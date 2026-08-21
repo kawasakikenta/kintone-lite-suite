@@ -9,7 +9,7 @@ import {
   getIssueSideLabel,
   stableStringify
 } from '../utils.js';
-import { stringifyRowValueForDiff, getDiffExportContentLabel } from './export.js';
+import { stringifyRowValueForDiff } from './export.js';
 import {
   isSensitiveSameDiffRow,
   SENSITIVE_DIFF_SECTION_KEYS,
@@ -80,11 +80,14 @@ export interface DiffXlsxBundle {
   appId?: string | number;
   guestId?: string;
   preview?: boolean;
+  fetchedAt?: string | number;
   meta?: { appName?: string };
   sections?: Record<string, any>;
 }
 
 export interface DiffXlsxContext {
+  /** 顧客共有用は技術情報を除外する。未指定時も安全側の customer を採用する。 */
+  audience?: 'customer' | 'internal';
   rows: DiffXlsxRow[];
   fetchIssues?: DiffXlsxFetchIssue[];
   partialIssues?: DiffXlsxPartialIssue[];
@@ -96,6 +99,7 @@ export interface DiffXlsxContext {
   normalizationPresetState?: Record<string, boolean>;
   exportMode?: string;
   exportLabel?: string;
+  filterDescription?: string;
   exportContentMode?: string;
   filename?: string;
   generatedAt?: string;
@@ -167,6 +171,10 @@ function sectionLabelOf(key: string): string {
   return SECTION_LABEL_BY_KEY.get(key) || key || '(未分類)';
 }
 
+function sectionKeyOfRow(row: DiffXlsxRow): string {
+  return String(row.sectionKey || row.section || '(その他)');
+}
+
 function normalizationLabel(state: Record<string, boolean> | undefined): string {
   if (!state || !Object.keys(state).length) return '未記録';
   const entries = Object.entries(state).sort(([a], [b]) => a.localeCompare(b));
@@ -178,7 +186,7 @@ function normalizationLabel(state: Record<string, boolean> | undefined): string 
 function groupRowsBySection(rows: DiffXlsxRow[]): Map<string, DiffXlsxRow[]> {
   const map = new Map<string, DiffXlsxRow[]>();
   for (const r of rows) {
-    const key = r.sectionKey || '(その他)';
+    const key = sectionKeyOfRow(r);
     let list = map.get(key);
     if (!list) { list = []; map.set(key, list); }
     list.push(r);
@@ -461,7 +469,53 @@ function appLabel(bundle?: DiffXlsxBundle): string {
 }
 
 function scopeLabel(scopes: string[] | undefined): string {
-  return (scopes || []).map((key) => sectionLabelOf(key)).join('、');
+  const labels = (scopes || []).map((key) => sectionLabelOf(key)).filter(Boolean);
+  return labels.length ? labels.join('、') : '未記録';
+}
+
+function humanDateTime(value: unknown): string {
+  if (value == null || value === '') return '未記録';
+  const source = typeof value === 'string' && /^\d{11,}$/.test(value.trim())
+    ? Number(value)
+    : value;
+  const date = typeof source === 'number' ? new Date(source) : new Date(String(source));
+  if (!Number.isFinite(date.getTime())) return String(value);
+  return `${new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).format(date)} JST`;
+}
+
+function xlsxContentLabel(rows: DiffXlsxRow[]): string {
+  const hasActual = rows.some((row) => !row._displayOnly && row.type !== 'same');
+  const hasSame = rows.some((row) => !row._displayOnly && row.type === 'same');
+  const hasReference = rows.some((row) => !!row._displayOnly);
+  const parts = [
+    hasActual ? '差分行' : '',
+    hasSame ? '同一証跡行' : '',
+    hasReference ? '参考表示行' : ''
+  ].filter(Boolean);
+  const content = parts.length === 0
+    ? '差分行なし'
+    : parts.length === 1
+      ? `${parts[0]}のみ`
+      : parts.length === 2
+        ? `${parts[0]}と${parts[1]}`
+        : parts.join('・');
+  return `収録した${content}（全設定スナップショットなし）`;
+}
+
+function filterDescriptionLabel(ctx: DiffXlsxContext): string {
+  if (String(ctx.filterDescription || '').trim()) return String(ctx.filterDescription).trim();
+  return ctx.exportMode === 'filtered'
+    ? '画面で表示中の結果（詳細条件は未記録）'
+    : 'フィルターなし（比較結果の全件）';
 }
 
 function fieldSettingKind(row: DiffXlsxRow): 'field' | 'setting' | null {
@@ -604,11 +658,13 @@ function shortStableHash(text: string): string {
 
 function xlsxDiffValuePreview(text: string, originalUtf16Length = text.length): string {
   if (text.length <= XLSX_DIFF_VALUE_PREVIEW_LIMIT) return text;
-  const suffix = `\n…（Excel表示用に省略・元UTF-16長 ${originalUtf16Length}・識別:${shortStableHash(text)}）`;
-  let keep = XLSX_DIFF_VALUE_PREVIEW_LIMIT - suffix.length;
+  const hash = shortStableHash(text);
+  const prefix = `[一部表示: 元データ ${originalUtf16Length}文字（UTF-16） / 識別:${hash}]\n`;
+  const suffix = `\n…（Excel表示用に省略・元UTF-16長 ${originalUtf16Length}・識別:${hash}）`;
+  let keep = XLSX_DIFF_VALUE_PREVIEW_LIMIT - prefix.length - suffix.length;
   // UTF-16 サロゲートペアの途中で切らない。
   if (keep > 0 && /[\uD800-\uDBFF]/.test(text.charAt(keep - 1))) keep -= 1;
-  return text.slice(0, Math.max(0, keep)) + suffix;
+  return prefix + text.slice(0, Math.max(0, keep)) + suffix;
 }
 
 function rowValue(row: DiffXlsxRow, side: 'source' | 'target'): string {
@@ -803,26 +859,26 @@ function fieldSettingHumanValue(
 
 function fieldSettingReviewGuidance(detail: DiffXlsxFieldDetail): string {
   if (detail.settingKey === '(field)' && detail.row.type === 'added') {
-    return '入力画面・権限・一覧・外部連携に追加してよいか確認してください。';
+    return '入力画面・権限・一覧・外部連携での利用有無を確認してください。';
   }
   if (detail.settingKey === '(field)' && detail.row.type === 'removed') {
-    return '保存済みデータ・一覧・外部連携から参照されていないか確認してください。';
+    return '保存済みデータ・一覧・外部連携からの参照有無を確認してください。';
   }
   if (detail.settingKey === 'required' || detail.settingKey.endsWith('.required')) {
     return detail.row.right === true
-      ? '既存データ・入力画面・外部連携が必須入力に対応できるか確認してください。'
-      : '未入力を許可してよいか確認してください。';
+      ? '既存データの未入力有無と、入力画面・外部連携の入力条件を確認してください。'
+      : '未入力を許可する設定への変更を確認してください。';
   }
   if (detail.settingKey === 'options' || detail.settingKey.startsWith('options.')) {
-    return '既存値・絞り込み条件・連携への影響を確認してください。';
+    return '既存値・絞り込み条件・連携で使用している選択肢を確認してください。';
   }
   if (['type', 'code'].includes(detail.settingKey) || /\.(?:type|code)$/.test(detail.settingKey)) {
-    return '保存済みデータとAPI・外部連携への影響を確認してください。';
+    return '保存済みデータとAPI・外部連携で使用している型・コードを確認してください。';
   }
   if (/^(?:lookup|referenceTable)(?:\.|$)/.test(detail.settingKey)) {
-    return '参照先とコピー項目への影響を確認してください。';
+    return '参照先アプリ、キー、コピー項目を確認してください。';
   }
-  return '変更内容と業務影響を確認してください。';
+  return '変更前後の設定値と利用箇所を確認してください。';
 }
 
 function fieldDetailReviewNote(detail: DiffXlsxFieldDetail): string {
@@ -880,7 +936,10 @@ function summarizeRows(rows: DiffXlsxRow[]) {
     else counts.changed += 1;
     if (row.moved || row.type === 'moved') counts.moved += 1;
   }
-  return counts;
+  return {
+    ...counts,
+    contentChanged: Math.max(0, counts.changed - counts.moved)
+  };
 }
 
 function issueMessage(issue: DiffXlsxFetchIssue): string {
@@ -898,6 +957,7 @@ function partialFileDetails(issue: DiffXlsxPartialIssue): string {
 }
 
 function bundleEnvironmentLabel(bundle?: DiffXlsxBundle): string {
+  if (!bundle) return '未記録';
   return `${bundle?.guestId ? `ゲスト ${bundle.guestId}` : '通常スペース'} / ${bundle?.preview ? 'プレビュー' : '運用'}設定`;
 }
 
@@ -944,17 +1004,55 @@ function fieldComparisonSummary(
     || (ctx.rows || []).some((row) => (row.sectionKey || row.section) === 'fieldSettings');
   if (!fieldSelected) return '比較対象外';
 
+  const fieldTruncation = (ctx.truncation?.sections || [])
+    .find((section) => (section.sectionKey || section.section) === 'fieldSettings');
+  const fieldScanStatus = fieldTruncation ? truncationScanStatusOf(fieldTruncation) : null;
+  const fieldOmittedDiff = Number(fieldTruncation?.omittedDiffCount ?? fieldTruncation?.droppedDiff ?? 0);
+  const legacyUnknownTruncation = !!ctx.truncation?.truncated && !(ctx.truncation.sections || []).length;
   const fieldIncomplete = (ctx.fetchIssues || []).some((issue) => (issue.sectionKey || issue.section) === 'fieldSettings')
     || (ctx.partialIssues || []).some((issue) => (issue.sectionKey || issue.section) === 'fieldSettings')
-    || (ctx.truncation?.sections || []).some((section) => (section.sectionKey || section.section) === 'fieldSettings');
+    || legacyUnknownTruncation
+    || fieldScanStatus === 'partial'
+    || fieldScanStatus === 'unscanned';
   const known = [
-    fieldCount ? `${fieldCount}フィールド / ${settingDiffCount}設定差分` : '',
+    fieldCount ? `${fieldCount}フィールド / ${settingDiffCount}件の差分明細` : '',
     unstructuredFieldDiffCount ? `構造化できない差分 ${unstructuredFieldDiffCount}件` : ''
   ].filter(Boolean).join('、');
   if (fieldIncomplete) return `未判定${known ? `（確認できた範囲: ${known}）` : '（取得・走査が不完全）'}`;
+  if (fieldScanStatus === 'complete' && fieldOmittedDiff > 0) {
+    return `${known || '確認できた差分 0件'}（走査済み・一部未収録 ${fieldOmittedDiff}件）`;
+  }
   if (unstructuredFieldDiffCount) return `${known}。技術明細を確認してください`;
-  if (fieldCount) return `${fieldCount}フィールド / ${settingDiffCount}設定差分`;
+  if (fieldCount) return `${fieldCount}フィールド / ${settingDiffCount}件の差分明細`;
   return ctx.exportMode === 'filtered' ? '0件（この出力範囲内）' : '0件（走査済み）';
+}
+
+function summarySectionKeys(ctx: DiffXlsxContext, grouped: Map<string, DiffXlsxRow[]>): string[] {
+  const keys = new Set<string>();
+  const add = (value: unknown) => {
+    const key = String(value || '').trim();
+    if (key) keys.add(key);
+  };
+  (ctx.scopes || []).forEach(add);
+  grouped.forEach((_rows, key) => add(key));
+  (ctx.fetchIssues || []).forEach((issue) => add(issue.sectionKey || issue.section));
+  (ctx.partialIssues || []).forEach((issue) => add(issue.sectionKey || issue.section));
+  (ctx.truncation?.sections || []).forEach((section) => add(section.sectionKey || section.section));
+  const known = SECTION_DEFS.map((section) => section.key).filter((key) => keys.has(key));
+  const unknown = [...keys].filter((key) => !SECTION_ORDER_BY_KEY.has(key));
+  return [...known, ...unknown];
+}
+
+function sectionCountBreakdown(rows: DiffXlsxRow[]): string {
+  const counts = summarizeRows(rows);
+  return [
+    `追加 ${counts.added}`,
+    `削除 ${counts.removed}`,
+    `内容変更 ${counts.contentChanged}`,
+    `移動 ${counts.moved}`,
+    `同一 ${counts.same}`,
+    `参考 ${counts.reference}`
+  ].join(' / ');
 }
 
 interface DiffXlsxSheetGuide {
@@ -986,6 +1084,14 @@ function buildSheetGuides(
         : '最初に確認し、収録された差分は「差分一覧」へ進みます。',
     targetCell: 'A1'
   }];
+  if (hasIssues) {
+    guides.push({
+      name: '取得・未検証',
+      purpose: '取得失敗、一部未検証、件数上限の対象と理由を確認できます。',
+      useWhen: '概要の取得状態が「不完全」または結果が「比較不完全」のときに確認します。',
+      targetCell: 'A3'
+    });
+  }
   if (fieldCount) {
     guides.push(
       {
@@ -996,7 +1102,7 @@ function buildSheetGuides(
       },
       {
         name: 'フィールド差分詳細',
-        purpose: 'フィールド設定ごとの変更前後と確認ポイントを確認できます。',
+        purpose: 'フィールド設定ごとの変更前後と確認事項を確認できます。',
         useWhen: '設定単位の内容を確認し、差分IDからレビュー入力へ進むときに使います。',
         targetCell: 'B4'
       }
@@ -1005,7 +1111,7 @@ function buildSheetGuides(
   guides.push({
     name: '差分一覧',
     purpose: 'このブックに収録された差分と変更前後の値を一覧で確認できます。',
-    useWhen: '黄色の列に確認状態、担当者、レビューコメントを記録するときに使います。',
+    useWhen: '黄色の列に確認状況、対応判断、担当者、コメントを記録するときに使います。',
     targetCell: (ctx.rows || []).length ? 'I4' : 'A3'
   });
   for (const key of grouped.keys()) {
@@ -1020,14 +1126,6 @@ function buildSheetGuides(
         ? '人向けの要約だけでは判断できない場合に、技術的な根拠を確認します。'
         : '差分一覧だけでは判断できない場合に、技術的な根拠を確認します。',
       targetCell: 'A4'
-    });
-  }
-  if (hasIssues) {
-    guides.push({
-      name: '取得・未検証',
-      purpose: '取得失敗、一部未検証、件数上限の対象と理由を確認できます。',
-      useWhen: '概要の取得状態が「不完全」または判定が「要確認」のときに確認します。',
-      targetCell: 'A3'
     });
   }
   return guides;
@@ -1051,7 +1149,7 @@ function buildSummarySheet(
   const truncation = ctx.truncation?.truncated ? ctx.truncation : null;
   const incomplete = fetchIssues.length > 0 || partialIssues.length > 0 || !!truncation;
   const verdict = incomplete
-    ? '要確認（比較結果は不完全です。差分なしとは判断できません）'
+    ? '比較不完全（差分なしとは判断できません）'
     : counts.actual > 0 ? '差分あり' : '差分なし';
   const completeness = completenessLabel(fetchIssues, partialIssues, truncation);
   const comparisonBanner = `${appLabel(ctx.sourceBundle) || '比較元'}  →  ${appLabel(ctx.targetBundle) || '比較先'}`;
@@ -1062,7 +1160,7 @@ function buildSummarySheet(
     .filter((row) => isSensitiveSameDiffRow(row))
     .map((row) => sectionLabelOf(String(row.sectionKey || ''))))];
   const fieldStatus = fieldComparisonSummary(ctx, fieldCount, settingDiffCount, unstructuredFieldDiffCount);
-  const fieldStatusIncomplete = fieldStatus.startsWith('未判定');
+  const fieldStatusIncomplete = fieldStatus.startsWith('未判定') || fieldStatus.includes('一部未収録');
   const sheetGuides = buildSheetGuides(ctx, grouped, fieldCount);
   const fieldLinkTarget = fieldCount
     ? { sheet: 'フィールド差分要約', cell: 'C4', label: 'フィールド差分を見る' }
@@ -1076,45 +1174,49 @@ function buildSummarySheet(
     incomplete ? '不完全な範囲は「取得・未検証」で確認します。' : ''
   ].filter(Boolean).join(' ');
   const overviewRow = {
-    verdict: 4,
-    total: 5,
-    added: 6,
-    removed: 7,
-    changed: 8,
-    moved: 9,
-    same: 10,
-    comparisonTitle: 11,
-    comparisonApps: 12,
-    comparisonEnvironment: 13,
-    fieldStatus: 17,
-    usage: 18
+    guideBand: 4,
+    verdict: 5,
+    total: 6,
+    added: 7,
+    removed: 8,
+    contentChanged: 9,
+    moved: 10,
+    same: 11,
+    comparisonTitle: 12,
+    comparisonApps: 13,
+    comparisonEnvironment: 14,
+    normalization: 18,
+    fieldStatus: 19,
+    usage: 20
   } as const;
 
   const sheetRows: (string | number | null)[][] = [
     ['kintone 設定差分比較レポート', '', '', ''],
     [comparisonBanner, '', '', ''],
-    ['生成日時', ctx.generatedAt || new Date().toISOString(), '比較日時', ctx.comparedAt == null || ctx.comparedAt === '' ? '未記録' : String(ctx.comparedAt)],
+    ['生成日時', humanDateTime(ctx.generatedAt || Date.now()), '比較日時', humanDateTime(ctx.comparedAt)],
+    ['比較元取得日時', humanDateTime(ctx.sourceBundle?.fetchedAt), '比較先取得日時', humanDateTime(ctx.targetBundle?.fetchedAt)],
     [sheetGuideBand(
-      '全体の判定、取得状態、差分件数、比較条件を確認できます。',
+      'この出力範囲の結果、取得状態、収録差分数、比較条件を確認できます。',
       overviewNextPlaces
     ), '', '', ''],
-    ['判定', verdict, '取得状態', completeness],
-    ['差分件数', counts.actual, '取得失敗', fetchIssues.length],
+    ['この出力範囲の結果', verdict, '取得状態', completeness],
+    ['収録差分数', counts.actual, '取得失敗', fetchIssues.length],
     ['追加（比較先のみ）', counts.added, '一部未検証', partialIssues.length],
     ['削除（比較元のみ）', counts.removed, '件数上限', truncation ? '省略あり' : '省略なし'],
-    ['変更', counts.changed, '', ''],
-    ['移動（変更の内数）', counts.moved, '', ''],
+    ['内容変更（移動を除く）', counts.contentChanged, '', ''],
+    ['移動', counts.moved, '', ''],
     ['同一', counts.same, '', ''],
     ['比較の向き・条件', '', '', ''],
-    ['比較元', appLabel(ctx.sourceBundle), '比較先', appLabel(ctx.targetBundle)],
+    ['比較元', appLabel(ctx.sourceBundle) || '未記録', '比較先', appLabel(ctx.targetBundle) || '未記録'],
     ['環境', bundleEnvironmentLabel(ctx.sourceBundle), '環境', bundleEnvironmentLabel(ctx.targetBundle)],
     ['比較方向', '比較元 → 比較先', '出力範囲', ctx.exportLabel || (ctx.exportMode === 'filtered' ? '表示中（フィルタ適用後）' : '全件')],
-    ['比較対象', scopeLabel(ctx.scopes), '出力内容', getDiffExportContentLabel(ctx.exportContentMode || 'diffOnly')],
-    ['正規化設定', normalizationLabel(ctx.normalizationPresetState), '無視キー', String(ctx.ignoreKeys || '')],
+    ['比較対象', scopeLabel(ctx.scopes), '収録内容', xlsxContentLabel(rows)],
+    ['フィルタ条件', filterDescriptionLabel(ctx), '無視キー', String(ctx.ignoreKeys || '').trim() || 'なし'],
+    ['正規化設定', normalizationLabel(ctx.normalizationPresetState), '自動判定', '重要度、業務への影響、対応要否は自動判定しません'],
     ['フィールド差分', fieldStatus, '', fieldLinkTarget?.label || ''],
     ['使い方', fieldCount
-      ? '①「フィールド差分要約」で対象を確認　②「フィールド差分詳細」で変更前後を確認　③「差分一覧」でレビューを入力　※パスは技術明細シートにのみ掲載'
-      : '①概要で判定と取得状態を確認　②「差分一覧」で変更前後を確認　③黄色い3列にレビューを入力　※パスは技術明細シートにのみ掲載', '', rows.length ? '③ レビュー入力へ' : ''],
+      ? '①「フィールド差分要約」で対象を確認　②「フィールド差分詳細」で変更前後を確認　③「差分一覧」で確認状況と対応判断を入力　※パスは技術明細シートにのみ掲載'
+      : '①概要で結果と取得状態を確認　②「差分一覧」で変更前後を確認　③黄色い4列に確認状況・対応判断・担当者・コメントを入力　※パスは技術明細シートにのみ掲載', '', rows.length ? '③ レビュー入力へ' : ''],
     ['', '', '', '']
   ];
   const guideTitleRow = sheetRows.length;
@@ -1130,12 +1232,13 @@ function buildSummarySheet(
   const sectionTitleRow = sheetRows.length;
   sheetRows.push(['セクション別集計', '', '', '']);
   const sectionHeaderRow = sheetRows.length;
-  sheetRows.push(['セクション', '一覧行数', '差分件数', '走査・取得状態']);
-  for (const [key, list] of grouped) {
+  sheetRows.push(['セクション', '収録行数', '客観内訳', '走査・取得状態']);
+  for (const key of summarySectionKeys(ctx, grouped)) {
+    const list = grouped.get(key) || [];
     sheetRows.push([
       sectionLabelOf(key),
       list.length,
-      summarizeRows(list).actual,
+      sectionCountBreakdown(list),
       sectionCompletenessLabel(key, ctx)
     ]);
   }
@@ -1173,12 +1276,22 @@ function buildSummarySheet(
   }
 
   const rowStyles: XlsxRowStyle[] = sheetRows.map(() => 'normal');
-  const rowHeights: number[] = [32, 24, 0, 44];
+  const rowHeights: number[] = [32, 24, 0, 0, 44];
+  rowHeights[overviewRow.normalization] = readableDiffRowHeight([
+    { value: sheetRows[overviewRow.normalization][1], width: 54 },
+    { value: sheetRows[overviewRow.normalization][3], width: 54 }
+  ], 72);
   for (let rowIndex = guideStartRow; rowIndex < guideEndRow; rowIndex += 1) rowHeights[rowIndex] = 40;
+  for (const rowIndex of warningRows) {
+    rowHeights[rowIndex] = readableDiffRowHeight([
+      { value: sheetRows[rowIndex][0], width: 24 },
+      { value: sheetRows[rowIndex][1], width: 120 }
+    ], 132);
+  }
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = sheetRows.map(() => []);
   cellStyles[0][0] = 'title';
   cellStyles[1][0] = 'sectionHeader';
-  cellStyles[3][0] = 'info';
+  cellStyles[overviewRow.guideBand][0] = 'info';
   cellStyles[overviewRow.verdict] = [
     'sectionHeader',
     incomplete ? 'kpiDanger' : 'kpiGood',
@@ -1189,7 +1302,7 @@ function buildSummarySheet(
     overviewRow.total,
     overviewRow.added,
     overviewRow.removed,
-    overviewRow.changed,
+    overviewRow.contentChanged,
     overviewRow.moved,
     overviewRow.same
   ]) {
@@ -1218,7 +1331,7 @@ function buildSummarySheet(
   if (rows.length) cellStyles[overviewRow.usage][3] = 'hyperlink';
   for (const index of warningRows) cellStyles[index][0] = 'warning';
   const merges = [
-    'A1:D1', 'A2:D2', 'A4:D4', `A${overviewRow.comparisonTitle + 1}:D${overviewRow.comparisonTitle + 1}`,
+    'A1:D1', 'A2:D2', `A${overviewRow.guideBand + 1}:D${overviewRow.guideBand + 1}`, `A${overviewRow.comparisonTitle + 1}:D${overviewRow.comparisonTitle + 1}`,
     `A${guideTitleRow + 1}:D${guideTitleRow + 1}`,
     `C${guideHeaderRow + 1}:D${guideHeaderRow + 1}`,
     `A${sectionTitleRow + 1}:D${sectionTitleRow + 1}`
@@ -1248,7 +1361,7 @@ function buildSummarySheet(
         ref: `D${overviewRow.usage + 1}`,
         targetSheet: '差分一覧',
         targetCell: 'I4',
-        tooltip: '確認状態・担当者・コメントの入力欄へ移動'
+        tooltip: '確認状況・対応判断・担当者・コメントの入力欄へ移動'
       }] : []),
       ...sheetGuides.map((guide, index) => ({
         ref: `A${guideStartRow + index + 1}`,
@@ -1267,7 +1380,8 @@ function buildSummarySheet(
   };
 }
 
-const REVIEW_STATUS_VALUES = ['未確認', '確認中', '対応要', '対応不要', '確認済み'];
+const REVIEW_PROGRESS_VALUES = ['未確認', '確認中', '確認済み', '対象外'];
+const ACTION_DECISION_VALUES = ['未判断', '要対応', '対応不要', '保留', '対象外'];
 
 function stableDifferenceId(row: DiffXlsxRow, seen: Map<string, number>): string {
   const redactedIdentityValue = isSensitiveSameDiffRow(row) ? 'SENSITIVE_SAME_VALUE_REDACTED' : null;
@@ -1293,6 +1407,11 @@ interface DiffXlsxDifferenceRef {
   rowNumber: number;
 }
 
+interface DiffXlsxTechnicalRef {
+  sheetName: string;
+  rowNumber: number;
+}
+
 function buildDifferenceRefs(rows: DiffXlsxRow[]): DiffXlsxDifferenceRef[] {
   const refs: DiffXlsxDifferenceRef[] = [];
   const seenIds = new Map<string, number>();
@@ -1301,6 +1420,19 @@ function buildDifferenceRefs(rows: DiffXlsxRow[]): DiffXlsxDifferenceRef[] {
     rowNumber: index + 4
   }));
   return refs;
+}
+
+function buildTechnicalRefs(rows: DiffXlsxRow[]): DiffXlsxTechnicalRef[] {
+  const sectionCounts = new Map<string, number>();
+  return rows.map((row) => {
+    const key = sectionKeyOfRow(row);
+    const indexInSection = sectionCounts.get(key) || 0;
+    sectionCounts.set(key, indexInSection + 1);
+    return {
+      sheetName: sectionSheetName(key),
+      rowNumber: indexInSection + 4
+    };
+  });
 }
 
 function directionalValueHeader(side: 'source' | 'target', bundle?: DiffXlsxBundle): string {
@@ -1315,26 +1447,28 @@ function buildListSheet(
   sourceBundle?: DiffXlsxBundle,
   targetBundle?: DiffXlsxBundle,
   differenceRefs?: DiffXlsxDifferenceRef[],
+  technicalRefs?: DiffXlsxTechnicalRef[],
   fieldModel?: DiffXlsxFieldModel
 ): XlsxSheet {
   const headers = [
-    '差分ID', '変更種別', '存在状況', 'セクション', '項目',
-    directionalValueHeader('source', sourceBundle), directionalValueHeader('target', targetBundle), '確認ポイント',
-    '確認状態', '担当者', 'レビューコメント'
+    'セクション', '項目', '変更種別', '存在状況', '差分ID',
+    directionalValueHeader('source', sourceBundle), directionalValueHeader('target', targetBundle), '確認事項',
+    '確認状況', '対応判断', '担当者', 'コメント'
   ];
   const groupHeader = [
-    '差分の識別', '', '', '', '',
-    '比較元（変更前）', '比較先（変更後）', '確認ポイント',
-    'レビュー入力（黄色）', '', ''
+    '差分対象', '', '変更の事実', '', '',
+    '比較元（変更前）', '比較先（変更後）', '確認事項',
+    'レビュー入力（黄色）', '', '', ''
   ];
   const guide = sheetGuideBand(
-    'このブックに収録された差分、変更前後の値、確認ポイントを一覧で確認できます。',
-    '黄色の列に確認状態・担当者・コメントを入力します。技術的な根拠は各明細シートで確認します。'
+    'このブックに収録された差分、変更前後の値、確認事項を一覧で確認できます。',
+    '黄色の列に確認状況・対応判断・担当者・コメントを入力します。差分IDから技術明細へ移動できます。値先頭の「[一部表示]」は技術明細または元データを確認します。'
   );
-  const out: (string | number | null)[][] = [[guide, '', '', '', '', '', '', '', '', '', ''], groupHeader, headers];
+  const out: (string | number | null)[][] = [[guide, '', '', '', '', '', '', '', '', '', '', ''], groupHeader, headers];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal', 'normal'];
   const groupCellStyles: Array<XlsxCellStyle | undefined> = [];
   groupCellStyles[0] = 'sectionHeader';
+  groupCellStyles[2] = 'info';
   groupCellStyles[5] = 'sourceGroup';
   groupCellStyles[6] = 'targetGroup';
   groupCellStyles[7] = 'info';
@@ -1364,28 +1498,39 @@ function buildListSheet(
           : humanizeFieldSettingValue(row.right, '')
         : humanizeListRowValue(row, 'target', sourceBundle, targetBundle);
     const note = fieldDetail ? fieldDetailReviewNote(fieldDetail) : rowNote(row);
+    const reviewable = !row._displayOnly && row.type !== 'same';
     out.push([
-      differenceRefs?.[rowIndex]?.id || stableDifferenceId(row, seenIds),
-      rowTypeLabel(row),
-      existence,
       sectionLabelOf(row.sectionKey || row.section || ''),
       item,
+      rowTypeLabel(row),
+      existence,
+      differenceRefs?.[rowIndex]?.id || stableDifferenceId(row, seenIds),
       sourceValue,
       targetValue,
       note,
-      '未確認',
+      reviewable ? '未確認' : '対象外',
+      reviewable ? '未判断' : '対象外',
       '',
       ''
     ]);
     rowStyles.push('normal');
-    const styles: Array<XlsxCellStyle | undefined> = ['info'];
+    const styles: Array<XlsxCellStyle | undefined> = [];
+    styles[4] = 'hyperlink';
     styles[5] = 'sourceDivider';
     styles[6] = 'target';
-    styles[8] = 'review';
-    styles[9] = 'review';
-    styles[10] = 'review';
+    styles[7] = 'info';
+    if (reviewable) {
+      styles[8] = 'review';
+      styles[9] = 'review';
+      styles[10] = 'review';
+      styles[11] = 'review';
+    } else {
+      styles[8] = 'info';
+      styles[9] = 'info';
+    }
     cellStyles.push(styles);
     rowHeights.push(readableDiffRowHeight([
+      { value: sectionLabelOf(row.sectionKey || row.section || ''), width: 18 },
       { value: existence, width: 18 },
       { value: item, width: 30 },
       { value: sourceValue, width: 42 },
@@ -1396,23 +1541,37 @@ function buildListSheet(
   const dataValidations = rows.length
     ? [{
         sqref: `I4:I${rows.length + 3}`,
-        values: REVIEW_STATUS_VALUES,
-        promptTitle: '確認状態',
-        prompt: 'レビューの進捗を選択してください'
+        values: REVIEW_PROGRESS_VALUES,
+        promptTitle: '確認状況',
+        prompt: '事実確認の進捗を選択してください'
+      }, {
+        sqref: `J4:J${rows.length + 3}`,
+        values: ACTION_DECISION_VALUES,
+        promptTitle: '対応判断',
+        prompt: '人が判断した対応方針を選択してください'
       }]
     : [];
   return {
     name,
     rows: out,
-    colWidths: [15, 16, 18, 18, 30, 42, 42, 32, 14, 16, 28],
+    colWidths: [18, 30, 16, 18, 15, 42, 42, 32, 14, 14, 16, 28],
     rowStyles,
     cellStyles,
     headerRow: 3,
     freezeRows: 3,
     freezeColumns: 5,
     rowHeights,
-    merges: ['A1:K1', 'A2:E2', 'I2:K2'],
+    merges: ['A1:L1', 'A2:B2', 'C2:E2', 'I2:L2'],
     dataValidations,
+    internalHyperlinks: rows.flatMap((_row, index) => {
+      const target = technicalRefs?.[index];
+      return target ? [{
+        ref: `E${index + 4}`,
+        targetSheet: target.sheetName,
+        targetCell: `A${target.rowNumber}`,
+        tooltip: '該当する技術明細へ移動'
+      }] : [];
+    }),
     showGridLines: false,
     print: {
       orientation: 'landscape',
@@ -1427,23 +1586,24 @@ function buildSectionSheet(
   label: string,
   list: DiffXlsxRow[],
   sourceBundle?: DiffXlsxBundle,
-  targetBundle?: DiffXlsxBundle
+  targetBundle?: DiffXlsxBundle,
+  differenceRefs?: DiffXlsxDifferenceRef[]
 ): XlsxSheet {
   const headers = [
     '差分ID', '変更種別', '存在状況', '項目', 'パス',
     directionalValueHeader('source', sourceBundle),
     directionalValueHeader('target', targetBundle),
-    '確認ポイント'
+    '確認事項'
   ];
   const groupHeader = [
     '差分の識別', '', '', '', '技術パス',
-    '比較元（変更前）', '比較先（変更後）', '確認ポイント'
+    '比較元（変更前）', '比較先（変更後）', '確認事項'
   ];
   const guide = sheetGuideBand(
     `${label}の技術パスと原データを確認できます。`,
     label === 'フィールド技術明細'
-      ? '通常の確認は「フィールド差分詳細」、レビュー記録は同じ差分IDの「差分一覧」で行います。長文はセルを選択して数式バーでも確認し、「…省略」の表示がある場合は元データを確認します。'
-      : '通常の確認は「差分一覧」で行い、要約だけでは判断できない場合にこのシートで根拠を確認します。長文はセルを選択して数式バーでも確認し、「…省略」の表示がある場合は元データを確認します。'
+      ? '通常の確認は「フィールド差分詳細」、レビュー記録は同じ差分IDの「差分一覧」で行います。長文はセルを選択して数式バーでも確認し、「[一部表示]」または「…省略」がある場合は元データを確認します。'
+      : '通常の確認は「差分一覧」で行い、要約だけでは判断できない場合にこのシートで根拠を確認します。長文はセルを選択して数式バーでも確認し、「[一部表示]」または「…省略」がある場合は元データを確認します。'
   );
   const rows: (string | number | null)[][] = [[guide, '', '', '', '', '', '', ''], groupHeader, headers];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal', 'normal'];
@@ -1457,14 +1617,14 @@ function buildSectionSheet(
   cellStyles[2][5] = 'headerDivider';
   const rowHeights: number[] = [44, 24, 42];
   const seenIds = new Map<string, number>();
-  for (const row of list) {
+  for (const [rowIndex, row] of list.entries()) {
     const existence = rowExistenceLabel(row);
     const item = rowItemLabel(row, sourceBundle, targetBundle);
     const sourceValue = rowValue(row, 'source');
     const targetValue = rowValue(row, 'target');
     const note = rowNote(row);
     rows.push([
-      stableDifferenceId(row, seenIds),
+      differenceRefs?.[rowIndex]?.id || stableDifferenceId(row, seenIds),
       rowTypeLabel(row),
       existence,
       item,
@@ -1474,7 +1634,7 @@ function buildSectionSheet(
       note
     ]);
     rowStyles.push('normal');
-    const styles: Array<XlsxCellStyle | undefined> = ['info'];
+    const styles: Array<XlsxCellStyle | undefined> = [differenceRefs?.[rowIndex] ? 'hyperlink' : 'info'];
     styles[5] = 'sourceDivider';
     styles[6] = 'target';
     cellStyles.push(styles);
@@ -1498,6 +1658,15 @@ function buildSectionSheet(
     freezeColumns: 4,
     rowHeights,
     merges: ['A1:H1', 'A2:D2'],
+    internalHyperlinks: list.flatMap((_row, index) => {
+      const target = differenceRefs?.[index];
+      return target ? [{
+        ref: `A${index + 4}`,
+        targetSheet: '差分一覧',
+        targetCell: `I${target.rowNumber}`,
+        tooltip: '差分一覧の確認状況へ戻る'
+      }] : [];
+    }),
     showGridLines: false,
     print: {
       orientation: 'landscape',
@@ -1606,7 +1775,7 @@ function buildFieldSummarySheet(
   const headers = [
     '変更種別', '存在状況',
     'フィールド名', 'フィールドコード', 'フィールド種別',
-    '設定差分数', '主な変更', '確認ポイント', '詳細', 'レビュー'
+    '差分明細数', '主な変更', '確認事項', '詳細', 'レビュー'
   ];
   const guide = sheetGuideBand(
     '差分があるフィールドと主な変更を、フィールド単位で確認できます。',
@@ -1712,11 +1881,11 @@ function buildFieldDetailSheet(
     '設定項目', '変更種別', '存在状況',
     directionalValueHeader('source', sourceBundle),
     directionalValueHeader('target', targetBundle),
-    '確認ポイント', '要約へ'
+    '確認事項', '要約へ'
   ];
   const guide = sheetGuideBand(
     '各フィールドの設定項目ごとに、変更種別・存在状況・変更前後の値を確認できます。',
-    '差分IDから「差分一覧」のレビュー入力へ進み、「要約へ」でフィールド単位の一覧へ戻ります。'
+    '差分IDから「差分一覧」のレビュー入力へ進み、「要約へ」でフィールド単位の一覧へ戻ります。値先頭の「[一部表示]」は技術明細または元データを確認します。'
   );
   const rows: (string | number | null)[][] = [[guide, '', '', '', '', '', '', '', '', ''], groupHeader, headers];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal', 'normal'];
@@ -1859,7 +2028,17 @@ function buildIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
     headerRow: 2,
     freezeRows: 2,
     freezeColumns: 2,
-    rowHeights: [44, 30],
+    rowHeights: rows.map((row, index) => {
+      if (index === 0) return 44;
+      if (index === 1) return 30;
+      return readableDiffRowHeight([
+        { value: row[0], width: 14 },
+        { value: row[1], width: 22 },
+        { value: row[2], width: 12 },
+        { value: row[3], width: 72 },
+        { value: row[4], width: 60 }
+      ], 160);
+    }),
     merges: ['A1:E1'],
     showGridLines: false,
     print: {
@@ -1871,7 +2050,1276 @@ function buildIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Customer-safe workbook
+// ---------------------------------------------------------------------------
+
+const CUSTOMER_HIGH_RISK_SECTION_KEYS: ReadonlySet<string> = new Set([
+  'customizeSettings',
+  'pluginSettings',
+  'appAcl',
+  'fieldAcl',
+  'recordPermissions',
+  'notifications',
+  'perRecordNotifications',
+  'reminderNotifications'
+]);
+
+const CUSTOMER_VISIBLE_SECTION_KEYS: ReadonlySet<string> = new Set([
+  'appSettings',
+  'appInfo',
+  'fieldSettings',
+  'layoutSettings',
+  'formSettings',
+  'viewSettings',
+  'reportSettings',
+  'processSettings',
+  'actionSettings',
+  'categories'
+]);
+
+const CUSTOMER_HIDDEN_DETAIL = '詳細は安全のため非表示';
+const CUSTOMER_TEXT_LIMIT = 240;
+const CUSTOMER_REVIEW_STATUS_VALUES = ['未レビュー', 'レビュー中', 'レビュー済み', '対象外'];
+const CUSTOMER_ACTION_DECISION_VALUES = ['未判断', '対応する', '対応しない', '保留', '対象外'];
+
+interface CustomerDiffItem {
+  sectionKey: string;
+  sectionLabel: string;
+  item: string;
+  changeType: '追加' | '削除' | '変更' | '要素の移動';
+  before: string;
+  after: string;
+  reviewNote: string;
+  omittedTechnicalValues: number;
+}
+
+function customerSectionLabel(key: string): string {
+  const labels: Record<string, string> = {
+    appSettings: 'アプリ基本設定',
+    appInfo: 'アプリ情報',
+    formSettings: 'フォーム設定',
+    pluginSettings: 'プラグイン設定',
+    customizeSettings: 'カスタマイズ設定',
+    appAcl: 'アプリ権限',
+    fieldAcl: 'フィールド権限',
+    recordPermissions: 'レコード権限'
+  };
+  const known = SECTION_LABEL_BY_KEY.get(key) || '';
+  return labels[key] || known.replace(/\(※\)/g, '').trim() || 'その他の設定';
+}
+
+function customerAppName(bundle: DiffXlsxBundle | undefined, fallback: string): string {
+  let name = String(extractAppNameFromBundle(bundle) || '').normalize('NFKC').trim();
+  const numericIds = customerBundleNumericIds(bundle);
+  if (numericIds.includes(name)) name = '';
+  const idLabel = '(?:App|アプリ|Guest|ゲスト|Space|Thread)';
+  if (/^\d+$/.test(name)
+    || /^ID\s*[:#-]?\s*\d+$/i.test(name)
+    || new RegExp(`^${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*\\d+$`, 'i').test(name)) {
+    name = '';
+  }
+  for (const id of numericIds) {
+    const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    name = name
+      .replace(new RegExp(`\\(\\s*(?:${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*)?${escapedId}(?!\\d)\\s*\\)`, 'gi'), '')
+      .replace(new RegExp(`${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*${escapedId}(?!\\d)`, 'gi'), '')
+      .replace(new RegExp(`(^|[^\\p{L}\\p{N}])${escapedId}(?![\\p{L}\\p{N}])`, 'gu'), '$1');
+  }
+  name = name
+    .replace(new RegExp(`[\\(（\\[［【]\\s*${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*\\d+\\s*[\\)）\\]］】]`, 'gi'), '')
+    .replace(/[\(（\[［【]\s*\d{5,}\s*[\)）\]］】]/g, '')
+    .replace(new RegExp(`${idLabel}[\\s_=-]*(?:ID[\\s_=-]*)?[:#-]?[\\s_=-]*\\d{5,}`, 'gi'), '')
+    .replace(new RegExp(`^${idLabel}\\s*\\d+\\s*[:：-]\\s*`, 'i'), '')
+    .replace(new RegExp(`\\s+${idLabel}\\s+\\d{5,}\\s*$`, 'i'), '');
+  if (!numericIds.length) {
+    name = name
+      .replace(new RegExp(`\\(\\s*${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*\\d+\\s*\\)`, 'gi'), '')
+      .replace(new RegExp(`${idLabel}\\s+ID\\s*[:#-]?\\s*\\d+`, 'gi'), '')
+      .replace(new RegExp(`${idLabel}[\\s_=-]*(?:ID[\\s_=-]*)?[:#-]?[\\s_=-]*\\d+[\\s_=-]*(?:[:：-][\\s_-]*)?`, 'gi'), '')
+      .replace(/^\d{4,}\s*[-:：]\s*/, '');
+  }
+  name = name
+    .replace(/\(\s*\)/g, '')
+    .replace(/[（\[［【]\s*[）\]］】]/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\s\-:：#]+|[\s\-:：#]+$/g, '')
+    .trim();
+  if (customerUnsafeRawLabelText(name)) name = '';
+  return name || fallback;
+}
+
+function customerScopeLabel(scopes: string[] | undefined): string {
+  const labels = [...new Set((scopes || []).map((key) => customerSectionLabel(key)).filter(Boolean))];
+  return labels.length ? labels.join('、') : '比較した設定範囲';
+}
+
+function hasCustomerComparisonAdjustments(ctx: DiffXlsxContext): boolean {
+  return !!String(ctx.ignoreKeys || '').trim()
+    || Object.values(ctx.normalizationPresetState || {}).some(Boolean);
+}
+
+function customerChangeType(row: DiffXlsxRow): CustomerDiffItem['changeType'] {
+  if (row.moved || row.type === 'moved') return '要素の移動';
+  if (row.type === 'added') return '追加';
+  if (row.type === 'removed') return '削除';
+  return '変更';
+}
+
+function customerAggregatedChangeType(rows: DiffXlsxRow[]): CustomerDiffItem['changeType'] {
+  const types = new Set(rows.map(customerChangeType));
+  return types.size === 1 ? [...types][0] : '変更';
+}
+
+function customerSensitivePath(path: string): boolean {
+  const rawPath = String(path || '');
+  const normalized = rawPath.toLowerCase();
+  const rawSegments = rawPath
+    .replace(/\[(?:\d+|[^\]]+)\]/g, '.')
+    .split('.')
+    .map((segment) => segment.replace(/[^A-Za-z0-9_-]/g, ''))
+    .filter(Boolean);
+  const segments = rawSegments.map((segment) => segment.toLowerCase());
+  if (segments.some((segment) => /(?:token|secret|password|passwd|credential|authorization|privatekey|private_key|apikey|api_key)/.test(segment))) {
+    return true;
+  }
+  if (rawSegments.some((segment) => segment.toLowerCase() === 'id'
+    || /(?:Id|ID)$/.test(segment)
+    || /(?:^|[_-])id$/i.test(segment)
+    || /^(?:app|guest|space|thread|view|report|record|field)id$/i.test(segment)
+    || /^(?:uuid|guid)$/i.test(segment))) return true;
+  if (segments.some((segment) => ['revision', 'filekey', '_body', 'body', 'config', 'expression', 'formula'].includes(segment))) return true;
+  const defaultValueIndex = segments.indexOf('defaultvalue');
+  if (defaultValueIndex >= 0 && segments.slice(defaultValueIndex + 1).some((segment) => ['code', 'name', 'login', 'id'].includes(segment))) {
+    return true;
+  }
+  if (/(?:^|\.)destapp\.app(?:\.|$)/.test(normalized)) return true;
+  if (/(?:^|\.)(?:relatedapp|lookup|referencetable)(?:\.|[\s\S]*\.)app(?:\.|$)/.test(normalized)) return true;
+  if (/(?:^|\.)entity\.(?:code|login)(?:\.|$)/.test(normalized)) return true;
+  if (segments.some((segment) => /^(?:assignee|entities|recipients|targets|members|users?|groups?|organizations?)$/.test(segment))) return true;
+  if (segments.some((segment) => ['creator', 'modifier', 'createdby', 'updatedby', 'login'].includes(segment))) return true;
+  return false;
+}
+
+function customerLooksLikeOpaqueToken(text: string): boolean {
+  return /[A-Za-z0-9_~+/=-]{24,}/.test(String(text || ''));
+}
+
+function customerKnownSafePath(row: DiffXlsxRow): boolean {
+  const sectionKey = sectionKeyOfRow(row);
+  const path = String(row.path || '');
+  if (!path || path === sectionKey) {
+    return [row.left, row.right].every((value) => value == null || typeof value === 'object');
+  }
+  if (customerSensitivePath(path)) return false;
+
+  const fieldInfo = extractFieldPathInfo(path);
+  if (sectionKey === 'fieldSettings' && fieldInfo) {
+    const tokens = Array.isArray(fieldInfo.tailTokens) ? fieldInfo.tailTokens : [];
+    if (!tokens.length) return true;
+    const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
+    const simple = /^(?:label|name|code|type|noLabel|required|unique|defaultValue(?:\.\d+)?|defaultNowValue|minLength|maxLength|minValue|maxValue|hideExpression|protocol|displayScale|digit|unit|unitPosition|align|format|thumbnailSize|index)$/;
+    const option = /^options\.[^.]+(?:\.(?:label|index))?$/;
+    const lookup = /^lookup\.(?:relatedKeyField|filterCond|sort|lookupPickerFields\.\d+|retrieveFields\.\d+|fieldMappings\.\d+\.(?:field|relatedField))$/;
+    const referenceTable = /^referenceTable\.(?:filterCond|sort|size|displayFields\.\d+|condition\.(?:field|relatedField))$/;
+    if (!(simple.test(settingKey) || option.test(settingKey) || lookup.test(settingKey) || referenceTable.test(settingKey))) return false;
+    if (option.test(settingKey)) {
+      const optionName = String(tokens[1] || '');
+      return !!optionName && !customerUnsafeRawLabelText(optionName) && optionName.length <= 120;
+    }
+    return true;
+  }
+
+  const safePatterns: Record<string, RegExp[]> = {
+    appSettings: [
+      /^appSettings\.(?:name|theme|enableThumbnails|firstMonthOfFiscalYear|numberPrecision)$/
+    ],
+    appInfo: [
+      /^appInfo\.name$/
+    ],
+    layoutSettings: [
+      /^layoutSettings\.layout\[\d+\](?:\.fields\[\d+\])*(?:\.(?:type|code|label|value|elementId|size(?:\.(?:width|height|innerHeight))?))?$/
+    ],
+    viewSettings: [
+      /^viewSettings\.views\.[^.[\]]+(?:\.(?:type|name|index|filterCond|sort|pager|device)|\.fields\[\d+\])?$/
+    ],
+    processSettings: [
+      /^processSettings\.(?:enable|states\.[^.[\]]+(?:\.(?:name|index))?|actions\[\d+\](?:\.(?:name|from|to|filterCond))?)$/
+    ],
+    actionSettings: [
+      /^actionSettings\.actions\[\d+\](?:\.(?:name|index|from|to|filterCond))?$/
+    ]
+  };
+  return (safePatterns[sectionKey] || []).some((pattern) => pattern.test(path));
+}
+
+function customerUnsafeText(text: string, allowReadableLongToken = false): boolean {
+  text = String(text || '').normalize('NFKC')
+    .replace(/[\u2044\u2215\u29F5\uFF0F]/g, '/')
+    .replace(/[\u00A5\u2216\uFF3C]/g, '\\');
+  return /[\p{Cc}\p{Cf}\p{Cs}]/u.test(text)
+    || /(?:https?|ftp):\/\/|\bwww\./i.test(text)
+    || /\b(?:data|blob|javascript|vbscript|mailto|ssh|git|s3|gs|jdbc|kintone|chrome-extension):/i.test(text)
+    || /(?:^|[^A-Za-z0-9])(?:file:\/\/|[a-z]:[\\/]|\\\\[^\\\s]+\\)/i.test(text)
+    || /(?:^|[^A-Za-z0-9])\/(?!\/)[^\s/]+(?:\/[^\s/]+)*/u.test(text)
+    || /(?:^|[^A-Za-z0-9])(?:\.{1,2}|~)[\\/](?:[^\\/\r\n]+[\\/])*[^\\/\r\n]+/.test(text)
+    || /(?:^|[\s"'=])(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+(?:\.(?:js|ts|json|env|pem|key|crt|log|txt|csv|xlsx?))?(?::\d+:\d+)?/i.test(text)
+    || /(?:^|[^A-Za-z0-9])(?:%[A-Za-z_][A-Za-z0-9_]*%|\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*))[\\/][^\r\n]+/.test(text)
+    || /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}_-]{1,63}(?:\.[\p{L}\p{N}_-]{1,63})*/iu.test(text)
+    || customerContainsPhoneLike(text)
+    || customerContainsPaymentCardLike(text)
+    || /\b(?:TypeError|ReferenceError|SyntaxError|RangeError|Error|Exception):/i.test(text)
+    || /\b(?:ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|ENOENT|EACCES|ERR_[A-Z0-9_]+|Traceback|Unhandled)\b/i.test(text)
+    || /\bat\s+\S+\s*\([^\r\n]+:\d+:\d+\)/.test(text)
+    || /\bat\s+[^\r\n]+:\d+:\d+\b/.test(text)
+    || /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/.test(text)
+    || /\b\d{2,4}-\d{2,4}-\d{3,4}\b/.test(text)
+    || /(?:^|[^0-9])(?:\+?81|0)[\s-]?(?:\d[\s-]?){9,10}(?:$|[^0-9])/.test(text)
+    || /(?:^|[^0-9])\+\d{1,3}[\s().-]*(?:\d[\s().-]*){7,14}(?:$|[^0-9])/.test(text)
+    || /\b(?:ssn|social[\s_-]*security)\s*[:#=-]?\s*\d(?:[\s-]*\d){8}\b/i.test(text)
+    || /\b(?:card|credit[\s_-]*card|visa|mastercard)\s*[:#=-]?\s*\d(?:[\s-]*\d){12,18}\b/i.test(text)
+    || /\b[\p{L}\p{N}][\p{L}\p{N}.-]*\.(?:internal|corp|local|lan|intra)\b/iu.test(text)
+    || /(?:^|[^A-Za-z0-9])(?:JSESSIONID|PHPSESSID|SESSIONID|AUTHSESSION|SID|CSRF(?:TOKEN)?)\s*[:=]\s*[^;,\s]+/i.test(text)
+    || /(?:^|[^A-Za-z0-9])(?:Cookie|Set-Cookie)\s*:\s*[^\r\n]+/i.test(text)
+    || /(?:^|[^A-Za-z0-9])(?:secret[\s_-]*key|passphrase|session|cookie|auth[\s_-]*code|ssh[\s_-]*key|pin)\s*[:=]\s*[^;,\s]+/i.test(text)
+    || /(?:^|[^A-Za-z0-9])(?:passphrase|session|cookie|auth[\s_-]*code|pin)\s+[A-Za-z0-9._~+\/-]{4,}/i.test(text)
+    || /(?:^|[^A-Za-z0-9])[A-Za-z0-9_-]*(?:pwd|dbpass|sqlpass)\s*(?:\(|<|\[|\{)\s*[^)\]}>]+\s*(?:\)|>|\]|\})/i.test(text)
+    || /(?:^|[^A-Za-z0-9])(?:cfg\s*)?(?:[.\[]\s*)?["']?(?:[A-Za-z0-9_-]*(?:pwd|pass(?:word)?|token|secret|credential))["']?\s*\]?\s*[:=]\s*[^;,\s]+/i.test(text)
+    || /(?:^|[^A-Za-z0-9])(?:dsn|uid|server|host|port|data[\s_-]*source|database|[A-Za-z0-9_-]*(?:pwd|pass(?:word)?|token|secret|auth(?:orization)?|credential|access[\s_-]?key|client[\s_-]?secret))\s*[:=]\s*[^;,\s]+/i.test(text)
+    || /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/i.test(text)
+    || /\b(?:sk|rk|pk)[-_](?:(?:live|test|proj)[-_]?)?[A-Za-z0-9_-]{12,}\b/i.test(text)
+    || /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/i.test(text)
+    || /\bglpat-[A-Za-z0-9_-]{20,}\b/i.test(text)
+    || /\bnpm_[A-Za-z0-9]{30,}\b/i.test(text)
+    || /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/.test(text)
+    || /\bgh[pousr]_[A-Za-z0-9]{20,}\b/i.test(text)
+    || /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/.test(text)
+    || /(?:^|[^0-9a-f])[0-9a-f]{32,128}(?:$|[^0-9a-f])/i.test(text)
+    || /\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/i.test(text)
+    || /(?:commit|sha(?:1|256)?|hash)\s*[:=#-]?\s*[0-9a-f]{7,64}/i.test(text)
+    || /\b(?:release|build)\s+[0-9a-f]{7,31}\b/i.test(text)
+    || /\b(?:app|guest|space|thread)\s*(?:id)?\s*(?:[:=#]|\bin\b)/i.test(text)
+    || /(?:App|アプリ|Guest|ゲスト|Space|Thread)[\s_=-]*(?:ID[\s_=-]*)?[:#-]?[\s_=-]*\d{5,}/i.test(text)
+    || /(?:Guest|ゲスト|Space|Thread)[\s_=-]*(?:ID[\s_=-]*)?[:#-]?[\s_=-]*\d+/i.test(text)
+    || /(?:view|report|record|field|user|group|org(?:anization)?|client|tenant)[\s_-]*(?:id|code|login)\s*[:=#-]?\s*\S+/i.test(text)
+    || /(?:login|user[\s_-]?(?:id|code)|client[\s_-]?id|tenant[\s_-]?id)\s*[:=]\s*\S+/i.test(text)
+    || /(?:employee|member|account|owner|assignee|principal|subject|project)?[\s_-]*(?:id|code|login)\s+[A-Za-z0-9_-]+/i.test(text)
+    || /\b(?:appId|guestId|spaceId|threadId|fileKey|revision)\b/i.test(text)
+    || /(?:^|[^a-z0-9])(?:(?:api|access|account|session|signing)[\s_-]?key|token|secret|password|passwd|credential|authorization|private[\s_-]?key)(?:$|[^a-z0-9])/i.test(text)
+    || (!allowReadableLongToken && customerLooksLikeOpaqueToken(text));
+}
+
+function customerContainsPhoneLike(text: string): boolean {
+  return [...String(text || '').matchAll(/\+?\d[\d\s().-]{7,}\d/g)].some((match) => {
+    const digits = match[0].replace(/\D/g, '');
+    return digits.length >= 10 && digits.length <= 15;
+  });
+}
+
+function customerUnsafeLabelText(text: string): boolean {
+  const normalized = String(text || '').normalize('NFKC');
+  return customerUnsafeText(normalized, true)
+    || customerContainsPhoneLike(normalized)
+    || /(?:^|[^\p{L}\p{N}])ID\s*[:#-]?\s*\d+(?:$|[^\p{L}\p{N}])/iu.test(normalized)
+    || /[\(（\[［【]\s*\d+\s*[\)）\]］】]/u.test(normalized)
+    || /(?:^|[^0-9])\d{5,}(?:$|[^0-9])/.test(normalized);
+}
+
+function customerContainsPaymentCardLike(text: string): boolean {
+  return [...String(text || '').matchAll(/\d[\d\s-]{11,23}\d/g)].some((match) => {
+    const digits = match[0].replace(/\D/g, '');
+    if (digits.length < 13 || digits.length > 19) return false;
+    let sum = 0;
+    let double = false;
+    for (let index = digits.length - 1; index >= 0; index -= 1) {
+      let value = Number(digits[index]);
+      if (double) {
+        value *= 2;
+        if (value > 9) value -= 9;
+      }
+      sum += value;
+      double = !double;
+    }
+    return sum % 10 === 0;
+  });
+}
+
+function customerUnsafeRawLabelText(text: string): boolean {
+  const normalized = String(text || '').normalize('NFKC');
+  return customerUnsafeLabelText(normalized)
+    || /[@:;=,"'\\/\[\]{}<>]/.test(normalized)
+    || /(?:^|[^0-9a-f])(?=[0-9a-f]{8,31}(?:$|[^0-9a-f]))(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,31}(?:$|[^0-9a-f])/i.test(normalized)
+    || /^(?=[0-9a-f]{7,12}$)(?=.*\d)[0-9a-f]+$/i.test(normalized);
+}
+
+function customerLooksLikeFieldCodeLabel(text: string, ...knownCodes: string[]): boolean {
+  const value = String(text || '').trim();
+  if (!value) return true;
+  if (knownCodes.some((code) => code && value === String(code).trim())) return true;
+  return /^[a-z][a-z0-9]*$/.test(value) || /[_$-]/.test(value);
+}
+
+function customerFieldLabelMap(bundle?: DiffXlsxBundle): Map<string, string> {
+  const labels = new Map<string, string>();
+  const visit = (properties: Record<string, any>) => {
+    for (const [fallbackCode, definition] of Object.entries(properties || {})) {
+      if (!definition || typeof definition !== 'object' || Array.isArray(definition)) continue;
+      const code = String((definition as any).code || fallbackCode).trim();
+      const label = String((definition as any).label || (definition as any).name || '').trim();
+      const codeLikeLabel = customerLooksLikeFieldCodeLabel(label, code);
+      if (code && label && !codeLikeLabel && !customerUnsafeRawLabelText(label)
+        && !customerContainsKnownBundleId(label, bundle) && label.length <= 120) labels.set(code, label);
+      const children = (definition as any).fields;
+      if (children && typeof children === 'object' && !Array.isArray(children)) visit(children);
+    }
+  };
+  visit(fieldSettingsProperties(bundle));
+  return labels;
+}
+
+function customerFieldLabelForCode(
+  code: string,
+  preferredBundle?: DiffXlsxBundle,
+  fallbackBundle?: DiffXlsxBundle
+): string {
+  const normalized = String(code || '').trim();
+  if (!normalized) return '';
+  return customerFieldLabelMap(preferredBundle).get(normalized)
+    || customerFieldLabelMap(fallbackBundle).get(normalized)
+    || '';
+}
+
+function customerFieldTypeForCode(
+  code: string,
+  preferredBundle?: DiffXlsxBundle,
+  fallbackBundle?: DiffXlsxBundle
+): string {
+  const normalized = String(code || '').trim();
+  if (!normalized) return '';
+  const find = (bundle?: DiffXlsxBundle): string => {
+    let found = '';
+    const visit = (properties: Record<string, any>) => {
+      for (const [fallbackCode, definition] of Object.entries(properties || {})) {
+        if (found || !definition || typeof definition !== 'object' || Array.isArray(definition)) continue;
+        const fieldCode = String((definition as any).code || fallbackCode).trim();
+        if (fieldCode === normalized) {
+          found = String((definition as any).type || '').trim();
+          continue;
+        }
+        const children = (definition as any).fields;
+        if (children && typeof children === 'object' && !Array.isArray(children)) visit(children);
+      }
+    };
+    visit(fieldSettingsProperties(bundle));
+    return found;
+  };
+  return find(preferredBundle) || find(fallbackBundle);
+}
+
+function customerFieldOptionValuesForCode(
+  code: string,
+  preferredBundle?: DiffXlsxBundle,
+  fallbackBundle?: DiffXlsxBundle
+): Set<string> {
+  const normalized = String(code || '').trim();
+  const values = new Set<string>();
+  if (!normalized) return values;
+  const visitBundle = (bundle?: DiffXlsxBundle) => {
+    const visit = (properties: Record<string, any>) => {
+      for (const [fallbackCode, definition] of Object.entries(properties || {})) {
+        if (!definition || typeof definition !== 'object' || Array.isArray(definition)) continue;
+        const fieldCode = String((definition as any).code || fallbackCode).trim();
+        if (fieldCode === normalized) {
+          const options = (definition as any).options;
+          if (options && typeof options === 'object' && !Array.isArray(options)) {
+            for (const [optionKey, option] of Object.entries(options)) {
+              if (!customerUnsafeRawLabelText(String(optionKey))) values.add(String(optionKey));
+              if (option && typeof option === 'object' && !Array.isArray(option)) {
+                const label = String((option as any).label || '').trim();
+                if (label && !customerUnsafeRawLabelText(label)) values.add(label);
+              }
+            }
+          }
+        }
+        const children = (definition as any).fields;
+        if (children && typeof children === 'object' && !Array.isArray(children)) visit(children);
+      }
+    };
+    visit(fieldSettingsProperties(bundle));
+  };
+  visitBundle(preferredBundle);
+  visitBundle(fallbackBundle);
+  return values;
+}
+
+function customerFieldLooksLikePersonalIdentifier(
+  code: string,
+  preferredBundle?: DiffXlsxBundle,
+  fallbackBundle?: DiffXlsxBundle
+): boolean {
+  const label = customerFieldLabelForCode(code, preferredBundle, fallbackBundle);
+  return /(?:^|[_\s-])(?:ssn|social[\s_-]*security|card|credit[\s_-]*card|pan|my[\s_-]*number|phone|tel|mobile)(?:$|[_\s-])/i
+    .test(`${code} ${label}`)
+    || /(?:個人番号|マイナンバー|電話|携帯|カード番号)/.test(label);
+}
+
+function customerConditionLiteral(raw: string): string | null {
+  const value = raw.trim();
+  if (customerUnsafeText(value)) return null;
+  if (/^-?\d+(?:\.\d+)?$/.test(value)) return value;
+  const quoted = value.match(/^"([^"\\]*)"$/) || value.match(/^'([^'\\]*)'$/);
+  if (!quoted || customerUnsafeText(quoted[1])) return null;
+  return `「${quoted[1]}」`;
+}
+
+function customerHumanizeExpression(
+  text: string,
+  path: string,
+  preferredBundle?: DiffXlsxBundle,
+  fallbackBundle?: DiffXlsxBundle
+): string | null {
+  const leaf = path.match(/(?:^|\.)([^.[\]]+)$/)?.[1] || '';
+  if (leaf === 'sort') {
+    const match = text.match(/^\s*([A-Za-z0-9_\u0080-\uffff-]+)\s+(asc|desc)\s*$/i);
+    if (!match) return null;
+    const field = customerFieldLabelForCode(match[1], preferredBundle, fallbackBundle);
+    if (!field) return null;
+    return `${field}（${match[2].toLowerCase() === 'asc' ? '昇順' : '降順'}）`;
+  }
+  if (leaf !== 'filterCond') return null;
+
+  const inMatch = text.match(/^\s*([A-Za-z0-9_\u0080-\uffff-]+)\s+(not\s+in|in)\s*\(([^()]*)\)\s*$/i);
+  if (inMatch) {
+    const field = customerFieldLabelForCode(inMatch[1], preferredBundle, fallbackBundle);
+    const fieldType = customerFieldTypeForCode(inMatch[1], preferredBundle, fallbackBundle);
+    if (!['RADIO_BUTTON', 'CHECK_BOX', 'MULTI_SELECT', 'DROP_DOWN'].includes(fieldType)) return null;
+    const rawValues = inMatch[3].split(',').map((value) => value.trim()).filter(Boolean);
+    const allowedOptions = customerFieldOptionValuesForCode(inMatch[1], preferredBundle, fallbackBundle);
+    const optionValues = rawValues.map((raw) => {
+      const quoted = raw.match(/^"([^"\\]*)"$/) || raw.match(/^'([^'\\]*)'$/);
+      return quoted?.[1] ?? null;
+    });
+    if (!allowedOptions.size || optionValues.some((value) => value == null || !allowedOptions.has(value))) return null;
+    const values = rawValues.map(customerConditionLiteral);
+    if (!field || values.length === 0 || values.some((value) => value == null)) return null;
+    const joined = values.length === 2
+      ? `${values[0]}または${values[1]}`
+      : values.length > 2
+        ? `${values.slice(0, -1).join('、')}、または${values[values.length - 1]}`
+        : values[0];
+    const negative = /not\s+in/i.test(inMatch[2]);
+    if (values.length === 1) return `${field}が${joined}${negative ? 'ではない' : ''}`;
+    return negative ? `${field}が${joined}のいずれでもない` : `${field}が${joined}`;
+  }
+
+  const comparison = text.match(/^\s*([A-Za-z0-9_\u0080-\uffff-]+)\s*(<=|>=|!=|=|<|>)\s*(.+?)\s*$/);
+  if (!comparison) return null;
+  const field = customerFieldLabelForCode(comparison[1], preferredBundle, fallbackBundle);
+  const fieldType = customerFieldTypeForCode(comparison[1], preferredBundle, fallbackBundle);
+  if (customerFieldLooksLikePersonalIdentifier(comparison[1], preferredBundle, fallbackBundle)) return null;
+  if (!['NUMBER', 'CALC', 'RADIO_BUTTON', 'CHECK_BOX', 'MULTI_SELECT', 'DROP_DOWN'].includes(fieldType)) return null;
+  if (['NUMBER', 'CALC'].includes(fieldType) && !/^-?\d+(?:\.\d+)?$/.test(comparison[3].trim())) return null;
+  if (['RADIO_BUTTON', 'CHECK_BOX', 'MULTI_SELECT', 'DROP_DOWN'].includes(fieldType)) {
+    const quoted = comparison[3].match(/^"([^"\\]*)"$/) || comparison[3].match(/^'([^'\\]*)'$/);
+    const allowedOptions = customerFieldOptionValuesForCode(comparison[1], preferredBundle, fallbackBundle);
+    if (!quoted || !allowedOptions.has(quoted[1])) return null;
+  }
+  const value = customerConditionLiteral(comparison[3]);
+  if (!field || value == null) return null;
+  const operatorLabels: Record<string, string> = {
+    '=': `${field}が${value}`,
+    '!=': `${field}が${value}ではない`,
+    '>': `${field}が${value}より大きい`,
+    '>=': `${field}が${value}以上`,
+    '<': `${field}が${value}より小さい`,
+    '<=': `${field}が${value}以下`
+  };
+  return operatorLabels[comparison[2]] || null;
+}
+
+function looksLikeTechnicalPath(text: string, sectionKey: string): boolean {
+  const value = String(text || '').trim();
+  return !value
+    || value === sectionKey
+    || value.startsWith(`${sectionKey}.`)
+    || /\[[0-9]+\]/.test(value)
+    || /^(?:[A-Za-z_$][\w$]*\.){2,}[A-Za-z_$][\w$]*$/.test(value);
+}
+
+function customerLayoutItemLabel(
+  row: DiffXlsxRow,
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle
+): string {
+  const path = String(row.path || '');
+  const match = path.match(/^layoutSettings\.layout\[(\d+)\](?:\.(.+))?$/);
+  if (!match) return '';
+  const rowIndex = Number(match[1]);
+  const preferredBundle = row.type === 'removed' ? sourceBundle : targetBundle;
+  const fallbackBundle = row.type === 'removed' ? targetBundle : sourceBundle;
+  const layoutAt = (bundle?: DiffXlsxBundle) => bundle?.sections?.layoutSettings?.layout?.[rowIndex];
+  let entity = layoutAt(preferredBundle) || layoutAt(fallbackBundle) || null;
+  const parts = [`レイアウト ${rowIndex + 1}行目`];
+  for (const fieldMatch of path.matchAll(/\.fields\[(\d+)\]/g)) {
+    const fieldIndex = Number(fieldMatch[1]);
+    entity = entity && typeof entity === 'object' && !Array.isArray(entity)
+      ? (entity as Record<string, any>).fields?.[fieldIndex]
+      : null;
+    const code = entity && typeof entity === 'object' && !Array.isArray(entity)
+      ? String((entity as Record<string, any>).code || '').trim()
+      : '';
+    const label = customerFieldLabelForCode(code, preferredBundle, fallbackBundle);
+    parts.push(label || `フィールド ${fieldIndex + 1}`);
+  }
+  const leaf = path.match(/(?:^|\.)([^.[\]]+)$/)?.[1] || '';
+  const propLabels: Record<string, string> = {
+    type: '種別',
+    code: 'フィールド',
+    fields: 'フィールド',
+    elementId: '要素',
+    label: 'ラベル',
+    value: '初期値',
+    size: 'サイズ',
+    width: '横幅',
+    height: '高さ',
+    innerHeight: '入力欄の高さ'
+  };
+  if (leaf && leaf !== 'layout' && leaf !== 'fields') parts.push(propLabels[leaf] || '設定');
+  return parts.join(' / ');
+}
+
+function customerViewFieldItemLabel(
+  row: DiffXlsxRow,
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle
+): string {
+  const path = String(row.path || '');
+  const match = path.match(/^viewSettings\.views\.([^.[\]]+)\.fields\[(\d+)\](?:\.|$)/);
+  if (!match) return '';
+  const rawViewName = String(match[1] || '').trim();
+  const viewName = rawViewName && !customerUnsafeRawLabelText(rawViewName)
+    && !customerContainsKnownBundleId(rawViewName, sourceBundle, targetBundle) && rawViewName.length <= 80
+    ? rawViewName
+    : '一覧';
+  const preferredBundle = row.type === 'removed' ? sourceBundle : targetBundle;
+  const fallbackBundle = row.type === 'removed' ? targetBundle : sourceBundle;
+  const rawCode = row.type === 'removed' ? row.left : row.right;
+  const fieldLabel = typeof rawCode === 'string'
+    ? customerFieldLabelForCode(rawCode, preferredBundle, fallbackBundle)
+    : '';
+  return fieldLabel
+    ? `${viewName} / 表示フィールド「${fieldLabel}」`
+    : `${viewName} / 表示フィールド`;
+}
+
+function customerItemLabel(
+  row: DiffXlsxRow,
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle
+): string {
+  const key = sectionKeyOfRow(row);
+  const section = customerSectionLabel(key);
+  const path = String(row.path || '');
+  if (customerSensitivePath(path) || !customerKnownSafePath(row)) return `${section}の設定情報`;
+
+  const fieldInfo = extractFieldPathInfo(path);
+  if (fieldInfo) {
+    const identity = fieldDisplayIdentity(row, fieldInfo, { rows: [], sourceBundle, targetBundle });
+    const setting = fieldSettingIdentity(fieldInfo);
+    const fieldName = String(identity.fieldName || '').trim();
+    const safeSetting = String(setting.settingLabel || '設定')
+      .replace(/参照するアプリID/g, '参照するアプリ')
+      .replace(/\bID\b/gi, '識別情報');
+    const safeFieldName = fieldName
+      && fieldName !== String(identity.fieldCode || '').trim()
+      && !customerUnsafeRawLabelText(fieldName)
+      && !customerContainsKnownBundleId(fieldName, sourceBundle, targetBundle)
+      && fieldName.length <= 120
+      ? fieldName
+      : 'フィールド';
+    const candidate = setting.settingKey === '(field)'
+      ? safeFieldName
+      : `${safeFieldName} / ${safeSetting}`;
+    return !customerUnsafeLabelText(candidate)
+      && !customerContainsKnownBundleId(candidate, sourceBundle, targetBundle) && candidate.length <= 120
+      ? candidate
+      : `${section}の設定`;
+  }
+
+  const layout = customerLayoutItemLabel(row, sourceBundle, targetBundle);
+  if (layout && !customerUnsafeLabelText(layout)
+    && !customerContainsKnownBundleId(layout, sourceBundle, targetBundle)) return layout;
+
+  const viewField = customerViewFieldItemLabel(row, sourceBundle, targetBundle);
+  if (viewField && !customerUnsafeLabelText(viewField)
+    && !customerContainsKnownBundleId(viewField, sourceBundle, targetBundle)) return viewField;
+
+  const plainPathLabels: Record<string, string> = {
+    'appSettings.name': 'アプリ名',
+    'appSettings.description': '説明',
+    'appSettings.theme': 'テーマ',
+    'appSettings.icon': 'アイコン',
+    'appSettings.enableThumbnails': 'サムネイル表示',
+    'appSettings.firstMonthOfFiscalYear': '会計年度の開始月',
+    'appSettings.numberPrecision': '数値の精度',
+    'appInfo.name': 'アプリ名',
+    'appInfo.description': '説明'
+  };
+  if (plainPathLabels[path]) return plainPathLabels[path];
+
+  try {
+    const decoded = decodeRow(row as any);
+    if (decoded) {
+      const parts = [
+        ...decoded.whereChips.map((chip) => chip.label),
+        decoded.propLabel
+      ].filter((part): part is string => !!part)
+        .map((part) => part === '絞込条件' ? '絞り込み条件' : part === 'ソート' ? '並び順' : part);
+      const readable = [...new Set(parts)].join(' / ') || decoded.oneLineSummary;
+      if (readable && !looksLikeTechnicalPath(readable, key) && !customerUnsafeLabelText(readable)
+        && !customerContainsKnownBundleId(readable, sourceBundle, targetBundle)) {
+        return String(readable).slice(0, 120);
+      }
+    }
+  } catch {
+    // 顧客向けでは技術パスへフォールバックしない。
+  }
+
+  const explicit = String(row.label || '').trim();
+  if (explicit && !looksLikeTechnicalPath(explicit, key) && !customerUnsafeRawLabelText(explicit)
+    && !customerContainsKnownBundleId(explicit, sourceBundle, targetBundle)) {
+    return explicit.slice(0, 120);
+  }
+  return `${section}の設定`;
+}
+
+function customerFieldDefinitionSummary(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const definition = value as Record<string, any>;
+  const type = String(definition.type || '').trim();
+  const parts = [
+    type ? `種類: ${FIELD_TYPE_LABELS[type] || '設定項目'}` : '',
+    typeof definition.required === 'boolean' ? `必須: ${definition.required ? 'はい' : 'いいえ'}` : '',
+    typeof definition.unique === 'boolean' ? `重複禁止: ${definition.unique ? 'はい' : 'いいえ'}` : '',
+    definition.options && typeof definition.options === 'object'
+      ? `選択肢: ${Object.keys(definition.options).length}件`
+      : '',
+    definition.fields && typeof definition.fields === 'object'
+      ? `テーブル内項目: ${Object.keys(definition.fields).length}件`
+      : '',
+    definition.lookup && typeof definition.lookup === 'object' ? 'ルックアップ設定あり' : '',
+    definition.referenceTable && typeof definition.referenceTable === 'object' ? '関連レコード設定あり' : '',
+    String(definition.expression || '').trim() ? '計算式あり' : ''
+  ].filter(Boolean);
+  return parts.length ? `${parts.join('\n')}\n（${CUSTOMER_HIDDEN_DETAIL}）` : null;
+}
+
+function customerBundleNumericIds(...bundles: Array<DiffXlsxBundle | undefined>): string[] {
+  return [...new Set(bundles.flatMap((bundle) => [
+    bundle?.appId,
+    bundle?.guestId,
+    (bundle as any)?.spaceId,
+    (bundle as any)?.threadId
+  ]).map((value) => String(value ?? '').trim()).filter((value) => /^\d+$/.test(value)))];
+}
+
+function customerContainsKnownBundleId(text: string, ...bundles: Array<DiffXlsxBundle | undefined>): boolean {
+  const normalized = String(text || '').normalize('NFKC');
+  return customerBundleNumericIds(...bundles).some((id) => {
+    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'u').test(normalized);
+  });
+}
+
+function customerNumericScalar(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value)
+    || typeof value === 'string' && /^-?\d+(?:\.\d+)?$/.test(value.trim());
+}
+
+function customerScalarValueMatchesPath(
+  path: string,
+  value: unknown,
+  fieldInfo: ReturnType<typeof extractFieldPathInfo>,
+  preferredBundle?: DiffXlsxBundle,
+  fallbackBundle?: DiffXlsxBundle
+): boolean {
+  if (fieldInfo) {
+    const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
+    const root = settingKey.split('.')[0];
+    if (root === '(field)') return false;
+    if (['label', 'name', 'unit'].includes(root)) {
+      return typeof value === 'string' && !customerUnsafeRawLabelText(value)
+        && (root === 'unit' || !customerLooksLikeFieldCodeLabel(value, fieldInfo.activeCode, fieldInfo.rootCode))
+        && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
+    }
+    if (root === 'type') return typeof value === 'string' && !!FIELD_TYPE_LABELS[value];
+    if (['noLabel', 'required', 'unique', 'defaultNowValue', 'hideExpression', 'digit'].includes(root)) {
+      return typeof value === 'boolean';
+    }
+    if (['minLength', 'maxLength', 'minValue', 'maxValue', 'displayScale', 'size', 'thumbnailSize', 'index'].includes(root)) {
+      return customerNumericScalar(value);
+    }
+    if (root === 'defaultValue') return true;
+    if (['code', 'relatedKeyField', 'field', 'relatedField', 'displayFields', 'lookupPickerFields', 'retrieveFields'].includes(root)) {
+      return typeof value === 'string';
+    }
+    if (root === 'options') {
+      const leaf = String(fieldInfo.leafKey || '');
+      return leaf === 'index'
+        ? customerNumericScalar(value)
+        : leaf === 'label'
+          ? typeof value === 'string' && !customerUnsafeRawLabelText(value)
+            && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120
+          : false;
+    }
+    return false;
+  }
+
+  if (/^(?:appSettings|appInfo)\.name$/.test(path)) {
+    return typeof value === 'string' && !customerUnsafeRawLabelText(value)
+      && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
+  }
+  if (path === 'appSettings.theme') {
+    return typeof value === 'string' && /^(?:WHITE|RED|BLUE|GREEN|YELLOW|BLACK)$/i.test(value);
+  }
+  if (path === 'appSettings.enableThumbnails') return typeof value === 'boolean';
+  if (path === 'appSettings.firstMonthOfFiscalYear') {
+    return customerNumericScalar(value) && Number(value) >= 1 && Number(value) <= 12;
+  }
+  if (path === 'appSettings.numberPrecision') return false;
+  if (/^layoutSettings\..*\.(?:width|height|innerHeight)$/.test(path)) return customerNumericScalar(value);
+  if (/^layoutSettings\..*\.type$/.test(path)) {
+    return typeof value === 'string' && /^(?:ROW|SUBTABLE|GROUP|LABEL|SPACER|HR|REFERENCE_TABLE)$/.test(value);
+  }
+  if (/^layoutSettings\..*\.(?:code)$/.test(path)) return typeof value === 'string';
+  if (/^layoutSettings\..*\.(?:label|value)$/.test(path)) {
+    return typeof value === 'string' && !customerUnsafeRawLabelText(value)
+      && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
+  }
+  if (/^viewSettings\..*\.index$/.test(path)) return customerNumericScalar(value);
+  if (/^viewSettings\..*\.pager$/.test(path)) return typeof value === 'boolean';
+  if (/^viewSettings\..*\.type$/.test(path)) {
+    return typeof value === 'string' && /^(?:LIST|CALENDAR|CUSTOM)$/.test(value);
+  }
+  if (/^(?:viewSettings|processSettings|actionSettings)\..*\.(?:name|from|to)$/.test(path)) {
+    return typeof value === 'string' && !customerUnsafeRawLabelText(value)
+      && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
+  }
+  if (/^(?:processSettings)\.enable$/.test(path)) return typeof value === 'boolean';
+  if (/^(?:processSettings|actionSettings)\..*\.index$/.test(path)) return customerNumericScalar(value);
+  if (/\.(?:filterCond|sort)$/.test(path)) return typeof value === 'string';
+  if (/\.fields\[\d+\]$/.test(path)) return typeof value === 'string';
+  return false;
+}
+
+function customerSafeValue(
+  row: DiffXlsxRow,
+  side: 'source' | 'target',
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle
+): { text: string; omitted: boolean } {
+  const missing = side === 'source'
+    ? row.left === undefined || row.type === 'added'
+    : row.right === undefined || row.type === 'removed';
+  if (missing) return { text: '（設定なし）', omitted: false };
+
+  const path = String(row.path || '');
+  if (customerSensitivePath(path) || !customerKnownSafePath(row)) {
+    return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+  }
+
+  const value = side === 'source' ? row.left : row.right;
+  const preferredBundle = side === 'source' ? sourceBundle : targetBundle;
+  const fallbackBundle = side === 'source' ? targetBundle : sourceBundle;
+  const fieldInfo = extractFieldPathInfo(path);
+  if (fieldInfo) {
+    const definition = fieldDefinitionAt(preferredBundle, fieldInfo) || fieldDefinitionAt(fallbackBundle, fieldInfo);
+    const fieldType = String(definition?.type || '');
+    const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
+    const anyDefaultValue = /^defaultValue(?:\.|$)/.test(settingKey);
+    const safeDefaultValueType = /^(?:NUMBER|CALC|RADIO_BUTTON|CHECK_BOX|MULTI_SELECT|DROP_DOWN|DATE|TIME|DATETIME)$/.test(fieldType);
+    const fieldCode = String(fieldInfo.activeCode || fieldInfo.rootCode || '');
+    if (anyDefaultValue && customerFieldLooksLikePersonalIdentifier(fieldCode, preferredBundle, fallbackBundle)) {
+      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+    }
+    if (anyDefaultValue && !safeDefaultValueType) {
+      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+    }
+    if (anyDefaultValue && value != null && value !== '') {
+      const scalar = String(value);
+      const validTypedScalar = fieldType === 'NUMBER' || fieldType === 'CALC'
+        ? /^-?\d+(?:\.\d+)?$/.test(scalar)
+        : fieldType === 'DATE'
+          ? /^\d{4}-\d{2}-\d{2}$/.test(scalar)
+          : fieldType === 'TIME'
+            ? /^\d{2}:\d{2}(?::\d{2})?$/.test(scalar)
+            : fieldType === 'DATETIME'
+              ? /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(scalar) && Number.isFinite(new Date(scalar).getTime())
+              : true;
+      if (!validTypedScalar) return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+    }
+    if (anyDefaultValue && /^(?:RADIO_BUTTON|CHECK_BOX|MULTI_SELECT|DROP_DOWN)$/.test(fieldType)) {
+      const fieldCode = String(fieldInfo.activeCode || fieldInfo.rootCode || '');
+      const allowedOptions = customerFieldOptionValuesForCode(fieldCode, preferredBundle, fallbackBundle);
+      if (!allowedOptions.has(String(value))) {
+        return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+      }
+    }
+  }
+  if (value && typeof value === 'object') {
+    if (fieldInfo && fieldSettingIdentity(fieldInfo).settingKey === '(field)') {
+      const summary = customerFieldDefinitionSummary(value);
+      return { text: summary || `設定内容（${Object.keys(value as object).length}項目・${CUSTOMER_HIDDEN_DETAIL}）`, omitted: true };
+    }
+    const count = Array.isArray(value) ? value.length : Object.keys(value as object).length;
+    const unit = Array.isArray(value) ? '件' : '項目';
+    return { text: `設定内容（${count}${unit}・${CUSTOMER_HIDDEN_DETAIL}）`, omitted: true };
+  }
+  if (value === undefined) return { text: '（未設定）', omitted: false };
+  if (value === null) return { text: '（値なし）', omitted: false };
+  if (!customerScalarValueMatchesPath(path, value, fieldInfo, preferredBundle, fallbackBundle)) {
+    return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+  }
+  if (typeof value === 'boolean') {
+    const settingKey = fieldInfo ? fieldSettingIdentity(fieldInfo).settingKey : '';
+    return { text: humanizeFieldSettingValue(value, settingKey), omitted: false };
+  }
+
+  const text = String(value);
+  if (text === '') return { text: '（空欄）', omitted: false };
+  if (customerUnsafeText(text) || /^\s*[\[{][\s\S]*[\]}]\s*$/.test(text)) {
+    return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+  }
+  if (text.length > CUSTOMER_TEXT_LIMIT || text.split(/\r?\n/).length > 5) {
+    return { text: `長文（${text.length}文字・${CUSTOMER_HIDDEN_DETAIL}）`, omitted: true };
+  }
+  if (/^(?:appSettings|appInfo)\.name$/.test(path) && customerUnsafeRawLabelText(text)) {
+    return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+  }
+  if (path === 'appSettings.theme'
+    && !/^(?:WHITE|RED|BLUE|GREEN|YELLOW|BLACK)$/i.test(text)) {
+    return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+  }
+  if (/\.(?:width|height|innerHeight)$/i.test(path) && /^-?\d+(?:\.\d+)?$/.test(text)) {
+    return { text: `${text}px`, omitted: false };
+  }
+  const fieldLabel = customerFieldLabelForCode(text, preferredBundle, fallbackBundle);
+  if (fieldLabel) return { text: fieldLabel, omitted: false };
+  if (/(?:\.fields\[\d+\]|\.code|\.relatedKeyField|\.relatedField|\.keyField|\.lookupPickerFields\[\d+\]|\.retrieveFields\[\d+\]|\.displayFields\[\d+\])$/i.test(path)) {
+    return { text: 'フィールド（表示名を確認できません）', omitted: true };
+  }
+  if (/\.(?:filterCond|sort)$/i.test(path)) {
+    const humanized = customerHumanizeExpression(text, path, preferredBundle, fallbackBundle);
+    if (humanized) return { text: humanized, omitted: false };
+    return {
+      text: /\.sort$/i.test(path)
+        ? '並び順が変更されました（詳細非表示）'
+        : '条件が変更されました（詳細非表示）',
+      omitted: true
+    };
+  }
+  if (fieldInfo) {
+    const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
+    if (settingKey === 'type' && typeof value === 'string' && !FIELD_TYPE_LABELS[value]) {
+      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+    }
+    return { text: humanizeFieldSettingValue(value, settingKey), omitted: false };
+  }
+  return { text, omitted: false };
+}
+
+function customerReviewNote(row: DiffXlsxRow): string {
+  const key = sectionKeyOfRow(row);
+  const fieldInfo = extractFieldPathInfo(String(row.path || ''));
+  if (fieldInfo) {
+    const identity = fieldDisplayIdentity(row, fieldInfo, { rows: [] });
+    const setting = fieldSettingIdentity(fieldInfo);
+    return fieldSettingReviewGuidance({
+      rowIndex: 0,
+      fieldKey: identity.fieldKey,
+      fieldCode: identity.fieldCode,
+      fieldName: identity.fieldName,
+      fieldType: identity.fieldType,
+      settingKey: setting.settingKey,
+      settingLabel: setting.settingLabel,
+      row
+    });
+  }
+  const guidance: Record<string, string> = {
+    appSettings: 'アプリの基本設定が意図した変更か確認してください。',
+    appInfo: 'アプリ情報が意図した変更か確認してください。',
+    layoutSettings: '配置や表示サイズが意図した変更か確認してください。',
+    formSettings: 'フォーム設定が意図した変更か確認してください。',
+    viewSettings: '表示項目・条件・並び順が意図した変更か確認してください。',
+    reportSettings: 'グラフの項目・条件が意図した変更か確認してください。',
+    processSettings: 'ステータス・遷移条件が意図した変更か確認してください。',
+    actionSettings: 'アクション設定が意図した変更か確認してください。',
+    categories: 'カテゴリ設定が意図した変更か確認してください。'
+  };
+  return guidance[key] || '変更内容が意図したものか確認してください。';
+}
+
+function customerHiddenReviewLocation(sourceHidden: boolean, targetHidden: boolean): string {
+  if (sourceHidden && targetHidden) return '比較元と比較先の両方の環境';
+  if (sourceHidden) return '比較元の環境';
+  return '比較先の環境';
+}
+
+function buildCustomerDiffItems(ctx: DiffXlsxContext): CustomerDiffItem[] {
+  const actualRows = (ctx.rows || []).filter((row) => !row._displayOnly && row.type !== 'same');
+  const grouped = groupRowsBySection(actualRows);
+  const items: CustomerDiffItem[] = [];
+  for (const [sectionKey, rows] of grouped) {
+    const sectionLabel = customerSectionLabel(sectionKey);
+    if (CUSTOMER_HIGH_RISK_SECTION_KEYS.has(sectionKey) || !CUSTOMER_VISIBLE_SECTION_KEYS.has(sectionKey)) {
+      const sourceHidden = rows.some((row) => row.type !== 'added' && row.left !== undefined);
+      const targetHidden = rows.some((row) => row.type !== 'removed' && row.right !== undefined);
+      const reviewLocation = customerHiddenReviewLocation(sourceHidden, targetHidden);
+      items.push({
+        sectionKey,
+        sectionLabel,
+        item: `${sectionLabel}（${rows.length}件の変更）`,
+        changeType: customerAggregatedChangeType(rows),
+        before: CUSTOMER_HIDDEN_DETAIL,
+        after: CUSTOMER_HIDDEN_DETAIL,
+        reviewNote: `設定内容は安全のため非表示です。詳細は権限のある担当者が${reviewLocation}で確認してください。`,
+        omittedTechnicalValues: rows.length
+      });
+      continue;
+    }
+    for (const row of rows) {
+      const before = customerSafeValue(row, 'source', ctx.sourceBundle, ctx.targetBundle);
+      const after = customerSafeValue(row, 'target', ctx.sourceBundle, ctx.targetBundle);
+      const omitted = before.omitted || after.omitted;
+      const reviewLocation = customerHiddenReviewLocation(before.omitted, after.omitted);
+      const baseReviewNote = customerReviewNote(row);
+      items.push({
+        sectionKey,
+        sectionLabel,
+        item: customerItemLabel(row, ctx.sourceBundle, ctx.targetBundle),
+        changeType: customerChangeType(row),
+        before: before.text,
+        after: after.text,
+        reviewNote: omitted
+          ? `${baseReviewNote} 詳細は権限のある担当者が${reviewLocation}で確認してください。`
+          : baseReviewNote,
+        omittedTechnicalValues: omitted ? 1 : 0
+      });
+    }
+  }
+  return items;
+}
+
+function summarizeCustomerRows(rows: DiffXlsxRow[]) {
+  const counts = { actual: 0, added: 0, removed: 0, contentChanged: 0, moved: 0 };
+  for (const row of rows) {
+    if (!row || row._displayOnly || row.type === 'same') continue;
+    counts.actual += 1;
+    if (row.moved || row.type === 'moved') counts.moved += 1;
+    else if (row.type === 'added') counts.added += 1;
+    else if (row.type === 'removed') counts.removed += 1;
+    else counts.contentChanged += 1;
+  }
+  return counts;
+}
+
+function customerSectionBreakdown(rows: DiffXlsxRow[]): Array<[string, number, number, number, number, number]> {
+  const grouped = new Map<string, DiffXlsxRow[]>();
+  for (const row of rows) {
+    if (!row || row._displayOnly || row.type === 'same') continue;
+    const key = sectionKeyOfRow(row);
+    const list = grouped.get(key) || [];
+    list.push(row);
+    grouped.set(key, list);
+  }
+  return [...grouped].map(([key, list]) => {
+    const counts = summarizeCustomerRows(list);
+    return [customerSectionLabel(key), counts.added, counts.removed, counts.contentChanged, counts.moved, counts.actual];
+  });
+}
+
+function customerIncomplete(ctx: DiffXlsxContext): boolean {
+  return !!((ctx.fetchIssues || []).length
+    || (ctx.partialIssues || []).length
+    || customerHasDiffTruncation(ctx.truncation));
+}
+
+function customerTruncationSectionIncomplete(section: DiffTruncationSection): boolean {
+  const status = truncationScanStatusOf(section);
+  if (status === 'partial' || status === 'unscanned' || section.partiallyScanned) return true;
+  const omitted = section.omittedDiffCount;
+  return omitted == null ? status !== 'complete' : Number(omitted) > 0;
+}
+
+function customerHasDiffTruncation(truncation: DiffXlsxTruncation | null | undefined): boolean {
+  if (!truncation) return false;
+  if (Number(truncation.droppedDiff || 0) > 0) return true;
+  const sections = truncation.sections || [];
+  if (sections.some(customerTruncationSectionIncomplete)) return true;
+  if (!truncation.truncated) return false;
+  const hasExplicitDiffCount = Object.prototype.hasOwnProperty.call(truncation, 'droppedDiff');
+  const hasOnlySameOmission = Number(truncation.droppedSame || 0) > 0 && hasExplicitDiffCount;
+  const hasCompleteSectionEvidence = sections.length > 0
+    && sections.every((section) => truncationScanStatusOf(section) === 'complete'
+      && Number(section.omittedDiffCount || 0) === 0);
+  return !(hasOnlySameOmission || hasCompleteSectionEvidence);
+}
+
+function customerDateTime(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  const normalized = typeof value === 'number'
+    ? value
+    : /^\d{11,}$/.test(raw)
+      ? Number(raw)
+      : raw;
+  const date = new Date(normalized);
+  return Number.isFinite(date.getTime()) ? humanDateTime(date.toISOString()) : '未記録';
+}
+
+function buildCustomerSummarySheet(ctx: DiffXlsxContext, items: CustomerDiffItem[]): XlsxSheet {
+  const counts = summarizeCustomerRows(ctx.rows || []);
+  const incomplete = customerIncomplete(ctx);
+  const filtered = ctx.exportMode === 'filtered';
+  const verdict = incomplete
+    ? '比較未完了'
+    : filtered
+      ? counts.actual ? '絞り込み後：変更あり' : '絞り込み後：掲載対象なし'
+      : counts.actual ? '変更あり' : '変更なし';
+  const completeness = incomplete ? '一部未完了' : '正常完了（選択範囲）';
+  const sourceName = customerAppName(ctx.sourceBundle, '比較元のアプリ');
+  const targetName = customerAppName(ctx.targetBundle, '比較先のアプリ');
+  const omitted = items.reduce((sum, item) => sum + item.omittedTechnicalValues, 0);
+  const comparedScopes = ctx.scopes?.length ? ctx.scopes : [...new Set(items.map((item) => item.sectionKey))];
+  const rows: (string | number | null)[][] = [
+    ['kintone 設定差分確認レポート', '', '', '', '', ''],
+    [`比較元：${sourceName}  ／  比較先：${targetName}`, '', '', '', '', ''],
+    ['比較結果', verdict, '比較処理', completeness, '', '変更一覧を開く'],
+    [filtered ? '掲載変更件数' : '変更件数', `${counts.actual}件`, '比較日時', customerDateTime(ctx.comparedAt), '', ''],
+    ['追加', `${counts.added}件`, '削除', `${counts.removed}件`, '変更', `${counts.contentChanged}件`],
+    ['要素の移動', `${counts.moved}件`, '詳細を省略した変更', omitted ? `${omitted}件（変更一覧で確認）` : '0件', '', ''],
+    ['比較した設定領域', customerScopeLabel(comparedScopes), '', '', '', ''],
+    ['掲載範囲', ctx.exportMode === 'filtered' ? '上記範囲内の一部' : '上記範囲内の全変更', '絞り込み', ctx.exportMode === 'filtered' ? 'あり' : 'なし', '比較条件の調整', hasCustomerComparisonAdjustments(ctx) ? 'あり' : 'なし'],
+    ['掲載内容', '変更点のみ。上記以外の設定領域は比較していません。', '', '', '', ''],
+    ['このレポートは比較元と比較先の現在設定の差を示すもので、設定の反映・移行計画ではありません。重要度、業務への影響、対応要否は自動判定していません。', '', '', '', '', ''],
+    ['', '', '', '', '', ''],
+    ['分類別件数', '', '', '', '', ''],
+    ['分類', '追加', '削除', '変更', '要素の移動', '合計'],
+    ...customerSectionBreakdown(ctx.rows || [])
+  ];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = rows.map(() => []);
+  cellStyles[2][1] = incomplete ? 'kpiWarning' : counts.actual ? 'kpiDanger' : 'kpiGood';
+  cellStyles[2][3] = incomplete ? 'warning' : 'info';
+  cellStyles[2][5] = 'hyperlink';
+  cellStyles[3][1] = 'info';
+  cellStyles[3][3] = 'info';
+  cellStyles[4][1] = 'info';
+  cellStyles[4][3] = 'info';
+  cellStyles[4][5] = 'info';
+  cellStyles[5][1] = 'info';
+  cellStyles[5][3] = omitted ? 'warning' : 'info';
+  cellStyles[6][1] = 'info';
+  cellStyles[7][1] = 'info';
+  cellStyles[7][3] = 'info';
+  cellStyles[7][5] = 'info';
+  cellStyles[8][1] = 'info';
+  cellStyles[9][0] = 'info';
+  cellStyles[11][0] = 'sectionHeader';
+  return {
+    name: '比較概要',
+    rows,
+    colWidths: [20, 34, 18, 32, 18, 24],
+    rowStyles: rows.map(() => 'normal'),
+    cellStyles,
+    headerRow: 13,
+    freezeRows: 2,
+    rowHeights: rows.map((row, index) => {
+      if (index === 0) return 36;
+      if (index === 1) return 28;
+      if (index === 9) return readableDiffRowHeight([{ value: row[0], width: 72 }], 74);
+      return index === 12 ? 30 : 24;
+    }),
+    merges: ['A1:F1', 'A2:F2', 'B7:F7', 'B9:F9', 'A10:F10', 'A12:F12'],
+    internalHyperlinks: [{
+      ref: 'F3',
+      targetSheet: '変更一覧',
+      targetCell: 'A2',
+      tooltip: '変更一覧へ移動'
+    }],
+    showGridLines: false,
+    print: {
+      orientation: 'portrait',
+      fitToWidth: 1,
+      fitToHeight: 0,
+      repeatRows: { from: 1, to: 2 }
+    }
+  };
+}
+
+function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[]): XlsxSheet {
+  const sourceName = customerAppName(ctx.sourceBundle, '比較元');
+  const targetName = customerAppName(ctx.targetBundle, '比較先');
+  const headers = [
+    'No.', '分類', '対象', '変更区分',
+    `比較元\n${sourceName}`, `比較先\n${targetName}`, '確認ポイント',
+    '顧客レビュー状況', '対応方針', '担当者', 'コメント'
+  ];
+  const rows: (string | number | null)[][] = [
+    ['比較元と比較先の現在設定を確認し、「顧客レビュー状況」から「コメント」までの4列に確認結果を入力してください。', '', '', '', '', '', '', '', '', '', ''],
+    headers
+  ];
+  const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], []];
+  const rowHeights: number[] = [30, 42];
+  items.forEach((item, index) => {
+    rows.push([
+      index + 1,
+      item.sectionLabel,
+      item.item,
+      item.changeType,
+      item.before,
+      item.after,
+      item.reviewNote,
+      '未レビュー',
+      '未判断',
+      '',
+      ''
+    ]);
+    rowStyles.push('normal');
+    const styles: Array<XlsxCellStyle | undefined> = [];
+    styles[4] = 'sourceDivider';
+    styles[5] = 'target';
+    styles[6] = 'info';
+    styles[7] = 'review';
+    styles[8] = 'review';
+    styles[9] = 'review';
+    styles[10] = 'review';
+    cellStyles.push(styles);
+    rowHeights.push(readableDiffRowHeight([
+      { value: item.sectionLabel, width: 18 },
+      { value: item.item, width: 34 },
+      { value: item.before, width: 36 },
+      { value: item.after, width: 36 },
+      { value: item.reviewNote, width: 38 }
+    ], 132));
+  });
+  const lastRow = items.length + 2;
+  return {
+    name: '変更一覧',
+    rows,
+    colWidths: [8, 18, 34, 16, 36, 36, 38, 14, 16, 16, 28],
+    rowStyles,
+    cellStyles,
+    headerRow: 2,
+    freezeRows: 2,
+    freezeColumns: 3,
+    rowHeights,
+    merges: ['A1:K1'],
+    dataValidations: items.length ? [{
+      sqref: `H3:H${lastRow}`,
+      values: CUSTOMER_REVIEW_STATUS_VALUES,
+      promptTitle: '顧客レビュー状況',
+      prompt: '顧客レビューの進捗を選択してください'
+    }, {
+      sqref: `I3:I${lastRow}`,
+      values: CUSTOMER_ACTION_DECISION_VALUES,
+      promptTitle: '対応方針',
+      prompt: '人が判断した対応方針を選択してください'
+    }] : [],
+    showGridLines: false,
+    print: {
+      orientation: 'landscape',
+      fitToWidth: 1,
+      fitToHeight: 0,
+      repeatRows: { from: 2, to: 2 }
+    }
+  };
+}
+
+function customerIssueSide(side: unknown): string {
+  if (side === 'source') return '比較元';
+  if (side === 'target') return '比較先';
+  if (side === 'both') return '比較元・比較先';
+  return '対象範囲';
+}
+
+function buildCustomerIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
+  if (!customerIncomplete(ctx)) return null;
+  const rows: (string | number | null)[][] = [
+    ['このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。', '', '', ''],
+    ['分類', '対象', '確認状態', '説明']
+  ];
+  for (const issue of ctx.fetchIssues || []) {
+    rows.push([
+      customerSectionLabel(String(issue.sectionKey || issue.section || '')),
+      customerIssueSide(issue.side),
+      '取得できませんでした',
+      'この範囲は比較結果に含まれていません。再取得して確認してください。'
+    ]);
+  }
+  for (const issue of ctx.partialIssues || []) {
+    rows.push([
+      customerSectionLabel(String(issue.sectionKey || issue.section || '')),
+      customerIssueSide(issue.side),
+      '一部のみ確認',
+      '取得できた範囲だけを比較しています。必要に応じて再取得してください。'
+    ]);
+  }
+  if (customerHasDiffTruncation(ctx.truncation)) {
+    const incompleteSections = (ctx.truncation?.sections || []).filter(customerTruncationSectionIncomplete);
+    const sections: DiffTruncationSection[] = incompleteSections.length
+      ? incompleteSections
+      : [{ section: '比較対象全体', partiallyScanned: true, scanStatus: 'partial' }];
+    for (const section of sections) {
+      const status = truncationScanStatusOf(section);
+      rows.push([
+        customerSectionLabel(String(section.sectionKey || section.section || '')),
+        '件数上限の対象',
+        status === 'unscanned' ? '未確認' : status === 'partial' ? '一部のみ確認' : '表示を一部省略',
+        status === 'unscanned'
+          ? 'この範囲は確認できていません。条件を分けて再比較してください。'
+          : status === 'partial'
+            ? '確認できた件数は全体の一部です。条件を分けて再比較してください。'
+            : '範囲の確認は完了していますが、表示を一部省略しています。'
+      ]);
+    }
+  }
+  return {
+    name: '確認できなかった範囲',
+    rows,
+    colWidths: [24, 20, 22, 72],
+    rowStyles: rows.map(() => 'normal'),
+    cellStyles: rows.map((_, index) => index === 0 ? ['warning'] : index === 1 ? [] : ['warning']),
+    headerRow: 2,
+    freezeRows: 2,
+    freezeColumns: 2,
+    rowHeights: rows.map((row, index) => index < 2 ? (index === 0 ? 36 : 30) : readableDiffRowHeight([
+      { value: row[0], width: 24 },
+      { value: row[1], width: 20 },
+      { value: row[2], width: 22 },
+      { value: row[3], width: 72 }
+    ], 118)),
+    merges: ['A1:D1'],
+    showGridLines: false,
+    print: {
+      orientation: 'landscape',
+      fitToWidth: 1,
+      fitToHeight: 0,
+      repeatRows: { from: 2, to: 2 }
+    }
+  };
+}
+
+function buildCustomerDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
+  const items = buildCustomerDiffItems(ctx);
+  const sheets: XlsxSheet[] = [buildCustomerSummarySheet(ctx, items)];
+  const issues = buildCustomerIssuesSheet(ctx);
+  if (issues) sheets.push(issues);
+  sheets.push(buildCustomerListSheet(ctx, items));
+  return sheets;
+}
+
 export function buildDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
+  if (ctx.audience !== 'internal') return buildCustomerDiffXlsxSheets(ctx);
   const rows = ctx.rows || [];
   const grouped = groupRowsBySection(rows);
   const fieldModel = buildDiffXlsxFieldModel(ctx);
@@ -1880,6 +3328,14 @@ export function buildDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
     && row.type !== 'same');
   const unstructuredFieldDiffCount = Math.max(0, actionableFieldRows.length - fieldModel.details.length);
   const differenceRefs = buildDifferenceRefs(rows);
+  const technicalRefs = buildTechnicalRefs(rows);
+  const differenceRefsBySection = new Map<string, DiffXlsxDifferenceRef[]>();
+  rows.forEach((row, index) => {
+    const key = sectionKeyOfRow(row);
+    const refs = differenceRefsBySection.get(key) || [];
+    refs.push(differenceRefs[index]);
+    differenceRefsBySection.set(key, refs);
+  });
   const sheets: XlsxSheet[] = [buildSummarySheet(
     ctx,
     grouped,
@@ -1887,23 +3343,32 @@ export function buildDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
     fieldModel.details.length,
     unstructuredFieldDiffCount
   )];
+  const issuesSheet = buildIssuesSheet(ctx);
+  if (issuesSheet) sheets.push(issuesSheet);
   if (fieldModel.details.length) {
     sheets.push(
       buildFieldSummarySheet(fieldModel, ctx.sourceBundle, ctx.targetBundle, differenceRefs),
       buildFieldDetailSheet(fieldModel, ctx.sourceBundle, ctx.targetBundle, differenceRefs)
     );
   }
-  sheets.push(buildListSheet(rows, '差分一覧', ctx.sourceBundle, ctx.targetBundle, differenceRefs, fieldModel));
+  sheets.push(buildListSheet(
+    rows,
+    '差分一覧',
+    ctx.sourceBundle,
+    ctx.targetBundle,
+    differenceRefs,
+    technicalRefs,
+    fieldModel
+  ));
   for (const [key, list] of grouped) {
     sheets.push(buildSectionSheet(
       sectionSheetName(key),
       list,
       ctx.sourceBundle,
-      ctx.targetBundle
+      ctx.targetBundle,
+      differenceRefsBySection.get(key)
     ));
   }
-  const issuesSheet = buildIssuesSheet(ctx);
-  if (issuesSheet) sheets.push(issuesSheet);
   return sheets;
 }
 
@@ -1913,6 +3378,15 @@ export function buildDiffXlsxBlob(ctx: DiffXlsxContext): Blob {
 
 export function buildDiffXlsxExport(ctx: DiffXlsxContext): { filename: string; blob: Blob } {
   const blob = buildDiffXlsxBlob(ctx);
+  if (ctx.audience !== 'internal') {
+    const sourceName = customerAppName(ctx.sourceBundle, '比較元');
+    const targetName = customerAppName(ctx.targetBundle, '比較先');
+    const pairLabel = [sourceName, targetName].filter(Boolean).join('_vs_');
+    return {
+      filename: buildExportFilename('設定差分確認', 'xlsx', { appLabel: pairLabel }),
+      blob
+    };
+  }
   const srcName = extractAppNameFromBundle(ctx.sourceBundle);
   const tgtName = extractAppNameFromBundle(ctx.targetBundle);
   const src = buildAppFilenameLabel(ctx.sourceBundle?.appId, srcName);

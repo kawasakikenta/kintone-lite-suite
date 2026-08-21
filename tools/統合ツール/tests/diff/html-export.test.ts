@@ -166,7 +166,7 @@ describe('diff/html export', () => {
     expect(html).toContain('.fc-card:focus-within{content-visibility:visible}');
   });
 
-  it('exposes severity review and the comparison controls', () => {
+  it('exposes objective review facts and the comparison controls without judgment labels', () => {
     const sourceBundle = {
       appId: '1', guestId: '', preview: false,
       sections: { fieldSettings: { properties: {} }, layoutSettings: { layout: [] } },
@@ -179,12 +179,19 @@ describe('diff/html export', () => {
     };
     const html = buildDiffHtml(sourceBundle, targetBundle, [], ['fieldSettings'], '', {});
 
-    // 重要度は文字ラベル付きで表示・絞り込み・並び替えできる
-    expect(html).toContain('data-severity-chip');
-    expect(html).toContain('id="diffSeveritySel"');
-    expect(html).toContain('全重要度');
-    expect(html).toContain('重要度が高い順（高→中→低）');
-    expect(html).toContain('.severity-chip--high');
+    // 人が判断できるよう、存在状況と差分内容だけを表示し、重要度UIは持たない
+    expect(html).toContain('data-report-overview');
+    expect(html).toContain('data-comparison-status="complete"');
+    expect(html).toContain('data-objective-counts');
+    expect(html).toContain('data-row-existence');
+    expect(html).toContain('data-row-difference');
+    expect(html).not.toContain('data-severity-chip');
+    expect(html).not.toContain('id="diffSeveritySel"');
+    expect(html).not.toContain('data-priority-filter');
+    expect(html).not.toContain('重要度が高い順（高→中→低）');
+    expect(html.indexOf('aria-label="比較方向"')).toBeLessThan(html.indexOf('data-comparison-status='));
+    expect(html.indexOf('data-comparison-status=')).toBeLessThan(html.indexOf('data-objective-counts'));
+    expect(html.indexOf('data-objective-counts')).toBeLessThan(html.indexOf('data-report-workspace'));
 
     // 素のJSON比較・確認済み・CSV/MD 出力・確認済み統計を追加
     expect(html).toContain('id="rawJson"');
@@ -212,14 +219,16 @@ describe('diff/html export', () => {
     expect(html).not.toContain('Field Detail Popup');
   });
 
-  it('keeps severity filtering and sticky focus treatment explicit in the generated report', () => {
+  it('keeps objective section/type filtering and sticky focus treatment explicit in the generated report', () => {
     const bundle = {
       appId: '1', guestId: '', preview: false,
       sections: { fieldSettings: { properties: {} } }, meta: {}
     };
     const rows = [{
       _id: 'high-row', sectionKey: 'fieldSettings', section: 'フィールド', type: 'changed',
-      path: 'fieldSettings.properties.critical.required', left: false, right: true, severity: 'high'
+      path: 'fieldSettings.properties.critical.required', left: false, right: true, severity: 'high',
+      impactCount: 1,
+      impactRefs: [{ section: '一覧', kind: '表示項目', label: '重要項目一覧', path: 'viewSettings.views.list.fields' }]
     }, {
       _id: 'medium-row', sectionKey: 'fieldSettings', section: 'フィールド', type: 'changed',
       path: 'fieldSettings.properties.notice.label', left: '旧', right: '新', severity: 'medium'
@@ -231,11 +240,19 @@ describe('diff/html export', () => {
     const script = extractInlineScript(html);
 
     expect(() => new Function(script)).not.toThrow();
-    expect(script).toContain("let severityFilterValue = 'all';");
-    expect(script).toContain("normalizeSeverity(row && row.severity) === severityFilterValue");
-    expect(script).toContain("severityRank(a && a.severity) - severityRank(b && b.severity)");
-    expect(script).toContain(`data-severity="' + severity + '"`);
-    expect(script).toContain(`重要度 ' + severityLabel(severity)`);
+    expect(script).toContain("let sectionFilterValue = 'all';");
+    expect(script).toContain('function sectionFilterMatches(row)');
+    expect(script).toContain('filterBaseRows.filter(sectionFilterMatches).filter(typeFilterMatches)');
+    expect(script).toContain('function renderRowFacts(row)');
+    expect(script).toContain('data-row-existence');
+    expect(script).toContain('data-row-difference');
+    expect(script).toContain('関連している設定 ');
+    expect(script).toContain('row.impactRefs || []');
+    expect(script).not.toContain('row.impactSummary ||');
+    expect(script).not.toContain('severityFilterValue');
+    expect(script).not.toContain('severityRank(');
+    expect(script).not.toContain('data-severity=');
+    expect(script).not.toContain('data-priority-filter');
     expect(script).toContain("style.setProperty('--diff-toolbar-offset', offset + 'px')");
     expect(html).toContain('.sec-head{position:sticky;top:var(--diff-toolbar-offset)');
     expect(html).toContain('scroll-margin-top:calc(var(--diff-toolbar-offset) + 12px)');
@@ -268,19 +285,22 @@ describe('diff/html export', () => {
     expect(() => new Function(script)).not.toThrow();
     expect(script).toContain('"_reportDisplayTitle":"説明"');
     expect(script).toContain('id="reviewQueueHost"');
-    expect(script).toContain('最優先レビュー');
-    expect(script).toContain('data-priority-filter');
+    expect(script).toContain('レビュー受信箱');
+    expect(script).toContain('未確認の差分を上から確認できます');
+    expect(script).not.toContain('data-priority-filter');
     expect(script).toContain('data-clear-filter');
     expect(script).toContain('一覧条件をすべて解除');
     expect(script).toContain('class="path-tech"');
+    expect(script).not.toContain('class="drow-title" title=');
     expect(script).toContain('renderInlineLane(\'source\', \'del\'');
     expect(script).toContain('renderDuoLaneHeader(\'source\', \'比較元\')');
     expect(script).toContain('長い設定値を表示');
-    expect(script).toContain('requestAnimationFrame(() => document.getElementById(\'diffSeveritySel\')?.focus())');
+    expect(script).toContain('requestAnimationFrame(() => document.getElementById(\'diffSectionSel\')?.focus())');
     expect(script).toContain('requestAnimationFrame(() => document.getElementById(\'diffSortSel\')?.focus())');
     expect(script).toContain('const focusType = typeFilterValue;');
     expect(html).toContain('id="mobileSidebarToggle"');
     expect(html).toContain('aria-controls="sidebarPanels"');
+    expect(html).toContain('@media (max-width:768px)');
     expect(html).toContain('@media (max-width:560px)');
     expect(html).toContain('.long-value>summary:focus-visible');
   });
@@ -298,16 +318,19 @@ describe('diff/html export', () => {
     const script = extractInlineScript(html);
 
     expect(() => new Function(script)).not.toThrow();
+    expect(html).toContain('data-report-overview');
+    expect(html).toContain('data-report-workspace');
+    expect(html).toContain('data-review-workspace');
     expect(html).toContain('class="topbar-eyebrow-row"');
     expect(html).toContain('class="topbar-app-card topbar-app-card--source"');
     expect(html).toContain('class="topbar-app-card topbar-app-card--target"');
-    expect(html).toContain('class="topbar-app-eyebrow">BEFORE</span>');
-    expect(html).toContain('class="topbar-app-eyebrow">AFTER</span>');
+    expect(html).toContain('class="topbar-app-eyebrow">比較元</span>');
+    expect(html).toContain('class="topbar-app-eyebrow">比較先</span>');
     expect(html).not.toContain('class="topbar-apps"');
     expect(html).toContain('.topbar-eyebrow-row{display:flex;align-items:center;justify-content:space-between');
     expect(html).toContain('.header-badge{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;white-space:nowrap;writing-mode:horizontal-tb');
-    expect(html).toContain('.topbar-compare{grid-template-columns:1fr;gap:4px}');
-    expect(html).toContain('.topbar-arrow{height:14px;transform:rotate(90deg)}');
+    expect(html).toContain('.report-hero .topbar-compare{grid-template-columns:1fr;gap:6px}');
+    expect(html).toContain('.report-hero .topbar-arrow{height:16px;transform:rotate(90deg)}');
 
     expect(html).toContain('id="sidebarBackdrop"');
     expect(html).toContain('id="sidebarDrawerClose"');
@@ -366,7 +389,8 @@ describe('diff/html export', () => {
     expect(script).toContain("diffFocusKey = '';");
 
     expect(script).toContain('function getReportViewState()');
-    expect(script).toContain('const visibleRows = filterBaseRows.filter(typeFilterMatches).filter(severityFilterMatches)');
+    expect(script).toContain('const visibleRows = filterBaseRows.filter(sectionFilterMatches).filter(typeFilterMatches)');
+    expect(script).toContain('id="diffSectionSel"');
     expect(script).toContain('全体 <b>');
     expect(script).toContain('表示中 <b>');
     expect(script).toContain('未確認 <b>');
@@ -383,9 +407,10 @@ describe('diff/html export', () => {
     expect(html).toContain('.drow--reviewed{opacity:1;background:linear-gradient');
     expect(html).not.toContain('.drow--reviewed{opacity:.62}');
     expect(html).toContain('button:disabled,.btn:disabled,.tchip:disabled');
-    expect(script).toContain('>追加 ');
-    expect(script).toContain('>削除 ');
-    expect(script).toContain('>変更 ');
+    expect(script).toContain('比較先のみ');
+    expect(script).toContain('比較元のみ');
+    expect(script).toContain('内容が異なる');
+    expect(script).not.toContain('severityFilterMatches');
   });
 
   it('saves and atomically restores reviewed rows with deterministic report-bound keys', () => {
@@ -709,10 +734,39 @@ describe('diff/html export', () => {
     });
 
     expect(output.filename).toMatch(/\.html$/);
-    expect(output.html).toContain('差分 <b>0件</b>');
+    expect(output.html).toContain('data-objective-counts');
+    expect(output.html).toContain('<span>両方に存在・内容が異なる</span><strong>0</strong>');
     expect(output.html).toContain('アプリ 101');
     expect(output.html).toContain('アプリ 202');
     expect(() => new Function(extractInlineScript(output.html))).not.toThrow();
+  });
+
+  it('keeps pure ordering differences separate from content changes', () => {
+    const sections = { layoutSettings: { layout: [] } };
+    const output = buildDiffHtmlStandaloneExport({
+      rows: [{
+        _id: 'moved-only',
+        sectionKey: 'layoutSettings',
+        section: 'レイアウト設定',
+        type: 'changed',
+        moved: true,
+        path: 'layoutSettings.layout[0]',
+        left: { index: 0 },
+        right: { index: 1 }
+      }],
+      fetchIssues: [],
+      sourceBundle: { appId: '101', guestId: '', preview: false, sections, meta: {} },
+      targetBundle: { appId: '202', guestId: '', preview: false, sections, meta: {} },
+      scopes: ['layoutSettings'],
+      ignoreKeys: '',
+      normalizationPresetState: {}
+    });
+
+    expect(output.html).toContain('<span>両方に存在・内容が異なる</span><strong>0</strong>');
+    expect(output.html).toContain('<span>並び順が異なる</span><strong>1</strong>');
+    const script = extractInlineScript(output.html);
+    expect(script).toContain("if (typeFilterValue === 'moved') return !!row.moved;");
+    expect(script).toContain("if (typeFilterValue === 'changed') return !row.moved");
   });
 
   it('adds the same-section evidence row when object key insertion order differs', () => {
@@ -732,7 +786,7 @@ describe('diff/html export', () => {
     const html = buildDiffHtml(sourceBundle, targetBundle, [], ['fieldSettings'], '', {});
     const script = extractInlineScript(html);
 
-    expect(html).toContain('差分 <b>0件</b>');
+    expect(html).toContain('<span>両方に存在・内容が異なる</span><strong>0</strong>');
     expect(html).toContain('id="stat-same">1</b>');
     expect(script).toContain('"_id":"same:fieldSettings"');
   });
@@ -877,6 +931,8 @@ describe('diff/html export', () => {
     });
 
     expect(html).not.toContain(scratchError);
+    expect(html).toContain('data-comparison-status="incomplete"');
+    expect(html).toContain('この結果だけでは、全差分を断定できません');
     expect(html).toContain('API取得失敗 1件');
     expect(html).toContain('HTTP 403');
     expect(extractInlineScript(html)).toContain('"fetchIssues"');
@@ -980,7 +1036,7 @@ describe('diff/html export', () => {
     const script = extractInlineScript(html);
     expect(script).toContain('"exportMode":"filtered"');
     expect(script).not.toContain('"_id":"same:viewSettings"');
-    expect(html).toContain('差分 <b>1件</b>');
+    expect(html).toContain('<span>両方に存在・内容が異なる</span><strong>1</strong>');
   });
 
   it('makes offline reflect JSON safety, incompleteness, and guest API routing explicit', () => {

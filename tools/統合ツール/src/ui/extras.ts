@@ -1989,6 +1989,7 @@ export function exportDiffAsXlsx(): void {
       ? importedContext.scopes
       : (comparedBundleScopes.length ? comparedBundleScopes : selectedScopes);
     runExportDiffXlsx({
+      audience: 'internal',
       rows: info.rows,
       fetchIssues: state.lastFetchIssues || [],
       partialIssues: state.lastPartialIssues || [],

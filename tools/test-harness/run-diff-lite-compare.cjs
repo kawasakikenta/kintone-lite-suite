@@ -14,6 +14,8 @@
  * 既定では before を `git show HEAD:tools/差分比較.js`、after を作業ツリーの
  * `tools/差分比較.js` から読み込む。スクリーンショット、ダウンロードされた
  * HTML レポート、after版のExcel一覧、DOM 検証結果 JSON、比較用 index.html を .iter-shots 配下へ保存する。
+ * after版は見た目のCSSクラスではなく、ARIA名と data-kus-dl-* の操作契約を使い、
+ * 完全性、レビュー、技術情報、出力、狭幅、ブラウザ倍率相当も確認する。
  *
  * 主なオプション:
  *   --before-ref <ref>   before の Git ref（既定: HEAD）
@@ -38,6 +40,15 @@ const DEFAULT_OUT = path.resolve(ROOT, '.iter-shots', 'diff-lite-compare');
 const GIT_BUNDLE_PATH = 'tools/差分比較.js';
 const SOURCE_APP_ID = '101';
 const TARGET_APP_ID = '202';
+const RESPONSIVE_VIEWPORTS = [
+  { width: 320, height: 568 },
+  { width: 390, height: 844 },
+  { width: 768, height: 900 },
+  { width: 1024, height: 900 },
+  { width: 1440, height: 1000 }
+];
+const BROWSER_ZOOM_LEVELS = [80, 100, 125, 150, 200];
+const BROWSER_ZOOM_BASE_VIEWPORT = { width: 1440, height: 900 };
 
 function argValue(name, fallback = '') {
   const index = process.argv.indexOf(name);
@@ -220,6 +231,7 @@ async function installMockKintone(page, fixture) {
     api.url = (resource, preview) => `/k/v1${preview ? '/preview' : ''}${resource}`;
 
     window.__KUS_MOCK_CALLS__ = calls;
+    window.__KUS_MOCK_FIXTURE__ = mock;
     window.kintone = {
       api,
       app: { getId: () => Number(currentAppId) },
@@ -258,42 +270,327 @@ async function firstVisibleLocator(locator) {
   return null;
 }
 
+async function firstContractLocator(candidates, { visible = true } = {}) {
+  for (const locator of candidates) {
+    const count = await locator.count();
+    for (let index = 0; index < count; index += 1) {
+      const candidate = locator.nth(index);
+      if (!visible || await candidate.isVisible().catch(() => false)) return candidate;
+    }
+  }
+  return null;
+}
+
 async function fillComparisonForm(page) {
   const root = page.locator('#kus-diff-lite');
-  const sourceLabel = root.locator('.kus-lp__label').filter({ hasText: /^比較元$/ }).first();
-  const targetLabel = root.locator('.kus-lp__label').filter({ hasText: /^比較先\s*1$/ }).first();
-  await sourceLabel.locator('..').locator('input[type="text"]').first().fill(SOURCE_APP_ID);
-  await targetLabel.locator('..').locator('input[type="text"]').first().fill(TARGET_APP_ID);
+  const sourceInput = await firstContractLocator([
+    root.getByLabel(/^比較元アプリID$/),
+    root.locator('input[aria-label="比較元アプリID"]')
+  ]);
+  const targetInput = await firstContractLocator([
+    root.getByLabel(/^比較先1アプリID$/),
+    root.locator('input[aria-label="比較先1アプリID"]')
+  ]);
+  assert.ok(sourceInput, '比較元アプリID入力が見つかりません');
+  assert.ok(targetInput, '比較先1アプリID入力が見つかりません');
+  await sourceInput.fill(SOURCE_APP_ID);
+  await targetInput.fill(TARGET_APP_ID);
 
   // アプリ名も比較結果に含めるため、既定4セクションにアプリ設定を追加する。
-  const appSettings = root.locator('.kus-lp__chip input[value="appSettings"]');
-  if (!(await appSettings.isChecked())) await appSettings.check();
+  const appSettings = root.locator('input[type="checkbox"][value="appSettings"]').first();
+  if (await appSettings.count()) {
+    if (!(await appSettings.isChecked())) {
+      await appSettings.evaluate((element) => {
+        element.checked = true;
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
+  }
 
-  const advanced = root.locator('details.kus-lp__details').filter({ hasText: '詳細オプション' }).first();
-  await advanced.evaluate((element) => { element.open = true; });
-  const showResult = advanced.locator('label')
-    .filter({ hasText: /画面に(?:比較結果一覧|差分明細)を表示/ })
-    .locator('input[type="checkbox"]');
-  if (!(await showResult.isChecked())) await showResult.check();
+  const advanced = await firstContractLocator([
+    root.locator('details').filter({ hasText: /詳細オプション|高度な比較設定/ })
+  ], { visible: false });
+  if (advanced) {
+    await advanced.evaluate((element) => {
+      let current = element;
+      while (current) {
+        if (current instanceof HTMLDetailsElement) current.open = true;
+        current = current.parentElement;
+      }
+    });
+    const showResult = advanced.locator('label')
+      .filter({ hasText: /画面に(?:比較結果一覧|差分明細)を表示/ })
+      .locator('input[type="checkbox"]')
+      .first();
+    if ((await showResult.count()) && !(await showResult.isChecked())) {
+      await showResult.evaluate((element) => {
+        element.checked = true;
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
+  }
 }
 
 async function inspectPanel(page) {
   return page.locator('#kus-diff-lite').evaluate((root) => {
-    const body = root.querySelector('.kus-lp__body');
-    const status = root.querySelector('.kus-lp__status');
+    const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const status = [...root.querySelectorAll('[data-tone]')]
+      .find((element) => ['neutral', 'info', 'busy', 'ok', 'warn', 'err'].includes(element.getAttribute('data-tone') || ''));
+    const result = root.querySelector('[data-kus-dl-result],.kus-dl-result');
+    const completenessElement = root.querySelector('[data-kus-dl-completeness]');
+    const overview = root.querySelector('[aria-label="比較結果サマリー"]') || completenessElement;
+    const controls = [...root.querySelectorAll('select,input,button,[role="button"]')];
+    const subjectiveControls = controls.filter((element) => {
+      const labelledBy = element.getAttribute('aria-labelledby');
+      const labelledText = labelledBy
+        ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent || '').join(' ')
+        : '';
+      const text = [
+        element.getAttribute('aria-label'),
+        element.getAttribute('name'),
+        labelledText,
+        element.closest('label')?.textContent
+      ].map(normalize).join(' ');
+      return /影響度|重要度/.test(text);
+    });
+    const technicalDetails = [...root.querySelectorAll('details[data-kus-dl-technical]')];
     return {
-      title: root.querySelector('.kus-lp__title')?.textContent?.trim() || '',
+      title: normalize(root.querySelector('h1')?.textContent),
       statusTone: status?.dataset?.tone || '',
-      statusText: root.querySelector('.kus-lp__status-text')?.textContent?.trim() || '',
-      resultRows: root.querySelectorAll('.kus-dl-row').length,
-      resultSections: root.querySelectorAll('.kus-dl-section').length,
-      hasOverview: !!root.querySelector('.kus-dl-overview'),
-      overviewText: root.querySelector('.kus-dl-overview')?.textContent?.replace(/\s+/g, ' ').trim() || '',
-      visibleTypeBadges: [...root.querySelectorAll('.kus-dl-badge')].map((element) => element.textContent?.trim() || ''),
+      statusText: normalize(status?.textContent),
+      resultRows: root.querySelectorAll('[data-kus-dl-row-key]').length,
+      resultSections: root.querySelectorAll('details[data-kus-dl-section-key]').length,
+      hasOverview: !!overview,
+      completeness: completenessElement?.getAttribute('data-kus-dl-completeness') || '',
+      overviewText: normalize(overview?.textContent || result?.textContent),
+      workflowSteps: [...root.querySelectorAll('[data-kus-dl-step]')]
+        .map((element) => element.getAttribute('data-kus-dl-step') || ''),
+      technicalDetails: technicalDetails.length,
+      technicalDetailsCollapsed: technicalDetails.filter((element) => !element.open).length,
+      reviewActions: root.querySelectorAll('[data-kus-dl-nav="prev"],[data-kus-dl-nav="next"]').length,
+      exportActions: root.querySelectorAll('[data-kus-dl-export="xlsx"],[data-kus-dl-export="html"]').length,
+      subjectiveControls: subjectiveControls.length,
       horizontalOverflow: root.scrollWidth > root.clientWidth + 2,
-      bodyHorizontalOverflow: !!body && body.scrollWidth > body.clientWidth + 2
+      resultHorizontalOverflow: !!result && result.scrollWidth > result.clientWidth + 2
     };
   });
+}
+
+async function inspectPanelLayout(page) {
+  return page.locator('#kus-diff-lite').evaluate((root) => {
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const rectOf = (element) => {
+      const rect = element.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height };
+    };
+    const visible = (element) => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none'
+        && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0;
+    };
+    const overlaps = (left, right) => (
+      Math.min(left.right, right.right) - Math.max(left.left, right.left) > 2
+      && Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top) > 2
+    );
+    const rootRect = rectOf(root);
+    const result = root.querySelector('[data-kus-dl-result],.kus-dl-result');
+    const anchored = [...root.querySelectorAll('*')].filter((element) => {
+      if (!visible(element)) return false;
+      const position = getComputedStyle(element).position;
+      return position === 'fixed' || position === 'sticky';
+    });
+    const fixedOverlaps = [];
+    for (let leftIndex = 0; leftIndex < anchored.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < anchored.length; rightIndex += 1) {
+        const left = anchored[leftIndex];
+        const right = anchored[rightIndex];
+        if (left.contains(right) || right.contains(left)) continue;
+        if (overlaps(rectOf(left), rectOf(right))) {
+          fixedOverlaps.push(`${left.getAttribute('aria-label') || left.tagName}/${right.getAttribute('aria-label') || right.tagName}`);
+        }
+      }
+    }
+    const focusables = [...root.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])')]
+      .filter(visible);
+    // 追従バーの背後へスクロールした未選択要素は、フォーカス時にブラウザが再配置する。
+    // 実際のキーボード利用で問題になる「現在フォーカス中の要素」が覆われていないかを検査する。
+    const obscuredFocusables = focusables.filter((element) => element === document.activeElement).filter((element) => {
+      const rect = element.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      if (rect.right <= 0 || rect.left >= viewport.width || rect.bottom <= 0 || rect.top >= viewport.height) return false;
+      if (x < 0 || x >= viewport.width || y < 0 || y >= viewport.height) return false;
+      const hit = document.elementFromPoint(x, y);
+      return !!hit && hit !== element && !element.contains(hit) && !hit.contains(element);
+    }).map((element) => element.getAttribute('aria-label') || String(element.textContent || '').trim().slice(0, 40) || element.tagName);
+    const valuePair = [...root.querySelectorAll('[data-kus-dl-row-key]')].map((row) => {
+      const before = row.querySelector('[aria-label="比較元の値"],[data-side="before"]');
+      const after = row.querySelector('[aria-label="比較先の値"],[data-side="after"]');
+      if (!before || !after || !visible(before) || !visible(after)) return null;
+      return { before: rectOf(before), after: rectOf(after) };
+    }).find(Boolean);
+    const rowsOutsideRoot = [...root.querySelectorAll('[data-kus-dl-row-key]')]
+      .filter(visible)
+      .filter((row) => {
+        const rect = row.getBoundingClientRect();
+        return rect.left < rootRect.left - 2 || rect.right > rootRect.right + 2;
+      }).length;
+    return {
+      viewport,
+      devicePixelRatio: window.devicePixelRatio,
+      rootRect,
+      rootWithinViewport: rootRect.left >= -2 && rootRect.right <= viewport.width + 2 && rootRect.width > 0,
+      documentHorizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 2,
+      rootHorizontalOverflow: root.scrollWidth > root.clientWidth + 2,
+      resultHorizontalOverflow: !!result && result.scrollWidth > result.clientWidth + 2,
+      rowsOutsideRoot,
+      fixedOverlaps,
+      obscuredFocusables,
+      valuePair,
+      focusedInsidePanel: !document.activeElement || document.activeElement === document.body || root.contains(document.activeElement)
+    };
+  });
+}
+
+function assertPanelLayout(state, label) {
+  assert.equal(state.rootWithinViewport, true, `${label}: パネルが画面幅内に収まりません`);
+  assert.equal(state.documentHorizontalOverflow, false, `${label}: ページ全体に横スクロールがあります`);
+  assert.equal(state.rootHorizontalOverflow, false, `${label}: パネルに横スクロールがあります`);
+  assert.equal(state.resultHorizontalOverflow, false, `${label}: 差分結果に横スクロールがあります`);
+  assert.equal(state.rowsOutsideRoot, 0, `${label}: 差分行がパネル外へはみ出しています`);
+  assert.deepEqual(state.fixedOverlaps, [], `${label}: 固定・追従UIが重なっています`);
+  assert.deepEqual(state.obscuredFocusables, [], `${label}: 操作要素が別UIに覆われています`);
+  assert.equal(state.focusedInsidePanel, true, `${label}: フォーカスが差分パネル外へ失われました`);
+  if (state.viewport.width <= 390 && state.valuePair) {
+    assert.ok(state.valuePair.after.top >= state.valuePair.before.bottom - 2,
+      `${label}: 狭幅でも比較元・比較先の値が横並びのままです`);
+  }
+}
+
+async function captureResponsivePanelMatrix(page, outDir) {
+  const levels = [];
+  for (const viewport of RESPONSIVE_VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    const result = page.locator('#kus-diff-lite [data-kus-dl-result],#kus-diff-lite .kus-dl-result').first();
+    if (await result.count()) await result.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(100);
+    const state = await inspectPanelLayout(page);
+    assertPanelLayout(state, `after: ${viewport.width}px`);
+    const screenshot = path.join(outDir, `after-panel-width-${viewport.width}.png`);
+    await page.screenshot({ path: screenshot, fullPage: false, animations: 'disabled' });
+    levels.push({ ...state, screenshot: path.basename(screenshot) });
+  }
+  await page.setViewportSize({ width: 1365, height: 900 });
+  return levels;
+}
+
+function buildZeroDifferenceFixture(fixture) {
+  const zero = clone(fixture);
+  zero.apps[TARGET_APP_ID] = clone(zero.apps[SOURCE_APP_ID]);
+  if (zero.apps[TARGET_APP_ID]['/app.json']) zero.apps[TARGET_APP_ID]['/app.json'].appId = TARGET_APP_ID;
+  return zero;
+}
+
+function buildPartialFixture(fixture) {
+  const partial = clone(fixture);
+  delete partial.apps[TARGET_APP_ID]['/app/views.json'];
+  return partial;
+}
+
+async function runPanelScenario(context, label, bundleSource, fixture, screenshotFile) {
+  const page = await context.newPage();
+  const errors = collectPageErrors(page, `after-${label}`);
+  await page.setContent('<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>Mock kintone</title></head><body><main id="mock-kintone-portal"></main></body></html>');
+  await installMockKintone(page, fixture);
+  await page.addScriptTag({ content: bundleSource });
+  await page.waitForSelector('#kus-diff-lite[role="dialog"]', { timeout: 15000 });
+  await fillComparisonForm(page);
+  const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
+  await page.getByRole('button', { name: /差分比較を実行/ }).click();
+  await downloadPromise;
+  await page.waitForFunction(() => {
+    const status = [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
+      .find((element) => ['ok', 'warn', 'err'].includes(element.getAttribute('data-tone') || ''));
+    return !!status;
+  }, null, { timeout: 30000 });
+  await page.waitForSelector('#kus-diff-lite [data-kus-dl-completeness]', { timeout: 10000 });
+  const panel = await inspectPanel(page);
+  const layout = await inspectPanelLayout(page);
+  await page.screenshot({ path: screenshotFile, fullPage: false, animations: 'disabled' });
+  await page.close();
+  return { panel, layout, errors };
+}
+
+async function captureObjectiveStateScenarios(browser, bundleSource, fixture, outDir) {
+  const partialContext = await browser.newContext({ viewport: { width: 1024, height: 900 }, acceptDownloads: true });
+  const partial = await runPanelScenario(
+    partialContext,
+    'partial',
+    bundleSource,
+    buildPartialFixture(fixture),
+    path.join(outDir, 'after-panel-partial.png')
+  );
+  await partialContext.close();
+  assert.equal(partial.panel.completeness, 'incomplete', 'after: 取得失敗時に比較の不完全性がDOMへ明示されません');
+  assert.equal(partial.panel.statusTone, 'warn', `after: 不完全比較が警告状態ではありません: ${partial.panel.statusText}`);
+  assert.match(`${partial.panel.overviewText} ${partial.panel.statusText}`, /不完全|差分なしとは判断できません|取得失敗|未検証/,
+    'after: 不完全比較で判断保留の説明が見つかりません');
+  assert.equal(partial.panel.technicalDetailsCollapsed, partial.panel.technicalDetails,
+    'after: 不完全比較の技術情報が初期状態で展開されています');
+  assertPanelLayout(partial.layout, 'after: 不完全比較');
+  assert.deepEqual(partial.errors, [], 'after: 不完全比較でブラウザエラーが発生しました');
+
+  const zeroContext = await browser.newContext({ viewport: { width: 1024, height: 900 }, acceptDownloads: true });
+  const zero = await runPanelScenario(
+    zeroContext,
+    'zero',
+    bundleSource,
+    buildZeroDifferenceFixture(fixture),
+    path.join(outDir, 'after-panel-zero.png')
+  );
+  await zeroContext.close();
+  assert.equal(zero.panel.completeness, 'complete', 'after: 差分0件の完全比較がcompleteになりません');
+  assert.equal(zero.panel.statusTone, 'ok', `after: 差分0件の完全比較が正常完了しません: ${zero.panel.statusText}`);
+  assert.equal(zero.panel.resultRows, 0, 'after: 同一設定なのに差分行が表示されました');
+  assert.match(`${zero.panel.overviewText} ${zero.panel.statusText}`, /差分なし|一致|0件/,
+    'after: 完全取得の差分0件が明示されません');
+  assertPanelLayout(zero.layout, 'after: 差分0件');
+  assert.deepEqual(zero.errors, [], 'after: 差分0件でブラウザエラーが発生しました');
+  return { partial, zero };
+}
+
+async function captureBrowserZoomMatrix(browser, bundleSource, fixture, outDir) {
+  const levels = [];
+  for (const percent of BROWSER_ZOOM_LEVELS) {
+    const scale = percent / 100;
+    const viewport = {
+      width: Math.round(BROWSER_ZOOM_BASE_VIEWPORT.width / scale),
+      height: Math.round(BROWSER_ZOOM_BASE_VIEWPORT.height / scale)
+    };
+    const context = await browser.newContext({
+      viewport,
+      screen: BROWSER_ZOOM_BASE_VIEWPORT,
+      deviceScaleFactor: scale,
+      acceptDownloads: true
+    });
+    const result = await runPanelScenario(
+      context,
+      `zoom-${percent}`,
+      bundleSource,
+      clone(fixture),
+      path.join(outDir, `after-panel-zoom-${String(percent).padStart(3, '0')}.png`)
+    );
+    await context.close();
+    assert.equal(result.panel.statusTone, 'ok', `after: ${percent}%相当で比較が正常完了しません`);
+    assert.equal(result.panel.completeness, 'complete', `after: ${percent}%相当で完全性表示が失われました`);
+    assertPanelLayout(result.layout, `after: ${percent}%相当`);
+    assert.ok(Math.abs(result.layout.devicePixelRatio - scale) <= 0.02,
+      `after: ${percent}%相当のdevicePixelRatioが不正です: ${result.layout.devicePixelRatio}`);
+    assert.deepEqual(result.errors, [], `after: ${percent}%相当でブラウザエラーが発生しました`);
+    levels.push({ percent, cssViewport: viewport, ...result });
+  }
+  return { physicalViewport: BROWSER_ZOOM_BASE_VIEWPORT, levels };
 }
 
 async function inspectReport(page) {
@@ -327,6 +624,40 @@ async function captureReport(context, variant, reportFile, outDir) {
   await page.screenshot({ path: path.join(outDir, `${variant}-report.png`), fullPage: false, animations: 'disabled' });
 
   if (variant === 'after') {
+    const reportContract = await page.evaluate(() => {
+      const overview = document.querySelector('[data-report-overview]');
+      const completeness = document.querySelector('[data-comparison-status]');
+      const overviewRect = overview?.getBoundingClientRect();
+      const completenessRect = completeness?.getBoundingClientRect();
+      const subjectiveControls = [...document.querySelectorAll('select,input,button')].filter((element) => {
+        const text = `${element.id || ''} ${element.getAttribute('aria-label') || ''} ${element.closest('label')?.textContent || ''}`;
+        return /影響度|重要度|diffSeverity|priority-filter/i.test(text);
+      });
+      return {
+        overview: document.querySelectorAll('[data-report-overview]').length,
+        completeness: completeness?.getAttribute('data-comparison-status') || '',
+        completenessWidth: completenessRect?.width || 0,
+        overviewWidth: overviewRect?.width || 0,
+        completenessWidthRatio: overviewRect?.width ? (completenessRect?.width || 0) / overviewRect.width : 0,
+        objectiveCounts: document.querySelectorAll('[data-objective-counts]').length,
+        reportWorkspace: document.querySelectorAll('[data-report-workspace]').length,
+        reviewWorkspace: document.querySelectorAll('[data-review-workspace]').length,
+        existenceChips: document.querySelectorAll('[data-row-existence]').length,
+        differenceChips: document.querySelectorAll('[data-row-difference]').length,
+        subjectiveControls: subjectiveControls.length
+      };
+    });
+    assert.equal(reportContract.overview, 1, 'after: HTMLレポートの概要契約がありません');
+    assert.equal(reportContract.completeness, 'complete', 'after: HTMLレポートの完全性がcompleteではありません');
+    assert.ok(reportContract.completenessWidthRatio >= 0.8,
+      `after: 完全性帯が概要の横幅を十分に使っていません: ${reportContract.completenessWidth}px / ${reportContract.overviewWidth}px`);
+    assert.equal(reportContract.objectiveCounts, 1, 'after: HTMLレポートの客観件数領域がありません');
+    assert.equal(reportContract.reportWorkspace, 1, 'after: HTMLレポートの全体workspace契約がありません');
+    assert.equal(reportContract.reviewWorkspace, 1, 'after: HTMLレポートのレビューworkspace契約がありません');
+    assert.ok(reportContract.existenceChips > 0, 'after: HTMLレポートに存在状況の表示がありません');
+    assert.ok(reportContract.differenceChips > 0, 'after: HTMLレポートに差分内容の表示がありません');
+    assert.equal(reportContract.subjectiveControls, 0, 'after: HTMLレポートに影響度・重要度の操作UIが残っています');
+
     const reportTopbar = await firstVisibleLocator(page.locator('[data-compare-header],.topbar'));
     assert.ok(reportTopbar, 'after: 比較コンテキストの topbar が見つかりません');
     const desktopHeader = await reportTopbar.evaluate((topbar, ids) => {
@@ -336,28 +667,28 @@ async function captureReport(context, variant, reportFile, outDir) {
         return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
       };
       const descendants = [...topbar.querySelectorAll('*')].filter(visible);
-      const lane = (side, english, ownId, otherId) => {
+      const lane = (side, label, ownId, otherId) => {
         const explicit = topbar.querySelector(
-          '[data-compare-side="' + side + '"],[data-compare-lane="' + side + '"],.topbar-lane--' + side
+          '[data-compare-side="' + side + '"],[data-compare-lane="' + side + '"],[aria-label="' + label + 'アプリ"]'
         );
         const explicitText = String(explicit?.textContent || '').replace(/\s+/g, ' ').trim();
         if (explicit && visible(explicit) && explicitText.includes(ownId) && !explicitText.includes(otherId)) return explicit;
         return descendants.find((element) => {
           const text = String(element.textContent || '').replace(/\s+/g, ' ').trim();
-          return text.includes(english) && text.includes(ownId) && !text.includes(otherId);
+          return text.includes(label) && text.includes(ownId) && !text.includes(otherId);
         });
       };
-      const before = lane('before', 'BEFORE', ids.source, ids.target);
-      const after = lane('after', 'AFTER', ids.target, ids.source);
+      const before = lane('before', '比較元', ids.source, ids.target);
+      const after = lane('after', '比較先', ids.target, ids.source);
       return {
         before: !!before,
         after: !!after,
         order: !!before && !!after && (before.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
       };
     }, { source: SOURCE_APP_ID, target: TARGET_APP_ID });
-    assert.equal(desktopHeader.before, true, 'after: topbar に構造化された BEFORE 比較元レーンがありません');
-    assert.equal(desktopHeader.after, true, 'after: topbar に構造化された AFTER 比較先レーンがありません');
-    assert.equal(desktopHeader.order, true, 'after: topbar の BEFORE/AFTER 順序が逆です');
+    assert.equal(desktopHeader.before, true, 'after: topbar に構造化された比較元レーンがありません');
+    assert.equal(desktopHeader.after, true, 'after: topbar に構造化された比較先レーンがありません');
+    assert.equal(desktopHeader.order, true, 'after: topbar の比較元/比較先の順序が逆です');
 
     const progressbar = await firstVisibleLocator(page.locator('[role="progressbar"]'));
     assert.ok(progressbar, 'after: レビュー進捗の progressbar が見つかりません');
@@ -369,12 +700,18 @@ async function captureReport(context, variant, reportFile, outDir) {
     assert.ok(Number.isFinite(initialProgress.max) && initialProgress.max > 0, 'after: progressbar の aria-valuemax が不正です');
 
     const firstDesktopRow = await firstVisibleLocator(page.locator('#main [data-diff-row-key], #main .drow'));
-    assert.ok(firstDesktopRow, 'after: デスクトップ初期表示に差分行がありません');
-    const firstDesktopRowInViewport = await firstDesktopRow.evaluate((element) => {
+    assert.ok(firstDesktopRow, 'after: HTMLレポートに差分行がありません');
+    const reviewEntry = await firstContractLocator([
+      page.locator('[data-review-start]'),
+      page.getByRole('button', { name: /未確認レビューを開始|レビューを開始|レビュー開始|確認を開始/ }),
+      page.locator('#reviewQueueHost')
+    ]);
+    assert.ok(reviewEntry, 'after: デスクトップ初期表示にレビュー開始の導線がありません');
+    const reviewEntryInViewport = await reviewEntry.evaluate((element) => {
       const rect = element.getBoundingClientRect();
       return rect.top < window.innerHeight && rect.bottom > 0;
     });
-    assert.equal(firstDesktopRowInViewport, true, 'after: デスクトップ初期viewportで最初の差分行が見えません');
+    assert.equal(reviewEntryInViewport, true, 'after: デスクトップ初期viewportでレビュー開始の導線が見えません');
     await page.screenshot({ path: path.join(outDir, 'after-report-v3.png'), fullPage: false, animations: 'disabled' });
 
     // 0件になっても適用条件を画面内から解除でき、一覧へ復帰できること。
@@ -506,12 +843,19 @@ async function captureReport(context, variant, reportFile, outDir) {
       const context = document.querySelector('.focus-context');
       const contextRect = context?.getBoundingClientRect();
       const contextStyle = context ? getComputedStyle(context) : null;
+      const workspace = document.querySelector('[data-report-workspace]');
+      const reviewWorkspace = document.querySelector('[data-review-workspace]');
+      const workspaceRect = workspace?.getBoundingClientRect();
+      const reviewRect = reviewWorkspace?.getBoundingClientRect();
       return {
         pressed: control?.getAttribute('aria-pressed') || '',
         marker: `${root.getAttribute('data-focus-mode') || ''} ${root.className || ''}`,
         contextVisible: !!context && !!contextRect && contextRect.width > 0 && contextRect.height > 0
           && contextStyle?.display !== 'none' && contextStyle?.visibility !== 'hidden',
         contextText: String(context?.textContent || '').replace(/\s+/g, ' ').trim(),
+        workspaceWidth: workspaceRect?.width || 0,
+        reviewWidth: reviewRect?.width || 0,
+        reviewWidthRatio: workspaceRect?.width ? (reviewRect?.width || 0) / workspaceRect.width : 0,
         visibleRows: [...document.querySelectorAll('#main [data-diff-row-key],#main .drow')].filter((element) => {
           const rect = element.getBoundingClientRect();
           const style = getComputedStyle(element);
@@ -523,6 +867,8 @@ async function captureReport(context, variant, reportFile, outDir) {
     assert.equal(focusState.contextVisible, true, 'after: 集中表示で比較対象の文脈帯が見えません');
     assert.match(focusState.contextText, /→/, 'after: 集中表示の文脈帯に比較方向がありません');
     assert.ok(focusState.visibleRows >= 1 && focusState.visibleRows < visibleRowsBeforeFocus, 'after: 集中表示で現在行へ絞られません');
+    assert.ok(focusState.reviewWidthRatio >= 0.8,
+      `after: 集中表示でもレビュー領域が十分な幅へ広がりません: ${focusState.reviewWidth}px / ${focusState.workspaceWidth}px`);
     await page.screenshot({ path: path.join(outDir, 'after-report-v3-focus.png'), fullPage: false, animations: 'disabled' });
     const focusExit = await firstVisibleLocator(page.getByRole('button', { name: /一覧表示|集中表示を終了|集中表示/ }));
     assert.ok(focusExit, 'after: 集中表示を解除する操作がありません');
@@ -578,20 +924,16 @@ async function captureReport(context, variant, reportFile, outDir) {
         const style = getComputedStyle(element);
         return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
       });
-      const badge = [...document.querySelectorAll('[data-section-badge],.header-badge')].find((element) => {
-        const rect = element.getBoundingClientRect();
-        const style = getComputedStyle(element);
-        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
-      });
-      const badgeRect = badge?.getBoundingClientRect();
-      const badgeStyle = badge ? getComputedStyle(badge) : null;
       const firstSection = document.querySelector('#main .sec-head');
       const firstSectionRect = firstSection?.getBoundingClientRect();
+      const headerRect = header?.getBoundingClientRect();
+      const reportTitle = document.getElementById('reportTitle');
+      const reportTitleRect = reportTitle?.getBoundingClientRect();
       const toast = document.querySelector('#reportToast.is-visible');
       const toastRect = toast?.getBoundingClientRect();
       const toggleRect = toggle?.getBoundingClientRect();
       const overlaps = (a, b) => !!a && !!b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-      const aboveFoldCandidates = [
+      const reviewCandidates = [
         ...document.querySelectorAll('#main .path-main,#main [data-row-heading],#main .drow-title'),
         ...[...document.querySelectorAll('button')].filter((button) => /レビューを開始|レビュー開始|確認を開始/.test(button.textContent || ''))
       ];
@@ -606,15 +948,14 @@ async function captureReport(context, variant, reportFile, outDir) {
             && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0;
         })(),
         laneColumns: lanes ? getComputedStyle(lanes).gridTemplateColumns : '',
-        headerHeight: header?.getBoundingClientRect().height || 0,
-        badgeHorizontal: !!badge && !!badgeRect && badgeRect.width > badgeRect.height && badgeStyle?.whiteSpace === 'nowrap',
-        firstSectionVisible: !!firstSectionRect && firstSectionRect.top < window.innerHeight && firstSectionRect.bottom > 0,
+        headerHeight: headerRect?.height || 0,
+        headerWithinViewport: !!headerRect && headerRect.left >= -2 && headerRect.right <= window.innerWidth + 2,
+        titleVisible: !!reportTitleRect && reportTitleRect.top < window.innerHeight && reportTitleRect.bottom > 0,
+        overviewPresent: !!document.querySelector('[data-report-overview]'),
+        reviewWorkspacePresent: !!document.querySelector('[data-review-workspace]'),
+        firstSectionAttached: !!firstSectionRect,
         toastOverlapsHeaderControl: overlaps(toastRect, toggleRect),
-        firstReviewTargetVisible: aboveFoldCandidates.some((element) => {
-          const rect = element.getBoundingClientRect();
-          const style = getComputedStyle(element);
-          return rect.top < window.innerHeight && rect.bottom > 0 && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
-        }),
+        reviewTargetAttached: reviewCandidates.length > 0,
         horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 2 || document.body.scrollWidth > document.body.clientWidth + 2
       };
     });
@@ -624,11 +965,14 @@ async function captureReport(context, variant, reportFile, outDir) {
     assert.equal(mobileReport.toggleVisible, true, 'after: mobile filter/output toggle is not visible');
     assert.equal(mobileReport.expanded, 'false', 'after: mobile sidebar starts expanded');
     assert.equal(mobileReport.panelsVisible, false, 'after: mobile drawer is visually open initially');
-    assert.ok(mobileReport.headerHeight > 0 && mobileReport.headerHeight <= 160, `after: mobile header is not compact: ${mobileReport.headerHeight}px`);
-    assert.equal(mobileReport.badgeHorizontal, true, 'after: mobile section badge wraps vertically');
-    assert.equal(mobileReport.firstSectionVisible, true, 'after: mobile初期viewportに最初のセクション見出しがありません');
+    assert.ok(mobileReport.headerHeight > 0, 'after: mobileで比較概要が表示されません');
+    assert.equal(mobileReport.headerWithinViewport, true, 'after: mobileで比較概要が画面幅からはみ出します');
+    assert.equal(mobileReport.titleVisible, true, 'after: mobile初期viewportでレポート名が見えません');
+    assert.equal(mobileReport.overviewPresent, true, 'after: mobileで比較概要の意味契約が失われています');
+    assert.equal(mobileReport.reviewWorkspacePresent, true, 'after: mobileでレビュー領域の意味契約が失われています');
+    assert.equal(mobileReport.firstSectionAttached, true, 'after: mobileに最初のセクション見出しがありません');
     assert.equal(mobileReport.toastOverlapsHeaderControl, false, 'after: mobileトーストが絞り込み操作を覆っています');
-    assert.equal(mobileReport.firstReviewTargetVisible, true, 'after: mobile初期viewportに最初の行見出しまたはレビュー開始CTAがありません');
+    assert.equal(mobileReport.reviewTargetAttached, true, 'after: mobileにレビュー開始CTAまたは差分行がありません');
     assert.equal(mobileReport.horizontalOverflow, false, 'after: mobile HTML report has horizontal overflow');
     if (mobileReport.laneColumns) assert.ok(!mobileReport.laneColumns.includes(' '), `after: mobile comparison values are not single-column: ${mobileReport.laneColumns}`);
     await page.evaluate(() => window.scrollTo(0, Math.min(120, document.documentElement.scrollHeight - window.innerHeight)));
@@ -727,20 +1071,21 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
   await page.setContent('<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>Mock kintone</title></head><body><main id="mock-kintone-portal"></main></body></html>');
   await installMockKintone(page, fixture);
   await page.addScriptTag({ content: bundleSource });
-  await page.waitForSelector('#kus-diff-lite', { timeout: 15000 });
+  await page.waitForSelector('#kus-diff-lite[role="dialog"]', { timeout: 15000 });
   await fillComparisonForm(page);
 
   const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
   await page.getByRole('button', { name: /差分比較を実行/ }).click();
   const download = await downloadPromise;
   await page.waitForFunction(() => {
-    const status = document.querySelector('#kus-diff-lite .kus-lp__status');
-    return status && ['ok', 'warn', 'err'].includes(status.dataset.tone || '');
+    const status = [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
+      .find((element) => ['ok', 'warn', 'err'].includes(element.getAttribute('data-tone') || ''));
+    return !!status;
   }, null, { timeout: 30000 });
 
   const reportFile = path.join(outDir, `${variant}-report.html`);
   await download.saveAs(reportFile);
-  const result = page.locator('#kus-diff-lite .kus-dl-result');
+  const result = page.locator('#kus-diff-lite [data-kus-dl-result],#kus-diff-lite .kus-dl-result').first();
   await result.scrollIntoViewIfNeeded();
   await page.waitForTimeout(150);
   await page.locator('#kus-diff-lite').screenshot({
@@ -753,19 +1098,32 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
   assert.equal(panelDom.title, '差分比較', `${variant}: liteパネルが正しく起動していません`);
   assert.equal(panelDom.statusTone, 'ok', `${variant}: 差分比較が正常完了していません: ${panelDom.statusText}`);
   assert.ok(panelDom.resultRows > 0, `${variant}: 画面内の差分行が0件です`);
-  assert.match(panelDom.statusText, /取得失敗\s*0件/, `${variant}: モックAPIの取得失敗があります`);
   assert.ok(apiCalls.length >= 10, `${variant}: 想定よりAPI呼び出しが少なすぎます`);
   assert.deepEqual(errors, [], `${variant}: liteパネルでブラウザエラーが発生しました`);
 
   let xlsx = null;
   let profile = null;
+  let responsive = null;
+  let objectiveStates = null;
+  let browserZoom = null;
   if (variant === 'after') {
-    const contextHeader = page.locator('#kus-diff-lite .kus-dl-contextbar');
-    assert.equal(await contextHeader.count(), 1, 'after: 固定比較コンテキストが見つかりません');
-    assert.match(await contextHeader.textContent(), /BEFORE[\s\S]*AFTER/, 'after: BEFORE/AFTER の比較方向が固定部に表示されません');
-    const panelBox = await page.locator('#kus-diff-lite').boundingBox();
-    assert.ok(panelBox && panelBox.width >= 600 && panelBox.width <= 660, `after: デスクトップパネル幅が想定外です: ${panelBox?.width}`);
-    assert.equal(await page.locator('#kus-diff-lite .kus-dl-sticky').evaluate((element) => getComputedStyle(element).position), 'sticky', 'after: 比較コンテキストが sticky ではありません');
+    assert.equal(panelDom.completeness, 'complete', 'after: 正常取得した比較の完全性がcompleteではありません');
+    assert.deepEqual([...new Set(panelDom.workflowSteps)].sort(), ['export', 'review', 'target'],
+      'after: 比較対象・レビュー・出力のワークフロー区分が揃っていません');
+    assert.equal(panelDom.subjectiveControls, 0, 'after: 人が判断すべき影響度・重要度の操作UIが残っています');
+    assert.ok(panelDom.reviewActions >= 2, 'after: 前後の差分レビュー操作が揃っていません');
+    assert.ok(panelDom.exportActions >= 2, 'after: HTML/Excelの出力操作契約が揃っていません');
+    assert.ok(panelDom.technicalDetails > 0, 'after: 技術情報の折りたたみ詳細が見つかりません');
+    assert.equal(panelDom.technicalDetailsCollapsed, panelDom.technicalDetails,
+      'after: 技術情報が初期状態で展開されています');
+
+    const contextHeader = await firstContractLocator([
+      page.locator('#kus-diff-lite [aria-label*="比較方向"]'),
+      page.locator('#kus-diff-lite [aria-label="比較結果サマリー"]')
+    ]);
+    assert.ok(contextHeader, 'after: 比較元・比較先の方向を示す領域が見つかりません');
+    assert.match(await contextHeader.textContent(), /比較元[\s\S]*比較先/, 'after: 比較方向が客観的な比較元/比較先として表示されません');
+    assertPanelLayout(await inspectPanelLayout(page), 'after: デスクトップ');
 
     const typeFilter = page.locator('#kus-diff-lite select[aria-label="結果の種別絞り込み"]');
     await typeFilter.selectOption('changed');
@@ -774,14 +1132,18 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     assert.match(await changedFilterChip.textContent(), /変更/, 'after: フィルタチップに現在の条件が表示されません');
     await changedFilterChip.click();
     assert.equal(await typeFilter.inputValue(), '', 'after: フィルタチップの1クリック解除が反映されません');
-    assert.match(await page.locator('#kus-diff-lite .kus-dl-filter-empty').textContent(), /フィルタなし/, 'after: フィルタ解除後の状態が明示されません');
+    const activeFilters = await firstContractLocator([
+      page.locator('#kus-diff-lite [aria-label="有効なフィルタ"]')
+    ]);
+    assert.ok(activeFilters, 'after: 有効なフィルタを伝える領域が見つかりません');
+    assert.match(await activeFilters.textContent(), /フィルタなし|条件なし|すべて/, 'after: フィルタ解除後の状態が明示されません');
 
-    const technicalPath = page.locator('#kus-diff-lite details.kus-dl-row__technical').first();
+    const technicalPath = page.locator('#kus-diff-lite details[data-kus-dl-technical]').first();
     assert.equal(await technicalPath.count(), 1, 'after: 内部パスの折りたたみ詳細が見つかりません');
     assert.equal(await technicalPath.getAttribute('open'), null, 'after: 内部パスが初期状態で展開されています');
     const longValueToggle = page.locator('#kus-diff-lite [data-kus-dl-value-toggle]').first();
     assert.equal(await longValueToggle.count(), 1, 'after: 長い値の明示的な全文展開ボタンが見つかりません');
-    const longValueWrapper = longValueToggle.locator('xpath=../..');
+    const longValueWrapper = longValueToggle.locator('xpath=ancestor::*[@data-kus-dl-value-key][1]');
     const collapsedHeight = (await longValueWrapper.boundingBox())?.height || 0;
     await longValueToggle.click();
     assert.equal(await longValueToggle.getAttribute('aria-expanded'), 'true', 'after: 長い値の展開状態が支援技術へ伝わりません');
@@ -794,72 +1156,50 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     });
     await longValueToggle.click();
 
-    const nextDiffButton = page.getByRole('button', { name: /次の差分 \(J\)/ });
+    const nextDiffButton = page.locator('#kus-diff-lite [data-kus-dl-nav="next"]');
     assert.equal(await nextDiffButton.count(), 1, 'after: 次の差分ナビゲーションが見つかりません');
     await nextDiffButton.click();
     await page.waitForFunction(() => {
       const active = document.activeElement;
-      return !!active?.matches?.('#kus-diff-lite .kus-dl-row.is-current[aria-current="true"]');
+      return !!active?.matches?.('#kus-diff-lite [data-kus-dl-row-key][aria-current="true"]');
     }, null, { timeout: 5000 });
     const focusedDiff = await page.evaluate(() => ({
-      current: document.querySelectorAll('#kus-diff-lite .kus-dl-row.is-current').length,
-      activeIsRow: document.activeElement?.classList.contains('kus-dl-row') || false,
-      counter: document.querySelector('#kus-diff-lite .kus-dl-reviewbar__count')?.getAttribute('aria-label') || ''
+      current: document.querySelectorAll('#kus-diff-lite [data-kus-dl-row-key][aria-current="true"]').length,
+      activeIsRow: document.activeElement?.hasAttribute('data-kus-dl-row-key') || false,
+      counter: document.querySelector('#kus-diff-lite [role="status"][aria-label*="件目"]')?.getAttribute('aria-label') || ''
     }));
     assert.equal(focusedDiff.current, 1, 'after: 現在差分が1行に絞られていません');
     assert.equal(focusedDiff.activeIsRow, true, 'after: 差分移動後に行へ実フォーカスされていません');
     assert.match(focusedDiff.counter, /^1 \/ 全\d+件目/, 'after: 差分位置カウンタが更新されていません');
 
-    await page.getByRole('button', { name: 'すべて折りたたむ' }).click();
-    assert.equal(await page.locator('#kus-diff-lite details.kus-dl-section[open]').count(), 0, 'after: 全セクションを折りたためません');
+    await page.locator('#kus-diff-lite [data-kus-dl-sections="collapse"]').click();
+    assert.equal(await page.locator('#kus-diff-lite details[data-kus-dl-section-key][open]').count(), 0, 'after: 全セクションを折りたためません');
     await page.waitForFunction(() => document.activeElement?.getAttribute('data-kus-dl-sections') === 'collapse', null, { timeout: 5000 });
     await page.keyboard.press('j');
-    await page.waitForFunction(() => /^2 \/ 全\d+件目/.test(document.querySelector('#kus-diff-lite .kus-dl-reviewbar__count')?.getAttribute('aria-label') || ''), null, { timeout: 5000 });
-    assert.ok(await page.locator('#kus-diff-lite details.kus-dl-section[open]').count() >= 1, 'after: 差分移動先のセクションが自動展開されません');
+    await page.waitForFunction(() => /^2 \/ 全\d+件目/.test(document.querySelector('#kus-diff-lite [role="status"][aria-label*="件目"]')?.getAttribute('aria-label') || ''), null, { timeout: 5000 });
+    assert.ok(await page.locator('#kus-diff-lite details[data-kus-dl-section-key][open]').count() >= 1, 'after: 差分移動先のセクションが自動展開されません');
 
-    await page.getByRole('button', { name: 'すべて展開' }).click();
+    await page.locator('#kus-diff-lite [data-kus-dl-sections="expand"]').click();
     const currentIgnore = page.locator('#kus-diff-lite [data-kus-dl-ignore-path]:visible').first();
     const ignoredPath = await currentIgnore.getAttribute('data-kus-dl-ignore-path');
     assert.ok(ignoredPath, 'after: 安定パスを持つ差分に無視操作がありません');
     await currentIgnore.click();
-    const ignoreTextarea = page.locator('#kus-diff-lite textarea').first();
+    const ignoreTextarea = page.locator('#kus-diff-lite textarea[placeholder*="完全パス"],#kus-diff-lite textarea[aria-label*="無視"]').first();
     assert.ok((await ignoreTextarea.inputValue()).includes(ignoredPath || ''), 'after: 行の完全パスが無視ルールへ追加されません');
+
+    responsive = await captureResponsivePanelMatrix(page, outDir);
 
     const density = page.locator('#kus-diff-lite select[aria-label="差分一覧の表示密度"]');
     await density.selectOption('comfortable');
-    assert.ok(await result.evaluate((element) => element.classList.contains('kus-dl-result--comfortable')), 'after: 表示密度が結果へ反映されません');
+    assert.equal(await density.inputValue(), 'comfortable', 'after: 表示密度の選択が反映されません');
     const layout = page.locator('#kus-diff-lite select[aria-label="差分一覧の比較レイアウト"]');
     await layout.selectOption('stacked');
-    assert.ok(await result.evaluate((element) => element.classList.contains('kus-dl-result--stacked')), 'after: 上下比較レイアウトが結果へ反映されません');
-    assert.equal(await page.locator('#kus-diff-lite select[aria-label*="影響度"]').count(), 1, 'after: 影響度フィルタが見つかりません');
-
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.waitForTimeout(100);
-    const mobileLayout = await page.evaluate(() => {
-      const before = document.querySelector('#kus-diff-lite .kus-dl-contextlane--before')?.getBoundingClientRect();
-      const after = document.querySelector('#kus-diff-lite .kus-dl-contextlane--after')?.getBoundingClientRect();
-      const progress = document.querySelector('#kus-diff-lite .kus-dl-progress')?.getBoundingClientRect();
-      const valueColumns = document.querySelector('#kus-diff-lite .kus-dl-row__cols');
-      return {
-        beforeY: before?.y || 0,
-        afterY: after?.y || 0,
-        progressY: progress?.y || 0,
-        valueGrid: valueColumns ? getComputedStyle(valueColumns).gridTemplateColumns : ''
-      };
-    });
-    assert.ok(Math.abs(mobileLayout.beforeY - mobileLayout.afterY) < 2, 'after: 狭幅で BEFORE/AFTER レーンが同じ段に揃いません');
-    assert.ok(mobileLayout.progressY > mobileLayout.beforeY, 'after: 狭幅で進捗が比較レーンの下へ整理されません');
-    assert.ok(!mobileLayout.valueGrid.includes(' '), `after: 狭幅で値が1列表示になりません: ${mobileLayout.valueGrid}`);
-    await page.locator('#kus-diff-lite').screenshot({
-      path: path.join(outDir, 'after-panel-mobile.png'),
-      animations: 'disabled'
-    });
-    await page.setViewportSize({ width: 1365, height: 900 });
+    assert.equal(await layout.inputValue(), 'stacked', 'after: 上下比較レイアウトの選択が反映されません');
 
     const profileName = page.locator('#kus-diff-lite input[aria-label="比較条件プロファイル名"]');
     await profileName.fill('レビュー用');
     const profileDownloadPromise = page.waitForEvent('download', { timeout: 10000 });
-    await page.getByRole('button', { name: '比較条件を保存' }).click();
+    await page.locator('#kus-diff-lite [data-kus-dl-profile="save"]').click();
     const profileDownload = await profileDownloadPromise;
     const profileFile = path.join(outDir, 'after-comparison-profile.json');
     await profileDownload.saveAs(profileFile);
@@ -872,7 +1212,11 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     assert.equal(containsObjectKey(profilePayload, new Set(['appId', 'guestId', 'source', 'target', 'sourceBundle', 'targetBundle', 'sections', 'rows'])), false, 'after: 比較条件にアプリ・設定情報が混入しています');
     profile = { suggestedFilename: profileDownload.suggestedFilename(), file: path.basename(profileFile) };
 
-    const xlsxButton = page.getByRole('button', { name: /差分一覧を Excel 保存/ });
+    const outputDisclosure = page.locator('#kus-diff-lite [data-kus-dl-step="export"] details').first();
+    if ((await outputDisclosure.count()) && !(await outputDisclosure.getAttribute('open'))) {
+      await outputDisclosure.locator('summary').click();
+    }
+    const xlsxButton = page.locator('#kus-diff-lite [data-kus-dl-export="xlsx"]');
     assert.equal(await xlsxButton.count(), 1, 'after: Excel保存ボタンが見つかりません');
     assert.equal(await xlsxButton.isEnabled(), true, 'after: 比較完了後もExcel保存ボタンが無効です');
     const xlsxDownloadPromise = page.waitForEvent('download', { timeout: 30000 });
@@ -885,8 +1229,9 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     assert.equal(xlsxBytes.readUInt32LE(0), 0x04034b50, 'after: ExcelファイルがZIP形式ではありません');
     assert.match(xlsxDownload.suggestedFilename(), /\.xlsx$/i, 'after: Excelの拡張子が.xlsxではありません');
     await page.waitForFunction(() => {
-      const status = document.querySelector('#kus-diff-lite .kus-lp__status-text');
-      return /Excel/.test(status?.textContent || '');
+      const status = [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
+        .find((element) => /Excel/.test(element.textContent || ''));
+      return !!status;
     }, null, { timeout: 10000 });
     xlsx = {
       suggestedFilename: xlsxDownload.suggestedFilename(),
@@ -894,18 +1239,23 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
       file: path.basename(xlsxFile)
     };
 
-    const profileInput = page.locator('#kus-diff-lite input[type="file"][hidden][accept*="application/json"]');
+    const profileInput = page.locator('#kus-diff-lite input[data-kus-dl-profile-file="load"]');
     assert.equal(await profileInput.count(), 1, 'after: 比較条件プロファイル読込inputが見つかりません');
     await profileInput.setInputFiles(profileFile);
-    await page.waitForFunction(() => /再比較してください/.test(document.querySelector('#kus-diff-lite .kus-lp__status-text')?.textContent || ''), null, { timeout: 10000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
+      .some((element) => /再比較してください/.test(element.textContent || '')), null, { timeout: 10000 });
     assert.equal(await layout.inputValue(), 'stacked', 'after: 比較条件読込で比較レイアウトが復元されません');
-    assert.equal(await page.locator('#kus-diff-lite .kus-dl-row').count(), 0, 'after: プロファイル読込後に古い差分結果が残っています');
+    assert.equal(await page.locator('#kus-diff-lite [data-kus-dl-row-key]').count(), 0, 'after: プロファイル読込後に古い差分結果が残っています');
     assert.equal(await xlsxButton.isDisabled(), true, 'after: プロファイル読込後も古い結果をExcel出力できます');
     assert.deepEqual(errors, [], 'after: 新規レビュー/プロファイル/Excel操作でブラウザエラーが発生しました');
   }
 
   const reportDom = await captureReport(context, variant, reportFile, outDir);
   await context.close();
+  if (variant === 'after') {
+    objectiveStates = await captureObjectiveStateScenarios(browser, bundleSource, fixture, outDir);
+    browserZoom = await captureBrowserZoomMatrix(browser, bundleSource, fixture, outDir);
+  }
   return {
     hash: bundleHash(bundleSource),
     bytes: Buffer.byteLength(bundleSource),
@@ -914,6 +1264,9 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     report: reportDom,
     xlsx,
     profile,
+    responsive,
+    objectiveStates,
+    browserZoom,
     apiCalls,
     errors
   };

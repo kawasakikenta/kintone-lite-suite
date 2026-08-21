@@ -2405,6 +2405,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     ? `/k/guest/${encodeURIComponent(targetGuestId)}/v1/preview`
     : '/k/v1/preview';
   const diffTotal = summary.added + summary.removed + summary.changed;
+  const objectiveContentChangedCount = Math.max(0, summary.changed - summary.moved);
   const stateRenameNoticeCount = withSameSections.filter((row: any) => row?._stateRenameNotice).length;
   const formatAppDisplay = (meta: any) => {
     const id = String(meta?.appId || '-');
@@ -2510,7 +2511,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const CHAR_DIFF_MAX_CELLS = ${CHAR_DIFF_MAX_CELLS};
   const collapsed = new Set();
   let typeFilterValue = 'all';
-  let severityFilterValue = 'all';
+  let sectionFilterValue = 'all';
   let diffSortValue = 'standard';
   let focusModeEnabled = false;
   let compactDensityEnabled = false;
@@ -2881,7 +2882,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       if (hideSame && row.type === 'same') return false;
       if (hideReviewed && row.type !== 'same' && reviewedKeys.has(rowStateKey(row))) return false;
       return rowMatches(row, keyword);
-    }).filter(typeFilterMatches).filter(severityFilterMatches);
+    }).filter(sectionFilterMatches).filter(typeFilterMatches);
   }
 
   function csvEscape(v) {
@@ -2979,6 +2980,37 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return moved && type !== 'moved' ? base + '(移動)' : base;
   }
 
+  function rowExistenceLabel(row) {
+    if (row && row.type === 'added') return '比較先のみに存在';
+    if (row && row.type === 'removed') return '比較元のみに存在';
+    return '両方に存在';
+  }
+
+  function rowDifferenceLabels(row) {
+    if (row && (row.type === 'added' || row.type === 'removed')) return ['片側のみ'];
+    if (row && row.type === 'same') return ['内容は同じ'];
+    if (row && (row.moved || row.type === 'moved')) return ['並び順が異なる'];
+    const labels = [];
+    if (row && row.type === 'changed') labels.push('内容が異なる');
+    return labels.length ? labels : ['差分あり'];
+  }
+
+  function rowDifferenceLabel(row) {
+    return rowDifferenceLabels(row).join('・');
+  }
+
+  function renderRowFacts(row) {
+    const typeClass = row && row.type === 'same'
+      ? 'same'
+      : row && row.type === 'added'
+        ? 'added'
+        : row && row.type === 'removed'
+          ? 'removed'
+          : 'changed';
+    return '<span class="fact-chip fact-chip--existence fact-chip--' + typeClass + '" data-row-existence="' + escHtml(rowExistenceLabel(row)) + '">' + escHtml(rowExistenceLabel(row)) + '</span>'
+      + rowDifferenceLabels(row).map((label) => '<span class="fact-chip fact-chip--difference fact-chip--' + typeClass + '" data-row-difference="' + escHtml(label) + '">' + escHtml(label) + '</span>').join('');
+  }
+
   function issueSideLabel(side) {
     if (side === 'source') return '比較元';
     if (side === 'target') return '比較先';
@@ -2996,8 +3028,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       row.path || '',
       row.reasonSummary || '',
       row.renameCandidate ? (row.renameCandidate.fromCode || '') + ' ' + (row.renameCandidate.toCode || '') : '',
-      row.impactSummary || '',
-      ...((row.impactRefs || []).map((ref) => (ref.section || '') + ' ' + (ref.kind || '') + ' ' + (ref.path || ''))),
+      ...((row.impactRefs || []).map((ref) => (ref.section || ref.sectionKey || '') + ' ' + (ref.kind || '') + ' ' + (ref.label || '') + ' ' + (ref.path || ''))),
       safeText(row.left),
       safeText(row.right)
     ].join('\\n').toLowerCase();
@@ -3453,12 +3484,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         + (row.renameCandidate.matchedBy ? ' / 判定: ' + String(row.renameCandidate.matchedBy) : '');
       tags.push('<span class="meta-tag rename" title="' + escHtml(renameTip) + '">名称変更候補</span>');
     }
-    if (row.impactCount) {
-      const impactText = (row.impactRefs || [])
-        .map((ref) => (ref.section || ref.sectionKey || '-') + ':' + (ref.kind || '-'))
-        .join(' / ');
-      tags.push('<span class="meta-tag impact" title="' + escHtml(String(row.impactCount)) + '件">影響</span>');
-    }
     if (!tags.length) return '';
     return '<div class="meta-wrap">' +
       (tags.length ? '<div class="meta-tags">' + tags.join('') + '</div>' : '') +
@@ -3503,14 +3528,12 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       }
       const status = src && tgt ? 'changed' : (tgt ? 'added' : 'removed');
       const ref = tgt || src || ({});
-      const severity = highestSeverity(bucket);
       groups.push({
         code,
         rows: bucket,
         src,
         tgt,
         status,
-        severity,
         label: String(ref.label || ref.name || code),
         type: String(ref.type || '-'),
         reviewRow: {
@@ -3519,7 +3542,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
           section: SECTION_LABEL_MAP[FIELD_SECTION_KEY] || 'フィールド設定',
           path: FIELD_SECTION_KEY + '.properties.' + code,
           type: status,
-          severity,
           _displayOnly: !bucket.some((row) => isActionableReviewRow(row)),
           __childRows: bucket
         }
@@ -3530,7 +3552,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   function renderFieldJsonBlockHtml(group, useCharDiff) {
     const toneCls = group.status === 'added' ? 'added' : group.status === 'removed' ? 'removed' : 'changed';
-    const severity = normalizeSeverity(group && group.severity);
     const checked = selectedFieldCodes.has(group.code);
     const selectable = CAN_BUILD_REFLECT_JSON && (group.rows || []).some((row) => row && row.type !== 'same' && !row._displayOnly);
     const reviewRow = group.reviewRow;
@@ -3555,8 +3576,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     }
     return '<article class="fj-block fj-block--' + toneCls + (reviewed ? ' drow--reviewed' : '') + '" tabindex="-1" data-diff-row-key="' + escHtml(reviewKey) + '" aria-current="false">'
       + '<div class="fj-head">'
-      +   '<span class="type-chip type-chip--' + toneCls + '">' + escHtml(diffTypeLabel(group.status, false)) + '</span>'
-      +   '<span class="severity-chip severity-chip--' + severity + '" data-severity-chip="' + severity + '">重要度 ' + severityLabel(severity) + '</span>'
+      +   renderRowFacts(reviewRow)
       +   '<span class="fj-title">' + escHtml(group.label) + '</span>'
       +   '<code class="fj-code">' + escHtml(group.code) + '</code>'
       +   '<span class="fj-type">' + escHtml(fieldTypeDisplayLabel(group.type)) + '</span>'
@@ -3994,7 +4014,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         impactCount,
         impactRefs,
         impactSummary: bucket.find((row) => row.impactSummary)?.impactSummary || rootRow.impactSummary || '',
-        severity: highestSeverity(bucket),
         __fieldRowCount: bucket.length
       });
     });
@@ -4022,8 +4041,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       out.diffCount += 1;
       if (row.type === 'added') out.added += 1;
       else if (row.type === 'removed') out.removed += 1;
+      else if (row.moved || row.type === 'moved') out.moved += 1;
       else out.changed += 1;
-      if (row.moved) out.moved += 1;
     });
     return out;
   }
@@ -4031,11 +4050,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   function groupSummaryLabel(rows) {
     const s = summarizeGroupRows(rows);
     const parts = ['差分 ' + s.diffCount];
-    if (s.added) parts.push('追加 ' + s.added);
-    if (s.removed) parts.push('削除 ' + s.removed);
-    if (s.changed) parts.push('変更 ' + s.changed);
-    if (s.moved) parts.push('移動 ' + s.moved);
-    if (s.same) parts.push('同一 ' + s.same);
+    if (s.added) parts.push('比較先のみ ' + s.added);
+    if (s.removed) parts.push('比較元のみ ' + s.removed);
+    if (s.changed) parts.push('内容差 ' + s.changed);
+    if (s.moved) parts.push('並び順差 ' + s.moved);
+    if (s.same) parts.push('同じ ' + s.same);
     return parts.join(' / ');
   }
 
@@ -4081,6 +4100,19 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       html += '<details class="path-tech"><summary>技術情報</summary><div class="path-tech-body">'
         + technicalRows.map((item) => '<div><span>' + escHtml(item[0]) + '</span><code>' + escHtml(item[1]) + '</code></div>').join('')
         + '</div></details>';
+    }
+    const relatedRefs = Array.isArray(row?.impactRefs) ? row.impactRefs.filter(Boolean) : [];
+    const relatedCount = Math.max(Number(row?.impactCount || 0), relatedRefs.length);
+    if (relatedCount) {
+      html += '<details class="related-settings"><summary>関連している設定 ' + relatedCount + '件</summary>'
+        + (relatedRefs.length
+          ? '<ul>' + relatedRefs.map((ref) => {
+              const label = ref.label || ref.kind || ref.section || ref.sectionKey || '関連設定';
+              const path = ref.path ? ' / ' + ref.path : '';
+              return '<li><span>' + escHtml(label) + '</span><code>' + escHtml(path) + '</code></li>';
+            }).join('') + '</ul>'
+          : '<p>関連件数のみ検出されています。</p>')
+        + '</details>';
     }
     return html + renderRowMeta(row);
   }
@@ -5110,7 +5142,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const chips = [];
     if (group.settingDiffCount) chips.push('<span class="fc-chip">設定 ' + group.settingDiffCount + '</span>');
     if (includeLayout && group.layoutDiffCount) chips.push('<span class="fc-chip">配置 ' + group.layoutDiffCount + '</span>');
-    if (group.impactCount) chips.push('<span class="fc-chip">影響 ' + group.impactCount + '</span>');
     if (group.parentTableCode) chips.push('<span class="fc-chip fc-chip--muted">テーブル ' + escHtml(group.parentTableLabel || group.parentTableCode) + '</span>');
     if (!chips.length) chips.push('<span class="fc-chip fc-chip--muted">差分なし</span>');
     return chips.join('');
@@ -5556,10 +5587,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       if (row.type === 'same') same += 1;
       else if (row.type === 'added') added += 1;
       else if (row.type === 'removed') removed += 1;
-      else {
-        changed += 1;
-        if (row.moved) moved += 1;
-      }
+      else if (row.moved || row.type === 'moved') moved += 1;
+      else changed += 1;
     }
     document.getElementById('stat-total').textContent = String(rows.length);
     document.getElementById('stat-added').textContent = String(added);
@@ -5646,75 +5675,39 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   function typeFilterMatches(row) {
     if (typeFilterValue === 'all') return true;
     if (typeFilterValue === 'moved') return !!row.moved;
-    if (typeFilterValue === 'changed') return row.type !== 'same' && row.type !== 'added' && row.type !== 'removed';
+    if (typeFilterValue === 'changed') return !row.moved && row.type !== 'moved' && row.type !== 'same' && row.type !== 'added' && row.type !== 'removed';
     return row.type === typeFilterValue;
   }
 
-  function normalizeSeverity(value) {
-    const severity = String(value || 'low').toLowerCase();
-    return severity === 'high' || severity === 'medium' ? severity : 'low';
-  }
-
-  function severityLabel(value) {
-    const severity = normalizeSeverity(value);
-    return severity === 'high' ? '高' : severity === 'medium' ? '中' : '低';
-  }
-
-  function severityRank(value) {
-    const severity = normalizeSeverity(value);
-    return severity === 'high' ? 0 : severity === 'medium' ? 1 : 2;
-  }
-
-  function severityFilterMatches(row) {
-    return severityFilterValue === 'all' || normalizeSeverity(row && row.severity) === severityFilterValue;
-  }
-
-  function highestSeverity(rows) {
-    return (rows || []).reduce((best, row) => {
-      const severity = normalizeSeverity(row && row.severity);
-      return severityRank(severity) < severityRank(best) ? severity : best;
-    }, 'low');
+  function sectionFilterMatches(row) {
+    if (sectionFilterValue === 'all') return true;
+    return String(row && (row.sectionKey || row.section) || '') === sectionFilterValue;
   }
 
   function buildReviewQueueHtml(rows) {
     const progress = reviewProgressOf(rows);
     const pending = progress.actionable.filter((row) => !reviewedKeys.has(rowStateKey(row)));
-    const high = pending.filter((row) => normalizeSeverity(row.severity) === 'high');
-    const medium = pending.filter((row) => normalizeSeverity(row.severity) === 'medium');
-    const low = pending.length - high.length - medium.length;
-    const priority = high.length ? 'high' : medium.length ? 'medium' : '';
-    const samples = (high.length ? high : medium).slice(0, 3);
-    const startRow = high[0] || medium[0] || pending[0] || null;
-    const tone = high.length ? 'alert' : medium.length ? 'watch' : 'clear';
-    const headline = high.length
-      ? '高重要度 ' + high.length + '件を先に確認'
-      : medium.length
-        ? '高重要度なし・中重要度 ' + medium.length + '件'
-        : pending.length
-          ? '高・中重要度の未確認差分はありません'
-          : '現在の対象はすべて確認済みです';
-    return '<section class="review-queue review-queue--' + tone + '" aria-labelledby="reviewQueueTitle" tabindex="-1">'
-      + '<div class="review-queue-mark" aria-hidden="true">' + (high.length ? '!' : medium.length ? '•' : '✓') + '</div>'
+    const samples = pending.slice(0, 3);
+    const startRow = pending[0] || null;
+    const headline = pending.length
+      ? '未確認の差分を上から確認できます'
+      : '現在の対象はすべて確認済みです';
+    return '<section class="review-queue review-queue--' + (pending.length ? 'pending' : 'clear') + '" aria-labelledby="reviewQueueTitle" tabindex="-1">'
+      + '<div class="review-queue-mark" aria-hidden="true">' + (pending.length ? '→' : '✓') + '</div>'
       + '<div class="review-queue-main">'
-      +   '<span class="review-queue-kicker">最優先レビュー</span>'
+      +   '<span class="review-queue-kicker">レビュー受信箱</span>'
       +   '<strong id="reviewQueueTitle">' + escHtml(headline) + '</strong>'
-      +   '<span class="review-queue-note">全体未確認 ' + pending.length + '件 · 高 ' + high.length + ' / 中 ' + medium.length + ' / 低 ' + low + '</span>'
+      +   '<span class="review-queue-note">未確認 ' + pending.length + '件 / レビュー対象 ' + progress.total + '件。判断による並び替えをせず、レポートの定義順で表示します。</span>'
       +   '<div class="review-progress review-progress--queue">'
       +     '<div class="review-progress-copy"><span>確認済み</span><strong>' + progress.reviewed + ' / ' + progress.total + '（' + progress.percent + '%）</strong></div>'
       +     '<div class="review-progress-track" role="progressbar" aria-label="レビュー進捗" aria-valuemin="0" aria-valuemax="' + progress.total + '" aria-valuenow="' + progress.reviewed + '" aria-valuetext="確認済み ' + progress.reviewed + '件 / 全 ' + progress.total + '件（' + progress.percent + '%）"><span style="width:' + progress.percent + '%"></span></div>'
       +     '<span class="review-progress-note">確認状態はJSONファイルで保存・読込できます</span>'
       +   '</div>'
-      +   (samples.length ? '<div class="review-queue-samples" aria-label="優先して確認する差分">' + samples.map((row) => '<button type="button" data-review-jump="' + escHtml(rowStateKey(row)) + '">' + escHtml(reportRowTitle(row)) + '</button>').join('') + '</div>' : '')
+      +   (samples.length ? '<div class="review-queue-samples" aria-label="次に確認する差分">' + samples.map((row) => '<button type="button" data-review-jump="' + escHtml(rowStateKey(row)) + '">' + escHtml(reportRowTitle(row)) + '</button>').join('') + '</div>' : '')
       + '</div>'
-      + (startRow || priority
+      + (startRow
         ? '<div class="review-queue-actions">'
-          + (startRow
-            ? '<button type="button" class="review-queue-action" data-review-jump="' + escHtml(rowStateKey(startRow)) + '">未確認レビューを開始</button>'
-            : '')
-          + (priority
-            ? '<button type="button" class="review-queue-action review-queue-action--secondary" data-priority-filter="' + priority + '"' + (severityFilterValue === priority ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>'
-              + (priority === 'high' ? '高重要度だけ表示' : '中重要度だけ表示') + '</button>'
-            : '')
+          + '<button type="button" class="review-queue-action" data-review-jump="' + escHtml(rowStateKey(startRow)) + '">未確認レビューを開始</button>'
           + '</div>'
         : '')
       + '</section>';
@@ -5722,9 +5715,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   function buildActiveFiltersHtml(keyword, hideSame, hideReviewed) {
     const chips = [];
-    const typeLabels = { added: '追加', removed: '削除', changed: '変更', moved: '移動', same: '同一' };
+    const typeLabels = { added: '比較先のみ', removed: '比較元のみ', changed: '内容が異なる', moved: '並び順が異なる', same: '同じ' };
     if (typeFilterValue !== 'all') chips.push(['type', '種別: ' + (typeLabels[typeFilterValue] || typeFilterValue)]);
-    if (severityFilterValue !== 'all') chips.push(['severity', '重要度: ' + severityLabel(severityFilterValue)]);
+    if (sectionFilterValue !== 'all') chips.push(['section', 'セクション: ' + (SECTION_LABEL_MAP[sectionFilterValue] || sectionFilterValue)]);
     if (keyword) chips.push(['search', '検索: ' + keyword]);
     if (hideSame) chips.push(['hideSame', '同一を非表示']);
     if (hideReviewed) chips.push(['hideReviewed', '確認済みを非表示']);
@@ -5746,10 +5739,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     if (diffSortValue === 'standard') return rows;
     const typeOrder = { removed: 0, added: 1, changed: 2, same: 3 };
     return rows.slice().sort((a, b) => {
-      if (diffSortValue === 'severity') {
-        const severityDiff = severityRank(a && a.severity) - severityRank(b && b.severity);
-        if (severityDiff) return severityDiff;
-      }
       const d = ((typeOrder[a.type] != null ? typeOrder[a.type] : 9) - (typeOrder[b.type] != null ? typeOrder[b.type] : 9));
       if (d) return d;
       return String(a.path || '').localeCompare(String(b.path || ''));
@@ -5759,26 +5748,19 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   function buildToolbarHtml(rows, hideSame, hideReviewed, shownCount, keyword, scopeCount, pendingCount) {
     const s = summarizeGroupRows(rows);
     const chips = [
-      { key: 'all', label: '全て', count: rows.length },
-      { key: 'added', label: '追加', count: s.added },
-      { key: 'removed', label: '削除', count: s.removed },
-      { key: 'changed', label: '変更', count: s.changed }
+      { key: 'all', label: 'すべて', count: rows.length },
+      { key: 'added', label: '比較先のみ', count: s.added },
+      { key: 'removed', label: '比較元のみ', count: s.removed },
+      { key: 'changed', label: '内容が異なる', count: s.changed }
     ];
-    if (s.moved) chips.push({ key: 'moved', label: '移動', count: s.moved });
-    if (!hideSame) chips.push({ key: 'same', label: '同一', count: s.same });
-    const severityCounts = { high: 0, medium: 0, low: 0 };
-    rows.forEach((row) => { severityCounts[normalizeSeverity(row && row.severity)] += 1; });
-    const severityOptions = [
-      ['all', '全重要度', rows.length],
-      ['high', '高', severityCounts.high],
-      ['medium', '中', severityCounts.medium],
-      ['low', '低', severityCounts.low]
-    ];
+    if (s.moved) chips.push({ key: 'moved', label: '並び順が異なる', count: s.moved });
+    if (!hideSame) chips.push({ key: 'same', label: '同じ', count: s.same });
     const sortOptions = [
       ['standard', '標準（定義順）'],
-      ['type', '種別順（削除→追加→変更）'],
-      ['severity', '重要度が高い順（高→中→低）']
+      ['type', '存在状況・差分内容順']
     ];
+    const sectionKeys = [...new Set(rows.map((row) => String(row && (row.sectionKey || row.section) || '')).filter(Boolean))];
+    const sectionOptions = [['all', 'すべてのセクション']].concat(sectionKeys.map((key) => [key, SECTION_LABEL_MAP[key] || key]));
     const sourceContextLabel = String((REPORT_META.source.appName ? REPORT_META.source.appName + ' · ' : '') + 'App ' + (REPORT_META.source.appId || '-'));
     const targetContextLabel = String((REPORT_META.target.appName ? REPORT_META.target.appName + ' · ' : '') + 'App ' + (REPORT_META.target.appId || '-'));
     return '<div class="diff-toolbar" role="toolbar" aria-label="差分一覧の絞り込みと並び替え">'
@@ -5803,8 +5785,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         + c.label + '<b>' + c.count + '</b></button>'
       ).join('')
       + '<span class="diff-toolbar-spacer"></span>'
-      + '<label class="diff-sort diff-severity-filter">重要度 <select id="diffSeveritySel" aria-label="重要度で絞り込み">'
-      + severityOptions.map((o) => '<option value="' + o[0] + '"' + (severityFilterValue === o[0] ? ' selected' : '') + '>' + o[1] + ' (' + o[2] + ')</option>').join('')
+      + '<label class="diff-sort">セクション <select id="diffSectionSel" aria-label="セクションで絞り込み">'
+      + sectionOptions.map((o) => '<option value="' + escHtml(o[0]) + '"' + (sectionFilterValue === o[0] ? ' selected' : '') + '>' + escHtml(o[1]) + '</option>').join('')
       + '</select></label>'
       + '</div>'
       + '<div class="diff-toolbar-row diff-toolbar-row--navigation">'
@@ -5827,10 +5809,10 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   function sectionCountChips(s) {
     const parts = [];
-    if (s.added) parts.push('<span class="cnt cnt--add" title="追加 ' + s.added + '件">追加 ' + s.added + '</span>');
-    if (s.removed) parts.push('<span class="cnt cnt--del" title="削除 ' + s.removed + '件">削除 ' + s.removed + '</span>');
-    if (s.changed) parts.push('<span class="cnt cnt--chg" title="変更 ' + s.changed + '件">変更 ' + s.changed + '</span>');
-    if (s.same) parts.push('<span class="cnt cnt--same" title="同一 ' + s.same + '件">同一 ' + s.same + '</span>');
+    if (s.added) parts.push('<span class="cnt cnt--add" title="比較先のみ ' + s.added + '件">比較先のみ ' + s.added + '</span>');
+    if (s.removed) parts.push('<span class="cnt cnt--del" title="比較元のみ ' + s.removed + '件">比較元のみ ' + s.removed + '</span>');
+    if (s.changed) parts.push('<span class="cnt cnt--chg" title="内容が異なる ' + s.changed + '件">内容差 ' + s.changed + '</span>');
+    if (s.same) parts.push('<span class="cnt cnt--same" title="内容は同じ ' + s.same + '件">同じ ' + s.same + '</span>');
     if (!parts.length) parts.push('<span class="cnt cnt--same">0件</span>');
     return parts.join('');
   }
@@ -5854,7 +5836,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   function renderDiffRowHtml(row, useCharDiff) {
     const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
-    const severity = normalizeSeverity(row && row.severity);
     const key = rowStateKey(row);
     rowLookup.set(key, row);
     const hasDiffKids = !isRawJsonMode() && !!(row.__childRows && row.__childRows.some((kid) => kid.type !== 'same'));
@@ -5895,13 +5876,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         : '')
       + '</span>';
     return '<article class="drow drow--' + typeClass + (reviewed ? ' drow--reviewed' : '') + (focused ? ' drow--focus' : '') + '"'
-      + ' data-severity="' + severity + '"'
       + ' tabindex="-1" data-diff-row-key="' + escHtml(key) + '" aria-current="' + (focused ? 'true' : 'false') + '"'
-      + ' aria-label="' + escHtml(diffTypeLabel(row.type, row.moved) + '・重要度 ' + severityLabel(severity) + ': ' + (row.path || '-')) + '">'
+      + ' aria-label="' + escHtml(rowExistenceLabel(row) + '・' + rowDifferenceLabel(row) + ': ' + reportRowTitle(row)) + '">'
       + '<div class="drow-head">'
-      +   '<span class="type-chip type-chip--' + typeClass + '">' + escHtml(diffTypeLabel(row.type, row.moved)) + '</span>'
-      +   '<span class="severity-chip severity-chip--' + severity + '" data-severity-chip="' + severity + '">重要度 ' + severityLabel(severity) + '</span>'
-      +   '<div class="drow-title" title="' + escHtml(row.path || '-') + '">' + renderPathCell(row) + '</div>'
+      +   '<span class="drow-facts">' + renderRowFacts(row) + '</span>'
+      +   '<div class="drow-title">' + renderPathCell(row) + '</div>'
       +   actionsHtml
       + '</div>'
       + (valueHtml ? '<div class="drow-val">' + valueHtml + '</div>' : '')
@@ -5919,7 +5898,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       if (hideReviewed && row.type !== 'same' && reviewedKeys.has(rowStateKey(row))) return false;
       return rowMatches(row, keyword);
     });
-    const visibleRows = filterBaseRows.filter(typeFilterMatches).filter(severityFilterMatches);
+    const visibleRows = filterBaseRows.filter(sectionFilterMatches).filter(typeFilterMatches);
     return {
       hideSame,
       hideReviewed,
@@ -6194,7 +6173,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     if (reviewJump) {
       const key = reviewJump.getAttribute('data-review-jump') || '';
       typeFilterValue = 'all';
-      severityFilterValue = 'all';
+      sectionFilterValue = 'all';
       const search = document.getElementById('search');
       const hideReviewed = document.getElementById('hideReviewed');
       if (search) search.value = '';
@@ -6243,20 +6222,12 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       }
       return;
     }
-    const priorityFilter = e.target.closest('[data-priority-filter]');
-    if (priorityFilter) {
-      severityFilterValue = priorityFilter.getAttribute('data-priority-filter') || 'all';
-      typeFilterValue = 'all';
-      render();
-      requestAnimationFrame(() => document.getElementById('diffSeveritySel')?.focus());
-      return;
-    }
     const clearFilter = e.target.closest('[data-clear-filter]');
     if (clearFilter) {
       const key = clearFilter.getAttribute('data-clear-filter') || '';
       const clearAll = key === 'all';
       if (clearAll || key === 'type') typeFilterValue = 'all';
-      if (clearAll || key === 'severity') severityFilterValue = 'all';
+      if (clearAll || key === 'section') sectionFilterValue = 'all';
       if (clearAll || key === 'search') document.getElementById('search').value = '';
       if (clearAll || key === 'hideSame') document.getElementById('hideSame').checked = false;
       if (clearAll || key === 'hideReviewed') document.getElementById('hideReviewed').checked = false;
@@ -6273,9 +6244,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       requestAnimationFrame(() => {
         const focusTarget = key === 'type'
           ? document.querySelector('[data-type-chip="all"]')
-          : key === 'severity'
-            ? document.getElementById('diffSeveritySel')
-            : document.getElementById('search');
+          : key === 'section'
+            ? document.getElementById('diffSectionSel')
+          : document.getElementById('search');
         const visibleTarget = focusTarget && focusTarget.offsetParent !== null
           ? focusTarget
           : document.getElementById('mobileSidebarToggle');
@@ -6576,10 +6547,10 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       requestAnimationFrame(() => document.getElementById('diffSortSel')?.focus());
       return;
     }
-    if (e.target && e.target.id === 'diffSeveritySel') {
-      severityFilterValue = e.target.value || 'all';
+    if (e.target && e.target.id === 'diffSectionSel') {
+      sectionFilterValue = e.target.value || 'all';
       render();
-      requestAnimationFrame(() => document.getElementById('diffSeveritySel')?.focus());
+      requestAnimationFrame(() => document.getElementById('diffSectionSel')?.focus());
       return;
     }
     const reviewToggle = e.target && e.target.closest ? e.target.closest('[data-review-toggle]') : null;
@@ -7134,13 +7105,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     body.dark .type-chip--removed{background:#450a0a;color:#fecaca;border-color:#991b1b}
     body.dark .type-chip--changed{background:#78350f;color:#fde68a;border-color:#b45309}
     body.dark .type-chip--same{background:#134e4a;color:#99f6e4;border-color:#0f766e}
-    .severity-chip{display:inline-flex;align-items:center;justify-content:center;padding:4px 9px;border-radius:999px;font-size:10px;font-weight:800;border:1px solid transparent;white-space:nowrap;flex-shrink:0;margin-top:1px}
-    .severity-chip--high{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
-    .severity-chip--medium{background:#fef3c7;color:#92400e;border-color:#fcd34d}
-    .severity-chip--low{background:#e2e8f0;color:#475569;border-color:#cbd5e1}
-    body.dark .severity-chip--high{background:#450a0a;color:#fecaca;border-color:#991b1b}
-    body.dark .severity-chip--medium{background:#78350f;color:#fde68a;border-color:#b45309}
-    body.dark .severity-chip--low{background:#334155;color:#cbd5e1;border-color:#475569}
     .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:var(--muted);font-size:11px}
     .path-main{font-size:13px;font-weight:800;color:var(--fg);margin-bottom:3px;word-break:break-word;line-height:1.45}
     .path-sub{font-size:10px;line-height:1.45;color:var(--muted);word-break:break-all}
@@ -7159,10 +7123,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .meta-tag{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;border:1px solid var(--border);background:var(--pad);font-size:10px;font-weight:600;color:var(--fg)}
     .meta-tag.reason{background:#fff7ed;color:#9a3412;border-color:#fdba74}
     .meta-tag.rename{background:#ecfdf5;color:#15803d;border-color:#86efac}
-    .meta-tag.impact{background:#eff6ff;color:#1d4ed8;border-color:#93c5fd}
     body.dark .meta-tag.reason{background:#431407;color:#fdba74;border-color:#9a3412}
     body.dark .meta-tag.rename{background:#052e16;color:#86efac;border-color:#166534}
-    body.dark .meta-tag.impact{background:#172554;color:#93c5fd;border-color:#1d4ed8}
     .meta-line{font-size:10px;line-height:1.5;color:var(--muted)}
     .meta-line strong{color:var(--fg)}
     .scroll{max-height:300px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
@@ -7303,6 +7265,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     body.diff-focus-mode .focus-context{display:flex}
     body.diff-focus-mode .sec:not(:has(.drow--focus)){display:none}
     body.diff-focus-mode .drow:not(.drow--focus),body.diff-focus-mode .fj-block:not(.drow--focus),body.diff-focus-mode .same-fold{display:none}
+    body.diff-focus-mode .report-workspace{grid-template-columns:minmax(0,1fr)}
+    body.diff-focus-mode .report-workspace>main{grid-column:1/-1}
     body.diff-focus-mode main{padding-top:12px}
     body.diff-focus-mode .settings-shell{margin-top:0}
     body.diff-focus-mode .content{padding-top:10px}
@@ -7533,11 +7497,150 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .fd-overlay-actions{width:100%;justify-content:space-between}
       .fd-snapshots,.fd-entry-grid,.fd-mini-grid,.kf-extra-grid{grid-template-columns:1fr}
     }
+
+    /* Human-first report shell: direction -> completeness -> facts -> review. */
+    body{display:block;min-width:0;background:#f4f6f8;background-image:none}
+    body.dark{background:#0b1220;background-image:none}
+    .skip-link{position:fixed;left:12px;top:10px;z-index:120;transform:translateY(-160%);padding:10px 14px;border-radius:8px;background:var(--fg);color:var(--card);font-size:12px;font-weight:800;text-decoration:none}
+    .skip-link:focus{transform:translateY(0);outline:3px solid var(--accent);outline-offset:2px}
+    .report-hero,.report-workspace{width:min(calc(100% - 32px),1440px);margin-inline:auto}
+    .report-hero{display:flex;flex-direction:column;align-items:stretch;gap:18px;margin-top:20px;padding:24px;border-radius:18px;background:var(--card);box-shadow:0 12px 40px -28px rgba(15,23,42,.45);overflow:visible}
+    .report-hero::before{height:4px;background:var(--accent)}
+    .report-hero .topbar-main{gap:10px}
+    .report-hero .topbar-title{margin:0;font-size:clamp(1.45rem,3vw,2rem)}
+    .topbar-lead{max-width:72ch;margin:0;color:var(--muted);font-size:13px;line-height:1.7}
+    .report-hero .topbar-compare{width:100%;max-width:980px;gap:12px}
+    .report-hero .topbar-app-card{grid-template-columns:auto auto minmax(0,1fr);min-height:66px;padding:12px 14px;border-top:1px solid var(--border);border-left:4px solid #475569;background:var(--card-soft)}
+    .report-hero .topbar-app-card--source{border-left-color:#475569;background:var(--card-soft)}
+    .report-hero .topbar-app-card--target{border-left-color:var(--accent);background:var(--card-soft)}
+    body.dark .report-hero .topbar-app-card--source,body.dark .report-hero .topbar-app-card--target{background:var(--card-soft)}
+    .report-hero .topbar-app-eyebrow{font-size:11px;letter-spacing:.04em}
+    .report-hero .topbar-app-side{font-size:10px}
+    .report-hero .topbar-app-card strong{font-size:14px;white-space:normal;overflow:visible;word-break:break-word}
+    .report-step-label{display:block;margin-bottom:3px;color:var(--muted);font-size:10px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}
+    .report-completeness{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px 14px;padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--card-soft)}
+    .report-completeness--incomplete{border-color:#f0c36a;background:#fffaf0}
+    .report-completeness--complete{border-color:#9bc8ac;background:#f4fbf6}
+    body.dark .report-completeness--incomplete{border-color:#8b6824;background:#2a210d}
+    body.dark .report-completeness--complete{border-color:#245b3c;background:#0d281a}
+    .report-completeness-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#334155;color:#fff;font-size:17px;font-weight:900}
+    .report-completeness--incomplete .report-completeness-mark{background:#a16207}
+    .report-completeness--complete .report-completeness-mark{background:#15803d}
+    .report-completeness-copy h2,.report-facts h2{margin:0;color:var(--fg);font-size:16px;line-height:1.45}
+    .report-completeness-copy p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.65}
+    .report-diagnostics{grid-column:2;min-width:0;border-top:1px solid color-mix(in srgb,var(--border) 80%,transparent);padding-top:9px}
+    .report-diagnostics>summary{display:inline-flex;align-items:center;min-height:36px;color:var(--accent-strong);font-size:11px;font-weight:800;cursor:pointer}
+    .report-diagnostics>summary:focus-visible,.tool-details-summary:focus-visible,.related-settings>summary:focus-visible{outline:none;box-shadow:var(--focus);border-radius:7px}
+    .report-diagnostics .report-notices{margin:8px 0 0}
+    .report-facts{padding-top:2px}
+    .report-facts-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:10px}
+    .report-facts-head>p{max-width:52ch;margin:0;color:var(--muted);font-size:11px;line-height:1.6;text-align:right}
+    .report-fact-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+    .report-fact-grid article{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;min-width:0;padding:12px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card-soft)}
+    .report-fact-grid span{align-self:center;color:var(--fg);font-size:11px;font-weight:750;line-height:1.45}
+    .report-fact-grid strong{grid-row:1/3;grid-column:2;align-self:center;font-size:24px;font-variant-numeric:tabular-nums}
+    .report-fact-grid small{color:var(--muted);font-size:9px;line-height:1.45}
+    .report-meta-line{display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:10px;line-height:1.5}
+    .report-workspace{display:grid;grid-template-columns:minmax(248px,282px) minmax(0,1fr);align-items:start;gap:16px;margin-top:16px;margin-bottom:36px}
+    .report-workspace>aside{position:sticky;top:12px;width:auto;min-width:0;height:calc(100vh - 24px);max-height:calc(100vh - 24px);border:1px solid var(--border);border-radius:16px;background:var(--sidebar);overflow:auto;box-shadow:none;backdrop-filter:none}
+    .report-workspace>main{min-width:0;padding:0;overflow:visible}
+    .report-workspace .settings-shell{margin-top:0;border-radius:16px;box-shadow:0 12px 40px -30px rgba(15,23,42,.45)}
+    .report-workspace .settings-tabs{border-radius:16px 16px 0 0}
+    .tool-details{padding:0!important}
+    .tool-details-summary{display:flex;align-items:center;min-height:46px;padding:12px 16px;color:var(--fg);font-size:11px;font-weight:850;cursor:pointer;list-style:none}
+    .tool-details-summary::-webkit-details-marker{display:none}
+    .tool-details-summary::before{content:"▸";margin-right:7px;color:var(--muted);font-size:9px}
+    .tool-details[open] .tool-details-summary::before{transform:rotate(90deg)}
+    .tool-details-body{padding:0 16px 16px;border-top:1px solid var(--border)}
+    .tool-details-body>.field-label:first-child{margin-top:14px}
+    .drow-list{gap:9px;padding:10px;background:var(--card-soft);overflow:visible}
+    .drow{border:1px solid var(--border);border-left:4px solid #94a3b8;border-radius:12px;background:var(--card);box-shadow:none}
+    .drow--added{border-left-color:#0f766e}
+    .drow--removed{border-left-color:#475569}
+    .drow--changed{border-left-color:#2563eb}
+    .drow-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px 12px}
+    .drow-facts{display:flex;grid-column:1/-1;gap:6px;flex-wrap:wrap}
+    .drow-title{grid-column:1;min-width:0}
+    .drow-actions{grid-column:2;align-self:start}
+    .fact-chip{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:var(--card-soft);color:var(--fg);font-size:10px;font-weight:750;line-height:1.35}
+    .fact-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#64748b;flex:0 0 auto}
+    .fact-chip--added::before{background:#0f766e}
+    .fact-chip--removed::before{background:#475569}
+    .fact-chip--changed::before{background:#2563eb}
+    .fact-chip--same::before{background:#64748b}
+    .fact-chip--difference{background:var(--card)}
+    .path-main{font-size:14px;line-height:1.55}
+    .path-tech>summary,.related-settings>summary{display:inline-flex;align-items:center;min-height:30px;color:var(--muted);font-size:10px;font-weight:750;cursor:pointer}
+    .related-settings{margin-top:2px}
+    .related-settings>summary::before{content:"▸";margin-right:5px;font-size:8px}
+    .related-settings[open]>summary::before{transform:rotate(90deg)}
+    .related-settings ul{display:grid;gap:5px;margin:2px 0 0;padding:8px 10px 8px 26px;border:1px dashed var(--border);border-radius:8px;background:var(--card-soft)}
+    .related-settings li{font-size:10px;line-height:1.5;color:var(--fg)}
+    .related-settings code{display:block;color:var(--muted);font-size:9px;word-break:break-all}
+    .related-settings p{margin:2px 0 0;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;color:var(--muted);font-size:10px}
+    .review-queue{border-color:var(--border);background:var(--card);box-shadow:none}
+    .review-queue--pending .review-queue-mark{background:var(--accent);color:#fff}
+    .review-queue--clear .review-queue-mark{background:#15803d;color:#fff}
+    .review-queue-note{line-height:1.5}
+    .diff-toolbar{border-top-width:1px;box-shadow:0 10px 30px -25px rgba(15,23,42,.65)}
+    .tchip{min-height:36px}
+    .settings-tab,.btn,.row-act,.row-review-next,.row-reviewed,.row-select{min-height:36px}
+
+    @media (max-width:1080px){
+      .report-hero,.report-workspace{width:min(calc(100% - 24px),1440px)}
+      .report-workspace{display:block}
+      .report-workspace>aside{position:relative;top:auto;width:auto;height:auto;max-height:none;margin-bottom:12px;overflow:visible}
+      .report-workspace>main{padding:0}
+      .report-fact-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+    }
+    @media (max-width:768px){
+      .report-hero,.report-workspace{width:calc(100% - 16px)}
+      .report-hero{gap:14px;margin-top:8px;padding:16px;border-radius:14px}
+      .report-hero .topbar-compare{grid-template-columns:1fr;gap:6px}
+      .report-hero .topbar-arrow{height:16px;transform:rotate(90deg)}
+      .report-completeness{grid-template-columns:auto minmax(0,1fr);padding:13px}
+      .report-diagnostics{grid-column:1/-1}
+      .report-facts-head{display:block}
+      .report-facts-head>p{margin-top:5px;text-align:left}
+      .report-fact-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .val-inline--lanes,.duo-row,.fd-entry-grid,.sl-pair{grid-template-columns:1fr}
+      .duo-head{display:none}
+      .drow-head{grid-template-columns:1fr}
+      .drow-facts,.drow-title,.drow-actions{grid-column:1}
+      .drow-actions{width:100%;margin-left:0;justify-content:flex-start;flex-wrap:wrap}
+      .report-workspace button,.report-workspace input,.report-workspace select,.report-workspace summary{min-height:44px}
+    }
+    @media (max-width:480px){
+      .report-fact-grid{grid-template-columns:1fr}
+      .report-fact-grid article{padding:10px 12px}
+      .report-completeness{grid-template-columns:1fr}
+      .report-completeness-mark{width:30px;height:30px}
+      .topbar-eyebrow-row{align-items:flex-start;flex-direction:column}
+      .header-badge{white-space:normal}
+      .report-meta-line{display:grid;gap:4px}
+      .drow-list{padding:7px}
+      .drow{padding:10px 9px}
+      .fact-chip{white-space:normal}
+      .review-queue{grid-template-columns:1fr}
+      .review-queue-actions{grid-column:1}
+    }
+    @media (forced-colors:active){
+      .report-completeness,.report-fact-grid article,.drow,.fact-chip{forced-color-adjust:auto;border:1px solid CanvasText}
+      .fact-chip::before{border:1px solid CanvasText;background:CanvasText}
+      :focus-visible{outline:2px solid Highlight!important;outline-offset:2px;box-shadow:none!important}
+    }
     @media print{
-      aside,.sb-panel .btn,.settings-tabs,.search-hint{display:none!important}
+      aside,.sb-panel .btn,.settings-tabs,.search-hint,.diff-toolbar,.drow-actions,.review-queue-actions,.skip-link{display:none!important}
       body{display:block;background:#fff}
-      main{padding:0}
+      .report-hero,.report-workspace{width:100%;margin:0}
+      .report-hero{padding:0 0 14px;border:none}
+      .report-workspace{display:block}
+      main{padding:0!important}
       .settings-shell,.sec,.topbar{box-shadow:none}
+      .report-diagnostics>summary{display:none}
+      .report-diagnostics>.report-notices{display:flex!important}
+      .drow-list{gap:6px;padding:6px;background:#fff}
+      .drow{break-inside:avoid}
       .drow,.fj-block,.fc-card{content-visibility:visible!important;contain-intrinsic-size:none!important}
     }
     @media (prefers-reduced-motion:reduce){
@@ -7546,12 +7649,73 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   </style>
 </head>
 <body>
-  <aside>
+  <a class="skip-link" href="#reportReview">差分レビューへ移動</a>
+  <header class="topbar report-hero" data-report-overview aria-labelledby="reportTitle">
+    <div class="topbar-main">
+      <div class="topbar-eyebrow-row">
+        <div class="sb-kicker">kintone 設定差分</div>
+        <span class="header-badge">${esc(reportMeta.exportLabel || '全差分')} · ${esc(reportMeta.exportContentLabel)}</span>
+      </div>
+      <h1 id="reportTitle" class="topbar-title">設定差分レポート</h1>
+      <p class="topbar-lead">比較元の設定と比較先の設定を、同じ項目どうしで確認するためのレポートです。</p>
+      <div class="topbar-compare" role="group" aria-label="比較方向">
+        <section class="topbar-app-card topbar-app-card--source" aria-label="比較元アプリ">
+          <span class="topbar-app-eyebrow">比較元</span>
+          <span class="topbar-app-side">現在の値</span>
+          <strong>${esc(sourceAppDisplay)}</strong>
+        </section>
+        <span class="topbar-arrow" aria-hidden="true">→</span>
+        <section class="topbar-app-card topbar-app-card--target" aria-label="比較先アプリ">
+          <span class="topbar-app-eyebrow">比較先</span>
+          <span class="topbar-app-side">比較する値</span>
+          <strong>${esc(targetAppDisplay)}</strong>
+        </section>
+      </div>
+    </div>
+
+    <section class="report-completeness report-completeness--${reportMeta.incompleteComparison ? 'incomplete' : 'complete'}" data-comparison-status="${reportMeta.incompleteComparison ? 'incomplete' : 'complete'}" aria-labelledby="comparisonStatusTitle">
+      <span class="report-completeness-mark" aria-hidden="true">${reportMeta.incompleteComparison ? '!' : '✓'}</span>
+      <div class="report-completeness-copy">
+        <span class="report-step-label">1 · 比較の完全性</span>
+        <h2 id="comparisonStatusTitle">${reportMeta.incompleteComparison ? 'この結果だけでは、全差分を断定できません' : '比較対象の取得と差分検出は完了しています'}</h2>
+        <p>${reportMeta.incompleteComparison
+          ? `${incompleteComparisonWarnings.length}件の未完了要因があります。件数は確認できた範囲の下限として扱ってください。`
+          : '取得失敗・本文未検証・検出上限による打ち切りはありません。'}</p>
+      </div>
+      ${noticesHtml ? `<details class="report-diagnostics"><summary>確認が必要な取得状況を見る</summary><div class="report-notices">${noticesHtml}</div></details>` : ''}
+    </section>
+
+    <section class="report-facts" data-objective-counts aria-labelledby="objectiveCountsTitle">
+      <div class="report-facts-head">
+        <div>
+          <span class="report-step-label">2 · 確認できた客観的な件数</span>
+          <h2 id="objectiveCountsTitle">存在状況と差分内容</h2>
+        </div>
+        <p>判断や優先順位は付けず、比較で確認できた事実だけを表示します。</p>
+      </div>
+      <div class="report-fact-grid">
+        <article><span>比較先のみに存在</span><strong>${summary.added}</strong><small>比較元にはありません</small></article>
+        <article><span>比較元のみに存在</span><strong>${summary.removed}</strong><small>比較先にはありません</small></article>
+        <article><span>両方に存在・内容が異なる</span><strong>${objectiveContentChangedCount}</strong><small>値または設定が異なります</small></article>
+        <article><span>並び順が異なる</span><strong>${summary.moved}</strong><small>内容とは別に集計</small></article>
+        <article><span>内容は同じ</span><strong>${summary.same}</strong><small>${includesComparedContent ? '比較証跡として収録' : '安全共有版では非収録の場合があります'}</small></article>
+      </div>
+    </section>
+
+    <div class="report-meta-line">
+      <span>生成 ${esc(reportMeta.generatedAt)}</span>
+      <span>対象 ${esc(sectionText || '-')}</span>
+      <span>${esc(comparedContentModeNote)}</span>
+    </div>
+  </header>
+
+  <div class="report-workspace" data-report-workspace>
+  <aside data-report-tools>
     <div class="sb-head">
       <div class="sb-kicker">kintone アプリ設定の比較</div>
       <div class="sb-head-row">
-        <div class="sb-title">差分レポート</div>
-        <button type="button" id="mobileSidebarToggle" class="mobile-filter-toggle" aria-expanded="false" aria-controls="sidebarPanels">絞り込み・出力</button>
+        <div class="sb-title">検索・確認ツール</div>
+        <button type="button" id="mobileSidebarToggle" class="mobile-filter-toggle" aria-expanded="false" aria-controls="sidebarPanels">検索・出力</button>
       </div>
       <div class="sb-meta">
         生成日時: ${esc(reportMeta.generatedAt)}<br>
@@ -7563,7 +7727,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     <button type="button" id="sidebarBackdrop" class="sidebar-backdrop" aria-label="絞り込みを閉じる" hidden></button>
     <div id="sidebarPanels" class="sidebar-panels">
     <div class="sidebar-drawer-head">
-      <strong id="sidebarDrawerTitle">絞り込み・出力</strong>
+      <strong id="sidebarDrawerTitle">検索・確認・出力</strong>
       <button type="button" id="sidebarDrawerClose" class="btn">閉じる</button>
     </div>
     <div class="sb-panel sb-stats">
@@ -7579,11 +7743,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       </div>
       <div class="sb-stat-grid">
         <div class="sb-stat"><span>表示中</span><b id="stat-total">${summary.total}</b></div>
-        <div class="sb-stat"><span>追加</span><b id="stat-added">${summary.added}</b></div>
-        <div class="sb-stat"><span>削除</span><b id="stat-removed">${summary.removed}</b></div>
-        <div class="sb-stat"><span>変更</span><b id="stat-changed">${summary.changed}</b></div>
-        <div class="sb-stat"><span>移動</span><b id="stat-moved">${summary.moved}</b></div>
-        <div class="sb-stat"><span>同一</span><b id="stat-same">${summary.same}</b></div>
+        <div class="sb-stat"><span>比較先のみ</span><b id="stat-added">${summary.added}</b></div>
+        <div class="sb-stat"><span>比較元のみ</span><b id="stat-removed">${summary.removed}</b></div>
+        <div class="sb-stat"><span>内容差</span><b id="stat-changed">${objectiveContentChangedCount}</b></div>
+        <div class="sb-stat"><span>並び順差</span><b id="stat-moved">${summary.moved}</b></div>
+        <div class="sb-stat"><span>同じ</span><b id="stat-same">${summary.same}</b></div>
         <div class="sb-stat"><span>確認済み</span><b id="stat-reviewed">0</b></div>
         <div class="sb-stat"><span>選択中</span><b id="stat-selected">0</b></div>
       </div>
@@ -7601,8 +7765,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         <label class="vs-opt"><input type="radio" name="viewSide" value="source"> 比較元</label>
         <label class="vs-opt"><input type="radio" name="viewSide" value="target"> 比較先</label>
       </div>
-      <span class="field-label">検索</span>
-      <input type="text" id="search" placeholder="パス・値・理由・フィールド名で絞り込み" aria-label="差分の検索" autocomplete="off">
+      <span class="field-label">項目を検索</span>
+      <input type="text" id="search" placeholder="項目名・値・理由で検索" aria-label="差分の検索" autocomplete="off">
       <p class="search-hint"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">F</kbd> / <kbd class="kbd">⌘</kbd>+<kbd class="kbd">F</kbd> で検索 · <kbd class="kbd">J</kbd>/<kbd class="kbd">K</kbd> で移動 · <kbd class="kbd">R</kbd> で確認して次へ · <kbd class="kbd">Esc</kbd> でクリア</p>
       <div class="sb-btns">
         <button type="button" class="btn" id="collapseBtn">全折畳</button>
@@ -7612,7 +7776,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         <button type="button" class="btn" id="themeBtn" style="grid-column:span 2">ダークに切替</button>
       </div>
     </div>
-    <div class="sb-panel sb-ctrl">
+    <details class="sb-panel sb-ctrl tool-details">
+      <summary class="tool-details-summary">出力・反映・比較証跡</summary>
+      <div class="tool-details-body">
       <span class="field-label">反映JSON（選択差分 → APIパラメータ）</span>
       <p class="search-hint" style="margin-top:0">${!includesComparedContent
         ? '差分行のみのレポートには設定本文が収録されていないため、この機能は利用できません。'
@@ -7628,7 +7794,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         <button type="button" class="btn" id="srcJsonBtn"${comparedContentDisabledAttrs}>比較元JSON</button>
         <button type="button" class="btn" id="tgtJsonBtn"${comparedContentDisabledAttrs}>比較先JSON</button>
       </div>
-    </div>
+      </div>
+    </details>
     <div class="sb-panel sb-ctrl sb-advanced">
       <details class="adv">
         <summary class="adv-summary">詳細オプション（表示の絞り込み）</summary>
@@ -7647,31 +7814,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     </div>
     </div>
   </aside>
-  <main>
-    <div class="topbar">
-      <div class="topbar-main">
-        <div class="topbar-eyebrow-row">
-          <div class="sb-kicker">kintone 設定差分</div>
-          <span class="header-badge">セクション ${esc(String((scopes || []).length || 0))}</span>
-        </div>
-        <div class="topbar-title">設定差分レポート</div>
-        <div class="topbar-compare" role="group" aria-label="比較対象アプリ">
-          <div class="topbar-app-card topbar-app-card--source">
-            <span class="topbar-app-eyebrow">BEFORE</span>
-            <span class="topbar-app-side">比較元</span>
-            <strong>${esc(sourceAppDisplay)}</strong>
-          </div>
-          <span class="topbar-arrow" aria-hidden="true">→</span>
-          <div class="topbar-app-card topbar-app-card--target">
-            <span class="topbar-app-eyebrow">AFTER</span>
-            <span class="topbar-app-side">比較先</span>
-            <strong>${esc(targetAppDisplay)}</strong>
-          </div>
-        </div>
-        <div class="topbar-desc">差分 <b>${diffTotal}件</b>（追加 ${summary.added} / 削除 ${summary.removed} / 変更 ${summary.changed}）・同一 ${summary.same}件。${includesComparedContent ? 'タブで「差分一覧」「フィールド単位」を切り替えて確認できます。' : 'このHTMLは差分行のみを収録し、比較設定本文は収録していません。'}</div>
-      </div>
-    </div>
-
+  <main id="reportReview" data-review-workspace tabindex="-1">
     <div class="settings-shell">
       <div class="settings-tabs" role="tablist" aria-label="レポート表示切替">
         <button id="reportTabDiff" type="button" role="tab" class="settings-tab" data-report-tab="diff" aria-selected="true" aria-controls="reportPaneDiff" tabindex="0">差分一覧</button>
@@ -7681,7 +7824,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
       <section id="reportPaneDiff" class="tab-pane" data-report-pane="diff" role="tabpanel" aria-labelledby="reportTabDiff">
         <div class="content">
-          ${noticesHtml ? `<div class="report-notices">${noticesHtml}</div>` : ''}
           <p id="reportFilterStatus" class="report-filter-status" role="status" aria-live="polite" aria-atomic="true">表示 ${summary.total}件、全体 ${reportRows.length}件、未確認 ${preparedReviewRows.reviewKeys.length}件</p>
           <div id="main" aria-busy="false"></div>
         </div>
@@ -7689,7 +7831,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
       <section id="reportPaneSettingsLike" class="tab-pane" data-report-pane="settingsLike" role="tabpanel" aria-labelledby="reportTabSettingsLike" hidden>
         <div class="content" style="padding:0">
-          <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6">${includesComparedContent ? '<strong>フィールド単位</strong>で、フィールドごとの設定差分と影響範囲を1つの項目にまとめて確認します。左の検索と「同一項目を隠す」が連動し、カードのボタンから詳細をポップアップ表示できます。' : '<strong>差分行のみ</strong>のレポートにはフィールド設定本文が収録されていないため、フィールド単位表示は利用できません。'}</p>
+          <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6">${includesComparedContent ? '<strong>フィールド単位</strong>で、フィールドごとの設定差分を1つの項目にまとめて確認します。検索と「同一項目を隠す」が連動し、カードのボタンから詳細を表示できます。' : '<strong>差分行のみ</strong>のレポートにはフィールド設定本文が収録されていないため、フィールド単位表示は利用できません。'}</p>
           <div id="settingsLikeRoot" class="sl-root"></div>
         </div>
       </section>
@@ -7712,6 +7854,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       </div>
     </div>
   </main>
+  </div>
   <script>${logicScript}</script>
 </body>
 </html>`;

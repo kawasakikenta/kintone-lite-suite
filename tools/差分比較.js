@@ -4872,6 +4872,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const targetGuestId = String(reportMeta.target.guestId || "").trim();
     const targetPreviewApiPrefix = targetGuestId ? `/k/guest/${encodeURIComponent(targetGuestId)}/v1/preview` : "/k/v1/preview";
     const diffTotal = summary.added + summary.removed + summary.changed;
+    const objectiveContentChangedCount = Math.max(0, summary.changed - summary.moved);
     const stateRenameNoticeCount = withSameSections.filter((row) => row?._stateRenameNotice).length;
     const formatAppDisplay = (meta) => {
       const id = String(meta?.appId || "-");
@@ -4962,7 +4963,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   const CHAR_DIFF_MAX_CELLS = ${CHAR_DIFF_MAX_CELLS};
   const collapsed = new Set();
   let typeFilterValue = 'all';
-  let severityFilterValue = 'all';
+  let sectionFilterValue = 'all';
   let diffSortValue = 'standard';
   let focusModeEnabled = false;
   let compactDensityEnabled = false;
@@ -5333,7 +5334,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       if (hideSame && row.type === 'same') return false;
       if (hideReviewed && row.type !== 'same' && reviewedKeys.has(rowStateKey(row))) return false;
       return rowMatches(row, keyword);
-    }).filter(typeFilterMatches).filter(severityFilterMatches);
+    }).filter(sectionFilterMatches).filter(typeFilterMatches);
   }
 
   function csvEscape(v) {
@@ -5431,6 +5432,37 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return moved && type !== 'moved' ? base + '(移動)' : base;
   }
 
+  function rowExistenceLabel(row) {
+    if (row && row.type === 'added') return '比較先のみに存在';
+    if (row && row.type === 'removed') return '比較元のみに存在';
+    return '両方に存在';
+  }
+
+  function rowDifferenceLabels(row) {
+    if (row && (row.type === 'added' || row.type === 'removed')) return ['片側のみ'];
+    if (row && row.type === 'same') return ['内容は同じ'];
+    if (row && (row.moved || row.type === 'moved')) return ['並び順が異なる'];
+    const labels = [];
+    if (row && row.type === 'changed') labels.push('内容が異なる');
+    return labels.length ? labels : ['差分あり'];
+  }
+
+  function rowDifferenceLabel(row) {
+    return rowDifferenceLabels(row).join('・');
+  }
+
+  function renderRowFacts(row) {
+    const typeClass = row && row.type === 'same'
+      ? 'same'
+      : row && row.type === 'added'
+        ? 'added'
+        : row && row.type === 'removed'
+          ? 'removed'
+          : 'changed';
+    return '<span class="fact-chip fact-chip--existence fact-chip--' + typeClass + '" data-row-existence="' + escHtml(rowExistenceLabel(row)) + '">' + escHtml(rowExistenceLabel(row)) + '</span>'
+      + rowDifferenceLabels(row).map((label) => '<span class="fact-chip fact-chip--difference fact-chip--' + typeClass + '" data-row-difference="' + escHtml(label) + '">' + escHtml(label) + '</span>').join('');
+  }
+
   function issueSideLabel(side) {
     if (side === 'source') return '比較元';
     if (side === 'target') return '比較先';
@@ -5448,8 +5480,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       row.path || '',
       row.reasonSummary || '',
       row.renameCandidate ? (row.renameCandidate.fromCode || '') + ' ' + (row.renameCandidate.toCode || '') : '',
-      row.impactSummary || '',
-      ...((row.impactRefs || []).map((ref) => (ref.section || '') + ' ' + (ref.kind || '') + ' ' + (ref.path || ''))),
+      ...((row.impactRefs || []).map((ref) => (ref.section || ref.sectionKey || '') + ' ' + (ref.kind || '') + ' ' + (ref.label || '') + ' ' + (ref.path || ''))),
       safeText(row.left),
       safeText(row.right)
     ].join('\\n').toLowerCase();
@@ -5905,12 +5936,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         + (row.renameCandidate.matchedBy ? ' / 判定: ' + String(row.renameCandidate.matchedBy) : '');
       tags.push('<span class="meta-tag rename" title="' + escHtml(renameTip) + '">名称変更候補</span>');
     }
-    if (row.impactCount) {
-      const impactText = (row.impactRefs || [])
-        .map((ref) => (ref.section || ref.sectionKey || '-') + ':' + (ref.kind || '-'))
-        .join(' / ');
-      tags.push('<span class="meta-tag impact" title="' + escHtml(String(row.impactCount)) + '件">影響</span>');
-    }
     if (!tags.length) return '';
     return '<div class="meta-wrap">' +
       (tags.length ? '<div class="meta-tags">' + tags.join('') + '</div>' : '') +
@@ -5955,14 +5980,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       }
       const status = src && tgt ? 'changed' : (tgt ? 'added' : 'removed');
       const ref = tgt || src || ({});
-      const severity = highestSeverity(bucket);
       groups.push({
         code,
         rows: bucket,
         src,
         tgt,
         status,
-        severity,
         label: String(ref.label || ref.name || code),
         type: String(ref.type || '-'),
         reviewRow: {
@@ -5971,7 +5994,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
           section: SECTION_LABEL_MAP[FIELD_SECTION_KEY] || 'フィールド設定',
           path: FIELD_SECTION_KEY + '.properties.' + code,
           type: status,
-          severity,
           _displayOnly: !bucket.some((row) => isActionableReviewRow(row)),
           __childRows: bucket
         }
@@ -5982,7 +6004,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
   function renderFieldJsonBlockHtml(group, useCharDiff) {
     const toneCls = group.status === 'added' ? 'added' : group.status === 'removed' ? 'removed' : 'changed';
-    const severity = normalizeSeverity(group && group.severity);
     const checked = selectedFieldCodes.has(group.code);
     const selectable = CAN_BUILD_REFLECT_JSON && (group.rows || []).some((row) => row && row.type !== 'same' && !row._displayOnly);
     const reviewRow = group.reviewRow;
@@ -6007,8 +6028,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
     return '<article class="fj-block fj-block--' + toneCls + (reviewed ? ' drow--reviewed' : '') + '" tabindex="-1" data-diff-row-key="' + escHtml(reviewKey) + '" aria-current="false">'
       + '<div class="fj-head">'
-      +   '<span class="type-chip type-chip--' + toneCls + '">' + escHtml(diffTypeLabel(group.status, false)) + '</span>'
-      +   '<span class="severity-chip severity-chip--' + severity + '" data-severity-chip="' + severity + '">重要度 ' + severityLabel(severity) + '</span>'
+      +   renderRowFacts(reviewRow)
       +   '<span class="fj-title">' + escHtml(group.label) + '</span>'
       +   '<code class="fj-code">' + escHtml(group.code) + '</code>'
       +   '<span class="fj-type">' + escHtml(fieldTypeDisplayLabel(group.type)) + '</span>'
@@ -6446,7 +6466,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         impactCount,
         impactRefs,
         impactSummary: bucket.find((row) => row.impactSummary)?.impactSummary || rootRow.impactSummary || '',
-        severity: highestSeverity(bucket),
         __fieldRowCount: bucket.length
       });
     });
@@ -6474,8 +6493,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       out.diffCount += 1;
       if (row.type === 'added') out.added += 1;
       else if (row.type === 'removed') out.removed += 1;
+      else if (row.moved || row.type === 'moved') out.moved += 1;
       else out.changed += 1;
-      if (row.moved) out.moved += 1;
     });
     return out;
   }
@@ -6483,11 +6502,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function groupSummaryLabel(rows) {
     const s = summarizeGroupRows(rows);
     const parts = ['差分 ' + s.diffCount];
-    if (s.added) parts.push('追加 ' + s.added);
-    if (s.removed) parts.push('削除 ' + s.removed);
-    if (s.changed) parts.push('変更 ' + s.changed);
-    if (s.moved) parts.push('移動 ' + s.moved);
-    if (s.same) parts.push('同一 ' + s.same);
+    if (s.added) parts.push('比較先のみ ' + s.added);
+    if (s.removed) parts.push('比較元のみ ' + s.removed);
+    if (s.changed) parts.push('内容差 ' + s.changed);
+    if (s.moved) parts.push('並び順差 ' + s.moved);
+    if (s.same) parts.push('同じ ' + s.same);
     return parts.join(' / ');
   }
 
@@ -6533,6 +6552,19 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       html += '<details class="path-tech"><summary>技術情報</summary><div class="path-tech-body">'
         + technicalRows.map((item) => '<div><span>' + escHtml(item[0]) + '</span><code>' + escHtml(item[1]) + '</code></div>').join('')
         + '</div></details>';
+    }
+    const relatedRefs = Array.isArray(row?.impactRefs) ? row.impactRefs.filter(Boolean) : [];
+    const relatedCount = Math.max(Number(row?.impactCount || 0), relatedRefs.length);
+    if (relatedCount) {
+      html += '<details class="related-settings"><summary>関連している設定 ' + relatedCount + '件</summary>'
+        + (relatedRefs.length
+          ? '<ul>' + relatedRefs.map((ref) => {
+              const label = ref.label || ref.kind || ref.section || ref.sectionKey || '関連設定';
+              const path = ref.path ? ' / ' + ref.path : '';
+              return '<li><span>' + escHtml(label) + '</span><code>' + escHtml(path) + '</code></li>';
+            }).join('') + '</ul>'
+          : '<p>関連件数のみ検出されています。</p>')
+        + '</details>';
     }
     return html + renderRowMeta(row);
   }
@@ -7562,7 +7594,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const chips = [];
     if (group.settingDiffCount) chips.push('<span class="fc-chip">設定 ' + group.settingDiffCount + '</span>');
     if (includeLayout && group.layoutDiffCount) chips.push('<span class="fc-chip">配置 ' + group.layoutDiffCount + '</span>');
-    if (group.impactCount) chips.push('<span class="fc-chip">影響 ' + group.impactCount + '</span>');
     if (group.parentTableCode) chips.push('<span class="fc-chip fc-chip--muted">テーブル ' + escHtml(group.parentTableLabel || group.parentTableCode) + '</span>');
     if (!chips.length) chips.push('<span class="fc-chip fc-chip--muted">差分なし</span>');
     return chips.join('');
@@ -8008,10 +8039,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       if (row.type === 'same') same += 1;
       else if (row.type === 'added') added += 1;
       else if (row.type === 'removed') removed += 1;
-      else {
-        changed += 1;
-        if (row.moved) moved += 1;
-      }
+      else if (row.moved || row.type === 'moved') moved += 1;
+      else changed += 1;
     }
     document.getElementById('stat-total').textContent = String(rows.length);
     document.getElementById('stat-added').textContent = String(added);
@@ -8098,75 +8127,39 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function typeFilterMatches(row) {
     if (typeFilterValue === 'all') return true;
     if (typeFilterValue === 'moved') return !!row.moved;
-    if (typeFilterValue === 'changed') return row.type !== 'same' && row.type !== 'added' && row.type !== 'removed';
+    if (typeFilterValue === 'changed') return !row.moved && row.type !== 'moved' && row.type !== 'same' && row.type !== 'added' && row.type !== 'removed';
     return row.type === typeFilterValue;
   }
 
-  function normalizeSeverity(value) {
-    const severity = String(value || 'low').toLowerCase();
-    return severity === 'high' || severity === 'medium' ? severity : 'low';
-  }
-
-  function severityLabel(value) {
-    const severity = normalizeSeverity(value);
-    return severity === 'high' ? '高' : severity === 'medium' ? '中' : '低';
-  }
-
-  function severityRank(value) {
-    const severity = normalizeSeverity(value);
-    return severity === 'high' ? 0 : severity === 'medium' ? 1 : 2;
-  }
-
-  function severityFilterMatches(row) {
-    return severityFilterValue === 'all' || normalizeSeverity(row && row.severity) === severityFilterValue;
-  }
-
-  function highestSeverity(rows) {
-    return (rows || []).reduce((best, row) => {
-      const severity = normalizeSeverity(row && row.severity);
-      return severityRank(severity) < severityRank(best) ? severity : best;
-    }, 'low');
+  function sectionFilterMatches(row) {
+    if (sectionFilterValue === 'all') return true;
+    return String(row && (row.sectionKey || row.section) || '') === sectionFilterValue;
   }
 
   function buildReviewQueueHtml(rows) {
     const progress = reviewProgressOf(rows);
     const pending = progress.actionable.filter((row) => !reviewedKeys.has(rowStateKey(row)));
-    const high = pending.filter((row) => normalizeSeverity(row.severity) === 'high');
-    const medium = pending.filter((row) => normalizeSeverity(row.severity) === 'medium');
-    const low = pending.length - high.length - medium.length;
-    const priority = high.length ? 'high' : medium.length ? 'medium' : '';
-    const samples = (high.length ? high : medium).slice(0, 3);
-    const startRow = high[0] || medium[0] || pending[0] || null;
-    const tone = high.length ? 'alert' : medium.length ? 'watch' : 'clear';
-    const headline = high.length
-      ? '高重要度 ' + high.length + '件を先に確認'
-      : medium.length
-        ? '高重要度なし・中重要度 ' + medium.length + '件'
-        : pending.length
-          ? '高・中重要度の未確認差分はありません'
-          : '現在の対象はすべて確認済みです';
-    return '<section class="review-queue review-queue--' + tone + '" aria-labelledby="reviewQueueTitle" tabindex="-1">'
-      + '<div class="review-queue-mark" aria-hidden="true">' + (high.length ? '!' : medium.length ? '•' : '✓') + '</div>'
+    const samples = pending.slice(0, 3);
+    const startRow = pending[0] || null;
+    const headline = pending.length
+      ? '未確認の差分を上から確認できます'
+      : '現在の対象はすべて確認済みです';
+    return '<section class="review-queue review-queue--' + (pending.length ? 'pending' : 'clear') + '" aria-labelledby="reviewQueueTitle" tabindex="-1">'
+      + '<div class="review-queue-mark" aria-hidden="true">' + (pending.length ? '→' : '✓') + '</div>'
       + '<div class="review-queue-main">'
-      +   '<span class="review-queue-kicker">最優先レビュー</span>'
+      +   '<span class="review-queue-kicker">レビュー受信箱</span>'
       +   '<strong id="reviewQueueTitle">' + escHtml(headline) + '</strong>'
-      +   '<span class="review-queue-note">全体未確認 ' + pending.length + '件 · 高 ' + high.length + ' / 中 ' + medium.length + ' / 低 ' + low + '</span>'
+      +   '<span class="review-queue-note">未確認 ' + pending.length + '件 / レビュー対象 ' + progress.total + '件。判断による並び替えをせず、レポートの定義順で表示します。</span>'
       +   '<div class="review-progress review-progress--queue">'
       +     '<div class="review-progress-copy"><span>確認済み</span><strong>' + progress.reviewed + ' / ' + progress.total + '（' + progress.percent + '%）</strong></div>'
       +     '<div class="review-progress-track" role="progressbar" aria-label="レビュー進捗" aria-valuemin="0" aria-valuemax="' + progress.total + '" aria-valuenow="' + progress.reviewed + '" aria-valuetext="確認済み ' + progress.reviewed + '件 / 全 ' + progress.total + '件（' + progress.percent + '%）"><span style="width:' + progress.percent + '%"></span></div>'
       +     '<span class="review-progress-note">確認状態はJSONファイルで保存・読込できます</span>'
       +   '</div>'
-      +   (samples.length ? '<div class="review-queue-samples" aria-label="優先して確認する差分">' + samples.map((row) => '<button type="button" data-review-jump="' + escHtml(rowStateKey(row)) + '">' + escHtml(reportRowTitle(row)) + '</button>').join('') + '</div>' : '')
+      +   (samples.length ? '<div class="review-queue-samples" aria-label="次に確認する差分">' + samples.map((row) => '<button type="button" data-review-jump="' + escHtml(rowStateKey(row)) + '">' + escHtml(reportRowTitle(row)) + '</button>').join('') + '</div>' : '')
       + '</div>'
-      + (startRow || priority
+      + (startRow
         ? '<div class="review-queue-actions">'
-          + (startRow
-            ? '<button type="button" class="review-queue-action" data-review-jump="' + escHtml(rowStateKey(startRow)) + '">未確認レビューを開始</button>'
-            : '')
-          + (priority
-            ? '<button type="button" class="review-queue-action review-queue-action--secondary" data-priority-filter="' + priority + '"' + (severityFilterValue === priority ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>'
-              + (priority === 'high' ? '高重要度だけ表示' : '中重要度だけ表示') + '</button>'
-            : '')
+          + '<button type="button" class="review-queue-action" data-review-jump="' + escHtml(rowStateKey(startRow)) + '">未確認レビューを開始</button>'
           + '</div>'
         : '')
       + '</section>';
@@ -8174,9 +8167,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
   function buildActiveFiltersHtml(keyword, hideSame, hideReviewed) {
     const chips = [];
-    const typeLabels = { added: '追加', removed: '削除', changed: '変更', moved: '移動', same: '同一' };
+    const typeLabels = { added: '比較先のみ', removed: '比較元のみ', changed: '内容が異なる', moved: '並び順が異なる', same: '同じ' };
     if (typeFilterValue !== 'all') chips.push(['type', '種別: ' + (typeLabels[typeFilterValue] || typeFilterValue)]);
-    if (severityFilterValue !== 'all') chips.push(['severity', '重要度: ' + severityLabel(severityFilterValue)]);
+    if (sectionFilterValue !== 'all') chips.push(['section', 'セクション: ' + (SECTION_LABEL_MAP[sectionFilterValue] || sectionFilterValue)]);
     if (keyword) chips.push(['search', '検索: ' + keyword]);
     if (hideSame) chips.push(['hideSame', '同一を非表示']);
     if (hideReviewed) chips.push(['hideReviewed', '確認済みを非表示']);
@@ -8198,10 +8191,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if (diffSortValue === 'standard') return rows;
     const typeOrder = { removed: 0, added: 1, changed: 2, same: 3 };
     return rows.slice().sort((a, b) => {
-      if (diffSortValue === 'severity') {
-        const severityDiff = severityRank(a && a.severity) - severityRank(b && b.severity);
-        if (severityDiff) return severityDiff;
-      }
       const d = ((typeOrder[a.type] != null ? typeOrder[a.type] : 9) - (typeOrder[b.type] != null ? typeOrder[b.type] : 9));
       if (d) return d;
       return String(a.path || '').localeCompare(String(b.path || ''));
@@ -8211,26 +8200,19 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function buildToolbarHtml(rows, hideSame, hideReviewed, shownCount, keyword, scopeCount, pendingCount) {
     const s = summarizeGroupRows(rows);
     const chips = [
-      { key: 'all', label: '全て', count: rows.length },
-      { key: 'added', label: '追加', count: s.added },
-      { key: 'removed', label: '削除', count: s.removed },
-      { key: 'changed', label: '変更', count: s.changed }
+      { key: 'all', label: 'すべて', count: rows.length },
+      { key: 'added', label: '比較先のみ', count: s.added },
+      { key: 'removed', label: '比較元のみ', count: s.removed },
+      { key: 'changed', label: '内容が異なる', count: s.changed }
     ];
-    if (s.moved) chips.push({ key: 'moved', label: '移動', count: s.moved });
-    if (!hideSame) chips.push({ key: 'same', label: '同一', count: s.same });
-    const severityCounts = { high: 0, medium: 0, low: 0 };
-    rows.forEach((row) => { severityCounts[normalizeSeverity(row && row.severity)] += 1; });
-    const severityOptions = [
-      ['all', '全重要度', rows.length],
-      ['high', '高', severityCounts.high],
-      ['medium', '中', severityCounts.medium],
-      ['low', '低', severityCounts.low]
-    ];
+    if (s.moved) chips.push({ key: 'moved', label: '並び順が異なる', count: s.moved });
+    if (!hideSame) chips.push({ key: 'same', label: '同じ', count: s.same });
     const sortOptions = [
       ['standard', '標準（定義順）'],
-      ['type', '種別順（削除→追加→変更）'],
-      ['severity', '重要度が高い順（高→中→低）']
+      ['type', '存在状況・差分内容順']
     ];
+    const sectionKeys = [...new Set(rows.map((row) => String(row && (row.sectionKey || row.section) || '')).filter(Boolean))];
+    const sectionOptions = [['all', 'すべてのセクション']].concat(sectionKeys.map((key) => [key, SECTION_LABEL_MAP[key] || key]));
     const sourceContextLabel = String((REPORT_META.source.appName ? REPORT_META.source.appName + ' · ' : '') + 'App ' + (REPORT_META.source.appId || '-'));
     const targetContextLabel = String((REPORT_META.target.appName ? REPORT_META.target.appName + ' · ' : '') + 'App ' + (REPORT_META.target.appId || '-'));
     return '<div class="diff-toolbar" role="toolbar" aria-label="差分一覧の絞り込みと並び替え">'
@@ -8255,8 +8237,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         + c.label + '<b>' + c.count + '</b></button>'
       ).join('')
       + '<span class="diff-toolbar-spacer"></span>'
-      + '<label class="diff-sort diff-severity-filter">重要度 <select id="diffSeveritySel" aria-label="重要度で絞り込み">'
-      + severityOptions.map((o) => '<option value="' + o[0] + '"' + (severityFilterValue === o[0] ? ' selected' : '') + '>' + o[1] + ' (' + o[2] + ')</option>').join('')
+      + '<label class="diff-sort">セクション <select id="diffSectionSel" aria-label="セクションで絞り込み">'
+      + sectionOptions.map((o) => '<option value="' + escHtml(o[0]) + '"' + (sectionFilterValue === o[0] ? ' selected' : '') + '>' + escHtml(o[1]) + '</option>').join('')
       + '</select></label>'
       + '</div>'
       + '<div class="diff-toolbar-row diff-toolbar-row--navigation">'
@@ -8279,10 +8261,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
   function sectionCountChips(s) {
     const parts = [];
-    if (s.added) parts.push('<span class="cnt cnt--add" title="追加 ' + s.added + '件">追加 ' + s.added + '</span>');
-    if (s.removed) parts.push('<span class="cnt cnt--del" title="削除 ' + s.removed + '件">削除 ' + s.removed + '</span>');
-    if (s.changed) parts.push('<span class="cnt cnt--chg" title="変更 ' + s.changed + '件">変更 ' + s.changed + '</span>');
-    if (s.same) parts.push('<span class="cnt cnt--same" title="同一 ' + s.same + '件">同一 ' + s.same + '</span>');
+    if (s.added) parts.push('<span class="cnt cnt--add" title="比較先のみ ' + s.added + '件">比較先のみ ' + s.added + '</span>');
+    if (s.removed) parts.push('<span class="cnt cnt--del" title="比較元のみ ' + s.removed + '件">比較元のみ ' + s.removed + '</span>');
+    if (s.changed) parts.push('<span class="cnt cnt--chg" title="内容が異なる ' + s.changed + '件">内容差 ' + s.changed + '</span>');
+    if (s.same) parts.push('<span class="cnt cnt--same" title="内容は同じ ' + s.same + '件">同じ ' + s.same + '</span>');
     if (!parts.length) parts.push('<span class="cnt cnt--same">0件</span>');
     return parts.join('');
   }
@@ -8306,7 +8288,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
   function renderDiffRowHtml(row, useCharDiff) {
     const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
-    const severity = normalizeSeverity(row && row.severity);
     const key = rowStateKey(row);
     rowLookup.set(key, row);
     const hasDiffKids = !isRawJsonMode() && !!(row.__childRows && row.__childRows.some((kid) => kid.type !== 'same'));
@@ -8347,13 +8328,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         : '')
       + '</span>';
     return '<article class="drow drow--' + typeClass + (reviewed ? ' drow--reviewed' : '') + (focused ? ' drow--focus' : '') + '"'
-      + ' data-severity="' + severity + '"'
       + ' tabindex="-1" data-diff-row-key="' + escHtml(key) + '" aria-current="' + (focused ? 'true' : 'false') + '"'
-      + ' aria-label="' + escHtml(diffTypeLabel(row.type, row.moved) + '・重要度 ' + severityLabel(severity) + ': ' + (row.path || '-')) + '">'
+      + ' aria-label="' + escHtml(rowExistenceLabel(row) + '・' + rowDifferenceLabel(row) + ': ' + reportRowTitle(row)) + '">'
       + '<div class="drow-head">'
-      +   '<span class="type-chip type-chip--' + typeClass + '">' + escHtml(diffTypeLabel(row.type, row.moved)) + '</span>'
-      +   '<span class="severity-chip severity-chip--' + severity + '" data-severity-chip="' + severity + '">重要度 ' + severityLabel(severity) + '</span>'
-      +   '<div class="drow-title" title="' + escHtml(row.path || '-') + '">' + renderPathCell(row) + '</div>'
+      +   '<span class="drow-facts">' + renderRowFacts(row) + '</span>'
+      +   '<div class="drow-title">' + renderPathCell(row) + '</div>'
       +   actionsHtml
       + '</div>'
       + (valueHtml ? '<div class="drow-val">' + valueHtml + '</div>' : '')
@@ -8371,7 +8350,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       if (hideReviewed && row.type !== 'same' && reviewedKeys.has(rowStateKey(row))) return false;
       return rowMatches(row, keyword);
     });
-    const visibleRows = filterBaseRows.filter(typeFilterMatches).filter(severityFilterMatches);
+    const visibleRows = filterBaseRows.filter(sectionFilterMatches).filter(typeFilterMatches);
     return {
       hideSame,
       hideReviewed,
@@ -8646,7 +8625,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if (reviewJump) {
       const key = reviewJump.getAttribute('data-review-jump') || '';
       typeFilterValue = 'all';
-      severityFilterValue = 'all';
+      sectionFilterValue = 'all';
       const search = document.getElementById('search');
       const hideReviewed = document.getElementById('hideReviewed');
       if (search) search.value = '';
@@ -8695,20 +8674,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       }
       return;
     }
-    const priorityFilter = e.target.closest('[data-priority-filter]');
-    if (priorityFilter) {
-      severityFilterValue = priorityFilter.getAttribute('data-priority-filter') || 'all';
-      typeFilterValue = 'all';
-      render();
-      requestAnimationFrame(() => document.getElementById('diffSeveritySel')?.focus());
-      return;
-    }
     const clearFilter = e.target.closest('[data-clear-filter]');
     if (clearFilter) {
       const key = clearFilter.getAttribute('data-clear-filter') || '';
       const clearAll = key === 'all';
       if (clearAll || key === 'type') typeFilterValue = 'all';
-      if (clearAll || key === 'severity') severityFilterValue = 'all';
+      if (clearAll || key === 'section') sectionFilterValue = 'all';
       if (clearAll || key === 'search') document.getElementById('search').value = '';
       if (clearAll || key === 'hideSame') document.getElementById('hideSame').checked = false;
       if (clearAll || key === 'hideReviewed') document.getElementById('hideReviewed').checked = false;
@@ -8725,9 +8696,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       requestAnimationFrame(() => {
         const focusTarget = key === 'type'
           ? document.querySelector('[data-type-chip="all"]')
-          : key === 'severity'
-            ? document.getElementById('diffSeveritySel')
-            : document.getElementById('search');
+          : key === 'section'
+            ? document.getElementById('diffSectionSel')
+          : document.getElementById('search');
         const visibleTarget = focusTarget && focusTarget.offsetParent !== null
           ? focusTarget
           : document.getElementById('mobileSidebarToggle');
@@ -9028,10 +8999,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       requestAnimationFrame(() => document.getElementById('diffSortSel')?.focus());
       return;
     }
-    if (e.target && e.target.id === 'diffSeveritySel') {
-      severityFilterValue = e.target.value || 'all';
+    if (e.target && e.target.id === 'diffSectionSel') {
+      sectionFilterValue = e.target.value || 'all';
       render();
-      requestAnimationFrame(() => document.getElementById('diffSeveritySel')?.focus());
+      requestAnimationFrame(() => document.getElementById('diffSectionSel')?.focus());
       return;
     }
     const reviewToggle = e.target && e.target.closest ? e.target.closest('[data-review-toggle]') : null;
@@ -9585,13 +9556,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     body.dark .type-chip--removed{background:#450a0a;color:#fecaca;border-color:#991b1b}
     body.dark .type-chip--changed{background:#78350f;color:#fde68a;border-color:#b45309}
     body.dark .type-chip--same{background:#134e4a;color:#99f6e4;border-color:#0f766e}
-    .severity-chip{display:inline-flex;align-items:center;justify-content:center;padding:4px 9px;border-radius:999px;font-size:10px;font-weight:800;border:1px solid transparent;white-space:nowrap;flex-shrink:0;margin-top:1px}
-    .severity-chip--high{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
-    .severity-chip--medium{background:#fef3c7;color:#92400e;border-color:#fcd34d}
-    .severity-chip--low{background:#e2e8f0;color:#475569;border-color:#cbd5e1}
-    body.dark .severity-chip--high{background:#450a0a;color:#fecaca;border-color:#991b1b}
-    body.dark .severity-chip--medium{background:#78350f;color:#fde68a;border-color:#b45309}
-    body.dark .severity-chip--low{background:#334155;color:#cbd5e1;border-color:#475569}
     .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:var(--muted);font-size:11px}
     .path-main{font-size:13px;font-weight:800;color:var(--fg);margin-bottom:3px;word-break:break-word;line-height:1.45}
     .path-sub{font-size:10px;line-height:1.45;color:var(--muted);word-break:break-all}
@@ -9610,10 +9574,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .meta-tag{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;border:1px solid var(--border);background:var(--pad);font-size:10px;font-weight:600;color:var(--fg)}
     .meta-tag.reason{background:#fff7ed;color:#9a3412;border-color:#fdba74}
     .meta-tag.rename{background:#ecfdf5;color:#15803d;border-color:#86efac}
-    .meta-tag.impact{background:#eff6ff;color:#1d4ed8;border-color:#93c5fd}
     body.dark .meta-tag.reason{background:#431407;color:#fdba74;border-color:#9a3412}
     body.dark .meta-tag.rename{background:#052e16;color:#86efac;border-color:#166534}
-    body.dark .meta-tag.impact{background:#172554;color:#93c5fd;border-color:#1d4ed8}
     .meta-line{font-size:10px;line-height:1.5;color:var(--muted)}
     .meta-line strong{color:var(--fg)}
     .scroll{max-height:300px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
@@ -9754,6 +9716,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     body.diff-focus-mode .focus-context{display:flex}
     body.diff-focus-mode .sec:not(:has(.drow--focus)){display:none}
     body.diff-focus-mode .drow:not(.drow--focus),body.diff-focus-mode .fj-block:not(.drow--focus),body.diff-focus-mode .same-fold{display:none}
+    body.diff-focus-mode .report-workspace{grid-template-columns:minmax(0,1fr)}
+    body.diff-focus-mode .report-workspace>main{grid-column:1/-1}
     body.diff-focus-mode main{padding-top:12px}
     body.diff-focus-mode .settings-shell{margin-top:0}
     body.diff-focus-mode .content{padding-top:10px}
@@ -9984,11 +9948,150 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .fd-overlay-actions{width:100%;justify-content:space-between}
       .fd-snapshots,.fd-entry-grid,.fd-mini-grid,.kf-extra-grid{grid-template-columns:1fr}
     }
+
+    /* Human-first report shell: direction -> completeness -> facts -> review. */
+    body{display:block;min-width:0;background:#f4f6f8;background-image:none}
+    body.dark{background:#0b1220;background-image:none}
+    .skip-link{position:fixed;left:12px;top:10px;z-index:120;transform:translateY(-160%);padding:10px 14px;border-radius:8px;background:var(--fg);color:var(--card);font-size:12px;font-weight:800;text-decoration:none}
+    .skip-link:focus{transform:translateY(0);outline:3px solid var(--accent);outline-offset:2px}
+    .report-hero,.report-workspace{width:min(calc(100% - 32px),1440px);margin-inline:auto}
+    .report-hero{display:flex;flex-direction:column;align-items:stretch;gap:18px;margin-top:20px;padding:24px;border-radius:18px;background:var(--card);box-shadow:0 12px 40px -28px rgba(15,23,42,.45);overflow:visible}
+    .report-hero::before{height:4px;background:var(--accent)}
+    .report-hero .topbar-main{gap:10px}
+    .report-hero .topbar-title{margin:0;font-size:clamp(1.45rem,3vw,2rem)}
+    .topbar-lead{max-width:72ch;margin:0;color:var(--muted);font-size:13px;line-height:1.7}
+    .report-hero .topbar-compare{width:100%;max-width:980px;gap:12px}
+    .report-hero .topbar-app-card{grid-template-columns:auto auto minmax(0,1fr);min-height:66px;padding:12px 14px;border-top:1px solid var(--border);border-left:4px solid #475569;background:var(--card-soft)}
+    .report-hero .topbar-app-card--source{border-left-color:#475569;background:var(--card-soft)}
+    .report-hero .topbar-app-card--target{border-left-color:var(--accent);background:var(--card-soft)}
+    body.dark .report-hero .topbar-app-card--source,body.dark .report-hero .topbar-app-card--target{background:var(--card-soft)}
+    .report-hero .topbar-app-eyebrow{font-size:11px;letter-spacing:.04em}
+    .report-hero .topbar-app-side{font-size:10px}
+    .report-hero .topbar-app-card strong{font-size:14px;white-space:normal;overflow:visible;word-break:break-word}
+    .report-step-label{display:block;margin-bottom:3px;color:var(--muted);font-size:10px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}
+    .report-completeness{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px 14px;padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--card-soft)}
+    .report-completeness--incomplete{border-color:#f0c36a;background:#fffaf0}
+    .report-completeness--complete{border-color:#9bc8ac;background:#f4fbf6}
+    body.dark .report-completeness--incomplete{border-color:#8b6824;background:#2a210d}
+    body.dark .report-completeness--complete{border-color:#245b3c;background:#0d281a}
+    .report-completeness-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#334155;color:#fff;font-size:17px;font-weight:900}
+    .report-completeness--incomplete .report-completeness-mark{background:#a16207}
+    .report-completeness--complete .report-completeness-mark{background:#15803d}
+    .report-completeness-copy h2,.report-facts h2{margin:0;color:var(--fg);font-size:16px;line-height:1.45}
+    .report-completeness-copy p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.65}
+    .report-diagnostics{grid-column:2;min-width:0;border-top:1px solid color-mix(in srgb,var(--border) 80%,transparent);padding-top:9px}
+    .report-diagnostics>summary{display:inline-flex;align-items:center;min-height:36px;color:var(--accent-strong);font-size:11px;font-weight:800;cursor:pointer}
+    .report-diagnostics>summary:focus-visible,.tool-details-summary:focus-visible,.related-settings>summary:focus-visible{outline:none;box-shadow:var(--focus);border-radius:7px}
+    .report-diagnostics .report-notices{margin:8px 0 0}
+    .report-facts{padding-top:2px}
+    .report-facts-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:10px}
+    .report-facts-head>p{max-width:52ch;margin:0;color:var(--muted);font-size:11px;line-height:1.6;text-align:right}
+    .report-fact-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+    .report-fact-grid article{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;min-width:0;padding:12px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card-soft)}
+    .report-fact-grid span{align-self:center;color:var(--fg);font-size:11px;font-weight:750;line-height:1.45}
+    .report-fact-grid strong{grid-row:1/3;grid-column:2;align-self:center;font-size:24px;font-variant-numeric:tabular-nums}
+    .report-fact-grid small{color:var(--muted);font-size:9px;line-height:1.45}
+    .report-meta-line{display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:10px;line-height:1.5}
+    .report-workspace{display:grid;grid-template-columns:minmax(248px,282px) minmax(0,1fr);align-items:start;gap:16px;margin-top:16px;margin-bottom:36px}
+    .report-workspace>aside{position:sticky;top:12px;width:auto;min-width:0;height:calc(100vh - 24px);max-height:calc(100vh - 24px);border:1px solid var(--border);border-radius:16px;background:var(--sidebar);overflow:auto;box-shadow:none;backdrop-filter:none}
+    .report-workspace>main{min-width:0;padding:0;overflow:visible}
+    .report-workspace .settings-shell{margin-top:0;border-radius:16px;box-shadow:0 12px 40px -30px rgba(15,23,42,.45)}
+    .report-workspace .settings-tabs{border-radius:16px 16px 0 0}
+    .tool-details{padding:0!important}
+    .tool-details-summary{display:flex;align-items:center;min-height:46px;padding:12px 16px;color:var(--fg);font-size:11px;font-weight:850;cursor:pointer;list-style:none}
+    .tool-details-summary::-webkit-details-marker{display:none}
+    .tool-details-summary::before{content:"▸";margin-right:7px;color:var(--muted);font-size:9px}
+    .tool-details[open] .tool-details-summary::before{transform:rotate(90deg)}
+    .tool-details-body{padding:0 16px 16px;border-top:1px solid var(--border)}
+    .tool-details-body>.field-label:first-child{margin-top:14px}
+    .drow-list{gap:9px;padding:10px;background:var(--card-soft);overflow:visible}
+    .drow{border:1px solid var(--border);border-left:4px solid #94a3b8;border-radius:12px;background:var(--card);box-shadow:none}
+    .drow--added{border-left-color:#0f766e}
+    .drow--removed{border-left-color:#475569}
+    .drow--changed{border-left-color:#2563eb}
+    .drow-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px 12px}
+    .drow-facts{display:flex;grid-column:1/-1;gap:6px;flex-wrap:wrap}
+    .drow-title{grid-column:1;min-width:0}
+    .drow-actions{grid-column:2;align-self:start}
+    .fact-chip{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:var(--card-soft);color:var(--fg);font-size:10px;font-weight:750;line-height:1.35}
+    .fact-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#64748b;flex:0 0 auto}
+    .fact-chip--added::before{background:#0f766e}
+    .fact-chip--removed::before{background:#475569}
+    .fact-chip--changed::before{background:#2563eb}
+    .fact-chip--same::before{background:#64748b}
+    .fact-chip--difference{background:var(--card)}
+    .path-main{font-size:14px;line-height:1.55}
+    .path-tech>summary,.related-settings>summary{display:inline-flex;align-items:center;min-height:30px;color:var(--muted);font-size:10px;font-weight:750;cursor:pointer}
+    .related-settings{margin-top:2px}
+    .related-settings>summary::before{content:"▸";margin-right:5px;font-size:8px}
+    .related-settings[open]>summary::before{transform:rotate(90deg)}
+    .related-settings ul{display:grid;gap:5px;margin:2px 0 0;padding:8px 10px 8px 26px;border:1px dashed var(--border);border-radius:8px;background:var(--card-soft)}
+    .related-settings li{font-size:10px;line-height:1.5;color:var(--fg)}
+    .related-settings code{display:block;color:var(--muted);font-size:9px;word-break:break-all}
+    .related-settings p{margin:2px 0 0;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;color:var(--muted);font-size:10px}
+    .review-queue{border-color:var(--border);background:var(--card);box-shadow:none}
+    .review-queue--pending .review-queue-mark{background:var(--accent);color:#fff}
+    .review-queue--clear .review-queue-mark{background:#15803d;color:#fff}
+    .review-queue-note{line-height:1.5}
+    .diff-toolbar{border-top-width:1px;box-shadow:0 10px 30px -25px rgba(15,23,42,.65)}
+    .tchip{min-height:36px}
+    .settings-tab,.btn,.row-act,.row-review-next,.row-reviewed,.row-select{min-height:36px}
+
+    @media (max-width:1080px){
+      .report-hero,.report-workspace{width:min(calc(100% - 24px),1440px)}
+      .report-workspace{display:block}
+      .report-workspace>aside{position:relative;top:auto;width:auto;height:auto;max-height:none;margin-bottom:12px;overflow:visible}
+      .report-workspace>main{padding:0}
+      .report-fact-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+    }
+    @media (max-width:768px){
+      .report-hero,.report-workspace{width:calc(100% - 16px)}
+      .report-hero{gap:14px;margin-top:8px;padding:16px;border-radius:14px}
+      .report-hero .topbar-compare{grid-template-columns:1fr;gap:6px}
+      .report-hero .topbar-arrow{height:16px;transform:rotate(90deg)}
+      .report-completeness{grid-template-columns:auto minmax(0,1fr);padding:13px}
+      .report-diagnostics{grid-column:1/-1}
+      .report-facts-head{display:block}
+      .report-facts-head>p{margin-top:5px;text-align:left}
+      .report-fact-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .val-inline--lanes,.duo-row,.fd-entry-grid,.sl-pair{grid-template-columns:1fr}
+      .duo-head{display:none}
+      .drow-head{grid-template-columns:1fr}
+      .drow-facts,.drow-title,.drow-actions{grid-column:1}
+      .drow-actions{width:100%;margin-left:0;justify-content:flex-start;flex-wrap:wrap}
+      .report-workspace button,.report-workspace input,.report-workspace select,.report-workspace summary{min-height:44px}
+    }
+    @media (max-width:480px){
+      .report-fact-grid{grid-template-columns:1fr}
+      .report-fact-grid article{padding:10px 12px}
+      .report-completeness{grid-template-columns:1fr}
+      .report-completeness-mark{width:30px;height:30px}
+      .topbar-eyebrow-row{align-items:flex-start;flex-direction:column}
+      .header-badge{white-space:normal}
+      .report-meta-line{display:grid;gap:4px}
+      .drow-list{padding:7px}
+      .drow{padding:10px 9px}
+      .fact-chip{white-space:normal}
+      .review-queue{grid-template-columns:1fr}
+      .review-queue-actions{grid-column:1}
+    }
+    @media (forced-colors:active){
+      .report-completeness,.report-fact-grid article,.drow,.fact-chip{forced-color-adjust:auto;border:1px solid CanvasText}
+      .fact-chip::before{border:1px solid CanvasText;background:CanvasText}
+      :focus-visible{outline:2px solid Highlight!important;outline-offset:2px;box-shadow:none!important}
+    }
     @media print{
-      aside,.sb-panel .btn,.settings-tabs,.search-hint{display:none!important}
+      aside,.sb-panel .btn,.settings-tabs,.search-hint,.diff-toolbar,.drow-actions,.review-queue-actions,.skip-link{display:none!important}
       body{display:block;background:#fff}
-      main{padding:0}
+      .report-hero,.report-workspace{width:100%;margin:0}
+      .report-hero{padding:0 0 14px;border:none}
+      .report-workspace{display:block}
+      main{padding:0!important}
       .settings-shell,.sec,.topbar{box-shadow:none}
+      .report-diagnostics>summary{display:none}
+      .report-diagnostics>.report-notices{display:flex!important}
+      .drow-list{gap:6px;padding:6px;background:#fff}
+      .drow{break-inside:avoid}
       .drow,.fj-block,.fc-card{content-visibility:visible!important;contain-intrinsic-size:none!important}
     }
     @media (prefers-reduced-motion:reduce){
@@ -9997,12 +10100,71 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   </style>
 </head>
 <body>
-  <aside>
+  <a class="skip-link" href="#reportReview">差分レビューへ移動</a>
+  <header class="topbar report-hero" data-report-overview aria-labelledby="reportTitle">
+    <div class="topbar-main">
+      <div class="topbar-eyebrow-row">
+        <div class="sb-kicker">kintone 設定差分</div>
+        <span class="header-badge">${esc(reportMeta.exportLabel || "全差分")} · ${esc(reportMeta.exportContentLabel)}</span>
+      </div>
+      <h1 id="reportTitle" class="topbar-title">設定差分レポート</h1>
+      <p class="topbar-lead">比較元の設定と比較先の設定を、同じ項目どうしで確認するためのレポートです。</p>
+      <div class="topbar-compare" role="group" aria-label="比較方向">
+        <section class="topbar-app-card topbar-app-card--source" aria-label="比較元アプリ">
+          <span class="topbar-app-eyebrow">比較元</span>
+          <span class="topbar-app-side">現在の値</span>
+          <strong>${esc(sourceAppDisplay)}</strong>
+        </section>
+        <span class="topbar-arrow" aria-hidden="true">→</span>
+        <section class="topbar-app-card topbar-app-card--target" aria-label="比較先アプリ">
+          <span class="topbar-app-eyebrow">比較先</span>
+          <span class="topbar-app-side">比較する値</span>
+          <strong>${esc(targetAppDisplay)}</strong>
+        </section>
+      </div>
+    </div>
+
+    <section class="report-completeness report-completeness--${reportMeta.incompleteComparison ? "incomplete" : "complete"}" data-comparison-status="${reportMeta.incompleteComparison ? "incomplete" : "complete"}" aria-labelledby="comparisonStatusTitle">
+      <span class="report-completeness-mark" aria-hidden="true">${reportMeta.incompleteComparison ? "!" : "✓"}</span>
+      <div class="report-completeness-copy">
+        <span class="report-step-label">1 · 比較の完全性</span>
+        <h2 id="comparisonStatusTitle">${reportMeta.incompleteComparison ? "この結果だけでは、全差分を断定できません" : "比較対象の取得と差分検出は完了しています"}</h2>
+        <p>${reportMeta.incompleteComparison ? `${incompleteComparisonWarnings.length}件の未完了要因があります。件数は確認できた範囲の下限として扱ってください。` : "取得失敗・本文未検証・検出上限による打ち切りはありません。"}</p>
+      </div>
+      ${noticesHtml ? `<details class="report-diagnostics"><summary>確認が必要な取得状況を見る</summary><div class="report-notices">${noticesHtml}</div></details>` : ""}
+    </section>
+
+    <section class="report-facts" data-objective-counts aria-labelledby="objectiveCountsTitle">
+      <div class="report-facts-head">
+        <div>
+          <span class="report-step-label">2 · 確認できた客観的な件数</span>
+          <h2 id="objectiveCountsTitle">存在状況と差分内容</h2>
+        </div>
+        <p>判断や優先順位は付けず、比較で確認できた事実だけを表示します。</p>
+      </div>
+      <div class="report-fact-grid">
+        <article><span>比較先のみに存在</span><strong>${summary.added}</strong><small>比較元にはありません</small></article>
+        <article><span>比較元のみに存在</span><strong>${summary.removed}</strong><small>比較先にはありません</small></article>
+        <article><span>両方に存在・内容が異なる</span><strong>${objectiveContentChangedCount}</strong><small>値または設定が異なります</small></article>
+        <article><span>並び順が異なる</span><strong>${summary.moved}</strong><small>内容とは別に集計</small></article>
+        <article><span>内容は同じ</span><strong>${summary.same}</strong><small>${includesComparedContent ? "比較証跡として収録" : "安全共有版では非収録の場合があります"}</small></article>
+      </div>
+    </section>
+
+    <div class="report-meta-line">
+      <span>生成 ${esc(reportMeta.generatedAt)}</span>
+      <span>対象 ${esc(sectionText || "-")}</span>
+      <span>${esc(comparedContentModeNote)}</span>
+    </div>
+  </header>
+
+  <div class="report-workspace" data-report-workspace>
+  <aside data-report-tools>
     <div class="sb-head">
       <div class="sb-kicker">kintone アプリ設定の比較</div>
       <div class="sb-head-row">
-        <div class="sb-title">差分レポート</div>
-        <button type="button" id="mobileSidebarToggle" class="mobile-filter-toggle" aria-expanded="false" aria-controls="sidebarPanels">絞り込み・出力</button>
+        <div class="sb-title">検索・確認ツール</div>
+        <button type="button" id="mobileSidebarToggle" class="mobile-filter-toggle" aria-expanded="false" aria-controls="sidebarPanels">検索・出力</button>
       </div>
       <div class="sb-meta">
         生成日時: ${esc(reportMeta.generatedAt)}<br>
@@ -10014,7 +10176,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     <button type="button" id="sidebarBackdrop" class="sidebar-backdrop" aria-label="絞り込みを閉じる" hidden></button>
     <div id="sidebarPanels" class="sidebar-panels">
     <div class="sidebar-drawer-head">
-      <strong id="sidebarDrawerTitle">絞り込み・出力</strong>
+      <strong id="sidebarDrawerTitle">検索・確認・出力</strong>
       <button type="button" id="sidebarDrawerClose" class="btn">閉じる</button>
     </div>
     <div class="sb-panel sb-stats">
@@ -10030,11 +10192,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       </div>
       <div class="sb-stat-grid">
         <div class="sb-stat"><span>表示中</span><b id="stat-total">${summary.total}</b></div>
-        <div class="sb-stat"><span>追加</span><b id="stat-added">${summary.added}</b></div>
-        <div class="sb-stat"><span>削除</span><b id="stat-removed">${summary.removed}</b></div>
-        <div class="sb-stat"><span>変更</span><b id="stat-changed">${summary.changed}</b></div>
-        <div class="sb-stat"><span>移動</span><b id="stat-moved">${summary.moved}</b></div>
-        <div class="sb-stat"><span>同一</span><b id="stat-same">${summary.same}</b></div>
+        <div class="sb-stat"><span>比較先のみ</span><b id="stat-added">${summary.added}</b></div>
+        <div class="sb-stat"><span>比較元のみ</span><b id="stat-removed">${summary.removed}</b></div>
+        <div class="sb-stat"><span>内容差</span><b id="stat-changed">${objectiveContentChangedCount}</b></div>
+        <div class="sb-stat"><span>並び順差</span><b id="stat-moved">${summary.moved}</b></div>
+        <div class="sb-stat"><span>同じ</span><b id="stat-same">${summary.same}</b></div>
         <div class="sb-stat"><span>確認済み</span><b id="stat-reviewed">0</b></div>
         <div class="sb-stat"><span>選択中</span><b id="stat-selected">0</b></div>
       </div>
@@ -10052,8 +10214,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <label class="vs-opt"><input type="radio" name="viewSide" value="source"> 比較元</label>
         <label class="vs-opt"><input type="radio" name="viewSide" value="target"> 比較先</label>
       </div>
-      <span class="field-label">検索</span>
-      <input type="text" id="search" placeholder="パス・値・理由・フィールド名で絞り込み" aria-label="差分の検索" autocomplete="off">
+      <span class="field-label">項目を検索</span>
+      <input type="text" id="search" placeholder="項目名・値・理由で検索" aria-label="差分の検索" autocomplete="off">
       <p class="search-hint"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">F</kbd> / <kbd class="kbd">⌘</kbd>+<kbd class="kbd">F</kbd> で検索 · <kbd class="kbd">J</kbd>/<kbd class="kbd">K</kbd> で移動 · <kbd class="kbd">R</kbd> で確認して次へ · <kbd class="kbd">Esc</kbd> でクリア</p>
       <div class="sb-btns">
         <button type="button" class="btn" id="collapseBtn">全折畳</button>
@@ -10063,7 +10225,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <button type="button" class="btn" id="themeBtn" style="grid-column:span 2">ダークに切替</button>
       </div>
     </div>
-    <div class="sb-panel sb-ctrl">
+    <details class="sb-panel sb-ctrl tool-details">
+      <summary class="tool-details-summary">出力・反映・比較証跡</summary>
+      <div class="tool-details-body">
       <span class="field-label">反映JSON（選択差分 → APIパラメータ）</span>
       <p class="search-hint" style="margin-top:0">${!includesComparedContent ? "差分行のみのレポートには設定本文が収録されていないため、この機能は利用できません。" : canBuildReflectJson ? "行やフィールドの「選択」にチェックした差分から、比較元の設定値を比較先アプリへ反映するためのAPIパラメータJSONを作成します。" : "比較結果が不完全なため、反映JSONの選択・保存・コピーを無効にしています。取得失敗や本文未検証、上限超過を解消して再比較してください。"}</p>
       <div class="sb-btns">
@@ -10075,7 +10239,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <button type="button" class="btn" id="srcJsonBtn"${comparedContentDisabledAttrs}>比較元JSON</button>
         <button type="button" class="btn" id="tgtJsonBtn"${comparedContentDisabledAttrs}>比較先JSON</button>
       </div>
-    </div>
+      </div>
+    </details>
     <div class="sb-panel sb-ctrl sb-advanced">
       <details class="adv">
         <summary class="adv-summary">詳細オプション（表示の絞り込み）</summary>
@@ -10094,31 +10259,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     </div>
     </div>
   </aside>
-  <main>
-    <div class="topbar">
-      <div class="topbar-main">
-        <div class="topbar-eyebrow-row">
-          <div class="sb-kicker">kintone 設定差分</div>
-          <span class="header-badge">セクション ${esc(String((scopes || []).length || 0))}</span>
-        </div>
-        <div class="topbar-title">設定差分レポート</div>
-        <div class="topbar-compare" role="group" aria-label="比較対象アプリ">
-          <div class="topbar-app-card topbar-app-card--source">
-            <span class="topbar-app-eyebrow">BEFORE</span>
-            <span class="topbar-app-side">比較元</span>
-            <strong>${esc(sourceAppDisplay)}</strong>
-          </div>
-          <span class="topbar-arrow" aria-hidden="true">→</span>
-          <div class="topbar-app-card topbar-app-card--target">
-            <span class="topbar-app-eyebrow">AFTER</span>
-            <span class="topbar-app-side">比較先</span>
-            <strong>${esc(targetAppDisplay)}</strong>
-          </div>
-        </div>
-        <div class="topbar-desc">差分 <b>${diffTotal}件</b>（追加 ${summary.added} / 削除 ${summary.removed} / 変更 ${summary.changed}）・同一 ${summary.same}件。${includesComparedContent ? "タブで「差分一覧」「フィールド単位」を切り替えて確認できます。" : "このHTMLは差分行のみを収録し、比較設定本文は収録していません。"}</div>
-      </div>
-    </div>
-
+  <main id="reportReview" data-review-workspace tabindex="-1">
     <div class="settings-shell">
       <div class="settings-tabs" role="tablist" aria-label="レポート表示切替">
         <button id="reportTabDiff" type="button" role="tab" class="settings-tab" data-report-tab="diff" aria-selected="true" aria-controls="reportPaneDiff" tabindex="0">差分一覧</button>
@@ -10128,7 +10269,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
       <section id="reportPaneDiff" class="tab-pane" data-report-pane="diff" role="tabpanel" aria-labelledby="reportTabDiff">
         <div class="content">
-          ${noticesHtml ? `<div class="report-notices">${noticesHtml}</div>` : ""}
           <p id="reportFilterStatus" class="report-filter-status" role="status" aria-live="polite" aria-atomic="true">表示 ${summary.total}件、全体 ${reportRows.length}件、未確認 ${preparedReviewRows.reviewKeys.length}件</p>
           <div id="main" aria-busy="false"></div>
         </div>
@@ -10136,7 +10276,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
       <section id="reportPaneSettingsLike" class="tab-pane" data-report-pane="settingsLike" role="tabpanel" aria-labelledby="reportTabSettingsLike" hidden>
         <div class="content" style="padding:0">
-          <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6">${includesComparedContent ? "<strong>フィールド単位</strong>で、フィールドごとの設定差分と影響範囲を1つの項目にまとめて確認します。左の検索と「同一項目を隠す」が連動し、カードのボタンから詳細をポップアップ表示できます。" : "<strong>差分行のみ</strong>のレポートにはフィールド設定本文が収録されていないため、フィールド単位表示は利用できません。"}</p>
+          <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6">${includesComparedContent ? "<strong>フィールド単位</strong>で、フィールドごとの設定差分を1つの項目にまとめて確認します。検索と「同一項目を隠す」が連動し、カードのボタンから詳細を表示できます。" : "<strong>差分行のみ</strong>のレポートにはフィールド設定本文が収録されていないため、フィールド単位表示は利用できません。"}</p>
           <div id="settingsLikeRoot" class="sl-root"></div>
         </div>
       </section>
@@ -10159,6 +10299,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       </div>
     </div>
   </main>
+  </div>
   <script>${logicScript}<\/script>
 </body>
 </html>`;
@@ -11014,6 +11155,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function sectionLabelOf(key) {
     return SECTION_LABEL_BY_KEY2.get(key) || key || "(未分類)";
   }
+  function sectionKeyOfRow(row) {
+    return String(row.sectionKey || row.section || "(その他)");
+  }
   function normalizationLabel(state3) {
     if (!state3 || !Object.keys(state3).length) return "未記録";
     const entries = Object.entries(state3).sort(([a], [b]) => a.localeCompare(b));
@@ -11024,7 +11168,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function groupRowsBySection(rows) {
     const map = /* @__PURE__ */ new Map();
     for (const r of rows) {
-      const key = r.sectionKey || "(その他)";
+      const key = sectionKeyOfRow(r);
       let list = map.get(key);
       if (!list) {
         list = [];
@@ -11273,7 +11417,40 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return name || (id ? `App ${id}` : "");
   }
   function scopeLabel(scopes) {
-    return (scopes || []).map((key) => sectionLabelOf(key)).join("、");
+    const labels = (scopes || []).map((key) => sectionLabelOf(key)).filter(Boolean);
+    return labels.length ? labels.join("、") : "未記録";
+  }
+  function humanDateTime(value) {
+    if (value == null || value === "") return "未記録";
+    const source = typeof value === "string" && /^\d{11,}$/.test(value.trim()) ? Number(value) : value;
+    const date = typeof source === "number" ? new Date(source) : new Date(String(source));
+    if (!Number.isFinite(date.getTime())) return String(value);
+    return `${new Intl.DateTimeFormat("ja-JP", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
+    }).format(date)} JST`;
+  }
+  function xlsxContentLabel(rows) {
+    const hasActual = rows.some((row) => !row._displayOnly && row.type !== "same");
+    const hasSame = rows.some((row) => !row._displayOnly && row.type === "same");
+    const hasReference = rows.some((row) => !!row._displayOnly);
+    const parts = [
+      hasActual ? "差分行" : "",
+      hasSame ? "同一証跡行" : "",
+      hasReference ? "参考表示行" : ""
+    ].filter(Boolean);
+    const content = parts.length === 0 ? "差分行なし" : parts.length === 1 ? `${parts[0]}のみ` : parts.length === 2 ? `${parts[0]}と${parts[1]}` : parts.join("・");
+    return `収録した${content}（全設定スナップショットなし）`;
+  }
+  function filterDescriptionLabel(ctx) {
+    if (String(ctx.filterDescription || "").trim()) return String(ctx.filterDescription).trim();
+    return ctx.exportMode === "filtered" ? "画面で表示中の結果（詳細条件は未記録）" : "フィルターなし（比較結果の全件）";
   }
   function fieldSettingKind(row) {
     const fieldInfo = extractFieldPathInfo(String(row.path || ""));
@@ -11387,11 +11564,14 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
   function xlsxDiffValuePreview(text, originalUtf16Length = text.length) {
     if (text.length <= XLSX_DIFF_VALUE_PREVIEW_LIMIT) return text;
+    const hash = shortStableHash(text);
+    const prefix = `[一部表示: 元データ ${originalUtf16Length}文字（UTF-16） / 識別:${hash}]
+`;
     const suffix = `
-…（Excel表示用に省略・元UTF-16長 ${originalUtf16Length}・識別:${shortStableHash(text)}）`;
-    let keep = XLSX_DIFF_VALUE_PREVIEW_LIMIT - suffix.length;
+…（Excel表示用に省略・元UTF-16長 ${originalUtf16Length}・識別:${hash}）`;
+    let keep = XLSX_DIFF_VALUE_PREVIEW_LIMIT - prefix.length - suffix.length;
     if (keep > 0 && /[\uD800-\uDBFF]/.test(text.charAt(keep - 1))) keep -= 1;
-    return text.slice(0, Math.max(0, keep)) + suffix;
+    return prefix + text.slice(0, Math.max(0, keep)) + suffix;
   }
   function rowValue(row, side) {
     if (isSensitiveSameDiffRow(row)) return SENSITIVE_SAME_VALUE_REDACTION;
@@ -11547,24 +11727,24 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
   function fieldSettingReviewGuidance(detail) {
     if (detail.settingKey === "(field)" && detail.row.type === "added") {
-      return "入力画面・権限・一覧・外部連携に追加してよいか確認してください。";
+      return "入力画面・権限・一覧・外部連携での利用有無を確認してください。";
     }
     if (detail.settingKey === "(field)" && detail.row.type === "removed") {
-      return "保存済みデータ・一覧・外部連携から参照されていないか確認してください。";
+      return "保存済みデータ・一覧・外部連携からの参照有無を確認してください。";
     }
     if (detail.settingKey === "required" || detail.settingKey.endsWith(".required")) {
-      return detail.row.right === true ? "既存データ・入力画面・外部連携が必須入力に対応できるか確認してください。" : "未入力を許可してよいか確認してください。";
+      return detail.row.right === true ? "既存データの未入力有無と、入力画面・外部連携の入力条件を確認してください。" : "未入力を許可する設定への変更を確認してください。";
     }
     if (detail.settingKey === "options" || detail.settingKey.startsWith("options.")) {
-      return "既存値・絞り込み条件・連携への影響を確認してください。";
+      return "既存値・絞り込み条件・連携で使用している選択肢を確認してください。";
     }
     if (["type", "code"].includes(detail.settingKey) || /\.(?:type|code)$/.test(detail.settingKey)) {
-      return "保存済みデータとAPI・外部連携への影響を確認してください。";
+      return "保存済みデータとAPI・外部連携で使用している型・コードを確認してください。";
     }
     if (/^(?:lookup|referenceTable)(?:\.|$)/.test(detail.settingKey)) {
-      return "参照先とコピー項目への影響を確認してください。";
+      return "参照先アプリ、キー、コピー項目を確認してください。";
     }
-    return "変更内容と業務影響を確認してください。";
+    return "変更前後の設定値と利用箇所を確認してください。";
   }
   function fieldDetailReviewNote(detail) {
     const notes = [rowNote(detail.row), fieldSettingReviewGuidance(detail)].map((note) => note.trim()).filter(Boolean);
@@ -11611,7 +11791,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       else counts.changed += 1;
       if (row.moved || row.type === "moved") counts.moved += 1;
     }
-    return counts;
+    return {
+      ...counts,
+      contentChanged: Math.max(0, counts.changed - counts.moved)
+    };
   }
   function issueMessage(issue) {
     if (issue.message) return String(issue.message);
@@ -11626,6 +11809,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }).join("\n");
   }
   function bundleEnvironmentLabel(bundle) {
+    if (!bundle) return "未記録";
     return `${bundle?.guestId ? `ゲスト ${bundle.guestId}` : "通常スペース"} / ${bundle?.preview ? "プレビュー" : "運用"}設定`;
   }
   function completenessLabel(fetchIssues, partialIssues, truncation) {
@@ -11657,15 +11841,48 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function fieldComparisonSummary(ctx, fieldCount, settingDiffCount, unstructuredFieldDiffCount) {
     const fieldSelected = (ctx.scopes || []).includes("fieldSettings") || (ctx.rows || []).some((row) => (row.sectionKey || row.section) === "fieldSettings");
     if (!fieldSelected) return "比較対象外";
-    const fieldIncomplete = (ctx.fetchIssues || []).some((issue) => (issue.sectionKey || issue.section) === "fieldSettings") || (ctx.partialIssues || []).some((issue) => (issue.sectionKey || issue.section) === "fieldSettings") || (ctx.truncation?.sections || []).some((section) => (section.sectionKey || section.section) === "fieldSettings");
+    const fieldTruncation = (ctx.truncation?.sections || []).find((section) => (section.sectionKey || section.section) === "fieldSettings");
+    const fieldScanStatus = fieldTruncation ? truncationScanStatusOf(fieldTruncation) : null;
+    const fieldOmittedDiff = Number(fieldTruncation?.omittedDiffCount ?? fieldTruncation?.droppedDiff ?? 0);
+    const legacyUnknownTruncation = !!ctx.truncation?.truncated && !(ctx.truncation.sections || []).length;
+    const fieldIncomplete = (ctx.fetchIssues || []).some((issue) => (issue.sectionKey || issue.section) === "fieldSettings") || (ctx.partialIssues || []).some((issue) => (issue.sectionKey || issue.section) === "fieldSettings") || legacyUnknownTruncation || fieldScanStatus === "partial" || fieldScanStatus === "unscanned";
     const known = [
-      fieldCount ? `${fieldCount}フィールド / ${settingDiffCount}設定差分` : "",
+      fieldCount ? `${fieldCount}フィールド / ${settingDiffCount}件の差分明細` : "",
       unstructuredFieldDiffCount ? `構造化できない差分 ${unstructuredFieldDiffCount}件` : ""
     ].filter(Boolean).join("、");
     if (fieldIncomplete) return `未判定${known ? `（確認できた範囲: ${known}）` : "（取得・走査が不完全）"}`;
+    if (fieldScanStatus === "complete" && fieldOmittedDiff > 0) {
+      return `${known || "確認できた差分 0件"}（走査済み・一部未収録 ${fieldOmittedDiff}件）`;
+    }
     if (unstructuredFieldDiffCount) return `${known}。技術明細を確認してください`;
-    if (fieldCount) return `${fieldCount}フィールド / ${settingDiffCount}設定差分`;
+    if (fieldCount) return `${fieldCount}フィールド / ${settingDiffCount}件の差分明細`;
     return ctx.exportMode === "filtered" ? "0件（この出力範囲内）" : "0件（走査済み）";
+  }
+  function summarySectionKeys(ctx, grouped) {
+    const keys = /* @__PURE__ */ new Set();
+    const add = (value) => {
+      const key = String(value || "").trim();
+      if (key) keys.add(key);
+    };
+    (ctx.scopes || []).forEach(add);
+    grouped.forEach((_rows, key) => add(key));
+    (ctx.fetchIssues || []).forEach((issue) => add(issue.sectionKey || issue.section));
+    (ctx.partialIssues || []).forEach((issue) => add(issue.sectionKey || issue.section));
+    (ctx.truncation?.sections || []).forEach((section) => add(section.sectionKey || section.section));
+    const known = SECTION_DEFS.map((section) => section.key).filter((key) => keys.has(key));
+    const unknown = [...keys].filter((key) => !SECTION_ORDER_BY_KEY.has(key));
+    return [...known, ...unknown];
+  }
+  function sectionCountBreakdown(rows) {
+    const counts = summarizeRows2(rows);
+    return [
+      `追加 ${counts.added}`,
+      `削除 ${counts.removed}`,
+      `内容変更 ${counts.contentChanged}`,
+      `移動 ${counts.moved}`,
+      `同一 ${counts.same}`,
+      `参考 ${counts.reference}`
+    ].join(" / ");
   }
   function sectionSheetName(key) {
     return key === "fieldSettings" ? "フィールド技術明細" : sectionLabelOf(key);
@@ -11678,6 +11895,14 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       useWhen: hasIssues ? "最初に確認します。不完全な範囲は「取得・未検証」も確認します。" : fieldCount ? "最初に確認し、フィールドは「フィールド差分要約」、収録された差分は「差分一覧」へ進みます。" : "最初に確認し、収録された差分は「差分一覧」へ進みます。",
       targetCell: "A1"
     }];
+    if (hasIssues) {
+      guides.push({
+        name: "取得・未検証",
+        purpose: "取得失敗、一部未検証、件数上限の対象と理由を確認できます。",
+        useWhen: "概要の取得状態が「不完全」または結果が「比較不完全」のときに確認します。",
+        targetCell: "A3"
+      });
+    }
     if (fieldCount) {
       guides.push(
         {
@@ -11688,7 +11913,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         },
         {
           name: "フィールド差分詳細",
-          purpose: "フィールド設定ごとの変更前後と確認ポイントを確認できます。",
+          purpose: "フィールド設定ごとの変更前後と確認事項を確認できます。",
           useWhen: "設定単位の内容を確認し、差分IDからレビュー入力へ進むときに使います。",
           targetCell: "B4"
         }
@@ -11697,7 +11922,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     guides.push({
       name: "差分一覧",
       purpose: "このブックに収録された差分と変更前後の値を一覧で確認できます。",
-      useWhen: "黄色の列に確認状態、担当者、レビューコメントを記録するときに使います。",
+      useWhen: "黄色の列に確認状況、対応判断、担当者、コメントを記録するときに使います。",
       targetCell: (ctx.rows || []).length ? "I4" : "A3"
     });
     for (const key of grouped.keys()) {
@@ -11708,14 +11933,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         purpose: isFieldTechnical ? "フィールド設定の技術パスと原データを確認できます。" : `${sectionLabelOf(key)}の技術パスと原データを確認できます。`,
         useWhen: isFieldTechnical ? "人向けの要約だけでは判断できない場合に、技術的な根拠を確認します。" : "差分一覧だけでは判断できない場合に、技術的な根拠を確認します。",
         targetCell: "A4"
-      });
-    }
-    if (hasIssues) {
-      guides.push({
-        name: "取得・未検証",
-        purpose: "取得失敗、一部未検証、件数上限の対象と理由を確認できます。",
-        useWhen: "概要の取得状態が「不完全」または判定が「要確認」のときに確認します。",
-        targetCell: "A3"
       });
     }
     return guides;
@@ -11731,13 +11948,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const counts = summarizeRows2(rows);
     const truncation = ctx.truncation?.truncated ? ctx.truncation : null;
     const incomplete = fetchIssues.length > 0 || partialIssues.length > 0 || !!truncation;
-    const verdict = incomplete ? "要確認（比較結果は不完全です。差分なしとは判断できません）" : counts.actual > 0 ? "差分あり" : "差分なし";
+    const verdict = incomplete ? "比較不完全（差分なしとは判断できません）" : counts.actual > 0 ? "差分あり" : "差分なし";
     const completeness = completenessLabel(fetchIssues, partialIssues, truncation);
     const comparisonBanner = `${appLabel(ctx.sourceBundle) || "比較元"}  →  ${appLabel(ctx.targetBundle) || "比較先"}`;
     const sensitiveSections = [...new Set(rows.filter((row) => !row._displayOnly && row.type !== "same" && SENSITIVE_DIFF_SECTION_KEYS.has(String(row.sectionKey || ""))).map((row) => sectionLabelOf(String(row.sectionKey || ""))))];
     const redactedSensitiveSections = [...new Set(rows.filter((row) => isSensitiveSameDiffRow(row)).map((row) => sectionLabelOf(String(row.sectionKey || ""))))];
     const fieldStatus = fieldComparisonSummary(ctx, fieldCount, settingDiffCount, unstructuredFieldDiffCount);
-    const fieldStatusIncomplete = fieldStatus.startsWith("未判定");
+    const fieldStatusIncomplete = fieldStatus.startsWith("未判定") || fieldStatus.includes("一部未収録");
     const sheetGuides = buildSheetGuides(ctx, grouped, fieldCount);
     const fieldLinkTarget = fieldCount ? { sheet: "フィールド差分要約", cell: "C4", label: "フィールド差分を見る" } : unstructuredFieldDiffCount ? { sheet: "フィールド技術明細", cell: "A4", label: "技術明細を見る" } : null;
     const overviewNextPlaces = [
@@ -11747,42 +11964,46 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       incomplete ? "不完全な範囲は「取得・未検証」で確認します。" : ""
     ].filter(Boolean).join(" ");
     const overviewRow = {
-      verdict: 4,
-      total: 5,
-      added: 6,
-      removed: 7,
-      changed: 8,
-      moved: 9,
-      same: 10,
-      comparisonTitle: 11,
-      comparisonApps: 12,
-      comparisonEnvironment: 13,
-      fieldStatus: 17,
-      usage: 18
+      guideBand: 4,
+      verdict: 5,
+      total: 6,
+      added: 7,
+      removed: 8,
+      contentChanged: 9,
+      moved: 10,
+      same: 11,
+      comparisonTitle: 12,
+      comparisonApps: 13,
+      comparisonEnvironment: 14,
+      normalization: 18,
+      fieldStatus: 19,
+      usage: 20
     };
     const sheetRows = [
       ["kintone 設定差分比較レポート", "", "", ""],
       [comparisonBanner, "", "", ""],
-      ["生成日時", ctx.generatedAt || (/* @__PURE__ */ new Date()).toISOString(), "比較日時", ctx.comparedAt == null || ctx.comparedAt === "" ? "未記録" : String(ctx.comparedAt)],
+      ["生成日時", humanDateTime(ctx.generatedAt || Date.now()), "比較日時", humanDateTime(ctx.comparedAt)],
+      ["比較元取得日時", humanDateTime(ctx.sourceBundle?.fetchedAt), "比較先取得日時", humanDateTime(ctx.targetBundle?.fetchedAt)],
       [sheetGuideBand(
-        "全体の判定、取得状態、差分件数、比較条件を確認できます。",
+        "この出力範囲の結果、取得状態、収録差分数、比較条件を確認できます。",
         overviewNextPlaces
       ), "", "", ""],
-      ["判定", verdict, "取得状態", completeness],
-      ["差分件数", counts.actual, "取得失敗", fetchIssues.length],
+      ["この出力範囲の結果", verdict, "取得状態", completeness],
+      ["収録差分数", counts.actual, "取得失敗", fetchIssues.length],
       ["追加（比較先のみ）", counts.added, "一部未検証", partialIssues.length],
       ["削除（比較元のみ）", counts.removed, "件数上限", truncation ? "省略あり" : "省略なし"],
-      ["変更", counts.changed, "", ""],
-      ["移動（変更の内数）", counts.moved, "", ""],
+      ["内容変更（移動を除く）", counts.contentChanged, "", ""],
+      ["移動", counts.moved, "", ""],
       ["同一", counts.same, "", ""],
       ["比較の向き・条件", "", "", ""],
-      ["比較元", appLabel(ctx.sourceBundle), "比較先", appLabel(ctx.targetBundle)],
+      ["比較元", appLabel(ctx.sourceBundle) || "未記録", "比較先", appLabel(ctx.targetBundle) || "未記録"],
       ["環境", bundleEnvironmentLabel(ctx.sourceBundle), "環境", bundleEnvironmentLabel(ctx.targetBundle)],
       ["比較方向", "比較元 → 比較先", "出力範囲", ctx.exportLabel || (ctx.exportMode === "filtered" ? "表示中（フィルタ適用後）" : "全件")],
-      ["比較対象", scopeLabel(ctx.scopes), "出力内容", getDiffExportContentLabel(ctx.exportContentMode || "diffOnly")],
-      ["正規化設定", normalizationLabel(ctx.normalizationPresetState), "無視キー", String(ctx.ignoreKeys || "")],
+      ["比較対象", scopeLabel(ctx.scopes), "収録内容", xlsxContentLabel(rows)],
+      ["フィルタ条件", filterDescriptionLabel(ctx), "無視キー", String(ctx.ignoreKeys || "").trim() || "なし"],
+      ["正規化設定", normalizationLabel(ctx.normalizationPresetState), "自動判定", "重要度、業務への影響、対応要否は自動判定しません"],
       ["フィールド差分", fieldStatus, "", fieldLinkTarget?.label || ""],
-      ["使い方", fieldCount ? "①「フィールド差分要約」で対象を確認　②「フィールド差分詳細」で変更前後を確認　③「差分一覧」でレビューを入力　※パスは技術明細シートにのみ掲載" : "①概要で判定と取得状態を確認　②「差分一覧」で変更前後を確認　③黄色い3列にレビューを入力　※パスは技術明細シートにのみ掲載", "", rows.length ? "③ レビュー入力へ" : ""],
+      ["使い方", fieldCount ? "①「フィールド差分要約」で対象を確認　②「フィールド差分詳細」で変更前後を確認　③「差分一覧」で確認状況と対応判断を入力　※パスは技術明細シートにのみ掲載" : "①概要で結果と取得状態を確認　②「差分一覧」で変更前後を確認　③黄色い4列に確認状況・対応判断・担当者・コメントを入力　※パスは技術明細シートにのみ掲載", "", rows.length ? "③ レビュー入力へ" : ""],
       ["", "", "", ""]
     ];
     const guideTitleRow = sheetRows.length;
@@ -11798,12 +12019,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const sectionTitleRow = sheetRows.length;
     sheetRows.push(["セクション別集計", "", "", ""]);
     const sectionHeaderRow = sheetRows.length;
-    sheetRows.push(["セクション", "一覧行数", "差分件数", "走査・取得状態"]);
-    for (const [key, list] of grouped) {
+    sheetRows.push(["セクション", "収録行数", "客観内訳", "走査・取得状態"]);
+    for (const key of summarySectionKeys(ctx, grouped)) {
+      const list = grouped.get(key) || [];
       sheetRows.push([
         sectionLabelOf(key),
         list.length,
-        summarizeRows2(list).actual,
+        sectionCountBreakdown(list),
         sectionCompletenessLabel(key, ctx)
       ]);
     }
@@ -11835,12 +12057,22 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       pushWarning("🔒 機密値省略", `${redactedSensitiveSections.join("・")} の同一行は、機密値を重複収録しないため値を省略しています。`);
     }
     const rowStyles = sheetRows.map(() => "normal");
-    const rowHeights = [32, 24, 0, 44];
+    const rowHeights = [32, 24, 0, 0, 44];
+    rowHeights[overviewRow.normalization] = readableDiffRowHeight([
+      { value: sheetRows[overviewRow.normalization][1], width: 54 },
+      { value: sheetRows[overviewRow.normalization][3], width: 54 }
+    ], 72);
     for (let rowIndex = guideStartRow; rowIndex < guideEndRow; rowIndex += 1) rowHeights[rowIndex] = 40;
+    for (const rowIndex of warningRows) {
+      rowHeights[rowIndex] = readableDiffRowHeight([
+        { value: sheetRows[rowIndex][0], width: 24 },
+        { value: sheetRows[rowIndex][1], width: 120 }
+      ], 132);
+    }
     const cellStyles = sheetRows.map(() => []);
     cellStyles[0][0] = "title";
     cellStyles[1][0] = "sectionHeader";
-    cellStyles[3][0] = "info";
+    cellStyles[overviewRow.guideBand][0] = "info";
     cellStyles[overviewRow.verdict] = [
       "sectionHeader",
       incomplete ? "kpiDanger" : "kpiGood",
@@ -11851,7 +12083,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       overviewRow.total,
       overviewRow.added,
       overviewRow.removed,
-      overviewRow.changed,
+      overviewRow.contentChanged,
       overviewRow.moved,
       overviewRow.same
     ]) {
@@ -11882,7 +12114,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const merges = [
       "A1:D1",
       "A2:D2",
-      "A4:D4",
+      `A${overviewRow.guideBand + 1}:D${overviewRow.guideBand + 1}`,
       `A${overviewRow.comparisonTitle + 1}:D${overviewRow.comparisonTitle + 1}`,
       `A${guideTitleRow + 1}:D${guideTitleRow + 1}`,
       `C${guideHeaderRow + 1}:D${guideHeaderRow + 1}`,
@@ -11913,7 +12145,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
           ref: `D${overviewRow.usage + 1}`,
           targetSheet: "差分一覧",
           targetCell: "I4",
-          tooltip: "確認状態・担当者・コメントの入力欄へ移動"
+          tooltip: "確認状況・対応判断・担当者・コメントの入力欄へ移動"
         }] : [],
         ...sheetGuides.map((guide, index) => ({
           ref: `A${guideStartRow + index + 1}`,
@@ -11931,7 +12163,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       }
     };
   }
-  var REVIEW_STATUS_VALUES = ["未確認", "確認中", "対応要", "対応不要", "確認済み"];
+  var REVIEW_PROGRESS_VALUES = ["未確認", "確認中", "確認済み", "対象外"];
+  var ACTION_DECISION_VALUES = ["未判断", "要対応", "対応不要", "保留", "対象外"];
   function stableDifferenceId(row, seen) {
     const redactedIdentityValue = isSensitiveSameDiffRow(row) ? "SENSITIVE_SAME_VALUE_REDACTED" : null;
     const leftDigest = shortStableHash(redactedIdentityValue ?? stableStringify(row.left) ?? "undefined");
@@ -11959,47 +12192,62 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }));
     return refs;
   }
+  function buildTechnicalRefs(rows) {
+    const sectionCounts = /* @__PURE__ */ new Map();
+    return rows.map((row) => {
+      const key = sectionKeyOfRow(row);
+      const indexInSection = sectionCounts.get(key) || 0;
+      sectionCounts.set(key, indexInSection + 1);
+      return {
+        sheetName: sectionSheetName(key),
+        rowNumber: indexInSection + 4
+      };
+    });
+  }
   function directionalValueHeader(side, bundle) {
     const direction = side === "source" ? "比較元" : "比較先";
     const label = appLabel(bundle);
     return label ? `${direction}の値
 ${label}` : `${direction}の値`;
   }
-  function buildListSheet(rows, name = "差分一覧", sourceBundle, targetBundle, differenceRefs, fieldModel) {
+  function buildListSheet(rows, name = "差分一覧", sourceBundle, targetBundle, differenceRefs, technicalRefs, fieldModel) {
     const headers = [
-      "差分ID",
-      "変更種別",
-      "存在状況",
       "セクション",
       "項目",
+      "変更種別",
+      "存在状況",
+      "差分ID",
       directionalValueHeader("source", sourceBundle),
       directionalValueHeader("target", targetBundle),
-      "確認ポイント",
-      "確認状態",
+      "確認事項",
+      "確認状況",
+      "対応判断",
       "担当者",
-      "レビューコメント"
+      "コメント"
     ];
     const groupHeader = [
-      "差分の識別",
+      "差分対象",
       "",
-      "",
+      "変更の事実",
       "",
       "",
       "比較元（変更前）",
       "比較先（変更後）",
-      "確認ポイント",
+      "確認事項",
       "レビュー入力（黄色）",
+      "",
       "",
       ""
     ];
     const guide = sheetGuideBand(
-      "このブックに収録された差分、変更前後の値、確認ポイントを一覧で確認できます。",
-      "黄色の列に確認状態・担当者・コメントを入力します。技術的な根拠は各明細シートで確認します。"
+      "このブックに収録された差分、変更前後の値、確認事項を一覧で確認できます。",
+      "黄色の列に確認状況・対応判断・担当者・コメントを入力します。差分IDから技術明細へ移動できます。値先頭の「[一部表示]」は技術明細または元データを確認します。"
     );
-    const out = [[guide, "", "", "", "", "", "", "", "", "", ""], groupHeader, headers];
+    const out = [[guide, "", "", "", "", "", "", "", "", "", "", ""], groupHeader, headers];
     const rowStyles = ["normal", "normal", "normal"];
     const groupCellStyles = [];
     groupCellStyles[0] = "sectionHeader";
+    groupCellStyles[2] = "info";
     groupCellStyles[5] = "sourceGroup";
     groupCellStyles[6] = "targetGroup";
     groupCellStyles[7] = "info";
@@ -12017,28 +12265,39 @@ ${label}` : `${direction}の値`;
       const sourceValue = fieldDetail ? fieldSettingHumanValue(fieldDetail, "source", sourceBundle, targetBundle) : isFieldSettings ? row.type === "added" ? fieldValueOnlyExistsLabel("source", sourceBundle, targetBundle) : humanizeFieldSettingValue(row.left, "") : humanizeListRowValue(row, "source", sourceBundle, targetBundle);
       const targetValue = fieldDetail ? fieldSettingHumanValue(fieldDetail, "target", sourceBundle, targetBundle) : isFieldSettings ? row.type === "removed" ? fieldValueOnlyExistsLabel("target", sourceBundle, targetBundle) : humanizeFieldSettingValue(row.right, "") : humanizeListRowValue(row, "target", sourceBundle, targetBundle);
       const note = fieldDetail ? fieldDetailReviewNote(fieldDetail) : rowNote(row);
+      const reviewable = !row._displayOnly && row.type !== "same";
       out.push([
-        differenceRefs?.[rowIndex]?.id || stableDifferenceId(row, seenIds),
-        rowTypeLabel(row),
-        existence,
         sectionLabelOf(row.sectionKey || row.section || ""),
         item,
+        rowTypeLabel(row),
+        existence,
+        differenceRefs?.[rowIndex]?.id || stableDifferenceId(row, seenIds),
         sourceValue,
         targetValue,
         note,
-        "未確認",
+        reviewable ? "未確認" : "対象外",
+        reviewable ? "未判断" : "対象外",
         "",
         ""
       ]);
       rowStyles.push("normal");
-      const styles = ["info"];
+      const styles = [];
+      styles[4] = "hyperlink";
       styles[5] = "sourceDivider";
       styles[6] = "target";
-      styles[8] = "review";
-      styles[9] = "review";
-      styles[10] = "review";
+      styles[7] = "info";
+      if (reviewable) {
+        styles[8] = "review";
+        styles[9] = "review";
+        styles[10] = "review";
+        styles[11] = "review";
+      } else {
+        styles[8] = "info";
+        styles[9] = "info";
+      }
       cellStyles.push(styles);
       rowHeights.push(readableDiffRowHeight([
+        { value: sectionLabelOf(row.sectionKey || row.section || ""), width: 18 },
         { value: existence, width: 18 },
         { value: item, width: 30 },
         { value: sourceValue, width: 42 },
@@ -12048,22 +12307,36 @@ ${label}` : `${direction}の値`;
     }
     const dataValidations = rows.length ? [{
       sqref: `I4:I${rows.length + 3}`,
-      values: REVIEW_STATUS_VALUES,
-      promptTitle: "確認状態",
-      prompt: "レビューの進捗を選択してください"
+      values: REVIEW_PROGRESS_VALUES,
+      promptTitle: "確認状況",
+      prompt: "事実確認の進捗を選択してください"
+    }, {
+      sqref: `J4:J${rows.length + 3}`,
+      values: ACTION_DECISION_VALUES,
+      promptTitle: "対応判断",
+      prompt: "人が判断した対応方針を選択してください"
     }] : [];
     return {
       name,
       rows: out,
-      colWidths: [15, 16, 18, 18, 30, 42, 42, 32, 14, 16, 28],
+      colWidths: [18, 30, 16, 18, 15, 42, 42, 32, 14, 14, 16, 28],
       rowStyles,
       cellStyles,
       headerRow: 3,
       freezeRows: 3,
       freezeColumns: 5,
       rowHeights,
-      merges: ["A1:K1", "A2:E2", "I2:K2"],
+      merges: ["A1:L1", "A2:B2", "C2:E2", "I2:L2"],
       dataValidations,
+      internalHyperlinks: rows.flatMap((_row, index) => {
+        const target = technicalRefs?.[index];
+        return target ? [{
+          ref: `E${index + 4}`,
+          targetSheet: target.sheetName,
+          targetCell: `A${target.rowNumber}`,
+          tooltip: "該当する技術明細へ移動"
+        }] : [];
+      }),
       showGridLines: false,
       print: {
         orientation: "landscape",
@@ -12073,7 +12346,7 @@ ${label}` : `${direction}の値`;
       }
     };
   }
-  function buildSectionSheet(label, list, sourceBundle, targetBundle) {
+  function buildSectionSheet(label, list, sourceBundle, targetBundle, differenceRefs) {
     const headers = [
       "差分ID",
       "変更種別",
@@ -12082,7 +12355,7 @@ ${label}` : `${direction}の値`;
       "パス",
       directionalValueHeader("source", sourceBundle),
       directionalValueHeader("target", targetBundle),
-      "確認ポイント"
+      "確認事項"
     ];
     const groupHeader = [
       "差分の識別",
@@ -12092,11 +12365,11 @@ ${label}` : `${direction}の値`;
       "技術パス",
       "比較元（変更前）",
       "比較先（変更後）",
-      "確認ポイント"
+      "確認事項"
     ];
     const guide = sheetGuideBand(
       `${label}の技術パスと原データを確認できます。`,
-      label === "フィールド技術明細" ? "通常の確認は「フィールド差分詳細」、レビュー記録は同じ差分IDの「差分一覧」で行います。長文はセルを選択して数式バーでも確認し、「…省略」の表示がある場合は元データを確認します。" : "通常の確認は「差分一覧」で行い、要約だけでは判断できない場合にこのシートで根拠を確認します。長文はセルを選択して数式バーでも確認し、「…省略」の表示がある場合は元データを確認します。"
+      label === "フィールド技術明細" ? "通常の確認は「フィールド差分詳細」、レビュー記録は同じ差分IDの「差分一覧」で行います。長文はセルを選択して数式バーでも確認し、「[一部表示]」または「…省略」がある場合は元データを確認します。" : "通常の確認は「差分一覧」で行い、要約だけでは判断できない場合にこのシートで根拠を確認します。長文はセルを選択して数式バーでも確認し、「[一部表示]」または「…省略」がある場合は元データを確認します。"
     );
     const rows = [[guide, "", "", "", "", "", "", ""], groupHeader, headers];
     const rowStyles = ["normal", "normal", "normal"];
@@ -12110,14 +12383,14 @@ ${label}` : `${direction}の値`;
     cellStyles[2][5] = "headerDivider";
     const rowHeights = [44, 24, 42];
     const seenIds = /* @__PURE__ */ new Map();
-    for (const row of list) {
+    for (const [rowIndex, row] of list.entries()) {
       const existence = rowExistenceLabel(row);
       const item = rowItemLabel(row, sourceBundle, targetBundle);
       const sourceValue = rowValue(row, "source");
       const targetValue = rowValue(row, "target");
       const note = rowNote(row);
       rows.push([
-        stableDifferenceId(row, seenIds),
+        differenceRefs?.[rowIndex]?.id || stableDifferenceId(row, seenIds),
         rowTypeLabel(row),
         existence,
         item,
@@ -12127,7 +12400,7 @@ ${label}` : `${direction}の値`;
         note
       ]);
       rowStyles.push("normal");
-      const styles = ["info"];
+      const styles = [differenceRefs?.[rowIndex] ? "hyperlink" : "info"];
       styles[5] = "sourceDivider";
       styles[6] = "target";
       cellStyles.push(styles);
@@ -12151,6 +12424,15 @@ ${label}` : `${direction}の値`;
       freezeColumns: 4,
       rowHeights,
       merges: ["A1:H1", "A2:D2"],
+      internalHyperlinks: list.flatMap((_row, index) => {
+        const target = differenceRefs?.[index];
+        return target ? [{
+          ref: `A${index + 4}`,
+          targetSheet: "差分一覧",
+          targetCell: `I${target.rowNumber}`,
+          tooltip: "差分一覧の確認状況へ戻る"
+        }] : [];
+      }),
       showGridLines: false,
       print: {
         orientation: "landscape",
@@ -12235,9 +12517,9 @@ ${label}` : `${direction}の値`;
       "フィールド名",
       "フィールドコード",
       "フィールド種別",
-      "設定差分数",
+      "差分明細数",
       "主な変更",
-      "確認ポイント",
+      "確認事項",
       "詳細",
       "レビュー"
     ];
@@ -12348,12 +12630,12 @@ ${label}` : `${direction}の値`;
       "存在状況",
       directionalValueHeader("source", sourceBundle),
       directionalValueHeader("target", targetBundle),
-      "確認ポイント",
+      "確認事項",
       "要約へ"
     ];
     const guide = sheetGuideBand(
       "各フィールドの設定項目ごとに、変更種別・存在状況・変更前後の値を確認できます。",
-      "差分IDから「差分一覧」のレビュー入力へ進み、「要約へ」でフィールド単位の一覧へ戻ります。"
+      "差分IDから「差分一覧」のレビュー入力へ進み、「要約へ」でフィールド単位の一覧へ戻ります。値先頭の「[一部表示]」は技術明細または元データを確認します。"
     );
     const rows = [[guide, "", "", "", "", "", "", "", "", ""], groupHeader, headers];
     const rowStyles = ["normal", "normal", "normal"];
@@ -12480,7 +12762,17 @@ ${label}` : `${direction}の値`;
       headerRow: 2,
       freezeRows: 2,
       freezeColumns: 2,
-      rowHeights: [44, 30],
+      rowHeights: rows.map((row, index) => {
+        if (index === 0) return 44;
+        if (index === 1) return 30;
+        return readableDiffRowHeight([
+          { value: row[0], width: 14 },
+          { value: row[1], width: 22 },
+          { value: row[2], width: 12 },
+          { value: row[3], width: 72 },
+          { value: row[4], width: 60 }
+        ], 160);
+      }),
       merges: ["A1:E1"],
       showGridLines: false,
       print: {
@@ -12491,13 +12783,1002 @@ ${label}` : `${direction}の値`;
       }
     };
   }
+  var CUSTOMER_HIGH_RISK_SECTION_KEYS = /* @__PURE__ */ new Set([
+    "customizeSettings",
+    "pluginSettings",
+    "appAcl",
+    "fieldAcl",
+    "recordPermissions",
+    "notifications",
+    "perRecordNotifications",
+    "reminderNotifications"
+  ]);
+  var CUSTOMER_VISIBLE_SECTION_KEYS = /* @__PURE__ */ new Set([
+    "appSettings",
+    "appInfo",
+    "fieldSettings",
+    "layoutSettings",
+    "formSettings",
+    "viewSettings",
+    "reportSettings",
+    "processSettings",
+    "actionSettings",
+    "categories"
+  ]);
+  var CUSTOMER_HIDDEN_DETAIL = "詳細は安全のため非表示";
+  var CUSTOMER_TEXT_LIMIT = 240;
+  var CUSTOMER_REVIEW_STATUS_VALUES = ["未レビュー", "レビュー中", "レビュー済み", "対象外"];
+  var CUSTOMER_ACTION_DECISION_VALUES = ["未判断", "対応する", "対応しない", "保留", "対象外"];
+  function customerSectionLabel(key) {
+    const labels = {
+      appSettings: "アプリ基本設定",
+      appInfo: "アプリ情報",
+      formSettings: "フォーム設定",
+      pluginSettings: "プラグイン設定",
+      customizeSettings: "カスタマイズ設定",
+      appAcl: "アプリ権限",
+      fieldAcl: "フィールド権限",
+      recordPermissions: "レコード権限"
+    };
+    const known = SECTION_LABEL_BY_KEY2.get(key) || "";
+    return labels[key] || known.replace(/\(※\)/g, "").trim() || "その他の設定";
+  }
+  function customerAppName(bundle, fallback) {
+    let name = String(extractAppNameFromBundle(bundle) || "").normalize("NFKC").trim();
+    const numericIds = customerBundleNumericIds(bundle);
+    if (numericIds.includes(name)) name = "";
+    const idLabel = "(?:App|アプリ|Guest|ゲスト|Space|Thread)";
+    if (/^\d+$/.test(name) || /^ID\s*[:#-]?\s*\d+$/i.test(name) || new RegExp(`^${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*\\d+$`, "i").test(name)) {
+      name = "";
+    }
+    for (const id of numericIds) {
+      const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      name = name.replace(new RegExp(`\\(\\s*(?:${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*)?${escapedId}(?!\\d)\\s*\\)`, "gi"), "").replace(new RegExp(`${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*${escapedId}(?!\\d)`, "gi"), "").replace(new RegExp(`(^|[^\\p{L}\\p{N}])${escapedId}(?![\\p{L}\\p{N}])`, "gu"), "$1");
+    }
+    name = name.replace(new RegExp(`[\\(（\\[［【]\\s*${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*\\d+\\s*[\\)）\\]］】]`, "gi"), "").replace(/[\(（\[［【]\s*\d{5,}\s*[\)）\]］】]/g, "").replace(new RegExp(`${idLabel}[\\s_=-]*(?:ID[\\s_=-]*)?[:#-]?[\\s_=-]*\\d{5,}`, "gi"), "").replace(new RegExp(`^${idLabel}\\s*\\d+\\s*[:：-]\\s*`, "i"), "").replace(new RegExp(`\\s+${idLabel}\\s+\\d{5,}\\s*$`, "i"), "");
+    if (!numericIds.length) {
+      name = name.replace(new RegExp(`\\(\\s*${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*\\d+\\s*\\)`, "gi"), "").replace(new RegExp(`${idLabel}\\s+ID\\s*[:#-]?\\s*\\d+`, "gi"), "").replace(new RegExp(`${idLabel}[\\s_=-]*(?:ID[\\s_=-]*)?[:#-]?[\\s_=-]*\\d+[\\s_=-]*(?:[:：-][\\s_-]*)?`, "gi"), "").replace(/^\d{4,}\s*[-:：]\s*/, "");
+    }
+    name = name.replace(/\(\s*\)/g, "").replace(/[（\[［【]\s*[）\]］】]/g, "").replace(/\s{2,}/g, " ").replace(/^[\s\-:：#]+|[\s\-:：#]+$/g, "").trim();
+    if (customerUnsafeRawLabelText(name)) name = "";
+    return name || fallback;
+  }
+  function customerScopeLabel(scopes) {
+    const labels = [...new Set((scopes || []).map((key) => customerSectionLabel(key)).filter(Boolean))];
+    return labels.length ? labels.join("、") : "比較した設定範囲";
+  }
+  function hasCustomerComparisonAdjustments(ctx) {
+    return !!String(ctx.ignoreKeys || "").trim() || Object.values(ctx.normalizationPresetState || {}).some(Boolean);
+  }
+  function customerChangeType(row) {
+    if (row.moved || row.type === "moved") return "要素の移動";
+    if (row.type === "added") return "追加";
+    if (row.type === "removed") return "削除";
+    return "変更";
+  }
+  function customerAggregatedChangeType(rows) {
+    const types = new Set(rows.map(customerChangeType));
+    return types.size === 1 ? [...types][0] : "変更";
+  }
+  function customerSensitivePath(path) {
+    const rawPath = String(path || "");
+    const normalized = rawPath.toLowerCase();
+    const rawSegments = rawPath.replace(/\[(?:\d+|[^\]]+)\]/g, ".").split(".").map((segment) => segment.replace(/[^A-Za-z0-9_-]/g, "")).filter(Boolean);
+    const segments = rawSegments.map((segment) => segment.toLowerCase());
+    if (segments.some((segment) => /(?:token|secret|password|passwd|credential|authorization|privatekey|private_key|apikey|api_key)/.test(segment))) {
+      return true;
+    }
+    if (rawSegments.some((segment) => segment.toLowerCase() === "id" || /(?:Id|ID)$/.test(segment) || /(?:^|[_-])id$/i.test(segment) || /^(?:app|guest|space|thread|view|report|record|field)id$/i.test(segment) || /^(?:uuid|guid)$/i.test(segment))) return true;
+    if (segments.some((segment) => ["revision", "filekey", "_body", "body", "config", "expression", "formula"].includes(segment))) return true;
+    const defaultValueIndex = segments.indexOf("defaultvalue");
+    if (defaultValueIndex >= 0 && segments.slice(defaultValueIndex + 1).some((segment) => ["code", "name", "login", "id"].includes(segment))) {
+      return true;
+    }
+    if (/(?:^|\.)destapp\.app(?:\.|$)/.test(normalized)) return true;
+    if (/(?:^|\.)(?:relatedapp|lookup|referencetable)(?:\.|[\s\S]*\.)app(?:\.|$)/.test(normalized)) return true;
+    if (/(?:^|\.)entity\.(?:code|login)(?:\.|$)/.test(normalized)) return true;
+    if (segments.some((segment) => /^(?:assignee|entities|recipients|targets|members|users?|groups?|organizations?)$/.test(segment))) return true;
+    if (segments.some((segment) => ["creator", "modifier", "createdby", "updatedby", "login"].includes(segment))) return true;
+    return false;
+  }
+  function customerLooksLikeOpaqueToken(text) {
+    return /[A-Za-z0-9_~+/=-]{24,}/.test(String(text || ""));
+  }
+  function customerKnownSafePath(row) {
+    const sectionKey = sectionKeyOfRow(row);
+    const path = String(row.path || "");
+    if (!path || path === sectionKey) {
+      return [row.left, row.right].every((value) => value == null || typeof value === "object");
+    }
+    if (customerSensitivePath(path)) return false;
+    const fieldInfo = extractFieldPathInfo(path);
+    if (sectionKey === "fieldSettings" && fieldInfo) {
+      const tokens = Array.isArray(fieldInfo.tailTokens) ? fieldInfo.tailTokens : [];
+      if (!tokens.length) return true;
+      const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
+      const simple = /^(?:label|name|code|type|noLabel|required|unique|defaultValue(?:\.\d+)?|defaultNowValue|minLength|maxLength|minValue|maxValue|hideExpression|protocol|displayScale|digit|unit|unitPosition|align|format|thumbnailSize|index)$/;
+      const option = /^options\.[^.]+(?:\.(?:label|index))?$/;
+      const lookup = /^lookup\.(?:relatedKeyField|filterCond|sort|lookupPickerFields\.\d+|retrieveFields\.\d+|fieldMappings\.\d+\.(?:field|relatedField))$/;
+      const referenceTable = /^referenceTable\.(?:filterCond|sort|size|displayFields\.\d+|condition\.(?:field|relatedField))$/;
+      if (!(simple.test(settingKey) || option.test(settingKey) || lookup.test(settingKey) || referenceTable.test(settingKey))) return false;
+      if (option.test(settingKey)) {
+        const optionName = String(tokens[1] || "");
+        return !!optionName && !customerUnsafeRawLabelText(optionName) && optionName.length <= 120;
+      }
+      return true;
+    }
+    const safePatterns = {
+      appSettings: [
+        /^appSettings\.(?:name|theme|enableThumbnails|firstMonthOfFiscalYear|numberPrecision)$/
+      ],
+      appInfo: [
+        /^appInfo\.name$/
+      ],
+      layoutSettings: [
+        /^layoutSettings\.layout\[\d+\](?:\.fields\[\d+\])*(?:\.(?:type|code|label|value|elementId|size(?:\.(?:width|height|innerHeight))?))?$/
+      ],
+      viewSettings: [
+        /^viewSettings\.views\.[^.[\]]+(?:\.(?:type|name|index|filterCond|sort|pager|device)|\.fields\[\d+\])?$/
+      ],
+      processSettings: [
+        /^processSettings\.(?:enable|states\.[^.[\]]+(?:\.(?:name|index))?|actions\[\d+\](?:\.(?:name|from|to|filterCond))?)$/
+      ],
+      actionSettings: [
+        /^actionSettings\.actions\[\d+\](?:\.(?:name|index|from|to|filterCond))?$/
+      ]
+    };
+    return (safePatterns[sectionKey] || []).some((pattern) => pattern.test(path));
+  }
+  function customerUnsafeText(text, allowReadableLongToken = false) {
+    text = String(text || "").normalize("NFKC").replace(/[\u2044\u2215\u29F5\uFF0F]/g, "/").replace(/[\u00A5\u2216\uFF3C]/g, "\\");
+    return /[\p{Cc}\p{Cf}\p{Cs}]/u.test(text) || /(?:https?|ftp):\/\/|\bwww\./i.test(text) || /\b(?:data|blob|javascript|vbscript|mailto|ssh|git|s3|gs|jdbc|kintone|chrome-extension):/i.test(text) || /(?:^|[^A-Za-z0-9])(?:file:\/\/|[a-z]:[\\/]|\\\\[^\\\s]+\\)/i.test(text) || /(?:^|[^A-Za-z0-9])\/(?!\/)[^\s/]+(?:\/[^\s/]+)*/u.test(text) || /(?:^|[^A-Za-z0-9])(?:\.{1,2}|~)[\\/](?:[^\\/\r\n]+[\\/])*[^\\/\r\n]+/.test(text) || /(?:^|[\s"'=])(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+(?:\.(?:js|ts|json|env|pem|key|crt|log|txt|csv|xlsx?))?(?::\d+:\d+)?/i.test(text) || /(?:^|[^A-Za-z0-9])(?:%[A-Za-z_][A-Za-z0-9_]*%|\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*))[\\/][^\r\n]+/.test(text) || /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}_-]{1,63}(?:\.[\p{L}\p{N}_-]{1,63})*/iu.test(text) || customerContainsPhoneLike(text) || customerContainsPaymentCardLike(text) || /\b(?:TypeError|ReferenceError|SyntaxError|RangeError|Error|Exception):/i.test(text) || /\b(?:ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|ENOENT|EACCES|ERR_[A-Z0-9_]+|Traceback|Unhandled)\b/i.test(text) || /\bat\s+\S+\s*\([^\r\n]+:\d+:\d+\)/.test(text) || /\bat\s+[^\r\n]+:\d+:\d+\b/.test(text) || /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/.test(text) || /\b\d{2,4}-\d{2,4}-\d{3,4}\b/.test(text) || /(?:^|[^0-9])(?:\+?81|0)[\s-]?(?:\d[\s-]?){9,10}(?:$|[^0-9])/.test(text) || /(?:^|[^0-9])\+\d{1,3}[\s().-]*(?:\d[\s().-]*){7,14}(?:$|[^0-9])/.test(text) || /\b(?:ssn|social[\s_-]*security)\s*[:#=-]?\s*\d(?:[\s-]*\d){8}\b/i.test(text) || /\b(?:card|credit[\s_-]*card|visa|mastercard)\s*[:#=-]?\s*\d(?:[\s-]*\d){12,18}\b/i.test(text) || /\b[\p{L}\p{N}][\p{L}\p{N}.-]*\.(?:internal|corp|local|lan|intra)\b/iu.test(text) || /(?:^|[^A-Za-z0-9])(?:JSESSIONID|PHPSESSID|SESSIONID|AUTHSESSION|SID|CSRF(?:TOKEN)?)\s*[:=]\s*[^;,\s]+/i.test(text) || /(?:^|[^A-Za-z0-9])(?:Cookie|Set-Cookie)\s*:\s*[^\r\n]+/i.test(text) || /(?:^|[^A-Za-z0-9])(?:secret[\s_-]*key|passphrase|session|cookie|auth[\s_-]*code|ssh[\s_-]*key|pin)\s*[:=]\s*[^;,\s]+/i.test(text) || /(?:^|[^A-Za-z0-9])(?:passphrase|session|cookie|auth[\s_-]*code|pin)\s+[A-Za-z0-9._~+\/-]{4,}/i.test(text) || /(?:^|[^A-Za-z0-9])[A-Za-z0-9_-]*(?:pwd|dbpass|sqlpass)\s*(?:\(|<|\[|\{)\s*[^)\]}>]+\s*(?:\)|>|\]|\})/i.test(text) || /(?:^|[^A-Za-z0-9])(?:cfg\s*)?(?:[.\[]\s*)?["']?(?:[A-Za-z0-9_-]*(?:pwd|pass(?:word)?|token|secret|credential))["']?\s*\]?\s*[:=]\s*[^;,\s]+/i.test(text) || /(?:^|[^A-Za-z0-9])(?:dsn|uid|server|host|port|data[\s_-]*source|database|[A-Za-z0-9_-]*(?:pwd|pass(?:word)?|token|secret|auth(?:orization)?|credential|access[\s_-]?key|client[\s_-]?secret))\s*[:=]\s*[^;,\s]+/i.test(text) || /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/i.test(text) || /\b(?:sk|rk|pk)[-_](?:(?:live|test|proj)[-_]?)?[A-Za-z0-9_-]{12,}\b/i.test(text) || /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/i.test(text) || /\bglpat-[A-Za-z0-9_-]{20,}\b/i.test(text) || /\bnpm_[A-Za-z0-9]{30,}\b/i.test(text) || /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/.test(text) || /\bgh[pousr]_[A-Za-z0-9]{20,}\b/i.test(text) || /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/.test(text) || /(?:^|[^0-9a-f])[0-9a-f]{32,128}(?:$|[^0-9a-f])/i.test(text) || /\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/i.test(text) || /(?:commit|sha(?:1|256)?|hash)\s*[:=#-]?\s*[0-9a-f]{7,64}/i.test(text) || /\b(?:release|build)\s+[0-9a-f]{7,31}\b/i.test(text) || /\b(?:app|guest|space|thread)\s*(?:id)?\s*(?:[:=#]|\bin\b)/i.test(text) || /(?:App|アプリ|Guest|ゲスト|Space|Thread)[\s_=-]*(?:ID[\s_=-]*)?[:#-]?[\s_=-]*\d{5,}/i.test(text) || /(?:Guest|ゲスト|Space|Thread)[\s_=-]*(?:ID[\s_=-]*)?[:#-]?[\s_=-]*\d+/i.test(text) || /(?:view|report|record|field|user|group|org(?:anization)?|client|tenant)[\s_-]*(?:id|code|login)\s*[:=#-]?\s*\S+/i.test(text) || /(?:login|user[\s_-]?(?:id|code)|client[\s_-]?id|tenant[\s_-]?id)\s*[:=]\s*\S+/i.test(text) || /(?:employee|member|account|owner|assignee|principal|subject|project)?[\s_-]*(?:id|code|login)\s+[A-Za-z0-9_-]+/i.test(text) || /\b(?:appId|guestId|spaceId|threadId|fileKey|revision)\b/i.test(text) || /(?:^|[^a-z0-9])(?:(?:api|access|account|session|signing)[\s_-]?key|token|secret|password|passwd|credential|authorization|private[\s_-]?key)(?:$|[^a-z0-9])/i.test(text) || !allowReadableLongToken && customerLooksLikeOpaqueToken(text);
+  }
+  function customerContainsPhoneLike(text) {
+    return [...String(text || "").matchAll(/\+?\d[\d\s().-]{7,}\d/g)].some((match) => {
+      const digits = match[0].replace(/\D/g, "");
+      return digits.length >= 10 && digits.length <= 15;
+    });
+  }
+  function customerUnsafeLabelText(text) {
+    const normalized = String(text || "").normalize("NFKC");
+    return customerUnsafeText(normalized, true) || customerContainsPhoneLike(normalized) || /(?:^|[^\p{L}\p{N}])ID\s*[:#-]?\s*\d+(?:$|[^\p{L}\p{N}])/iu.test(normalized) || /[\(（\[［【]\s*\d+\s*[\)）\]］】]/u.test(normalized) || /(?:^|[^0-9])\d{5,}(?:$|[^0-9])/.test(normalized);
+  }
+  function customerContainsPaymentCardLike(text) {
+    return [...String(text || "").matchAll(/\d[\d\s-]{11,23}\d/g)].some((match) => {
+      const digits = match[0].replace(/\D/g, "");
+      if (digits.length < 13 || digits.length > 19) return false;
+      let sum = 0;
+      let double = false;
+      for (let index = digits.length - 1; index >= 0; index -= 1) {
+        let value = Number(digits[index]);
+        if (double) {
+          value *= 2;
+          if (value > 9) value -= 9;
+        }
+        sum += value;
+        double = !double;
+      }
+      return sum % 10 === 0;
+    });
+  }
+  function customerUnsafeRawLabelText(text) {
+    const normalized = String(text || "").normalize("NFKC");
+    return customerUnsafeLabelText(normalized) || /[@:;=,"'\\/\[\]{}<>]/.test(normalized) || /(?:^|[^0-9a-f])(?=[0-9a-f]{8,31}(?:$|[^0-9a-f]))(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,31}(?:$|[^0-9a-f])/i.test(normalized) || /^(?=[0-9a-f]{7,12}$)(?=.*\d)[0-9a-f]+$/i.test(normalized);
+  }
+  function customerLooksLikeFieldCodeLabel(text, ...knownCodes) {
+    const value = String(text || "").trim();
+    if (!value) return true;
+    if (knownCodes.some((code) => code && value === String(code).trim())) return true;
+    return /^[a-z][a-z0-9]*$/.test(value) || /[_$-]/.test(value);
+  }
+  function customerFieldLabelMap(bundle) {
+    const labels = /* @__PURE__ */ new Map();
+    const visit = (properties) => {
+      for (const [fallbackCode, definition] of Object.entries(properties || {})) {
+        if (!definition || typeof definition !== "object" || Array.isArray(definition)) continue;
+        const code = String(definition.code || fallbackCode).trim();
+        const label = String(definition.label || definition.name || "").trim();
+        const codeLikeLabel = customerLooksLikeFieldCodeLabel(label, code);
+        if (code && label && !codeLikeLabel && !customerUnsafeRawLabelText(label) && !customerContainsKnownBundleId(label, bundle) && label.length <= 120) labels.set(code, label);
+        const children = definition.fields;
+        if (children && typeof children === "object" && !Array.isArray(children)) visit(children);
+      }
+    };
+    visit(fieldSettingsProperties(bundle));
+    return labels;
+  }
+  function customerFieldLabelForCode(code, preferredBundle, fallbackBundle) {
+    const normalized = String(code || "").trim();
+    if (!normalized) return "";
+    return customerFieldLabelMap(preferredBundle).get(normalized) || customerFieldLabelMap(fallbackBundle).get(normalized) || "";
+  }
+  function customerFieldTypeForCode(code, preferredBundle, fallbackBundle) {
+    const normalized = String(code || "").trim();
+    if (!normalized) return "";
+    const find = (bundle) => {
+      let found = "";
+      const visit = (properties) => {
+        for (const [fallbackCode, definition] of Object.entries(properties || {})) {
+          if (found || !definition || typeof definition !== "object" || Array.isArray(definition)) continue;
+          const fieldCode = String(definition.code || fallbackCode).trim();
+          if (fieldCode === normalized) {
+            found = String(definition.type || "").trim();
+            continue;
+          }
+          const children = definition.fields;
+          if (children && typeof children === "object" && !Array.isArray(children)) visit(children);
+        }
+      };
+      visit(fieldSettingsProperties(bundle));
+      return found;
+    };
+    return find(preferredBundle) || find(fallbackBundle);
+  }
+  function customerFieldOptionValuesForCode(code, preferredBundle, fallbackBundle) {
+    const normalized = String(code || "").trim();
+    const values = /* @__PURE__ */ new Set();
+    if (!normalized) return values;
+    const visitBundle = (bundle) => {
+      const visit = (properties) => {
+        for (const [fallbackCode, definition] of Object.entries(properties || {})) {
+          if (!definition || typeof definition !== "object" || Array.isArray(definition)) continue;
+          const fieldCode = String(definition.code || fallbackCode).trim();
+          if (fieldCode === normalized) {
+            const options = definition.options;
+            if (options && typeof options === "object" && !Array.isArray(options)) {
+              for (const [optionKey, option] of Object.entries(options)) {
+                if (!customerUnsafeRawLabelText(String(optionKey))) values.add(String(optionKey));
+                if (option && typeof option === "object" && !Array.isArray(option)) {
+                  const label = String(option.label || "").trim();
+                  if (label && !customerUnsafeRawLabelText(label)) values.add(label);
+                }
+              }
+            }
+          }
+          const children = definition.fields;
+          if (children && typeof children === "object" && !Array.isArray(children)) visit(children);
+        }
+      };
+      visit(fieldSettingsProperties(bundle));
+    };
+    visitBundle(preferredBundle);
+    visitBundle(fallbackBundle);
+    return values;
+  }
+  function customerFieldLooksLikePersonalIdentifier(code, preferredBundle, fallbackBundle) {
+    const label = customerFieldLabelForCode(code, preferredBundle, fallbackBundle);
+    return /(?:^|[_\s-])(?:ssn|social[\s_-]*security|card|credit[\s_-]*card|pan|my[\s_-]*number|phone|tel|mobile)(?:$|[_\s-])/i.test(`${code} ${label}`) || /(?:個人番号|マイナンバー|電話|携帯|カード番号)/.test(label);
+  }
+  function customerConditionLiteral(raw) {
+    const value = raw.trim();
+    if (customerUnsafeText(value)) return null;
+    if (/^-?\d+(?:\.\d+)?$/.test(value)) return value;
+    const quoted = value.match(/^"([^"\\]*)"$/) || value.match(/^'([^'\\]*)'$/);
+    if (!quoted || customerUnsafeText(quoted[1])) return null;
+    return `「${quoted[1]}」`;
+  }
+  function customerHumanizeExpression(text, path, preferredBundle, fallbackBundle) {
+    const leaf = path.match(/(?:^|\.)([^.[\]]+)$/)?.[1] || "";
+    if (leaf === "sort") {
+      const match = text.match(/^\s*([A-Za-z0-9_\u0080-\uffff-]+)\s+(asc|desc)\s*$/i);
+      if (!match) return null;
+      const field2 = customerFieldLabelForCode(match[1], preferredBundle, fallbackBundle);
+      if (!field2) return null;
+      return `${field2}（${match[2].toLowerCase() === "asc" ? "昇順" : "降順"}）`;
+    }
+    if (leaf !== "filterCond") return null;
+    const inMatch = text.match(/^\s*([A-Za-z0-9_\u0080-\uffff-]+)\s+(not\s+in|in)\s*\(([^()]*)\)\s*$/i);
+    if (inMatch) {
+      const field2 = customerFieldLabelForCode(inMatch[1], preferredBundle, fallbackBundle);
+      const fieldType2 = customerFieldTypeForCode(inMatch[1], preferredBundle, fallbackBundle);
+      if (!["RADIO_BUTTON", "CHECK_BOX", "MULTI_SELECT", "DROP_DOWN"].includes(fieldType2)) return null;
+      const rawValues = inMatch[3].split(",").map((value2) => value2.trim()).filter(Boolean);
+      const allowedOptions = customerFieldOptionValuesForCode(inMatch[1], preferredBundle, fallbackBundle);
+      const optionValues = rawValues.map((raw) => {
+        const quoted = raw.match(/^"([^"\\]*)"$/) || raw.match(/^'([^'\\]*)'$/);
+        return quoted?.[1] ?? null;
+      });
+      if (!allowedOptions.size || optionValues.some((value2) => value2 == null || !allowedOptions.has(value2))) return null;
+      const values = rawValues.map(customerConditionLiteral);
+      if (!field2 || values.length === 0 || values.some((value2) => value2 == null)) return null;
+      const joined = values.length === 2 ? `${values[0]}または${values[1]}` : values.length > 2 ? `${values.slice(0, -1).join("、")}、または${values[values.length - 1]}` : values[0];
+      const negative = /not\s+in/i.test(inMatch[2]);
+      if (values.length === 1) return `${field2}が${joined}${negative ? "ではない" : ""}`;
+      return negative ? `${field2}が${joined}のいずれでもない` : `${field2}が${joined}`;
+    }
+    const comparison = text.match(/^\s*([A-Za-z0-9_\u0080-\uffff-]+)\s*(<=|>=|!=|=|<|>)\s*(.+?)\s*$/);
+    if (!comparison) return null;
+    const field = customerFieldLabelForCode(comparison[1], preferredBundle, fallbackBundle);
+    const fieldType = customerFieldTypeForCode(comparison[1], preferredBundle, fallbackBundle);
+    if (customerFieldLooksLikePersonalIdentifier(comparison[1], preferredBundle, fallbackBundle)) return null;
+    if (!["NUMBER", "CALC", "RADIO_BUTTON", "CHECK_BOX", "MULTI_SELECT", "DROP_DOWN"].includes(fieldType)) return null;
+    if (["NUMBER", "CALC"].includes(fieldType) && !/^-?\d+(?:\.\d+)?$/.test(comparison[3].trim())) return null;
+    if (["RADIO_BUTTON", "CHECK_BOX", "MULTI_SELECT", "DROP_DOWN"].includes(fieldType)) {
+      const quoted = comparison[3].match(/^"([^"\\]*)"$/) || comparison[3].match(/^'([^'\\]*)'$/);
+      const allowedOptions = customerFieldOptionValuesForCode(comparison[1], preferredBundle, fallbackBundle);
+      if (!quoted || !allowedOptions.has(quoted[1])) return null;
+    }
+    const value = customerConditionLiteral(comparison[3]);
+    if (!field || value == null) return null;
+    const operatorLabels = {
+      "=": `${field}が${value}`,
+      "!=": `${field}が${value}ではない`,
+      ">": `${field}が${value}より大きい`,
+      ">=": `${field}が${value}以上`,
+      "<": `${field}が${value}より小さい`,
+      "<=": `${field}が${value}以下`
+    };
+    return operatorLabels[comparison[2]] || null;
+  }
+  function looksLikeTechnicalPath(text, sectionKey) {
+    const value = String(text || "").trim();
+    return !value || value === sectionKey || value.startsWith(`${sectionKey}.`) || /\[[0-9]+\]/.test(value) || /^(?:[A-Za-z_$][\w$]*\.){2,}[A-Za-z_$][\w$]*$/.test(value);
+  }
+  function customerLayoutItemLabel(row, sourceBundle, targetBundle) {
+    const path = String(row.path || "");
+    const match = path.match(/^layoutSettings\.layout\[(\d+)\](?:\.(.+))?$/);
+    if (!match) return "";
+    const rowIndex = Number(match[1]);
+    const preferredBundle = row.type === "removed" ? sourceBundle : targetBundle;
+    const fallbackBundle = row.type === "removed" ? targetBundle : sourceBundle;
+    const layoutAt = (bundle) => bundle?.sections?.layoutSettings?.layout?.[rowIndex];
+    let entity = layoutAt(preferredBundle) || layoutAt(fallbackBundle) || null;
+    const parts = [`レイアウト ${rowIndex + 1}行目`];
+    for (const fieldMatch of path.matchAll(/\.fields\[(\d+)\]/g)) {
+      const fieldIndex = Number(fieldMatch[1]);
+      entity = entity && typeof entity === "object" && !Array.isArray(entity) ? entity.fields?.[fieldIndex] : null;
+      const code = entity && typeof entity === "object" && !Array.isArray(entity) ? String(entity.code || "").trim() : "";
+      const label = customerFieldLabelForCode(code, preferredBundle, fallbackBundle);
+      parts.push(label || `フィールド ${fieldIndex + 1}`);
+    }
+    const leaf = path.match(/(?:^|\.)([^.[\]]+)$/)?.[1] || "";
+    const propLabels = {
+      type: "種別",
+      code: "フィールド",
+      fields: "フィールド",
+      elementId: "要素",
+      label: "ラベル",
+      value: "初期値",
+      size: "サイズ",
+      width: "横幅",
+      height: "高さ",
+      innerHeight: "入力欄の高さ"
+    };
+    if (leaf && leaf !== "layout" && leaf !== "fields") parts.push(propLabels[leaf] || "設定");
+    return parts.join(" / ");
+  }
+  function customerViewFieldItemLabel(row, sourceBundle, targetBundle) {
+    const path = String(row.path || "");
+    const match = path.match(/^viewSettings\.views\.([^.[\]]+)\.fields\[(\d+)\](?:\.|$)/);
+    if (!match) return "";
+    const rawViewName = String(match[1] || "").trim();
+    const viewName = rawViewName && !customerUnsafeRawLabelText(rawViewName) && !customerContainsKnownBundleId(rawViewName, sourceBundle, targetBundle) && rawViewName.length <= 80 ? rawViewName : "一覧";
+    const preferredBundle = row.type === "removed" ? sourceBundle : targetBundle;
+    const fallbackBundle = row.type === "removed" ? targetBundle : sourceBundle;
+    const rawCode = row.type === "removed" ? row.left : row.right;
+    const fieldLabel = typeof rawCode === "string" ? customerFieldLabelForCode(rawCode, preferredBundle, fallbackBundle) : "";
+    return fieldLabel ? `${viewName} / 表示フィールド「${fieldLabel}」` : `${viewName} / 表示フィールド`;
+  }
+  function customerItemLabel(row, sourceBundle, targetBundle) {
+    const key = sectionKeyOfRow(row);
+    const section = customerSectionLabel(key);
+    const path = String(row.path || "");
+    if (customerSensitivePath(path) || !customerKnownSafePath(row)) return `${section}の設定情報`;
+    const fieldInfo = extractFieldPathInfo(path);
+    if (fieldInfo) {
+      const identity = fieldDisplayIdentity(row, fieldInfo, { rows: [], sourceBundle, targetBundle });
+      const setting = fieldSettingIdentity(fieldInfo);
+      const fieldName = String(identity.fieldName || "").trim();
+      const safeSetting = String(setting.settingLabel || "設定").replace(/参照するアプリID/g, "参照するアプリ").replace(/\bID\b/gi, "識別情報");
+      const safeFieldName = fieldName && fieldName !== String(identity.fieldCode || "").trim() && !customerUnsafeRawLabelText(fieldName) && !customerContainsKnownBundleId(fieldName, sourceBundle, targetBundle) && fieldName.length <= 120 ? fieldName : "フィールド";
+      const candidate = setting.settingKey === "(field)" ? safeFieldName : `${safeFieldName} / ${safeSetting}`;
+      return !customerUnsafeLabelText(candidate) && !customerContainsKnownBundleId(candidate, sourceBundle, targetBundle) && candidate.length <= 120 ? candidate : `${section}の設定`;
+    }
+    const layout = customerLayoutItemLabel(row, sourceBundle, targetBundle);
+    if (layout && !customerUnsafeLabelText(layout) && !customerContainsKnownBundleId(layout, sourceBundle, targetBundle)) return layout;
+    const viewField = customerViewFieldItemLabel(row, sourceBundle, targetBundle);
+    if (viewField && !customerUnsafeLabelText(viewField) && !customerContainsKnownBundleId(viewField, sourceBundle, targetBundle)) return viewField;
+    const plainPathLabels = {
+      "appSettings.name": "アプリ名",
+      "appSettings.description": "説明",
+      "appSettings.theme": "テーマ",
+      "appSettings.icon": "アイコン",
+      "appSettings.enableThumbnails": "サムネイル表示",
+      "appSettings.firstMonthOfFiscalYear": "会計年度の開始月",
+      "appSettings.numberPrecision": "数値の精度",
+      "appInfo.name": "アプリ名",
+      "appInfo.description": "説明"
+    };
+    if (plainPathLabels[path]) return plainPathLabels[path];
+    try {
+      const decoded = decodeRow(row);
+      if (decoded) {
+        const parts = [
+          ...decoded.whereChips.map((chip) => chip.label),
+          decoded.propLabel
+        ].filter((part) => !!part).map((part) => part === "絞込条件" ? "絞り込み条件" : part === "ソート" ? "並び順" : part);
+        const readable = [...new Set(parts)].join(" / ") || decoded.oneLineSummary;
+        if (readable && !looksLikeTechnicalPath(readable, key) && !customerUnsafeLabelText(readable) && !customerContainsKnownBundleId(readable, sourceBundle, targetBundle)) {
+          return String(readable).slice(0, 120);
+        }
+      }
+    } catch {
+    }
+    const explicit = String(row.label || "").trim();
+    if (explicit && !looksLikeTechnicalPath(explicit, key) && !customerUnsafeRawLabelText(explicit) && !customerContainsKnownBundleId(explicit, sourceBundle, targetBundle)) {
+      return explicit.slice(0, 120);
+    }
+    return `${section}の設定`;
+  }
+  function customerFieldDefinitionSummary(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const definition = value;
+    const type = String(definition.type || "").trim();
+    const parts = [
+      type ? `種類: ${FIELD_TYPE_LABELS[type] || "設定項目"}` : "",
+      typeof definition.required === "boolean" ? `必須: ${definition.required ? "はい" : "いいえ"}` : "",
+      typeof definition.unique === "boolean" ? `重複禁止: ${definition.unique ? "はい" : "いいえ"}` : "",
+      definition.options && typeof definition.options === "object" ? `選択肢: ${Object.keys(definition.options).length}件` : "",
+      definition.fields && typeof definition.fields === "object" ? `テーブル内項目: ${Object.keys(definition.fields).length}件` : "",
+      definition.lookup && typeof definition.lookup === "object" ? "ルックアップ設定あり" : "",
+      definition.referenceTable && typeof definition.referenceTable === "object" ? "関連レコード設定あり" : "",
+      String(definition.expression || "").trim() ? "計算式あり" : ""
+    ].filter(Boolean);
+    return parts.length ? `${parts.join("\n")}
+（${CUSTOMER_HIDDEN_DETAIL}）` : null;
+  }
+  function customerBundleNumericIds(...bundles) {
+    return [...new Set(bundles.flatMap((bundle) => [
+      bundle?.appId,
+      bundle?.guestId,
+      bundle?.spaceId,
+      bundle?.threadId
+    ]).map((value) => String(value ?? "").trim()).filter((value) => /^\d+$/.test(value)))];
+  }
+  function customerContainsKnownBundleId(text, ...bundles) {
+    const normalized = String(text || "").normalize("NFKC");
+    return customerBundleNumericIds(...bundles).some((id) => {
+      const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u").test(normalized);
+    });
+  }
+  function customerNumericScalar(value) {
+    return typeof value === "number" && Number.isFinite(value) || typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value.trim());
+  }
+  function customerScalarValueMatchesPath(path, value, fieldInfo, preferredBundle, fallbackBundle) {
+    if (fieldInfo) {
+      const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
+      const root2 = settingKey.split(".")[0];
+      if (root2 === "(field)") return false;
+      if (["label", "name", "unit"].includes(root2)) {
+        return typeof value === "string" && !customerUnsafeRawLabelText(value) && (root2 === "unit" || !customerLooksLikeFieldCodeLabel(value, fieldInfo.activeCode, fieldInfo.rootCode)) && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
+      }
+      if (root2 === "type") return typeof value === "string" && !!FIELD_TYPE_LABELS[value];
+      if (["noLabel", "required", "unique", "defaultNowValue", "hideExpression", "digit"].includes(root2)) {
+        return typeof value === "boolean";
+      }
+      if (["minLength", "maxLength", "minValue", "maxValue", "displayScale", "size", "thumbnailSize", "index"].includes(root2)) {
+        return customerNumericScalar(value);
+      }
+      if (root2 === "defaultValue") return true;
+      if (["code", "relatedKeyField", "field", "relatedField", "displayFields", "lookupPickerFields", "retrieveFields"].includes(root2)) {
+        return typeof value === "string";
+      }
+      if (root2 === "options") {
+        const leaf = String(fieldInfo.leafKey || "");
+        return leaf === "index" ? customerNumericScalar(value) : leaf === "label" ? typeof value === "string" && !customerUnsafeRawLabelText(value) && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120 : false;
+      }
+      return false;
+    }
+    if (/^(?:appSettings|appInfo)\.name$/.test(path)) {
+      return typeof value === "string" && !customerUnsafeRawLabelText(value) && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
+    }
+    if (path === "appSettings.theme") {
+      return typeof value === "string" && /^(?:WHITE|RED|BLUE|GREEN|YELLOW|BLACK)$/i.test(value);
+    }
+    if (path === "appSettings.enableThumbnails") return typeof value === "boolean";
+    if (path === "appSettings.firstMonthOfFiscalYear") {
+      return customerNumericScalar(value) && Number(value) >= 1 && Number(value) <= 12;
+    }
+    if (path === "appSettings.numberPrecision") return false;
+    if (/^layoutSettings\..*\.(?:width|height|innerHeight)$/.test(path)) return customerNumericScalar(value);
+    if (/^layoutSettings\..*\.type$/.test(path)) {
+      return typeof value === "string" && /^(?:ROW|SUBTABLE|GROUP|LABEL|SPACER|HR|REFERENCE_TABLE)$/.test(value);
+    }
+    if (/^layoutSettings\..*\.(?:code)$/.test(path)) return typeof value === "string";
+    if (/^layoutSettings\..*\.(?:label|value)$/.test(path)) {
+      return typeof value === "string" && !customerUnsafeRawLabelText(value) && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
+    }
+    if (/^viewSettings\..*\.index$/.test(path)) return customerNumericScalar(value);
+    if (/^viewSettings\..*\.pager$/.test(path)) return typeof value === "boolean";
+    if (/^viewSettings\..*\.type$/.test(path)) {
+      return typeof value === "string" && /^(?:LIST|CALENDAR|CUSTOM)$/.test(value);
+    }
+    if (/^(?:viewSettings|processSettings|actionSettings)\..*\.(?:name|from|to)$/.test(path)) {
+      return typeof value === "string" && !customerUnsafeRawLabelText(value) && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
+    }
+    if (/^(?:processSettings)\.enable$/.test(path)) return typeof value === "boolean";
+    if (/^(?:processSettings|actionSettings)\..*\.index$/.test(path)) return customerNumericScalar(value);
+    if (/\.(?:filterCond|sort)$/.test(path)) return typeof value === "string";
+    if (/\.fields\[\d+\]$/.test(path)) return typeof value === "string";
+    return false;
+  }
+  function customerSafeValue(row, side, sourceBundle, targetBundle) {
+    const missing = side === "source" ? row.left === void 0 || row.type === "added" : row.right === void 0 || row.type === "removed";
+    if (missing) return { text: "（設定なし）", omitted: false };
+    const path = String(row.path || "");
+    if (customerSensitivePath(path) || !customerKnownSafePath(row)) {
+      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+    }
+    const value = side === "source" ? row.left : row.right;
+    const preferredBundle = side === "source" ? sourceBundle : targetBundle;
+    const fallbackBundle = side === "source" ? targetBundle : sourceBundle;
+    const fieldInfo = extractFieldPathInfo(path);
+    if (fieldInfo) {
+      const definition = fieldDefinitionAt(preferredBundle, fieldInfo) || fieldDefinitionAt(fallbackBundle, fieldInfo);
+      const fieldType = String(definition?.type || "");
+      const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
+      const anyDefaultValue = /^defaultValue(?:\.|$)/.test(settingKey);
+      const safeDefaultValueType = /^(?:NUMBER|CALC|RADIO_BUTTON|CHECK_BOX|MULTI_SELECT|DROP_DOWN|DATE|TIME|DATETIME)$/.test(fieldType);
+      const fieldCode = String(fieldInfo.activeCode || fieldInfo.rootCode || "");
+      if (anyDefaultValue && customerFieldLooksLikePersonalIdentifier(fieldCode, preferredBundle, fallbackBundle)) {
+        return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+      }
+      if (anyDefaultValue && !safeDefaultValueType) {
+        return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+      }
+      if (anyDefaultValue && value != null && value !== "") {
+        const scalar = String(value);
+        const validTypedScalar = fieldType === "NUMBER" || fieldType === "CALC" ? /^-?\d+(?:\.\d+)?$/.test(scalar) : fieldType === "DATE" ? /^\d{4}-\d{2}-\d{2}$/.test(scalar) : fieldType === "TIME" ? /^\d{2}:\d{2}(?::\d{2})?$/.test(scalar) : fieldType === "DATETIME" ? /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(scalar) && Number.isFinite(new Date(scalar).getTime()) : true;
+        if (!validTypedScalar) return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+      }
+      if (anyDefaultValue && /^(?:RADIO_BUTTON|CHECK_BOX|MULTI_SELECT|DROP_DOWN)$/.test(fieldType)) {
+        const fieldCode2 = String(fieldInfo.activeCode || fieldInfo.rootCode || "");
+        const allowedOptions = customerFieldOptionValuesForCode(fieldCode2, preferredBundle, fallbackBundle);
+        if (!allowedOptions.has(String(value))) {
+          return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+        }
+      }
+    }
+    if (value && typeof value === "object") {
+      if (fieldInfo && fieldSettingIdentity(fieldInfo).settingKey === "(field)") {
+        const summary = customerFieldDefinitionSummary(value);
+        return { text: summary || `設定内容（${Object.keys(value).length}項目・${CUSTOMER_HIDDEN_DETAIL}）`, omitted: true };
+      }
+      const count = Array.isArray(value) ? value.length : Object.keys(value).length;
+      const unit = Array.isArray(value) ? "件" : "項目";
+      return { text: `設定内容（${count}${unit}・${CUSTOMER_HIDDEN_DETAIL}）`, omitted: true };
+    }
+    if (value === void 0) return { text: "（未設定）", omitted: false };
+    if (value === null) return { text: "（値なし）", omitted: false };
+    if (!customerScalarValueMatchesPath(path, value, fieldInfo, preferredBundle, fallbackBundle)) {
+      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+    }
+    if (typeof value === "boolean") {
+      const settingKey = fieldInfo ? fieldSettingIdentity(fieldInfo).settingKey : "";
+      return { text: humanizeFieldSettingValue(value, settingKey), omitted: false };
+    }
+    const text = String(value);
+    if (text === "") return { text: "（空欄）", omitted: false };
+    if (customerUnsafeText(text) || /^\s*[\[{][\s\S]*[\]}]\s*$/.test(text)) {
+      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+    }
+    if (text.length > CUSTOMER_TEXT_LIMIT || text.split(/\r?\n/).length > 5) {
+      return { text: `長文（${text.length}文字・${CUSTOMER_HIDDEN_DETAIL}）`, omitted: true };
+    }
+    if (/^(?:appSettings|appInfo)\.name$/.test(path) && customerUnsafeRawLabelText(text)) {
+      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+    }
+    if (path === "appSettings.theme" && !/^(?:WHITE|RED|BLUE|GREEN|YELLOW|BLACK)$/i.test(text)) {
+      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+    }
+    if (/\.(?:width|height|innerHeight)$/i.test(path) && /^-?\d+(?:\.\d+)?$/.test(text)) {
+      return { text: `${text}px`, omitted: false };
+    }
+    const fieldLabel = customerFieldLabelForCode(text, preferredBundle, fallbackBundle);
+    if (fieldLabel) return { text: fieldLabel, omitted: false };
+    if (/(?:\.fields\[\d+\]|\.code|\.relatedKeyField|\.relatedField|\.keyField|\.lookupPickerFields\[\d+\]|\.retrieveFields\[\d+\]|\.displayFields\[\d+\])$/i.test(path)) {
+      return { text: "フィールド（表示名を確認できません）", omitted: true };
+    }
+    if (/\.(?:filterCond|sort)$/i.test(path)) {
+      const humanized = customerHumanizeExpression(text, path, preferredBundle, fallbackBundle);
+      if (humanized) return { text: humanized, omitted: false };
+      return {
+        text: /\.sort$/i.test(path) ? "並び順が変更されました（詳細非表示）" : "条件が変更されました（詳細非表示）",
+        omitted: true
+      };
+    }
+    if (fieldInfo) {
+      const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
+      if (settingKey === "type" && typeof value === "string" && !FIELD_TYPE_LABELS[value]) {
+        return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+      }
+      return { text: humanizeFieldSettingValue(value, settingKey), omitted: false };
+    }
+    return { text, omitted: false };
+  }
+  function customerReviewNote(row) {
+    const key = sectionKeyOfRow(row);
+    const fieldInfo = extractFieldPathInfo(String(row.path || ""));
+    if (fieldInfo) {
+      const identity = fieldDisplayIdentity(row, fieldInfo, { rows: [] });
+      const setting = fieldSettingIdentity(fieldInfo);
+      return fieldSettingReviewGuidance({
+        rowIndex: 0,
+        fieldKey: identity.fieldKey,
+        fieldCode: identity.fieldCode,
+        fieldName: identity.fieldName,
+        fieldType: identity.fieldType,
+        settingKey: setting.settingKey,
+        settingLabel: setting.settingLabel,
+        row
+      });
+    }
+    const guidance = {
+      appSettings: "アプリの基本設定が意図した変更か確認してください。",
+      appInfo: "アプリ情報が意図した変更か確認してください。",
+      layoutSettings: "配置や表示サイズが意図した変更か確認してください。",
+      formSettings: "フォーム設定が意図した変更か確認してください。",
+      viewSettings: "表示項目・条件・並び順が意図した変更か確認してください。",
+      reportSettings: "グラフの項目・条件が意図した変更か確認してください。",
+      processSettings: "ステータス・遷移条件が意図した変更か確認してください。",
+      actionSettings: "アクション設定が意図した変更か確認してください。",
+      categories: "カテゴリ設定が意図した変更か確認してください。"
+    };
+    return guidance[key] || "変更内容が意図したものか確認してください。";
+  }
+  function customerHiddenReviewLocation(sourceHidden, targetHidden) {
+    if (sourceHidden && targetHidden) return "比較元と比較先の両方の環境";
+    if (sourceHidden) return "比較元の環境";
+    return "比較先の環境";
+  }
+  function buildCustomerDiffItems(ctx) {
+    const actualRows = (ctx.rows || []).filter((row) => !row._displayOnly && row.type !== "same");
+    const grouped = groupRowsBySection(actualRows);
+    const items = [];
+    for (const [sectionKey, rows] of grouped) {
+      const sectionLabel = customerSectionLabel(sectionKey);
+      if (CUSTOMER_HIGH_RISK_SECTION_KEYS.has(sectionKey) || !CUSTOMER_VISIBLE_SECTION_KEYS.has(sectionKey)) {
+        const sourceHidden = rows.some((row) => row.type !== "added" && row.left !== void 0);
+        const targetHidden = rows.some((row) => row.type !== "removed" && row.right !== void 0);
+        const reviewLocation = customerHiddenReviewLocation(sourceHidden, targetHidden);
+        items.push({
+          sectionKey,
+          sectionLabel,
+          item: `${sectionLabel}（${rows.length}件の変更）`,
+          changeType: customerAggregatedChangeType(rows),
+          before: CUSTOMER_HIDDEN_DETAIL,
+          after: CUSTOMER_HIDDEN_DETAIL,
+          reviewNote: `設定内容は安全のため非表示です。詳細は権限のある担当者が${reviewLocation}で確認してください。`,
+          omittedTechnicalValues: rows.length
+        });
+        continue;
+      }
+      for (const row of rows) {
+        const before = customerSafeValue(row, "source", ctx.sourceBundle, ctx.targetBundle);
+        const after = customerSafeValue(row, "target", ctx.sourceBundle, ctx.targetBundle);
+        const omitted = before.omitted || after.omitted;
+        const reviewLocation = customerHiddenReviewLocation(before.omitted, after.omitted);
+        const baseReviewNote = customerReviewNote(row);
+        items.push({
+          sectionKey,
+          sectionLabel,
+          item: customerItemLabel(row, ctx.sourceBundle, ctx.targetBundle),
+          changeType: customerChangeType(row),
+          before: before.text,
+          after: after.text,
+          reviewNote: omitted ? `${baseReviewNote} 詳細は権限のある担当者が${reviewLocation}で確認してください。` : baseReviewNote,
+          omittedTechnicalValues: omitted ? 1 : 0
+        });
+      }
+    }
+    return items;
+  }
+  function summarizeCustomerRows(rows) {
+    const counts = { actual: 0, added: 0, removed: 0, contentChanged: 0, moved: 0 };
+    for (const row of rows) {
+      if (!row || row._displayOnly || row.type === "same") continue;
+      counts.actual += 1;
+      if (row.moved || row.type === "moved") counts.moved += 1;
+      else if (row.type === "added") counts.added += 1;
+      else if (row.type === "removed") counts.removed += 1;
+      else counts.contentChanged += 1;
+    }
+    return counts;
+  }
+  function customerSectionBreakdown(rows) {
+    const grouped = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      if (!row || row._displayOnly || row.type === "same") continue;
+      const key = sectionKeyOfRow(row);
+      const list = grouped.get(key) || [];
+      list.push(row);
+      grouped.set(key, list);
+    }
+    return [...grouped].map(([key, list]) => {
+      const counts = summarizeCustomerRows(list);
+      return [customerSectionLabel(key), counts.added, counts.removed, counts.contentChanged, counts.moved, counts.actual];
+    });
+  }
+  function customerIncomplete(ctx) {
+    return !!((ctx.fetchIssues || []).length || (ctx.partialIssues || []).length || customerHasDiffTruncation(ctx.truncation));
+  }
+  function customerTruncationSectionIncomplete(section) {
+    const status = truncationScanStatusOf(section);
+    if (status === "partial" || status === "unscanned" || section.partiallyScanned) return true;
+    const omitted = section.omittedDiffCount;
+    return omitted == null ? status !== "complete" : Number(omitted) > 0;
+  }
+  function customerHasDiffTruncation(truncation) {
+    if (!truncation) return false;
+    if (Number(truncation.droppedDiff || 0) > 0) return true;
+    const sections = truncation.sections || [];
+    if (sections.some(customerTruncationSectionIncomplete)) return true;
+    if (!truncation.truncated) return false;
+    const hasExplicitDiffCount = Object.prototype.hasOwnProperty.call(truncation, "droppedDiff");
+    const hasOnlySameOmission = Number(truncation.droppedSame || 0) > 0 && hasExplicitDiffCount;
+    const hasCompleteSectionEvidence = sections.length > 0 && sections.every((section) => truncationScanStatusOf(section) === "complete" && Number(section.omittedDiffCount || 0) === 0);
+    return !(hasOnlySameOmission || hasCompleteSectionEvidence);
+  }
+  function customerDateTime(value) {
+    const raw = String(value ?? "").trim();
+    const normalized = typeof value === "number" ? value : /^\d{11,}$/.test(raw) ? Number(raw) : raw;
+    const date = new Date(normalized);
+    return Number.isFinite(date.getTime()) ? humanDateTime(date.toISOString()) : "未記録";
+  }
+  function buildCustomerSummarySheet(ctx, items) {
+    const counts = summarizeCustomerRows(ctx.rows || []);
+    const incomplete = customerIncomplete(ctx);
+    const filtered = ctx.exportMode === "filtered";
+    const verdict = incomplete ? "比較未完了" : filtered ? counts.actual ? "絞り込み後：変更あり" : "絞り込み後：掲載対象なし" : counts.actual ? "変更あり" : "変更なし";
+    const completeness = incomplete ? "一部未完了" : "正常完了（選択範囲）";
+    const sourceName = customerAppName(ctx.sourceBundle, "比較元のアプリ");
+    const targetName = customerAppName(ctx.targetBundle, "比較先のアプリ");
+    const omitted = items.reduce((sum, item) => sum + item.omittedTechnicalValues, 0);
+    const comparedScopes = ctx.scopes?.length ? ctx.scopes : [...new Set(items.map((item) => item.sectionKey))];
+    const rows = [
+      ["kintone 設定差分確認レポート", "", "", "", "", ""],
+      [`比較元：${sourceName}  ／  比較先：${targetName}`, "", "", "", "", ""],
+      ["比較結果", verdict, "比較処理", completeness, "", "変更一覧を開く"],
+      [filtered ? "掲載変更件数" : "変更件数", `${counts.actual}件`, "比較日時", customerDateTime(ctx.comparedAt), "", ""],
+      ["追加", `${counts.added}件`, "削除", `${counts.removed}件`, "変更", `${counts.contentChanged}件`],
+      ["要素の移動", `${counts.moved}件`, "詳細を省略した変更", omitted ? `${omitted}件（変更一覧で確認）` : "0件", "", ""],
+      ["比較した設定領域", customerScopeLabel(comparedScopes), "", "", "", ""],
+      ["掲載範囲", ctx.exportMode === "filtered" ? "上記範囲内の一部" : "上記範囲内の全変更", "絞り込み", ctx.exportMode === "filtered" ? "あり" : "なし", "比較条件の調整", hasCustomerComparisonAdjustments(ctx) ? "あり" : "なし"],
+      ["掲載内容", "変更点のみ。上記以外の設定領域は比較していません。", "", "", "", ""],
+      ["このレポートは比較元と比較先の現在設定の差を示すもので、設定の反映・移行計画ではありません。重要度、業務への影響、対応要否は自動判定していません。", "", "", "", "", ""],
+      ["", "", "", "", "", ""],
+      ["分類別件数", "", "", "", "", ""],
+      ["分類", "追加", "削除", "変更", "要素の移動", "合計"],
+      ...customerSectionBreakdown(ctx.rows || [])
+    ];
+    const cellStyles = rows.map(() => []);
+    cellStyles[2][1] = incomplete ? "kpiWarning" : counts.actual ? "kpiDanger" : "kpiGood";
+    cellStyles[2][3] = incomplete ? "warning" : "info";
+    cellStyles[2][5] = "hyperlink";
+    cellStyles[3][1] = "info";
+    cellStyles[3][3] = "info";
+    cellStyles[4][1] = "info";
+    cellStyles[4][3] = "info";
+    cellStyles[4][5] = "info";
+    cellStyles[5][1] = "info";
+    cellStyles[5][3] = omitted ? "warning" : "info";
+    cellStyles[6][1] = "info";
+    cellStyles[7][1] = "info";
+    cellStyles[7][3] = "info";
+    cellStyles[7][5] = "info";
+    cellStyles[8][1] = "info";
+    cellStyles[9][0] = "info";
+    cellStyles[11][0] = "sectionHeader";
+    return {
+      name: "比較概要",
+      rows,
+      colWidths: [20, 34, 18, 32, 18, 24],
+      rowStyles: rows.map(() => "normal"),
+      cellStyles,
+      headerRow: 13,
+      freezeRows: 2,
+      rowHeights: rows.map((row, index) => {
+        if (index === 0) return 36;
+        if (index === 1) return 28;
+        if (index === 9) return readableDiffRowHeight([{ value: row[0], width: 72 }], 74);
+        return index === 12 ? 30 : 24;
+      }),
+      merges: ["A1:F1", "A2:F2", "B7:F7", "B9:F9", "A10:F10", "A12:F12"],
+      internalHyperlinks: [{
+        ref: "F3",
+        targetSheet: "変更一覧",
+        targetCell: "A2",
+        tooltip: "変更一覧へ移動"
+      }],
+      showGridLines: false,
+      print: {
+        orientation: "portrait",
+        fitToWidth: 1,
+        fitToHeight: 0,
+        repeatRows: { from: 1, to: 2 }
+      }
+    };
+  }
+  function buildCustomerListSheet(ctx, items) {
+    const sourceName = customerAppName(ctx.sourceBundle, "比較元");
+    const targetName = customerAppName(ctx.targetBundle, "比較先");
+    const headers = [
+      "No.",
+      "分類",
+      "対象",
+      "変更区分",
+      `比較元
+${sourceName}`,
+      `比較先
+${targetName}`,
+      "確認ポイント",
+      "顧客レビュー状況",
+      "対応方針",
+      "担当者",
+      "コメント"
+    ];
+    const rows = [
+      ["比較元と比較先の現在設定を確認し、「顧客レビュー状況」から「コメント」までの4列に確認結果を入力してください。", "", "", "", "", "", "", "", "", "", ""],
+      headers
+    ];
+    const rowStyles = ["normal", "normal"];
+    const cellStyles = [["info"], []];
+    const rowHeights = [30, 42];
+    items.forEach((item, index) => {
+      rows.push([
+        index + 1,
+        item.sectionLabel,
+        item.item,
+        item.changeType,
+        item.before,
+        item.after,
+        item.reviewNote,
+        "未レビュー",
+        "未判断",
+        "",
+        ""
+      ]);
+      rowStyles.push("normal");
+      const styles = [];
+      styles[4] = "sourceDivider";
+      styles[5] = "target";
+      styles[6] = "info";
+      styles[7] = "review";
+      styles[8] = "review";
+      styles[9] = "review";
+      styles[10] = "review";
+      cellStyles.push(styles);
+      rowHeights.push(readableDiffRowHeight([
+        { value: item.sectionLabel, width: 18 },
+        { value: item.item, width: 34 },
+        { value: item.before, width: 36 },
+        { value: item.after, width: 36 },
+        { value: item.reviewNote, width: 38 }
+      ], 132));
+    });
+    const lastRow = items.length + 2;
+    return {
+      name: "変更一覧",
+      rows,
+      colWidths: [8, 18, 34, 16, 36, 36, 38, 14, 16, 16, 28],
+      rowStyles,
+      cellStyles,
+      headerRow: 2,
+      freezeRows: 2,
+      freezeColumns: 3,
+      rowHeights,
+      merges: ["A1:K1"],
+      dataValidations: items.length ? [{
+        sqref: `H3:H${lastRow}`,
+        values: CUSTOMER_REVIEW_STATUS_VALUES,
+        promptTitle: "顧客レビュー状況",
+        prompt: "顧客レビューの進捗を選択してください"
+      }, {
+        sqref: `I3:I${lastRow}`,
+        values: CUSTOMER_ACTION_DECISION_VALUES,
+        promptTitle: "対応方針",
+        prompt: "人が判断した対応方針を選択してください"
+      }] : [],
+      showGridLines: false,
+      print: {
+        orientation: "landscape",
+        fitToWidth: 1,
+        fitToHeight: 0,
+        repeatRows: { from: 2, to: 2 }
+      }
+    };
+  }
+  function customerIssueSide(side) {
+    if (side === "source") return "比較元";
+    if (side === "target") return "比較先";
+    if (side === "both") return "比較元・比較先";
+    return "対象範囲";
+  }
+  function buildCustomerIssuesSheet(ctx) {
+    if (!customerIncomplete(ctx)) return null;
+    const rows = [
+      ["このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。", "", "", ""],
+      ["分類", "対象", "確認状態", "説明"]
+    ];
+    for (const issue of ctx.fetchIssues || []) {
+      rows.push([
+        customerSectionLabel(String(issue.sectionKey || issue.section || "")),
+        customerIssueSide(issue.side),
+        "取得できませんでした",
+        "この範囲は比較結果に含まれていません。再取得して確認してください。"
+      ]);
+    }
+    for (const issue of ctx.partialIssues || []) {
+      rows.push([
+        customerSectionLabel(String(issue.sectionKey || issue.section || "")),
+        customerIssueSide(issue.side),
+        "一部のみ確認",
+        "取得できた範囲だけを比較しています。必要に応じて再取得してください。"
+      ]);
+    }
+    if (customerHasDiffTruncation(ctx.truncation)) {
+      const incompleteSections = (ctx.truncation?.sections || []).filter(customerTruncationSectionIncomplete);
+      const sections = incompleteSections.length ? incompleteSections : [{ section: "比較対象全体", partiallyScanned: true, scanStatus: "partial" }];
+      for (const section of sections) {
+        const status = truncationScanStatusOf(section);
+        rows.push([
+          customerSectionLabel(String(section.sectionKey || section.section || "")),
+          "件数上限の対象",
+          status === "unscanned" ? "未確認" : status === "partial" ? "一部のみ確認" : "表示を一部省略",
+          status === "unscanned" ? "この範囲は確認できていません。条件を分けて再比較してください。" : status === "partial" ? "確認できた件数は全体の一部です。条件を分けて再比較してください。" : "範囲の確認は完了していますが、表示を一部省略しています。"
+        ]);
+      }
+    }
+    return {
+      name: "確認できなかった範囲",
+      rows,
+      colWidths: [24, 20, 22, 72],
+      rowStyles: rows.map(() => "normal"),
+      cellStyles: rows.map((_, index) => index === 0 ? ["warning"] : index === 1 ? [] : ["warning"]),
+      headerRow: 2,
+      freezeRows: 2,
+      freezeColumns: 2,
+      rowHeights: rows.map((row, index) => index < 2 ? index === 0 ? 36 : 30 : readableDiffRowHeight([
+        { value: row[0], width: 24 },
+        { value: row[1], width: 20 },
+        { value: row[2], width: 22 },
+        { value: row[3], width: 72 }
+      ], 118)),
+      merges: ["A1:D1"],
+      showGridLines: false,
+      print: {
+        orientation: "landscape",
+        fitToWidth: 1,
+        fitToHeight: 0,
+        repeatRows: { from: 2, to: 2 }
+      }
+    };
+  }
+  function buildCustomerDiffXlsxSheets(ctx) {
+    const items = buildCustomerDiffItems(ctx);
+    const sheets = [buildCustomerSummarySheet(ctx, items)];
+    const issues = buildCustomerIssuesSheet(ctx);
+    if (issues) sheets.push(issues);
+    sheets.push(buildCustomerListSheet(ctx, items));
+    return sheets;
+  }
   function buildDiffXlsxSheets(ctx) {
+    if (ctx.audience !== "internal") return buildCustomerDiffXlsxSheets(ctx);
     const rows = ctx.rows || [];
     const grouped = groupRowsBySection(rows);
     const fieldModel = buildDiffXlsxFieldModel(ctx);
     const actionableFieldRows = rows.filter((row) => (row.sectionKey || row.section) === "fieldSettings" && !row._displayOnly && row.type !== "same");
     const unstructuredFieldDiffCount = Math.max(0, actionableFieldRows.length - fieldModel.details.length);
     const differenceRefs = buildDifferenceRefs(rows);
+    const technicalRefs = buildTechnicalRefs(rows);
+    const differenceRefsBySection = /* @__PURE__ */ new Map();
+    rows.forEach((row, index) => {
+      const key = sectionKeyOfRow(row);
+      const refs = differenceRefsBySection.get(key) || [];
+      refs.push(differenceRefs[index]);
+      differenceRefsBySection.set(key, refs);
+    });
     const sheets = [buildSummarySheet(
       ctx,
       grouped,
@@ -12505,23 +13786,32 @@ ${label}` : `${direction}の値`;
       fieldModel.details.length,
       unstructuredFieldDiffCount
     )];
+    const issuesSheet = buildIssuesSheet(ctx);
+    if (issuesSheet) sheets.push(issuesSheet);
     if (fieldModel.details.length) {
       sheets.push(
         buildFieldSummarySheet(fieldModel, ctx.sourceBundle, ctx.targetBundle, differenceRefs),
         buildFieldDetailSheet(fieldModel, ctx.sourceBundle, ctx.targetBundle, differenceRefs)
       );
     }
-    sheets.push(buildListSheet(rows, "差分一覧", ctx.sourceBundle, ctx.targetBundle, differenceRefs, fieldModel));
+    sheets.push(buildListSheet(
+      rows,
+      "差分一覧",
+      ctx.sourceBundle,
+      ctx.targetBundle,
+      differenceRefs,
+      technicalRefs,
+      fieldModel
+    ));
     for (const [key, list] of grouped) {
       sheets.push(buildSectionSheet(
         sectionSheetName(key),
         list,
         ctx.sourceBundle,
-        ctx.targetBundle
+        ctx.targetBundle,
+        differenceRefsBySection.get(key)
       ));
     }
-    const issuesSheet = buildIssuesSheet(ctx);
-    if (issuesSheet) sheets.push(issuesSheet);
     return sheets;
   }
   function buildDiffXlsxBlob(ctx) {
@@ -12529,6 +13819,15 @@ ${label}` : `${direction}の値`;
   }
   function buildDiffXlsxExport(ctx) {
     const blob = buildDiffXlsxBlob(ctx);
+    if (ctx.audience !== "internal") {
+      const sourceName = customerAppName(ctx.sourceBundle, "比較元");
+      const targetName = customerAppName(ctx.targetBundle, "比較先");
+      const pairLabel2 = [sourceName, targetName].filter(Boolean).join("_vs_");
+      return {
+        filename: buildExportFilename("設定差分確認", "xlsx", { appLabel: pairLabel2 }),
+        blob
+      };
+    }
     const srcName = extractAppNameFromBundle(ctx.sourceBundle);
     const tgtName = extractAppNameFromBundle(ctx.targetBundle);
     const src = buildAppFilenameLabel(ctx.sourceBundle?.appId, srcName);
@@ -13446,7 +14745,13 @@ ${label}` : `${direction}の値`;
     ["categories", "カテゴリ", false]
   ];
   var TYPE_LABEL = { added: "追加", removed: "削除", changed: "変更", moved: "移動", same: "同一" };
-  var SEVERITY_LABEL = { high: "高影響", medium: "中影響", low: "低影響" };
+  var FACT_LABEL = {
+    added: "比較先にのみ存在",
+    removed: "比較元にのみ存在",
+    changed: "内容が異なる",
+    moved: "並び順が異なる",
+    same: "内容が一致"
+  };
   var RESULT_PAGE_SIZE = 200;
   var XLSX_EXPORT_COOLDOWN_MS = 400;
   var VALUE_PREVIEW_MAX_LINES = 8;
@@ -13545,10 +14850,6 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-badge--changed{background:#dbeafe;color:#1d4ed8}
 .kus-dl-badge--moved{background:#fef3c7;color:#92400e}
 .kus-dl-badge--same{background:#e2e8f0;color:#475569}
-.kus-dl-severity{display:inline-block;padding:1px 6px;border:1px solid;border-radius:999px;font:700 9.5px/1.4 -apple-system,Segoe UI,sans-serif}
-.kus-dl-severity--high{background:#fff1f2;border-color:#fda4af;color:#9f1239}
-.kus-dl-severity--medium{background:#fffbeb;border-color:#fcd34d;color:#92400e}
-.kus-dl-severity--low{background:#f8fafc;border-color:#cbd5e1;color:#475569}
 .kus-dl-empty{padding:14px;text-align:center;color:#64748b;font-size:12px;background:#f8fafc;border-radius:8px}
 .kus-dl-flag{display:inline-block;padding:1px 6px;border-radius:999px;background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font:500 10px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-row__action{border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569;padding:3px 7px;font:600 9.5px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
@@ -13587,6 +14888,116 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-multi thead th{position:sticky;top:0;background:#f8fafc;color:#475569;font-size:10px}
 .kus-dl-multi__warn{color:#9a3412;font-weight:700}
 .kus-dl-multi__ok{color:#166534;font-weight:700}
+
+/* Diff Lite only: human-first review workspace. Shared litePanelTheme is intentionally untouched. */
+#kus-diff-lite.kus-lp{width:min(960px,calc(100vw - 24px));max-height:min(96vh,1040px);top:max(8px,2vh);right:max(8px,1vw);border-radius:14px;background:#f8fafc}
+#kus-diff-lite .kus-lp__hero{padding:15px 20px;background:#10253f}
+#kus-diff-lite .kus-lp__badge-row{display:none}
+#kus-diff-lite .kus-lp__body{padding:18px 20px 22px}
+#kus-diff-lite [hidden]{display:none!important}
+#kus-diff-lite .kus-lp__hint{margin-bottom:16px;padding:0 2px;border:0;background:transparent;color:#475569}
+#kus-diff-lite button,#kus-diff-lite input:not([type="checkbox"]):not([type="file"]),#kus-diff-lite select{min-height:44px}
+#kus-diff-lite input[type="file"]{min-height:44px;padding:8px 0;box-sizing:border-box}
+#kus-diff-lite .kus-lp__check{min-height:44px}
+#kus-diff-lite button:focus-visible,#kus-diff-lite input:focus-visible,#kus-diff-lite select:focus-visible,#kus-diff-lite textarea:focus-visible,#kus-diff-lite summary:focus-visible{outline:3px solid #2563eb;outline-offset:2px}
+.kus-dl-workflow{display:grid;gap:16px}
+.kus-dl-step{padding:18px;border:1px solid #d8e0ea;border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.kus-dl-step__header{display:flex;align-items:flex-start;gap:11px;margin:0 0 15px;padding:0 0 13px;border-bottom:1px solid #e2e8f0;font-family:-apple-system,Segoe UI,sans-serif}
+.kus-dl-step__number{display:inline-flex;flex:0 0 28px;width:28px;height:28px;align-items:center;justify-content:center;border-radius:50%;background:#16395f;color:#fff;font-size:12px;font-weight:800}
+.kus-dl-step__header h2{margin:0;color:#10253f;font-size:16px;line-height:1.35}
+.kus-dl-step__header p{margin:3px 0 0;color:#64748b;font-size:11.5px;line-height:1.5}
+.kus-dl-step__empty{margin:0;padding:18px;border:1px dashed #cbd5e1;border-radius:9px;background:#f8fafc;color:#64748b;text-align:center;font-size:12px}
+.kus-dl-step>.kus-lp__card,.kus-dl-disclosure__body>.kus-lp__card{margin:0;border:0;box-shadow:none;background:transparent;padding:0}
+.kus-dl-target-card>.kus-lp__card-head,.kus-dl-filter-disclosure .kus-lp__card-head,.kus-dl-output-disclosure .kus-lp__card-head,.kus-dl-step[data-kus-dl-step="review"]>.kus-lp__card>.kus-lp__card-head{display:none}
+.kus-dl-mode{display:inline-flex;gap:4px;margin:0 0 12px;padding:3px;border:1px solid #cbd5e1;border-radius:10px;background:#f1f5f9}
+.kus-dl-mode .kus-lp__btn{min-width:118px;border-color:transparent;background:transparent;box-shadow:none;color:#475569}
+.kus-dl-mode .kus-lp__btn.is-active{background:#fff;border-color:#cbd5e1;color:#10253f;box-shadow:0 1px 2px rgba(15,23,42,.08)}
+.kus-dl-direction-grid{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:10px}
+.kus-dl-app-card{min-width:0;padding:15px;border:1px solid #cbd5e1;border-radius:10px;background:#fff}
+.kus-dl-app-card--target{border-color:#9fb2c8}
+.kus-dl-app-card__role{margin:0 0 2px;color:#64748b;font-size:10px;font-weight:800;letter-spacing:.09em;text-transform:uppercase}
+.kus-dl-app-card h3{margin:0;color:#10253f;font-size:14px}
+.kus-dl-app-card__help{margin:3px 0 13px;color:#64748b;font-size:10.5px}
+.kus-dl-app-card .kus-lp__row{align-items:flex-start;margin-bottom:7px}
+.kus-dl-app-card .kus-lp__label{width:100%;min-width:0;color:#475569;font-size:10.5px}
+.kus-dl-app-card .kus-lp__input{flex:1;min-width:100px;width:auto;box-sizing:border-box}
+.kus-dl-app-card .kus-dl-target-field{min-width:140px}
+.kus-dl-swap{align-self:center;justify-self:center;width:88px;padding:8px!important;white-space:normal;line-height:1.3}
+.kus-dl-target-list{display:grid;gap:7px;max-height:220px;margin-top:8px;padding-right:2px;overflow-y:auto}
+.kus-dl-multi-controls{margin-top:12px!important;padding-top:10px;border-top:1px solid #e2e8f0}
+.kus-dl-run-row{margin:13px 0 0!important}
+.kus-dl-run-row .kus-lp__btn{width:100%}
+.kus-dl-step>.kus-lp__status{margin:10px 0 0;min-height:44px;box-sizing:border-box}
+.kus-dl-disclosure{margin-top:12px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;overflow:hidden}
+.kus-dl-disclosure>summary{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:44px;box-sizing:border-box;padding:9px 13px;cursor:pointer;list-style:none;color:#10253f;font-weight:750}
+.kus-dl-disclosure>summary::-webkit-details-marker{display:none}
+.kus-dl-disclosure>summary::after{content:'＋';margin-left:auto;color:#64748b;font-size:16px}
+.kus-dl-disclosure[open]>summary::after{content:'−'}
+.kus-dl-disclosure>summary small{color:#64748b;font-size:10px;font-weight:500;text-align:right}
+.kus-dl-disclosure__body{display:grid;gap:12px;padding:13px;border-top:1px solid #e2e8f0;background:#f8fafc}
+.kus-dl-disclosure__body .kus-lp__details{margin-bottom:0;background:#fff}
+.kus-dl-overview{border-color:#cbd5e1;border-radius:10px;box-shadow:none}
+.kus-dl-overview__direction{background:#fff}
+.kus-dl-overview__arrow{color:#16395f}
+.kus-dl-verdict{position:relative;padding:12px 14px 12px 18px;border-left:5px solid #2563eb;background:#f8fafc;color:#10253f}
+.kus-dl-verdict--same{border-left-color:#64748b;background:#f8fafc;color:#334155}
+.kus-dl-verdict--warn{border-left-color:#b45309;background:#fffbeb;color:#78350f}
+.kus-dl-verdict__eyebrow{display:block;margin-bottom:2px;color:inherit;font-size:9.5px!important;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.kus-dl-alert{position:relative;margin:9px 12px 0;padding:9px 10px 9px 32px;border-color:#d6a85c;background:#fffbeb;color:#713f12;font-weight:550}
+.kus-dl-alert::before{content:'!';position:absolute;left:10px;top:9px;display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center;border:1px solid currentColor;border-radius:50%;font-size:9px;font-weight:900}
+.kus-dl-alert[role="note"]{border-color:#cbd5e1;background:#f8fafc;color:#475569}
+.kus-dl-alert[role="note"]::before{content:'i'}
+.kus-dl-metrics{grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:6px;margin:10px 12px;padding:0}
+.kus-dl-metric{min-width:0!important;min-height:66px!important;border:1px solid #dbe3ec;border-radius:8px;background:#fff}
+button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
+.kus-dl-section-jump,.kus-dl-filterchip,.kus-dl-navbtn,.kus-dl-value__toggle,.kus-dl-row__action{min-height:44px!important}
+.kus-dl-section__stat,.kus-dl-section__stat--added,.kus-dl-section__stat--removed,.kus-dl-section__stat--changed,.kus-dl-section__stat--moved{border-color:#cbd5e1;background:#fff;color:#475569}
+.kus-dl-section__body{background:#f4f7fa}
+.kus-dl-section>summary{min-height:44px;box-sizing:border-box}
+.kus-dl-row{border-left-color:#334155;background:#fff;transition:none}
+.kus-dl-row--added,.kus-dl-row--removed,.kus-dl-row--changed,.kus-dl-row--moved{border-left-color:#334155}
+.kus-dl-row--same{border-left-color:#94a3b8}
+.kus-dl-badge,.kus-dl-badge--added,.kus-dl-badge--removed,.kus-dl-badge--changed,.kus-dl-badge--moved,.kus-dl-badge--same{display:inline-flex;align-items:center;gap:4px;border:1px solid #cbd5e1;background:#f8fafc;color:#334155;font-weight:750}
+.kus-dl-badge--added::before{content:'＋'}
+.kus-dl-badge--removed::before{content:'−'}
+.kus-dl-badge--changed::before{content:'≠'}
+.kus-dl-badge--moved::before{content:'↕'}
+.kus-dl-badge--same::before{content:'＝'}
+.kus-dl-badge__type{font-weight:850}
+.kus-dl-badge__fact{display:inline-flex;align-items:center;color:#475569;font-weight:650}
+.kus-dl-badge__fact::before{content:'｜';margin-right:4px;color:#94a3b8}
+.kus-dl-flag{border-color:#cbd5e1;background:#f8fafc;color:#475569}
+.kus-dl-row__action:hover{border-color:#94a3b8;background:#f1f5f9;color:#10253f}
+.kus-dl-pre,.kus-dl-pre.del,.kus-dl-pre.add{border-color:#dbe3ec;background:#f8fafc;color:#1e293b}
+.kus-dl-value__label{display:block;margin:0 0 4px;color:#475569;font:800 9.5px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.06em}
+.kus-dl-presence{grid-column:1/-1;display:grid;grid-template-columns:minmax(150px,.38fr) minmax(0,1fr);gap:10px;align-items:start;padding:10px;border:1px dashed #9fb2c8;border-radius:8px;background:#f8fafc}
+.kus-dl-presence>p{margin:1px 0;color:#334155;font-family:-apple-system,Segoe UI,sans-serif}
+.kus-dl-presence>p strong,.kus-dl-presence>p span{display:block}
+.kus-dl-presence>p strong{color:#10253f;font-size:12px}
+.kus-dl-presence>p span{margin-top:3px;color:#64748b;font-size:10.5px}
+.kus-dl-row__technical>summary{min-height:44px;box-sizing:border-box}
+.kus-dl-row__raw>span{display:block;margin-bottom:2px;color:#64748b;font-family:-apple-system,Segoe UI,sans-serif;font-size:9px;font-weight:700}
+.kus-dl-reviewbar{border-color:#cbd5e1;background:#f8fafc}
+.kus-dl-contextbar{border-color:#cbd5e1;background:#e2e8f0}
+.kus-dl-contextlane,.kus-dl-contextlane--after{box-shadow:none;border-left:4px solid #64748b}
+.kus-dl-contextlane--after{border-left-color:#2563eb}
+.kus-dl-filter-disclosure,.kus-dl-output-disclosure{margin:0 0 12px}
+.kus-dl-filter-disclosure .kus-lp__card,.kus-dl-output-disclosure .kus-lp__card{padding:0}
+.kus-dl-result mark.diff-char-del{background:#e2e8f0;color:#1e293b;text-decoration:line-through;text-decoration-thickness:2px}
+.kus-dl-result mark.diff-char-add{background:#dbeafe;color:#1e3a8a;text-decoration:underline;text-decoration-thickness:2px}
+@media(max-width:768px){
+  #kus-diff-lite.kus-lp{width:calc(100vw - 12px);max-height:calc(100vh - 12px);top:6px;right:6px;border-radius:10px}
+  #kus-diff-lite .kus-lp__hero{padding:13px 14px}
+  #kus-diff-lite .kus-lp__body{padding:13px 12px 18px}
+  .kus-dl-step{padding:14px 12px}
+  .kus-dl-direction-grid{grid-template-columns:1fr}
+  .kus-dl-swap{width:100%;max-width:none}
+  .kus-dl-row__cols{grid-template-columns:1fr}
+  .kus-dl-presence{grid-template-columns:1fr}
+  .kus-dl-sticky{position:static;background:transparent;backdrop-filter:none}
+  .kus-dl-disclosure>summary{align-items:flex-start;flex-wrap:wrap}
+  .kus-dl-disclosure>summary small{width:100%;padding-right:28px;text-align:left}
+}
 @media(max-width:640px){
   .kus-dl-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .kus-dl-row__cols{grid-template-columns:1fr}
@@ -13601,9 +15012,21 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
   .kus-dl-row__head{grid-template-columns:1fr}
   .kus-dl-row__action{justify-self:start}
   .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 4px;color:#64748b;font:700 9px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.03em}
+  .kus-dl-value__label+.kus-dl-pre::before{content:none;display:none}
   .kus-dl-multi{display:block;overflow-x:auto;white-space:nowrap}
 }
+@media(max-width:420px){
+  .kus-dl-mode{display:grid;grid-template-columns:1fr 1fr;width:100%;box-sizing:border-box}
+  .kus-dl-mode .kus-lp__btn{min-width:0;padding-inline:6px}
+  .kus-dl-overview__direction{grid-template-columns:1fr;gap:5px}
+  .kus-dl-side--target{text-align:left}
+  .kus-dl-overview__arrow{transform:rotate(90deg);justify-self:start;margin-left:12px}
+  .kus-dl-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kus-dl-step__header{gap:8px}
+}
 @media(prefers-reduced-motion:reduce){
+  #kus-diff-lite.kus-lp{animation:none}
+  #kus-diff-lite *{scroll-behavior:auto!important;transition:none!important}
   .kus-dl-section>summary::before{transition:none}
 }
 @media(prefers-contrast:more){
@@ -13639,8 +15062,9 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
       exportContentLabel: getLiteHtmlExportContentLabel(safeContentMode)
     };
   }
-  function buildLiteDiffXlsxContext(cache, rows, exportMode, exportLabel) {
+  function buildLiteDiffXlsxContext(cache, rows, exportMode, exportLabel, filterDescription) {
     return {
+      audience: "customer",
       rows,
       fetchIssues: cache.fetchIssues || [],
       partialIssues: cache.partialIssues || [],
@@ -13650,11 +15074,24 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
       scopes: cache.scopes,
       ignoreKeys: cache.ignoreKeys,
       normalizationPresetState: cache.normalizationPresetState || {},
-      comparedAt: cache.comparedAt || cache.targetBundle?.fetchedAt || cache.sourceBundle?.fetchedAt,
+      comparedAt: cache.comparedAt,
       exportMode,
       exportLabel,
+      filterDescription: filterDescription || (exportMode === "filtered" ? "画面で表示中の結果（詳細条件は未記録）" : "フィルターなし（比較結果の全件）"),
       exportContentMode: "diffOnly"
     };
+  }
+  function buildLiteDiffFilterDescription(input) {
+    const exactValue = (value, label) => label && label !== value ? `${label} [${value}]` : value;
+    const section = String(input.section || "").trim();
+    const type = String(input.type || "").trim();
+    const keyword = String(input.keyword || "").trim();
+    const parts = [
+      section ? `セクション: ${exactValue(section, String(input.sectionLabel || "").trim())}` : "",
+      type ? `変更種別: ${exactValue(type, String(input.typeLabel || "").trim())}` : "",
+      keyword ? `検索: ${keyword}` : ""
+    ].filter(Boolean);
+    return parts.length ? `画面の絞り込み: ${parts.join(" / ")}` : "画面で表示中の結果（フィルターなし）";
   }
   var rowSearchCache = /* @__PURE__ */ new WeakMap();
   var SEARCH_VALUE_TEXT_LIMIT = 8e3;
@@ -13686,6 +15123,9 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
       }
     }
     return counts;
+  }
+  function contentChangedCount(counts) {
+    return Math.max(0, counts.changed - counts.moved);
   }
   function isIncompleteLiteDiff(result) {
     return !!result?.truncation?.truncated || (result?.fetchIssues || []).length > 0 || (result?.partialIssues || []).length > 0;
@@ -13738,11 +15178,12 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
     if (filters.type) {
       if (filters.type === "moved") {
         if (!row.moved) return false;
+      } else if (filters.type === "changed") {
+        if (row.type !== "changed" || row.moved) return false;
       } else if (row.type !== filters.type) {
         return false;
       }
     }
-    if (filters.severity && String(row.severity || "low") !== filters.severity) return false;
     if (filters.keyword && !rowSearchText(row).includes(filters.keyword)) return false;
     return true;
   }
@@ -13806,17 +15247,24 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
       const isLong = lineCount > VALUE_PREVIEW_MAX_LINES || measuredValue.length > VALUE_PREVIEW_MAX_CHARS;
       const expanded = isLong && expandedValueKeys.has(valueKey);
       const id = `kus-dl-value-${rowKey}-${side}`;
-      const preHtml = `<pre id="${esc(id)}" class="kus-dl-pre ${className}" aria-label="${esc(label)}" data-side-label="${esc(label)}">${rawHtml ? value : esc(value)}</pre>`;
+      const visibleLabel = side === "before" ? "比較元" : "比較先";
+      const preHtml = `<span class="kus-dl-value__label">${visibleLabel}</span><pre id="${esc(id)}" class="kus-dl-pre ${className}" aria-label="${esc(label)}" data-side-label="${esc(label)}">${rawHtml ? value : esc(value)}</pre>`;
       if (!isLong) return `<div class="kus-dl-value">${preHtml}</div>`;
       const stateClass = expanded ? "is-expanded" : "is-collapsed";
       const actionLabel = expanded ? "プレビューに戻す" : "全文を展開";
       return `<div class="kus-dl-value ${stateClass}" data-kus-dl-value-key="${esc(valueKey)}">${preHtml}<div class="kus-dl-value__footer"><span>${lineCount}行 · ${measuredValue.length}文字</span><button type="button" class="kus-dl-value__toggle" data-kus-dl-value-toggle="${esc(valueKey)}" aria-expanded="${expanded ? "true" : "false"}" aria-controls="${esc(id)}">${actionLabel}</button></div></div>`;
     };
     if (row.type === "added") {
-      return { left: pre("（比較元にはなし）", "empty", "比較元の値", "before"), right: pre(rightStr, "add", "比較先の値", "after") };
+      return {
+        left: "",
+        right: `<div class="kus-dl-presence" role="group" aria-label="比較先にのみ存在"><p><strong>比較先にのみ存在</strong><span>比較元にはありません</span></p>${pre(rightStr, "add", "比較先の値", "after")}</div>`
+      };
     }
     if (row.type === "removed") {
-      return { left: pre(leftStr, "del", "比較元の値", "before"), right: pre("（比較先にはなし）", "empty", "比較先の値", "after") };
+      return {
+        left: `<div class="kus-dl-presence" role="group" aria-label="比較元にのみ存在"><p><strong>比較元にのみ存在</strong><span>比較先にはありません</span></p>${pre(leftStr, "del", "比較元の値", "before")}</div>`,
+        right: ""
+      };
     }
     if (row.type === "same") {
       return { left: pre(leftStr, "empty", "比較元の値", "before"), right: pre("（同一）", "empty", "比較先の値", "after") };
@@ -13839,6 +15287,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
   }
   function renderLiteDiffOverviewHtml(cache, options = {}) {
     const counts = summarizeLiteDiffRows(cache.rows || []);
+    const contentChanged = contentChangedCount(counts);
     const source = displayBundleSide(cache.sourceBundle, "比較元");
     const target = displayBundleSide(cache.targetBundle, "比較先");
     const fetchIssues = cache.fetchIssues || [];
@@ -13849,7 +15298,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
     const hasNoticeOnlyChanges = counts.actual === 0 && counts.displayOnly > 0;
     const verdictClass = incomplete ? "kus-dl-verdict--warn" : counts.actual === 0 && !hasNoticeOnlyChanges ? "kus-dl-verdict--same" : "";
     const verdictTitle = incomplete ? "比較結果は不完全です" : hasNoticeOnlyChanges ? `状態名の変更候補が ${counts.displayOnly} 件見つかりました` : counts.actual === 0 ? "選択した設定に差分はありません" : `差分が ${counts.actual} 件見つかりました`;
-    const verdictText = incomplete ? counts.actual ? `取得できた範囲では ${counts.actual} 件の差分があります。警告内容を確認してください。` : "差分なしとは判断できません。取得失敗または件数上限を解消して再比較してください。" : hasNoticeOnlyChanges ? "参照先の連動変更をまとめた表示用通知です。削除・追加としては数えていません。内容を確認してください。" : counts.actual === 0 ? `比較元と比較先は一致しています${counts.same ? `（同一 ${counts.same} 件）` : ""}。` : `追加 ${counts.added} / 削除 ${counts.removed} / 変更 ${counts.changed}${counts.moved ? `（移動 ${counts.moved}）` : ""}`;
+    const verdictText = incomplete ? counts.actual ? `取得できた範囲では ${counts.actual} 件の差分があります。警告内容を確認してください。` : "差分なしとは判断できません。取得失敗または件数上限を解消して再比較してください。" : hasNoticeOnlyChanges ? "参照先の連動変更をまとめた表示用通知です。削除・追加としては数えていません。内容を確認してください。" : counts.actual === 0 ? `比較元と比較先は一致しています${counts.same ? `（同一 ${counts.same} 件）` : ""}。` : `追加 ${counts.added} / 削除 ${counts.removed} / 内容変更 ${contentChanged}${counts.moved ? ` / 移動 ${counts.moved}` : ""}`;
     const metric = (type, label, hint, value) => `<button type="button" class="kus-dl-metric" data-kus-dl-type-filter="${esc(type)}" aria-label="${esc(label)} ${value}件を表示"${value ? "" : " disabled"}><span class="kus-dl-metric__num">${value}</span><span class="kus-dl-metric__label">${esc(label)}</span><span class="kus-dl-metric__hint">${esc(hint)}</span></button>`;
     const bySection = /* @__PURE__ */ new Map();
     for (const row of cache.rows || []) {
@@ -13902,7 +15351,9 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
     }
     const announceAttrs = options.announce === false ? "" : ' role="status"';
     const alertAttrs = options.announce === false ? "" : ' role="alert"';
-    return `<section class="kus-dl-overview" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}"${announceAttrs}><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div><div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "追加", "比較先のみ", counts.added) + metric("removed", "削除", "比較元のみ", counts.removed) + metric("changed", "変更", "値が異なる", counts.changed) + metric("moved", "移動", "並び順", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションを開く</span>${sectionButtons}</div>` : "") + alerts.map((message) => `<div class="kus-dl-alert"${alertAttrs}>⚠ ${esc(message)}</div>`).join("") + (ignoreRuleSummary.total ? `<div class="kus-dl-alert" role="note">無視ルール ${ignoreRuleSummary.total}件を適用した後の結果です。ルールに一致した設定差分は一覧に含まれません${ignoreRuleSummary.contextualRules ? `（完全パス/パターン ${ignoreRuleSummary.contextualRules}件）` : ""}。</div>` : "") + '<div class="kus-dl-legend">追加 = 比較先にのみ存在 / 削除 = 比較元にのみ存在。比較方向は上の矢印で確認できます。</div></section>';
+    const completeness = incomplete ? "incomplete" : "complete";
+    const alertsHtml = alerts.map((message) => `<div class="kus-dl-alert"${alertAttrs}>${esc(message)}</div>`).join("");
+    return `<section class="kus-dl-overview" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "比較完了"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションを開く</span>${sectionButtons}</div>` : "") + (ignoreRuleSummary.total ? `<div class="kus-dl-alert" role="note">無視ルール ${ignoreRuleSummary.total}件を適用した後の結果です。ルールに一致した設定差分は一覧に含まれません${ignoreRuleSummary.contextualRules ? `（完全パス/パターン ${ignoreRuleSummary.contextualRules}件）` : ""}。</div>` : "") + '<div class="kus-dl-legend">「比較先のみ」は追加、「比較元のみ」は削除として検出しています。比較方向は上の矢印で確認できます。</div></section>';
   }
   function renderRowsHtml(rows, useCharDiff, summary, allFilteredRows = rows, options = {}) {
     if (!rows.length) return `<div class="kus-dl-empty">該当する差分はありません${summary ? ` — ${summary}` : ""}</div>`;
@@ -13929,10 +15380,11 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
       const allInSection = allBySection.get(k) || list;
       const label = SECTION_DEFS.find((d) => d.key === k)?.label || k;
       const sectionCounts = summarizeLiteDiffRows(allInSection);
+      const sectionContentChanged = contentChangedCount(sectionCounts);
       const breakdown = sectionCounts.actual ? [
         ["added", "追加", sectionCounts.added],
         ["removed", "削除", sectionCounts.removed],
-        ["changed", "変更", sectionCounts.changed],
+        ["changed", "内容変更", sectionContentChanged],
         ["moved", "移動", sectionCounts.moved]
       ].filter((entry) => Number(entry[2]) > 0).map(([tone, statLabel, value]) => `<span class="kus-dl-section__stat kus-dl-section__stat--${tone}">${statLabel} ${value}</span>`).join("") : `<span class="kus-dl-section__stat">${sectionCounts.same ? `一致 ${sectionCounts.same}` : `変更候補 ${sectionCounts.displayOnly}`}</span>`;
       const countLabel = list.length === allInSection.length ? `${list.length}件` : `${list.length} / ${allInSection.length}件表示`;
@@ -13945,18 +15397,18 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
         const identity = rowDisplayIdentity(r, decoded);
         const current = rowKey === options.currentRowKey;
         const typeKey = r.moved ? "moved" : r.type || "same";
-        const severityKey = String(r.severity || "low");
-        const typeBadge = `<span class="kus-dl-badge kus-dl-badge--${esc(typeKey)}">${esc(TYPE_LABEL[typeKey] || typeKey)}</span>`;
-        const severityBadge = r.type === "same" ? "" : `<span class="kus-dl-severity kus-dl-severity--${esc(severityKey)}">${esc(SEVERITY_LABEL[severityKey] || severityKey)}</span>`;
+        const factLabel = FACT_LABEL[typeKey] || TYPE_LABEL[typeKey] || typeKey;
+        const typeLabel = TYPE_LABEL[typeKey] || typeKey;
+        const typeBadge = `<span class="kus-dl-badge kus-dl-badge--${esc(typeKey)}" aria-label="変更種別: ${esc(typeLabel)}。状態: ${esc(factLabel)}"><span class="kus-dl-badge__type">${esc(typeLabel)}</span><span class="kus-dl-badge__fact">${esc(factLabel)}</span></span>`;
         const flagHtml = [
           r.notationOnly ? '<span class="kus-dl-flag" title="型・表記だけが異なり、値としては同じです（例: &quot;100&quot; と 100）">表記のみ</span>' : "",
           r.emptyOnly ? '<span class="kus-dl-flag" title="空文字・null・空配列など、空値同士の差です">空値ゆれ</span>' : ""
         ].join("");
         const contextHtml = decoded ? `<div class="kus-dl-row__context">${decoded.whereChips.map((chip) => `<span class="kus-dl-row__chip">${esc(`${chip.icon || ""}${chip.icon ? " " : ""}${chip.label}`)}</span>`).join("")}</div>` : "";
-        const technicalHtml = r.path ? `<details class="kus-dl-row__technical"><summary>内部パスを表示</summary><code class="kus-dl-row__raw">${esc(r.path)}</code></details>` : "";
+        const technicalHtml = r.path ? `<details class="kus-dl-row__technical" data-kus-dl-technical><summary>技術情報</summary><code class="kus-dl-row__raw"><span>内部パス</span>${esc(r.path)}</code></details>` : "";
         const positionalPath = /\[\d+\]/.test(String(r.path || ""));
-        const ignoreAction = r.type !== "same" && r.path ? positionalPath ? '<span class="kus-dl-flag" title="配列の番号は並び替えで別の対象を指すため、自動で無視ルールには追加できません">位置依存パス（自動無視不可）</span>' : `<button type="button" class="kus-dl-row__action" data-kus-dl-ignore-path="${esc(r.path)}" title="この完全パスだけを次回比較の無視ルールへ追加">パスを無視</button>` : "";
-        parts.push(`<article class="kus-dl-row kus-dl-row--${esc(typeKey)}${current ? " is-current" : ""}" data-kus-dl-row-key="${esc(rowKey)}" data-severity="${esc(severityKey)}" tabindex="-1"${current ? ' aria-current="true"' : ""} aria-label="${esc(`${TYPE_LABEL[typeKey] || typeKey}・${SEVERITY_LABEL[severityKey] || severityKey}: ${identity.title}`)}"><div class="kus-dl-row__head"><div class="kus-dl-row__identity"><div class="kus-dl-row__headline">${typeBadge}${severityBadge}<span class="kus-dl-row__title">${esc(identity.title)}</span>${flagHtml}</div>${identity.subtitle ? `<div class="kus-dl-row__subtitle">${esc(identity.subtitle)}</div>` : ""}</div>${ignoreAction}</div>${contextHtml}${technicalHtml}<div class="kus-dl-row__cols">${cols.left}${cols.right}</div></article>`);
+        const ignoreAction = r.type !== "same" && r.path ? positionalPath ? '<span class="kus-dl-flag" title="並び替え後に別の対象を指す可能性があるため、自動で無視ルールには追加できません">並び順に依存（自動除外不可）</span>' : `<button type="button" class="kus-dl-row__action" data-kus-dl-ignore-path="${esc(r.path)}" title="この項目だけを次回比較から除外">次回から除外</button>` : "";
+        parts.push(`<article class="kus-dl-row kus-dl-row--${esc(typeKey)}${current ? " is-current" : ""}" data-kus-dl-row-key="${esc(rowKey)}" tabindex="-1"${current ? ' aria-current="true"' : ""} aria-label="${esc(`${typeLabel}・${factLabel}: ${identity.title}`)}"><div class="kus-dl-row__head"><div class="kus-dl-row__identity"><div class="kus-dl-row__headline">${typeBadge}<span class="kus-dl-row__title">${esc(identity.title)}</span>${flagHtml}</div>${identity.subtitle ? `<div class="kus-dl-row__subtitle">${esc(identity.subtitle)}</div>` : ""}</div>${ignoreAction}</div>${contextHtml}${technicalHtml}<div class="kus-dl-row__cols">${cols.left}${cols.right}</div></article>`);
       }
       parts.push("</div></details>");
     }
@@ -13976,13 +15428,19 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
     panel.status.setAttribute("role", "status");
     panel.status.setAttribute("aria-live", "polite");
     panel.status.setAttribute("aria-atomic", "true");
+    panel.root.classList.add("kus-dl-workspace");
     const srcApp = makeInput({ placeholder: "アプリID", width: "id", ariaLabel: "比較元アプリID" });
     const srcGuest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: "比較元ゲストスペースID" });
     const srcPrev = makeCheck({ label: "プレビューで取得" });
     const tgtApp = makeInput({ placeholder: "アプリID（カンマ区切り可）", width: "medium", ariaLabel: "比較先1アプリID" });
     const tgtGuest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: "比較先1ゲストスペースID" });
     const tgtPrev = makeCheck({ label: "プレビューで取得" });
-    const cardApp = makeCard({ title: "アプリと環境", number: 1 });
+    let comparisonMode = "single";
+    let applyComparisonMode = (mode) => {
+      comparisonMode = mode;
+    };
+    const cardApp = makeCard({ title: "比較するアプリ", number: 1 });
+    cardApp.card.classList.add("kus-dl-target-card");
     const makeTargetName = () => {
       const el = document.createElement("div");
       el.className = "kus-dl-target-name kus-dl-target-name--empty";
@@ -14009,17 +15467,38 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
       srcName.title = sourceAppName ? `アプリ名: ${sourceAppName}` : "";
       srcName.classList.toggle("kus-dl-target-name--empty", !sourceAppName);
     };
-    cardApp.body.appendChild(makeRow([makeTargetField(srcApp, srcName), srcGuest, srcPrev.label], { label: "比較元" }));
+    const sourceRow = makeRow([makeTargetField(srcApp, srcName), srcGuest, srcPrev.label], { label: "アプリID・環境" });
     const tgtName = makeTargetName();
-    const firstTargetRow = makeRow([makeTargetField(tgtApp, tgtName), tgtGuest, tgtPrev.label], { label: "比較先 1" });
-    cardApp.body.appendChild(firstTargetRow);
+    const firstTargetRow = makeRow([makeTargetField(tgtApp, tgtName), tgtGuest, tgtPrev.label], { label: "アプリID・環境" });
+    const modeSwitch = document.createElement("div");
+    modeSwitch.className = "kus-dl-mode";
+    modeSwitch.setAttribute("role", "group");
+    modeSwitch.setAttribute("aria-label", "比較方法");
+    const singleModeBtn = makeButton("通常比較", "sub");
+    singleModeBtn.dataset.kusDlMode = "single";
+    const multiModeBtn = makeButton("複数比較", "sub");
+    multiModeBtn.dataset.kusDlMode = "multi";
+    modeSwitch.append(singleModeBtn, multiModeBtn);
+    cardApp.body.appendChild(modeSwitch);
+    const directionGrid = document.createElement("div");
+    directionGrid.className = "kus-dl-direction-grid";
+    const sourceCard = document.createElement("section");
+    sourceCard.className = "kus-dl-app-card kus-dl-app-card--source";
+    sourceCard.setAttribute("aria-labelledby", "kus-dl-source-title");
+    sourceCard.innerHTML = '<p class="kus-dl-app-card__role">比較元</p><h3 id="kus-dl-source-title">基準にするアプリ</h3><p class="kus-dl-app-card__help">変更前として扱う設定です</p>';
+    sourceCard.appendChild(sourceRow);
+    const targetCard = document.createElement("section");
+    targetCard.className = "kus-dl-app-card kus-dl-app-card--target";
+    targetCard.setAttribute("aria-labelledby", "kus-dl-target-title");
+    targetCard.innerHTML = '<p class="kus-dl-app-card__role">比較先</p><h3 id="kus-dl-target-title">確認するアプリ</h3><p class="kus-dl-app-card__help">変更後として扱う設定です</p>';
+    targetCard.appendChild(firstTargetRow);
+    const swapBtn = makeButton("比較方向を入れ替え", "ghost", { icon: "⇄" });
+    swapBtn.classList.add("kus-dl-swap");
+    swapBtn.dataset.kusDlSwap = "";
+    directionGrid.append(sourceCard, swapBtn, targetCard);
+    cardApp.body.appendChild(directionGrid);
     const targetList = document.createElement("div");
-    targetList.style.display = "grid";
-    targetList.style.gap = "6px";
-    targetList.style.marginTop = "6px";
-    targetList.style.maxHeight = "180px";
-    targetList.style.overflowY = "auto";
-    targetList.style.paddingRight = "2px";
+    targetList.className = "kus-dl-target-list";
     const targetRows = [{ app: tgtApp, guest: tgtGuest, row: firstTargetRow, name: tgtName, appName: "" }];
     const relabelTargetRows = () => targetRows.forEach((r, idx) => {
       const label = r.row?.querySelector?.(".kus-lp__label");
@@ -14076,6 +15555,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
         setTargetName(entry, "");
         const guestVal = entry.guest.value.trim();
         for (let k = 1; k < tokens.length; k += 1) addTargetRow(tokens[k], guestVal);
+        applyComparisonMode("multi");
         panel.setStatus(`比較先を ${tokens.length} 件に分割しました`, "info");
       };
       entry.app.addEventListener("change", distribute);
@@ -14097,11 +15577,17 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
     const addTargetBtn = makeButton("比較先行を追加", "sub");
     addTargetBtn.addEventListener("click", () => {
       addTargetRow();
+      applyComparisonMode("multi");
       panel.setStatus("比較先行を追加しました", "info");
     });
     const copyFirstBtn = makeButton("比較先1を複製", "sub");
-    copyFirstBtn.addEventListener("click", () => addTargetRow(tgtApp.value.trim(), tgtGuest.value.trim(), targetRows[0]?.appName || ""));
-    cardApp.body.appendChild(makeRow([addTargetBtn, copyFirstBtn], { label: "複数比較" }));
+    copyFirstBtn.addEventListener("click", () => {
+      addTargetRow(tgtApp.value.trim(), tgtGuest.value.trim(), targetRows[0]?.appName || "");
+      applyComparisonMode("multi");
+    });
+    const multiControls = makeRow([addTargetBtn, copyFirstBtn], { label: "比較先を増やす" });
+    multiControls.classList.add("kus-dl-multi-controls");
+    targetCard.appendChild(multiControls);
     cardApp.body.appendChild(createAppSearchControl(panel, {
       targets: [
         { label: "比較元", apply: (id, name, guestId) => {
@@ -14117,7 +15603,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
         } }
       ]
     }));
-    cardApp.body.appendChild(targetList);
+    targetCard.appendChild(targetList);
     panel.body.insertBefore(cardApp.card, panel.status);
     const cardScope = makeCard({ title: "比較セクション", number: 2 });
     const chipBox = document.createElement("div");
@@ -14142,19 +15628,21 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
     srcFile.type = "file";
     srcFile.accept = ".json,application/json";
     srcFile.className = "kus-lp__file";
+    srcFile.setAttribute("aria-label", "比較元設定JSON");
     const tgtFile = document.createElement("input");
     tgtFile.type = "file";
     tgtFile.accept = ".json,application/json";
     tgtFile.className = "kus-lp__file";
+    tgtFile.setAttribute("aria-label", "比較先設定JSON");
     const clearImportBtn = makeButton("読込解除", "ghost");
     cardImport.body.appendChild(makeRow(srcFile, { label: "比較元JSON" }));
     cardImport.body.appendChild(makeRow(tgtFile, { label: "比較先JSON" }));
     cardImport.body.appendChild(makeRow(clearImportBtn));
     panel.body.insertBefore(cardImport.card, panel.status);
-    const advDetails = makeDetails("詳細オプション");
+    const advDetails = makeDetails("高度な比較設定");
     const ignTa = makeTextarea({ rows: 2, code: true, placeholder: "キー / 完全パス / * ワイルドカード（改行・カンマ区切り）" });
     advDetails.body.appendChild(makeRow(ignTa, { label: "無視キー", block: true }));
-    advDetails.body.appendChild(makeNote("キー名だけの指定、fieldSettings.properties.code.label のようなパス、* を使ったパターンに対応します。結果行の「パスを無視」は、記号や大小文字を含めてもその1パスだけに一致する path: 形式で追加します。"));
+    advDetails.body.appendChild(makeNote("キー名だけの指定、fieldSettings.properties.code.label のようなパス、* を使ったパターンに対応します。結果行の「次回から除外」は、記号や大小文字を含めてもその1パスだけに一致する path: 形式で追加します。"));
     advDetails.body.appendChild(makeNote("⚠ 完全パスとワイルドカードは別アプリにもそのまま適用され、該当差分は結果から除外されます。プロファイル読込後と再比較前に内容を確認してください。"));
     const includeSame = makeCheck({ label: "同一行も差分行に含める" });
     const showResultList = makeCheck({ label: "画面に差分明細を表示（200件ずつ）", checked: true, help: "大量差分でも固まりにくいよう、明細は200件ずつ段階表示します" });
@@ -14203,42 +15691,58 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
     const profileName = makeInput({ placeholder: "例: 権限を除く標準比較", width: "medium", noSubmit: true, ariaLabel: "比較条件プロファイル名" });
     const profileSaveBtn = makeButton("比較条件を保存", "sub", { icon: "↓" });
     const profileLoadBtn = makeButton("比較条件を読込", "sub", { icon: "↑" });
+    profileSaveBtn.dataset.kusDlProfile = "save";
+    profileLoadBtn.dataset.kusDlProfile = "load";
     const profileFile = document.createElement("input");
     profileFile.type = "file";
     profileFile.accept = ".json,application/json";
     profileFile.hidden = true;
+    profileFile.dataset.kusDlProfileFile = "load";
     advDetails.body.appendChild(makeRow(profileName, { label: "比較条件名" }));
     advDetails.body.appendChild(makeRow([profileSaveBtn, profileLoadBtn]));
     advDetails.body.appendChild(makeNote("比較セクション・無視ルール・正規化・表示設定だけをJSONで保存します。アプリID、設定値、認証情報は含みません。"));
     advDetails.body.appendChild(profileFile);
     panel.body.insertBefore(advDetails.details, panel.status);
-    const runBtn = makeButton("差分比較を実行", "run", { icon: "◎" });
-    const runAllBtn = makeButton("全比較先を順に比較", "sub", { icon: "◎" });
-    panel.body.insertBefore(makeRow([runBtn, runAllBtn]), panel.status);
+    const runBtn = makeButton("差分比較を実行", "run", { icon: "→" });
+    const runAllBtn = makeButton("複数の比較を実行", "run", { icon: "→" });
+    const runRow = makeRow([runBtn, runAllBtn]);
+    runRow.classList.add("kus-dl-run-row");
+    panel.body.insertBefore(runRow, panel.status);
     panel.setPrimaryAction(runBtn);
+    applyComparisonMode = (mode) => {
+      comparisonMode = mode;
+      panel.root.dataset.kusDlMode = mode;
+      singleModeBtn.setAttribute("aria-pressed", mode === "single" ? "true" : "false");
+      multiModeBtn.setAttribute("aria-pressed", mode === "multi" ? "true" : "false");
+      singleModeBtn.classList.toggle("is-active", mode === "single");
+      multiModeBtn.classList.toggle("is-active", mode === "multi");
+      multiControls.hidden = mode !== "multi";
+      targetList.hidden = mode !== "multi";
+      runBtn.hidden = mode !== "single";
+      runAllBtn.hidden = mode !== "multi";
+      swapBtn.disabled = mode === "multi";
+      swapBtn.title = mode === "multi" ? "通常比較に切り替えると方向を入れ替えられます" : "";
+      panel.setPrimaryAction(mode === "multi" ? runAllBtn : runBtn);
+    };
+    singleModeBtn.addEventListener("click", () => applyComparisonMode("single"));
+    multiModeBtn.addEventListener("click", () => applyComparisonMode("multi"));
+    applyComparisonMode("single");
     const cardFilter = makeCard({ title: "結果の絞り込み", soft: true });
     cardFilter.card.style.display = "none";
     const filterSection = makeSelect([["", "全セクション"]]);
     filterSection.setAttribute("aria-label", "結果のセクション絞り込み");
     const filterType = makeSelect([
       ["", "全種別"],
-      ["added", "追加"],
-      ["removed", "削除"],
-      ["changed", "変更"],
-      ["moved", "移動"],
-      ["same", "同一"]
+      ["added", "追加｜比較先のみ"],
+      ["removed", "削除｜比較元のみ"],
+      ["changed", "変更｜内容が異なる"],
+      ["moved", "移動｜並び順が異なる"],
+      ["same", "同一｜内容が一致"]
     ]);
     filterType.setAttribute("aria-label", "結果の種別絞り込み");
-    const filterSeverity = makeSelect([
-      ["", "全影響度"],
-      ["high", "高影響"],
-      ["medium", "中影響"],
-      ["low", "低影響"]
-    ]);
-    filterSeverity.setAttribute("aria-label", "結果の影響度絞り込み（目安）");
-    const filterSearch = makeInput({ placeholder: "日本語ラベル・パス・値で検索", width: "wide", noSubmit: true, ariaLabel: "差分結果を検索" });
+    const filterSearch = makeInput({ placeholder: "項目名・値で検索", width: "wide", noSubmit: true, ariaLabel: "差分結果を検索" });
     const filterClear = makeButton("クリア", "ghost");
-    cardFilter.body.appendChild(makeRow([filterSection, filterType, filterSeverity, filterClear], { label: "フィルタ" }));
+    cardFilter.body.appendChild(makeRow([filterSection, filterType, filterClear], { label: "フィルタ" }));
     cardFilter.body.appendChild(makeRow(filterSearch, { label: "検索" }));
     const charDiffCb = makeCheck({ label: "文字単位ハイライト", checked: true, help: "変更行で「どこが変わったか」を文字単位で強調表示します" });
     const densitySelect = makeSelect([
@@ -14266,11 +15770,10 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
     filterClear.addEventListener("click", () => {
       filterSection.value = "";
       filterType.value = "";
-      filterSeverity.value = "";
       filterSearch.value = "";
       rerenderFromFilter();
     });
-    [filterSection, filterType, filterSeverity].forEach((el) => el.addEventListener("change", rerenderFromFilter));
+    [filterSection, filterType].forEach((el) => el.addEventListener("change", rerenderFromFilter));
     filterSearch.addEventListener("input", () => {
       if (filterRenderTimer !== void 0) window.clearTimeout(filterRenderTimer);
       filterRenderTimer = window.setTimeout(rerenderFromFilter, 160);
@@ -14292,6 +15795,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
     cardResult.card.style.display = "none";
     const resultBox = document.createElement("div");
     resultBox.className = "kus-dl-result";
+    resultBox.dataset.kusDlResult = "";
     cardResult.body.appendChild(resultBox);
     panel.body.insertBefore(cardResult.card, panel.status);
     const cardOut = makeCard({ title: "ファイル出力", number: 3, soft: true });
@@ -14311,10 +15815,58 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
     grid.className = "kus-lp__btn-grid";
     const bXlsx = makeButton("差分一覧を Excel 保存 (.xlsx)", "primary", { icon: "↓" });
     const bHtml = makeButton("差分 HTML を再出力", "sub", { icon: "↓" });
+    bXlsx.dataset.kusDlExport = "xlsx";
+    bHtml.dataset.kusDlExport = "html";
     grid.appendChild(bXlsx);
     grid.appendChild(bHtml);
     cardOut.body.appendChild(grid);
     panel.body.insertBefore(cardOut.card, cardResult.card);
+    const workflow = document.createElement("main");
+    workflow.className = "kus-dl-workflow";
+    const makeWorkflowStep = (key, number, title, description) => {
+      const section = document.createElement("section");
+      section.className = "kus-dl-step";
+      section.dataset.kusDlStep = key;
+      const headingId = `kus-dl-step-${key}`;
+      section.setAttribute("aria-labelledby", headingId);
+      section.innerHTML = `<header class="kus-dl-step__header"><span class="kus-dl-step__number" aria-hidden="true">${number}</span><div><h2 id="${headingId}">${title}</h2><p>${description}</p></div></header>`;
+      return section;
+    };
+    const targetStep = makeWorkflowStep("target", "1", "比較対象を決める", "比較元から比較先へ、どの設定が変わったかを確認します。");
+    const reviewStep = makeWorkflowStep("review", "2", "結果を確認する", "取得の完全性を確認してから、差分を順にレビューします。");
+    const exportStep = makeWorkflowStep("export", "3", "結果を出力する", "確認用の Excel または共有用の HTML を保存できます。");
+    const configDetails = document.createElement("details");
+    configDetails.className = "kus-dl-disclosure";
+    configDetails.innerHTML = "<summary><span>比較範囲と詳細設定</span><small>セクション、JSON読込、無視ルール、比較条件</small></summary>";
+    const configBody = document.createElement("div");
+    configBody.className = "kus-dl-disclosure__body";
+    configBody.append(cardScope.card, cardImport.card, advDetails.details);
+    configDetails.appendChild(configBody);
+    const filterDetails = document.createElement("details");
+    filterDetails.className = "kus-dl-disclosure kus-dl-filter-disclosure";
+    filterDetails.open = true;
+    filterDetails.style.display = "none";
+    filterDetails.innerHTML = "<summary><span>絞り込みと表示</span><small>セクション、種別、検索、表示方法</small></summary>";
+    const filterBody = document.createElement("div");
+    filterBody.className = "kus-dl-disclosure__body";
+    filterBody.appendChild(cardFilter.card);
+    filterDetails.appendChild(filterBody);
+    const outputDetails = document.createElement("details");
+    outputDetails.className = "kus-dl-disclosure kus-dl-output-disclosure";
+    outputDetails.innerHTML = "<summary><span>出力設定と保存ボタン</span><small>比較後に利用できます</small></summary>";
+    const outputBody = document.createElement("div");
+    outputBody.className = "kus-dl-disclosure__body";
+    outputBody.appendChild(cardOut.card);
+    outputDetails.appendChild(outputBody);
+    const reviewEmpty = document.createElement("p");
+    reviewEmpty.className = "kus-dl-step__empty";
+    reviewEmpty.dataset.kusDlResultEmpty = "";
+    reviewEmpty.textContent = "比較を実行すると、ここに完全性と差分の一覧が表示されます。";
+    targetStep.append(cardApp.card, configDetails, runRow, panel.status);
+    reviewStep.append(reviewEmpty, filterDetails, cardResult.card);
+    exportStep.appendChild(outputDetails);
+    workflow.append(targetStep, reviewStep, exportStep);
+    panel.body.insertBefore(workflow, panel.result);
     const setExportControlsEnabled = (enabled) => {
       expRange.disabled = !enabled;
       bXlsx.disabled = !enabled;
@@ -14334,6 +15886,31 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
     const expandedValueKeys = /* @__PURE__ */ new Set();
     let importedSourceBundle = null;
     let importedTargetBundle = null;
+    swapBtn.addEventListener("click", () => {
+      if (comparisonMode === "multi") {
+        panel.setStatus("比較方向の入れ替えは、比較先が1件の通常比較で利用できます", "warn");
+        return;
+      }
+      if (importedSourceBundle || importedTargetBundle) {
+        panel.setStatus("設定JSONを読み込んでいる間は方向を入れ替えられません。読込を解除してから実行してください", "warn");
+        return;
+      }
+      const source = {
+        appId: srcApp.value,
+        guestId: srcGuest.value,
+        preview: srcPrev.checkbox.checked,
+        appName: sourceAppName
+      };
+      srcApp.value = tgtApp.value;
+      srcGuest.value = tgtGuest.value;
+      srcPrev.checkbox.checked = tgtPrev.checkbox.checked;
+      setSourceName(targetRows[0]?.appName || "");
+      tgtApp.value = source.appId;
+      tgtGuest.value = source.guestId;
+      tgtPrev.checkbox.checked = source.preview;
+      setTargetName(targetRows[0], source.appName);
+      panel.setStatus("比較元と比較先を入れ替えました。矢印の向きを確認して比較してください", "info");
+    });
     srcFile.addEventListener("change", () => liteRun(panel, "比較元JSONを読み込み中…", async () => {
       const file = srcFile.files?.[0];
       if (!file) return;
@@ -14463,6 +16040,8 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
           resultBox.innerHTML = "";
           cardResult.card.style.display = "none";
           cardFilter.card.style.display = "none";
+          filterDetails.style.display = "none";
+          reviewEmpty.style.display = "";
           const ruleSummary = summarizeLiteIgnoreRules(profile.ignoreKeys);
           const pathWarning = ruleSummary.positionalRules ? ` 配列番号を含む位置依存ルール ${ruleSummary.positionalRules}件は、並び替え後に別の対象を隠す可能性があります。削除または見直してから再比較してください。` : ruleSummary.contextualRules ? ` 完全パス/パターン ${ruleSummary.contextualRules}件を含むため、再比較前に無視ルールを確認してください。` : "";
           panel.setStatus(`比較条件「${profile.name}」を読み込みました（対象 ${profile.scopes.length}セクション / 無視 ${ruleSummary.total}件）。アプリと環境は変更していません。結果を更新するため再比較してください。${pathWarning}`, "warn");
@@ -14480,7 +16059,6 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
       return {
         section: filterSection.value,
         type: filterType.value,
-        severity: filterSeverity.value,
         keyword: filterSearch.value.trim().toLowerCase()
       };
     }
@@ -14521,10 +16099,19 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
       const filters = [];
       if (filterSection.value) filters.push({ key: "section", label: filterSection.selectedOptions[0]?.textContent || filterSection.value });
       if (filterType.value) filters.push({ key: "type", label: filterType.selectedOptions[0]?.textContent || filterType.value });
-      if (filterSeverity.value) filters.push({ key: "severity", label: filterSeverity.selectedOptions[0]?.textContent || filterSeverity.value });
       const keyword = filterSearch.value.trim();
       if (keyword) filters.push({ key: "keyword", label: `検索: ${keyword.length > 28 ? `${keyword.slice(0, 28)}…` : keyword}` });
       return filters;
+    }
+    function exportFilterDescription(isAll) {
+      if (isAll) return "フィルターなし（比較結果の全件）";
+      return buildLiteDiffFilterDescription({
+        section: filterSection.value,
+        sectionLabel: filterSection.selectedOptions[0]?.textContent || "",
+        type: filterType.value,
+        typeLabel: filterType.selectedOptions[0]?.textContent || "",
+        keyword: filterSearch.value.trim()
+      });
     }
     function renderActiveFilterChipsHtml() {
       const filters = activeFilters();
@@ -14582,14 +16169,18 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
         resultBox.innerHTML = "";
         cardResult.card.style.display = "none";
         cardFilter.card.style.display = "none";
+        filterDetails.style.display = "none";
+        reviewEmpty.style.display = "";
         return;
       }
       const overview = renderLiteDiffOverviewHtml(cache, { announce: announceResultOverview });
       announceResultOverview = false;
       cardResult.card.style.display = "block";
+      reviewEmpty.style.display = "none";
       if (!showResultList.checkbox.checked) {
         resultBox.innerHTML = overview;
         cardFilter.card.style.display = "none";
+        filterDetails.style.display = "none";
         return;
       }
       const rows = filteredRows();
@@ -14602,6 +16193,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
       resultBox.className = `kus-dl-result kus-dl-result--${densitySelect.value} kus-dl-result--${layoutSelect.value}`;
       resultBox.innerHTML = overview + `<div class="kus-dl-sticky">${renderReviewBarHtml(rows, source, target)}</div>` + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows, { collapsedSections, currentRowKey, expandedValueKeys }) + more;
       cardFilter.card.style.display = "block";
+      filterDetails.style.display = "";
     }
     resultBox.addEventListener("click", async (event) => {
       const target = event.target;
@@ -14610,7 +16202,6 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
         const key = clearFilterButton.dataset.kusDlClearFilter || "";
         if (key === "all" || key === "section") filterSection.value = "";
         if (key === "all" || key === "type") filterType.value = "";
-        if (key === "all" || key === "severity") filterSeverity.value = "";
         if (key === "all" || key === "keyword") filterSearch.value = "";
         if (filterRenderTimer !== void 0) {
           window.clearTimeout(filterRenderTimer);
@@ -14669,8 +16260,9 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
         if (!existing.some((token) => decodeExactIgnorePathRule(token) === path || token === path)) {
           ignTa.value = `${ignTa.value.trim()}${ignTa.value.trim() ? "\n" : ""}${exactRule}`;
         }
+        configDetails.open = true;
         advDetails.details.open = true;
-        panel.setStatus(`「${path}」だけを無視ルールへ追加しました。現在の結果は変えず、次回比較から適用します`, "warn");
+        panel.setStatus("この項目だけを無視ルールへ追加しました。現在の結果は変えず、次回比較から適用します", "warn");
         return;
       }
       const multiXlsxButton = target?.closest("[data-kus-dl-multi-xlsx]");
@@ -14684,7 +16276,13 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
         try {
           panel.setStatus(`${item.label} の差分一覧 Excel を生成中…`, "busy");
           await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
-          const result = runExportDiffXlsx(buildLiteDiffXlsxContext(item.cache, item.cache.rows, "all", "全件"));
+          const result = runExportDiffXlsx(buildLiteDiffXlsxContext(
+            item.cache,
+            item.cache.rows,
+            "all",
+            "全件",
+            "フィルターなし（比較結果の全件）"
+          ));
           const incomplete = isIncompleteLiteDiff(item.cache);
           panel.setStatus(`${item.label} の差分一覧 Excel のダウンロードを開始しました: ${result.filename}${incomplete ? " — 比較結果は不完全です" : ""}`, incomplete ? "warn" : "ok");
         } catch (e) {
@@ -14737,13 +16335,17 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
       if (!cache) throw new Error("先に差分比較を実行してください");
       const isAll = forceAll || expRange.value === "all";
       const rows = isAll ? cache.rows : filteredRows();
-      return buildLiteDiffHtmlContext(
+      const htmlContext = buildLiteDiffHtmlContext(
         cache,
         rows,
         isAll ? "all" : "filtered",
         isAll ? "全差分" : "表示中（フィルタ適用後）",
         htmlContentMode.value
       );
+      return {
+        ...htmlContext,
+        filterDescription: exportFilterDescription(isAll)
+      };
     }
     let runControlSnapshot = [];
     function lockComparisonControls() {
@@ -14819,6 +16421,8 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
       resultBox.innerHTML = "";
       cardResult.card.style.display = "none";
       cardFilter.card.style.display = "none";
+      filterDetails.style.display = "none";
+      reviewEmpty.style.display = "";
       runDiffTask("全比較先を比較中…", async () => {
         const resultRows = [];
         let sharedSourceBundle = importedSourceBundle;
@@ -14848,6 +16452,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
             attachKnownAppName(out.sourceBundle, base.source.appName);
             attachKnownAppName(out.targetBundle, t.appName);
             const counts = summarizeLiteDiffRows(out.rows || []);
+            const contentChanged = contentChangedCount(counts);
             const issueCount = (out.fetchIssues || []).length;
             const partialIssueCount = (out.partialIssues || []).length;
             const needsReview = isIncompleteLiteDiff(out);
@@ -14889,15 +16494,16 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
                 truncation: out.truncation || null
               }
             }) - 1;
-            resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : "通常スペース")} / ${t.preview ? "プレビュー" : "運用"}</small></td><td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${counts.changed}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ""}</td><td class="${needsReview || exportNote ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${exportNote ? "出力失敗" : needsReview ? "要確認" : "完了"}${esc(exportNote)}</td><td><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}">Excel保存</button></td></tr>`);
+            resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : "通常スペース")} / ${t.preview ? "プレビュー" : "運用"}</small></td><td class="${needsReview || exportNote ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${exportNote ? "出力失敗" : needsReview ? "要確認" : "完了"}${esc(exportNote)}</td><td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ""}</td><td><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}">Excel保存</button></td></tr>`);
           } catch (e) {
             failed += 1;
             const targetLabel = t.appName ? `${t.appName}（App ${t.appId}）` : `App ${t.appId}`;
-            resultRows.push(`<tr><td>${esc(targetLabel)}</td><td colspan="6">—</td><td class="kus-dl-multi__warn">失敗: ${esc(e?.message || String(e))}</td><td>—</td></tr>`);
+            resultRows.push(`<tr><td>${esc(targetLabel)}</td><td class="kus-dl-multi__warn">失敗: ${esc(e?.message || String(e))}</td><td colspan="6">—</td><td>—</td></tr>`);
           }
         }
         cardResult.card.style.display = "";
-        resultBox.innerHTML = `<div class="kus-dl-result"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>状態</th><th>Excel</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div>`;
+        reviewEmpty.style.display = "none";
+        resultBox.innerHTML = `<div class="kus-dl-result"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>Excel</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div>`;
         const tone = failed || exportFailed || incomplete || exported !== targets.length ? "warn" : "ok";
         const note = [failed ? `比較失敗 ${failed}件` : "", exportFailed ? `HTML出力失敗 ${exportFailed}件` : "", incomplete ? `要確認 ${incomplete}件` : ""].filter(Boolean).join(" / ");
         panel.setStatus(`全比較先の比較が完了: HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）${note ? ` / ${note}` : ""}`, tone);
@@ -14915,6 +16521,8 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
       resultBox.innerHTML = "";
       cardResult.card.style.display = "none";
       cardFilter.card.style.display = "none";
+      filterDetails.style.display = "none";
+      reviewEmpty.style.display = "";
       const f = readForm();
       if (!f.scopes.length) {
         panel.setStatus("比較セクションを 1 つ以上選択してください", "warn");
@@ -14994,7 +16602,13 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
         }
         panel.setStatus("差分一覧 Excel を生成中…", "busy");
         await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
-        const result = runExportDiffXlsx(buildLiteDiffXlsxContext(snapshot, ctx.rows, ctx.exportMode, ctx.exportLabel));
+        const result = runExportDiffXlsx(buildLiteDiffXlsxContext(
+          snapshot,
+          ctx.rows,
+          ctx.exportMode,
+          ctx.exportLabel,
+          ctx.filterDescription
+        ));
         const incomplete = isIncompleteLiteDiff(snapshot);
         panel.setStatus(`差分一覧 Excel のダウンロードを開始しました: ${result.filename}${incomplete ? " — 元の比較結果は不完全です" : ""}`, incomplete ? "warn" : "ok");
       } catch (e) {

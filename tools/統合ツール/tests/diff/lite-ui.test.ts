@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLiteDiffHtmlContext,
+  buildLiteDiffFilterDescription,
   buildLiteDiffRowKey,
   buildLiteDiffXlsxContext,
   getLiteHtmlExportContentLabel,
@@ -18,10 +19,12 @@ function cache(rows: any[], overrides: Record<string, any> = {}) {
     fetchIssues: [],
     sourceBundle: {
       appId: '10', guestId: '', preview: false,
+      fetchedAt: '2026-08-16T00:00:00.000Z',
       meta: { appName: '受注管理' }, sections: {}
     },
     targetBundle: {
       appId: '20', guestId: '3', preview: true,
+      fetchedAt: '2026-08-16T00:15:00.000Z',
       meta: { appName: '受注管理（改修版）' }, sections: {}
     },
     scopes: ['appAcl'],
@@ -44,8 +47,15 @@ describe('diff lite result presentation', () => {
       comparedAt: '2026-08-16T00:30:00.000Z'
     });
     const selected = [full.rows[1]];
-    const ctx = buildLiteDiffXlsxContext(full, selected, 'filtered', '表示中（フィルタ適用後）');
+    const ctx = buildLiteDiffXlsxContext(
+      full,
+      selected,
+      'filtered',
+      '表示中（フィルタ適用後）',
+      '画面の絞り込み: ビュー設定 / 削除'
+    );
 
+    expect(ctx.audience).toBe('customer');
     expect(ctx.rows).toEqual(selected);
     expect(ctx.sourceBundle?.appId).toBe('10');
     expect(ctx.targetBundle?.appId).toBe('20');
@@ -56,7 +66,34 @@ describe('diff lite result presentation', () => {
     expect(ctx.comparedAt).toBe('2026-08-16T00:30:00.000Z');
     expect(ctx.exportMode).toBe('filtered');
     expect(ctx.exportLabel).toBe('表示中（フィルタ適用後）');
+    expect(ctx.filterDescription).toBe('画面の絞り込み: ビュー設定 / 削除');
     expect(ctx.exportContentMode).toBe('diffOnly');
+  });
+
+  it('does not substitute a bundle fetch time for an unrecorded comparison time', () => {
+    const current = cache([]);
+    const ctx = buildLiteDiffXlsxContext(current, [], 'all', '全件');
+
+    expect(ctx.comparedAt).toBeUndefined();
+    expect(ctx.sourceBundle?.fetchedAt).toBe('2026-08-16T00:00:00.000Z');
+    expect(ctx.targetBundle?.fetchedAt).toBe('2026-08-16T00:15:00.000Z');
+    expect(ctx.filterDescription).toBe('フィルターなし（比較結果の全件）');
+  });
+
+  it('keeps the full raw keyword in the Excel filter evidence while labels remain readable', () => {
+    const keyword = '顧客名に含まれる非常に長い検索語を省略せず証跡へ残すための文字列1234567890';
+    const description = buildLiteDiffFilterDescription({
+      section: 'fieldSettings',
+      sectionLabel: 'フィールド設定',
+      type: 'changed',
+      typeLabel: '変更｜内容が異なる',
+      keyword
+    });
+
+    expect(description).toBe(
+      `画面の絞り込み: セクション: フィールド設定 [fieldSettings] / 変更種別: 変更｜内容が異なる [changed] / 検索: ${keyword}`
+    );
+    expect(description).not.toContain('…');
   });
 
   it('defaults standalone HTML context to safe diff-only and preserves an explicit compared-content choice', () => {
@@ -98,6 +135,29 @@ describe('diff lite result presentation', () => {
     });
   });
 
+  it('shows a pure move separately from content changes and keeps type filters exclusive', () => {
+    const movedRow = {
+      sectionKey: 'layoutSettings',
+      section: 'レイアウト',
+      path: 'layoutSettings.layout[0].fields[0]',
+      type: 'changed',
+      moved: true,
+      left: { code: 'customer', index: 0 },
+      right: { code: 'customer', index: 1 }
+    } as any;
+    const overview = renderLiteDiffOverviewHtml(cache([movedRow]));
+    const rows = renderRowsHtml([movedRow], false, '1件');
+
+    expect(summarizeLiteDiffRows([movedRow])).toMatchObject({ actual: 1, changed: 1, moved: 1 });
+    expect(overview).toContain('内容変更 0 / 移動 1');
+    expect(overview).toContain('aria-label="内容が異なる 0件を表示" disabled');
+    expect(overview).toContain('aria-label="並び順 1件を表示"');
+    expect(rows).not.toContain('kus-dl-section__stat--changed');
+    expect(rows).toContain('kus-dl-section__stat--moved">移動 1</span>');
+    expect(rowMatchesFilters(movedRow, { section: '', type: 'changed', keyword: '' })).toBe(false);
+    expect(rowMatchesFilters(movedRow, { section: '', type: 'moved', keyword: '' })).toBe(true);
+  });
+
   it('makes comparison direction, app identity, and added/removed meaning explicit', () => {
     const html = renderLiteDiffOverviewHtml(cache([
       { sectionKey: 'appAcl', section: 'アプリ権限', path: 'appAcl.rights[0]', type: 'added', right: {} },
@@ -113,6 +173,8 @@ describe('diff lite result presentation', () => {
     expect(html).toContain('通常スペース');
     expect(html).toContain('ゲスト 3');
     expect(html).toContain('プレビュー');
+    expect(html).toContain('data-kus-dl-completeness="complete"');
+    expect(html.indexOf('data-kus-dl-completeness')).toBeLessThan(html.indexOf('kus-dl-metrics'));
   });
 
   it('does not present a truncated or partially fetched result as complete', () => {
@@ -125,6 +187,7 @@ describe('diff lite result presentation', () => {
     expect(html).toContain('差分なしとは判断できません');
     expect(html).toContain('差分上限 1,000 件');
     expect(html).toContain('設定の取得に 1 件失敗');
+    expect(html).toContain('data-kus-dl-completeness="incomplete"');
     expect(html.match(/role="alert"/g)).toHaveLength(2);
   });
 
@@ -191,8 +254,14 @@ describe('diff lite result presentation', () => {
       sectionKey: 'viewSettings', section: 'ビュー', path: 'viewSettings.views.old', type: 'removed', left: { name: '旧一覧' }
     }] as any, false, '');
 
-    expect(added).toContain('比較元にはなし');
-    expect(removed).toContain('比較先にはなし');
+    expect(added).toContain('比較先にのみ存在');
+    expect(added).toContain('比較元にはありません');
+    expect(added).toContain('<span class="kus-dl-badge__type">追加</span>');
+    expect(added).toContain('<span class="kus-dl-badge__fact">比較先にのみ存在</span>');
+    expect(removed).toContain('比較元にのみ存在');
+    expect(removed).toContain('比較先にはありません');
+    expect(removed).toContain('<span class="kus-dl-badge__type">削除</span>');
+    expect(removed).toContain('<span class="kus-dl-badge__fact">比較元にのみ存在</span>');
   });
 
   it('shows both visible and total section counts when rows are paged', () => {
@@ -217,8 +286,8 @@ describe('diff lite result presentation', () => {
     }] as any, false, '1件');
 
     expect(html).toContain('<span class="kus-dl-row__title">配色テーマの変更</span>');
-    expect(html).toContain('<details class="kus-dl-row__technical"><summary>内部パスを表示</summary>');
-    expect(html).toContain('<code class="kus-dl-row__raw">customSettings.deep.internal.value</code>');
+    expect(html).toContain('<details class="kus-dl-row__technical" data-kus-dl-technical><summary>技術情報</summary>');
+    expect(html).toContain('<span>内部パス</span>customSettings.deep.internal.value');
     expect(html.indexOf('配色テーマの変更')).toBeLessThan(html.indexOf('customSettings.deep.internal.value'));
   });
 
@@ -262,13 +331,14 @@ describe('diff lite result presentation', () => {
     expect(buildLiteDiffRowKey(row)).not.toBe(buildLiteDiffRowKey({ ...row, type: 'removed' }));
   });
 
-  it('filters rows by impact level as well as section, type, and keyword', () => {
+  it('filters rows only by factual section, type, and keyword, not internal severity', () => {
     const row = {
       sectionKey: 'appAcl', section: 'アプリ権限', path: 'appAcl.rights[0].recordViewable',
       type: 'changed', severity: 'high', left: true, right: false
     } as any;
-    expect(rowMatchesFilters(row, { section: 'appAcl', type: 'changed', severity: 'high', keyword: 'recordviewable' })).toBe(true);
-    expect(rowMatchesFilters(row, { section: 'appAcl', type: 'changed', severity: 'low', keyword: '' })).toBe(false);
+    expect(rowMatchesFilters(row, { section: 'appAcl', type: 'changed', keyword: 'recordviewable' })).toBe(true);
+    expect(rowMatchesFilters({ ...row, severity: 'low' }, { section: 'appAcl', type: 'changed', keyword: '' })).toBe(true);
+    expect(rowMatchesFilters(row, { section: 'viewSettings', type: 'changed', keyword: '' })).toBe(false);
   });
 
   it('distinguishes broad ignore keys from contextual path and wildcard rules', () => {
@@ -301,8 +371,10 @@ describe('diff lite result presentation', () => {
     const closedHtml = renderRowsHtml([row], false, '', [row], { collapsedSections: new Set(['fieldSettings']) });
 
     expect(openHtml).toContain(`data-kus-dl-row-key="${rowKey}"`);
-    expect(openHtml).toContain('data-severity="low"');
-    expect(openHtml).toContain('低影響');
+    expect(openHtml).not.toContain('data-severity');
+    expect(openHtml).not.toContain('影響');
+    expect(openHtml).toContain('<span class="kus-dl-badge__type">変更</span>');
+    expect(openHtml).toContain('<span class="kus-dl-badge__fact">内容が異なる</span>');
     expect(openHtml).toContain('tabindex="-1"');
     expect(openHtml).toContain('aria-current="true"');
     expect(openHtml).toContain('data-kus-dl-ignore-path="fieldSettings.properties.customer.label"');
@@ -326,7 +398,7 @@ describe('diff lite result presentation', () => {
       sectionKey: 'appAcl', section: 'アプリ権限', path: 'appAcl.rights[3].appEditable',
       type: 'changed', left: true, right: false
     }] as any, false, '');
-    expect(html).toContain('位置依存パス（自動無視不可）');
+    expect(html).toContain('並び順に依存（自動除外不可）');
     expect(html).not.toContain('data-kus-dl-ignore-path');
   });
 

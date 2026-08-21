@@ -40,6 +40,12 @@ npm run test:diff-compare
 npm run test:er-compare
 ```
 
+## 資料
+
+- [差分比較ロジック説明](docs/diff-comparison-logic.md) — 比較方向、取得完全性、無視・正規化、配列の対応付け、HTML / Excel出力の違い
+- [統合ツールの開発・ビルド](tools/統合ツール/README.md)
+- [liteツール群の機能説明](tools/統合ツール_機能説明.md)
+
 ## 安全上の注意
 
 反映・追加・更新を行うツールは kintone の設定やデータを変更します。対象環境、App ID、処理方向を確認し、必要なバックアップを取得してから実行してください。

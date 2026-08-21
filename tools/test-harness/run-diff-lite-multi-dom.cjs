@@ -210,11 +210,15 @@ async function configureThreeTargets(page) {
   assert.deepEqual(values, ['202', '303', '404'], '比較先のカンマ分割に失敗しました');
 }
 
+function multiResultRows(page) {
+  return page.getByRole('table', { name: /複数比較の結果/ }).locator('tbody tr');
+}
+
 async function dispatchDoubleRun(page) {
   await page.evaluate(() => {
     const buttons = [...document.querySelectorAll('#kus-diff-lite button')];
     const runOne = buttons.find((button) => button.textContent.includes('差分比較を実行'));
-    const runAll = buttons.find((button) => button.textContent.includes('全比較先を順に比較'));
+    const runAll = buttons.find((button) => /全比較先を順に比較|複数の比較を実行/.test(button.textContent || ''));
     if (!runOne || !runAll) throw new Error('比較実行ボタンが見つかりません');
     runAll.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     window.__multiProbe.disabledAfterFirstDispatch = { runOne: runOne.disabled, runAll: runAll.disabled };
@@ -226,17 +230,20 @@ async function dispatchDoubleRun(page) {
 async function inspectResult(page) {
   return page.evaluate(() => {
     const root = document.getElementById('kus-diff-lite');
-    const status = root?.querySelector('.kus-lp__status');
+    const status = [...(root?.querySelectorAll('[data-tone]') || [])]
+      .find((element) => ['neutral', 'info', 'busy', 'ok', 'warn', 'err'].includes(element.getAttribute('data-tone') || ''));
     const buttons = [...(root?.querySelectorAll('button') || [])];
     const runOne = buttons.find((button) => button.textContent.includes('差分比較を実行'));
-    const runAll = buttons.find((button) => button.textContent.includes('全比較先を順に比較'));
-    const rows = [...(root?.querySelectorAll('.kus-dl-multi tbody tr') || [])].map((row) =>
+    const runAll = buttons.find((button) => /全比較先を順に比較|複数の比較を実行/.test(button.textContent || ''));
+    const table = [...(root?.querySelectorAll('table') || [])]
+      .find((candidate) => /複数比較の結果/.test(candidate.querySelector('caption')?.textContent || ''));
+    const rows = [...(table?.querySelectorAll('tbody tr') || [])].map((row) =>
       [...row.querySelectorAll('td')].map((cell) => cell.textContent.replace(/\s+/g, ' ').trim())
     );
     const excelButtons = [...(root?.querySelectorAll('[data-kus-dl-multi-xlsx]') || [])];
     return {
       statusTone: status?.dataset?.tone || '',
-      statusText: root?.querySelector('.kus-lp__status-text')?.textContent?.trim() || '',
+      statusText: status?.textContent?.replace(/\s+/g, ' ').trim() || '',
       rows,
       runOneDisabled: !!runOne?.disabled,
       runAllDisabled: !!runAll?.disabled,
@@ -298,8 +305,8 @@ async function main() {
     await configureThreeTargets(page);
     await dispatchDoubleRun(page);
     await page.waitForFunction(() => {
-      const text = document.querySelector('#kus-diff-lite .kus-lp__status-text')?.textContent || '';
-      return text.includes('全比較先の比較が完了');
+      return [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
+        .some((element) => (element.textContent || '').includes('全比較先の比較が完了'));
     }, null, { timeout: 15000 });
     result = await inspectResult(page);
     verifyResult(result, pageErrors);
@@ -310,7 +317,7 @@ async function main() {
       checkbox.checked = false;
       checkbox.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    assert.equal(await page.locator('.kus-dl-multi tbody tr').count(), 3,
+    assert.equal(await multiResultRows(page).count(), 3,
       '複数比較後の表示設定変更で結果表が消えました');
     assert.equal(await page.locator('[data-kus-dl-multi-xlsx]').count(), 2,
       '複数比較後の表示設定変更でExcel保存ボタンが消えました');
@@ -325,23 +332,24 @@ async function main() {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await page.waitForFunction(() => {
-      const text = document.querySelector('#kus-diff-lite .kus-lp__status-text')?.textContent || '';
-      return text.includes('差分一覧 Excel のダウンロードを開始しました');
+      return [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
+        .some((element) => (element.textContent || '').includes('差分一覧 Excel のダウンロードを開始しました'));
     }, null, { timeout: 10000 });
     await page.waitForTimeout(400);
     result.downloadsAfterExcel = await page.evaluate(() => Number(window.__downloadCount || 0));
     assert.equal(result.downloadsAfterExcel, 3, 'Excel保存の二重クリックで重複ダウンロードされました');
     assert.deepEqual(pageErrors, [], 'Excel保存時にブラウザエラーが発生しました');
 
-    const runAll = page.getByRole('button', { name: /全比較先を順に比較/ });
+    const runAll = page.getByRole('button', { name: /全比較先を順に比較|複数の比較を実行/ });
     await runAll.click();
-    result.rowsImmediatelyAfterRerun = await page.locator('.kus-dl-multi tbody tr').count();
+    result.rowsImmediatelyAfterRerun = await multiResultRows(page).count();
     result.excelButtonsImmediatelyAfterRerun = await page.locator('[data-kus-dl-multi-xlsx]').count();
     assert.equal(result.rowsImmediatelyAfterRerun, 0, '複数比較の再実行開始時に古い結果表が残っています');
     assert.equal(result.excelButtonsImmediatelyAfterRerun, 0, '複数比較の再実行開始時に古いExcel保存ボタンが残っています');
     await page.waitForFunction(() => {
-      const text = document.querySelector('#kus-diff-lite .kus-lp__status-text')?.textContent || '';
-      return text.includes('全比較先の比較が完了') && window.__multiProbe.calls.length === 6;
+      const complete = [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
+        .some((element) => (element.textContent || '').includes('全比較先の比較が完了'));
+      return complete && window.__multiProbe.calls.length === 6;
     }, null, { timeout: 15000 });
     result.downloadsAfterRerun = await page.evaluate(() => Number(window.__downloadCount || 0));
     assert.equal(result.downloadsAfterRerun, 5, '再実行後のHTML出力回数が不正です');
