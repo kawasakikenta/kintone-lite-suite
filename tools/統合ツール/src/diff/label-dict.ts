@@ -185,6 +185,9 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   // layoutSettings
   layout:           { label: 'レイアウト' },
   row:              { label: '行' },
+  width:            { label: '横幅' },
+  height:           { label: '高さ' },
+  innerHeight:      { label: '入力欄の高さ' },
 
   // fieldSettings: 関連レコード一覧（referenceTable）/ ルックアップ（lookup）
   referenceTable:    { label: '関連レコード一覧設定' },

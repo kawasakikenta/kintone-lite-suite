@@ -180,6 +180,9 @@ function normalizeTruncation(value: unknown): any | null {
   const sections = Array.isArray(truncation.sections) ? truncation.sections : [];
   return {
     truncated: true,
+    ...(typeof truncation.actualDiffIncomplete === 'boolean'
+      ? { actualDiffIncomplete: truncation.actualDiffIncomplete }
+      : {}),
     diffLimit: finiteNumber(truncation.diffLimit),
     sameLimit: finiteNumber(truncation.sameLimit),
     droppedDiff: finiteNumber(truncation.droppedDiff) || 0,

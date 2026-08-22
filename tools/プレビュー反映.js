@@ -1258,7 +1258,7 @@ ${contextLine}`);
     if (appId) {
       const matched = candidates.find((b) => String(b?.appId || "") === appId);
       if (matched) return limitImportedBundleToSections(matched, options.sections);
-      if (candidates.length > 1) throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
+      throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
     }
     return limitImportedBundleToSections(candidates[0], options.sections);
   }

@@ -306,8 +306,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                         </label>
                         <label class="diff-export-panel__opt">内容
                           <select id="u_diffExportContent" title="出力内容">
-                            <option value="diffOnly">行データのみ</option>
-                            <option value="withCompared">行+比較設定</option>
+                            <option value="diffOnly">差分行のみ（全設定は未収録）</option>
+                            <option value="withCompared">比較設定込み（取扱注意）</option>
                           </select>
                         </label>
                       </div>

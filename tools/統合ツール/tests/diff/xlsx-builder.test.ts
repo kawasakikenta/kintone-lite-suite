@@ -203,8 +203,8 @@ describe('diff/xlsx-builder', () => {
     expect(xml).toContain('tooltip="詳細差分へ &quot;移動&quot;"');
     expect(xml).not.toContain('r:id=');
     expect(xml).toMatch(/<c r="A2" s="13"/);
-    expect(styles).toContain('<fonts count="6">');
-    expect(styles).toContain('<cellXfs count="18">');
+    expect(styles).toContain('<fonts count="16">');
+    expect(styles).toContain('<cellXfs count="37">');
     expect(xml.indexOf('<mergeCells ')).toBeLessThan(xml.indexOf('<dataValidations '));
     expect(xml.indexOf('<dataValidations ')).toBeLessThan(xml.indexOf('<hyperlinks>'));
     expect(xml.indexOf('<hyperlinks>')).toBeLessThan(xml.indexOf('<printOptions '));
@@ -265,25 +265,33 @@ describe('diff/xlsx-builder', () => {
     expect(xml.indexOf('<autoFilter ')).toBeLessThan(xml.indexOf('<printOptions '));
   });
 
-  it('adds A4 print setup and repeating header rows without deriving formulas from cell values', async () => {
+  it('adds A4 print setup, display zoom, repeating titles, and a safe footer without deriving formulas from cell values', async () => {
     const sheets: XlsxSheet[] = [{
       name: "一覧'確認",
       rows: [['group'], ['header'], ['=USER_TEXT()']],
+      zoomScale: 85,
       print: {
         orientation: 'landscape',
         fitToWidth: 1,
         fitToHeight: 0,
-        repeatRows: { from: 1, to: 2 }
+        repeatRows: { from: 1, to: 2 },
+        repeatColumns: { from: 1, to: 4 },
+        horizontalCentered: true,
+        footer: '&Rページ &P / &N'
       }
     }];
     const buf = await blobToBuffer(buildXlsxBlob(sheets));
     const sheet = extractEntry(buf, 'xl/worksheets/sheet1.xml');
     const workbook = extractEntry(buf, 'xl/workbook.xml');
     expect(sheet).toContain('<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+    expect(sheet).toContain('zoomScale="85" zoomScaleNormal="85"');
+    expect(sheet).toContain('<printOptions horizontalCentered="1"');
     expect(sheet).toContain('<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>');
     expect(sheet).toContain('<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>');
+    expect(sheet).toContain('<headerFooter><oddFooter>&amp;Rページ &amp;P / &amp;N</oddFooter></headerFooter>');
     expect(workbook).toContain('name="_xlnm.Print_Titles" localSheetId="0"');
     expect(workbook).toContain('&apos;一覧&apos;&apos;確認&apos;!$1:$2');
+    expect(workbook).toContain('&apos;一覧&apos;&apos;確認&apos;!$A:$D');
     expect(sheet).toContain('=USER_TEXT()');
     expect(sheet).not.toContain('<f>');
   });
@@ -332,14 +340,20 @@ describe('diff/xlsx-builder', () => {
     expect(xml).toMatch(/<c r="B4" s="17"/);
   });
 
-  it('uses a restrained role palette with neutral KPI styles and no severity colors', async () => {
+  it('uses a restrained role palette that separates direction, change facts, and review inputs', async () => {
     const sheets: XlsxSheet[] = [{
       name: 'S',
-      rows: [['title'], ['ok', 'neutral', 'danger'], ['review', 'info', 'link']],
+      rows: [
+        ['title'],
+        ['ok', 'neutral', 'danger', 'change'],
+        ['review', 'info', 'link', 'choice'],
+        ['added', 'removed', 'changed', 'moved']
+      ],
       cellStyles: [
         ['title'],
-        ['kpiGood', 'kpiWarning', 'kpiDanger'],
-        ['review', 'info', 'hyperlink']
+        ['kpiGood', 'kpiWarning', 'kpiDanger', 'kpiChange'],
+        ['review', 'info', 'hyperlink', 'reviewChoice'],
+        ['changeAdded', 'changeRemoved', 'changeChanged', 'changeMoved']
       ]
     }];
     const buf = await blobToBuffer(buildXlsxBlob(sheets));
@@ -352,18 +366,23 @@ describe('diff/xlsx-builder', () => {
     expect(xml).toMatch(/<c r="A3" s="11"/);
     expect(xml).toMatch(/<c r="B3" s="12"/);
     expect(xml).toMatch(/<c r="C3" s="13"/);
-    expect(styles).toContain('<fills count="7">');
-    expect(styles).toContain('<borders count="5">');
-    expect(styles).toContain('<cellXfs count="18">');
+    expect(xml).toMatch(/<c r="D2" s="19"/);
+    expect(xml).toMatch(/<c r="D3" s="29"/);
+    expect(xml).toMatch(/<c r="A4" s="25"/);
+    expect(xml).toMatch(/<c r="B4" s="26"/);
+    expect(xml).toMatch(/<c r="C4" s="27"/);
+    expect(xml).toMatch(/<c r="D4" s="28"/);
+    expect(styles).toContain('<fills count="10">');
+    expect(styles).toContain('<borders count="6">');
+    expect(styles).toContain('<cellXfs count="37">');
     expect(styles).toContain('<right style="medium"><color rgb="FF64748B"/></right>');
     expect(styles).toContain('rgb="FF1E3A5F"');
     expect(styles).toContain('rgb="FFF1F5F9"');
     expect(styles).toContain('rgb="FFEFF6FF"');
     expect(styles).toContain('rgb="FFFEF2F2"');
-    expect(styles).toContain('rgb="FFFFF8D6"');
-    expect(styles).not.toContain('rgb="FFDCFCE7"');
-    expect(styles).not.toContain('rgb="FFF5F3FF"');
-    expect(styles).not.toContain('rgb="FFFFF7ED"');
+    expect(styles).toContain('rgb="FFFFFBEB"');
+    expect(styles).toContain('rgb="FFECFDF5"');
+    expect(styles).toContain('rgb="FFF5F3FF"');
     expect(styles).not.toContain('<left style="thin"');
     expect(styles).not.toContain('<right style="thin"');
   });

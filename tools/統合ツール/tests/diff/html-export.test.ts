@@ -4,6 +4,7 @@ import {
   buildDiffHtml,
   buildDiffWarningInfo,
   buildPatchPayload,
+  getDiffExportContentLabel,
   selectDiffHtmlRowsForExport
 } from '../../src/diff/export';
 import { buildDiffHtmlStandaloneExport } from '../../src/tabs/diff-export-standalone';
@@ -488,6 +489,30 @@ describe('diff/html export', () => {
     expect(() => new Function(script)).not.toThrow();
   });
 
+  it('keeps diff-only review identities independent from subjective severity metadata', () => {
+    const sourceBundle = { appId: '1', sections: { appSettings: { name: '旧' } } };
+    const targetBundle = { appId: '2', sections: { appSettings: { name: '新' } } };
+    const row = {
+      sectionKey: 'appSettings', section: 'アプリ設定', type: 'changed',
+      path: 'appSettings.name', left: '旧', right: '新', severity: 'high'
+    };
+    const highHtml = buildDiffHtml(sourceBundle, targetBundle, [row], ['appSettings'], '', {
+      exportContentMode: 'diffOnly', fetchIssues: [], partialIssues: [], truncation: null
+    });
+    const lowHtml = buildDiffHtml(sourceBundle, targetBundle, [{ ...row, severity: 'low' }], ['appSettings'], '', {
+      exportContentMode: 'diffOnly', fetchIssues: [], partialIssues: [], truncation: null
+    });
+    const highRows = extractInlineJsonConst(highHtml, 'REPORT_ROWS');
+    const lowRows = extractInlineJsonConst(lowHtml, 'REPORT_ROWS');
+    const highMeta = extractInlineJsonConst(highHtml, 'REPORT_META');
+    const lowMeta = extractInlineJsonConst(lowHtml, 'REPORT_META');
+
+    expect(highRows[0].severity).toBeUndefined();
+    expect(lowRows[0].severity).toBeUndefined();
+    expect(highRows[0]._reviewKey).toBe(lowRows[0]._reviewKey);
+    expect(highMeta.reviewState.fingerprint).toBe(lowMeta.reviewState.fingerprint);
+  });
+
   it('provides keyboard-operable tabs and modal focus management', () => {
     const bundle = {
       appId: '1', guestId: '', preview: false,
@@ -548,6 +573,18 @@ describe('diff/html export', () => {
     expect(html).toContain('data-side-label="比較元"');
     expect(html).toContain('data-side-label="比較先"');
     expect(html).toContain('@media (prefers-reduced-motion:reduce)');
+  });
+
+  it('forces light disclosure and completeness panels when printing from dark mode', () => {
+    const source = { appId: '1', guestId: '', preview: false, sections: {}, meta: {} };
+    const target = { appId: '2', guestId: '', preview: false, sections: {}, meta: {} };
+    const html = buildDiffHtml(source, target, [], [], '', {});
+
+    expect(html).toContain('@media print');
+    expect(html).toContain('body.dark .report-content-disclosure{border-color:#d6b456;border-left-color:#9a6700;background:#fffaf0;color:#5f4300}');
+    expect(html).toContain('body.dark .report-content-disclosure--caution{border-color:#e0a06b;border-left-color:#b45309;background:#fff7ed;color:#7c2d12}');
+    expect(html).toContain('body.dark .report-completeness--incomplete{border-color:#f0c36a;background:#fffaf0}');
+    expect(html).toContain('body.dark .report-completeness--complete{border-color:#9bc8ac;background:#f4fbf6}');
   });
 
   it('colors differing keys inside the reference-table key/value snapshot', () => {
@@ -657,15 +694,23 @@ describe('diff/html export', () => {
 
     const safeHtml = buildDiffHtml(sourceBundle, targetBundle, rows, ['fieldSettings', 'layoutSettings'], '', {
       exportContentMode: 'diffOnly',
-      exportContentLabel: '差分行のみ（安全共有向け）'
+      exportContentLabel: '差分行のみ（全設定は未収録）'
     });
     const safeScript = extractInlineScript(safeHtml);
     const detailedHtml = buildDiffHtml(sourceBundle, targetBundle, rows, ['fieldSettings', 'layoutSettings'], '', {
       exportContentMode: 'withCompared',
-      exportContentLabel: '比較設定込み（フィールド詳細・反映JSON）'
+      exportContentLabel: '比較設定込み（取扱注意）'
     });
 
-    expect(safeHtml).toContain('差分行のみ・設定本文は未収録');
+    expect(getDiffExportContentLabel('diffOnly')).toBe('差分行のみ（全設定は未収録）');
+    expect(getDiffExportContentLabel('withCompared')).toBe('比較設定込み（取扱注意）');
+    expect(safeHtml).toContain('差分行のみ（全設定は未収録）');
+    expect(safeHtml).toContain('全設定スナップショットは収録していません');
+    expect(safeHtml).toContain('変更された差分行の比較元・比較先の値は収録しています');
+    expect(safeHtml).toContain('匿名化・機密情報のマスキング済みではありません');
+    expect(safeHtml).toContain('顧客への受け渡しには顧客向けExcelを使用してください');
+    expect(safeHtml).toContain('<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note"');
+    expect(safeHtml).not.toContain('<aside class="report-content-disclosure"');
     expect(safeHtml).toContain('ROW_SOURCE_VALUE');
     expect(safeHtml).toContain('ROW_TARGET_VALUE');
     expect(safeHtml).not.toContain('SOURCE_FIELD_SECRET');
@@ -677,18 +722,122 @@ describe('diff/html export', () => {
     expect(safeScript).toContain('const FIELD_PROPS_SRC = {};');
     expect(safeScript).toContain('const SOURCE_SECTIONS = {};');
     expect(safeScript).toContain('const LAYOUT_ROWS_SRC = [];');
-    expect(safeHtml).toContain('id="rawJson" disabled aria-disabled="true"');
-    expect(safeHtml).toContain('id="reflectJsonBtn" disabled aria-disabled="true"');
-    expect(safeHtml).toContain('id="reportTabSettingsLike"');
-    expect(safeHtml).toMatch(/id="reportTabSettingsLike"[^>]* disabled aria-disabled="true"/);
+    expect(safeHtml).not.toContain('id="rawJson"');
+    expect(safeHtml).not.toContain('id="reflectJsonBtn"');
+    expect(safeHtml).not.toContain('id="reflectJsonCopyBtn"');
+    expect(safeHtml).not.toContain('id="srcJsonBtn"');
+    expect(safeHtml).not.toContain('id="tgtJsonBtn"');
+    expect(safeHtml).not.toContain('出力・反映・比較証跡');
+    expect(safeHtml).not.toContain('id="reportTabSettingsLike"');
+    expect(safeHtml).not.toContain('id="reportPaneSettingsLike"');
+    expect(safeHtml).not.toContain('id="settingsLikeRoot"');
+    expect(safeHtml).not.toContain('id="fieldDetailModal"');
     expect(() => new Function(safeScript)).not.toThrow();
 
+    expect(detailedHtml).toContain('取扱注意: 比較設定込み');
+    expect(detailedHtml).toContain('比較元の設定値で比較先を上書きする方向です');
     expect(detailedHtml).toContain('SOURCE_FIELD_SECRET');
     expect(detailedHtml).toContain('TARGET_FIELD_SECRET');
     expect(detailedHtml).toContain('SOURCE_LAYOUT_SECRET');
     expect(detailedHtml).toContain('TARGET_LAYOUT_SECRET');
     expect(detailedHtml).toContain('SAME_ROW_SECRET');
+    expect(detailedHtml).toContain('id="rawJson"');
+    expect(detailedHtml).toContain('id="reflectJsonBtn"');
+    expect(detailedHtml).toContain('id="srcJsonBtn"');
+    expect(detailedHtml).toContain('id="reportTabSettingsLike"');
+    expect(detailedHtml).toContain('id="reportPaneSettingsLike"');
+    expect(detailedHtml).toContain('id="settingsLikeRoot"');
+    expect(detailedHtml).toContain('id="fieldDetailModal"');
     expect(extractInlineScript(detailedHtml)).toContain('const HAS_COMPARED_CONTENT = true;');
+  });
+
+  it('omits subjective row metadata recursively from diffOnly REPORT_ROWS only', () => {
+    const sourceBundle = { appId: '1', sections: { appSettings: { name: '旧' } }, meta: {} };
+    const targetBundle = { appId: '2', sections: { appSettings: { name: '新' } }, meta: {} };
+    const rows = [{
+      _id: 'parent', sectionKey: 'appSettings', section: 'アプリ設定', type: 'changed',
+      path: 'appSettings.name', left: '旧', right: '新', severity: 'high',
+      impactSummary: '主観的な影響説明', impactCount: 1,
+      impactRefs: [{ section: '一覧', kind: '表示項目', label: '一覧A', path: 'viewSettings.views.a.fields[0]' }],
+      __childRows: [{
+        _id: 'child', sectionKey: 'appSettings', section: 'アプリ設定', type: 'changed',
+        path: 'appSettings.description', left: '旧説明', right: '新説明', severity: 'medium',
+        impactSummary: '子行の影響説明', impactCount: 0, impactRefs: []
+      }]
+    }];
+
+    const safeRows = extractInlineJsonConst(buildDiffHtml(sourceBundle, targetBundle, rows, ['appSettings'], '', {
+      exportContentMode: 'diffOnly'
+    }), 'REPORT_ROWS');
+    const detailedRows = extractInlineJsonConst(buildDiffHtml(sourceBundle, targetBundle, rows, ['appSettings'], '', {
+      exportContentMode: 'withCompared'
+    }), 'REPORT_ROWS');
+
+    expect(JSON.stringify(safeRows)).not.toContain('"severity":');
+    expect(JSON.stringify(safeRows)).not.toContain('"impactSummary":');
+    expect(safeRows[0]).toMatchObject({ impactCount: 1, impactRefs: [expect.objectContaining({ label: '一覧A' })] });
+    expect(safeRows[0].__childRows[0]).toMatchObject({ impactCount: 0, impactRefs: [] });
+    expect(detailedRows[0]).toMatchObject({ severity: 'high', impactSummary: '主観的な影響説明' });
+    expect(detailedRows[0].__childRows[0]).toMatchObject({ severity: 'medium', impactSummary: '子行の影響説明' });
+  });
+
+  it('keeps applied ignore and normalization conditions visible in the report metadata', () => {
+    const bundle = { appId: '1', sections: { appSettings: { name: '同じ' } }, meta: {} };
+    const html = buildDiffHtml(bundle, { ...bundle, appId: '2' }, [], ['appSettings'], 'revision, modifiedAt', {
+      exportContentMode: 'diffOnly',
+      normalizationState: { viewOrder: true }
+    });
+
+    expect(html).toContain('data-applied-ignore');
+    expect(html).toContain('比較時の無視キー 2件: revision、modifiedAt');
+    expect(html).toContain('data-applied-normalization');
+    expect(html).toContain('比較時の正規化 1件: ビュー/グラフ/アクション順序');
+  });
+
+  it('uses state-dependent completeness details and starts the first pending review from a prominent CTA', () => {
+    const sourceBundle = { appId: '1', sections: { appSettings: { name: '旧' } }, meta: {} };
+    const targetBundle = { appId: '2', sections: { appSettings: { name: '新' } }, meta: {} };
+    const rows = [{
+      _id: 'name', sectionKey: 'appSettings', section: 'アプリ設定', type: 'changed',
+      path: 'appSettings.name', left: '旧', right: '新'
+    }];
+    const completeHtml = buildDiffHtml(sourceBundle, targetBundle, rows, ['appSettings'], '', {
+      exportContentMode: 'withCompared',
+      truncation: {
+        truncated: true, actualDiffIncomplete: false, diffLimit: 1000, sameLimit: 3000,
+        droppedDiff: 0, droppedSame: 1, sections: []
+      }
+    });
+    const incompleteHtml = buildDiffHtml(sourceBundle, targetBundle, rows, ['appSettings'], '', {
+      exportContentMode: 'withCompared',
+      fetchIssues: [{ sectionKey: 'appSettings', section: 'アプリ設定', side: 'source', message: '403' }]
+    });
+    const script = extractInlineScript(completeHtml);
+
+    expect(completeHtml).toContain('<details class="report-diagnostics"><summary>取得範囲と収録内容の詳細</summary>');
+    expect(completeHtml).not.toContain('確認が必要な取得状況を見る');
+    expect(incompleteHtml).toContain('<details class="report-diagnostics" open><summary>未完了の要因を確認</summary>');
+    expect(completeHtml).toContain('id="startPendingReviewBtn">未確認レビューを開始（1件）</button>');
+    expect(script).toContain('function jumpToFirstPendingReview()');
+    expect(script).toContain('isActionableReviewRow(row) && rowHasPendingReview(row)');
+    expect(script).toContain('startPendingReviewBtn.onclick = jumpToFirstPendingReview');
+  });
+
+  it('adds item-specific action names and non-color character-diff cues', () => {
+    const bundle = { appId: '1', sections: { appSettings: { name: '旧' } }, meta: {} };
+    const html = buildDiffHtml(bundle, { ...bundle, appId: '2' }, [{
+      _id: 'name', sectionKey: 'appSettings', section: 'アプリ設定', type: 'changed',
+      path: 'appSettings.name', left: '旧', right: '新'
+    }], ['appSettings'], '', { exportContentMode: 'withCompared' });
+    const script = extractInlineScript(html);
+
+    expect(script).toContain("rowItemLabel + 'の設定パスをコピー'");
+    expect(script).toContain("rowItemLabel + 'の比較元・比較先の値をコピー'");
+    expect(script).toContain("rowItemLabel + 'を確認済みにして次へ'");
+    expect(script).toContain("fieldItemLabel + 'を反映JSONの対象に選択'");
+    expect(script).toContain("String(group.label || group.code) + (group.diffCount ? 'の設定差分を開く' : 'の設定を開く')");
+    expect(html).toContain('mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:3px;padding:0 2px;text-decoration:underline 2px');
+    expect(html).toContain('mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:3px;padding:0 2px;text-decoration:line-through 2px');
   });
 
   it('makes standalone HTML safe by default and forwards an explicit compared-content mode and label', () => {
@@ -716,7 +865,7 @@ describe('diff/html export', () => {
     });
 
     expect(safeOutput.html).not.toContain('STANDALONE_SECTION_SECRET');
-    expect(safeOutput.html).toContain('差分行のみ（安全共有向け）');
+    expect(safeOutput.html).toContain('差分行のみ（全設定は未収録）');
     expect(detailedOutput.html).toContain('STANDALONE_SECTION_SECRET');
     expect(detailedOutput.html).toContain('比較設定込み（テスト）');
   });
@@ -1075,7 +1224,7 @@ describe('diff/html export', () => {
     expect(() => new Function(script)).not.toThrow();
     expect(script).toContain('const TARGET_PREVIEW_API_PREFIX = "/k/guest/88/v1/preview";');
     expect(script).toContain("row.type !== 'same' && !row._displayOnly");
-    expect(script).toContain('if (!row || row._displayOnly || row.type === \'same\') return;');
+    expect(script).toContain('if (!row || row._displayOnly || row._nonActionable || row.type === \'same\') return;');
     expect(script).toContain('replacesEntireSection');
     expect(script).toContain('destructive');
     expect(script).toContain('warnings: warnings');
@@ -1186,24 +1335,90 @@ describe('diff/html export', () => {
     expect(payload.sections['アプリのアクセス権'][0].severity).toBe('high');
   });
 
-  it('calls out process state rename notices even when they are excluded from actionable counts', () => {
-    const sourceBundle = { appId: '1', guestId: '', preview: false, sections: { processSettings: {} }, meta: {} };
-    const targetBundle = { appId: '2', guestId: '', preview: false, sections: { processSettings: {} }, meta: {} };
+  it('excludes review-only rows from apply patch payloads', () => {
+    const payload = buildPatchPayload([{
+      sectionKey: 'processSettings', section: 'プロセス管理', type: 'changed',
+      path: 'processSettings.states.__rename__', left: { name: '未処理' }, right: { name: '受付' },
+      _nonActionable: true, _stateRenameNotice: true
+    }, {
+      sectionKey: 'processSettings', section: 'プロセス管理', type: 'changed',
+      path: 'processSettings.enable', left: true, right: false
+    }], { appId: '1', sections: {} }, { appId: '2', sections: {} });
+
+    expect(payload.sections['プロセス管理']).toHaveLength(1);
+    expect(payload.sections['プロセス管理'][0].path).toBe('processSettings.enable');
+  });
+
+  it('blocks reflect JSON when a process state rename could be included through another selected row', () => {
+    const sourceBundle = {
+      appId: '1', guestId: '', preview: false,
+      sections: { processSettings: { enable: true, states: { 未処理: { name: '未処理', index: '0' } }, actions: [] } }, meta: {}
+    };
+    const targetBundle = {
+      appId: '2', guestId: '', preview: false,
+      sections: { processSettings: { enable: false, states: { 受付: { name: '受付', index: '0' } }, actions: [] } }, meta: {}
+    };
     const rows = [{
-      _id: 'rename-1',
+      _id: 'enable-1',
       sectionKey: 'processSettings',
       section: 'プロセス管理',
       type: 'changed',
-      path: 'processSettings.states.__rename__',
-      left: { name: '未処理' },
-      right: { name: '受付' },
-      _displayOnly: true,
-      _stateRenameNotice: true
+      path: 'processSettings.enable',
+      left: true,
+      right: false
     }];
 
-    const html = buildDiffHtml(sourceBundle, targetBundle, rows, ['processSettings'], '', {});
-    expect(html).toContain('プロセスの状態名変更候補が 1 件あります');
-    expect(html).toContain('追加・削除・変更件数には含めていません');
+    const html = buildDiffHtml(sourceBundle, targetBundle, rows, ['processSettings'], '', {
+      exportContentMode: 'withCompared', fetchIssues: [], partialIssues: [], truncation: null
+    });
+    const script = extractInlineScript(html);
+    expect(html).toContain('比較設定全体でプロセスの状態名変更を 1 件検出しました');
+    expect(html).toContain('この出力範囲には 0 件を収録');
+    expect(html).toContain('画面の変更件数は出力範囲に含まれる改名だけを数えています');
+    expect(html).not.toContain('変更件数に含めています');
+    expect(html).toContain('このレポートでは反映JSON全体を無効にしています');
+    expect(html).toContain('状態名変更以外の選択にも改名が混入します');
+    expect(html).toContain('状態名変更の安全対策により反映JSONは無効');
+    expect(html).not.toContain('比較結果が不完全なため、反映JSONの選択');
+    expect(html).toContain('id="reflectJsonBtn" disabled aria-disabled="true"');
+    expect(html).toContain('<span>両方に存在・内容が異なる</span><strong>1</strong>');
+    expect(script).toContain('"reflectJsonAvailable":false');
+    expect(script).toContain('if (!CAN_BUILD_REFLECT_JSON) return null;');
+  });
+
+  it('keeps a same-evidence-only engine truncation complete and reflectable', () => {
+    const sourceBundle = {
+      appId: '1', guestId: '', preview: false,
+      sections: { appSettings: { name: '旧' } }, meta: {}
+    };
+    const targetBundle = {
+      appId: '2', guestId: '', preview: false,
+      sections: { appSettings: { name: '新' } }, meta: {}
+    };
+    const html = buildDiffHtml(sourceBundle, targetBundle, [{
+      _id: 'name', sectionKey: 'appSettings', section: 'アプリ設定', type: 'changed',
+      path: 'appSettings.name', left: '旧', right: '新'
+    }], ['appSettings'], '', {
+      fetchIssues: [],
+      partialIssues: [],
+      exportContentMode: 'withCompared',
+      truncation: {
+        truncated: true,
+        actualDiffIncomplete: false,
+        diffLimit: 1000,
+        sameLimit: 3000,
+        droppedDiff: 0,
+        droppedSame: 2,
+        sections: [{ sectionKey: 'appSettings', scanStatus: 'complete', droppedDiff: 0, droppedSame: 2, omittedDiffCount: 0 }]
+      }
+    });
+    const script = extractInlineScript(html);
+
+    expect(script).toContain('"incompleteComparison":false');
+    expect(script).toContain('"reflectJsonAvailable":true');
+    expect(html).toContain('同一証跡は上限 3000 件まで収録し、2 件を省略しました');
+    expect(html).toContain('実差分の検出結果は完全です');
+    expect(html).not.toContain('この結果だけでは、全差分を断定できません');
   });
 
   it('prioritizes actual differences over display-only helpers and same rows', () => {

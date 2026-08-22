@@ -31,7 +31,7 @@ import {
 } from '../diff/filter.js';
 import { refreshIgnorePresetDropdown } from '../diff/ignore-presets.js';
 import {
-  getActualDiffRows,
+  getActionableDiffRows,
   countActualDiffRows,
   summarizeRows,
   getActiveDiffNormalizationLabels
@@ -996,7 +996,7 @@ function buildLayoutHeatmapHtml(beforeLayout: any, afterLayout: any): string {
       else changed = 2; // 部分変更
       if (t === 'GROUP' || t === 'SUBTABLE') {
         const code = String(row.code || '');
-        cells.push(`<div class="layout-heatmap__cell" data-changed="${changed}" title="${esc(t)}: ${esc(code)}">${esc(t === 'SUBTABLE' ? '⊞' : '▦')} ${esc(code || `#${idx}`)}</div>`);
+        cells.push(`<div class="layout-heatmap__cell" data-changed="${changed}" title="${esc(t)}: ${esc(code)}">${esc(t === 'SUBTABLE' ? '⊞' : '▦')} ${esc(code || `#${idx + 1}`)}</div>`);
       } else {
         fields.forEach((f: any) => {
           const code = String(f?.code || f?.elementId || '');
@@ -1229,7 +1229,7 @@ export function renderReflectMinimapNav() {
     layout.parentElement?.appendChild(host);
   }
   const counts = new Map<string, { total: number; high: number; medium: number }>();
-  const rows = getActualDiffRows(state.lastDiffRows || []);
+  const rows = getActionableDiffRows(state.lastDiffRows || []);
   for (const r of rows) {
     const k = String(r.sectionKey || '');
     if (!k) continue;
@@ -1329,7 +1329,7 @@ export interface ReflectNextActionInfo {
 export function getReflectNextAction(): ReflectNextActionInfo {
   const isNode = isReflectNodeModeEffective();
   const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
-  const actualDiffRows = getActualDiffRows(state.lastDiffRows || []);
+  const actualDiffRows = getActionableDiffRows(state.lastDiffRows || []);
   const scopeInfo = getEffectiveReflectScopeInfo();
   const selectedNodeRows = deps.getSelectedReflectRows ? deps.getSelectedReflectRows() : [];
   const targetCount = isNode ? selectedNodeRows.length : scopeInfo.effectiveScopes.length;
@@ -1394,7 +1394,7 @@ export function renderReflectFooterBadges() {
   const el = getToolDocument().getElementById('u_reflectFooterBadges');
   if (!el) return;
   const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
-  const diffRowCount = getActualDiffRows(state.lastDiffRows || []).length;
+  const diffRowCount = getActionableDiffRows(state.lastDiffRows || []).length;
   const planSig = getCurrentReflectPlanSignature();
   const plan = state.lastApplyPlan;
   const planReady = !!(plan && planSig && plan.signature === planSig);
@@ -1819,7 +1819,7 @@ function renderReflectHowto() {
 
 function getDiffCountsBySection() {
   const counts = {};
-  for (const row of getActualDiffRows(state.lastDiffRows || [])) {
+  for (const row of getActionableDiffRows(state.lastDiffRows || [])) {
     const key = row.sectionKey || '';
     if (!key) continue;
     if (!counts[key]) counts[key] = { total: 0, added: 0, removed: 0, changed: 0 };
@@ -1908,7 +1908,7 @@ export function renderReflectMainPanel() {
     const def = SECTION_DEFS.find((d) => d.key === activeSec);
     if (!def) { overview.innerHTML = ''; return; }
     const count = diffCounts[activeSec] || { total: 0, added: 0, removed: 0, changed: 0 };
-    const rows = getActualDiffRows(state.lastDiffRows || []).filter((r) => r.sectionKey === activeSec);
+    const rows = getActionableDiffRows(state.lastDiffRows || []).filter((r) => r.sectionKey === activeSec);
     const openEditorBtn = activeSec === 'fieldSettings'
       ? '<button class="btn primary-action" data-act="openReflectPreviewEditor">フィールド確認を開く</button>'
       : `<button class="btn primary-action" data-act="openSectionPreviewEditor" data-section="${esc(activeSec)}">このセクションを編集</button>`;

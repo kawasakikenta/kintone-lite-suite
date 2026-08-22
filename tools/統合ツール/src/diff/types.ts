@@ -10,6 +10,8 @@ export interface DiffRow {
   type: DiffType;
   severity?: DiffSeverity;
   moved?: boolean;
+  _displayOnly?: boolean;
+  _nonActionable?: boolean;
   source?: any;
   target?: any;
   [key: string]: any;

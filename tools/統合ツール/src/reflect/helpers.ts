@@ -5,7 +5,7 @@ import { state, ui } from '../state.js';
 import { esc, selectedScopeKeys, renderSectionIconHtml } from '../utils.js';
 import { classifyLogLine, buildGanttHtmlFromLogs } from './progress-pure.js';
 import { fetchBundle, pickBundleSections } from '../api.js';
-import { getActualDiffRows } from '../diff/engine.js';
+import { detectProcessStateRenames, getActionableDiffRows } from '../diff/engine.js';
 import { setStatus } from '../ui/components.js';
 import { commonParams, currentDiffSignature, runDiff, saveCurrentDialogState } from '../tabs/diff.js';
 import { parseLookupMapInput } from '../tabs/field.js';
@@ -38,7 +38,7 @@ export {
 
 export function diffSectionKeySet(): Set<string> {
   const set = new Set<string>();
-  for (const row of getActualDiffRows(state.lastDiffRows || []) as any[]) {
+  for (const row of getActionableDiffRows(state.lastDiffRows || []) as any[]) {
     let key: string | undefined = row.sectionKey;
     if (!key && row.section) {
       const def = SECTION_DEFS.find((d) => d.label === row.section || d.key === row.section);
@@ -47,6 +47,25 @@ export function diffSectionKeySet(): Set<string> {
     if (key) set.add(key);
   }
   return set;
+}
+
+export function hasProcessStateRenameNotice(rows: readonly any[]): boolean {
+  return (rows || []).some((row: any) => (
+    row?._stateRenameNotice === true
+    && row?._nonActionable === true
+    && row?.sectionKey === 'processSettings'
+  ));
+}
+
+export function assertProcessSectionApplySafe(scopes: readonly string[]): void {
+  if (!scopes.includes('processSettings')) return;
+  const hasBundledProcessStateRename = detectProcessStateRenames(
+    state.lastSourceBundle?.sections?.processSettings,
+    state.lastTargetBundle?.sections?.processSettings
+  ).size > 0;
+  if (hasProcessStateRenameNotice(state.lastDiffRows || []) || hasBundledProcessStateRename) {
+    throw new Error('プロセス管理に状態名変更が含まれるため、セクション全体の反映はできません。行／ノード単位で状態名変更以外を選ぶか、管理画面で手動確認してください');
+  }
 }
 
 export async function ensureDiffPreparedForReflect(): Promise<void> {
@@ -58,6 +77,7 @@ export async function ensureDiffPreparedForReflect(): Promise<void> {
 
 export function resolveApplyScopes(baseScopes: readonly string[]): string[] {
   let scopes = [...baseScopes];
+  assertProcessSectionApplySafe(scopes);
   if (!ui.applyDiffOnly?.checked) return scopes;
   const diffSet = diffSectionKeySet();
   if (!diffSet.size) throw new Error('「前回差分のあるセクションのみ反映」がONのため先に差分比較が必要です。差分なしで反映する場合はこのチェックをOFFにしてください');

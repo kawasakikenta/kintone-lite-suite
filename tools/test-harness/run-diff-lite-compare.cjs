@@ -474,6 +474,21 @@ async function captureResponsivePanelMatrix(page, outDir) {
     await page.setViewportSize(viewport);
     const result = page.locator('#kus-diff-lite [data-kus-dl-result],#kus-diff-lite .kus-dl-result').first();
     if (await result.count()) await result.scrollIntoViewIfNeeded();
+    if (viewport.width <= 390) {
+      const mobileValueToggle = page.locator('#kus-diff-lite [data-kus-dl-mobile-row-toggle]').first();
+      assert.equal(await mobileValueToggle.count(), 1, `${viewport.width}px: 差分値のモバイル展開ボタンがありません`);
+      assert.equal(await mobileValueToggle.isVisible(), true, `${viewport.width}px: 差分値のモバイル展開ボタンが見えません`);
+      assert.equal(await mobileValueToggle.getAttribute('aria-expanded'), 'false', `${viewport.width}px: 差分値が初期展開されています`);
+      const controlledId = await mobileValueToggle.getAttribute('aria-controls');
+      assert.ok(controlledId, `${viewport.width}px: 差分値の展開先が関連付けられていません`);
+      assert.equal(await page.locator(`#${controlledId}`).isVisible(), false, `${viewport.width}px: 折りたたみ中の差分値が見えています`);
+      await mobileValueToggle.click();
+      assert.equal(await mobileValueToggle.getAttribute('aria-expanded'), 'true', `${viewport.width}px: 差分値を展開できません`);
+      assert.equal(await page.locator(`#${controlledId}`).isVisible(), true, `${viewport.width}px: 展開した比較元・比較先の値が見えません`);
+      assert.equal(await mobileValueToggle.evaluate((element) => element === document.activeElement), true,
+        `${viewport.width}px: 差分値の展開後にフォーカスが失われました`);
+      await mobileValueToggle.click();
+    }
     await page.waitForTimeout(100);
     const state = await inspectPanelLayout(page);
     assertPanelLayout(state, `after: ${viewport.width}px`);
@@ -644,6 +659,10 @@ async function captureReport(context, variant, reportFile, outDir) {
         reviewWorkspace: document.querySelectorAll('[data-review-workspace]').length,
         existenceChips: document.querySelectorAll('[data-row-existence]').length,
         differenceChips: document.querySelectorAll('[data-row-difference]').length,
+        disclosureText: document.querySelector('[data-content-disclosure="diffOnly"]')?.textContent?.replace(/\s+/g, ' ').trim() || '',
+        comparedOnlyControls: document.querySelectorAll('#rawJson,#reflectJsonBtn,#reflectJsonCopyBtn,#srcJsonBtn,#tgtJsonBtn,[data-report-tab="settingsLike"],#settingsLikeRoot,#fieldDetailModal').length,
+        comparisonConditions: [...document.querySelectorAll('[data-applied-ignore],[data-applied-normalization]')]
+          .map((element) => element.textContent?.replace(/\s+/g, ' ').trim() || '').join(' '),
         subjectiveControls: subjectiveControls.length
       };
     });
@@ -654,6 +673,9 @@ async function captureReport(context, variant, reportFile, outDir) {
     assert.equal(reportContract.objectiveCounts, 1, 'after: HTMLレポートの客観件数領域がありません');
     assert.equal(reportContract.reportWorkspace, 1, 'after: HTMLレポートの全体workspace契約がありません');
     assert.equal(reportContract.reviewWorkspace, 1, 'after: HTMLレポートのレビューworkspace契約がありません');
+    assert.equal(reportContract.comparedOnlyControls, 0, 'after: 差分行のみHTMLに比較設定専用の操作が残っています');
+    assert.match(reportContract.disclosureText, /全設定.*未収録[\s\S]*匿名化.*ではありません/, 'after: 差分行のみHTMLの収録範囲と安全上の注意が不足しています');
+    assert.match(reportContract.comparisonConditions, /無視[\s\S]*正規化/, 'after: HTMLに適用済み比較条件が常時表示されません');
     assert.ok(reportContract.existenceChips > 0, 'after: HTMLレポートに存在状況の表示がありません');
     assert.ok(reportContract.differenceChips > 0, 'after: HTMLレポートに差分内容の表示がありません');
     assert.equal(reportContract.subjectiveControls, 0, 'after: HTMLレポートに影響度・重要度の操作UIが残っています');
@@ -1049,8 +1071,8 @@ async function captureReport(context, variant, reportFile, outDir) {
     await page.screenshot({ path: path.join(outDir, `${variant}-report-fields.png`), fullPage: false, animations: 'disabled' });
     dom.fieldCards = await page.locator('#settingsLikeRoot .sl-item').count();
   } else {
-    // 安全共有向け(diffOnly)ではフィールド単位タブを意図的に収録しない。
-    // 比較indexの画像参照を切らさないため、現在の安全モード画面を代替保存する。
+    // 差分行のみ(diffOnly)では比較設定本文を収録しないため、フィールド単位タブも生成しない。
+    // 比較indexの画像参照を切らさないため、現在の差分一覧画面を代替保存する。
     await page.screenshot({ path: path.join(outDir, `${variant}-report-fields.png`), fullPage: false, animations: 'disabled' });
     dom.fieldCards = 0;
   }
@@ -1123,6 +1145,16 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     ]);
     assert.ok(contextHeader, 'after: 比較元・比較先の方向を示す領域が見つかりません');
     assert.match(await contextHeader.textContent(), /比較元[\s\S]*比較先/, 'after: 比較方向が客観的な比較元/比較先として表示されません');
+    const resultOverview = page.locator('#kus-diff-lite [aria-label="比較結果サマリー"]');
+    assert.equal(await resultOverview.count(), 1, 'after: 比較結果サマリーが一意に見つかりません');
+    assert.match(await resultOverview.textContent(), /適用した比較条件/, 'after: 実行時の無視・正規化条件が結果に常時表示されません');
+    const completionReview = page.locator('#kus-diff-lite [data-kus-dl-completion="review"]');
+    const completionXlsx = page.locator('#kus-diff-lite [data-kus-dl-completion="xlsx"]');
+    assert.equal(await completionReview.isVisible(), true, 'after: 比較完了後の「結果を確認」が見えません');
+    assert.equal(await completionXlsx.isVisible(), true, 'after: 比較完了後の顧客向けExcel導線が見えません');
+    await completionReview.click();
+    assert.equal(await page.evaluate(() => document.activeElement?.hasAttribute('data-kus-dl-overview') || false), true,
+      'after: 「結果を確認」で完全性サマリーへフォーカスできません');
     assertPanelLayout(await inspectPanelLayout(page), 'after: デスクトップ');
 
     const typeFilter = page.locator('#kus-diff-lite select[aria-label="結果の種別絞り込み"]');

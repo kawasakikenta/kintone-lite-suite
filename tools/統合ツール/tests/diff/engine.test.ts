@@ -3,7 +3,8 @@ import {
   detectRowSeverity, isIgnoredKey, parseIgnoreRules,
   hasUniquePrimitiveKey, computeDiffRows,
   isNotationOnlyChange, isEmptyLikeValue,
-  countActualDiffRows, detectProcessStateRenames, summarizeRows,
+  countActualDiffRows, countActionableDiffRows,
+  detectProcessStateRenames, hasIncompleteActualDiffTruncation, summarizeRows,
   encodeExactIgnorePathRule, decodeExactIgnorePathRule
 } from '../../src/diff/engine';
 
@@ -367,7 +368,7 @@ describe('diff/engine', () => {
       return { source, target };
     };
 
-    it('keeps a display-only notice for a pure state rename without counting it as an actual difference', () => {
+    it('counts a pure state rename as a reviewable but non-actionable difference', () => {
       const { source, target } = processPair();
       const result = computeDiffRows(
         makeBundle({ processSettings: source }),
@@ -379,16 +380,18 @@ describe('diff/engine', () => {
       expect(result.rows).toHaveLength(1);
       expect(result.rows[0]).toMatchObject({
         type: 'changed',
-        _displayOnly: true,
+        _nonActionable: true,
         _stateRenameNotice: true,
         left: { name: '未処理' },
         right: { name: '受付' }
       });
-      expect(countActualDiffRows(result.rows)).toBe(0);
-      expect(summarizeRows(result.rows)).toMatchObject({ total: 0, added: 0, removed: 0, changed: 0, moved: 0 });
+      expect(result.rows[0]._displayOnly).toBeUndefined();
+      expect(countActualDiffRows(result.rows)).toBe(1);
+      expect(countActionableDiffRows(result.rows)).toBe(0);
+      expect(summarizeRows(result.rows)).toMatchObject({ total: 1, added: 0, removed: 0, changed: 1, moved: 0 });
     });
 
-    it('keeps the rename notice alongside another process change without inflating the breakdown', () => {
+    it('counts the rename notice alongside another process change without creating cascade noise', () => {
       const { source, target } = processPair();
       target.enable = false;
       const result = computeDiffRows(
@@ -401,8 +404,9 @@ describe('diff/engine', () => {
       expect(result.rows.filter((row: any) => row._stateRenameNotice)).toHaveLength(1);
       expect(result.rows.some((row: any) => row.path === 'processSettings.enable')).toBe(true);
       expect(result.rows.some((row: any) => row.type === 'added' || row.type === 'removed')).toBe(false);
-      expect(countActualDiffRows(result.rows)).toBe(1);
-      expect(summarizeRows(result.rows)).toMatchObject({ total: 1, added: 0, removed: 0, changed: 1, moved: 0 });
+      expect(countActualDiffRows(result.rows)).toBe(2);
+      expect(countActionableDiffRows(result.rows)).toBe(1);
+      expect(summarizeRows(result.rows)).toMatchObject({ total: 2, added: 0, removed: 0, changed: 2, moved: 0 });
     });
 
     it('does not infer renames when multiple unmatched states have identical bodies', () => {
@@ -578,6 +582,8 @@ describe('diff/engine', () => {
       );
       expect(result.rows.filter((r: any) => r.type !== 'same').length).toBe(1000);
       expect(result.truncation.truncated).toBe(true);
+      expect(result.truncation.actualDiffIncomplete).toBe(true);
+      expect(hasIncompleteActualDiffTruncation(result.truncation)).toBe(true);
       expect(result.truncation.diffLimit).toBe(1000);
       const section = result.truncation.sections.find((s: any) => s.sectionKey === 'fieldSettings');
       expect(section).toMatchObject({
@@ -678,8 +684,45 @@ describe('diff/engine', () => {
         ''
       );
       expect(result.truncation.truncated).toBe(false);
+      expect(result.truncation.actualDiffIncomplete).toBe(false);
       expect(result.truncation.droppedDiff).toBe(0);
       expect(result.truncation.sections).toEqual([]);
+    });
+
+    it('counts omitted same evidence without marking actual diff detection incomplete', () => {
+      const sourceProperties: Record<string, any> = {};
+      const targetProperties: Record<string, any> = {};
+      for (let i = 0; i < 3002; i += 1) {
+        sourceProperties[`f${i}`] = { code: `f${i}`, type: 'SINGLE_LINE_TEXT', label: `項目 ${i}` };
+        targetProperties[`f${i}`] = { code: `f${i}`, type: 'SINGLE_LINE_TEXT', label: `項目 ${i}` };
+      }
+      targetProperties.f0.label = '変更後';
+
+      const result = computeDiffRows(
+        makeBundle({ fieldSettings: { properties: sourceProperties } }),
+        makeBundle({ fieldSettings: { properties: targetProperties } }),
+        ['fieldSettings'],
+        '',
+        { includeSame: true }
+      );
+
+      expect(result.rows.filter((row: any) => row.type === 'same')).toHaveLength(3000);
+      expect(countActualDiffRows(result.rows)).toBe(1);
+      expect(result.truncation).toMatchObject({
+        truncated: true,
+        actualDiffIncomplete: false,
+        droppedDiff: 0,
+        droppedSame: 3,
+        sameLimit: 3000
+      });
+      expect(result.truncation.sections).toContainEqual(expect.objectContaining({
+        sectionKey: 'fieldSettings',
+        scanStatus: 'complete',
+        droppedDiff: 0,
+        droppedSame: 3,
+        omittedDiffCount: 0
+      }));
+      expect(hasIncompleteActualDiffTruncation(result.truncation)).toBe(false);
     });
   });
 });

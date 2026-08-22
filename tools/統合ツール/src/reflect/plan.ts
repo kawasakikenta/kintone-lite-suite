@@ -46,7 +46,7 @@ import {
   renderReflectMainPanel
 } from './helpers.js';
 import { buildPatchPayload, buildDiffHtml } from '../diff/export.js';
-import { getDiffNormalizationPresetState } from '../diff/engine.js';
+import { countActionableDiffRows, getDiffNormalizationPresetState } from '../diff/engine.js';
 import { loadJSZip } from '../tabs/record.js';
 
 /**
@@ -1660,7 +1660,7 @@ export async function runExportReviewZip(): Promise<void> {
     excludedSectionKeys,
     excludedSectionLabels: excludedLabels,
     totalPlannedRequests: includedRequests.length,
-    diffRowCount: (state.lastDiffRows || []).filter((row: any) => row && !row._displayOnly).length,
+    diffRowCount: countActionableDiffRows(state.lastDiffRows || []),
     partialIssueCount: (state.lastPartialIssues || []).length,
     partialIssues: state.lastPartialIssues || []
   };

@@ -14,7 +14,7 @@ import {
 } from './state.js';
 import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast, kusConfirm, kusPrompt, downloadText, buildExportFilename } from './utils.js';
 import { buildApiPrefix, apiGet } from './api.js';
-import { countActualDiffRows, getActualDiffRows, summarizeRows } from './diff/engine.js';
+import { countActualDiffRows, getActionableDiffRows, summarizeRows } from './diff/engine.js';
 import { getRenderedDiffRows } from './diff/filter.js';
 import {
   renderResultRows,
@@ -2917,7 +2917,7 @@ export function setupEventHandlers(injected: any = {}) {
     }
     if (act === 'applyScopeHighRisk') {
       const highRiskSections = new Set(
-        (getActualDiffRows(state.lastDiffRows || []) as any[])
+        (getActionableDiffRows(state.lastDiffRows || []) as any[])
           .filter((row: any) => String(row.severity || '').toLowerCase() === 'high')
           .map((row: any) => row.sectionKey)
           .filter(Boolean)

@@ -20,7 +20,7 @@ Playwrightハーネスは既定でChromeを使用します。`--browser chromium
 | --- | --- |
 | `npm run test:output-layouts` | HTML、Markdown、CSV、Mermaidなどの出力を合成データで生成 |
 | `npm run test:diff-multi-dom` | 複数比較先、途中失敗、二重実行防止を実ブラウザDOMで検証 |
-| `npm run test:diff-compare` | `tools/差分比較.js` のHEAD版と作業ツリー版を比較。作業ツリー版は意味・操作契約、完全／不完全、差分0件、レビュー、出力、技術情報の初期折りたたみ、画面幅・倍率相当も検証 |
+| `npm run test:diff-compare` | `tools/差分比較.js` のHEAD版と作業ツリー版を比較。作業ツリー版は意味・操作契約、完全／不完全、差分0件、レビュー、出力、技術情報とモバイル差分値の初期折りたたみ、完了後CTA、画面幅・倍率相当も検証 |
 | `npm run test:er-compare` | `tools/ER図.js` のHEAD版と作業ツリー版を倍率・画面幅別に比較 |
 
 before/after比較は、作業ツリーの生成物を更新してから実行します。`--before-ref`、`--before-file`、`--after-file`、`--out`、`--browser` などの詳細は各スクリプトの `--help` を参照してください。

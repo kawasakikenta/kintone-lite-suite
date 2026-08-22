@@ -25,6 +25,13 @@ describe('diff/standalone imported bundles', () => {
     });
   });
 
+  it('rejects a single imported bundle when the explicitly entered app ID does not match', () => {
+    expect(() => pickSettingsBundle(
+      makeBundle('99', { fieldSettings: { properties: {} } }),
+      { appId: '1', sections: ['fieldSettings'] }
+    )).toThrow('設定JSON内に App 1 のバンドルが見つかりません');
+  });
+
   it.each([
     ['source', makeBundle('1', {}), makeBundle('2', { viewSettings: { views: { 一覧: { name: '一覧' } } } })],
     ['target', makeBundle('1', { viewSettings: { views: { 一覧: { name: '一覧' } } } }), makeBundle('2', {})]
@@ -89,6 +96,58 @@ describe('diff/standalone imported bundles', () => {
     expect(result.summary.text).toContain('結果は不完全');
     expect(result.summary.text).toContain('差分上限 1000件に到達');
     expect(statuses.at(-1)).toBe(result.summary.text);
+  });
+
+  it('reports omitted same evidence without calling the actual diff result incomplete', async () => {
+    const sourceProperties: Record<string, any> = {};
+    const targetProperties: Record<string, any> = {};
+    for (let i = 0; i < 3002; i += 1) {
+      sourceProperties[`field_${i}`] = { code: `field_${i}`, type: 'SINGLE_LINE_TEXT', label: `項目 ${i}` };
+      targetProperties[`field_${i}`] = { code: `field_${i}`, type: 'SINGLE_LINE_TEXT', label: `項目 ${i}` };
+    }
+    targetProperties.field_0.label = '変更後';
+
+    const result = await runDiffStandalone({
+      source: { appId: '1' },
+      target: { appId: '2' },
+      scopes: ['fieldSettings'],
+      includeSame: true,
+      importedSourceBundle: makeBundle('1', { fieldSettings: { properties: sourceProperties } }),
+      importedTargetBundle: makeBundle('2', { fieldSettings: { properties: targetProperties } })
+    });
+
+    expect(result.truncation).toMatchObject({ truncated: true, actualDiffIncomplete: false, droppedSame: 3 });
+    expect(result.summary.text).not.toContain('結果は不完全');
+    expect(result.summary.text).toContain('同一証跡 3件を上限により省略（実差分の走査は完了）');
+  });
+
+  it('does not claim the actual diff scan completed when diff and same limits are both reached', async () => {
+    const sourceProperties: Record<string, any> = {};
+    const targetProperties: Record<string, any> = {};
+    for (let i = 0; i < 3002; i += 1) {
+      const code = `a_same_${String(i).padStart(4, '0')}`;
+      sourceProperties[code] = { code, type: 'SINGLE_LINE_TEXT', label: `同一 ${i}` };
+      targetProperties[code] = { code, type: 'SINGLE_LINE_TEXT', label: `同一 ${i}` };
+    }
+    for (let i = 0; i < 1002; i += 1) {
+      const code = `z_removed_${String(i).padStart(4, '0')}`;
+      sourceProperties[code] = { code, type: 'SINGLE_LINE_TEXT', label: `削除 ${i}` };
+    }
+
+    const result = await runDiffStandalone({
+      source: { appId: '1' },
+      target: { appId: '2' },
+      scopes: ['fieldSettings'],
+      includeSame: true,
+      importedSourceBundle: makeBundle('1', { fieldSettings: { properties: sourceProperties } }),
+      importedTargetBundle: makeBundle('2', { fieldSettings: { properties: targetProperties } })
+    });
+
+    expect(result.truncation?.actualDiffIncomplete).toBe(true);
+    expect(Number(result.truncation?.droppedSame || 0)).toBeGreaterThan(0);
+    expect(result.summary.text).toContain('結果は不完全');
+    expect(result.summary.text).toMatch(/同一証跡 \d+件を上限により省略/);
+    expect(result.summary.text).not.toContain('実差分の走査は完了');
   });
 
   it('exposes an isolated source bundle for reuse across multi-target comparisons', async () => {

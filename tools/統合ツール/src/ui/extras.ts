@@ -46,6 +46,7 @@ import {
 } from '../diff/snapshot.js';
 import { renderReflectApplyChecklistStatus } from '../handlers/checklist.js';
 import { runExportDiffXlsx } from '../diff/xlsx-export.js';
+import { hasIncompleteActualDiffTruncation } from '../diff/engine.js';
 import { buildExportFilename, selectedScopeKeys } from '../utils.js';
 
 interface ExtrasGlobal {
@@ -1914,8 +1915,10 @@ function buildDiffReportContextLines(exportLabel: string, rows: any[]): string[]
   const issues = (state.lastFetchIssues || []).length;
   if (issues) lines.push(`- ⚠ API取得失敗: ${issues} 件（該当セクションは比較できていません）`);
   const truncation = (state as any).lastDiffTruncation;
-  if (truncation?.truncated) {
+  if (hasIncompleteActualDiffTruncation(truncation)) {
     lines.push(`- ⚠ 差分上限打ち切り: 上限 ${truncation.diffLimit} 件に達したため超過分は含まれていません（このレポートは不完全です）`);
+  } else if (Number(truncation?.droppedSame || 0) > 0) {
+    lines.push(`- ℹ 同一証跡の省略: ${Number(truncation.droppedSame)} 件（実差分の検出結果は完全です）`);
   }
   return lines;
 }

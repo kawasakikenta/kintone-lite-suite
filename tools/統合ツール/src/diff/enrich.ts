@@ -236,13 +236,24 @@ export function collectFieldDefinitions(properties: any, out: any = {}) {
   return out;
 }
 
+export function getImpactRefLogicalLocator(ref: any): string {
+  const path = String(ref?.path || '');
+  // 一覧の表示項目配列は並び替えによって添字だけが変わる。
+  // 表示用 path は維持し、重複判定だけを同じ論理設定へ寄せる。
+  return path.replace(/((?:^|\.)(?:fields|displayFields|columns))\[\d+\]$/, '$1[]');
+}
+
+function getImpactRefLogicalKey(ref: any): string {
+  return [ref?.sectionKey, ref?.kind, getImpactRefLogicalLocator(ref), ref?.label].join('|');
+}
+
 export function addFieldImpactRef(index, code, ref) {
   const fieldCode = String(code || '').trim();
   if (!fieldCode) return;
   if (!index.has(fieldCode)) index.set(fieldCode, []);
   const bucket = index.get(fieldCode);
-  const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join('|');
-  if (bucket.some((item) => [item.sectionKey, item.kind, item.path, item.label].join('|') === sig)) return;
+  const sig = getImpactRefLogicalKey(ref);
+  if (bucket.some((item) => getImpactRefLogicalKey(item) === sig)) return;
   bucket.push(ref);
 }
 
@@ -443,7 +454,7 @@ export function buildStatusImpactIndex(sourceBundle: any, targetBundle: any = nu
     const actions = Array.isArray(proc.actions) ? proc.actions : [];
     actions.forEach((act: any, idx: number) => {
       if (!act || typeof act !== 'object') return;
-      const label = String(act.name || `遷移 #${idx}`);
+      const label = String(act.name || `遷移 #${idx + 1}`);
       if (typeof act.from === 'string' && act.from) {
         add(act.from, {
           sectionKey: 'processSettings',
@@ -497,7 +508,7 @@ export function resolveRowImpactRefs(row, impactIndex, statusImpactIndex: Map<st
   const seen = new Set();
   codes.forEach((code) => {
     (impactIndex.get(code) || []).forEach((ref: any) => {
-      const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join('|');
+      const sig = getImpactRefLogicalKey(ref);
       if (seen.has(sig)) return;
       seen.add(sig);
       refs.push(ref);
@@ -505,7 +516,7 @@ export function resolveRowImpactRefs(row, impactIndex, statusImpactIndex: Map<st
   });
   stateNames.forEach((name) => {
     (statusImpactIndex?.get(name) || []).forEach((ref: any) => {
-      const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join('|');
+      const sig = getImpactRefLogicalKey(ref);
       if (seen.has(sig)) return;
       seen.add(sig);
       refs.push(ref);
@@ -767,7 +778,8 @@ const SECTION_PROP_LABELS: Record<string, Record<string, string>> = {
   layoutSettings: {
     type: '種別', code: 'フィールドコード', fields: 'フィールド',
     elementId: '要素ID', label: 'ラベル', value: '初期値',
-    layout: 'レイアウト', size: 'サイズ', width: '横幅', height: '高さ'
+    layout: 'レイアウト', size: 'サイズ', width: '横幅', height: '高さ',
+    innerHeight: '入力欄の高さ'
   },
   appSettings: {
     name: 'アプリ名', description: '説明', icon: 'アイコン', theme: 'テーマ',
@@ -860,7 +872,7 @@ export function extractEntityContext(row: any): DiffEntityContext {
         const name = (row?.arrayKey === 'name' && row?.arrayKeyValue != null)
           ? String(row.arrayKeyValue)
           : String((payload && typeof payload === 'object' && (payload as any).name) || '');
-        const label = name || `遷移 #${tokens[2]}`;
+        const label = name || `遷移 #${tokens[2] + 1}`;
         return { entityKind: 'action', entityLabel: label, entityCode: name, propLabel };
       }
       return empty;
@@ -870,7 +882,7 @@ export function extractEntityContext(row: any): DiffEntityContext {
         const name = (row?.arrayKey === 'name' && row?.arrayKeyValue != null)
           ? String(row.arrayKeyValue)
           : String((payload && typeof payload === 'object' && (payload as any).name) || '');
-        const label = name || `アクション #${tokens[2]}`;
+        const label = name || `アクション #${tokens[2] + 1}`;
         return { entityKind: 'appAction', entityLabel: label, entityCode: name, propLabel };
       }
       return empty;
@@ -880,7 +892,7 @@ export function extractEntityContext(row: any): DiffEntityContext {
       if (tokens[1] === 'rights' && typeof tokens[2] === 'number') {
         let entityRef: any = (row?.arrayKey === 'entity' && row?.arrayKeyValue && typeof row.arrayKeyValue === 'object') ? row.arrayKeyValue : null;
         if (!entityRef) entityRef = (payload && typeof payload === 'object') ? (payload as any).entity : null;
-        const label = describeAclEntity(entityRef) || `エントリー #${tokens[2]}`;
+        const label = describeAclEntity(entityRef) || `エントリー #${tokens[2] + 1}`;
         const code = String(entityRef?.code || '');
         const kind = sectionKey === 'appAcl' ? 'aclEntry' : 'recordAclEntry';
         return { entityKind: kind, entityLabel: label, entityCode: code, propLabel };
@@ -902,7 +914,7 @@ export function extractEntityContext(row: any): DiffEntityContext {
             return { entityKind: 'fieldAclEntry', entityLabel: label, entityCode: fc || String(ent?.code || ''), propLabel };
           }
         }
-        const label = fc || `エントリー #${tokens[2]}`;
+        const label = fc || `エントリー #${tokens[2] + 1}`;
         return { entityKind: 'fieldAclEntry', entityLabel: label, entityCode: fc, propLabel };
       }
       return empty;
@@ -934,7 +946,7 @@ export function extractEntityContext(row: any): DiffEntityContext {
         if (!label && row?.arrayKey === 'title' && row?.arrayKeyValue != null) {
           label = String(row.arrayKeyValue);
         }
-        if (!label) label = `通知 #${tokens[2]}`;
+        if (!label) label = `通知 #${tokens[2] + 1}`;
         const kind = sectionKey === 'perRecordNotifications'
           ? 'perRecordNotification'
           : (sectionKey === 'reminderNotifications' ? 'reminderNotification' : 'notification');
@@ -954,7 +966,7 @@ export function extractEntityContext(row: any): DiffEntityContext {
           ? String(row.arrayKeyValue)
           : String((payload && typeof payload === 'object' && (payload as any).id) || '');
         const name = String((payload && typeof payload === 'object' && (payload as any).name) || '');
-        const label = name ? (id ? `${name} (${id})` : name) : (id || `プラグイン #${tokens[2]}`);
+        const label = name ? (id ? `${name} (${id})` : name) : (id || `プラグイン #${tokens[2] + 1}`);
         return { entityKind: 'plugin', entityLabel: label, entityCode: id, propLabel };
       }
       return empty;
@@ -986,10 +998,10 @@ export function extractEntityContext(row: any): DiffEntityContext {
       if (tokens[1] === 'layout' && typeof tokens[2] === 'number') {
         const obj = (payload && typeof payload === 'object') ? payload as any : {};
         const t = String(obj.type || '').toUpperCase();
-        let label = `行 #${tokens[2]}`;
+        let label = `行 #${tokens[2] + 1}`;
         if (t === 'GROUP' && obj.code) label = `グループ「${obj.code}」`;
         else if (t === 'SUBTABLE' && obj.code) label = `テーブル「${obj.code}」`;
-        else if (t === 'ROW') label = `行 #${tokens[2]}`;
+        else if (t === 'ROW') label = `行 #${tokens[2] + 1}`;
         return { entityKind: 'layoutRow', entityLabel: label, entityCode: String(obj.code || ''), propLabel };
       }
       return empty;

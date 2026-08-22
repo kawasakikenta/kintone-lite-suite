@@ -14,6 +14,8 @@ import {
   filterWritableFieldProps,
   convertLookupAppIds,
   extractReferencedAppIds,
+  inspectRowApplyPreflight,
+  isReservedReviewOnlyDiffRow,
   parsePatchJsonPayload,
   assertRetryApplyModeAllowed,
   summarizePatchPayloadForApplyGuard,
@@ -21,6 +23,9 @@ import {
   resolveVerificationExpectedSectionKeys
 } from '../../src/reflect/apply';
 import { tokenizePath } from '../../src/utils';
+import { state } from '../../src/state';
+import { queueDiffRowForReflect } from '../../src/tabs/reflect';
+import { assertProcessSectionApplySafe, hasProcessStateRenameNotice, resolveApplyScopes } from '../../src/reflect/helpers';
 
 // reflectRowDesiredValue は state.reflectNodeModes 未設定なら 'src' 扱いで row.left を返す。
 // 本テストでは left=desired, left:undefined=削除 という前提で行を組む。
@@ -141,6 +146,83 @@ describe('reflect/apply patch JSON normalization', () => {
 });
 
 describe('reflect/apply retry and patch safety guards', () => {
+  it('rejects reserved review-only rows at parse, preflight, and mutation boundaries', () => {
+    const reviewOnlyRow = {
+      type: 'changed',
+      path: 'processSettings.states.__rename__',
+      sourceValue: { name: '未処理' },
+      targetValue: { name: '受付' }
+    };
+
+    expect(isReservedReviewOnlyDiffRow(reviewOnlyRow, 'processSettings')).toBe(true);
+    expect(() => parsePatchJsonPayload({ sections: { processSettings: [reviewOnlyRow] } }))
+      .toThrow(/確認専用の差分/);
+    expect(inspectRowApplyPreflight({ processSettings: [reviewOnlyRow] }))
+      .toContainEqual(expect.objectContaining({ code: 'review-only-row' }));
+    expect(applyDiffRowToSection({ states: {} }, reviewOnlyRow, 'processSettings'))
+      .toMatchObject({ applied: false, op: 'skip', reason: 'review-only row' });
+  });
+
+  it('rejects an explicit non-actionable flag even when the path is not virtual', () => {
+    expect(() => parsePatchJsonPayload({
+      sections: {
+        processSettings: [{
+          type: 'changed', path: 'processSettings.enable', sourceValue: true, targetValue: false,
+          _nonActionable: true
+        }]
+      }
+    })).toThrow(/確認専用の差分/);
+  });
+
+  it('rejects a review-only process state rename before it enters the apply queue', () => {
+    const previousRows = state.lastDiffRows;
+    state.lastDiffRows = [{
+      _id: 'process-state-rename',
+      sectionKey: 'processSettings',
+      type: 'changed',
+      path: 'processSettings.states.__rename__',
+      _nonActionable: true
+    }];
+    try {
+      expect(() => queueDiffRowForReflect('process-state-rename'))
+        .toThrow('この差分は確認専用のため、反映対象にはできません');
+    } finally {
+      state.lastDiffRows = previousRows;
+    }
+  });
+
+  it('blocks section-wide process apply when a review-only state rename is present', () => {
+    const previousRows = state.lastDiffRows;
+    const previousSourceBundle = state.lastSourceBundle;
+    const previousTargetBundle = state.lastTargetBundle;
+    state.lastDiffRows = [{
+      _id: 'process-enable',
+      sectionKey: 'processSettings',
+      type: 'changed',
+      path: 'processSettings.enable',
+      left: true,
+      right: false
+    }];
+    state.lastSourceBundle = {
+      sections: { processSettings: { enable: true, states: { 未処理: { name: '未処理', index: '0' } }, actions: [] } }
+    } as any;
+    state.lastTargetBundle = {
+      sections: { processSettings: { enable: false, states: { 受付: { name: '受付', index: '0' } }, actions: [] } }
+    } as any;
+    try {
+      expect(hasProcessStateRenameNotice(state.lastDiffRows)).toBe(false);
+      expect(() => resolveApplyScopes(['processSettings', 'viewSettings']))
+        .toThrow(/状態名変更.*セクション全体の反映はできません/);
+      expect(() => assertProcessSectionApplySafe(['processSettings']))
+        .toThrow(/状態名変更.*セクション全体の反映はできません/);
+      expect(() => resolveApplyScopes(['viewSettings'])).not.toThrow();
+    } finally {
+      state.lastDiffRows = previousRows;
+      state.lastSourceBundle = previousSourceBundle;
+      state.lastTargetBundle = previousTargetBundle;
+    }
+  });
+
   it.each(['section', 'retry'])('allows section-wide retry after %s mode', (mode) => {
     expect(() => assertRetryApplyModeAllowed(mode)).not.toThrow();
   });

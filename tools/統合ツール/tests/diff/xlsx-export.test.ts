@@ -5,6 +5,8 @@ import {
   buildDiffXlsxFieldModel,
   type DiffXlsxContext
 } from '../../src/diff/xlsx-export';
+import { computeDiffRows } from '../../src/diff/engine';
+import { enrichDiffRows } from '../../src/diff/enrich';
 
 // 既存の内部監査版の回帰は明示的に internal として維持する。
 const buildDiffXlsxBlob = (ctx: DiffXlsxContext) => buildDiffXlsxBlobWithSafeDefault({ ...ctx, audience: ctx.audience || 'internal' });
@@ -120,7 +122,13 @@ describe('diff/xlsx-export', () => {
       '比較概要', '変更一覧'
     ]);
     expect(summary).toContain('kintone 設定差分確認レポート');
-    expect(summary).toContain('比較元：変更前アプリ  ／  比較先：変更後アプリ');
+    expect(summary).toContain('比較元\n変更前アプリ');
+    expect(summary).toContain('比較先\n変更後アプリ');
+    expect(summary).toMatch(/<c r="A1" s="6"/);
+    expect(summary).toMatch(/<c r="A2" s="16"/);
+    expect(summary).toMatch(/<c r="C2" s="32"/);
+    expect(summary).toMatch(/<c r="D2" s="17"/);
+    expect(summary).toMatch(/<c r="B3" s="19"/);
     expect(summary).toContain('比較結果');
     expect(summary).toContain('比較処理');
     expect(summary).toContain('正常完了（選択範囲）');
@@ -131,6 +139,10 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('比較条件の調整');
     expect(summary).toContain('変更一覧を開く');
     expect(summary).toContain('<hyperlink ref="F3" location="&apos;変更一覧&apos;!A2"');
+    expect(summary).toMatch(/<c r="F3" s="30"/);
+    expect(summary).toContain('<mergeCell ref="A2:B2"/>');
+    expect(summary).toContain('<mergeCell ref="D2:F2"/>');
+    expect(summary).toContain('zoomScale="100" zoomScaleNormal="100"');
     expect(summary).not.toContain('生成日時');
     expect(summary).not.toContain('取得日時');
     expect(summary).not.toContain('正規化設定');
@@ -145,14 +157,20 @@ describe('diff/xlsx-export', () => {
       expect(list).toMatch(new RegExp(`<c r="${cell}"[^>]*>[\\s\\S]*?${label}[\\s\\S]*?<\\/c>`));
     }
     expect((list.match(/<row r="/g) || []).length).toBe(3);
-    expect(list).toContain('<pane xSplit="3" ySplit="2" topLeftCell="D3" activePane="bottomRight" state="frozen"/>');
+    expect(list).toContain('<pane xSplit="4" ySplit="2" topLeftCell="E3" activePane="bottomRight" state="frozen"/>');
     expect(list).toContain('<autoFilter ref="A2:K3"/>');
+    expect(list).toContain('<mergeCell ref="A1:G1"/>');
+    expect(list).toContain('<mergeCell ref="H1:K1"/>');
+    expect(list).toContain('zoomScale="85" zoomScaleNormal="85"');
+    expect(list).toContain('orientation="landscape" fitToWidth="2" fitToHeight="0"');
+    expect(workbook).toContain('&apos;変更一覧&apos;!$2:$2,&apos;変更一覧&apos;!$A:$D');
     expect(list).toContain('sqref="H3:H3"');
     expect(list).toContain('顧客レビュー状況');
     expect(list).toContain('&quot;未レビュー,レビュー中,レビュー済み,対象外&quot;');
     expect(list).toContain('sqref="I3:I3"');
     expect(list).toContain('&quot;未判断,対応する,対応しない,保留,対象外&quot;');
-    for (const cell of ['H3', 'I3', 'J3', 'K3']) expect(list).toContain(`<c r="${cell}" s="11"`);
+    for (const cell of ['H3', 'I3']) expect(list).toContain(`<c r="${cell}" s="29"`);
+    for (const cell of ['J3', 'K3']) expect(list).toContain(`<c r="${cell}" s="11"`);
     expect(list).not.toContain('差分ID');
     expect(list).not.toContain('存在状況');
     expect(list).not.toContain('技術パス');
@@ -249,9 +267,36 @@ describe('diff/xlsx-export', () => {
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
       '比較概要', '変更一覧'
     ]);
-    expect(summary).toContain('正常完了（選択範囲）');
+    expect(summary).toContain('正常完了（同一証跡 5件を省略）');
+    expect(summary).toContain('5件（変更判定への影響なし）');
     expect(summary).not.toContain('比較未完了');
     expect(summary).not.toContain('一部未完了');
+  });
+
+  it('exports a process state rename as a customer-reviewable change without technical apply claims', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      scopes: ['processSettings'],
+      rows: [{
+        sectionKey: 'processSettings',
+        section: 'プロセス管理',
+        type: 'changed',
+        path: 'processSettings.states.__rename__',
+        left: { name: '未処理' },
+        right: { name: '受付' },
+        _nonActionable: true,
+        _stateRenameNotice: true
+      }]
+    });
+    const summary = await readWorksheetByName(blob, '比較概要');
+    const list = await readWorksheetByName(blob, '変更一覧');
+
+    expect(summary).toContain('変更あり');
+    expect(summary).toContain('1件');
+    expect(list).toContain('ステータス名');
+    expect(list).toContain('未処理');
+    expect(list).toContain('受付');
+    expect(list).toContain('確認専用で、自動反映の対象外です');
+    expect(list).not.toContain('processSettings.states.__rename__');
   });
 
   it('fails closed when diff truncation evidence exists without a true top-level flag', async () => {
@@ -466,7 +511,8 @@ describe('diff/xlsx-export', () => {
     const list = await readWorksheetByName(result.blob, '変更一覧');
     const allText = await readAllEntryText(result.blob);
 
-    expect(allText).toContain('比較元：Dept7 Sales2024  ／  比較先：Source');
+    expect(allText).toContain('比較元\nDept7 Sales2024');
+    expect(allText).toContain('比較先\nSource');
     expect(result.filename).toContain('Dept7 Sales2024_vs_Source');
     expect(result.filename).not.toContain('991122');
     expect(list).toContain('アプリ権限（2件の変更）');
@@ -612,7 +658,8 @@ describe('diff/xlsx-export', () => {
     const list = await readWorksheetByName(result.blob, '変更一覧');
     const allText = await readAllEntryText(result.blob);
 
-    expect(summary).toContain('比較元：Legit App 2024  ／  比較先：Source');
+    expect(summary).toContain('比較元\nLegit App 2024');
+    expect(summary).toContain('比較先\nSource');
     expect(summary).toContain('未記録');
     expect(result.filename).toContain('Legit App 2024_vs_Source');
     expect(list).toContain('フィールド / 必須項目にする');
@@ -1167,7 +1214,7 @@ describe('diff/xlsx-export', () => {
       expect(xml).not.toContain('最優先');
     }
     const styles = await readEntry(blob, 'xl/styles.xml');
-    expect(styles).toContain('<cellXfs count="18">');
+    expect(styles).toContain('<cellXfs count="37">');
     expect(styles).not.toContain('rgb="FFDCFCE7"');
     expect(styles).not.toContain('rgb="FFFDE68A"');
   });
@@ -1414,31 +1461,52 @@ describe('diff/xlsx-export', () => {
     expect(list).toMatch(/<c r="E3"[^>]*>[\s\S]*?レイアウト行 #1 \/ 横幅[\s\S]*?<\/c>/);
   });
 
-  it('uses one-based nested layout positions with field identity and Japanese innerHeight', async () => {
-    const list = await readWorksheetByName(buildDiffXlsxBlob({
-      targetBundle: {
-        sections: {
-          layoutSettings: {
-            layout: [{
-              type: 'ROW',
-              fields: [
-                { code: 'amount', label: '金額' },
-                { code: 'priority', label: '優先度', size: { innerHeight: 80 } }
-              ]
-            }]
-          }
+  it('keeps enriched one-based layout positions unchanged in the human-facing list', async () => {
+    const sourceBundle = {
+      appId: 1,
+      meta: { appName: '比較元アプリ' },
+      sections: {
+        layoutSettings: {
+          layout: [{
+            type: 'ROW',
+            fields: [
+              { code: 'amount', label: '金額' },
+              { code: 'priority', label: '優先度', size: { innerHeight: 60 } }
+            ]
+          }]
         }
-      },
-      rows: [{
-        sectionKey: 'layoutSettings', type: 'changed', severity: 'low',
-        path: 'layoutSettings.layout[0].fields[1].size.innerHeight', left: 60, right: 80,
-        reasonSummary: 'レイアウト行「行 #0」 / フィールド #1 / innerheight 変更'
-      }]
+      }
+    };
+    const targetBundle = {
+      appId: 2,
+      meta: { appName: '比較先アプリ' },
+      sections: {
+        layoutSettings: {
+          layout: [{
+            type: 'ROW',
+            fields: [
+              { code: 'amount', label: '金額' },
+              { code: 'priority', label: '優先度', size: { innerHeight: 80 } }
+            ]
+          }]
+        }
+      }
+    };
+    const computed = computeDiffRows(sourceBundle, targetBundle, ['layoutSettings'], '');
+    const rows = enrichDiffRows(computed.rows, sourceBundle, targetBundle);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].reasonSummary).toContain('行 #1');
+
+    const list = await readWorksheetByName(buildDiffXlsxBlob({
+      sourceBundle,
+      targetBundle,
+      rows
     }), '差分一覧');
 
     expect(list).toContain('レイアウト行 #1 / フィールド #2 「優先度」（priority） / 内側の高さ');
-    expect(list).toContain('レイアウト行「行 #1」 / フィールド #2 / 入力欄の高さ 変更');
+    expect(list).toContain('レイアウト行「行 #1」 / 入力欄の高さ 変更');
     expect(list).not.toContain('行 #0');
+    expect(list).not.toContain('行 #2');
     expect(list).not.toContain('innerheight');
   });
 
@@ -1753,6 +1821,38 @@ describe('diff/xlsx-export', () => {
     expect(issues).toContain('差分 1件（既知）');
     expect(issues).not.toContain('差分 0件以上');
     expect(issues).not.toContain('同一 0件以上');
+  });
+
+  it('keeps the internal workbook complete when only same evidence was omitted', async () => {
+    const blob = buildDiffXlsxBlob({
+      audience: 'internal',
+      scopes: ['appSettings'],
+      rows: [{ sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧', right: '新' }],
+      truncation: {
+        truncated: true,
+        actualDiffIncomplete: false,
+        diffLimit: 1000,
+        sameLimit: 3000,
+        droppedDiff: 0,
+        droppedSame: 5,
+        sections: [{
+          sectionKey: 'appSettings',
+          scanStatus: 'complete',
+          omittedDiffCount: 0,
+          droppedDiff: 0,
+          droppedSame: 5
+        }]
+      }
+    });
+    const workbook = await readEntry(blob, 'xl/workbook.xml');
+    const summary = await readWorksheetByName(blob, '概要');
+
+    expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).not.toContain('取得・未検証');
+    expect(summary).toContain('差分あり');
+    expect(summary).toContain('完全（差分走査済み / 同一証跡 5件を省略）');
+    expect(summary).toContain('同一証跡 5件を省略');
+    expect(summary).toContain('実差分の検出結果は完全です');
+    expect(summary).not.toContain('比較不完全（差分なしとは判断できません）');
   });
 
   it.each([

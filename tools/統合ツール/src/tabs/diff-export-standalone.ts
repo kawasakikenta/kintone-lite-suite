@@ -42,8 +42,8 @@ export function buildDiffHtmlStandaloneExport(ctx) {
   const exportLabel = ctx.exportLabel || (exportMode === 'all' ? '全差分' : '表示中（フィルタ適用後）');
   const exportContentMode = ctx.exportContentMode === 'withCompared' ? 'withCompared' : 'diffOnly';
   const exportContentLabel = ctx.exportContentLabel || (exportContentMode === 'withCompared'
-    ? '比較設定込み（フィールド詳細・反映JSON）'
-    : '差分行のみ（安全共有向け）');
+    ? '比較設定込み（取扱注意）'
+    : '差分行のみ（全設定は未収録）');
   const html = buildDiffHtml(ctx.sourceBundle, ctx.targetBundle, rows, scopes, ctx.ignoreKeys || '', {
     fetchIssues,
     partialIssues,

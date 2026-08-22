@@ -5,7 +5,7 @@ import { state, ui } from '../state.js';
 import { esc, deepClone, normalize, downloadText, readTextFile, kusConfirm, showToast, buildExportFilename } from '../utils.js';
 import { apiGet, fetchBundle, buildApiPrefix, pickBundleSections } from '../api.js';
 import {
-  getActualDiffRows,
+  getActionableDiffRows,
   countActualDiffRows,
   getDiffNormalizationPresetState
 } from '../diff/engine.js';
@@ -116,7 +116,7 @@ export function setActiveReflectNode(rowId, options: any = {}) {
 export function loadReflectRowsFromLastDiff() {
   if (!state.lastDiffRows.length) throw new Error('先に差分比較を実行してください');
   const putKeys = new Set(SECTION_DEFS.filter((d) => d.put).map((d) => d.key));
-  const rows = getActualDiffRows(state.lastDiffRows)
+  const rows = getActionableDiffRows(state.lastDiffRows)
     .filter((r) => putKeys.has(r.sectionKey))
     .map((r, idx) => ({ ...r, _id: `n${idx}` }));
   state.reflectRows = rows;
@@ -165,6 +165,7 @@ export function queueDiffRowForReflect(diffRowId, options: any = {}) {
   if (!diffRowId) throw new Error('対象の差分行が指定されていません');
   const diffRow = (state.lastDiffRows || []).find((r) => r && r._id === diffRowId);
   if (!diffRow) throw new Error('対応する差分行が見つかりませんでした（差分比較を再実行してください）');
+  if (diffRow._nonActionable) throw new Error('この差分は確認専用のため、反映対象にはできません');
   const putKeys = new Set(SECTION_DEFS.filter((d) => d.put).map((d) => d.key));
   if (!putKeys.has(diffRow.sectionKey)) {
     throw new Error(`このセクション「${SECTION_DEFS.find((d) => d.key === diffRow.sectionKey)?.label || diffRow.sectionKey || '-'}」は反映に対応していません`);
@@ -323,7 +324,7 @@ export function getEffectiveReflectScopeInfo() {
 
 export function getDiffCountsBySection() {
   const counts = {};
-  for (const row of getActualDiffRows(state.lastDiffRows || [])) {
+  for (const row of getActionableDiffRows(state.lastDiffRows || [])) {
     const key = row.sectionKey || '';
     if (!key) continue;
     if (!counts[key]) counts[key] = { total: 0, added: 0, removed: 0, changed: 0 };

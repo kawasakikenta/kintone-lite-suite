@@ -76,6 +76,51 @@ describe('diff/enrich (non-field improvements)', () => {
     });
   });
 
+  describe('enrichDiffRows: related setting deduplication', () => {
+    it('collapses source/target field-list positions without merging different views', () => {
+      const source = makeBundle({
+        fieldSettings: {
+          properties: {
+            subject: { type: 'SINGLE_LINE_TEXT', code: 'subject', label: '件名' },
+            owner: { type: 'USER_SELECT', code: 'owner', label: '担当者' }
+          }
+        },
+        viewSettings: {
+          views: {
+            案件一覧: { type: 'LIST', fields: ['subject', 'owner'] },
+            担当一覧: { type: 'LIST', fields: ['subject', 'owner'] }
+          }
+        }
+      });
+      const target = makeBundle({
+        fieldSettings: {
+          properties: {
+            subject: { type: 'SINGLE_LINE_TEXT', code: 'subject', label: '案件名' },
+            owner: { type: 'USER_SELECT', code: 'owner', label: '担当者' }
+          }
+        },
+        viewSettings: {
+          views: {
+            案件一覧: { type: 'LIST', fields: ['owner', 'subject'] },
+            担当一覧: { type: 'LIST', fields: ['owner', 'subject'] }
+          }
+        }
+      });
+      const { rows } = computeDiffRows(source, target, ['fieldSettings'], '');
+      const enriched = enrichDiffRows(rows, source, target);
+      const fieldRow = enriched.find((r: any) => r.path === 'fieldSettings.properties.subject.label');
+
+      expect(fieldRow).toBeTruthy();
+      expect(fieldRow.impactCount).toBe(2);
+      expect(fieldRow.impactRefs).toHaveLength(2);
+      expect(fieldRow.impactSummary).toContain(':2');
+      expect(fieldRow.impactRefs.map((ref: any) => ref.path)).toEqual([
+        'viewSettings.views.案件一覧.fields[0]',
+        'viewSettings.views.担当一覧.fields[0]'
+      ]);
+    });
+  });
+
   describe('buildDiffReasonSummary: moved rows include positions', () => {
     it('includes from/to positions when available', () => {
       const summary = buildDiffReasonSummary({
@@ -118,6 +163,20 @@ describe('diff/enrich (non-field improvements)', () => {
   });
 
   describe('extractEntityContext', () => {
+    it('uses one-based layout positions and the same Japanese height label as Excel', () => {
+      const row = {
+        sectionKey: 'layoutSettings',
+        path: 'layoutSettings.layout[0].fields[1].size.innerHeight',
+        type: 'changed',
+        left: 60,
+        right: 80
+      };
+      const ctx = extractEntityContext(row);
+      expect(ctx.entityKind).toBe('layoutRow');
+      expect(ctx.entityLabel).toBe('行 #1');
+      expect(ctx.propLabel).toBe('入力欄の高さ');
+    });
+
     it('labels general notification rows by recipient entity', () => {
       const row = {
         sectionKey: 'notifications',

@@ -102,16 +102,20 @@ describe('diff lite result presentation', () => {
     const detailed = buildLiteDiffHtmlContext(current, current.rows, 'filtered', '表示中', 'withCompared');
 
     expect(safe.exportContentMode).toBe('diffOnly');
-    expect(safe.exportContentLabel).toBe('差分行のみ（安全共有向け）');
+    expect(safe.exportContentLabel).toBe('差分行のみ（全設定は未収録）');
     expect(detailed.exportContentMode).toBe('withCompared');
-    expect(detailed.exportContentLabel).toBe('比較設定込み（フィールド詳細・反映JSON）');
-    expect(getLiteHtmlExportContentLabel('unexpected')).toBe('差分行のみ（安全共有向け）');
+    expect(detailed.exportContentLabel).toBe('比較設定込み（取扱注意）');
+    expect(getLiteHtmlExportContentLabel('unexpected')).toBe('差分行のみ（全設定は未収録）');
   });
 
   it('keeps fetch failures and truncation in a warning state after export', () => {
     expect(isIncompleteLiteDiff({ fetchIssues: [{ sectionKey: 'pluginSettings' }], truncation: null })).toBe(true);
     expect(isIncompleteLiteDiff({ fetchIssues: [], partialIssues: [{ sectionKey: 'customizeSettings' }], truncation: null })).toBe(true);
     expect(isIncompleteLiteDiff({ fetchIssues: [], truncation: { truncated: true } })).toBe(true);
+    expect(isIncompleteLiteDiff({
+      fetchIssues: [],
+      truncation: { truncated: true, actualDiffIncomplete: false, droppedDiff: 0, droppedSame: 2 }
+    })).toBe(false);
     expect(isIncompleteLiteDiff({ fetchIssues: [], truncation: null })).toBe(false);
   });
 
@@ -122,13 +126,14 @@ describe('diff lite result presentation', () => {
       { type: 'changed' },
       { type: 'changed', moved: true },
       { type: 'same' },
-      { type: 'changed', _displayOnly: true }
+      { type: 'changed', _displayOnly: true },
+      { type: 'changed', _nonActionable: true }
     ] as any)).toEqual({
-      total: 6,
-      actual: 4,
+      total: 7,
+      actual: 5,
       added: 1,
       removed: 1,
-      changed: 2,
+      changed: 3,
       moved: 1,
       same: 1,
       displayOnly: 1
@@ -174,6 +179,8 @@ describe('diff lite result presentation', () => {
     expect(html).toContain('ゲスト 3');
     expect(html).toContain('プレビュー');
     expect(html).toContain('data-kus-dl-completeness="complete"');
+    expect(html).toContain('id="kus-dl-overview"');
+    expect(html).toContain('data-kus-dl-overview tabindex="-1"');
     expect(html.indexOf('data-kus-dl-completeness')).toBeLessThan(html.indexOf('kus-dl-metrics'));
   });
 
@@ -204,7 +211,7 @@ describe('diff lite result presentation', () => {
     expect(navigationHtml).toContain('比較結果は不完全です');
   });
 
-  it('does not call a state-rename notice "no differences"', () => {
+  it('counts a state rename as a difference while keeping it review-only', () => {
     const html = renderLiteDiffOverviewHtml(cache([{
       sectionKey: 'processSettings',
       section: 'プロセス管理',
@@ -212,13 +219,35 @@ describe('diff lite result presentation', () => {
       type: 'changed',
       left: { name: '未処理' },
       right: { name: '受付' },
-      _displayOnly: true,
+      _nonActionable: true,
       _stateRenameNotice: true
     }]));
 
-    expect(html).toContain('状態名の変更候補が 1 件');
+    expect(html).toContain('差分が 1 件見つかりました');
+    expect(html).toContain('内容変更 1');
     expect(html).not.toContain('差分はありません');
-    expect(html).toContain('削除・追加としては数えていません');
+  });
+
+  it('keeps same-evidence-only truncation complete and explains the omission', () => {
+    const html = renderLiteDiffOverviewHtml(cache([{
+      sectionKey: 'appSettings', section: 'アプリ設定', path: 'appSettings.name',
+      type: 'changed', left: '旧', right: '新'
+    }], {
+      truncation: {
+        truncated: true,
+        actualDiffIncomplete: false,
+        diffLimit: 1000,
+        sameLimit: 3000,
+        droppedDiff: 0,
+        droppedSame: 2,
+        sections: [{ sectionKey: 'appSettings', scanStatus: 'complete', droppedDiff: 0, droppedSame: 2, omittedDiffCount: 0 }]
+      }
+    }));
+
+    expect(html).toContain('data-kus-dl-completeness="complete"');
+    expect(html).not.toContain('比較結果は不完全です');
+    expect(html).toContain('同一証跡は上限 3,000 件まで表示し、2 件を省略しました');
+    expect(html).toContain('実差分の検出結果は完全です');
   });
 
   it('states that visible results are after ignore rules were applied', () => {
@@ -226,6 +255,23 @@ describe('diff lite result presentation', () => {
     expect(html).toContain('無視ルール 2件を適用した後の結果');
     expect(html).toContain('ルールに一致した設定差分は一覧に含まれません');
     expect(html).toContain('完全パス/パターン 1件');
+    expect(html).toContain('正規化は適用していません');
+  });
+
+  it('always states the applied ignore and normalization comparison conditions', () => {
+    const applied = renderLiteDiffOverviewHtml(cache([], {
+      normalizationPresetState: { viewOrder: true, appearance: true, unknownPreset: true }
+    }));
+    const none = renderLiteDiffOverviewHtml(cache([]));
+
+    expect(applied).toContain('適用した比較条件');
+    expect(applied).toContain('無視ルールは適用していません');
+    expect(applied).toContain('正規化 2件を適用しています');
+    expect(applied).toContain('ビュー/グラフ/アクション順序');
+    expect(applied).toContain('見た目/幅/座標');
+    expect(applied).not.toContain('unknownPreset');
+    expect(none).toContain('無視ルールは適用していません');
+    expect(none).toContain('正規化は適用していません');
   });
 
   it('renders semantic Japanese labels and clearly labeled before/after values', () => {
@@ -331,6 +377,29 @@ describe('diff lite result presentation', () => {
     expect(buildLiteDiffRowKey(row)).not.toBe(buildLiteDiffRowKey({ ...row, type: 'removed' }));
   });
 
+  it('assigns unique navigation and disclosure ids to multiple process state renames', () => {
+    const first = {
+      sectionKey: 'processSettings', section: 'プロセス管理', type: 'changed',
+      path: 'processSettings.states.__rename__', left: { name: 'a:b' }, right: { name: 'c' },
+      _stateRenameNotice: true, _nonActionable: true,
+      renameCandidate: { id: 'state-rename:a:b:c' }
+    } as any;
+    const second = {
+      ...first,
+      left: { name: 'a' }, right: { name: 'b:c' },
+      renameCandidate: { id: 'state-rename:a:b:c' }
+    } as any;
+    const firstKey = buildLiteDiffRowKey(first);
+    const secondKey = buildLiteDiffRowKey(second);
+    const html = renderRowsHtml([first, second], false, '', [first, second]);
+
+    expect(firstKey).not.toBe(secondKey);
+    expect(html).toContain(`data-kus-dl-row-key="${firstKey}"`);
+    expect(html).toContain(`data-kus-dl-row-key="${secondKey}"`);
+    expect(html).toContain(`aria-controls="kus-dl-row-values-${firstKey}"`);
+    expect(html).toContain(`aria-controls="kus-dl-row-values-${secondKey}"`);
+  });
+
   it('filters rows only by factual section, type, and keyword, not internal severity', () => {
     const row = {
       sectionKey: 'appAcl', section: 'アプリ権限', path: 'appAcl.rights[0].recordViewable',
@@ -378,10 +447,29 @@ describe('diff lite result presentation', () => {
     expect(openHtml).toContain('tabindex="-1"');
     expect(openHtml).toContain('aria-current="true"');
     expect(openHtml).toContain('data-kus-dl-ignore-path="fieldSettings.properties.customer.label"');
+    expect(openHtml).toContain('aria-label="フィールド設定の表示名を次回の比較から除外（無視ルールへ追加）"');
     expect(openHtml).toContain('data-side-label="比較元の値"');
     expect(openHtml).toContain('data-side-label="比較先の値"');
+    expect(openHtml).toContain(`data-kus-dl-mobile-row-toggle="${rowKey}"`);
+    expect(openHtml).toContain(`aria-controls="kus-dl-row-values-${rowKey}"`);
+    expect(openHtml).toContain('aria-expanded="false"');
+    expect(openHtml).toContain('比較元・比較先の値を確認');
     expect(openHtml).toContain('data-kus-dl-section-key="fieldSettings" open');
     expect(closedHtml).not.toContain('data-kus-dl-section-key="fieldSettings" open');
+  });
+
+  it('preserves an explicitly expanded mobile row and uses an item-specific accessible label', () => {
+    const row = {
+      sectionKey: 'appSettings', section: 'アプリ設定', path: 'appSettings.name',
+      type: 'changed', reasonSummary: 'アプリ名の変更', left: '旧名称', right: '新名称'
+    } as any;
+    const rowKey = buildLiteDiffRowKey(row);
+    const html = renderRowsHtml([row], false, '', [row], { expandedRowKeys: new Set([rowKey]) });
+
+    expect(html).toContain(`data-kus-dl-mobile-row-toggle="${rowKey}"`);
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('aria-label="名前: 旧名称 → 新名称の比較元・比較先の値を閉じる"');
+    expect(html).toContain(`id="kus-dl-row-values-${rowKey}" class="kus-dl-row__cols is-expanded"`);
   });
 
   it('offers literal exact-path ignore for wildcard and delimiter characters', () => {

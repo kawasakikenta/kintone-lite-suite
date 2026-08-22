@@ -5,6 +5,7 @@ import { pickSettingsBundle } from '../settingsBundleImport.js';
 import {
   computeDiffRows,
   countActualDiffRows,
+  hasIncompleteActualDiffTruncation,
   summarizeRows
 } from '../diff/engine.js';
 import { enrichDiffRows } from '../diff/enrich.js';
@@ -134,12 +135,17 @@ export async function runDiffStandalone(opts) {
   const s = summarizeRows(rows);
   const warning = warningInfoForStandalone(rows, fetchIssues, partialIssues);
   const truncation = diffResult.truncation?.truncated ? diffResult.truncation : null;
+  const actualDiffTruncated = hasIncompleteActualDiffTruncation(truncation);
   const incompleteNotes = [
-    truncation ? `差分上限 ${truncation.diffLimit}件に到達` : '',
+    actualDiffTruncated ? `差分上限 ${truncation?.diffLimit}件に到達` : '',
     partialIssues.length ? `本文未検証 ${partialIssues.length}件` : ''
   ].filter(Boolean);
   const incompleteNote = incompleteNotes.length ? ` / ⚠ 結果は不完全（${incompleteNotes.join(' / ')}）` : '';
-  const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件 / 一部未検証 ${partialIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''}${incompleteNote} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved})`;
+  const droppedSame = Number(truncation?.droppedSame || 0);
+  const sameOmissionNote = droppedSame > 0
+    ? ` / 同一証跡 ${droppedSame}件を上限により省略${actualDiffTruncated ? '' : '（実差分の走査は完了）'}`
+    : '';
+  const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件 / 一部未検証 ${partialIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''}${incompleteNote}${sameOmissionNote} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved})`;
   onStatus(statusLine);
 
   return {

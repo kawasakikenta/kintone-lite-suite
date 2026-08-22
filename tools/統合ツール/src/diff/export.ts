@@ -11,10 +11,12 @@ import {
 } from '../utils.js';
 import { state, ui } from '../state.js';
 import {
-  getActualDiffRows, countActualDiffRows, parseIgnoreRules,
+  getActualDiffRows, getActionableDiffRows, countActualDiffRows,
+  hasIncompleteActualDiffTruncation, parseIgnoreRules,
   summarizeRows, summarizeFetchIssues,
   normalizeIgnoreToken, getPathLeafKey,
   getActiveDiffNormalizationLabels, normalizeSectionForCompare,
+  detectProcessStateRenames,
   expandSubtableRowsForDisplay,
   expandEntityRowsForDisplay
 } from './engine.js';
@@ -230,7 +232,9 @@ export function stringifyRowValueForDiff(value, path) {
 }
 
 export function getDiffExportContentLabel(mode) {
-  return mode === 'withCompared' ? '行データ + 比較設定' : '行データのみ';
+  return mode === 'withCompared'
+    ? '比較設定込み（取扱注意）'
+    : '差分行のみ（全設定は未収録）';
 }
 
 export function shouldIncludeComparedContent(mode) {
@@ -1170,7 +1174,9 @@ export function buildDiffExportPayload({
       ...typeSummary,
       fetchIssueCount: safeIssues.length,
       partialIssueCount: safePartialIssues.length,
-      incompleteComparison: safeIssues.length > 0 || safePartialIssues.length > 0 || !!truncation?.truncated,
+      incompleteComparison: safeIssues.length > 0
+        || safePartialIssues.length > 0
+        || hasIncompleteActualDiffTruncation(truncation),
       sectionCount: sectionSummaries.length,
       sectionsWithDiff: sectionSummaries.filter((item) => item.diffCount > 0).length,
       severity: summarizeSeverity(safeRows),
@@ -1182,8 +1188,8 @@ export function buildDiffExportPayload({
         total: typeSummary.diffCount + safeIssues.length + safePartialIssues.length,
         exceeded: false
       },
-      // 差分エンジンの上限打ち切り情報。truncated: true のとき、この出力は不完全。
-      truncation: truncation?.truncated ? truncation : null
+      // 差分/同一証跡の上限情報。同一証跡だけの省略は actualDiffIncomplete=false。
+      truncation: truncation || null
     },
     sectionSummaries,
     highlights: buildDiffHighlightRows(safeRows),
@@ -1958,7 +1964,7 @@ export function bundleToMarkdown(bundle: any) {
 
 export function buildPatchPayload(rows, sourceBundle, targetBundle) {
   const grouped = {};
-  const diffRows = getActualDiffRows(rows);
+  const diffRows = getActionableDiffRows(rows);
   for (const r of diffRows) {
     const section = r.section || '未分類';
     if (!grouped[section]) grouped[section] = [];
@@ -2140,7 +2146,6 @@ function diffHtmlReviewRowMaterial(row: any): Record<string, any> {
     path: String(row?.path || ''),
     type: String(row?.type || ''),
     moved: !!row?.moved,
-    severity: String(row?.severity || ''),
     arrayKey: String(row?.arrayKey || ''),
     arrayKeyValueDefined,
     arrayKeyValue: arrayKeyValueDefined ? row.arrayKeyValue : null,
@@ -2166,6 +2171,20 @@ function prepareDiffHtmlReviewRows(rows: any[]): { rows: any[]; reviewKeys: stri
   return { rows: keyedRows, reviewKeys };
 }
 
+/**
+ * diffOnly の差分行に、レポートUIで使用しない主観的な補助情報を収録しない。
+ * left/right の実データ内に同名キーが存在する可能性があるため、行自身と表示用子行だけを対象にする。
+ */
+function stripDiffHtmlSubjectiveRowMetadata(row: any): any {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
+  const { severity: _severity, impactSummary: _impactSummary, __childRows, ...rest } = row;
+  if (!Array.isArray(__childRows)) return rest;
+  return {
+    ...rest,
+    __childRows: __childRows.map(stripDiffHtmlSubjectiveRowMetadata)
+  };
+}
+
 function buildDiffHtmlReviewFingerprint(context: Record<string, any>, reviewKeys: string[]): string {
   const material = stableStringify({
     version: DIFF_HTML_REVIEW_STATE_VERSION,
@@ -2184,7 +2203,7 @@ function buildDiffHtmlReviewFingerprint(context: Record<string, any>, reviewKeys
 
 export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKeys, options: any = {}) {
   // 既存の直接呼び出しは後方互換のため比較設定込みとして扱う。実際のUI経由では
-  // 必ず exportContentMode を渡し、安全共有向けの diffOnly を既定にする。
+  // 必ず exportContentMode を渡し、全設定スナップショットを収録しない diffOnly を既定にする。
   const exportContentMode = options.exportContentMode === 'diffOnly' ? 'diffOnly' : 'withCompared';
   const includesComparedContent = shouldIncludeComparedContent(exportContentMode);
   const withSameSections = (() => {
@@ -2259,7 +2278,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const exportSelection = selectDiffHtmlRowsForExport(displayRows);
   const exportRows = exportSelection.rows;
   // レポート表示専用の短い日本語見出し。値は複製せず、辞書で変換した場所・項目名だけを
-  // 付与することで、安全共有モードや機密値のマスキング方針を変えない。
+  // 付与することで、diffOnly の収録範囲や機密値の扱いを変えない。
   const baseReportRows = exportRows.map((row) => {
     const decoded = decodeRow(row);
     if (!decoded) return row;
@@ -2271,7 +2290,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return title ? { ...row, _reportDisplayTitle: title } : row;
   });
   const preparedReviewRows = prepareDiffHtmlReviewRows(baseReportRows);
-  const reportRows = preparedReviewRows.rows;
+  const reportRows = includesComparedContent
+    ? preparedReviewRows.rows
+    : preparedReviewRows.rows.map(stripDiffHtmlSubjectiveRowMetadata);
   const sensitiveDiffSections = [...new Set(exportRows
     .filter((row) => !row?._displayOnly && row?.type !== 'same' && ['customizeSettings', 'pluginSettings'].includes(String(row?.sectionKey || '')))
     .map((row) => String(row.sectionKey)))] as string[];
@@ -2284,8 +2305,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
   /** kintone-ui-component UMD / Kucs グローバルと一致させる */
   const KUC_REPORT_VERSION = '1.24.0';
-  const engineTruncation = options.truncation?.truncated ? options.truncation : null;
-  const engineTruncationSections = Array.isArray(engineTruncation?.sections) ? engineTruncation.sections : [];
+  const engineTruncation = options.truncation || null;
+  const actualDiffTruncation = hasIncompleteActualDiffTruncation(engineTruncation) ? engineTruncation : null;
+  const engineTruncationSections = Array.isArray(actualDiffTruncation?.sections) ? actualDiffTruncation.sections : [];
   const partialTruncationSections = engineTruncationSections
     .filter((section: any) => diffTruncationScanStatusOf(section) === 'partial');
   const unscannedTruncationSections = engineTruncationSections
@@ -2308,7 +2330,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       ? `走査完了・未収録件数既知: ${completeKnownTruncationLabels.join('、')}。`
       : ''
   ].filter(Boolean).join(' ');
-  const diffNavRangeNote = !engineTruncation
+  const diffNavRangeNote = !actualDiffTruncation
     ? ''
     : partialTruncationLabels.length && unscannedTruncationLabels.length
       ? '（部分走査・未走査を含む・総件数不明）'
@@ -2318,8 +2340,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
           ? '（未走査を含む・件数不明）'
           : '（比較範囲不完全）';
   const incompleteComparisonWarnings = [
-    engineTruncation
-      ? `差分検出が上限 ${Number(engineTruncation.diffLimit || 0)} 件で打ち切られています。未検出の差分が存在します。${truncationRangeSummary ? ` ${truncationRangeSummary}` : ''}`
+    actualDiffTruncation
+      ? `差分検出が上限 ${Number(actualDiffTruncation.diffLimit || 0)} 件で打ち切られています。未検出の差分が存在します。${truncationRangeSummary ? ` ${truncationRangeSummary}` : ''}`
       : '',
     fetchIssues.length
       ? `設定取得に ${fetchIssues.length} 件失敗しています。取得失敗セクションは比較できていません。`
@@ -2331,12 +2353,24 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       ? `HTML収録上限により表示用展開後の行が ${exportSelection.summary.omittedRows} 件省略されています。`
       : ''
   ].filter(Boolean);
-  const canBuildReflectJson = includesComparedContent && incompleteComparisonWarnings.length === 0;
+  const visibleStateRenameNoticeCount = withSameSections.filter((row: any) => row?._stateRenameNotice).length;
+  const bundledStateRenameNoticeCount = (Array.isArray(scopes) && scopes.includes('processSettings'))
+    ? detectProcessStateRenames(
+      sourceBundle?.sections?.processSettings,
+      targetBundle?.sections?.processSettings
+    ).size
+    : 0;
+  const stateRenameNoticeCount = Math.max(visibleStateRenameNoticeCount, bundledStateRenameNoticeCount);
+  const canBuildReflectJson = includesComparedContent
+    && incompleteComparisonWarnings.length === 0
+    && stateRenameNoticeCount === 0;
   const reflectJsonBlockedReason = !includesComparedContent
     ? '差分行のみのレポートには比較設定が収録されていないため、反映JSONは作成できません'
-    : canBuildReflectJson
-      ? ''
-      : '比較結果が不完全なため、反映JSONは作成できません。取得失敗や本文未検証、差分・HTML収録上限を解消して再比較してください';
+    : stateRenameNoticeCount > 0
+      ? 'プロセスの状態名変更を含むため、このレポートでは反映JSONを作成できません。プロセス管理はセクション全体を置き換えるAPIのため、状態名変更以外の選択にも改名が混入します。管理画面で手動確認してください'
+      : canBuildReflectJson
+        ? ''
+        : '比較結果が不完全なため、反映JSONは作成できません。取得失敗や本文未検証、差分・HTML収録上限を解消して再比較してください';
   const normalizationState = options.normalizationState || ({} as any);
   const sourceExportMeta = getBundleExportMeta(sourceBundle);
   const targetExportMeta = getBundleExportMeta(targetBundle);
@@ -2406,7 +2440,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     : '/k/v1/preview';
   const diffTotal = summary.added + summary.removed + summary.changed;
   const objectiveContentChangedCount = Math.max(0, summary.changed - summary.moved);
-  const stateRenameNoticeCount = withSameSections.filter((row: any) => row?._stateRenameNotice).length;
   const formatAppDisplay = (meta: any) => {
     const id = String(meta?.appId || '-');
     const name = String(meta?.appName || '').trim();
@@ -2427,15 +2460,35 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const advPresetChecksHtml = clientNormalizationPresets.map((preset) =>
     `<label class="chk adv-chk${preset.applied ? ' is-baked' : ''}"${preset.applied ? ' title="比較時に適用済みです（該当行はレポートに含まれていません）"' : ''}><input type="checkbox" data-preset-toggle="${esc(preset.key)}"${preset.applied ? ' checked disabled' : ''}> ${esc(preset.label)}を無視${preset.applied ? '<span class="adv-baked-tag">適用済</span>' : ''}</label>`
   ).join('');
+  const appliedIgnoreTokens = [...new Set(String(reportMeta.ignoreKeys || '')
+    .split(/[\n\r,、，;；]+/)
+    .map((token) => token.trim())
+    .filter(Boolean))];
+  const appliedIgnoreSummary = appliedIgnoreTokens.length
+    ? `比較時の無視キー ${appliedIgnoreTokens.length}件: ${appliedIgnoreTokens.join('、')}`
+    : '比較時の無視キー 0件（なし）';
+  const appliedNormalizationSummary = reportMeta.normalizationLabels.length
+    ? `比較時の正規化 ${reportMeta.normalizationLabels.length}件: ${reportMeta.normalizationLabels.join('、')}`
+    : '比較時の正規化 0件（なし）';
+  const contentDisclosureHtml = includesComparedContent
+    ? `<div class="report-content-disclosure report-content-disclosure--caution" data-content-disclosure="withCompared" role="note" aria-label="収録内容と反映方向"><strong>取扱注意: 比較設定込み</strong><span>比較設定・フィールド詳細・設定証跡JSONを収録しています。反映JSONは、比較元の設定値で比較先を上書きする方向です。${canBuildReflectJson ? '' : `反映JSONは利用できません。${esc(reflectJsonBlockedReason)}`}</span></div>`
+    : '<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note" aria-label="収録内容の注意"><strong>差分行のみ（全設定は未収録）</strong><span>全設定スナップショットは収録していませんが、変更された差分行の比較元・比較先の値は収録しています。匿名化・機密情報のマスキング済みではありません。顧客への受け渡しには顧客向けExcelを使用してください。</span></div>';
+  const stateRenameSafetyNoticeHtml = !stateRenameNoticeCount
+    ? ''
+    : visibleStateRenameNoticeCount === stateRenameNoticeCount
+      ? `<div class="warn">ℹ プロセスの状態名変更が ${stateRenameNoticeCount} 件あります。変更件数に含めていますが、プロセス管理はセクション全体を置き換えるAPIのため、このレポートでは反映JSON全体を無効にしています。管理画面で手動確認してください。</div>`
+      : `<div class="warn">ℹ 比較設定全体でプロセスの状態名変更を ${stateRenameNoticeCount} 件検出しました。この出力範囲には ${visibleStateRenameNoticeCount} 件を収録しているため、画面の変更件数は出力範囲に含まれる改名だけを数えています。プロセス管理はセクション全体を置き換えるAPIのため、このレポートでは反映JSON全体を無効にしています。管理画面で手動確認してください。</div>`;
   const noticesHtml = [
-    !includesComparedContent ? '<div class="warn"><b>🔒 安全共有向け: 差分行のみ・設定本文は未収録です。</b> 比較元/比較先の設定JSON、フィールド詳細、反映JSONはこのレポートでは利用できません。</div>' : '',
-    includesComparedContent && !canBuildReflectJson ? `<div class="warn"><b>⛔ 比較結果が不完全なため、反映JSONの選択・保存・コピーを無効にしています。</b> 比較元/比較先JSONは比較時の証跡として保存できます。</div>` : '',
+    includesComparedContent && incompleteComparisonWarnings.length > 0 ? `<div class="warn"><b>⛔ 比較結果が不完全なため、反映JSONの選択・保存・コピーを無効にしています。</b> 比較元/比較先JSONは比較時の証跡として保存できます。</div>` : '',
     warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? ' (超過)' : ''}</div>` : '',
     sensitiveDiffSections.length ? `<div class="warn">🔒 このHTMLには ${sensitiveDiffSections.map((key) => esc(sectionLabelMap[key] || key)).join('・')} の差分値（JS/CSS本文やプラグイン設定値を含む場合があります）が収録されています。共有先と保管場所を確認してください。取得時の内部キャッシュは重複収録していません。</div>` : '',
     redactedSensitiveSections.length ? `<div class="warn">🔒 ${redactedSensitiveSections.map((key) => esc(sectionLabelMap[key] || key)).join('・')} の同一行は、機密値を重複収録しないため値を省略しています。</div>` : '',
-    stateRenameNoticeCount ? `<div class="warn">ℹ プロセスの状態名変更候補が ${stateRenameNoticeCount} 件あります。参照先の連動変更をまとめた表示用通知のため、上の追加・削除・変更件数には含めていません。内容を確認してください。</div>` : '',
+    stateRenameSafetyNoticeHtml,
     reportMeta.truncated ? `<div class="warn">${reportMeta.rowSelection.categories.actualDiff.omitted ? '⚠ <b>収録上限により実差分も省略されているため、このレポートは不完全です。</b> ' : '※ 実差分を優先して収録しました。'}表示用展開後 ${reportMeta.rowSelection.expandedRows} 件のうち ${reportMeta.rowSelection.renderedRows} 件を収録し、${reportMeta.rowSelection.omittedRows} 件を省略しました（省略: 実差分 ${reportMeta.rowSelection.categories.actualDiff.omitted} 件 / 表示専用の補助行 ${reportMeta.rowSelection.categories.displayOnly.omitted} 件 / 同一行 ${reportMeta.rowSelection.categories.same.omitted} 件）。</div>` : '',
-    engineTruncation ? `<div class="warn">⚠ 差分件数が上限（${engineTruncation.diffLimit}件）に達したため、超過分は検出されておらずこのレポートに含まれていません。${partialTruncationLabels.length ? `<b>部分走査・総件数不明（表示件数は下限）: ${partialTruncationLabels.map((label) => esc(label)).join('・')}。</b>` : ''}${unscannedTruncationLabels.length ? `<b>未走査・件数不明: ${unscannedTruncationLabels.map((label) => esc(label)).join('・')}。</b>` : ''}${completeKnownTruncationLabels.length ? `<b>走査完了・未収録件数既知: ${completeKnownTruncationLabels.map((label) => esc(label)).join('・')}。</b>` : ''}<b>このレポートは不完全です。</b>無視キーやセクション絞り込みで差分を減らして再比較してください。</div>` : '',
+    actualDiffTruncation ? `<div class="warn">⚠ 差分件数が上限（${actualDiffTruncation.diffLimit}件）に達したため、超過分は検出されておらずこのレポートに含まれていません。${partialTruncationLabels.length ? `<b>部分走査・総件数不明（表示件数は下限）: ${partialTruncationLabels.map((label) => esc(label)).join('・')}。</b>` : ''}${unscannedTruncationLabels.length ? `<b>未走査・件数不明: ${unscannedTruncationLabels.map((label) => esc(label)).join('・')}。</b>` : ''}${completeKnownTruncationLabels.length ? `<b>走査完了・未収録件数既知: ${completeKnownTruncationLabels.map((label) => esc(label)).join('・')}。</b>` : ''}<b>このレポートは不完全です。</b>無視キーやセクション絞り込みで差分を減らして再比較してください。</div>` : '',
+    engineTruncation && !actualDiffTruncation && Number(engineTruncation.droppedSame || 0) > 0
+      ? `<div class="warn">ℹ 同一証跡は上限 ${Number(engineTruncation.sameLimit || 0)} 件まで収録し、${Number(engineTruncation.droppedSame || 0)} 件を省略しました。実差分の検出結果は完全です。</div>`
+      : '',
     partialIssues.length ? `<div class="warn">⚠ <b>本文未検証 ${partialIssues.length}件</b> — JS/CSS等の本文を取得できなかったため、該当項目は本文ではなく fileKey 等で比較しています。${partialIssues.map((issue) => `<div class="msg">${esc(issue.section || issue.sectionKey || '-')} / ${esc(getIssueSideLabel(issue.side))}: ${esc(issue.message || issue.reason || '本文を取得できませんでした')}</div>`).join('')}</div>` : '',
     fetchIssues.length ? `<details class="issue-box">
           <summary>API取得失敗 ${fetchIssues.length}件</summary>
@@ -2445,17 +2498,16 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
           </table>
         </details>` : ''
   ].filter(Boolean).join('');
-  const comparedContentDisabledAttrs = includesComparedContent
-    ? ''
-    : ' disabled aria-disabled="true" title="差分行のみのレポートには設定本文が収録されていません"';
   const reflectJsonDisabledAttrs = canBuildReflectJson
     ? ''
     : ` disabled aria-disabled="true" title="${esc(reflectJsonBlockedReason)}"`;
   const comparedContentModeNote = includesComparedContent
     ? (canBuildReflectJson
-      ? '比較設定込み（フィールド詳細・反映JSONを利用可能）'
-      : '比較設定込み（比較不完全のため反映JSONは無効）')
-    : '差分行のみ（安全共有向け・設定本文は未収録）';
+      ? '比較設定込み（取扱注意・反映JSONを利用可能）'
+      : stateRenameNoticeCount > 0
+        ? '比較設定込み（取扱注意・状態名変更の安全対策により反映JSONは無効）'
+        : '比較設定込み（取扱注意・比較不完全のため反映JSONは無効）')
+    : '差分行のみ（全設定は未収録）';
 
   // 比較設定込みを明示した場合だけ、レポート単体の設定JSON・フィールド詳細・
   // 反映JSON作成に必要な生セクションを埋め込む。diffOnly では空値だけを埋め込み、
@@ -3553,11 +3605,12 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   function renderFieldJsonBlockHtml(group, useCharDiff) {
     const toneCls = group.status === 'added' ? 'added' : group.status === 'removed' ? 'removed' : 'changed';
     const checked = selectedFieldCodes.has(group.code);
-    const selectable = CAN_BUILD_REFLECT_JSON && (group.rows || []).some((row) => row && row.type !== 'same' && !row._displayOnly);
+    const selectable = CAN_BUILD_REFLECT_JSON && (group.rows || []).some((row) => row && row.type !== 'same' && !row._displayOnly && !row._nonActionable);
     const reviewRow = group.reviewRow;
     const reviewKey = rowStateKey(reviewRow);
     const reviewable = isActionableReviewRow(reviewRow);
     const reviewed = isReviewRowComplete(reviewRow);
+    const fieldItemLabel = String(group.label || group.code || 'フィールド');
     rowLookup.set(reviewKey, reviewRow);
     let body;
     if (group.src && group.tgt) {
@@ -3583,12 +3636,12 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       +   '<span class="fj-spacer"></span>'
       +   (selectable
         ? '<label class="row-select' + (checked ? ' is-on' : '') + '" title="このフィールドを反映JSONの対象にする">'
-          + '<input type="checkbox" data-select-field="' + escHtml(group.code) + '"' + (checked ? ' checked' : '') + '> 選択</label>'
+          + '<input type="checkbox" data-select-field="' + escHtml(group.code) + '" aria-label="' + escHtml(fieldItemLabel + 'を反映JSONの対象に選択') + '"' + (checked ? ' checked' : '') + '> 選択</label>'
         : '<span class="muted" title="' + escHtml(CAN_BUILD_REFLECT_JSON ? '表示専用または同一のため反映対象にできません' : REFLECT_JSON_BLOCK_REASON) + '">'
           + (CAN_BUILD_REFLECT_JSON ? '反映対象外' : '反映利用不可') + '</span>')
       + (reviewable
-        ? (!reviewed ? '<button type="button" class="row-review-next" data-review-next="' + escHtml(reviewKey) + '">確認して次へ</button>' : '')
-          + '<label class="row-reviewed' + (reviewed ? ' is-on' : '') + '"><input type="checkbox" data-review-toggle="' + escHtml(reviewKey) + '"' + (reviewed ? ' checked' : '') + '> 確認済み</label>'
+        ? (!reviewed ? '<button type="button" class="row-review-next" data-review-next="' + escHtml(reviewKey) + '" aria-label="' + escHtml(fieldItemLabel + 'を確認済みにして次へ') + '">確認して次へ</button>' : '')
+          + '<label class="row-reviewed' + (reviewed ? ' is-on' : '') + '"><input type="checkbox" data-review-toggle="' + escHtml(reviewKey) + '" aria-label="' + escHtml(fieldItemLabel + 'を確認済みにする') + '"' + (reviewed ? ' checked' : '') + '> 確認済み</label>'
         : '<span class="row-display-only">表示専用</span>')
       + '</div>'
       + '<div class="fj-body">' + body + '</div>'
@@ -3805,7 +3858,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const expected = String(code || '');
     if (!expected) return false;
     return REPORT_ROWS.some((row) => {
-      if (!row || row.sectionKey !== FIELD_SECTION_KEY || row.type === 'same' || row._displayOnly) return false;
+      if (!row || row.sectionKey !== FIELD_SECTION_KEY || row.type === 'same' || row._displayOnly || row._nonActionable) return false;
       const info = extractFieldPathInfo(row.path);
       return !!info && (info.activeCode === expected || info.rootCode === expected);
     });
@@ -3817,7 +3870,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const app = String(REPORT_META.target.appId || '');
     const bySection = new Map();
     selectedRows.forEach((row) => {
-      if (!row || row._displayOnly || row.type === 'same') return;
+      if (!row || row._displayOnly || row._nonActionable || row.type === 'same') return;
       const key = row.sectionKey || '';
       if (!bySection.has(key)) bySection.set(key, []);
       bySection.get(key).push(row);
@@ -5350,21 +5403,21 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
             const tone = fieldStatusTone(group.status);
             const isActive = group.code === activeFieldCode;
             const isSelected = selectedFieldCodes.has(group.code);
-            const isReflectSelectable = CAN_BUILD_REFLECT_JSON && (group.fieldRows || []).some((row) => row && row.type !== 'same' && !row._displayOnly);
+            const isReflectSelectable = CAN_BUILD_REFLECT_JSON && (group.fieldRows || []).some((row) => row && row.type !== 'same' && !row._displayOnly && !row._nonActionable);
             return '<article class="fc-card fc-card--' + tone + (isActive ? ' is-active' : '') + '" id="field_card_' + idx + '">' +
               '<div class="fc-card-head">' +
                 '<span class="fd-status fd-status--' + tone + '">' + escHtml(fieldStatusLabel(group.status)) + '</span>' +
                 '<span class="fc-code">' + escHtml(group.code) + '</span>' +
                 (isReflectSelectable
                   ? '<label class="row-select' + (isSelected ? ' is-on' : '') + '" title="このフィールドを反映JSONの対象にする">' +
-                      '<input type="checkbox" data-select-field="' + escHtml(group.code) + '"' + (isSelected ? ' checked' : '') + '> 選択</label>'
+                      '<input type="checkbox" data-select-field="' + escHtml(group.code) + '" aria-label="' + escHtml(String(group.label || group.code) + 'を反映JSONの対象に選択') + '"' + (isSelected ? ' checked' : '') + '> 選択</label>'
                   : '<span class="muted" title="' + escHtml(CAN_BUILD_REFLECT_JSON ? '表示専用・同一・レイアウト参照のみのため反映対象にできません' : REFLECT_JSON_BLOCK_REASON) + '">' +
                       (CAN_BUILD_REFLECT_JSON ? '反映対象外' : '反映利用不可') + '</span>') +
               '</div>' +
               '<div class="fc-title">' + escHtml(group.label) + '</div>' +
               '<div class="fc-sub">' + escHtml(fieldTypeDisplayLabel(group.type)) + (group.parentTableCode ? ' / テーブル: ' + escHtml(group.parentTableLabel || group.parentTableCode) : '') + '</div>' +
               '<div class="fc-chip-row">' + renderFieldSummaryChips(group) + '</div>' +
-              '<button type="button" class="btn' + (isActive ? ' primary' : '') + '" data-field-select="' + escHtml(group.code) + '">' + escHtml(group.diffCount ? '設定差分を開く' : '設定を開く') + '</button>' +
+              '<button type="button" class="btn' + (isActive ? ' primary' : '') + '" data-field-select="' + escHtml(group.code) + '" aria-label="' + escHtml(String(group.label || group.code) + (group.diffCount ? 'の設定差分を開く' : 'の設定を開く')) + '">' + escHtml(group.diffCount ? '設定差分を開く' : '設定を開く') + '</button>' +
             '</article>';
           }).join('') : '<div class="no-diff">この種別に該当するフィールドがありません。</div>') +
         '</div>' +
@@ -5856,21 +5909,22 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const reviewed = isReviewRowComplete(row);
     const selected = selectedRows.has(key);
     const focused = key === diffFocusKey;
+    const rowItemLabel = reportRowTitle(row);
     const actionsHtml = '<span class="drow-actions">'
-      + '<button type="button" class="row-act" data-copy-path="' + escHtml(row.path || '') + '" title="設定パスをコピー">パス</button>'
-      + '<button type="button" class="row-act" data-copy-row="' + escHtml(key) + '" title="比較元・比較先の値をJSONでコピー">コピー</button>'
+      + '<button type="button" class="row-act" data-copy-path="' + escHtml(row.path || '') + '" title="設定パスをコピー" aria-label="' + escHtml(rowItemLabel + 'の設定パスをコピー') + '">パス</button>'
+      + '<button type="button" class="row-act" data-copy-row="' + escHtml(key) + '" title="比較元・比較先の値をJSONでコピー" aria-label="' + escHtml(rowItemLabel + 'の比較元・比較先の値をコピー') + '">コピー</button>'
       + (row.type !== 'same'
-          ? (CAN_BUILD_REFLECT_JSON && row.type !== 'same' && !row._displayOnly
+          ? (CAN_BUILD_REFLECT_JSON && row.type !== 'same' && !row._displayOnly && !row._nonActionable
           ? '<label class="row-select' + (selected ? ' is-on' : '') + '" title="この差分を反映JSONの対象にする">'
-            + '<input type="checkbox" data-select-toggle="' + escHtml(key) + '"' + (selected ? ' checked' : '') + '> 選択'
+            + '<input type="checkbox" data-select-toggle="' + escHtml(key) + '" aria-label="' + escHtml(rowItemLabel + 'を反映JSONの対象に選択') + '"' + (selected ? ' checked' : '') + '> 選択'
             + '</label>'
           : '')
           + (!row._displayOnly && !reviewed
-            ? '<button type="button" class="row-review-next" data-review-next="' + escHtml(key) + '" title="確認済みにして次の未確認差分へ移動（Rキー）">確認して次へ</button>'
+            ? '<button type="button" class="row-review-next" data-review-next="' + escHtml(key) + '" title="確認済みにして次の未確認差分へ移動（Rキー）" aria-label="' + escHtml(rowItemLabel + 'を確認済みにして次へ') + '">確認して次へ</button>'
             : '')
           + (!row._displayOnly
             ? '<label class="row-reviewed' + (reviewed ? ' is-on' : '') + '" title="確認済みにする（サイドバーの「確認済みを隠す」と連動）">'
-              + '<input type="checkbox" data-review-toggle="' + escHtml(key) + '"' + (reviewed ? ' checked' : '') + '> 確認済み'
+              + '<input type="checkbox" data-review-toggle="' + escHtml(key) + '" aria-label="' + escHtml(rowItemLabel + 'を確認済みにする') + '"' + (reviewed ? ' checked' : '') + '> 確認済み'
               + '</label>'
             : '<span class="row-display-only" title="取得状況などを示す表示専用行です">表示専用</span>')
         : '')
@@ -6157,6 +6211,40 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     scheduleDiffStickyOffsetSync();
   }
 
+  function jumpToReviewKey(key) {
+    if (!key) return;
+    typeFilterValue = 'all';
+    sectionFilterValue = 'all';
+    const search = document.getElementById('search');
+    const hideReviewed = document.getElementById('hideReviewed');
+    if (search) search.value = '';
+    if (hideReviewed) hideReviewed.checked = false;
+    const sourceRow = getDetailFilteredRows().find((row) => rowStateKey(row) === key);
+    if (sourceRow) collapsed.delete(sourceRow.sectionKey || sourceRow.section || '未分類');
+    diffFocusKey = '';
+    render();
+    requestAnimationFrame(() => {
+      const renderedKey = renderedReviewKey(key);
+      if (!renderedKey) {
+        showToast('対象の差分を現在の表示で開けませんでした');
+        return;
+      }
+      diffFocusKey = renderedKey;
+      focusDiffRow(renderedKey);
+      syncDiffNavPosition();
+    });
+  }
+
+  function jumpToFirstPendingReview() {
+    if (getActiveReportTab() !== 'diff') setActiveTab('diff');
+    const firstPending = getDetailFilteredRows().find((row) => isActionableReviewRow(row) && rowHasPendingReview(row));
+    if (!firstPending) {
+      focusReviewCompletion(syncReviewedStat(getDetailFilteredRows()));
+      return;
+    }
+    jumpToReviewKey(rowStateKey(firstPending));
+  }
+
   function handleMainClick(e) {
     const mobileToolbarToggle = e.target.closest('[data-mobile-toolbar-toggle]');
     if (mobileToolbarToggle) {
@@ -6171,27 +6259,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     }
     const reviewJump = e.target.closest('[data-review-jump]');
     if (reviewJump) {
-      const key = reviewJump.getAttribute('data-review-jump') || '';
-      typeFilterValue = 'all';
-      sectionFilterValue = 'all';
-      const search = document.getElementById('search');
-      const hideReviewed = document.getElementById('hideReviewed');
-      if (search) search.value = '';
-      if (hideReviewed) hideReviewed.checked = false;
-      const sourceRow = getDetailFilteredRows().find((row) => rowStateKey(row) === key);
-      if (sourceRow) collapsed.delete(sourceRow.sectionKey || sourceRow.section || '未分類');
-      diffFocusKey = '';
-      render();
-      requestAnimationFrame(() => {
-        const renderedKey = renderedReviewKey(key);
-        if (!renderedKey) {
-          showToast('対象の差分を現在の表示で開けませんでした');
-          return;
-        }
-        diffFocusKey = renderedKey;
-        focusDiffRow(renderedKey);
-        syncDiffNavPosition();
-      });
+      jumpToReviewKey(reviewJump.getAttribute('data-review-jump') || '');
       return;
     }
     const densityToggle = e.target.closest('[data-density-toggle]');
@@ -6435,7 +6503,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   document.getElementById('hideSame').onchange = onReportFilterChange;
   document.getElementById('charDiff').onchange = onReportFilterChange;
   document.getElementById('hideUnchangedLines').onchange = onReportFilterChange;
-  document.getElementById('rawJson').onchange = onReportFilterChange;
+  const rawJsonInput = document.getElementById('rawJson');
+  if (rawJsonInput) rawJsonInput.onchange = onReportFilterChange;
   document.getElementById('hideReviewed').onchange = onReportFilterChange;
   document.querySelectorAll('input[name="viewSide"]').forEach((radio) => {
     radio.addEventListener('change', () => {
@@ -6484,11 +6553,16 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       }
     };
   }
-  document.getElementById('reflectJsonBtn').onclick = () => exportReflectJson(false);
-  document.getElementById('reflectJsonCopyBtn').onclick = () => exportReflectJson(true);
-  document.getElementById('srcJsonBtn').onclick = () => exportComparedBundleJson('source');
-  document.getElementById('tgtJsonBtn').onclick = () => exportComparedBundleJson('target');
-  document.getElementById('settingsLikeRoot').addEventListener('change', handleSelectionChange);
+  const reflectJsonBtn = document.getElementById('reflectJsonBtn');
+  const reflectJsonCopyBtn = document.getElementById('reflectJsonCopyBtn');
+  const srcJsonBtn = document.getElementById('srcJsonBtn');
+  const tgtJsonBtn = document.getElementById('tgtJsonBtn');
+  const settingsLikeRoot = document.getElementById('settingsLikeRoot');
+  if (reflectJsonBtn) reflectJsonBtn.onclick = () => exportReflectJson(false);
+  if (reflectJsonCopyBtn) reflectJsonCopyBtn.onclick = () => exportReflectJson(true);
+  if (srcJsonBtn) srcJsonBtn.onclick = () => exportComparedBundleJson('source');
+  if (tgtJsonBtn) tgtJsonBtn.onclick = () => exportComparedBundleJson('target');
+  if (settingsLikeRoot) settingsLikeRoot.addEventListener('change', handleSelectionChange);
   const extraIgnoreInput = document.getElementById('extraIgnoreKeys');
   if (extraIgnoreInput) {
     extraIgnoreInput.addEventListener('input', () => {
@@ -6576,6 +6650,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     }
   });
   document.getElementById('main').addEventListener('click', handleMainClick);
+  const startPendingReviewBtn = document.getElementById('startPendingReviewBtn');
+  if (startPendingReviewBtn) startPendingReviewBtn.onclick = jumpToFirstPendingReview;
   document.getElementById('main').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const head = e.target.closest ? e.target.closest('[data-sec-toggle]') : null;
@@ -6827,10 +6903,10 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .topbar-title{font-size:clamp(1.12rem,2.2vw,1.42rem);font-weight:800;line-height:1.3;letter-spacing:-.02em;color:var(--fg)}
     .topbar-compare{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:9px;width:min(860px,100%)}
     .topbar-app-card{display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:center;gap:7px;padding:8px 11px;border:1px solid var(--border);border-top:3px solid var(--muted);border-radius:11px;background:var(--card);min-width:0}
-    .topbar-app-card--source{border-top-color:#dc2626;background:linear-gradient(180deg,#fff7f7,var(--card))}
-    .topbar-app-card--target{border-top-color:#16a34a;background:linear-gradient(180deg,#f0fdf4,var(--card))}
-    body.dark .topbar-app-card--source{background:linear-gradient(180deg,#2b1014,var(--card))}
-    body.dark .topbar-app-card--target{background:linear-gradient(180deg,#052e16,var(--card))}
+    .topbar-app-card--source{border-top-color:#475569;background:linear-gradient(180deg,#f8fafc,var(--card))}
+    .topbar-app-card--target{border-top-color:#2563eb;background:linear-gradient(180deg,#eff6ff,var(--card))}
+    body.dark .topbar-app-card--source{background:linear-gradient(180deg,#1e293b,var(--card))}
+    body.dark .topbar-app-card--target{background:linear-gradient(180deg,#172554,var(--card))}
     .topbar-app-eyebrow{font-size:9px;font-weight:900;letter-spacing:.08em;color:var(--fg)}
     .topbar-app-side{font-size:10px;font-weight:800;color:var(--muted);white-space:nowrap}
     .topbar-app-card strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--fg)}
@@ -6987,18 +7063,18 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .drow-head{display:flex;gap:9px;align-items:flex-start}
     .drow-title{flex:1;min-width:0}
     .drow-actions{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
-    .row-act{border:1px solid var(--border);background:var(--card-soft);color:var(--muted);border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer;transition:color .15s,border-color .15s}
+    .row-act{border:1px solid var(--border);background:var(--card-soft);color:var(--muted);border-radius:8px;padding:3px 9px;font-size:11px;font-weight:700;cursor:pointer;transition:color .15s,border-color .15s}
     .row-act:hover{color:var(--fg);border-color:var(--muted)}
     .row-act:focus-visible{outline:none;box-shadow:var(--focus)}
-    .row-review-next{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:4px 9px;font-size:10px;font-weight:800;cursor:pointer;white-space:nowrap}
+    .row-review-next{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap}
     .row-review-next:hover{filter:brightness(1.06)}
     .row-review-next:focus-visible{outline:none;box-shadow:var(--focus)}
-    .row-reviewed{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);color:var(--muted);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap}
+    .row-reviewed{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
     .row-reviewed input{width:12px;height:12px;accent-color:var(--accent);cursor:pointer;margin:0}
     .row-reviewed.is-on{background:#ecfdf5;color:#15803d;border-color:#86efac}
     body.dark .row-reviewed.is-on{background:#052e16;color:#86efac;border-color:#166534}
-    .row-display-only{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;border:1px dashed var(--border);background:var(--card-soft);color:var(--muted);font-size:10px;font-weight:700;white-space:nowrap}
-    .row-select{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);color:var(--muted);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap}
+    .row-display-only{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;border:1px dashed var(--border);background:var(--card-soft);color:var(--muted);font-size:11px;font-weight:700;white-space:nowrap}
+    .row-select{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
     .row-select input{width:12px;height:12px;accent-color:var(--accent);cursor:pointer;margin:0}
     .row-select.is-on{background:var(--accent-soft);color:var(--accent-strong);border-color:var(--accent)}
     .fj-list{display:flex;flex-direction:column;gap:12px}
@@ -7132,8 +7208,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:999px}
     .ln{min-width:34px;display:inline-block;text-align:right;margin-right:8px;padding-right:6px;border-right:1px solid var(--border);font-size:10px;color:var(--muted);user-select:none;flex-shrink:0}
     .blk{margin:0;padding:10px 12px;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.55;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-    mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:3px;padding:0 2px}
-    mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:3px;padding:0 2px}
+    mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:3px;padding:0 2px;text-decoration:underline 2px;text-underline-offset:2px}
+    mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:3px;padding:0 2px;text-decoration:line-through 2px}
     .sb-advanced .adv-summary{cursor:pointer;font-size:11px;font-weight:800;color:var(--fg);list-style:none;display:flex;align-items:center;gap:6px}
     .sb-advanced .adv-summary::-webkit-details-marker{display:none}
     .sb-advanced .adv-summary::before{content:"▸";display:inline-block;font-size:9px;color:var(--muted);transition:transform .15s}
@@ -7206,8 +7282,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     body.dark tr.kv-chg>td{background:#78350f;color:#fde68a}
     tr.kv-del>th,tr.kv-add>th,tr.kv-chg>th{box-shadow:inset 3px 0 0 #ca8a04}
     tr.kv-ghost>td,tr.kv-ghost>th{background:var(--pad);color:var(--muted);font-style:italic}
-    .sl-mini-table mark.cdel,.st-fields mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:2px;padding:0 1px}
-    .sl-mini-table mark.cadd,.st-fields mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:2px;padding:0 1px}
+    .sl-mini-table mark.cdel,.st-fields mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:2px;padding:0 1px;text-decoration:line-through 2px}
+    .sl-mini-table mark.cadd,.st-fields mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:2px;padding:0 1px;text-decoration:underline 2px;text-underline-offset:2px}
     .kf-row--diff .kf-value{border-color:#f59e0b;box-shadow:inset 3px 0 0 #f59e0b,inset 0 1px 2px rgba(15,23,42,.04);background:#fffbeb}
     body.dark .kf-row--diff .kf-value{background:#2a2008;border-color:#b45309}
     .kf-diff-chip{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:9px;font-weight:800;vertical-align:middle;white-space:nowrap}
@@ -7307,7 +7383,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .duo-cell.pad{display:none}
       .duo-head{display:none}
       .duo-cell[data-side-label]{align-items:flex-start;gap:8px;padding-top:5px;padding-bottom:5px}
-      .duo-cell[data-side-label]::before,.vi-val[data-side-label]::before{content:attr(data-side-label);display:inline-flex;flex:0 0 auto;align-items:center;padding:1px 6px;border:1px solid currentColor;border-radius:999px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:9px;font-weight:800;line-height:1.4;opacity:.78}
+      .duo-cell[data-side-label]::before,.vi-val[data-side-label]::before{content:attr(data-side-label);display:inline-flex;flex:0 0 auto;align-items:center;padding:1px 6px;border:1px solid currentColor;border-radius:999px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:11px;font-weight:800;line-height:1.4;opacity:.78}
       .vi-val[data-side-label]{display:inline-flex;align-items:baseline;gap:7px}
     }
     @media (max-width:560px){
@@ -7315,7 +7391,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .topbar{padding:12px 12px 13px;border-radius:15px}
       .topbar-title{font-size:1.12rem}
       .topbar-eyebrow-row{align-items:center}
-      .header-badge{padding:5px 8px;font-size:9px;line-height:1.2;white-space:nowrap;writing-mode:horizontal-tb}
+      .header-badge{padding:5px 8px;font-size:11px;line-height:1.2;white-space:nowrap;writing-mode:horizontal-tb}
       .topbar-compare{grid-template-columns:1fr;gap:4px}
       .topbar-arrow{height:14px;transform:rotate(90deg)}
       .topbar-app-card{grid-template-columns:auto auto minmax(0,1fr);padding:7px 9px}
@@ -7326,11 +7402,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .settings-tab{padding:7px 13px}
       .content{padding:8px}
       .report-notices{margin-bottom:8px}
-      .warn{padding:8px 9px;font-size:10px}
+      .warn{padding:8px 9px;font-size:11px}
       .review-queue{padding:8px 9px;gap:7px}
       .review-queue-mark{width:32px;height:32px;border-radius:10px;font-size:17px}
       .review-queue-main>strong{font-size:13px}
-      .review-queue-note{font-size:9px}
+      .review-queue-note{font-size:11px}
       .review-progress--queue{max-width:none}
       .review-progress-note,.review-queue-samples{display:none}
       .review-queue-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -7504,21 +7580,28 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .skip-link{position:fixed;left:12px;top:10px;z-index:120;transform:translateY(-160%);padding:10px 14px;border-radius:8px;background:var(--fg);color:var(--card);font-size:12px;font-weight:800;text-decoration:none}
     .skip-link:focus{transform:translateY(0);outline:3px solid var(--accent);outline-offset:2px}
     .report-hero,.report-workspace{width:min(calc(100% - 32px),1440px);margin-inline:auto}
-    .report-hero{display:flex;flex-direction:column;align-items:stretch;gap:18px;margin-top:20px;padding:24px;border-radius:18px;background:var(--card);box-shadow:0 12px 40px -28px rgba(15,23,42,.45);overflow:visible}
+    .report-hero{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);align-items:stretch;gap:14px 16px;margin-top:20px;padding:26px;border-radius:22px;background:linear-gradient(145deg,var(--card) 0%,color-mix(in srgb,var(--card) 90%,var(--accent-soft)) 100%);box-shadow:0 22px 56px -38px rgba(15,37,63,.62);overflow:visible}
     .report-hero::before{height:4px;background:var(--accent)}
-    .report-hero .topbar-main{gap:10px}
+    .report-hero .topbar-main{grid-column:1/-1;display:grid;grid-template-columns:minmax(260px,.78fr) minmax(480px,1.22fr);grid-template-rows:auto auto 1fr;align-items:start;gap:7px 28px}
+    .report-hero .topbar-eyebrow-row,.report-hero .topbar-title,.report-hero .topbar-lead{grid-column:1}
+    .report-hero .topbar-compare{grid-column:2;grid-row:1/4;align-self:stretch}
     .report-hero .topbar-title{margin:0;font-size:clamp(1.45rem,3vw,2rem)}
     .topbar-lead{max-width:72ch;margin:0;color:var(--muted);font-size:13px;line-height:1.7}
-    .report-hero .topbar-compare{width:100%;max-width:980px;gap:12px}
-    .report-hero .topbar-app-card{grid-template-columns:auto auto minmax(0,1fr);min-height:66px;padding:12px 14px;border-top:1px solid var(--border);border-left:4px solid #475569;background:var(--card-soft)}
+    .report-hero .topbar-compare{width:100%;max-width:none;gap:12px}
+    .report-hero .topbar-app-card{grid-template-columns:1fr;align-content:center;gap:3px;min-height:92px;padding:14px 16px;border-top:1px solid var(--border);border-left:4px solid #475569;background:var(--card-soft)}
     .report-hero .topbar-app-card--source{border-left-color:#475569;background:var(--card-soft)}
     .report-hero .topbar-app-card--target{border-left-color:var(--accent);background:var(--card-soft)}
     body.dark .report-hero .topbar-app-card--source,body.dark .report-hero .topbar-app-card--target{background:var(--card-soft)}
-    .report-hero .topbar-app-eyebrow{font-size:11px;letter-spacing:.04em}
-    .report-hero .topbar-app-side{font-size:10px}
+    .report-hero .topbar-app-eyebrow{font-size:12px;letter-spacing:.04em}
+    .report-hero .topbar-app-side{font-size:11px}
     .report-hero .topbar-app-card strong{font-size:14px;white-space:normal;overflow:visible;word-break:break-word}
-    .report-step-label{display:block;margin-bottom:3px;color:var(--muted);font-size:10px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}
-    .report-completeness{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px 14px;padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--card-soft)}
+    .report-content-disclosure{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 12px;padding:11px 14px;border:1px solid #d6b456;border-left:4px solid #9a6700;border-radius:12px;background:#fffaf0;color:#5f4300;font-size:12px;line-height:1.6}
+    .report-content-disclosure strong{white-space:nowrap;font-size:12px}
+    .report-content-disclosure--caution{border-color:#e0a06b;border-left-color:#b45309;background:#fff7ed;color:#7c2d12}
+    body.dark .report-content-disclosure{border-color:#8b6824;background:#2a210d;color:#fde68a}
+    body.dark .report-content-disclosure--caution{border-color:#9a5a24;background:#2f190d;color:#fed7aa}
+    .report-step-label{display:block;margin-bottom:3px;color:var(--muted);font-size:11px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}
+    .report-completeness{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px 14px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--card-soft)}
     .report-completeness--incomplete{border-color:#f0c36a;background:#fffaf0}
     .report-completeness--complete{border-color:#9bc8ac;background:#f4fbf6}
     body.dark .report-completeness--incomplete{border-color:#8b6824;background:#2a210d}
@@ -7532,15 +7615,25 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .report-diagnostics>summary{display:inline-flex;align-items:center;min-height:36px;color:var(--accent-strong);font-size:11px;font-weight:800;cursor:pointer}
     .report-diagnostics>summary:focus-visible,.tool-details-summary:focus-visible,.related-settings>summary:focus-visible{outline:none;box-shadow:var(--focus);border-radius:7px}
     .report-diagnostics .report-notices{margin:8px 0 0}
-    .report-facts{padding-top:2px}
+    .report-review-start{grid-column:1/-1;display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:16px;padding:13px 16px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--border));border-radius:16px;background:color-mix(in srgb,var(--accent-soft) 58%,var(--card))}
+    .report-review-start span{color:var(--muted);font-size:12px;line-height:1.65}
+    .report-review-start button{min-height:46px;padding:10px 16px;border:1px solid var(--accent);border-radius:11px;background:linear-gradient(180deg,#3b82f6,var(--accent));color:#fff;font-size:13px;font-weight:850;cursor:pointer;white-space:normal;box-shadow:0 10px 24px -16px rgba(37,99,235,.9)}
+    .report-review-start button:hover{filter:brightness(.96)}
+    .report-review-start button:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:3px}
+    .report-facts{grid-column:1/-1;padding-top:4px}
     .report-facts-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:10px}
     .report-facts-head>p{max-width:52ch;margin:0;color:var(--muted);font-size:11px;line-height:1.6;text-align:right}
     .report-fact-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
-    .report-fact-grid article{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;min-width:0;padding:12px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card-soft)}
-    .report-fact-grid span{align-self:center;color:var(--fg);font-size:11px;font-weight:750;line-height:1.45}
+    .report-fact-grid article{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;min-width:0;padding:13px 14px 12px;border:1px solid var(--border);border-radius:14px;background:var(--card);overflow:hidden}
+    .report-fact-grid article::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:#64748b}
+    .report-fact-grid article:nth-child(1)::before{background:#15803d}
+    .report-fact-grid article:nth-child(2)::before{background:#b91c1c}
+    .report-fact-grid article:nth-child(3)::before{background:#b45309}
+    .report-fact-grid article:nth-child(4)::before{background:#7c3aed}
+    .report-fact-grid span{align-self:center;color:var(--fg);font-size:12px;font-weight:750;line-height:1.5}
     .report-fact-grid strong{grid-row:1/3;grid-column:2;align-self:center;font-size:24px;font-variant-numeric:tabular-nums}
-    .report-fact-grid small{color:var(--muted);font-size:9px;line-height:1.45}
-    .report-meta-line{display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:10px;line-height:1.5}
+    .report-fact-grid small{color:var(--muted);font-size:11px;line-height:1.5}
+    .report-meta-line{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;line-height:1.5}
     .report-workspace{display:grid;grid-template-columns:minmax(248px,282px) minmax(0,1fr);align-items:start;gap:16px;margin-top:16px;margin-bottom:36px}
     .report-workspace>aside{position:sticky;top:12px;width:auto;min-width:0;height:calc(100vh - 24px);max-height:calc(100vh - 24px);border:1px solid var(--border);border-radius:16px;background:var(--sidebar);overflow:auto;box-shadow:none;backdrop-filter:none}
     .report-workspace>main{min-width:0;padding:0;overflow:visible}
@@ -7554,30 +7647,30 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .tool-details-body{padding:0 16px 16px;border-top:1px solid var(--border)}
     .tool-details-body>.field-label:first-child{margin-top:14px}
     .drow-list{gap:9px;padding:10px;background:var(--card-soft);overflow:visible}
-    .drow{border:1px solid var(--border);border-left:4px solid #94a3b8;border-radius:12px;background:var(--card);box-shadow:none}
+    .drow{border:1px solid var(--border);border-left:4px solid #94a3b8;border-radius:14px;background:var(--card);box-shadow:0 12px 28px -30px rgba(15,37,63,.62)}
     .drow--added{border-left-color:#0f766e}
     .drow--removed{border-left-color:#475569}
-    .drow--changed{border-left-color:#2563eb}
+    .drow--changed{border-left-color:#b45309}
     .drow-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px 12px}
     .drow-facts{display:flex;grid-column:1/-1;gap:6px;flex-wrap:wrap}
     .drow-title{grid-column:1;min-width:0}
     .drow-actions{grid-column:2;align-self:start}
-    .fact-chip{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:var(--card-soft);color:var(--fg);font-size:10px;font-weight:750;line-height:1.35}
+    .fact-chip{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:var(--card-soft);color:var(--fg);font-size:11px;font-weight:750;line-height:1.35}
     .fact-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#64748b;flex:0 0 auto}
     .fact-chip--added::before{background:#0f766e}
     .fact-chip--removed::before{background:#475569}
-    .fact-chip--changed::before{background:#2563eb}
+    .fact-chip--changed::before{background:#b45309}
     .fact-chip--same::before{background:#64748b}
     .fact-chip--difference{background:var(--card)}
     .path-main{font-size:14px;line-height:1.55}
-    .path-tech>summary,.related-settings>summary{display:inline-flex;align-items:center;min-height:30px;color:var(--muted);font-size:10px;font-weight:750;cursor:pointer}
+    .path-tech>summary,.related-settings>summary{display:inline-flex;align-items:center;min-height:30px;color:var(--muted);font-size:11px;font-weight:750;cursor:pointer}
     .related-settings{margin-top:2px}
     .related-settings>summary::before{content:"▸";margin-right:5px;font-size:8px}
     .related-settings[open]>summary::before{transform:rotate(90deg)}
     .related-settings ul{display:grid;gap:5px;margin:2px 0 0;padding:8px 10px 8px 26px;border:1px dashed var(--border);border-radius:8px;background:var(--card-soft)}
-    .related-settings li{font-size:10px;line-height:1.5;color:var(--fg)}
-    .related-settings code{display:block;color:var(--muted);font-size:9px;word-break:break-all}
-    .related-settings p{margin:2px 0 0;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;color:var(--muted);font-size:10px}
+    .related-settings li{font-size:11px;line-height:1.5;color:var(--fg)}
+    .related-settings code{display:block;color:var(--muted);font-size:11px;word-break:break-all}
+    .related-settings p{margin:2px 0 0;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;color:var(--muted);font-size:11px}
     .review-queue{border-color:var(--border);background:var(--card);box-shadow:none}
     .review-queue--pending .review-queue-mark{background:var(--accent);color:#fff}
     .review-queue--clear .review-queue-mark{background:#15803d;color:#fff}
@@ -7586,6 +7679,13 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .tchip{min-height:36px}
     .settings-tab,.btn,.row-act,.row-review-next,.row-reviewed,.row-select{min-height:36px}
 
+    @media (max-width:900px){
+      .report-hero{display:flex;flex-direction:column}
+      .report-hero .topbar-main{display:flex;flex-direction:column;gap:9px}
+      .report-hero .topbar-compare{width:100%;max-width:980px}
+      .report-hero .topbar-app-card{grid-template-columns:auto auto minmax(0,1fr);min-height:66px;padding:12px 14px}
+      .report-review-start{display:flex;flex-direction:row;align-items:center;justify-content:space-between}
+    }
     @media (max-width:1080px){
       .report-hero,.report-workspace{width:min(calc(100% - 24px),1440px)}
       .report-workspace{display:block}
@@ -7595,10 +7695,12 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     }
     @media (max-width:768px){
       .report-hero,.report-workspace{width:calc(100% - 16px)}
-      .report-hero{gap:14px;margin-top:8px;padding:16px;border-radius:14px}
+      .report-hero{gap:12px;margin-top:8px;padding:15px;border-radius:16px}
       .report-hero .topbar-compare{grid-template-columns:1fr;gap:6px}
       .report-hero .topbar-arrow{height:16px;transform:rotate(90deg)}
       .report-completeness{grid-template-columns:auto minmax(0,1fr);padding:13px}
+      .report-content-disclosure{grid-template-columns:1fr}
+      .report-content-disclosure strong{white-space:normal}
       .report-diagnostics{grid-column:1/-1}
       .report-facts-head{display:block}
       .report-facts-head>p{margin-top:5px;text-align:left}
@@ -7609,11 +7711,25 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .drow-facts,.drow-title,.drow-actions{grid-column:1}
       .drow-actions{width:100%;margin-left:0;justify-content:flex-start;flex-wrap:wrap}
       .report-workspace button,.report-workspace input,.report-workspace select,.report-workspace summary{min-height:44px}
+      .report-review-start{align-items:stretch;flex-direction:column}
+      .report-review-start button{width:100%}
     }
     @media (max-width:480px){
-      .report-fact-grid{grid-template-columns:1fr}
+      .report-hero{gap:9px;padding:12px}
+      .report-hero .topbar-main{gap:6px}
+      .report-hero .topbar-title{font-size:1.5rem}
+      .topbar-lead{font-size:12px;line-height:1.55}
+      .report-hero .topbar-compare{gap:5px}
+      .report-hero .topbar-app-card{min-height:56px;padding:10px 12px}
+      .report-hero .topbar-arrow{height:12px}
+      .report-content-disclosure{gap:3px;padding:9px 11px;font-size:11px;line-height:1.55}
+      .report-completeness{grid-template-columns:auto minmax(0,1fr);gap:9px;padding:11px}
+      .report-completeness-copy h2{font-size:15px}
+      .report-completeness-copy p{font-size:11px;line-height:1.55}
+      .report-review-start{gap:8px;padding:10px 12px}
+      .report-fact-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
       .report-fact-grid article{padding:10px 12px}
-      .report-completeness{grid-template-columns:1fr}
+      .report-fact-grid article:last-child:nth-child(odd){grid-column:1/-1}
       .report-completeness-mark{width:30px;height:30px}
       .topbar-eyebrow-row{align-items:flex-start;flex-direction:column}
       .header-badge{white-space:normal}
@@ -7625,22 +7741,34 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .review-queue-actions{grid-column:1}
     }
     @media (forced-colors:active){
-      .report-completeness,.report-fact-grid article,.drow,.fact-chip{forced-color-adjust:auto;border:1px solid CanvasText}
+      .report-content-disclosure,.report-completeness,.report-review-start,.report-fact-grid article,.drow,.fact-chip{forced-color-adjust:auto;border:1px solid CanvasText}
       .fact-chip::before{border:1px solid CanvasText;background:CanvasText}
       :focus-visible{outline:2px solid Highlight!important;outline-offset:2px;box-shadow:none!important}
     }
     @media print{
-      aside,.sb-panel .btn,.settings-tabs,.search-hint,.diff-toolbar,.drow-actions,.review-queue-actions,.skip-link{display:none!important}
-      body{display:block;background:#fff}
+      @page{size:A4;margin:12mm}
+      :root,body.dark{--bg:#fff;--fg:#0f172a;--card:#fff;--card-soft:#f8fafc;--border:#cbd5e1;--sidebar:#f8fafc;--sidebar-fg:#334155;--accent:#2563eb;--accent-strong:#1d4ed8;--accent-soft:#dbeafe;--muted:#475569;color-scheme:light}
+      body.dark .report-content-disclosure{border-color:#d6b456;border-left-color:#9a6700;background:#fffaf0;color:#5f4300}
+      body.dark .report-content-disclosure--caution{border-color:#e0a06b;border-left-color:#b45309;background:#fff7ed;color:#7c2d12}
+      body.dark .report-completeness--incomplete{border-color:#f0c36a;background:#fffaf0}
+      body.dark .report-completeness--complete{border-color:#9bc8ac;background:#f4fbf6}
+      aside,.sb-panel .btn,.settings-tabs,.search-hint,.diff-toolbar,.drow-actions,.review-queue-actions,.skip-link,.report-review-start{display:none!important}
+      body{display:block;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .report-hero,.report-workspace{width:100%;margin:0}
-      .report-hero{padding:0 0 14px;border:none}
+      .report-hero{display:block;padding:0 0 14px;border:none;background:#fff}
+      .report-hero>*{margin-bottom:10px}
+      .report-hero .topbar-main{display:block}
+      .report-hero .topbar-compare{margin-top:10px}
       .report-workspace{display:block}
       main{padding:0!important}
       .settings-shell,.sec,.topbar{box-shadow:none}
       .report-diagnostics>summary{display:none}
       .report-diagnostics>.report-notices{display:flex!important}
       .drow-list{gap:6px;padding:6px;background:#fff}
-      .drow{break-inside:avoid}
+      .sec-head{break-after:avoid}
+      .drow,.fj-block,.fc-card,.duo-wrap,.report-fact-grid article{break-inside:avoid}
+      details:not([open])>*:not(summary){display:block!important}
+      details>summary{break-after:avoid}
       .drow,.fj-block,.fc-card{content-visibility:visible!important;contain-intrinsic-size:none!important}
     }
     @media (prefers-reduced-motion:reduce){
@@ -7673,6 +7801,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       </div>
     </div>
 
+    ${contentDisclosureHtml}
+
     <section class="report-completeness report-completeness--${reportMeta.incompleteComparison ? 'incomplete' : 'complete'}" data-comparison-status="${reportMeta.incompleteComparison ? 'incomplete' : 'complete'}" aria-labelledby="comparisonStatusTitle">
       <span class="report-completeness-mark" aria-hidden="true">${reportMeta.incompleteComparison ? '!' : '✓'}</span>
       <div class="report-completeness-copy">
@@ -7682,8 +7812,10 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
           ? `${incompleteComparisonWarnings.length}件の未完了要因があります。件数は確認できた範囲の下限として扱ってください。`
           : '取得失敗・本文未検証・検出上限による打ち切りはありません。'}</p>
       </div>
-      ${noticesHtml ? `<details class="report-diagnostics"><summary>確認が必要な取得状況を見る</summary><div class="report-notices">${noticesHtml}</div></details>` : ''}
+      ${noticesHtml ? `<details class="report-diagnostics"${reportMeta.incompleteComparison ? ' open' : ''}><summary>${reportMeta.incompleteComparison ? '未完了の要因を確認' : '取得範囲と収録内容の詳細'}</summary><div class="report-notices">${noticesHtml}</div></details>` : ''}
     </section>
+
+    ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-review-start><span>未確認の差分を定義順に確認します。確認状態はレポート内で記録できます。</span><button type="button" id="startPendingReviewBtn">未確認レビューを開始（${preparedReviewRows.reviewKeys.length}件）</button></div>` : ''}
 
     <section class="report-facts" data-objective-counts aria-labelledby="objectiveCountsTitle">
       <div class="report-facts-head">
@@ -7698,7 +7830,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         <article><span>比較元のみに存在</span><strong>${summary.removed}</strong><small>比較先にはありません</small></article>
         <article><span>両方に存在・内容が異なる</span><strong>${objectiveContentChangedCount}</strong><small>値または設定が異なります</small></article>
         <article><span>並び順が異なる</span><strong>${summary.moved}</strong><small>内容とは別に集計</small></article>
-        <article><span>内容は同じ</span><strong>${summary.same}</strong><small>${includesComparedContent ? '比較証跡として収録' : '安全共有版では非収録の場合があります'}</small></article>
+        <article><span>内容は同じ</span><strong>${summary.same}</strong><small>${includesComparedContent ? '比較証跡として収録' : '差分行のみのため非収録'}</small></article>
       </div>
     </section>
 
@@ -7706,6 +7838,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       <span>生成 ${esc(reportMeta.generatedAt)}</span>
       <span>対象 ${esc(sectionText || '-')}</span>
       <span>${esc(comparedContentModeNote)}</span>
+      <span data-applied-ignore>${esc(appliedIgnoreSummary)}</span>
+      <span data-applied-normalization>${esc(appliedNormalizationSummary)}</span>
     </div>
   </header>
 
@@ -7757,7 +7891,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       <label class="chk"><input type="checkbox" id="hideSame"> 同一項目を隠す</label>
       <label class="chk"><input type="checkbox" id="charDiff" checked> 文字単位ハイライト</label>
       <label class="chk"><input type="checkbox" id="hideUnchangedLines" checked> 複数行差分は変更行だけ表示</label>
-      <label class="chk" title="${includesComparedContent ? 'フィールドごとに区切って、設定JSON全体を左右に並べて行単位で比較します（WinMerge風）' : '差分行のみのレポートには設定本文が収録されていません'}"><input type="checkbox" id="rawJson"${comparedContentDisabledAttrs}> JSONで比較（フィールド単位）</label>
+      ${includesComparedContent ? '<label class="chk" title="フィールドごとに区切って、設定JSON全体を左右に並べて行単位で比較します（WinMerge風）"><input type="checkbox" id="rawJson"> JSONで比較（フィールド単位）</label>' : ''}
       <label class="chk" title="「確認」チェックを付けた差分行を一覧から隠します"><input type="checkbox" id="hideReviewed"> 確認済みを隠す</label>
       <span class="field-label">表示視点</span>
       <div class="view-side" role="radiogroup" aria-label="差分の表示視点" title="どちらか一方のアプリから見た内容だけを表示します（追加・削除の判定は変わりません）">
@@ -7776,26 +7910,24 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         <button type="button" class="btn" id="themeBtn" style="grid-column:span 2">ダークに切替</button>
       </div>
     </div>
-    <details class="sb-panel sb-ctrl tool-details">
+    ${includesComparedContent ? `<details class="sb-panel sb-ctrl tool-details">
       <summary class="tool-details-summary">出力・反映・比較証跡</summary>
       <div class="tool-details-body">
       <span class="field-label">反映JSON（選択差分 → APIパラメータ）</span>
-      <p class="search-hint" style="margin-top:0">${!includesComparedContent
-        ? '差分行のみのレポートには設定本文が収録されていないため、この機能は利用できません。'
-        : canBuildReflectJson
-          ? '行やフィールドの「選択」にチェックした差分から、比較元の設定値を比較先アプリへ反映するためのAPIパラメータJSONを作成します。'
-          : '比較結果が不完全なため、反映JSONの選択・保存・コピーを無効にしています。取得失敗や本文未検証、上限超過を解消して再比較してください。'}</p>
+      <p class="search-hint" style="margin-top:0">${canBuildReflectJson
+        ? '行やフィールドの「選択」にチェックした差分から、比較元の設定値で比較先アプリを上書きするためのAPIパラメータJSONを作成します。'
+        : esc(reflectJsonBlockedReason)}</p>
       <div class="sb-btns">
         <button type="button" class="btn" id="reflectJsonBtn"${reflectJsonDisabledAttrs}>反映JSON保存</button>
         <button type="button" class="btn" id="reflectJsonCopyBtn"${reflectJsonDisabledAttrs}>反映JSONコピー</button>
       </div>
       <span class="field-label" style="margin-top:10px">作成時に利用した設定JSON（比較証跡）</span>
       <div class="sb-btns">
-        <button type="button" class="btn" id="srcJsonBtn"${comparedContentDisabledAttrs}>比較元JSON</button>
-        <button type="button" class="btn" id="tgtJsonBtn"${comparedContentDisabledAttrs}>比較先JSON</button>
+        <button type="button" class="btn" id="srcJsonBtn">比較元JSON</button>
+        <button type="button" class="btn" id="tgtJsonBtn">比較先JSON</button>
       </div>
       </div>
-    </details>
+    </details>` : ''}
     <div class="sb-panel sb-ctrl sb-advanced">
       <details class="adv">
         <summary class="adv-summary">詳細オプション（表示の絞り込み）</summary>
@@ -7818,7 +7950,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     <div class="settings-shell">
       <div class="settings-tabs" role="tablist" aria-label="レポート表示切替">
         <button id="reportTabDiff" type="button" role="tab" class="settings-tab" data-report-tab="diff" aria-selected="true" aria-controls="reportPaneDiff" tabindex="0">差分一覧</button>
-        <button id="reportTabSettingsLike" type="button" role="tab" class="settings-tab passive" data-report-tab="settingsLike" aria-selected="false" aria-controls="reportPaneSettingsLike" tabindex="-1"${comparedContentDisabledAttrs}>フィールド単位</button>
+        ${includesComparedContent ? '<button id="reportTabSettingsLike" type="button" role="tab" class="settings-tab passive" data-report-tab="settingsLike" aria-selected="false" aria-controls="reportPaneSettingsLike" tabindex="-1">フィールド単位</button>' : ''}
       </div>
       <div id="reportToast" class="report-toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
@@ -7829,15 +7961,15 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         </div>
       </section>
 
-      <section id="reportPaneSettingsLike" class="tab-pane" data-report-pane="settingsLike" role="tabpanel" aria-labelledby="reportTabSettingsLike" hidden>
+      ${includesComparedContent ? `<section id="reportPaneSettingsLike" class="tab-pane" data-report-pane="settingsLike" role="tabpanel" aria-labelledby="reportTabSettingsLike" hidden>
         <div class="content" style="padding:0">
-          <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6">${includesComparedContent ? '<strong>フィールド単位</strong>で、フィールドごとの設定差分を1つの項目にまとめて確認します。検索と「同一項目を隠す」が連動し、カードのボタンから詳細を表示できます。' : '<strong>差分行のみ</strong>のレポートにはフィールド設定本文が収録されていないため、フィールド単位表示は利用できません。'}</p>
+          <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6"><strong>フィールド単位</strong>で、フィールドごとの設定差分を1つの項目にまとめて確認します。検索と「同一項目を隠す」が連動し、カードのボタンから詳細を表示できます。</p>
           <div id="settingsLikeRoot" class="sl-root"></div>
         </div>
-      </section>
+      </section>` : ''}
     </div>
 
-    <div id="fieldDetailModal" class="fd-overlay" hidden>
+    ${includesComparedContent ? `<div id="fieldDetailModal" class="fd-overlay" hidden>
       <div class="fd-overlay-dialog" role="dialog" aria-modal="true" aria-labelledby="fieldDetailModalTitle" aria-describedby="fieldDetailModalSub" tabindex="-1">
         <div class="fd-overlay-head">
           <div>
@@ -7852,7 +7984,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         </div>
         <div id="fieldDetailModalBody" class="fd-overlay-body"></div>
       </div>
-    </div>
+    </div>` : ''}
   </main>
   </div>
   <script>${logicScript}</script>
@@ -7938,12 +8070,15 @@ export function renderDiffExportSummary() {
   const breakdown = `追加${s.added} / 削除${s.removed} / 変更${s.changed}${s.moved ? ` / 移動${s.moved}` : ''}${s.same ? ` / 同一${s.same}` : ''}`;
   const issueNote = mode === 'all' && issues ? ` ＋ 取得失敗 ${issues}件` : '';
   const partialIssueNote = mode === 'all' && partialIssues ? ` ＋ 本文未検証 ${partialIssues}件` : '';
-  const truncated = !!state.lastDiffTruncation?.truncated;
+  const truncation = state.lastDiffTruncation;
+  const truncated = hasIncompleteActualDiffTruncation(truncation);
+  const droppedSame = Number(truncation?.droppedSame || 0);
   const incomplete = truncated || partialIssues > 0;
   host.className = `diff-export-panel__summary${incomplete ? ' is-warn' : ''}`;
   host.innerHTML = `出力対象: <b>${esc(resolved.label)} ${actual}件</b>（${breakdown}）${issueNote}${partialIssueNote}`
     + `<span class="diff-export-panel__summary-sub">内容: ${esc(getDiffExportContentLabel(resolveDiffExportContentMode()))}</span>`
     + (truncated ? '<span class="diff-export-panel__summary-sub">⚠ 差分上限打ち切りが発生しています。出力は不完全です。</span>' : '')
+    + (!truncated && droppedSame > 0 ? `<span class="diff-export-panel__summary-sub">ℹ 同一証跡 ${droppedSame}件を省略しています（実差分の走査は完了）。</span>` : '')
     + (partialIssues ? '<span class="diff-export-panel__summary-sub">⚠ JS/CSS等に本文未検証があります。fileKey 等による比較結果です。</span>' : '');
 }
 
@@ -8328,7 +8463,8 @@ export function renderResultRows(rows) {
     .filter((section) => diffTruncationScanStatusOf(section) === 'partial');
   const truncationUnscanned = truncationSections
     .filter((section) => diffTruncationScanStatusOf(section) === 'unscanned');
-  const truncationHtml = truncation?.truncated ? `
+  const actualDiffTruncated = hasIncompleteActualDiffTruncation(truncation);
+  const truncationHtml = actualDiffTruncated ? `
       <div class="diff-truncation-warn" role="alert">
         <span class="diff-truncation-warn__icon" aria-hidden="true">⚠</span>
         <div class="diff-truncation-warn__body">
@@ -8342,6 +8478,13 @@ export function renderResultRows(rows) {
             if (scanStatus === 'partial') return `${label}（部分走査・総件数不明／表示件数は下限）`;
             return `${label}（走査完了・未収録 ${knownOmittedDiffCount(s)}件）`;
           }).join(' / ')}</div>` : ''}
+        </div>
+      </div>` : Number(truncation?.droppedSame || 0) > 0 ? `
+      <div class="diff-truncation-warn" role="status">
+        <span class="diff-truncation-warn__icon" aria-hidden="true">ℹ</span>
+        <div class="diff-truncation-warn__body">
+          <strong>同一証跡は上限（${truncation.sameLimit}件）まで表示し、${truncation.droppedSame}件を省略しました。</strong>
+          実差分の検出結果は完全です。
         </div>
       </div>` : '';
 
@@ -8474,7 +8617,7 @@ export function renderResultRows(rows) {
       const hierarchyClass = isSubfieldRow
         ? ' diff-row-subfield'
         : (isTableRootRow ? ' diff-row-table-root' : '');
-      const canReflect = !r._displayOnly && !!r.sectionKey;
+      const canReflect = !r._displayOnly && !r._nonActionable && !!r.sectionKey;
       const reflectBtn = canReflect
         ? `<button type="button" class="diff-mini-btn diff-mini-btn--reflect" data-send-to-reflect="${esc(r._id || '')}" title="この差分ノードだけを反映対象に追加し、反映タブへ移動します">反映へ送る</button>`
         : '';

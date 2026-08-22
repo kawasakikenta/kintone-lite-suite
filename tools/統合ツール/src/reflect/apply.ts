@@ -19,6 +19,7 @@ import {
   resolveHttpStatus
 } from '../api.js';
 import { buildPatchPayload } from '../diff/export.js';
+import { isActionableDiffRow } from '../diff/engine.js';
 import {
   planFieldSectionDiffRequests,
   planViewsSectionDiffRequests,
@@ -37,6 +38,7 @@ import {
   parseLookupMapInput,
   getSelectedReflectRows,
   ensureDiffPreparedForReflect,
+  assertProcessSectionApplySafe,
   resolveApplyScopes,
   saveCurrentDialogState,
   getSourceBundleForApply,
@@ -394,7 +396,19 @@ export function deleteByTokens(root, tokens) {
   return { root, deleted: true };
 }
 
+export function isReservedReviewOnlyDiffRow(row, secKey = row?.sectionKey) {
+  const sectionKey = String(secKey || '');
+  const path = String(row?.path || '');
+  return row?._nonActionable === true
+    || row?._stateRenameNotice === true
+    || (sectionKey === 'processSettings'
+      && (path === 'processSettings.states.__rename__' || path === 'states.__rename__'));
+}
+
 export function applyDiffRowToSection(sectionObj, row, secKey) {
+  if (isReservedReviewOnlyDiffRow(row, secKey)) {
+    return { section: sectionObj, applied: false, op: 'skip', reason: 'review-only row' };
+  }
   const rel = relativePathFromRow(row.path, secKey);
   if (rel == null) return { section: sectionObj, applied: false, op: 'skip', reason: 'path mismatch' };
   const desired = reflectRowDesiredValue(row);
@@ -1470,6 +1484,11 @@ export function parsePatchJsonPayload(input) {
   Object.entries(rawSections).forEach(([name, rows]) => {
     const key = resolvePatchSectionKey(name);
     if (!key) return;
+    const reviewOnlyRow = (Array.isArray(rows) ? rows : [])
+      .find((row) => isReservedReviewOnlyDiffRow(row, key));
+    if (reviewOnlyRow) {
+      throw new Error(`パッチJSONに確認専用の差分が含まれています: ${String(reviewOnlyRow?.path || key)}`);
+    }
     normalizedSections[key] = normalizePatchRows(key, rows);
   });
   const scopeKeys = Object.keys(normalizedSections);
@@ -1747,7 +1766,7 @@ function getPatchPayloadForApply() {
 export interface RowApplyPreflightIssue {
   sectionKey: string;
   sectionLabel: string;
-  code: 'unsupported-section' | 'customize-section-unsupported';
+  code: 'unsupported-section' | 'customize-section-unsupported' | 'review-only-row';
   message: string;
 }
 
@@ -1763,6 +1782,15 @@ export function inspectRowApplyPreflight(sections: any): RowApplyPreflightIssue[
     if (!Array.isArray(sectionRows) || sectionRows.length === 0) continue;
     const def = SECTION_DEFS.find((item) => item.key === sectionKey);
     const sectionLabel = def?.label || sectionKey;
+    if (sectionRows.some((row) => isReservedReviewOnlyDiffRow(row, sectionKey))) {
+      issues.push({
+        sectionKey,
+        sectionLabel,
+        code: 'review-only-row',
+        message: '状態名変更などの確認専用差分は自動反映できません'
+      });
+      continue;
+    }
     if (!def || !def.put) {
       issues.push({
         sectionKey,
@@ -2231,7 +2259,7 @@ export async function runApplyPreview() {
     setStatus('全セクションが除外されているため反映できません。プラン画面で除外を解除してください', true);
     return;
   }
-  const actualRows = (state.lastDiffRows || []).filter((row) => row && !row._displayOnly && effectiveScopes.includes(row.sectionKey));
+  const actualRows = (state.lastDiffRows || []).filter((row) => isActionableDiffRow(row) && effectiveScopes.includes(row.sectionKey));
   const sectionSummary = summarizeRowsBySeverity(actualRows);
   const plannedReq = Number(state.lastApplyPlan?.signature === planSignature ? state.lastApplyPlan.totalReq : 0);
   const scopeLabels = effectiveScopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
@@ -2528,6 +2556,7 @@ export async function runRetryFailedSections() {
     setStatus('失敗・未実行のセクションはありません（再実行不要）');
     return;
   }
+  assertProcessSectionApplySafe(failed);
   const c = commonParams();
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
   if (String(c.target.appId) !== String(report.appId || '')) {

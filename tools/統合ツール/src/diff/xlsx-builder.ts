@@ -158,10 +158,29 @@ export type XlsxCellStyle =
   | 'kpiGood'
   | 'kpiWarning'
   | 'kpiDanger'
+  | 'kpiChange'
   | 'review'
+  | 'reviewChoice'
   | 'info'
   | 'headerDivider'
-  | 'hyperlink';
+  | 'hyperlink'
+  | 'subtitle'
+  | 'summaryLabel'
+  | 'summaryValue'
+  | 'center'
+  | 'zebra'
+  | 'zebraCenter'
+  | 'changeAdded'
+  | 'changeRemoved'
+  | 'changeChanged'
+  | 'changeMoved'
+  | 'actionLink'
+  | 'category'
+  | 'directionArrow'
+  | 'metricValueAdded'
+  | 'metricValueRemoved'
+  | 'metricValueChanged'
+  | 'metricValueMoved';
 export type XlsxRowStyle = XlsxCellStyle;
 export interface XlsxDataValidation {
   /** 適用範囲。例: A2:A100 */
@@ -179,6 +198,12 @@ export interface XlsxPrintSettings {
   fitToHeight?: number;
   /** 各印刷ページで繰り返す行（1始まり・両端を含む）。 */
   repeatRows?: { from: number; to: number };
+  /** 各印刷ページで繰り返す列（1始まり・両端を含む）。 */
+  repeatColumns?: { from: number; to: number };
+  /** 印刷範囲を水平方向の中央へ配置する。 */
+  horizontalCentered?: boolean;
+  /** フッター。Excel の &P / &N などのページ記号を利用できる。 */
+  footer?: string;
 }
 export interface XlsxInternalHyperlink {
   /** リンクを設定するセル。例: A2 */
@@ -237,6 +262,8 @@ export interface XlsxSheet {
   outlineSummaryBelow?: boolean;
   /** グリッド線を非表示にする場合は false。既定: true。 */
   showGridLines?: boolean;
+  /** 初期表示倍率（10～400）。 */
+  zoomScale?: number;
   /** 印刷方向、横幅へのフィット、見出しの繰り返し。 */
   print?: XlsxPrintSettings;
 }
@@ -280,7 +307,26 @@ const CELL_STYLE_INDEX: Record<XlsxCellStyle, number> = {
   review: 11,
   info: 12,
   headerDivider: 15,
-  hyperlink: 13
+  hyperlink: 13,
+  subtitle: 18,
+  kpiChange: 19,
+  summaryLabel: 20,
+  summaryValue: 21,
+  center: 22,
+  zebra: 23,
+  zebraCenter: 24,
+  changeAdded: 25,
+  changeRemoved: 26,
+  changeChanged: 27,
+  changeMoved: 28,
+  reviewChoice: 29,
+  actionLink: 30,
+  category: 31,
+  directionArrow: 32,
+  metricValueAdded: 33,
+  metricValueRemoved: 34,
+  metricValueChanged: 35,
+  metricValueMoved: 36
 };
 
 interface ResolvedInternalHyperlink {
@@ -303,6 +349,12 @@ function normalizedPositiveInt(value: unknown, fallback: number, max: number): n
 function normalizedNonNegativeInt(value: unknown, fallback: number, max: number): number {
   const n = Math.floor(Number(value));
   return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : fallback;
+}
+
+function normalizedZoomScale(value: unknown): number | null {
+  if (value == null) return null;
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) ? Math.max(10, Math.min(400, n)) : null;
 }
 
 function buildPaneXml(freezeRows: number, freezeColumns: number): string {
@@ -426,9 +478,11 @@ function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyp
   // XFD が最終列なので、固定列は 16,383 列まで（右ペインの先頭が XFD）。
   const freezeColumns = normalizedPaneCount(sheet.freezeColumns, 16383);
   const paneXml = buildPaneXml(freezeRows, freezeColumns);
-  if (paneXml || sheet.showGridLines === false) {
+  const zoomScale = normalizedZoomScale(sheet.zoomScale);
+  if (paneXml || sheet.showGridLines === false || zoomScale != null) {
     const gridLines = sheet.showGridLines === false ? ' showGridLines="0"' : '';
-    out.push(`<sheetViews><sheetView workbookViewId="0"${gridLines}>`);
+    const zoom = zoomScale == null ? '' : ` zoomScale="${zoomScale}" zoomScaleNormal="${zoomScale}"`;
+    out.push(`<sheetViews><sheetView workbookViewId="0"${gridLines}${zoom}>`);
     if (paneXml) out.push(paneXml);
     out.push('</sheetView></sheetViews>');
   }
@@ -533,9 +587,13 @@ function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyp
     const orientation = sheet.print.orientation === 'landscape' ? 'landscape' : 'portrait';
     const fitToWidth = normalizedNonNegativeInt(sheet.print.fitToWidth, 1, 32767);
     const fitToHeight = normalizedNonNegativeInt(sheet.print.fitToHeight, 0, 32767);
-    out.push('<printOptions horizontalCentered="0" verticalCentered="0" gridLines="0" headings="0"/>');
+    const horizontalCentered = sheet.print.horizontalCentered === true ? 1 : 0;
+    out.push(`<printOptions horizontalCentered="${horizontalCentered}" verticalCentered="0" gridLines="0" headings="0"/>`);
     out.push('<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>');
     out.push(`<pageSetup paperSize="9" orientation="${orientation}" fitToWidth="${fitToWidth}" fitToHeight="${fitToHeight}"/>`);
+    if (sheet.print.footer) {
+      out.push(`<headerFooter><oddFooter>${escapeXml(String(sheet.print.footer).slice(0, 255))}</oddFooter></headerFooter>`);
+    }
   }
 
   out.push('</worksheet>');
@@ -548,12 +606,22 @@ function buildWorkbookXml(sheets: Array<{ name: string; print?: XlsxPrintSetting
     .join('');
   const printTitles = sheets.flatMap((sheet, index) => {
     const repeatRows = sheet.print?.repeatRows;
-    if (!repeatRows) return [];
-    const from = normalizedPositiveInt(repeatRows.from, 1, 1048576);
-    const to = Math.max(from, normalizedPositiveInt(repeatRows.to, from, 1048576));
+    const repeatColumns = sheet.print?.repeatColumns;
+    if (!repeatRows && !repeatColumns) return [];
     // シート名は式中では単引用符で囲み、内部の単引用符を二重化する。
     const formulaSheetName = sheet.name.replace(/'/g, "''");
-    return [`<definedName name="_xlnm.Print_Titles" localSheetId="${index}">${escapeXml(`'${formulaSheetName}'!$${from}:$${to}`)}</definedName>`];
+    const ranges: string[] = [];
+    if (repeatRows) {
+      const from = normalizedPositiveInt(repeatRows.from, 1, 1048576);
+      const to = Math.max(from, normalizedPositiveInt(repeatRows.to, from, 1048576));
+      ranges.push(`'${formulaSheetName}'!$${from}:$${to}`);
+    }
+    if (repeatColumns) {
+      const from = normalizedPositiveInt(repeatColumns.from, 1, 16384);
+      const to = Math.max(from, normalizedPositiveInt(repeatColumns.to, from, 16384));
+      ranges.push(`'${formulaSheetName}'!$${colRef(from)}:$${colRef(to)}`);
+    }
+    return [`<definedName name="_xlnm.Print_Titles" localSheetId="${index}">${escapeXml(ranges.join(','))}</definedName>`];
   }).join('');
   const definedNames = printTitles ? `<definedNames>${printTitles}</definedNames>` : '';
   return `${XML_HEADER}<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${items}</sheets>${definedNames}</workbook>`;
@@ -587,35 +655,49 @@ function buildRootRels(): string {
 }
 
 function buildStylesXml(): string {
-  // 色はセルの役割に限定する。状態（追加・削除・変更）は文字ラベルで表現する。
-  // 0: 既定 / 1: 表見出し / 2: データ / 3..17: レポート用UI
+  // 色は「比較方向」「変更事実」「レビュー入力」の役割に限定する。
+  // 0: 既定 / 1: 表見出し / 2: データ / 3..36: レポート用UI
   return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`
-    + '<fonts count="6">'
+    + '<fonts count="16">'
     +   '<font><sz val="11"/><name val="Meiryo"/></font>'
     +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font>'
     +   '<font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font>'
     +   '<font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font>'
     +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font>'
     +   '<font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font>'
+    +   '<font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font>'
+    +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF15803D"/></font>'
+    +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font>'
+    +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB45309"/></font>'
+    +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font>'
+    +   '<font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF15803D"/></font>'
+    +   '<font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font>'
+    +   '<font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB45309"/></font>'
+    +   '<font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font>'
+    +   '<font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF2563EB"/></font>'
     + '</fonts>'
-    + '<fills count="7">'
+    + '<fills count="10">'
     +   '<fill><patternFill patternType="none"/></fill>'
     +   '<fill><patternFill patternType="gray125"/></fill>'
     +   '<fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill>'
     +   '<fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill>'
     +   '<fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill>'
     +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF8D6"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill>'
     + '</fills>'
-    + '<borders count="5">'
+    + '<borders count="6">'
     +   '<border><left/><right/><top/><bottom/><diagonal/></border>'
     +   '<border><left/><right/><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
     +   '<border><left/><right/><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border>'
     +   '<border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
     +   '<border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border>'
+    +   '<border><left/><right/><top style="medium"><color rgb="FF94A3B8"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
     + '</borders>'
     + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    + '<cellXfs count="18">'
+    + '<cellXfs count="37">'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
     +   '<xf numFmtId="0" fontId="1" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
@@ -634,6 +716,25 @@ function buildStylesXml(): string {
     +   '<xf numFmtId="0" fontId="1" fillId="2" borderId="4" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="4" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="3" fillId="4" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="7" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="8" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="9" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="10" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="4" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="4" fillId="7" borderId="5" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="15" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf>'
+    +   '<xf numFmtId="0" fontId="11" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="12" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="13" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="14" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     + '</cellXfs>'
     + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
     + '</styleSheet>';

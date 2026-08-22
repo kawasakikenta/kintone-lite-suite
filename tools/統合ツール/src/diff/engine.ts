@@ -355,12 +355,14 @@ export function getCollectedDiffCount(rows) {
   return rows.filter((row) => row?.type !== 'same' && !row?._displayOnly).length;
 }
 
-export function canCollectSameRows(rows) {
+export function shouldCollectSameRows(rows) {
   if (!Array.isArray(rows)) return false;
-  if (!(rows as any).__includeSame) return false;
-  const count = Number((rows as any).__sameCount);
-  if (Number.isFinite(count)) return count < SAME_ROW_LIMIT;
-  return rows.filter((row) => row?.type === 'same').length < SAME_ROW_LIMIT;
+  return !!(rows as any).__includeSame;
+}
+
+export function pushSameDiffRow(out, row, ignoreRules) {
+  if (!shouldCollectSameRows(out)) return false;
+  return pushDiffRow(out, { ...row, type: 'same' }, ignoreRules);
 }
 
 export function normalizeForCompare(v, ignoreRules, path = '') {
@@ -486,9 +488,8 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
           arrayKey: key,
           arrayKeyValue: right.item?.[key]
         }, ignoreRules);
-      } else if (canCollectSameRows(out)) {
-        pushDiffRow(out, {
-          type: 'same',
+      } else {
+        pushSameDiffRow(out, {
           path: `${path}[${right.idx}]`,
           left: left.item,
           right: right.item,
@@ -664,9 +665,8 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
           arrayKey: rule.arrayKey,
           arrayKeyValue: rule.keyValue(right.item)
         }, ignoreRules);
-      } else if (canCollectSameRows(out)) {
-        pushDiffRow(out, {
-          type: 'same',
+      } else {
+        pushSameDiffRow(out, {
           path: `${path}[${right.idx}]`,
           left: left.item,
           right: right.item,
@@ -712,9 +712,7 @@ export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules) {
     if (from < 0) continue; // 多重集合一致済みのため理論上到達しない
     used[from] = true;
     if (from === j) {
-      if (canCollectSameRows(out)) {
-        pushDiffRow(out, { type: 'same', path: `${path}[${j}]`, left: a[from], right: b[j], severity: 'low' }, ignoreRules);
-      }
+      pushSameDiffRow(out, { path: `${path}[${j}]`, left: a[from], right: b[j], severity: 'low' }, ignoreRules);
       continue;
     }
     pushDiffRow(out, {
@@ -823,15 +821,12 @@ export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
   while (i < n || j < m) {
     if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) break;
     if (i < n && j < m && sigA[i] === sigB[j]) {
-      if (canCollectSameRows(out)) {
-        pushDiffRow(out, {
-          type: 'same',
+      pushSameDiffRow(out, {
           path: `${path}[${j}]`,
           left: a[i],
           right: b[j],
           severity: 'low'
         }, ignoreRules);
-      }
       i += 1;
       j += 1;
       continue;
@@ -886,9 +881,7 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
   if (isIgnoredPath(ignoreRules, path)) return;
 
   if (a === b) {
-    if (canCollectSameRows(out)) {
-      pushDiffRow(out, { type: 'same', path, left: a, right: b, severity: 'low' }, ignoreRules);
-    }
+    pushSameDiffRow(out, { path, left: a, right: b, severity: 'low' }, ignoreRules);
     return;
   }
   const ta = Object.prototype.toString.call(a);
@@ -905,9 +898,7 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
 
   if (Array.isArray(a)) {
     if (makeArrayItemSignature(a, ignoreRules, path) === makeArrayItemSignature(b, ignoreRules, path)) {
-      if (canCollectSameRows(out)) {
-        pushDiffRow(out, { type: 'same', path, left: a, right: b, severity: 'low' }, ignoreRules);
-      }
+      pushSameDiffRow(out, { path, left: a, right: b, severity: 'low' }, ignoreRules);
       return;
     }
     collectArrayDiffs(a, b, path, out, ignoreRules);
@@ -916,9 +907,7 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
 
   if (typeof a === 'object') {
     if (makeArrayItemSignature(a, ignoreRules, path) === makeArrayItemSignature(b, ignoreRules, path)) {
-      if (canCollectSameRows(out)) {
-        pushDiffRow(out, { type: 'same', path, left: a, right: b, severity: 'low' }, ignoreRules);
-      }
+      pushSameDiffRow(out, { path, left: a, right: b, severity: 'low' }, ignoreRules);
       return;
     }
     const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
@@ -1125,7 +1114,7 @@ function pushProcessStateRenameNotices(rows, sectionKey, sectionLabel, stateRena
       left: { name: from },
       right: { name: to },
       severity: 'low',
-      _displayOnly: true,
+      _nonActionable: true,
       _stateRenameNotice: true,
       renameCandidate: {
         id: `state-rename:${from}:${to}`,
@@ -1221,9 +1210,7 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
     const sourceForDiff = normalizeSectionForCompare(sec, sourceForSection, presetState);
     const targetForDiff = normalizeSectionForCompare(sec, targetForSection, presetState);
     if (makeArrayItemSignature(sourceForDiff, ignoreRules, sec) === makeArrayItemSignature(targetForDiff, ignoreRules, sec)) {
-      if (includeSame) {
-        pushDiffRow(rows, { sectionKey: sec, section: label, type: 'same', path: sec, left: sourceForDiff, right: targetForDiff, severity: 'low' }, ignoreRules);
-      }
+      pushSameDiffRow(rows, { sectionKey: sec, section: label, path: sec, left: sourceForDiff, right: targetForDiff, severity: 'low' }, ignoreRules);
       // 仮想改名で両側が一致した場合も、改名そのものの通知は必ず残す。
       if (sec === 'processSettings') {
         pushProcessStateRenameNotices(rows, sec, label, stateRenames, ignoreRules);
@@ -1237,7 +1224,7 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
       if (!rows[i].sectionKey) rows[i].sectionKey = sec;
       if (!rows[i].severity) rows[i].severity = detectRowSeverity(rows[i]);
     }
-    // ステータス改名の通知行（_displayOnly：反映系ロジックからは除外）
+    // ステータス改名は実差分としてレビュー対象にするが、仮想補正行なので直接反映はさせない。
     if (sec === 'processSettings') {
       pushProcessStateRenameNotices(rows, sec, label, stateRenames, ignoreRules);
     }
@@ -1258,7 +1245,7 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
 // 上限打ち切り（ARRAY_DIFF_LIMIT / SAME_ROW_LIMIT）の集計。
 // droppedDiff/droppedSame は pushDiffRow まで到達して棄却された「判明分」のみで、
 // コレクタが列挙自体を打ち切った分は含まれない（＝実際の欠落はこれ以上）。
-// 打ち切りが起きた比較結果は不完全であり、UI で必ず警告表示する。
+// 実差分の打ち切りは比較不完全。同一証跡だけの省略は差分検出の完全性に影響しない。
 export function buildDiffTruncationInfo(rows, limitHitSectionKeys: string[] = [], unscannedSectionKeys: string[] = []) {
   const droppedDiff = Number((rows as any)?.__diffDropped || 0);
   const droppedSame = Number((rows as any)?.__sameDropped || 0);
@@ -1284,14 +1271,61 @@ export function buildDiffTruncationInfo(rows, limitHitSectionKeys: string[] = []
       omittedDiffCount: scanned && !partiallyScanned ? droppedSectionDiff : null
     };
   });
+  const actualDiffIncomplete = droppedDiff > 0 || limitHitSectionKeys.length > 0 || unscannedSectionKeys.length > 0;
   return {
     truncated: droppedDiff > 0 || droppedSame > 0 || limitHitSectionKeys.length > 0 || unscannedSectionKeys.length > 0,
+    actualDiffIncomplete,
     diffLimit: ARRAY_DIFF_LIMIT,
     sameLimit: SAME_ROW_LIMIT,
     droppedDiff,
     droppedSame,
     sections
   };
+}
+
+export function hasIncompleteActualDiffTruncation(truncation: any): boolean {
+  if (!truncation || typeof truncation !== 'object') return false;
+  if (Number(truncation.droppedDiff || 0) > 0) return true;
+  const sections = Array.isArray(truncation.sections) ? truncation.sections : [];
+  if (sections.some((section) => {
+    const status = section?.scanStatus
+      || (section?.scanned === false ? 'unscanned' : (section?.partiallyScanned ? 'partial' : ''));
+    if (status === 'partial' || status === 'unscanned') return true;
+    const omitted = section?.omittedDiffCount;
+    return omitted == null ? Number(section?.droppedDiff || 0) > 0 : Number(omitted) > 0;
+  })) return true;
+  if (truncation.actualDiffIncomplete === true) return true;
+  if (truncation.actualDiffIncomplete === false) return false;
+  if (!truncation.truncated) return false;
+  const hasExplicitDiffCount = Object.prototype.hasOwnProperty.call(truncation, 'droppedDiff');
+  const sameOnlyEvidence = hasExplicitDiffCount
+    && Number(truncation.droppedDiff || 0) === 0
+    && Number(truncation.droppedSame || 0) > 0;
+  if (sameOnlyEvidence) {
+    const sectionsAreKnownComplete = !sections.length || sections.every((section) => {
+      const status = section?.scanStatus
+        || (section?.scanned === true && !section?.partiallyScanned ? 'complete' : '');
+      const omitted = section?.omittedDiffCount;
+      return status === 'complete'
+        && (omitted == null || Number(omitted) === 0)
+        && Number(section?.droppedDiff || 0) === 0;
+    });
+    if (sectionsAreKnownComplete) return false;
+  }
+  // 旧形式で省略種別を判別できない場合は安全側に倒す。
+  return true;
+}
+
+export function isActionableDiffRow(row): boolean {
+  return !!row && row.type !== 'same' && !row._displayOnly && !row._nonActionable;
+}
+
+export function getActionableDiffRows(rows) {
+  return (rows || []).filter(isActionableDiffRow);
+}
+
+export function countActionableDiffRows(rows) {
+  return getActionableDiffRows(rows).length;
 }
 
 export function summarizeRows(rows) {
@@ -1478,7 +1512,7 @@ function enumerateArray(arr, basePath, kind, kindLabel, options: { keyField?: st
         const t = String(item.type || '').toUpperCase();
         if (t === 'GROUP' && item.code) label = `グループ「${item.code}」`;
         else if (t === 'SUBTABLE' && item.code) label = `テーブル「${item.code}」`;
-        else label = `行 #${idx} (${t || 'ROW'})`;
+        else label = `行 #${idx + 1} (${t || 'ROW'})`;
         code = String(item.code || '');
       } else if (kind === 'notification' || kind === 'perRecordNotification' || kind === 'reminderNotification') {
         label = String(item.name || item.title || '').trim();
@@ -1494,7 +1528,7 @@ function enumerateArray(arr, basePath, kind, kindLabel, options: { keyField?: st
       }
     }
     if (!label) {
-      label = options.fallbackLabel ? options.fallbackLabel(item, idx) : `${kindLabel} #${idx}`;
+      label = options.fallbackLabel ? options.fallbackLabel(item, idx) : `${kindLabel} #${idx + 1}`;
     }
     return {
       path: `${basePath}[${idx}]`,

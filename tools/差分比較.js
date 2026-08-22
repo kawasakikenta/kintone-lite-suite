@@ -1460,12 +1460,13 @@ ${contextLine}`);
     if (Number.isFinite(count)) return count;
     return rows.filter((row) => row?.type !== "same" && !row?._displayOnly).length;
   }
-  function canCollectSameRows(rows) {
+  function shouldCollectSameRows(rows) {
     if (!Array.isArray(rows)) return false;
-    if (!rows.__includeSame) return false;
-    const count = Number(rows.__sameCount);
-    if (Number.isFinite(count)) return count < SAME_ROW_LIMIT;
-    return rows.filter((row) => row?.type === "same").length < SAME_ROW_LIMIT;
+    return !!rows.__includeSame;
+  }
+  function pushSameDiffRow(out, row, ignoreRules) {
+    if (!shouldCollectSameRows(out)) return false;
+    return pushDiffRow(out, { ...row, type: "same" }, ignoreRules);
   }
   function normalizeForCompare(v, ignoreRules, path = "") {
     if (Array.isArray(v)) return v.map((x, index) => normalizeForCompare(x, ignoreRules, `${path}[${index}]`));
@@ -1581,9 +1582,8 @@ ${contextLine}`);
             arrayKey: key,
             arrayKeyValue: right.item?.[key]
           }, ignoreRules);
-        } else if (canCollectSameRows(out)) {
-          pushDiffRow(out, {
-            type: "same",
+        } else {
+          pushSameDiffRow(out, {
             path: `${path}[${right.idx}]`,
             left: left.item,
             right: right.item,
@@ -1695,9 +1695,8 @@ ${contextLine}`);
             arrayKey: rule.arrayKey,
             arrayKeyValue: rule.keyValue(right.item)
           }, ignoreRules);
-        } else if (canCollectSameRows(out)) {
-          pushDiffRow(out, {
-            type: "same",
+        } else {
+          pushSameDiffRow(out, {
             path: `${path}[${right.idx}]`,
             left: left.item,
             right: right.item,
@@ -1737,9 +1736,7 @@ ${contextLine}`);
       if (from < 0) continue;
       used[from] = true;
       if (from === j) {
-        if (canCollectSameRows(out)) {
-          pushDiffRow(out, { type: "same", path: `${path}[${j}]`, left: a[from], right: b[j], severity: "low" }, ignoreRules);
-        }
+        pushSameDiffRow(out, { path: `${path}[${j}]`, left: a[from], right: b[j], severity: "low" }, ignoreRules);
         continue;
       }
       pushDiffRow(out, {
@@ -1833,15 +1830,12 @@ ${contextLine}`);
     while (i < n || j < m) {
       if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) break;
       if (i < n && j < m && sigA[i] === sigB[j]) {
-        if (canCollectSameRows(out)) {
-          pushDiffRow(out, {
-            type: "same",
-            path: `${path}[${j}]`,
-            left: a[i],
-            right: b[j],
-            severity: "low"
-          }, ignoreRules);
-        }
+        pushSameDiffRow(out, {
+          path: `${path}[${j}]`,
+          left: a[i],
+          right: b[j],
+          severity: "low"
+        }, ignoreRules);
         i += 1;
         j += 1;
         continue;
@@ -1888,9 +1882,7 @@ ${contextLine}`);
     if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
     if (isIgnoredPath(ignoreRules, path)) return;
     if (a === b) {
-      if (canCollectSameRows(out)) {
-        pushDiffRow(out, { type: "same", path, left: a, right: b, severity: "low" }, ignoreRules);
-      }
+      pushSameDiffRow(out, { path, left: a, right: b, severity: "low" }, ignoreRules);
       return;
     }
     const ta = Object.prototype.toString.call(a);
@@ -1905,9 +1897,7 @@ ${contextLine}`);
     }
     if (Array.isArray(a)) {
       if (makeArrayItemSignature(a, ignoreRules, path) === makeArrayItemSignature(b, ignoreRules, path)) {
-        if (canCollectSameRows(out)) {
-          pushDiffRow(out, { type: "same", path, left: a, right: b, severity: "low" }, ignoreRules);
-        }
+        pushSameDiffRow(out, { path, left: a, right: b, severity: "low" }, ignoreRules);
         return;
       }
       collectArrayDiffs(a, b, path, out, ignoreRules);
@@ -1915,9 +1905,7 @@ ${contextLine}`);
     }
     if (typeof a === "object") {
       if (makeArrayItemSignature(a, ignoreRules, path) === makeArrayItemSignature(b, ignoreRules, path)) {
-        if (canCollectSameRows(out)) {
-          pushDiffRow(out, { type: "same", path, left: a, right: b, severity: "low" }, ignoreRules);
-        }
+        pushSameDiffRow(out, { path, left: a, right: b, severity: "low" }, ignoreRules);
         return;
       }
       const keys = [.../* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)])].sort();
@@ -2085,7 +2073,7 @@ ${contextLine}`);
         left: { name: from },
         right: { name: to },
         severity: "low",
-        _displayOnly: true,
+        _nonActionable: true,
         _stateRenameNotice: true,
         renameCandidate: {
           id: `state-rename:${from}:${to}`,
@@ -2166,9 +2154,7 @@ ${contextLine}`);
       const sourceForDiff = normalizeSectionForCompare(sec, sourceForSection, presetState);
       const targetForDiff = normalizeSectionForCompare(sec, targetForSection, presetState);
       if (makeArrayItemSignature(sourceForDiff, ignoreRules, sec) === makeArrayItemSignature(targetForDiff, ignoreRules, sec)) {
-        if (includeSame) {
-          pushDiffRow(rows, { sectionKey: sec, section: label, type: "same", path: sec, left: sourceForDiff, right: targetForDiff, severity: "low" }, ignoreRules);
-        }
+        pushSameDiffRow(rows, { sectionKey: sec, section: label, path: sec, left: sourceForDiff, right: targetForDiff, severity: "low" }, ignoreRules);
         if (sec === "processSettings") {
           pushProcessStateRenameNotices(rows, sec, label, stateRenames, ignoreRules);
         }
@@ -2222,14 +2208,41 @@ ${contextLine}`);
         omittedDiffCount: scanned && !partiallyScanned ? droppedSectionDiff : null
       };
     });
+    const actualDiffIncomplete = droppedDiff > 0 || limitHitSectionKeys.length > 0 || unscannedSectionKeys.length > 0;
     return {
       truncated: droppedDiff > 0 || droppedSame > 0 || limitHitSectionKeys.length > 0 || unscannedSectionKeys.length > 0,
+      actualDiffIncomplete,
       diffLimit: ARRAY_DIFF_LIMIT,
       sameLimit: SAME_ROW_LIMIT,
       droppedDiff,
       droppedSame,
       sections
     };
+  }
+  function hasIncompleteActualDiffTruncation(truncation) {
+    if (!truncation || typeof truncation !== "object") return false;
+    if (Number(truncation.droppedDiff || 0) > 0) return true;
+    const sections = Array.isArray(truncation.sections) ? truncation.sections : [];
+    if (sections.some((section) => {
+      const status = section?.scanStatus || (section?.scanned === false ? "unscanned" : section?.partiallyScanned ? "partial" : "");
+      if (status === "partial" || status === "unscanned") return true;
+      const omitted = section?.omittedDiffCount;
+      return omitted == null ? Number(section?.droppedDiff || 0) > 0 : Number(omitted) > 0;
+    })) return true;
+    if (truncation.actualDiffIncomplete === true) return true;
+    if (truncation.actualDiffIncomplete === false) return false;
+    if (!truncation.truncated) return false;
+    const hasExplicitDiffCount = Object.prototype.hasOwnProperty.call(truncation, "droppedDiff");
+    const sameOnlyEvidence = hasExplicitDiffCount && Number(truncation.droppedDiff || 0) === 0 && Number(truncation.droppedSame || 0) > 0;
+    if (sameOnlyEvidence) {
+      const sectionsAreKnownComplete = !sections.length || sections.every((section) => {
+        const status = section?.scanStatus || (section?.scanned === true && !section?.partiallyScanned ? "complete" : "");
+        const omitted = section?.omittedDiffCount;
+        return status === "complete" && (omitted == null || Number(omitted) === 0) && Number(section?.droppedDiff || 0) === 0;
+      });
+      if (sectionsAreKnownComplete) return false;
+    }
+    return true;
   }
   function summarizeRows(rows) {
     const s = { total: 0, added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
@@ -2365,7 +2378,7 @@ ${contextLine}`);
           const t = String(item.type || "").toUpperCase();
           if (t === "GROUP" && item.code) label = `グループ「${item.code}」`;
           else if (t === "SUBTABLE" && item.code) label = `テーブル「${item.code}」`;
-          else label = `行 #${idx} (${t || "ROW"})`;
+          else label = `行 #${idx + 1} (${t || "ROW"})`;
           code = String(item.code || "");
         } else if (kind === "notification" || kind === "perRecordNotification" || kind === "reminderNotification") {
           label = String(item.name || item.title || "").trim();
@@ -2381,7 +2394,7 @@ ${contextLine}`);
         }
       }
       if (!label) {
-        label = options.fallbackLabel ? options.fallbackLabel(item, idx) : `${kindLabel} #${idx}`;
+        label = options.fallbackLabel ? options.fallbackLabel(item, idx) : `${kindLabel} #${idx + 1}`;
       }
       return {
         path: `${basePath}[${idx}]`,
@@ -2857,13 +2870,20 @@ ${contextLine}`);
     });
     return out;
   }
+  function getImpactRefLogicalLocator(ref) {
+    const path = String(ref?.path || "");
+    return path.replace(/((?:^|\.)(?:fields|displayFields|columns))\[\d+\]$/, "$1[]");
+  }
+  function getImpactRefLogicalKey(ref) {
+    return [ref?.sectionKey, ref?.kind, getImpactRefLogicalLocator(ref), ref?.label].join("|");
+  }
   function addFieldImpactRef(index, code, ref) {
     const fieldCode = String(code || "").trim();
     if (!fieldCode) return;
     if (!index.has(fieldCode)) index.set(fieldCode, []);
     const bucket = index.get(fieldCode);
-    const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join("|");
-    if (bucket.some((item) => [item.sectionKey, item.kind, item.path, item.label].join("|") === sig)) return;
+    const sig = getImpactRefLogicalKey(ref);
+    if (bucket.some((item) => getImpactRefLogicalKey(item) === sig)) return;
     bucket.push(ref);
   }
   function collectExpressionFieldRefs(text, codeSet) {
@@ -3052,7 +3072,7 @@ ${contextLine}`);
       const actions = Array.isArray(proc.actions) ? proc.actions : [];
       actions.forEach((act, idx) => {
         if (!act || typeof act !== "object") return;
-        const label = String(act.name || `遷移 #${idx}`);
+        const label = String(act.name || `遷移 #${idx + 1}`);
         if (typeof act.from === "string" && act.from) {
           add(act.from, {
             sectionKey: "processSettings",
@@ -3101,7 +3121,7 @@ ${contextLine}`);
     const seen = /* @__PURE__ */ new Set();
     codes.forEach((code) => {
       (impactIndex.get(code) || []).forEach((ref) => {
-        const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join("|");
+        const sig = getImpactRefLogicalKey(ref);
         if (seen.has(sig)) return;
         seen.add(sig);
         refs.push(ref);
@@ -3109,7 +3129,7 @@ ${contextLine}`);
     });
     stateNames.forEach((name) => {
       (statusImpactIndex?.get(name) || []).forEach((ref) => {
-        const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join("|");
+        const sig = getImpactRefLogicalKey(ref);
         if (seen.has(sig)) return;
         seen.add(sig);
         refs.push(ref);
@@ -3300,7 +3320,7 @@ ${contextLine}`);
         }
         if (tokens[1] === "actions" && typeof tokens[2] === "number") {
           const name = row?.arrayKey === "name" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.name || "");
-          const label = name || `遷移 #${tokens[2]}`;
+          const label = name || `遷移 #${tokens[2] + 1}`;
           return { entityKind: "action", entityLabel: label, entityCode: name, propLabel };
         }
         return empty;
@@ -3308,7 +3328,7 @@ ${contextLine}`);
       case "actionSettings": {
         if (tokens[1] === "actions" && typeof tokens[2] === "number") {
           const name = row?.arrayKey === "name" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.name || "");
-          const label = name || `アクション #${tokens[2]}`;
+          const label = name || `アクション #${tokens[2] + 1}`;
           return { entityKind: "appAction", entityLabel: label, entityCode: name, propLabel };
         }
         return empty;
@@ -3318,7 +3338,7 @@ ${contextLine}`);
         if (tokens[1] === "rights" && typeof tokens[2] === "number") {
           let entityRef = row?.arrayKey === "entity" && row?.arrayKeyValue && typeof row.arrayKeyValue === "object" ? row.arrayKeyValue : null;
           if (!entityRef) entityRef = payload && typeof payload === "object" ? payload.entity : null;
-          const label = describeAclEntity(entityRef) || `エントリー #${tokens[2]}`;
+          const label = describeAclEntity(entityRef) || `エントリー #${tokens[2] + 1}`;
           const code = String(entityRef?.code || "");
           const kind = sectionKey === "appAcl" ? "aclEntry" : "recordAclEntry";
           return { entityKind: kind, entityLabel: label, entityCode: code, propLabel };
@@ -3337,7 +3357,7 @@ ${contextLine}`);
               return { entityKind: "fieldAclEntry", entityLabel: label2, entityCode: fc || String(ent?.code || ""), propLabel };
             }
           }
-          const label = fc || `エントリー #${tokens[2]}`;
+          const label = fc || `エントリー #${tokens[2] + 1}`;
           return { entityKind: "fieldAclEntry", entityLabel: label, entityCode: fc, propLabel };
         }
         return empty;
@@ -3368,7 +3388,7 @@ ${contextLine}`);
           if (!label && row?.arrayKey === "title" && row?.arrayKeyValue != null) {
             label = String(row.arrayKeyValue);
           }
-          if (!label) label = `通知 #${tokens[2]}`;
+          if (!label) label = `通知 #${tokens[2] + 1}`;
           const kind = sectionKey === "perRecordNotifications" ? "perRecordNotification" : sectionKey === "reminderNotifications" ? "reminderNotification" : "notification";
           return { entityKind: kind, entityLabel: label, entityCode: String(obj.name || ""), propLabel };
         }
@@ -3384,7 +3404,7 @@ ${contextLine}`);
         if (tokens[1] === "plugins" && typeof tokens[2] === "number") {
           const id = row?.arrayKey === "id" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.id || "");
           const name = String(payload && typeof payload === "object" && payload.name || "");
-          const label = name ? id ? `${name} (${id})` : name : id || `プラグイン #${tokens[2]}`;
+          const label = name ? id ? `${name} (${id})` : name : id || `プラグイン #${tokens[2] + 1}`;
           return { entityKind: "plugin", entityLabel: label, entityCode: id, propLabel };
         }
         return empty;
@@ -3410,10 +3430,10 @@ ${contextLine}`);
         if (tokens[1] === "layout" && typeof tokens[2] === "number") {
           const obj = payload && typeof payload === "object" ? payload : {};
           const t = String(obj.type || "").toUpperCase();
-          let label = `行 #${tokens[2]}`;
+          let label = `行 #${tokens[2] + 1}`;
           if (t === "GROUP" && obj.code) label = `グループ「${obj.code}」`;
           else if (t === "SUBTABLE" && obj.code) label = `テーブル「${obj.code}」`;
-          else if (t === "ROW") label = `行 #${tokens[2]}`;
+          else if (t === "ROW") label = `行 #${tokens[2] + 1}`;
           return { entityKind: "layoutRow", entityLabel: label, entityCode: String(obj.code || ""), propLabel };
         }
         return empty;
@@ -3714,7 +3734,8 @@ ${contextLine}`);
           layout: "レイアウト",
           size: "サイズ",
           width: "横幅",
-          height: "高さ"
+          height: "高さ",
+          innerHeight: "入力欄の高さ"
         },
         appSettings: {
           name: "アプリ名",
@@ -3986,6 +4007,9 @@ ${contextLine}`);
         // layoutSettings
         layout: { label: "レイアウト" },
         row: { label: "行" },
+        width: { label: "横幅" },
+        height: { label: "高さ" },
+        innerHeight: { label: "入力欄の高さ" },
         // fieldSettings: 関連レコード一覧（referenceTable）/ ルックアップ（lookup）
         referenceTable: { label: "関連レコード一覧設定" },
         lookup: { label: "ルックアップ設定" },
@@ -4515,7 +4539,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return stringifyForDiff(value);
   }
   function getDiffExportContentLabel(mode) {
-    return mode === "withCompared" ? "行データ + 比較設定" : "行データのみ";
+    return mode === "withCompared" ? "比較設定込み（取扱注意）" : "差分行のみ（全設定は未収録）";
   }
   function shouldIncludeComparedContent(mode) {
     return mode === "withCompared";
@@ -4661,7 +4685,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       path: String(row?.path || ""),
       type: String(row?.type || ""),
       moved: !!row?.moved,
-      severity: String(row?.severity || ""),
       arrayKey: String(row?.arrayKey || ""),
       arrayKeyValueDefined,
       arrayKeyValue: arrayKeyValueDefined ? row.arrayKeyValue : null,
@@ -4684,6 +4707,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       return { ...row, _reviewKey: reviewKey };
     });
     return { rows: keyedRows, reviewKeys };
+  }
+  function stripDiffHtmlSubjectiveRowMetadata(row) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return row;
+    const { severity: _severity, impactSummary: _impactSummary, __childRows, ...rest } = row;
+    if (!Array.isArray(__childRows)) return rest;
+    return {
+      ...rest,
+      __childRows: __childRows.map(stripDiffHtmlSubjectiveRowMetadata)
+    };
   }
   function buildDiffHtmlReviewFingerprint(context, reviewKeys) {
     const material = stableStringify({
@@ -4777,15 +4809,16 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       return title ? { ...row, _reportDisplayTitle: title } : row;
     });
     const preparedReviewRows = prepareDiffHtmlReviewRows(baseReportRows);
-    const reportRows = preparedReviewRows.rows;
+    const reportRows = includesComparedContent ? preparedReviewRows.rows : preparedReviewRows.rows.map(stripDiffHtmlSubjectiveRowMetadata);
     const sensitiveDiffSections = [...new Set(exportRows.filter((row) => !row?._displayOnly && row?.type !== "same" && ["customizeSettings", "pluginSettings"].includes(String(row?.sectionKey || ""))).map((row) => String(row.sectionKey)))];
     const redactedSensitiveSections = [...new Set(exportRows.filter((row) => isSensitiveSameDiffRow(row)).map((row) => String(row.sectionKey || "")).filter(Boolean))];
     const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
     const partialIssues = Array.isArray(options.partialIssues) ? options.partialIssues : [];
     const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
     const KUC_REPORT_VERSION = "1.24.0";
-    const engineTruncation = options.truncation?.truncated ? options.truncation : null;
-    const engineTruncationSections = Array.isArray(engineTruncation?.sections) ? engineTruncation.sections : [];
+    const engineTruncation = options.truncation || null;
+    const actualDiffTruncation = hasIncompleteActualDiffTruncation(engineTruncation) ? engineTruncation : null;
+    const engineTruncationSections = Array.isArray(actualDiffTruncation?.sections) ? actualDiffTruncation.sections : [];
     const partialTruncationSections = engineTruncationSections.filter((section) => diffTruncationScanStatusOf(section) === "partial");
     const unscannedTruncationSections = engineTruncationSections.filter((section) => diffTruncationScanStatusOf(section) === "unscanned");
     const completeKnownTruncationSections = engineTruncationSections.filter((section) => diffTruncationScanStatusOf(section) === "complete" && knownOmittedDiffCount(section) > 0);
@@ -4797,15 +4830,21 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       unscannedTruncationLabels.length ? `未走査・件数不明: ${unscannedTruncationLabels.join("、")}。` : "",
       completeKnownTruncationLabels.length ? `走査完了・未収録件数既知: ${completeKnownTruncationLabels.join("、")}。` : ""
     ].filter(Boolean).join(" ");
-    const diffNavRangeNote = !engineTruncation ? "" : partialTruncationLabels.length && unscannedTruncationLabels.length ? "（部分走査・未走査を含む・総件数不明）" : partialTruncationLabels.length ? "（部分走査を含む・総件数不明）" : unscannedTruncationLabels.length ? "（未走査を含む・件数不明）" : "（比較範囲不完全）";
+    const diffNavRangeNote = !actualDiffTruncation ? "" : partialTruncationLabels.length && unscannedTruncationLabels.length ? "（部分走査・未走査を含む・総件数不明）" : partialTruncationLabels.length ? "（部分走査を含む・総件数不明）" : unscannedTruncationLabels.length ? "（未走査を含む・件数不明）" : "（比較範囲不完全）";
     const incompleteComparisonWarnings = [
-      engineTruncation ? `差分検出が上限 ${Number(engineTruncation.diffLimit || 0)} 件で打ち切られています。未検出の差分が存在します。${truncationRangeSummary ? ` ${truncationRangeSummary}` : ""}` : "",
+      actualDiffTruncation ? `差分検出が上限 ${Number(actualDiffTruncation.diffLimit || 0)} 件で打ち切られています。未検出の差分が存在します。${truncationRangeSummary ? ` ${truncationRangeSummary}` : ""}` : "",
       fetchIssues.length ? `設定取得に ${fetchIssues.length} 件失敗しています。取得失敗セクションは比較できていません。` : "",
       partialIssues.length ? `JS/CSS等の本文取得に ${partialIssues.length} 件の未検証があります。該当項目は本文ではなく fileKey 等で比較されています。` : "",
       exportSelection.summary.truncated ? `HTML収録上限により表示用展開後の行が ${exportSelection.summary.omittedRows} 件省略されています。` : ""
     ].filter(Boolean);
-    const canBuildReflectJson = includesComparedContent && incompleteComparisonWarnings.length === 0;
-    const reflectJsonBlockedReason = !includesComparedContent ? "差分行のみのレポートには比較設定が収録されていないため、反映JSONは作成できません" : canBuildReflectJson ? "" : "比較結果が不完全なため、反映JSONは作成できません。取得失敗や本文未検証、差分・HTML収録上限を解消して再比較してください";
+    const visibleStateRenameNoticeCount = withSameSections.filter((row) => row?._stateRenameNotice).length;
+    const bundledStateRenameNoticeCount = Array.isArray(scopes) && scopes.includes("processSettings") ? detectProcessStateRenames(
+      sourceBundle?.sections?.processSettings,
+      targetBundle?.sections?.processSettings
+    ).size : 0;
+    const stateRenameNoticeCount = Math.max(visibleStateRenameNoticeCount, bundledStateRenameNoticeCount);
+    const canBuildReflectJson = includesComparedContent && incompleteComparisonWarnings.length === 0 && stateRenameNoticeCount === 0;
+    const reflectJsonBlockedReason = !includesComparedContent ? "差分行のみのレポートには比較設定が収録されていないため、反映JSONは作成できません" : stateRenameNoticeCount > 0 ? "プロセスの状態名変更を含むため、このレポートでは反映JSONを作成できません。プロセス管理はセクション全体を置き換えるAPIのため、状態名変更以外の選択にも改名が混入します。管理画面で手動確認してください" : canBuildReflectJson ? "" : "比較結果が不完全なため、反映JSONは作成できません。取得失敗や本文未検証、差分・HTML収録上限を解消して再比較してください";
     const normalizationState = options.normalizationState || {};
     const sourceExportMeta = getBundleExportMeta(sourceBundle);
     const targetExportMeta = getBundleExportMeta(targetBundle);
@@ -4873,7 +4912,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const targetPreviewApiPrefix = targetGuestId ? `/k/guest/${encodeURIComponent(targetGuestId)}/v1/preview` : "/k/v1/preview";
     const diffTotal = summary.added + summary.removed + summary.changed;
     const objectiveContentChangedCount = Math.max(0, summary.changed - summary.moved);
-    const stateRenameNoticeCount = withSameSections.filter((row) => row?._stateRenameNotice).length;
     const formatAppDisplay = (meta) => {
       const id = String(meta?.appId || "-");
       const name = String(meta?.appName || "").trim();
@@ -4892,15 +4930,20 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const advPresetChecksHtml = clientNormalizationPresets.map(
       (preset) => `<label class="chk adv-chk${preset.applied ? " is-baked" : ""}"${preset.applied ? ' title="比較時に適用済みです（該当行はレポートに含まれていません）"' : ""}><input type="checkbox" data-preset-toggle="${esc(preset.key)}"${preset.applied ? " checked disabled" : ""}> ${esc(preset.label)}を無視${preset.applied ? '<span class="adv-baked-tag">適用済</span>' : ""}</label>`
     ).join("");
+    const appliedIgnoreTokens = [...new Set(String(reportMeta.ignoreKeys || "").split(/[\n\r,、，;；]+/).map((token) => token.trim()).filter(Boolean))];
+    const appliedIgnoreSummary = appliedIgnoreTokens.length ? `比較時の無視キー ${appliedIgnoreTokens.length}件: ${appliedIgnoreTokens.join("、")}` : "比較時の無視キー 0件（なし）";
+    const appliedNormalizationSummary = reportMeta.normalizationLabels.length ? `比較時の正規化 ${reportMeta.normalizationLabels.length}件: ${reportMeta.normalizationLabels.join("、")}` : "比較時の正規化 0件（なし）";
+    const contentDisclosureHtml = includesComparedContent ? `<div class="report-content-disclosure report-content-disclosure--caution" data-content-disclosure="withCompared" role="note" aria-label="収録内容と反映方向"><strong>取扱注意: 比較設定込み</strong><span>比較設定・フィールド詳細・設定証跡JSONを収録しています。反映JSONは、比較元の設定値で比較先を上書きする方向です。${canBuildReflectJson ? "" : `反映JSONは利用できません。${esc(reflectJsonBlockedReason)}`}</span></div>` : '<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note" aria-label="収録内容の注意"><strong>差分行のみ（全設定は未収録）</strong><span>全設定スナップショットは収録していませんが、変更された差分行の比較元・比較先の値は収録しています。匿名化・機密情報のマスキング済みではありません。顧客への受け渡しには顧客向けExcelを使用してください。</span></div>';
+    const stateRenameSafetyNoticeHtml = !stateRenameNoticeCount ? "" : visibleStateRenameNoticeCount === stateRenameNoticeCount ? `<div class="warn">ℹ プロセスの状態名変更が ${stateRenameNoticeCount} 件あります。変更件数に含めていますが、プロセス管理はセクション全体を置き換えるAPIのため、このレポートでは反映JSON全体を無効にしています。管理画面で手動確認してください。</div>` : `<div class="warn">ℹ 比較設定全体でプロセスの状態名変更を ${stateRenameNoticeCount} 件検出しました。この出力範囲には ${visibleStateRenameNoticeCount} 件を収録しているため、画面の変更件数は出力範囲に含まれる改名だけを数えています。プロセス管理はセクション全体を置き換えるAPIのため、このレポートでは反映JSON全体を無効にしています。管理画面で手動確認してください。</div>`;
     const noticesHtml = [
-      !includesComparedContent ? '<div class="warn"><b>🔒 安全共有向け: 差分行のみ・設定本文は未収録です。</b> 比較元/比較先の設定JSON、フィールド詳細、反映JSONはこのレポートでは利用できません。</div>' : "",
-      includesComparedContent && !canBuildReflectJson ? `<div class="warn"><b>⛔ 比較結果が不完全なため、反映JSONの選択・保存・コピーを無効にしています。</b> 比較元/比較先JSONは比較時の証跡として保存できます。</div>` : "",
+      includesComparedContent && incompleteComparisonWarnings.length > 0 ? `<div class="warn"><b>⛔ 比較結果が不完全なため、反映JSONの選択・保存・コピーを無効にしています。</b> 比較元/比較先JSONは比較時の証跡として保存できます。</div>` : "",
       warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? " (超過)" : ""}</div>` : "",
       sensitiveDiffSections.length ? `<div class="warn">🔒 このHTMLには ${sensitiveDiffSections.map((key) => esc(sectionLabelMap[key] || key)).join("・")} の差分値（JS/CSS本文やプラグイン設定値を含む場合があります）が収録されています。共有先と保管場所を確認してください。取得時の内部キャッシュは重複収録していません。</div>` : "",
       redactedSensitiveSections.length ? `<div class="warn">🔒 ${redactedSensitiveSections.map((key) => esc(sectionLabelMap[key] || key)).join("・")} の同一行は、機密値を重複収録しないため値を省略しています。</div>` : "",
-      stateRenameNoticeCount ? `<div class="warn">ℹ プロセスの状態名変更候補が ${stateRenameNoticeCount} 件あります。参照先の連動変更をまとめた表示用通知のため、上の追加・削除・変更件数には含めていません。内容を確認してください。</div>` : "",
+      stateRenameSafetyNoticeHtml,
       reportMeta.truncated ? `<div class="warn">${reportMeta.rowSelection.categories.actualDiff.omitted ? "⚠ <b>収録上限により実差分も省略されているため、このレポートは不完全です。</b> " : "※ 実差分を優先して収録しました。"}表示用展開後 ${reportMeta.rowSelection.expandedRows} 件のうち ${reportMeta.rowSelection.renderedRows} 件を収録し、${reportMeta.rowSelection.omittedRows} 件を省略しました（省略: 実差分 ${reportMeta.rowSelection.categories.actualDiff.omitted} 件 / 表示専用の補助行 ${reportMeta.rowSelection.categories.displayOnly.omitted} 件 / 同一行 ${reportMeta.rowSelection.categories.same.omitted} 件）。</div>` : "",
-      engineTruncation ? `<div class="warn">⚠ 差分件数が上限（${engineTruncation.diffLimit}件）に達したため、超過分は検出されておらずこのレポートに含まれていません。${partialTruncationLabels.length ? `<b>部分走査・総件数不明（表示件数は下限）: ${partialTruncationLabels.map((label) => esc(label)).join("・")}。</b>` : ""}${unscannedTruncationLabels.length ? `<b>未走査・件数不明: ${unscannedTruncationLabels.map((label) => esc(label)).join("・")}。</b>` : ""}${completeKnownTruncationLabels.length ? `<b>走査完了・未収録件数既知: ${completeKnownTruncationLabels.map((label) => esc(label)).join("・")}。</b>` : ""}<b>このレポートは不完全です。</b>無視キーやセクション絞り込みで差分を減らして再比較してください。</div>` : "",
+      actualDiffTruncation ? `<div class="warn">⚠ 差分件数が上限（${actualDiffTruncation.diffLimit}件）に達したため、超過分は検出されておらずこのレポートに含まれていません。${partialTruncationLabels.length ? `<b>部分走査・総件数不明（表示件数は下限）: ${partialTruncationLabels.map((label) => esc(label)).join("・")}。</b>` : ""}${unscannedTruncationLabels.length ? `<b>未走査・件数不明: ${unscannedTruncationLabels.map((label) => esc(label)).join("・")}。</b>` : ""}${completeKnownTruncationLabels.length ? `<b>走査完了・未収録件数既知: ${completeKnownTruncationLabels.map((label) => esc(label)).join("・")}。</b>` : ""}<b>このレポートは不完全です。</b>無視キーやセクション絞り込みで差分を減らして再比較してください。</div>` : "",
+      engineTruncation && !actualDiffTruncation && Number(engineTruncation.droppedSame || 0) > 0 ? `<div class="warn">ℹ 同一証跡は上限 ${Number(engineTruncation.sameLimit || 0)} 件まで収録し、${Number(engineTruncation.droppedSame || 0)} 件を省略しました。実差分の検出結果は完全です。</div>` : "",
       partialIssues.length ? `<div class="warn">⚠ <b>本文未検証 ${partialIssues.length}件</b> — JS/CSS等の本文を取得できなかったため、該当項目は本文ではなく fileKey 等で比較しています。${partialIssues.map((issue) => `<div class="msg">${esc(issue.section || issue.sectionKey || "-")} / ${esc(getIssueSideLabel(issue.side))}: ${esc(issue.message || issue.reason || "本文を取得できませんでした")}</div>`).join("")}</div>` : "",
       fetchIssues.length ? `<details class="issue-box">
           <summary>API取得失敗 ${fetchIssues.length}件</summary>
@@ -4910,9 +4953,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
           </table>
         </details>` : ""
     ].filter(Boolean).join("");
-    const comparedContentDisabledAttrs = includesComparedContent ? "" : ' disabled aria-disabled="true" title="差分行のみのレポートには設定本文が収録されていません"';
     const reflectJsonDisabledAttrs = canBuildReflectJson ? "" : ` disabled aria-disabled="true" title="${esc(reflectJsonBlockedReason)}"`;
-    const comparedContentModeNote = includesComparedContent ? canBuildReflectJson ? "比較設定込み（フィールド詳細・反映JSONを利用可能）" : "比較設定込み（比較不完全のため反映JSONは無効）" : "差分行のみ（安全共有向け・設定本文は未収録）";
+    const comparedContentModeNote = includesComparedContent ? canBuildReflectJson ? "比較設定込み（取扱注意・反映JSONを利用可能）" : stateRenameNoticeCount > 0 ? "比較設定込み（取扱注意・状態名変更の安全対策により反映JSONは無効）" : "比較設定込み（取扱注意・比較不完全のため反映JSONは無効）" : "差分行のみ（全設定は未収録）";
     const pickSectionsForReport = (bundle) => {
       const out = {};
       if (!includesComparedContent) return out;
@@ -6005,11 +6047,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function renderFieldJsonBlockHtml(group, useCharDiff) {
     const toneCls = group.status === 'added' ? 'added' : group.status === 'removed' ? 'removed' : 'changed';
     const checked = selectedFieldCodes.has(group.code);
-    const selectable = CAN_BUILD_REFLECT_JSON && (group.rows || []).some((row) => row && row.type !== 'same' && !row._displayOnly);
+    const selectable = CAN_BUILD_REFLECT_JSON && (group.rows || []).some((row) => row && row.type !== 'same' && !row._displayOnly && !row._nonActionable);
     const reviewRow = group.reviewRow;
     const reviewKey = rowStateKey(reviewRow);
     const reviewable = isActionableReviewRow(reviewRow);
     const reviewed = isReviewRowComplete(reviewRow);
+    const fieldItemLabel = String(group.label || group.code || 'フィールド');
     rowLookup.set(reviewKey, reviewRow);
     let body;
     if (group.src && group.tgt) {
@@ -6035,12 +6078,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       +   '<span class="fj-spacer"></span>'
       +   (selectable
         ? '<label class="row-select' + (checked ? ' is-on' : '') + '" title="このフィールドを反映JSONの対象にする">'
-          + '<input type="checkbox" data-select-field="' + escHtml(group.code) + '"' + (checked ? ' checked' : '') + '> 選択</label>'
+          + '<input type="checkbox" data-select-field="' + escHtml(group.code) + '" aria-label="' + escHtml(fieldItemLabel + 'を反映JSONの対象に選択') + '"' + (checked ? ' checked' : '') + '> 選択</label>'
         : '<span class="muted" title="' + escHtml(CAN_BUILD_REFLECT_JSON ? '表示専用または同一のため反映対象にできません' : REFLECT_JSON_BLOCK_REASON) + '">'
           + (CAN_BUILD_REFLECT_JSON ? '反映対象外' : '反映利用不可') + '</span>')
       + (reviewable
-        ? (!reviewed ? '<button type="button" class="row-review-next" data-review-next="' + escHtml(reviewKey) + '">確認して次へ</button>' : '')
-          + '<label class="row-reviewed' + (reviewed ? ' is-on' : '') + '"><input type="checkbox" data-review-toggle="' + escHtml(reviewKey) + '"' + (reviewed ? ' checked' : '') + '> 確認済み</label>'
+        ? (!reviewed ? '<button type="button" class="row-review-next" data-review-next="' + escHtml(reviewKey) + '" aria-label="' + escHtml(fieldItemLabel + 'を確認済みにして次へ') + '">確認して次へ</button>' : '')
+          + '<label class="row-reviewed' + (reviewed ? ' is-on' : '') + '"><input type="checkbox" data-review-toggle="' + escHtml(reviewKey) + '" aria-label="' + escHtml(fieldItemLabel + 'を確認済みにする') + '"' + (reviewed ? ' checked' : '') + '> 確認済み</label>'
         : '<span class="row-display-only">表示専用</span>')
       + '</div>'
       + '<div class="fj-body">' + body + '</div>'
@@ -6257,7 +6300,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const expected = String(code || '');
     if (!expected) return false;
     return REPORT_ROWS.some((row) => {
-      if (!row || row.sectionKey !== FIELD_SECTION_KEY || row.type === 'same' || row._displayOnly) return false;
+      if (!row || row.sectionKey !== FIELD_SECTION_KEY || row.type === 'same' || row._displayOnly || row._nonActionable) return false;
       const info = extractFieldPathInfo(row.path);
       return !!info && (info.activeCode === expected || info.rootCode === expected);
     });
@@ -6269,7 +6312,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const app = String(REPORT_META.target.appId || '');
     const bySection = new Map();
     selectedRows.forEach((row) => {
-      if (!row || row._displayOnly || row.type === 'same') return;
+      if (!row || row._displayOnly || row._nonActionable || row.type === 'same') return;
       const key = row.sectionKey || '';
       if (!bySection.has(key)) bySection.set(key, []);
       bySection.get(key).push(row);
@@ -7802,21 +7845,21 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
             const tone = fieldStatusTone(group.status);
             const isActive = group.code === activeFieldCode;
             const isSelected = selectedFieldCodes.has(group.code);
-            const isReflectSelectable = CAN_BUILD_REFLECT_JSON && (group.fieldRows || []).some((row) => row && row.type !== 'same' && !row._displayOnly);
+            const isReflectSelectable = CAN_BUILD_REFLECT_JSON && (group.fieldRows || []).some((row) => row && row.type !== 'same' && !row._displayOnly && !row._nonActionable);
             return '<article class="fc-card fc-card--' + tone + (isActive ? ' is-active' : '') + '" id="field_card_' + idx + '">' +
               '<div class="fc-card-head">' +
                 '<span class="fd-status fd-status--' + tone + '">' + escHtml(fieldStatusLabel(group.status)) + '</span>' +
                 '<span class="fc-code">' + escHtml(group.code) + '</span>' +
                 (isReflectSelectable
                   ? '<label class="row-select' + (isSelected ? ' is-on' : '') + '" title="このフィールドを反映JSONの対象にする">' +
-                      '<input type="checkbox" data-select-field="' + escHtml(group.code) + '"' + (isSelected ? ' checked' : '') + '> 選択</label>'
+                      '<input type="checkbox" data-select-field="' + escHtml(group.code) + '" aria-label="' + escHtml(String(group.label || group.code) + 'を反映JSONの対象に選択') + '"' + (isSelected ? ' checked' : '') + '> 選択</label>'
                   : '<span class="muted" title="' + escHtml(CAN_BUILD_REFLECT_JSON ? '表示専用・同一・レイアウト参照のみのため反映対象にできません' : REFLECT_JSON_BLOCK_REASON) + '">' +
                       (CAN_BUILD_REFLECT_JSON ? '反映対象外' : '反映利用不可') + '</span>') +
               '</div>' +
               '<div class="fc-title">' + escHtml(group.label) + '</div>' +
               '<div class="fc-sub">' + escHtml(fieldTypeDisplayLabel(group.type)) + (group.parentTableCode ? ' / テーブル: ' + escHtml(group.parentTableLabel || group.parentTableCode) : '') + '</div>' +
               '<div class="fc-chip-row">' + renderFieldSummaryChips(group) + '</div>' +
-              '<button type="button" class="btn' + (isActive ? ' primary' : '') + '" data-field-select="' + escHtml(group.code) + '">' + escHtml(group.diffCount ? '設定差分を開く' : '設定を開く') + '</button>' +
+              '<button type="button" class="btn' + (isActive ? ' primary' : '') + '" data-field-select="' + escHtml(group.code) + '" aria-label="' + escHtml(String(group.label || group.code) + (group.diffCount ? 'の設定差分を開く' : 'の設定を開く')) + '">' + escHtml(group.diffCount ? '設定差分を開く' : '設定を開く') + '</button>' +
             '</article>';
           }).join('') : '<div class="no-diff">この種別に該当するフィールドがありません。</div>') +
         '</div>' +
@@ -8308,21 +8351,22 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const reviewed = isReviewRowComplete(row);
     const selected = selectedRows.has(key);
     const focused = key === diffFocusKey;
+    const rowItemLabel = reportRowTitle(row);
     const actionsHtml = '<span class="drow-actions">'
-      + '<button type="button" class="row-act" data-copy-path="' + escHtml(row.path || '') + '" title="設定パスをコピー">パス</button>'
-      + '<button type="button" class="row-act" data-copy-row="' + escHtml(key) + '" title="比較元・比較先の値をJSONでコピー">コピー</button>'
+      + '<button type="button" class="row-act" data-copy-path="' + escHtml(row.path || '') + '" title="設定パスをコピー" aria-label="' + escHtml(rowItemLabel + 'の設定パスをコピー') + '">パス</button>'
+      + '<button type="button" class="row-act" data-copy-row="' + escHtml(key) + '" title="比較元・比較先の値をJSONでコピー" aria-label="' + escHtml(rowItemLabel + 'の比較元・比較先の値をコピー') + '">コピー</button>'
       + (row.type !== 'same'
-          ? (CAN_BUILD_REFLECT_JSON && row.type !== 'same' && !row._displayOnly
+          ? (CAN_BUILD_REFLECT_JSON && row.type !== 'same' && !row._displayOnly && !row._nonActionable
           ? '<label class="row-select' + (selected ? ' is-on' : '') + '" title="この差分を反映JSONの対象にする">'
-            + '<input type="checkbox" data-select-toggle="' + escHtml(key) + '"' + (selected ? ' checked' : '') + '> 選択'
+            + '<input type="checkbox" data-select-toggle="' + escHtml(key) + '" aria-label="' + escHtml(rowItemLabel + 'を反映JSONの対象に選択') + '"' + (selected ? ' checked' : '') + '> 選択'
             + '</label>'
           : '')
           + (!row._displayOnly && !reviewed
-            ? '<button type="button" class="row-review-next" data-review-next="' + escHtml(key) + '" title="確認済みにして次の未確認差分へ移動（Rキー）">確認して次へ</button>'
+            ? '<button type="button" class="row-review-next" data-review-next="' + escHtml(key) + '" title="確認済みにして次の未確認差分へ移動（Rキー）" aria-label="' + escHtml(rowItemLabel + 'を確認済みにして次へ') + '">確認して次へ</button>'
             : '')
           + (!row._displayOnly
             ? '<label class="row-reviewed' + (reviewed ? ' is-on' : '') + '" title="確認済みにする（サイドバーの「確認済みを隠す」と連動）">'
-              + '<input type="checkbox" data-review-toggle="' + escHtml(key) + '"' + (reviewed ? ' checked' : '') + '> 確認済み'
+              + '<input type="checkbox" data-review-toggle="' + escHtml(key) + '" aria-label="' + escHtml(rowItemLabel + 'を確認済みにする') + '"' + (reviewed ? ' checked' : '') + '> 確認済み'
               + '</label>'
             : '<span class="row-display-only" title="取得状況などを示す表示専用行です">表示専用</span>')
         : '')
@@ -8609,6 +8653,40 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     scheduleDiffStickyOffsetSync();
   }
 
+  function jumpToReviewKey(key) {
+    if (!key) return;
+    typeFilterValue = 'all';
+    sectionFilterValue = 'all';
+    const search = document.getElementById('search');
+    const hideReviewed = document.getElementById('hideReviewed');
+    if (search) search.value = '';
+    if (hideReviewed) hideReviewed.checked = false;
+    const sourceRow = getDetailFilteredRows().find((row) => rowStateKey(row) === key);
+    if (sourceRow) collapsed.delete(sourceRow.sectionKey || sourceRow.section || '未分類');
+    diffFocusKey = '';
+    render();
+    requestAnimationFrame(() => {
+      const renderedKey = renderedReviewKey(key);
+      if (!renderedKey) {
+        showToast('対象の差分を現在の表示で開けませんでした');
+        return;
+      }
+      diffFocusKey = renderedKey;
+      focusDiffRow(renderedKey);
+      syncDiffNavPosition();
+    });
+  }
+
+  function jumpToFirstPendingReview() {
+    if (getActiveReportTab() !== 'diff') setActiveTab('diff');
+    const firstPending = getDetailFilteredRows().find((row) => isActionableReviewRow(row) && rowHasPendingReview(row));
+    if (!firstPending) {
+      focusReviewCompletion(syncReviewedStat(getDetailFilteredRows()));
+      return;
+    }
+    jumpToReviewKey(rowStateKey(firstPending));
+  }
+
   function handleMainClick(e) {
     const mobileToolbarToggle = e.target.closest('[data-mobile-toolbar-toggle]');
     if (mobileToolbarToggle) {
@@ -8623,27 +8701,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
     const reviewJump = e.target.closest('[data-review-jump]');
     if (reviewJump) {
-      const key = reviewJump.getAttribute('data-review-jump') || '';
-      typeFilterValue = 'all';
-      sectionFilterValue = 'all';
-      const search = document.getElementById('search');
-      const hideReviewed = document.getElementById('hideReviewed');
-      if (search) search.value = '';
-      if (hideReviewed) hideReviewed.checked = false;
-      const sourceRow = getDetailFilteredRows().find((row) => rowStateKey(row) === key);
-      if (sourceRow) collapsed.delete(sourceRow.sectionKey || sourceRow.section || '未分類');
-      diffFocusKey = '';
-      render();
-      requestAnimationFrame(() => {
-        const renderedKey = renderedReviewKey(key);
-        if (!renderedKey) {
-          showToast('対象の差分を現在の表示で開けませんでした');
-          return;
-        }
-        diffFocusKey = renderedKey;
-        focusDiffRow(renderedKey);
-        syncDiffNavPosition();
-      });
+      jumpToReviewKey(reviewJump.getAttribute('data-review-jump') || '');
       return;
     }
     const densityToggle = e.target.closest('[data-density-toggle]');
@@ -8887,7 +8945,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   document.getElementById('hideSame').onchange = onReportFilterChange;
   document.getElementById('charDiff').onchange = onReportFilterChange;
   document.getElementById('hideUnchangedLines').onchange = onReportFilterChange;
-  document.getElementById('rawJson').onchange = onReportFilterChange;
+  const rawJsonInput = document.getElementById('rawJson');
+  if (rawJsonInput) rawJsonInput.onchange = onReportFilterChange;
   document.getElementById('hideReviewed').onchange = onReportFilterChange;
   document.querySelectorAll('input[name="viewSide"]').forEach((radio) => {
     radio.addEventListener('change', () => {
@@ -8936,11 +8995,16 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       }
     };
   }
-  document.getElementById('reflectJsonBtn').onclick = () => exportReflectJson(false);
-  document.getElementById('reflectJsonCopyBtn').onclick = () => exportReflectJson(true);
-  document.getElementById('srcJsonBtn').onclick = () => exportComparedBundleJson('source');
-  document.getElementById('tgtJsonBtn').onclick = () => exportComparedBundleJson('target');
-  document.getElementById('settingsLikeRoot').addEventListener('change', handleSelectionChange);
+  const reflectJsonBtn = document.getElementById('reflectJsonBtn');
+  const reflectJsonCopyBtn = document.getElementById('reflectJsonCopyBtn');
+  const srcJsonBtn = document.getElementById('srcJsonBtn');
+  const tgtJsonBtn = document.getElementById('tgtJsonBtn');
+  const settingsLikeRoot = document.getElementById('settingsLikeRoot');
+  if (reflectJsonBtn) reflectJsonBtn.onclick = () => exportReflectJson(false);
+  if (reflectJsonCopyBtn) reflectJsonCopyBtn.onclick = () => exportReflectJson(true);
+  if (srcJsonBtn) srcJsonBtn.onclick = () => exportComparedBundleJson('source');
+  if (tgtJsonBtn) tgtJsonBtn.onclick = () => exportComparedBundleJson('target');
+  if (settingsLikeRoot) settingsLikeRoot.addEventListener('change', handleSelectionChange);
   const extraIgnoreInput = document.getElementById('extraIgnoreKeys');
   if (extraIgnoreInput) {
     extraIgnoreInput.addEventListener('input', () => {
@@ -9028,6 +9092,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
   });
   document.getElementById('main').addEventListener('click', handleMainClick);
+  const startPendingReviewBtn = document.getElementById('startPendingReviewBtn');
+  if (startPendingReviewBtn) startPendingReviewBtn.onclick = jumpToFirstPendingReview;
   document.getElementById('main').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const head = e.target.closest ? e.target.closest('[data-sec-toggle]') : null;
@@ -9278,10 +9344,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .topbar-title{font-size:clamp(1.12rem,2.2vw,1.42rem);font-weight:800;line-height:1.3;letter-spacing:-.02em;color:var(--fg)}
     .topbar-compare{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:9px;width:min(860px,100%)}
     .topbar-app-card{display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:center;gap:7px;padding:8px 11px;border:1px solid var(--border);border-top:3px solid var(--muted);border-radius:11px;background:var(--card);min-width:0}
-    .topbar-app-card--source{border-top-color:#dc2626;background:linear-gradient(180deg,#fff7f7,var(--card))}
-    .topbar-app-card--target{border-top-color:#16a34a;background:linear-gradient(180deg,#f0fdf4,var(--card))}
-    body.dark .topbar-app-card--source{background:linear-gradient(180deg,#2b1014,var(--card))}
-    body.dark .topbar-app-card--target{background:linear-gradient(180deg,#052e16,var(--card))}
+    .topbar-app-card--source{border-top-color:#475569;background:linear-gradient(180deg,#f8fafc,var(--card))}
+    .topbar-app-card--target{border-top-color:#2563eb;background:linear-gradient(180deg,#eff6ff,var(--card))}
+    body.dark .topbar-app-card--source{background:linear-gradient(180deg,#1e293b,var(--card))}
+    body.dark .topbar-app-card--target{background:linear-gradient(180deg,#172554,var(--card))}
     .topbar-app-eyebrow{font-size:9px;font-weight:900;letter-spacing:.08em;color:var(--fg)}
     .topbar-app-side{font-size:10px;font-weight:800;color:var(--muted);white-space:nowrap}
     .topbar-app-card strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--fg)}
@@ -9438,18 +9504,18 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .drow-head{display:flex;gap:9px;align-items:flex-start}
     .drow-title{flex:1;min-width:0}
     .drow-actions{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
-    .row-act{border:1px solid var(--border);background:var(--card-soft);color:var(--muted);border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer;transition:color .15s,border-color .15s}
+    .row-act{border:1px solid var(--border);background:var(--card-soft);color:var(--muted);border-radius:8px;padding:3px 9px;font-size:11px;font-weight:700;cursor:pointer;transition:color .15s,border-color .15s}
     .row-act:hover{color:var(--fg);border-color:var(--muted)}
     .row-act:focus-visible{outline:none;box-shadow:var(--focus)}
-    .row-review-next{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:4px 9px;font-size:10px;font-weight:800;cursor:pointer;white-space:nowrap}
+    .row-review-next{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap}
     .row-review-next:hover{filter:brightness(1.06)}
     .row-review-next:focus-visible{outline:none;box-shadow:var(--focus)}
-    .row-reviewed{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);color:var(--muted);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap}
+    .row-reviewed{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
     .row-reviewed input{width:12px;height:12px;accent-color:var(--accent);cursor:pointer;margin:0}
     .row-reviewed.is-on{background:#ecfdf5;color:#15803d;border-color:#86efac}
     body.dark .row-reviewed.is-on{background:#052e16;color:#86efac;border-color:#166534}
-    .row-display-only{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;border:1px dashed var(--border);background:var(--card-soft);color:var(--muted);font-size:10px;font-weight:700;white-space:nowrap}
-    .row-select{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);color:var(--muted);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap}
+    .row-display-only{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;border:1px dashed var(--border);background:var(--card-soft);color:var(--muted);font-size:11px;font-weight:700;white-space:nowrap}
+    .row-select{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
     .row-select input{width:12px;height:12px;accent-color:var(--accent);cursor:pointer;margin:0}
     .row-select.is-on{background:var(--accent-soft);color:var(--accent-strong);border-color:var(--accent)}
     .fj-list{display:flex;flex-direction:column;gap:12px}
@@ -9583,8 +9649,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:999px}
     .ln{min-width:34px;display:inline-block;text-align:right;margin-right:8px;padding-right:6px;border-right:1px solid var(--border);font-size:10px;color:var(--muted);user-select:none;flex-shrink:0}
     .blk{margin:0;padding:10px 12px;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.55;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-    mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:3px;padding:0 2px}
-    mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:3px;padding:0 2px}
+    mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:3px;padding:0 2px;text-decoration:underline 2px;text-underline-offset:2px}
+    mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:3px;padding:0 2px;text-decoration:line-through 2px}
     .sb-advanced .adv-summary{cursor:pointer;font-size:11px;font-weight:800;color:var(--fg);list-style:none;display:flex;align-items:center;gap:6px}
     .sb-advanced .adv-summary::-webkit-details-marker{display:none}
     .sb-advanced .adv-summary::before{content:"▸";display:inline-block;font-size:9px;color:var(--muted);transition:transform .15s}
@@ -9657,8 +9723,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     body.dark tr.kv-chg>td{background:#78350f;color:#fde68a}
     tr.kv-del>th,tr.kv-add>th,tr.kv-chg>th{box-shadow:inset 3px 0 0 #ca8a04}
     tr.kv-ghost>td,tr.kv-ghost>th{background:var(--pad);color:var(--muted);font-style:italic}
-    .sl-mini-table mark.cdel,.st-fields mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:2px;padding:0 1px}
-    .sl-mini-table mark.cadd,.st-fields mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:2px;padding:0 1px}
+    .sl-mini-table mark.cdel,.st-fields mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:2px;padding:0 1px;text-decoration:line-through 2px}
+    .sl-mini-table mark.cadd,.st-fields mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:2px;padding:0 1px;text-decoration:underline 2px;text-underline-offset:2px}
     .kf-row--diff .kf-value{border-color:#f59e0b;box-shadow:inset 3px 0 0 #f59e0b,inset 0 1px 2px rgba(15,23,42,.04);background:#fffbeb}
     body.dark .kf-row--diff .kf-value{background:#2a2008;border-color:#b45309}
     .kf-diff-chip{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:9px;font-weight:800;vertical-align:middle;white-space:nowrap}
@@ -9758,7 +9824,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .duo-cell.pad{display:none}
       .duo-head{display:none}
       .duo-cell[data-side-label]{align-items:flex-start;gap:8px;padding-top:5px;padding-bottom:5px}
-      .duo-cell[data-side-label]::before,.vi-val[data-side-label]::before{content:attr(data-side-label);display:inline-flex;flex:0 0 auto;align-items:center;padding:1px 6px;border:1px solid currentColor;border-radius:999px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:9px;font-weight:800;line-height:1.4;opacity:.78}
+      .duo-cell[data-side-label]::before,.vi-val[data-side-label]::before{content:attr(data-side-label);display:inline-flex;flex:0 0 auto;align-items:center;padding:1px 6px;border:1px solid currentColor;border-radius:999px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:11px;font-weight:800;line-height:1.4;opacity:.78}
       .vi-val[data-side-label]{display:inline-flex;align-items:baseline;gap:7px}
     }
     @media (max-width:560px){
@@ -9766,7 +9832,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .topbar{padding:12px 12px 13px;border-radius:15px}
       .topbar-title{font-size:1.12rem}
       .topbar-eyebrow-row{align-items:center}
-      .header-badge{padding:5px 8px;font-size:9px;line-height:1.2;white-space:nowrap;writing-mode:horizontal-tb}
+      .header-badge{padding:5px 8px;font-size:11px;line-height:1.2;white-space:nowrap;writing-mode:horizontal-tb}
       .topbar-compare{grid-template-columns:1fr;gap:4px}
       .topbar-arrow{height:14px;transform:rotate(90deg)}
       .topbar-app-card{grid-template-columns:auto auto minmax(0,1fr);padding:7px 9px}
@@ -9777,11 +9843,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .settings-tab{padding:7px 13px}
       .content{padding:8px}
       .report-notices{margin-bottom:8px}
-      .warn{padding:8px 9px;font-size:10px}
+      .warn{padding:8px 9px;font-size:11px}
       .review-queue{padding:8px 9px;gap:7px}
       .review-queue-mark{width:32px;height:32px;border-radius:10px;font-size:17px}
       .review-queue-main>strong{font-size:13px}
-      .review-queue-note{font-size:9px}
+      .review-queue-note{font-size:11px}
       .review-progress--queue{max-width:none}
       .review-progress-note,.review-queue-samples{display:none}
       .review-queue-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -9955,21 +10021,28 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .skip-link{position:fixed;left:12px;top:10px;z-index:120;transform:translateY(-160%);padding:10px 14px;border-radius:8px;background:var(--fg);color:var(--card);font-size:12px;font-weight:800;text-decoration:none}
     .skip-link:focus{transform:translateY(0);outline:3px solid var(--accent);outline-offset:2px}
     .report-hero,.report-workspace{width:min(calc(100% - 32px),1440px);margin-inline:auto}
-    .report-hero{display:flex;flex-direction:column;align-items:stretch;gap:18px;margin-top:20px;padding:24px;border-radius:18px;background:var(--card);box-shadow:0 12px 40px -28px rgba(15,23,42,.45);overflow:visible}
+    .report-hero{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);align-items:stretch;gap:14px 16px;margin-top:20px;padding:26px;border-radius:22px;background:linear-gradient(145deg,var(--card) 0%,color-mix(in srgb,var(--card) 90%,var(--accent-soft)) 100%);box-shadow:0 22px 56px -38px rgba(15,37,63,.62);overflow:visible}
     .report-hero::before{height:4px;background:var(--accent)}
-    .report-hero .topbar-main{gap:10px}
+    .report-hero .topbar-main{grid-column:1/-1;display:grid;grid-template-columns:minmax(260px,.78fr) minmax(480px,1.22fr);grid-template-rows:auto auto 1fr;align-items:start;gap:7px 28px}
+    .report-hero .topbar-eyebrow-row,.report-hero .topbar-title,.report-hero .topbar-lead{grid-column:1}
+    .report-hero .topbar-compare{grid-column:2;grid-row:1/4;align-self:stretch}
     .report-hero .topbar-title{margin:0;font-size:clamp(1.45rem,3vw,2rem)}
     .topbar-lead{max-width:72ch;margin:0;color:var(--muted);font-size:13px;line-height:1.7}
-    .report-hero .topbar-compare{width:100%;max-width:980px;gap:12px}
-    .report-hero .topbar-app-card{grid-template-columns:auto auto minmax(0,1fr);min-height:66px;padding:12px 14px;border-top:1px solid var(--border);border-left:4px solid #475569;background:var(--card-soft)}
+    .report-hero .topbar-compare{width:100%;max-width:none;gap:12px}
+    .report-hero .topbar-app-card{grid-template-columns:1fr;align-content:center;gap:3px;min-height:92px;padding:14px 16px;border-top:1px solid var(--border);border-left:4px solid #475569;background:var(--card-soft)}
     .report-hero .topbar-app-card--source{border-left-color:#475569;background:var(--card-soft)}
     .report-hero .topbar-app-card--target{border-left-color:var(--accent);background:var(--card-soft)}
     body.dark .report-hero .topbar-app-card--source,body.dark .report-hero .topbar-app-card--target{background:var(--card-soft)}
-    .report-hero .topbar-app-eyebrow{font-size:11px;letter-spacing:.04em}
-    .report-hero .topbar-app-side{font-size:10px}
+    .report-hero .topbar-app-eyebrow{font-size:12px;letter-spacing:.04em}
+    .report-hero .topbar-app-side{font-size:11px}
     .report-hero .topbar-app-card strong{font-size:14px;white-space:normal;overflow:visible;word-break:break-word}
-    .report-step-label{display:block;margin-bottom:3px;color:var(--muted);font-size:10px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}
-    .report-completeness{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px 14px;padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--card-soft)}
+    .report-content-disclosure{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 12px;padding:11px 14px;border:1px solid #d6b456;border-left:4px solid #9a6700;border-radius:12px;background:#fffaf0;color:#5f4300;font-size:12px;line-height:1.6}
+    .report-content-disclosure strong{white-space:nowrap;font-size:12px}
+    .report-content-disclosure--caution{border-color:#e0a06b;border-left-color:#b45309;background:#fff7ed;color:#7c2d12}
+    body.dark .report-content-disclosure{border-color:#8b6824;background:#2a210d;color:#fde68a}
+    body.dark .report-content-disclosure--caution{border-color:#9a5a24;background:#2f190d;color:#fed7aa}
+    .report-step-label{display:block;margin-bottom:3px;color:var(--muted);font-size:11px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}
+    .report-completeness{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px 14px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--card-soft)}
     .report-completeness--incomplete{border-color:#f0c36a;background:#fffaf0}
     .report-completeness--complete{border-color:#9bc8ac;background:#f4fbf6}
     body.dark .report-completeness--incomplete{border-color:#8b6824;background:#2a210d}
@@ -9983,15 +10056,25 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .report-diagnostics>summary{display:inline-flex;align-items:center;min-height:36px;color:var(--accent-strong);font-size:11px;font-weight:800;cursor:pointer}
     .report-diagnostics>summary:focus-visible,.tool-details-summary:focus-visible,.related-settings>summary:focus-visible{outline:none;box-shadow:var(--focus);border-radius:7px}
     .report-diagnostics .report-notices{margin:8px 0 0}
-    .report-facts{padding-top:2px}
+    .report-review-start{grid-column:1/-1;display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:16px;padding:13px 16px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--border));border-radius:16px;background:color-mix(in srgb,var(--accent-soft) 58%,var(--card))}
+    .report-review-start span{color:var(--muted);font-size:12px;line-height:1.65}
+    .report-review-start button{min-height:46px;padding:10px 16px;border:1px solid var(--accent);border-radius:11px;background:linear-gradient(180deg,#3b82f6,var(--accent));color:#fff;font-size:13px;font-weight:850;cursor:pointer;white-space:normal;box-shadow:0 10px 24px -16px rgba(37,99,235,.9)}
+    .report-review-start button:hover{filter:brightness(.96)}
+    .report-review-start button:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:3px}
+    .report-facts{grid-column:1/-1;padding-top:4px}
     .report-facts-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:10px}
     .report-facts-head>p{max-width:52ch;margin:0;color:var(--muted);font-size:11px;line-height:1.6;text-align:right}
     .report-fact-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
-    .report-fact-grid article{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;min-width:0;padding:12px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card-soft)}
-    .report-fact-grid span{align-self:center;color:var(--fg);font-size:11px;font-weight:750;line-height:1.45}
+    .report-fact-grid article{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;min-width:0;padding:13px 14px 12px;border:1px solid var(--border);border-radius:14px;background:var(--card);overflow:hidden}
+    .report-fact-grid article::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:#64748b}
+    .report-fact-grid article:nth-child(1)::before{background:#15803d}
+    .report-fact-grid article:nth-child(2)::before{background:#b91c1c}
+    .report-fact-grid article:nth-child(3)::before{background:#b45309}
+    .report-fact-grid article:nth-child(4)::before{background:#7c3aed}
+    .report-fact-grid span{align-self:center;color:var(--fg);font-size:12px;font-weight:750;line-height:1.5}
     .report-fact-grid strong{grid-row:1/3;grid-column:2;align-self:center;font-size:24px;font-variant-numeric:tabular-nums}
-    .report-fact-grid small{color:var(--muted);font-size:9px;line-height:1.45}
-    .report-meta-line{display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:10px;line-height:1.5}
+    .report-fact-grid small{color:var(--muted);font-size:11px;line-height:1.5}
+    .report-meta-line{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;line-height:1.5}
     .report-workspace{display:grid;grid-template-columns:minmax(248px,282px) minmax(0,1fr);align-items:start;gap:16px;margin-top:16px;margin-bottom:36px}
     .report-workspace>aside{position:sticky;top:12px;width:auto;min-width:0;height:calc(100vh - 24px);max-height:calc(100vh - 24px);border:1px solid var(--border);border-radius:16px;background:var(--sidebar);overflow:auto;box-shadow:none;backdrop-filter:none}
     .report-workspace>main{min-width:0;padding:0;overflow:visible}
@@ -10005,30 +10088,30 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .tool-details-body{padding:0 16px 16px;border-top:1px solid var(--border)}
     .tool-details-body>.field-label:first-child{margin-top:14px}
     .drow-list{gap:9px;padding:10px;background:var(--card-soft);overflow:visible}
-    .drow{border:1px solid var(--border);border-left:4px solid #94a3b8;border-radius:12px;background:var(--card);box-shadow:none}
+    .drow{border:1px solid var(--border);border-left:4px solid #94a3b8;border-radius:14px;background:var(--card);box-shadow:0 12px 28px -30px rgba(15,37,63,.62)}
     .drow--added{border-left-color:#0f766e}
     .drow--removed{border-left-color:#475569}
-    .drow--changed{border-left-color:#2563eb}
+    .drow--changed{border-left-color:#b45309}
     .drow-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px 12px}
     .drow-facts{display:flex;grid-column:1/-1;gap:6px;flex-wrap:wrap}
     .drow-title{grid-column:1;min-width:0}
     .drow-actions{grid-column:2;align-self:start}
-    .fact-chip{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:var(--card-soft);color:var(--fg);font-size:10px;font-weight:750;line-height:1.35}
+    .fact-chip{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:var(--card-soft);color:var(--fg);font-size:11px;font-weight:750;line-height:1.35}
     .fact-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#64748b;flex:0 0 auto}
     .fact-chip--added::before{background:#0f766e}
     .fact-chip--removed::before{background:#475569}
-    .fact-chip--changed::before{background:#2563eb}
+    .fact-chip--changed::before{background:#b45309}
     .fact-chip--same::before{background:#64748b}
     .fact-chip--difference{background:var(--card)}
     .path-main{font-size:14px;line-height:1.55}
-    .path-tech>summary,.related-settings>summary{display:inline-flex;align-items:center;min-height:30px;color:var(--muted);font-size:10px;font-weight:750;cursor:pointer}
+    .path-tech>summary,.related-settings>summary{display:inline-flex;align-items:center;min-height:30px;color:var(--muted);font-size:11px;font-weight:750;cursor:pointer}
     .related-settings{margin-top:2px}
     .related-settings>summary::before{content:"▸";margin-right:5px;font-size:8px}
     .related-settings[open]>summary::before{transform:rotate(90deg)}
     .related-settings ul{display:grid;gap:5px;margin:2px 0 0;padding:8px 10px 8px 26px;border:1px dashed var(--border);border-radius:8px;background:var(--card-soft)}
-    .related-settings li{font-size:10px;line-height:1.5;color:var(--fg)}
-    .related-settings code{display:block;color:var(--muted);font-size:9px;word-break:break-all}
-    .related-settings p{margin:2px 0 0;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;color:var(--muted);font-size:10px}
+    .related-settings li{font-size:11px;line-height:1.5;color:var(--fg)}
+    .related-settings code{display:block;color:var(--muted);font-size:11px;word-break:break-all}
+    .related-settings p{margin:2px 0 0;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;color:var(--muted);font-size:11px}
     .review-queue{border-color:var(--border);background:var(--card);box-shadow:none}
     .review-queue--pending .review-queue-mark{background:var(--accent);color:#fff}
     .review-queue--clear .review-queue-mark{background:#15803d;color:#fff}
@@ -10037,6 +10120,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .tchip{min-height:36px}
     .settings-tab,.btn,.row-act,.row-review-next,.row-reviewed,.row-select{min-height:36px}
 
+    @media (max-width:900px){
+      .report-hero{display:flex;flex-direction:column}
+      .report-hero .topbar-main{display:flex;flex-direction:column;gap:9px}
+      .report-hero .topbar-compare{width:100%;max-width:980px}
+      .report-hero .topbar-app-card{grid-template-columns:auto auto minmax(0,1fr);min-height:66px;padding:12px 14px}
+      .report-review-start{display:flex;flex-direction:row;align-items:center;justify-content:space-between}
+    }
     @media (max-width:1080px){
       .report-hero,.report-workspace{width:min(calc(100% - 24px),1440px)}
       .report-workspace{display:block}
@@ -10046,10 +10136,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
     @media (max-width:768px){
       .report-hero,.report-workspace{width:calc(100% - 16px)}
-      .report-hero{gap:14px;margin-top:8px;padding:16px;border-radius:14px}
+      .report-hero{gap:12px;margin-top:8px;padding:15px;border-radius:16px}
       .report-hero .topbar-compare{grid-template-columns:1fr;gap:6px}
       .report-hero .topbar-arrow{height:16px;transform:rotate(90deg)}
       .report-completeness{grid-template-columns:auto minmax(0,1fr);padding:13px}
+      .report-content-disclosure{grid-template-columns:1fr}
+      .report-content-disclosure strong{white-space:normal}
       .report-diagnostics{grid-column:1/-1}
       .report-facts-head{display:block}
       .report-facts-head>p{margin-top:5px;text-align:left}
@@ -10060,11 +10152,25 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .drow-facts,.drow-title,.drow-actions{grid-column:1}
       .drow-actions{width:100%;margin-left:0;justify-content:flex-start;flex-wrap:wrap}
       .report-workspace button,.report-workspace input,.report-workspace select,.report-workspace summary{min-height:44px}
+      .report-review-start{align-items:stretch;flex-direction:column}
+      .report-review-start button{width:100%}
     }
     @media (max-width:480px){
-      .report-fact-grid{grid-template-columns:1fr}
+      .report-hero{gap:9px;padding:12px}
+      .report-hero .topbar-main{gap:6px}
+      .report-hero .topbar-title{font-size:1.5rem}
+      .topbar-lead{font-size:12px;line-height:1.55}
+      .report-hero .topbar-compare{gap:5px}
+      .report-hero .topbar-app-card{min-height:56px;padding:10px 12px}
+      .report-hero .topbar-arrow{height:12px}
+      .report-content-disclosure{gap:3px;padding:9px 11px;font-size:11px;line-height:1.55}
+      .report-completeness{grid-template-columns:auto minmax(0,1fr);gap:9px;padding:11px}
+      .report-completeness-copy h2{font-size:15px}
+      .report-completeness-copy p{font-size:11px;line-height:1.55}
+      .report-review-start{gap:8px;padding:10px 12px}
+      .report-fact-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
       .report-fact-grid article{padding:10px 12px}
-      .report-completeness{grid-template-columns:1fr}
+      .report-fact-grid article:last-child:nth-child(odd){grid-column:1/-1}
       .report-completeness-mark{width:30px;height:30px}
       .topbar-eyebrow-row{align-items:flex-start;flex-direction:column}
       .header-badge{white-space:normal}
@@ -10076,22 +10182,34 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .review-queue-actions{grid-column:1}
     }
     @media (forced-colors:active){
-      .report-completeness,.report-fact-grid article,.drow,.fact-chip{forced-color-adjust:auto;border:1px solid CanvasText}
+      .report-content-disclosure,.report-completeness,.report-review-start,.report-fact-grid article,.drow,.fact-chip{forced-color-adjust:auto;border:1px solid CanvasText}
       .fact-chip::before{border:1px solid CanvasText;background:CanvasText}
       :focus-visible{outline:2px solid Highlight!important;outline-offset:2px;box-shadow:none!important}
     }
     @media print{
-      aside,.sb-panel .btn,.settings-tabs,.search-hint,.diff-toolbar,.drow-actions,.review-queue-actions,.skip-link{display:none!important}
-      body{display:block;background:#fff}
+      @page{size:A4;margin:12mm}
+      :root,body.dark{--bg:#fff;--fg:#0f172a;--card:#fff;--card-soft:#f8fafc;--border:#cbd5e1;--sidebar:#f8fafc;--sidebar-fg:#334155;--accent:#2563eb;--accent-strong:#1d4ed8;--accent-soft:#dbeafe;--muted:#475569;color-scheme:light}
+      body.dark .report-content-disclosure{border-color:#d6b456;border-left-color:#9a6700;background:#fffaf0;color:#5f4300}
+      body.dark .report-content-disclosure--caution{border-color:#e0a06b;border-left-color:#b45309;background:#fff7ed;color:#7c2d12}
+      body.dark .report-completeness--incomplete{border-color:#f0c36a;background:#fffaf0}
+      body.dark .report-completeness--complete{border-color:#9bc8ac;background:#f4fbf6}
+      aside,.sb-panel .btn,.settings-tabs,.search-hint,.diff-toolbar,.drow-actions,.review-queue-actions,.skip-link,.report-review-start{display:none!important}
+      body{display:block;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .report-hero,.report-workspace{width:100%;margin:0}
-      .report-hero{padding:0 0 14px;border:none}
+      .report-hero{display:block;padding:0 0 14px;border:none;background:#fff}
+      .report-hero>*{margin-bottom:10px}
+      .report-hero .topbar-main{display:block}
+      .report-hero .topbar-compare{margin-top:10px}
       .report-workspace{display:block}
       main{padding:0!important}
       .settings-shell,.sec,.topbar{box-shadow:none}
       .report-diagnostics>summary{display:none}
       .report-diagnostics>.report-notices{display:flex!important}
       .drow-list{gap:6px;padding:6px;background:#fff}
-      .drow{break-inside:avoid}
+      .sec-head{break-after:avoid}
+      .drow,.fj-block,.fc-card,.duo-wrap,.report-fact-grid article{break-inside:avoid}
+      details:not([open])>*:not(summary){display:block!important}
+      details>summary{break-after:avoid}
       .drow,.fj-block,.fc-card{content-visibility:visible!important;contain-intrinsic-size:none!important}
     }
     @media (prefers-reduced-motion:reduce){
@@ -10124,6 +10242,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       </div>
     </div>
 
+    ${contentDisclosureHtml}
+
     <section class="report-completeness report-completeness--${reportMeta.incompleteComparison ? "incomplete" : "complete"}" data-comparison-status="${reportMeta.incompleteComparison ? "incomplete" : "complete"}" aria-labelledby="comparisonStatusTitle">
       <span class="report-completeness-mark" aria-hidden="true">${reportMeta.incompleteComparison ? "!" : "✓"}</span>
       <div class="report-completeness-copy">
@@ -10131,8 +10251,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <h2 id="comparisonStatusTitle">${reportMeta.incompleteComparison ? "この結果だけでは、全差分を断定できません" : "比較対象の取得と差分検出は完了しています"}</h2>
         <p>${reportMeta.incompleteComparison ? `${incompleteComparisonWarnings.length}件の未完了要因があります。件数は確認できた範囲の下限として扱ってください。` : "取得失敗・本文未検証・検出上限による打ち切りはありません。"}</p>
       </div>
-      ${noticesHtml ? `<details class="report-diagnostics"><summary>確認が必要な取得状況を見る</summary><div class="report-notices">${noticesHtml}</div></details>` : ""}
+      ${noticesHtml ? `<details class="report-diagnostics"${reportMeta.incompleteComparison ? " open" : ""}><summary>${reportMeta.incompleteComparison ? "未完了の要因を確認" : "取得範囲と収録内容の詳細"}</summary><div class="report-notices">${noticesHtml}</div></details>` : ""}
     </section>
+
+    ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-review-start><span>未確認の差分を定義順に確認します。確認状態はレポート内で記録できます。</span><button type="button" id="startPendingReviewBtn">未確認レビューを開始（${preparedReviewRows.reviewKeys.length}件）</button></div>` : ""}
 
     <section class="report-facts" data-objective-counts aria-labelledby="objectiveCountsTitle">
       <div class="report-facts-head">
@@ -10147,7 +10269,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <article><span>比較元のみに存在</span><strong>${summary.removed}</strong><small>比較先にはありません</small></article>
         <article><span>両方に存在・内容が異なる</span><strong>${objectiveContentChangedCount}</strong><small>値または設定が異なります</small></article>
         <article><span>並び順が異なる</span><strong>${summary.moved}</strong><small>内容とは別に集計</small></article>
-        <article><span>内容は同じ</span><strong>${summary.same}</strong><small>${includesComparedContent ? "比較証跡として収録" : "安全共有版では非収録の場合があります"}</small></article>
+        <article><span>内容は同じ</span><strong>${summary.same}</strong><small>${includesComparedContent ? "比較証跡として収録" : "差分行のみのため非収録"}</small></article>
       </div>
     </section>
 
@@ -10155,6 +10277,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       <span>生成 ${esc(reportMeta.generatedAt)}</span>
       <span>対象 ${esc(sectionText || "-")}</span>
       <span>${esc(comparedContentModeNote)}</span>
+      <span data-applied-ignore>${esc(appliedIgnoreSummary)}</span>
+      <span data-applied-normalization>${esc(appliedNormalizationSummary)}</span>
     </div>
   </header>
 
@@ -10206,7 +10330,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       <label class="chk"><input type="checkbox" id="hideSame"> 同一項目を隠す</label>
       <label class="chk"><input type="checkbox" id="charDiff" checked> 文字単位ハイライト</label>
       <label class="chk"><input type="checkbox" id="hideUnchangedLines" checked> 複数行差分は変更行だけ表示</label>
-      <label class="chk" title="${includesComparedContent ? "フィールドごとに区切って、設定JSON全体を左右に並べて行単位で比較します（WinMerge風）" : "差分行のみのレポートには設定本文が収録されていません"}"><input type="checkbox" id="rawJson"${comparedContentDisabledAttrs}> JSONで比較（フィールド単位）</label>
+      ${includesComparedContent ? '<label class="chk" title="フィールドごとに区切って、設定JSON全体を左右に並べて行単位で比較します（WinMerge風）"><input type="checkbox" id="rawJson"> JSONで比較（フィールド単位）</label>' : ""}
       <label class="chk" title="「確認」チェックを付けた差分行を一覧から隠します"><input type="checkbox" id="hideReviewed"> 確認済みを隠す</label>
       <span class="field-label">表示視点</span>
       <div class="view-side" role="radiogroup" aria-label="差分の表示視点" title="どちらか一方のアプリから見た内容だけを表示します（追加・削除の判定は変わりません）">
@@ -10225,22 +10349,22 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <button type="button" class="btn" id="themeBtn" style="grid-column:span 2">ダークに切替</button>
       </div>
     </div>
-    <details class="sb-panel sb-ctrl tool-details">
+    ${includesComparedContent ? `<details class="sb-panel sb-ctrl tool-details">
       <summary class="tool-details-summary">出力・反映・比較証跡</summary>
       <div class="tool-details-body">
       <span class="field-label">反映JSON（選択差分 → APIパラメータ）</span>
-      <p class="search-hint" style="margin-top:0">${!includesComparedContent ? "差分行のみのレポートには設定本文が収録されていないため、この機能は利用できません。" : canBuildReflectJson ? "行やフィールドの「選択」にチェックした差分から、比較元の設定値を比較先アプリへ反映するためのAPIパラメータJSONを作成します。" : "比較結果が不完全なため、反映JSONの選択・保存・コピーを無効にしています。取得失敗や本文未検証、上限超過を解消して再比較してください。"}</p>
+      <p class="search-hint" style="margin-top:0">${canBuildReflectJson ? "行やフィールドの「選択」にチェックした差分から、比較元の設定値で比較先アプリを上書きするためのAPIパラメータJSONを作成します。" : esc(reflectJsonBlockedReason)}</p>
       <div class="sb-btns">
         <button type="button" class="btn" id="reflectJsonBtn"${reflectJsonDisabledAttrs}>反映JSON保存</button>
         <button type="button" class="btn" id="reflectJsonCopyBtn"${reflectJsonDisabledAttrs}>反映JSONコピー</button>
       </div>
       <span class="field-label" style="margin-top:10px">作成時に利用した設定JSON（比較証跡）</span>
       <div class="sb-btns">
-        <button type="button" class="btn" id="srcJsonBtn"${comparedContentDisabledAttrs}>比較元JSON</button>
-        <button type="button" class="btn" id="tgtJsonBtn"${comparedContentDisabledAttrs}>比較先JSON</button>
+        <button type="button" class="btn" id="srcJsonBtn">比較元JSON</button>
+        <button type="button" class="btn" id="tgtJsonBtn">比較先JSON</button>
       </div>
       </div>
-    </details>
+    </details>` : ""}
     <div class="sb-panel sb-ctrl sb-advanced">
       <details class="adv">
         <summary class="adv-summary">詳細オプション（表示の絞り込み）</summary>
@@ -10263,7 +10387,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     <div class="settings-shell">
       <div class="settings-tabs" role="tablist" aria-label="レポート表示切替">
         <button id="reportTabDiff" type="button" role="tab" class="settings-tab" data-report-tab="diff" aria-selected="true" aria-controls="reportPaneDiff" tabindex="0">差分一覧</button>
-        <button id="reportTabSettingsLike" type="button" role="tab" class="settings-tab passive" data-report-tab="settingsLike" aria-selected="false" aria-controls="reportPaneSettingsLike" tabindex="-1"${comparedContentDisabledAttrs}>フィールド単位</button>
+        ${includesComparedContent ? '<button id="reportTabSettingsLike" type="button" role="tab" class="settings-tab passive" data-report-tab="settingsLike" aria-selected="false" aria-controls="reportPaneSettingsLike" tabindex="-1">フィールド単位</button>' : ""}
       </div>
       <div id="reportToast" class="report-toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
@@ -10274,15 +10398,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         </div>
       </section>
 
-      <section id="reportPaneSettingsLike" class="tab-pane" data-report-pane="settingsLike" role="tabpanel" aria-labelledby="reportTabSettingsLike" hidden>
+      ${includesComparedContent ? `<section id="reportPaneSettingsLike" class="tab-pane" data-report-pane="settingsLike" role="tabpanel" aria-labelledby="reportTabSettingsLike" hidden>
         <div class="content" style="padding:0">
-          <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6">${includesComparedContent ? "<strong>フィールド単位</strong>で、フィールドごとの設定差分を1つの項目にまとめて確認します。検索と「同一項目を隠す」が連動し、カードのボタンから詳細を表示できます。" : "<strong>差分行のみ</strong>のレポートにはフィールド設定本文が収録されていないため、フィールド単位表示は利用できません。"}</p>
+          <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6"><strong>フィールド単位</strong>で、フィールドごとの設定差分を1つの項目にまとめて確認します。検索と「同一項目を隠す」が連動し、カードのボタンから詳細を表示できます。</p>
           <div id="settingsLikeRoot" class="sl-root"></div>
         </div>
-      </section>
+      </section>` : ""}
     </div>
 
-    <div id="fieldDetailModal" class="fd-overlay" hidden>
+    ${includesComparedContent ? `<div id="fieldDetailModal" class="fd-overlay" hidden>
       <div class="fd-overlay-dialog" role="dialog" aria-modal="true" aria-labelledby="fieldDetailModalTitle" aria-describedby="fieldDetailModalSub" tabindex="-1">
         <div class="fd-overlay-head">
           <div>
@@ -10297,7 +10421,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         </div>
         <div id="fieldDetailModalBody" class="fd-overlay-body"></div>
       </div>
-    </div>
+    </div>` : ""}
   </main>
   </div>
   <script>${logicScript}<\/script>
@@ -10389,7 +10513,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if (appId) {
       const matched = candidates.find((b) => String(b?.appId || "") === appId);
       if (matched) return limitImportedBundleToSections(matched, options.sections);
-      if (candidates.length > 1) throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
+      throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
     }
     return limitImportedBundleToSections(candidates[0], options.sections);
   }
@@ -10503,12 +10627,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const s = summarizeRows(rows);
     const warning = warningInfoForStandalone(rows, fetchIssues, partialIssues);
     const truncation = diffResult.truncation?.truncated ? diffResult.truncation : null;
+    const actualDiffTruncated = hasIncompleteActualDiffTruncation(truncation);
     const incompleteNotes = [
-      truncation ? `差分上限 ${truncation.diffLimit}件に到達` : "",
+      actualDiffTruncated ? `差分上限 ${truncation?.diffLimit}件に到達` : "",
       partialIssues.length ? `本文未検証 ${partialIssues.length}件` : ""
     ].filter(Boolean);
     const incompleteNote = incompleteNotes.length ? ` / ⚠ 結果は不完全（${incompleteNotes.join(" / ")}）` : "";
-    const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件 / 一部未検証 ${partialIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ""}${incompleteNote} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved})`;
+    const droppedSame = Number(truncation?.droppedSame || 0);
+    const sameOmissionNote = droppedSame > 0 ? ` / 同一証跡 ${droppedSame}件を上限により省略${actualDiffTruncated ? "" : "（実差分の走査は完了）"}` : "";
+    const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件 / 一部未検証 ${partialIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ""}${incompleteNote}${sameOmissionNote} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved})`;
     onStatus(statusLine);
     return {
       rows,
@@ -10729,6 +10856,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   init_export_safety();
   init_enrich();
   init_path_decoder();
+  init_engine();
 
   // src/diff/xlsx-builder.ts
   var XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
@@ -10879,7 +11007,26 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     review: 11,
     info: 12,
     headerDivider: 15,
-    hyperlink: 13
+    hyperlink: 13,
+    subtitle: 18,
+    kpiChange: 19,
+    summaryLabel: 20,
+    summaryValue: 21,
+    center: 22,
+    zebra: 23,
+    zebraCenter: 24,
+    changeAdded: 25,
+    changeRemoved: 26,
+    changeChanged: 27,
+    changeMoved: 28,
+    reviewChoice: 29,
+    actionLink: 30,
+    category: 31,
+    directionArrow: 32,
+    metricValueAdded: 33,
+    metricValueRemoved: 34,
+    metricValueChanged: 35,
+    metricValueMoved: 36
   };
   function normalizedPaneCount(value, max) {
     const n = Math.floor(Number(value));
@@ -10892,6 +11039,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function normalizedNonNegativeInt(value, fallback, max) {
     const n = Math.floor(Number(value));
     return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : fallback;
+  }
+  function normalizedZoomScale(value) {
+    if (value == null) return null;
+    const n = Math.floor(Number(value));
+    return Number.isFinite(n) ? Math.max(10, Math.min(400, n)) : null;
   }
   function buildPaneXml(freezeRows, freezeColumns) {
     if (!freezeRows && !freezeColumns) return "";
@@ -10991,9 +11143,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const freezeRows = normalizedPaneCount(sheet.freezeRows == null ? sheet.freezeHeader !== false && rows.length > 0 ? 1 : 0 : sheet.freezeRows, 1048575);
     const freezeColumns = normalizedPaneCount(sheet.freezeColumns, 16383);
     const paneXml = buildPaneXml(freezeRows, freezeColumns);
-    if (paneXml || sheet.showGridLines === false) {
+    const zoomScale = normalizedZoomScale(sheet.zoomScale);
+    if (paneXml || sheet.showGridLines === false || zoomScale != null) {
       const gridLines = sheet.showGridLines === false ? ' showGridLines="0"' : "";
-      out.push(`<sheetViews><sheetView workbookViewId="0"${gridLines}>`);
+      const zoom = zoomScale == null ? "" : ` zoomScale="${zoomScale}" zoomScaleNormal="${zoomScale}"`;
+      out.push(`<sheetViews><sheetView workbookViewId="0"${gridLines}${zoom}>`);
       if (paneXml) out.push(paneXml);
       out.push("</sheetView></sheetViews>");
     }
@@ -11071,9 +11225,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       const orientation = sheet.print.orientation === "landscape" ? "landscape" : "portrait";
       const fitToWidth = normalizedNonNegativeInt(sheet.print.fitToWidth, 1, 32767);
       const fitToHeight = normalizedNonNegativeInt(sheet.print.fitToHeight, 0, 32767);
-      out.push('<printOptions horizontalCentered="0" verticalCentered="0" gridLines="0" headings="0"/>');
+      const horizontalCentered = sheet.print.horizontalCentered === true ? 1 : 0;
+      out.push(`<printOptions horizontalCentered="${horizontalCentered}" verticalCentered="0" gridLines="0" headings="0"/>`);
       out.push('<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>');
       out.push(`<pageSetup paperSize="9" orientation="${orientation}" fitToWidth="${fitToWidth}" fitToHeight="${fitToHeight}"/>`);
+      if (sheet.print.footer) {
+        out.push(`<headerFooter><oddFooter>${escapeXml(String(sheet.print.footer).slice(0, 255))}</oddFooter></headerFooter>`);
+      }
     }
     out.push("</worksheet>");
     return out.join("");
@@ -11082,11 +11240,21 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const items = sheets.map((s, i) => `<sheet name="${escapeXml(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("");
     const printTitles = sheets.flatMap((sheet, index) => {
       const repeatRows = sheet.print?.repeatRows;
-      if (!repeatRows) return [];
-      const from = normalizedPositiveInt(repeatRows.from, 1, 1048576);
-      const to = Math.max(from, normalizedPositiveInt(repeatRows.to, from, 1048576));
+      const repeatColumns = sheet.print?.repeatColumns;
+      if (!repeatRows && !repeatColumns) return [];
       const formulaSheetName = sheet.name.replace(/'/g, "''");
-      return [`<definedName name="_xlnm.Print_Titles" localSheetId="${index}">${escapeXml(`'${formulaSheetName}'!$${from}:$${to}`)}</definedName>`];
+      const ranges = [];
+      if (repeatRows) {
+        const from = normalizedPositiveInt(repeatRows.from, 1, 1048576);
+        const to = Math.max(from, normalizedPositiveInt(repeatRows.to, from, 1048576));
+        ranges.push(`'${formulaSheetName}'!$${from}:$${to}`);
+      }
+      if (repeatColumns) {
+        const from = normalizedPositiveInt(repeatColumns.from, 1, 16384);
+        const to = Math.max(from, normalizedPositiveInt(repeatColumns.to, from, 16384));
+        ranges.push(`'${formulaSheetName}'!$${colRef(from)}:$${colRef(to)}`);
+      }
+      return [`<definedName name="_xlnm.Print_Titles" localSheetId="${index}">${escapeXml(ranges.join(","))}</definedName>`];
     }).join("");
     const definedNames = printTitles ? `<definedNames>${printTitles}</definedNames>` : "";
     return `${XML_HEADER}<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${items}</sheets>${definedNames}</workbook>`;
@@ -11104,7 +11272,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return `${XML_HEADER}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
   }
   function buildStylesXml() {
-    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="6"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font></fonts><fills count="7"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF8D6"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="5"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border><border><left/><right/><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border><border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border><border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="18"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="3" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="4" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="16"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF2563EB"/></font></fonts><fills count="10"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="6"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border><border><left/><right/><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border><border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border><border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border><border><left/><right/><top style="medium"><color rgb="FF94A3B8"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="37"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="3" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="4" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="3" fillId="4" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="7" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="8" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="9" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="10" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="7" borderId="5" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="15" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="11" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="12" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="13" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="14" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
   }
   function buildXlsxBlob(sheets) {
     const enc = new TextEncoder();
@@ -11544,10 +11712,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return "項目名を判別できません（技術明細を確認）";
   }
   function rowNote(row) {
-    const reasonSummary = row.sectionKey === "layoutSettings" ? String(row.reasonSummary || "").replace(/(行|フィールド) #(\d+)/g, (_match, label, index) => `${label} #${Number(index) + 1}`).replace(/\binnerheight\b/gi, "入力欄の高さ") : String(row.reasonSummary || "");
+    const reasonSummary = row.sectionKey === "layoutSettings" ? String(row.reasonSummary || "").replace(/\binnerheight\b/gi, "入力欄の高さ") : String(row.reasonSummary || "");
     const notes = [
       reasonSummary,
       row._displayOnly ? "表示用の補助情報（差分件数には含めません）" : "",
+      row._nonActionable ? "確認専用（自動反映対象外）" : "",
       row.notationOnly ? "表記ゆれのみ" : "",
       row.emptyOnly ? "空値の違いのみ" : ""
     ].filter(Boolean);
@@ -11816,7 +11985,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const reasons = [];
     if (fetchIssues.length) reasons.push(`取得失敗 ${fetchIssues.length}件`);
     if (partialIssues.length) reasons.push(`一部未検証 ${partialIssues.length}件`);
-    if (truncation) {
+    if (truncation && hasIncompleteActualDiffTruncation(truncation)) {
       const sections = truncation.sections || [];
       const partial = sections.filter((section) => truncationScanStatusOf(section) === "partial").length;
       const unscanned = sections.filter((section) => truncationScanStatusOf(section) === "unscanned").length;
@@ -11824,7 +11993,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       if (unscanned) reasons.push(`未走査 ${unscanned}セクション`);
       if (!partial && !unscanned) reasons.push("件数上限による省略あり");
     }
-    return reasons.length ? `不完全（${reasons.join(" / ")}）` : "完全（選択範囲を走査済み）";
+    if (reasons.length) return `不完全（${reasons.join(" / ")}）`;
+    const droppedSame = Number(truncation?.droppedSame || 0);
+    return droppedSame > 0 ? `完全（差分走査済み / 同一証跡 ${droppedSame}件を省略）` : "完全（選択範囲を走査済み）";
   }
   function sectionCompletenessLabel(key, ctx) {
     if ((ctx.fetchIssues || []).some((issue) => (issue.sectionKey || issue.section) === key)) return "取得失敗あり";
@@ -11844,7 +12015,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const fieldTruncation = (ctx.truncation?.sections || []).find((section) => (section.sectionKey || section.section) === "fieldSettings");
     const fieldScanStatus = fieldTruncation ? truncationScanStatusOf(fieldTruncation) : null;
     const fieldOmittedDiff = Number(fieldTruncation?.omittedDiffCount ?? fieldTruncation?.droppedDiff ?? 0);
-    const legacyUnknownTruncation = !!ctx.truncation?.truncated && !(ctx.truncation.sections || []).length;
+    const legacyUnknownTruncation = hasIncompleteActualDiffTruncation(ctx.truncation) && !(ctx.truncation?.sections || []).length;
     const fieldIncomplete = (ctx.fetchIssues || []).some((issue) => (issue.sectionKey || issue.section) === "fieldSettings") || (ctx.partialIssues || []).some((issue) => (issue.sectionKey || issue.section) === "fieldSettings") || legacyUnknownTruncation || fieldScanStatus === "partial" || fieldScanStatus === "unscanned";
     const known = [
       fieldCount ? `${fieldCount}フィールド / ${settingDiffCount}件の差分明細` : "",
@@ -11888,7 +12059,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return key === "fieldSettings" ? "フィールド技術明細" : sectionLabelOf(key);
   }
   function buildSheetGuides(ctx, grouped, fieldCount) {
-    const hasIssues = !!((ctx.fetchIssues || []).length || (ctx.partialIssues || []).length || ctx.truncation?.truncated);
+    const hasIssues = !!((ctx.fetchIssues || []).length || (ctx.partialIssues || []).length || hasIncompleteActualDiffTruncation(ctx.truncation));
     const guides = [{
       name: "概要",
       purpose: "比較結果の判定、件数、比較条件、取得状態を確認できます。",
@@ -11946,8 +12117,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const fetchIssues = ctx.fetchIssues || [];
     const partialIssues = ctx.partialIssues || [];
     const counts = summarizeRows2(rows);
-    const truncation = ctx.truncation?.truncated ? ctx.truncation : null;
-    const incomplete = fetchIssues.length > 0 || partialIssues.length > 0 || !!truncation;
+    const truncation = ctx.truncation || null;
+    const actualDiffTruncation = hasIncompleteActualDiffTruncation(truncation) ? truncation : null;
+    const incomplete = fetchIssues.length > 0 || partialIssues.length > 0 || !!actualDiffTruncation;
     const verdict = incomplete ? "比較不完全（差分なしとは判断できません）" : counts.actual > 0 ? "差分あり" : "差分なし";
     const completeness = completenessLabel(fetchIssues, partialIssues, truncation);
     const comparisonBanner = `${appLabel(ctx.sourceBundle) || "比較元"}  →  ${appLabel(ctx.targetBundle) || "比較先"}`;
@@ -11991,7 +12163,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       ["この出力範囲の結果", verdict, "取得状態", completeness],
       ["収録差分数", counts.actual, "取得失敗", fetchIssues.length],
       ["追加（比較先のみ）", counts.added, "一部未検証", partialIssues.length],
-      ["削除（比較元のみ）", counts.removed, "件数上限", truncation ? "省略あり" : "省略なし"],
+      ["削除（比較元のみ）", counts.removed, "件数上限", actualDiffTruncation ? "差分の省略あり" : Number(truncation?.droppedSame || 0) > 0 ? `同一証跡 ${Number(truncation?.droppedSame || 0)}件を省略` : "省略なし"],
       ["内容変更（移動を除く）", counts.contentChanged, "", ""],
       ["移動", counts.moved, "", ""],
       ["同一", counts.same, "", ""],
@@ -12034,15 +12206,17 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       warningRows.push(sheetRows.length);
       sheetRows.push([label, message, "", ""]);
     };
-    if (truncation) {
-      const truncationSections = truncation.sections || [];
+    if (actualDiffTruncation) {
+      const truncationSections = actualDiffTruncation.sections || [];
       const partial = truncationSections.filter((section) => truncationScanStatusOf(section) === "partial");
       const unscanned = truncationSections.filter((section) => truncationScanStatusOf(section) === "unscanned");
       const rangeNotes = [
         partial.length ? `部分走査・総件数不明（表示件数は下限）: ${partial.map(truncationSectionName).join("・")}。` : "",
         unscanned.length ? `未走査・件数不明: ${unscanned.map(truncationSectionName).join("・")}。` : ""
       ].filter(Boolean).join(" ");
-      pushWarning("⚠ 件数上限", `差分上限 ${truncation.diffLimit || "-"} 件に到達。未収録の差分があるため、このブックだけで反映判断をしないでください。${rangeNotes ? ` ${rangeNotes}` : ""}`);
+      pushWarning("⚠ 件数上限", `差分上限 ${actualDiffTruncation.diffLimit || "-"} 件に到達。未収録の差分があるため、このブックだけで反映判断をしないでください。${rangeNotes ? ` ${rangeNotes}` : ""}`);
+    } else if (Number(truncation?.droppedSame || 0) > 0) {
+      pushWarning("ℹ 同一証跡の省略", `同一証跡は上限 ${truncation?.sameLimit || "-"} 件まで収録し、${Number(truncation?.droppedSame || 0)} 件を省略しました。実差分の検出結果は完全です。`);
     }
     if (partialIssues.length) {
       pushWarning("⚠ 一部未検証", `${partialIssues.length} 件。JS/CSS等の本文を取得できず、代替情報で比較した項目があります。`);
@@ -12094,7 +12268,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     cellStyles[overviewRow.added][2] = "info";
     cellStyles[overviewRow.added][3] = partialIssues.length > 0 ? "kpiDanger" : "kpiGood";
     cellStyles[overviewRow.removed][2] = "info";
-    cellStyles[overviewRow.removed][3] = truncation ? "kpiDanger" : "kpiGood";
+    cellStyles[overviewRow.removed][3] = actualDiffTruncation ? "kpiDanger" : "kpiGood";
     cellStyles[overviewRow.comparisonApps][1] = "source";
     cellStyles[overviewRow.comparisonApps][3] = "target";
     cellStyles[overviewRow.comparisonEnvironment][1] = "source";
@@ -12725,7 +12899,7 @@ ${label}` : `${direction}の値`;
   function buildIssuesSheet(ctx) {
     const fetchIssues = ctx.fetchIssues || [];
     const partialIssues = ctx.partialIssues || [];
-    const truncation = ctx.truncation?.truncated ? ctx.truncation : null;
+    const truncation = hasIncompleteActualDiffTruncation(ctx.truncation) ? ctx.truncation : null;
     if (!fetchIssues.length && !partialIssues.length && !truncation) return null;
     const guide = sheetGuideBand(
       "取得失敗、一部未検証、件数上限の対象と理由を確認できます。",
@@ -13163,6 +13337,7 @@ ${label}` : `${direction}の値`;
     const key = sectionKeyOfRow(row);
     const section = customerSectionLabel(key);
     const path = String(row.path || "");
+    if (row._stateRenameNotice) return "ステータス名";
     if (customerSensitivePath(path) || !customerKnownSafePath(row)) return `${section}の設定情報`;
     const fieldInfo = extractFieldPathInfo(path);
     if (fieldInfo) {
@@ -13313,6 +13488,11 @@ ${label}` : `${direction}の値`;
     const value = side === "source" ? row.left : row.right;
     const preferredBundle = side === "source" ? sourceBundle : targetBundle;
     const fallbackBundle = side === "source" ? targetBundle : sourceBundle;
+    if (row._stateRenameNotice) {
+      const stateName = value && typeof value === "object" && !Array.isArray(value) ? String(value.name || "").trim() : "";
+      const safe = !!stateName && stateName.length <= 120 && !customerUnsafeRawLabelText(stateName) && !customerContainsKnownBundleId(stateName, preferredBundle, fallbackBundle);
+      return safe ? { text: stateName, omitted: false } : { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
+    }
     const fieldInfo = extractFieldPathInfo(path);
     if (fieldInfo) {
       const definition = fieldDefinitionAt(preferredBundle, fieldInfo) || fieldDefinitionAt(fallbackBundle, fieldInfo);
@@ -13414,6 +13594,9 @@ ${label}` : `${direction}の値`;
         row
       });
     }
+    if (row._stateRenameNotice) {
+      return "ステータス名の変更が意図したものか確認してください。この行は確認専用で、自動反映の対象外です。";
+    }
     const guidance = {
       appSettings: "アプリの基本設定が意図した変更か確認してください。",
       appInfo: "アプリ情報が意図した変更か確認してください。",
@@ -13425,7 +13608,8 @@ ${label}` : `${direction}の値`;
       actionSettings: "アクション設定が意図した変更か確認してください。",
       categories: "カテゴリ設定が意図した変更か確認してください。"
     };
-    return guidance[key] || "変更内容が意図したものか確認してください。";
+    const note = guidance[key] || "変更内容が意図したものか確認してください。";
+    return row._nonActionable ? `${note} この行は確認専用で、自動反映の対象外です。` : note;
   }
   function customerHiddenReviewLocation(sourceHidden, targetHidden) {
     if (sourceHidden && targetHidden) return "比較元と比較先の両方の環境";
@@ -13510,15 +13694,7 @@ ${label}` : `${direction}の値`;
     return omitted == null ? status !== "complete" : Number(omitted) > 0;
   }
   function customerHasDiffTruncation(truncation) {
-    if (!truncation) return false;
-    if (Number(truncation.droppedDiff || 0) > 0) return true;
-    const sections = truncation.sections || [];
-    if (sections.some(customerTruncationSectionIncomplete)) return true;
-    if (!truncation.truncated) return false;
-    const hasExplicitDiffCount = Object.prototype.hasOwnProperty.call(truncation, "droppedDiff");
-    const hasOnlySameOmission = Number(truncation.droppedSame || 0) > 0 && hasExplicitDiffCount;
-    const hasCompleteSectionEvidence = sections.length > 0 && sections.every((section) => truncationScanStatusOf(section) === "complete" && Number(section.omittedDiffCount || 0) === 0);
-    return !(hasOnlySameOmission || hasCompleteSectionEvidence);
+    return hasIncompleteActualDiffTruncation(truncation);
   }
   function customerDateTime(value) {
     const raw = String(value ?? "").trim();
@@ -13529,20 +13705,23 @@ ${label}` : `${direction}の値`;
   function buildCustomerSummarySheet(ctx, items) {
     const counts = summarizeCustomerRows(ctx.rows || []);
     const incomplete = customerIncomplete(ctx);
+    const droppedSame = Number(ctx.truncation?.droppedSame || 0);
     const filtered = ctx.exportMode === "filtered";
     const verdict = incomplete ? "比較未完了" : filtered ? counts.actual ? "絞り込み後：変更あり" : "絞り込み後：掲載対象なし" : counts.actual ? "変更あり" : "変更なし";
-    const completeness = incomplete ? "一部未完了" : "正常完了（選択範囲）";
+    const completeness = incomplete ? "一部未完了" : droppedSame > 0 ? `正常完了（同一証跡 ${droppedSame}件を省略）` : "正常完了（選択範囲）";
     const sourceName = customerAppName(ctx.sourceBundle, "比較元のアプリ");
     const targetName = customerAppName(ctx.targetBundle, "比較先のアプリ");
     const omitted = items.reduce((sum, item) => sum + item.omittedTechnicalValues, 0);
     const comparedScopes = ctx.scopes?.length ? ctx.scopes : [...new Set(items.map((item) => item.sectionKey))];
     const rows = [
       ["kintone 設定差分確認レポート", "", "", "", "", ""],
-      [`比較元：${sourceName}  ／  比較先：${targetName}`, "", "", "", "", ""],
+      [`比較元
+${sourceName}`, "", "→", `比較先
+${targetName}`, "", ""],
       ["比較結果", verdict, "比較処理", completeness, "", "変更一覧を開く"],
       [filtered ? "掲載変更件数" : "変更件数", `${counts.actual}件`, "比較日時", customerDateTime(ctx.comparedAt), "", ""],
       ["追加", `${counts.added}件`, "削除", `${counts.removed}件`, "変更", `${counts.contentChanged}件`],
-      ["要素の移動", `${counts.moved}件`, "詳細を省略した変更", omitted ? `${omitted}件（変更一覧で確認）` : "0件", "", ""],
+      ["要素の移動", `${counts.moved}件`, "詳細を省略した変更", omitted ? `${omitted}件（変更一覧で確認）` : "0件", "同一証跡の省略", droppedSame ? `${droppedSame}件（変更判定への影響なし）` : "0件"],
       ["比較した設定領域", customerScopeLabel(comparedScopes), "", "", "", ""],
       ["掲載範囲", ctx.exportMode === "filtered" ? "上記範囲内の一部" : "上記範囲内の全変更", "絞り込み", ctx.exportMode === "filtered" ? "あり" : "なし", "比較条件の調整", hasCustomerComparisonAdjustments(ctx) ? "あり" : "なし"],
       ["掲載内容", "変更点のみ。上記以外の設定領域は比較していません。", "", "", "", ""],
@@ -13553,38 +13732,71 @@ ${label}` : `${direction}の値`;
       ...customerSectionBreakdown(ctx.rows || [])
     ];
     const cellStyles = rows.map(() => []);
-    cellStyles[2][1] = incomplete ? "kpiWarning" : counts.actual ? "kpiDanger" : "kpiGood";
+    cellStyles[0][0] = "title";
+    cellStyles[1][0] = "sourceGroup";
+    cellStyles[1][2] = "directionArrow";
+    cellStyles[1][3] = "targetGroup";
+    cellStyles[2][0] = "summaryLabel";
+    cellStyles[2][1] = incomplete ? "kpiWarning" : counts.actual ? "kpiChange" : "kpiGood";
+    cellStyles[2][2] = "summaryLabel";
     cellStyles[2][3] = incomplete ? "warning" : "info";
-    cellStyles[2][5] = "hyperlink";
-    cellStyles[3][1] = "info";
+    cellStyles[2][5] = "actionLink";
+    cellStyles[3][0] = "summaryLabel";
+    cellStyles[3][1] = "summaryValue";
+    cellStyles[3][2] = "summaryLabel";
     cellStyles[3][3] = "info";
-    cellStyles[4][1] = "info";
-    cellStyles[4][3] = "info";
-    cellStyles[4][5] = "info";
-    cellStyles[5][1] = "info";
+    cellStyles[4] = [
+      "changeAdded",
+      "metricValueAdded",
+      "changeRemoved",
+      "metricValueRemoved",
+      "changeChanged",
+      "metricValueChanged"
+    ];
+    cellStyles[5][0] = "changeMoved";
+    cellStyles[5][1] = "metricValueMoved";
+    cellStyles[5][2] = "summaryLabel";
     cellStyles[5][3] = omitted ? "warning" : "info";
+    cellStyles[5][4] = "summaryLabel";
+    cellStyles[5][5] = "info";
+    cellStyles[6][0] = "summaryLabel";
     cellStyles[6][1] = "info";
+    cellStyles[7][0] = "summaryLabel";
     cellStyles[7][1] = "info";
+    cellStyles[7][2] = "summaryLabel";
     cellStyles[7][3] = "info";
+    cellStyles[7][4] = "summaryLabel";
     cellStyles[7][5] = "info";
+    cellStyles[8][0] = "summaryLabel";
     cellStyles[8][1] = "info";
-    cellStyles[9][0] = "info";
+    cellStyles[9][0] = "subtitle";
     cellStyles[11][0] = "sectionHeader";
+    for (let index = 13; index < rows.length; index += 1) {
+      const alternate = (index - 13) % 2 === 1;
+      cellStyles[index][0] = alternate ? "zebra" : "normal";
+      for (let column = 1; column < 6; column += 1) {
+        cellStyles[index][column] = alternate ? "zebraCenter" : "center";
+      }
+    }
     return {
       name: "比較概要",
       rows,
-      colWidths: [20, 34, 18, 32, 18, 24],
+      colWidths: [16, 22, 10, 22, 16, 22],
       rowStyles: rows.map(() => "normal"),
       cellStyles,
       headerRow: 13,
       freezeRows: 2,
       rowHeights: rows.map((row, index) => {
-        if (index === 0) return 36;
-        if (index === 1) return 28;
-        if (index === 9) return readableDiffRowHeight([{ value: row[0], width: 72 }], 74);
-        return index === 12 ? 30 : 24;
+        if (index === 0) return 42;
+        if (index === 1) return 42;
+        if (index === 2 || index === 3) return 34;
+        if (index === 4 || index === 5) return 38;
+        if (index === 6 || index === 8) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
+        if (index === 9) return readableDiffRowHeight([{ value: row[0], width: 62 }], 82);
+        if (index === 11) return 30;
+        return index === 12 ? 32 : 26;
       }),
-      merges: ["A1:F1", "A2:F2", "B7:F7", "B9:F9", "A10:F10", "A12:F12"],
+      merges: ["A1:F1", "A2:B2", "D2:F2", "B7:F7", "B9:F9", "A10:F10", "A12:F12"],
       internalHyperlinks: [{
         ref: "F3",
         targetSheet: "変更一覧",
@@ -13592,11 +13804,14 @@ ${label}` : `${direction}の値`;
         tooltip: "変更一覧へ移動"
       }],
       showGridLines: false,
+      zoomScale: 100,
       print: {
-        orientation: "portrait",
+        orientation: "landscape",
         fitToWidth: 1,
         fitToHeight: 0,
-        repeatRows: { from: 1, to: 2 }
+        repeatRows: { from: 1, to: 2 },
+        horizontalCentered: true,
+        footer: "&Rページ &P / &N"
       }
     };
   }
@@ -13619,12 +13834,30 @@ ${targetName}`,
       "コメント"
     ];
     const rows = [
-      ["比較元と比較先の現在設定を確認し、「顧客レビュー状況」から「コメント」までの4列に確認結果を入力してください。", "", "", "", "", "", "", "", "", "", ""],
+      [
+        "変更点を確認し、必要に応じて比較元・比較先の値を照合してください。",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "確認結果の入力欄（淡い黄色）",
+        "",
+        "",
+        ""
+      ],
       headers
     ];
     const rowStyles = ["normal", "normal"];
-    const cellStyles = [["info"], []];
-    const rowHeights = [30, 42];
+    const cellStyles = [["subtitle", void 0, void 0, void 0, void 0, void 0, void 0, "reviewChoice"], []];
+    const rowHeights = [38, 46];
+    const changeStyles = {
+      "追加": "changeAdded",
+      "削除": "changeRemoved",
+      "変更": "changeChanged",
+      "要素の移動": "changeMoved"
+    };
     items.forEach((item, index) => {
       rows.push([
         index + 1,
@@ -13641,34 +13874,40 @@ ${targetName}`,
       ]);
       rowStyles.push("normal");
       const styles = [];
+      const alternate = index % 2 === 1;
+      const startsCategory = index === 0 || items[index - 1]?.sectionLabel !== item.sectionLabel;
+      styles[0] = alternate ? "zebraCenter" : "center";
+      styles[1] = startsCategory ? "category" : alternate ? "zebra" : "normal";
+      styles[2] = alternate ? "zebra" : "normal";
+      styles[3] = changeStyles[item.changeType];
       styles[4] = "sourceDivider";
       styles[5] = "target";
       styles[6] = "info";
-      styles[7] = "review";
-      styles[8] = "review";
+      styles[7] = "reviewChoice";
+      styles[8] = "reviewChoice";
       styles[9] = "review";
       styles[10] = "review";
       cellStyles.push(styles);
       rowHeights.push(readableDiffRowHeight([
-        { value: item.sectionLabel, width: 18 },
-        { value: item.item, width: 34 },
-        { value: item.before, width: 36 },
-        { value: item.after, width: 36 },
-        { value: item.reviewNote, width: 38 }
-      ], 132));
+        { value: item.sectionLabel, width: 15 },
+        { value: item.item, width: 26 },
+        { value: item.before, width: 25 },
+        { value: item.after, width: 25 },
+        { value: item.reviewNote, width: 28 }
+      ], 112));
     });
     const lastRow = items.length + 2;
     return {
       name: "変更一覧",
       rows,
-      colWidths: [8, 18, 34, 16, 36, 36, 38, 14, 16, 16, 28],
+      colWidths: [10, 15, 26, 12, 25, 25, 28, 14, 15, 14, 22],
       rowStyles,
       cellStyles,
       headerRow: 2,
       freezeRows: 2,
-      freezeColumns: 3,
+      freezeColumns: 4,
       rowHeights,
-      merges: ["A1:K1"],
+      merges: ["A1:G1", "H1:K1"],
       dataValidations: items.length ? [{
         sqref: `H3:H${lastRow}`,
         values: CUSTOMER_REVIEW_STATUS_VALUES,
@@ -13681,11 +13920,14 @@ ${targetName}`,
         prompt: "人が判断した対応方針を選択してください"
       }] : [],
       showGridLines: false,
+      zoomScale: 85,
       print: {
         orientation: "landscape",
-        fitToWidth: 1,
+        fitToWidth: 2,
         fitToHeight: 0,
-        repeatRows: { from: 2, to: 2 }
+        repeatRows: { from: 2, to: 2 },
+        repeatColumns: { from: 1, to: 4 },
+        footer: "&Rページ &P / &N"
       }
     };
   }
@@ -13871,7 +14113,7 @@ ${targetName}`,
     const exportMode = ctx.exportMode || "all";
     const exportLabel = ctx.exportLabel || (exportMode === "all" ? "全差分" : "表示中（フィルタ適用後）");
     const exportContentMode = ctx.exportContentMode === "withCompared" ? "withCompared" : "diffOnly";
-    const exportContentLabel = ctx.exportContentLabel || (exportContentMode === "withCompared" ? "比較設定込み（フィールド詳細・反映JSON）" : "差分行のみ（安全共有向け）");
+    const exportContentLabel = ctx.exportContentLabel || (exportContentMode === "withCompared" ? "比較設定込み（取扱注意）" : "差分行のみ（全設定は未収録）");
     const html = buildDiffHtml(ctx.sourceBundle, ctx.targetBundle, rows, scopes, ctx.ignoreKeys || "", {
       fetchIssues,
       partialIssues,
@@ -14758,14 +15000,15 @@ ${targetName}`,
   var VALUE_PREVIEW_MAX_CHARS = 280;
   var RESULT_CSS_ID2 = "kus-diff-lite-result-styles";
   var RESULT_CSS2 = `
-.kus-dl-result{font:12px/1.5 ui-monospace,Menlo,monospace;color:#0f172a}
-.kus-dl-overview{font-family:-apple-system,Segoe UI,sans-serif;border:1px solid #cbd5e1;border-radius:10px;background:#fff;margin-bottom:10px;overflow:hidden}
+.kus-dl-result{font:13px/1.58 ui-monospace,Menlo,monospace;color:#10253f}
+.kus-dl-overview{font-family:-apple-system,"Segoe UI",sans-serif;border:1px solid #d8e0ea;border-radius:16px;background:#fff;margin-bottom:12px;overflow:hidden;box-shadow:0 16px 34px -30px rgba(15,37,63,.48)}
+.kus-dl-overview:focus{outline:3px solid #2563eb;outline-offset:2px}
 .kus-dl-overview__direction{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:10px;padding:10px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0}
 .kus-dl-side{min-width:0}
 .kus-dl-side--target{text-align:right}
-.kus-dl-side__role{display:block;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.04em}
+.kus-dl-side__role{display:block;color:#64748b;font-size:11px;font-weight:700;letter-spacing:.04em}
 .kus-dl-side__name{display:block;color:#0f172a;font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.kus-dl-side__env{display:block;color:#64748b;font-size:10px}
+.kus-dl-side__env{display:block;color:#64748b;font-size:11px}
 .kus-dl-overview__arrow{color:#2563eb;font-size:18px;font-weight:800}
 .kus-dl-verdict{padding:10px 12px;border-bottom:1px solid #e2e8f0;background:#eff6ff;color:#1e3a8a}
 .kus-dl-verdict--same{background:#f0fdf4;color:#166534}
@@ -14773,48 +15016,53 @@ ${targetName}`,
 .kus-dl-verdict strong{display:block;font-size:13px;margin-bottom:2px}
 .kus-dl-verdict span{font-size:11px;line-height:1.55}
 .kus-dl-metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;padding:10px 12px}
-.kus-dl-metric{appearance:none;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#334155;padding:7px 5px;text-align:center;font:inherit}
+.kus-dl-metric{appearance:none;position:relative;overflow:hidden;border:1px solid #d8e0ea;border-radius:12px;background:#fff;color:#334155;padding:10px 8px;text-align:center;font:inherit}
+.kus-dl-metric::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:#94a3b8}
+.kus-dl-metric[data-kus-dl-type-filter="added"]::before{background:#15803d}
+.kus-dl-metric[data-kus-dl-type-filter="removed"]::before{background:#b91c1c}
+.kus-dl-metric[data-kus-dl-type-filter="changed"]::before{background:#b45309}
+.kus-dl-metric[data-kus-dl-type-filter="moved"]::before{background:#7c3aed}
 button.kus-dl-metric{cursor:pointer}
 button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
-.kus-dl-metric__num{display:block;color:#0f172a;font-size:15px;font-weight:800;font-variant-numeric:tabular-nums}
-.kus-dl-metric__label{display:block;font-size:10px;font-weight:700}
-.kus-dl-metric__hint{display:block;color:#64748b;font-size:9px;font-weight:400}
+.kus-dl-metric__num{display:block;color:#10253f;font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.15}
+.kus-dl-metric__label{display:block;margin-top:3px;font-size:12px;font-weight:700}
+.kus-dl-metric__hint{display:block;color:#64748b;font-size:11px;font-weight:400}
 .kus-dl-section-nav{display:flex;flex-wrap:wrap;gap:5px;padding:0 12px 10px}
-.kus-dl-section-nav__label{width:100%;color:#64748b;font-size:10px;font-weight:700}
-.kus-dl-section-jump{border:1px solid #cbd5e1;border-radius:999px;background:#fff;color:#334155;padding:3px 8px;font:600 10.5px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer}
+.kus-dl-section-nav__label{width:100%;color:#64748b;font-size:11px;font-weight:700}
+.kus-dl-section-jump{border:1px solid #cbd5e1;border-radius:999px;background:#fff;color:#334155;padding:3px 8px;font:600 11px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer}
 .kus-dl-section-jump:hover{border-color:#60a5fa;background:#eff6ff;color:#1d4ed8}
 .kus-dl-alert{margin:0 12px 10px;padding:8px 10px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font:600 11px/1.55 -apple-system,Segoe UI,sans-serif}
-.kus-dl-legend{padding:0 12px 10px;color:#64748b;font:10.5px/1.5 -apple-system,Segoe UI,sans-serif}
+.kus-dl-legend{padding:0 12px 10px;color:#64748b;font:11px/1.5 -apple-system,Segoe UI,sans-serif}
 .kus-dl-result__summary{margin:0 2px 7px;font-family:-apple-system,Segoe UI,sans-serif;font-size:11px;color:#64748b;display:flex;flex-wrap:wrap;gap:6px 12px}
 .kus-dl-sticky{position:sticky;top:0;z-index:4;margin:0 0 10px;padding:0 0 4px;background:linear-gradient(180deg,rgba(248,250,252,.995) 86%,rgba(248,250,252,0));backdrop-filter:blur(7px)}
 .kus-dl-contextbar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:7px;padding:6px;border:1px solid #cbd5e1;border-radius:10px;background:#e2e8f0;box-shadow:0 2px 10px rgba(15,23,42,.08);font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-contextlane{min-width:0;padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#fff;box-shadow:inset 3px 0 0 #64748b}
 .kus-dl-contextlane--after{box-shadow:inset 3px 0 0 #2563eb}
-.kus-dl-contextlane__role{display:block;margin-bottom:1px;color:#64748b;font-size:8.5px;font-weight:900;letter-spacing:.12em}
+.kus-dl-contextlane__role{display:block;margin-bottom:1px;color:#64748b;font-size:11px;font-weight:900;letter-spacing:.08em}
 .kus-dl-contextlane--after .kus-dl-contextlane__role{color:#1d4ed8}
 .kus-dl-contextlane__name{display:block;overflow:hidden;color:#0f172a;font-size:11px;font-weight:800;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}
 .kus-dl-progress{align-self:center;min-width:72px;padding:4px 7px;text-align:center;color:#1e3a8a;font-variant-numeric:tabular-nums}
 .kus-dl-progress__numbers{display:flex;align-items:baseline;justify-content:center;gap:3px;line-height:1}
 .kus-dl-progress__current{color:#1d4ed8;font-size:18px;font-weight:900}
 .kus-dl-progress__total{color:#475569;font-size:11px;font-weight:800}
-.kus-dl-progress__label{display:block;margin-top:3px;color:#64748b;font-size:8.5px;font-weight:800;letter-spacing:.04em}
+.kus-dl-progress__label{display:block;margin-top:3px;color:#64748b;font-size:11px;font-weight:800;letter-spacing:.04em}
 .kus-dl-result__summary strong{color:#0f172a}
-.kus-dl-section{border:1px solid #dbe3ee;border-radius:10px;margin-bottom:10px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.04)}
-.kus-dl-section>summary{padding:8px 10px;background:#f8fafc;font:600 12px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;list-style:none;display:flex;align-items:center;gap:7px}
+.kus-dl-section{border:1px solid #d8e0ea;border-radius:14px;margin-bottom:12px;overflow:hidden;background:#fff;box-shadow:0 12px 28px -28px rgba(15,37,63,.55)}
+.kus-dl-section>summary{padding:11px 13px;background:linear-gradient(180deg,#fff,#f4f7fa);font:700 13px/1.45 -apple-system,"Segoe UI",sans-serif;cursor:pointer;list-style:none;display:flex;align-items:center;gap:7px}
 .kus-dl-section>summary::-webkit-details-marker{display:none}
 .kus-dl-section>summary::before{content:"▸";display:inline-block;margin-right:6px;color:#64748b;transition:transform .15s}
 .kus-dl-section[open]>summary::before{transform:rotate(90deg)}
 .kus-dl-section__heading{display:flex;align-items:baseline;gap:7px;min-width:100px}
 .kus-dl-section__label{color:#0f172a;font-weight:800}
-.kus-dl-section__count{color:#64748b;font-size:10.5px;font-weight:500}
+.kus-dl-section__count{color:#64748b;font-size:11px;font-weight:500}
 .kus-dl-section__breakdown{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;margin-left:auto}
-.kus-dl-section__stat{padding:1px 6px;border:1px solid #dbe3ee;border-radius:999px;background:#fff;color:#475569;font-size:9px;font-weight:700;white-space:nowrap}
+.kus-dl-section__stat{padding:1px 6px;border:1px solid #dbe3ee;border-radius:999px;background:#fff;color:#475569;font-size:11px;font-weight:700;white-space:nowrap}
 .kus-dl-section__stat--added{border-color:#bbf7d0;color:#166534}
 .kus-dl-section__stat--removed{border-color:#fecaca;color:#991b1b}
 .kus-dl-section__stat--changed{border-color:#bfdbfe;color:#1d4ed8}
 .kus-dl-section__stat--moved{border-color:#fde68a;color:#92400e}
-.kus-dl-section__body{display:grid;gap:7px;padding:8px;background:#f8fafc}
-.kus-dl-row{border:1px solid #dbe3ee;border-left:4px solid transparent;border-radius:8px;padding:9px 10px;background:#fff;font-family:-apple-system,Segoe UI,sans-serif;font-size:11.5px;transition:background-color .12s,border-color .12s,box-shadow .12s}
+.kus-dl-section__body{display:grid;gap:9px;padding:10px;background:#f4f7fa}
+.kus-dl-row{border:1px solid #d8e0ea;border-left:4px solid transparent;border-radius:12px;padding:12px 13px;background:linear-gradient(180deg,#fff,#fbfdff);font-family:-apple-system,"Segoe UI",sans-serif;font-size:13px;box-shadow:0 10px 24px -24px rgba(15,37,63,.58);transition:background-color .12s,border-color .12s,box-shadow .12s}
 .kus-dl-row--added{border-left-color:#22c55e}
 .kus-dl-row--removed{border-left-color:#ef4444}
 .kus-dl-row--changed{border-left-color:#3b82f6}
@@ -14824,46 +15072,47 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-row__head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:start;margin-bottom:7px}
 .kus-dl-row__identity{min-width:0}
 .kus-dl-row__headline{display:flex;flex-wrap:wrap;align-items:center;gap:5px 6px}
-.kus-dl-row__title{min-width:150px;flex:1;color:#0f172a;font-size:12.5px;font-weight:800;line-height:1.4}
-.kus-dl-row__subtitle{margin:3px 0 0;color:#64748b;font-size:10.5px;line-height:1.45}
+.kus-dl-row__title{min-width:150px;flex:1;color:#10253f;font-size:15px;font-weight:800;line-height:1.45}
+.kus-dl-row__subtitle{margin:4px 0 0;color:#64748b;font-size:12px;line-height:1.55}
 .kus-dl-row__context{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:0 0 6px;color:#64748b}
-.kus-dl-row__chip{display:inline-flex;align-items:center;border-radius:999px;background:#e2e8f0;color:#334155;padding:1px 6px;font-size:10px}
-.kus-dl-row__technical{margin:0 0 7px;color:#64748b;font:9.5px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-row__chip{display:inline-flex;align-items:center;border-radius:999px;background:#e2e8f0;color:#334155;padding:1px 6px;font-size:11px}
+.kus-dl-row__technical{margin:0 0 7px;color:#64748b;font:11px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-row__technical>summary{display:inline-flex;align-items:center;gap:4px;padding:1px 4px;border-radius:4px;cursor:pointer;list-style:none;color:#64748b;font-weight:700}
 .kus-dl-row__technical>summary::-webkit-details-marker{display:none}
 .kus-dl-row__technical>summary::before{content:'›';font-size:12px;transition:transform .12s}
 .kus-dl-row__technical[open]>summary::before{transform:rotate(90deg)}
-.kus-dl-row__raw{display:block;margin-top:3px;padding:5px 7px;border:1px dashed #cbd5e1;border-radius:5px;background:#f8fafc;color:#475569;font:9.5px/1.45 ui-monospace,Menlo,monospace;word-break:break-all}
-.kus-dl-row__cols{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-family:ui-monospace,Menlo,monospace;font-size:11px}
+.kus-dl-row__raw{display:block;margin-top:3px;padding:5px 7px;border:1px dashed #cbd5e1;border-radius:5px;background:#f8fafc;color:#475569;font:11px/1.45 ui-monospace,Menlo,monospace;word-break:break-all}
+.kus-dl-row__cols{display:grid;grid-template-columns:1fr 1fr;gap:9px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.kus-dl-row__mobile-toggle{display:none;width:100%;margin:0 0 7px;align-items:center;justify-content:center;border:1px solid #94a3b8;border-radius:7px;background:#f8fafc;color:#1e3a8a;padding:7px 9px;font:700 11px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer}
 .kus-dl-value{position:relative;min-width:0}
 .kus-dl-pre{box-sizing:border-box;width:100%;margin:0;padding:7px 8px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;white-space:pre-wrap;word-break:break-word;overflow:auto}
 .kus-dl-value.is-collapsed .kus-dl-pre{max-height:126px;overflow:hidden}
-.kus-dl-value__footer{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;padding:3px 2px 0;color:#64748b;font:9px/1.3 -apple-system,Segoe UI,sans-serif}
-.kus-dl-value__toggle{margin-left:auto;padding:2px 6px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#1d4ed8;font:700 9.5px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer}
+.kus-dl-value__footer{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;padding:3px 2px 0;color:#64748b;font:11px/1.3 -apple-system,Segoe UI,sans-serif}
+.kus-dl-value__toggle{margin-left:auto;padding:2px 6px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#1d4ed8;font:700 11px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer}
 .kus-dl-value__toggle:hover{border-color:#60a5fa;background:#eff6ff}
 .kus-dl-pre.del{background:#fef2f2;border-color:#fecaca;color:#7f1d1d}
 .kus-dl-pre.add{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}
 .kus-dl-pre.empty{color:#64748b;font-style:italic}
-.kus-dl-badge{display:inline-block;padding:1px 6px;border-radius:4px;font:600 10.5px/1.4 -apple-system,Segoe UI,sans-serif;letter-spacing:.02em}
+.kus-dl-badge{display:inline-block;padding:1px 6px;border-radius:4px;font:600 11px/1.4 -apple-system,Segoe UI,sans-serif;letter-spacing:.02em}
 .kus-dl-badge--added{background:#dcfce7;color:#166534}
 .kus-dl-badge--removed{background:#fee2e2;color:#991b1b}
 .kus-dl-badge--changed{background:#dbeafe;color:#1d4ed8}
 .kus-dl-badge--moved{background:#fef3c7;color:#92400e}
 .kus-dl-badge--same{background:#e2e8f0;color:#475569}
 .kus-dl-empty{padding:14px;text-align:center;color:#64748b;font-size:12px;background:#f8fafc;border-radius:8px}
-.kus-dl-flag{display:inline-block;padding:1px 6px;border-radius:999px;background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font:500 10px/1.4 -apple-system,Segoe UI,sans-serif}
-.kus-dl-row__action{border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569;padding:3px 7px;font:600 9.5px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
+.kus-dl-flag{display:inline-block;padding:1px 6px;border-radius:999px;background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font:500 11px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-row__action{border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569;padding:3px 7px;font:600 11px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
 .kus-dl-row__action:hover{border-color:#f59e0b;background:#fffbeb;color:#92400e}
-.kus-dl-reviewbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:5px 0 0;padding:5px 6px;border:1px solid #bfdbfe;border-radius:8px;background:rgba(239,246,255,.98);font:600 10px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-reviewbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:5px 0 0;padding:5px 6px;border:1px solid #bfdbfe;border-radius:8px;background:rgba(239,246,255,.98);font:600 11px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-reviewbar__nav,.kus-dl-reviewbar__tools,.kus-dl-reviewbar__filters{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 .kus-dl-reviewbar__filters{min-width:120px;flex:1}
 .kus-dl-filter-empty{padding:2px 5px;color:#64748b;font-weight:600}
-.kus-dl-filterchip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border:1px solid #93c5fd;border-radius:999px;background:#fff;color:#1e3a8a;font:700 9.5px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer;max-width:180px}
+.kus-dl-filterchip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border:1px solid #93c5fd;border-radius:999px;background:#fff;color:#1e3a8a;font:700 11px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer;max-width:180px}
 .kus-dl-filterchip>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .kus-dl-filterchip::after{content:'×';color:#64748b;font-size:11px}
 .kus-dl-filterchip:hover{border-color:#2563eb;background:#dbeafe}
 .kus-dl-filterchip--all{border-style:dashed;color:#475569}
-.kus-dl-navbtn{border:1px solid #93c5fd;border-radius:6px;background:#fff;color:#1d4ed8;padding:3px 7px;font:700 9.5px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
+.kus-dl-navbtn{border:1px solid #93c5fd;border-radius:6px;background:#fff;color:#1d4ed8;padding:3px 7px;font:700 11px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
 .kus-dl-navbtn:disabled{opacity:.45;cursor:not-allowed}
 .kus-dl-result--compact .kus-dl-row{padding:6px 7px;font-size:10.5px}
 .kus-dl-result--compact .kus-dl-row__context{display:none}
@@ -14873,25 +15122,26 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-result--comfortable .kus-dl-row{padding:9px 10px}
 .kus-dl-result--comfortable .kus-dl-value.is-collapsed .kus-dl-pre{max-height:164px}
 .kus-dl-result--stacked .kus-dl-row__cols{grid-template-columns:1fr}
-.kus-dl-result--stacked .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 5px;color:#64748b;font:700 9px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.04em}
+.kus-dl-result--stacked .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 5px;color:#64748b;font:700 11px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.04em}
 .kus-dl-result mark.diff-char-del{background:#fecaca;color:#7f1d1d;border-radius:2px;padding:0 1px;text-decoration:line-through}
 .kus-dl-result mark.diff-char-add{background:#bbf7d0;color:#14532d;border-radius:2px;padding:0 1px}
 .kus-dl-target-field{display:flex;flex:1 1 180px;min-width:180px;flex-direction:column}
 .kus-dl-target-field .kus-lp__input{width:100%;box-sizing:border-box}
-.kus-dl-target-name{min-height:1.35em;margin-top:3px;color:#64748b;font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-dl-target-name{min-height:1.35em;margin-top:3px;color:#64748b;font-size:11px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-dl-target-name:not(.kus-dl-target-name--empty)::before{content:'アプリ名: ';color:#334155;font-weight:600}
 .kus-dl-more{display:flex;justify-content:center;padding:8px 0 2px}
 .kus-dl-multi{width:100%;border-collapse:collapse;font:11px/1.45 -apple-system,Segoe UI,sans-serif}
 .kus-dl-multi caption{text-align:left;color:#475569;font-weight:700;padding:0 0 6px}
 .kus-dl-multi th,.kus-dl-multi td{padding:6px 7px;border-bottom:1px solid #e2e8f0;text-align:right;vertical-align:top}
 .kus-dl-multi th:first-child,.kus-dl-multi td:first-child{text-align:left}
-.kus-dl-multi thead th{position:sticky;top:0;background:#f8fafc;color:#475569;font-size:10px}
+.kus-dl-multi thead th{position:sticky;top:0;background:#f8fafc;color:#475569;font-size:11px}
 .kus-dl-multi__warn{color:#9a3412;font-weight:700}
 .kus-dl-multi__ok{color:#166534;font-weight:700}
 
 /* Diff Lite only: human-first review workspace. Shared litePanelTheme is intentionally untouched. */
-#kus-diff-lite.kus-lp{width:min(960px,calc(100vw - 24px));max-height:min(96vh,1040px);top:max(8px,2vh);right:max(8px,1vw);border-radius:14px;background:#f8fafc}
-#kus-diff-lite .kus-lp__hero{padding:15px 20px;background:#10253f}
+#kus-diff-lite.kus-lp{width:min(1000px,calc(100vw - 24px));max-height:min(96vh,1040px);top:max(8px,2vh);right:max(8px,1vw);border-radius:18px;background:#f4f7fa;box-shadow:0 28px 80px -32px rgba(15,37,63,.52)}
+#kus-diff-lite .kus-lp__hero{position:relative;padding:17px 22px;background:linear-gradient(135deg,#0f2742 0%,#173b63 72%,#24517f 100%)}
+#kus-diff-lite .kus-lp__hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:linear-gradient(90deg,#60a5fa,#22d3ee,#818cf8)}
 #kus-diff-lite .kus-lp__badge-row{display:none}
 #kus-diff-lite .kus-lp__body{padding:18px 20px 22px}
 #kus-diff-lite [hidden]{display:none!important}
@@ -14901,9 +15151,9 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 #kus-diff-lite .kus-lp__check{min-height:44px}
 #kus-diff-lite button:focus-visible,#kus-diff-lite input:focus-visible,#kus-diff-lite select:focus-visible,#kus-diff-lite textarea:focus-visible,#kus-diff-lite summary:focus-visible{outline:3px solid #2563eb;outline-offset:2px}
 .kus-dl-workflow{display:grid;gap:16px}
-.kus-dl-step{padding:18px;border:1px solid #d8e0ea;border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.kus-dl-step{padding:20px;border:1px solid #d8e0ea;border-radius:16px;background:#fff;box-shadow:0 16px 36px -32px rgba(15,37,63,.62)}
 .kus-dl-step__header{display:flex;align-items:flex-start;gap:11px;margin:0 0 15px;padding:0 0 13px;border-bottom:1px solid #e2e8f0;font-family:-apple-system,Segoe UI,sans-serif}
-.kus-dl-step__number{display:inline-flex;flex:0 0 28px;width:28px;height:28px;align-items:center;justify-content:center;border-radius:50%;background:#16395f;color:#fff;font-size:12px;font-weight:800}
+.kus-dl-step__number{display:inline-flex;flex:0 0 30px;width:30px;height:30px;align-items:center;justify-content:center;border-radius:10px;background:linear-gradient(145deg,#16395f,#2563eb);color:#fff;font-size:12px;font-weight:800;box-shadow:0 6px 14px -8px rgba(37,99,235,.8)}
 .kus-dl-step__header h2{margin:0;color:#10253f;font-size:16px;line-height:1.35}
 .kus-dl-step__header p{margin:3px 0 0;color:#64748b;font-size:11.5px;line-height:1.5}
 .kus-dl-step__empty{margin:0;padding:18px;border:1px dashed #cbd5e1;border-radius:9px;background:#f8fafc;color:#64748b;text-align:center;font-size:12px}
@@ -14913,13 +15163,13 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-mode .kus-lp__btn{min-width:118px;border-color:transparent;background:transparent;box-shadow:none;color:#475569}
 .kus-dl-mode .kus-lp__btn.is-active{background:#fff;border-color:#cbd5e1;color:#10253f;box-shadow:0 1px 2px rgba(15,23,42,.08)}
 .kus-dl-direction-grid{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:10px}
-.kus-dl-app-card{min-width:0;padding:15px;border:1px solid #cbd5e1;border-radius:10px;background:#fff}
-.kus-dl-app-card--target{border-color:#9fb2c8}
-.kus-dl-app-card__role{margin:0 0 2px;color:#64748b;font-size:10px;font-weight:800;letter-spacing:.09em;text-transform:uppercase}
+.kus-dl-app-card{min-width:0;padding:16px;border:1px solid #d8e0ea;border-left:4px solid #475569;border-radius:14px;background:#f8fafc}
+.kus-dl-app-card--target{border-color:#d8e0ea;border-left-color:#2563eb;background:#eff6ff}
+.kus-dl-app-card__role{margin:0 0 2px;color:#64748b;font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase}
 .kus-dl-app-card h3{margin:0;color:#10253f;font-size:14px}
-.kus-dl-app-card__help{margin:3px 0 13px;color:#64748b;font-size:10.5px}
+.kus-dl-app-card__help{margin:3px 0 13px;color:#64748b;font-size:11px}
 .kus-dl-app-card .kus-lp__row{align-items:flex-start;margin-bottom:7px}
-.kus-dl-app-card .kus-lp__label{width:100%;min-width:0;color:#475569;font-size:10.5px}
+.kus-dl-app-card .kus-lp__label{width:100%;min-width:0;color:#475569;font-size:11px}
 .kus-dl-app-card .kus-lp__input{flex:1;min-width:100px;width:auto;box-sizing:border-box}
 .kus-dl-app-card .kus-dl-target-field{min-width:140px}
 .kus-dl-swap{align-self:center;justify-self:center;width:88px;padding:8px!important;white-space:normal;line-height:1.3}
@@ -14933,7 +15183,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-disclosure>summary::-webkit-details-marker{display:none}
 .kus-dl-disclosure>summary::after{content:'＋';margin-left:auto;color:#64748b;font-size:16px}
 .kus-dl-disclosure[open]>summary::after{content:'−'}
-.kus-dl-disclosure>summary small{color:#64748b;font-size:10px;font-weight:500;text-align:right}
+.kus-dl-disclosure>summary small{color:#64748b;font-size:11px;font-weight:500;text-align:right}
 .kus-dl-disclosure__body{display:grid;gap:12px;padding:13px;border-top:1px solid #e2e8f0;background:#f8fafc}
 .kus-dl-disclosure__body .kus-lp__details{margin-bottom:0;background:#fff}
 .kus-dl-overview{border-color:#cbd5e1;border-radius:10px;box-shadow:none}
@@ -14942,7 +15192,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-verdict{position:relative;padding:12px 14px 12px 18px;border-left:5px solid #2563eb;background:#f8fafc;color:#10253f}
 .kus-dl-verdict--same{border-left-color:#64748b;background:#f8fafc;color:#334155}
 .kus-dl-verdict--warn{border-left-color:#b45309;background:#fffbeb;color:#78350f}
-.kus-dl-verdict__eyebrow{display:block;margin-bottom:2px;color:inherit;font-size:9.5px!important;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.kus-dl-verdict__eyebrow{display:block;margin-bottom:2px;color:inherit;font-size:11px!important;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
 .kus-dl-alert{position:relative;margin:9px 12px 0;padding:9px 10px 9px 32px;border-color:#d6a85c;background:#fffbeb;color:#713f12;font-weight:550}
 .kus-dl-alert::before{content:'!';position:absolute;left:10px;top:9px;display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center;border:1px solid currentColor;border-radius:50%;font-size:9px;font-weight:900}
 .kus-dl-alert[role="note"]{border-color:#cbd5e1;background:#f8fafc;color:#475569}
@@ -14954,10 +15204,18 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
 .kus-dl-section__stat,.kus-dl-section__stat--added,.kus-dl-section__stat--removed,.kus-dl-section__stat--changed,.kus-dl-section__stat--moved{border-color:#cbd5e1;background:#fff;color:#475569}
 .kus-dl-section__body{background:#f4f7fa}
 .kus-dl-section>summary{min-height:44px;box-sizing:border-box}
-.kus-dl-row{border-left-color:#334155;background:#fff;transition:none}
-.kus-dl-row--added,.kus-dl-row--removed,.kus-dl-row--changed,.kus-dl-row--moved{border-left-color:#334155}
+.kus-dl-row{border-left-color:#64748b;background:#fff;transition:none}
+.kus-dl-row--added{border-left-color:#15803d}
+.kus-dl-row--removed{border-left-color:#b91c1c}
+.kus-dl-row--changed{border-left-color:#b45309}
+.kus-dl-row--moved{border-left-color:#7c3aed}
 .kus-dl-row--same{border-left-color:#94a3b8}
-.kus-dl-badge,.kus-dl-badge--added,.kus-dl-badge--removed,.kus-dl-badge--changed,.kus-dl-badge--moved,.kus-dl-badge--same{display:inline-flex;align-items:center;gap:4px;border:1px solid #cbd5e1;background:#f8fafc;color:#334155;font-weight:750}
+.kus-dl-badge{display:inline-flex;align-items:center;gap:4px;border:1px solid #cbd5e1;background:#f8fafc;color:#334155;font-weight:750}
+.kus-dl-badge--added{border-color:#bbf7d0;background:#ecfdf5;color:#15803d}
+.kus-dl-badge--removed{border-color:#fecaca;background:#fef2f2;color:#b91c1c}
+.kus-dl-badge--changed{border-color:#fde68a;background:#fffbeb;color:#b45309}
+.kus-dl-badge--moved{border-color:#ddd6fe;background:#f5f3ff;color:#7c3aed}
+.kus-dl-badge--same{border-color:#cbd5e1;background:#f8fafc;color:#64748b}
 .kus-dl-badge--added::before{content:'＋'}
 .kus-dl-badge--removed::before{content:'−'}
 .kus-dl-badge--changed::before{content:'≠'}
@@ -14969,17 +15227,21 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
 .kus-dl-flag{border-color:#cbd5e1;background:#f8fafc;color:#475569}
 .kus-dl-row__action:hover{border-color:#94a3b8;background:#f1f5f9;color:#10253f}
 .kus-dl-pre,.kus-dl-pre.del,.kus-dl-pre.add{border-color:#dbe3ec;background:#f8fafc;color:#1e293b}
-.kus-dl-value__label{display:block;margin:0 0 4px;color:#475569;font:800 9.5px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.06em}
+.kus-dl-value__label{display:block;margin:0 0 4px;color:#475569;font:800 11px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.06em}
 .kus-dl-presence{grid-column:1/-1;display:grid;grid-template-columns:minmax(150px,.38fr) minmax(0,1fr);gap:10px;align-items:start;padding:10px;border:1px dashed #9fb2c8;border-radius:8px;background:#f8fafc}
 .kus-dl-presence>p{margin:1px 0;color:#334155;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-presence>p strong,.kus-dl-presence>p span{display:block}
 .kus-dl-presence>p strong{color:#10253f;font-size:12px}
-.kus-dl-presence>p span{margin-top:3px;color:#64748b;font-size:10.5px}
+.kus-dl-presence>p span{margin-top:3px;color:#64748b;font-size:11px}
 .kus-dl-row__technical>summary{min-height:44px;box-sizing:border-box}
-.kus-dl-row__raw>span{display:block;margin-bottom:2px;color:#64748b;font-family:-apple-system,Segoe UI,sans-serif;font-size:9px;font-weight:700}
+.kus-dl-row__raw>span{display:block;margin-bottom:2px;color:#64748b;font-family:-apple-system,Segoe UI,sans-serif;font-size:11px;font-weight:700}
+.kus-dl-conditions strong,.kus-dl-conditions span{display:block}
+.kus-dl-conditions strong{margin-bottom:2px;color:#334155}
+.kus-dl-completion-row{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0 0!important}
+.kus-dl-completion-row .kus-lp__btn{width:100%}
 .kus-dl-reviewbar{border-color:#cbd5e1;background:#f8fafc}
-.kus-dl-contextbar{border-color:#cbd5e1;background:#e2e8f0}
-.kus-dl-contextlane,.kus-dl-contextlane--after{box-shadow:none;border-left:4px solid #64748b}
+.kus-dl-contextbar{border-color:#cbd5e1;background:rgba(226,232,240,.94);box-shadow:0 12px 30px -22px rgba(15,37,63,.72)}
+.kus-dl-contextlane,.kus-dl-contextlane--after{box-shadow:none;border-left:4px solid #475569}
 .kus-dl-contextlane--after{border-left-color:#2563eb}
 .kus-dl-filter-disclosure,.kus-dl-output-disclosure{margin:0 0 12px}
 .kus-dl-filter-disclosure .kus-lp__card,.kus-dl-output-disclosure .kus-lp__card{padding:0}
@@ -14994,13 +15256,15 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-swap{width:100%;max-width:none}
   .kus-dl-row__cols{grid-template-columns:1fr}
   .kus-dl-presence{grid-template-columns:1fr}
-  .kus-dl-sticky{position:static;background:transparent;backdrop-filter:none}
+  .kus-dl-sticky{position:sticky;top:0;z-index:6;margin-inline:-2px;padding:4px 2px 8px;background:linear-gradient(180deg,rgba(244,247,250,.98) 80%,rgba(244,247,250,0));backdrop-filter:blur(10px)}
   .kus-dl-disclosure>summary{align-items:flex-start;flex-wrap:wrap}
   .kus-dl-disclosure>summary small{width:100%;padding-right:28px;text-align:left}
 }
 @media(max-width:640px){
   .kus-dl-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .kus-dl-row__cols{grid-template-columns:1fr}
+  .kus-dl-row__mobile-toggle{display:inline-flex;min-height:44px}
+  .kus-dl-row__cols{display:none;grid-template-columns:1fr}
+  .kus-dl-row__cols.is-expanded{display:grid}
   .kus-dl-contextbar{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
   .kus-dl-contextlane--before{grid-column:1;grid-row:1}
   .kus-dl-contextlane--after{grid-column:2;grid-row:1}
@@ -15009,9 +15273,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-reviewbar__filters{order:3;width:100%;flex-basis:100%}
   .kus-dl-section>summary{align-items:flex-start;flex-wrap:wrap}
   .kus-dl-section__breakdown{width:100%;justify-content:flex-start;margin-left:20px}
-  .kus-dl-row__head{grid-template-columns:1fr}
-  .kus-dl-row__action{justify-self:start}
-  .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 4px;color:#64748b;font:700 9px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.03em}
+  .kus-dl-row__head{grid-template-columns:minmax(0,1fr) auto;gap:8px}
+  .kus-dl-row__action{justify-self:end;align-self:start}
+  .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 4px;color:#64748b;font:700 11px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.03em}
   .kus-dl-value__label+.kus-dl-pre::before{content:none;display:none}
   .kus-dl-multi{display:block;overflow-x:auto;white-space:nowrap}
 }
@@ -15023,6 +15287,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-overview__arrow{transform:rotate(90deg);justify-self:start;margin-left:12px}
   .kus-dl-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .kus-dl-step__header{gap:8px}
+  .kus-dl-completion-row{grid-template-columns:1fr}
+  .kus-dl-row{padding:11px 10px}
+  .kus-dl-row__action{padding-inline:8px!important}
 }
 @media(prefers-reduced-motion:reduce){
   #kus-diff-lite.kus-lp{animation:none}
@@ -15049,7 +15316,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     return mode === "withCompared" ? "withCompared" : "diffOnly";
   }
   function getLiteHtmlExportContentLabel(mode) {
-    return normalizeLiteHtmlExportContentMode(mode) === "withCompared" ? "比較設定込み（フィールド詳細・反映JSON）" : "差分行のみ（安全共有向け）";
+    return normalizeLiteHtmlExportContentMode(mode) === "withCompared" ? "比較設定込み（取扱注意）" : "差分行のみ（全設定は未収録）";
   }
   function buildLiteDiffHtmlContext(cache, rows, exportMode, exportLabel, exportContentMode = "diffOnly") {
     const safeContentMode = normalizeLiteHtmlExportContentMode(exportContentMode);
@@ -15128,7 +15395,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     return Math.max(0, counts.changed - counts.moved);
   }
   function isIncompleteLiteDiff(result) {
-    return !!result?.truncation?.truncated || (result?.fetchIssues || []).length > 0 || (result?.partialIssues || []).length > 0;
+    return hasIncompleteActualDiffTruncation(result?.truncation) || (result?.fetchIssues || []).length > 0 || (result?.partialIssues || []).length > 0;
   }
   function rowSearchText(row) {
     const cached = rowSearchCache.get(row);
@@ -15158,13 +15425,19 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     return text;
   }
   function buildLiteDiffRowKey(row) {
+    const stateRenameIdentity = row._stateRenameNotice ? stableStringify({
+      id: row.renameCandidate?.id || "",
+      left: row.left,
+      right: row.right
+    }) : "";
     const seed = [
       row.sectionKey || "",
       row.type || "",
       row.moved ? "moved" : "",
       row.path || "",
       row.arrayKey || "",
-      stableStringify(row.arrayKeyValue)
+      stableStringify(row.arrayKeyValue),
+      stateRenameIdentity
     ].join("");
     let hash = 2166136261;
     for (let i = 0; i < seed.length; i++) {
@@ -15293,7 +15566,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const fetchIssues = cache.fetchIssues || [];
     const partialIssues = cache.partialIssues || [];
     const ignoreRuleSummary = summarizeLiteIgnoreRules(cache.ignoreKeys || "");
+    const normalizationLabels = Object.entries(DIFF_NORMALIZATION_PRESETS).filter(([key]) => cache.normalizationPresetState?.[key] === true).map(([, preset]) => preset.label);
     const truncated = !!cache.truncation?.truncated;
+    const actualDiffTruncated = hasIncompleteActualDiffTruncation(cache.truncation);
     const incomplete = isIncompleteLiteDiff(cache);
     const hasNoticeOnlyChanges = counts.actual === 0 && counts.displayOnly > 0;
     const verdictClass = incomplete ? "kus-dl-verdict--warn" : counts.actual === 0 && !hasNoticeOnlyChanges ? "kus-dl-verdict--same" : "";
@@ -15316,7 +15591,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       return `<button type="button" class="kus-dl-section-jump" data-kus-dl-section-filter="${esc(key)}">${esc(label)} ${esc(countLabel)}</button>`;
     }).join("");
     const alerts = [];
-    if (truncated) {
+    if (actualDiffTruncated) {
       const truncationSections = cache.truncation?.sections || [];
       const sections = truncationSections.map((item) => item?.section || item?.sectionKey).filter(Boolean);
       const unscanned = truncationSections.filter((item) => item?.scanned === false).map((item) => item?.section || item?.sectionKey).filter(Boolean);
@@ -15325,6 +15600,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const unscannedText = unscanned.length ? ` 後続の ${unscanned.join("、")} は未走査で、未検出件数も不明です。` : "";
       const partialText = partial.length ? ` ${partial.join("、")} は部分走査で、表示件数より多い差分がある可能性があります。` : "";
       alerts.push(`差分上限 ${Number(cache.truncation?.diffLimit || 0).toLocaleString()} 件に到達したため、結果の一部が表示されていません。${partialText}${unscannedText}${sectionText}`);
+    } else if (truncated && Number(cache.truncation?.droppedSame || 0) > 0) {
+      alerts.push(`同一証跡は上限 ${Number(cache.truncation?.sameLimit || 0).toLocaleString()} 件まで表示し、${Number(cache.truncation?.droppedSame || 0).toLocaleString()} 件を省略しました。実差分の検出結果は完全です。`);
     }
     if (fetchIssues.length) {
       const sections = [...new Set(fetchIssues.map((item) => item?.section || item?.sectionKey).filter(Boolean))];
@@ -15353,7 +15630,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const alertAttrs = options.announce === false ? "" : ' role="alert"';
     const completeness = incomplete ? "incomplete" : "complete";
     const alertsHtml = alerts.map((message) => `<div class="kus-dl-alert"${alertAttrs}>${esc(message)}</div>`).join("");
-    return `<section class="kus-dl-overview" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "比較完了"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションを開く</span>${sectionButtons}</div>` : "") + (ignoreRuleSummary.total ? `<div class="kus-dl-alert" role="note">無視ルール ${ignoreRuleSummary.total}件を適用した後の結果です。ルールに一致した設定差分は一覧に含まれません${ignoreRuleSummary.contextualRules ? `（完全パス/パターン ${ignoreRuleSummary.contextualRules}件）` : ""}。</div>` : "") + '<div class="kus-dl-legend">「比較先のみ」は追加、「比較元のみ」は削除として検出しています。比較方向は上の矢印で確認できます。</div></section>';
+    const ignoreCondition = ignoreRuleSummary.total ? `無視ルール ${ignoreRuleSummary.total}件を適用した後の結果です。ルールに一致した設定差分は一覧に含まれません${ignoreRuleSummary.contextualRules ? `（完全パス/パターン ${ignoreRuleSummary.contextualRules}件）` : ""}。` : "無視ルールは適用していません。";
+    const normalizationCondition = normalizationLabels.length ? `正規化 ${normalizationLabels.length}件を適用しています（${normalizationLabels.join("、")}）。` : "正規化は適用していません。";
+    return `<section id="kus-dl-overview" class="kus-dl-overview" data-kus-dl-overview tabindex="-1" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "比較完了"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションを開く</span>${sectionButtons}</div>` : "") + `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div><div class="kus-dl-legend">「比較先のみ」は追加、「比較元のみ」は削除として検出しています。比較方向は上の矢印で確認できます。</div></section>`;
   }
   function renderRowsHtml(rows, useCharDiff, summary, allFilteredRows = rows, options = {}) {
     if (!rows.length) return `<div class="kus-dl-empty">該当する差分はありません${summary ? ` — ${summary}` : ""}</div>`;
@@ -15395,6 +15674,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         const rowKey = buildLiteDiffRowKey(r);
         const cols = rowColumnsHtml(r, useCharDiff, decoded, rowKey, expandedValueKeys);
         const identity = rowDisplayIdentity(r, decoded);
+        const rowValuesExpanded = !!options.expandedRowKeys?.has(rowKey);
+        const rowValuesId = `kus-dl-row-values-${rowKey}`;
         const current = rowKey === options.currentRowKey;
         const typeKey = r.moved ? "moved" : r.type || "same";
         const factLabel = FACT_LABEL[typeKey] || TYPE_LABEL[typeKey] || typeKey;
@@ -15407,8 +15688,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         const contextHtml = decoded ? `<div class="kus-dl-row__context">${decoded.whereChips.map((chip) => `<span class="kus-dl-row__chip">${esc(`${chip.icon || ""}${chip.icon ? " " : ""}${chip.label}`)}</span>`).join("")}</div>` : "";
         const technicalHtml = r.path ? `<details class="kus-dl-row__technical" data-kus-dl-technical><summary>技術情報</summary><code class="kus-dl-row__raw"><span>内部パス</span>${esc(r.path)}</code></details>` : "";
         const positionalPath = /\[\d+\]/.test(String(r.path || ""));
-        const ignoreAction = r.type !== "same" && r.path ? positionalPath ? '<span class="kus-dl-flag" title="並び替え後に別の対象を指す可能性があるため、自動で無視ルールには追加できません">並び順に依存（自動除外不可）</span>' : `<button type="button" class="kus-dl-row__action" data-kus-dl-ignore-path="${esc(r.path)}" title="この項目だけを次回比較から除外">次回から除外</button>` : "";
-        parts.push(`<article class="kus-dl-row kus-dl-row--${esc(typeKey)}${current ? " is-current" : ""}" data-kus-dl-row-key="${esc(rowKey)}" tabindex="-1"${current ? ' aria-current="true"' : ""} aria-label="${esc(`${typeLabel}・${factLabel}: ${identity.title}`)}"><div class="kus-dl-row__head"><div class="kus-dl-row__identity"><div class="kus-dl-row__headline">${typeBadge}<span class="kus-dl-row__title">${esc(identity.title)}</span>${flagHtml}</div>${identity.subtitle ? `<div class="kus-dl-row__subtitle">${esc(identity.subtitle)}</div>` : ""}</div>${ignoreAction}</div>${contextHtml}${technicalHtml}<div class="kus-dl-row__cols">${cols.left}${cols.right}</div></article>`);
+        const ignoreAction = r.type !== "same" && r.path ? positionalPath ? '<span class="kus-dl-flag" title="並び替え後に別の対象を指す可能性があるため、自動で無視ルールには追加できません">並び順に依存（自動除外不可）</span>' : `<button type="button" class="kus-dl-row__action" data-kus-dl-ignore-path="${esc(r.path)}" title="この項目だけを次回比較から除外" aria-label="${esc(`${identity.title}を次回の比較から除外（無視ルールへ追加）`)}">次回から除外</button>` : "";
+        const rowValuesAction = rowValuesExpanded ? "閉じる" : "確認";
+        parts.push(`<article class="kus-dl-row kus-dl-row--${esc(typeKey)}${current ? " is-current" : ""}" data-kus-dl-row-key="${esc(rowKey)}" tabindex="-1"${current ? ' aria-current="true"' : ""} aria-label="${esc(`${typeLabel}・${factLabel}: ${identity.title}`)}"><div class="kus-dl-row__head"><div class="kus-dl-row__identity"><div class="kus-dl-row__headline">${typeBadge}<span class="kus-dl-row__title">${esc(identity.title)}</span>${flagHtml}</div>${identity.subtitle ? `<div class="kus-dl-row__subtitle">${esc(identity.subtitle)}</div>` : ""}</div>${ignoreAction}</div>${contextHtml}${technicalHtml}<button type="button" class="kus-dl-row__mobile-toggle" data-kus-dl-mobile-row-toggle="${esc(rowKey)}" aria-expanded="${rowValuesExpanded ? "true" : "false"}" aria-controls="${esc(rowValuesId)}" aria-label="${esc(`${identity.title}の比較元・比較先の値を${rowValuesAction}`)}">比較元・比較先の値を${rowValuesAction}</button><div id="${esc(rowValuesId)}" class="kus-dl-row__cols${rowValuesExpanded ? " is-expanded" : ""}">${cols.left}${cols.right}</div></article>`);
       }
       parts.push("</div></details>");
     }
@@ -15436,6 +15718,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const tgtGuest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: "比較先1ゲストスペースID" });
     const tgtPrev = makeCheck({ label: "プレビューで取得" });
     let comparisonMode = "single";
+    let completionReady = false;
     let applyComparisonMode = (mode) => {
       comparisonMode = mode;
     };
@@ -15708,6 +15991,18 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const runRow = makeRow([runBtn, runAllBtn]);
     runRow.classList.add("kus-dl-run-row");
     panel.body.insertBefore(runRow, panel.status);
+    const completionReviewBtn = makeButton("結果を確認", "sub", { icon: "↓" });
+    const completionXlsxBtn = makeButton("顧客向けExcelを保存", "primary", { icon: "↓" });
+    completionReviewBtn.dataset.kusDlCompletion = "review";
+    completionXlsxBtn.dataset.kusDlCompletion = "xlsx";
+    completionReviewBtn.setAttribute("aria-controls", "kus-dl-overview");
+    const completionRow = makeRow([completionReviewBtn, completionXlsxBtn]);
+    completionRow.classList.add("kus-dl-completion-row");
+    completionRow.hidden = true;
+    const setCompletionActionsVisible = (visible) => {
+      completionReady = visible;
+      completionRow.hidden = !completionReady || comparisonMode !== "single";
+    };
     panel.setPrimaryAction(runBtn);
     applyComparisonMode = (mode) => {
       comparisonMode = mode;
@@ -15720,6 +16015,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       targetList.hidden = mode !== "multi";
       runBtn.hidden = mode !== "single";
       runAllBtn.hidden = mode !== "multi";
+      completionRow.hidden = !completionReady || mode !== "single";
       swapBtn.disabled = mode === "multi";
       swapBtn.title = mode === "multi" ? "通常比較に切り替えると方向を入れ替えられます" : "";
       panel.setPrimaryAction(mode === "multi" ? runAllBtn : runBtn);
@@ -15800,10 +16096,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     panel.body.insertBefore(cardResult.card, panel.status);
     const cardOut = makeCard({ title: "ファイル出力", number: 3, soft: true });
     cardOut.body.appendChild(makeNote("HTML レポートは比較実行時に、下の「HTML内容」で選んだ形式により自動保存されます。Excel は比較後に、全件または画面で絞り込んだ範囲を一覧として保存できます。"));
-    cardOut.body.appendChild(makeNote("既定の「差分行のみ」は比較元・比較先の設定本文を埋め込まないため共有向けです。「比較設定込み」にはフィールド詳細や反映JSON作成に必要な設定値が入るため、共有先と保管場所に注意してください。"));
+    cardOut.body.appendChild(makeNote("「差分行のみ」は全設定スナップショットを収録しませんが、変更行の比較元・比較先の値は残ります。匿名化・機密情報のマスキング済みではありません。顧客への受け渡しには顧客向け Excel を使用してください。「比較設定込み」はフィールド詳細や反映JSONも収録するため取扱注意です。"));
     const htmlContentMode = makeSelect([
-      ["diffOnly", "差分行のみ（安全共有向け）"],
-      ["withCompared", "比較設定込み（フィールド詳細・反映JSON）"]
+      ["diffOnly", "差分行のみ（全設定は未収録）"],
+      ["withCompared", "比較設定込み（取扱注意）"]
     ], "diffOnly");
     cardOut.body.appendChild(makeRow(htmlContentMode, { label: "HTML内容" }));
     const expRange = makeSelect([
@@ -15820,6 +16116,15 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     grid.appendChild(bXlsx);
     grid.appendChild(bHtml);
     cardOut.body.appendChild(grid);
+    completionReviewBtn.addEventListener("click", () => {
+      const overview = resultBox.querySelector("[data-kus-dl-overview]");
+      if (!overview) return;
+      overview.focus({ preventScroll: true });
+      overview.scrollIntoView({ block: "start", behavior: "auto" });
+    });
+    completionXlsxBtn.addEventListener("click", () => {
+      if (!bXlsx.disabled) bXlsx.click();
+    });
     panel.body.insertBefore(cardOut.card, cardResult.card);
     const workflow = document.createElement("main");
     workflow.className = "kus-dl-workflow";
@@ -15834,7 +16139,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     };
     const targetStep = makeWorkflowStep("target", "1", "比較対象を決める", "比較元から比較先へ、どの設定が変わったかを確認します。");
     const reviewStep = makeWorkflowStep("review", "2", "結果を確認する", "取得の完全性を確認してから、差分を順にレビューします。");
-    const exportStep = makeWorkflowStep("export", "3", "結果を出力する", "確認用の Excel または共有用の HTML を保存できます。");
+    const exportStep = makeWorkflowStep("export", "3", "結果を出力する", "顧客向け Excel または社内確認用の HTML を保存できます。");
     const configDetails = document.createElement("details");
     configDetails.className = "kus-dl-disclosure";
     configDetails.innerHTML = "<summary><span>比較範囲と詳細設定</span><small>セクション、JSON読込、無視ルール、比較条件</small></summary>";
@@ -15862,7 +16167,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     reviewEmpty.className = "kus-dl-step__empty";
     reviewEmpty.dataset.kusDlResultEmpty = "";
     reviewEmpty.textContent = "比較を実行すると、ここに完全性と差分の一覧が表示されます。";
-    targetStep.append(cardApp.card, configDetails, runRow, panel.status);
+    targetStep.append(cardApp.card, configDetails, runRow, completionRow, panel.status);
     reviewStep.append(reviewEmpty, filterDetails, cardResult.card);
     exportStep.appendChild(outputDetails);
     workflow.append(targetStep, reviewStep, exportStep);
@@ -15871,6 +16176,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       expRange.disabled = !enabled;
       bXlsx.disabled = !enabled;
       bHtml.disabled = !enabled;
+      completionReviewBtn.disabled = !enabled;
+      completionXlsxBtn.disabled = !enabled;
     };
     setExportControlsEnabled(false);
     let cache = null;
@@ -15884,6 +16191,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     let announceResultOverview = false;
     const collapsedSections = /* @__PURE__ */ new Set();
     const expandedValueKeys = /* @__PURE__ */ new Set();
+    const expandedRowKeys = /* @__PURE__ */ new Set();
     let importedSourceBundle = null;
     let importedTargetBundle = null;
     swapBtn.addEventListener("click", () => {
@@ -15914,6 +16222,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     srcFile.addEventListener("change", () => liteRun(panel, "比較元JSONを読み込み中…", async () => {
       const file = srcFile.files?.[0];
       if (!file) return;
+      setCompletionActionsVisible(false);
       importedSourceBundle = await readSettingsBundleFile(file, { side: "source", appId: srcApp.value.trim() });
       if (!srcApp.value.trim() && importedSourceBundle?.appId) srcApp.value = String(importedSourceBundle.appId);
       setSourceName(extractAppNameFromBundle(importedSourceBundle));
@@ -15922,6 +16231,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     tgtFile.addEventListener("change", () => liteRun(panel, "比較先JSONを読み込み中…", async () => {
       const file = tgtFile.files?.[0];
       if (!file) return;
+      setCompletionActionsVisible(false);
       importedTargetBundle = await readSettingsBundleFile(file, { side: "target", appId: tgtApp.value.trim() });
       if (!tgtApp.value.trim() && importedTargetBundle?.appId) tgtApp.value = String(importedTargetBundle.appId);
       setTargetName(targetRows[0], extractAppNameFromBundle(importedTargetBundle));
@@ -15932,6 +16242,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       importedTargetBundle = null;
       srcFile.value = "";
       tgtFile.value = "";
+      setCompletionActionsVisible(false);
       panel.setStatus("設定JSONの読込を解除しました", "info");
     });
     function readTargets() {
@@ -16034,6 +16345,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           currentRowKey = "";
           collapsedSections.clear();
           expandedValueKeys.clear();
+          expandedRowKeys.clear();
+          setCompletionActionsVisible(false);
           summaryText = "";
           resetResultPage();
           setExportControlsEnabled(false);
@@ -16191,7 +16504,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const target = displayBundleSide(cache.targetBundle, "比較先");
       const more = rows.length > visibleRows.length ? `<div class="kus-dl-more"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-more>さらに ${Math.min(RESULT_PAGE_SIZE, rows.length - visibleRows.length)} 件表示（残り ${rows.length - visibleRows.length} 件）</button></div>` : "";
       resultBox.className = `kus-dl-result kus-dl-result--${densitySelect.value} kus-dl-result--${layoutSelect.value}`;
-      resultBox.innerHTML = overview + `<div class="kus-dl-sticky">${renderReviewBarHtml(rows, source, target)}</div>` + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows, { collapsedSections, currentRowKey, expandedValueKeys }) + more;
+      resultBox.innerHTML = overview + `<div class="kus-dl-sticky">${renderReviewBarHtml(rows, source, target)}</div>` + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows, { collapsedSections, currentRowKey, expandedValueKeys, expandedRowKeys }) + more;
       cardFilter.card.style.display = "block";
       filterDetails.style.display = "";
     }
@@ -16210,6 +16523,18 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         rerenderFromFilter();
         window.requestAnimationFrame(() => {
           (resultBox.querySelector("[data-kus-dl-clear-filter]") || resultBox.querySelector('[data-kus-dl-nav="next"]'))?.focus();
+        });
+        return;
+      }
+      const mobileRowToggle = target?.closest("[data-kus-dl-mobile-row-toggle]");
+      if (mobileRowToggle) {
+        const rowKey = mobileRowToggle.dataset.kusDlMobileRowToggle || "";
+        if (!rowKey) return;
+        if (expandedRowKeys.has(rowKey)) expandedRowKeys.delete(rowKey);
+        else expandedRowKeys.add(rowKey);
+        rerender();
+        window.requestAnimationFrame(() => {
+          resultBox.querySelector(`[data-kus-dl-mobile-row-toggle="${rowKey}"]`)?.focus({ preventScroll: true });
         });
         return;
       }
@@ -16415,6 +16740,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       currentRowKey = "";
       collapsedSections.clear();
       expandedValueKeys.clear();
+      expandedRowKeys.clear();
+      setCompletionActionsVisible(false);
       setExportControlsEnabled(false);
       summaryText = "";
       resetResultPage();
@@ -16515,6 +16842,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       currentRowKey = "";
       collapsedSections.clear();
       expandedValueKeys.clear();
+      expandedRowKeys.clear();
+      setCompletionActionsVisible(false);
       setExportControlsEnabled(false);
       summaryText = "";
       resetResultPage();
@@ -16563,6 +16892,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         summaryText = out.summary?.text || "完了";
         refreshFilterSectionOptions();
         rerender();
+        setCompletionActionsVisible(true);
         try {
           runExportDiffHtmlStandalone(exportCtx(true));
           const incomplete = isIncompleteLiteDiff(out);

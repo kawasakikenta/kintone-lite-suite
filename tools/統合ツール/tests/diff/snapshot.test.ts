@@ -167,6 +167,35 @@ describe('diff/snapshot', () => {
     });
   });
 
+  it('round-trips an explicit complete actual-diff result when only same evidence was omitted', () => {
+    const payload = buildDiffSnapshotPayload({
+      rows: [],
+      truncation: {
+        truncated: true,
+        actualDiffIncomplete: false,
+        diffLimit: 1000,
+        sameLimit: 3000,
+        droppedDiff: 0,
+        droppedSame: 4,
+        sections: [{
+          sectionKey: 'appSettings',
+          scanStatus: 'complete',
+          omittedDiffCount: 0,
+          droppedDiff: 0,
+          droppedSame: 4
+        }]
+      }
+    });
+    const imported = createDiffSnapshotImportState(JSON.parse(JSON.stringify(payload)));
+
+    expect(imported.snapshot.truncation).toMatchObject({
+      truncated: true,
+      actualDiffIncomplete: false,
+      droppedDiff: 0,
+      droppedSame: 4
+    });
+  });
+
   it('clears prior comparison state and keeps a zero-row snapshot exportable', () => {
     const imported = createDiffSnapshotImportState({
       tool: 'kintone-unified-suite',

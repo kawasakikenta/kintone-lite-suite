@@ -21,8 +21,10 @@ import {
   computeDiffRows,
   getActualDiffRows,
   countActualDiffRows,
+  countActionableDiffRows,
   summarizeRows,
-  getDiffNormalizationPresetState
+  getDiffNormalizationPresetState,
+  hasIncompleteActualDiffTruncation
 } from '../diff/engine.js';
 import { enrichDiffRows, summarizeSeverity } from '../diff/enrich.js';
 import { collectPartialComparisonIssues } from './diff-standalone.js';
@@ -282,9 +284,13 @@ export async function runDiff() {
   renderBundleState();
   renderReflectSidebar();
   renderReflectMainPanel();
-  const truncationNote = state.lastDiffTruncation
+  const actualDiffTruncated = hasIncompleteActualDiffTruncation(state.lastDiffTruncation);
+  const droppedSame = Number(state.lastDiffTruncation?.droppedSame || 0);
+  const truncationNote = actualDiffTruncated
     ? ` / ⚠ 差分上限${state.lastDiffTruncation.diffLimit}件到達（結果は不完全）`
-    : '';
+    : droppedSame > 0
+      ? ` / ℹ 同一証跡${droppedSame}件を省略（実差分の走査は完了）`
+      : '';
   const partialNote = state.lastPartialIssues.length
     ? ' / ⚠ 結果は不完全（本文未検証あり）'
     : '';
@@ -426,7 +432,7 @@ export async function exportDiffHtml() {
 export async function exportPatchJson() {
   if (!state.lastDiffRows.length) throw new Error('先に差分比較を実行してください');
   const exportInfo = resolveDiffExportRows();
-  if (!countActualDiffRows(exportInfo.rows)) throw new Error('出力できる差分がありません');
+  if (!countActionableDiffRows(exportInfo.rows)) throw new Error('反映可能な差分がありません');
   const payload = buildPatchPayload(exportInfo.rows, state.lastSourceBundle, state.lastTargetBundle);
   const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));
   const targetLabel = buildAppFilenameLabel(state.lastTargetBundle?.appId, extractAppNameFromBundle(state.lastTargetBundle));
