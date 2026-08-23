@@ -153,8 +153,8 @@ describe('diff/xlsx-export', () => {
     expect(summary).not.toContain('シート案内');
 
     for (const [cell, label] of [
-      ['A2', 'No.'], ['B2', '分類'], ['C2', '対象'], ['D2', '変更区分'],
-      ['E2', '比較元'], ['F2', '比較先'], ['G2', '確認ポイント'], ['H2', '顧客レビュー状況'],
+      ['A2', 'No.'], ['B2', '変更区分'], ['C2', '分類'], ['D2', '対象'],
+      ['E2', '変更前'], ['F2', '変更後'], ['G2', '確認すること'], ['H2', '顧客レビュー状況'],
       ['I2', '対応方針'], ['J2', '担当者'], ['K2', 'コメント']
     ]) {
       expect(list).toMatch(new RegExp(`<c r="${cell}"[^>]*>[\\s\\S]*?${label}[\\s\\S]*?<\\/c>`));
@@ -164,8 +164,8 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('<autoFilter ref="A2:K3"/>');
     expect(list).toContain('<mergeCell ref="A1:G1"/>');
     expect(list).toContain('<mergeCell ref="H1:K1"/>');
-    expect(list).toContain('zoomScale="85" zoomScaleNormal="85"');
-    expect(list).toContain('orientation="landscape" fitToWidth="2" fitToHeight="0"');
+    expect(list).toContain('zoomScale="95" zoomScaleNormal="95"');
+    expect(list).toContain('orientation="landscape" fitToWidth="1" fitToHeight="0"');
     expect(workbook).toContain('&apos;変更一覧&apos;!$2:$2,&apos;変更一覧&apos;!$A:$D');
     expect(list).toContain('sqref="H3:H3"');
     expect(list).toContain('顧客レビュー状況');
@@ -244,11 +244,15 @@ describe('diff/xlsx-export', () => {
       ]
     });
     const list = await readWorksheetByName(blob, '変更一覧');
+    const detail = await readWorksheetByName(blob, '設定値詳細');
 
     for (const value of [
       'required', 'defaultValue', 'KEEP_LEFT', 'KEEP_RIGHT', 'KEEP_ME', 'KEEP_ME_TOO',
       'RAW_LEFT', 'RAW_RIGHT', '&lt;b&gt;明細&lt;/b&gt;', '&lt;strong&gt;HTML_LABEL_LEFT&lt;/strong&gt;'
-    ]) expect(list).toContain(value);
+    ]) expect(detail).toContain(value);
+    expect(list).toContain('原文は「設定値詳細」シートで確認');
+    expect(list).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A3"');
+    expect(detail).toContain('<hyperlink ref="G3" location="&apos;変更一覧&apos;!A3"');
     expect(list).not.toContain('テーブル内の項目:');
     expect(list).not.toContain('詳細は安全のため非表示');
   });
@@ -266,12 +270,16 @@ describe('diff/xlsx-export', () => {
     });
     const summary = await readWorksheetByName(blob, '比較概要');
     const list = await readWorksheetByName(blob, '変更一覧');
+    const detail = await readWorksheetByName(blob, '設定値詳細');
 
     expect(summary).toContain('32,767文字を超える値はExcelセル上限を明記して省略します');
-    expect(list).toContain('Excelセル上限32,767文字のため省略');
-    expect(list).toContain('元40004文字');
-    expect(list).toContain('元40005文字');
-    expect(list).not.toContain('TAIL');
+    expect(summary).toContain('設定値詳細を開く');
+    expect(summary).toContain('<hyperlink ref="F4" location="&apos;設定値詳細&apos;!A2"');
+    expect(list).toContain('原文は「設定値詳細」シートで確認');
+    expect(detail).toContain('Excelセル上限32,767文字のため省略');
+    expect(detail).toContain('元40004文字');
+    expect(detail).toContain('元40005文字');
+    expect(detail).not.toContain('TAIL');
     expect(list).not.toContain('詳細は安全のため非表示');
   });
 
@@ -550,14 +558,51 @@ describe('diff/xlsx-export', () => {
         { sectionKey: 'processSettings', type: 'changed', path: 'processSettings.actions[0].filterCond', left: '', right: 'priority in ("高", "通常")' }
       ]
     });
+    const workbook = await readEntry(blob, 'xl/workbook.xml');
+    const list = await readWorksheetByName(blob, '変更一覧');
+    const detail = await readWorksheetByName(blob, '設定値詳細');
     const allText = await readAllEntryText(blob);
 
+    expect(workbook).toContain('name="設定値詳細"');
+    for (const expected of [
+      '300px', '360px', '見積金額（amount）', '優先度（priority）',
+      '（降順）', '（昇順）', '対象となる条件が変わります', '条件が追加され対象が絞られます'
+    ]) expect(list).toContain(expected);
+    expect(list).toMatch(/<c r="E3" s="37"/);
+    expect(list).toMatch(/<c r="F3" s="38"/);
+    expect(list).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A3"');
+    expect(detail).toContain('<hyperlink ref="G3" location="&apos;変更一覧&apos;!A3"');
     for (const expected of [
       'レイアウト行 #1', 'customer_name', 'amount', 'priority',
       'amount &gt; 0', 'priority in', 'amount desc', 'customer_name asc'
     ]) expect(allText).toContain(expected);
     expect(allText).not.toContain('詳細は安全のため非表示');
     expect(allText).not.toContain('詳細非表示');
+  });
+
+  it('replaces field codes only outside quoted filter values without cascading through inserted labels', async () => {
+    const fields = {
+      status: { code: 'status', label: '公開状態 open', type: 'DROP_DOWN' },
+      open: { code: 'open', label: '公開フラグ', type: 'SINGLE_LINE_TEXT' }
+    };
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      sourceBundle: { sections: { fieldSettings: { properties: fields } } },
+      targetBundle: { sections: { fieldSettings: { properties: fields } } },
+      rows: [{
+        sectionKey: 'viewSettings',
+        type: 'changed',
+        path: 'viewSettings.views.公開一覧.filterCond',
+        left: 'status = "closed"',
+        right: 'status in ("open") and open != "open"'
+      }]
+    });
+    const list = await readWorksheetByName(blob, '変更一覧');
+    const detail = await readWorksheetByName(blob, '設定値詳細');
+
+    expect(list).toContain('公開状態 open（status） in (&quot;open&quot;) and 公開フラグ（open） != &quot;open&quot;');
+    expect(list).not.toContain('&quot;公開フラグ（open）&quot;');
+    expect(list).not.toContain('公開状態 公開フラグ（open）');
+    expect(detail).toContain('status in (&quot;open&quot;) and open != &quot;open&quot;');
   });
 
   it('keeps credential-like and formula-looking customer values visible as inert text', async () => {

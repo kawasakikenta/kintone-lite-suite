@@ -347,13 +347,15 @@ describe('diff/xlsx-builder', () => {
         ['title'],
         ['ok', 'neutral', 'danger', 'change'],
         ['review', 'info', 'link', 'choice'],
-        ['added', 'removed', 'changed', 'moved']
+        ['added', 'removed', 'changed', 'moved'],
+        ['before', 'after', 'absent']
       ],
       cellStyles: [
         ['title'],
         ['kpiGood', 'kpiWarning', 'kpiDanger', 'kpiChange'],
         ['review', 'info', 'hyperlink', 'reviewChoice'],
-        ['changeAdded', 'changeRemoved', 'changeChanged', 'changeMoved']
+        ['changeAdded', 'changeRemoved', 'changeChanged', 'changeMoved'],
+        ['diffBefore', 'diffAfter', 'diffAbsent']
       ]
     }];
     const buf = await blobToBuffer(buildXlsxBlob(sheets));
@@ -372,9 +374,14 @@ describe('diff/xlsx-builder', () => {
     expect(xml).toMatch(/<c r="B4" s="26"/);
     expect(xml).toMatch(/<c r="C4" s="27"/);
     expect(xml).toMatch(/<c r="D4" s="28"/);
+    expect(xml).toMatch(/<c r="A5" s="37"/);
+    expect(xml).toMatch(/<c r="B5" s="38"/);
+    expect(xml).toMatch(/<c r="C5" s="39"/);
     expect(styles).toContain('<fills count="10">');
     expect(styles).toContain('<borders count="6">');
-    expect(styles).toContain('<cellXfs count="37">');
+    expect(styles).toContain('<cellXfs count="40">');
+    expect(styles).toContain('color rgb="FF991B1B"');
+    expect(styles).toContain('color rgb="FF166534"');
     expect(styles).toContain('<right style="medium"><color rgb="FF64748B"/></right>');
     expect(styles).toContain('rgb="FF1E3A5F"');
     expect(styles).toContain('rgb="FFF1F5F9"');
