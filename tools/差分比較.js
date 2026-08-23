@@ -4912,6 +4912,14 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const targetPreviewApiPrefix = targetGuestId ? `/k/guest/${encodeURIComponent(targetGuestId)}/v1/preview` : "/k/v1/preview";
     const diffTotal = summary.added + summary.removed + summary.changed;
     const objectiveContentChangedCount = Math.max(0, summary.changed - summary.moved);
+    const objectiveFactCards = [
+      summary.added > 0 ? `<article class="report-fact report-fact--added"><span>比較先のみに存在</span><strong>${summary.added}</strong><small>比較元にはありません</small></article>` : "",
+      summary.removed > 0 ? `<article class="report-fact report-fact--removed"><span>比較元のみに存在</span><strong>${summary.removed}</strong><small>比較先にはありません</small></article>` : "",
+      objectiveContentChangedCount > 0 ? `<article class="report-fact report-fact--changed"><span>両方に存在・内容が異なる</span><strong>${objectiveContentChangedCount}</strong><small>値または設定が異なります</small></article>` : "",
+      summary.moved > 0 ? `<article class="report-fact report-fact--moved"><span>並び順が異なる</span><strong>${summary.moved}</strong><small>内容とは別に集計</small></article>` : "",
+      includesComparedContent && summary.same > 0 ? `<article class="report-fact report-fact--same"><span>内容は同じ</span><strong>${summary.same}</strong><small>比較証跡として収録</small></article>` : ""
+    ].filter(Boolean);
+    const objectiveFactCardsHtml = objectiveFactCards.length ? objectiveFactCards.join("") : '<article class="report-fact report-fact--same report-fact--empty"><span>差分は見つかりませんでした</span><strong>0</strong><small>選択した設定は一致しています</small></article>';
     const formatAppDisplay = (meta) => {
       const id = String(meta?.appId || "-");
       const name = String(meta?.appName || "").trim();
@@ -4933,7 +4941,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const appliedIgnoreTokens = [...new Set(String(reportMeta.ignoreKeys || "").split(/[\n\r,、，;；]+/).map((token) => token.trim()).filter(Boolean))];
     const appliedIgnoreSummary = appliedIgnoreTokens.length ? `比較時の無視キー ${appliedIgnoreTokens.length}件: ${appliedIgnoreTokens.join("、")}` : "比較時の無視キー 0件（なし）";
     const appliedNormalizationSummary = reportMeta.normalizationLabels.length ? `比較時の正規化 ${reportMeta.normalizationLabels.length}件: ${reportMeta.normalizationLabels.join("、")}` : "比較時の正規化 0件（なし）";
-    const contentDisclosureHtml = includesComparedContent ? `<div class="report-content-disclosure report-content-disclosure--caution" data-content-disclosure="withCompared" role="note" aria-label="収録内容と反映方向"><strong>取扱注意: 比較設定込み</strong><span>比較設定・フィールド詳細・設定証跡JSONを収録しています。反映JSONは、比較元の設定値で比較先を上書きする方向です。${canBuildReflectJson ? "" : `反映JSONは利用できません。${esc(reflectJsonBlockedReason)}`}</span></div>` : '<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note" aria-label="収録内容の注意"><strong>差分行のみ（全設定は未収録）</strong><span>全設定スナップショットは収録していませんが、変更された差分行の比較元・比較先の値は収録しています。匿名化・機密情報のマスキング済みではありません。顧客への受け渡しには顧客向けExcelを使用してください。</span></div>';
+    const contentDisclosureHtml = includesComparedContent ? `<div class="report-content-disclosure report-content-disclosure--caution" data-content-disclosure="withCompared" role="note" aria-label="収録内容と反映方向"><strong>取扱注意: 比較設定込み</strong><span>比較設定・フィールド詳細・設定証跡JSONを収録しています。反映JSONは、比較元の設定値で比較先を上書きする方向です。${canBuildReflectJson ? "" : `反映JSONは利用できません。${esc(reflectJsonBlockedReason)}`}</span></div>` : '<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note" aria-label="収録内容の注意"><strong>差分行のみ（全設定は未収録）</strong><span>全設定スナップショットは収録していませんが、変更された差分行の比較元・比較先の値は収録しています。匿名化・機密情報のマスキング済みではありません。顧客向けExcelにも同じ差分値が収録され、取得不完全時はエラー等の原文も含まれるため、共有前に内容を確認してください。</span></div>';
     const stateRenameSafetyNoticeHtml = !stateRenameNoticeCount ? "" : visibleStateRenameNoticeCount === stateRenameNoticeCount ? `<div class="warn">ℹ プロセスの状態名変更が ${stateRenameNoticeCount} 件あります。変更件数に含めていますが、プロセス管理はセクション全体を置き換えるAPIのため、このレポートでは反映JSON全体を無効にしています。管理画面で手動確認してください。</div>` : `<div class="warn">ℹ 比較設定全体でプロセスの状態名変更を ${stateRenameNoticeCount} 件検出しました。この出力範囲には ${visibleStateRenameNoticeCount} 件を収録しているため、画面の変更件数は出力範囲に含まれる改名だけを数えています。プロセス管理はセクション全体を置き換えるAPIのため、このレポートでは反映JSON全体を無効にしています。管理画面で手動確認してください。</div>`;
     const noticesHtml = [
       includesComparedContent && incompleteComparisonWarnings.length > 0 ? `<div class="warn"><b>⛔ 比較結果が不完全なため、反映JSONの選択・保存・コピーを無効にしています。</b> 比較元/比較先JSONは比較時の証跡として保存できます。</div>` : "",
@@ -8183,7 +8191,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const progress = reviewProgressOf(rows);
     const pending = progress.actionable.filter((row) => !reviewedKeys.has(rowStateKey(row)));
     const samples = pending.slice(0, 3);
-    const startRow = pending[0] || null;
     const headline = pending.length
       ? '未確認の差分を上から確認できます'
       : '現在の対象はすべて確認済みです';
@@ -8196,15 +8203,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       +   '<div class="review-progress review-progress--queue">'
       +     '<div class="review-progress-copy"><span>確認済み</span><strong>' + progress.reviewed + ' / ' + progress.total + '（' + progress.percent + '%）</strong></div>'
       +     '<div class="review-progress-track" role="progressbar" aria-label="レビュー進捗" aria-valuemin="0" aria-valuemax="' + progress.total + '" aria-valuenow="' + progress.reviewed + '" aria-valuetext="確認済み ' + progress.reviewed + '件 / 全 ' + progress.total + '件（' + progress.percent + '%）"><span style="width:' + progress.percent + '%"></span></div>'
-      +     '<span class="review-progress-note">確認状態はJSONファイルで保存・読込できます</span>'
       +   '</div>'
       +   (samples.length ? '<div class="review-queue-samples" aria-label="次に確認する差分">' + samples.map((row) => '<button type="button" data-review-jump="' + escHtml(rowStateKey(row)) + '">' + escHtml(reportRowTitle(row)) + '</button>').join('') + '</div>' : '')
       + '</div>'
-      + (startRow
-        ? '<div class="review-queue-actions">'
-          + '<button type="button" class="review-queue-action" data-review-jump="' + escHtml(rowStateKey(startRow)) + '">未確認レビューを開始</button>'
-          + '</div>'
-        : '')
       + '</section>';
   }
 
@@ -8888,7 +8889,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if (main) main.removeAttribute('inert');
     if (mobileSidebarToggle) {
       mobileSidebarToggle.setAttribute('aria-expanded', 'false');
-      mobileSidebarToggle.textContent = '絞り込み・出力';
+      mobileSidebarToggle.textContent = '条件・出力';
     }
     if (restoreFocus !== false && mobileSidebarReturnFocus && typeof mobileSidebarReturnFocus.focus === 'function') {
       mobileSidebarReturnFocus.focus();
@@ -8915,7 +8916,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if (main) main.setAttribute('inert', '');
     if (mobileSidebarToggle) {
       mobileSidebarToggle.setAttribute('aria-expanded', 'true');
-      mobileSidebarToggle.textContent = '絞り込みを閉じる';
+      mobileSidebarToggle.textContent = '閉じる';
     }
     requestAnimationFrame(() => {
       const closeButton = document.getElementById('sidebarDrawerClose');
@@ -9300,12 +9301,18 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .sb-stat:nth-last-child(-n+2){border-bottom:none}
     .sb-stat b{font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums}
     .sidebar-review-progress{display:flex;flex-direction:column;gap:7px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)}
-    .review-state-transfer{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:-2px 0 12px;padding-bottom:12px;border-bottom:1px solid var(--border)}
-    .review-state-transfer .btn{min-width:0;padding-inline:7px;line-height:1.35}
+    .sidebar-review-progress--solo{margin-bottom:0;padding-bottom:0;border-bottom:0}
+    .review-state-transfer-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:14px}
+    .review-state-transfer-actions .btn{min-width:0;padding-inline:7px;line-height:1.35}
     .review-state-status{grid-column:1/-1;margin:0;font-size:10px;line-height:1.5;color:var(--muted)}
     .review-state-status.is-error{color:#b91c1c;font-weight:700}
     body.dark .review-state-status.is-error{color:#fca5a5}
     .sb-ctrl{padding:16px}
+    .sidebar-count-details>summary{display:flex;align-items:center;min-height:36px;color:var(--accent-strong);font-size:11px;font-weight:800;cursor:pointer;list-style:none}
+    .sidebar-count-details>summary::-webkit-details-marker{display:none}
+    .sidebar-count-details>summary::before{content:"▸";margin-right:7px;color:var(--muted);font-size:9px}
+    .sidebar-count-details[open]>summary::before{transform:rotate(90deg)}
+    .sidebar-count-details .sb-stat-grid{margin-top:8px}
     .sb-ctrl .field-label{display:block;font-size:10px;font-weight:800;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
     .sb-ctrl label.chk{display:flex;align-items:center;gap:10px;font-size:12px;margin-bottom:10px;color:var(--fg);cursor:pointer}
     .sb-ctrl input[type="checkbox"]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
@@ -10021,7 +10028,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .skip-link{position:fixed;left:12px;top:10px;z-index:120;transform:translateY(-160%);padding:10px 14px;border-radius:8px;background:var(--fg);color:var(--card);font-size:12px;font-weight:800;text-decoration:none}
     .skip-link:focus{transform:translateY(0);outline:3px solid var(--accent);outline-offset:2px}
     .report-hero,.report-workspace{width:min(calc(100% - 32px),1440px);margin-inline:auto}
-    .report-hero{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);align-items:stretch;gap:14px 16px;margin-top:20px;padding:26px;border-radius:22px;background:linear-gradient(145deg,var(--card) 0%,color-mix(in srgb,var(--card) 90%,var(--accent-soft)) 100%);box-shadow:0 22px 56px -38px rgba(15,37,63,.62);overflow:visible}
+    .report-hero{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);align-items:stretch;gap:11px 16px;margin-top:16px;padding:21px 22px;border-radius:20px;background:linear-gradient(145deg,var(--card) 0%,color-mix(in srgb,var(--card) 90%,var(--accent-soft)) 100%);box-shadow:0 22px 56px -38px rgba(15,37,63,.62);overflow:visible}
     .report-hero::before{height:4px;background:var(--accent)}
     .report-hero .topbar-main{grid-column:1/-1;display:grid;grid-template-columns:minmax(260px,.78fr) minmax(480px,1.22fr);grid-template-rows:auto auto 1fr;align-items:start;gap:7px 28px}
     .report-hero .topbar-eyebrow-row,.report-hero .topbar-title,.report-hero .topbar-lead{grid-column:1}
@@ -10029,7 +10036,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .report-hero .topbar-title{margin:0;font-size:clamp(1.45rem,3vw,2rem)}
     .topbar-lead{max-width:72ch;margin:0;color:var(--muted);font-size:13px;line-height:1.7}
     .report-hero .topbar-compare{width:100%;max-width:none;gap:12px}
-    .report-hero .topbar-app-card{grid-template-columns:1fr;align-content:center;gap:3px;min-height:92px;padding:14px 16px;border-top:1px solid var(--border);border-left:4px solid #475569;background:var(--card-soft)}
+    .report-hero .topbar-app-card{grid-template-columns:1fr;align-content:center;gap:3px;min-height:78px;padding:12px 15px;border-top:1px solid var(--border);border-left:4px solid #475569;background:var(--card-soft)}
     .report-hero .topbar-app-card--source{border-left-color:#475569;background:var(--card-soft)}
     .report-hero .topbar-app-card--target{border-left-color:var(--accent);background:var(--card-soft)}
     body.dark .report-hero .topbar-app-card--source,body.dark .report-hero .topbar-app-card--target{background:var(--card-soft)}
@@ -10042,7 +10049,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     body.dark .report-content-disclosure{border-color:#8b6824;background:#2a210d;color:#fde68a}
     body.dark .report-content-disclosure--caution{border-color:#9a5a24;background:#2f190d;color:#fed7aa}
     .report-step-label{display:block;margin-bottom:3px;color:var(--muted);font-size:11px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}
-    .report-completeness{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px 14px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--card-soft)}
+    .report-completeness{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 13px;padding:13px 14px;border:1px solid var(--border);border-radius:14px;background:var(--card-soft)}
     .report-completeness--incomplete{border-color:#f0c36a;background:#fffaf0}
     .report-completeness--complete{border-color:#9bc8ac;background:#f4fbf6}
     body.dark .report-completeness--incomplete{border-color:#8b6824;background:#2a210d}
@@ -10064,13 +10071,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .report-facts{grid-column:1/-1;padding-top:4px}
     .report-facts-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:10px}
     .report-facts-head>p{max-width:52ch;margin:0;color:var(--muted);font-size:11px;line-height:1.6;text-align:right}
-    .report-fact-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+    .report-fact-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px}
     .report-fact-grid article{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;min-width:0;padding:13px 14px 12px;border:1px solid var(--border);border-radius:14px;background:var(--card);overflow:hidden}
     .report-fact-grid article::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:#64748b}
-    .report-fact-grid article:nth-child(1)::before{background:#15803d}
-    .report-fact-grid article:nth-child(2)::before{background:#b91c1c}
-    .report-fact-grid article:nth-child(3)::before{background:#b45309}
-    .report-fact-grid article:nth-child(4)::before{background:#7c3aed}
+    .report-fact--added::before{background:#15803d!important}
+    .report-fact--removed::before{background:#b91c1c!important}
+    .report-fact--changed::before{background:#b45309!important}
+    .report-fact--moved::before{background:#7c3aed!important}
+    .report-fact--same::before{background:#64748b!important}
+    .report-fact--empty{grid-column:1/-1}
     .report-fact-grid span{align-self:center;color:var(--fg);font-size:12px;font-weight:750;line-height:1.5}
     .report-fact-grid strong{grid-row:1/3;grid-column:2;align-self:center;font-size:24px;font-variant-numeric:tabular-nums}
     .report-fact-grid small{color:var(--muted);font-size:11px;line-height:1.5}
@@ -10132,7 +10141,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .report-workspace{display:block}
       .report-workspace>aside{position:relative;top:auto;width:auto;height:auto;max-height:none;margin-bottom:12px;overflow:visible}
       .report-workspace>main{padding:0}
-      .report-fact-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+      .report-fact-grid{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
     }
     @media (max-width:768px){
       .report-hero,.report-workspace{width:calc(100% - 16px)}
@@ -10265,11 +10274,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <p>判断や優先順位は付けず、比較で確認できた事実だけを表示します。</p>
       </div>
       <div class="report-fact-grid">
-        <article><span>比較先のみに存在</span><strong>${summary.added}</strong><small>比較元にはありません</small></article>
-        <article><span>比較元のみに存在</span><strong>${summary.removed}</strong><small>比較先にはありません</small></article>
-        <article><span>両方に存在・内容が異なる</span><strong>${objectiveContentChangedCount}</strong><small>値または設定が異なります</small></article>
-        <article><span>並び順が異なる</span><strong>${summary.moved}</strong><small>内容とは別に集計</small></article>
-        <article><span>内容は同じ</span><strong>${summary.same}</strong><small>${includesComparedContent ? "比較証跡として収録" : "差分行のみのため非収録"}</small></article>
+        ${objectiveFactCardsHtml}
       </div>
     </section>
 
@@ -10287,8 +10292,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     <div class="sb-head">
       <div class="sb-kicker">kintone アプリ設定の比較</div>
       <div class="sb-head-row">
-        <div class="sb-title">検索・確認ツール</div>
-        <button type="button" id="mobileSidebarToggle" class="mobile-filter-toggle" aria-expanded="false" aria-controls="sidebarPanels">検索・出力</button>
+        <div class="sb-title">検索・表示</div>
+        <button type="button" id="mobileSidebarToggle" class="mobile-filter-toggle" aria-expanded="false" aria-controls="sidebarPanels">条件・出力</button>
       </div>
       <div class="sb-meta">
         生成日時: ${esc(reportMeta.generatedAt)}<br>
@@ -10300,33 +10305,20 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     <button type="button" id="sidebarBackdrop" class="sidebar-backdrop" aria-label="絞り込みを閉じる" hidden></button>
     <div id="sidebarPanels" class="sidebar-panels">
     <div class="sidebar-drawer-head">
-      <strong id="sidebarDrawerTitle">検索・確認・出力</strong>
+      <strong id="sidebarDrawerTitle">検索・表示・出力</strong>
       <button type="button" id="sidebarDrawerClose" class="btn">閉じる</button>
     </div>
     <div class="sb-panel sb-stats">
-      <div class="sidebar-review-progress">
+      <div class="sidebar-review-progress sidebar-review-progress--solo">
         <div class="review-progress-copy"><span>レビュー進捗</span><strong id="sidebarReviewProgressValue">0 / ${diffTotal}（0%）</strong></div>
         <div id="sidebarReviewProgressBar" class="review-progress-track" role="progressbar" aria-label="レビュー進捗" aria-valuemin="0" aria-valuemax="${diffTotal}" aria-valuenow="0" aria-valuetext="確認済み 0件 / 全 ${diffTotal}件（0%）"><span id="sidebarReviewProgressFill" style="width:0%"></span></div>
       </div>
-      <div class="review-state-transfer" aria-label="レビュー状態JSONの保存と読込">
-        <button type="button" class="btn" id="reviewStateSaveBtn" title="このレポートの確認済み状態をJSONファイルに保存">レビュー状態JSON保存</button>
-        <button type="button" class="btn" id="reviewStateLoadBtn" aria-controls="reviewStateFile" title="このレポート用に保存した確認済み状態JSONを読み込んで置き換え">レビュー状態JSON読込</button>
-        <input type="file" id="reviewStateFile" accept="application/json,.json" hidden>
-        <p id="reviewStateStatus" class="review-state-status" role="status" aria-live="polite">確認状態はJSONファイルで保存・読込できます（最大2MB）</p>
-      </div>
-      <div class="sb-stat-grid">
-        <div class="sb-stat"><span>表示中</span><b id="stat-total">${summary.total}</b></div>
-        <div class="sb-stat"><span>比較先のみ</span><b id="stat-added">${summary.added}</b></div>
-        <div class="sb-stat"><span>比較元のみ</span><b id="stat-removed">${summary.removed}</b></div>
-        <div class="sb-stat"><span>内容差</span><b id="stat-changed">${objectiveContentChangedCount}</b></div>
-        <div class="sb-stat"><span>並び順差</span><b id="stat-moved">${summary.moved}</b></div>
-        <div class="sb-stat"><span>同じ</span><b id="stat-same">${summary.same}</b></div>
-        <div class="sb-stat"><span>確認済み</span><b id="stat-reviewed">0</b></div>
-        <div class="sb-stat"><span>選択中</span><b id="stat-selected">0</b></div>
-      </div>
-      <div style="margin-top:10px;font-size:11px;color:var(--muted)">取得失敗: <b>${fetchIssues.length}</b></div>
     </div>
     <div class="sb-panel sb-ctrl">
+      <span class="field-label">項目を検索</span>
+      <input type="text" id="search" placeholder="項目名・値・理由で検索" aria-label="差分の検索" autocomplete="off">
+      <p class="search-hint"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">F</kbd> / <kbd class="kbd">⌘</kbd>+<kbd class="kbd">F</kbd> で検索 · <kbd class="kbd">J</kbd>/<kbd class="kbd">K</kbd> で移動 · <kbd class="kbd">R</kbd> で確認して次へ · <kbd class="kbd">Esc</kbd> でクリア</p>
+      <span class="field-label" style="margin-top:14px">表示設定</span>
       <label class="chk"><input type="checkbox" id="hideSame"> 同一項目を隠す</label>
       <label class="chk"><input type="checkbox" id="charDiff" checked> 文字単位ハイライト</label>
       <label class="chk"><input type="checkbox" id="hideUnchangedLines" checked> 複数行差分は変更行だけ表示</label>
@@ -10338,9 +10330,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <label class="vs-opt"><input type="radio" name="viewSide" value="source"> 比較元</label>
         <label class="vs-opt"><input type="radio" name="viewSide" value="target"> 比較先</label>
       </div>
-      <span class="field-label">項目を検索</span>
-      <input type="text" id="search" placeholder="項目名・値・理由で検索" aria-label="差分の検索" autocomplete="off">
-      <p class="search-hint"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">F</kbd> / <kbd class="kbd">⌘</kbd>+<kbd class="kbd">F</kbd> で検索 · <kbd class="kbd">J</kbd>/<kbd class="kbd">K</kbd> で移動 · <kbd class="kbd">R</kbd> で確認して次へ · <kbd class="kbd">Esc</kbd> でクリア</p>
       <div class="sb-btns">
         <button type="button" class="btn" id="collapseBtn">全折畳</button>
         <button type="button" class="btn" id="expandBtn">全展開</button>
@@ -10348,6 +10337,22 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <button type="button" class="btn" id="mdBtn" title="表示中の差分行をMarkdown表としてクリップボードにコピー">MDコピー</button>
         <button type="button" class="btn" id="themeBtn" style="grid-column:span 2">ダークに切替</button>
       </div>
+    </div>
+    <div class="sb-panel sb-stats">
+      <details class="sidebar-count-details">
+        <summary>件数の内訳</summary>
+        <div class="sb-stat-grid">
+          <div class="sb-stat"><span>表示中</span><b id="stat-total">${summary.total}</b></div>
+          <div class="sb-stat"><span>比較先のみ</span><b id="stat-added">${summary.added}</b></div>
+          <div class="sb-stat"><span>比較元のみ</span><b id="stat-removed">${summary.removed}</b></div>
+          <div class="sb-stat"><span>内容差</span><b id="stat-changed">${objectiveContentChangedCount}</b></div>
+          <div class="sb-stat"><span>並び順差</span><b id="stat-moved">${summary.moved}</b></div>
+          <div class="sb-stat"><span>同じ</span><b id="stat-same">${summary.same}</b></div>
+          <div class="sb-stat"><span>確認済み</span><b id="stat-reviewed">0</b></div>
+          <div class="sb-stat"><span>選択中</span><b id="stat-selected">0</b></div>
+        </div>
+        <div style="margin-top:10px;font-size:11px;color:var(--muted)">取得失敗: <b>${fetchIssues.length}</b></div>
+      </details>
     </div>
     ${includesComparedContent ? `<details class="sb-panel sb-ctrl tool-details">
       <summary class="tool-details-summary">出力・反映・比較証跡</summary>
@@ -10377,6 +10382,18 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         </div>
       </details>
     </div>
+    <details class="sb-panel sb-ctrl tool-details review-state-tools">
+      <summary class="tool-details-summary">レビュー状態を引き継ぐ</summary>
+      <div class="tool-details-body">
+        <p class="search-hint">別の端末や担当者へ確認済み状態だけを引き継ぐための補助機能です。</p>
+        <div class="review-state-transfer-actions" aria-label="レビュー状態JSONの保存と読込">
+          <button type="button" class="btn" id="reviewStateSaveBtn" title="このレポートの確認済み状態をJSONファイルに保存">状態を保存</button>
+          <button type="button" class="btn" id="reviewStateLoadBtn" aria-controls="reviewStateFile" title="このレポート用に保存した確認済み状態JSONを読み込んで置き換え">状態を読込</button>
+          <input type="file" id="reviewStateFile" accept="application/json,.json" hidden>
+          <p id="reviewStateStatus" class="review-state-status" role="status" aria-live="polite">JSONファイルで保存・読込できます（最大2MB）</p>
+        </div>
+      </div>
+    </details>
     <div id="navWrap">
       <div class="nav-label">セクションへジャンプ</div>
       <div id="nav"></div>
@@ -12957,30 +12974,6 @@ ${label}` : `${direction}の値`;
       }
     };
   }
-  var CUSTOMER_HIGH_RISK_SECTION_KEYS = /* @__PURE__ */ new Set([
-    "customizeSettings",
-    "pluginSettings",
-    "appAcl",
-    "fieldAcl",
-    "recordPermissions",
-    "notifications",
-    "perRecordNotifications",
-    "reminderNotifications"
-  ]);
-  var CUSTOMER_VISIBLE_SECTION_KEYS = /* @__PURE__ */ new Set([
-    "appSettings",
-    "appInfo",
-    "fieldSettings",
-    "layoutSettings",
-    "formSettings",
-    "viewSettings",
-    "reportSettings",
-    "processSettings",
-    "actionSettings",
-    "categories"
-  ]);
-  var CUSTOMER_HIDDEN_DETAIL = "詳細は安全のため非表示";
-  var CUSTOMER_TEXT_LIMIT = 240;
   var CUSTOMER_REVIEW_STATUS_VALUES = ["未レビュー", "レビュー中", "レビュー済み", "対象外"];
   var CUSTOMER_ACTION_DECISION_VALUES = ["未判断", "対応する", "対応しない", "保留", "対象外"];
   function customerSectionLabel(key) {
@@ -12998,23 +12991,7 @@ ${label}` : `${direction}の値`;
     return labels[key] || known.replace(/\(※\)/g, "").trim() || "その他の設定";
   }
   function customerAppName(bundle, fallback) {
-    let name = String(extractAppNameFromBundle(bundle) || "").normalize("NFKC").trim();
-    const numericIds = customerBundleNumericIds(bundle);
-    if (numericIds.includes(name)) name = "";
-    const idLabel = "(?:App|アプリ|Guest|ゲスト|Space|Thread)";
-    if (/^\d+$/.test(name) || /^ID\s*[:#-]?\s*\d+$/i.test(name) || new RegExp(`^${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*\\d+$`, "i").test(name)) {
-      name = "";
-    }
-    for (const id of numericIds) {
-      const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      name = name.replace(new RegExp(`\\(\\s*(?:${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*)?${escapedId}(?!\\d)\\s*\\)`, "gi"), "").replace(new RegExp(`${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*${escapedId}(?!\\d)`, "gi"), "").replace(new RegExp(`(^|[^\\p{L}\\p{N}])${escapedId}(?![\\p{L}\\p{N}])`, "gu"), "$1");
-    }
-    name = name.replace(new RegExp(`[\\(（\\[［【]\\s*${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*\\d+\\s*[\\)）\\]］】]`, "gi"), "").replace(/[\(（\[［【]\s*\d{5,}\s*[\)）\]］】]/g, "").replace(new RegExp(`${idLabel}[\\s_=-]*(?:ID[\\s_=-]*)?[:#-]?[\\s_=-]*\\d{5,}`, "gi"), "").replace(new RegExp(`^${idLabel}\\s*\\d+\\s*[:：-]\\s*`, "i"), "").replace(new RegExp(`\\s+${idLabel}\\s+\\d{5,}\\s*$`, "i"), "");
-    if (!numericIds.length) {
-      name = name.replace(new RegExp(`\\(\\s*${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*\\d+\\s*\\)`, "gi"), "").replace(new RegExp(`${idLabel}\\s+ID\\s*[:#-]?\\s*\\d+`, "gi"), "").replace(new RegExp(`${idLabel}[\\s_=-]*(?:ID[\\s_=-]*)?[:#-]?[\\s_=-]*\\d+[\\s_=-]*(?:[:：-][\\s_-]*)?`, "gi"), "").replace(/^\d{4,}\s*[-:：]\s*/, "");
-    }
-    name = name.replace(/\(\s*\)/g, "").replace(/[（\[［【]\s*[）\]］】]/g, "").replace(/\s{2,}/g, " ").replace(/^[\s\-:：#]+|[\s\-:：#]+$/g, "").trim();
-    if (customerUnsafeRawLabelText(name)) name = "";
+    const name = String(extractAppNameFromBundle(bundle) || "").normalize("NFKC").trim();
     return name || fallback;
   }
   function customerScopeLabel(scopes) {
@@ -13030,341 +13007,22 @@ ${label}` : `${direction}の値`;
     if (row.type === "removed") return "削除";
     return "変更";
   }
-  function customerAggregatedChangeType(rows) {
-    const types = new Set(rows.map(customerChangeType));
-    return types.size === 1 ? [...types][0] : "変更";
-  }
-  function customerSensitivePath(path) {
-    const rawPath = String(path || "");
-    const normalized = rawPath.toLowerCase();
-    const rawSegments = rawPath.replace(/\[(?:\d+|[^\]]+)\]/g, ".").split(".").map((segment) => segment.replace(/[^A-Za-z0-9_-]/g, "")).filter(Boolean);
-    const segments = rawSegments.map((segment) => segment.toLowerCase());
-    if (segments.some((segment) => /(?:token|secret|password|passwd|credential|authorization|privatekey|private_key|apikey|api_key)/.test(segment))) {
-      return true;
-    }
-    if (rawSegments.some((segment) => segment.toLowerCase() === "id" || /(?:Id|ID)$/.test(segment) || /(?:^|[_-])id$/i.test(segment) || /^(?:app|guest|space|thread|view|report|record|field)id$/i.test(segment) || /^(?:uuid|guid)$/i.test(segment))) return true;
-    if (segments.some((segment) => ["revision", "filekey", "_body", "body", "config", "expression", "formula"].includes(segment))) return true;
-    const defaultValueIndex = segments.indexOf("defaultvalue");
-    if (defaultValueIndex >= 0 && segments.slice(defaultValueIndex + 1).some((segment) => ["code", "name", "login", "id"].includes(segment))) {
-      return true;
-    }
-    if (/(?:^|\.)destapp\.app(?:\.|$)/.test(normalized)) return true;
-    if (/(?:^|\.)(?:relatedapp|lookup|referencetable)(?:\.|[\s\S]*\.)app(?:\.|$)/.test(normalized)) return true;
-    if (/(?:^|\.)entity\.(?:code|login)(?:\.|$)/.test(normalized)) return true;
-    if (segments.some((segment) => /^(?:assignee|entities|recipients|targets|members|users?|groups?|organizations?)$/.test(segment))) return true;
-    if (segments.some((segment) => ["creator", "modifier", "createdby", "updatedby", "login"].includes(segment))) return true;
-    return false;
-  }
-  function customerLooksLikeOpaqueToken(text) {
-    return /[A-Za-z0-9_~+/=-]{24,}/.test(String(text || ""));
-  }
-  function customerKnownSafePath(row) {
-    const sectionKey = sectionKeyOfRow(row);
-    const path = String(row.path || "");
-    if (!path || path === sectionKey) {
-      return [row.left, row.right].every((value) => value == null || typeof value === "object");
-    }
-    if (customerSensitivePath(path)) return false;
-    const fieldInfo = extractFieldPathInfo(path);
-    if (sectionKey === "fieldSettings" && fieldInfo) {
-      const tokens = Array.isArray(fieldInfo.tailTokens) ? fieldInfo.tailTokens : [];
-      if (!tokens.length) return true;
-      const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
-      const simple = /^(?:label|name|code|type|noLabel|required|unique|defaultValue(?:\.\d+)?|defaultNowValue|minLength|maxLength|minValue|maxValue|hideExpression|protocol|displayScale|digit|unit|unitPosition|align|format|thumbnailSize|index)$/;
-      const option = /^options\.[^.]+(?:\.(?:label|index))?$/;
-      const lookup = /^lookup\.(?:relatedKeyField|filterCond|sort|lookupPickerFields\.\d+|retrieveFields\.\d+|fieldMappings\.\d+\.(?:field|relatedField))$/;
-      const referenceTable = /^referenceTable\.(?:filterCond|sort|size|displayFields\.\d+|condition\.(?:field|relatedField))$/;
-      if (!(simple.test(settingKey) || option.test(settingKey) || lookup.test(settingKey) || referenceTable.test(settingKey))) return false;
-      if (option.test(settingKey)) {
-        const optionName = String(tokens[1] || "");
-        return !!optionName && !customerUnsafeRawLabelText(optionName) && optionName.length <= 120;
-      }
-      return true;
-    }
-    const safePatterns = {
-      appSettings: [
-        /^appSettings\.(?:name|theme|enableThumbnails|firstMonthOfFiscalYear|numberPrecision)$/
-      ],
-      appInfo: [
-        /^appInfo\.name$/
-      ],
-      layoutSettings: [
-        /^layoutSettings\.layout\[\d+\](?:\.fields\[\d+\])*(?:\.(?:type|code|label|value|elementId|size(?:\.(?:width|height|innerHeight))?))?$/
-      ],
-      viewSettings: [
-        /^viewSettings\.views\.[^.[\]]+(?:\.(?:type|name|index|filterCond|sort|pager|device)|\.fields\[\d+\])?$/
-      ],
-      processSettings: [
-        /^processSettings\.(?:enable|states\.[^.[\]]+(?:\.(?:name|index))?|actions\[\d+\](?:\.(?:name|from|to|filterCond))?)$/
-      ],
-      actionSettings: [
-        /^actionSettings\.actions\[\d+\](?:\.(?:name|index|from|to|filterCond))?$/
-      ]
-    };
-    return (safePatterns[sectionKey] || []).some((pattern) => pattern.test(path));
-  }
-  function customerUnsafeText(text, allowReadableLongToken = false) {
-    text = String(text || "").normalize("NFKC").replace(/[\u2044\u2215\u29F5\uFF0F]/g, "/").replace(/[\u00A5\u2216\uFF3C]/g, "\\");
-    return /[\p{Cc}\p{Cf}\p{Cs}]/u.test(text) || /(?:https?|ftp):\/\/|\bwww\./i.test(text) || /\b(?:data|blob|javascript|vbscript|mailto|ssh|git|s3|gs|jdbc|kintone|chrome-extension):/i.test(text) || /(?:^|[^A-Za-z0-9])(?:file:\/\/|[a-z]:[\\/]|\\\\[^\\\s]+\\)/i.test(text) || /(?:^|[^A-Za-z0-9])\/(?!\/)[^\s/]+(?:\/[^\s/]+)*/u.test(text) || /(?:^|[^A-Za-z0-9])(?:\.{1,2}|~)[\\/](?:[^\\/\r\n]+[\\/])*[^\\/\r\n]+/.test(text) || /(?:^|[\s"'=])(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+(?:\.(?:js|ts|json|env|pem|key|crt|log|txt|csv|xlsx?))?(?::\d+:\d+)?/i.test(text) || /(?:^|[^A-Za-z0-9])(?:%[A-Za-z_][A-Za-z0-9_]*%|\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*))[\\/][^\r\n]+/.test(text) || /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}_-]{1,63}(?:\.[\p{L}\p{N}_-]{1,63})*/iu.test(text) || customerContainsPhoneLike(text) || customerContainsPaymentCardLike(text) || /\b(?:TypeError|ReferenceError|SyntaxError|RangeError|Error|Exception):/i.test(text) || /\b(?:ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|ENOENT|EACCES|ERR_[A-Z0-9_]+|Traceback|Unhandled)\b/i.test(text) || /\bat\s+\S+\s*\([^\r\n]+:\d+:\d+\)/.test(text) || /\bat\s+[^\r\n]+:\d+:\d+\b/.test(text) || /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/.test(text) || /\b\d{2,4}-\d{2,4}-\d{3,4}\b/.test(text) || /(?:^|[^0-9])(?:\+?81|0)[\s-]?(?:\d[\s-]?){9,10}(?:$|[^0-9])/.test(text) || /(?:^|[^0-9])\+\d{1,3}[\s().-]*(?:\d[\s().-]*){7,14}(?:$|[^0-9])/.test(text) || /\b(?:ssn|social[\s_-]*security)\s*[:#=-]?\s*\d(?:[\s-]*\d){8}\b/i.test(text) || /\b(?:card|credit[\s_-]*card|visa|mastercard)\s*[:#=-]?\s*\d(?:[\s-]*\d){12,18}\b/i.test(text) || /\b[\p{L}\p{N}][\p{L}\p{N}.-]*\.(?:internal|corp|local|lan|intra)\b/iu.test(text) || /(?:^|[^A-Za-z0-9])(?:JSESSIONID|PHPSESSID|SESSIONID|AUTHSESSION|SID|CSRF(?:TOKEN)?)\s*[:=]\s*[^;,\s]+/i.test(text) || /(?:^|[^A-Za-z0-9])(?:Cookie|Set-Cookie)\s*:\s*[^\r\n]+/i.test(text) || /(?:^|[^A-Za-z0-9])(?:secret[\s_-]*key|passphrase|session|cookie|auth[\s_-]*code|ssh[\s_-]*key|pin)\s*[:=]\s*[^;,\s]+/i.test(text) || /(?:^|[^A-Za-z0-9])(?:passphrase|session|cookie|auth[\s_-]*code|pin)\s+[A-Za-z0-9._~+\/-]{4,}/i.test(text) || /(?:^|[^A-Za-z0-9])[A-Za-z0-9_-]*(?:pwd|dbpass|sqlpass)\s*(?:\(|<|\[|\{)\s*[^)\]}>]+\s*(?:\)|>|\]|\})/i.test(text) || /(?:^|[^A-Za-z0-9])(?:cfg\s*)?(?:[.\[]\s*)?["']?(?:[A-Za-z0-9_-]*(?:pwd|pass(?:word)?|token|secret|credential))["']?\s*\]?\s*[:=]\s*[^;,\s]+/i.test(text) || /(?:^|[^A-Za-z0-9])(?:dsn|uid|server|host|port|data[\s_-]*source|database|[A-Za-z0-9_-]*(?:pwd|pass(?:word)?|token|secret|auth(?:orization)?|credential|access[\s_-]?key|client[\s_-]?secret))\s*[:=]\s*[^;,\s]+/i.test(text) || /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/i.test(text) || /\b(?:sk|rk|pk)[-_](?:(?:live|test|proj)[-_]?)?[A-Za-z0-9_-]{12,}\b/i.test(text) || /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/i.test(text) || /\bglpat-[A-Za-z0-9_-]{20,}\b/i.test(text) || /\bnpm_[A-Za-z0-9]{30,}\b/i.test(text) || /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/.test(text) || /\bgh[pousr]_[A-Za-z0-9]{20,}\b/i.test(text) || /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/.test(text) || /(?:^|[^0-9a-f])[0-9a-f]{32,128}(?:$|[^0-9a-f])/i.test(text) || /\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/i.test(text) || /(?:commit|sha(?:1|256)?|hash)\s*[:=#-]?\s*[0-9a-f]{7,64}/i.test(text) || /\b(?:release|build)\s+[0-9a-f]{7,31}\b/i.test(text) || /\b(?:app|guest|space|thread)\s*(?:id)?\s*(?:[:=#]|\bin\b)/i.test(text) || /(?:App|アプリ|Guest|ゲスト|Space|Thread)[\s_=-]*(?:ID[\s_=-]*)?[:#-]?[\s_=-]*\d{5,}/i.test(text) || /(?:Guest|ゲスト|Space|Thread)[\s_=-]*(?:ID[\s_=-]*)?[:#-]?[\s_=-]*\d+/i.test(text) || /(?:view|report|record|field|user|group|org(?:anization)?|client|tenant)[\s_-]*(?:id|code|login)\s*[:=#-]?\s*\S+/i.test(text) || /(?:login|user[\s_-]?(?:id|code)|client[\s_-]?id|tenant[\s_-]?id)\s*[:=]\s*\S+/i.test(text) || /(?:employee|member|account|owner|assignee|principal|subject|project)?[\s_-]*(?:id|code|login)\s+[A-Za-z0-9_-]+/i.test(text) || /\b(?:appId|guestId|spaceId|threadId|fileKey|revision)\b/i.test(text) || /(?:^|[^a-z0-9])(?:(?:api|access|account|session|signing)[\s_-]?key|token|secret|password|passwd|credential|authorization|private[\s_-]?key)(?:$|[^a-z0-9])/i.test(text) || !allowReadableLongToken && customerLooksLikeOpaqueToken(text);
-  }
-  function customerContainsPhoneLike(text) {
-    return [...String(text || "").matchAll(/\+?\d[\d\s().-]{7,}\d/g)].some((match) => {
-      const digits = match[0].replace(/\D/g, "");
-      return digits.length >= 10 && digits.length <= 15;
-    });
-  }
-  function customerUnsafeLabelText(text) {
-    const normalized = String(text || "").normalize("NFKC");
-    return customerUnsafeText(normalized, true) || customerContainsPhoneLike(normalized) || /(?:^|[^\p{L}\p{N}])ID\s*[:#-]?\s*\d+(?:$|[^\p{L}\p{N}])/iu.test(normalized) || /[\(（\[［【]\s*\d+\s*[\)）\]］】]/u.test(normalized) || /(?:^|[^0-9])\d{5,}(?:$|[^0-9])/.test(normalized);
-  }
-  function customerContainsPaymentCardLike(text) {
-    return [...String(text || "").matchAll(/\d[\d\s-]{11,23}\d/g)].some((match) => {
-      const digits = match[0].replace(/\D/g, "");
-      if (digits.length < 13 || digits.length > 19) return false;
-      let sum = 0;
-      let double = false;
-      for (let index = digits.length - 1; index >= 0; index -= 1) {
-        let value = Number(digits[index]);
-        if (double) {
-          value *= 2;
-          if (value > 9) value -= 9;
-        }
-        sum += value;
-        double = !double;
-      }
-      return sum % 10 === 0;
-    });
-  }
-  function customerUnsafeRawLabelText(text) {
-    const normalized = String(text || "").normalize("NFKC");
-    return customerUnsafeLabelText(normalized) || /[@:;=,"'\\/\[\]{}<>]/.test(normalized) || /(?:^|[^0-9a-f])(?=[0-9a-f]{8,31}(?:$|[^0-9a-f]))(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,31}(?:$|[^0-9a-f])/i.test(normalized) || /^(?=[0-9a-f]{7,12}$)(?=.*\d)[0-9a-f]+$/i.test(normalized);
-  }
-  function customerLooksLikeFieldCodeLabel(text, ...knownCodes) {
-    const value = String(text || "").trim();
-    if (!value) return true;
-    if (knownCodes.some((code) => code && value === String(code).trim())) return true;
-    return /^[a-z][a-z0-9]*$/.test(value) || /[_$-]/.test(value);
-  }
-  function customerFieldLabelMap(bundle) {
-    const labels = /* @__PURE__ */ new Map();
-    const visit = (properties) => {
-      for (const [fallbackCode, definition] of Object.entries(properties || {})) {
-        if (!definition || typeof definition !== "object" || Array.isArray(definition)) continue;
-        const code = String(definition.code || fallbackCode).trim();
-        const label = String(definition.label || definition.name || "").trim();
-        const codeLikeLabel = customerLooksLikeFieldCodeLabel(label, code);
-        if (code && label && !codeLikeLabel && !customerUnsafeRawLabelText(label) && !customerContainsKnownBundleId(label, bundle) && label.length <= 120) labels.set(code, label);
-        const children = definition.fields;
-        if (children && typeof children === "object" && !Array.isArray(children)) visit(children);
-      }
-    };
-    visit(fieldSettingsProperties(bundle));
-    return labels;
-  }
-  function customerFieldLabelForCode(code, preferredBundle, fallbackBundle) {
-    const normalized = String(code || "").trim();
-    if (!normalized) return "";
-    return customerFieldLabelMap(preferredBundle).get(normalized) || customerFieldLabelMap(fallbackBundle).get(normalized) || "";
-  }
-  function customerFieldTypeForCode(code, preferredBundle, fallbackBundle) {
-    const normalized = String(code || "").trim();
-    if (!normalized) return "";
-    const find = (bundle) => {
-      let found = "";
-      const visit = (properties) => {
-        for (const [fallbackCode, definition] of Object.entries(properties || {})) {
-          if (found || !definition || typeof definition !== "object" || Array.isArray(definition)) continue;
-          const fieldCode = String(definition.code || fallbackCode).trim();
-          if (fieldCode === normalized) {
-            found = String(definition.type || "").trim();
-            continue;
-          }
-          const children = definition.fields;
-          if (children && typeof children === "object" && !Array.isArray(children)) visit(children);
-        }
-      };
-      visit(fieldSettingsProperties(bundle));
-      return found;
-    };
-    return find(preferredBundle) || find(fallbackBundle);
-  }
-  function customerFieldOptionValuesForCode(code, preferredBundle, fallbackBundle) {
-    const normalized = String(code || "").trim();
-    const values = /* @__PURE__ */ new Set();
-    if (!normalized) return values;
-    const visitBundle = (bundle) => {
-      const visit = (properties) => {
-        for (const [fallbackCode, definition] of Object.entries(properties || {})) {
-          if (!definition || typeof definition !== "object" || Array.isArray(definition)) continue;
-          const fieldCode = String(definition.code || fallbackCode).trim();
-          if (fieldCode === normalized) {
-            const options = definition.options;
-            if (options && typeof options === "object" && !Array.isArray(options)) {
-              for (const [optionKey, option] of Object.entries(options)) {
-                if (!customerUnsafeRawLabelText(String(optionKey))) values.add(String(optionKey));
-                if (option && typeof option === "object" && !Array.isArray(option)) {
-                  const label = String(option.label || "").trim();
-                  if (label && !customerUnsafeRawLabelText(label)) values.add(label);
-                }
-              }
-            }
-          }
-          const children = definition.fields;
-          if (children && typeof children === "object" && !Array.isArray(children)) visit(children);
-        }
-      };
-      visit(fieldSettingsProperties(bundle));
-    };
-    visitBundle(preferredBundle);
-    visitBundle(fallbackBundle);
-    return values;
-  }
-  function customerFieldLooksLikePersonalIdentifier(code, preferredBundle, fallbackBundle) {
-    const label = customerFieldLabelForCode(code, preferredBundle, fallbackBundle);
-    return /(?:^|[_\s-])(?:ssn|social[\s_-]*security|card|credit[\s_-]*card|pan|my[\s_-]*number|phone|tel|mobile)(?:$|[_\s-])/i.test(`${code} ${label}`) || /(?:個人番号|マイナンバー|電話|携帯|カード番号)/.test(label);
-  }
-  function customerConditionLiteral(raw) {
-    const value = raw.trim();
-    if (customerUnsafeText(value)) return null;
-    if (/^-?\d+(?:\.\d+)?$/.test(value)) return value;
-    const quoted = value.match(/^"([^"\\]*)"$/) || value.match(/^'([^'\\]*)'$/);
-    if (!quoted || customerUnsafeText(quoted[1])) return null;
-    return `「${quoted[1]}」`;
-  }
-  function customerHumanizeExpression(text, path, preferredBundle, fallbackBundle) {
-    const leaf = path.match(/(?:^|\.)([^.[\]]+)$/)?.[1] || "";
-    if (leaf === "sort") {
-      const match = text.match(/^\s*([A-Za-z0-9_\u0080-\uffff-]+)\s+(asc|desc)\s*$/i);
-      if (!match) return null;
-      const field2 = customerFieldLabelForCode(match[1], preferredBundle, fallbackBundle);
-      if (!field2) return null;
-      return `${field2}（${match[2].toLowerCase() === "asc" ? "昇順" : "降順"}）`;
-    }
-    if (leaf !== "filterCond") return null;
-    const inMatch = text.match(/^\s*([A-Za-z0-9_\u0080-\uffff-]+)\s+(not\s+in|in)\s*\(([^()]*)\)\s*$/i);
-    if (inMatch) {
-      const field2 = customerFieldLabelForCode(inMatch[1], preferredBundle, fallbackBundle);
-      const fieldType2 = customerFieldTypeForCode(inMatch[1], preferredBundle, fallbackBundle);
-      if (!["RADIO_BUTTON", "CHECK_BOX", "MULTI_SELECT", "DROP_DOWN"].includes(fieldType2)) return null;
-      const rawValues = inMatch[3].split(",").map((value2) => value2.trim()).filter(Boolean);
-      const allowedOptions = customerFieldOptionValuesForCode(inMatch[1], preferredBundle, fallbackBundle);
-      const optionValues = rawValues.map((raw) => {
-        const quoted = raw.match(/^"([^"\\]*)"$/) || raw.match(/^'([^'\\]*)'$/);
-        return quoted?.[1] ?? null;
-      });
-      if (!allowedOptions.size || optionValues.some((value2) => value2 == null || !allowedOptions.has(value2))) return null;
-      const values = rawValues.map(customerConditionLiteral);
-      if (!field2 || values.length === 0 || values.some((value2) => value2 == null)) return null;
-      const joined = values.length === 2 ? `${values[0]}または${values[1]}` : values.length > 2 ? `${values.slice(0, -1).join("、")}、または${values[values.length - 1]}` : values[0];
-      const negative = /not\s+in/i.test(inMatch[2]);
-      if (values.length === 1) return `${field2}が${joined}${negative ? "ではない" : ""}`;
-      return negative ? `${field2}が${joined}のいずれでもない` : `${field2}が${joined}`;
-    }
-    const comparison = text.match(/^\s*([A-Za-z0-9_\u0080-\uffff-]+)\s*(<=|>=|!=|=|<|>)\s*(.+?)\s*$/);
-    if (!comparison) return null;
-    const field = customerFieldLabelForCode(comparison[1], preferredBundle, fallbackBundle);
-    const fieldType = customerFieldTypeForCode(comparison[1], preferredBundle, fallbackBundle);
-    if (customerFieldLooksLikePersonalIdentifier(comparison[1], preferredBundle, fallbackBundle)) return null;
-    if (!["NUMBER", "CALC", "RADIO_BUTTON", "CHECK_BOX", "MULTI_SELECT", "DROP_DOWN"].includes(fieldType)) return null;
-    if (["NUMBER", "CALC"].includes(fieldType) && !/^-?\d+(?:\.\d+)?$/.test(comparison[3].trim())) return null;
-    if (["RADIO_BUTTON", "CHECK_BOX", "MULTI_SELECT", "DROP_DOWN"].includes(fieldType)) {
-      const quoted = comparison[3].match(/^"([^"\\]*)"$/) || comparison[3].match(/^'([^'\\]*)'$/);
-      const allowedOptions = customerFieldOptionValuesForCode(comparison[1], preferredBundle, fallbackBundle);
-      if (!quoted || !allowedOptions.has(quoted[1])) return null;
-    }
-    const value = customerConditionLiteral(comparison[3]);
-    if (!field || value == null) return null;
-    const operatorLabels = {
-      "=": `${field}が${value}`,
-      "!=": `${field}が${value}ではない`,
-      ">": `${field}が${value}より大きい`,
-      ">=": `${field}が${value}以上`,
-      "<": `${field}が${value}より小さい`,
-      "<=": `${field}が${value}以下`
-    };
-    return operatorLabels[comparison[2]] || null;
-  }
-  function looksLikeTechnicalPath(text, sectionKey) {
-    const value = String(text || "").trim();
-    return !value || value === sectionKey || value.startsWith(`${sectionKey}.`) || /\[[0-9]+\]/.test(value) || /^(?:[A-Za-z_$][\w$]*\.){2,}[A-Za-z_$][\w$]*$/.test(value);
-  }
-  function customerLayoutItemLabel(row, sourceBundle, targetBundle) {
-    const path = String(row.path || "");
-    const match = path.match(/^layoutSettings\.layout\[(\d+)\](?:\.(.+))?$/);
-    if (!match) return "";
-    const rowIndex = Number(match[1]);
-    const preferredBundle = row.type === "removed" ? sourceBundle : targetBundle;
-    const fallbackBundle = row.type === "removed" ? targetBundle : sourceBundle;
-    const layoutAt = (bundle) => bundle?.sections?.layoutSettings?.layout?.[rowIndex];
-    let entity = layoutAt(preferredBundle) || layoutAt(fallbackBundle) || null;
-    const parts = [`レイアウト ${rowIndex + 1}行目`];
-    for (const fieldMatch of path.matchAll(/\.fields\[(\d+)\]/g)) {
-      const fieldIndex = Number(fieldMatch[1]);
-      entity = entity && typeof entity === "object" && !Array.isArray(entity) ? entity.fields?.[fieldIndex] : null;
-      const code = entity && typeof entity === "object" && !Array.isArray(entity) ? String(entity.code || "").trim() : "";
-      const label = customerFieldLabelForCode(code, preferredBundle, fallbackBundle);
-      parts.push(label || `フィールド ${fieldIndex + 1}`);
-    }
-    const leaf = path.match(/(?:^|\.)([^.[\]]+)$/)?.[1] || "";
-    const propLabels = {
-      type: "種別",
-      code: "フィールド",
-      fields: "フィールド",
-      elementId: "要素",
-      label: "ラベル",
-      value: "初期値",
-      size: "サイズ",
-      width: "横幅",
-      height: "高さ",
-      innerHeight: "入力欄の高さ"
-    };
-    if (leaf && leaf !== "layout" && leaf !== "fields") parts.push(propLabels[leaf] || "設定");
-    return parts.join(" / ");
-  }
-  function customerViewFieldItemLabel(row, sourceBundle, targetBundle) {
-    const path = String(row.path || "");
-    const match = path.match(/^viewSettings\.views\.([^.[\]]+)\.fields\[(\d+)\](?:\.|$)/);
-    if (!match) return "";
-    const rawViewName = String(match[1] || "").trim();
-    const viewName = rawViewName && !customerUnsafeRawLabelText(rawViewName) && !customerContainsKnownBundleId(rawViewName, sourceBundle, targetBundle) && rawViewName.length <= 80 ? rawViewName : "一覧";
-    const preferredBundle = row.type === "removed" ? sourceBundle : targetBundle;
-    const fallbackBundle = row.type === "removed" ? targetBundle : sourceBundle;
-    const rawCode = row.type === "removed" ? row.left : row.right;
-    const fieldLabel = typeof rawCode === "string" ? customerFieldLabelForCode(rawCode, preferredBundle, fallbackBundle) : "";
-    return fieldLabel ? `${viewName} / 表示フィールド「${fieldLabel}」` : `${viewName} / 表示フィールド`;
-  }
   function customerItemLabel(row, sourceBundle, targetBundle) {
-    const key = sectionKeyOfRow(row);
-    const section = customerSectionLabel(key);
-    const path = String(row.path || "");
+    const sectionKey = sectionKeyOfRow(row);
+    const sectionLabel = customerSectionLabel(sectionKey);
+    const path = String(row.path || "").trim();
     if (row._stateRenameNotice) return "ステータス名";
-    if (customerSensitivePath(path) || !customerKnownSafePath(row)) return `${section}の設定情報`;
     const fieldInfo = extractFieldPathInfo(path);
     if (fieldInfo) {
       const identity = fieldDisplayIdentity(row, fieldInfo, { rows: [], sourceBundle, targetBundle });
       const setting = fieldSettingIdentity(fieldInfo);
+      const fieldCode = String(identity.fieldCode || "").trim();
       const fieldName = String(identity.fieldName || "").trim();
-      const safeSetting = String(setting.settingLabel || "設定").replace(/参照するアプリID/g, "参照するアプリ").replace(/\bID\b/gi, "識別情報");
-      const safeFieldName = fieldName && fieldName !== String(identity.fieldCode || "").trim() && !customerUnsafeRawLabelText(fieldName) && !customerContainsKnownBundleId(fieldName, sourceBundle, targetBundle) && fieldName.length <= 120 ? fieldName : "フィールド";
-      const candidate = setting.settingKey === "(field)" ? safeFieldName : `${safeFieldName} / ${safeSetting}`;
-      return !customerUnsafeLabelText(candidate) && !customerContainsKnownBundleId(candidate, sourceBundle, targetBundle) && candidate.length <= 120 ? candidate : `${section}の設定`;
+      const fieldLabel = fieldName && fieldName !== fieldCode ? fieldCode ? `${fieldName}（${fieldCode}）` : fieldName : fieldCode || fieldName || "フィールド";
+      return setting.settingKey === "(field)" ? fieldLabel : `${fieldLabel} / ${setting.settingLabel}`;
     }
-    const layout = customerLayoutItemLabel(row, sourceBundle, targetBundle);
-    if (layout && !customerUnsafeLabelText(layout) && !customerContainsKnownBundleId(layout, sourceBundle, targetBundle)) return layout;
-    const viewField = customerViewFieldItemLabel(row, sourceBundle, targetBundle);
-    if (viewField && !customerUnsafeLabelText(viewField) && !customerContainsKnownBundleId(viewField, sourceBundle, targetBundle)) return viewField;
-    const plainPathLabels = {
-      "appSettings.name": "アプリ名",
-      "appSettings.description": "説明",
-      "appSettings.theme": "テーマ",
-      "appSettings.icon": "アイコン",
-      "appSettings.enableThumbnails": "サムネイル表示",
-      "appSettings.firstMonthOfFiscalYear": "会計年度の開始月",
-      "appSettings.numberPrecision": "数値の精度",
-      "appInfo.name": "アプリ名",
-      "appInfo.description": "説明"
-    };
-    if (plainPathLabels[path]) return plainPathLabels[path];
+    const layoutLabel = layoutRowItemLabel(row, sourceBundle, targetBundle);
+    if (layoutLabel) return layoutLabel;
     try {
       const decoded = decodeRow(row);
       if (decoded) {
@@ -13373,209 +13031,23 @@ ${label}` : `${direction}の値`;
           decoded.propLabel
         ].filter((part) => !!part).map((part) => part === "絞込条件" ? "絞り込み条件" : part === "ソート" ? "並び順" : part);
         const readable = [...new Set(parts)].join(" / ") || decoded.oneLineSummary;
-        if (readable && !looksLikeTechnicalPath(readable, key) && !customerUnsafeLabelText(readable) && !customerContainsKnownBundleId(readable, sourceBundle, targetBundle)) {
-          return String(readable).slice(0, 120);
-        }
+        if (readable) return String(readable);
       }
     } catch {
     }
     const explicit = String(row.label || "").trim();
-    if (explicit && !looksLikeTechnicalPath(explicit, key) && !customerUnsafeRawLabelText(explicit) && !customerContainsKnownBundleId(explicit, sourceBundle, targetBundle)) {
-      return explicit.slice(0, 120);
-    }
-    return `${section}の設定`;
+    if (explicit && explicit !== path) return explicit;
+    return path || `${sectionLabel}の設定`;
   }
-  function customerFieldDefinitionSummary(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const definition = value;
-    const type = String(definition.type || "").trim();
-    const parts = [
-      type ? `種類: ${FIELD_TYPE_LABELS[type] || "設定項目"}` : "",
-      typeof definition.required === "boolean" ? `必須: ${definition.required ? "はい" : "いいえ"}` : "",
-      typeof definition.unique === "boolean" ? `重複禁止: ${definition.unique ? "はい" : "いいえ"}` : "",
-      definition.options && typeof definition.options === "object" ? `選択肢: ${Object.keys(definition.options).length}件` : "",
-      definition.fields && typeof definition.fields === "object" ? `テーブル内項目: ${Object.keys(definition.fields).length}件` : "",
-      definition.lookup && typeof definition.lookup === "object" ? "ルックアップ設定あり" : "",
-      definition.referenceTable && typeof definition.referenceTable === "object" ? "関連レコード設定あり" : "",
-      String(definition.expression || "").trim() ? "計算式あり" : ""
-    ].filter(Boolean);
-    return parts.length ? `${parts.join("\n")}
-（${CUSTOMER_HIDDEN_DETAIL}）` : null;
-  }
-  function customerBundleNumericIds(...bundles) {
-    return [...new Set(bundles.flatMap((bundle) => [
-      bundle?.appId,
-      bundle?.guestId,
-      bundle?.spaceId,
-      bundle?.threadId
-    ]).map((value) => String(value ?? "").trim()).filter((value) => /^\d+$/.test(value)))];
-  }
-  function customerContainsKnownBundleId(text, ...bundles) {
-    const normalized = String(text || "").normalize("NFKC");
-    return customerBundleNumericIds(...bundles).some((id) => {
-      const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u").test(normalized);
-    });
-  }
-  function customerNumericScalar(value) {
-    return typeof value === "number" && Number.isFinite(value) || typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value.trim());
-  }
-  function customerScalarValueMatchesPath(path, value, fieldInfo, preferredBundle, fallbackBundle) {
-    if (fieldInfo) {
-      const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
-      const root2 = settingKey.split(".")[0];
-      if (root2 === "(field)") return false;
-      if (["label", "name", "unit"].includes(root2)) {
-        return typeof value === "string" && !customerUnsafeRawLabelText(value) && (root2 === "unit" || !customerLooksLikeFieldCodeLabel(value, fieldInfo.activeCode, fieldInfo.rootCode)) && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
-      }
-      if (root2 === "type") return typeof value === "string" && !!FIELD_TYPE_LABELS[value];
-      if (["noLabel", "required", "unique", "defaultNowValue", "hideExpression", "digit"].includes(root2)) {
-        return typeof value === "boolean";
-      }
-      if (["minLength", "maxLength", "minValue", "maxValue", "displayScale", "size", "thumbnailSize", "index"].includes(root2)) {
-        return customerNumericScalar(value);
-      }
-      if (root2 === "defaultValue") return true;
-      if (["code", "relatedKeyField", "field", "relatedField", "displayFields", "lookupPickerFields", "retrieveFields"].includes(root2)) {
-        return typeof value === "string";
-      }
-      if (root2 === "options") {
-        const leaf = String(fieldInfo.leafKey || "");
-        return leaf === "index" ? customerNumericScalar(value) : leaf === "label" ? typeof value === "string" && !customerUnsafeRawLabelText(value) && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120 : false;
-      }
-      return false;
-    }
-    if (/^(?:appSettings|appInfo)\.name$/.test(path)) {
-      return typeof value === "string" && !customerUnsafeRawLabelText(value) && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
-    }
-    if (path === "appSettings.theme") {
-      return typeof value === "string" && /^(?:WHITE|RED|BLUE|GREEN|YELLOW|BLACK)$/i.test(value);
-    }
-    if (path === "appSettings.enableThumbnails") return typeof value === "boolean";
-    if (path === "appSettings.firstMonthOfFiscalYear") {
-      return customerNumericScalar(value) && Number(value) >= 1 && Number(value) <= 12;
-    }
-    if (path === "appSettings.numberPrecision") return false;
-    if (/^layoutSettings\..*\.(?:width|height|innerHeight)$/.test(path)) return customerNumericScalar(value);
-    if (/^layoutSettings\..*\.type$/.test(path)) {
-      return typeof value === "string" && /^(?:ROW|SUBTABLE|GROUP|LABEL|SPACER|HR|REFERENCE_TABLE)$/.test(value);
-    }
-    if (/^layoutSettings\..*\.(?:code)$/.test(path)) return typeof value === "string";
-    if (/^layoutSettings\..*\.(?:label|value)$/.test(path)) {
-      return typeof value === "string" && !customerUnsafeRawLabelText(value) && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
-    }
-    if (/^viewSettings\..*\.index$/.test(path)) return customerNumericScalar(value);
-    if (/^viewSettings\..*\.pager$/.test(path)) return typeof value === "boolean";
-    if (/^viewSettings\..*\.type$/.test(path)) {
-      return typeof value === "string" && /^(?:LIST|CALENDAR|CUSTOM)$/.test(value);
-    }
-    if (/^(?:viewSettings|processSettings|actionSettings)\..*\.(?:name|from|to)$/.test(path)) {
-      return typeof value === "string" && !customerUnsafeRawLabelText(value) && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
-    }
-    if (/^(?:processSettings)\.enable$/.test(path)) return typeof value === "boolean";
-    if (/^(?:processSettings|actionSettings)\..*\.index$/.test(path)) return customerNumericScalar(value);
-    if (/\.(?:filterCond|sort)$/.test(path)) return typeof value === "string";
-    if (/\.fields\[\d+\]$/.test(path)) return typeof value === "string";
-    return false;
-  }
-  function customerSafeValue(row, side, sourceBundle, targetBundle) {
+  function customerDisplayedValue(row, side) {
     const missing = side === "source" ? row.left === void 0 || row.type === "added" : row.right === void 0 || row.type === "removed";
-    if (missing) return { text: "（設定なし）", omitted: false };
-    const path = String(row.path || "");
-    if (customerSensitivePath(path) || !customerKnownSafePath(row)) {
-      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-    }
+    if (missing) return "（設定なし）";
     const value = side === "source" ? row.left : row.right;
-    const preferredBundle = side === "source" ? sourceBundle : targetBundle;
-    const fallbackBundle = side === "source" ? targetBundle : sourceBundle;
-    if (row._stateRenameNotice) {
-      const stateName = value && typeof value === "object" && !Array.isArray(value) ? String(value.name || "").trim() : "";
-      const safe = !!stateName && stateName.length <= 120 && !customerUnsafeRawLabelText(stateName) && !customerContainsKnownBundleId(stateName, preferredBundle, fallbackBundle);
-      return safe ? { text: stateName, omitted: false } : { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-    }
-    const fieldInfo = extractFieldPathInfo(path);
-    if (fieldInfo) {
-      const definition = fieldDefinitionAt(preferredBundle, fieldInfo) || fieldDefinitionAt(fallbackBundle, fieldInfo);
-      const fieldType = String(definition?.type || "");
-      const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
-      const anyDefaultValue = /^defaultValue(?:\.|$)/.test(settingKey);
-      const safeDefaultValueType = /^(?:NUMBER|CALC|RADIO_BUTTON|CHECK_BOX|MULTI_SELECT|DROP_DOWN|DATE|TIME|DATETIME)$/.test(fieldType);
-      const fieldCode = String(fieldInfo.activeCode || fieldInfo.rootCode || "");
-      if (anyDefaultValue && customerFieldLooksLikePersonalIdentifier(fieldCode, preferredBundle, fallbackBundle)) {
-        return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-      }
-      if (anyDefaultValue && !safeDefaultValueType) {
-        return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-      }
-      if (anyDefaultValue && value != null && value !== "") {
-        const scalar = String(value);
-        const validTypedScalar = fieldType === "NUMBER" || fieldType === "CALC" ? /^-?\d+(?:\.\d+)?$/.test(scalar) : fieldType === "DATE" ? /^\d{4}-\d{2}-\d{2}$/.test(scalar) : fieldType === "TIME" ? /^\d{2}:\d{2}(?::\d{2})?$/.test(scalar) : fieldType === "DATETIME" ? /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(scalar) && Number.isFinite(new Date(scalar).getTime()) : true;
-        if (!validTypedScalar) return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-      }
-      if (anyDefaultValue && /^(?:RADIO_BUTTON|CHECK_BOX|MULTI_SELECT|DROP_DOWN)$/.test(fieldType)) {
-        const fieldCode2 = String(fieldInfo.activeCode || fieldInfo.rootCode || "");
-        const allowedOptions = customerFieldOptionValuesForCode(fieldCode2, preferredBundle, fallbackBundle);
-        if (!allowedOptions.has(String(value))) {
-          return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-        }
-      }
-    }
-    if (value && typeof value === "object") {
-      if (fieldInfo && fieldSettingIdentity(fieldInfo).settingKey === "(field)") {
-        const summary = customerFieldDefinitionSummary(value);
-        return { text: summary || `設定内容（${Object.keys(value).length}項目・${CUSTOMER_HIDDEN_DETAIL}）`, omitted: true };
-      }
-      const count = Array.isArray(value) ? value.length : Object.keys(value).length;
-      const unit = Array.isArray(value) ? "件" : "項目";
-      return { text: `設定内容（${count}${unit}・${CUSTOMER_HIDDEN_DETAIL}）`, omitted: true };
-    }
-    if (value === void 0) return { text: "（未設定）", omitted: false };
-    if (value === null) return { text: "（値なし）", omitted: false };
-    if (!customerScalarValueMatchesPath(path, value, fieldInfo, preferredBundle, fallbackBundle)) {
-      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-    }
-    if (typeof value === "boolean") {
-      const settingKey = fieldInfo ? fieldSettingIdentity(fieldInfo).settingKey : "";
-      return { text: humanizeFieldSettingValue(value, settingKey), omitted: false };
-    }
-    const text = String(value);
-    if (text === "") return { text: "（空欄）", omitted: false };
-    if (customerUnsafeText(text) || /^\s*[\[{][\s\S]*[\]}]\s*$/.test(text)) {
-      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-    }
-    if (text.length > CUSTOMER_TEXT_LIMIT || text.split(/\r?\n/).length > 5) {
-      return { text: `長文（${text.length}文字・${CUSTOMER_HIDDEN_DETAIL}）`, omitted: true };
-    }
-    if (/^(?:appSettings|appInfo)\.name$/.test(path) && customerUnsafeRawLabelText(text)) {
-      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-    }
-    if (path === "appSettings.theme" && !/^(?:WHITE|RED|BLUE|GREEN|YELLOW|BLACK)$/i.test(text)) {
-      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-    }
-    if (/\.(?:width|height|innerHeight)$/i.test(path) && /^-?\d+(?:\.\d+)?$/.test(text)) {
-      return { text: `${text}px`, omitted: false };
-    }
-    const fieldLabel = customerFieldLabelForCode(text, preferredBundle, fallbackBundle);
-    if (fieldLabel) return { text: fieldLabel, omitted: false };
-    if (/(?:\.fields\[\d+\]|\.code|\.relatedKeyField|\.relatedField|\.keyField|\.lookupPickerFields\[\d+\]|\.retrieveFields\[\d+\]|\.displayFields\[\d+\])$/i.test(path)) {
-      return { text: "フィールド（表示名を確認できません）", omitted: true };
-    }
-    if (/\.(?:filterCond|sort)$/i.test(path)) {
-      const humanized = customerHumanizeExpression(text, path, preferredBundle, fallbackBundle);
-      if (humanized) return { text: humanized, omitted: false };
-      return {
-        text: /\.sort$/i.test(path) ? "並び順が変更されました（詳細非表示）" : "条件が変更されました（詳細非表示）",
-        omitted: true
-      };
-    }
-    if (fieldInfo) {
-      const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
-      if (settingKey === "type" && typeof value === "string" && !FIELD_TYPE_LABELS[value]) {
-        return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-      }
-      return { text: humanizeFieldSettingValue(value, settingKey), omitted: false };
-    }
-    return { text, omitted: false };
+    if (value === void 0) return "（未設定）";
+    if (value === null) return "（値なし）";
+    if (value === "") return "（空欄）";
+    if (typeof value === "string") return value;
+    return stringifyForDiff(value);
   }
   function customerReviewNote(row) {
     const key = sectionKeyOfRow(row);
@@ -13611,48 +13083,20 @@ ${label}` : `${direction}の値`;
     const note = guidance[key] || "変更内容が意図したものか確認してください。";
     return row._nonActionable ? `${note} この行は確認専用で、自動反映の対象外です。` : note;
   }
-  function customerHiddenReviewLocation(sourceHidden, targetHidden) {
-    if (sourceHidden && targetHidden) return "比較元と比較先の両方の環境";
-    if (sourceHidden) return "比較元の環境";
-    return "比較先の環境";
-  }
   function buildCustomerDiffItems(ctx) {
     const actualRows = (ctx.rows || []).filter((row) => !row._displayOnly && row.type !== "same");
-    const grouped = groupRowsBySection(actualRows);
     const items = [];
-    for (const [sectionKey, rows] of grouped) {
+    for (const [sectionKey, rows] of groupRowsBySection(actualRows)) {
       const sectionLabel = customerSectionLabel(sectionKey);
-      if (CUSTOMER_HIGH_RISK_SECTION_KEYS.has(sectionKey) || !CUSTOMER_VISIBLE_SECTION_KEYS.has(sectionKey)) {
-        const sourceHidden = rows.some((row) => row.type !== "added" && row.left !== void 0);
-        const targetHidden = rows.some((row) => row.type !== "removed" && row.right !== void 0);
-        const reviewLocation = customerHiddenReviewLocation(sourceHidden, targetHidden);
-        items.push({
-          sectionKey,
-          sectionLabel,
-          item: `${sectionLabel}（${rows.length}件の変更）`,
-          changeType: customerAggregatedChangeType(rows),
-          before: CUSTOMER_HIDDEN_DETAIL,
-          after: CUSTOMER_HIDDEN_DETAIL,
-          reviewNote: `設定内容は安全のため非表示です。詳細は権限のある担当者が${reviewLocation}で確認してください。`,
-          omittedTechnicalValues: rows.length
-        });
-        continue;
-      }
       for (const row of rows) {
-        const before = customerSafeValue(row, "source", ctx.sourceBundle, ctx.targetBundle);
-        const after = customerSafeValue(row, "target", ctx.sourceBundle, ctx.targetBundle);
-        const omitted = before.omitted || after.omitted;
-        const reviewLocation = customerHiddenReviewLocation(before.omitted, after.omitted);
-        const baseReviewNote = customerReviewNote(row);
         items.push({
           sectionKey,
           sectionLabel,
           item: customerItemLabel(row, ctx.sourceBundle, ctx.targetBundle),
           changeType: customerChangeType(row),
-          before: before.text,
-          after: after.text,
-          reviewNote: omitted ? `${baseReviewNote} 詳細は権限のある担当者が${reviewLocation}で確認してください。` : baseReviewNote,
-          omittedTechnicalValues: omitted ? 1 : 0
+          before: customerDisplayedValue(row, "source"),
+          after: customerDisplayedValue(row, "target"),
+          reviewNote: customerReviewNote(row)
         });
       }
     }
@@ -13711,7 +13155,6 @@ ${label}` : `${direction}の値`;
     const completeness = incomplete ? "一部未完了" : droppedSame > 0 ? `正常完了（同一証跡 ${droppedSame}件を省略）` : "正常完了（選択範囲）";
     const sourceName = customerAppName(ctx.sourceBundle, "比較元のアプリ");
     const targetName = customerAppName(ctx.targetBundle, "比較先のアプリ");
-    const omitted = items.reduce((sum, item) => sum + item.omittedTechnicalValues, 0);
     const comparedScopes = ctx.scopes?.length ? ctx.scopes : [...new Set(items.map((item) => item.sectionKey))];
     const rows = [
       ["kintone 設定差分確認レポート", "", "", "", "", ""],
@@ -13721,10 +13164,10 @@ ${targetName}`, "", ""],
       ["比較結果", verdict, "比較処理", completeness, "", "変更一覧を開く"],
       [filtered ? "掲載変更件数" : "変更件数", `${counts.actual}件`, "比較日時", customerDateTime(ctx.comparedAt), "", ""],
       ["追加", `${counts.added}件`, "削除", `${counts.removed}件`, "変更", `${counts.contentChanged}件`],
-      ["要素の移動", `${counts.moved}件`, "詳細を省略した変更", omitted ? `${omitted}件（変更一覧で確認）` : "0件", "同一証跡の省略", droppedSame ? `${droppedSame}件（変更判定への影響なし）` : "0件"],
+      ["要素の移動", `${counts.moved}件`, "変更一覧の明細", `${items.length}件`, "同一証跡の省略", droppedSame ? `${droppedSame}件（変更判定への影響なし）` : "0件"],
       ["比較した設定領域", customerScopeLabel(comparedScopes), "", "", "", ""],
       ["掲載範囲", ctx.exportMode === "filtered" ? "上記範囲内の一部" : "上記範囲内の全変更", "絞り込み", ctx.exportMode === "filtered" ? "あり" : "なし", "比較条件の調整", hasCustomerComparisonAdjustments(ctx) ? "あり" : "なし"],
-      ["掲載内容", "変更点のみ。上記以外の設定領域は比較していません。", "", "", "", ""],
+      ["掲載内容", "変更点ごとの比較元・比較先の設定値をマスキングせず収録しています。32,767文字を超える値はExcelセル上限を明記して省略します。上記以外の設定領域は比較していません。", "", "", "", ""],
       ["このレポートは比較元と比較先の現在設定の差を示すもので、設定の反映・移行計画ではありません。重要度、業務への影響、対応要否は自動判定していません。", "", "", "", "", ""],
       ["", "", "", "", "", ""],
       ["分類別件数", "", "", "", "", ""],
@@ -13756,7 +13199,7 @@ ${targetName}`, "", ""],
     cellStyles[5][0] = "changeMoved";
     cellStyles[5][1] = "metricValueMoved";
     cellStyles[5][2] = "summaryLabel";
-    cellStyles[5][3] = omitted ? "warning" : "info";
+    cellStyles[5][3] = "info";
     cellStyles[5][4] = "summaryLabel";
     cellStyles[5][5] = "info";
     cellStyles[6][0] = "summaryLabel";
@@ -13891,16 +13334,16 @@ ${targetName}`,
       rowHeights.push(readableDiffRowHeight([
         { value: item.sectionLabel, width: 15 },
         { value: item.item, width: 26 },
-        { value: item.before, width: 25 },
-        { value: item.after, width: 25 },
+        { value: item.before, width: 30 },
+        { value: item.after, width: 30 },
         { value: item.reviewNote, width: 28 }
-      ], 112));
+      ], 180));
     });
     const lastRow = items.length + 2;
     return {
       name: "変更一覧",
       rows,
-      colWidths: [10, 15, 26, 12, 25, 25, 28, 14, 15, 14, 22],
+      colWidths: [10, 15, 26, 12, 30, 30, 28, 14, 15, 14, 22],
       rowStyles,
       cellStyles,
       headerRow: 2,
@@ -13940,15 +13383,16 @@ ${targetName}`,
   function buildCustomerIssuesSheet(ctx) {
     if (!customerIncomplete(ctx)) return null;
     const rows = [
-      ["このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。", "", "", ""],
-      ["分類", "対象", "確認状態", "説明"]
+      ["このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。取得・打切り情報はマスキングせず収録しています。", "", "", "", ""],
+      ["分類", "対象", "確認状態", "説明", "取得・打切り情報（原文）"]
     ];
     for (const issue of ctx.fetchIssues || []) {
       rows.push([
         customerSectionLabel(String(issue.sectionKey || issue.section || "")),
         customerIssueSide(issue.side),
         "取得できませんでした",
-        "この範囲は比較結果に含まれていません。再取得して確認してください。"
+        "この範囲は比較結果に含まれていません。再取得して確認してください。",
+        stringifyForDiff(issue)
       ]);
     }
     for (const issue of ctx.partialIssues || []) {
@@ -13956,7 +13400,8 @@ ${targetName}`,
         customerSectionLabel(String(issue.sectionKey || issue.section || "")),
         customerIssueSide(issue.side),
         "一部のみ確認",
-        "取得できた範囲だけを比較しています。必要に応じて再取得してください。"
+        "取得できた範囲だけを比較しています。必要に応じて再取得してください。",
+        stringifyForDiff(issue)
       ]);
     }
     if (customerHasDiffTruncation(ctx.truncation)) {
@@ -13968,14 +13413,23 @@ ${targetName}`,
           customerSectionLabel(String(section.sectionKey || section.section || "")),
           "件数上限の対象",
           status === "unscanned" ? "未確認" : status === "partial" ? "一部のみ確認" : "表示を一部省略",
-          status === "unscanned" ? "この範囲は確認できていません。条件を分けて再比較してください。" : status === "partial" ? "確認できた件数は全体の一部です。条件を分けて再比較してください。" : "範囲の確認は完了していますが、表示を一部省略しています。"
+          status === "unscanned" ? "この範囲は確認できていません。条件を分けて再比較してください。" : status === "partial" ? "確認できた件数は全体の一部です。条件を分けて再比較してください。" : "範囲の確認は完了していますが、表示を一部省略しています。",
+          stringifyForDiff({
+            truncated: ctx.truncation?.truncated,
+            actualDiffIncomplete: ctx.truncation?.actualDiffIncomplete,
+            diffLimit: ctx.truncation?.diffLimit,
+            sameLimit: ctx.truncation?.sameLimit,
+            droppedDiff: ctx.truncation?.droppedDiff,
+            droppedSame: ctx.truncation?.droppedSame,
+            section
+          })
         ]);
       }
     }
     return {
       name: "確認できなかった範囲",
       rows,
-      colWidths: [24, 20, 22, 72],
+      colWidths: [24, 20, 22, 48, 60],
       rowStyles: rows.map(() => "normal"),
       cellStyles: rows.map((_, index) => index === 0 ? ["warning"] : index === 1 ? [] : ["warning"]),
       headerRow: 2,
@@ -13985,9 +13439,10 @@ ${targetName}`,
         { value: row[0], width: 24 },
         { value: row[1], width: 20 },
         { value: row[2], width: 22 },
-        { value: row[3], width: 72 }
-      ], 118)),
-      merges: ["A1:D1"],
+        { value: row[3], width: 48 },
+        { value: row[4], width: 60 }
+      ], 180)),
+      merges: ["A1:E1"],
       showGridLines: false,
       print: {
         orientation: "landscape",
@@ -15256,7 +14711,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-swap{width:100%;max-width:none}
   .kus-dl-row__cols{grid-template-columns:1fr}
   .kus-dl-presence{grid-template-columns:1fr}
-  .kus-dl-sticky{position:sticky;top:0;z-index:6;margin-inline:-2px;padding:4px 2px 8px;background:linear-gradient(180deg,rgba(244,247,250,.98) 80%,rgba(244,247,250,0));backdrop-filter:blur(10px)}
+  .kus-dl-sticky{position:sticky;top:0;z-index:6;margin-inline:-2px;padding:2px 2px 5px;background:linear-gradient(180deg,rgba(244,247,250,.98) 84%,rgba(244,247,250,0));backdrop-filter:blur(10px)}
   .kus-dl-disclosure>summary{align-items:flex-start;flex-wrap:wrap}
   .kus-dl-disclosure>summary small{width:100%;padding-right:28px;text-align:left}
 }
@@ -15265,12 +14720,20 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-row__mobile-toggle{display:inline-flex;min-height:44px}
   .kus-dl-row__cols{display:none;grid-template-columns:1fr}
   .kus-dl-row__cols.is-expanded{display:grid}
-  .kus-dl-contextbar{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .kus-dl-contextbar{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:4px;padding:4px}
+  .kus-dl-contextlane{padding:5px 6px}
   .kus-dl-contextlane--before{grid-column:1;grid-row:1}
-  .kus-dl-contextlane--after{grid-column:2;grid-row:1}
-  .kus-dl-progress{grid-column:1 / -1;grid-row:2;display:flex;align-items:center;justify-content:center;gap:7px;padding:2px}
-  .kus-dl-progress__label{margin-top:0}
-  .kus-dl-reviewbar__filters{order:3;width:100%;flex-basis:100%}
+  .kus-dl-contextlane--after{grid-column:3;grid-row:1}
+  .kus-dl-contextlane__role{font-size:9px;letter-spacing:.04em}
+  .kus-dl-contextlane__name{font-size:10px}
+  .kus-dl-progress{grid-column:2;grid-row:1;min-width:42px;padding:2px 3px}
+  .kus-dl-progress__current{font-size:15px}
+  .kus-dl-progress__total{font-size:9px}
+  .kus-dl-progress__label{margin-top:2px;font-size:9px;letter-spacing:0}
+  .kus-dl-reviewbar{display:grid;grid-template-columns:1fr;padding:4px}
+  .kus-dl-reviewbar__nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;gap:5px}
+  .kus-dl-reviewbar__nav .kus-dl-navbtn{width:100%;min-width:0}
+  .kus-dl-reviewbar__tools,.kus-dl-reviewbar__filters{display:none}
   .kus-dl-section>summary{align-items:flex-start;flex-wrap:wrap}
   .kus-dl-section__breakdown{width:100%;justify-content:flex-start;margin-left:20px}
   .kus-dl-row__head{grid-template-columns:minmax(0,1fr) auto;gap:8px}
@@ -15574,7 +15037,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const verdictClass = incomplete ? "kus-dl-verdict--warn" : counts.actual === 0 && !hasNoticeOnlyChanges ? "kus-dl-verdict--same" : "";
     const verdictTitle = incomplete ? "比較結果は不完全です" : hasNoticeOnlyChanges ? `状態名の変更候補が ${counts.displayOnly} 件見つかりました` : counts.actual === 0 ? "選択した設定に差分はありません" : `差分が ${counts.actual} 件見つかりました`;
     const verdictText = incomplete ? counts.actual ? `取得できた範囲では ${counts.actual} 件の差分があります。警告内容を確認してください。` : "差分なしとは判断できません。取得失敗または件数上限を解消して再比較してください。" : hasNoticeOnlyChanges ? "参照先の連動変更をまとめた表示用通知です。削除・追加としては数えていません。内容を確認してください。" : counts.actual === 0 ? `比較元と比較先は一致しています${counts.same ? `（同一 ${counts.same} 件）` : ""}。` : `追加 ${counts.added} / 削除 ${counts.removed} / 内容変更 ${contentChanged}${counts.moved ? ` / 移動 ${counts.moved}` : ""}`;
-    const metric = (type, label, hint, value) => `<button type="button" class="kus-dl-metric" data-kus-dl-type-filter="${esc(type)}" aria-label="${esc(label)} ${value}件を表示"${value ? "" : " disabled"}><span class="kus-dl-metric__num">${value}</span><span class="kus-dl-metric__label">${esc(label)}</span><span class="kus-dl-metric__hint">${esc(hint)}</span></button>`;
+    const metric = (type, label, hint, value) => value > 0 ? `<button type="button" class="kus-dl-metric" data-kus-dl-type-filter="${esc(type)}" aria-label="${esc(label)} ${value}件を表示"><span class="kus-dl-metric__num">${value}</span><span class="kus-dl-metric__label">${esc(label)}</span><span class="kus-dl-metric__hint">${esc(hint)}</span></button>` : "";
     const bySection = /* @__PURE__ */ new Map();
     for (const row of cache.rows || []) {
       const key = row.sectionKey || "(その他)";
@@ -15588,7 +15051,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const sectionCounts = summarizeLiteDiffRows(bySection.get(key) || []);
       const label = SECTION_DEFS.find((def) => def.key === key)?.label || key;
       const countLabel = sectionCounts.actual ? `${sectionCounts.actual}件` : sectionCounts.displayOnly ? `変更候補 ${sectionCounts.displayOnly}件` : `一致 ${sectionCounts.same}件`;
-      return `<button type="button" class="kus-dl-section-jump" data-kus-dl-section-filter="${esc(key)}">${esc(label)} ${esc(countLabel)}</button>`;
+      return `<button type="button" class="kus-dl-section-jump" data-kus-dl-section-filter="${esc(key)}" aria-label="${esc(`${label}で結果を絞り込む（${countLabel}）`)}">${esc(label)} ${esc(countLabel)}</button>`;
     }).join("");
     const alerts = [];
     if (actualDiffTruncated) {
@@ -15632,7 +15095,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const alertsHtml = alerts.map((message) => `<div class="kus-dl-alert"${alertAttrs}>${esc(message)}</div>`).join("");
     const ignoreCondition = ignoreRuleSummary.total ? `無視ルール ${ignoreRuleSummary.total}件を適用した後の結果です。ルールに一致した設定差分は一覧に含まれません${ignoreRuleSummary.contextualRules ? `（完全パス/パターン ${ignoreRuleSummary.contextualRules}件）` : ""}。` : "無視ルールは適用していません。";
     const normalizationCondition = normalizationLabels.length ? `正規化 ${normalizationLabels.length}件を適用しています（${normalizationLabels.join("、")}）。` : "正規化は適用していません。";
-    return `<section id="kus-dl-overview" class="kus-dl-overview" data-kus-dl-overview tabindex="-1" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "比較完了"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションを開く</span>${sectionButtons}</div>` : "") + `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div><div class="kus-dl-legend">「比較先のみ」は追加、「比較元のみ」は削除として検出しています。比較方向は上の矢印で確認できます。</div></section>`;
+    return `<section id="kus-dl-overview" class="kus-dl-overview" data-kus-dl-overview tabindex="-1" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "比較完了"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションで絞り込む</span>${sectionButtons}</div>` : "") + `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div><div class="kus-dl-legend">「比較先のみ」は追加、「比較元のみ」は削除として検出しています。比較方向は上の矢印で確認できます。</div></section>`;
   }
   function renderRowsHtml(rows, useCharDiff, summary, allFilteredRows = rows, options = {}) {
     if (!rows.length) return `<div class="kus-dl-empty">該当する差分はありません${summary ? ` — ${summary}` : ""}</div>`;
@@ -15701,10 +15164,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const panel = createLitePanel({
       id: "kus-diff-lite",
       title: "差分比較",
-      subtitle: "2 アプリの設定差分を比較し、HTML レポートと Excel 一覧で確認",
+      subtitle: "アプリ設定の差分を比較し、レビュー用 HTML と顧客向け Excel で確認",
       accent: "diff",
       badges: [{ label: "Lite" }, { label: "出力対応" }],
-      hint: "比較完了と同時に HTML レポートを保存します。結果は Excel (.xlsx) の一覧としても保存できます。<strong>統合ツール.js は不要</strong>。",
+      hint: "比較完了時にレビュー用 HTML を自動保存します。顧客向け Excel には差分値と取得不完全時のエラー等の原文を収録し、Excelセル上限を超える値を除いてマスキングしません。共有前に内容を確認してください。",
       wide: true
     });
     panel.status.setAttribute("role", "status");
@@ -15717,6 +15180,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const tgtApp = makeInput({ placeholder: "アプリID（カンマ区切り可）", width: "medium", ariaLabel: "比較先1アプリID" });
     const tgtGuest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: "比較先1ゲストスペースID" });
     const tgtPrev = makeCheck({ label: "プレビューで取得" });
+    srcPrev.checkbox.setAttribute("aria-label", "比較元をプレビュー環境から取得");
+    tgtPrev.checkbox.setAttribute("aria-label", "比較先をプレビュー環境から取得");
     let comparisonMode = "single";
     let completionReady = false;
     let applyComparisonMode = (mode) => {
@@ -15757,7 +15222,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     modeSwitch.className = "kus-dl-mode";
     modeSwitch.setAttribute("role", "group");
     modeSwitch.setAttribute("aria-label", "比較方法");
-    const singleModeBtn = makeButton("通常比較", "sub");
+    const singleModeBtn = makeButton("1対1比較", "sub");
     singleModeBtn.dataset.kusDlMode = "single";
     const multiModeBtn = makeButton("複数比較", "sub");
     multiModeBtn.dataset.kusDlMode = "multi";
@@ -15924,6 +15389,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     panel.body.insertBefore(cardImport.card, panel.status);
     const advDetails = makeDetails("高度な比較設定");
     const ignTa = makeTextarea({ rows: 2, code: true, placeholder: "キー / 完全パス / * ワイルドカード（改行・カンマ区切り）" });
+    ignTa.setAttribute("aria-label", "比較から除外する無視キーまたは設定パス");
     advDetails.body.appendChild(makeRow(ignTa, { label: "無視キー", block: true }));
     advDetails.body.appendChild(makeNote("キー名だけの指定、fieldSettings.properties.code.label のようなパス、* を使ったパターンに対応します。結果行の「次回から除外」は、記号や大小文字を含めてもその1パスだけに一致する path: 形式で追加します。"));
     advDetails.body.appendChild(makeNote("⚠ 完全パスとワイルドカードは別アプリにもそのまま適用され、該当差分は結果から除外されます。プロファイル読込後と再比較前に内容を確認してください。"));
@@ -15992,7 +15458,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     runRow.classList.add("kus-dl-run-row");
     panel.body.insertBefore(runRow, panel.status);
     const completionReviewBtn = makeButton("結果を確認", "sub", { icon: "↓" });
-    const completionXlsxBtn = makeButton("顧客向けExcelを保存", "primary", { icon: "↓" });
+    const completionXlsxBtn = makeButton("顧客向けExcelを保存（全件）", "primary", { icon: "↓" });
     completionReviewBtn.dataset.kusDlCompletion = "review";
     completionXlsxBtn.dataset.kusDlCompletion = "xlsx";
     completionReviewBtn.setAttribute("aria-controls", "kus-dl-overview");
@@ -16017,7 +15483,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       runAllBtn.hidden = mode !== "multi";
       completionRow.hidden = !completionReady || mode !== "single";
       swapBtn.disabled = mode === "multi";
-      swapBtn.title = mode === "multi" ? "通常比較に切り替えると方向を入れ替えられます" : "";
+      swapBtn.title = mode === "multi" ? "1対1比較に切り替えると方向を入れ替えられます" : "";
       panel.setPrimaryAction(mode === "multi" ? runAllBtn : runBtn);
     };
     singleModeBtn.addEventListener("click", () => applyComparisonMode("single"));
@@ -16094,28 +15560,31 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     resultBox.dataset.kusDlResult = "";
     cardResult.body.appendChild(resultBox);
     panel.body.insertBefore(cardResult.card, panel.status);
-    const cardOut = makeCard({ title: "ファイル出力", number: 3, soft: true });
-    cardOut.body.appendChild(makeNote("HTML レポートは比較実行時に、下の「HTML内容」で選んだ形式により自動保存されます。Excel は比較後に、全件または画面で絞り込んだ範囲を一覧として保存できます。"));
-    cardOut.body.appendChild(makeNote("「差分行のみ」は全設定スナップショットを収録しませんが、変更行の比較元・比較先の値は残ります。匿名化・機密情報のマスキング済みではありません。顧客への受け渡しには顧客向け Excel を使用してください。「比較設定込み」はフィールド詳細や反映JSONも収録するため取扱注意です。"));
+    const cardOut = makeCard({ title: "出力", number: 3, soft: true });
+    cardOut.body.appendChild(makeNote("レビュー用 HTML は比較実行時に自動保存されます。顧客へ共有する場合は、全件または画面で絞り込んだ範囲を Excel で保存してください。Excel には差分値と取得不完全時のエラー等の原文を収録し、Excelセル上限を超える値を除いてマスキングしないため、共有前に内容を確認してください。"));
+    cardOut.body.appendChild(makeNote("変更箇所のみの HTML にも比較元・比較先の値が含まれ、匿名化・機密情報のマスキング済みではありません。比較設定を含む社内用 HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。"));
     const htmlContentMode = makeSelect([
-      ["diffOnly", "差分行のみ（全設定は未収録）"],
-      ["withCompared", "比較設定込み（取扱注意）"]
+      ["diffOnly", "レビュー用（変更箇所のみ）"],
+      ["withCompared", "社内用（比較設定を含む・取扱注意）"]
     ], "diffOnly");
+    htmlContentMode.setAttribute("aria-label", "HTMLに含める内容");
     cardOut.body.appendChild(makeRow(htmlContentMode, { label: "HTML内容" }));
     const expRange = makeSelect([
       ["all", "全件"],
       ["filtered", "表示中（フィルタ適用後）"]
     ], "all");
+    expRange.setAttribute("aria-label", "ファイルへ出力する差分の範囲");
     cardOut.body.appendChild(makeRow(expRange, { label: "範囲" }));
     const grid = document.createElement("div");
     grid.className = "kus-lp__btn-grid";
-    const bXlsx = makeButton("差分一覧を Excel 保存 (.xlsx)", "primary", { icon: "↓" });
-    const bHtml = makeButton("差分 HTML を再出力", "sub", { icon: "↓" });
+    const bXlsx = makeButton("顧客向け Excel を保存 (.xlsx)", "primary", { icon: "↓" });
+    const bHtml = makeButton("レビュー用 HTML を再出力", "sub", { icon: "↓" });
     bXlsx.dataset.kusDlExport = "xlsx";
     bHtml.dataset.kusDlExport = "html";
     grid.appendChild(bXlsx);
     grid.appendChild(bHtml);
     cardOut.body.appendChild(grid);
+    let forceFullXlsxExport = false;
     completionReviewBtn.addEventListener("click", () => {
       const overview = resultBox.querySelector("[data-kus-dl-overview]");
       if (!overview) return;
@@ -16123,11 +15592,15 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       overview.scrollIntoView({ block: "start", behavior: "auto" });
     });
     completionXlsxBtn.addEventListener("click", () => {
-      if (!bXlsx.disabled) bXlsx.click();
+      if (bXlsx.disabled) return;
+      forceFullXlsxExport = true;
+      bXlsx.click();
     });
     panel.body.insertBefore(cardOut.card, cardResult.card);
-    const workflow = document.createElement("main");
+    const workflow = document.createElement("div");
     workflow.className = "kus-dl-workflow";
+    workflow.setAttribute("role", "region");
+    workflow.setAttribute("aria-label", "差分比較の手順");
     const makeWorkflowStep = (key, number, title, description) => {
       const section = document.createElement("section");
       section.className = "kus-dl-step";
@@ -16196,7 +15669,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     let importedTargetBundle = null;
     swapBtn.addEventListener("click", () => {
       if (comparisonMode === "multi") {
-        panel.setStatus("比較方向の入れ替えは、比較先が1件の通常比較で利用できます", "warn");
+        panel.setStatus("比較方向の入れ替えは、比較先が1件の1対1比較で利用できます", "warn");
         return;
       }
       if (importedSourceBundle || importedTargetBundle) {
@@ -16443,7 +15916,21 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const nextDisabled = !queue.length || currentIndex === queue.length - 1;
       const incomplete = isIncompleteLiteDiff(cache);
       const progressLabel = position ? `${position} / 全${queue.length}件目` : `未選択 / 全${queue.length}件`;
-      return `<div class="kus-dl-contextbar" role="group" aria-label="比較方向と確認位置"><div class="kus-dl-contextlane kus-dl-contextlane--before" title="${esc(`${source.name} · ${source.environment}`)}"><span class="kus-dl-contextlane__role">BEFORE · 比較元</span><strong class="kus-dl-contextlane__name">${esc(source.name)}</strong></div><div class="kus-dl-progress kus-dl-reviewbar__count" role="status" aria-live="polite" aria-atomic="true" aria-label="${esc(progressLabel + (incomplete ? "・比較不完全" : ""))}"><span class="kus-dl-progress__numbers"><strong class="kus-dl-progress__current">${position || "—"}</strong><span class="kus-dl-progress__total">/ ${queue.length}</span></span><span class="kus-dl-progress__label">${incomplete ? "比較不完全" : position ? "確認位置" : "未選択"}</span></div><div class="kus-dl-contextlane kus-dl-contextlane--after" title="${esc(`${target.name} · ${target.environment}`)}"><span class="kus-dl-contextlane__role">AFTER · 比較先</span><strong class="kus-dl-contextlane__name">${esc(target.name)}</strong></div></div><nav class="kus-dl-reviewbar" aria-label="差分レビュー操作"><span class="kus-dl-reviewbar__nav"><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="prev" aria-keyshortcuts="K"${prevDisabled ? " disabled" : ""}>↑ 前の差分 (K)</button><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="next" aria-keyshortcuts="J"${nextDisabled ? " disabled" : ""}>次の差分 (J) ↓</button></span><span class="kus-dl-reviewbar__tools"><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="collapse">すべて折りたたむ</button><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="expand">すべて展開</button></span><span class="kus-dl-reviewbar__filters" aria-label="有効なフィルタ">${renderActiveFilterChipsHtml()}</span></nav>`;
+      return `<div class="kus-dl-contextbar" role="group" aria-label="比較方向と確認位置"><div class="kus-dl-contextlane kus-dl-contextlane--before" title="${esc(`${source.name} · ${source.environment}`)}"><span class="kus-dl-contextlane__role">BEFORE · 比較元</span><strong class="kus-dl-contextlane__name">${esc(source.name)}</strong></div><div class="kus-dl-progress kus-dl-reviewbar__count" role="status" aria-live="polite" aria-atomic="true" aria-label="${esc(progressLabel + (incomplete ? "・比較不完全" : ""))}"><span class="kus-dl-progress__numbers"><strong class="kus-dl-progress__current">${position || "—"}</strong><span class="kus-dl-progress__total">/ ${queue.length}</span></span><span class="kus-dl-progress__label">${incomplete ? "比較不完全" : position ? "確認位置" : "未選択"}</span></div><div class="kus-dl-contextlane kus-dl-contextlane--after" title="${esc(`${target.name} · ${target.environment}`)}"><span class="kus-dl-contextlane__role">AFTER · 比較先</span><strong class="kus-dl-contextlane__name">${esc(target.name)}</strong></div></div><nav class="kus-dl-reviewbar" aria-label="差分レビュー操作"><span class="kus-dl-reviewbar__nav"><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="prev" aria-keyshortcuts="K"${prevDisabled ? " disabled" : ""}>↑ 前 (K)</button><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="next" aria-keyshortcuts="J"${nextDisabled ? " disabled" : ""}>次 (J) ↓</button></span><span class="kus-dl-reviewbar__tools"><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="collapse">すべて折りたたむ</button><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="expand">すべて展開</button></span><span class="kus-dl-reviewbar__filters" aria-label="有効なフィルタ">${renderActiveFilterChipsHtml()}</span></nav>`;
+    }
+    function focusAppliedFilter(key) {
+      window.requestAnimationFrame(() => {
+        const chip = resultBox.querySelector(`[data-kus-dl-clear-filter="${key}"]`);
+        const input = key === "type" ? filterType : filterSection;
+        const summary = filterDetails.querySelector("summary");
+        const candidates = [chip, input, summary];
+        const target = candidates.find((element) => {
+          if (!element || element.hidden || element.getClientRects().length === 0) return false;
+          const style = window.getComputedStyle(element);
+          return style.display !== "none" && style.visibility !== "hidden";
+        });
+        target?.focus({ preventScroll: true });
+      });
     }
     function focusRenderedRow(rowKey) {
       window.requestAnimationFrame(() => {
@@ -16625,6 +16112,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         showResultList.checkbox.checked = true;
         filterType.value = typeButton.dataset.kusDlTypeFilter || "";
         rerenderFromFilter();
+        focusAppliedFilter("type");
         return;
       }
       const sectionButton = target?.closest("[data-kus-dl-section-filter]");
@@ -16632,6 +16120,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         showResultList.checkbox.checked = true;
         filterSection.value = sectionButton.dataset.kusDlSectionFilter || "";
         rerenderFromFilter();
+        focusAppliedFilter("section");
         return;
       }
       if (target?.closest("[data-kus-dl-more]")) {
@@ -16925,7 +16414,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       try {
         const snapshot = cache;
         if (!snapshot) throw new Error("先に差分比較を実行してください");
-        const ctx = exportCtx();
+        const ctx = exportCtx(forceFullXlsxExport);
         if (!ctx.rows.length && snapshot.rows.length) {
           panel.setStatus("現在のフィルタに該当する行がありません。範囲を「全件」に戻すか、フィルタを見直してください", "warn");
           return;
@@ -16940,13 +16429,14 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           ctx.filterDescription
         ));
         const incomplete = isIncompleteLiteDiff(snapshot);
-        panel.setStatus(`差分一覧 Excel のダウンロードを開始しました: ${result.filename}${incomplete ? " — 元の比較結果は不完全です" : ""}`, incomplete ? "warn" : "ok");
+        panel.setStatus(`差分一覧 Excel のダウンロードを開始しました（${ctx.exportLabel} / ${ctx.rows.length}件）: ${result.filename}${incomplete ? " — 元の比較結果は不完全です" : ""}`, incomplete ? "warn" : "ok");
       } catch (e) {
         panel.setStatus(`Excel出力エラー: ${e?.message || String(e)}`, "err");
       } finally {
         const cooldown = XLSX_EXPORT_COOLDOWN_MS - (Date.now() - exportStartedAt);
         if (cooldown > 0) await new Promise((resolve) => window.setTimeout(resolve, cooldown));
         xlsxExportActive = false;
+        forceFullXlsxExport = false;
         setExportControlsEnabled(!!cache);
       }
     });

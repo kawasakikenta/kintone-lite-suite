@@ -2440,6 +2440,26 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     : '/k/v1/preview';
   const diffTotal = summary.added + summary.removed + summary.changed;
   const objectiveContentChangedCount = Math.max(0, summary.changed - summary.moved);
+  const objectiveFactCards = [
+    summary.added > 0
+      ? `<article class="report-fact report-fact--added"><span>比較先のみに存在</span><strong>${summary.added}</strong><small>比較元にはありません</small></article>`
+      : '',
+    summary.removed > 0
+      ? `<article class="report-fact report-fact--removed"><span>比較元のみに存在</span><strong>${summary.removed}</strong><small>比較先にはありません</small></article>`
+      : '',
+    objectiveContentChangedCount > 0
+      ? `<article class="report-fact report-fact--changed"><span>両方に存在・内容が異なる</span><strong>${objectiveContentChangedCount}</strong><small>値または設定が異なります</small></article>`
+      : '',
+    summary.moved > 0
+      ? `<article class="report-fact report-fact--moved"><span>並び順が異なる</span><strong>${summary.moved}</strong><small>内容とは別に集計</small></article>`
+      : '',
+    includesComparedContent && summary.same > 0
+      ? `<article class="report-fact report-fact--same"><span>内容は同じ</span><strong>${summary.same}</strong><small>比較証跡として収録</small></article>`
+      : ''
+  ].filter(Boolean);
+  const objectiveFactCardsHtml = objectiveFactCards.length
+    ? objectiveFactCards.join('')
+    : '<article class="report-fact report-fact--same report-fact--empty"><span>差分は見つかりませんでした</span><strong>0</strong><small>選択した設定は一致しています</small></article>';
   const formatAppDisplay = (meta: any) => {
     const id = String(meta?.appId || '-');
     const name = String(meta?.appName || '').trim();
@@ -2472,7 +2492,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     : '比較時の正規化 0件（なし）';
   const contentDisclosureHtml = includesComparedContent
     ? `<div class="report-content-disclosure report-content-disclosure--caution" data-content-disclosure="withCompared" role="note" aria-label="収録内容と反映方向"><strong>取扱注意: 比較設定込み</strong><span>比較設定・フィールド詳細・設定証跡JSONを収録しています。反映JSONは、比較元の設定値で比較先を上書きする方向です。${canBuildReflectJson ? '' : `反映JSONは利用できません。${esc(reflectJsonBlockedReason)}`}</span></div>`
-    : '<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note" aria-label="収録内容の注意"><strong>差分行のみ（全設定は未収録）</strong><span>全設定スナップショットは収録していませんが、変更された差分行の比較元・比較先の値は収録しています。匿名化・機密情報のマスキング済みではありません。顧客への受け渡しには顧客向けExcelを使用してください。</span></div>';
+    : '<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note" aria-label="収録内容の注意"><strong>差分行のみ（全設定は未収録）</strong><span>全設定スナップショットは収録していませんが、変更された差分行の比較元・比較先の値は収録しています。匿名化・機密情報のマスキング済みではありません。顧客向けExcelにも同じ差分値が収録され、取得不完全時はエラー等の原文も含まれるため、共有前に内容を確認してください。</span></div>';
   const stateRenameSafetyNoticeHtml = !stateRenameNoticeCount
     ? ''
     : visibleStateRenameNoticeCount === stateRenameNoticeCount
@@ -5741,7 +5761,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const progress = reviewProgressOf(rows);
     const pending = progress.actionable.filter((row) => !reviewedKeys.has(rowStateKey(row)));
     const samples = pending.slice(0, 3);
-    const startRow = pending[0] || null;
     const headline = pending.length
       ? '未確認の差分を上から確認できます'
       : '現在の対象はすべて確認済みです';
@@ -5754,15 +5773,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       +   '<div class="review-progress review-progress--queue">'
       +     '<div class="review-progress-copy"><span>確認済み</span><strong>' + progress.reviewed + ' / ' + progress.total + '（' + progress.percent + '%）</strong></div>'
       +     '<div class="review-progress-track" role="progressbar" aria-label="レビュー進捗" aria-valuemin="0" aria-valuemax="' + progress.total + '" aria-valuenow="' + progress.reviewed + '" aria-valuetext="確認済み ' + progress.reviewed + '件 / 全 ' + progress.total + '件（' + progress.percent + '%）"><span style="width:' + progress.percent + '%"></span></div>'
-      +     '<span class="review-progress-note">確認状態はJSONファイルで保存・読込できます</span>'
       +   '</div>'
       +   (samples.length ? '<div class="review-queue-samples" aria-label="次に確認する差分">' + samples.map((row) => '<button type="button" data-review-jump="' + escHtml(rowStateKey(row)) + '">' + escHtml(reportRowTitle(row)) + '</button>').join('') + '</div>' : '')
       + '</div>'
-      + (startRow
-        ? '<div class="review-queue-actions">'
-          + '<button type="button" class="review-queue-action" data-review-jump="' + escHtml(rowStateKey(startRow)) + '">未確認レビューを開始</button>'
-          + '</div>'
-        : '')
       + '</section>';
   }
 
@@ -6446,7 +6459,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     if (main) main.removeAttribute('inert');
     if (mobileSidebarToggle) {
       mobileSidebarToggle.setAttribute('aria-expanded', 'false');
-      mobileSidebarToggle.textContent = '絞り込み・出力';
+      mobileSidebarToggle.textContent = '条件・出力';
     }
     if (restoreFocus !== false && mobileSidebarReturnFocus && typeof mobileSidebarReturnFocus.focus === 'function') {
       mobileSidebarReturnFocus.focus();
@@ -6473,7 +6486,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     if (main) main.setAttribute('inert', '');
     if (mobileSidebarToggle) {
       mobileSidebarToggle.setAttribute('aria-expanded', 'true');
-      mobileSidebarToggle.textContent = '絞り込みを閉じる';
+      mobileSidebarToggle.textContent = '閉じる';
     }
     requestAnimationFrame(() => {
       const closeButton = document.getElementById('sidebarDrawerClose');
@@ -6859,12 +6872,18 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .sb-stat:nth-last-child(-n+2){border-bottom:none}
     .sb-stat b{font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums}
     .sidebar-review-progress{display:flex;flex-direction:column;gap:7px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)}
-    .review-state-transfer{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:-2px 0 12px;padding-bottom:12px;border-bottom:1px solid var(--border)}
-    .review-state-transfer .btn{min-width:0;padding-inline:7px;line-height:1.35}
+    .sidebar-review-progress--solo{margin-bottom:0;padding-bottom:0;border-bottom:0}
+    .review-state-transfer-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:14px}
+    .review-state-transfer-actions .btn{min-width:0;padding-inline:7px;line-height:1.35}
     .review-state-status{grid-column:1/-1;margin:0;font-size:10px;line-height:1.5;color:var(--muted)}
     .review-state-status.is-error{color:#b91c1c;font-weight:700}
     body.dark .review-state-status.is-error{color:#fca5a5}
     .sb-ctrl{padding:16px}
+    .sidebar-count-details>summary{display:flex;align-items:center;min-height:36px;color:var(--accent-strong);font-size:11px;font-weight:800;cursor:pointer;list-style:none}
+    .sidebar-count-details>summary::-webkit-details-marker{display:none}
+    .sidebar-count-details>summary::before{content:"▸";margin-right:7px;color:var(--muted);font-size:9px}
+    .sidebar-count-details[open]>summary::before{transform:rotate(90deg)}
+    .sidebar-count-details .sb-stat-grid{margin-top:8px}
     .sb-ctrl .field-label{display:block;font-size:10px;font-weight:800;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
     .sb-ctrl label.chk{display:flex;align-items:center;gap:10px;font-size:12px;margin-bottom:10px;color:var(--fg);cursor:pointer}
     .sb-ctrl input[type="checkbox"]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
@@ -7580,7 +7599,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .skip-link{position:fixed;left:12px;top:10px;z-index:120;transform:translateY(-160%);padding:10px 14px;border-radius:8px;background:var(--fg);color:var(--card);font-size:12px;font-weight:800;text-decoration:none}
     .skip-link:focus{transform:translateY(0);outline:3px solid var(--accent);outline-offset:2px}
     .report-hero,.report-workspace{width:min(calc(100% - 32px),1440px);margin-inline:auto}
-    .report-hero{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);align-items:stretch;gap:14px 16px;margin-top:20px;padding:26px;border-radius:22px;background:linear-gradient(145deg,var(--card) 0%,color-mix(in srgb,var(--card) 90%,var(--accent-soft)) 100%);box-shadow:0 22px 56px -38px rgba(15,37,63,.62);overflow:visible}
+    .report-hero{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);align-items:stretch;gap:11px 16px;margin-top:16px;padding:21px 22px;border-radius:20px;background:linear-gradient(145deg,var(--card) 0%,color-mix(in srgb,var(--card) 90%,var(--accent-soft)) 100%);box-shadow:0 22px 56px -38px rgba(15,37,63,.62);overflow:visible}
     .report-hero::before{height:4px;background:var(--accent)}
     .report-hero .topbar-main{grid-column:1/-1;display:grid;grid-template-columns:minmax(260px,.78fr) minmax(480px,1.22fr);grid-template-rows:auto auto 1fr;align-items:start;gap:7px 28px}
     .report-hero .topbar-eyebrow-row,.report-hero .topbar-title,.report-hero .topbar-lead{grid-column:1}
@@ -7588,7 +7607,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .report-hero .topbar-title{margin:0;font-size:clamp(1.45rem,3vw,2rem)}
     .topbar-lead{max-width:72ch;margin:0;color:var(--muted);font-size:13px;line-height:1.7}
     .report-hero .topbar-compare{width:100%;max-width:none;gap:12px}
-    .report-hero .topbar-app-card{grid-template-columns:1fr;align-content:center;gap:3px;min-height:92px;padding:14px 16px;border-top:1px solid var(--border);border-left:4px solid #475569;background:var(--card-soft)}
+    .report-hero .topbar-app-card{grid-template-columns:1fr;align-content:center;gap:3px;min-height:78px;padding:12px 15px;border-top:1px solid var(--border);border-left:4px solid #475569;background:var(--card-soft)}
     .report-hero .topbar-app-card--source{border-left-color:#475569;background:var(--card-soft)}
     .report-hero .topbar-app-card--target{border-left-color:var(--accent);background:var(--card-soft)}
     body.dark .report-hero .topbar-app-card--source,body.dark .report-hero .topbar-app-card--target{background:var(--card-soft)}
@@ -7601,7 +7620,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     body.dark .report-content-disclosure{border-color:#8b6824;background:#2a210d;color:#fde68a}
     body.dark .report-content-disclosure--caution{border-color:#9a5a24;background:#2f190d;color:#fed7aa}
     .report-step-label{display:block;margin-bottom:3px;color:var(--muted);font-size:11px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}
-    .report-completeness{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px 14px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--card-soft)}
+    .report-completeness{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 13px;padding:13px 14px;border:1px solid var(--border);border-radius:14px;background:var(--card-soft)}
     .report-completeness--incomplete{border-color:#f0c36a;background:#fffaf0}
     .report-completeness--complete{border-color:#9bc8ac;background:#f4fbf6}
     body.dark .report-completeness--incomplete{border-color:#8b6824;background:#2a210d}
@@ -7623,13 +7642,15 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .report-facts{grid-column:1/-1;padding-top:4px}
     .report-facts-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:10px}
     .report-facts-head>p{max-width:52ch;margin:0;color:var(--muted);font-size:11px;line-height:1.6;text-align:right}
-    .report-fact-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+    .report-fact-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px}
     .report-fact-grid article{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;min-width:0;padding:13px 14px 12px;border:1px solid var(--border);border-radius:14px;background:var(--card);overflow:hidden}
     .report-fact-grid article::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:#64748b}
-    .report-fact-grid article:nth-child(1)::before{background:#15803d}
-    .report-fact-grid article:nth-child(2)::before{background:#b91c1c}
-    .report-fact-grid article:nth-child(3)::before{background:#b45309}
-    .report-fact-grid article:nth-child(4)::before{background:#7c3aed}
+    .report-fact--added::before{background:#15803d!important}
+    .report-fact--removed::before{background:#b91c1c!important}
+    .report-fact--changed::before{background:#b45309!important}
+    .report-fact--moved::before{background:#7c3aed!important}
+    .report-fact--same::before{background:#64748b!important}
+    .report-fact--empty{grid-column:1/-1}
     .report-fact-grid span{align-self:center;color:var(--fg);font-size:12px;font-weight:750;line-height:1.5}
     .report-fact-grid strong{grid-row:1/3;grid-column:2;align-self:center;font-size:24px;font-variant-numeric:tabular-nums}
     .report-fact-grid small{color:var(--muted);font-size:11px;line-height:1.5}
@@ -7691,7 +7712,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .report-workspace{display:block}
       .report-workspace>aside{position:relative;top:auto;width:auto;height:auto;max-height:none;margin-bottom:12px;overflow:visible}
       .report-workspace>main{padding:0}
-      .report-fact-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+      .report-fact-grid{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
     }
     @media (max-width:768px){
       .report-hero,.report-workspace{width:calc(100% - 16px)}
@@ -7826,11 +7847,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         <p>判断や優先順位は付けず、比較で確認できた事実だけを表示します。</p>
       </div>
       <div class="report-fact-grid">
-        <article><span>比較先のみに存在</span><strong>${summary.added}</strong><small>比較元にはありません</small></article>
-        <article><span>比較元のみに存在</span><strong>${summary.removed}</strong><small>比較先にはありません</small></article>
-        <article><span>両方に存在・内容が異なる</span><strong>${objectiveContentChangedCount}</strong><small>値または設定が異なります</small></article>
-        <article><span>並び順が異なる</span><strong>${summary.moved}</strong><small>内容とは別に集計</small></article>
-        <article><span>内容は同じ</span><strong>${summary.same}</strong><small>${includesComparedContent ? '比較証跡として収録' : '差分行のみのため非収録'}</small></article>
+        ${objectiveFactCardsHtml}
       </div>
     </section>
 
@@ -7848,8 +7865,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     <div class="sb-head">
       <div class="sb-kicker">kintone アプリ設定の比較</div>
       <div class="sb-head-row">
-        <div class="sb-title">検索・確認ツール</div>
-        <button type="button" id="mobileSidebarToggle" class="mobile-filter-toggle" aria-expanded="false" aria-controls="sidebarPanels">検索・出力</button>
+        <div class="sb-title">検索・表示</div>
+        <button type="button" id="mobileSidebarToggle" class="mobile-filter-toggle" aria-expanded="false" aria-controls="sidebarPanels">条件・出力</button>
       </div>
       <div class="sb-meta">
         生成日時: ${esc(reportMeta.generatedAt)}<br>
@@ -7861,33 +7878,20 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     <button type="button" id="sidebarBackdrop" class="sidebar-backdrop" aria-label="絞り込みを閉じる" hidden></button>
     <div id="sidebarPanels" class="sidebar-panels">
     <div class="sidebar-drawer-head">
-      <strong id="sidebarDrawerTitle">検索・確認・出力</strong>
+      <strong id="sidebarDrawerTitle">検索・表示・出力</strong>
       <button type="button" id="sidebarDrawerClose" class="btn">閉じる</button>
     </div>
     <div class="sb-panel sb-stats">
-      <div class="sidebar-review-progress">
+      <div class="sidebar-review-progress sidebar-review-progress--solo">
         <div class="review-progress-copy"><span>レビュー進捗</span><strong id="sidebarReviewProgressValue">0 / ${diffTotal}（0%）</strong></div>
         <div id="sidebarReviewProgressBar" class="review-progress-track" role="progressbar" aria-label="レビュー進捗" aria-valuemin="0" aria-valuemax="${diffTotal}" aria-valuenow="0" aria-valuetext="確認済み 0件 / 全 ${diffTotal}件（0%）"><span id="sidebarReviewProgressFill" style="width:0%"></span></div>
       </div>
-      <div class="review-state-transfer" aria-label="レビュー状態JSONの保存と読込">
-        <button type="button" class="btn" id="reviewStateSaveBtn" title="このレポートの確認済み状態をJSONファイルに保存">レビュー状態JSON保存</button>
-        <button type="button" class="btn" id="reviewStateLoadBtn" aria-controls="reviewStateFile" title="このレポート用に保存した確認済み状態JSONを読み込んで置き換え">レビュー状態JSON読込</button>
-        <input type="file" id="reviewStateFile" accept="application/json,.json" hidden>
-        <p id="reviewStateStatus" class="review-state-status" role="status" aria-live="polite">確認状態はJSONファイルで保存・読込できます（最大2MB）</p>
-      </div>
-      <div class="sb-stat-grid">
-        <div class="sb-stat"><span>表示中</span><b id="stat-total">${summary.total}</b></div>
-        <div class="sb-stat"><span>比較先のみ</span><b id="stat-added">${summary.added}</b></div>
-        <div class="sb-stat"><span>比較元のみ</span><b id="stat-removed">${summary.removed}</b></div>
-        <div class="sb-stat"><span>内容差</span><b id="stat-changed">${objectiveContentChangedCount}</b></div>
-        <div class="sb-stat"><span>並び順差</span><b id="stat-moved">${summary.moved}</b></div>
-        <div class="sb-stat"><span>同じ</span><b id="stat-same">${summary.same}</b></div>
-        <div class="sb-stat"><span>確認済み</span><b id="stat-reviewed">0</b></div>
-        <div class="sb-stat"><span>選択中</span><b id="stat-selected">0</b></div>
-      </div>
-      <div style="margin-top:10px;font-size:11px;color:var(--muted)">取得失敗: <b>${fetchIssues.length}</b></div>
     </div>
     <div class="sb-panel sb-ctrl">
+      <span class="field-label">項目を検索</span>
+      <input type="text" id="search" placeholder="項目名・値・理由で検索" aria-label="差分の検索" autocomplete="off">
+      <p class="search-hint"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">F</kbd> / <kbd class="kbd">⌘</kbd>+<kbd class="kbd">F</kbd> で検索 · <kbd class="kbd">J</kbd>/<kbd class="kbd">K</kbd> で移動 · <kbd class="kbd">R</kbd> で確認して次へ · <kbd class="kbd">Esc</kbd> でクリア</p>
+      <span class="field-label" style="margin-top:14px">表示設定</span>
       <label class="chk"><input type="checkbox" id="hideSame"> 同一項目を隠す</label>
       <label class="chk"><input type="checkbox" id="charDiff" checked> 文字単位ハイライト</label>
       <label class="chk"><input type="checkbox" id="hideUnchangedLines" checked> 複数行差分は変更行だけ表示</label>
@@ -7899,9 +7903,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         <label class="vs-opt"><input type="radio" name="viewSide" value="source"> 比較元</label>
         <label class="vs-opt"><input type="radio" name="viewSide" value="target"> 比較先</label>
       </div>
-      <span class="field-label">項目を検索</span>
-      <input type="text" id="search" placeholder="項目名・値・理由で検索" aria-label="差分の検索" autocomplete="off">
-      <p class="search-hint"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">F</kbd> / <kbd class="kbd">⌘</kbd>+<kbd class="kbd">F</kbd> で検索 · <kbd class="kbd">J</kbd>/<kbd class="kbd">K</kbd> で移動 · <kbd class="kbd">R</kbd> で確認して次へ · <kbd class="kbd">Esc</kbd> でクリア</p>
       <div class="sb-btns">
         <button type="button" class="btn" id="collapseBtn">全折畳</button>
         <button type="button" class="btn" id="expandBtn">全展開</button>
@@ -7909,6 +7910,22 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         <button type="button" class="btn" id="mdBtn" title="表示中の差分行をMarkdown表としてクリップボードにコピー">MDコピー</button>
         <button type="button" class="btn" id="themeBtn" style="grid-column:span 2">ダークに切替</button>
       </div>
+    </div>
+    <div class="sb-panel sb-stats">
+      <details class="sidebar-count-details">
+        <summary>件数の内訳</summary>
+        <div class="sb-stat-grid">
+          <div class="sb-stat"><span>表示中</span><b id="stat-total">${summary.total}</b></div>
+          <div class="sb-stat"><span>比較先のみ</span><b id="stat-added">${summary.added}</b></div>
+          <div class="sb-stat"><span>比較元のみ</span><b id="stat-removed">${summary.removed}</b></div>
+          <div class="sb-stat"><span>内容差</span><b id="stat-changed">${objectiveContentChangedCount}</b></div>
+          <div class="sb-stat"><span>並び順差</span><b id="stat-moved">${summary.moved}</b></div>
+          <div class="sb-stat"><span>同じ</span><b id="stat-same">${summary.same}</b></div>
+          <div class="sb-stat"><span>確認済み</span><b id="stat-reviewed">0</b></div>
+          <div class="sb-stat"><span>選択中</span><b id="stat-selected">0</b></div>
+        </div>
+        <div style="margin-top:10px;font-size:11px;color:var(--muted)">取得失敗: <b>${fetchIssues.length}</b></div>
+      </details>
     </div>
     ${includesComparedContent ? `<details class="sb-panel sb-ctrl tool-details">
       <summary class="tool-details-summary">出力・反映・比較証跡</summary>
@@ -7940,6 +7957,18 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         </div>
       </details>
     </div>
+    <details class="sb-panel sb-ctrl tool-details review-state-tools">
+      <summary class="tool-details-summary">レビュー状態を引き継ぐ</summary>
+      <div class="tool-details-body">
+        <p class="search-hint">別の端末や担当者へ確認済み状態だけを引き継ぐための補助機能です。</p>
+        <div class="review-state-transfer-actions" aria-label="レビュー状態JSONの保存と読込">
+          <button type="button" class="btn" id="reviewStateSaveBtn" title="このレポートの確認済み状態をJSONファイルに保存">状態を保存</button>
+          <button type="button" class="btn" id="reviewStateLoadBtn" aria-controls="reviewStateFile" title="このレポート用に保存した確認済み状態JSONを読み込んで置き換え">状態を読込</button>
+          <input type="file" id="reviewStateFile" accept="application/json,.json" hidden>
+          <p id="reviewStateStatus" class="review-state-status" role="status" aria-live="polite">JSONファイルで保存・読込できます（最大2MB）</p>
+        </div>
+      </div>
+    </details>
     <div id="navWrap">
       <div class="nav-label">セクションへジャンプ</div>
       <div id="nav"></div>
