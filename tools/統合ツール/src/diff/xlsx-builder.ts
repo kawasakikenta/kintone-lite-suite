@@ -180,7 +180,10 @@ export type XlsxCellStyle =
   | 'metricValueAdded'
   | 'metricValueRemoved'
   | 'metricValueChanged'
-  | 'metricValueMoved';
+  | 'metricValueMoved'
+  | 'diffBefore'
+  | 'diffAfter'
+  | 'diffAbsent';
 export type XlsxRowStyle = XlsxCellStyle;
 export interface XlsxDataValidation {
   /** 適用範囲。例: A2:A100 */
@@ -326,7 +329,10 @@ const CELL_STYLE_INDEX: Record<XlsxCellStyle, number> = {
   metricValueAdded: 33,
   metricValueRemoved: 34,
   metricValueChanged: 35,
-  metricValueMoved: 36
+  metricValueMoved: 36,
+  diffBefore: 37,
+  diffAfter: 38,
+  diffAbsent: 39
 };
 
 interface ResolvedInternalHyperlink {
@@ -654,11 +660,20 @@ function buildRootRels(): string {
     + '</Relationships>';
 }
 
-function buildStylesXml(): string {
+const CUSTOMER_DIFF_STYLES = new Set<XlsxCellStyle>(['diffBefore', 'diffAfter', 'diffAbsent']);
+
+function sheetsUseCustomerDiffStyles(sheets: XlsxSheet[]): boolean {
+  return sheets.some((sheet) => (
+    sheet.rowStyles?.some((style) => CUSTOMER_DIFF_STYLES.has(style))
+    || sheet.cellStyles?.some((row) => row?.some((style) => !!style && CUSTOMER_DIFF_STYLES.has(style)))
+  ));
+}
+
+function buildStylesXml(includeCustomerDiffStyles: boolean): string {
   // 色は「比較方向」「変更事実」「レビュー入力」の役割に限定する。
-  // 0: 既定 / 1: 表見出し / 2: データ / 3..36: レポート用UI
+  // 0: 既定 / 1: 表見出し / 2: データ / 3..36: 共通UI / 37..39: 顧客向け変更前後
   return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`
-    + '<fonts count="16">'
+    + `<fonts count="${includeCustomerDiffStyles ? 18 : 16}">`
     +   '<font><sz val="11"/><name val="Meiryo"/></font>'
     +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font>'
     +   '<font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font>'
@@ -675,6 +690,10 @@ function buildStylesXml(): string {
     +   '<font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB45309"/></font>'
     +   '<font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font>'
     +   '<font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF2563EB"/></font>'
+    +   (includeCustomerDiffStyles
+      ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font>'
+        + '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>'
+      : '')
     + '</fonts>'
     + '<fills count="10">'
     +   '<fill><patternFill patternType="none"/></fill>'
@@ -697,7 +716,7 @@ function buildStylesXml(): string {
     +   '<border><left/><right/><top style="medium"><color rgb="FF94A3B8"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
     + '</borders>'
     + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    + '<cellXfs count="37">'
+    + `<cellXfs count="${includeCustomerDiffStyles ? 40 : 37}">`
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
     +   '<xf numFmtId="0" fontId="1" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
@@ -735,6 +754,11 @@ function buildStylesXml(): string {
     +   '<xf numFmtId="0" fontId="12" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="13" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="14" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   (includeCustomerDiffStyles
+      ? '<xf numFmtId="0" fontId="16" fillId="5" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+        + '<xf numFmtId="0" fontId="17" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+        + '<xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+      : '')
     + '</cellXfs>'
     + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
     + '</styleSheet>';
@@ -756,7 +780,7 @@ export function buildXlsxBlob(sheets: XlsxSheet[]): Blob {
     { name: '_rels/.rels', data: enc.encode(buildRootRels()) },
     { name: 'xl/workbook.xml', data: enc.encode(buildWorkbookXml(safe)) },
     { name: 'xl/_rels/workbook.xml.rels', data: enc.encode(buildWorkbookRels(safe)) },
-    { name: 'xl/styles.xml', data: enc.encode(buildStylesXml()) }
+    { name: 'xl/styles.xml', data: enc.encode(buildStylesXml(sheetsUseCustomerDiffStyles(safe))) }
   ];
   safe.forEach((s, i) => {
     entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(buildSheetXml(s, hyperlinksBySheet[i])) });
