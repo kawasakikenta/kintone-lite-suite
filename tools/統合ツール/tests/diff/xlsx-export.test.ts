@@ -133,7 +133,10 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('比較処理');
     expect(summary).toContain('正常完了（選択範囲）');
     expect(summary).toContain('変更件数');
-    expect(summary).toContain('詳細を省略した変更');
+    expect(summary).toContain('変更一覧の明細');
+    expect(summary).not.toContain('詳細を省略した変更');
+    expect(summary).toContain('設定値をマスキングせず収録しています');
+    expect(summary).toContain('32,767文字を超える値はExcelセル上限を明記して省略します');
     expect(summary).toContain('上記以外の設定領域は比較していません');
     expect(summary).toContain('設定の反映・移行計画ではありません');
     expect(summary).toContain('比較条件の調整');
@@ -186,7 +189,7 @@ describe('diff/xlsx-export', () => {
     expect(allText).not.toContain('20202');
   });
 
-  it('directs masked-value review to the comparison side that actually contains the hidden value', async () => {
+  it('shows values that were previously masked without adding environment-only review instructions', async () => {
     const blob = buildDiffXlsxBlobWithSafeDefault({
       scopes: ['appSettings'],
       rows: [
@@ -196,14 +199,83 @@ describe('diff/xlsx-export', () => {
       ]
     });
     const list = await readWorksheetByName(blob, '変更一覧');
-    expect(list).toMatch(/<c r="G3"[^>]*>[\s\S]*?比較先の環境で確認[\s\S]*?<\/c>/);
-    expect(list).toMatch(/<c r="G4"[^>]*>[\s\S]*?比較元の環境で確認[\s\S]*?<\/c>/);
-    expect(list).toMatch(/<c r="G5"[^>]*>[\s\S]*?比較元と比較先の両方の環境で確認[\s\S]*?<\/c>/);
-    expect(list).not.toContain('担当者が元の環境で確認');
-    for (const secret of ['TARGET_SECRET', 'SOURCE_SECRET']) expect(list).not.toContain(secret);
+
+    for (const value of [
+      'TARGET_SECRET', 'SOURCE_SECRET', 'SOURCE_SECRET_2', 'TARGET_SECRET_2'
+    ]) expect(list).toContain(value);
+    expect(list).toContain('>api_key=TARGET_SECRET<');
+    expect(list).not.toContain('&quot;api_key=TARGET_SECRET&quot;');
+    expect(list).toContain('（設定なし）');
+    expect(list).not.toContain('詳細は安全のため非表示');
+    expect(list).not.toContain('詳細非表示');
+    expect(list).not.toContain('権限のある担当者');
+    expect(list).not.toContain('環境で確認');
   });
 
-  it('adds a safe customer issue sheet only when comparison coverage is incomplete', async () => {
+  it('preserves complete object values without subtable summaries or HTML stripping', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      rows: [
+        {
+          sectionKey: 'fieldSettings',
+          type: 'changed',
+          path: 'fieldSettings.properties.items',
+          left: {
+            type: 'SUBTABLE', code: 'items', label: '<b>明細</b>', required: true,
+            defaultValue: [{ note: 'KEEP_LEFT' }],
+            fields: {
+              note: { type: 'SINGLE_LINE_TEXT', code: 'note', label: '<i>備考</i>', required: true, defaultValue: 'KEEP_ME' }
+            }
+          },
+          right: {
+            type: 'SUBTABLE', code: 'items', label: '<b>明細（新）</b>', required: false,
+            defaultValue: [{ note: 'KEEP_RIGHT' }],
+            fields: {
+              note: { type: 'SINGLE_LINE_TEXT', code: 'note', label: '<i>備考（新）</i>', required: false, defaultValue: 'KEEP_ME_TOO' }
+            }
+          }
+        },
+        {
+          sectionKey: 'layoutSettings',
+          type: 'changed',
+          path: 'layoutSettings.layout[0]',
+          left: { type: 'LABEL', label: '<strong>HTML_LABEL_LEFT</strong>', value: 'RAW_LEFT' },
+          right: { type: 'LABEL', label: '<strong>HTML_LABEL_RIGHT</strong>', value: 'RAW_RIGHT' }
+        }
+      ]
+    });
+    const list = await readWorksheetByName(blob, '変更一覧');
+
+    for (const value of [
+      'required', 'defaultValue', 'KEEP_LEFT', 'KEEP_RIGHT', 'KEEP_ME', 'KEEP_ME_TOO',
+      'RAW_LEFT', 'RAW_RIGHT', '&lt;b&gt;明細&lt;/b&gt;', '&lt;strong&gt;HTML_LABEL_LEFT&lt;/strong&gt;'
+    ]) expect(list).toContain(value);
+    expect(list).not.toContain('テーブル内の項目:');
+    expect(list).not.toContain('詳細は安全のため非表示');
+  });
+
+  it('documents and applies only the unavoidable Excel cell-length limit', async () => {
+    const oversized = `${'X'.repeat(40000)}TAIL`;
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      rows: [{
+        sectionKey: 'customizeSettings',
+        type: 'changed',
+        path: 'customizeSettings.desktop.js[0].file._body',
+        left: oversized,
+        right: `${oversized}R`
+      }]
+    });
+    const summary = await readWorksheetByName(blob, '比較概要');
+    const list = await readWorksheetByName(blob, '変更一覧');
+
+    expect(summary).toContain('32,767文字を超える値はExcelセル上限を明記して省略します');
+    expect(list).toContain('Excelセル上限32,767文字のため省略');
+    expect(list).toContain('元40004文字');
+    expect(list).toContain('元40005文字');
+    expect(list).not.toContain('TAIL');
+    expect(list).not.toContain('詳細は安全のため非表示');
+  });
+
+  it('adds a customer issue sheet only when comparison coverage is incomplete', async () => {
     const rawError = 'HTTP 403 https://internal.example/error?app=778899';
     const rawMessage = 'RAW_FETCH_MESSAGE_778899';
     const rawFile = 'private-file-778899.js';
@@ -234,9 +306,14 @@ describe('diff/xlsx-export', () => {
     expect(issues).toContain('この範囲は比較結果に含まれていません。再取得して確認してください。');
     expect(issues).toContain('取得できた範囲だけを比較しています。必要に応じて再取得してください。');
     expect(issues).toContain('確認できた件数は全体の一部です。条件を分けて再比較してください。');
-    for (const secret of [rawError, rawMessage, rawFile, 'FILE_KEY_778899', 'RAW_PARTIAL_MESSAGE', 'RAW_FILE_REASON']) {
-      expect(allText).not.toContain(secret);
-    }
+    expect(issues).toContain('取得・打切り情報（原文）');
+    expect(issues).toContain('マスキングせず収録しています');
+    for (const value of [
+      rawError, rawMessage, rawFile, 'FILE_KEY_778899',
+      'RAW_PARTIAL_MESSAGE', 'RAW_FILE_REASON', '778899'
+    ]) expect(allText).toContain(value);
+    expect(allText).not.toContain('<f>');
+    expect(allText).not.toContain('externalLink');
   });
 
   it('does not describe an empty filtered export as a complete no-difference result', async () => {
@@ -319,117 +396,119 @@ describe('diff/xlsx-export', () => {
     expect(summary).not.toContain('変更なし');
   });
 
-  it('aggregates high-risk sections and removes technical identifiers from the customer ZIP and filename', async () => {
-    const longSecret = `${'顧客説明'.repeat(80)}LONG_SECRET_TAIL_556677`;
+  it('exports every high-risk and unknown-section difference with its original values', async () => {
+    const longValue = `${'顧客説明'.repeat(80)}LONG_VALUE_TAIL_556677`;
     const result = buildDiffXlsxExportWithSafeDefault({
-      filename: 'unsafe-app-556677-search.xlsx',
       sourceBundle: {
         appId: 556677,
-        guestId: '778899',
-        meta: { appName: '変更前環境' },
-        sections: { fieldSettings: { properties: { title: { label: '件名', type: 'SINGLE_LINE_TEXT' } } } }
+        meta: { appName: '変更前環境 App 556677' }
       },
       targetBundle: {
         appId: 667788,
-        guestId: '889900',
-        meta: { appName: '変更後環境' },
-        sections: { fieldSettings: { properties: { title: { label: '件名', type: 'SINGLE_LINE_TEXT' } } } }
+        meta: { appName: '変更後環境 App 667788' }
       },
-      scopes: ['fieldSettings', 'appAcl', 'pluginSettings', 'customizeSettings', 'notifications'],
-      exportMode: 'filtered',
-      exportLabel: 'RAW_EXPORT_LABEL_556677',
-      filterDescription: '検索: RAW_SEARCH_TERM_556677',
-      ignoreKeys: 'revision,threadId',
-      normalizationPresetState: { auditMeta: true },
+      scopes: [
+        'appAcl', 'pluginSettings', 'customizeSettings', 'notifications',
+        'fieldSettings', 'futureUnknownSettings', 'appSettings'
+      ],
       rows: [
         {
-          sectionKey: 'appAcl', type: 'changed', path: 'appAcl.rights[0].entity.code',
+          sectionKey: 'appAcl',
+          type: 'changed',
+          path: 'appAcl.rights[0].entity.code',
           left: { type: 'USER', code: 'USER_556677', id: 556677 },
           right: { type: 'USER', code: 'USER_667788', id: 667788 }
         },
         {
-          sectionKey: 'appAcl', type: 'changed', path: 'appAcl.rights[1].entity.code',
-          left: 'ACL_SECRET_LEFT', right: 'ACL_SECRET_RIGHT'
+          sectionKey: 'appAcl',
+          type: 'changed',
+          path: 'appAcl.rights[1].entity.code',
+          left: 'ACL_SECRET_LEFT',
+          right: 'ACL_SECRET_RIGHT'
         },
         {
-          sectionKey: 'pluginSettings', type: 'changed', path: 'pluginSettings.plugins[0].config',
-          left: { token: 'PLUGIN_SECRET_556677' }, right: { token: 'PLUGIN_SECRET_667788' }
+          sectionKey: 'pluginSettings',
+          type: 'changed',
+          path: 'pluginSettings.plugins[0].config',
+          left: { token: 'PLUGIN_SECRET_556677' },
+          right: { token: 'PLUGIN_SECRET_667788' }
         },
         {
-          sectionKey: 'customizeSettings', type: 'changed', path: 'customizeSettings.desktop.js[0].file._body',
-          left: 'CUSTOM_BODY_SECRET', right: 'https://internal.example/custom.js'
+          sectionKey: 'customizeSettings',
+          type: 'changed',
+          path: 'customizeSettings.desktop.js[0].file._body',
+          left: 'const token = "CUSTOM_BODY_SECRET";',
+          right: 'console.log("CUSTOM_BODY_VISIBLE");'
         },
         {
-          sectionKey: 'notifications', type: 'changed', path: 'notifications.notifications[0]',
-          left: { entity: { code: 'NOTIFY_USER_556677' } }, right: { entity: { code: 'NOTIFY_USER_667788' } }
+          sectionKey: 'notifications',
+          type: 'changed',
+          path: 'notifications.notifications[0]',
+          left: { entity: { code: 'NOTIFY_USER_556677' } },
+          right: { entity: { code: 'NOTIFY_USER_667788' } }
         },
         {
-          sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.title.label',
-          left: '旧件名', right: '新件名'
+          sectionKey: 'fieldSettings',
+          type: 'changed',
+          path: 'fieldSettings.properties.title.lookup.relatedApp.app',
+          left: '556677',
+          right: '667788'
         },
         {
-          sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.title.lookup.relatedApp.app',
-          left: '556677', right: '667788'
+          sectionKey: 'futureUnknownSettings',
+          type: 'changed',
+          path: 'futureUnknownSettings.apiToken',
+          left: 'https://internal.example/556677',
+          right: 'UNKNOWN_TOKEN_667788'
         },
         {
-          sectionKey: 'appSettings', type: 'changed', path: 'appSettings.revision',
-          label: 'revision', left: 112233, right: 223344
+          sectionKey: 'appSettings',
+          type: 'changed',
+          path: 'appSettings.description',
+          left: longValue,
+          right: `${longValue}R`
         },
         {
-          sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.customer',
-          left: { url: 'https://internal.example/556677', spaceId: 334455 },
-          right: { url: 'https://internal.example/667788', threadId: 445566 }
+          sectionKey: 'pluginSettings',
+          type: 'same',
+          path: 'pluginSettings',
+          left: 'SAME_PLUGIN_SECRET',
+          right: 'SAME_PLUGIN_SECRET'
         },
         {
-          sectionKey: 'appSettings', type: 'changed', path: 'appSettings.description',
-          left: longSecret, right: `${longSecret}R`
-        },
-        {
-          sectionKey: 'pluginSettings', type: 'same', path: 'pluginSettings',
-          left: { config: 'SAME_PLUGIN_SECRET' }, right: { config: 'SAME_PLUGIN_SECRET' }
-        },
-        {
-          sectionKey: 'appSettings', type: 'changed', path: 'appSettings.helper',
-          left: 'DISPLAY_ONLY_SECRET', right: 'DISPLAY_ONLY_SECRET', _displayOnly: true
+          sectionKey: 'appSettings',
+          type: 'changed',
+          path: 'appSettings.helper',
+          left: 'DISPLAY_ONLY_SECRET',
+          right: 'DISPLAY_ONLY_SECRET',
+          _displayOnly: true
         }
       ]
     });
-    const workbook = await readEntry(result.blob, 'xl/workbook.xml');
     const summary = await readWorksheetByName(result.blob, '比較概要');
     const list = await readWorksheetByName(result.blob, '変更一覧');
     const allText = await readAllEntryText(result.blob);
 
-    expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '変更一覧'
-    ]);
-    expect(list).toContain('アプリ権限（2件の変更）');
-    expect(list).toContain('プラグイン設定（1件の変更）');
-    expect(list).toContain('カスタマイズ設定（1件の変更）');
-    expect(list).toContain('通知設定（1件の変更）');
-    expect(list).toContain('詳細は安全のため非表示');
-    expect(list).toContain('件名 / フィールド名');
-    expect(summary).toContain('絞り込み');
-    expect(summary).toContain('比較条件の調整');
-    expect(summary).toContain('詳細を省略した変更');
-    expect(result.filename).toMatch(/^設定差分確認_変更前環境_vs_変更後環境_/);
-    expect(result.filename).not.toContain('556677');
-    expect(result.filename).not.toContain('667788');
-    expect(result.filename).not.toContain('unsafe');
-    for (const secret of [
-      '556677', '667788', '778899', '889900', '112233', '223344', '334455', '445566',
-      'RAW_EXPORT_LABEL_556677', 'RAW_SEARCH_TERM_556677',
-      'appAcl.rights[0].entity.code', 'pluginSettings.plugins[0].config', 'appSettings.revision',
-      'ACL_SECRET_LEFT', 'ACL_SECRET_RIGHT', 'PLUGIN_SECRET_556677', 'PLUGIN_SECRET_667788',
-      'CUSTOM_BODY_SECRET', 'NOTIFY_USER_556677', 'NOTIFY_USER_667788',
-      'https://internal.example', 'LONG_SECRET_TAIL_556677', 'SAME_PLUGIN_SECRET', 'DISPLAY_ONLY_SECRET'
-    ]) {
-      expect(allText).not.toContain(secret);
-    }
-    expect(allText).not.toMatch(/D-[0-9A-F]{8}/);
-    expect(allText).not.toContain('識別:');
+    expect((list.match(/<row r="/g) || []).length).toBe(10);
+    expect(summary).toContain('変更一覧の明細');
+    expect(summary).toMatch(/<c r="D6"[^>]*>[\s\S]*?8件[\s\S]*?<\/c>/);
+    for (const value of [
+      'USER_556677', 'USER_667788', 'ACL_SECRET_LEFT', 'ACL_SECRET_RIGHT',
+      'PLUGIN_SECRET_556677', 'PLUGIN_SECRET_667788',
+      'CUSTOM_BODY_SECRET', 'CUSTOM_BODY_VISIBLE',
+      'NOTIFY_USER_556677', 'NOTIFY_USER_667788',
+      'https://internal.example/556677', 'UNKNOWN_TOKEN_667788',
+      'LONG_VALUE_TAIL_556677'
+    ]) expect(allText).toContain(value);
+    expect(allText).not.toContain('詳細は安全のため非表示');
+    expect(allText).not.toContain('詳細非表示');
+    expect(allText).not.toContain('詳細を省略した変更');
+    expect(allText).not.toContain('SAME_PLUGIN_SECRET');
+    expect(allText).not.toContain('DISPLAY_ONLY_SECRET');
+    expect(result.filename).toContain('変更前環境 App 556677_vs_変更後環境 App 667788');
   });
 
-  it('uses field labels and plain Japanese for customer layout, conditions, and sort order', async () => {
+  it('keeps readable item labels while showing the original layout, condition, and sort values', async () => {
     const sourceFields = {
       customer_name: { code: 'customer_name', label: '顧客名', type: 'SINGLE_LINE_TEXT' },
       amount: { code: 'amount', label: '見積金額', type: 'NUMBER' },
@@ -474,390 +553,130 @@ describe('diff/xlsx-export', () => {
     const allText = await readAllEntryText(blob);
 
     for (const expected of [
-      'レイアウト 1行目 / 取引先名 / 横幅',
-      '見積金額が0より大きい',
-      '優先度が「高」',
-      '優先度が「高」または「通常」',
-      '見積金額（降順）',
-      '取引先名（昇順）'
+      'レイアウト行 #1', 'customer_name', 'amount', 'priority',
+      'amount &gt; 0', 'priority in', 'amount desc', 'customer_name asc'
     ]) expect(allText).toContain(expected);
-    for (const technical of [
-      'customer_name', 'amount &gt; 0', 'priority in', 'amount desc', 'customer_name asc'
-    ]) expect(allText).not.toContain(technical);
+    expect(allText).not.toContain('詳細は安全のため非表示');
+    expect(allText).not.toContain('詳細非表示');
   });
 
-  it('denies unknown and credential-like customer values while preserving accurate source counts', async () => {
-    const result = buildDiffXlsxExportWithSafeDefault({
-      sourceBundle: { appId: 202, guestId: 7, meta: { appName: 'Dept7 Sales2024 (App 202)' } },
-      targetBundle: { meta: { appName: 'Source App 991122' } },
+  it('keeps credential-like and formula-looking customer values visible as inert text', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
       rows: [
-        { sectionKey: 'appAcl', type: 'added', path: 'appAcl.rights[0]', right: 'ACL_ADD_SENTINEL' },
-        { sectionKey: 'appAcl', type: 'removed', path: 'appAcl.rights[1]', left: 'ACL_REMOVE_SENTINEL' },
-        { sectionKey: 'actionSettings', type: 'changed', path: 'actionSettings.actions[0].destApp.app', left: 'DEST_APP_441122', right: 'DEST_APP_551133' },
-        { sectionKey: 'actionSettings', type: 'changed', path: 'actionSettings.actions[1].targetAppId', left: 'TARGET_APP_661144', right: 'TARGET_APP_771155' },
-        { sectionKey: 'processSettings', type: 'changed', path: 'processSettings.actions[0].assignee.entity.code', left: 'USER_CODE_LEFT', right: 'USER_CODE_RIGHT' },
-        { sectionKey: 'appInfo', type: 'changed', path: 'appInfo.creator.code', left: 'CREATOR_LEFT', right: 'CREATOR_RIGHT' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.main.id', left: 'VIEW_ID_LEFT', right: 'VIEW_ID_RIGHT' },
-        { sectionKey: 'reportSettings', type: 'changed', path: 'reportSettings.reports.main.id', left: 'REPORT_ID_LEFT', right: 'REPORT_ID_RIGHT' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.api_token.defaultValue', left: 'FIELD_SECRET_LEFT', right: 'FIELD_SECRET_RIGHT' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.total.expression', left: 'FORMULA_SECRET_LEFT', right: 'FORMULA_SECRET_RIGHT' },
-        { sectionKey: 'futureUnknownSettings', type: 'changed', path: 'futureUnknownSettings.apiToken', left: 'UNKNOWN_TOKEN_LEFT', right: 'UNKNOWN_TOKEN_RIGHT' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.description', left: 'C:\\Corp\\secret.txt', right: '\\\\server\\private\\share' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.theme', left: 'Bearer SECRET_BEARER_ABC', right: 'api_key=SECRET_API_KEY_X' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.icon', left: '/var/private/customer.pem', right: 'owner@example.internal' }
-      ]
-    });
-    const summary = await readWorksheetByName(result.blob, '比較概要');
-    const list = await readWorksheetByName(result.blob, '変更一覧');
-    const allText = await readAllEntryText(result.blob);
-
-    expect(allText).toContain('比較元\nDept7 Sales2024');
-    expect(allText).toContain('比較先\nSource');
-    expect(result.filename).toContain('Dept7 Sales2024_vs_Source');
-    expect(result.filename).not.toContain('991122');
-    expect(list).toContain('アプリ権限（2件の変更）');
-    expect(summary).toMatch(/<c r="B4"[^>]*t="inlineStr"[^>]*>[\s\S]*?14件[\s\S]*?<\/c>/);
-    expect(summary).toMatch(/<c r="B5"[^>]*t="inlineStr"[^>]*>[\s\S]*?1件[\s\S]*?<\/c>/);
-    expect(summary).toMatch(/<c r="D5"[^>]*t="inlineStr"[^>]*>[\s\S]*?1件[\s\S]*?<\/c>/);
-    for (const secret of [
-      '991122', 'ACL_ADD_SENTINEL', 'ACL_REMOVE_SENTINEL',
-      'DEST_APP_441122', 'DEST_APP_551133', 'TARGET_APP_661144', 'TARGET_APP_771155',
-      'USER_CODE_LEFT', 'USER_CODE_RIGHT', 'CREATOR_LEFT', 'CREATOR_RIGHT',
-      'VIEW_ID_LEFT', 'VIEW_ID_RIGHT', 'REPORT_ID_LEFT', 'REPORT_ID_RIGHT',
-      'FIELD_SECRET_LEFT', 'FIELD_SECRET_RIGHT', 'FORMULA_SECRET_LEFT', 'FORMULA_SECRET_RIGHT',
-      'UNKNOWN_TOKEN_LEFT', 'UNKNOWN_TOKEN_RIGHT',
-      'C:\\Corp\\secret.txt', '\\\\server\\private\\share',
-      'SECRET_BEARER_ABC', 'SECRET_API_KEY_X', '/var/private/customer.pem', 'owner@example.internal',
-      'futureUnknownSettings.apiToken'
-    ]) expect(allText).not.toContain(secret);
-  });
-
-  it('fails closed for future paths, identifier variants, credentials, unsafe labels, and invalid evidence dates', async () => {
-    const longHash = 'a'.repeat(64);
-    const sourceBundle = {
-      appId: 202,
-      meta: { appName: 'Legit App 2024' },
-      sections: {
-        fieldSettings: {
-          properties: {
-            customer_name: { code: 'customer_name', label: 'customer_name', type: 'SINGLE_LINE_TEXT' },
-            lookup_field: { code: 'lookup_field', label: '顧客検索', type: 'SINGLE_LINE_TEXT' },
-            field_1: { code: 'field_1', label: 'C:\\Corp\\private\\FIELD_LABEL_SECRET.txt', type: 'SINGLE_LINE_TEXT' },
-            notes: { code: 'notes', label: '備考', type: 'SINGLE_LINE_TEXT' },
-            owner: { code: 'owner', label: '担当者', type: 'USER_SELECT' },
-            phone: { code: 'phone', label: '電話番号', type: 'SINGLE_LINE_TEXT' },
-            owner_code: { code: 'owner_code', label: '担当者コード', type: 'USER_SELECT' },
-            owner_choice: { code: 'owner_choice', label: '担当者選択', type: 'DROP_DOWN', options: { 通常: { label: '通常' } } },
-            phone_num: { code: 'phone_num', label: '電話番号', type: 'NUMBER' },
-            date_field: { code: 'date_field', label: '日付', type: 'DATE' },
-            status: { code: 'status', label: '状態', type: 'DROP_DOWN', options: { OPEN: { label: 'OPEN' } } },
-            text: { code: 'text', label: 'テキスト', type: 'SINGLE_LINE_TEXT' },
-            unsafe_status: {
-              code: 'unsafe_status', label: '社内状態', type: 'DROP_DOWN',
-              options: { USER_CODE_ALICE: { label: 'USER_CODE_ALICE' }, USER_CODE_BOB: { label: 'USER_CODE_BOB' } }
-            },
-            choice: { code: 'choice', label: '選択', type: 'DROP_DOWN', options: { Safe: { label: 'Safe' } } },
-            ref: { code: 'ref', label: '参照先', type: 'REFERENCE_TABLE' }
-          }
+        {
+          sectionKey: 'appAcl',
+          type: 'added',
+          path: 'appAcl.rights[0]',
+          right: 'ACL_ADD_SENTINEL'
+        },
+        {
+          sectionKey: 'futureUnknownSettings',
+          type: 'changed',
+          path: 'futureUnknownSettings.apiToken',
+          left: 'UNKNOWN_TOKEN_LEFT',
+          right: 'UNKNOWN_TOKEN_RIGHT'
+        },
+        {
+          sectionKey: 'appSettings',
+          type: 'changed',
+          path: 'appSettings.description',
+          left: '=HYPERLINK("https://internal.example","open")',
+          right: '@SUM(A1:A2)'
+        },
+        {
+          sectionKey: 'appSettings',
+          type: 'changed',
+          path: 'appSettings.icon',
+          left: 'C:\\Corp\\secret.txt',
+          right: 'owner@example.internal'
         }
-      }
-    };
-    const targetBundle = {
-      meta: { appName: 'Source App 991122' },
-      sections: sourceBundle.sections
-    };
+      ]
+    });
+    const list = await readWorksheetByName(blob, '変更一覧');
+    const allText = await readAllEntryText(blob);
+
+    for (const value of [
+      'ACL_ADD_SENTINEL', 'UNKNOWN_TOKEN_LEFT', 'UNKNOWN_TOKEN_RIGHT',
+      '=HYPERLINK', '@SUM(A1:A2)', 'Corp', 'secret.txt', 'owner@example.internal'
+    ]) expect(allText).toContain(value);
+    expect(list).toContain('t="inlineStr"');
+    expect(allText).not.toContain('<f>');
+    expect(list).not.toContain('r:id=');
+    expect(allText).not.toContain('externalLink');
+    expect(allText).not.toContain('詳細は安全のため非表示');
+  });
+
+  it('shows identifiers, URLs, long values, and app names without masking them', async () => {
+    const longValue = `${'長文設定'.repeat(300)}LONG_VALUE_END`;
     const result = buildDiffXlsxExportWithSafeDefault({
-      sourceBundle,
-      targetBundle,
-      comparedAt: 'https://internal.example/error?token=DATE_SECRET',
+      comparedAt: 'not-a-date',
+      sourceBundle: {
+        appId: 202,
+        guestId: '7',
+        meta: { appName: 'Customer App 991122 Prod' }
+      },
+      targetBundle: {
+        appId: 303,
+        meta: { appName: 'Portal Guest 7' }
+      },
       rows: [
-        { sectionKey: 'actionSettings', type: 'changed', path: 'actionSettings.actions[0].targetAppID', left: '441122', right: '551133' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.description', left: 'path=C:\\Corp\\private\\client.txt', right: 'path=/var/private/client.pem' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.description', left: 'TypeError: Cannot read properties of undefined at render (bundle.js:12:34)', right: 'Exception: INTERNAL_FAILURE_SENTINEL' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.description', left: 'ODBC;DSN=Prod;UID=svc_batch;PWD=N7zQ4p!', right: 'ODBC;DSN=Prod;UID=svc_batch;PWD=V9mT2x!' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: 'DBPWD=N7zQ4p!', right: 'SQLPWD=V9mT2x!' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: 'cfg.DBPWD=N7zQ4p!', right: 'cfg.DBPASS=V9mT2x!' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: 'Portal [778899]', right: 'Portal [667788]' },
-        { sectionKey: 'appInfo', type: 'changed', path: 'appInfo.name', left: '665544', right: '554433' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.theme', left: 'JSESSIONID=SIDABC123', right: 'PHPSESSID=SIDXYZ789' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.enableThumbnails', left: 'Frank Internal', right: 'Frank External' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.firstMonthOfFiscalYear', left: 'Grace Internal', right: 'Grace External' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.numberPrecision', left: 'Heidi Internal', right: 'Heidi External' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: 'path=..\\private\\client.txt', right: 'path=%APPDATA%\\client.txt' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.icon', left: '$USERPROFILE\\private\\client.txt', right: '~\\private\\client.txt' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.firstMonthOfFiscalYear', left: 'path=/rootfile.txt', right: 'path=/Users/山田/文書.txt' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.theme', left: 'sk-proj-ABCDEF1234567890XYZ', right: 'AKIAIOSFODNN7EXAMPLE' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.notes.defaultValue', left: longHash, right: '550e8400-e29b-41d4-a716-446655440000' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.notes.description', left: 'sk_live_51ABCDEF1234567890XYZ', right: 'xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.notes.defaultValue', left: 'AbCDefGHIjklMNOP0123456789qrstUVWXyz0123456789ABCD', right: 'safe replacement' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.notes.defaultValue', left: 'Qx7+/Za9Bc2_De4+Fg6/Hi8=Jk0Lm2No4Pq6Rs8Tu0Vw2Xy4Z', right: 'safe replacement 2' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.notes.defaultValue', left: 'data:text/plain;base64,QUJDREVGRw==', right: 'ssh:internal-host' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.notes.defaultValue', left: 'glpat-abcdefghijklmnopqrst', right: 'npm_abcdefghijklmnopqrstuvwxyz0123456789' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.notes.defaultValue', left: 'session_key=abcdefghijklmnopqrstuv', right: 'safe replacement 3' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.field_1.required', left: false, right: true },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.案件一覧.sort', left: 'customer_name desc', right: 'customer_name asc' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.lookup_field.lookup.relatedKeyField', left: 'old_customer_id', right: 'customer_id' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.owner.entities[0].name', left: 'Alice Internal', right: 'Bob Internal' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.owner.defaultValue[0]', left: 'USER_CODE_ALICE', right: 'USER_CODE_BOB' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.orphan_owner.defaultValue[0].code', left: 'ORPHAN_USER_CODE_ALICE', right: 'ORPHAN_USER_CODE_BOB' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.orphan_owner.defaultValue[0].name', left: 'Orphan Alice Internal', right: 'Orphan Bob Internal' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.orphan_owner.defaultValue', left: 'ORPHAN_SCALAR_USER_ALICE', right: 'ORPHAN_SCALAR_USER_BOB' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.owner.type', left: 'INTERNAL_TYPE_X', right: 'INTERNAL_TYPE_Y' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.status.defaultValue', left: 'USER_CODE_ALICE', right: 'USER_CODE_BOB' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.phone_num.defaultValue', left: 'Alice Internal', right: 'Bob Internal' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.date_field.defaultValue', left: 'Alice Internal', right: 'Bob Internal' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.text.required', left: 'Ivan Internal', right: 'Ivan External' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.text.maxLength', left: 'Judy Internal', right: 'Judy External' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.text.label.required', left: 'Alice Internal', right: 'Alice External' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.text.code.label', left: 'Bob Internal', right: 'Bob External' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.text.options.foo.required', left: 'Carol Internal', right: 'Carol External' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.customer_name.label', left: 'customer_name', right: 'customer_name_new' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.ref.displayFields[0]', left: 'internal_customer_code', right: 'internal_customer_code_new' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.unsafe_status.defaultValue', left: 'USER_CODE_ALICE', right: 'USER_CODE_BOB' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.unsafe_status.options.USER_CODE_ALICE.label', left: 'USER_CODE_ALICE', right: 'USER_CODE_BOB' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.choice.options.Safe', left: 'Alice Internal', right: 'Bob Internal' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.案件一覧.filterCond', left: 'phone = "090-1234-5678"', right: 'owner_code = "USER_CODE_ALICE"' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.案件一覧.filterCond', left: 'owner_choice in ("alice@corp")', right: 'phone_num = 09012345678' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.案件一覧.filterCond', left: 'owner_choice in ("alice@corp_internal")', right: 'phone_num = "Dave Internal"' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.案件一覧.filterCond', left: 'phone_num = +819012345678', right: 'phone_num = "090 1234 5678"' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.Customer App 771144 Prod.name', left: 'Customer App 771144 Prod', right: 'Customer App 661155 Prod' },
-        { sectionKey: 'layoutSettings', type: 'changed', path: 'layoutSettings.layout[0].size.width', left: 'Ken Internal', right: 'Ken External' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.Main.index', left: 'Leo Internal', right: 'Leo External' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.Main.name', left: 'View ID 771144', right: 'ReportID=881155' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V1.name', left: 'P\u200BASSWORD=alpha1', right: 'alice\u200B@internal' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V2.name', left: 'LOG\u200BIN=ALICE01', right: 'C\u200B:\\Users\\alice\\secrets.txt' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V3.name', left: '+1 415 555 2671', right: 'commit=abcdef1234' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V4.name', left: 'cfg."DBPWD":"N7zQ4p!"', right: 'cfg["DBPWD"]=V9mT2x!' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V5.name', left: 'Error [ERR_MODULE_NOT_FOUND]: Alice Internal', right: 'at src/client.js:12:34' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V6.name', left: 'ENOENT: no such file, open private/client.json', right: 'HOST=db01;PORT=5432' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V7.name', left: 'DATA SOURCE=db01', right: '(415) 555 2671' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V8.name', left: 'private/secrets.txt', right: 'config\\prod.env' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V9.name', left: 'ECONNREFUSED 10.0.0.8:443', right: 'SECRETKEY=ABCxyz' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V10.name', left: 'PASSPHRASE=ABCxyz', right: 'SESSION=ABCxyz' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V11.name', left: 'COOKIE=ABCxyz', right: 'AUTHCODE=ABCxyz' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V12.name', left: 'SSHKEY=ABCxyz', right: 'PIN=1234' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V13.name', left: 'Employee ID ALICE', right: 'Account ID BOB' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V14.name', left: 'Owner login CAROL', right: 'passphrase huntertwo' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V15.name', left: 'session ABCxyz', right: 'auth code ABCxyz' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V16.name', left: 'Release deadbeef', right: 'Build deadbeefcafebabe' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V17.name', left: 'ssn 123 45 6789', right: 'card 4111 1111 1111 1111' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V18.name', left: 'db01.corp.local', right: 'prod-db.internal' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V19.name', left: '山田@example.com', right: 'alice@例え.テスト' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V20.name', left: 'PWD(N7zQ4p!)', right: '<DBPWD>V9mT2x!' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.V21.name', left: 'private∕client.pem', right: 'private∖client.pem' },
-        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.Contact.filterCond', left: 'phone_num = 2125551212', right: 'phone_num = 4155552671' },
-        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.phone_num.defaultValue', left: '2125551212', right: '4155552671' },
-        { sectionKey: 'processSettings', type: 'changed', path: 'processSettings.enable', left: 'Mallory Internal', right: 'Mallory External' },
-        { sectionKey: 'processSettings', type: 'changed', path: 'processSettings.states.Active.name', left: 'LOGIN=ALICE01', right: 'USERID=BOB02' },
-        { sectionKey: 'actionSettings', type: 'changed', path: 'actionSettings.actions[0].name', left: 'CLIENT_ID=cli-ABC-123', right: 'CLIENT_ID=cli-XYZ-789' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.futureInternalBlob', left: 'FUTURE_INTERNAL_LEFT_ABC', right: 'FUTURE_INTERNAL_RIGHT_XYZ' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings', left: 'ROOTPAYLOADABC', right: 'ROOTPAYLOADABCR' }
+        {
+          sectionKey: 'actionSettings',
+          type: 'changed',
+          path: 'actionSettings.actions[0].targetAppId',
+          left: 'TARGET_APP_661144',
+          right: 'TARGET_APP_771155'
+        },
+        {
+          sectionKey: 'viewSettings',
+          type: 'changed',
+          path: 'viewSettings.views.main',
+          left: { id: 'VIEW_ID_LEFT', url: 'https://internal.example/left' },
+          right: { id: 'VIEW_ID_RIGHT', url: 'https://internal.example/right' }
+        },
+        {
+          sectionKey: 'fieldSettings',
+          type: 'changed',
+          path: 'fieldSettings.properties.phone_num.defaultValue',
+          left: '090-1234-5678',
+          right: 'owner@example.internal'
+        },
+        {
+          sectionKey: 'appSettings',
+          type: 'changed',
+          path: 'appSettings.description',
+          left: longValue,
+          right: `${longValue}R`
+        },
+        {
+          sectionKey: 'futureUnknownSettings',
+          type: 'changed',
+          path: 'futureUnknownSettings',
+          left: { token: 'ROOTPAYLOADABC', revision: 991122 },
+          right: { token: 'ROOTPAYLOADABCR', revision: 882233 }
+        }
       ]
     });
     const summary = await readWorksheetByName(result.blob, '比較概要');
     const list = await readWorksheetByName(result.blob, '変更一覧');
     const allText = await readAllEntryText(result.blob);
 
-    expect(summary).toContain('比較元\nLegit App 2024');
-    expect(summary).toContain('比較先\nSource');
+    expect(summary).toContain('比較元\nCustomer App 991122 Prod');
+    expect(summary).toContain('比較先\nPortal Guest 7');
     expect(summary).toContain('未記録');
-    expect(result.filename).toContain('Legit App 2024_vs_Source');
-    expect(list).toContain('フィールド / 必須項目にする');
-    expect(list).toContain('並び順が変更されました（詳細非表示）');
-    expect(list).toContain('詳細は安全のため非表示');
-    for (const secret of [
-      '991122', '441122', '551133', 'targetAppID',
-      'path=C:\\Corp\\private\\client.txt', 'path=/var/private/client.pem',
-      'TypeError: Cannot read properties of undefined at render (bundle.js:12:34)', 'INTERNAL_FAILURE_SENTINEL',
-      'ODBC;DSN=Prod;UID=svc_batch;PWD=N7zQ4p!', 'ODBC;DSN=Prod;UID=svc_batch;PWD=V9mT2x!',
-      'DBPWD=N7zQ4p!', 'SQLPWD=V9mT2x!',
-      'cfg.DBPWD=N7zQ4p!', 'cfg.DBPASS=V9mT2x!',
-      'Portal [778899]', 'Portal [667788]', '665544', '554433',
-      'JSESSIONID=SIDABC123', 'PHPSESSID=SIDXYZ789',
-      'Frank Internal', 'Frank External', 'Grace Internal', 'Grace External', 'Heidi Internal', 'Heidi External',
-      'path=..\\private\\client.txt', 'path=%APPDATA%\\client.txt',
-      '$USERPROFILE\\private\\client.txt', '~\\private\\client.txt',
-      'path=/rootfile.txt', 'path=/Users/山田/文書.txt',
-      'sk-proj-ABCDEF1234567890XYZ', 'AKIAIOSFODNN7EXAMPLE', longHash,
-      'sk_live_51ABCDEF1234567890XYZ', 'xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx',
-      'AbCDefGHIjklMNOP0123456789qrstUVWXyz0123456789ABCD',
-      'Qx7+/Za9Bc2_De4+Fg6/Hi8=Jk0Lm2No4Pq6Rs8Tu0Vw2Xy4Z',
-      'data:text/plain;base64,QUJDREVGRw==', 'ssh:internal-host',
-      'glpat-abcdefghijklmnopqrst', 'npm_abcdefghijklmnopqrstuvwxyz0123456789',
-      'session_key=abcdefghijklmnopqrstuv',
-      '550e8400-e29b-41d4-a716-446655440000',
-      'C:\\Corp\\private\\FIELD_LABEL_SECRET.txt',
-      'customer_name', 'old_customer_id', 'customer_id',
-      'Alice Internal', 'Bob Internal', 'USER_CODE_ALICE', 'USER_CODE_BOB',
-      'ORPHAN_USER_CODE_ALICE', 'ORPHAN_USER_CODE_BOB', 'Orphan Alice Internal', 'Orphan Bob Internal',
-      'ORPHAN_SCALAR_USER_ALICE', 'ORPHAN_SCALAR_USER_BOB', 'INTERNAL_TYPE_X', 'INTERNAL_TYPE_Y',
-      '090-1234-5678', 'phone =', 'owner_code =',
-      'alice@corp', '09012345678', 'owner_choice in', 'phone_num =',
-      'alice@corp_internal', 'Dave Internal', '+819012345678', '090 1234 5678',
-      'Customer App 771144 Prod', 'Customer App 661155 Prod', '771144', '661155',
-      'Ivan Internal', 'Ivan External', 'Judy Internal', 'Judy External',
-      'Alice External', 'Bob External', 'Carol Internal', 'Carol External',
-      'customer_name_new', 'internal_customer_code', 'internal_customer_code_new',
-      'Ken Internal', 'Ken External', 'Leo Internal', 'Leo External',
-      'View ID 771144', 'ReportID=881155', 'LOGIN=ALICE01', 'USERID=BOB02',
-      'CLIENT_ID=cli-ABC-123', 'CLIENT_ID=cli-XYZ-789', 'Mallory Internal', 'Mallory External',
-      'P\u200BASSWORD=alpha1', 'alice\u200B@internal', 'LOG\u200BIN=ALICE01', 'C\u200B:\\Users\\alice\\secrets.txt',
-      '+1 415 555 2671', 'commit=abcdef1234',
-      'cfg."DBPWD":"N7zQ4p!"', 'cfg["DBPWD"]=V9mT2x!',
-      'Error [ERR_MODULE_NOT_FOUND]: Alice Internal', 'at src/client.js:12:34',
-      'ENOENT: no such file, open private/client.json', 'HOST=db01;PORT=5432',
-      'DATA SOURCE=db01', '(415) 555 2671', 'private/secrets.txt', 'config\\prod.env',
-      'ECONNREFUSED 10.0.0.8:443', 'SECRETKEY=ABCxyz', 'PASSPHRASE=ABCxyz', 'SESSION=ABCxyz',
-      'COOKIE=ABCxyz', 'AUTHCODE=ABCxyz', 'SSHKEY=ABCxyz', 'PIN=1234',
-      'Employee ID ALICE', 'Account ID BOB', 'Owner login CAROL', 'passphrase huntertwo',
-      'session ABCxyz', 'auth code ABCxyz', 'Release deadbeef', 'Build deadbeefcafebabe',
-      'ssn 123 45 6789', 'card 4111 1111 1111 1111', 'db01.corp.local', 'prod-db.internal',
-      '山田@example.com', 'alice@例え.テスト', 'PWD(N7zQ4p!)', '<DBPWD>V9mT2x!',
-      'private∕client.pem', 'private∖client.pem', '2125551212', '4155552671',
-      'futureInternalBlob', 'FUTURE_INTERNAL_LEFT_ABC', 'FUTURE_INTERNAL_RIGHT_XYZ',
-      'ROOTPAYLOADABC', 'ROOTPAYLOADABCR',
-      'https://internal.example/error?token=DATE_SECRET', 'DATE_SECRET'
-    ]) expect(allText).not.toContain(secret);
-
-    for (const unsafeName of [
-      '991122', 'ID: 991122', 'App 991122', 'APP_991122', 'App 991122: Source', '991122 - Source'
-    ]) {
-      const idOnly = buildDiffXlsxExportWithSafeDefault({
-        sourceBundle: { meta: { appName: 'Safe' } },
-        targetBundle: { meta: { appName: unsafeName } },
-        rows: [{ sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧名称', right: '新名称' }]
-      });
-      expect(await readAllEntryText(idOnly.blob)).not.toContain('991122');
-      expect(idOnly.filename).not.toContain('991122');
-    }
-
-    for (const shortExplicitId of ['Portal [9911]', 'ID: 8822']) {
-      const unsafeShortId = buildDiffXlsxExportWithSafeDefault({
-        sourceBundle: { meta: { appName: 'Safe' } },
-        targetBundle: { meta: { appName: shortExplicitId } },
-        rows: [{ sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: shortExplicitId, right: 'Safe target' }]
-      });
-      expect(await readAllEntryText(unsafeShortId.blob)).not.toContain(shortExplicitId);
-      expect(unsafeShortId.filename).not.toContain(shortExplicitId);
-    }
-
-    for (const unsafeCredentialName of [
-      'glpat-abcdefghijklmnopqrst',
-      'npm_abcdefghijklmnopqrstuvwxyz0123456789',
-      'session_key=abcdefghijklmnopqrstuv',
-      'P\u200BASSWORD=alpha1',
-      'alice\u200B@internal',
-      'Release deadbeef',
-      'Build deadbeefcafebabe',
-      '山田@example.com',
-      'alice@例え.テスト',
-      'PWD(N7zQ4p!)',
-      '<DBPWD>N7zQ4p!',
-      'Portal Guest 7'
-    ]) {
-      const credentialName = buildDiffXlsxExportWithSafeDefault({
-        sourceBundle: { meta: { appName: 'Safe' } },
-        targetBundle: { meta: { appName: unsafeCredentialName } },
-        rows: [{ sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧名称', right: '新名称' }]
-      });
-      expect(await readAllEntryText(credentialName.blob)).not.toContain(unsafeCredentialName);
-      expect(credentialName.filename).not.toContain(unsafeCredentialName);
-    }
-
-    const mismatchedIdNames = buildDiffXlsxExportWithSafeDefault({
-      sourceBundle: { appId: 202, meta: { appName: '顧客ポータル (App 991122)' } },
-      targetBundle: { appId: 303, meta: { appName: '(App 882233)' } },
-      rows: [{ sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧名称', right: '新名称' }]
-    });
-    const mismatchedIdText = await readAllEntryText(mismatchedIdNames.blob);
-    expect(mismatchedIdText).toContain('顧客ポータル');
-    for (const leakedId of ['991122', '882233']) {
-      expect(mismatchedIdText).not.toContain(leakedId);
-      expect(mismatchedIdNames.filename).not.toContain(leakedId);
-    }
-
-    const bracketedMismatchedIdNames = buildDiffXlsxExportWithSafeDefault({
-      sourceBundle: { appId: 202, meta: { appName: 'Customer Portal [App 991122]' } },
-      targetBundle: { appId: 303, meta: { appName: 'Customer Portal 【App 882233】' } },
-      rows: [{ sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧名称', right: '新名称' }]
-    });
-    const bracketedMismatchedIdText = await readAllEntryText(bracketedMismatchedIdNames.blob);
-    for (const leakedId of ['991122', '882233']) {
-      expect(bracketedMismatchedIdText).not.toContain(leakedId);
-      expect(bracketedMismatchedIdNames.filename).not.toContain(leakedId);
-    }
-
-    const bareBracketedIdNames = buildDiffXlsxExportWithSafeDefault({
-      sourceBundle: { appId: 202, meta: { appName: 'Customer Portal [991122]' } },
-      targetBundle: { appId: 303, meta: { appName: 'Customer Portal 【882233】' } },
-      rows: [{ sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧名称', right: '新名称' }]
-    });
-    const bareBracketedIdText = await readAllEntryText(bareBracketedIdNames.blob);
-    for (const leakedId of ['991122', '882233']) {
-      expect(bareBracketedIdText).not.toContain(leakedId);
-      expect(bareBracketedIdNames.filename).not.toContain(leakedId);
-    }
-
-    const knownShortIds = buildDiffXlsxExportWithSafeDefault({
-      sourceBundle: { appId: 202, guestId: 7, meta: { appName: 'Portal [２０２]' } },
-      targetBundle: { appId: 303, meta: { appName: 'Safe target' } },
-      rows: [
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: 'Portal #202', right: 'Portal [7]' },
-        { sectionKey: 'appInfo', type: 'changed', path: 'appInfo.name', left: 'Portal 202', right: 'Portal 7' }
-      ]
-    });
-    const knownShortIdText = await readAllEntryText(knownShortIds.blob);
-    for (const technicalName of ['Portal [２０２]', 'Portal [202]', 'Portal #202', 'Portal [7]', 'Portal 202', 'Portal 7']) {
-      expect(knownShortIdText).not.toContain(technicalName);
-      expect(knownShortIds.filename).not.toContain(technicalName);
-    }
-
-    const readableEmbeddedIds = buildDiffXlsxExportWithSafeDefault({
-      sourceBundle: { appId: 202, meta: { appName: '顧客202管理' } },
-      targetBundle: { appId: 7, meta: { appName: 'Dept7Sales' } },
-      rows: [{ sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧名称', right: '新名称' }]
-    });
-    const readableEmbeddedIdText = await readAllEntryText(readableEmbeddedIds.blob);
-    expect(readableEmbeddedIdText).toContain('顧客202管理');
-    expect(readableEmbeddedIdText).toContain('Dept7Sales');
-    expect(readableEmbeddedIds.filename).toContain('顧客202管理');
-    expect(readableEmbeddedIds.filename).toContain('Dept7Sales');
-
-    const embeddedMismatchedIdNames = buildDiffXlsxExportWithSafeDefault({
-      sourceBundle: { appId: 202, meta: { appName: 'Customer App 991122 Prod' } },
-      targetBundle: { appId: 303, meta: { appName: 'Customer New App 882233 Prod' } },
-      rows: [{ sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧名称', right: '新名称' }]
-    });
-    const embeddedMismatchedIdText = await readAllEntryText(embeddedMismatchedIdNames.blob);
-    for (const leakedId of ['991122', '882233']) {
-      expect(embeddedMismatchedIdText).not.toContain(leakedId);
-      expect(embeddedMismatchedIdNames.filename).not.toContain(leakedId);
-    }
-
-    const epochDate = buildDiffXlsxBlobWithSafeDefault({
-      comparedAt: 1787270400000,
-      rows: [{ sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧名称', right: '新名称' }]
-    });
-    expect(await readWorksheetByName(epochDate, '比較概要')).toContain('JST');
-
-    const readableNames = buildDiffXlsxExportWithSafeDefault({
-      sourceBundle: { meta: { appName: 'CustomerPortalRelease2024Production' } },
-      targetBundle: { meta: { appName: 'Department7CustomerManagement2024' } },
-      rows: [{ sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧名称', right: '新名称' }]
-    });
-    const readableNameText = await readAllEntryText(readableNames.blob);
-    expect(readableNameText).toContain('CustomerPortalRelease2024Production');
-    expect(readableNameText).toContain('Department7CustomerManagement2024');
-    expect(readableNames.filename).toContain('CustomerPortalRelease2024Production_vs_Department7CustomerManagement2024');
-
-    const readableEnglishFieldLabels = buildDiffXlsxBlobWithSafeDefault({
-      sourceBundle: { sections: { fieldSettings: { properties: { amount: { code: 'amount', label: 'OldAmount', type: 'NUMBER' } } } } },
-      targetBundle: { sections: { fieldSettings: { properties: { amount: { code: 'amount', label: 'Amount', type: 'NUMBER' } } } } },
-      rows: [{ sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.amount.label', left: 'OldAmount', right: 'Amount' }]
-    });
-    const readableEnglishFieldLabelText = await readAllEntryText(readableEnglishFieldLabels);
-    expect(readableEnglishFieldLabelText).toContain('OldAmount');
-    expect(readableEnglishFieldLabelText).toContain('Amount');
+    expect(result.filename).toContain('Customer App 991122 Prod_vs_Portal Guest 7');
+    expect((list.match(/<row r="/g) || []).length).toBe(7);
+    for (const value of [
+      'TARGET_APP_661144', 'TARGET_APP_771155',
+      'VIEW_ID_LEFT', 'VIEW_ID_RIGHT',
+      'https://internal.example/left', 'https://internal.example/right',
+      '090-1234-5678', 'owner@example.internal',
+      'LONG_VALUE_END', 'ROOTPAYLOADABC', 'ROOTPAYLOADABCR',
+      '991122', '882233'
+    ]) expect(allText).toContain(value);
+    expect(allText).not.toContain('詳細は安全のため非表示');
+    expect(allText).not.toContain('詳細非表示');
+    expect(allText).not.toContain('詳細を省略した変更');
   });
 
   it('builds summary, one filterable list, per-section sheets, and an issue sheet', async () => {

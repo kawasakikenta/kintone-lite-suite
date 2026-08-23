@@ -155,7 +155,7 @@ describe('diff lite result presentation', () => {
 
     expect(summarizeLiteDiffRows([movedRow])).toMatchObject({ actual: 1, changed: 1, moved: 1 });
     expect(overview).toContain('内容変更 0 / 移動 1');
-    expect(overview).toContain('aria-label="内容が異なる 0件を表示" disabled');
+    expect(overview).not.toContain('data-kus-dl-type-filter="changed"');
     expect(overview).toContain('aria-label="並び順 1件を表示"');
     expect(rows).not.toContain('kus-dl-section__stat--changed');
     expect(rows).toContain('kus-dl-section__stat--moved">移動 1</span>');

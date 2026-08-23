@@ -9,7 +9,7 @@ import {
   getIssueSideLabel,
   stableStringify
 } from '../utils.js';
-import { stringifyRowValueForDiff } from './export.js';
+import { stringifyForDiff, stringifyRowValueForDiff } from './export.js';
 import {
   isSensitiveSameDiffRow,
   SENSITIVE_DIFF_SECTION_KEYS,
@@ -90,7 +90,7 @@ export interface DiffXlsxBundle {
 }
 
 export interface DiffXlsxContext {
-  /** 顧客共有用は技術情報を除外する。未指定時も安全側の customer を採用する。 */
+  /** customer は顧客レビュー向けの簡潔な構成。実差分値はマスキングしない。未指定時も customer を採用する。 */
   audience?: 'customer' | 'internal';
   rows: DiffXlsxRow[];
   fetchIssues?: DiffXlsxFetchIssue[];
@@ -2067,35 +2067,9 @@ function buildIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
 }
 
 // ---------------------------------------------------------------------------
-// Customer-safe workbook
+// Customer workbook
 // ---------------------------------------------------------------------------
 
-const CUSTOMER_HIGH_RISK_SECTION_KEYS: ReadonlySet<string> = new Set([
-  'customizeSettings',
-  'pluginSettings',
-  'appAcl',
-  'fieldAcl',
-  'recordPermissions',
-  'notifications',
-  'perRecordNotifications',
-  'reminderNotifications'
-]);
-
-const CUSTOMER_VISIBLE_SECTION_KEYS: ReadonlySet<string> = new Set([
-  'appSettings',
-  'appInfo',
-  'fieldSettings',
-  'layoutSettings',
-  'formSettings',
-  'viewSettings',
-  'reportSettings',
-  'processSettings',
-  'actionSettings',
-  'categories'
-]);
-
-const CUSTOMER_HIDDEN_DETAIL = '詳細は安全のため非表示';
-const CUSTOMER_TEXT_LIMIT = 240;
 const CUSTOMER_REVIEW_STATUS_VALUES = ['未レビュー', 'レビュー中', 'レビュー済み', '対象外'];
 const CUSTOMER_ACTION_DECISION_VALUES = ['未判断', '対応する', '対応しない', '保留', '対象外'];
 
@@ -2107,7 +2081,6 @@ interface CustomerDiffItem {
   before: string;
   after: string;
   reviewNote: string;
-  omittedTechnicalValues: number;
 }
 
 function customerSectionLabel(key: string): string {
@@ -2126,42 +2099,7 @@ function customerSectionLabel(key: string): string {
 }
 
 function customerAppName(bundle: DiffXlsxBundle | undefined, fallback: string): string {
-  let name = String(extractAppNameFromBundle(bundle) || '').normalize('NFKC').trim();
-  const numericIds = customerBundleNumericIds(bundle);
-  if (numericIds.includes(name)) name = '';
-  const idLabel = '(?:App|アプリ|Guest|ゲスト|Space|Thread)';
-  if (/^\d+$/.test(name)
-    || /^ID\s*[:#-]?\s*\d+$/i.test(name)
-    || new RegExp(`^${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*\\d+$`, 'i').test(name)) {
-    name = '';
-  }
-  for (const id of numericIds) {
-    const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    name = name
-      .replace(new RegExp(`\\(\\s*(?:${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*)?${escapedId}(?!\\d)\\s*\\)`, 'gi'), '')
-      .replace(new RegExp(`${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*${escapedId}(?!\\d)`, 'gi'), '')
-      .replace(new RegExp(`(^|[^\\p{L}\\p{N}])${escapedId}(?![\\p{L}\\p{N}])`, 'gu'), '$1');
-  }
-  name = name
-    .replace(new RegExp(`[\\(（\\[［【]\\s*${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*\\d+\\s*[\\)）\\]］】]`, 'gi'), '')
-    .replace(/[\(（\[［【]\s*\d{5,}\s*[\)）\]］】]/g, '')
-    .replace(new RegExp(`${idLabel}[\\s_=-]*(?:ID[\\s_=-]*)?[:#-]?[\\s_=-]*\\d{5,}`, 'gi'), '')
-    .replace(new RegExp(`^${idLabel}\\s*\\d+\\s*[:：-]\\s*`, 'i'), '')
-    .replace(new RegExp(`\\s+${idLabel}\\s+\\d{5,}\\s*$`, 'i'), '');
-  if (!numericIds.length) {
-    name = name
-      .replace(new RegExp(`\\(\\s*${idLabel}\\s*(?:ID\\s*)?[:#-]?\\s*\\d+\\s*\\)`, 'gi'), '')
-      .replace(new RegExp(`${idLabel}\\s+ID\\s*[:#-]?\\s*\\d+`, 'gi'), '')
-      .replace(new RegExp(`${idLabel}[\\s_=-]*(?:ID[\\s_=-]*)?[:#-]?[\\s_=-]*\\d+[\\s_=-]*(?:[:：-][\\s_-]*)?`, 'gi'), '')
-      .replace(/^\d{4,}\s*[-:：]\s*/, '');
-  }
-  name = name
-    .replace(/\(\s*\)/g, '')
-    .replace(/[（\[［【]\s*[）\]］】]/g, '')
-    .replace(/\s{2,}/g, ' ')
-    .replace(/^[\s\-:：#]+|[\s\-:：#]+$/g, '')
-    .trim();
-  if (customerUnsafeRawLabelText(name)) name = '';
+  const name = String(extractAppNameFromBundle(bundle) || '').normalize('NFKC').trim();
   return name || fallback;
 }
 
@@ -2182,507 +2120,32 @@ function customerChangeType(row: DiffXlsxRow): CustomerDiffItem['changeType'] {
   return '変更';
 }
 
-function customerAggregatedChangeType(rows: DiffXlsxRow[]): CustomerDiffItem['changeType'] {
-  const types = new Set(rows.map(customerChangeType));
-  return types.size === 1 ? [...types][0] : '変更';
-}
-
-function customerSensitivePath(path: string): boolean {
-  const rawPath = String(path || '');
-  const normalized = rawPath.toLowerCase();
-  const rawSegments = rawPath
-    .replace(/\[(?:\d+|[^\]]+)\]/g, '.')
-    .split('.')
-    .map((segment) => segment.replace(/[^A-Za-z0-9_-]/g, ''))
-    .filter(Boolean);
-  const segments = rawSegments.map((segment) => segment.toLowerCase());
-  if (segments.some((segment) => /(?:token|secret|password|passwd|credential|authorization|privatekey|private_key|apikey|api_key)/.test(segment))) {
-    return true;
-  }
-  if (rawSegments.some((segment) => segment.toLowerCase() === 'id'
-    || /(?:Id|ID)$/.test(segment)
-    || /(?:^|[_-])id$/i.test(segment)
-    || /^(?:app|guest|space|thread|view|report|record|field)id$/i.test(segment)
-    || /^(?:uuid|guid)$/i.test(segment))) return true;
-  if (segments.some((segment) => ['revision', 'filekey', '_body', 'body', 'config', 'expression', 'formula'].includes(segment))) return true;
-  const defaultValueIndex = segments.indexOf('defaultvalue');
-  if (defaultValueIndex >= 0 && segments.slice(defaultValueIndex + 1).some((segment) => ['code', 'name', 'login', 'id'].includes(segment))) {
-    return true;
-  }
-  if (/(?:^|\.)destapp\.app(?:\.|$)/.test(normalized)) return true;
-  if (/(?:^|\.)(?:relatedapp|lookup|referencetable)(?:\.|[\s\S]*\.)app(?:\.|$)/.test(normalized)) return true;
-  if (/(?:^|\.)entity\.(?:code|login)(?:\.|$)/.test(normalized)) return true;
-  if (segments.some((segment) => /^(?:assignee|entities|recipients|targets|members|users?|groups?|organizations?)$/.test(segment))) return true;
-  if (segments.some((segment) => ['creator', 'modifier', 'createdby', 'updatedby', 'login'].includes(segment))) return true;
-  return false;
-}
-
-function customerLooksLikeOpaqueToken(text: string): boolean {
-  return /[A-Za-z0-9_~+/=-]{24,}/.test(String(text || ''));
-}
-
-function customerKnownSafePath(row: DiffXlsxRow): boolean {
-  const sectionKey = sectionKeyOfRow(row);
-  const path = String(row.path || '');
-  if (!path || path === sectionKey) {
-    return [row.left, row.right].every((value) => value == null || typeof value === 'object');
-  }
-  if (customerSensitivePath(path)) return false;
-
-  const fieldInfo = extractFieldPathInfo(path);
-  if (sectionKey === 'fieldSettings' && fieldInfo) {
-    const tokens = Array.isArray(fieldInfo.tailTokens) ? fieldInfo.tailTokens : [];
-    if (!tokens.length) return true;
-    const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
-    const simple = /^(?:label|name|code|type|noLabel|required|unique|defaultValue(?:\.\d+)?|defaultNowValue|minLength|maxLength|minValue|maxValue|hideExpression|protocol|displayScale|digit|unit|unitPosition|align|format|thumbnailSize|index)$/;
-    const option = /^options\.[^.]+(?:\.(?:label|index))?$/;
-    const lookup = /^lookup\.(?:relatedKeyField|filterCond|sort|lookupPickerFields\.\d+|retrieveFields\.\d+|fieldMappings\.\d+\.(?:field|relatedField))$/;
-    const referenceTable = /^referenceTable\.(?:filterCond|sort|size|displayFields\.\d+|condition\.(?:field|relatedField))$/;
-    if (!(simple.test(settingKey) || option.test(settingKey) || lookup.test(settingKey) || referenceTable.test(settingKey))) return false;
-    if (option.test(settingKey)) {
-      const optionName = String(tokens[1] || '');
-      return !!optionName && !customerUnsafeRawLabelText(optionName) && optionName.length <= 120;
-    }
-    return true;
-  }
-
-  const safePatterns: Record<string, RegExp[]> = {
-    appSettings: [
-      /^appSettings\.(?:name|theme|enableThumbnails|firstMonthOfFiscalYear|numberPrecision)$/
-    ],
-    appInfo: [
-      /^appInfo\.name$/
-    ],
-    layoutSettings: [
-      /^layoutSettings\.layout\[\d+\](?:\.fields\[\d+\])*(?:\.(?:type|code|label|value|elementId|size(?:\.(?:width|height|innerHeight))?))?$/
-    ],
-    viewSettings: [
-      /^viewSettings\.views\.[^.[\]]+(?:\.(?:type|name|index|filterCond|sort|pager|device)|\.fields\[\d+\])?$/
-    ],
-    processSettings: [
-      /^processSettings\.(?:enable|states\.[^.[\]]+(?:\.(?:name|index))?|actions\[\d+\](?:\.(?:name|from|to|filterCond))?)$/
-    ],
-    actionSettings: [
-      /^actionSettings\.actions\[\d+\](?:\.(?:name|index|from|to|filterCond))?$/
-    ]
-  };
-  return (safePatterns[sectionKey] || []).some((pattern) => pattern.test(path));
-}
-
-function customerUnsafeText(text: string, allowReadableLongToken = false): boolean {
-  text = String(text || '').normalize('NFKC')
-    .replace(/[\u2044\u2215\u29F5\uFF0F]/g, '/')
-    .replace(/[\u00A5\u2216\uFF3C]/g, '\\');
-  return /[\p{Cc}\p{Cf}\p{Cs}]/u.test(text)
-    || /(?:https?|ftp):\/\/|\bwww\./i.test(text)
-    || /\b(?:data|blob|javascript|vbscript|mailto|ssh|git|s3|gs|jdbc|kintone|chrome-extension):/i.test(text)
-    || /(?:^|[^A-Za-z0-9])(?:file:\/\/|[a-z]:[\\/]|\\\\[^\\\s]+\\)/i.test(text)
-    || /(?:^|[^A-Za-z0-9])\/(?!\/)[^\s/]+(?:\/[^\s/]+)*/u.test(text)
-    || /(?:^|[^A-Za-z0-9])(?:\.{1,2}|~)[\\/](?:[^\\/\r\n]+[\\/])*[^\\/\r\n]+/.test(text)
-    || /(?:^|[\s"'=])(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+(?:\.(?:js|ts|json|env|pem|key|crt|log|txt|csv|xlsx?))?(?::\d+:\d+)?/i.test(text)
-    || /(?:^|[^A-Za-z0-9])(?:%[A-Za-z_][A-Za-z0-9_]*%|\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*))[\\/][^\r\n]+/.test(text)
-    || /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}_-]{1,63}(?:\.[\p{L}\p{N}_-]{1,63})*/iu.test(text)
-    || customerContainsPhoneLike(text)
-    || customerContainsPaymentCardLike(text)
-    || /\b(?:TypeError|ReferenceError|SyntaxError|RangeError|Error|Exception):/i.test(text)
-    || /\b(?:ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|ENOENT|EACCES|ERR_[A-Z0-9_]+|Traceback|Unhandled)\b/i.test(text)
-    || /\bat\s+\S+\s*\([^\r\n]+:\d+:\d+\)/.test(text)
-    || /\bat\s+[^\r\n]+:\d+:\d+\b/.test(text)
-    || /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/.test(text)
-    || /\b\d{2,4}-\d{2,4}-\d{3,4}\b/.test(text)
-    || /(?:^|[^0-9])(?:\+?81|0)[\s-]?(?:\d[\s-]?){9,10}(?:$|[^0-9])/.test(text)
-    || /(?:^|[^0-9])\+\d{1,3}[\s().-]*(?:\d[\s().-]*){7,14}(?:$|[^0-9])/.test(text)
-    || /\b(?:ssn|social[\s_-]*security)\s*[:#=-]?\s*\d(?:[\s-]*\d){8}\b/i.test(text)
-    || /\b(?:card|credit[\s_-]*card|visa|mastercard)\s*[:#=-]?\s*\d(?:[\s-]*\d){12,18}\b/i.test(text)
-    || /\b[\p{L}\p{N}][\p{L}\p{N}.-]*\.(?:internal|corp|local|lan|intra)\b/iu.test(text)
-    || /(?:^|[^A-Za-z0-9])(?:JSESSIONID|PHPSESSID|SESSIONID|AUTHSESSION|SID|CSRF(?:TOKEN)?)\s*[:=]\s*[^;,\s]+/i.test(text)
-    || /(?:^|[^A-Za-z0-9])(?:Cookie|Set-Cookie)\s*:\s*[^\r\n]+/i.test(text)
-    || /(?:^|[^A-Za-z0-9])(?:secret[\s_-]*key|passphrase|session|cookie|auth[\s_-]*code|ssh[\s_-]*key|pin)\s*[:=]\s*[^;,\s]+/i.test(text)
-    || /(?:^|[^A-Za-z0-9])(?:passphrase|session|cookie|auth[\s_-]*code|pin)\s+[A-Za-z0-9._~+\/-]{4,}/i.test(text)
-    || /(?:^|[^A-Za-z0-9])[A-Za-z0-9_-]*(?:pwd|dbpass|sqlpass)\s*(?:\(|<|\[|\{)\s*[^)\]}>]+\s*(?:\)|>|\]|\})/i.test(text)
-    || /(?:^|[^A-Za-z0-9])(?:cfg\s*)?(?:[.\[]\s*)?["']?(?:[A-Za-z0-9_-]*(?:pwd|pass(?:word)?|token|secret|credential))["']?\s*\]?\s*[:=]\s*[^;,\s]+/i.test(text)
-    || /(?:^|[^A-Za-z0-9])(?:dsn|uid|server|host|port|data[\s_-]*source|database|[A-Za-z0-9_-]*(?:pwd|pass(?:word)?|token|secret|auth(?:orization)?|credential|access[\s_-]?key|client[\s_-]?secret))\s*[:=]\s*[^;,\s]+/i.test(text)
-    || /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/i.test(text)
-    || /\b(?:sk|rk|pk)[-_](?:(?:live|test|proj)[-_]?)?[A-Za-z0-9_-]{12,}\b/i.test(text)
-    || /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/i.test(text)
-    || /\bglpat-[A-Za-z0-9_-]{20,}\b/i.test(text)
-    || /\bnpm_[A-Za-z0-9]{30,}\b/i.test(text)
-    || /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/.test(text)
-    || /\bgh[pousr]_[A-Za-z0-9]{20,}\b/i.test(text)
-    || /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/.test(text)
-    || /(?:^|[^0-9a-f])[0-9a-f]{32,128}(?:$|[^0-9a-f])/i.test(text)
-    || /\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/i.test(text)
-    || /(?:commit|sha(?:1|256)?|hash)\s*[:=#-]?\s*[0-9a-f]{7,64}/i.test(text)
-    || /\b(?:release|build)\s+[0-9a-f]{7,31}\b/i.test(text)
-    || /\b(?:app|guest|space|thread)\s*(?:id)?\s*(?:[:=#]|\bin\b)/i.test(text)
-    || /(?:App|アプリ|Guest|ゲスト|Space|Thread)[\s_=-]*(?:ID[\s_=-]*)?[:#-]?[\s_=-]*\d{5,}/i.test(text)
-    || /(?:Guest|ゲスト|Space|Thread)[\s_=-]*(?:ID[\s_=-]*)?[:#-]?[\s_=-]*\d+/i.test(text)
-    || /(?:view|report|record|field|user|group|org(?:anization)?|client|tenant)[\s_-]*(?:id|code|login)\s*[:=#-]?\s*\S+/i.test(text)
-    || /(?:login|user[\s_-]?(?:id|code)|client[\s_-]?id|tenant[\s_-]?id)\s*[:=]\s*\S+/i.test(text)
-    || /(?:employee|member|account|owner|assignee|principal|subject|project)?[\s_-]*(?:id|code|login)\s+[A-Za-z0-9_-]+/i.test(text)
-    || /\b(?:appId|guestId|spaceId|threadId|fileKey|revision)\b/i.test(text)
-    || /(?:^|[^a-z0-9])(?:(?:api|access|account|session|signing)[\s_-]?key|token|secret|password|passwd|credential|authorization|private[\s_-]?key)(?:$|[^a-z0-9])/i.test(text)
-    || (!allowReadableLongToken && customerLooksLikeOpaqueToken(text));
-}
-
-function customerContainsPhoneLike(text: string): boolean {
-  return [...String(text || '').matchAll(/\+?\d[\d\s().-]{7,}\d/g)].some((match) => {
-    const digits = match[0].replace(/\D/g, '');
-    return digits.length >= 10 && digits.length <= 15;
-  });
-}
-
-function customerUnsafeLabelText(text: string): boolean {
-  const normalized = String(text || '').normalize('NFKC');
-  return customerUnsafeText(normalized, true)
-    || customerContainsPhoneLike(normalized)
-    || /(?:^|[^\p{L}\p{N}])ID\s*[:#-]?\s*\d+(?:$|[^\p{L}\p{N}])/iu.test(normalized)
-    || /[\(（\[［【]\s*\d+\s*[\)）\]］】]/u.test(normalized)
-    || /(?:^|[^0-9])\d{5,}(?:$|[^0-9])/.test(normalized);
-}
-
-function customerContainsPaymentCardLike(text: string): boolean {
-  return [...String(text || '').matchAll(/\d[\d\s-]{11,23}\d/g)].some((match) => {
-    const digits = match[0].replace(/\D/g, '');
-    if (digits.length < 13 || digits.length > 19) return false;
-    let sum = 0;
-    let double = false;
-    for (let index = digits.length - 1; index >= 0; index -= 1) {
-      let value = Number(digits[index]);
-      if (double) {
-        value *= 2;
-        if (value > 9) value -= 9;
-      }
-      sum += value;
-      double = !double;
-    }
-    return sum % 10 === 0;
-  });
-}
-
-function customerUnsafeRawLabelText(text: string): boolean {
-  const normalized = String(text || '').normalize('NFKC');
-  return customerUnsafeLabelText(normalized)
-    || /[@:;=,"'\\/\[\]{}<>]/.test(normalized)
-    || /(?:^|[^0-9a-f])(?=[0-9a-f]{8,31}(?:$|[^0-9a-f]))(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,31}(?:$|[^0-9a-f])/i.test(normalized)
-    || /^(?=[0-9a-f]{7,12}$)(?=.*\d)[0-9a-f]+$/i.test(normalized);
-}
-
-function customerLooksLikeFieldCodeLabel(text: string, ...knownCodes: string[]): boolean {
-  const value = String(text || '').trim();
-  if (!value) return true;
-  if (knownCodes.some((code) => code && value === String(code).trim())) return true;
-  return /^[a-z][a-z0-9]*$/.test(value) || /[_$-]/.test(value);
-}
-
-function customerFieldLabelMap(bundle?: DiffXlsxBundle): Map<string, string> {
-  const labels = new Map<string, string>();
-  const visit = (properties: Record<string, any>) => {
-    for (const [fallbackCode, definition] of Object.entries(properties || {})) {
-      if (!definition || typeof definition !== 'object' || Array.isArray(definition)) continue;
-      const code = String((definition as any).code || fallbackCode).trim();
-      const label = String((definition as any).label || (definition as any).name || '').trim();
-      const codeLikeLabel = customerLooksLikeFieldCodeLabel(label, code);
-      if (code && label && !codeLikeLabel && !customerUnsafeRawLabelText(label)
-        && !customerContainsKnownBundleId(label, bundle) && label.length <= 120) labels.set(code, label);
-      const children = (definition as any).fields;
-      if (children && typeof children === 'object' && !Array.isArray(children)) visit(children);
-    }
-  };
-  visit(fieldSettingsProperties(bundle));
-  return labels;
-}
-
-function customerFieldLabelForCode(
-  code: string,
-  preferredBundle?: DiffXlsxBundle,
-  fallbackBundle?: DiffXlsxBundle
-): string {
-  const normalized = String(code || '').trim();
-  if (!normalized) return '';
-  return customerFieldLabelMap(preferredBundle).get(normalized)
-    || customerFieldLabelMap(fallbackBundle).get(normalized)
-    || '';
-}
-
-function customerFieldTypeForCode(
-  code: string,
-  preferredBundle?: DiffXlsxBundle,
-  fallbackBundle?: DiffXlsxBundle
-): string {
-  const normalized = String(code || '').trim();
-  if (!normalized) return '';
-  const find = (bundle?: DiffXlsxBundle): string => {
-    let found = '';
-    const visit = (properties: Record<string, any>) => {
-      for (const [fallbackCode, definition] of Object.entries(properties || {})) {
-        if (found || !definition || typeof definition !== 'object' || Array.isArray(definition)) continue;
-        const fieldCode = String((definition as any).code || fallbackCode).trim();
-        if (fieldCode === normalized) {
-          found = String((definition as any).type || '').trim();
-          continue;
-        }
-        const children = (definition as any).fields;
-        if (children && typeof children === 'object' && !Array.isArray(children)) visit(children);
-      }
-    };
-    visit(fieldSettingsProperties(bundle));
-    return found;
-  };
-  return find(preferredBundle) || find(fallbackBundle);
-}
-
-function customerFieldOptionValuesForCode(
-  code: string,
-  preferredBundle?: DiffXlsxBundle,
-  fallbackBundle?: DiffXlsxBundle
-): Set<string> {
-  const normalized = String(code || '').trim();
-  const values = new Set<string>();
-  if (!normalized) return values;
-  const visitBundle = (bundle?: DiffXlsxBundle) => {
-    const visit = (properties: Record<string, any>) => {
-      for (const [fallbackCode, definition] of Object.entries(properties || {})) {
-        if (!definition || typeof definition !== 'object' || Array.isArray(definition)) continue;
-        const fieldCode = String((definition as any).code || fallbackCode).trim();
-        if (fieldCode === normalized) {
-          const options = (definition as any).options;
-          if (options && typeof options === 'object' && !Array.isArray(options)) {
-            for (const [optionKey, option] of Object.entries(options)) {
-              if (!customerUnsafeRawLabelText(String(optionKey))) values.add(String(optionKey));
-              if (option && typeof option === 'object' && !Array.isArray(option)) {
-                const label = String((option as any).label || '').trim();
-                if (label && !customerUnsafeRawLabelText(label)) values.add(label);
-              }
-            }
-          }
-        }
-        const children = (definition as any).fields;
-        if (children && typeof children === 'object' && !Array.isArray(children)) visit(children);
-      }
-    };
-    visit(fieldSettingsProperties(bundle));
-  };
-  visitBundle(preferredBundle);
-  visitBundle(fallbackBundle);
-  return values;
-}
-
-function customerFieldLooksLikePersonalIdentifier(
-  code: string,
-  preferredBundle?: DiffXlsxBundle,
-  fallbackBundle?: DiffXlsxBundle
-): boolean {
-  const label = customerFieldLabelForCode(code, preferredBundle, fallbackBundle);
-  return /(?:^|[_\s-])(?:ssn|social[\s_-]*security|card|credit[\s_-]*card|pan|my[\s_-]*number|phone|tel|mobile)(?:$|[_\s-])/i
-    .test(`${code} ${label}`)
-    || /(?:個人番号|マイナンバー|電話|携帯|カード番号)/.test(label);
-}
-
-function customerConditionLiteral(raw: string): string | null {
-  const value = raw.trim();
-  if (customerUnsafeText(value)) return null;
-  if (/^-?\d+(?:\.\d+)?$/.test(value)) return value;
-  const quoted = value.match(/^"([^"\\]*)"$/) || value.match(/^'([^'\\]*)'$/);
-  if (!quoted || customerUnsafeText(quoted[1])) return null;
-  return `「${quoted[1]}」`;
-}
-
-function customerHumanizeExpression(
-  text: string,
-  path: string,
-  preferredBundle?: DiffXlsxBundle,
-  fallbackBundle?: DiffXlsxBundle
-): string | null {
-  const leaf = path.match(/(?:^|\.)([^.[\]]+)$/)?.[1] || '';
-  if (leaf === 'sort') {
-    const match = text.match(/^\s*([A-Za-z0-9_\u0080-\uffff-]+)\s+(asc|desc)\s*$/i);
-    if (!match) return null;
-    const field = customerFieldLabelForCode(match[1], preferredBundle, fallbackBundle);
-    if (!field) return null;
-    return `${field}（${match[2].toLowerCase() === 'asc' ? '昇順' : '降順'}）`;
-  }
-  if (leaf !== 'filterCond') return null;
-
-  const inMatch = text.match(/^\s*([A-Za-z0-9_\u0080-\uffff-]+)\s+(not\s+in|in)\s*\(([^()]*)\)\s*$/i);
-  if (inMatch) {
-    const field = customerFieldLabelForCode(inMatch[1], preferredBundle, fallbackBundle);
-    const fieldType = customerFieldTypeForCode(inMatch[1], preferredBundle, fallbackBundle);
-    if (!['RADIO_BUTTON', 'CHECK_BOX', 'MULTI_SELECT', 'DROP_DOWN'].includes(fieldType)) return null;
-    const rawValues = inMatch[3].split(',').map((value) => value.trim()).filter(Boolean);
-    const allowedOptions = customerFieldOptionValuesForCode(inMatch[1], preferredBundle, fallbackBundle);
-    const optionValues = rawValues.map((raw) => {
-      const quoted = raw.match(/^"([^"\\]*)"$/) || raw.match(/^'([^'\\]*)'$/);
-      return quoted?.[1] ?? null;
-    });
-    if (!allowedOptions.size || optionValues.some((value) => value == null || !allowedOptions.has(value))) return null;
-    const values = rawValues.map(customerConditionLiteral);
-    if (!field || values.length === 0 || values.some((value) => value == null)) return null;
-    const joined = values.length === 2
-      ? `${values[0]}または${values[1]}`
-      : values.length > 2
-        ? `${values.slice(0, -1).join('、')}、または${values[values.length - 1]}`
-        : values[0];
-    const negative = /not\s+in/i.test(inMatch[2]);
-    if (values.length === 1) return `${field}が${joined}${negative ? 'ではない' : ''}`;
-    return negative ? `${field}が${joined}のいずれでもない` : `${field}が${joined}`;
-  }
-
-  const comparison = text.match(/^\s*([A-Za-z0-9_\u0080-\uffff-]+)\s*(<=|>=|!=|=|<|>)\s*(.+?)\s*$/);
-  if (!comparison) return null;
-  const field = customerFieldLabelForCode(comparison[1], preferredBundle, fallbackBundle);
-  const fieldType = customerFieldTypeForCode(comparison[1], preferredBundle, fallbackBundle);
-  if (customerFieldLooksLikePersonalIdentifier(comparison[1], preferredBundle, fallbackBundle)) return null;
-  if (!['NUMBER', 'CALC', 'RADIO_BUTTON', 'CHECK_BOX', 'MULTI_SELECT', 'DROP_DOWN'].includes(fieldType)) return null;
-  if (['NUMBER', 'CALC'].includes(fieldType) && !/^-?\d+(?:\.\d+)?$/.test(comparison[3].trim())) return null;
-  if (['RADIO_BUTTON', 'CHECK_BOX', 'MULTI_SELECT', 'DROP_DOWN'].includes(fieldType)) {
-    const quoted = comparison[3].match(/^"([^"\\]*)"$/) || comparison[3].match(/^'([^'\\]*)'$/);
-    const allowedOptions = customerFieldOptionValuesForCode(comparison[1], preferredBundle, fallbackBundle);
-    if (!quoted || !allowedOptions.has(quoted[1])) return null;
-  }
-  const value = customerConditionLiteral(comparison[3]);
-  if (!field || value == null) return null;
-  const operatorLabels: Record<string, string> = {
-    '=': `${field}が${value}`,
-    '!=': `${field}が${value}ではない`,
-    '>': `${field}が${value}より大きい`,
-    '>=': `${field}が${value}以上`,
-    '<': `${field}が${value}より小さい`,
-    '<=': `${field}が${value}以下`
-  };
-  return operatorLabels[comparison[2]] || null;
-}
-
-function looksLikeTechnicalPath(text: string, sectionKey: string): boolean {
-  const value = String(text || '').trim();
-  return !value
-    || value === sectionKey
-    || value.startsWith(`${sectionKey}.`)
-    || /\[[0-9]+\]/.test(value)
-    || /^(?:[A-Za-z_$][\w$]*\.){2,}[A-Za-z_$][\w$]*$/.test(value);
-}
-
-function customerLayoutItemLabel(
-  row: DiffXlsxRow,
-  sourceBundle?: DiffXlsxBundle,
-  targetBundle?: DiffXlsxBundle
-): string {
-  const path = String(row.path || '');
-  const match = path.match(/^layoutSettings\.layout\[(\d+)\](?:\.(.+))?$/);
-  if (!match) return '';
-  const rowIndex = Number(match[1]);
-  const preferredBundle = row.type === 'removed' ? sourceBundle : targetBundle;
-  const fallbackBundle = row.type === 'removed' ? targetBundle : sourceBundle;
-  const layoutAt = (bundle?: DiffXlsxBundle) => bundle?.sections?.layoutSettings?.layout?.[rowIndex];
-  let entity = layoutAt(preferredBundle) || layoutAt(fallbackBundle) || null;
-  const parts = [`レイアウト ${rowIndex + 1}行目`];
-  for (const fieldMatch of path.matchAll(/\.fields\[(\d+)\]/g)) {
-    const fieldIndex = Number(fieldMatch[1]);
-    entity = entity && typeof entity === 'object' && !Array.isArray(entity)
-      ? (entity as Record<string, any>).fields?.[fieldIndex]
-      : null;
-    const code = entity && typeof entity === 'object' && !Array.isArray(entity)
-      ? String((entity as Record<string, any>).code || '').trim()
-      : '';
-    const label = customerFieldLabelForCode(code, preferredBundle, fallbackBundle);
-    parts.push(label || `フィールド ${fieldIndex + 1}`);
-  }
-  const leaf = path.match(/(?:^|\.)([^.[\]]+)$/)?.[1] || '';
-  const propLabels: Record<string, string> = {
-    type: '種別',
-    code: 'フィールド',
-    fields: 'フィールド',
-    elementId: '要素',
-    label: 'ラベル',
-    value: '初期値',
-    size: 'サイズ',
-    width: '横幅',
-    height: '高さ',
-    innerHeight: '入力欄の高さ'
-  };
-  if (leaf && leaf !== 'layout' && leaf !== 'fields') parts.push(propLabels[leaf] || '設定');
-  return parts.join(' / ');
-}
-
-function customerViewFieldItemLabel(
-  row: DiffXlsxRow,
-  sourceBundle?: DiffXlsxBundle,
-  targetBundle?: DiffXlsxBundle
-): string {
-  const path = String(row.path || '');
-  const match = path.match(/^viewSettings\.views\.([^.[\]]+)\.fields\[(\d+)\](?:\.|$)/);
-  if (!match) return '';
-  const rawViewName = String(match[1] || '').trim();
-  const viewName = rawViewName && !customerUnsafeRawLabelText(rawViewName)
-    && !customerContainsKnownBundleId(rawViewName, sourceBundle, targetBundle) && rawViewName.length <= 80
-    ? rawViewName
-    : '一覧';
-  const preferredBundle = row.type === 'removed' ? sourceBundle : targetBundle;
-  const fallbackBundle = row.type === 'removed' ? targetBundle : sourceBundle;
-  const rawCode = row.type === 'removed' ? row.left : row.right;
-  const fieldLabel = typeof rawCode === 'string'
-    ? customerFieldLabelForCode(rawCode, preferredBundle, fallbackBundle)
-    : '';
-  return fieldLabel
-    ? `${viewName} / 表示フィールド「${fieldLabel}」`
-    : `${viewName} / 表示フィールド`;
-}
-
 function customerItemLabel(
   row: DiffXlsxRow,
   sourceBundle?: DiffXlsxBundle,
   targetBundle?: DiffXlsxBundle
 ): string {
-  const key = sectionKeyOfRow(row);
-  const section = customerSectionLabel(key);
-  const path = String(row.path || '');
+  const sectionKey = sectionKeyOfRow(row);
+  const sectionLabel = customerSectionLabel(sectionKey);
+  const path = String(row.path || '').trim();
   if (row._stateRenameNotice) return 'ステータス名';
-  if (customerSensitivePath(path) || !customerKnownSafePath(row)) return `${section}の設定情報`;
 
   const fieldInfo = extractFieldPathInfo(path);
   if (fieldInfo) {
     const identity = fieldDisplayIdentity(row, fieldInfo, { rows: [], sourceBundle, targetBundle });
     const setting = fieldSettingIdentity(fieldInfo);
+    const fieldCode = String(identity.fieldCode || '').trim();
     const fieldName = String(identity.fieldName || '').trim();
-    const safeSetting = String(setting.settingLabel || '設定')
-      .replace(/参照するアプリID/g, '参照するアプリ')
-      .replace(/\bID\b/gi, '識別情報');
-    const safeFieldName = fieldName
-      && fieldName !== String(identity.fieldCode || '').trim()
-      && !customerUnsafeRawLabelText(fieldName)
-      && !customerContainsKnownBundleId(fieldName, sourceBundle, targetBundle)
-      && fieldName.length <= 120
-      ? fieldName
-      : 'フィールド';
-    const candidate = setting.settingKey === '(field)'
-      ? safeFieldName
-      : `${safeFieldName} / ${safeSetting}`;
-    return !customerUnsafeLabelText(candidate)
-      && !customerContainsKnownBundleId(candidate, sourceBundle, targetBundle) && candidate.length <= 120
-      ? candidate
-      : `${section}の設定`;
+    const fieldLabel = fieldName && fieldName !== fieldCode
+      ? fieldCode ? `${fieldName}（${fieldCode}）` : fieldName
+      : fieldCode || fieldName || 'フィールド';
+    return setting.settingKey === '(field)'
+      ? fieldLabel
+      : `${fieldLabel} / ${setting.settingLabel}`;
   }
 
-  const layout = customerLayoutItemLabel(row, sourceBundle, targetBundle);
-  if (layout && !customerUnsafeLabelText(layout)
-    && !customerContainsKnownBundleId(layout, sourceBundle, targetBundle)) return layout;
-
-  const viewField = customerViewFieldItemLabel(row, sourceBundle, targetBundle);
-  if (viewField && !customerUnsafeLabelText(viewField)
-    && !customerContainsKnownBundleId(viewField, sourceBundle, targetBundle)) return viewField;
-
-  const plainPathLabels: Record<string, string> = {
-    'appSettings.name': 'アプリ名',
-    'appSettings.description': '説明',
-    'appSettings.theme': 'テーマ',
-    'appSettings.icon': 'アイコン',
-    'appSettings.enableThumbnails': 'サムネイル表示',
-    'appSettings.firstMonthOfFiscalYear': '会計年度の開始月',
-    'appSettings.numberPrecision': '数値の精度',
-    'appInfo.name': 'アプリ名',
-    'appInfo.description': '説明'
-  };
-  if (plainPathLabels[path]) return plainPathLabels[path];
+  const layoutLabel = layoutRowItemLabel(row, sourceBundle, targetBundle);
+  if (layoutLabel) return layoutLabel;
 
   try {
     const decoded = decodeRow(row as any);
@@ -2693,266 +2156,29 @@ function customerItemLabel(
       ].filter((part): part is string => !!part)
         .map((part) => part === '絞込条件' ? '絞り込み条件' : part === 'ソート' ? '並び順' : part);
       const readable = [...new Set(parts)].join(' / ') || decoded.oneLineSummary;
-      if (readable && !looksLikeTechnicalPath(readable, key) && !customerUnsafeLabelText(readable)
-        && !customerContainsKnownBundleId(readable, sourceBundle, targetBundle)) {
-        return String(readable).slice(0, 120);
-      }
+      if (readable) return String(readable);
     }
   } catch {
-    // 顧客向けでは技術パスへフォールバックしない。
+    // 人向けラベルを作れない場合は、値を隠さず技術パスへフォールバックする。
   }
 
   const explicit = String(row.label || '').trim();
-  if (explicit && !looksLikeTechnicalPath(explicit, key) && !customerUnsafeRawLabelText(explicit)
-    && !customerContainsKnownBundleId(explicit, sourceBundle, targetBundle)) {
-    return explicit.slice(0, 120);
-  }
-  return `${section}の設定`;
+  if (explicit && explicit !== path) return explicit;
+  return path || `${sectionLabel}の設定`;
 }
 
-function customerFieldDefinitionSummary(value: unknown): string | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const definition = value as Record<string, any>;
-  const type = String(definition.type || '').trim();
-  const parts = [
-    type ? `種類: ${FIELD_TYPE_LABELS[type] || '設定項目'}` : '',
-    typeof definition.required === 'boolean' ? `必須: ${definition.required ? 'はい' : 'いいえ'}` : '',
-    typeof definition.unique === 'boolean' ? `重複禁止: ${definition.unique ? 'はい' : 'いいえ'}` : '',
-    definition.options && typeof definition.options === 'object'
-      ? `選択肢: ${Object.keys(definition.options).length}件`
-      : '',
-    definition.fields && typeof definition.fields === 'object'
-      ? `テーブル内項目: ${Object.keys(definition.fields).length}件`
-      : '',
-    definition.lookup && typeof definition.lookup === 'object' ? 'ルックアップ設定あり' : '',
-    definition.referenceTable && typeof definition.referenceTable === 'object' ? '関連レコード設定あり' : '',
-    String(definition.expression || '').trim() ? '計算式あり' : ''
-  ].filter(Boolean);
-  return parts.length ? `${parts.join('\n')}\n（${CUSTOMER_HIDDEN_DETAIL}）` : null;
-}
-
-function customerBundleNumericIds(...bundles: Array<DiffXlsxBundle | undefined>): string[] {
-  return [...new Set(bundles.flatMap((bundle) => [
-    bundle?.appId,
-    bundle?.guestId,
-    (bundle as any)?.spaceId,
-    (bundle as any)?.threadId
-  ]).map((value) => String(value ?? '').trim()).filter((value) => /^\d+$/.test(value)))];
-}
-
-function customerContainsKnownBundleId(text: string, ...bundles: Array<DiffXlsxBundle | undefined>): boolean {
-  const normalized = String(text || '').normalize('NFKC');
-  return customerBundleNumericIds(...bundles).some((id) => {
-    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'u').test(normalized);
-  });
-}
-
-function customerNumericScalar(value: unknown): boolean {
-  return typeof value === 'number' && Number.isFinite(value)
-    || typeof value === 'string' && /^-?\d+(?:\.\d+)?$/.test(value.trim());
-}
-
-function customerScalarValueMatchesPath(
-  path: string,
-  value: unknown,
-  fieldInfo: ReturnType<typeof extractFieldPathInfo>,
-  preferredBundle?: DiffXlsxBundle,
-  fallbackBundle?: DiffXlsxBundle
-): boolean {
-  if (fieldInfo) {
-    const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
-    const root = settingKey.split('.')[0];
-    if (root === '(field)') return false;
-    if (['label', 'name', 'unit'].includes(root)) {
-      return typeof value === 'string' && !customerUnsafeRawLabelText(value)
-        && (root === 'unit' || !customerLooksLikeFieldCodeLabel(value, fieldInfo.activeCode, fieldInfo.rootCode))
-        && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
-    }
-    if (root === 'type') return typeof value === 'string' && !!FIELD_TYPE_LABELS[value];
-    if (['noLabel', 'required', 'unique', 'defaultNowValue', 'hideExpression', 'digit'].includes(root)) {
-      return typeof value === 'boolean';
-    }
-    if (['minLength', 'maxLength', 'minValue', 'maxValue', 'displayScale', 'size', 'thumbnailSize', 'index'].includes(root)) {
-      return customerNumericScalar(value);
-    }
-    if (root === 'defaultValue') return true;
-    if (['code', 'relatedKeyField', 'field', 'relatedField', 'displayFields', 'lookupPickerFields', 'retrieveFields'].includes(root)) {
-      return typeof value === 'string';
-    }
-    if (root === 'options') {
-      const leaf = String(fieldInfo.leafKey || '');
-      return leaf === 'index'
-        ? customerNumericScalar(value)
-        : leaf === 'label'
-          ? typeof value === 'string' && !customerUnsafeRawLabelText(value)
-            && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120
-          : false;
-    }
-    return false;
-  }
-
-  if (/^(?:appSettings|appInfo)\.name$/.test(path)) {
-    return typeof value === 'string' && !customerUnsafeRawLabelText(value)
-      && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
-  }
-  if (path === 'appSettings.theme') {
-    return typeof value === 'string' && /^(?:WHITE|RED|BLUE|GREEN|YELLOW|BLACK)$/i.test(value);
-  }
-  if (path === 'appSettings.enableThumbnails') return typeof value === 'boolean';
-  if (path === 'appSettings.firstMonthOfFiscalYear') {
-    return customerNumericScalar(value) && Number(value) >= 1 && Number(value) <= 12;
-  }
-  if (path === 'appSettings.numberPrecision') return false;
-  if (/^layoutSettings\..*\.(?:width|height|innerHeight)$/.test(path)) return customerNumericScalar(value);
-  if (/^layoutSettings\..*\.type$/.test(path)) {
-    return typeof value === 'string' && /^(?:ROW|SUBTABLE|GROUP|LABEL|SPACER|HR|REFERENCE_TABLE)$/.test(value);
-  }
-  if (/^layoutSettings\..*\.(?:code)$/.test(path)) return typeof value === 'string';
-  if (/^layoutSettings\..*\.(?:label|value)$/.test(path)) {
-    return typeof value === 'string' && !customerUnsafeRawLabelText(value)
-      && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
-  }
-  if (/^viewSettings\..*\.index$/.test(path)) return customerNumericScalar(value);
-  if (/^viewSettings\..*\.pager$/.test(path)) return typeof value === 'boolean';
-  if (/^viewSettings\..*\.type$/.test(path)) {
-    return typeof value === 'string' && /^(?:LIST|CALENDAR|CUSTOM)$/.test(value);
-  }
-  if (/^(?:viewSettings|processSettings|actionSettings)\..*\.(?:name|from|to)$/.test(path)) {
-    return typeof value === 'string' && !customerUnsafeRawLabelText(value)
-      && !customerContainsKnownBundleId(value, preferredBundle, fallbackBundle) && value.length <= 120;
-  }
-  if (/^(?:processSettings)\.enable$/.test(path)) return typeof value === 'boolean';
-  if (/^(?:processSettings|actionSettings)\..*\.index$/.test(path)) return customerNumericScalar(value);
-  if (/\.(?:filterCond|sort)$/.test(path)) return typeof value === 'string';
-  if (/\.fields\[\d+\]$/.test(path)) return typeof value === 'string';
-  return false;
-}
-
-function customerSafeValue(
-  row: DiffXlsxRow,
-  side: 'source' | 'target',
-  sourceBundle?: DiffXlsxBundle,
-  targetBundle?: DiffXlsxBundle
-): { text: string; omitted: boolean } {
+function customerDisplayedValue(row: DiffXlsxRow, side: 'source' | 'target'): string {
   const missing = side === 'source'
     ? row.left === undefined || row.type === 'added'
     : row.right === undefined || row.type === 'removed';
-  if (missing) return { text: '（設定なし）', omitted: false };
-
-  const path = String(row.path || '');
-  if (customerSensitivePath(path) || !customerKnownSafePath(row)) {
-    return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-  }
+  if (missing) return '（設定なし）';
 
   const value = side === 'source' ? row.left : row.right;
-  const preferredBundle = side === 'source' ? sourceBundle : targetBundle;
-  const fallbackBundle = side === 'source' ? targetBundle : sourceBundle;
-  if (row._stateRenameNotice) {
-    const stateName = value && typeof value === 'object' && !Array.isArray(value)
-      ? String((value as Record<string, unknown>).name || '').trim()
-      : '';
-    const safe = !!stateName
-      && stateName.length <= 120
-      && !customerUnsafeRawLabelText(stateName)
-      && !customerContainsKnownBundleId(stateName, preferredBundle, fallbackBundle);
-    return safe ? { text: stateName, omitted: false } : { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-  }
-  const fieldInfo = extractFieldPathInfo(path);
-  if (fieldInfo) {
-    const definition = fieldDefinitionAt(preferredBundle, fieldInfo) || fieldDefinitionAt(fallbackBundle, fieldInfo);
-    const fieldType = String(definition?.type || '');
-    const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
-    const anyDefaultValue = /^defaultValue(?:\.|$)/.test(settingKey);
-    const safeDefaultValueType = /^(?:NUMBER|CALC|RADIO_BUTTON|CHECK_BOX|MULTI_SELECT|DROP_DOWN|DATE|TIME|DATETIME)$/.test(fieldType);
-    const fieldCode = String(fieldInfo.activeCode || fieldInfo.rootCode || '');
-    if (anyDefaultValue && customerFieldLooksLikePersonalIdentifier(fieldCode, preferredBundle, fallbackBundle)) {
-      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-    }
-    if (anyDefaultValue && !safeDefaultValueType) {
-      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-    }
-    if (anyDefaultValue && value != null && value !== '') {
-      const scalar = String(value);
-      const validTypedScalar = fieldType === 'NUMBER' || fieldType === 'CALC'
-        ? /^-?\d+(?:\.\d+)?$/.test(scalar)
-        : fieldType === 'DATE'
-          ? /^\d{4}-\d{2}-\d{2}$/.test(scalar)
-          : fieldType === 'TIME'
-            ? /^\d{2}:\d{2}(?::\d{2})?$/.test(scalar)
-            : fieldType === 'DATETIME'
-              ? /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(scalar) && Number.isFinite(new Date(scalar).getTime())
-              : true;
-      if (!validTypedScalar) return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-    }
-    if (anyDefaultValue && /^(?:RADIO_BUTTON|CHECK_BOX|MULTI_SELECT|DROP_DOWN)$/.test(fieldType)) {
-      const fieldCode = String(fieldInfo.activeCode || fieldInfo.rootCode || '');
-      const allowedOptions = customerFieldOptionValuesForCode(fieldCode, preferredBundle, fallbackBundle);
-      if (!allowedOptions.has(String(value))) {
-        return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-      }
-    }
-  }
-  if (value && typeof value === 'object') {
-    if (fieldInfo && fieldSettingIdentity(fieldInfo).settingKey === '(field)') {
-      const summary = customerFieldDefinitionSummary(value);
-      return { text: summary || `設定内容（${Object.keys(value as object).length}項目・${CUSTOMER_HIDDEN_DETAIL}）`, omitted: true };
-    }
-    const count = Array.isArray(value) ? value.length : Object.keys(value as object).length;
-    const unit = Array.isArray(value) ? '件' : '項目';
-    return { text: `設定内容（${count}${unit}・${CUSTOMER_HIDDEN_DETAIL}）`, omitted: true };
-  }
-  if (value === undefined) return { text: '（未設定）', omitted: false };
-  if (value === null) return { text: '（値なし）', omitted: false };
-  if (!customerScalarValueMatchesPath(path, value, fieldInfo, preferredBundle, fallbackBundle)) {
-    return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-  }
-  if (typeof value === 'boolean') {
-    const settingKey = fieldInfo ? fieldSettingIdentity(fieldInfo).settingKey : '';
-    return { text: humanizeFieldSettingValue(value, settingKey), omitted: false };
-  }
-
-  const text = String(value);
-  if (text === '') return { text: '（空欄）', omitted: false };
-  if (customerUnsafeText(text) || /^\s*[\[{][\s\S]*[\]}]\s*$/.test(text)) {
-    return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-  }
-  if (text.length > CUSTOMER_TEXT_LIMIT || text.split(/\r?\n/).length > 5) {
-    return { text: `長文（${text.length}文字・${CUSTOMER_HIDDEN_DETAIL}）`, omitted: true };
-  }
-  if (/^(?:appSettings|appInfo)\.name$/.test(path) && customerUnsafeRawLabelText(text)) {
-    return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-  }
-  if (path === 'appSettings.theme'
-    && !/^(?:WHITE|RED|BLUE|GREEN|YELLOW|BLACK)$/i.test(text)) {
-    return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-  }
-  if (/\.(?:width|height|innerHeight)$/i.test(path) && /^-?\d+(?:\.\d+)?$/.test(text)) {
-    return { text: `${text}px`, omitted: false };
-  }
-  const fieldLabel = customerFieldLabelForCode(text, preferredBundle, fallbackBundle);
-  if (fieldLabel) return { text: fieldLabel, omitted: false };
-  if (/(?:\.fields\[\d+\]|\.code|\.relatedKeyField|\.relatedField|\.keyField|\.lookupPickerFields\[\d+\]|\.retrieveFields\[\d+\]|\.displayFields\[\d+\])$/i.test(path)) {
-    return { text: 'フィールド（表示名を確認できません）', omitted: true };
-  }
-  if (/\.(?:filterCond|sort)$/i.test(path)) {
-    const humanized = customerHumanizeExpression(text, path, preferredBundle, fallbackBundle);
-    if (humanized) return { text: humanized, omitted: false };
-    return {
-      text: /\.sort$/i.test(path)
-        ? '並び順が変更されました（詳細非表示）'
-        : '条件が変更されました（詳細非表示）',
-      omitted: true
-    };
-  }
-  if (fieldInfo) {
-    const settingKey = fieldSettingIdentity(fieldInfo).settingKey;
-    if (settingKey === 'type' && typeof value === 'string' && !FIELD_TYPE_LABELS[value]) {
-      return { text: CUSTOMER_HIDDEN_DETAIL, omitted: true };
-    }
-    return { text: humanizeFieldSettingValue(value, settingKey), omitted: false };
-  }
-  return { text, omitted: false };
+  if (value === undefined) return '（未設定）';
+  if (value === null) return '（値なし）';
+  if (value === '') return '（空欄）';
+  if (typeof value === 'string') return value;
+  return stringifyForDiff(value);
 }
 
 function customerReviewNote(row: DiffXlsxRow): string {
@@ -2990,51 +2216,20 @@ function customerReviewNote(row: DiffXlsxRow): string {
   return row._nonActionable ? `${note} この行は確認専用で、自動反映の対象外です。` : note;
 }
 
-function customerHiddenReviewLocation(sourceHidden: boolean, targetHidden: boolean): string {
-  if (sourceHidden && targetHidden) return '比較元と比較先の両方の環境';
-  if (sourceHidden) return '比較元の環境';
-  return '比較先の環境';
-}
-
 function buildCustomerDiffItems(ctx: DiffXlsxContext): CustomerDiffItem[] {
   const actualRows = (ctx.rows || []).filter((row) => !row._displayOnly && row.type !== 'same');
-  const grouped = groupRowsBySection(actualRows);
   const items: CustomerDiffItem[] = [];
-  for (const [sectionKey, rows] of grouped) {
+  for (const [sectionKey, rows] of groupRowsBySection(actualRows)) {
     const sectionLabel = customerSectionLabel(sectionKey);
-    if (CUSTOMER_HIGH_RISK_SECTION_KEYS.has(sectionKey) || !CUSTOMER_VISIBLE_SECTION_KEYS.has(sectionKey)) {
-      const sourceHidden = rows.some((row) => row.type !== 'added' && row.left !== undefined);
-      const targetHidden = rows.some((row) => row.type !== 'removed' && row.right !== undefined);
-      const reviewLocation = customerHiddenReviewLocation(sourceHidden, targetHidden);
-      items.push({
-        sectionKey,
-        sectionLabel,
-        item: `${sectionLabel}（${rows.length}件の変更）`,
-        changeType: customerAggregatedChangeType(rows),
-        before: CUSTOMER_HIDDEN_DETAIL,
-        after: CUSTOMER_HIDDEN_DETAIL,
-        reviewNote: `設定内容は安全のため非表示です。詳細は権限のある担当者が${reviewLocation}で確認してください。`,
-        omittedTechnicalValues: rows.length
-      });
-      continue;
-    }
     for (const row of rows) {
-      const before = customerSafeValue(row, 'source', ctx.sourceBundle, ctx.targetBundle);
-      const after = customerSafeValue(row, 'target', ctx.sourceBundle, ctx.targetBundle);
-      const omitted = before.omitted || after.omitted;
-      const reviewLocation = customerHiddenReviewLocation(before.omitted, after.omitted);
-      const baseReviewNote = customerReviewNote(row);
       items.push({
         sectionKey,
         sectionLabel,
         item: customerItemLabel(row, ctx.sourceBundle, ctx.targetBundle),
         changeType: customerChangeType(row),
-        before: before.text,
-        after: after.text,
-        reviewNote: omitted
-          ? `${baseReviewNote} 詳細は権限のある担当者が${reviewLocation}で確認してください。`
-          : baseReviewNote,
-        omittedTechnicalValues: omitted ? 1 : 0
+        before: customerDisplayedValue(row, 'source'),
+        after: customerDisplayedValue(row, 'target'),
+        reviewNote: customerReviewNote(row)
       });
     }
   }
@@ -3114,7 +2309,6 @@ function buildCustomerSummarySheet(ctx: DiffXlsxContext, items: CustomerDiffItem
       : '正常完了（選択範囲）';
   const sourceName = customerAppName(ctx.sourceBundle, '比較元のアプリ');
   const targetName = customerAppName(ctx.targetBundle, '比較先のアプリ');
-  const omitted = items.reduce((sum, item) => sum + item.omittedTechnicalValues, 0);
   const comparedScopes = ctx.scopes?.length ? ctx.scopes : [...new Set(items.map((item) => item.sectionKey))];
   const rows: (string | number | null)[][] = [
     ['kintone 設定差分確認レポート', '', '', '', '', ''],
@@ -3122,10 +2316,10 @@ function buildCustomerSummarySheet(ctx: DiffXlsxContext, items: CustomerDiffItem
     ['比較結果', verdict, '比較処理', completeness, '', '変更一覧を開く'],
     [filtered ? '掲載変更件数' : '変更件数', `${counts.actual}件`, '比較日時', customerDateTime(ctx.comparedAt), '', ''],
     ['追加', `${counts.added}件`, '削除', `${counts.removed}件`, '変更', `${counts.contentChanged}件`],
-    ['要素の移動', `${counts.moved}件`, '詳細を省略した変更', omitted ? `${omitted}件（変更一覧で確認）` : '0件', '同一証跡の省略', droppedSame ? `${droppedSame}件（変更判定への影響なし）` : '0件'],
+    ['要素の移動', `${counts.moved}件`, '変更一覧の明細', `${items.length}件`, '同一証跡の省略', droppedSame ? `${droppedSame}件（変更判定への影響なし）` : '0件'],
     ['比較した設定領域', customerScopeLabel(comparedScopes), '', '', '', ''],
     ['掲載範囲', ctx.exportMode === 'filtered' ? '上記範囲内の一部' : '上記範囲内の全変更', '絞り込み', ctx.exportMode === 'filtered' ? 'あり' : 'なし', '比較条件の調整', hasCustomerComparisonAdjustments(ctx) ? 'あり' : 'なし'],
-    ['掲載内容', '変更点のみ。上記以外の設定領域は比較していません。', '', '', '', ''],
+    ['掲載内容', '変更点ごとの比較元・比較先の設定値をマスキングせず収録しています。32,767文字を超える値はExcelセル上限を明記して省略します。上記以外の設定領域は比較していません。', '', '', '', ''],
     ['このレポートは比較元と比較先の現在設定の差を示すもので、設定の反映・移行計画ではありません。重要度、業務への影響、対応要否は自動判定していません。', '', '', '', '', ''],
     ['', '', '', '', '', ''],
     ['分類別件数', '', '', '', '', ''],
@@ -3154,7 +2348,7 @@ function buildCustomerSummarySheet(ctx: DiffXlsxContext, items: CustomerDiffItem
   cellStyles[5][0] = 'changeMoved';
   cellStyles[5][1] = 'metricValueMoved';
   cellStyles[5][2] = 'summaryLabel';
-  cellStyles[5][3] = omitted ? 'warning' : 'info';
+  cellStyles[5][3] = 'info';
   cellStyles[5][4] = 'summaryLabel';
   cellStyles[5][5] = 'info';
   cellStyles[6][0] = 'summaryLabel';
@@ -3271,16 +2465,16 @@ function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[])
     rowHeights.push(readableDiffRowHeight([
       { value: item.sectionLabel, width: 15 },
       { value: item.item, width: 26 },
-      { value: item.before, width: 25 },
-      { value: item.after, width: 25 },
+      { value: item.before, width: 30 },
+      { value: item.after, width: 30 },
       { value: item.reviewNote, width: 28 }
-    ], 112));
+    ], 180));
   });
   const lastRow = items.length + 2;
   return {
     name: '変更一覧',
     rows,
-    colWidths: [10, 15, 26, 12, 25, 25, 28, 14, 15, 14, 22],
+    colWidths: [10, 15, 26, 12, 30, 30, 28, 14, 15, 14, 22],
     rowStyles,
     cellStyles,
     headerRow: 2,
@@ -3322,15 +2516,16 @@ function customerIssueSide(side: unknown): string {
 function buildCustomerIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
   if (!customerIncomplete(ctx)) return null;
   const rows: (string | number | null)[][] = [
-    ['このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。', '', '', ''],
-    ['分類', '対象', '確認状態', '説明']
+    ['このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。取得・打切り情報はマスキングせず収録しています。', '', '', '', ''],
+    ['分類', '対象', '確認状態', '説明', '取得・打切り情報（原文）']
   ];
   for (const issue of ctx.fetchIssues || []) {
     rows.push([
       customerSectionLabel(String(issue.sectionKey || issue.section || '')),
       customerIssueSide(issue.side),
       '取得できませんでした',
-      'この範囲は比較結果に含まれていません。再取得して確認してください。'
+      'この範囲は比較結果に含まれていません。再取得して確認してください。',
+      stringifyForDiff(issue)
     ]);
   }
   for (const issue of ctx.partialIssues || []) {
@@ -3338,7 +2533,8 @@ function buildCustomerIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
       customerSectionLabel(String(issue.sectionKey || issue.section || '')),
       customerIssueSide(issue.side),
       '一部のみ確認',
-      '取得できた範囲だけを比較しています。必要に応じて再取得してください。'
+      '取得できた範囲だけを比較しています。必要に応じて再取得してください。',
+      stringifyForDiff(issue)
     ]);
   }
   if (customerHasDiffTruncation(ctx.truncation)) {
@@ -3356,14 +2552,23 @@ function buildCustomerIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
           ? 'この範囲は確認できていません。条件を分けて再比較してください。'
           : status === 'partial'
             ? '確認できた件数は全体の一部です。条件を分けて再比較してください。'
-            : '範囲の確認は完了していますが、表示を一部省略しています。'
+            : '範囲の確認は完了していますが、表示を一部省略しています。',
+        stringifyForDiff({
+          truncated: ctx.truncation?.truncated,
+          actualDiffIncomplete: ctx.truncation?.actualDiffIncomplete,
+          diffLimit: ctx.truncation?.diffLimit,
+          sameLimit: ctx.truncation?.sameLimit,
+          droppedDiff: ctx.truncation?.droppedDiff,
+          droppedSame: ctx.truncation?.droppedSame,
+          section
+        })
       ]);
     }
   }
   return {
     name: '確認できなかった範囲',
     rows,
-    colWidths: [24, 20, 22, 72],
+    colWidths: [24, 20, 22, 48, 60],
     rowStyles: rows.map(() => 'normal'),
     cellStyles: rows.map((_, index) => index === 0 ? ['warning'] : index === 1 ? [] : ['warning']),
     headerRow: 2,
@@ -3373,9 +2578,10 @@ function buildCustomerIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
       { value: row[0], width: 24 },
       { value: row[1], width: 20 },
       { value: row[2], width: 22 },
-      { value: row[3], width: 72 }
-    ], 118)),
-    merges: ['A1:D1'],
+      { value: row[3], width: 48 },
+      { value: row[4], width: 60 }
+    ], 180)),
+    merges: ['A1:E1'],
     showGridLines: false,
     print: {
       orientation: 'landscape',

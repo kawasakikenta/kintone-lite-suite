@@ -395,6 +395,7 @@ async function inspectPanelLayout(page) {
     );
     const rootRect = rectOf(root);
     const result = root.querySelector('[data-kus-dl-result],.kus-dl-result');
+    const sticky = root.querySelector('.kus-dl-sticky');
     const anchored = [...root.querySelectorAll('*')].filter((element) => {
       if (!visible(element)) return false;
       const position = getComputedStyle(element).position;
@@ -445,6 +446,7 @@ async function inspectPanelLayout(page) {
       rootHorizontalOverflow: root.scrollWidth > root.clientWidth + 2,
       resultHorizontalOverflow: !!result && result.scrollWidth > result.clientWidth + 2,
       rowsOutsideRoot,
+      stickyHeight: sticky && visible(sticky) ? rectOf(sticky).height : 0,
       fixedOverlaps,
       obscuredFocusables,
       valuePair,
@@ -465,6 +467,10 @@ function assertPanelLayout(state, label) {
   if (state.viewport.width <= 390 && state.valuePair) {
     assert.ok(state.valuePair.after.top >= state.valuePair.before.bottom - 2,
       `${label}: 狭幅でも比較元・比較先の値が横並びのままです`);
+  }
+  if (state.viewport.width <= 390 && state.stickyHeight) {
+    assert.ok(state.stickyHeight <= 140,
+      `${label}: 追従レビュー領域が高すぎます（${Math.round(state.stickyHeight)}px）`);
   }
 }
 
@@ -488,6 +494,25 @@ async function captureResponsivePanelMatrix(page, outDir) {
       assert.equal(await mobileValueToggle.evaluate((element) => element === document.activeElement), true,
         `${viewport.width}px: 差分値の展開後にフォーカスが失われました`);
       await mobileValueToggle.click();
+    }
+    if (viewport.width === 390) {
+      const changedMetric = page.locator('#kus-diff-lite [data-kus-dl-type-filter="changed"]').first();
+      assert.equal(await changedMetric.count(), 1, '390px: 変更件数から絞り込む操作がありません');
+      await changedMetric.click();
+      const mobileFilterFocus = await page.evaluate(() => {
+        const active = document.activeElement;
+        if (!(active instanceof HTMLElement)) return { inside: false, visible: false, label: '' };
+        const rect = active.getBoundingClientRect();
+        return {
+          inside: !!active.closest('#kus-diff-lite'),
+          visible: rect.width > 0 && rect.height > 0 && getComputedStyle(active).display !== 'none',
+          label: active.getAttribute('aria-label') || active.textContent || ''
+        };
+      });
+      assert.equal(mobileFilterFocus.inside, true, '390px: 件数から絞り込んだ後にフォーカスがパネル外へ失われました');
+      assert.equal(mobileFilterFocus.visible, true, '390px: 件数から絞り込んだ後に非表示要素へフォーカスしました');
+      assert.match(mobileFilterFocus.label, /種別|変更/, '390px: 絞り込み後のフォーカス先が条件を説明していません');
+      await page.locator('#kus-diff-lite select[aria-label="結果の種別絞り込み"]').selectOption('');
     }
     await page.waitForTimeout(100);
     const state = await inspectPanelLayout(page);
@@ -819,6 +844,10 @@ async function captureReport(context, variant, reportFile, outDir) {
     assert.ok((Number(await progressbar.getAttribute('aria-valuenow')) || 0) >= progressBeforeConfirm, 'after: 確認後にレビュー進捗が後退しました');
 
     // 確認状態をJSONへ保存し、解除後に読み戻せること。別レポート用JSONは原子的に拒否すること。
+    const reviewStateTools = page.locator('details.review-state-tools');
+    if (await reviewStateTools.count() && !(await reviewStateTools.getAttribute('open'))) {
+      await reviewStateTools.locator('summary').click();
+    }
     const reviewStateSave = page.locator('#reviewStateSaveBtn');
     const reviewStateFile = page.locator('#reviewStateFile');
     assert.equal(await reviewStateSave.count(), 1, 'after: レビュー状態JSON保存ボタンがありません');
@@ -1251,6 +1280,23 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     const xlsxButton = page.locator('#kus-diff-lite [data-kus-dl-export="xlsx"]');
     assert.equal(await xlsxButton.count(), 1, 'after: Excel保存ボタンが見つかりません');
     assert.equal(await xlsxButton.isEnabled(), true, 'after: 比較完了後もExcel保存ボタンが無効です');
+    const exportRange = page.locator('#kus-diff-lite select[aria-label="ファイルへ出力する差分の範囲"]');
+    await exportRange.selectOption('filtered');
+    await typeFilter.selectOption('changed');
+    const filteredRows = await page.locator('#kus-diff-lite [data-kus-dl-row-key]').count();
+    assert.ok(filteredRows > 0 && filteredRows < 18, 'after: 完了CTAの全件出力を検証する絞り込み状態を作れません');
+    const completionXlsxDownloadPromise = page.waitForEvent('download', { timeout: 30000 });
+    await completionXlsx.click();
+    const completionXlsxDownload = await completionXlsxDownloadPromise;
+    const completionXlsxFile = path.join(outDir, 'after-diff-list-completion-full.xlsx');
+    await completionXlsxDownload.saveAs(completionXlsxFile);
+    await page.waitForFunction(() => [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
+      .some((element) => /Excel.*全差分 \/ 18件/.test(element.textContent || '')), null, { timeout: 10000 });
+    assert.equal(await exportRange.inputValue(), 'filtered', 'after: 完了CTAが利用者の出力範囲選択を書き換えました');
+    await xlsxButton.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => !document.querySelector('#kus-diff-lite [data-kus-dl-export="xlsx"]')?.hasAttribute('disabled'), null, { timeout: 10000 });
+    await typeFilter.selectOption('');
+    await exportRange.selectOption('all');
     const xlsxDownloadPromise = page.waitForEvent('download', { timeout: 30000 });
     await xlsxButton.click();
     const xlsxDownload = await xlsxDownloadPromise;

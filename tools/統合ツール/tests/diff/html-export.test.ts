@@ -371,12 +371,12 @@ describe('diff/html export', () => {
     expect(script).toContain("確認済み ' + progress.reviewed + '件 / 全 ' + progress.total + '件");
     expect(script).toContain('data-review-next');
     expect(script).toContain('確認して次へ');
-    expect(script).toContain('未確認レビューを開始');
+    expect(html).toContain('未確認レビューを開始（2件）');
     expect(script).toContain('class="focus-context"');
     expect(script).toContain('id="focusContextPosition"');
     expect(script).toContain("focusPosition.textContent = (currentIndex >= 0 ? currentIndex + 1 : 0)");
-    expect(script).toContain('確認状態はJSONファイルで保存・読込できます');
-    expect(script).toContain('class="review-queue-actions"');
+    expect(html).toContain('レビュー状態を引き継ぐ');
+    expect(script).not.toContain('class="review-queue-actions"');
     expect(script).toContain('function reviewAndMoveNext(key)');
     expect(script).toContain('fieldJsonParts.groups.map((group) => group.reviewRow)');
     expect(script).toContain('rowLookup.set(reviewKey, reviewRow)');
@@ -708,7 +708,7 @@ describe('diff/html export', () => {
     expect(safeHtml).toContain('全設定スナップショットは収録していません');
     expect(safeHtml).toContain('変更された差分行の比較元・比較先の値は収録しています');
     expect(safeHtml).toContain('匿名化・機密情報のマスキング済みではありません');
-    expect(safeHtml).toContain('顧客への受け渡しには顧客向けExcelを使用してください');
+    expect(safeHtml).toContain('顧客向けExcelにも同じ差分値が収録され、取得不完全時はエラー等の原文も含まれるため、共有前に内容を確認してください');
     expect(safeHtml).toContain('<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note"');
     expect(safeHtml).not.toContain('<aside class="report-content-disclosure"');
     expect(safeHtml).toContain('ROW_SOURCE_VALUE');
@@ -884,7 +884,7 @@ describe('diff/html export', () => {
 
     expect(output.filename).toMatch(/\.html$/);
     expect(output.html).toContain('data-objective-counts');
-    expect(output.html).toContain('<span>両方に存在・内容が異なる</span><strong>0</strong>');
+    expect(output.html).toContain('<span>差分は見つかりませんでした</span><strong>0</strong>');
     expect(output.html).toContain('アプリ 101');
     expect(output.html).toContain('アプリ 202');
     expect(() => new Function(extractInlineScript(output.html))).not.toThrow();
@@ -911,7 +911,7 @@ describe('diff/html export', () => {
       normalizationPresetState: {}
     });
 
-    expect(output.html).toContain('<span>両方に存在・内容が異なる</span><strong>0</strong>');
+    expect(output.html).not.toContain('<span>両方に存在・内容が異なる</span><strong>0</strong>');
     expect(output.html).toContain('<span>並び順が異なる</span><strong>1</strong>');
     const script = extractInlineScript(output.html);
     expect(script).toContain("if (typeFilterValue === 'moved') return !!row.moved;");
@@ -935,7 +935,7 @@ describe('diff/html export', () => {
     const html = buildDiffHtml(sourceBundle, targetBundle, [], ['fieldSettings'], '', {});
     const script = extractInlineScript(html);
 
-    expect(html).toContain('<span>両方に存在・内容が異なる</span><strong>0</strong>');
+    expect(html).toContain('<span>内容は同じ</span><strong>1</strong>');
     expect(html).toContain('id="stat-same">1</b>');
     expect(script).toContain('"_id":"same:fieldSettings"');
   });
