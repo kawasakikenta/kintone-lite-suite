@@ -501,10 +501,11 @@
           unorderedArrays: true
         },
         appReferences: {
-          label: "アプリID/参照先アプリID",
-          sections: /* @__PURE__ */ new Set(["fieldSettings", "viewSettings", "reportSettings", "actionSettings", "customizeSettings", "appSettings", "pluginSettings"]),
-          ignoreKeys: /* @__PURE__ */ new Set(["app", "appid", "appId", "relatedApp", "relatedAppId", "targetApp", "sourceApp"]),
-          unorderedArrays: false
+          label: "アプリID（比較対象・参照先）",
+          sections: /* @__PURE__ */ new Set(["appInfo", "fieldSettings", "actionSettings"]),
+          ignoreKeys: /* @__PURE__ */ new Set(),
+          unorderedArrays: false,
+          ignoreAppReferencePaths: true
         },
         auditMeta: {
           label: "監査/リビジョン情報",
@@ -2123,11 +2124,17 @@ ${contextLine}`);
         continue;
       }
       if (!s && t) {
-        pushDiffRow(rows, { sectionKey: sec, section: label, type: "added", path: sec, left: void 0, right: t }, ignoreRules);
+        const normalizedTarget = normalizeSectionForCompare(sec, t, presetState);
+        if (normalizedTarget === t || hasComparableNormalizedContent(normalizedTarget)) {
+          pushDiffRow(rows, { sectionKey: sec, section: label, type: "added", path: sec, left: void 0, right: normalizedTarget }, ignoreRules);
+        }
         continue;
       }
       if (s && !t) {
-        pushDiffRow(rows, { sectionKey: sec, section: label, type: "removed", path: sec, left: s, right: void 0 }, ignoreRules);
+        const normalizedSource = normalizeSectionForCompare(sec, s, presetState);
+        if (normalizedSource === s || hasComparableNormalizedContent(normalizedSource)) {
+          pushDiffRow(rows, { sectionKey: sec, section: label, type: "removed", path: sec, left: normalizedSource, right: void 0 }, ignoreRules);
+        }
         continue;
       }
       if (!s && !t) continue;
@@ -2284,14 +2291,44 @@ ${contextLine}`);
     if (!active.length) return null;
     const ignoreKeys = /* @__PURE__ */ new Set();
     let unorderedArrays = false;
+    let ignoreAppReferencePaths = false;
     active.forEach((preset) => {
       preset.ignoreKeys?.forEach((key) => ignoreKeys.add(normalizeIgnoreToken(key)));
       if (preset.unorderedArrays) unorderedArrays = true;
+      if (preset.ignoreAppReferencePaths) ignoreAppReferencePaths = true;
     });
-    return { ignoreKeys, unorderedArrays };
+    return { ignoreKeys, unorderedArrays, ignoreAppReferencePaths };
   }
-  function normalizeArrayForSectionCompare(arr, config) {
-    const list = arr.map((item) => normalizeSectionValueForCompare(item, config));
+  function isAppReferenceIdPath(path) {
+    const normalizedPath = normalizeIgnoreToken(path);
+    if (normalizedPath === "appinfo.appid") return true;
+    if (normalizedPath.startsWith("fieldsettings.properties.")) {
+      if (/\.(?:lookup|referencetable)\.(?:relatedapp|targetapp|sourceapp)\.(?:app|appid)$/.test(normalizedPath)) return true;
+      if (/\.(?:lookup|referencetable)\.(?:relatedappid|targetappid|sourceappid)$/.test(normalizedPath)) return true;
+    }
+    if (/^actionsettings\.actions(?:\.|\[)/.test(normalizedPath)) {
+      if (/\.(?:destapp|targetapp|sourceapp)\.(?:app|appid)$/.test(normalizedPath)) return true;
+      if (/\.(?:destappid|targetappid|sourceappid)$/.test(normalizedPath)) return true;
+    }
+    return false;
+  }
+  function appendNormalizationPath(parentPath, key) {
+    return parentPath ? `${parentPath}.${key}` : String(key);
+  }
+  function appendNormalizationArrayPath(parentPath, index) {
+    return `${parentPath || ""}[${index}]`;
+  }
+  function hasComparableNormalizedContent(value) {
+    if (Array.isArray(value)) return value.length > 0;
+    if (value && typeof value === "object") return Object.keys(value).length > 0;
+    return value !== void 0;
+  }
+  function normalizeArrayForSectionCompare(arr, config, path = "") {
+    const list = arr.map((item, index) => normalizeSectionValueForCompare(
+      item,
+      config,
+      appendNormalizationArrayPath(path, index)
+    ));
     if (!config?.unorderedArrays) return list;
     return list.slice().sort((a, b) => {
       const sa = JSON.stringify(a);
@@ -2300,14 +2337,16 @@ ${contextLine}`);
       return sa < sb ? -1 : 1;
     });
   }
-  function normalizeSectionValueForCompare(value, config) {
-    if (Array.isArray(value)) return normalizeArrayForSectionCompare(value, config);
+  function normalizeSectionValueForCompare(value, config, path = "") {
+    if (Array.isArray(value)) return normalizeArrayForSectionCompare(value, config, path);
     if (value && typeof value === "object") {
       const out = {};
       Object.keys(value).sort().forEach((key) => {
         if (META_KEYS.has(key)) return;
         if (config?.ignoreKeys?.has(normalizeIgnoreToken(key))) return;
-        out[key] = normalizeSectionValueForCompare(value[key], config);
+        const childPath = appendNormalizationPath(path, key);
+        if (config?.ignoreAppReferencePaths && isAppReferenceIdPath(childPath)) return;
+        out[key] = normalizeSectionValueForCompare(value[key], config, childPath);
       });
       return out;
     }
@@ -2316,7 +2355,7 @@ ${contextLine}`);
   function normalizeSectionForCompare(sectionKey, value, presetState) {
     const config = getActiveDiffNormalizationConfig(sectionKey, presetState);
     if (!config) return value;
-    return normalizeSectionValueForCompare(value, config);
+    return normalizeSectionValueForCompare(value, config, sectionKey);
   }
   function getActiveDiffNormalizationLabels(presetState) {
     const stateMap = presetState || getDiffNormalizationPresetState();
@@ -13012,8 +13051,24 @@ ${label}` : `${direction}の値`;
     const labels = [...new Set((scopes || []).map((key) => customerSectionLabel(key)).filter(Boolean))];
     return labels.length ? labels.join("、") : "比較した設定範囲";
   }
-  function hasCustomerComparisonAdjustments(ctx) {
-    return !!String(ctx.ignoreKeys || "").trim() || Object.values(ctx.normalizationPresetState || {}).some(Boolean);
+  function customerComparisonExclusionLabel(ctx) {
+    const customerLabels = {
+      viewOrder: "ビュー順序",
+      permissionOrder: "権限順序",
+      generalArrayOrder: "一般配列順序",
+      fieldOrder: "フィールド順序",
+      processOrder: "プロセス順序",
+      appReferences: "アプリID（比較対象・参照先）",
+      auditMeta: "監査メタ情報",
+      labelsAndText: "ラベル・説明文",
+      appearance: "表示設定",
+      fileKeys: "ファイルキー",
+      enabledFlags: "有効フラグ"
+    };
+    const enabled = Object.entries(ctx.normalizationPresetState || {}).sort(([left], [right]) => left.localeCompare(right)).filter(([, value]) => !!value).map(([key]) => customerLabels[key] || NORMALIZATION_LABELS[key] || key);
+    const ignoreKeys = [...new Set(String(ctx.ignoreKeys || "").split(/[\n\r,、，;；]+/).map((key) => key.trim()).filter(Boolean))];
+    if (ignoreKeys.length) enabled.push(`個別指定 ${ignoreKeys.length}件`);
+    return enabled.length ? enabled.join("、") : "なし";
   }
   function customerChangeType(row) {
     if (row.moved || row.type === "moved") return "要素の移動";
@@ -13021,41 +13076,292 @@ ${label}` : `${direction}の値`;
     if (row.type === "removed") return "削除";
     return "変更";
   }
-  function customerItemLabel(row, sourceBundle, targetBundle) {
+  function customerPlainText(value, maxLength) {
+    const decoded = String(value ?? "").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&#(?:39|x27);/gi, "'").replace(/&#(\d+);/g, (match, code) => {
+      const codePoint = Number(code);
+      return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 1114111 ? String.fromCodePoint(codePoint) : match;
+    }).replace(/[\t\r\n ]+/g, " ").trim();
+    if (maxLength == null || decoded.length <= maxLength) return decoded;
+    return `${decoded.slice(0, Math.max(0, maxLength - 1))}…`;
+  }
+  function customerRichText(value, maxLength) {
+    const withoutMarkup = customerPlainText(value).replace(/<br\s*\/?>/gi, "\n").replace(/<\/(?:div|p|li|tr|h[1-6])>/gi, "\n").replace(/<[^>]*>/g, "");
+    return customerPlainText(withoutMarkup, maxLength);
+  }
+  function customerGenericSettingLabel(sectionKey, path, decodedLabel) {
+    const leaf = path.match(/(?:^|[.\]])([^.[\]]+)$/)?.[1] || "";
+    if (sectionKey === "customizeSettings" && (leaf === "_body" || leaf === "body")) {
+      return "ファイル内容";
+    }
+    if (sectionKey === "pluginSettings" && (leaf === "config" || leaf === "_config")) {
+      return "プラグイン設定内容";
+    }
+    if (sectionKey === "actionSettings" && /\.(?:(?:destApp|targetApp|sourceApp)\.(?:app|appId)|destAppId|targetAppId|sourceAppId)$/.test(path)) {
+      return "参照先アプリID";
+    }
+    if (sectionKey === "actionSettings" && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(path)) {
+      const mappingIndex = Number(path.match(/\.mappings\[(\d+)\]/)?.[1]);
+      return Number.isInteger(mappingIndex) ? `フィールドの対応付け（${mappingIndex + 1}件目）` : "フィールドの対応付け";
+    }
+    if ((sectionKey === "actionSettings" || sectionKey === "processSettings") && leaf === "filterCond") {
+      return "実行条件";
+    }
+    const labels = {
+      fileKey: "ファイル識別情報",
+      filterCond: "絞り込み条件",
+      sort: "並び順"
+    };
+    return labels[leaf] || decodedLabel || "設定内容";
+  }
+  function customerGenericTargetLabel(row, sectionKey, decodedTargets) {
+    const entityLabel = customerPlainText(row.entityLabel || "");
+    const entityKind = String(row.entityKind || "");
+    if (entityLabel) {
+      const prefixes = {
+        action: "アクション",
+        appAction: "アプリアクション",
+        plugin: "プラグイン",
+        jsCss: "カスタマイズ",
+        state: "ステータス",
+        report: "グラフ",
+        notification: "通知",
+        perRecordNotification: "レコード条件通知",
+        reminderNotification: "リマインダー通知"
+      };
+      const prefix = prefixes[entityKind];
+      return prefix ? `${prefix}「${entityLabel}」` : entityLabel;
+    }
+    const arrayKeyValue = row.arrayKeyValue;
+    if (arrayKeyValue != null && typeof arrayKeyValue !== "object") {
+      const value = customerPlainText(arrayKeyValue);
+      if (sectionKey === "pluginSettings") return `プラグイン「${value}」`;
+      if (sectionKey === "actionSettings") return `アプリアクション「${value}」`;
+      if (sectionKey === "processSettings") return `アクション「${value}」`;
+    }
+    const normalizedTargets = decodedTargets.map((target) => target.replace(/^デスクトップ\s*\/\s*JS$/i, "デスクトップ JavaScript").replace(/^モバイル\s*\/\s*JS$/i, "モバイル JavaScript").replace(/^デスクトップ\s*\/\s*CSS$/i, "デスクトップ CSS").replace(/^モバイル\s*\/\s*CSS$/i, "モバイル CSS"));
+    return normalizedTargets.length ? normalizedTargets.join(" › ") : `${customerSectionLabel(sectionKey)}全体`;
+  }
+  function customerActionItemParts(row, sourceBundle, targetBundle) {
+    const path = String(row.path || "");
+    if (sectionKeyOfRow(row) !== "actionSettings" || !/^actionSettings\.actions(?:\.|\[)/.test(path)) {
+      return null;
+    }
+    const actionNames = (bundle) => {
+      const actions = bundle?.sections?.actionSettings?.actions;
+      if (!actions || typeof actions !== "object" || Array.isArray(actions)) return [];
+      return Object.keys(actions).filter((name) => {
+        const prefix = `actionSettings.actions.${name}`;
+        return path === prefix || path.startsWith(`${prefix}.`) || path.startsWith(`${prefix}[`);
+      }).sort((left, right) => right.length - left.length);
+    };
+    const preferredBundle = row.type === "removed" ? sourceBundle : targetBundle;
+    const fallbackBundle = row.type === "removed" ? targetBundle : sourceBundle;
+    const entityKind = String(row.entityKind || "");
+    const entityLabel = customerPlainText(row.entityLabel || "");
+    const keyedActionName = row.arrayKey === "name" ? customerPlainText(row.arrayKeyValue || "") : "";
+    const pathActionName = customerPlainText(
+      /^actionSettings\.actions\.(.+?)(?=\.(?:mappings|destApp|targetApp|sourceApp|destAppId|targetAppId|sourceAppId|filterCond|name|index)(?:\.|\[|$)|$)/.exec(path)?.[1] || ""
+    );
+    const actionName = actionNames(preferredBundle)[0] || actionNames(fallbackBundle)[0] || (entityKind === "appAction" ? entityLabel : "") || keyedActionName || pathActionName || "名称不明";
+    let settingItem = customerGenericSettingLabel("actionSettings", path, "");
+    const actionPrefix = actionName === "名称不明" ? "" : `actionSettings.actions.${actionName}`;
+    if (actionPrefix && path === actionPrefix) {
+      settingItem = row.type === "added" ? "アクションを追加" : row.type === "removed" ? "アクションを削除" : "アクション全体";
+    }
+    return {
+      target: `アプリアクション「${actionName}」`,
+      settingItem
+    };
+  }
+  function customerFieldTargetLabel(row, info, sourceBundle, targetBundle) {
+    const identity = fieldDisplayIdentity(row, info, { rows: [], sourceBundle, targetBundle });
+    if (info.isSubField) {
+      const preferredBundle = row.type === "removed" ? sourceBundle : targetBundle;
+      const fallbackBundle = row.type === "removed" ? targetBundle : sourceBundle;
+      const preferredRoot = fieldSettingsProperties(preferredBundle)[info.rootCode];
+      const fallbackRoot = fieldSettingsProperties(fallbackBundle)[info.rootCode];
+      const rootName = customerPlainText(fieldDefinitionLabel(preferredRoot) || fieldDefinitionLabel(fallbackRoot) || info.rootCode);
+      const childName = customerPlainText(identity.fieldName.split(" > ").at(-1) || info.subFieldCode);
+      const root2 = rootName && rootName !== info.rootCode ? `テーブル「${rootName}」（コード: ${info.rootCode}）` : `テーブル「${info.rootCode}」`;
+      const child = childName && childName !== info.subFieldCode ? `フィールド「${childName}」（コード: ${info.subFieldCode}）` : `フィールド「${info.subFieldCode}」`;
+      return `${root2} › ${child}`;
+    }
+    const fieldCode = String(identity.fieldCode || info.rootCode || "").trim();
+    const fieldName = customerPlainText(identity.fieldName || fieldCode || "フィールド");
+    return fieldName && fieldName !== fieldCode ? `フィールド「${fieldName}」（コード: ${fieldCode}）` : `フィールド「${fieldCode || fieldName || "名称不明"}」`;
+  }
+  function customerFieldSettingLabel(settingKey, fallback) {
+    if (settingKey === "(field)") return "フィールド全体";
+    if (settingKey.startsWith("options.")) {
+      const tokens = settingKey.split(".");
+      const option = customerPlainText(tokens[1] || "名称不明");
+      const property = FIELD_SETTING_LABELS[tokens.at(-1) || ""] || fallback.split(" / ").at(-1) || "設定内容";
+      return `選択肢「${option}」：${property}`;
+    }
+    const prefix = settingKey.startsWith("lookup.") ? "ルックアップ" : settingKey.startsWith("referenceTable.") ? "関連レコード" : "";
+    const leaf = settingKey.split(".").filter(Boolean).at(-1) || "";
+    const exactLabels = {
+      "lookup.relatedApp.app": "参照先アプリID",
+      "lookup.relatedApp.appId": "参照先アプリID",
+      "lookup.relatedAppId": "参照先アプリID",
+      "referenceTable.relatedApp.app": "参照先アプリID",
+      "referenceTable.relatedApp.appId": "参照先アプリID",
+      "referenceTable.relatedAppId": "参照先アプリID",
+      "referenceTable.condition.field": "自アプリの照合フィールド",
+      "referenceTable.condition.relatedField": "参照先の照合フィールド",
+      "referenceTable.sort": "並び順",
+      "lookup.relatedKeyField": "コピー元のフィールド",
+      "lookup.fieldMappings": "ほかのフィールドのコピー",
+      "lookup.lookupPickerFields": "選択画面の表示フィールド"
+    };
+    let label = exactLabels[settingKey];
+    if (!label && /^referenceTable\.displayFields\.\d+$/.test(settingKey)) {
+      const index = Number(settingKey.split(".").at(-1));
+      label = `表示フィールド（${index + 1}件目）`;
+    }
+    if (!label && /^lookup\.(?:fieldMappings|lookupPickerFields)\.\d+/.test(settingKey)) {
+      const index = Number(settingKey.match(/\.(\d+)/)?.[1] || 0);
+      label = `${FIELD_SETTING_LABELS[settingKey.split(".")[1]] || "設定項目"}（${index + 1}件目）`;
+    }
+    if (!label) label = FIELD_SETTING_LABELS[leaf] || fallback.split(" / ").at(-1) || "設定内容";
+    return prefix ? `${prefix}：${label}` : label;
+  }
+  function customerLayoutItemParts(row, sourceBundle, targetBundle) {
+    const path = String(row.path || "");
+    const match = /^layoutSettings\.layout\[(\d+)\](.*)$/.exec(path);
+    if (!match) return null;
+    const rowIndex = Number(match[1]);
+    const preferredBundle = row.type === "removed" ? sourceBundle : targetBundle;
+    const fallbackBundle = row.type === "removed" ? targetBundle : sourceBundle;
+    const preferredPayload = row.type === "removed" ? row.left : row.right;
+    const fallbackPayload = row.type === "removed" ? row.right : row.left;
+    const payloadEntity = preferredPayload && typeof preferredPayload === "object" && !Array.isArray(preferredPayload) ? preferredPayload : fallbackPayload && typeof fallbackPayload === "object" && !Array.isArray(fallbackPayload) ? fallbackPayload : null;
+    const entityRootPath = /(?:^|\.)(?:layout|fields)\[\d+\]$/.test(path);
+    const layoutAt = (bundle) => bundle?.sections?.layoutSettings?.layout?.[rowIndex];
+    let entity = entityRootPath ? payloadEntity : null;
+    if (!entity) entity = layoutAt(preferredBundle) || layoutAt(fallbackBundle) || null;
+    const childRoutes = [...match[2].matchAll(/\.(fields|layout)\[(\d+)\]/g)].map((entry) => ({ bucket: entry[1], index: Number(entry[2]) }));
+    const fieldIndices = [...path.matchAll(/\.fields\[(\d+)\]/g)].map((entry) => Number(entry[1]));
+    for (const route of childRoutes) {
+      if (entityRootPath && entity === payloadEntity) break;
+      entity = entity && typeof entity === "object" && !Array.isArray(entity) ? entity[route.bucket]?.[route.index] : null;
+    }
+    if (!entity && payloadEntity) entity = payloadEntity;
+    const lastFieldIndex = fieldIndices.at(-1);
+    const position = lastFieldIndex == null ? `${rowIndex + 1}行目` : `${rowIndex + 1}行目・${lastFieldIndex + 1}項目目`;
+    const definition = entity && typeof entity === "object" && !Array.isArray(entity) ? entity : {};
+    const type = String(definition.type || "").toUpperCase();
+    const code = String(definition.code || "").trim();
+    const entityLabel = customerRichText(definition.label || definition.name || definition.value || "");
+    const elementId = String(definition.elementId || "").trim();
+    const display = code ? customerFieldCodeLabel(code, preferredBundle) || customerFieldCodeLabel(code, fallbackBundle) || code : "";
+    const labelMatch = /^(.*?)（[^（）]+）$/.exec(display);
+    const displayName = customerPlainText(entityLabel || labelMatch?.[1] || display || code);
+    const codedTarget = (kind) => displayName && displayName !== code ? `${kind}「${displayName}」（コード: ${code}）` : `${kind}「${code || displayName || "名称不明"}」`;
+    let target;
+    if (type === "GROUP") {
+      target = codedTarget("グループ");
+    } else if (type === "SUBTABLE") {
+      target = codedTarget("テーブル");
+    } else if (type === "LABEL") {
+      target = `ラベル「${entityLabel || "文字なし"}」（${position}）`;
+    } else if (type === "SPACER") {
+      target = elementId ? `スペース「${elementId}」（${position}）` : `スペース（${position}）`;
+    } else if (code) {
+      target = codedTarget("フィールド");
+    } else if (entityLabel) {
+      target = `ラベル「${entityLabel}」（${position}）`;
+    } else {
+      target = `レイアウト ${position}`;
+    }
+    const leaf = path.match(/(?:^|\.)([^.[\]]+)$/)?.[1] || "";
+    const propLabels = {
+      type: "種類",
+      code: "フィールドコード",
+      elementId: "要素ID",
+      label: "表示文字",
+      value: "表示文字",
+      size: "表示サイズ",
+      width: "横幅",
+      height: "高さ",
+      innerWidth: "入力欄の横幅",
+      innerHeight: "入力欄の高さ"
+    };
+    let settingItem = propLabels[leaf] || (leaf && leaf !== "layout" && leaf !== "fields" ? leaf : "");
+    if (!settingItem) {
+      settingItem = lastFieldIndex == null ? row.type === "added" ? "行を追加" : row.type === "removed" ? "行を削除" : "行の設定" : row.type === "added" ? "配置を追加" : row.type === "removed" ? "配置を削除" : "配置の設定";
+    }
+    return { target, settingItem };
+  }
+  function customerViewItemParts(row) {
+    const path = String(row.path || "");
+    const match = /^viewSettings\.views\.(.+?)\.(fields(?:\[(\d+)\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|title|html|index)$/.exec(path);
+    if (!match) {
+      const wholeView = /^viewSettings\.views\.(.+)$/.exec(path);
+      if (!wholeView) return null;
+      return {
+        target: `一覧「${customerPlainText(wholeView[1])}」`,
+        settingItem: row.type === "added" ? "一覧を追加" : row.type === "removed" ? "一覧を削除" : "一覧全体"
+      };
+    }
+    const viewName = customerPlainText(match[1]);
+    const property = match[2];
+    const labels = {
+      filterCond: "絞り込み条件",
+      sort: "並び順",
+      type: "一覧の種類",
+      name: "一覧名",
+      pagination: "ページ送り",
+      paginationStyle: "ページ送りの形式",
+      pager: "ページ送り",
+      builtinType: "標準一覧の種類",
+      title: "見出し",
+      html: "カスタマイズ内容",
+      index: "一覧の並び順"
+    };
+    const settingItem = property.startsWith("fields") ? match[3] == null ? "表示項目" : `表示項目（${Number(match[3]) + 1}件目）` : labels[property] || "一覧設定";
+    return { target: `一覧「${viewName}」`, settingItem };
+  }
+  function customerItemParts(row, sourceBundle, targetBundle) {
     const sectionKey = sectionKeyOfRow(row);
     const sectionLabel = customerSectionLabel(sectionKey);
     const path = String(row.path || "").trim();
-    if (row._stateRenameNotice) return "ステータス名";
+    if (row._stateRenameNotice) return { target: "プロセス管理", settingItem: "ステータス名" };
     const fieldInfo = extractFieldPathInfo(path);
     if (fieldInfo) {
-      const identity = fieldDisplayIdentity(row, fieldInfo, { rows: [], sourceBundle, targetBundle });
       const setting = fieldSettingIdentity(fieldInfo);
-      const fieldCode = String(identity.fieldCode || "").trim();
-      const fieldName = String(identity.fieldName || "").trim();
-      const fieldLabel = fieldName && fieldName !== fieldCode ? fieldCode ? `${fieldName}（${fieldCode}）` : fieldName : fieldCode || fieldName || "フィールド";
-      return setting.settingKey === "(field)" ? fieldLabel : `${fieldLabel} / ${setting.settingLabel}`;
+      return {
+        target: customerFieldTargetLabel(row, fieldInfo, sourceBundle, targetBundle),
+        settingItem: customerFieldSettingLabel(setting.settingKey, setting.settingLabel)
+      };
     }
-    const layoutLabel = layoutRowItemLabel(row, sourceBundle, targetBundle);
-    if (layoutLabel) return layoutLabel;
-    if (sectionKey === "viewSettings") {
-      const viewFields = /^viewSettings\.views\.(.+?)\.fields(?:\[\d+\])?$/.exec(path);
-      if (viewFields) return `${viewFields[1]} / 表示項目`;
-    }
+    const layout = customerLayoutItemParts(row, sourceBundle, targetBundle);
+    if (layout) return layout;
+    const view = sectionKey === "viewSettings" ? customerViewItemParts(row) : null;
+    if (view) return view;
+    const action = customerActionItemParts(row, sourceBundle, targetBundle);
+    if (action) return action;
     try {
       const decoded = decodeRow(row);
       if (decoded) {
-        const parts = [
-          ...decoded.whereChips.map((chip) => chip.label),
-          decoded.propLabel
-        ].filter((part) => !!part).map((part) => part === "絞込条件" ? "絞り込み条件" : part === "ソート" ? "並び順" : part);
-        const readable = [...new Set(parts)].join(" / ") || decoded.oneLineSummary;
-        if (readable) return String(readable);
+        const targets = [...new Set(decoded.whereChips.map((chip) => customerPlainText(chip.label)).filter(Boolean))];
+        const decodedSetting = decoded.propLabel === "絞込条件" ? "絞り込み条件" : decoded.propLabel === "ソート" ? "並び順" : customerPlainText(decoded.propLabel);
+        return {
+          target: customerGenericTargetLabel(row, sectionKey, targets),
+          settingItem: customerGenericSettingLabel(sectionKey, path, decodedSetting)
+        };
       }
     } catch {
     }
     const explicit = String(row.label || "").trim();
-    if (explicit && explicit !== path) return explicit;
-    return path || `${sectionLabel}の設定`;
+    if (explicit && explicit !== path) {
+      return { target: customerPlainText(explicit), settingItem: "設定内容" };
+    }
+    return {
+      target: "未識別の設定項目",
+      settingItem: "設定内容",
+      technicalPath: path || sectionKey
+    };
   }
   function customerSideIsAbsent(row, side) {
     if (side === "source" && row.type === "added") return true;
@@ -13344,12 +13650,20 @@ ${label}` : `${direction}の値`;
         const after = customerReadableValue(row, "target", ctx.sourceBundle, ctx.targetBundle);
         const rawBefore = customerRawValue(row, "source");
         const rawAfter = customerRawValue(row, "target");
+        const parts = customerItemParts(row, ctx.sourceBundle, ctx.targetBundle);
+        const targetDetail = parts.target;
+        const settingItemDetail = parts.settingItem;
         items.push({
           index: items.length,
           row,
           sectionKey,
           sectionLabel,
-          item: customerItemLabel(row, ctx.sourceBundle, ctx.targetBundle),
+          target: customerPlainText(targetDetail, 80),
+          settingItem: customerPlainText(settingItemDetail, 80),
+          targetDetail,
+          settingItemDetail,
+          technicalPath: parts.technicalPath,
+          item: `${targetDetail} / ${settingItemDetail}`,
           changeType: customerChangeType(row),
           before,
           after,
@@ -13426,9 +13740,9 @@ ${targetName}`, "", ""],
       ["追加", `${counts.added}件`, "削除", `${counts.removed}件`, "変更", `${counts.contentChanged}件`],
       ["要素の移動", `${counts.moved}件`, "変更一覧の明細", `${items.length}件`, "同一証跡の省略", droppedSame ? `${droppedSame}件（変更判定への影響なし）` : "0件"],
       ["比較した設定領域", customerScopeLabel(comparedScopes), "", "", "", ""],
-      ["掲載範囲", ctx.exportMode === "filtered" ? "上記範囲内の一部" : "上記範囲内の全変更", "絞り込み", ctx.exportMode === "filtered" ? "あり" : "なし", "比較条件の調整", hasCustomerComparisonAdjustments(ctx) ? "あり" : "なし"],
+      ["掲載範囲", ctx.exportMode === "filtered" ? "上記範囲内の一部" : "上記範囲内の全変更", "絞り込み", ctx.exportMode === "filtered" ? "あり" : "なし", "比較から除外", customerComparisonExclusionLabel(ctx)],
       ["掲載内容", detailCount ? `「変更一覧」は読みやすい日本語表示です。全${detailCount}件の型・状態・原文を「設定値詳細」に収録しています。${continuations.length ? `表示が長い原文${continuations.length}件は、可視の「長文原文」シートへ分割して全文を収録しています。` : ""}上記以外の設定領域は比較していません。` : `${continuations.length ? `取得・打切り情報のうち表示が長い原文${continuations.length}件は、可視の「長文原文」シートへ分割して全文を収録しています。` : ""}上記以外の設定領域は比較していません。`, "", "", "", ""],
-      ["読み方", "1. 比較概要で範囲を確認 → 2. 変更一覧で差分を確認 → 3. H/Iを選択し、必要に応じてJ/Kへ入力 → 4. No.（リンク）から原文を確認", "", "", "", ""],
+      ["読み方", "1. 比較概要で範囲を確認 → 2. 変更一覧で差分を確認 → 3. I/Jを選択し、必要に応じてK/Lへ入力 → 4. No.（リンク）から原文を確認", "", "", "", ""],
       ["表記", "不存在、undefined、null、空文字を区別しています。「設定値詳細」の状態・型と原文を組み合わせると元の値を判別できます。", "", "", "", ""],
       ["確認時の注意", "このレポートは現在設定の差を示すもので、反映・移行計画ではありません。「確認すること」は中立的な確認質問で、重要度・業務影響・対応要否は自動判定していません。並べ替え後にリンク先がずれた場合はNo.で照合してください。", "", "", "", ""],
       ["", "", "", "", "", ""],
@@ -13499,6 +13813,11 @@ ${targetName}`, "", ""],
         if (index === 2 || index === 3) return 34;
         if (index === 4 || index === 5) return 38;
         if (index === 6) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
+        if (index === 7) return readableDiffRowHeight([
+          { value: row[1], width: 22 },
+          { value: row[3], width: 22 },
+          { value: row[5], width: 22 }
+        ], 76);
         if (index >= 8 && index <= 11) return readableDiffRowHeight([{ value: row[1], width: 78 }], index === 11 ? 104 : 76);
         if (index === 12) return 12;
         if (index === 13) return 30;
@@ -13513,7 +13832,7 @@ ${targetName}`, "", ""],
       }, ...detailCount ? [{
         ref: "F4",
         targetSheet: "変更一覧",
-        targetCell: "H2",
+        targetCell: "I2",
         tooltip: "顧客レビュー入力欄へ移動"
       }] : []],
       showGridLines: false,
@@ -13534,7 +13853,8 @@ ${targetName}`, "", ""],
       "No.",
       "変更区分",
       "分類",
-      "対象",
+      "設定対象",
+      "変更項目",
       `変更前
 ${sourceName}`,
       `変更後
@@ -13547,14 +13867,15 @@ ${targetName}`,
     ];
     const rows = [
       [
-        "変更前／変更後は見出しと淡い背景色で区別します。No.（リンク）から全差分の状態・型・原文を確認できます。並べ替え後はNo.で照合してください。",
+        "「設定対象」でどの設定か、「変更項目」で何が変わったかを確認できます。No.（リンク）から全差分の状態・型・原文を確認できます。並べ替え後はNo.で照合してください。",
         "",
         "",
         "",
         "",
         "",
         "",
-        "入力欄：H/Iは選択、J/Kは任意入力",
+        "",
+        "入力欄：I/Jは選択、K/Lは任意入力",
         "",
         "",
         ""
@@ -13562,7 +13883,7 @@ ${targetName}`,
       headers
     ];
     const rowStyles = ["normal", "normal"];
-    const cellStyles = [["subtitle", void 0, void 0, void 0, void 0, void 0, void 0, "reviewChoice"], []];
+    const cellStyles = [["subtitle", void 0, void 0, void 0, void 0, void 0, void 0, void 0, "reviewChoice"], []];
     const rowHeights = [38, 46];
     const changeStyles = {
       "追加": "changeAdded",
@@ -13576,7 +13897,8 @@ ${targetName}`,
         index + 1,
         item.changeType,
         item.sectionLabel,
-        item.item,
+        item.target,
+        item.settingItem,
         item.before,
         item.after,
         item.reviewNote,
@@ -13593,13 +13915,14 @@ ${targetName}`,
       styles[1] = changeStyles[item.changeType];
       styles[2] = startsCategory ? "category" : alternate ? "zebra" : "normal";
       styles[3] = alternate ? "zebra" : "normal";
-      styles[4] = item.changeType === "追加" ? "diffAbsent" : "diffBefore";
-      styles[5] = item.changeType === "削除" ? "diffAbsent" : "diffAfter";
-      styles[6] = "info";
-      styles[7] = "reviewChoice";
+      styles[4] = alternate ? "zebra" : "normal";
+      styles[5] = item.changeType === "追加" ? "diffAbsent" : "diffBefore";
+      styles[6] = item.changeType === "削除" ? "diffAbsent" : "diffAfter";
+      styles[7] = "info";
       styles[8] = "reviewChoice";
-      styles[9] = "review";
+      styles[9] = "reviewChoice";
       styles[10] = "review";
+      styles[11] = "review";
       cellStyles.push(styles);
       internalHyperlinks.push({
         ref: `A${index + 3}`,
@@ -13609,33 +13932,34 @@ ${targetName}`,
       });
       rowHeights.push(readableCustomerRowHeight([
         { value: item.sectionLabel, width: 14 },
-        { value: item.item, width: 24 },
-        { value: item.before, width: 24 },
-        { value: item.after, width: 24 },
-        { value: item.reviewNote, width: 30 }
+        { value: item.target, width: 24 },
+        { value: item.settingItem, width: 22 },
+        { value: item.before, width: 22 },
+        { value: item.after, width: 22 },
+        { value: item.reviewNote, width: 28 }
       ], 220));
     });
     const lastRow = items.length + 2;
     return {
       name: "変更一覧",
       rows,
-      colWidths: [7, 10, 14, 24, 22, 22, 28, 14, 13, 14, 30],
+      colWidths: [7, 10, 14, 24, 22, 22, 22, 28, 14, 13, 14, 30],
       rowStyles,
       cellStyles,
       headerRow: 2,
       freezeRows: 2,
-      freezeColumns: 4,
+      freezeColumns: 5,
       rowHeights,
       styledEmptyCellsAsBlank: true,
-      merges: ["A1:G1", "H1:K1"],
+      merges: ["A1:H1", "I1:L1"],
       internalHyperlinks,
       dataValidations: items.length ? [{
-        sqref: `H3:H${lastRow}`,
+        sqref: `I3:I${lastRow}`,
         values: CUSTOMER_REVIEW_STATUS_VALUES,
         promptTitle: "顧客レビュー状況",
         prompt: "顧客レビューの進捗を選択してください"
       }, {
-        sqref: `I3:I${lastRow}`,
+        sqref: `J3:J${lastRow}`,
         values: CUSTOMER_ACTION_DECISION_VALUES,
         promptTitle: "対応方針",
         prompt: "人が判断した対応方針を選択してください"
@@ -13647,7 +13971,7 @@ ${targetName}`,
         fitToWidth: 2,
         fitToHeight: 0,
         repeatRows: { from: 2, to: 2 },
-        repeatColumns: { from: 1, to: 4 },
+        repeatColumns: { from: 1, to: 5 },
         footer: "&L変更一覧（顧客レビュー）&Rページ &P / &N"
       }
     };
@@ -13666,6 +13990,7 @@ ${targetName}`,
         "",
         "",
         "",
+        "",
         "状態・型で不存在／undefined／null／空文字を区別できます。",
         "",
         "長文セルは「長文原文」へ移動します。並べ替え後はNo.で照合してください。",
@@ -13676,7 +14001,8 @@ ${targetName}`,
         "No.",
         "変更区分",
         "分類",
-        "対象",
+        "設定対象",
+        "変更項目",
         `変更前の状態・型
 ${sourceName}`,
         `変更前の原文
@@ -13691,6 +14017,7 @@ ${targetName}`,
     const rowStyles = ["normal", "normal"];
     const cellStyles = [[
       "subtitle",
+      void 0,
       void 0,
       void 0,
       void 0,
@@ -13711,11 +14038,14 @@ ${targetName}`,
       const afterContinuation = continuationByKey.get(`${item.index}:target`);
       const beforeText = beforeContinuation ? `長文原文へ（${item.rawBefore.text.length}文字・${beforeContinuation.chunks.length}分割）` : item.rawBefore.text;
       const afterText = afterContinuation ? `長文原文へ（${item.rawAfter.text.length}文字・${afterContinuation.chunks.length}分割）` : item.rawAfter.text;
+      const settingItemDetail = item.technicalPath ? `${item.settingItemDetail}
+内部パス: ${item.technicalPath}` : item.settingItemDetail;
       rows.push([
         item.index + 1,
         item.changeType,
         item.sectionLabel,
-        item.item,
+        item.targetDetail,
+        settingItemDetail,
         item.rawBefore.state,
         beforeText,
         item.rawAfter.state,
@@ -13729,14 +14059,16 @@ ${targetName}`,
       styles[1] = changeStyles[item.changeType];
       styles[2] = startsCategory ? "category" : index % 2 === 1 ? "zebra" : "normal";
       styles[3] = index % 2 === 1 ? "zebra" : "normal";
-      styles[4] = item.changeType === "追加" ? "diffAbsent" : "diffBefore";
-      styles[5] = beforeContinuation ? "hyperlink" : item.changeType === "追加" ? "diffAbsent" : "diffBefore";
-      styles[6] = item.changeType === "削除" ? "diffAbsent" : "diffAfter";
-      styles[7] = afterContinuation ? "hyperlink" : item.changeType === "削除" ? "diffAbsent" : "diffAfter";
-      styles[8] = "actionLink";
+      styles[4] = index % 2 === 1 ? "zebra" : "normal";
+      styles[5] = item.changeType === "追加" ? "diffAbsent" : "diffBefore";
+      styles[6] = beforeContinuation ? "hyperlink" : item.changeType === "追加" ? "diffAbsent" : "diffBefore";
+      styles[7] = item.changeType === "削除" ? "diffAbsent" : "diffAfter";
+      styles[8] = afterContinuation ? "hyperlink" : item.changeType === "削除" ? "diffAbsent" : "diffAfter";
+      styles[9] = "actionLink";
       cellStyles.push(styles);
       rowHeights.push(readableCustomerRowHeight([
-        { value: item.item, width: 24 },
+        { value: item.targetDetail, width: 24 },
+        { value: settingItemDetail, width: 22 },
         { value: item.rawBefore.state, width: 15 },
         { value: beforeText, width: 42 },
         { value: item.rawAfter.state, width: 15 },
@@ -13744,7 +14076,7 @@ ${targetName}`,
       ], 395));
       if (beforeContinuation) {
         internalHyperlinks.push({
-          ref: `F${index + 3}`,
+          ref: `G${index + 3}`,
           targetSheet: "長文原文",
           targetCell: `A${beforeContinuation.firstRow}`,
           tooltip: `No.${item.index + 1} 変更前の長文原文へ移動`
@@ -13752,14 +14084,14 @@ ${targetName}`,
       }
       if (afterContinuation) {
         internalHyperlinks.push({
-          ref: `H${index + 3}`,
+          ref: `I${index + 3}`,
           targetSheet: "長文原文",
           targetCell: `A${afterContinuation.firstRow}`,
           tooltip: `No.${item.index + 1} 変更後の長文原文へ移動`
         });
       }
       internalHyperlinks.push({
-        ref: `I${index + 3}`,
+        ref: `J${index + 3}`,
         targetSheet: "変更一覧",
         targetCell: `A${item.index + 3}`,
         tooltip: `変更一覧 No.${item.index + 1}へ戻る`
@@ -13768,14 +14100,14 @@ ${targetName}`,
     return {
       name: "設定値詳細",
       rows,
-      colWidths: [7, 11, 14, 24, 15, 42, 15, 42, 18],
+      colWidths: [7, 11, 14, 24, 22, 15, 42, 15, 42, 18],
       rowStyles,
       cellStyles,
       headerRow: 2,
       freezeRows: 2,
-      freezeColumns: 4,
+      freezeColumns: 5,
       rowHeights,
-      merges: ["A1:D1", "E1:F1", "G1:I1"],
+      merges: ["A1:E1", "F1:G1", "H1:J1"],
       internalHyperlinks,
       showGridLines: false,
       zoomScale: 85,
@@ -13784,7 +14116,7 @@ ${targetName}`,
         fitToWidth: 2,
         fitToHeight: 0,
         repeatRows: { from: 2, to: 2 },
-        repeatColumns: { from: 1, to: 4 },
+        repeatColumns: { from: 1, to: 5 },
         footer: "&L設定値詳細（型・状態・原文）&Rページ &P / &N"
       }
     };
@@ -15216,6 +15548,11 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-swap{align-self:center;justify-self:center;width:88px;padding:8px!important;white-space:normal;line-height:1.3}
 .kus-dl-target-list{display:grid;gap:7px;max-height:220px;margin-top:8px;padding-right:2px;overflow-y:auto}
 .kus-dl-multi-controls{margin-top:12px!important;padding-top:10px;border-top:1px solid #e2e8f0}
+.kus-dl-common-exclusion{margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;background:#eff6ff;color:#10253f;font-family:-apple-system,Segoe UI,sans-serif}
+.kus-dl-common-exclusion__heading{margin:0 0 3px;font-size:12px;font-weight:850;letter-spacing:.04em}
+.kus-dl-common-exclusion__description{margin:0 0 4px;color:#334155;font-size:11.5px;line-height:1.55}
+.kus-dl-common-exclusion .kus-lp__check{min-height:40px!important;color:#10253f;font-size:13px;font-weight:750}
+.kus-dl-common-exclusion__note{margin:3px 0 0;color:#475569;font-size:11px;line-height:1.55}
 .kus-dl-run-row{margin:13px 0 0!important}
 .kus-dl-run-row .kus-lp__btn{width:100%}
 .kus-dl-step>.kus-lp__status{margin:10px 0 0;min-height:44px;box-sizing:border-box}
@@ -15956,6 +16293,34 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       c.checkbox.checked = false;
     }));
     panel.body.insertBefore(cardScope.card, panel.status);
+    const nAppRefs = makeCheck({
+      label: "アプリID（比較対象・参照先）を比較から除外",
+      checked: false,
+      help: "比較対象のアプリIDと、ルックアップ・関連レコード・アプリアクションの参照先アプリIDだけを除外します"
+    });
+    nAppRefs.checkbox.dataset.kusDlExcludeAppReferences = "";
+    const appReferenceExclusion = document.createElement("section");
+    appReferenceExclusion.className = "kus-dl-common-exclusion";
+    appReferenceExclusion.setAttribute("aria-labelledby", "kus-dl-common-exclusion-heading");
+    const appReferenceExclusionHeading = document.createElement("h3");
+    appReferenceExclusionHeading.id = "kus-dl-common-exclusion-heading";
+    appReferenceExclusionHeading.className = "kus-dl-common-exclusion__heading";
+    appReferenceExclusionHeading.textContent = "よく使う除外";
+    const appReferenceExclusionDescription = document.createElement("p");
+    appReferenceExclusionDescription.id = "kus-dl-common-exclusion-description";
+    appReferenceExclusionDescription.className = "kus-dl-common-exclusion__description";
+    appReferenceExclusionDescription.textContent = "比較対象のアプリIDと、ルックアップ・関連レコード・アプリアクションの参照先アプリIDだけを除外します。フィールドコードや対応付けは比較します。";
+    const appReferenceExclusionNote = document.createElement("p");
+    appReferenceExclusionNote.id = "kus-dl-common-exclusion-note";
+    appReferenceExclusionNote.className = "kus-dl-common-exclusion__note";
+    appReferenceExclusionNote.textContent = "初期状態はオフです。オン／オフを変更した後は再比較してください。差分件数・画面結果・顧客向けExcelに反映されます。";
+    nAppRefs.checkbox.setAttribute("aria-describedby", `${appReferenceExclusionDescription.id} ${appReferenceExclusionNote.id}`);
+    appReferenceExclusion.append(
+      appReferenceExclusionHeading,
+      appReferenceExclusionDescription,
+      nAppRefs.label,
+      appReferenceExclusionNote
+    );
     const cardImport = makeCard({ title: "設定JSON読込（任意）", soft: true });
     cardImport.body.appendChild(makeNote("設定出力で保存した単体JSON、設定一括取得JSON（apps 配列）、差分バンドルJSONを指定できます。指定した側はAPI取得せずJSONを使用します。比較先JSONは単一比較専用です。"));
     const srcFile = document.createElement("input");
@@ -15986,7 +16351,6 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const nAll = makeCheck({ label: "すべての配列順序を無視", checked: false });
     const nField = makeCheck({ label: "フィールド/レイアウト順序を無視", checked: false });
     const nProcess = makeCheck({ label: "プロセスの並び順を無視", checked: false });
-    const nAppRefs = makeCheck({ label: "アプリID/参照先アプリIDを無視", checked: false });
     const nAudit = makeCheck({ label: "監査/リビジョン情報を無視", checked: false });
     const nText = makeCheck({ label: "ラベル/説明文/ヘルプを無視", checked: false });
     const nAppearance = makeCheck({ label: "見た目/幅/座標を無視", checked: false });
@@ -16015,7 +16379,6 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       nAll.label,
       nField.label,
       nProcess.label,
-      nAppRefs.label,
       nAudit.label,
       nText.label,
       nAppearance.label,
@@ -16226,7 +16589,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     reviewEmpty.className = "kus-dl-step__empty";
     reviewEmpty.dataset.kusDlResultEmpty = "";
     reviewEmpty.textContent = "比較を実行すると、ここに完全性と差分の一覧が表示されます。";
-    targetStep.append(cardApp.card, configDetails, runRow, completionRow, panel.status);
+    targetStep.append(cardApp.card, appReferenceExclusion, configDetails, runRow, completionRow, panel.status);
     reviewStep.append(reviewEmpty, filterDetails, cardResult.card);
     exportStep.appendChild(outputDetails);
     workflow.append(targetStep, reviewStep, exportStep);
@@ -16253,6 +16616,28 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const expandedRowKeys = /* @__PURE__ */ new Set();
     let importedSourceBundle = null;
     let importedTargetBundle = null;
+    function invalidateResultAfterAppReferenceConditionChange() {
+      const hadResult = !!cache || multiXlsxExports.length > 0 || resultBox.childElementCount > 0;
+      if (!hadResult) return;
+      cache = null;
+      multiXlsxExports = [];
+      currentRowKey = "";
+      collapsedSections.clear();
+      expandedValueKeys.clear();
+      expandedRowKeys.clear();
+      summaryText = "";
+      resetResultPage();
+      setCompletionActionsVisible(false);
+      setExportControlsEnabled(false);
+      resultBox.innerHTML = "";
+      cardResult.card.style.display = "none";
+      cardFilter.card.style.display = "none";
+      filterDetails.style.display = "none";
+      reviewEmpty.textContent = "比較条件が変更されました。再比較すると新しい条件の結果を表示します。";
+      reviewEmpty.style.display = "";
+      panel.setStatus("アプリIDの除外条件を変更したため、前回の結果と保存機能を無効にしました。新しい条件で再比較してください", "warn");
+    }
+    nAppRefs.checkbox.addEventListener("change", invalidateResultAfterAppReferenceConditionChange);
     swapBtn.addEventListener("click", () => {
       if (comparisonMode === "multi") {
         panel.setStatus("比較方向の入れ替えは、比較先が1件の1対1比較で利用できます", "warn");
@@ -16416,7 +16801,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           reviewEmpty.style.display = "";
           const ruleSummary = summarizeLiteIgnoreRules(profile.ignoreKeys);
           const pathWarning = ruleSummary.positionalRules ? ` 配列番号を含む位置依存ルール ${ruleSummary.positionalRules}件は、並び替え後に別の対象を隠す可能性があります。削除または見直してから再比較してください。` : ruleSummary.contextualRules ? ` 完全パス/パターン ${ruleSummary.contextualRules}件を含むため、再比較前に無視ルールを確認してください。` : "";
-          panel.setStatus(`比較条件「${profile.name}」を読み込みました（対象 ${profile.scopes.length}セクション / 無視 ${ruleSummary.total}件）。アプリと環境は変更していません。結果を更新するため再比較してください。${pathWarning}`, "warn");
+          const appReferenceMigrationNote = profile.normalizationPresetState.appReferences ? " 「アプリID（比較対象・参照先）」は現在、安全な参照パスだけを除外します。以前保存した条件でも一般的な app / id キーは除外しません。" : "";
+          panel.setStatus(`比較条件「${profile.name}」を読み込みました（対象 ${profile.scopes.length}セクション / 無視 ${ruleSummary.total}件）。アプリと環境は変更していません。結果を更新するため再比較してください。${appReferenceMigrationNote}${pathWarning}`, "warn");
         });
       } finally {
         profileFile.value = "";

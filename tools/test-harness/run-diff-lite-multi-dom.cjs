@@ -164,7 +164,11 @@ async function mountWithControlledDiff(page) {
     mountDiffLitePanel(async (opts) => {
       const targetAppId = String(opts?.target?.appId || '');
       const importedSource = opts?.importedSourceBundle || null;
-      probe.calls.push({ targetAppId, reusedSource: !!importedSource });
+      probe.calls.push({
+        targetAppId,
+        reusedSource: !!importedSource,
+        excludesAppReferences: !!opts?.normalizationPresetState?.appReferences
+      });
       probe.activeCalls += 1;
       probe.maxConcurrentCalls = Math.max(probe.maxConcurrentCalls, probe.activeCalls);
       try {
@@ -208,6 +212,18 @@ async function configureThreeTargets(page) {
     (elements) => elements.map((element) => element.value)
   );
   assert.deepEqual(values, ['202', '303', '404'], '比較先のカンマ分割に失敗しました');
+}
+
+async function verifyAppReferenceExclusionControl(page) {
+  const control = page.getByLabel('アプリID（比較対象・参照先）を比較から除外', { exact: true });
+  assert.equal(await control.count(), 1,
+    '参照先アプリIDの除外設定が重複しているか、見つかりません');
+  assert.equal(await control.isChecked(), false,
+    '参照先アプリIDの除外設定は初期状態でオフである必要があります');
+  assert.equal(await page.getByText('よく使う除外', { exact: true }).isVisible(), true,
+    '参照先アプリIDの除外設定が常時見える位置にありません');
+  assert.equal(await page.getByText(/オン／オフを変更した後は再比較してください。差分件数・画面結果・顧客向けExcelに反映されます。/).isVisible(), true,
+    '参照先アプリIDの除外が比較結果とExcelへ与える影響の説明がありません');
 }
 
 function multiResultRows(page) {
@@ -261,6 +277,8 @@ function verifyResult(result, pageErrors) {
   assert.equal(result.probe.freshSourceFetches, 1, '比較元が複数回取得されています');
   assert.deepEqual(result.probe.calls.map((call) => call.reusedSource), [false, true, true],
     '比較元バンドルが後続比較へ再利用されていません');
+  assert.deepEqual(result.probe.calls.map((call) => call.excludesAppReferences), [false, false, false],
+    '初期状態で参照先アプリIDの除外が比較へ適用されています');
   assert.equal(result.probe.maxConcurrentCalls, 1, '比較処理が並行・二重実行されました');
   assert.deepEqual(result.probe.disabledAfterFirstDispatch, { runOne: true, runAll: true },
     '実行開始時に比較ボタンが無効化されませんでした');
@@ -302,6 +320,7 @@ async function main() {
     await page.addScriptTag({ content: browserBundle });
     await mountWithControlledDiff(page);
     await page.waitForSelector('#kus-diff-lite');
+    await verifyAppReferenceExclusionControl(page);
     await configureThreeTargets(page);
     await dispatchDoubleRun(page);
     await page.waitForFunction(() => {
@@ -340,6 +359,20 @@ async function main() {
     assert.equal(result.downloadsAfterExcel, 3, 'Excel保存の二重クリックで重複ダウンロードされました');
     assert.deepEqual(pageErrors, [], 'Excel保存時にブラウザエラーが発生しました');
 
+    const appReferenceExclusion = page.getByLabel('アプリID（比較対象・参照先）を比較から除外', { exact: true });
+    await appReferenceExclusion.check();
+    assert.equal(await multiResultRows(page).count(), 0,
+      'アプリID除外条件の変更後も古い比較結果が表示されています');
+    assert.equal(await page.locator('[data-kus-dl-multi-xlsx]').count(), 0,
+      'アプリID除外条件の変更後も古いExcel保存ボタンが残っています');
+    assert.equal(await page.locator('[data-kus-dl-export="xlsx"]').isDisabled(), true,
+      'アプリID除外条件の変更後もExcel出力が有効です');
+    assert.equal(await page.locator('[data-kus-dl-export="html"]').isDisabled(), true,
+      'アプリID除外条件の変更後もHTML出力が有効です');
+    assert.equal(await page.locator('[data-kus-dl-completion="xlsx"]').isVisible(), false,
+      'アプリID除外条件の変更後も完了時のExcel保存導線が表示されています');
+    assert.equal(await page.getByText(/前回の結果と保存機能を無効にしました。新しい条件で再比較してください/).isVisible(), true,
+      'アプリID除外条件の変更後に再比較を求める警告がありません');
     const runAll = page.getByRole('button', { name: /全比較先を順に比較|複数の比較を実行/ });
     await runAll.click();
     result.rowsImmediatelyAfterRerun = await multiResultRows(page).count();
@@ -353,6 +386,14 @@ async function main() {
     }, null, { timeout: 15000 });
     result.downloadsAfterRerun = await page.evaluate(() => Number(window.__downloadCount || 0));
     assert.equal(result.downloadsAfterRerun, 5, '再実行後のHTML出力回数が不正です');
+    assert.equal(await multiResultRows(page).count(), 3,
+      'アプリID除外条件を反映した再比較後に結果表が復元されませんでした');
+    assert.equal(await page.locator('[data-kus-dl-multi-xlsx]').count(), 2,
+      'アプリID除外条件を反映した再比較後にExcel保存ボタンが復元されませんでした');
+    result.rerunAppReferenceFlags = await page.evaluate(() =>
+      window.__multiProbe.calls.slice(3).map((call) => call.excludesAppReferences));
+    assert.deepEqual(result.rerunAppReferenceFlags, [true, true, true],
+      '参照先アプリIDの除外設定が再比較へ引き継がれていません');
     assert.deepEqual(pageErrors, [], '複数比較の再実行中にブラウザエラーが発生しました');
     await page.locator('#kus-diff-lite').screenshot({
       path: path.join(outDir, 'multi-dom-panel.png'),

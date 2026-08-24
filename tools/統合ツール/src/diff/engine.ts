@@ -1170,11 +1170,17 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
     }
 
     if (!s && t) {
-      pushDiffRow(rows, { sectionKey: sec, section: label, type: 'added', path: sec, left: undefined, right: t }, ignoreRules);
+      const normalizedTarget = normalizeSectionForCompare(sec, t, presetState);
+      if (normalizedTarget === t || hasComparableNormalizedContent(normalizedTarget)) {
+        pushDiffRow(rows, { sectionKey: sec, section: label, type: 'added', path: sec, left: undefined, right: normalizedTarget }, ignoreRules);
+      }
       continue;
     }
     if (s && !t) {
-      pushDiffRow(rows, { sectionKey: sec, section: label, type: 'removed', path: sec, left: s, right: undefined }, ignoreRules);
+      const normalizedSource = normalizeSectionForCompare(sec, s, presetState);
+      if (normalizedSource === s || hasComparableNormalizedContent(normalizedSource)) {
+        pushDiffRow(rows, { sectionKey: sec, section: label, type: 'removed', path: sec, left: normalizedSource, right: undefined }, ignoreRules);
+      }
       continue;
     }
     if (!s && !t) continue;
@@ -1382,15 +1388,59 @@ export function getActiveDiffNormalizationConfig(sectionKey, presetState) {
   if (!active.length) return null;
   const ignoreKeys = new Set<string>();
   let unorderedArrays = false;
+  let ignoreAppReferencePaths = false;
   active.forEach((preset) => {
     preset.ignoreKeys?.forEach((key) => ignoreKeys.add(normalizeIgnoreToken(key)));
     if (preset.unorderedArrays) unorderedArrays = true;
+    if (preset.ignoreAppReferencePaths) ignoreAppReferencePaths = true;
   });
-  return { ignoreKeys, unorderedArrays };
+  return { ignoreKeys, unorderedArrays, ignoreAppReferencePaths };
 }
 
-export function normalizeArrayForSectionCompare(arr, config) {
-  const list = arr.map((item) => normalizeSectionValueForCompare(item, config));
+/**
+ * API上で比較対象または参照先のアプリIDだと意味が確定するパスだけを判定する。
+ * `app` / `appId` という末尾名だけでは判定せず、プラグイン設定や独自設定の
+ * 同名キー、参照先アプリコードなどは比較対象に残す。
+ */
+export function isAppReferenceIdPath(path) {
+  const normalizedPath = normalizeIgnoreToken(path);
+  if (normalizedPath === 'appinfo.appid') return true;
+
+  if (normalizedPath.startsWith('fieldsettings.properties.')) {
+    if (/\.(?:lookup|referencetable)\.(?:relatedapp|targetapp|sourceapp)\.(?:app|appid)$/.test(normalizedPath)) return true;
+    if (/\.(?:lookup|referencetable)\.(?:relatedappid|targetappid|sourceappid)$/.test(normalizedPath)) return true;
+  }
+
+  if (/^actionsettings\.actions(?:\.|\[)/.test(normalizedPath)) {
+    if (/\.(?:destapp|targetapp|sourceapp)\.(?:app|appid)$/.test(normalizedPath)) return true;
+    if (/\.(?:destappid|targetappid|sourceappid)$/.test(normalizedPath)) return true;
+  }
+
+  return false;
+}
+
+function appendNormalizationPath(parentPath, key) {
+  return parentPath ? `${parentPath}.${key}` : String(key);
+}
+
+function appendNormalizationArrayPath(parentPath, index) {
+  return `${parentPath || ''}[${index}]`;
+}
+
+function hasComparableNormalizedContent(value) {
+  // コンテナのキーや配列要素自体がエンティティ識別子になる場合があるため、
+  // 深い空判定で追加/削除を消さない。ルートが完全に空になった場合だけ抑止する。
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === 'object') return Object.keys(value).length > 0;
+  return value !== undefined;
+}
+
+export function normalizeArrayForSectionCompare(arr, config, path = '') {
+  const list = arr.map((item, index) => normalizeSectionValueForCompare(
+    item,
+    config,
+    appendNormalizationArrayPath(path, index)
+  ));
   if (!config?.unorderedArrays) return list;
   return list.slice().sort((a, b) => {
     const sa = JSON.stringify(a);
@@ -1400,14 +1450,16 @@ export function normalizeArrayForSectionCompare(arr, config) {
   });
 }
 
-export function normalizeSectionValueForCompare(value, config) {
-  if (Array.isArray(value)) return normalizeArrayForSectionCompare(value, config);
+export function normalizeSectionValueForCompare(value, config, path = '') {
+  if (Array.isArray(value)) return normalizeArrayForSectionCompare(value, config, path);
   if (value && typeof value === 'object') {
     const out = {};
     Object.keys(value).sort().forEach((key) => {
       if (META_KEYS.has(key)) return;
       if (config?.ignoreKeys?.has(normalizeIgnoreToken(key))) return;
-      out[key] = normalizeSectionValueForCompare(value[key], config);
+      const childPath = appendNormalizationPath(path, key);
+      if (config?.ignoreAppReferencePaths && isAppReferenceIdPath(childPath)) return;
+      out[key] = normalizeSectionValueForCompare(value[key], config, childPath);
     });
     return out;
   }
@@ -1417,7 +1469,7 @@ export function normalizeSectionValueForCompare(value, config) {
 export function normalizeSectionForCompare(sectionKey, value, presetState) {
   const config = getActiveDiffNormalizationConfig(sectionKey, presetState);
   if (!config) return value;
-  return normalizeSectionValueForCompare(value, config);
+  return normalizeSectionValueForCompare(value, config, sectionKey);
 }
 
 export function getActiveDiffNormalizationLabels(presetState?: any) {

@@ -244,6 +244,11 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-swap{align-self:center;justify-self:center;width:88px;padding:8px!important;white-space:normal;line-height:1.3}
 .kus-dl-target-list{display:grid;gap:7px;max-height:220px;margin-top:8px;padding-right:2px;overflow-y:auto}
 .kus-dl-multi-controls{margin-top:12px!important;padding-top:10px;border-top:1px solid #e2e8f0}
+.kus-dl-common-exclusion{margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;background:#eff6ff;color:#10253f;font-family:-apple-system,Segoe UI,sans-serif}
+.kus-dl-common-exclusion__heading{margin:0 0 3px;font-size:12px;font-weight:850;letter-spacing:.04em}
+.kus-dl-common-exclusion__description{margin:0 0 4px;color:#334155;font-size:11.5px;line-height:1.55}
+.kus-dl-common-exclusion .kus-lp__check{min-height:40px!important;color:#10253f;font-size:13px;font-weight:750}
+.kus-dl-common-exclusion__note{margin:3px 0 0;color:#475569;font-size:11px;line-height:1.55}
 .kus-dl-run-row{margin:13px 0 0!important}
 .kus-dl-run-row .kus-lp__btn{width:100%}
 .kus-dl-step>.kus-lp__status{margin:10px 0 0;min-height:44px;box-sizing:border-box}
@@ -1123,6 +1128,37 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   noneBtn.addEventListener('click', () => chips.forEach((c) => { c.checkbox.checked = false; }));
   panel.body.insertBefore(cardScope.card, panel.status);
 
+  // 環境ごとに変わりやすい比較対象・参照先アプリIDは、詳細設定を開かなくても選べるようにする。
+  // 比較結果そのものを変える条件なので既定はオフとし、再比較が必要なことも常時表示する。
+  const nAppRefs = makeCheck({
+    label: 'アプリID（比較対象・参照先）を比較から除外',
+    checked: false,
+    help: '比較対象のアプリIDと、ルックアップ・関連レコード・アプリアクションの参照先アプリIDだけを除外します'
+  });
+  nAppRefs.checkbox.dataset.kusDlExcludeAppReferences = '';
+  const appReferenceExclusion = document.createElement('section');
+  appReferenceExclusion.className = 'kus-dl-common-exclusion';
+  appReferenceExclusion.setAttribute('aria-labelledby', 'kus-dl-common-exclusion-heading');
+  const appReferenceExclusionHeading = document.createElement('h3');
+  appReferenceExclusionHeading.id = 'kus-dl-common-exclusion-heading';
+  appReferenceExclusionHeading.className = 'kus-dl-common-exclusion__heading';
+  appReferenceExclusionHeading.textContent = 'よく使う除外';
+  const appReferenceExclusionDescription = document.createElement('p');
+  appReferenceExclusionDescription.id = 'kus-dl-common-exclusion-description';
+  appReferenceExclusionDescription.className = 'kus-dl-common-exclusion__description';
+  appReferenceExclusionDescription.textContent = '比較対象のアプリIDと、ルックアップ・関連レコード・アプリアクションの参照先アプリIDだけを除外します。フィールドコードや対応付けは比較します。';
+  const appReferenceExclusionNote = document.createElement('p');
+  appReferenceExclusionNote.id = 'kus-dl-common-exclusion-note';
+  appReferenceExclusionNote.className = 'kus-dl-common-exclusion__note';
+  appReferenceExclusionNote.textContent = '初期状態はオフです。オン／オフを変更した後は再比較してください。差分件数・画面結果・顧客向けExcelに反映されます。';
+  nAppRefs.checkbox.setAttribute('aria-describedby', `${appReferenceExclusionDescription.id} ${appReferenceExclusionNote.id}`);
+  appReferenceExclusion.append(
+    appReferenceExclusionHeading,
+    appReferenceExclusionDescription,
+    nAppRefs.label,
+    appReferenceExclusionNote
+  );
+
   // ---- 設定JSON読込 ----
   const cardImport = makeCard({ title: '設定JSON読込（任意）', soft: true });
   cardImport.body.appendChild(makeNote('設定出力で保存した単体JSON、設定一括取得JSON（apps 配列）、差分バンドルJSONを指定できます。指定した側はAPI取得せずJSONを使用します。比較先JSONは単一比較専用です。'));
@@ -1157,7 +1193,6 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const nAll = makeCheck({ label: 'すべての配列順序を無視', checked: false });
   const nField = makeCheck({ label: 'フィールド/レイアウト順序を無視', checked: false });
   const nProcess = makeCheck({ label: 'プロセスの並び順を無視', checked: false });
-  const nAppRefs = makeCheck({ label: 'アプリID/参照先アプリIDを無視', checked: false });
   const nAudit = makeCheck({ label: '監査/リビジョン情報を無視', checked: false });
   const nText = makeCheck({ label: 'ラベル/説明文/ヘルプを無視', checked: false });
   const nAppearance = makeCheck({ label: '見た目/幅/座標を無視', checked: false });
@@ -1186,7 +1221,6 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     nAll.label,
     nField.label,
     nProcess.label,
-    nAppRefs.label,
     nAudit.label,
     nText.label,
     nAppearance.label,
@@ -1408,7 +1442,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   reviewEmpty.dataset.kusDlResultEmpty = '';
   reviewEmpty.textContent = '比較を実行すると、ここに完全性と差分の一覧が表示されます。';
 
-  targetStep.append(cardApp.card, configDetails, runRow, completionRow, panel.status);
+  targetStep.append(cardApp.card, appReferenceExclusion, configDetails, runRow, completionRow, panel.status);
   reviewStep.append(reviewEmpty, filterDetails, cardResult.card);
   exportStep.appendChild(outputDetails);
   workflow.append(targetStep, reviewStep, exportStep);
@@ -1438,6 +1472,30 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const expandedRowKeys = new Set<string>();
   let importedSourceBundle: any = null;
   let importedTargetBundle: any = null;
+
+  function invalidateResultAfterAppReferenceConditionChange() {
+    const hadResult = !!cache || multiXlsxExports.length > 0 || resultBox.childElementCount > 0;
+    if (!hadResult) return;
+    cache = null;
+    multiXlsxExports = [];
+    currentRowKey = '';
+    collapsedSections.clear();
+    expandedValueKeys.clear();
+    expandedRowKeys.clear();
+    summaryText = '';
+    resetResultPage();
+    setCompletionActionsVisible(false);
+    setExportControlsEnabled(false);
+    resultBox.innerHTML = '';
+    cardResult.card.style.display = 'none';
+    cardFilter.card.style.display = 'none';
+    filterDetails.style.display = 'none';
+    reviewEmpty.textContent = '比較条件が変更されました。再比較すると新しい条件の結果を表示します。';
+    reviewEmpty.style.display = '';
+    panel.setStatus('アプリIDの除外条件を変更したため、前回の結果と保存機能を無効にしました。新しい条件で再比較してください', 'warn');
+  }
+
+  nAppRefs.checkbox.addEventListener('change', invalidateResultAfterAppReferenceConditionChange);
 
   swapBtn.addEventListener('click', () => {
     if (comparisonMode === 'multi') {
@@ -1611,7 +1669,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           : (ruleSummary.contextualRules
             ? ` 完全パス/パターン ${ruleSummary.contextualRules}件を含むため、再比較前に無視ルールを確認してください。`
             : '');
-        panel.setStatus(`比較条件「${profile.name}」を読み込みました（対象 ${profile.scopes.length}セクション / 無視 ${ruleSummary.total}件）。アプリと環境は変更していません。結果を更新するため再比較してください。${pathWarning}`, 'warn');
+        const appReferenceMigrationNote = profile.normalizationPresetState.appReferences
+          ? ' 「アプリID（比較対象・参照先）」は現在、安全な参照パスだけを除外します。以前保存した条件でも一般的な app / id キーは除外しません。'
+          : '';
+        panel.setStatus(`比較条件「${profile.name}」を読み込みました（対象 ${profile.scopes.length}セクション / 無視 ${ruleSummary.total}件）。アプリと環境は変更していません。結果を更新するため再比較してください。${appReferenceMigrationNote}${pathWarning}`, 'warn');
       });
     } finally {
       profileFile.value = '';

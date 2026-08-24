@@ -5,7 +5,7 @@ import {
   isNotationOnlyChange, isEmptyLikeValue,
   countActualDiffRows, countActionableDiffRows,
   detectProcessStateRenames, hasIncompleteActualDiffTruncation, summarizeRows,
-  encodeExactIgnorePathRule, decodeExactIgnorePathRule
+  encodeExactIgnorePathRule, decodeExactIgnorePathRule, isAppReferenceIdPath
 } from '../../src/diff/engine';
 
 function makeBundle(sections: Record<string, any>) {
@@ -274,6 +274,277 @@ describe('diff/engine', () => {
         'id'
       );
       expect(countActualDiffRows(result.rows)).toBe(0);
+    });
+  });
+
+  describe('comparison target and reference app ID normalization', () => {
+    it('recognizes only the supported semantic app ID paths', () => {
+      expect([
+        'appInfo.appId',
+        'fieldSettings.properties.customer.lookup.relatedApp.app',
+        'fieldSettings.properties.table.fields.customer.lookup.relatedApp.appId',
+        'fieldSettings.properties.history.referenceTable.relatedAppId',
+        'fieldSettings.properties.customer.lookup.targetAppId',
+        'fieldSettings.properties.history.referenceTable.sourceApp.app',
+        'actionSettings.actions.copy.destApp.app',
+        'actionSettings.actions[0].destApp.appId',
+        'actionSettings.actions.copy.destAppId',
+        'actionSettings.actions.copy.targetAppId',
+        'actionSettings.actions.copy.sourceApp.appId'
+      ].every((path) => isAppReferenceIdPath(path))).toBe(true);
+
+      expect([
+        'fieldSettings.properties.customer.app',
+        'fieldSettings.properties.customer.applicationId',
+        'fieldSettings.properties.customer.lookup.relatedApp.code',
+        'actionSettings.actions.copy.appId',
+        'actionSettings.actions.copy.destApp.code',
+        'pluginSettings.plugins[0].config.app',
+        'customizeSettings.appId'
+      ].some((path) => isAppReferenceIdPath(path))).toBe(false);
+    });
+
+    const appReferencePair = () => ({
+      source: {
+        appInfo: { appId: '101', name: '保有物件' },
+        fieldSettings: {
+          properties: {
+            customer: {
+              type: 'SINGLE_LINE_TEXT',
+              code: 'customer',
+              lookup: {
+                relatedApp: { app: '201', code: 'customer-master' },
+                targetAppId: '211',
+                relatedKeyField: 'customer_code'
+              }
+            },
+            history: {
+              type: 'REFERENCE_TABLE',
+              code: 'history',
+              referenceTable: {
+                relatedApp: { appId: '301', code: 'history-app' },
+                condition: { field: 'asset_code', relatedField: 'asset_code' }
+              }
+            }
+          }
+        },
+        actionSettings: {
+          actions: {
+            copy: {
+              name: '複製',
+              destApp: { app: '401', code: 'destination-app' },
+              targetAppId: '411',
+              mappings: []
+            }
+          }
+        }
+      },
+      target: {
+        appInfo: { appId: '102', name: '保有物件' },
+        fieldSettings: {
+          properties: {
+            customer: {
+              type: 'SINGLE_LINE_TEXT',
+              code: 'customer',
+              lookup: {
+                relatedApp: { app: '202', code: 'customer-master' },
+                targetAppId: '212',
+                relatedKeyField: 'customer_code'
+              }
+            },
+            history: {
+              type: 'REFERENCE_TABLE',
+              code: 'history',
+              referenceTable: {
+                relatedApp: { appId: '302', code: 'history-app' },
+                condition: { field: 'asset_code', relatedField: 'asset_code' }
+              }
+            }
+          }
+        },
+        actionSettings: {
+          actions: {
+            copy: {
+              name: '複製',
+              destApp: { app: '402', code: 'destination-app' },
+              targetAppId: '412',
+              mappings: []
+            }
+          }
+        }
+      }
+    });
+
+    it('keeps app IDs as differences until the explicit preset is enabled', () => {
+      const { source, target } = appReferencePair();
+      const result = computeDiffRows(
+        makeBundle(source),
+        makeBundle(target),
+        ['appInfo', 'fieldSettings', 'actionSettings'],
+        ''
+      );
+
+      expect(result.rows.map((row: any) => row.path)).toEqual([
+        'appInfo.appId',
+        'fieldSettings.properties.customer.lookup.relatedApp.app',
+        'fieldSettings.properties.customer.lookup.targetAppId',
+        'fieldSettings.properties.history.referenceTable.relatedApp.appId',
+        'actionSettings.actions.copy.destApp.app',
+        'actionSettings.actions.copy.targetAppId'
+      ]);
+    });
+
+    it('excludes only appInfo and reference destination IDs when enabled', () => {
+      const { source, target } = appReferencePair();
+      const result = computeDiffRows(
+        makeBundle(source),
+        makeBundle(target),
+        ['appInfo', 'fieldSettings', 'actionSettings'],
+        '',
+        { normalizationPresetState: { appReferences: true } }
+      );
+
+      expect(countActualDiffRows(result.rows)).toBe(0);
+    });
+
+    it('keeps non-ID reference settings and misleading app-like keys', () => {
+      const source = {
+        fieldSettings: {
+          properties: {
+            customer: {
+              type: 'SINGLE_LINE_TEXT',
+              code: 'customer',
+              lookup: {
+                relatedApp: { app: '201', code: 'customer-master-a' },
+                relatedKeyField: 'old_key'
+              },
+              applicationId: 'application-a',
+              myAppId: 'mine-a',
+              appIdLabel: '表示A',
+              app: 'ordinary-a'
+            }
+          }
+        }
+      };
+      const target = {
+        fieldSettings: {
+          properties: {
+            customer: {
+              type: 'SINGLE_LINE_TEXT',
+              code: 'customer',
+              lookup: {
+                relatedApp: { app: '202', code: 'customer-master-b' },
+                relatedKeyField: 'new_key'
+              },
+              applicationId: 'application-b',
+              myAppId: 'mine-b',
+              appIdLabel: '表示B',
+              app: 'ordinary-b'
+            }
+          }
+        }
+      };
+      const result = computeDiffRows(
+        makeBundle(source),
+        makeBundle(target),
+        ['fieldSettings'],
+        '',
+        { normalizationPresetState: { appReferences: true } }
+      );
+
+      expect(result.rows.map((row: any) => row.path)).toEqual([
+        'fieldSettings.properties.customer.app',
+        'fieldSettings.properties.customer.appIdLabel',
+        'fieldSettings.properties.customer.applicationId',
+        'fieldSettings.properties.customer.lookup.relatedApp.code',
+        'fieldSettings.properties.customer.lookup.relatedKeyField',
+        'fieldSettings.properties.customer.myAppId'
+      ]);
+    });
+
+    it('does not affect app-like keys in plugin or customize settings', () => {
+      const result = computeDiffRows(
+        makeBundle({
+          pluginSettings: { plugins: [{ id: 'plugin-a', _config: { app: '1', appId: '2', applicationId: '3' } }] },
+          customizeSettings: { app: '4', appId: '5', applicationId: '6' }
+        }),
+        makeBundle({
+          pluginSettings: { plugins: [{ id: 'plugin-a', _config: { app: '11', appId: '12', applicationId: '13' } }] },
+          customizeSettings: { app: '14', appId: '15', applicationId: '16' }
+        }),
+        ['pluginSettings', 'customizeSettings'],
+        '',
+        { normalizationPresetState: { appReferences: true } }
+      );
+
+      expect(result.rows.map((row: any) => row.path)).toEqual([
+        'pluginSettings.plugins[0].config.app',
+        'pluginSettings.plugins[0].config.appId',
+        'pluginSettings.plugins[0].config.applicationId',
+        'customizeSettings.app',
+        'customizeSettings.appId',
+        'customizeSettings.applicationId'
+      ]);
+    });
+
+    it.each([
+      { label: '追加', source: {}, target: { appInfo: { appId: '501' } } },
+      { label: '削除', source: { appInfo: { appId: '501' } }, target: {} }
+    ])('suppresses an ID-only one-sided appInfo section ($label)', ({ source, target }) => {
+      const result = computeDiffRows(
+        makeBundle(source),
+        makeBundle(target),
+        ['appInfo'],
+        '',
+        { normalizationPresetState: { appReferences: true } }
+      );
+
+      expect(countActualDiffRows(result.rows)).toBe(0);
+    });
+
+    it.each([
+      { label: '追加', source: {}, target: { fieldSettings: {
+        properties: { customer: {
+          type: 'SINGLE_LINE_TEXT', code: 'customer',
+          lookup: { relatedApp: { app: '765' }, relatedKeyField: 'customer_code' }
+        } }
+      } } },
+      { label: '削除', source: { fieldSettings: {
+        properties: { customer: {
+          type: 'SINGLE_LINE_TEXT', code: 'customer',
+          lookup: { relatedApp: { app: '765' }, relatedKeyField: 'customer_code' }
+        } }
+      } }, target: {} }
+    ])('removes IDs from a meaningful one-sided section without hiding the section ($label)', ({ source, target }) => {
+      const result = computeDiffRows(
+        makeBundle(source),
+        makeBundle(target),
+        ['fieldSettings'],
+        '',
+        { normalizationPresetState: { appReferences: true } }
+      );
+
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0].path).toBe('fieldSettings');
+      expect(JSON.stringify(result.rows[0])).not.toContain('765');
+      expect(JSON.stringify(result.rows[0])).toContain('customer_code');
+    });
+
+    it('removes a destination app ID from a one-sided action section', () => {
+      const result = computeDiffRows(
+        makeBundle({}),
+        makeBundle({ actionSettings: { actions: {
+          copy: { name: '複製', destApp: { app: '876', code: 'destination-app' }, mappings: [] }
+        } } }),
+        ['actionSettings'],
+        '',
+        { normalizationPresetState: { appReferences: true } }
+      );
+
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0].path).toBe('actionSettings');
+      expect(JSON.stringify(result.rows[0])).not.toContain('876');
+      expect(JSON.stringify(result.rows[0])).toContain('destination-app');
     });
   });
 
