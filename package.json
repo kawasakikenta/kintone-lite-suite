@@ -23,6 +23,7 @@
     "test:unit": "npm --prefix tools/統合ツール run test:unit",
     "test:output-layouts": "node tools/test-harness/run-output-layouts.mjs",
     "test:diff-multi-dom": "node tools/test-harness/run-diff-lite-multi-dom.cjs",
+    "test:diff-pairs-dom": "node tools/test-harness/run-diff-lite-pairs-dom.cjs",
     "test:diff-compare": "node tools/test-harness/run-diff-lite-compare.cjs",
     "test:er-compare": "node tools/test-harness/run-er-diagram-compare.cjs",
     "snippet": "node scripts/build-snippet.js",
