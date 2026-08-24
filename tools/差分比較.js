@@ -570,10 +570,10 @@
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
   function decodeHtmlEntities(value) {
-    let text = String(value ?? "");
-    if (!text.includes("&")) return text;
+    let text2 = String(value ?? "");
+    if (!text2.includes("&")) return text2;
     for (let i = 0; i < 3; i += 1) {
-      const next = text.replace(/&(#(\d+)|#x([0-9a-f]+)|[a-z][a-z0-9]+);/gi, (match, token, dec, hex) => {
+      const next = text2.replace(/&(#(\d+)|#x([0-9a-f]+)|[a-z][a-z0-9]+);/gi, (match, token, dec, hex) => {
         if (dec) {
           const codePoint = Number(dec);
           return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 1114111 ? String.fromCodePoint(codePoint) : match;
@@ -585,16 +585,16 @@
         const named = HTML_ENTITY_NAMES[String(token).toLowerCase()];
         return named ?? match;
       });
-      if (next === text) break;
-      text = next;
+      if (next === text2) break;
+      text2 = next;
     }
-    return text;
+    return text2;
   }
   function stripHtmlToText(value) {
-    let text = decodeHtmlEntities(value);
-    if (!/[<>]/.test(text)) return text;
-    text = text.replace(/<\s*br\s*\/?\s*>/gi, "\n").replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, "\n").replace(/<\s*\/?\s*[a-z][^>]*>/gi, "");
-    return decodeHtmlEntities(text).replace(/\n{3,}/g, "\n\n").trim();
+    let text2 = decodeHtmlEntities(value);
+    if (!/[<>]/.test(text2)) return text2;
+    text2 = text2.replace(/<\s*br\s*\/?\s*>/gi, "\n").replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, "\n").replace(/<\s*\/?\s*[a-z][^>]*>/gi, "");
+    return decodeHtmlEntities(text2).replace(/\n{3,}/g, "\n\n").trim();
   }
   function safeJsonForScript(v) {
     return JSON.stringify(v).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
@@ -653,8 +653,8 @@ ${contextLine}`);
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
   function sanitizeFilenamePart(value, fallback = "不明") {
-    const text = String(value || "").trim();
-    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    const text2 = String(value || "").trim();
+    const cleaned = text2.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
     return cleaned || fallback;
   }
   function extractAppNameFromBundle(bundle) {
@@ -719,8 +719,8 @@ ${contextLine}`);
       }
     }, 0);
   }
-  function downloadText(filename, text, type) {
-    triggerDownload(filename, new Blob([text], { type: type || "text/plain" }));
+  function downloadText(filename, text2, type) {
+    triggerDownload(filename, new Blob([text2], { type: type || "text/plain" }));
   }
   function downloadBlob(filename, blob) {
     triggerDownload(filename, blob);
@@ -763,8 +763,8 @@ ${contextLine}`);
   function resolveHttpStatus(error) {
     const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
     if (Number.isFinite(direct) && direct > 0) return direct;
-    const text = String(error?.message || "");
-    const matched = text.match(/\b(?:HTTP(?:\/\d+(?:\.\d+)?)?(?:\s+status(?:\s+code)?)?|status(?:\s+code)?)\s*(?::|=|-)?\s*([45]\d{2})\b/i);
+    const text2 = String(error?.message || "");
+    const matched = text2.match(/\b(?:HTTP(?:\/\d+(?:\.\d+)?)?(?:\s+status(?:\s+code)?)?|status(?:\s+code)?)\s*(?::|=|-)?\s*([45]\d{2})\b/i);
     return matched ? Number(matched[1]) : 0;
   }
   function isRetriableApiError(error) {
@@ -876,10 +876,10 @@ ${contextLine}`);
     }
     return picked;
   }
-  function fnv1aHashString(text) {
+  function fnv1aHashString(text2) {
     let h = 2166136261;
-    for (let i = 0; i < text.length; i++) {
-      h ^= text.charCodeAt(i);
+    for (let i = 0; i < text2.length; i++) {
+      h ^= text2.charCodeAt(i);
       h = h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
     }
     return h.toString(16).padStart(8, "0");
@@ -1355,13 +1355,13 @@ ${contextLine}`);
     const escaped = token.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
     return new RegExp(`^${escaped}$`);
   }
-  function parseIgnoreRules(text) {
+  function parseIgnoreRules(text2) {
     const keySet = new Set(DEFAULT_IGNORE_KEYS);
     const pathSet = /* @__PURE__ */ new Set();
     const exactPathSet = /* @__PURE__ */ new Set();
     const keyPatterns = [];
     const pathPatterns = [];
-    String(text || "").split(/[\n\r,、，;；]+/).map(trimIgnoreToken).filter(Boolean).forEach((rawToken) => {
+    String(text2 || "").split(/[\n\r,、，;；]+/).map(trimIgnoreToken).filter(Boolean).forEach((rawToken) => {
       const exactPath = decodeExactIgnorePathRule(rawToken);
       if (exactPath) {
         exactPathSet.add(exactPath);
@@ -2925,11 +2925,11 @@ ${contextLine}`);
     if (bucket.some((item) => getImpactRefLogicalKey(item) === sig)) return;
     bucket.push(ref);
   }
-  function collectExpressionFieldRefs(text, codeSet) {
+  function collectExpressionFieldRefs(text2, codeSet) {
     const matches = /* @__PURE__ */ new Set();
     const re = /[A-Za-z_][A-Za-z0-9_]*/g;
     let match;
-    while ((match = re.exec(String(text || ""))) !== null) {
+    while ((match = re.exec(String(text2 || ""))) !== null) {
       if (codeSet.has(match[0])) matches.add(match[0]);
     }
     return [...matches];
@@ -3042,10 +3042,10 @@ ${contextLine}`);
       return;
     }
     if (typeof value !== "string") return;
-    const text = value.trim();
-    if (!text) return;
-    if (FIELD_REF_EXACT_KEYS.has(parentKey) && codeSet.has(text)) {
-      addFieldImpactRef(index, text, {
+    const text2 = value.trim();
+    if (!text2) return;
+    if (FIELD_REF_EXACT_KEYS.has(parentKey) && codeSet.has(text2)) {
+      addFieldImpactRef(index, text2, {
         sectionKey,
         section: SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey,
         kind: "フィールド参照",
@@ -3055,7 +3055,7 @@ ${contextLine}`);
       return;
     }
     if (!FIELD_REF_TOKEN_KEYS.has(parentKey)) return;
-    collectExpressionFieldRefs(text, codeSet).forEach((fieldCode) => {
+    collectExpressionFieldRefs(text2, codeSet).forEach((fieldCode) => {
       addFieldImpactRef(index, fieldCode, {
         sectionKey,
         section: SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey,
@@ -4479,8 +4479,8 @@ ${formatSubtableChildrenText(value.fields)}`;
   function isSubtableFieldRootPath(path) {
     return typeof path === "string" && /^fieldSettings\.properties\.[^.[\]]+$/.test(path);
   }
-  function stripLabelHtmlTags(text) {
-    return stripHtmlToText(text);
+  function stripLabelHtmlTags(text2) {
+    return stripHtmlToText(text2);
   }
   function sanitizeHtmlBearingProps(value) {
     if (value == null || typeof value !== "object") return value;
@@ -4584,8 +4584,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return mode === "withCompared";
   }
   function buildCharDiffHtml(leftText, rightText) {
-    const segmentGraphemes = (text) => {
-      const normalized = String(text ?? "");
+    const segmentGraphemes = (text2) => {
+      const normalized = String(text2 ?? "");
       if (!normalized) return [];
       const IntlAny = Intl;
       if (typeof IntlAny !== "undefined" && typeof IntlAny.Segmenter === "function") {
@@ -4703,11 +4703,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       }
     };
   }
-  function hashDiffHtmlReviewText(text) {
+  function hashDiffHtmlReviewText(text2) {
     let first = 2166136261;
     let second = 2654435769;
-    for (let index = 0; index < text.length; index += 1) {
-      const code = text.charCodeAt(index);
+    for (let index = 0; index < text2.length; index += 1) {
+      const code = text2.charCodeAt(index);
       first = Math.imul((first ^ code) >>> 0, 16777619) >>> 0;
       second = Math.imul((second ^ code ^ index) >>> 0, 2246822507) >>> 0;
       second ^= second >>> 13;
@@ -10574,13 +10574,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return limitImportedBundleToSections(candidates[0], options.sections);
   }
   async function readSettingsBundleFile(file, options = {}) {
-    const text = await new Promise((resolve, reject) => {
+    const text2 = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => resolve(String(e.target.result || ""));
       reader.onerror = () => reject(new Error("ファイルの読み取りに失敗しました"));
       reader.readAsText(file);
     });
-    return pickSettingsBundle(JSON.parse(text), options);
+    return pickSettingsBundle(JSON.parse(text2), options);
   }
 
   // src/tabs/diff-standalone.ts
@@ -11030,22 +11030,22 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   var MIN_COL_W = 10;
   var MAX_COL_W = 60;
   var EXCEL_CELL_TEXT_LIMIT = 32767;
-  function shortTextHash(text) {
+  function shortTextHash(text2) {
     let hash = 2166136261;
-    for (let i = 0; i < text.length; i += 1) {
-      hash ^= text.charCodeAt(i);
+    for (let i = 0; i < text2.length; i += 1) {
+      hash ^= text2.charCodeAt(i);
       hash = Math.imul(hash, 16777619);
     }
     return (hash >>> 0).toString(16).padStart(8, "0");
   }
   function normalizeExcelCellText(value) {
-    const text = String(value ?? "");
-    if (text.length <= EXCEL_CELL_TEXT_LIMIT) return text;
+    const text2 = String(value ?? "");
+    if (text2.length <= EXCEL_CELL_TEXT_LIMIT) return text2;
     const suffix = `
-…（Excelセル上限32,767文字のため省略・元${text.length}文字・識別:${shortTextHash(text)}）`;
+…（Excelセル上限32,767文字のため省略・元${text2.length}文字・識別:${shortTextHash(text2)}）`;
     let keep = EXCEL_CELL_TEXT_LIMIT - suffix.length;
-    if (keep > 0 && /[\uD800-\uDBFF]/.test(text.charAt(keep - 1))) keep -= 1;
-    return text.slice(0, Math.max(0, keep)) + suffix;
+    if (keep > 0 && /[\uD800-\uDBFF]/.test(text2.charAt(keep - 1))) keep -= 1;
+    return text2.slice(0, Math.max(0, keep)) + suffix;
   }
   var CELL_STYLE_INDEX = {
     normal: 2,
@@ -11167,9 +11167,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     for (let r = 0; r < limit; r++) {
       const v = rows[r] ? rows[r][col] : void 0;
       if (v == null) continue;
-      const text = String(v);
+      const text2 = String(v);
       let maxLine = 0;
-      for (const line of text.split("\n")) {
+      for (const line of text2.split("\n")) {
         let w = 0;
         for (let i = 0; i < line.length; i++) {
           const code = line.charCodeAt(i);
@@ -11789,33 +11789,33 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return [...new Set(notes)].join(" / ");
   }
   var XLSX_DIFF_VALUE_PREVIEW_LIMIT = 4e3;
-  function shortStableHash(text) {
+  function shortStableHash(text2) {
     let hash = 2166136261;
-    for (let i = 0; i < text.length; i += 1) {
-      hash ^= text.charCodeAt(i);
+    for (let i = 0; i < text2.length; i += 1) {
+      hash ^= text2.charCodeAt(i);
       hash = Math.imul(hash, 16777619);
     }
     return (hash >>> 0).toString(16).toUpperCase().padStart(8, "0");
   }
-  function xlsxDiffValuePreview(text, originalUtf16Length = text.length) {
-    if (text.length <= XLSX_DIFF_VALUE_PREVIEW_LIMIT) return text;
-    const hash = shortStableHash(text);
+  function xlsxDiffValuePreview(text2, originalUtf16Length = text2.length) {
+    if (text2.length <= XLSX_DIFF_VALUE_PREVIEW_LIMIT) return text2;
+    const hash = shortStableHash(text2);
     const prefix = `[一部表示: 元データ ${originalUtf16Length}文字（UTF-16） / 識別:${hash}]
 `;
     const suffix = `
 …（Excel表示用に省略・元UTF-16長 ${originalUtf16Length}・識別:${hash}）`;
     let keep = XLSX_DIFF_VALUE_PREVIEW_LIMIT - prefix.length - suffix.length;
-    if (keep > 0 && /[\uD800-\uDBFF]/.test(text.charAt(keep - 1))) keep -= 1;
-    return prefix + text.slice(0, Math.max(0, keep)) + suffix;
+    if (keep > 0 && /[\uD800-\uDBFF]/.test(text2.charAt(keep - 1))) keep -= 1;
+    return prefix + text2.slice(0, Math.max(0, keep)) + suffix;
   }
   function rowValue(row, side) {
     if (isSensitiveSameDiffRow(row)) return SENSITIVE_SAME_VALUE_REDACTION;
     if (side === "source" && (row.left === void 0 || row.type === "added")) return "";
     if (side === "target" && (row.right === void 0 || row.type === "removed")) return "";
     const rawValue = side === "source" ? row.left : row.right;
-    const text = stringifyRowValueForDiff(rawValue, row.path);
-    const originalUtf16Length = typeof rawValue === "string" ? rawValue.length : text.length;
-    return xlsxDiffValuePreview(text, originalUtf16Length);
+    const text2 = stringifyRowValueForDiff(rawValue, row.path);
+    const originalUtf16Length = typeof rawValue === "string" ? rawValue.length : text2.length;
+    return xlsxDiffValuePreview(text2, originalUtf16Length);
   }
   function conciseFieldDefinition(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -11929,9 +11929,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       });
       summary = facts.length ? facts.join(" / ") : `${Object.keys(value).length}項目の設定`;
     }
-    const text = `${summary}
+    const text2 = `${summary}
 詳細は「${technicalSheetNameForRow(row)}」シートで確認`;
-    return xlsxDiffValuePreview(text, text.length);
+    return xlsxDiffValuePreview(text2, text2.length);
   }
   function humanizeListRowValue(row, side, sourceBundle, targetBundle) {
     if (isSensitiveSameDiffRow(row)) return SENSITIVE_SAME_VALUE_REDACTION;
@@ -13401,19 +13401,19 @@ ${label}` : `${direction}の値`;
   function customerRawNeedsContinuation(raw) {
     return raw.text.length > 32767 || estimatedWrappedLines(raw.text, 42) > CUSTOMER_DETAIL_RAW_MAX_LINES;
   }
-  function splitCustomerRawText(text) {
-    if (!text.length) return [""];
+  function splitCustomerRawText(text2) {
+    if (!text2.length) return [""];
     const chunks = [];
     let offset = 0;
-    while (offset < text.length) {
+    while (offset < text2.length) {
       const capacity = Math.max(8, CUSTOMER_RAW_CHUNK_COLUMN_WIDTH - 2);
       let end = offset;
       let lines = 1;
       let lineWidth = 0;
-      while (end < text.length && end - offset < CUSTOMER_RAW_CHUNK_TEXT_LIMIT) {
-        const codePoint = text.codePointAt(end);
+      while (end < text2.length && end - offset < CUSTOMER_RAW_CHUNK_TEXT_LIMIT) {
+        const codePoint = text2.codePointAt(end);
         const charLength = codePoint > 65535 ? 2 : 1;
-        const char = text.slice(end, end + charLength);
+        const char = text2.slice(end, end + charLength);
         let nextLines = lines;
         let nextWidth = lineWidth;
         if (char === "\n") {
@@ -13433,8 +13433,8 @@ ${label}` : `${direction}の値`;
         lineWidth = nextWidth;
         end += charLength;
       }
-      if (end <= offset) end = Math.min(text.length, offset + 1);
-      chunks.push(text.slice(offset, end));
+      if (end <= offset) end = Math.min(text2.length, offset + 1);
+      chunks.push(text2.slice(offset, end));
       offset = end;
     }
     return chunks;
@@ -13475,7 +13475,7 @@ ${label}` : `${direction}の値`;
     const labels = new Map(definitions.map(({ code, label }) => [code, label]));
     const alternatives = definitions.map(({ code }) => code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
     const fieldCodePattern = new RegExp(`(^|[^A-Za-z0-9_])(${alternatives})(?=$|[^A-Za-z0-9_])`, "g");
-    const replaceUnquoted = (text) => text.replace(
+    const replaceUnquoted = (text2) => text2.replace(
       fieldCodePattern,
       (_match, prefix, code) => `${prefix}${labels.get(code)}（${code}）`
     );
@@ -14235,14 +14235,14 @@ ${targetName}`,
   function buildCustomerCoverageIssueItems(ctx) {
     const items = [];
     const add = (sectionLabel, target, status, explanation, rawValue) => {
-      const text = stringifyForDiff(rawValue);
+      const text2 = stringifyForDiff(rawValue);
       items.push({
         index: items.length,
         sectionLabel,
         target,
         status,
         explanation,
-        raw: { state: `取得・打切り情報（${text.length}文字）`, text }
+        raw: { state: `取得・打切り情報（${text2.length}文字）`, text: text2 }
       });
     };
     for (const issue of ctx.fetchIssues || []) {
@@ -14949,13 +14949,13 @@ ${targetName}`,
       status.innerHTML = `<span class="${iconCls}">${icon}</span><span class="kus-lp__status-text"></span>`;
       status.querySelector(".kus-lp__status-text").textContent = msg || "";
     }
-    function setResult(text) {
-      if (!text) {
+    function setResult(text2) {
+      if (!text2) {
         result.textContent = "";
         result.classList.add("kus-lp__result--empty");
         return;
       }
-      result.textContent = text;
+      result.textContent = text2;
       result.classList.remove("kus-lp__result--empty");
     }
     function setResultHtml(html) {
@@ -15146,10 +15146,10 @@ ${targetName}`,
     }
     return { card, body, actions };
   }
-  function makeNote(text, kind = "plain") {
+  function makeNote(text2, kind = "plain") {
     const n = document.createElement("div");
     n.className = kind === "warn" ? "kus-lp__note--warn" : "kus-lp__note";
-    n.textContent = text;
+    n.textContent = text2;
     return n;
   }
   function makeDetails(title, opts = {}) {
@@ -15339,6 +15339,177 @@ ${targetName}`,
     return details;
   }
 
+  // src/diff/batch-comparison.ts
+  var DEFAULT_MAX_DIFF_BATCH_PAIRS = 50;
+  function text(value) {
+    return String(value ?? "").trim();
+  }
+  function numericIdentifier(value) {
+    const normalized = text(value);
+    return /^\d+$/.test(normalized) ? normalized.replace(/^0+(?=\d)/, "") : normalized;
+  }
+  function normalizeEndpoint(input) {
+    return {
+      appId: numericIdentifier(input?.appId),
+      guestId: numericIdentifier(input?.guestId),
+      preview: input?.preview === true,
+      appName: text(input?.appName)
+    };
+  }
+  function endpointWasTouched(endpoint) {
+    return !!(endpoint.appId || endpoint.guestId || endpoint.preview || endpoint.appName);
+  }
+  function endpointDescription(endpoint) {
+    const space = endpoint.guestId ? `ゲスト ${endpoint.guestId}` : "通常スペース";
+    return `App ${endpoint.appId || "-"} / ${space} / ${endpoint.preview ? "プレビュー" : "運用"}`;
+  }
+  function buildDiffBatchEndpointKey(endpoint) {
+    return JSON.stringify([
+      numericIdentifier(endpoint?.appId),
+      numericIdentifier(endpoint?.guestId),
+      endpoint?.preview === true
+    ]);
+  }
+  function buildDiffBatchPairKey(pair) {
+    return JSON.stringify([
+      buildDiffBatchEndpointKey(pair.source),
+      buildDiffBatchEndpointKey(pair.target)
+    ]);
+  }
+  function prepareDiffBatchPairs(inputs, options = {}) {
+    const maxPairs = Math.max(1, Math.floor(options.maxPairs ?? DEFAULT_MAX_DIFF_BATCH_PAIRS));
+    const requireOneToOne = options.requireOneToOne !== false;
+    const pairs = [];
+    const issues = [];
+    const pairRows = /* @__PURE__ */ new Map();
+    const sourceRows = /* @__PURE__ */ new Map();
+    const targetRows = /* @__PURE__ */ new Map();
+    for (let index = 0; index < inputs.length; index += 1) {
+      const input = inputs[index] || {};
+      const rowNumber = Number.isInteger(input.rowNumber) && Number(input.rowNumber) > 0 ? Number(input.rowNumber) : index + 1;
+      const source = normalizeEndpoint(input.source);
+      const target = normalizeEndpoint(input.target);
+      const sourceTouched = endpointWasTouched(source);
+      const targetTouched = endpointWasTouched(target);
+      if (!sourceTouched && !targetTouched) continue;
+      if (!source.appId || !target.appId) {
+        const missing = [!source.appId ? "比較元" : "", !target.appId ? "比較先" : ""].filter(Boolean).join("と");
+        issues.push({
+          code: "incomplete",
+          rowNumber,
+          side: !source.appId ? "source" : "target",
+          message: `ペア ${rowNumber}: ${missing}のアプリIDを入力してください`
+        });
+        continue;
+      }
+      const fieldChecks = [
+        { value: source.appId, code: "invalid-source-app", side: "source", label: "比較元アプリID" },
+        { value: target.appId, code: "invalid-target-app", side: "target", label: "比較先アプリID" },
+        { value: source.guestId, code: "invalid-source-guest", side: "source", label: "比較元ゲストID", optional: true },
+        { value: target.guestId, code: "invalid-target-guest", side: "target", label: "比較先ゲストID", optional: true }
+      ];
+      let invalid = false;
+      for (const check of fieldChecks) {
+        if (check.optional && !check.value || /^\d+$/.test(check.value)) continue;
+        invalid = true;
+        issues.push({
+          code: check.code,
+          rowNumber,
+          side: check.side,
+          message: `ペア ${rowNumber}: ${check.label}は半角数字で入力してください`
+        });
+      }
+      if (invalid) continue;
+      const pair = { source, target, rowNumber };
+      const sourceKey = buildDiffBatchEndpointKey(source);
+      const targetKey = buildDiffBatchEndpointKey(target);
+      const pairKey = buildDiffBatchPairKey(pair);
+      if (sourceKey === targetKey) {
+        issues.push({
+          code: "same-endpoint",
+          rowNumber,
+          side: "pair",
+          message: `ペア ${rowNumber}: 比較元と比較先が同じ接続先です（${endpointDescription(source)}）`
+        });
+        continue;
+      }
+      const duplicatePairRow = pairRows.get(pairKey);
+      if (duplicatePairRow != null) {
+        issues.push({
+          code: "duplicate-pair",
+          rowNumber,
+          relatedRowNumber: duplicatePairRow,
+          side: "pair",
+          message: `ペア ${rowNumber}: ペア ${duplicatePairRow} と同じ組み合わせです`
+        });
+        continue;
+      }
+      if (requireOneToOne) {
+        const duplicateSourceRow = sourceRows.get(sourceKey);
+        if (duplicateSourceRow != null) {
+          issues.push({
+            code: "duplicate-source",
+            rowNumber,
+            relatedRowNumber: duplicateSourceRow,
+            side: "source",
+            message: `ペア ${rowNumber}: 比較元がペア ${duplicateSourceRow} と重複しています。1対多比較は「1対多比較」を使ってください`
+          });
+          continue;
+        }
+        const duplicateTargetRow = targetRows.get(targetKey);
+        if (duplicateTargetRow != null) {
+          issues.push({
+            code: "duplicate-target",
+            rowNumber,
+            relatedRowNumber: duplicateTargetRow,
+            side: "target",
+            message: `ペア ${rowNumber}: 比較先がペア ${duplicateTargetRow} と重複しています。各アプリを1件ずつ対応付けてください`
+          });
+          continue;
+        }
+      }
+      pairRows.set(pairKey, rowNumber);
+      sourceRows.set(sourceKey, rowNumber);
+      targetRows.set(targetKey, rowNumber);
+      pairs.push(pair);
+    }
+    if (pairs.length > maxPairs) {
+      const firstOverflow = pairs[maxPairs]?.rowNumber || maxPairs + 1;
+      issues.push({
+        code: "too-many",
+        rowNumber: firstOverflow,
+        side: "pair",
+        message: `一度に比較できるペアは ${maxPairs} 件までです`
+      });
+    }
+    return { pairs: pairs.slice(0, maxPairs), issues };
+  }
+  async function runSequentialDiffBatch(pairs, runPair, onProgress) {
+    const bundleCache = /* @__PURE__ */ new Map();
+    const results = [];
+    for (let index = 0; index < pairs.length; index += 1) {
+      const pair = pairs[index];
+      const sourceKey = buildDiffBatchEndpointKey(pair.source);
+      const targetKey = buildDiffBatchEndpointKey(pair.target);
+      onProgress?.(pair, index, pairs.length);
+      try {
+        const value = await runPair(pair, {
+          importedSourceBundle: bundleCache.get(sourceKey) ?? null,
+          importedTargetBundle: bundleCache.get(targetKey) ?? null,
+          onSourceBundle: (bundle) => {
+            if (bundle != null) bundleCache.set(sourceKey, bundle);
+          }
+        });
+        if (value?.sourceBundle != null) bundleCache.set(sourceKey, value.sourceBundle);
+        if (value?.targetBundle != null) bundleCache.set(targetKey, value.targetBundle);
+        results.push({ status: "fulfilled", pair, index, value });
+      } catch (error) {
+        results.push({ status: "rejected", pair, index, error });
+      }
+    }
+    return results;
+  }
+
   // src/entries/diff-lite-ui.ts
   var SCOPE_OPTS = [
     ["fieldSettings", "フィールド", true],
@@ -15504,12 +15675,22 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-target-name:not(.kus-dl-target-name--empty)::before{content:'アプリ名: ';color:#334155;font-weight:600}
 .kus-dl-more{display:flex;justify-content:center;padding:8px 0 2px}
 .kus-dl-multi{width:100%;border-collapse:collapse;font:11px/1.45 -apple-system,Segoe UI,sans-serif}
+.kus-dl-table-scroll{box-sizing:border-box;width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;-webkit-overflow-scrolling:touch}
+.kus-dl-table-scroll:focus-visible{outline:3px solid #2563eb;outline-offset:2px}
+.kus-dl-table-scroll>.kus-dl-multi{min-width:720px}
+.kus-dl-table-scroll>.kus-dl-multi--pairs{min-width:880px}
 .kus-dl-multi caption{text-align:left;color:#475569;font-weight:700;padding:0 0 6px}
 .kus-dl-multi th,.kus-dl-multi td{padding:6px 7px;border-bottom:1px solid #e2e8f0;text-align:right;vertical-align:top}
 .kus-dl-multi th:first-child,.kus-dl-multi td:first-child{text-align:left}
 .kus-dl-multi thead th{position:sticky;top:0;background:#f8fafc;color:#475569;font-size:11px}
 .kus-dl-multi__warn{color:#9a3412;font-weight:700}
 .kus-dl-multi__ok{color:#166534;font-weight:700}
+.kus-dl-multi--pairs th:nth-child(2),.kus-dl-multi--pairs td:nth-child(2),.kus-dl-multi--pairs th:nth-child(3),.kus-dl-multi--pairs td:nth-child(3),.kus-dl-multi--pairs th:nth-child(5),.kus-dl-multi--pairs td:nth-child(5),.kus-dl-multi--pairs th:nth-child(6),.kus-dl-multi--pairs td:nth-child(6){text-align:left}
+.kus-dl-pair-breakdown{display:block;min-width:165px}
+.kus-dl-pair-breakdown strong,.kus-dl-pair-breakdown small{display:block}
+.kus-dl-pair-breakdown small{margin-top:2px;color:#64748b;white-space:nowrap}
+.kus-dl-pair-save{display:flex;gap:4px;justify-content:flex-end}
+.kus-dl-pair-save .kus-lp__btn{min-height:36px!important;padding:5px 7px!important;font-size:10.5px}
 
 /* Diff Lite only: human-first review workspace. Shared litePanelTheme is intentionally untouched. */
 #kus-diff-lite.kus-lp{width:min(1000px,calc(100vw - 24px));max-height:min(96vh,1040px);top:max(8px,2vh);right:max(8px,1vw);border-radius:18px;background:#f4f7fa;box-shadow:0 28px 80px -32px rgba(15,37,63,.52)}
@@ -15524,7 +15705,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 #kus-diff-lite .kus-lp__check{min-height:44px}
 #kus-diff-lite button:focus-visible,#kus-diff-lite input:focus-visible,#kus-diff-lite select:focus-visible,#kus-diff-lite textarea:focus-visible,#kus-diff-lite summary:focus-visible{outline:3px solid #2563eb;outline-offset:2px}
 .kus-dl-workflow{display:grid;gap:16px}
-.kus-dl-step{padding:20px;border:1px solid #d8e0ea;border-radius:16px;background:#fff;box-shadow:0 16px 36px -32px rgba(15,37,63,.62)}
+.kus-dl-step{min-width:0;padding:20px;border:1px solid #d8e0ea;border-radius:16px;background:#fff;box-shadow:0 16px 36px -32px rgba(15,37,63,.62)}
 .kus-dl-step__header{display:flex;align-items:flex-start;gap:11px;margin:0 0 15px;padding:0 0 13px;border-bottom:1px solid #e2e8f0;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-step__number{display:inline-flex;flex:0 0 30px;width:30px;height:30px;align-items:center;justify-content:center;border-radius:10px;background:linear-gradient(145deg,#16395f,#2563eb);color:#fff;font-size:12px;font-weight:800;box-shadow:0 6px 14px -8px rgba(37,99,235,.8)}
 .kus-dl-step__header h2{margin:0;color:#10253f;font-size:16px;line-height:1.35}
@@ -15535,6 +15716,34 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-mode{display:inline-flex;gap:4px;margin:0 0 12px;padding:3px;border:1px solid #cbd5e1;border-radius:10px;background:#f1f5f9}
 .kus-dl-mode .kus-lp__btn{min-width:118px;border-color:transparent;background:transparent;box-shadow:none;color:#475569}
 .kus-dl-mode .kus-lp__btn.is-active{background:#fff;border-color:#cbd5e1;color:#10253f;box-shadow:0 1px 2px rgba(15,23,42,.08)}
+.kus-dl-pair-editor{display:grid;gap:12px}
+.kus-dl-pair-editor__intro{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:8px;padding:11px 13px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;color:#1e3a8a;font-family:-apple-system,Segoe UI,sans-serif}
+.kus-dl-pair-editor__intro strong{display:block;color:#10253f;font-size:13px}
+.kus-dl-pair-editor__intro span{display:block;margin-top:2px;color:#475569;font-size:11px;line-height:1.5}
+.kus-dl-pair-count{flex:0 0 auto;padding:3px 8px;border:1px solid #bfdbfe;border-radius:999px;background:#fff;color:#1e3a8a;font-size:11px;font-weight:800;font-variant-numeric:tabular-nums}
+.kus-dl-pair-list{display:grid;gap:10px}
+.kus-dl-pair-row{position:relative;display:grid;grid-template-columns:34px minmax(0,1fr) 38px minmax(0,1fr) minmax(84px,auto);gap:9px;align-items:stretch;padding:12px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;font-family:-apple-system,Segoe UI,sans-serif;box-shadow:0 12px 28px -28px rgba(15,37,63,.7)}
+.kus-dl-pair-row.is-invalid{border-color:#f59e0b;background:#fffbeb;box-shadow:0 0 0 2px rgba(245,158,11,.12)}
+.kus-dl-pair-row__number{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:9px;background:#e2e8f0;color:#334155;font-size:12px;font-weight:900;font-variant-numeric:tabular-nums}
+.kus-dl-pair-side{min-width:0;padding:10px;border:1px solid #d8e0ea;border-left:4px solid #475569;border-radius:10px;background:#f8fafc}
+.kus-dl-pair-side--target{border-left-color:#2563eb;background:#eff6ff}
+.kus-dl-pair-side__role{display:block;margin:0 0 7px;color:#475569;font-size:11px;font-weight:850;letter-spacing:.05em}
+.kus-dl-pair-side__fields{display:grid;grid-template-columns:minmax(125px,1fr) minmax(82px,.55fr);gap:7px;align-items:start}
+.kus-dl-pair-side__fields .kus-dl-target-field{min-width:0}
+.kus-dl-pair-side__fields .kus-lp__input{width:100%;box-sizing:border-box}
+.kus-dl-pair-field-label{display:block;margin:0 0 4px;color:#475569;font-size:10.5px;font-weight:750;line-height:1.35}
+.kus-dl-pair-guest-field{min-width:0}
+.kus-dl-pair-side__preview{grid-column:1/-1;min-height:34px!important}
+.kus-dl-pair-arrow{display:flex;align-items:center;justify-content:center;color:#2563eb;font-size:20px;font-weight:900}
+.kus-dl-pair-actions{display:flex;flex-direction:column;gap:5px;justify-content:center}
+.kus-dl-pair-actions .kus-lp__btn{width:100%;min-height:36px!important;padding:6px 8px!important;font-size:11px}
+.kus-dl-pair-row__error{grid-column:2/-1;margin:0;padding:7px 9px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font-size:11px;font-weight:700;line-height:1.5}
+.kus-dl-pair-toolbar{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.kus-dl-pair-bulk{margin:0;border:1px solid #cbd5e1;border-radius:9px;background:#f8fafc}
+.kus-dl-pair-bulk>summary{display:flex;align-items:center;min-height:44px;padding:8px 11px;box-sizing:border-box;cursor:pointer;color:#334155;font-size:12px;font-weight:750}
+.kus-dl-pair-bulk__body{display:grid;gap:8px;padding:10px;border-top:1px solid #e2e8f0}
+.kus-dl-pair-bulk__body textarea{box-sizing:border-box;width:100%}
+.kus-dl-pair-editor .kus-as__result{background:#fff}
 .kus-dl-direction-grid{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:10px}
 .kus-dl-app-card{min-width:0;padding:16px;border:1px solid #d8e0ea;border-left:4px solid #475569;border-radius:14px;background:#f8fafc}
 .kus-dl-app-card--target{border-color:#d8e0ea;border-left-color:#2563eb;background:#eff6ff}
@@ -15631,6 +15840,12 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   #kus-diff-lite .kus-lp__body{padding:13px 12px 18px}
   .kus-dl-step{padding:14px 12px}
   .kus-dl-direction-grid{grid-template-columns:1fr}
+  .kus-dl-mode{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;box-sizing:border-box}
+  .kus-dl-mode .kus-lp__btn{min-width:0;padding-inline:7px!important}
+  .kus-dl-pair-row{grid-template-columns:30px minmax(0,1fr) 30px minmax(0,1fr);padding:10px;gap:7px}
+  .kus-dl-pair-actions{grid-column:2/-1;flex-direction:row;justify-content:flex-end}
+  .kus-dl-pair-actions .kus-lp__btn{width:auto}
+  .kus-dl-pair-row__error{grid-column:2/-1}
   .kus-dl-swap{width:100%;max-width:none}
   .kus-dl-row__cols{grid-template-columns:1fr}
   .kus-dl-presence{grid-template-columns:1fr}
@@ -15639,6 +15854,14 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-disclosure>summary small{width:100%;padding-right:28px;text-align:left}
 }
 @media(max-width:640px){
+  .kus-dl-pair-row{grid-template-columns:30px minmax(0,1fr);gap:7px}
+  .kus-dl-pair-side{grid-column:2}
+  .kus-dl-pair-arrow{grid-column:2;min-height:24px;transform:rotate(90deg)}
+  .kus-dl-pair-actions{grid-column:2;justify-content:stretch}
+  .kus-dl-pair-actions .kus-lp__btn{flex:1}
+  .kus-dl-pair-row__error{grid-column:2}
+  .kus-dl-pair-side__fields{grid-template-columns:1fr}
+  .kus-dl-pair-side__preview{grid-column:1}
   .kus-dl-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .kus-dl-row__mobile-toggle{display:inline-flex;min-height:44px}
   .kus-dl-row__cols{display:none;grid-template-columns:1fr}
@@ -15663,7 +15886,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-row__action{justify-self:end;align-self:start}
   .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 4px;color:#64748b;font:700 11px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.03em}
   .kus-dl-value__label+.kus-dl-pre::before{content:none;display:none}
-  .kus-dl-multi{display:block;overflow-x:auto;white-space:nowrap}
+  .kus-dl-table-scroll>.kus-dl-multi{white-space:nowrap}
 }
 @media(max-width:420px){
   .kus-dl-mode{display:grid;grid-template-columns:1fr 1fr;width:100%;box-sizing:border-box}
@@ -15789,14 +16012,14 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const safe = (v) => {
       try {
         if (v === void 0) return "";
-        const text2 = JSON.stringify(v, (_key, value) => typeof value === "string" && value.length > SEARCH_NESTED_STRING_LIMIT ? `${value.slice(0, SEARCH_NESTED_STRING_LIMIT)}…` : value);
-        return String(text2 || "").slice(0, SEARCH_VALUE_TEXT_LIMIT);
+        const text3 = JSON.stringify(v, (_key, value) => typeof value === "string" && value.length > SEARCH_NESTED_STRING_LIMIT ? `${value.slice(0, SEARCH_NESTED_STRING_LIMIT)}…` : value);
+        return String(text3 || "").slice(0, SEARCH_VALUE_TEXT_LIMIT);
       } catch {
         return String(v).slice(0, SEARCH_VALUE_TEXT_LIMIT);
       }
     };
     const decoded = safeDecodeRow(row);
-    const text = [
+    const text2 = [
       row.section || "",
       row.sectionKey || "",
       row.path || "",
@@ -15807,8 +16030,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       decoded?.oneLineSummary || "",
       ...decoded?.searchableTokens || []
     ].join("\n").toLowerCase();
-    rowSearchCache.set(row, text);
-    return text;
+    rowSearchCache.set(row, text2);
+    return text2;
   }
   function buildLiteDiffRowKey(row) {
     const stateRenameIdentity = row._stateRenameNotice ? stableStringify({
@@ -15846,8 +16069,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     if (filters.keyword && !rowSearchText(row).includes(filters.keyword)) return false;
     return true;
   }
-  function summarizeLiteIgnoreRules(text) {
-    const tokens = String(text || "").split(/[\n\r,、，;；]+/).map((token) => token.trim()).filter(Boolean);
+  function summarizeLiteIgnoreRules(text2) {
+    const tokens = String(text2 || "").split(/[\n\r,、，;；]+/).map((token) => token.trim()).filter(Boolean);
     const unique = [...new Map(tokens.map((token) => {
       const exactPath = decodeExactIgnorePathRule(token);
       return [exactPath == null ? token.toLowerCase() : `path:${exactPath}`, token];
@@ -16087,10 +16310,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const panel = createLitePanel({
       id: "kus-diff-lite",
       title: "差分比較",
-      subtitle: "アプリ設定の差分を比較し、レビュー用 HTML と顧客向け Excel で確認",
+      subtitle: "アプリ設定を1件ずつ、1対多、または複数の1対1ペアで比較し、HTMLと顧客向けExcelで確認",
       accent: "diff",
       badges: [{ label: "Lite" }, { label: "出力対応" }],
-      hint: "比較完了時にレビュー用 HTML を自動保存します。顧客向け Excel には差分値と取得不完全時のエラー等の原文をマスキングせず収録し、長い原文は可視シートへ分割して全文を保持します。共有前に内容を確認してください。",
+      hint: "1対1比較と1対多比較は完了時にレビュー用HTMLを自動保存します。ペア一括比較は結果行から必要なHTMLまたはExcelを保存します。顧客向けExcelには差分値と取得不完全時のエラー等の原文をマスキングせず収録するため、共有前に内容を確認してください。",
       wide: true
     });
     panel.status.setAttribute("role", "status");
@@ -16147,9 +16370,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     modeSwitch.setAttribute("aria-label", "比較方法");
     const singleModeBtn = makeButton("1対1比較", "sub");
     singleModeBtn.dataset.kusDlMode = "single";
-    const multiModeBtn = makeButton("複数比較", "sub");
+    const multiModeBtn = makeButton("1対多比較", "sub");
     multiModeBtn.dataset.kusDlMode = "multi";
-    modeSwitch.append(singleModeBtn, multiModeBtn);
+    const pairModeBtn = makeButton("ペア一括比較", "sub");
+    pairModeBtn.dataset.kusDlMode = "pairs";
+    modeSwitch.append(singleModeBtn, multiModeBtn, pairModeBtn);
     cardApp.body.appendChild(modeSwitch);
     const directionGrid = document.createElement("div");
     directionGrid.className = "kus-dl-direction-grid";
@@ -16190,12 +16415,12 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const entry = { app, guest, row, name, appName: "" };
       setTargetName(entry, appName);
       copy.addEventListener("click", async () => {
-        const text = [`比較先 ${targetRows.indexOf(entry) + 1}`, app.value.trim(), guest.value.trim()].join("	");
+        const text2 = [`比較先 ${targetRows.indexOf(entry) + 1}`, app.value.trim(), guest.value.trim()].join("	");
         try {
-          await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(text2);
           panel.setStatus("比較先行をコピーしました", "info");
         } catch {
-          panel.setStatus(text, "info");
+          panel.setStatus(text2, "info");
         }
       });
       remove.addEventListener("click", () => {
@@ -16203,10 +16428,13 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         const idx = targetRows.indexOf(entry);
         if (idx >= 0) targetRows.splice(idx, 1);
         relabelTargetRows();
+        invalidateResultAfterAppSelectionChange();
       });
       app.addEventListener("input", () => {
         if (entry.appName) setTargetName(entry, "");
+        invalidateResultAfterAppSelectionChange();
       });
+      guest.addEventListener("input", invalidateResultAfterAppSelectionChange);
       targetRows.push(entry);
       targetList.appendChild(row);
       attachTargetSplit(entry);
@@ -16226,24 +16454,31 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         setTargetName(entry, "");
         const guestVal = entry.guest.value.trim();
         for (let k = 1; k < tokens.length; k += 1) addTargetRow(tokens[k], guestVal);
+        invalidateResultAfterAppSelectionChange();
         applyComparisonMode("multi");
         panel.setStatus(`比較先を ${tokens.length} 件に分割しました`, "info");
       };
       entry.app.addEventListener("change", distribute);
       entry.app.addEventListener("paste", (ev) => {
-        const text = ev.clipboardData?.getData("text") || "";
-        if (!/[,、\s]/.test(text)) return;
+        const text2 = ev.clipboardData?.getData("text") || "";
+        if (!/[,、\s]/.test(text2)) return;
         ev.preventDefault();
-        entry.app.value = [entry.app.value.trim(), text].filter(Boolean).join(",");
+        entry.app.value = [entry.app.value.trim(), text2].filter(Boolean).join(",");
         distribute();
       });
     };
     srcApp.addEventListener("input", () => {
       if (sourceAppName) setSourceName("");
+      invalidateResultAfterAppSelectionChange();
     });
     tgtApp.addEventListener("input", () => {
       if (targetRows[0]?.appName) setTargetName(targetRows[0], "");
+      invalidateResultAfterAppSelectionChange();
     });
+    srcGuest.addEventListener("input", invalidateResultAfterAppSelectionChange);
+    tgtGuest.addEventListener("input", invalidateResultAfterAppSelectionChange);
+    srcPrev.checkbox.addEventListener("change", invalidateResultAfterAppSelectionChange);
+    tgtPrev.checkbox.addEventListener("change", invalidateResultAfterAppSelectionChange);
     attachTargetSplit(targetRows[0]);
     const addTargetBtn = makeButton("比較先行を追加", "sub");
     addTargetBtn.addEventListener("click", () => {
@@ -16259,22 +16494,362 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const multiControls = makeRow([addTargetBtn, copyFirstBtn], { label: "比較先を増やす" });
     multiControls.classList.add("kus-dl-multi-controls");
     targetCard.appendChild(multiControls);
-    cardApp.body.appendChild(createAppSearchControl(panel, {
+    const singleAppSearch = createAppSearchControl(panel, {
       targets: [
         { label: "比較元", apply: (id, name, guestId) => {
+          if (diffRunActive) return { message: "比較を実行中です。完了してからアプリを設定してください", tone: "warn" };
           srcApp.value = id;
           setSourceName(name);
           if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId;
+          const invalidated = invalidateResultAfterAppSelectionChange();
+          return { message: invalidated ? "比較元を変更したため、前回の結果を無効にしました。再比較してください" : `App ${id} を比較元へ設定しました`, tone: invalidated ? "warn" : "ok" };
         } },
         { label: "比較先", apply: (id, name, guestId) => {
+          if (diffRunActive) return { message: "比較を実行中です。完了してからアプリを設定してください", tone: "warn" };
           const empty = targetRows.find((r) => !r.app.value.trim()) || addTargetRow();
           empty.app.value = id;
           setTargetName(empty, name);
           if (guestId && !empty.guest.value.trim()) empty.guest.value = guestId;
+          const invalidated = invalidateResultAfterAppSelectionChange();
+          return { message: invalidated ? "比較先を変更したため、前回の結果を無効にしました。再比較してください" : `App ${id} を比較先へ設定しました`, tone: invalidated ? "warn" : "ok" };
         } }
       ]
-    }));
+    });
+    cardApp.body.appendChild(singleAppSearch);
     targetCard.appendChild(targetList);
+    const MAX_PAIR_ROWS = DEFAULT_MAX_DIFF_BATCH_PAIRS;
+    const pairEditor = document.createElement("section");
+    pairEditor.className = "kus-dl-pair-editor";
+    pairEditor.hidden = true;
+    pairEditor.setAttribute("aria-labelledby", "kus-dl-pair-editor-title");
+    const pairIntro = document.createElement("div");
+    pairIntro.className = "kus-dl-pair-editor__intro";
+    pairIntro.innerHTML = '<div><strong id="kus-dl-pair-editor-title">複数の1対1ペアを登録</strong><span>各行の比較元と比較先を1組として、登録順に比較します。同じ接続先は比較元・比較先で各1回だけ登録できます。共通の比較元から複数先を比べる場合は「1対多比較」を使います。</span></div>';
+    const pairCount = document.createElement("span");
+    pairCount.className = "kus-dl-pair-count";
+    pairCount.setAttribute("aria-live", "polite");
+    pairIntro.appendChild(pairCount);
+    const pairList = document.createElement("div");
+    pairList.className = "kus-dl-pair-list";
+    pairList.dataset.kusDlPairList = "";
+    const pairRows = [];
+    const makePairEndpoint = (side, rowNumber) => {
+      const app = makeInput({ placeholder: "アプリID", width: "medium", ariaLabel: `ペア${rowNumber}${side === "source" ? "比較元" : "比較先"}アプリID` });
+      const guest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: `ペア${rowNumber}${side === "source" ? "比較元" : "比較先"}ゲストスペースID` });
+      app.inputMode = "numeric";
+      guest.inputMode = "numeric";
+      const preview = makeCheck({ label: "プレビューで取得" });
+      preview.checkbox.setAttribute("aria-label", `ペア${rowNumber}${side === "source" ? "比較元" : "比較先"}をプレビュー環境から取得`);
+      preview.label.classList.add("kus-dl-pair-side__preview");
+      const name = makeTargetName();
+      const endpointSide = document.createElement("section");
+      endpointSide.className = `kus-dl-pair-side kus-dl-pair-side--${side}`;
+      const role = document.createElement("span");
+      role.className = "kus-dl-pair-side__role";
+      role.textContent = side === "source" ? "比較元（変更前）" : "比較先（変更後）";
+      const fields = document.createElement("div");
+      fields.className = "kus-dl-pair-side__fields";
+      const appField = makeTargetField(app, name);
+      const appFieldLabel = document.createElement("span");
+      appFieldLabel.className = "kus-dl-pair-field-label";
+      appFieldLabel.textContent = "App ID";
+      appField.prepend(appFieldLabel);
+      const guestField = document.createElement("div");
+      guestField.className = "kus-dl-pair-guest-field";
+      const guestFieldLabel = document.createElement("span");
+      guestFieldLabel.className = "kus-dl-pair-field-label";
+      guestFieldLabel.textContent = "Guest ID（任意）";
+      guestField.append(guestFieldLabel, guest);
+      fields.append(appField, guestField, preview.label);
+      endpointSide.append(role, fields);
+      return { app, guest, preview, name, appName: "", side: endpointSide };
+    };
+    const setPairEndpointName = (endpoint, appName) => {
+      endpoint.appName = String(appName || "").trim();
+      endpoint.name.textContent = endpoint.appName;
+      endpoint.name.title = endpoint.appName ? `アプリ名: ${endpoint.appName}` : "";
+      endpoint.name.classList.toggle("kus-dl-target-name--empty", !endpoint.appName);
+    };
+    const pairRowIsBlank = (entry) => !(entry.source.app.value.trim() || entry.source.guest.value.trim() || entry.source.preview.checkbox.checked || entry.target.app.value.trim() || entry.target.guest.value.trim() || entry.target.preview.checkbox.checked);
+    const clearPairRowValidation = (entry) => {
+      entry.row.classList.remove("is-invalid");
+      entry.error.hidden = true;
+      entry.error.textContent = "";
+      [entry.source.app, entry.source.guest, entry.target.app, entry.target.guest].forEach((input) => {
+        input.removeAttribute("aria-invalid");
+        input.removeAttribute("aria-describedby");
+      });
+    };
+    const clearPairValidation = () => pairRows.forEach(clearPairRowValidation);
+    const relabelPairRows = () => {
+      pairRows.forEach((entry, index) => {
+        const rowNumber = index + 1;
+        entry.row.dataset.kusDlPairRow = String(rowNumber);
+        entry.number.textContent = String(rowNumber);
+        entry.number.setAttribute("aria-label", `ペア ${rowNumber}`);
+        entry.source.app.setAttribute("aria-label", `ペア${rowNumber}比較元アプリID`);
+        entry.source.guest.setAttribute("aria-label", `ペア${rowNumber}比較元ゲストスペースID`);
+        entry.source.preview.checkbox.setAttribute("aria-label", `ペア${rowNumber}比較元をプレビュー環境から取得`);
+        entry.target.app.setAttribute("aria-label", `ペア${rowNumber}比較先アプリID`);
+        entry.target.guest.setAttribute("aria-label", `ペア${rowNumber}比較先ゲストスペースID`);
+        entry.target.preview.checkbox.setAttribute("aria-label", `ペア${rowNumber}比較先をプレビュー環境から取得`);
+        entry.error.id = `kus-dl-pair-error-${rowNumber}`;
+        entry.duplicate.setAttribute("aria-label", `ペア${rowNumber}を複製`);
+        entry.swap.setAttribute("aria-label", `ペア${rowNumber}の比較方向を入れ替え`);
+        entry.remove.setAttribute("aria-label", `ペア${rowNumber}を削除`);
+        entry.remove.disabled = pairRows.length === 1;
+      });
+      pairCount.textContent = `${pairRows.length} / ${MAX_PAIR_ROWS} 行`;
+    };
+    const readPairInputs = () => pairRows.map((entry, index) => ({
+      rowNumber: index + 1,
+      source: {
+        appId: entry.source.app.value,
+        guestId: entry.source.guest.value,
+        preview: entry.source.preview.checkbox.checked,
+        appName: entry.source.appName
+      },
+      target: {
+        appId: entry.target.app.value,
+        guestId: entry.target.guest.value,
+        preview: entry.target.preview.checkbox.checked,
+        appName: entry.target.appName
+      }
+    }));
+    const showPairValidationIssues = (issues) => {
+      clearPairValidation();
+      const inputsForIssue = (entry, issue) => {
+        if (issue.code === "invalid-source-guest") return [entry.source.guest];
+        if (issue.code === "invalid-target-guest") return [entry.target.guest];
+        if (issue.code === "invalid-source-app" || issue.code === "duplicate-source") return [entry.source.app];
+        if (issue.code === "invalid-target-app" || issue.code === "duplicate-target") return [entry.target.app];
+        if (issue.code === "incomplete") return issue.side === "target" ? [entry.target.app] : [entry.source.app];
+        return [entry.source.app, entry.target.app];
+      };
+      const byRow = /* @__PURE__ */ new Map();
+      issues.forEach((issue) => {
+        const list = byRow.get(issue.rowNumber) || [];
+        list.push(issue);
+        byRow.set(issue.rowNumber, list);
+      });
+      byRow.forEach((rowIssues, rowNumber) => {
+        const entry = pairRows[rowNumber - 1];
+        if (!entry) return;
+        entry.row.classList.add("is-invalid");
+        entry.error.hidden = false;
+        entry.error.textContent = rowIssues.map((issue) => issue.message).join(" / ");
+        rowIssues.forEach((issue) => {
+          inputsForIssue(entry, issue).forEach((input) => {
+            input.setAttribute("aria-invalid", "true");
+            input.setAttribute("aria-describedby", entry.error.id);
+          });
+        });
+      });
+      const first = issues[0];
+      const firstRow = first ? pairRows[first.rowNumber - 1] : null;
+      const focusTarget = firstRow && first ? inputsForIssue(firstRow, first)[0] : null;
+      focusTarget?.focus();
+    };
+    const addPairRow = (initial = {}, focus = false) => {
+      if (pairRows.length >= MAX_PAIR_ROWS) {
+        panel.setStatus(`一度に登録できるペアは ${MAX_PAIR_ROWS} 件までです`, "warn");
+        return null;
+      }
+      const rowNumber = pairRows.length + 1;
+      const source = makePairEndpoint("source", rowNumber);
+      const target = makePairEndpoint("target", rowNumber);
+      const row = document.createElement("article");
+      row.className = "kus-dl-pair-row";
+      const number = document.createElement("span");
+      number.className = "kus-dl-pair-row__number";
+      const arrow = document.createElement("span");
+      arrow.className = "kus-dl-pair-arrow";
+      arrow.setAttribute("aria-hidden", "true");
+      arrow.textContent = "→";
+      const duplicate = makeButton("複製", "sub");
+      const swap = makeButton("入替", "ghost");
+      const remove = makeButton("削除", "ghost");
+      const actions = document.createElement("div");
+      actions.className = "kus-dl-pair-actions";
+      actions.append(duplicate, swap, remove);
+      const error = document.createElement("p");
+      error.className = "kus-dl-pair-row__error";
+      error.setAttribute("role", "alert");
+      error.hidden = true;
+      row.append(number, source.side, arrow, target.side, actions, error);
+      const entry = { row, number, source, target, error, duplicate, swap, remove };
+      const applyEndpointInitial = (endpointEntry, value) => {
+        endpointEntry.app.value = String(value?.appId || "");
+        endpointEntry.guest.value = String(value?.guestId || "");
+        endpointEntry.preview.checkbox.checked = value?.preview === true;
+        setPairEndpointName(endpointEntry, String(value?.appName || ""));
+      };
+      applyEndpointInitial(source, initial.source);
+      applyEndpointInitial(target, initial.target);
+      const onEndpointInput = (endpoint) => {
+        if (endpoint.appName) setPairEndpointName(endpoint, "");
+        clearPairRowValidation(entry);
+        invalidateResultAfterPairConditionChange();
+      };
+      source.app.addEventListener("input", () => onEndpointInput(source));
+      target.app.addEventListener("input", () => onEndpointInput(target));
+      [source.guest, target.guest].forEach((input) => input.addEventListener("input", () => {
+        clearPairRowValidation(entry);
+        invalidateResultAfterPairConditionChange();
+      }));
+      [source.preview.checkbox, target.preview.checkbox].forEach((checkbox) => checkbox.addEventListener("change", () => {
+        clearPairRowValidation(entry);
+        invalidateResultAfterPairConditionChange();
+      }));
+      duplicate.addEventListener("click", () => {
+        const copy = addPairRow({
+          source: { appId: source.app.value.trim(), guestId: source.guest.value.trim(), preview: source.preview.checkbox.checked, appName: source.appName },
+          target: { appId: target.app.value.trim(), guestId: target.guest.value.trim(), preview: target.preview.checkbox.checked, appName: target.appName }
+        }, true);
+        if (copy) {
+          const invalidated = invalidateResultAfterPairConditionChange();
+          if (!invalidated) panel.setStatus(`ペア ${pairRows.indexOf(entry) + 1} を末尾へ複製しました。重複箇所を変更してください`, "info");
+        }
+      });
+      swap.addEventListener("click", () => {
+        const sourceValue = { appId: source.app.value, guestId: source.guest.value, preview: source.preview.checkbox.checked, appName: source.appName };
+        applyEndpointInitial(source, { appId: target.app.value, guestId: target.guest.value, preview: target.preview.checkbox.checked, appName: target.appName });
+        applyEndpointInitial(target, sourceValue);
+        clearPairRowValidation(entry);
+        const invalidated = invalidateResultAfterPairConditionChange();
+        if (!invalidated) panel.setStatus(`ペア ${pairRows.indexOf(entry) + 1} の比較方向を入れ替えました`, "info");
+        source.app.focus();
+      });
+      remove.addEventListener("click", () => {
+        const index = pairRows.indexOf(entry);
+        if (index < 0 || pairRows.length === 1) return;
+        row.remove();
+        pairRows.splice(index, 1);
+        clearPairValidation();
+        relabelPairRows();
+        const invalidated = invalidateResultAfterPairConditionChange();
+        if (!invalidated) panel.setStatus(`ペア ${index + 1} を削除しました`, "info");
+        pairRows[Math.min(index, pairRows.length - 1)]?.source.app.focus();
+      });
+      pairRows.push(entry);
+      pairList.appendChild(row);
+      relabelPairRows();
+      if (focus) source.app.focus();
+      return entry;
+    };
+    const seedFirstPairFromSingle = () => {
+      const first = pairRows[0];
+      if (!first || !pairRowIsBlank(first)) return;
+      first.source.app.value = srcApp.value.trim();
+      first.source.guest.value = srcGuest.value.trim();
+      first.source.preview.checkbox.checked = srcPrev.checkbox.checked;
+      setPairEndpointName(first.source, sourceAppName);
+      first.target.app.value = tgtApp.value.trim().split(/[,、\s]+/)[0] || "";
+      first.target.guest.value = tgtGuest.value.trim();
+      first.target.preview.checkbox.checked = tgtPrev.checkbox.checked;
+      setPairEndpointName(first.target, targetRows[0]?.appName || "");
+    };
+    addPairRow();
+    const addPairBtn = makeButton("ペアを追加", "sub", { icon: "＋" });
+    addPairBtn.dataset.kusDlPairAdd = "";
+    addPairBtn.addEventListener("click", () => {
+      const entry = addPairRow({}, true);
+      if (!entry) return;
+      const invalidated = invalidateResultAfterPairConditionChange();
+      if (!invalidated) panel.setStatus(`ペア ${pairRows.length} を追加しました`, "info");
+    });
+    const pairToolbar = document.createElement("div");
+    pairToolbar.className = "kus-dl-pair-toolbar";
+    const pairClearImportBtn = makeButton("設定JSON読込を解除", "ghost");
+    pairClearImportBtn.dataset.kusDlPairClearImport = "";
+    pairClearImportBtn.disabled = true;
+    pairClearImportBtn.hidden = true;
+    pairToolbar.append(addPairBtn, pairClearImportBtn);
+    const pairBulk = document.createElement("details");
+    pairBulk.className = "kus-dl-pair-bulk";
+    pairBulk.innerHTML = "<summary>表から複数ペアをまとめて入力</summary>";
+    const pairBulkBody = document.createElement("div");
+    pairBulkBody.className = "kus-dl-pair-bulk__body";
+    const pairBulkTextarea = makeTextarea({ rows: 5, code: true, placeholder: "比較元App ID	比較先App ID\nまたは\n比較元App ID	比較元Guest ID	比較先App ID	比較先Guest ID" });
+    pairBulkTextarea.setAttribute("aria-label", "一括登録する比較ペア");
+    const pairBulkApply = makeButton("入力したペアを追加", "sub");
+    pairBulkBody.append(
+      makeNote("Excelなどの2列（比較元App ID・比較先App ID）、または4列（比較元App ID・比較元Guest ID・比較先App ID・比較先Guest ID）を貼り付けます。"),
+      pairBulkTextarea,
+      pairBulkApply
+    );
+    pairBulk.appendChild(pairBulkBody);
+    pairBulkApply.addEventListener("click", () => {
+      const parsed = [];
+      const invalidLines = [];
+      pairBulkTextarea.value.split(/\r?\n/).forEach((rawLine, index) => {
+        if (!rawLine.trim()) return;
+        const line = rawLine.replace(/\r$/, "");
+        const columns = (line.includes("	") ? line.split("	") : line.split(/[,、]/)).map((value) => value.trim());
+        if (columns.length === 2) parsed.push({ source: { appId: columns[0] }, target: { appId: columns[1] } });
+        else if (columns.length === 4) parsed.push({ source: { appId: columns[0], guestId: columns[1] }, target: { appId: columns[2], guestId: columns[3] } });
+        else invalidLines.push(index + 1);
+      });
+      if (invalidLines.length) {
+        panel.setStatus(`一括入力の ${invalidLines.join(", ")} 行目は2列または4列ではありません`, "warn");
+        return;
+      }
+      if (!parsed.length) {
+        panel.setStatus("追加する比較ペアを入力してください", "warn");
+        return;
+      }
+      if (pairRows.filter((entry) => !pairRowIsBlank(entry)).length + parsed.length > MAX_PAIR_ROWS) {
+        panel.setStatus(`一度に登録できるペアは ${MAX_PAIR_ROWS} 件までです`, "warn");
+        return;
+      }
+      let added = 0;
+      parsed.forEach((value) => {
+        const blank = pairRows.find(pairRowIsBlank);
+        if (blank) {
+          blank.source.app.value = String(value.source.appId || "");
+          blank.source.guest.value = String(value.source.guestId || "");
+          blank.target.app.value = String(value.target.appId || "");
+          blank.target.guest.value = String(value.target.guestId || "");
+          added += 1;
+          return;
+        }
+        if (addPairRow(value)) added += 1;
+      });
+      pairBulkTextarea.value = "";
+      pairBulk.open = false;
+      clearPairValidation();
+      const invalidated = invalidateResultAfterPairConditionChange();
+      if (!invalidated) panel.setStatus(`${added} 件の比較ペアを追加しました`, "ok");
+    });
+    const pairAppSearch = createAppSearchControl(panel, {
+      title: "ペアへアプリ名で設定",
+      targets: [
+        { label: "空いている比較元", apply: (id, name, guestId) => {
+          if (diffRunActive) return { message: "比較を実行中です。完了してからアプリを設定してください", tone: "warn" };
+          const entry = pairRows.find((row) => !row.source.app.value.trim()) || addPairRow();
+          if (!entry) return { message: `登録上限 ${MAX_PAIR_ROWS} 件に達しています`, tone: "warn" };
+          entry.source.app.value = id;
+          if (guestId && !entry.source.guest.value.trim()) entry.source.guest.value = guestId;
+          setPairEndpointName(entry.source, name);
+          clearPairRowValidation(entry);
+          const invalidated = invalidateResultAfterPairConditionChange();
+          return { message: invalidated ? "比較ペアを変更したため、前回の一括結果を無効にしました。再比較してください" : `App ${id} をペア ${pairRows.indexOf(entry) + 1} の比較元へ設定しました`, tone: invalidated ? "warn" : "ok" };
+        } },
+        { label: "空いている比較先", apply: (id, name, guestId) => {
+          if (diffRunActive) return { message: "比較を実行中です。完了してからアプリを設定してください", tone: "warn" };
+          const entry = pairRows.find((row) => !row.target.app.value.trim()) || addPairRow();
+          if (!entry) return { message: `登録上限 ${MAX_PAIR_ROWS} 件に達しています`, tone: "warn" };
+          entry.target.app.value = id;
+          if (guestId && !entry.target.guest.value.trim()) entry.target.guest.value = guestId;
+          setPairEndpointName(entry.target, name);
+          clearPairRowValidation(entry);
+          const invalidated = invalidateResultAfterPairConditionChange();
+          return { message: invalidated ? "比較ペアを変更したため、前回の一括結果を無効にしました。再比較してください" : `App ${id} をペア ${pairRows.indexOf(entry) + 1} の比較先へ設定しました`, tone: invalidated ? "warn" : "ok" };
+        } }
+      ]
+    });
+    pairEditor.append(pairIntro, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote("ペア一括比較では設定JSON読込は使用せず、APIから各アプリを取得します。JSONを読み込んだまま切り替えた場合は「設定JSON読込を解除」を押してください。"));
+    cardApp.body.appendChild(pairEditor);
     panel.body.insertBefore(cardApp.card, panel.status);
     const cardScope = makeCard({ title: "比較セクション", number: 2 });
     const chipBox = document.createElement("div");
@@ -16286,12 +16861,18 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const noneBtn = makeButton("全解除", "sub");
     cardScope.actions.appendChild(allBtn);
     cardScope.actions.appendChild(noneBtn);
-    allBtn.addEventListener("click", () => chips.forEach((c) => {
-      c.checkbox.checked = true;
-    }));
-    noneBtn.addEventListener("click", () => chips.forEach((c) => {
-      c.checkbox.checked = false;
-    }));
+    allBtn.addEventListener("click", () => {
+      chips.forEach((c) => {
+        c.checkbox.checked = true;
+      });
+      invalidateResultAfterGeneralConditionChange();
+    });
+    noneBtn.addEventListener("click", () => {
+      chips.forEach((c) => {
+        c.checkbox.checked = false;
+      });
+      invalidateResultAfterGeneralConditionChange();
+    });
     panel.body.insertBefore(cardScope.card, panel.status);
     const nAppRefs = makeCheck({
       label: "アプリID（比較対象・参照先）を比較から除外",
@@ -16403,7 +16984,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     panel.body.insertBefore(advDetails.details, panel.status);
     const runBtn = makeButton("差分比較を実行", "run", { icon: "→" });
     const runAllBtn = makeButton("複数の比較を実行", "run", { icon: "→" });
-    const runRow = makeRow([runBtn, runAllBtn]);
+    const runPairsBtn = makeButton("登録したペアを一括比較", "run", { icon: "→" });
+    runPairsBtn.dataset.kusDlRunPairs = "";
+    const runRow = makeRow([runBtn, runAllBtn, runPairsBtn]);
     runRow.classList.add("kus-dl-run-row");
     panel.body.insertBefore(runRow, panel.status);
     const completionReviewBtn = makeButton("結果を確認", "sub", { icon: "↓" });
@@ -16420,23 +17003,34 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     };
     panel.setPrimaryAction(runBtn);
     applyComparisonMode = (mode) => {
+      const changed = comparisonMode !== mode;
       comparisonMode = mode;
       panel.root.dataset.kusDlMode = mode;
       singleModeBtn.setAttribute("aria-pressed", mode === "single" ? "true" : "false");
       multiModeBtn.setAttribute("aria-pressed", mode === "multi" ? "true" : "false");
+      pairModeBtn.setAttribute("aria-pressed", mode === "pairs" ? "true" : "false");
       singleModeBtn.classList.toggle("is-active", mode === "single");
       multiModeBtn.classList.toggle("is-active", mode === "multi");
+      pairModeBtn.classList.toggle("is-active", mode === "pairs");
       multiControls.hidden = mode !== "multi";
       targetList.hidden = mode !== "multi";
+      directionGrid.hidden = mode === "pairs";
+      singleAppSearch.hidden = mode === "pairs";
+      pairEditor.hidden = mode !== "pairs";
+      cardImport.card.hidden = mode === "pairs";
       runBtn.hidden = mode !== "single";
       runAllBtn.hidden = mode !== "multi";
+      runPairsBtn.hidden = mode !== "pairs";
       completionRow.hidden = !completionReady || mode !== "single";
-      swapBtn.disabled = mode === "multi";
-      swapBtn.title = mode === "multi" ? "1対1比較に切り替えると方向を入れ替えられます" : "";
-      panel.setPrimaryAction(mode === "multi" ? runAllBtn : runBtn);
+      swapBtn.disabled = mode !== "single";
+      swapBtn.title = mode !== "single" ? "1対1比較に切り替えると方向を入れ替えられます" : "";
+      if (mode === "pairs") seedFirstPairFromSingle();
+      panel.setPrimaryAction(mode === "multi" ? runAllBtn : mode === "pairs" ? runPairsBtn : runBtn);
+      if (changed) invalidateResultAfterComparisonModeChange();
     };
     singleModeBtn.addEventListener("click", () => applyComparisonMode("single"));
     multiModeBtn.addEventListener("click", () => applyComparisonMode("multi"));
+    pairModeBtn.addEventListener("click", () => applyComparisonMode("pairs"));
     applyComparisonMode("single");
     const cardFilter = makeCard({ title: "結果の絞り込み", soft: true });
     cardFilter.card.style.display = "none";
@@ -16616,9 +17210,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const expandedRowKeys = /* @__PURE__ */ new Set();
     let importedSourceBundle = null;
     let importedTargetBundle = null;
-    function invalidateResultAfterAppReferenceConditionChange() {
+    function invalidateComparisonResult(statusMessage) {
       const hadResult = !!cache || multiXlsxExports.length > 0 || resultBox.childElementCount > 0;
-      if (!hadResult) return;
+      if (!hadResult) return false;
       cache = null;
       multiXlsxExports = [];
       currentRowKey = "";
@@ -16635,12 +17229,34 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       filterDetails.style.display = "none";
       reviewEmpty.textContent = "比較条件が変更されました。再比較すると新しい条件の結果を表示します。";
       reviewEmpty.style.display = "";
-      panel.setStatus("アプリIDの除外条件を変更したため、前回の結果と保存機能を無効にしました。新しい条件で再比較してください", "warn");
+      panel.setStatus(statusMessage, "warn");
+      return true;
+    }
+    function invalidateResultAfterAppReferenceConditionChange() {
+      invalidateComparisonResult("アプリIDの除外条件を変更したため、前回の結果と保存機能を無効にしました。新しい条件で再比較してください");
+    }
+    function invalidateResultAfterPairConditionChange() {
+      return invalidateComparisonResult("比較ペアを変更したため、前回の一括結果と保存機能を無効にしました。新しいペアで再比較してください");
+    }
+    function invalidateResultAfterComparisonModeChange() {
+      return invalidateComparisonResult("比較方法を変更したため、前回の結果と保存機能を無効にしました。選択した方法で再比較してください");
+    }
+    function invalidateResultAfterGeneralConditionChange() {
+      return invalidateComparisonResult("比較範囲または比較条件を変更したため、前回の結果と保存機能を無効にしました。新しい条件で再比較してください");
+    }
+    function invalidateResultAfterAppSelectionChange() {
+      return invalidateComparisonResult("比較するアプリまたは環境を変更したため、前回の結果と保存機能を無効にしました。新しい対象で再比較してください");
     }
     nAppRefs.checkbox.addEventListener("change", invalidateResultAfterAppReferenceConditionChange);
+    chipBox.addEventListener("change", invalidateResultAfterGeneralConditionChange);
+    ignTa.addEventListener("input", invalidateResultAfterGeneralConditionChange);
+    includeSame.checkbox.addEventListener("change", invalidateResultAfterGeneralConditionChange);
+    Object.entries(normalizationControls).forEach(([key, checkbox]) => {
+      if (key !== "appReferences") checkbox.addEventListener("change", invalidateResultAfterGeneralConditionChange);
+    });
     swapBtn.addEventListener("click", () => {
-      if (comparisonMode === "multi") {
-        panel.setStatus("比較方向の入れ替えは、比較先が1件の1対1比較で利用できます", "warn");
+      if (comparisonMode !== "single") {
+        panel.setStatus("このボタンでの比較方向の入れ替えは、1対1比較で利用できます", "warn");
         return;
       }
       if (importedSourceBundle || importedTargetBundle) {
@@ -16661,7 +17277,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       tgtGuest.value = source.guestId;
       tgtPrev.checkbox.checked = source.preview;
       setTargetName(targetRows[0], source.appName);
-      panel.setStatus("比較元と比較先を入れ替えました。矢印の向きを確認して比較してください", "info");
+      const invalidated = invalidateResultAfterAppSelectionChange();
+      if (!invalidated) panel.setStatus("比較元と比較先を入れ替えました。矢印の向きを確認して比較してください", "info");
     });
     srcFile.addEventListener("change", () => liteRun(panel, "比較元JSONを読み込み中…", async () => {
       const file = srcFile.files?.[0];
@@ -16670,7 +17287,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       importedSourceBundle = await readSettingsBundleFile(file, { side: "source", appId: srcApp.value.trim() });
       if (!srcApp.value.trim() && importedSourceBundle?.appId) srcApp.value = String(importedSourceBundle.appId);
       setSourceName(extractAppNameFromBundle(importedSourceBundle));
-      panel.setStatus(`比較元JSONを読み込みました: App ${importedSourceBundle?.appId || "-"}`, "ok");
+      pairClearImportBtn.disabled = false;
+      pairClearImportBtn.hidden = false;
+      const invalidated = invalidateResultAfterAppSelectionChange();
+      panel.setStatus(`比較元JSONを読み込みました: App ${importedSourceBundle?.appId || "-"}${invalidated ? "。結果を更新するため再比較してください" : ""}`, invalidated ? "warn" : "ok");
     }));
     tgtFile.addEventListener("change", () => liteRun(panel, "比較先JSONを読み込み中…", async () => {
       const file = tgtFile.files?.[0];
@@ -16679,16 +17299,24 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       importedTargetBundle = await readSettingsBundleFile(file, { side: "target", appId: tgtApp.value.trim() });
       if (!tgtApp.value.trim() && importedTargetBundle?.appId) tgtApp.value = String(importedTargetBundle.appId);
       setTargetName(targetRows[0], extractAppNameFromBundle(importedTargetBundle));
-      panel.setStatus(`比較先JSONを読み込みました: App ${importedTargetBundle?.appId || "-"}`, "ok");
+      pairClearImportBtn.disabled = false;
+      pairClearImportBtn.hidden = false;
+      const invalidated = invalidateResultAfterAppSelectionChange();
+      panel.setStatus(`比較先JSONを読み込みました: App ${importedTargetBundle?.appId || "-"}${invalidated ? "。結果を更新するため再比較してください" : ""}`, invalidated ? "warn" : "ok");
     }));
-    clearImportBtn.addEventListener("click", () => {
+    const clearImportedBundles = () => {
       importedSourceBundle = null;
       importedTargetBundle = null;
       srcFile.value = "";
       tgtFile.value = "";
+      pairClearImportBtn.disabled = true;
+      pairClearImportBtn.hidden = true;
       setCompletionActionsVisible(false);
-      panel.setStatus("設定JSONの読込を解除しました", "info");
-    });
+      const invalidated = invalidateResultAfterAppSelectionChange();
+      panel.setStatus(invalidated ? "設定JSONの読込を解除し、前回の結果を無効にしました。再比較してください" : "設定JSONの読込を解除しました", invalidated ? "warn" : "info");
+    };
+    clearImportBtn.addEventListener("click", clearImportedBundles);
+    pairClearImportBtn.addEventListener("click", clearImportedBundles);
     function readTargets() {
       const seen = /* @__PURE__ */ new Set();
       return targetRows.map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim(), preview: tgtPrev.checkbox.checked, appName: r.appName })).filter((t) => t.appId).filter((t) => {
@@ -16767,6 +17395,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       profileLoadBtn.disabled = true;
       runBtn.disabled = true;
       runAllBtn.disabled = true;
+      runPairsBtn.disabled = true;
       try {
         await liteRun(panel, "比較条件を読み込み中…", async () => {
           const profile = parseDiffComparisonProfile(await readTextFile(file));
@@ -16811,6 +17440,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         profileLoadBtn.disabled = false;
         runBtn.disabled = diffRunActive;
         runAllBtn.disabled = diffRunActive;
+        runPairsBtn.disabled = diffRunActive;
       }
     });
     function currentFilters() {
@@ -17049,6 +17679,31 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         panel.setStatus("この項目だけを無視ルールへ追加しました。現在の結果は変えず、次回比較から適用します", "warn");
         return;
       }
+      const multiHtmlButton = target?.closest("[data-kus-dl-multi-html]");
+      if (multiHtmlButton) {
+        const index = Number(multiHtmlButton.dataset.kusDlMultiHtml);
+        const item = Number.isInteger(index) ? multiXlsxExports[index] : null;
+        if (!item || multiHtmlButton.disabled || multiXlsxExportActive) return;
+        multiXlsxExportActive = true;
+        multiHtmlButton.disabled = true;
+        try {
+          const result = runExportDiffHtmlStandalone(buildLiteDiffHtmlContext(
+            item.cache,
+            item.cache.rows,
+            "all",
+            "全差分",
+            htmlContentMode.value
+          ));
+          const incomplete = isIncompleteLiteDiff(item.cache);
+          panel.setStatus(`${item.label} の差分 HTML のダウンロードを開始しました: ${result.filename}${incomplete ? " — 比較結果は不完全です" : ""}`, incomplete ? "warn" : "ok");
+        } catch (e) {
+          panel.setStatus(`HTML出力エラー: ${e?.message || String(e)}`, "err");
+        } finally {
+          multiXlsxExportActive = false;
+          multiHtmlButton.disabled = false;
+        }
+        return;
+      }
       const multiXlsxButton = target?.closest("[data-kus-dl-multi-xlsx]");
       if (multiXlsxButton) {
         const index = Number(multiXlsxButton.dataset.kusDlMultiXlsx);
@@ -17159,6 +17814,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       lockComparisonControls();
       runBtn.disabled = true;
       runAllBtn.disabled = true;
+      runPairsBtn.disabled = true;
       htmlContentMode.disabled = true;
       profileSaveBtn.disabled = true;
       profileLoadBtn.disabled = true;
@@ -17170,12 +17826,146 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         unlockComparisonControls();
         runBtn.disabled = false;
         runAllBtn.disabled = false;
+        runPairsBtn.disabled = false;
         htmlContentMode.disabled = false;
         profileSaveBtn.disabled = profileIoActive;
         profileLoadBtn.disabled = profileIoActive;
         setExportControlsEnabled(!!cache);
       }
     }
+    runPairsBtn.addEventListener("click", () => {
+      clearPairValidation();
+      const prepared = prepareDiffBatchPairs(readPairInputs(), { maxPairs: MAX_PAIR_ROWS, requireOneToOne: true });
+      if (prepared.issues.length) {
+        showPairValidationIssues(prepared.issues);
+        panel.setStatus(`${prepared.issues[0].message}${prepared.issues.length > 1 ? `（ほか ${prepared.issues.length - 1}件）` : ""}`, "warn");
+        return;
+      }
+      if (!prepared.pairs.length) {
+        panel.setStatus("比較元と比較先を入力したペアを 1 件以上登録してください", "warn");
+        pairRows[0]?.source.app.focus();
+        return;
+      }
+      if (importedSourceBundle || importedTargetBundle) {
+        panel.setStatus("設定JSON読込は1対1比較専用です。読込を解除してからペア一括比較を実行してください", "warn");
+        return;
+      }
+      const base = readForm();
+      if (!base.scopes.length) {
+        panel.setStatus("比較セクションを 1 つ以上選択してください", "warn");
+        return;
+      }
+      const positionalRuleCount = summarizeLiteIgnoreRules(base.ignoreKeys).positionalRules;
+      if (positionalRuleCount) {
+        panel.setStatus(`配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`, "warn");
+        return;
+      }
+      cache = null;
+      multiXlsxExports = [];
+      currentRowKey = "";
+      collapsedSections.clear();
+      expandedValueKeys.clear();
+      expandedRowKeys.clear();
+      setCompletionActionsVisible(false);
+      setExportControlsEnabled(false);
+      summaryText = "";
+      resetResultPage();
+      resultBox.innerHTML = "";
+      cardResult.card.style.display = "none";
+      cardFilter.card.style.display = "none";
+      filterDetails.style.display = "none";
+      reviewEmpty.style.display = "";
+      runDiffTask("比較ペアを一括比較中…", async () => {
+        let activeIndex = 0;
+        const results = await runSequentialDiffBatch(
+          prepared.pairs,
+          async (pair, context) => {
+            const position = activeIndex + 1;
+            const sourceText = pair.source.appName || `App ${pair.source.appId}`;
+            const targetText = pair.target.appName || `App ${pair.target.appId}`;
+            const out = await runDiffStandalone2({
+              source: pair.source,
+              target: pair.target,
+              scopes: base.scopes,
+              ignoreKeys: base.ignoreKeys,
+              includeSame: base.includeSame,
+              normalizationPresetState: base.normalizationPresetState,
+              importedSourceBundle: context.importedSourceBundle,
+              importedTargetBundle: context.importedTargetBundle,
+              onSourceBundle: (bundle) => {
+                attachKnownAppName(bundle, pair.source.appName);
+                context.onSourceBundle(bundle);
+              },
+              onStatus: (message) => panel.setStatus(`比較 ${position}/${prepared.pairs.length}・入力ペア ${pair.rowNumber}（${sourceText} → ${targetText}）: ${message}`, "busy")
+            });
+            attachKnownAppName(out.sourceBundle, pair.source.appName);
+            attachKnownAppName(out.targetBundle, pair.target.appName);
+            return out;
+          },
+          (pair, index, total) => {
+            activeIndex = index;
+            panel.setStatus(`比較 ${index + 1}/${total}・入力ペア ${pair.rowNumber}: App ${pair.source.appId} → App ${pair.target.appId}`, "busy");
+          }
+        );
+        const resultRows = [];
+        let succeeded = 0;
+        let failed = 0;
+        let incomplete = 0;
+        results.forEach((result) => {
+          const sourceEnv = `${result.pair.source.guestId ? `ゲスト ${result.pair.source.guestId}` : "通常スペース"} / ${result.pair.source.preview ? "プレビュー" : "運用"}`;
+          const targetEnv = `${result.pair.target.guestId ? `ゲスト ${result.pair.target.guestId}` : "通常スペース"} / ${result.pair.target.preview ? "プレビュー" : "運用"}`;
+          if (result.status === "rejected") {
+            failed += 1;
+            const errorMessage = result.error?.message || String(result.error);
+            const sourceLabel2 = result.pair.source.appName ? `${result.pair.source.appName}（App ${result.pair.source.appId}）` : `App ${result.pair.source.appId}`;
+            const targetLabel2 = result.pair.target.appName ? `${result.pair.target.appName}（App ${result.pair.target.appId}）` : `App ${result.pair.target.appId}`;
+            resultRows.push(`<tr><td>${result.pair.rowNumber}</td><td>${esc(sourceLabel2)}<br><small>${esc(sourceEnv)}</small></td><td>${esc(targetLabel2)}<br><small>${esc(targetEnv)}</small></td><td class="kus-dl-multi__warn">失敗<br><small>${esc(errorMessage)}</small></td><td>—</td><td>—</td><td>—</td></tr>`);
+            return;
+          }
+          succeeded += 1;
+          const out = result.value;
+          const sourceName = extractAppNameFromBundle(out.sourceBundle) || result.pair.source.appName;
+          const targetName = extractAppNameFromBundle(out.targetBundle) || result.pair.target.appName;
+          const sourceLabel = sourceName ? `${sourceName}（App ${result.pair.source.appId}）` : `App ${result.pair.source.appId}`;
+          const targetLabel = targetName ? `${targetName}（App ${result.pair.target.appId}）` : `App ${result.pair.target.appId}`;
+          const counts = summarizeLiteDiffRows(out.rows || []);
+          const changed = contentChangedCount(counts);
+          const issueCount = (out.fetchIssues || []).length;
+          const partialIssueCount = (out.partialIssues || []).length;
+          const needsReview = isIncompleteLiteDiff(out);
+          const incompleteReasons = [
+            issueCount ? `取得失敗 ${issueCount}件` : "",
+            partialIssueCount ? `本文未検証 ${partialIssueCount}件` : "",
+            hasIncompleteActualDiffTruncation(out.truncation || null) ? `差分上限 ${Number(out.truncation?.diffLimit || 0).toLocaleString()}件に到達` : ""
+          ].filter(Boolean);
+          if (needsReview) incomplete += 1;
+          const comparedAt = (/* @__PURE__ */ new Date()).toISOString();
+          const multiExportIndex = multiXlsxExports.push({
+            label: `ペア ${result.pair.rowNumber}: ${sourceLabel} → ${targetLabel}`,
+            cache: {
+              rows: out.rows || [],
+              fetchIssues: out.fetchIssues || [],
+              partialIssues: out.partialIssues || [],
+              sourceBundle: out.sourceBundle,
+              targetBundle: out.targetBundle,
+              scopes: base.scopes,
+              ignoreKeys: base.ignoreKeys,
+              normalizationPresetState: base.normalizationPresetState,
+              comparedAt,
+              truncation: out.truncation || null
+            }
+          }) - 1;
+          const stateLabel = needsReview ? "要確認" : counts.actual ? "完了" : "一致";
+          const pairActionLabel = `ペア ${result.pair.rowNumber}・${sourceLabel}から${targetLabel}`;
+          resultRows.push(`<tr><td>${result.pair.rowNumber}</td><td>${esc(sourceLabel)}<br><small>${esc(sourceEnv)}</small></td><td>${esc(targetLabel)}<br><small>${esc(targetEnv)}</small></td><td class="${needsReview ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${stateLabel}</td><td><span class="kus-dl-pair-breakdown"><strong>差分 ${counts.actual}</strong><small>追加 ${counts.added} / 削除 ${counts.removed} / 内容変更 ${changed} / 移動 ${counts.moved}</small></span></td><td>${incompleteReasons.length ? incompleteReasons.map((reason) => esc(reason)).join("<br>") : "なし"}</td><td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のHTMLを保存`)}">HTML</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}の顧客向けExcelを保存`)}">Excel</button></span></td></tr>`);
+        });
+        cardResult.card.style.display = "";
+        reviewEmpty.style.display = "none";
+        resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="ペア一括比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi kus-dl-multi--pairs"><caption>ペア一括比較の結果（登録順）</caption><thead><tr><th>No.</th><th>比較元<br><small>変更前</small></th><th>比較先<br><small>変更後</small></th><th>状態</th><th>差分内訳</th><th>確認事項<br><small>不完全な理由</small></th><th>保存</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div></div>`;
+        const note = [failed ? `失敗 ${failed}件` : "", incomplete ? `要確認 ${incomplete}件` : ""].filter(Boolean).join(" / ");
+        panel.setStatus(`ペア一括比較が完了: 成功 ${succeeded}/${prepared.pairs.length}件${note ? ` / ${note}` : ""}。各行からHTMLまたは顧客向けExcelを保存できます`, failed || incomplete ? "warn" : "ok");
+      });
+    });
     runAllBtn.addEventListener("click", () => {
       const targets = readTargets();
       if (!targets.length) {
@@ -17291,7 +18081,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         }
         cardResult.card.style.display = "";
         reviewEmpty.style.display = "none";
-        resultBox.innerHTML = `<div class="kus-dl-result"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>Excel</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div>`;
+        resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>Excel</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div></div>`;
         const tone = failed || exportFailed || incomplete || exported !== targets.length ? "warn" : "ok";
         const note = [failed ? `比較失敗 ${failed}件` : "", exportFailed ? `HTML出力失敗 ${exportFailed}件` : "", incomplete ? `要確認 ${incomplete}件` : ""].filter(Boolean).join(" / ");
         panel.setStatus(`全比較先の比較が完了: HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）${note ? ` / ${note}` : ""}`, tone);

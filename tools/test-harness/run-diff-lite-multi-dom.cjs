@@ -203,7 +203,7 @@ async function mountWithControlledDiff(page) {
 }
 
 async function configureThreeTargets(page) {
-  await page.getByLabel('比較元アプリID').fill('101');
+  await page.getByLabel('比較元アプリID', { exact: true }).fill('101');
   const firstTarget = page.getByLabel('比較先1アプリID');
   await firstTarget.fill('202,303,404');
   await firstTarget.evaluate((element) => element.dispatchEvent(new Event('change', { bubbles: true })));
