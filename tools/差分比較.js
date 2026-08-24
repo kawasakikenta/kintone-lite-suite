@@ -11187,12 +11187,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       for (let c = 0; c < row.length; c++) {
         const v = row[c];
         const explicitCellStyle = sheet.cellStyles?.[r]?.[c];
-        if ((v === null || v === void 0 || v === "") && !explicitCellStyle) continue;
+        const isEmptyCell = v === null || v === void 0 || v === "";
+        if (isEmptyCell && !explicitCellStyle) continue;
         const ref = `${colRef(c + 1)}${r + 1}`;
         const rowStyle = sheet.rowStyles?.[r] || "normal";
         const styleIndex = explicitCellStyle ? CELL_STYLE_INDEX[explicitCellStyle] : r + 1 === headerRow ? 1 : hyperlinkRefs.has(ref) && rowStyle === "normal" ? CELL_STYLE_INDEX.hyperlink : CELL_STYLE_INDEX[rowStyle];
         const styleAttr = ` s="${styleIndex}"`;
-        if (typeof v === "number" && Number.isFinite(v)) {
+        if (isEmptyCell && explicitCellStyle && sheet.styledEmptyCellsAsBlank === true) {
+          cells.push(`<c r="${ref}"${styleAttr}/>`);
+        } else if (typeof v === "number" && Number.isFinite(v)) {
           cells.push(`<c r="${ref}"${styleAttr}><v>${v}</v></c>`);
         } else if (typeof v === "boolean") {
           cells.push(`<c r="${ref}"${styleAttr} t="b"><v>${v ? 1 : 0}</v></c>`);
@@ -11958,6 +11961,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function readableDiffRowHeight(cells, maxHeight = 110) {
     const maxLines = cells.reduce((max, cell) => Math.max(max, estimatedWrappedLines(cell.value, cell.width)), 1);
     return Math.min(maxHeight, 26 + Math.max(0, maxLines - 1) * 14);
+  }
+  function readableCustomerRowHeight(cells, maxHeight) {
+    const maxLines = cells.reduce((max, cell) => Math.max(max, estimatedWrappedLines(cell.value, cell.width)), 1);
+    return Math.min(maxHeight, 28 + Math.max(0, maxLines - 1) * 17);
   }
   function summarizeRows2(rows) {
     const counts = {
@@ -13030,6 +13037,10 @@ ${label}` : `${direction}の値`;
     }
     const layoutLabel = layoutRowItemLabel(row, sourceBundle, targetBundle);
     if (layoutLabel) return layoutLabel;
+    if (sectionKey === "viewSettings") {
+      const viewFields = /^viewSettings\.views\.(.+?)\.fields(?:\[\d+\])?$/.exec(path);
+      if (viewFields) return `${viewFields[1]} / 表示項目`;
+    }
     try {
       const decoded = decodeRow(row);
       if (decoded) {
@@ -13046,25 +13057,95 @@ ${label}` : `${direction}の値`;
     if (explicit && explicit !== path) return explicit;
     return path || `${sectionLabel}の設定`;
   }
-  function customerDisplayedValue(row, side) {
-    const missing = side === "source" ? row.left === void 0 || row.type === "added" : row.right === void 0 || row.type === "removed";
-    if (missing) return "（設定なし）";
+  function customerSideIsAbsent(row, side) {
+    if (side === "source" && row.type === "added") return true;
+    if (side === "target" && row.type === "removed") return true;
+    const property = side === "source" ? "left" : "right";
+    return !Object.prototype.hasOwnProperty.call(row, property);
+  }
+  function customerRawValue(row, side) {
+    if (customerSideIsAbsent(row, side)) return { state: "不存在", text: "—" };
     const value = side === "source" ? row.left : row.right;
-    if (value === void 0) return "（未設定）";
-    if (value === null) return "（値なし）";
-    if (value === "") return "（空欄）";
-    if (typeof value === "string") return value;
-    return stringifyForDiff(value);
+    if (value === void 0) return { state: "未定義（undefined）", text: "undefined" };
+    if (value === null) return { state: "null", text: "null" };
+    if (typeof value === "string") {
+      return {
+        state: value.length ? `文字列（${value.length}文字）` : "文字列（空文字）",
+        text: JSON.stringify(value)
+      };
+    }
+    if (typeof value === "boolean") return { state: "真偽値", text: value ? "true" : "false" };
+    if (typeof value === "number") {
+      const serialized = JSON.stringify(value);
+      return { state: "数値", text: serialized == null ? String(value) : serialized };
+    }
+    if (Array.isArray(value)) {
+      return { state: `配列（${value.length}件）`, text: stringifyForDiff(value) };
+    }
+    if (typeof value === "object") {
+      return { state: `オブジェクト（${Object.keys(value).length}項目）`, text: stringifyForDiff(value) };
+    }
+    return { state: typeof value, text: String(value) };
   }
-  var CUSTOMER_MAIN_VALUE_LIMIT = 240;
-  function customerValueNeedsDetail(value) {
-    if (value != null && typeof value === "object") return true;
-    if (typeof value !== "string") return false;
-    const lineCount = (value.match(/\r?\n/g) || []).length + 1;
-    return value.length > CUSTOMER_MAIN_VALUE_LIMIT || lineCount > 4;
+  var CUSTOMER_MAIN_VALUE_LIMIT = 120;
+  var CUSTOMER_DETAIL_RAW_MAX_LINES = 22;
+  var CUSTOMER_RAW_CHUNK_TEXT_LIMIT = 3e4;
+  var CUSTOMER_RAW_CHUNK_LINE_LIMIT = 20;
+  var CUSTOMER_RAW_CHUNK_COLUMN_WIDTH = 60;
+  function customerRawNeedsContinuation(raw) {
+    return raw.text.length > 32767 || estimatedWrappedLines(raw.text, 42) > CUSTOMER_DETAIL_RAW_MAX_LINES;
   }
-  function customerRowNeedsValueDetail(row) {
-    return customerValueNeedsDetail(row.left) || customerValueNeedsDetail(row.right);
+  function splitCustomerRawText(text) {
+    if (!text.length) return [""];
+    const chunks = [];
+    let offset = 0;
+    while (offset < text.length) {
+      const capacity = Math.max(8, CUSTOMER_RAW_CHUNK_COLUMN_WIDTH - 2);
+      let end = offset;
+      let lines = 1;
+      let lineWidth = 0;
+      while (end < text.length && end - offset < CUSTOMER_RAW_CHUNK_TEXT_LIMIT) {
+        const codePoint = text.codePointAt(end);
+        const charLength = codePoint > 65535 ? 2 : 1;
+        const char = text.slice(end, end + charLength);
+        let nextLines = lines;
+        let nextWidth = lineWidth;
+        if (char === "\n") {
+          nextLines += 1;
+          nextWidth = 0;
+        } else if (char !== "\r") {
+          const charWidth = codePoint <= 255 ? 1 : 2;
+          if (nextWidth + charWidth > capacity) {
+            nextLines += 1;
+            nextWidth = charWidth;
+          } else {
+            nextWidth += charWidth;
+          }
+        }
+        if (nextLines > CUSTOMER_RAW_CHUNK_LINE_LIMIT && end > offset) break;
+        lines = nextLines;
+        lineWidth = nextWidth;
+        end += charLength;
+      }
+      if (end <= offset) end = Math.min(text.length, offset + 1);
+      chunks.push(text.slice(offset, end));
+      offset = end;
+    }
+    return chunks;
+  }
+  function buildCustomerRawContinuations(items) {
+    const continuations = [];
+    let firstRow = 3;
+    for (const item of items) {
+      for (const side of ["source", "target"]) {
+        const raw = side === "source" ? item.rawBefore : item.rawAfter;
+        if (!customerRawNeedsContinuation(raw)) continue;
+        const chunks = splitCustomerRawText(raw.text);
+        continuations.push({ kind: "difference", item, side, chunks, firstRow });
+        firstRow += chunks.length;
+      }
+    }
+    return continuations;
   }
   function compactCustomerMainValue(value) {
     const lines = value.split(/\r?\n/);
@@ -13167,15 +13248,14 @@ ${label}` : `${direction}の値`;
     return facts.length ? facts.join("\n") : `${Object.keys(value).length}項目の設定`;
   }
   function customerReadableValue(row, side, sourceBundle, targetBundle) {
-    const missing = side === "source" ? row.left === void 0 || row.type === "added" : row.right === void 0 || row.type === "removed";
-    if (missing) return "（設定なし）";
+    if (customerSideIsAbsent(row, side)) return "（存在しません）";
     const value = side === "source" ? row.left : row.right;
     const bundle = side === "source" ? sourceBundle : targetBundle;
     const path = String(row.path || "");
-    if (value === void 0) return "（未設定）";
-    if (value === null) return "（値なし）";
+    if (value === void 0) return "（未定義：undefined）";
+    if (value === null) return "（null）";
     if (value === "") {
-      return /(?:^|\.)filterCond$/.test(path) ? "（条件なし）" : "（空欄）";
+      return /(?:^|\.)filterCond$/.test(path) ? "（空文字：条件なし）" : "（空文字）";
     }
     let display;
     if (value && typeof value === "object") {
@@ -13202,9 +13282,7 @@ ${label}` : `${direction}の値`;
         display = customerTypeLabel(value);
       }
     }
-    const compact = compactCustomerMainValue(display);
-    return customerValueNeedsDetail(value) ? `${compact}
-原文は「設定値詳細」シートで確認` : compact;
+    return compactCustomerMainValue(display);
   }
   function customerReviewNote(row) {
     const key = sectionKeyOfRow(row);
@@ -13264,8 +13342,8 @@ ${label}` : `${direction}の値`;
       for (const row of rows) {
         const before = customerReadableValue(row, "source", ctx.sourceBundle, ctx.targetBundle);
         const after = customerReadableValue(row, "target", ctx.sourceBundle, ctx.targetBundle);
-        const rawBefore = customerDisplayedValue(row, "source");
-        const rawAfter = customerDisplayedValue(row, "target");
+        const rawBefore = customerRawValue(row, "source");
+        const rawAfter = customerRawValue(row, "target");
         items.push({
           index: items.length,
           row,
@@ -13277,7 +13355,6 @@ ${label}` : `${direction}の値`;
           after,
           rawBefore,
           rawAfter,
-          hasValueDetail: customerRowNeedsValueDetail(row) || before !== rawBefore || after !== rawAfter,
           reviewNote: customerReviewNote(row)
         });
       }
@@ -13328,9 +13405,9 @@ ${label}` : `${direction}の値`;
     const date = new Date(normalized);
     return Number.isFinite(date.getTime()) ? humanDateTime(date.toISOString()) : "未記録";
   }
-  function buildCustomerSummarySheet(ctx, items) {
+  function buildCustomerSummarySheet(ctx, items, continuations) {
     const counts = summarizeCustomerRows(ctx.rows || []);
-    const detailCount = items.filter((item) => item.hasValueDetail).length;
+    const detailCount = items.length;
     const incomplete = customerIncomplete(ctx);
     const droppedSame = Number(ctx.truncation?.droppedSame || 0);
     const filtered = ctx.exportMode === "filtered";
@@ -13345,13 +13422,15 @@ ${label}` : `${direction}の値`;
 ${sourceName}`, "", "→", `比較先
 ${targetName}`, "", ""],
       ["比較結果", verdict, "比較処理", completeness, "", "変更一覧を開く"],
-      [filtered ? "掲載変更件数" : "変更件数", `${counts.actual}件`, "比較日時", customerDateTime(ctx.comparedAt), "", detailCount ? "設定値詳細を開く" : ""],
+      [filtered ? "掲載変更件数" : "変更件数", `${counts.actual}件`, "比較日時", customerDateTime(ctx.comparedAt), "", detailCount ? "レビュー入力を開く" : ""],
       ["追加", `${counts.added}件`, "削除", `${counts.removed}件`, "変更", `${counts.contentChanged}件`],
       ["要素の移動", `${counts.moved}件`, "変更一覧の明細", `${items.length}件`, "同一証跡の省略", droppedSame ? `${droppedSame}件（変更判定への影響なし）` : "0件"],
       ["比較した設定領域", customerScopeLabel(comparedScopes), "", "", "", ""],
       ["掲載範囲", ctx.exportMode === "filtered" ? "上記範囲内の一部" : "上記範囲内の全変更", "絞り込み", ctx.exportMode === "filtered" ? "あり" : "なし", "比較条件の調整", hasCustomerComparisonAdjustments(ctx) ? "あり" : "なし"],
-      ["掲載内容", detailCount ? `「変更一覧」は読みやすい日本語表示です。日本語化・要約した値を含む ${detailCount}件の原文は「設定値詳細」にマスキングせず収録しています。32,767文字を超える値はExcelセル上限を明記して省略します。上記以外の設定領域は比較していません。` : "変更点ごとの比較元・比較先の設定値をマスキングせず収録しています。32,767文字を超える値はExcelセル上限を明記して省略します。上記以外の設定領域は比較していません。", "", "", "", ""],
-      ["このレポートは比較元と比較先の現在設定の差を示すもので、設定の反映・移行計画ではありません。重要度、業務への影響、対応要否は自動判定していません。", "", "", "", "", ""],
+      ["掲載内容", detailCount ? `「変更一覧」は読みやすい日本語表示です。全${detailCount}件の型・状態・原文を「設定値詳細」に収録しています。${continuations.length ? `表示が長い原文${continuations.length}件は、可視の「長文原文」シートへ分割して全文を収録しています。` : ""}上記以外の設定領域は比較していません。` : `${continuations.length ? `取得・打切り情報のうち表示が長い原文${continuations.length}件は、可視の「長文原文」シートへ分割して全文を収録しています。` : ""}上記以外の設定領域は比較していません。`, "", "", "", ""],
+      ["読み方", "1. 比較概要で範囲を確認 → 2. 変更一覧で差分を確認 → 3. H/Iを選択し、必要に応じてJ/Kへ入力 → 4. No.（リンク）から原文を確認", "", "", "", ""],
+      ["表記", "不存在、undefined、null、空文字を区別しています。「設定値詳細」の状態・型と原文を組み合わせると元の値を判別できます。", "", "", "", ""],
+      ["確認時の注意", "このレポートは現在設定の差を示すもので、反映・移行計画ではありません。「確認すること」は中立的な確認質問で、重要度・業務影響・対応要否は自動判定していません。並べ替え後にリンク先がずれた場合はNo.で照合してください。", "", "", "", ""],
       ["", "", "", "", "", ""],
       ["分類別件数", "", "", "", "", ""],
       ["分類", "追加", "削除", "変更", "要素の移動", "合計"],
@@ -13394,12 +13473,13 @@ ${targetName}`, "", ""],
     cellStyles[7][3] = "info";
     cellStyles[7][4] = "summaryLabel";
     cellStyles[7][5] = "info";
-    cellStyles[8][0] = "summaryLabel";
-    cellStyles[8][1] = "info";
-    cellStyles[9][0] = "subtitle";
-    cellStyles[11][0] = "sectionHeader";
-    for (let index = 13; index < rows.length; index += 1) {
-      const alternate = (index - 13) % 2 === 1;
+    for (const index of [8, 9, 10, 11]) {
+      cellStyles[index][0] = index === 11 ? "warning" : "summaryLabel";
+      cellStyles[index][1] = index === 11 ? "warning" : "info";
+    }
+    cellStyles[13][0] = "sectionHeader";
+    for (let index = 15; index < rows.length; index += 1) {
+      const alternate = (index - 15) % 2 === 1;
       cellStyles[index][0] = alternate ? "zebra" : "normal";
       for (let column = 1; column < 6; column += 1) {
         cellStyles[index][column] = alternate ? "zebraCenter" : "center";
@@ -13411,19 +13491,20 @@ ${targetName}`, "", ""],
       colWidths: [16, 22, 10, 22, 16, 22],
       rowStyles: rows.map(() => "normal"),
       cellStyles,
-      headerRow: 13,
+      headerRow: 15,
       freezeRows: 2,
       rowHeights: rows.map((row, index) => {
         if (index === 0) return 42;
         if (index === 1) return 42;
         if (index === 2 || index === 3) return 34;
         if (index === 4 || index === 5) return 38;
-        if (index === 6 || index === 8) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
-        if (index === 9) return readableDiffRowHeight([{ value: row[0], width: 62 }], 82);
-        if (index === 11) return 30;
-        return index === 12 ? 32 : 26;
+        if (index === 6) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
+        if (index >= 8 && index <= 11) return readableDiffRowHeight([{ value: row[1], width: 78 }], index === 11 ? 104 : 76);
+        if (index === 12) return 12;
+        if (index === 13) return 30;
+        return index === 14 ? 32 : 26;
       }),
-      merges: ["A1:F1", "A2:B2", "D2:F2", "B7:F7", "B9:F9", "A10:F10", "A12:F12"],
+      merges: ["A1:F1", "A2:B2", "D2:F2", "B7:F7", "B9:F9", "B10:F10", "B11:F11", "B12:F12", "A14:F14"],
       internalHyperlinks: [{
         ref: "F3",
         targetSheet: "変更一覧",
@@ -13431,19 +13512,18 @@ ${targetName}`, "", ""],
         tooltip: "変更一覧へ移動"
       }, ...detailCount ? [{
         ref: "F4",
-        targetSheet: "設定値詳細",
-        targetCell: "A2",
-        tooltip: "長文・構造化された設定の原文へ移動"
+        targetSheet: "変更一覧",
+        targetCell: "H2",
+        tooltip: "顧客レビュー入力欄へ移動"
       }] : []],
       showGridLines: false,
       zoomScale: 100,
       print: {
         orientation: "landscape",
         fitToWidth: 1,
-        fitToHeight: 0,
-        repeatRows: { from: 1, to: 2 },
+        fitToHeight: 1,
         horizontalCentered: true,
-        footer: "&Rページ &P / &N"
+        footer: "&Lkintone 設定差分確認レポート&Rページ &P / &N"
       }
     };
   }
@@ -13467,14 +13547,14 @@ ${targetName}`,
     ];
     const rows = [
       [
-        "変更前は淡い赤、変更後は淡い緑で表示します。青いNo.は「設定値詳細」の原文へ移動します。",
+        "変更前／変更後は見出しと淡い背景色で区別します。No.（リンク）から全差分の状態・型・原文を確認できます。並べ替え後はNo.で照合してください。",
         "",
         "",
         "",
         "",
         "",
         "",
-        "確認結果の入力欄（淡い黄色）",
+        "入力欄：H/Iは選択、J/Kは任意入力",
         "",
         "",
         ""
@@ -13491,7 +13571,6 @@ ${targetName}`,
       "要素の移動": "changeMoved"
     };
     const internalHyperlinks = [];
-    let detailRow = 3;
     items.forEach((item, index) => {
       rows.push([
         index + 1,
@@ -13510,7 +13589,7 @@ ${targetName}`,
       const styles = [];
       const alternate = index % 2 === 1;
       const startsCategory = index === 0 || items[index - 1]?.sectionLabel !== item.sectionLabel;
-      styles[0] = item.hasValueDetail ? "hyperlink" : alternate ? "zebraCenter" : "center";
+      styles[0] = "hyperlink";
       styles[1] = changeStyles[item.changeType];
       styles[2] = startsCategory ? "category" : alternate ? "zebra" : "normal";
       styles[3] = alternate ? "zebra" : "normal";
@@ -13522,34 +13601,32 @@ ${targetName}`,
       styles[9] = "review";
       styles[10] = "review";
       cellStyles.push(styles);
-      if (item.hasValueDetail) {
-        internalHyperlinks.push({
-          ref: `A${index + 3}`,
-          targetSheet: "設定値詳細",
-          targetCell: `A${detailRow}`,
-          tooltip: "比較元・比較先の原文を確認"
-        });
-        detailRow += 1;
-      }
-      rowHeights.push(readableDiffRowHeight([
+      internalHyperlinks.push({
+        ref: `A${index + 3}`,
+        targetSheet: "設定値詳細",
+        targetCell: `A${index + 3}`,
+        tooltip: "比較元・比較先の状態・型・原文を確認"
+      });
+      rowHeights.push(readableCustomerRowHeight([
         { value: item.sectionLabel, width: 14 },
         { value: item.item, width: 24 },
         { value: item.before, width: 24 },
         { value: item.after, width: 24 },
         { value: item.reviewNote, width: 30 }
-      ], 110));
+      ], 220));
     });
     const lastRow = items.length + 2;
     return {
       name: "変更一覧",
       rows,
-      colWidths: [7, 10, 14, 24, 24, 24, 30, 13, 13, 13, 22],
+      colWidths: [7, 10, 14, 24, 22, 22, 28, 14, 13, 14, 30],
       rowStyles,
       cellStyles,
       headerRow: 2,
       freezeRows: 2,
       freezeColumns: 4,
       rowHeights,
+      styledEmptyCellsAsBlank: true,
       merges: ["A1:G1", "H1:K1"],
       internalHyperlinks,
       dataValidations: items.length ? [{
@@ -13567,28 +13644,61 @@ ${targetName}`,
       zoomScale: 95,
       print: {
         orientation: "landscape",
-        fitToWidth: 1,
+        fitToWidth: 2,
         fitToHeight: 0,
         repeatRows: { from: 2, to: 2 },
         repeatColumns: { from: 1, to: 4 },
-        footer: "&Rページ &P / &N"
+        footer: "&L変更一覧（顧客レビュー）&Rページ &P / &N"
       }
     };
   }
-  function buildCustomerValueDetailSheet(ctx, items) {
-    const detailItems = items.filter((item) => item.hasValueDetail);
-    if (!detailItems.length) return null;
+  function buildCustomerValueDetailSheet(ctx, items, continuations) {
+    if (!items.length) return null;
     const sourceName = customerAppName(ctx.sourceBundle, "比較元");
     const targetName = customerAppName(ctx.targetBundle, "比較先");
+    const continuationByKey = new Map(continuations.map((continuation) => [
+      `${continuation.item.index}:${continuation.side}`,
+      continuation
+    ]));
     const rows = [
-      ["「変更一覧」で日本語化・要約した値の原文です。非表示やマスキングは行っていません。32,767文字を超える値だけはExcelセル上限を明記して省略します。", "", "", "", "", "", ""],
-      ["No.", "変更区分", "分類", "対象", `変更前（原文）
-${sourceName}`, `変更後（原文）
-${targetName}`, "変更一覧へ"]
+      [
+        "全差分の状態・型・原文です。非表示、マスキング、省略は行っていません。",
+        "",
+        "",
+        "",
+        "状態・型で不存在／undefined／null／空文字を区別できます。",
+        "",
+        "長文セルは「長文原文」へ移動します。並べ替え後はNo.で照合してください。",
+        "",
+        ""
+      ],
+      [
+        "No.",
+        "変更区分",
+        "分類",
+        "対象",
+        `変更前の状態・型
+${sourceName}`,
+        `変更前の原文
+${sourceName}`,
+        `変更後の状態・型
+${targetName}`,
+        `変更後の原文
+${targetName}`,
+        "変更一覧へ"
+      ]
     ];
     const rowStyles = ["normal", "normal"];
-    const cellStyles = [["subtitle"], []];
-    const rowHeights = [42, 46];
+    const cellStyles = [[
+      "subtitle",
+      void 0,
+      void 0,
+      void 0,
+      "info",
+      void 0,
+      "warning"
+    ], []];
+    const rowHeights = [64, 52];
     const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
@@ -13596,50 +13706,76 @@ ${targetName}`, "変更一覧へ"]
       "変更": "changeChanged",
       "要素の移動": "changeMoved"
     };
-    detailItems.forEach((item, index) => {
+    items.forEach((item, index) => {
+      const beforeContinuation = continuationByKey.get(`${item.index}:source`);
+      const afterContinuation = continuationByKey.get(`${item.index}:target`);
+      const beforeText = beforeContinuation ? `長文原文へ（${item.rawBefore.text.length}文字・${beforeContinuation.chunks.length}分割）` : item.rawBefore.text;
+      const afterText = afterContinuation ? `長文原文へ（${item.rawAfter.text.length}文字・${afterContinuation.chunks.length}分割）` : item.rawAfter.text;
       rows.push([
         item.index + 1,
         item.changeType,
         item.sectionLabel,
         item.item,
-        item.rawBefore,
-        item.rawAfter,
-        "変更一覧へ戻る"
+        item.rawBefore.state,
+        beforeText,
+        item.rawAfter.state,
+        afterText,
+        `変更一覧 No.${item.index + 1}へ`
       ]);
       rowStyles.push("normal");
-      const startsCategory = index === 0 || detailItems[index - 1]?.sectionLabel !== item.sectionLabel;
+      const startsCategory = index === 0 || items[index - 1]?.sectionLabel !== item.sectionLabel;
       const styles = [];
       styles[0] = "center";
       styles[1] = changeStyles[item.changeType];
       styles[2] = startsCategory ? "category" : index % 2 === 1 ? "zebra" : "normal";
       styles[3] = index % 2 === 1 ? "zebra" : "normal";
       styles[4] = item.changeType === "追加" ? "diffAbsent" : "diffBefore";
-      styles[5] = item.changeType === "削除" ? "diffAbsent" : "diffAfter";
-      styles[6] = "actionLink";
+      styles[5] = beforeContinuation ? "hyperlink" : item.changeType === "追加" ? "diffAbsent" : "diffBefore";
+      styles[6] = item.changeType === "削除" ? "diffAbsent" : "diffAfter";
+      styles[7] = afterContinuation ? "hyperlink" : item.changeType === "削除" ? "diffAbsent" : "diffAfter";
+      styles[8] = "actionLink";
       cellStyles.push(styles);
-      rowHeights.push(readableDiffRowHeight([
-        { value: item.item, width: 30 },
-        { value: item.rawBefore, width: 46 },
-        { value: item.rawAfter, width: 46 }
-      ], 180));
+      rowHeights.push(readableCustomerRowHeight([
+        { value: item.item, width: 24 },
+        { value: item.rawBefore.state, width: 15 },
+        { value: beforeText, width: 42 },
+        { value: item.rawAfter.state, width: 15 },
+        { value: afterText, width: 42 }
+      ], 395));
+      if (beforeContinuation) {
+        internalHyperlinks.push({
+          ref: `F${index + 3}`,
+          targetSheet: "長文原文",
+          targetCell: `A${beforeContinuation.firstRow}`,
+          tooltip: `No.${item.index + 1} 変更前の長文原文へ移動`
+        });
+      }
+      if (afterContinuation) {
+        internalHyperlinks.push({
+          ref: `H${index + 3}`,
+          targetSheet: "長文原文",
+          targetCell: `A${afterContinuation.firstRow}`,
+          tooltip: `No.${item.index + 1} 変更後の長文原文へ移動`
+        });
+      }
       internalHyperlinks.push({
-        ref: `G${index + 3}`,
+        ref: `I${index + 3}`,
         targetSheet: "変更一覧",
         targetCell: `A${item.index + 3}`,
-        tooltip: "要約とレビュー入力欄へ戻る"
+        tooltip: `変更一覧 No.${item.index + 1}へ戻る`
       });
     });
     return {
       name: "設定値詳細",
       rows,
-      colWidths: [7, 11, 16, 30, 46, 46, 16],
+      colWidths: [7, 11, 14, 24, 15, 42, 15, 42, 18],
       rowStyles,
       cellStyles,
       headerRow: 2,
       freezeRows: 2,
       freezeColumns: 4,
       rowHeights,
-      merges: ["A1:G1"],
+      merges: ["A1:D1", "E1:F1", "G1:I1"],
       internalHyperlinks,
       showGridLines: false,
       zoomScale: 85,
@@ -13649,7 +13785,112 @@ ${targetName}`, "変更一覧へ"]
         fitToHeight: 0,
         repeatRows: { from: 2, to: 2 },
         repeatColumns: { from: 1, to: 4 },
-        footer: "&Rページ &P / &N"
+        footer: "&L設定値詳細（型・状態・原文）&Rページ &P / &N"
+      }
+    };
+  }
+  function buildCustomerLongRawSheet(continuations) {
+    if (!continuations.length) return null;
+    const rows = [[
+      "長い原文を可視セルへ分割しています。参照・対象・比較側・分割No.順に、区切り文字を追加せず連結すると原文表記を完全に復元できます。",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "すべての行・列は表示状態です。数式、外部リンク、別添ファイルは使用していません。",
+      ""
+    ], [
+      "参照",
+      "対象",
+      "比較側",
+      "状態・型",
+      "分割No.",
+      "文字位置",
+      "原文（順に連結）",
+      "参照元へ"
+    ]];
+    const rowStyles = ["normal", "normal"];
+    const cellStyles = [[
+      "subtitle",
+      void 0,
+      void 0,
+      void 0,
+      void 0,
+      void 0,
+      "info"
+    ], []];
+    const rowHeights = [54, 42];
+    const internalHyperlinks = [];
+    for (const continuation of continuations) {
+      const difference = continuation.kind === "difference" ? continuation : void 0;
+      const coverage = continuation.kind === "coverage" ? continuation : void 0;
+      const raw = difference ? difference.side === "source" ? difference.item.rawBefore : difference.item.rawAfter : coverage.issue.raw;
+      const reference = difference ? difference.item.index + 1 : `確認範囲 ${coverage.issue.index + 1}`;
+      const target = difference ? difference.item.item : coverage.issue.sectionLabel;
+      const side = difference ? difference.side === "source" ? "変更前" : "変更後" : coverage.issue.target;
+      const returnLabel = difference ? `設定値詳細 No.${difference.item.index + 1}へ` : `確認できなかった範囲 ${coverage.issue.index + 1}へ`;
+      let offset = 0;
+      continuation.chunks.forEach((chunk, chunkIndex) => {
+        const start = offset + 1;
+        offset += chunk.length;
+        const end = offset;
+        const rowNumber = rows.length + 1;
+        rows.push([
+          reference,
+          target,
+          side,
+          raw.state,
+          `${chunkIndex + 1} / ${continuation.chunks.length}`,
+          `${start}–${end} / ${raw.text.length}文字`,
+          chunk,
+          returnLabel
+        ]);
+        rowStyles.push("normal");
+        const alternate = (rowNumber - 3) % 2 === 1;
+        cellStyles.push([
+          alternate ? "zebraCenter" : "center",
+          alternate ? "zebra" : "normal",
+          "center",
+          "info",
+          "center",
+          "info",
+          difference ? difference.side === "source" ? "diffBefore" : "diffAfter" : "warning",
+          "actionLink"
+        ]);
+        rowHeights.push(readableCustomerRowHeight([
+          { value: target, width: 24 },
+          { value: chunk, width: CUSTOMER_RAW_CHUNK_COLUMN_WIDTH }
+        ], 395));
+        internalHyperlinks.push({
+          ref: `H${rowNumber}`,
+          targetSheet: difference ? "設定値詳細" : "確認できなかった範囲",
+          targetCell: `A${(difference ? difference.item.index : coverage.issue.index) + 3}`,
+          tooltip: `${returnLabel}戻る`
+        });
+      });
+    }
+    return {
+      name: "長文原文",
+      rows,
+      colWidths: [7, 24, 9, 16, 11, 20, CUSTOMER_RAW_CHUNK_COLUMN_WIDTH, 20],
+      rowStyles,
+      cellStyles,
+      headerRow: 2,
+      freezeRows: 2,
+      freezeColumns: 4,
+      rowHeights,
+      merges: ["A1:F1", "G1:H1"],
+      internalHyperlinks,
+      showGridLines: false,
+      zoomScale: 80,
+      print: {
+        orientation: "landscape",
+        fitToWidth: 2,
+        fitToHeight: 0,
+        repeatRows: { from: 2, to: 2 },
+        repeatColumns: { from: 1, to: 6 },
+        footer: "&L長文原文（分割証跡）&Rページ &P / &N"
       }
     };
   }
@@ -13659,41 +13900,48 @@ ${targetName}`, "変更一覧へ"]
     if (side === "both") return "比較元・比較先";
     return "対象範囲";
   }
-  function buildCustomerIssuesSheet(ctx) {
-    if (!customerIncomplete(ctx)) return null;
-    const rows = [
-      ["このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。取得・打切り情報はマスキングせず収録しています。", "", "", "", ""],
-      ["分類", "対象", "確認状態", "説明", "取得・打切り情報（原文）"]
-    ];
+  function buildCustomerCoverageIssueItems(ctx) {
+    const items = [];
+    const add = (sectionLabel, target, status, explanation, rawValue) => {
+      const text = stringifyForDiff(rawValue);
+      items.push({
+        index: items.length,
+        sectionLabel,
+        target,
+        status,
+        explanation,
+        raw: { state: `取得・打切り情報（${text.length}文字）`, text }
+      });
+    };
     for (const issue of ctx.fetchIssues || []) {
-      rows.push([
+      add(
         customerSectionLabel(String(issue.sectionKey || issue.section || "")),
         customerIssueSide(issue.side),
         "取得できませんでした",
         "この範囲は比較結果に含まれていません。再取得して確認してください。",
-        stringifyForDiff(issue)
-      ]);
+        issue
+      );
     }
     for (const issue of ctx.partialIssues || []) {
-      rows.push([
+      add(
         customerSectionLabel(String(issue.sectionKey || issue.section || "")),
         customerIssueSide(issue.side),
         "一部のみ確認",
         "取得できた範囲だけを比較しています。必要に応じて再取得してください。",
-        stringifyForDiff(issue)
-      ]);
+        issue
+      );
     }
     if (customerHasDiffTruncation(ctx.truncation)) {
       const incompleteSections = (ctx.truncation?.sections || []).filter(customerTruncationSectionIncomplete);
       const sections = incompleteSections.length ? incompleteSections : [{ section: "比較対象全体", partiallyScanned: true, scanStatus: "partial" }];
       for (const section of sections) {
         const status = truncationScanStatusOf(section);
-        rows.push([
+        add(
           customerSectionLabel(String(section.sectionKey || section.section || "")),
           "件数上限の対象",
           status === "unscanned" ? "未確認" : status === "partial" ? "一部のみ確認" : "表示を一部省略",
           status === "unscanned" ? "この範囲は確認できていません。条件を分けて再比較してください。" : status === "partial" ? "確認できた件数は全体の一部です。条件を分けて再比較してください。" : "範囲の確認は完了していますが、表示を一部省略しています。",
-          stringifyForDiff({
+          {
             truncated: ctx.truncation?.truncated,
             actualDiffIncomplete: ctx.truncation?.actualDiffIncomplete,
             diffLimit: ctx.truncation?.diffLimit,
@@ -13701,16 +13949,62 @@ ${targetName}`, "変更一覧へ"]
             droppedDiff: ctx.truncation?.droppedDiff,
             droppedSame: ctx.truncation?.droppedSame,
             section
-          })
-        ]);
+          }
+        );
       }
     }
+    return items;
+  }
+  function buildCustomerIssueRawContinuations(items, firstDataRow) {
+    const continuations = [];
+    let firstRow = firstDataRow;
+    for (const issue of items) {
+      if (!customerRawNeedsContinuation(issue.raw)) continue;
+      const chunks = splitCustomerRawText(issue.raw.text);
+      continuations.push({ kind: "coverage", issue, chunks, firstRow });
+      firstRow += chunks.length;
+    }
+    return continuations;
+  }
+  function buildCustomerIssuesSheet(items, continuations) {
+    if (!items.length) return null;
+    const continuationByIndex = new Map(continuations.map((continuation) => [
+      continuation.issue.index,
+      continuation
+    ]));
+    const rows = [
+      ["このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。取得・打切り情報はマスキングせず収録しています。", "", "", "", ""],
+      ["分類", "対象", "確認状態", "説明", "取得・打切り情報（原文）"]
+    ];
+    const internalHyperlinks = [];
+    items.forEach((item, index) => {
+      const continuation = continuationByIndex.get(item.index);
+      rows.push([
+        item.sectionLabel,
+        item.target,
+        item.status,
+        item.explanation,
+        continuation ? `長文原文へ（${item.raw.text.length}文字・${continuation.chunks.length}分割）` : item.raw.text
+      ]);
+      if (continuation) {
+        internalHyperlinks.push({
+          ref: `E${index + 3}`,
+          targetSheet: "長文原文",
+          targetCell: `A${continuation.firstRow}`,
+          tooltip: `確認できなかった範囲 ${index + 1} の長文原文へ移動`
+        });
+      }
+    });
+    const cellStyles = rows.map((_, index) => index === 0 ? ["warning"] : index === 1 ? [] : ["warning"]);
+    items.forEach((item, index) => {
+      if (continuationByIndex.has(item.index)) cellStyles[index + 2][4] = "hyperlink";
+    });
     return {
       name: "確認できなかった範囲",
       rows,
       colWidths: [24, 20, 22, 48, 60],
       rowStyles: rows.map(() => "normal"),
-      cellStyles: rows.map((_, index) => index === 0 ? ["warning"] : index === 1 ? [] : ["warning"]),
+      cellStyles,
       headerRow: 2,
       freezeRows: 2,
       freezeColumns: 2,
@@ -13722,6 +14016,7 @@ ${targetName}`, "変更一覧へ"]
         { value: row[4], width: 60 }
       ], 180)),
       merges: ["A1:E1"],
+      internalHyperlinks,
       showGridLines: false,
       print: {
         orientation: "landscape",
@@ -13733,12 +14028,22 @@ ${targetName}`, "変更一覧へ"]
   }
   function buildCustomerDiffXlsxSheets(ctx) {
     const items = buildCustomerDiffItems(ctx);
-    const sheets = [buildCustomerSummarySheet(ctx, items)];
-    const issues = buildCustomerIssuesSheet(ctx);
+    const differenceContinuations = buildCustomerRawContinuations(items);
+    const issueItems = buildCustomerCoverageIssueItems(ctx);
+    const nextLongRawRow = differenceContinuations.reduce(
+      (nextRow, continuation) => Math.max(nextRow, continuation.firstRow + continuation.chunks.length),
+      3
+    );
+    const issueContinuations = buildCustomerIssueRawContinuations(issueItems, nextLongRawRow);
+    const allContinuations = [...differenceContinuations, ...issueContinuations];
+    const sheets = [buildCustomerSummarySheet(ctx, items, allContinuations)];
+    const issues = buildCustomerIssuesSheet(issueItems, issueContinuations);
     if (issues) sheets.push(issues);
     sheets.push(buildCustomerListSheet(ctx, items));
-    const valueDetails = buildCustomerValueDetailSheet(ctx, items);
+    const valueDetails = buildCustomerValueDetailSheet(ctx, items, differenceContinuations);
     if (valueDetails) sheets.push(valueDetails);
+    const longRaw = buildCustomerLongRawSheet(allContinuations);
+    if (longRaw) sheets.push(longRaw);
     return sheets;
   }
   function buildDiffXlsxSheets(ctx) {
@@ -15448,7 +15753,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       subtitle: "アプリ設定の差分を比較し、レビュー用 HTML と顧客向け Excel で確認",
       accent: "diff",
       badges: [{ label: "Lite" }, { label: "出力対応" }],
-      hint: "比較完了時にレビュー用 HTML を自動保存します。顧客向け Excel には差分値と取得不完全時のエラー等の原文を収録し、Excelセル上限を超える値を除いてマスキングしません。共有前に内容を確認してください。",
+      hint: "比較完了時にレビュー用 HTML を自動保存します。顧客向け Excel には差分値と取得不完全時のエラー等の原文をマスキングせず収録し、長い原文は可視シートへ分割して全文を保持します。共有前に内容を確認してください。",
       wide: true
     });
     panel.status.setAttribute("role", "status");
@@ -15842,7 +16147,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     cardResult.body.appendChild(resultBox);
     panel.body.insertBefore(cardResult.card, panel.status);
     const cardOut = makeCard({ title: "出力", number: 3, soft: true });
-    cardOut.body.appendChild(makeNote("レビュー用 HTML は比較実行時に自動保存されます。顧客へ共有する場合は、全件または画面で絞り込んだ範囲を Excel で保存してください。Excel には差分値と取得不完全時のエラー等の原文を収録し、Excelセル上限を超える値を除いてマスキングしないため、共有前に内容を確認してください。"));
+    cardOut.body.appendChild(makeNote("レビュー用 HTML は比較実行時に自動保存されます。顧客へ共有する場合は、全件または画面で絞り込んだ範囲を Excel で保存してください。Excel には差分値と取得不完全時のエラー等の原文をマスキングせず収録し、長い原文は可視シートへ分割して全文を保持するため、共有前に内容を確認してください。"));
     cardOut.body.appendChild(makeNote("変更箇所のみの HTML にも比較元・比較先の値が含まれ、匿名化・機密情報のマスキング済みではありません。比較設定を含む社内用 HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。"));
     const htmlContentMode = makeSelect([
       ["diffOnly", "レビュー用（変更箇所のみ）"],

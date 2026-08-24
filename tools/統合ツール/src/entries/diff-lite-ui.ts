@@ -943,7 +943,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     subtitle: 'アプリ設定の差分を比較し、レビュー用 HTML と顧客向け Excel で確認',
     accent: 'diff',
     badges: [{ label: 'Lite' }, { label: '出力対応' }],
-    hint: '比較完了時にレビュー用 HTML を自動保存します。顧客向け Excel には差分値と取得不完全時のエラー等の原文を収録し、Excelセル上限を超える値を除いてマスキングしません。共有前に内容を確認してください。',
+    hint: '比較完了時にレビュー用 HTML を自動保存します。顧客向け Excel には差分値と取得不完全時のエラー等の原文をマスキングせず収録し、長い原文は可視シートへ分割して全文を保持します。共有前に内容を確認してください。',
     wide: true
   });
   panel.status.setAttribute('role', 'status');
@@ -1319,7 +1319,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   // ---- 出力（再出力用。初回は比較実行時に自動保存される） ----
   const cardOut = makeCard({ title: '出力', number: 3, soft: true });
-  cardOut.body.appendChild(makeNote('レビュー用 HTML は比較実行時に自動保存されます。顧客へ共有する場合は、全件または画面で絞り込んだ範囲を Excel で保存してください。Excel には差分値と取得不完全時のエラー等の原文を収録し、Excelセル上限を超える値を除いてマスキングしないため、共有前に内容を確認してください。'));
+  cardOut.body.appendChild(makeNote('レビュー用 HTML は比較実行時に自動保存されます。顧客へ共有する場合は、全件または画面で絞り込んだ範囲を Excel で保存してください。Excel には差分値と取得不完全時のエラー等の原文をマスキングせず収録し、長い原文は可視シートへ分割して全文を保持するため、共有前に内容を確認してください。'));
   cardOut.body.appendChild(makeNote('変更箇所のみの HTML にも比較元・比較先の値が含まれ、匿名化・機密情報のマスキング済みではありません。比較設定を含む社内用 HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。'));
   const htmlContentMode = makeSelect([
     ['diffOnly', 'レビュー用（変更箇所のみ）'],

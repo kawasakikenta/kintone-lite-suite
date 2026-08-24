@@ -317,6 +317,20 @@ describe('diff/xlsx-builder', () => {
     expect(xml).not.toContain('<f>');
   });
 
+  it('can opt in to true blank styled cells without changing the legacy default', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [['status', 'memo'], ['', '']],
+      cellStyles: [[], ['review', 'review']],
+      styledEmptyCellsAsBlank: true
+    }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    expect(xml).toContain('<c r="A2" s="11"/>');
+    expect(xml).toContain('<c r="B2" s="11"/>');
+    expect(xml).not.toMatch(/<c r="A2"[^>]*t="inlineStr"/);
+    expect(xml).not.toMatch(/<c r="B2"[^>]*t="inlineStr"/);
+  });
+
   it('applies source, target, comparison-divider, and warning roles without changing the header style', async () => {
     const sheets: XlsxSheet[] = [{
       name: 'S',

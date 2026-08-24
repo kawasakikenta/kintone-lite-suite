@@ -253,6 +253,8 @@ export interface XlsxSheet {
   cellStyles?: Array<Array<XlsxCellStyle | undefined>>;
   /** 行高。未指定の行は既定値。 */
   rowHeights?: number[];
+  /** スタイル付き空セルを inlineStr ではなく真正の空セルとして書き出す。既定は従来互換の false。 */
+  styledEmptyCellsAsBlank?: boolean;
   /** 結合セル範囲。例: A1:D1 */
   merges?: string[];
   /** 入力候補のドロップダウン。 */
@@ -513,8 +515,9 @@ function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyp
     for (let c = 0; c < row.length; c++) {
       const v = row[c];
       const explicitCellStyle = sheet.cellStyles?.[r]?.[c];
+      const isEmptyCell = v === null || v === undefined || v === '';
       // レビュー入力欄など、空でも塗りを表示したいセルは書き出す。
-      if ((v === null || v === undefined || v === '') && !explicitCellStyle) continue;
+      if (isEmptyCell && !explicitCellStyle) continue;
       const ref = `${colRef(c + 1)}${r + 1}`;
       const rowStyle = sheet.rowStyles?.[r] || 'normal';
       const styleIndex = explicitCellStyle
@@ -525,7 +528,9 @@ function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyp
             ? CELL_STYLE_INDEX.hyperlink
             : CELL_STYLE_INDEX[rowStyle];
       const styleAttr = ` s="${styleIndex}"`;
-      if (typeof v === 'number' && Number.isFinite(v)) {
+      if (isEmptyCell && explicitCellStyle && sheet.styledEmptyCellsAsBlank === true) {
+        cells.push(`<c r="${ref}"${styleAttr}/>`);
+      } else if (typeof v === 'number' && Number.isFinite(v)) {
         cells.push(`<c r="${ref}"${styleAttr}><v>${v}</v></c>`);
       } else if (typeof v === 'boolean') {
         cells.push(`<c r="${ref}"${styleAttr} t="b"><v>${v ? 1 : 0}</v></c>`);
