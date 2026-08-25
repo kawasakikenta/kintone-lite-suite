@@ -24,6 +24,7 @@
     "test:output-layouts": "node tools/test-harness/run-output-layouts.mjs",
     "test:diff-multi-dom": "node tools/test-harness/run-diff-lite-multi-dom.cjs",
     "test:diff-pairs-dom": "node tools/test-harness/run-diff-lite-pairs-dom.cjs",
+    "test:diff-pair-folders-dom": "node tools/test-harness/run-diff-lite-pair-folders-dom.cjs",
     "test:diff-compare": "node tools/test-harness/run-diff-lite-compare.cjs",
     "test:er-compare": "node tools/test-harness/run-er-diagram-compare.cjs",
     "snippet": "node scripts/build-snippet.js",

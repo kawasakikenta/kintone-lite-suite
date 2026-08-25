@@ -51,6 +51,8 @@ export interface DiffBatchPairIssue {
 export interface PrepareDiffBatchPairsOptions {
   maxPairs?: number;
   requireOneToOne?: boolean;
+  /** 左右が別スナップショットの場合、同じ接続先ID同士の比較を許可する。 */
+  allowSameEndpoint?: boolean;
 }
 
 export interface PreparedDiffBatchPairs {
@@ -134,6 +136,7 @@ export function prepareDiffBatchPairs(
 ): PreparedDiffBatchPairs {
   const maxPairs = Math.max(1, Math.floor(options.maxPairs ?? DEFAULT_MAX_DIFF_BATCH_PAIRS));
   const requireOneToOne = options.requireOneToOne !== false;
+  const allowSameEndpoint = options.allowSameEndpoint === true;
   const pairs: DiffBatchPair[] = [];
   const issues: DiffBatchPairIssue[] = [];
   const pairRows = new Map<string, number>();
@@ -191,7 +194,7 @@ export function prepareDiffBatchPairs(
     const sourceKey = buildDiffBatchEndpointKey(source);
     const targetKey = buildDiffBatchEndpointKey(target);
     const pairKey = buildDiffBatchPairKey(pair);
-    if (sourceKey === targetKey) {
+    if (!allowSameEndpoint && sourceKey === targetKey) {
       issues.push({
         code: 'same-endpoint',
         rowNumber,
