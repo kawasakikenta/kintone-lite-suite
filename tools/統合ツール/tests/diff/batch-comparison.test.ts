@@ -119,6 +119,18 @@ describe('diff batch comparison pair planning', () => {
     ]);
   });
 
+  it('allows the same endpoint only when comparing separate imported snapshots', () => {
+    const input = [{ source: endpoint('101'), target: endpoint('101') }];
+
+    expect(prepareDiffBatchPairs(input).issues).toEqual([
+      expect.objectContaining({ code: 'same-endpoint' })
+    ]);
+    expect(prepareDiffBatchPairs(input, { allowSameEndpoint: true })).toEqual({
+      pairs: [pair(1, '101', '101')],
+      issues: []
+    });
+  });
+
   it('reports the configured batch limit without silently accepting overflow', () => {
     const prepared = prepareDiffBatchPairs([
       { source: endpoint('101'), target: endpoint('201') },

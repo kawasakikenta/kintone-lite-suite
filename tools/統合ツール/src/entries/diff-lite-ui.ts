@@ -41,6 +41,13 @@ import {
   type DiffBatchPairInput,
   type DiffBatchPairIssue
 } from '../diff/batch-comparison.js';
+import {
+  autoMatchDiffBatchFolderBundles,
+  parseDiffBatchFolderImport,
+  type DiffBatchFolderImportedBundle,
+  type DiffBatchFolderImportResult,
+  type DiffBatchFolderMatchKind
+} from '../diff/batch-folder-import.js';
 
 const SCOPE_OPTS: Array<[string, string, boolean]> = [
   ['fieldSettings', 'フィールド', true],
@@ -271,7 +278,34 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-pair-actions{display:flex;flex-direction:column;gap:5px;justify-content:center}
 .kus-dl-pair-actions .kus-lp__btn{width:100%;min-height:36px!important;padding:6px 8px!important;font-size:11px}
 .kus-dl-pair-row__error{grid-column:2/-1;margin:0;padding:7px 9px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font-size:11px;font-weight:700;line-height:1.5}
+.kus-dl-pair-row__match{grid-column:2/-1;margin:0;padding:6px 9px;border:1px solid #bfdbfe;border-radius:7px;background:#eff6ff;color:#1e3a8a;font-size:11px;font-weight:700;line-height:1.5}
+.kus-dl-pair-side__file{display:block;margin:8px 0 0;padding:6px 8px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#475569;font-size:10.5px;line-height:1.45;overflow-wrap:anywhere}
 .kus-dl-pair-toolbar{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.kus-dl-pair-folder{display:grid;gap:10px;padding:13px;border:1px solid #93c5fd;border-radius:12px;background:#f8fbff;font-family:-apple-system,Segoe UI,sans-serif}
+.kus-dl-pair-folder__head strong{display:block;color:#10253f;font-size:13px}
+.kus-dl-pair-folder__head span{display:block;margin-top:3px;color:#475569;font-size:11px;line-height:1.55}
+.kus-dl-pair-folder__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.kus-dl-pair-folder__side{min-width:0;padding:10px;border:1px solid #cbd5e1;border-left:4px solid #475569;border-radius:9px;background:#fff}
+.kus-dl-pair-folder__side--target{border-left-color:#2563eb;background:#eff6ff}
+.kus-dl-pair-folder__side strong{display:block;margin-bottom:7px;color:#334155;font-size:11px}
+.kus-dl-pair-folder__actions{display:flex;flex-wrap:wrap;gap:6px}
+.kus-dl-pair-folder__summary{margin:7px 0 0;color:#64748b;font-size:10.5px;line-height:1.5;overflow-wrap:anywhere}
+.kus-dl-pair-folder__error{margin:0;padding:8px 10px;border:1px solid #fecaca;border-radius:8px;background:#fef2f2;color:#991b1b;font-size:10.5px;font-weight:700;line-height:1.5;overflow-wrap:anywhere}
+.kus-dl-pair-folder__mapping{border:1px solid #cbd5e1;border-radius:9px;background:#fff;overflow:hidden}
+.kus-dl-pair-folder__mapping-scroll{max-width:100%;overflow-x:auto}
+.kus-dl-pair-folder__mapping table{width:100%;min-width:700px;border-collapse:collapse;font-size:10.5px}
+.kus-dl-pair-folder__mapping th,.kus-dl-pair-folder__mapping td{padding:7px 8px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:middle}
+.kus-dl-pair-folder__mapping th{background:#f1f5f9;color:#475569;font-weight:800}
+.kus-dl-pair-folder__mapping select{box-sizing:border-box;width:100%;min-height:38px;border:1px solid #94a3b8;border-radius:7px;background:#fff;color:#0f172a}
+.kus-dl-pair-folder__app{display:block;color:#10253f;font-weight:800}
+.kus-dl-pair-folder__meta{display:block;margin-top:2px;color:#64748b;line-height:1.4;overflow-wrap:anywhere}
+.kus-dl-pair-folder__badge{display:inline-flex;padding:3px 6px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:10px;font-weight:850;white-space:nowrap}
+.kus-dl-pair-folder__badge--app-name{background:#dcfce7;color:#166534}
+.kus-dl-pair-folder__badge--app-id,.kus-dl-pair-folder__badge--position{background:#fef3c7;color:#92400e}
+.kus-dl-pair-folder__badge--manual{background:#dbeafe;color:#1e40af}
+.kus-dl-pair-folder__foot{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:7px;padding:9px 10px;background:#f8fafc}
+.kus-dl-pair-folder__review{min-width:0;color:#475569;font-size:11px;font-weight:700;line-height:1.5}
+.kus-dl-pair-folder__unused{margin:0;padding:8px 10px;border-top:1px solid #e2e8f0;color:#9a3412;font-size:10.5px;line-height:1.5}
 .kus-dl-pair-bulk{margin:0;border:1px solid #cbd5e1;border-radius:9px;background:#f8fafc}
 .kus-dl-pair-bulk>summary{display:flex;align-items:center;min-height:44px;padding:8px 11px;box-sizing:border-box;cursor:pointer;color:#334155;font-size:12px;font-weight:750}
 .kus-dl-pair-bulk__body{display:grid;gap:8px;padding:10px;border-top:1px solid #e2e8f0}
@@ -387,6 +421,18 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-disclosure>summary small{width:100%;padding-right:28px;text-align:left}
 }
 @media(max-width:640px){
+  .kus-dl-pair-folder__grid{grid-template-columns:1fr}
+  .kus-dl-pair-folder__mapping-scroll{overflow-x:visible}
+  .kus-dl-pair-folder__mapping table{display:block;min-width:0}
+  .kus-dl-pair-folder__mapping thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .kus-dl-pair-folder__mapping tbody{display:grid;gap:8px;padding:8px}
+  .kus-dl-pair-folder__mapping tr{display:grid;border:1px solid #cbd5e1;border-radius:9px;background:#fff;overflow:hidden}
+  .kus-dl-pair-folder__mapping td{display:grid;grid-template-columns:88px minmax(0,1fr);gap:8px;align-items:center;padding:8px;border-bottom:1px solid #e2e8f0}
+  .kus-dl-pair-folder__mapping td:last-child{border-bottom:0}
+  .kus-dl-pair-folder__mapping td::before{content:attr(data-label);color:#64748b;font-size:10px;font-weight:800;line-height:1.35}
+  .kus-dl-pair-folder__mapping select{min-width:0}
+  .kus-dl-pair-folder__foot{grid-template-columns:1fr}
+  .kus-dl-pair-folder__foot .kus-lp__btn{width:100%}
   .kus-dl-pair-row{grid-template-columns:30px minmax(0,1fr);gap:7px}
   .kus-dl-pair-side{grid-column:2}
   .kus-dl-pair-arrow{grid-column:2;min-height:24px;transform:rotate(90deg)}
@@ -1213,6 +1259,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     name: HTMLElement;
     appName: string;
     side: HTMLElement;
+    folderFile: HTMLElement;
+    folderBundle: DiffBatchFolderImportedBundle | null;
   }
   interface PairRowEntry {
     row: HTMLElement;
@@ -1220,6 +1268,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     source: PairEndpointEntry;
     target: PairEndpointEntry;
     error: HTMLElement;
+    match: HTMLElement;
     duplicate: HTMLButtonElement;
     swap: HTMLButtonElement;
     remove: HTMLButtonElement;
@@ -1251,6 +1300,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     preview.checkbox.setAttribute('aria-label', `ペア${rowNumber}${side === 'source' ? '比較元' : '比較先'}をプレビュー環境から取得`);
     preview.label.classList.add('kus-dl-pair-side__preview');
     const name = makeTargetName();
+    const folderFile = document.createElement('span');
+    folderFile.className = 'kus-dl-pair-side__file';
+    folderFile.hidden = true;
     const endpointSide = document.createElement('section');
     endpointSide.className = `kus-dl-pair-side kus-dl-pair-side--${side}`;
     const role = document.createElement('span');
@@ -1270,8 +1322,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     guestFieldLabel.textContent = 'Guest ID（任意）';
     guestField.append(guestFieldLabel, guest);
     fields.append(appField, guestField, preview.label);
-    endpointSide.append(role, fields);
-    return { app, guest, preview, name, appName: '', side: endpointSide };
+    endpointSide.append(role, fields, folderFile);
+    return { app, guest, preview, name, appName: '', side: endpointSide, folderFile, folderBundle: null };
   };
 
   const setPairEndpointName = (endpoint: PairEndpointEntry, appName: string) => {
@@ -1279,6 +1331,32 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     endpoint.name.textContent = endpoint.appName;
     endpoint.name.title = endpoint.appName ? `アプリ名: ${endpoint.appName}` : '';
     endpoint.name.classList.toggle('kus-dl-target-name--empty', !endpoint.appName);
+  };
+
+  const setPairEndpointFolderBundle = (
+    endpoint: PairEndpointEntry,
+    imported: DiffBatchFolderImportedBundle | null,
+    options: { clearValues?: boolean } = {}
+  ) => {
+    endpoint.folderBundle = imported;
+    endpoint.side.classList.toggle('is-folder-imported', !!imported);
+    endpoint.app.readOnly = !!imported;
+    endpoint.guest.readOnly = !!imported;
+    endpoint.preview.checkbox.disabled = !!imported;
+    endpoint.folderFile.hidden = !imported;
+    endpoint.folderFile.textContent = imported ? `設定JSON: ${imported.relativePath}` : '';
+    endpoint.folderFile.title = imported?.relativePath || '';
+    if (imported) {
+      endpoint.app.value = imported.appId;
+      endpoint.guest.value = imported.guestId;
+      endpoint.preview.checkbox.checked = imported.preview;
+      setPairEndpointName(endpoint, imported.appName);
+    } else if (options.clearValues) {
+      endpoint.app.value = '';
+      endpoint.guest.value = '';
+      endpoint.preview.checkbox.checked = false;
+      setPairEndpointName(endpoint, '');
+    }
   };
 
   const pairRowIsBlank = (entry: PairRowEntry) => !(
@@ -1313,6 +1391,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       entry.duplicate.setAttribute('aria-label', `ペア${rowNumber}を複製`);
       entry.swap.setAttribute('aria-label', `ペア${rowNumber}の比較方向を入れ替え`);
       entry.remove.setAttribute('aria-label', `ペア${rowNumber}を削除`);
+      entry.match.id = `kus-dl-pair-match-${rowNumber}`;
       entry.remove.disabled = pairRows.length === 1;
     });
     pairCount.textContent = `${pairRows.length} / ${MAX_PAIR_ROWS} 行`;
@@ -1395,8 +1474,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     error.className = 'kus-dl-pair-row__error';
     error.setAttribute('role', 'alert');
     error.hidden = true;
-    row.append(number, source.side, arrow, target.side, actions, error);
-    const entry: PairRowEntry = { row, number, source, target, error, duplicate, swap, remove };
+    const match = document.createElement('p');
+    match.className = 'kus-dl-pair-row__match';
+    match.hidden = true;
+    row.append(number, source.side, arrow, target.side, actions, error, match);
+    const entry: PairRowEntry = { row, number, source, target, error, match, duplicate, swap, remove };
     const applyEndpointInitial = (endpointEntry: PairEndpointEntry, value: Partial<DiffBatchEndpoint> | undefined) => {
       endpointEntry.app.value = String(value?.appId || '');
       endpointEntry.guest.value = String(value?.guestId || '');
@@ -1422,6 +1504,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       invalidateResultAfterPairConditionChange();
     }));
     duplicate.addEventListener('click', () => {
+      if (pairFolderModeActive()) {
+        panel.setStatus('フォルダ比較中は対応確認表からペアを作り直してください', 'warn');
+        return;
+      }
       const copy = addPairRow({
         source: { appId: source.app.value.trim(), guestId: source.guest.value.trim(), preview: source.preview.checkbox.checked, appName: source.appName },
         target: { appId: target.app.value.trim(), guestId: target.guest.value.trim(), preview: target.preview.checkbox.checked, appName: target.appName }
@@ -1432,6 +1518,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       }
     });
     swap.addEventListener('click', () => {
+      if (pairFolderModeActive()) {
+        panel.setStatus('フォルダ比較中は対応確認表で比較元と比較先を選び直してください', 'warn');
+        return;
+      }
       const sourceValue = { appId: source.app.value, guestId: source.guest.value, preview: source.preview.checkbox.checked, appName: source.appName };
       applyEndpointInitial(source, { appId: target.app.value, guestId: target.guest.value, preview: target.preview.checkbox.checked, appName: target.appName });
       applyEndpointInitial(target, sourceValue);
@@ -1441,6 +1531,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       source.app.focus();
     });
     remove.addEventListener('click', () => {
+      if (pairFolderModeActive()) {
+        panel.setStatus('フォルダ比較中はペア表から削除できません。対応確認表で対象チェックを外して再反映してください', 'warn');
+        return;
+      }
       const index = pairRows.indexOf(entry);
       if (index < 0 || pairRows.length === 1) return;
       row.remove();
@@ -1475,6 +1569,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const addPairBtn = makeButton('ペアを追加', 'sub', { icon: '＋' });
   addPairBtn.dataset.kusDlPairAdd = '';
   addPairBtn.addEventListener('click', () => {
+    if (pairFolderModeActive()) {
+      panel.setStatus('フォルダ比較中は対応確認表からペアを作成してください。手入力へ戻す場合は両フォルダを解除してください', 'warn');
+      return;
+    }
     const entry = addPairRow({}, true);
     if (!entry) return;
     const invalidated = invalidateResultAfterPairConditionChange();
@@ -1487,6 +1585,495 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   pairClearImportBtn.disabled = true;
   pairClearImportBtn.hidden = true;
   pairToolbar.append(addPairBtn, pairClearImportBtn);
+
+  type PairFolderSide = 'source' | 'target';
+  interface PairFolderState {
+    folderName: string;
+    result: DiffBatchFolderImportResult;
+  }
+  interface PairFolderDraftRow {
+    source: DiffBatchFolderImportedBundle;
+    targetKey: string;
+    included: boolean;
+    confirmed: boolean;
+    matchKind: DiffBatchFolderMatchKind | 'manual' | 'position';
+  }
+
+  const pairFolderStates: Record<PairFolderSide, PairFolderState | null> = { source: null, target: null };
+  const pairFolderLoadGeneration: Record<PairFolderSide, number> = { source: 0, target: 0 };
+  let pairFolderDraftRows: PairFolderDraftRow[] = [];
+  let pairFolderDraftDirty = false;
+  let pairFolderApplied = false;
+  let pairFolderIgnoreUnusedTargets = false;
+  const pairFolderActiveLoads: Record<PairFolderSide, number> = { source: 0, target: 0 };
+  const pairFolderLoadActive = () => pairFolderActiveLoads.source > 0 || pairFolderActiveLoads.target > 0;
+
+  const pairFolder = document.createElement('section');
+  pairFolder.className = 'kus-dl-pair-folder';
+  pairFolder.setAttribute('aria-labelledby', 'kus-dl-pair-folder-title');
+  const pairFolderHead = document.createElement('div');
+  pairFolderHead.className = 'kus-dl-pair-folder__head';
+  pairFolderHead.innerHTML = '<strong id="kus-dl-pair-folder-title">設定フォルダからペアを作成</strong><span>設定一括取得ZIPを展開したフォルダなどを、変更前・変更後の両側で選びます。対応を確認して反映すると、現在のペア表を確認済みの組み合わせで置き換えます。比較にはJSONだけを使い、kintone APIへ接続しません。</span>';
+  const pairFolderGrid = document.createElement('div');
+  pairFolderGrid.className = 'kus-dl-pair-folder__grid';
+
+  const makePairFolderSide = (side: PairFolderSide) => {
+    const box = document.createElement('section');
+    box.className = `kus-dl-pair-folder__side kus-dl-pair-folder__side--${side}`;
+    const title = document.createElement('strong');
+    title.id = `kus-dl-pair-folder-${side}-title`;
+    title.textContent = side === 'source' ? '比較元（変更前）フォルダ' : '比較先（変更後）フォルダ';
+    box.setAttribute('aria-labelledby', title.id);
+    const actions = document.createElement('div');
+    actions.className = 'kus-dl-pair-folder__actions';
+    const select = makeButton('フォルダを選択', 'sub', { icon: '↑' });
+    select.dataset.kusDlPairFolderSelect = side;
+    select.setAttribute('aria-label', `${side === 'source' ? '比較元（変更前）' : '比較先（変更後）'}フォルダを選択`);
+    const clear = makeButton('解除', 'ghost');
+    clear.dataset.kusDlPairFolderClear = side;
+    clear.setAttribute('aria-label', `${side === 'source' ? '比較元（変更前）' : '比較先（変更後）'}フォルダの読込を解除`);
+    clear.disabled = true;
+    const summary = document.createElement('p');
+    summary.className = 'kus-dl-pair-folder__summary';
+    summary.dataset.kusDlPairFolderSummary = side;
+    summary.setAttribute('aria-live', 'polite');
+    summary.textContent = '未選択';
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = '.json,application/json';
+    input.hidden = true;
+    input.setAttribute('webkitdirectory', '');
+    input.setAttribute('directory', '');
+    input.setAttribute('aria-label', `${side === 'source' ? '比較元' : '比較先'}設定フォルダ`);
+    input.dataset.kusDlPairFolderInput = side;
+    actions.append(select, clear);
+    box.append(title, actions, summary, input);
+    return { box, select, clear, summary, input };
+  };
+  const sourceFolderUi = makePairFolderSide('source');
+  const targetFolderUi = makePairFolderSide('target');
+  pairFolderGrid.append(sourceFolderUi.box, targetFolderUi.box);
+  const pairFolderAlert = document.createElement('p');
+  pairFolderAlert.className = 'kus-dl-pair-folder__error';
+  pairFolderAlert.setAttribute('role', 'alert');
+  pairFolderAlert.hidden = true;
+
+  const pairFolderMapping = document.createElement('section');
+  pairFolderMapping.className = 'kus-dl-pair-folder__mapping';
+  pairFolderMapping.hidden = true;
+  pairFolderMapping.setAttribute('aria-label', 'フォルダ内アプリの対応確認');
+  const pairFolderMappingScroll = document.createElement('div');
+  pairFolderMappingScroll.className = 'kus-dl-pair-folder__mapping-scroll';
+  const pairFolderMappingTable = document.createElement('div');
+  pairFolderMappingScroll.appendChild(pairFolderMappingTable);
+  const pairFolderUnused = document.createElement('p');
+  pairFolderUnused.className = 'kus-dl-pair-folder__unused';
+  pairFolderUnused.hidden = true;
+  const pairFolderFoot = document.createElement('div');
+  pairFolderFoot.className = 'kus-dl-pair-folder__foot';
+  const pairFolderReview = document.createElement('span');
+  pairFolderReview.className = 'kus-dl-pair-folder__review';
+  pairFolderReview.setAttribute('aria-live', 'polite');
+  const pairFolderOrderBtn = makeButton('未対応をフォルダ順で候補化', 'ghost');
+  pairFolderOrderBtn.dataset.kusDlPairFolderOrder = '';
+  const pairFolderApplyBtn = makeButton('確認済みペアで現在の表を置き換える', 'primary');
+  pairFolderApplyBtn.dataset.kusDlPairFolderApply = '';
+  pairFolderApplyBtn.disabled = true;
+  pairFolderFoot.append(pairFolderReview, pairFolderOrderBtn, pairFolderApplyBtn);
+  pairFolderMapping.append(pairFolderMappingScroll, pairFolderUnused, pairFolderFoot);
+  pairFolder.append(pairFolderHead, pairFolderGrid, pairFolderAlert, pairFolderMapping);
+
+  const pairFolderModeActive = () => !!(
+    pairFolderStates.source || pairFolderStates.target ||
+    pairRows.some((entry) => entry.source.folderBundle || entry.target.folderBundle)
+  );
+
+  const folderBundleLabel = (item: DiffBatchFolderImportedBundle) => {
+    const name = item.appName || `App ${item.appId}`;
+    const env = `${item.guestId ? `Guest ${item.guestId}` : '通常'} / ${item.preview ? 'プレビュー' : '運用'}`;
+    return `${name}（App ${item.appId} / ${env}）`;
+  };
+
+  const folderBundleOptionLabel = (item: DiffBatchFolderImportedBundle) =>
+    `${folderBundleLabel(item)} — ${item.relativePath}`;
+
+  const folderMatchLabel = (kind: PairFolderDraftRow['matchKind']) => {
+    if (kind === 'app-name') return 'アプリ名一致';
+    if (kind === 'app-id') return 'App ID一致・要確認';
+    if (kind === 'position') return 'フォルダ順・要確認';
+    if (kind === 'manual') return '手動指定';
+    return '未対応';
+  };
+
+  const pairFolderMatchNeedsConfirmation = (row: PairFolderDraftRow) =>
+    row.matchKind === 'app-id' || row.matchKind === 'position';
+
+  const updatePairFolderSummaries = () => {
+    const update = (side: PairFolderSide, ui: ReturnType<typeof makePairFolderSide>) => {
+      const state = pairFolderStates[side];
+      const loading = pairFolderActiveLoads[side] > 0;
+      const resetsPairTable = pairFolderApplied || pairRows.some((entry) => entry.source.folderBundle || entry.target.folderBundle);
+      ui.box.setAttribute('aria-busy', loading ? 'true' : 'false');
+      ui.clear.disabled = !state || loading;
+      ui.clear.textContent = resetsPairTable ? '解除して表を初期化' : '解除';
+      ui.clear.setAttribute('aria-label', `${side === 'source' ? '比較元（変更前）' : '比較先（変更後）'}フォルダの読込を解除${resetsPairTable ? 'してペア表を初期化' : ''}`);
+      ui.summary.textContent = loading
+        ? `${state ? `${state.folderName} — ` : ''}新しいフォルダを読み込み中…`
+        : state
+        ? `${state.folderName} — ${state.result.bundles.length}アプリ / JSON ${state.result.jsonFileCount}ファイル${state.result.ignoredFileCount ? ` / JSON以外 ${state.result.ignoredFileCount}件を除外` : ''}`
+        : '未選択';
+    };
+    update('source', sourceFolderUi);
+    update('target', targetFolderUi);
+  };
+
+  const renderPairFolderMapping = () => {
+    const sourceState = pairFolderStates.source;
+    const targetState = pairFolderStates.target;
+    const ready = !!sourceState && !!targetState;
+    pairFolderMapping.hidden = !ready;
+    if (!ready) {
+      pairFolderMappingTable.innerHTML = '';
+      pairFolderReview.textContent = '比較元と比較先の両フォルダを選択してください';
+      pairFolderApplyBtn.disabled = true;
+      return;
+    }
+
+    const targets = targetState.result.bundles;
+    const activeRows = pairFolderDraftRows.filter((row) => row.included);
+    const mappedTargetKeys = activeRows.map((row) => row.targetKey).filter(Boolean);
+    const usedTargetKeys = new Set(mappedTargetKeys);
+    const targetUseCounts = new Map<string, number>();
+    mappedTargetKeys.forEach((key) => targetUseCounts.set(key, (targetUseCounts.get(key) || 0) + 1));
+    const duplicateTargetKeys = new Set([...targetUseCounts].filter(([, count]) => count > 1).map(([key]) => key));
+    const unmapped = activeRows.filter((row) => !row.targetKey).length;
+    const needsConfirmation = activeRows.filter((row) => row.targetKey && pairFolderMatchNeedsConfirmation(row) && !row.confirmed).length;
+    const selectedTargetKeys = new Set(activeRows.map((row) => row.targetKey).filter(Boolean));
+    const unusedTargets = targets.filter((target) => !selectedTargetKeys.has(target.endpointKey));
+
+    const rowsHtml = pairFolderDraftRows.map((row, index) => {
+      const sourceLabel = folderBundleLabel(row.source);
+      const options = [
+        '<option value="">比較先を選択してください</option>',
+        ...targets.map((target) => {
+          const selected = target.endpointKey === row.targetKey;
+          const usedElsewhere = !selected && usedTargetKeys.has(target.endpointKey);
+          return `<option value="${esc(target.endpointKey)}"${selected ? ' selected' : ''}${usedElsewhere ? ' disabled' : ''}>${esc(folderBundleOptionLabel(target))}</option>`;
+        })
+      ].join('');
+      const duplicateTarget = row.included && !!row.targetKey && duplicateTargetKeys.has(row.targetKey);
+      const requiresConfirmation = row.included && !!row.targetKey && pairFolderMatchNeedsConfirmation(row);
+      const selectedTarget = targets.find((target) => target.endpointKey === row.targetKey) || null;
+      const confirmationLabel = selectedTarget
+        ? `${sourceLabel}から${folderBundleLabel(selectedTarget)}への対応を確認`
+        : `${sourceLabel}の対応を確認`;
+      const state = !row.included
+        ? '対象外'
+        : !row.targetKey
+          ? '比較先未選択'
+          : duplicateTarget
+            ? '比較先が重複'
+            : requiresConfirmation
+              ? `<label><input type="checkbox" data-kus-dl-folder-confirm="${index}" aria-label="${esc(confirmationLabel)}"${row.confirmed ? ' checked' : ''}> 対応を確認</label>`
+              : '確認済み';
+      const warning = row.included && (!row.targetKey || duplicateTarget || (requiresConfirmation && !row.confirmed));
+      return `<tr><td data-label="比較対象"><input type="checkbox" data-kus-dl-folder-include="${index}" aria-label="${esc(`${sourceLabel}を比較対象にする`)}"${row.included ? ' checked' : ''}></td>` +
+        `<td data-label="比較元（変更前）"><span class="kus-dl-pair-folder__app">${esc(row.source.appName || `App ${row.source.appId}`)}</span><span class="kus-dl-pair-folder__meta">App ${esc(row.source.appId)} / ${esc(row.source.guestId ? `Guest ${row.source.guestId}` : '通常')} / ${row.source.preview ? 'プレビュー' : '運用'}<br>${esc(row.source.relativePath)}</span></td>` +
+        `<td data-label="対応根拠"><span class="kus-dl-pair-folder__badge kus-dl-pair-folder__badge--${esc(row.matchKind)}">${esc(folderMatchLabel(row.matchKind))}</span></td>` +
+        `<td data-label="比較先（変更後）"><select data-kus-dl-folder-target="${index}" aria-label="${esc(`${sourceLabel}の比較先`)}"${row.included ? '' : ' disabled'}>${options}</select></td>` +
+        `<td data-label="確認状態" class="${warning ? 'kus-dl-multi__warn' : ''}">${state}</td></tr>`;
+    }).join('');
+    pairFolderMappingTable.innerHTML = `<table><thead><tr><th>対象</th><th>比較元（変更前）</th><th>対応根拠</th><th>比較先（変更後）</th><th>状態</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+
+    pairFolderUnused.hidden = !unusedTargets.length;
+    pairFolderUnused.innerHTML = unusedTargets.length
+      ? `<label><input type="checkbox" data-kus-dl-folder-ignore-unused${pairFolderIgnoreUnusedTargets ? ' checked' : ''}> 未使用の比較先 ${unusedTargets.length}件を今回の比較対象外にする</label><br>${esc(unusedTargets.map(folderBundleLabel).join(' / '))}`
+      : '';
+    const unusedNotConfirmed = unusedTargets.length > 0 && !pairFolderIgnoreUnusedTargets;
+    const invalid = !activeRows.length || unmapped > 0 || duplicateTargetKeys.size > 0 || needsConfirmation > 0 || activeRows.length > MAX_PAIR_ROWS || unusedNotConfirmed || pairFolderLoadActive();
+    pairFolderApplyBtn.disabled = invalid;
+    pairFolderOrderBtn.disabled = pairFolderLoadActive() || !unmapped || !unusedTargets.length;
+    const problems = [
+      unmapped ? `未対応 ${unmapped}件` : '',
+      duplicateTargetKeys.size ? `比較先重複 ${duplicateTargetKeys.size}件` : '',
+      needsConfirmation ? `要確認 ${needsConfirmation}件` : '',
+      unusedNotConfirmed ? `対象外未確認 ${unusedTargets.length}件` : '',
+      pairFolderLoadActive() ? 'フォルダ読込中' : ''
+    ].filter(Boolean);
+    pairFolderReview.textContent = `比較対象 ${activeRows.length}件 / 未対応 ${unmapped}件 / 要確認 ${needsConfirmation}件 / 未使用の比較先 ${unusedTargets.length}件${invalid ? ` — ${problems.join(' / ') || '比較対象を選択してください'}` : ' — 確認済みペアで現在のペア表を置き換えます'}`;
+  };
+
+  const resetPairFolderDraft = () => {
+    pairFolderIgnoreUnusedTargets = false;
+    const sourceBundles = pairFolderStates.source?.result.bundles || [];
+    const targetBundles = pairFolderStates.target?.result.bundles || [];
+    if (!sourceBundles.length || !targetBundles.length) {
+      pairFolderDraftRows = [];
+      renderPairFolderMapping();
+      return;
+    }
+    pairFolderDraftRows = autoMatchDiffBatchFolderBundles(sourceBundles, targetBundles)
+      .filter((row): row is typeof row & { source: DiffBatchFolderImportedBundle } => !!row.source)
+      .map((row) => ({
+        source: row.source,
+        targetKey: row.target?.endpointKey || '',
+        included: true,
+        confirmed: row.matchKind === 'app-name',
+        matchKind: row.target ? row.matchKind : 'unpaired'
+      }));
+    pairFolderDraftDirty = true;
+    renderPairFolderMapping();
+  };
+
+  const clearPairRowsForFolderReset = () => {
+    pairRows.forEach((entry) => entry.row.remove());
+    pairRows.length = 0;
+    addPairRow();
+    pairFolderApplied = false;
+  };
+
+  const refreshPairFolderControlState = () => {
+    const active = pairFolderModeActive();
+    const loading = pairFolderLoadActive();
+    addPairBtn.disabled = active;
+    pairBulkTextarea.disabled = active;
+    pairBulkApply.disabled = active;
+    runBtn.disabled = loading || diffRunActive || profileIoActive;
+    runAllBtn.disabled = loading || diffRunActive || profileIoActive;
+    runPairsBtn.disabled = loading || diffRunActive || profileIoActive;
+    pairRows.forEach((entry) => {
+      entry.duplicate.disabled = active;
+      entry.swap.disabled = active;
+      entry.remove.disabled = active || pairRows.length === 1;
+      entry.duplicate.title = active ? 'フォルダ比較中は対応確認表からペアを作り直してください' : '';
+      entry.swap.title = active ? 'フォルダ比較中は比較元・比較先フォルダを入れ替えてください' : '';
+      entry.remove.title = active ? 'フォルダ比較中は対応確認表で対象チェックを外して再反映してください' : '';
+      [entry.source, entry.target].forEach((endpoint) => {
+        endpoint.app.readOnly = active || !!endpoint.folderBundle;
+        endpoint.guest.readOnly = active || !!endpoint.folderBundle;
+        endpoint.preview.checkbox.disabled = active || !!endpoint.folderBundle;
+      });
+    });
+  };
+
+  const rootFolderName = (files: File[]) => {
+    const path = String(files[0]?.webkitRelativePath || files[0]?.name || '').replace(/\\/g, '/');
+    return path.includes('/') ? path.split('/')[0] : (path || '選択フォルダ');
+  };
+
+  const loadPairFolder = async (side: PairFolderSide, input: HTMLInputElement, invalidatedBeforeLoad: boolean) => {
+    const generation = ++pairFolderLoadGeneration[side];
+    const files = Array.from(input.files || []);
+    if (!files.length) throw new Error('選択したフォルダにファイルがありません');
+    input.value = '';
+    const jsonFiles = files.filter((file) => /\.json$/i.test(file.name));
+    const totalJsonBytes = jsonFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
+    if (files.length > 2000 || jsonFiles.length > 500) throw new Error('選択したフォルダのファイル数が多すぎます（全体2,000件、JSON 500件まで）');
+    if (totalJsonBytes > 128 * 1024 * 1024) throw new Error('選択したフォルダのJSON合計サイズが128MBを超えています');
+    let entries: Array<{ name: string; relativePath: string; text: string }>;
+    try {
+      entries = await Promise.all(files.map(async (file) => ({
+        name: file.name,
+        relativePath: file.webkitRelativePath || file.name,
+        text: /\.json$/i.test(file.name) ? await file.text() : ''
+      })));
+    } catch (error) {
+      if (generation !== pairFolderLoadGeneration[side]) return;
+      throw error;
+    }
+    if (generation !== pairFolderLoadGeneration[side]) return;
+    const parsed = parseDiffBatchFolderImport(entries);
+    if (parsed.issues.length) {
+      const shown = parsed.issues.slice(0, 3).map((issue) => issue.message).join(' / ');
+      throw new Error(`${side === 'source' ? '比較元' : '比較先'}フォルダを取り込めません: ${shown}${parsed.issues.length > 3 ? `（ほか ${parsed.issues.length - 3}件）` : ''}`);
+    }
+    if (!parsed.bundles.length) throw new Error('選択したフォルダにアプリ設定JSONがありません');
+    if (parsed.bundles.length > MAX_PAIR_ROWS) throw new Error(`1フォルダから取り込めるアプリは ${MAX_PAIR_ROWS}件までです`);
+    pairFolderStates[side] = { folderName: rootFolderName(files), result: parsed };
+    pairFolderDraftDirty = true;
+    updatePairFolderSummaries();
+    resetPairFolderDraft();
+    refreshPairFolderControlState();
+    const invalidated = invalidateResultAfterPairConditionChange() || invalidatedBeforeLoad;
+    panel.setStatus(`${side === 'source' ? '比較元' : '比較先'}フォルダから ${parsed.bundles.length}アプリを読み込みました。${pairFolderStates.source && pairFolderStates.target ? '対応付けを確認してペア表へ反映してください' : '反対側のフォルダも選択してください'}${invalidated ? '。前回の結果は無効です' : ''}`, invalidated ? 'warn' : 'ok');
+  };
+
+  ([['source', sourceFolderUi], ['target', targetFolderUi]] as const).forEach(([side, ui]) => {
+    ui.select.addEventListener('click', () => {
+      if (multiXlsxExportActive) {
+        panel.setStatus('Excelの生成が完了してからフォルダを選択してください', 'warn');
+        return;
+      }
+      ui.input.click();
+    });
+    ui.input.addEventListener('change', () => {
+      if (!ui.input.files?.length) {
+        ui.input.value = '';
+        panel.setStatus('選択したフォルダにファイルがありません', 'warn');
+        return;
+      }
+      pairFolderAlert.hidden = true;
+      pairFolderAlert.textContent = '';
+      const invalidatedBeforeLoad = invalidateResultAfterPairConditionChange();
+      pairFolderDraftDirty = true;
+      pairFolderApplied = false;
+      pairFolderActiveLoads[side] += 1;
+      updatePairFolderSummaries();
+      renderPairFolderMapping();
+      refreshPairFolderControlState();
+      void liteRun(panel, `${side === 'source' ? '比較元' : '比較先'}フォルダを読み込み中…`, async () => {
+        try {
+          await loadPairFolder(side, ui.input, invalidatedBeforeLoad);
+        } catch (error) {
+          pairFolderAlert.textContent = error instanceof Error ? error.message : String(error);
+          pairFolderAlert.hidden = false;
+          throw error;
+        } finally {
+          pairFolderActiveLoads[side] = Math.max(0, pairFolderActiveLoads[side] - 1);
+          updatePairFolderSummaries();
+          renderPairFolderMapping();
+          refreshPairFolderControlState();
+        }
+      });
+    });
+    ui.clear.addEventListener('click', () => {
+      const resetAppliedPairs = pairFolderApplied || pairRows.some((entry) => entry.source.folderBundle || entry.target.folderBundle);
+      pairFolderLoadGeneration[side] += 1;
+      pairFolderStates[side] = null;
+      ui.input.value = '';
+      pairFolderAlert.hidden = true;
+      pairFolderAlert.textContent = '';
+      if (resetAppliedPairs) clearPairRowsForFolderReset();
+      pairFolderDraftRows = [];
+      pairFolderDraftDirty = !!(pairFolderStates.source || pairFolderStates.target);
+      updatePairFolderSummaries();
+      resetPairFolderDraft();
+      refreshPairFolderControlState();
+      const invalidated = invalidateResultAfterPairConditionChange();
+      panel.setStatus(`${side === 'source' ? '比較元' : '比較先'}フォルダの読込を解除しました${resetAppliedPairs ? '。フォルダ由来のペア表を初期化しました' : ''}${invalidated ? '。前回の結果は無効です' : ''}`, invalidated || resetAppliedPairs ? 'warn' : 'info');
+    });
+  });
+
+  const focusPairFolderMappingControl = (selector: string) => {
+    pairFolderMapping.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
+  };
+
+  pairFolderMapping.addEventListener('change', (event) => {
+    const target = event.target as HTMLInputElement | HTMLSelectElement | null;
+    if (!target) return;
+    const includeIndex = Number(target.dataset.kusDlFolderInclude);
+    if (Number.isInteger(includeIndex) && pairFolderDraftRows[includeIndex] && target instanceof HTMLInputElement) {
+      pairFolderDraftRows[includeIndex].included = target.checked;
+      pairFolderIgnoreUnusedTargets = false;
+      pairFolderDraftDirty = true;
+      renderPairFolderMapping();
+      focusPairFolderMappingControl(`[data-kus-dl-folder-include="${includeIndex}"]`);
+      invalidateResultAfterPairConditionChange();
+      return;
+    }
+    if (target.dataset.kusDlFolderIgnoreUnused != null && target instanceof HTMLInputElement) {
+      pairFolderIgnoreUnusedTargets = target.checked;
+      pairFolderDraftDirty = true;
+      renderPairFolderMapping();
+      focusPairFolderMappingControl('[data-kus-dl-folder-ignore-unused]');
+      invalidateResultAfterPairConditionChange();
+      return;
+    }
+    const confirmIndex = Number(target.dataset.kusDlFolderConfirm);
+    if (Number.isInteger(confirmIndex) && pairFolderDraftRows[confirmIndex] && target instanceof HTMLInputElement) {
+      pairFolderDraftRows[confirmIndex].confirmed = target.checked;
+      pairFolderDraftDirty = true;
+      renderPairFolderMapping();
+      focusPairFolderMappingControl(`[data-kus-dl-folder-confirm="${confirmIndex}"]`);
+      invalidateResultAfterPairConditionChange();
+      return;
+    }
+    const targetIndex = Number(target.dataset.kusDlFolderTarget);
+    if (Number.isInteger(targetIndex) && pairFolderDraftRows[targetIndex] && target instanceof HTMLSelectElement) {
+      pairFolderDraftRows[targetIndex].targetKey = target.value;
+      pairFolderDraftRows[targetIndex].matchKind = target.value ? 'manual' : 'unpaired';
+      pairFolderDraftRows[targetIndex].confirmed = !!target.value;
+      pairFolderIgnoreUnusedTargets = false;
+      pairFolderDraftDirty = true;
+      renderPairFolderMapping();
+      focusPairFolderMappingControl(`[data-kus-dl-folder-target="${targetIndex}"]`);
+      invalidateResultAfterPairConditionChange();
+    }
+  });
+
+  pairFolderOrderBtn.addEventListener('click', () => {
+    if (pairFolderLoadActive()) {
+      panel.setStatus('フォルダの読込が完了してから候補を作成してください', 'warn');
+      return;
+    }
+    const targets = pairFolderStates.target?.result.bundles || [];
+    const used = new Set(pairFolderDraftRows.filter((row) => row.included).map((row) => row.targetKey).filter(Boolean));
+    const remainingTargets = targets.filter((target) => !used.has(target.endpointKey));
+    let targetIndex = 0;
+    pairFolderDraftRows.forEach((row) => {
+      if (!row.included || row.targetKey || targetIndex >= remainingTargets.length) return;
+      row.targetKey = remainingTargets[targetIndex].endpointKey;
+      row.matchKind = 'position';
+      row.confirmed = false;
+      targetIndex += 1;
+    });
+    pairFolderIgnoreUnusedTargets = false;
+    pairFolderDraftDirty = true;
+    renderPairFolderMapping();
+    invalidateResultAfterPairConditionChange();
+    panel.setStatus('未対応の組み合わせをフォルダ内の順番で候補化しました。誤対応を防ぐため、左右のアプリ名を確認してから反映してください', 'warn');
+  });
+
+  pairFolderApplyBtn.addEventListener('click', () => {
+    if (pairFolderLoadActive()) {
+      panel.setStatus('フォルダの読込が完了してからペア表を置き換えてください', 'warn');
+      return;
+    }
+    const targets = pairFolderStates.target?.result.bundles || [];
+    const targetByKey = new Map(targets.map((target) => [target.endpointKey, target]));
+    const selections = pairFolderDraftRows.filter((row) => row.included).map((row) => ({
+      ...row,
+      target: targetByKey.get(row.targetKey) || null
+    }));
+    if (!selections.length || selections.some((row) => !row.target)) {
+      panel.setStatus('比較対象のすべての行で比較先を選択してください', 'warn');
+      return;
+    }
+    if (selections.some((row) => pairFolderMatchNeedsConfirmation(row) && !row.confirmed)) {
+      panel.setStatus('「要確認」の対応を各行で確認してからペア表を置き換えてください', 'warn');
+      return;
+    }
+    if (new Set(selections.map((row) => row.targetKey)).size !== selections.length) {
+      panel.setStatus('同じ比較先を複数の比較元へ対応付けることはできません', 'warn');
+      return;
+    }
+    if (selections.length > MAX_PAIR_ROWS) {
+      panel.setStatus(`一度に比較できるペアは ${MAX_PAIR_ROWS}件までです`, 'warn');
+      return;
+    }
+
+    pairRows.forEach((entry) => entry.row.remove());
+    pairRows.length = 0;
+    selections.forEach((selection) => {
+      const entry = addPairRow();
+      if (!entry || !selection.target) return;
+      setPairEndpointFolderBundle(entry.source, selection.source);
+      setPairEndpointFolderBundle(entry.target, selection.target);
+      entry.match.hidden = false;
+      entry.match.textContent = `フォルダ取込 / ${folderMatchLabel(selection.matchKind)}。比較元・比較先の設定JSONを固定して比較します。`;
+    });
+    pairFolderApplied = true;
+    pairFolderDraftDirty = false;
+    clearPairValidation();
+    relabelPairRows();
+    updatePairFolderSummaries();
+    refreshPairFolderControlState();
+    const invalidated = invalidateResultAfterPairConditionChange();
+    panel.setStatus(`${selections.length}組をペア表へ反映しました。アプリ名・方向を確認して一括比較してください${invalidated ? '。前回の結果は無効です' : ''}`, invalidated ? 'warn' : 'ok');
+  });
+
+  updatePairFolderSummaries();
 
   const pairBulk = document.createElement('details');
   pairBulk.className = 'kus-dl-pair-bulk';
@@ -1503,6 +2090,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   );
   pairBulk.appendChild(pairBulkBody);
   pairBulkApply.addEventListener('click', () => {
+    if (pairFolderModeActive()) {
+      panel.setStatus('フォルダ比較中は表の一括貼り付けを使用できません。両フォルダを解除すると手入力へ戻ります', 'warn');
+      return;
+    }
     const parsed: Array<{ source: Partial<DiffBatchEndpoint>; target: Partial<DiffBatchEndpoint> }> = [];
     const invalidLines: number[] = [];
     pairBulkTextarea.value.split(/\r?\n/).forEach((rawLine, index) => {
@@ -1550,6 +2141,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     targets: [
       { label: '空いている比較元', apply: (id, name, guestId) => {
         if (diffRunActive) return { message: '比較を実行中です。完了してからアプリを設定してください', tone: 'warn' as const };
+        if (pairFolderModeActive()) return { message: 'フォルダ比較中は対応確認表からアプリを選択してください', tone: 'warn' as const };
         const entry = pairRows.find((row) => !row.source.app.value.trim()) || addPairRow();
         if (!entry) return { message: `登録上限 ${MAX_PAIR_ROWS} 件に達しています`, tone: 'warn' as const };
         entry.source.app.value = id;
@@ -1563,6 +2155,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       } },
       { label: '空いている比較先', apply: (id, name, guestId) => {
         if (diffRunActive) return { message: '比較を実行中です。完了してからアプリを設定してください', tone: 'warn' as const };
+        if (pairFolderModeActive()) return { message: 'フォルダ比較中は対応確認表からアプリを選択してください', tone: 'warn' as const };
         const entry = pairRows.find((row) => !row.target.app.value.trim()) || addPairRow();
         if (!entry) return { message: `登録上限 ${MAX_PAIR_ROWS} 件に達しています`, tone: 'warn' as const };
         entry.target.app.value = id;
@@ -1576,7 +2169,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       } }
     ]
   });
-  pairEditor.append(pairIntro, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote('ペア一括比較では設定JSON読込は使用せず、APIから各アプリを取得します。JSONを読み込んだまま切り替えた場合は「設定JSON読込を解除」を押してください。'));
+  pairEditor.append(pairIntro, pairFolder, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote('手入力のペアはkintone APIから取得します。フォルダ取込では両側の設定JSONだけを使い、不足分をAPIで補いません。単一比較用の設定JSONを読み込んだまま切り替えた場合は「設定JSON読込を解除」を押してください。'));
   cardApp.body.appendChild(pairEditor);
   panel.body.insertBefore(cardApp.card, panel.status);
 
@@ -2205,9 +2798,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       profileIoActive = false;
       profileSaveBtn.disabled = false;
       profileLoadBtn.disabled = false;
-      runBtn.disabled = diffRunActive;
-      runAllBtn.disabled = diffRunActive;
-      runPairsBtn.disabled = diffRunActive;
+      runBtn.disabled = diffRunActive || pairFolderLoadActive();
+      runAllBtn.disabled = diffRunActive || pairFolderLoadActive();
+      runPairsBtn.disabled = diffRunActive || pairFolderLoadActive();
     }
   });
 
@@ -2478,6 +3071,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     }
     const multiHtmlButton = target?.closest<HTMLButtonElement>('[data-kus-dl-multi-html]');
     if (multiHtmlButton) {
+      if (pairFolderLoadActive()) {
+        panel.setStatus('フォルダの読込が完了してから前回結果を保存してください', 'warn');
+        return;
+      }
       const index = Number(multiHtmlButton.dataset.kusDlMultiHtml);
       const item = Number.isInteger(index) ? multiXlsxExports[index] : null;
       if (!item || multiHtmlButton.disabled || multiXlsxExportActive) return;
@@ -2503,6 +3100,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     }
     const multiXlsxButton = target?.closest<HTMLButtonElement>('[data-kus-dl-multi-xlsx]');
     if (multiXlsxButton) {
+      if (pairFolderLoadActive()) {
+        panel.setStatus('フォルダの読込が完了してから前回結果を保存してください', 'warn');
+        return;
+      }
       const index = Number(multiXlsxButton.dataset.kusDlMultiXlsx);
       const item = Number.isInteger(index) ? multiXlsxExports[index] : null;
       if (!item || multiXlsxButton.disabled || multiXlsxExportActive) return;
@@ -2603,6 +3204,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   }
 
   async function runDiffTask(busyMessage: string, task: () => Promise<void>) {
+    if (pairFolderLoadActive()) {
+      panel.setStatus('フォルダの読込が完了してから比較してください', 'warn');
+      return;
+    }
     if (profileIoActive) {
       panel.setStatus('比較条件の読込が完了してから比較してください', 'warn');
       return;
@@ -2625,9 +3230,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     } finally {
       diffRunActive = false;
       unlockComparisonControls();
-      runBtn.disabled = false;
-      runAllBtn.disabled = false;
-      runPairsBtn.disabled = false;
+      runBtn.disabled = pairFolderLoadActive();
+      runAllBtn.disabled = pairFolderLoadActive();
+      runPairsBtn.disabled = pairFolderLoadActive();
       htmlContentMode.disabled = false;
       profileSaveBtn.disabled = profileIoActive;
       profileLoadBtn.disabled = profileIoActive;
@@ -2636,8 +3241,61 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   }
 
   runPairsBtn.addEventListener('click', () => {
+    if (pairFolderLoadActive()) {
+      panel.setStatus('比較元・比較先フォルダの読込が完了してから一括比較してください', 'warn');
+      return;
+    }
     clearPairValidation();
-    const prepared = prepareDiffBatchPairs(readPairInputs(), { maxPairs: MAX_PAIR_ROWS, requireOneToOne: true });
+    const folderMode = pairFolderModeActive();
+    if (folderMode) {
+      if (!pairFolderStates.source || !pairFolderStates.target) {
+        panel.setStatus('フォルダ比較では比較元と比較先の両フォルダを選択してください。片側だけをAPIで補うことはありません', 'warn');
+        (pairFolderStates.source ? targetFolderUi.select : sourceFolderUi.select).focus();
+        return;
+      }
+      if (pairFolderDraftDirty || !pairFolderApplied) {
+        panel.setStatus('フォルダ内アプリの対応付けを確認し、「確認済みペアで現在の表を置き換える」を押してください', 'warn');
+        pairFolderMapping.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+        const activeDraftRows = pairFolderDraftRows.filter((row) => row.included);
+        const targetCounts = new Map<string, number>();
+        activeDraftRows.forEach((row) => {
+          if (row.targetKey) targetCounts.set(row.targetKey, (targetCounts.get(row.targetKey) || 0) + 1);
+        });
+        const problemIndex = pairFolderDraftRows.findIndex((row) => row.included && (
+          !row.targetKey ||
+          (targetCounts.get(row.targetKey) || 0) > 1 ||
+          (pairFolderMatchNeedsConfirmation(row) && !row.confirmed)
+        ));
+        if (problemIndex >= 0) {
+          const problem = pairFolderDraftRows[problemIndex];
+          focusPairFolderMappingControl(!problem.targetKey || (targetCounts.get(problem.targetKey) || 0) > 1
+            ? `[data-kus-dl-folder-target="${problemIndex}"]`
+            : `[data-kus-dl-folder-confirm="${problemIndex}"]`);
+        } else {
+          const usedTargets = new Set(activeDraftRows.map((row) => row.targetKey).filter(Boolean));
+          const hasUnusedTarget = (pairFolderStates.target?.result.bundles || []).some((target) => !usedTargets.has(target.endpointKey));
+          if (!activeDraftRows.length) {
+            focusPairFolderMappingControl('[data-kus-dl-folder-include]');
+          } else if (hasUnusedTarget && !pairFolderIgnoreUnusedTargets) {
+            focusPairFolderMappingControl('[data-kus-dl-folder-ignore-unused]');
+          } else {
+            pairFolderApplyBtn.focus();
+          }
+        }
+        return;
+      }
+      const incompleteFolderRow = pairRows.find((entry) => !entry.source.folderBundle || !entry.target.folderBundle);
+      if (incompleteFolderRow) {
+        panel.setStatus('フォルダ比較の全ペアで、比較元と比較先の設定JSONが必要です。APIへの自動切替は行いません', 'warn');
+        incompleteFolderRow.source.app.focus({ preventScroll: true });
+        return;
+      }
+    }
+    const prepared = prepareDiffBatchPairs(readPairInputs(), {
+      maxPairs: MAX_PAIR_ROWS,
+      requireOneToOne: true,
+      allowSameEndpoint: folderMode
+    });
     if (prepared.issues.length) {
       showPairValidationIssues(prepared.issues);
       panel.setStatus(`${prepared.issues[0].message}${prepared.issues.length > 1 ? `（ほか ${prepared.issues.length - 1}件）` : ''}`, 'warn');
@@ -2687,6 +3345,12 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           const position = activeIndex + 1;
           const sourceText = pair.source.appName || `App ${pair.source.appId}`;
           const targetText = pair.target.appName || `App ${pair.target.appId}`;
+          const pairEntry = pairRows[pair.rowNumber - 1];
+          const folderSourceBundle = folderMode ? pairEntry?.source.folderBundle?.bundle : null;
+          const folderTargetBundle = folderMode ? pairEntry?.target.folderBundle?.bundle : null;
+          if (folderMode && (!folderSourceBundle || !folderTargetBundle)) {
+            throw new Error(`入力ペア ${pair.rowNumber}: フォルダ設定JSONが不足しています`);
+          }
           const out = await runDiffStandalone({
             source: pair.source,
             target: pair.target,
@@ -2694,11 +3358,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
             ignoreKeys: base.ignoreKeys,
             includeSame: base.includeSame,
             normalizationPresetState: base.normalizationPresetState,
-            importedSourceBundle: context.importedSourceBundle,
-            importedTargetBundle: context.importedTargetBundle,
+            importedSourceBundle: folderMode ? folderSourceBundle : context.importedSourceBundle,
+            importedTargetBundle: folderMode ? folderTargetBundle : context.importedTargetBundle,
             onSourceBundle: (bundle: any) => {
               attachKnownAppName(bundle, pair.source.appName);
-              context.onSourceBundle(bundle);
+              if (!folderMode) context.onSourceBundle(bundle);
             },
             onStatus: (message: string) => panel.setStatus(`比較 ${position}/${prepared.pairs.length}・入力ペア ${pair.rowNumber}（${sourceText} → ${targetText}）: ${message}`, 'busy')
           });
