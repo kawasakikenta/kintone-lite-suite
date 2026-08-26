@@ -11198,6 +11198,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const headerRow = normalizedPositiveInt(sheet.headerRow, 1, Math.max(1, rows.length));
     const widths = sheet.colWidths && sheet.colWidths.length ? sheet.colWidths : Array.from({ length: maxCols }, (_, i) => estimateColWidth(rows, i));
     const hyperlinkRefs = new Set(internalHyperlinks.map((link) => link.ref));
+    const materializeEmptyCellsFromRow = sheet.materializeEmptyCellsFromRow == null ? null : normalizedPositiveInt(sheet.materializeEmptyCellsFromRow, 1, Math.max(1, rows.length));
     const outlines = rows.map((_, index) => normalizedOutline(sheet.rowOutlines?.[index]));
     const maxOutlineLevel = outlines.reduce((max, outline) => Math.max(max, outline.level), 0);
     const hasOutline = maxOutlineLevel > 0 || outlines.some((outline) => outline.collapsed);
@@ -11234,16 +11235,18 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r] || [];
       const cells = [];
-      for (let c = 0; c < row.length; c++) {
+      const materializeEmptyCells = materializeEmptyCellsFromRow != null && r + 1 >= materializeEmptyCellsFromRow;
+      const cellCount = materializeEmptyCells ? maxCols : row.length;
+      for (let c = 0; c < cellCount; c++) {
         const v = row[c];
         const explicitCellStyle = sheet.cellStyles?.[r]?.[c];
         const isEmptyCell = v === null || v === void 0 || v === "";
-        if (isEmptyCell && !explicitCellStyle) continue;
+        if (isEmptyCell && !explicitCellStyle && !materializeEmptyCells) continue;
         const ref = `${colRef(c + 1)}${r + 1}`;
         const rowStyle = sheet.rowStyles?.[r] || "normal";
         const styleIndex = explicitCellStyle ? CELL_STYLE_INDEX[explicitCellStyle] : r + 1 === headerRow ? 1 : hyperlinkRefs.has(ref) && rowStyle === "normal" ? CELL_STYLE_INDEX.hyperlink : CELL_STYLE_INDEX[rowStyle];
         const styleAttr = ` s="${styleIndex}"`;
-        if (isEmptyCell && explicitCellStyle && sheet.styledEmptyCellsAsBlank === true) {
+        if (isEmptyCell && (materializeEmptyCells || explicitCellStyle && sheet.styledEmptyCellsAsBlank === true)) {
           cells.push(`<c r="${ref}"${styleAttr}/>`);
         } else if (typeof v === "number" && Number.isFinite(v)) {
           cells.push(`<c r="${ref}"${styleAttr}><v>${v}</v></c>`);
@@ -11349,7 +11352,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return sheets.some((sheet) => sheet.rowStyles?.some((style) => CUSTOMER_DIFF_STYLES.has(style)) || sheet.cellStyles?.some((row) => row?.some((style) => !!style && CUSTOMER_DIFF_STYLES.has(style))));
   }
   function buildStylesXml(includeCustomerDiffStyles) {
-    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="${includeCustomerDiffStyles ? 18 : 16}"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF2563EB"/></font>` + (includeCustomerDiffStyles ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>' : "") + `</fonts><fills count="10"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="6"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border><border><left/><right/><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border><border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border><border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border><border><left/><right/><top style="medium"><color rgb="FF94A3B8"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${includeCustomerDiffStyles ? 40 : 37}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="3" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="4" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="3" fillId="4" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="7" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="8" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="9" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="10" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="7" borderId="5" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="15" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="11" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="12" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="13" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="14" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>` + (includeCustomerDiffStyles ? '<xf numFmtId="0" fontId="16" fillId="5" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="17" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>' : "") + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="${includeCustomerDiffStyles ? 18 : 16}"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF2563EB"/></font>` + (includeCustomerDiffStyles ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>' : "") + `</fonts><fills count="10"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="6"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border><border><left style="thin"><color rgb="FFCBD5E1"/></left><right style="thin"><color rgb="FFCBD5E1"/></right><top style="thin"><color rgb="FFCBD5E1"/></top><bottom style="medium"><color rgb="FF94A3B8"/></bottom><diagonal/></border><border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="medium"><color rgb="FF64748B"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border><border><left style="thin"><color rgb="FFCBD5E1"/></left><right style="medium"><color rgb="FF64748B"/></right><top style="thin"><color rgb="FFCBD5E1"/></top><bottom style="medium"><color rgb="FF94A3B8"/></bottom><diagonal/></border><border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="medium"><color rgb="FF94A3B8"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${includeCustomerDiffStyles ? 40 : 37}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="3" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="4" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="3" fillId="4" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="7" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="8" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="9" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="10" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="7" borderId="5" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="15" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="11" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="12" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="13" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="14" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>` + (includeCustomerDiffStyles ? '<xf numFmtId="0" fontId="16" fillId="5" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="17" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>' : "") + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
   }
   function buildXlsxBlob(sheets) {
     const enc = new TextEncoder();
@@ -13038,8 +13041,6 @@ ${label}` : `${direction}の値`;
       }
     };
   }
-  var CUSTOMER_REVIEW_STATUS_VALUES = ["未レビュー", "レビュー中", "レビュー済み", "対象外"];
-  var CUSTOMER_ACTION_DECISION_VALUES = ["未判断", "対応する", "対応しない", "保留", "対象外"];
   function customerSectionLabel(key) {
     const labels = {
       appSettings: "アプリ基本設定",
@@ -13730,9 +13731,8 @@ ${label}` : `${direction}の値`;
     const date = new Date(normalized);
     return Number.isFinite(date.getTime()) ? humanDateTime(date.toISOString()) : "未記録";
   }
-  function buildCustomerSummarySheet(ctx, items, continuations) {
+  function buildCustomerSummarySheet(ctx, items) {
     const counts = summarizeCustomerRows(ctx.rows || []);
-    const detailCount = items.length;
     const incomplete = customerIncomplete(ctx);
     const droppedSame = Number(ctx.truncation?.droppedSame || 0);
     const filtered = ctx.exportMode === "filtered";
@@ -13747,16 +13747,11 @@ ${label}` : `${direction}の値`;
 ${sourceName}`, "", "→", `比較先
 ${targetName}`, "", ""],
       ["比較結果", verdict, "比較処理", completeness, "", "変更一覧を開く"],
-      [filtered ? "掲載変更件数" : "変更件数", `${counts.actual}件`, "比較日時", customerDateTime(ctx.comparedAt), "", detailCount ? "レビュー入力を開く" : ""],
+      [filtered ? "掲載変更件数" : "変更件数", `${counts.actual}件`, "比較日時", customerDateTime(ctx.comparedAt), "", ""],
       ["追加", `${counts.added}件`, "削除", `${counts.removed}件`, "変更", `${counts.contentChanged}件`],
       ["要素の移動", `${counts.moved}件`, "変更一覧の明細", `${items.length}件`, "同一証跡の省略", droppedSame ? `${droppedSame}件（変更判定への影響なし）` : "0件"],
       ["比較した設定領域", customerScopeLabel(comparedScopes), "", "", "", ""],
       ["掲載範囲", ctx.exportMode === "filtered" ? "上記範囲内の一部" : "上記範囲内の全変更", "絞り込み", ctx.exportMode === "filtered" ? "あり" : "なし", "比較から除外", customerComparisonExclusionLabel(ctx)],
-      ["掲載内容", detailCount ? `「変更一覧」は読みやすい日本語表示です。全${detailCount}件の型・状態・原文を「設定値詳細」に収録しています。${continuations.length ? `表示が長い原文${continuations.length}件は、可視の「長文原文」シートへ分割して全文を収録しています。` : ""}上記以外の設定領域は比較していません。` : `${continuations.length ? `取得・打切り情報のうち表示が長い原文${continuations.length}件は、可視の「長文原文」シートへ分割して全文を収録しています。` : ""}上記以外の設定領域は比較していません。`, "", "", "", ""],
-      ["読み方", "1. 比較概要で範囲を確認 → 2. 変更一覧で差分を確認 → 3. I/Jを選択し、必要に応じてK/Lへ入力 → 4. No.（リンク）から原文を確認", "", "", "", ""],
-      ["表記", "不存在、undefined、null、空文字を区別しています。「設定値詳細」の状態・型と原文を組み合わせると元の値を判別できます。", "", "", "", ""],
-      ["確認時の注意", "このレポートは現在設定の差を示すもので、反映・移行計画ではありません。「確認すること」は中立的な確認質問で、重要度・業務影響・対応要否は自動判定していません。並べ替え後にリンク先がずれた場合はNo.で照合してください。", "", "", "", ""],
-      ["", "", "", "", "", ""],
       ["分類別件数", "", "", "", "", ""],
       ["分類", "追加", "削除", "変更", "要素の移動", "合計"],
       ...customerSectionBreakdown(ctx.rows || [])
@@ -13775,7 +13770,6 @@ ${targetName}`, "", ""],
     cellStyles[3][1] = "summaryValue";
     cellStyles[3][2] = "summaryLabel";
     cellStyles[3][3] = "info";
-    if (detailCount) cellStyles[3][5] = "actionLink";
     cellStyles[4] = [
       "changeAdded",
       "metricValueAdded",
@@ -13798,13 +13792,9 @@ ${targetName}`, "", ""],
     cellStyles[7][3] = "info";
     cellStyles[7][4] = "summaryLabel";
     cellStyles[7][5] = "info";
-    for (const index of [8, 9, 10, 11]) {
-      cellStyles[index][0] = index === 11 ? "warning" : "summaryLabel";
-      cellStyles[index][1] = index === 11 ? "warning" : "info";
-    }
-    cellStyles[13][0] = "sectionHeader";
-    for (let index = 15; index < rows.length; index += 1) {
-      const alternate = (index - 15) % 2 === 1;
+    cellStyles[8] = Array.from({ length: 6 }, () => "sectionHeader");
+    for (let index = 10; index < rows.length; index += 1) {
+      const alternate = (index - 10) % 2 === 1;
       cellStyles[index][0] = alternate ? "zebra" : "normal";
       for (let column = 1; column < 6; column += 1) {
         cellStyles[index][column] = alternate ? "zebraCenter" : "center";
@@ -13816,8 +13806,9 @@ ${targetName}`, "", ""],
       colWidths: [16, 22, 10, 22, 16, 22],
       rowStyles: rows.map(() => "normal"),
       cellStyles,
-      headerRow: 15,
+      headerRow: 10,
       freezeRows: 2,
+      materializeEmptyCellsFromRow: 3,
       rowHeights: rows.map((row, index) => {
         if (index === 0) return 42;
         if (index === 1) return 42;
@@ -13829,23 +13820,16 @@ ${targetName}`, "", ""],
           { value: row[3], width: 22 },
           { value: row[5], width: 22 }
         ], 76);
-        if (index >= 8 && index <= 11) return readableDiffRowHeight([{ value: row[1], width: 78 }], index === 11 ? 104 : 76);
-        if (index === 12) return 12;
-        if (index === 13) return 30;
-        return index === 14 ? 32 : 26;
+        if (index === 8) return 30;
+        return index === 9 ? 32 : 26;
       }),
-      merges: ["A1:F1", "A2:B2", "D2:F2", "B7:F7", "B9:F9", "B10:F10", "B11:F11", "B12:F12", "A14:F14"],
+      merges: ["A1:F1", "A2:B2", "D2:F2", "B7:F7", "A9:F9"],
       internalHyperlinks: [{
         ref: "F3",
         targetSheet: "変更一覧",
-        targetCell: "A2",
+        targetCell: "A1",
         tooltip: "変更一覧へ移動"
-      }, ...detailCount ? [{
-        ref: "F4",
-        targetSheet: "変更一覧",
-        targetCell: "I2",
-        tooltip: "顧客レビュー入力欄へ移動"
-      }] : []],
+      }],
       showGridLines: false,
       zoomScale: 100,
       print: {
@@ -13870,32 +13854,12 @@ ${targetName}`, "", ""],
 ${sourceName}`,
       `変更後
 ${targetName}`,
-      "確認すること",
-      "顧客レビュー状況",
-      "対応方針",
-      "担当者",
-      "コメント"
+      "確認すること"
     ];
-    const rows = [
-      [
-        "「設定対象」でどの設定か、「変更項目」で何が変わったかを確認できます。No.（リンク）から全差分の状態・型・原文を確認できます。並べ替え後はNo.で照合してください。",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "入力欄：I/Jは選択、K/Lは任意入力",
-        "",
-        "",
-        ""
-      ],
-      headers
-    ];
-    const rowStyles = ["normal", "normal"];
-    const cellStyles = [["subtitle", void 0, void 0, void 0, void 0, void 0, void 0, void 0, "reviewChoice"], []];
-    const rowHeights = [38, 46];
+    const rows = [headers];
+    const rowStyles = ["normal"];
+    const cellStyles = [[]];
+    const rowHeights = [46];
     const changeStyles = {
       "追加": "changeAdded",
       "削除": "changeRemoved",
@@ -13912,11 +13876,7 @@ ${targetName}`,
         item.settingItem,
         item.before,
         item.after,
-        item.reviewNote,
-        "未レビュー",
-        "未判断",
-        "",
-        ""
+        item.reviewNote
       ]);
       rowStyles.push("normal");
       const styles = [];
@@ -13930,13 +13890,9 @@ ${targetName}`,
       styles[5] = item.changeType === "追加" ? "diffAbsent" : "diffBefore";
       styles[6] = item.changeType === "削除" ? "diffAbsent" : "diffAfter";
       styles[7] = "info";
-      styles[8] = "reviewChoice";
-      styles[9] = "reviewChoice";
-      styles[10] = "review";
-      styles[11] = "review";
       cellStyles.push(styles);
       internalHyperlinks.push({
-        ref: `A${index + 3}`,
+        ref: `A${index + 2}`,
         targetSheet: "設定値詳細",
         targetCell: `A${index + 3}`,
         tooltip: "比較元・比較先の状態・型・原文を確認"
@@ -13950,40 +13906,28 @@ ${targetName}`,
         { value: item.reviewNote, width: 28 }
       ], 220));
     });
-    const lastRow = items.length + 2;
     return {
       name: "変更一覧",
       rows,
-      colWidths: [7, 10, 14, 24, 22, 22, 22, 28, 14, 13, 14, 30],
+      colWidths: [7, 10, 14, 24, 22, 22, 22, 28],
       rowStyles,
       cellStyles,
-      headerRow: 2,
-      freezeRows: 2,
+      headerRow: 1,
+      freezeRows: 1,
       freezeColumns: 5,
       rowHeights,
       styledEmptyCellsAsBlank: true,
-      merges: ["A1:H1", "I1:L1"],
+      materializeEmptyCellsFromRow: 1,
       internalHyperlinks,
-      dataValidations: items.length ? [{
-        sqref: `I3:I${lastRow}`,
-        values: CUSTOMER_REVIEW_STATUS_VALUES,
-        promptTitle: "顧客レビュー状況",
-        prompt: "顧客レビューの進捗を選択してください"
-      }, {
-        sqref: `J3:J${lastRow}`,
-        values: CUSTOMER_ACTION_DECISION_VALUES,
-        promptTitle: "対応方針",
-        prompt: "人が判断した対応方針を選択してください"
-      }] : [],
       showGridLines: false,
       zoomScale: 95,
       print: {
         orientation: "landscape",
-        fitToWidth: 2,
+        fitToWidth: 1,
         fitToHeight: 0,
-        repeatRows: { from: 2, to: 2 },
+        repeatRows: { from: 1, to: 1 },
         repeatColumns: { from: 1, to: 5 },
-        footer: "&L変更一覧（顧客レビュー）&Rページ &P / &N"
+        footer: "&L変更一覧&Rページ &P / &N"
       }
     };
   }
@@ -14104,7 +14048,7 @@ ${targetName}`,
       internalHyperlinks.push({
         ref: `J${index + 3}`,
         targetSheet: "変更一覧",
-        targetCell: `A${item.index + 3}`,
+        targetCell: `A${item.index + 2}`,
         tooltip: `変更一覧 No.${item.index + 1}へ戻る`
       });
     });
@@ -14118,6 +14062,7 @@ ${targetName}`,
       freezeRows: 2,
       freezeColumns: 5,
       rowHeights,
+      materializeEmptyCellsFromRow: 2,
       merges: ["A1:E1", "F1:G1", "H1:J1"],
       internalHyperlinks,
       showGridLines: false,
@@ -14223,6 +14168,7 @@ ${targetName}`,
       freezeRows: 2,
       freezeColumns: 4,
       rowHeights,
+      materializeEmptyCellsFromRow: 2,
       merges: ["A1:F1", "G1:H1"],
       internalHyperlinks,
       showGridLines: false,
@@ -14351,6 +14297,7 @@ ${targetName}`,
       headerRow: 2,
       freezeRows: 2,
       freezeColumns: 2,
+      materializeEmptyCellsFromRow: 2,
       rowHeights: rows.map((row, index) => index < 2 ? index === 0 ? 36 : 30 : readableDiffRowHeight([
         { value: row[0], width: 24 },
         { value: row[1], width: 20 },
@@ -14379,7 +14326,7 @@ ${targetName}`,
     );
     const issueContinuations = buildCustomerIssueRawContinuations(issueItems, nextLongRawRow);
     const allContinuations = [...differenceContinuations, ...issueContinuations];
-    const sheets = [buildCustomerSummarySheet(ctx, items, allContinuations)];
+    const sheets = [buildCustomerSummarySheet(ctx, items)];
     const issues = buildCustomerIssuesSheet(issueItems, issueContinuations);
     if (issues) sheets.push(issues);
     sheets.push(buildCustomerListSheet(ctx, items));

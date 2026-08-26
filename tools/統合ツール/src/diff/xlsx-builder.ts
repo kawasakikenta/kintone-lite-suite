@@ -255,6 +255,8 @@ export interface XlsxSheet {
   rowHeights?: number[];
   /** スタイル付き空セルを inlineStr ではなく真正の空セルとして書き出す。既定は従来互換の false。 */
   styledEmptyCellsAsBlank?: boolean;
+  /** 指定した1始まりの行以降は最大列数まで空セルも書き出し、表の罫線を途切れさせない。 */
+  materializeEmptyCellsFromRow?: number;
   /** 結合セル範囲。例: A1:D1 */
   merges?: string[];
   /** 入力候補のドロップダウン。 */
@@ -464,6 +466,9 @@ function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyp
     ? sheet.colWidths
     : Array.from({ length: maxCols }, (_, i) => estimateColWidth(rows, i));
   const hyperlinkRefs = new Set(internalHyperlinks.map((link) => link.ref));
+  const materializeEmptyCellsFromRow = sheet.materializeEmptyCellsFromRow == null
+    ? null
+    : normalizedPositiveInt(sheet.materializeEmptyCellsFromRow, 1, Math.max(1, rows.length));
   const outlines = rows.map((_, index) => normalizedOutline(sheet.rowOutlines?.[index]));
   const maxOutlineLevel = outlines.reduce((max, outline) => Math.max(max, outline.level), 0);
   const hasOutline = maxOutlineLevel > 0 || outlines.some((outline) => outline.collapsed);
@@ -512,12 +517,14 @@ function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyp
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r] || [];
     const cells: string[] = [];
-    for (let c = 0; c < row.length; c++) {
+    const materializeEmptyCells = materializeEmptyCellsFromRow != null && r + 1 >= materializeEmptyCellsFromRow;
+    const cellCount = materializeEmptyCells ? maxCols : row.length;
+    for (let c = 0; c < cellCount; c++) {
       const v = row[c];
       const explicitCellStyle = sheet.cellStyles?.[r]?.[c];
       const isEmptyCell = v === null || v === undefined || v === '';
-      // レビュー入力欄など、空でも塗りを表示したいセルは書き出す。
-      if (isEmptyCell && !explicitCellStyle) continue;
+      // 入力欄などの明示スタイル、または表の連続罫線を保つ対象範囲は空でも書き出す。
+      if (isEmptyCell && !explicitCellStyle && !materializeEmptyCells) continue;
       const ref = `${colRef(c + 1)}${r + 1}`;
       const rowStyle = sheet.rowStyles?.[r] || 'normal';
       const styleIndex = explicitCellStyle
@@ -528,7 +535,7 @@ function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyp
             ? CELL_STYLE_INDEX.hyperlink
             : CELL_STYLE_INDEX[rowStyle];
       const styleAttr = ` s="${styleIndex}"`;
-      if (isEmptyCell && explicitCellStyle && sheet.styledEmptyCellsAsBlank === true) {
+      if (isEmptyCell && (materializeEmptyCells || (explicitCellStyle && sheet.styledEmptyCellsAsBlank === true))) {
         cells.push(`<c r="${ref}"${styleAttr}/>`);
       } else if (typeof v === 'number' && Number.isFinite(v)) {
         cells.push(`<c r="${ref}"${styleAttr}><v>${v}</v></c>`);
@@ -714,11 +721,11 @@ function buildStylesXml(includeCustomerDiffStyles: boolean): string {
     + '</fills>'
     + '<borders count="6">'
     +   '<border><left/><right/><top/><bottom/><diagonal/></border>'
-    +   '<border><left/><right/><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
-    +   '<border><left/><right/><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border>'
-    +   '<border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
-    +   '<border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border>'
-    +   '<border><left/><right/><top style="medium"><color rgb="FF94A3B8"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
+    +   '<border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
+    +   '<border><left style="thin"><color rgb="FFCBD5E1"/></left><right style="thin"><color rgb="FFCBD5E1"/></right><top style="thin"><color rgb="FFCBD5E1"/></top><bottom style="medium"><color rgb="FF94A3B8"/></bottom><diagonal/></border>'
+    +   '<border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="medium"><color rgb="FF64748B"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
+    +   '<border><left style="thin"><color rgb="FFCBD5E1"/></left><right style="medium"><color rgb="FF64748B"/></right><top style="thin"><color rgb="FFCBD5E1"/></top><bottom style="medium"><color rgb="FF94A3B8"/></bottom><diagonal/></border>'
+    +   '<border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="medium"><color rgb="FF94A3B8"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
     + '</borders>'
     + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
     + `<cellXfs count="${includeCustomerDiffStyles ? 40 : 37}">`

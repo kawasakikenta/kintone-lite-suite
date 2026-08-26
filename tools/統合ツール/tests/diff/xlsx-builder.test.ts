@@ -331,6 +331,38 @@ describe('diff/xlsx-builder', () => {
     expect(xml).not.toMatch(/<c r="B2"[^>]*t="inlineStr"/);
   });
 
+  it('materializes missing table cells through maxCols and gives normal cells four thin edges', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [['h1', 'h2', 'h3'], ['value'], ['link']],
+      headerRow: 1,
+      cellStyles: [[], [], ['actionLink']],
+      materializeEmptyCellsFromRow: 1
+    }];
+    const buf = await blobToBuffer(buildXlsxBlob(sheets));
+    const xml = extractEntry(buf, 'xl/worksheets/sheet1.xml');
+    const styles = extractEntry(buf, 'xl/styles.xml');
+
+    expect(xml).toContain('<c r="B2" s="2"/>');
+    expect(xml).toContain('<c r="C2" s="2"/>');
+    expect(xml).not.toMatch(/<c r="[BC]2"[^>]*t="inlineStr"/);
+    expect(xml).toContain('<c r="A3" s="30"');
+
+    const borderBlock = /<borders\b[^>]*>([\s\S]*?)<\/borders>/.exec(styles)?.[1] || '';
+    const borders = [...borderBlock.matchAll(/<border>([\s\S]*?)<\/border>/g)].map((match) => match[1]);
+    expect(borders).toHaveLength(6);
+    for (const border of borders.slice(1)) {
+      for (const edge of ['left', 'right', 'top', 'bottom']) {
+        expect(border).toMatch(new RegExp(`<${edge} style="(?:thin|medium)"`));
+      }
+    }
+
+    const cellXfsBlock = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(styles)?.[1] || '';
+    const cellXfs = [...cellXfsBlock.matchAll(/<xf\b[^>]*>/g)].map((match) => match[0]);
+    expect(cellXfs[30]).toContain('borderId="1"');
+    expect(cellXfs[30]).toContain('applyBorder="1"');
+  });
+
   it('applies source, target, comparison-divider, and warning roles without changing the header style', async () => {
     const sheets: XlsxSheet[] = [{
       name: 'S',
@@ -404,8 +436,10 @@ describe('diff/xlsx-builder', () => {
     expect(styles).toContain('rgb="FFFFFBEB"');
     expect(styles).toContain('rgb="FFECFDF5"');
     expect(styles).toContain('rgb="FFF5F3FF"');
-    expect(styles).not.toContain('<left style="thin"');
-    expect(styles).not.toContain('<right style="thin"');
+    expect(styles).toContain('<left style="thin"');
+    expect(styles).toContain('<right style="thin"');
+    expect(styles).toContain('<top style="thin"');
+    expect(styles).toContain('<bottom style="thin"');
   });
 
   it('truncates oversized text to the Excel cell limit without splitting a surrogate pair', async () => {

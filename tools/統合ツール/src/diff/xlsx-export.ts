@@ -90,7 +90,7 @@ export interface DiffXlsxBundle {
 }
 
 export interface DiffXlsxContext {
-  /** customer は顧客レビュー向けの簡潔な構成。実差分値はマスキングしない。未指定時も customer を採用する。 */
+  /** customer は提出用の簡潔な構成。実差分値はマスキングしない。未指定時も customer を採用する。 */
   audience?: 'customer' | 'internal';
   rows: DiffXlsxRow[];
   fetchIssues?: DiffXlsxFetchIssue[];
@@ -2078,9 +2078,6 @@ function buildIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
 // Customer workbook
 // ---------------------------------------------------------------------------
 
-const CUSTOMER_REVIEW_STATUS_VALUES = ['未レビュー', 'レビュー中', 'レビュー済み', '対象外'];
-const CUSTOMER_ACTION_DECISION_VALUES = ['未判断', '対応する', '対応しない', '保留', '対象外'];
-
 interface CustomerDiffItem {
   index: number;
   row: DiffXlsxRow;
@@ -2998,11 +2995,9 @@ function customerDateTime(value: unknown): string {
 
 function buildCustomerSummarySheet(
   ctx: DiffXlsxContext,
-  items: CustomerDiffItem[],
-  continuations: CustomerRawContinuation[]
+  items: CustomerDiffItem[]
 ): XlsxSheet {
   const counts = summarizeCustomerRows(ctx.rows || []);
-  const detailCount = items.length;
   const incomplete = customerIncomplete(ctx);
   const droppedSame = Number(ctx.truncation?.droppedSame || 0);
   const filtered = ctx.exportMode === 'filtered';
@@ -3023,18 +3018,11 @@ function buildCustomerSummarySheet(
     ['kintone 設定差分確認レポート', '', '', '', '', ''],
     [`比較元\n${sourceName}`, '', '→', `比較先\n${targetName}`, '', ''],
     ['比較結果', verdict, '比較処理', completeness, '', '変更一覧を開く'],
-    [filtered ? '掲載変更件数' : '変更件数', `${counts.actual}件`, '比較日時', customerDateTime(ctx.comparedAt), '', detailCount ? 'レビュー入力を開く' : ''],
+    [filtered ? '掲載変更件数' : '変更件数', `${counts.actual}件`, '比較日時', customerDateTime(ctx.comparedAt), '', ''],
     ['追加', `${counts.added}件`, '削除', `${counts.removed}件`, '変更', `${counts.contentChanged}件`],
     ['要素の移動', `${counts.moved}件`, '変更一覧の明細', `${items.length}件`, '同一証跡の省略', droppedSame ? `${droppedSame}件（変更判定への影響なし）` : '0件'],
     ['比較した設定領域', customerScopeLabel(comparedScopes), '', '', '', ''],
     ['掲載範囲', ctx.exportMode === 'filtered' ? '上記範囲内の一部' : '上記範囲内の全変更', '絞り込み', ctx.exportMode === 'filtered' ? 'あり' : 'なし', '比較から除外', customerComparisonExclusionLabel(ctx)],
-    ['掲載内容', detailCount
-      ? `「変更一覧」は読みやすい日本語表示です。全${detailCount}件の型・状態・原文を「設定値詳細」に収録しています。${continuations.length ? `表示が長い原文${continuations.length}件は、可視の「長文原文」シートへ分割して全文を収録しています。` : ''}上記以外の設定領域は比較していません。`
-      : `${continuations.length ? `取得・打切り情報のうち表示が長い原文${continuations.length}件は、可視の「長文原文」シートへ分割して全文を収録しています。` : ''}上記以外の設定領域は比較していません。`, '', '', '', ''],
-    ['読み方', '1. 比較概要で範囲を確認 → 2. 変更一覧で差分を確認 → 3. I/Jを選択し、必要に応じてK/Lへ入力 → 4. No.（リンク）から原文を確認', '', '', '', ''],
-    ['表記', '不存在、undefined、null、空文字を区別しています。「設定値詳細」の状態・型と原文を組み合わせると元の値を判別できます。', '', '', '', ''],
-    ['確認時の注意', 'このレポートは現在設定の差を示すもので、反映・移行計画ではありません。「確認すること」は中立的な確認質問で、重要度・業務影響・対応要否は自動判定していません。並べ替え後にリンク先がずれた場合はNo.で照合してください。', '', '', '', ''],
-    ['', '', '', '', '', ''],
     ['分類別件数', '', '', '', '', ''],
     ['分類', '追加', '削除', '変更', '要素の移動', '合計'],
     ...customerSectionBreakdown(ctx.rows || [])
@@ -3053,7 +3041,6 @@ function buildCustomerSummarySheet(
   cellStyles[3][1] = 'summaryValue';
   cellStyles[3][2] = 'summaryLabel';
   cellStyles[3][3] = 'info';
-  if (detailCount) cellStyles[3][5] = 'actionLink';
   cellStyles[4] = [
     'changeAdded', 'metricValueAdded',
     'changeRemoved', 'metricValueRemoved',
@@ -3073,13 +3060,9 @@ function buildCustomerSummarySheet(
   cellStyles[7][3] = 'info';
   cellStyles[7][4] = 'summaryLabel';
   cellStyles[7][5] = 'info';
-  for (const index of [8, 9, 10, 11]) {
-    cellStyles[index][0] = index === 11 ? 'warning' : 'summaryLabel';
-    cellStyles[index][1] = index === 11 ? 'warning' : 'info';
-  }
-  cellStyles[13][0] = 'sectionHeader';
-  for (let index = 15; index < rows.length; index += 1) {
-    const alternate = (index - 15) % 2 === 1;
+  cellStyles[8] = Array.from({ length: 6 }, () => 'sectionHeader');
+  for (let index = 10; index < rows.length; index += 1) {
+    const alternate = (index - 10) % 2 === 1;
     cellStyles[index][0] = alternate ? 'zebra' : 'normal';
     for (let column = 1; column < 6; column += 1) {
       cellStyles[index][column] = alternate ? 'zebraCenter' : 'center';
@@ -3091,8 +3074,9 @@ function buildCustomerSummarySheet(
     colWidths: [16, 22, 10, 22, 16, 22],
     rowStyles: rows.map(() => 'normal'),
     cellStyles,
-    headerRow: 15,
+    headerRow: 10,
     freezeRows: 2,
+    materializeEmptyCellsFromRow: 3,
     rowHeights: rows.map((row, index) => {
       if (index === 0) return 42;
       if (index === 1) return 42;
@@ -3104,23 +3088,16 @@ function buildCustomerSummarySheet(
         { value: row[3], width: 22 },
         { value: row[5], width: 22 }
       ], 76);
-      if (index >= 8 && index <= 11) return readableDiffRowHeight([{ value: row[1], width: 78 }], index === 11 ? 104 : 76);
-      if (index === 12) return 12;
-      if (index === 13) return 30;
-      return index === 14 ? 32 : 26;
+      if (index === 8) return 30;
+      return index === 9 ? 32 : 26;
     }),
-    merges: ['A1:F1', 'A2:B2', 'D2:F2', 'B7:F7', 'B9:F9', 'B10:F10', 'B11:F11', 'B12:F12', 'A14:F14'],
+    merges: ['A1:F1', 'A2:B2', 'D2:F2', 'B7:F7', 'A9:F9'],
     internalHyperlinks: [{
       ref: 'F3',
       targetSheet: '変更一覧',
-      targetCell: 'A2',
+      targetCell: 'A1',
       tooltip: '変更一覧へ移動'
-    }, ...(detailCount ? [{
-      ref: 'F4',
-      targetSheet: '変更一覧',
-      targetCell: 'I2',
-      tooltip: '顧客レビュー入力欄へ移動'
-    }] : [])],
+    }],
     showGridLines: false,
     zoomScale: 100,
     print: {
@@ -3138,19 +3115,12 @@ function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[])
   const targetName = customerAppName(ctx.targetBundle, '比較先');
   const headers = [
     'No.', '変更区分', '分類', '設定対象', '変更項目',
-    `変更前\n${sourceName}`, `変更後\n${targetName}`, '確認すること',
-    '顧客レビュー状況', '対応方針', '担当者', 'コメント'
+    `変更前\n${sourceName}`, `変更後\n${targetName}`, '確認すること'
   ];
-  const rows: (string | number | null)[][] = [
-    [
-      '「設定対象」でどの設定か、「変更項目」で何が変わったかを確認できます。No.（リンク）から全差分の状態・型・原文を確認できます。並べ替え後はNo.で照合してください。', '', '', '', '', '', '', '',
-      '入力欄：I/Jは選択、K/Lは任意入力', '', '', ''
-    ],
-    headers
-  ];
-  const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
-  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['subtitle', undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'reviewChoice'], []];
-  const rowHeights: number[] = [38, 46];
+  const rows: (string | number | null)[][] = [headers];
+  const rowStyles: XlsxRowStyle[] = ['normal'];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[]];
+  const rowHeights: number[] = [46];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
     '追加': 'changeAdded',
     '削除': 'changeRemoved',
@@ -3167,11 +3137,7 @@ function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[])
       item.settingItem,
       item.before,
       item.after,
-      item.reviewNote,
-      '未レビュー',
-      '未判断',
-      '',
-      ''
+      item.reviewNote
     ]);
     rowStyles.push('normal');
     const styles: Array<XlsxCellStyle | undefined> = [];
@@ -3185,13 +3151,9 @@ function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[])
     styles[5] = item.changeType === '追加' ? 'diffAbsent' : 'diffBefore';
     styles[6] = item.changeType === '削除' ? 'diffAbsent' : 'diffAfter';
     styles[7] = 'info';
-    styles[8] = 'reviewChoice';
-    styles[9] = 'reviewChoice';
-    styles[10] = 'review';
-    styles[11] = 'review';
     cellStyles.push(styles);
     internalHyperlinks.push({
-      ref: `A${index + 3}`,
+      ref: `A${index + 2}`,
       targetSheet: '設定値詳細',
       targetCell: `A${index + 3}`,
       tooltip: '比較元・比較先の状態・型・原文を確認'
@@ -3205,40 +3167,28 @@ function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[])
       { value: item.reviewNote, width: 28 }
     ], 220));
   });
-  const lastRow = items.length + 2;
   return {
     name: '変更一覧',
     rows,
-    colWidths: [7, 10, 14, 24, 22, 22, 22, 28, 14, 13, 14, 30],
+    colWidths: [7, 10, 14, 24, 22, 22, 22, 28],
     rowStyles,
     cellStyles,
-    headerRow: 2,
-    freezeRows: 2,
+    headerRow: 1,
+    freezeRows: 1,
     freezeColumns: 5,
     rowHeights,
     styledEmptyCellsAsBlank: true,
-    merges: ['A1:H1', 'I1:L1'],
+    materializeEmptyCellsFromRow: 1,
     internalHyperlinks,
-    dataValidations: items.length ? [{
-      sqref: `I3:I${lastRow}`,
-      values: CUSTOMER_REVIEW_STATUS_VALUES,
-      promptTitle: '顧客レビュー状況',
-      prompt: '顧客レビューの進捗を選択してください'
-    }, {
-      sqref: `J3:J${lastRow}`,
-      values: CUSTOMER_ACTION_DECISION_VALUES,
-      promptTitle: '対応方針',
-      prompt: '人が判断した対応方針を選択してください'
-    }] : [],
     showGridLines: false,
     zoomScale: 95,
     print: {
       orientation: 'landscape',
-      fitToWidth: 2,
+      fitToWidth: 1,
       fitToHeight: 0,
-      repeatRows: { from: 2, to: 2 },
+      repeatRows: { from: 1, to: 1 },
       repeatColumns: { from: 1, to: 5 },
-      footer: '&L変更一覧（顧客レビュー）&Rページ &P / &N'
+      footer: '&L変更一覧&Rページ &P / &N'
     }
   };
 }
@@ -3346,7 +3296,7 @@ function buildCustomerValueDetailSheet(
     internalHyperlinks.push({
       ref: `J${index + 3}`,
       targetSheet: '変更一覧',
-      targetCell: `A${item.index + 3}`,
+      targetCell: `A${item.index + 2}`,
       tooltip: `変更一覧 No.${item.index + 1}へ戻る`
     });
   });
@@ -3361,6 +3311,7 @@ function buildCustomerValueDetailSheet(
     freezeRows: 2,
     freezeColumns: 5,
     rowHeights,
+    materializeEmptyCellsFromRow: 2,
     merges: ['A1:E1', 'F1:G1', 'H1:J1'],
     internalHyperlinks,
     showGridLines: false,
@@ -3457,6 +3408,7 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
     freezeRows: 2,
     freezeColumns: 4,
     rowHeights,
+    materializeEmptyCellsFromRow: 2,
     merges: ['A1:F1', 'G1:H1'],
     internalHyperlinks,
     showGridLines: false,
@@ -3612,6 +3564,7 @@ function buildCustomerIssuesSheet(
     headerRow: 2,
     freezeRows: 2,
     freezeColumns: 2,
+    materializeEmptyCellsFromRow: 2,
     rowHeights: rows.map((row, index) => index < 2 ? (index === 0 ? 36 : 30) : readableDiffRowHeight([
       { value: row[0], width: 24 },
       { value: row[1], width: 20 },
@@ -3641,7 +3594,7 @@ function buildCustomerDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
   );
   const issueContinuations = buildCustomerIssueRawContinuations(issueItems, nextLongRawRow);
   const allContinuations: CustomerRawContinuation[] = [...differenceContinuations, ...issueContinuations];
-  const sheets: XlsxSheet[] = [buildCustomerSummarySheet(ctx, items, allContinuations)];
+  const sheets: XlsxSheet[] = [buildCustomerSummarySheet(ctx, items)];
   const issues = buildCustomerIssuesSheet(issueItems, issueContinuations);
   if (issues) sheets.push(issues);
   sheets.push(buildCustomerListSheet(ctx, items));
