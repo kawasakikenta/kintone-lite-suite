@@ -707,8 +707,8 @@ describe('diff/html export', () => {
     expect(safeHtml).toContain('差分行のみ（全設定は未収録）');
     expect(safeHtml).toContain('全設定スナップショットは収録していません');
     expect(safeHtml).toContain('変更された差分行の比較元・比較先の値は収録しています');
-    expect(safeHtml).toContain('匿名化・機密情報のマスキング済みではありません');
-    expect(safeHtml).toContain('顧客向けExcelにも同じ差分値が収録され、取得不完全時はエラー等の原文も含まれるため、共有前に内容を確認してください');
+    expect(safeHtml).not.toContain('マスキング');
+    expect(safeHtml).toContain('Excelにも同じ差分値が収録され、取得不完全時はエラー等の原文も含まれるため、共有前に内容を確認してください');
     expect(safeHtml).toContain('<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note"');
     expect(safeHtml).not.toContain('<aside class="report-content-disclosure"');
     expect(safeHtml).toContain('ROW_SOURCE_VALUE');

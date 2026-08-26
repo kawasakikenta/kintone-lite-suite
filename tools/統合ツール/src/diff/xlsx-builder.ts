@@ -1,5 +1,7 @@
 'use strict';
 
+import { buildStoredZip, type StoredZipEntry } from '../archive/stored-zip.js';
+
 /**
  * 追加ライブラリ無しで .xlsx (OOXML / SpreadsheetML) を組み立てる最小実装。
  * - 圧縮なし (STORE) の ZIP コンテナを自前で構築。
@@ -11,96 +13,6 @@
  */
 
 const XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
-
-// ---------------------------------------------------------------------------
-// ZIP container (no compression)
-// ---------------------------------------------------------------------------
-
-let crcTable: Uint32Array | null = null;
-function crc32(bytes: Uint8Array): number {
-  if (!crcTable) {
-    const t = new Uint32Array(256);
-    for (let i = 0; i < 256; i++) {
-      let c = i;
-      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
-      t[i] = c >>> 0;
-    }
-    crcTable = t;
-  }
-  let crc = 0xffffffff;
-  for (let i = 0; i < bytes.length; i++) crc = (crcTable[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8)) >>> 0;
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-interface ZipEntry { name: string; data: Uint8Array; }
-
-function buildStoredZip(entries: ZipEntry[]): Blob {
-  const parts: Uint8Array[] = [];
-  const central: Uint8Array[] = [];
-  let offset = 0;
-  const DOS_TIME = 0;
-  const DOS_DATE = ((2020 - 1980) << 9) | (1 << 5) | 1;
-  const enc = new TextEncoder();
-  for (const e of entries) {
-    const nameBytes = enc.encode(e.name);
-    const data = e.data;
-    const crc = crc32(data);
-    const size = data.length;
-    const lfh = new Uint8Array(30 + nameBytes.length);
-    const dv = new DataView(lfh.buffer);
-    dv.setUint32(0, 0x04034b50, true);
-    dv.setUint16(4, 20, true);
-    dv.setUint16(6, 0x0800, true);
-    dv.setUint16(8, 0, true);
-    dv.setUint16(10, DOS_TIME, true);
-    dv.setUint16(12, DOS_DATE, true);
-    dv.setUint32(14, crc, true);
-    dv.setUint32(18, size, true);
-    dv.setUint32(22, size, true);
-    dv.setUint16(26, nameBytes.length, true);
-    dv.setUint16(28, 0, true);
-    lfh.set(nameBytes, 30);
-    parts.push(lfh, data);
-
-    const cdh = new Uint8Array(46 + nameBytes.length);
-    const cdv = new DataView(cdh.buffer);
-    cdv.setUint32(0, 0x02014b50, true);
-    cdv.setUint16(4, 20, true);
-    cdv.setUint16(6, 20, true);
-    cdv.setUint16(8, 0x0800, true);
-    cdv.setUint16(10, 0, true);
-    cdv.setUint16(12, DOS_TIME, true);
-    cdv.setUint16(14, DOS_DATE, true);
-    cdv.setUint32(16, crc, true);
-    cdv.setUint32(20, size, true);
-    cdv.setUint32(24, size, true);
-    cdv.setUint16(28, nameBytes.length, true);
-    cdv.setUint16(30, 0, true);
-    cdv.setUint16(32, 0, true);
-    cdv.setUint16(34, 0, true);
-    cdv.setUint16(36, 0, true);
-    cdv.setUint32(38, 0, true);
-    cdv.setUint32(42, offset, true);
-    cdh.set(nameBytes, 46);
-    central.push(cdh);
-    offset += lfh.length + data.length;
-  }
-  const cdStart = offset;
-  let cdSize = 0;
-  for (const c of central) { parts.push(c); cdSize += c.length; }
-  const eocd = new Uint8Array(22);
-  const edv = new DataView(eocd.buffer);
-  edv.setUint32(0, 0x06054b50, true);
-  edv.setUint16(4, 0, true);
-  edv.setUint16(6, 0, true);
-  edv.setUint16(8, central.length, true);
-  edv.setUint16(10, central.length, true);
-  edv.setUint32(12, cdSize, true);
-  edv.setUint32(16, cdStart, true);
-  edv.setUint16(20, 0, true);
-  parts.push(eocd);
-  return new Blob(parts as BlobPart[], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-}
 
 // ---------------------------------------------------------------------------
 // XML helpers
@@ -682,8 +594,8 @@ function sheetsUseCustomerDiffStyles(sheets: XlsxSheet[]): boolean {
 }
 
 function buildStylesXml(includeCustomerDiffStyles: boolean): string {
-  // 色は「比較方向」「変更事実」「レビュー入力」の役割に限定する。
-  // 0: 既定 / 1: 表見出し / 2: データ / 3..36: 共通UI / 37..39: 顧客向け変更前後
+  // 色は「比較方向」「変更事実」「情報区分」の役割に限定する。
+  // 0: 既定 / 1: 表見出し / 2: データ / 3..36: 共通UI / 37..39: 提出版の変更前後
   return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`
     + `<fonts count="${includeCustomerDiffStyles ? 18 : 16}">`
     +   '<font><sz val="11"/><name val="Meiryo"/></font>'
@@ -787,7 +699,7 @@ export function buildXlsxBlob(sheets: XlsxSheet[]): Blob {
   const safeSheetNames = safe.map((sheet) => sheet.name);
   const hyperlinksBySheet = safe.map((sheet) => resolveInternalHyperlinks(sheets, safeSheetNames, sheet.internalHyperlinks));
 
-  const entries: ZipEntry[] = [
+  const entries: StoredZipEntry[] = [
     { name: '[Content_Types].xml', data: enc.encode(buildContentTypes(safe)) },
     { name: '_rels/.rels', data: enc.encode(buildRootRels()) },
     { name: 'xl/workbook.xml', data: enc.encode(buildWorkbookXml(safe)) },
@@ -797,5 +709,7 @@ export function buildXlsxBlob(sheets: XlsxSheet[]): Blob {
   safe.forEach((s, i) => {
     entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(buildSheetXml(s, hyperlinksBySheet[i])) });
   });
-  return buildStoredZip(entries);
+  return buildStoredZip(entries, {
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
 }

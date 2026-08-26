@@ -117,7 +117,7 @@ const sampleCtx: DiffXlsxContext = {
 };
 
 describe('diff/xlsx-export', () => {
-  it('defaults to the customer workbook and records every actual difference row with typed raw evidence', async () => {
+  it('defaults to the customer workbook and records every actual difference row with raw evidence', async () => {
     const blob = buildDiffXlsxBlobWithSafeDefault({
       sourceBundle: { appId: 10101, guestId: '30303', meta: { appName: '変更前アプリ' } },
       targetBundle: { appId: 20202, guestId: '40404', meta: { appName: '変更後アプリ' } },
@@ -174,14 +174,14 @@ describe('diff/xlsx-export', () => {
     expect(summary).not.toContain('シート案内');
 
     for (const [cell, label] of [
-      ['A1', 'No.'], ['B1', '変更区分'], ['C1', '分類'], ['D1', '設定対象'], ['E1', '変更項目'],
-      ['F1', '変更前'], ['G1', '変更後'], ['H1', '確認すること']
+      ['A1', 'No.'], ['B1', '変更区分'], ['C1', '分類'], ['D1', '設定対象'], ['E1', '差分プロパティ'],
+      ['F1', '変更前'], ['G1', '変更後']
     ]) {
       expect(list).toMatch(new RegExp(`<c r="${cell}"[^>]*>[\\s\\S]*?${label}[\\s\\S]*?<\\/c>`));
     }
     expect((list.match(/<row r="/g) || []).length).toBe(2);
     expect(list).toContain('<pane xSplit="5" ySplit="1" topLeftCell="F2" activePane="bottomRight" state="frozen"/>');
-    expect(list).toContain('<autoFilter ref="A1:H2"/>');
+    expect(list).toContain('<autoFilter ref="A1:G2"/>');
     expect(list).not.toContain('<mergeCell');
     expect(list).toContain('zoomScale="95" zoomScaleNormal="95"');
     expect(list).toContain('orientation="landscape" fitToWidth="1" fitToHeight="0"');
@@ -190,25 +190,25 @@ describe('diff/xlsx-export', () => {
     for (const removedText of ['顧客レビュー状況', 'レビュー入力', '未レビュー', '未判断', '対応方針']) {
       expect(list).not.toContain(removedText);
     }
-    expect(list).not.toMatch(/<c r="[I-Z]\d+"/);
-    expect(list).toContain('<col min="8" max="8"');
-    expect(list).not.toContain('<col min="9"');
-    for (const label of ['変更前の状態・型', '変更前の原文', '変更後の状態・型', '変更後の原文']) {
+    expect(list).not.toMatch(/<c r="[H-Z]\d+"/);
+    expect(list).toContain('<col min="7" max="7"');
+    expect(list).not.toContain('<col min="8"');
+    for (const column of 'ABCDEFG') expect(list).toContain(`<c r="${column}2"`);
+    for (const label of ['変更前の原文', '変更後の原文']) {
       expect(detail).toContain(label);
     }
-    expect(detail).toMatch(/<c r="D2"[^>]*>[\s\S]*?設定対象[\s\S]*?<\/c>/);
-    expect(detail).toMatch(/<c r="E2"[^>]*>[\s\S]*?変更項目[\s\S]*?<\/c>/);
-    expect(detail).toContain('<pane xSplit="5" ySplit="2" topLeftCell="F3" activePane="bottomRight" state="frozen"/>');
-    expect(detail).toContain('<autoFilter ref="A2:J3"/>');
-    expect(detail).toContain('<mergeCell ref="A1:E1"/>');
-    expect(detail).toContain('<mergeCell ref="F1:G1"/>');
-    expect(detail).toContain('<mergeCell ref="H1:J1"/>');
-    expect(workbook).toContain('&apos;設定値詳細&apos;!$2:$2,&apos;設定値詳細&apos;!$A:$E');
-    expect(detail).toContain('文字列（3文字）');
+    expect(detail).toMatch(/<c r="D1"[^>]*>[\s\S]*?設定対象[\s\S]*?<\/c>/);
+    expect(detail).toMatch(/<c r="E1"[^>]*>[\s\S]*?差分プロパティ[\s\S]*?<\/c>/);
+    expect(detail).toContain('<pane xSplit="5" ySplit="1" topLeftCell="F2" activePane="bottomRight" state="frozen"/>');
+    expect(detail).toContain('<autoFilter ref="A1:H2"/>');
+    expect(detail).not.toContain('<mergeCell');
+    expect(workbook).toContain('&apos;設定値詳細&apos;!$1:$1,&apos;設定値詳細&apos;!$A:$E');
+    expect(detail).not.toContain('文字列（3文字）');
     expect(detail).toContain('&quot;旧名称&quot;');
     expect(detail).toContain('&quot;新名称&quot;');
-    expect(list).toContain('<hyperlink ref="A2" location="&apos;設定値詳細&apos;!A3"');
-    expect(detail).toContain('<hyperlink ref="J3" location="&apos;変更一覧&apos;!A2"');
+    for (const column of 'ABCDEFGH') expect(detail).toContain(`<c r="${column}2"`);
+    expect(list).toContain('<hyperlink ref="A2" location="&apos;設定値詳細&apos;!A2"');
+    expect(detail).toContain('<hyperlink ref="H2" location="&apos;変更一覧&apos;!A2"');
     expect(list).not.toContain('差分ID');
     expect(list).not.toContain('存在状況');
     expect(list).not.toContain('技術パス');
@@ -219,6 +219,8 @@ describe('diff/xlsx-export', () => {
     expect(allText).not.toContain('connections.xml');
     expect(allText).not.toContain('<dataValidation');
     for (const genericUi of ['顧客向け', '顧客レビュー', '顧客共有']) expect(allText).not.toContain(genericUi);
+    expect(allText).not.toContain('確認すること');
+    expect(allText).not.toContain('状態・型');
     expect(allText).not.toContain('SAME_ROW_SECRET');
     expect(allText).not.toContain('30303');
     expect(allText).not.toContain('40404');
@@ -255,9 +257,9 @@ describe('diff/xlsx-export', () => {
     expect(list).toMatch(/<c r="F2"[^>]*>[\s\S]*?担当者[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="G2"[^>]*>[\s\S]*?レビュー[\s\S]*?<\/c>/);
     const detail = await readWorksheetByName(blob, '設定値詳細');
-    expect(detail).toMatch(/<c r="D3"[^>]*>[\s\S]*?顧客名[\s\S]*?<\/c>/);
-    expect(detail).toMatch(/<c r="G3"[^>]*>[\s\S]*?&quot;担当者&quot;[\s\S]*?<\/c>/);
-    expect(detail).toMatch(/<c r="I3"[^>]*>[\s\S]*?&quot;レビュー&quot;[\s\S]*?<\/c>/);
+    expect(detail).toMatch(/<c r="D2"[^>]*>[\s\S]*?顧客名[\s\S]*?<\/c>/);
+    expect(detail).toMatch(/<c r="F2"[^>]*>[\s\S]*?&quot;担当者&quot;[\s\S]*?<\/c>/);
+    expect(detail).toMatch(/<c r="G2"[^>]*>[\s\S]*?&quot;レビュー&quot;[\s\S]*?<\/c>/);
     for (const removedUi of ['顧客レビュー状況', '顧客レビューの進捗', 'レビュー入力', '入力欄：I/J']) {
       expect(allText).not.toContain(removedUi);
     }
@@ -338,9 +340,96 @@ describe('diff/xlsx-export', () => {
     expect(list).toMatch(/<c r="E3"[^>]*>[\s\S]*?表示文字[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="D4"[^>]*>[\s\S]*?一覧「保有物件一覧」[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="E4"[^>]*>[\s\S]*?並び順[\s\S]*?<\/c>/);
-    expect(detail).toMatch(/<c r="D3"[^>]*>[\s\S]*?フィールド「BM会社情報」[\s\S]*?<\/c>/);
-    expect(detail).toMatch(/<c r="E3"[^>]*>[\s\S]*?関連レコード：参照先アプリID[\s\S]*?<\/c>/);
+    expect(detail).toMatch(/<c r="D2"[^>]*>[\s\S]*?フィールド「BM会社情報」[\s\S]*?<\/c>/);
+    expect(detail).toMatch(/<c r="E2"[^>]*>[\s\S]*?関連レコード：参照先アプリID[\s\S]*?<\/c>/);
     expect(list).not.toContain('BM会社情報 / 関連レコード一覧設定 / 参照するアプリ / 参照するアプリID');
+  });
+
+  it('separates field identity, property, presence, and table hierarchy in a dedicated customer sheet', async () => {
+    const sourceFields = {
+      amount: { code: 'amount', label: '金額', type: 'NUMBER' },
+      lines: {
+        code: 'lines', label: '請求 > 明細', type: 'SUBTABLE',
+        fields: { item: { code: 'item', label: '商品 > SKU', type: 'SINGLE_LINE_TEXT', required: false } }
+      }
+    };
+    const targetFields = {
+      ...sourceFields,
+      status: { code: 'status', label: '進捗', type: 'DROP_DOWN' },
+      amount: { ...sourceFields.amount, unit: '円' },
+      lines: {
+        ...sourceFields.lines,
+        fields: { item: { ...sourceFields.lines.fields.item, required: true } }
+      },
+      new_lines: {
+        code: 'new_lines', label: '新しい明細', type: 'SUBTABLE',
+        fields: { memo: { code: 'memo', label: '備考', type: 'SINGLE_LINE_TEXT' } }
+      }
+    };
+    const addedTable = targetFields.new_lines;
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      sourceBundle: { sections: { fieldSettings: { properties: sourceFields } } },
+      targetBundle: { sections: { fieldSettings: { properties: targetFields } } },
+      rows: [
+        { sectionKey: 'fieldSettings', type: 'added', path: 'fieldSettings.properties.status', right: targetFields.status },
+        { sectionKey: 'fieldSettings', type: 'added', path: 'fieldSettings.properties.amount.unit', right: '円' },
+        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.lines.fields.item.required', left: false, right: true },
+        { sectionKey: 'fieldSettings', type: 'added', path: 'fieldSettings.properties.new_lines', right: addedTable }
+      ]
+    });
+    const workbook = await readEntry(blob, 'xl/workbook.xml');
+    const list = await readWorksheetByName(blob, '変更一覧');
+    const fields = await readWorksheetByName(blob, 'フィールド差分');
+    const styles = await readEntry(blob, 'xl/styles.xml');
+
+    expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
+      '比較概要', '変更一覧', 'フィールド差分', '設定値詳細'
+    ]);
+    expect(worksheetInlineTexts(fields, 'C', 2)).toEqual([
+      'フィールド', 'フィールド', '└ テーブル内フィールド', 'テーブル', '└ テーブル内フィールド'
+    ]);
+    expect(worksheetInlineTexts(fields, 'D', 2)).toEqual([
+      '—', '—', '請求 > 明細（lines）', '—', '新しい明細（new_lines）'
+    ]);
+    expect(worksheetInlineTexts(fields, 'E', 2)).toEqual([
+      '進捗', '金額', '商品 > SKU', '新しい明細', '備考'
+    ]);
+    expect(worksheetInlineTexts(fields, 'F', 2)).toEqual(['status', 'amount', 'item', 'new_lines', 'memo']);
+    expect(worksheetInlineTexts(fields, 'H', 2)).toEqual([
+      'フィールド自体', '単位記号', '必須項目にする', 'テーブル自体', 'フィールド自体'
+    ]);
+    expect(worksheetInlineTexts(fields, 'I', 2)).toEqual([
+      '比較先のみ', '両方', '両方', '比較先のみ', '比較先のみ'
+    ]);
+    expect(worksheetInlineTexts(fields, 'J', 2)).toEqual(['—', '比較先のみ', '両方', '—', '—']);
+    expect(worksheetInlineTexts(fields, 'K', 2)).toEqual([
+      '存在しません', '存在しません', '任意', '存在しません', '存在しません'
+    ]);
+    expect(worksheetInlineTexts(fields, 'L', 2)).toEqual(['存在', '円', '必須', '存在', '存在']);
+    expect(fields).toMatch(/<row r="4"[^>]*outlineLevel="1"/);
+    expect(fields).toMatch(/<row r="6"[^>]*outlineLevel="1"/);
+    expect(fields).toContain('<pane xSplit="6" ySplit="1" topLeftCell="G2" activePane="bottomRight" state="frozen"/>');
+    expect(fields).toContain('<autoFilter ref="A1:L6"/>');
+    expect(fields).toMatch(/<c r="K2" s="39"/);
+    expect(list).toMatch(/<c r="D2"[^>]*>[\s\S]*?フィールド「進捗」[\s\S]*?<\/c>/);
+    expect(list).toMatch(/<c r="E2"[^>]*>[\s\S]*?フィールド自体[\s\S]*?<\/c>/);
+    expect(list).toMatch(/<c r="F2"[^>]*>[\s\S]*?存在しません[\s\S]*?<\/c>/);
+    expect(list).toMatch(/<c r="G2"[^>]*>[\s\S]*?存在[\s\S]*?<\/c>/);
+    expect(list).toMatch(/<c r="D5"[^>]*>[\s\S]*?テーブル「新しい明細」[\s\S]*?<\/c>/);
+    expect(list).toMatch(/<c r="E5"[^>]*>[\s\S]*?テーブル自体[\s\S]*?<\/c>/);
+
+    for (let row = 2; row <= 6; row += 1) {
+      for (const column of 'ABCDEFGHIJKL') expect(fields).toContain(`<c r="${column}${row}"`);
+    }
+    const cellXfsBlock = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(styles)?.[1] || '';
+    const cellXfs = [...cellXfsBlock.matchAll(/<xf\b[^>]*>/g)].map((match) => match[0]);
+    expect(cellXfs[39]).toContain('borderId="1"');
+    expect(cellXfs[39]).toContain('applyBorder="1"');
+    const bordersBlock = /<borders\b[^>]*>([\s\S]*?)<\/borders>/.exec(styles)?.[1] || '';
+    const borders = [...bordersBlock.matchAll(/<border>([\s\S]*?)<\/border>/g)].map((match) => match[1]);
+    for (const edge of ['left', 'right', 'top', 'bottom']) {
+      expect(borders[1]).toMatch(new RegExp(`<${edge} style="thin"`));
+    }
   });
 
   it('keeps technical paths and long target identities out of the customer list while preserving them in details', async () => {
@@ -545,7 +634,7 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('一覧「&lt;要確認&gt;」');
   });
 
-  it('distinguishes absence, undefined, null, empty text, scalar, array, and object raw states', async () => {
+  it('distinguishes absence, undefined, null, empty text, scalar, array, and object raw values without type columns', async () => {
     const blob = buildDiffXlsxBlobWithSafeDefault({
       rows: [
         { sectionKey: 'appSettings', type: 'added', path: 'appSettings.a', right: '（存在しません）' },
@@ -560,25 +649,30 @@ describe('diff/xlsx-export', () => {
     const detail = await readWorksheetByName(blob, '設定値詳細');
 
     expect(workbook).not.toContain('name="長文原文"');
-    for (const state of [
-      '不存在', '未定義（undefined）', 'null', '文字列（空文字）', '文字列（4文字）',
-      '数値', '真偽値', '配列（2件）', 'オブジェクト（1項目）'
-    ]) expect(detail).toContain(state);
-    for (const raw of ['undefined', '&quot;&quot;', '&quot;null&quot;', '&quot;（存在しません）&quot;', '>0<', '>false<']) {
+    for (const raw of [
+      '存在しません', 'undefined', 'null', '空文字', '&quot;null&quot;',
+      '&quot;（存在しません）&quot;', '>0<', '>false<', '[', '{'
+    ]) {
       expect(detail).toContain(raw);
     }
+    for (const removedState of ['未定義（undefined）', '文字列（空文字）', '文字列（4文字）', '数値', '真偽値', '配列（2件）', 'オブジェクト（1項目）']) {
+      expect(detail).not.toContain(removedState);
+    }
+    for (let row = 2; row <= 6; row += 1) {
+      for (const column of 'ABCDEFGH') expect(detail).toContain(`<c r="${column}${row}"`);
+    }
     expect((list.match(/<hyperlink ref="A\d+"/g) || []).length).toBe(5);
-    expect((detail.match(/<hyperlink ref="J\d+"/g) || []).length).toBe(5);
-    expect((detail.match(/<row r="/g) || []).length).toBe(7);
+    expect((detail.match(/<hyperlink ref="H\d+"/g) || []).length).toBe(5);
+    expect((detail.match(/<row r="/g) || []).length).toBe(6);
   });
 
-  it('shows values that were previously masked without adding environment-only review instructions', async () => {
+  it('keeps complete changed values without adding report-owned masking labels or environment-only instructions', async () => {
     const blob = buildDiffXlsxBlobWithSafeDefault({
       scopes: ['appSettings'],
       rows: [
         { sectionKey: 'appSettings', type: 'added', path: 'appSettings.name', right: 'api_key=TARGET_SECRET' },
         { sectionKey: 'appSettings', type: 'removed', path: 'appSettings.name', left: 'api_key=SOURCE_SECRET' },
-        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: 'api_key=SOURCE_SECRET_2', right: 'api_key=TARGET_SECRET_2' }
+        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: 'api_key=SOURCE_SECRET_2', right: 'api_key=TARGET_SECRET_2 / 実データ: マスキング' }
       ]
     });
     const list = await readWorksheetByName(blob, '変更一覧');
@@ -588,7 +682,11 @@ describe('diff/xlsx-export', () => {
     ]) expect(list).toContain(value);
     expect(list).toContain('>api_key=TARGET_SECRET<');
     expect(list).not.toContain('&quot;api_key=TARGET_SECRET&quot;');
-    expect(list).toContain('（存在しません）');
+    expect(list).toContain('存在しません');
+    expect(list).toContain('実データ: マスキング');
+    expect(list).not.toContain('マスキングせず収録');
+    expect(list).not.toContain('マスキング済み');
+    expect(list).not.toContain('非表示、マスキング');
     expect(list).not.toContain('詳細は安全のため非表示');
     expect(list).not.toContain('詳細非表示');
     expect(list).not.toContain('権限のある担当者');
@@ -634,8 +732,8 @@ describe('diff/xlsx-export', () => {
       'RAW_LEFT', 'RAW_RIGHT', '&lt;b&gt;明細&lt;/b&gt;', '&lt;strong&gt;HTML_LABEL_LEFT&lt;/strong&gt;'
     ]) expect(detail).toContain(value);
     expect(list).not.toContain('No.（リンク）から全差分の状態・型・原文を確認できます');
-    expect(list).toContain('<hyperlink ref="A2" location="&apos;設定値詳細&apos;!A3"');
-    expect(detail).toContain('<hyperlink ref="J3" location="&apos;変更一覧&apos;!A2"');
+    expect(list).toContain('<hyperlink ref="A2" location="&apos;設定値詳細&apos;!A2"');
+    expect(detail).toContain('<hyperlink ref="H2" location="&apos;変更一覧&apos;!A2"');
     expect(list).not.toContain('テーブル内の項目:');
     expect(list).not.toContain('詳細は安全のため非表示');
   });
@@ -665,9 +763,13 @@ describe('diff/xlsx-export', () => {
     expect(summary).not.toContain('掲載内容');
     expect(list).not.toContain('No.（リンク）から全差分の状態・型・原文を確認できます');
     expect(detail).toContain('長文原文へ');
-    expect(detail).toContain('<hyperlink ref="G3" location="&apos;長文原文&apos;!A3"');
+    expect(detail).toContain('<hyperlink ref="F2" location="&apos;長文原文&apos;!A3"');
+    expect(detail).toMatch(/<hyperlink ref="G2" location="&apos;長文原文&apos;!A\d+"/);
     expect(longRaw).toContain('区切り文字を追加せず連結すると原文表記を完全に復元できます');
-    const chunks = worksheetInlineTexts(longRaw, 'G', 3);
+    expect(longRaw).not.toContain('状態・型');
+    expect(longRaw).toContain('<pane xSplit="3" ySplit="2" topLeftCell="D3" activePane="bottomRight" state="frozen"/>');
+    expect(longRaw).not.toMatch(/<c r="H\d+"/);
+    const chunks = worksheetInlineTexts(longRaw, 'F', 3);
     expect(chunks.length).toBeGreaterThan(2);
     expect(chunks.every((chunk) => chunk.length <= 30000)).toBe(true);
     expect(chunks.join('')).toBe(`${JSON.stringify(oversized)}${JSON.stringify(targetOversized)}`);
@@ -712,7 +814,7 @@ describe('diff/xlsx-export', () => {
     expect(issues).toContain('取得できた範囲だけを比較しています。必要に応じて再取得してください。');
     expect(issues).toContain('確認できた件数は全体の一部です。条件を分けて再比較してください。');
     expect(issues).toContain('取得・打切り情報（原文）');
-    expect(issues).toContain('マスキングせず収録しています');
+    expect(issues).not.toContain('マスキング');
     for (const value of [
       rawError, rawMessage, rawFile, 'FILE_KEY_778899',
       'RAW_PARTIAL_MESSAGE', 'RAW_FILE_REASON', '778899'
@@ -745,7 +847,7 @@ describe('diff/xlsx-export', () => {
     expect(summary).not.toContain('掲載内容');
     expect(issues).toContain('長文原文へ');
     expect(issues).toContain('<hyperlink ref="E3" location="&apos;長文原文&apos;!A3"');
-    const chunks = worksheetInlineTexts(longRaw, 'G', 3);
+    const chunks = worksheetInlineTexts(longRaw, 'F', 3);
     expect(chunks.length).toBeGreaterThan(2);
     expect(chunks.every((chunk) => chunk.length <= 30000)).toBe(true);
     expect(chunks.join('')).toBe(JSON.stringify(issue, null, 2));
@@ -753,7 +855,7 @@ describe('diff/xlsx-export', () => {
     for (const sentinel of ['ISSUE_HEAD_', 'ISSUE_MIDDLE_', 'ISSUE_TAIL', 'ISSUE_ERROR_TAIL', '😀']) {
       expect(chunks.join('')).toContain(sentinel);
     }
-    expect(longRaw).toContain('<hyperlink ref="H3" location="&apos;確認できなかった範囲&apos;!A3"');
+    expect(longRaw).toContain('<hyperlink ref="G3" location="&apos;確認できなかった範囲&apos;!A3"');
     expect(allText).not.toContain('Excelセル上限32,767文字のため省略');
     expect(allText).not.toContain('<f>');
     expect(allText).not.toContain('externalLink');
@@ -794,7 +896,7 @@ describe('diff/xlsx-export', () => {
     expect(summary).not.toContain('一部未完了');
   });
 
-  it('exports a process state rename as a customer-reviewable change without technical apply claims', async () => {
+  it('exports a process state rename without report-owned review guidance or technical apply claims', async () => {
     const blob = buildDiffXlsxBlobWithSafeDefault({
       scopes: ['processSettings'],
       rows: [{
@@ -816,7 +918,7 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('ステータス名');
     expect(list).toContain('未処理');
     expect(list).toContain('受付');
-    expect(list).toContain('確認専用で、自動反映の対象外です');
+    expect(list).not.toContain('確認専用で、自動反映の対象外です');
     expect(list).not.toContain('processSettings.states.__rename__');
   });
 
@@ -1002,12 +1104,12 @@ describe('diff/xlsx-export', () => {
     expect(workbook).toContain('name="設定値詳細"');
     for (const expected of [
       '300px', '360px', '見積金額（amount）', '優先度（priority）',
-      '（降順）', '（昇順）', '対象となる条件が変わります', '条件が追加され対象が絞られます'
+      '（降順）', '（昇順）'
     ]) expect(list).toContain(expected);
     expect(list).toMatch(/<c r="F2" s="37"/);
     expect(list).toMatch(/<c r="G2" s="38"/);
-    expect(list).toContain('<hyperlink ref="A2" location="&apos;設定値詳細&apos;!A3"');
-    expect(detail).toContain('<hyperlink ref="J3" location="&apos;変更一覧&apos;!A2"');
+    expect(list).toContain('<hyperlink ref="A2" location="&apos;設定値詳細&apos;!A2"');
+    expect(detail).toContain('<hyperlink ref="H2" location="&apos;変更一覧&apos;!A2"');
     expect(list).toContain('一覧「案件一覧」');
     expect(list).toContain('表示項目（1件目）');
     for (const expected of [

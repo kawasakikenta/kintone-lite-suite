@@ -17,7 +17,7 @@ import {
 } from './export-safety.js';
 import { extractFieldPathInfo } from './enrich.js';
 import { decodeRow } from './path-decoder.js';
-import { hasIncompleteActualDiffTruncation } from './engine.js';
+import { expandSubtableRowsForDisplay, hasIncompleteActualDiffTruncation } from './engine.js';
 import {
   buildXlsxBlob,
   type XlsxCellStyle,
@@ -39,6 +39,8 @@ export interface DiffXlsxRow {
   notationOnly?: boolean;
   emptyOnly?: boolean;
   _displayOnly?: boolean;
+  _expandedFromTable?: boolean;
+  _parentRowId?: string;
   _nonActionable?: boolean;
   _stateRenameNotice?: boolean;
 }
@@ -90,7 +92,7 @@ export interface DiffXlsxBundle {
 }
 
 export interface DiffXlsxContext {
-  /** customer は提出用の簡潔な構成。実差分値はマスキングしない。未指定時も customer を採用する。 */
+  /** customer は提出用の簡潔な構成。未指定時も customer を採用する。 */
   audience?: 'customer' | 'internal';
   rows: DiffXlsxRow[];
   fetchIssues?: DiffXlsxFetchIssue[];
@@ -925,7 +927,7 @@ function readableCustomerRowHeight(cells: DiffRowHeightCell[], maxHeight: number
   const maxLines = cells.reduce((max, cell) => (
     Math.max(max, estimatedWrappedLines(cell.value, cell.width))
   ), 1);
-  // 実Excel（Meiryo 11pt）のAutoFitに合わせ、顧客版は本文1行あたり17ptを確保する。
+  // 実Excel（Meiryo 11pt）のAutoFitに合わせ、提出版は本文1行あたり17ptを確保する。
   return Math.min(maxHeight, 28 + Math.max(0, maxLines - 1) * 17);
 }
 
@@ -2084,6 +2086,9 @@ interface CustomerDiffItem {
   sectionKey: string;
   sectionLabel: string;
   target: string;
+  parentTarget: string;
+  targetName: string;
+  targetCode: string;
   settingItem: string;
   targetDetail: string;
   settingItemDetail: string;
@@ -2094,7 +2099,8 @@ interface CustomerDiffItem {
   after: string;
   rawBefore: CustomerRawValue;
   rawAfter: CustomerRawValue;
-  reviewNote: string;
+  tableChild: boolean;
+  field?: CustomerFieldColumns;
 }
 
 interface CustomerRawValue {
@@ -2343,15 +2349,21 @@ function customerFieldTargetLabel(
   targetBundle?: DiffXlsxBundle
 ): string {
   const identity = fieldDisplayIdentity(row, info, { rows: [], sourceBundle, targetBundle });
+  const preferredBundle = row.type === 'removed' ? sourceBundle : targetBundle;
+  const fallbackBundle = row.type === 'removed' ? targetBundle : sourceBundle;
   if (info.isSubField) {
-    const preferredBundle = row.type === 'removed' ? sourceBundle : targetBundle;
-    const fallbackBundle = row.type === 'removed' ? targetBundle : sourceBundle;
     const preferredRoot = fieldSettingsProperties(preferredBundle)[info.rootCode];
     const fallbackRoot = fieldSettingsProperties(fallbackBundle)[info.rootCode];
+    const preferredChild = fieldDefinitionAt(preferredBundle, info);
+    const fallbackChild = fieldDefinitionAt(fallbackBundle, info);
     const rootName = customerPlainText(fieldDefinitionLabel(preferredRoot)
       || fieldDefinitionLabel(fallbackRoot)
+      || /^テーブル「([^」]+)」/.exec(String(row.reasonSummary || ''))?.[1]
       || info.rootCode);
-    const childName = customerPlainText(identity.fieldName.split(' > ').at(-1) || info.subFieldCode);
+    const childName = customerPlainText(fieldDefinitionLabel(preferredChild)
+      || fieldDefinitionLabel(fallbackChild)
+      || fieldLabelFromRow(row, info)
+      || info.subFieldCode);
     const root = rootName && rootName !== info.rootCode
       ? `テーブル「${rootName}」（コード: ${info.rootCode}）`
       : `テーブル「${info.rootCode}」`;
@@ -2362,9 +2374,36 @@ function customerFieldTargetLabel(
   }
   const fieldCode = String(identity.fieldCode || info.rootCode || '').trim();
   const fieldName = customerPlainText(identity.fieldName || fieldCode || 'フィールド');
+  const preferredDefinition = fieldDefinitionAt(preferredBundle, info);
+  const fallbackDefinition = fieldDefinitionAt(fallbackBundle, info);
+  const preferredPayload = row.type === 'removed' ? row.left : row.right;
+  const fallbackPayload = row.type === 'removed' ? row.right : row.left;
+  const definitionType = String(
+    preferredDefinition?.type
+    || fallbackDefinition?.type
+    || (preferredPayload && typeof preferredPayload === 'object' && !Array.isArray(preferredPayload)
+      ? (preferredPayload as Record<string, unknown>).type
+      : '')
+    || (fallbackPayload && typeof fallbackPayload === 'object' && !Array.isArray(fallbackPayload)
+      ? (fallbackPayload as Record<string, unknown>).type
+      : '')
+  ).toUpperCase();
+  const kind = definitionType === 'SUBTABLE' ? 'テーブル' : 'フィールド';
   return fieldName && fieldName !== fieldCode
-    ? `フィールド「${fieldName}」（コード: ${fieldCode}）`
-    : `フィールド「${fieldCode || fieldName || '名称不明'}」`;
+    ? `${kind}「${fieldName}」（コード: ${fieldCode}）`
+    : `${kind}「${fieldCode || fieldName || '名称不明'}」`;
+}
+
+interface CustomerFieldColumns {
+  structure: 'フィールド' | 'テーブル' | '└ テーブル内フィールド';
+  parentTableName: string;
+  parentTableCode: string;
+  fieldName: string;
+  fieldCode: string;
+  fieldType: string;
+  fieldPresence: '両方' | '比較元のみ' | '比較先のみ';
+  settingPresence: '両方' | '比較元のみ' | '比較先のみ' | '—';
+  wholeField: boolean;
 }
 
 function customerFieldSettingLabel(settingKey: string, fallback: string): string {
@@ -2590,6 +2629,105 @@ function customerItemParts(
   };
 }
 
+function customerFieldColumns(
+  row: DiffXlsxRow,
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle
+): CustomerFieldColumns | null {
+  const info = extractFieldPathInfo(String(row.path || ''));
+  if (!info) return null;
+
+  const sourceDefinition = fieldDefinitionAt(sourceBundle, info);
+  const targetDefinition = fieldDefinitionAt(targetBundle, info);
+  const preferredDefinition = row.type === 'removed' ? sourceDefinition : targetDefinition;
+  const fallbackDefinition = row.type === 'removed' ? targetDefinition : sourceDefinition;
+  const identity = fieldDisplayIdentity(row, info, { rows: [], sourceBundle, targetBundle });
+  const fieldName = customerPlainText(
+    fieldDefinitionLabel(preferredDefinition)
+    || fieldDefinitionLabel(fallbackDefinition)
+    || fieldLabelFromRow(row, info)
+    || info.activeCode
+  );
+  const preferredRoot = fieldSettingsProperties(row.type === 'removed' ? sourceBundle : targetBundle)[info.rootCode];
+  const fallbackRoot = fieldSettingsProperties(row.type === 'removed' ? targetBundle : sourceBundle)[info.rootCode];
+  const parentTableName = info.isSubField
+    ? customerPlainText(
+      fieldDefinitionLabel(preferredRoot)
+      || fieldDefinitionLabel(fallbackRoot)
+      || /^テーブル「([^」]+)」/.exec(String(row.reasonSummary || ''))?.[1]
+      || info.rootCode
+    )
+    : '—';
+  const definitionType = String(
+    preferredDefinition?.type
+    || fallbackDefinition?.type
+    || ((row.type === 'removed' ? row.left : row.right) as Record<string, unknown> | null)?.type
+    || ((row.type === 'removed' ? row.right : row.left) as Record<string, unknown> | null)?.type
+    || ''
+  ).toUpperCase();
+  const wholeField = info.isFieldRoot || info.isSubFieldRoot;
+
+  let fieldPresence: CustomerFieldColumns['fieldPresence'];
+  if (wholeField && row.type === 'added') fieldPresence = '比較先のみ';
+  else if (wholeField && row.type === 'removed') fieldPresence = '比較元のみ';
+  else if (sourceDefinition && !targetDefinition) fieldPresence = '比較元のみ';
+  else if (!sourceDefinition && targetDefinition) fieldPresence = '比較先のみ';
+  else fieldPresence = '両方';
+
+  const settingPresence: CustomerFieldColumns['settingPresence'] = wholeField
+    ? '—'
+    : row.type === 'added'
+      ? '比較先のみ'
+      : row.type === 'removed'
+        ? '比較元のみ'
+        : '両方';
+
+  return {
+    structure: info.isSubField
+      ? '└ テーブル内フィールド'
+      : definitionType === 'SUBTABLE'
+        ? 'テーブル'
+        : 'フィールド',
+    parentTableName,
+    parentTableCode: info.isSubField ? String(info.rootCode) : '—',
+    fieldName: fieldName || String(info.activeCode || '名称不明'),
+    fieldCode: String(info.activeCode || identity.fieldCode || '—'),
+    fieldType: identity.fieldType,
+    fieldPresence,
+    settingPresence,
+    wholeField
+  };
+}
+
+function customerTargetColumns(
+  row: DiffXlsxRow,
+  parts: CustomerItemParts,
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle
+): Pick<CustomerDiffItem, 'parentTarget' | 'targetName' | 'targetCode' | 'tableChild' | 'field'> {
+  const field = customerFieldColumns(row, sourceBundle, targetBundle);
+  if (!field) {
+    return {
+      parentTarget: '—',
+      targetName: parts.target,
+      targetCode: '—',
+      tableChild: false
+    };
+  }
+  const parentTarget = field.parentTableName === '—'
+    ? '—'
+    : field.parentTableName === field.parentTableCode
+      ? field.parentTableCode
+      : `${field.parentTableName}（${field.parentTableCode}）`;
+  return {
+    parentTarget,
+    targetName: field.fieldName,
+    targetCode: field.fieldCode,
+    tableChild: field.structure === '└ テーブル内フィールド',
+    field
+  };
+}
+
 function customerSideIsAbsent(row: DiffXlsxRow, side: 'source' | 'target'): boolean {
   if (side === 'source' && row.type === 'added') return true;
   if (side === 'target' && row.type === 'removed') return true;
@@ -2598,7 +2736,7 @@ function customerSideIsAbsent(row: DiffXlsxRow, side: 'source' | 'target'): bool
 }
 
 function customerRawValue(row: DiffXlsxRow, side: 'source' | 'target'): CustomerRawValue {
-  if (customerSideIsAbsent(row, side)) return { state: '不存在', text: '—' };
+  if (customerSideIsAbsent(row, side)) return { state: '存在しません', text: '—' };
 
   const value = side === 'source' ? row.left : row.right;
   if (value === undefined) return { state: '未定義（undefined）', text: 'undefined' };
@@ -2621,6 +2759,12 @@ function customerRawValue(row: DiffXlsxRow, side: 'source' | 'target'): Customer
     return { state: `オブジェクト（${Object.keys(value as Record<string, unknown>).length}項目）`, text: stringifyForDiff(value) };
   }
   return { state: typeof value, text: String(value) };
+}
+
+function customerRawDisplayValue(raw: CustomerRawValue): string {
+  if (raw.state === '存在しません') return '存在しません';
+  if (raw.state === '文字列（空文字）') return '空文字';
+  return raw.text;
 }
 
 const CUSTOMER_MAIN_VALUE_LIMIT = 120;
@@ -2808,7 +2952,7 @@ function customerReadableValue(
   sourceBundle?: DiffXlsxBundle,
   targetBundle?: DiffXlsxBundle
 ): string {
-  if (customerSideIsAbsent(row, side)) return '（存在しません）';
+  if (customerSideIsAbsent(row, side)) return '存在しません';
 
   const value = side === 'source' ? row.left : row.right;
   const bundle = side === 'source' ? sourceBundle : targetBundle;
@@ -2850,76 +2994,47 @@ function customerReadableValue(
   return compactCustomerMainValue(display);
 }
 
-function customerReviewNote(row: DiffXlsxRow): string {
-  const key = sectionKeyOfRow(row);
-  const fieldInfo = extractFieldPathInfo(String(row.path || ''));
-  if (fieldInfo) {
-    const identity = fieldDisplayIdentity(row, fieldInfo, { rows: [] });
-    const setting = fieldSettingIdentity(fieldInfo);
-    return fieldSettingReviewGuidance({
-      rowIndex: 0,
-      fieldKey: identity.fieldKey,
-      fieldCode: identity.fieldCode,
-      fieldName: identity.fieldName,
-      fieldType: identity.fieldType,
-      settingKey: setting.settingKey,
-      settingLabel: setting.settingLabel,
-      row
-    });
-  }
-  if (row._stateRenameNotice) {
-    return 'ステータス名の変更が意図したものか確認してください。この行は確認専用で、自動反映の対象外です。';
-  }
-  const path = String(row.path || '');
-  if (/(?:^|\.)filterCond$/.test(path)) {
-    if (row.right == null || row.right === '') {
-      return '条件がなくなり対象が広がる可能性があります。意図した変更か確認してください。';
-    }
-    if (row.left == null || row.left === '') {
-      return '条件が追加され対象が絞られます。意図した変更か確認してください。';
-    }
-    return '対象となる条件が変わります。変更前後の対象レコードを確認してください。';
-  }
-  if (/(?:^|\.)sort$/.test(path)) {
-    return '表示順が変わります。利用者が探しやすい順序になっているか確認してください。';
-  }
-  if (/(?:^|\.)(?:width|height|innerWidth|innerHeight)$/.test(path)) {
-    return '画面上の幅・高さが変わります。入力欄や一覧の見え方を確認してください。';
-  }
-  const guidance: Record<string, string> = {
-    appSettings: 'アプリの基本設定が意図した変更か確認してください。',
-    appInfo: 'アプリ情報が意図した変更か確認してください。',
-    layoutSettings: '配置や表示サイズが意図した変更か確認してください。',
-    formSettings: 'フォーム設定が意図した変更か確認してください。',
-    viewSettings: '表示項目・条件・並び順が意図した変更か確認してください。',
-    reportSettings: 'グラフの項目・条件が意図した変更か確認してください。',
-    processSettings: 'ステータス・遷移条件が意図した変更か確認してください。',
-    actionSettings: 'アクション設定が意図した変更か確認してください。',
-    categories: 'カテゴリ設定が意図した変更か確認してください。'
-  };
-  const note = guidance[key] || '変更内容が意図したものか確認してください。';
-  return row._nonActionable ? `${note} この行は確認専用で、自動反映の対象外です。` : note;
-}
-
-function buildCustomerDiffItems(ctx: DiffXlsxContext): CustomerDiffItem[] {
-  const actualRows = (ctx.rows || []).filter((row) => !row._displayOnly && row.type !== 'same');
+function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = false): CustomerDiffItem[] {
+  const sourceRows = includeTableChildren
+    ? expandSubtableRowsForDisplay((ctx.rows || []) as any) as DiffXlsxRow[]
+    : (ctx.rows || []);
+  const actualRows = sourceRows.filter((row) => (
+    row.type !== 'same'
+    && (!row._displayOnly || (includeTableChildren && row._expandedFromTable === true))
+  ));
   const items: CustomerDiffItem[] = [];
   for (const [sectionKey, rows] of groupRowsBySection(actualRows)) {
     const sectionLabel = customerSectionLabel(sectionKey);
     for (const row of rows) {
-      const before = customerReadableValue(row, 'source', ctx.sourceBundle, ctx.targetBundle);
-      const after = customerReadableValue(row, 'target', ctx.sourceBundle, ctx.targetBundle);
-      const rawBefore = customerRawValue(row, 'source');
-      const rawAfter = customerRawValue(row, 'target');
       const parts = customerItemParts(row, ctx.sourceBundle, ctx.targetBundle);
+      const targetColumns = customerTargetColumns(row, parts, ctx.sourceBundle, ctx.targetBundle);
+      const wholeFieldExistenceChange = targetColumns.field?.wholeField
+        && (row.type === 'added' || row.type === 'removed');
+      const before = wholeFieldExistenceChange
+        ? row.type === 'added' ? '存在しません' : '存在'
+        : customerReadableValue(row, 'source', ctx.sourceBundle, ctx.targetBundle);
+      const after = wholeFieldExistenceChange
+        ? row.type === 'removed' ? '存在しません' : '存在'
+        : customerReadableValue(row, 'target', ctx.sourceBundle, ctx.targetBundle);
+      const rawBeforeBase = customerRawValue(row, 'source');
+      const rawAfterBase = customerRawValue(row, 'target');
+      const rawBefore = wholeFieldExistenceChange
+        ? { ...rawBeforeBase, state: row.type === 'added' ? '存在しません' : '存在' }
+        : rawBeforeBase;
+      const rawAfter = wholeFieldExistenceChange
+        ? { ...rawAfterBase, state: row.type === 'removed' ? '存在しません' : '存在' }
+        : rawAfterBase;
       const targetDetail = parts.target;
-      const settingItemDetail = parts.settingItem;
+      const settingItemDetail = targetColumns.field?.wholeField
+        ? targetColumns.field.structure === 'テーブル' ? 'テーブル自体' : 'フィールド自体'
+        : parts.settingItem;
       items.push({
         index: items.length,
         row,
         sectionKey,
         sectionLabel,
         target: customerPlainText(targetDetail, 80),
+        ...targetColumns,
         settingItem: customerPlainText(settingItemDetail, 80),
         targetDetail,
         settingItemDetail,
@@ -2929,8 +3044,7 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext): CustomerDiffItem[] {
         before,
         after,
         rawBefore,
-        rawAfter,
-        reviewNote: customerReviewNote(row)
+        rawAfter
       });
     }
   }
@@ -3114,8 +3228,8 @@ function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[])
   const sourceName = customerAppName(ctx.sourceBundle, '比較元');
   const targetName = customerAppName(ctx.targetBundle, '比較先');
   const headers = [
-    'No.', '変更区分', '分類', '設定対象', '変更項目',
-    `変更前\n${sourceName}`, `変更後\n${targetName}`, '確認すること'
+    'No.', '変更区分', '分類', '設定対象', '差分プロパティ',
+    `変更前\n${sourceName}`, `変更後\n${targetName}`
   ];
   const rows: (string | number | null)[][] = [headers];
   const rowStyles: XlsxRowStyle[] = ['normal'];
@@ -3136,8 +3250,7 @@ function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[])
       item.target,
       item.settingItem,
       item.before,
-      item.after,
-      item.reviewNote
+      item.after
     ]);
     rowStyles.push('normal');
     const styles: Array<XlsxCellStyle | undefined> = [];
@@ -3150,27 +3263,25 @@ function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[])
     styles[4] = alternate ? 'zebra' : 'normal';
     styles[5] = item.changeType === '追加' ? 'diffAbsent' : 'diffBefore';
     styles[6] = item.changeType === '削除' ? 'diffAbsent' : 'diffAfter';
-    styles[7] = 'info';
     cellStyles.push(styles);
     internalHyperlinks.push({
       ref: `A${index + 2}`,
       targetSheet: '設定値詳細',
-      targetCell: `A${index + 3}`,
-      tooltip: '比較元・比較先の状態・型・原文を確認'
+      targetCell: `A${index + 2}`,
+      tooltip: '比較元・比較先の原文を確認'
     });
     rowHeights.push(readableCustomerRowHeight([
       { value: item.sectionLabel, width: 14 },
       { value: item.target, width: 24 },
       { value: item.settingItem, width: 22 },
       { value: item.before, width: 22 },
-      { value: item.after, width: 22 },
-      { value: item.reviewNote, width: 28 }
+      { value: item.after, width: 22 }
     ], 220));
   });
   return {
     name: '変更一覧',
     rows,
-    colWidths: [7, 10, 14, 24, 22, 22, 22, 28],
+    colWidths: [7, 10, 14, 24, 22, 22, 22],
     rowStyles,
     cellStyles,
     headerRow: 1,
@@ -3193,6 +3304,109 @@ function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[])
   };
 }
 
+function buildCustomerFieldDiffSheet(
+  ctx: DiffXlsxContext,
+  items: CustomerDiffItem[]
+): XlsxSheet | null {
+  const fieldItems = buildCustomerDiffItems(ctx, true).filter((item) => !!item.field);
+  if (!fieldItems.length) return null;
+
+  const headers = [
+    'No.', '変更区分', '構造', '親テーブル', 'フィールド名', 'フィールドコード',
+    'フィールド種別', '差分プロパティ', 'フィールド存在', '設定値存在',
+    '変更前', '変更後'
+  ];
+  const rows: (string | number | null)[][] = [headers];
+  const rowStyles: XlsxRowStyle[] = ['normal'];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[]];
+  const rowHeights: number[] = [48];
+  const rowOutlines: NonNullable<XlsxSheet['rowOutlines']> = [undefined];
+  const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
+  const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
+    '追加': 'changeAdded',
+    '削除': 'changeRemoved',
+    '変更': 'changeChanged',
+    '要素の移動': 'changeMoved'
+  };
+  const actualIndexByRow = new Map(items.map((item, index) => [item.row, index]));
+
+  fieldItems.forEach((item, index) => {
+    const field = item.field!;
+    rows.push([
+      index + 1,
+      item.changeType,
+      field.structure,
+      item.parentTarget,
+      field.fieldName,
+      field.fieldCode,
+      field.fieldType,
+      item.settingItem,
+      field.fieldPresence,
+      field.settingPresence,
+      item.before,
+      item.after
+    ]);
+    rowStyles.push('normal');
+    rowOutlines.push(item.tableChild ? { level: 1 } : undefined);
+    const alternate = index % 2 === 1;
+    const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
+    const styles: Array<XlsxCellStyle | undefined> = Array.from({ length: headers.length }, () => baseStyle);
+    const actualIndex = actualIndexByRow.get(item.row);
+    styles[0] = actualIndex == null ? 'center' : 'hyperlink';
+    styles[1] = changeStyles[item.changeType];
+    styles[2] = field.structure === 'テーブル' ? 'category' : baseStyle;
+    styles[8] = 'center';
+    styles[9] = 'center';
+    styles[10] = item.changeType === '追加' ? 'diffAbsent' : 'diffBefore';
+    styles[11] = item.changeType === '削除' ? 'diffAbsent' : 'diffAfter';
+    cellStyles.push(styles);
+    if (actualIndex != null) {
+      internalHyperlinks.push({
+        ref: `A${index + 2}`,
+        targetSheet: '設定値詳細',
+        targetCell: `A${actualIndex + 2}`,
+        tooltip: '比較元・比較先の原文を確認'
+      });
+    }
+    rowHeights.push(readableCustomerRowHeight([
+      { value: field.structure, width: 17 },
+      { value: item.parentTarget, width: 24 },
+      { value: field.fieldName, width: 22 },
+      { value: field.fieldCode, width: 22 },
+      { value: field.fieldType, width: 17 },
+      { value: item.settingItem, width: 22 },
+      { value: item.before, width: 24 },
+      { value: item.after, width: 24 }
+    ], 240));
+  });
+
+  return {
+    name: 'フィールド差分',
+    rows,
+    colWidths: [7, 10, 20, 24, 22, 22, 17, 22, 15, 15, 24, 24],
+    rowStyles,
+    cellStyles,
+    headerRow: 1,
+    freezeRows: 1,
+    freezeColumns: 6,
+    rowHeights,
+    rowOutlines,
+    outlineSummaryBelow: false,
+    materializeEmptyCellsFromRow: 1,
+    internalHyperlinks,
+    showGridLines: false,
+    zoomScale: 85,
+    print: {
+      orientation: 'landscape',
+      fitToWidth: 2,
+      fitToHeight: 0,
+      repeatRows: { from: 1, to: 1 },
+      repeatColumns: { from: 1, to: 6 },
+      footer: '&Lフィールド差分&Rページ &P / &N'
+    }
+  };
+}
+
 function buildCustomerValueDetailSheet(
   ctx: DiffXlsxContext,
   items: CustomerDiffItem[],
@@ -3206,23 +3420,13 @@ function buildCustomerValueDetailSheet(
     `${continuation.item.index}:${continuation.side}`,
     continuation
   ]));
-  const rows: (string | number | null)[][] = [
-    [
-      '全差分の状態・型・原文です。非表示、マスキング、省略は行っていません。', '', '', '', '',
-      '状態・型で不存在／undefined／null／空文字を区別できます。', '',
-      '長文セルは「長文原文」へ移動します。並べ替え後はNo.で照合してください。', '', ''
-    ],
-    [
-      'No.', '変更区分', '分類', '設定対象', '変更項目',
-      `変更前の状態・型\n${sourceName}`, `変更前の原文\n${sourceName}`,
-      `変更後の状態・型\n${targetName}`, `変更後の原文\n${targetName}`, '変更一覧へ'
-    ]
-  ];
-  const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
-  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[
-    'subtitle', undefined, undefined, undefined, undefined, 'info', undefined, 'warning'
-  ], []];
-  const rowHeights: number[] = [64, 52];
+  const rows: (string | number | null)[][] = [[
+    'No.', '変更区分', '分類', '設定対象', '差分プロパティ',
+    `変更前の原文\n${sourceName}`, `変更後の原文\n${targetName}`, '変更一覧へ'
+  ]];
+  const rowStyles: XlsxRowStyle[] = ['normal'];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[]];
+  const rowHeights: number[] = [52];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
     '追加': 'changeAdded',
@@ -3236,10 +3440,10 @@ function buildCustomerValueDetailSheet(
     const afterContinuation = continuationByKey.get(`${item.index}:target`);
     const beforeText = beforeContinuation
       ? `長文原文へ（${item.rawBefore.text.length}文字・${beforeContinuation.chunks.length}分割）`
-      : item.rawBefore.text;
+      : customerRawDisplayValue(item.rawBefore);
     const afterText = afterContinuation
       ? `長文原文へ（${item.rawAfter.text.length}文字・${afterContinuation.chunks.length}分割）`
-      : item.rawAfter.text;
+      : customerRawDisplayValue(item.rawAfter);
     const settingItemDetail = item.technicalPath
       ? `${item.settingItemDetail}\n内部パス: ${item.technicalPath}`
       : item.settingItemDetail;
@@ -3249,9 +3453,7 @@ function buildCustomerValueDetailSheet(
       item.sectionLabel,
       item.targetDetail,
       settingItemDetail,
-      item.rawBefore.state,
       beforeText,
-      item.rawAfter.state,
       afterText,
       `変更一覧 No.${item.index + 1}へ`
     ]);
@@ -3263,23 +3465,19 @@ function buildCustomerValueDetailSheet(
     styles[2] = startsCategory ? 'category' : index % 2 === 1 ? 'zebra' : 'normal';
     styles[3] = index % 2 === 1 ? 'zebra' : 'normal';
     styles[4] = index % 2 === 1 ? 'zebra' : 'normal';
-    styles[5] = item.changeType === '追加' ? 'diffAbsent' : 'diffBefore';
-    styles[6] = beforeContinuation ? 'hyperlink' : item.changeType === '追加' ? 'diffAbsent' : 'diffBefore';
-    styles[7] = item.changeType === '削除' ? 'diffAbsent' : 'diffAfter';
-    styles[8] = afterContinuation ? 'hyperlink' : item.changeType === '削除' ? 'diffAbsent' : 'diffAfter';
-    styles[9] = 'actionLink';
+    styles[5] = beforeContinuation ? 'hyperlink' : item.changeType === '追加' ? 'diffAbsent' : 'diffBefore';
+    styles[6] = afterContinuation ? 'hyperlink' : item.changeType === '削除' ? 'diffAbsent' : 'diffAfter';
+    styles[7] = 'actionLink';
     cellStyles.push(styles);
     rowHeights.push(readableCustomerRowHeight([
       { value: item.targetDetail, width: 24 },
       { value: settingItemDetail, width: 22 },
-      { value: item.rawBefore.state, width: 15 },
       { value: beforeText, width: 42 },
-      { value: item.rawAfter.state, width: 15 },
       { value: afterText, width: 42 }
     ], 395));
     if (beforeContinuation) {
       internalHyperlinks.push({
-        ref: `G${index + 3}`,
+        ref: `F${index + 2}`,
         targetSheet: '長文原文',
         targetCell: `A${beforeContinuation.firstRow}`,
         tooltip: `No.${item.index + 1} 変更前の長文原文へ移動`
@@ -3287,14 +3485,14 @@ function buildCustomerValueDetailSheet(
     }
     if (afterContinuation) {
       internalHyperlinks.push({
-        ref: `I${index + 3}`,
+        ref: `G${index + 2}`,
         targetSheet: '長文原文',
         targetCell: `A${afterContinuation.firstRow}`,
         tooltip: `No.${item.index + 1} 変更後の長文原文へ移動`
       });
     }
     internalHyperlinks.push({
-      ref: `J${index + 3}`,
+      ref: `H${index + 2}`,
       targetSheet: '変更一覧',
       targetCell: `A${item.index + 2}`,
       tooltip: `変更一覧 No.${item.index + 1}へ戻る`
@@ -3304,15 +3502,14 @@ function buildCustomerValueDetailSheet(
   return {
     name: '設定値詳細',
     rows,
-    colWidths: [7, 11, 14, 24, 22, 15, 42, 15, 42, 18],
+    colWidths: [7, 11, 14, 24, 22, 42, 42, 18],
     rowStyles,
     cellStyles,
-    headerRow: 2,
-    freezeRows: 2,
+    headerRow: 1,
+    freezeRows: 1,
     freezeColumns: 5,
     rowHeights,
-    materializeEmptyCellsFromRow: 2,
-    merges: ['A1:E1', 'F1:G1', 'H1:J1'],
+    materializeEmptyCellsFromRow: 1,
     internalHyperlinks,
     showGridLines: false,
     zoomScale: 85,
@@ -3320,9 +3517,9 @@ function buildCustomerValueDetailSheet(
       orientation: 'landscape',
       fitToWidth: 2,
       fitToHeight: 0,
-      repeatRows: { from: 2, to: 2 },
+      repeatRows: { from: 1, to: 1 },
       repeatColumns: { from: 1, to: 5 },
-      footer: '&L設定値詳細（型・状態・原文）&Rページ &P / &N'
+      footer: '&L設定値詳細（原文）&Rページ &P / &N'
     }
   };
 }
@@ -3331,14 +3528,14 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
   if (!continuations.length) return null;
 
   const rows: (string | number | null)[][] = [[
-    '長い原文を可視セルへ分割しています。参照・対象・比較側・分割No.順に、区切り文字を追加せず連結すると原文表記を完全に復元できます。', '', '', '', '', '',
+    '長い原文を可視セルへ分割しています。参照・対象・比較側・分割No.順に、区切り文字を追加せず連結すると原文表記を完全に復元できます。', '', '', '', '',
     'すべての行・列は表示状態です。数式、外部リンク、別添ファイルは使用していません。', ''
   ], [
-    '参照', '対象', '比較側', '状態・型', '分割No.', '文字位置', '原文（順に連結）', '参照元へ'
+    '参照', '対象', '比較側', '分割No.', '文字位置', '原文（順に連結）', '参照元へ'
   ]];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[
-    'subtitle', undefined, undefined, undefined, undefined, undefined, 'info'
+    'subtitle', undefined, undefined, undefined, undefined, 'info'
   ], []];
   const rowHeights: number[] = [54, 42];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
@@ -3367,7 +3564,6 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
         reference,
         target,
         side,
-        raw.state,
         `${chunkIndex + 1} / ${continuation.chunks.length}`,
         `${start}–${end} / ${raw.text.length}文字`,
         chunk,
@@ -3379,7 +3575,6 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
         alternate ? 'zebraCenter' : 'center',
         alternate ? 'zebra' : 'normal',
         'center',
-        'info',
         'center',
         'info',
         difference ? difference.side === 'source' ? 'diffBefore' : 'diffAfter' : 'warning',
@@ -3390,9 +3585,9 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
         { value: chunk, width: CUSTOMER_RAW_CHUNK_COLUMN_WIDTH }
       ], 395));
       internalHyperlinks.push({
-        ref: `H${rowNumber}`,
+        ref: `G${rowNumber}`,
         targetSheet: difference ? '設定値詳細' : '確認できなかった範囲',
-        targetCell: `A${(difference ? difference.item.index : coverage!.issue.index) + 3}`,
+        targetCell: `A${difference ? difference.item.index + 2 : coverage!.issue.index + 3}`,
         tooltip: `${returnLabel}戻る`
       });
     });
@@ -3401,15 +3596,15 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
   return {
     name: '長文原文',
     rows,
-    colWidths: [7, 24, 9, 16, 11, 20, CUSTOMER_RAW_CHUNK_COLUMN_WIDTH, 20],
+    colWidths: [7, 24, 9, 11, 20, CUSTOMER_RAW_CHUNK_COLUMN_WIDTH, 20],
     rowStyles,
     cellStyles,
     headerRow: 2,
     freezeRows: 2,
-    freezeColumns: 4,
+    freezeColumns: 3,
     rowHeights,
     materializeEmptyCellsFromRow: 2,
-    merges: ['A1:F1', 'G1:H1'],
+    merges: ['A1:E1', 'F1:G1'],
     internalHyperlinks,
     showGridLines: false,
     zoomScale: 80,
@@ -3418,7 +3613,7 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
       fitToWidth: 2,
       fitToHeight: 0,
       repeatRows: { from: 2, to: 2 },
-      repeatColumns: { from: 1, to: 6 },
+      repeatColumns: { from: 1, to: 5 },
       footer: '&L長文原文（分割証跡）&Rページ &P / &N'
     }
   };
@@ -3525,7 +3720,7 @@ function buildCustomerIssuesSheet(
     continuation
   ]));
   const rows: (string | number | null)[][] = [
-    ['このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。取得・打切り情報はマスキングせず収録しています。', '', '', '', ''],
+    ['このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。取得・打切り情報の原文を確認してください。', '', '', '', ''],
     ['分類', '対象', '確認状態', '説明', '取得・打切り情報（原文）']
   ];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
@@ -3598,6 +3793,8 @@ function buildCustomerDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
   const issues = buildCustomerIssuesSheet(issueItems, issueContinuations);
   if (issues) sheets.push(issues);
   sheets.push(buildCustomerListSheet(ctx, items));
+  const fieldDiff = buildCustomerFieldDiffSheet(ctx, items);
+  if (fieldDiff) sheets.push(fieldDiff);
   const valueDetails = buildCustomerValueDetailSheet(ctx, items, differenceContinuations);
   if (valueDetails) sheets.push(valueDetails);
   const longRaw = buildCustomerLongRawSheet(allContinuations);

@@ -699,7 +699,7 @@ async function captureReport(context, variant, reportFile, outDir) {
     assert.equal(reportContract.reportWorkspace, 1, 'after: HTMLレポートの全体workspace契約がありません');
     assert.equal(reportContract.reviewWorkspace, 1, 'after: HTMLレポートのレビューworkspace契約がありません');
     assert.equal(reportContract.comparedOnlyControls, 0, 'after: 差分行のみHTMLに比較設定専用の操作が残っています');
-    assert.match(reportContract.disclosureText, /全設定.*未収録[\s\S]*匿名化.*ではありません/, 'after: 差分行のみHTMLの収録範囲と安全上の注意が不足しています');
+    assert.match(reportContract.disclosureText, /全設定.*未収録[\s\S]*変更された差分行[\s\S]*共有前に内容を確認/, 'after: 差分行のみHTMLの収録範囲と共有前確認の案内が不足しています');
     assert.match(reportContract.comparisonConditions, /無視[\s\S]*正規化/, 'after: HTMLに適用済み比較条件が常時表示されません');
     assert.ok(reportContract.existenceChips > 0, 'after: HTMLレポートに存在状況の表示がありません');
     assert.ok(reportContract.differenceChips > 0, 'after: HTMLレポートに差分内容の表示がありません');
@@ -1180,7 +1180,7 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     const completionReview = page.locator('#kus-diff-lite [data-kus-dl-completion="review"]');
     const completionXlsx = page.locator('#kus-diff-lite [data-kus-dl-completion="xlsx"]');
     assert.equal(await completionReview.isVisible(), true, 'after: 比較完了後の「結果を確認」が見えません');
-    assert.equal(await completionXlsx.isVisible(), true, 'after: 比較完了後の顧客向けExcel導線が見えません');
+    assert.equal(await completionXlsx.isVisible(), true, 'after: 比較完了後のExcel導線が見えません');
     await completionReview.click();
     assert.equal(await page.evaluate(() => document.activeElement?.hasAttribute('data-kus-dl-overview') || false), true,
       'after: 「結果を確認」で完全性サマリーへフォーカスできません');

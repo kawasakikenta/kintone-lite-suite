@@ -123,13 +123,22 @@ async function installBrowserFixtures(page) {
 
     // HTMLレポート生成は実行しつつ、回帰テストでは実ファイルをダウンロードしない。
     window.__downloadCount = 0;
+    window.__downloadNames = [];
+    window.__downloadBlobs = [];
     let blobSequence = 0;
-    URL.createObjectURL = () => `blob:multi-dom-${++blobSequence}`;
-    URL.revokeObjectURL = () => {};
+    const blobUrls = new Map();
+    URL.createObjectURL = (blob) => {
+      const url = `blob:multi-dom-${++blobSequence}`;
+      blobUrls.set(url, blob);
+      return url;
+    };
+    URL.revokeObjectURL = (url) => { blobUrls.delete(url); };
     const nativeAnchorClick = HTMLAnchorElement.prototype.click;
     HTMLAnchorElement.prototype.click = function click() {
       if (this.download) {
         window.__downloadCount += 1;
+        window.__downloadNames.push(this.download);
+        window.__downloadBlobs.push(blobUrls.get(this.getAttribute('href') || this.href) || null);
         return;
       }
       return nativeAnchorClick.call(this);
@@ -222,12 +231,45 @@ async function verifyAppReferenceExclusionControl(page) {
     '参照先アプリIDの除外設定は初期状態でオフである必要があります');
   assert.equal(await page.getByText('よく使う除外', { exact: true }).isVisible(), true,
     '参照先アプリIDの除外設定が常時見える位置にありません');
-  assert.equal(await page.getByText(/オン／オフを変更した後は再比較してください。差分件数・画面結果・顧客向けExcelに反映されます。/).isVisible(), true,
+  assert.equal(await page.getByText(/オン／オフを変更した後は再比較してください。差分件数・画面結果・Excelに反映されます。/).isVisible(), true,
     '参照先アプリIDの除外が比較結果とExcelへ与える影響の説明がありません');
 }
 
 function multiResultRows(page) {
   return page.getByRole('table', { name: /複数比較の結果/ }).locator('tbody tr');
+}
+
+async function inspectStoredZipDownload(page, downloadIndex) {
+  return page.evaluate(async (index) => {
+    const blob = window.__downloadBlobs[index];
+    if (!(blob instanceof Blob)) throw new Error(`ダウンロード ${index + 1} のBlobが見つかりません`);
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const decoder = new TextDecoder('utf-8');
+    const entries = [];
+    let offset = 0;
+    while (offset + 4 <= bytes.length && view.getUint32(offset, true) === 0x04034b50) {
+      const method = view.getUint16(offset + 8, true);
+      const size = view.getUint32(offset + 18, true);
+      const nameLength = view.getUint16(offset + 26, true);
+      const extraLength = view.getUint16(offset + 28, true);
+      const nameStart = offset + 30;
+      const dataStart = nameStart + nameLength + extraLength;
+      entries.push({
+        name: decoder.decode(bytes.slice(nameStart, nameStart + nameLength)),
+        method,
+        size,
+        prefix: Array.from(bytes.slice(dataStart, dataStart + 4))
+      });
+      offset = dataStart + size;
+    }
+    return {
+      filename: window.__downloadNames[index] || '',
+      type: blob.type,
+      size: blob.size,
+      entries
+    };
+  }, downloadIndex);
 }
 
 async function dispatchDoubleRun(page) {
@@ -257,6 +299,8 @@ async function inspectResult(page) {
       [...row.querySelectorAll('td')].map((cell) => cell.textContent.replace(/\s+/g, ' ').trim())
     );
     const excelButtons = [...(root?.querySelectorAll('[data-kus-dl-multi-xlsx]') || [])];
+    const batchButton = root?.querySelector('[data-kus-dl-multi-xlsx-all]');
+    const resultScroll = root?.querySelector('.kus-dl-table-scroll');
     return {
       statusTone: status?.dataset?.tone || '',
       statusText: status?.textContent?.replace(/\s+/g, ' ').trim() || '',
@@ -265,6 +309,9 @@ async function inspectResult(page) {
       runAllDisabled: !!runAll?.disabled,
       excelButtonCount: excelButtons.length,
       excelButtonsEnabled: excelButtons.every((button) => !button.disabled),
+      batchButtonCount: batchButton ? 1 : 0,
+      batchButtonText: batchButton?.textContent?.replace(/\s+/g, ' ').trim() || '',
+      batchButtonOutsideScroll: !!batchButton && !!resultScroll && !resultScroll.contains(batchButton),
       downloads: Number(window.__downloadCount || 0),
       probe: JSON.parse(JSON.stringify(window.__multiProbe))
     };
@@ -289,6 +336,9 @@ function verifyResult(result, pageErrors) {
   assert.match(result.rows[2].join(' '), /App 404.*完了/, '中間失敗後の比較先が処理されていません');
   assert.equal(result.excelButtonCount, 2, '成功した比較先ごとのExcel保存ボタン数が不正です');
   assert.equal(result.excelButtonsEnabled, true, '複数比較のExcel保存ボタンが無効です');
+  assert.equal(result.batchButtonCount, 1, '成功した比較結果の一括Excel保存ボタンがありません');
+  assert.match(result.batchButtonText, /Excelをまとめて保存（2件・ZIP）/, '一括Excel保存ボタンの成功件数が不正です');
+  assert.equal(result.batchButtonOutsideScroll, true, '一括Excel保存ボタンが結果表の横スクロール内にあります');
   assert.match(result.statusText, /全比較先の比較が完了/, '複数比較が完了状態になっていません');
   assert.match(result.statusText, /失敗\s*1件/, '完了ステータスに失敗件数がありません');
   assert.equal(result.statusTone, 'warn', '一部失敗時のステータスが警告になっていません');
@@ -340,6 +390,8 @@ async function main() {
       '複数比較後の表示設定変更で結果表が消えました');
     assert.equal(await page.locator('[data-kus-dl-multi-xlsx]').count(), 2,
       '複数比較後の表示設定変更でExcel保存ボタンが消えました');
+    assert.equal(await page.locator('[data-kus-dl-multi-xlsx-all]').count(), 1,
+      '複数比較後の表示設定変更で一括Excel保存ボタンが消えました');
     await showDetails.evaluate((checkbox) => {
       checkbox.checked = true;
       checkbox.dispatchEvent(new Event('change', { bubbles: true }));
@@ -359,12 +411,42 @@ async function main() {
     assert.equal(result.downloadsAfterExcel, 3, 'Excel保存の二重クリックで重複ダウンロードされました');
     assert.deepEqual(pageErrors, [], 'Excel保存時にブラウザエラーが発生しました');
 
+    const bulkButton = page.locator('[data-kus-dl-multi-xlsx-all]');
+    const downloadsBeforeBulk = await page.evaluate(() => Number(window.__downloadCount || 0));
+    await bulkButton.evaluate((button) => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await page.waitForFunction((count) => window.__downloadCount === count + 1, downloadsBeforeBulk, { timeout: 15000 });
+    await page.waitForTimeout(500);
+    result.bulkZip = await inspectStoredZipDownload(page, downloadsBeforeBulk);
+    assert.equal(await page.evaluate(() => Number(window.__downloadCount || 0)), downloadsBeforeBulk + 1,
+      '一括Excel保存の二重クリックでZIPが重複ダウンロードされました');
+    assert.match(result.bulkZip.filename, /\.zip$/i, '一括Excelのダウンロード名がZIPではありません');
+    assert.match(result.bulkZip.type, /zip/i, '一括ExcelのMIME typeがZIPではありません');
+    assert.equal(result.bulkZip.entries.length, 2, '比較失敗を除いた成功2件がZIPへ収録されていません');
+    assert.deepEqual(result.bulkZip.entries.map((entry) => entry.name),
+      [...result.bulkZip.entries.map((entry) => entry.name)].sort((a, b) => a.localeCompare(b, 'ja')),
+      '一括ExcelのZIPエントリが比較順に並んでいません');
+    assert.deepEqual(result.bulkZip.entries.map((entry) => entry.name.slice(0, 4)), ['001_', '002_'],
+      '一括ExcelのZIPエントリに比較順の連番がありません');
+    assert.equal(result.bulkZip.entries.every((entry) => /\.xlsx$/i.test(entry.name)), true,
+      '一括ExcelのZIPにXLSX以外のファイルが含まれています');
+    assert.equal(result.bulkZip.entries.every((entry) => entry.method === 0), true,
+      '一括ExcelのZIPが想定外の圧縮方式です');
+    assert.equal(result.bulkZip.entries.every((entry) => entry.prefix.join(',') === '80,75,3,4'), true,
+      '一括ExcelのZIP内に正しいXLSXではないエントリがあります');
+    assert.equal(result.bulkZip.entries.some((entry) => /303/.test(entry.name)), false,
+      '比較失敗した App 303 のExcelが一括ZIPへ混入しました');
+
     const appReferenceExclusion = page.getByLabel('アプリID（比較対象・参照先）を比較から除外', { exact: true });
     await appReferenceExclusion.check();
     assert.equal(await multiResultRows(page).count(), 0,
       'アプリID除外条件の変更後も古い比較結果が表示されています');
     assert.equal(await page.locator('[data-kus-dl-multi-xlsx]').count(), 0,
       'アプリID除外条件の変更後も古いExcel保存ボタンが残っています');
+    assert.equal(await page.locator('[data-kus-dl-multi-xlsx-all]').count(), 0,
+      'アプリID除外条件の変更後も古い一括Excel保存ボタンが残っています');
     assert.equal(await page.locator('[data-kus-dl-export="xlsx"]').isDisabled(), true,
       'アプリID除外条件の変更後もExcel出力が有効です');
     assert.equal(await page.locator('[data-kus-dl-export="html"]').isDisabled(), true,
@@ -377,19 +459,23 @@ async function main() {
     await runAll.click();
     result.rowsImmediatelyAfterRerun = await multiResultRows(page).count();
     result.excelButtonsImmediatelyAfterRerun = await page.locator('[data-kus-dl-multi-xlsx]').count();
+    result.batchButtonsImmediatelyAfterRerun = await page.locator('[data-kus-dl-multi-xlsx-all]').count();
     assert.equal(result.rowsImmediatelyAfterRerun, 0, '複数比較の再実行開始時に古い結果表が残っています');
     assert.equal(result.excelButtonsImmediatelyAfterRerun, 0, '複数比較の再実行開始時に古いExcel保存ボタンが残っています');
+    assert.equal(result.batchButtonsImmediatelyAfterRerun, 0, '複数比較の再実行開始時に古い一括Excel保存ボタンが残っています');
     await page.waitForFunction(() => {
       const complete = [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
         .some((element) => (element.textContent || '').includes('全比較先の比較が完了'));
       return complete && window.__multiProbe.calls.length === 6;
     }, null, { timeout: 15000 });
     result.downloadsAfterRerun = await page.evaluate(() => Number(window.__downloadCount || 0));
-    assert.equal(result.downloadsAfterRerun, 5, '再実行後のHTML出力回数が不正です');
+    assert.equal(result.downloadsAfterRerun, 6, '再実行後のHTML出力回数が不正です');
     assert.equal(await multiResultRows(page).count(), 3,
       'アプリID除外条件を反映した再比較後に結果表が復元されませんでした');
     assert.equal(await page.locator('[data-kus-dl-multi-xlsx]').count(), 2,
       'アプリID除外条件を反映した再比較後にExcel保存ボタンが復元されませんでした');
+    assert.equal(await page.locator('[data-kus-dl-multi-xlsx-all]').count(), 1,
+      'アプリID除外条件を反映した再比較後に一括Excel保存ボタンが復元されませんでした');
     result.rerunAppReferenceFlags = await page.evaluate(() =>
       window.__multiProbe.calls.slice(3).map((call) => call.excludesAppReferences));
     assert.deepEqual(result.rerunAppReferenceFlags, [true, true, true],

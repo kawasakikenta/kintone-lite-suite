@@ -425,6 +425,39 @@ function resultTable(page) {
   return page.getByRole('table', { name: 'ペア一括比較の結果（登録順）', exact: true });
 }
 
+async function inspectStoredZipDownload(page, downloadIndex) {
+  return page.evaluate(async (index) => {
+    const blob = window.__folderDownloadBlobs[index];
+    if (!(blob instanceof Blob)) throw new Error(`ダウンロード ${index + 1} のBlobが見つかりません`);
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const decoder = new TextDecoder('utf-8');
+    const entries = [];
+    let offset = 0;
+    while (offset + 4 <= bytes.length && view.getUint32(offset, true) === 0x04034b50) {
+      const method = view.getUint16(offset + 8, true);
+      const size = view.getUint32(offset + 18, true);
+      const nameLength = view.getUint16(offset + 26, true);
+      const extraLength = view.getUint16(offset + 28, true);
+      const nameStart = offset + 30;
+      const dataStart = nameStart + nameLength + extraLength;
+      entries.push({
+        name: decoder.decode(bytes.slice(nameStart, nameStart + nameLength)),
+        method,
+        size,
+        prefix: Array.from(bytes.slice(dataStart, dataStart + 4))
+      });
+      offset = dataStart + size;
+    }
+    return {
+      filename: window.__folderProbe.downloadNames[index] || '',
+      type: blob.type,
+      size: blob.size,
+      entries
+    };
+  }, downloadIndex);
+}
+
 async function runFolderComparison(page, pageErrors) {
   await page.locator('[data-kus-dl-run-pairs]').click();
   await page.waitForFunction(() => {
@@ -456,6 +489,12 @@ async function runFolderComparison(page, pageErrors) {
     assert.equal(await rows.nth(index).locator('[data-kus-dl-multi-html]').count(), 1, `${index + 1}行目のHTML保存導線がありません`);
     assert.equal(await rows.nth(index).locator('[data-kus-dl-multi-xlsx]').count(), 1, `${index + 1}行目のExcel保存導線がありません`);
   }
+  const batchButton = page.locator('[data-kus-dl-multi-xlsx-all]');
+  assert.equal(await batchButton.count(), 1, 'フォルダ比較の一括Excel保存ボタンがありません');
+  assert.match((await batchButton.textContent()) || '', /Excelをまとめて保存（5件・ZIP）/,
+    'フォルダ比較の一括Excel保存ボタン件数が不正です');
+  assert.equal(await batchButton.evaluate((button) => !button.closest('.kus-dl-table-scroll')), true,
+    'フォルダ比較の一括Excel保存ボタンが結果表の横スクロール内にあります');
   assert.deepEqual(pageErrors, [], 'フォルダ比較中にブラウザエラーが発生しました');
   return probe;
 }
@@ -490,7 +529,37 @@ async function verifyExports(page) {
   assert.match(artifacts[1].text, /A-old/, '選択した1件目の変更前値がExcel内部XMLにありません');
   assert.match(artifacts[1].text, /B-new/, '選択した1件目の変更後値がExcel内部XMLにありません');
   assert.doesNotMatch(artifacts[1].text, /B-old|C-new/, '別ペアのキャッシュが1件目のExcelへ混入しました');
-  return { names, artifacts: artifacts.map(({ type, size, prefix }) => ({ type, size, prefix })) };
+  await page.waitForTimeout(400);
+  const downloadsBeforeBulk = await page.evaluate(() => window.__folderProbe.downloadCount);
+  await page.locator('[data-kus-dl-multi-xlsx-all]').evaluate((button) => {
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+  await page.waitForFunction((count) => window.__folderProbe.downloadCount === count + 1, downloadsBeforeBulk, { timeout: 20000 });
+  await page.waitForTimeout(500);
+  assert.equal(await page.evaluate(() => window.__folderProbe.downloadCount), downloadsBeforeBulk + 1,
+    'フォルダ比較の一括Excel二重クリックでZIPが重複ダウンロードされました');
+  const bulkZip = await inspectStoredZipDownload(page, downloadsBeforeBulk);
+  assert.match(bulkZip.filename, /\.zip$/i, 'フォルダ比較の一括Excelダウンロード名がZIPではありません');
+  assert.match(bulkZip.type, /zip/i, 'フォルダ比較の一括Excel MIME typeがZIPではありません');
+  assert.equal(bulkZip.entries.length, EXPECTED_PAIRS.length, 'フォルダ比較の成功Excelが一括ZIPへ全件収録されていません');
+  assert.deepEqual(bulkZip.entries.map((entry) => entry.name),
+    [...bulkZip.entries.map((entry) => entry.name)].sort((a, b) => a.localeCompare(b, 'ja')),
+    'フォルダ比較の一括ZIPエントリが登録順に並んでいません');
+  assert.deepEqual(bulkZip.entries.map((entry) => entry.name.slice(0, 4)),
+    EXPECTED_PAIRS.map((_, index) => `${String(index + 1).padStart(3, '0')}_`),
+    'フォルダ比較の一括ZIPエントリに登録順の連番がありません');
+  assert.equal(bulkZip.entries.every((entry) => /\.xlsx$/i.test(entry.name)), true,
+    'フォルダ比較の一括ZIPにXLSX以外のファイルが含まれています');
+  assert.equal(bulkZip.entries.every((entry) => entry.method === 0), true,
+    'フォルダ比較の一括ZIPが想定外の圧縮方式です');
+  assert.equal(bulkZip.entries.every((entry) => entry.prefix.join(',') === '80,75,3,4'), true,
+    'フォルダ比較の一括ZIP内に正しいXLSXではないエントリがあります');
+  return {
+    names,
+    artifacts: artifacts.map(({ type, size, prefix }) => ({ type, size, prefix })),
+    bulkZip
+  };
 }
 
 async function verifyMobileGeometry(page, outDir = '') {
@@ -502,7 +571,8 @@ async function verifyMobileGeometry(page, outDir = '') {
     const folder = document.querySelector('#kus-diff-lite .kus-dl-pair-folder');
     const mappingScroll = document.querySelector('#kus-diff-lite .kus-dl-pair-folder__mapping-scroll');
     const resultScroll = document.querySelector('#kus-diff-lite .kus-dl-table-scroll');
-    if (!body || !workflow || !folder || !mappingScroll || !resultScroll) throw new Error('モバイル幅の計測対象が見つかりません');
+    const batchButton = document.querySelector('#kus-diff-lite [data-kus-dl-multi-xlsx-all]');
+    if (!body || !workflow || !folder || !mappingScroll || !resultScroll || !batchButton) throw new Error('モバイル幅の計測対象が見つかりません');
     resultScroll.scrollLeft = resultScroll.scrollWidth;
     const saveButton = resultScroll.querySelector('[data-kus-dl-multi-xlsx]');
     const resultRect = resultScroll.getBoundingClientRect();
@@ -518,7 +588,9 @@ async function verifyMobileGeometry(page, outDir = '') {
       mappingScrollWidth: mappingScroll.scrollWidth,
       resultClientWidth: resultScroll.clientWidth,
       resultScrollWidth: resultScroll.scrollWidth,
-      saveButtonInside: !!buttonRect && buttonRect.left >= resultRect.left - 1 && buttonRect.right <= resultRect.right + 1
+      saveButtonInside: !!buttonRect && buttonRect.left >= resultRect.left - 1 && buttonRect.right <= resultRect.right + 1,
+      batchButtonOutsideResultScroll: !resultScroll.contains(batchButton),
+      batchButtonVisible: batchButton.getBoundingClientRect().width > 0 && batchButton.getBoundingClientRect().height > 0
     };
   });
   assert.ok(geometry.bodyScrollWidth <= geometry.bodyClientWidth + 1, '390px幅でパネル本文全体が横にはみ出しています');
@@ -527,6 +599,8 @@ async function verifyMobileGeometry(page, outDir = '') {
   assert.ok(geometry.mappingScrollWidth <= geometry.mappingClientWidth + 1, '390px幅の対応確認が横スクロールで分断されています');
   assert.ok(geometry.resultScrollWidth > geometry.resultClientWidth, '結果表の専用横スクロール領域がありません');
   assert.equal(geometry.saveButtonInside, true, '結果表を横スクロールしても保存ボタンへ到達できません');
+  assert.equal(geometry.batchButtonOutsideResultScroll, true, '一括Excel保存ボタンが結果表の横スクロール内にあります');
+  assert.equal(geometry.batchButtonVisible, true, '390px幅で一括Excel保存ボタンが表示されていません');
   if (outDir) {
     await page.locator('.kus-dl-pair-folder').screenshot({ path: path.join(outDir, 'pair-folders-mapping-mobile.png'), animations: 'disabled' });
   }
@@ -540,7 +614,7 @@ async function verifyReloadRaceStop(page) {
   await page.waitForFunction(() => (document.querySelector('[data-kus-dl-pair-folder-summary="source"]')?.textContent || '').includes('読み込み中'));
   assert.equal(await page.locator('[data-kus-dl-run-pairs]').isDisabled(), true, 'フォルダ再読込中も一括比較ボタンが有効です');
   assert.equal(await resultTable(page).count(), 0, 'フォルダ再読込開始時に旧結果が残っています');
-  assert.equal(await page.locator('[data-kus-dl-multi-html],[data-kus-dl-multi-xlsx]').count(), 0, 'フォルダ再読込開始時に旧保存導線が残っています');
+  assert.equal(await page.locator('[data-kus-dl-multi-html],[data-kus-dl-multi-xlsx],[data-kus-dl-multi-xlsx-all]').count(), 0, 'フォルダ再読込開始時に旧保存導線が残っています');
   await page.locator('[data-kus-dl-run-pairs]').evaluate((button) => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
   assert.equal(await page.evaluate(() => window.__folderProbe.compareCalls.length), compareCountBefore, 'フォルダ再読込中に旧ペアの比較が始まりました');
   await dispatchFolderFiles(page, 'source', FAST_SOURCE_FILES, { lastModified: 3 });
@@ -579,7 +653,7 @@ async function verifyInvalidReselectStop(context, browserBundle) {
     await page.waitForFunction(() => !(document.querySelector('[data-kus-dl-pair-folder-summary="source"]')?.textContent || '').includes('読み込み中'));
     assert.match((await alert.textContent()) || '', /取り込めません|JSON/, '無効な再選択のエラーをフォルダ領域に表示していません');
     assert.equal(await resultTable(page).count(), 0, '無効な再選択開始時に旧結果が残っています');
-    assert.equal(await page.locator('[data-kus-dl-multi-html],[data-kus-dl-multi-xlsx]').count(), 0, '無効な再選択後に旧保存導線が残っています');
+    assert.equal(await page.locator('[data-kus-dl-multi-html],[data-kus-dl-multi-xlsx],[data-kus-dl-multi-xlsx-all]').count(), 0, '無効な再選択後に旧保存導線が残っています');
     assert.equal(await page.locator('[data-kus-dl-pair-row]').count(), EXPECTED_PAIRS.length, '無効な再選択で確認済みペア表まで失われました');
 
     await page.locator('[data-kus-dl-run-pairs]').click();

@@ -149,14 +149,21 @@ async function installBrowserFixtures(page) {
     window.prompt = () => '';
     window.__downloadCount = 0;
     window.__downloadNames = [];
+    window.__downloadBlobs = [];
     let blobSequence = 0;
-    URL.createObjectURL = () => `blob:pairs-dom-${++blobSequence}`;
-    URL.revokeObjectURL = () => {};
+    const blobUrls = new Map();
+    URL.createObjectURL = (blob) => {
+      const url = `blob:pairs-dom-${++blobSequence}`;
+      blobUrls.set(url, blob);
+      return url;
+    };
+    URL.revokeObjectURL = (url) => { blobUrls.delete(url); };
     const nativeAnchorClick = HTMLAnchorElement.prototype.click;
     HTMLAnchorElement.prototype.click = function click() {
       if (this.download) {
         window.__downloadCount += 1;
         window.__downloadNames.push(this.download);
+        window.__downloadBlobs.push(blobUrls.get(this.getAttribute('href') || this.href) || null);
         return;
       }
       return nativeAnchorClick.call(this);
@@ -297,6 +304,39 @@ function pairResultTable(page) {
   return page.getByRole('table', { name: 'ペア一括比較の結果（登録順）', exact: true });
 }
 
+async function inspectStoredZipDownload(page, downloadIndex) {
+  return page.evaluate(async (index) => {
+    const blob = window.__downloadBlobs[index];
+    if (!(blob instanceof Blob)) throw new Error(`ダウンロード ${index + 1} のBlobが見つかりません`);
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const decoder = new TextDecoder('utf-8');
+    const entries = [];
+    let offset = 0;
+    while (offset + 4 <= bytes.length && view.getUint32(offset, true) === 0x04034b50) {
+      const method = view.getUint16(offset + 8, true);
+      const size = view.getUint32(offset + 18, true);
+      const nameLength = view.getUint16(offset + 26, true);
+      const extraLength = view.getUint16(offset + 28, true);
+      const nameStart = offset + 30;
+      const dataStart = nameStart + nameLength + extraLength;
+      entries.push({
+        name: decoder.decode(bytes.slice(nameStart, nameStart + nameLength)),
+        method,
+        size,
+        prefix: Array.from(bytes.slice(dataStart, dataStart + 4))
+      });
+      offset = dataStart + size;
+    }
+    return {
+      filename: window.__downloadNames[index] || '',
+      type: blob.type,
+      size: blob.size,
+      entries
+    };
+  }, downloadIndex);
+}
+
 async function inspectMainResult(page) {
   return page.evaluate(() => {
     const root = document.getElementById('kus-diff-lite');
@@ -309,11 +349,16 @@ async function inspectMainResult(page) {
       xlsxButtons: row.querySelectorAll('[data-kus-dl-multi-xlsx]').length
     }));
     const runPairs = root?.querySelector('[data-kus-dl-run-pairs]');
+    const batchButton = root?.querySelector('[data-kus-dl-multi-xlsx-all]');
+    const resultScroll = root?.querySelector('.kus-dl-table-scroll');
     return {
       statusTone: status?.getAttribute('data-tone') || '',
       statusText: status?.textContent?.replace(/\s+/g, ' ').trim() || '',
       rows,
       runPairsDisabled: !!runPairs?.disabled,
+      batchButtonCount: batchButton ? 1 : 0,
+      batchButtonText: batchButton?.textContent?.replace(/\s+/g, ' ').trim() || '',
+      batchButtonOutsideScroll: !!batchButton && !!resultScroll && !resultScroll.contains(batchButton),
       downloads: Number(window.__downloadCount || 0),
       probe: JSON.parse(JSON.stringify(window.__pairsProbe))
     };
@@ -343,6 +388,9 @@ function verifyMainResult(result, pageErrors) {
   assert.match(result.rows[2].cells[2], /App 404.*ゲスト 44.*プレビュー/, '中間失敗後の比較先が表示されていません');
   assert.deepEqual(result.rows.map((row) => row.htmlButtons), [1, 0, 1], '成功行以外にHTML保存ボタンが表示されています');
   assert.deepEqual(result.rows.map((row) => row.xlsxButtons), [1, 0, 1], '成功行以外にExcel保存ボタンが表示されています');
+  assert.equal(result.batchButtonCount, 1, '成功ペアの一括Excel保存ボタンがありません');
+  assert.match(result.batchButtonText, /Excelをまとめて保存（2件・ZIP）/, '一括Excel保存ボタンの成功件数が不正です');
+  assert.equal(result.batchButtonOutsideScroll, true, '一括Excel保存ボタンが結果表の横スクロール内にあります');
   assert.match(result.statusText, /ペア一括比較が完了.*成功 2\/3件.*失敗 1件/, '一部失敗を含む完了ステータスが不正です');
   assert.equal(result.statusTone, 'warn', '一部失敗時のステータスが警告になっていません');
   assert.equal(result.downloads, 0, 'ペア完了時に意図しない自動ダウンロードが発生しました');
@@ -355,6 +403,7 @@ async function verifyStaleResultInvalidation(page) {
   assert.equal(await pairResultTable(page).count(), 0, 'ペア入力変更後も古い結果表が残っています');
   assert.equal(await page.locator('[data-kus-dl-multi-html]').count(), 0, 'ペア入力変更後も古いHTML保存導線が残っています');
   assert.equal(await page.locator('[data-kus-dl-multi-xlsx]').count(), 0, 'ペア入力変更後も古いExcel保存導線が残っています');
+  assert.equal(await page.locator('[data-kus-dl-multi-xlsx-all]').count(), 0, 'ペア入力変更後も古い一括Excel保存導線が残っています');
   assert.equal(await page.locator('[data-kus-dl-export="html"]').isDisabled(), true, 'ペア入力変更後も全体HTML出力が有効です');
   assert.equal(await page.locator('[data-kus-dl-export="xlsx"]').isDisabled(), true, 'ペア入力変更後も全体Excel出力が有効です');
   assert.equal(await page.locator('[data-kus-dl-completion="xlsx"]').isVisible(), false, 'ペア入力変更後も完了時のExcel保存導線が表示されています');
@@ -372,7 +421,34 @@ async function verifySuccessfulPairExports(page) {
   assert.match(names[0], /\.html$/i, '成功ペアのHTMLファイル名が不正です');
   assert.match(names[1], /\.xlsx$/i, '成功ペアのExcelファイル名が不正です');
   assert.match(names[0], /101.*202|202.*101/, 'HTMLファイル名が選択したペアに対応していません');
-  return names;
+  await page.waitForTimeout(400);
+  const downloadsBeforeBulk = await page.evaluate(() => Number(window.__downloadCount || 0));
+  await page.locator('[data-kus-dl-multi-xlsx-all]').evaluate((button) => {
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+  await page.waitForFunction((count) => window.__downloadCount === count + 1, downloadsBeforeBulk, { timeout: 15000 });
+  await page.waitForTimeout(500);
+  assert.equal(await page.evaluate(() => Number(window.__downloadCount || 0)), downloadsBeforeBulk + 1,
+    'ペア一括Excelの二重クリックでZIPが重複ダウンロードされました');
+  const bulkZip = await inspectStoredZipDownload(page, downloadsBeforeBulk);
+  assert.match(bulkZip.filename, /\.zip$/i, 'ペア一括Excelのダウンロード名がZIPではありません');
+  assert.match(bulkZip.type, /zip/i, 'ペア一括ExcelのMIME typeがZIPではありません');
+  assert.equal(bulkZip.entries.length, 2, '失敗ペアを除いた成功2件がZIPへ収録されていません');
+  assert.deepEqual(bulkZip.entries.map((entry) => entry.name),
+    [...bulkZip.entries.map((entry) => entry.name)].sort((a, b) => a.localeCompare(b, 'ja')),
+    'ペア一括ExcelのZIPエントリが登録順に並んでいません');
+  assert.deepEqual(bulkZip.entries.map((entry) => entry.name.slice(0, 4)), ['001_', '002_'],
+    'ペア一括ExcelのZIPエントリに登録順の連番がありません');
+  assert.equal(bulkZip.entries.every((entry) => /\.xlsx$/i.test(entry.name)), true,
+    'ペア一括ExcelのZIPにXLSX以外のファイルが含まれています');
+  assert.equal(bulkZip.entries.every((entry) => entry.method === 0), true,
+    'ペア一括ExcelのZIPが想定外の圧縮方式です');
+  assert.equal(bulkZip.entries.every((entry) => entry.prefix.join(',') === '80,75,3,4'), true,
+    'ペア一括ExcelのZIP内に正しいXLSXではないエントリがあります');
+  assert.equal(bulkZip.entries.some((entry) => /303/.test(entry.name)), false,
+    '比較失敗した App 303 のExcelがペア一括ZIPへ混入しました');
+  return { names, bulkZip };
 }
 
 async function verifyMobileResultGeometry(page) {
@@ -382,7 +458,8 @@ async function verifyMobileResultGeometry(page) {
     const body = document.querySelector('#kus-diff-lite .kus-lp__body');
     const workflow = document.querySelector('#kus-diff-lite .kus-dl-workflow');
     const wrapper = document.querySelector('#kus-diff-lite .kus-dl-table-scroll');
-    if (!body || !workflow || !wrapper) throw new Error('モバイル幅の計測対象が見つかりません');
+    const batchButton = document.querySelector('#kus-diff-lite [data-kus-dl-multi-xlsx-all]');
+    if (!body || !workflow || !wrapper || !batchButton) throw new Error('モバイル幅の計測対象が見つかりません');
     wrapper.scrollLeft = wrapper.scrollWidth;
     const saveButton = wrapper.querySelector('[data-kus-dl-multi-xlsx]');
     const wrapperRect = wrapper.getBoundingClientRect();
@@ -394,13 +471,17 @@ async function verifyMobileResultGeometry(page) {
       workflowScrollWidth: workflow.scrollWidth,
       wrapperClientWidth: wrapper.clientWidth,
       wrapperScrollWidth: wrapper.scrollWidth,
-      saveButtonInsideWrapper: !!buttonRect && buttonRect.left >= wrapperRect.left - 1 && buttonRect.right <= wrapperRect.right + 1
+      saveButtonInsideWrapper: !!buttonRect && buttonRect.left >= wrapperRect.left - 1 && buttonRect.right <= wrapperRect.right + 1,
+      batchButtonOutsideWrapper: !wrapper.contains(batchButton),
+      batchButtonVisible: batchButton.getBoundingClientRect().width > 0 && batchButton.getBoundingClientRect().height > 0
     };
   });
   assert.ok(geometry.bodyScrollWidth <= geometry.bodyClientWidth + 1, 'モバイル幅でパネル本文全体が横にはみ出しています');
   assert.ok(geometry.workflowScrollWidth <= geometry.workflowClientWidth + 1, 'モバイル幅でワークフロー全体が横にはみ出しています');
   assert.ok(geometry.wrapperScrollWidth > geometry.wrapperClientWidth, '結果表専用の横スクロール領域がありません');
   assert.equal(geometry.saveButtonInsideWrapper, true, '横スクロール後も保存ボタンへ到達できません');
+  assert.equal(geometry.batchButtonOutsideWrapper, true, '一括Excel保存ボタンが結果表の横スクロール内にあります');
+  assert.equal(geometry.batchButtonVisible, true, 'モバイル幅で一括Excel保存ボタンが表示されていません');
   return geometry;
 }
 

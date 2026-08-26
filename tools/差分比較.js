@@ -11,10 +11,13 @@
 // ==========================================================================
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
   var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __esm = (fn, res) => function __init() {
     return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
   };
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
   // src/featureDefs.mjs
   var ICONS, FEATURE_DEFS;
@@ -4980,7 +4983,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const appliedIgnoreTokens = [...new Set(String(reportMeta.ignoreKeys || "").split(/[\n\r,、，;；]+/).map((token) => token.trim()).filter(Boolean))];
     const appliedIgnoreSummary = appliedIgnoreTokens.length ? `比較時の無視キー ${appliedIgnoreTokens.length}件: ${appliedIgnoreTokens.join("、")}` : "比較時の無視キー 0件（なし）";
     const appliedNormalizationSummary = reportMeta.normalizationLabels.length ? `比較時の正規化 ${reportMeta.normalizationLabels.length}件: ${reportMeta.normalizationLabels.join("、")}` : "比較時の正規化 0件（なし）";
-    const contentDisclosureHtml = includesComparedContent ? `<div class="report-content-disclosure report-content-disclosure--caution" data-content-disclosure="withCompared" role="note" aria-label="収録内容と反映方向"><strong>取扱注意: 比較設定込み</strong><span>比較設定・フィールド詳細・設定証跡JSONを収録しています。反映JSONは、比較元の設定値で比較先を上書きする方向です。${canBuildReflectJson ? "" : `反映JSONは利用できません。${esc(reflectJsonBlockedReason)}`}</span></div>` : '<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note" aria-label="収録内容の注意"><strong>差分行のみ（全設定は未収録）</strong><span>全設定スナップショットは収録していませんが、変更された差分行の比較元・比較先の値は収録しています。匿名化・機密情報のマスキング済みではありません。顧客向けExcelにも同じ差分値が収録され、取得不完全時はエラー等の原文も含まれるため、共有前に内容を確認してください。</span></div>';
+    const contentDisclosureHtml = includesComparedContent ? `<div class="report-content-disclosure report-content-disclosure--caution" data-content-disclosure="withCompared" role="note" aria-label="収録内容と反映方向"><strong>取扱注意: 比較設定込み</strong><span>比較設定・フィールド詳細・設定証跡JSONを収録しています。反映JSONは、比較元の設定値で比較先を上書きする方向です。${canBuildReflectJson ? "" : `反映JSONは利用できません。${esc(reflectJsonBlockedReason)}`}</span></div>` : '<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note" aria-label="収録内容の注意"><strong>差分行のみ（全設定は未収録）</strong><span>全設定スナップショットは収録していませんが、変更された差分行の比較元・比較先の値は収録しています。Excelにも同じ差分値が収録され、取得不完全時はエラー等の原文も含まれるため、共有前に内容を確認してください。</span></div>';
     const stateRenameSafetyNoticeHtml = !stateRenameNoticeCount ? "" : visibleStateRenameNoticeCount === stateRenameNoticeCount ? `<div class="warn">ℹ プロセスの状態名変更が ${stateRenameNoticeCount} 件あります。変更件数に含めていますが、プロセス管理はセクション全体を置き換えるAPIのため、このレポートでは反映JSON全体を無効にしています。管理画面で手動確認してください。</div>` : `<div class="warn">ℹ 比較設定全体でプロセスの状態名変更を ${stateRenameNoticeCount} 件検出しました。この出力範囲には ${visibleStateRenameNoticeCount} 件を収録しているため、画面の変更件数は出力範囲に含まれる改名だけを数えています。プロセス管理はセクション全体を置き換えるAPIのため、このレポートでは反映JSON全体を無効にしています。管理画面で手動確認してください。</div>`;
     const noticesHtml = [
       includesComparedContent && incompleteComparisonWarnings.length > 0 ? `<div class="warn"><b>⛔ 比較結果が不完全なため、反映JSONの選択・保存・コピーを無効にしています。</b> 比較元/比較先JSONは比較時の証跡として保存できます。</div>` : "",
@@ -10925,92 +10928,177 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   init_path_decoder();
   init_engine();
 
-  // src/diff/xlsx-builder.ts
-  var XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  // src/archive/stored-zip.ts
+  var CLASSIC_ZIP_MAX_ENTRIES = 65535;
+  var CLASSIC_ZIP_MAX_BYTES = 4294967295;
+  var DEFAULT_DOS_TIME = 0;
+  var DEFAULT_DOS_DATE = 2020 - 1980 << 9 | 1 << 5 | 1;
+  var DEFAULT_MIME_TYPE = "application/zip";
+  var LOCAL_FILE_HEADER_SIZE = 30;
+  var CENTRAL_DIRECTORY_HEADER_SIZE = 46;
+  var END_OF_CENTRAL_DIRECTORY_SIZE = 22;
   var crcTable = null;
   function crc32(bytes) {
     if (!crcTable) {
-      const t = new Uint32Array(256);
-      for (let i = 0; i < 256; i++) {
-        let c = i;
-        for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
-        t[i] = c >>> 0;
+      const table = new Uint32Array(256);
+      for (let i = 0; i < table.length; i += 1) {
+        let value = i;
+        for (let bit = 0; bit < 8; bit += 1) {
+          value = value & 1 ? 3988292384 ^ value >>> 1 : value >>> 1;
+        }
+        table[i] = value >>> 0;
       }
-      crcTable = t;
+      crcTable = table;
     }
     let crc = 4294967295;
-    for (let i = 0; i < bytes.length; i++) crc = (crcTable[(crc ^ bytes[i]) & 255] ^ crc >>> 8) >>> 0;
+    for (let i = 0; i < bytes.length; i += 1) {
+      crc = (crcTable[(crc ^ bytes[i]) & 255] ^ crc >>> 8) >>> 0;
+    }
     return (crc ^ 4294967295) >>> 0;
   }
-  function buildStoredZip(entries) {
+  function assertSafeEntryName(name, index) {
+    if (!name) throw new TypeError(`ZIP entry ${index + 1} has an empty name`);
+    if (name.includes("\0")) throw new TypeError(`ZIP entry ${index + 1} contains a NUL in its name`);
+    if (name.includes("\\")) throw new TypeError(`ZIP entry ${index + 1} must use forward slashes`);
+    if (name.startsWith("/") || /^[A-Za-z]:\//.test(name)) {
+      throw new TypeError(`ZIP entry ${index + 1} must use a relative path`);
+    }
+    if (name.split("/").some((segment) => segment === "..")) {
+      throw new TypeError(`ZIP entry ${index + 1} must not contain a parent path segment`);
+    }
+  }
+  function prepareEntries(entries) {
+    if (entries.length > CLASSIC_ZIP_MAX_ENTRIES) {
+      throw new RangeError(`ZIP entry count exceeds the classic ZIP limit (${CLASSIC_ZIP_MAX_ENTRIES})`);
+    }
+    const encoder = new TextEncoder();
+    const seen = /* @__PURE__ */ new Set();
+    return entries.map((entry, index) => {
+      if (!entry || typeof entry.name !== "string") {
+        throw new TypeError(`ZIP entry ${index + 1} is invalid`);
+      }
+      if (!(entry.data instanceof Uint8Array)) {
+        throw new TypeError(`ZIP entry ${index + 1} data must be a Uint8Array`);
+      }
+      assertSafeEntryName(entry.name, index);
+      if (seen.has(entry.name)) throw new TypeError(`Duplicate ZIP entry name: ${entry.name}`);
+      seen.add(entry.name);
+      const nameBytes = encoder.encode(entry.name);
+      if (nameBytes.length > 65535) {
+        throw new RangeError(`ZIP entry ${index + 1} name exceeds 65,535 UTF-8 bytes`);
+      }
+      if (entry.data.length > CLASSIC_ZIP_MAX_BYTES) {
+        throw new RangeError(`ZIP entry ${index + 1} exceeds the classic ZIP size limit`);
+      }
+      return { name: entry.name, data: entry.data, nameBytes };
+    });
+  }
+  function checkedClassicZipSize(value, label) {
+    if (!Number.isSafeInteger(value) || value < 0 || value > CLASSIC_ZIP_MAX_BYTES) {
+      throw new RangeError(`${label} exceeds the classic ZIP size limit`);
+    }
+    return value;
+  }
+  function resolveDosTimestamp(modifiedAt) {
+    if (modifiedAt === void 0) return { dosDate: DEFAULT_DOS_DATE, dosTime: DEFAULT_DOS_TIME };
+    if (!(modifiedAt instanceof Date) || !Number.isFinite(modifiedAt.getTime())) {
+      throw new TypeError("ZIP modifiedAt must be a valid Date");
+    }
+    const actualYear = modifiedAt.getFullYear();
+    if (actualYear < 1980) return { dosDate: 1 << 5 | 1, dosTime: 0 };
+    if (actualYear > 2107) {
+      return {
+        dosDate: 2107 - 1980 << 9 | 12 << 5 | 31,
+        dosTime: 23 << 11 | 59 << 5 | 29
+      };
+    }
+    const dosDate = actualYear - 1980 << 9 | modifiedAt.getMonth() + 1 << 5 | modifiedAt.getDate();
+    const dosTime = modifiedAt.getHours() << 11 | modifiedAt.getMinutes() << 5 | Math.floor(modifiedAt.getSeconds() / 2);
+    return { dosDate, dosTime };
+  }
+  function calculatePreparedZipByteLength(entries) {
+    let total = END_OF_CENTRAL_DIRECTORY_SIZE;
+    for (const entry of entries) {
+      total += LOCAL_FILE_HEADER_SIZE + entry.nameBytes.length + entry.data.length;
+      total += CENTRAL_DIRECTORY_HEADER_SIZE + entry.nameBytes.length;
+      checkedClassicZipSize(total, "ZIP archive");
+    }
+    return total;
+  }
+  function calculateStoredZipByteLength(entries) {
+    return calculatePreparedZipByteLength(prepareEntries(entries));
+  }
+  function buildStoredZip(entries, options = {}) {
+    const prepared = prepareEntries(entries);
+    calculatePreparedZipByteLength(prepared);
+    const { dosDate, dosTime } = resolveDosTimestamp(options.modifiedAt);
     const parts = [];
     const central = [];
     let offset = 0;
-    const DOS_TIME = 0;
-    const DOS_DATE = 2020 - 1980 << 9 | 1 << 5 | 1;
-    const enc = new TextEncoder();
-    for (const e of entries) {
-      const nameBytes = enc.encode(e.name);
-      const data = e.data;
+    for (const entry of prepared) {
+      const { nameBytes, data } = entry;
       const crc = crc32(data);
       const size = data.length;
-      const lfh = new Uint8Array(30 + nameBytes.length);
-      const dv = new DataView(lfh.buffer);
-      dv.setUint32(0, 67324752, true);
-      dv.setUint16(4, 20, true);
-      dv.setUint16(6, 2048, true);
-      dv.setUint16(8, 0, true);
-      dv.setUint16(10, DOS_TIME, true);
-      dv.setUint16(12, DOS_DATE, true);
-      dv.setUint32(14, crc, true);
-      dv.setUint32(18, size, true);
-      dv.setUint32(22, size, true);
-      dv.setUint16(26, nameBytes.length, true);
-      dv.setUint16(28, 0, true);
-      lfh.set(nameBytes, 30);
-      parts.push(lfh, data);
-      const cdh = new Uint8Array(46 + nameBytes.length);
-      const cdv = new DataView(cdh.buffer);
-      cdv.setUint32(0, 33639248, true);
-      cdv.setUint16(4, 20, true);
-      cdv.setUint16(6, 20, true);
-      cdv.setUint16(8, 2048, true);
-      cdv.setUint16(10, 0, true);
-      cdv.setUint16(12, DOS_TIME, true);
-      cdv.setUint16(14, DOS_DATE, true);
-      cdv.setUint32(16, crc, true);
-      cdv.setUint32(20, size, true);
-      cdv.setUint32(24, size, true);
-      cdv.setUint16(28, nameBytes.length, true);
-      cdv.setUint16(30, 0, true);
-      cdv.setUint16(32, 0, true);
-      cdv.setUint16(34, 0, true);
-      cdv.setUint16(36, 0, true);
-      cdv.setUint32(38, 0, true);
-      cdv.setUint32(42, offset, true);
-      cdh.set(nameBytes, 46);
-      central.push(cdh);
-      offset += lfh.length + data.length;
+      const localHeader = new Uint8Array(LOCAL_FILE_HEADER_SIZE + nameBytes.length);
+      const localView = new DataView(localHeader.buffer);
+      localView.setUint32(0, 67324752, true);
+      localView.setUint16(4, 20, true);
+      localView.setUint16(6, 2048, true);
+      localView.setUint16(8, 0, true);
+      localView.setUint16(10, dosTime, true);
+      localView.setUint16(12, dosDate, true);
+      localView.setUint32(14, crc, true);
+      localView.setUint32(18, size, true);
+      localView.setUint32(22, size, true);
+      localView.setUint16(26, nameBytes.length, true);
+      localView.setUint16(28, 0, true);
+      localHeader.set(nameBytes, LOCAL_FILE_HEADER_SIZE);
+      parts.push(localHeader, data);
+      const centralHeader = new Uint8Array(CENTRAL_DIRECTORY_HEADER_SIZE + nameBytes.length);
+      const centralView = new DataView(centralHeader.buffer);
+      centralView.setUint32(0, 33639248, true);
+      centralView.setUint16(4, 20, true);
+      centralView.setUint16(6, 20, true);
+      centralView.setUint16(8, 2048, true);
+      centralView.setUint16(10, 0, true);
+      centralView.setUint16(12, dosTime, true);
+      centralView.setUint16(14, dosDate, true);
+      centralView.setUint32(16, crc, true);
+      centralView.setUint32(20, size, true);
+      centralView.setUint32(24, size, true);
+      centralView.setUint16(28, nameBytes.length, true);
+      centralView.setUint16(30, 0, true);
+      centralView.setUint16(32, 0, true);
+      centralView.setUint16(34, 0, true);
+      centralView.setUint16(36, 0, true);
+      centralView.setUint32(38, 0, true);
+      centralView.setUint32(42, offset, true);
+      centralHeader.set(nameBytes, CENTRAL_DIRECTORY_HEADER_SIZE);
+      central.push(centralHeader);
+      offset = checkedClassicZipSize(offset + localHeader.length + data.length, "ZIP local data");
     }
-    const cdStart = offset;
-    let cdSize = 0;
-    for (const c of central) {
-      parts.push(c);
-      cdSize += c.length;
+    const centralStart = offset;
+    let centralSize = 0;
+    for (const header of central) {
+      parts.push(header);
+      centralSize = checkedClassicZipSize(centralSize + header.length, "ZIP central directory");
     }
-    const eocd = new Uint8Array(22);
-    const edv = new DataView(eocd.buffer);
-    edv.setUint32(0, 101010256, true);
-    edv.setUint16(4, 0, true);
-    edv.setUint16(6, 0, true);
-    edv.setUint16(8, central.length, true);
-    edv.setUint16(10, central.length, true);
-    edv.setUint32(12, cdSize, true);
-    edv.setUint32(16, cdStart, true);
-    edv.setUint16(20, 0, true);
-    parts.push(eocd);
-    return new Blob(parts, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const end = new Uint8Array(END_OF_CENTRAL_DIRECTORY_SIZE);
+    const endView = new DataView(end.buffer);
+    endView.setUint32(0, 101010256, true);
+    endView.setUint16(4, 0, true);
+    endView.setUint16(6, 0, true);
+    endView.setUint16(8, central.length, true);
+    endView.setUint16(10, central.length, true);
+    endView.setUint32(12, centralSize, true);
+    endView.setUint32(16, centralStart, true);
+    endView.setUint16(20, 0, true);
+    parts.push(end);
+    return new Blob(parts, { type: options.mimeType || DEFAULT_MIME_TYPE });
   }
+
+  // src/diff/xlsx-builder.ts
+  var XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
   function escapeXml(s) {
     return String(s ?? "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/g, "").replace(/_(?=[xX][0-9A-Fa-f]{4}_)/g, "_x005F_").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
   }
@@ -11370,7 +11458,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     safe.forEach((s, i) => {
       entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(buildSheetXml(s, hyperlinksBySheet[i])) });
     });
-    return buildStoredZip(entries);
+    return buildStoredZip(entries, {
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    });
   }
 
   // src/diff/xlsx-export.ts
@@ -13187,20 +13277,30 @@ ${label}` : `${direction}の値`;
   }
   function customerFieldTargetLabel(row, info, sourceBundle, targetBundle) {
     const identity = fieldDisplayIdentity(row, info, { rows: [], sourceBundle, targetBundle });
+    const preferredBundle = row.type === "removed" ? sourceBundle : targetBundle;
+    const fallbackBundle = row.type === "removed" ? targetBundle : sourceBundle;
     if (info.isSubField) {
-      const preferredBundle = row.type === "removed" ? sourceBundle : targetBundle;
-      const fallbackBundle = row.type === "removed" ? targetBundle : sourceBundle;
       const preferredRoot = fieldSettingsProperties(preferredBundle)[info.rootCode];
       const fallbackRoot = fieldSettingsProperties(fallbackBundle)[info.rootCode];
-      const rootName = customerPlainText(fieldDefinitionLabel(preferredRoot) || fieldDefinitionLabel(fallbackRoot) || info.rootCode);
-      const childName = customerPlainText(identity.fieldName.split(" > ").at(-1) || info.subFieldCode);
+      const preferredChild = fieldDefinitionAt(preferredBundle, info);
+      const fallbackChild = fieldDefinitionAt(fallbackBundle, info);
+      const rootName = customerPlainText(fieldDefinitionLabel(preferredRoot) || fieldDefinitionLabel(fallbackRoot) || /^テーブル「([^」]+)」/.exec(String(row.reasonSummary || ""))?.[1] || info.rootCode);
+      const childName = customerPlainText(fieldDefinitionLabel(preferredChild) || fieldDefinitionLabel(fallbackChild) || fieldLabelFromRow(row, info) || info.subFieldCode);
       const root2 = rootName && rootName !== info.rootCode ? `テーブル「${rootName}」（コード: ${info.rootCode}）` : `テーブル「${info.rootCode}」`;
       const child = childName && childName !== info.subFieldCode ? `フィールド「${childName}」（コード: ${info.subFieldCode}）` : `フィールド「${info.subFieldCode}」`;
       return `${root2} › ${child}`;
     }
     const fieldCode = String(identity.fieldCode || info.rootCode || "").trim();
     const fieldName = customerPlainText(identity.fieldName || fieldCode || "フィールド");
-    return fieldName && fieldName !== fieldCode ? `フィールド「${fieldName}」（コード: ${fieldCode}）` : `フィールド「${fieldCode || fieldName || "名称不明"}」`;
+    const preferredDefinition = fieldDefinitionAt(preferredBundle, info);
+    const fallbackDefinition = fieldDefinitionAt(fallbackBundle, info);
+    const preferredPayload = row.type === "removed" ? row.left : row.right;
+    const fallbackPayload = row.type === "removed" ? row.right : row.left;
+    const definitionType = String(
+      preferredDefinition?.type || fallbackDefinition?.type || (preferredPayload && typeof preferredPayload === "object" && !Array.isArray(preferredPayload) ? preferredPayload.type : "") || (fallbackPayload && typeof fallbackPayload === "object" && !Array.isArray(fallbackPayload) ? fallbackPayload.type : "")
+    ).toUpperCase();
+    const kind = definitionType === "SUBTABLE" ? "テーブル" : "フィールド";
+    return fieldName && fieldName !== fieldCode ? `${kind}「${fieldName}」（コード: ${fieldCode}）` : `${kind}「${fieldCode || fieldName || "名称不明"}」`;
   }
   function customerFieldSettingLabel(settingKey, fallback) {
     if (settingKey === "(field)") return "フィールド全体";
@@ -13375,6 +13475,64 @@ ${label}` : `${direction}の値`;
       technicalPath: path || sectionKey
     };
   }
+  function customerFieldColumns(row, sourceBundle, targetBundle) {
+    const info = extractFieldPathInfo(String(row.path || ""));
+    if (!info) return null;
+    const sourceDefinition = fieldDefinitionAt(sourceBundle, info);
+    const targetDefinition = fieldDefinitionAt(targetBundle, info);
+    const preferredDefinition = row.type === "removed" ? sourceDefinition : targetDefinition;
+    const fallbackDefinition = row.type === "removed" ? targetDefinition : sourceDefinition;
+    const identity = fieldDisplayIdentity(row, info, { rows: [], sourceBundle, targetBundle });
+    const fieldName = customerPlainText(
+      fieldDefinitionLabel(preferredDefinition) || fieldDefinitionLabel(fallbackDefinition) || fieldLabelFromRow(row, info) || info.activeCode
+    );
+    const preferredRoot = fieldSettingsProperties(row.type === "removed" ? sourceBundle : targetBundle)[info.rootCode];
+    const fallbackRoot = fieldSettingsProperties(row.type === "removed" ? targetBundle : sourceBundle)[info.rootCode];
+    const parentTableName = info.isSubField ? customerPlainText(
+      fieldDefinitionLabel(preferredRoot) || fieldDefinitionLabel(fallbackRoot) || /^テーブル「([^」]+)」/.exec(String(row.reasonSummary || ""))?.[1] || info.rootCode
+    ) : "—";
+    const definitionType = String(
+      preferredDefinition?.type || fallbackDefinition?.type || (row.type === "removed" ? row.left : row.right)?.type || (row.type === "removed" ? row.right : row.left)?.type || ""
+    ).toUpperCase();
+    const wholeField = info.isFieldRoot || info.isSubFieldRoot;
+    let fieldPresence;
+    if (wholeField && row.type === "added") fieldPresence = "比較先のみ";
+    else if (wholeField && row.type === "removed") fieldPresence = "比較元のみ";
+    else if (sourceDefinition && !targetDefinition) fieldPresence = "比較元のみ";
+    else if (!sourceDefinition && targetDefinition) fieldPresence = "比較先のみ";
+    else fieldPresence = "両方";
+    const settingPresence = wholeField ? "—" : row.type === "added" ? "比較先のみ" : row.type === "removed" ? "比較元のみ" : "両方";
+    return {
+      structure: info.isSubField ? "└ テーブル内フィールド" : definitionType === "SUBTABLE" ? "テーブル" : "フィールド",
+      parentTableName,
+      parentTableCode: info.isSubField ? String(info.rootCode) : "—",
+      fieldName: fieldName || String(info.activeCode || "名称不明"),
+      fieldCode: String(info.activeCode || identity.fieldCode || "—"),
+      fieldType: identity.fieldType,
+      fieldPresence,
+      settingPresence,
+      wholeField
+    };
+  }
+  function customerTargetColumns(row, parts, sourceBundle, targetBundle) {
+    const field = customerFieldColumns(row, sourceBundle, targetBundle);
+    if (!field) {
+      return {
+        parentTarget: "—",
+        targetName: parts.target,
+        targetCode: "—",
+        tableChild: false
+      };
+    }
+    const parentTarget = field.parentTableName === "—" ? "—" : field.parentTableName === field.parentTableCode ? field.parentTableCode : `${field.parentTableName}（${field.parentTableCode}）`;
+    return {
+      parentTarget,
+      targetName: field.fieldName,
+      targetCode: field.fieldCode,
+      tableChild: field.structure === "└ テーブル内フィールド",
+      field
+    };
+  }
   function customerSideIsAbsent(row, side) {
     if (side === "source" && row.type === "added") return true;
     if (side === "target" && row.type === "removed") return true;
@@ -13382,7 +13540,7 @@ ${label}` : `${direction}の値`;
     return !Object.prototype.hasOwnProperty.call(row, property);
   }
   function customerRawValue(row, side) {
-    if (customerSideIsAbsent(row, side)) return { state: "不存在", text: "—" };
+    if (customerSideIsAbsent(row, side)) return { state: "存在しません", text: "—" };
     const value = side === "source" ? row.left : row.right;
     if (value === void 0) return { state: "未定義（undefined）", text: "undefined" };
     if (value === null) return { state: "null", text: "null" };
@@ -13404,6 +13562,11 @@ ${label}` : `${direction}の値`;
       return { state: `オブジェクト（${Object.keys(value).length}項目）`, text: stringifyForDiff(value) };
     }
     return { state: typeof value, text: String(value) };
+  }
+  function customerRawDisplayValue(raw) {
+    if (raw.state === "存在しません") return "存在しません";
+    if (raw.state === "文字列（空文字）") return "空文字";
+    return raw.text;
   }
   var CUSTOMER_MAIN_VALUE_LIMIT = 120;
   var CUSTOMER_DETAIL_RAW_MAX_LINES = 22;
@@ -13566,7 +13729,7 @@ ${label}` : `${direction}の値`;
     return facts.length ? facts.join("\n") : `${Object.keys(value).length}項目の設定`;
   }
   function customerReadableValue(row, side, sourceBundle, targetBundle) {
-    if (customerSideIsAbsent(row, side)) return "（存在しません）";
+    if (customerSideIsAbsent(row, side)) return "存在しません";
     const value = side === "source" ? row.left : row.right;
     const bundle = side === "source" ? sourceBundle : targetBundle;
     const path = String(row.path || "");
@@ -13602,75 +13765,31 @@ ${label}` : `${direction}の値`;
     }
     return compactCustomerMainValue(display);
   }
-  function customerReviewNote(row) {
-    const key = sectionKeyOfRow(row);
-    const fieldInfo = extractFieldPathInfo(String(row.path || ""));
-    if (fieldInfo) {
-      const identity = fieldDisplayIdentity(row, fieldInfo, { rows: [] });
-      const setting = fieldSettingIdentity(fieldInfo);
-      return fieldSettingReviewGuidance({
-        rowIndex: 0,
-        fieldKey: identity.fieldKey,
-        fieldCode: identity.fieldCode,
-        fieldName: identity.fieldName,
-        fieldType: identity.fieldType,
-        settingKey: setting.settingKey,
-        settingLabel: setting.settingLabel,
-        row
-      });
-    }
-    if (row._stateRenameNotice) {
-      return "ステータス名の変更が意図したものか確認してください。この行は確認専用で、自動反映の対象外です。";
-    }
-    const path = String(row.path || "");
-    if (/(?:^|\.)filterCond$/.test(path)) {
-      if (row.right == null || row.right === "") {
-        return "条件がなくなり対象が広がる可能性があります。意図した変更か確認してください。";
-      }
-      if (row.left == null || row.left === "") {
-        return "条件が追加され対象が絞られます。意図した変更か確認してください。";
-      }
-      return "対象となる条件が変わります。変更前後の対象レコードを確認してください。";
-    }
-    if (/(?:^|\.)sort$/.test(path)) {
-      return "表示順が変わります。利用者が探しやすい順序になっているか確認してください。";
-    }
-    if (/(?:^|\.)(?:width|height|innerWidth|innerHeight)$/.test(path)) {
-      return "画面上の幅・高さが変わります。入力欄や一覧の見え方を確認してください。";
-    }
-    const guidance = {
-      appSettings: "アプリの基本設定が意図した変更か確認してください。",
-      appInfo: "アプリ情報が意図した変更か確認してください。",
-      layoutSettings: "配置や表示サイズが意図した変更か確認してください。",
-      formSettings: "フォーム設定が意図した変更か確認してください。",
-      viewSettings: "表示項目・条件・並び順が意図した変更か確認してください。",
-      reportSettings: "グラフの項目・条件が意図した変更か確認してください。",
-      processSettings: "ステータス・遷移条件が意図した変更か確認してください。",
-      actionSettings: "アクション設定が意図した変更か確認してください。",
-      categories: "カテゴリ設定が意図した変更か確認してください。"
-    };
-    const note = guidance[key] || "変更内容が意図したものか確認してください。";
-    return row._nonActionable ? `${note} この行は確認専用で、自動反映の対象外です。` : note;
-  }
-  function buildCustomerDiffItems(ctx) {
-    const actualRows = (ctx.rows || []).filter((row) => !row._displayOnly && row.type !== "same");
+  function buildCustomerDiffItems(ctx, includeTableChildren = false) {
+    const sourceRows = includeTableChildren ? expandSubtableRowsForDisplay(ctx.rows || []) : ctx.rows || [];
+    const actualRows = sourceRows.filter((row) => row.type !== "same" && (!row._displayOnly || includeTableChildren && row._expandedFromTable === true));
     const items = [];
     for (const [sectionKey, rows] of groupRowsBySection(actualRows)) {
       const sectionLabel = customerSectionLabel(sectionKey);
       for (const row of rows) {
-        const before = customerReadableValue(row, "source", ctx.sourceBundle, ctx.targetBundle);
-        const after = customerReadableValue(row, "target", ctx.sourceBundle, ctx.targetBundle);
-        const rawBefore = customerRawValue(row, "source");
-        const rawAfter = customerRawValue(row, "target");
         const parts = customerItemParts(row, ctx.sourceBundle, ctx.targetBundle);
+        const targetColumns = customerTargetColumns(row, parts, ctx.sourceBundle, ctx.targetBundle);
+        const wholeFieldExistenceChange = targetColumns.field?.wholeField && (row.type === "added" || row.type === "removed");
+        const before = wholeFieldExistenceChange ? row.type === "added" ? "存在しません" : "存在" : customerReadableValue(row, "source", ctx.sourceBundle, ctx.targetBundle);
+        const after = wholeFieldExistenceChange ? row.type === "removed" ? "存在しません" : "存在" : customerReadableValue(row, "target", ctx.sourceBundle, ctx.targetBundle);
+        const rawBeforeBase = customerRawValue(row, "source");
+        const rawAfterBase = customerRawValue(row, "target");
+        const rawBefore = wholeFieldExistenceChange ? { ...rawBeforeBase, state: row.type === "added" ? "存在しません" : "存在" } : rawBeforeBase;
+        const rawAfter = wholeFieldExistenceChange ? { ...rawAfterBase, state: row.type === "removed" ? "存在しません" : "存在" } : rawAfterBase;
         const targetDetail = parts.target;
-        const settingItemDetail = parts.settingItem;
+        const settingItemDetail = targetColumns.field?.wholeField ? targetColumns.field.structure === "テーブル" ? "テーブル自体" : "フィールド自体" : parts.settingItem;
         items.push({
           index: items.length,
           row,
           sectionKey,
           sectionLabel,
           target: customerPlainText(targetDetail, 80),
+          ...targetColumns,
           settingItem: customerPlainText(settingItemDetail, 80),
           targetDetail,
           settingItemDetail,
@@ -13680,8 +13799,7 @@ ${label}` : `${direction}の値`;
           before,
           after,
           rawBefore,
-          rawAfter,
-          reviewNote: customerReviewNote(row)
+          rawAfter
         });
       }
     }
@@ -13849,12 +13967,11 @@ ${targetName}`, "", ""],
       "変更区分",
       "分類",
       "設定対象",
-      "変更項目",
+      "差分プロパティ",
       `変更前
 ${sourceName}`,
       `変更後
-${targetName}`,
-      "確認すること"
+${targetName}`
     ];
     const rows = [headers];
     const rowStyles = ["normal"];
@@ -13875,8 +13992,7 @@ ${targetName}`,
         item.target,
         item.settingItem,
         item.before,
-        item.after,
-        item.reviewNote
+        item.after
       ]);
       rowStyles.push("normal");
       const styles = [];
@@ -13889,27 +14005,25 @@ ${targetName}`,
       styles[4] = alternate ? "zebra" : "normal";
       styles[5] = item.changeType === "追加" ? "diffAbsent" : "diffBefore";
       styles[6] = item.changeType === "削除" ? "diffAbsent" : "diffAfter";
-      styles[7] = "info";
       cellStyles.push(styles);
       internalHyperlinks.push({
         ref: `A${index + 2}`,
         targetSheet: "設定値詳細",
-        targetCell: `A${index + 3}`,
-        tooltip: "比較元・比較先の状態・型・原文を確認"
+        targetCell: `A${index + 2}`,
+        tooltip: "比較元・比較先の原文を確認"
       });
       rowHeights.push(readableCustomerRowHeight([
         { value: item.sectionLabel, width: 14 },
         { value: item.target, width: 24 },
         { value: item.settingItem, width: 22 },
         { value: item.before, width: 22 },
-        { value: item.after, width: 22 },
-        { value: item.reviewNote, width: 28 }
+        { value: item.after, width: 22 }
       ], 220));
     });
     return {
       name: "変更一覧",
       rows,
-      colWidths: [7, 10, 14, 24, 22, 22, 22, 28],
+      colWidths: [7, 10, 14, 24, 22, 22, 22],
       rowStyles,
       cellStyles,
       headerRow: 1,
@@ -13931,6 +14045,111 @@ ${targetName}`,
       }
     };
   }
+  function buildCustomerFieldDiffSheet(ctx, items) {
+    const fieldItems = buildCustomerDiffItems(ctx, true).filter((item) => !!item.field);
+    if (!fieldItems.length) return null;
+    const headers = [
+      "No.",
+      "変更区分",
+      "構造",
+      "親テーブル",
+      "フィールド名",
+      "フィールドコード",
+      "フィールド種別",
+      "差分プロパティ",
+      "フィールド存在",
+      "設定値存在",
+      "変更前",
+      "変更後"
+    ];
+    const rows = [headers];
+    const rowStyles = ["normal"];
+    const cellStyles = [[]];
+    const rowHeights = [48];
+    const rowOutlines = [void 0];
+    const internalHyperlinks = [];
+    const changeStyles = {
+      "追加": "changeAdded",
+      "削除": "changeRemoved",
+      "変更": "changeChanged",
+      "要素の移動": "changeMoved"
+    };
+    const actualIndexByRow = new Map(items.map((item, index) => [item.row, index]));
+    fieldItems.forEach((item, index) => {
+      const field = item.field;
+      rows.push([
+        index + 1,
+        item.changeType,
+        field.structure,
+        item.parentTarget,
+        field.fieldName,
+        field.fieldCode,
+        field.fieldType,
+        item.settingItem,
+        field.fieldPresence,
+        field.settingPresence,
+        item.before,
+        item.after
+      ]);
+      rowStyles.push("normal");
+      rowOutlines.push(item.tableChild ? { level: 1 } : void 0);
+      const alternate = index % 2 === 1;
+      const baseStyle = alternate ? "zebra" : "normal";
+      const styles = Array.from({ length: headers.length }, () => baseStyle);
+      const actualIndex = actualIndexByRow.get(item.row);
+      styles[0] = actualIndex == null ? "center" : "hyperlink";
+      styles[1] = changeStyles[item.changeType];
+      styles[2] = field.structure === "テーブル" ? "category" : baseStyle;
+      styles[8] = "center";
+      styles[9] = "center";
+      styles[10] = item.changeType === "追加" ? "diffAbsent" : "diffBefore";
+      styles[11] = item.changeType === "削除" ? "diffAbsent" : "diffAfter";
+      cellStyles.push(styles);
+      if (actualIndex != null) {
+        internalHyperlinks.push({
+          ref: `A${index + 2}`,
+          targetSheet: "設定値詳細",
+          targetCell: `A${actualIndex + 2}`,
+          tooltip: "比較元・比較先の原文を確認"
+        });
+      }
+      rowHeights.push(readableCustomerRowHeight([
+        { value: field.structure, width: 17 },
+        { value: item.parentTarget, width: 24 },
+        { value: field.fieldName, width: 22 },
+        { value: field.fieldCode, width: 22 },
+        { value: field.fieldType, width: 17 },
+        { value: item.settingItem, width: 22 },
+        { value: item.before, width: 24 },
+        { value: item.after, width: 24 }
+      ], 240));
+    });
+    return {
+      name: "フィールド差分",
+      rows,
+      colWidths: [7, 10, 20, 24, 22, 22, 17, 22, 15, 15, 24, 24],
+      rowStyles,
+      cellStyles,
+      headerRow: 1,
+      freezeRows: 1,
+      freezeColumns: 6,
+      rowHeights,
+      rowOutlines,
+      outlineSummaryBelow: false,
+      materializeEmptyCellsFromRow: 1,
+      internalHyperlinks,
+      showGridLines: false,
+      zoomScale: 85,
+      print: {
+        orientation: "landscape",
+        fitToWidth: 2,
+        fitToHeight: 0,
+        repeatRows: { from: 1, to: 1 },
+        repeatColumns: { from: 1, to: 6 },
+        footer: "&Lフィールド差分&Rページ &P / &N"
+      }
+    };
+  }
   function buildCustomerValueDetailSheet(ctx, items, continuations) {
     if (!items.length) return null;
     const sourceName = customerAppName(ctx.sourceBundle, "比較元");
@@ -13939,48 +14158,21 @@ ${targetName}`,
       `${continuation.item.index}:${continuation.side}`,
       continuation
     ]));
-    const rows = [
-      [
-        "全差分の状態・型・原文です。非表示、マスキング、省略は行っていません。",
-        "",
-        "",
-        "",
-        "",
-        "状態・型で不存在／undefined／null／空文字を区別できます。",
-        "",
-        "長文セルは「長文原文」へ移動します。並べ替え後はNo.で照合してください。",
-        "",
-        ""
-      ],
-      [
-        "No.",
-        "変更区分",
-        "分類",
-        "設定対象",
-        "変更項目",
-        `変更前の状態・型
+    const rows = [[
+      "No.",
+      "変更区分",
+      "分類",
+      "設定対象",
+      "差分プロパティ",
+      `変更前の原文
 ${sourceName}`,
-        `変更前の原文
-${sourceName}`,
-        `変更後の状態・型
+      `変更後の原文
 ${targetName}`,
-        `変更後の原文
-${targetName}`,
-        "変更一覧へ"
-      ]
-    ];
-    const rowStyles = ["normal", "normal"];
-    const cellStyles = [[
-      "subtitle",
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      "info",
-      void 0,
-      "warning"
-    ], []];
-    const rowHeights = [64, 52];
+      "変更一覧へ"
+    ]];
+    const rowStyles = ["normal"];
+    const cellStyles = [[]];
+    const rowHeights = [52];
     const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
@@ -13991,8 +14183,8 @@ ${targetName}`,
     items.forEach((item, index) => {
       const beforeContinuation = continuationByKey.get(`${item.index}:source`);
       const afterContinuation = continuationByKey.get(`${item.index}:target`);
-      const beforeText = beforeContinuation ? `長文原文へ（${item.rawBefore.text.length}文字・${beforeContinuation.chunks.length}分割）` : item.rawBefore.text;
-      const afterText = afterContinuation ? `長文原文へ（${item.rawAfter.text.length}文字・${afterContinuation.chunks.length}分割）` : item.rawAfter.text;
+      const beforeText = beforeContinuation ? `長文原文へ（${item.rawBefore.text.length}文字・${beforeContinuation.chunks.length}分割）` : customerRawDisplayValue(item.rawBefore);
+      const afterText = afterContinuation ? `長文原文へ（${item.rawAfter.text.length}文字・${afterContinuation.chunks.length}分割）` : customerRawDisplayValue(item.rawAfter);
       const settingItemDetail = item.technicalPath ? `${item.settingItemDetail}
 内部パス: ${item.technicalPath}` : item.settingItemDetail;
       rows.push([
@@ -14001,9 +14193,7 @@ ${targetName}`,
         item.sectionLabel,
         item.targetDetail,
         settingItemDetail,
-        item.rawBefore.state,
         beforeText,
-        item.rawAfter.state,
         afterText,
         `変更一覧 No.${item.index + 1}へ`
       ]);
@@ -14015,23 +14205,19 @@ ${targetName}`,
       styles[2] = startsCategory ? "category" : index % 2 === 1 ? "zebra" : "normal";
       styles[3] = index % 2 === 1 ? "zebra" : "normal";
       styles[4] = index % 2 === 1 ? "zebra" : "normal";
-      styles[5] = item.changeType === "追加" ? "diffAbsent" : "diffBefore";
-      styles[6] = beforeContinuation ? "hyperlink" : item.changeType === "追加" ? "diffAbsent" : "diffBefore";
-      styles[7] = item.changeType === "削除" ? "diffAbsent" : "diffAfter";
-      styles[8] = afterContinuation ? "hyperlink" : item.changeType === "削除" ? "diffAbsent" : "diffAfter";
-      styles[9] = "actionLink";
+      styles[5] = beforeContinuation ? "hyperlink" : item.changeType === "追加" ? "diffAbsent" : "diffBefore";
+      styles[6] = afterContinuation ? "hyperlink" : item.changeType === "削除" ? "diffAbsent" : "diffAfter";
+      styles[7] = "actionLink";
       cellStyles.push(styles);
       rowHeights.push(readableCustomerRowHeight([
         { value: item.targetDetail, width: 24 },
         { value: settingItemDetail, width: 22 },
-        { value: item.rawBefore.state, width: 15 },
         { value: beforeText, width: 42 },
-        { value: item.rawAfter.state, width: 15 },
         { value: afterText, width: 42 }
       ], 395));
       if (beforeContinuation) {
         internalHyperlinks.push({
-          ref: `G${index + 3}`,
+          ref: `F${index + 2}`,
           targetSheet: "長文原文",
           targetCell: `A${beforeContinuation.firstRow}`,
           tooltip: `No.${item.index + 1} 変更前の長文原文へ移動`
@@ -14039,14 +14225,14 @@ ${targetName}`,
       }
       if (afterContinuation) {
         internalHyperlinks.push({
-          ref: `I${index + 3}`,
+          ref: `G${index + 2}`,
           targetSheet: "長文原文",
           targetCell: `A${afterContinuation.firstRow}`,
           tooltip: `No.${item.index + 1} 変更後の長文原文へ移動`
         });
       }
       internalHyperlinks.push({
-        ref: `J${index + 3}`,
+        ref: `H${index + 2}`,
         targetSheet: "変更一覧",
         targetCell: `A${item.index + 2}`,
         tooltip: `変更一覧 No.${item.index + 1}へ戻る`
@@ -14055,15 +14241,14 @@ ${targetName}`,
     return {
       name: "設定値詳細",
       rows,
-      colWidths: [7, 11, 14, 24, 22, 15, 42, 15, 42, 18],
+      colWidths: [7, 11, 14, 24, 22, 42, 42, 18],
       rowStyles,
       cellStyles,
-      headerRow: 2,
-      freezeRows: 2,
+      headerRow: 1,
+      freezeRows: 1,
       freezeColumns: 5,
       rowHeights,
-      materializeEmptyCellsFromRow: 2,
-      merges: ["A1:E1", "F1:G1", "H1:J1"],
+      materializeEmptyCellsFromRow: 1,
       internalHyperlinks,
       showGridLines: false,
       zoomScale: 85,
@@ -14071,9 +14256,9 @@ ${targetName}`,
         orientation: "landscape",
         fitToWidth: 2,
         fitToHeight: 0,
-        repeatRows: { from: 2, to: 2 },
+        repeatRows: { from: 1, to: 1 },
         repeatColumns: { from: 1, to: 5 },
-        footer: "&L設定値詳細（型・状態・原文）&Rページ &P / &N"
+        footer: "&L設定値詳細（原文）&Rページ &P / &N"
       }
     };
   }
@@ -14085,14 +14270,12 @@ ${targetName}`,
       "",
       "",
       "",
-      "",
       "すべての行・列は表示状態です。数式、外部リンク、別添ファイルは使用していません。",
       ""
     ], [
       "参照",
       "対象",
       "比較側",
-      "状態・型",
       "分割No.",
       "文字位置",
       "原文（順に連結）",
@@ -14101,7 +14284,6 @@ ${targetName}`,
     const rowStyles = ["normal", "normal"];
     const cellStyles = [[
       "subtitle",
-      void 0,
       void 0,
       void 0,
       void 0,
@@ -14128,7 +14310,6 @@ ${targetName}`,
           reference,
           target,
           side,
-          raw.state,
           `${chunkIndex + 1} / ${continuation.chunks.length}`,
           `${start}–${end} / ${raw.text.length}文字`,
           chunk,
@@ -14140,7 +14321,6 @@ ${targetName}`,
           alternate ? "zebraCenter" : "center",
           alternate ? "zebra" : "normal",
           "center",
-          "info",
           "center",
           "info",
           difference ? difference.side === "source" ? "diffBefore" : "diffAfter" : "warning",
@@ -14151,9 +14331,9 @@ ${targetName}`,
           { value: chunk, width: CUSTOMER_RAW_CHUNK_COLUMN_WIDTH }
         ], 395));
         internalHyperlinks.push({
-          ref: `H${rowNumber}`,
+          ref: `G${rowNumber}`,
           targetSheet: difference ? "設定値詳細" : "確認できなかった範囲",
-          targetCell: `A${(difference ? difference.item.index : coverage.issue.index) + 3}`,
+          targetCell: `A${difference ? difference.item.index + 2 : coverage.issue.index + 3}`,
           tooltip: `${returnLabel}戻る`
         });
       });
@@ -14161,15 +14341,15 @@ ${targetName}`,
     return {
       name: "長文原文",
       rows,
-      colWidths: [7, 24, 9, 16, 11, 20, CUSTOMER_RAW_CHUNK_COLUMN_WIDTH, 20],
+      colWidths: [7, 24, 9, 11, 20, CUSTOMER_RAW_CHUNK_COLUMN_WIDTH, 20],
       rowStyles,
       cellStyles,
       headerRow: 2,
       freezeRows: 2,
-      freezeColumns: 4,
+      freezeColumns: 3,
       rowHeights,
       materializeEmptyCellsFromRow: 2,
-      merges: ["A1:F1", "G1:H1"],
+      merges: ["A1:E1", "F1:G1"],
       internalHyperlinks,
       showGridLines: false,
       zoomScale: 80,
@@ -14178,7 +14358,7 @@ ${targetName}`,
         fitToWidth: 2,
         fitToHeight: 0,
         repeatRows: { from: 2, to: 2 },
-        repeatColumns: { from: 1, to: 6 },
+        repeatColumns: { from: 1, to: 5 },
         footer: "&L長文原文（分割証跡）&Rページ &P / &N"
       }
     };
@@ -14262,7 +14442,7 @@ ${targetName}`,
       continuation
     ]));
     const rows = [
-      ["このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。取得・打切り情報はマスキングせず収録しています。", "", "", "", ""],
+      ["このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。取得・打切り情報の原文を確認してください。", "", "", "", ""],
       ["分類", "対象", "確認状態", "説明", "取得・打切り情報（原文）"]
     ];
     const internalHyperlinks = [];
@@ -14330,6 +14510,8 @@ ${targetName}`,
     const issues = buildCustomerIssuesSheet(issueItems, issueContinuations);
     if (issues) sheets.push(issues);
     sheets.push(buildCustomerListSheet(ctx, items));
+    const fieldDiff = buildCustomerFieldDiffSheet(ctx, items);
+    if (fieldDiff) sheets.push(fieldDiff);
     const valueDetails = buildCustomerValueDetailSheet(ctx, items, differenceContinuations);
     if (valueDetails) sheets.push(valueDetails);
     const longRaw = buildCustomerLongRawSheet(allContinuations);
@@ -14413,6 +14595,140 @@ ${targetName}`,
     const result = buildDiffXlsxExport(ctx);
     downloadBlob(result.filename, result.blob);
     return result;
+  }
+
+  // src/diff/xlsx-batch-export.ts
+  var DEFAULT_DIFF_XLSX_BATCH_MAX_ARCHIVE_BYTES = 200 * 1024 * 1024;
+  var ZIP_MIME_TYPE = "application/zip";
+  var XLSX_EXTENSION = ".xlsx";
+  var ZIP_EXTENSION = ".zip";
+  var MAX_ARCHIVE_FILENAME_CODE_POINTS = 180;
+  var MAX_ENTRY_FILENAME_CODE_POINTS = 180;
+  var DiffXlsxBatchExportError = class extends Error {
+    constructor(code, message, options = {}) {
+      super(message);
+      __publicField(this, "code");
+      __publicField(this, "failures");
+      __publicField(this, "maxArchiveBytes");
+      __publicField(this, "requiredArchiveBytes");
+      this.name = "DiffXlsxBatchExportError";
+      this.code = code;
+      this.failures = [...options.failures || []];
+      this.maxArchiveBytes = options.maxArchiveBytes;
+      this.requiredArchiveBytes = options.requiredArchiveBytes;
+    }
+  };
+  function resolveGeneratedAt(value) {
+    const date = value === void 0 ? /* @__PURE__ */ new Date() : value instanceof Date ? new Date(value.getTime()) : new Date(value);
+    if (!Number.isFinite(date.getTime())) throw new TypeError("generatedAt must be a valid date");
+    return date;
+  }
+  function resolveMaxArchiveBytes(value) {
+    const resolved = value === void 0 ? DEFAULT_DIFF_XLSX_BATCH_MAX_ARCHIVE_BYTES : value;
+    if (!Number.isSafeInteger(resolved) || resolved <= 0 || resolved > CLASSIC_ZIP_MAX_BYTES) {
+      throw new RangeError(`maxArchiveBytes must be an integer from 1 to ${CLASSIC_ZIP_MAX_BYTES}`);
+    }
+    return resolved;
+  }
+  function safeErrorMessage(error) {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    return message.trim() || "Excelの生成に失敗しました";
+  }
+  function safeLabel(value, index) {
+    return String(value || "").trim() || `比較 ${index + 1}`;
+  }
+  function normalizeFilenameText(value) {
+    return String(value || "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/\s+/g, " ").trim().replace(/^[._ ]+/g, "").replace(/[. ]+$/g, "");
+  }
+  function truncateCodePoints(value, maxCodePoints) {
+    const points = Array.from(value);
+    return points.length <= maxCodePoints ? value : points.slice(0, Math.max(0, maxCodePoints)).join("");
+  }
+  function ensureExtension(value, extension) {
+    const withoutExtension = value.toLocaleLowerCase("en-US").endsWith(extension) ? value.slice(0, -extension.length) : value;
+    return `${withoutExtension || "出力"}${extension}`;
+  }
+  function orderedXlsxEntryName(rawFilename, inputIndex, total) {
+    const prefixWidth = Math.max(3, String(Math.max(1, total)).length);
+    const prefix = `${String(inputIndex + 1).padStart(prefixWidth, "0")}_`;
+    const normalized = ensureExtension(normalizeFilenameText(rawFilename), XLSX_EXTENSION);
+    const stem = normalized.slice(0, -XLSX_EXTENSION.length);
+    const maxStem = MAX_ENTRY_FILENAME_CODE_POINTS - Array.from(prefix).length - XLSX_EXTENSION.length;
+    const safeStem = truncateCodePoints(stem, Math.max(1, maxStem)).replace(/[. ]+$/g, "") || `比較_${inputIndex + 1}`;
+    return `${prefix}${safeStem}${XLSX_EXTENSION}`;
+  }
+  function defaultArchiveFilename(successCount, generatedAt) {
+    const pad2 = (value) => String(value).padStart(2, "0");
+    const stamp = `${generatedAt.getFullYear()}${pad2(generatedAt.getMonth() + 1)}${pad2(generatedAt.getDate())}_${pad2(generatedAt.getHours())}${pad2(generatedAt.getMinutes())}${pad2(generatedAt.getSeconds())}`;
+    return `設定差分確認_一括_${successCount}件_${stamp}${ZIP_EXTENSION}`;
+  }
+  function safeArchiveFilename(rawFilename, fallback) {
+    const normalized = ensureExtension(normalizeFilenameText(rawFilename) || fallback, ZIP_EXTENSION);
+    const stem = normalized.slice(0, -ZIP_EXTENSION.length);
+    const maxStem = MAX_ARCHIVE_FILENAME_CODE_POINTS - ZIP_EXTENSION.length;
+    return `${truncateCodePoints(stem, maxStem).replace(/[. ]+$/g, "") || "設定差分確認_一括"}${ZIP_EXTENSION}`;
+  }
+  function notifyProgress(callback, progress) {
+    if (!callback) return;
+    try {
+      callback(progress);
+    } catch {
+    }
+  }
+  async function buildDiffXlsxBatchExport(items, options = {}) {
+    const total = items.length;
+    const generatedAt = resolveGeneratedAt(options.generatedAt);
+    const maxArchiveBytes = resolveMaxArchiveBytes(options.maxArchiveBytes);
+    const zipEntries = [];
+    const entryNames = [];
+    const failures = [];
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      const label = safeLabel(item?.label, index);
+      notifyProgress(options.onProgress, { stage: "building", current: index + 1, total, label });
+      try {
+        const workbook = buildDiffXlsxExport(item.context);
+        const data = new Uint8Array(await workbook.blob.arrayBuffer());
+        const entryName = orderedXlsxEntryName(workbook.filename, index, total);
+        const candidateEntries = [...zipEntries, { name: entryName, data }];
+        const requiredArchiveBytes = calculateStoredZipByteLength(candidateEntries);
+        if (requiredArchiveBytes > maxArchiveBytes) {
+          throw new DiffXlsxBatchExportError(
+            "MAX_ARCHIVE_BYTES",
+            `一括ExcelのZIPサイズが上限 ${maxArchiveBytes.toLocaleString()} バイトを超えます`,
+            { failures, maxArchiveBytes, requiredArchiveBytes }
+          );
+        }
+        zipEntries.push({ name: entryName, data });
+        entryNames.push(entryName);
+      } catch (error) {
+        if (error instanceof DiffXlsxBatchExportError && error.code === "MAX_ARCHIVE_BYTES") throw error;
+        failures.push({ index, label, message: safeErrorMessage(error) });
+      }
+    }
+    if (zipEntries.length === 0) {
+      throw new DiffXlsxBatchExportError(
+        "NO_SUCCESSFUL_WORKBOOK",
+        "一括保存できるExcelを生成できませんでした",
+        { failures }
+      );
+    }
+    notifyProgress(options.onProgress, { stage: "archiving", current: total, total });
+    const blob = buildStoredZip(zipEntries, { mimeType: ZIP_MIME_TYPE, modifiedAt: generatedAt });
+    if (blob.size > maxArchiveBytes) {
+      throw new DiffXlsxBatchExportError(
+        "MAX_ARCHIVE_BYTES",
+        `一括ExcelのZIPサイズが上限 ${maxArchiveBytes.toLocaleString()} バイトを超えます`,
+        { failures, maxArchiveBytes, requiredArchiveBytes: blob.size }
+      );
+    }
+    const fallbackFilename = defaultArchiveFilename(zipEntries.length, generatedAt);
+    return {
+      filename: safeArchiveFilename(options.archiveFilename, fallbackFilename),
+      blob,
+      entries: entryNames,
+      failures
+    };
   }
 
   // src/entries/diff-lite-ui.ts
@@ -16021,6 +16337,12 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-pair-breakdown small{margin-top:2px;color:#64748b;white-space:nowrap}
 .kus-dl-pair-save{display:flex;gap:4px;justify-content:flex-end}
 .kus-dl-pair-save .kus-lp__btn{min-height:36px!important;padding:5px 7px!important;font-size:10.5px}
+.kus-dl-batch-save{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-radius:11px;background:#eff6ff;font-family:-apple-system,Segoe UI,sans-serif}
+.kus-dl-batch-save__text{min-width:0;color:#1e3a8a}
+.kus-dl-batch-save__text strong,.kus-dl-batch-save__text small{display:block}
+.kus-dl-batch-save__text strong{color:#10253f;font-size:13px}
+.kus-dl-batch-save__text small{margin-top:2px;font-size:11px;line-height:1.45}
+.kus-dl-batch-save .kus-lp__btn{flex:0 0 auto;min-width:250px}
 
 /* Diff Lite only: human-first review workspace. Shared litePanelTheme is intentionally untouched. */
 #kus-diff-lite.kus-lp{width:min(1000px,calc(100vw - 24px));max-height:min(96vh,1040px);top:max(8px,2vh);right:max(8px,1vw);border-radius:18px;background:#f4f7fa;box-shadow:0 28px 80px -32px rgba(15,37,63,.52)}
@@ -16256,6 +16578,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 4px;color:#64748b;font:700 11px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.03em}
   .kus-dl-value__label+.kus-dl-pre::before{content:none;display:none}
   .kus-dl-table-scroll>.kus-dl-multi{white-space:nowrap}
+  .kus-dl-batch-save{align-items:stretch;flex-direction:column}
+  .kus-dl-batch-save .kus-lp__btn{width:100%;min-width:0}
 }
 @media(max-width:420px){
   .kus-dl-mode{display:grid;grid-template-columns:1fr 1fr;width:100%;box-sizing:border-box}
@@ -16337,6 +16661,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       keyword ? `検索: ${keyword}` : ""
     ].filter(Boolean);
     return parts.length ? `画面の絞り込み: ${parts.join(" / ")}` : "画面で表示中の結果（フィルターなし）";
+  }
+  function multiXlsxBatchSaveMarkup(count) {
+    if (count <= 0) return "";
+    const label = `Excelをまとめて保存（${count}件・ZIP）`;
+    return `<div class="kus-dl-batch-save"><span class="kus-dl-batch-save__text"><strong>Excelを一括保存</strong><small>成功した比較結果 ${count}件を、1つのZIPにまとめます。</small></span><button type="button" class="kus-lp__btn kus-lp__btn--primary" data-kus-dl-multi-xlsx-all aria-label="${esc(label)}">${esc(label)}</button></div>`;
   }
   var rowSearchCache = /* @__PURE__ */ new WeakMap();
   var SEARCH_VALUE_TEXT_LIMIT = 8e3;
@@ -16679,10 +17008,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const panel = createLitePanel({
       id: "kus-diff-lite",
       title: "差分比較",
-      subtitle: "アプリ設定を1件ずつ、1対多、または複数の1対1ペアで比較し、HTMLと顧客向けExcelで確認",
+      subtitle: "アプリ設定を1件ずつ、1対多、または複数の1対1ペアで比較し、HTMLとExcelで確認",
       accent: "diff",
       badges: [{ label: "Lite" }, { label: "出力対応" }],
-      hint: "1対1比較と1対多比較は完了時にレビュー用HTMLを自動保存します。ペア一括比較は結果行から必要なHTMLまたはExcelを保存します。顧客向けExcelには差分値と取得不完全時のエラー等の原文をマスキングせず収録するため、共有前に内容を確認してください。",
+      hint: "1対1比較と1対多比較は完了時にレビュー用HTMLを自動保存します。ペア一括比較は結果行から個別保存でき、成功したExcelはZIPでまとめて保存できます。Excelには差分値と取得不完全時のエラー等の原文が含まれるため、共有前に内容を確認してください。",
       wide: true
     });
     panel.status.setAttribute("role", "status");
@@ -17736,7 +18065,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const appReferenceExclusionNote = document.createElement("p");
     appReferenceExclusionNote.id = "kus-dl-common-exclusion-note";
     appReferenceExclusionNote.className = "kus-dl-common-exclusion__note";
-    appReferenceExclusionNote.textContent = "初期状態はオフです。オン／オフを変更した後は再比較してください。差分件数・画面結果・顧客向けExcelに反映されます。";
+    appReferenceExclusionNote.textContent = "初期状態はオフです。オン／オフを変更した後は再比較してください。差分件数・画面結果・Excelに反映されます。";
     nAppRefs.checkbox.setAttribute("aria-describedby", `${appReferenceExclusionDescription.id} ${appReferenceExclusionNote.id}`);
     appReferenceExclusion.append(
       appReferenceExclusionHeading,
@@ -17832,7 +18161,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     runRow.classList.add("kus-dl-run-row");
     panel.body.insertBefore(runRow, panel.status);
     const completionReviewBtn = makeButton("結果を確認", "sub", { icon: "↓" });
-    const completionXlsxBtn = makeButton("顧客向けExcelを保存（全件）", "primary", { icon: "↓" });
+    const completionXlsxBtn = makeButton("Excelを保存（全件）", "primary", { icon: "↓" });
     completionReviewBtn.dataset.kusDlCompletion = "review";
     completionXlsxBtn.dataset.kusDlCompletion = "xlsx";
     completionReviewBtn.setAttribute("aria-controls", "kus-dl-overview");
@@ -17946,8 +18275,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     cardResult.body.appendChild(resultBox);
     panel.body.insertBefore(cardResult.card, panel.status);
     const cardOut = makeCard({ title: "出力", number: 3, soft: true });
-    cardOut.body.appendChild(makeNote("レビュー用 HTML は比較実行時に自動保存されます。顧客へ共有する場合は、全件または画面で絞り込んだ範囲を Excel で保存してください。Excel には差分値と取得不完全時のエラー等の原文をマスキングせず収録し、長い原文は可視シートへ分割して全文を保持するため、共有前に内容を確認してください。"));
-    cardOut.body.appendChild(makeNote("変更箇所のみの HTML にも比較元・比較先の値が含まれ、匿名化・機密情報のマスキング済みではありません。比較設定を含む社内用 HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。"));
+    cardOut.body.appendChild(makeNote("レビュー用 HTML は比較実行時に自動保存されます。共有する場合は、全件または画面で絞り込んだ範囲を Excel で保存してください。Excel には差分値と取得不完全時のエラー等の原文を収録し、長い原文は可視シートへ分割して全文を保持します。"));
+    cardOut.body.appendChild(makeNote("変更箇所のみの HTML にも比較元・比較先の値が含まれます。比較設定を含む社内用 HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。"));
     const htmlContentMode = makeSelect([
       ["diffOnly", "レビュー用（変更箇所のみ）"],
       ["withCompared", "社内用（比較設定を含む・取扱注意）"]
@@ -17962,7 +18291,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     cardOut.body.appendChild(makeRow(expRange, { label: "範囲" }));
     const grid = document.createElement("div");
     grid.className = "kus-lp__btn-grid";
-    const bXlsx = makeButton("顧客向け Excel を保存 (.xlsx)", "primary", { icon: "↓" });
+    const bXlsx = makeButton("Excel を保存 (.xlsx)", "primary", { icon: "↓" });
     const bHtml = makeButton("レビュー用 HTML を再出力", "sub", { icon: "↓" });
     bXlsx.dataset.kusDlExport = "xlsx";
     bHtml.dataset.kusDlExport = "html";
@@ -17997,7 +18326,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     };
     const targetStep = makeWorkflowStep("target", "1", "比較対象を決める", "比較元から比較先へ、どの設定が変わったかを確認します。");
     const reviewStep = makeWorkflowStep("review", "2", "結果を確認する", "取得の完全性を確認してから、差分を順にレビューします。");
-    const exportStep = makeWorkflowStep("export", "3", "結果を出力する", "顧客向け Excel または社内確認用の HTML を保存できます。");
+    const exportStep = makeWorkflowStep("export", "3", "結果を出力する", "Excel または社内確認用の HTML を保存できます。");
     const configDetails = document.createElement("details");
     configDetails.className = "kus-dl-disclosure";
     configDetails.innerHTML = "<summary><span>比較範囲と詳細設定</span><small>セクション、JSON読込、無視ルール、比較条件</small></summary>";
@@ -18521,6 +18850,71 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         panel.setStatus("この項目だけを無視ルールへ追加しました。現在の結果は変えず、次回比較から適用します", "warn");
         return;
       }
+      const multiXlsxAllButton = target?.closest("[data-kus-dl-multi-xlsx-all]");
+      if (multiXlsxAllButton) {
+        if (pairFolderLoadActive()) {
+          panel.setStatus("フォルダの読込が完了してから前回結果を保存してください", "warn");
+          return;
+        }
+        if (multiXlsxAllButton.disabled || multiXlsxExportActive || multiXlsxExports.length === 0) return;
+        const exportStartedAt = Date.now();
+        const sourceItems = multiXlsxExports;
+        const snapshot = sourceItems.slice();
+        const buttons = [...resultBox.querySelectorAll("[data-kus-dl-multi-html], [data-kus-dl-multi-xlsx], [data-kus-dl-multi-xlsx-all]")];
+        multiXlsxExportActive = true;
+        buttons.forEach((button) => {
+          button.disabled = true;
+        });
+        try {
+          panel.setStatus(`一括Excelを生成中… 0/${snapshot.length}件`, "busy");
+          await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+          const result = await buildDiffXlsxBatchExport(
+            snapshot.map((item) => ({
+              label: item.label,
+              context: buildLiteDiffXlsxContext(
+                item.cache,
+                item.cache.rows,
+                "all",
+                "全件",
+                "フィルターなし（比較結果の全件）"
+              )
+            })),
+            {
+              onProgress: (progress) => {
+                if (progress.stage === "building") {
+                  panel.setStatus(`一括Excelを生成中… ${progress.current}/${progress.total}件${progress.label ? ` — ${progress.label}` : ""}`, "busy");
+                } else {
+                  panel.setStatus(`Excel ${progress.total}件をZIPにまとめています…`, "busy");
+                }
+              }
+            }
+          );
+          if (multiXlsxExports !== sourceItems) {
+            panel.setStatus("比較結果が更新されたため、生成した一括Excelは保存しませんでした。最新の結果からもう一度保存してください", "warn");
+            return;
+          }
+          downloadBlob(result.filename, result.blob);
+          const incomplete = snapshot.filter((item) => isIncompleteLiteDiff(item.cache)).length;
+          const notes = [
+            result.failures.length ? `Excel生成失敗 ${result.failures.length}件` : "",
+            incomplete ? `要確認 ${incomplete}件` : ""
+          ].filter(Boolean).join(" / ");
+          panel.setStatus(
+            `一括Excelのダウンロードを開始しました: ${result.filename}（${result.entries.length}件）${notes ? ` — ${notes}` : ""}`,
+            result.failures.length || incomplete ? "warn" : "ok"
+          );
+        } catch (e) {
+          panel.setStatus(`一括Excel出力エラー: ${e?.message || String(e)}`, "err");
+        } finally {
+          const cooldown = XLSX_EXPORT_COOLDOWN_MS - (Date.now() - exportStartedAt);
+          if (cooldown > 0) await new Promise((resolve) => window.setTimeout(resolve, cooldown));
+          multiXlsxExportActive = false;
+          buttons.forEach((button) => {
+            if (button.isConnected) button.disabled = false;
+          });
+        }
+        return;
+      }
       const multiHtmlButton = target?.closest("[data-kus-dl-multi-html]");
       if (multiHtmlButton) {
         if (pairFolderLoadActive()) {
@@ -18864,13 +19258,13 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           }) - 1;
           const stateLabel = needsReview ? "要確認" : counts.actual ? "完了" : "一致";
           const pairActionLabel = `ペア ${result.pair.rowNumber}・${sourceLabel}から${targetLabel}`;
-          resultRows.push(`<tr><td>${result.pair.rowNumber}</td><td>${esc(sourceLabel)}<br><small>${esc(sourceEnv)}</small></td><td>${esc(targetLabel)}<br><small>${esc(targetEnv)}</small></td><td class="${needsReview ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${stateLabel}</td><td><span class="kus-dl-pair-breakdown"><strong>差分 ${counts.actual}</strong><small>追加 ${counts.added} / 削除 ${counts.removed} / 内容変更 ${changed} / 移動 ${counts.moved}</small></span></td><td>${incompleteReasons.length ? incompleteReasons.map((reason) => esc(reason)).join("<br>") : "なし"}</td><td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のHTMLを保存`)}">HTML</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}の顧客向けExcelを保存`)}">Excel</button></span></td></tr>`);
+          resultRows.push(`<tr><td>${result.pair.rowNumber}</td><td>${esc(sourceLabel)}<br><small>${esc(sourceEnv)}</small></td><td>${esc(targetLabel)}<br><small>${esc(targetEnv)}</small></td><td class="${needsReview ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${stateLabel}</td><td><span class="kus-dl-pair-breakdown"><strong>差分 ${counts.actual}</strong><small>追加 ${counts.added} / 削除 ${counts.removed} / 内容変更 ${changed} / 移動 ${counts.moved}</small></span></td><td>${incompleteReasons.length ? incompleteReasons.map((reason) => esc(reason)).join("<br>") : "なし"}</td><td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のHTMLを保存`)}">HTML</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のExcelを保存`)}">Excel</button></span></td></tr>`);
         });
         cardResult.card.style.display = "";
         reviewEmpty.style.display = "none";
-        resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="ペア一括比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi kus-dl-multi--pairs"><caption>ペア一括比較の結果（登録順）</caption><thead><tr><th>No.</th><th>比較元<br><small>変更前</small></th><th>比較先<br><small>変更後</small></th><th>状態</th><th>差分内訳</th><th>確認事項<br><small>不完全な理由</small></th><th>保存</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div></div>`;
+        resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="ペア一括比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi kus-dl-multi--pairs"><caption>ペア一括比較の結果（登録順）</caption><thead><tr><th>No.</th><th>比較元<br><small>変更前</small></th><th>比較先<br><small>変更後</small></th><th>状態</th><th>差分内訳</th><th>確認事項<br><small>不完全な理由</small></th><th>保存</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
         const note = [failed ? `失敗 ${failed}件` : "", incomplete ? `要確認 ${incomplete}件` : ""].filter(Boolean).join(" / ");
-        panel.setStatus(`ペア一括比較が完了: 成功 ${succeeded}/${prepared.pairs.length}件${note ? ` / ${note}` : ""}。各行からHTMLまたは顧客向けExcelを保存できます`, failed || incomplete ? "warn" : "ok");
+        panel.setStatus(`ペア一括比較が完了: 成功 ${succeeded}/${prepared.pairs.length}件${note ? ` / ${note}` : ""}。Excelは各行または一括ボタンから保存できます`, failed || incomplete ? "warn" : "ok");
       });
     });
     runAllBtn.addEventListener("click", () => {
@@ -18988,10 +19382,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         }
         cardResult.card.style.display = "";
         reviewEmpty.style.display = "none";
-        resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>Excel</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div></div>`;
+        resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>Excel</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
         const tone = failed || exportFailed || incomplete || exported !== targets.length ? "warn" : "ok";
         const note = [failed ? `比較失敗 ${failed}件` : "", exportFailed ? `HTML出力失敗 ${exportFailed}件` : "", incomplete ? `要確認 ${incomplete}件` : ""].filter(Boolean).join(" / ");
-        panel.setStatus(`全比較先の比較が完了: HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）${note ? ` / ${note}` : ""}`, tone);
+        panel.setStatus(`全比較先の比較が完了: HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）${note ? ` / ${note}` : ""}。Excelは各行または一括ボタンから保存できます`, tone);
       });
     });
     runBtn.addEventListener("click", () => {

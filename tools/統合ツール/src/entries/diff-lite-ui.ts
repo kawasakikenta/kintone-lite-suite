@@ -13,8 +13,9 @@ import {
   hasIncompleteActualDiffTruncation
 } from '../diff/engine.js';
 import { runExportDiffXlsx, type DiffXlsxContext } from '../diff/xlsx-export.js';
+import { buildDiffXlsxBatchExport } from '../diff/xlsx-batch-export.js';
 import { decodeRow, type DecodedRow } from '../diff/path-decoder.js';
-import { downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify } from '../utils.js';
+import { downloadBlob, downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify } from '../utils.js';
 import { runExportDiffHtmlStandalone } from '../tabs/diff-export-standalone.js';
 import {
   createLitePanel,
@@ -231,6 +232,12 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-pair-breakdown small{margin-top:2px;color:#64748b;white-space:nowrap}
 .kus-dl-pair-save{display:flex;gap:4px;justify-content:flex-end}
 .kus-dl-pair-save .kus-lp__btn{min-height:36px!important;padding:5px 7px!important;font-size:10.5px}
+.kus-dl-batch-save{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-radius:11px;background:#eff6ff;font-family:-apple-system,Segoe UI,sans-serif}
+.kus-dl-batch-save__text{min-width:0;color:#1e3a8a}
+.kus-dl-batch-save__text strong,.kus-dl-batch-save__text small{display:block}
+.kus-dl-batch-save__text strong{color:#10253f;font-size:13px}
+.kus-dl-batch-save__text small{margin-top:2px;font-size:11px;line-height:1.45}
+.kus-dl-batch-save .kus-lp__btn{flex:0 0 auto;min-width:250px}
 
 /* Diff Lite only: human-first review workspace. Shared litePanelTheme is intentionally untouched. */
 #kus-diff-lite.kus-lp{width:min(1000px,calc(100vw - 24px));max-height:min(96vh,1040px);top:max(8px,2vh);right:max(8px,1vw);border-radius:18px;background:#f4f7fa;box-shadow:0 28px 80px -32px rgba(15,37,63,.52)}
@@ -466,6 +473,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 4px;color:#64748b;font:700 11px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.03em}
   .kus-dl-value__label+.kus-dl-pre::before{content:none;display:none}
   .kus-dl-table-scroll>.kus-dl-multi{white-space:nowrap}
+  .kus-dl-batch-save{align-items:stretch;flex-direction:column}
+  .kus-dl-batch-save .kus-lp__btn{width:100%;min-width:0}
 }
 @media(max-width:420px){
   .kus-dl-mode{display:grid;grid-template-columns:1fr 1fr;width:100%;box-sizing:border-box}
@@ -632,6 +641,13 @@ interface DiffCounts {
 interface MultiXlsxExportItem {
   label: string;
   cache: DiffCache;
+}
+
+function multiXlsxBatchSaveMarkup(count: number): string {
+  if (count <= 0) return '';
+  const label = `Excelをまとめて保存（${count}件・ZIP）`;
+  return `<div class="kus-dl-batch-save"><span class="kus-dl-batch-save__text"><strong>Excelを一括保存</strong><small>成功した比較結果 ${count}件を、1つのZIPにまとめます。</small></span>`
+    + `<button type="button" class="kus-lp__btn kus-lp__btn--primary" data-kus-dl-multi-xlsx-all aria-label="${esc(label)}">${esc(label)}</button></div>`;
 }
 
 const rowSearchCache = new WeakMap<object, string>();
@@ -1051,10 +1067,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const panel: LitePanelHandle = createLitePanel({
     id: 'kus-diff-lite',
     title: '差分比較',
-    subtitle: 'アプリ設定を1件ずつ、1対多、または複数の1対1ペアで比較し、HTMLと顧客向けExcelで確認',
+    subtitle: 'アプリ設定を1件ずつ、1対多、または複数の1対1ペアで比較し、HTMLとExcelで確認',
     accent: 'diff',
     badges: [{ label: 'Lite' }, { label: '出力対応' }],
-    hint: '1対1比較と1対多比較は完了時にレビュー用HTMLを自動保存します。ペア一括比較は結果行から必要なHTMLまたはExcelを保存します。顧客向けExcelには差分値と取得不完全時のエラー等の原文をマスキングせず収録するため、共有前に内容を確認してください。',
+    hint: '1対1比較と1対多比較は完了時にレビュー用HTMLを自動保存します。ペア一括比較は結果行から個別保存でき、成功したExcelはZIPでまとめて保存できます。Excelには差分値と取得不完全時のエラー等の原文が含まれるため、共有前に内容を確認してください。',
     wide: true
   });
   panel.status.setAttribute('role', 'status');
@@ -2216,7 +2232,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const appReferenceExclusionNote = document.createElement('p');
   appReferenceExclusionNote.id = 'kus-dl-common-exclusion-note';
   appReferenceExclusionNote.className = 'kus-dl-common-exclusion__note';
-  appReferenceExclusionNote.textContent = '初期状態はオフです。オン／オフを変更した後は再比較してください。差分件数・画面結果・顧客向けExcelに反映されます。';
+  appReferenceExclusionNote.textContent = '初期状態はオフです。オン／オフを変更した後は再比較してください。差分件数・画面結果・Excelに反映されます。';
   nAppRefs.checkbox.setAttribute('aria-describedby', `${appReferenceExclusionDescription.id} ${appReferenceExclusionNote.id}`);
   appReferenceExclusion.append(
     appReferenceExclusionHeading,
@@ -2320,7 +2336,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   runRow.classList.add('kus-dl-run-row');
   panel.body.insertBefore(runRow, panel.status);
   const completionReviewBtn = makeButton('結果を確認', 'sub', { icon: '↓' });
-  const completionXlsxBtn = makeButton('顧客向けExcelを保存（全件）', 'primary', { icon: '↓' });
+  const completionXlsxBtn = makeButton('Excelを保存（全件）', 'primary', { icon: '↓' });
   completionReviewBtn.dataset.kusDlCompletion = 'review';
   completionXlsxBtn.dataset.kusDlCompletion = 'xlsx';
   completionReviewBtn.setAttribute('aria-controls', 'kus-dl-overview');
@@ -2432,8 +2448,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   // ---- 出力（再出力用。初回は比較実行時に自動保存される） ----
   const cardOut = makeCard({ title: '出力', number: 3, soft: true });
-  cardOut.body.appendChild(makeNote('レビュー用 HTML は比較実行時に自動保存されます。顧客へ共有する場合は、全件または画面で絞り込んだ範囲を Excel で保存してください。Excel には差分値と取得不完全時のエラー等の原文をマスキングせず収録し、長い原文は可視シートへ分割して全文を保持するため、共有前に内容を確認してください。'));
-  cardOut.body.appendChild(makeNote('変更箇所のみの HTML にも比較元・比較先の値が含まれ、匿名化・機密情報のマスキング済みではありません。比較設定を含む社内用 HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。'));
+  cardOut.body.appendChild(makeNote('レビュー用 HTML は比較実行時に自動保存されます。共有する場合は、全件または画面で絞り込んだ範囲を Excel で保存してください。Excel には差分値と取得不完全時のエラー等の原文を収録し、長い原文は可視シートへ分割して全文を保持します。'));
+  cardOut.body.appendChild(makeNote('変更箇所のみの HTML にも比較元・比較先の値が含まれます。比較設定を含む社内用 HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。'));
   const htmlContentMode = makeSelect([
     ['diffOnly', 'レビュー用（変更箇所のみ）'],
     ['withCompared', '社内用（比較設定を含む・取扱注意）']
@@ -2449,7 +2465,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   const grid = document.createElement('div');
   grid.className = 'kus-lp__btn-grid';
-  const bXlsx = makeButton('顧客向け Excel を保存 (.xlsx)', 'primary', { icon: '↓' });
+  const bXlsx = makeButton('Excel を保存 (.xlsx)', 'primary', { icon: '↓' });
   const bHtml = makeButton('レビュー用 HTML を再出力', 'sub', { icon: '↓' });
   bXlsx.dataset.kusDlExport = 'xlsx';
   bHtml.dataset.kusDlExport = 'html';
@@ -2488,7 +2504,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   };
   const targetStep = makeWorkflowStep('target', '1', '比較対象を決める', '比較元から比較先へ、どの設定が変わったかを確認します。');
   const reviewStep = makeWorkflowStep('review', '2', '結果を確認する', '取得の完全性を確認してから、差分を順にレビューします。');
-  const exportStep = makeWorkflowStep('export', '3', '結果を出力する', '顧客向け Excel または社内確認用の HTML を保存できます。');
+  const exportStep = makeWorkflowStep('export', '3', '結果を出力する', 'Excel または社内確認用の HTML を保存できます。');
 
   const configDetails = document.createElement('details');
   configDetails.className = 'kus-dl-disclosure';
@@ -3069,6 +3085,69 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       panel.setStatus('この項目だけを無視ルールへ追加しました。現在の結果は変えず、次回比較から適用します', 'warn');
       return;
     }
+    const multiXlsxAllButton = target?.closest<HTMLButtonElement>('[data-kus-dl-multi-xlsx-all]');
+    if (multiXlsxAllButton) {
+      if (pairFolderLoadActive()) {
+        panel.setStatus('フォルダの読込が完了してから前回結果を保存してください', 'warn');
+        return;
+      }
+      if (multiXlsxAllButton.disabled || multiXlsxExportActive || multiXlsxExports.length === 0) return;
+      const exportStartedAt = Date.now();
+      const sourceItems = multiXlsxExports;
+      const snapshot = sourceItems.slice();
+      const buttons = [...resultBox.querySelectorAll<HTMLButtonElement>('[data-kus-dl-multi-html], [data-kus-dl-multi-xlsx], [data-kus-dl-multi-xlsx-all]')];
+      multiXlsxExportActive = true;
+      buttons.forEach((button) => { button.disabled = true; });
+      try {
+        panel.setStatus(`一括Excelを生成中… 0/${snapshot.length}件`, 'busy');
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        const result = await buildDiffXlsxBatchExport(
+          snapshot.map((item) => ({
+            label: item.label,
+            context: buildLiteDiffXlsxContext(
+              item.cache,
+              item.cache.rows,
+              'all',
+              '全件',
+              'フィルターなし（比較結果の全件）'
+            )
+          })),
+          {
+            onProgress: (progress) => {
+              if (progress.stage === 'building') {
+                panel.setStatus(`一括Excelを生成中… ${progress.current}/${progress.total}件${progress.label ? ` — ${progress.label}` : ''}`, 'busy');
+              } else {
+                panel.setStatus(`Excel ${progress.total}件をZIPにまとめています…`, 'busy');
+              }
+            }
+          }
+        );
+        if (multiXlsxExports !== sourceItems) {
+          panel.setStatus('比較結果が更新されたため、生成した一括Excelは保存しませんでした。最新の結果からもう一度保存してください', 'warn');
+          return;
+        }
+        downloadBlob(result.filename, result.blob);
+        const incomplete = snapshot.filter((item) => isIncompleteLiteDiff(item.cache)).length;
+        const notes = [
+          result.failures.length ? `Excel生成失敗 ${result.failures.length}件` : '',
+          incomplete ? `要確認 ${incomplete}件` : ''
+        ].filter(Boolean).join(' / ');
+        panel.setStatus(
+          `一括Excelのダウンロードを開始しました: ${result.filename}（${result.entries.length}件）${notes ? ` — ${notes}` : ''}`,
+          result.failures.length || incomplete ? 'warn' : 'ok'
+        );
+      } catch (e: any) {
+        panel.setStatus(`一括Excel出力エラー: ${e?.message || String(e)}`, 'err');
+      } finally {
+        const cooldown = XLSX_EXPORT_COOLDOWN_MS - (Date.now() - exportStartedAt);
+        if (cooldown > 0) await new Promise<void>((resolve) => window.setTimeout(resolve, cooldown));
+        multiXlsxExportActive = false;
+        buttons.forEach((button) => {
+          if (button.isConnected) button.disabled = false;
+        });
+      }
+      return;
+    }
     const multiHtmlButton = target?.closest<HTMLButtonElement>('[data-kus-dl-multi-html]');
     if (multiHtmlButton) {
       if (pairFolderLoadActive()) {
@@ -3433,14 +3512,14 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           `<td class="${needsReview ? 'kus-dl-multi__warn' : 'kus-dl-multi__ok'}">${stateLabel}</td>` +
           `<td><span class="kus-dl-pair-breakdown"><strong>差分 ${counts.actual}</strong><small>追加 ${counts.added} / 削除 ${counts.removed} / 内容変更 ${changed} / 移動 ${counts.moved}</small></span></td>` +
           `<td>${incompleteReasons.length ? incompleteReasons.map((reason) => esc(reason)).join('<br>') : 'なし'}</td>` +
-          `<td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のHTMLを保存`)}">HTML</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}の顧客向けExcelを保存`)}">Excel</button></span></td></tr>`);
+          `<td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のHTMLを保存`)}">HTML</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のExcelを保存`)}">Excel</button></span></td></tr>`);
       });
 
       cardResult.card.style.display = '';
       reviewEmpty.style.display = 'none';
-      resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="ペア一括比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi kus-dl-multi--pairs"><caption>ペア一括比較の結果（登録順）</caption><thead><tr><th>No.</th><th>比較元<br><small>変更前</small></th><th>比較先<br><small>変更後</small></th><th>状態</th><th>差分内訳</th><th>確認事項<br><small>不完全な理由</small></th><th>保存</th></tr></thead><tbody>${resultRows.join('')}</tbody></table></div></div>`;
+      resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="ペア一括比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi kus-dl-multi--pairs"><caption>ペア一括比較の結果（登録順）</caption><thead><tr><th>No.</th><th>比較元<br><small>変更前</small></th><th>比較先<br><small>変更後</small></th><th>状態</th><th>差分内訳</th><th>確認事項<br><small>不完全な理由</small></th><th>保存</th></tr></thead><tbody>${resultRows.join('')}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
       const note = [failed ? `失敗 ${failed}件` : '', incomplete ? `要確認 ${incomplete}件` : ''].filter(Boolean).join(' / ');
-      panel.setStatus(`ペア一括比較が完了: 成功 ${succeeded}/${prepared.pairs.length}件${note ? ` / ${note}` : ''}。各行からHTMLまたは顧客向けExcelを保存できます`, failed || incomplete ? 'warn' : 'ok');
+      panel.setStatus(`ペア一括比較が完了: 成功 ${succeeded}/${prepared.pairs.length}件${note ? ` / ${note}` : ''}。Excelは各行または一括ボタンから保存できます`, failed || incomplete ? 'warn' : 'ok');
     });
   });
 
@@ -3563,10 +3642,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       }
       cardResult.card.style.display = '';
       reviewEmpty.style.display = 'none';
-      resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>Excel</th></tr></thead><tbody>${resultRows.join('')}</tbody></table></div></div>`;
+      resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>Excel</th></tr></thead><tbody>${resultRows.join('')}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
       const tone = failed || exportFailed || incomplete || exported !== targets.length ? 'warn' : 'ok';
       const note = [failed ? `比較失敗 ${failed}件` : '', exportFailed ? `HTML出力失敗 ${exportFailed}件` : '', incomplete ? `要確認 ${incomplete}件` : ''].filter(Boolean).join(' / ');
-      panel.setStatus(`全比較先の比較が完了: HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）${note ? ` / ${note}` : ''}`, tone);
+      panel.setStatus(`全比較先の比較が完了: HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）${note ? ` / ${note}` : ''}。Excelは各行または一括ボタンから保存できます`, tone);
     });
   });
 
