@@ -55,11 +55,15 @@ const ACL_GRANT_FLAG_KEYS: ReadonlySet<string> = new Set([
   'viewable', 'editable', 'deletable'
 ]);
 
-const FIELD_ACL_LEVEL_ORDER: ReadonlyArray<string> = ['NONE', 'READ', 'READ_WRITE'];
+const FIELD_ACL_LEVEL_ORDER: ReadonlyArray<string> = ['NONE', 'READ', 'WRITE'];
 
 function fieldAclLevelIndex(value): number {
   if (value == null) return -1;
-  return FIELD_ACL_LEVEL_ORDER.indexOf(String(value).toUpperCase());
+  const upper = String(value).toUpperCase();
+  const normalized = upper === 'READ_WRITE'
+    ? 'WRITE'
+    : upper;
+  return FIELD_ACL_LEVEL_ORDER.indexOf(normalized);
 }
 
 export function detectRowSeverity(row) {
@@ -83,13 +87,15 @@ export function detectRowSeverity(row) {
     if (row?.left === true && row?.right === false) return 'high';
     if (row?.left === false && row?.right === true) return 'medium';
   }
-  // fieldAcl の accessibility（NONE < READ < READ_WRITE）：低下=high、上昇=medium
+  // fieldAcl の accessibility（NONE < READ < WRITE）：低下=high、上昇=medium。
+  // 旧形式の READ_WRITE は WRITE と同じ最上位権限として扱う。
   if (sec === 'fieldAcl' && leaf === 'accessibility' && row?.type === 'changed') {
     const lIdx = fieldAclLevelIndex(row?.left);
     const rIdx = fieldAclLevelIndex(row?.right);
     if (lIdx >= 0 && rIdx >= 0) {
       if (rIdx < lIdx) return 'high';
       if (rIdx > lIdx) return 'medium';
+      return 'low';
     }
   }
 
@@ -1007,6 +1013,11 @@ export function preprocessCustomizePairForDiff(src, tgt) {
 export function preprocessPluginSettingsForDiff(value) {
   if (!value || typeof value !== 'object') return value;
   const cloned = deepClone(value);
+  // 旧形式の設定取得JSONでは補助取得の集計値がセクション直下に保存されていた。
+  // これらはプラグイン設定そのものではないため、差分対象へ混ぜない。
+  delete cloned.fetched;
+  delete cloned.skipped;
+  delete cloned.failed;
   if (!Array.isArray(cloned.plugins)) return cloned;
   cloned.plugins.forEach((p) => {
     if (!p || typeof p !== 'object') return;
@@ -1017,6 +1028,22 @@ export function preprocessPluginSettingsForDiff(value) {
     }
   });
   return cloned;
+}
+
+function getLegacyPluginSettingsFetchError(value): string {
+  if (!value || typeof value !== 'object') return '';
+  const failed = Number(value.failed);
+  const skipped = Number(value.skipped);
+  const failedCount = Number.isFinite(failed) && failed > 0 ? Math.trunc(failed) : 0;
+  const skippedCount = Number.isFinite(skipped) && skipped > 0 ? Math.trunc(skipped) : 0;
+  if (failedCount <= 0 && skippedCount <= 0) return '';
+  if (skippedCount <= 0) {
+    return `プラグイン設定の取得に失敗したため、このセクションは比較できません（${failedCount}件）`;
+  }
+  if (failedCount <= 0) {
+    return `プラグイン設定を取得できない項目があるため、このセクションは比較できません（${skippedCount}件）`;
+  }
+  return `プラグイン設定を取得できない項目があるため、このセクションは比較できません（失敗${failedCount}件、未取得${skippedCount}件）`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1153,9 +1180,13 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
     const s = sourceBundle.sections[sec];
     const t = targetBundle.sections[sec];
 
-    if ((s && s._fetchError) || (t && t._fetchError)) {
-      const sourceError = s?._fetchError ? String(s._fetchError) : '';
-      const targetError = t?._fetchError ? String(t._fetchError) : '';
+    const sourceError = s?._fetchError
+      ? String(s._fetchError)
+      : (sec === 'pluginSettings' ? getLegacyPluginSettingsFetchError(s) : '');
+    const targetError = t?._fetchError
+      ? String(t._fetchError)
+      : (sec === 'pluginSettings' ? getLegacyPluginSettingsFetchError(t) : '');
+    if (sourceError || targetError) {
       const side = sourceError && targetError ? 'both' : (sourceError ? 'source' : 'target');
       fetchIssues.push({
         _id: `fetch:${sec}:${side}`,
@@ -1398,9 +1429,9 @@ export function getActiveDiffNormalizationConfig(sectionKey, presetState) {
 }
 
 /**
- * API上で比較対象または参照先のアプリIDだと意味が確定するパスだけを判定する。
+ * API上で環境ごとに変わる内部IDだと意味が確定するパスだけを判定する。
  * `app` / `appId` という末尾名だけでは判定せず、プラグイン設定や独自設定の
- * 同名キー、参照先アプリコードなどは比較対象に残す。
+ * 同名キー、参照先アプリコード、各設定の内容は比較対象に残す。
  */
 export function isAppReferenceIdPath(path) {
   const normalizedPath = normalizeIgnoreToken(path);
@@ -1411,7 +1442,11 @@ export function isAppReferenceIdPath(path) {
     if (/\.(?:lookup|referencetable)\.(?:relatedappid|targetappid|sourceappid)$/.test(normalizedPath)) return true;
   }
 
+  if (/^viewsettings\.views(?:\[[^\]]+\]|\.[^.]+)\.id$/.test(normalizedPath)) return true;
+  if (/^reportsettings\.reports(?:\[[^\]]+\]|\.[^.]+)\.id$/.test(normalizedPath)) return true;
+
   if (/^actionsettings\.actions(?:\.|\[)/.test(normalizedPath)) {
+    if (/^actionsettings\.actions(?:\[[^\]]+\]|\.[^.]+)\.id$/.test(normalizedPath)) return true;
     if (/\.(?:destapp|targetapp|sourceapp)\.(?:app|appid)$/.test(normalizedPath)) return true;
     if (/\.(?:destappid|targetappid|sourceappid)$/.test(normalizedPath)) return true;
   }
@@ -1420,7 +1455,13 @@ export function isAppReferenceIdPath(path) {
 }
 
 function appendNormalizationPath(parentPath, key) {
-  return parentPath ? `${parentPath}.${key}` : String(key);
+  const segment = String(key);
+  if (!parentPath) return segment;
+  // 名前付きマップのキーにドットが含まれても、後続プロパティとの境界を失わない。
+  // 例: views["営業.一覧"].id は一覧自身のID、views.営業一覧.config.id は任意の入れ子ID。
+  return segment.includes('.') || !segment
+    ? `${parentPath}[${JSON.stringify(segment)}]`
+    : `${parentPath}.${segment}`;
 }
 
 function appendNormalizationArrayPath(parentPath, index) {

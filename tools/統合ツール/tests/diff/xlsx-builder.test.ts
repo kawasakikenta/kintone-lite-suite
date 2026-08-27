@@ -343,24 +343,55 @@ describe('diff/xlsx-builder', () => {
     const xml = extractEntry(buf, 'xl/worksheets/sheet1.xml');
     const styles = extractEntry(buf, 'xl/styles.xml');
 
+    for (let row = 1; row <= 3; row += 1) {
+      for (const column of ['A', 'B', 'C']) expect(xml).toContain(`<c r="${column}${row}"`);
+    }
     expect(xml).toContain('<c r="B2" s="2"/>');
     expect(xml).toContain('<c r="C2" s="2"/>');
+    expect(xml).toContain('<c r="B3" s="2"/>');
+    expect(xml).toContain('<c r="C3" s="2"/>');
     expect(xml).not.toMatch(/<c r="[BC]2"[^>]*t="inlineStr"/);
     expect(xml).toContain('<c r="A3" s="30"');
 
     const borderBlock = /<borders\b[^>]*>([\s\S]*?)<\/borders>/.exec(styles)?.[1] || '';
     const borders = [...borderBlock.matchAll(/<border>([\s\S]*?)<\/border>/g)].map((match) => match[1]);
-    expect(borders).toHaveLength(6);
-    for (const border of borders.slice(1)) {
-      for (const edge of ['left', 'right', 'top', 'bottom']) {
-        expect(border).toMatch(new RegExp(`<${edge} style="(?:thin|medium)"`));
-      }
+    expect(borders).toHaveLength(2);
+    for (const edge of ['left', 'right', 'top', 'bottom']) {
+      expect(borders[1]).toContain(`<${edge} style="thin"><color rgb="FFE2E8F0"/></${edge}>`);
     }
+    expect(borders[1]).not.toMatch(/style="(?:medium|thick)"/);
 
     const cellXfsBlock = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(styles)?.[1] || '';
     const cellXfs = [...cellXfsBlock.matchAll(/<xf\b[^>]*>/g)].map((match) => match[0]);
+    cellXfs.forEach((xf, index) => {
+      const expectedBorderId = [0, 6, 32].includes(index) ? '0' : '1';
+      expect(xf).toContain(`borderId="${expectedBorderId}"`);
+      if (expectedBorderId === '1') expect(xf).toContain('applyBorder="1"');
+    });
     expect(cellXfs[30]).toContain('borderId="1"');
     expect(cellXfs[30]).toContain('applyBorder="1"');
+  });
+
+  it('suppresses number-stored-as-text warnings across the used range without adding formulas or external links', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [['ID', 'value'], ['00123', '=USER_TEXT()'], ['', '0456']],
+      materializeEmptyCellsFromRow: 1,
+      print: { footer: '&R&P / &N' }
+    }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+
+    expect(xml).toContain('<ignoredErrors><ignoredError sqref="A1:B3" numberStoredAsText="1"/></ignoredErrors>');
+    expect(xml.indexOf('<headerFooter>')).toBeLessThan(xml.indexOf('<ignoredErrors>'));
+    expect(xml.indexOf('<ignoredErrors>')).toBeLessThan(xml.indexOf('</worksheet>'));
+    expect(xml).not.toContain('<f>');
+    expect(xml).not.toContain('r:id=');
+  });
+
+  it('does not emit ignoredErrors for a sheet without a used range', async () => {
+    const sheets: XlsxSheet[] = [{ name: 'S', rows: [] }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    expect(xml).not.toContain('<ignoredErrors>');
   });
 
   it('applies source, target, comparison-divider, and warning roles without changing the header style', async () => {
@@ -424,11 +455,11 @@ describe('diff/xlsx-builder', () => {
     expect(xml).toMatch(/<c r="B5" s="38"/);
     expect(xml).toMatch(/<c r="C5" s="39"/);
     expect(styles).toContain('<fills count="10">');
-    expect(styles).toContain('<borders count="6">');
+    expect(styles).toContain('<borders count="2">');
     expect(styles).toContain('<cellXfs count="40">');
     expect(styles).toContain('color rgb="FF991B1B"');
     expect(styles).toContain('color rgb="FF166534"');
-    expect(styles).toContain('<right style="medium"><color rgb="FF64748B"/></right>');
+    expect(styles).not.toMatch(/style="(?:medium|thick)"/);
     expect(styles).toContain('rgb="FF1E3A5F"');
     expect(styles).toContain('rgb="FFF1F5F9"');
     expect(styles).toContain('rgb="FFEFF6FF"');
@@ -440,6 +471,12 @@ describe('diff/xlsx-builder', () => {
     expect(styles).toContain('<right style="thin"');
     expect(styles).toContain('<top style="thin"');
     expect(styles).toContain('<bottom style="thin"');
+
+    const cellXfsBlock = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(styles)?.[1] || '';
+    const borderIds = [...cellXfsBlock.matchAll(/<xf\b[^>]*\bborderId="([0-9]+)"[^>]*>/g)]
+      .map((match) => match[1]);
+    expect(new Set(borderIds)).toEqual(new Set(['0', '1']));
+    expect(borderIds.filter((borderId) => borderId === '0')).toHaveLength(3);
   });
 
   it('truncates oversized text to the Excel cell limit without splitting a surrogate pair', async () => {

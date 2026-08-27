@@ -5,7 +5,7 @@
  *
  * 行一覧モード / セクション別ビュー / Markdown 出力 / 検索インデックスの
  * すべてから参照する単一のエントリポイント。kintone API が返す内部キー
- * (`recordViewable`, `accessibility=READ_WRITE`, `entity.type=GROUP` 等) を
+ * (`recordViewable`, `accessibility=WRITE`, `entity.type=GROUP` 等) を
  * 日本語ラベル＋アイコンに変換することで「JSON 内部用語の露出」を排除する。
  *
  * 対象は **enum 値** と **プロパティ名** に限定する。自由文字列（`filterCond`
@@ -30,6 +30,10 @@ export const VALUE_LABELS: Record<string, Record<string, string>> = {
     DEPARTMENT: '🏢 部署',
     DEPT: '🏢 部署',
     CREATOR: '✏️ 作成者',
+    MODIFIER: '✏️ 更新者',
+    FUNCTION: '⚙ 関数',
+    LOGIN_USER: '👤 ログインユーザー',
+    ALL: '🌐 全員',
     FIELD_ENTITY: '🔗 フィールド',
     EVERYONE: '🌐 全員',
     CUSTOM_FIELD: '🔗 ユーザー選択フィールド'
@@ -38,7 +42,8 @@ export const VALUE_LABELS: Record<string, Record<string, string>> = {
   accessibility: {
     NONE: '不可',
     READ: '閲覧のみ',
-    READ_WRITE: '閲覧+編集'
+    WRITE: '閲覧・編集可',
+    READ_WRITE: '閲覧・編集可'
   },
   // ビュー種別
   'view.type': {
@@ -283,6 +288,13 @@ export function formatEntityText(entity: any, options: { compact?: boolean } = {
   const type = String(entity.type || '');
   const code = String(entity.code || entity.login || entity.id || '');
   const name = String(entity.name || '');
+  const functionLabel = type.toUpperCase() === 'FUNCTION'
+    ? ({
+        'LOGINUSER()': 'ログインユーザー',
+        'PRIMARY_ORGANIZATION()': '優先する組織'
+      } as Record<string, string>)[code.trim().toUpperCase()]
+    : '';
+  if (functionLabel && !name) return functionLabel;
   const typed = VALUE_LABELS['entity.type']?.[type] || (type ? `· ${type}` : '·');
   const display = name || code || '(未設定)';
   if (options.compact) return `${typed} ${display}`;

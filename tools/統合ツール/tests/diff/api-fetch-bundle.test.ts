@@ -116,6 +116,25 @@ describe('fetchBundle auxiliary diff data', () => {
     expect(result.fetchIssues[0]).toMatchObject({ sectionKey: 'pluginSettings', side: 'source' });
   });
 
+  it('marks plug-in settings as uncomparable when a configuration response is unavailable', async () => {
+    installKintoneApi(async (path) => {
+      if (path.endsWith('/app/plugins.json')) {
+        return { plugins: [{ id: 'plugin-1', name: 'Plugin 1', version: '1.0.0' }] };
+      }
+      if (path.endsWith('/app/plugin/config.json')) return null;
+      throw new Error(`unexpected API path: ${path}`);
+    });
+
+    const bundle = await fetchBundle({
+      appId: '123',
+      preview: true,
+      sections: ['pluginSettings']
+    });
+
+    expect(bundle.sections.pluginSettings._fetchError).toContain('プラグイン設定の取得に失敗');
+    expect(bundle.sections.pluginSettings._fetchError).toContain('1件');
+  });
+
   it('marks customization settings as uncomparable when a text body cannot be fetched', async () => {
     installKintoneApi(async (path) => {
       if (path.endsWith('/app/customize.json')) {
