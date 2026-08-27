@@ -19,6 +19,25 @@ import { extractFieldPathInfo } from './enrich.js';
 import { decodeRow } from './path-decoder.js';
 import { expandSubtableRowsForDisplay, hasIncompleteActualDiffTruncation } from './engine.js';
 import {
+  AGGREGATION_TYPE_JP,
+  ALIGN_JP,
+  CHART_MODE_JP,
+  CHART_TYPE_JP,
+  CUSTOMIZE_SCOPE_JP,
+  ENTITY_TYPE_JP,
+  GROUP_PER_JP,
+  ICON_TYPE_JP,
+  LINK_PROTOCOL_JP,
+  NOTIFICATION_TIMING_JP,
+  NUMBER_FORMAT_JP,
+  PAGINATION_TYPE_JP,
+  PROCESS_ASSIGNEE_TYPE_JP,
+  RESOURCE_TYPE_JP,
+  UNIT_POSITION_JP,
+  VIEW_BUILTIN_TYPE_JP,
+  VIEW_TYPE_JP
+} from '../kintone-enums.js';
+import {
   buildXlsxBlob,
   type XlsxCellStyle,
   type XlsxRowStyle,
@@ -35,6 +54,15 @@ export interface DiffXlsxRow {
   left?: unknown;
   right?: unknown;
   moved?: boolean;
+  movedFrom?: number;
+  movedTo?: number;
+  renameCandidate?: {
+    id?: string;
+    fromCode?: string;
+    toCode?: string;
+    entityKind?: string;
+    matchedBy?: string;
+  } | null;
   reasonSummary?: string;
   notationOnly?: boolean;
   emptyOnly?: boolean;
@@ -923,12 +951,12 @@ function readableDiffRowHeight(cells: DiffRowHeightCell[], maxHeight = 110): num
   return Math.min(maxHeight, 26 + Math.max(0, maxLines - 1) * 14);
 }
 
-function readableCustomerRowHeight(cells: DiffRowHeightCell[], maxHeight: number): number {
+function readableCustomerRowHeight(cells: DiffRowHeightCell[], maxHeight = 96): number {
   const maxLines = cells.reduce((max, cell) => (
     Math.max(max, estimatedWrappedLines(cell.value, cell.width))
   ), 1);
   // 実Excel（Meiryo 11pt）のAutoFitに合わせ、提出版は本文1行あたり17ptを確保する。
-  return Math.min(maxHeight, 28 + Math.max(0, maxLines - 1) * 17);
+  return Math.min(96, maxHeight, 28 + Math.max(0, maxLines - 1) * 17);
 }
 
 function summarizeRows(rows: DiffXlsxRow[]) {
@@ -2094,7 +2122,7 @@ interface CustomerDiffItem {
   settingItemDetail: string;
   technicalPath?: string;
   item: string;
-  changeType: '追加' | '削除' | '変更' | '要素の移動';
+  changeType: '追加' | '削除' | '変更' | '並び順変更';
   before: string;
   after: string;
   rawBefore: CustomerRawValue;
@@ -2166,7 +2194,7 @@ function customerComparisonExclusionLabel(ctx: DiffXlsxContext): string {
     generalArrayOrder: '一般配列順序',
     fieldOrder: 'フィールド順序',
     processOrder: 'プロセス順序',
-    appReferences: 'アプリID（比較対象・参照先）',
+    appReferences: '環境固有ID（アプリ・一覧・グラフ・アクション）',
     auditMeta: '監査メタ情報',
     labelsAndText: 'ラベル・説明文',
     appearance: '表示設定',
@@ -2186,7 +2214,7 @@ function customerComparisonExclusionLabel(ctx: DiffXlsxContext): string {
 }
 
 function customerChangeType(row: DiffXlsxRow): CustomerDiffItem['changeType'] {
-  if (row.moved || row.type === 'moved') return '要素の移動';
+  if (row.moved || row.type === 'moved') return '並び順変更';
   if (row.type === 'added') return '追加';
   if (row.type === 'removed') return '削除';
   return '変更';
@@ -2239,9 +2267,17 @@ function customerGenericSettingLabel(sectionKey: string, path: string, decodedLa
   }
   if (sectionKey === 'actionSettings' && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(path)) {
     const mappingIndex = Number(path.match(/\.mappings\[(\d+)\]/)?.[1]);
-    return Number.isInteger(mappingIndex)
+    const mappingProperty = path.match(/\.(srcField|destField|srcType|destType)$/)?.[1] || '';
+    const mappingLabels: Record<string, string> = {
+      srcField: 'コピー元フィールド',
+      destField: 'コピー先フィールド',
+      srcType: 'コピー元の種類',
+      destType: 'コピー先の種類'
+    };
+    const target = Number.isInteger(mappingIndex)
       ? `フィールドの対応付け（${mappingIndex + 1}件目）`
       : 'フィールドの対応付け';
+    return mappingProperty ? `${target}：${mappingLabels[mappingProperty]}` : target;
   }
   if ((sectionKey === 'actionSettings' || sectionKey === 'processSettings') && leaf === 'filterCond') {
     return '実行条件';
@@ -2249,14 +2285,100 @@ function customerGenericSettingLabel(sectionKey: string, path: string, decodedLa
   const labels: Record<string, string> = {
     fileKey: 'ファイル識別情報',
     filterCond: '絞り込み条件',
-    sort: '並び順'
+    sort: '並び順',
+    index: '並び順',
+    srcField: 'コピー元フィールド',
+    destField: 'コピー先フィールド',
+    srcType: 'コピー元の種類',
+    destType: 'コピー先の種類',
+    enabled: '有効状態',
+    enable: '有効状態'
   };
   return labels[leaf] || decodedLabel || '設定内容';
 }
 
+const CUSTOMER_ENTITY_TYPE_LABELS: Record<string, string> = {
+  ...ENTITY_TYPE_JP,
+  DEPARTMENT: '組織',
+  DEPT: '組織',
+  EVERYONE: '全員',
+  FUNCTION: '関数',
+  LOGINUSER: 'ログインユーザー'
+};
+
+const CUSTOMER_ENTITY_FUNCTION_LABELS: Record<string, string> = {
+  'LOGINUSER()': 'ログインユーザー',
+  'PRIMARY_ORGANIZATION()': '優先する組織'
+};
+
+function customerEntityCodeLabel(value: string): string {
+  const normalized = value.trim().toUpperCase();
+  if (normalized === 'EVERYONE') return '全員';
+  return CUSTOMER_ENTITY_FUNCTION_LABELS[normalized] || value;
+}
+
+function customerEntityObjectSummary(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const wrapper = value as Record<string, unknown>;
+  const entity = wrapper.entity && typeof wrapper.entity === 'object' && !Array.isArray(wrapper.entity)
+    ? wrapper.entity as Record<string, unknown>
+    : wrapper;
+  const type = String(entity.type || '').trim().toUpperCase();
+  const typeLabel = CUSTOMER_ENTITY_TYPE_LABELS[type];
+  if (!typeLabel) return null;
+  const rawCode = String(entity.code || entity.login || entity.id || '').trim();
+  const code = customerEntityCodeLabel(rawCode);
+  const name = String(entity.name || '').trim();
+
+  let display: string;
+  if (type === 'FUNCTION' && code && code !== rawCode) display = code;
+  else if (code === '全員') display = code;
+  else if (name && rawCode && name !== rawCode) display = `${typeLabel}「${name}」（コード: ${rawCode}）`;
+  else if (name || code) display = `${typeLabel}「${name || code}」`;
+  else display = typeLabel;
+
+  const extras: string[] = [];
+  if (typeof wrapper.includeSubs === 'boolean') extras.push(wrapper.includeSubs ? '配下の組織を含む' : '配下の組織を含まない');
+  if (typeof wrapper.accessibility === 'string') {
+    const accessibility = customerMapValue(CUSTOMER_FIELD_ACCESSIBILITY_LABELS, wrapper.accessibility);
+    if (accessibility) extras.push(accessibility);
+  }
+  return extras.length ? `${display} / ${extras.join(' / ')}` : display;
+}
+
+function customerEntityCollectionSummary(row: DiffXlsxRow, value: unknown): string | null {
+  if (!/(?:^|\.)(?:defaultValue|entity|entities|recipients)(?:\.|\[|$)/.test(String(row.path || ''))) return null;
+  if (Array.isArray(value)) {
+    if (!value.length) return null;
+    const labels = value.map(customerEntityObjectSummary);
+    return labels.every(Boolean) ? labels.join('、') : null;
+  }
+  return customerEntityObjectSummary(value);
+}
+
+function localizeCustomerEntityLabel(value: string): string {
+  return value.split(/(\s*›\s*)/).map((part) => {
+    if (/^\s*›\s*$/.test(part)) return part;
+    const match = /^(.*?)\s+\(([A-Z][A-Z0-9_]*)\)$/.exec(part.trim());
+    if (!match) return customerEntityCodeLabel(part);
+    const code = customerEntityCodeLabel(match[1].trim());
+    const type = CUSTOMER_ENTITY_TYPE_LABELS[match[2]];
+    if (!type) return part;
+    if (match[2] === 'FUNCTION' && code !== match[1].trim()) return code;
+    if (code === '全員') return code;
+    return code ? `${type}「${code}」` : type;
+  }).join('');
+}
+
 function customerGenericTargetLabel(row: DiffXlsxRow, sectionKey: string, decodedTargets: string[]): string {
-  const entityLabel = customerPlainText((row as any).entityLabel || '');
   const entityKind = String((row as any).entityKind || '');
+  const rawEntityLabel = customerPlainText((row as any).entityLabel || '');
+  const entityLabel = [
+    'aclEntry', 'fieldAclEntry', 'recordAclEntry',
+    'notification', 'perRecordNotification', 'reminderNotification'
+  ].includes(entityKind)
+    ? localizeCustomerEntityLabel(rawEntityLabel)
+    : rawEntityLabel;
   if (entityLabel) {
     const prefixes: Record<string, string> = {
       action: 'アクション',
@@ -2767,10 +2889,11 @@ function customerRawDisplayValue(raw: CustomerRawValue): string {
   return raw.text;
 }
 
-const CUSTOMER_MAIN_VALUE_LIMIT = 120;
-const CUSTOMER_DETAIL_RAW_MAX_LINES = 22;
+const CUSTOMER_MAIN_VALUE_COLUMN_WIDTH = 26;
+const CUSTOMER_MAIN_VALUE_MAX_LINES = 3;
+const CUSTOMER_DETAIL_RAW_MAX_LINES = 5;
 const CUSTOMER_RAW_CHUNK_TEXT_LIMIT = 30000;
-const CUSTOMER_RAW_CHUNK_LINE_LIMIT = 20;
+const CUSTOMER_RAW_CHUNK_LINE_LIMIT = 5;
 const CUSTOMER_RAW_CHUNK_COLUMN_WIDTH = 60;
 
 function customerRawNeedsContinuation(raw: CustomerRawValue): boolean {
@@ -2819,7 +2942,7 @@ function splitCustomerRawText(text: string): string[] {
 
 function buildCustomerRawContinuations(items: CustomerDiffItem[]): CustomerDiffRawContinuation[] {
   const continuations: CustomerDiffRawContinuation[] = [];
-  let firstRow = 3;
+  let firstRow = 2;
   for (const item of items) {
     for (const side of ['source', 'target'] as const) {
       const raw = side === 'source' ? item.rawBefore : item.rawAfter;
@@ -2833,12 +2956,18 @@ function buildCustomerRawContinuations(items: CustomerDiffItem[]): CustomerDiffR
 }
 
 function compactCustomerMainValue(value: string): string {
-  const lines = value.split(/\r?\n/);
-  const lineLimited = lines.length > 4 ? `${lines.slice(0, 4).join('\n')}\n…` : value;
-  if (lineLimited.length <= CUSTOMER_MAIN_VALUE_LIMIT) return lineLimited;
-  let keep = CUSTOMER_MAIN_VALUE_LIMIT - 1;
-  if (keep > 0 && /[\uD800-\uDBFF]/.test(lineLimited.charAt(keep - 1))) keep -= 1;
-  return `${lineLimited.slice(0, Math.max(0, keep))}…`;
+  const normalized = value.replace(/\r\n?/g, '\n');
+  if (estimatedWrappedLines(normalized, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH) <= CUSTOMER_MAIN_VALUE_MAX_LINES) {
+    return normalized;
+  }
+
+  let output = '';
+  for (const char of normalized) {
+    const candidate = `${output}${char}…`;
+    if (estimatedWrappedLines(candidate, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH) > CUSTOMER_MAIN_VALUE_MAX_LINES) break;
+    output += char;
+  }
+  return `${output.replace(/\s+$/g, '')}…`;
 }
 
 function customerFieldCodeLabel(codeValue: unknown, bundle?: DiffXlsxBundle): string {
@@ -2847,6 +2976,36 @@ function customerFieldCodeLabel(codeValue: unknown, bundle?: DiffXlsxBundle): st
   const definition = fieldSettingsProperties(bundle)[code];
   const label = fieldDefinitionLabel(definition);
   return label && label !== code ? `${label}（${code}）` : code;
+}
+
+function transformCustomerUnquotedText(value: string, transform: (text: string) => string): string {
+  let result = '';
+  let unquotedStart = 0;
+  let cursor = 0;
+  while (cursor < value.length) {
+    const quote = value[cursor];
+    if (quote !== '"' && quote !== "'") {
+      cursor += 1;
+      continue;
+    }
+    result += transform(value.slice(unquotedStart, cursor));
+    const quotedStart = cursor;
+    cursor += 1;
+    while (cursor < value.length) {
+      if (value[cursor] === '\\' && cursor + 1 < value.length) {
+        cursor += 2;
+        continue;
+      }
+      if (value[cursor] === quote) {
+        cursor += 1;
+        break;
+      }
+      cursor += 1;
+    }
+    result += value.slice(quotedStart, cursor);
+    unquotedStart = cursor;
+  }
+  return result + transform(value.slice(unquotedStart));
 }
 
 function replaceCustomerFieldCodes(value: string, bundle?: DiffXlsxBundle): string {
@@ -2868,33 +3027,46 @@ function replaceCustomerFieldCodes(value: string, bundle?: DiffXlsxBundle): stri
 
   // 絞り込み条件の引用符内は選択肢・文字列リテラルなので、フィールドコードとして置換しない。
   // 未引用部分も一括置換し、挿入したラベルを別コードとして再置換しない。
-  let result = '';
-  let unquotedStart = 0;
-  let cursor = 0;
-  while (cursor < value.length) {
-    const quote = value[cursor];
-    if (quote !== '"' && quote !== "'") {
-      cursor += 1;
-      continue;
-    }
-    result += replaceUnquoted(value.slice(unquotedStart, cursor));
-    const quotedStart = cursor;
-    cursor += 1;
-    while (cursor < value.length) {
-      if (value[cursor] === '\\' && cursor + 1 < value.length) {
-        cursor += 2;
-        continue;
-      }
-      if (value[cursor] === quote) {
-        cursor += 1;
-        break;
-      }
-      cursor += 1;
-    }
-    result += value.slice(quotedStart, cursor);
-    unquotedStart = cursor;
-  }
-  return result + replaceUnquoted(value.slice(unquotedStart));
+  return transformCustomerUnquotedText(value, replaceUnquoted);
+}
+
+const CUSTOMER_QUERY_FUNCTION_LABELS: Record<string, string> = {
+  LOGINUSER: 'ログインユーザー',
+  PRIMARY_ORGANIZATION: '優先する組織',
+  NOW: '現在日時',
+  TODAY: '今日',
+  YESTERDAY: '昨日',
+  TOMORROW: '明日',
+  THIS_WEEK: '今週',
+  LAST_WEEK: '先週',
+  NEXT_WEEK: '来週',
+  THIS_MONTH: '今月',
+  LAST_MONTH: '先月',
+  NEXT_MONTH: '来月',
+  THIS_YEAR: '今年',
+  LAST_YEAR: '昨年',
+  NEXT_YEAR: '来年'
+};
+
+const CUSTOMER_QUERY_PERIOD_LABELS: Record<string, string> = {
+  DAYS: '日',
+  WEEKS: '週',
+  MONTHS: 'か月',
+  YEARS: '年'
+};
+
+function localizeCustomerFilterFunctions(value: string): string {
+  return transformCustomerUnquotedText(value, (text) => {
+    let localized = text.replace(
+      /\bFROM_TODAY\s*\(\s*(-?\d+)\s*,\s*(DAYS|WEEKS|MONTHS|YEARS)\s*\)/gi,
+      (_match, count: string, unit: string) => `今日から（${count}${CUSTOMER_QUERY_PERIOD_LABELS[unit.toUpperCase()] || unit}）`
+    );
+    localized = localized.replace(
+      /\b(LOGINUSER|PRIMARY_ORGANIZATION|NOW|TODAY|YESTERDAY|TOMORROW|THIS_WEEK|LAST_WEEK|NEXT_WEEK|THIS_MONTH|LAST_MONTH|NEXT_MONTH|THIS_YEAR|LAST_YEAR|NEXT_YEAR)\s*\(\s*\)/gi,
+      (_match, name: string) => CUSTOMER_QUERY_FUNCTION_LABELS[name.toUpperCase()] || name
+    );
+    return localized;
+  });
 }
 
 function customerSortValue(value: string, bundle?: DiffXlsxBundle): string {
@@ -2910,14 +3082,185 @@ function customerTypeLabel(value: string): string {
   const labels: Record<string, string> = {
     LIST: '一覧',
     CALENDAR: 'カレンダー',
-    CUSTOM: 'カスタマイズ'
+    CUSTOM: 'カスタマイズ',
+    NUMBER_DIGIT: '数値（桁区切りあり）',
+    NUMBER: '数値',
+    FIELD: 'フィールド',
+    RECORD_URL: 'レコードのURL'
   };
   return FIELD_TYPE_LABELS[value] || labels[value] || value;
 }
 
+const CUSTOMER_ONE_BASED_INDEX_SECTIONS = new Set([
+  'fieldSettings',
+  'viewSettings',
+  'reportSettings',
+  'processSettings',
+  'actionSettings',
+  'categories'
+]);
+
+const CUSTOMER_VIEW_BUILTIN_LABELS: Record<string, string> = {
+  ...VIEW_BUILTIN_TYPE_JP,
+  UNDONE: '未完了レコード',
+  ACTIVE_BY_USER: '自分が処理すべきレコード',
+  RECORDS_OF_USER: '自分が関わるレコード'
+};
+
+const CUSTOMER_VIEW_DEVICE_LABELS: Record<string, string> = {
+  ANY: 'PC・モバイル両方',
+  DESKTOP: 'PC版のみ'
+};
+
+const CUSTOMER_PAGINATION_LABELS: Record<string, string> = {
+  ...PAGINATION_TYPE_JP,
+  PAGER: 'ページ送り',
+  SCROLL: '無限スクロール'
+};
+
+const CUSTOMER_FIELD_ACCESSIBILITY_LABELS: Record<string, string> = {
+  WRITE: '閲覧・編集可',
+  READ_WRITE: '閲覧・編集可',
+  READ: '閲覧のみ',
+  NONE: 'アクセス不可'
+};
+
+const CUSTOMER_APP_THEME_LABELS: Record<string, string> = {
+  WHITE: 'ホワイト',
+  RED: 'レッド',
+  BLUE: 'ブルー',
+  GREEN: 'グリーン',
+  YELLOW: 'イエロー',
+  BLACK: 'ブラック',
+  CLIPBOARD: 'クリップボード',
+  BINDER: 'バインダー',
+  PENCIL: 'ペンシル',
+  CLIPS: 'クリップ'
+};
+
+const CUSTOMER_TITLE_SELECTION_LABELS: Record<string, string> = {
+  AUTO: '自動選択',
+  MANUAL: '手動指定'
+};
+
+const CUSTOMER_ROUNDING_MODE_LABELS: Record<string, string> = {
+  HALF_EVEN: '四捨五入（偶数丸め）',
+  UP: '切り上げ',
+  DOWN: '切り捨て'
+};
+
+function customerMapValue(map: Record<string, string>, value: unknown): string | null {
+  const original = String(value ?? '');
+  const label = map[original.trim().toUpperCase()];
+  return label || null;
+}
+
+function customerOneBasedIndexLabel(row: DiffXlsxRow, value: unknown): string | null {
+  if (!CUSTOMER_ONE_BASED_INDEX_SECTIONS.has(sectionKeyOfRow(row))) return null;
+  if (!/(?:^|\.)index$/.test(String(row.path || ''))) return null;
+  const raw = typeof value === 'number' ? value : String(value ?? '').trim();
+  if (typeof raw === 'string' && !/^\d+$/.test(raw)) return null;
+  const index = Number(raw);
+  if (!Number.isSafeInteger(index) || index < 0) return null;
+  return `${index + 1}番目`;
+}
+
+function customerContextualEnumLabel(row: DiffXlsxRow, value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const sectionKey = sectionKeyOfRow(row);
+  const path = String(row.path || '');
+  const leaf = path.match(/(?:^|\.)([^.[\]]+)$/)?.[1] || '';
+
+  if (sectionKey === 'fieldAcl' && leaf === 'accessibility') {
+    return customerMapValue(CUSTOMER_FIELD_ACCESSIBILITY_LABELS, value);
+  }
+  if (/\.(?:entity|entities\[\d+\]|recipients\[\d+\])(?:\.entity)?\.type$/.test(path)) {
+    return customerMapValue(CUSTOMER_ENTITY_TYPE_LABELS, value);
+  }
+  if (/\.(?:entity|entities\[\d+\]|recipients\[\d+\])(?:\.entity)?\.code$/.test(path)) {
+    const localized = customerEntityCodeLabel(value);
+    return localized === value ? null : localized;
+  }
+
+  if (sectionKey === 'fieldSettings') {
+    if (/\.defaultValue(?:\[\d+\])?\.type$/.test(path)) {
+      return customerMapValue(CUSTOMER_ENTITY_TYPE_LABELS, value);
+    }
+    if (leaf === 'align') return customerMapValue(ALIGN_JP, value);
+    if (leaf === 'unitPosition') return customerMapValue(UNIT_POSITION_JP, value);
+    if (leaf === 'protocol') return customerMapValue(LINK_PROTOCOL_JP, value);
+    if (leaf === 'format') return customerMapValue(NUMBER_FORMAT_JP, value);
+    if (/\.defaultValue(?:\[\d+\])?\.code$/.test(path)) {
+      const localized = customerEntityCodeLabel(value);
+      return localized === value ? null : localized;
+    }
+  }
+
+  if (sectionKey === 'viewSettings') {
+    if (leaf === 'type') return customerMapValue(VIEW_TYPE_JP, value);
+    if (leaf === 'builtinType') return customerMapValue(CUSTOMER_VIEW_BUILTIN_LABELS, value);
+    if (leaf === 'device') return customerMapValue(CUSTOMER_VIEW_DEVICE_LABELS, value);
+    if (leaf === 'pagination' || leaf === 'paginationStyle' || leaf === 'pager') {
+      return customerMapValue(CUSTOMER_PAGINATION_LABELS, value);
+    }
+  }
+
+  if (sectionKey === 'reportSettings') {
+    if (leaf === 'chartType') return customerMapValue(CHART_TYPE_JP, value);
+    if (leaf === 'chartMode') return customerMapValue(CHART_MODE_JP, value);
+    if (/\.aggregations\[\d+\]\.type$/.test(path)) return customerMapValue(AGGREGATION_TYPE_JP, value);
+    if (/\.groups\[\d+\]\.per$/.test(path)) return customerMapValue(GROUP_PER_JP, value);
+  }
+
+  if (sectionKey === 'processSettings' && /\.assignee\.type$/.test(path)) {
+    return customerMapValue(PROCESS_ASSIGNEE_TYPE_JP, value);
+  }
+
+  if (sectionKey === 'customizeSettings') {
+    if (leaf === 'scope') return customerMapValue(CUSTOMIZE_SCOPE_JP, value);
+    if (leaf === 'type') return customerMapValue(RESOURCE_TYPE_JP, value);
+  }
+
+  if (sectionKey === 'reminderNotifications' && leaf === 'timing') {
+    return customerMapValue(NOTIFICATION_TIMING_JP, value);
+  }
+
+  if (sectionKey === 'appSettings') {
+    if (leaf === 'theme') return customerMapValue(CUSTOMER_APP_THEME_LABELS, value);
+    if (/\.icon\.type$/.test(path)) return customerMapValue(ICON_TYPE_JP, value);
+    if (leaf === 'selectionMode') return customerMapValue(CUSTOMER_TITLE_SELECTION_LABELS, value);
+    if (leaf === 'roundingMode') return customerMapValue(CUSTOMER_ROUNDING_MODE_LABELS, value);
+  }
+
+  if (sectionKey === 'actionSettings' && (leaf === 'srcType' || leaf === 'destType')) {
+    const localized = customerTypeLabel(value.trim().toUpperCase());
+    return localized === value ? null : localized;
+  }
+  return null;
+}
+
+function customerTechnicalValueLabel(value: string, key: string): string {
+  const normalized = value.trim();
+  if (key === 'enabled' || key === 'enable') {
+    if (normalized === 'true') return 'はい';
+    if (normalized === 'false') return 'いいえ';
+    return value;
+  }
+  if (key === 'type' || key === 'srcType' || key === 'destType') return customerTypeLabel(normalized);
+  return value;
+}
+
 function customerComplexValueSummary(row: DiffXlsxRow, side: 'source' | 'target', value: Record<string, unknown> | unknown[]): string {
-  const fieldSummary = sectionKeyOfRow(row) === 'fieldSettings' ? conciseFieldDefinition(value) : null;
+  const fieldInfo = sectionKeyOfRow(row) === 'fieldSettings'
+    ? extractFieldPathInfo(String(row.path || ''))
+    : null;
+  const fieldSummary = fieldInfo && (fieldInfo.isFieldRoot || fieldInfo.isSubFieldRoot)
+    ? conciseFieldDefinition(value)
+    : null;
   if (fieldSummary) return fieldSummary;
+
+  const entitySummary = customerEntityCollectionSummary(row, value);
+  if (entitySummary) return entitySummary;
 
   const decoded = decodedListValue(row, side);
   if (decoded) return decoded;
@@ -2932,14 +3275,16 @@ function customerComplexValueSummary(row: DiffXlsxRow, side: 'source' | 'target'
 
   const labels: Record<string, string> = {
     name: '名称', label: '名称', title: '名称', code: 'コード', id: 'ID', url: 'URL',
-    type: '種類', enabled: '有効', enable: '有効'
+    type: '種類', enabled: '有効状態', enable: '有効状態',
+    srcField: 'コピー元フィールド', destField: 'コピー先フィールド',
+    srcType: 'コピー元の種類', destType: 'コピー先の種類'
   };
   const facts = Object.entries(value)
     .filter(([key, item]) => labels[key] && (item == null || typeof item !== 'object'))
     .slice(0, 5)
     .map(([key, item]) => {
-      const displayValue = key === 'type' && typeof item === 'string'
-        ? customerTypeLabel(item)
+      const displayValue = typeof item === 'string'
+        ? customerTechnicalValueLabel(item, key)
         : humanizeListScalar(item);
       return `${labels[key]}: ${displayValue}`;
     });
@@ -2957,8 +3302,8 @@ function customerReadableValue(
   const value = side === 'source' ? row.left : row.right;
   const bundle = side === 'source' ? sourceBundle : targetBundle;
   const path = String(row.path || '');
-  if (value === undefined) return '（未定義：undefined）';
-  if (value === null) return '（null）';
+  if (value === undefined) return '（未設定）';
+  if (value === null) return '（値なし）';
   if (value === '') {
     return /(?:^|\.)filterCond$/.test(path) ? '（空文字：条件なし）' : '（空文字）';
   }
@@ -2969,7 +3314,13 @@ function customerReadableValue(
   } else {
     const fieldInfo = extractFieldPathInfo(path);
     const setting = fieldInfo ? fieldSettingIdentity(fieldInfo) : null;
-    if (fieldInfo && setting?.settingKey !== '(field)') {
+    const oneBasedIndex = customerOneBasedIndexLabel(row, value);
+    const contextualEnum = customerContextualEnumLabel(row, value);
+    if (oneBasedIndex) {
+      display = oneBasedIndex;
+    } else if (contextualEnum) {
+      display = contextualEnum;
+    } else if (fieldInfo && setting?.settingKey !== '(field)') {
       display = humanizeFieldSettingValue(value, setting?.settingKey || '');
     } else if (typeof value === 'boolean') {
       display = value ? 'はい' : 'いいえ';
@@ -2977,17 +3328,23 @@ function customerReadableValue(
       display = String(value);
     }
 
-    if (/\.fields\[\d+\]$/.test(path) && typeof value === 'string') {
+    if (oneBasedIndex || contextualEnum) {
+      // 上でパス文脈を使って確定した表示値を、そのまま採用する。
+    } else if (/(?:\.fields\[\d+\]|\.(?:srcField|destField))$/.test(path) && typeof value === 'string') {
       display = customerFieldCodeLabel(value, bundle);
     } else if (/(?:^|\.)sort$/.test(path) && typeof value === 'string') {
       display = customerSortValue(value, bundle);
     } else if (/(?:^|\.)filterCond$/.test(path) && typeof value === 'string') {
-      display = replaceCustomerFieldCodes(value, bundle);
+      display = localizeCustomerFilterFunctions(replaceCustomerFieldCodes(value, bundle));
     } else if (/(?:^|\.)(?:width|height|innerWidth|innerHeight)$/.test(path)
       && (typeof value === 'number' || /^-?\d+(?:\.\d+)?$/.test(String(value)))) {
       display = `${value}px`;
     } else if (/(?:^|\.)type$/.test(path) && typeof value === 'string') {
       display = customerTypeLabel(value);
+    } else if (/(?:^|\.)(?:srcType|destType)$/.test(path) && typeof value === 'string') {
+      display = customerTechnicalValueLabel(value, path.split('.').at(-1) || '');
+    } else if (/(?:^|\.)(?:enabled|enable)$/.test(path) && typeof value === 'string') {
+      display = customerTechnicalValueLabel(value, path.split('.').at(-1) || '');
     }
   }
 
@@ -3008,14 +3365,34 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = fal
     for (const row of rows) {
       const parts = customerItemParts(row, ctx.sourceBundle, ctx.targetBundle);
       const targetColumns = customerTargetColumns(row, parts, ctx.sourceBundle, ctx.targetBundle);
+      const moved = row.moved || row.type === 'moved';
+      const renameCandidate = row.renameCandidate
+        && !row.renameCandidate.entityKind
+        && String(row.renameCandidate.fromCode || '').trim()
+        && String(row.renameCandidate.toCode || '').trim()
+        ? row.renameCandidate
+        : null;
       const wholeFieldExistenceChange = targetColumns.field?.wholeField
         && (row.type === 'added' || row.type === 'removed');
-      const before = wholeFieldExistenceChange
-        ? row.type === 'added' ? '存在しません' : '存在'
-        : customerReadableValue(row, 'source', ctx.sourceBundle, ctx.targetBundle);
-      const after = wholeFieldExistenceChange
-        ? row.type === 'removed' ? '存在しません' : '存在'
-        : customerReadableValue(row, 'target', ctx.sourceBundle, ctx.targetBundle);
+      const positionLabel = (value: unknown, fallbackSide: 'source' | 'target'): string => (
+        Number.isInteger(value) && Number(value) >= 0
+          ? `${Number(value) + 1}番目`
+          : customerReadableValue(row, fallbackSide, ctx.sourceBundle, ctx.targetBundle)
+      );
+      const before = moved
+        ? positionLabel(row.movedFrom, 'source')
+        : renameCandidate
+          ? String(renameCandidate.fromCode)
+          : wholeFieldExistenceChange
+            ? row.type === 'added' ? '存在しません' : '存在'
+            : customerReadableValue(row, 'source', ctx.sourceBundle, ctx.targetBundle);
+      const after = moved
+        ? positionLabel(row.movedTo, 'target')
+        : renameCandidate
+          ? String(renameCandidate.toCode)
+          : wholeFieldExistenceChange
+            ? row.type === 'removed' ? '存在しません' : '存在'
+            : customerReadableValue(row, 'target', ctx.sourceBundle, ctx.targetBundle);
       const rawBeforeBase = customerRawValue(row, 'source');
       const rawAfterBase = customerRawValue(row, 'target');
       const rawBefore = wholeFieldExistenceChange
@@ -3025,9 +3402,13 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = fal
         ? { ...rawAfterBase, state: row.type === 'removed' ? '存在しません' : '存在' }
         : rawAfterBase;
       const targetDetail = parts.target;
-      const settingItemDetail = targetColumns.field?.wholeField
-        ? targetColumns.field.structure === 'テーブル' ? 'テーブル自体' : 'フィールド自体'
-        : parts.settingItem;
+      const settingItemDetail = renameCandidate
+        ? 'コード変更候補'
+        : moved
+          ? '並び順'
+          : targetColumns.field?.wholeField
+            ? targetColumns.field.structure === 'テーブル' ? 'テーブル自体' : 'フィールド自体'
+            : parts.settingItem;
       items.push({
         index: items.length,
         row,
@@ -3131,16 +3512,20 @@ function buildCustomerSummarySheet(
   const rows: (string | number | null)[][] = [
     ['kintone 設定差分確認レポート', '', '', '', '', ''],
     [`比較元\n${sourceName}`, '', '→', `比較先\n${targetName}`, '', ''],
-    ['比較結果', verdict, '比較処理', completeness, '', '変更一覧を開く'],
+    ['比較結果', verdict, '比較処理', completeness, '', counts.actual ? '変更一覧を開く' : ''],
     [filtered ? '掲載変更件数' : '変更件数', `${counts.actual}件`, '比較日時', customerDateTime(ctx.comparedAt), '', ''],
     ['追加', `${counts.added}件`, '削除', `${counts.removed}件`, '変更', `${counts.contentChanged}件`],
-    ['要素の移動', `${counts.moved}件`, '変更一覧の明細', `${items.length}件`, '同一証跡の省略', droppedSame ? `${droppedSame}件（変更判定への影響なし）` : '0件'],
+    ['並び順変更', `${counts.moved}件`, '変更一覧の明細', `${items.length}件`, '同一証跡の省略', droppedSame ? `${droppedSame}件（変更判定への影響なし）` : '0件'],
     ['比較した設定領域', customerScopeLabel(comparedScopes), '', '', '', ''],
-    ['掲載範囲', ctx.exportMode === 'filtered' ? '上記範囲内の一部' : '上記範囲内の全変更', '絞り込み', ctx.exportMode === 'filtered' ? 'あり' : 'なし', '比較から除外', customerComparisonExclusionLabel(ctx)],
-    ['分類別件数', '', '', '', '', ''],
-    ['分類', '追加', '削除', '変更', '要素の移動', '合計'],
-    ...customerSectionBreakdown(ctx.rows || [])
+    ['掲載範囲', ctx.exportMode === 'filtered' ? '上記範囲内の一部' : '上記範囲内の全変更', '絞り込み', ctx.exportMode === 'filtered' ? 'あり' : 'なし', '比較から除外', customerComparisonExclusionLabel(ctx)]
   ];
+  if (counts.actual) {
+    rows.push(
+      ['分類別件数', '', '', '', '', ''],
+      ['分類', '追加', '削除', '変更', '並び順変更', '合計'],
+      ...customerSectionBreakdown(ctx.rows || [])
+    );
+  }
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = rows.map(() => []);
   cellStyles[0][0] = 'title';
   cellStyles[1][0] = 'sourceGroup';
@@ -3150,7 +3535,7 @@ function buildCustomerSummarySheet(
   cellStyles[2][1] = incomplete ? 'kpiWarning' : counts.actual ? 'kpiChange' : 'kpiGood';
   cellStyles[2][2] = 'summaryLabel';
   cellStyles[2][3] = incomplete ? 'warning' : 'info';
-  cellStyles[2][5] = 'actionLink';
+  if (counts.actual) cellStyles[2][5] = 'actionLink';
   cellStyles[3][0] = 'summaryLabel';
   cellStyles[3][1] = 'summaryValue';
   cellStyles[3][2] = 'summaryLabel';
@@ -3174,12 +3559,14 @@ function buildCustomerSummarySheet(
   cellStyles[7][3] = 'info';
   cellStyles[7][4] = 'summaryLabel';
   cellStyles[7][5] = 'info';
-  cellStyles[8] = Array.from({ length: 6 }, () => 'sectionHeader');
-  for (let index = 10; index < rows.length; index += 1) {
-    const alternate = (index - 10) % 2 === 1;
-    cellStyles[index][0] = alternate ? 'zebra' : 'normal';
-    for (let column = 1; column < 6; column += 1) {
-      cellStyles[index][column] = alternate ? 'zebraCenter' : 'center';
+  if (counts.actual) {
+    cellStyles[8] = Array.from({ length: 6 }, () => 'sectionHeader');
+    for (let index = 10; index < rows.length; index += 1) {
+      const alternate = (index - 10) % 2 === 1;
+      cellStyles[index][0] = alternate ? 'zebra' : 'normal';
+      for (let column = 1; column < 6; column += 1) {
+        cellStyles[index][column] = alternate ? 'zebraCenter' : 'center';
+      }
     }
   }
   return {
@@ -3188,7 +3575,8 @@ function buildCustomerSummarySheet(
     colWidths: [16, 22, 10, 22, 16, 22],
     rowStyles: rows.map(() => 'normal'),
     cellStyles,
-    headerRow: 10,
+    headerRow: counts.actual ? 10 : undefined,
+    autoFilter: counts.actual > 0,
     freezeRows: 2,
     materializeEmptyCellsFromRow: 3,
     rowHeights: rows.map((row, index) => {
@@ -3205,13 +3593,16 @@ function buildCustomerSummarySheet(
       if (index === 8) return 30;
       return index === 9 ? 32 : 26;
     }),
-    merges: ['A1:F1', 'A2:B2', 'D2:F2', 'B7:F7', 'A9:F9'],
-    internalHyperlinks: [{
+    merges: [
+      'A1:F1', 'A2:B2', 'D2:F2', 'B7:F7',
+      ...(counts.actual ? ['A9:F9'] : [])
+    ],
+    internalHyperlinks: counts.actual ? [{
       ref: 'F3',
       targetSheet: '変更一覧',
       targetCell: 'A1',
       tooltip: '変更一覧へ移動'
-    }],
+    }] : [],
     showGridLines: false,
     zoomScale: 100,
     print: {
@@ -3239,9 +3630,15 @@ function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[])
     '追加': 'changeAdded',
     '削除': 'changeRemoved',
     '変更': 'changeChanged',
-    '要素の移動': 'changeMoved'
+    '並び順変更': 'changeMoved'
   };
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
+  if (!items.length) {
+    rows.push(['', '', '', '差分はありません', '', '', '']);
+    rowStyles.push('normal');
+    cellStyles.push(Array.from({ length: headers.length }, () => 'info'));
+    rowHeights.push(32);
+  }
   items.forEach((item, index) => {
     rows.push([
       index + 1,
@@ -3274,17 +3671,18 @@ function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[])
       { value: item.sectionLabel, width: 14 },
       { value: item.target, width: 24 },
       { value: item.settingItem, width: 22 },
-      { value: item.before, width: 22 },
-      { value: item.after, width: 22 }
+      { value: item.before, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH },
+      { value: item.after, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH }
     ], 220));
   });
   return {
     name: '変更一覧',
     rows,
-    colWidths: [7, 10, 14, 24, 22, 22, 22],
+    colWidths: [7, 10, 14, 24, 22, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH],
     rowStyles,
     cellStyles,
     headerRow: 1,
+    autoFilter: items.length > 0,
     freezeRows: 1,
     freezeColumns: 5,
     rowHeights,
@@ -3304,6 +3702,194 @@ function buildCustomerListSheet(ctx: DiffXlsxContext, items: CustomerDiffItem[])
   };
 }
 
+function customerNamedTarget(target: string, prefixes: string[]): string {
+  for (const prefix of prefixes) {
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = new RegExp(`^${escapedPrefix}「([^」]+)」`).exec(target);
+    if (match) return match[1];
+  }
+  return target;
+}
+
+function buildCustomerViewDiffSheet(items: CustomerDiffItem[]): XlsxSheet | null {
+  const viewItems = items.filter((item) => item.sectionKey === 'viewSettings')
+    .sort((left, right) => customerNamedTarget(left.targetDetail, ['一覧'])
+      .localeCompare(customerNamedTarget(right.targetDetail, ['一覧']), 'ja')
+      || left.index - right.index);
+  if (!viewItems.length) return null;
+
+  const headers = ['No.', '変更区分', '一覧名', '差分プロパティ', '変更前', '変更後'];
+  const rows: (string | number | null)[][] = [headers];
+  const rowStyles: XlsxRowStyle[] = ['normal'];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[]];
+  const rowHeights: number[] = [44];
+  const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
+  const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
+    '追加': 'changeAdded',
+    '削除': 'changeRemoved',
+    '変更': 'changeChanged',
+    '並び順変更': 'changeMoved'
+  };
+
+  viewItems.forEach((item, index) => {
+    const viewName = customerNamedTarget(item.targetDetail, ['一覧']);
+    const previousName = index > 0
+      ? customerNamedTarget(viewItems[index - 1].targetDetail, ['一覧'])
+      : '';
+    const startsTarget = index === 0 || viewName !== previousName;
+    const alternate = index % 2 === 1;
+    const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
+    rows.push([
+      item.index + 1,
+      item.changeType,
+      viewName,
+      item.settingItem,
+      item.before,
+      item.after
+    ]);
+    rowStyles.push('normal');
+    cellStyles.push([
+      'hyperlink',
+      changeStyles[item.changeType],
+      startsTarget ? 'category' : baseStyle,
+      baseStyle,
+      item.changeType === '追加' ? 'diffAbsent' : 'diffBefore',
+      item.changeType === '削除' ? 'diffAbsent' : 'diffAfter'
+    ]);
+    rowHeights.push(readableCustomerRowHeight([
+      { value: viewName, width: 28 },
+      { value: item.settingItem, width: 24 },
+      { value: item.before, width: 30 },
+      { value: item.after, width: 30 }
+    ], 96));
+    internalHyperlinks.push({
+      ref: `A${index + 2}`,
+      targetSheet: '設定値詳細',
+      targetCell: `A${item.index + 2}`,
+      tooltip: '比較元・比較先の原文を確認'
+    });
+  });
+
+  return {
+    name: '一覧差分',
+    rows,
+    colWidths: [7, 11, 28, 24, 30, 30],
+    rowStyles,
+    cellStyles,
+    headerRow: 1,
+    freezeRows: 1,
+    freezeColumns: 4,
+    rowHeights,
+    materializeEmptyCellsFromRow: 1,
+    internalHyperlinks,
+    showGridLines: false,
+    zoomScale: 95,
+    print: {
+      orientation: 'landscape',
+      fitToWidth: 1,
+      fitToHeight: 0,
+      repeatRows: { from: 1, to: 1 },
+      repeatColumns: { from: 1, to: 4 },
+      footer: '&L一覧差分&Rページ &P / &N'
+    }
+  };
+}
+
+function buildCustomerActionDiffSheet(items: CustomerDiffItem[]): XlsxSheet | null {
+  const actionItems = items.filter((item) => item.sectionKey === 'actionSettings'
+    || (item.sectionKey === 'processSettings' && /\.actions(?:\.|\[)/.test(String(item.row.path || ''))))
+    .sort((left, right) => {
+      const leftKind = left.sectionKey === 'actionSettings' ? 'アプリアクション' : 'プロセスのアクション';
+      const rightKind = right.sectionKey === 'actionSettings' ? 'アプリアクション' : 'プロセスのアクション';
+      return leftKind.localeCompare(rightKind, 'ja')
+        || customerNamedTarget(left.targetDetail, ['アプリアクション', 'アクション'])
+          .localeCompare(customerNamedTarget(right.targetDetail, ['アプリアクション', 'アクション']), 'ja')
+        || left.index - right.index;
+    });
+  if (!actionItems.length) return null;
+
+  const headers = ['No.', '変更区分', 'アクション種別', 'アクション名', '差分プロパティ', '変更前', '変更後'];
+  const rows: (string | number | null)[][] = [headers];
+  const rowStyles: XlsxRowStyle[] = ['normal'];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[]];
+  const rowHeights: number[] = [44];
+  const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
+  const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
+    '追加': 'changeAdded',
+    '削除': 'changeRemoved',
+    '変更': 'changeChanged',
+    '並び順変更': 'changeMoved'
+  };
+
+  actionItems.forEach((item, index) => {
+    const actionKind = item.sectionKey === 'actionSettings' ? 'アプリアクション' : 'プロセスのアクション';
+    const actionName = customerNamedTarget(item.targetDetail, ['アプリアクション', 'アクション']);
+    const previous = actionItems[index - 1];
+    const previousName = previous
+      ? `${previous.sectionKey}:${customerNamedTarget(previous.targetDetail, ['アプリアクション', 'アクション'])}`
+      : '';
+    const startsTarget = index === 0 || `${item.sectionKey}:${actionName}` !== previousName;
+    const alternate = index % 2 === 1;
+    const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
+    rows.push([
+      item.index + 1,
+      item.changeType,
+      actionKind,
+      actionName,
+      item.settingItem,
+      item.before,
+      item.after
+    ]);
+    rowStyles.push('normal');
+    cellStyles.push([
+      'hyperlink',
+      changeStyles[item.changeType],
+      baseStyle,
+      startsTarget ? 'category' : baseStyle,
+      baseStyle,
+      item.changeType === '追加' ? 'diffAbsent' : 'diffBefore',
+      item.changeType === '削除' ? 'diffAbsent' : 'diffAfter'
+    ]);
+    rowHeights.push(readableCustomerRowHeight([
+      { value: actionKind, width: 19 },
+      { value: actionName, width: 28 },
+      { value: item.settingItem, width: 24 },
+      { value: item.before, width: 28 },
+      { value: item.after, width: 28 }
+    ], 96));
+    internalHyperlinks.push({
+      ref: `A${index + 2}`,
+      targetSheet: '設定値詳細',
+      targetCell: `A${item.index + 2}`,
+      tooltip: '比較元・比較先の原文を確認'
+    });
+  });
+
+  return {
+    name: 'アクション差分',
+    rows,
+    colWidths: [7, 11, 19, 28, 24, 28, 28],
+    rowStyles,
+    cellStyles,
+    headerRow: 1,
+    freezeRows: 1,
+    freezeColumns: 5,
+    rowHeights,
+    materializeEmptyCellsFromRow: 1,
+    internalHyperlinks,
+    showGridLines: false,
+    zoomScale: 92,
+    print: {
+      orientation: 'landscape',
+      fitToWidth: 1,
+      fitToHeight: 0,
+      repeatRows: { from: 1, to: 1 },
+      repeatColumns: { from: 1, to: 5 },
+      footer: '&Lアクション差分&Rページ &P / &N'
+    }
+  };
+}
+
 function buildCustomerFieldDiffSheet(
   ctx: DiffXlsxContext,
   items: CustomerDiffItem[]
@@ -3312,7 +3898,7 @@ function buildCustomerFieldDiffSheet(
   if (!fieldItems.length) return null;
 
   const headers = [
-    'No.', '変更区分', '構造', '親テーブル', 'フィールド名', 'フィールドコード',
+    'No.', '変更区分', '配置', 'フィールド名', 'フィールドコード',
     'フィールド種別', '差分プロパティ', 'フィールド存在', '設定値存在',
     '変更前', '変更後'
   ];
@@ -3326,17 +3912,19 @@ function buildCustomerFieldDiffSheet(
     '追加': 'changeAdded',
     '削除': 'changeRemoved',
     '変更': 'changeChanged',
-    '要素の移動': 'changeMoved'
+    '並び順変更': 'changeMoved'
   };
   const actualIndexByRow = new Map(items.map((item, index) => [item.row, index]));
 
   fieldItems.forEach((item, index) => {
     const field = item.field!;
+    const location = field.structure === '└ テーブル内フィールド'
+      ? `テーブル「${field.parentTableName}」（コード: ${field.parentTableCode}）\n└ テーブル内フィールド`
+      : field.structure;
     rows.push([
       index + 1,
       item.changeType,
-      field.structure,
-      item.parentTarget,
+      location,
       field.fieldName,
       field.fieldCode,
       field.fieldType,
@@ -3355,10 +3943,10 @@ function buildCustomerFieldDiffSheet(
     styles[0] = actualIndex == null ? 'center' : 'hyperlink';
     styles[1] = changeStyles[item.changeType];
     styles[2] = field.structure === 'テーブル' ? 'category' : baseStyle;
+    styles[7] = 'center';
     styles[8] = 'center';
-    styles[9] = 'center';
-    styles[10] = item.changeType === '追加' ? 'diffAbsent' : 'diffBefore';
-    styles[11] = item.changeType === '削除' ? 'diffAbsent' : 'diffAfter';
+    styles[9] = item.changeType === '追加' ? 'diffAbsent' : 'diffBefore';
+    styles[10] = item.changeType === '削除' ? 'diffAbsent' : 'diffAfter';
     cellStyles.push(styles);
     if (actualIndex != null) {
       internalHyperlinks.push({
@@ -3369,26 +3957,25 @@ function buildCustomerFieldDiffSheet(
       });
     }
     rowHeights.push(readableCustomerRowHeight([
-      { value: field.structure, width: 17 },
-      { value: item.parentTarget, width: 24 },
+      { value: location, width: 30 },
       { value: field.fieldName, width: 22 },
       { value: field.fieldCode, width: 22 },
       { value: field.fieldType, width: 17 },
       { value: item.settingItem, width: 22 },
-      { value: item.before, width: 24 },
-      { value: item.after, width: 24 }
+      { value: item.before, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH },
+      { value: item.after, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH }
     ], 240));
   });
 
   return {
     name: 'フィールド差分',
     rows,
-    colWidths: [7, 10, 20, 24, 22, 22, 17, 22, 15, 15, 24, 24],
+    colWidths: [7, 10, 30, 22, 22, 17, 22, 15, 15, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH],
     rowStyles,
     cellStyles,
     headerRow: 1,
     freezeRows: 1,
-    freezeColumns: 6,
+    freezeColumns: 5,
     rowHeights,
     rowOutlines,
     outlineSummaryBelow: false,
@@ -3401,7 +3988,7 @@ function buildCustomerFieldDiffSheet(
       fitToWidth: 2,
       fitToHeight: 0,
       repeatRows: { from: 1, to: 1 },
-      repeatColumns: { from: 1, to: 6 },
+      repeatColumns: { from: 1, to: 5 },
       footer: '&Lフィールド差分&Rページ &P / &N'
     }
   };
@@ -3432,7 +4019,7 @@ function buildCustomerValueDetailSheet(
     '追加': 'changeAdded',
     '削除': 'changeRemoved',
     '変更': 'changeChanged',
-    '要素の移動': 'changeMoved'
+    '並び順変更': 'changeMoved'
   };
 
   items.forEach((item, index) => {
@@ -3528,16 +4115,11 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
   if (!continuations.length) return null;
 
   const rows: (string | number | null)[][] = [[
-    '長い原文を可視セルへ分割しています。参照・対象・比較側・分割No.順に、区切り文字を追加せず連結すると原文表記を完全に復元できます。', '', '', '', '',
-    'すべての行・列は表示状態です。数式、外部リンク、別添ファイルは使用していません。', ''
-  ], [
     '参照', '対象', '比較側', '分割No.', '文字位置', '原文（順に連結）', '参照元へ'
   ]];
-  const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
-  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[
-    'subtitle', undefined, undefined, undefined, undefined, 'info'
-  ], []];
-  const rowHeights: number[] = [54, 42];
+  const rowStyles: XlsxRowStyle[] = ['normal'];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[]];
+  const rowHeights: number[] = [42];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
 
   for (const continuation of continuations) {
@@ -3570,7 +4152,7 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
         returnLabel
       ]);
       rowStyles.push('normal');
-      const alternate = (rowNumber - 3) % 2 === 1;
+      const alternate = (rowNumber - 2) % 2 === 1;
       cellStyles.push([
         alternate ? 'zebraCenter' : 'center',
         alternate ? 'zebra' : 'normal',
@@ -3599,12 +4181,11 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
     colWidths: [7, 24, 9, 11, 20, CUSTOMER_RAW_CHUNK_COLUMN_WIDTH, 20],
     rowStyles,
     cellStyles,
-    headerRow: 2,
-    freezeRows: 2,
+    headerRow: 1,
+    freezeRows: 1,
     freezeColumns: 3,
     rowHeights,
-    materializeEmptyCellsFromRow: 2,
-    merges: ['A1:E1', 'F1:G1'],
+    materializeEmptyCellsFromRow: 1,
     internalHyperlinks,
     showGridLines: false,
     zoomScale: 80,
@@ -3612,7 +4193,7 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
       orientation: 'landscape',
       fitToWidth: 2,
       fitToHeight: 0,
-      repeatRows: { from: 2, to: 2 },
+      repeatRows: { from: 1, to: 1 },
       repeatColumns: { from: 1, to: 5 },
       footer: '&L長文原文（分割証跡）&Rページ &P / &N'
     }
@@ -3760,13 +4341,13 @@ function buildCustomerIssuesSheet(
     freezeRows: 2,
     freezeColumns: 2,
     materializeEmptyCellsFromRow: 2,
-    rowHeights: rows.map((row, index) => index < 2 ? (index === 0 ? 36 : 30) : readableDiffRowHeight([
+    rowHeights: rows.map((row, index) => index < 2 ? (index === 0 ? 36 : 30) : readableCustomerRowHeight([
       { value: row[0], width: 24 },
       { value: row[1], width: 20 },
       { value: row[2], width: 22 },
       { value: row[3], width: 48 },
       { value: row[4], width: 60 }
-    ], 180)),
+    ], 96)),
     merges: ['A1:E1'],
     internalHyperlinks,
     showGridLines: false,
@@ -3785,7 +4366,7 @@ function buildCustomerDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
   const issueItems = buildCustomerCoverageIssueItems(ctx);
   const nextLongRawRow = differenceContinuations.reduce(
     (nextRow, continuation) => Math.max(nextRow, continuation.firstRow + continuation.chunks.length),
-    3
+    2
   );
   const issueContinuations = buildCustomerIssueRawContinuations(issueItems, nextLongRawRow);
   const allContinuations: CustomerRawContinuation[] = [...differenceContinuations, ...issueContinuations];
@@ -3795,6 +4376,10 @@ function buildCustomerDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
   sheets.push(buildCustomerListSheet(ctx, items));
   const fieldDiff = buildCustomerFieldDiffSheet(ctx, items);
   if (fieldDiff) sheets.push(fieldDiff);
+  const viewDiff = buildCustomerViewDiffSheet(items);
+  if (viewDiff) sheets.push(viewDiff);
+  const actionDiff = buildCustomerActionDiffSheet(items);
+  if (actionDiff) sheets.push(actionDiff);
   const valueDetails = buildCustomerValueDetailSheet(ctx, items, differenceContinuations);
   if (valueDetails) sheets.push(valueDetails);
   const longRaw = buildCustomerLongRawSheet(allContinuations);

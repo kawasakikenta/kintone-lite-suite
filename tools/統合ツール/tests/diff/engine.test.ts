@@ -34,6 +34,23 @@ describe('diff/engine', () => {
       expect(detectRowSeverity(row)).toBe('medium');
     });
 
+    it('orders the official field permissions as NONE < READ < WRITE', () => {
+      const row = { sectionKey: 'fieldAcl', path: 'fieldAcl.rights[0].entities[0].accessibility', type: 'changed' };
+      expect(detectRowSeverity({ ...row, left: 'WRITE', right: 'READ' })).toBe('high');
+      expect(detectRowSeverity({ ...row, left: 'READ', right: 'NONE' })).toBe('high');
+      expect(detectRowSeverity({ ...row, left: 'NONE', right: 'READ' })).toBe('medium');
+      expect(detectRowSeverity({ ...row, left: 'READ', right: 'WRITE' })).toBe('medium');
+    });
+
+    it('keeps READ_WRITE as a compatibility alias of WRITE', () => {
+      const aliasOnly = { sectionKey: 'fieldAcl', path: 'fieldAcl.rights[0].entities[0].accessibility', type: 'changed', left: 'READ_WRITE', right: 'WRITE' };
+      const legacyDowngrade = { ...aliasOnly, right: 'READ' };
+      const legacyUpgrade = { ...aliasOnly, left: 'READ', right: 'READ_WRITE' };
+      expect(detectRowSeverity(aliasOnly)).toBe('low');
+      expect(detectRowSeverity(legacyDowngrade)).toBe('high');
+      expect(detectRowSeverity(legacyUpgrade)).toBe('medium');
+    });
+
     it('returns high for HIGH_IMPACT_SECTIONS removal', () => {
       const row = { sectionKey: 'fieldSettings', path: 'fieldSettings.code1', type: 'removed' };
       expect(detectRowSeverity(row)).toBe('high');
@@ -290,7 +307,15 @@ describe('diff/engine', () => {
         'actionSettings.actions[0].destApp.appId',
         'actionSettings.actions.copy.destAppId',
         'actionSettings.actions.copy.targetAppId',
-        'actionSettings.actions.copy.sourceApp.appId'
+        'actionSettings.actions.copy.sourceApp.appId',
+        'viewSettings.views.営業一覧.id',
+        'viewSettings.views["営業.一覧"].id',
+        'viewSettings.views[0].id',
+        'reportSettings.reports.月次集計.id',
+        'reportSettings.reports["月次.集計"].id',
+        'actionSettings.actions.copy.id',
+        'actionSettings.actions["copy.main"].id',
+        'actionSettings.actions[0].id'
       ].every((path) => isAppReferenceIdPath(path))).toBe(true);
 
       expect([
@@ -299,7 +324,9 @@ describe('diff/engine', () => {
         'fieldSettings.properties.customer.lookup.relatedApp.code',
         'actionSettings.actions.copy.appId',
         'actionSettings.actions.copy.destApp.code',
+        'actionSettings.actions.copy.mapping.id',
         'pluginSettings.plugins[0].config.app',
+        'pluginSettings.plugins[0].id',
         'customizeSettings.appId'
       ].some((path) => isAppReferenceIdPath(path))).toBe(false);
     });
@@ -394,7 +421,7 @@ describe('diff/engine', () => {
       ]);
     });
 
-    it('excludes only appInfo and reference destination IDs when enabled', () => {
+    it('excludes only supported environment-specific IDs when enabled', () => {
       const { source, target } = appReferencePair();
       const result = computeDiffRows(
         makeBundle(source),
@@ -405,6 +432,55 @@ describe('diff/engine', () => {
       );
 
       expect(countActualDiffRows(result.rows)).toBe(0);
+    });
+
+    it('excludes view, report and action entity IDs but keeps their settings', () => {
+      const result = computeDiffRows(
+        makeBundle({
+          viewSettings: { views: { '営業.一覧': { id: '10', name: '営業.一覧', filterCond: 'status = "open"' } } },
+          reportSettings: { reports: { '月次.集計': { id: '20', name: '月次.集計', chartType: 'BAR' } } },
+          actionSettings: { actions: { 'copy.main': { id: '30', name: '複製', mappings: [{ srcType: 'FIELD', srcField: 'old_code', destField: 'dest' }] } } }
+        }),
+        makeBundle({
+          viewSettings: { views: { '営業.一覧': { id: '11', name: '営業.一覧', filterCond: 'status = "closed"' } } },
+          reportSettings: { reports: { '月次.集計': { id: '21', name: '月次.集計', chartType: 'PIE' } } },
+          actionSettings: { actions: { 'copy.main': { id: '31', name: '複製', mappings: [{ srcType: 'FIELD', srcField: 'new_code', destField: 'dest' }] } } }
+        }),
+        ['viewSettings', 'reportSettings', 'actionSettings'],
+        '',
+        { normalizationPresetState: { appReferences: true } }
+      );
+
+      expect(result.rows.map((row: any) => row.path)).toEqual([
+        'viewSettings.views.営業.一覧.filterCond',
+        'reportSettings.reports.月次.集計.chartType',
+        'actionSettings.actions.copy.main.mappings[0].srcField'
+      ]);
+    });
+
+    it('keeps plugin IDs and arbitrary nested IDs when environment-specific IDs are excluded', () => {
+      const result = computeDiffRows(
+        makeBundle({
+          pluginSettings: { plugins: [{ id: 'plugin-a', name: '同名' }] },
+          viewSettings: { views: { 営業一覧: { id: '10', config: { id: 'custom-a' } } } }
+        }),
+        makeBundle({
+          pluginSettings: { plugins: [{ id: 'plugin-b', name: '同名' }] },
+          viewSettings: { views: { 営業一覧: { id: '11', config: { id: 'custom-b' } } } }
+        }),
+        ['pluginSettings', 'viewSettings'],
+        '',
+        { normalizationPresetState: { appReferences: true } }
+      );
+
+      const paths = result.rows.map((row: any) => row.path);
+      const pluginRows = result.rows.filter((row: any) => row.sectionKey === 'pluginSettings');
+      expect(pluginRows).toHaveLength(2);
+      expect(pluginRows.every((row: any) => row.arrayKey === 'id')).toBe(true);
+      expect(JSON.stringify(pluginRows)).toContain('plugin-a');
+      expect(JSON.stringify(pluginRows)).toContain('plugin-b');
+      expect(paths).toContain('viewSettings.views.営業一覧.config.id');
+      expect(paths).not.toContain('viewSettings.views.営業一覧.id');
     });
 
     it('keeps non-ID reference settings and misleading app-like keys', () => {
@@ -545,6 +621,56 @@ describe('diff/engine', () => {
       expect(result.rows[0].path).toBe('actionSettings');
       expect(JSON.stringify(result.rows[0])).not.toContain('876');
       expect(JSON.stringify(result.rows[0])).toContain('destination-app');
+    });
+  });
+
+  describe('legacy plugin fetch metadata', () => {
+    it('does not report successful legacy fetch counters as settings differences', () => {
+      const result = computeDiffRows(
+        makeBundle({ pluginSettings: { plugins: [], fetched: 3, skipped: 0, failed: 0 } }),
+        makeBundle({ pluginSettings: { plugins: [], fetched: 4, skipped: 0, failed: 0 } }),
+        ['pluginSettings'],
+        ''
+      );
+
+      expect(countActualDiffRows(result.rows)).toBe(0);
+      expect(result.fetchIssues).toEqual([]);
+    });
+
+    it('marks a legacy failed counter as an incomplete comparison instead of a settings difference', () => {
+      const result = computeDiffRows(
+        makeBundle({ pluginSettings: { plugins: [], fetched: 2, skipped: 0, failed: 1 } }),
+        makeBundle({ pluginSettings: { plugins: [], fetched: 3, skipped: 0, failed: 0 } }),
+        ['pluginSettings'],
+        ''
+      );
+
+      expect(countActualDiffRows(result.rows)).toBe(0);
+      expect(result.fetchIssues).toEqual([
+        expect.objectContaining({
+          sectionKey: 'pluginSettings',
+          side: 'source',
+          sourceError: 'プラグイン設定の取得に失敗したため、このセクションは比較できません（1件）'
+        })
+      ]);
+    });
+
+    it('marks a legacy skipped counter as an incomplete comparison instead of silently ignoring it', () => {
+      const result = computeDiffRows(
+        makeBundle({ pluginSettings: { plugins: [], fetched: 2, skipped: 1, failed: 0 } }),
+        makeBundle({ pluginSettings: { plugins: [], fetched: 3, skipped: 0, failed: 0 } }),
+        ['pluginSettings'],
+        ''
+      );
+
+      expect(countActualDiffRows(result.rows)).toBe(0);
+      expect(result.fetchIssues).toEqual([
+        expect.objectContaining({
+          sectionKey: 'pluginSettings',
+          side: 'source',
+          sourceError: 'プラグイン設定を取得できない項目があるため、このセクションは比較できません（1件）'
+        })
+      ]);
     });
   });
 

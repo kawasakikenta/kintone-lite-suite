@@ -434,19 +434,19 @@ async function verifySuccessfulPairExports(page) {
   const bulkZip = await inspectStoredZipDownload(page, downloadsBeforeBulk);
   assert.match(bulkZip.filename, /\.zip$/i, 'ペア一括Excelのダウンロード名がZIPではありません');
   assert.match(bulkZip.type, /zip/i, 'ペア一括ExcelのMIME typeがZIPではありません');
-  assert.equal(bulkZip.entries.length, 2, '失敗ペアを除いた成功2件がZIPへ収録されていません');
-  assert.deepEqual(bulkZip.entries.map((entry) => entry.name),
-    [...bulkZip.entries.map((entry) => entry.name)].sort((a, b) => a.localeCompare(b, 'ja')),
-    'ペア一括ExcelのZIPエントリが登録順に並んでいません');
-  assert.deepEqual(bulkZip.entries.map((entry) => entry.name.slice(0, 4)), ['001_', '002_'],
-    'ペア一括ExcelのZIPエントリに登録順の連番がありません');
+  assert.equal(bulkZip.entries.length, 3, '一括比較結果と、失敗ペアを除いた成功2件がZIPへ収録されていません');
+  assert.equal(bulkZip.entries[0]?.name, '000_一括比較結果.xlsx',
+    '一括比較結果がペア一括ZIPの先頭にありません');
+  const individualEntries = bulkZip.entries.slice(1);
+  assert.deepEqual(individualEntries.map((entry) => entry.name.slice(0, 4)), ['001_', '002_'],
+    'ペア一括Excelの成功ブックに登録順の連番がありません');
   assert.equal(bulkZip.entries.every((entry) => /\.xlsx$/i.test(entry.name)), true,
     'ペア一括ExcelのZIPにXLSX以外のファイルが含まれています');
   assert.equal(bulkZip.entries.every((entry) => entry.method === 0), true,
     'ペア一括ExcelのZIPが想定外の圧縮方式です');
   assert.equal(bulkZip.entries.every((entry) => entry.prefix.join(',') === '80,75,3,4'), true,
     'ペア一括ExcelのZIP内に正しいXLSXではないエントリがあります');
-  assert.equal(bulkZip.entries.some((entry) => /303/.test(entry.name)), false,
+  assert.equal(individualEntries.some((entry) => /303/.test(entry.name)), false,
     '比較失敗した App 303 のExcelがペア一括ZIPへ混入しました');
   return { names, bulkZip };
 }

@@ -450,7 +450,7 @@ export interface DiffNormalizationPreset {
   sections: ReadonlySet<string>;
   ignoreKeys: ReadonlySet<string>;
   unorderedArrays: boolean;
-  /** 参照先アプリIDとして意味が確定するパスだけを除外する。 */
+  /** 環境ごとに変わる内部IDとして意味が確定するパスだけを除外する。 */
   ignoreAppReferencePaths?: boolean;
 }
 
@@ -486,8 +486,8 @@ export const DIFF_NORMALIZATION_PRESETS: Record<string, DiffNormalizationPreset>
     unorderedArrays: true
   },
   appReferences: {
-    label: 'アプリID（比較対象・参照先）',
-    sections: new Set(['appInfo', 'fieldSettings', 'actionSettings']),
+    label: '環境固有ID（アプリ・一覧・グラフ・アクション）',
+    sections: new Set(['appInfo', 'fieldSettings', 'viewSettings', 'reportSettings', 'actionSettings']),
     ignoreKeys: new Set(),
     unorderedArrays: false,
     ignoreAppReferencePaths: true

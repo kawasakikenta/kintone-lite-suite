@@ -224,15 +224,15 @@ async function configureThreeTargets(page) {
 }
 
 async function verifyAppReferenceExclusionControl(page) {
-  const control = page.getByLabel('アプリID（比較対象・参照先）を比較から除外', { exact: true });
+  const control = page.getByLabel('環境固有ID（アプリ・一覧・グラフ・アクション）を比較から除外', { exact: true });
   assert.equal(await control.count(), 1,
-    '参照先アプリIDの除外設定が重複しているか、見つかりません');
+    '環境固有IDの除外設定が重複しているか、見つかりません');
   assert.equal(await control.isChecked(), false,
-    '参照先アプリIDの除外設定は初期状態でオフである必要があります');
+    '環境固有IDの除外設定は初期状態でオフである必要があります');
   assert.equal(await page.getByText('よく使う除外', { exact: true }).isVisible(), true,
-    '参照先アプリIDの除外設定が常時見える位置にありません');
+    '環境固有IDの除外設定が常時見える位置にありません');
   assert.equal(await page.getByText(/オン／オフを変更した後は再比較してください。差分件数・画面結果・Excelに反映されます。/).isVisible(), true,
-    '参照先アプリIDの除外が比較結果とExcelへ与える影響の説明がありません');
+    '環境固有IDの除外が比較結果とExcelへ与える影響の説明がありません');
 }
 
 function multiResultRows(page) {
@@ -424,22 +424,22 @@ async function main() {
       '一括Excel保存の二重クリックでZIPが重複ダウンロードされました');
     assert.match(result.bulkZip.filename, /\.zip$/i, '一括Excelのダウンロード名がZIPではありません');
     assert.match(result.bulkZip.type, /zip/i, '一括ExcelのMIME typeがZIPではありません');
-    assert.equal(result.bulkZip.entries.length, 2, '比較失敗を除いた成功2件がZIPへ収録されていません');
-    assert.deepEqual(result.bulkZip.entries.map((entry) => entry.name),
-      [...result.bulkZip.entries.map((entry) => entry.name)].sort((a, b) => a.localeCompare(b, 'ja')),
-      '一括ExcelのZIPエントリが比較順に並んでいません');
-    assert.deepEqual(result.bulkZip.entries.map((entry) => entry.name.slice(0, 4)), ['001_', '002_'],
-      '一括ExcelのZIPエントリに比較順の連番がありません');
+    assert.equal(result.bulkZip.entries.length, 3, '一括比較結果と、比較失敗を除いた成功2件がZIPへ収録されていません');
+    assert.equal(result.bulkZip.entries[0]?.name, '000_一括比較結果.xlsx',
+      '一括比較結果がZIPの先頭にありません');
+    const individualEntries = result.bulkZip.entries.slice(1);
+    assert.deepEqual(individualEntries.map((entry) => entry.name.slice(0, 4)), ['001_', '002_'],
+      '一括Excelの成功ブックに比較順の連番がありません');
     assert.equal(result.bulkZip.entries.every((entry) => /\.xlsx$/i.test(entry.name)), true,
       '一括ExcelのZIPにXLSX以外のファイルが含まれています');
     assert.equal(result.bulkZip.entries.every((entry) => entry.method === 0), true,
       '一括ExcelのZIPが想定外の圧縮方式です');
     assert.equal(result.bulkZip.entries.every((entry) => entry.prefix.join(',') === '80,75,3,4'), true,
       '一括ExcelのZIP内に正しいXLSXではないエントリがあります');
-    assert.equal(result.bulkZip.entries.some((entry) => /303/.test(entry.name)), false,
+    assert.equal(individualEntries.some((entry) => /303/.test(entry.name)), false,
       '比較失敗した App 303 のExcelが一括ZIPへ混入しました');
 
-    const appReferenceExclusion = page.getByLabel('アプリID（比較対象・参照先）を比較から除外', { exact: true });
+    const appReferenceExclusion = page.getByLabel('環境固有ID（アプリ・一覧・グラフ・アクション）を比較から除外', { exact: true });
     await appReferenceExclusion.check();
     assert.equal(await multiResultRows(page).count(), 0,
       'アプリID除外条件の変更後も古い比較結果が表示されています');

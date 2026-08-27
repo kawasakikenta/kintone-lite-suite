@@ -2210,12 +2210,12 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   });
   panel.body.insertBefore(cardScope.card, panel.status);
 
-  // 環境ごとに変わりやすい比較対象・参照先アプリIDは、詳細設定を開かなくても選べるようにする。
+  // 環境ごとに変わる内部IDは、詳細設定を開かなくても選べるようにする。
   // 比較結果そのものを変える条件なので既定はオフとし、再比較が必要なことも常時表示する。
   const nAppRefs = makeCheck({
-    label: 'アプリID（比較対象・参照先）を比較から除外',
+    label: '環境固有ID（アプリ・一覧・グラフ・アクション）を比較から除外',
     checked: false,
-    help: '比較対象のアプリIDと、ルックアップ・関連レコード・アプリアクションの参照先アプリIDだけを除外します'
+    help: '比較対象・参照先のアプリIDと、一覧・グラフ・アクション自身の内部IDだけを除外します'
   });
   nAppRefs.checkbox.dataset.kusDlExcludeAppReferences = '';
   const appReferenceExclusion = document.createElement('section');
@@ -2228,7 +2228,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const appReferenceExclusionDescription = document.createElement('p');
   appReferenceExclusionDescription.id = 'kus-dl-common-exclusion-description';
   appReferenceExclusionDescription.className = 'kus-dl-common-exclusion__description';
-  appReferenceExclusionDescription.textContent = '比較対象のアプリIDと、ルックアップ・関連レコード・アプリアクションの参照先アプリIDだけを除外します。フィールドコードや対応付けは比較します。';
+  appReferenceExclusionDescription.textContent = '比較対象・参照先のアプリIDと、一覧・グラフ・アクション自身の内部IDだけを除外します。フィールドコード、一覧条件、アクションの対応付け、プラグインIDは比較します。';
   const appReferenceExclusionNote = document.createElement('p');
   appReferenceExclusionNote.id = 'kus-dl-common-exclusion-note';
   appReferenceExclusionNote.className = 'kus-dl-common-exclusion__note';
@@ -2592,7 +2592,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   }
 
   function invalidateResultAfterAppReferenceConditionChange() {
-    invalidateComparisonResult('アプリIDの除外条件を変更したため、前回の結果と保存機能を無効にしました。新しい条件で再比較してください');
+    invalidateComparisonResult('環境固有IDの除外条件を変更したため、前回の結果と保存機能を無効にしました。新しい条件で再比較してください');
   }
 
   function invalidateResultAfterPairConditionChange(): boolean {
@@ -2805,7 +2805,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
             ? ` 完全パス/パターン ${ruleSummary.contextualRules}件を含むため、再比較前に無視ルールを確認してください。`
             : '');
         const appReferenceMigrationNote = profile.normalizationPresetState.appReferences
-          ? ' 「アプリID（比較対象・参照先）」は現在、安全な参照パスだけを除外します。以前保存した条件でも一般的な app / id キーは除外しません。'
+          ? ' 「環境固有ID（アプリ・一覧・グラフ・アクション）」は意味が確定する内部IDだけを除外します。以前保存した条件でも一般的な app / id キーやプラグインIDは除外しません。'
           : '';
         panel.setStatus(`比較条件「${profile.name}」を読み込みました（対象 ${profile.scopes.length}セクション / 無視 ${ruleSummary.total}件）。アプリと環境は変更していません。結果を更新するため再比較してください。${appReferenceMigrationNote}${pathWarning}`, 'warn');
       });

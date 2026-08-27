@@ -1149,7 +1149,8 @@ ${contextLine}`);
         try {
           const prefix = buildApiPrefix(guestId, preview);
           const stats = await fetchPluginConfigs(plug, prefix, app);
-          if (stats.failed > 0) setAuxiliaryFetchError(plug, "プラグイン設定", stats.failed);
+          const unavailable = stats.failed + stats.skipped;
+          if (unavailable > 0) setAuxiliaryFetchError(plug, "プラグイン設定", unavailable);
         } catch (e) {
           setAuxiliaryFetchError(plug, "プラグイン設定", 0, e);
         }

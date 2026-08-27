@@ -12,7 +12,8 @@ describe('label-dict', () => {
     expect(labelOfProp('zzzUnknownKey')).toBe('zzzUnknownKey');
   });
   it('labelOfValue resolves accessibility enum', () => {
-    expect(labelOfValue('accessibility', 'READ_WRITE')).toBe('閲覧+編集');
+    expect(labelOfValue('accessibility', 'WRITE')).toBe('閲覧・編集可');
+    expect(labelOfValue('accessibility', 'READ_WRITE')).toBe('閲覧・編集可');
     expect(labelOfValue('accessibility', 'NONE')).toBe('不可');
     expect(labelOfValue('accessibility', 'unknownLevel')).toBeNull();
   });
@@ -26,6 +27,15 @@ describe('label-dict', () => {
     expect(formatEntityText({ type: 'GROUP', code: 'sales', name: '営業部' })).toContain('営業部');
     expect(formatEntityText({ type: 'GROUP', code: 'sales' })).toContain('sales');
     expect(formatEntityText(null)).toBe('');
+  });
+  it('localizes kintone entity types and built-in function entities', () => {
+    expect(labelOfValue('entity.type', 'FUNCTION')).toBe('⚙ 関数');
+    expect(labelOfValue('entity.type', 'MODIFIER')).toBe('✏️ 更新者');
+    expect(labelOfValue('entity.type', 'LOGIN_USER')).toBe('👤 ログインユーザー');
+    expect(labelOfValue('entity.type', 'ALL')).toBe('🌐 全員');
+    expect(formatEntityText({ type: 'FUNCTION', code: 'LOGINUSER()' })).toBe('ログインユーザー');
+    expect(formatEntityText({ type: 'FUNCTION', code: 'PRIMARY_ORGANIZATION()' })).toBe('優先する組織');
+    expect(formatEntityText({ type: 'GROUP', code: 'sales', name: '営業部' })).toBe('👥 グループ 営業部 (sales)');
   });
 });
 
@@ -99,11 +109,13 @@ describe('path-decoder.decodeRow', () => {
       path: 'fieldAcl.rights[0].entities[1].accessibility',
       type: 'changed',
       left: 'READ',
-      right: 'READ_WRITE'
+      right: 'WRITE'
     };
     const d = decodeRow(row);
     expect(d!.beforeText).toBe('閲覧のみ');
-    expect(d!.afterText).toBe('閲覧+編集');
+    expect(d!.afterText).toBe('閲覧・編集可');
+    const legacy = decodeRow({ ...row, right: 'READ_WRITE' });
+    expect(legacy!.afterText).toBe('閲覧・編集可');
   });
 
   it('returns null for field/layout rows (kept on legacy renderer)', () => {

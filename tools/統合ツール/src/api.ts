@@ -607,7 +607,10 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
         // プラグイン設定 API は本番/preview の両方を持つため、選択環境と揃える。
         const prefix = buildApiPrefix(guestId, preview);
         const stats = await fetchPluginConfigs(plug, prefix, app);
-        if (stats.failed > 0) setAuxiliaryFetchError(plug, 'プラグイン設定', stats.failed);
+        // ID欠落や不正な応答で skipped になった場合も設定内容は揃っていないため、
+        // 差分なしと誤判定せずセクション全体を比較未完了として扱う。
+        const unavailable = stats.failed + stats.skipped;
+        if (unavailable > 0) setAuxiliaryFetchError(plug, 'プラグイン設定', unavailable);
       } catch (e) {
         setAuxiliaryFetchError(plug, 'プラグイン設定', 0, e);
       }
