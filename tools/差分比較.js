@@ -13331,6 +13331,35 @@ ${label}` : `${direction}の値`;
       }
     };
   }
+  var CUSTOMER_API_SHEET_DEFS = [
+    { key: "appSettings", sectionKey: "appSettings", label: "01 アプリ一般設定", sheetName: "API_01_アプリ一般設定", endpoint: "/app/settings.json" },
+    { key: "appInfo", sectionKey: "appInfo", label: "02 アプリ情報", sheetName: "API_02_アプリ情報", endpoint: "/app.json" },
+    { key: "fieldSettings", sectionKey: "fieldSettings", label: "03 フォームフィールド", sheetName: "API_03_フォームフィールド", endpoint: "/app/form/fields.json" },
+    { key: "layoutSettings", sectionKey: "layoutSettings", label: "04 フォームレイアウト", sheetName: "API_04_フォームレイアウト", endpoint: "/app/form/layout.json" },
+    { key: "formSettings", sectionKey: "formSettings", label: "05 フォーム設計情報", sheetName: "API_05_フォーム設計情報", endpoint: "/form.json" },
+    { key: "viewSettings", sectionKey: "viewSettings", label: "06 一覧設定", sheetName: "API_06_一覧設定", endpoint: "/app/views.json" },
+    { key: "reportSettings", sectionKey: "reportSettings", label: "07 グラフ設定", sheetName: "API_07_グラフ設定", endpoint: "/app/reports.json" },
+    { key: "processSettings", sectionKey: "processSettings", label: "08 プロセス管理", sheetName: "API_08_プロセス管理", endpoint: "/app/status.json" },
+    { key: "pluginSettings", sectionKey: "pluginSettings", label: "09 追加済みプラグイン", sheetName: "API_09_追加済みプラグイン", endpoint: "/app/plugins.json" },
+    { key: "pluginConfig", label: "10 プラグイン個別設定", sheetName: "API_10_プラグイン個別設定", endpoint: "/app/plugin/config.json" },
+    { key: "customizeSettings", sectionKey: "customizeSettings", label: "11 JavaScript・CSS", sheetName: "API_11_JavaScript・CSS", endpoint: "/app/customize.json" },
+    { key: "customizeFile", label: "12 カスタマイズ本文", sheetName: "API_12_カスタマイズ本文", endpoint: "/file.json" },
+    { key: "actionSettings", sectionKey: "actionSettings", label: "13 アプリアクション", sheetName: "API_13_アプリアクション", endpoint: "/app/actions.json" },
+    { key: "appAcl", sectionKey: "appAcl", label: "14 アプリ権限", sheetName: "API_14_アプリ権限", endpoint: "/app/acl.json" },
+    { key: "fieldAcl", sectionKey: "fieldAcl", label: "15 フィールド権限", sheetName: "API_15_フィールド権限", endpoint: "/field/acl.json" },
+    { key: "recordPermissions", sectionKey: "recordPermissions", label: "16 レコード権限", sheetName: "API_16_レコード権限", endpoint: "/record/acl.json" },
+    { key: "notifications", sectionKey: "notifications", label: "17 アプリ条件通知", sheetName: "API_17_アプリ条件通知", endpoint: "/app/notifications/general.json" },
+    { key: "perRecordNotifications", sectionKey: "perRecordNotifications", label: "18 レコード条件通知", sheetName: "API_18_レコード条件通知", endpoint: "/app/notifications/perRecord.json" },
+    { key: "reminderNotifications", sectionKey: "reminderNotifications", label: "19 リマインダー通知", sheetName: "API_19_リマインダー通知", endpoint: "/app/notifications/reminder.json" },
+    { key: "categories", sectionKey: "categories", label: "20 カテゴリー設定", sheetName: "API_20_カテゴリー設定", endpoint: "/app/categories.json" },
+    { key: "unknown", label: "99 API未特定", sheetName: "API_99_API未特定" }
+  ];
+  var CUSTOMER_API_SHEET_DEF_BY_SECTION = new Map(
+    CUSTOMER_API_SHEET_DEFS.filter((definition) => !!definition.sectionKey).map((definition) => [definition.sectionKey, definition])
+  );
+  var CUSTOMER_API_SHEET_DEF_BY_KEY = new Map(
+    CUSTOMER_API_SHEET_DEFS.map((definition) => [definition.key, definition])
+  );
   function customerSectionLabel(key) {
     const labels = {
       appSettings: "アプリ基本設定",
@@ -14310,18 +14339,40 @@ ${label}` : `${direction}の値`;
     }
     return counts;
   }
-  function customerSectionBreakdown(rows) {
-    const grouped = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      if (!row || row._displayOnly || row.type === "same") continue;
-      const key = sectionKeyOfRow(row);
-      const list = grouped.get(key) || [];
-      list.push(row);
-      grouped.set(key, list);
+  function customerApiDefinitionForItem(item) {
+    const path = String(item.row.path || "");
+    if (item.sectionKey === "pluginSettings" && /(?:^|\.)(?:config|_config)(?:$|\.|\[)/.test(path)) {
+      return CUSTOMER_API_SHEET_DEF_BY_KEY.get("pluginConfig");
     }
-    return [...grouped].map(([key, list]) => {
-      const counts = summarizeCustomerRows(list);
-      return [customerSectionLabel(key), counts.added, counts.removed, counts.contentChanged, counts.moved, counts.actual];
+    if (item.sectionKey === "customizeSettings" && /(?:^|\.)(?:_body|_bodyText|_bodyHash|_bodyUnavailable)(?:$|\.|\[)/.test(path)) {
+      return CUSTOMER_API_SHEET_DEF_BY_KEY.get("customizeFile");
+    }
+    return CUSTOMER_API_SHEET_DEF_BY_SECTION.get(item.sectionKey) || CUSTOMER_API_SHEET_DEF_BY_KEY.get("unknown");
+  }
+  function buildCustomerApiGroups(items) {
+    const grouped = /* @__PURE__ */ new Map();
+    for (const item of items) {
+      const definition = customerApiDefinitionForItem(item);
+      const groupItems = grouped.get(definition.key) || [];
+      groupItems.push(item);
+      grouped.set(definition.key, groupItems);
+    }
+    return CUSTOMER_API_SHEET_DEFS.flatMap((definition) => {
+      const groupItems = grouped.get(definition.key) || [];
+      return groupItems.length ? [{ definition, items: groupItems }] : [];
+    });
+  }
+  function customerApiBreakdown(groups) {
+    return groups.map((group) => {
+      const counts = summarizeCustomerRows(group.items.map((item) => item.row));
+      return [
+        group.definition.label,
+        counts.added,
+        counts.removed,
+        counts.contentChanged,
+        counts.moved,
+        counts.actual
+      ];
     });
   }
   function customerIncomplete(ctx) {
@@ -14342,7 +14393,7 @@ ${label}` : `${direction}の値`;
     const date = new Date(normalized);
     return Number.isFinite(date.getTime()) ? humanDateTime(date.toISOString()) : "未記録";
   }
-  function buildCustomerSummarySheet(ctx, items) {
+  function buildCustomerSummarySheet(ctx, items, apiGroups) {
     const counts = summarizeCustomerRows(ctx.rows || []);
     const incomplete = customerIncomplete(ctx);
     const droppedSame = Number(ctx.truncation?.droppedSame || 0);
@@ -14366,9 +14417,9 @@ ${targetName}`, "", ""],
     ];
     if (counts.actual) {
       rows.push(
-        ["分類別件数", "", "", "", "", ""],
-        ["分類", "追加", "削除", "変更", "並び順変更", "合計"],
-        ...customerSectionBreakdown(ctx.rows || [])
+        ["API別差分件数", "", "", "", "", ""],
+        ["API別シート", "追加", "削除", "変更", "並び順変更", "合計"],
+        ...customerApiBreakdown(apiGroups)
       );
     }
     const cellStyles = rows.map(() => []);
@@ -14411,7 +14462,7 @@ ${targetName}`, "", ""],
       cellStyles[8] = Array.from({ length: 6 }, () => "sectionHeader");
       for (let index = 10; index < rows.length; index += 1) {
         const alternate = (index - 10) % 2 === 1;
-        cellStyles[index][0] = alternate ? "zebra" : "normal";
+        cellStyles[index][0] = "actionLink";
         for (let column = 1; column < 6; column += 1) {
           cellStyles[index][column] = alternate ? "zebraCenter" : "center";
         }
@@ -14420,7 +14471,7 @@ ${targetName}`, "", ""],
     return {
       name: "比較概要",
       rows,
-      colWidths: [16, 22, 10, 22, 16, 22],
+      colWidths: [24, 22, 10, 22, 16, 22],
       rowStyles: rows.map(() => "normal"),
       cellStyles,
       headerRow: counts.actual ? 10 : void 0,
@@ -14448,12 +14499,20 @@ ${targetName}`, "", ""],
         "B7:F7",
         ...counts.actual ? ["A9:F9"] : []
       ],
-      internalHyperlinks: counts.actual ? [{
-        ref: "F3",
-        targetSheet: "変更一覧",
-        targetCell: "A1",
-        tooltip: "変更一覧へ移動"
-      }] : [],
+      internalHyperlinks: counts.actual ? [
+        {
+          ref: "F3",
+          targetSheet: "変更一覧",
+          targetCell: "A1",
+          tooltip: "変更一覧へ移動"
+        },
+        ...apiGroups.map((group, index) => ({
+          ref: `A${index + 11}`,
+          targetSheet: group.definition.sheetName,
+          targetCell: "A1",
+          tooltip: `${group.definition.label}を開く`
+        }))
+      ] : [],
       showGridLines: false,
       zoomScale: 100,
       print: {
@@ -14465,7 +14524,7 @@ ${targetName}`, "", ""],
       }
     };
   }
-  function buildCustomerListSheet(ctx, items) {
+  function buildCustomerListSheet(ctx, items, apiGroups) {
     const sourceName = customerAppName(ctx.sourceBundle, "比較元");
     const targetName = customerAppName(ctx.targetBundle, "比較先");
     const headers = [
@@ -14490,6 +14549,10 @@ ${targetName}`
       "並び順変更": "changeMoved"
     };
     const internalHyperlinks = [];
+    const apiDefinitionByItem = /* @__PURE__ */ new Map();
+    for (const group of apiGroups) {
+      for (const item of group.items) apiDefinitionByItem.set(item, group.definition);
+    }
     if (!items.length) {
       rows.push(["", "", "", "差分はありません", "", "", ""]);
       rowStyles.push("normal");
@@ -14509,10 +14572,9 @@ ${targetName}`
       rowStyles.push("normal");
       const styles = [];
       const alternate = index % 2 === 1;
-      const startsCategory = index === 0 || items[index - 1]?.sectionLabel !== item.sectionLabel;
       styles[0] = "hyperlink";
       styles[1] = changeStyles[item.changeType];
-      styles[2] = startsCategory ? "category" : alternate ? "zebra" : "normal";
+      styles[2] = "actionLink";
       styles[3] = alternate ? "zebra" : "normal";
       styles[4] = alternate ? "zebra" : "normal";
       styles[5] = item.changeType === "追加" ? "diffAbsent" : "diffBefore";
@@ -14524,6 +14586,15 @@ ${targetName}`
         targetCell: `A${index + 2}`,
         tooltip: "比較元・比較先の原文を確認"
       });
+      const apiDefinition = apiDefinitionByItem.get(item);
+      if (apiDefinition) {
+        internalHyperlinks.push({
+          ref: `C${index + 2}`,
+          targetSheet: apiDefinition.sheetName,
+          targetCell: "A1",
+          tooltip: `${apiDefinition.label}を開く`
+        });
+      }
       rowHeights.push(readableCustomerRowHeight([
         { value: item.sectionLabel, width: 14 },
         { value: item.target, width: 24 },
@@ -14558,6 +14629,86 @@ ${targetName}`
       }
     };
   }
+  function buildCustomerGenericApiDiffSheet(group) {
+    const { definition, items } = group;
+    const title = definition.endpoint ? `対象API: GET ${definition.endpoint}` : "対象API: APIを特定できません";
+    const headers = ["No.", "変更区分", "設定対象", "差分プロパティ", "変更前", "変更後"];
+    const rows = [
+      [title, "", "", "", "", ""],
+      headers
+    ];
+    const rowStyles = ["normal", "normal"];
+    const cellStyles = [["info"], []];
+    const rowHeights = [30, 44];
+    const internalHyperlinks = [];
+    const changeStyles = {
+      "追加": "changeAdded",
+      "削除": "changeRemoved",
+      "変更": "changeChanged",
+      "並び順変更": "changeMoved"
+    };
+    items.forEach((item, index) => {
+      const alternate = index % 2 === 1;
+      const baseStyle = alternate ? "zebra" : "normal";
+      const startsTarget = index === 0 || items[index - 1]?.target !== item.target;
+      const target = definition.key === "unknown" ? `${item.sectionLabel}
+${item.target}` : item.target;
+      rows.push([
+        item.index + 1,
+        item.changeType,
+        target,
+        item.settingItem,
+        item.before,
+        item.after
+      ]);
+      rowStyles.push("normal");
+      cellStyles.push([
+        "hyperlink",
+        changeStyles[item.changeType],
+        startsTarget ? "category" : baseStyle,
+        baseStyle,
+        item.changeType === "追加" ? "diffAbsent" : "diffBefore",
+        item.changeType === "削除" ? "diffAbsent" : "diffAfter"
+      ]);
+      rowHeights.push(readableCustomerRowHeight([
+        { value: target, width: 30 },
+        { value: item.settingItem, width: 24 },
+        { value: item.before, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH },
+        { value: item.after, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH }
+      ], 220));
+      internalHyperlinks.push({
+        ref: `A${index + 3}`,
+        targetSheet: "設定値詳細",
+        targetCell: `A${item.index + 2}`,
+        tooltip: `設定値詳細 No.${item.index + 1}を開く`
+      });
+    });
+    return {
+      name: definition.sheetName,
+      rows,
+      colWidths: [7, 11, 30, 24, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH],
+      rowStyles,
+      cellStyles,
+      headerRow: 2,
+      freezeRows: 2,
+      freezeColumns: 4,
+      rowHeights,
+      styledEmptyCellsAsBlank: true,
+      materializeEmptyCellsFromRow: 2,
+      merges: ["A1:F1"],
+      internalHyperlinks,
+      showGridLines: false,
+      zoomScale: 95,
+      print: {
+        orientation: "landscape",
+        fitToWidth: 1,
+        fitToHeight: 0,
+        repeatRows: { from: 1, to: 2 },
+        repeatColumns: { from: 1, to: 4 },
+        footer: `&L${definition.label}&Rページ &P / &N`
+      }
+    };
+  }
   function customerNamedTarget(target, prefixes) {
     for (const prefix of prefixes) {
       const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -14566,14 +14717,17 @@ ${targetName}`
     }
     return target;
   }
-  function buildCustomerViewDiffSheet(items) {
-    const viewItems = items.filter((item) => item.sectionKey === "viewSettings").sort((left, right) => customerNamedTarget(left.targetDetail, ["一覧"]).localeCompare(customerNamedTarget(right.targetDetail, ["一覧"]), "ja") || left.index - right.index);
+  function buildCustomerViewDiffSheet(items, definition) {
+    const viewItems = [...items].sort((left, right) => customerNamedTarget(left.targetDetail, ["一覧"]).localeCompare(customerNamedTarget(right.targetDetail, ["一覧"]), "ja") || left.index - right.index);
     if (!viewItems.length) return null;
     const headers = ["No.", "変更区分", "一覧名", "差分プロパティ", "変更前", "変更後"];
-    const rows = [headers];
-    const rowStyles = ["normal"];
-    const cellStyles = [[]];
-    const rowHeights = [44];
+    const rows = [
+      [`対象API: GET ${definition.endpoint}`, "", "", "", "", ""],
+      headers
+    ];
+    const rowStyles = ["normal", "normal"];
+    const cellStyles = [["info"], []];
+    const rowHeights = [30, 44];
     const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
@@ -14611,23 +14765,24 @@ ${targetName}`
         { value: item.after, width: 30 }
       ], 96));
       internalHyperlinks.push({
-        ref: `A${index + 2}`,
+        ref: `A${index + 3}`,
         targetSheet: "設定値詳細",
         targetCell: `A${item.index + 2}`,
         tooltip: "比較元・比較先の原文を確認"
       });
     });
     return {
-      name: "一覧差分",
+      name: definition.sheetName,
       rows,
       colWidths: [7, 11, 28, 24, 30, 30],
       rowStyles,
       cellStyles,
-      headerRow: 1,
-      freezeRows: 1,
+      headerRow: 2,
+      freezeRows: 2,
       freezeColumns: 4,
       rowHeights,
-      materializeEmptyCellsFromRow: 1,
+      materializeEmptyCellsFromRow: 2,
+      merges: ["A1:F1"],
       internalHyperlinks,
       showGridLines: false,
       zoomScale: 95,
@@ -14635,24 +14790,27 @@ ${targetName}`
         orientation: "landscape",
         fitToWidth: 1,
         fitToHeight: 0,
-        repeatRows: { from: 1, to: 1 },
+        repeatRows: { from: 1, to: 2 },
         repeatColumns: { from: 1, to: 4 },
-        footer: "&L一覧差分&Rページ &P / &N"
+        footer: `&L${definition.label}&Rページ &P / &N`
       }
     };
   }
-  function buildCustomerActionDiffSheet(items) {
-    const actionItems = items.filter((item) => item.sectionKey === "actionSettings" || item.sectionKey === "processSettings" && /\.actions(?:\.|\[)/.test(String(item.row.path || ""))).sort((left, right) => {
+  function buildCustomerActionDiffSheet(items, definition) {
+    const actionItems = [...items].sort((left, right) => {
       const leftKind = left.sectionKey === "actionSettings" ? "アプリアクション" : "プロセスのアクション";
       const rightKind = right.sectionKey === "actionSettings" ? "アプリアクション" : "プロセスのアクション";
       return leftKind.localeCompare(rightKind, "ja") || customerNamedTarget(left.targetDetail, ["アプリアクション", "アクション"]).localeCompare(customerNamedTarget(right.targetDetail, ["アプリアクション", "アクション"]), "ja") || left.index - right.index;
     });
     if (!actionItems.length) return null;
     const headers = ["No.", "変更区分", "アクション種別", "アクション名", "差分プロパティ", "変更前", "変更後"];
-    const rows = [headers];
-    const rowStyles = ["normal"];
-    const cellStyles = [[]];
-    const rowHeights = [44];
+    const rows = [
+      [`対象API: GET ${definition.endpoint}`, "", "", "", "", "", ""],
+      headers
+    ];
+    const rowStyles = ["normal", "normal"];
+    const cellStyles = [["info"], []];
+    const rowHeights = [30, 44];
     const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
@@ -14695,23 +14853,24 @@ ${targetName}`
         { value: item.after, width: 28 }
       ], 96));
       internalHyperlinks.push({
-        ref: `A${index + 2}`,
+        ref: `A${index + 3}`,
         targetSheet: "設定値詳細",
         targetCell: `A${item.index + 2}`,
         tooltip: "比較元・比較先の原文を確認"
       });
     });
     return {
-      name: "アクション差分",
+      name: definition.sheetName,
       rows,
       colWidths: [7, 11, 19, 28, 24, 28, 28],
       rowStyles,
       cellStyles,
-      headerRow: 1,
-      freezeRows: 1,
+      headerRow: 2,
+      freezeRows: 2,
       freezeColumns: 5,
       rowHeights,
-      materializeEmptyCellsFromRow: 1,
+      materializeEmptyCellsFromRow: 2,
+      merges: ["A1:G1"],
       internalHyperlinks,
       showGridLines: false,
       zoomScale: 92,
@@ -14719,14 +14878,14 @@ ${targetName}`
         orientation: "landscape",
         fitToWidth: 1,
         fitToHeight: 0,
-        repeatRows: { from: 1, to: 1 },
+        repeatRows: { from: 1, to: 2 },
         repeatColumns: { from: 1, to: 5 },
-        footer: "&Lアクション差分&Rページ &P / &N"
+        footer: `&L${definition.label}&Rページ &P / &N`
       }
     };
   }
-  function buildCustomerFieldDiffSheet(ctx, items) {
-    const fieldItems = buildCustomerDiffItems(ctx, true).filter((item) => !!item.field);
+  function buildCustomerFieldDiffSheet(ctx, items, definition) {
+    const fieldItems = buildCustomerDiffItems(ctx, true).filter((item) => item.sectionKey === "fieldSettings" && !!item.field);
     if (!fieldItems.length) return null;
     const headers = [
       "No.",
@@ -14741,11 +14900,14 @@ ${targetName}`
       "変更前",
       "変更後"
     ];
-    const rows = [headers];
-    const rowStyles = ["normal"];
-    const cellStyles = [[]];
-    const rowHeights = [48];
-    const rowOutlines = [void 0];
+    const rows = [
+      [`対象API: GET ${definition.endpoint}`, "", "", "", "", "", "", "", "", "", ""],
+      headers
+    ];
+    const rowStyles = ["normal", "normal"];
+    const cellStyles = [["info"], []];
+    const rowHeights = [30, 48];
+    const rowOutlines = [void 0, void 0];
     const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
@@ -14756,10 +14918,11 @@ ${targetName}`
     const actualIndexByRow = new Map(items.map((item, index) => [item.row, index]));
     fieldItems.forEach((item, index) => {
       const field = item.field;
+      const actualIndex = actualIndexByRow.get(item.row);
       const location = field.structure === "└ テーブル内フィールド" ? `テーブル「${field.parentTableName}」（コード: ${field.parentTableCode}）
 └ テーブル内フィールド` : field.structure;
       rows.push([
-        index + 1,
+        actualIndex == null ? "" : actualIndex + 1,
         item.changeType,
         location,
         field.fieldName,
@@ -14776,7 +14939,6 @@ ${targetName}`
       const alternate = index % 2 === 1;
       const baseStyle = alternate ? "zebra" : "normal";
       const styles = Array.from({ length: headers.length }, () => baseStyle);
-      const actualIndex = actualIndexByRow.get(item.row);
       styles[0] = actualIndex == null ? "center" : "hyperlink";
       styles[1] = changeStyles[item.changeType];
       styles[2] = field.structure === "テーブル" ? "category" : baseStyle;
@@ -14787,7 +14949,7 @@ ${targetName}`
       cellStyles.push(styles);
       if (actualIndex != null) {
         internalHyperlinks.push({
-          ref: `A${index + 2}`,
+          ref: `A${index + 3}`,
           targetSheet: "設定値詳細",
           targetCell: `A${actualIndex + 2}`,
           tooltip: "比較元・比較先の原文を確認"
@@ -14804,18 +14966,19 @@ ${targetName}`
       ], 240));
     });
     return {
-      name: "フィールド差分",
+      name: definition.sheetName,
       rows,
       colWidths: [7, 10, 30, 22, 22, 17, 22, 15, 15, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH],
       rowStyles,
       cellStyles,
-      headerRow: 1,
-      freezeRows: 1,
+      headerRow: 2,
+      freezeRows: 2,
       freezeColumns: 5,
       rowHeights,
       rowOutlines,
       outlineSummaryBelow: false,
-      materializeEmptyCellsFromRow: 1,
+      materializeEmptyCellsFromRow: 2,
+      merges: ["A1:K1"],
       internalHyperlinks,
       showGridLines: false,
       zoomScale: 85,
@@ -14823,11 +14986,28 @@ ${targetName}`
         orientation: "landscape",
         fitToWidth: 2,
         fitToHeight: 0,
-        repeatRows: { from: 1, to: 1 },
+        repeatRows: { from: 1, to: 2 },
         repeatColumns: { from: 1, to: 5 },
-        footer: "&Lフィールド差分&Rページ &P / &N"
+        footer: `&L${definition.label}&Rページ &P / &N`
       }
     };
+  }
+  function buildCustomerApiDiffSheets(ctx, groups, items) {
+    const sheets = [];
+    for (const group of groups) {
+      let sheet;
+      if (group.definition.key === "fieldSettings" && group.items.every((item) => !!item.field)) {
+        sheet = buildCustomerFieldDiffSheet(ctx, items, group.definition) || buildCustomerGenericApiDiffSheet(group);
+      } else if (group.definition.key === "viewSettings") {
+        sheet = buildCustomerViewDiffSheet(group.items, group.definition);
+      } else if (group.definition.key === "actionSettings") {
+        sheet = buildCustomerActionDiffSheet(group.items, group.definition);
+      } else {
+        sheet = buildCustomerGenericApiDiffSheet(group);
+      }
+      if (sheet) sheets.push(sheet);
+    }
+    return sheets;
   }
   function buildCustomerValueDetailSheet(ctx, items, continuations) {
     if (!items.length) return null;
@@ -15161,6 +15341,7 @@ ${targetName}`,
   }
   function buildCustomerDiffXlsxSheets(ctx) {
     const items = buildCustomerDiffItems(ctx);
+    const apiGroups = buildCustomerApiGroups(items);
     const differenceContinuations = buildCustomerRawContinuations(items);
     const issueItems = buildCustomerCoverageIssueItems(ctx);
     const nextLongRawRow = differenceContinuations.reduce(
@@ -15169,16 +15350,11 @@ ${targetName}`,
     );
     const issueContinuations = buildCustomerIssueRawContinuations(issueItems, nextLongRawRow);
     const allContinuations = [...differenceContinuations, ...issueContinuations];
-    const sheets = [buildCustomerSummarySheet(ctx, items)];
+    const sheets = [buildCustomerSummarySheet(ctx, items, apiGroups)];
     const issues = buildCustomerIssuesSheet(issueItems, issueContinuations);
     if (issues) sheets.push(issues);
-    sheets.push(buildCustomerListSheet(ctx, items));
-    const fieldDiff = buildCustomerFieldDiffSheet(ctx, items);
-    if (fieldDiff) sheets.push(fieldDiff);
-    const viewDiff = buildCustomerViewDiffSheet(items);
-    if (viewDiff) sheets.push(viewDiff);
-    const actionDiff = buildCustomerActionDiffSheet(items);
-    if (actionDiff) sheets.push(actionDiff);
+    sheets.push(buildCustomerListSheet(ctx, items, apiGroups));
+    sheets.push(...buildCustomerApiDiffSheets(ctx, apiGroups, items));
     const valueDetails = buildCustomerValueDetailSheet(ctx, items, differenceContinuations);
     if (valueDetails) sheets.push(valueDetails);
     const longRaw = buildCustomerLongRawSheet(allContinuations);

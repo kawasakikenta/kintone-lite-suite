@@ -68,6 +68,12 @@ async function readWorksheetByName(blob: Blob, name: string): Promise<string> {
   return readEntry(blob, `xl/worksheets/sheet${index + 1}.xml`);
 }
 
+async function readWorkbookSheetNames(blob: Blob): Promise<string[]> {
+  const workbook = await readEntry(blob, 'xl/workbook.xml');
+  return [...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"[^>]*\/>/g)]
+    .map((match) => decodeXmlText(match[1]));
+}
+
 function worksheetRowContaining(worksheet: string, text: string): string {
   const rows = [...worksheet.matchAll(/<row\b[^>]*>[\s\S]*?<\/row>/g)]
     .map((match) => match[0])
@@ -136,7 +142,7 @@ describe('diff/xlsx-export', () => {
     const allText = await readAllEntryText(blob);
 
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '変更一覧', '設定値詳細'
+      '比較概要', '変更一覧', 'API_01_アプリ一般設定', '設定値詳細'
     ]);
     expect(summary).toContain('kintone 設定差分確認レポート');
     expect(summary).toContain('比較元\n変更前アプリ');
@@ -212,7 +218,7 @@ describe('diff/xlsx-export', () => {
     expect(list).not.toContain('差分ID');
     expect(list).not.toContain('存在状況');
     expect(list).not.toContain('技術パス');
-    expect((allText.match(/<hyperlink\b/g) || []).length).toBe(3);
+    expect((allText.match(/<hyperlink\b/g) || []).length).toBe(6);
     expect(allText).not.toContain('<f>');
     expect(allText).not.toContain('externalLink');
     expect(allText).not.toContain('vbaProject');
@@ -379,40 +385,40 @@ describe('diff/xlsx-export', () => {
     });
     const workbook = await readEntry(blob, 'xl/workbook.xml');
     const list = await readWorksheetByName(blob, '変更一覧');
-    const fields = await readWorksheetByName(blob, 'フィールド差分');
+    const fields = await readWorksheetByName(blob, 'API_03_フォームフィールド');
     const styles = await readEntry(blob, 'xl/styles.xml');
 
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '変更一覧', 'フィールド差分', '設定値詳細', '長文原文'
+      '比較概要', '変更一覧', 'API_03_フォームフィールド', '設定値詳細', '長文原文'
     ]);
-    expect(worksheetInlineTexts(fields, 'C', 2)).toEqual([
+    expect(worksheetInlineTexts(fields, 'C', 3)).toEqual([
       'フィールド', 'フィールド',
       'テーブル「請求 > 明細」（コード: lines）\n└ テーブル内フィールド',
       'テーブル',
       'テーブル「新しい明細」（コード: new_lines）\n└ テーブル内フィールド'
     ]);
-    expect(worksheetInlineTexts(fields, 'D', 2)).toEqual([
+    expect(worksheetInlineTexts(fields, 'D', 3)).toEqual([
       '進捗', '金額', '商品 > SKU', '新しい明細', '備考'
     ]);
-    expect(worksheetInlineTexts(fields, 'E', 2)).toEqual([
+    expect(worksheetInlineTexts(fields, 'E', 3)).toEqual([
       'status', 'amount', 'item', 'new_lines', 'memo'
     ]);
-    expect(worksheetInlineTexts(fields, 'G', 2)).toEqual([
+    expect(worksheetInlineTexts(fields, 'G', 3)).toEqual([
       'フィールド自体', '単位記号', '必須項目にする', 'テーブル自体', 'フィールド自体'
     ]);
-    expect(worksheetInlineTexts(fields, 'H', 2)).toEqual([
+    expect(worksheetInlineTexts(fields, 'H', 3)).toEqual([
       '比較先のみ', '両方', '両方', '比較先のみ', '比較先のみ'
     ]);
-    expect(worksheetInlineTexts(fields, 'I', 2)).toEqual(['—', '比較先のみ', '両方', '—', '—']);
-    expect(worksheetInlineTexts(fields, 'J', 2)).toEqual([
+    expect(worksheetInlineTexts(fields, 'I', 3)).toEqual(['—', '比較先のみ', '両方', '—', '—']);
+    expect(worksheetInlineTexts(fields, 'J', 3)).toEqual([
       '存在しません', '存在しません', '任意', '存在しません', '存在しません'
     ]);
-    expect(worksheetInlineTexts(fields, 'K', 2)).toEqual(['存在', '円', '必須', '存在', '存在']);
-    expect(fields).toMatch(/<row r="4"[^>]*outlineLevel="1"/);
-    expect(fields).toMatch(/<row r="6"[^>]*outlineLevel="1"/);
-    expect(fields).toContain('<pane xSplit="5" ySplit="1" topLeftCell="F2" activePane="bottomRight" state="frozen"/>');
-    expect(fields).toContain('<autoFilter ref="A1:K6"/>');
-    expect(fields).toMatch(/<c r="J2" s="39"/);
+    expect(worksheetInlineTexts(fields, 'K', 3)).toEqual(['存在', '円', '必須', '存在', '存在']);
+    expect(fields).toMatch(/<row r="5"[^>]*outlineLevel="1"/);
+    expect(fields).toMatch(/<row r="7"[^>]*outlineLevel="1"/);
+    expect(fields).toContain('<pane xSplit="5" ySplit="2" topLeftCell="F3" activePane="bottomRight" state="frozen"/>');
+    expect(fields).toContain('<autoFilter ref="A2:K7"/>');
+    expect(fields).toMatch(/<c r="J3" s="39"/);
     expect(list).toMatch(/<c r="D2"[^>]*>[\s\S]*?フィールド「進捗」[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="E2"[^>]*>[\s\S]*?フィールド自体[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="F2"[^>]*>[\s\S]*?存在しません[\s\S]*?<\/c>/);
@@ -420,7 +426,7 @@ describe('diff/xlsx-export', () => {
     expect(list).toMatch(/<c r="D5"[^>]*>[\s\S]*?テーブル「新しい明細」[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="E5"[^>]*>[\s\S]*?テーブル自体[\s\S]*?<\/c>/);
 
-    for (let row = 2; row <= 6; row += 1) {
+    for (let row = 3; row <= 7; row += 1) {
       for (const column of 'ABCDEFGHIJK') expect(fields).toContain(`<c r="${column}${row}"`);
     }
     const cellXfsBlock = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(styles)?.[1] || '';
@@ -761,7 +767,7 @@ describe('diff/xlsx-export', () => {
     const allText = await readAllEntryText(blob);
 
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '変更一覧', '設定値詳細', '長文原文'
+      '比較概要', '変更一覧', 'API_12_カスタマイズ本文', '設定値詳細', '長文原文'
     ]);
     expect(summary).not.toContain('掲載内容');
     expect(list).not.toContain('No.（リンク）から全差分の状態・型・原文を確認できます');
@@ -1435,7 +1441,7 @@ describe('diff/xlsx-export', () => {
     });
     const summary = await readWorksheetByName(blob, '比較概要');
     const list = await readWorksheetByName(blob, '変更一覧');
-    const views = await readWorksheetByName(blob, '一覧差分');
+    const views = await readWorksheetByName(blob, 'API_06_一覧設定');
 
     for (const sheet of [summary, list, views]) {
       expect(sheet).toContain('並び順変更');
@@ -1443,8 +1449,8 @@ describe('diff/xlsx-export', () => {
     }
     expect(worksheetInlineTexts(list, 'F', 2)).toEqual(['1番目']);
     expect(worksheetInlineTexts(list, 'G', 2)).toEqual(['5番目']);
-    expect(worksheetInlineTexts(views, 'E', 2)).toEqual(['1番目']);
-    expect(worksheetInlineTexts(views, 'F', 2)).toEqual(['5番目']);
+    expect(worksheetInlineTexts(views, 'E', 3)).toEqual(['1番目']);
+    expect(worksheetInlineTexts(views, 'F', 3)).toEqual(['5番目']);
   });
 
   it('adds grouped view and action sheets with domain labels while preserving ordinary strings', async () => {
@@ -1489,13 +1495,13 @@ describe('diff/xlsx-export', () => {
     });
     const workbook = await readEntry(blob, 'xl/workbook.xml');
     const list = await readWorksheetByName(blob, '変更一覧');
-    const views = await readWorksheetByName(blob, '一覧差分');
-    const actions = await readWorksheetByName(blob, 'アクション差分');
+    const views = await readWorksheetByName(blob, 'API_06_一覧設定');
+    const actions = await readWorksheetByName(blob, 'API_13_アプリアクション');
 
-    expect(workbook).toContain('name="一覧差分"');
-    expect(workbook).toContain('name="アクション差分"');
-    expect(worksheetInlineTexts(views, 'C', 2)).toEqual(['案件一覧', '案件一覧']);
-    expect(worksheetInlineTexts(views, 'D', 2)).toEqual(['絞り込み条件', '並び順']);
+    expect(workbook).toContain('name="API_06_一覧設定"');
+    expect(workbook).toContain('name="API_13_アプリアクション"');
+    expect(worksheetInlineTexts(views, 'C', 3)).toEqual(['案件一覧', '案件一覧']);
+    expect(worksheetInlineTexts(views, 'D', 3)).toEqual(['絞り込み条件', '並び順']);
     expect(actions).toContain('アプリアクション');
     expect(actions).toContain('顧客登録');
     expect(actions).toContain('コピー元フィールド');
@@ -1568,7 +1574,7 @@ describe('diff/xlsx-export', () => {
       ]
     });
     const list = await readWorksheetByName(blob, '変更一覧');
-    const fields = await readWorksheetByName(blob, 'フィールド差分');
+    const fields = await readWorksheetByName(blob, 'API_03_フォームフィールド');
 
     expect((list.match(/<row r="/g) || []).length).toBe(3);
     expect(worksheetInlineTexts(list, 'E', 2)).toEqual(['コード変更候補', 'コード変更候補']);
@@ -1577,6 +1583,149 @@ describe('diff/xlsx-export', () => {
     expect(fields).toContain('コード変更候補');
     expect(fields).toContain('比較元のみ');
     expect(fields).toContain('比較先のみ');
+  });
+
+  it('creates customer API sheets for actual differences in canonical API order', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      scopes: [
+        'appSettings', 'appInfo', 'fieldSettings', 'layoutSettings', 'formSettings',
+        'viewSettings', 'reportSettings', 'processSettings', 'pluginSettings',
+        'customizeSettings', 'actionSettings', 'appAcl', 'fieldAcl',
+        'recordPermissions', 'notifications', 'perRecordNotifications',
+        'reminderNotifications', 'categories'
+      ],
+      rows: [
+        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧', right: '新' },
+        { sectionKey: 'appInfo', type: 'changed', path: 'appInfo.name', left: '旧', right: '新' },
+        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.customer.label', left: '顧客', right: '取引先' },
+        { sectionKey: 'layoutSettings', type: 'changed', path: 'layoutSettings.layout[0].fields[0].size.width', left: 100, right: 200 },
+        { sectionKey: 'formSettings', type: 'changed', path: 'formSettings.properties.customer.label', left: '顧客', right: '取引先' },
+        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.一覧.name', left: '旧一覧', right: '新一覧' },
+        { sectionKey: 'reportSettings', type: 'changed', path: 'reportSettings.reports.集計.name', left: '旧集計', right: '新集計' },
+        { sectionKey: 'processSettings', type: 'changed', path: 'processSettings.states.受付.name', left: '受付', right: '受領' },
+        { sectionKey: 'pluginSettings', type: 'changed', path: 'pluginSettings.plugins[0].name', left: '旧プラグイン', right: '新プラグイン' },
+        { sectionKey: 'pluginSettings', type: 'changed', path: 'pluginSettings.plugins[0].config.mode', left: 'old', right: 'new' },
+        { sectionKey: 'customizeSettings', type: 'changed', path: 'customizeSettings.scope', left: 'ALL', right: 'ADMIN' },
+        { sectionKey: 'customizeSettings', type: 'changed', path: 'customizeSettings.desktop.js[0].file._body', left: 'old();', right: 'new();' },
+        { sectionKey: 'actionSettings', type: 'changed', path: 'actionSettings.actions.転記.name', left: '旧転記', right: '新転記' },
+        { sectionKey: 'appAcl', type: 'changed', path: 'appAcl.rights[0].recordViewable', left: false, right: true },
+        { sectionKey: 'fieldAcl', type: 'changed', path: 'fieldAcl.rights[0].accessibility', left: 'READ', right: 'WRITE' },
+        { sectionKey: 'recordPermissions', type: 'changed', path: 'recordPermissions.rights[0].recordEditable', left: false, right: true },
+        { sectionKey: 'notifications', type: 'changed', path: 'notifications.notifyToCommenter', left: false, right: true },
+        { sectionKey: 'perRecordNotifications', type: 'changed', path: 'perRecordNotifications.notifications[0].filterCond', left: 'A', right: 'B' },
+        { sectionKey: 'reminderNotifications', type: 'changed', path: 'reminderNotifications.notifications[0].timing.daysLater', left: 0, right: 1 },
+        { sectionKey: 'categories', type: 'changed', path: 'categories.categories[0].name', left: '旧分類', right: '新分類' },
+        { sectionKey: 'futureSettings', type: 'changed', path: 'futureSettings.option', left: 'old', right: 'new' }
+      ]
+    });
+    const names = await readWorkbookSheetNames(blob);
+
+    expect(names.filter((name) => name.startsWith('API_'))).toEqual([
+      'API_01_アプリ一般設定',
+      'API_02_アプリ情報',
+      'API_03_フォームフィールド',
+      'API_04_フォームレイアウト',
+      'API_05_フォーム設計情報',
+      'API_06_一覧設定',
+      'API_07_グラフ設定',
+      'API_08_プロセス管理',
+      'API_09_追加済みプラグイン',
+      'API_10_プラグイン個別設定',
+      'API_11_JavaScript・CSS',
+      'API_12_カスタマイズ本文',
+      'API_13_アプリアクション',
+      'API_14_アプリ権限',
+      'API_15_フィールド権限',
+      'API_16_レコード権限',
+      'API_17_アプリ条件通知',
+      'API_18_レコード条件通知',
+      'API_19_リマインダー通知',
+      'API_20_カテゴリー設定',
+      'API_99_API未特定'
+    ]);
+    expect(names.indexOf('変更一覧')).toBeLessThan(names.indexOf('API_01_アプリ一般設定'));
+    expect(names.indexOf('API_99_API未特定')).toBeLessThan(names.indexOf('設定値詳細'));
+
+    const settingsApi = await readWorksheetByName(blob, 'API_01_アプリ一般設定');
+    expect(worksheetRowContaining(settingsApi, '対象API: GET /app/settings.json')).toMatch(/<row r="1"/);
+    expect(worksheetRowContaining(settingsApi, 'No.')).toMatch(/<row r="2"/);
+    expect(settingsApi).toMatch(/<row r="3"(?:\s|>)/);
+    expect(settingsApi).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A2"');
+  });
+
+  it('routes supplemental API children separately while keeping added or removed parents on their parent API', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      rows: [
+        {
+          sectionKey: 'pluginSettings', type: 'added', path: 'pluginSettings.plugins[0]',
+          right: { id: 'parent-plugin', config: { mode: 'PARENT_PLUGIN_CONFIG' } }
+        },
+        {
+          sectionKey: 'pluginSettings', type: 'changed', path: 'pluginSettings.plugins[1].config.mode',
+          left: 'PLUGIN_CONFIG_OLD', right: 'PLUGIN_CONFIG_NEW'
+        },
+        {
+          sectionKey: 'customizeSettings', type: 'removed', path: 'customizeSettings.desktop.js[0]',
+          left: { type: 'FILE', file: { name: 'parent.js', _body: 'PARENT_CUSTOMIZE_BODY' } }
+        },
+        {
+          sectionKey: 'customizeSettings', type: 'changed', path: 'customizeSettings.desktop.js[1].file._body',
+          left: 'CUSTOMIZE_BODY_OLD', right: 'CUSTOMIZE_BODY_NEW'
+        }
+      ]
+    });
+    const names = await readWorkbookSheetNames(blob);
+    expect(names.filter((name) => name.startsWith('API_'))).toEqual([
+      'API_09_追加済みプラグイン',
+      'API_10_プラグイン個別設定',
+      'API_11_JavaScript・CSS',
+      'API_12_カスタマイズ本文'
+    ]);
+
+    const pluginParent = await readWorksheetByName(blob, 'API_09_追加済みプラグイン');
+    const pluginConfig = await readWorksheetByName(blob, 'API_10_プラグイン個別設定');
+    const customizeParent = await readWorksheetByName(blob, 'API_11_JavaScript・CSS');
+    const customizeBody = await readWorksheetByName(blob, 'API_12_カスタマイズ本文');
+    for (const sheet of [pluginParent, pluginConfig, customizeParent, customizeBody]) {
+      expect((sheet.match(/<row r="/g) || []).length).toBe(3);
+    }
+    expect(pluginParent).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A2"');
+    expect(pluginConfig).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A3"');
+    expect(customizeParent).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A4"');
+    expect(customizeBody).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A5"');
+  });
+
+  it('keeps process actions, app actions, and unknown APIs in separate customer sheets', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      rows: [
+        {
+          sectionKey: 'processSettings', type: 'changed', path: 'processSettings.actions[0].filterCond',
+          left: 'PROCESS_ACTION_OLD', right: 'PROCESS_ACTION_NEW'
+        },
+        {
+          sectionKey: 'actionSettings', type: 'changed', path: 'actionSettings.actions.転記.filterCond',
+          left: 'APP_ACTION_OLD', right: 'APP_ACTION_NEW'
+        },
+        {
+          sectionKey: 'futureSettings', type: 'changed', path: 'futureSettings.option',
+          left: 'UNKNOWN_API_OLD', right: 'UNKNOWN_API_NEW'
+        }
+      ]
+    });
+    const processApi = await readWorksheetByName(blob, 'API_08_プロセス管理');
+    const actionApi = await readWorksheetByName(blob, 'API_13_アプリアクション');
+    const unknownApi = await readWorksheetByName(blob, 'API_99_API未特定');
+
+    expect(processApi).toContain('対象API: GET /app/status.json');
+    expect(processApi).toContain('PROCESS_ACTION_OLD');
+    expect(processApi).not.toContain('APP_ACTION_OLD');
+    expect(processApi).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A2"');
+    expect(actionApi).toContain('対象API: GET /app/actions.json');
+    expect(actionApi).toContain('APP_ACTION_OLD');
+    expect(actionApi).not.toContain('PROCESS_ACTION_OLD');
+    expect(actionApi).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A3"');
+    expect(unknownApi).toContain('UNKNOWN_API_OLD');
+    expect(unknownApi).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A4"');
   });
 
   it('builds summary, one filterable list, per-section sheets, and an issue sheet', async () => {
