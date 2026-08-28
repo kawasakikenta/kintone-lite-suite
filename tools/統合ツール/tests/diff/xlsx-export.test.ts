@@ -142,8 +142,15 @@ describe('diff/xlsx-export', () => {
     const allText = await readAllEntryText(blob);
 
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '変更一覧', 'API_01_アプリ一般設定', '設定値詳細'
+      '比較概要', '変更一覧', '01_アプリ一般設定', '設定値詳細'
     ]);
+    expect(list).toContain('設定対象／変更内容');
+    expect(list).toContain('旧名称 → 新名称');
+    const appSettings = await readWorksheetByName(blob, '01_アプリ一般設定');
+    expect(appSettings).toContain('01 アプリ一般設定');
+    expect(appSettings).toContain('比較元：変更前アプリ');
+    expect(appSettings).toContain('比較先：変更後アプリ');
+    expect(appSettings).not.toContain('対象API');
     expect(summary).toContain('kintone 設定差分確認レポート');
     expect(summary).toContain('比較元\n変更前アプリ');
     expect(summary).toContain('比較先\n変更後アプリ');
@@ -385,11 +392,11 @@ describe('diff/xlsx-export', () => {
     });
     const workbook = await readEntry(blob, 'xl/workbook.xml');
     const list = await readWorksheetByName(blob, '変更一覧');
-    const fields = await readWorksheetByName(blob, 'API_03_フォームフィールド');
+    const fields = await readWorksheetByName(blob, '03_フォームフィールド');
     const styles = await readEntry(blob, 'xl/styles.xml');
 
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '変更一覧', 'API_03_フォームフィールド', '設定値詳細', '長文原文'
+      '比較概要', '変更一覧', '03_フォームフィールド', '設定値詳細', '長文原文'
     ]);
     expect(worksheetInlineTexts(fields, 'C', 3)).toEqual([
       'フィールド', 'フィールド',
@@ -547,10 +554,12 @@ describe('diff/xlsx-export', () => {
     });
     const list = await readWorksheetByName(blob, '変更一覧');
 
-    expect(worksheetInlineTexts(list, 'D', 2)).toEqual([
+    expect(worksheetInlineTexts(list, 'D', 2).map((value) => value.split('\n', 1)[0])).toEqual([
       'アプリアクション「物件を複製」',
       'アプリアクション「物件を複製」'
     ]);
+    expect(list).toContain('比較先から削除：');
+    expect(list).toContain('比較先に追加：');
     expect(worksheetInlineTexts(list, 'E', 2)).toEqual([
       'フィールドの対応付け（1件目）',
       'フィールドの対応付け（1件目）'
@@ -767,7 +776,7 @@ describe('diff/xlsx-export', () => {
     const allText = await readAllEntryText(blob);
 
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '変更一覧', 'API_12_カスタマイズ本文', '設定値詳細', '長文原文'
+      '比較概要', '変更一覧', '12_カスタマイズ本文', '設定値詳細', '長文原文'
     ]);
     expect(summary).not.toContain('掲載内容');
     expect(list).not.toContain('No.（リンク）から全差分の状態・型・原文を確認できます');
@@ -1441,7 +1450,7 @@ describe('diff/xlsx-export', () => {
     });
     const summary = await readWorksheetByName(blob, '比較概要');
     const list = await readWorksheetByName(blob, '変更一覧');
-    const views = await readWorksheetByName(blob, 'API_06_一覧設定');
+    const views = await readWorksheetByName(blob, '06_一覧設定');
 
     for (const sheet of [summary, list, views]) {
       expect(sheet).toContain('並び順変更');
@@ -1495,11 +1504,11 @@ describe('diff/xlsx-export', () => {
     });
     const workbook = await readEntry(blob, 'xl/workbook.xml');
     const list = await readWorksheetByName(blob, '変更一覧');
-    const views = await readWorksheetByName(blob, 'API_06_一覧設定');
-    const actions = await readWorksheetByName(blob, 'API_13_アプリアクション');
+    const views = await readWorksheetByName(blob, '06_一覧設定');
+    const actions = await readWorksheetByName(blob, '13_アプリアクション');
 
-    expect(workbook).toContain('name="API_06_一覧設定"');
-    expect(workbook).toContain('name="API_13_アプリアクション"');
+    expect(workbook).toContain('name="06_一覧設定"');
+    expect(workbook).toContain('name="13_アプリアクション"');
     expect(worksheetInlineTexts(views, 'C', 3)).toEqual(['案件一覧', '案件一覧']);
     expect(worksheetInlineTexts(views, 'D', 3)).toEqual(['絞り込み条件', '並び順']);
     expect(actions).toContain('アプリアクション');
@@ -1574,7 +1583,7 @@ describe('diff/xlsx-export', () => {
       ]
     });
     const list = await readWorksheetByName(blob, '変更一覧');
-    const fields = await readWorksheetByName(blob, 'API_03_フォームフィールド');
+    const fields = await readWorksheetByName(blob, '03_フォームフィールド');
 
     expect((list.match(/<row r="/g) || []).length).toBe(3);
     expect(worksheetInlineTexts(list, 'E', 2)).toEqual(['コード変更候補', 'コード変更候補']);
@@ -1620,34 +1629,34 @@ describe('diff/xlsx-export', () => {
     });
     const names = await readWorkbookSheetNames(blob);
 
-    expect(names.filter((name) => name.startsWith('API_'))).toEqual([
-      'API_01_アプリ一般設定',
-      'API_02_アプリ情報',
-      'API_03_フォームフィールド',
-      'API_04_フォームレイアウト',
-      'API_05_フォーム設計情報',
-      'API_06_一覧設定',
-      'API_07_グラフ設定',
-      'API_08_プロセス管理',
-      'API_09_追加済みプラグイン',
-      'API_10_プラグイン個別設定',
-      'API_11_JavaScript・CSS',
-      'API_12_カスタマイズ本文',
-      'API_13_アプリアクション',
-      'API_14_アプリ権限',
-      'API_15_フィールド権限',
-      'API_16_レコード権限',
-      'API_17_アプリ条件通知',
-      'API_18_レコード条件通知',
-      'API_19_リマインダー通知',
-      'API_20_カテゴリー設定',
-      'API_99_API未特定'
+    expect(names.filter((name) => /^\d{2}_/.test(name))).toEqual([
+      '01_アプリ一般設定',
+      '02_アプリ情報',
+      '03_フォームフィールド',
+      '04_フォームレイアウト',
+      '05_フォーム設計情報',
+      '06_一覧設定',
+      '07_グラフ設定',
+      '08_プロセス管理',
+      '09_追加済みプラグイン',
+      '10_プラグイン個別設定',
+      '11_JavaScript・CSS',
+      '12_カスタマイズ本文',
+      '13_アプリアクション',
+      '14_アプリ権限',
+      '15_フィールド権限',
+      '16_レコード権限',
+      '17_アプリ条件通知',
+      '18_レコード条件通知',
+      '19_リマインダー通知',
+      '20_カテゴリー設定',
+      '99_その他の設定'
     ]);
-    expect(names.indexOf('変更一覧')).toBeLessThan(names.indexOf('API_01_アプリ一般設定'));
-    expect(names.indexOf('API_99_API未特定')).toBeLessThan(names.indexOf('設定値詳細'));
+    expect(names.indexOf('変更一覧')).toBeLessThan(names.indexOf('01_アプリ一般設定'));
+    expect(names.indexOf('99_その他の設定')).toBeLessThan(names.indexOf('設定値詳細'));
 
-    const settingsApi = await readWorksheetByName(blob, 'API_01_アプリ一般設定');
-    expect(worksheetRowContaining(settingsApi, '対象API: GET /app/settings.json')).toMatch(/<row r="1"/);
+    const settingsApi = await readWorksheetByName(blob, '01_アプリ一般設定');
+    expect(worksheetRowContaining(settingsApi, '01 アプリ一般設定')).toMatch(/<row r="1"/);
     expect(worksheetRowContaining(settingsApi, 'No.')).toMatch(/<row r="2"/);
     expect(settingsApi).toMatch(/<row r="3"(?:\s|>)/);
     expect(settingsApi).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A2"');
@@ -1675,17 +1684,17 @@ describe('diff/xlsx-export', () => {
       ]
     });
     const names = await readWorkbookSheetNames(blob);
-    expect(names.filter((name) => name.startsWith('API_'))).toEqual([
-      'API_09_追加済みプラグイン',
-      'API_10_プラグイン個別設定',
-      'API_11_JavaScript・CSS',
-      'API_12_カスタマイズ本文'
+    expect(names.filter((name) => /^\d{2}_/.test(name))).toEqual([
+      '09_追加済みプラグイン',
+      '10_プラグイン個別設定',
+      '11_JavaScript・CSS',
+      '12_カスタマイズ本文'
     ]);
 
-    const pluginParent = await readWorksheetByName(blob, 'API_09_追加済みプラグイン');
-    const pluginConfig = await readWorksheetByName(blob, 'API_10_プラグイン個別設定');
-    const customizeParent = await readWorksheetByName(blob, 'API_11_JavaScript・CSS');
-    const customizeBody = await readWorksheetByName(blob, 'API_12_カスタマイズ本文');
+    const pluginParent = await readWorksheetByName(blob, '09_追加済みプラグイン');
+    const pluginConfig = await readWorksheetByName(blob, '10_プラグイン個別設定');
+    const customizeParent = await readWorksheetByName(blob, '11_JavaScript・CSS');
+    const customizeBody = await readWorksheetByName(blob, '12_カスタマイズ本文');
     for (const sheet of [pluginParent, pluginConfig, customizeParent, customizeBody]) {
       expect((sheet.match(/<row r="/g) || []).length).toBe(3);
     }
@@ -1708,23 +1717,23 @@ describe('diff/xlsx-export', () => {
         },
         {
           sectionKey: 'futureSettings', type: 'changed', path: 'futureSettings.option',
-          left: 'UNKNOWN_API_OLD', right: 'UNKNOWN_API_NEW'
+          left: 'UNKNOWN_OLD', right: 'UNKNOWN_NEW'
         }
       ]
     });
-    const processApi = await readWorksheetByName(blob, 'API_08_プロセス管理');
-    const actionApi = await readWorksheetByName(blob, 'API_13_アプリアクション');
-    const unknownApi = await readWorksheetByName(blob, 'API_99_API未特定');
+    const processApi = await readWorksheetByName(blob, '08_プロセス管理');
+    const actionApi = await readWorksheetByName(blob, '13_アプリアクション');
+    const unknownApi = await readWorksheetByName(blob, '99_その他の設定');
 
-    expect(processApi).toContain('対象API: GET /app/status.json');
+    expect(processApi).toContain('08 プロセス管理');
     expect(processApi).toContain('PROCESS_ACTION_OLD');
     expect(processApi).not.toContain('APP_ACTION_OLD');
     expect(processApi).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A2"');
-    expect(actionApi).toContain('対象API: GET /app/actions.json');
+    expect(actionApi).toContain('13 アプリアクション');
     expect(actionApi).toContain('APP_ACTION_OLD');
     expect(actionApi).not.toContain('PROCESS_ACTION_OLD');
     expect(actionApi).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A3"');
-    expect(unknownApi).toContain('UNKNOWN_API_OLD');
+    expect(unknownApi).toContain('UNKNOWN_OLD');
     expect(unknownApi).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A4"');
   });
 
@@ -1906,6 +1915,7 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('アプリB (App 2)');
     expect(list).toContain('確認事項');
     expect(list).toContain('差分ID');
+    expect(list).toContain('項目／変更内容');
     expect(list).toContain('変更種別');
     expect(list).toContain('存在状況');
     expect(list).toContain('確認状況');
@@ -1927,6 +1937,9 @@ describe('diff/xlsx-export', () => {
     expect(list).toMatch(/<c r="K3"[^>]*>[\s\S]*?担当者[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="L3"[^>]*>[\s\S]*?コメント[\s\S]*?<\/c>/);
     expect(list).toContain('表示名が変更されています');
+    expect(list).toContain('比較先に追加：');
+    expect(list).toContain('比較先から削除：');
+    expect(list).toContain('旧ラベル → 新ラベル');
     expect(list).toContain('新ラベル（bar） / フィールド名');
     expect(list).not.toContain('フィールド「bar」 / フィールド名');
     expect(list).toContain('フィールド追加');

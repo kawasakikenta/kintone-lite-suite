@@ -12248,6 +12248,24 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if (typeof value === "string") return xlsxDiffValuePreview(humanizeListScalar(value), value.length);
     return humanizeListScalar(value);
   }
+  function conciseReviewValue(value) {
+    const firstLine = String(value || "").split("\n", 1)[0].trim();
+    if (!firstLine) return "（内容なし）";
+    const characters = Array.from(firstLine);
+    return characters.length > 80 ? `${characters.slice(0, 79).join("")}…` : firstLine;
+  }
+  function reviewChangeSummary(row, sourceValue, targetValue) {
+    if (row._displayOnly) return "参考情報です（実差分には含めません）";
+    if (row.type === "same") return "変更はありません";
+    if (row.moved) {
+      const from = Number.isFinite(Number(row.movedFrom)) ? Number(row.movedFrom) + 1 : null;
+      const to = Number.isFinite(Number(row.movedTo)) ? Number(row.movedTo) + 1 : null;
+      return from != null && to != null ? `並び順を ${from}番目 → ${to}番目 に変更` : "並び順を変更";
+    }
+    if (row.type === "added") return `比較先に追加：${conciseReviewValue(targetValue)}`;
+    if (row.type === "removed") return `比較先から削除：${conciseReviewValue(sourceValue)}`;
+    return `${conciseReviewValue(sourceValue)} → ${conciseReviewValue(targetValue)}`;
+  }
   function fieldSettingHumanValue(detail, side, sourceBundle, targetBundle) {
     const row = detail.row;
     const missing = side === "source" ? row.left === void 0 || row.type === "added" : row.right === void 0 || row.type === "removed";
@@ -12761,7 +12779,7 @@ ${label}` : `${direction}の値`;
   function buildListSheet(rows, name = "差分一覧", sourceBundle, targetBundle, differenceRefs, technicalRefs, fieldModel) {
     const headers = [
       "セクション",
-      "項目",
+      "項目／変更内容",
       "変更種別",
       "存在状況",
       "差分ID",
@@ -12788,7 +12806,7 @@ ${label}` : `${direction}の値`;
       ""
     ];
     const guide = sheetGuideBand(
-      "このブックに収録された差分、変更前後の値、確認事項を一覧で確認できます。",
+      "このブックに収録された差分を、設定項目ごとの短い変更内容と変更前後の値で確認できます。",
       "黄色の列に確認状況・対応判断・担当者・コメントを入力します。差分IDから技術明細へ移動できます。値先頭の「[一部表示]」は技術明細または元データを確認します。"
     );
     const out = [[guide, "", "", "", "", "", "", "", "", "", "", ""], groupHeader, headers];
@@ -12809,10 +12827,12 @@ ${label}` : `${direction}の値`;
       const fieldDetail = fieldDetailByRowIndex.get(rowIndex);
       const isFieldSettings = (row.sectionKey || row.section) === "fieldSettings";
       const existence = rowExistenceLabel(row);
-      const item = rowItemLabel(row, sourceBundle, targetBundle);
+      const itemLabel = rowItemLabel(row, sourceBundle, targetBundle);
       const sourceValue = fieldDetail ? fieldSettingHumanValue(fieldDetail, "source", sourceBundle, targetBundle) : isFieldSettings ? row.type === "added" ? fieldValueOnlyExistsLabel("source", sourceBundle, targetBundle) : humanizeFieldSettingValue(row.left, "") : humanizeListRowValue(row, "source", sourceBundle, targetBundle);
       const targetValue = fieldDetail ? fieldSettingHumanValue(fieldDetail, "target", sourceBundle, targetBundle) : isFieldSettings ? row.type === "removed" ? fieldValueOnlyExistsLabel("target", sourceBundle, targetBundle) : humanizeFieldSettingValue(row.right, "") : humanizeListRowValue(row, "target", sourceBundle, targetBundle);
       const note = fieldDetail ? fieldDetailReviewNote(fieldDetail) : rowNote(row);
+      const item = `${itemLabel}
+${reviewChangeSummary(row, sourceValue, targetValue)}`;
       const reviewable = !row._displayOnly && row.type !== "same";
       out.push([
         sectionLabelOf(row.sectionKey || row.section || ""),
@@ -13332,27 +13352,27 @@ ${label}` : `${direction}の値`;
     };
   }
   var CUSTOMER_API_SHEET_DEFS = [
-    { key: "appSettings", sectionKey: "appSettings", label: "01 アプリ一般設定", sheetName: "API_01_アプリ一般設定", endpoint: "/app/settings.json" },
-    { key: "appInfo", sectionKey: "appInfo", label: "02 アプリ情報", sheetName: "API_02_アプリ情報", endpoint: "/app.json" },
-    { key: "fieldSettings", sectionKey: "fieldSettings", label: "03 フォームフィールド", sheetName: "API_03_フォームフィールド", endpoint: "/app/form/fields.json" },
-    { key: "layoutSettings", sectionKey: "layoutSettings", label: "04 フォームレイアウト", sheetName: "API_04_フォームレイアウト", endpoint: "/app/form/layout.json" },
-    { key: "formSettings", sectionKey: "formSettings", label: "05 フォーム設計情報", sheetName: "API_05_フォーム設計情報", endpoint: "/form.json" },
-    { key: "viewSettings", sectionKey: "viewSettings", label: "06 一覧設定", sheetName: "API_06_一覧設定", endpoint: "/app/views.json" },
-    { key: "reportSettings", sectionKey: "reportSettings", label: "07 グラフ設定", sheetName: "API_07_グラフ設定", endpoint: "/app/reports.json" },
-    { key: "processSettings", sectionKey: "processSettings", label: "08 プロセス管理", sheetName: "API_08_プロセス管理", endpoint: "/app/status.json" },
-    { key: "pluginSettings", sectionKey: "pluginSettings", label: "09 追加済みプラグイン", sheetName: "API_09_追加済みプラグイン", endpoint: "/app/plugins.json" },
-    { key: "pluginConfig", label: "10 プラグイン個別設定", sheetName: "API_10_プラグイン個別設定", endpoint: "/app/plugin/config.json" },
-    { key: "customizeSettings", sectionKey: "customizeSettings", label: "11 JavaScript・CSS", sheetName: "API_11_JavaScript・CSS", endpoint: "/app/customize.json" },
-    { key: "customizeFile", label: "12 カスタマイズ本文", sheetName: "API_12_カスタマイズ本文", endpoint: "/file.json" },
-    { key: "actionSettings", sectionKey: "actionSettings", label: "13 アプリアクション", sheetName: "API_13_アプリアクション", endpoint: "/app/actions.json" },
-    { key: "appAcl", sectionKey: "appAcl", label: "14 アプリ権限", sheetName: "API_14_アプリ権限", endpoint: "/app/acl.json" },
-    { key: "fieldAcl", sectionKey: "fieldAcl", label: "15 フィールド権限", sheetName: "API_15_フィールド権限", endpoint: "/field/acl.json" },
-    { key: "recordPermissions", sectionKey: "recordPermissions", label: "16 レコード権限", sheetName: "API_16_レコード権限", endpoint: "/record/acl.json" },
-    { key: "notifications", sectionKey: "notifications", label: "17 アプリ条件通知", sheetName: "API_17_アプリ条件通知", endpoint: "/app/notifications/general.json" },
-    { key: "perRecordNotifications", sectionKey: "perRecordNotifications", label: "18 レコード条件通知", sheetName: "API_18_レコード条件通知", endpoint: "/app/notifications/perRecord.json" },
-    { key: "reminderNotifications", sectionKey: "reminderNotifications", label: "19 リマインダー通知", sheetName: "API_19_リマインダー通知", endpoint: "/app/notifications/reminder.json" },
-    { key: "categories", sectionKey: "categories", label: "20 カテゴリー設定", sheetName: "API_20_カテゴリー設定", endpoint: "/app/categories.json" },
-    { key: "unknown", label: "99 API未特定", sheetName: "API_99_API未特定" }
+    { key: "appSettings", sectionKey: "appSettings", label: "01 アプリ一般設定", sheetName: "01_アプリ一般設定" },
+    { key: "appInfo", sectionKey: "appInfo", label: "02 アプリ情報", sheetName: "02_アプリ情報" },
+    { key: "fieldSettings", sectionKey: "fieldSettings", label: "03 フォームフィールド", sheetName: "03_フォームフィールド" },
+    { key: "layoutSettings", sectionKey: "layoutSettings", label: "04 フォームレイアウト", sheetName: "04_フォームレイアウト" },
+    { key: "formSettings", sectionKey: "formSettings", label: "05 フォーム設計情報", sheetName: "05_フォーム設計情報" },
+    { key: "viewSettings", sectionKey: "viewSettings", label: "06 一覧設定", sheetName: "06_一覧設定" },
+    { key: "reportSettings", sectionKey: "reportSettings", label: "07 グラフ設定", sheetName: "07_グラフ設定" },
+    { key: "processSettings", sectionKey: "processSettings", label: "08 プロセス管理", sheetName: "08_プロセス管理" },
+    { key: "pluginSettings", sectionKey: "pluginSettings", label: "09 追加済みプラグイン", sheetName: "09_追加済みプラグイン" },
+    { key: "pluginConfig", label: "10 プラグイン個別設定", sheetName: "10_プラグイン個別設定" },
+    { key: "customizeSettings", sectionKey: "customizeSettings", label: "11 JavaScript・CSS", sheetName: "11_JavaScript・CSS" },
+    { key: "customizeFile", label: "12 カスタマイズ本文", sheetName: "12_カスタマイズ本文" },
+    { key: "actionSettings", sectionKey: "actionSettings", label: "13 アプリアクション", sheetName: "13_アプリアクション" },
+    { key: "appAcl", sectionKey: "appAcl", label: "14 アプリ権限", sheetName: "14_アプリ権限" },
+    { key: "fieldAcl", sectionKey: "fieldAcl", label: "15 フィールド権限", sheetName: "15_フィールド権限" },
+    { key: "recordPermissions", sectionKey: "recordPermissions", label: "16 レコード権限", sheetName: "16_レコード権限" },
+    { key: "notifications", sectionKey: "notifications", label: "17 アプリ条件通知", sheetName: "17_アプリ条件通知" },
+    { key: "perRecordNotifications", sectionKey: "perRecordNotifications", label: "18 レコード条件通知", sheetName: "18_レコード条件通知" },
+    { key: "reminderNotifications", sectionKey: "reminderNotifications", label: "19 リマインダー通知", sheetName: "19_リマインダー通知" },
+    { key: "categories", sectionKey: "categories", label: "20 カテゴリー設定", sheetName: "20_カテゴリー設定" },
+    { key: "unknown", label: "99 その他の設定", sheetName: "99_その他の設定" }
   ];
   var CUSTOMER_API_SHEET_DEF_BY_SECTION = new Map(
     CUSTOMER_API_SHEET_DEFS.filter((definition) => !!definition.sectionKey).map((definition) => [definition.sectionKey, definition])
@@ -14417,8 +14437,8 @@ ${targetName}`, "", ""],
     ];
     if (counts.actual) {
       rows.push(
-        ["API別差分件数", "", "", "", "", ""],
-        ["API別シート", "追加", "削除", "変更", "並び順変更", "合計"],
+        ["kintone機能別の差分件数", "", "", "", "", ""],
+        ["kintone機能別シート", "追加", "削除", "変更", "並び順変更", "合計"],
         ...customerApiBreakdown(apiGroups)
       );
     }
@@ -14531,7 +14551,7 @@ ${targetName}`, "", ""],
       "No.",
       "変更区分",
       "分類",
-      "設定対象",
+      "設定対象／変更内容",
       "差分プロパティ",
       `変更前
 ${sourceName}`,
@@ -14560,11 +14580,13 @@ ${targetName}`
       rowHeights.push(32);
     }
     items.forEach((item, index) => {
+      const changeSummary = item.changeType === "追加" ? `比較先に追加：${conciseReviewValue(item.after)}` : item.changeType === "削除" ? `比較先から削除：${conciseReviewValue(item.before)}` : item.changeType === "並び順変更" ? "並び順を変更" : `${conciseReviewValue(item.before)} → ${conciseReviewValue(item.after)}`;
       rows.push([
         index + 1,
         item.changeType,
         item.sectionLabel,
-        item.target,
+        `${item.target}
+${changeSummary}`,
         item.settingItem,
         item.before,
         item.after
@@ -14597,7 +14619,8 @@ ${targetName}`
       }
       rowHeights.push(readableCustomerRowHeight([
         { value: item.sectionLabel, width: 14 },
-        { value: item.target, width: 24 },
+        { value: `${item.target}
+${changeSummary}`, width: 24 },
         { value: item.settingItem, width: 22 },
         { value: item.before, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH },
         { value: item.after, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH }
@@ -14629,9 +14652,15 @@ ${targetName}`
       }
     };
   }
-  function buildCustomerGenericApiDiffSheet(group) {
+  function customerFeatureSheetTitle(ctx, definition) {
+    const sourceName = customerAppName(ctx.sourceBundle, "比較元のアプリ");
+    const targetName = customerAppName(ctx.targetBundle, "比較先のアプリ");
+    return `${definition.label}
+比較元：${sourceName}  →  比較先：${targetName}`;
+  }
+  function buildCustomerGenericApiDiffSheet(ctx, group) {
     const { definition, items } = group;
-    const title = definition.endpoint ? `対象API: GET ${definition.endpoint}` : "対象API: APIを特定できません";
+    const title = customerFeatureSheetTitle(ctx, definition);
     const headers = ["No.", "変更区分", "設定対象", "差分プロパティ", "変更前", "変更後"];
     const rows = [
       [title, "", "", "", "", ""],
@@ -14639,7 +14668,7 @@ ${targetName}`
     ];
     const rowStyles = ["normal", "normal"];
     const cellStyles = [["info"], []];
-    const rowHeights = [30, 44];
+    const rowHeights = [42, 44];
     const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
@@ -14717,17 +14746,17 @@ ${item.target}` : item.target;
     }
     return target;
   }
-  function buildCustomerViewDiffSheet(items, definition) {
+  function buildCustomerViewDiffSheet(ctx, items, definition) {
     const viewItems = [...items].sort((left, right) => customerNamedTarget(left.targetDetail, ["一覧"]).localeCompare(customerNamedTarget(right.targetDetail, ["一覧"]), "ja") || left.index - right.index);
     if (!viewItems.length) return null;
     const headers = ["No.", "変更区分", "一覧名", "差分プロパティ", "変更前", "変更後"];
     const rows = [
-      [`対象API: GET ${definition.endpoint}`, "", "", "", "", ""],
+      [customerFeatureSheetTitle(ctx, definition), "", "", "", "", ""],
       headers
     ];
     const rowStyles = ["normal", "normal"];
     const cellStyles = [["info"], []];
-    const rowHeights = [30, 44];
+    const rowHeights = [42, 44];
     const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
@@ -14796,7 +14825,7 @@ ${item.target}` : item.target;
       }
     };
   }
-  function buildCustomerActionDiffSheet(items, definition) {
+  function buildCustomerActionDiffSheet(ctx, items, definition) {
     const actionItems = [...items].sort((left, right) => {
       const leftKind = left.sectionKey === "actionSettings" ? "アプリアクション" : "プロセスのアクション";
       const rightKind = right.sectionKey === "actionSettings" ? "アプリアクション" : "プロセスのアクション";
@@ -14805,12 +14834,12 @@ ${item.target}` : item.target;
     if (!actionItems.length) return null;
     const headers = ["No.", "変更区分", "アクション種別", "アクション名", "差分プロパティ", "変更前", "変更後"];
     const rows = [
-      [`対象API: GET ${definition.endpoint}`, "", "", "", "", "", ""],
+      [customerFeatureSheetTitle(ctx, definition), "", "", "", "", "", ""],
       headers
     ];
     const rowStyles = ["normal", "normal"];
     const cellStyles = [["info"], []];
-    const rowHeights = [30, 44];
+    const rowHeights = [42, 44];
     const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
@@ -14901,12 +14930,12 @@ ${item.target}` : item.target;
       "変更後"
     ];
     const rows = [
-      [`対象API: GET ${definition.endpoint}`, "", "", "", "", "", "", "", "", "", ""],
+      [customerFeatureSheetTitle(ctx, definition), "", "", "", "", "", "", "", "", "", ""],
       headers
     ];
     const rowStyles = ["normal", "normal"];
     const cellStyles = [["info"], []];
-    const rowHeights = [30, 48];
+    const rowHeights = [42, 48];
     const rowOutlines = [void 0, void 0];
     const internalHyperlinks = [];
     const changeStyles = {
@@ -14997,13 +15026,13 @@ ${item.target}` : item.target;
     for (const group of groups) {
       let sheet;
       if (group.definition.key === "fieldSettings" && group.items.every((item) => !!item.field)) {
-        sheet = buildCustomerFieldDiffSheet(ctx, items, group.definition) || buildCustomerGenericApiDiffSheet(group);
+        sheet = buildCustomerFieldDiffSheet(ctx, items, group.definition) || buildCustomerGenericApiDiffSheet(ctx, group);
       } else if (group.definition.key === "viewSettings") {
-        sheet = buildCustomerViewDiffSheet(group.items, group.definition);
+        sheet = buildCustomerViewDiffSheet(ctx, group.items, group.definition);
       } else if (group.definition.key === "actionSettings") {
-        sheet = buildCustomerActionDiffSheet(group.items, group.definition);
+        sheet = buildCustomerActionDiffSheet(ctx, group.items, group.definition);
       } else {
-        sheet = buildCustomerGenericApiDiffSheet(group);
+        sheet = buildCustomerGenericApiDiffSheet(ctx, group);
       }
       if (sheet) sheets.push(sheet);
     }
