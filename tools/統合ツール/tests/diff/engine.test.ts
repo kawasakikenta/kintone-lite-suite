@@ -315,7 +315,10 @@ describe('diff/engine', () => {
         'reportSettings.reports["月次.集計"].id',
         'actionSettings.actions.copy.id',
         'actionSettings.actions["copy.main"].id',
-        'actionSettings.actions[0].id'
+        'actionSettings.actions[0].id',
+        'formSettings.properties[3].lookup.relatedApp.app',
+        'formSettings.properties[3].referenceTable.relatedApp.appId',
+        'formSettings.properties[3].lookup.relatedAppId'
       ].every((path) => isAppReferenceIdPath(path))).toBe(true);
 
       expect([
@@ -327,7 +330,9 @@ describe('diff/engine', () => {
         'actionSettings.actions.copy.mapping.id',
         'pluginSettings.plugins[0].config.app',
         'pluginSettings.plugins[0].id',
-        'customizeSettings.appId'
+        'customizeSettings.appId',
+        'formSettings.properties[3].lookup.relatedApp.code',
+        'formSettings.properties[3].app'
       ].some((path) => isAppReferenceIdPath(path))).toBe(false);
     });
 
