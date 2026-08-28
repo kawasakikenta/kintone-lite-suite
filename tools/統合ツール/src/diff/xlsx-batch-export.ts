@@ -9,7 +9,12 @@ import {
 import { extractAppNameFromBundle } from '../utils.js';
 import { hasIncompleteActualDiffTruncation } from './engine.js';
 import { buildXlsxBlob, type XlsxCellStyle, type XlsxSheet } from './xlsx-builder.js';
-import { buildDiffXlsxExport, type DiffXlsxContext } from './xlsx-export.js';
+import {
+  buildDiffXlsxExport,
+  customerIncompleteScopeSuffix,
+  summarizeCustomerDiffContext,
+  type DiffXlsxContext
+} from './xlsx-export.js';
 
 export const DEFAULT_DIFF_XLSX_BATCH_MAX_ARCHIVE_BYTES = 200 * 1024 * 1024;
 
@@ -70,7 +75,12 @@ interface DiffXlsxBatchSummaryRow {
   sequence: number;
   sourceName: string;
   targetName: string;
-  status: '差分なし' | '差分あり' | '比較未完了' | 'Excel生成失敗';
+  /** 差分の有無。取得の完全性とは分けて示す。 */
+  status: '差分なし' | '差分あり' | '差分は確認できず' | 'Excel生成失敗';
+  /** 取得できた範囲。差分の有無とは独立に判断する。 */
+  coverage: '全範囲を取得' | '一部未取得' | '—';
+  /** 未取得・打切りになった設定領域。 */
+  coverageDetail: string;
   counts: DiffXlsxBatchSummaryCounts | null;
   pairNameStatus: '一致' | '名称が異なります' | '名称未取得';
   filename: string;
@@ -207,19 +217,6 @@ function orderedXlsxEntryName(rawFilename: unknown, inputIndex: number, total: n
   return `${prefix}${safeStem}${XLSX_EXTENSION}`;
 }
 
-function summarizeRows(context: DiffXlsxContext): DiffXlsxBatchSummaryCounts {
-  const counts: DiffXlsxBatchSummaryCounts = { total: 0, added: 0, removed: 0, changed: 0, moved: 0 };
-  for (const row of context.rows || []) {
-    if (!row || row._displayOnly || row.type === 'same') continue;
-    counts.total += 1;
-    if (row.moved || row.type === 'moved') counts.moved += 1;
-    else if (row.type === 'added') counts.added += 1;
-    else if (row.type === 'removed') counts.removed += 1;
-    else counts.changed += 1;
-  }
-  return counts;
-}
-
 function comparisonIncomplete(context: DiffXlsxContext): boolean {
   return !!((context.fetchIssues || []).length
     || (context.partialIssues || []).length
@@ -235,12 +232,23 @@ function successfulSummaryRow(
   const rawTargetName = contextAppName(item.context, 'target');
   const sourceName = rawSourceName || '名称未取得';
   const targetName = rawTargetName || '名称未取得';
-  const counts = summarizeRows(item.context);
+  const summary = summarizeCustomerDiffContext(item.context);
+  const counts: DiffXlsxBatchSummaryCounts = {
+    total: summary.total,
+    added: summary.added,
+    removed: summary.removed,
+    changed: summary.changed,
+    moved: summary.moved
+  };
+  const incomplete = comparisonIncomplete(item.context);
   return {
     sequence: index + 1,
     sourceName,
     targetName,
-    status: comparisonIncomplete(item.context) ? '比較未完了' : counts.total > 0 ? '差分あり' : '差分なし',
+    // 未取得があっても、確認できた範囲の差分の有無は伝える。0件は「差分なし」と言い切らない。
+    status: counts.total > 0 ? '差分あり' : incomplete ? '差分は確認できず' : '差分なし',
+    coverage: incomplete ? '一部未取得' : '全範囲を取得',
+    coverageDetail: incomplete ? (customerIncompleteScopeSuffix(item.context) || '詳細は各Excelの「確認できなかった範囲」を確認') : '',
     counts,
     pairNameStatus: pairNameStatus(rawSourceName, rawTargetName),
     filename
@@ -260,6 +268,8 @@ function failedSummaryRow(
     sourceName,
     targetName,
     status: 'Excel生成失敗',
+    coverage: '—',
+    coverageDetail: 'Excelを生成できませんでした',
     counts: null,
     pairNameStatus: pairNameStatus(rawSourceName, rawTargetName),
     filename: ''
@@ -269,18 +279,53 @@ function failedSummaryRow(
 function summaryStatusStyle(status: DiffXlsxBatchSummaryRow['status']): XlsxCellStyle {
   if (status === '差分なし') return 'kpiGood';
   if (status === '差分あり') return 'kpiChange';
-  if (status === '比較未完了') return 'kpiWarning';
+  if (status === '差分は確認できず') return 'kpiWarning';
   return 'kpiDanger';
 }
 
+function summaryCoverageStyle(coverage: DiffXlsxBatchSummaryRow['coverage']): XlsxCellStyle {
+  if (coverage === '全範囲を取得') return 'kpiGood';
+  if (coverage === '一部未取得') return 'kpiWarning';
+  return 'kpiDanger';
+}
+
+const BATCH_SUMMARY_COLUMN_COUNT = 13;
+/** BATCH_SUMMARY_COLUMN_COUNT 列目の列記号。見出しの結合範囲に使う。 */
+const BATCH_SUMMARY_COLUMN_LAST = 'M';
+
+function buildBatchSummaryOverview(summaryRows: readonly DiffXlsxBatchSummaryRow[]): string {
+  const withDiff = summaryRows.filter((row) => row.status === '差分あり').length;
+  const noDiff = summaryRows.filter((row) => row.status === '差分なし').length;
+  const incomplete = summaryRows.filter((row) => row.coverage === '一部未取得').length;
+  const failed = summaryRows.filter((row) => row.status === 'Excel生成失敗').length;
+  const totalChanges = summaryRows.reduce((sum, row) => sum + (row.counts?.total ?? 0), 0);
+  const parts = [
+    `比較 ${summaryRows.length}件`,
+    `差分あり ${withDiff}件`,
+    `差分なし ${noDiff}件`,
+    `変更 合計 ${totalChanges}件`
+  ];
+  if (incomplete) parts.push(`一部未取得 ${incomplete}件`);
+  if (failed) parts.push(`Excel生成失敗 ${failed}件`);
+  return parts.join('　/　');
+}
+
 function buildBatchSummaryBlob(summaryRows: readonly DiffXlsxBatchSummaryRow[]): Blob {
+  const blank = Array.from({ length: BATCH_SUMMARY_COLUMN_COUNT - 1 }, () => '');
   const rows: XlsxSheet['rows'] = [
-    ['No.', '比較元', '比較先', '結果', '合計', '追加', '削除', '変更', '並び順変更', 'アプリ名', 'Excelファイル'],
+    ['kintone 設定差分 一括比較結果', ...blank],
+    [buildBatchSummaryOverview(summaryRows), ...blank],
+    [
+      'No.', '比較元', '比較先', '結果', '取得状態', '未取得・打切りの範囲',
+      '合計', '追加', '削除', '変更', '並び順変更', 'アプリ名', 'Excelファイル'
+    ],
     ...summaryRows.map((row) => [
       row.sequence,
       row.sourceName,
       row.targetName,
       row.status,
+      row.coverage,
+      row.coverageDetail,
       row.counts?.total ?? null,
       row.counts?.added ?? null,
       row.counts?.removed ?? null,
@@ -290,14 +335,19 @@ function buildBatchSummaryBlob(summaryRows: readonly DiffXlsxBatchSummaryRow[]):
       row.filename
     ])
   ];
+  const headerRowIndex = 2;
   const cellStyles: XlsxSheet['cellStyles'] = rows.map(() => []);
-  for (let index = 1; index < rows.length; index += 1) {
-    const summary = summaryRows[index - 1];
+  cellStyles[0] = ['title'];
+  cellStyles[1] = ['subtitle'];
+  for (let index = headerRowIndex + 1; index < rows.length; index += 1) {
+    const summary = summaryRows[index - headerRowIndex - 1];
     cellStyles[index] = [
       'center',
       'normal',
       'normal',
       summaryStatusStyle(summary.status),
+      summaryCoverageStyle(summary.coverage),
+      summary.coverageDetail ? 'warning' : 'normal',
       'center',
       'center',
       'center',
@@ -310,25 +360,33 @@ function buildBatchSummaryBlob(summaryRows: readonly DiffXlsxBatchSummaryRow[]):
   return buildXlsxBlob([{
     name: '一括比較結果',
     rows,
-    headerRow: 1,
-    freezeRows: 1,
+    headerRow: headerRowIndex + 1,
+    freezeRows: headerRowIndex + 1,
     freezeColumns: 1,
     autoFilter: true,
-    colWidths: [7, 30, 30, 14, 10, 10, 10, 10, 14, 26, 48],
+    colWidths: [7, 28, 28, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44],
     rowStyles: rows.map(() => 'normal'),
     cellStyles,
-    rowHeights: rows.map((_, index) => index === 0 ? 32 : 38),
+    rowHeights: rows.map((_, index) => {
+      if (index === 0) return 34;
+      if (index === 1) return 28;
+      return index === headerRowIndex ? 32 : 38;
+    }),
     styledEmptyCellsAsBlank: true,
-    materializeEmptyCellsFromRow: 1,
+    materializeEmptyCellsFromRow: headerRowIndex + 1,
+    merges: [
+      `A1:${BATCH_SUMMARY_COLUMN_LAST}1`,
+      `A2:${BATCH_SUMMARY_COLUMN_LAST}2`
+    ],
     showGridLines: false,
     zoomScale: 90,
     print: {
       orientation: 'landscape',
       fitToWidth: 1,
       fitToHeight: 0,
-      repeatRows: { from: 1, to: 1 },
+      repeatRows: { from: headerRowIndex + 1, to: headerRowIndex + 1 },
       horizontalCentered: true,
-      footer: '&P / &N'
+      footer: '&L一括比較結果&R&P / &N'
     }
   }]);
 }
