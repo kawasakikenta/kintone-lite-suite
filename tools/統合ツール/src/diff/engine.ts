@@ -1437,7 +1437,8 @@ export function isAppReferenceIdPath(path) {
   const normalizedPath = normalizeIgnoreToken(path);
   if (normalizedPath === 'appinfo.appid') return true;
 
-  if (normalizedPath.startsWith('fieldsettings.properties.')) {
+  // formSettings は旧 /form.json で properties が配列になるだけで、参照IDの持ち方は fieldSettings と同じ。
+  if (/^(?:fieldsettings|formsettings)\.properties[.[]/.test(normalizedPath)) {
     if (/\.(?:lookup|referencetable)\.(?:relatedapp|targetapp|sourceapp)\.(?:app|appid)$/.test(normalizedPath)) return true;
     if (/\.(?:lookup|referencetable)\.(?:relatedappid|targetappid|sourceappid)$/.test(normalizedPath)) return true;
   }

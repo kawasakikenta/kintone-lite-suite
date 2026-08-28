@@ -1595,6 +1595,71 @@ describe('diff/xlsx-export', () => {
     expect(fields).toContain('比較先のみ');
   });
 
+  it('keeps the deprecated form.json restatement out of the change list and the headline counts', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      scopes: ['fieldSettings', 'layoutSettings', 'formSettings'],
+      rows: [
+        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.顧客.label', left: '顧客', right: '取引先' },
+        { sectionKey: 'layoutSettings', type: 'changed', path: 'layoutSettings.layout[0].fields[0].size.width', left: 100, right: 200 },
+        { sectionKey: 'formSettings', type: 'changed', path: 'formSettings.properties[3].label', left: '顧客', right: '取引先' },
+        { sectionKey: 'formSettings', type: 'changed', path: 'formSettings.properties[4].label', left: '住所', right: '所在地' }
+      ]
+    });
+    const summary = await readWorksheetByName(blob, '比較概要');
+    const list = await readWorksheetByName(blob, '変更一覧');
+    const formSheet = await readWorksheetByName(blob, '05_フォーム設計情報');
+    const detail = await readWorksheetByName(blob, '設定値詳細');
+
+    // 変更一覧と件数は再掲を含まない 2 件。
+    expect(summary).toContain('変更あり');
+    expect(worksheetInlineTexts(summary, 'B', 4)[0]).toBe('2件');
+    expect(worksheetInlineTexts(list, 'C', 2)).toEqual(['フィールド設定', 'レイアウト設定']);
+    expect(worksheetInlineTexts(list, 'A', 2)).toEqual([]);
+
+    // 再掲であることと件数は概要で明示し、証跡は専用シートに残す。
+    expect(summary).toContain('参考として別シートに掲載');
+    expect(summary).toContain('2件（他シートと同じ変更のため件数に含めていません）');
+    expect(summary).toContain('05 フォーム設計情報（参考・再掲）');
+    expect(formSheet).toContain('参考・再掲');
+    expect(formSheet).toContain('旧 /form.json の再掲');
+    // 設定値詳細は全件（再掲は末尾の No.3・No.4）を保持する。
+    expect(worksheetInlineTexts(detail, 'C', 2)).toEqual([
+      'フィールド設定', 'レイアウト設定', 'フォーム設定', 'フォーム設定'
+    ]);
+    expect(worksheetInlineTexts(detail, 'H', 2)).toEqual([
+      '変更一覧 No.1へ', '変更一覧 No.2へ', '05 フォーム設計情報へ', '05 フォーム設計情報へ'
+    ]);
+  });
+
+  it('keeps form.json differences in the change list when the restated APIs were not compared', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      scopes: ['formSettings'],
+      rows: [
+        { sectionKey: 'formSettings', type: 'changed', path: 'formSettings.properties[3].label', left: '顧客', right: '取引先' }
+      ]
+    });
+    const summary = await readWorksheetByName(blob, '比較概要');
+    const list = await readWorksheetByName(blob, '変更一覧');
+
+    expect(worksheetInlineTexts(list, 'C', 2)).toEqual(['フォーム設定']);
+    expect(summary).not.toContain('参考として別シートに掲載');
+  });
+
+  it('reports the change count and the missing scopes separately when the fetch was incomplete', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      scopes: ['fieldSettings', 'categories'],
+      rows: [
+        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.顧客.label', left: '顧客', right: '取引先' }
+      ],
+      fetchIssues: [{ sectionKey: 'categories', side: 'source', message: '取得できませんでした' }]
+    });
+    const summary = await readWorksheetByName(blob, '比較概要');
+
+    expect(summary).toContain('比較未完了（確認できた範囲に変更 1件）');
+    expect(summary).toContain('一部未完了（カテゴリ設定）');
+    expect(summary).not.toContain('変更なし');
+  });
+
   it('creates customer API sheets for actual differences in canonical API order', async () => {
     const blob = buildDiffXlsxBlobWithSafeDefault({
       scopes: [

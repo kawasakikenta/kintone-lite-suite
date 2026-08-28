@@ -133,11 +133,17 @@ describe('diff/xlsx-batch-export', () => {
       .find((entry) => entry.name === 'xl/worksheets/sheet1.xml')!.data.toString('utf8');
     const summaryCells = firstWorksheetCells(archiveEntries[0].data);
     expect(summaryCells).toMatchObject({
-      A1: 'No.', B1: '比較元', C1: '比較先', D1: '結果', E1: '合計', I1: '並び順変更', J1: 'アプリ名',
-      D2: '差分なし', E2: '0', J2: '一致', K2: '001_保有物件.xlsx',
-      D3: '比較未完了', E3: '4', F3: '1', G3: '1', H3: '1', I3: '1',
-      J3: '名称が異なります', K3: '002_固都税管理_vs_固都税 路線価管理.xlsx'
+      A1: 'kintone 設定差分 一括比較結果',
+      A3: 'No.', B3: '比較元', C3: '比較先', D3: '結果', E3: '取得状態',
+      F3: '未取得・打切りの範囲', G3: '合計', K3: '並び順変更', L3: 'アプリ名',
+      D4: '差分なし', E4: '全範囲を取得', F4: '', G4: '0', L4: '一致', M4: '001_保有物件.xlsx',
+      D5: '差分あり', E5: '一部未取得', G5: '4', H5: '1', I5: '1', J5: '1', K5: '1',
+      L5: '名称が異なります', M5: '002_固都税管理_vs_固都税 路線価管理.xlsx'
     });
+    // 未取得があっても、確認できた範囲の差分件数は一括表で判断できる。
+    expect(summaryCells.A2).toContain('差分あり 1件');
+    expect(summaryCells.A2).toContain('一部未取得 1件');
+    expect(summaryCells.F5).toBeTruthy();
     expect(summaryXml).not.toContain('<f');
     expect(summaryXml).not.toContain('<hyperlinks');
     expect(progress).toEqual([
@@ -167,10 +173,11 @@ describe('diff/xlsx-batch-export', () => {
     ]);
     expect(archiveEntries).toHaveLength(3);
     expect(firstWorksheetCells(archiveEntries[0].data)).toMatchObject({
-      A3: '2',
-      D3: 'Excel生成失敗',
-      J3: '名称未取得',
-      K3: ''
+      A5: '2',
+      D5: 'Excel生成失敗',
+      E5: '—',
+      L5: '名称未取得',
+      M5: ''
     });
   });
 

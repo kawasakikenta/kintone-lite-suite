@@ -487,7 +487,9 @@ export const DIFF_NORMALIZATION_PRESETS: Record<string, DiffNormalizationPreset>
   },
   appReferences: {
     label: '環境固有ID（アプリ・一覧・グラフ・アクション）',
-    sections: new Set(['appInfo', 'fieldSettings', 'viewSettings', 'reportSettings', 'actionSettings']),
+    // formSettings は旧 /form.json で fieldSettings と同じ参照IDを持つため、
+    // 除外対象から漏らすと同じアプリIDの差分だけが再掲されてしまう。
+    sections: new Set(['appInfo', 'fieldSettings', 'formSettings', 'viewSettings', 'reportSettings', 'actionSettings']),
     ignoreKeys: new Set(),
     unorderedArrays: false,
     ignoreAppReferencePaths: true
