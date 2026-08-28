@@ -867,6 +867,32 @@ function humanizeListRowValue(
   return humanizeListScalar(value);
 }
 
+function conciseReviewValue(value: string): string {
+  const firstLine = String(value || '').split('\n', 1)[0].trim();
+  if (!firstLine) return '（内容なし）';
+  const characters = Array.from(firstLine);
+  return characters.length > 80 ? `${characters.slice(0, 79).join('')}…` : firstLine;
+}
+
+function reviewChangeSummary(
+  row: DiffXlsxRow,
+  sourceValue: string,
+  targetValue: string
+): string {
+  if (row._displayOnly) return '参考情報です（実差分には含めません）';
+  if (row.type === 'same') return '変更はありません';
+  if (row.moved) {
+    const from = Number.isFinite(Number(row.movedFrom)) ? Number(row.movedFrom) + 1 : null;
+    const to = Number.isFinite(Number(row.movedTo)) ? Number(row.movedTo) + 1 : null;
+    return from != null && to != null
+      ? `並び順を ${from}番目 → ${to}番目 に変更`
+      : '並び順を変更';
+  }
+  if (row.type === 'added') return `比較先に追加：${conciseReviewValue(targetValue)}`;
+  if (row.type === 'removed') return `比較先から削除：${conciseReviewValue(sourceValue)}`;
+  return `${conciseReviewValue(sourceValue)} → ${conciseReviewValue(targetValue)}`;
+}
+
 function fieldSettingHumanValue(
   detail: DiffXlsxFieldDetail,
   side: 'source' | 'target',
@@ -1505,7 +1531,7 @@ function buildListSheet(
   fieldModel?: DiffXlsxFieldModel
 ): XlsxSheet {
   const headers = [
-    'セクション', '項目', '変更種別', '存在状況', '差分ID',
+    'セクション', '項目／変更内容', '変更種別', '存在状況', '差分ID',
     directionalValueHeader('source', sourceBundle), directionalValueHeader('target', targetBundle), '確認事項',
     '確認状況', '対応判断', '担当者', 'コメント'
   ];
@@ -1515,7 +1541,7 @@ function buildListSheet(
     'レビュー入力（黄色）', '', '', ''
   ];
   const guide = sheetGuideBand(
-    'このブックに収録された差分、変更前後の値、確認事項を一覧で確認できます。',
+    'このブックに収録された差分を、設定項目ごとの短い変更内容と変更前後の値で確認できます。',
     '黄色の列に確認状況・対応判断・担当者・コメントを入力します。差分IDから技術明細へ移動できます。値先頭の「[一部表示]」は技術明細または元データを確認します。'
   );
   const out: (string | number | null)[][] = [[guide, '', '', '', '', '', '', '', '', '', '', ''], groupHeader, headers];
@@ -1536,7 +1562,7 @@ function buildListSheet(
     const fieldDetail = fieldDetailByRowIndex.get(rowIndex);
     const isFieldSettings = (row.sectionKey || row.section) === 'fieldSettings';
     const existence = rowExistenceLabel(row);
-    const item = rowItemLabel(row, sourceBundle, targetBundle);
+    const itemLabel = rowItemLabel(row, sourceBundle, targetBundle);
     const sourceValue = fieldDetail
       ? fieldSettingHumanValue(fieldDetail, 'source', sourceBundle, targetBundle)
       : isFieldSettings
@@ -1552,6 +1578,7 @@ function buildListSheet(
           : humanizeFieldSettingValue(row.right, '')
         : humanizeListRowValue(row, 'target', sourceBundle, targetBundle);
     const note = fieldDetail ? fieldDetailReviewNote(fieldDetail) : rowNote(row);
+    const item = `${itemLabel}\n${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const reviewable = !row._displayOnly && row.type !== 'same';
     out.push([
       sectionLabelOf(row.sectionKey || row.section || ''),
@@ -2136,7 +2163,6 @@ interface CustomerApiSheetDef {
   sectionKey?: string;
   label: string;
   sheetName: string;
-  endpoint?: string;
 }
 
 interface CustomerApiGroup {
@@ -2145,27 +2171,27 @@ interface CustomerApiGroup {
 }
 
 const CUSTOMER_API_SHEET_DEFS: readonly CustomerApiSheetDef[] = [
-  { key: 'appSettings', sectionKey: 'appSettings', label: '01 アプリ一般設定', sheetName: 'API_01_アプリ一般設定', endpoint: '/app/settings.json' },
-  { key: 'appInfo', sectionKey: 'appInfo', label: '02 アプリ情報', sheetName: 'API_02_アプリ情報', endpoint: '/app.json' },
-  { key: 'fieldSettings', sectionKey: 'fieldSettings', label: '03 フォームフィールド', sheetName: 'API_03_フォームフィールド', endpoint: '/app/form/fields.json' },
-  { key: 'layoutSettings', sectionKey: 'layoutSettings', label: '04 フォームレイアウト', sheetName: 'API_04_フォームレイアウト', endpoint: '/app/form/layout.json' },
-  { key: 'formSettings', sectionKey: 'formSettings', label: '05 フォーム設計情報', sheetName: 'API_05_フォーム設計情報', endpoint: '/form.json' },
-  { key: 'viewSettings', sectionKey: 'viewSettings', label: '06 一覧設定', sheetName: 'API_06_一覧設定', endpoint: '/app/views.json' },
-  { key: 'reportSettings', sectionKey: 'reportSettings', label: '07 グラフ設定', sheetName: 'API_07_グラフ設定', endpoint: '/app/reports.json' },
-  { key: 'processSettings', sectionKey: 'processSettings', label: '08 プロセス管理', sheetName: 'API_08_プロセス管理', endpoint: '/app/status.json' },
-  { key: 'pluginSettings', sectionKey: 'pluginSettings', label: '09 追加済みプラグイン', sheetName: 'API_09_追加済みプラグイン', endpoint: '/app/plugins.json' },
-  { key: 'pluginConfig', label: '10 プラグイン個別設定', sheetName: 'API_10_プラグイン個別設定', endpoint: '/app/plugin/config.json' },
-  { key: 'customizeSettings', sectionKey: 'customizeSettings', label: '11 JavaScript・CSS', sheetName: 'API_11_JavaScript・CSS', endpoint: '/app/customize.json' },
-  { key: 'customizeFile', label: '12 カスタマイズ本文', sheetName: 'API_12_カスタマイズ本文', endpoint: '/file.json' },
-  { key: 'actionSettings', sectionKey: 'actionSettings', label: '13 アプリアクション', sheetName: 'API_13_アプリアクション', endpoint: '/app/actions.json' },
-  { key: 'appAcl', sectionKey: 'appAcl', label: '14 アプリ権限', sheetName: 'API_14_アプリ権限', endpoint: '/app/acl.json' },
-  { key: 'fieldAcl', sectionKey: 'fieldAcl', label: '15 フィールド権限', sheetName: 'API_15_フィールド権限', endpoint: '/field/acl.json' },
-  { key: 'recordPermissions', sectionKey: 'recordPermissions', label: '16 レコード権限', sheetName: 'API_16_レコード権限', endpoint: '/record/acl.json' },
-  { key: 'notifications', sectionKey: 'notifications', label: '17 アプリ条件通知', sheetName: 'API_17_アプリ条件通知', endpoint: '/app/notifications/general.json' },
-  { key: 'perRecordNotifications', sectionKey: 'perRecordNotifications', label: '18 レコード条件通知', sheetName: 'API_18_レコード条件通知', endpoint: '/app/notifications/perRecord.json' },
-  { key: 'reminderNotifications', sectionKey: 'reminderNotifications', label: '19 リマインダー通知', sheetName: 'API_19_リマインダー通知', endpoint: '/app/notifications/reminder.json' },
-  { key: 'categories', sectionKey: 'categories', label: '20 カテゴリー設定', sheetName: 'API_20_カテゴリー設定', endpoint: '/app/categories.json' },
-  { key: 'unknown', label: '99 API未特定', sheetName: 'API_99_API未特定' }
+  { key: 'appSettings', sectionKey: 'appSettings', label: '01 アプリ一般設定', sheetName: '01_アプリ一般設定' },
+  { key: 'appInfo', sectionKey: 'appInfo', label: '02 アプリ情報', sheetName: '02_アプリ情報' },
+  { key: 'fieldSettings', sectionKey: 'fieldSettings', label: '03 フォームフィールド', sheetName: '03_フォームフィールド' },
+  { key: 'layoutSettings', sectionKey: 'layoutSettings', label: '04 フォームレイアウト', sheetName: '04_フォームレイアウト' },
+  { key: 'formSettings', sectionKey: 'formSettings', label: '05 フォーム設計情報', sheetName: '05_フォーム設計情報' },
+  { key: 'viewSettings', sectionKey: 'viewSettings', label: '06 一覧設定', sheetName: '06_一覧設定' },
+  { key: 'reportSettings', sectionKey: 'reportSettings', label: '07 グラフ設定', sheetName: '07_グラフ設定' },
+  { key: 'processSettings', sectionKey: 'processSettings', label: '08 プロセス管理', sheetName: '08_プロセス管理' },
+  { key: 'pluginSettings', sectionKey: 'pluginSettings', label: '09 追加済みプラグイン', sheetName: '09_追加済みプラグイン' },
+  { key: 'pluginConfig', label: '10 プラグイン個別設定', sheetName: '10_プラグイン個別設定' },
+  { key: 'customizeSettings', sectionKey: 'customizeSettings', label: '11 JavaScript・CSS', sheetName: '11_JavaScript・CSS' },
+  { key: 'customizeFile', label: '12 カスタマイズ本文', sheetName: '12_カスタマイズ本文' },
+  { key: 'actionSettings', sectionKey: 'actionSettings', label: '13 アプリアクション', sheetName: '13_アプリアクション' },
+  { key: 'appAcl', sectionKey: 'appAcl', label: '14 アプリ権限', sheetName: '14_アプリ権限' },
+  { key: 'fieldAcl', sectionKey: 'fieldAcl', label: '15 フィールド権限', sheetName: '15_フィールド権限' },
+  { key: 'recordPermissions', sectionKey: 'recordPermissions', label: '16 レコード権限', sheetName: '16_レコード権限' },
+  { key: 'notifications', sectionKey: 'notifications', label: '17 アプリ条件通知', sheetName: '17_アプリ条件通知' },
+  { key: 'perRecordNotifications', sectionKey: 'perRecordNotifications', label: '18 レコード条件通知', sheetName: '18_レコード条件通知' },
+  { key: 'reminderNotifications', sectionKey: 'reminderNotifications', label: '19 リマインダー通知', sheetName: '19_リマインダー通知' },
+  { key: 'categories', sectionKey: 'categories', label: '20 カテゴリー設定', sheetName: '20_カテゴリー設定' },
+  { key: 'unknown', label: '99 その他の設定', sheetName: '99_その他の設定' }
 ];
 
 const CUSTOMER_API_SHEET_DEF_BY_SECTION = new Map(
@@ -3596,8 +3622,8 @@ function buildCustomerSummarySheet(
   ];
   if (counts.actual) {
     rows.push(
-      ['API別差分件数', '', '', '', '', ''],
-      ['API別シート', '追加', '削除', '変更', '並び順変更', '合計'],
+      ['kintone機能別の差分件数', '', '', '', '', ''],
+      ['kintone機能別シート', '追加', '削除', '変更', '並び順変更', '合計'],
       ...customerApiBreakdown(apiGroups)
     );
   }
@@ -3706,7 +3732,7 @@ function buildCustomerListSheet(
   const sourceName = customerAppName(ctx.sourceBundle, '比較元');
   const targetName = customerAppName(ctx.targetBundle, '比較先');
   const headers = [
-    'No.', '変更区分', '分類', '設定対象', '差分プロパティ',
+    'No.', '変更区分', '分類', '設定対象／変更内容', '差分プロパティ',
     `変更前\n${sourceName}`, `変更後\n${targetName}`
   ];
   const rows: (string | number | null)[][] = [headers];
@@ -3731,11 +3757,18 @@ function buildCustomerListSheet(
     rowHeights.push(32);
   }
   items.forEach((item, index) => {
+    const changeSummary = item.changeType === '追加'
+      ? `比較先に追加：${conciseReviewValue(item.after)}`
+      : item.changeType === '削除'
+        ? `比較先から削除：${conciseReviewValue(item.before)}`
+        : item.changeType === '並び順変更'
+          ? '並び順を変更'
+          : `${conciseReviewValue(item.before)} → ${conciseReviewValue(item.after)}`;
     rows.push([
       index + 1,
       item.changeType,
       item.sectionLabel,
-      item.target,
+      `${item.target}\n${changeSummary}`,
       item.settingItem,
       item.before,
       item.after
@@ -3768,7 +3801,7 @@ function buildCustomerListSheet(
     }
     rowHeights.push(readableCustomerRowHeight([
       { value: item.sectionLabel, width: 14 },
-      { value: item.target, width: 24 },
+      { value: `${item.target}\n${changeSummary}`, width: 24 },
       { value: item.settingItem, width: 22 },
       { value: item.before, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH },
       { value: item.after, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH }
@@ -3801,11 +3834,15 @@ function buildCustomerListSheet(
   };
 }
 
-function buildCustomerGenericApiDiffSheet(group: CustomerApiGroup): XlsxSheet {
+function customerFeatureSheetTitle(ctx: DiffXlsxContext, definition: CustomerApiSheetDef): string {
+  const sourceName = customerAppName(ctx.sourceBundle, '比較元のアプリ');
+  const targetName = customerAppName(ctx.targetBundle, '比較先のアプリ');
+  return `${definition.label}\n比較元：${sourceName}  →  比較先：${targetName}`;
+}
+
+function buildCustomerGenericApiDiffSheet(ctx: DiffXlsxContext, group: CustomerApiGroup): XlsxSheet {
   const { definition, items } = group;
-  const title = definition.endpoint
-    ? `対象API: GET ${definition.endpoint}`
-    : '対象API: APIを特定できません';
+  const title = customerFeatureSheetTitle(ctx, definition);
   const headers = ['No.', '変更区分', '設定対象', '差分プロパティ', '変更前', '変更後'];
   const rows: (string | number | null)[][] = [
     [title, '', '', '', '', ''],
@@ -3813,7 +3850,7 @@ function buildCustomerGenericApiDiffSheet(group: CustomerApiGroup): XlsxSheet {
   ];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], []];
-  const rowHeights: number[] = [30, 44];
+  const rowHeights: number[] = [42, 44];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
     '追加': 'changeAdded',
@@ -3897,6 +3934,7 @@ function customerNamedTarget(target: string, prefixes: string[]): string {
 }
 
 function buildCustomerViewDiffSheet(
+  ctx: DiffXlsxContext,
   items: CustomerDiffItem[],
   definition: CustomerApiSheetDef
 ): XlsxSheet | null {
@@ -3908,12 +3946,12 @@ function buildCustomerViewDiffSheet(
 
   const headers = ['No.', '変更区分', '一覧名', '差分プロパティ', '変更前', '変更後'];
   const rows: (string | number | null)[][] = [
-    [`対象API: GET ${definition.endpoint}`, '', '', '', '', ''],
+    [customerFeatureSheetTitle(ctx, definition), '', '', '', '', ''],
     headers
   ];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], []];
-  const rowHeights: number[] = [30, 44];
+  const rowHeights: number[] = [42, 44];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
     '追加': 'changeAdded',
@@ -3988,6 +4026,7 @@ function buildCustomerViewDiffSheet(
 }
 
 function buildCustomerActionDiffSheet(
+  ctx: DiffXlsxContext,
   items: CustomerDiffItem[],
   definition: CustomerApiSheetDef
 ): XlsxSheet | null {
@@ -4003,12 +4042,12 @@ function buildCustomerActionDiffSheet(
 
   const headers = ['No.', '変更区分', 'アクション種別', 'アクション名', '差分プロパティ', '変更前', '変更後'];
   const rows: (string | number | null)[][] = [
-    [`対象API: GET ${definition.endpoint}`, '', '', '', '', '', ''],
+    [customerFeatureSheetTitle(ctx, definition), '', '', '', '', '', ''],
     headers
   ];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], []];
-  const rowHeights: number[] = [30, 44];
+  const rowHeights: number[] = [42, 44];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
     '追加': 'changeAdded',
@@ -4102,12 +4141,12 @@ function buildCustomerFieldDiffSheet(
     '変更前', '変更後'
   ];
   const rows: (string | number | null)[][] = [
-    [`対象API: GET ${definition.endpoint}`, '', '', '', '', '', '', '', '', '', ''],
+    [customerFeatureSheetTitle(ctx, definition), '', '', '', '', '', '', '', '', '', ''],
     headers
   ];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], []];
-  const rowHeights: number[] = [30, 48];
+  const rowHeights: number[] = [42, 48];
   const rowOutlines: NonNullable<XlsxSheet['rowOutlines']> = [undefined, undefined];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
@@ -4207,13 +4246,13 @@ function buildCustomerApiDiffSheets(
     let sheet: XlsxSheet | null;
     if (group.definition.key === 'fieldSettings' && group.items.every((item) => !!item.field)) {
       sheet = buildCustomerFieldDiffSheet(ctx, items, group.definition)
-        || buildCustomerGenericApiDiffSheet(group);
+        || buildCustomerGenericApiDiffSheet(ctx, group);
     } else if (group.definition.key === 'viewSettings') {
-      sheet = buildCustomerViewDiffSheet(group.items, group.definition);
+      sheet = buildCustomerViewDiffSheet(ctx, group.items, group.definition);
     } else if (group.definition.key === 'actionSettings') {
-      sheet = buildCustomerActionDiffSheet(group.items, group.definition);
+      sheet = buildCustomerActionDiffSheet(ctx, group.items, group.definition);
     } else {
-      sheet = buildCustomerGenericApiDiffSheet(group);
+      sheet = buildCustomerGenericApiDiffSheet(ctx, group);
     }
     if (sheet) sheets.push(sheet);
   }
