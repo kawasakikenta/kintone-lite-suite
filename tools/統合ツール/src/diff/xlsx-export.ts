@@ -3439,12 +3439,6 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = fal
       const parts = customerItemParts(row, ctx.sourceBundle, ctx.targetBundle);
       const targetColumns = customerTargetColumns(row, parts, ctx.sourceBundle, ctx.targetBundle);
       const moved = row.moved || row.type === 'moved';
-      const renameCandidate = row.renameCandidate
-        && !row.renameCandidate.entityKind
-        && String(row.renameCandidate.fromCode || '').trim()
-        && String(row.renameCandidate.toCode || '').trim()
-        ? row.renameCandidate
-        : null;
       const wholeFieldExistenceChange = targetColumns.field?.wholeField
         && (row.type === 'added' || row.type === 'removed');
       const positionLabel = (value: unknown, fallbackSide: 'source' | 'target'): string => (
@@ -3454,18 +3448,14 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = fal
       );
       const before = moved
         ? positionLabel(row.movedFrom, 'source')
-        : renameCandidate
-          ? String(renameCandidate.fromCode)
-          : wholeFieldExistenceChange
-            ? row.type === 'added' ? '存在しません' : '存在'
-            : customerReadableValue(row, 'source', ctx.sourceBundle, ctx.targetBundle);
+        : wholeFieldExistenceChange
+          ? row.type === 'added' ? '存在しません' : '存在'
+          : customerReadableValue(row, 'source', ctx.sourceBundle, ctx.targetBundle);
       const after = moved
         ? positionLabel(row.movedTo, 'target')
-        : renameCandidate
-          ? String(renameCandidate.toCode)
-          : wholeFieldExistenceChange
-            ? row.type === 'removed' ? '存在しません' : '存在'
-            : customerReadableValue(row, 'target', ctx.sourceBundle, ctx.targetBundle);
+        : wholeFieldExistenceChange
+          ? row.type === 'removed' ? '存在しません' : '存在'
+          : customerReadableValue(row, 'target', ctx.sourceBundle, ctx.targetBundle);
       const rawBeforeBase = customerRawValue(row, 'source');
       const rawAfterBase = customerRawValue(row, 'target');
       const rawBefore = wholeFieldExistenceChange
@@ -3475,13 +3465,11 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = fal
         ? { ...rawAfterBase, state: row.type === 'removed' ? '存在しません' : '存在' }
         : rawAfterBase;
       const targetDetail = parts.target;
-      const settingItemDetail = renameCandidate
-        ? 'コード変更候補'
-        : moved
-          ? '並び順'
-          : targetColumns.field?.wholeField
-            ? targetColumns.field.structure === 'テーブル' ? 'テーブル自体' : 'フィールド自体'
-            : parts.settingItem;
+      const settingItemDetail = moved
+        ? '並び順'
+        : targetColumns.field?.wholeField
+          ? targetColumns.field.structure === 'テーブル' ? 'テーブル自体' : 'フィールド自体'
+          : parts.settingItem;
       items.push({
         index: items.length,
         row,
