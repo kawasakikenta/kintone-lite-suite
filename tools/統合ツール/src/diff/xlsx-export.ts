@@ -2156,6 +2156,8 @@ interface CustomerDiffItem {
   rawAfter: CustomerRawValue;
   tableChild: boolean;
   field?: CustomerFieldColumns;
+  /** 他シートの再掲であり、変更一覧と件数集計から外す差分。証跡シートには残す。 */
+  redundant: boolean;
 }
 
 interface CustomerApiSheetDef {
@@ -2258,6 +2260,31 @@ function customerAppName(bundle: DiffXlsxBundle | undefined, fallback: string): 
 function customerScopeLabel(scopes: string[] | undefined): string {
   const labels = [...new Set((scopes || []).map((key) => customerSectionLabel(key)).filter(Boolean))];
   return labels.length ? labels.join('、') : '比較した設定範囲';
+}
+
+/**
+ * 旧 /form.json（フォーム設計情報）は fields.json と layout.json の再掲で、
+ * 反映もできない読み取り専用APIのため、両方を比較したときは同じ変更が二重に並ぶ。
+ * 主要シートと件数からは外し、専用シートに参考として残す。
+ */
+const CUSTOMER_REDUNDANT_SECTION_KEYS = ['formSettings'] as const;
+
+const CUSTOMER_REDUNDANT_SECTION_SOURCES: Record<string, string[]> = {
+  formSettings: ['fieldSettings', 'layoutSettings']
+};
+
+const CUSTOMER_REDUNDANT_SECTION_NOTE: Record<string, string> = {
+  formSettings: '03 フォームフィールドと 04 フォームレイアウトに同じ変更が載っています（旧 /form.json の再掲）。'
+};
+
+/** 再掲として主要シートから外すセクション。再掲元をどちらも比較していない場合は外さない。 */
+function customerRedundantSectionKeys(comparedSectionKeys: Set<string>): Set<string> {
+  const redundant = new Set<string>();
+  for (const key of CUSTOMER_REDUNDANT_SECTION_KEYS) {
+    const sources = CUSTOMER_REDUNDANT_SECTION_SOURCES[key] || [];
+    if (sources.length && sources.every((source) => comparedSectionKeys.has(source))) redundant.add(key);
+  }
+  return redundant;
 }
 
 function customerComparisonExclusionLabel(ctx: DiffXlsxContext): string {
@@ -3433,7 +3460,10 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = fal
     && (!row._displayOnly || (includeTableChildren && row._expandedFromTable === true))
   ));
   const items: CustomerDiffItem[] = [];
-  for (const [sectionKey, rows] of groupRowsBySection(actualRows)) {
+  const groupedRows = groupRowsBySection(actualRows);
+  const comparedSectionKeys = new Set<string>([...(ctx.scopes || []), ...groupedRows.keys()]);
+  const redundantSectionKeys = customerRedundantSectionKeys(comparedSectionKeys);
+  for (const [sectionKey, rows] of groupedRows) {
     const sectionLabel = customerSectionLabel(sectionKey);
     for (const row of rows) {
       const parts = customerItemParts(row, ctx.sourceBundle, ctx.targetBundle);
@@ -3486,11 +3516,70 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = fal
         before,
         after,
         rawBefore,
-        rawAfter
+        rawAfter,
+        redundant: redundantSectionKeys.has(sectionKey)
       });
     }
   }
-  return items;
+  // 再掲の差分を末尾へ寄せ、変更一覧の No. を 1 から連番のまま保つ。
+  const ordered = [
+    ...items.filter((item) => !item.redundant),
+    ...items.filter((item) => item.redundant)
+  ];
+  ordered.forEach((item, index) => { item.index = index; });
+  return ordered;
+}
+
+function customerPrimaryItems(items: CustomerDiffItem[]): CustomerDiffItem[] {
+  return items.filter((item) => !item.redundant);
+}
+
+export interface CustomerDiffCounts {
+  total: number;
+  added: number;
+  removed: number;
+  changed: number;
+  moved: number;
+  /** 他シートの再掲として total から除いた件数。 */
+  redundant: number;
+}
+
+/** 提出用Excelの掲載件数。一括比較結果と各ブックで同じ数え方をそろえる。 */
+export function summarizeCustomerDiffContext(ctx: DiffXlsxContext): CustomerDiffCounts {
+  if (ctx.audience === 'internal') {
+    // 内部監査版は再掲を含む全件を掲載するため、掲載件数もそのまま数える。
+    const rows = summarizeCustomerRows(ctx.rows || []);
+    return {
+      total: rows.actual,
+      added: rows.added,
+      removed: rows.removed,
+      changed: rows.contentChanged,
+      moved: rows.moved,
+      redundant: 0
+    };
+  }
+  const items = buildCustomerDiffItems(ctx);
+  const counts = summarizeCustomerItems(customerPrimaryItems(items));
+  return {
+    total: counts.actual,
+    added: counts.added,
+    removed: counts.removed,
+    changed: counts.contentChanged,
+    moved: counts.moved,
+    redundant: items.length - counts.actual
+  };
+}
+
+function summarizeCustomerItems(items: CustomerDiffItem[]) {
+  const counts = { actual: 0, added: 0, removed: 0, contentChanged: 0, moved: 0 };
+  for (const item of items) {
+    counts.actual += 1;
+    if (item.changeType === '並び順変更') counts.moved += 1;
+    else if (item.changeType === '追加') counts.added += 1;
+    else if (item.changeType === '削除') counts.removed += 1;
+    else counts.contentChanged += 1;
+  }
+  return counts;
 }
 
 function summarizeCustomerRows(rows: DiffXlsxRow[]) {
@@ -3536,9 +3625,10 @@ function buildCustomerApiGroups(items: CustomerDiffItem[]): CustomerApiGroup[] {
 
 function customerApiBreakdown(groups: CustomerApiGroup[]): Array<[string, number, number, number, number, number]> {
   return groups.map((group) => {
-    const counts = summarizeCustomerRows(group.items.map((item) => item.row));
+    const counts = summarizeCustomerItems(group.items);
+    const redundant = group.items.every((item) => item.redundant);
     return [
-      group.definition.label,
+      redundant ? `${group.definition.label}（参考・再掲）` : group.definition.label,
       counts.added,
       counts.removed,
       counts.contentChanged,
@@ -3565,6 +3655,31 @@ function customerHasDiffTruncation(truncation: DiffXlsxTruncation | null | undef
   return hasIncompleteActualDiffTruncation(truncation);
 }
 
+/** 未取得・打切りになった設定領域の名前。概要と一括比較結果で同じ文言を使う。 */
+export function customerIncompleteScopeLabels(ctx: DiffXlsxContext): string[] {
+  const labels: string[] = [];
+  const add = (label: string) => {
+    if (label && !labels.includes(label)) labels.push(label);
+  };
+  const push = (key: unknown) => add(customerSectionLabel(String(key || '')));
+  for (const issue of ctx.fetchIssues || []) push(issue.sectionKey || issue.section);
+  for (const issue of ctx.partialIssues || []) push(issue.sectionKey || issue.section);
+  if (customerHasDiffTruncation(ctx.truncation)) {
+    const sections = (ctx.truncation?.sections || []).filter(customerTruncationSectionIncomplete);
+    if (sections.length) for (const section of sections) push(section.sectionKey || section.section);
+    else add('比較対象全体');
+  }
+  return labels;
+}
+
+/** 「一部未完了（カテゴリ設定）」のように、未完了の理由を1行で示す。 */
+export function customerIncompleteScopeSuffix(ctx: DiffXlsxContext, maxLabels = 3): string {
+  const labels = customerIncompleteScopeLabels(ctx);
+  if (!labels.length) return '';
+  const shown = labels.slice(0, maxLabels).join('、');
+  return labels.length > maxLabels ? `${shown} ほか${labels.length - maxLabels}件` : shown;
+}
+
 function customerDateTime(value: unknown): string {
   const raw = String(value ?? '').trim();
   const normalized = typeof value === 'number'
@@ -3581,20 +3696,28 @@ function buildCustomerSummarySheet(
   items: CustomerDiffItem[],
   apiGroups: CustomerApiGroup[]
 ): XlsxSheet {
-  const counts = summarizeCustomerRows(ctx.rows || []);
+  const primaryItems = customerPrimaryItems(items);
+  const redundantItems = items.filter((item) => item.redundant);
+  const counts = summarizeCustomerItems(primaryItems);
   const incomplete = customerIncomplete(ctx);
   const droppedSame = Number(ctx.truncation?.droppedSame || 0);
   const filtered = ctx.exportMode === 'filtered';
+  // 未完了でも変更の有無は分かるようにする。ただし変更0件を「変更なし」と言い切らない。
   const verdict = incomplete
-    ? '比較未完了'
+    ? counts.actual ? `比較未完了（確認できた範囲に変更 ${counts.actual}件）` : '比較未完了'
     : filtered
       ? counts.actual ? '絞り込み後：変更あり' : '絞り込み後：掲載対象なし'
       : counts.actual ? '変更あり' : '変更なし';
+  const incompleteScopes = customerIncompleteScopeSuffix(ctx);
   const completeness = incomplete
-    ? '一部未完了'
+    ? incompleteScopes ? `一部未完了（${incompleteScopes}）` : '一部未完了'
     : droppedSame > 0
       ? `正常完了（同一証跡 ${droppedSame}件を省略）`
       : '正常完了（選択範囲）';
+  const redundantLabels = [...new Set(redundantItems.map((item) => customerApiDefinitionForItem(item).label))];
+  const redundantNote = redundantItems.length
+    ? `${redundantLabels.join('、')} の ${redundantItems.length}件（他シートと同じ変更のため件数に含めていません）`
+    : 'なし';
   const sourceName = customerAppName(ctx.sourceBundle, '比較元のアプリ');
   const targetName = customerAppName(ctx.targetBundle, '比較先のアプリ');
   const comparedScopes = ctx.scopes?.length ? ctx.scopes : [...new Set(items.map((item) => item.sectionKey))];
@@ -3604,11 +3727,15 @@ function buildCustomerSummarySheet(
     ['比較結果', verdict, '比較処理', completeness, '', counts.actual ? '変更一覧を開く' : ''],
     [filtered ? '掲載変更件数' : '変更件数', `${counts.actual}件`, '比較日時', customerDateTime(ctx.comparedAt), '', ''],
     ['追加', `${counts.added}件`, '削除', `${counts.removed}件`, '変更', `${counts.contentChanged}件`],
-    ['並び順変更', `${counts.moved}件`, '変更一覧の明細', `${items.length}件`, '同一証跡の省略', droppedSame ? `${droppedSame}件（変更判定への影響なし）` : '0件'],
+    ['並び順変更', `${counts.moved}件`, '変更一覧の明細', `${primaryItems.length}件`, '同一証跡の省略', droppedSame ? `${droppedSame}件（変更判定への影響なし）` : '0件'],
     ['比較した設定領域', customerScopeLabel(comparedScopes), '', '', '', ''],
     ['掲載範囲', ctx.exportMode === 'filtered' ? '上記範囲内の一部' : '上記範囲内の全変更', '絞り込み', ctx.exportMode === 'filtered' ? 'あり' : 'なし', '比較から除外', customerComparisonExclusionLabel(ctx)]
   ];
-  if (counts.actual) {
+  const redundantNoteRow = redundantItems.length ? rows.length : -1;
+  if (redundantNoteRow >= 0) rows.push(['参考として別シートに掲載', redundantNote, '', '', '', '']);
+  const breakdownTitleRow = apiGroups.length ? rows.length : -1;
+  const breakdownHeaderRow = apiGroups.length ? rows.length + 1 : -1;
+  if (apiGroups.length) {
     rows.push(
       ['kintone機能別の差分件数', '', '', '', '', ''],
       ['kintone機能別シート', '追加', '削除', '変更', '並び順変更', '合計'],
@@ -3648,10 +3775,15 @@ function buildCustomerSummarySheet(
   cellStyles[7][3] = 'info';
   cellStyles[7][4] = 'summaryLabel';
   cellStyles[7][5] = 'info';
-  if (counts.actual) {
-    cellStyles[8] = Array.from({ length: 6 }, () => 'sectionHeader');
-    for (let index = 10; index < rows.length; index += 1) {
-      const alternate = (index - 10) % 2 === 1;
+  if (redundantNoteRow >= 0) {
+    cellStyles[redundantNoteRow][0] = 'summaryLabel';
+    cellStyles[redundantNoteRow][1] = 'info';
+  }
+  if (breakdownTitleRow >= 0) {
+    cellStyles[breakdownTitleRow] = Array.from({ length: 6 }, () => 'sectionHeader');
+    const firstDataRow = breakdownHeaderRow + 1;
+    for (let index = firstDataRow; index < rows.length; index += 1) {
+      const alternate = (index - firstDataRow) % 2 === 1;
       cellStyles[index][0] = 'actionLink';
       for (let column = 1; column < 6; column += 1) {
         cellStyles[index][column] = alternate ? 'zebraCenter' : 'center';
@@ -3664,8 +3796,8 @@ function buildCustomerSummarySheet(
     colWidths: [24, 22, 10, 22, 16, 22],
     rowStyles: rows.map(() => 'normal'),
     cellStyles,
-    headerRow: counts.actual ? 10 : undefined,
-    autoFilter: counts.actual > 0,
+    headerRow: breakdownHeaderRow >= 0 ? breakdownHeaderRow + 1 : undefined,
+    autoFilter: breakdownHeaderRow >= 0,
     freezeRows: 2,
     materializeEmptyCellsFromRow: 3,
     rowHeights: rows.map((row, index) => {
@@ -3679,22 +3811,24 @@ function buildCustomerSummarySheet(
         { value: row[3], width: 22 },
         { value: row[5], width: 22 }
       ], 76);
-      if (index === 8) return 30;
-      return index === 9 ? 32 : 26;
+      if (index === redundantNoteRow) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
+      if (index === breakdownTitleRow) return 30;
+      return index === breakdownHeaderRow ? 32 : 26;
     }),
     merges: [
       'A1:F1', 'A2:B2', 'D2:F2', 'B7:F7',
-      ...(counts.actual ? ['A9:F9'] : [])
+      ...(redundantNoteRow >= 0 ? [`B${redundantNoteRow + 1}:F${redundantNoteRow + 1}`] : []),
+      ...(breakdownTitleRow >= 0 ? [`A${breakdownTitleRow + 1}:F${breakdownTitleRow + 1}`] : [])
     ],
-    internalHyperlinks: counts.actual ? [
-      {
+    internalHyperlinks: breakdownHeaderRow >= 0 ? [
+      ...(counts.actual ? [{
         ref: 'F3',
         targetSheet: '変更一覧',
         targetCell: 'A1',
         tooltip: '変更一覧へ移動'
-      },
+      }] : []),
       ...apiGroups.map((group, index) => ({
-        ref: `A${index + 11}`,
+        ref: `A${breakdownHeaderRow + 2 + index}`,
         targetSheet: group.definition.sheetName,
         targetCell: 'A1',
         tooltip: `${group.definition.label}を開く`
@@ -3714,9 +3848,11 @@ function buildCustomerSummarySheet(
 
 function buildCustomerListSheet(
   ctx: DiffXlsxContext,
-  items: CustomerDiffItem[],
+  allItems: CustomerDiffItem[],
   apiGroups: CustomerApiGroup[]
 ): XlsxSheet {
+  // 再掲の差分は末尾に並んでいるため、除いても No. と設定値詳細の行番号は一致したまま。
+  const items = customerPrimaryItems(allItems);
   const sourceName = customerAppName(ctx.sourceBundle, '比較元');
   const targetName = customerAppName(ctx.targetBundle, '比較先');
   const headers = [
@@ -3739,7 +3875,10 @@ function buildCustomerListSheet(
     for (const item of group.items) apiDefinitionByItem.set(item, group.definition);
   }
   if (!items.length) {
-    rows.push(['', '', '', '差分はありません', '', '', '']);
+    const emptyMessage = allItems.length
+      ? '差分はありません（参考・再掲の差分のみのため、機能別シートを確認してください）'
+      : '差分はありません';
+    rows.push(['', '', '', emptyMessage, '', '', '']);
     rowStyles.push('normal');
     cellStyles.push(Array.from({ length: headers.length }, () => 'info'));
     rowHeights.push(32);
@@ -3830,15 +3969,20 @@ function customerFeatureSheetTitle(ctx: DiffXlsxContext, definition: CustomerApi
 
 function buildCustomerGenericApiDiffSheet(ctx: DiffXlsxContext, group: CustomerApiGroup): XlsxSheet {
   const { definition, items } = group;
-  const title = customerFeatureSheetTitle(ctx, definition);
+  const redundantNote = items.every((item) => item.redundant)
+    ? CUSTOMER_REDUNDANT_SECTION_NOTE[String(definition.sectionKey || definition.key)] || ''
+    : '';
+  const title = redundantNote
+    ? `${customerFeatureSheetTitle(ctx, definition)}\n※ 参考・再掲：${redundantNote}変更一覧と件数には含めていません。`
+    : customerFeatureSheetTitle(ctx, definition);
   const headers = ['No.', '変更区分', '設定対象', '差分プロパティ', '変更前', '変更後'];
   const rows: (string | number | null)[][] = [
     [title, '', '', '', '', ''],
     headers
   ];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
-  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], []];
-  const rowHeights: number[] = [42, 44];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[redundantNote ? 'warning' : 'info'], []];
+  const rowHeights: number[] = [redundantNote ? 60 : 42, 44];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
     '追加': 'changeAdded',
@@ -4260,9 +4404,21 @@ function buildCustomerValueDetailSheet(
     `${continuation.item.index}:${continuation.side}`,
     continuation
   ]));
+  // 再掲の差分は変更一覧に行が無いので、機能別シートの該当行へ戻す。
+  const redundantAnchors = new Map<CustomerDiffItem, { sheetName: string; row: number; label: string }>();
+  for (const group of buildCustomerApiGroups(items)) {
+    group.items.forEach((item, position) => {
+      if (!item.redundant) return;
+      redundantAnchors.set(item, {
+        sheetName: group.definition.sheetName,
+        row: position + 3,
+        label: group.definition.label
+      });
+    });
+  }
   const rows: (string | number | null)[][] = [[
     'No.', '変更区分', '分類', '設定対象', '差分プロパティ',
-    `変更前の原文\n${sourceName}`, `変更後の原文\n${targetName}`, '変更一覧へ'
+    `変更前の原文\n${sourceName}`, `変更後の原文\n${targetName}`, '一覧へ戻る'
   ]];
   const rowStyles: XlsxRowStyle[] = ['normal'];
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[]];
@@ -4287,6 +4443,7 @@ function buildCustomerValueDetailSheet(
     const settingItemDetail = item.technicalPath
       ? `${item.settingItemDetail}\n内部パス: ${item.technicalPath}`
       : item.settingItemDetail;
+    const anchor = redundantAnchors.get(item);
     rows.push([
       item.index + 1,
       item.changeType,
@@ -4295,7 +4452,7 @@ function buildCustomerValueDetailSheet(
       settingItemDetail,
       beforeText,
       afterText,
-      `変更一覧 No.${item.index + 1}へ`
+      anchor ? `${anchor.label}へ` : `変更一覧 No.${item.index + 1}へ`
     ]);
     rowStyles.push('normal');
     const startsCategory = index === 0 || items[index - 1]?.sectionLabel !== item.sectionLabel;
@@ -4331,12 +4488,19 @@ function buildCustomerValueDetailSheet(
         tooltip: `No.${item.index + 1} 変更後の長文原文へ移動`
       });
     }
-    internalHyperlinks.push({
-      ref: `H${index + 2}`,
-      targetSheet: '変更一覧',
-      targetCell: `A${item.index + 2}`,
-      tooltip: `変更一覧 No.${item.index + 1}へ戻る`
-    });
+    internalHyperlinks.push(anchor
+      ? {
+        ref: `H${index + 2}`,
+        targetSheet: anchor.sheetName,
+        targetCell: `A${anchor.row}`,
+        tooltip: `${anchor.label}の該当行へ戻る`
+      }
+      : {
+        ref: `H${index + 2}`,
+        targetSheet: '変更一覧',
+        targetCell: `A${item.index + 2}`,
+        tooltip: `変更一覧 No.${item.index + 1}へ戻る`
+      });
   });
 
   return {
