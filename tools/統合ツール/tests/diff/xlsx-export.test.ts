@@ -1553,7 +1553,7 @@ describe('diff/xlsx-export', () => {
     expect(workbook).not.toContain('name="フィールド差分"');
   });
 
-  it('labels existing rename metadata as a code-change candidate without merging source rows', async () => {
+  it('does not expose uncertain code-change candidates in the customer workbook', async () => {
     const candidate = {
       id: 'rename:old_code:new_code',
       fromCode: 'old_code',
@@ -1586,10 +1586,11 @@ describe('diff/xlsx-export', () => {
     const fields = await readWorksheetByName(blob, '03_フォームフィールド');
 
     expect((list.match(/<row r="/g) || []).length).toBe(3);
-    expect(worksheetInlineTexts(list, 'E', 2)).toEqual(['コード変更候補', 'コード変更候補']);
-    expect(worksheetInlineTexts(list, 'F', 2)).toEqual(['old_code', 'old_code']);
-    expect(worksheetInlineTexts(list, 'G', 2)).toEqual(['new_code', 'new_code']);
-    expect(fields).toContain('コード変更候補');
+    expect(list).not.toContain('コード変更候補');
+    expect(fields).not.toContain('コード変更候補');
+    expect(worksheetInlineTexts(list, 'E', 2)).toEqual(['フィールド自体', 'フィールド自体']);
+    expect(worksheetInlineTexts(list, 'F', 2)).toEqual(['存在', '存在しません']);
+    expect(worksheetInlineTexts(list, 'G', 2)).toEqual(['存在しません', '存在']);
     expect(fields).toContain('比較元のみ');
     expect(fields).toContain('比較先のみ');
   });
