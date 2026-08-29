@@ -3888,6 +3888,203 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-enums.ts
+  function lookupEnum(map, value) {
+    if (value == null || value === "") return "";
+    const key = String(value).trim().toUpperCase();
+    return map[key] || String(value);
+  }
+  function describeReminderOffset(kind, value) {
+    const raw = String(value ?? "").trim();
+    if (!/^[+-]?\d+$/.test(raw)) return null;
+    const n = Number(raw);
+    const unit = kind === "days" ? "日" : "時間";
+    if (n === 0) return kind === "days" ? "当日" : "同時刻";
+    return n < 0 ? `${-n}${unit}前` : `${n}${unit}後`;
+  }
+  function describePeriodicReport(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const report = value;
+    if (typeof report.active !== "boolean" && !report.period) return null;
+    const period = report.period && typeof report.period === "object" ? report.period : {};
+    const schedule = [
+      lookupEnum(PERIODIC_REPORT_EVERY_JP, period.every),
+      period.month != null && period.month !== "" ? `${period.month}月` : "",
+      period.dayOfMonth != null && period.dayOfMonth !== "" ? `${period.dayOfMonth}日` : "",
+      lookupEnum(DAY_OF_WEEK_JP, period.dayOfWeek),
+      period.time != null && period.time !== "" ? String(period.time) : ""
+    ].filter(Boolean).join(" ");
+    const state3 = report.active === false ? "無効" : "有効";
+    return schedule ? `${state3}（${schedule}）` : state3;
+  }
+  var ENTITY_TYPE_JP, VIEW_TYPE_JP, VIEW_BUILTIN_TYPE_JP, VIEW_DEVICE_JP, PAGINATION_TYPE_JP, CHART_TYPE_JP, CHART_MODE_JP, AGGREGATION_TYPE_JP, GROUP_PER_JP, REPORT_SORT_BY_JP, REPORT_SORT_ORDER_JP, PERIODIC_REPORT_EVERY_JP, DAY_OF_WEEK_JP, PROCESS_ASSIGNEE_TYPE_JP, NOTIFICATION_TIMING_JP, RESOURCE_TYPE_JP, CUSTOMIZE_SCOPE_JP, ICON_TYPE_JP, APP_THEME_JP, TITLE_SELECTION_JP, ROUNDING_MODE_JP, NUMBER_FORMAT_JP, ALIGN_JP, UNIT_POSITION_JP, LINK_PROTOCOL_JP;
+  var init_kintone_enums = __esm({
+    "src/kintone-enums.ts"() {
+      "use strict";
+      ENTITY_TYPE_JP = {
+        USER: "ユーザー",
+        GROUP: "グループ",
+        ORGANIZATION: "組織",
+        FIELD_ENTITY: "フィールド値",
+        CREATOR: "作成者",
+        MODIFIER: "更新者",
+        LOGIN_USER: "ログインユーザー",
+        ALL: "全員",
+        CUSTOM_FIELD: "カスタムフィールド"
+      };
+      VIEW_TYPE_JP = {
+        LIST: "表形式",
+        CALENDAR: "カレンダー形式",
+        CUSTOM: "カスタマイズ"
+      };
+      VIEW_BUILTIN_TYPE_JP = {
+        ASSIGNEE: "作業者ビュー",
+        UNDONE: "未完了レコード",
+        ACTIVE_BY_USER: "自分が処理すべきレコード",
+        RECORDS_OF_USER: "自分が関わるレコード"
+      };
+      VIEW_DEVICE_JP = {
+        ANY: "PC・モバイル両方",
+        DESKTOP: "PC版のみ"
+      };
+      PAGINATION_TYPE_JP = {
+        ROW: "行ページャ",
+        PAGE: "ページ番号"
+      };
+      CHART_TYPE_JP = {
+        BAR: "横棒グラフ",
+        COLUMN: "縦棒グラフ",
+        LINE: "折れ線グラフ",
+        PIE: "円グラフ",
+        PIVOT_TABLE: "クロス集計表",
+        TABLE: "表",
+        AREA: "面グラフ",
+        SPLINE: "曲線グラフ",
+        SPLINE_AREA: "曲線面グラフ",
+        SCATTER: "散布図"
+      };
+      CHART_MODE_JP = {
+        NORMAL: "通常",
+        STACKED: "積み上げ",
+        PERCENTAGE: "100%積み上げ"
+      };
+      AGGREGATION_TYPE_JP = {
+        COUNT: "レコード数",
+        SUM: "合計",
+        AVG: "平均",
+        MAX: "最大値",
+        MIN: "最小値"
+      };
+      GROUP_PER_JP = {
+        YEAR: "年",
+        QUARTER: "四半期",
+        MONTH: "月",
+        WEEK: "週",
+        DAY: "日",
+        HOUR: "時",
+        MINUTE: "分"
+      };
+      REPORT_SORT_BY_JP = {
+        TOTAL: "集計値",
+        GROUP1: "分類1",
+        GROUP2: "分類2",
+        GROUP3: "分類3"
+      };
+      REPORT_SORT_ORDER_JP = {
+        ASC: "小さい順",
+        DESC: "大きい順"
+      };
+      PERIODIC_REPORT_EVERY_JP = {
+        YEAR: "毎年",
+        QUARTER: "四半期ごと",
+        MONTH: "毎月",
+        WEEK: "毎週",
+        DAY: "毎日",
+        HOUR: "毎時"
+      };
+      DAY_OF_WEEK_JP = {
+        SUNDAY: "日曜日",
+        MONDAY: "月曜日",
+        TUESDAY: "火曜日",
+        WEDNESDAY: "水曜日",
+        THURSDAY: "木曜日",
+        FRIDAY: "金曜日",
+        SATURDAY: "土曜日"
+      };
+      PROCESS_ASSIGNEE_TYPE_JP = {
+        ONE: "候補から作業者を1人選ぶ",
+        ANY: "候補のうち誰か1人が作業する",
+        ANYONE: "候補のうち誰か1人が作業する",
+        ALL: "候補の全員が作業する"
+      };
+      NOTIFICATION_TIMING_JP = {
+        CREATION: "レコード作成時",
+        DAYS_OF_WEEK: "曜日指定",
+        TIME: "時刻指定",
+        WEEKLY: "毎週",
+        MONTHLY: "毎月"
+      };
+      RESOURCE_TYPE_JP = {
+        URL: "URL指定",
+        FILE: "ファイル指定"
+      };
+      CUSTOMIZE_SCOPE_JP = {
+        ALL: "全ユーザー",
+        ADMIN: "管理者のみ",
+        NONE: "無効"
+      };
+      ICON_TYPE_JP = {
+        PRESET: "プリセット",
+        FILE: "アップロードファイル"
+      };
+      APP_THEME_JP = {
+        WHITE: "ホワイト",
+        RED: "レッド",
+        BLUE: "ブルー",
+        GREEN: "グリーン",
+        YELLOW: "イエロー",
+        BLACK: "ブラック",
+        CLIPBOARD: "クリップボード",
+        BINDER: "バインダー",
+        PENCIL: "ペンシル",
+        CLIPS: "クリップ"
+      };
+      TITLE_SELECTION_JP = {
+        AUTO: "自動選択",
+        MANUAL: "手動指定"
+      };
+      ROUNDING_MODE_JP = {
+        HALF_EVEN: "四捨五入（偶数丸め）",
+        UP: "切り上げ",
+        DOWN: "切り捨て"
+      };
+      NUMBER_FORMAT_JP = {
+        NUMBER: "数値",
+        NUMBER_DIGIT: "数値（桁区切り）",
+        PERCENT: "パーセント",
+        CURRENCY: "通貨",
+        DATE: "日付",
+        TIME: "時刻",
+        DATETIME: "日時",
+        HOUR_MINUTE: "時:分",
+        HOUR_MINUTE_SECOND: "時:分:秒"
+      };
+      ALIGN_JP = {
+        HORIZONTAL: "横並び",
+        VERTICAL: "縦並び"
+      };
+      UNIT_POSITION_JP = {
+        BEFORE: "前につける",
+        AFTER: "後につける"
+      };
+      LINK_PROTOCOL_JP = {
+        WEB: "Webサイトのアドレス",
+        CALL: "電話番号",
+        MAIL: "メールアドレス"
+      };
+    }
+  });
+
   // src/diff/label-dict.ts
   function labelOfProp(key) {
     if (!key) return "";
@@ -3911,8 +4108,14 @@ ${contextLine}`);
     if (propKey && PERMISSION_KEYS.has(propKey)) {
       return value ? "許可" : "不許可";
     }
-    if (propKey === "enable" || propKey === "enabled") {
+    if (propKey === "enable" || propKey === "enabled" || propKey === "active") {
       return value ? "有効" : "無効";
+    }
+    if (propKey === "pager") {
+      return value ? "表示する" : "表示しない";
+    }
+    if (propKey === "notifyToCommenter" || propKey === "notifyToMentioned" || propKey === "notifyOnUpdate") {
+      return value ? "通知する" : "通知しない";
     }
     return value ? "はい" : "いいえ";
   }
@@ -3936,6 +4139,7 @@ ${contextLine}`);
   var init_label_dict = __esm({
     "src/diff/label-dict.ts"() {
       "use strict";
+      init_kintone_enums();
       VALUE_LABELS = {
         // entity.type
         "entity.type": {
@@ -3992,7 +4196,25 @@ ${contextLine}`);
         recordTrigger: {
           APP: "アプリ全体",
           RECORD: "レコード単位"
-        }
+        },
+        // ここから下はセクション文脈込みで参照するスコープ（path-decoder が
+        // sectionKey を見て選択する）。kintone-enums の共通辞書を単一ソースとする。
+        "assignee.type": PROCESS_ASSIGNEE_TYPE_JP,
+        "icon.type": ICON_TYPE_JP,
+        "aggregation.type": AGGREGATION_TYPE_JP,
+        "resource.type": RESOURCE_TYPE_JP,
+        builtinType: VIEW_BUILTIN_TYPE_JP,
+        device: VIEW_DEVICE_JP,
+        chartMode: CHART_MODE_JP,
+        scope: CUSTOMIZE_SCOPE_JP,
+        theme: APP_THEME_JP,
+        selectionMode: TITLE_SELECTION_JP,
+        roundingMode: ROUNDING_MODE_JP,
+        per: GROUP_PER_JP,
+        by: REPORT_SORT_BY_JP,
+        order: REPORT_SORT_ORDER_JP,
+        every: PERIODIC_REPORT_EVERY_JP,
+        dayOfWeek: DAY_OF_WEEK_JP
       };
       PROP_LABELS = {
         // appAcl 操作権限（kintone のアクセス権設定画面の列名）
@@ -4014,7 +4236,7 @@ ${contextLine}`);
         entity: { label: "対象" },
         rights: { label: "権限エントリー" },
         accessibility: { label: "アクセス権" },
-        // viewSettings
+        // viewSettings（kintone の一覧設定画面の項目名）
         fields: { label: "表示するフィールド", icon: "📋" },
         sort: { label: "ソート", icon: "↕" },
         index: { label: "表示順", icon: "🔢" },
@@ -4022,13 +4244,26 @@ ${contextLine}`);
         defaultView: { label: "既定ビュー" },
         view: { label: "ビュー" },
         views: { label: "ビュー一覧" },
-        // reportSettings
+        builtinType: { label: "標準一覧の種類" },
+        device: { label: "表示するデバイス" },
+        pager: { label: "ページ送りの表示" },
+        date: { label: "日付の基準フィールド" },
+        // reportSettings（kintone のグラフ設定画面の項目名）
         groups: { label: "分類", icon: "📊" },
         aggregations: { label: "集計", icon: "🧮" },
         chartType: { label: "グラフ種別" },
         chartMode: { label: "モード" },
         reports: { label: "グラフ一覧" },
         periodicReports: { label: "定期レポート" },
+        periodicReport: { label: "定期レポート" },
+        period: { label: "実行スケジュール" },
+        every: { label: "間隔" },
+        dayOfWeek: { label: "曜日" },
+        dayOfMonth: { label: "日" },
+        per: { label: "分類の時間単位" },
+        by: { label: "ソートの基準" },
+        order: { label: "ソートの順序" },
+        active: { label: "有効状態" },
         // notifications（kintone の通知設定画面の項目名）
         recordAdded: { label: "レコードの追加" },
         recordEdited: { label: "レコードの編集" },
@@ -4039,6 +4274,11 @@ ${contextLine}`);
         targets: { label: "通知先" },
         notifications: { label: "通知ルール" },
         timing: { label: "通知するタイミング" },
+        daysLater: { label: "通知する日" },
+        hoursLater: { label: "通知する時間" },
+        time: { label: "時刻" },
+        notifyToCommenter: { label: "コメントを書き込んだユーザーへの通知" },
+        notifyToMentioned: { label: "コメントの宛先ユーザーへの通知" },
         notifyOnUpdate: { label: "更新時に通知" },
         timezone: { label: "タイムゾーン" },
         perRecordNotifications: { label: "レコード条件通知" },
@@ -4072,6 +4312,7 @@ ${contextLine}`);
         plugins: { label: "プラグイン一覧" },
         version: { label: "バージョン" },
         id: { label: "ID" },
+        enabled: { label: "有効状態" },
         // appSettings / appInfo（kintone のアプリ設定画面の項目名）
         name: { label: "名前" },
         description: { label: "説明" },
@@ -4169,17 +4410,33 @@ ${contextLine}`);
   function isIndex(token) {
     return typeof token === "number";
   }
-  function valueToText(value, propKey, depth = 0) {
+  function scopedEnumLabel(sectionKey, propKey, value) {
+    if (propKey === "type") {
+      const scope = TYPE_SCOPE_BY_SECTION[sectionKey];
+      if (scope) {
+        const scoped = labelOfValue(scope, value);
+        if (scoped) return scoped;
+      }
+      return labelOfValue("view.type", value) || labelOfValue("chart.type", value);
+    }
+    const sections = SCOPED_ENUM_SECTIONS[propKey];
+    if (sections && (!sections.length || sections.includes(sectionKey))) {
+      return labelOfValue(propKey, value);
+    }
+    return null;
+  }
+  function valueToText(value, propKey, depth = 0, sectionKey = "") {
     if (value === void 0) return "（未設定）";
     if (value === null) return "-";
     if (typeof value === "boolean") return labelOfBool(value, propKey);
+    if (propKey === "daysLater" || propKey === "hoursLater") {
+      const offset = describeReminderOffset(propKey === "daysLater" ? "days" : "hours", value);
+      if (offset) return offset;
+    }
     if (typeof value === "number") return String(value);
     if (typeof value === "string") {
       if (propKey === "accessibility") {
         return labelOfValue("accessibility", value) || value;
-      }
-      if (propKey === "type") {
-        return labelOfValue("view.type", value) || labelOfValue("chart.type", value) || value;
       }
       if (propKey === "chartType") {
         return labelOfValue("chart.type", value) || value;
@@ -4187,6 +4444,8 @@ ${contextLine}`);
       if (propKey === "paginationStyle") {
         return labelOfValue("paginationStyle", value) || value;
       }
+      const scoped = scopedEnumLabel(sectionKey, propKey, value);
+      if (scoped) return scoped;
       return value;
     }
     if (Array.isArray(value)) {
@@ -4205,9 +4464,13 @@ ${contextLine}`);
         return value.map((v) => v == null ? "-" : String(v)).join(", ");
       }
       if (depth >= 1) return `(${value.length} 件)`;
-      return value.slice(0, 6).map((v) => valueToText(v, propKey, depth + 1)).join("\n");
+      return value.slice(0, 6).map((v) => valueToText(v, propKey, depth + 1, sectionKey)).join("\n");
     }
     if (typeof value === "object") {
+      if (propKey === "periodicReport") {
+        const summary = describePeriodicReport(value);
+        if (summary) return summary;
+      }
       if (value.entity && typeof value.entity === "object") {
         const base = formatEntityText(value.entity);
         const extras = [];
@@ -4221,11 +4484,11 @@ ${contextLine}`);
       if (value.type && typeof value.code !== "undefined" && Object.keys(value).length <= 4) {
         return formatEntityText(value);
       }
-      return summarizeObject(value, depth);
+      return summarizeObject(value, depth, sectionKey);
     }
     return String(value);
   }
-  function summarizeObject(obj, depth) {
+  function summarizeObject(obj, depth, sectionKey = "") {
     const lines = [];
     let n = 0;
     for (const key of SUMMARY_KEYS_PRIORITY) {
@@ -4234,7 +4497,7 @@ ${contextLine}`);
       const v = obj[key];
       if (v === null || v === void 0) continue;
       if (typeof v === "object" && depth >= 1) continue;
-      lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1)}`);
+      lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
       n++;
     }
     const remaining = Object.keys(obj).filter((k) => !SUMMARY_KEYS_PRIORITY.includes(k));
@@ -4243,10 +4506,10 @@ ${contextLine}`);
       const v = obj[key];
       if (v === null || v === void 0) continue;
       if (Array.isArray(v)) {
-        lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1)}`);
+        lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
         n++;
       } else if (typeof v !== "object") {
-        lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1)}`);
+        lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
         n++;
       }
     }
@@ -4265,8 +4528,8 @@ ${contextLine}`);
     if (!tokens.length) return {};
     const ctx = {};
     if (sectionKey === "customizeSettings" && tokens.length >= 2) {
-      if (typeof tokens[1] === "string") ctx.platform = tokens[1];
-      if (typeof tokens[2] === "string") ctx.kind = tokens[2];
+      if (tokens[1] === "desktop" || tokens[1] === "mobile") ctx.platform = tokens[1];
+      if (ctx.platform && (tokens[2] === "js" || tokens[2] === "css")) ctx.kind = tokens[2];
     }
     const namedMaps = {
       viewSettings: "views",
@@ -4295,6 +4558,12 @@ ${contextLine}`);
     for (let i = tokens.length - 1; i >= 1; i--) {
       if (typeof tokens[i] === "string") {
         ctx.leafKey = tokens[i];
+        for (let j = i - 1; j >= 1; j--) {
+          if (typeof tokens[j] === "string") {
+            ctx.parentKey = tokens[j];
+            break;
+          }
+        }
         break;
       }
     }
@@ -4354,6 +4623,9 @@ ${contextLine}`);
     if (!chips.length && ctx.arrayBucketKey && typeof ctx.arrayIndex === "number") {
       chips.push({ label: `${labelOfProp(ctx.arrayBucketKey)} #${ctx.arrayIndex + 1}`, muted: true });
     }
+    if (!chips.length && ctx.parentKey && ctx.parentKey !== ctx.leafKey && ctx.parentKey !== ctx.arrayBucketKey && PROP_LABELS[ctx.parentKey]) {
+      chips.push({ label: labelOfProp(ctx.parentKey), muted: true });
+    }
     return chips;
   }
   function decodeRow(row) {
@@ -4365,8 +4637,9 @@ ${contextLine}`);
     const propLabel = leaf ? labelOfProp(leaf) : "";
     const propIcon = leaf ? iconOfProp(leaf) : "";
     const propKey = leaf || ctx.arrayBucketKey || "";
-    const beforeText = row.type === "added" ? "（なし）" : valueToText(row.left, propKey);
-    const afterText = row.type === "removed" ? "（なし）" : valueToText(row.right, propKey);
+    const sectionKey = String(row.sectionKey || "");
+    const beforeText = row.type === "added" ? "（なし）" : valueToText(row.left, propKey, 0, sectionKey);
+    const afterText = row.type === "removed" ? "（なし）" : valueToText(row.right, propKey, 0, sectionKey);
     const oneLineSummary = buildOneLineSummary(row, propLabel, beforeText, afterText);
     const searchableTokens = [
       sect.label,
@@ -4398,11 +4671,12 @@ ${contextLine}`);
     if (row.type === "same") return propLabel ? `${propLabel}: 同一` : "同一";
     return propLabel ? `${propLabel}: ${shortLeft} → ${shortRight}` : `${shortLeft} → ${shortRight}`;
   }
-  var SEMANTIC_SECTIONS, SUMMARY_KEYS_PRIORITY;
+  var SEMANTIC_SECTIONS, TYPE_SCOPE_BY_SECTION, SCOPED_ENUM_SECTIONS, SUMMARY_KEYS_PRIORITY;
   var init_path_decoder = __esm({
     "src/diff/path-decoder.ts"() {
       "use strict";
       init_label_dict();
+      init_kintone_enums();
       SEMANTIC_SECTIONS = /* @__PURE__ */ new Set([
         "appAcl",
         "fieldAcl",
@@ -4421,6 +4695,26 @@ ${contextLine}`);
         "formSettings",
         "categories"
       ]);
+      TYPE_SCOPE_BY_SECTION = {
+        processSettings: "assignee.type",
+        appSettings: "icon.type",
+        reportSettings: "aggregation.type",
+        customizeSettings: "resource.type"
+      };
+      SCOPED_ENUM_SECTIONS = {
+        builtinType: ["viewSettings"],
+        device: ["viewSettings"],
+        chartMode: ["reportSettings"],
+        scope: ["customizeSettings"],
+        theme: ["appSettings"],
+        selectionMode: ["appSettings"],
+        roundingMode: ["appSettings"],
+        per: ["reportSettings"],
+        by: ["reportSettings"],
+        order: ["reportSettings"],
+        every: ["reportSettings"],
+        dayOfWeek: ["reportSettings"]
+      };
       SUMMARY_KEYS_PRIORITY = [
         "name",
         "label",
@@ -10978,167 +11272,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   init_enrich();
   init_path_decoder();
   init_engine();
-
-  // src/kintone-enums.ts
-  var FIELD_TYPE_JP = {
-    SINGLE_LINE_TEXT: "文字列(1行)",
-    MULTI_LINE_TEXT: "文字列(複数行)",
-    RICH_TEXT: "リッチエディター",
-    NUMBER: "数値",
-    CALC: "計算",
-    CHECK_BOX: "チェックボックス",
-    RADIO_BUTTON: "ラジオボタン",
-    DROP_DOWN: "ドロップダウン",
-    MULTI_SELECT: "複数選択",
-    DATE: "日付",
-    TIME: "時刻",
-    DATETIME: "日時",
-    LINK: "リンク",
-    FILE: "添付ファイル",
-    USER_SELECT: "ユーザー選択",
-    ORGANIZATION_SELECT: "組織選択",
-    GROUP_SELECT: "グループ選択",
-    CATEGORY: "カテゴリー",
-    STATUS: "ステータス",
-    STATUS_ASSIGNEE: "作業者",
-    SUBTABLE: "テーブル",
-    REFERENCE_TABLE: "関連レコード一覧",
-    RECORD_NUMBER: "レコード番号",
-    CREATOR: "作成者",
-    CREATED_TIME: "作成日時",
-    MODIFIER: "更新者",
-    UPDATED_TIME: "更新日時",
-    SPACER: "スペース",
-    HR: "罫線",
-    LABEL: "ラベル",
-    GROUP: "グループ",
-    LOOKUP: "ルックアップ"
-  };
-  var ENTITY_TYPE_JP = {
-    USER: "ユーザー",
-    GROUP: "グループ",
-    ORGANIZATION: "組織",
-    FIELD_ENTITY: "フィールド値",
-    CREATOR: "作成者",
-    MODIFIER: "更新者",
-    LOGIN_USER: "ログインユーザー",
-    ALL: "全員",
-    CUSTOM_FIELD: "カスタムフィールド"
-  };
-  var VIEW_TYPE_JP = {
-    LIST: "表形式",
-    CALENDAR: "カレンダー形式",
-    CUSTOM: "カスタマイズ"
-  };
-  var VIEW_BUILTIN_TYPE_JP = {
-    ASSIGNEE: "作業者ビュー"
-  };
-  var PAGINATION_TYPE_JP = {
-    ROW: "行ページャ",
-    PAGE: "ページ番号"
-  };
-  var CHART_TYPE_JP = {
-    BAR: "横棒グラフ",
-    COLUMN: "縦棒グラフ",
-    LINE: "折れ線グラフ",
-    PIE: "円グラフ",
-    PIVOT_TABLE: "クロス集計表",
-    TABLE: "表",
-    AREA: "面グラフ",
-    SPLINE: "曲線グラフ",
-    SPLINE_AREA: "曲線面グラフ",
-    SCATTER: "散布図"
-  };
-  var CHART_MODE_JP = {
-    NORMAL: "通常",
-    STACKED: "積み上げ",
-    PERCENTAGE: "100%積み上げ"
-  };
-  var AGGREGATION_TYPE_JP = {
-    COUNT: "レコード数",
-    SUM: "合計",
-    AVG: "平均",
-    MAX: "最大値",
-    MIN: "最小値"
-  };
-  var GROUP_PER_JP = {
-    YEAR: "年",
-    QUARTER: "四半期",
-    MONTH: "月",
-    WEEK: "週",
-    DAY: "日",
-    HOUR: "時",
-    MINUTE: "分"
-  };
-  var PROCESS_ASSIGNEE_TYPE_JP = {
-    ONE: "候補から作業者を1人選ぶ",
-    ANY: "候補のうち誰か1人が作業する",
-    ANYONE: "候補のうち誰か1人が作業する",
-    ALL: "候補の全員が作業する"
-  };
-  var NOTIFICATION_TIMING_JP = {
-    CREATION: "レコード作成時",
-    DAYS_OF_WEEK: "曜日指定",
-    TIME: "時刻指定",
-    WEEKLY: "毎週",
-    MONTHLY: "毎月"
-  };
-  var RESOURCE_TYPE_JP = {
-    URL: "URL指定",
-    FILE: "ファイル指定"
-  };
-  var CUSTOMIZE_SCOPE_JP = {
-    ALL: "全ユーザー",
-    ADMIN: "管理者のみ",
-    NONE: "無効"
-  };
-  var ICON_TYPE_JP = {
-    PRESET: "プリセット",
-    FILE: "アップロードファイル"
-  };
-  var WEBHOOK_EVENT_JP = {
-    ADD_RECORD: "レコード追加",
-    UPDATE_RECORD: "レコード編集",
-    DELETE_RECORD: "レコード削除",
-    UPDATE_STATUS: "ステータス変更",
-    ADD_COMMENT: "コメント追加",
-    DELETE_COMMENT: "コメント削除"
-  };
-  var NUMBER_FORMAT_JP = {
-    NUMBER: "数値",
-    NUMBER_DIGIT: "数値（桁区切り）",
-    PERCENT: "パーセント",
-    CURRENCY: "通貨",
-    DATE: "日付",
-    TIME: "時刻",
-    DATETIME: "日時",
-    HOUR_MINUTE: "時:分",
-    HOUR_MINUTE_SECOND: "時:分:秒"
-  };
-  var ALIGN_JP = {
-    HORIZONTAL: "横並び",
-    VERTICAL: "縦並び"
-  };
-  var UNIT_POSITION_JP = {
-    BEFORE: "前につける",
-    AFTER: "後につける"
-  };
-  var LINK_PROTOCOL_JP = {
-    WEB: "Webサイトのアドレス",
-    CALL: "電話番号",
-    MAIL: "メールアドレス"
-  };
-  var ALL_ENUM_LABELS = (() => {
-    const out = {};
-    Object.assign(out, ENTITY_TYPE_JP, FIELD_TYPE_JP);
-    Object.assign(out, VIEW_TYPE_JP, VIEW_BUILTIN_TYPE_JP, PAGINATION_TYPE_JP);
-    Object.assign(out, CHART_TYPE_JP, CHART_MODE_JP, AGGREGATION_TYPE_JP, GROUP_PER_JP);
-    Object.assign(out, PROCESS_ASSIGNEE_TYPE_JP, NOTIFICATION_TIMING_JP);
-    Object.assign(out, RESOURCE_TYPE_JP, CUSTOMIZE_SCOPE_JP, ICON_TYPE_JP);
-    Object.assign(out, WEBHOOK_EVENT_JP, NUMBER_FORMAT_JP);
-    Object.assign(out, ALIGN_JP, UNIT_POSITION_JP, LINK_PROTOCOL_JP);
-    return out;
-  })();
+  init_kintone_enums();
 
   // src/archive/stored-zip.ts
   var CLASSIC_ZIP_MAX_ENTRIES = 65535;
@@ -11777,6 +11911,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     relatedField: "参照するアプリのフィールド",
     app: "参照するアプリID",
     thumbnailSize: "サムネイルの大きさ",
+    openGroup: "グループの初期表示",
     index: "並び順"
   };
   var FIELD_TYPE_LABELS = {
@@ -12160,6 +12295,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function fieldValueOnlyExistsLabel(_side, _sourceBundle, _targetBundle) {
     return "（存在しません）";
   }
+  var FIELD_SETTING_ENUM_LABELS = {
+    unitPosition: UNIT_POSITION_JP,
+    protocol: LINK_PROTOCOL_JP,
+    align: ALIGN_JP,
+    format: NUMBER_FORMAT_JP,
+    roundingMode: ROUNDING_MODE_JP
+  };
   function humanizeFieldSettingValue(value, settingKey) {
     const leafKey = settingKey.split(".").filter(Boolean).at(-1) || "";
     if (value === void 0) return "（未設定）";
@@ -12170,13 +12312,17 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         unique: ["重複を許可", "重複を禁止"],
         noLabel: ["フィールド名を表示する", "フィールド名を表示しない"],
         hideExpression: ["計算式を表示する", "計算式を表示しない"],
-        defaultNowValue: ["現在日時を使わない", "現在日時を使う"]
+        defaultNowValue: ["現在日時を使わない", "現在日時を使う"],
+        openGroup: ["グループを閉じた状態で表示", "グループを開いた状態で表示"]
       };
       return labels[leafKey]?.[value ? 1 : 0] || (value ? "はい" : "いいえ");
     }
     if (typeof value === "string") {
       if (value === "") return "（空欄）";
       if (leafKey === "type") return FIELD_TYPE_LABELS[value] || value;
+      const enumMap = FIELD_SETTING_ENUM_LABELS[leafKey];
+      const enumLabel = enumMap?.[value.trim().toUpperCase()];
+      if (enumLabel) return enumLabel;
       return xlsxDiffValuePreview(value, value.length);
     }
     if (typeof value === "number" || typeof value === "bigint") return String(value);
@@ -12259,6 +12405,19 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const value = side === "source" ? row.left : row.right;
     if (value && typeof value === "object") {
       return summarizeListComplexValue(row, side, value);
+    }
+    const fieldInfo = extractFieldPathInfo(String(row.path || ""));
+    if (fieldInfo) {
+      const setting = fieldSettingIdentity(fieldInfo);
+      if (setting.settingKey !== "(field)") {
+        const humanized = humanizeFieldSettingValue(value, setting.settingKey);
+        if (humanized) return humanized;
+      }
+    } else if (value != null) {
+      const decoded = decodedListValue(row, side);
+      if (decoded && decoded !== String(value)) {
+        return xlsxDiffValuePreview(decoded, decoded.length);
+      }
     }
     if (typeof value === "string") return xlsxDiffValuePreview(humanizeListScalar(value), value.length);
     return humanizeListScalar(value);
@@ -13800,7 +13959,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
   }
   function customerViewItemParts(row) {
     const path = String(row.path || "");
-    const match = /^viewSettings\.views\.(.+?)\.(fields(?:\[(\d+)\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|title|html|index)$/.exec(path);
+    const match = /^viewSettings\.views\.(.+?)\.(fields(?:\[(\d+)\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/.exec(path);
     if (!match) {
       const wholeView = /^viewSettings\.views\.(.+)$/.exec(path);
       if (!wholeView) return null;
@@ -13820,6 +13979,8 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       paginationStyle: "ページ送りの形式",
       pager: "ページ送り",
       builtinType: "標準一覧の種類",
+      device: "表示するデバイス",
+      date: "日付の基準フィールド",
       title: "見出し",
       html: "カスタマイズ内容",
       index: "一覧の並び順"
@@ -14147,16 +14308,8 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     "actionSettings",
     "categories"
   ]);
-  var CUSTOMER_VIEW_BUILTIN_LABELS = {
-    ...VIEW_BUILTIN_TYPE_JP,
-    UNDONE: "未完了レコード",
-    ACTIVE_BY_USER: "自分が処理すべきレコード",
-    RECORDS_OF_USER: "自分が関わるレコード"
-  };
-  var CUSTOMER_VIEW_DEVICE_LABELS = {
-    ANY: "PC・モバイル両方",
-    DESKTOP: "PC版のみ"
-  };
+  var CUSTOMER_VIEW_BUILTIN_LABELS = VIEW_BUILTIN_TYPE_JP;
+  var CUSTOMER_VIEW_DEVICE_LABELS = VIEW_DEVICE_JP;
   var CUSTOMER_PAGINATION_LABELS = {
     ...PAGINATION_TYPE_JP,
     PAGER: "ページ送り",
@@ -14168,27 +14321,9 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     READ: "閲覧のみ",
     NONE: "アクセス不可"
   };
-  var CUSTOMER_APP_THEME_LABELS = {
-    WHITE: "ホワイト",
-    RED: "レッド",
-    BLUE: "ブルー",
-    GREEN: "グリーン",
-    YELLOW: "イエロー",
-    BLACK: "ブラック",
-    CLIPBOARD: "クリップボード",
-    BINDER: "バインダー",
-    PENCIL: "ペンシル",
-    CLIPS: "クリップ"
-  };
-  var CUSTOMER_TITLE_SELECTION_LABELS = {
-    AUTO: "自動選択",
-    MANUAL: "手動指定"
-  };
-  var CUSTOMER_ROUNDING_MODE_LABELS = {
-    HALF_EVEN: "四捨五入（偶数丸め）",
-    UP: "切り上げ",
-    DOWN: "切り捨て"
-  };
+  var CUSTOMER_APP_THEME_LABELS = APP_THEME_JP;
+  var CUSTOMER_TITLE_SELECTION_LABELS = TITLE_SELECTION_JP;
+  var CUSTOMER_ROUNDING_MODE_LABELS = ROUNDING_MODE_JP;
   function customerMapValue(map, value) {
     const original = String(value ?? "");
     const label = map[original.trim().toUpperCase()];
@@ -14244,6 +14379,10 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       if (leaf === "chartMode") return customerMapValue(CHART_MODE_JP, value);
       if (/\.aggregations\[\d+\]\.type$/.test(path)) return customerMapValue(AGGREGATION_TYPE_JP, value);
       if (/\.groups\[\d+\]\.per$/.test(path)) return customerMapValue(GROUP_PER_JP, value);
+      if (/\.sorts\[\d+\]\.by$/.test(path)) return customerMapValue(REPORT_SORT_BY_JP, value);
+      if (/\.sorts\[\d+\]\.order$/.test(path)) return customerMapValue(REPORT_SORT_ORDER_JP, value);
+      if (leaf === "every") return customerMapValue(PERIODIC_REPORT_EVERY_JP, value);
+      if (leaf === "dayOfWeek") return customerMapValue(DAY_OF_WEEK_JP, value);
     }
     if (sectionKey === "processSettings" && /\.assignee\.type$/.test(path)) {
       return customerMapValue(PROCESS_ASSIGNEE_TYPE_JP, value);
@@ -14254,6 +14393,9 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     }
     if (sectionKey === "reminderNotifications" && leaf === "timing") {
       return customerMapValue(NOTIFICATION_TIMING_JP, value);
+    }
+    if (sectionKey === "reminderNotifications" && (leaf === "daysLater" || leaf === "hoursLater")) {
+      return describeReminderOffset(leaf === "daysLater" ? "days" : "hours", value);
     }
     if (sectionKey === "appSettings") {
       if (leaf === "theme") return customerMapValue(CUSTOMER_APP_THEME_LABELS, value);

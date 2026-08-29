@@ -1117,10 +1117,18 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-enums.ts
+  var init_kintone_enums = __esm({
+    "src/kintone-enums.ts"() {
+      "use strict";
+    }
+  });
+
   // src/diff/label-dict.ts
   var init_label_dict = __esm({
     "src/diff/label-dict.ts"() {
       "use strict";
+      init_kintone_enums();
     }
   });
 
@@ -1129,6 +1137,7 @@ ${contextLine}`);
     "src/diff/path-decoder.ts"() {
       "use strict";
       init_label_dict();
+      init_kintone_enums();
     }
   });
 
