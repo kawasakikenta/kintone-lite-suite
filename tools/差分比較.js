@@ -14563,11 +14563,14 @@ ${targetName}`, "", ""],
     cellStyles[2][1] = incomplete ? "kpiWarning" : counts.actual ? "kpiChange" : "kpiGood";
     cellStyles[2][2] = "summaryLabel";
     cellStyles[2][3] = incomplete ? "warning" : "info";
-    if (counts.actual) cellStyles[2][5] = "actionLink";
+    cellStyles[2][4] = incomplete ? "warning" : "info";
+    cellStyles[2][5] = counts.actual ? "actionLink" : "info";
     cellStyles[3][0] = "summaryLabel";
     cellStyles[3][1] = "summaryValue";
     cellStyles[3][2] = "summaryLabel";
     cellStyles[3][3] = "info";
+    cellStyles[3][4] = "info";
+    cellStyles[3][5] = "info";
     cellStyles[4] = [
       "changeAdded",
       "metricValueAdded",
