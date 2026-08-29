@@ -8,7 +8,12 @@ import {
 } from '../archive/stored-zip.js';
 import { extractAppNameFromBundle } from '../utils.js';
 import { hasIncompleteActualDiffTruncation } from './engine.js';
-import { buildXlsxBlob, type XlsxCellStyle, type XlsxSheet } from './xlsx-builder.js';
+import {
+  buildXlsxBlob,
+  makeExcelCellTextVisible,
+  type XlsxCellStyle,
+  type XlsxSheet
+} from './xlsx-builder.js';
 import {
   buildDiffXlsxExport,
   customerIncompleteScopeSuffix,
@@ -277,21 +282,69 @@ function failedSummaryRow(
 }
 
 function summaryStatusStyle(status: DiffXlsxBatchSummaryRow['status']): XlsxCellStyle {
-  if (status === '差分なし') return 'kpiGood';
-  if (status === '差分あり') return 'kpiChange';
-  if (status === '差分は確認できず') return 'kpiWarning';
-  return 'kpiDanger';
+  if (status === '差分なし') return 'statusGood';
+  if (status === '差分あり') return 'statusDifference';
+  if (status === '差分は確認できず') return 'statusIncomplete';
+  return 'statusError';
 }
 
 function summaryCoverageStyle(coverage: DiffXlsxBatchSummaryRow['coverage']): XlsxCellStyle {
-  if (coverage === '全範囲を取得') return 'kpiGood';
-  if (coverage === '一部未取得') return 'kpiWarning';
-  return 'kpiDanger';
+  if (coverage === '全範囲を取得') return 'statusGood';
+  if (coverage === '一部未取得') return 'statusIncomplete';
+  return 'diffAbsent';
+}
+
+function summaryPairNameStyle(pairNameStatus: DiffXlsxBatchSummaryRow['pairNameStatus']): XlsxCellStyle {
+  if (pairNameStatus === '一致') return 'statusGood';
+  if (pairNameStatus === '名称が異なります') return 'statusIncomplete';
+  return 'statusError';
+}
+
+function summaryCoverageDetailStyle(
+  summary: DiffXlsxBatchSummaryRow,
+  alternate: boolean
+): XlsxCellStyle {
+  if (summary.status === 'Excel生成失敗') return 'warning';
+  if (summary.coverage === '一部未取得') return 'review';
+  return alternate ? 'zebra' : 'normal';
 }
 
 const BATCH_SUMMARY_COLUMN_COUNT = 13;
 /** BATCH_SUMMARY_COLUMN_COUNT 列目の列記号。見出しの結合範囲に使う。 */
 const BATCH_SUMMARY_COLUMN_LAST = 'M';
+const BATCH_SUMMARY_COLUMN_WIDTHS = [7, 28, 28, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44];
+const BATCH_SUMMARY_DATA_ROW_HEIGHT = 32;
+const BATCH_SUMMARY_DATA_ROW_MAX_HEIGHT = 220;
+const BATCH_SUMMARY_DATA_LINE_HEIGHT = 17;
+
+function batchSummaryVisualTextWidth(value: unknown): number {
+  let width = 0;
+  for (const char of String(value ?? '')) {
+    const codePoint = char.codePointAt(0) || 0;
+    if (char === '\t') width += 4;
+    // ASCII・Latin-1 と半角カナは1、それ以外の全角文字や絵文字は2として見積もる。
+    else if (codePoint <= 0xff || (codePoint >= 0xff61 && codePoint <= 0xff9f)) width += 1;
+    else width += 2;
+  }
+  return width;
+}
+
+function batchSummaryWrappedLines(value: unknown, columnWidth: number): number {
+  const capacity = Math.max(8, Math.floor(columnWidth - 2));
+  return makeExcelCellTextVisible(value).split(/\r?\n/).reduce((total, line) => (
+    total + Math.max(1, Math.ceil(batchSummaryVisualTextWidth(line) / capacity))
+  ), 0);
+}
+
+function batchSummaryDataRowHeight(row: readonly unknown[]): number {
+  const maxLines = row.reduce<number>((max, value, columnIndex) => (
+    Math.max(max, batchSummaryWrappedLines(value, BATCH_SUMMARY_COLUMN_WIDTHS[columnIndex] || 10))
+  ), 1);
+  return Math.min(
+    BATCH_SUMMARY_DATA_ROW_MAX_HEIGHT,
+    BATCH_SUMMARY_DATA_ROW_HEIGHT + Math.max(0, maxLines - 1) * BATCH_SUMMARY_DATA_LINE_HEIGHT
+  );
+}
 
 function buildBatchSummaryOverview(summaryRows: readonly DiffXlsxBatchSummaryRow[]): string {
   const withDiff = summaryRows.filter((row) => row.status === '差分あり').length;
@@ -341,20 +394,23 @@ function buildBatchSummaryBlob(summaryRows: readonly DiffXlsxBatchSummaryRow[]):
   cellStyles[1] = ['subtitle'];
   for (let index = headerRowIndex + 1; index < rows.length; index += 1) {
     const summary = summaryRows[index - headerRowIndex - 1];
+    const alternate = (index - headerRowIndex - 1) % 2 === 1;
+    const neutralStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
+    const neutralCenterStyle: XlsxCellStyle = alternate ? 'zebraCenter' : 'center';
     cellStyles[index] = [
-      'center',
-      'normal',
-      'normal',
+      neutralCenterStyle,
+      neutralStyle,
+      neutralStyle,
       summaryStatusStyle(summary.status),
       summaryCoverageStyle(summary.coverage),
-      summary.coverageDetail ? 'warning' : 'normal',
-      'center',
-      'center',
-      'center',
-      'center',
-      'center',
-      summary.pairNameStatus === '一致' ? 'center' : 'warning',
-      'normal'
+      summaryCoverageDetailStyle(summary, alternate),
+      neutralCenterStyle,
+      neutralCenterStyle,
+      neutralCenterStyle,
+      neutralCenterStyle,
+      neutralCenterStyle,
+      summaryPairNameStyle(summary.pairNameStatus),
+      neutralStyle
     ];
   }
   return buildXlsxBlob([{
@@ -364,13 +420,13 @@ function buildBatchSummaryBlob(summaryRows: readonly DiffXlsxBatchSummaryRow[]):
     freezeRows: headerRowIndex + 1,
     freezeColumns: 1,
     autoFilter: true,
-    colWidths: [7, 28, 28, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44],
+    colWidths: BATCH_SUMMARY_COLUMN_WIDTHS,
     rowStyles: rows.map(() => 'normal'),
     cellStyles,
     rowHeights: rows.map((_, index) => {
       if (index === 0) return 34;
       if (index === 1) return 28;
-      return index === headerRowIndex ? 32 : 38;
+      return index === headerRowIndex ? 32 : batchSummaryDataRowHeight(rows[index]);
     }),
     styledEmptyCellsAsBlank: true,
     materializeEmptyCellsFromRow: headerRowIndex + 1,

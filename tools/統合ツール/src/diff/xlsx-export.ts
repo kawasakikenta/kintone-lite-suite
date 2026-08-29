@@ -48,6 +48,7 @@ import {
 } from '../kintone-enums.js';
 import {
   buildXlsxBlob,
+  makeExcelCellTextVisible,
   type XlsxCellStyle,
   type XlsxRowStyle,
   type XlsxSheet
@@ -1003,7 +1004,7 @@ function visualTextWidth(value: string): number {
 
 function estimatedWrappedLines(value: unknown, columnWidth: number): number {
   const capacity = Math.max(8, Math.floor(columnWidth - 2));
-  return String(value || '').split(/\r?\n/).reduce((total, line) => (
+  return makeExcelCellTextVisible(value).split(/\r?\n/).reduce((total, line) => (
     total + Math.max(1, Math.ceil(visualTextWidth(line) / capacity))
   ), 0);
 }
@@ -1016,12 +1017,28 @@ function readableDiffRowHeight(cells: DiffRowHeightCell[], maxHeight = 110): num
   return Math.min(maxHeight, 26 + Math.max(0, maxLines - 1) * 14);
 }
 
+const READABLE_CUSTOMER_ROW_HARD_MAX_HEIGHT = 395;
+
 function readableCustomerRowHeight(cells: DiffRowHeightCell[], maxHeight = 96): number {
   const maxLines = cells.reduce((max, cell) => (
     Math.max(max, estimatedWrappedLines(cell.value, cell.width))
   ), 1);
   // 実Excel（Meiryo 11pt）のAutoFitに合わせ、提出版は本文1行あたり17ptを確保する。
-  return Math.min(96, maxHeight, 28 + Math.max(0, maxLines - 1) * 17);
+  return Math.min(
+    READABLE_CUSTOMER_ROW_HARD_MAX_HEIGHT,
+    maxHeight,
+    28 + Math.max(0, maxLines - 1) * 17
+  );
+}
+
+const READABLE_HEADER_ROW_MAX_HEIGHT = 120;
+
+function readableHeaderRowHeight(
+  cells: DiffRowHeightCell[],
+  minimumHeight: number,
+  maxHeight = READABLE_HEADER_ROW_MAX_HEIGHT
+): number {
+  return Math.max(minimumHeight, readableCustomerRowHeight(cells, maxHeight));
 }
 
 function summarizeRows(rows: DiffXlsxRow[]) {
@@ -1395,7 +1412,13 @@ function buildSummarySheet(
   }
 
   const rowStyles: XlsxRowStyle[] = sheetRows.map(() => 'normal');
-  const rowHeights: number[] = [32, 24, 0, 0, 44];
+  const rowHeights: number[] = [
+    32,
+    readableHeaderRowHeight([{ value: comparisonBanner, width: 154 }], 24),
+    0,
+    0,
+    44
+  ];
   rowHeights[overviewRow.normalization] = readableDiffRowHeight([
     { value: sheetRows[overviewRow.normalization][1], width: 54 },
     { value: sheetRows[overviewRow.normalization][3], width: 54 }
@@ -1413,9 +1436,9 @@ function buildSummarySheet(
   cellStyles[overviewRow.guideBand][0] = 'info';
   cellStyles[overviewRow.verdict] = [
     'sectionHeader',
-    incomplete ? 'kpiDanger' : 'kpiGood',
+    incomplete ? 'kpiStatusWarning' : counts.actual > 0 ? 'kpiChange' : 'kpiStatusGood',
     'sectionHeader',
-    incomplete ? 'kpiDanger' : 'kpiGood'
+    incomplete ? 'statusIncomplete' : 'statusGood'
   ];
   for (const rowIndex of [
     overviewRow.total,
@@ -1594,7 +1617,10 @@ function buildListSheet(
   groupCellStyles[8] = 'sectionHeader';
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], groupCellStyles, []];
   cellStyles[2][5] = 'headerDivider';
-  const rowHeights: number[] = [44, 24, 42];
+  const rowHeights: number[] = [44, 24, readableHeaderRowHeight([
+    { value: headers[5], width: 42 },
+    { value: headers[6], width: 42 }
+  ], 42)];
   const seenIds = new Map<string, number>();
   const fieldDetailByRowIndex = new Map((fieldModel?.details || []).map((detail) => [detail.rowIndex, detail]));
   for (const [rowIndex, row] of rows.entries()) {
@@ -1640,8 +1666,8 @@ function buildListSheet(
     styles[6] = 'target';
     styles[7] = 'info';
     if (reviewable) {
-      styles[8] = 'review';
-      styles[9] = 'review';
+      styles[8] = 'reviewChoice';
+      styles[9] = 'reviewChoice';
       styles[10] = 'review';
       styles[11] = 'review';
     } else {
@@ -1735,7 +1761,10 @@ function buildSectionSheet(
   groupCellStyles[7] = 'info';
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], groupCellStyles, []];
   cellStyles[2][5] = 'headerDivider';
-  const rowHeights: number[] = [44, 24, 42];
+  const rowHeights: number[] = [44, 24, readableHeaderRowHeight([
+    { value: headers[5], width: 42 },
+    { value: headers[6], width: 42 }
+  ], 42)];
   const seenIds = new Map<string, number>();
   for (const [rowIndex, row] of list.entries()) {
     const existence = rowExistenceLabel(row);
@@ -2019,7 +2048,10 @@ function buildFieldDetailSheet(
   groupCellStyles[9] = 'info';
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], groupCellStyles, []];
   cellStyles[2][6] = 'headerDivider';
-  const rowHeights: number[] = [44, 24, 42];
+  const rowHeights: number[] = [44, 24, readableHeaderRowHeight([
+    { value: headers[6], width: 44 },
+    { value: headers[7], width: 44 }
+  ], 42)];
   for (const detail of model.details) {
     const changeType = rowTypeLabel(detail.row);
     const existence = rowExistenceLabel(detail.row);
@@ -2093,6 +2125,10 @@ function buildFieldDetailSheet(
   };
 }
 
+function incompleteIssueStatusStyle(status: unknown): XlsxCellStyle {
+  return /取得失敗|取得できません/.test(String(status ?? '')) ? 'statusError' : 'statusIncomplete';
+}
+
 function buildIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
   const fetchIssues = ctx.fetchIssues || [];
   const partialIssues = ctx.partialIssues || [];
@@ -2144,7 +2180,9 @@ function buildIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
     rows,
     colWidths: [14, 22, 12, 72, 60],
     rowStyles: rows.map(() => 'normal'),
-    cellStyles: rows.map((_, index) => index === 0 ? ['info'] : index === 1 ? [] : ['warning']),
+    cellStyles: rows.map((row, index) => (
+      index === 0 ? ['info'] : index === 1 ? [] : [incompleteIssueStatusStyle(row[0])]
+    )),
     headerRow: 2,
     freezeRows: 2,
     freezeColumns: 2,
@@ -2381,8 +2419,10 @@ function customerPlainText(value: unknown, maxLength?: number): string {
     })
     .replace(/[\t\r\n ]+/g, ' ')
     .trim();
-  if (maxLength == null || decoded.length <= maxLength) return decoded;
-  return `${decoded.slice(0, Math.max(0, maxLength - 1))}…`;
+  if (maxLength == null) return decoded;
+  const characters = Array.from(decoded);
+  if (characters.length <= maxLength) return decoded;
+  return `${characters.slice(0, Math.max(0, maxLength - 1)).join('')}…`;
 }
 
 function customerRichText(value: unknown, maxLength?: number): string {
@@ -3811,12 +3851,16 @@ function buildCustomerSummarySheet(
   cellStyles[1][2] = 'directionArrow';
   cellStyles[1][3] = 'targetGroup';
   cellStyles[2][0] = 'summaryLabel';
-  cellStyles[2][1] = incomplete ? 'kpiWarning' : counts.actual ? 'kpiChange' : 'kpiGood';
+  cellStyles[2][1] = incomplete
+    ? 'kpiStatusWarning'
+    : counts.actual
+      ? 'kpiChange'
+      : 'kpiStatusGood';
   cellStyles[2][2] = 'summaryLabel';
-  cellStyles[2][3] = incomplete ? 'warning' : 'info';
+  cellStyles[2][3] = incomplete ? 'statusIncomplete' : 'statusGood';
   // 空欄セルも同じ塗りへそろえ、表の帯が白抜けしないようにする。
-  cellStyles[2][4] = incomplete ? 'warning' : 'info';
-  cellStyles[2][5] = counts.actual ? 'actionLink' : 'info';
+  cellStyles[2][4] = incomplete ? 'statusIncomplete' : 'statusGood';
+  cellStyles[2][5] = counts.actual ? 'actionLink' : incomplete ? 'statusIncomplete' : 'statusGood';
   cellStyles[3][0] = 'summaryLabel';
   cellStyles[3][1] = 'summaryValue';
   cellStyles[3][2] = 'summaryLabel';
@@ -3831,17 +3875,17 @@ function buildCustomerSummarySheet(
   cellStyles[5][0] = 'changeMoved';
   cellStyles[5][1] = 'metricValueMoved';
   cellStyles[5][2] = 'summaryLabel';
-  cellStyles[5][3] = 'info';
+  cellStyles[5][3] = 'zebraCenter';
   cellStyles[5][4] = 'summaryLabel';
-  cellStyles[5][5] = 'info';
+  cellStyles[5][5] = 'zebraCenter';
   cellStyles[6][0] = 'summaryLabel';
   cellStyles[6][1] = 'info';
   cellStyles[7][0] = 'summaryLabel';
   cellStyles[7][1] = 'info';
   cellStyles[7][2] = 'summaryLabel';
-  cellStyles[7][3] = 'info';
+  cellStyles[7][3] = 'zebraCenter';
   cellStyles[7][4] = 'summaryLabel';
-  cellStyles[7][5] = 'info';
+  cellStyles[7][5] = 'zebraCenter';
   if (redundantNoteRow >= 0) {
     cellStyles[redundantNoteRow][0] = 'summaryLabel';
     cellStyles[redundantNoteRow][1] = 'info';
@@ -3869,7 +3913,10 @@ function buildCustomerSummarySheet(
     materializeEmptyCellsFromRow: 3,
     rowHeights: rows.map((row, index) => {
       if (index === 0) return 42;
-      if (index === 1) return 42;
+      if (index === 1) return readableHeaderRowHeight([
+        { value: row[0], width: 46 },
+        { value: row[3], width: 60 }
+      ], 42);
       if (index === 2 || index === 3) return 34;
       if (index === 4 || index === 5) return 38;
       if (index === 6) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
@@ -3883,7 +3930,7 @@ function buildCustomerSummarySheet(
       return index === breakdownHeaderRow ? 32 : 26;
     }),
     merges: [
-      'A1:F1', 'A2:B2', 'D2:F2', 'B7:F7',
+      'A1:F1', 'A2:B2', 'D2:F2', 'D3:E3', 'B7:F7',
       ...(redundantNoteRow >= 0 ? [`B${redundantNoteRow + 1}:F${redundantNoteRow + 1}`] : []),
       ...(breakdownTitleRow >= 0 ? [`A${breakdownTitleRow + 1}:F${breakdownTitleRow + 1}`] : [])
     ],
@@ -3913,6 +3960,20 @@ function buildCustomerSummarySheet(
   };
 }
 
+function customerComparisonValueStyles(item: CustomerDiffItem): [XlsxCellStyle, XlsxCellStyle] {
+  const beforeStyle: XlsxCellStyle = item.rawBefore.state === '存在しません'
+    ? 'diffAbsent'
+    : item.rawBefore.state === '存在'
+      ? 'changeRemoved'
+      : 'diffBefore';
+  const afterStyle: XlsxCellStyle = item.rawAfter.state === '存在しません'
+    ? 'diffAbsent'
+    : item.rawAfter.state === '存在'
+      ? 'changeAdded'
+      : 'diffAfter';
+  return [beforeStyle, afterStyle];
+}
+
 function buildCustomerListSheet(
   ctx: DiffXlsxContext,
   allItems: CustomerDiffItem[],
@@ -3929,7 +3990,10 @@ function buildCustomerListSheet(
   const rows: (string | number | null)[][] = [headers];
   const rowStyles: XlsxRowStyle[] = ['normal'];
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[]];
-  const rowHeights: number[] = [46];
+  const rowHeights: number[] = [readableHeaderRowHeight([
+    { value: headers[5], width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH },
+    { value: headers[6], width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH }
+  ], 46)];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
     '追加': 'changeAdded',
     '削除': 'changeRemoved',
@@ -3945,10 +4009,12 @@ function buildCustomerListSheet(
     const emptyMessage = allItems.length
       ? '差分はありません（参考・再掲の差分のみのため、機能別シートを確認してください）'
       : '差分はありません';
-    rows.push(['', '', '', emptyMessage, '', '', '']);
+    rows.push([emptyMessage, '', '', '', '', '', '']);
     rowStyles.push('normal');
-    cellStyles.push(Array.from({ length: headers.length }, () => 'info'));
-    rowHeights.push(32);
+    cellStyles.push(Array.from({ length: headers.length }, () => 'kpiGood'));
+    rowHeights.push(Math.max(40, readableCustomerRowHeight([
+      { value: emptyMessage, width: 129 }
+    ], 120)));
   }
   items.forEach((item, index) => {
     const changeSummary = item.changeType === '追加'
@@ -3970,13 +4036,14 @@ function buildCustomerListSheet(
     rowStyles.push('normal');
     const styles: Array<XlsxCellStyle | undefined> = [];
     const alternate = index % 2 === 1;
-    styles[0] = 'hyperlink';
+    const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
+    styles[0] = 'actionLink';
     styles[1] = changeStyles[item.changeType];
     styles[2] = 'actionLink';
     styles[3] = alternate ? 'zebra' : 'normal';
     styles[4] = alternate ? 'zebra' : 'normal';
-    styles[5] = item.changeType === '追加' ? 'diffAbsent' : 'diffBefore';
-    styles[6] = item.changeType === '削除' ? 'diffAbsent' : 'diffAfter';
+    styles[5] = beforeStyle;
+    styles[6] = afterStyle;
     cellStyles.push(styles);
     internalHyperlinks.push({
       ref: `A${index + 2}`,
@@ -4010,10 +4077,11 @@ function buildCustomerListSheet(
     headerRow: 1,
     autoFilter: items.length > 0,
     freezeRows: 1,
-    freezeColumns: 5,
+    freezeColumns: items.length > 0 ? 5 : undefined,
     rowHeights,
     styledEmptyCellsAsBlank: true,
     materializeEmptyCellsFromRow: 1,
+    merges: items.length ? undefined : ['A2:G2'],
     internalHyperlinks,
     showGridLines: false,
     zoomScale: 95,
@@ -4022,7 +4090,7 @@ function buildCustomerListSheet(
       fitToWidth: 1,
       fitToHeight: 0,
       repeatRows: { from: 1, to: 1 },
-      repeatColumns: { from: 1, to: 5 },
+      repeatColumns: items.length > 0 ? { from: 1, to: 5 } : undefined,
       footer: '&L変更一覧&Rページ &P / &N'
     }
   };
@@ -4048,8 +4116,10 @@ function buildCustomerGenericApiDiffSheet(ctx: DiffXlsxContext, group: CustomerA
     headers
   ];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
-  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[redundantNote ? 'warning' : 'info'], []];
-  const rowHeights: number[] = [redundantNote ? 60 : 42, 44];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[redundantNote ? 'warning' : 'subtitle'], []];
+  const rowHeights: number[] = [readableHeaderRowHeight([
+    { value: title, width: 124 }
+  ], redundantNote ? 60 : 42), 44];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
     '追加': 'changeAdded',
@@ -4074,13 +4144,14 @@ function buildCustomerGenericApiDiffSheet(ctx: DiffXlsxContext, group: CustomerA
       item.after
     ]);
     rowStyles.push('normal');
+    const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
     cellStyles.push([
-      'hyperlink',
+      'actionLink',
       changeStyles[item.changeType],
       startsTarget ? 'category' : baseStyle,
       baseStyle,
-      item.changeType === '追加' ? 'diffAbsent' : 'diffBefore',
-      item.changeType === '削除' ? 'diffAbsent' : 'diffAfter'
+      beforeStyle,
+      afterStyle
     ]);
     rowHeights.push(readableCustomerRowHeight([
       { value: target, width: 30 },
@@ -4143,14 +4214,17 @@ function buildCustomerViewDiffSheet(
       || left.index - right.index);
   if (!viewItems.length) return null;
 
+  const title = customerFeatureSheetTitle(ctx, definition);
   const headers = ['No.', '変更区分', '一覧名', '差分プロパティ', '変更前', '変更後'];
   const rows: (string | number | null)[][] = [
-    [customerFeatureSheetTitle(ctx, definition), '', '', '', '', ''],
+    [title, '', '', '', '', ''],
     headers
   ];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
-  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], []];
-  const rowHeights: number[] = [42, 44];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['subtitle'], []];
+  const rowHeights: number[] = [readableHeaderRowHeight([
+    { value: title, width: 130 }
+  ], 42), 44];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
     '追加': 'changeAdded',
@@ -4176,13 +4250,14 @@ function buildCustomerViewDiffSheet(
       item.after
     ]);
     rowStyles.push('normal');
+    const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
     cellStyles.push([
-      'hyperlink',
+      'actionLink',
       changeStyles[item.changeType],
       startsTarget ? 'category' : baseStyle,
       baseStyle,
-      item.changeType === '追加' ? 'diffAbsent' : 'diffBefore',
-      item.changeType === '削除' ? 'diffAbsent' : 'diffAfter'
+      beforeStyle,
+      afterStyle
     ]);
     rowHeights.push(readableCustomerRowHeight([
       { value: viewName, width: 28 },
@@ -4239,14 +4314,17 @@ function buildCustomerActionDiffSheet(
     });
   if (!actionItems.length) return null;
 
+  const title = customerFeatureSheetTitle(ctx, definition);
   const headers = ['No.', '変更区分', 'アクション種別', 'アクション名', '差分プロパティ', '変更前', '変更後'];
   const rows: (string | number | null)[][] = [
-    [customerFeatureSheetTitle(ctx, definition), '', '', '', '', '', ''],
+    [title, '', '', '', '', '', ''],
     headers
   ];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
-  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], []];
-  const rowHeights: number[] = [42, 44];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['subtitle'], []];
+  const rowHeights: number[] = [readableHeaderRowHeight([
+    { value: title, width: 145 }
+  ], 42), 44];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
     '追加': 'changeAdded',
@@ -4275,14 +4353,15 @@ function buildCustomerActionDiffSheet(
       item.after
     ]);
     rowStyles.push('normal');
+    const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
     cellStyles.push([
-      'hyperlink',
+      'actionLink',
       changeStyles[item.changeType],
       baseStyle,
       startsTarget ? 'category' : baseStyle,
       baseStyle,
-      item.changeType === '追加' ? 'diffAbsent' : 'diffBefore',
-      item.changeType === '削除' ? 'diffAbsent' : 'diffAfter'
+      beforeStyle,
+      afterStyle
     ]);
     rowHeights.push(readableCustomerRowHeight([
       { value: actionKind, width: 19 },
@@ -4334,18 +4413,21 @@ function buildCustomerFieldDiffSheet(
     .filter((item) => item.sectionKey === 'fieldSettings' && !!item.field);
   if (!fieldItems.length) return null;
 
+  const title = customerFeatureSheetTitle(ctx, definition);
   const headers = [
     'No.', '変更区分', '配置', 'フィールド名', 'フィールドコード',
     'フィールドの種類', '差分プロパティ', 'フィールド存在', '設定値存在',
     '変更前', '変更後'
   ];
   const rows: (string | number | null)[][] = [
-    [customerFeatureSheetTitle(ctx, definition), '', '', '', '', '', '', '', '', '', ''],
+    [title, '', '', '', '', '', '', '', '', '', ''],
     headers
   ];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
-  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], []];
-  const rowHeights: number[] = [42, 48];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['subtitle'], []];
+  const rowHeights: number[] = [readableHeaderRowHeight([
+    { value: title, width: 212 }
+  ], 42), 48];
   const rowOutlines: NonNullable<XlsxSheet['rowOutlines']> = [undefined, undefined];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
@@ -4379,14 +4461,15 @@ function buildCustomerFieldDiffSheet(
     rowOutlines.push(item.tableChild ? { level: 1 } : undefined);
     const alternate = index % 2 === 1;
     const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
+    const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
     const styles: Array<XlsxCellStyle | undefined> = Array.from({ length: headers.length }, () => baseStyle);
-    styles[0] = actualIndex == null ? 'center' : 'hyperlink';
+    styles[0] = actualIndex == null ? (alternate ? 'zebraCenter' : 'center') : 'actionLink';
     styles[1] = changeStyles[item.changeType];
     styles[2] = field.structure === 'テーブル' ? 'category' : baseStyle;
-    styles[7] = 'center';
-    styles[8] = 'center';
-    styles[9] = item.changeType === '追加' ? 'diffAbsent' : 'diffBefore';
-    styles[10] = item.changeType === '削除' ? 'diffAbsent' : 'diffAfter';
+    styles[7] = alternate ? 'zebraCenter' : 'center';
+    styles[8] = alternate ? 'zebraCenter' : 'center';
+    styles[9] = beforeStyle;
+    styles[10] = afterStyle;
     cellStyles.push(styles);
     if (actualIndex != null) {
       internalHyperlinks.push({
@@ -4483,13 +4566,17 @@ function buildCustomerValueDetailSheet(
       });
     });
   }
-  const rows: (string | number | null)[][] = [[
+  const headers = [
     'No.', '変更区分', '分類', '設定対象', '差分プロパティ',
     `変更前の原文\n${sourceName}`, `変更後の原文\n${targetName}`, '一覧へ戻る'
-  ]];
+  ];
+  const rows: (string | number | null)[][] = [headers];
   const rowStyles: XlsxRowStyle[] = ['normal'];
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[]];
-  const rowHeights: number[] = [52];
+  const rowHeights: number[] = [readableHeaderRowHeight([
+    { value: headers[5], width: 42 },
+    { value: headers[6], width: 42 }
+  ], 52)];
   const internalHyperlinks: NonNullable<XlsxSheet['internalHyperlinks']> = [];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
     '追加': 'changeAdded',
@@ -4523,14 +4610,15 @@ function buildCustomerValueDetailSheet(
     ]);
     rowStyles.push('normal');
     const startsCategory = index === 0 || items[index - 1]?.sectionLabel !== item.sectionLabel;
+    const alternate = index % 2 === 1;
     const styles: Array<XlsxCellStyle | undefined> = [];
-    styles[0] = 'center';
+    styles[0] = alternate ? 'zebraCenter' : 'center';
     styles[1] = changeStyles[item.changeType];
-    styles[2] = startsCategory ? 'category' : index % 2 === 1 ? 'zebra' : 'normal';
-    styles[3] = index % 2 === 1 ? 'zebra' : 'normal';
-    styles[4] = index % 2 === 1 ? 'zebra' : 'normal';
-    styles[5] = beforeContinuation ? 'hyperlink' : item.changeType === '追加' ? 'diffAbsent' : 'diffBefore';
-    styles[6] = afterContinuation ? 'hyperlink' : item.changeType === '削除' ? 'diffAbsent' : 'diffAfter';
+    styles[2] = startsCategory ? 'category' : alternate ? 'zebra' : 'normal';
+    styles[3] = alternate ? 'zebra' : 'normal';
+    styles[4] = alternate ? 'zebra' : 'normal';
+    styles[5] = beforeContinuation ? 'diffBeforeLink' : item.rawBefore.state === '存在しません' ? 'diffAbsent' : 'rawDiffBefore';
+    styles[6] = afterContinuation ? 'diffAfterLink' : item.rawAfter.state === '存在しません' ? 'diffAbsent' : 'rawDiffAfter';
     styles[7] = 'actionLink';
     cellStyles.push(styles);
     rowHeights.push(readableCustomerRowHeight([
@@ -4640,10 +4728,10 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
       cellStyles.push([
         alternate ? 'zebraCenter' : 'center',
         alternate ? 'zebra' : 'normal',
-        'center',
-        'center',
+        alternate ? 'zebraCenter' : 'center',
+        alternate ? 'zebraCenter' : 'center',
         'info',
-        difference ? difference.side === 'source' ? 'diffBefore' : 'diffAfter' : 'warning',
+        difference ? difference.side === 'source' ? 'rawDiffBefore' : 'rawDiffAfter' : 'rawWarning',
         'actionLink'
       ]);
       rowHeights.push(readableCustomerRowHeight([
@@ -4809,11 +4897,19 @@ function buildCustomerIssuesSheet(
       });
     }
   });
-  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = rows.map((_, index) => (
-    index === 0 ? ['warning'] : index === 1 ? [] : ['warning']
-  ));
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = rows.map((row, index) => {
+    if (index === 0) return ['warning'];
+    if (index === 1) return [];
+    const alternate = (index - 2) % 2 === 1;
+    const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
+    return [baseStyle, baseStyle, incompleteIssueStatusStyle(row[2]), baseStyle, baseStyle];
+  });
   items.forEach((item, index) => {
-    if (continuationByIndex.has(item.index)) cellStyles[index + 2][4] = 'hyperlink';
+    if (continuationByIndex.has(item.index)) {
+      cellStyles[index + 2][4] = incompleteIssueStatusStyle(item.status) === 'statusError'
+        ? 'warningLink'
+        : 'hyperlink';
+    }
   });
   return {
     name: '確認できなかった範囲',
