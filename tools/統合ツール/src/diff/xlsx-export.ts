@@ -513,6 +513,24 @@ function appLabel(bundle?: DiffXlsxBundle): string {
   return name || (id ? `App ${id}` : '');
 }
 
+function truncateDisplayText(value: unknown, maxCodePoints: number): string {
+  const characters = Array.from(String(value ?? ''));
+  if (characters.length <= maxCodePoints) return characters.join('');
+  if (maxCodePoints <= 1) return '…';
+  const available = maxCodePoints - 1;
+  const headLength = Math.ceil(available * 0.67);
+  const tailLength = available - headLength;
+  const head = characters.slice(0, headLength).join('').trimEnd();
+  const tail = tailLength > 0
+    ? characters.slice(characters.length - tailLength).join('').trimStart()
+    : '';
+  return `${head}…${tail}`;
+}
+
+function headerAppLabel(bundle: DiffXlsxBundle | undefined, fallback: string): string {
+  return truncateDisplayText(appLabel(bundle) || fallback, 80);
+}
+
 function scopeLabel(scopes: string[] | undefined): string {
   const labels = (scopes || []).map((key) => sectionLabelOf(key)).filter(Boolean);
   return labels.length ? labels.join('、') : '未記録';
@@ -907,11 +925,13 @@ function humanizeListRowValue(
   return humanizeListScalar(value);
 }
 
-function conciseReviewValue(value: string): string {
+function conciseReviewValue(value: string, maxCodePoints = 80): string {
   const firstLine = String(value || '').split('\n', 1)[0].trim();
   if (!firstLine) return '（内容なし）';
   const characters = Array.from(firstLine);
-  return characters.length > 80 ? `${characters.slice(0, 79).join('')}…` : firstLine;
+  return characters.length > maxCodePoints
+    ? `${characters.slice(0, Math.max(1, maxCodePoints - 1)).join('')}…`
+    : firstLine;
 }
 
 function reviewChangeSummary(
@@ -1278,11 +1298,16 @@ function buildSummarySheet(
   const truncation = ctx.truncation || null;
   const actualDiffTruncation = hasIncompleteActualDiffTruncation(truncation) ? truncation : null;
   const incomplete = fetchIssues.length > 0 || partialIssues.length > 0 || !!actualDiffTruncation;
+  const filteredWithoutRows = ctx.exportMode === 'filtered' && counts.actual === 0;
   const verdict = incomplete
     ? '比較不完全（差分なしとは判断できません）'
-    : counts.actual > 0 ? '差分あり' : '差分なし';
+    : counts.actual > 0
+      ? '差分あり'
+      : filteredWithoutRows
+        ? '絞り込み後：掲載対象なし'
+        : '差分なし';
   const completeness = completenessLabel(fetchIssues, partialIssues, truncation);
-  const comparisonBanner = `${appLabel(ctx.sourceBundle) || '比較元'}  →  ${appLabel(ctx.targetBundle) || '比較先'}`;
+  const comparisonBanner = `${headerAppLabel(ctx.sourceBundle, '比較元')}  →  ${headerAppLabel(ctx.targetBundle, '比較先')}`;
   const sensitiveSections = [...new Set(rows
     .filter((row) => !row._displayOnly && row.type !== 'same' && SENSITIVE_DIFF_SECTION_KEYS.has(String(row.sectionKey || '')))
     .map((row) => sectionLabelOf(String(row.sectionKey || ''))))];
@@ -1419,6 +1444,10 @@ function buildSummarySheet(
     0,
     44
   ];
+  rowHeights[overviewRow.comparisonApps] = readableCustomerRowHeight([
+    { value: sheetRows[overviewRow.comparisonApps][1], width: 54 },
+    { value: sheetRows[overviewRow.comparisonApps][3], width: 54 }
+  ], 220);
   rowHeights[overviewRow.normalization] = readableDiffRowHeight([
     { value: sheetRows[overviewRow.normalization][1], width: 54 },
     { value: sheetRows[overviewRow.normalization][3], width: 54 }
@@ -1436,7 +1465,13 @@ function buildSummarySheet(
   cellStyles[overviewRow.guideBand][0] = 'info';
   cellStyles[overviewRow.verdict] = [
     'sectionHeader',
-    incomplete ? 'kpiStatusWarning' : counts.actual > 0 ? 'kpiChange' : 'kpiStatusGood',
+    incomplete
+      ? 'statusIncomplete'
+      : counts.actual > 0
+        ? 'statusDifference'
+        : filteredWithoutRows
+          ? 'zebraCenter'
+          : 'statusGood',
     'sectionHeader',
     incomplete ? 'statusIncomplete' : 'statusGood'
   ];
@@ -1579,7 +1614,7 @@ function buildTechnicalRefs(rows: DiffXlsxRow[]): DiffXlsxTechnicalRef[] {
 
 function directionalValueHeader(side: 'source' | 'target', bundle?: DiffXlsxBundle): string {
   const direction = side === 'source' ? '比較元' : '比較先';
-  const label = appLabel(bundle);
+  const label = headerAppLabel(bundle, '');
   return label ? `${direction}の値\n${label}` : `${direction}の値`;
 }
 
@@ -2332,6 +2367,15 @@ function customerSectionLabel(key: string): string {
 function customerAppName(bundle: DiffXlsxBundle | undefined, fallback: string): string {
   const name = String(extractAppNameFromBundle(bundle) || '').normalize('NFKC').trim();
   return name || fallback;
+}
+
+const CUSTOMER_HEADER_APP_NAME_MAX_CODE_POINTS = 54;
+
+function customerHeaderAppName(bundle: DiffXlsxBundle | undefined, fallback: string): string {
+  return truncateDisplayText(
+    customerAppName(bundle, fallback),
+    CUSTOMER_HEADER_APP_NAME_MAX_CODE_POINTS
+  );
 }
 
 function customerScopeLabel(scopes: string[] | undefined): string {
@@ -3821,19 +3865,32 @@ function buildCustomerSummarySheet(
   const redundantNote = redundantItems.length
     ? `${redundantLabels.join('、')} の ${redundantItems.length}件（他シートと同じ変更のため件数に含めていません）`
     : 'なし';
-  const sourceName = customerAppName(ctx.sourceBundle, '比較元のアプリ');
-  const targetName = customerAppName(ctx.targetBundle, '比較先のアプリ');
+  const sourceFullName = customerAppName(ctx.sourceBundle, '比較元のアプリ');
+  const targetFullName = customerAppName(ctx.targetBundle, '比較先のアプリ');
+  const sourceName = customerHeaderAppName(ctx.sourceBundle, '比較元のアプリ');
+  const targetName = customerHeaderAppName(ctx.targetBundle, '比較先のアプリ');
+  const navigationLabel = counts.actual
+    ? '変更一覧を開く'
+    : incomplete
+      ? '比較未完了'
+      : filtered
+        ? '掲載対象なし'
+        : '変更一覧なし';
   const comparedScopes = ctx.scopes?.length ? ctx.scopes : [...new Set(items.map((item) => item.sectionKey))];
   const rows: (string | number | null)[][] = [
     ['kintone 設定差分確認レポート', '', '', '', '', ''],
     [`比較元\n${sourceName}`, '', '→', `比較先\n${targetName}`, '', ''],
-    ['比較結果', verdict, '比較処理', completeness, '', counts.actual ? '変更一覧を開く' : ''],
+    ['比較結果', verdict, '比較処理', completeness, '', navigationLabel],
     [filtered ? '掲載変更件数' : '変更件数', `${counts.actual}件`, '比較日時', customerDateTime(ctx.comparedAt), '', ''],
     ['追加', `${counts.added}件`, '削除', `${counts.removed}件`, '変更', `${counts.contentChanged}件`],
     ['並び順変更', `${counts.moved}件`, '変更一覧の明細', `${primaryItems.length}件`, '同一証跡の省略', droppedSame ? `${droppedSame}件（変更判定への影響なし）` : '0件'],
     ['比較した設定領域', customerScopeLabel(comparedScopes), '', '', '', ''],
     ['掲載範囲', ctx.exportMode === 'filtered' ? '上記範囲内の一部' : '上記範囲内の全変更', '絞り込み', ctx.exportMode === 'filtered' ? 'あり' : 'なし', '比較から除外', customerComparisonExclusionLabel(ctx)]
   ];
+  const fullAppNameRow = sourceName !== sourceFullName || targetName !== targetFullName ? rows.length : -1;
+  if (fullAppNameRow >= 0) {
+    rows.push(['アプリ名（全文）', `比較元：${sourceFullName}\n比較先：${targetFullName}`, '', '', '', '']);
+  }
   const redundantNoteRow = redundantItems.length ? rows.length : -1;
   if (redundantNoteRow >= 0) rows.push(['参考として別シートに掲載', redundantNote, '', '', '', '']);
   const breakdownTitleRow = apiGroups.length ? rows.length : -1;
@@ -3852,15 +3909,23 @@ function buildCustomerSummarySheet(
   cellStyles[1][3] = 'targetGroup';
   cellStyles[2][0] = 'summaryLabel';
   cellStyles[2][1] = incomplete
-    ? 'kpiStatusWarning'
+    ? 'statusIncomplete'
     : counts.actual
-      ? 'kpiChange'
-      : 'kpiStatusGood';
+      ? 'statusDifference'
+      : filtered
+        ? 'zebraCenter'
+        : 'statusGood';
   cellStyles[2][2] = 'summaryLabel';
   cellStyles[2][3] = incomplete ? 'statusIncomplete' : 'statusGood';
   // 空欄セルも同じ塗りへそろえ、表の帯が白抜けしないようにする。
   cellStyles[2][4] = incomplete ? 'statusIncomplete' : 'statusGood';
-  cellStyles[2][5] = counts.actual ? 'actionLink' : incomplete ? 'statusIncomplete' : 'statusGood';
+  cellStyles[2][5] = counts.actual
+    ? 'actionLink'
+    : incomplete
+      ? 'statusIncomplete'
+      : filtered
+        ? 'zebraCenter'
+        : 'statusGood';
   cellStyles[3][0] = 'summaryLabel';
   cellStyles[3][1] = 'summaryValue';
   cellStyles[3][2] = 'summaryLabel';
@@ -3886,6 +3951,10 @@ function buildCustomerSummarySheet(
   cellStyles[7][3] = 'zebraCenter';
   cellStyles[7][4] = 'summaryLabel';
   cellStyles[7][5] = 'zebraCenter';
+  if (fullAppNameRow >= 0) {
+    cellStyles[fullAppNameRow][0] = 'summaryLabel';
+    cellStyles[fullAppNameRow][1] = 'info';
+  }
   if (redundantNoteRow >= 0) {
     cellStyles[redundantNoteRow][0] = 'summaryLabel';
     cellStyles[redundantNoteRow][1] = 'info';
@@ -3925,12 +3994,16 @@ function buildCustomerSummarySheet(
         { value: row[3], width: 22 },
         { value: row[5], width: 22 }
       ], 76);
+      if (index === fullAppNameRow) return readableCustomerRowHeight([
+        { value: row[1], width: 92 }
+      ], 395);
       if (index === redundantNoteRow) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
       if (index === breakdownTitleRow) return 30;
       return index === breakdownHeaderRow ? 32 : 26;
     }),
     merges: [
       'A1:F1', 'A2:B2', 'D2:F2', 'D3:E3', 'B7:F7',
+      ...(fullAppNameRow >= 0 ? [`B${fullAppNameRow + 1}:F${fullAppNameRow + 1}`] : []),
       ...(redundantNoteRow >= 0 ? [`B${redundantNoteRow + 1}:F${redundantNoteRow + 1}`] : []),
       ...(breakdownTitleRow >= 0 ? [`A${breakdownTitleRow + 1}:F${breakdownTitleRow + 1}`] : [])
     ],
@@ -3981,8 +4054,8 @@ function buildCustomerListSheet(
 ): XlsxSheet {
   // 再掲の差分は末尾に並んでいるため、除いても No. と設定値詳細の行番号は一致したまま。
   const items = customerPrimaryItems(allItems);
-  const sourceName = customerAppName(ctx.sourceBundle, '比較元');
-  const targetName = customerAppName(ctx.targetBundle, '比較先');
+  const sourceName = customerHeaderAppName(ctx.sourceBundle, '比較元');
+  const targetName = customerHeaderAppName(ctx.targetBundle, '比較先');
   const headers = [
     'No.', '変更区分', '分類', '設定対象／変更内容', '差分プロパティ',
     `変更前\n${sourceName}`, `変更後\n${targetName}`
@@ -4006,29 +4079,44 @@ function buildCustomerListSheet(
     for (const item of group.items) apiDefinitionByItem.set(item, group.definition);
   }
   if (!items.length) {
-    const emptyMessage = allItems.length
-      ? '差分はありません（参考・再掲の差分のみのため、機能別シートを確認してください）'
-      : '差分はありません';
+    const emptyState: { message: string; style: XlsxCellStyle } = customerIncomplete(ctx)
+      ? {
+        message: '比較できなかった範囲があります。比較概要と「確認できなかった範囲」を確認してください',
+        style: 'statusIncomplete'
+      }
+      : ctx.exportMode === 'filtered'
+        ? {
+          message: '現在の絞り込み条件に該当する変更はありません',
+          style: 'zebraCenter'
+        }
+        : allItems.length
+          ? {
+            message: '変更一覧の掲載対象はありません（参考・再掲の差分は機能別シートを確認してください）',
+            style: 'zebraCenter'
+          }
+          : { message: '差分はありません', style: 'statusGood' };
+    const emptyMessage = emptyState.message;
     rows.push([emptyMessage, '', '', '', '', '', '']);
     rowStyles.push('normal');
-    cellStyles.push(Array.from({ length: headers.length }, () => 'kpiGood'));
+    cellStyles.push(Array.from({ length: headers.length }, () => emptyState.style));
     rowHeights.push(Math.max(40, readableCustomerRowHeight([
       { value: emptyMessage, width: 129 }
     ], 120)));
   }
   items.forEach((item, index) => {
+    const listTarget = customerPlainText(item.target, 48);
     const changeSummary = item.changeType === '追加'
-      ? `比較先に追加：${conciseReviewValue(item.after)}`
+      ? `比較先に追加：${conciseReviewValue(item.after, 32)}`
       : item.changeType === '削除'
-        ? `比較先から削除：${conciseReviewValue(item.before)}`
+        ? `比較先から削除：${conciseReviewValue(item.before, 32)}`
         : item.changeType === '並び順変更'
           ? '並び順を変更'
-          : `${conciseReviewValue(item.before)} → ${conciseReviewValue(item.after)}`;
+          : `${conciseReviewValue(item.before, 32)} → ${conciseReviewValue(item.after, 32)}`;
     rows.push([
       index + 1,
       item.changeType,
       item.sectionLabel,
-      `${item.target}\n${changeSummary}`,
+      `${listTarget}\n${changeSummary}`,
       item.settingItem,
       item.before,
       item.after
@@ -4062,7 +4150,7 @@ function buildCustomerListSheet(
     }
     rowHeights.push(readableCustomerRowHeight([
       { value: item.sectionLabel, width: 14 },
-      { value: `${item.target}\n${changeSummary}`, width: 24 },
+      { value: `${listTarget}\n${changeSummary}`, width: 24 },
       { value: item.settingItem, width: 22 },
       { value: item.before, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH },
       { value: item.after, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH }
@@ -4097,8 +4185,8 @@ function buildCustomerListSheet(
 }
 
 function customerFeatureSheetTitle(ctx: DiffXlsxContext, definition: CustomerApiSheetDef): string {
-  const sourceName = customerAppName(ctx.sourceBundle, '比較元のアプリ');
-  const targetName = customerAppName(ctx.targetBundle, '比較先のアプリ');
+  const sourceName = customerHeaderAppName(ctx.sourceBundle, '比較元のアプリ');
+  const targetName = customerHeaderAppName(ctx.targetBundle, '比較先のアプリ');
   return `${definition.label}\n比較元：${sourceName}  →  比較先：${targetName}`;
 }
 
@@ -4116,7 +4204,7 @@ function buildCustomerGenericApiDiffSheet(ctx: DiffXlsxContext, group: CustomerA
     headers
   ];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal'];
-  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [[redundantNote ? 'warning' : 'subtitle'], []];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['subtitle'], []];
   const rowHeights: number[] = [readableHeaderRowHeight([
     { value: title, width: 124 }
   ], redundantNote ? 60 : 42), 44];
@@ -4548,8 +4636,8 @@ function buildCustomerValueDetailSheet(
 ): XlsxSheet | null {
   if (!items.length) return null;
 
-  const sourceName = customerAppName(ctx.sourceBundle, '比較元');
-  const targetName = customerAppName(ctx.targetBundle, '比較先');
+  const sourceName = customerHeaderAppName(ctx.sourceBundle, '比較元');
+  const targetName = customerHeaderAppName(ctx.targetBundle, '比較先');
   const continuationByKey = new Map(continuations.map((continuation) => [
     `${continuation.item.index}:${continuation.side}`,
     continuation
@@ -4714,9 +4802,10 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
       offset += chunk.length;
       const end = offset;
       const rowNumber = rows.length + 1;
+      const displayedTarget = chunkIndex === 0 ? customerPlainText(target, 120) : '同上';
       rows.push([
         reference,
-        target,
+        displayedTarget,
         side,
         `${chunkIndex + 1} / ${continuation.chunks.length}`,
         `${start}–${end} / ${raw.text.length}文字`,
@@ -4730,12 +4819,12 @@ function buildCustomerLongRawSheet(continuations: CustomerRawContinuation[]): Xl
         alternate ? 'zebra' : 'normal',
         alternate ? 'zebraCenter' : 'center',
         alternate ? 'zebraCenter' : 'center',
-        'info',
+        alternate ? 'zebraCenter' : 'center',
         difference ? difference.side === 'source' ? 'rawDiffBefore' : 'rawDiffAfter' : 'rawWarning',
         'actionLink'
       ]);
       rowHeights.push(readableCustomerRowHeight([
-        { value: target, width: 24 },
+        { value: displayedTarget, width: 24 },
         { value: chunk, width: CUSTOMER_RAW_CHUNK_COLUMN_WIDTH }
       ], 395));
       internalHyperlinks.push({
@@ -4908,13 +4997,13 @@ function buildCustomerIssuesSheet(
     if (continuationByIndex.has(item.index)) {
       cellStyles[index + 2][4] = incompleteIssueStatusStyle(item.status) === 'statusError'
         ? 'warningLink'
-        : 'hyperlink';
+        : 'actionLink';
     }
   });
   return {
     name: '確認できなかった範囲',
     rows,
-    colWidths: [24, 20, 22, 48, 60],
+    colWidths: [24, 20, 22, 52, 56],
     rowStyles: rows.map(() => 'normal'),
     cellStyles,
     headerRow: 2,
@@ -4925,8 +5014,8 @@ function buildCustomerIssuesSheet(
       { value: row[0], width: 24 },
       { value: row[1], width: 20 },
       { value: row[2], width: 22 },
-      { value: row[3], width: 48 },
-      { value: row[4], width: 60 }
+      { value: row[3], width: 52 },
+      { value: row[4], width: 56 }
     ], 96)),
     merges: ['A1:E1'],
     internalHyperlinks,

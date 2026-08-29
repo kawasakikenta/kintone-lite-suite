@@ -81,7 +81,7 @@ interface DiffXlsxBatchSummaryRow {
   sourceName: string;
   targetName: string;
   /** 差分の有無。取得の完全性とは分けて示す。 */
-  status: '差分なし' | '差分あり' | '差分は確認できず' | 'Excel生成失敗';
+  status: '差分なし' | '差分あり' | '差分は確認できず' | '絞り込み後：掲載対象なし' | 'Excel生成失敗';
   /** 取得できた範囲。差分の有無とは独立に判断する。 */
   coverage: '全範囲を取得' | '一部未取得' | '—';
   /** 未取得・打切りになった設定領域。 */
@@ -246,12 +246,19 @@ function successfulSummaryRow(
     moved: summary.moved
   };
   const incomplete = comparisonIncomplete(item.context);
+  const filteredWithoutRows = item.context.exportMode === 'filtered' && counts.total === 0;
   return {
     sequence: index + 1,
     sourceName,
     targetName,
     // 未取得があっても、確認できた範囲の差分の有無は伝える。0件は「差分なし」と言い切らない。
-    status: counts.total > 0 ? '差分あり' : incomplete ? '差分は確認できず' : '差分なし',
+    status: counts.total > 0
+      ? '差分あり'
+      : incomplete
+        ? '差分は確認できず'
+        : filteredWithoutRows
+          ? '絞り込み後：掲載対象なし'
+          : '差分なし',
     coverage: incomplete ? '一部未取得' : '全範囲を取得',
     coverageDetail: incomplete ? (customerIncompleteScopeSuffix(item.context) || '詳細は各Excelの「確認できなかった範囲」を確認') : '',
     counts,
@@ -285,6 +292,7 @@ function summaryStatusStyle(status: DiffXlsxBatchSummaryRow['status']): XlsxCell
   if (status === '差分なし') return 'statusGood';
   if (status === '差分あり') return 'statusDifference';
   if (status === '差分は確認できず') return 'statusIncomplete';
+  if (status === '絞り込み後：掲載対象なし') return 'zebraCenter';
   return 'statusError';
 }
 
@@ -322,15 +330,15 @@ function batchSummaryVisualTextWidth(value: unknown): number {
   for (const char of String(value ?? '')) {
     const codePoint = char.codePointAt(0) || 0;
     if (char === '\t') width += 4;
-    // ASCII・Latin-1 と半角カナは1、それ以外の全角文字や絵文字は2として見積もる。
+    // Excelの列幅は全角2文字ぶんよりやや広いため、過大な空白行にならない係数で見積もる。
     else if (codePoint <= 0xff || (codePoint >= 0xff61 && codePoint <= 0xff9f)) width += 1;
-    else width += 2;
+    else width += 1.7;
   }
   return width;
 }
 
 function batchSummaryWrappedLines(value: unknown, columnWidth: number): number {
-  const capacity = Math.max(8, Math.floor(columnWidth - 2));
+  const capacity = Math.max(8, Math.floor(columnWidth - 1));
   return makeExcelCellTextVisible(value).split(/\r?\n/).reduce((total, line) => (
     total + Math.max(1, Math.ceil(batchSummaryVisualTextWidth(line) / capacity))
   ), 0);
@@ -349,6 +357,7 @@ function batchSummaryDataRowHeight(row: readonly unknown[]): number {
 function buildBatchSummaryOverview(summaryRows: readonly DiffXlsxBatchSummaryRow[]): string {
   const withDiff = summaryRows.filter((row) => row.status === '差分あり').length;
   const noDiff = summaryRows.filter((row) => row.status === '差分なし').length;
+  const filteredEmpty = summaryRows.filter((row) => row.status === '絞り込み後：掲載対象なし').length;
   const incomplete = summaryRows.filter((row) => row.coverage === '一部未取得').length;
   const failed = summaryRows.filter((row) => row.status === 'Excel生成失敗').length;
   const totalChanges = summaryRows.reduce((sum, row) => sum + (row.counts?.total ?? 0), 0);
@@ -358,6 +367,7 @@ function buildBatchSummaryOverview(summaryRows: readonly DiffXlsxBatchSummaryRow
     `差分なし ${noDiff}件`,
     `変更 合計 ${totalChanges}件`
   ];
+  if (filteredEmpty) parts.push(`絞り込み後：掲載対象なし ${filteredEmpty}件`);
   if (incomplete) parts.push(`一部未取得 ${incomplete}件`);
   if (failed) parts.push(`Excel生成失敗 ${failed}件`);
   return parts.join('　/　');
@@ -379,13 +389,13 @@ function buildBatchSummaryBlob(summaryRows: readonly DiffXlsxBatchSummaryRow[]):
       row.status,
       row.coverage,
       row.coverageDetail,
-      row.counts?.total ?? null,
-      row.counts?.added ?? null,
-      row.counts?.removed ?? null,
-      row.counts?.changed ?? null,
-      row.counts?.moved ?? null,
+      row.counts?.total ?? '—',
+      row.counts?.added ?? '—',
+      row.counts?.removed ?? '—',
+      row.counts?.changed ?? '—',
+      row.counts?.moved ?? '—',
       row.pairNameStatus,
-      row.filename
+      row.filename || '—'
     ])
   ];
   const headerRowIndex = 2;
@@ -412,6 +422,10 @@ function buildBatchSummaryBlob(summaryRows: readonly DiffXlsxBatchSummaryRow[]):
       summaryPairNameStyle(summary.pairNameStatus),
       neutralStyle
     ];
+    if (!summary.counts) {
+      for (let column = 6; column <= 10; column += 1) cellStyles[index][column] = 'diffAbsent';
+    }
+    if (!summary.filename) cellStyles[index][12] = 'diffAbsent';
   }
   return buildXlsxBlob([{
     name: '一括比較結果',

@@ -223,7 +223,8 @@ describe('diff/xlsx-batch-export', () => {
       D5: 'Excel生成失敗',
       E5: '—',
       L5: '名称未取得',
-      M5: ''
+      G5: '—', H5: '—', I5: '—', J5: '—', K5: '—',
+      M5: '—'
     });
   });
 
@@ -262,7 +263,7 @@ describe('diff/xlsx-batch-export', () => {
       A6: 22, B6: 2, C6: 2, D6: 27, E6: 27, F6: 11,
       G6: 22, H6: 22, I6: 22, J6: 22, K6: 22, L6: 26, M6: 2,
       A7: 24, B7: 23, C7: 23, D7: 26, E7: 39, F7: 5,
-      G7: 24, H7: 24, I7: 24, J7: 24, K7: 24, L7: 26, M7: 23
+      G7: 39, H7: 39, I7: 39, J7: 39, K7: 39, L7: 26, M7: 39
     });
 
     const semanticStyles = [
@@ -287,6 +288,23 @@ describe('diff/xlsx-batch-export', () => {
     expect(workbookStyles.cellXfs[11]).toContain('vertical="top"');
     expect(workbookStyles.cellXfs[5]).toContain('fillId="5"');
     expect(workbookStyles.cellXfs[5]).toContain('vertical="top"');
+  });
+
+  it('counts an empty filtered result separately from a verified no-difference result', async () => {
+    const result = await buildDiffXlsxBatchExport([
+      item('filtered empty', context('絞込元', '絞込先', { exportMode: 'filtered' })),
+      item('verified empty', context('同一', '同一'))
+    ]);
+    const summaryWorkbook = parseStoredEntries(await blobToBuffer(result.blob))[0].data;
+    const cells = firstWorksheetCells(summaryWorkbook);
+    const styles = firstWorksheetCellStyleIds(summaryWorkbook);
+
+    expect(cells.D4).toBe('絞り込み後：掲載対象なし');
+    expect(cells.D5).toBe('差分なし');
+    expect(cells.A2).toContain('差分なし 1件');
+    expect(cells.A2).toContain('絞り込み後：掲載対象なし 1件');
+    expect(styles.D4).toBe(24);
+    expect(styles.D5).toBe(25);
   });
 
   it('makes long or unsafe workbook names customer-safe, bounded, and unique', async () => {
@@ -332,15 +350,14 @@ describe('diff/xlsx-batch-export', () => {
 
     const archiveEntries = parseStoredEntries(await blobToBuffer(result.blob));
     const heights = firstWorksheetRowHeights(archiveEntries[0].data);
-    // Width estimates reserve two characters for cell padding. The narrow coverage column wraps
-    // complete-state text to two lines, while a genuinely single-line failure uses the 32pt base.
-    expect(heights['4']).toBe(49);
+    // 短文は1行のまま、半角カナはNFKC正規化後の全角表示に合わせて2行にする。
+    expect(heights['4']).toBe(32);
     expect(heights['5']).toBe(49);
-    expect(heights['6']).toBeGreaterThan(heights['5']);
+    expect(heights['6']).toBe(49);
     // XML-forbidden characters expand to visible tokens before wrap measurement.
-    expect(heights['7']).toBeGreaterThan(49);
+    expect(heights['7']).toBeGreaterThanOrEqual(49);
     expect(heights['8']).toBeGreaterThanOrEqual(49);
-    expect(heights['9']).toBeGreaterThan(49);
+    expect(heights['9']).toBe(49);
     expect(heights['10']).toBe(220);
     expect(heights['11']).toBe(32);
     expect(Object.values(heights).every((height) => height <= 220)).toBe(true);
