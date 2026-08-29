@@ -45,26 +45,26 @@ export const VALUE_LABELS: Record<string, Record<string, string>> = {
     WRITE: '閲覧・編集可',
     READ_WRITE: '閲覧・編集可'
   },
-  // ビュー種別
+  // 一覧の表示形式（kintone の一覧設定画面の選択肢名）
   'view.type': {
-    LIST: '一覧',
-    CALENDAR: 'カレンダー',
+    LIST: '表形式',
+    CALENDAR: 'カレンダー形式',
     CUSTOM: 'カスタマイズ'
   },
-  // グラフ種別
+  // グラフ種別（kintone のグラフ設定画面の名称）
   'chart.type': {
-    BAR: '棒グラフ',
+    BAR: '横棒グラフ',
     COLUMN: '縦棒グラフ',
     PIE: '円グラフ',
-    LINE: '折れ線',
+    LINE: '折れ線グラフ',
     PIVOT_TABLE: 'クロス集計表',
-    TABLE: '集計表',
-    AREA: 'エリアグラフ',
-    AREA_STACKED: '積み上げエリア',
-    SPLINE: 'スプライン',
-    SPLINE_AREA: 'スプラインエリア',
+    TABLE: '表',
+    AREA: '面グラフ',
+    AREA_STACKED: '積み上げ面グラフ',
+    SPLINE: '曲線グラフ',
+    SPLINE_AREA: '曲線面グラフ',
     BUBBLE: 'バブル',
-    BAR_STACKED: '積み上げ棒',
+    BAR_STACKED: '積み上げ横棒',
     FUNNEL: 'ファネル'
   },
   // ページ送り
@@ -85,14 +85,14 @@ export const VALUE_LABELS: Record<string, Record<string, string>> = {
 // ---------------------------------------------------------------------------
 
 export const PROP_LABELS: Record<string, PropMeta> = {
-  // appAcl 操作権限
+  // appAcl 操作権限（kintone のアクセス権設定画面の列名）
   appEditable:      { label: 'アプリ管理', icon: '⚙' },
-  recordViewable:   { label: '閲覧',       icon: '👁' },
-  recordAddable:    { label: '追加',       icon: '➕' },
-  recordEditable:   { label: '編集',       icon: '✏️' },
-  recordDeletable:  { label: '削除',       icon: '🗑' },
-  recordImportable: { label: 'CSV読込',    icon: '📥' },
-  recordExportable: { label: 'CSV書出',    icon: '📤' },
+  recordViewable:   { label: 'レコード閲覧', icon: '👁' },
+  recordAddable:    { label: 'レコード追加', icon: '➕' },
+  recordEditable:   { label: 'レコード編集', icon: '✏️' },
+  recordDeletable:  { label: 'レコード削除', icon: '🗑' },
+  recordImportable: { label: 'ファイル読み込み', icon: '📥' },
+  recordExportable: { label: 'ファイル書き出し', icon: '📤' },
 
   // recordPermissions の権限
   viewable:         { label: '閲覧',       icon: '👁' },
@@ -108,7 +108,7 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   accessibility:    { label: 'アクセス権' },
 
   // viewSettings
-  fields:           { label: '表示項目',   icon: '📋' },
+  fields:           { label: '表示するフィールド', icon: '📋' },
   sort:             { label: 'ソート',     icon: '↕' },
   index:            { label: '表示順',     icon: '🔢' },
   paginationStyle:  { label: 'ページ送り', icon: '📄' },
@@ -124,16 +124,16 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   reports:          { label: 'グラフ一覧' },
   periodicReports:  { label: '定期レポート' },
 
-  // notifications
-  recordAdded:      { label: 'レコード追加時' },
-  recordEdited:     { label: 'レコード編集時' },
-  commentAdded:     { label: 'コメント追加時' },
-  statusChanged:    { label: 'ステータス変更時' },
-  fileImported:     { label: 'ファイル取込時' },
-  recipients:       { label: '宛先' },
-  targets:          { label: '宛先' },
+  // notifications（kintone の通知設定画面の項目名）
+  recordAdded:      { label: 'レコードの追加' },
+  recordEdited:     { label: 'レコードの編集' },
+  commentAdded:     { label: 'コメントの書き込み' },
+  statusChanged:    { label: 'ステータスの更新' },
+  fileImported:     { label: 'ファイルの読み込み' },
+  recipients:       { label: '通知先' },
+  targets:          { label: '通知先' },
   notifications:    { label: '通知ルール' },
-  timing:           { label: 'タイミング' },
+  timing:           { label: '通知するタイミング' },
   notifyOnUpdate:   { label: '更新時に通知' },
   timezone:         { label: 'タイムゾーン' },
   perRecordNotifications: { label: 'レコード条件通知' },
@@ -141,12 +141,12 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   title:            { label: 'タイトル' },
   body:             { label: '本文' },
 
-  // processSettings
-  enable:           { label: 'プロセス有効化' },
+  // processSettings（kintone のプロセス管理設定画面の項目名）
+  enable:           { label: 'プロセス管理の有効化' },
   states:           { label: 'ステータス' },
   actions:          { label: 'アクション' },
-  from:             { label: '遷移元' },
-  to:               { label: '遷移先' },
+  from:             { label: '実行前のステータス' },
+  to:               { label: '実行後のステータス' },
   assignee:         { label: '作業者' },
   type:             { label: '種別' },
   settings:         { label: '設定' },
@@ -164,7 +164,7 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   js:               { label: 'JS' },
   css:              { label: 'CSS' },
   file:             { label: 'ファイル' },
-  scope:            { label: '配置' },
+  scope:            { label: '適用範囲' },
   url:              { label: 'URL' },
 
   // pluginSettings
@@ -172,12 +172,23 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   version:          { label: 'バージョン' },
   id:               { label: 'ID' },
 
-  // appSettings / appInfo
+  // appSettings / appInfo（kintone のアプリ設定画面の項目名）
   name:             { label: '名前' },
   description:      { label: '説明' },
-  theme:            { label: 'テーマ' },
-  titleField:       { label: 'タイトルフィールド' },
+  theme:            { label: 'デザインテーマ' },
+  titleField:       { label: 'レコードのタイトル' },
+  selectionMode:    { label: '選択方法' },
   icon:             { label: 'アイコン' },
+  enableThumbnails: { label: 'サムネイルの表示' },
+  enableBulkDeletion: { label: 'レコードの一括削除' },
+  enableComments:   { label: 'レコードのコメント機能' },
+  enableDuplicateRecord: { label: 'レコードの再利用' },
+  enableInlineRecordEditing: { label: '一覧でのレコードのインライン編集' },
+  numberPrecision:  { label: '数値や計算の精度' },
+  digits:           { label: '全体の桁数' },
+  decimalPlaces:    { label: '小数部の桁数' },
+  roundingMode:     { label: '数値の丸めかた' },
+  firstMonthOfFiscalYear: { label: '第1四半期の開始月' },
   appId:            { label: 'アプリID' },
   spaceId:          { label: 'スペースID' },
   threadId:         { label: 'スレッドID' },
@@ -195,16 +206,17 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   innerHeight:      { label: '入力欄の高さ' },
 
   // fieldSettings: 関連レコード一覧（referenceTable）/ ルックアップ（lookup）
+  // kintone のフィールド設定画面の項目名に合わせる。
   referenceTable:    { label: '関連レコード一覧設定' },
   lookup:            { label: 'ルックアップ設定' },
-  condition:         { label: '表示条件（フィールドの一致）' },
+  condition:         { label: '表示するレコードの条件' },
   displayFields:     { label: '表示するフィールド' },
   relatedApp:        { label: '参照するアプリ' },
   relatedField:      { label: '参照するアプリのフィールド' },
   relatedKeyField:   { label: 'コピー元のフィールド' },
   fieldMappings:     { label: 'ほかのフィールドのコピー' },
-  lookupPickerFields:{ label: '選択画面に表示するフィールド' },
-  size:              { label: '一度に表示する最大件数' }
+  lookupPickerFields:{ label: 'コピー元のレコード選択時に表示するフィールド' },
+  size:              { label: '一度に表示する最大レコード数' }
 };
 
 // ---------------------------------------------------------------------------

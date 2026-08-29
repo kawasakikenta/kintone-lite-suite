@@ -237,40 +237,40 @@ const FIELD_SETTING_LABELS: Record<string, string> = {
   label: 'フィールド名',
   name: 'フィールド名',
   code: 'フィールドコード',
-  type: 'フィールドタイプ',
+  type: 'フィールドの種類',
   noLabel: 'フィールド名を表示しない',
   required: '必須項目にする',
-  unique: '重複禁止にする',
+  unique: '値の重複を禁止する',
   defaultValue: '初期値',
-  defaultNowValue: '現在日時を初期値にする',
+  defaultNowValue: 'レコード登録時の日時を初期値にする',
   description: '説明',
-  minLength: '最小文字数',
-  maxLength: '最大文字数',
-  minValue: '最小値',
-  maxValue: '最大値',
+  minLength: '文字数（最小）',
+  maxLength: '文字数（最大）',
+  minValue: '数値の制限（最小）',
+  maxValue: '数値の制限（最大）',
   expression: '計算式',
   hideExpression: '計算式を表示しない',
   options: '選択肢',
-  protocol: 'プロトコル',
+  protocol: '入力値の種類',
   displayScale: '小数点以下の表示桁数',
   digit: '桁区切りを表示する',
   unit: '単位記号',
-  unitPosition: '単位記号の位置',
-  align: '並び',
+  unitPosition: '単位記号の表示位置',
+  align: '選択肢の並び',
   format: '表示形式',
   entities: '選択候補',
-  fields: 'テーブル内の項目',
+  fields: 'テーブル内のフィールド',
   referenceTable: '関連レコード一覧設定',
   lookup: 'ルックアップ設定',
-  condition: '表示条件（フィールドの一致）',
+  condition: '表示するレコードの条件',
   displayFields: '表示するフィールド',
   filterCond: '絞り込み条件',
   relatedApp: '参照するアプリ',
-  size: '一度に表示する最大件数',
+  size: '一度に表示する最大レコード数',
   sort: 'ソート',
   relatedKeyField: 'コピー元のフィールド',
   fieldMappings: 'ほかのフィールドのコピー',
-  lookupPickerFields: '選択画面に表示するフィールド',
+  lookupPickerFields: 'コピー元のレコード選択時に表示するフィールド',
   field: '自アプリのフィールド',
   relatedField: '参照するアプリのフィールド',
   app: '参照するアプリID',
@@ -2362,8 +2362,11 @@ function customerGenericSettingLabel(sectionKey: string, path: string, decodedLa
   if (sectionKey === 'pluginSettings' && (leaf === 'config' || leaf === '_config')) {
     return 'プラグイン設定内容';
   }
-  if (sectionKey === 'actionSettings' && /\.(?:(?:destApp|targetApp|sourceApp)\.(?:app|appId)|destAppId|targetAppId|sourceAppId)$/.test(path)) {
-    return '参照先アプリID';
+  const actionAppRef = /\.((?:destApp|targetApp|sourceApp)\.(?:app|appId)|destAppId|targetAppId|sourceAppId)$/.exec(path);
+  if (sectionKey === 'actionSettings' && actionAppRef) {
+    return actionAppRef[1].startsWith('sourceApp')
+      ? 'コピー元のアプリ（アプリID）'
+      : 'レコードを追加するアプリ（アプリID）';
   }
   if (sectionKey === 'actionSettings' && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(path)) {
     const mappingIndex = Number(path.match(/\.mappings\[(\d+)\]/)?.[1]);
@@ -2375,17 +2378,29 @@ function customerGenericSettingLabel(sectionKey: string, path: string, decodedLa
       destType: 'コピー先の種類'
     };
     const target = Number.isInteger(mappingIndex)
-      ? `フィールドの対応付け（${mappingIndex + 1}件目）`
-      : 'フィールドの対応付け';
+      ? `フィールドの関連付け（${mappingIndex + 1}件目）`
+      : 'フィールドの関連付け';
     return mappingProperty ? `${target}：${mappingLabels[mappingProperty]}` : target;
   }
   if ((sectionKey === 'actionSettings' || sectionKey === 'processSettings') && leaf === 'filterCond') {
     return '実行条件';
   }
+  if (sectionKey === 'actionSettings' && leaf === 'entities') {
+    return 'アクションを利用できるユーザー';
+  }
+  if (sectionKey === 'processSettings' && leaf === 'enable') {
+    return 'プロセス管理を有効にする';
+  }
+  if ((sectionKey === 'perRecordNotifications' || sectionKey === 'reminderNotifications') && leaf === 'title') {
+    return '通知内容';
+  }
+  if ((sectionKey === 'appSettings' || sectionKey === 'appInfo') && leaf === 'name') {
+    return 'アプリ名';
+  }
   const labels: Record<string, string> = {
     fileKey: 'ファイル識別情報',
     filterCond: '絞り込み条件',
-    sort: '並び順',
+    sort: 'ソート',
     index: '並び順',
     srcField: 'コピー元フィールド',
     destField: 'コピー先フィールド',
@@ -2639,27 +2654,41 @@ function customerFieldSettingLabel(settingKey: string, fallback: string): string
   const prefix = settingKey.startsWith('lookup.')
     ? 'ルックアップ'
     : settingKey.startsWith('referenceTable.')
-      ? '関連レコード'
+      ? '関連レコード一覧'
       : '';
   const leaf = settingKey.split('.').filter(Boolean).at(-1) || '';
+  // kintone のフィールド設定画面に表示される項目名に合わせる（独自の略語を作らない）。
   const exactLabels: Record<string, string> = {
-    'lookup.relatedApp.app': '参照先アプリID',
-    'lookup.relatedApp.appId': '参照先アプリID',
-    'lookup.relatedAppId': '参照先アプリID',
-    'referenceTable.relatedApp.app': '参照先アプリID',
-    'referenceTable.relatedApp.appId': '参照先アプリID',
-    'referenceTable.relatedAppId': '参照先アプリID',
-    'referenceTable.condition.field': '自アプリの照合フィールド',
-    'referenceTable.condition.relatedField': '参照先の照合フィールド',
-    'referenceTable.sort': '並び順',
+    'lookup.relatedApp.app': '関連付けるアプリ（アプリID）',
+    'lookup.relatedApp.appId': '関連付けるアプリ（アプリID）',
+    'lookup.relatedAppId': '関連付けるアプリ（アプリID）',
+    'referenceTable.relatedApp.app': '参照するアプリ（アプリID）',
+    'referenceTable.relatedApp.appId': '参照するアプリ（アプリID）',
+    'referenceTable.relatedAppId': '参照するアプリ（アプリID）',
+    'referenceTable.condition': '表示するレコードの条件',
+    'referenceTable.condition.field': '表示するレコードの条件（自アプリのフィールド）',
+    'referenceTable.condition.relatedField': '表示するレコードの条件（参照するアプリのフィールド）',
+    'referenceTable.sort': 'レコードのソート（表示順）',
+    'referenceTable.filterCond': 'さらに絞り込む条件',
+    'referenceTable.size': '一度に表示する最大レコード数',
     'lookup.relatedKeyField': 'コピー元のフィールド',
     'lookup.fieldMappings': 'ほかのフィールドのコピー',
-    'lookup.lookupPickerFields': '選択画面の表示フィールド'
+    'lookup.lookupPickerFields': 'コピー元のレコード選択時に表示するフィールド',
+    'lookup.filterCond': '絞り込みの初期設定',
+    'lookup.sort': 'ソートの初期設定'
   };
   let label = exactLabels[settingKey];
   if (!label && /^referenceTable\.displayFields\.\d+$/.test(settingKey)) {
     const index = Number(settingKey.split('.').at(-1));
-    label = `表示フィールド（${index + 1}件目）`;
+    label = `表示するフィールド（${index + 1}件目）`;
+  }
+  if (!label) {
+    const mapping = /^lookup\.fieldMappings\.(\d+)\.(field|relatedField)$/.exec(settingKey);
+    if (mapping) {
+      label = mapping[2] === 'field'
+        ? `ほかのフィールドのコピー（${Number(mapping[1]) + 1}件目）のコピー先（自アプリのフィールド）`
+        : `ほかのフィールドのコピー（${Number(mapping[1]) + 1}件目）のコピー元（関連付けるアプリのフィールド）`;
+    }
   }
   if (!label && /^lookup\.(?:fieldMappings|lookupPickerFields)\.\d+/.test(settingKey)) {
     const index = Number(settingKey.match(/\.(\d+)/)?.[1] || 0);
@@ -2669,6 +2698,12 @@ function customerFieldSettingLabel(settingKey: string, fallback: string): string
     || fallback.split(' / ').at(-1)
     || '設定内容';
   return prefix ? `${prefix}：${label}` : label;
+}
+
+function movedSettingItemLabel(settingItem: string): string {
+  // 「表示するフィールド（3件目）」のような一覧項目の移動は、何の並び順が変わったかを明示する。
+  const listItem = /^(.+?)（\d+件目）$/.exec(settingItem);
+  return listItem ? `${listItem[1]}の並び順` : '並び順';
 }
 
 function customerLayoutItemParts(
@@ -2777,8 +2812,8 @@ function customerViewItemParts(row: DiffXlsxRow): CustomerItemParts | null {
   const property = match[2];
   const labels: Record<string, string> = {
     filterCond: '絞り込み条件',
-    sort: '並び順',
-    type: '一覧の種類',
+    sort: 'ソート',
+    type: '一覧の表示形式',
     name: '一覧名',
     pagination: 'ページ送り',
     paginationStyle: 'ページ送りの形式',
@@ -2789,7 +2824,7 @@ function customerViewItemParts(row: DiffXlsxRow): CustomerItemParts | null {
     index: '一覧の並び順'
   };
   const settingItem = property.startsWith('fields')
-    ? match[3] == null ? '表示項目' : `表示項目（${Number(match[3]) + 1}件目）`
+    ? match[3] == null ? '表示するフィールド' : `表示するフィールド（${Number(match[3]) + 1}件目）`
     : labels[property] || '一覧設定';
   return { target: `一覧「${viewName}」`, settingItem };
 }
@@ -3432,6 +3467,12 @@ function customerReadableValue(
       // 上でパス文脈を使って確定した表示値を、そのまま採用する。
     } else if (/(?:\.fields\[\d+\]|\.(?:srcField|destField))$/.test(path) && typeof value === 'string') {
       display = customerFieldCodeLabel(value, bundle);
+    } else if (typeof value === 'string' && setting
+      && (setting.settingKey === 'referenceTable.condition.field'
+        || /^lookup\.fieldMappings\.\d+\.field$/.test(setting.settingKey))) {
+      // 自アプリ側のフィールドコードだけ名前解決する。参照先アプリ側のコードは
+      // 自アプリの設定で解決すると別フィールドの名前を出しかねないため原文のままにする。
+      display = customerFieldCodeLabel(value, bundle);
     } else if (/(?:^|\.)sort$/.test(path) && typeof value === 'string') {
       display = customerSortValue(value, bundle);
     } else if (/(?:^|\.)filterCond$/.test(path) && typeof value === 'string') {
@@ -3496,7 +3537,7 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = fal
         : rawAfterBase;
       const targetDetail = parts.target;
       const settingItemDetail = moved
-        ? '並び順'
+        ? movedSettingItemLabel(parts.settingItem)
         : targetColumns.field?.wholeField
           ? targetColumns.field.structure === 'テーブル' ? 'テーブル自体' : 'フィールド自体'
           : parts.settingItem;
@@ -3751,11 +3792,15 @@ function buildCustomerSummarySheet(
   cellStyles[2][1] = incomplete ? 'kpiWarning' : counts.actual ? 'kpiChange' : 'kpiGood';
   cellStyles[2][2] = 'summaryLabel';
   cellStyles[2][3] = incomplete ? 'warning' : 'info';
-  if (counts.actual) cellStyles[2][5] = 'actionLink';
+  // 空欄セルも同じ塗りへそろえ、表の帯が白抜けしないようにする。
+  cellStyles[2][4] = incomplete ? 'warning' : 'info';
+  cellStyles[2][5] = counts.actual ? 'actionLink' : 'info';
   cellStyles[3][0] = 'summaryLabel';
   cellStyles[3][1] = 'summaryValue';
   cellStyles[3][2] = 'summaryLabel';
   cellStyles[3][3] = 'info';
+  cellStyles[3][4] = 'info';
+  cellStyles[3][5] = 'info';
   cellStyles[4] = [
     'changeAdded', 'metricValueAdded',
     'changeRemoved', 'metricValueRemoved',
@@ -4269,7 +4314,7 @@ function buildCustomerFieldDiffSheet(
 
   const headers = [
     'No.', '変更区分', '配置', 'フィールド名', 'フィールドコード',
-    'フィールド種別', '差分プロパティ', 'フィールド存在', '設定値存在',
+    'フィールドの種類', '差分プロパティ', 'フィールド存在', '設定値存在',
     '変更前', '変更後'
   ];
   const rows: (string | number | null)[][] = [
