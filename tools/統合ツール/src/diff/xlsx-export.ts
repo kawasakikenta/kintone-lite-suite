@@ -21,9 +21,12 @@ import { expandSubtableRowsForDisplay, hasIncompleteActualDiffTruncation } from 
 import {
   AGGREGATION_TYPE_JP,
   ALIGN_JP,
+  APP_THEME_JP,
   CHART_MODE_JP,
   CHART_TYPE_JP,
   CUSTOMIZE_SCOPE_JP,
+  DAY_OF_WEEK_JP,
+  describeReminderOffset,
   ENTITY_TYPE_JP,
   GROUP_PER_JP,
   ICON_TYPE_JP,
@@ -31,10 +34,16 @@ import {
   NOTIFICATION_TIMING_JP,
   NUMBER_FORMAT_JP,
   PAGINATION_TYPE_JP,
+  PERIODIC_REPORT_EVERY_JP,
   PROCESS_ASSIGNEE_TYPE_JP,
+  REPORT_SORT_BY_JP,
+  REPORT_SORT_ORDER_JP,
   RESOURCE_TYPE_JP,
+  ROUNDING_MODE_JP,
+  TITLE_SELECTION_JP,
   UNIT_POSITION_JP,
   VIEW_BUILTIN_TYPE_JP,
+  VIEW_DEVICE_JP,
   VIEW_TYPE_JP
 } from '../kintone-enums.js';
 import {
@@ -275,6 +284,7 @@ const FIELD_SETTING_LABELS: Record<string, string> = {
   relatedField: '参照するアプリのフィールド',
   app: '参照するアプリID',
   thumbnailSize: 'サムネイルの大きさ',
+  openGroup: 'グループの初期表示',
   index: '並び順'
 };
 
@@ -746,6 +756,15 @@ function fieldValueOnlyExistsLabel(
   return '（存在しません）';
 }
 
+// フィールド設定の enum 値を kintone の設定画面の選択肢名で表示する（leaf キー別）。
+const FIELD_SETTING_ENUM_LABELS: Record<string, Record<string, string>> = {
+  unitPosition: UNIT_POSITION_JP,
+  protocol: LINK_PROTOCOL_JP,
+  align: ALIGN_JP,
+  format: NUMBER_FORMAT_JP,
+  roundingMode: ROUNDING_MODE_JP
+};
+
 function humanizeFieldSettingValue(value: unknown, settingKey: string): string {
   const leafKey = settingKey.split('.').filter(Boolean).at(-1) || '';
   if (value === undefined) return '（未設定）';
@@ -756,13 +775,17 @@ function humanizeFieldSettingValue(value: unknown, settingKey: string): string {
       unique: ['重複を許可', '重複を禁止'],
       noLabel: ['フィールド名を表示する', 'フィールド名を表示しない'],
       hideExpression: ['計算式を表示する', '計算式を表示しない'],
-      defaultNowValue: ['現在日時を使わない', '現在日時を使う']
+      defaultNowValue: ['現在日時を使わない', '現在日時を使う'],
+      openGroup: ['グループを閉じた状態で表示', 'グループを開いた状態で表示']
     };
     return labels[leafKey]?.[value ? 1 : 0] || (value ? 'はい' : 'いいえ');
   }
   if (typeof value === 'string') {
     if (value === '') return '（空欄）';
     if (leafKey === 'type') return FIELD_TYPE_LABELS[value] || value;
+    const enumMap = FIELD_SETTING_ENUM_LABELS[leafKey];
+    const enumLabel = enumMap?.[value.trim().toUpperCase()];
+    if (enumLabel) return enumLabel;
     return xlsxDiffValuePreview(value, value.length);
   }
   if (typeof value === 'number' || typeof value === 'bigint') return String(value);
@@ -862,6 +885,22 @@ function humanizeListRowValue(
   const value = side === 'source' ? row.left : row.right;
   if (value && typeof value === 'object') {
     return summarizeListComplexValue(row, side, value as Record<string, unknown> | unknown[]);
+  }
+  // プリミティブ値も辞書を通す: フィールド設定は設定キー文脈、
+  // それ以外のセクションは path-decoder の enum 解決を優先する。
+  // 訳が付かない値は従来どおりの素通し表示にフォールバックする。
+  const fieldInfo = extractFieldPathInfo(String(row.path || ''));
+  if (fieldInfo) {
+    const setting = fieldSettingIdentity(fieldInfo);
+    if (setting.settingKey !== '(field)') {
+      const humanized = humanizeFieldSettingValue(value, setting.settingKey);
+      if (humanized) return humanized;
+    }
+  } else if (value != null) {
+    const decoded = decodedListValue(row, side);
+    if (decoded && decoded !== String(value)) {
+      return xlsxDiffValuePreview(decoded, decoded.length);
+    }
   }
   if (typeof value === 'string') return xlsxDiffValuePreview(humanizeListScalar(value), value.length);
   return humanizeListScalar(value);
@@ -2799,7 +2838,7 @@ function customerLayoutItemParts(
 
 function customerViewItemParts(row: DiffXlsxRow): CustomerItemParts | null {
   const path = String(row.path || '');
-  const match = /^viewSettings\.views\.(.+?)\.(fields(?:\[(\d+)\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|title|html|index)$/.exec(path);
+  const match = /^viewSettings\.views\.(.+?)\.(fields(?:\[(\d+)\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/.exec(path);
   if (!match) {
     const wholeView = /^viewSettings\.views\.(.+)$/.exec(path);
     if (!wholeView) return null;
@@ -2819,6 +2858,8 @@ function customerViewItemParts(row: DiffXlsxRow): CustomerItemParts | null {
     paginationStyle: 'ページ送りの形式',
     pager: 'ページ送り',
     builtinType: '標準一覧の種類',
+    device: '表示するデバイス',
+    date: '日付の基準フィールド',
     title: '見出し',
     html: 'カスタマイズ内容',
     index: '一覧の並び順'
@@ -3235,17 +3276,9 @@ const CUSTOMER_ONE_BASED_INDEX_SECTIONS = new Set([
   'categories'
 ]);
 
-const CUSTOMER_VIEW_BUILTIN_LABELS: Record<string, string> = {
-  ...VIEW_BUILTIN_TYPE_JP,
-  UNDONE: '未完了レコード',
-  ACTIVE_BY_USER: '自分が処理すべきレコード',
-  RECORDS_OF_USER: '自分が関わるレコード'
-};
+const CUSTOMER_VIEW_BUILTIN_LABELS: Record<string, string> = VIEW_BUILTIN_TYPE_JP;
 
-const CUSTOMER_VIEW_DEVICE_LABELS: Record<string, string> = {
-  ANY: 'PC・モバイル両方',
-  DESKTOP: 'PC版のみ'
-};
+const CUSTOMER_VIEW_DEVICE_LABELS: Record<string, string> = VIEW_DEVICE_JP;
 
 const CUSTOMER_PAGINATION_LABELS: Record<string, string> = {
   ...PAGINATION_TYPE_JP,
@@ -3260,29 +3293,11 @@ const CUSTOMER_FIELD_ACCESSIBILITY_LABELS: Record<string, string> = {
   NONE: 'アクセス不可'
 };
 
-const CUSTOMER_APP_THEME_LABELS: Record<string, string> = {
-  WHITE: 'ホワイト',
-  RED: 'レッド',
-  BLUE: 'ブルー',
-  GREEN: 'グリーン',
-  YELLOW: 'イエロー',
-  BLACK: 'ブラック',
-  CLIPBOARD: 'クリップボード',
-  BINDER: 'バインダー',
-  PENCIL: 'ペンシル',
-  CLIPS: 'クリップ'
-};
+const CUSTOMER_APP_THEME_LABELS: Record<string, string> = APP_THEME_JP;
 
-const CUSTOMER_TITLE_SELECTION_LABELS: Record<string, string> = {
-  AUTO: '自動選択',
-  MANUAL: '手動指定'
-};
+const CUSTOMER_TITLE_SELECTION_LABELS: Record<string, string> = TITLE_SELECTION_JP;
 
-const CUSTOMER_ROUNDING_MODE_LABELS: Record<string, string> = {
-  HALF_EVEN: '四捨五入（偶数丸め）',
-  UP: '切り上げ',
-  DOWN: '切り捨て'
-};
+const CUSTOMER_ROUNDING_MODE_LABELS: Record<string, string> = ROUNDING_MODE_JP;
 
 function customerMapValue(map: Record<string, string>, value: unknown): string | null {
   const original = String(value ?? '');
@@ -3345,6 +3360,10 @@ function customerContextualEnumLabel(row: DiffXlsxRow, value: unknown): string |
     if (leaf === 'chartMode') return customerMapValue(CHART_MODE_JP, value);
     if (/\.aggregations\[\d+\]\.type$/.test(path)) return customerMapValue(AGGREGATION_TYPE_JP, value);
     if (/\.groups\[\d+\]\.per$/.test(path)) return customerMapValue(GROUP_PER_JP, value);
+    if (/\.sorts\[\d+\]\.by$/.test(path)) return customerMapValue(REPORT_SORT_BY_JP, value);
+    if (/\.sorts\[\d+\]\.order$/.test(path)) return customerMapValue(REPORT_SORT_ORDER_JP, value);
+    if (leaf === 'every') return customerMapValue(PERIODIC_REPORT_EVERY_JP, value);
+    if (leaf === 'dayOfWeek') return customerMapValue(DAY_OF_WEEK_JP, value);
   }
 
   if (sectionKey === 'processSettings' && /\.assignee\.type$/.test(path)) {
@@ -3358,6 +3377,9 @@ function customerContextualEnumLabel(row: DiffXlsxRow, value: unknown): string |
 
   if (sectionKey === 'reminderNotifications' && leaf === 'timing') {
     return customerMapValue(NOTIFICATION_TIMING_JP, value);
+  }
+  if (sectionKey === 'reminderNotifications' && (leaf === 'daysLater' || leaf === 'hoursLater')) {
+    return describeReminderOffset(leaf === 'daysLater' ? 'days' : 'hours', value);
   }
 
   if (sectionKey === 'appSettings') {
