@@ -353,7 +353,7 @@ describe('diff/xlsx-export', () => {
     expect(list).toMatch(/<c r="D3"[^>]*>[\s\S]*?ラベル「契約情報 確認事項」（1行目・1項目目）[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="E3"[^>]*>[\s\S]*?表示文字[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="D4"[^>]*>[\s\S]*?一覧「保有物件一覧」[\s\S]*?<\/c>/);
-    expect(list).toMatch(/<c r="E4"[^>]*>[\s\S]*?並び順[\s\S]*?<\/c>/);
+    expect(list).toMatch(/<c r="E4"[^>]*>[\s\S]*?ソート[\s\S]*?<\/c>/);
     expect(detail).toMatch(/<c r="D2"[^>]*>[\s\S]*?フィールド「BM会社情報」[\s\S]*?<\/c>/);
     expect(detail).toMatch(/<c r="E2"[^>]*>[\s\S]*?関連レコード一覧：参照するアプリ（アプリID）[\s\S]*?<\/c>/);
     expect(list).not.toContain('BM会社情報 / 関連レコード一覧設定 / 参照するアプリ / 参照するアプリID');
@@ -593,7 +593,7 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('ファイル内容');
     expect(list).toContain('本文');
     expect(list).toContain('アプリアクション「顧客へ転記」');
-    expect(list).toContain('参照先アプリID');
+    expect(list).toContain('レコードを追加するアプリ（アプリID）');
     expect(list).toContain('一覧「保有物件一覧」');
     expect(list).toContain('ページ送りの形式');
     expect(list).toContain('…');
@@ -651,8 +651,8 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('比較先から削除：');
     expect(list).toContain('比較先に追加：');
     expect(worksheetInlineTexts(list, 'E', 2)).toEqual([
-      'フィールドの対応付け（1件目）',
-      'フィールドの対応付け（1件目）'
+      'フィールドの関連付け（1件目）',
+      'フィールドの関連付け（1件目）'
     ]);
     expect(list).not.toContain('アプリアクション「取得価額」');
     expect(list).not.toContain('アプリアクション「税抜取得価額」');
@@ -842,7 +842,7 @@ describe('diff/xlsx-export', () => {
     expect(list).not.toContain('No.（リンク）から全差分の状態・型・原文を確認できます');
     expect(list).toContain('<hyperlink ref="A2" location="&apos;設定値詳細&apos;!A2"');
     expect(detail).toContain('<hyperlink ref="H2" location="&apos;変更一覧&apos;!A2"');
-    expect(list).not.toContain('テーブル内の項目:');
+    expect(list).not.toContain('テーブル内のフィールド:');
     expect(list).not.toContain('詳細は安全のため非表示');
   });
 
@@ -1229,7 +1229,7 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('<hyperlink ref="A2" location="&apos;設定値詳細&apos;!A2"');
     expect(detail).toContain('<hyperlink ref="H2" location="&apos;変更一覧&apos;!A2"');
     expect(list).toContain('一覧「案件一覧」');
-    expect(list).toContain('表示項目（1件目）');
+    expect(list).toContain('表示するフィールド（1件目）');
     for (const expected of [
       'フィールド「取引先名」（コード: customer_name）', 'customer_name', 'amount', 'priority',
       'amount &gt; 0', 'priority in', 'amount desc', 'customer_name asc'
@@ -1366,14 +1366,14 @@ describe('diff/xlsx-export', () => {
     const after = worksheetInlineTexts(list, 'G', 2);
 
     for (const expected of [
-      '横', '前に付ける', 'Web', '数値（桁区切り）', '閲覧・編集可',
-      '1人選出（候補から1人）', '全ユーザー', 'URL指定', 'レコードのURL',
-      '横棒グラフ', '通常', '件数', '月', '作業者ビュー', 'PC・モバイル両方',
+      '横並び', '前につける', 'Webサイトのアドレス', '数値（桁区切り）', '閲覧・編集可',
+      '候補から作業者を1人選ぶ', '全ユーザー', 'URL指定', 'レコードのURL',
+      '横棒グラフ', '通常', 'レコード数', '月', '作業者ビュー', 'PC・モバイル両方',
       'ホワイト', 'プリセット', '自動選択', '四捨五入（偶数丸め）', 'FILE'
     ]) expect(before).toContain(expected);
     for (const expected of [
-      '縦', '後ろに付ける', 'メール', 'パーセント', '閲覧のみ',
-      '全員（全員の処理が必要）', '管理者のみ', 'ファイル指定', 'フィールド',
+      '縦並び', '後につける', 'メールアドレス', 'パーセント', '閲覧のみ',
+      '候補の全員が作業する', '管理者のみ', 'ファイル指定', 'フィールド',
       '円グラフ', '積み上げ', '合計', '年', '未完了レコード', 'PC版のみ',
       'クリップボード', 'アップロードファイル', '手動指定', '切り捨て', 'ALL'
     ]) expect(after).toContain(expected);
@@ -1600,7 +1600,7 @@ describe('diff/xlsx-export', () => {
     expect(workbook).toContain('name="06_一覧設定"');
     expect(workbook).toContain('name="13_アプリアクション"');
     expect(worksheetInlineTexts(views, 'C', 3)).toEqual(['案件一覧', '案件一覧']);
-    expect(worksheetInlineTexts(views, 'D', 3)).toEqual(['絞り込み条件', '並び順']);
+    expect(worksheetInlineTexts(views, 'D', 3)).toEqual(['絞り込み条件', 'ソート']);
     expect(actions).toContain('アプリアクション');
     expect(actions).toContain('顧客登録');
     expect(actions).toContain('コピー元フィールド');

@@ -4554,26 +4554,26 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     code: 'フィールドコード',
     noLabel: 'フィールド名を表示しない',
     required: '必須項目にする',
-    unique: '重複禁止にする',
+    unique: '値の重複を禁止する',
     defaultValue: '初期値',
-    defaultNowValue: '現在日時を初期値にする',
+    defaultNowValue: 'レコード登録時の日時を初期値にする',
     description: '説明',
-    minLength: '最小文字数',
-    maxLength: '最大文字数',
-    minValue: '最小値',
-    maxValue: '最大値',
+    minLength: '文字数（最小）',
+    maxLength: '文字数（最大）',
+    minValue: '数値の制限（最小）',
+    maxValue: '数値の制限（最大）',
     expression: '計算式',
     hideExpression: '計算式を表示しない',
     options: '項目と順番',
-    protocol: 'プロトコル',
+    protocol: '入力値の種類',
     displayScale: '小数点以下の表示桁数',
     digit: '桁区切りを表示する',
     unit: '単位記号',
-    unitPosition: '単位記号の位置',
-    align: '並び',
+    unitPosition: '単位記号の表示位置',
+    align: '選択肢の並び',
     format: '表示形式',
     entities: '選択候補',
-    fields: 'テーブル内の項目',
+    fields: 'テーブル内のフィールド',
     referenceTable: '関連レコード一覧設定',
     lookup: 'ルックアップ設定'
   };
@@ -4581,15 +4581,15 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   // 関連レコード一覧設定 / ルックアップ設定オブジェクト内のキー → 日本語ラベル
   // （kintone のフィールド設定ダイアログの項目名に揃える）
   const SETTING_KEY_LABELS = {
-    condition: '表示条件（フィールドの一致）',
+    condition: '表示するレコードの条件',
     displayFields: '表示するフィールド',
     filterCond: '絞り込み条件',
     relatedApp: '参照するアプリ',
-    size: '一度に表示する最大件数',
+    size: '一度に表示する最大レコード数',
     sort: 'ソート',
     relatedKeyField: 'コピー元のフィールド',
     fieldMappings: 'ほかのフィールドのコピー',
-    lookupPickerFields: '選択画面に表示するフィールド',
+    lookupPickerFields: 'コピー元のレコード選択時に表示するフィールド',
     field: '自アプリのフィールド',
     relatedField: '参照するアプリのフィールド',
     app: '参照するアプリID',
@@ -4597,15 +4597,15 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   };
 
   const FIELD_ALIGN_LABELS = Object.freeze({
-    horizontal: '横',
-    vertical: '縦',
-    HORIZONTAL: '横',
-    VERTICAL: '縦'
+    horizontal: '横並び',
+    vertical: '縦並び',
+    HORIZONTAL: '横並び',
+    VERTICAL: '縦並び'
   });
 
   const FIELD_UNIT_POSITION_LABELS = Object.freeze({
-    BEFORE: '前に付ける',
-    AFTER: '後ろに付ける'
+    BEFORE: '前につける',
+    AFTER: '後につける'
   });
 
   const CALC_FORMAT_LABELS = Object.freeze({
