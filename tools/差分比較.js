@@ -3960,26 +3960,26 @@ ${contextLine}`);
           WRITE: "閲覧・編集可",
           READ_WRITE: "閲覧・編集可"
         },
-        // ビュー種別
+        // 一覧の表示形式（kintone の一覧設定画面の選択肢名）
         "view.type": {
-          LIST: "一覧",
-          CALENDAR: "カレンダー",
+          LIST: "表形式",
+          CALENDAR: "カレンダー形式",
           CUSTOM: "カスタマイズ"
         },
-        // グラフ種別
+        // グラフ種別（kintone のグラフ設定画面の名称）
         "chart.type": {
-          BAR: "棒グラフ",
+          BAR: "横棒グラフ",
           COLUMN: "縦棒グラフ",
           PIE: "円グラフ",
-          LINE: "折れ線",
+          LINE: "折れ線グラフ",
           PIVOT_TABLE: "クロス集計表",
-          TABLE: "集計表",
-          AREA: "エリアグラフ",
-          AREA_STACKED: "積み上げエリア",
-          SPLINE: "スプライン",
-          SPLINE_AREA: "スプラインエリア",
+          TABLE: "表",
+          AREA: "面グラフ",
+          AREA_STACKED: "積み上げ面グラフ",
+          SPLINE: "曲線グラフ",
+          SPLINE_AREA: "曲線面グラフ",
           BUBBLE: "バブル",
-          BAR_STACKED: "積み上げ棒",
+          BAR_STACKED: "積み上げ横棒",
           FUNNEL: "ファネル"
         },
         // ページ送り
@@ -3995,14 +3995,14 @@ ${contextLine}`);
         }
       };
       PROP_LABELS = {
-        // appAcl 操作権限
+        // appAcl 操作権限（kintone のアクセス権設定画面の列名）
         appEditable: { label: "アプリ管理", icon: "⚙" },
-        recordViewable: { label: "閲覧", icon: "👁" },
-        recordAddable: { label: "追加", icon: "➕" },
-        recordEditable: { label: "編集", icon: "✏️" },
-        recordDeletable: { label: "削除", icon: "🗑" },
-        recordImportable: { label: "CSV読込", icon: "📥" },
-        recordExportable: { label: "CSV書出", icon: "📤" },
+        recordViewable: { label: "レコード閲覧", icon: "👁" },
+        recordAddable: { label: "レコード追加", icon: "➕" },
+        recordEditable: { label: "レコード編集", icon: "✏️" },
+        recordDeletable: { label: "レコード削除", icon: "🗑" },
+        recordImportable: { label: "ファイル読み込み", icon: "📥" },
+        recordExportable: { label: "ファイル書き出し", icon: "📤" },
         // recordPermissions の権限
         viewable: { label: "閲覧", icon: "👁" },
         editable: { label: "編集", icon: "✏️" },
@@ -4015,7 +4015,7 @@ ${contextLine}`);
         rights: { label: "権限エントリー" },
         accessibility: { label: "アクセス権" },
         // viewSettings
-        fields: { label: "表示項目", icon: "📋" },
+        fields: { label: "表示するフィールド", icon: "📋" },
         sort: { label: "ソート", icon: "↕" },
         index: { label: "表示順", icon: "🔢" },
         paginationStyle: { label: "ページ送り", icon: "📄" },
@@ -4029,28 +4029,28 @@ ${contextLine}`);
         chartMode: { label: "モード" },
         reports: { label: "グラフ一覧" },
         periodicReports: { label: "定期レポート" },
-        // notifications
-        recordAdded: { label: "レコード追加時" },
-        recordEdited: { label: "レコード編集時" },
-        commentAdded: { label: "コメント追加時" },
-        statusChanged: { label: "ステータス変更時" },
-        fileImported: { label: "ファイル取込時" },
-        recipients: { label: "宛先" },
-        targets: { label: "宛先" },
+        // notifications（kintone の通知設定画面の項目名）
+        recordAdded: { label: "レコードの追加" },
+        recordEdited: { label: "レコードの編集" },
+        commentAdded: { label: "コメントの書き込み" },
+        statusChanged: { label: "ステータスの更新" },
+        fileImported: { label: "ファイルの読み込み" },
+        recipients: { label: "通知先" },
+        targets: { label: "通知先" },
         notifications: { label: "通知ルール" },
-        timing: { label: "タイミング" },
+        timing: { label: "通知するタイミング" },
         notifyOnUpdate: { label: "更新時に通知" },
         timezone: { label: "タイムゾーン" },
         perRecordNotifications: { label: "レコード条件通知" },
         reminderNotifications: { label: "リマインダー通知" },
         title: { label: "タイトル" },
         body: { label: "本文" },
-        // processSettings
-        enable: { label: "プロセス有効化" },
+        // processSettings（kintone のプロセス管理設定画面の項目名）
+        enable: { label: "プロセス管理の有効化" },
         states: { label: "ステータス" },
         actions: { label: "アクション" },
-        from: { label: "遷移元" },
-        to: { label: "遷移先" },
+        from: { label: "実行前のステータス" },
+        to: { label: "実行後のステータス" },
         assignee: { label: "作業者" },
         type: { label: "種別" },
         settings: { label: "設定" },
@@ -4066,18 +4066,29 @@ ${contextLine}`);
         js: { label: "JS" },
         css: { label: "CSS" },
         file: { label: "ファイル" },
-        scope: { label: "配置" },
+        scope: { label: "適用範囲" },
         url: { label: "URL" },
         // pluginSettings
         plugins: { label: "プラグイン一覧" },
         version: { label: "バージョン" },
         id: { label: "ID" },
-        // appSettings / appInfo
+        // appSettings / appInfo（kintone のアプリ設定画面の項目名）
         name: { label: "名前" },
         description: { label: "説明" },
-        theme: { label: "テーマ" },
-        titleField: { label: "タイトルフィールド" },
+        theme: { label: "デザインテーマ" },
+        titleField: { label: "レコードのタイトル" },
+        selectionMode: { label: "選択方法" },
         icon: { label: "アイコン" },
+        enableThumbnails: { label: "サムネイルの表示" },
+        enableBulkDeletion: { label: "レコードの一括削除" },
+        enableComments: { label: "レコードのコメント機能" },
+        enableDuplicateRecord: { label: "レコードの再利用" },
+        enableInlineRecordEditing: { label: "一覧でのレコードのインライン編集" },
+        numberPrecision: { label: "数値や計算の精度" },
+        digits: { label: "全体の桁数" },
+        decimalPlaces: { label: "小数部の桁数" },
+        roundingMode: { label: "数値の丸めかた" },
+        firstMonthOfFiscalYear: { label: "第1四半期の開始月" },
         appId: { label: "アプリID" },
         spaceId: { label: "スペースID" },
         threadId: { label: "スレッドID" },
@@ -4092,16 +4103,17 @@ ${contextLine}`);
         height: { label: "高さ" },
         innerHeight: { label: "入力欄の高さ" },
         // fieldSettings: 関連レコード一覧（referenceTable）/ ルックアップ（lookup）
+        // kintone のフィールド設定画面の項目名に合わせる。
         referenceTable: { label: "関連レコード一覧設定" },
         lookup: { label: "ルックアップ設定" },
-        condition: { label: "表示条件（フィールドの一致）" },
+        condition: { label: "表示するレコードの条件" },
         displayFields: { label: "表示するフィールド" },
         relatedApp: { label: "参照するアプリ" },
         relatedField: { label: "参照するアプリのフィールド" },
         relatedKeyField: { label: "コピー元のフィールド" },
         fieldMappings: { label: "ほかのフィールドのコピー" },
-        lookupPickerFields: { label: "選択画面に表示するフィールド" },
-        size: { label: "一度に表示する最大件数" }
+        lookupPickerFields: { label: "コピー元のレコード選択時に表示するフィールド" },
+        size: { label: "一度に表示する最大レコード数" }
       };
       SECTION_LABELS = {
         appAcl: { label: "アプリ権限", icon: "🔐" },
@@ -7065,26 +7077,26 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     code: 'フィールドコード',
     noLabel: 'フィールド名を表示しない',
     required: '必須項目にする',
-    unique: '重複禁止にする',
+    unique: '値の重複を禁止する',
     defaultValue: '初期値',
-    defaultNowValue: '現在日時を初期値にする',
+    defaultNowValue: 'レコード登録時の日時を初期値にする',
     description: '説明',
-    minLength: '最小文字数',
-    maxLength: '最大文字数',
-    minValue: '最小値',
-    maxValue: '最大値',
+    minLength: '文字数（最小）',
+    maxLength: '文字数（最大）',
+    minValue: '数値の制限（最小）',
+    maxValue: '数値の制限（最大）',
     expression: '計算式',
     hideExpression: '計算式を表示しない',
     options: '項目と順番',
-    protocol: 'プロトコル',
+    protocol: '入力値の種類',
     displayScale: '小数点以下の表示桁数',
     digit: '桁区切りを表示する',
     unit: '単位記号',
-    unitPosition: '単位記号の位置',
-    align: '並び',
+    unitPosition: '単位記号の表示位置',
+    align: '選択肢の並び',
     format: '表示形式',
     entities: '選択候補',
-    fields: 'テーブル内の項目',
+    fields: 'テーブル内のフィールド',
     referenceTable: '関連レコード一覧設定',
     lookup: 'ルックアップ設定'
   };
@@ -7092,15 +7104,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   // 関連レコード一覧設定 / ルックアップ設定オブジェクト内のキー → 日本語ラベル
   // （kintone のフィールド設定ダイアログの項目名に揃える）
   const SETTING_KEY_LABELS = {
-    condition: '表示条件（フィールドの一致）',
+    condition: '表示するレコードの条件',
     displayFields: '表示するフィールド',
     filterCond: '絞り込み条件',
     relatedApp: '参照するアプリ',
-    size: '一度に表示する最大件数',
+    size: '一度に表示する最大レコード数',
     sort: 'ソート',
     relatedKeyField: 'コピー元のフィールド',
     fieldMappings: 'ほかのフィールドのコピー',
-    lookupPickerFields: '選択画面に表示するフィールド',
+    lookupPickerFields: 'コピー元のレコード選択時に表示するフィールド',
     field: '自アプリのフィールド',
     relatedField: '参照するアプリのフィールド',
     app: '参照するアプリID',
@@ -7108,15 +7120,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   };
 
   const FIELD_ALIGN_LABELS = Object.freeze({
-    horizontal: '横',
-    vertical: '縦',
-    HORIZONTAL: '横',
-    VERTICAL: '縦'
+    horizontal: '横並び',
+    vertical: '縦並び',
+    HORIZONTAL: '横並び',
+    VERTICAL: '縦並び'
   });
 
   const FIELD_UNIT_POSITION_LABELS = Object.freeze({
-    BEFORE: '前に付ける',
-    AFTER: '後ろに付ける'
+    BEFORE: '前につける',
+    AFTER: '後につける'
   });
 
   const CALC_FORMAT_LABELS = Object.freeze({
@@ -11014,8 +11026,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     CUSTOM_FIELD: "カスタムフィールド"
   };
   var VIEW_TYPE_JP = {
-    LIST: "一覧",
-    CALENDAR: "カレンダー",
+    LIST: "表形式",
+    CALENDAR: "カレンダー形式",
     CUSTOM: "カスタマイズ"
   };
   var VIEW_BUILTIN_TYPE_JP = {
@@ -11033,8 +11045,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     PIVOT_TABLE: "クロス集計表",
     TABLE: "表",
     AREA: "面グラフ",
-    SPLINE: "スプライン",
-    SPLINE_AREA: "スプライン面",
+    SPLINE: "曲線グラフ",
+    SPLINE_AREA: "曲線面グラフ",
     SCATTER: "散布図"
   };
   var CHART_MODE_JP = {
@@ -11043,7 +11055,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     PERCENTAGE: "100%積み上げ"
   };
   var AGGREGATION_TYPE_JP = {
-    COUNT: "件数",
+    COUNT: "レコード数",
     SUM: "合計",
     AVG: "平均",
     MAX: "最大値",
@@ -11059,9 +11071,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     MINUTE: "分"
   };
   var PROCESS_ASSIGNEE_TYPE_JP = {
-    ONE: "1人選出（候補から1人）",
-    ANYONE: "候補の誰でも（先着）",
-    ALL: "全員（全員の処理が必要）"
+    ONE: "候補から作業者を1人選ぶ",
+    ANY: "候補のうち誰か1人が作業する",
+    ANYONE: "候補のうち誰か1人が作業する",
+    ALL: "候補の全員が作業する"
   };
   var NOTIFICATION_TIMING_JP = {
     CREATION: "レコード作成時",
@@ -11103,17 +11116,17 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     HOUR_MINUTE_SECOND: "時:分:秒"
   };
   var ALIGN_JP = {
-    HORIZONTAL: "横",
-    VERTICAL: "縦"
+    HORIZONTAL: "横並び",
+    VERTICAL: "縦並び"
   };
   var UNIT_POSITION_JP = {
-    BEFORE: "前に付ける",
-    AFTER: "後ろに付ける"
+    BEFORE: "前につける",
+    AFTER: "後につける"
   };
   var LINK_PROTOCOL_JP = {
-    WEB: "Web",
-    CALL: "電話",
-    MAIL: "メール"
+    WEB: "Webサイトのアドレス",
+    CALL: "電話番号",
+    MAIL: "メールアドレス"
   };
   var ALL_ENUM_LABELS = (() => {
     const out = {};
@@ -11726,29 +11739,29 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     label: "フィールド名",
     name: "フィールド名",
     code: "フィールドコード",
-    type: "フィールドタイプ",
+    type: "フィールドの種類",
     noLabel: "フィールド名を表示しない",
     required: "必須項目にする",
-    unique: "重複禁止にする",
+    unique: "値の重複を禁止する",
     defaultValue: "初期値",
-    defaultNowValue: "現在日時を初期値にする",
+    defaultNowValue: "レコード登録時の日時を初期値にする",
     description: "説明",
-    minLength: "最小文字数",
-    maxLength: "最大文字数",
-    minValue: "最小値",
-    maxValue: "最大値",
+    minLength: "文字数（最小）",
+    maxLength: "文字数（最大）",
+    minValue: "数値の制限（最小）",
+    maxValue: "数値の制限（最大）",
     expression: "計算式",
     hideExpression: "計算式を表示しない",
     options: "選択肢",
-    protocol: "プロトコル",
+    protocol: "入力値の種類",
     displayScale: "小数点以下の表示桁数",
     digit: "桁区切りを表示する",
     unit: "単位記号",
-    unitPosition: "単位記号の位置",
-    align: "並び",
+    unitPosition: "単位記号の表示位置",
+    align: "選択肢の並び",
     format: "表示形式",
     entities: "選択候補",
-    fields: "テーブル内の項目",
+    fields: "テーブル内のフィールド",
     referenceTable: "関連レコード一覧設定",
     lookup: "ルックアップ設定",
     condition: "表示するレコードの条件",
@@ -13464,8 +13477,9 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     if (sectionKey === "pluginSettings" && (leaf === "config" || leaf === "_config")) {
       return "プラグイン設定内容";
     }
-    if (sectionKey === "actionSettings" && /\.(?:(?:destApp|targetApp|sourceApp)\.(?:app|appId)|destAppId|targetAppId|sourceAppId)$/.test(path)) {
-      return "参照先アプリID";
+    const actionAppRef = /\.((?:destApp|targetApp|sourceApp)\.(?:app|appId)|destAppId|targetAppId|sourceAppId)$/.exec(path);
+    if (sectionKey === "actionSettings" && actionAppRef) {
+      return actionAppRef[1].startsWith("sourceApp") ? "コピー元のアプリ（アプリID）" : "レコードを追加するアプリ（アプリID）";
     }
     if (sectionKey === "actionSettings" && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(path)) {
       const mappingIndex = Number(path.match(/\.mappings\[(\d+)\]/)?.[1]);
@@ -13476,16 +13490,28 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
         srcType: "コピー元の種類",
         destType: "コピー先の種類"
       };
-      const target = Number.isInteger(mappingIndex) ? `フィールドの対応付け（${mappingIndex + 1}件目）` : "フィールドの対応付け";
+      const target = Number.isInteger(mappingIndex) ? `フィールドの関連付け（${mappingIndex + 1}件目）` : "フィールドの関連付け";
       return mappingProperty ? `${target}：${mappingLabels[mappingProperty]}` : target;
     }
     if ((sectionKey === "actionSettings" || sectionKey === "processSettings") && leaf === "filterCond") {
       return "実行条件";
     }
+    if (sectionKey === "actionSettings" && leaf === "entities") {
+      return "アクションを利用できるユーザー";
+    }
+    if (sectionKey === "processSettings" && leaf === "enable") {
+      return "プロセス管理を有効にする";
+    }
+    if ((sectionKey === "perRecordNotifications" || sectionKey === "reminderNotifications") && leaf === "title") {
+      return "通知内容";
+    }
+    if ((sectionKey === "appSettings" || sectionKey === "appInfo") && leaf === "name") {
+      return "アプリ名";
+    }
     const labels = {
       fileKey: "ファイル識別情報",
       filterCond: "絞り込み条件",
-      sort: "並び順",
+      sort: "ソート",
       index: "並び順",
       srcField: "コピー元フィールド",
       destField: "コピー先フィールド",
@@ -13787,8 +13813,8 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const property = match[2];
     const labels = {
       filterCond: "絞り込み条件",
-      sort: "並び順",
-      type: "一覧の種類",
+      sort: "ソート",
+      type: "一覧の表示形式",
       name: "一覧名",
       pagination: "ページ送り",
       paginationStyle: "ページ送りの形式",
@@ -13798,7 +13824,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       html: "カスタマイズ内容",
       index: "一覧の並び順"
     };
-    const settingItem = property.startsWith("fields") ? match[3] == null ? "表示項目" : `表示項目（${Number(match[3]) + 1}件目）` : labels[property] || "一覧設定";
+    const settingItem = property.startsWith("fields") ? match[3] == null ? "表示するフィールド" : `表示するフィールド（${Number(match[3]) + 1}件目）` : labels[property] || "一覧設定";
     return { target: `一覧「${viewName}」`, settingItem };
   }
   function customerItemParts(row, sourceBundle, targetBundle) {
@@ -15048,7 +15074,7 @@ ${item.target}` : item.target;
       "配置",
       "フィールド名",
       "フィールドコード",
-      "フィールド種別",
+      "フィールドの種類",
       "差分プロパティ",
       "フィールド存在",
       "設定値存在",

@@ -237,29 +237,29 @@ const FIELD_SETTING_LABELS: Record<string, string> = {
   label: 'フィールド名',
   name: 'フィールド名',
   code: 'フィールドコード',
-  type: 'フィールドタイプ',
+  type: 'フィールドの種類',
   noLabel: 'フィールド名を表示しない',
   required: '必須項目にする',
-  unique: '重複禁止にする',
+  unique: '値の重複を禁止する',
   defaultValue: '初期値',
-  defaultNowValue: '現在日時を初期値にする',
+  defaultNowValue: 'レコード登録時の日時を初期値にする',
   description: '説明',
-  minLength: '最小文字数',
-  maxLength: '最大文字数',
-  minValue: '最小値',
-  maxValue: '最大値',
+  minLength: '文字数（最小）',
+  maxLength: '文字数（最大）',
+  minValue: '数値の制限（最小）',
+  maxValue: '数値の制限（最大）',
   expression: '計算式',
   hideExpression: '計算式を表示しない',
   options: '選択肢',
-  protocol: 'プロトコル',
+  protocol: '入力値の種類',
   displayScale: '小数点以下の表示桁数',
   digit: '桁区切りを表示する',
   unit: '単位記号',
-  unitPosition: '単位記号の位置',
-  align: '並び',
+  unitPosition: '単位記号の表示位置',
+  align: '選択肢の並び',
   format: '表示形式',
   entities: '選択候補',
-  fields: 'テーブル内の項目',
+  fields: 'テーブル内のフィールド',
   referenceTable: '関連レコード一覧設定',
   lookup: 'ルックアップ設定',
   condition: '表示するレコードの条件',
@@ -2362,8 +2362,11 @@ function customerGenericSettingLabel(sectionKey: string, path: string, decodedLa
   if (sectionKey === 'pluginSettings' && (leaf === 'config' || leaf === '_config')) {
     return 'プラグイン設定内容';
   }
-  if (sectionKey === 'actionSettings' && /\.(?:(?:destApp|targetApp|sourceApp)\.(?:app|appId)|destAppId|targetAppId|sourceAppId)$/.test(path)) {
-    return '参照先アプリID';
+  const actionAppRef = /\.((?:destApp|targetApp|sourceApp)\.(?:app|appId)|destAppId|targetAppId|sourceAppId)$/.exec(path);
+  if (sectionKey === 'actionSettings' && actionAppRef) {
+    return actionAppRef[1].startsWith('sourceApp')
+      ? 'コピー元のアプリ（アプリID）'
+      : 'レコードを追加するアプリ（アプリID）';
   }
   if (sectionKey === 'actionSettings' && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(path)) {
     const mappingIndex = Number(path.match(/\.mappings\[(\d+)\]/)?.[1]);
@@ -2375,17 +2378,29 @@ function customerGenericSettingLabel(sectionKey: string, path: string, decodedLa
       destType: 'コピー先の種類'
     };
     const target = Number.isInteger(mappingIndex)
-      ? `フィールドの対応付け（${mappingIndex + 1}件目）`
-      : 'フィールドの対応付け';
+      ? `フィールドの関連付け（${mappingIndex + 1}件目）`
+      : 'フィールドの関連付け';
     return mappingProperty ? `${target}：${mappingLabels[mappingProperty]}` : target;
   }
   if ((sectionKey === 'actionSettings' || sectionKey === 'processSettings') && leaf === 'filterCond') {
     return '実行条件';
   }
+  if (sectionKey === 'actionSettings' && leaf === 'entities') {
+    return 'アクションを利用できるユーザー';
+  }
+  if (sectionKey === 'processSettings' && leaf === 'enable') {
+    return 'プロセス管理を有効にする';
+  }
+  if ((sectionKey === 'perRecordNotifications' || sectionKey === 'reminderNotifications') && leaf === 'title') {
+    return '通知内容';
+  }
+  if ((sectionKey === 'appSettings' || sectionKey === 'appInfo') && leaf === 'name') {
+    return 'アプリ名';
+  }
   const labels: Record<string, string> = {
     fileKey: 'ファイル識別情報',
     filterCond: '絞り込み条件',
-    sort: '並び順',
+    sort: 'ソート',
     index: '並び順',
     srcField: 'コピー元フィールド',
     destField: 'コピー先フィールド',
@@ -2797,8 +2812,8 @@ function customerViewItemParts(row: DiffXlsxRow): CustomerItemParts | null {
   const property = match[2];
   const labels: Record<string, string> = {
     filterCond: '絞り込み条件',
-    sort: '並び順',
-    type: '一覧の種類',
+    sort: 'ソート',
+    type: '一覧の表示形式',
     name: '一覧名',
     pagination: 'ページ送り',
     paginationStyle: 'ページ送りの形式',
@@ -2809,7 +2824,7 @@ function customerViewItemParts(row: DiffXlsxRow): CustomerItemParts | null {
     index: '一覧の並び順'
   };
   const settingItem = property.startsWith('fields')
-    ? match[3] == null ? '表示項目' : `表示項目（${Number(match[3]) + 1}件目）`
+    ? match[3] == null ? '表示するフィールド' : `表示するフィールド（${Number(match[3]) + 1}件目）`
     : labels[property] || '一覧設定';
   return { target: `一覧「${viewName}」`, settingItem };
 }
@@ -4299,7 +4314,7 @@ function buildCustomerFieldDiffSheet(
 
   const headers = [
     'No.', '変更区分', '配置', 'フィールド名', 'フィールドコード',
-    'フィールド種別', '差分プロパティ', 'フィールド存在', '設定値存在',
+    'フィールドの種類', '差分プロパティ', 'フィールド存在', '設定値存在',
     '変更前', '変更後'
   ];
   const rows: (string | number | null)[][] = [

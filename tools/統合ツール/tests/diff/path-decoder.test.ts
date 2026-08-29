@@ -4,7 +4,7 @@ import { labelOfProp, labelOfValue, labelOfBool, formatEntityText } from '../../
 
 describe('label-dict', () => {
   it('labelOfProp maps known keys to Japanese', () => {
-    expect(labelOfProp('recordEditable')).toBe('編集');
+    expect(labelOfProp('recordEditable')).toBe('レコード編集');
     expect(labelOfProp('filterCond')).toBe('絞込条件');
     expect(labelOfProp('paginationStyle')).toBe('ページ送り');
   });
@@ -65,7 +65,7 @@ describe('path-decoder.decodeRow', () => {
     const d = decodeRow(row);
     expect(d).not.toBeNull();
     expect(d!.sectionLabel).toBe('アプリ権限');
-    expect(d!.propLabel).toBe('編集');
+    expect(d!.propLabel).toBe('レコード編集');
     expect(d!.beforeText).toBe('許可');
     expect(d!.afterText).toBe('不許可');
   });
@@ -135,7 +135,7 @@ describe('path-decoder.decodeRow', () => {
       ]
     };
     const d = decodeRow(row);
-    expect(d!.propLabel).toBe('宛先');
+    expect(d!.propLabel).toBe('通知先');
     expect(d!.beforeText).toContain('営業部');
     expect(d!.afterText).toContain('Alice');
   });

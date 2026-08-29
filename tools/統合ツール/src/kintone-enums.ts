@@ -57,10 +57,10 @@ export const ENTITY_TYPE_JP: Record<string, string> = {
   CUSTOM_FIELD: 'カスタムフィールド'
 };
 
-/** 一覧（views）の種別 */
+/** 一覧（views）の表示形式。kintone の一覧設定画面の選択肢名に合わせる。 */
 export const VIEW_TYPE_JP: Record<string, string> = {
-  LIST: '一覧',
-  CALENDAR: 'カレンダー',
+  LIST: '表形式',
+  CALENDAR: 'カレンダー形式',
   CUSTOM: 'カスタマイズ'
 };
 
@@ -84,8 +84,8 @@ export const CHART_TYPE_JP: Record<string, string> = {
   PIVOT_TABLE: 'クロス集計表',
   TABLE: '表',
   AREA: '面グラフ',
-  SPLINE: 'スプライン',
-  SPLINE_AREA: 'スプライン面',
+  SPLINE: '曲線グラフ',
+  SPLINE_AREA: '曲線面グラフ',
   SCATTER: '散布図'
 };
 
@@ -96,7 +96,7 @@ export const CHART_MODE_JP: Record<string, string> = {
 };
 
 export const AGGREGATION_TYPE_JP: Record<string, string> = {
-  COUNT: '件数',
+  COUNT: 'レコード数',
   SUM: '合計',
   AVG: '平均',
   MAX: '最大値',
@@ -114,11 +114,12 @@ export const GROUP_PER_JP: Record<string, string> = {
   MINUTE: '分'
 };
 
-/** プロセス管理の作業者タイプ */
+/** プロセス管理の作業者の選択方式（APIの assignee.type は ONE / ALL / ANY） */
 export const PROCESS_ASSIGNEE_TYPE_JP: Record<string, string> = {
-  ONE: '1人選出（候補から1人）',
-  ANYONE: '候補の誰でも（先着）',
-  ALL: '全員（全員の処理が必要）'
+  ONE: '候補から作業者を1人選ぶ',
+  ANY: '候補のうち誰か1人が作業する',
+  ANYONE: '候補のうち誰か1人が作業する',
+  ALL: '候補の全員が作業する'
 };
 
 /** 通知タイミング */
@@ -173,23 +174,23 @@ export const NUMBER_FORMAT_JP: Record<string, string> = {
 };
 
 
-/** 整列方向（CHECK_BOX/RADIO_BUTTON/MULTI_SELECT 等） */
+/** 選択肢の並び（CHECK_BOX/RADIO_BUTTON 等） */
 export const ALIGN_JP: Record<string, string> = {
-  HORIZONTAL: '横',
-  VERTICAL: '縦'
+  HORIZONTAL: '横並び',
+  VERTICAL: '縦並び'
 };
 
-/** 単位記号の位置 */
+/** 単位記号の表示位置。kintone の設定画面の選択肢名に合わせる。 */
 export const UNIT_POSITION_JP: Record<string, string> = {
-  BEFORE: '前に付ける',
-  AFTER: '後ろに付ける'
+  BEFORE: '前につける',
+  AFTER: '後につける'
 };
 
-/** リンクフィールドのプロトコル */
+/** リンクフィールドの入力値の種類。kintone の設定画面の選択肢名に合わせる。 */
 export const LINK_PROTOCOL_JP: Record<string, string> = {
-  WEB: 'Web',
-  CALL: '電話',
-  MAIL: 'メール'
+  WEB: 'Webサイトのアドレス',
+  CALL: '電話番号',
+  MAIL: 'メールアドレス'
 };
 
 /** 単一の ENUM lookup（未知の値は元の値を返すフォールバック付き） */

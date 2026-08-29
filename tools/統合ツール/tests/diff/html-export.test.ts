@@ -624,7 +624,7 @@ describe('diff/html export', () => {
     expect(() => new Function(script)).not.toThrow();
     // 関連レコード一覧設定のキーは日本語ラベルへ変換される
     expect(script).toContain('参照するアプリ');
-    expect(script).toContain('表示条件（フィールドの一致）');
+    expect(script).toContain('表示するレコードの条件');
   });
 
   it('embeds both compared bundles and the field-unit JSON compare / reflect helpers', () => {
