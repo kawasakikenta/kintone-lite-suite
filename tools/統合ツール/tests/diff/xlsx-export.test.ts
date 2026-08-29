@@ -348,14 +348,103 @@ describe('diff/xlsx-export', () => {
     expect(summary).toMatch(/<c r="F8"[^>]*>[\s\S]*?環境固有ID（アプリ・一覧・グラフ・アクション）[\s\S]*?個別指定 2件[\s\S]*?<\/c>/);
     expect(Number(/<row r="8" ht="([\d.]+)"/.exec(summary)?.[1] || 0)).toBeGreaterThan(26);
     expect(list).toMatch(/<c r="D2"[^>]*>[\s\S]*?フィールド「BM会社情報」[\s\S]*?<\/c>/);
-    expect(list).toMatch(/<c r="E2"[^>]*>[\s\S]*?関連レコード：参照先アプリID[\s\S]*?<\/c>/);
+    expect(list).toMatch(/<c r="E2"[^>]*>[\s\S]*?関連レコード一覧：参照するアプリ（アプリID）[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="D3"[^>]*>[\s\S]*?ラベル「契約情報 確認事項」（1行目・1項目目）[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="E3"[^>]*>[\s\S]*?表示文字[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="D4"[^>]*>[\s\S]*?一覧「保有物件一覧」[\s\S]*?<\/c>/);
     expect(list).toMatch(/<c r="E4"[^>]*>[\s\S]*?並び順[\s\S]*?<\/c>/);
     expect(detail).toMatch(/<c r="D2"[^>]*>[\s\S]*?フィールド「BM会社情報」[\s\S]*?<\/c>/);
-    expect(detail).toMatch(/<c r="E2"[^>]*>[\s\S]*?関連レコード：参照先アプリID[\s\S]*?<\/c>/);
+    expect(detail).toMatch(/<c r="E2"[^>]*>[\s\S]*?関連レコード一覧：参照するアプリ（アプリID）[\s\S]*?<\/c>/);
     expect(list).not.toContain('BM会社情報 / 関連レコード一覧設定 / 参照するアプリ / 参照するアプリID');
+  });
+
+  it('describes related record and lookup diffs with kintone admin-screen terms and resolved own-app field names', async () => {
+    const sourceFields = {
+      BM会社情報: {
+        type: 'REFERENCE_TABLE', code: 'BM会社情報', label: 'BM会社情報',
+        referenceTable: {
+          relatedApp: { app: '101' },
+          condition: { field: 'BM会社選択', relatedField: '会社ID' },
+          displayFields: ['会社名', '住所', 'TEL'],
+          filterCond: '契約状態 in ("有効")',
+          sort: '会社ID asc',
+          size: '5'
+        }
+      },
+      BM会社選択: { type: 'SINGLE_LINE_TEXT', code: 'BM会社選択', label: 'BM会社（選択用）' },
+      請求先: {
+        type: 'SINGLE_LINE_TEXT', code: '請求先', label: '請求先',
+        lookup: {
+          relatedApp: { app: '202' },
+          relatedKeyField: '会社ID',
+          fieldMappings: [{ field: '住所欄', relatedField: '住所' }],
+          lookupPickerFields: ['会社名']
+        }
+      },
+      住所欄: { type: 'SINGLE_LINE_TEXT', code: '住所欄', label: '住所（自動コピー）' }
+    };
+    const targetFields = {
+      ...sourceFields,
+      BM会社ID: { type: 'SINGLE_LINE_TEXT', code: 'BM会社ID', label: 'BM会社ID' },
+      振込先住所: { type: 'SINGLE_LINE_TEXT', code: '振込先住所', label: '振込先住所（表示用）' }
+    };
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      sourceBundle: { sections: { fieldSettings: { properties: sourceFields } } },
+      targetBundle: { sections: { fieldSettings: { properties: targetFields } } },
+      rows: [
+        {
+          sectionKey: 'fieldSettings', type: 'changed',
+          path: 'fieldSettings.properties.BM会社情報.referenceTable.condition.field',
+          left: 'BM会社選択', right: 'BM会社ID'
+        },
+        {
+          sectionKey: 'fieldSettings', type: 'changed', moved: true, movedFrom: 0, movedTo: 2,
+          path: 'fieldSettings.properties.BM会社情報.referenceTable.displayFields[0]',
+          left: '会社名', right: '会社名'
+        },
+        {
+          sectionKey: 'fieldSettings', type: 'changed',
+          path: 'fieldSettings.properties.BM会社情報.referenceTable.filterCond',
+          left: '契約状態 in ("有効")', right: ''
+        },
+        {
+          sectionKey: 'fieldSettings', type: 'changed',
+          path: 'fieldSettings.properties.BM会社情報.referenceTable.size',
+          left: '5', right: '10'
+        },
+        {
+          sectionKey: 'fieldSettings', type: 'changed',
+          path: 'fieldSettings.properties.請求先.lookup.fieldMappings[0].field',
+          left: '住所欄', right: '振込先住所'
+        }
+      ]
+    });
+    const list = await readWorksheetByName(blob, '変更一覧');
+
+    // 差分プロパティは kintone のフィールド設定画面と同じ項目名で説明する。
+    expect(worksheetInlineTexts(list, 'E', 2)).toEqual([
+      '関連レコード一覧：表示するレコードの条件（自アプリのフィールド）',
+      '関連レコード一覧：表示するフィールドの並び順',
+      '関連レコード一覧：さらに絞り込む条件',
+      '関連レコード一覧：一度に表示する最大レコード数',
+      'ルックアップ：ほかのフィールドのコピー（1件目）のコピー先（自アプリのフィールド）'
+    ]);
+    expect(list).not.toContain('照合フィールド');
+    // 自アプリ側のフィールドコードは「フィールド名（コード）」で表示し、名前の違いと分かるようにする。
+    expect(worksheetInlineTexts(list, 'F', 2)).toEqual([
+      'BM会社（選択用）（BM会社選択）',
+      '1番目',
+      '契約状態 in ("有効")',
+      '5',
+      '住所（自動コピー）（住所欄）'
+    ]);
+    expect(worksheetInlineTexts(list, 'G', 2)).toEqual([
+      'BM会社ID',
+      '3番目',
+      '（空文字：条件なし）',
+      '10',
+      '振込先住所（表示用）（振込先住所）'
+    ]);
   });
 
   it('separates field identity, property, presence, and table hierarchy in a dedicated customer sheet', async () => {
@@ -624,7 +713,7 @@ describe('diff/xlsx-export', () => {
     expect(list).not.toContain('フィールド「分類マスタ」');
     expect(list).toContain('テーブル「借入返済情報」');
     expect(list).not.toContain('フィールド「借入返済情報」');
-    expect(list).toContain('関連レコード：並び順');
+    expect(list).toContain('関連レコード一覧：レコードのソート（表示順）');
   });
 
   it('preserves angle-bracket text in plain field and view names', async () => {
