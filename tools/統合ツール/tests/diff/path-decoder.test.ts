@@ -152,4 +152,121 @@ describe('path-decoder.decodeRow', () => {
     // 日本語ラベルが検索インデックスに含まれる
     expect(d!.searchableTokens.join(' ')).toMatch(/閲覧|アプリ権限|許可/);
   });
+
+  it('resolves the assignee type via processSettings context (type is section-scoped)', () => {
+    const d = decodeRow({
+      sectionKey: 'processSettings',
+      path: 'processSettings.states.処理中.assignee.type',
+      type: 'changed',
+      left: 'ANY',
+      right: 'ALL'
+    });
+    expect(d!.beforeText).toBe('候補のうち誰か1人が作業する');
+    expect(d!.afterText).toBe('候補の全員が作業する');
+  });
+
+  it('resolves appSettings enums (icon type / theme / roundingMode) with screen labels', () => {
+    const icon = decodeRow({
+      sectionKey: 'appSettings', path: 'appSettings.icon.type',
+      type: 'changed', left: 'PRESET', right: 'FILE'
+    });
+    expect(icon!.beforeText).toBe('プリセット');
+    expect(icon!.afterText).toBe('アップロードファイル');
+    // 親プロパティ（アイコン）が文脈チップとして補われる
+    expect(icon!.whereChips.map((c) => c.label)).toContain('アイコン');
+
+    const theme = decodeRow({
+      sectionKey: 'appSettings', path: 'appSettings.theme',
+      type: 'changed', left: 'WHITE', right: 'RED'
+    });
+    expect(theme!.beforeText).toBe('ホワイト');
+    expect(theme!.afterText).toBe('レッド');
+
+    const rounding = decodeRow({
+      sectionKey: 'appSettings', path: 'appSettings.numberPrecision.roundingMode',
+      type: 'changed', left: 'HALF_EVEN', right: 'UP'
+    });
+    expect(rounding!.beforeText).toBe('四捨五入（偶数丸め）');
+    expect(rounding!.afterText).toBe('切り上げ');
+  });
+
+  it('resolves view device/builtinType and report sort/aggregation enums', () => {
+    const device = decodeRow({
+      sectionKey: 'viewSettings', path: 'viewSettings.views.カスタム.device',
+      type: 'changed', left: 'ANY', right: 'DESKTOP'
+    });
+    expect(device!.propLabel).toBe('表示するデバイス');
+    expect(device!.beforeText).toBe('PC・モバイル両方');
+    expect(device!.afterText).toBe('PC版のみ');
+
+    const builtin = decodeRow({
+      sectionKey: 'viewSettings', path: 'viewSettings.views.一覧.builtinType',
+      type: 'removed', left: 'ASSIGNEE', right: undefined
+    });
+    expect(builtin!.propLabel).toBe('標準一覧の種類');
+    expect(builtin!.beforeText).toBe('作業者ビュー');
+
+    const order = decodeRow({
+      sectionKey: 'reportSettings', path: 'reportSettings.reports.売上集計.sorts[0].order',
+      type: 'changed', left: 'DESC', right: 'ASC'
+    });
+    expect(order!.propLabel).toBe('ソートの順序');
+    expect(order!.beforeText).toBe('大きい順');
+    expect(order!.afterText).toBe('小さい順');
+
+    const aggregation = decodeRow({
+      sectionKey: 'reportSettings', path: 'reportSettings.reports.売上集計.aggregations[0].type',
+      type: 'changed', left: 'SUM', right: 'AVG'
+    });
+    expect(aggregation!.beforeText).toBe('合計');
+    expect(aggregation!.afterText).toBe('平均');
+  });
+
+  it('summarizes periodicReport as one line instead of raw JSON keys', () => {
+    const d = decodeRow({
+      sectionKey: 'reportSettings',
+      path: 'reportSettings.reports.売上集計.periodicReport',
+      type: 'added',
+      left: undefined,
+      right: { active: true, period: { every: 'WEEK', dayOfWeek: 'MONDAY', time: '09:00' } }
+    });
+    expect(d!.propLabel).toBe('定期レポート');
+    expect(d!.afterText).toBe('有効（毎週 月曜日 09:00）');
+  });
+
+  it('humanizes reminder daysLater offsets to 日前/日後', () => {
+    const d = decodeRow({
+      sectionKey: 'reminderNotifications',
+      path: 'reminderNotifications.notifications[0].timing.daysLater',
+      type: 'changed',
+      left: '-1',
+      right: '3'
+    });
+    expect(d!.propLabel).toBe('通知する日');
+    expect(d!.beforeText).toBe('1日前');
+    expect(d!.afterText).toBe('3日後');
+  });
+
+  it('does not treat customizeSettings.scope as a platform chip and localizes the value', () => {
+    const d = decodeRow({
+      sectionKey: 'customizeSettings',
+      path: 'customizeSettings.scope',
+      type: 'changed',
+      left: 'ALL',
+      right: 'ADMIN'
+    });
+    expect(d!.propLabel).toBe('適用範囲');
+    expect(d!.whereChips.map((c) => c.label)).not.toContain('scope');
+    expect(d!.beforeText).toBe('全ユーザー');
+    expect(d!.afterText).toBe('管理者のみ');
+  });
+
+  it('keeps view/chart type resolution for sections without a scoped type dictionary', () => {
+    const view = decodeRow({
+      sectionKey: 'viewSettings', path: 'viewSettings.views.一覧.type',
+      type: 'changed', left: 'LIST', right: 'CALENDAR'
+    });
+    expect(view!.beforeText).toBe('表形式');
+    expect(view!.afterText).toBe('カレンダー形式');
+  });
 });
