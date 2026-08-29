@@ -174,8 +174,9 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('<hyperlink ref="F3" location="&apos;変更一覧&apos;!A1"');
     expect(summary).not.toContain('<hyperlink ref="F4"');
     expect(summary).toMatch(/<c r="F3" s="30"/);
-    expect(summary).toContain('<c r="E3" s="2"/>');
-    expect(summary).toContain('<c r="F4" s="2"/>');
+    expect(summary).toContain('<c r="E3" s="12"/>');
+    expect(summary).toContain('<c r="E4" s="12"/>');
+    expect(summary).toContain('<c r="F4" s="12"/>');
     for (const cell of ['B9', 'C9', 'D9', 'E9', 'F9']) expect(summary).toContain(`<c r="${cell}" s="7"/>`);
     expect(summary).toContain('<mergeCell ref="A2:B2"/>');
     expect(summary).toContain('<mergeCell ref="D2:F2"/>');
