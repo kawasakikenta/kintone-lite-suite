@@ -15,8 +15,9 @@
 
 import {
   labelOfProp, iconOfProp, labelOfValue, labelOfSection, labelOfBool, formatEntityText,
-  VALUE_LABELS
+  VALUE_LABELS, PROP_LABELS
 } from './label-dict.js';
+import { describePeriodicReport, describeReminderOffset } from '../kintone-enums.js';
 
 export interface WhereChip {
   icon?: string;
@@ -76,19 +77,61 @@ function isIndex(token: any): token is number {
 // 値 → 表示テキスト
 // ---------------------------------------------------------------------------
 
+// sectionKey ごとに leaf `type` の意味が変わるため、参照する値辞書スコープを分ける。
+const TYPE_SCOPE_BY_SECTION: Record<string, string> = {
+  processSettings: 'assignee.type',
+  appSettings: 'icon.type',
+  reportSettings: 'aggregation.type',
+  customizeSettings: 'resource.type'
+};
+
+// leaf 名だけで意味が一意に決まる enum スコープ。誤訳を避けるため、
+// その leaf が実際に現れるセクションに限定する（空配列 = どこでも可）。
+const SCOPED_ENUM_SECTIONS: Record<string, string[]> = {
+  builtinType: ['viewSettings'],
+  device: ['viewSettings'],
+  chartMode: ['reportSettings'],
+  scope: ['customizeSettings'],
+  theme: ['appSettings'],
+  selectionMode: ['appSettings'],
+  roundingMode: ['appSettings'],
+  per: ['reportSettings'],
+  by: ['reportSettings'],
+  order: ['reportSettings'],
+  every: ['reportSettings'],
+  dayOfWeek: ['reportSettings']
+};
+
+function scopedEnumLabel(sectionKey: string, propKey: string, value: string): string | null {
+  if (propKey === 'type') {
+    const scope = TYPE_SCOPE_BY_SECTION[sectionKey];
+    if (scope) {
+      const scoped = labelOfValue(scope, value);
+      if (scoped) return scoped;
+    }
+    return labelOfValue('view.type', value) || labelOfValue('chart.type', value);
+  }
+  const sections = SCOPED_ENUM_SECTIONS[propKey];
+  if (sections && (!sections.length || sections.includes(sectionKey))) {
+    return labelOfValue(propKey, value);
+  }
+  return null;
+}
+
 /** propKey の文脈で primitive / object / array を表示テキスト化する */
-function valueToText(value: any, propKey: string, depth = 0): string {
+function valueToText(value: any, propKey: string, depth = 0, sectionKey = ''): string {
   if (value === undefined) return '（未設定）';
   if (value === null) return '-';
   if (typeof value === 'boolean') return labelOfBool(value, propKey);
+  if (propKey === 'daysLater' || propKey === 'hoursLater') {
+    const offset = describeReminderOffset(propKey === 'daysLater' ? 'days' : 'hours', value);
+    if (offset) return offset;
+  }
   if (typeof value === 'number') return String(value);
   if (typeof value === 'string') {
     // accessibility / view.type など enum スコープのラベルを優先
     if (propKey === 'accessibility') {
       return labelOfValue('accessibility', value) || value;
-    }
-    if (propKey === 'type') {
-      return labelOfValue('view.type', value) || labelOfValue('chart.type', value) || value;
     }
     if (propKey === 'chartType') {
       return labelOfValue('chart.type', value) || value;
@@ -96,6 +139,8 @@ function valueToText(value: any, propKey: string, depth = 0): string {
     if (propKey === 'paginationStyle') {
       return labelOfValue('paginationStyle', value) || value;
     }
+    const scoped = scopedEnumLabel(sectionKey, propKey, value);
+    if (scoped) return scoped;
     return value;
   }
   if (Array.isArray(value)) {
@@ -115,9 +160,14 @@ function valueToText(value: any, propKey: string, depth = 0): string {
       return value.map((v: any) => (v == null ? '-' : String(v))).join(', ');
     }
     if (depth >= 1) return `(${value.length} 件)`;
-    return value.slice(0, 6).map((v: any) => valueToText(v, propKey, depth + 1)).join('\n');
+    return value.slice(0, 6).map((v: any) => valueToText(v, propKey, depth + 1, sectionKey)).join('\n');
   }
   if (typeof value === 'object') {
+    // 定期レポートは active/period を 1 行へ要約（raw キーの露出を防ぐ）
+    if (propKey === 'periodicReport') {
+      const summary = describePeriodicReport(value);
+      if (summary) return summary;
+    }
     // entity ラッパ
     if (value.entity && typeof value.entity === 'object') {
       const base = formatEntityText(value.entity);
@@ -134,7 +184,7 @@ function valueToText(value: any, propKey: string, depth = 0): string {
       return formatEntityText(value);
     }
     // アクション/ビュー/通知などの構造物 → 重要キーを抜粋
-    return summarizeObject(value, depth);
+    return summarizeObject(value, depth, sectionKey);
   }
   return String(value);
 }
@@ -145,7 +195,7 @@ const SUMMARY_KEYS_PRIORITY = [
   'version', 'paginationStyle', 'url'
 ];
 
-function summarizeObject(obj: any, depth: number): string {
+function summarizeObject(obj: any, depth: number, sectionKey = ''): string {
   const lines: string[] = [];
   let n = 0;
   for (const key of SUMMARY_KEYS_PRIORITY) {
@@ -154,7 +204,7 @@ function summarizeObject(obj: any, depth: number): string {
     const v = obj[key];
     if (v === null || v === undefined) continue;
     if (typeof v === 'object' && depth >= 1) continue;
-    lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1)}`);
+    lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
     n++;
   }
   // 残りキー (rights/entities/recipients 等)
@@ -164,10 +214,10 @@ function summarizeObject(obj: any, depth: number): string {
     const v = obj[key];
     if (v === null || v === undefined) continue;
     if (Array.isArray(v)) {
-      lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1)}`);
+      lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
       n++;
     } else if (typeof v !== 'object') {
-      lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1)}`);
+      lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
       n++;
     }
   }
@@ -192,6 +242,8 @@ interface ParsedContext {
   namedScope?: string;       // 'views', 'reports', 'states', 'categories'
   /** path 末尾の leaf プロパティ (propKey) */
   leafKey?: string;
+  /** leaf 直前の親プロパティ（icon.type の icon 等、文脈表示用） */
+  parentKey?: string;
   /** customizeSettings.desktop.js[0] の platform/kind */
   platform?: string;
   kind?: string;
@@ -204,9 +256,10 @@ function parsePath(sectionKey: string, path: string): ParsedContext {
   const ctx: ParsedContext = {};
 
   // customizeSettings.<platform>.<kind>[idx]...
+  // scope などの直下プロパティを platform と誤認しないよう、既知の値に限定する。
   if (sectionKey === 'customizeSettings' && tokens.length >= 2) {
-    if (typeof tokens[1] === 'string') ctx.platform = tokens[1] as string;
-    if (typeof tokens[2] === 'string') ctx.kind = tokens[2] as string;
+    if (tokens[1] === 'desktop' || tokens[1] === 'mobile') ctx.platform = tokens[1] as string;
+    if (ctx.platform && (tokens[2] === 'js' || tokens[2] === 'css')) ctx.kind = tokens[2] as string;
   }
 
   // 名前付きマップ (views.X, reports.X, states.X, categories.X, notifications-bucket は配列なので除外)
@@ -236,10 +289,16 @@ function parsePath(sectionKey: string, path: string): ParsedContext {
     }
   }
 
-  // leaf: 末尾の非数値トークン
+  // leaf: 末尾の非数値トークン。あわせて直前の親プロパティも記録する。
   for (let i = tokens.length - 1; i >= 1; i--) {
     if (typeof tokens[i] === 'string') {
       ctx.leafKey = tokens[i] as string;
+      for (let j = i - 1; j >= 1; j--) {
+        if (typeof tokens[j] === 'string') {
+          ctx.parentKey = tokens[j] as string;
+          break;
+        }
+      }
       break;
     }
   }
@@ -316,6 +375,13 @@ function buildWhereChips(row: any, ctx: ParsedContext): WhereChip[] {
     chips.push({ label: `${labelOfProp(ctx.arrayBucketKey)} #${ctx.arrayIndex + 1}`, muted: true });
   }
 
+  // 6) icon.type / titleField.selectionMode 等、辞書に載っている親プロパティを
+  //    文脈として補う（辞書に無い親キーは生のまま出さない）
+  if (!chips.length && ctx.parentKey && ctx.parentKey !== ctx.leafKey
+    && ctx.parentKey !== ctx.arrayBucketKey && PROP_LABELS[ctx.parentKey]) {
+    chips.push({ label: labelOfProp(ctx.parentKey), muted: true });
+  }
+
   return chips;
 }
 
@@ -339,8 +405,9 @@ export function decodeRow(row: any): DecodedRow | null {
   const propIcon = leaf ? iconOfProp(leaf) : '';
 
   const propKey = leaf || ctx.arrayBucketKey || '';
-  const beforeText = row.type === 'added' ? '（なし）' : valueToText(row.left, propKey);
-  const afterText  = row.type === 'removed' ? '（なし）' : valueToText(row.right, propKey);
+  const sectionKey = String(row.sectionKey || '');
+  const beforeText = row.type === 'added' ? '（なし）' : valueToText(row.left, propKey, 0, sectionKey);
+  const afterText  = row.type === 'removed' ? '（なし）' : valueToText(row.right, propKey, 0, sectionKey);
 
   const oneLineSummary = buildOneLineSummary(row, propLabel, beforeText, afterText);
 

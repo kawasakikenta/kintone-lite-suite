@@ -2578,8 +2578,93 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('（空欄）');
     expect(list).toContain('status = &quot;OPEN&quot;');
     expect(list).toContain('（存在しません）');
-    expect(list).toContain('いいえ');
-    expect(list).toContain('はい');
+    // enable の真偽値は はい/いいえ ではなく設定画面の文脈語で表示する
+    expect(list).toContain('無効');
+    expect(list).toContain('有効');
+  });
+
+  it('localizes section-scoped enum values in the human list and field sheets', async () => {
+    const fields = {
+      金額: { type: 'NUMBER', code: '金額', label: '金額', unitPosition: 'AFTER' },
+      合計: { type: 'CALC', code: '合計', label: '合計', format: 'NUMBER' },
+      基本情報: { type: 'GROUP', code: '基本情報', label: '基本情報', openGroup: true }
+    };
+    const blob = buildDiffXlsxBlob({
+      sourceBundle: { sections: { fieldSettings: { properties: fields } } },
+      targetBundle: { sections: { fieldSettings: { properties: fields } } },
+      rows: [
+        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.金額.unitPosition', left: 'AFTER', right: 'BEFORE' },
+        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.合計.format', left: 'NUMBER', right: 'NUMBER_DIGIT' },
+        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.基本情報.openGroup', left: true, right: false },
+        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.theme', left: 'WHITE', right: 'RED' },
+        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.icon.type', left: 'PRESET', right: 'FILE' },
+        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.カスタム.device', left: 'ANY', right: 'DESKTOP' },
+        { sectionKey: 'processSettings', type: 'changed', path: 'processSettings.states.処理中.assignee.type', left: 'ANY', right: 'ALL' },
+        { sectionKey: 'pluginSettings', type: 'changed', path: 'pluginSettings.plugins[0].enabled', left: true, right: false }
+      ]
+    });
+    const list = await readWorksheetByName(blob, '差分一覧');
+    const fieldDetail = await readWorksheetByName(blob, 'フィールド差分詳細');
+
+    // フィールド設定の enum 値はフィールド設定画面の選択肢名で表示する
+    expect(fieldDetail).toContain('後につける');
+    expect(fieldDetail).toContain('前につける');
+    expect(fieldDetail).toContain('数値（桁区切り）');
+    expect(fieldDetail).toContain('グループの初期表示');
+    expect(fieldDetail).toContain('グループを開いた状態で表示');
+    expect(list).toContain('後につける');
+
+    // 非フィールドセクションの enum 値・ラベルも画面用語で表示する
+    expect(list).toContain('ホワイト');
+    expect(list).toContain('レッド');
+    expect(list).toContain('アイコン');
+    expect(list).toContain('アップロードファイル');
+    expect(list).toContain('表示するデバイス');
+    expect(list).toContain('PC・モバイル両方');
+    expect(list).toContain('PC版のみ');
+    expect(list).toContain('候補のうち誰か1人が作業する');
+    expect(list).toContain('候補の全員が作業する');
+    expect(list).toContain('有効状態');
+    const humanCells = [...list.matchAll(/<c r="[A-L]\d+"[^>]*t="inlineStr"><is><t[^>]*>([\s\S]*?)<\/t>/g)]
+      .map((match) => match[1]);
+    // 人向け列に raw enum が残らない（差分IDやパス以外のセル本文を検査）
+    for (const raw of ['AFTER', 'BEFORE', 'NUMBER_DIGIT', 'WHITE', 'RED', 'PRESET', 'DESKTOP', 'openGroup']) {
+      expect(humanCells.filter((cell) => new RegExp(`(?<![A-Za-z0-9_])${raw}(?![A-Za-z0-9_])`).test(cell))).toEqual([]);
+    }
+  });
+
+  it('localizes report sort, periodic report, and reminder offsets in the customer workbook', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      audience: 'customer',
+      rows: [
+        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.カスタム.device', left: 'ANY', right: 'DESKTOP' },
+        { sectionKey: 'reportSettings', type: 'changed', path: 'reportSettings.reports.売上集計.sorts[0].order', left: 'DESC', right: 'ASC' },
+        {
+          sectionKey: 'reportSettings', type: 'added', path: 'reportSettings.reports.売上集計.periodicReport',
+          right: { active: true, period: { every: 'WEEK', dayOfWeek: 'MONDAY', time: '09:00' } }
+        },
+        { sectionKey: 'reminderNotifications', type: 'changed', path: 'reminderNotifications.notifications[0].timing.daysLater', left: '-1', right: '3' },
+        { sectionKey: 'notifications', type: 'changed', path: 'notifications.notifyToMentioned', left: false, right: true }
+      ]
+    });
+    const list = await readWorksheetByName(blob, '変更一覧');
+
+    expect(list).toContain('一覧「カスタム」');
+    expect(list).toContain('表示するデバイス');
+    expect(list).toContain('PC・モバイル両方');
+    expect(list).toContain('PC版のみ');
+    expect(list).toContain('ソートの順序');
+    expect(list).toContain('大きい順');
+    expect(list).toContain('小さい順');
+    expect(list).toContain('定期レポート');
+    expect(list).toContain('有効（毎週 月曜日 09:00）');
+    expect(list).toContain('通知する日');
+    expect(list).toContain('1日前');
+    expect(list).toContain('3日後');
+    expect(list).toContain('コメントの宛先ユーザーへの通知');
+    for (const raw of ['DESC', 'ASC', 'DESKTOP', 'MONDAY', 'daysLater', 'notifyToMentioned', 'periodicReport', 'device']) {
+      expect(list).not.toContain(raw);
+    }
   });
 
   it('summarizes non-field object and array values in the master list while retaining raw section evidence', async () => {

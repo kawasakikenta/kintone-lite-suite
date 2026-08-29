@@ -12,6 +12,13 @@
  * の中身、ユーザー入力名）は辞書化しない（膨張防止と意味のずれ防止）。
  */
 
+import {
+  VIEW_BUILTIN_TYPE_JP, VIEW_DEVICE_JP, GROUP_PER_JP, CHART_MODE_JP,
+  REPORT_SORT_BY_JP, REPORT_SORT_ORDER_JP, PERIODIC_REPORT_EVERY_JP, DAY_OF_WEEK_JP,
+  PROCESS_ASSIGNEE_TYPE_JP, ICON_TYPE_JP, AGGREGATION_TYPE_JP, RESOURCE_TYPE_JP,
+  CUSTOMIZE_SCOPE_JP, APP_THEME_JP, TITLE_SELECTION_JP, ROUNDING_MODE_JP
+} from '../kintone-enums.js';
+
 export interface PropMeta {
   label: string;
   icon?: string;
@@ -77,7 +84,25 @@ export const VALUE_LABELS: Record<string, Record<string, string>> = {
   recordTrigger: {
     APP: 'アプリ全体',
     RECORD: 'レコード単位'
-  }
+  },
+  // ここから下はセクション文脈込みで参照するスコープ（path-decoder が
+  // sectionKey を見て選択する）。kintone-enums の共通辞書を単一ソースとする。
+  'assignee.type': PROCESS_ASSIGNEE_TYPE_JP,
+  'icon.type': ICON_TYPE_JP,
+  'aggregation.type': AGGREGATION_TYPE_JP,
+  'resource.type': RESOURCE_TYPE_JP,
+  builtinType: VIEW_BUILTIN_TYPE_JP,
+  device: VIEW_DEVICE_JP,
+  chartMode: CHART_MODE_JP,
+  scope: CUSTOMIZE_SCOPE_JP,
+  theme: APP_THEME_JP,
+  selectionMode: TITLE_SELECTION_JP,
+  roundingMode: ROUNDING_MODE_JP,
+  per: GROUP_PER_JP,
+  by: REPORT_SORT_BY_JP,
+  order: REPORT_SORT_ORDER_JP,
+  every: PERIODIC_REPORT_EVERY_JP,
+  dayOfWeek: DAY_OF_WEEK_JP
 };
 
 // ---------------------------------------------------------------------------
@@ -107,7 +132,7 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   rights:           { label: '権限エントリー' },
   accessibility:    { label: 'アクセス権' },
 
-  // viewSettings
+  // viewSettings（kintone の一覧設定画面の項目名）
   fields:           { label: '表示するフィールド', icon: '📋' },
   sort:             { label: 'ソート',     icon: '↕' },
   index:            { label: '表示順',     icon: '🔢' },
@@ -115,14 +140,27 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   defaultView:      { label: '既定ビュー' },
   view:             { label: 'ビュー' },
   views:            { label: 'ビュー一覧' },
+  builtinType:      { label: '標準一覧の種類' },
+  device:           { label: '表示するデバイス' },
+  pager:            { label: 'ページ送りの表示' },
+  date:             { label: '日付の基準フィールド' },
 
-  // reportSettings
+  // reportSettings（kintone のグラフ設定画面の項目名）
   groups:           { label: '分類',       icon: '📊' },
   aggregations:     { label: '集計',       icon: '🧮' },
   chartType:        { label: 'グラフ種別' },
   chartMode:        { label: 'モード' },
   reports:          { label: 'グラフ一覧' },
   periodicReports:  { label: '定期レポート' },
+  periodicReport:   { label: '定期レポート' },
+  period:           { label: '実行スケジュール' },
+  every:            { label: '間隔' },
+  dayOfWeek:        { label: '曜日' },
+  dayOfMonth:       { label: '日' },
+  per:              { label: '分類の時間単位' },
+  by:               { label: 'ソートの基準' },
+  order:            { label: 'ソートの順序' },
+  active:           { label: '有効状態' },
 
   // notifications（kintone の通知設定画面の項目名）
   recordAdded:      { label: 'レコードの追加' },
@@ -134,6 +172,11 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   targets:          { label: '通知先' },
   notifications:    { label: '通知ルール' },
   timing:           { label: '通知するタイミング' },
+  daysLater:        { label: '通知する日' },
+  hoursLater:       { label: '通知する時間' },
+  time:             { label: '時刻' },
+  notifyToCommenter:{ label: 'コメントを書き込んだユーザーへの通知' },
+  notifyToMentioned:{ label: 'コメントの宛先ユーザーへの通知' },
   notifyOnUpdate:   { label: '更新時に通知' },
   timezone:         { label: 'タイムゾーン' },
   perRecordNotifications: { label: 'レコード条件通知' },
@@ -171,6 +214,7 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   plugins:          { label: 'プラグイン一覧' },
   version:          { label: 'バージョン' },
   id:               { label: 'ID' },
+  enabled:          { label: '有効状態' },
 
   // appSettings / appInfo（kintone のアプリ設定画面の項目名）
   name:             { label: '名前' },
@@ -285,8 +329,14 @@ export function labelOfBool(value: boolean, propKey?: string): string {
   if (propKey && PERMISSION_KEYS.has(propKey)) {
     return value ? '許可' : '不許可';
   }
-  if (propKey === 'enable' || propKey === 'enabled') {
+  if (propKey === 'enable' || propKey === 'enabled' || propKey === 'active') {
     return value ? '有効' : '無効';
+  }
+  if (propKey === 'pager') {
+    return value ? '表示する' : '表示しない';
+  }
+  if (propKey === 'notifyToCommenter' || propKey === 'notifyToMentioned' || propKey === 'notifyOnUpdate') {
+    return value ? '通知する' : '通知しない';
   }
   return value ? 'はい' : 'いいえ';
 }
