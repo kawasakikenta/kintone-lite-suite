@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { buildXlsxBlob, type XlsxSheet } from '../../src/diff/xlsx-builder';
+import {
+  buildXlsxBlob,
+  makeExcelCellTextVisible,
+  type XlsxSheet
+} from '../../src/diff/xlsx-builder';
 
 async function blobToBuffer(blob: Blob): Promise<Buffer> {
   const ab = await blob.arrayBuffer();
@@ -100,6 +104,39 @@ describe('diff/xlsx-builder', () => {
     expect(workbook).toContain('name="case_2"');
   });
 
+  it('replaces XML-forbidden characters and lone surrogates before validating sheet names', async () => {
+    const sheets: XlsxSheet[] = [
+      {
+        name: `bad\u0001\\\uD800/name:${'x'.repeat(40)}`,
+        rows: [['x']]
+      },
+      {
+        name: `${'x'.repeat(30)}😀`,
+        rows: [['x']]
+      },
+      {
+        name: `${'y'.repeat(28)}😀`,
+        rows: [['x']]
+      },
+      {
+        name: `${'y'.repeat(28)}😀`,
+        rows: [['x']]
+      }
+    ];
+    const workbook = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/workbook.xml');
+    const sheetNames = [...workbook.matchAll(/<sheet name="([^"]+)"/g)].map((match) => match[1]);
+    const sheetName = sheetNames[0];
+
+    expect(sheetName).toHaveLength(31);
+    expect(sheetName).toMatch(/^bad____name_/);
+    expect(sheetName).not.toMatch(/[\\\/\?\*\[\]:]/);
+    expect(sheetName).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F\uD800-\uDFFF\uFFFE\uFFFF]/);
+    expect(sheetName).not.toContain('⟦U+');
+    expect(sheetNames[1]).toBe('x'.repeat(30));
+    expect(sheetNames[2]).toBe(`${'y'.repeat(28)}😀`);
+    expect(sheetNames[3]).toBe(`${'y'.repeat(28)}_2`);
+  });
+
   it('escapes XML special characters in cell values', async () => {
     const sheets: XlsxSheet[] = [
       { name: 'Sheet1', rows: [['<tag>'], ['a & b'], ['"quoted"']] }
@@ -111,12 +148,51 @@ describe('diff/xlsx-builder', () => {
     expect(sheet1).toContain('&quot;quoted&quot;');
   });
 
-  it('removes XML 1.0 noncharacters that make Excel reject the workbook', async () => {
-    const sheets: XlsxSheet[] = [{ name: 'Sheet1', rows: [['value'], ['before\uFFFEafter\uFFFF']] }];
+  it('renders XML 1.0-forbidden characters visibly and distinguishes literal token prefixes', async () => {
+    const forbidden = '\u0000\u0001\u0008\u000B\u000C\u000E\u001F\uFFFE\uFFFF';
+    const visibleTokens = '⟦U+0000⟧⟦U+0001⟧⟦U+0008⟧⟦U+000B⟧⟦U+000C⟧⟦U+000E⟧⟦U+001F⟧⟦U+FFFE⟧⟦U+FFFF⟧';
+    expect(makeExcelCellTextVisible(forbidden)).toBe(visibleTokens);
+    expect(makeExcelCellTextVisible('⟦U+0001⟧')).toBe('⟦⟦U+0001⟧');
+    expect(makeExcelCellTextVisible('\t\n\r')).toBe('\t\n\r');
+
+    const sheets: XlsxSheet[] = [{
+      name: 'Sheet1',
+      rows: [['value'], [`before${forbidden}after`], ['⟦U+0001⟧']]
+    }];
     const sheet1 = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
-    expect(sheet1).toContain('beforeafter');
+    expect(sheet1).toContain(`before${visibleTokens}after`);
+    expect(sheet1).toContain('⟦⟦U+0001⟧');
+    expect(sheet1).not.toContain('\u0001');
     expect(sheet1).not.toContain('\uFFFE');
     expect(sheet1).not.toContain('\uFFFF');
+  });
+
+  it('renders lone surrogates visibly while preserving valid surrogate pairs', async () => {
+    const value = `before\uD800middle\uDC00after😀`;
+    const visible = 'before⟦U+D800⟧middle⟦U+DC00⟧after😀';
+    expect(makeExcelCellTextVisible(value)).toBe(visible);
+
+    const sheets: XlsxSheet[] = [{ name: 'Sheet1', rows: [['value'], [value]] }];
+    const sheet1 = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    expect(sheet1).toContain(visible);
+  });
+
+  it('strips XML-forbidden characters from structural XML attributes instead of expanding them', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'Sheet1',
+      rows: [['value'], ['x']],
+      dataValidations: [{
+        sqref: 'A2:A2',
+        values: ['ok\u0001\uD800value'],
+        promptTitle: 'title\u0001\uD800',
+        prompt: 'prompt\uFFFE\uDC00'
+      }]
+    }];
+    const sheet1 = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    expect(sheet1).toContain('promptTitle="title"');
+    expect(sheet1).toContain('prompt="prompt"');
+    expect(sheet1).toContain('<formula1>&quot;okvalue&quot;</formula1>');
+    expect(sheet1).not.toContain('⟦U+');
   });
 
   it('preserves text that looks like an Excel _xHHHH_ escape sequence', async () => {
@@ -364,12 +440,16 @@ describe('diff/xlsx-builder', () => {
     const cellXfsBlock = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(styles)?.[1] || '';
     const cellXfs = [...cellXfsBlock.matchAll(/<xf\b[^>]*>/g)].map((match) => match[0]);
     cellXfs.forEach((xf, index) => {
-      const expectedBorderId = [0, 6, 32].includes(index) ? '0' : '1';
+      const expectedBorderId = [0, 6].includes(index) ? '0' : '1';
       expect(xf).toContain(`borderId="${expectedBorderId}"`);
       if (expectedBorderId === '1') expect(xf).toContain('applyBorder="1"');
     });
     expect(cellXfs[30]).toContain('borderId="1"');
     expect(cellXfs[30]).toContain('applyBorder="1"');
+    expect(cellXfs[32]).toContain('fillId="4"');
+    expect(cellXfs[32]).toContain('borderId="1"');
+    expect(cellXfs[32]).toContain('applyFill="1"');
+    expect(cellXfs[32]).toContain('applyBorder="1"');
   });
 
   it('suppresses number-stored-as-text warnings across the used range without adding formulas or external links', async () => {
@@ -454,9 +534,11 @@ describe('diff/xlsx-builder', () => {
     expect(xml).toMatch(/<c r="A5" s="37"/);
     expect(xml).toMatch(/<c r="B5" s="38"/);
     expect(xml).toMatch(/<c r="C5" s="39"/);
+    expect(styles).toContain('<fonts count="18">');
     expect(styles).toContain('<fills count="10">');
     expect(styles).toContain('<borders count="2">');
     expect(styles).toContain('<cellXfs count="40">');
+    expect(styles).not.toContain('Consolas');
     expect(styles).toContain('color rgb="FF991B1B"');
     expect(styles).toContain('color rgb="FF166534"');
     expect(styles).not.toMatch(/style="(?:medium|thick)"/);
@@ -473,10 +555,102 @@ describe('diff/xlsx-builder', () => {
     expect(styles).toContain('<bottom style="thin"');
 
     const cellXfsBlock = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(styles)?.[1] || '';
+    const cellXfs = [...cellXfsBlock.matchAll(/<xf\b[^>]*>/g)].map((match) => match[0]);
+    expect(cellXfs[32]).toContain('fillId="4"');
+    expect(cellXfs[32]).toContain('borderId="1"');
+    expect(cellXfs[39]).toContain('fillId="3"');
+    expect(cellXfs[39]).toContain('borderId="1"');
     const borderIds = [...cellXfsBlock.matchAll(/<xf\b[^>]*\bborderId="([0-9]+)"[^>]*>/g)]
       .map((match) => match[1]);
     expect(new Set(borderIds)).toEqual(new Set(['0', '1']));
-    expect(borderIds.filter((borderId) => borderId === '0')).toHaveLength(3);
+    expect(borderIds.filter((borderId) => borderId === '0')).toHaveLength(2);
+  });
+
+  it('adds opt-in monospace raw styles without changing existing style indexes', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [['before', 'after', 'warning'], ['{"path":"C:\\\\tmp"}', '{"ok":true}', 'raw warning']],
+      cellStyles: [[], ['rawDiffBefore', 'rawDiffAfter', 'rawWarning']]
+    }];
+    const buf = await blobToBuffer(buildXlsxBlob(sheets));
+    const xml = extractEntry(buf, 'xl/worksheets/sheet1.xml');
+    const styles = extractEntry(buf, 'xl/styles.xml');
+
+    expect(xml).toMatch(/<c r="A2" s="40"/);
+    expect(xml).toMatch(/<c r="B2" s="41"/);
+    expect(xml).toMatch(/<c r="C2" s="42"/);
+    expect(styles).toContain('<fonts count="21">');
+    expect(styles).toContain('<cellXfs count="45">');
+
+    const fontsBlock = /<fonts\b[^>]*>([\s\S]*?)<\/fonts>/.exec(styles)?.[1] || '';
+    const fonts = [...fontsBlock.matchAll(/<font>([\s\S]*?)<\/font>/g)].map((match) => match[1]);
+    expect(fonts).toHaveLength(21);
+    for (const index of [18, 19, 20]) {
+      expect(fonts[index]).toContain('<name val="Consolas"/>');
+      expect(fonts[index]).toContain('<family val="3"/>');
+    }
+    expect(fonts[18]).toContain('<color rgb="FF991B1B"/>');
+    expect(fonts[19]).toContain('<color rgb="FF166534"/>');
+    expect(fonts[20]).toContain('<color rgb="FF92400E"/>');
+
+    const cellXfsBlock = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(styles)?.[1] || '';
+    const cellXfs = [...cellXfsBlock.matchAll(/<xf\b[^>]*>/g)].map((match) => match[0]);
+    expect(cellXfs).toHaveLength(45);
+    expect(cellXfs[37]).toContain('fontId="16"');
+    expect(cellXfs[38]).toContain('fontId="17"');
+    expect(cellXfs[39]).toContain('fontId="0"');
+    expect(cellXfs[40]).toContain('fontId="18" fillId="5"');
+    expect(cellXfs[41]).toContain('fontId="19" fillId="8"');
+    expect(cellXfs[42]).toContain('fontId="20" fillId="6"');
+    expect(cellXfs[43]).toContain('fontId="5" fillId="5"');
+    expect(cellXfs[43]).toContain('borderId="1"');
+    expect(cellXfs[43]).toContain('applyFont="1"');
+    expect(cellXfs[43]).toContain('applyFill="1"');
+    expect(cellXfs[43]).toContain('applyBorder="1"');
+    expect(cellXfs[43]).toContain('applyAlignment="1"');
+    expect(cellXfs[44]).toContain('fontId="5" fillId="8"');
+    expect(cellXfs[44]).toContain('borderId="1"');
+    expect(cellXfs[44]).toContain('applyFont="1"');
+    expect(cellXfs[44]).toContain('applyFill="1"');
+    expect(cellXfs[44]).toContain('applyBorder="1"');
+    expect(cellXfs[44]).toContain('applyAlignment="1"');
+
+    const cellXfEntries = [...cellXfsBlock.matchAll(/<xf\b[^>]*\/>|<xf\b[^>]*>[\s\S]*?<\/xf>/g)]
+      .map((match) => match[0]);
+    expect(cellXfEntries[43]).toContain('<alignment vertical="top" wrapText="1"/>');
+    expect(cellXfEntries[44]).toContain('<alignment vertical="top" wrapText="1"/>');
+  });
+
+  it('maps semantic aliases to existing style indexes without adding XFs', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [[
+        'good KPI', 'warning KPI', 'danger KPI',
+        'good', 'difference', 'incomplete', 'error',
+        'warning link', 'before link', 'after link'
+      ]],
+      cellStyles: [[
+        'kpiStatusGood', 'kpiStatusWarning', 'kpiStatusDanger',
+        'statusGood', 'statusDifference', 'statusIncomplete', 'statusError',
+        'warningLink', 'diffBeforeLink', 'diffAfterLink'
+      ]]
+    }];
+    const buf = await blobToBuffer(buildXlsxBlob(sheets));
+    const xml = extractEntry(buf, 'xl/worksheets/sheet1.xml');
+    const styles = extractEntry(buf, 'xl/styles.xml');
+
+    expect(xml).toMatch(/<c r="A1" s="33"/);
+    expect(xml).toMatch(/<c r="B1" s="35"/);
+    expect(xml).toMatch(/<c r="C1" s="34"/);
+    expect(xml).toMatch(/<c r="D1" s="25"/);
+    expect(xml).toMatch(/<c r="E1" s="28"/);
+    expect(xml).toMatch(/<c r="F1" s="27"/);
+    expect(xml).toMatch(/<c r="G1" s="26"/);
+    expect(xml).toMatch(/<c r="H1" s="43"/);
+    expect(xml).toMatch(/<c r="I1" s="43"/);
+    expect(xml).toMatch(/<c r="J1" s="44"/);
+    expect(styles).toContain('<fonts count="21">');
+    expect(styles).toContain('<cellXfs count="45">');
   });
 
   it('truncates oversized text to the Excel cell limit without splitting a surrogate pair', async () => {
@@ -490,6 +664,19 @@ describe('diff/xlsx-builder', () => {
     expect(text).toContain('Excelセル上限32,767文字のため省略');
     expect(text).toMatch(/元40000文字・識別:[0-9a-f]{8}/);
     expect(/[\uD800-\uDBFF]$/.test(text)).toBe(false);
+  });
+
+  it('applies the Excel cell limit after forbidden characters expand to visible escapes', async () => {
+    const forbiddenCharacters = '\u0001'.repeat(6000);
+    const sheets: XlsxSheet[] = [{ name: 'S', rows: [['value'], [forbiddenCharacters]] }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    const match = xml.match(/<c r="A2"[^>]*><is><t[^>]*>([\s\S]*?)<\/t><\/is><\/c>/);
+    expect(match).not.toBeNull();
+    const text = match![1];
+    expect(text.length).toBeLessThanOrEqual(32767);
+    expect(text).toContain('⟦U+0001⟧');
+    expect(text).not.toContain('\u0001');
+    expect(text).toMatch(/\n…（Excelセル上限32,767文字のため省略・元48000文字・識別:[0-9a-f]{8}）$/);
   });
 
   it('adds a distinct hash when long values differ only after the visible prefix', async () => {

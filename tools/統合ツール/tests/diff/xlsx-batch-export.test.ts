@@ -58,6 +58,52 @@ function firstWorksheetCells(workbook: Buffer): Record<string, string> {
   return cells;
 }
 
+function firstWorksheetRowHeights(workbook: Buffer): Record<string, number> {
+  const sheet = parseStoredEntries(workbook).find((entry) => entry.name === 'xl/worksheets/sheet1.xml');
+  expect(sheet).toBeDefined();
+  const xml = sheet!.data.toString('utf8');
+  const heights: Record<string, number> = {};
+  for (const match of xml.matchAll(/<row\b([^>]*)>/g)) {
+    const row = match[1].match(/\br="(\d+)"/)?.[1];
+    const height = Number(match[1].match(/\bht="([\d.]+)"/)?.[1]);
+    if (row && Number.isFinite(height)) heights[row] = height;
+  }
+  return heights;
+}
+
+function firstWorksheetCellStyleIds(workbook: Buffer): Record<string, number> {
+  const sheet = parseStoredEntries(workbook).find((entry) => entry.name === 'xl/worksheets/sheet1.xml');
+  expect(sheet).toBeDefined();
+  const xml = sheet!.data.toString('utf8');
+  const styles: Record<string, number> = {};
+  for (const match of xml.matchAll(/<c\b([^>]*)/g)) {
+    const ref = match[1].match(/\br="([A-Z]+\d+)"/)?.[1];
+    const styleId = Number(match[1].match(/\bs="(\d+)"/)?.[1]);
+    if (ref && Number.isSafeInteger(styleId)) styles[ref] = styleId;
+  }
+  return styles;
+}
+
+function firstWorkbookStyles(workbook: Buffer): {
+  cellXfs: string[];
+  fonts: string[];
+  fills: string[];
+} {
+  const entry = parseStoredEntries(workbook).find((item) => item.name === 'xl/styles.xml');
+  expect(entry).toBeDefined();
+  const xml = entry!.data.toString('utf8');
+  const section = (name: 'cellXfs' | 'fonts' | 'fills'): string => {
+    const content = xml.match(new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)</${name}>`))?.[1];
+    expect(content).toBeDefined();
+    return content!;
+  };
+  return {
+    cellXfs: [...section('cellXfs').matchAll(/<xf\b[^>]*?\/>|<xf\b[^>]*?>[\s\S]*?<\/xf>/g)].map((match) => match[0]),
+    fonts: [...section('fonts').matchAll(/<font\b[^>]*>[\s\S]*?<\/font>/g)].map((match) => match[0]),
+    fills: [...section('fills').matchAll(/<fill\b[^>]*>[\s\S]*?<\/fill>/g)].map((match) => match[0])
+  };
+}
+
 function context(sourceName: string, targetName: string, extra: Partial<DiffXlsxContext> = {}): DiffXlsxContext {
   return {
     audience: 'customer',
@@ -181,6 +227,68 @@ describe('diff/xlsx-batch-export', () => {
     });
   });
 
+  it('uses semantic centered 11pt styles while zebra-striping only neutral batch cells', async () => {
+    const result = await buildDiffXlsxBatchExport([
+      item('no difference', context('同一アプリ', '同一アプリ')),
+      item('with difference', context('比較元アプリ', '比較先アプリ', {
+        rows: [{ sectionKey: 'fields', type: 'changed', path: 'properties.A.label', left: '旧', right: '新' }]
+      })),
+      item('incomplete', context('', '', {
+        fetchIssues: [{ sectionKey: 'pluginSettings', side: 'source', message: '取得失敗' }]
+      })),
+      item('failed', failingContext('broken workbook'))
+    ]);
+
+    const archiveEntries = parseStoredEntries(await blobToBuffer(result.blob));
+    const summaryWorkbook = archiveEntries[0].data;
+    const cells = firstWorksheetCells(summaryWorkbook);
+    const styles = firstWorksheetCellStyleIds(summaryWorkbook);
+    const workbookStyles = firstWorkbookStyles(summaryWorkbook);
+
+    expect(cells).toMatchObject({
+      D4: '差分なし', E4: '全範囲を取得', L4: '一致',
+      D5: '差分あり', E5: '全範囲を取得', L5: '名称が異なります',
+      D6: '差分は確認できず', E6: '一部未取得', L6: '名称未取得',
+      D7: 'Excel生成失敗', E7: '—', L7: '名称未取得'
+    });
+    expect(styles).toMatchObject({
+      // First data row: neutral cells are unshaded; semantic cells keep their fills.
+      A4: 22, B4: 2, C4: 2, D4: 25, E4: 25, F4: 2,
+      G4: 22, H4: 22, I4: 22, J4: 22, K4: 22, L4: 25, M4: 2,
+      // Second data row: only neutral cells receive the zebra fill.
+      A5: 24, B5: 23, C5: 23, D5: 28, E5: 25, F5: 23,
+      G5: 24, H5: 24, I5: 24, J5: 24, K5: 24, L5: 27, M5: 23,
+      // Coverage detail and failure detail retain their own severity styles on either stripe.
+      A6: 22, B6: 2, C6: 2, D6: 27, E6: 27, F6: 11,
+      G6: 22, H6: 22, I6: 22, J6: 22, K6: 22, L6: 26, M6: 2,
+      A7: 24, B7: 23, C7: 23, D7: 26, E7: 39, F7: 5,
+      G7: 24, H7: 24, I7: 24, J7: 24, K7: 24, L7: 26, M7: 23
+    });
+
+    const semanticStyles = [
+      { id: 25, fill: 'FFECFDF5' }, // good: green
+      { id: 28, fill: 'FFF5F3FF' }, // difference: purple
+      { id: 27, fill: 'FFFFFBEB' }, // incomplete: amber
+      { id: 26, fill: 'FFFEF2F2' } // error: red
+    ];
+    for (const { id, fill } of semanticStyles) {
+      const xf = workbookStyles.cellXfs[id];
+      expect(xf).toContain('vertical="center"');
+      expect(xf).toContain('horizontal="center"');
+      expect(xf).toContain('wrapText="1"');
+      const fontId = Number(xf.match(/\bfontId="(\d+)"/)?.[1]);
+      const fillId = Number(xf.match(/\bfillId="(\d+)"/)?.[1]);
+      expect(workbookStyles.fonts[fontId]).toContain('<sz val="11"/>');
+      expect(workbookStyles.fills[fillId]).toContain(`rgb="${fill}"`);
+    }
+    expect(workbookStyles.cellXfs[39]).toContain('horizontal="center"');
+    expect(workbookStyles.cellXfs[39]).toContain('vertical="center"');
+    expect(workbookStyles.cellXfs[11]).toContain('fillId="6"');
+    expect(workbookStyles.cellXfs[11]).toContain('vertical="top"');
+    expect(workbookStyles.cellXfs[5]).toContain('fillId="5"');
+    expect(workbookStyles.cellXfs[5]).toContain('vertical="top"');
+  });
+
   it('makes long or unsafe workbook names customer-safe, bounded, and unique', async () => {
     const unsafeName = `../同名:比較?${'長'.repeat(220)}`;
     const internal = context(unsafeName, unsafeName, { audience: 'internal', filename: `${unsafeName}.xlsx` });
@@ -198,6 +306,44 @@ describe('diff/xlsx-batch-export', () => {
     expect(Array.from(result.entries[0]).length).toBeLessThanOrEqual(96);
     expect(Array.from(result.entries[1]).length).toBeLessThanOrEqual(96);
     expect(result.entries[0]).not.toBe(result.entries[1]);
+  });
+
+  it('expands summary data rows using half-width/full-width wrapping and caps extreme text', async () => {
+    const halfWidthName = 'ｱ'.repeat(27);
+    const fullWidthName = 'ア'.repeat(27);
+    const forbiddenName = '\u0001'.repeat(6);
+    const extremeName = '極'.repeat(400);
+    const result = await buildDiffXlsxBatchExport([
+      item('short', context('元', '先')),
+      item('half-width', context(halfWidthName, halfWidthName)),
+      item('full-width', context(fullWidthName, fullWidthName)),
+      item('visible forbidden characters', context(forbiddenName, forbiddenName)),
+      item('coverage detail', context('元', '先', {
+        fetchIssues: [
+          { sectionKey: 'pluginSettings', side: 'source', message: '取得失敗' },
+          { sectionKey: 'customizeSettings', side: 'target', message: '取得失敗' },
+          { sectionKey: 'recordPermissions', side: 'target', message: '取得失敗' }
+        ]
+      })),
+      item('long filename', context('A'.repeat(36), 'B'.repeat(36))),
+      item('extreme', context(extremeName, extremeName)),
+      item('single line failure', failingContext('broken workbook'))
+    ]);
+
+    const archiveEntries = parseStoredEntries(await blobToBuffer(result.blob));
+    const heights = firstWorksheetRowHeights(archiveEntries[0].data);
+    // Width estimates reserve two characters for cell padding. The narrow coverage column wraps
+    // complete-state text to two lines, while a genuinely single-line failure uses the 32pt base.
+    expect(heights['4']).toBe(49);
+    expect(heights['5']).toBe(49);
+    expect(heights['6']).toBeGreaterThan(heights['5']);
+    // XML-forbidden characters expand to visible tokens before wrap measurement.
+    expect(heights['7']).toBeGreaterThan(49);
+    expect(heights['8']).toBeGreaterThanOrEqual(49);
+    expect(heights['9']).toBeGreaterThan(49);
+    expect(heights['10']).toBe(220);
+    expect(heights['11']).toBe(32);
+    expect(Object.values(heights).every((height) => height <= 220)).toBe(true);
   });
 
   it('rejects the whole archive when the configured byte limit would be exceeded', async () => {

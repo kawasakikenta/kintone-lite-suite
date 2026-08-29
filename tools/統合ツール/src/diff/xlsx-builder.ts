@@ -18,9 +18,51 @@ const XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 // XML helpers
 // ---------------------------------------------------------------------------
 
-function escapeXml(s: unknown): string {
-  return String(s ?? '')
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/g, '')
+function transformXmlCharacters(s: unknown, invalidReplacement: (code: number) => string): string {
+  const text = String(s ?? '');
+  let transformed = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code >= 0xD800 && code <= 0xDBFF) {
+      const nextCode = text.charCodeAt(i + 1);
+      if (nextCode >= 0xDC00 && nextCode <= 0xDFFF) {
+        transformed += text.slice(i, i + 2);
+        i += 1;
+      } else {
+        transformed += invalidReplacement(code);
+      }
+    } else if (
+      (code >= 0xDC00 && code <= 0xDFFF)
+      || (code <= 0x08)
+      || (code >= 0x0B && code <= 0x0C)
+      || (code >= 0x0E && code <= 0x1F)
+      || code === 0xFFFE
+      || code === 0xFFFF
+    ) {
+      transformed += invalidReplacement(code);
+    } else {
+      transformed += text.charAt(i);
+    }
+  }
+  return transformed;
+}
+
+function xmlCodeToken(code: number): string {
+  return `⟦U+${code.toString(16).toUpperCase().padStart(4, '0')}⟧`;
+}
+
+/** XML 1.0 に書けないセル文字を、元の差分が失われない一意な可視表記へ変換する。 */
+export function makeExcelCellTextVisible(value: unknown): string {
+  const escapedLiteralPrefixes = String(value ?? '').replace(/⟦/g, '⟦⟦');
+  return transformXmlCharacters(escapedLiteralPrefixes, xmlCodeToken);
+}
+
+function stripXmlForbiddenCharacters(s: unknown): string {
+  return transformXmlCharacters(s, () => '');
+}
+
+function escapeXmlText(s: string): string {
+  return s
     // Excel は _xHHHH_ を特殊エスケープとして解釈するため、リテラルの先頭 _ を逃がす。
     .replace(/_(?=[xX][0-9A-Fa-f]{4}_)/g, '_x005F_')
     .replace(/&/g, '&amp;')
@@ -30,6 +72,10 @@ function escapeXml(s: unknown): string {
     .replace(/'/g, '&apos;');
 }
 
+function escapeXml(s: unknown): string {
+  return escapeXmlText(stripXmlForbiddenCharacters(s));
+}
+
 function colRef(n: number): string {
   let s = '';
   let v = n;
@@ -37,16 +83,33 @@ function colRef(n: number): string {
   return s;
 }
 
+function truncateUtf16WithoutSplittingPair(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  let end = Math.max(0, maxLength);
+  const previousCode = text.charCodeAt(end - 1);
+  const nextCode = text.charCodeAt(end);
+  if (
+    previousCode >= 0xD800 && previousCode <= 0xDBFF
+    && nextCode >= 0xDC00 && nextCode <= 0xDFFF
+  ) {
+    end -= 1;
+  }
+  return text.slice(0, end);
+}
+
 function sanitizeSheetName(name: string, index: number, used: Set<string>): string {
-  let n = String(name || `Sheet${index + 1}`).replace(/[\\\/\?\*\[\]:]/g, '_');
+  const rawName = String(name || `Sheet${index + 1}`);
+  let n = transformXmlCharacters(rawName, () => '_').replace(/[\\\/\?\*\[\]:]/g, '_');
   n = n.replace(/^'+|'+$/g, '_');
-  if (n.length > 31) n = n.slice(0, 31);
+  if (n.length > 31) n = truncateUtf16WithoutSplittingPair(n, 31);
   if (!n) n = `Sheet${index + 1}`;
   let candidate = n;
   let i = 2;
   while (used.has(candidate.toLocaleLowerCase('en-US'))) {
     const suffix = `_${i++}`;
-    candidate = (n.length + suffix.length > 31 ? n.slice(0, 31 - suffix.length) : n) + suffix;
+    candidate = (n.length + suffix.length > 31
+      ? truncateUtf16WithoutSplittingPair(n, 31 - suffix.length)
+      : n) + suffix;
   }
   used.add(candidate.toLocaleLowerCase('en-US'));
   return candidate;
@@ -93,9 +156,22 @@ export type XlsxCellStyle =
   | 'metricValueRemoved'
   | 'metricValueChanged'
   | 'metricValueMoved'
+  | 'kpiStatusGood'
+  | 'kpiStatusWarning'
+  | 'kpiStatusDanger'
+  | 'statusGood'
+  | 'statusDifference'
+  | 'statusIncomplete'
+  | 'statusError'
   | 'diffBefore'
   | 'diffAfter'
-  | 'diffAbsent';
+  | 'diffAbsent'
+  | 'rawDiffBefore'
+  | 'rawDiffAfter'
+  | 'rawWarning'
+  | 'warningLink'
+  | 'diffBeforeLink'
+  | 'diffAfterLink';
 export type XlsxRowStyle = XlsxCellStyle;
 export interface XlsxDataValidation {
   /** 適用範囲。例: A2:A100 */
@@ -210,6 +286,12 @@ function normalizeExcelCellText(value: unknown): string {
   return text.slice(0, Math.max(0, keep)) + suffix;
 }
 
+function serializeExcelCellText(value: unknown): string {
+  // 可視化で文字数が増えるため、可視化 → Excel上限 → XML escape の順序を固定する。
+  const visibleText = makeExcelCellTextVisible(value);
+  return escapeXmlText(normalizeExcelCellText(visibleText));
+}
+
 const CELL_STYLE_INDEX: Record<XlsxCellStyle, number> = {
   normal: 2,
   source: 3,
@@ -246,9 +328,22 @@ const CELL_STYLE_INDEX: Record<XlsxCellStyle, number> = {
   metricValueRemoved: 34,
   metricValueChanged: 35,
   metricValueMoved: 36,
+  kpiStatusGood: 33,
+  kpiStatusWarning: 35,
+  kpiStatusDanger: 34,
+  statusGood: 25,
+  statusDifference: 28,
+  statusIncomplete: 27,
+  statusError: 26,
   diffBefore: 37,
   diffAfter: 38,
-  diffAbsent: 39
+  diffAbsent: 39,
+  rawDiffBefore: 40,
+  rawDiffAfter: 41,
+  rawWarning: 42,
+  warningLink: 43,
+  diffBeforeLink: 43,
+  diffAfterLink: 44
 };
 
 interface ResolvedInternalHyperlink {
@@ -454,7 +549,7 @@ function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyp
       } else if (typeof v === 'boolean') {
         cells.push(`<c r="${ref}"${styleAttr} t="b"><v>${v ? 1 : 0}</v></c>`);
       } else {
-        cells.push(`<c r="${ref}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${escapeXml(normalizeExcelCellText(v))}</t></is></c>`);
+        cells.push(`<c r="${ref}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${serializeExcelCellText(v)}</t></is></c>`);
       }
     }
     const rowHeight = Number(sheet.rowHeights?.[r]);
@@ -592,19 +687,28 @@ function buildRootRels(): string {
 }
 
 const CUSTOMER_DIFF_STYLES = new Set<XlsxCellStyle>(['diffBefore', 'diffAfter', 'diffAbsent']);
+const RAW_TEXT_STYLES = new Set<XlsxCellStyle>([
+  'rawDiffBefore',
+  'rawDiffAfter',
+  'rawWarning',
+  'warningLink',
+  'diffBeforeLink',
+  'diffAfterLink'
+]);
 
-function sheetsUseCustomerDiffStyles(sheets: XlsxSheet[]): boolean {
+function sheetsUseStyles(sheets: XlsxSheet[], styles: Set<XlsxCellStyle>): boolean {
   return sheets.some((sheet) => (
-    sheet.rowStyles?.some((style) => CUSTOMER_DIFF_STYLES.has(style))
-    || sheet.cellStyles?.some((row) => row?.some((style) => !!style && CUSTOMER_DIFF_STYLES.has(style)))
+    sheet.rowStyles?.some((style) => styles.has(style))
+    || sheet.cellStyles?.some((row) => row?.some((style) => !!style && styles.has(style)))
   ));
 }
 
-function buildStylesXml(includeCustomerDiffStyles: boolean): string {
+function buildStylesXml(includeCustomerDiffStyles: boolean, includeRawTextStyles: boolean): string {
   // 色は「比較方向」「変更事実」「情報区分」の役割に限定する。
   // 0: 既定 / 1: 表見出し / 2: データ / 3..36: 共通UI / 37..39: 提出版の変更前後
+  // 40..42: raw text（変更前・変更後・警告を区別する等幅表示） / 43..44: リンク付き変更前後
   return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`
-    + `<fonts count="${includeCustomerDiffStyles ? 18 : 16}">`
+    + `<fonts count="${includeRawTextStyles ? 21 : includeCustomerDiffStyles ? 18 : 16}">`
     +   '<font><sz val="11"/><name val="Meiryo"/></font>'
     +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font>'
     +   '<font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font>'
@@ -625,6 +729,11 @@ function buildStylesXml(includeCustomerDiffStyles: boolean): string {
       ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font>'
         + '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>'
       : '')
+    +   (includeRawTextStyles
+      ? '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF991B1B"/></font>'
+        + '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF166534"/></font>'
+        + '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF92400E"/></font>'
+      : '')
     + '</fonts>'
     + '<fills count="10">'
     +   '<fill><patternFill patternType="none"/></fill>'
@@ -643,7 +752,7 @@ function buildStylesXml(includeCustomerDiffStyles: boolean): string {
     +   '<border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
     + '</borders>'
     + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    + `<cellXfs count="${includeCustomerDiffStyles ? 40 : 37}">`
+    + `<cellXfs count="${includeRawTextStyles ? 45 : includeCustomerDiffStyles ? 40 : 37}">`
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
     +   '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
@@ -676,7 +785,7 @@ function buildStylesXml(includeCustomerDiffStyles: boolean): string {
     +   '<xf numFmtId="0" fontId="4" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="4" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
-    +   '<xf numFmtId="0" fontId="15" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf>'
+    +   '<xf numFmtId="0" fontId="15" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf>'
     +   '<xf numFmtId="0" fontId="11" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="12" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="13" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
@@ -684,7 +793,14 @@ function buildStylesXml(includeCustomerDiffStyles: boolean): string {
     +   (includeCustomerDiffStyles
       ? '<xf numFmtId="0" fontId="16" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
         + '<xf numFmtId="0" fontId="17" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
-        + '<xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+        + '<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+      : '')
+    +   (includeRawTextStyles
+      ? '<xf numFmtId="0" fontId="18" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+        + '<xf numFmtId="0" fontId="19" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+        + '<xf numFmtId="0" fontId="20" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+        + '<xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+        + '<xf numFmtId="0" fontId="5" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
       : '')
     + '</cellXfs>'
     + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
@@ -701,13 +817,16 @@ export function buildXlsxBlob(sheets: XlsxSheet[]): Blob {
   const safe = sheets.map((s, i) => ({ ...s, name: sanitizeSheetName(s.name, i, used) }));
   const safeSheetNames = safe.map((sheet) => sheet.name);
   const hyperlinksBySheet = safe.map((sheet) => resolveInternalHyperlinks(sheets, safeSheetNames, sheet.internalHyperlinks));
+  const includeRawTextStyles = sheetsUseStyles(safe, RAW_TEXT_STYLES);
+  // raw style は 40 番以降なので、37..39 番も出力して既存の style index を維持する。
+  const includeCustomerDiffStyles = includeRawTextStyles || sheetsUseStyles(safe, CUSTOMER_DIFF_STYLES);
 
   const entries: StoredZipEntry[] = [
     { name: '[Content_Types].xml', data: enc.encode(buildContentTypes(safe)) },
     { name: '_rels/.rels', data: enc.encode(buildRootRels()) },
     { name: 'xl/workbook.xml', data: enc.encode(buildWorkbookXml(safe)) },
     { name: 'xl/_rels/workbook.xml.rels', data: enc.encode(buildWorkbookRels(safe)) },
-    { name: 'xl/styles.xml', data: enc.encode(buildStylesXml(sheetsUseCustomerDiffStyles(safe))) }
+    { name: 'xl/styles.xml', data: enc.encode(buildStylesXml(includeCustomerDiffStyles, includeRawTextStyles)) }
   ];
   safe.forEach((s, i) => {
     entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(buildSheetXml(s, hyperlinksBySheet[i])) });

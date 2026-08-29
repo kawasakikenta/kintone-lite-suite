@@ -11445,8 +11445,42 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
   // src/diff/xlsx-builder.ts
   var XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  function transformXmlCharacters(s, invalidReplacement) {
+    const text2 = String(s ?? "");
+    let transformed = "";
+    for (let i = 0; i < text2.length; i += 1) {
+      const code = text2.charCodeAt(i);
+      if (code >= 55296 && code <= 56319) {
+        const nextCode = text2.charCodeAt(i + 1);
+        if (nextCode >= 56320 && nextCode <= 57343) {
+          transformed += text2.slice(i, i + 2);
+          i += 1;
+        } else {
+          transformed += invalidReplacement(code);
+        }
+      } else if (code >= 56320 && code <= 57343 || code <= 8 || code >= 11 && code <= 12 || code >= 14 && code <= 31 || code === 65534 || code === 65535) {
+        transformed += invalidReplacement(code);
+      } else {
+        transformed += text2.charAt(i);
+      }
+    }
+    return transformed;
+  }
+  function xmlCodeToken(code) {
+    return `⟦U+${code.toString(16).toUpperCase().padStart(4, "0")}⟧`;
+  }
+  function makeExcelCellTextVisible(value) {
+    const escapedLiteralPrefixes = String(value ?? "").replace(/⟦/g, "⟦⟦");
+    return transformXmlCharacters(escapedLiteralPrefixes, xmlCodeToken);
+  }
+  function stripXmlForbiddenCharacters(s) {
+    return transformXmlCharacters(s, () => "");
+  }
+  function escapeXmlText(s) {
+    return s.replace(/_(?=[xX][0-9A-Fa-f]{4}_)/g, "_x005F_").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  }
   function escapeXml(s) {
-    return String(s ?? "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/g, "").replace(/_(?=[xX][0-9A-Fa-f]{4}_)/g, "_x005F_").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+    return escapeXmlText(stripXmlForbiddenCharacters(s));
   }
   function colRef(n) {
     let s = "";
@@ -11458,16 +11492,27 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
     return s;
   }
+  function truncateUtf16WithoutSplittingPair(text2, maxLength) {
+    if (text2.length <= maxLength) return text2;
+    let end = Math.max(0, maxLength);
+    const previousCode = text2.charCodeAt(end - 1);
+    const nextCode = text2.charCodeAt(end);
+    if (previousCode >= 55296 && previousCode <= 56319 && nextCode >= 56320 && nextCode <= 57343) {
+      end -= 1;
+    }
+    return text2.slice(0, end);
+  }
   function sanitizeSheetName(name, index, used) {
-    let n = String(name || `Sheet${index + 1}`).replace(/[\\\/\?\*\[\]:]/g, "_");
+    const rawName = String(name || `Sheet${index + 1}`);
+    let n = transformXmlCharacters(rawName, () => "_").replace(/[\\\/\?\*\[\]:]/g, "_");
     n = n.replace(/^'+|'+$/g, "_");
-    if (n.length > 31) n = n.slice(0, 31);
+    if (n.length > 31) n = truncateUtf16WithoutSplittingPair(n, 31);
     if (!n) n = `Sheet${index + 1}`;
     let candidate = n;
     let i = 2;
     while (used.has(candidate.toLocaleLowerCase("en-US"))) {
       const suffix = `_${i++}`;
-      candidate = (n.length + suffix.length > 31 ? n.slice(0, 31 - suffix.length) : n) + suffix;
+      candidate = (n.length + suffix.length > 31 ? truncateUtf16WithoutSplittingPair(n, 31 - suffix.length) : n) + suffix;
     }
     used.add(candidate.toLocaleLowerCase("en-US"));
     return candidate;
@@ -11491,6 +11536,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     let keep = EXCEL_CELL_TEXT_LIMIT - suffix.length;
     if (keep > 0 && /[\uD800-\uDBFF]/.test(text2.charAt(keep - 1))) keep -= 1;
     return text2.slice(0, Math.max(0, keep)) + suffix;
+  }
+  function serializeExcelCellText(value) {
+    const visibleText = makeExcelCellTextVisible(value);
+    return escapeXmlText(normalizeExcelCellText(visibleText));
   }
   var CELL_STYLE_INDEX = {
     normal: 2,
@@ -11528,9 +11577,22 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     metricValueRemoved: 34,
     metricValueChanged: 35,
     metricValueMoved: 36,
+    kpiStatusGood: 33,
+    kpiStatusWarning: 35,
+    kpiStatusDanger: 34,
+    statusGood: 25,
+    statusDifference: 28,
+    statusIncomplete: 27,
+    statusError: 26,
     diffBefore: 37,
     diffAfter: 38,
-    diffAbsent: 39
+    diffAbsent: 39,
+    rawDiffBefore: 40,
+    rawDiffAfter: 41,
+    rawWarning: 42,
+    warningLink: 43,
+    diffBeforeLink: 43,
+    diffAfterLink: 44
   };
   function normalizedPaneCount(value, max) {
     const n = Math.floor(Number(value));
@@ -11687,7 +11749,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         } else if (typeof v === "boolean") {
           cells.push(`<c r="${ref}"${styleAttr} t="b"><v>${v ? 1 : 0}</v></c>`);
         } else {
-          cells.push(`<c r="${ref}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${escapeXml(normalizeExcelCellText(v))}</t></is></c>`);
+          cells.push(`<c r="${ref}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${serializeExcelCellText(v)}</t></is></c>`);
         }
       }
       const rowHeight = Number(sheet.rowHeights?.[r]);
@@ -11785,11 +11847,19 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return `${XML_HEADER}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
   }
   var CUSTOMER_DIFF_STYLES = /* @__PURE__ */ new Set(["diffBefore", "diffAfter", "diffAbsent"]);
-  function sheetsUseCustomerDiffStyles(sheets) {
-    return sheets.some((sheet) => sheet.rowStyles?.some((style) => CUSTOMER_DIFF_STYLES.has(style)) || sheet.cellStyles?.some((row) => row?.some((style) => !!style && CUSTOMER_DIFF_STYLES.has(style))));
+  var RAW_TEXT_STYLES = /* @__PURE__ */ new Set([
+    "rawDiffBefore",
+    "rawDiffAfter",
+    "rawWarning",
+    "warningLink",
+    "diffBeforeLink",
+    "diffAfterLink"
+  ]);
+  function sheetsUseStyles(sheets, styles) {
+    return sheets.some((sheet) => sheet.rowStyles?.some((style) => styles.has(style)) || sheet.cellStyles?.some((row) => row?.some((style) => !!style && styles.has(style))));
   }
-  function buildStylesXml(includeCustomerDiffStyles) {
-    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="${includeCustomerDiffStyles ? 18 : 16}"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF2563EB"/></font>` + (includeCustomerDiffStyles ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>' : "") + `</fonts><fills count="10"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${includeCustomerDiffStyles ? 40 : 37}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="7" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="8" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="9" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="10" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="15" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="11" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="12" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="13" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="14" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>` + (includeCustomerDiffStyles ? '<xf numFmtId="0" fontId="16" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="17" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>' : "") + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+  function buildStylesXml(includeCustomerDiffStyles, includeRawTextStyles) {
+    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="${includeRawTextStyles ? 21 : includeCustomerDiffStyles ? 18 : 16}"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF2563EB"/></font>` + (includeCustomerDiffStyles ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>' : "") + (includeRawTextStyles ? '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF166534"/></font><font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF92400E"/></font>' : "") + `</fonts><fills count="10"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${includeRawTextStyles ? 45 : includeCustomerDiffStyles ? 40 : 37}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="7" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="8" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="9" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="10" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="15" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="11" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="12" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="13" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="14" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>` + (includeCustomerDiffStyles ? '<xf numFmtId="0" fontId="16" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="17" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>' : "") + (includeRawTextStyles ? '<xf numFmtId="0" fontId="18" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="19" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="20" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' : "") + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
   }
   function buildXlsxBlob(sheets) {
     const enc = new TextEncoder();
@@ -11797,12 +11867,14 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const safe = sheets.map((s, i) => ({ ...s, name: sanitizeSheetName(s.name, i, used) }));
     const safeSheetNames = safe.map((sheet) => sheet.name);
     const hyperlinksBySheet = safe.map((sheet) => resolveInternalHyperlinks(sheets, safeSheetNames, sheet.internalHyperlinks));
+    const includeRawTextStyles = sheetsUseStyles(safe, RAW_TEXT_STYLES);
+    const includeCustomerDiffStyles = includeRawTextStyles || sheetsUseStyles(safe, CUSTOMER_DIFF_STYLES);
     const entries = [
       { name: "[Content_Types].xml", data: enc.encode(buildContentTypes(safe)) },
       { name: "_rels/.rels", data: enc.encode(buildRootRels()) },
       { name: "xl/workbook.xml", data: enc.encode(buildWorkbookXml(safe)) },
       { name: "xl/_rels/workbook.xml.rels", data: enc.encode(buildWorkbookRels(safe)) },
-      { name: "xl/styles.xml", data: enc.encode(buildStylesXml(sheetsUseCustomerDiffStyles(safe))) }
+      { name: "xl/styles.xml", data: enc.encode(buildStylesXml(includeCustomerDiffStyles, includeRawTextStyles)) }
     ];
     safe.forEach((s, i) => {
       entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(buildSheetXml(s, hyperlinksBySheet[i])) });
@@ -12491,15 +12563,24 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
   function estimatedWrappedLines(value, columnWidth) {
     const capacity = Math.max(8, Math.floor(columnWidth - 2));
-    return String(value || "").split(/\r?\n/).reduce((total, line) => total + Math.max(1, Math.ceil(visualTextWidth(line) / capacity)), 0);
+    return makeExcelCellTextVisible(value).split(/\r?\n/).reduce((total, line) => total + Math.max(1, Math.ceil(visualTextWidth(line) / capacity)), 0);
   }
   function readableDiffRowHeight(cells, maxHeight = 110) {
     const maxLines = cells.reduce((max, cell) => Math.max(max, estimatedWrappedLines(cell.value, cell.width)), 1);
     return Math.min(maxHeight, 26 + Math.max(0, maxLines - 1) * 14);
   }
+  var READABLE_CUSTOMER_ROW_HARD_MAX_HEIGHT = 395;
   function readableCustomerRowHeight(cells, maxHeight = 96) {
     const maxLines = cells.reduce((max, cell) => Math.max(max, estimatedWrappedLines(cell.value, cell.width)), 1);
-    return Math.min(96, maxHeight, 28 + Math.max(0, maxLines - 1) * 17);
+    return Math.min(
+      READABLE_CUSTOMER_ROW_HARD_MAX_HEIGHT,
+      maxHeight,
+      28 + Math.max(0, maxLines - 1) * 17
+    );
+  }
+  var READABLE_HEADER_ROW_MAX_HEIGHT = 120;
+  function readableHeaderRowHeight(cells, minimumHeight, maxHeight = READABLE_HEADER_ROW_MAX_HEIGHT) {
+    return Math.max(minimumHeight, readableCustomerRowHeight(cells, maxHeight));
   }
   function summarizeRows2(rows) {
     const counts = {
@@ -12797,7 +12878,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       pushWarning("🔒 機密値省略", `${redactedSensitiveSections.join("・")} の同一行は、機密値を重複収録しないため値を省略しています。`);
     }
     const rowStyles = sheetRows.map(() => "normal");
-    const rowHeights = [32, 24, 0, 0, 44];
+    const rowHeights = [
+      32,
+      readableHeaderRowHeight([{ value: comparisonBanner, width: 154 }], 24),
+      0,
+      0,
+      44
+    ];
     rowHeights[overviewRow.normalization] = readableDiffRowHeight([
       { value: sheetRows[overviewRow.normalization][1], width: 54 },
       { value: sheetRows[overviewRow.normalization][3], width: 54 }
@@ -12815,9 +12902,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     cellStyles[overviewRow.guideBand][0] = "info";
     cellStyles[overviewRow.verdict] = [
       "sectionHeader",
-      incomplete ? "kpiDanger" : "kpiGood",
+      incomplete ? "kpiStatusWarning" : counts.actual > 0 ? "kpiChange" : "kpiStatusGood",
       "sectionHeader",
-      incomplete ? "kpiDanger" : "kpiGood"
+      incomplete ? "statusIncomplete" : "statusGood"
     ];
     for (const rowIndex of [
       overviewRow.total,
@@ -12994,7 +13081,10 @@ ${label}` : `${direction}の値`;
     groupCellStyles[8] = "sectionHeader";
     const cellStyles = [["info"], groupCellStyles, []];
     cellStyles[2][5] = "headerDivider";
-    const rowHeights = [44, 24, 42];
+    const rowHeights = [44, 24, readableHeaderRowHeight([
+      { value: headers[5], width: 42 },
+      { value: headers[6], width: 42 }
+    ], 42)];
     const seenIds = /* @__PURE__ */ new Map();
     const fieldDetailByRowIndex = new Map((fieldModel?.details || []).map((detail) => [detail.rowIndex, detail]));
     for (const [rowIndex, row] of rows.entries()) {
@@ -13029,8 +13119,8 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       styles[6] = "target";
       styles[7] = "info";
       if (reviewable) {
-        styles[8] = "review";
-        styles[9] = "review";
+        styles[8] = "reviewChoice";
+        styles[9] = "reviewChoice";
         styles[10] = "review";
         styles[11] = "review";
       } else {
@@ -13123,7 +13213,10 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     groupCellStyles[7] = "info";
     const cellStyles = [["info"], groupCellStyles, []];
     cellStyles[2][5] = "headerDivider";
-    const rowHeights = [44, 24, 42];
+    const rowHeights = [44, 24, readableHeaderRowHeight([
+      { value: headers[5], width: 42 },
+      { value: headers[6], width: 42 }
+    ], 42)];
     const seenIds = /* @__PURE__ */ new Map();
     for (const [rowIndex, row] of list.entries()) {
       const existence = rowExistenceLabel(row);
@@ -13391,7 +13484,10 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     groupCellStyles[9] = "info";
     const cellStyles = [["info"], groupCellStyles, []];
     cellStyles[2][6] = "headerDivider";
-    const rowHeights = [44, 24, 42];
+    const rowHeights = [44, 24, readableHeaderRowHeight([
+      { value: headers[6], width: 44 },
+      { value: headers[7], width: 44 }
+    ], 42)];
     for (const detail of model.details) {
       const changeType = rowTypeLabel(detail.row);
       const existence = rowExistenceLabel(detail.row);
@@ -13464,6 +13560,9 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       }
     };
   }
+  function incompleteIssueStatusStyle(status) {
+    return /取得失敗|取得できません/.test(String(status ?? "")) ? "statusError" : "statusIncomplete";
+  }
   function buildIssuesSheet(ctx) {
     const fetchIssues = ctx.fetchIssues || [];
     const partialIssues = ctx.partialIssues || [];
@@ -13500,7 +13599,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       rows,
       colWidths: [14, 22, 12, 72, 60],
       rowStyles: rows.map(() => "normal"),
-      cellStyles: rows.map((_, index) => index === 0 ? ["info"] : index === 1 ? [] : ["warning"]),
+      cellStyles: rows.map((row, index) => index === 0 ? ["info"] : index === 1 ? [] : [incompleteIssueStatusStyle(row[0])]),
       headerRow: 2,
       freezeRows: 2,
       freezeColumns: 2,
@@ -13621,8 +13720,10 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       const codePoint = Number(code);
       return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 1114111 ? String.fromCodePoint(codePoint) : match;
     }).replace(/[\t\r\n ]+/g, " ").trim();
-    if (maxLength == null || decoded.length <= maxLength) return decoded;
-    return `${decoded.slice(0, Math.max(0, maxLength - 1))}…`;
+    if (maxLength == null) return decoded;
+    const characters = Array.from(decoded);
+    if (characters.length <= maxLength) return decoded;
+    return `${characters.slice(0, Math.max(0, maxLength - 1)).join("")}…`;
   }
   function customerRichText(value, maxLength) {
     const withoutMarkup = customerPlainText(value).replace(/<br\s*\/?>/gi, "\n").replace(/<\/(?:div|p|li|tr|h[1-6])>/gi, "\n").replace(/<[^>]*>/g, "");
@@ -14728,11 +14829,11 @@ ${targetName}`, "", ""],
     cellStyles[1][2] = "directionArrow";
     cellStyles[1][3] = "targetGroup";
     cellStyles[2][0] = "summaryLabel";
-    cellStyles[2][1] = incomplete ? "kpiWarning" : counts.actual ? "kpiChange" : "kpiGood";
+    cellStyles[2][1] = incomplete ? "kpiStatusWarning" : counts.actual ? "kpiChange" : "kpiStatusGood";
     cellStyles[2][2] = "summaryLabel";
-    cellStyles[2][3] = incomplete ? "warning" : "info";
-    cellStyles[2][4] = incomplete ? "warning" : "info";
-    cellStyles[2][5] = counts.actual ? "actionLink" : "info";
+    cellStyles[2][3] = incomplete ? "statusIncomplete" : "statusGood";
+    cellStyles[2][4] = incomplete ? "statusIncomplete" : "statusGood";
+    cellStyles[2][5] = counts.actual ? "actionLink" : incomplete ? "statusIncomplete" : "statusGood";
     cellStyles[3][0] = "summaryLabel";
     cellStyles[3][1] = "summaryValue";
     cellStyles[3][2] = "summaryLabel";
@@ -14750,17 +14851,17 @@ ${targetName}`, "", ""],
     cellStyles[5][0] = "changeMoved";
     cellStyles[5][1] = "metricValueMoved";
     cellStyles[5][2] = "summaryLabel";
-    cellStyles[5][3] = "info";
+    cellStyles[5][3] = "zebraCenter";
     cellStyles[5][4] = "summaryLabel";
-    cellStyles[5][5] = "info";
+    cellStyles[5][5] = "zebraCenter";
     cellStyles[6][0] = "summaryLabel";
     cellStyles[6][1] = "info";
     cellStyles[7][0] = "summaryLabel";
     cellStyles[7][1] = "info";
     cellStyles[7][2] = "summaryLabel";
-    cellStyles[7][3] = "info";
+    cellStyles[7][3] = "zebraCenter";
     cellStyles[7][4] = "summaryLabel";
-    cellStyles[7][5] = "info";
+    cellStyles[7][5] = "zebraCenter";
     if (redundantNoteRow >= 0) {
       cellStyles[redundantNoteRow][0] = "summaryLabel";
       cellStyles[redundantNoteRow][1] = "info";
@@ -14788,7 +14889,10 @@ ${targetName}`, "", ""],
       materializeEmptyCellsFromRow: 3,
       rowHeights: rows.map((row, index) => {
         if (index === 0) return 42;
-        if (index === 1) return 42;
+        if (index === 1) return readableHeaderRowHeight([
+          { value: row[0], width: 46 },
+          { value: row[3], width: 60 }
+        ], 42);
         if (index === 2 || index === 3) return 34;
         if (index === 4 || index === 5) return 38;
         if (index === 6) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
@@ -14805,6 +14909,7 @@ ${targetName}`, "", ""],
         "A1:F1",
         "A2:B2",
         "D2:F2",
+        "D3:E3",
         "B7:F7",
         ...redundantNoteRow >= 0 ? [`B${redundantNoteRow + 1}:F${redundantNoteRow + 1}`] : [],
         ...breakdownTitleRow >= 0 ? [`A${breakdownTitleRow + 1}:F${breakdownTitleRow + 1}`] : []
@@ -14834,6 +14939,11 @@ ${targetName}`, "", ""],
       }
     };
   }
+  function customerComparisonValueStyles(item) {
+    const beforeStyle = item.rawBefore.state === "存在しません" ? "diffAbsent" : item.rawBefore.state === "存在" ? "changeRemoved" : "diffBefore";
+    const afterStyle = item.rawAfter.state === "存在しません" ? "diffAbsent" : item.rawAfter.state === "存在" ? "changeAdded" : "diffAfter";
+    return [beforeStyle, afterStyle];
+  }
   function buildCustomerListSheet(ctx, allItems, apiGroups) {
     const items = customerPrimaryItems(allItems);
     const sourceName = customerAppName(ctx.sourceBundle, "比較元");
@@ -14852,7 +14962,10 @@ ${targetName}`
     const rows = [headers];
     const rowStyles = ["normal"];
     const cellStyles = [[]];
-    const rowHeights = [46];
+    const rowHeights = [readableHeaderRowHeight([
+      { value: headers[5], width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH },
+      { value: headers[6], width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH }
+    ], 46)];
     const changeStyles = {
       "追加": "changeAdded",
       "削除": "changeRemoved",
@@ -14866,10 +14979,12 @@ ${targetName}`
     }
     if (!items.length) {
       const emptyMessage = allItems.length ? "差分はありません（参考・再掲の差分のみのため、機能別シートを確認してください）" : "差分はありません";
-      rows.push(["", "", "", emptyMessage, "", "", ""]);
+      rows.push([emptyMessage, "", "", "", "", "", ""]);
       rowStyles.push("normal");
-      cellStyles.push(Array.from({ length: headers.length }, () => "info"));
-      rowHeights.push(32);
+      cellStyles.push(Array.from({ length: headers.length }, () => "kpiGood"));
+      rowHeights.push(Math.max(40, readableCustomerRowHeight([
+        { value: emptyMessage, width: 129 }
+      ], 120)));
     }
     items.forEach((item, index) => {
       const changeSummary = item.changeType === "追加" ? `比較先に追加：${conciseReviewValue(item.after)}` : item.changeType === "削除" ? `比較先から削除：${conciseReviewValue(item.before)}` : item.changeType === "並び順変更" ? "並び順を変更" : `${conciseReviewValue(item.before)} → ${conciseReviewValue(item.after)}`;
@@ -14886,13 +15001,14 @@ ${changeSummary}`,
       rowStyles.push("normal");
       const styles = [];
       const alternate = index % 2 === 1;
-      styles[0] = "hyperlink";
+      const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
+      styles[0] = "actionLink";
       styles[1] = changeStyles[item.changeType];
       styles[2] = "actionLink";
       styles[3] = alternate ? "zebra" : "normal";
       styles[4] = alternate ? "zebra" : "normal";
-      styles[5] = item.changeType === "追加" ? "diffAbsent" : "diffBefore";
-      styles[6] = item.changeType === "削除" ? "diffAbsent" : "diffAfter";
+      styles[5] = beforeStyle;
+      styles[6] = afterStyle;
       cellStyles.push(styles);
       internalHyperlinks.push({
         ref: `A${index + 2}`,
@@ -14927,10 +15043,11 @@ ${changeSummary}`, width: 24 },
       headerRow: 1,
       autoFilter: items.length > 0,
       freezeRows: 1,
-      freezeColumns: 5,
+      freezeColumns: items.length > 0 ? 5 : void 0,
       rowHeights,
       styledEmptyCellsAsBlank: true,
       materializeEmptyCellsFromRow: 1,
+      merges: items.length ? void 0 : ["A2:G2"],
       internalHyperlinks,
       showGridLines: false,
       zoomScale: 95,
@@ -14939,7 +15056,7 @@ ${changeSummary}`, width: 24 },
         fitToWidth: 1,
         fitToHeight: 0,
         repeatRows: { from: 1, to: 1 },
-        repeatColumns: { from: 1, to: 5 },
+        repeatColumns: items.length > 0 ? { from: 1, to: 5 } : void 0,
         footer: "&L変更一覧&Rページ &P / &N"
       }
     };
@@ -14961,8 +15078,10 @@ ${changeSummary}`, width: 24 },
       headers
     ];
     const rowStyles = ["normal", "normal"];
-    const cellStyles = [[redundantNote ? "warning" : "info"], []];
-    const rowHeights = [redundantNote ? 60 : 42, 44];
+    const cellStyles = [[redundantNote ? "warning" : "subtitle"], []];
+    const rowHeights = [readableHeaderRowHeight([
+      { value: title, width: 124 }
+    ], redundantNote ? 60 : 42), 44];
     const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
@@ -14985,13 +15104,14 @@ ${item.target}` : item.target;
         item.after
       ]);
       rowStyles.push("normal");
+      const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
       cellStyles.push([
-        "hyperlink",
+        "actionLink",
         changeStyles[item.changeType],
         startsTarget ? "category" : baseStyle,
         baseStyle,
-        item.changeType === "追加" ? "diffAbsent" : "diffBefore",
-        item.changeType === "削除" ? "diffAbsent" : "diffAfter"
+        beforeStyle,
+        afterStyle
       ]);
       rowHeights.push(readableCustomerRowHeight([
         { value: target, width: 30 },
@@ -15043,14 +15163,17 @@ ${item.target}` : item.target;
   function buildCustomerViewDiffSheet(ctx, items, definition) {
     const viewItems = [...items].sort((left, right) => customerNamedTarget(left.targetDetail, ["一覧"]).localeCompare(customerNamedTarget(right.targetDetail, ["一覧"]), "ja") || left.index - right.index);
     if (!viewItems.length) return null;
+    const title = customerFeatureSheetTitle(ctx, definition);
     const headers = ["No.", "変更区分", "一覧名", "差分プロパティ", "変更前", "変更後"];
     const rows = [
-      [customerFeatureSheetTitle(ctx, definition), "", "", "", "", ""],
+      [title, "", "", "", "", ""],
       headers
     ];
     const rowStyles = ["normal", "normal"];
-    const cellStyles = [["info"], []];
-    const rowHeights = [42, 44];
+    const cellStyles = [["subtitle"], []];
+    const rowHeights = [readableHeaderRowHeight([
+      { value: title, width: 130 }
+    ], 42), 44];
     const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
@@ -15073,13 +15196,14 @@ ${item.target}` : item.target;
         item.after
       ]);
       rowStyles.push("normal");
+      const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
       cellStyles.push([
-        "hyperlink",
+        "actionLink",
         changeStyles[item.changeType],
         startsTarget ? "category" : baseStyle,
         baseStyle,
-        item.changeType === "追加" ? "diffAbsent" : "diffBefore",
-        item.changeType === "削除" ? "diffAbsent" : "diffAfter"
+        beforeStyle,
+        afterStyle
       ]);
       rowHeights.push(readableCustomerRowHeight([
         { value: viewName, width: 28 },
@@ -15126,14 +15250,17 @@ ${item.target}` : item.target;
       return leftKind.localeCompare(rightKind, "ja") || customerNamedTarget(left.targetDetail, ["アプリアクション", "アクション"]).localeCompare(customerNamedTarget(right.targetDetail, ["アプリアクション", "アクション"]), "ja") || left.index - right.index;
     });
     if (!actionItems.length) return null;
+    const title = customerFeatureSheetTitle(ctx, definition);
     const headers = ["No.", "変更区分", "アクション種別", "アクション名", "差分プロパティ", "変更前", "変更後"];
     const rows = [
-      [customerFeatureSheetTitle(ctx, definition), "", "", "", "", "", ""],
+      [title, "", "", "", "", "", ""],
       headers
     ];
     const rowStyles = ["normal", "normal"];
-    const cellStyles = [["info"], []];
-    const rowHeights = [42, 44];
+    const cellStyles = [["subtitle"], []];
+    const rowHeights = [readableHeaderRowHeight([
+      { value: title, width: 145 }
+    ], 42), 44];
     const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
@@ -15159,14 +15286,15 @@ ${item.target}` : item.target;
         item.after
       ]);
       rowStyles.push("normal");
+      const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
       cellStyles.push([
-        "hyperlink",
+        "actionLink",
         changeStyles[item.changeType],
         baseStyle,
         startsTarget ? "category" : baseStyle,
         baseStyle,
-        item.changeType === "追加" ? "diffAbsent" : "diffBefore",
-        item.changeType === "削除" ? "diffAbsent" : "diffAfter"
+        beforeStyle,
+        afterStyle
       ]);
       rowHeights.push(readableCustomerRowHeight([
         { value: actionKind, width: 19 },
@@ -15210,6 +15338,7 @@ ${item.target}` : item.target;
   function buildCustomerFieldDiffSheet(ctx, items, definition) {
     const fieldItems = buildCustomerDiffItems(ctx, true).filter((item) => item.sectionKey === "fieldSettings" && !!item.field);
     if (!fieldItems.length) return null;
+    const title = customerFeatureSheetTitle(ctx, definition);
     const headers = [
       "No.",
       "変更区分",
@@ -15224,12 +15353,14 @@ ${item.target}` : item.target;
       "変更後"
     ];
     const rows = [
-      [customerFeatureSheetTitle(ctx, definition), "", "", "", "", "", "", "", "", "", ""],
+      [title, "", "", "", "", "", "", "", "", "", ""],
       headers
     ];
     const rowStyles = ["normal", "normal"];
-    const cellStyles = [["info"], []];
-    const rowHeights = [42, 48];
+    const cellStyles = [["subtitle"], []];
+    const rowHeights = [readableHeaderRowHeight([
+      { value: title, width: 212 }
+    ], 42), 48];
     const rowOutlines = [void 0, void 0];
     const internalHyperlinks = [];
     const changeStyles = {
@@ -15261,14 +15392,15 @@ ${item.target}` : item.target;
       rowOutlines.push(item.tableChild ? { level: 1 } : void 0);
       const alternate = index % 2 === 1;
       const baseStyle = alternate ? "zebra" : "normal";
+      const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
       const styles = Array.from({ length: headers.length }, () => baseStyle);
-      styles[0] = actualIndex == null ? "center" : "hyperlink";
+      styles[0] = actualIndex == null ? alternate ? "zebraCenter" : "center" : "actionLink";
       styles[1] = changeStyles[item.changeType];
       styles[2] = field.structure === "テーブル" ? "category" : baseStyle;
-      styles[7] = "center";
-      styles[8] = "center";
-      styles[9] = item.changeType === "追加" ? "diffAbsent" : "diffBefore";
-      styles[10] = item.changeType === "削除" ? "diffAbsent" : "diffAfter";
+      styles[7] = alternate ? "zebraCenter" : "center";
+      styles[8] = alternate ? "zebraCenter" : "center";
+      styles[9] = beforeStyle;
+      styles[10] = afterStyle;
       cellStyles.push(styles);
       if (actualIndex != null) {
         internalHyperlinks.push({
@@ -15351,7 +15483,7 @@ ${item.target}` : item.target;
         });
       });
     }
-    const rows = [[
+    const headers = [
       "No.",
       "変更区分",
       "分類",
@@ -15362,10 +15494,14 @@ ${sourceName}`,
       `変更後の原文
 ${targetName}`,
       "一覧へ戻る"
-    ]];
+    ];
+    const rows = [headers];
     const rowStyles = ["normal"];
     const cellStyles = [[]];
-    const rowHeights = [52];
+    const rowHeights = [readableHeaderRowHeight([
+      { value: headers[5], width: 42 },
+      { value: headers[6], width: 42 }
+    ], 52)];
     const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
@@ -15393,14 +15529,15 @@ ${targetName}`,
       ]);
       rowStyles.push("normal");
       const startsCategory = index === 0 || items[index - 1]?.sectionLabel !== item.sectionLabel;
+      const alternate = index % 2 === 1;
       const styles = [];
-      styles[0] = "center";
+      styles[0] = alternate ? "zebraCenter" : "center";
       styles[1] = changeStyles[item.changeType];
-      styles[2] = startsCategory ? "category" : index % 2 === 1 ? "zebra" : "normal";
-      styles[3] = index % 2 === 1 ? "zebra" : "normal";
-      styles[4] = index % 2 === 1 ? "zebra" : "normal";
-      styles[5] = beforeContinuation ? "hyperlink" : item.changeType === "追加" ? "diffAbsent" : "diffBefore";
-      styles[6] = afterContinuation ? "hyperlink" : item.changeType === "削除" ? "diffAbsent" : "diffAfter";
+      styles[2] = startsCategory ? "category" : alternate ? "zebra" : "normal";
+      styles[3] = alternate ? "zebra" : "normal";
+      styles[4] = alternate ? "zebra" : "normal";
+      styles[5] = beforeContinuation ? "diffBeforeLink" : item.rawBefore.state === "存在しません" ? "diffAbsent" : "rawDiffBefore";
+      styles[6] = afterContinuation ? "diffAfterLink" : item.rawAfter.state === "存在しません" ? "diffAbsent" : "rawDiffAfter";
       styles[7] = "actionLink";
       cellStyles.push(styles);
       rowHeights.push(readableCustomerRowHeight([
@@ -15504,10 +15641,10 @@ ${targetName}`,
         cellStyles.push([
           alternate ? "zebraCenter" : "center",
           alternate ? "zebra" : "normal",
-          "center",
-          "center",
+          alternate ? "zebraCenter" : "center",
+          alternate ? "zebraCenter" : "center",
           "info",
-          difference ? difference.side === "source" ? "diffBefore" : "diffAfter" : "warning",
+          difference ? difference.side === "source" ? "rawDiffBefore" : "rawDiffAfter" : "rawWarning",
           "actionLink"
         ]);
         rowHeights.push(readableCustomerRowHeight([
@@ -15647,9 +15784,17 @@ ${targetName}`,
         });
       }
     });
-    const cellStyles = rows.map((_, index) => index === 0 ? ["warning"] : index === 1 ? [] : ["warning"]);
+    const cellStyles = rows.map((row, index) => {
+      if (index === 0) return ["warning"];
+      if (index === 1) return [];
+      const alternate = (index - 2) % 2 === 1;
+      const baseStyle = alternate ? "zebra" : "normal";
+      return [baseStyle, baseStyle, incompleteIssueStatusStyle(row[2]), baseStyle, baseStyle];
+    });
     items.forEach((item, index) => {
-      if (continuationByIndex.has(item.index)) cellStyles[index + 2][4] = "hyperlink";
+      if (continuationByIndex.has(item.index)) {
+        cellStyles[index + 2][4] = incompleteIssueStatusStyle(item.status) === "statusError" ? "warningLink" : "hyperlink";
+      }
     });
     return {
       name: "確認できなかった範囲",
@@ -15932,18 +16077,53 @@ ${targetName}`,
     };
   }
   function summaryStatusStyle(status) {
-    if (status === "差分なし") return "kpiGood";
-    if (status === "差分あり") return "kpiChange";
-    if (status === "差分は確認できず") return "kpiWarning";
-    return "kpiDanger";
+    if (status === "差分なし") return "statusGood";
+    if (status === "差分あり") return "statusDifference";
+    if (status === "差分は確認できず") return "statusIncomplete";
+    return "statusError";
   }
   function summaryCoverageStyle(coverage) {
-    if (coverage === "全範囲を取得") return "kpiGood";
-    if (coverage === "一部未取得") return "kpiWarning";
-    return "kpiDanger";
+    if (coverage === "全範囲を取得") return "statusGood";
+    if (coverage === "一部未取得") return "statusIncomplete";
+    return "diffAbsent";
+  }
+  function summaryPairNameStyle(pairNameStatus2) {
+    if (pairNameStatus2 === "一致") return "statusGood";
+    if (pairNameStatus2 === "名称が異なります") return "statusIncomplete";
+    return "statusError";
+  }
+  function summaryCoverageDetailStyle(summary, alternate) {
+    if (summary.status === "Excel生成失敗") return "warning";
+    if (summary.coverage === "一部未取得") return "review";
+    return alternate ? "zebra" : "normal";
   }
   var BATCH_SUMMARY_COLUMN_COUNT = 13;
   var BATCH_SUMMARY_COLUMN_LAST = "M";
+  var BATCH_SUMMARY_COLUMN_WIDTHS = [7, 28, 28, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44];
+  var BATCH_SUMMARY_DATA_ROW_HEIGHT = 32;
+  var BATCH_SUMMARY_DATA_ROW_MAX_HEIGHT = 220;
+  var BATCH_SUMMARY_DATA_LINE_HEIGHT = 17;
+  function batchSummaryVisualTextWidth(value) {
+    let width = 0;
+    for (const char of String(value ?? "")) {
+      const codePoint = char.codePointAt(0) || 0;
+      if (char === "	") width += 4;
+      else if (codePoint <= 255 || codePoint >= 65377 && codePoint <= 65439) width += 1;
+      else width += 2;
+    }
+    return width;
+  }
+  function batchSummaryWrappedLines(value, columnWidth) {
+    const capacity = Math.max(8, Math.floor(columnWidth - 2));
+    return makeExcelCellTextVisible(value).split(/\r?\n/).reduce((total, line) => total + Math.max(1, Math.ceil(batchSummaryVisualTextWidth(line) / capacity)), 0);
+  }
+  function batchSummaryDataRowHeight(row) {
+    const maxLines = row.reduce((max, value, columnIndex) => Math.max(max, batchSummaryWrappedLines(value, BATCH_SUMMARY_COLUMN_WIDTHS[columnIndex] || 10)), 1);
+    return Math.min(
+      BATCH_SUMMARY_DATA_ROW_MAX_HEIGHT,
+      BATCH_SUMMARY_DATA_ROW_HEIGHT + Math.max(0, maxLines - 1) * BATCH_SUMMARY_DATA_LINE_HEIGHT
+    );
+  }
   function buildBatchSummaryOverview(summaryRows) {
     const withDiff = summaryRows.filter((row) => row.status === "差分あり").length;
     const noDiff = summaryRows.filter((row) => row.status === "差分なし").length;
@@ -16002,20 +16182,23 @@ ${targetName}`,
     cellStyles[1] = ["subtitle"];
     for (let index = headerRowIndex + 1; index < rows.length; index += 1) {
       const summary = summaryRows[index - headerRowIndex - 1];
+      const alternate = (index - headerRowIndex - 1) % 2 === 1;
+      const neutralStyle = alternate ? "zebra" : "normal";
+      const neutralCenterStyle = alternate ? "zebraCenter" : "center";
       cellStyles[index] = [
-        "center",
-        "normal",
-        "normal",
+        neutralCenterStyle,
+        neutralStyle,
+        neutralStyle,
         summaryStatusStyle(summary.status),
         summaryCoverageStyle(summary.coverage),
-        summary.coverageDetail ? "warning" : "normal",
-        "center",
-        "center",
-        "center",
-        "center",
-        "center",
-        summary.pairNameStatus === "一致" ? "center" : "warning",
-        "normal"
+        summaryCoverageDetailStyle(summary, alternate),
+        neutralCenterStyle,
+        neutralCenterStyle,
+        neutralCenterStyle,
+        neutralCenterStyle,
+        neutralCenterStyle,
+        summaryPairNameStyle(summary.pairNameStatus),
+        neutralStyle
       ];
     }
     return buildXlsxBlob([{
@@ -16025,13 +16208,13 @@ ${targetName}`,
       freezeRows: headerRowIndex + 1,
       freezeColumns: 1,
       autoFilter: true,
-      colWidths: [7, 28, 28, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44],
+      colWidths: BATCH_SUMMARY_COLUMN_WIDTHS,
       rowStyles: rows.map(() => "normal"),
       cellStyles,
       rowHeights: rows.map((_, index) => {
         if (index === 0) return 34;
         if (index === 1) return 28;
-        return index === headerRowIndex ? 32 : 38;
+        return index === headerRowIndex ? 32 : batchSummaryDataRowHeight(rows[index]);
       }),
       styledEmptyCellsAsBlank: true,
       materializeEmptyCellsFromRow: headerRowIndex + 1,
