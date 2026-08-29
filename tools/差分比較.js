@@ -11751,15 +11751,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     fields: "テーブル内の項目",
     referenceTable: "関連レコード一覧設定",
     lookup: "ルックアップ設定",
-    condition: "表示条件（フィールドの一致）",
+    condition: "表示するレコードの条件",
     displayFields: "表示するフィールド",
     filterCond: "絞り込み条件",
     relatedApp: "参照するアプリ",
-    size: "一度に表示する最大件数",
+    size: "一度に表示する最大レコード数",
     sort: "ソート",
     relatedKeyField: "コピー元のフィールド",
     fieldMappings: "ほかのフィールドのコピー",
-    lookupPickerFields: "選択画面に表示するフィールド",
+    lookupPickerFields: "コピー元のレコード選択時に表示するフィールド",
     field: "自アプリのフィールド",
     relatedField: "参照するアプリのフィールド",
     app: "参照するアプリID",
@@ -13662,26 +13662,37 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       const property = FIELD_SETTING_LABELS[tokens.at(-1) || ""] || fallback.split(" / ").at(-1) || "設定内容";
       return `選択肢「${option}」：${property}`;
     }
-    const prefix = settingKey.startsWith("lookup.") ? "ルックアップ" : settingKey.startsWith("referenceTable.") ? "関連レコード" : "";
+    const prefix = settingKey.startsWith("lookup.") ? "ルックアップ" : settingKey.startsWith("referenceTable.") ? "関連レコード一覧" : "";
     const leaf = settingKey.split(".").filter(Boolean).at(-1) || "";
     const exactLabels = {
-      "lookup.relatedApp.app": "参照先アプリID",
-      "lookup.relatedApp.appId": "参照先アプリID",
-      "lookup.relatedAppId": "参照先アプリID",
-      "referenceTable.relatedApp.app": "参照先アプリID",
-      "referenceTable.relatedApp.appId": "参照先アプリID",
-      "referenceTable.relatedAppId": "参照先アプリID",
-      "referenceTable.condition.field": "自アプリの照合フィールド",
-      "referenceTable.condition.relatedField": "参照先の照合フィールド",
-      "referenceTable.sort": "並び順",
+      "lookup.relatedApp.app": "関連付けるアプリ（アプリID）",
+      "lookup.relatedApp.appId": "関連付けるアプリ（アプリID）",
+      "lookup.relatedAppId": "関連付けるアプリ（アプリID）",
+      "referenceTable.relatedApp.app": "参照するアプリ（アプリID）",
+      "referenceTable.relatedApp.appId": "参照するアプリ（アプリID）",
+      "referenceTable.relatedAppId": "参照するアプリ（アプリID）",
+      "referenceTable.condition": "表示するレコードの条件",
+      "referenceTable.condition.field": "表示するレコードの条件（自アプリのフィールド）",
+      "referenceTable.condition.relatedField": "表示するレコードの条件（参照するアプリのフィールド）",
+      "referenceTable.sort": "レコードのソート（表示順）",
+      "referenceTable.filterCond": "さらに絞り込む条件",
+      "referenceTable.size": "一度に表示する最大レコード数",
       "lookup.relatedKeyField": "コピー元のフィールド",
       "lookup.fieldMappings": "ほかのフィールドのコピー",
-      "lookup.lookupPickerFields": "選択画面の表示フィールド"
+      "lookup.lookupPickerFields": "コピー元のレコード選択時に表示するフィールド",
+      "lookup.filterCond": "絞り込みの初期設定",
+      "lookup.sort": "ソートの初期設定"
     };
     let label = exactLabels[settingKey];
     if (!label && /^referenceTable\.displayFields\.\d+$/.test(settingKey)) {
       const index = Number(settingKey.split(".").at(-1));
-      label = `表示フィールド（${index + 1}件目）`;
+      label = `表示するフィールド（${index + 1}件目）`;
+    }
+    if (!label) {
+      const mapping = /^lookup\.fieldMappings\.(\d+)\.(field|relatedField)$/.exec(settingKey);
+      if (mapping) {
+        label = mapping[2] === "field" ? `ほかのフィールドのコピー（${Number(mapping[1]) + 1}件目）のコピー先（自アプリのフィールド）` : `ほかのフィールドのコピー（${Number(mapping[1]) + 1}件目）のコピー元（関連付けるアプリのフィールド）`;
+      }
     }
     if (!label && /^lookup\.(?:fieldMappings|lookupPickerFields)\.\d+/.test(settingKey)) {
       const index = Number(settingKey.match(/\.(\d+)/)?.[1] || 0);
@@ -13689,6 +13700,10 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     }
     if (!label) label = FIELD_SETTING_LABELS[leaf] || fallback.split(" / ").at(-1) || "設定内容";
     return prefix ? `${prefix}：${label}` : label;
+  }
+  function movedSettingItemLabel(settingItem) {
+    const listItem = /^(.+?)（\d+件目）$/.exec(settingItem);
+    return listItem ? `${listItem[1]}の並び順` : "並び順";
   }
   function customerLayoutItemParts(row, sourceBundle, targetBundle) {
     const path = String(row.path || "");
@@ -14305,6 +14320,8 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       if (oneBasedIndex || contextualEnum) {
       } else if (/(?:\.fields\[\d+\]|\.(?:srcField|destField))$/.test(path) && typeof value === "string") {
         display = customerFieldCodeLabel(value, bundle);
+      } else if (typeof value === "string" && setting && (setting.settingKey === "referenceTable.condition.field" || /^lookup\.fieldMappings\.\d+\.field$/.test(setting.settingKey))) {
+        display = customerFieldCodeLabel(value, bundle);
       } else if (/(?:^|\.)sort$/.test(path) && typeof value === "string") {
         display = customerSortValue(value, bundle);
       } else if (/(?:^|\.)filterCond$/.test(path) && typeof value === "string") {
@@ -14343,7 +14360,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
         const rawBefore = wholeFieldExistenceChange ? { ...rawBeforeBase, state: row.type === "added" ? "存在しません" : "存在" } : rawBeforeBase;
         const rawAfter = wholeFieldExistenceChange ? { ...rawAfterBase, state: row.type === "removed" ? "存在しません" : "存在" } : rawAfterBase;
         const targetDetail = parts.target;
-        const settingItemDetail = moved ? "並び順" : targetColumns.field?.wholeField ? targetColumns.field.structure === "テーブル" ? "テーブル自体" : "フィールド自体" : parts.settingItem;
+        const settingItemDetail = moved ? movedSettingItemLabel(parts.settingItem) : targetColumns.field?.wholeField ? targetColumns.field.structure === "テーブル" ? "テーブル自体" : "フィールド自体" : parts.settingItem;
         items.push({
           index: items.length,
           row,
