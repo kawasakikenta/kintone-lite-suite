@@ -3211,7 +3211,7 @@ ${contextLine}`);
       const ao = order.has(a.sectionKey) ? order.get(a.sectionKey) ?? 999 : 999;
       const bo = order.has(b.sectionKey) ? order.get(b.sectionKey) ?? 999 : 999;
       if (ao !== bo) return ao - bo;
-      return String(a.path || "").localeCompare(String(b.path || ""));
+      return String(a.path || "").localeCompare(String(b.path || ""), "ja");
     });
     return refs;
   }

@@ -527,7 +527,8 @@ export function resolveRowImpactRefs(row, impactIndex, statusImpactIndex: Map<st
     const ao = order.has(a.sectionKey) ? (order.get(a.sectionKey) ?? 999) : 999;
     const bo = order.has(b.sectionKey) ? (order.get(b.sectionKey) ?? 999) : 999;
     if (ao !== bo) return ao - bo;
-    return String(a.path || '').localeCompare(String(b.path || ''));
+    // 実行環境の既定ロケールに依存すると参照一覧の並びが変わるため、日本語照合順へ固定する。
+    return String(a.path || '').localeCompare(String(b.path || ''), 'ja');
   });
   return refs;
 }
