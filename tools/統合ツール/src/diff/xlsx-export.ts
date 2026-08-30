@@ -4194,6 +4194,11 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = fal
   const actualRows = sourceRows.filter((row) => (
     row.type !== 'same'
     && (!row._displayOnly || (includeTableChildren && row._expandedFromTable === true))
+    // プラグイン単位の差分が明細にあるため、セクション全体を示す変更行は
+    // 人向け Excel では重複情報となる。追加・削除は存在差分なので残す。
+    && !(sectionKeyOfRow(row) === 'pluginSettings'
+      && String(row.path || '').trim() === 'pluginSettings'
+      && row.type === 'changed')
   ));
   const items: CustomerDiffItem[] = [];
   const groupedRows = groupRowsBySection(actualRows);
