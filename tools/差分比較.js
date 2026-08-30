@@ -15134,7 +15134,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
   }
   function buildCustomerDiffItems(ctx, includeTableChildren = false) {
     const sourceRows = includeTableChildren ? expandSubtableRowsForDisplay(ctx.rows || []) : ctx.rows || [];
-    const actualRows = sourceRows.filter((row) => row.type !== "same" && (!row._displayOnly || includeTableChildren && row._expandedFromTable === true));
+    const actualRows = sourceRows.filter((row) => row.type !== "same" && (!row._displayOnly || includeTableChildren && row._expandedFromTable === true) && !(sectionKeyOfRow(row) === "pluginSettings" && String(row.path || "").trim() === "pluginSettings" && row.type === "changed"));
     const items = [];
     const groupedRows = groupRowsBySection(actualRows);
     const comparedSectionKeys = /* @__PURE__ */ new Set([...ctx.scopes || [], ...groupedRows.keys()]);
