@@ -75,6 +75,37 @@ describe('diff/xlsx-builder', () => {
     expect(rels).toContain('Target="styles.xml"');
   });
 
+  it('fails fast when workbook or sheet dimensions exceed Excel limits', () => {
+    expect(() => buildXlsxBlob([])).toThrow(/at least one worksheet/);
+    expect(() => buildXlsxBlob([{
+      name: 'too many rows',
+      rows: new Array(1048577) as XlsxSheet['rows']
+    }])).toThrow(/rows exceeds the Excel limit \(1,048,576\)/);
+    expect(() => buildXlsxBlob([{
+      name: 'too many columns',
+      rows: [new Array(16385)]
+    }])).toThrow(/columns exceeds the Excel limit \(16,384\)/);
+    expect(() => buildXlsxBlob([{
+      name: 'too many widths',
+      rows: [],
+      colWidths: new Array(16385)
+    }])).toThrow(/column widths exceeds the Excel limit \(16,384\)/);
+    expect(() => buildXlsxBlob([{
+      name: 'too many cell style columns',
+      rows: [],
+      cellStyles: [new Array(16385)]
+    }])).toThrow(/cell style row 1 columns exceeds the Excel limit \(16,384\)/);
+
+    for (const sheet of [
+      { name: 'row styles', rows: [], rowStyles: new Array(1048577) },
+      { name: 'row heights', rows: [], rowHeights: new Array(1048577) },
+      { name: 'row outlines', rows: [], rowOutlines: new Array(1048577) },
+      { name: 'cell style rows', rows: [], cellStyles: new Array(1048577) }
+    ] as XlsxSheet[]) {
+      expect(() => buildXlsxBlob([sheet])).toThrow(/exceeds the Excel limit \(1,048,576\)/);
+    }
+  });
+
   it('sanitizes sheet names (forbidden chars, length, duplicates)', async () => {
     const longName = 'a'.repeat(40);
     const sheets: XlsxSheet[] = [
@@ -177,6 +208,16 @@ describe('diff/xlsx-builder', () => {
     expect(sheet1).toContain(visible);
   });
 
+  it('preserves CR, LF, and CRLF as distinct cell text sequences', async () => {
+    const value = 'A\rB\nC\r\nD&#13;';
+    const sheets: XlsxSheet[] = [{ name: 'Sheet1', rows: [['value'], [value]] }];
+    const sheet1 = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    const cellText = /<c r="A2"[^>]*><is><t[^>]*>([\s\S]*?)<\/t><\/is><\/c>/.exec(sheet1)?.[1];
+
+    expect(cellText).toBe('A&#13;B\nC&#13;\nD&amp;#13;');
+    expect(cellText).not.toContain('\r');
+  });
+
   it('strips XML-forbidden characters from structural XML attributes instead of expanding them', async () => {
     const sheets: XlsxSheet[] = [{
       name: 'Sheet1',
@@ -251,6 +292,49 @@ describe('diff/xlsx-builder', () => {
     expect(xml).toContain('<autoFilter ref="A2:C3"/>');
     expect(xml).toMatch(/<c r="A2" s="1"/);
     expect(xml.indexOf('<autoFilter ')).toBeLessThan(xml.indexOf('<mergeCells '));
+  });
+
+  it('keeps only ordered A1 ranges and cell references within Excel bounds', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [['linked']],
+      autoFilter: false,
+      merges: [
+        'A1:B1',
+        'XFD1048576:XFD1048576',
+        'XFE1:XFE1',
+        'A1048577:A1048577',
+        'B1:A1',
+        'A2:A1'
+      ],
+      dataValidations: [
+        { sqref: 'A1:A1', values: ['ok'] },
+        { sqref: 'XFD1048576:XFD1048576', values: ['edge'] },
+        { sqref: 'XFE1:XFE1', values: ['outside column'] },
+        { sqref: 'A1048577:A1048577', values: ['outside row'] },
+        { sqref: 'B1:A1', values: ['reversed columns'] },
+        { sqref: 'A2:A1', values: ['reversed rows'] }
+      ],
+      internalHyperlinks: [
+        { ref: 'A1', targetSheet: 'S', targetCell: 'XFD1048576' },
+        { ref: 'XFE1', targetSheet: 'S', targetCell: 'A1' },
+        { ref: 'A1048577', targetSheet: 'S', targetCell: 'A1' },
+        { ref: 'A2', targetSheet: 'S', targetCell: 'XFE1' }
+      ]
+    }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+
+    expect(xml).toContain('<mergeCells count="2">');
+    expect(xml).toContain('<mergeCell ref="A1:B1"/>');
+    expect(xml).toContain('<mergeCell ref="XFD1048576:XFD1048576"/>');
+    expect(xml).toContain('<dataValidations count="2">');
+    expect(xml).toContain('sqref="A1:A1"');
+    expect(xml).toContain('sqref="XFD1048576:XFD1048576"');
+    expect(xml).toContain('<hyperlink ref="A1" location="&apos;S&apos;!XFD1048576"/>');
+    expect(xml).not.toContain('XFE1');
+    expect(xml).not.toContain('A1048577');
+    expect(xml).not.toContain('B1:A1');
+    expect(xml).not.toContain('A2:A1');
   });
 
   it('adds relationship-free internal hyperlinks to sanitized sheet names in valid OOXML order', async () => {
@@ -664,6 +748,35 @@ describe('diff/xlsx-builder', () => {
     expect(text).toContain('Excelセル上限32,767文字のため省略');
     expect(text).toMatch(/元40000文字・識別:[0-9a-f]{8}/);
     expect(/[\uD800-\uDBFF]$/.test(text)).toBe(false);
+  });
+
+  it('truncates oversized text only at grapheme boundaries', async () => {
+    const originalLength = 40000;
+    const suffixLength = `\n…（Excelセル上限32,767文字のため省略・元${originalLength}文字・識別:00000000）`.length;
+    const keep = 32767 - suffixLength;
+    const atBoundary = (cluster: string, naiveClusterUnits: number): { value: string; expectedPrefix: string } => {
+      const expectedPrefix = 'a'.repeat(keep - naiveClusterUnits);
+      const remaining = originalLength - expectedPrefix.length - cluster.length;
+      return { value: expectedPrefix + cluster + 'b'.repeat(remaining), expectedPrefix };
+    };
+    const cases = [
+      atBoundary('👨‍👩‍👧‍👦', 2),
+      atBoundary('e\u0301', 1),
+      atBoundary('🇯🇵', 2)
+    ];
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [['value'], ...cases.map(({ value }) => [value])]
+    }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+
+    cases.forEach(({ expectedPrefix }, index) => {
+      const ref = `A${index + 2}`;
+      const cellText = new RegExp(`<c r="${ref}"[^>]*><is><t[^>]*>([\\s\\S]*?)<\\/t><\\/is><\\/c>`).exec(xml)?.[1];
+      const preview = cellText?.split('\n…（Excelセル上限32,767文字のため省略')[0];
+      expect(preview).toBe(expectedPrefix);
+      expect(cellText?.length).toBeLessThanOrEqual(32767);
+    });
   });
 
   it('applies the Excel cell limit after forbidden characters expand to visible escapes', async () => {

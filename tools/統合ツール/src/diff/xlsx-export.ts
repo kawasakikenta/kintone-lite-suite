@@ -76,6 +76,12 @@ export interface DiffXlsxRow {
   reasonSummary?: string;
   notationOnly?: boolean;
   emptyOnly?: boolean;
+  entityKind?: string;
+  entityLabel?: string;
+  entityCode?: string;
+  entityPropLabel?: string;
+  arrayKey?: string;
+  arrayKeyValue?: unknown;
   _displayOnly?: boolean;
   _expandedFromTable?: boolean;
   _parentRowId?: string;
@@ -513,11 +519,37 @@ function appLabel(bundle?: DiffXlsxBundle): string {
   return name || (id ? `App ${id}` : '');
 }
 
-function truncateDisplayText(value: unknown, maxCodePoints: number): string {
-  const characters = Array.from(String(value ?? ''));
-  if (characters.length <= maxCodePoints) return characters.join('');
-  if (maxCodePoints <= 1) return '…';
-  const available = maxCodePoints - 1;
+function graphemeClusters(value: unknown): string[] {
+  const text = String(value ?? '');
+  const Segmenter = (globalThis as any).Intl?.Segmenter;
+  if (typeof Segmenter === 'function') {
+    try {
+      return Array.from(
+        new Segmenter(undefined, { granularity: 'grapheme' }).segment(text),
+        (part: any) => String(part.segment)
+      );
+    } catch {
+      // 古い実行環境ではコードポイント単位にフォールバックする。
+    }
+  }
+  return Array.from(text);
+}
+
+function graphemePrefixWithinUtf16(value: string, maxUtf16Length: number): string {
+  if (maxUtf16Length <= 0) return '';
+  let output = '';
+  for (const cluster of graphemeClusters(value)) {
+    if (output.length + cluster.length > maxUtf16Length) break;
+    output += cluster;
+  }
+  return output;
+}
+
+function truncateDisplayText(value: unknown, maxGraphemes: number): string {
+  const characters = graphemeClusters(value);
+  if (characters.length <= maxGraphemes) return characters.join('');
+  if (maxGraphemes <= 1) return '…';
+  const available = maxGraphemes - 1;
   const headLength = Math.ceil(available * 0.67);
   const tailLength = available - headLength;
   const head = characters.slice(0, headLength).join('').trimEnd();
@@ -724,10 +756,8 @@ function xlsxDiffValuePreview(text: string, originalUtf16Length = text.length): 
   const hash = shortStableHash(text);
   const prefix = `[一部表示: 元データ ${originalUtf16Length}文字（UTF-16） / 識別:${hash}]\n`;
   const suffix = `\n…（Excel表示用に省略・元UTF-16長 ${originalUtf16Length}・識別:${hash}）`;
-  let keep = XLSX_DIFF_VALUE_PREVIEW_LIMIT - prefix.length - suffix.length;
-  // UTF-16 サロゲートペアの途中で切らない。
-  if (keep > 0 && /[\uD800-\uDBFF]/.test(text.charAt(keep - 1))) keep -= 1;
-  return prefix + text.slice(0, Math.max(0, keep)) + suffix;
+  const keep = XLSX_DIFF_VALUE_PREVIEW_LIMIT - prefix.length - suffix.length;
+  return prefix + graphemePrefixWithinUtf16(text, keep) + suffix;
 }
 
 function rowValue(row: DiffXlsxRow, side: 'source' | 'target'): string {
@@ -926,9 +956,9 @@ function humanizeListRowValue(
 }
 
 function conciseReviewValue(value: string, maxCodePoints = 80): string {
-  const firstLine = String(value || '').split('\n', 1)[0].trim();
+  const firstLine = String(value || '').split(/\r\n|\r|\n/, 1)[0].trim();
   if (!firstLine) return '（内容なし）';
-  const characters = Array.from(firstLine);
+  const characters = graphemeClusters(firstLine);
   return characters.length > maxCodePoints
     ? `${characters.slice(0, Math.max(1, maxCodePoints - 1)).join('')}…`
     : firstLine;
@@ -1024,7 +1054,7 @@ function visualTextWidth(value: string): number {
 
 function estimatedWrappedLines(value: unknown, columnWidth: number): number {
   const capacity = Math.max(8, Math.floor(columnWidth - 2));
-  return makeExcelCellTextVisible(value).split(/\r?\n/).reduce((total, line) => (
+  return makeExcelCellTextVisible(value).split(/\r\n|\r|\n/).reduce((total, line) => (
     total + Math.max(1, Math.ceil(visualTextWidth(line) / capacity))
   ), 0);
 }
@@ -1229,8 +1259,8 @@ function buildSheetGuides(
     useWhen: hasIssues
       ? '最初に確認します。不完全な範囲は「取得・未検証」も確認します。'
       : fieldCount
-        ? '最初に確認し、フィールドは「フィールド差分要約」、収録された差分は「差分一覧」へ進みます。'
-        : '最初に確認し、収録された差分は「差分一覧」へ進みます。',
+        ? '最初に確認し、「変更対象一覧」で対象を絞ってからフィールド要約または差分一覧へ進みます。'
+        : '最初に確認し、「変更対象一覧」で対象を絞ってから差分一覧へ進みます。',
     targetCell: 'A1'
   }];
   if (hasIssues) {
@@ -1241,6 +1271,12 @@ function buildSheetGuides(
       targetCell: 'A3'
     });
   }
+  guides.push({
+    name: '変更対象一覧',
+    purpose: '変更された業務対象を、フィールドや一覧などの対象単位で大づかみに確認できます。',
+    useWhen: '詳細を読む前に、どのフィールド・一覧・設定対象が変わったかを絞り込むときに使います。',
+    targetCell: summarizeRows(ctx.rows || []).actual ? 'B4' : 'A4'
+  });
   if (fieldCount) {
     guides.push(
       {
@@ -1324,8 +1360,9 @@ function buildSummarySheet(
       : null;
   const overviewNextPlaces = [
     '最初に確認します。',
-    fieldCount ? 'フィールドは「フィールド差分要約」へ進みます。' : '',
-    rows.length ? '収録された差分とレビュー入力は「差分一覧」へ進みます。' : '差分一覧には見出しのみ出力されています。',
+    '変更対象の全体像は「変更対象一覧」で確認します。',
+    fieldCount ? 'フィールドの設定内容は「フィールド差分要約」へ進みます。' : '',
+    rows.length ? '設定項目ごとの差分とレビュー入力は「差分一覧」へ進みます。' : '差分一覧には見出しのみ出力されています。',
     incomplete ? '不完全な範囲は「取得・未検証」で確認します。' : ''
   ].filter(Boolean).join(' ');
   const overviewRow = {
@@ -1374,8 +1411,8 @@ function buildSummarySheet(
     ['正規化設定', normalizationLabel(ctx.normalizationPresetState), '自動判定', '重要度、業務への影響、対応要否は自動判定しません'],
     ['フィールド差分', fieldStatus, '', fieldLinkTarget?.label || ''],
     ['使い方', fieldCount
-      ? '①「フィールド差分要約」で対象を確認　②「フィールド差分詳細」で変更前後を確認　③「差分一覧」で確認状況と対応判断を入力　※パスは技術明細シートにのみ掲載'
-      : '①概要で結果と取得状態を確認　②「差分一覧」で変更前後を確認　③黄色い4列に確認状況・対応判断・担当者・コメントを入力　※パスは技術明細シートにのみ掲載', '', rows.length ? '③ レビュー入力へ' : ''],
+      ? '①「変更対象一覧」で対象を絞る　②「フィールド差分要約・詳細」で変更内容を確認　③「差分一覧」で確認状況と対応判断を入力　※パスは技術明細シートにのみ掲載'
+      : '①「変更対象一覧」で対象を絞る　②「差分一覧」で変更前後を確認　③黄色い4列に確認状況・対応判断・担当者・コメントを入力　※パスは技術明細シートにのみ掲載', '', rows.length ? '③ レビュー入力へ' : ''],
     ['', '', '', '']
   ];
   const guideTitleRow = sheetRows.length;
@@ -1589,6 +1626,20 @@ interface DiffXlsxTechnicalRef {
   rowNumber: number;
 }
 
+interface DiffXlsxCoarseTarget {
+  key: string;
+  targetType: string;
+  targetName: string;
+  identifier: string;
+  changeState: string;
+  diffCount: number;
+  mainChanges: string;
+  sourceRowIndexes: number[];
+  navigationLabel: string;
+  navigationSheet: string;
+  navigationCell: string;
+}
+
 function buildDifferenceRefs(rows: DiffXlsxRow[]): DiffXlsxDifferenceRef[] {
   const refs: DiffXlsxDifferenceRef[] = [];
   const seenIds = new Map<string, number>();
@@ -1612,6 +1663,510 @@ function buildTechnicalRefs(rows: DiffXlsxRow[]): DiffXlsxTechnicalRef[] {
   });
 }
 
+function coarseTargetType(sectionKey: string): string {
+  const labels: Record<string, string> = {
+    fieldSettings: 'フィールド',
+    viewSettings: '一覧',
+    layoutSettings: 'レイアウト',
+    reportSettings: 'グラフ',
+    processSettings: 'プロセス管理',
+    actionSettings: 'アプリアクション',
+    pluginSettings: 'プラグイン',
+    customizeSettings: 'カスタマイズ',
+    notifications: 'アプリ条件通知',
+    perRecordNotifications: 'レコード条件通知',
+    reminderNotifications: 'リマインダー通知'
+  };
+  return labels[sectionKey] || customerSectionLabel(sectionKey);
+}
+
+function coarseTargetIdentifier(target: string, sectionKey: string): string {
+  const codeMatches = [...target.matchAll(/（コード:\s*([^）]+)）/g)];
+  if (codeMatches.length) return String(codeMatches.at(-1)?.[1] || sectionKey);
+  const quoted = /「([^」]+)」/.exec(target)?.[1];
+  return quoted || sectionKey;
+}
+
+const VIEW_SETTING_PROPERTY_PATTERN = /^(fields(?:\[\d+\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/;
+
+interface CoarseViewIdentity {
+  viewName: string;
+  property: string | null;
+  isRoot: boolean;
+}
+
+function viewDefinitionNames(
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle
+): string[] {
+  return [...new Set([sourceBundle, targetBundle].flatMap((bundle) => {
+    const views = bundle?.sections?.viewSettings?.views;
+    return views && typeof views === 'object' && !Array.isArray(views) ? Object.keys(views) : [];
+  }))].sort((left, right) => right.length - left.length || left.localeCompare(right, 'ja'));
+}
+
+function isViewDefinitionObject(value: unknown, rootExistenceChange: boolean): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (rootExistenceChange) return true;
+  const keys = Object.keys(value as Record<string, unknown>);
+  const definitionKeys = new Set([
+    'id', 'name', 'type', 'fields', 'filterCond', 'sort', 'index', 'builtinType',
+    'device', 'pagination', 'paginationStyle', 'pager', 'date', 'title', 'html'
+  ]);
+  return keys.some((key) => definitionKeys.has(key));
+}
+
+function resolveCoarseViewIdentity(
+  row: DiffXlsxRow,
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle
+): CoarseViewIdentity | null {
+  const path = String(row.path || '');
+  const prefix = 'viewSettings.views.';
+  if (!path.startsWith(prefix)) return null;
+  const remainder = path.slice(prefix.length);
+  if (!remainder) return null;
+
+  const names = viewDefinitionNames(sourceBundle, targetBundle);
+  const exactName = names.find((name) => remainder === name) || null;
+  const leafCandidates = names.flatMap((name) => {
+    if (!remainder.startsWith(`${name}.`)) return [];
+    const property = remainder.slice(name.length + 1);
+    return VIEW_SETTING_PROPERTY_PATTERN.test(property) ? [{ name, property }] : [];
+  });
+  const rootExistenceChange = row.type === 'added' || row.type === 'removed';
+  const hasDefinitionPayload = [row.left, row.right]
+    .some((value) => isViewDefinitionObject(value, rootExistenceChange && !!exactName));
+
+  // 「営業」と「営業.sort」が共存する場合、営業.sort が一覧定義オブジェクトならroot、
+  // primitiveなsort値なら「営業」のsort leafとして扱う。
+  if (exactName && hasDefinitionPayload) return { viewName: exactName, property: null, isRoot: true };
+  if (leafCandidates.length) {
+    const leaf = leafCandidates[0];
+    return { viewName: leaf.name, property: leaf.property, isRoot: false };
+  }
+  if (exactName) return { viewName: exactName, property: null, isRoot: true };
+
+  const fallbackLeaf = /^(.*)\.(fields(?:\[\d+\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/.exec(remainder);
+  if (hasDefinitionPayload || !fallbackLeaf) {
+    return { viewName: customerPlainText(remainder), property: null, isRoot: true };
+  }
+  return {
+    viewName: customerPlainText(fallbackLeaf[1]),
+    property: fallbackLeaf[2],
+    isRoot: false
+  };
+}
+
+function coarseViewName(
+  row: DiffXlsxRow,
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle
+): string | null {
+  return resolveCoarseViewIdentity(row, sourceBundle, targetBundle)?.viewName || null;
+}
+
+interface CoarseStableIdentity {
+  key: string;
+  identifier: string;
+}
+
+function coarseGenericEntityRootPath(row: DiffXlsxRow, sectionKey: string): string | null {
+  const path = String(row.path || '');
+  const entityCode = String(row.entityCode || '').trim();
+  const keyedPrefixes: Record<string, string> = {
+    reportSettings: 'reportSettings.reports.',
+    categories: 'categories.categories.',
+    processSettings: row.entityKind === 'state' ? 'processSettings.states.' : '',
+    actionSettings: row.entityKind === 'appAction' && entityCode ? 'actionSettings.actions.' : ''
+  };
+  const keyedPrefix = keyedPrefixes[sectionKey];
+  if (keyedPrefix && entityCode) {
+    const root = `${keyedPrefix}${entityCode}`;
+    if (path === root || path.startsWith(`${root}.`) || path.startsWith(`${root}[`)) return root;
+  }
+
+  const indexedPatterns: Partial<Record<string, RegExp>> = {
+    processSettings: /^(processSettings\.(?:actions|states)(?:\[\d+\]|\.\d+))(?=\.|\[|$)/,
+    actionSettings: /^(actionSettings\.actions(?:\[\d+\]|\.\d+))(?=\.|\[|$)/,
+    appAcl: /^(appAcl\.rights(?:\[\d+\]|\.\d+))(?=\.|\[|$)/,
+    recordPermissions: /^(recordPermissions\.rights(?:\[\d+\]|\.\d+))(?=\.|\[|$)/,
+    fieldAcl: /^(fieldAcl\.rights(?:\[\d+\]|\.\d+))(?=\.|\[|$)/,
+    notifications: /^(notifications\.notifications(?:\[\d+\]|\.\d+))(?=\.|\[|$)/,
+    perRecordNotifications: /^(perRecordNotifications\.notifications(?:\[\d+\]|\.\d+))(?=\.|\[|$)/,
+    reminderNotifications: /^(reminderNotifications\.notifications(?:\[\d+\]|\.\d+))(?=\.|\[|$)/,
+    pluginSettings: /^(pluginSettings\.plugins(?:\[\d+\]|\.\d+))(?=\.|\[|$)/,
+    layoutSettings: /^(layoutSettings\.layout(?:\[\d+\]|\.\d+))(?=\.|\[|$)/,
+    customizeSettings: /^(customizeSettings\.(?:desktop|mobile)\.(?:js|css)(?:\[\d+\]|\.\d+))(?=\.|\[|$)/
+  };
+  return indexedPatterns[sectionKey]?.exec(path)?.[1] || null;
+}
+
+function coarseStableIdentity(row: DiffXlsxRow, sectionKey: string): CoarseStableIdentity {
+  const entityKind = String(row.entityKind || '').trim();
+  const entityCode = String(row.entityCode || '').trim();
+  if (entityKind && entityCode) {
+    return {
+      key: JSON.stringify([sectionKey, 'entity', entityKind, entityCode]),
+      identifier: entityCode
+    };
+  }
+
+  if (row.arrayKey && row.arrayKeyValue !== undefined) {
+    const stableValue = stableStringify(row.arrayKeyValue) ?? String(row.arrayKeyValue);
+    return {
+      key: JSON.stringify([sectionKey, 'arrayKey', row.arrayKey, stableValue]),
+      identifier: typeof row.arrayKeyValue === 'object'
+        ? `${row.arrayKey}: ${shortStableHash(stableValue)}`
+        : `${row.arrayKey}: ${String(row.arrayKeyValue)}`
+    };
+  }
+
+  const rootPath = coarseGenericEntityRootPath(row, sectionKey);
+  if (rootPath) return { key: JSON.stringify([sectionKey, 'path', rootPath]), identifier: rootPath };
+  const path = String(row.path || sectionKey);
+  return { key: JSON.stringify([sectionKey, 'path', path]), identifier: path };
+}
+
+function coarseRowIsGenericEntityRoot(row: DiffXlsxRow, sectionKey: string): boolean {
+  if (String(row.entityPropLabel || '').trim()) return false;
+  const rootPath = coarseGenericEntityRootPath(row, sectionKey);
+  if (rootPath && rootPath === String(row.path || '')) return true;
+  const keyedObjectRootKinds = new Set(['report', 'category', 'state']);
+  return (row.type === 'added' || row.type === 'removed')
+    && keyedObjectRootKinds.has(String(row.entityKind || ''))
+    && [row.left, row.right].some((value) => !!value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function coarseViewIdentifier(
+  viewName: string,
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle
+): string {
+  for (const bundle of [targetBundle, sourceBundle]) {
+    const definition = bundle?.sections?.viewSettings?.views?.[viewName];
+    const id = definition && typeof definition === 'object' && !Array.isArray(definition)
+      ? (definition as Record<string, unknown>).id
+      : null;
+    if (id != null && String(id).trim()) return `一覧ID ${String(id).trim()}`;
+  }
+  return `一覧名 ${viewName}`;
+}
+
+function coarseRowsChangeState(
+  rows: DiffXlsxRow[],
+  targetType: string,
+  options: {
+    sectionKey?: string;
+    viewName?: string;
+    sourceBundle?: DiffXlsxBundle;
+    targetBundle?: DiffXlsxBundle;
+  } = {}
+): string {
+  const states = new Set(rows.map((row) => {
+    if (row.moved || row.type === 'moved') return '並び順変更';
+    if (row.type === 'added') return '追加';
+    if (row.type === 'removed') return '削除';
+    return '設定変更';
+  }));
+  const isView = targetType === '一覧';
+  const rootRows = isView
+    ? rows.filter((row) => {
+      const identity = resolveCoarseViewIdentity(row, options.sourceBundle, options.targetBundle);
+      return !!identity?.isRoot && (!options.viewName || identity.viewName === options.viewName);
+    })
+    : options.sectionKey && options.sectionKey !== 'fieldSettings'
+      ? rows.filter((row) => coarseRowIsGenericEntityRoot(row, options.sectionKey!))
+      : [];
+  const rootAdded = rootRows.some((row) => row.type === 'added');
+  const rootRemoved = rootRows.some((row) => row.type === 'removed');
+  if ((rootAdded && rootRemoved)
+    || (rootAdded && [...states].some((state) => state !== '追加'))
+    || (rootRemoved && [...states].some((state) => state !== '削除'))) return '複合変更';
+  if (rootAdded) return isView ? '一覧追加' : '追加';
+  if (rootRemoved) return isView ? '一覧削除' : '削除';
+  if (states.size === 1 && states.has('並び順変更')) return '並び順変更';
+  // 配列要素や設定leafの追加・削除であり、対象自体の追加・削除ではない。
+  return states.size > 1 ? '複合変更' : '設定変更';
+}
+
+function coarseStateStyle(changeState: string): XlsxCellStyle {
+  if (/追加$/.test(changeState)) return 'changeAdded';
+  if (/削除$/.test(changeState)) return 'changeRemoved';
+  if (/並び順/.test(changeState)) return 'changeMoved';
+  return 'changeChanged';
+}
+
+function coarseRowChangeSummary(
+  row: DiffXlsxRow,
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle,
+  viewName?: string
+): string {
+  const parts = customerItemParts(row, sourceBundle, targetBundle);
+  const sourceValue = humanizeListRowValue(row, 'source', sourceBundle, targetBundle);
+  const targetValue = humanizeListRowValue(row, 'target', sourceBundle, targetBundle);
+  const viewIdentity = viewName ? resolveCoarseViewIdentity(row, sourceBundle, targetBundle) : null;
+  const settingItem = viewIdentity?.isRoot && viewIdentity.viewName === viewName
+    ? row.type === 'added'
+      ? '一覧を追加'
+      : row.type === 'removed'
+        ? '一覧を削除'
+        : '一覧全体'
+    : parts.settingItem;
+  return compactFieldSummaryValue(`${settingItem}: ${reviewChangeSummary(row, sourceValue, targetValue)}`);
+}
+
+function coarseMainChanges(
+  rows: DiffXlsxRow[],
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle,
+  viewName?: string
+): string {
+  const changes = [...new Set(rows
+    .slice()
+    .sort((left, right) => String(left.path || '').localeCompare(String(right.path || ''), 'ja'))
+    .map((row) => coarseRowChangeSummary(row, sourceBundle, targetBundle, viewName)))];
+  const visible = changes.slice(0, 3);
+  const more = changes.length > visible.length ? `\nほか${changes.length - visible.length}件` : '';
+  return `${visible.join('\n')}${more}`;
+}
+
+function buildCoarseTargets(
+  ctx: DiffXlsxContext,
+  fieldModel: DiffXlsxFieldModel,
+  differenceRefs: DiffXlsxDifferenceRef[]
+): DiffXlsxCoarseTarget[] {
+  const targets: DiffXlsxCoarseTarget[] = [];
+  const structuredFieldRows = new Set(fieldModel.details.map((detail) => detail.rowIndex));
+
+  for (const [summaryIndex, summary] of fieldModel.summaries.entries()) {
+    const details = fieldModel.details.filter((detail) => detail.fieldKey === summary.fieldKey);
+    const sourceRowIndexes = details.map((detail) => detail.rowIndex).sort((left, right) => left - right);
+    targets.push({
+      key: `fieldSettings\u001f${summary.fieldKey}`,
+      targetType: 'フィールド',
+      targetName: summary.fieldName,
+      identifier: summary.fieldCode,
+      changeState: coarseRowsChangeState(details.map((detail) => detail.row), 'フィールド') === '複合変更'
+        ? '複合変更'
+        : fieldSummaryChangeTypeLabel(summary, fieldModel),
+      diffCount: summary.diffCount,
+      mainChanges: fieldSummaryMainChanges(summary, fieldModel, ctx.sourceBundle, ctx.targetBundle),
+      sourceRowIndexes,
+      navigationLabel: 'フィールド要約へ',
+      navigationSheet: 'フィールド差分要約',
+      navigationCell: `C${summaryIndex + 4}`
+    });
+  }
+
+  const grouped = new Map<string, {
+    sectionKey: string;
+    targetType: string;
+    targetName: string;
+    identifier: string;
+    rows: Array<{ row: DiffXlsxRow; rowIndex: number }>;
+  }>();
+  for (const [rowIndex, row] of (ctx.rows || []).entries()) {
+    if (!row || row._displayOnly || row.type === 'same' || structuredFieldRows.has(rowIndex)) continue;
+    const sectionKey = sectionKeyOfRow(row);
+    const parts = customerItemParts(row, ctx.sourceBundle, ctx.targetBundle);
+    const viewName = sectionKey === 'viewSettings'
+      ? coarseViewName(row, ctx.sourceBundle, ctx.targetBundle)
+      : null;
+    const targetName = sectionKey === 'fieldSettings'
+      ? '未識別のフィールド差分'
+      : sectionKey === 'viewSettings' && !viewName
+        ? '未識別の一覧差分'
+        : viewName || parts.target || customerSectionLabel(sectionKey);
+    const targetType = coarseTargetType(sectionKey);
+    const stableIdentity = sectionKey === 'fieldSettings' || sectionKey === 'viewSettings'
+      ? null
+      : coarseStableIdentity(row, sectionKey);
+    const identifier = viewName
+      ? coarseViewIdentifier(viewName, ctx.sourceBundle, ctx.targetBundle)
+      : sectionKey === 'fieldSettings' || sectionKey === 'viewSettings'
+        ? sectionKey
+        : stableIdentity?.identifier || coarseTargetIdentifier(targetName, sectionKey);
+    const key = sectionKey === 'fieldSettings'
+      ? `${sectionKey}\u001f(unidentified)`
+      : sectionKey === 'viewSettings'
+        ? `${sectionKey}\u001f${viewName || '(unidentified)'}`
+        : `${sectionKey}\u001f${stableIdentity?.key || String(row.path || sectionKey)}`;
+    let group = grouped.get(key);
+    if (!group) {
+      group = { sectionKey, targetType, targetName, identifier, rows: [] };
+      grouped.set(key, group);
+    }
+    group.rows.push({ row, rowIndex });
+  }
+
+  for (const [key, group] of grouped) {
+    const sourceRowIndexes = group.rows.map(({ rowIndex }) => rowIndex).sort((left, right) => left - right);
+    const firstDifference = differenceRefs[sourceRowIndexes[0]];
+    const rows = group.rows.map(({ row }) => row);
+    targets.push({
+      key,
+      targetType: group.targetType,
+      targetName: group.targetName,
+      identifier: group.identifier,
+      changeState: coarseRowsChangeState(rows, group.targetType, {
+        sectionKey: group.sectionKey,
+        viewName: group.targetType === '一覧' && group.targetName !== '未識別の一覧差分'
+          ? group.targetName
+          : undefined,
+        sourceBundle: ctx.sourceBundle,
+        targetBundle: ctx.targetBundle
+      }),
+      diffCount: rows.length,
+      mainChanges: coarseMainChanges(
+        rows,
+        ctx.sourceBundle,
+        ctx.targetBundle,
+        group.targetType === '一覧' && group.targetName !== '未識別の一覧差分'
+          ? group.targetName
+          : undefined
+      ),
+      sourceRowIndexes,
+      navigationLabel: '差分一覧へ',
+      navigationSheet: '差分一覧',
+      navigationCell: `B${firstDifference?.rowNumber || 4}`
+    });
+  }
+
+  return targets.sort((left, right) => {
+    const leftSection = left.key.split('\u001f', 1)[0];
+    const rightSection = right.key.split('\u001f', 1)[0];
+    return ((SECTION_ORDER_BY_KEY.get(leftSection) ?? Number.MAX_SAFE_INTEGER)
+      - (SECTION_ORDER_BY_KEY.get(rightSection) ?? Number.MAX_SAFE_INTEGER))
+      || left.targetType.localeCompare(right.targetType, 'ja')
+      || left.targetName.localeCompare(right.targetName, 'ja')
+      || left.identifier.localeCompare(right.identifier, 'ja');
+  });
+}
+
+function buildCoarseTargetSheet(
+  ctx: DiffXlsxContext,
+  fieldModel: DiffXlsxFieldModel,
+  differenceRefs: DiffXlsxDifferenceRef[]
+): XlsxSheet {
+  const targets = buildCoarseTargets(ctx, fieldModel, differenceRefs);
+  const hasTargets = targets.length > 0;
+  const incomplete = customerIncomplete(ctx);
+  const showIncompleteWarning = hasTargets && incomplete;
+  const guide = sheetGuideBand(
+    '変更された業務対象を、フィールド・一覧・その他の設定対象ごとにまとめて確認できます。',
+    'まず対象名と主な変更で確認範囲を絞り、「ナビゲーション」からフィールド要約または差分一覧へ進みます。'
+  );
+  const rows: (string | number | null)[][] = [[guide, '', '', '', '', '', '']];
+  const rowStyles: XlsxRowStyle[] = ['normal'];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info']];
+  const rowHeights = [44];
+  if (showIncompleteWarning) {
+    rows.push([
+      '⚠ 比較できなかった範囲があります。掲載された変更対象は確認できた範囲のみです。「取得・未検証」も確認してください',
+      '', '', '', '', '', ''
+    ]);
+    rowStyles.push('normal');
+    cellStyles.push(Array.from({ length: 7 }, () => 'statusIncomplete'));
+    rowHeights.push(42);
+  }
+  const groupRowNumber = rows.length + 1;
+  rows.push(['変更された対象', '', '', '変更の概要', '', '', 'ナビゲーション']);
+  rowStyles.push('normal');
+  const groupCellStyles: Array<XlsxCellStyle | undefined> = [];
+  groupCellStyles[0] = 'sectionHeader';
+  groupCellStyles[3] = 'info';
+  groupCellStyles[6] = 'info';
+  cellStyles.push(groupCellStyles);
+  rowHeights.push(24);
+  const headerRowNumber = rows.length + 1;
+  rows.push(['対象種別', '対象名', '識別子', '変更状態', '差分件数', '主な変更', '詳細']);
+  rowStyles.push('normal');
+  cellStyles.push([]);
+  rowHeights.push(32);
+  const dataStartRow = headerRowNumber + 1;
+
+  for (const target of targets) {
+    rows.push([
+      target.targetType,
+      target.targetName,
+      target.identifier,
+      target.changeState,
+      target.diffCount,
+      target.mainChanges,
+      target.navigationLabel
+    ]);
+    rowStyles.push('normal');
+    const styles: Array<XlsxCellStyle | undefined> = [];
+    styles[0] = 'category';
+    styles[2] = 'info';
+    styles[3] = coarseStateStyle(target.changeState);
+    styles[4] = 'center';
+    styles[6] = 'hyperlink';
+    cellStyles.push(styles);
+    rowHeights.push(readableDiffRowHeight([
+      { value: target.targetType, width: 20 },
+      { value: target.targetName, width: 32 },
+      { value: target.identifier, width: 28 },
+      { value: target.changeState, width: 18 },
+      { value: target.mainChanges, width: 64 }
+    ], 160));
+  }
+
+  if (!hasTargets) {
+    const emptyState: { message: string; style: XlsxCellStyle } = incomplete
+      ? {
+        message: '比較できなかった範囲があります。概要と「取得・未検証」を確認してください',
+        style: 'statusIncomplete'
+      }
+      : ctx.exportMode === 'filtered'
+        ? {
+          message: '現在の絞り込み条件に該当する変更対象はありません',
+          style: 'zebraCenter'
+        }
+        : { message: '変更対象はありません（差分なし）', style: 'statusGood' };
+    rows.push([emptyState.message, '', '', '', '', '', '']);
+    rowStyles.push('normal');
+    cellStyles.push(Array.from({ length: 7 }, () => emptyState.style));
+    rowHeights.push(44);
+  }
+
+  return {
+    name: '変更対象一覧',
+    rows,
+    colWidths: [20, 32, 28, 18, 12, 64, 20],
+    rowStyles,
+    cellStyles,
+    headerRow: headerRowNumber,
+    autoFilter: hasTargets,
+    freezeRows: hasTargets ? headerRowNumber : 0,
+    freezeColumns: hasTargets ? 3 : 0,
+    rowHeights,
+    merges: [
+      'A1:G1',
+      ...(showIncompleteWarning ? ['A2:G2'] : []),
+      `A${groupRowNumber}:C${groupRowNumber}`,
+      `D${groupRowNumber}:F${groupRowNumber}`,
+      ...(hasTargets ? [] : [`A${dataStartRow}:G${dataStartRow}`])
+    ],
+    internalHyperlinks: targets.map((target, index) => ({
+      ref: `G${index + dataStartRow}`,
+      targetSheet: target.navigationSheet,
+      targetCell: target.navigationCell,
+      tooltip: `${target.targetName}の詳細へ移動`
+    })),
+    showGridLines: false,
+    print: {
+      orientation: 'landscape',
+      fitToWidth: 1,
+      fitToHeight: 0,
+      repeatRows: { from: 2, to: headerRowNumber },
+      repeatColumns: hasTargets ? { from: 1, to: 3 } : undefined
+    }
+  };
+}
+
 function directionalValueHeader(side: 'source' | 'target', bundle?: DiffXlsxBundle): string {
   const direction = side === 'source' ? '比較元' : '比較先';
   const label = headerAppLabel(bundle, '');
@@ -1625,8 +2180,10 @@ function buildListSheet(
   targetBundle?: DiffXlsxBundle,
   differenceRefs?: DiffXlsxDifferenceRef[],
   technicalRefs?: DiffXlsxTechnicalRef[],
-  fieldModel?: DiffXlsxFieldModel
+  fieldModel?: DiffXlsxFieldModel,
+  ctx?: DiffXlsxContext
 ): XlsxSheet {
+  const hasRows = rows.length > 0;
   const headers = [
     'セクション', '項目／変更内容', '変更種別', '存在状況', '差分ID',
     directionalValueHeader('source', sourceBundle), directionalValueHeader('target', targetBundle), '確認事項',
@@ -1719,7 +2276,30 @@ function buildListSheet(
       { value: note, width: 32 }
     ]));
   }
-  const dataValidations = rows.length
+  if (!hasRows) {
+    const incomplete = !!((ctx?.fetchIssues || []).length
+      || (ctx?.partialIssues || []).length
+      || hasIncompleteActualDiffTruncation(ctx?.truncation));
+    const emptyState: { message: string; style: XlsxCellStyle } = incomplete
+      ? {
+        message: '比較できなかった範囲があります。概要と「取得・未検証」を確認してください',
+        style: 'statusIncomplete'
+      }
+      : ctx?.exportMode === 'filtered'
+        ? {
+          message: '現在の絞り込み条件に該当する変更はありません',
+          style: 'zebraCenter'
+        }
+        : { message: '差分はありません', style: 'statusGood' };
+    out.push([emptyState.message, '', '', '', '', '', '', '', '', '', '', '']);
+    rowStyles.push('normal');
+    cellStyles.push(Array.from({ length: headers.length }, () => emptyState.style));
+    rowHeights.push(Math.max(40, readableDiffRowHeight([{
+      value: emptyState.message,
+      width: 318
+    }], 120)));
+  }
+  const dataValidations = hasRows
     ? [{
         sqref: `I4:I${rows.length + 3}`,
         values: REVIEW_PROGRESS_VALUES,
@@ -1739,10 +2319,14 @@ function buildListSheet(
     rowStyles,
     cellStyles,
     headerRow: 3,
+    autoFilter: hasRows,
     freezeRows: 3,
-    freezeColumns: 5,
+    freezeColumns: hasRows ? 5 : undefined,
     rowHeights,
-    merges: ['A1:L1', 'A2:B2', 'C2:E2', 'I2:L2'],
+    merges: [
+      'A1:L1', 'A2:B2', 'C2:E2', 'I2:L2',
+      ...(hasRows ? [] : ['A4:L4'])
+    ],
     dataValidations,
     internalHyperlinks: rows.flatMap((_row, index) => {
       const target = technicalRefs?.[index];
@@ -1756,9 +2340,10 @@ function buildListSheet(
     showGridLines: false,
     print: {
       orientation: 'landscape',
-      fitToWidth: 1,
+      fitToWidth: 2,
       fitToHeight: 0,
-      repeatRows: { from: 2, to: 3 }
+      repeatRows: { from: 2, to: 3 },
+      repeatColumns: hasRows ? { from: 1, to: 5 } : undefined
     }
   };
 }
@@ -1854,9 +2439,10 @@ function buildSectionSheet(
     showGridLines: false,
     print: {
       orientation: 'landscape',
-      fitToWidth: 1,
+      fitToWidth: 2,
       fitToHeight: 0,
-      repeatRows: { from: 2, to: 3 }
+      repeatRows: { from: 2, to: 3 },
+      repeatColumns: { from: 1, to: 5 }
     }
   };
 }
@@ -1890,11 +2476,9 @@ function fieldSummaryExistenceLabel(
 }
 
 function compactFieldSummaryValue(value: string): string {
-  const compact = value.replace(/\r?\n/g, ' / ');
-  if (compact.length <= 100) return compact;
-  let keep = 99;
-  if (keep > 0 && /[\uD800-\uDBFF]/.test(compact.charAt(keep - 1))) keep -= 1;
-  return `${compact.slice(0, keep)}…`;
+  const compact = value.replace(/\r\n|\r|\n/g, ' / ');
+  const characters = graphemeClusters(compact);
+  return characters.length <= 100 ? compact : `${characters.slice(0, 99).join('')}…`;
 }
 
 function fieldSummaryMainChanges(
@@ -2039,9 +2623,10 @@ function buildFieldSummarySheet(
     showGridLines: false,
     print: {
       orientation: 'landscape',
-      fitToWidth: 1,
+      fitToWidth: 2,
       fitToHeight: 0,
-      repeatRows: { from: 2, to: 3 }
+      repeatRows: { from: 2, to: 3 },
+      repeatColumns: { from: 1, to: 5 }
     }
   };
 }
@@ -2133,7 +2718,7 @@ function buildFieldDetailSheet(
     cellStyles,
     headerRow: 3,
     freezeRows: 3,
-    freezeColumns: 6,
+    freezeColumns: 4,
     rowHeights,
     merges: ['A1:J1', 'B2:C2', 'D2:F2'],
     internalHyperlinks: [
@@ -2153,9 +2738,10 @@ function buildFieldDetailSheet(
     showGridLines: false,
     print: {
       orientation: 'landscape',
-      fitToWidth: 1,
+      fitToWidth: 2,
       fitToHeight: 0,
-      repeatRows: { from: 2, to: 3 }
+      repeatRows: { from: 2, to: 3 },
+      repeatColumns: { from: 1, to: 4 }
     }
   };
 }
@@ -2464,7 +3050,7 @@ function customerPlainText(value: unknown, maxLength?: number): string {
     .replace(/[\t\r\n ]+/g, ' ')
     .trim();
   if (maxLength == null) return decoded;
-  const characters = Array.from(decoded);
+  const characters = graphemeClusters(decoded);
   if (characters.length <= maxLength) return decoded;
   return `${characters.slice(0, Math.max(0, maxLength - 1)).join('')}…`;
 }
@@ -2920,19 +3506,21 @@ function customerLayoutItemParts(
   return { target, settingItem };
 }
 
-function customerViewItemParts(row: DiffXlsxRow): CustomerItemParts | null {
-  const path = String(row.path || '');
-  const match = /^viewSettings\.views\.(.+?)\.(fields(?:\[(\d+)\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/.exec(path);
-  if (!match) {
-    const wholeView = /^viewSettings\.views\.(.+)$/.exec(path);
-    if (!wholeView) return null;
+function customerViewItemParts(
+  row: DiffXlsxRow,
+  sourceBundle?: DiffXlsxBundle,
+  targetBundle?: DiffXlsxBundle
+): CustomerItemParts | null {
+  const identity = resolveCoarseViewIdentity(row, sourceBundle, targetBundle);
+  if (!identity) return null;
+  if (identity.isRoot) {
     return {
-      target: `一覧「${customerPlainText(wholeView[1])}」`,
+      target: `一覧「${customerPlainText(identity.viewName)}」`,
       settingItem: row.type === 'added' ? '一覧を追加' : row.type === 'removed' ? '一覧を削除' : '一覧全体'
     };
   }
-  const viewName = customerPlainText(match[1]);
-  const property = match[2];
+  const viewName = customerPlainText(identity.viewName);
+  const property = String(identity.property || '');
   const labels: Record<string, string> = {
     filterCond: '絞り込み条件',
     sort: 'ソート',
@@ -2948,8 +3536,9 @@ function customerViewItemParts(row: DiffXlsxRow): CustomerItemParts | null {
     html: 'カスタマイズ内容',
     index: '一覧の並び順'
   };
+  const fieldIndex = /^fields\[(\d+)\]$/.exec(property)?.[1];
   const settingItem = property.startsWith('fields')
-    ? match[3] == null ? '表示するフィールド' : `表示するフィールド（${Number(match[3]) + 1}件目）`
+    ? fieldIndex == null ? '表示するフィールド' : `表示するフィールド（${Number(fieldIndex) + 1}件目）`
     : labels[property] || '一覧設定';
   return { target: `一覧「${viewName}」`, settingItem };
 }
@@ -2976,7 +3565,7 @@ function customerItemParts(
   const layout = customerLayoutItemParts(row, sourceBundle, targetBundle);
   if (layout) return layout;
 
-  const view = sectionKey === 'viewSettings' ? customerViewItemParts(row) : null;
+  const view = sectionKey === 'viewSettings' ? customerViewItemParts(row, sourceBundle, targetBundle) : null;
   if (view) return view;
 
   const action = customerActionItemParts(row, sourceBundle, targetBundle);
@@ -3222,7 +3811,7 @@ function compactCustomerMainValue(value: string): string {
   }
 
   let output = '';
-  for (const char of normalized) {
+  for (const char of graphemeClusters(normalized)) {
     const candidate = `${output}${char}…`;
     if (estimatedWrappedLines(candidate, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH) > CUSTOMER_MAIN_VALUE_MAX_LINES) break;
     output += char;
@@ -3681,6 +4270,248 @@ function customerPrimaryItems(items: CustomerDiffItem[]): CustomerDiffItem[] {
   return items.filter((item) => !item.redundant);
 }
 
+interface CustomerCoarseTarget {
+  key: string;
+  classification: string;
+  target: string;
+  changeState: string;
+  changeItems: string;
+  detailCount: number;
+  firstItemIndex: number;
+}
+
+function customerCoarseIdentity(
+  item: CustomerDiffItem,
+  ctx: DiffXlsxContext
+): { key: string; classification: string; target: string; sectionKey: string; viewName?: string } {
+  if (item.field) {
+    const parentCode = item.field.parentTableCode === '—' ? '' : item.field.parentTableCode;
+    return {
+      key: JSON.stringify(['fieldSettings', parentCode, item.field.fieldCode]),
+      classification: item.field.structure === 'テーブル' ? 'テーブル' : 'フィールド',
+      target: customerPlainText(item.targetDetail || item.target, 96),
+      sectionKey: item.sectionKey
+    };
+  }
+  if (item.sectionKey === 'viewSettings') {
+    const viewName = coarseViewName(item.row, ctx.sourceBundle, ctx.targetBundle);
+    if (viewName) {
+      return {
+        key: JSON.stringify(['viewSettings', viewName]),
+        classification: '一覧',
+        target: `一覧「${customerPlainText(viewName, 72)}」`,
+        sectionKey: item.sectionKey,
+        viewName
+      };
+    }
+  }
+  const target = customerPlainText(item.targetDetail || item.target || item.sectionLabel, 96);
+  const identity = coarseStableIdentity(item.row, item.sectionKey);
+  return {
+    key: identity.key,
+    classification: item.sectionLabel,
+    target: target || '未識別の設定項目',
+    sectionKey: item.sectionKey
+  };
+}
+
+function customerCoarseChangeState(
+  items: CustomerDiffItem[],
+  classification: string,
+  ctx: DiffXlsxContext,
+  sectionKey: string,
+  viewName?: string
+): string {
+  if (items.some((item) => !!item.field)) {
+    const rootExistenceChanges = items.filter((item) => (
+      item.field?.wholeField && (item.changeType === '追加' || item.changeType === '削除')
+    ));
+    const rootAdded = rootExistenceChanges.some((item) => item.changeType === '追加');
+    const rootRemoved = rootExistenceChanges.some((item) => item.changeType === '削除');
+    const changes = new Set(items.map((item) => item.changeType));
+    if ((rootAdded && rootRemoved)
+      || (rootAdded && [...changes].some((state) => state !== '追加'))
+      || (rootRemoved && [...changes].some((state) => state !== '削除'))) return '複合変更';
+    if (rootAdded) return '追加';
+    if (rootRemoved) return '削除';
+    if (changes.size === 1 && changes.has('並び順変更')) return '並び順変更';
+    return changes.size > 1 ? '複合変更' : '設定変更';
+  }
+  const state = coarseRowsChangeState(items.map((item) => item.row), classification, {
+    sectionKey,
+    viewName,
+    sourceBundle: ctx.sourceBundle,
+    targetBundle: ctx.targetBundle
+  });
+  return state === '一覧追加' ? '追加' : state === '一覧削除' ? '削除' : state;
+}
+
+function customerCoarseChangeItems(items: CustomerDiffItem[]): string {
+  const labels = [...new Set(items.map((item) => customerPlainText(item.settingItem, 54)).filter(Boolean))];
+  const visible = labels.slice(0, 4);
+  return `${visible.join('、') || '設定内容'}${labels.length > visible.length ? `、ほか${labels.length - visible.length}項目` : ''}`;
+}
+
+function buildCustomerCoarseTargets(ctx: DiffXlsxContext, allItems: CustomerDiffItem[]): CustomerCoarseTarget[] {
+  const grouped = new Map<string, {
+    classification: string;
+    target: string;
+    sectionKey: string;
+    viewName?: string;
+    items: CustomerDiffItem[];
+  }>();
+  for (const item of customerPrimaryItems(allItems)) {
+    const identity = customerCoarseIdentity(item, ctx);
+    let group = grouped.get(identity.key);
+    if (!group) {
+      group = {
+        classification: identity.classification,
+        target: identity.target,
+        sectionKey: identity.sectionKey,
+        viewName: identity.viewName,
+        items: []
+      };
+      grouped.set(identity.key, group);
+    }
+    group.items.push(item);
+  }
+  return [...grouped.entries()].map(([key, group]) => ({
+    key,
+    classification: group.classification,
+    target: group.target,
+    changeState: customerCoarseChangeState(
+      group.items,
+      group.classification,
+      ctx,
+      group.sectionKey,
+      group.viewName
+    ),
+    changeItems: customerCoarseChangeItems(group.items),
+    detailCount: group.items.length,
+    firstItemIndex: Math.min(...group.items.map((item) => item.index))
+  })).sort((left, right) => left.firstItemIndex - right.firstItemIndex
+    || left.classification.localeCompare(right.classification, 'ja')
+    || left.target.localeCompare(right.target, 'ja'));
+}
+
+function buildCustomerCoarseTargetSheet(ctx: DiffXlsxContext, allItems: CustomerDiffItem[]): XlsxSheet {
+  const targets = buildCustomerCoarseTargets(ctx, allItems);
+  const hasTargets = targets.length > 0;
+  const incomplete = customerIncomplete(ctx);
+  const showIncompleteWarning = hasTargets && incomplete;
+  const title = '変更対象一覧\n設定項目ではなく、フィールド・一覧などの変更対象単位でまとめています。';
+  const headers = ['No.', '分類', '変更対象', '対象の変更', '変更箇所', '明細件数', '変更一覧'];
+  const rows: (string | number | null)[][] = [[title, '', '', '', '', '', '']];
+  const rowStyles: XlsxRowStyle[] = ['normal'];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['subtitle']];
+  const rowHeights: number[] = [44];
+  if (showIncompleteWarning) {
+    rows.push([
+      '⚠ 比較できなかった範囲があります。掲載された変更対象は確認できた範囲のみです。「確認できなかった範囲」も確認してください',
+      '', '', '', '', '', ''
+    ]);
+    rowStyles.push('normal');
+    cellStyles.push(Array.from({ length: headers.length }, () => 'statusIncomplete'));
+    rowHeights.push(42);
+  }
+  const headerRowNumber = rows.length + 1;
+  rows.push(headers);
+  rowStyles.push('normal');
+  cellStyles.push([]);
+  rowHeights.push(34);
+  const dataStartRow = headerRowNumber + 1;
+  const stateStyles: Record<string, XlsxCellStyle> = {
+    '追加': 'changeAdded',
+    '削除': 'changeRemoved',
+    '設定変更': 'changeChanged',
+    '複合変更': 'changeChanged',
+    '並び順変更': 'changeMoved'
+  };
+
+  targets.forEach((target, index) => {
+    rows.push([
+      index + 1,
+      target.classification,
+      target.target,
+      target.changeState,
+      target.changeItems,
+      target.detailCount,
+      '変更一覧へ'
+    ]);
+    rowStyles.push('normal');
+    const alternate = index % 2 === 1;
+    const styles: Array<XlsxCellStyle | undefined> = [];
+    styles[0] = alternate ? 'zebraCenter' : 'center';
+    styles[1] = 'category';
+    styles[2] = alternate ? 'zebra' : 'normal';
+    styles[3] = stateStyles[target.changeState] || 'changeChanged';
+    styles[4] = alternate ? 'zebra' : 'normal';
+    styles[5] = alternate ? 'zebraCenter' : 'center';
+    styles[6] = 'actionLink';
+    cellStyles.push(styles);
+    rowHeights.push(readableCustomerRowHeight([
+      { value: target.classification, width: 18 },
+      { value: target.target, width: 36 },
+      { value: target.changeState, width: 14 },
+      { value: target.changeItems, width: 42 }
+    ], 132));
+  });
+
+  if (!hasTargets) {
+    const emptyState: { message: string; style: XlsxCellStyle } = incomplete
+      ? {
+        message: '比較できなかった範囲があります。変更対象0件を差分なしとは判断できません',
+        style: 'statusIncomplete'
+      }
+      : ctx.exportMode === 'filtered'
+        ? {
+          message: '現在の絞り込み条件に該当する変更対象はありません',
+          style: 'zebraCenter'
+        }
+        : { message: '変更対象はありません（差分なし）', style: 'statusGood' };
+    rows.push([emptyState.message, '', '', '', '', '', '']);
+    rowStyles.push('normal');
+    cellStyles.push(Array.from({ length: headers.length }, () => emptyState.style));
+    rowHeights.push(44);
+  }
+
+  return {
+    name: '変更対象一覧',
+    rows,
+    colWidths: [7, 18, 36, 14, 42, 10, 14],
+    rowStyles,
+    cellStyles,
+    headerRow: headerRowNumber,
+    autoFilter: hasTargets,
+    freezeRows: hasTargets ? headerRowNumber : 0,
+    freezeColumns: hasTargets ? 3 : 0,
+    rowHeights,
+    styledEmptyCellsAsBlank: true,
+    materializeEmptyCellsFromRow: headerRowNumber,
+    merges: [
+      'A1:G1',
+      ...(showIncompleteWarning ? ['A2:G2'] : []),
+      ...(hasTargets ? [] : [`A${dataStartRow}:G${dataStartRow}`])
+    ],
+    internalHyperlinks: targets.map((target, index) => ({
+      ref: `G${index + dataStartRow}`,
+      targetSheet: '変更一覧',
+      targetCell: `D${target.firstItemIndex + 2}`,
+      tooltip: `${target.target}の明細へ移動`
+    })),
+    showGridLines: false,
+    zoomScale: 95,
+    print: {
+      orientation: 'landscape',
+      fitToWidth: 1,
+      fitToHeight: 0,
+      repeatRows: { from: 1, to: headerRowNumber },
+      repeatColumns: hasTargets ? { from: 1, to: 3 } : undefined,
+      footer: '&L変更対象一覧&Rページ &P / &N'
+    }
+  };
+}
+
 export interface CustomerDiffCounts {
   total: number;
   added: number;
@@ -3870,7 +4701,7 @@ function buildCustomerSummarySheet(
   const sourceName = customerHeaderAppName(ctx.sourceBundle, '比較元のアプリ');
   const targetName = customerHeaderAppName(ctx.targetBundle, '比較先のアプリ');
   const navigationLabel = counts.actual
-    ? '変更一覧を開く'
+    ? '変更対象一覧を開く'
     : incomplete
       ? '比較未完了'
       : filtered
@@ -4010,9 +4841,9 @@ function buildCustomerSummarySheet(
     internalHyperlinks: breakdownHeaderRow >= 0 ? [
       ...(counts.actual ? [{
         ref: 'F3',
-        targetSheet: '変更一覧',
+        targetSheet: '変更対象一覧',
         targetCell: 'A1',
-        tooltip: '変更一覧へ移動'
+        tooltip: '変更対象一覧へ移動'
       }] : []),
       ...apiGroups.map((group, index) => ({
         ref: `A${breakdownHeaderRow + 2 + index}`,
@@ -5043,6 +5874,7 @@ function buildCustomerDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
   const sheets: XlsxSheet[] = [buildCustomerSummarySheet(ctx, items, apiGroups)];
   const issues = buildCustomerIssuesSheet(issueItems, issueContinuations);
   if (issues) sheets.push(issues);
+  sheets.push(buildCustomerCoarseTargetSheet(ctx, items));
   sheets.push(buildCustomerListSheet(ctx, items, apiGroups));
   sheets.push(...buildCustomerApiDiffSheets(ctx, apiGroups, items));
   const valueDetails = buildCustomerValueDetailSheet(ctx, items, differenceContinuations);
@@ -5079,6 +5911,9 @@ export function buildDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
   )];
   const issuesSheet = buildIssuesSheet(ctx);
   if (issuesSheet) sheets.push(issuesSheet);
+  // 取得状態に問題があるときは先に注意事項を読み、その後に対象単位の索引で
+  // 「どの業務対象が変わったか」を短時間で把握できる読み順にする。
+  sheets.push(buildCoarseTargetSheet(ctx, fieldModel, differenceRefs));
   if (fieldModel.details.length) {
     sheets.push(
       buildFieldSummarySheet(fieldModel, ctx.sourceBundle, ctx.targetBundle, differenceRefs),
@@ -5092,7 +5927,8 @@ export function buildDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
     ctx.targetBundle,
     differenceRefs,
     technicalRefs,
-    fieldModel
+    fieldModel,
+    ctx
   ));
   for (const [key, list] of grouped) {
     sheets.push(buildSectionSheet(
@@ -5110,23 +5946,103 @@ export function buildDiffXlsxBlob(ctx: DiffXlsxContext): Blob {
   return buildXlsxBlob(buildDiffXlsxSheets(ctx));
 }
 
+const XLSX_FILENAME_EXTENSION = '.xlsx';
+const XLSX_FILENAME_MAX_UTF16_LENGTH = 180;
+const XLSX_FILENAME_BIDI_CONTROLS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u206F]/g;
+
+function removeLoneSurrogates(value: string): string {
+  let output = '';
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        output += value[index] + value[index + 1];
+        index += 1;
+      } else {
+        output += ' ';
+      }
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      output += ' ';
+    } else {
+      output += value[index];
+    }
+  }
+  return output;
+}
+
+function cleanXlsxFilenameText(value: unknown): string {
+  return removeLoneSurrogates(String(value ?? ''))
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
+    .replace(XLSX_FILENAME_BIDI_CONTROLS, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[ .]+$/g, '');
+}
+
+function boundedXlsxFilenamePart(value: unknown, maxUtf16Length: number): string {
+  const cleaned = cleanXlsxFilenameText(value);
+  if (cleaned.length <= maxUtf16Length) return cleaned;
+  if (maxUtf16Length <= 1) return '…';
+  return `${graphemePrefixWithinUtf16(cleaned, maxUtf16Length - 1).replace(/[ .]+$/g, '')}…`;
+}
+
+function boundedAppFilenameLabel(bundle: DiffXlsxBundle | undefined, appName: string): string {
+  const id = boundedXlsxFilenamePart(bundle?.appId, 16);
+  const name = boundedXlsxFilenamePart(appName, 40);
+  return buildAppFilenameLabel(id, name);
+}
+
+function safeXlsxFilename(value: unknown, fallback: string): string {
+  let stem = cleanXlsxFilenameText(value).replace(/\.xlsx$/i, '').replace(/[ .]+$/g, '');
+  const timestampMatch = /(_\d{8}_\d{6})$/.exec(stem);
+  const timestampSuffix = timestampMatch?.[1] || '';
+  if (timestampSuffix) stem = stem.slice(0, -timestampSuffix.length).replace(/[ .]+$/g, '');
+
+  const fallbackStem = cleanXlsxFilenameText(fallback).replace(/\.xlsx$/i, '') || '出力';
+  if (!stem) stem = fallbackStem;
+  if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(stem)) stem = `_${stem}`;
+
+  const available = XLSX_FILENAME_MAX_UTF16_LENGTH
+    - XLSX_FILENAME_EXTENSION.length
+    - timestampSuffix.length;
+  let boundedStem = graphemePrefixWithinUtf16(stem, available).replace(/[ .]+$/g, '');
+  if (!boundedStem) {
+    boundedStem = graphemePrefixWithinUtf16(fallbackStem, available).replace(/[ .]+$/g, '') || '出力';
+  }
+  return `${boundedStem}${timestampSuffix}${XLSX_FILENAME_EXTENSION}`;
+}
+
 export function buildDiffXlsxExport(ctx: DiffXlsxContext): { filename: string; blob: Blob } {
   const blob = buildDiffXlsxBlob(ctx);
-  if (ctx.audience !== 'internal') {
-    const sourceName = customerAppName(ctx.sourceBundle, '比較元');
-    const targetName = customerAppName(ctx.targetBundle, '比較先');
-    const pairLabel = [sourceName, targetName].filter(Boolean).join('_vs_');
+  if (String(ctx.filename || '').trim()) {
     return {
-      filename: buildExportFilename('設定差分確認', 'xlsx', { appLabel: pairLabel }),
+      filename: safeXlsxFilename(ctx.filename, ctx.audience === 'internal' ? '差分一覧' : '設定差分確認'),
+      blob
+    };
+  }
+  if (ctx.audience !== 'internal') {
+    const source = boundedAppFilenameLabel(ctx.sourceBundle, customerAppName(ctx.sourceBundle, '比較元'));
+    const target = boundedAppFilenameLabel(ctx.targetBundle, customerAppName(ctx.targetBundle, '比較先'));
+    const pairLabel = [source, target].filter(Boolean).join('_vs_');
+    return {
+      filename: safeXlsxFilename(
+        buildExportFilename('設定差分確認', 'xlsx', { appLabel: pairLabel }),
+        '設定差分確認'
+      ),
       blob
     };
   }
   const srcName = extractAppNameFromBundle(ctx.sourceBundle);
   const tgtName = extractAppNameFromBundle(ctx.targetBundle);
-  const src = buildAppFilenameLabel(ctx.sourceBundle?.appId, srcName);
-  const tgt = buildAppFilenameLabel(ctx.targetBundle?.appId, tgtName);
+  const src = boundedAppFilenameLabel(ctx.sourceBundle, srcName);
+  const tgt = boundedAppFilenameLabel(ctx.targetBundle, tgtName);
   const pairLabel = src && tgt ? `${src}_vs_${tgt}` : (src || tgt || '');
-  const filename = ctx.filename || buildExportFilename('差分一覧', 'xlsx', { appLabel: pairLabel });
+  const filename = safeXlsxFilename(
+    buildExportFilename('差分一覧', 'xlsx', { appLabel: pairLabel }),
+    '差分一覧'
+  );
   return { filename, blob };
 }
 

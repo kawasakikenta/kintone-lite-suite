@@ -130,8 +130,8 @@ function item(label: string, ctx: DiffXlsxContext): DiffXlsxBatchExportItem {
   return { label, context: ctx };
 }
 
-function failingContext(message: string): DiffXlsxContext {
-  return Object.defineProperty({}, 'rows', {
+function failingContext(message: string, extra: Partial<DiffXlsxContext> = {}): DiffXlsxContext {
+  return Object.defineProperty({ ...extra }, 'rows', {
     enumerable: true,
     get() { throw new Error(message); }
   }) as DiffXlsxContext;
@@ -177,6 +177,8 @@ describe('diff/xlsx-batch-export', () => {
     expect(archiveEntries.every((entry) => entry.data.readUInt32LE(0) === 0x04034b50)).toBe(true);
     const summaryXml = parseStoredEntries(archiveEntries[0].data)
       .find((entry) => entry.name === 'xl/worksheets/sheet1.xml')!.data.toString('utf8');
+    const summaryWorkbookXml = parseStoredEntries(archiveEntries[0].data)
+      .find((entry) => entry.name === 'xl/workbook.xml')!.data.toString('utf8');
     const summaryCells = firstWorksheetCells(archiveEntries[0].data);
     expect(summaryCells).toMatchObject({
       A1: 'kintone 設定差分 一括比較結果',
@@ -192,6 +194,8 @@ describe('diff/xlsx-batch-export', () => {
     expect(summaryCells.F5).toBeTruthy();
     expect(summaryXml).not.toContain('<f');
     expect(summaryXml).not.toContain('<hyperlinks');
+    expect(summaryXml).toContain('orientation="landscape" fitToWidth="2" fitToHeight="0"');
+    expect(summaryWorkbookXml).toContain('&apos;一括比較結果&apos;!$3:$3');
     expect(progress).toEqual([
       { stage: 'building', current: 1, total: 2, label: '一致した比較' },
       { stage: 'building', current: 2, total: 2, label: '取得不完全な比較' },
@@ -202,7 +206,16 @@ describe('diff/xlsx-batch-export', () => {
   it('continues after a workbook failure and reports its original input index', async () => {
     const result = await buildDiffXlsxBatchExport([
       item('first', context('元1', '先1')),
-      item('broken', failingContext('broken workbook')),
+      item('broken', failingContext('broken workbook', {
+        sourceBundle: {
+          appId: '303', guestId: '12', preview: true,
+          meta: { appName: '同名の失敗アプリ' }
+        },
+        targetBundle: {
+          appId: '404', preview: false,
+          meta: { appName: '同名の失敗アプリ' }
+        }
+      })),
       item('third', context('元3', '先3'))
     ], { generatedAt: '2026-08-27T00:00:00+09:00' });
 
@@ -220,12 +233,45 @@ describe('diff/xlsx-batch-export', () => {
     expect(archiveEntries).toHaveLength(3);
     expect(firstWorksheetCells(archiveEntries[0].data)).toMatchObject({
       A5: '2',
+      B5: '同名の失敗アプリ\nApp ID: 303 / ゲスト 12 / プレビュー',
+      C5: '同名の失敗アプリ\nApp ID: 404 / 通常スペース / 運用',
       D5: 'Excel生成失敗',
       E5: '—',
-      L5: '名称未取得',
+      F5: 'Excelを生成できませんでした\n原因: broken workbook',
+      L5: '一致',
       G5: '—', H5: '—', I5: '—', J5: '—', K5: '—',
       M5: '—'
     });
+  });
+
+  it('keeps fallback labels and available app identity while safely shortening visible failure causes', async () => {
+    const longError = `先頭\u0001\uD800${'長いエラー'.repeat(200)}末尾`;
+    const result = await buildDiffXlsxBatchExport([
+      item('success', context('成功元', '成功先')),
+      item('比較ラベルのみ', failingContext(longError, {
+        sourceBundle: { appId: '505', preview: true },
+        targetBundle: { appId: '606', guestId: '88', preview: false }
+      }))
+    ]);
+
+    const archiveEntries = parseStoredEntries(await blobToBuffer(result.blob));
+    const cells = firstWorksheetCells(archiveEntries[0].data);
+    const heights = firstWorksheetRowHeights(archiveEntries[0].data);
+    expect(cells).toMatchObject({
+      B5: '名称未取得\n比較ラベル: 比較ラベルのみ\nApp ID: 505 / 通常スペース / プレビュー',
+      C5: '名称未取得\n比較ラベル: 比較ラベルのみ\nApp ID: 606 / ゲスト 88 / 運用',
+      D5: 'Excel生成失敗',
+      L5: '名称未取得'
+    });
+    expect(cells.F5).toContain('Excelを生成できませんでした\n原因: 先頭⟪U+0001⟫⟪U+D800⟫');
+    expect(cells.F5).toContain('…（以降省略）');
+    expect(cells.F5).not.toContain('\u0001');
+    expect(cells.F5).not.toContain('\uD800');
+    expect(result.failures[0].message).toContain('先頭⟪U+0001⟫⟪U+D800⟫');
+    expect(result.failures[0].message).toContain('…（以降省略）');
+    expect(Array.from(result.failures[0].message)).toHaveLength(280);
+    expect(heights['5']).toBeGreaterThan(32);
+    expect(heights['5']).toBeLessThanOrEqual(220);
   });
 
   it('uses semantic centered 11pt styles while zebra-striping only neutral batch cells', async () => {
@@ -359,7 +405,8 @@ describe('diff/xlsx-batch-export', () => {
     expect(heights['8']).toBeGreaterThanOrEqual(49);
     expect(heights['9']).toBe(49);
     expect(heights['10']).toBe(220);
-    expect(heights['11']).toBe(32);
+    // 失敗行は比較ラベルと原因を複数行で残すため、識別情報に合わせて展開する。
+    expect(heights['11']).toBeGreaterThan(32);
     expect(Object.values(heights).every((height) => height <= 220)).toBe(true);
   });
 
