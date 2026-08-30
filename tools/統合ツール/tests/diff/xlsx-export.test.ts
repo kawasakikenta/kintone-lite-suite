@@ -2400,6 +2400,28 @@ describe('diff/xlsx-export', () => {
     expect(customizeBody).toContain('<hyperlink ref="A3" location="&apos;設定値詳細&apos;!A5"');
   });
 
+  it('omits the redundant whole-plugin-settings change from customer Excel', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      rows: [
+        {
+          sectionKey: 'pluginSettings', type: 'changed', path: 'pluginSettings',
+          left: { plugins: [{ id: 'plugin-1' }] }, right: { plugins: [{ id: 'plugin-1' }] }
+        },
+        {
+          sectionKey: 'pluginSettings', type: 'changed', path: 'pluginSettings.plugins[0].config.mode',
+          arrayKey: 'id', arrayKeyValue: 'plugin-1', left: 'old', right: 'new'
+        }
+      ]
+    });
+    const targets = await readWorksheetByName(blob, '変更対象一覧');
+    const details = await readWorksheetByName(blob, '変更一覧');
+
+    expect(targets).not.toContain('プラグイン設定全体');
+    expect(details).not.toContain('プラグイン設定全体');
+    expect(details).toContain('プラグイン「plugin-1」');
+    expect((details.match(/<row r="/g) || [])).toHaveLength(2);
+  });
+
   it('keeps process actions, app actions, and unknown APIs in separate customer sheets', async () => {
     const blob = buildDiffXlsxBlobWithSafeDefault({
       rows: [
