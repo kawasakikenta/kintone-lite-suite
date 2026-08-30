@@ -29,6 +29,7 @@ const ZIP_EXTENSION = '.zip';
 const MAX_ARCHIVE_FILENAME_CODE_POINTS = 180;
 const MAX_ENTRY_FILENAME_CODE_POINTS = 96;
 const MAX_BUSINESS_NAME_CODE_POINTS = 36;
+const MAX_BATCH_SUMMARY_ERROR_CODE_POINTS = 280;
 const BATCH_SUMMARY_ENTRY_NAME = '000_一括比較結果.xlsx';
 
 export interface DiffXlsxBatchExportItem {
@@ -131,7 +132,57 @@ function resolveMaxArchiveBytes(value: number | undefined): number {
 
 function safeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? '');
-  return message.trim() || 'Excelの生成に失敗しました';
+  const normalized = (message.trim() || 'Excelの生成に失敗しました').replace(/\r\n?/g, '\n');
+  return makeBatchErrorTextVisible(normalized, MAX_BATCH_SUMMARY_ERROR_CODE_POINTS);
+}
+
+/**
+ * XML 1.0 禁止文字と不正サロゲートを、一括結果でも追跡できる可視トークンへ変換する。
+ * XLSX ビルダーのセル文字可視化と重ならない別の括弧を使い、二重変換を避ける。
+ */
+function makeBatchErrorTextVisible(value: unknown, maxCodePoints: number): string {
+  const text = String(value ?? '');
+  let visible = '';
+  let visibleCodePoints = 0;
+  let truncated = false;
+  const token = (code: number) => `⟪U+${code.toString(16).toUpperCase().padStart(4, '0')}⟫`;
+  const append = (segment: string): boolean => {
+    const count = Array.from(segment).length;
+    if (visibleCodePoints + count > maxCodePoints) {
+      truncated = true;
+      return false;
+    }
+    visible += segment;
+    visibleCodePoints += count;
+    return true;
+  };
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code >= 0xD800 && code <= 0xDBFF) {
+      const next = text.charCodeAt(index + 1);
+      if (next >= 0xDC00 && next <= 0xDFFF) {
+        if (!append(text.slice(index, index + 2))) break;
+        index += 1;
+      } else {
+        if (!append(token(code))) break;
+      }
+    } else if (
+      (code >= 0xDC00 && code <= 0xDFFF)
+      || code <= 0x08
+      || (code >= 0x0B && code <= 0x0C)
+      || (code >= 0x0E && code <= 0x1F)
+      || code === 0xFFFE
+      || code === 0xFFFF
+    ) {
+      if (!append(token(code))) break;
+    } else {
+      if (!append(text.charAt(index))) break;
+    }
+  }
+  if (!truncated) return visible;
+  const suffix = '…（以降省略）';
+  const keep = Math.max(0, maxCodePoints - Array.from(suffix).length);
+  return Array.from(visible).slice(0, keep).join('') + suffix;
 }
 
 function safeLabel(value: unknown, index: number): string {
@@ -158,6 +209,37 @@ function contextAppName(context: DiffXlsxContext, side: 'source' | 'target'): st
   } catch {
     return '';
   }
+}
+
+function failedAppIdentity(
+  item: DiffXlsxBatchExportItem,
+  index: number,
+  side: 'source' | 'target',
+  rawName: string
+): string {
+  const lines = [rawName || '名称未取得'];
+  if (!rawName) lines.push(`比較ラベル: ${safeLabel(item.label, index)}`);
+
+  let bundle: DiffXlsxContext['sourceBundle'] | DiffXlsxContext['targetBundle'];
+  try {
+    bundle = side === 'source' ? item.context.sourceBundle : item.context.targetBundle;
+  } catch {
+    bundle = undefined;
+  }
+  if (!bundle || typeof bundle !== 'object') return lines.join('\n');
+
+  try {
+    const identity: string[] = [];
+    const appId = bundle.appId == null ? '' : String(bundle.appId).trim();
+    const guestId = bundle.guestId == null ? '' : String(bundle.guestId).trim();
+    if (appId) identity.push(`App ID: ${appId}`);
+    identity.push(guestId ? `ゲスト ${guestId}` : '通常スペース');
+    identity.push(bundle.preview ? 'プレビュー' : '運用');
+    lines.push(identity.join(' / '));
+  } catch {
+    // 識別子の読み取り自体が失敗しても、取得済みの名称・比較ラベルは残す。
+  }
+  return lines.join('\n');
 }
 
 function businessName(value: unknown): string {
@@ -269,19 +351,20 @@ function successfulSummaryRow(
 
 function failedSummaryRow(
   item: DiffXlsxBatchExportItem,
-  index: number
+  index: number,
+  message: string
 ): DiffXlsxBatchSummaryRow {
   const rawSourceName = contextAppName(item.context, 'source');
   const rawTargetName = contextAppName(item.context, 'target');
-  const sourceName = rawSourceName || '名称未取得';
-  const targetName = rawTargetName || '名称未取得';
+  const sourceName = failedAppIdentity(item, index, 'source', rawSourceName);
+  const targetName = failedAppIdentity(item, index, 'target', rawTargetName);
   return {
     sequence: index + 1,
     sourceName,
     targetName,
     status: 'Excel生成失敗',
     coverage: '—',
-    coverageDetail: 'Excelを生成できませんでした',
+    coverageDetail: `Excelを生成できませんでした\n原因: ${message}`,
     counts: null,
     pairNameStatus: pairNameStatus(rawSourceName, rawTargetName),
     filename: ''
@@ -452,7 +535,7 @@ function buildBatchSummaryBlob(summaryRows: readonly DiffXlsxBatchSummaryRow[]):
     zoomScale: 90,
     print: {
       orientation: 'landscape',
-      fitToWidth: 1,
+      fitToWidth: 2,
       fitToHeight: 0,
       repeatRows: { from: headerRowIndex + 1, to: headerRowIndex + 1 },
       horizontalCentered: true,
@@ -523,7 +606,7 @@ export async function buildDiffXlsxBatchExport(
       if (error instanceof DiffXlsxBatchExportError && error.code === 'MAX_ARCHIVE_BYTES') throw error;
       const message = safeErrorMessage(error);
       failures.push({ index, label, message });
-      summaryRows.push(failedSummaryRow(item, index));
+      summaryRows.push(failedSummaryRow(item, index, message));
     }
   }
 

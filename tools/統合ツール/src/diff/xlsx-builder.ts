@@ -69,7 +69,9 @@ function escapeXmlText(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+    .replace(/'/g, '&apos;')
+    // XML 1.0 の改行正規化で CR / CRLF が LF と同一化されないよう、CR は文字参照にする。
+    .replace(/\r/g, '&#13;');
 }
 
 function escapeXml(s: unknown): string {
@@ -265,7 +267,45 @@ export interface XlsxSheet {
 
 const MIN_COL_W = 10;
 const MAX_COL_W = 60;
+const EXCEL_MAX_ROWS = 1048576;
+const EXCEL_MAX_COLUMNS = 16384;
 const EXCEL_CELL_TEXT_LIMIT = 32767;
+
+function assertArrayLengthWithinLimit(
+  values: { length: number } | null | undefined,
+  maxLength: number,
+  label: string
+): void {
+  if (values && values.length > maxLength) {
+    throw new RangeError(`${label} exceeds the Excel limit (${maxLength.toLocaleString('en-US')})`);
+  }
+}
+
+function assertWorkbookShape(sheets: XlsxSheet[]): void {
+  if (!Array.isArray(sheets) || sheets.length === 0) {
+    throw new RangeError('XLSX workbook must contain at least one worksheet');
+  }
+  sheets.forEach((sheet, sheetIndex) => {
+    const sheetLabel = `Sheet ${sheetIndex + 1}`;
+    if (!sheet || !Array.isArray(sheet.rows)) {
+      throw new TypeError(`${sheetLabel} rows must be an array`);
+    }
+    assertArrayLengthWithinLimit(sheet.rows, EXCEL_MAX_ROWS, `${sheetLabel} rows`);
+    sheet.rows.forEach((row, rowIndex) => {
+      if (!Array.isArray(row)) throw new TypeError(`${sheetLabel} row ${rowIndex + 1} must be an array`);
+      assertArrayLengthWithinLimit(row, EXCEL_MAX_COLUMNS, `${sheetLabel} row ${rowIndex + 1} columns`);
+    });
+
+    assertArrayLengthWithinLimit(sheet.colWidths, EXCEL_MAX_COLUMNS, `${sheetLabel} column widths`);
+    assertArrayLengthWithinLimit(sheet.rowStyles, EXCEL_MAX_ROWS, `${sheetLabel} row styles`);
+    assertArrayLengthWithinLimit(sheet.rowHeights, EXCEL_MAX_ROWS, `${sheetLabel} row heights`);
+    assertArrayLengthWithinLimit(sheet.rowOutlines, EXCEL_MAX_ROWS, `${sheetLabel} row outlines`);
+    assertArrayLengthWithinLimit(sheet.cellStyles, EXCEL_MAX_ROWS, `${sheetLabel} cell style rows`);
+    sheet.cellStyles?.forEach((row, rowIndex) => {
+      assertArrayLengthWithinLimit(row, EXCEL_MAX_COLUMNS, `${sheetLabel} cell style row ${rowIndex + 1} columns`);
+    });
+  });
+}
 
 function shortTextHash(text: string): string {
   let hash = 0x811c9dc5;
@@ -276,14 +316,33 @@ function shortTextHash(text: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
+function truncateUtf16AtGraphemeBoundary(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  const IntlAny: any = (globalThis as any).Intl;
+  if (IntlAny && typeof IntlAny.Segmenter === 'function') {
+    try {
+      const segmenter = new IntlAny.Segmenter('ja', { granularity: 'grapheme' });
+      let end = 0;
+      for (const item of segmenter.segment(text) as any) {
+        const segment = String(item?.segment ?? '');
+        const nextEnd = end + segment.length;
+        if (nextEnd > maxLength) break;
+        end = nextEnd;
+      }
+      return text.slice(0, end);
+    } catch (_) {
+      /* UTF-16 サロゲートペアだけは守るフォールバックへ進む。 */
+    }
+  }
+  return truncateUtf16WithoutSplittingPair(text, maxLength);
+}
+
 function normalizeExcelCellText(value: unknown): string {
   const text = String(value ?? '');
   if (text.length <= EXCEL_CELL_TEXT_LIMIT) return text;
   const suffix = `\n…（Excelセル上限32,767文字のため省略・元${text.length}文字・識別:${shortTextHash(text)}）`;
-  let keep = EXCEL_CELL_TEXT_LIMIT - suffix.length;
-  // UTF-16 サロゲートペアの途中で切らない。
-  if (keep > 0 && /[\uD800-\uDBFF]/.test(text.charAt(keep - 1))) keep -= 1;
-  return text.slice(0, Math.max(0, keep)) + suffix;
+  const keep = Math.max(0, EXCEL_CELL_TEXT_LIMIT - suffix.length);
+  return truncateUtf16AtGraphemeBoundary(text, keep) + suffix;
 }
 
 function serializeExcelCellText(value: unknown): string {
@@ -385,17 +444,34 @@ function buildPaneXml(freezeRows: number, freezeColumns: number): string {
   return `<pane ${attrs.join(' ')}/>`;
 }
 
-function isSafeCellRange(value: string): boolean {
-  return /^[A-Z]{1,3}[1-9][0-9]*:[A-Z]{1,3}[1-9][0-9]*$/.test(value);
+interface SafeCellAddress {
+  column: number;
+  row: number;
 }
 
-function isSafeCellRef(value: string): boolean {
+function parseSafeCellRef(value: string): SafeCellAddress | null {
   const match = /^([A-Z]{1,3})([1-9][0-9]*)$/.exec(value);
-  if (!match) return false;
+  if (!match) return null;
   let column = 0;
   for (const char of match[1]) column = column * 26 + char.charCodeAt(0) - 64;
   const row = Number(match[2]);
-  return column >= 1 && column <= 16384 && Number.isSafeInteger(row) && row <= 1048576;
+  if (
+    column < 1 || column > EXCEL_MAX_COLUMNS
+    || !Number.isSafeInteger(row) || row > EXCEL_MAX_ROWS
+  ) return null;
+  return { column, row };
+}
+
+function isSafeCellRef(value: string): boolean {
+  return parseSafeCellRef(value) !== null;
+}
+
+function isSafeCellRange(value: string): boolean {
+  const match = /^([A-Z]{1,3}[1-9][0-9]*):([A-Z]{1,3}[1-9][0-9]*)$/.exec(value);
+  if (!match) return false;
+  const from = parseSafeCellRef(match[1]);
+  const to = parseSafeCellRef(match[2]);
+  return !!from && !!to && from.column <= to.column && from.row <= to.row;
 }
 
 function normalizedOutline(value: XlsxRowOutline | undefined): Required<XlsxRowOutline> {
@@ -494,9 +570,9 @@ function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyp
   // Freeze panes. freezeRows が未指定なら従来どおりヘッダ1行を固定する。
   const freezeRows = normalizedPaneCount(sheet.freezeRows == null
     ? (sheet.freezeHeader !== false && rows.length > 0 ? 1 : 0)
-    : sheet.freezeRows, 1048575);
+    : sheet.freezeRows, EXCEL_MAX_ROWS - 1);
   // XFD が最終列なので、固定列は 16,383 列まで（右ペインの先頭が XFD）。
-  const freezeColumns = normalizedPaneCount(sheet.freezeColumns, 16383);
+  const freezeColumns = normalizedPaneCount(sheet.freezeColumns, EXCEL_MAX_COLUMNS - 1);
   const paneXml = buildPaneXml(freezeRows, freezeColumns);
   const zoomScale = normalizedZoomScale(sheet.zoomScale);
   if (paneXml || sheet.showGridLines === false || zoomScale != null) {
@@ -624,7 +700,7 @@ function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyp
   // 識別子など数値に見える文字列も意図的なテキストとして出力しているため、
   // Excel の「数値が文字列として保存されています」警告は使用範囲全体で抑止する。
   // このビルダーはセル数式と外部リンクを生成しないので、計算結果の警告を隠すことはない。
-  if (maxCols > 0 && maxCols <= 16384 && rows.length > 0 && rows.length <= 1048576) {
+  if (maxCols > 0 && maxCols <= EXCEL_MAX_COLUMNS && rows.length > 0 && rows.length <= EXCEL_MAX_ROWS) {
     out.push(`<ignoredErrors><ignoredError sqref="A1:${colRef(maxCols)}${rows.length}" numberStoredAsText="1"/></ignoredErrors>`);
   }
 
@@ -644,13 +720,13 @@ function buildWorkbookXml(sheets: Array<{ name: string; print?: XlsxPrintSetting
     const formulaSheetName = sheet.name.replace(/'/g, "''");
     const ranges: string[] = [];
     if (repeatRows) {
-      const from = normalizedPositiveInt(repeatRows.from, 1, 1048576);
-      const to = Math.max(from, normalizedPositiveInt(repeatRows.to, from, 1048576));
+      const from = normalizedPositiveInt(repeatRows.from, 1, EXCEL_MAX_ROWS);
+      const to = Math.max(from, normalizedPositiveInt(repeatRows.to, from, EXCEL_MAX_ROWS));
       ranges.push(`'${formulaSheetName}'!$${from}:$${to}`);
     }
     if (repeatColumns) {
-      const from = normalizedPositiveInt(repeatColumns.from, 1, 16384);
-      const to = Math.max(from, normalizedPositiveInt(repeatColumns.to, from, 16384));
+      const from = normalizedPositiveInt(repeatColumns.from, 1, EXCEL_MAX_COLUMNS);
+      const to = Math.max(from, normalizedPositiveInt(repeatColumns.to, from, EXCEL_MAX_COLUMNS));
       ranges.push(`'${formulaSheetName}'!$${colRef(from)}:$${colRef(to)}`);
     }
     return [`<definedName name="_xlnm.Print_Titles" localSheetId="${index}">${escapeXml(ranges.join(','))}</definedName>`];
@@ -812,6 +888,7 @@ function buildStylesXml(includeCustomerDiffStyles: boolean, includeRawTextStyles
 // ---------------------------------------------------------------------------
 
 export function buildXlsxBlob(sheets: XlsxSheet[]): Blob {
+  assertWorkbookShape(sheets);
   const enc = new TextEncoder();
   const used = new Set<string>();
   const safe = sheets.map((s, i) => ({ ...s, name: sanitizeSheetName(s.name, i, used) }));

@@ -96,6 +96,20 @@ function decodeXmlText(value: string): string {
     .replace(/&amp;/g, '&');
 }
 
+function hasLoneSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function worksheetInlineTexts(worksheet: string, column: string, firstRow = 1): string[] {
   return [...worksheet.matchAll(/<c r="([A-Z]+)(\d+)"[^>]*t="inlineStr"><is><t[^>]*>([\s\S]*?)<\/t><\/is><\/c>/g)]
     .filter((match) => match[1] === column && Number(match[2]) >= firstRow)
@@ -141,14 +155,23 @@ describe('diff/xlsx-export', () => {
     });
     const workbook = await readEntry(blob, 'xl/workbook.xml');
     const summary = await readWorksheetByName(blob, '比較概要');
+    const targets = await readWorksheetByName(blob, '変更対象一覧');
     const list = await readWorksheetByName(blob, '変更一覧');
     const detail = await readWorksheetByName(blob, '設定値詳細');
     const allText = await readAllEntryText(blob);
     const styles = await readEntry(blob, 'xl/styles.xml');
 
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '変更一覧', '01_アプリ一般設定', '設定値詳細'
+      '比較概要', '変更対象一覧', '変更一覧', '01_アプリ一般設定', '設定値詳細'
     ]);
+    expect(targets).toContain('設定項目ではなく、フィールド・一覧などの変更対象単位でまとめています。');
+    expect(targets).toContain('変更対象');
+    expect(targets).toContain('対象の変更');
+    expect(targets).toContain('明細件数');
+    expect(targets).toContain('<hyperlink ref="G3" location="&apos;変更一覧&apos;!D2"');
+    expect(targets).toContain('<autoFilter ref="A2:G3"/>');
+    expect(targets).toContain('<pane xSplit="3" ySplit="2" topLeftCell="D3" activePane="bottomRight" state="frozen"/>');
+    expect(workbook).toContain('&apos;変更対象一覧&apos;!$1:$2,&apos;変更対象一覧&apos;!$A:$C');
     expect(list).toContain('設定対象／変更内容');
     expect(list).toContain('旧名称 → 新名称');
     const appSettings = await readWorksheetByName(blob, '01_アプリ一般設定');
@@ -175,8 +198,8 @@ describe('diff/xlsx-export', () => {
     }
     expect(summary).toContain('比較から除外');
     expect(summary).toMatch(/<c r="F8"[^>]*>[\s\S]*?なし[\s\S]*?<\/c>/);
-    expect(summary).toContain('変更一覧を開く');
-    expect(summary).toContain('<hyperlink ref="F3" location="&apos;変更一覧&apos;!A1"');
+    expect(summary).toContain('変更対象一覧を開く');
+    expect(summary).toContain('<hyperlink ref="F3" location="&apos;変更対象一覧&apos;!A1"');
     expect(summary).not.toContain('<hyperlink ref="F4"');
     expect(summary).toMatch(/<c r="F3" s="30"/);
     expect(summary).toContain('<c r="D3" s="25"');
@@ -238,7 +261,7 @@ describe('diff/xlsx-export', () => {
     expect(list).not.toContain('差分ID');
     expect(list).not.toContain('存在状況');
     expect(list).not.toContain('技術パス');
-    expect((allText.match(/<hyperlink\b/g) || []).length).toBe(6);
+    expect((allText.match(/<hyperlink\b/g) || []).length).toBe(7);
     expect(allText).not.toContain('<f>');
     expect(allText).not.toContain('externalLink');
     expect(allText).not.toContain('vbaProject');
@@ -264,6 +287,83 @@ describe('diff/xlsx-export', () => {
     for (const styleId of [26, 27]) {
       expect(cellXfs[styleId]).toContain('<alignment vertical="center" horizontal="center" wrapText="1"/>');
     }
+  });
+
+  it('groups customer field settings by field and view settings by view in the coarse sheet', async () => {
+    const fields = {
+      customer: { code: 'customer', label: '顧客', type: 'SINGLE_LINE_TEXT', required: false }
+    };
+    const views = {
+      '営業': { id: '100', type: 'LIST' },
+      '営業.sort': { id: '880', type: 'LIST', fields: ['customer'], filterCond: '', sort: '' }
+    };
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      sourceBundle: {
+        sections: {
+          fieldSettings: { properties: fields },
+          viewSettings: { views }
+        }
+      },
+      targetBundle: {
+        sections: {
+          fieldSettings: { properties: { customer: { ...fields.customer, label: '取引先', required: true } } },
+          viewSettings: { views }
+        }
+      },
+      rows: [
+        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.customer.label', left: '顧客', right: '取引先' },
+        { sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.customer.required', left: false, right: true },
+        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.営業.sort.filterCond', left: '', right: 'customer != ""' },
+        { sectionKey: 'viewSettings', type: 'added', path: 'viewSettings.views.営業.sort.fields[0]', right: 'customer' },
+        { sectionKey: 'viewSettings', type: 'removed', path: 'viewSettings.views.営業.sort.fields[1]', left: 'old_field' }
+      ]
+    });
+    const targets = await readWorksheetByName(blob, '変更対象一覧');
+
+    expect((targets.match(/<row r="/g) || []).length).toBe(4);
+    expect(worksheetInlineTexts(targets, 'B', 3)).toEqual(['フィールド', '一覧']);
+    expect(worksheetInlineTexts(targets, 'C', 3)[0]).toContain('取引先');
+    expect(worksheetInlineTexts(targets, 'C', 3)[1]).toBe('一覧「営業.sort」');
+    expect(worksheetInlineTexts(targets, 'D', 3)).toEqual(['設定変更', '複合変更']);
+    expect(worksheetInlineTexts(targets, 'E', 3)[0]).toContain('フィールド名');
+    expect(worksheetInlineTexts(targets, 'E', 3)[1]).toContain('絞り込み条件');
+    expect(targets).toMatch(/<c r="F3"[^>]*><v>2<\/v><\/c>/);
+    expect(targets).toMatch(/<c r="F4"[^>]*><v>3<\/v><\/c>/);
+    expect(targets).toContain('<hyperlink ref="G3" location="&apos;変更一覧&apos;!D2"');
+    expect(targets).toContain('<hyperlink ref="G4" location="&apos;変更一覧&apos;!D4"');
+    expect(targets).not.toContain('一覧追加');
+    expect(targets).not.toContain('一覧削除');
+  });
+
+  it.each([
+    {
+      label: 'complete comparison',
+      context: {},
+      message: '変更対象はありません（差分なし）'
+    },
+    {
+      label: 'filtered export',
+      context: { exportMode: 'filtered' as const },
+      message: '現在の絞り込み条件に該当する変更対象はありません'
+    },
+    {
+      label: 'incomplete comparison',
+      context: { fetchIssues: [{ sectionKey: 'viewSettings', side: 'target' as const, message: '権限不足' }] },
+      message: '比較できなかった範囲があります。変更対象0件を差分なしとは判断できません'
+    }
+  ])('shows a centered customer coarse-sheet empty state: $label', async ({ context, message }) => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({ rows: [], ...context });
+    const targets = await readWorksheetByName(blob, '変更対象一覧');
+    const workbook = await readEntry(blob, 'xl/workbook.xml');
+
+    expect((targets.match(/<row r="/g) || []).length).toBe(3);
+    expect(targets).toContain(message);
+    expect(targets).toContain('<mergeCell ref="A3:G3"/>');
+    expect(targets).not.toContain('<autoFilter');
+    expect(targets).not.toContain('xSplit=');
+    expect(targets).toContain('orientation="landscape" fitToWidth="1" fitToHeight="0"');
+    expect(workbook).toContain('&apos;変更対象一覧&apos;!$1:$2</definedName>');
+    expect(workbook).not.toContain('&apos;変更対象一覧&apos;!$1:$2,&apos;変更対象一覧&apos;!$A:');
   });
 
   it('shortens app-name headers without clipping while preserving full names in the summary', async () => {
@@ -360,8 +460,8 @@ describe('diff/xlsx-export', () => {
     }
   });
 
-  it('truncates customer labels by code point without replacing a boundary emoji', async () => {
-    const label = `${'x'.repeat(42)}😀tail`;
+  it('truncates customer labels by grapheme cluster without splitting a joined emoji', async () => {
+    const label = `${'x'.repeat(42)}👩‍💻tail`;
     const layout = { layout: [{ type: 'ROW', fields: [{ type: 'LABEL', label }] }] };
     const list = await readWorksheetByName(buildDiffXlsxBlobWithSafeDefault({
       sourceBundle: { sections: { layoutSettings: layout } },
@@ -372,7 +472,7 @@ describe('diff/xlsx-export', () => {
       }]
     }), '変更一覧');
 
-    expect(list).toContain(`ラベル「${'x'.repeat(42)}😀…`);
+    expect(list).toContain(`ラベル「${'x'.repeat(42)}👩‍💻…`);
     expect(list).not.toContain('�');
   });
 
@@ -620,7 +720,7 @@ describe('diff/xlsx-export', () => {
     const styles = await readEntry(blob, 'xl/styles.xml');
 
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '変更一覧', '03_フォームフィールド', '設定値詳細', '長文原文'
+      '比較概要', '変更対象一覧', '変更一覧', '03_フォームフィールド', '設定値詳細', '長文原文'
     ]);
     expect(worksheetInlineTexts(fields, 'C', 3)).toEqual([
       'フィールド', 'フィールド',
@@ -1025,7 +1125,7 @@ describe('diff/xlsx-export', () => {
     const allText = await readAllEntryText(blob);
 
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '変更一覧', '12_カスタマイズ本文', '設定値詳細', '長文原文'
+      '比較概要', '変更対象一覧', '変更一覧', '12_カスタマイズ本文', '設定値詳細', '長文原文'
     ]);
     expect(summary).not.toContain('掲載内容');
     expect(list).not.toContain('No.（リンク）から全差分の状態・型・原文を確認できます');
@@ -1112,7 +1212,7 @@ describe('diff/xlsx-export', () => {
     const rawEvidence = worksheetInlineTexts(longRaw, 'F', 2).join('');
 
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '確認できなかった範囲', '変更一覧', '長文原文'
+      '比較概要', '確認できなかった範囲', '変更対象一覧', '変更一覧', '長文原文'
     ]);
     expect(summary).toContain('比較未完了');
     expect(summary).toContain('一部未完了');
@@ -1161,7 +1261,7 @@ describe('diff/xlsx-export', () => {
     const allText = await readAllEntryText(blob);
 
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '確認できなかった範囲', '変更一覧', '長文原文'
+      '比較概要', '確認できなかった範囲', '変更対象一覧', '変更一覧', '長文原文'
     ]);
     expect(summary).not.toContain('掲載内容');
     expect(issues).toContain('長文原文へ');
@@ -1218,7 +1318,7 @@ describe('diff/xlsx-export', () => {
     const workbook = await readEntry(blob, 'xl/workbook.xml');
     const summary = await readWorksheetByName(blob, '比較概要');
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '変更一覧'
+      '比較概要', '変更対象一覧', '変更一覧'
     ]);
     expect(summary).toContain('正常完了（同一証跡 5件を省略）');
     expect(summary).toContain('5件（変更判定への影響なし）');
@@ -1265,7 +1365,7 @@ describe('diff/xlsx-export', () => {
     const workbook = await readEntry(blob, 'xl/workbook.xml');
     const summary = await readWorksheetByName(blob, '比較概要');
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '確認できなかった範囲', '変更一覧', '長文原文'
+      '比較概要', '確認できなかった範囲', '変更対象一覧', '変更一覧', '長文原文'
     ]);
     expect(summary).toContain('比較未完了');
     expect(summary).toContain('一部未完了');
@@ -1381,7 +1481,7 @@ describe('diff/xlsx-export', () => {
     expect(allText).not.toContain('詳細を省略した変更');
     expect(allText).not.toContain('SAME_PLUGIN_SECRET');
     expect(allText).not.toContain('DISPLAY_ONLY_SECRET');
-    expect(result.filename).toContain('変更前環境 App 556677_vs_変更後環境 App 667788');
+    expect(result.filename).toContain('変更前環境 App 556677(app556677)_vs_変更後環境 App 667788(app667788)');
   });
 
   it('keeps readable item labels while showing the original layout, condition, and sort values', async () => {
@@ -1722,7 +1822,7 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('比較元\nCustomer App 991122 Prod');
     expect(summary).toContain('比較先\nPortal Guest 7');
     expect(summary).toContain('未記録');
-    expect(result.filename).toContain('Customer App 991122 Prod_vs_Portal Guest 7');
+    expect(result.filename).toContain('Customer App 991122 Prod(app202)_vs_Portal Guest 7(app303)');
     expect((list.match(/<row r="/g) || []).length).toBe(6);
     for (const value of [
       'TARGET_APP_661144', 'TARGET_APP_771155',
@@ -1851,7 +1951,7 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('<c r="F3" s="25"');
     expect(summary).toContain('変更一覧なし');
     expect(summary).toContain('<mergeCell ref="D3:E3"/>');
-    expect(summary).not.toContain('変更一覧を開く');
+    expect(summary).not.toContain('変更対象一覧を開く');
     expect(summary).not.toContain('分類別件数');
     expect(summary).not.toContain('<hyperlink');
     expect(summary).not.toContain('<autoFilter');
@@ -2148,6 +2248,7 @@ describe('diff/xlsx-export', () => {
     const blob = buildDiffXlsxBlob(sampleCtx);
     const workbook = await readEntry(blob, 'xl/workbook.xml');
     expect(workbook).toContain('name="概要"');
+    expect(workbook).toContain('name="変更対象一覧"');
     expect(workbook).toContain('name="差分一覧"');
     expect(workbook).toContain('name="フィールド差分要約"');
     expect(workbook).toContain('name="フィールド差分詳細"');
@@ -2155,17 +2256,346 @@ describe('diff/xlsx-export', () => {
     expect(workbook).toContain('name="ビュー設定"');
     expect(workbook).toContain('name="取得・未検証"');
     expect(workbook.indexOf('name="概要"')).toBeLessThan(workbook.indexOf('name="取得・未検証"'));
+    expect(workbook.indexOf('name="取得・未検証"')).toBeLessThan(workbook.indexOf('name="変更対象一覧"'));
+    expect(workbook.indexOf('name="変更対象一覧"')).toBeLessThan(workbook.indexOf('name="フィールド差分要約"'));
     expect(workbook.indexOf('name="取得・未検証"')).toBeLessThan(workbook.indexOf('name="フィールド差分要約"'));
     expect(workbook.indexOf('name="フィールド差分要約"')).toBeLessThan(workbook.indexOf('name="フィールド差分詳細"'));
     expect(workbook.indexOf('name="フィールド差分詳細"')).toBeLessThan(workbook.indexOf('name="差分一覧"'));
     expect(workbook).toContain('<definedNames>');
     expect(workbook).toContain('&apos;概要&apos;!$1:$2');
+    expect(workbook).toContain('&apos;変更対象一覧&apos;!$2:$4,&apos;変更対象一覧&apos;!$A:$C');
     expect(workbook).toContain('&apos;フィールド差分要約&apos;!$2:$3');
     expect(workbook).toContain('&apos;フィールド差分詳細&apos;!$2:$3');
     expect(workbook).toContain('&apos;差分一覧&apos;!$2:$3');
     expect(workbook).toContain('&apos;フィールド技術明細&apos;!$2:$3');
     expect(workbook).toContain('&apos;ビュー設定&apos;!$2:$3');
     expect(workbook).toContain('&apos;取得・未検証&apos;!$2:$2');
+  });
+
+  it('groups the coarse target list by field and view while keeping drill-down links', async () => {
+    const blob = buildDiffXlsxBlob({
+      ...sampleCtx,
+      fetchIssues: [],
+      rows: [
+        ...sampleCtx.rows,
+        {
+          sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.一覧A.fields[0]',
+          label: 'ビュー「一覧A」 / 表示フィールド', left: '顧客名', right: '案件名'
+        },
+        {
+          sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.一覧A.filterCond',
+          label: 'ビュー「一覧A」 / 絞り込み条件', left: 'status = "未処理"', right: 'status = "処理中"'
+        }
+      ]
+    });
+    const targets = await readWorksheetByName(blob, '変更対象一覧');
+    const workbook = await readEntry(blob, 'xl/workbook.xml');
+
+    expect((targets.match(/<row r="/g) || []).length).toBe(6);
+    for (const [cell, label] of [
+      ['A3', '対象種別'], ['B3', '対象名'], ['C3', '識別子'], ['D3', '変更状態'],
+      ['E3', '差分件数'], ['F3', '主な変更'], ['G3', '詳細']
+    ]) {
+      expect(targets).toMatch(new RegExp(`<c r="${cell}" s="1"[^>]*>[\\s\\S]*?${label}[\\s\\S]*?<\\/c>`));
+    }
+    expect(targets).toMatch(/<c r="A2" s="7"[^>]*>[\s\S]*?変更された対象[\s\S]*?<\/c>/);
+    expect(targets).toMatch(/<c r="D2" s="12"[^>]*>[\s\S]*?変更の概要[\s\S]*?<\/c>/);
+    expect(targets).toMatch(/<c r="G2" s="12"[^>]*>[\s\S]*?ナビゲーション[\s\S]*?<\/c>/);
+    expect(targets).toContain('<mergeCell ref="A2:C2"/>');
+    expect(targets).toContain('<mergeCell ref="D2:F2"/>');
+    expect(worksheetInlineTexts(targets, 'A', 4).filter((value) => value === 'フィールド')).toHaveLength(2);
+    expect(worksheetInlineTexts(targets, 'A', 4).filter((value) => value === '一覧')).toHaveLength(1);
+    expect(worksheetInlineTexts(targets, 'C', 4)).toEqual(expect.arrayContaining(['foo', 'bar', '一覧名 一覧A']));
+    expect(worksheetInlineTexts(targets, 'B', 4)).toHaveLength(3);
+    expect(worksheetInlineTexts(targets, 'F', 4)).toHaveLength(3);
+    expect(worksheetInlineTexts(targets, 'G', 4)).toHaveLength(3);
+    const viewRow = worksheetRowContaining(targets, '一覧A');
+    expect(viewRow).toMatch(/<c r="E\d+"[^>]*><v>3<\/v><\/c>/);
+    expect(viewRow).toContain('表示するフィールド');
+    expect(viewRow).toContain('絞り込み条件');
+    expect(targets).toContain('location="&apos;フィールド差分要約&apos;!C');
+    expect(targets).toContain('location="&apos;差分一覧&apos;!B');
+    expect(targets).toContain('<pane xSplit="3" ySplit="3" topLeftCell="D4" activePane="bottomRight" state="frozen"/>');
+    expect(targets).toContain('<autoFilter ref="A3:G6"/>');
+    expect(targets).toContain('orientation="landscape" fitToWidth="1" fitToHeight="0"');
+    expect(workbook).toContain('&apos;変更対象一覧&apos;!$2:$3,&apos;変更対象一覧&apos;!$A:$C');
+  });
+
+  it('uses the longest bundle view key when a view name contains dots', async () => {
+    const sourceView = { id: '880', type: 'LIST', fields: ['顧客名'], filterCond: 'status = "未処理"' };
+    const targetView = { id: '880', type: 'LIST', fields: ['案件名'], filterCond: 'status = "処理中"' };
+    const targets = await readWorksheetByName(buildDiffXlsxBlob({
+      audience: 'internal',
+      sourceBundle: { sections: { viewSettings: { views: { '営業.sort': sourceView } } } },
+      targetBundle: { sections: { viewSettings: { views: { '営業.sort': targetView } } } },
+      rows: [
+        {
+          sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.営業.sort',
+          left: sourceView, right: targetView
+        },
+        {
+          sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.営業.sort.fields[0]',
+          left: '顧客名', right: '案件名'
+        },
+        {
+          sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.営業.sort.filterCond',
+          left: 'status = "未処理"', right: 'status = "処理中"'
+        }
+      ]
+    }), '変更対象一覧');
+
+    expect(worksheetInlineTexts(targets, 'A', 4)).toEqual(['一覧']);
+    expect(worksheetInlineTexts(targets, 'B', 4)).toEqual(['営業.sort']);
+    expect(worksheetInlineTexts(targets, 'C', 4)).toEqual(['一覧ID 880']);
+    const viewRow = worksheetRowContaining(targets, '営業.sort');
+    expect(viewRow).toMatch(/<c r="E\d+"[^>]*><v>3<\/v><\/c>/);
+    expect(viewRow).toContain('差分一覧へ');
+  });
+
+  it.each([
+    { type: 'added', left: undefined, right: '更新日時 desc' },
+    { type: 'removed', left: '案件番号 asc', right: undefined },
+    { type: 'changed', left: '案件番号 asc', right: '更新日時 desc' }
+  ])('keeps an ambiguous $type sort leaf under the shorter coexisting view name', async ({ type, left, right }) => {
+    const commonViews = {
+      営業: { id: '101', type: 'LIST', fields: ['案件番号'] },
+      '営業.sort': { id: '202', type: 'LIST', fields: ['更新日時'] }
+    };
+    const context: DiffXlsxContext = {
+      sourceBundle: { sections: { viewSettings: { views: commonViews } } },
+      targetBundle: { sections: { viewSettings: { views: commonViews } } },
+      rows: [{
+        sectionKey: 'viewSettings', type, path: 'viewSettings.views.営業.sort', left, right
+      }]
+    };
+    const internalTargets = await readWorksheetByName(buildDiffXlsxBlob({
+      ...context,
+      audience: 'internal'
+    }), '変更対象一覧');
+    const customerTargets = await readWorksheetByName(buildDiffXlsxBlobWithSafeDefault({
+      ...context,
+      audience: 'customer'
+    }), '変更対象一覧');
+
+    expect(worksheetInlineTexts(internalTargets, 'B', 4)).toEqual(['営業']);
+    expect(worksheetInlineTexts(internalTargets, 'C', 4)).toEqual(['一覧ID 101']);
+    expect(internalTargets).not.toContain('一覧追加');
+    expect(internalTargets).not.toContain('一覧削除');
+    expect(worksheetInlineTexts(customerTargets, 'C', 3)).toEqual(['一覧「営業」']);
+    expect(worksheetInlineTexts(customerTargets, 'D', 3)).toEqual(['設定変更']);
+    expect(customerTargets).not.toContain('一覧「営業.sort」');
+  });
+
+  it('treats an object payload at the same ambiguous path as the dotted view root', async () => {
+    const salesView = { id: '101', type: 'LIST', fields: ['案件番号'] };
+    const dottedView = { id: '202', type: 'LIST', fields: ['更新日時'] };
+    const context: DiffXlsxContext = {
+      sourceBundle: { sections: { viewSettings: { views: { 営業: salesView } } } },
+      targetBundle: { sections: { viewSettings: { views: { 営業: salesView, '営業.sort': dottedView } } } },
+      rows: [{
+        sectionKey: 'viewSettings', type: 'added', path: 'viewSettings.views.営業.sort', right: dottedView
+      }]
+    };
+    const internalTargets = await readWorksheetByName(buildDiffXlsxBlob({
+      ...context,
+      audience: 'internal'
+    }), '変更対象一覧');
+    const customerTargets = await readWorksheetByName(buildDiffXlsxBlobWithSafeDefault({
+      ...context,
+      audience: 'customer'
+    }), '変更対象一覧');
+
+    expect(worksheetInlineTexts(internalTargets, 'B', 4)).toEqual(['営業.sort']);
+    expect(worksheetInlineTexts(internalTargets, 'C', 4)).toEqual(['一覧ID 202']);
+    expect(worksheetInlineTexts(internalTargets, 'D', 4)).toEqual(['一覧追加']);
+    expect(worksheetInlineTexts(customerTargets, 'C', 3)).toEqual(['一覧「営業.sort」']);
+    expect(worksheetInlineTexts(customerTargets, 'D', 3)).toEqual(['追加']);
+  });
+
+  it('does not describe added or removed view leaves as whole-view additions or removals', async () => {
+    const targets = await readWorksheetByName(buildDiffXlsxBlob({
+      audience: 'internal',
+      sourceBundle: {
+        sections: {
+          viewSettings: {
+            views: {
+              追加確認一覧: { id: '101', type: 'LIST', fields: [] },
+              削除確認一覧: { id: '202', type: 'LIST', filterCond: 'status = "未処理"' }
+            }
+          }
+        }
+      },
+      targetBundle: {
+        sections: {
+          viewSettings: {
+            views: {
+              追加確認一覧: { id: '101', type: 'LIST', fields: ['customer'] },
+              削除確認一覧: { id: '202', type: 'LIST', filterCond: '' }
+            }
+          }
+        }
+      },
+      rows: [
+        {
+          sectionKey: 'viewSettings', type: 'added', path: 'viewSettings.views.追加確認一覧.fields[0]',
+          right: 'customer'
+        },
+        {
+          sectionKey: 'viewSettings', type: 'removed', path: 'viewSettings.views.削除確認一覧.filterCond',
+          left: 'status = "未処理"'
+        }
+      ]
+    }), '変更対象一覧');
+
+    const addedLeafRow = worksheetRowContaining(targets, '追加確認一覧');
+    const removedLeafRow = worksheetRowContaining(targets, '削除確認一覧');
+    expect(addedLeafRow).toMatch(/<c r="D\d+"[^>]*>[\s\S]*?>設定変更<[\s\S]*?<\/c>/);
+    expect(addedLeafRow).not.toContain('一覧追加');
+    expect(removedLeafRow).toMatch(/<c r="D\d+"[^>]*>[\s\S]*?>設定変更<[\s\S]*?<\/c>/);
+    expect(removedLeafRow).not.toContain('一覧削除');
+  });
+
+  it('distinguishes root additions from leaf additions consistently in internal and customer target lists', async () => {
+    const rows: DiffXlsxContext['rows'] = [
+      {
+        sectionKey: 'reportSettings', type: 'added', path: 'reportSettings.reports.新規売上',
+        entityKind: 'report', entityCode: 'report-new', entityLabel: '新規売上', entityPropLabel: '',
+        right: { name: '新規売上', chartType: 'BAR' }
+      },
+      {
+        sectionKey: 'reportSettings', type: 'added', path: 'reportSettings.reports.既存売上.sort',
+        entityKind: 'report', entityCode: 'report-existing', entityLabel: '既存売上', entityPropLabel: 'ソート',
+        right: 'amount desc'
+      },
+      {
+        sectionKey: 'actionSettings', type: 'added', path: 'actionSettings.actions[0]',
+        entityKind: 'appAction', entityCode: 'action-new', entityLabel: '新規転記', entityPropLabel: '',
+        arrayKey: 'name', arrayKeyValue: '新規転記', right: { name: '新規転記', mappings: [] }
+      },
+      {
+        sectionKey: 'actionSettings', type: 'added', path: 'actionSettings.actions[1].mappings[0]',
+        entityKind: 'appAction', entityCode: 'action-existing', entityLabel: '既存転記', entityPropLabel: 'フィールドの関連付け',
+        arrayKey: 'name', arrayKeyValue: '既存転記', right: { srcField: 'customer', destField: 'customer' }
+      },
+      {
+        sectionKey: 'notifications', type: 'added', path: 'notifications.notifications[0]',
+        entityKind: 'notification', entityCode: 'notification-new', entityLabel: '新規通知', entityPropLabel: '',
+        right: { entity: { type: 'USER', code: 'user-a' } }
+      },
+      {
+        sectionKey: 'notifications', type: 'added', path: 'notifications.notifications[1].recipients[0]',
+        entityKind: 'notification', entityCode: 'notification-existing', entityLabel: '既存通知', entityPropLabel: '通知先',
+        right: { entity: { type: 'USER', code: 'user-b' } }
+      }
+    ];
+    const internalTargets = await readWorksheetByName(buildDiffXlsxBlob({ audience: 'internal', rows }), '変更対象一覧');
+    const customerTargets = await readWorksheetByName(buildDiffXlsxBlobWithSafeDefault({ audience: 'customer', rows }), '変更対象一覧');
+    const stateIn = (worksheet: string, target: string): string => {
+      const row = worksheetRowContaining(worksheet, target);
+      return /<c r="D\d+"[^>]*t="inlineStr"><is><t[^>]*>([^<]*)<\/t><\/is><\/c>/.exec(row)?.[1] || '';
+    };
+
+    for (const [rootTarget, leafTarget] of [
+      ['グラフ「新規売上」', 'グラフ「既存売上」'],
+      ['アプリアクション「新規転記」', 'アプリアクション「既存転記」'],
+      ['通知「新規通知」', '通知「既存通知」']
+    ]) {
+      expect(stateIn(internalTargets, rootTarget)).toBe('追加');
+      expect(stateIn(internalTargets, leafTarget)).toBe('設定変更');
+      expect(stateIn(customerTargets, rootTarget)).toBe('追加');
+      expect(stateIn(customerTargets, leafTarget)).toBe('設定変更');
+    }
+  });
+
+  it('keeps separate array entities even when their human-facing labels are identical', async () => {
+    const rows: DiffXlsxContext['rows'] = [0, 1].map((index) => ({
+      sectionKey: 'notifications',
+      type: 'changed',
+      path: `notifications.notifications[${index}].recipients[0]`,
+      entityKind: 'notification',
+      entityLabel: '担当者へ通知',
+      entityPropLabel: '通知先',
+      left: { entity: { type: 'USER', code: `old-user-${index}` } },
+      right: { entity: { type: 'USER', code: `new-user-${index}` } }
+    }));
+    const internalTargets = await readWorksheetByName(buildDiffXlsxBlob({ audience: 'internal', rows }), '変更対象一覧');
+    const customerTargets = await readWorksheetByName(buildDiffXlsxBlobWithSafeDefault({ audience: 'customer', rows }), '変更対象一覧');
+
+    expect(worksheetInlineTexts(internalTargets, 'B', 4)).toEqual(['通知「担当者へ通知」', '通知「担当者へ通知」']);
+    const identifiers = worksheetInlineTexts(internalTargets, 'C', 4);
+    expect(identifiers).toHaveLength(2);
+    expect(new Set(identifiers).size).toBe(2);
+    expect(worksheetInlineTexts(customerTargets, 'C', 3)).toEqual(['通知「担当者へ通知」', '通知「担当者へ通知」']);
+    expect((customerTargets.match(/<c r="F[34]"[^>]*><v>1<\/v><\/c>/g) || [])).toHaveLength(2);
+  });
+
+  it('shows an incomplete-comparison warning above coarse targets even when differences exist', async () => {
+    const context: DiffXlsxContext = {
+      rows: [{
+        sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧名称', right: '新名称'
+      }],
+      fetchIssues: [{ sectionKey: 'viewSettings', side: 'target', message: '権限不足' }]
+    };
+    const internalTargets = await readWorksheetByName(buildDiffXlsxBlob({
+      ...context,
+      audience: 'internal'
+    }), '変更対象一覧');
+    const customerTargets = await readWorksheetByName(buildDiffXlsxBlobWithSafeDefault({
+      ...context,
+      audience: 'customer'
+    }), '変更対象一覧');
+
+    expect(worksheetRowContaining(internalTargets, '比較できなかった範囲があります')).toMatch(/<row r="2"[\s\S]*?<c r="A2" s="27"/);
+    expect(internalTargets).toContain('<mergeCell ref="A2:G2"/>');
+    expect(internalTargets).toContain('<autoFilter ref="A4:G5"/>');
+    expect(internalTargets).toContain('<pane xSplit="3" ySplit="4" topLeftCell="D5" activePane="bottomRight" state="frozen"/>');
+    expect(worksheetRowContaining(customerTargets, '比較できなかった範囲があります')).toMatch(/<row r="2"[\s\S]*?<c r="A2" s="27"/);
+    expect(customerTargets).toContain('<mergeCell ref="A2:G2"/>');
+    expect(customerTargets).toContain('<autoFilter ref="A3:G4"/>');
+    expect(customerTargets).toContain('<pane xSplit="3" ySplit="3" topLeftCell="D4" activePane="bottomRight" state="frozen"/>');
+  });
+
+  it.each([
+    {
+      label: 'complete comparison',
+      context: { fetchIssues: [], partialIssues: [] },
+      message: '変更対象はありません（差分なし）',
+      style: 25
+    },
+    {
+      label: 'filtered export',
+      context: { exportMode: 'filtered' as const, fetchIssues: [], partialIssues: [] },
+      message: '現在の絞り込み条件に該当する変更対象はありません',
+      style: 24
+    },
+    {
+      label: 'incomplete comparison',
+      context: {
+        fetchIssues: [{ sectionKey: 'viewSettings', side: 'target' as const, message: '権限不足' }],
+        partialIssues: []
+      },
+      message: '比較できなかった範囲があります。概要と「取得・未検証」を確認してください',
+      style: 27
+    }
+  ])('shows a centered semantic empty band on the coarse target list: $label', async ({ context, message, style }) => {
+    const blob = buildDiffXlsxBlob({
+      audience: 'internal',
+      rows: [],
+      scopes: ['fieldSettings', 'viewSettings'],
+      ...context
+    });
+    const targets = await readWorksheetByName(blob, '変更対象一覧');
+    const workbook = await readEntry(blob, 'xl/workbook.xml');
+
+    expect((targets.match(/<row r="/g) || []).length).toBe(4);
+    expect(targets).toContain(message);
+    expect(targets).toContain(`<c r="A4" s="${style}"`);
+    expect(targets).toContain('<mergeCell ref="A4:G4"/>');
+    expect(targets).not.toContain('<autoFilter');
+    expect(targets).not.toContain('<pane');
+    expect(targets).toContain('orientation="landscape" fitToWidth="1" fitToHeight="0"');
+    expect(workbook).toContain('&apos;変更対象一覧&apos;!$2:$3</definedName>');
+    expect(workbook).not.toContain('&apos;変更対象一覧&apos;!$2:$3,&apos;変更対象一覧&apos;!$A:');
   });
 
   it('adds a neutral two-line guide band to every sheet', async () => {
@@ -2178,8 +2608,8 @@ describe('diff/xlsx-export', () => {
     expect(summary).toMatch(/<c r="A5" s="12"/);
     expect(summary).toContain('<mergeCell ref="A5:D5"/>');
     expect(summary).toMatch(/<row r="2[5-9]" ht="40" customHeight="1">/);
-    expect(summary).toMatch(/<c r="A38" s="5"/);
-    expect(summary).toContain('<mergeCell ref="B38:D38"/>');
+    expect(summary).toMatch(/<c r="A39" s="5"/);
+    expect(summary).toContain('<mergeCell ref="B39:D39"/>');
 
     for (const worksheet of worksheets.slice(1)) {
       expect(worksheet).toContain('このシートで分かること：');
@@ -2230,8 +2660,8 @@ describe('diff/xlsx-export', () => {
     expect(summary).toMatch(/<c r="A12"[^>]*>[\s\S]*?同一[\s\S]*?<\/c>/);
     expect(summary).toMatch(/<c r="B12"[^>]*><v>0<\/v>/);
     expect(summary).not.toContain('参考行');
-    expect(summary).toContain('①「フィールド差分要約」で対象を確認');
-    expect(summary).toContain('②「フィールド差分詳細」で変更前後を確認');
+    expect(summary).toContain('①「変更対象一覧」で対象を絞る');
+    expect(summary).toContain('②「フィールド差分要約・詳細」で変更内容を確認');
     expect(summary).toContain('③「差分一覧」で確認状況と対応判断を入力');
     expect(summary).toContain('※パスは技術明細シートにのみ掲載');
     expect(summary).toContain('フィールド差分を見る');
@@ -2243,10 +2673,11 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('目的');
     expect(summary).toContain('利用場面');
     expect(summary).toContain('このブックに収録された差分と変更前後の値');
-    expect(summary).toContain('収録された差分とレビュー入力は「差分一覧」へ進みます。');
+    expect(summary).toContain('設定項目ごとの差分とレビュー入力は「差分一覧」へ進みます。');
     expect(summary).not.toContain('すべての差分');
     expect(summary).toContain('<hyperlink ref="A26" location="&apos;取得・未検証&apos;!A3"');
-    expect(summary).toContain('<hyperlink ref="A27" location="&apos;フィールド差分要約&apos;!C4"');
+    expect(summary).toContain('<hyperlink ref="A27" location="&apos;変更対象一覧&apos;!B4"');
+    expect(summary).toContain('<hyperlink ref="A28" location="&apos;フィールド差分要約&apos;!C4"');
     expect(summary).toMatch(/<c r="B7"[^>]*><v>3<\/v>/);
     expect(summary).toContain('<mergeCell ref="A1:D1"/>');
     expect(summary).toContain('<mergeCell ref="A2:D2"/>');
@@ -2304,6 +2735,7 @@ describe('diff/xlsx-export', () => {
   it('writes one row per result to the consolidated list with directional values', async () => {
     const blob = buildDiffXlsxBlob(sampleCtx);
     const list = await readWorksheetByName(blob, '差分一覧');
+    const workbook = await readEntry(blob, 'xl/workbook.xml');
     expect((list.match(/<row r="/g) || []).length).toBe(6);
     expect(list).toContain('このシートで分かること：このブックに収録された差分');
     expect(list).toContain('使い方・次に見る場所：黄色の列');
@@ -2396,7 +2828,8 @@ describe('diff/xlsx-export', () => {
     expect(dataRowHeights).toHaveLength(3);
     expect(dataRowHeights.every((height) => height >= 26 && height <= 110)).toBe(true);
     expect(dataRowHeights.some((height) => height > 26)).toBe(true);
-    expect(list).toContain('orientation="landscape" fitToWidth="1" fitToHeight="0"');
+    expect(list).toContain('orientation="landscape" fitToWidth="2" fitToHeight="0"');
+    expect(workbook).toContain('&apos;差分一覧&apos;!$2:$3,&apos;差分一覧&apos;!$A:$E');
 
     const fieldTechnical = await readWorksheetByName(blob, 'フィールド技術明細');
     const viewTechnical = await readWorksheetByName(blob, 'ビュー設定');
@@ -2422,8 +2855,27 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('比較先のみ');
   });
 
+  it('treats a lone carriage return as a line break when estimating row height', async () => {
+    const rowHeightFor = async (left: string): Promise<number> => {
+      const list = await readWorksheetByName(buildDiffXlsxBlob({
+        rows: [{
+          sectionKey: 'appSettings', type: 'changed', path: 'appSettings.description',
+          left, right: '変更後'
+        }]
+      }), '差分一覧');
+      return worksheetRowHeight(list, 4);
+    };
+
+    const singleLineHeight = await rowHeightFor('短い値');
+    const loneCrHeight = await rowHeightFor('1行目\r2行目\r3行目\r4行目');
+    expect(loneCrHeight).toBeGreaterThan(singleLineHeight);
+    expect(loneCrHeight).toBeLessThanOrEqual(110);
+  });
+
   it('keeps section-specific drill-down sheets', async () => {
-    const fieldSheet = await readWorksheetByName(buildDiffXlsxBlob(sampleCtx), 'フィールド技術明細');
+    const blob = buildDiffXlsxBlob(sampleCtx);
+    const fieldSheet = await readWorksheetByName(blob, 'フィールド技術明細');
+    const workbook = await readEntry(blob, 'xl/workbook.xml');
     expect((fieldSheet.match(/<row r="/g) || []).length).toBe(5);
     expect(fieldSheet).toContain('このシートで分かること：フィールド技術明細');
     expect(fieldSheet).toContain('通常の確認は「フィールド差分詳細」、レビュー記録は同じ差分IDの「差分一覧」で行います。');
@@ -2447,6 +2899,8 @@ describe('diff/xlsx-export', () => {
     expect(fieldSheet).toMatch(/<row r="4" ht="([0-9.]+)" customHeight="1">/);
     expect(fieldSheet).toContain('<pane xSplit="4" ySplit="3" topLeftCell="E4" activePane="bottomRight" state="frozen"/>');
     expect(fieldSheet).toContain('<autoFilter ref="A3:H5"/>');
+    expect(fieldSheet).toContain('orientation="landscape" fitToWidth="2" fitToHeight="0"');
+    expect(workbook).toContain('&apos;フィールド技術明細&apos;!$2:$3,&apos;フィールド技術明細&apos;!$A:$E');
   });
 
   it('expands technical long-value rows while keeping a bounded height and a visible reading note', async () => {
@@ -2584,6 +3038,7 @@ describe('diff/xlsx-export', () => {
     const blob = buildDiffXlsxBlob(sampleCtx);
     const summary = await readWorksheetByName(blob, 'フィールド差分要約');
     const detail = await readWorksheetByName(blob, 'フィールド差分詳細');
+    const workbook = await readEntry(blob, 'xl/workbook.xml');
 
     expect(summary).toContain('差分フィールド');
     expect(summary).toContain('変更種別');
@@ -2608,6 +3063,8 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('このシートで分かること：差分があるフィールド');
     expect(summary).toContain('<pane xSplit="5" ySplit="3" topLeftCell="F4" activePane="bottomRight" state="frozen"/>');
     expect(summary).toContain('<autoFilter ref="A3:J5"/>');
+    expect(summary).toContain('orientation="landscape" fitToWidth="2" fitToHeight="0"');
+    expect(workbook).toContain('&apos;フィールド差分要約&apos;!$2:$3,&apos;フィールド差分要約&apos;!$A:$E');
     expect(summary).toContain('<hyperlink ref="I4" location="&apos;フィールド差分詳細&apos;!B4"');
     expect(summary).toContain('<hyperlink ref="I5" location="&apos;フィールド差分詳細&apos;!B5"');
     expect(summary).toContain('<hyperlink ref="J4" location="&apos;差分一覧&apos;!I5"');
@@ -2630,8 +3087,10 @@ describe('diff/xlsx-export', () => {
     expect(detail).toContain('コード: foo');
     expect(detail).not.toContain('&quot;code&quot;: &quot;foo&quot;');
     expect(detail).toContain('このシートで分かること：各フィールドの設定項目');
-    expect(detail).toContain('<pane xSplit="6" ySplit="3" topLeftCell="G4" activePane="bottomRight" state="frozen"/>');
+    expect(detail).toContain('<pane xSplit="4" ySplit="3" topLeftCell="E4" activePane="bottomRight" state="frozen"/>');
     expect(detail).toContain('<autoFilter ref="A3:J5"/>');
+    expect(detail).toContain('orientation="landscape" fitToWidth="2" fitToHeight="0"');
+    expect(workbook).toContain('&apos;フィールド差分詳細&apos;!$2:$3,&apos;フィールド差分詳細&apos;!$A:$D');
     expect(detail).toContain('<hyperlink ref="A4" location="&apos;差分一覧&apos;!I5"');
     expect(detail).toContain('<hyperlink ref="A5" location="&apos;差分一覧&apos;!I4"');
     expect(detail).toContain('<hyperlink ref="J4" location="&apos;フィールド差分要約&apos;!C4"');
@@ -2698,7 +3157,7 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('ほか1件');
   });
 
-  it('truncates field summary values without splitting a surrogate pair', async () => {
+  it('truncates field summary values without splitting a grapheme cluster', async () => {
     const left = `${'a'.repeat(98)}😀tail`;
     const right = `${'b'.repeat(98)}😀tail`;
     const summary = await readWorksheetByName(buildDiffXlsxBlob({
@@ -2708,8 +3167,8 @@ describe('diff/xlsx-export', () => {
       }]
     }), 'フィールド差分要約');
 
-    expect(summary).toContain(`${'a'.repeat(98)}…`);
-    expect(summary).toContain(`${'b'.repeat(98)}…`);
+    expect(summary).toContain(`${'a'.repeat(98)}😀…`);
+    expect(summary).toContain(`${'b'.repeat(98)}😀…`);
     expect(summary).not.toContain('�');
   });
 
@@ -3110,16 +3569,23 @@ describe('diff/xlsx-export', () => {
     expect(summary).not.toContain('差分なしとは判断できません');
     expect(summary).not.toContain('フィールド差分要約');
     expect(summary).not.toContain('取得・未検証');
-    expect((list.match(/<row r="/g) || []).length).toBe(3);
+    expect((list.match(/<row r="/g) || []).length).toBe(4);
     expect(list).toContain('このシートで分かること：このブックに収録された差分');
-    expect(list).toContain('<autoFilter ref="A3:L3"/>');
-    expect(summary).toContain('<hyperlink ref="A26" location="&apos;差分一覧&apos;!A3"');
+    expect(list).toContain('差分はありません');
+    expect(list).toContain('<c r="A4" s="25"');
+    expect(list).toContain('<mergeCell ref="A4:L4"/>');
+    expect(list).not.toContain('<autoFilter');
+    expect(list).not.toContain('xSplit=');
+    expect(workbook).toContain('&apos;差分一覧&apos;!$2:$3</definedName>');
+    expect(workbook).not.toContain('&apos;差分一覧&apos;!$2:$3,&apos;差分一覧&apos;!$A:');
+    expect(summary).toContain('<hyperlink ref="A26" location="&apos;変更対象一覧&apos;!A4"');
+    expect(summary).toContain('<hyperlink ref="A27" location="&apos;差分一覧&apos;!A3"');
     expect(workbook).not.toContain('name="フィールド差分要約"');
     expect(workbook).not.toContain('name="フィールド差分詳細"');
   });
 
   it('keeps an empty filtered internal export neutral instead of declaring no difference', async () => {
-    const summary = await readWorksheetByName(buildDiffXlsxBlob({
+    const blob = buildDiffXlsxBlob({
       audience: 'internal',
       exportMode: 'filtered',
       exportLabel: '表示中（フィルタ適用後）',
@@ -3127,11 +3593,18 @@ describe('diff/xlsx-export', () => {
       fetchIssues: [],
       partialIssues: [],
       scopes: ['fieldSettings']
-    }), '概要');
+    });
+    const summary = await readWorksheetByName(blob, '概要');
+    const list = await readWorksheetByName(blob, '差分一覧');
 
     expect(summary).toContain('絞り込み後：掲載対象なし');
     expect(summary).toContain('<c r="B6" s="24"');
     expect(summary).not.toContain('差分なし');
+    expect(list).toContain('現在の絞り込み条件に該当する変更はありません');
+    expect(list).toContain('<c r="A4" s="24"');
+    expect(list).toContain('<mergeCell ref="A4:L4"/>');
+    expect(list).not.toContain('<autoFilter');
+    expect(list).not.toContain('xSplit=');
   });
 
   it('records fetch failures, partial comparison, and truncation as incomplete', async () => {
@@ -3151,6 +3624,7 @@ describe('diff/xlsx-export', () => {
     });
     const summary = await readWorksheetByName(blob, '概要');
     const issues = await readWorksheetByName(blob, '取得・未検証');
+    const list = await readWorksheetByName(blob, '差分一覧');
     expect(summary).toContain('比較不完全（差分なしとは判断できません）');
     expect(summary).toContain('差分上限 1000 件');
     expect(summary).toContain('一部未検証');
@@ -3162,6 +3636,12 @@ describe('diff/xlsx-export', () => {
     expect(issues).toContain('<c r="A3" s="26"');
     expect(issues).toContain('<c r="A4" s="27"');
     expect(issues).toContain('<c r="A5" s="27"');
+    expect(list).toContain('比較できなかった範囲があります。概要と「取得・未検証」を確認してください');
+    expect(list).toContain('<c r="A4" s="27"');
+    expect(list).toContain('<mergeCell ref="A4:L4"/>');
+    expect(list).not.toContain('差分はありません');
+    expect(list).not.toContain('<autoFilter');
+    expect(list).not.toContain('xSplit=');
   });
 
   it('distinguishes partial, unscanned, and complete truncation counts', async () => {
@@ -3424,6 +3904,24 @@ describe('diff/xlsx-export', () => {
     expect(list).not.toContain('RIGHT_ONLY_TAIL');
   });
 
+  it('clips long-value previews only at grapheme-cluster boundaries', async () => {
+    const list = await readWorksheetByName(buildDiffXlsxBlob({
+      rows: [{
+        sectionKey: 'appSettings',
+        type: 'changed',
+        path: 'appSettings.description',
+        left: '👩‍💻'.repeat(1000),
+        right: '変更後'
+      }]
+    }), '差分一覧');
+    const preview = worksheetInlineTexts(list, 'F', 4)[0];
+    const body = preview.slice(preview.indexOf('\n') + 1, preview.lastIndexOf('\n…'));
+
+    expect(body.endsWith('👩‍💻')).toBe(true);
+    expect(body.endsWith('👩')).toBe(false);
+    expect(preview).not.toContain('�');
+  });
+
   it('applies the same long-value safety preview to field detail values', async () => {
     const common = '値'.repeat(5000);
     const detail = await readWorksheetByName(buildDiffXlsxBlob({
@@ -3456,5 +3954,36 @@ describe('diff/xlsx-export', () => {
     expect(result.filename).toMatch(/app20/i);
     expect(result.filename).toMatch(/\.xlsx$/);
     expect(result.filename).not.toMatch(/[\/:*?"<>|]/);
+  });
+
+  it('sanitizes an explicit customer filename and clips it without splitting graphemes', () => {
+    const result = buildDiffXlsxExportWithSafeDefault({
+      audience: 'customer',
+      rows: [],
+      filename: `\u202Eunsafe/name\u0001${'👩‍💻'.repeat(100)}\uD800.xlsx`
+    });
+
+    expect(result.filename).toMatch(/\.xlsx$/);
+    expect(result.filename.length).toBeLessThanOrEqual(180);
+    expect(result.filename).not.toMatch(/[\\/:*?"<>|\u0000-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u206F]/);
+    expect(hasLoneSurrogate(result.filename)).toBe(false);
+    expect(result.filename.slice(0, -'.xlsx'.length)).not.toMatch(/\u200D$/);
+    expect(result.filename).not.toContain('設定差分確認_');
+  });
+
+  it('preserves both customer App IDs, the timestamp, and the extension within the filename limit', () => {
+    const sharedLongName = `同名アプリ${'👩‍💻長い名前'.repeat(50)}`;
+    const result = buildDiffXlsxExportWithSafeDefault({
+      audience: 'customer',
+      rows: [],
+      sourceBundle: { appId: 101, meta: { appName: sharedLongName } },
+      targetBundle: { appId: 202, meta: { appName: sharedLongName } }
+    });
+
+    expect(result.filename.length).toBeLessThanOrEqual(180);
+    expect(result.filename).toContain('(app101)');
+    expect(result.filename).toContain('(app202)');
+    expect(result.filename).toMatch(/_\d{8}_\d{6}\.xlsx$/);
+    expect(result.filename.slice(0, result.filename.search(/_\d{8}_\d{6}\.xlsx$/))).not.toMatch(/\u200D$/);
   });
 });
