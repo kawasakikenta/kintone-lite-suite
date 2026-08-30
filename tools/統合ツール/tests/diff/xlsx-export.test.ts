@@ -207,7 +207,30 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('<c r="E4" s="12"/>');
     expect(summary).toContain('<c r="F4" s="12"/>');
     for (const cell of ['D6', 'F6', 'D8', 'F8']) expect(summary).toContain(`<c r="${cell}" s="24"`);
-    for (const cell of ['B9', 'C9', 'D9', 'E9', 'F9']) expect(summary).toContain(`<c r="${cell}" s="7"/>`);
+    expect(summary).toContain('この資料の見方');
+    expect(summary).toContain('① 比較概要で件数と比較範囲を確認');
+    expect(summary).toContain('② 変更対象一覧で変更対象を絞る');
+    expect(summary).toContain('③ 変更一覧・機能別シートで内容を確認');
+    expect(summary).toContain('④ 必要に応じて設定値詳細・長文原文で根拠を確認');
+    expect(summary).toContain('追加（緑）：比較先だけ');
+    expect(summary).toContain('削除（赤）：比較元だけ');
+    expect(summary).toContain('変更（黄）：値・設定内容');
+    expect(summary).toContain('並び順変更（紫）：順番だけ');
+    expect(summary).toContain('取得失敗ではありません');
+    expect(summary).toContain('<mergeCell ref="A9:F9"/>');
+    expect(summary).toContain('<mergeCell ref="B10:F10"/>');
+    expect(summary).toContain('<mergeCell ref="E11:F11"/>');
+    expect(summary).toContain('<mergeCell ref="B12:C12"/>');
+    expect(summary).toContain('<mergeCell ref="E12:F12"/>');
+    expect(summary).toMatch(/<c r="A9" s="7"/);
+    expect(summary).toMatch(/<c r="B10" s="12"/);
+    for (const [cell, style] of [['B11', 25], ['C11', 26], ['D11', 27], ['E11', 28]] as const) {
+      expect(summary).toMatch(new RegExp(`<c r="${cell}" s="${style}"`));
+    }
+    expect(summary).toMatch(/<c r="D12" s="39"/);
+    for (const cell of ['B13', 'C13', 'D13', 'E13', 'F13']) expect(summary).toContain(`<c r="${cell}" s="7"/>`);
+    expect(summary).toContain('<autoFilter ref="A14:F15"/>');
+    expect(summary).toContain('<hyperlink ref="A15" location="&apos;01_アプリ一般設定&apos;!A1"');
     expect(summary).toContain('<mergeCell ref="A2:B2"/>');
     expect(summary).toContain('<mergeCell ref="D2:F2"/>');
     expect(summary).toContain('<mergeCell ref="D3:E3"/>');
@@ -331,6 +354,10 @@ describe('diff/xlsx-export', () => {
     expect(targets).toMatch(/<c r="F4"[^>]*><v>3<\/v><\/c>/);
     expect(targets).toContain('<hyperlink ref="G3" location="&apos;変更一覧&apos;!D2"');
     expect(targets).toContain('<hyperlink ref="G4" location="&apos;変更一覧&apos;!D4"');
+    expect(targets).toMatch(/<c r="B3" s="2"/);
+    expect(targets).toMatch(/<c r="B4" s="23"/);
+    expect(targets).toMatch(/<c r="D4" s="27"/);
+    expect(targets).toMatch(/<c r="G4" s="30"/);
     expect(targets).not.toContain('一覧追加');
     expect(targets).not.toContain('一覧削除');
   });

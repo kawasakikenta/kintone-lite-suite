@@ -4440,12 +4440,13 @@ function buildCustomerCoarseTargetSheet(ctx: DiffXlsxContext, allItems: Customer
     ]);
     rowStyles.push('normal');
     const alternate = index % 2 === 1;
+    const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
     const styles: Array<XlsxCellStyle | undefined> = [];
     styles[0] = alternate ? 'zebraCenter' : 'center';
-    styles[1] = 'category';
-    styles[2] = alternate ? 'zebra' : 'normal';
+    styles[1] = baseStyle;
+    styles[2] = baseStyle;
     styles[3] = stateStyles[target.changeState] || 'changeChanged';
-    styles[4] = alternate ? 'zebra' : 'normal';
+    styles[4] = baseStyle;
     styles[5] = alternate ? 'zebraCenter' : 'center';
     styles[6] = 'actionLink';
     cellStyles.push(styles);
@@ -4724,6 +4725,34 @@ function buildCustomerSummarySheet(
   }
   const redundantNoteRow = redundantItems.length ? rows.length : -1;
   if (redundantNoteRow >= 0) rows.push(['参考として別シートに掲載', redundantNote, '', '', '', '']);
+  const guideTitleRow = rows.length;
+  const guideFlowRow = guideTitleRow + 1;
+  const guideColorRow = guideTitleRow + 2;
+  const guideLinkRow = guideTitleRow + 3;
+  rows.push(
+    ['この資料の見方', '', '', '', '', ''],
+    [
+      '読む順番',
+      '① 比較概要で件数と比較範囲を確認 → ② 変更対象一覧で変更対象を絞る → ③ 変更一覧・機能別シートで内容を確認 → ④ 必要に応じて設定値詳細・長文原文で根拠を確認',
+      '', '', '', ''
+    ],
+    [
+      '色の意味',
+      '追加（緑）：比較先だけ',
+      '削除（赤）：比較元だけ',
+      '変更（黄）：値・設定内容',
+      '並び順変更（紫）：順番だけ',
+      ''
+    ],
+    [
+      'リンク',
+      '青い「変更一覧へ」やNo.は、関連するシート・明細へ移動します',
+      '',
+      '存在しません',
+      'その側に設定・対象がないことを示します（取得失敗ではありません）',
+      ''
+    ]
+  );
   const breakdownTitleRow = apiGroups.length ? rows.length : -1;
   const breakdownHeaderRow = apiGroups.length ? rows.length + 1 : -1;
   if (apiGroups.length) {
@@ -4790,6 +4819,12 @@ function buildCustomerSummarySheet(
     cellStyles[redundantNoteRow][0] = 'summaryLabel';
     cellStyles[redundantNoteRow][1] = 'info';
   }
+  cellStyles[guideTitleRow] = Array.from({ length: 6 }, () => 'sectionHeader');
+  cellStyles[guideFlowRow] = ['summaryLabel', 'info', 'info', 'info', 'info', 'info'];
+  cellStyles[guideColorRow] = [
+    'summaryLabel', 'changeAdded', 'changeRemoved', 'changeChanged', 'changeMoved', 'changeMoved'
+  ];
+  cellStyles[guideLinkRow] = ['summaryLabel', 'info', 'info', 'diffAbsent', 'info', 'info'];
   if (breakdownTitleRow >= 0) {
     cellStyles[breakdownTitleRow] = Array.from({ length: 6 }, () => 'sectionHeader');
     const firstDataRow = breakdownHeaderRow + 1;
@@ -4829,6 +4864,13 @@ function buildCustomerSummarySheet(
         { value: row[1], width: 92 }
       ], 395);
       if (index === redundantNoteRow) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
+      if (index === guideTitleRow) return 30;
+      if (index === guideFlowRow) return readableCustomerRowHeight([{ value: row[1], width: 98 }], 72);
+      if (index === guideColorRow) return 42;
+      if (index === guideLinkRow) return readableCustomerRowHeight([
+        { value: row[1], width: 44 },
+        { value: row[4], width: 38 }
+      ], 72);
       if (index === breakdownTitleRow) return 30;
       return index === breakdownHeaderRow ? 32 : 26;
     }),
@@ -4836,6 +4878,11 @@ function buildCustomerSummarySheet(
       'A1:F1', 'A2:B2', 'D2:F2', 'D3:E3', 'B7:F7',
       ...(fullAppNameRow >= 0 ? [`B${fullAppNameRow + 1}:F${fullAppNameRow + 1}`] : []),
       ...(redundantNoteRow >= 0 ? [`B${redundantNoteRow + 1}:F${redundantNoteRow + 1}`] : []),
+      `A${guideTitleRow + 1}:F${guideTitleRow + 1}`,
+      `B${guideFlowRow + 1}:F${guideFlowRow + 1}`,
+      `E${guideColorRow + 1}:F${guideColorRow + 1}`,
+      `B${guideLinkRow + 1}:C${guideLinkRow + 1}`,
+      `E${guideLinkRow + 1}:F${guideLinkRow + 1}`,
       ...(breakdownTitleRow >= 0 ? [`A${breakdownTitleRow + 1}:F${breakdownTitleRow + 1}`] : [])
     ],
     internalHyperlinks: breakdownHeaderRow >= 0 ? [
