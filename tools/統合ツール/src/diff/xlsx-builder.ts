@@ -153,6 +153,7 @@ export type XlsxCellStyle =
   | 'changeMoved'
   | 'actionLink'
   | 'category'
+  | 'categoryPlain'
   | 'directionArrow'
   | 'metricValueAdded'
   | 'metricValueRemoved'
@@ -382,6 +383,7 @@ const CELL_STYLE_INDEX: Record<XlsxCellStyle, number> = {
   reviewChoice: 29,
   actionLink: 30,
   category: 31,
+  categoryPlain: 45,
   directionArrow: 32,
   metricValueAdded: 33,
   metricValueRemoved: 34,
@@ -771,6 +773,7 @@ const RAW_TEXT_STYLES = new Set<XlsxCellStyle>([
   'diffBeforeLink',
   'diffAfterLink'
 ]);
+const CATEGORY_PLAIN_STYLES = new Set<XlsxCellStyle>(['categoryPlain']);
 
 function sheetsUseStyles(sheets: XlsxSheet[], styles: Set<XlsxCellStyle>): boolean {
   return sheets.some((sheet) => (
@@ -779,12 +782,19 @@ function sheetsUseStyles(sheets: XlsxSheet[], styles: Set<XlsxCellStyle>): boole
   ));
 }
 
-function buildStylesXml(includeCustomerDiffStyles: boolean, includeRawTextStyles: boolean): string {
+function buildStylesXml(
+  includeCustomerDiffStyles: boolean,
+  includeRawTextStyles: boolean,
+  includeCategoryPlainStyle: boolean
+): string {
+  // categoryPlain は既存 index を変えず 45 番へ追加するため、単独利用時も 40..44 番を出力する。
+  const includeRawTextStyleRange = includeRawTextStyles || includeCategoryPlainStyle;
   // 色は「比較方向」「変更事実」「情報区分」の役割に限定する。
   // 0: 既定 / 1: 表見出し / 2: データ / 3..36: 共通UI / 37..39: 提出版の変更前後
   // 40..42: raw text（変更前・変更後・警告を区別する等幅表示） / 43..44: リンク付き変更前後
+  // 45: 白背景カテゴリ（既存 category の太字を維持）
   return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`
-    + `<fonts count="${includeRawTextStyles ? 21 : includeCustomerDiffStyles ? 18 : 16}">`
+    + `<fonts count="${includeRawTextStyleRange ? 21 : includeCustomerDiffStyles ? 18 : 16}">`
     +   '<font><sz val="11"/><name val="Meiryo"/></font>'
     +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font>'
     +   '<font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font>'
@@ -805,7 +815,7 @@ function buildStylesXml(includeCustomerDiffStyles: boolean, includeRawTextStyles
       ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font>'
         + '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>'
       : '')
-    +   (includeRawTextStyles
+    +   (includeRawTextStyleRange
       ? '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF991B1B"/></font>'
         + '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF166534"/></font>'
         + '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF92400E"/></font>'
@@ -828,7 +838,7 @@ function buildStylesXml(includeCustomerDiffStyles: boolean, includeRawTextStyles
     +   '<border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
     + '</borders>'
     + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    + `<cellXfs count="${includeRawTextStyles ? 45 : includeCustomerDiffStyles ? 40 : 37}">`
+    + `<cellXfs count="${includeCategoryPlainStyle ? 46 : includeRawTextStyleRange ? 45 : includeCustomerDiffStyles ? 40 : 37}">`
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
     +   '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
@@ -871,12 +881,15 @@ function buildStylesXml(includeCustomerDiffStyles: boolean, includeRawTextStyles
         + '<xf numFmtId="0" fontId="17" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
         + '<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
       : '')
-    +   (includeRawTextStyles
+    +   (includeRawTextStyleRange
       ? '<xf numFmtId="0" fontId="18" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
         + '<xf numFmtId="0" fontId="19" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
         + '<xf numFmtId="0" fontId="20" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
         + '<xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
         + '<xf numFmtId="0" fontId="5" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+      : '')
+    +   (includeCategoryPlainStyle
+      ? '<xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
       : '')
     + '</cellXfs>'
     + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
@@ -895,15 +908,21 @@ export function buildXlsxBlob(sheets: XlsxSheet[]): Blob {
   const safeSheetNames = safe.map((sheet) => sheet.name);
   const hyperlinksBySheet = safe.map((sheet) => resolveInternalHyperlinks(sheets, safeSheetNames, sheet.internalHyperlinks));
   const includeRawTextStyles = sheetsUseStyles(safe, RAW_TEXT_STYLES);
-  // raw style は 40 番以降なので、37..39 番も出力して既存の style index を維持する。
-  const includeCustomerDiffStyles = includeRawTextStyles || sheetsUseStyles(safe, CUSTOMER_DIFF_STYLES);
+  const includeCategoryPlainStyle = sheetsUseStyles(safe, CATEGORY_PLAIN_STYLES);
+  // raw style は 40 番以降、categoryPlain は 45 番なので、間の style も出力して既存 index を維持する。
+  const includeCustomerDiffStyles = includeRawTextStyles
+    || includeCategoryPlainStyle
+    || sheetsUseStyles(safe, CUSTOMER_DIFF_STYLES);
 
   const entries: StoredZipEntry[] = [
     { name: '[Content_Types].xml', data: enc.encode(buildContentTypes(safe)) },
     { name: '_rels/.rels', data: enc.encode(buildRootRels()) },
     { name: 'xl/workbook.xml', data: enc.encode(buildWorkbookXml(safe)) },
     { name: 'xl/_rels/workbook.xml.rels', data: enc.encode(buildWorkbookRels(safe)) },
-    { name: 'xl/styles.xml', data: enc.encode(buildStylesXml(includeCustomerDiffStyles, includeRawTextStyles)) }
+    {
+      name: 'xl/styles.xml',
+      data: enc.encode(buildStylesXml(includeCustomerDiffStyles, includeRawTextStyles, includeCategoryPlainStyle))
+    }
   ];
   safe.forEach((s, i) => {
     entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(buildSheetXml(s, hyperlinksBySheet[i])) });

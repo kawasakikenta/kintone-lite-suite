@@ -4441,9 +4441,10 @@ function buildCustomerCoarseTargetSheet(ctx: DiffXlsxContext, allItems: Customer
     rowStyles.push('normal');
     const alternate = index % 2 === 1;
     const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
+    const categoryStyle: XlsxCellStyle = alternate ? 'category' : 'categoryPlain';
     const styles: Array<XlsxCellStyle | undefined> = [];
     styles[0] = alternate ? 'zebraCenter' : 'center';
-    styles[1] = baseStyle;
+    styles[1] = categoryStyle;
     styles[2] = baseStyle;
     styles[3] = stateStyles[target.changeState] || 'changeChanged';
     styles[4] = baseStyle;
@@ -4670,10 +4671,65 @@ function customerDateTime(value: unknown): string {
   return Number.isFinite(date.getTime()) ? humanDateTime(date.toISOString()) : '未記録';
 }
 
+interface CustomerSummarySheetAvailability {
+  hasIssues: boolean;
+  hasFeatureSheets: boolean;
+  hasValueDetails: boolean;
+  hasLongRaw: boolean;
+}
+
+function customerSummaryReadingOrder(
+  ctx: DiffXlsxContext,
+  primaryItems: CustomerDiffItem[],
+  redundantItems: CustomerDiffItem[],
+  availability: CustomerSummarySheetAvailability
+): string {
+  const steps: string[] = [];
+  if (availability.hasIssues && ctx.exportMode === 'filtered') {
+    steps.push('比較概要で件数・絞り込みと確認できた範囲を確認');
+  } else if (availability.hasIssues) {
+    steps.push('比較概要で件数と確認できた範囲を確認');
+  } else if (ctx.exportMode === 'filtered') {
+    steps.push('比較概要で件数・比較範囲・絞り込みを確認');
+  } else {
+    steps.push('比較概要で件数と比較範囲を確認');
+  }
+
+  if (availability.hasIssues) {
+    steps.push('確認できなかった範囲で未取得・未確認の設定を確認');
+  }
+
+  if (primaryItems.length) {
+    steps.push('変更対象一覧で変更対象を絞る');
+    const contentSheets = ['変更一覧'];
+    if (availability.hasFeatureSheets) contentSheets.push('機能別シート');
+    steps.push(`${contentSheets.join('・')}で内容を確認`);
+  } else if (redundantItems.length && availability.hasFeatureSheets) {
+    steps.push('機能別シート（参考・再掲）で参考情報を確認');
+  } else if (ctx.exportMode === 'filtered') {
+    steps.push('変更対象一覧・変更一覧で絞り込み後の掲載対象がないことを確認');
+  } else if (availability.hasIssues) {
+    steps.push('変更対象一覧・変更一覧で確認できた範囲に掲載対象がないことを確認');
+  } else {
+    steps.push('変更対象一覧・変更一覧で差分がないことを確認');
+  }
+
+  const evidenceSheets: string[] = [];
+  if (availability.hasValueDetails) evidenceSheets.push('設定値詳細');
+  if (availability.hasLongRaw) evidenceSheets.push('長文原文');
+  if (evidenceSheets.length) {
+    steps.push(`必要に応じて${evidenceSheets.join('・')}で根拠を確認`);
+  }
+
+  const markers = ['①', '②', '③', '④', '⑤'];
+  return steps.map((step, index) => `${markers[index]} ${step}`).join(' → ');
+}
+
 function buildCustomerSummarySheet(
   ctx: DiffXlsxContext,
   items: CustomerDiffItem[],
-  apiGroups: CustomerApiGroup[]
+  apiGroups: CustomerApiGroup[],
+  availability: CustomerSummarySheetAvailability
 ): XlsxSheet {
   const primaryItems = customerPrimaryItems(items);
   const redundantItems = items.filter((item) => item.redundant);
@@ -4729,11 +4785,12 @@ function buildCustomerSummarySheet(
   const guideFlowRow = guideTitleRow + 1;
   const guideColorRow = guideTitleRow + 2;
   const guideLinkRow = guideTitleRow + 3;
+  const readingOrder = customerSummaryReadingOrder(ctx, primaryItems, redundantItems, availability);
   rows.push(
     ['この資料の見方', '', '', '', '', ''],
     [
       '読む順番',
-      '① 比較概要で件数と比較範囲を確認 → ② 変更対象一覧で変更対象を絞る → ③ 変更一覧・機能別シートで内容を確認 → ④ 必要に応じて設定値詳細・長文原文で根拠を確認',
+      readingOrder,
       '', '', '', ''
     ],
     [
@@ -4904,7 +4961,10 @@ function buildCustomerSummarySheet(
     print: {
       orientation: 'landscape',
       fitToWidth: 1,
-      fitToHeight: 1,
+      fitToHeight: 0,
+      repeatRows: breakdownHeaderRow >= 0
+        ? { from: breakdownHeaderRow + 1, to: breakdownHeaderRow + 1 }
+        : undefined,
       horizontalCentered: true,
       footer: '&Lkintone 設定差分確認レポート&Rページ &P / &N'
     }
@@ -5097,6 +5157,7 @@ function buildCustomerGenericApiDiffSheet(ctx: DiffXlsxContext, group: CustomerA
   items.forEach((item, index) => {
     const alternate = index % 2 === 1;
     const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
+    const categoryStyle: XlsxCellStyle = alternate ? 'category' : 'categoryPlain';
     const startsTarget = index === 0 || items[index - 1]?.target !== item.target;
     const target = definition.key === 'unknown'
       ? `${item.sectionLabel}\n${item.target}`
@@ -5114,7 +5175,7 @@ function buildCustomerGenericApiDiffSheet(ctx: DiffXlsxContext, group: CustomerA
     cellStyles.push([
       'actionLink',
       changeStyles[item.changeType],
-      startsTarget ? 'category' : baseStyle,
+      startsTarget ? categoryStyle : baseStyle,
       baseStyle,
       beforeStyle,
       afterStyle
@@ -5207,6 +5268,7 @@ function buildCustomerViewDiffSheet(
     const startsTarget = index === 0 || viewName !== previousName;
     const alternate = index % 2 === 1;
     const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
+    const categoryStyle: XlsxCellStyle = alternate ? 'category' : 'categoryPlain';
     rows.push([
       item.index + 1,
       item.changeType,
@@ -5220,7 +5282,7 @@ function buildCustomerViewDiffSheet(
     cellStyles.push([
       'actionLink',
       changeStyles[item.changeType],
-      startsTarget ? 'category' : baseStyle,
+      startsTarget ? categoryStyle : baseStyle,
       baseStyle,
       beforeStyle,
       afterStyle
@@ -5309,6 +5371,7 @@ function buildCustomerActionDiffSheet(
     const startsTarget = index === 0 || `${item.sectionKey}:${actionName}` !== previousName;
     const alternate = index % 2 === 1;
     const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
+    const categoryStyle: XlsxCellStyle = alternate ? 'category' : 'categoryPlain';
     rows.push([
       item.index + 1,
       item.changeType,
@@ -5324,7 +5387,7 @@ function buildCustomerActionDiffSheet(
       'actionLink',
       changeStyles[item.changeType],
       baseStyle,
-      startsTarget ? 'category' : baseStyle,
+      startsTarget ? categoryStyle : baseStyle,
       baseStyle,
       beforeStyle,
       afterStyle
@@ -5427,11 +5490,12 @@ function buildCustomerFieldDiffSheet(
     rowOutlines.push(item.tableChild ? { level: 1 } : undefined);
     const alternate = index % 2 === 1;
     const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
+    const categoryStyle: XlsxCellStyle = alternate ? 'category' : 'categoryPlain';
     const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
     const styles: Array<XlsxCellStyle | undefined> = Array.from({ length: headers.length }, () => baseStyle);
     styles[0] = actualIndex == null ? (alternate ? 'zebraCenter' : 'center') : 'actionLink';
     styles[1] = changeStyles[item.changeType];
-    styles[2] = field.structure === 'テーブル' ? 'category' : baseStyle;
+    styles[2] = field.structure === 'テーブル' ? categoryStyle : baseStyle;
     styles[7] = alternate ? 'zebraCenter' : 'center';
     styles[8] = alternate ? 'zebraCenter' : 'center';
     styles[9] = beforeStyle;
@@ -5577,12 +5641,14 @@ function buildCustomerValueDetailSheet(
     rowStyles.push('normal');
     const startsCategory = index === 0 || items[index - 1]?.sectionLabel !== item.sectionLabel;
     const alternate = index % 2 === 1;
+    const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
+    const categoryStyle: XlsxCellStyle = alternate ? 'category' : 'categoryPlain';
     const styles: Array<XlsxCellStyle | undefined> = [];
     styles[0] = alternate ? 'zebraCenter' : 'center';
     styles[1] = changeStyles[item.changeType];
-    styles[2] = startsCategory ? 'category' : alternate ? 'zebra' : 'normal';
-    styles[3] = alternate ? 'zebra' : 'normal';
-    styles[4] = alternate ? 'zebra' : 'normal';
+    styles[2] = startsCategory ? categoryStyle : baseStyle;
+    styles[3] = baseStyle;
+    styles[4] = baseStyle;
     styles[5] = beforeContinuation ? 'diffBeforeLink' : item.rawBefore.state === '存在しません' ? 'diffAbsent' : 'rawDiffBefore';
     styles[6] = afterContinuation ? 'diffAfterLink' : item.rawAfter.state === '存在しません' ? 'diffAbsent' : 'rawDiffAfter';
     styles[7] = 'actionLink';
@@ -5918,15 +5984,22 @@ function buildCustomerDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
   );
   const issueContinuations = buildCustomerIssueRawContinuations(issueItems, nextLongRawRow);
   const allContinuations: CustomerRawContinuation[] = [...differenceContinuations, ...issueContinuations];
-  const sheets: XlsxSheet[] = [buildCustomerSummarySheet(ctx, items, apiGroups)];
   const issues = buildCustomerIssuesSheet(issueItems, issueContinuations);
+  const apiSheets = buildCustomerApiDiffSheets(ctx, apiGroups, items);
+  const valueDetails = buildCustomerValueDetailSheet(ctx, items, differenceContinuations);
+  const longRaw = buildCustomerLongRawSheet(allContinuations);
+  const summary = buildCustomerSummarySheet(ctx, items, apiGroups, {
+    hasIssues: !!issues,
+    hasFeatureSheets: apiSheets.length > 0,
+    hasValueDetails: !!valueDetails,
+    hasLongRaw: !!longRaw
+  });
+  const sheets: XlsxSheet[] = [summary];
   if (issues) sheets.push(issues);
   sheets.push(buildCustomerCoarseTargetSheet(ctx, items));
   sheets.push(buildCustomerListSheet(ctx, items, apiGroups));
-  sheets.push(...buildCustomerApiDiffSheets(ctx, apiGroups, items));
-  const valueDetails = buildCustomerValueDetailSheet(ctx, items, differenceContinuations);
+  sheets.push(...apiSheets);
   if (valueDetails) sheets.push(valueDetails);
-  const longRaw = buildCustomerLongRawSheet(allContinuations);
   if (longRaw) sheets.push(longRaw);
   return sheets;
 }
