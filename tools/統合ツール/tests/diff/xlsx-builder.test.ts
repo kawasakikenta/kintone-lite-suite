@@ -705,6 +705,44 @@ describe('diff/xlsx-builder', () => {
     expect(cellXfEntries[44]).toContain('<alignment vertical="top" wrapText="1"/>');
   });
 
+  it('appends a white category style at index 45 without shifting existing XFs', async () => {
+    const categoryBuf = await blobToBuffer(buildXlsxBlob([{
+      name: 'S',
+      rows: [['plain category', 'zebra category']],
+      cellStyles: [['categoryPlain', 'category']]
+    }]));
+    const rawBaselineBuf = await blobToBuffer(buildXlsxBlob([{
+      name: 'S',
+      rows: [['raw']],
+      cellStyles: [['rawDiffBefore']]
+    }]));
+    const xml = extractEntry(categoryBuf, 'xl/worksheets/sheet1.xml');
+    const styles = extractEntry(categoryBuf, 'xl/styles.xml');
+    const rawBaselineStyles = extractEntry(rawBaselineBuf, 'xl/styles.xml');
+
+    expect(xml).toMatch(/<c r="A1" s="45"/);
+    expect(xml).toMatch(/<c r="B1" s="31"/);
+    expect(xml).not.toMatch(/\bs="4[0-4]"/);
+    expect(styles).toContain('<fonts count="21">');
+    expect(styles).toContain('<cellXfs count="46">');
+
+    const cellXfsBlock = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(styles)?.[1] || '';
+    const rawCellXfsBlock = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(rawBaselineStyles)?.[1] || '';
+    const cellXfs = [...cellXfsBlock.matchAll(/<xf\b[^>]*\/>|<xf\b[^>]*>[\s\S]*?<\/xf>/g)]
+      .map((match) => match[0]);
+    const rawCellXfs = [...rawCellXfsBlock.matchAll(/<xf\b[^>]*\/>|<xf\b[^>]*>[\s\S]*?<\/xf>/g)]
+      .map((match) => match[0]);
+    expect(cellXfs).toHaveLength(46);
+    expect(rawCellXfs).toHaveLength(45);
+    expect(cellXfs.slice(0, 45)).toEqual(rawCellXfs);
+    expect(cellXfs[45]).toContain('fontId="4" fillId="0" borderId="1"');
+    expect(cellXfs[45]).toContain('applyFont="1"');
+    expect(cellXfs[45]).toContain('applyBorder="1"');
+    expect(cellXfs[45]).toContain('applyAlignment="1"');
+    expect(cellXfs[45]).not.toContain('applyFill="1"');
+    expect(cellXfs[45]).toContain('<alignment vertical="top" wrapText="1"/>');
+  });
+
   it('maps semantic aliases to existing style indexes without adding XFs', async () => {
     const sheets: XlsxSheet[] = [{
       name: 'S',

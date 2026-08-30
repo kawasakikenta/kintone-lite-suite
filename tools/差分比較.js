@@ -11621,6 +11621,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     reviewChoice: 29,
     actionLink: 30,
     category: 31,
+    categoryPlain: 45,
     directionArrow: 32,
     metricValueAdded: 33,
     metricValueRemoved: 34,
@@ -11912,11 +11913,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     "diffBeforeLink",
     "diffAfterLink"
   ]);
+  var CATEGORY_PLAIN_STYLES = /* @__PURE__ */ new Set(["categoryPlain"]);
   function sheetsUseStyles(sheets, styles) {
     return sheets.some((sheet) => sheet.rowStyles?.some((style) => styles.has(style)) || sheet.cellStyles?.some((row) => row?.some((style) => !!style && styles.has(style))));
   }
-  function buildStylesXml(includeCustomerDiffStyles, includeRawTextStyles) {
-    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="${includeRawTextStyles ? 21 : includeCustomerDiffStyles ? 18 : 16}"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF2563EB"/></font>` + (includeCustomerDiffStyles ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>' : "") + (includeRawTextStyles ? '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF166534"/></font><font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF92400E"/></font>' : "") + `</fonts><fills count="10"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${includeRawTextStyles ? 45 : includeCustomerDiffStyles ? 40 : 37}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="7" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="8" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="9" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="10" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="15" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="11" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="12" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="13" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="14" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>` + (includeCustomerDiffStyles ? '<xf numFmtId="0" fontId="16" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="17" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>' : "") + (includeRawTextStyles ? '<xf numFmtId="0" fontId="18" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="19" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="20" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' : "") + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+  function buildStylesXml(includeCustomerDiffStyles, includeRawTextStyles, includeCategoryPlainStyle) {
+    const includeRawTextStyleRange = includeRawTextStyles || includeCategoryPlainStyle;
+    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="${includeRawTextStyleRange ? 21 : includeCustomerDiffStyles ? 18 : 16}"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF2563EB"/></font>` + (includeCustomerDiffStyles ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>' : "") + (includeRawTextStyleRange ? '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF166534"/></font><font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF92400E"/></font>' : "") + `</fonts><fills count="10"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${includeCategoryPlainStyle ? 46 : includeRawTextStyleRange ? 45 : includeCustomerDiffStyles ? 40 : 37}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="7" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="8" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="9" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="10" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="15" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="11" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="12" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="13" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="14" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>` + (includeCustomerDiffStyles ? '<xf numFmtId="0" fontId="16" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="17" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>' : "") + (includeRawTextStyleRange ? '<xf numFmtId="0" fontId="18" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="19" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="20" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' : "") + (includeCategoryPlainStyle ? '<xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' : "") + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
   }
   function buildXlsxBlob(sheets) {
     assertWorkbookShape(sheets);
@@ -11926,13 +11929,17 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const safeSheetNames = safe.map((sheet) => sheet.name);
     const hyperlinksBySheet = safe.map((sheet) => resolveInternalHyperlinks(sheets, safeSheetNames, sheet.internalHyperlinks));
     const includeRawTextStyles = sheetsUseStyles(safe, RAW_TEXT_STYLES);
-    const includeCustomerDiffStyles = includeRawTextStyles || sheetsUseStyles(safe, CUSTOMER_DIFF_STYLES);
+    const includeCategoryPlainStyle = sheetsUseStyles(safe, CATEGORY_PLAIN_STYLES);
+    const includeCustomerDiffStyles = includeRawTextStyles || includeCategoryPlainStyle || sheetsUseStyles(safe, CUSTOMER_DIFF_STYLES);
     const entries = [
       { name: "[Content_Types].xml", data: enc.encode(buildContentTypes(safe)) },
       { name: "_rels/.rels", data: enc.encode(buildRootRels()) },
       { name: "xl/workbook.xml", data: enc.encode(buildWorkbookXml(safe)) },
       { name: "xl/_rels/workbook.xml.rels", data: enc.encode(buildWorkbookRels(safe)) },
-      { name: "xl/styles.xml", data: enc.encode(buildStylesXml(includeCustomerDiffStyles, includeRawTextStyles)) }
+      {
+        name: "xl/styles.xml",
+        data: enc.encode(buildStylesXml(includeCustomerDiffStyles, includeRawTextStyles, includeCategoryPlainStyle))
+      }
     ];
     safe.forEach((s, i) => {
       entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(buildSheetXml(s, hyperlinksBySheet[i])) });
@@ -15321,9 +15328,10 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       rowStyles.push("normal");
       const alternate = index % 2 === 1;
       const baseStyle = alternate ? "zebra" : "normal";
+      const categoryStyle = alternate ? "category" : "categoryPlain";
       const styles = [];
       styles[0] = alternate ? "zebraCenter" : "center";
-      styles[1] = baseStyle;
+      styles[1] = categoryStyle;
       styles[2] = baseStyle;
       styles[3] = stateStyles[target.changeState] || "changeChanged";
       styles[4] = baseStyle;
@@ -15508,7 +15516,44 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const date = new Date(normalized);
     return Number.isFinite(date.getTime()) ? humanDateTime(date.toISOString()) : "未記録";
   }
-  function buildCustomerSummarySheet(ctx, items, apiGroups) {
+  function customerSummaryReadingOrder(ctx, primaryItems, redundantItems, availability) {
+    const steps = [];
+    if (availability.hasIssues && ctx.exportMode === "filtered") {
+      steps.push("比較概要で件数・絞り込みと確認できた範囲を確認");
+    } else if (availability.hasIssues) {
+      steps.push("比較概要で件数と確認できた範囲を確認");
+    } else if (ctx.exportMode === "filtered") {
+      steps.push("比較概要で件数・比較範囲・絞り込みを確認");
+    } else {
+      steps.push("比較概要で件数と比較範囲を確認");
+    }
+    if (availability.hasIssues) {
+      steps.push("確認できなかった範囲で未取得・未確認の設定を確認");
+    }
+    if (primaryItems.length) {
+      steps.push("変更対象一覧で変更対象を絞る");
+      const contentSheets = ["変更一覧"];
+      if (availability.hasFeatureSheets) contentSheets.push("機能別シート");
+      steps.push(`${contentSheets.join("・")}で内容を確認`);
+    } else if (redundantItems.length && availability.hasFeatureSheets) {
+      steps.push("機能別シート（参考・再掲）で参考情報を確認");
+    } else if (ctx.exportMode === "filtered") {
+      steps.push("変更対象一覧・変更一覧で絞り込み後の掲載対象がないことを確認");
+    } else if (availability.hasIssues) {
+      steps.push("変更対象一覧・変更一覧で確認できた範囲に掲載対象がないことを確認");
+    } else {
+      steps.push("変更対象一覧・変更一覧で差分がないことを確認");
+    }
+    const evidenceSheets = [];
+    if (availability.hasValueDetails) evidenceSheets.push("設定値詳細");
+    if (availability.hasLongRaw) evidenceSheets.push("長文原文");
+    if (evidenceSheets.length) {
+      steps.push(`必要に応じて${evidenceSheets.join("・")}で根拠を確認`);
+    }
+    const markers = ["①", "②", "③", "④", "⑤"];
+    return steps.map((step, index) => `${markers[index]} ${step}`).join(" → ");
+  }
+  function buildCustomerSummarySheet(ctx, items, apiGroups, availability) {
     const primaryItems = customerPrimaryItems(items);
     const redundantItems = items.filter((item) => item.redundant);
     const counts = summarizeCustomerItems(primaryItems);
@@ -15549,11 +15594,12 @@ ${targetName}`, "", ""],
     const guideFlowRow = guideTitleRow + 1;
     const guideColorRow = guideTitleRow + 2;
     const guideLinkRow = guideTitleRow + 3;
+    const readingOrder = customerSummaryReadingOrder(ctx, primaryItems, redundantItems, availability);
     rows.push(
       ["この資料の見方", "", "", "", "", ""],
       [
         "読む順番",
-        "① 比較概要で件数と比較範囲を確認 → ② 変更対象一覧で変更対象を絞る → ③ 変更一覧・機能別シートで内容を確認 → ④ 必要に応じて設定値詳細・長文原文で根拠を確認",
+        readingOrder,
         "",
         "",
         "",
@@ -15726,7 +15772,8 @@ ${targetName}`, "", ""],
       print: {
         orientation: "landscape",
         fitToWidth: 1,
-        fitToHeight: 1,
+        fitToHeight: 0,
+        repeatRows: breakdownHeaderRow >= 0 ? { from: breakdownHeaderRow + 1, to: breakdownHeaderRow + 1 } : void 0,
         horizontalCentered: true,
         footer: "&Lkintone 設定差分確認レポート&Rページ &P / &N"
       }
@@ -15896,6 +15943,7 @@ ${changeSummary}`, width: 24 },
     items.forEach((item, index) => {
       const alternate = index % 2 === 1;
       const baseStyle = alternate ? "zebra" : "normal";
+      const categoryStyle = alternate ? "category" : "categoryPlain";
       const startsTarget = index === 0 || items[index - 1]?.target !== item.target;
       const target = definition.key === "unknown" ? `${item.sectionLabel}
 ${item.target}` : item.target;
@@ -15912,7 +15960,7 @@ ${item.target}` : item.target;
       cellStyles.push([
         "actionLink",
         changeStyles[item.changeType],
-        startsTarget ? "category" : baseStyle,
+        startsTarget ? categoryStyle : baseStyle,
         baseStyle,
         beforeStyle,
         afterStyle
@@ -15991,6 +16039,7 @@ ${item.target}` : item.target;
       const startsTarget = index === 0 || viewName !== previousName;
       const alternate = index % 2 === 1;
       const baseStyle = alternate ? "zebra" : "normal";
+      const categoryStyle = alternate ? "category" : "categoryPlain";
       rows.push([
         item.index + 1,
         item.changeType,
@@ -16004,7 +16053,7 @@ ${item.target}` : item.target;
       cellStyles.push([
         "actionLink",
         changeStyles[item.changeType],
-        startsTarget ? "category" : baseStyle,
+        startsTarget ? categoryStyle : baseStyle,
         baseStyle,
         beforeStyle,
         afterStyle
@@ -16080,6 +16129,7 @@ ${item.target}` : item.target;
       const startsTarget = index === 0 || `${item.sectionKey}:${actionName}` !== previousName;
       const alternate = index % 2 === 1;
       const baseStyle = alternate ? "zebra" : "normal";
+      const categoryStyle = alternate ? "category" : "categoryPlain";
       rows.push([
         item.index + 1,
         item.changeType,
@@ -16095,7 +16145,7 @@ ${item.target}` : item.target;
         "actionLink",
         changeStyles[item.changeType],
         baseStyle,
-        startsTarget ? "category" : baseStyle,
+        startsTarget ? categoryStyle : baseStyle,
         baseStyle,
         beforeStyle,
         afterStyle
@@ -16196,11 +16246,12 @@ ${item.target}` : item.target;
       rowOutlines.push(item.tableChild ? { level: 1 } : void 0);
       const alternate = index % 2 === 1;
       const baseStyle = alternate ? "zebra" : "normal";
+      const categoryStyle = alternate ? "category" : "categoryPlain";
       const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
       const styles = Array.from({ length: headers.length }, () => baseStyle);
       styles[0] = actualIndex == null ? alternate ? "zebraCenter" : "center" : "actionLink";
       styles[1] = changeStyles[item.changeType];
-      styles[2] = field.structure === "テーブル" ? "category" : baseStyle;
+      styles[2] = field.structure === "テーブル" ? categoryStyle : baseStyle;
       styles[7] = alternate ? "zebraCenter" : "center";
       styles[8] = alternate ? "zebraCenter" : "center";
       styles[9] = beforeStyle;
@@ -16334,12 +16385,14 @@ ${targetName}`,
       rowStyles.push("normal");
       const startsCategory = index === 0 || items[index - 1]?.sectionLabel !== item.sectionLabel;
       const alternate = index % 2 === 1;
+      const baseStyle = alternate ? "zebra" : "normal";
+      const categoryStyle = alternate ? "category" : "categoryPlain";
       const styles = [];
       styles[0] = alternate ? "zebraCenter" : "center";
       styles[1] = changeStyles[item.changeType];
-      styles[2] = startsCategory ? "category" : alternate ? "zebra" : "normal";
-      styles[3] = alternate ? "zebra" : "normal";
-      styles[4] = alternate ? "zebra" : "normal";
+      styles[2] = startsCategory ? categoryStyle : baseStyle;
+      styles[3] = baseStyle;
+      styles[4] = baseStyle;
       styles[5] = beforeContinuation ? "diffBeforeLink" : item.rawBefore.state === "存在しません" ? "diffAbsent" : "rawDiffBefore";
       styles[6] = afterContinuation ? "diffAfterLink" : item.rawAfter.state === "存在しません" ? "diffAbsent" : "rawDiffAfter";
       styles[7] = "actionLink";
@@ -16640,15 +16693,22 @@ ${targetName}`,
     );
     const issueContinuations = buildCustomerIssueRawContinuations(issueItems, nextLongRawRow);
     const allContinuations = [...differenceContinuations, ...issueContinuations];
-    const sheets = [buildCustomerSummarySheet(ctx, items, apiGroups)];
     const issues = buildCustomerIssuesSheet(issueItems, issueContinuations);
+    const apiSheets = buildCustomerApiDiffSheets(ctx, apiGroups, items);
+    const valueDetails = buildCustomerValueDetailSheet(ctx, items, differenceContinuations);
+    const longRaw = buildCustomerLongRawSheet(allContinuations);
+    const summary = buildCustomerSummarySheet(ctx, items, apiGroups, {
+      hasIssues: !!issues,
+      hasFeatureSheets: apiSheets.length > 0,
+      hasValueDetails: !!valueDetails,
+      hasLongRaw: !!longRaw
+    });
+    const sheets = [summary];
     if (issues) sheets.push(issues);
     sheets.push(buildCustomerCoarseTargetSheet(ctx, items));
     sheets.push(buildCustomerListSheet(ctx, items, apiGroups));
-    sheets.push(...buildCustomerApiDiffSheets(ctx, apiGroups, items));
-    const valueDetails = buildCustomerValueDetailSheet(ctx, items, differenceContinuations);
+    sheets.push(...apiSheets);
     if (valueDetails) sheets.push(valueDetails);
-    const longRaw = buildCustomerLongRawSheet(allContinuations);
     if (longRaw) sheets.push(longRaw);
     return sheets;
   }
