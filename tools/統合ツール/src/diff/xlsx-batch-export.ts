@@ -448,7 +448,7 @@ function buildBatchSummaryOverview(summaryRows: readonly DiffXlsxBatchSummaryRow
     `比較 ${summaryRows.length}件`,
     `差分あり ${withDiff}件`,
     `差分なし ${noDiff}件`,
-    `変更 合計 ${totalChanges}件`
+    `変更対象 合計 ${totalChanges}件`
   ];
   if (filteredEmpty) parts.push(`絞り込み後：掲載対象なし ${filteredEmpty}件`);
   if (incomplete) parts.push(`一部未取得 ${incomplete}件`);

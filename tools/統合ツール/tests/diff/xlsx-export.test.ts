@@ -712,7 +712,7 @@ describe('diff/xlsx-export', () => {
     });
     const summary = await readWorksheetByName(blob, '比較概要');
     const list = await readWorksheetByName(blob, '変更一覧');
-    expect(summary).toContain('掲載変更件数');
+    expect(summary).toContain('掲載変更対象件数');
     expect(summary).toMatch(/<c r="A5"[^>]*>[\s\S]*?0件[\s\S]*?<\/c>/);
     expect(summary).toContain('シートの使い分け');
     expect(summary).not.toContain('機能別シート');
@@ -740,11 +740,11 @@ describe('diff/xlsx-export', () => {
     });
     const summary = await readWorksheetByName(blob, '比較概要');
 
-    // 変更件数は合計＋種別を1つの帯（ラベル行＋件数行）にまとめる。
+    // 変更対象件数は合計＋種別を1つの帯（ラベル行＋件数行）にまとめる。
     expect(summary).toContain('<mergeCell ref="A3:F3"/>');
     expect(summary).toContain('<mergeCell ref="A4:B4"/>');
     expect(summary).toContain('<mergeCell ref="A5:B5"/>');
-    expect(worksheetInlineTexts(summary, 'A', 4)[0]).toBe('変更件数');
+    expect(worksheetInlineTexts(summary, 'A', 4)[0]).toBe('変更対象件数');
     expect(worksheetInlineTexts(summary, 'A', 5)[0]).toBe('1件');
     for (const [cell, text] of [['C4', '追加'], ['D4', '削除'], ['E4', '変更'], ['F4', '並び順変更']] as const) {
       expect(summary).toMatch(new RegExp(`<c r="${cell}"[^>]*>[\\s\\S]*?${text}[\\s\\S]*?<\\/c>`));
@@ -793,6 +793,41 @@ describe('diff/xlsx-export', () => {
 
     expect(worksheetInlineTexts(targets, 'C', 3)).toEqual(['アプリアクション「次月作成」']);
     expect(targets).toMatch(/<c r="F3"[^>]*><v>3<\/v><\/c>/);
+  });
+
+  it('比較概要の件数を変更対象一覧と同じ変更対象単位で数える', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      rows: [
+        {
+          sectionKey: 'actionSettings', type: 'changed',
+          path: 'actionSettings.actions.次月作成.mappings[0].srcField',
+          left: '売上', right: '税込売上'
+        },
+        {
+          sectionKey: 'actionSettings', type: 'changed',
+          path: 'actionSettings.actions.次月作成.mappings[0].destField',
+          left: '売上', right: '転記先売上'
+        },
+        {
+          sectionKey: 'fieldSettings', type: 'added',
+          path: 'fieldSettings.properties.new_field',
+          right: { type: 'SINGLE_LINE_TEXT', code: 'new_field', label: '新フィールド' }
+        }
+      ]
+    });
+    const summary = await readWorksheetByName(blob, '比較概要');
+    const targets = await readWorksheetByName(blob, '変更対象一覧');
+
+    // 明細3件でも、変更対象（アプリアクション1件＋フィールド1件）の単位で数える。
+    expect(worksheetInlineTexts(targets, 'C', 3)).toHaveLength(2);
+    expect(worksheetInlineTexts(summary, 'A', 5)[0]).toBe('2件');
+    expect(worksheetInlineTexts(summary, 'C', 5)[0]).toBe('1件');
+    expect(worksheetInlineTexts(summary, 'D', 5)[0]).toBe('0件');
+    expect(worksheetInlineTexts(summary, 'E', 5)[0]).toBe('1件');
+    expect(worksheetInlineTexts(summary, 'F', 5)[0]).toBe('0件');
+    // 機能別内訳は変更一覧の明細単位のままなので、単位をタイトルで区別する。
+    expect(summary).toContain('kintone機能別の差分明細件数');
+    expect(summary).not.toContain('kintone機能別の差分件数');
   });
 
   it('keeps customer comparison complete when only same rows were omitted', async () => {

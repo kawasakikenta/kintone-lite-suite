@@ -15322,14 +15322,14 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       };
     }
     const items = buildCustomerDiffItems(ctx);
-    const counts = summarizeCustomerItems(customerPrimaryItems(items));
+    const counts = summarizeCustomerCoarseTargets(buildCustomerCoarseTargets(ctx, items));
     return {
       total: counts.actual,
       added: counts.added,
       removed: counts.removed,
       changed: counts.contentChanged,
       moved: counts.moved,
-      redundant: items.length - counts.actual
+      redundant: items.filter((item) => item.redundant).length
     };
   }
   function summarizeCustomerItems(items) {
@@ -15339,6 +15339,17 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       if (item.changeType === "並び順変更") counts.moved += 1;
       else if (item.changeType === "追加") counts.added += 1;
       else if (item.changeType === "削除") counts.removed += 1;
+      else counts.contentChanged += 1;
+    }
+    return counts;
+  }
+  function summarizeCustomerCoarseTargets(targets) {
+    const counts = { actual: 0, added: 0, removed: 0, contentChanged: 0, moved: 0 };
+    for (const target of targets) {
+      counts.actual += 1;
+      if (target.changeState === "追加") counts.added += 1;
+      else if (target.changeState === "削除") counts.removed += 1;
+      else if (target.changeState === "並び順変更") counts.moved += 1;
       else counts.contentChanged += 1;
     }
     return counts;
@@ -15432,9 +15443,8 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     return Number.isFinite(date.getTime()) ? humanDateTime(date.toISOString()) : "未記録";
   }
   function buildCustomerSummarySheet(ctx, items, apiGroups, availability) {
-    const primaryItems = customerPrimaryItems(items);
     const redundantItems = items.filter((item) => item.redundant);
-    const counts = summarizeCustomerItems(primaryItems);
+    const counts = summarizeCustomerCoarseTargets(buildCustomerCoarseTargets(ctx, items));
     const incomplete = customerIncomplete(ctx);
     const droppedSame = Number(ctx.truncation?.droppedSame || 0);
     const filtered = ctx.exportMode === "filtered";
@@ -15452,7 +15462,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
 ${sourceName}`, "", "→", `比較先
 ${targetName}`, "", ""],
       ["比較結果", "", "", "", "", ""],
-      [filtered ? "掲載変更件数" : "変更件数", "", "追加", "削除", "変更", "並び順変更"],
+      [filtered ? "掲載変更対象件数" : "変更対象件数", "", "追加", "削除", "変更", "並び順変更"],
       [`${counts.actual}件`, "", `${counts.added}件`, `${counts.removed}件`, `${counts.contentChanged}件`, `${counts.moved}件`],
       ["比較範囲", "", "", "", "", ""],
       ["比較した設定領域", customerScopeLabel(comparedScopes), "", "", "", ""],
@@ -15491,7 +15501,7 @@ ${targetName}`, "", ""],
     const breakdownHeaderRow = apiGroups.length ? rows.length + 1 : -1;
     if (apiGroups.length) {
       rows.push(
-        ["kintone機能別の差分件数", "", "", "", "", ""],
+        ["kintone機能別の差分明細件数", "", "", "", "", ""],
         ["機能別シート", "追加", "削除", "変更", "並び順変更", "合計"],
         ...customerApiBreakdown(apiGroups)
       );
@@ -16689,7 +16699,7 @@ ${item.target}` : item.target;
       `比較 ${summaryRows.length}件`,
       `差分あり ${withDiff}件`,
       `差分なし ${noDiff}件`,
-      `変更 合計 ${totalChanges}件`
+      `変更対象 合計 ${totalChanges}件`
     ];
     if (filteredEmpty) parts.push(`絞り込み後：掲載対象なし ${filteredEmpty}件`);
     if (incomplete) parts.push(`一部未取得 ${incomplete}件`);
