@@ -145,9 +145,10 @@ describe('diff/xlsx-batch-export', () => {
         rows: [{ sectionKey: 'fields', type: 'same', path: 'properties.物件名.label' }]
       })),
       item('取得不完全な比較', context('14.【検証用 物件DB】固都税管理', '14.【MG検証用 物件DB】固都税 路線価管理', {
+        // 件数は「変更対象一覧」と同じ変更対象単位。追加・削除は対象自体の追加・削除で数える。
         rows: [
-          { sectionKey: 'fields', type: 'added', path: 'properties.A' },
-          { sectionKey: 'fields', type: 'removed', path: 'properties.B' },
+          { sectionKey: 'appAcl', type: 'added', path: 'appAcl.rights[0]', right: { entity: { type: 'USER', code: 'sato' } } },
+          { sectionKey: 'appAcl', type: 'removed', path: 'appAcl.rights[1]', left: { entity: { type: 'USER', code: 'suzuki' } } },
           { sectionKey: 'fields', type: 'changed', path: 'properties.C.label' },
           { sectionKey: 'layout', type: 'changed', moved: true, path: 'layout[0]' }
         ],
