@@ -1424,8 +1424,8 @@ describe('diff/xlsx-export', () => {
     const summary = await readWorksheetByName(blob, '比較概要');
     const list = await readWorksheetByName(blob, '変更一覧');
     expect(summary).toContain('掲載変更件数');
-    expect(summary).toMatch(/<c r="B4"[^>]*>[\s\S]*?0件[\s\S]*?<\/c>/);
-    expect(summary).toContain('シートごとの粒度');
+    expect(summary).toMatch(/<c r="A5"[^>]*>[\s\S]*?0件[\s\S]*?<\/c>/);
+    expect(summary).toContain('シートの使い分け');
     expect(summary).not.toContain('機能別シート');
     expect(summary).not.toContain('設定値詳細');
     expect(summary).not.toContain('長文原文');
@@ -1437,7 +1437,7 @@ describe('diff/xlsx-export', () => {
     expect(list).not.toContain('差分はありません');
   });
 
-  it('比較概要にシートごとの粒度を示し、操作用の情報を載せない', async () => {
+  it('比較概要に件数タイルとシートの使い分けを示し、操作用の情報を載せない', async () => {
     const blob = buildDiffXlsxBlobWithSafeDefault({
       scopes: ['appSettings', 'fieldSettings'],
       comparedAt: '2026-08-30T12:34:56.000Z',
@@ -1451,16 +1451,29 @@ describe('diff/xlsx-export', () => {
     });
     const summary = await readWorksheetByName(blob, '比較概要');
 
+    // 変更件数は合計＋種別を1つの帯（ラベル行＋件数行）にまとめる。
     expect(summary).toContain('<mergeCell ref="A3:F3"/>');
-    expect(summary).toContain('<mergeCell ref="A7:F7"/>');
+    expect(summary).toContain('<mergeCell ref="A4:B4"/>');
+    expect(summary).toContain('<mergeCell ref="A5:B5"/>');
+    expect(worksheetInlineTexts(summary, 'A', 4)[0]).toBe('変更件数');
+    expect(worksheetInlineTexts(summary, 'A', 5)[0]).toBe('1件');
+    for (const [cell, text] of [['C4', '追加'], ['D4', '削除'], ['E4', '変更'], ['F4', '並び順変更']] as const) {
+      expect(summary).toMatch(new RegExp(`<c r="${cell}"[^>]*>[\\s\\S]*?${text}[\\s\\S]*?<\\/c>`));
+    }
+    expect(summary).toContain('<mergeCell ref="A6:F6"/>');
+    expect(summary).toContain('<mergeCell ref="B7:F7"/>');
     expect(summary).toContain('比較した設定領域');
     expect(summary).toContain('アプリ基本設定、フィールド設定');
-    expect(summary).toContain('シートごとの粒度');
-    expect(summary).toContain('変更対象ごと');
-    expect(summary).toContain('変更した設定項目ごと');
-    expect(summary).toContain('機能別の設定項目ごと');
+    expect(summary).toContain('比較日時');
+    expect(summary).toContain('2026/08/30 21:34:56');
+    expect(summary).toContain('シートの使い分け');
+    expect(summary).toContain('確認したいこと');
+    expect(summary).toContain('開くシート');
+    expect(summary).toContain('どこが変わったか、まず全体を把握する');
+    expect(summary).toContain('変更前と変更後の設定値を、1件ずつ確認する');
+    expect(summary).toContain('機能別シート（上の表から開けます）');
     for (const unnecessary of [
-      '掲載範囲', '比較から除外',
+      '掲載範囲', '比較から除外', 'シートごとの粒度', '1行の単位',
       '比較処理', '正常完了', '変更対象一覧を開く', '<hyperlink ref="F4"'
     ]) {
       expect(summary).not.toContain(unnecessary);
@@ -2166,8 +2179,8 @@ describe('diff/xlsx-export', () => {
     const summary = await readWorksheetByName(blob, '比較概要');
     const list = await readWorksheetByName(blob, '変更一覧');
 
-    expect(summary).toMatch(/<c r="B4"[^>]*>[\s\S]*?0件[\s\S]*?<\/c>/);
-    expect(summary).toContain('シートごとの粒度');
+    expect(summary).toMatch(/<c r="A5"[^>]*>[\s\S]*?0件[\s\S]*?<\/c>/);
+    expect(summary).toContain('シートの使い分け');
     for (const unnecessary of ['変更なし', '変更一覧なし', '変更対象一覧を開く']) {
       expect(summary).not.toContain(unnecessary);
     }
