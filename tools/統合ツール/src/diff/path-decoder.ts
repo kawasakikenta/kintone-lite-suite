@@ -99,7 +99,9 @@ const SCOPED_ENUM_SECTIONS: Record<string, string[]> = {
   by: ['reportSettings'],
   order: ['reportSettings'],
   every: ['reportSettings'],
-  dayOfWeek: ['reportSettings']
+  dayOfWeek: ['reportSettings'],
+  srcType: ['actionSettings'],
+  destType: ['actionSettings']
 };
 
 function scopedEnumLabel(sectionKey: string, propKey: string, value: string): string | null {
@@ -192,7 +194,10 @@ function valueToText(value: any, propKey: string, depth = 0, sectionKey = ''): s
 const SUMMARY_KEYS_PRIORITY = [
   'name', 'label', 'title', 'code', 'id', 'type', 'chartType',
   'from', 'to', 'enable', 'filterCond', 'accessibility', 'timing',
-  'version', 'paginationStyle', 'url'
+  'version', 'paginationStyle', 'url',
+  // アクションのフィールド関連付けは「コピー元 → コピー先 → 種類」の順で読ませる
+  // （キーのアルファベット順だと destField が先頭に来てしまう）
+  'srcField', 'sourceField', 'destField', 'srcType', 'destType'
 ];
 
 function summarizeObject(obj: any, depth: number, sectionKey = ''): string {

@@ -85,6 +85,16 @@ export const VALUE_LABELS: Record<string, Record<string, string>> = {
     APP: 'アプリ全体',
     RECORD: 'レコード単位'
   },
+  // アプリアクションのフィールド関連付けのコピー元／コピー先の種類
+  // （actionSettings 文脈で参照。表記は xlsx 出力の customerTypeLabel と揃える）
+  srcType: {
+    FIELD: 'フィールド',
+    RECORD_URL: 'レコードのURL'
+  },
+  destType: {
+    FIELD: 'フィールド',
+    RECORD_URL: 'レコードのURL'
+  },
   // ここから下はセクション文脈込みで参照するスコープ（path-decoder が
   // sectionKey を見て選択する）。kintone-enums の共通辞書を単一ソースとする。
   'assignee.type': PROCESS_ASSIGNEE_TYPE_JP,
@@ -194,11 +204,15 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   type:             { label: '種別' },
   settings:         { label: '設定' },
 
-  // actionSettings
+  // actionSettings（kintone API の mappings[] キーは srcField/srcType/destField。
+  // sourceField は旧形式データの別名。xlsx 出力の「コピー元/コピー先」表記に揃える）
   app:              { label: '対象アプリ' },
   mappings:         { label: 'フィールド対応' },
-  sourceField:      { label: '元フィールド' },
-  destField:        { label: '先フィールド' },
+  srcField:         { label: 'コピー元フィールド' },
+  sourceField:      { label: 'コピー元フィールド' },
+  srcType:          { label: 'コピー元の種類' },
+  destField:        { label: 'コピー先フィールド' },
+  destType:         { label: 'コピー先の種類' },
   destApp:          { label: '先アプリ' },
 
   // customizeSettings
