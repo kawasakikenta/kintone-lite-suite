@@ -4197,6 +4197,16 @@ ${contextLine}`);
           APP: "アプリ全体",
           RECORD: "レコード単位"
         },
+        // アプリアクションのフィールド関連付けのコピー元／コピー先の種類
+        // （actionSettings 文脈で参照。表記は xlsx 出力の customerTypeLabel と揃える）
+        srcType: {
+          FIELD: "フィールド",
+          RECORD_URL: "レコードのURL"
+        },
+        destType: {
+          FIELD: "フィールド",
+          RECORD_URL: "レコードのURL"
+        },
         // ここから下はセクション文脈込みで参照するスコープ（path-decoder が
         // sectionKey を見て選択する）。kintone-enums の共通辞書を単一ソースとする。
         "assignee.type": PROCESS_ASSIGNEE_TYPE_JP,
@@ -4294,11 +4304,15 @@ ${contextLine}`);
         assignee: { label: "作業者" },
         type: { label: "種別" },
         settings: { label: "設定" },
-        // actionSettings
+        // actionSettings（kintone API の mappings[] キーは srcField/srcType/destField。
+        // sourceField は旧形式データの別名。xlsx 出力の「コピー元/コピー先」表記に揃える）
         app: { label: "対象アプリ" },
         mappings: { label: "フィールド対応" },
-        sourceField: { label: "元フィールド" },
-        destField: { label: "先フィールド" },
+        srcField: { label: "コピー元フィールド" },
+        sourceField: { label: "コピー元フィールド" },
+        srcType: { label: "コピー元の種類" },
+        destField: { label: "コピー先フィールド" },
+        destType: { label: "コピー先の種類" },
         destApp: { label: "先アプリ" },
         // customizeSettings
         desktop: { label: "デスクトップ" },
@@ -4713,7 +4727,9 @@ ${contextLine}`);
         by: ["reportSettings"],
         order: ["reportSettings"],
         every: ["reportSettings"],
-        dayOfWeek: ["reportSettings"]
+        dayOfWeek: ["reportSettings"],
+        srcType: ["actionSettings"],
+        destType: ["actionSettings"]
       };
       SUMMARY_KEYS_PRIORITY = [
         "name",
@@ -4731,7 +4747,14 @@ ${contextLine}`);
         "timing",
         "version",
         "paginationStyle",
-        "url"
+        "url",
+        // アクションのフィールド関連付けは「コピー元 → コピー先 → 種類」の順で読ませる
+        // （キーのアルファベット順だと destField が先頭に来てしまう）
+        "srcField",
+        "sourceField",
+        "destField",
+        "srcType",
+        "destType"
       ];
     }
   });
