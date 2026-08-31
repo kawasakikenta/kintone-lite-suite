@@ -328,8 +328,8 @@ describe('diff/xlsx-batch-export', () => {
       expect(workbookStyles.fonts[fontId]).toContain('<sz val="11"/>');
       expect(workbookStyles.fills[fillId]).toContain(`rgb="${fill}"`);
     }
-    expect(workbookStyles.cellXfs[39]).toContain('horizontal="center"');
-    expect(workbookStyles.cellXfs[39]).toContain('vertical="center"');
+    expect(workbookStyles.cellXfs[39]).toContain('horizontal="left"');
+    expect(workbookStyles.cellXfs[39]).toContain('vertical="top"');
     expect(workbookStyles.cellXfs[11]).toContain('fillId="6"');
     expect(workbookStyles.cellXfs[11]).toContain('vertical="top"');
     expect(workbookStyles.cellXfs[5]).toContain('fillId="5"');

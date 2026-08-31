@@ -816,9 +816,9 @@ function buildStylesXml(
         + '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>'
       : '')
     +   (includeRawTextStyleRange
-      ? '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF991B1B"/></font>'
-        + '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF166534"/></font>'
-        + '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF92400E"/></font>'
+      ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font>'
+        + '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>'
+        + '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF92400E"/></font>'
       : '')
     + '</fonts>'
     + '<fills count="10">'
@@ -879,7 +879,7 @@ function buildStylesXml(
     +   (includeCustomerDiffStyles
       ? '<xf numFmtId="0" fontId="16" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
         + '<xf numFmtId="0" fontId="17" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
-        + '<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+        + '<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" horizontal="left" wrapText="1"/></xf>'
       : '')
     +   (includeRawTextStyleRange
       ? '<xf numFmtId="0" fontId="18" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
