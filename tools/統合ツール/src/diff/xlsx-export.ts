@@ -584,7 +584,7 @@ function humanDateTime(value: unknown): string {
     minute: '2-digit',
     second: '2-digit',
     hourCycle: 'h23'
-  }).format(date)} JST`;
+  }).format(date)}`;
 }
 
 function xlsxContentLabel(rows: DiffXlsxRow[]): string {
@@ -4990,14 +4990,10 @@ function buildCustomerSummarySheet(
 function customerComparisonValueStyles(item: CustomerDiffItem): [XlsxCellStyle, XlsxCellStyle] {
   const beforeStyle: XlsxCellStyle = item.rawBefore.state === '存在しません'
     ? 'diffAbsent'
-    : item.rawBefore.state === '存在'
-      ? 'changeRemoved'
-      : 'diffBefore';
+    : 'diffBefore';
   const afterStyle: XlsxCellStyle = item.rawAfter.state === '存在しません'
     ? 'diffAbsent'
-    : item.rawAfter.state === '存在'
-      ? 'changeAdded'
-      : 'diffAfter';
+    : 'diffAfter';
   return [beforeStyle, afterStyle];
 }
 
