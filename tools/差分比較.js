@@ -14216,25 +14216,6 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     }
     return redundant;
   }
-  function customerComparisonExclusionLabel(ctx) {
-    const customerLabels = {
-      viewOrder: "ビュー順序",
-      permissionOrder: "権限順序",
-      generalArrayOrder: "一般配列順序",
-      fieldOrder: "フィールド順序",
-      processOrder: "プロセス順序",
-      appReferences: "環境固有ID（アプリ・一覧・グラフ・アクション）",
-      auditMeta: "監査メタ情報",
-      labelsAndText: "ラベル・説明文",
-      appearance: "表示設定",
-      fileKeys: "ファイルキー",
-      enabledFlags: "有効フラグ"
-    };
-    const enabled = Object.entries(ctx.normalizationPresetState || {}).sort(([left], [right]) => left.localeCompare(right)).filter(([, value]) => !!value).map(([key]) => customerLabels[key] || NORMALIZATION_LABELS[key] || key);
-    const ignoreKeys = [...new Set(String(ctx.ignoreKeys || "").split(/[\n\r,、，;；]+/).map((key) => key.trim()).filter(Boolean))];
-    if (ignoreKeys.length) enabled.push(`個別指定 ${ignoreKeys.length}件`);
-    return enabled.length ? enabled.join("、") : "なし";
-  }
   function customerChangeType(row) {
     if (row.moved || row.type === "moved") return "並び順変更";
     if (row.type === "added") return "追加";
@@ -15137,6 +15118,14 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       }
     }
     const target = customerPlainText(item.targetDetail || item.target || item.sectionLabel, 96);
+    if (item.sectionKey === "actionSettings") {
+      return {
+        key: JSON.stringify(["actionSettings", target]),
+        classification: item.sectionLabel,
+        target: target || "名称不明のアプリアクション",
+        sectionKey: item.sectionKey
+      };
+    }
     const identity = coarseStableIdentity(item.row, item.sectionKey);
     return {
       key: identity.key,
@@ -15436,49 +15425,6 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const shown = labels.slice(0, maxLabels).join("、");
     return labels.length > maxLabels ? `${shown} ほか${labels.length - maxLabels}件` : shown;
   }
-  function customerDateTime(value) {
-    const raw = String(value ?? "").trim();
-    const normalized = typeof value === "number" ? value : /^\d{11,}$/.test(raw) ? Number(raw) : raw;
-    const date = new Date(normalized);
-    return Number.isFinite(date.getTime()) ? humanDateTime(date.toISOString()) : "未記録";
-  }
-  function customerSummaryReadingOrder(ctx, primaryItems, redundantItems, availability) {
-    const steps = [];
-    if (availability.hasIssues && ctx.exportMode === "filtered") {
-      steps.push("比較概要で件数・絞り込みと確認できた範囲を確認");
-    } else if (availability.hasIssues) {
-      steps.push("比較概要で件数と確認できた範囲を確認");
-    } else if (ctx.exportMode === "filtered") {
-      steps.push("比較概要で件数・比較範囲・絞り込みを確認");
-    } else {
-      steps.push("比較概要で件数と比較範囲を確認");
-    }
-    if (availability.hasIssues) {
-      steps.push("確認できなかった範囲で未取得・未確認の設定を確認");
-    }
-    if (primaryItems.length) {
-      steps.push("変更対象一覧で変更対象を絞る");
-      const contentSheets = ["変更一覧"];
-      if (availability.hasFeatureSheets) contentSheets.push("機能別シート");
-      steps.push(`${contentSheets.join("・")}で内容を確認`);
-    } else if (redundantItems.length && availability.hasFeatureSheets) {
-      steps.push("機能別シート（参考・再掲）で参考情報を確認");
-    } else if (ctx.exportMode === "filtered") {
-      steps.push("変更対象一覧・変更一覧で絞り込み後の掲載対象がないことを確認");
-    } else if (availability.hasIssues) {
-      steps.push("変更対象一覧・変更一覧で確認できた範囲に掲載対象がないことを確認");
-    } else {
-      steps.push("変更対象一覧・変更一覧で差分がないことを確認");
-    }
-    const evidenceSheets = [];
-    if (availability.hasValueDetails) evidenceSheets.push("設定値詳細");
-    if (availability.hasLongRaw) evidenceSheets.push("長文原文");
-    if (evidenceSheets.length) {
-      steps.push(`必要に応じて${evidenceSheets.join("・")}で根拠を確認`);
-    }
-    const markers = ["①", "②", "③", "④", "⑤"];
-    return steps.map((step, index) => `${markers[index]} ${step}`).join(" → ");
-  }
   function buildCustomerSummarySheet(ctx, items, apiGroups, availability) {
     const primaryItems = customerPrimaryItems(items);
     const redundantItems = items.filter((item) => item.redundant);
@@ -15486,29 +15432,32 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const incomplete = customerIncomplete(ctx);
     const droppedSame = Number(ctx.truncation?.droppedSame || 0);
     const filtered = ctx.exportMode === "filtered";
-    const verdict = incomplete ? counts.actual ? `比較未完了（確認できた範囲に変更 ${counts.actual}件）` : "比較未完了" : filtered ? counts.actual ? "絞り込み後：変更あり" : "絞り込み後：掲載対象なし" : counts.actual ? "変更あり" : "変更なし";
     const incompleteScopes = customerIncompleteScopeSuffix(ctx);
-    const completeness = incomplete ? incompleteScopes ? `一部未完了（${incompleteScopes}）` : "一部未完了" : droppedSame > 0 ? `正常完了（同一証跡 ${droppedSame}件を省略）` : "正常完了（選択範囲）";
     const redundantLabels = [...new Set(redundantItems.map((item) => customerApiDefinitionForItem(item).label))];
     const redundantNote = redundantItems.length ? `${redundantLabels.join("、")} の ${redundantItems.length}件（他シートと同じ変更のため件数に含めていません）` : "なし";
     const sourceFullName = customerAppName(ctx.sourceBundle, "比較元のアプリ");
     const targetFullName = customerAppName(ctx.targetBundle, "比較先のアプリ");
     const sourceName = customerHeaderAppName(ctx.sourceBundle, "比較元のアプリ");
     const targetName = customerHeaderAppName(ctx.targetBundle, "比較先のアプリ");
-    const navigationLabel = counts.actual ? "変更対象一覧を開く" : incomplete ? "比較未完了" : filtered ? "掲載対象なし" : "変更一覧なし";
     const comparedScopes = ctx.scopes?.length ? ctx.scopes : [...new Set(items.map((item) => item.sectionKey))];
     const rows = [
       ["kintone 設定差分確認レポート", "", "", "", "", ""],
       [`比較元
 ${sourceName}`, "", "→", `比較先
 ${targetName}`, "", ""],
-      ["比較結果", verdict, "比較処理", completeness, "", navigationLabel],
-      [filtered ? "掲載変更件数" : "変更件数", `${counts.actual}件`, "比較日時", customerDateTime(ctx.comparedAt), "", ""],
+      ["比較結果", "", "", "", "", ""],
+      [filtered ? "掲載変更件数" : "変更件数", `${counts.actual}件`, "", "", "", ""],
       ["追加", `${counts.added}件`, "削除", `${counts.removed}件`, "変更", `${counts.contentChanged}件`],
-      ["並び順変更", `${counts.moved}件`, "変更一覧の明細", `${primaryItems.length}件`, "同一証跡の省略", droppedSame ? `${droppedSame}件（変更判定への影響なし）` : "0件"],
-      ["比較した設定領域", customerScopeLabel(comparedScopes), "", "", "", ""],
-      ["掲載範囲", ctx.exportMode === "filtered" ? "上記範囲内の一部" : "上記範囲内の全変更", "絞り込み", ctx.exportMode === "filtered" ? "あり" : "なし", "比較から除外", customerComparisonExclusionLabel(ctx)]
+      ["並び順変更", `${counts.moved}件`, "", "", "", ""],
+      ["比較範囲", "", "", "", "", ""],
+      ["比較した設定領域", customerScopeLabel(comparedScopes), "", "", "", ""]
     ];
+    const resultTitleRow = 2;
+    const countRow = 3;
+    const changeTypeRow = 4;
+    const movedRow = 5;
+    const scopeTitleRow = 6;
+    const scopeRow = 7;
     const fullAppNameRow = sourceName !== sourceFullName || targetName !== targetFullName ? rows.length : -1;
     if (fullAppNameRow >= 0) {
       rows.push(["アプリ名（全文）", `比較元：${sourceFullName}
@@ -15516,37 +15465,36 @@ ${targetName}`, "", ""],
     }
     const redundantNoteRow = redundantItems.length ? rows.length : -1;
     if (redundantNoteRow >= 0) rows.push(["参考として別シートに掲載", redundantNote, "", "", "", ""]);
+    const incompleteNoteRow = incomplete ? rows.length : -1;
+    if (incompleteNoteRow >= 0) {
+      rows.push(["比較上の注意", incompleteScopes ? `一部未完了（${incompleteScopes}）` : "一部未完了", "", "", "", ""]);
+    }
+    const droppedSameNoteRow = droppedSame > 0 ? rows.length : -1;
+    if (droppedSameNoteRow >= 0) {
+      rows.push(["比較処理の注記", `同一証跡 ${droppedSame}件（変更判定への影響なし）`, "", "", "", ""]);
+    }
     const guideTitleRow = rows.length;
-    const guideFlowRow = guideTitleRow + 1;
-    const guideColorRow = guideTitleRow + 2;
-    const guideLinkRow = guideTitleRow + 3;
-    const readingOrder = customerSummaryReadingOrder(ctx, primaryItems, redundantItems, availability);
+    const guideHeaderRow = guideTitleRow + 1;
+    const guideRows = [
+      ["変更対象一覧", "変更対象ごと", "同じフィールド・一覧・アプリアクションの変更を1行にまとめ、対象を絞り込みます", "", "", ""],
+      ["変更一覧", "変更した設定項目ごと", "変更対象のどの設定が変わったかを、変更前後と一緒に確認します", "", "", ""]
+    ];
+    if (availability.hasFeatureSheets) {
+      guideRows.push(["機能別シート", "機能別の設定項目ごと", "フォーム・一覧・アプリアクションなど、kintone機能ごとに変更前後を確認します", "", "", ""]);
+    }
+    if (availability.hasValueDetails) {
+      guideRows.push(["設定値詳細", "差分の根拠ごと", "表示用に要約する前の設定値を確認します", "", "", ""]);
+    }
+    if (availability.hasLongRaw) {
+      guideRows.push(["長文原文", "長文の分割データごと", "Excelのセル上限を超える原文を省略せず確認します", "", "", ""]);
+    }
+    if (availability.hasIssues) {
+      guideRows.push(["確認できなかった範囲", "未取得・未確認の設定領域ごと", "比較結果に含められなかった範囲と理由を確認します", "", "", ""]);
+    }
     rows.push(
-      ["この資料の見方", "", "", "", "", ""],
-      [
-        "読む順番",
-        readingOrder,
-        "",
-        "",
-        "",
-        ""
-      ],
-      [
-        "色の意味",
-        "追加（緑）：比較先だけ",
-        "削除（赤）：比較元だけ",
-        "変更（黄）：値・設定内容",
-        "並び順変更（紫）：順番だけ",
-        ""
-      ],
-      [
-        "リンク",
-        "青い「変更一覧へ」やNo.は、関連するシート・明細へ移動します",
-        "",
-        "存在しません",
-        "その側に設定・対象がないことを示します（取得失敗ではありません）",
-        ""
-      ]
+      ["シートごとの粒度", "", "", "", "", ""],
+      ["シート", "1行の単位", "確認できること", "", "", ""],
+      ...guideRows
     );
     const breakdownTitleRow = apiGroups.length ? rows.length : -1;
     const breakdownHeaderRow = apiGroups.length ? rows.length + 1 : -1;
@@ -15562,19 +15510,10 @@ ${targetName}`, "", ""],
     cellStyles[1][0] = "sourceGroup";
     cellStyles[1][2] = "directionArrow";
     cellStyles[1][3] = "targetGroup";
-    cellStyles[2][0] = "summaryLabel";
-    cellStyles[2][1] = incomplete ? "statusIncomplete" : counts.actual ? "statusDifference" : filtered ? "zebraCenter" : "statusGood";
-    cellStyles[2][2] = "summaryLabel";
-    cellStyles[2][3] = incomplete ? "statusIncomplete" : "statusGood";
-    cellStyles[2][4] = incomplete ? "statusIncomplete" : "statusGood";
-    cellStyles[2][5] = counts.actual ? "actionLink" : incomplete ? "statusIncomplete" : filtered ? "zebraCenter" : "statusGood";
-    cellStyles[3][0] = "summaryLabel";
-    cellStyles[3][1] = "summaryValue";
-    cellStyles[3][2] = "summaryLabel";
-    cellStyles[3][3] = "info";
-    cellStyles[3][4] = "info";
-    cellStyles[3][5] = "info";
-    cellStyles[4] = [
+    cellStyles[resultTitleRow] = Array.from({ length: 6 }, () => "sectionHeader");
+    cellStyles[countRow][0] = "summaryLabel";
+    cellStyles[countRow][1] = "summaryValue";
+    cellStyles[changeTypeRow] = [
       "changeAdded",
       "metricValueAdded",
       "changeRemoved",
@@ -15582,20 +15521,11 @@ ${targetName}`, "", ""],
       "changeChanged",
       "metricValueChanged"
     ];
-    cellStyles[5][0] = "changeMoved";
-    cellStyles[5][1] = "metricValueMoved";
-    cellStyles[5][2] = "summaryLabel";
-    cellStyles[5][3] = "zebraCenter";
-    cellStyles[5][4] = "summaryLabel";
-    cellStyles[5][5] = "zebraCenter";
-    cellStyles[6][0] = "summaryLabel";
-    cellStyles[6][1] = "info";
-    cellStyles[7][0] = "summaryLabel";
-    cellStyles[7][1] = "info";
-    cellStyles[7][2] = "summaryLabel";
-    cellStyles[7][3] = "zebraCenter";
-    cellStyles[7][4] = "summaryLabel";
-    cellStyles[7][5] = "zebraCenter";
+    cellStyles[movedRow][0] = "changeMoved";
+    cellStyles[movedRow][1] = "metricValueMoved";
+    cellStyles[scopeTitleRow] = Array.from({ length: 6 }, () => "sectionHeader");
+    cellStyles[scopeRow][0] = "summaryLabel";
+    cellStyles[scopeRow][1] = "info";
     if (fullAppNameRow >= 0) {
       cellStyles[fullAppNameRow][0] = "summaryLabel";
       cellStyles[fullAppNameRow][1] = "info";
@@ -15604,17 +15534,28 @@ ${targetName}`, "", ""],
       cellStyles[redundantNoteRow][0] = "summaryLabel";
       cellStyles[redundantNoteRow][1] = "info";
     }
+    if (incompleteNoteRow >= 0) {
+      cellStyles[incompleteNoteRow][0] = "summaryLabel";
+      cellStyles[incompleteNoteRow][1] = "statusIncomplete";
+    }
+    if (droppedSameNoteRow >= 0) {
+      cellStyles[droppedSameNoteRow][0] = "summaryLabel";
+      cellStyles[droppedSameNoteRow][1] = "info";
+    }
     cellStyles[guideTitleRow] = Array.from({ length: 6 }, () => "sectionHeader");
-    cellStyles[guideFlowRow] = ["summaryLabel", "info", "info", "info", "info", "info"];
-    cellStyles[guideColorRow] = [
-      "summaryLabel",
-      "changeAdded",
-      "changeRemoved",
-      "changeChanged",
-      "changeMoved",
-      "changeMoved"
-    ];
-    cellStyles[guideLinkRow] = ["summaryLabel", "info", "info", "diffAbsent", "info", "info"];
+    cellStyles[guideHeaderRow] = Array.from({ length: 6 }, () => "summaryLabel");
+    guideRows.forEach((_, index) => {
+      const rowIndex = guideHeaderRow + 1 + index;
+      const alternate = index % 2 === 1;
+      cellStyles[rowIndex] = [
+        alternate ? "category" : "categoryPlain",
+        alternate ? "zebra" : "normal",
+        alternate ? "zebra" : "normal",
+        alternate ? "zebra" : "normal",
+        alternate ? "zebra" : "normal",
+        alternate ? "zebra" : "normal"
+      ];
+    });
     if (breakdownTitleRow >= 0) {
       cellStyles[breakdownTitleRow] = Array.from({ length: 6 }, () => "sectionHeader");
       const firstDataRow = breakdownHeaderRow + 1;
@@ -15642,25 +15583,23 @@ ${targetName}`, "", ""],
           { value: row[0], width: 46 },
           { value: row[3], width: 60 }
         ], 42);
-        if (index === 2 || index === 3) return 34;
-        if (index === 4 || index === 5) return 38;
-        if (index === 6) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
-        if (index === 7) return readableDiffRowHeight([
-          { value: row[1], width: 22 },
-          { value: row[3], width: 22 },
-          { value: row[5], width: 22 }
-        ], 76);
+        if (index === resultTitleRow || index === scopeTitleRow) return 30;
+        if (index === countRow) return 34;
+        if (index === changeTypeRow || index === movedRow) return 38;
+        if (index === scopeRow) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
         if (index === fullAppNameRow) return readableCustomerRowHeight([
           { value: row[1], width: 92 }
         ], 395);
         if (index === redundantNoteRow) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
+        if (index === incompleteNoteRow) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
+        if (index === droppedSameNoteRow) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
         if (index === guideTitleRow) return 30;
-        if (index === guideFlowRow) return readableCustomerRowHeight([{ value: row[1], width: 98 }], 72);
-        if (index === guideColorRow) return 42;
-        if (index === guideLinkRow) return readableCustomerRowHeight([
-          { value: row[1], width: 44 },
-          { value: row[4], width: 38 }
-        ], 72);
+        if (index === guideHeaderRow) return 32;
+        if (index > guideHeaderRow && index <= guideHeaderRow + guideRows.length) return readableCustomerRowHeight([
+          { value: row[0], width: 19 },
+          { value: row[1], width: 19 },
+          { value: row[2], width: 76 }
+        ], 88);
         if (index === breakdownTitleRow) return 30;
         return index === breakdownHeaderRow ? 32 : 26;
       }),
@@ -15668,31 +15607,26 @@ ${targetName}`, "", ""],
         "A1:F1",
         "A2:B2",
         "D2:F2",
-        "D3:E3",
-        "B7:F7",
+        `A${resultTitleRow + 1}:F${resultTitleRow + 1}`,
+        `B${countRow + 1}:F${countRow + 1}`,
+        `B${movedRow + 1}:F${movedRow + 1}`,
+        `A${scopeTitleRow + 1}:F${scopeTitleRow + 1}`,
+        `B${scopeRow + 1}:F${scopeRow + 1}`,
         ...fullAppNameRow >= 0 ? [`B${fullAppNameRow + 1}:F${fullAppNameRow + 1}`] : [],
         ...redundantNoteRow >= 0 ? [`B${redundantNoteRow + 1}:F${redundantNoteRow + 1}`] : [],
+        ...incompleteNoteRow >= 0 ? [`B${incompleteNoteRow + 1}:F${incompleteNoteRow + 1}`] : [],
+        ...droppedSameNoteRow >= 0 ? [`B${droppedSameNoteRow + 1}:F${droppedSameNoteRow + 1}`] : [],
         `A${guideTitleRow + 1}:F${guideTitleRow + 1}`,
-        `B${guideFlowRow + 1}:F${guideFlowRow + 1}`,
-        `E${guideColorRow + 1}:F${guideColorRow + 1}`,
-        `B${guideLinkRow + 1}:C${guideLinkRow + 1}`,
-        `E${guideLinkRow + 1}:F${guideLinkRow + 1}`,
+        `C${guideHeaderRow + 1}:F${guideHeaderRow + 1}`,
+        ...guideRows.map((_, index) => `C${guideHeaderRow + 2 + index}:F${guideHeaderRow + 2 + index}`),
         ...breakdownTitleRow >= 0 ? [`A${breakdownTitleRow + 1}:F${breakdownTitleRow + 1}`] : []
       ],
-      internalHyperlinks: breakdownHeaderRow >= 0 ? [
-        ...counts.actual ? [{
-          ref: "F3",
-          targetSheet: "変更対象一覧",
-          targetCell: "A1",
-          tooltip: "変更対象一覧へ移動"
-        }] : [],
-        ...apiGroups.map((group, index) => ({
-          ref: `A${breakdownHeaderRow + 2 + index}`,
-          targetSheet: group.definition.sheetName,
-          targetCell: "A1",
-          tooltip: `${group.definition.label}を開く`
-        }))
-      ] : [],
+      internalHyperlinks: breakdownHeaderRow >= 0 ? apiGroups.map((group, index) => ({
+        ref: `A${breakdownHeaderRow + 2 + index}`,
+        targetSheet: group.definition.sheetName,
+        targetCell: "A1",
+        tooltip: `${group.definition.label}を開く`
+      })) : [],
       showGridLines: false,
       zoomScale: 100,
       print: {
