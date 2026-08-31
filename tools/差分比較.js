@@ -15873,7 +15873,7 @@ ${item.target}` : item.target;
     return target;
   }
   function buildCustomerViewDiffSheet(ctx, items, definition) {
-    const viewItems = [...items].sort((left, right) => customerNamedTarget(left.targetDetail, ["一覧"]).localeCompare(customerNamedTarget(right.targetDetail, ["一覧"]), "ja") || left.index - right.index);
+    const viewItems = [...items].sort((left, right) => left.index - right.index);
     if (!viewItems.length) return null;
     const title = customerFeatureSheetTitle(ctx, definition);
     const headers = ["No.", "変更区分", "一覧名", "差分プロパティ", "変更前", "変更後"];
@@ -15947,11 +15947,7 @@ ${item.target}` : item.target;
     };
   }
   function buildCustomerActionDiffSheet(ctx, items, definition) {
-    const actionItems = [...items].sort((left, right) => {
-      const leftKind = left.sectionKey === "actionSettings" ? "アプリアクション" : "プロセスのアクション";
-      const rightKind = right.sectionKey === "actionSettings" ? "アプリアクション" : "プロセスのアクション";
-      return leftKind.localeCompare(rightKind, "ja") || customerNamedTarget(left.targetDetail, ["アプリアクション", "アクション"]).localeCompare(customerNamedTarget(right.targetDetail, ["アプリアクション", "アクション"]), "ja") || left.index - right.index;
-    });
+    const actionItems = [...items].sort((left, right) => left.index - right.index);
     if (!actionItems.length) return null;
     const title = customerFeatureSheetTitle(ctx, definition);
     const headers = ["No.", "変更区分", "アクション種別", "アクション名", "差分プロパティ", "変更前", "変更後"];

@@ -117,6 +117,13 @@ function worksheetInlineTexts(worksheet: string, column: string, firstRow = 1): 
     .map((match) => decodeXmlText(match[3]));
 }
 
+function worksheetNumbers(worksheet: string, column: string, firstRow = 1): number[] {
+  return [...worksheet.matchAll(/<c r="([A-Z]+)(\d+)"[^>]*><v>([0-9.]+)<\/v><\/c>/g)]
+    .filter((match) => match[1] === column && Number(match[2]) >= firstRow)
+    .sort((a, b) => Number(a[2]) - Number(b[2]))
+    .map((match) => Number(match[3]));
+}
+
 const sampleCtx: DiffXlsxContext = {
   audience: 'internal',
   generatedAt: '2026-08-16T00:00:00.000Z',
@@ -290,6 +297,32 @@ describe('diff/xlsx-export', () => {
     ] as const) {
       expect(worksheetRowContaining(sheet, target)).toMatch(new RegExp(`<c r="${column}\\d+" s="31"`));
     }
+  });
+
+  it('keeps view and action detail sheets in ascending change-list No. order', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      rows: [
+        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.B一覧.filterCond', left: '', right: 'status = "open"' },
+        { sectionKey: 'viewSettings', type: 'changed', path: 'viewSettings.views.A一覧.filterCond', left: '', right: 'status = "closed"' },
+        {
+          sectionKey: 'actionSettings', type: 'changed', path: 'actionSettings.actions[0].name',
+          entityKind: 'appAction', entityLabel: 'B転記', entityPropLabel: 'アクション名',
+          arrayKey: 'name', arrayKeyValue: 'B転記', left: 'B転記', right: 'B転記済'
+        },
+        {
+          sectionKey: 'actionSettings', type: 'changed', path: 'actionSettings.actions[1].name',
+          entityKind: 'appAction', entityLabel: 'A転記', entityPropLabel: 'アクション名',
+          arrayKey: 'name', arrayKeyValue: 'A転記', left: 'A転記', right: 'A転記済'
+        }
+      ]
+    });
+    const views = await readWorksheetByName(blob, '06_一覧設定');
+    const actions = await readWorksheetByName(blob, '13_アプリアクション');
+
+    expect(worksheetNumbers(views, 'A', 3)).toEqual([1, 2]);
+    expect(worksheetInlineTexts(views, 'C', 3)).toEqual(['B一覧', 'A一覧']);
+    expect(worksheetNumbers(actions, 'A', 3)).toEqual([3, 4]);
+    expect(worksheetInlineTexts(actions, 'D', 3)).toEqual(['B転記', 'A転記']);
   });
 
   it.each([
