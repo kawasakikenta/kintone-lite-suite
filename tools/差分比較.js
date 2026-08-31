@@ -11919,7 +11919,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
   function buildStylesXml(includeCustomerDiffStyles, includeRawTextStyles, includeCategoryPlainStyle) {
     const includeRawTextStyleRange = includeRawTextStyles || includeCategoryPlainStyle;
-    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="${includeRawTextStyleRange ? 21 : includeCustomerDiffStyles ? 18 : 16}"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF2563EB"/></font>` + (includeCustomerDiffStyles ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>' : "") + (includeRawTextStyleRange ? '<font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF166534"/></font><font><sz val="11"/><name val="Consolas"/><family val="3"/><color rgb="FF92400E"/></font>' : "") + `</fonts><fills count="10"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${includeCategoryPlainStyle ? 46 : includeRawTextStyleRange ? 45 : includeCustomerDiffStyles ? 40 : 37}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="7" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="8" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="9" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="10" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="15" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="11" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="12" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="13" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="14" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>` + (includeCustomerDiffStyles ? '<xf numFmtId="0" fontId="16" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="17" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>' : "") + (includeRawTextStyleRange ? '<xf numFmtId="0" fontId="18" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="19" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="20" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' : "") + (includeCategoryPlainStyle ? '<xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' : "") + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="${includeRawTextStyleRange ? 21 : includeCustomerDiffStyles ? 18 : 16}"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF15803D"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB91C1C"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FFB45309"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF7C3AED"/></font><font><b/><sz val="16"/><name val="Meiryo"/><color rgb="FF2563EB"/></font>` + (includeCustomerDiffStyles ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font>' : "") + (includeRawTextStyleRange ? '<font><sz val="11"/><name val="Meiryo"/><color rgb="FF991B1B"/></font><font><sz val="11"/><name val="Meiryo"/><color rgb="FF166534"/></font><font><sz val="11"/><name val="Meiryo"/><color rgb="FF92400E"/></font>' : "") + `</fonts><fills count="10"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${includeCategoryPlainStyle ? 46 : includeRawTextStyleRange ? 45 : includeCustomerDiffStyles ? 40 : 37}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="7" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="8" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="9" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="10" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="15" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="11" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="12" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="13" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="14" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>` + (includeCustomerDiffStyles ? '<xf numFmtId="0" fontId="16" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="17" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" horizontal="left" wrapText="1"/></xf>' : "") + (includeRawTextStyleRange ? '<xf numFmtId="0" fontId="18" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="19" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="20" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' : "") + (includeCategoryPlainStyle ? '<xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' : "") + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
   }
   function buildXlsxBlob(sheets) {
     assertWorkbookShape(sheets);
@@ -14608,7 +14608,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       date: "日付の基準フィールド",
       title: "見出し",
       html: "カスタマイズ内容",
-      index: "一覧の並び順"
+      index: "一覧自体の表示順"
     };
     const fieldIndex = /^fields\[(\d+)\]$/.exec(property)?.[1];
     const settingItem = property.startsWith("fields") ? fieldIndex == null ? "表示するフィールド" : `表示するフィールド（${Number(fieldIndex) + 1}件目）` : labels[property] || "一覧設定";
@@ -14743,85 +14743,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     }
     return { state: typeof value, text: String(value) };
   }
-  function customerRawDisplayValue(raw) {
-    if (raw.state === "存在しません") return "存在しません";
-    if (raw.state === "文字列（空文字）") return "空文字";
-    return raw.text;
-  }
   var CUSTOMER_MAIN_VALUE_COLUMN_WIDTH = 26;
-  var CUSTOMER_MAIN_VALUE_MAX_LINES = 3;
-  var CUSTOMER_DETAIL_RAW_MAX_LINES = 5;
-  var CUSTOMER_RAW_CHUNK_TEXT_LIMIT = 3e4;
-  var CUSTOMER_RAW_CHUNK_LINE_LIMIT = 5;
-  var CUSTOMER_RAW_CHUNK_COLUMN_WIDTH = 60;
-  function customerRawNeedsContinuation(raw) {
-    return raw.text.length > 32767 || estimatedWrappedLines(raw.text, 42) > CUSTOMER_DETAIL_RAW_MAX_LINES;
-  }
-  function splitCustomerRawText(text2) {
-    if (!text2.length) return [""];
-    const chunks = [];
-    let offset = 0;
-    while (offset < text2.length) {
-      const capacity = Math.max(8, CUSTOMER_RAW_CHUNK_COLUMN_WIDTH - 2);
-      let end = offset;
-      let lines = 1;
-      let lineWidth = 0;
-      while (end < text2.length && end - offset < CUSTOMER_RAW_CHUNK_TEXT_LIMIT) {
-        const codePoint = text2.codePointAt(end);
-        const charLength = codePoint > 65535 ? 2 : 1;
-        const char = text2.slice(end, end + charLength);
-        let nextLines = lines;
-        let nextWidth = lineWidth;
-        if (char === "\n") {
-          nextLines += 1;
-          nextWidth = 0;
-        } else if (char !== "\r") {
-          const charWidth = codePoint <= 255 ? 1 : 2;
-          if (nextWidth + charWidth > capacity) {
-            nextLines += 1;
-            nextWidth = charWidth;
-          } else {
-            nextWidth += charWidth;
-          }
-        }
-        if (nextLines > CUSTOMER_RAW_CHUNK_LINE_LIMIT && end > offset) break;
-        lines = nextLines;
-        lineWidth = nextWidth;
-        end += charLength;
-      }
-      if (end <= offset) end = Math.min(text2.length, offset + 1);
-      chunks.push(text2.slice(offset, end));
-      offset = end;
-    }
-    return chunks;
-  }
-  function buildCustomerRawContinuations(items) {
-    const continuations = [];
-    let firstRow = 2;
-    for (const item of items) {
-      for (const side of ["source", "target"]) {
-        const raw = side === "source" ? item.rawBefore : item.rawAfter;
-        if (!customerRawNeedsContinuation(raw)) continue;
-        const chunks = splitCustomerRawText(raw.text);
-        continuations.push({ kind: "difference", item, side, chunks, firstRow });
-        firstRow += chunks.length;
-      }
-    }
-    return continuations;
-  }
-  function compactCustomerMainValue(value) {
-    const normalized = value.replace(/\r\n?/g, "\n");
-    if (estimatedWrappedLines(normalized, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH) <= CUSTOMER_MAIN_VALUE_MAX_LINES) {
-      return normalized;
-    }
-    let output = "";
-    for (const char of graphemeClusters(normalized)) {
-      const candidate = `${output}${char}…`;
-      if (estimatedWrappedLines(candidate, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH) > CUSTOMER_MAIN_VALUE_MAX_LINES) break;
-      output += char;
-    }
-    return `${output.replace(/\s+$/g, "")}…`;
-  }
   function customerFieldCodeLabel(codeValue, bundle) {
     const code = String(codeValue ?? "").trim();
     if (!code) return code;
@@ -15130,7 +15052,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
         display = customerTechnicalValueLabel(value, path.split(".").at(-1) || "");
       }
     }
-    return compactCustomerMainValue(display);
+    return display;
   }
   function buildCustomerDiffItems(ctx, includeTableChildren = false) {
     const sourceRows = includeTableChildren ? expandSubtableRowsForDisplay(ctx.rows || []) : ctx.rows || [];
@@ -15146,9 +15068,11 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
         const targetColumns = customerTargetColumns(row, parts, ctx.sourceBundle, ctx.targetBundle);
         const moved = row.moved || row.type === "moved";
         const wholeFieldExistenceChange = targetColumns.field?.wholeField && (row.type === "added" || row.type === "removed");
+        const viewIdentity = sectionKey === "viewSettings" ? resolveCoarseViewIdentity(row, ctx.sourceBundle, ctx.targetBundle) : null;
+        const wholeNamedEntityExistenceChange = (row.type === "added" || row.type === "removed") && (wholeFieldExistenceChange || !!viewIdentity?.isRoot || sectionKey === "actionSettings" && (!!row.entityKind || /^actionSettings\.actions(?:\[[^\]]+\]|\.[^.]+)$/.test(String(row.path || ""))));
         const positionLabel = (value, fallbackSide) => Number.isInteger(value) && Number(value) >= 0 ? `${Number(value) + 1}番目` : customerReadableValue(row, fallbackSide, ctx.sourceBundle, ctx.targetBundle);
-        const before = moved ? positionLabel(row.movedFrom, "source") : wholeFieldExistenceChange ? row.type === "added" ? "存在しません" : "存在" : customerReadableValue(row, "source", ctx.sourceBundle, ctx.targetBundle);
-        const after = moved ? positionLabel(row.movedTo, "target") : wholeFieldExistenceChange ? row.type === "removed" ? "存在しません" : "存在" : customerReadableValue(row, "target", ctx.sourceBundle, ctx.targetBundle);
+        const before = moved ? positionLabel(row.movedFrom, "source") : wholeNamedEntityExistenceChange ? row.type === "added" ? "存在しません" : parts.target : customerReadableValue(row, "source", ctx.sourceBundle, ctx.targetBundle);
+        const after = moved ? positionLabel(row.movedTo, "target") : wholeNamedEntityExistenceChange ? row.type === "removed" ? "存在しません" : parts.target : customerReadableValue(row, "target", ctx.sourceBundle, ctx.targetBundle);
         const rawBeforeBase = customerRawValue(row, "source");
         const rawAfterBase = customerRawValue(row, "target");
         const rawBefore = wholeFieldExistenceChange ? { ...rawBeforeBase, state: row.type === "added" ? "存在しません" : "存在" } : rawBeforeBase;
@@ -15193,7 +15117,9 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       const parentCode = item.field.parentTableCode === "—" ? "" : item.field.parentTableCode;
       return {
         key: JSON.stringify(["fieldSettings", parentCode, item.field.fieldCode]),
-        classification: item.field.structure === "テーブル" ? "テーブル" : "フィールド",
+        // kintone のテーブルもフォームのフィールド設定の一種として扱う。
+        // 対象名の「テーブル」表記で通常フィールドとの区別は維持する。
+        classification: "フィールド",
         target: customerPlainText(item.targetDetail || item.target, 96),
         sectionKey: item.sectionKey
       };
@@ -15703,7 +15629,7 @@ ${targetName}`, "", ""],
     return {
       name: "比較概要",
       rows,
-      colWidths: [24, 22, 10, 22, 16, 22],
+      colWidths: [19, 19, 19, 19, 19, 19],
       rowStyles: rows.map(() => "normal"),
       cellStyles,
       headerRow: breakdownHeaderRow >= 0 ? breakdownHeaderRow + 1 : void 0,
@@ -15944,7 +15870,6 @@ ${changeSummary}`, width: 24 },
       const alternate = index % 2 === 1;
       const baseStyle = alternate ? "zebra" : "normal";
       const categoryStyle = alternate ? "category" : "categoryPlain";
-      const startsTarget = index === 0 || items[index - 1]?.target !== item.target;
       const target = definition.key === "unknown" ? `${item.sectionLabel}
 ${item.target}` : item.target;
       rows.push([
@@ -15960,7 +15885,7 @@ ${item.target}` : item.target;
       cellStyles.push([
         "actionLink",
         changeStyles[item.changeType],
-        startsTarget ? categoryStyle : baseStyle,
+        categoryStyle,
         baseStyle,
         beforeStyle,
         afterStyle
@@ -16035,8 +15960,6 @@ ${item.target}` : item.target;
     };
     viewItems.forEach((item, index) => {
       const viewName = customerNamedTarget(item.targetDetail, ["一覧"]);
-      const previousName = index > 0 ? customerNamedTarget(viewItems[index - 1].targetDetail, ["一覧"]) : "";
-      const startsTarget = index === 0 || viewName !== previousName;
       const alternate = index % 2 === 1;
       const baseStyle = alternate ? "zebra" : "normal";
       const categoryStyle = alternate ? "category" : "categoryPlain";
@@ -16053,7 +15976,7 @@ ${item.target}` : item.target;
       cellStyles.push([
         "actionLink",
         changeStyles[item.changeType],
-        startsTarget ? categoryStyle : baseStyle,
+        categoryStyle,
         baseStyle,
         beforeStyle,
         afterStyle
@@ -16124,9 +16047,6 @@ ${item.target}` : item.target;
     actionItems.forEach((item, index) => {
       const actionKind = item.sectionKey === "actionSettings" ? "アプリアクション" : "プロセスのアクション";
       const actionName = customerNamedTarget(item.targetDetail, ["アプリアクション", "アクション"]);
-      const previous = actionItems[index - 1];
-      const previousName = previous ? `${previous.sectionKey}:${customerNamedTarget(previous.targetDetail, ["アプリアクション", "アクション"])}` : "";
-      const startsTarget = index === 0 || `${item.sectionKey}:${actionName}` !== previousName;
       const alternate = index % 2 === 1;
       const baseStyle = alternate ? "zebra" : "normal";
       const categoryStyle = alternate ? "category" : "categoryPlain";
@@ -16145,7 +16065,7 @@ ${item.target}` : item.target;
         "actionLink",
         changeStyles[item.changeType],
         baseStyle,
-        startsTarget ? categoryStyle : baseStyle,
+        categoryStyle,
         baseStyle,
         beforeStyle,
         afterStyle
@@ -16251,7 +16171,7 @@ ${item.target}` : item.target;
       const styles = Array.from({ length: headers.length }, () => baseStyle);
       styles[0] = actualIndex == null ? alternate ? "zebraCenter" : "center" : "actionLink";
       styles[1] = changeStyles[item.changeType];
-      styles[2] = field.structure === "テーブル" ? categoryStyle : baseStyle;
+      styles[2] = categoryStyle;
       styles[7] = alternate ? "zebraCenter" : "center";
       styles[8] = alternate ? "zebraCenter" : "center";
       styles[9] = beforeStyle;
@@ -16319,228 +16239,6 @@ ${item.target}` : item.target;
     }
     return sheets;
   }
-  function buildCustomerValueDetailSheet(ctx, items, continuations) {
-    if (!items.length) return null;
-    const sourceName = customerHeaderAppName(ctx.sourceBundle, "比較元");
-    const targetName = customerHeaderAppName(ctx.targetBundle, "比較先");
-    const continuationByKey = new Map(continuations.map((continuation) => [
-      `${continuation.item.index}:${continuation.side}`,
-      continuation
-    ]));
-    const redundantAnchors = /* @__PURE__ */ new Map();
-    for (const group of buildCustomerApiGroups(items)) {
-      group.items.forEach((item, position) => {
-        if (!item.redundant) return;
-        redundantAnchors.set(item, {
-          sheetName: group.definition.sheetName,
-          row: position + 3,
-          label: group.definition.label
-        });
-      });
-    }
-    const headers = [
-      "No.",
-      "変更区分",
-      "分類",
-      "設定対象",
-      "差分プロパティ",
-      `変更前の原文
-${sourceName}`,
-      `変更後の原文
-${targetName}`,
-      "一覧へ戻る"
-    ];
-    const rows = [headers];
-    const rowStyles = ["normal"];
-    const cellStyles = [[]];
-    const rowHeights = [readableHeaderRowHeight([
-      { value: headers[5], width: 42 },
-      { value: headers[6], width: 42 }
-    ], 52)];
-    const internalHyperlinks = [];
-    const changeStyles = {
-      "追加": "changeAdded",
-      "削除": "changeRemoved",
-      "変更": "changeChanged",
-      "並び順変更": "changeMoved"
-    };
-    items.forEach((item, index) => {
-      const beforeContinuation = continuationByKey.get(`${item.index}:source`);
-      const afterContinuation = continuationByKey.get(`${item.index}:target`);
-      const beforeText = beforeContinuation ? `長文原文へ（${item.rawBefore.text.length}文字・${beforeContinuation.chunks.length}分割）` : customerRawDisplayValue(item.rawBefore);
-      const afterText = afterContinuation ? `長文原文へ（${item.rawAfter.text.length}文字・${afterContinuation.chunks.length}分割）` : customerRawDisplayValue(item.rawAfter);
-      const settingItemDetail = item.technicalPath ? `${item.settingItemDetail}
-内部パス: ${item.technicalPath}` : item.settingItemDetail;
-      const anchor = redundantAnchors.get(item);
-      rows.push([
-        item.index + 1,
-        item.changeType,
-        item.sectionLabel,
-        item.targetDetail,
-        settingItemDetail,
-        beforeText,
-        afterText,
-        anchor ? `${anchor.label}へ` : `変更一覧 No.${item.index + 1}へ`
-      ]);
-      rowStyles.push("normal");
-      const startsCategory = index === 0 || items[index - 1]?.sectionLabel !== item.sectionLabel;
-      const alternate = index % 2 === 1;
-      const baseStyle = alternate ? "zebra" : "normal";
-      const categoryStyle = alternate ? "category" : "categoryPlain";
-      const styles = [];
-      styles[0] = alternate ? "zebraCenter" : "center";
-      styles[1] = changeStyles[item.changeType];
-      styles[2] = startsCategory ? categoryStyle : baseStyle;
-      styles[3] = baseStyle;
-      styles[4] = baseStyle;
-      styles[5] = beforeContinuation ? "diffBeforeLink" : item.rawBefore.state === "存在しません" ? "diffAbsent" : "rawDiffBefore";
-      styles[6] = afterContinuation ? "diffAfterLink" : item.rawAfter.state === "存在しません" ? "diffAbsent" : "rawDiffAfter";
-      styles[7] = "actionLink";
-      cellStyles.push(styles);
-      rowHeights.push(readableCustomerRowHeight([
-        { value: item.targetDetail, width: 24 },
-        { value: settingItemDetail, width: 22 },
-        { value: beforeText, width: 42 },
-        { value: afterText, width: 42 }
-      ], 395));
-      if (beforeContinuation) {
-        internalHyperlinks.push({
-          ref: `F${index + 2}`,
-          targetSheet: "長文原文",
-          targetCell: `A${beforeContinuation.firstRow}`,
-          tooltip: `No.${item.index + 1} 変更前の長文原文へ移動`
-        });
-      }
-      if (afterContinuation) {
-        internalHyperlinks.push({
-          ref: `G${index + 2}`,
-          targetSheet: "長文原文",
-          targetCell: `A${afterContinuation.firstRow}`,
-          tooltip: `No.${item.index + 1} 変更後の長文原文へ移動`
-        });
-      }
-      internalHyperlinks.push(anchor ? {
-        ref: `H${index + 2}`,
-        targetSheet: anchor.sheetName,
-        targetCell: `A${anchor.row}`,
-        tooltip: `${anchor.label}の該当行へ戻る`
-      } : {
-        ref: `H${index + 2}`,
-        targetSheet: "変更一覧",
-        targetCell: `A${item.index + 2}`,
-        tooltip: `変更一覧 No.${item.index + 1}へ戻る`
-      });
-    });
-    return {
-      name: "設定値詳細",
-      rows,
-      colWidths: [7, 11, 14, 24, 22, 42, 42, 18],
-      rowStyles,
-      cellStyles,
-      headerRow: 1,
-      freezeRows: 1,
-      freezeColumns: 5,
-      rowHeights,
-      materializeEmptyCellsFromRow: 1,
-      internalHyperlinks,
-      showGridLines: false,
-      zoomScale: 85,
-      print: {
-        orientation: "landscape",
-        fitToWidth: 2,
-        fitToHeight: 0,
-        repeatRows: { from: 1, to: 1 },
-        repeatColumns: { from: 1, to: 5 },
-        footer: "&L設定値詳細（原文）&Rページ &P / &N"
-      }
-    };
-  }
-  function buildCustomerLongRawSheet(continuations) {
-    if (!continuations.length) return null;
-    const rows = [[
-      "参照",
-      "対象",
-      "比較側",
-      "分割No.",
-      "文字位置",
-      "原文（順に連結）",
-      "参照元へ"
-    ]];
-    const rowStyles = ["normal"];
-    const cellStyles = [[]];
-    const rowHeights = [42];
-    const internalHyperlinks = [];
-    for (const continuation of continuations) {
-      const difference = continuation.kind === "difference" ? continuation : void 0;
-      const coverage = continuation.kind === "coverage" ? continuation : void 0;
-      const raw = difference ? difference.side === "source" ? difference.item.rawBefore : difference.item.rawAfter : coverage.issue.raw;
-      const reference = difference ? difference.item.index + 1 : `確認範囲 ${coverage.issue.index + 1}`;
-      const target = difference ? difference.item.item : coverage.issue.sectionLabel;
-      const side = difference ? difference.side === "source" ? "変更前" : "変更後" : coverage.issue.target;
-      const returnLabel = difference ? `設定値詳細 No.${difference.item.index + 1}へ` : `確認できなかった範囲 ${coverage.issue.index + 1}へ`;
-      let offset = 0;
-      continuation.chunks.forEach((chunk, chunkIndex) => {
-        const start = offset + 1;
-        offset += chunk.length;
-        const end = offset;
-        const rowNumber = rows.length + 1;
-        const displayedTarget = chunkIndex === 0 ? customerPlainText(target, 120) : "同上";
-        rows.push([
-          reference,
-          displayedTarget,
-          side,
-          `${chunkIndex + 1} / ${continuation.chunks.length}`,
-          `${start}–${end} / ${raw.text.length}文字`,
-          chunk,
-          returnLabel
-        ]);
-        rowStyles.push("normal");
-        const alternate = (rowNumber - 2) % 2 === 1;
-        cellStyles.push([
-          alternate ? "zebraCenter" : "center",
-          alternate ? "zebra" : "normal",
-          alternate ? "zebraCenter" : "center",
-          alternate ? "zebraCenter" : "center",
-          alternate ? "zebraCenter" : "center",
-          difference ? difference.side === "source" ? "rawDiffBefore" : "rawDiffAfter" : "rawWarning",
-          "actionLink"
-        ]);
-        rowHeights.push(readableCustomerRowHeight([
-          { value: displayedTarget, width: 24 },
-          { value: chunk, width: CUSTOMER_RAW_CHUNK_COLUMN_WIDTH }
-        ], 395));
-        internalHyperlinks.push({
-          ref: `G${rowNumber}`,
-          targetSheet: difference ? "設定値詳細" : "確認できなかった範囲",
-          targetCell: `A${difference ? difference.item.index + 2 : coverage.issue.index + 3}`,
-          tooltip: `${returnLabel}戻る`
-        });
-      });
-    }
-    return {
-      name: "長文原文",
-      rows,
-      colWidths: [7, 24, 9, 11, 20, CUSTOMER_RAW_CHUNK_COLUMN_WIDTH, 20],
-      rowStyles,
-      cellStyles,
-      headerRow: 1,
-      freezeRows: 1,
-      freezeColumns: 3,
-      rowHeights,
-      materializeEmptyCellsFromRow: 1,
-      internalHyperlinks,
-      showGridLines: false,
-      zoomScale: 80,
-      print: {
-        orientation: "landscape",
-        fitToWidth: 2,
-        fitToHeight: 0,
-        repeatRows: { from: 1, to: 1 },
-        repeatColumns: { from: 1, to: 5 },
-        footer: "&L長文原文（分割証跡）&Rページ &P / &N"
-      }
-    };
-  }
   function customerIssueSide(side) {
     if (side === "source") return "比較元";
     if (side === "target") return "比較先";
@@ -16601,17 +16299,6 @@ ${targetName}`,
       }
     }
     return items;
-  }
-  function buildCustomerIssueRawContinuations(items, firstDataRow) {
-    const continuations = [];
-    let firstRow = firstDataRow;
-    for (const issue of items) {
-      if (!customerRawNeedsContinuation(issue.raw)) continue;
-      const chunks = splitCustomerRawText(issue.raw.text);
-      continuations.push({ kind: "coverage", issue, chunks, firstRow });
-      firstRow += chunks.length;
-    }
-    return continuations;
   }
   function buildCustomerIssuesSheet(items, continuations) {
     if (!items.length) return null;
@@ -16685,31 +16372,24 @@ ${targetName}`,
   function buildCustomerDiffXlsxSheets(ctx) {
     const items = buildCustomerDiffItems(ctx);
     const apiGroups = buildCustomerApiGroups(items);
-    const differenceContinuations = buildCustomerRawContinuations(items);
     const issueItems = buildCustomerCoverageIssueItems(ctx);
-    const nextLongRawRow = differenceContinuations.reduce(
-      (nextRow, continuation) => Math.max(nextRow, continuation.firstRow + continuation.chunks.length),
-      2
-    );
-    const issueContinuations = buildCustomerIssueRawContinuations(issueItems, nextLongRawRow);
-    const allContinuations = [...differenceContinuations, ...issueContinuations];
-    const issues = buildCustomerIssuesSheet(issueItems, issueContinuations);
+    const issues = buildCustomerIssuesSheet(issueItems, []);
     const apiSheets = buildCustomerApiDiffSheets(ctx, apiGroups, items);
-    const valueDetails = buildCustomerValueDetailSheet(ctx, items, differenceContinuations);
-    const longRaw = buildCustomerLongRawSheet(allContinuations);
     const summary = buildCustomerSummarySheet(ctx, items, apiGroups, {
       hasIssues: !!issues,
       hasFeatureSheets: apiSheets.length > 0,
-      hasValueDetails: !!valueDetails,
-      hasLongRaw: !!longRaw
+      hasValueDetails: false,
+      hasLongRaw: false
     });
     const sheets = [summary];
     if (issues) sheets.push(issues);
     sheets.push(buildCustomerCoarseTargetSheet(ctx, items));
     sheets.push(buildCustomerListSheet(ctx, items, apiGroups));
     sheets.push(...apiSheets);
-    if (valueDetails) sheets.push(valueDetails);
-    if (longRaw) sheets.push(longRaw);
+    const sheetNames = new Set(sheets.map((sheet) => sheet.name));
+    for (const sheet of sheets) {
+      sheet.internalHyperlinks = sheet.internalHyperlinks?.filter((link) => sheetNames.has(link.targetSheet));
+    }
     return sheets;
   }
   function buildDiffXlsxSheets(ctx) {

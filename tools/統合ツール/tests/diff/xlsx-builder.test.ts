@@ -644,13 +644,14 @@ describe('diff/xlsx-builder', () => {
     expect(cellXfs[32]).toContain('borderId="1"');
     expect(cellXfs[39]).toContain('fillId="3"');
     expect(cellXfs[39]).toContain('borderId="1"');
+    expect(cellXfsBlock).toMatch(/<xf\b[^>]*fillId="3"[^>]*><alignment vertical="top" horizontal="left" wrapText="1"\/><\/xf>/);
     const borderIds = [...cellXfsBlock.matchAll(/<xf\b[^>]*\bborderId="([0-9]+)"[^>]*>/g)]
       .map((match) => match[1]);
     expect(new Set(borderIds)).toEqual(new Set(['0', '1']));
     expect(borderIds.filter((borderId) => borderId === '0')).toHaveLength(2);
   });
 
-  it('adds opt-in monospace raw styles without changing existing style indexes', async () => {
+  it('adds opt-in raw styles in Meiryo without changing existing style indexes', async () => {
     const sheets: XlsxSheet[] = [{
       name: 'S',
       rows: [['before', 'after', 'warning'], ['{"path":"C:\\\\tmp"}', '{"ok":true}', 'raw warning']],
@@ -670,8 +671,8 @@ describe('diff/xlsx-builder', () => {
     const fonts = [...fontsBlock.matchAll(/<font>([\s\S]*?)<\/font>/g)].map((match) => match[1]);
     expect(fonts).toHaveLength(21);
     for (const index of [18, 19, 20]) {
-      expect(fonts[index]).toContain('<name val="Consolas"/>');
-      expect(fonts[index]).toContain('<family val="3"/>');
+      expect(fonts[index]).toContain('<name val="Meiryo"/>');
+      expect(fonts[index]).not.toContain('<family val="3"/>');
     }
     expect(fonts[18]).toContain('<color rgb="FF991B1B"/>');
     expect(fonts[19]).toContain('<color rgb="FF166534"/>');
