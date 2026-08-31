@@ -15509,12 +15509,6 @@ ${targetName}`, "", ""],
     if (availability.hasFeatureSheets) {
       guideRows.push(["フォーム・一覧など、特定の機能に絞って確認する", "", "", "", "機能別シート（上の表から開けます）", ""]);
     }
-    if (availability.hasValueDetails) {
-      guideRows.push(["表示用に要約する前の設定値を確認する", "", "", "", "設定値詳細", ""]);
-    }
-    if (availability.hasLongRaw) {
-      guideRows.push(["セルに収まらない長い設定値の全文を確認する", "", "", "", "長文原文", ""]);
-    }
     rows.push(
       ["シートの使い分け", "", "", "", "", ""],
       ["確認したいこと", "", "", "", "開くシート", ""],
@@ -15734,7 +15728,7 @@ ${changeSummary}`,
       const styles = [];
       const alternate = index % 2 === 1;
       const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
-      styles[0] = "actionLink";
+      styles[0] = alternate ? "zebraCenter" : "center";
       styles[1] = changeStyles[item.changeType];
       styles[2] = "actionLink";
       styles[3] = alternate ? "zebra" : "normal";
@@ -15742,12 +15736,6 @@ ${changeSummary}`,
       styles[5] = beforeStyle;
       styles[6] = afterStyle;
       cellStyles.push(styles);
-      internalHyperlinks.push({
-        ref: `A${index + 2}`,
-        targetSheet: "設定値詳細",
-        targetCell: `A${index + 2}`,
-        tooltip: "比較元・比較先の原文を確認"
-      });
       const apiDefinition = apiDefinitionByItem.get(item);
       if (apiDefinition) {
         internalHyperlinks.push({
@@ -15814,7 +15802,6 @@ ${changeSummary}`, width: 24 },
     const rowHeights = [readableHeaderRowHeight([
       { value: title, width: 124 }
     ], redundantNote ? 60 : 42), 44];
-    const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
       "削除": "changeRemoved",
@@ -15838,7 +15825,7 @@ ${item.target}` : item.target;
       rowStyles.push("normal");
       const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
       cellStyles.push([
-        "actionLink",
+        alternate ? "zebraCenter" : "center",
         changeStyles[item.changeType],
         categoryStyle,
         baseStyle,
@@ -15851,12 +15838,6 @@ ${item.target}` : item.target;
         { value: item.before, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH },
         { value: item.after, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH }
       ], 220));
-      internalHyperlinks.push({
-        ref: `A${index + 3}`,
-        targetSheet: "設定値詳細",
-        targetCell: `A${item.index + 2}`,
-        tooltip: `設定値詳細 No.${item.index + 1}を開く`
-      });
     });
     return {
       name: definition.sheetName,
@@ -15871,7 +15852,6 @@ ${item.target}` : item.target;
       styledEmptyCellsAsBlank: true,
       materializeEmptyCellsFromRow: 2,
       merges: ["A1:F1"],
-      internalHyperlinks,
       showGridLines: false,
       zoomScale: 95,
       print: {
@@ -15906,7 +15886,6 @@ ${item.target}` : item.target;
     const rowHeights = [readableHeaderRowHeight([
       { value: title, width: 130 }
     ], 42), 44];
-    const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
       "削除": "changeRemoved",
@@ -15929,7 +15908,7 @@ ${item.target}` : item.target;
       rowStyles.push("normal");
       const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
       cellStyles.push([
-        "actionLink",
+        alternate ? "zebraCenter" : "center",
         changeStyles[item.changeType],
         categoryStyle,
         baseStyle,
@@ -15942,12 +15921,6 @@ ${item.target}` : item.target;
         { value: item.before, width: 30 },
         { value: item.after, width: 30 }
       ], 96));
-      internalHyperlinks.push({
-        ref: `A${index + 3}`,
-        targetSheet: "設定値詳細",
-        targetCell: `A${item.index + 2}`,
-        tooltip: "比較元・比較先の原文を確認"
-      });
     });
     return {
       name: definition.sheetName,
@@ -15961,7 +15934,6 @@ ${item.target}` : item.target;
       rowHeights,
       materializeEmptyCellsFromRow: 2,
       merges: ["A1:F1"],
-      internalHyperlinks,
       showGridLines: false,
       zoomScale: 95,
       print: {
@@ -15992,7 +15964,6 @@ ${item.target}` : item.target;
     const rowHeights = [readableHeaderRowHeight([
       { value: title, width: 145 }
     ], 42), 44];
-    const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
       "削除": "changeRemoved",
@@ -16017,7 +15988,7 @@ ${item.target}` : item.target;
       rowStyles.push("normal");
       const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
       cellStyles.push([
-        "actionLink",
+        alternate ? "zebraCenter" : "center",
         changeStyles[item.changeType],
         baseStyle,
         categoryStyle,
@@ -16032,12 +16003,6 @@ ${item.target}` : item.target;
         { value: item.before, width: 28 },
         { value: item.after, width: 28 }
       ], 96));
-      internalHyperlinks.push({
-        ref: `A${index + 3}`,
-        targetSheet: "設定値詳細",
-        targetCell: `A${item.index + 2}`,
-        tooltip: "比較元・比較先の原文を確認"
-      });
     });
     return {
       name: definition.sheetName,
@@ -16051,7 +16016,6 @@ ${item.target}` : item.target;
       rowHeights,
       materializeEmptyCellsFromRow: 2,
       merges: ["A1:G1"],
-      internalHyperlinks,
       showGridLines: false,
       zoomScale: 92,
       print: {
@@ -16091,7 +16055,6 @@ ${item.target}` : item.target;
       { value: title, width: 212 }
     ], 42), 48];
     const rowOutlines = [void 0, void 0];
-    const internalHyperlinks = [];
     const changeStyles = {
       "追加": "changeAdded",
       "削除": "changeRemoved",
@@ -16124,7 +16087,7 @@ ${item.target}` : item.target;
       const categoryStyle = alternate ? "category" : "categoryPlain";
       const [beforeStyle, afterStyle] = customerComparisonValueStyles(item);
       const styles = Array.from({ length: headers.length }, () => baseStyle);
-      styles[0] = actualIndex == null ? alternate ? "zebraCenter" : "center" : "actionLink";
+      styles[0] = alternate ? "zebraCenter" : "center";
       styles[1] = changeStyles[item.changeType];
       styles[2] = categoryStyle;
       styles[7] = alternate ? "zebraCenter" : "center";
@@ -16132,14 +16095,6 @@ ${item.target}` : item.target;
       styles[9] = beforeStyle;
       styles[10] = afterStyle;
       cellStyles.push(styles);
-      if (actualIndex != null) {
-        internalHyperlinks.push({
-          ref: `A${index + 3}`,
-          targetSheet: "設定値詳細",
-          targetCell: `A${actualIndex + 2}`,
-          tooltip: "比較元・比較先の原文を確認"
-        });
-      }
       rowHeights.push(readableCustomerRowHeight([
         { value: location, width: 30 },
         { value: field.fieldName, width: 22 },
@@ -16164,7 +16119,6 @@ ${item.target}` : item.target;
       outlineSummaryBelow: false,
       materializeEmptyCellsFromRow: 2,
       merges: ["A1:K1"],
-      internalHyperlinks,
       showGridLines: false,
       zoomScale: 85,
       print: {
@@ -16205,7 +16159,6 @@ ${item.target}` : item.target;
     const add = (sectionLabel, target, status, explanation, rawValue) => {
       const text2 = stringifyForDiff(rawValue);
       items.push({
-        index: items.length,
         sectionLabel,
         target,
         status,
@@ -16255,46 +16208,27 @@ ${item.target}` : item.target;
     }
     return items;
   }
-  function buildCustomerIssuesSheet(items, continuations) {
+  function buildCustomerIssuesSheet(items) {
     if (!items.length) return null;
-    const continuationByIndex = new Map(continuations.map((continuation) => [
-      continuation.issue.index,
-      continuation
-    ]));
     const rows = [
       ["このシートの範囲は比較結果に含まれていないか、一部だけ確認できています。取得・打切り情報の原文を確認してください。", "", "", "", ""],
       ["分類", "対象", "確認状態", "説明", "取得・打切り情報（原文）"]
     ];
-    const internalHyperlinks = [];
-    items.forEach((item, index) => {
-      const continuation = continuationByIndex.get(item.index);
+    for (const item of items) {
       rows.push([
         item.sectionLabel,
         item.target,
         item.status,
         item.explanation,
-        continuation ? `長文原文へ（${item.raw.text.length}文字・${continuation.chunks.length}分割）` : item.raw.text
+        item.raw.text
       ]);
-      if (continuation) {
-        internalHyperlinks.push({
-          ref: `E${index + 3}`,
-          targetSheet: "長文原文",
-          targetCell: `A${continuation.firstRow}`,
-          tooltip: `確認できなかった範囲 ${index + 1} の長文原文へ移動`
-        });
-      }
-    });
+    }
     const cellStyles = rows.map((row, index) => {
       if (index === 0) return ["warning"];
       if (index === 1) return [];
       const alternate = (index - 2) % 2 === 1;
       const baseStyle = alternate ? "zebra" : "normal";
       return [baseStyle, baseStyle, incompleteIssueStatusStyle(row[2]), baseStyle, baseStyle];
-    });
-    items.forEach((item, index) => {
-      if (continuationByIndex.has(item.index)) {
-        cellStyles[index + 2][4] = incompleteIssueStatusStyle(item.status) === "statusError" ? "warningLink" : "actionLink";
-      }
     });
     return {
       name: "確認できなかった範囲",
@@ -16314,7 +16248,6 @@ ${item.target}` : item.target;
         { value: row[4], width: 56 }
       ], 96)),
       merges: ["A1:E1"],
-      internalHyperlinks,
       showGridLines: false,
       print: {
         orientation: "landscape",
@@ -16328,23 +16261,17 @@ ${item.target}` : item.target;
     const items = buildCustomerDiffItems(ctx);
     const apiGroups = buildCustomerApiGroups(items);
     const issueItems = buildCustomerCoverageIssueItems(ctx);
-    const issues = buildCustomerIssuesSheet(issueItems, []);
+    const issues = buildCustomerIssuesSheet(issueItems);
     const apiSheets = buildCustomerApiDiffSheets(ctx, apiGroups, items);
     const summary = buildCustomerSummarySheet(ctx, items, apiGroups, {
       hasIssues: !!issues,
-      hasFeatureSheets: apiSheets.length > 0,
-      hasValueDetails: false,
-      hasLongRaw: false
+      hasFeatureSheets: apiSheets.length > 0
     });
     const sheets = [summary];
     if (issues) sheets.push(issues);
     sheets.push(buildCustomerCoarseTargetSheet(ctx, items));
     sheets.push(buildCustomerListSheet(ctx, items, apiGroups));
     sheets.push(...apiSheets);
-    const sheetNames = new Set(sheets.map((sheet) => sheet.name));
-    for (const sheet of sheets) {
-      sheet.internalHyperlinks = sheet.internalHyperlinks?.filter((link) => sheetNames.has(link.targetSheet));
-    }
     return sheets;
   }
   function buildDiffXlsxSheets(ctx) {
