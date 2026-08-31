@@ -3534,7 +3534,7 @@ function customerViewItemParts(
     date: '日付の基準フィールド',
     title: '見出し',
     html: 'カスタマイズ内容',
-    index: '一覧の並び順'
+    index: '一覧自体の表示順'
   };
   const fieldIndex = /^fields\[(\d+)\]$/.exec(property)?.[1];
   const settingItem = property.startsWith('fields')
@@ -4184,7 +4184,9 @@ function customerReadableValue(
     }
   }
 
-  return compactCustomerMainValue(display);
+  // 変更一覧と機能別シートだけで原文を確認できるよう、
+  // 表示値を別シートへ退避させずそのままセルに収録する。
+  return display;
 }
 
 function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = false): CustomerDiffItem[] {
@@ -4212,6 +4214,13 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = fal
       const moved = row.moved || row.type === 'moved';
       const wholeFieldExistenceChange = targetColumns.field?.wholeField
         && (row.type === 'added' || row.type === 'removed');
+      const viewIdentity = sectionKey === 'viewSettings' ? resolveCoarseViewIdentity(row, ctx.sourceBundle, ctx.targetBundle) : null;
+      const wholeNamedEntityExistenceChange = (row.type === 'added' || row.type === 'removed') && (
+        wholeFieldExistenceChange
+        || !!viewIdentity?.isRoot
+        || (sectionKey === 'actionSettings'
+          && (!!(row as any).entityKind || /^actionSettings\.actions(?:\[[^\]]+\]|\.[^.]+)$/.test(String(row.path || ''))))
+      );
       const positionLabel = (value: unknown, fallbackSide: 'source' | 'target'): string => (
         Number.isInteger(value) && Number(value) >= 0
           ? `${Number(value) + 1}番目`
@@ -4219,13 +4228,13 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = fal
       );
       const before = moved
         ? positionLabel(row.movedFrom, 'source')
-        : wholeFieldExistenceChange
-          ? row.type === 'added' ? '存在しません' : '存在'
+        : wholeNamedEntityExistenceChange
+          ? row.type === 'added' ? '存在しません' : parts.target
           : customerReadableValue(row, 'source', ctx.sourceBundle, ctx.targetBundle);
       const after = moved
         ? positionLabel(row.movedTo, 'target')
-        : wholeFieldExistenceChange
-          ? row.type === 'removed' ? '存在しません' : '存在'
+        : wholeNamedEntityExistenceChange
+          ? row.type === 'removed' ? '存在しません' : parts.target
           : customerReadableValue(row, 'target', ctx.sourceBundle, ctx.targetBundle);
       const rawBeforeBase = customerRawValue(row, 'source');
       const rawAfterBase = customerRawValue(row, 'target');
@@ -4293,7 +4302,9 @@ function customerCoarseIdentity(
     const parentCode = item.field.parentTableCode === '—' ? '' : item.field.parentTableCode;
     return {
       key: JSON.stringify(['fieldSettings', parentCode, item.field.fieldCode]),
-      classification: item.field.structure === 'テーブル' ? 'テーブル' : 'フィールド',
+      // kintone のテーブルもフォームのフィールド設定の一種として扱う。
+      // 対象名の「テーブル」表記で通常フィールドとの区別は維持する。
+      classification: 'フィールド',
       target: customerPlainText(item.targetDetail || item.target, 96),
       sectionKey: item.sectionKey
     };
@@ -4901,7 +4912,7 @@ function buildCustomerSummarySheet(
   return {
     name: '比較概要',
     rows,
-    colWidths: [24, 22, 10, 22, 16, 22],
+    colWidths: [19, 19, 19, 19, 19, 19],
     rowStyles: rows.map(() => 'normal'),
     cellStyles,
     headerRow: breakdownHeaderRow >= 0 ? breakdownHeaderRow + 1 : undefined,
@@ -5163,7 +5174,6 @@ function buildCustomerGenericApiDiffSheet(ctx: DiffXlsxContext, group: CustomerA
     const alternate = index % 2 === 1;
     const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
     const categoryStyle: XlsxCellStyle = alternate ? 'category' : 'categoryPlain';
-    const startsTarget = index === 0 || items[index - 1]?.target !== item.target;
     const target = definition.key === 'unknown'
       ? `${item.sectionLabel}\n${item.target}`
       : item.target;
@@ -5180,7 +5190,7 @@ function buildCustomerGenericApiDiffSheet(ctx: DiffXlsxContext, group: CustomerA
     cellStyles.push([
       'actionLink',
       changeStyles[item.changeType],
-      startsTarget ? categoryStyle : baseStyle,
+      categoryStyle,
       baseStyle,
       beforeStyle,
       afterStyle
@@ -5267,10 +5277,6 @@ function buildCustomerViewDiffSheet(
 
   viewItems.forEach((item, index) => {
     const viewName = customerNamedTarget(item.targetDetail, ['一覧']);
-    const previousName = index > 0
-      ? customerNamedTarget(viewItems[index - 1].targetDetail, ['一覧'])
-      : '';
-    const startsTarget = index === 0 || viewName !== previousName;
     const alternate = index % 2 === 1;
     const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
     const categoryStyle: XlsxCellStyle = alternate ? 'category' : 'categoryPlain';
@@ -5287,7 +5293,7 @@ function buildCustomerViewDiffSheet(
     cellStyles.push([
       'actionLink',
       changeStyles[item.changeType],
-      startsTarget ? categoryStyle : baseStyle,
+      categoryStyle,
       baseStyle,
       beforeStyle,
       afterStyle
@@ -5369,11 +5375,6 @@ function buildCustomerActionDiffSheet(
   actionItems.forEach((item, index) => {
     const actionKind = item.sectionKey === 'actionSettings' ? 'アプリアクション' : 'プロセスのアクション';
     const actionName = customerNamedTarget(item.targetDetail, ['アプリアクション', 'アクション']);
-    const previous = actionItems[index - 1];
-    const previousName = previous
-      ? `${previous.sectionKey}:${customerNamedTarget(previous.targetDetail, ['アプリアクション', 'アクション'])}`
-      : '';
-    const startsTarget = index === 0 || `${item.sectionKey}:${actionName}` !== previousName;
     const alternate = index % 2 === 1;
     const baseStyle: XlsxCellStyle = alternate ? 'zebra' : 'normal';
     const categoryStyle: XlsxCellStyle = alternate ? 'category' : 'categoryPlain';
@@ -5392,7 +5393,7 @@ function buildCustomerActionDiffSheet(
       'actionLink',
       changeStyles[item.changeType],
       baseStyle,
-      startsTarget ? categoryStyle : baseStyle,
+      categoryStyle,
       baseStyle,
       beforeStyle,
       afterStyle
@@ -5500,7 +5501,7 @@ function buildCustomerFieldDiffSheet(
     const styles: Array<XlsxCellStyle | undefined> = Array.from({ length: headers.length }, () => baseStyle);
     styles[0] = actualIndex == null ? (alternate ? 'zebraCenter' : 'center') : 'actionLink';
     styles[1] = changeStyles[item.changeType];
-    styles[2] = field.structure === 'テーブル' ? categoryStyle : baseStyle;
+    styles[2] = categoryStyle;
     styles[7] = alternate ? 'zebraCenter' : 'center';
     styles[8] = alternate ? 'zebraCenter' : 'center';
     styles[9] = beforeStyle;
@@ -5981,31 +5982,24 @@ function buildCustomerIssuesSheet(
 function buildCustomerDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
   const items = buildCustomerDiffItems(ctx);
   const apiGroups = buildCustomerApiGroups(items);
-  const differenceContinuations = buildCustomerRawContinuations(items);
   const issueItems = buildCustomerCoverageIssueItems(ctx);
-  const nextLongRawRow = differenceContinuations.reduce(
-    (nextRow, continuation) => Math.max(nextRow, continuation.firstRow + continuation.chunks.length),
-    2
-  );
-  const issueContinuations = buildCustomerIssueRawContinuations(issueItems, nextLongRawRow);
-  const allContinuations: CustomerRawContinuation[] = [...differenceContinuations, ...issueContinuations];
-  const issues = buildCustomerIssuesSheet(issueItems, issueContinuations);
+  const issues = buildCustomerIssuesSheet(issueItems, []);
   const apiSheets = buildCustomerApiDiffSheets(ctx, apiGroups, items);
-  const valueDetails = buildCustomerValueDetailSheet(ctx, items, differenceContinuations);
-  const longRaw = buildCustomerLongRawSheet(allContinuations);
   const summary = buildCustomerSummarySheet(ctx, items, apiGroups, {
     hasIssues: !!issues,
     hasFeatureSheets: apiSheets.length > 0,
-    hasValueDetails: !!valueDetails,
-    hasLongRaw: !!longRaw
+    hasValueDetails: false,
+    hasLongRaw: false
   });
   const sheets: XlsxSheet[] = [summary];
   if (issues) sheets.push(issues);
   sheets.push(buildCustomerCoarseTargetSheet(ctx, items));
   sheets.push(buildCustomerListSheet(ctx, items, apiGroups));
   sheets.push(...apiSheets);
-  if (valueDetails) sheets.push(valueDetails);
-  if (longRaw) sheets.push(longRaw);
+  const sheetNames = new Set(sheets.map((sheet) => sheet.name));
+  for (const sheet of sheets) {
+    sheet.internalHyperlinks = sheet.internalHyperlinks?.filter((link) => sheetNames.has(link.targetSheet));
+  }
   return sheets;
 }
 
