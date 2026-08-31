@@ -5051,10 +5051,8 @@ function buildCustomerViewDiffSheet(
   items: CustomerDiffItem[],
   definition: CustomerApiSheetDef
 ): XlsxSheet | null {
-  const viewItems = [...items]
-    .sort((left, right) => customerNamedTarget(left.targetDetail, ['一覧'])
-      .localeCompare(customerNamedTarget(right.targetDetail, ['一覧']), 'ja')
-      || left.index - right.index);
+  // 変更一覧の No. と突き合わせられるよう、No. の昇順で掲載する。
+  const viewItems = [...items].sort((left, right) => left.index - right.index);
   if (!viewItems.length) return null;
 
   const title = customerFeatureSheetTitle(ctx, definition);
@@ -5136,14 +5134,8 @@ function buildCustomerActionDiffSheet(
   items: CustomerDiffItem[],
   definition: CustomerApiSheetDef
 ): XlsxSheet | null {
-  const actionItems = [...items].sort((left, right) => {
-      const leftKind = left.sectionKey === 'actionSettings' ? 'アプリアクション' : 'プロセスのアクション';
-      const rightKind = right.sectionKey === 'actionSettings' ? 'アプリアクション' : 'プロセスのアクション';
-      return leftKind.localeCompare(rightKind, 'ja')
-        || customerNamedTarget(left.targetDetail, ['アプリアクション', 'アクション'])
-          .localeCompare(customerNamedTarget(right.targetDetail, ['アプリアクション', 'アクション']), 'ja')
-        || left.index - right.index;
-    });
+  // 変更一覧の No. と突き合わせられるよう、No. の昇順で掲載する。
+  const actionItems = [...items].sort((left, right) => left.index - right.index);
   if (!actionItems.length) return null;
 
   const title = customerFeatureSheetTitle(ctx, definition);
