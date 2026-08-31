@@ -553,6 +553,27 @@ describe('diff/xlsx-export', () => {
     expect(list).not.toContain('アプリアクション「税抜取得価額」');
   });
 
+  it('フィールドの関連付けの値をコピー元/コピー先ラベルで表示し内部キーを出さない', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      rows: [
+        {
+          sectionKey: 'actionSettings', type: 'added', arrayKey: 'destField', arrayKeyValue: '設備ID取得',
+          path: 'actionSettings.actions.レコード複製.mappings[1]',
+          right: { srcType: 'FIELD', srcField: '設備ID取得', destField: '設備ID取得' }
+        }
+      ]
+    });
+    const list = await readWorksheetByName(blob, '変更一覧');
+
+    expect(worksheetInlineTexts(list, 'G', 2)).toEqual([
+      'コピー元フィールド: 設備ID取得\nコピー先フィールド: 設備ID取得\nコピー元の種類: フィールド'
+    ]);
+    expect(worksheetInlineTexts(list, 'D', 2)[0]).toContain('比較先に追加：コピー元フィールド: 設備ID取得');
+    expect(list).not.toContain('srcField');
+    expect(list).not.toContain('srcType');
+    expect(list).not.toContain('FIELD');
+  });
+
   it('uses authoritative layout payload identities and distinguishes groups and tables from fields', async () => {
     const sourceBundle = {
       sections: {
