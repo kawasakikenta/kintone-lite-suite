@@ -4432,11 +4432,11 @@ export interface CustomerDiffCounts {
   removed: number;
   changed: number;
   moved: number;
-  /** 他シートの再掲として total から除いた件数。 */
+  /** 他シートの再掲として掲載対象から除いた明細件数。 */
   redundant: number;
 }
 
-/** 提出用Excelの掲載件数。一括比較結果と各ブックで同じ数え方をそろえる。 */
+/** 提出用Excelの掲載件数。比較概要・一括比較結果とも「変更対象一覧」と同じ変更対象単位でそろえる。 */
 export function summarizeCustomerDiffContext(ctx: DiffXlsxContext): CustomerDiffCounts {
   if (ctx.audience === 'internal') {
     // 内部監査版は再掲を含む全件を掲載するため、掲載件数もそのまま数える。
@@ -4451,14 +4451,14 @@ export function summarizeCustomerDiffContext(ctx: DiffXlsxContext): CustomerDiff
     };
   }
   const items = buildCustomerDiffItems(ctx);
-  const counts = summarizeCustomerItems(customerPrimaryItems(items));
+  const counts = summarizeCustomerCoarseTargets(buildCustomerCoarseTargets(ctx, items));
   return {
     total: counts.actual,
     added: counts.added,
     removed: counts.removed,
     changed: counts.contentChanged,
     moved: counts.moved,
-    redundant: items.length - counts.actual
+    redundant: items.filter((item) => item.redundant).length
   };
 }
 
@@ -4469,6 +4469,19 @@ function summarizeCustomerItems(items: CustomerDiffItem[]) {
     if (item.changeType === '並び順変更') counts.moved += 1;
     else if (item.changeType === '追加') counts.added += 1;
     else if (item.changeType === '削除') counts.removed += 1;
+    else counts.contentChanged += 1;
+  }
+  return counts;
+}
+
+/** 「変更対象一覧」と同じ変更対象単位の件数。追加・削除は対象自体の追加・削除だけを数え、設定変更・複合変更は変更に含める。 */
+function summarizeCustomerCoarseTargets(targets: CustomerCoarseTarget[]) {
+  const counts = { actual: 0, added: 0, removed: 0, contentChanged: 0, moved: 0 };
+  for (const target of targets) {
+    counts.actual += 1;
+    if (target.changeState === '追加') counts.added += 1;
+    else if (target.changeState === '削除') counts.removed += 1;
+    else if (target.changeState === '並び順変更') counts.moved += 1;
     else counts.contentChanged += 1;
   }
   return counts;
@@ -4594,9 +4607,9 @@ function buildCustomerSummarySheet(
   apiGroups: CustomerApiGroup[],
   availability: CustomerSummarySheetAvailability
 ): XlsxSheet {
-  const primaryItems = customerPrimaryItems(items);
   const redundantItems = items.filter((item) => item.redundant);
-  const counts = summarizeCustomerItems(primaryItems);
+  // 比較結果の件数は「変更対象一覧」と同じ変更対象単位でそろえる。
+  const counts = summarizeCustomerCoarseTargets(buildCustomerCoarseTargets(ctx, items));
   const incomplete = customerIncomplete(ctx);
   const droppedSame = Number(ctx.truncation?.droppedSame || 0);
   const filtered = ctx.exportMode === 'filtered';
@@ -4614,7 +4627,7 @@ function buildCustomerSummarySheet(
     ['kintone 設定差分確認レポート', '', '', '', '', ''],
     [`比較元\n${sourceName}`, '', '→', `比較先\n${targetName}`, '', ''],
     ['比較結果', '', '', '', '', ''],
-    [filtered ? '掲載変更件数' : '変更件数', '', '追加', '削除', '変更', '並び順変更'],
+    [filtered ? '掲載変更対象件数' : '変更対象件数', '', '追加', '削除', '変更', '並び順変更'],
     [`${counts.actual}件`, '', `${counts.added}件`, `${counts.removed}件`, `${counts.contentChanged}件`, `${counts.moved}件`],
     ['比較範囲', '', '', '', '', ''],
     ['比較した設定領域', customerScopeLabel(comparedScopes), '', '', '', ''],
@@ -4651,7 +4664,7 @@ function buildCustomerSummarySheet(
   const breakdownHeaderRow = apiGroups.length ? rows.length + 1 : -1;
   if (apiGroups.length) {
     rows.push(
-      ['kintone機能別の差分件数', '', '', '', '', ''],
+      ['kintone機能別の差分明細件数', '', '', '', '', ''],
       ['機能別シート', '追加', '削除', '変更', '並び順変更', '合計'],
       ...customerApiBreakdown(apiGroups)
     );
