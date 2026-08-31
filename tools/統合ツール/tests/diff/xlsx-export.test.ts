@@ -191,6 +191,9 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('比較処理');
     expect(summary).toContain('正常完了（選択範囲）');
     expect(summary).toContain('変更件数');
+    expect(summary).toMatch(/<c r="A4" s="20"/);
+    expect(summary).toMatch(/<c r="B4" s="21"/);
+    expect(styles).toContain('<xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>');
     expect(summary).toContain('変更一覧の明細');
     expect(summary).not.toContain('詳細を省略した変更');
     for (const removedText of ['掲載内容', '読み方', '表記', '確認時の注意', '反映・移行計画', '並べ替え後']) {
@@ -864,6 +867,7 @@ describe('diff/xlsx-export', () => {
     expect(fields).toContain('<pane xSplit="5" ySplit="2" topLeftCell="F3" activePane="bottomRight" state="frozen"/>');
     expect(fields).toContain('<autoFilter ref="A2:K7"/>');
     expect(fields).toMatch(/<c r="J3" s="39"/);
+    expect(fields).toMatch(/<c r="K3" s="38"/);
     expect(fields).toMatch(/<c r="C5" s="2"/);
     expect(fields).toMatch(/<c r="C6" s="31"/);
     expect(fields).toMatch(/<c r="C7" s="2"/);
@@ -2184,19 +2188,19 @@ describe('diff/xlsx-export', () => {
     expect(worksheetInlineTexts(list, 'G', 2)).toEqual([
       '存在しません', 'フィールド「金額」（コード: new_code）'
     ]);
-    expect(list).toContain('<c r="F2" s="26"');
+    expect(list).toContain('<c r="F2" s="37"');
     expect(list).toContain('<c r="G2" s="39"');
     expect(list).toContain('<c r="F3" s="39"');
-    expect(list).toContain('<c r="G3" s="25"');
+    expect(list).toContain('<c r="G3" s="38"');
     expect(fields).toContain('比較元のみ');
     expect(fields).toContain('比較先のみ');
     for (const row of [3, 4]) expect(fields).toContain(`<c r="A${row}" s="30"`);
     for (const cell of ['H3', 'I3']) expect(fields).toContain(`<c r="${cell}" s="22"`);
     for (const cell of ['H4', 'I4']) expect(fields).toContain(`<c r="${cell}" s="24"`);
-    expect(fields).toContain('<c r="J3" s="26"');
+    expect(fields).toContain('<c r="J3" s="37"');
     expect(fields).toContain('<c r="K3" s="39"');
     expect(fields).toContain('<c r="J4" s="39"');
-    expect(fields).toContain('<c r="K4" s="25"');
+    expect(fields).toContain('<c r="K4" s="38"');
   });
 
   it.skip('keeps the deprecated form.json restatement out of the change list and the headline counts', async () => {
@@ -2863,13 +2867,14 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('アプリA (App 1)');
     expect(summary).toContain('アプリB (App 2)');
     expect(summary).toContain('比較元 → 比較先');
-    expect(summary).toContain('2026/08/16 09:00:00 JST');
+    expect(summary).toContain('2026/08/16 09:00:00');
+    expect(summary).not.toContain('JST');
     expect(summary).toContain('比較日時');
-    expect(summary).toContain('2026/08/16 08:59:00 JST');
+    expect(summary).toContain('2026/08/16 08:59:00');
     expect(summary).toContain('比較元取得日時');
-    expect(summary).toContain('2026/08/16 08:57:00 JST');
+    expect(summary).toContain('2026/08/16 08:57:00');
     expect(summary).toContain('比較先取得日時');
-    expect(summary).toContain('2026/08/16 08:58:00 JST');
+    expect(summary).toContain('2026/08/16 08:58:00');
     expect(summary).toContain('表示中（フィルタ適用後）');
     expect(summary).toContain('フィールド設定、ビュー設定');
     expect(summary).toContain('収録差分数');
