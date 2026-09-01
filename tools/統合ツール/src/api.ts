@@ -29,6 +29,12 @@ const RECORD_DATA_MUTATION_PATHS: ReadonlySet<string> = new Set([
   '/record/status.json',
   '/records/status.json'
 ]);
+/**
+ * cursor API はレコードを読み取るためのハンドルを作成・破棄するだけで、
+ * アプリ設定にもレコード本体にも書き込まない。10,000 件超の取得（offset 上限回避）に
+ * 必要なため、本番 prefix でも POST/DELETE を許可する。
+ */
+const RECORD_CURSOR_PATH = '/records/cursor.json';
 
 export interface ApiPathMetric {
   calls: number;
@@ -82,6 +88,10 @@ export function assertAllowsMutatingRestCall(prefix: string, path: string, metho
   const rel = String(path || '').replace(/\\/g, '/');
   if (rel.includes(DEPLOY_PATH_SNIPPET)) {
     throw new Error(ERR_NO_DEPLOY_API);
+  }
+  if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === 'POST' || m === 'DELETE')) {
+    if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+    return;
   }
   if (isRecordDataMutationPath(rel)) {
     if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
@@ -246,6 +256,139 @@ export async function apiPost(prefix: string, path: string, body: Record<string,
   } catch (e) {
     throw apiErrorWithContext(e, { method: 'POST', prefix, path, payload: body });
   }
+}
+
+export async function apiDelete(prefix: string, path: string, body: Record<string, unknown>): Promise<any> {
+  assertAllowsMutatingRestCall(prefix, path, 'DELETE');
+  try {
+    return await (kintone as any).api(`${prefix}${path}`, 'DELETE', body);
+  } catch (e) {
+    throw apiErrorWithContext(e, { method: 'DELETE', prefix, path, payload: body });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// revision 競合（楽観ロック）
+// ---------------------------------------------------------------------------
+// アプリ設定の PUT/POST に GET 時の revision を添えると、別の利用者が先に更新していた
+// 場合 kintone が GAIA_CO02 で拒否する。黙って上書きせず、利用者へ再取得を促す。
+// ---------------------------------------------------------------------------
+const REVISION_CONFLICT_CODES: ReadonlySet<string> = new Set(['GAIA_CO02']);
+
+export function isRevisionConflictError(error: any): boolean {
+  if (!error) return false;
+  const codes = [error?.code, error?.original?.code, error?.original?.error?.code]
+    .map((c) => String(c || '').toUpperCase())
+    .filter(Boolean);
+  if (codes.some((c) => REVISION_CONFLICT_CODES.has(c))) return true;
+  const text = String(error?.message || '');
+  return /GAIA_CO02|リビジョン.*(最新|一致|異な)|revision.*(latest|mismatch|conflict)/i.test(text);
+}
+
+/** revision 競合なら利用者向けの説明を付けたエラーに、それ以外はそのまま返す。 */
+export function decorateRevisionConflict(error: any, subject: string): any {
+  if (!isRevisionConflictError(error)) return error;
+  const base = error?.message != null ? String(error.message) : String(error);
+  const wrapped = new Error(
+    `${subject}は取得後に別の更新が入ったため中止しました（revision 競合）。最新の設定を取得し直してから再実行してください。\n${base}`
+  ) as any;
+  wrapped.revisionConflict = true;
+  wrapped.original = error;
+  if (error?.code) wrapped.code = error.code;
+  return wrapped;
+}
+
+/** GET 応答の revision を文字列で取り出す（無ければ空文字）。 */
+export function pickRevision(res: any): string {
+  const value = res?.revision;
+  if (value == null || value === '') return '';
+  return String(value);
+}
+
+// ---------------------------------------------------------------------------
+// レコード一括取得（$id シーク / cursor API）
+// ---------------------------------------------------------------------------
+export interface FetchRecordsByQueryOptions {
+  fields?: string[];
+  onProgress?: (fetched: number, mode: 'keyset' | 'cursor') => void;
+}
+
+export interface FetchRecordsByQueryResult {
+  records: any[];
+  /** 'keyset': $id シーク / 'cursor': cursor API（利用者クエリに order by がある場合） */
+  mode: 'keyset' | 'cursor';
+}
+
+function throwIfPagingClause(query: string): void {
+  if (/\blimit\s+\d+/i.test(query) || /\boffset\s+\d+/i.test(query)) {
+    throw new Error('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。');
+  }
+}
+
+/**
+ * 条件に合うレコードを全件取得する。
+ * - 利用者クエリに order by が無ければ `$id > lastId order by $id asc limit 500` でシークする（offset 上限なし）。
+ * - order by がある場合は $id 順に並べ替えられないため cursor API を使う（offset 10,000 件上限を回避）。
+ *   cursor は取得完了・失敗のどちらでも削除する。
+ */
+export async function fetchRecordsByQuery(
+  prefix: string,
+  app: string | number,
+  query: string,
+  options: FetchRecordsByQueryOptions = {}
+): Promise<FetchRecordsByQueryResult> {
+  const base = String(query || '').trim();
+  throwIfPagingClause(base);
+  const fields = Array.isArray(options.fields) && options.fields.length ? options.fields : undefined;
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {};
+  const useCursor = /\border\s+by\b/i.test(base);
+  const limit = 500;
+
+  if (!useCursor) {
+    const all: any[] = [];
+    let lastId = 0;
+    while (true) {
+      const cond = `$id > ${lastId}`;
+      const q = base ? `(${base}) and ${cond} order by $id asc limit ${limit}` : `${cond} order by $id asc limit ${limit}`;
+      const params: Record<string, unknown> = { app, query: q };
+      if (fields) params.fields = fields.includes('$id') ? fields : [...fields, '$id'];
+      const resp = await apiGet(prefix, '/records.json', params);
+      const batch: any[] = Array.isArray(resp?.records) ? resp.records : [];
+      if (!batch.length) break;
+      all.push(...batch);
+      onProgress(all.length, 'keyset');
+      const nextId = Number(batch[batch.length - 1]?.$id?.value);
+      if (!Number.isFinite(nextId) || nextId <= lastId) {
+        throw new Error('レコードIDの取得順が想定と異なるため中断しました（$id を fields に含めてください）');
+      }
+      lastId = nextId;
+      if (batch.length < limit) break;
+    }
+    return { records: all, mode: 'keyset' };
+  }
+
+  const createBody: Record<string, unknown> = { app, query: base, size: limit };
+  if (fields) createBody.fields = fields;
+  const created = await apiPost(prefix, '/records/cursor.json', createBody);
+  const cursorId = String(created?.id || '');
+  if (!cursorId) throw new Error('cursor の作成に失敗しました（id が返りません）');
+  const all: any[] = [];
+  let finished = false;
+  try {
+    while (true) {
+      const resp = await apiGet(prefix, '/records/cursor.json', { id: cursorId });
+      const batch: any[] = Array.isArray(resp?.records) ? resp.records : [];
+      all.push(...batch);
+      onProgress(all.length, 'cursor');
+      if (!resp?.next) { finished = true; break; }
+    }
+  } finally {
+    // 読み切ると kintone 側で自動削除されるが、途中失敗時は残るので明示的に片付ける。
+    if (!finished) {
+      try { await apiDelete(prefix, '/records/cursor.json', { id: cursorId }); } catch { /* noop */ }
+    }
+  }
+  return { records: all, mode: 'cursor' };
 }
 
 export interface BundleMeta {

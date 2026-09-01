@@ -476,6 +476,13 @@
       return document;
     }
   }
+  function kusConfirm(message) {
+    try {
+      return getToolWindowSafe().confirm(message);
+    } catch (e) {
+      return window.confirm(message);
+    }
+  }
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
@@ -599,6 +606,10 @@ ${contextLine}`);
     if (rel.includes(DEPLOY_PATH_SNIPPET)) {
       throw new Error(ERR_NO_DEPLOY_API);
     }
+    if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === "POST" || m === "DELETE")) {
+      if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+      return;
+    }
     if (isRecordDataMutationPath(rel)) {
       if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
       return;
@@ -692,7 +703,31 @@ ${contextLine}`);
       throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
     }
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
+  function isRevisionConflictError(error) {
+    if (!error) return false;
+    const codes = [error?.code, error?.original?.code, error?.original?.error?.code].map((c) => String(c || "").toUpperCase()).filter(Boolean);
+    if (codes.some((c) => REVISION_CONFLICT_CODES.has(c))) return true;
+    const text = String(error?.message || "");
+    return /GAIA_CO02|リビジョン.*(最新|一致|異な)|revision.*(latest|mismatch|conflict)/i.test(text);
+  }
+  function decorateRevisionConflict(error, subject) {
+    if (!isRevisionConflictError(error)) return error;
+    const base = error?.message != null ? String(error.message) : String(error);
+    const wrapped = new Error(
+      `${subject}は取得後に別の更新が入ったため中止しました（revision 競合）。最新の設定を取得し直してから再実行してください。
+${base}`
+    );
+    wrapped.revisionConflict = true;
+    wrapped.original = error;
+    if (error?.code) wrapped.code = error.code;
+    return wrapped;
+  }
+  function pickRevision(res) {
+    const value = res?.revision;
+    if (value == null || value === "") return "";
+    return String(value);
+  }
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -712,6 +747,7 @@ ${contextLine}`);
         "/record/status.json",
         "/records/status.json"
       ]);
+      RECORD_CURSOR_PATH = "/records/cursor.json";
       apiGetMetrics = {
         calls: 0,
         retries: 0,
@@ -720,6 +756,7 @@ ${contextLine}`);
         lastError: "",
         byPath: {}
       };
+      REVISION_CONFLICT_CODES = /* @__PURE__ */ new Set(["GAIA_CO02"]);
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
     }
   });
@@ -1004,50 +1041,128 @@ ${contextLine}`);
     walk(def);
     return { def, changed };
   }
-  async function runFieldApplyStandalone(opts, setStatus) {
-    const { targetAppId, targetGuestId, fieldJson, lookupMapJson, overwrite } = opts;
-    if (!targetAppId) throw new Error("比較先アプリIDを入力してください");
-    if (!fieldJson?.trim()) throw new Error("フィールドJSONを入力してください");
-    let incoming;
-    const parsed = JSON.parse(fieldJson);
-    if (parsed?.properties && typeof parsed.properties === "object") incoming = parsed.properties;
-    else incoming = parsed;
-    const lookupMap = {};
-    if (lookupMapJson?.trim()) {
-      const lm = JSON.parse(lookupMapJson);
-      for (const [k, v] of Object.entries(lm || {})) {
-        if (String(k).trim() && String(v).trim()) lookupMap[String(k).trim()] = String(v).trim();
-      }
+  function parseFieldJsonInput(text) {
+    const raw = String(text ?? "").trim();
+    if (!raw) throw new Error("フィールドJSONを入力してください");
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      throw new Error(`フィールドJSONを解析できません（「整形」ボタンで位置を確認してください）: ${e?.message || String(e)}`);
     }
-    const prefix = buildApiPrefix(targetGuestId || "", true);
-    setStatus("比較先フィールド取得中...");
-    const current = await apiGet(prefix, "/app/form/fields.json", { app: targetAppId });
-    const currentMap = current.properties || {};
-    const adds = {};
-    const updates = {};
-    const logs = [];
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error('フィールドJSONは { "properties": { ... } } 形式のオブジェクトで入力してください');
+    }
+    const props = parsed.properties && typeof parsed.properties === "object" ? parsed.properties : parsed;
+    if (!Object.keys(props).length) throw new Error("フィールドJSONに反映対象のフィールドがありません");
+    return props;
+  }
+  function parseLookupMapInput(text) {
+    const raw = String(text ?? "").trim();
+    const out = {};
+    if (!raw) return out;
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      throw new Error(`Lookup AppID 変換 JSON を解析できません: ${e?.message || String(e)}`);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error('Lookup AppID 変換 JSON は {"旧AppID":"新AppID"} 形式で入力してください');
+    }
+    for (const [k, v] of Object.entries(parsed)) {
+      const from = String(k).trim();
+      const to = String(v ?? "").trim();
+      if (from && to) out[from] = to;
+    }
+    return out;
+  }
+  function planFieldApply(incoming, currentProps, lookupMap, overwrite) {
+    const plan = { adds: {}, updates: {}, skippedSystem: [], skippedExisting: [], lookupConverted: [], logs: [] };
+    const currentMap = currentProps || {};
     for (const [code, rawDef] of Object.entries(incoming || {})) {
       const writable = filterWritable({ [code]: rawDef });
       if (!writable[code]) {
-        logs.push(`SKIP ${code} (system)`);
+        plan.skippedSystem.push(code);
+        plan.logs.push(`SKIP ${code} (system)`);
         continue;
       }
-      const { def } = convertLookup(writable[code], lookupMap);
+      const { def, changed } = convertLookup(writable[code], lookupMap);
+      if (changed) plan.lookupConverted.push(code);
       if (!def.code) def.code = code;
       if (currentMap[code]) {
         if (overwrite) {
-          updates[code] = def;
-          logs.push(`UPDATE ${code}`);
-        } else logs.push(`SKIP ${code} (exists)`);
+          plan.updates[code] = def;
+          plan.logs.push(`UPDATE ${code}${changed ? " (lookup変換)" : ""}`);
+        } else {
+          plan.skippedExisting.push(code);
+          plan.logs.push(`SKIP ${code} (exists)`);
+        }
       } else {
-        adds[code] = def;
-        logs.push(`ADD ${code}`);
+        plan.adds[code] = def;
+        plan.logs.push(`ADD ${code}${changed ? " (lookup変換)" : ""}`);
       }
     }
-    setStatus("フィールド追加/更新中...");
-    if (Object.keys(adds).length) await apiPost(prefix, "/app/form/fields.json", { app: targetAppId, properties: adds });
-    if (Object.keys(updates).length) await apiPut(prefix, "/app/form/fields.json", { app: targetAppId, properties: updates });
-    setStatus("フィールド追加処理完了");
+    return plan;
+  }
+  function buildFieldApplyConfirmText(targetAppId, targetGuestId, plan) {
+    const addCount = Object.keys(plan.adds).length;
+    const updateCount = Object.keys(plan.updates).length;
+    const skipCount = plan.skippedSystem.length + plan.skippedExisting.length;
+    return [
+      `比較先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ""} のプレビュー環境へフィールドを反映します。`,
+      `追加 ${addCount}件 / 更新 ${updateCount}件 / スキップ ${skipCount}件${plan.lookupConverted.length ? ` / Lookup変換 ${plan.lookupConverted.length}件` : ""}`,
+      updateCount ? "更新対象は既存の定義を比較元の内容で置き換えます。" : "",
+      "本番には反映されません（管理画面から手動デプロイ）。実行しますか？"
+    ].filter(Boolean).join("\n");
+  }
+  async function runFieldApplyStandalone(opts, setStatus) {
+    const { targetAppId, targetGuestId, fieldJson, lookupMapJson, overwrite } = opts;
+    if (!targetAppId) throw new Error("比較先アプリIDを入力してください");
+    const incoming = parseFieldJsonInput(fieldJson);
+    const lookupMap = parseLookupMapInput(lookupMapJson);
+    const prefix = buildApiPrefix(targetGuestId || "", true);
+    setStatus("比較先フィールド取得中...");
+    const current = await apiGet(prefix, "/app/form/fields.json", { app: targetAppId });
+    const plan = planFieldApply(incoming, current.properties || {}, lookupMap, !!overwrite);
+    const logs = [...plan.logs];
+    const addCount = Object.keys(plan.adds).length;
+    const updateCount = Object.keys(plan.updates).length;
+    if (!addCount && !updateCount) {
+      setStatus(`追加・更新対象がありません（スキップ ${plan.skippedSystem.length + plan.skippedExisting.length}件）`, true);
+      logs.push("反映対象なし");
+      return logs;
+    }
+    if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(String(targetAppId), String(targetGuestId || ""), plan))) {
+      setStatus("フィールド反映をキャンセルしました");
+      logs.push("キャンセル");
+      return logs;
+    }
+    let revision = pickRevision(current);
+    const withRevision = (body) => revision ? { ...body, revision } : body;
+    if (addCount) {
+      setStatus(`フィールド追加中... (${addCount}件)`);
+      try {
+        const res = await apiPost(prefix, "/app/form/fields.json", withRevision({ app: targetAppId, properties: plan.adds }));
+        revision = pickRevision(res) || revision;
+        logs.push(`OK フィールド追加 ${addCount}件${revision ? ` (revision ${revision})` : ""}`);
+      } catch (e) {
+        logs.push(`NG フィールド追加 ${addCount}件`);
+        throw decorateRevisionConflict(e, "フィールド追加");
+      }
+    }
+    if (updateCount) {
+      setStatus(`フィールド更新中... (${updateCount}件)`);
+      try {
+        const res = await apiPut(prefix, "/app/form/fields.json", withRevision({ app: targetAppId, properties: plan.updates }));
+        revision = pickRevision(res) || revision;
+        logs.push(`OK フィールド更新 ${updateCount}件${revision ? ` (revision ${revision})` : ""}`);
+      } catch (e) {
+        logs.push(`NG フィールド更新 ${updateCount}件${addCount ? "（追加 " + addCount + "件は反映済み）" : ""}`);
+        throw decorateRevisionConflict(e, "フィールド更新");
+      }
+    }
+    setStatus(`フィールド反映完了: 追加 ${addCount} / 更新 ${updateCount} / スキップ ${plan.skippedSystem.length + plan.skippedExisting.length}`);
     return logs;
   }
   async function runLoadFieldsStandalone(opts, setStatus) {
@@ -1069,6 +1184,51 @@ ${contextLine}`);
     "STATUS_ASSIGNEE",
     "CATEGORY"
   ]);
+  function planBulkRename(props, prefixText, removeMode) {
+    const trimmed = String(prefixText || "").trim();
+    const rename = (code) => {
+      if (removeMode) return code.startsWith(trimmed) ? code.slice(trimmed.length) : code;
+      return code.startsWith(trimmed) ? code : trimmed + code;
+    };
+    let modifiedCount = 0;
+    const newProps = {};
+    const renamePairs = [];
+    const collisions = [];
+    for (const [code, field] of Object.entries(props || {})) {
+      if (!field || RENAME_EXCLUDED_TYPES.has(field.type)) continue;
+      const newCode = rename(code);
+      const cloned = deepClone(field);
+      let touched = false;
+      if (newCode !== code) {
+        if (!newCode) {
+          collisions.push(`${code} → (空)`);
+          continue;
+        }
+        cloned.code = newCode;
+        touched = true;
+        renamePairs.push({ from: code, to: newCode });
+      }
+      if (cloned.type === "SUBTABLE" && cloned.fields && typeof cloned.fields === "object") {
+        const children = {};
+        for (const [childCode, childDef] of Object.entries(cloned.fields)) {
+          const newChild = rename(childCode);
+          const childClone = deepClone(childDef);
+          if (newChild !== childCode && newChild) {
+            childClone.code = newChild;
+            touched = true;
+            renamePairs.push({ from: `${code}.${childCode}`, to: `${newCode}.${newChild}` });
+          }
+          children[newChild || childCode] = childClone;
+        }
+        cloned.fields = children;
+      }
+      if (!touched) continue;
+      if (newProps[newCode]) collisions.push(`${code} → ${newCode}`);
+      newProps[newCode] = cloned;
+      modifiedCount++;
+    }
+    return { properties: newProps, modifiedCount, renamePairs, collisions };
+  }
   async function runBulkRenameFieldStandalone(opts, setStatus) {
     const { targetAppId, targetGuestId, prefix, removeMode } = opts;
     if (!targetAppId) throw new Error("比較先アプリIDを入力してください");
@@ -1076,26 +1236,12 @@ ${contextLine}`);
     const apiPrefix = buildApiPrefix(targetGuestId || "", true);
     setStatus("比較先フィールドを取得中...");
     const fieldsResp = await apiGet(apiPrefix, "/app/form/fields.json", { app: targetAppId });
-    const props = fieldsResp.properties || {};
-    const trimmed = String(prefix).trim();
-    let modifiedCount = 0;
-    const newProps = {};
-    const renamePairs = [];
-    for (const [code, field] of Object.entries(props)) {
-      if (RENAME_EXCLUDED_TYPES.has(field.type)) continue;
-      let newCode = code;
-      if (removeMode && code.startsWith(trimmed)) newCode = code.slice(trimmed.length);
-      else if (!removeMode && !code.startsWith(trimmed)) newCode = trimmed + code;
-      if (newCode !== code) {
-        const cloned = deepClone(field);
-        cloned.code = newCode;
-        newProps[newCode] = cloned;
-        modifiedCount++;
-        renamePairs.push({ from: code, to: newCode });
-      }
+    const result = planBulkRename(fieldsResp.properties || {}, String(prefix), !!removeMode);
+    if (result.collisions.length) {
+      throw new Error(`リネーム後のフィールドコードが重複または空になります: ${result.collisions.join(", ")}`);
     }
-    setStatus(`プレフィックス${removeMode ? "除去" : "付与"}完了: ${modifiedCount}件`);
-    return { properties: newProps, modifiedCount, renamePairs };
+    setStatus(`プレフィックス${removeMode ? "除去" : "付与"}完了: ${result.modifiedCount}件`);
+    return { properties: result.properties, modifiedCount: result.modifiedCount, renamePairs: result.renamePairs };
   }
 
   // src/ui/components.ts

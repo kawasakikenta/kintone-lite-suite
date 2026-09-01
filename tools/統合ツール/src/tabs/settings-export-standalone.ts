@@ -4,7 +4,10 @@ import { SECTION_DEFS } from '../constants.js';
 import { esc, downloadText, downloadBlob, selectedScopeKeys, buildExportFilename, buildAppFilenameLabel, appLabelFromBundle, extractAppNameFromBundle } from '../utils.js';
 import { fetchBundle, buildApiPrefix, apiGet, fetchAppsInSpace } from '../api.js';
 import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
-import { loadJSZip } from './record.js';
+import { loadJSZipLite } from '../jszipLoader.js';
+
+/** apps.json の 1 回あたり取得上限。検索結果がこの件数に達したら絞り込みを促す。 */
+const APP_SEARCH_LIMIT = 100;
 
 /** 設定一括取得のファイル名ラベル。1アプリならアプリ名(appID)、複数なら「N件」。 */
 function settingsExportLabel(bundles: any[]): string {
@@ -87,14 +90,19 @@ export async function runSettingsExportSearchStandalone(keyword: any, guestId: a
     setStatus(`アプリID ${directAppId}${guest ? ` / ゲスト ${guest}` : ''} を候補に表示しました`);
     return [{ appId: directAppId, name: name || 'ID指定' }];
   }
-  const params: Record<string, any> = { limit: 100 };
+  const params: Record<string, any> = { limit: APP_SEARCH_LIMIT };
   if (kw) params.name = kw;
   setStatus('アプリ検索中...');
   const res = await apiGet(prefix, '/apps.json', params);
+  const rawCount = Array.isArray(res.apps) ? res.apps.length : 0;
   const apps = (res.apps || [])
     .map((a: any) => ({ appId: String(a.appId || ''), name: String(a.name || '') }))
     .filter((a: { appId: string }) => /^\d+$/.test(a.appId))
     .sort((a: { appId: string }, b: { appId: string }) => Number(a.appId) - Number(b.appId));
+  if (rawCount >= APP_SEARCH_LIMIT) {
+    setStatus(`アプリ検索完了: 先頭 ${apps.length}件のみ表示（上限 ${APP_SEARCH_LIMIT}件）。目的のアプリが無い場合はキーワードで絞り込むかアプリIDを直接入力してください`, true);
+    return apps;
+  }
   setStatus(`アプリ検索完了: ${apps.length}件`);
   return apps;
 }
@@ -194,7 +202,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
   };
 
   if (mode === 'zip') {
-    const JSZipCtor = await loadJSZip();
+    const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
     zip.file(
       'manifest.json',
