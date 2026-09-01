@@ -97,7 +97,8 @@ export function mountProcessLitePanel() {
         }
       }
     );
-    if (result) {
+    // 描画側が警告（Mermaid 読込失敗 / from-to 未設定のアクション除外）を出している場合は残す
+    if (result && panel.status.dataset.tone !== 'err') {
       panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, 'ok');
     }
   }));

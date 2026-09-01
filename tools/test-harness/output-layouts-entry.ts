@@ -13,6 +13,8 @@ import {
 import { buildHTML as buildErHtml } from '../統合ツール/src/tabs/er.js';
 import { computeDiffRows } from '../統合ツール/src/diff/engine.js';
 import { enrichDiffRows } from '../統合ツール/src/diff/enrich.js';
+import { buildRecordsCsvText } from '../統合ツール/src/tabs/record-query.js';
+import { buildProcessMermaidSource } from '../統合ツール/src/tabs/process-standalone.js';
 
 declare const globalThis: any;
 
@@ -22,5 +24,7 @@ declare const globalThis: any;
   bundleToMarkdown,
   buildErHtml,
   computeDiffRows,
-  enrichDiffRows
+  enrichDiffRows,
+  buildRecordsCsvText,
+  buildProcessMermaidSource
 };

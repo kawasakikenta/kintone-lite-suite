@@ -237,29 +237,8 @@ const erSpaceHtml = api.buildErHtml(erSpaceApps, {
 writeFileSync(resolve(outDir, 'er-diagram-space.html'), erSpaceHtml, 'utf8');
 console.log(`[harness] wrote er-diagram-space.html (${(erSpaceHtml.length / 1024).toFixed(1)} KB)`);
 
-// ------------ 6) Records CSV (replicated builder; private in record.ts) -----
-function escapeCsvCell(value) {
-  if (value === null || value === undefined) return '';
-  const s = String(value);
-  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
-  return s;
-}
-function extractCsvFieldValue(rec, key) {
-  const f = rec[key];
-  if (!f || f.value === null || f.value === undefined) return '';
-  if (Array.isArray(f.value)) {
-    if (!f.value.length) return '';
-    if (typeof f.value[0] === 'object') return JSON.stringify(f.value);
-    return f.value.join(', ');
-  }
-  if (typeof f.value === 'object') return JSON.stringify(f.value);
-  return f.value;
-}
-function buildRecordsCsvString(records, propKeys) {
-  const lines = [propKeys.map(escapeCsvCell).join(',')];
-  for (const rec of records) lines.push(propKeys.map(k => escapeCsvCell(extractCsvFieldValue(rec, k))).join(','));
-  return '﻿' + lines.join('\n');
-}
+// ------------ 6) Records CSV (real builder from tabs/record-query.ts) --------
+const buildRecordsCsvString = api.buildRecordsCsvText;
 const sampleRecords = [
   { $id: { type: '__ID__', value: '1' }, レコード番号: { type: 'RECORD_NUMBER', value: '1' },
     顧客名: { type: 'SINGLE_LINE_TEXT', value: '株式会社サンプル' },
@@ -278,20 +257,21 @@ const csv = buildRecordsCsvString(sampleRecords, ['$id', 'レコード番号', '
 writeFileSync(resolve(outDir, 'records.csv'), csv, 'utf8');
 console.log(`[harness] wrote records.csv`);
 
-// ------------ 7) Process Mermaid (string template only, no DOM) -------------
-const pfStates = { '受付': {}, '一次対応中': {}, '完了': {}, '却下': {} };
+// ------------ 7) Process Mermaid (real builder from tabs/process-standalone.ts)
+// 状態名に空白・記号を含めて、別名宣言方式で壊れないことを出力で確認できるようにする。
+const pfStates = {
+  '受付': { index: '0' },
+  '一次 対応中': { index: '1' },
+  '完了 (仮)': { index: '2' },
+  '却下': { index: '3' }
+};
 const pfActions = [
-  { from: '受付', to: '一次対応中', name: '対応開始' },
-  { from: '一次対応中', to: '完了', name: '完了' },
-  { from: '一次対応中', to: '却下', name: '却下' }
+  { from: '受付', to: '一次 対応中', name: '対応開始' },
+  { from: '一次 対応中', to: '完了 (仮)', name: '完了: 承認' },
+  { from: '一次 対応中', to: '却下', name: '却下' },
+  { from: '却下', to: '受付', name: '差し戻し' }
 ];
-const safeStateName = (n) => String(n == null ? '' : n).replace(/[*_~\[\]()]/g, '');
-const safeActionName = (n) => String(n == null ? '' : n).replace(/[*_~\[\]()"]/g, '');
-let mmd = 'stateDiagram-v2\n';
-const startSet = new Set(Object.keys(pfStates));
-for (const a of pfActions) startSet.delete(a.to);
-for (const s of startSet) mmd += `    [*] --> ${safeStateName(s)}\n`;
-for (const a of pfActions) mmd += `    ${safeStateName(a.from)} --> ${safeStateName(a.to)} : ${safeActionName(a.name)}\n`;
+const mmd = api.buildProcessMermaidSource(pfStates, pfActions, '一次 対応中');
 writeFileSync(resolve(outDir, 'process-flow.mmd'), mmd, 'utf8');
 console.log(`[harness] wrote process-flow.mmd`);
 
