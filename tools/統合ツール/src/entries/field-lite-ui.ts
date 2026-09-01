@@ -246,6 +246,7 @@ export function mountFieldLitePanel() {
   optCard.body.appendChild(makeRow(lookupMap, { label: 'Lookup', block: true }));
   const ow = makeCheck({ label: '既存フィールドを上書き更新', help: '同一フィールドコードがある場合に PUT で更新します' });
   optCard.body.appendChild(makeRow(ow.label));
+  optCard.body.appendChild(makeNote('反映前に追加・更新・スキップ件数を確認します。比較先の取得後に別の更新が入っていた場合（revision 競合）は上書きせず中止するので、読み込み直してから再実行してください。'));
   panel.body.insertBefore(optCard.card, panel.status);
 
   const bApply = makeButton('比較先プレビューへ反映', 'run', { icon: '⤴' });
@@ -263,8 +264,9 @@ export function mountFieldLitePanel() {
       },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
+    // 完了・キャンセル・対象なしのメッセージは処理側が出すので、ここでは上書きしない
     panel.setResult(logs.join('\n'));
-  }, '反映処理が完了しました（ログは下に表示）'));
+  }));
 
   // ---- バルクリネーム ----
   const renameDetails = makeDetails('プレフィックス一括リネーム（比較先プレビュー）');

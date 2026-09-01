@@ -576,6 +576,10 @@ ${contextLine}`);
     if (rel.includes(DEPLOY_PATH_SNIPPET)) {
       throw new Error(ERR_NO_DEPLOY_API);
     }
+    if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === "POST" || m === "DELETE")) {
+      if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+      return;
+    }
     if (isRecordDataMutationPath(rel)) {
       if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
       return;
@@ -944,7 +948,7 @@ ${contextLine}`);
     }
     return bundle;
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -964,6 +968,7 @@ ${contextLine}`);
         "/record/status.json",
         "/records/status.json"
       ]);
+      RECORD_CURSOR_PATH = "/records/cursor.json";
       apiGetMetrics = {
         calls: 0,
         retries: 0,
@@ -1891,7 +1896,9 @@ ${contextLine}`);
 .kus-lp__status--warn{background:var(--c-warn-bg);color:var(--c-warn-fg);border-color:var(--c-warn-bd)}
 .kus-lp__status--info{background:var(--c-info-bg);color:var(--c-info-fg);border-color:var(--c-info-bd)}
 .kus-lp__status--busy{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
-.kus-lp__status-icon{font-size:14px;line-height:1.2}
+.kus-lp__status-icon{font-size:14px;line-height:1.2;flex:0 0 auto}
+/* 部分成功や API コンテキストなど複数行のメッセージを改行のまま表示する */
+.kus-lp__status-text{min-width:0;white-space:pre-wrap;word-break:break-word}
 .kus-lp__status-busy::before{
   content:'';display:inline-block;width:10px;height:10px;border-radius:50%;
   border:2px solid var(--c-muted);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
@@ -2263,10 +2270,20 @@ ${contextLine}`);
     panel.setBusy(true);
     try {
       const out = await fn();
-      if (okMsg) panel.setStatus(okMsg, "ok");
+      const tone = panel.status.dataset.tone;
+      if (okMsg && tone !== "err") {
+        panel.setStatus(okMsg, "ok");
+      } else if (tone === "busy") {
+        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        panel.setStatus(text || "完了", "ok");
+      }
       return out;
     } catch (e) {
-      panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
+      const message = String(e?.message || e || "不明なエラー");
+      const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
+      const [first, ...rest] = lines.length ? lines : [message];
+      panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
+      if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
     } finally {
       panel.setBusy(false);

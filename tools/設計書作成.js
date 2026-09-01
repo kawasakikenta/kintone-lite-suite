@@ -4716,21 +4716,28 @@ ${detail}`);
   }
 
   // src/tabs/design-standalone.ts
-  async function runDesignExportStandalone(kind, source, setStatus) {
-    const appId = String(source.appId || "").trim();
-    const importedBundle = source.importedBundle;
-    if (!appId && !importedBundle) throw new Error("アプリIDまたは設定JSONを指定してください");
-    const guestId = String(source.guestId || "").trim();
-    const preview = !!source.preview;
+  async function resolveDesignBundle(source, side, setStatus, labelPrefix = "") {
+    const appId = String(source?.appId || "").trim();
+    const importedBundle = source?.importedBundle;
+    if (!appId && !importedBundle) throw new Error(`${labelPrefix || ""}アプリIDまたは設定JSONを指定してください`.trim());
     const scopes = SECTION_DEFS.map((s) => s.key);
-    setStatus(importedBundle ? "設定JSONから設計情報を読み込み中..." : "設計情報を取得中...");
-    const bundle = importedBundle ? pickSettingsBundle(importedBundle, { side: "source", appId }) : await fetchBundle({
+    setStatus(importedBundle ? `${labelPrefix}設定JSONから設計情報を読み込み中...` : `${labelPrefix}設計情報を取得中...`);
+    const bundle = importedBundle ? pickSettingsBundle(importedBundle, { side, appId }) : await fetchBundle({
       appId,
-      guestId,
-      preview,
+      guestId: String(source?.guestId || "").trim(),
+      preview: !!source?.preview,
       sections: scopes,
-      onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`)
+      onProgress: (p, l) => setStatus(`${labelPrefix}取得中 ${Math.round(p * 100)}% (${l})`)
     });
+    const failed = scopes.filter((key) => bundle?.sections?.[key]?._fetchError);
+    if (failed.length) {
+      const labels = failed.map((key) => SECTION_DEFS.find((s) => s.key === key)?.label || key);
+      setStatus(`${labelPrefix}取得できなかったセクション ${failed.length}件（${labels.join(", ")}）は設計書に「取得失敗」として載ります`, true);
+    }
+    return bundle;
+  }
+  async function runDesignExportStandalone(kind, source, setStatus) {
+    const bundle = await resolveDesignBundle(source, "source", setStatus);
     state.lastSourceBundle = bundle;
     const appLabel = appLabelFromBundle(bundle);
     if (kind === "json") {
@@ -4741,20 +4748,7 @@ ${detail}`);
     setStatus(`設計書出力完了（App ${bundle.appId}）`);
   }
   async function runDesignCopyMdStandalone(source, setStatus) {
-    const appId = String(source.appId || "").trim();
-    const importedBundle = source.importedBundle;
-    if (!appId && !importedBundle) throw new Error("アプリIDまたは設定JSONを指定してください");
-    const guestId = String(source.guestId || "").trim();
-    const preview = !!source.preview;
-    const scopes = SECTION_DEFS.map((s) => s.key);
-    setStatus(importedBundle ? "設定JSONから設計情報を読み込み中..." : "設計情報を取得中...");
-    const bundle = importedBundle ? pickSettingsBundle(importedBundle, { side: "source", appId }) : await fetchBundle({
-      appId,
-      guestId,
-      preview,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`)
-    });
+    const bundle = await resolveDesignBundle(source, "source", setStatus);
     state.lastSourceBundle = bundle;
     const md = bundleToMarkdown(bundle);
     try {
@@ -4846,23 +4840,8 @@ ${detail}`);
     const importedSource = opts.source?.importedBundle;
     const importedTarget = opts.target?.importedBundle;
     if (!srcAppId && !importedSource || !tgtAppId && !importedTarget) throw new Error("比較元と比較先の両方にアプリIDまたは設定JSONを指定してください。");
-    const scopes = SECTION_DEFS.map((s) => s.key);
-    setStatus(importedSource ? "比較元の設計情報を設定JSONから読み込み中..." : "比較元の設計情報を取得中...");
-    const srcBundle = importedSource ? pickSettingsBundle(importedSource, { side: "source", appId: srcAppId }) : await fetchBundle({
-      appId: srcAppId,
-      guestId: String(opts.source.guestId || "").trim(),
-      preview: !!opts.source.preview,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
-    });
-    setStatus(importedTarget ? "比較先の設計情報を設定JSONから読み込み中..." : "比較先の設計情報を取得中...");
-    const tgtBundle = importedTarget ? pickSettingsBundle(importedTarget, { side: "target", appId: tgtAppId }) : await fetchBundle({
-      appId: tgtAppId,
-      guestId: String(opts.target.guestId || "").trim(),
-      preview: !!opts.target.preview,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`比較先取得中 ${Math.round(p * 100)}% (${l})`)
-    });
+    const srcBundle = await resolveDesignBundle(opts.source, "source", setStatus, "比較元: ");
+    const tgtBundle = await resolveDesignBundle(opts.target, "target", setStatus, "比較先: ");
     setStatus("差分レポート生成中...");
     const srcMd = bundleToMarkdown(srcBundle);
     const tgtMd = bundleToMarkdown(tgtBundle);
@@ -5162,7 +5141,9 @@ ${diffMd}
 .kus-lp__status--warn{background:var(--c-warn-bg);color:var(--c-warn-fg);border-color:var(--c-warn-bd)}
 .kus-lp__status--info{background:var(--c-info-bg);color:var(--c-info-fg);border-color:var(--c-info-bd)}
 .kus-lp__status--busy{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
-.kus-lp__status-icon{font-size:14px;line-height:1.2}
+.kus-lp__status-icon{font-size:14px;line-height:1.2;flex:0 0 auto}
+/* 部分成功や API コンテキストなど複数行のメッセージを改行のまま表示する */
+.kus-lp__status-text{min-width:0;white-space:pre-wrap;word-break:break-word}
 .kus-lp__status-busy::before{
   content:'';display:inline-block;width:10px;height:10px;border-radius:50%;
   border:2px solid var(--c-muted);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
@@ -5784,10 +5765,20 @@ ${diffMd}
     panel.setBusy(true);
     try {
       const out = await fn();
-      if (okMsg) panel.setStatus(okMsg, "ok");
+      const tone = panel.status.dataset.tone;
+      if (okMsg && tone !== "err") {
+        panel.setStatus(okMsg, "ok");
+      } else if (tone === "busy") {
+        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        panel.setStatus(text || "完了", "ok");
+      }
       return out;
     } catch (e) {
-      panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
+      const message = String(e?.message || e || "不明なエラー");
+      const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
+      const [first, ...rest] = lines.length ? lines : [message];
+      panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
+      if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
     } finally {
       panel.setBusy(false);

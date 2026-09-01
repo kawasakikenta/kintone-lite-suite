@@ -566,6 +566,38 @@ ${contextLine}`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
   }
+  function isPreviewRestPrefix(prefix) {
+    return String(prefix || "").includes("/v1/preview");
+  }
+  function normalizeApiResourcePath(path) {
+    const raw = String(path || "").replace(/\\/g, "/").split("?")[0];
+    const match = raw.match(/\/k(?:\/guest\/[^/]+)?\/v1(?:\/preview)?(\/.*)$/);
+    const resource = match ? match[1] : raw;
+    return resource.startsWith("/") ? resource : `/${resource}`;
+  }
+  function isRecordDataMutationPath(path) {
+    return RECORD_DATA_MUTATION_PATHS.has(normalizeApiResourcePath(path));
+  }
+  function assertAllowsMutatingRestCall(prefix, path, method) {
+    const m = String(method || "").toUpperCase();
+    if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
+    if (m !== "POST" && m !== "PUT" && m !== "DELETE" && m !== "PATCH") return;
+    const rel = String(path || "").replace(/\\/g, "/");
+    if (rel.includes(DEPLOY_PATH_SNIPPET)) {
+      throw new Error(ERR_NO_DEPLOY_API);
+    }
+    if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === "POST" || m === "DELETE")) {
+      if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+      return;
+    }
+    if (isRecordDataMutationPath(rel)) {
+      if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+      return;
+    }
+    if (!isPreviewRestPrefix(prefix)) {
+      throw new Error(ERR_NO_PROD_WRITE);
+    }
+  }
   function normalizeApiGetOptions(optionsOrRetries) {
     if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
     if (!optionsOrRetries || typeof optionsOrRetries !== "object") return {};
@@ -635,16 +667,106 @@ ${contextLine}`);
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
+  async function apiPost(prefix, path, body) {
+    assertAllowsMutatingRestCall(prefix, path, "POST");
+    try {
+      return await kintone.api(`${prefix}${path}`, "POST", body);
+    } catch (e) {
+      throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
+    }
+  }
+  async function apiDelete(prefix, path, body) {
+    assertAllowsMutatingRestCall(prefix, path, "DELETE");
+    try {
+      return await kintone.api(`${prefix}${path}`, "DELETE", body);
+    } catch (e) {
+      throw apiErrorWithContext(e, { method: "DELETE", prefix, path, payload: body });
+    }
+  }
+  function throwIfPagingClause(query) {
+    if (/\blimit\s+\d+/i.test(query) || /\boffset\s+\d+/i.test(query)) {
+      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
+    }
+  }
+  async function fetchRecordsByQuery(prefix, app, query, options = {}) {
+    const base = String(query || "").trim();
+    throwIfPagingClause(base);
+    const fields = Array.isArray(options.fields) && options.fields.length ? options.fields : void 0;
+    const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => {
+    };
+    const useCursor = /\border\s+by\b/i.test(base);
+    const limit = 500;
+    if (!useCursor) {
+      const all2 = [];
+      let lastId = 0;
+      while (true) {
+        const cond = `$id > ${lastId}`;
+        const q = base ? `(${base}) and ${cond} order by $id asc limit ${limit}` : `${cond} order by $id asc limit ${limit}`;
+        const params = { app, query: q };
+        if (fields) params.fields = fields.includes("$id") ? fields : [...fields, "$id"];
+        const resp = await apiGet(prefix, "/records.json", params);
+        const batch = Array.isArray(resp?.records) ? resp.records : [];
+        if (!batch.length) break;
+        all2.push(...batch);
+        onProgress(all2.length, "keyset");
+        const nextId = Number(batch[batch.length - 1]?.$id?.value);
+        if (!Number.isFinite(nextId) || nextId <= lastId) {
+          throw new Error("レコードIDの取得順が想定と異なるため中断しました（$id を fields に含めてください）");
+        }
+        lastId = nextId;
+        if (batch.length < limit) break;
+      }
+      return { records: all2, mode: "keyset" };
+    }
+    const createBody = { app, query: base, size: limit };
+    if (fields) createBody.fields = fields;
+    const created = await apiPost(prefix, "/records/cursor.json", createBody);
+    const cursorId = String(created?.id || "");
+    if (!cursorId) throw new Error("cursor の作成に失敗しました（id が返りません）");
+    const all = [];
+    let finished = false;
+    try {
+      while (true) {
+        const resp = await apiGet(prefix, "/records/cursor.json", { id: cursorId });
+        const batch = Array.isArray(resp?.records) ? resp.records : [];
+        all.push(...batch);
+        onProgress(all.length, "cursor");
+        if (!resp?.next) {
+          finished = true;
+          break;
+        }
+      }
+    } finally {
+      if (!finished) {
+        try {
+          await apiDelete(prefix, "/records/cursor.json", { id: cursorId });
+        } catch {
+        }
+      }
+    }
+    return { records: all, mode: "cursor" };
+  }
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      DEPLOY_PATH_SNIPPET = "app/deploy.json";
+      ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
+      ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
+      ERR_NO_RECORD_PREVIEW_API = "レコードAPIにはプレビュー用の追加・更新・削除エンドポイントがありません。レコード操作は本番REST APIを明示的な確認付きで実行します。";
       DEFAULT_API_GET_RETRIES = 3;
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
       RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+      RECORD_DATA_MUTATION_PATHS = /* @__PURE__ */ new Set([
+        "/record.json",
+        "/records.json",
+        "/record/status.json",
+        "/records/status.json"
+      ]);
+      RECORD_CURSOR_PATH = "/records/cursor.json";
       apiGetMetrics = {
         calls: 0,
         retries: 0,
@@ -908,23 +1030,63 @@ ${contextLine}`);
   // src/tabs/record-standalone.ts
   init_utils();
   init_api();
-  var JSZIP_CDN = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+
+  // src/jszipLoader.ts
+  init_constants();
+  var loadPromise = null;
   function loadJSZipLite() {
     const w = window;
     if (w.JSZip) return Promise.resolve(w.JSZip);
-    return new Promise((resolve, reject) => {
-      const existing = document.querySelector(`script[src="${JSZIP_CDN}"]`);
+    if (loadPromise) return loadPromise;
+    const src = EXTERNAL_LIBRARIES.jszip.cdnUrl || "";
+    loadPromise = new Promise((resolve, reject) => {
+      const settle = () => {
+        const ctor = window.JSZip;
+        if (ctor) resolve(ctor);
+        else reject(new Error("JSZipのロード後もグローバル変数が見つかりません"));
+      };
+      const fail = () => reject(new Error(`JSZipの読み込みに失敗しました（${src}）。CSP やネットワーク制限を確認してください`));
+      const existing = document.querySelector(`script[src="${src}"]`);
       if (existing) {
-        existing.addEventListener("load", () => resolve(window.JSZip));
-        existing.addEventListener("error", () => reject(new Error("JSZipの読み込みに失敗")));
+        existing.addEventListener("load", settle, { once: true });
+        existing.addEventListener("error", fail, { once: true });
         return;
       }
       const s = document.createElement("script");
-      s.src = JSZIP_CDN;
-      s.onload = () => resolve(window.JSZip);
-      s.onerror = () => reject(new Error("JSZipの読み込みに失敗"));
+      s.src = src;
+      s.async = true;
+      s.onload = settle;
+      s.onerror = fail;
       document.head.appendChild(s);
+    }).catch((error) => {
+      loadPromise = null;
+      throw error;
     });
+    return loadPromise;
+  }
+
+  // src/tabs/record-query.ts
+  function csvEscape(val) {
+    const s = String(val == null ? "" : val);
+    return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r") ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function extractRecordCsvValue(rec, code) {
+    const f = rec?.[code];
+    if (!f) return "";
+    const type = String(f.type || "");
+    if (type === "USER_SELECT" || type === "ORGANIZATION_SELECT" || type === "GROUP_SELECT") {
+      return (Array.isArray(f.value) ? f.value : []).map((v) => v?.code || v?.name || "").join(",");
+    }
+    if (type === "CHECK_BOX" || type === "MULTI_SELECT") return (Array.isArray(f.value) ? f.value : []).join(",");
+    if (type === "FILE") return (Array.isArray(f.value) ? f.value : []).map((file) => file?.name || "").join(",");
+    if (type === "SUBTABLE") return `${(Array.isArray(f.value) ? f.value : []).length}行`;
+    if (typeof f.value === "object" && f.value !== null) return JSON.stringify(f.value);
+    return f.value == null ? "" : String(f.value);
+  }
+  function buildRecordsCsvText(records, propKeys) {
+    const lines = [propKeys.map(csvEscape).join(",")];
+    for (const rec of records) lines.push(propKeys.map((k) => csvEscape(extractRecordCsvValue(rec, k))).join(","));
+    return "\uFEFF" + lines.join("\n");
   }
   function sanitizeZipSegment(value, fallback = "item") {
     const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim();
@@ -933,64 +1095,30 @@ ${contextLine}`);
   function uniqueZipName(used, raw, fileKey, idx) {
     const safeName = sanitizeZipSegment(raw || "file.bin", "file.bin");
     const safePrefix = sanitizeZipSegment(String(fileKey || "").slice(0, 12) || String(idx + 1), "file");
-    const base = `${safePrefix}_${safeName}`;
+    return uniqueZipEntryName(used, `${safePrefix}_${safeName}`);
+  }
+  function uniqueZipEntryName(used, base) {
     let cand = base;
     let n = 2;
     while (used.has(cand)) {
       const dot = base.lastIndexOf(".");
-      if (dot > 0) cand = `${base.slice(0, dot)}_${n}${base.slice(dot)}`;
-      else cand = `${base}_${n}`;
+      cand = dot > 0 ? `${base.slice(0, dot)}_${n}${base.slice(dot)}` : `${base}_${n}`;
       n++;
     }
     used.add(cand);
     return cand;
   }
-  function hasOrderByClause(query) {
-    return /\border\s+by\b/i.test(String(query || ""));
+
+  // src/tabs/record-standalone.ts
+  function describeFetchMode(mode) {
+    return mode === "cursor" ? " / cursor API" : "";
   }
-  function hasPagingClause(query) {
-    return /\blimit\s+\d+/i.test(String(query || "")) || /\boffset\s+\d+/i.test(String(query || ""));
-  }
-  function buildPagedQuery(query, offset) {
-    const base = String(query || "").trim();
-    if (hasPagingClause(base)) {
-      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
-    }
-    const parts = [];
-    if (base) parts.push(base);
-    if (!hasOrderByClause(base)) parts.push("order by $id asc");
-    parts.push("limit 500");
-    parts.push(`offset ${Number(offset || 0)}`);
-    return parts.join(" ");
-  }
-  function buildKeysetQuery(query, lastRecordId) {
-    const base = String(query || "").trim();
-    if (hasPagingClause(base)) {
-      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
-    }
-    const idCond = `$id > ${Number(lastRecordId || 0)}`;
-    if (!base) return `${idCond} order by $id asc limit 500`;
-    if (hasOrderByClause(base)) return null;
-    return `(${base}) and ${idCond} order by $id asc limit 500`;
-  }
-  function csvEscape(val) {
-    const s = String(val == null ? "" : val);
-    return s.includes(",") || s.includes('"') || s.includes("\n") ? '"' + s.replace(/"/g, '""') + '"' : s;
-  }
-  function extractRecordCsvValue(rec, code) {
-    const f = rec[code];
-    if (!f) return "";
-    if (["USER_SELECT", "ORGANIZATION_SELECT", "GROUP_SELECT"].includes(f.type)) return (f.value || []).map((v) => v.code || v.name).join(",");
-    if (["CHECK_BOX", "MULTI_SELECT"].includes(f.type)) return (f.value || []).join(",");
-    if (f.type === "FILE") return (f.value || []).map((file) => file.name).join(",");
-    if (f.type === "SUBTABLE") return (f.value || []).length + "行";
-    if (typeof f.value === "object" && f.value !== null) return JSON.stringify(f.value);
-    return f.value;
-  }
-  function buildRecordsCsvText(records, propKeys) {
-    const lines = [propKeys.map(csvEscape).join(",")];
-    for (const rec of records) lines.push(propKeys.map((k) => csvEscape(extractRecordCsvValue(rec, k))).join(","));
-    return "\uFEFF" + lines.join("\n");
+  async function fetchAllRecords(prefix, app, query, setStatus) {
+    setStatus("レコード取得中...");
+    const result = await fetchRecordsByQuery(prefix, app, query || "", {
+      onProgress: (n, mode) => setStatus(`レコード取得中... (${n}件取得済${describeFetchMode(mode)})`)
+    });
+    return result.records;
   }
   async function buildCsvExportForApp(appId, guestId, query, setStatus) {
     if (!appId) throw new Error("アプリIDを入力してください");
@@ -1008,22 +1136,6 @@ ${contextLine}`);
       recordCount: records.length,
       csvText: buildRecordsCsvText(records, propKeys)
     };
-  }
-  async function fetchAllRecords(prefix, app, query, setStatus) {
-    let all = [];
-    let offset = 0;
-    let lastRecordId = 0;
-    while (true) {
-      setStatus(`レコード取得中... (${all.length}件取得済)`);
-      const q = buildKeysetQuery(query, lastRecordId) || buildPagedQuery(query, offset);
-      const resp = await apiGet(prefix, "/records.json", { app, query: q });
-      const batch = resp.records || [];
-      all = all.concat(batch);
-      if (batch.length < 500) break;
-      lastRecordId = Number(batch[batch.length - 1]?.$id?.value || lastRecordId);
-      offset += 500;
-    }
-    return all;
   }
   async function runCsvExportStandalone(opts, setStatus) {
     const { appId, guestId, query, filename } = opts;
@@ -1046,31 +1158,45 @@ ${contextLine}`);
     const zip = new JSZip();
     const used = /* @__PURE__ */ new Set();
     let totalRecords = 0;
+    const failures = [];
     for (let i = 0; i < apps.length; i++) {
       const app = apps[i];
       setStatus(`CSV出力中... (${i + 1}/${apps.length})`);
-      const result = await buildCsvExportForApp(app.appId, app.guestId || "", query, setStatus);
-      totalRecords += result.recordCount;
-      const label = buildAppFilenameLabel(result.appId, app.appName || "");
-      const baseName = buildExportFilename("レコード", "csv", { appLabel: label }).replace(/\.csv$/i, "");
-      const guestSuffix = result.guestId ? `_guest${sanitizeZipSegment(result.guestId)}` : "";
-      const entryName = uniqueZipName(used, `${baseName}${guestSuffix}.csv`, result.appId, i);
-      zip.file(entryName, result.csvText);
+      try {
+        const result = await buildCsvExportForApp(app.appId, app.guestId || "", query, setStatus);
+        totalRecords += result.recordCount;
+        const label = buildAppFilenameLabel(result.appId, app.appName || "");
+        const baseName = buildExportFilename("レコード", "csv", { appLabel: label }).replace(/\.csv$/i, "");
+        const guestSuffix = result.guestId ? `_guest${sanitizeZipSegment(result.guestId)}` : "";
+        const entryName = uniqueZipName(used, `${baseName}${guestSuffix}.csv`, result.appId, i);
+        zip.file(entryName, result.csvText);
+      } catch (error) {
+        failures.push(`App ${app.appId}: ${error?.message || String(error)}`);
+      }
+    }
+    if (failures.length === apps.length) {
+      throw new Error(`すべてのアプリで CSV 出力に失敗しました
+${failures.join("\n")}`);
     }
     const manifest = [
       "kintone CSV 一括出力マニフェスト",
       `出力日時: ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`,
-      `対象アプリ数: ${apps.length}`,
+      `対象アプリ数: ${apps.length}（成功 ${apps.length - failures.length} / 失敗 ${failures.length}）`,
       `総レコード数: ${totalRecords}`,
       `共通クエリ: ${query || "(なし)"}`,
       "",
-      ...apps.map((a, i) => `${i + 1}. App ${a.appId}${a.guestId ? ` / Guest ${a.guestId}` : ""}${a.appName ? ` / ${a.appName}` : ""}`)
+      ...apps.map((a, i) => `${i + 1}. App ${a.appId}${a.guestId ? ` / Guest ${a.guestId}` : ""}${a.appName ? ` / ${a.appName}` : ""}`),
+      ...failures.length ? ["", "失敗:", ...failures] : []
     ].join("\n");
     zip.file("manifest.txt", manifest);
     setStatus(`ZIP生成中... (${apps.length}アプリ / ${totalRecords}件)`);
     const blob = await zip.generateAsync({ type: "blob" });
     const zipName = filename || buildExportFilename("CSV出力", "zip");
     downloadBlob(zipName.toLowerCase().endsWith(".zip") ? zipName : `${zipName}.zip`, blob);
+    if (failures.length) {
+      setStatus(`CSV一括出力完了（失敗 ${failures.length}アプリ、詳細は manifest.txt）: ${apps.length - failures.length}アプリ / ${totalRecords}件`, true);
+      return;
+    }
     setStatus(`CSV一括出力完了 (${apps.length}アプリ / ${totalRecords}件)`);
   }
   async function runLoadViewsStandalone(opts, setStatus) {
@@ -1362,7 +1488,9 @@ ${contextLine}`);
 .kus-lp__status--warn{background:var(--c-warn-bg);color:var(--c-warn-fg);border-color:var(--c-warn-bd)}
 .kus-lp__status--info{background:var(--c-info-bg);color:var(--c-info-fg);border-color:var(--c-info-bd)}
 .kus-lp__status--busy{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
-.kus-lp__status-icon{font-size:14px;line-height:1.2}
+.kus-lp__status-icon{font-size:14px;line-height:1.2;flex:0 0 auto}
+/* 部分成功や API コンテキストなど複数行のメッセージを改行のまま表示する */
+.kus-lp__status-text{min-width:0;white-space:pre-wrap;word-break:break-word}
 .kus-lp__status-busy::before{
   content:'';display:inline-block;width:10px;height:10px;border-radius:50%;
   border:2px solid var(--c-muted);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
@@ -1984,10 +2112,20 @@ ${contextLine}`);
     panel.setBusy(true);
     try {
       const out = await fn();
-      if (okMsg) panel.setStatus(okMsg, "ok");
+      const tone = panel.status.dataset.tone;
+      if (okMsg && tone !== "err") {
+        panel.setStatus(okMsg, "ok");
+      } else if (tone === "busy") {
+        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        panel.setStatus(text || "完了", "ok");
+      }
       return out;
     } catch (e) {
-      panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
+      const message = String(e?.message || e || "不明なエラー");
+      const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
+      const [first, ...rest] = lines.length ? lines : [message];
+      panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
+      if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
     } finally {
       panel.setBusy(false);
@@ -2193,6 +2331,7 @@ ${contextLine}`);
     cardCond.body.appendChild(makeRow(viewSelect, { label: "一覧" }));
     cardCond.body.appendChild(makeRow(filename, { label: "ファイル名" }));
     cardCond.body.appendChild(makeNote("クエリは全対象アプリへ共通適用します。アプリごとにフィールド構成が異なる場合も、各アプリのフィールドコードをヘッダーにして別 CSV を作成します。"));
+    cardCond.body.appendChild(makeNote("limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します。複数アプリで一部が失敗しても成功分は ZIP に保存し、失敗一覧を manifest.txt に記録します。"));
     panel.body.insertBefore(cardCond.card, panel.status);
     loadViews.addEventListener("click", () => liteRun(panel, "一覧情報を取得中…", async () => {
       const views = await runLoadViewsStandalone(

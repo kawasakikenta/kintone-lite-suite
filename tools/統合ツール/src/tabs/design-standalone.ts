@@ -8,28 +8,52 @@ import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { bundleToMarkdown } from '../diff/export.js';
 import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip } from './design-xlsx.js';
 
+interface DesignSourceInput {
+  appId?: string;
+  guestId?: string;
+  preview?: boolean;
+  importedBundle?: any;
+}
+
+/**
+ * 設定JSON（importedBundle）があればそれを、無ければ API から全セクションを取得して bundle を返す。
+ * 設計書出力・Markdownコピー・差分レポートで共通。取得できなかったセクション数を status に出す。
+ */
+async function resolveDesignBundle(
+  source: DesignSourceInput,
+  side: 'source' | 'target',
+  setStatus: (msg: string, err?: boolean) => void,
+  labelPrefix = ''
+) {
+  const appId = String(source?.appId || '').trim();
+  const importedBundle = source?.importedBundle;
+  if (!appId && !importedBundle) throw new Error(`${labelPrefix || ''}アプリIDまたは設定JSONを指定してください`.trim());
+  const scopes = SECTION_DEFS.map((s) => s.key);
+  setStatus(importedBundle ? `${labelPrefix}設定JSONから設計情報を読み込み中...` : `${labelPrefix}設計情報を取得中...`);
+  const bundle = importedBundle
+    ? pickSettingsBundle(importedBundle, { side, appId })
+    : await fetchBundle({
+      appId,
+      guestId: String(source?.guestId || '').trim(),
+      preview: !!source?.preview,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`${labelPrefix}取得中 ${Math.round(p * 100)}% (${l})`)
+    });
+  const failed = scopes.filter((key) => bundle?.sections?.[key]?._fetchError);
+  if (failed.length) {
+    const labels = failed.map((key) => SECTION_DEFS.find((s) => s.key === key)?.label || key);
+    setStatus(`${labelPrefix}取得できなかったセクション ${failed.length}件（${labels.join(', ')}）は設計書に「取得失敗」として載ります`, true);
+  }
+  return bundle;
+}
+
 /**
  * @param {'md'|'json'} kind
  * @param {{ appId: string, guestId: string, preview: boolean }} source
  * @param {(msg: string, err?: boolean) => void} setStatus
  */
 export async function runDesignExportStandalone(kind, source, setStatus) {
-  const appId = String(source.appId || '').trim();
-  const importedBundle = (source as any).importedBundle;
-  if (!appId && !importedBundle) throw new Error('アプリIDまたは設定JSONを指定してください');
-  const guestId = String(source.guestId || '').trim();
-  const preview = !!source.preview;
-  const scopes = SECTION_DEFS.map((s) => s.key);
-  setStatus(importedBundle ? '設定JSONから設計情報を読み込み中...' : '設計情報を取得中...');
-  const bundle = importedBundle
-    ? pickSettingsBundle(importedBundle, { side: 'source', appId })
-    : await fetchBundle({
-      appId,
-      guestId,
-      preview,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`)
-    });
+  const bundle = await resolveDesignBundle(source, 'source', setStatus);
   state.lastSourceBundle = bundle;
 
   const appLabel = appLabelFromBundle(bundle);
@@ -46,22 +70,7 @@ export async function runDesignExportStandalone(kind, source, setStatus) {
  * @param {(msg: string, err?: boolean) => void} setStatus
  */
 export async function runDesignCopyMdStandalone(source, setStatus) {
-  const appId = String(source.appId || '').trim();
-  const importedBundle = (source as any).importedBundle;
-  if (!appId && !importedBundle) throw new Error('アプリIDまたは設定JSONを指定してください');
-  const guestId = String(source.guestId || '').trim();
-  const preview = !!source.preview;
-  const scopes = SECTION_DEFS.map((s) => s.key);
-  setStatus(importedBundle ? '設定JSONから設計情報を読み込み中...' : '設計情報を取得中...');
-  const bundle = importedBundle
-    ? pickSettingsBundle(importedBundle, { side: 'source', appId })
-    : await fetchBundle({
-      appId,
-      guestId,
-      preview,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`)
-    });
+  const bundle = await resolveDesignBundle(source, 'source', setStatus);
   state.lastSourceBundle = bundle;
 
   const md = bundleToMarkdown(bundle);
@@ -176,28 +185,9 @@ export async function runDesignDiffMdStandalone(
   const importedSource = (opts.source as any)?.importedBundle;
   const importedTarget = (opts.target as any)?.importedBundle;
   if ((!srcAppId && !importedSource) || (!tgtAppId && !importedTarget)) throw new Error('比較元と比較先の両方にアプリIDまたは設定JSONを指定してください。');
-  const scopes = SECTION_DEFS.map((s) => s.key);
 
-  setStatus(importedSource ? '比較元の設計情報を設定JSONから読み込み中...' : '比較元の設計情報を取得中...');
-  const srcBundle = importedSource
-    ? pickSettingsBundle(importedSource, { side: 'source', appId: srcAppId })
-    : await fetchBundle({
-      appId: srcAppId,
-      guestId: String(opts.source.guestId || '').trim(),
-      preview: !!opts.source.preview,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
-    });
-  setStatus(importedTarget ? '比較先の設計情報を設定JSONから読み込み中...' : '比較先の設計情報を取得中...');
-  const tgtBundle = importedTarget
-    ? pickSettingsBundle(importedTarget, { side: 'target', appId: tgtAppId })
-    : await fetchBundle({
-      appId: tgtAppId,
-      guestId: String(opts.target.guestId || '').trim(),
-      preview: !!opts.target.preview,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`比較先取得中 ${Math.round(p * 100)}% (${l})`)
-    });
+  const srcBundle = await resolveDesignBundle(opts.source, 'source', setStatus, '比較元: ');
+  const tgtBundle = await resolveDesignBundle(opts.target, 'target', setStatus, '比較先: ');
 
   setStatus('差分レポート生成中...');
   const srcMd = bundleToMarkdown(srcBundle);

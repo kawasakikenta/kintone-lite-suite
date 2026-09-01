@@ -45,6 +45,7 @@ export function mountRecordLitePanel() {
   const cardApp = makeCard({ title: '接続情報', number: 1 });
   cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '対象アプリ' }));
   cardApp.body.appendChild(makeNote('複数アプリは「463,464,469」のようにカンマ、改行、または空白で区切って指定できます。選択した操作を上から順にすべてのアプリへ実行します。'));
+  cardApp.body.appendChild(makeNote('クエリに limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します（10,000 件超も可）。'));
   cardApp.body.appendChild(createAppSearchControl(panel, {
     guestEl: tgtGuest,
     targets: [{ label: '対象アプリ', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; } }]
@@ -108,7 +109,7 @@ export function mountRecordLitePanel() {
         fileInput.accept = '.csv';
         fileInput.className = 'kus-lp__file';
         root.appendChild(makeRow(fileInput, { label: 'CSV' }));
-        root.appendChild(makeNote('UTF-8 / Excel BOM 対応。ファイル・サブテーブル・ステータスは取込対象外です。'));
+        root.appendChild(makeNote('UTF-8 / Excel BOM 対応。ヘッダ行はフィールドコード。ファイル・サブテーブル・ステータスは取込対象外です。100 件単位で追加し、途中で失敗した場合は確定済み件数と未処理件数を表示します。'));
         const run = makeButton('レコードを取込', 'primary', { icon: '↑' });
         run.style.width = '100%';
         run.addEventListener('click', () => liteRun(panel, 'CSV取込中…', async () => {
@@ -176,6 +177,7 @@ export function mountRecordLitePanel() {
         root.appendChild(makeRow(fileCode, { label: 'ファイル' }));
         root.appendChild(makeRow(folderCode, { label: 'フォルダ' }));
         root.appendChild(makeRow(zipName, { label: 'ZIP名' }));
+        root.appendChild(makeNote('取得できなかったファイル（閲覧権限なし等）は ZIP 内の download_errors.txt に記録し、完了メッセージに件数を表示します。'));
         const run = makeButton('添付ファイルをZIPで保存', 'primary', { icon: '↓' });
         run.style.width = '100%';
         run.addEventListener('click', () => liteRun(panel, '添付ファイル取得中…', async () => {
@@ -205,7 +207,7 @@ export function mountRecordLitePanel() {
           targets: [{ label: 'コピー元', apply: (id, _name, guestId) => { srcApp.value = id; if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId; } }]
         }));
         root.appendChild(makeRow(query, { label: 'クエリ' }));
-        root.appendChild(makeNote('元アプリの絞り込んだレコードを、対象アプリへ POST で追加します。ファイル/システム項目は除外されます。'));
+        root.appendChild(makeNote('コピー元の絞り込んだレコードを、対象アプリへ新規レコードとして追加します。ファイル・システム項目・計算項目と、対象アプリに無い（または型が異なる）フィールドは除外し、除外したフィールドコードを実行前に表示します。'));
         const run = makeButton('レコードをコピー実行', 'primary');
         run.style.width = '100%';
         run.classList.add('kus-lp__btn--danger');
@@ -252,6 +254,7 @@ export function mountRecordLitePanel() {
         incSettings.checkbox.addEventListener('change', () => {
           scopeBox.style.display = incSettings.checkbox.checked ? 'flex' : 'none';
         });
+        root.appendChild(makeNote('ZIP には records.csv / records.json と manifest.json を含みます。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。'));
 
         const run = makeButton('バックアップ ZIP を保存', 'primary', { icon: '↓' });
         run.style.width = '100%';

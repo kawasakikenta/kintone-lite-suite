@@ -5706,26 +5706,40 @@ applySavedViewState();
       (v, i, a) => /^\d+$/.test(String(v)) && a.indexOf(v) === i
     );
   }
-  async function runGenerateERDiagramStandalone(opts, setStatus2) {
+  function buildErCrawlOptions(opts) {
+    const appId = String(opts?.appId || "").trim();
+    const primaryAppIds = Array.isArray(opts?.appIds) && opts.appIds.length ? opts.appIds : [appId];
+    const startAppIds = [...primaryAppIds, ...opts?.extraAppIds || []].map((v) => String(v || "").trim()).filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
+    const maxDepthRaw = Number(opts?.maxDepth);
+    return {
+      startAppId: startAppIds[0] || appId,
+      startAppIds,
+      layoutName: opts?.layoutName || ER_DEFAULTS.layoutName,
+      fieldDensity: opts?.fieldDensity || ER_DEFAULTS.fieldDensity,
+      maxDepth: Number.isFinite(maxDepthRaw) && maxDepthRaw >= 0 ? Math.floor(maxDepthRaw) : 0,
+      includeSubtableFields: opts?.includeSubtableFields !== false,
+      includeReverseLookup: !!opts?.includeReverseLookup,
+      maxFields: ER_DEFAULTS.maxFields,
+      sleepMs: ER_DEFAULTS.sleepMs,
+      source: { guestId: opts?.guestId || "", preview: !!opts?.preview }
+    };
+  }
+  async function resolveErOptions(opts, setStatus2) {
     const appId = String(opts.appId || "").trim();
     const spaceId = String(opts.spaceId || "").trim();
     if (!appId && !spaceId) throw new Error("アプリID または スペースID を入力してください");
-    const primaryAppIds = Array.isArray(opts.appIds) && opts.appIds.length ? opts.appIds : [appId];
-    const startAppIds = [...primaryAppIds, ...opts.extraAppIds || []].map((v) => String(v || "").trim()).filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
-    const options = {
-      startAppId: startAppIds[0] || appId,
-      startAppIds,
-      layoutName: opts.layoutName || ER_DEFAULTS.layoutName,
-      fieldDensity: opts.fieldDensity || ER_DEFAULTS.fieldDensity,
-      maxDepth: Number.isFinite(Number(opts.maxDepth)) && Number(opts.maxDepth) >= 0 ? Math.floor(Number(opts.maxDepth)) : 0,
-      includeSubtableFields: opts.includeSubtableFields !== false,
-      includeReverseLookup: !!opts.includeReverseLookup,
-      maxFields: ER_DEFAULTS.maxFields,
-      sleepMs: ER_DEFAULTS.sleepMs,
-      source: { guestId: opts.guestId || "", preview: !!opts.preview }
-    };
+    const options = buildErCrawlOptions(opts);
     await applySpaceToErOptions(opts, options, setStatus2);
     if (!options.startAppIds.length) throw new Error("対象アプリが見つかりませんでした");
+    return options;
+  }
+  function summarizeCrawl(apps) {
+    const partialCount = apps.filter((app) => app?.status === "partial").length;
+    const failedCount = apps.filter((app) => app?.status === "failed" || app?.ok === false).length;
+    return { partialCount, failedCount, note: partialCount || failedCount ? `（一部取得 ${partialCount} / 取得失敗 ${failedCount}）` : "" };
+  }
+  async function runGenerateERDiagramStandalone(opts, setStatus2) {
+    const options = await resolveErOptions(opts, setStatus2);
     const popup = window.open("", "_blank");
     if (!popup) throw new Error("別タブを開けませんでした。ポップアップブロックを確認してください");
     try {
@@ -5744,9 +5758,8 @@ applySavedViewState();
       const url = URL.createObjectURL(blob);
       popup.location.href = url;
       progressUi.close();
-      const partialCount = apps.filter((app) => app?.status === "partial").length;
-      const failedCount = apps.filter((app) => app?.status === "failed" || app?.ok === false).length;
-      setStatus2(partialCount || failedCount ? `ER図を生成しました: ${apps.length}アプリ（一部取得 ${partialCount} / 取得失敗 ${failedCount}）` : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました`, !!failedCount);
+      const summary = summarizeCrawl(apps);
+      setStatus2(summary.note ? `ER図を生成しました: ${apps.length}アプリ${summary.note}` : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました`, !!summary.failedCount);
       setTimeout(() => URL.revokeObjectURL(url), 60 * 1e3);
     } catch (e) {
       try {
@@ -5760,23 +5773,7 @@ applySavedViewState();
   async function runExportERDiagramHtmlStandalone(opts, setStatus2) {
     const appId = String(opts.appId || "").trim();
     const spaceId = String(opts.spaceId || "").trim();
-    if (!appId && !spaceId) throw new Error("アプリID または スペースID を入力してください");
-    const primaryAppIds = Array.isArray(opts.appIds) && opts.appIds.length ? opts.appIds : [appId];
-    const startAppIds = [...primaryAppIds, ...opts.extraAppIds || []].map((v) => String(v || "").trim()).filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
-    const options = {
-      startAppId: startAppIds[0] || appId,
-      startAppIds,
-      layoutName: opts.layoutName || ER_DEFAULTS.layoutName,
-      fieldDensity: opts.fieldDensity || ER_DEFAULTS.fieldDensity,
-      maxDepth: Number.isFinite(Number(opts.maxDepth)) && Number(opts.maxDepth) >= 0 ? Math.floor(Number(opts.maxDepth)) : 0,
-      includeSubtableFields: opts.includeSubtableFields !== false,
-      includeReverseLookup: !!opts.includeReverseLookup,
-      maxFields: ER_DEFAULTS.maxFields,
-      sleepMs: ER_DEFAULTS.sleepMs,
-      source: { guestId: opts.guestId || "", preview: !!opts.preview }
-    };
-    await applySpaceToErOptions(opts, options, setStatus2);
-    if (!options.startAppIds.length) throw new Error("対象アプリが見つかりませんでした");
+    const options = await resolveErOptions(opts, setStatus2);
     setStatus2(`ER図HTMLを生成中... 起点 ${options.startAppIds.join(",")}`);
     progressUi.init();
     progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
@@ -5784,7 +5781,7 @@ applySavedViewState();
       const apps = await crawl(options.startAppIds, options);
       progressUi.update(94, "HTML保存データ生成中...");
       const html = buildHTML(apps, options);
-      const baseName = startAppIds[0] || appId || `space${spaceId}`;
+      const baseName = options.startAppIds[0] || appId || `space${spaceId}`;
       const suffix = `${opts.guestId ? `guest${opts.guestId}_` : ""}${opts.preview ? "プレビュー" : "本番"}`;
       downloadText(
         buildExportFilename("ER図", "html", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
@@ -5792,9 +5789,8 @@ applySavedViewState();
         "text/html"
       );
       progressUi.close();
-      const partialCount = apps.filter((app) => app?.status === "partial").length;
-      const failedCount = apps.filter((app) => app?.status === "failed" || app?.ok === false).length;
-      setStatus2(partialCount || failedCount ? `ER図HTMLを保存しました: ${apps.length}アプリ（一部取得 ${partialCount} / 取得失敗 ${failedCount}）` : `ER図HTMLを保存しました (${apps.length}アプリ)`, !!failedCount);
+      const summary = summarizeCrawl(apps);
+      setStatus2(summary.note ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}` : `ER図HTMLを保存しました (${apps.length}アプリ)`, !!summary.failedCount);
     } catch (e) {
       progressUi.error(e.message || String(e));
       throw e;
@@ -6030,7 +6026,9 @@ applySavedViewState();
 .kus-lp__status--warn{background:var(--c-warn-bg);color:var(--c-warn-fg);border-color:var(--c-warn-bd)}
 .kus-lp__status--info{background:var(--c-info-bg);color:var(--c-info-fg);border-color:var(--c-info-bd)}
 .kus-lp__status--busy{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
-.kus-lp__status-icon{font-size:14px;line-height:1.2}
+.kus-lp__status-icon{font-size:14px;line-height:1.2;flex:0 0 auto}
+/* 部分成功や API コンテキストなど複数行のメッセージを改行のまま表示する */
+.kus-lp__status-text{min-width:0;white-space:pre-wrap;word-break:break-word}
 .kus-lp__status-busy::before{
   content:'';display:inline-block;width:10px;height:10px;border-radius:50%;
   border:2px solid var(--c-muted);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
@@ -6394,10 +6392,20 @@ applySavedViewState();
     panel.setBusy(true);
     try {
       const out = await fn();
-      if (okMsg) panel.setStatus(okMsg, "ok");
+      const tone = panel.status.dataset.tone;
+      if (okMsg && tone !== "err") {
+        panel.setStatus(okMsg, "ok");
+      } else if (tone === "busy") {
+        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        panel.setStatus(text || "完了", "ok");
+      }
       return out;
     } catch (e) {
-      panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
+      const message = String(e?.message || e || "不明なエラー");
+      const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
+      const [first, ...rest] = lines.length ? lines : [message];
+      panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
+      if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
     } finally {
       panel.setBusy(false);

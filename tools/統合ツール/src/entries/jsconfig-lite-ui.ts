@@ -85,7 +85,8 @@ export function mountJsconfigLitePanel() {
       { label: '反映先', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; } }
     ]
   }));
-  cardApply.body.appendChild(makeNote('反映先は常にプレビュー環境。デプロイは管理画面から手動で行ってください。'));
+  cardApply.body.appendChild(makeNote('反映先は常にプレビュー環境。デプロイは管理画面から手動で行ってください。反映先の JS/CSS 一覧は JSON の内容で全置換され、JSON に scope（ALL / ADMIN / NONE）があれば適用範囲も更新します。'));
+  cardApply.body.appendChild(makeNote('FILE タイプは反映先で有効なアップロード済み fileKey が必要です。取得結果の fileKey（ダウンロード用）を別アプリへそのまま流用すると kintone に拒否されます。反映前に件数を確認し、取得後に別の更新が入っていた場合は上書きせず中止します。'));
   const applyBtn = makeButton('比較先プレビューへ反映', 'run', { icon: '⤴' });
   cardApply.body.appendChild(applyBtn);
   panel.body.insertBefore(cardApply.card, panel.status);
