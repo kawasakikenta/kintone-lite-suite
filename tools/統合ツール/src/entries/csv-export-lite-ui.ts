@@ -56,6 +56,7 @@ export function mountCsvExportLitePanel() {
   cardCond.body.appendChild(makeRow(viewSelect, { label: '一覧' }));
   cardCond.body.appendChild(makeRow(filename, { label: 'ファイル名' }));
   cardCond.body.appendChild(makeNote('クエリは全対象アプリへ共通適用します。アプリごとにフィールド構成が異なる場合も、各アプリのフィールドコードをヘッダーにして別 CSV を作成します。'));
+  cardCond.body.appendChild(makeNote('limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します。複数アプリで一部が失敗しても成功分は ZIP に保存し、失敗一覧を manifest.txt に記録します。'));
   panel.body.insertBefore(cardCond.card, panel.status);
 
   loadViews.addEventListener('click', () => liteRun(panel, '一覧情報を取得中…', async () => {

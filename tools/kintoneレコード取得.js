@@ -2316,7 +2316,9 @@ ${formatFileFailures(failures)}
 .kus-lp__status--warn{background:var(--c-warn-bg);color:var(--c-warn-fg);border-color:var(--c-warn-bd)}
 .kus-lp__status--info{background:var(--c-info-bg);color:var(--c-info-fg);border-color:var(--c-info-bd)}
 .kus-lp__status--busy{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
-.kus-lp__status-icon{font-size:14px;line-height:1.2}
+.kus-lp__status-icon{font-size:14px;line-height:1.2;flex:0 0 auto}
+/* 部分成功や API コンテキストなど複数行のメッセージを改行のまま表示する */
+.kus-lp__status-text{min-width:0;white-space:pre-wrap;word-break:break-word}
 .kus-lp__status-busy::before{
   content:'';display:inline-block;width:10px;height:10px;border-radius:50%;
   border:2px solid var(--c-muted);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
@@ -2729,10 +2731,20 @@ ${formatFileFailures(failures)}
     panel.setBusy(true);
     try {
       const out = await fn();
-      if (okMsg) panel.setStatus(okMsg, "ok");
+      const tone = panel.status.dataset.tone;
+      if (okMsg && tone !== "err") {
+        panel.setStatus(okMsg, "ok");
+      } else if (tone === "busy") {
+        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        panel.setStatus(text || "完了", "ok");
+      }
       return out;
     } catch (e) {
-      panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
+      const message = String(e?.message || e || "不明なエラー");
+      const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
+      const [first, ...rest] = lines.length ? lines : [message];
+      panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
+      if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
     } finally {
       panel.setBusy(false);
@@ -2915,6 +2927,7 @@ ${formatFileFailures(failures)}
     const cardApp = makeCard({ title: "接続情報", number: 1 });
     cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "対象アプリ" }));
     cardApp.body.appendChild(makeNote("複数アプリは「463,464,469」のようにカンマ、改行、または空白で区切って指定できます。選択した操作を上から順にすべてのアプリへ実行します。"));
+    cardApp.body.appendChild(makeNote("クエリに limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します（10,000 件超も可）。"));
     cardApp.body.appendChild(createAppSearchControl(panel, {
       guestEl: tgtGuest,
       targets: [{ label: "対象アプリ", apply: (id, _name, guestId) => {
@@ -2978,7 +2991,7 @@ ${formatFileFailures(failures)}
           fileInput.accept = ".csv";
           fileInput.className = "kus-lp__file";
           root2.appendChild(makeRow(fileInput, { label: "CSV" }));
-          root2.appendChild(makeNote("UTF-8 / Excel BOM 対応。ファイル・サブテーブル・ステータスは取込対象外です。"));
+          root2.appendChild(makeNote("UTF-8 / Excel BOM 対応。ヘッダ行はフィールドコード。ファイル・サブテーブル・ステータスは取込対象外です。100 件単位で追加し、途中で失敗した場合は確定済み件数と未処理件数を表示します。"));
           const run = makeButton("レコードを取込", "primary", { icon: "↑" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "CSV取込中…", async () => {
@@ -3051,6 +3064,7 @@ ${formatFileFailures(failures)}
           root2.appendChild(makeRow(fileCode, { label: "ファイル" }));
           root2.appendChild(makeRow(folderCode, { label: "フォルダ" }));
           root2.appendChild(makeRow(zipName, { label: "ZIP名" }));
+          root2.appendChild(makeNote("取得できなかったファイル（閲覧権限なし等）は ZIP 内の download_errors.txt に記録し、完了メッセージに件数を表示します。"));
           const run = makeButton("添付ファイルをZIPで保存", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "添付ファイル取得中…", async () => {
@@ -3085,7 +3099,7 @@ ${formatFileFailures(failures)}
             } }]
           }));
           root2.appendChild(makeRow(query, { label: "クエリ" }));
-          root2.appendChild(makeNote("元アプリの絞り込んだレコードを、対象アプリへ POST で追加します。ファイル/システム項目は除外されます。"));
+          root2.appendChild(makeNote("コピー元の絞り込んだレコードを、対象アプリへ新規レコードとして追加します。ファイル・システム項目・計算項目と、対象アプリに無い（または型が異なる）フィールドは除外し、除外したフィールドコードを実行前に表示します。"));
           const run = makeButton("レコードをコピー実行", "primary");
           run.style.width = "100%";
           run.classList.add("kus-lp__btn--danger");
@@ -3132,6 +3146,7 @@ ${formatFileFailures(failures)}
           incSettings.checkbox.addEventListener("change", () => {
             scopeBox.style.display = incSettings.checkbox.checked ? "flex" : "none";
           });
+          root2.appendChild(makeNote("ZIP には records.csv / records.json と manifest.json を含みます。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。"));
           const run = makeButton("バックアップ ZIP を保存", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "レコードバックアップ中…", async () => {
