@@ -49,7 +49,8 @@ tools/統合ツール/
 │   ├── register-api.ts        # window.__KUS__ 公開 API
 │   ├── constants.ts           # 定数
 │   ├── state.ts               # グローバル state
-│   ├── api.ts                 # kintone REST API ラッパー
+│   ├── api.ts                 # kintone REST API ラッパー（書き込みガード / revision 競合判定 / レコード全件取得）
+│   ├── jszipLoader.ts         # lite 版共通の JSZip 動的ローダ
 │   ├── utils.ts               # 汎用ユーティリティ
 │   ├── kintoneGuard.ts        # kintone 画面ガード（全エントリ・boot 共通）
 │   ├── handlers.ts            # イベント委譲
@@ -60,6 +61,7 @@ tools/統合ツール/
 │   │   └── appSearchControl.ts # アプリ名検索コントロール（lite 共通）
 │   ├── tabs/                  # 各タブの正規実装
 │   │   ├── *.ts               # 共通・旧統合 UI 用タブロジック
+│   │   ├── record-query.ts    # レコード取得クエリ / CSV / ZIP 命名 / 分割書き込みの純粋ヘルパー
 │   │   └── *-standalone.ts    # lite 版用に統合 UI 依存を外した関数群
 │   ├── diff/                  # 差分エンジン
 │   ├── reflect/               # プレビュー反映エンジン
@@ -77,3 +79,6 @@ tools/統合ツール/
 - `entries/litePanelTheme.ts` の `createLitePanel`／`makeRow` 等は全 lite 系パネルの共通 UI 基盤。変更時は軽量バンドル全体に影響する。
 - `kintoneGuard.ts` の `isKintonePage`／`runOnKintonePage` は全 lite エントリ（9 本）と `boot.ts` 共通の kintone 画面ガード。文言・判定を変えると全エントリに波及する。
 - `diff/export.ts` の `bundleToMarkdown` は設計書 lite（`tabs/design-standalone.ts`）から参照される。
+- `tabs/record-query.ts` のクエリ生成は `tabs/record.ts`（旧統合 UI）からも再公開されている。lite 版のレコード取得は `api.ts` の `fetchRecordsByQuery`（order by 無し: `$id` シーク / あり: cursor API）に統一する。
+- `api.ts` の `assertAllowsMutatingRestCall` は本番 prefix への書き込みを原則拒否する。例外はレコード API と `/records/cursor.json`（読み取り用ハンドル）のみ。
+- 設定の書き戻し（フィールド追加 / JS/CSS 設定）は GET の `revision` を送り、`decorateRevisionConflict` で競合を利用者へ通知する。

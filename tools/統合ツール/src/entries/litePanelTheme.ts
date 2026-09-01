@@ -239,7 +239,9 @@ const THEME_CSS = `
 .kus-lp__status--warn{background:var(--c-warn-bg);color:var(--c-warn-fg);border-color:var(--c-warn-bd)}
 .kus-lp__status--info{background:var(--c-info-bg);color:var(--c-info-fg);border-color:var(--c-info-bd)}
 .kus-lp__status--busy{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
-.kus-lp__status-icon{font-size:14px;line-height:1.2}
+.kus-lp__status-icon{font-size:14px;line-height:1.2;flex:0 0 auto}
+/* 部分成功や API コンテキストなど複数行のメッセージを改行のまま表示する */
+.kus-lp__status-text{min-width:0;white-space:pre-wrap;word-break:break-word}
 .kus-lp__status-busy::before{
   content:'';display:inline-block;width:10px;height:10px;border-radius:50%;
   border:2px solid var(--c-muted);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
@@ -1117,10 +1119,23 @@ export async function liteRun<T>(
   panel.setBusy(true);
   try {
     const out = await fn();
-    if (okMsg) panel.setStatus(okMsg, 'ok');
+    const tone = panel.status.dataset.tone;
+    if (okMsg && tone !== 'err') {
+      // 処理側が警告（err トーン）を出して正常終了した場合は、成功メッセージで上書きしない
+      panel.setStatus(okMsg, 'ok');
+    } else if (tone === 'busy') {
+      // 処理側の最終メッセージ（「…完了」など）がスピナー付きのまま残らないよう成功トーンへ切り替える
+      const text = panel.status.querySelector('.kus-lp__status-text')?.textContent || '';
+      panel.setStatus(text || '完了', 'ok');
+    }
     return out;
   } catch (e: any) {
-    panel.setStatus(`エラー: ${e?.message || String(e)}`, 'err');
+    const message = String(e?.message || e || '不明なエラー');
+    const lines = message.split('\n').map((line) => line.trim()).filter(Boolean);
+    const [first, ...rest] = lines.length ? lines : [message];
+    // 1 行目（要点）はステータスへ、部分成功の内訳や API コンテキストは下のログへ出す
+    panel.setStatus(`エラー: ${first}${rest.length ? '（詳細は下のログ）' : ''}`, 'err');
+    if (rest.length) panel.setResult(lines.join('\n'));
     return undefined;
   } finally {
     panel.setBusy(false);

@@ -467,6 +467,13 @@
       return document;
     }
   }
+  function kusConfirm(message) {
+    try {
+      return getToolWindowSafe().confirm(message);
+    } catch (e) {
+      return window.confirm(message);
+    }
+  }
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
@@ -541,6 +548,9 @@ ${contextLine}`);
   function downloadText(filename, text, type) {
     triggerDownload(filename, new Blob([text], { type: type || "text/plain" }));
   }
+  function downloadBlob(filename, blob) {
+    triggerDownload(filename, blob);
+  }
   var init_utils = __esm({
     "src/utils.ts"() {
       "use strict";
@@ -573,6 +583,10 @@ ${contextLine}`);
     const rel = String(path || "").replace(/\\/g, "/");
     if (rel.includes(DEPLOY_PATH_SNIPPET)) {
       throw new Error(ERR_NO_DEPLOY_API);
+    }
+    if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === "POST" || m === "DELETE")) {
+      if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+      return;
     }
     if (isRecordDataMutationPath(rel)) {
       if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
@@ -659,7 +673,31 @@ ${contextLine}`);
       throw apiErrorWithContext(e, { method: "PUT", prefix, path, payload: body });
     }
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
+  function isRevisionConflictError(error) {
+    if (!error) return false;
+    const codes = [error?.code, error?.original?.code, error?.original?.error?.code].map((c) => String(c || "").toUpperCase()).filter(Boolean);
+    if (codes.some((c) => REVISION_CONFLICT_CODES.has(c))) return true;
+    const text = String(error?.message || "");
+    return /GAIA_CO02|リビジョン.*(最新|一致|異な)|revision.*(latest|mismatch|conflict)/i.test(text);
+  }
+  function decorateRevisionConflict(error, subject) {
+    if (!isRevisionConflictError(error)) return error;
+    const base = error?.message != null ? String(error.message) : String(error);
+    const wrapped = new Error(
+      `${subject}は取得後に別の更新が入ったため中止しました（revision 競合）。最新の設定を取得し直してから再実行してください。
+${base}`
+    );
+    wrapped.revisionConflict = true;
+    wrapped.original = error;
+    if (error?.code) wrapped.code = error.code;
+    return wrapped;
+  }
+  function pickRevision(res) {
+    const value = res?.revision;
+    if (value == null || value === "") return "";
+    return String(value);
+  }
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -679,6 +717,7 @@ ${contextLine}`);
         "/record/status.json",
         "/records/status.json"
       ]);
+      RECORD_CURSOR_PATH = "/records/cursor.json";
       apiGetMetrics = {
         calls: 0,
         retries: 0,
@@ -687,6 +726,7 @@ ${contextLine}`);
         lastError: "",
         byPath: {}
       };
+      REVISION_CONFLICT_CODES = /* @__PURE__ */ new Set(["GAIA_CO02"]);
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
     }
   });
@@ -940,43 +980,78 @@ ${contextLine}`);
   init_constants();
 
   // src/tabs/jsconfig-standalone.ts
+  init_constants();
   init_utils();
   init_api();
-  var JSZIP_CDN = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
-  function loadJSZipForJsConfig() {
+
+  // src/jszipLoader.ts
+  init_constants();
+  var loadPromise = null;
+  function loadJSZipLite() {
     const w = window;
     if (w.JSZip) return Promise.resolve(w.JSZip);
-    return new Promise((resolve, reject) => {
-      const existing = document.querySelector(`script[src="${JSZIP_CDN}"]`);
+    if (loadPromise) return loadPromise;
+    const src = EXTERNAL_LIBRARIES.jszip.cdnUrl || "";
+    loadPromise = new Promise((resolve, reject) => {
+      const settle = () => {
+        const ctor = window.JSZip;
+        if (ctor) resolve(ctor);
+        else reject(new Error("JSZipのロード後もグローバル変数が見つかりません"));
+      };
+      const fail = () => reject(new Error(`JSZipの読み込みに失敗しました（${src}）。CSP やネットワーク制限を確認してください`));
+      const existing = document.querySelector(`script[src="${src}"]`);
       if (existing) {
-        existing.addEventListener("load", () => resolve(window.JSZip));
-        existing.addEventListener("error", () => reject(new Error("JSZipの読み込みに失敗")));
+        existing.addEventListener("load", settle, { once: true });
+        existing.addEventListener("error", fail, { once: true });
         return;
       }
       const s = document.createElement("script");
-      s.src = JSZIP_CDN;
-      s.onload = () => resolve(window.JSZip);
-      s.onerror = () => reject(new Error("JSZipの読み込みに失敗"));
+      s.src = src;
+      s.async = true;
+      s.onload = settle;
+      s.onerror = fail;
       document.head.appendChild(s);
+    }).catch((error) => {
+      loadPromise = null;
+      throw error;
     });
+    return loadPromise;
   }
+
+  // src/tabs/record-query.ts
+  function uniqueZipEntryName(used, base) {
+    let cand = base;
+    let n = 2;
+    while (used.has(cand)) {
+      const dot = base.lastIndexOf(".");
+      cand = dot > 0 ? `${base.slice(0, dot)}_${n}${base.slice(dot)}` : `${base}_${n}`;
+      n++;
+    }
+    used.add(cand);
+    return cand;
+  }
+
+  // src/tabs/jsconfig-standalone.ts
   async function downloadFileBlobForJsConfig(prefix, fileKey) {
+    if (!fileKey) return { ok: false, reason: "fileKey がありません" };
     const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
     const headers = { "X-Requested-With": "XMLHttpRequest" };
+    let lastReason = "";
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const resp = await fetch(url, { method: "GET", headers });
-        if (resp.status === 403) return null;
-        if (!resp.ok) throw new Error("ダウンロード失敗: " + resp.status);
-        return await resp.blob();
-      } catch (_e) {
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
+        if (resp.status === 403) return { ok: false, reason: "閲覧権限なし (HTTP 403)" };
+        if (resp.ok) return { ok: true, blob: await resp.blob() };
+        lastReason = `HTTP ${resp.status}`;
+      } catch (e) {
+        lastReason = e?.message || String(e);
       }
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
     }
-    return null;
+    return { ok: false, reason: lastReason || "取得失敗" };
   }
   function sanitizeFolderName(name) {
-    return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[ -]/g, "").trim();
+    return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim();
   }
   function renderCustomizeResultHtml(data) {
     if (!data) {
@@ -989,7 +1064,8 @@ ${contextLine}`);
       { label: "モバイル CSS", items: data.mobile?.css || [] }
     ];
     const totalCount = categories.reduce((s, c) => s + c.items.length, 0);
-    const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">合計: ${totalCount}件 (Desktop JS:${categories[0].items.length} CSS:${categories[1].items.length} / Mobile JS:${categories[2].items.length} CSS:${categories[3].items.length})</div>`;
+    const scope = data.scope ? ` / 適用範囲: ${esc(String(data.scope))}` : "";
+    const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">合計: ${totalCount}件 (Desktop JS:${categories[0].items.length} CSS:${categories[1].items.length} / Mobile JS:${categories[2].items.length} CSS:${categories[3].items.length})${scope}</div>`;
     const rows = [];
     for (const cat of categories) {
       if (!cat.items.length) continue;
@@ -1032,28 +1108,80 @@ ${contextLine}`);
     downloadText(`customize_${appId}_${nowStamp()}.json`, JSON.stringify(parsed, null, 2), "application/json");
     setStatus("JS/CSS設定JSONを保存しました");
   }
+  var CUSTOMIZE_SCOPES = /* @__PURE__ */ new Set(["ALL", "ADMIN", "NONE"]);
+  function buildJsConfigApplyPlan(parsed) {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error('JSONは { "desktop": {...}, "mobile": {...} } 形式のオブジェクトで入力してください');
+    }
+    const payload = buildCustomizeSettingsPutPayload(parsed);
+    const count = (platform, kind) => payload[platform]?.[kind] || [];
+    const all = [...count("desktop", "js"), ...count("desktop", "css"), ...count("mobile", "js"), ...count("mobile", "css")];
+    const inputTotal = ["desktop", "mobile"].reduce((sum, platform) => {
+      return sum + ["js", "css"].reduce((s, kind) => s + (Array.isArray(parsed?.[platform]?.[kind]) ? parsed[platform][kind].length : 0), 0);
+    }, 0);
+    const scopeRaw = String(parsed.scope || "").trim().toUpperCase();
+    return {
+      payload,
+      scope: CUSTOMIZE_SCOPES.has(scopeRaw) ? scopeRaw : null,
+      counts: {
+        desktopJs: count("desktop", "js").length,
+        desktopCss: count("desktop", "css").length,
+        mobileJs: count("mobile", "js").length,
+        mobileCss: count("mobile", "css").length,
+        file: all.filter((r) => r.type === "FILE").length,
+        url: all.filter((r) => r.type === "URL").length
+      },
+      dropped: Math.max(0, inputTotal - all.length)
+    };
+  }
+  function buildJsConfigApplyConfirmText(targetAppId, targetGuestId, plan) {
+    const c = plan.counts;
+    return [
+      `比較先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ""} のプレビュー環境へ JS/CSS 設定を反映します。`,
+      `Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}（URL ${c.url}件 / FILE ${c.file}件）${plan.scope ? ` / 適用範囲 ${plan.scope}` : ""}`,
+      "比較先の JS/CSS 一覧はこの内容で全置換され、比較先のみにあるファイルは外れます。",
+      plan.dropped ? `type/url/fileKey が不足している ${plan.dropped}件は送信しません。` : "",
+      c.file ? "FILE タイプは反映先で有効なアップロード済み fileKey が必要です。他アプリの取得結果にある fileKey（ダウンロード用）をそのまま流用すると kintone に拒否されます。" : "",
+      "本番には反映されません（管理画面から手動デプロイ）。実行しますか？"
+    ].filter(Boolean).join("\n");
+  }
   async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
     const targetAppId = String(p.targetAppId || "").trim();
     if (!targetAppId) throw new Error("反映先アプリIDを入力してください");
     const text = String(p.jsonText || "").trim();
     if (!text) throw new Error("JS/CSS設定JSONを入力してください");
-    const parsed = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object") throw new Error("JSONはオブジェクト形式で入力してください");
-    const body = {
-      app: targetAppId,
-      desktop: parsed.desktop || {},
-      mobile: parsed.mobile || {}
-    };
-    if (!window.confirm(`JS/CSS設定を比較先(プレビュー)へ反映しますか？
-比較先アプリ: ${targetAppId}`)) {
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      throw new Error(`JS/CSS設定JSONを解析できません（「整形」ボタンで位置を確認してください）: ${e?.message || String(e)}`);
+    }
+    const plan = buildJsConfigApplyPlan(parsed);
+    const guestId = String(p.targetGuestId || "").trim();
+    const prefix = buildApiPrefix(guestId, true);
+    setStatus("反映先の現在設定を確認中...");
+    const current = await apiGet(prefix, "/app/customize.json", { app: targetAppId });
+    const revision = pickRevision(current);
+    if (!p.skipConfirm && !kusConfirm(buildJsConfigApplyConfirmText(targetAppId, guestId, plan))) {
       setStatus("JS/CSS設定反映をキャンセルしました");
       return;
     }
-    const guestId = String(p.targetGuestId || "").trim();
-    const prefix = buildApiPrefix(guestId, true);
+    const body = { app: targetAppId, ...plan.payload };
+    if (plan.scope) body.scope = plan.scope;
+    if (revision) body.revision = revision;
     setStatus("JS/CSS設定を反映中...");
-    await apiPut(prefix, "/app/customize.json", body);
-    const logs = [`OK JS/CSS設定反映（アプリ: ${targetAppId}）`];
+    let res;
+    try {
+      res = await apiPut(prefix, "/app/customize.json", body);
+    } catch (e) {
+      throw decorateRevisionConflict(e, "JS/CSS設定の反映");
+    }
+    const c = plan.counts;
+    const logs = [
+      `OK JS/CSS設定反映（アプリ: ${targetAppId}${guestId ? ` / ゲスト ${guestId}` : ""}）${pickRevision(res) ? ` revision ${pickRevision(res)}` : ""}`,
+      `Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}${plan.scope ? ` / 適用範囲 ${plan.scope}` : ""}`,
+      plan.dropped ? `送信対象外 ${plan.dropped}件（type/url/fileKey 不足）` : ""
+    ].filter(Boolean);
     setLogHtml(`<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`);
     setStatus("JS/CSS設定反映完了");
   }
@@ -1065,10 +1193,10 @@ ${contextLine}`);
     let offset = 0;
     while (true) {
       const resp = await apiGet(baseListPrefix, "/apps.json", { limit: 100, offset });
-      const batch = (resp?.apps || []).map((a2) => ({
-        appId: String(a2.appId),
-        name: String(a2.name || ""),
-        spaceId: a2.spaceId
+      const batch = (resp?.apps || []).map((a) => ({
+        appId: String(a.appId),
+        name: String(a.name || ""),
+        spaceId: a.spaceId
       }));
       apps = apps.concat(batch);
       if (batch.length < 100) break;
@@ -1084,23 +1212,20 @@ ${contextLine}`);
       return true;
     });
     setStatus(`${apps.length}個のアプリ設定を解析中...`);
-    const JSZipCtor = await loadJSZipForJsConfig();
+    const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
-    let hasFiles = false;
-    let failedCount = 0;
+    const failedApps = [];
+    const failedFiles = [];
     let fileCount = 0;
     for (let i = 0; i < apps.length; i++) {
       const app = apps[i];
       const safeName = sanitizeFolderName(app.name || `app${app.appId}`);
-      const guestSpaceId = app.spaceId ? Number(app.spaceId) : 0;
       setStatus(`[${i + 1}/${apps.length}] アプリ "${safeName}" (${app.appId}) をチェック...`);
       let customize = null;
       try {
-        let prefix = baseListPrefix;
-        if (guestSpaceId) prefix = `/k/guest/${guestSpaceId}/v1`;
-        customize = await apiGet(prefix, "/app/customize.json", { app: app.appId });
-      } catch (_e) {
-        failedCount++;
+        customize = await apiGet(baseListPrefix, "/app/customize.json", { app: app.appId });
+      } catch (e) {
+        failedApps.push({ appId: app.appId, name: app.name, reason: e?.message || String(e) });
         continue;
       }
       const files = [
@@ -1109,41 +1234,44 @@ ${contextLine}`);
         ...customize?.mobile?.js || [],
         ...customize?.mobile?.css || []
       ];
-      const fileTargets = files.filter((f) => f.type === "FILE");
+      const fileTargets = files.filter((f) => f?.type === "FILE" && f?.file?.fileKey);
       if (!fileTargets.length) continue;
-      const folderName = guestSpaceId ? `guest${guestSpaceId}_${app.appId}_${safeName}` : `${app.appId}_${safeName}`;
+      const folderName = guestId ? `guest${guestId}_${app.appId}_${safeName}` : `${app.appId}_${safeName}`;
       const appFolder = zip.folder(folderName);
-      const dlPrefix = guestSpaceId ? `/k/guest/${guestSpaceId}/v1` : baseListPrefix;
+      const used = /* @__PURE__ */ new Set();
       for (const file of fileTargets) {
-        const blob = await downloadFileBlobForJsConfig(dlPrefix, file.file.fileKey);
-        if (blob) {
-          appFolder.file(file.file.name || `${file.file.fileKey}.bin`, blob);
-          hasFiles = true;
+        const fileName = String(file.file.name || `${file.file.fileKey}.bin`);
+        const result = await downloadFileBlobForJsConfig(baseListPrefix, file.file.fileKey);
+        if (result.ok === true) {
+          appFolder.file(uniqueZipEntryName(used, sanitizeFolderName(fileName) || "file.bin"), result.blob);
           fileCount++;
         } else {
-          failedCount++;
+          failedFiles.push({ appId: app.appId, fileName, reason: result.reason });
         }
       }
       await new Promise((r) => setTimeout(r, 80));
     }
-    if (!hasFiles) {
-      setStatus(`対象ファイルがありません。(取得失敗: ${failedCount}件スキップ)`, true);
-      return { apps: apps.length, files: 0, failed: failedCount };
+    const failed = failedApps.length + failedFiles.length;
+    if (!fileCount) {
+      setStatus(`対象ファイルがありません。（取得失敗: アプリ ${failedApps.length} / ファイル ${failedFiles.length}）`, true);
+      return { apps: apps.length, files: 0, failed, failedApps, failedFiles };
+    }
+    if (failed) {
+      const lines = [
+        `取得できなかった項目 ${failed}件`,
+        ...failedApps.map((a) => `app ${a.appId}	${a.name}	customize.json 取得失敗: ${a.reason}`),
+        ...failedFiles.map((f) => `app ${f.appId}	${f.fileName}	${f.reason}`)
+      ];
+      zip.file("download_errors.txt", lines.join("\n") + "\n");
     }
     setStatus("ZIPファイル作成中...");
     const zipBlob = await zip.generateAsync({ type: "blob" });
-    const a = document.createElement("a");
-    const u = URL.createObjectURL(zipBlob);
-    a.href = u;
-    a.download = `customize_scripts_${nowStamp()}.zip`;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(u);
-    }, 100);
-    setStatus(`JS/CSS一括DL完了（${apps.length}アプリ / ${fileCount}ファイル / 取得失敗 ${failedCount}件）`);
-    return { apps: apps.length, files: fileCount, failed: failedCount };
+    downloadBlob(`customize_scripts_${nowStamp()}.zip`, zipBlob);
+    setStatus(
+      `JS/CSS一括DL完了（${apps.length}アプリ / ${fileCount}ファイル / 取得失敗 ${failed}件${failed ? "、詳細は download_errors.txt" : ""}）`,
+      failed > 0
+    );
+    return { apps: apps.length, files: fileCount, failed, failedApps, failedFiles };
   }
 
   // src/ui/components.ts
@@ -1424,7 +1552,9 @@ ${contextLine}`);
 .kus-lp__status--warn{background:var(--c-warn-bg);color:var(--c-warn-fg);border-color:var(--c-warn-bd)}
 .kus-lp__status--info{background:var(--c-info-bg);color:var(--c-info-fg);border-color:var(--c-info-bd)}
 .kus-lp__status--busy{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
-.kus-lp__status-icon{font-size:14px;line-height:1.2}
+.kus-lp__status-icon{font-size:14px;line-height:1.2;flex:0 0 auto}
+/* 部分成功や API コンテキストなど複数行のメッセージを改行のまま表示する */
+.kus-lp__status-text{min-width:0;white-space:pre-wrap;word-break:break-word}
 .kus-lp__status-busy::before{
   content:'';display:inline-block;width:10px;height:10px;border-radius:50%;
   border:2px solid var(--c-muted);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
@@ -1784,10 +1914,20 @@ ${contextLine}`);
     panel.setBusy(true);
     try {
       const out = await fn();
-      if (okMsg) panel.setStatus(okMsg, "ok");
+      const tone = panel.status.dataset.tone;
+      if (okMsg && tone !== "err") {
+        panel.setStatus(okMsg, "ok");
+      } else if (tone === "busy") {
+        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        panel.setStatus(text || "完了", "ok");
+      }
       return out;
     } catch (e) {
-      panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
+      const message = String(e?.message || e || "不明なエラー");
+      const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
+      const [first, ...rest] = lines.length ? lines : [message];
+      panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
+      if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
     } finally {
       panel.setBusy(false);
@@ -2017,7 +2157,8 @@ ${contextLine}`);
         } }
       ]
     }));
-    cardApply.body.appendChild(makeNote("反映先は常にプレビュー環境。デプロイは管理画面から手動で行ってください。"));
+    cardApply.body.appendChild(makeNote("反映先は常にプレビュー環境。デプロイは管理画面から手動で行ってください。反映先の JS/CSS 一覧は JSON の内容で全置換され、JSON に scope（ALL / ADMIN / NONE）があれば適用範囲も更新します。"));
+    cardApply.body.appendChild(makeNote("FILE タイプは反映先で有効なアップロード済み fileKey が必要です。取得結果の fileKey（ダウンロード用）を別アプリへそのまま流用すると kintone に拒否されます。反映前に件数を確認し、取得後に別の更新が入っていた場合は上書きせず中止します。"));
     const applyBtn = makeButton("比較先プレビューへ反映", "run", { icon: "⤴" });
     cardApply.body.appendChild(applyBtn);
     panel.body.insertBefore(cardApply.card, panel.status);
