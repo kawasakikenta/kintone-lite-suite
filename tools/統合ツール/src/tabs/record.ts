@@ -15,37 +15,9 @@ export function getSideApiPrefix(isSource, preview) {
   return buildApiPrefix(side.guestId, !!preview);
 }
 
-export function hasOrderByClause(query) {
-  return /\border\s+by\b/i.test(String(query || ''));
-}
-
-export function hasPagingClause(query) {
-  return /\blimit\s+\d+/i.test(String(query || '')) || /\boffset\s+\d+/i.test(String(query || ''));
-}
-
-export function buildPagedRecordsQuery(query, offset, options: { includeOrder?: boolean; limit?: number } = {}) {
-  const base = String(query || '').trim();
-  if (hasPagingClause(base)) {
-    throw new Error('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。');
-  }
-  const parts: string[] = [];
-  if (base) parts.push(base);
-  if (options.includeOrder !== false && !hasOrderByClause(base)) parts.push('order by $id asc');
-  parts.push(`limit ${Number(options.limit || 500)}`);
-  parts.push(`offset ${Number(offset || 0)}`);
-  return parts.join(' ');
-}
-
-export function buildKeysetRecordsQuery(query, lastRecordId, limit = 500) {
-  const base = String(query || '').trim();
-  if (hasPagingClause(base)) {
-    throw new Error('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。');
-  }
-  const idCond = `$id > ${Number(lastRecordId || 0)}`;
-  if (!base) return `${idCond} order by $id asc limit ${Number(limit || 500)}`;
-  if (hasOrderByClause(base)) return null;
-  return `(${base}) and ${idCond} order by $id asc limit ${Number(limit || 500)}`;
-}
+// クエリ生成の正規実装は tabs/record-query.ts（lite 版と共有）。既存の import 互換のため再公開する。
+export { hasOrderByClause, hasPagingClause, buildPagedRecordsQuery, buildKeysetRecordsQuery } from './record-query.js';
+import { hasOrderByClause, hasPagingClause, buildPagedRecordsQuery, buildKeysetRecordsQuery } from './record-query.js';
 
 export async function loadViewsForSelect(selectId: string, inputId: string) {
   const tApp = (getToolDocument().getElementById('u_targetApp') as HTMLInputElement).value.trim();

@@ -1054,9 +1054,6 @@ ${contextLine}`);
   });
 
   // src/ui/dialog.ts
-  function getToolDocument() {
-    return root?.ownerDocument || document;
-  }
   function setRootElement(el) {
     root = el;
   }
@@ -1067,22 +1064,6 @@ ${contextLine}`);
       init_constants();
       init_state();
       root = null;
-    }
-  });
-
-  // src/ui/psychology.ts
-  var init_psychology = __esm({
-    "src/ui/psychology.ts"() {
-      "use strict";
-      init_utils();
-      init_dialog();
-    }
-  });
-
-  // src/reflect/applyOutcome.ts
-  var init_applyOutcome = __esm({
-    "src/reflect/applyOutcome.ts"() {
-      "use strict";
     }
   });
 
@@ -1198,201 +1179,6 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/ignore-presets.ts
-  var init_ignore_presets = __esm({
-    "src/diff/ignore-presets.ts"() {
-      "use strict";
-      init_state();
-    }
-  });
-
-  // src/reflect/nodeModeUi.ts
-  var init_nodeModeUi = __esm({
-    "src/reflect/nodeModeUi.ts"() {
-      "use strict";
-      init_state();
-    }
-  });
-
-  // src/reflect/footerLabel.ts
-  var init_footerLabel = __esm({
-    "src/reflect/footerLabel.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/reflect/applyHistorySummary.ts
-  var APPLY_HISTORY_MODE_LABELS;
-  var init_applyHistorySummary = __esm({
-    "src/reflect/applyHistorySummary.ts"() {
-      "use strict";
-      APPLY_HISTORY_MODE_LABELS = Object.freeze({
-        section: "まとめ反映",
-        nodes: "差分選択",
-        patch: "JSONパッチ",
-        retry: "再反映",
-        restore: "復元"
-      });
-    }
-  });
-
-  // src/oss_integrations.ts
-  var init_oss_integrations = __esm({
-    "src/oss_integrations.ts"() {
-      "use strict";
-      init_utils();
-      init_dialog();
-    }
-  });
-
-  // src/ui/components.ts
-  function setComponentUi(uiRefs) {
-    ui2 = uiRefs;
-  }
-  function setStatus(msg, isError = false) {
-    if (!ui2.status) return;
-    ui2.status.textContent = msg;
-    ui2.status.style.background = "";
-    ui2.status.style.color = "";
-    ui2.status.classList.remove("status--neutral", "status--error");
-    ui2.status.classList.add(isError ? "status--error" : "status--neutral");
-    const bar = ui2.status.closest?.(".status-bar");
-    if (bar) bar.classList.toggle("status-bar--error", !!isError);
-  }
-  var ui2, SCOPE_PICKER_META;
-  var init_components = __esm({
-    "src/ui/components.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_applyOutcome();
-      init_utils();
-      init_filter();
-      init_ignore_presets();
-      init_engine();
-      init_enrich();
-      init_nodeModeUi();
-      init_footerLabel();
-      init_applyHistorySummary();
-      init_constants();
-      init_dialog();
-      init_oss_integrations();
-      ui2 = {};
-      SCOPE_PICKER_META = Object.freeze({
-        diff: Object.freeze({
-          title: "比較対象セクション",
-          sub: "差分比較で取得する API 設定を選びます。"
-        }),
-        reflect: Object.freeze({
-          title: "反映するセクション",
-          sub: "プレビュー反映でまとめて適用するセクションを選びます。"
-        }),
-        settingsExport: Object.freeze({
-          title: "取得対象セクション",
-          sub: "設定一括取得で保存する API 設定を、JS/CSS設定も含めて選びます。"
-        })
-      });
-    }
-  });
-
-  // src/ui/appTargetTable.ts
-  var init_appTargetTable = __esm({
-    "src/ui/appTargetTable.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/settingsBundleImport.ts
-  var init_settingsBundleImport = __esm({
-    "src/settingsBundleImport.ts"() {
-      "use strict";
-      init_api();
-    }
-  });
-
-  // src/tabs/diff-standalone.ts
-  var init_diff_standalone = __esm({
-    "src/tabs/diff-standalone.ts"() {
-      "use strict";
-      init_api();
-      init_settingsBundleImport();
-      init_engine();
-      init_enrich();
-      init_utils();
-      init_constants();
-    }
-  });
-
-  // src/tabs/preview-compare.ts
-  var init_preview_compare = __esm({
-    "src/tabs/preview-compare.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/tabs/diff.ts
-  var init_diff = __esm({
-    "src/tabs/diff.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_psychology();
-      init_appTargetTable();
-      init_utils();
-      init_api();
-      init_settingsBundleImport();
-      init_engine();
-      init_enrich();
-      init_diff_standalone();
-      init_filter();
-      init_export();
-      init_export();
-      init_components();
-      init_dialog();
-      init_preview_compare();
-      init_nodeModeUi();
-    }
-  });
-
-  // src/tabs/record.ts
-  async function loadJSZip() {
-    const doc = getToolDocument();
-    const win = doc.defaultView || window;
-    if (typeof win.JSZip !== "undefined") return win.JSZip;
-    if (typeof globalThis.JSZip !== "undefined") return globalThis.JSZip;
-    setStatus("JSZipを動的ロード中...");
-    return new Promise((resolve, reject) => {
-      const script = doc.createElement("script");
-      script.src = EXTERNAL_LIBRARIES.jszip.cdnUrl || "";
-      script.onload = () => {
-        const ctor = win.JSZip || globalThis.JSZip;
-        if (typeof ctor === "undefined") {
-          reject(new Error("JSZipのロード後もグローバル変数が見つかりません"));
-          return;
-        }
-        setStatus("JSZipのロード完了");
-        resolve(ctor);
-      };
-      script.onerror = () => {
-        reject(new Error("JSZipの読み込みに失敗しました"));
-      };
-      doc.head.appendChild(script);
-    });
-  }
-  var init_record = __esm({
-    "src/tabs/record.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_utils();
-      init_psychology();
-      init_api();
-      init_components();
-      init_diff();
-      init_dialog();
-    }
-  });
-
   // src/kintoneGuard.ts
   var NOT_KINTONE_PAGE_MESSAGE = "kintone画面で実行してください";
   function isKintonePage() {
@@ -1446,8 +1232,42 @@ ${contextLine}`);
     return guestPathMatch ? guestPathMatch[1] : "";
   }
 
+  // src/jszipLoader.ts
+  init_constants();
+  var loadPromise = null;
+  function loadJSZipLite() {
+    const w = window;
+    if (w.JSZip) return Promise.resolve(w.JSZip);
+    if (loadPromise) return loadPromise;
+    const src = EXTERNAL_LIBRARIES.jszip.cdnUrl || "";
+    loadPromise = new Promise((resolve, reject) => {
+      const settle = () => {
+        const ctor = window.JSZip;
+        if (ctor) resolve(ctor);
+        else reject(new Error("JSZipのロード後もグローバル変数が見つかりません"));
+      };
+      const fail = () => reject(new Error(`JSZipの読み込みに失敗しました（${src}）。CSP やネットワーク制限を確認してください`));
+      const existing = document.querySelector(`script[src="${src}"]`);
+      if (existing) {
+        existing.addEventListener("load", settle, { once: true });
+        existing.addEventListener("error", fail, { once: true });
+        return;
+      }
+      const s = document.createElement("script");
+      s.src = src;
+      s.async = true;
+      s.onload = settle;
+      s.onerror = fail;
+      document.head.appendChild(s);
+    }).catch((error) => {
+      loadPromise = null;
+      throw error;
+    });
+    return loadPromise;
+  }
+
   // src/tabs/settings-export-standalone.ts
-  init_record();
+  var APP_SEARCH_LIMIT = 100;
   function settingsExportLabel(bundles) {
     if (bundles.length === 1) return appLabelFromBundle(bundles[0]);
     return `${bundles.length}件`;
@@ -1500,13 +1320,13 @@ ${contextLine}`);
     <tbody>${rows}</tbody>
   </table>`;
   }
-  async function runSettingsExportSearchStandalone(keyword, guestId, setStatus2) {
+  async function runSettingsExportSearchStandalone(keyword, guestId, setStatus) {
     const kw = String(keyword || "").trim();
     const guest = String(guestId || "").trim() || extractGuestIdFromInput(kw);
     const prefix = buildApiPrefix(guest, false);
     const directAppId = extractAppIdFromInput(kw);
     if (directAppId) {
-      setStatus2("アプリIDを確認中...");
+      setStatus("アプリIDを確認中...");
       let name = "";
       try {
         const info = await apiGet(prefix, "/app.json", { id: directAppId });
@@ -1514,27 +1334,32 @@ ${contextLine}`);
       } catch {
         name = "ID指定（名称未取得）";
       }
-      setStatus2(`アプリID ${directAppId}${guest ? ` / ゲスト ${guest}` : ""} を候補に表示しました`);
+      setStatus(`アプリID ${directAppId}${guest ? ` / ゲスト ${guest}` : ""} を候補に表示しました`);
       return [{ appId: directAppId, name: name || "ID指定" }];
     }
-    const params = { limit: 100 };
+    const params = { limit: APP_SEARCH_LIMIT };
     if (kw) params.name = kw;
-    setStatus2("アプリ検索中...");
+    setStatus("アプリ検索中...");
     const res = await apiGet(prefix, "/apps.json", params);
+    const rawCount = Array.isArray(res.apps) ? res.apps.length : 0;
     const apps = (res.apps || []).map((a) => ({ appId: String(a.appId || ""), name: String(a.name || "") })).filter((a) => /^\d+$/.test(a.appId)).sort((a, b) => Number(a.appId) - Number(b.appId));
-    setStatus2(`アプリ検索完了: ${apps.length}件`);
+    if (rawCount >= APP_SEARCH_LIMIT) {
+      setStatus(`アプリ検索完了: 先頭 ${apps.length}件のみ表示（上限 ${APP_SEARCH_LIMIT}件）。目的のアプリが無い場合はキーワードで絞り込むかアプリIDを直接入力してください`, true);
+      return apps;
+    }
+    setStatus(`アプリ検索完了: ${apps.length}件`);
     return apps;
   }
-  async function runSettingsExportListSpaceAppsStandalone(spaceId, guestId, setStatus2) {
+  async function runSettingsExportListSpaceAppsStandalone(spaceId, guestId, setStatus) {
     const sid = String(spaceId || "").trim();
     if (!/^\d+$/.test(sid)) throw new Error("スペースIDを数値で入力してください");
-    setStatus2(`スペース ${sid} のアプリ一覧を取得中...`);
+    setStatus(`スペース ${sid} のアプリ一覧を取得中...`);
     const apps = await fetchAppsInSpace(sid, guestId);
     if (!apps.length) {
-      setStatus2(`スペース ${sid} に取得対象アプリがありませんでした`, true);
+      setStatus(`スペース ${sid} に取得対象アプリがありませんでした`, true);
       return [];
     }
-    setStatus2(`スペース ${sid} のアプリ ${apps.length}件を取得しました`);
+    setStatus(`スペース ${sid} のアプリ ${apps.length}件を取得しました`);
     return apps.map((a) => ({ appId: a.appId, name: a.name || "" }));
   }
   function resolveExportTargets(opts) {
@@ -1557,7 +1382,7 @@ ${contextLine}`);
     }
     return out;
   }
-  async function runSettingsExportStandalone(mode, opts, setStatus2) {
+  async function runSettingsExportStandalone(mode, opts, setStatus) {
     const targets = resolveExportTargets(opts);
     if (!targets.length) throw new Error("対象アプリIDを1件以上入力してください");
     const scopes = selectedScopeKeys(opts.scopeRoot);
@@ -1568,13 +1393,13 @@ ${contextLine}`);
     for (let i = 0; i < targets.length; i++) {
       const { appId, guestId } = targets[i];
       const guestNote = guestId ? ` (guest:${guestId})` : "";
-      setStatus2(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote}`);
+      setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote}`);
       const bundle = await fetchBundle({
         appId,
         guestId,
         preview,
         sections: scopes,
-        onProgress: (p, l) => setStatus2(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
+        onProgress: (p, l) => setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
       });
       if (guestId && !bundle.guestId) bundle.guestId = guestId;
       bundles.push(bundle);
@@ -1599,7 +1424,7 @@ ${contextLine}`);
       apps: bundles
     };
     if (mode === "zip") {
-      const JSZipCtor = await loadJSZip();
+      const JSZipCtor = await loadJSZipLite();
       const zip = new JSZipCtor();
       zip.file(
         "manifest.json",
@@ -1625,16 +1450,68 @@ ${contextLine}`);
       }
       const zipBlob = await zip.generateAsync({ type: "blob" });
       downloadBlob(buildExportFilename("設定一括取得", "zip", { appLabel: settingsExportLabel(bundles) }), zipBlob);
-      setStatus2(`設定一括取得ZIPを保存しました（${bundles.length} apps）`);
+      setStatus(`設定一括取得ZIPを保存しました（${bundles.length} apps）`);
       return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
     }
     downloadText(buildExportFilename("設定一括取得", "json", { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), "application/json");
-    setStatus2(`設定一括取得JSONを保存しました（${bundles.length}アプリ）`);
+    setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）`);
     return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
   }
 
+  // src/ui/components.ts
+  init_constants();
+  init_state();
+  init_utils();
+  init_filter();
+
+  // src/diff/ignore-presets.ts
+  init_state();
+
+  // src/ui/components.ts
+  init_engine();
+  init_enrich();
+
+  // src/reflect/nodeModeUi.ts
+  init_state();
+
+  // src/reflect/applyHistorySummary.ts
+  var APPLY_HISTORY_MODE_LABELS = Object.freeze({
+    section: "まとめ反映",
+    nodes: "差分選択",
+    patch: "JSONパッチ",
+    retry: "再反映",
+    restore: "復元"
+  });
+
+  // src/ui/components.ts
+  init_constants();
+  init_dialog();
+
+  // src/oss_integrations.ts
+  init_utils();
+  init_dialog();
+
+  // src/ui/components.ts
+  var ui2 = {};
+  function setComponentUi(uiRefs) {
+    ui2 = uiRefs;
+  }
+  var SCOPE_PICKER_META = Object.freeze({
+    diff: Object.freeze({
+      title: "比較対象セクション",
+      sub: "差分比較で取得する API 設定を選びます。"
+    }),
+    reflect: Object.freeze({
+      title: "反映するセクション",
+      sub: "プレビュー反映でまとめて適用するセクションを選びます。"
+    }),
+    settingsExport: Object.freeze({
+      title: "取得対象セクション",
+      sub: "設定一括取得で保存する API 設定を、JS/CSS設定も含めて選びます。"
+    })
+  });
+
   // src/entries/litePanelTheme.ts
-  init_components();
   init_dialog();
   var STYLE_ID = "kus-lp-theme-styles";
   var ACCENTS = {
@@ -2015,7 +1892,7 @@ ${contextLine}`);
     document.body.appendChild(root2);
     body.appendChild(status);
     body.appendChild(result);
-    function setStatus2(msg, tone = "neutral") {
+    function setStatus(msg, tone = "neutral") {
       status.dataset.tone = tone;
       status.className = "kus-lp__status" + (tone !== "neutral" ? ` kus-lp__status--${tone}` : "");
       const icon = tone === "ok" ? "✓" : tone === "err" ? "⚠" : tone === "warn" ? "!" : tone === "info" ? "i" : tone === "busy" ? "" : "·";
@@ -2041,7 +1918,7 @@ ${contextLine}`);
       result.innerHTML = html;
       result.classList.remove("kus-lp__result--empty");
     }
-    function setBusy2(busy) {
+    function setBusy(busy) {
       closeBtn.disabled = busy;
       root2.style.cursor = busy ? "progress" : "";
     }
@@ -2097,7 +1974,7 @@ ${contextLine}`);
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus: setStatus2, setResult, setResultHtml, setBusy: setBusy2, close, setPrimaryAction };
+    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setPrimaryAction };
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");

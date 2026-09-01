@@ -914,10 +914,69 @@ ${contextLine}`);
     }
     await mermaidLoadPromise;
     if (w.mermaid) {
-      w.mermaid.initialize({ startOnLoad: false, theme: "default" });
+      w.mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "strict" });
       return w.mermaid;
     }
     throw new Error("Mermaid.js の読み込みに失敗しました");
+  }
+  function mermaidDisplayName(name) {
+    return String(name ?? "").replace(/[\r\n]+/g, " ").replace(/"/g, "'").trim() || "(名称なし)";
+  }
+  function mermaidTransitionLabel(name) {
+    return String(name ?? "").replace(/[\r\n]+/g, " ").replace(/[:;]/g, "-").replace(/[#"]/g, "").trim() || "(名称なし)";
+  }
+  function buildProcessMermaidSource(states, actions, highlightState) {
+    const stateNames = Object.keys(states || {});
+    const ids = /* @__PURE__ */ new Map();
+    const idOf = (name) => {
+      const key = String(name ?? "");
+      let id = ids.get(key);
+      if (!id) {
+        id = `s${ids.size}`;
+        ids.set(key, id);
+      }
+      return id;
+    };
+    const lines = ["stateDiagram-v2"];
+    for (const st of stateNames) {
+      lines.push(`    state "${mermaidDisplayName(st)}" as ${idOf(st)}`);
+    }
+    const validActions = (Array.isArray(actions) ? actions : []).filter((a) => a && a.from != null && a.to != null);
+    for (const a of validActions) {
+      for (const name of [String(a.from), String(a.to)]) {
+        if (!ids.has(name)) lines.push(`    state "${mermaidDisplayName(name)}" as ${idOf(name)}`);
+      }
+    }
+    const initial = findInitialState(states, validActions);
+    const startStates = new Set(stateNames);
+    for (const a of validActions) startStates.delete(String(a.to));
+    if (initial != null) startStates.add(initial);
+    for (const st of stateNames) {
+      if (startStates.has(st)) lines.push(`    [*] --> ${idOf(st)}`);
+    }
+    for (const a of validActions) {
+      lines.push(`    ${idOf(String(a.from))} --> ${idOf(String(a.to))} : ${mermaidTransitionLabel(a.name)}`);
+    }
+    if (highlightState != null && highlightState !== "" && ids.has(String(highlightState))) {
+      lines.push("");
+      lines.push("    classDef current fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#0f172a");
+      lines.push(`    class ${idOf(String(highlightState))} current`);
+    }
+    return lines.join("\n") + "\n";
+  }
+  function findInitialState(states, actions) {
+    const names = Object.keys(states || {});
+    if (!names.length) return null;
+    const indexed = names.map((name) => ({ name, index: Number(states?.[name]?.index) })).filter((s) => Number.isFinite(s.index));
+    if (indexed.length === names.length) {
+      indexed.sort((a, b) => a.index - b.index);
+      return indexed[0].name;
+    }
+    const remaining = new Set(names);
+    for (const a of Array.isArray(actions) ? actions : []) {
+      if (a?.to != null) remaining.delete(String(a.to));
+    }
+    return [...remaining][0] || names[0];
   }
   function renderFallbackFlowHtml(states, actions, highlightState) {
     const stateList = Object.keys(states || {});
@@ -959,29 +1018,10 @@ ${contextLine}`);
       return null;
     }
     const states = res.states || {};
-    const actions = res.actions || [];
-    const safeStateName = (n) => n.replace(/[*_~\[\]()]/g, "");
+    const actions = (res.actions || []).filter((a) => a && a.from != null && a.to != null);
+    const orphanActions = (res.actions || []).length - actions.length;
     const renderMermaid = async (highlightState) => {
-      let md = "stateDiagram-v2\n";
-      const startStates = new Set(Object.keys(states));
-      for (const a of actions) {
-        if (a.to) startStates.delete(a.to);
-      }
-      for (const st of startStates) {
-        if (st && states[st]) md += `    [*] --> ${safeStateName(st)}
-`;
-      }
-      for (const a of actions) {
-        md += `    ${safeStateName(a.from)} --> ${safeStateName(a.to)} : ${a.name.replace(/[*_~\[\]()"]/g, "")}
-`;
-      }
-      if (highlightState) {
-        md += `
-    classDef current fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#0f172a;
-`;
-        md += `    class ${safeStateName(highlightState)} current;
-`;
-      }
+      const md = buildProcessMermaidSource(states, actions, highlightState);
       targets.textEl.value = md;
       try {
         const mermaidObj = await ensureMermaid();
@@ -994,7 +1034,7 @@ ${contextLine}`);
     };
     setStatus("フロー図 生成中...");
     await renderMermaid(null);
-    setStatus("フロー図 生成完了");
+    setStatus(orphanActions ? `フロー図 生成完了（from/to 未設定のアクション ${orphanActions}件は除外）` : "フロー図 生成完了", orphanActions > 0);
     if (targets.simUi) {
       let current = null;
       const { container, current: curEl, select, startBtn, execBtn } = targets.simUi;
@@ -1015,14 +1055,12 @@ ${contextLine}`);
           select.innerHTML = '<option value="">-- 次のアクションなし（完了） --</option>';
           select.disabled = true;
         } else {
-          select.innerHTML = avail.map((a) => `<option value="${esc(a.name)}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join("");
+          select.innerHTML = avail.map((a, idx) => `<option value="${idx}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join("");
         }
       };
       updateSim();
       startBtn.onclick = async () => {
-        const ss = new Set(Object.keys(states));
-        for (const a of actions) if (a.to) ss.delete(a.to);
-        current = [...ss][0] || Object.keys(states)[0] || null;
+        current = findInitialState(states, actions);
         updateSim();
         if (current) {
           setStatus("シミュレーション開始: " + current);
@@ -1031,13 +1069,13 @@ ${contextLine}`);
       };
       execBtn.onclick = async () => {
         if (select.disabled) return;
-        const aName = select.value;
-        if (!aName) return;
-        const action = actions.find((a) => a.from === current && a.name === aName);
+        const idx = Number(select.value);
+        if (!Number.isFinite(idx)) return;
+        const action = actions.filter((a) => a.from === current)[idx];
         if (!action) return;
         current = action.to;
         updateSim();
-        setStatus(`アクション「${aName}」実行 → 「${action.to}」`);
+        setStatus(`アクション「${action.name}」実行 → 「${action.to}」`);
         await renderMermaid(action.to);
       };
     }

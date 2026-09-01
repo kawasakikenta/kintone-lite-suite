@@ -606,6 +606,10 @@ ${contextLine}`);
     if (rel.includes(DEPLOY_PATH_SNIPPET)) {
       throw new Error(ERR_NO_DEPLOY_API);
     }
+    if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === "POST" || m === "DELETE")) {
+      if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+      return;
+    }
     if (isRecordDataMutationPath(rel)) {
       if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
       return;
@@ -698,6 +702,77 @@ ${contextLine}`);
     } catch (e) {
       throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
     }
+  }
+  async function apiDelete(prefix, path, body) {
+    assertAllowsMutatingRestCall(prefix, path, "DELETE");
+    try {
+      return await kintone.api(`${prefix}${path}`, "DELETE", body);
+    } catch (e) {
+      throw apiErrorWithContext(e, { method: "DELETE", prefix, path, payload: body });
+    }
+  }
+  function throwIfPagingClause(query) {
+    if (/\blimit\s+\d+/i.test(query) || /\boffset\s+\d+/i.test(query)) {
+      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
+    }
+  }
+  async function fetchRecordsByQuery(prefix, app, query, options = {}) {
+    const base = String(query || "").trim();
+    throwIfPagingClause(base);
+    const fields = Array.isArray(options.fields) && options.fields.length ? options.fields : void 0;
+    const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => {
+    };
+    const useCursor = /\border\s+by\b/i.test(base);
+    const limit = 500;
+    if (!useCursor) {
+      const all2 = [];
+      let lastId = 0;
+      while (true) {
+        const cond = `$id > ${lastId}`;
+        const q = base ? `(${base}) and ${cond} order by $id asc limit ${limit}` : `${cond} order by $id asc limit ${limit}`;
+        const params = { app, query: q };
+        if (fields) params.fields = fields.includes("$id") ? fields : [...fields, "$id"];
+        const resp = await apiGet(prefix, "/records.json", params);
+        const batch = Array.isArray(resp?.records) ? resp.records : [];
+        if (!batch.length) break;
+        all2.push(...batch);
+        onProgress(all2.length, "keyset");
+        const nextId = Number(batch[batch.length - 1]?.$id?.value);
+        if (!Number.isFinite(nextId) || nextId <= lastId) {
+          throw new Error("レコードIDの取得順が想定と異なるため中断しました（$id を fields に含めてください）");
+        }
+        lastId = nextId;
+        if (batch.length < limit) break;
+      }
+      return { records: all2, mode: "keyset" };
+    }
+    const createBody = { app, query: base, size: limit };
+    if (fields) createBody.fields = fields;
+    const created = await apiPost(prefix, "/records/cursor.json", createBody);
+    const cursorId = String(created?.id || "");
+    if (!cursorId) throw new Error("cursor の作成に失敗しました（id が返りません）");
+    const all = [];
+    let finished = false;
+    try {
+      while (true) {
+        const resp = await apiGet(prefix, "/records/cursor.json", { id: cursorId });
+        const batch = Array.isArray(resp?.records) ? resp.records : [];
+        all.push(...batch);
+        onProgress(all.length, "cursor");
+        if (!resp?.next) {
+          finished = true;
+          break;
+        }
+      }
+    } finally {
+      if (!finished) {
+        try {
+          await apiDelete(prefix, "/records/cursor.json", { id: cursorId });
+        } catch {
+        }
+      }
+    }
+    return { records: all, mode: "cursor" };
   }
   function extractSectionRevision(res) {
     if (!res || typeof res !== "object") return "";
@@ -931,7 +1006,7 @@ ${contextLine}`);
     }
     return bundle;
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -951,6 +1026,7 @@ ${contextLine}`);
         "/record/status.json",
         "/records/status.json"
       ]);
+      RECORD_CURSOR_PATH = "/records/cursor.json";
       apiGetMetrics = {
         calls: 0,
         retries: 0,
@@ -1216,7 +1292,114 @@ ${contextLine}`);
   // src/tabs/record-standalone.ts
   init_utils();
   init_api();
-  var JSZIP_CDN = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+
+  // src/jszipLoader.ts
+  init_constants();
+  var loadPromise = null;
+  function loadJSZipLite() {
+    const w = window;
+    if (w.JSZip) return Promise.resolve(w.JSZip);
+    if (loadPromise) return loadPromise;
+    const src = EXTERNAL_LIBRARIES.jszip.cdnUrl || "";
+    loadPromise = new Promise((resolve, reject) => {
+      const settle = () => {
+        const ctor = window.JSZip;
+        if (ctor) resolve(ctor);
+        else reject(new Error("JSZipのロード後もグローバル変数が見つかりません"));
+      };
+      const fail = () => reject(new Error(`JSZipの読み込みに失敗しました（${src}）。CSP やネットワーク制限を確認してください`));
+      const existing = document.querySelector(`script[src="${src}"]`);
+      if (existing) {
+        existing.addEventListener("load", settle, { once: true });
+        existing.addEventListener("error", fail, { once: true });
+        return;
+      }
+      const s = document.createElement("script");
+      s.src = src;
+      s.async = true;
+      s.onload = settle;
+      s.onerror = fail;
+      document.head.appendChild(s);
+    }).catch((error) => {
+      loadPromise = null;
+      throw error;
+    });
+    return loadPromise;
+  }
+
+  // src/tabs/record-query.ts
+  var RECORDS_WRITE_CHUNK = 100;
+  function csvEscape(val) {
+    const s = String(val == null ? "" : val);
+    return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r") ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function extractRecordCsvValue(rec, code) {
+    const f = rec?.[code];
+    if (!f) return "";
+    const type = String(f.type || "");
+    if (type === "USER_SELECT" || type === "ORGANIZATION_SELECT" || type === "GROUP_SELECT") {
+      return (Array.isArray(f.value) ? f.value : []).map((v) => v?.code || v?.name || "").join(",");
+    }
+    if (type === "CHECK_BOX" || type === "MULTI_SELECT") return (Array.isArray(f.value) ? f.value : []).join(",");
+    if (type === "FILE") return (Array.isArray(f.value) ? f.value : []).map((file) => file?.name || "").join(",");
+    if (type === "SUBTABLE") return `${(Array.isArray(f.value) ? f.value : []).length}行`;
+    if (typeof f.value === "object" && f.value !== null) return JSON.stringify(f.value);
+    return f.value == null ? "" : String(f.value);
+  }
+  function buildRecordsCsvText(records, propKeys) {
+    const lines = [propKeys.map(csvEscape).join(",")];
+    for (const rec of records) lines.push(propKeys.map((k) => csvEscape(extractRecordCsvValue(rec, k))).join(","));
+    return "\uFEFF" + lines.join("\n");
+  }
+  function sanitizeZipSegment(value, fallback = "item") {
+    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim();
+    return cleaned || fallback;
+  }
+  function uniqueZipName(used, raw, fileKey, idx) {
+    const safeName = sanitizeZipSegment(raw || "file.bin", "file.bin");
+    const safePrefix = sanitizeZipSegment(String(fileKey || "").slice(0, 12) || String(idx + 1), "file");
+    return uniqueZipEntryName(used, `${safePrefix}_${safeName}`);
+  }
+  function uniqueZipEntryName(used, base) {
+    let cand = base;
+    let n = 2;
+    while (used.has(cand)) {
+      const dot = base.lastIndexOf(".");
+      cand = dot > 0 ? `${base.slice(0, dot)}_${n}${base.slice(dot)}` : `${base}_${n}`;
+      n++;
+    }
+    used.add(cand);
+    return cand;
+  }
+  function describeBatchWriteFailure(label, failure, error) {
+    const reason = error instanceof Error ? error.message : String(error ?? "");
+    const remaining = Math.max(0, failure.total - failure.done);
+    return [
+      `${label}が途中で失敗しました。`,
+      `確定済み: ${failure.done}件 / 失敗チャンク: ${failure.from}～${failure.to}件目 / 未処理: ${remaining}件（全${failure.total}件）`,
+      reason ? `原因: ${reason}` : ""
+    ].filter(Boolean).join("\n");
+  }
+  async function writeInChunks(items, label, writeChunk, onProgress, chunkSize = RECORDS_WRITE_CHUNK) {
+    const size = Math.max(1, Math.floor(chunkSize) || RECORDS_WRITE_CHUNK);
+    let done = 0;
+    for (let i = 0; i < items.length; i += size) {
+      const chunk = items.slice(i, i + size);
+      try {
+        await writeChunk(chunk, Math.floor(i / size));
+      } catch (error) {
+        const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length }, error));
+        wrapped.partial = { done, from: i + 1, to: i + chunk.length, total: items.length };
+        wrapped.original = error;
+        throw wrapped;
+      }
+      done += chunk.length;
+      if (onProgress) onProgress(done, items.length);
+    }
+    return done;
+  }
+
+  // src/tabs/record-standalone.ts
   function parseRecordAppIds(value) {
     const tokens = String(value ?? "").split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
     const invalid = tokens.filter((id) => !/^\d+$/.test(id) || Number(id) <= 0);
@@ -1242,103 +1425,47 @@ ${failures.join("\n")}`);
     }
     setStatus(`${appIds.length}アプリの操作が完了しました`);
   }
-  function loadJSZipLite() {
-    const w = window;
-    if (w.JSZip) return Promise.resolve(w.JSZip);
-    return new Promise((resolve, reject) => {
-      const existing = document.querySelector(`script[src="${JSZIP_CDN}"]`);
-      if (existing) {
-        existing.addEventListener("load", () => resolve(window.JSZip));
-        existing.addEventListener("error", () => reject(new Error("JSZipの読み込みに失敗")));
-        return;
-      }
-      const s = document.createElement("script");
-      s.src = JSZIP_CDN;
-      s.onload = () => resolve(window.JSZip);
-      s.onerror = () => reject(new Error("JSZipの読み込みに失敗"));
-      document.head.appendChild(s);
-    });
-  }
-  function sanitizeZipSegment(value, fallback = "item") {
-    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim();
-    return cleaned || fallback;
-  }
-  function uniqueZipName(used, raw, fileKey, idx) {
-    const safeName = sanitizeZipSegment(raw || "file.bin", "file.bin");
-    const safePrefix = sanitizeZipSegment(String(fileKey || "").slice(0, 12) || String(idx + 1), "file");
-    const base = `${safePrefix}_${safeName}`;
-    let cand = base;
-    let n = 2;
-    while (used.has(cand)) {
-      const dot = base.lastIndexOf(".");
-      if (dot > 0) cand = `${base.slice(0, dot)}_${n}${base.slice(dot)}`;
-      else cand = `${base}_${n}`;
-      n++;
-    }
-    used.add(cand);
-    return cand;
-  }
   async function downloadFileBlob(prefix, fileKey) {
+    if (!fileKey) return { ok: false, reason: "fileKey がありません" };
     const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
     const headers = { "X-Requested-With": "XMLHttpRequest" };
+    let lastReason = "";
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const resp = await fetch(url, { method: "GET", headers });
-        if (resp.status === 403) return null;
-        if (!resp.ok) throw new Error("ダウンロード失敗: " + resp.status);
-        return await resp.blob();
+        if (resp.status === 403) return { ok: false, reason: "閲覧権限なし (HTTP 403)" };
+        if (!resp.ok) {
+          lastReason = `HTTP ${resp.status}`;
+        } else {
+          return { ok: true, blob: await resp.blob() };
+        }
       } catch (e) {
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
+        lastReason = e?.message || String(e);
       }
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
     }
-    return null;
+    return { ok: false, reason: lastReason || "取得失敗" };
   }
-  function hasOrderByClause(query) {
-    return /\border\s+by\b/i.test(String(query || ""));
+  function formatFileFailures(failures) {
+    return failures.map((f) => `record ${f.recordId}	${f.fileName || "(名称不明)"}	${f.reason}`).join("\n");
   }
-  function hasPagingClause(query) {
-    return /\blimit\s+\d+/i.test(String(query || "")) || /\boffset\s+\d+/i.test(String(query || ""));
+  function describeFetchMode(mode) {
+    return mode === "cursor" ? " / cursor API" : "";
   }
-  function buildPagedQuery(query, offset) {
-    const base = String(query || "").trim();
-    if (hasPagingClause(base)) {
-      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
-    }
-    const parts = [];
-    if (base) parts.push(base);
-    if (!hasOrderByClause(base)) parts.push("order by $id asc");
-    parts.push("limit 500");
-    parts.push(`offset ${Number(offset || 0)}`);
-    return parts.join(" ");
+  async function fetchAllRecords(prefix, app, query, setStatus) {
+    setStatus("レコード取得中...");
+    const result = await fetchRecordsByQuery(prefix, app, query || "", {
+      onProgress: (n, mode) => setStatus(`レコード取得中... (${n}件取得済${describeFetchMode(mode)})`)
+    });
+    return result.records;
   }
-  function buildKeysetQuery(query, lastRecordId) {
-    const base = String(query || "").trim();
-    if (hasPagingClause(base)) {
-      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
-    }
-    const idCond = `$id > ${Number(lastRecordId || 0)}`;
-    if (!base) return `${idCond} order by $id asc limit 500`;
-    if (hasOrderByClause(base)) return null;
-    return `(${base}) and ${idCond} order by $id asc limit 500`;
-  }
-  function csvEscape(val) {
-    const s = String(val == null ? "" : val);
-    return s.includes(",") || s.includes('"') || s.includes("\n") ? '"' + s.replace(/"/g, '""') + '"' : s;
-  }
-  function extractRecordCsvValue(rec, code) {
-    const f = rec[code];
-    if (!f) return "";
-    if (["USER_SELECT", "ORGANIZATION_SELECT", "GROUP_SELECT"].includes(f.type)) return (f.value || []).map((v) => v.code || v.name).join(",");
-    if (["CHECK_BOX", "MULTI_SELECT"].includes(f.type)) return (f.value || []).join(",");
-    if (f.type === "FILE") return (f.value || []).map((file) => file.name).join(",");
-    if (f.type === "SUBTABLE") return (f.value || []).length + "行";
-    if (typeof f.value === "object" && f.value !== null) return JSON.stringify(f.value);
-    return f.value;
-  }
-  function buildRecordsCsvText(records, propKeys) {
-    const lines = [propKeys.map(csvEscape).join(",")];
-    for (const rec of records) lines.push(propKeys.map((k) => csvEscape(extractRecordCsvValue(rec, k))).join(","));
-    return "\uFEFF" + lines.join("\n");
+  async function fetchRecordIds(prefix, app, query, setStatus) {
+    setStatus("対象レコード取得中...");
+    const result = await fetchRecordsByQuery(prefix, app, query || "", {
+      fields: ["$id"],
+      onProgress: (n, mode) => setStatus(`対象レコード取得中... (${n}件${describeFetchMode(mode)})`)
+    });
+    return result.records.map((r) => Number(r?.$id?.value)).filter((id) => Number.isFinite(id) && id > 0);
   }
   async function buildCsvExportForApp(appId, guestId, query, setStatus) {
     if (!appId) throw new Error("アプリIDを入力してください");
@@ -1356,39 +1483,6 @@ ${failures.join("\n")}`);
       recordCount: records.length,
       csvText: buildRecordsCsvText(records, propKeys)
     };
-  }
-  async function fetchAllRecords(prefix, app, query, setStatus) {
-    let all = [];
-    let offset = 0;
-    let lastRecordId = 0;
-    while (true) {
-      setStatus(`レコード取得中... (${all.length}件取得済)`);
-      const q = buildKeysetQuery(query, lastRecordId) || buildPagedQuery(query, offset);
-      const resp = await apiGet(prefix, "/records.json", { app, query: q });
-      const batch = resp.records || [];
-      all = all.concat(batch);
-      if (batch.length < 500) break;
-      lastRecordId = Number(batch[batch.length - 1]?.$id?.value || lastRecordId);
-      offset += 500;
-    }
-    return all;
-  }
-  async function fetchRecordIds(prefix, app, query, setStatus) {
-    const ids = [];
-    let offset = 0;
-    let lastRecordId = 0;
-    while (true) {
-      setStatus(`対象レコード取得中... (${ids.length}件)`);
-      const q = buildKeysetQuery(query, lastRecordId) || buildPagedQuery(query, offset);
-      const resp = await apiGet(prefix, "/records.json", { app, query: q, fields: ["$id"] });
-      const batch = resp.records || [];
-      if (!batch.length) break;
-      batch.forEach((r) => ids.push(Number(r.$id.value)));
-      if (batch.length < 500) break;
-      lastRecordId = Number(batch[batch.length - 1]?.$id?.value || lastRecordId);
-      offset += 500;
-    }
-    return ids;
   }
   async function runCsvExportStandalone(opts, setStatus) {
     const { appId, guestId, query, filename } = opts;
@@ -1411,31 +1505,45 @@ ${failures.join("\n")}`);
     const zip = new JSZip();
     const used = /* @__PURE__ */ new Set();
     let totalRecords = 0;
+    const failures = [];
     for (let i = 0; i < apps.length; i++) {
       const app = apps[i];
       setStatus(`CSV出力中... (${i + 1}/${apps.length})`);
-      const result = await buildCsvExportForApp(app.appId, app.guestId || "", query, setStatus);
-      totalRecords += result.recordCount;
-      const label = buildAppFilenameLabel(result.appId, app.appName || "");
-      const baseName = buildExportFilename("レコード", "csv", { appLabel: label }).replace(/\.csv$/i, "");
-      const guestSuffix = result.guestId ? `_guest${sanitizeZipSegment(result.guestId)}` : "";
-      const entryName = uniqueZipName(used, `${baseName}${guestSuffix}.csv`, result.appId, i);
-      zip.file(entryName, result.csvText);
+      try {
+        const result = await buildCsvExportForApp(app.appId, app.guestId || "", query, setStatus);
+        totalRecords += result.recordCount;
+        const label = buildAppFilenameLabel(result.appId, app.appName || "");
+        const baseName = buildExportFilename("レコード", "csv", { appLabel: label }).replace(/\.csv$/i, "");
+        const guestSuffix = result.guestId ? `_guest${sanitizeZipSegment(result.guestId)}` : "";
+        const entryName = uniqueZipName(used, `${baseName}${guestSuffix}.csv`, result.appId, i);
+        zip.file(entryName, result.csvText);
+      } catch (error) {
+        failures.push(`App ${app.appId}: ${error?.message || String(error)}`);
+      }
+    }
+    if (failures.length === apps.length) {
+      throw new Error(`すべてのアプリで CSV 出力に失敗しました
+${failures.join("\n")}`);
     }
     const manifest = [
       "kintone CSV 一括出力マニフェスト",
       `出力日時: ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`,
-      `対象アプリ数: ${apps.length}`,
+      `対象アプリ数: ${apps.length}（成功 ${apps.length - failures.length} / 失敗 ${failures.length}）`,
       `総レコード数: ${totalRecords}`,
       `共通クエリ: ${query || "(なし)"}`,
       "",
-      ...apps.map((a, i) => `${i + 1}. App ${a.appId}${a.guestId ? ` / Guest ${a.guestId}` : ""}${a.appName ? ` / ${a.appName}` : ""}`)
+      ...apps.map((a, i) => `${i + 1}. App ${a.appId}${a.guestId ? ` / Guest ${a.guestId}` : ""}${a.appName ? ` / ${a.appName}` : ""}`),
+      ...failures.length ? ["", "失敗:", ...failures] : []
     ].join("\n");
     zip.file("manifest.txt", manifest);
     setStatus(`ZIP生成中... (${apps.length}アプリ / ${totalRecords}件)`);
     const blob = await zip.generateAsync({ type: "blob" });
     const zipName = filename || buildExportFilename("CSV出力", "zip");
     downloadBlob(zipName.toLowerCase().endsWith(".zip") ? zipName : `${zipName}.zip`, blob);
+    if (failures.length) {
+      setStatus(`CSV一括出力完了（失敗 ${failures.length}アプリ、詳細は manifest.txt）: ${apps.length - failures.length}アプリ / ${totalRecords}件`, true);
+      return;
+    }
     setStatus(`CSV一括出力完了 (${apps.length}アプリ / ${totalRecords}件)`);
   }
   var CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = /* @__PURE__ */ new Set([
@@ -1489,6 +1597,43 @@ ${failures.join("\n")}`);
     if (unknown.length) throw new Error(`CSVヘッダに存在しないフィールドコードがあります: ${unknown.join(", ")}`);
     if (unsupported.length) throw new Error(`CSVインポート非対応のフィールドが含まれています: ${unsupported.join(", ")}`);
   }
+  function parseCsvText(csv) {
+    const rows = [];
+    let current = [];
+    let cell = "";
+    let inQ = false;
+    for (let i = 0; i < csv.length; i++) {
+      const c = csv[i];
+      const n = csv[i + 1];
+      if (inQ) {
+        if (c === '"') {
+          if (n === '"') {
+            cell += '"';
+            i++;
+          } else inQ = false;
+        } else {
+          cell += c;
+        }
+        continue;
+      }
+      if (c === '"') inQ = true;
+      else if (c === ",") {
+        current.push(cell);
+        cell = "";
+      } else if (c === "\n" || c === "\r") {
+        if (c === "\r" && n === "\n") i++;
+        current.push(cell);
+        rows.push(current);
+        current = [];
+        cell = "";
+      } else cell += c;
+    }
+    if (cell || current.length) {
+      current.push(cell);
+      rows.push(current);
+    }
+    return rows;
+  }
   async function runCsvImportStandalone(opts, setStatus) {
     const { appId, guestId, file } = opts;
     if (!appId) throw new Error("アプリIDを入力してください");
@@ -1501,39 +1646,7 @@ ${failures.join("\n")}`);
       reader.onerror = () => reject(new Error("ファイルの読み取りに失敗"));
       reader.readAsText(file);
     });
-    const parseCsv = (csv) => {
-      const rows2 = [];
-      let current = [], cell = "", inQ = false;
-      for (let i = 0; i < csv.length; i++) {
-        const c = csv[i], n = csv[i + 1];
-        if (inQ) {
-          if (c === '"') {
-            if (n === '"') {
-              cell += '"';
-              i++;
-            } else inQ = false;
-          } else cell += c;
-        } else {
-          if (c === '"') inQ = true;
-          else if (c === ",") {
-            current.push(cell);
-            cell = "";
-          } else if (c === "\n" || c === "\r") {
-            if (c === "\r" && n === "\n") i++;
-            current.push(cell);
-            rows2.push(current);
-            current = [];
-            cell = "";
-          } else cell += c;
-        }
-      }
-      if (cell || current.length) {
-        current.push(cell);
-        rows2.push(current);
-      }
-      return rows2;
-    };
-    const rows = parseCsv(text.replace(/^\uFEFF/, ""));
+    const rows = parseCsvText(text.replace(/^\uFEFF/, ""));
     if (rows.length < 2) throw new Error("ヘッダ行とデータ行が必要です");
     const header = rows[0].map((h) => h.trim());
     setStatus("フィールド情報を確認中...");
@@ -1552,14 +1665,21 @@ ${failures.join("\n")}`);
       records.push(rec);
     }
     if (!records.length) throw new Error("登録するデータがありません");
-    if (!kusConfirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) return;
-    let ok = 0;
-    for (let i = 0; i < records.length; i += 100) {
-      const batch = records.slice(i, i + 100);
-      setStatus(`インポート中... (${i + 1}～${i + batch.length} / ${records.length}件)`);
-      await apiPost(prefix, "/records.json", { app: appId, records: batch });
-      ok += batch.length;
+    const confirmText = [
+      `App ${appId}${guestId ? `（ゲスト ${guestId}）` : ""} の本番レコードへ CSV から ${records.length}件 を追加します。`,
+      `対象フィールド: ${header.filter(Boolean).length}件`,
+      "追加したレコードは自動では取り消せません。実行しますか？"
+    ].join("\n");
+    if (!kusConfirm(confirmText)) {
+      setStatus("CSV取込をキャンセルしました");
+      return;
     }
+    const ok = await writeInChunks(
+      records,
+      `App ${appId} の CSV取込`,
+      (batch) => apiPost(prefix, "/records.json", { app: appId, records: batch }),
+      (done, total) => setStatus(`インポート中... (${done} / ${total}件)`)
+    );
     setStatus(`インポート完了: ${ok}件`);
   }
   async function runBatchProcessStandalone(opts, setStatus) {
@@ -1569,65 +1689,129 @@ ${failures.join("\n")}`);
     const prefix = buildApiPrefix(guestId || "", false);
     const ids = await fetchRecordIds(prefix, appId, query || "", setStatus);
     if (!ids.length) throw new Error("処理対象のレコードが0件です");
-    if (!kusConfirm(`${ids.length}件にアクション「${action}」を実行しますか？`)) return;
-    let ok = 0;
-    for (let i = 0; i < ids.length; i += 100) {
-      const batch = ids.slice(i, i + 100);
-      const body = { app: appId, records: batch.map((id) => {
-        const r = { id, action };
-        if (assignee) r.assignee = assignee;
-        return r;
-      }) };
-      await apiPut(prefix, "/records/status.json", body);
-      ok += batch.length;
-      setStatus(`ステータス更新中... ${ok}/${ids.length}件`);
+    const confirmText = [
+      `App ${appId}${guestId ? `（ゲスト ${guestId}）` : ""} の ${ids.length}件 にアクション「${action}」を実行します${assignee ? `（作業者: ${assignee}）` : ""}。`,
+      `条件: ${query || "(全件)"}`,
+      "本番レコードのステータスが変わり、自動では元に戻せません。実行しますか？"
+    ].join("\n");
+    if (!kusConfirm(confirmText)) {
+      setStatus("ステータス一括更新をキャンセルしました");
+      return;
     }
+    const ok = await writeInChunks(
+      ids,
+      `App ${appId} のステータス更新`,
+      (batch) => apiPut(prefix, "/records/status.json", {
+        app: appId,
+        records: batch.map((id) => {
+          const r = { id, action };
+          if (assignee) r.assignee = assignee;
+          return r;
+        })
+      }),
+      (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`)
+    );
     setStatus(`ステータス一括更新完了 (${ok}件)`);
+  }
+  var COPY_SYSTEM_TYPES = /* @__PURE__ */ new Set([
+    "RECORD_NUMBER",
+    "CREATOR",
+    "CREATED_TIME",
+    "MODIFIER",
+    "UPDATED_TIME",
+    "STATUS",
+    "STATUS_ASSIGNEE",
+    "CALC",
+    "CATEGORY",
+    "__ID__",
+    "__REVISION__",
+    "REFERENCE_TABLE",
+    "LABEL",
+    "HR",
+    "SPACER",
+    "GROUP"
+  ]);
+  var COPY_SYSTEM_CODES = /* @__PURE__ */ new Set(["$id", "$revision", "作成者", "作成日時", "更新者", "更新日時", "レコード番号", "ステータス", "作業者"]);
+  function buildCopyRecordPayloads(records, targetProps) {
+    const dropped = /* @__PURE__ */ new Set();
+    const targetKnown = targetProps && typeof targetProps === "object" ? targetProps : null;
+    const canWriteTop = (code, field) => {
+      if (COPY_SYSTEM_CODES.has(code) || COPY_SYSTEM_TYPES.has(field?.type) || field?.type === "FILE") return false;
+      if (targetKnown && !targetKnown[code]) {
+        dropped.add(code);
+        return false;
+      }
+      if (targetKnown && targetKnown[code]?.type !== field?.type) {
+        dropped.add(`${code}(型不一致)`);
+        return false;
+      }
+      return true;
+    };
+    const out = records.map((rec) => {
+      const payload = {};
+      for (const [code, field] of Object.entries(rec || {})) {
+        if (!field || typeof field !== "object") continue;
+        if (!canWriteTop(code, field)) continue;
+        if (field.type === "SUBTABLE") {
+          const childDefs = targetKnown ? targetKnown[code]?.fields || {} : null;
+          const rows = Array.isArray(field.value) ? field.value : [];
+          payload[code] = {
+            value: rows.map((row) => {
+              const inner = row && typeof row === "object" && row.value && typeof row.value === "object" ? row.value : {};
+              const cells = {};
+              for (const [childCode, childField] of Object.entries(inner)) {
+                if (!childField || typeof childField !== "object") continue;
+                if (COPY_SYSTEM_CODES.has(childCode) || COPY_SYSTEM_TYPES.has(childField.type) || childField.type === "FILE") continue;
+                if (childDefs && !childDefs[childCode]) {
+                  dropped.add(`${code}.${childCode}`);
+                  continue;
+                }
+                cells[childCode] = { value: childField.value };
+              }
+              return { value: cells };
+            })
+          };
+        } else {
+          payload[code] = { value: field.value };
+        }
+      }
+      return payload;
+    });
+    return { records: out, droppedFields: [...dropped].sort() };
   }
   async function runRecordCopyStandalone(opts, setStatus) {
     const { sourceAppId, sourceGuestId, targetAppId, targetGuestId, query } = opts;
-    if (!sourceAppId || !targetAppId) throw new Error("比較元と比較先のアプリIDを指定してください");
+    if (!sourceAppId || !targetAppId) throw new Error("コピー元とコピー先のアプリIDを指定してください");
     const srcPrefix = buildApiPrefix(sourceGuestId || "", false);
     const tgtPrefix = buildApiPrefix(targetGuestId || "", false);
+    setStatus(`コピー先 App ${targetAppId} のフィールド定義を確認中...`);
+    const targetFields = await apiGet(tgtPrefix, "/app/form/fields.json", { app: targetAppId });
+    const targetProps = targetFields?.properties || {};
     const records = await fetchAllRecords(srcPrefix, sourceAppId, query || "", setStatus);
     if (!records.length) {
       setStatus("コピー対象のレコードがありません");
       return;
     }
-    if (!kusConfirm(`${records.length}件を比較先(${targetAppId})へコピーしますか？`)) return;
-    const systemTypes = /* @__PURE__ */ new Set(["RECORD_NUMBER", "CREATOR", "CREATED_TIME", "MODIFIER", "UPDATED_TIME", "STATUS", "STATUS_ASSIGNEE", "CALC", "CATEGORY", "__ID__", "__REVISION__"]);
-    const systemFields = /* @__PURE__ */ new Set(["$id", "$revision", "作成者", "作成日時", "更新者", "更新日時", "レコード番号", "ステータス", "作業者"]);
-    const clean = records.map((rec) => {
-      const out = {};
-      for (const [k, v] of Object.entries(rec)) {
-        if (systemFields.has(k) || systemTypes.has(v.type)) continue;
-        if (v.type === "SUBTABLE") {
-          const rows = Array.isArray(v.value) ? v.value : [];
-          out[k] = { value: rows.map((sr) => {
-            const c = {};
-            const inner = sr && typeof sr === "object" && sr.value && typeof sr.value === "object" ? sr.value : {};
-            for (const [sk, sv] of Object.entries(inner)) {
-              if (systemFields.has(sk) || systemTypes.has(sv.type) || sv.type === "FILE") continue;
-              c[sk] = { value: sv.value };
-            }
-            return { value: c };
-          }) };
-        } else if (v.type === "FILE") {
-          continue;
-        } else {
-          out[k] = { value: v.value };
-        }
-      }
-      return out;
-    });
-    let ok = 0;
-    for (let i = 0; i < clean.length; i += 100) {
-      const batch = clean.slice(i, i + 100);
-      setStatus(`コピー中... ${i + 1}～${i + batch.length} / ${clean.length}件`);
-      await apiPost(tgtPrefix, "/records.json", { app: targetAppId, records: batch });
-      ok += batch.length;
+    const plan = buildCopyRecordPayloads(records, targetProps);
+    const droppedNote = plan.droppedFields.length ? `コピー先に無い/型が違うため除外: ${plan.droppedFields.slice(0, 10).join(", ")}${plan.droppedFields.length > 10 ? ` 他${plan.droppedFields.length - 10}件` : ""}` : "";
+    const confirmText = [
+      `コピー元 App ${sourceAppId} → コピー先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ""}`,
+      `${plan.records.length}件を本番レコードとして新規追加します（既存レコードは変更しません）。`,
+      "ファイル・システム項目・計算項目は除外されます。",
+      droppedNote,
+      "実行しますか？"
+    ].filter(Boolean).join("\n");
+    if (!kusConfirm(confirmText)) {
+      setStatus("レコードコピーをキャンセルしました");
+      return;
     }
-    setStatus(`レコードコピー完了: ${ok}件`);
+    const ok = await writeInChunks(
+      plan.records,
+      `App ${sourceAppId} → ${targetAppId} のレコードコピー`,
+      (batch) => apiPost(tgtPrefix, "/records.json", { app: targetAppId, records: batch }),
+      (done, total) => setStatus(`コピー中... ${done} / ${total}件`)
+    );
+    setStatus(`レコードコピー完了: ${ok}件${droppedNote ? `（${droppedNote}）` : ""}`, plan.droppedFields.length > 0);
   }
   async function runAttachmentDownloadStandalone(opts, setStatus) {
     const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
@@ -1636,33 +1820,52 @@ ${failures.join("\n")}`);
     const prefix = buildApiPrefix(guestId || "", false);
     const records = await fetchAllRecords(prefix, appId, query || "", setStatus);
     if (!records.length) throw new Error("対象レコードが0件です");
+    const fieldMissing = records.every((rec) => !rec?.[fileFieldCode]);
+    if (fieldMissing) throw new Error(`フィールド「${fileFieldCode}」が取得結果に存在しません。フィールドコードを確認してください`);
     const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
     let fileCount = 0;
+    const failures = [];
     for (let i = 0; i < records.length; i++) {
       const rec = records[i];
-      setStatus(`添付DL中 (${i + 1}/${records.length})`);
+      setStatus(`添付DL中 (${i + 1}/${records.length}${failures.length ? ` / 失敗 ${failures.length}` : ""})`);
       const files = rec?.[fileFieldCode]?.value || [];
       if (!files.length) continue;
+      const recordId = String(rec.$id?.value || i + 1);
       let folderName = folderFieldCode && rec[folderFieldCode]?.value;
-      if (!folderName) folderName = `Record_${rec.$id?.value || i + 1}`;
-      const folder = zip.folder(sanitizeZipSegment(folderName, `Record_${rec.$id?.value || i + 1}`));
+      if (!folderName) folderName = `Record_${recordId}`;
+      const folder = zip.folder(sanitizeZipSegment(folderName, `Record_${recordId}`));
       const used = /* @__PURE__ */ new Set();
       for (const f of files) {
-        const blob = await downloadFileBlob(prefix, f.fileKey);
-        if (blob) {
-          folder.file(uniqueZipName(used, f.name || "file.bin", f.fileKey, fileCount), blob);
+        const result = await downloadFileBlob(prefix, f.fileKey);
+        if (result.ok === true) {
+          folder.file(uniqueZipName(used, f.name || "file.bin", f.fileKey, fileCount), result.blob);
           fileCount++;
+        } else {
+          failures.push({ recordId, fileName: String(f.name || ""), fileKey: String(f.fileKey || ""), reason: result.reason });
         }
       }
     }
     if (!fileCount) {
+      if (failures.length) {
+        throw new Error(`添付ファイルを1件も取得できませんでした（失敗 ${failures.length}件）
+${formatFileFailures(failures.slice(0, 5))}${failures.length > 5 ? "\n…" : ""}`);
+      }
       setStatus("ダウンロード対象の添付がありませんでした", true);
       return;
+    }
+    if (failures.length) {
+      zip.file("download_errors.txt", `取得できなかった添付ファイル ${failures.length}件
+${formatFileFailures(failures)}
+`);
     }
     setStatus(`ZIP生成中 (${fileCount}ファイル)`);
     const zipBlob = await zip.generateAsync({ type: "blob" });
     downloadBlob(zipName || buildExportFilename("添付ファイル", "zip", { appLabel: buildAppFilenameLabel(appId, "") }), zipBlob);
+    if (failures.length) {
+      setStatus(`添付一括DL完了: ${fileCount}ファイル（取得失敗 ${failures.length}件、詳細は download_errors.txt）`, true);
+      return;
+    }
     setStatus(`添付一括DL完了: ${fileCount}ファイル`);
   }
   async function runRecordBackupStandalone(opts, setStatus) {
@@ -1678,25 +1881,10 @@ ${failures.join("\n")}`);
     const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
     const notes = [];
-    const esc2 = (v) => {
-      const s = String(v == null ? "" : v);
-      return s.includes(",") || s.includes('"') || s.includes("\n") ? '"' + s.replace(/"/g, '""') + '"' : s;
-    };
-    const extract = (rec, code) => {
-      const f = rec[code];
-      if (!f) return "";
-      if (["USER_SELECT", "ORGANIZATION_SELECT", "GROUP_SELECT"].includes(f.type)) return (f.value || []).map((v) => v.code || v.name).join(",");
-      if (["CHECK_BOX", "MULTI_SELECT"].includes(f.type)) return (f.value || []).join(",");
-      if (f.type === "FILE") return (f.value || []).map((file) => file.name).join(",");
-      if (f.type === "SUBTABLE") return (f.value || []).length + "行";
-      if (typeof f.value === "object" && f.value !== null) return JSON.stringify(f.value);
-      return f.value;
-    };
-    const lines = [propKeys.map(esc2).join(",")];
-    for (const rec of records) lines.push(propKeys.map((k) => esc2(extract(rec, k))).join(","));
-    zip.file("records.csv", "\uFEFF" + lines.join("\n"));
+    zip.file("records.csv", buildRecordsCsvText(records, propKeys));
     zip.file("records.json", JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, recordCount: records.length, records }, null, 2));
     let fileCount = 0;
+    const fileFailures = [];
     if (includeFiles) {
       const collected = [];
       for (const rec of records) {
@@ -1718,14 +1906,17 @@ ${failures.join("\n")}`);
       const blobCache = /* @__PURE__ */ new Map();
       for (let i = 0; i < collected.length; i++) {
         const ent = collected[i];
-        setStatus(`添付ファイル取得中 (${i + 1}/${collected.length})`);
-        let blob2 = blobCache.get(ent.file.fileKey);
-        if (blob2 === void 0) {
-          blob2 = await downloadFileBlob(prefix, ent.file.fileKey);
-          blobCache.set(ent.file.fileKey, blob2 || null);
-        }
-        if (!blob2) continue;
+        setStatus(`添付ファイル取得中 (${i + 1}/${collected.length}${fileFailures.length ? ` / 失敗 ${fileFailures.length}` : ""})`);
         const recordId = String(ent.rec?.$id?.value || "unknown");
+        let result = blobCache.get(ent.file.fileKey);
+        if (!result) {
+          result = await downloadFileBlob(prefix, ent.file.fileKey);
+          blobCache.set(ent.file.fileKey, result);
+        }
+        if (result.ok === false) {
+          fileFailures.push({ recordId, fileName: String(ent.file.name || ""), fileKey: String(ent.file.fileKey || ""), reason: result.reason });
+          continue;
+        }
         const parts = ["attachments", `record_${sanitizeZipSegment(recordId)}`];
         if (ent.childCode) {
           parts.push(sanitizeZipSegment(ent.fieldCode || "subtable"));
@@ -1736,20 +1927,24 @@ ${failures.join("\n")}`);
         }
         const filePrefix = sanitizeZipSegment(String(ent.file.fileKey || "").slice(0, 12) || String(ent.fileIndex + 1));
         parts.push(`${filePrefix}_${sanitizeZipSegment(ent.file.name || "file.bin", "file.bin")}`);
-        zip.file(parts.join("/"), blob2);
+        zip.file(parts.join("/"), result.blob);
         fileCount++;
+      }
+      if (fileFailures.length) {
+        notes.push(`添付ファイル取得失敗 ${fileFailures.length}件（manifest.json の fileFailures 参照）`);
       }
     } else {
       notes.push("添付ファイル未取得");
     }
     let commentCount = 0;
+    const commentFailures = [];
     if (includeComments) {
       const out = [];
       for (let i = 0; i < records.length; i++) {
         const rec = records[i];
         const recordId = String(rec?.$id?.value || "").trim();
         if (!recordId) continue;
-        setStatus(`コメント取得中 (${i + 1}/${records.length})`);
+        setStatus(`コメント取得中 (${i + 1}/${records.length}${commentFailures.length ? ` / 失敗 ${commentFailures.length}` : ""})`);
         try {
           const comments = [];
           let offset = 0;
@@ -1766,16 +1961,17 @@ ${failures.join("\n")}`);
             commentCount += comments.length;
           }
         } catch (e) {
-          notes.push("コメント取得失敗で中断");
-          break;
+          commentFailures.push({ recordId, reason: e?.message || String(e) });
         }
       }
-      zip.file("comments.json", JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, commentCount, records: out }, null, 2));
+      zip.file("comments.json", JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, commentCount, failures: commentFailures, records: out }, null, 2));
+      if (commentFailures.length) notes.push(`コメント取得失敗 ${commentFailures.length}レコード（manifest.json の commentFailures 参照）`);
     } else {
       notes.push("コメント未取得");
     }
     let appOk = 0;
     let appNg = 0;
+    const appNgSections = [];
     if (includeAppSettings && appScopes && appScopes.length) {
       setStatus("アプリ設定取得中...");
       const settings = await fetchBundle({
@@ -1787,9 +1983,12 @@ ${failures.join("\n")}`);
       });
       for (const key of appScopes) {
         const sec = settings.sections[key];
-        if (sec && sec._fetchError) appNg++;
-        else appOk++;
+        if (sec && sec._fetchError) {
+          appNg++;
+          appNgSections.push(key);
+        } else appOk++;
       }
+      if (appNg) notes.push(`アプリ設定取得失敗 ${appNg}セクション: ${appNgSections.join(", ")}`);
       zip.file(`app_settings/app_${appId}.json`, JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, scopes: appScopes, bundle: settings }, null, 2));
     } else if (!includeAppSettings) {
       notes.push("アプリ設定未取得");
@@ -1797,16 +1996,21 @@ ${failures.join("\n")}`);
     zip.file("manifest.json", JSON.stringify({
       generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       appId,
+      query: query || "",
       recordCount: records.length,
       fileCount,
+      fileFailures,
       commentCount,
-      appSettings: { ok: appOk, ng: appNg, scopes: appScopes || [] },
+      commentFailures,
+      appSettings: { ok: appOk, ng: appNg, ngSections: appNgSections, scopes: appScopes || [] },
       notes
     }, null, 2));
     setStatus(`ZIP生成中 (${records.length}件 / 添付 ${fileCount} / コメント ${commentCount})`);
     const blob = await zip.generateAsync({ type: "blob" });
     downloadBlob(zipName || buildExportFilename("レコードバックアップ", "zip", { appLabel: buildAppFilenameLabel(appId, "") }), blob);
-    setStatus(`バックアップ完了: ${records.length}件 / 添付 ${fileCount} / コメント ${commentCount}`);
+    const failureCount = fileFailures.length + commentFailures.length + appNg;
+    const failureNote = failureCount ? `（取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg} → manifest.json 参照）` : "";
+    setStatus(`バックアップ完了: ${records.length}件 / 添付 ${fileCount} / コメント ${commentCount}${failureNote}`, failureCount > 0);
   }
   async function runLoadStatusActionsStandalone(opts, setStatus) {
     const { appId, guestId } = opts;
