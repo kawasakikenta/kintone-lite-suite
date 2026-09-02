@@ -725,6 +725,65 @@ describe('diff/xlsx-export', () => {
     expect(controlHeight).toBeLessThanOrEqual(220);
   });
 
+  it('利用者向けの「このファイルの見方」シートを比較概要の案内付きで出力する', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      scopes: ['appSettings', 'fieldSettings'],
+      rows: [{
+        sectionKey: 'appSettings',
+        type: 'changed',
+        path: 'appSettings.name',
+        left: '旧名称',
+        right: '新名称'
+      }]
+    });
+    const workbook = await readEntry(blob, 'xl/workbook.xml');
+    const summary = await readWorksheetByName(blob, '比較概要');
+    const guide = await readWorksheetByName(blob, 'このファイルの見方');
+
+    // 取得状態の注意がないときは比較概要の直後、差分の表より前に置く。
+    expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1]).slice(0, 4)).toEqual([
+      '比較概要', 'このファイルの見方', '変更対象一覧', '変更一覧'
+    ]);
+    expect(summary).toContain('各シートの役割と列の読み方を確認する');
+    expect(summary).toContain('このファイルの見方');
+
+    for (const text of [
+      'シートの構成', '確認の手順', '変更対象一覧の列', '変更一覧の列', '機能別シートの列', '値の表記',
+      '設定対象／変更内容', '差分プロパティ', '対象の変更', '複合変更',
+      'セル内の1行目が対象の名前', '約30文字', '存在しません',
+      '確認できなかった範囲', 'このファイルには含まれていません。'
+    ]) {
+      expect(guide).toContain(text);
+    }
+    // 説明シートは比較結果を含まず、技術パスや操作用の情報も載せない。
+    expect(guide).not.toContain('appSettings.name');
+    expect(guide).not.toContain('旧名称');
+    expect(guide).not.toContain('<hyperlink');
+    expect(guide).toContain('<mergeCell ref="A1:B1"/>');
+  });
+
+  it('取得状態の注意があるときは「確認できなかった範囲」の後に「このファイルの見方」を置く', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      scopes: ['appSettings'],
+      rows: [],
+      truncation: {
+        truncated: true,
+        droppedDiff: 0,
+        droppedSame: 0,
+        sections: [{ sectionKey: 'appSettings', scanStatus: 'error', omittedDiffCount: 0, message: '取得に失敗しました' }]
+      }
+    });
+    const workbook = await readEntry(blob, 'xl/workbook.xml');
+    const names = [...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1]);
+    const guide = await readWorksheetByName(blob, 'このファイルの見方');
+
+    expect(names.indexOf('比較概要')).toBe(0);
+    expect(names.indexOf('確認できなかった範囲')).toBe(1);
+    expect(names.indexOf('このファイルの見方')).toBe(2);
+    expect(names.indexOf('変更対象一覧')).toBe(3);
+    expect(guide).toContain('このファイルには含まれています。');
+  });
+
   it('does not describe an empty filtered export as a complete no-difference result', async () => {
     const blob = buildDiffXlsxBlobWithSafeDefault({
       exportMode: 'filtered',
@@ -865,7 +924,7 @@ describe('diff/xlsx-export', () => {
     const workbook = await readEntry(blob, 'xl/workbook.xml');
     const summary = await readWorksheetByName(blob, '比較概要');
     expect([...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1])).toEqual([
-      '比較概要', '変更対象一覧', '変更一覧'
+      '比較概要', 'このファイルの見方', '変更対象一覧', '変更一覧'
     ]);
     expect(summary).toContain('5件（変更判定への影響なし）');
     expect(summary).not.toContain('比較未完了');
