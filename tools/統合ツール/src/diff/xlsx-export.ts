@@ -4683,6 +4683,7 @@ function buildCustomerSummarySheet(
   if (availability.hasFeatureSheets) {
     guideRows.push(['フォーム・一覧など、特定の機能に絞って確認する', '', '', '', '機能別シート（上の表から開けます）', '']);
   }
+  guideRows.push(['各シートの役割と列の読み方を確認する', '', '', '', CUSTOMER_GUIDE_SHEET_NAME, '']);
   rows.push(
     ['シートの使い分け', '', '', '', '', ''],
     ['確認したいこと', '', '', '', '開くシート', ''],
@@ -5482,18 +5483,201 @@ function buildCustomerIssuesSheet(items: CustomerCoverageIssueItem[]): XlsxSheet
   };
 }
 
+const CUSTOMER_GUIDE_SHEET_NAME = 'このファイルの見方';
+
+interface CustomerGuideEntry {
+  label: string;
+  text: string;
+}
+
+interface CustomerGuideSection {
+  title: string;
+  entries: CustomerGuideEntry[];
+}
+
+/** 利用者向けの説明シートの本文。比較結果に依存しない静的な案内と、このファイルに含まれるシートの有無だけを載せる。 */
+function buildCustomerGuideSections(
+  ctx: DiffXlsxContext,
+  availability: CustomerSummarySheetAvailability
+): CustomerGuideSection[] {
+  const sourceName = customerHeaderAppName(ctx.sourceBundle, '比較元のアプリ');
+  const targetName = customerHeaderAppName(ctx.targetBundle, '比較先のアプリ');
+  const issuesNote = availability.hasIssues
+    ? 'このファイルには含まれています。その範囲は比較結果に含まれていないため、先に確認してください。'
+    : 'このファイルには含まれていません。';
+  const featureNote = availability.hasFeatureSheets
+    ? '差分があった機能のシートだけを作っています。差分がない機能のシートはありません。'
+    : 'このファイルには差分のある機能がないため、機能別シートはありません。';
+  return [
+    {
+      title: 'シートの構成',
+      entries: [
+        {
+          label: '比較概要',
+          text: '比較元・比較先のアプリ名、比較日時、比較した設定領域、変更対象の件数（追加・削除・変更・並び順変更）と、機能別の差分明細件数をまとめた表紙です。'
+        },
+        {
+          label: '確認できなかった範囲',
+          text: `取得に失敗した、または一部しか確認できなかった設定領域がある場合にだけ作られるシートです。${issuesNote}`
+        },
+        {
+          label: '変更対象一覧',
+          text: '「何が変わったか」を、フィールドや一覧などの対象ごとに1行でまとめた目次です。細かい設定値は載せておらず、対象が追加・削除・設定変更のどれに当たるかだけが分かります。'
+        },
+        {
+          label: '変更一覧',
+          text: '変わった設定項目を1件ずつ、変更前と変更後の値を並べて示した明細です。変更対象一覧の1行が、ここでは設定項目ごとの複数行に分かれます。'
+        },
+        {
+          label: '機能別シート（01_～20_、99_）',
+          text: `変更一覧と同じ明細を kintone の機能ごとに分けたシートです。${featureNote}`
+        }
+      ]
+    },
+    {
+      title: '確認の手順',
+      entries: [
+        { label: '手順1', text: '「確認できなかった範囲」シートがある場合は先に確認し、比較できていない領域を把握します。' },
+        { label: '手順2', text: '変更対象一覧で、変更のあった対象と「対象の変更」（追加・削除・設定変更など）を確認し、確認する優先順位を決めます。' },
+        { label: '手順3', text: '詳細が必要な対象は、変更対象一覧の右端にある「変更一覧へ」のリンクから変更一覧の該当行へ移動します。' },
+        { label: '手順4', text: '変更一覧の「設定対象／変更内容」のセル内1行目で、対象（フィールド名や一覧名）を確認します。' },
+        { label: '手順5', text: '「差分プロパティ」で、その対象のどの設定項目かを確認します。kintone の設定画面で開く項目に当たります。' },
+        { label: '手順6', text: '「変更前」「変更後」で、正確な値を確認します。「存在しません」は、その側のアプリに対象そのものがないことを表します。' },
+        { label: '手順7', text: '特定の機能に絞って確認したい場合は、変更一覧の「分類」のリンクから機能別シートを開きます。' }
+      ]
+    },
+    {
+      title: '変更対象一覧の列',
+      entries: [
+        { label: '変更対象', text: '変更があったフィールド名や一覧名などです。特定できない場合は「未識別の設定項目」と表示されます。' },
+        {
+          label: '対象の変更',
+          text: '対象そのものがどうなったかです。「追加」「削除」はフィールドや一覧そのものが増えた・消えた場合、「設定変更」は対象は残っていて設定の一部が変わった場合、「並び順変更」は順番だけが変わった場合、「複合変更」はこれらが混在している場合です。選択肢1つの追加などは「設定変更」に入ります。'
+        },
+        { label: '変更箇所', text: '変わった設定項目の名前を最大4つ並べています。5つ以上あるときは「ほかN項目」と付きます。' },
+        { label: '明細件数', text: 'その対象について、変更一覧に何行の明細があるかです。' },
+        { label: '変更一覧', text: '「変更一覧へ」のリンクです。クリックすると、その対象の明細行へ移動します。' }
+      ]
+    },
+    {
+      title: '変更一覧の列',
+      entries: [
+        {
+          label: '設定対象／変更内容',
+          text: '「どの対象か」と「変更の要約」です。1つのセルの中に2行で記載しており、セル内の1行目が対象の名前（フィールド名や一覧名など）、2行目が変更のあらまし（「変更前 → 変更後」「比較先に追加：値」など）です。行の高さが足りないと2行目が隠れることがあります。'
+        },
+        {
+          label: '差分プロパティ',
+          text: 'その対象の「どの設定項目」が変わったかです。たとえば「必須項目」「絞り込み条件」「表示するフィールドの並び順」などが入ります。フィールドや一覧そのものの追加・削除は「フィールド自体」「テーブル自体」と表示されます。'
+        },
+        {
+          label: '変更前／変更後',
+          text: `変わった値そのものです。変更前は比較元（${sourceName}）、変更後は比較先（${targetName}）の値で、変更前は淡い赤、変更後は淡い緑の背景です。`
+        },
+        {
+          label: '読み方の例',
+          text: '設定対象／変更内容のセルに「顧客名」「いいえ → はい」、差分プロパティに「必須項目」とあれば、「顧客名フィールドの必須設定が、いいえからはいに変わった」と読みます。設定対象／変更内容だけでは「顧客名の何かが変わった」ことしか分からないため、差分プロパティと合わせて読むことで意味が確定します。'
+        },
+        {
+          label: '要約だけで判断しない',
+          text: '変更内容の要約は、値の1行目を約30文字までに短くしたものです。絞り込み条件や長い文章は途中で「…」と省略されるため、完全な値は変更前／変更後の列で確認してください。同じ対象について複数の設定項目が変わっている場合は1項目1行に分かれるため、どの行がどの設定項目に当たるかは差分プロパティで見分けます。'
+        }
+      ]
+    },
+    {
+      title: '機能別シートの列',
+      entries: [
+        { label: '基本の列', text: '「変更区分」「設定対象」「差分プロパティ」「変更前」「変更後」で、変更一覧と同じ読み方です。機能によっては対象を特定しやすいように列が増えています。' },
+        {
+          label: '03_フォームフィールド',
+          text: '「配置」「フィールド名」「フィールドコード」「フィールドの種類」が加わり、どのフィールドかをコードでも確認できます。「フィールド存在」「設定値存在」は、そのフィールドや設定値が比較元・比較先のどちらにあるかを示します。'
+        },
+        { label: '06_一覧設定', text: '「一覧名」でどの一覧の変更かを示します。' },
+        { label: '13_アプリアクション', text: '「アクション種別」「アクション名」でどのアクションの変更かを示します。' },
+        { label: '05_フォーム設計情報', text: '03 と 04 の内容を別の形で再掲したものです。参考として残しており、変更対象一覧・変更一覧・件数には含めていません。' },
+        { label: '99_その他の設定', text: 'どの機能の設定か特定できなかった差分をまとめています。' }
+      ]
+    },
+    {
+      title: '値の表記',
+      entries: [
+        { label: '存在しません', text: 'その側のアプリに対象そのもの（フィールドや一覧など）がないことを表します。背景色は付きません。' },
+        { label: '（未設定）（値なし）（空文字）', text: '対象はあるものの値が入っていない状態です。設定画面で空欄になっているものと、値が空文字で保存されているものを区別しています。' },
+        { label: 'N番目', text: '並び順の変更は、比較元・比較先での位置を1始まりの「N番目」で示します。' },
+        { label: 'はい／いいえ', text: 'オン・オフの設定は「はい」「いいえ」で表示します。' },
+        { label: '要約の「…」', text: '設定対象／変更内容の要約で値が長い場合の省略記号です。完全な値は変更前／変更後の列にあります。' }
+      ]
+    }
+  ];
+}
+
+function buildCustomerGuideSheet(
+  ctx: DiffXlsxContext,
+  availability: CustomerSummarySheetAvailability
+): XlsxSheet {
+  const sections = buildCustomerGuideSections(ctx, availability);
+  const labelWidth = 26;
+  const textWidth = 96;
+  const rows: (string | number | null)[][] = [
+    ['このファイルの見方', ''],
+    ['このシートは各シートの役割と列の読み方をまとめた説明です。比較結果そのものは含みません。', '']
+  ];
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['title'], ['info']];
+  const rowHeights: number[] = [42, 30];
+  const merges: string[] = ['A1:B1', 'A2:B2'];
+  for (const section of sections) {
+    rows.push([section.title, '']);
+    cellStyles.push(['sectionHeader', 'sectionHeader']);
+    rowHeights.push(30);
+    merges.push(`A${rows.length}:B${rows.length}`);
+    section.entries.forEach((entry, index) => {
+      rows.push([entry.label, entry.text]);
+      cellStyles.push(['summaryLabel', index % 2 === 1 ? 'zebra' : 'normal']);
+      rowHeights.push(readableCustomerRowHeight([
+        { value: entry.label, width: labelWidth },
+        { value: entry.text, width: textWidth }
+      ], 160));
+    });
+  }
+  return {
+    name: CUSTOMER_GUIDE_SHEET_NAME,
+    rows,
+    colWidths: [labelWidth, textWidth],
+    rowStyles: rows.map(() => 'normal'),
+    cellStyles,
+    autoFilter: false,
+    freezeRows: 1,
+    rowHeights,
+    styledEmptyCellsAsBlank: true,
+    materializeEmptyCellsFromRow: 3,
+    merges,
+    showGridLines: false,
+    zoomScale: 100,
+    print: {
+      orientation: 'landscape',
+      fitToWidth: 1,
+      fitToHeight: 0,
+      repeatRows: { from: 1, to: 1 },
+      footer: '&Lこのファイルの見方&Rページ &P / &N'
+    }
+  };
+}
+
 function buildCustomerDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
   const items = buildCustomerDiffItems(ctx);
   const apiGroups = buildCustomerApiGroups(items);
   const issueItems = buildCustomerCoverageIssueItems(ctx);
   const issues = buildCustomerIssuesSheet(issueItems);
   const apiSheets = buildCustomerApiDiffSheets(ctx, apiGroups, items);
-  const summary = buildCustomerSummarySheet(ctx, items, apiGroups, {
+  const availability: CustomerSummarySheetAvailability = {
     hasIssues: !!issues,
     hasFeatureSheets: apiSheets.length > 0
-  });
+  };
+  const summary = buildCustomerSummarySheet(ctx, items, apiGroups, availability);
   const sheets: XlsxSheet[] = [summary];
   if (issues) sheets.push(issues);
+  // 取得状態の注意を先に読ませ、その直後に利用者向けの説明を置いてから差分の表へ進む。
+  sheets.push(buildCustomerGuideSheet(ctx, availability));
   sheets.push(buildCustomerCoarseTargetSheet(ctx, items));
   sheets.push(buildCustomerListSheet(ctx, items, apiGroups));
   sheets.push(...apiSheets);
