@@ -560,6 +560,41 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-query.ts
+  function querySyntaxText(query) {
+    const text = String(query || "");
+    let syntax = "";
+    let quoted = false;
+    for (let index = 0; index < text.length; index++) {
+      const char = text[index];
+      if (quoted) {
+        if (char === "\\" && index + 1 < text.length) index++;
+        else if (char === '"') quoted = false;
+        syntax += " ";
+        continue;
+      }
+      if (char === '"') {
+        quoted = true;
+        syntax += " ";
+      } else {
+        syntax += char;
+      }
+    }
+    return syntax;
+  }
+  function hasKintoneOrderByClause(query) {
+    return /\border\s+by\b/i.test(querySyntaxText(query));
+  }
+  function hasKintonePagingClause(query) {
+    const syntax = querySyntaxText(query);
+    return /\blimit\s+\d+/i.test(syntax) || /\boffset\s+\d+/i.test(syntax);
+  }
+  var init_kintone_query = __esm({
+    "src/kintone-query.ts"() {
+      "use strict";
+    }
+  });
+
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
@@ -684,7 +719,7 @@ ${contextLine}`);
     }
   }
   function throwIfPagingClause(query) {
-    if (/\blimit\s+\d+/i.test(query) || /\boffset\s+\d+/i.test(query)) {
+    if (hasKintonePagingClause(query)) {
       throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
     }
   }
@@ -694,7 +729,7 @@ ${contextLine}`);
     const fields = Array.isArray(options.fields) && options.fields.length ? options.fields : void 0;
     const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => {
     };
-    const useCursor = /\border\s+by\b/i.test(base);
+    const useCursor = hasKintoneOrderByClause(base);
     const limit = 500;
     if (!useCursor) {
       const all2 = [];
@@ -751,6 +786,7 @@ ${contextLine}`);
     "src/api.ts"() {
       "use strict";
       init_constants();
+      init_kintone_query();
       init_utils();
       DEPLOY_PATH_SNIPPET = "app/deploy.json";
       ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
@@ -1066,6 +1102,7 @@ ${contextLine}`);
   }
 
   // src/tabs/record-query.ts
+  init_kintone_query();
   function csvEscape(val) {
     const s = String(val == null ? "" : val);
     return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r") ? '"' + s.replace(/"/g, '""') + '"' : s;

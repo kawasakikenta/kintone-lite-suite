@@ -1,5 +1,7 @@
 'use strict';
 
+import { hasKintoneOrderByClause, hasKintonePagingClause } from '../kintone-query.js';
+
 /**
  * レコード一括取得・CSV・ZIP 命名の純粋ヘルパー。
  * 旧統合 UI（tabs/record.ts）と lite 版（tabs/record-standalone.ts）の両方から参照する。
@@ -14,12 +16,11 @@ export const RECORDS_OFFSET_LIMIT = 10000;
 export const RECORDS_WRITE_CHUNK = 100;
 
 export function hasOrderByClause(query: unknown): boolean {
-  return /\border\s+by\b/i.test(String(query || ''));
+  return hasKintoneOrderByClause(query);
 }
 
 export function hasPagingClause(query: unknown): boolean {
-  const text = String(query || '');
-  return /\blimit\s+\d+/i.test(text) || /\boffset\s+\d+/i.test(text);
+  return hasKintonePagingClause(query);
 }
 
 const PAGING_CONFLICT_MESSAGE =

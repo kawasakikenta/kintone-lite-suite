@@ -180,8 +180,23 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-preview-row__actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 #kus-reflect-lite .kus-rl-preview-row__state{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 #kus-reflect-lite .kus-rl-preview-mini{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:#fff;border:1px solid #e2e8f0;font-size:10.5px;font-weight:700;color:#475569}
+#kus-reflect-lite.kus-lp--wide{width:min(760px,96vw)}
+#kus-reflect-lite .kus-rl-nav{position:sticky;top:-16px;z-index:8;display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:-2px 0 14px;padding:8px;background:rgba(248,250,252,.96);border:1px solid #e2e8f0;border-radius:12px;backdrop-filter:blur(8px)}
+#kus-reflect-lite .kus-rl-nav__btn{appearance:none;border:0;border-radius:9px;background:transparent;color:#64748b;padding:8px 7px;cursor:pointer;font:700 11.5px/1.3 inherit;display:flex;align-items:center;justify-content:center;gap:6px}
+#kus-reflect-lite .kus-rl-nav__btn:hover{background:#fff;color:#334155}
+#kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"]{background:#fff;color:#b91c1c;box-shadow:0 1px 3px rgba(15,23,42,.12)}
+#kus-reflect-lite .kus-rl-nav__num{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#e2e8f0;color:#475569;font-size:10px}
+#kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"] .kus-rl-nav__num{background:#fee2e2;color:#b91c1c}
+#kus-reflect-lite .kus-rl-stage[hidden]{display:none}
+#kus-reflect-lite .kus-rl-stage-head{margin:2px 2px 12px}
+#kus-reflect-lite .kus-rl-stage-head h2{margin:0;font-size:15px;color:#0f172a}
+#kus-reflect-lite .kus-rl-stage-head p{margin:3px 0 0;font-size:11.5px;color:#64748b}
+#kus-reflect-lite .kus-rl-action-dock{position:sticky;bottom:-18px;z-index:9;margin:14px -18px -18px;padding:12px 18px 16px;background:linear-gradient(180deg,rgba(255,255,255,.86),#fff 28%);border-top:1px solid #e2e8f0;box-shadow:0 -10px 22px rgba(15,23,42,.07)}
+#kus-reflect-lite .kus-rl-action-dock .kus-lp__status{margin-top:8px}
+#kus-reflect-lite .kus-rl-stage .kus-lp__card:last-child{margin-bottom:0}
 @media(max-width:640px){
   #kus-reflect-lite .kus-rl-review-grid{grid-template-columns:1fr}
+  #kus-reflect-lite .kus-rl-nav__btn{font-size:11px;padding-inline:3px}
 }
 `;
 
@@ -233,6 +248,7 @@ export function mountReflectLitePanel() {
     hint: '<strong>反映先は常にプレビュー</strong>環境です。まず差分プレビューで変更内容を確認し、そのまま反映判断につなげます。',
     wide: true
   });
+  let showWorkflowStage: (stage: 'setup' | 'review' | 'result') => void = () => {};
 
   // ---- アプリ ----
   const srcApp = makeInput({ placeholder: '比較元アプリID', value: memoryState.sourceAppId || '', width: 'id' });
@@ -821,6 +837,7 @@ export function mountReflectLitePanel() {
     };
     rerenderPreviewCard();
     refreshReviewCard();
+    showWorkflowStage('review');
     return result;
   }
 
@@ -1060,6 +1077,7 @@ export function mountReflectLitePanel() {
     const retryScopes = memoryState.lastResult?.retryScopes || [];
     if (!retryScopes.length) return;
     setSelectedScopes(retryScopes);
+    showWorkflowStage('setup');
     panel.setStatus(`失敗・未実行の ${retryScopes.length} セクションを選択しました。差分プレビューで確認してから再実行してください。`, 'info');
     cardScope.card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
@@ -1194,6 +1212,7 @@ export function mountReflectLitePanel() {
         failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng').map((s) => s.label)
       };
       renderLastResult();
+      showWorkflowStage('result');
       return { cancelled: false, hadError: counts.ng > 0 || counts.pending > 0 };
     });
 
@@ -1208,6 +1227,74 @@ export function mountReflectLitePanel() {
     }
     panel.setStatus('プレビュー反映が完了しました。運用環境への反映は「比較先の設定画面を開く」からデプロイしてください。', 'ok');
   });
+
+  // ---- 3ステップ・ワークフロー ----
+  // 全設定を縦に並べるのではなく、設定 → 差分確認 → 結果に分ける。
+  // 実行ボタンと現在の状態はどのステップでも見失わないよう下部に固定する。
+  const nav = document.createElement('nav');
+  nav.className = 'kus-rl-nav';
+  nav.setAttribute('aria-label', 'プレビュー反映の手順');
+  nav.setAttribute('role', 'tablist');
+  const stageDefs = [
+    { id: 'setup' as const, number: '1', label: '対象と設定' },
+    { id: 'review' as const, number: '2', label: '差分を確認' },
+    { id: 'result' as const, number: '3', label: '実行結果' }
+  ];
+  const stages = {} as Record<'setup' | 'review' | 'result', HTMLElement>;
+  const navButtons = {} as Record<'setup' | 'review' | 'result', HTMLButtonElement>;
+  for (const def of stageDefs) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'kus-rl-nav__btn';
+    button.id = `kus-rl-tab-${def.id}`;
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-controls', `kus-rl-stage-${def.id}`);
+    button.innerHTML = `<span class="kus-rl-nav__num">${def.number}</span><span>${def.label}</span>`;
+    nav.appendChild(button);
+    navButtons[def.id] = button;
+    const stage = document.createElement('section');
+    stage.className = 'kus-rl-stage';
+    stage.id = `kus-rl-stage-${def.id}`;
+    stage.dataset.stage = def.id;
+    stage.setAttribute('role', 'tabpanel');
+    stage.setAttribute('aria-labelledby', button.id);
+    stages[def.id] = stage;
+    button.addEventListener('click', () => showWorkflowStage(def.id));
+    button.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      const current = stageDefs.findIndex((item) => item.id === def.id);
+      const direction = event.key === 'ArrowRight' ? 1 : -1;
+      const next = stageDefs[(current + direction + stageDefs.length) % stageDefs.length];
+      showWorkflowStage(next.id);
+    });
+  }
+  stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>反映条件を決める</h2><p>接続先、セクション、安全オプションを設定します。</p></header>';
+  stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>差分と実行予定を確認</h2><p>実際に変更されるセクションと注意点を確認します。</p></header>';
+  stages.result.innerHTML = '<header class="kus-rl-stage-head"><h2>実行結果と次の操作</h2><p>成功・失敗と、再実行が必要なセクションを確認します。</p></header>';
+  [cardApp.card, cardScope.card, cardOpt.card, cardPreset.card].forEach((node) => stages.setup.appendChild(node));
+  [reviewCard.card, previewCard.card].forEach((node) => stages.review.appendChild(node));
+  [lastResultCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
+  const dock = document.createElement('div');
+  dock.className = 'kus-rl-action-dock';
+  dock.appendChild(runBtn);
+  dock.appendChild(panel.status);
+  dock.appendChild(panel.result);
+  const hint = panel.body.querySelector('.kus-lp__hint');
+  hint?.insertAdjacentElement('afterend', nav);
+  stageDefs.forEach((def) => panel.body.appendChild(stages[def.id]));
+  panel.body.appendChild(dock);
+  showWorkflowStage = (active) => {
+    stageDefs.forEach((def) => {
+      const selected = def.id === active;
+      stages[def.id].hidden = !selected;
+      navButtons[def.id].setAttribute('aria-selected', String(selected));
+      navButtons[def.id].tabIndex = selected ? 0 : -1;
+    });
+    navButtons[active].focus({ preventScroll: true });
+    panel.body.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  showWorkflowStage(memoryState.lastResult ? 'result' : (memoryState.lastPreview ? 'review' : 'setup'));
 
   refreshSameConnBanner();
   refreshReviewCard();

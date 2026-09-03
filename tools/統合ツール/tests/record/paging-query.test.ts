@@ -18,6 +18,12 @@ describe('record paging clause detection', () => {
     expect(hasOrderByClause('')).toBe(false);
   });
 
+  it('ignores clause-like words inside quoted values, including escaped quotes', () => {
+    expect(hasOrderByClause('memo like "order by amount"')).toBe(false);
+    expect(hasPagingClause('memo = "limit 10 / offset 5"')).toBe(false);
+    expect(hasPagingClause('memo = "say \\"limit 10\\"" and limit 20')).toBe(true);
+  });
+
   it('detects limit/offset paging clauses', () => {
     expect(hasPagingClause('limit 100')).toBe(true);
     expect(hasPagingClause('offset 50')).toBe(true);

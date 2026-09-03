@@ -53,6 +53,7 @@ async function resolveDesignBundle(
  * @param {(msg: string, err?: boolean) => void} setStatus
  */
 export async function runDesignExportStandalone(kind, source, setStatus) {
+  if (kind !== 'md' && kind !== 'json') throw new Error('設計書の出力形式は md または json を指定してください');
   const bundle = await resolveDesignBundle(source, 'source', setStatus);
   state.lastSourceBundle = bundle;
 

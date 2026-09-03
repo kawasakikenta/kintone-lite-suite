@@ -558,6 +558,13 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-query.ts
+  var init_kintone_query = __esm({
+    "src/kintone-query.ts"() {
+      "use strict";
+    }
+  });
+
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
@@ -702,6 +709,7 @@ ${base}`
     "src/api.ts"() {
       "use strict";
       init_constants();
+      init_kintone_query();
       init_utils();
       DEPLOY_PATH_SNIPPET = "app/deploy.json";
       ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
@@ -1019,6 +1027,7 @@ ${base}`
   }
 
   // src/tabs/record-query.ts
+  init_kintone_query();
   function uniqueZipEntryName(used, base) {
     let cand = base;
     let n = 2;
@@ -1120,6 +1129,9 @@ ${base}`
       return sum + ["js", "css"].reduce((s, kind) => s + (Array.isArray(parsed?.[platform]?.[kind]) ? parsed[platform][kind].length : 0), 0);
     }, 0);
     const scopeRaw = String(parsed.scope || "").trim().toUpperCase();
+    if (inputTotal > 0 && all.length === 0) {
+      throw new Error("JS/CSS設定の全項目で type/url/fileKey が不足しています。現在設定の全削除を防ぐため反映を中止しました");
+    }
     return {
       payload,
       scope: CUSTOMIZE_SCOPES.has(scopeRaw) ? scopeRaw : null,

@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone, stableStringify, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
-import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle } from '../api.js';
+import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, fetchBundle, pickRevision } from '../api.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { pushReflectErrorLog as pushErrorLog, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
 
@@ -50,31 +50,44 @@ async function applyFieldSection(prefix, app, sourceProps, logs, lookupMap, stop
   }
 
   let failedSteps = 0;
+  let revision = pickRevision(current);
+  const withRevision = (body: Record<string, unknown>) => revision ? { ...body, revision } : body;
   if (Object.keys(adds).length) {
     try {
-      await apiPost(prefix, '/app/form/fields.json', { app, properties: adds });
+      const res = await apiPost(prefix, '/app/form/fields.json', withRevision({ app, properties: adds }));
+      revision = pickRevision(res) || revision;
       logs.push(`  OK フィールド追加: ${Object.keys(adds).length}件`);
     } catch (e) {
       failedSteps += 1;
-      pushErrorLog(logs, `  NG フィールド追加: ${e.message}`, e.message);
-      if (stopOnError) throw e;
+      const reported = decorateRevisionConflict(e, 'フィールド追加');
+      pushErrorLog(logs, `  NG フィールド追加: ${reported.message}`, reported.message);
+      if (stopOnError) throw reported;
     }
   }
   if (Object.keys(updates).length) {
     try {
-      await apiPut(prefix, '/app/form/fields.json', { app, properties: updates });
+      await apiPut(prefix, '/app/form/fields.json', withRevision({ app, properties: updates }));
       logs.push(`  OK フィールド更新: ${Object.keys(updates).length}件`);
     } catch (e) {
       failedSteps += 1;
-      pushErrorLog(logs, `  NG フィールド更新: ${e.message}`, e.message);
-      if (stopOnError) throw e;
+      const reported = decorateRevisionConflict(e, 'フィールド更新');
+      pushErrorLog(logs, `  NG フィールド更新: ${reported.message}`, reported.message);
+      if (stopOnError) throw reported;
     }
   }
   return failedSteps;
 }
 
 async function applyViewsSection(prefix, app, sourceViews) {
-  await apiPut(prefix, '/app/views.json', { app, views: sourceViews.views || sourceViews });
+  const current = await apiGet(prefix, '/app/views.json', { app });
+  const revision = pickRevision(current);
+  try {
+    await apiPut(prefix, '/app/views.json', revision
+      ? { app, views: sourceViews.views || sourceViews, revision }
+      : { app, views: sourceViews.views || sourceViews });
+  } catch (e) {
+    throw decorateRevisionConflict(e, '一覧・グラフ設定の反映');
+  }
 }
 
 /**
@@ -184,8 +197,14 @@ export async function runApplyPreviewStandalone(
         logs.push(`OK ${def.label}`);
         sections.push({ sectionKey: secKey, label: def.label, status: 'ok' });
       } else {
-        const body = { app, ...def.putBuilder(sourceSec) };
-        await apiPut(prefix, def.endpoint, body);
+        const current = await apiGet(prefix, def.endpoint, { app });
+        const revision = pickRevision(current);
+        const body = { app, ...def.putBuilder(sourceSec), ...(revision ? { revision } : {}) };
+        try {
+          await apiPut(prefix, def.endpoint, body);
+        } catch (e) {
+          throw decorateRevisionConflict(e, `${def.label}の反映`);
+        }
         logs.push(`OK ${def.label}`);
         sections.push({ sectionKey: secKey, label: def.label, status: 'ok' });
       }
