@@ -34,6 +34,13 @@ describe('buildJsConfigApplyPlan', () => {
     expect(() => buildJsConfigApplyPlan(null)).toThrow(/desktop/);
   });
 
+  it('rejects an all-invalid non-empty list instead of clearing current settings', () => {
+    expect(() => buildJsConfigApplyPlan({
+      desktop: { js: [{ type: 'FILE', file: {} }] }
+    })).toThrow(/全削除/);
+    expect(buildJsConfigApplyPlan({ desktop: { js: [], css: [] } }).counts.desktopJs).toBe(0);
+  });
+
   it('warns about FILE fileKey reuse only when FILE entries exist', () => {
     const withFile = buildJsConfigApplyPlan({ desktop: { js: [{ type: 'FILE', file: { fileKey: 'k' } }] } });
     expect(buildJsConfigApplyConfirmText('5', '', withFile)).toContain('fileKey');

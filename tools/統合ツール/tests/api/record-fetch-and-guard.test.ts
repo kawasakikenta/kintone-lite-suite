@@ -94,6 +94,14 @@ describe('fetchRecordsByQuery', () => {
     expect(api.mock.calls.some((c) => c[1] === 'DELETE')).toBe(false);
   });
 
+  it('does not mistake clause-like text values for order or paging syntax', async () => {
+    api.mockResolvedValueOnce({ records: makeRecords(1, 1) });
+    const query = 'memo like "order by amount, limit 10"';
+    const result = await fetchRecordsByQuery('/k/v1', '7', query);
+    expect(result.mode).toBe('keyset');
+    expect(api.mock.calls[0][2].query).toBe(`(${query}) and $id > 0 order by $id asc limit 500`);
+  });
+
   it('deletes the cursor when reading fails midway', async () => {
     api
       .mockResolvedValueOnce({ id: 'cur-2' })
