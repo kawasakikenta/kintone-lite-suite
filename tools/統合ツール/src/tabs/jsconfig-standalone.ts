@@ -119,6 +119,9 @@ export function buildJsConfigApplyPlan(parsed: any): JsConfigApplyPlan {
     return sum + ['js', 'css'].reduce((s, kind) => s + (Array.isArray(parsed?.[platform]?.[kind]) ? parsed[platform][kind].length : 0), 0);
   }, 0);
   const scopeRaw = String(parsed.scope || '').trim().toUpperCase();
+  if (inputTotal > 0 && all.length === 0) {
+    throw new Error('JS/CSS設定の全項目で type/url/fileKey が不足しています。現在設定の全削除を防ぐため反映を中止しました');
+  }
   return {
     payload,
     scope: CUSTOMIZE_SCOPES.has(scopeRaw) ? scopeRaw : null,

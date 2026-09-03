@@ -224,6 +224,11 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
   const newProps: Record<string, any> = {};
   const renamePairs: Array<{ from: string; to: string }> = [];
   const collisions: string[] = [];
+  const retainedCodes = new Set(
+    Object.entries(props || {})
+      .filter(([, field]: [string, any]) => field && !RENAME_EXCLUDED_TYPES.has(field.type))
+      .map(([code]) => code)
+  );
   for (const [code, field] of Object.entries(props || {}) as Array<[string, any]>) {
     if (!field || RENAME_EXCLUDED_TYPES.has(field.type)) continue;
     const newCode = rename(code);
@@ -231,6 +236,8 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
     let touched = false;
     if (newCode !== code) {
       if (!newCode) { collisions.push(`${code} → (空)`); continue; }
+      retainedCodes.delete(code);
+      if (retainedCodes.has(newCode)) collisions.push(`${code} → ${newCode}`);
       cloned.code = newCode;
       touched = true;
       renamePairs.push({ from: code, to: newCode });
@@ -250,7 +257,7 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
       cloned.fields = children;
     }
     if (!touched) continue;
-    if (newProps[newCode]) collisions.push(`${code} → ${newCode}`);
+    if (newProps[newCode] && newCode !== code) collisions.push(`${code} → ${newCode}`);
     newProps[newCode] = cloned;
     modifiedCount++;
   }

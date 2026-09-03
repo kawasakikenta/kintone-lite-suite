@@ -1,6 +1,7 @@
 'use strict';
 
 import { SECTION_DEFS } from './constants.js';
+import { hasKintoneOrderByClause, hasKintonePagingClause } from './kintone-query.js';
 import { normalize, deepClone, apiErrorWithContext } from './utils.js';
 
 export function buildApiPrefix(guestId: string | number | null | undefined, preview: boolean): string {
@@ -320,7 +321,7 @@ export interface FetchRecordsByQueryResult {
 }
 
 function throwIfPagingClause(query: string): void {
-  if (/\blimit\s+\d+/i.test(query) || /\boffset\s+\d+/i.test(query)) {
+  if (hasKintonePagingClause(query)) {
     throw new Error('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。');
   }
 }
@@ -341,7 +342,7 @@ export async function fetchRecordsByQuery(
   throwIfPagingClause(base);
   const fields = Array.isArray(options.fields) && options.fields.length ? options.fields : undefined;
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {};
-  const useCursor = /\border\s+by\b/i.test(base);
+  const useCursor = hasKintoneOrderByClause(base);
   const limit = 500;
 
   if (!useCursor) {

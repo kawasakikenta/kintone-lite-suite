@@ -580,6 +580,13 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-query.ts
+  var init_kintone_query = __esm({
+    "src/kintone-query.ts"() {
+      "use strict";
+    }
+  });
+
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
@@ -732,6 +739,7 @@ ${base}`
     "src/api.ts"() {
       "use strict";
       init_constants();
+      init_kintone_query();
       init_utils();
       DEPLOY_PATH_SNIPPET = "app/deploy.json";
       ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
@@ -1194,6 +1202,9 @@ ${base}`
     const newProps = {};
     const renamePairs = [];
     const collisions = [];
+    const retainedCodes = new Set(
+      Object.entries(props || {}).filter(([, field]) => field && !RENAME_EXCLUDED_TYPES.has(field.type)).map(([code]) => code)
+    );
     for (const [code, field] of Object.entries(props || {})) {
       if (!field || RENAME_EXCLUDED_TYPES.has(field.type)) continue;
       const newCode = rename(code);
@@ -1204,6 +1215,8 @@ ${base}`
           collisions.push(`${code} → (空)`);
           continue;
         }
+        retainedCodes.delete(code);
+        if (retainedCodes.has(newCode)) collisions.push(`${code} → ${newCode}`);
         cloned.code = newCode;
         touched = true;
         renamePairs.push({ from: code, to: newCode });
@@ -1223,7 +1236,7 @@ ${base}`
         cloned.fields = children;
       }
       if (!touched) continue;
-      if (newProps[newCode]) collisions.push(`${code} → ${newCode}`);
+      if (newProps[newCode] && newCode !== code) collisions.push(`${code} → ${newCode}`);
       newProps[newCode] = cloned;
       modifiedCount++;
     }
