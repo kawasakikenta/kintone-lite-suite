@@ -808,6 +808,13 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-query.ts
+  var init_kintone_query = __esm({
+    "src/kintone-query.ts"() {
+      "use strict";
+    }
+  });
+
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
@@ -1163,6 +1170,7 @@ ${contextLine}`);
     "src/api.ts"() {
       "use strict";
       init_constants();
+      init_kintone_query();
       init_utils();
       DEFAULT_API_GET_RETRIES = 3;
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
@@ -4737,6 +4745,7 @@ ${detail}`);
     return bundle;
   }
   async function runDesignExportStandalone(kind, source, setStatus) {
+    if (kind !== "md" && kind !== "json") throw new Error("設計書の出力形式は md または json を指定してください");
     const bundle = await resolveDesignBundle(source, "source", setStatus);
     state.lastSourceBundle = bundle;
     const appLabel = appLabelFromBundle(bundle);

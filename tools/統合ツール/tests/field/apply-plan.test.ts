@@ -86,4 +86,12 @@ describe('planBulkRename', () => {
     expect(Object.keys(out.properties)).toEqual(['done']);
     expect(out.collisions).toEqual(['dev_ → (空)']);
   });
+
+  it('reports a collision with an unchanged existing field', () => {
+    const out = planBulkRename({
+      title: { type: 'SINGLE_LINE_TEXT', code: 'title' },
+      dev_title: { type: 'SINGLE_LINE_TEXT', code: 'dev_title' }
+    }, 'dev_', true);
+    expect(out.collisions).toContain('dev_title → title');
+  });
 });

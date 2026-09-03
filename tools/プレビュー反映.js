@@ -550,6 +550,13 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-query.ts
+  var init_kintone_query = __esm({
+    "src/kintone-query.ts"() {
+      "use strict";
+    }
+  });
+
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
@@ -672,6 +679,30 @@ ${contextLine}`);
     } catch (e) {
       throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
     }
+  }
+  function isRevisionConflictError(error) {
+    if (!error) return false;
+    const codes = [error?.code, error?.original?.code, error?.original?.error?.code].map((c) => String(c || "").toUpperCase()).filter(Boolean);
+    if (codes.some((c) => REVISION_CONFLICT_CODES.has(c))) return true;
+    const text = String(error?.message || "");
+    return /GAIA_CO02|リビジョン.*(最新|一致|異な)|revision.*(latest|mismatch|conflict)/i.test(text);
+  }
+  function decorateRevisionConflict(error, subject) {
+    if (!isRevisionConflictError(error)) return error;
+    const base = error?.message != null ? String(error.message) : String(error);
+    const wrapped = new Error(
+      `${subject}は取得後に別の更新が入ったため中止しました（revision 競合）。最新の設定を取得し直してから再実行してください。
+${base}`
+    );
+    wrapped.revisionConflict = true;
+    wrapped.original = error;
+    if (error?.code) wrapped.code = error.code;
+    return wrapped;
+  }
+  function pickRevision(res) {
+    const value = res?.revision;
+    if (value == null || value === "") return "";
+    return String(value);
   }
   function sanitizeBundleMeta(meta) {
     const out = { sectionRevisions: {} };
@@ -948,11 +979,12 @@ ${contextLine}`);
     }
     return bundle;
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
       init_constants();
+      init_kintone_query();
       init_utils();
       DEPLOY_PATH_SNIPPET = "app/deploy.json";
       ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
@@ -977,6 +1009,7 @@ ${contextLine}`);
         lastError: "",
         byPath: {}
       };
+      REVISION_CONFLICT_CODES = /* @__PURE__ */ new Set(["GAIA_CO02"]);
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
       CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
       TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
@@ -1384,30 +1417,41 @@ ${contextLine}`);
       }
     }
     let failedSteps = 0;
+    let revision = pickRevision(current);
+    const withRevision = (body) => revision ? { ...body, revision } : body;
     if (Object.keys(adds).length) {
       try {
-        await apiPost(prefix, "/app/form/fields.json", { app, properties: adds });
+        const res = await apiPost(prefix, "/app/form/fields.json", withRevision({ app, properties: adds }));
+        revision = pickRevision(res) || revision;
         logs.push(`  OK フィールド追加: ${Object.keys(adds).length}件`);
       } catch (e) {
         failedSteps += 1;
-        pushReflectErrorLog(logs, `  NG フィールド追加: ${e.message}`, e.message);
-        if (stopOnError) throw e;
+        const reported = decorateRevisionConflict(e, "フィールド追加");
+        pushReflectErrorLog(logs, `  NG フィールド追加: ${reported.message}`, reported.message);
+        if (stopOnError) throw reported;
       }
     }
     if (Object.keys(updates).length) {
       try {
-        await apiPut(prefix, "/app/form/fields.json", { app, properties: updates });
+        await apiPut(prefix, "/app/form/fields.json", withRevision({ app, properties: updates }));
         logs.push(`  OK フィールド更新: ${Object.keys(updates).length}件`);
       } catch (e) {
         failedSteps += 1;
-        pushReflectErrorLog(logs, `  NG フィールド更新: ${e.message}`, e.message);
-        if (stopOnError) throw e;
+        const reported = decorateRevisionConflict(e, "フィールド更新");
+        pushReflectErrorLog(logs, `  NG フィールド更新: ${reported.message}`, reported.message);
+        if (stopOnError) throw reported;
       }
     }
     return failedSteps;
   }
   async function applyViewsSection(prefix, app, sourceViews) {
-    await apiPut(prefix, "/app/views.json", { app, views: sourceViews.views || sourceViews });
+    const current = await apiGet(prefix, "/app/views.json", { app });
+    const revision = pickRevision(current);
+    try {
+      await apiPut(prefix, "/app/views.json", revision ? { app, views: sourceViews.views || sourceViews, revision } : { app, views: sourceViews.views || sourceViews });
+    } catch (e) {
+      throw decorateRevisionConflict(e, "一覧・グラフ設定の反映");
+    }
   }
   async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
     const { sourceAppId, sourceGuestId, sourcePreview, targetAppId, targetGuestId } = opts;
@@ -1483,8 +1527,14 @@ ${contextLine}`);
           logs.push(`OK ${def.label}`);
           sections.push({ sectionKey: secKey, label: def.label, status: "ok" });
         } else {
-          const body = { app, ...def.putBuilder(sourceSec) };
-          await apiPut(prefix, def.endpoint, body);
+          const current = await apiGet(prefix, def.endpoint, { app });
+          const revision = pickRevision(current);
+          const body = { app, ...def.putBuilder(sourceSec), ...revision ? { revision } : {} };
+          try {
+            await apiPut(prefix, def.endpoint, body);
+          } catch (e) {
+            throw decorateRevisionConflict(e, `${def.label}の反映`);
+          }
           logs.push(`OK ${def.label}`);
           sections.push({ sectionKey: secKey, label: def.label, status: "ok" });
         }
@@ -2536,8 +2586,23 @@ ${contextLine}`);
 #kus-reflect-lite .kus-rl-preview-row__actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 #kus-reflect-lite .kus-rl-preview-row__state{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 #kus-reflect-lite .kus-rl-preview-mini{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:#fff;border:1px solid #e2e8f0;font-size:10.5px;font-weight:700;color:#475569}
+#kus-reflect-lite.kus-lp--wide{width:min(760px,96vw)}
+#kus-reflect-lite .kus-rl-nav{position:sticky;top:-16px;z-index:8;display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:-2px 0 14px;padding:8px;background:rgba(248,250,252,.96);border:1px solid #e2e8f0;border-radius:12px;backdrop-filter:blur(8px)}
+#kus-reflect-lite .kus-rl-nav__btn{appearance:none;border:0;border-radius:9px;background:transparent;color:#64748b;padding:8px 7px;cursor:pointer;font:700 11.5px/1.3 inherit;display:flex;align-items:center;justify-content:center;gap:6px}
+#kus-reflect-lite .kus-rl-nav__btn:hover{background:#fff;color:#334155}
+#kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"]{background:#fff;color:#b91c1c;box-shadow:0 1px 3px rgba(15,23,42,.12)}
+#kus-reflect-lite .kus-rl-nav__num{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#e2e8f0;color:#475569;font-size:10px}
+#kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"] .kus-rl-nav__num{background:#fee2e2;color:#b91c1c}
+#kus-reflect-lite .kus-rl-stage[hidden]{display:none}
+#kus-reflect-lite .kus-rl-stage-head{margin:2px 2px 12px}
+#kus-reflect-lite .kus-rl-stage-head h2{margin:0;font-size:15px;color:#0f172a}
+#kus-reflect-lite .kus-rl-stage-head p{margin:3px 0 0;font-size:11.5px;color:#64748b}
+#kus-reflect-lite .kus-rl-action-dock{position:sticky;bottom:-18px;z-index:9;margin:14px -18px -18px;padding:12px 18px 16px;background:linear-gradient(180deg,rgba(255,255,255,.86),#fff 28%);border-top:1px solid #e2e8f0;box-shadow:0 -10px 22px rgba(15,23,42,.07)}
+#kus-reflect-lite .kus-rl-action-dock .kus-lp__status{margin-top:8px}
+#kus-reflect-lite .kus-rl-stage .kus-lp__card:last-child{margin-bottom:0}
 @media(max-width:640px){
   #kus-reflect-lite .kus-rl-review-grid{grid-template-columns:1fr}
+  #kus-reflect-lite .kus-rl-nav__btn{font-size:11px;padding-inline:3px}
 }
 `;
   function ensureReflectLiteStyles() {
@@ -2558,6 +2623,8 @@ ${contextLine}`);
       hint: "<strong>反映先は常にプレビュー</strong>環境です。まず差分プレビューで変更内容を確認し、そのまま反映判断につなげます。",
       wide: true
     });
+    let showWorkflowStage = () => {
+    };
     const srcApp = makeInput({ placeholder: "比較元アプリID", value: memoryState.sourceAppId || "", width: "id" });
     const srcGuest = makeInput({ placeholder: "ゲストID", value: memoryState.sourceGuestId || "", width: "guest" });
     const tgtApp = makeInput({ placeholder: "比較先アプリID", value: memoryState.targetAppId || DEFAULT_APP_ID || "", width: "id" });
@@ -3103,6 +3170,7 @@ ${contextLine}`);
       };
       rerenderPreviewCard();
       refreshReviewCard();
+      showWorkflowStage("review");
       return result;
     }
     function refreshReviewCard() {
@@ -3298,6 +3366,7 @@ ${contextLine}`);
       const retryScopes = memoryState.lastResult?.retryScopes || [];
       if (!retryScopes.length) return;
       setSelectedScopes(retryScopes);
+      showWorkflowStage("setup");
       panel.setStatus(`失敗・未実行の ${retryScopes.length} セクションを選択しました。差分プレビューで確認してから再実行してください。`, "info");
       cardScope.card.scrollIntoView({ behavior: "smooth", block: "start" });
     });
@@ -3416,6 +3485,7 @@ ${detail}
           failedLabels: applyOutcome.sections.filter((s) => s.status === "ng").map((s) => s.label)
         };
         renderLastResult();
+        showWorkflowStage("result");
         return { cancelled: false, hadError: counts.ng > 0 || counts.pending > 0 };
       });
       if (!outcome) return;
@@ -3429,6 +3499,70 @@ ${detail}
       }
       panel.setStatus("プレビュー反映が完了しました。運用環境への反映は「比較先の設定画面を開く」からデプロイしてください。", "ok");
     });
+    const nav = document.createElement("nav");
+    nav.className = "kus-rl-nav";
+    nav.setAttribute("aria-label", "プレビュー反映の手順");
+    nav.setAttribute("role", "tablist");
+    const stageDefs = [
+      { id: "setup", number: "1", label: "対象と設定" },
+      { id: "review", number: "2", label: "差分を確認" },
+      { id: "result", number: "3", label: "実行結果" }
+    ];
+    const stages = {};
+    const navButtons = {};
+    for (const def of stageDefs) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "kus-rl-nav__btn";
+      button.id = `kus-rl-tab-${def.id}`;
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-controls", `kus-rl-stage-${def.id}`);
+      button.innerHTML = `<span class="kus-rl-nav__num">${def.number}</span><span>${def.label}</span>`;
+      nav.appendChild(button);
+      navButtons[def.id] = button;
+      const stage = document.createElement("section");
+      stage.className = "kus-rl-stage";
+      stage.id = `kus-rl-stage-${def.id}`;
+      stage.dataset.stage = def.id;
+      stage.setAttribute("role", "tabpanel");
+      stage.setAttribute("aria-labelledby", button.id);
+      stages[def.id] = stage;
+      button.addEventListener("click", () => showWorkflowStage(def.id));
+      button.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        const current = stageDefs.findIndex((item) => item.id === def.id);
+        const direction = event.key === "ArrowRight" ? 1 : -1;
+        const next = stageDefs[(current + direction + stageDefs.length) % stageDefs.length];
+        showWorkflowStage(next.id);
+      });
+    }
+    stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>反映条件を決める</h2><p>接続先、セクション、安全オプションを設定します。</p></header>';
+    stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>差分と実行予定を確認</h2><p>実際に変更されるセクションと注意点を確認します。</p></header>';
+    stages.result.innerHTML = '<header class="kus-rl-stage-head"><h2>実行結果と次の操作</h2><p>成功・失敗と、再実行が必要なセクションを確認します。</p></header>';
+    [cardApp.card, cardScope.card, cardOpt.card, cardPreset.card].forEach((node) => stages.setup.appendChild(node));
+    [reviewCard.card, previewCard.card].forEach((node) => stages.review.appendChild(node));
+    [lastResultCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
+    const dock = document.createElement("div");
+    dock.className = "kus-rl-action-dock";
+    dock.appendChild(runBtn);
+    dock.appendChild(panel.status);
+    dock.appendChild(panel.result);
+    const hint = panel.body.querySelector(".kus-lp__hint");
+    hint?.insertAdjacentElement("afterend", nav);
+    stageDefs.forEach((def) => panel.body.appendChild(stages[def.id]));
+    panel.body.appendChild(dock);
+    showWorkflowStage = (active) => {
+      stageDefs.forEach((def) => {
+        const selected = def.id === active;
+        stages[def.id].hidden = !selected;
+        navButtons[def.id].setAttribute("aria-selected", String(selected));
+        navButtons[def.id].tabIndex = selected ? 0 : -1;
+      });
+      navButtons[active].focus({ preventScroll: true });
+      panel.body.scrollTo({ top: 0, behavior: "smooth" });
+    };
+    showWorkflowStage(memoryState.lastResult ? "result" : memoryState.lastPreview ? "review" : "setup");
     refreshSameConnBanner();
     refreshReviewCard();
   }
