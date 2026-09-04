@@ -142,6 +142,31 @@ const RISKY_SCOPE_KEYS = new Set([
 
 const REFLECT_LITE_STYLE_ID = 'kus-reflect-lite-styles';
 const REFLECT_LITE_CSS = `
+#kus-reflect-lite.kus-lp--wide{width:min(920px,96vw);max-height:min(94vh,960px);border-radius:24px;border-color:#cbd5e1}
+#kus-reflect-lite .kus-lp__hero{padding:20px 24px 22px;background:radial-gradient(circle at 82% -40%,rgba(251,146,60,.9),transparent 38%),linear-gradient(128deg,#172033 0%,#7f1d1d 58%,#dc2626 100%)}
+#kus-reflect-lite .kus-lp__title{font-size:20px;letter-spacing:-.01em}
+#kus-reflect-lite .kus-lp__subtitle{font-size:12.5px;max-width:560px}
+#kus-reflect-lite .kus-lp__body{padding:0;background:#f4f6f8}
+#kus-reflect-lite .kus-lp__hint{margin:0;padding:11px 24px;border:0;border-bottom:1px solid #e2e8f0;border-radius:0;background:#fff7ed;color:#9a3412}
+#kus-reflect-lite .kus-lp__hint strong{color:#7c2d12}
+#kus-reflect-lite .kus-lp__card{border-radius:16px;padding:16px 18px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+#kus-reflect-lite .kus-lp__card-head{border:0;margin:0 0 12px;padding:0}
+#kus-reflect-lite .kus-lp__card-title{font-size:12px;text-transform:none;letter-spacing:.01em;color:#172033}
+#kus-reflect-lite .kus-lp__card-num{background:#172033;color:#fff}
+#kus-reflect-lite .kus-rl-workspace{display:grid;grid-template-columns:184px minmax(0,1fr);min-height:480px}
+#kus-reflect-lite .kus-rl-canvas{min-width:0;padding:22px 24px 10px}
+#kus-reflect-lite .kus-rl-setup-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+#kus-reflect-lite .kus-rl-setup-grid>.kus-lp__card{margin:0}
+#kus-reflect-lite .kus-rl-setup-grid>.kus-rl-card--route,#kus-reflect-lite .kus-rl-setup-grid>.kus-rl-card--preset{grid-column:1/-1}
+#kus-reflect-lite .kus-rl-route{display:grid;grid-template-columns:minmax(0,1fr) 48px minmax(0,1fr);align-items:stretch;gap:10px}
+#kus-reflect-lite .kus-rl-endpoint{padding:13px;border:1px solid #e2e8f0;border-radius:13px;background:#f8fafc}
+#kus-reflect-lite .kus-rl-endpoint--target{background:#fff7ed;border-color:#fed7aa}
+#kus-reflect-lite .kus-rl-endpoint__eyebrow{margin-bottom:8px;font-size:10.5px;font-weight:800;letter-spacing:.08em;color:#64748b;text-transform:uppercase}
+#kus-reflect-lite .kus-rl-endpoint--target .kus-rl-endpoint__eyebrow{color:#c2410c}
+#kus-reflect-lite .kus-rl-endpoint .kus-lp__row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.8fr);gap:7px;margin:0}
+#kus-reflect-lite .kus-rl-endpoint .kus-lp__input{width:100%;min-width:0;box-sizing:border-box}
+#kus-reflect-lite .kus-rl-route-arrow{display:flex;align-items:center;justify-content:center;color:#dc2626;font-size:22px;font-weight:800}
+#kus-reflect-lite .kus-rl-route-utility{margin-top:10px!important;padding-top:10px;border-top:1px dashed #e2e8f0}
 #kus-reflect-lite .kus-rl-review{display:flex;flex-direction:column;gap:10px}
 #kus-reflect-lite .kus-rl-review-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 #kus-reflect-lite .kus-rl-stat{padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff}
@@ -180,23 +205,37 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-preview-row__actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 #kus-reflect-lite .kus-rl-preview-row__state{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 #kus-reflect-lite .kus-rl-preview-mini{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:#fff;border:1px solid #e2e8f0;font-size:10.5px;font-weight:700;color:#475569}
-#kus-reflect-lite.kus-lp--wide{width:min(760px,96vw)}
-#kus-reflect-lite .kus-rl-nav{position:sticky;top:-16px;z-index:8;display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:-2px 0 14px;padding:8px;background:rgba(248,250,252,.96);border:1px solid #e2e8f0;border-radius:12px;backdrop-filter:blur(8px)}
-#kus-reflect-lite .kus-rl-nav__btn{appearance:none;border:0;border-radius:9px;background:transparent;color:#64748b;padding:8px 7px;cursor:pointer;font:700 11.5px/1.3 inherit;display:flex;align-items:center;justify-content:center;gap:6px}
-#kus-reflect-lite .kus-rl-nav__btn:hover{background:#fff;color:#334155}
-#kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"]{background:#fff;color:#b91c1c;box-shadow:0 1px 3px rgba(15,23,42,.12)}
+#kus-reflect-lite .kus-rl-nav{padding:24px 14px;background:#172033;border-right:1px solid #0f172a}
+#kus-reflect-lite .kus-rl-nav::before{content:'WORKFLOW';display:block;margin:0 10px 13px;color:#94a3b8;font-size:9.5px;font-weight:800;letter-spacing:.14em}
+#kus-reflect-lite .kus-rl-nav__btn{appearance:none;width:100%;border:1px solid transparent;border-radius:12px;background:transparent;color:#94a3b8;padding:11px 10px;cursor:pointer;font:700 12px/1.3 inherit;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:9px;text-align:left}
+#kus-reflect-lite .kus-rl-nav__btn+.kus-rl-nav__btn{margin-top:5px}
+#kus-reflect-lite .kus-rl-nav__btn:hover{background:#202c42;color:#e2e8f0}
+#kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"]{background:#fff;color:#991b1b;border-color:#fff;box-shadow:0 8px 20px rgba(0,0,0,.2)}
 #kus-reflect-lite .kus-rl-nav__num{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#e2e8f0;color:#475569;font-size:10px}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"] .kus-rl-nav__num{background:#fee2e2;color:#b91c1c}
+#kus-reflect-lite .kus-rl-nav__copy{display:block;font-size:9.5px;font-weight:500;color:#94a3b8;margin-top:2px}
+#kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"] .kus-rl-nav__copy{color:#64748b}
 #kus-reflect-lite .kus-rl-stage[hidden]{display:none}
-#kus-reflect-lite .kus-rl-stage-head{margin:2px 2px 12px}
-#kus-reflect-lite .kus-rl-stage-head h2{margin:0;font-size:15px;color:#0f172a}
-#kus-reflect-lite .kus-rl-stage-head p{margin:3px 0 0;font-size:11.5px;color:#64748b}
-#kus-reflect-lite .kus-rl-action-dock{position:sticky;bottom:-18px;z-index:9;margin:14px -18px -18px;padding:12px 18px 16px;background:linear-gradient(180deg,rgba(255,255,255,.86),#fff 28%);border-top:1px solid #e2e8f0;box-shadow:0 -10px 22px rgba(15,23,42,.07)}
+#kus-reflect-lite .kus-rl-stage-head{margin:0 2px 16px}
+#kus-reflect-lite .kus-rl-stage-head h2{margin:0;font-size:19px;letter-spacing:-.02em;color:#0f172a}
+#kus-reflect-lite .kus-rl-stage-head p{margin:4px 0 0;font-size:12px;color:#64748b}
+#kus-reflect-lite .kus-rl-action-dock{position:sticky;bottom:0;z-index:9;padding:12px 24px 16px 208px;background:rgba(255,255,255,.96);border-top:1px solid #e2e8f0;box-shadow:0 -8px 24px rgba(15,23,42,.07);backdrop-filter:blur(10px)}
 #kus-reflect-lite .kus-rl-action-dock .kus-lp__status{margin-top:8px}
 #kus-reflect-lite .kus-rl-stage .kus-lp__card:last-child{margin-bottom:0}
-@media(max-width:640px){
+@media(max-width:720px){
+  #kus-reflect-lite.kus-lp--wide{width:min(96vw,640px)}
+  #kus-reflect-lite .kus-rl-workspace{display:block;min-height:0}
+  #kus-reflect-lite .kus-rl-nav{position:sticky;top:0;z-index:8;display:grid;grid-template-columns:repeat(3,1fr);padding:8px;background:rgba(23,32,51,.98);border:0}
+  #kus-reflect-lite .kus-rl-nav::before,#kus-reflect-lite .kus-rl-nav__copy{display:none}
+  #kus-reflect-lite .kus-rl-nav__btn{display:flex;justify-content:center;text-align:center;padding:8px 4px;font-size:11px}
+  #kus-reflect-lite .kus-rl-nav__btn+.kus-rl-nav__btn{margin:0}
+  #kus-reflect-lite .kus-rl-canvas{padding:18px 16px 8px}
+  #kus-reflect-lite .kus-rl-setup-grid{grid-template-columns:1fr}
+  #kus-reflect-lite .kus-rl-setup-grid>*{grid-column:1!important}
+  #kus-reflect-lite .kus-rl-route{grid-template-columns:1fr}
+  #kus-reflect-lite .kus-rl-route-arrow{height:24px;transform:rotate(90deg)}
+  #kus-reflect-lite .kus-rl-action-dock{padding:12px 16px 15px}
   #kus-reflect-lite .kus-rl-review-grid{grid-template-columns:1fr}
-  #kus-reflect-lite .kus-rl-nav__btn{font-size:11px;padding-inline:3px}
 }
 `;
 
@@ -255,6 +294,10 @@ export function mountReflectLitePanel() {
   const srcGuest = makeInput({ placeholder: 'ゲストID', value: memoryState.sourceGuestId || '', width: 'guest' });
   const tgtApp = makeInput({ placeholder: '比較先アプリID', value: memoryState.targetAppId || DEFAULT_APP_ID || '', width: 'id' });
   const tgtGuest = makeInput({ placeholder: 'ゲストID', value: memoryState.targetGuestId || '', width: 'guest' });
+  srcApp.setAttribute('aria-label', '比較元アプリID');
+  srcGuest.setAttribute('aria-label', '比較元ゲストスペースID');
+  tgtApp.setAttribute('aria-label', '比較先アプリID');
+  tgtGuest.setAttribute('aria-label', '比較先ゲストスペースID');
   let sourceBundleFromJson: any = null;
   // 差分プレビューの鮮度判定（signature）に使う読み込み済みJSONの識別子
   let sourceBundleToken = '';
@@ -274,12 +317,29 @@ export function mountReflectLitePanel() {
   const swapBtn = makeButton('入れ替え', 'sub');
 
   const cardApp = makeCard({ title: 'アプリ', number: 1 });
-  cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: '比較元' }));
+  cardApp.card.classList.add('kus-rl-card--route');
+  const route = document.createElement('div');
+  route.className = 'kus-rl-route';
+  const sourceEndpoint = document.createElement('section');
+  sourceEndpoint.className = 'kus-rl-endpoint';
+  sourceEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">Source · 読み取り</div>';
+  sourceEndpoint.appendChild(makeRow([srcApp, srcGuest]));
+  const routeArrow = document.createElement('div');
+  routeArrow.className = 'kus-rl-route-arrow';
+  routeArrow.setAttribute('aria-hidden', 'true');
+  routeArrow.textContent = '→';
+  const targetEndpoint = document.createElement('section');
+  targetEndpoint.className = 'kus-rl-endpoint kus-rl-endpoint--target';
+  targetEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">Target · Preview only</div>';
+  targetEndpoint.appendChild(makeRow([tgtApp, tgtGuest]));
+  route.appendChild(sourceEndpoint);
+  route.appendChild(routeArrow);
+  route.appendChild(targetEndpoint);
+  cardApp.body.appendChild(route);
   cardApp.body.appendChild(makeRow([srcJsonFile, srcJsonClearBtn], { label: '比較元JSON' }));
   cardApp.body.appendChild(srcJsonNote);
-  cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '比較先' }));
   const quickRow = makeRow([currentSrcBtn, copyBtn, currentBtn, swapBtn]);
-  quickRow.style.marginTop = '4px';
+  quickRow.classList.add('kus-rl-route-utility');
   cardApp.body.appendChild(quickRow);
 
   function refreshSrcJsonNote() {
@@ -552,6 +612,7 @@ export function mountReflectLitePanel() {
 
   // ---- プリセット（接続情報＋スコープを保存・読み込み） ----
   const cardPreset = makeCard({ title: 'プリセット（接続+スコープ）', soft: true });
+  cardPreset.card.classList.add('kus-rl-card--preset');
   const presetSelect = document.createElement('select');
   presetSelect.className = 'kus-lp__select';
   presetSelect.style.minWidth = '180px';
@@ -1236,9 +1297,9 @@ export function mountReflectLitePanel() {
   nav.setAttribute('aria-label', 'プレビュー反映の手順');
   nav.setAttribute('role', 'tablist');
   const stageDefs = [
-    { id: 'setup' as const, number: '1', label: '対象と設定' },
-    { id: 'review' as const, number: '2', label: '差分を確認' },
-    { id: 'result' as const, number: '3', label: '実行結果' }
+    { id: 'setup' as const, number: '1', label: '対象と設定', copy: '反映ルートを作る' },
+    { id: 'review' as const, number: '2', label: '差分を確認', copy: '変更前に審査する' },
+    { id: 'result' as const, number: '3', label: '実行結果', copy: '成否と次手を確認' }
   ];
   const stages = {} as Record<'setup' | 'review' | 'result', HTMLElement>;
   const navButtons = {} as Record<'setup' | 'review' | 'result', HTMLButtonElement>;
@@ -1249,7 +1310,7 @@ export function mountReflectLitePanel() {
     button.id = `kus-rl-tab-${def.id}`;
     button.setAttribute('role', 'tab');
     button.setAttribute('aria-controls', `kus-rl-stage-${def.id}`);
-    button.innerHTML = `<span class="kus-rl-nav__num">${def.number}</span><span>${def.label}</span>`;
+    button.innerHTML = `<span class="kus-rl-nav__num">${def.number}</span><span>${def.label}<small class="kus-rl-nav__copy">${def.copy}</small></span>`;
     nav.appendChild(button);
     navButtons[def.id] = button;
     const stage = document.createElement('section');
@@ -1272,7 +1333,10 @@ export function mountReflectLitePanel() {
   stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>反映条件を決める</h2><p>接続先、セクション、安全オプションを設定します。</p></header>';
   stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>差分と実行予定を確認</h2><p>実際に変更されるセクションと注意点を確認します。</p></header>';
   stages.result.innerHTML = '<header class="kus-rl-stage-head"><h2>実行結果と次の操作</h2><p>成功・失敗と、再実行が必要なセクションを確認します。</p></header>';
-  [cardApp.card, cardScope.card, cardOpt.card, cardPreset.card].forEach((node) => stages.setup.appendChild(node));
+  const setupGrid = document.createElement('div');
+  setupGrid.className = 'kus-rl-setup-grid';
+  [cardApp.card, cardScope.card, cardOpt.card, cardPreset.card].forEach((node) => setupGrid.appendChild(node));
+  stages.setup.appendChild(setupGrid);
   [reviewCard.card, previewCard.card].forEach((node) => stages.review.appendChild(node));
   [lastResultCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
   const dock = document.createElement('div');
@@ -1281,8 +1345,14 @@ export function mountReflectLitePanel() {
   dock.appendChild(panel.status);
   dock.appendChild(panel.result);
   const hint = panel.body.querySelector('.kus-lp__hint');
-  hint?.insertAdjacentElement('afterend', nav);
-  stageDefs.forEach((def) => panel.body.appendChild(stages[def.id]));
+  const workspace = document.createElement('div');
+  workspace.className = 'kus-rl-workspace';
+  const canvas = document.createElement('main');
+  canvas.className = 'kus-rl-canvas';
+  workspace.appendChild(nav);
+  stageDefs.forEach((def) => canvas.appendChild(stages[def.id]));
+  workspace.appendChild(canvas);
+  hint?.insertAdjacentElement('afterend', workspace);
   panel.body.appendChild(dock);
   showWorkflowStage = (active) => {
     stageDefs.forEach((def) => {
