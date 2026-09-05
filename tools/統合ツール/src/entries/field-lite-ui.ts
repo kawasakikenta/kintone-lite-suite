@@ -1,5 +1,7 @@
 'use strict';
 
+import { installLiteWorkflow, foldWorkflowSection, connectionSummary, validateJsonObject } from './liteWorkflow.js';
+
 import { DEFAULT_APP_ID } from '../constants.js';
 import {
   runFieldApplyStandalone,
@@ -28,7 +30,7 @@ export function mountFieldLitePanel() {
     subtitle: 'フィールド定義 JSON を比較先プレビューへ追加・更新します。',
     accent: 'field',
     badges: [{ label: 'Lite' }, { label: 'プレビュー反映' }],
-    hint: 'プレビュー環境へ POST/PUT します。本番反映は別途 kintone 管理画面で手動デプロイしてください。'
+    hint: 'フィールド定義を比較先のプレビューへ追加・更新します。本番への公開は設定画面で行います。'
   });
 
   // ---- アプリ ----
@@ -295,4 +297,21 @@ export function mountFieldLitePanel() {
     const list = out.renamePairs.slice(0, 50).map((p) => `${p.from}  →  ${p.to}`).join('\n');
     panel.setResult(list + (out.renamePairs.length > 50 ? `\n... 他 ${out.renamePairs.length - 50} 件` : ''));
   }, '対象を JSON にセットしました。反映するなら上の「反映」ボタンを押してください'));
+
+  srcApp.setAttribute('aria-label', '比較元アプリID'); srcGuest.setAttribute('aria-label', '比較元ゲストスペースID');
+  tgtApp.setAttribute('aria-label', '比較先アプリID'); tgtGuest.setAttribute('aria-label', '比較先ゲストスペースID');
+  fieldJson.setAttribute('aria-label', '反映するフィールド定義JSON');
+  lookupMap.setAttribute('aria-label', '参照アプリID変換JSON');
+  cardJson.body.appendChild(foldWorkflowSection('JSONファイル・整形・クリア', bImport, bExport, bFormat, bClear));
+  const fieldProblem = () => !tgtApp.value.trim() ? '比較先アプリIDを指定してください。' : validateJsonObject(fieldJson.value, 'フィールド定義JSON') || (lookupMap.value.trim() ? validateJsonObject(lookupMap.value, '参照アプリID変換JSON') : '');
+  const fieldSummary = (): Array<[string, string]> => {
+    let codes: string[] = [];
+    try { const data = JSON.parse(fieldJson.value); codes = Object.keys(data.properties || data); } catch { /* 入力中 */ }
+    return [['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー')], ['フィールド', codes.length + ' 件 · ' + codes.join('、')], ['既存フィールド', ow.checkbox.checked ? '上書き更新する' : '既存フィールドはスキップ'], ['参照先変換', lookupMap.value.trim() || 'なし'], ['本番公開', 'この操作では公開しません']];
+  };
+  installLiteWorkflow(panel, {
+    setup: [cardApp.card, cardJson.card, pickDetails.details, foldWorkflowSection('反映オプション・参照先変換', optCard.card), renameDetails.details],
+    actions: [{ id: 'apply', label: '比較先プレビューへ反映', description: '追加・更新・スキップ件数を最終確認してからフィールドを反映します。', button: bApply, writes: true, validate: fieldProblem, summary: fieldSummary }]
+  });
+
 }

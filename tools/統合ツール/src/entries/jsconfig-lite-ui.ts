@@ -1,5 +1,7 @@
 'use strict';
 
+import { installLiteWorkflow, connectionSummary, validateJsonObject } from './liteWorkflow.js';
+
 import { DEFAULT_APP_ID } from '../constants.js';
 import {
   runApplyJsConfigStandalone,
@@ -136,4 +138,32 @@ export function mountJsconfigLitePanel() {
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
   }));
+
+  srcApp.setAttribute('aria-label', '取得元アプリID'); srcGuest.setAttribute('aria-label', '取得元ゲストスペースID');
+  tgtApp.setAttribute('aria-label', '反映先アプリID'); tgtGuest.setAttribute('aria-label', '反映先ゲストスペースID');
+  jsonTa.setAttribute('aria-label', 'カスタマイズJSON');
+  batchGuest.setAttribute('aria-label', '一括取得のゲストスペースID');
+  const selectMode = (mode: string) => {
+    cardFetch.card.hidden = mode === 'batch' || mode === 'apply';
+    cardJson.card.hidden = mode === 'batch' || mode === 'fetch';
+    cardApply.card.hidden = mode !== 'apply';
+    batchDetails.details.hidden = mode !== 'batch';
+    batchDetails.details.open = true;
+  };
+  const jsonSummary = (): Array<[string, string]> => {
+    let data: any = {};
+    try { data = JSON.parse(jsonTa.value) || {}; } catch { /* 入力中 */ }
+    return [['PC用', 'JS ' + (data.desktop?.js?.length || 0) + ' / CSS ' + (data.desktop?.css?.length || 0)], ['モバイル用', 'JS ' + (data.mobile?.js?.length || 0) + ' / CSS ' + (data.mobile?.css?.length || 0)], ['適用範囲', data.scope || '指定なし']];
+  };
+  installLiteWorkflow(panel, {
+    setup: [cardFetch.card, cardJson.card, cardApply.card, batchDetails.details], results: [cardPreview.card], resultActions: ['fetch'],
+    beforeRun: actionId => { if (actionId === 'fetch') { previewBox.replaceChildren(); previewBox.classList.add('kus-lp__panel-html--empty'); } },
+    actions: [
+      { id: 'fetch', label: 'JS/CSS設定を取得', description: '対象アプリの設定を読み取り、ファイル一覧とJSONを確認します。', button: fetchBtn, validate: () => srcApp.value.trim() ? '' : '取得元アプリIDを指定してください。', summary: () => [['取得元', connectionSummary(srcApp.value.trim(), srcGuest.value.trim(), srcPrev.checkbox.checked ? 'プレビュー' : '本番')]], onSelect: () => selectMode('fetch') },
+      { id: 'save', label: 'カスタマイズJSONを保存', description: '取得・編集したJSONをファイルに保存します。', button: exportBtn, validate: () => validateJsonObject(jsonTa.value), summary: jsonSummary, onSelect: () => selectMode('save') },
+      { id: 'apply', label: '比較先プレビューへ反映', description: '比較先のJS/CSS一覧をJSONの内容で置き換えます。', button: applyBtn, writes: true, validate: () => !tgtApp.value.trim() ? '反映先アプリIDを指定してください。' : validateJsonObject(jsonTa.value), summary: () => [['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー')], ...jsonSummary(), ['反映方法', 'JS/CSS一覧を全置換。FILEは反映先で利用可能なアップロード済みfileKeyが必要です。']], onSelect: () => selectMode('apply') },
+      { id: 'batch', label: '全アプリのJS/CSSをZIP保存', description: '対象範囲のアプリを走査してFILE形式の実ファイルをまとめます。', button: batchBtn, validate: () => '', summary: () => [['対象範囲', (batchGuest.value.trim() || srcGuest.value.trim()) ? 'ゲストスペース ' + (batchGuest.value.trim() || srcGuest.value.trim()) : 'アクセス可能な全アプリ'], ['対象ファイル', 'FILE形式のJS/CSS。URL形式は含みません。']], onSelect: () => selectMode('batch') }
+    ]
+  });
+
 }
