@@ -1,5 +1,7 @@
 'use strict';
 
+import { installLiteWorkflow, connectionSummary, type LiteWorkflowAction } from './liteWorkflow.js';
+
 import { DEFAULT_APP_ID, SECTION_DEFS } from '../constants.js';
 import {
   runCsvExportBatchStandalone,
@@ -81,10 +83,21 @@ export function mountRecordLitePanel() {
   const tabHost = document.createElement('div');
   panel.body.insertBefore(tabHost, panel.status);
 
+  const recordActions: LiteWorkflowAction[] = [];
+  const requiredApps = () => { try { return parseRecordAppIds(tgtApp.value).length ? '' : '対象アプリを指定してください。'; } catch (error: any) { return error.message; } };
+  const targetSummary = (): [string, string] => ['対象アプリ', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())];
+  const addAction = (action: LiteWorkflowAction) => {
+    action.onSelect = () => {
+      tabs.bar.querySelector<HTMLButtonElement>('[data-tab="' + action.id + '"]')?.click();
+      const hint = panel.body.querySelector<HTMLElement>('.kus-lp__hint');
+      if (hint) hint.textContent = action.writes ? '本番データを変更する操作です。実行前に対象と条件を確認してください。' : '読み取り操作です。アプリのレコードは変更しません。';
+    };
+    recordActions.push(action);
+  };
   const tabs = makeTabs([
     {
       id: 'csv-export', label: 'CSV出力', build: (root) => {
-        const query = makeInput({ placeholder: 'absent', width: 'wide' });
+        const query = makeInput({ placeholder: '空欄で全件（例: 更新日時 >= \"2026-01-01T00:00:00Z\"）', width: 'wide' });
         const fname = makeInput({ placeholder: '空欄で自動命名（レコード_アプリ_日時.csv）', width: 'wide' });
         const useView = makeButton('▼ 一覧から', 'sub');
         useView.addEventListener('click', () => applyViewQuery(query));
@@ -99,6 +112,7 @@ export function mountRecordLitePanel() {
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           );
         }));
+        addAction({ id: 'csv-export', label: 'CSVを出力', description: '条件に合うレコードをCSV / ZIPで保存します。', button: run, validate: requiredApps, summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['ファイル名', fname.value.trim() || '自動命名']] });
         root.appendChild(makeRow(run));
       }
     },
@@ -118,6 +132,7 @@ export function mountRecordLitePanel() {
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
+        addAction({ id: 'csv-import', label: 'CSVからレコードを追加', description: 'CSVのレコードを対象アプリに新規追加します。', button: run, writes: true, validate: () => requiredApps() || (fileInput.files?.length ? '' : '取り込むCSVを選んでください。'), summary: () => [targetSummary(), ['CSV', fileInput.files?.[0]?.name || '未選択'], ['処理', '各対象アプリへ新規レコードを追加']] });
         root.appendChild(makeRow(run));
       }
     },
@@ -162,6 +177,7 @@ export function mountRecordLitePanel() {
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
+        addAction({ id: 'status', label: 'ステータスを一括更新', description: '指定条件に合うレコードの状態を更新します。', button: run, writes: true, validate: () => requiredApps() || (action.value.trim() ? '' : '実行するアクションを指定してください。'), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['アクション', action.value.trim()], ['作業者', assignee.value.trim() || '指定なし']] });
         root.appendChild(makeRow(run));
       }
     },
@@ -193,6 +209,7 @@ export function mountRecordLitePanel() {
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
+        addAction({ id: 'attach', label: '添付ファイルを保存', description: '添付ファイルを取得しZIPにまとめます。', button: run, validate: () => requiredApps() || (fileCode.value.trim() ? '' : '添付ファイルのフィールドコードを指定してください。'), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['添付フィールド', fileCode.value.trim()], ['ZIP名', zipName.value.trim() || '自動命名']] });
         root.appendChild(makeRow(run));
       }
     },
@@ -223,6 +240,7 @@ export function mountRecordLitePanel() {
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
+        addAction({ id: 'copy', label: 'レコードをコピー', description: 'コピー元のレコードを対象アプリへ新規追加します。', button: run, writes: true, validate: () => requiredApps() || (srcApp.value.trim() ? '' : 'コピー元アプリを指定してください。'), summary: () => [['コピー元', connectionSummary(srcApp.value.trim(), srcGuest.value.trim())], ['コピー先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())], ['コピー元の条件', query.value.trim() || '全件']] });
         root.appendChild(makeRow(run));
       }
     },
@@ -273,6 +291,7 @@ export function mountRecordLitePanel() {
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
+        addAction({ id: 'backup', label: 'バックアップを保存', description: 'レコードと選択した関連データをZIPで保存します。', button: run, validate: requiredApps, summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['保存内容', ['レコード', incFiles.checkbox.checked ? '添付ファイル' : '', incComments.checkbox.checked ? 'コメント' : '', incSettings.checkbox.checked ? '選択したアプリ設定' : ''].filter(Boolean).join('、')]] });
         root.appendChild(makeRow(run));
       }
     }
@@ -280,4 +299,9 @@ export function mountRecordLitePanel() {
 
   tabHost.appendChild(tabs.bar);
   tabHost.appendChild(tabs.panels);
+
+  tabs.bar.hidden = true;
+  tgtGuest.setAttribute('aria-label', '対象のゲストスペースID');
+  installLiteWorkflow(panel, { setup: [cardApp.card, tabHost], actions: recordActions });
+
 }

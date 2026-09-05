@@ -1,5 +1,7 @@
 'use strict';
 
+import { installLiteWorkflow, connectionSummary } from './liteWorkflow.js';
+
 import { DEFAULT_APP_ID } from '../constants.js';
 import {
   runGenerateERDiagramStandalone,
@@ -27,7 +29,7 @@ export function mountErLitePanel() {
     subtitle: '起点アプリからルックアップ／関連レコードを辿り ER 図を生成します。',
     accent: 'er',
     badges: [{ label: 'Lite' }, { label: '可視化' }],
-    hint: 'Cytoscape を CDN から動的読込します。生成後の HTML 出力でレポートに添付できます。'
+    hint: '関連アプリのつながりを確認します。画面で開くか、共有用HTMLとして保存できます。'
   });
 
   // ---- 起点 ----
@@ -216,4 +218,23 @@ export function mountErLitePanel() {
   bSave.addEventListener('click', () => liteRun(panel, 'HTML 生成中…', async () => {
     await runExportERDiagramHtmlStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }));
+
+  appInp.setAttribute('aria-label', '起点アプリID');
+  guestInp.setAttribute('aria-label', 'ゲストスペースID');
+  const erSummary = (): Array<[string, string]> => [
+    ['起点', connectionSummary(appInp.value.trim(), guestInp.value.trim())],
+    ['追加起点', extra.value.trim() || 'なし'], ['スペース', spaceInp.value.trim() || '指定なし'],
+    ['探索の深さ', depthInp.value === '0' ? '無制限' : depthInp.value],
+    ['表示', (layoutSel.selectedOptions[0]?.textContent || '') + ' / ' + (densitySel.selectedOptions[0]?.textContent || '')],
+    ['逆引き', reverseCb.checkbox.checked ? 'あり' : 'なし']
+  ];
+  const erProblem = () => appInp.value.trim() || extra.value.trim() || spaceInp.value.trim() ? '' : '起点アプリまたはスペースを指定してください。';
+  installLiteWorkflow(panel, {
+    setup: [cardMain.card, presetCard.card, details.details],
+    actions: [
+      { id: 'open', label: 'ER図を開く', description: '関連アプリを取得し、別の画面で関係図を開きます。', button: bOpen, validate: erProblem, summary: erSummary },
+      { id: 'save', label: 'ER図をHTMLで保存', description: '選んだ条件で生成した関係図をファイルに保存します。', button: bSave, validate: erProblem, summary: erSummary }
+    ]
+  });
+
 }

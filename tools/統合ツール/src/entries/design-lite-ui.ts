@@ -1,5 +1,7 @@
 'use strict';
 
+import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
+
 import { DEFAULT_APP_ID } from '../constants.js';
 import {
   runDesignCopyMdStandalone,
@@ -53,7 +55,7 @@ export function mountDesignLitePanel() {
     ]
   }));
   cardTarget.body.appendChild(appTable.element);
-  const prev = makeCheck({ label: 'プレビュー環境から取得' });
+  const prev = makeCheck({ label: 'プレビュー環境から取得（単一出力・2アプリ差分）' });
   cardTarget.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
   cardTarget.body.appendChild(makeNote('単一出力（Markdown / JSON / Excel / コピー）は1行目のアプリが対象です。ZIP 一括出力は表の全行を対象にします。各行「↑コピー」で上の行を複製できます。'));
   panel.body.insertBefore(cardTarget.card, panel.status);
@@ -179,4 +181,23 @@ export function mountDesignLitePanel() {
       );
     });
   });
+
+  const singleSummary = (format: string): Array<[string, string]> => [
+    ['対象', connectionSummary(appTable.first().appId, appTable.first().guestId, importedBundles.has(appTable.first().appId) ? '読込済みJSON' : prev.checkbox.checked ? 'プレビュー' : '本番')],
+    ['取得元', importedBundles.has(appTable.first().appId) ? '読み込んだ設定JSON' : 'アプリから取得'],
+    ['出力形式', format], ['対象範囲', '対象表の1行目のみ']
+  ];
+  const firstRequired = () => appTable.first().appId ? '' : '対象表の1行目にアプリIDを入力してください。';
+  installLiteWorkflow(panel, {
+    setup: [cardTarget.card, foldWorkflowSection('保存済みの設定JSONを使う', cardImport.card)],
+    actions: [
+      { id: 'xlsx', label: 'Excel設計書を保存', description: '1行目のアプリをExcelの設計書にします。', button: bXlsx, validate: firstRequired, summary: () => singleSummary('Excel (.xlsx)') },
+      { id: 'zip', label: '全対象をExcel ZIPで保存', description: '本番の設定または読込済みJSONから全対象を保存します。', button: bBatchZip, validate: () => appTable.count() ? '' : '対象アプリを1件以上指定してください。', summary: () => [['対象', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId, importedBundles.has(r.appId) ? '読込済みJSON' : '本番')).join('\n')], ['出力', appTable.count() + ' アプリのExcelをZIPに保存'], ['取得環境', 'ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。']] },
+      { id: 'md', label: 'Markdown設計書を保存', description: '1行目のアプリを文章で確認できる形式にします。', button: bMd, validate: firstRequired, summary: () => singleSummary('Markdown') },
+      { id: 'json', label: '設計書JSONを保存', description: '1行目のアプリの設定をJSONで保存します。', button: bJson, validate: firstRequired, summary: () => singleSummary('JSON') },
+      { id: 'copy', label: 'Markdownをコピー', description: '1行目の設計書をクリップボードにコピーします。', button: bCopy, validate: firstRequired, summary: () => singleSummary('クリップボード') },
+      { id: 'diff', label: '2アプリの設計差分を保存', description: '表の先頭2アプリを比較したMarkdownを保存します。', button: bDiff, validate: () => appTable.count() >= 2 ? '' : '対象アプリを2件以上指定してください。', summary: () => appTable.getApps().slice(0, 2).map((r, i) => [i ? '比較先' : '比較元', connectionSummary(r.appId, r.guestId, importedBundles.has(r.appId) ? '読込済みJSON' : prev.checkbox.checked ? 'プレビュー' : '本番')]) }
+    ]
+  });
+
 }

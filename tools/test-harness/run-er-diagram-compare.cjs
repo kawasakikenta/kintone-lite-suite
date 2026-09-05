@@ -278,6 +278,21 @@ function vendorKeyForUrl(url) {
   return '';
 }
 
+function makeLocalViewerHtml(htmlFile, localVendors) {
+  // CDNのmin版をnpm配布の非min版で置き換える場合も、差し替えた実体をSRIで検査する。
+  // 製品が出力した原本は保持し、レイアウト検証専用のコピーだけを変更する。
+  const html = fs.readFileSync(htmlFile, 'utf8').replace(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>/gi, (tag, url) => {
+    const source = localVendors[vendorKeyForUrl(url)];
+    if (!source) return tag;
+    const digest = 'sha384-' + crypto.createHash('sha384').update(source).digest('base64');
+    return tag.replace(/\sintegrity="[^"]*"/, ` integrity="${digest}"`)
+      .replace(/this\.integrity='[^']*'/, `this.integrity='${digest}'`);
+  });
+  const localFile = htmlFile.replace(/\.html$/, '-local.html');
+  fs.writeFileSync(localFile, html, 'utf8');
+  return localFile;
+}
+
 async function configureViewerRoutes(page, localVendors, blockLibraries) {
   await page.route('**/*', async (route) => {
     const url = route.request().url();
@@ -326,8 +341,13 @@ async function generateDiagramHtml(browser, variant, bundleSource, fixture, outD
   if (await densitySelect.count()) await densitySelect.first().selectOption('standard');
 
   const htmlFile = path.join(outDir, `${variant}-er-diagram.html`);
+  const hasWorkflow = await root.evaluate(element => element.classList.contains('kus-wf'));
+  if (hasWorkflow) {
+    await root.getByRole('radio', { name: 'ER図をHTMLで保存', exact: true }).check();
+    await root.getByRole('button', { name: '内容を確認する', exact: true }).click();
+  }
   const downloadPromise = page.waitForEvent('download', { timeout: 45000 });
-  await root.getByRole('button', { name: /HTML\s*保存/ }).click();
+  await root.getByRole('button', { name: hasWorkflow ? 'ER図をHTMLで保存' : /HTML\s*保存/ }).click();
   const download = await downloadPromise;
   const downloadFailure = await download.failure();
   if (downloadFailure) throw new Error(`${variant}: HTML 保存に失敗しました: ${downloadFailure}`);
@@ -783,6 +803,8 @@ async function inspectCdnFallback(browser, variant, htmlFile, localVendors, outD
 async function runVariant(browser, variant, bundleSource, fixture, localVendors, outDir, includeScaleMatrix = false) {
   console.log(`[ER compare] ${variant}: HTML 生成中...`);
   const generated = await generateDiagramHtml(browser, variant, bundleSource, fixture, outDir);
+  const originalHtmlFile = generated.htmlFile;
+  generated.htmlFile = makeLocalViewerHtml(originalHtmlFile, localVendors);
   const desktop = await captureViewport(
     browser,
     variant,
@@ -800,7 +822,7 @@ async function runVariant(browser, variant, bundleSource, fixture, localVendors,
     outDir
   );
   const unknownLayout = await inspectUnknownLayout(browser, variant, generated.htmlFile, localVendors, outDir);
-  const cdnFallback = await inspectCdnFallback(browser, variant, generated.htmlFile, localVendors, outDir);
+  const cdnFallback = await inspectCdnFallback(browser, variant, originalHtmlFile, localVendors, outDir);
   const diagramZoom = includeScaleMatrix
     ? await inspectDiagramZoom(browser, variant, generated.htmlFile, localVendors, outDir)
     : null;
