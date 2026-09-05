@@ -1,5 +1,7 @@
 'use strict';
 
+import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
+
 import { DEFAULT_APP_ID } from '../constants.js';
 import { runCsvExportBatchStandalone, runLoadViewsStandalone } from '../tabs/record-standalone.js';
 import {
@@ -27,7 +29,7 @@ export function mountCsvExportLitePanel() {
   });
 
   const cardApps = makeCard({ title: '対象アプリ', number: 1 });
-  const appTable = makeAppTable({ minRows: 3, currentAppId: DEFAULT_APP_ID || '' });
+  const appTable = makeAppTable({ minRows: 1, currentAppId: DEFAULT_APP_ID || '', initial: DEFAULT_APP_ID ? [{ appId: DEFAULT_APP_ID, guestId: '' }] : [] });
   cardApps.body.appendChild(appTable.element);
   cardApps.body.appendChild(createAppSearchControl(panel, {
     targets: [{ label: '対象アプリへ追加', apply: (id, name, guestId) => {
@@ -90,4 +92,18 @@ export function mountCsvExportLitePanel() {
   panel.body.insertBefore(cardRun.card, panel.status);
 
   panel.setStatus('対象アプリを入力して CSV 出力できます', 'ok');
+
+  query.setAttribute('aria-label', '全対象アプリの絞り込み条件');
+  filename.setAttribute('aria-label', '出力ファイル名');
+  viewSelect.setAttribute('aria-label', '一覧の条件');
+  const viewHelper = foldWorkflowSection('一覧の条件を利用する', viewApp.closest('.kus-lp__row') as HTMLElement, viewSelect.closest('.kus-lp__row') as HTMLElement, useView);
+  cardCond.body.appendChild(viewHelper);
+  installLiteWorkflow(panel, {
+    setup: [cardApps.card, cardCond.card],
+    actions: [{ id: 'csv', label: 'CSVを出力', description: '1アプリならCSV、複数アプリならアプリごとのCSVをZIPで保存します。', button: run,
+      validate: () => appTable.count() ? '' : '対象アプリを1件以上指定してください。',
+      summary: () => [['対象', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId)).join('\n')], ['絞り込み条件', query.value.trim() || '全件'], ['保存形式', appTable.count() > 1 ? '複数CSVをZIPで保存' : 'CSV'], ['ファイル名', filename.value.trim() || '自動命名']]
+    }]
+  });
+
 }

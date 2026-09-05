@@ -1,5 +1,7 @@
 'use strict';
 
+import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
+
 import { SETTINGS_EXPORT_SCOPE_DEFS, DEFAULT_APP_ID } from '../constants.js';
 import {
   runSettingsExportSearchStandalone,
@@ -172,4 +174,24 @@ export function mountSettingsExportLitePanel() {
     summary.innerHTML = summaryHtml;
     summary.classList.remove('kus-lp__panel-html--empty');
   }));
+
+  searchKw.type = 'search';
+  searchKw.setAttribute('aria-label', 'アプリを検索');
+  cardTarget.body.appendChild(foldWorkflowSection('アプリ名で検索・スペースから追加', searchKw.closest('.kus-lp__row') as HTMLElement, searchOut, spaceKw.closest('.kus-lp__row') as HTMLElement));
+  cardTarget.body.appendChild(prev.label);
+  const exportProblem = () => !appTable.count() ? '対象アプリを1件以上指定してください。' : chips.some(c => c.checkbox.checked) ? '' : '取得する設定を1つ以上選んでください。';
+  const exportSummary = (format: string): Array<[string, string]> => [
+    ['対象アプリ', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId, prev.checkbox.checked ? 'プレビュー' : '本番')).join('\n')],
+    ['取得する設定', chips.filter(c => c.checkbox.checked).map(c => c.label.textContent || '').join('、')],
+    ['保存形式', format]
+  ];
+  installLiteWorkflow(panel, {
+    setup: [cardTarget.card, cardScope.card], results: [summary],
+    beforeRun: () => { summary.replaceChildren(); summary.classList.add('kus-lp__panel-html--empty'); },
+    actions: [
+      { id: 'json', label: '設定をJSONで保存', description: '全対象アプリの設定を1つのJSONにまとめます。', button: btnJson, validate: exportProblem, summary: () => exportSummary('全アプリを1つのJSON') },
+      { id: 'zip', label: '設定をZIPで保存', description: 'アプリごとのJSONと取得結果をZIPにまとめます。', button: btnZip, validate: exportProblem, summary: () => exportSummary('1アプリ1JSONとmanifest.jsonをZIPに保存') }
+    ]
+  });
+
 }

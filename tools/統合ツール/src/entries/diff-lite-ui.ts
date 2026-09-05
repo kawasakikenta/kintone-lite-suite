@@ -1,5 +1,7 @@
 'use strict';
 
+import { installWorkflowNavigation } from './liteWorkflow.js';
+
 import { DIFF_NORMALIZATION_PRESETS, SECTION_DEFS } from '../constants.js';
 import {
   buildDiffComparisonProfile,
@@ -2541,6 +2543,12 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   reviewStep.append(reviewEmpty, filterDetails, cardResult.card);
   exportStep.appendChild(outputDetails);
   workflow.append(targetStep, reviewStep, exportStep);
+  [targetStep, reviewStep, exportStep].forEach(step => { step.style.scrollMarginTop = '80px'; });
+  installWorkflowNavigation(panel, [
+    { label: '比較対象', element: targetStep },
+    { label: '差分を確認', element: reviewStep },
+    { label: '結果を保存', element: exportStep, open: () => { outputDetails.open = true; } }
+  ]);
   panel.body.insertBefore(workflow, panel.result);
 
   const setExportControlsEnabled = (enabled: boolean) => {

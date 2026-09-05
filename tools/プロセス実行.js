@@ -450,152 +450,6 @@
     }
   });
 
-  // src/utils.ts
-  function esc(s) {
-    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
-  function compactForLog(value, max = 220) {
-    try {
-      const raw = typeof value === "string" ? value : JSON.stringify(value);
-      if (!raw) return "";
-      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
-    } catch (e) {
-      const raw = String(value ?? "");
-      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
-    }
-  }
-  function apiErrorWithContext(err, meta) {
-    if (err && err.__apiDiag) return err;
-    const method = meta?.method || "GET";
-    const prefix = meta?.prefix || "";
-    const path = meta?.path || "";
-    const bodyOrParams = meta?.payload;
-    const app = bodyOrParams?.app ?? bodyOrParams?.id ?? bodyOrParams?.apps?.[0] ?? "";
-    const bodySummary = compactForLog(bodyOrParams);
-    const endpoint = `${prefix}${path}`;
-    const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ""}${bodySummary ? ` payload=${bodySummary}` : ""}`;
-    const baseMessage = err?.message || String(err);
-    const wrapped = new Error(`${baseMessage}
-${contextLine}`);
-    wrapped.__apiDiag = true;
-    wrapped.original = err;
-    if (err?.code) wrapped.code = err.code;
-    if (err?.id) wrapped.id = err.id;
-    if (err?.stack) wrapped.stack = err.stack;
-    return wrapped;
-  }
-  var init_utils = __esm({
-    "src/utils.ts"() {
-      "use strict";
-      init_constants();
-    }
-  });
-
-  // src/kintone-query.ts
-  var init_kintone_query = __esm({
-    "src/kintone-query.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/api.ts
-  function buildApiPrefix(guestId, preview) {
-    const g = String(guestId || "").trim();
-    if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
-    return `/k/v1${preview ? "/preview" : ""}`;
-  }
-  function normalizeApiGetOptions(optionsOrRetries) {
-    if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
-    if (!optionsOrRetries || typeof optionsOrRetries !== "object") return {};
-    return optionsOrRetries;
-  }
-  function resolveHttpStatus(error) {
-    const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
-    if (Number.isFinite(direct) && direct > 0) return direct;
-    const text = String(error?.message || "");
-    const matched = text.match(/\b(?:HTTP(?:\/\d+(?:\.\d+)?)?(?:\s+status(?:\s+code)?)?|status(?:\s+code)?)\s*(?::|=|-)?\s*([45]\d{2})\b/i);
-    return matched ? Number(matched[1]) : 0;
-  }
-  function isRetriableApiError(error) {
-    if (!error) return false;
-    const status = resolveHttpStatus(error);
-    if (RETRIABLE_STATUS_CODES.has(status)) return true;
-    const code = String(error?.code || "").toUpperCase();
-    if (code && (code.includes("NETWORK") || code.includes("TIMEOUT") || code === "ECONNRESET")) return true;
-    const message = String(error?.message || "").toLowerCase();
-    return message.includes("network") || message.includes("timeout");
-  }
-  function computeRetryDelayMs(attempt, baseDelayMs, maxDelayMs) {
-    const expDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
-    const jitter = Math.random() * Math.min(200, baseDelayMs);
-    return Math.round(expDelay + jitter);
-  }
-  function touchApiPathMetric(path, field) {
-    const key = String(path || "");
-    const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
-    row[field] += 1;
-    apiGetMetrics.byPath[key] = row;
-    return row;
-  }
-  async function apiGet(prefix, path, params, optionsOrRetries) {
-    const options = normalizeApiGetOptions(optionsOrRetries);
-    const retries = Number.isFinite(options.retries) ? Math.max(1, Number(options.retries)) : DEFAULT_API_GET_RETRIES;
-    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? Math.max(1, Number(options.baseDelayMs)) : DEFAULT_RETRY_BASE_DELAY_MS;
-    const maxDelayMs = Number.isFinite(options.maxDelayMs) ? Math.max(baseDelayMs, Number(options.maxDelayMs)) : DEFAULT_RETRY_MAX_DELAY_MS;
-    let err;
-    const startAt = Date.now();
-    apiGetMetrics.calls += 1;
-    touchApiPathMetric(path, "calls");
-    for (let i = 0; i < retries; i++) {
-      try {
-        const res = await kintone.api(`${prefix}${path}`, "GET", params);
-        apiGetMetrics.lastLatencyMs = Date.now() - startAt;
-        apiGetMetrics.lastError = "";
-        return res;
-      } catch (e) {
-        err = e;
-        const retriable = isRetriableApiError(e);
-        if (i < retries - 1 && retriable) {
-          apiGetMetrics.retries += 1;
-          touchApiPathMetric(path, "retries");
-          const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
-          await new Promise((r) => setTimeout(r, waitMs));
-          continue;
-        }
-        break;
-      }
-    }
-    apiGetMetrics.failures += 1;
-    const pathMetric = touchApiPathMetric(path, "failures");
-    const lastError = err?.message || String(err);
-    pathMetric.lastError = lastError;
-    apiGetMetrics.lastError = lastError;
-    apiGetMetrics.lastLatencyMs = Date.now() - startAt;
-    throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
-  }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
-  var init_api = __esm({
-    "src/api.ts"() {
-      "use strict";
-      init_constants();
-      init_kintone_query();
-      init_utils();
-      DEFAULT_API_GET_RETRIES = 3;
-      DEFAULT_RETRY_BASE_DELAY_MS = 500;
-      DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
-      RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
-      apiGetMetrics = {
-        calls: 0,
-        retries: 0,
-        failures: 0,
-        lastLatencyMs: 0,
-        lastError: "",
-        byPath: {}
-      };
-      CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
-    }
-  });
-
   // src/state.ts
   function loadReflectApplyHistory() {
     return [];
@@ -702,6 +556,47 @@ ${contextLine}`);
     }
   });
 
+  // src/utils.ts
+  function esc(s) {
+    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function compactForLog(value, max = 220) {
+    try {
+      const raw = typeof value === "string" ? value : JSON.stringify(value);
+      if (!raw) return "";
+      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
+    } catch (e) {
+      const raw = String(value ?? "");
+      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
+    }
+  }
+  function apiErrorWithContext(err, meta) {
+    if (err && err.__apiDiag) return err;
+    const method = meta?.method || "GET";
+    const prefix = meta?.prefix || "";
+    const path = meta?.path || "";
+    const bodyOrParams = meta?.payload;
+    const app = bodyOrParams?.app ?? bodyOrParams?.id ?? bodyOrParams?.apps?.[0] ?? "";
+    const bodySummary = compactForLog(bodyOrParams);
+    const endpoint = `${prefix}${path}`;
+    const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ""}${bodySummary ? ` payload=${bodySummary}` : ""}`;
+    const baseMessage = err?.message || String(err);
+    const wrapped = new Error(`${baseMessage}
+${contextLine}`);
+    wrapped.__apiDiag = true;
+    wrapped.original = err;
+    if (err?.code) wrapped.code = err.code;
+    if (err?.id) wrapped.id = err.id;
+    if (err?.stack) wrapped.stack = err.stack;
+    return wrapped;
+  }
+  var init_utils = __esm({
+    "src/utils.ts"() {
+      "use strict";
+      init_constants();
+    }
+  });
+
   // src/diff/engine.ts
   var init_engine = __esm({
     "src/diff/engine.ts"() {
@@ -709,6 +604,111 @@ ${contextLine}`);
       init_constants();
       init_state();
       init_utils();
+    }
+  });
+
+  // src/kintone-query.ts
+  var init_kintone_query = __esm({
+    "src/kintone-query.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/api.ts
+  function buildApiPrefix(guestId, preview) {
+    const g = String(guestId || "").trim();
+    if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
+    return `/k/v1${preview ? "/preview" : ""}`;
+  }
+  function normalizeApiGetOptions(optionsOrRetries) {
+    if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
+    if (!optionsOrRetries || typeof optionsOrRetries !== "object") return {};
+    return optionsOrRetries;
+  }
+  function resolveHttpStatus(error) {
+    const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const text = String(error?.message || "");
+    const matched = text.match(/\b(?:HTTP(?:\/\d+(?:\.\d+)?)?(?:\s+status(?:\s+code)?)?|status(?:\s+code)?)\s*(?::|=|-)?\s*([45]\d{2})\b/i);
+    return matched ? Number(matched[1]) : 0;
+  }
+  function isRetriableApiError(error) {
+    if (!error) return false;
+    const status = resolveHttpStatus(error);
+    if (RETRIABLE_STATUS_CODES.has(status)) return true;
+    const code = String(error?.code || "").toUpperCase();
+    if (code && (code.includes("NETWORK") || code.includes("TIMEOUT") || code === "ECONNRESET")) return true;
+    const message = String(error?.message || "").toLowerCase();
+    return message.includes("network") || message.includes("timeout");
+  }
+  function computeRetryDelayMs(attempt, baseDelayMs, maxDelayMs) {
+    const expDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
+    const jitter = Math.random() * Math.min(200, baseDelayMs);
+    return Math.round(expDelay + jitter);
+  }
+  function touchApiPathMetric(path, field) {
+    const key = String(path || "");
+    const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
+    row[field] += 1;
+    apiGetMetrics.byPath[key] = row;
+    return row;
+  }
+  async function apiGet(prefix, path, params, optionsOrRetries) {
+    const options = normalizeApiGetOptions(optionsOrRetries);
+    const retries = Number.isFinite(options.retries) ? Math.max(1, Number(options.retries)) : DEFAULT_API_GET_RETRIES;
+    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? Math.max(1, Number(options.baseDelayMs)) : DEFAULT_RETRY_BASE_DELAY_MS;
+    const maxDelayMs = Number.isFinite(options.maxDelayMs) ? Math.max(baseDelayMs, Number(options.maxDelayMs)) : DEFAULT_RETRY_MAX_DELAY_MS;
+    let err;
+    const startAt = Date.now();
+    apiGetMetrics.calls += 1;
+    touchApiPathMetric(path, "calls");
+    for (let i = 0; i < retries; i++) {
+      try {
+        const res = await kintone.api(`${prefix}${path}`, "GET", params);
+        apiGetMetrics.lastLatencyMs = Date.now() - startAt;
+        apiGetMetrics.lastError = "";
+        return res;
+      } catch (e) {
+        err = e;
+        const retriable = isRetriableApiError(e);
+        if (i < retries - 1 && retriable) {
+          apiGetMetrics.retries += 1;
+          touchApiPathMetric(path, "retries");
+          const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        break;
+      }
+    }
+    apiGetMetrics.failures += 1;
+    const pathMetric = touchApiPathMetric(path, "failures");
+    const lastError = err?.message || String(err);
+    pathMetric.lastError = lastError;
+    apiGetMetrics.lastError = lastError;
+    apiGetMetrics.lastLatencyMs = Date.now() - startAt;
+    throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
+  }
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
+  var init_api = __esm({
+    "src/api.ts"() {
+      "use strict";
+      init_constants();
+      init_kintone_query();
+      init_utils();
+      DEFAULT_API_GET_RETRIES = 3;
+      DEFAULT_RETRY_BASE_DELAY_MS = 500;
+      DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
+      RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+      apiGetMetrics = {
+        calls: 0,
+        retries: 0,
+        failures: 0,
+        lastLatencyMs: 0,
+        lastError: "",
+        byPath: {}
+      };
+      CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
     }
   });
 
@@ -839,255 +839,6 @@ ${contextLine}`);
       return;
     }
     run();
-  }
-
-  // src/entries/process-lite-ui.ts
-  init_constants();
-
-  // src/tabs/process-standalone.ts
-  init_utils();
-  init_api();
-  var mermaidLoadPromise = null;
-  var MERMAID_CDN_URLS = [
-    "https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js",
-    "https://unpkg.com/mermaid@10.6.1/dist/mermaid.min.js",
-    "https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.6.1/mermaid.min.js"
-  ];
-  function loadScript(url) {
-    return new Promise((resolve, reject) => {
-      let cspViolation = null;
-      const onPolicyViolation = (ev) => {
-        const blocked = String(ev.blockedURI || "");
-        if (blocked === url || blocked.includes("mermaid")) {
-          cspViolation = ev;
-        }
-      };
-      const existing = document.querySelector(`script[src="${url}"]`);
-      if (existing) {
-        if (existing.dataset.loaded === "1") {
-          resolve();
-        } else if (existing.dataset.failed === "1") {
-          existing.remove();
-          loadScript(url).then(resolve).catch(reject);
-        } else {
-          existing.addEventListener("load", () => resolve(), { once: true });
-          existing.addEventListener("error", () => reject(new Error(`スクリプト読み込み失敗: ${url}`)), { once: true });
-        }
-        return;
-      }
-      const s = document.createElement("script");
-      s.src = url;
-      s.async = true;
-      document.addEventListener("securitypolicyviolation", onPolicyViolation, false);
-      const cleanup = () => document.removeEventListener("securitypolicyviolation", onPolicyViolation, false);
-      s.onload = () => {
-        cleanup();
-        s.dataset.loaded = "1";
-        resolve();
-      };
-      s.onerror = () => {
-        cleanup();
-        s.dataset.failed = "1";
-        if (cspViolation) {
-          reject(new Error(
-            `スクリプト読み込み失敗(CSP): ${url} / directive=${cspViolation.effectiveDirective || "unknown"} / blocked=${cspViolation.blockedURI || "unknown"}`
-          ));
-          return;
-        }
-        reject(new Error(`スクリプト読み込み失敗: ${url}`));
-      };
-      document.head.appendChild(s);
-    });
-  }
-  async function loadScriptWithFallback(urls) {
-    let lastErr = null;
-    for (const url of urls) {
-      try {
-        await loadScript(url);
-        return;
-      } catch (e) {
-        lastErr = e;
-      }
-    }
-    throw lastErr || new Error("Mermaid.js の読み込みに失敗しました");
-  }
-  async function ensureMermaid() {
-    const w = window;
-    if (w.mermaid) return w.mermaid;
-    if (!mermaidLoadPromise) {
-      mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS).catch((err) => {
-        mermaidLoadPromise = null;
-        throw err;
-      });
-    }
-    await mermaidLoadPromise;
-    if (w.mermaid) {
-      w.mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "strict" });
-      return w.mermaid;
-    }
-    throw new Error("Mermaid.js の読み込みに失敗しました");
-  }
-  function mermaidDisplayName(name) {
-    return String(name ?? "").replace(/[\r\n]+/g, " ").replace(/"/g, "'").trim() || "(名称なし)";
-  }
-  function mermaidTransitionLabel(name) {
-    return String(name ?? "").replace(/[\r\n]+/g, " ").replace(/[:;]/g, "-").replace(/[#"]/g, "").trim() || "(名称なし)";
-  }
-  function buildProcessMermaidSource(states, actions, highlightState) {
-    const stateNames = Object.keys(states || {});
-    const ids = /* @__PURE__ */ new Map();
-    const idOf = (name) => {
-      const key = String(name ?? "");
-      let id = ids.get(key);
-      if (!id) {
-        id = `s${ids.size}`;
-        ids.set(key, id);
-      }
-      return id;
-    };
-    const lines = ["stateDiagram-v2"];
-    for (const st of stateNames) {
-      lines.push(`    state "${mermaidDisplayName(st)}" as ${idOf(st)}`);
-    }
-    const validActions = (Array.isArray(actions) ? actions : []).filter((a) => a && a.from != null && a.to != null);
-    for (const a of validActions) {
-      for (const name of [String(a.from), String(a.to)]) {
-        if (!ids.has(name)) lines.push(`    state "${mermaidDisplayName(name)}" as ${idOf(name)}`);
-      }
-    }
-    const initial = findInitialState(states, validActions);
-    const startStates = new Set(stateNames);
-    for (const a of validActions) startStates.delete(String(a.to));
-    if (initial != null) startStates.add(initial);
-    for (const st of stateNames) {
-      if (startStates.has(st)) lines.push(`    [*] --> ${idOf(st)}`);
-    }
-    for (const a of validActions) {
-      lines.push(`    ${idOf(String(a.from))} --> ${idOf(String(a.to))} : ${mermaidTransitionLabel(a.name)}`);
-    }
-    if (highlightState != null && highlightState !== "" && ids.has(String(highlightState))) {
-      lines.push("");
-      lines.push("    classDef current fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#0f172a");
-      lines.push(`    class ${idOf(String(highlightState))} current`);
-    }
-    return lines.join("\n") + "\n";
-  }
-  function findInitialState(states, actions) {
-    const names = Object.keys(states || {});
-    if (!names.length) return null;
-    const indexed = names.map((name) => ({ name, index: Number(states?.[name]?.index) })).filter((s) => Number.isFinite(s.index));
-    if (indexed.length === names.length) {
-      indexed.sort((a, b) => a.index - b.index);
-      return indexed[0].name;
-    }
-    const remaining = new Set(names);
-    for (const a of Array.isArray(actions) ? actions : []) {
-      if (a?.to != null) remaining.delete(String(a.to));
-    }
-    return [...remaining][0] || names[0];
-  }
-  function renderFallbackFlowHtml(states, actions, highlightState) {
-    const stateList = Object.keys(states || {});
-    const transitions = (actions || []).map((a) => {
-      const from = esc(a.from || "");
-      const to = esc(a.to || "");
-      const name = esc(a.name || "");
-      const current = highlightState && (a.from === highlightState || a.to === highlightState);
-      const style = current ? ' style="background:#dcfce7"' : "";
-      return `<tr${style}><td>${from}</td><td>${name}</td><td>${to}</td></tr>`;
-    }).join("");
-    const stateHtml = stateList.map((s) => {
-      const isCurrent = highlightState === s;
-      const style = isCurrent ? "background:#bbf7d0;border-color:#16a34a" : "background:#f8fafc;border-color:#cbd5e1";
-      return `<span style="display:inline-block;margin:2px;padding:2px 8px;border:1px solid;${style};border-radius:9999px">${esc(s)}</span>`;
-    }).join("");
-    return `
-    <div style="color:#334155;font-size:12px;line-height:1.5">
-      <div style="margin-bottom:8px;color:#b45309">Mermaid.js を読み込めなかったため、簡易表示に切り替えました。</div>
-      <div style="margin-bottom:8px">${stateHtml || '<span style="color:#94a3b8">状態なし</span>'}</div>
-      <table style="width:100%;border-collapse:collapse;font-size:12px">
-        <thead><tr><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">From</th><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">Action</th><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">To</th></tr></thead>
-        <tbody>${transitions || '<tr><td colspan="3" style="padding:6px;color:#94a3b8">遷移なし</td></tr>'}</tbody>
-      </table>
-    </div>
-  `;
-  }
-  async function runRenderProcessFlowStandalone(source, setStatus, targets) {
-    const app = String(source.appId || "").trim();
-    if (!app) throw new Error("アプリIDを入力してください");
-    const prefix = buildApiPrefix(source.guestId || "", false);
-    setStatus("プロセス管理を取得中...");
-    const res = await apiGet(prefix, "/app/status.json", { app });
-    if (!res.enable) {
-      targets.textEl.value = "プロセス管理は無効です。";
-      targets.viewEl.innerHTML = '<div style="color:#64748b">プロセス管理は無効です</div>';
-      if (targets.simUi) targets.simUi.container.style.display = "none";
-      setStatus("プロセス管理は無効です");
-      return null;
-    }
-    const states = res.states || {};
-    const actions = (res.actions || []).filter((a) => a && a.from != null && a.to != null);
-    const orphanActions = (res.actions || []).length - actions.length;
-    const renderMermaid = async (highlightState) => {
-      const md = buildProcessMermaidSource(states, actions, highlightState);
-      targets.textEl.value = md;
-      try {
-        const mermaidObj = await ensureMermaid();
-        const { svg } = await mermaidObj.render("mermaid-svg-generated-" + Date.now(), md);
-        targets.viewEl.innerHTML = svg;
-      } catch (e) {
-        targets.viewEl.innerHTML = renderFallbackFlowHtml(states, actions, highlightState);
-        setStatus(`Mermaid.js の読み込みに失敗したため、簡易表示に切り替えました。(${e.message || e})`, true);
-      }
-    };
-    setStatus("フロー図 生成中...");
-    await renderMermaid(null);
-    setStatus(orphanActions ? `フロー図 生成完了（from/to 未設定のアクション ${orphanActions}件は除外）` : "フロー図 生成完了", orphanActions > 0);
-    if (targets.simUi) {
-      let current = null;
-      const { container, current: curEl, select, startBtn, execBtn } = targets.simUi;
-      container.style.display = "block";
-      const updateSim = () => {
-        if (!current) {
-          curEl.textContent = "未開始";
-          curEl.style.background = "#e2e8f0";
-          select.innerHTML = '<option value="">-- 開始ボタンを押してください --</option>';
-          select.disabled = true;
-          return;
-        }
-        curEl.textContent = current;
-        curEl.style.background = "#bbf7d0";
-        select.disabled = false;
-        const avail = actions.filter((a) => a.from === current);
-        if (avail.length === 0) {
-          select.innerHTML = '<option value="">-- 次のアクションなし（完了） --</option>';
-          select.disabled = true;
-        } else {
-          select.innerHTML = avail.map((a, idx) => `<option value="${idx}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join("");
-        }
-      };
-      updateSim();
-      startBtn.onclick = async () => {
-        current = findInitialState(states, actions);
-        updateSim();
-        if (current) {
-          setStatus("シミュレーション開始: " + current);
-          await renderMermaid(current);
-        }
-      };
-      execBtn.onclick = async () => {
-        if (select.disabled) return;
-        const idx = Number(select.value);
-        if (!Number.isFinite(idx)) return;
-        const action = actions.filter((a) => a.from === current)[idx];
-        if (!action) return;
-        current = action.to;
-        updateSim();
-        setStatus(`アクション「${action.name}」実行 → 「${action.to}」`);
-        await renderMermaid(action.to);
-      };
-    }
-    return { states, actions };
   }
 
   // src/ui/components.ts
@@ -1730,6 +1481,560 @@ ${contextLine}`);
     }
   }
 
+  // src/entries/liteWorkflow.ts
+  var CSS2 = `
+.kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
+.kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
+.kus-wf .kus-lp__badge-row{display:none}
+.kus-wf .kus-lp__body{padding:0;display:flex;flex-direction:column;overflow:hidden;min-height:0;background:#f5f7fa}
+.kus-wf .kus-lp__hint{margin:0;padding:10px 22px;border-radius:0;flex-shrink:0}
+.kus-wf [hidden]{display:none!important}
+.kus-wf .kus-lp__card{padding:16px;border-radius:14px;min-width:0}
+.kus-wf .kus-lp__card-head{flex-wrap:wrap}
+.kus-wf .kus-lp__row{min-width:0;flex-wrap:wrap}
+.kus-wf :is(input,select,textarea){max-width:100%;box-sizing:border-box}
+.kus-wf .kus-lp__input{min-width:0}
+.kus-wf .kus-lp__file{min-width:0;width:100%}
+.kus-wf .kus-lp__btn{white-space:normal}
+.kus-wf .kus-lp__tab-panel{min-width:0}
+.kus-wf .kus-lp__note{overflow-wrap:anywhere}
+.kus-wf :is(button,input,select,textarea,summary):focus-visible,.kus-wf-nav button:focus-visible{outline:3px solid #2563eb;outline-offset:3px}
+.kus-wf-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px 22px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
+.kus-wf-nav button{font-family:inherit;font-size:12px;font-weight:600;line-height:1.4;border:1px solid #e2e8f0;padding:10px;border-radius:9px;background:#fff;color:#475569;cursor:pointer}
+.kus-wf-nav button[aria-selected=true],.kus-wf-nav button[aria-current=step]{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+.kus-wf-nav button:disabled{opacity:.5;cursor:not-allowed}
+.kus-wf-canvas{overflow:auto;min-height:0;min-width:0;flex:1;padding:18px 22px;scroll-padding:16px}
+.kus-wf-stage{min-width:0}
+.kus-wf-heading{margin:0 0 4px;font-size:19px;color:#0f172a}
+.kus-wf-intro{margin:0 0 16px;color:#64748b;font-size:12px}
+.kus-wf-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin-bottom:16px}
+.kus-wf-action{padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:white;cursor:pointer;display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:12px;min-width:0;align-items:start}
+.kus-wf-action:has(input:checked){border-color:#60a5fa;background:#eff6ff}
+.kus-wf-action strong{display:block;color:#0f172a}
+.kus-wf-action small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
+.kus-wf-action em{display:inline-block;font-size:10px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
+.kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
+.kus-wf-summary>div:last-child{border:0}
+.kus-wf-summary dt{color:#64748b;font-size:12px}
+.kus-wf-summary dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#0f172a;font-size:13px}
+.kus-wf-notice{padding:12px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;margin:14px 0;color:#1e40af;font-size:12px;overflow-wrap:anywhere;white-space:pre-wrap}
+.kus-wf-notice[data-write=true]{border-color:#fed7aa;background:#fff7ed;color:#9a3412}
+.kus-wf-footer{padding:12px 22px;background:#fff;border-top:1px solid #e2e8f0;flex-shrink:0}
+.kus-wf-footer-row{display:flex;align-items:center;gap:12px}
+.kus-wf-footer-copy{flex:1;min-width:0;font-size:12px;color:#475569;overflow-wrap:anywhere}
+.kus-wf-footer-buttons{display:flex;gap:8px;flex-shrink:0}
+.kus-wf-footer-buttons button{min-height:42px;max-width:320px}
+.kus-wf-footer .kus-lp__status{margin-top:8px}
+.kus-wf-footer .kus-lp__status-text{max-height:44px;overflow:auto}
+.kus-wf .kus-lp__result{white-space:pre-wrap;max-height:none;overflow-wrap:anywhere}
+.kus-wf .kus-lp__apptable-scroll{overflow:auto}
+.kus-wf-jump{border:1px solid #e2e8f0;border-radius:12px;margin-bottom:14px}
+@media(max-width:720px){
+ .kus-wf.kus-lp{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);top:8px;right:8px}
+ .kus-wf .kus-lp__hero{padding:12px 16px}
+ .kus-wf .kus-lp__hint{display:none}
+ .kus-wf-nav{padding:8px;gap:4px}
+ .kus-wf-nav button{padding:9px 3px;font-size:11px}
+ .kus-wf-canvas{padding:16px}
+ .kus-wf .kus-lp__card{padding:12px}
+ .kus-wf-actions{grid-template-columns:1fr}
+ .kus-wf-summary>div{grid-template-columns:1fr;gap:4px}
+ .kus-wf-footer{padding:10px 16px}
+ .kus-wf-footer-row{display:block}
+ .kus-wf-footer-buttons{display:flex;margin-top:8px}
+ .kus-wf-footer-buttons button{flex:1;min-width:0;max-width:none}
+}
+`;
+  function ensureStyles() {
+    if (document.getElementById("kus-workflow-style")) return;
+    const style = document.createElement("style");
+    style.id = "kus-workflow-style";
+    style.textContent = CSS2;
+    document.head.appendChild(style);
+  }
+  function foldWorkflowSection(title, ...nodes) {
+    const details = makeDetails(title);
+    details.body.append(...nodes);
+    return details.details;
+  }
+  function connectionSummary(appId, guestId = "", environment = "本番") {
+    return `#${appId || "未入力"}${guestId ? `（ゲスト ${guestId}）` : ""} · ${environment}`;
+  }
+  function installLiteWorkflow(panel, options) {
+    ensureStyles();
+    panel.root.classList.add("kus-wf");
+    const nav = document.createElement("nav");
+    nav.className = "kus-wf-nav";
+    nav.setAttribute("role", "tablist");
+    nav.setAttribute("aria-label", "操作の手順");
+    const canvas = document.createElement("div");
+    canvas.className = "kus-wf-canvas";
+    const setup = document.createElement("section");
+    const review = document.createElement("section");
+    const result = document.createElement("section");
+    const stages = [setup, review, result];
+    const labels = ["1 対象と操作", "2 内容を確認", "3 実行結果"];
+    const headings = ["対象と操作を選ぶ", "この内容で実行します", "実行結果を確認"];
+    const tabs = labels.map((label, index) => {
+      const tab = makeButton(label, "ghost");
+      tab.id = `${panel.root.id}-workflow-tab-${index}`;
+      tab.setAttribute("role", "tab");
+      const stage = stages[index];
+      stage.id = `${panel.root.id}-workflow-stage-${index}`;
+      stage.className = "kus-wf-stage";
+      stage.setAttribute("role", "tabpanel");
+      stage.setAttribute("aria-labelledby", tab.id);
+      tab.setAttribute("aria-controls", stage.id);
+      const heading = document.createElement("h2");
+      heading.className = "kus-wf-heading";
+      heading.textContent = headings[index];
+      stage.appendChild(heading);
+      tab.addEventListener("click", () => show(index));
+      tab.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const next2 = event.key === "Home" ? 0 : event.key === "End" ? 2 : (index + (event.key === "ArrowRight" ? 1 : 2)) % 3;
+        show(next2);
+      });
+      nav.appendChild(tab);
+      canvas.appendChild(stage);
+      return tab;
+    });
+    const intro = document.createElement("p");
+    intro.className = "kus-wf-intro";
+    intro.textContent = "入力後に対象と条件を確認してから実行できます。";
+    setup.appendChild(intro);
+    const choices = document.createElement("div");
+    choices.className = "kus-wf-actions";
+    choices.setAttribute("role", "radiogroup");
+    choices.setAttribute("aria-label", "行う操作");
+    let selected = options.actions[0];
+    const hiddenActions = document.createElement("div");
+    hiddenActions.hidden = true;
+    options.actions.forEach((action, index) => {
+      const label = document.createElement("label");
+      label.className = "kus-wf-action";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = `${panel.root.id}-workflow-action`;
+      radio.value = action.id;
+      radio.checked = index === 0;
+      radio.setAttribute("aria-label", action.label);
+      const copy = document.createElement("span");
+      const title = document.createElement("strong");
+      title.textContent = action.label;
+      const description = document.createElement("small");
+      description.textContent = action.description;
+      copy.append(title, description);
+      if (action.writes) {
+        const badge = document.createElement("em");
+        badge.textContent = "書き込みあり · 実行前に対象を確認";
+        copy.appendChild(badge);
+      }
+      radio.addEventListener("change", () => {
+        selected = action;
+        reviewedSignature = "";
+        action.onSelect?.();
+        refresh();
+      });
+      label.append(radio, copy);
+      choices.appendChild(label);
+      hiddenActions.appendChild(action.button);
+    });
+    if (options.actions.length > 1) setup.appendChild(choices);
+    setup.append(...options.setup);
+    const summary = document.createElement("dl");
+    summary.className = "kus-wf-summary";
+    const notice = document.createElement("div");
+    notice.className = "kus-wf-notice";
+    review.append(summary, notice);
+    const resultNote = document.createElement("div");
+    resultNote.className = "kus-wf-notice";
+    resultNote.textContent = "まだ実行していません。対象と操作を選んでください。";
+    result.append(resultNote, ...options.results || [], panel.result);
+    options.results?.forEach((element) => {
+      element.hidden = true;
+    });
+    const footer = document.createElement("footer");
+    footer.className = "kus-wf-footer";
+    const footerRow = document.createElement("div");
+    footerRow.className = "kus-wf-footer-row";
+    const footerCopy = document.createElement("div");
+    footerCopy.className = "kus-wf-footer-copy";
+    footerCopy.setAttribute("aria-live", "polite");
+    const buttons = document.createElement("div");
+    buttons.className = "kus-wf-footer-buttons";
+    const back = makeButton("対象・条件を変更", "sub");
+    const next = makeButton("内容を確認する", "primary");
+    const execute = makeButton(selected.label, "primary");
+    buttons.append(back, next, execute);
+    footerRow.append(footerCopy, buttons);
+    footer.append(footerRow, panel.status);
+    const hint = panel.body.querySelector(".kus-lp__hint");
+    panel.body.replaceChildren(...hint ? [hint] : [], nav, canvas, footer, hiddenActions);
+    let active = 0;
+    let busy = false;
+    let pending = null;
+    let reviewedSignature = "";
+    let lastContext = "";
+    const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll("input,select,textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
+    function show(index) {
+      if (busy) return;
+      if (index === 1 && selected.validate()) {
+        panel.setStatus(selected.validate(), "warn");
+        return;
+      }
+      active = index;
+      if (index === 1) {
+        summary.replaceChildren();
+        for (const [label, value] of [["操作", selected.label], ...selected.summary()]) {
+          const row = document.createElement("div");
+          const term = document.createElement("dt");
+          const description = document.createElement("dd");
+          term.textContent = label;
+          description.textContent = value;
+          row.append(term, description);
+          summary.appendChild(row);
+        }
+        reviewedSignature = signature();
+      }
+      stages.forEach((stage, i) => {
+        stage.hidden = i !== active;
+        tabs[i].setAttribute("aria-selected", String(i === active));
+        tabs[i].tabIndex = i === active ? 0 : -1;
+      });
+      canvas.scrollTop = 0;
+      tabs[index].focus({ preventScroll: true });
+      refresh();
+    }
+    function refresh() {
+      const problem = selected.validate();
+      const fresh = reviewedSignature === signature();
+      next.hidden = active !== 0;
+      execute.hidden = active !== 1;
+      back.hidden = active === 0;
+      next.disabled = busy || !!problem;
+      execute.disabled = busy || !!problem || !fresh;
+      execute.textContent = selected.label;
+      execute.classList.toggle("kus-lp__btn--danger", !!selected.writes);
+      tabs[1].disabled = busy || !!problem;
+      footerCopy.textContent = busy ? "処理中です。完了すると結果を表示します。" : problem || (active === 0 ? `${selected.label} · 対象と条件を確認してください。` : active === 1 ? fresh ? "表示内容を確認し、実行してください。" : "条件が変わりました。対象・条件に戻って確認してください。" : "結果を確認してから、次の操作へ進めます。");
+      notice.dataset.write = String(!!selected.writes);
+      notice.textContent = selected.description + (selected.writes ? "\n書き込み先と内容を確認してください。続いて、変更内容の最終確認が表示されます。" : "\nアプリ設定やレコードの書き込みは行いません。");
+      panel.setPrimaryAction(next);
+    }
+    back.addEventListener("click", () => show(0));
+    next.addEventListener("click", () => show(1));
+    function finish() {
+      if (!pending) return;
+      const status = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      resultNote.textContent = `${lastContext}
+${status}`;
+      resultNote.dataset.write = String(!!pending.writes);
+      const showResults = !options.resultActions || options.resultActions.includes(pending.id);
+      options.results?.forEach((element) => {
+        element.hidden = !showResults;
+      });
+      pending = null;
+      reviewedSignature = "";
+      show(2);
+    }
+    execute.addEventListener("click", () => {
+      if (busy || pending || selected.validate() || reviewedSignature !== signature()) return;
+      pending = selected;
+      options.beforeRun?.(selected.id);
+      panel.setResult("");
+      options.results?.forEach((element) => {
+        element.hidden = true;
+      });
+      lastContext = `${selected.label}
+${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
+      selected.button.click();
+      if (!busy) finish();
+    });
+    const originalBusy = panel.setBusy;
+    const disabled = /* @__PURE__ */ new Map();
+    panel.setBusy = (value) => {
+      busy = value;
+      panel.root.setAttribute("aria-busy", String(value));
+      canvas.inert = value;
+      nav.inert = value;
+      if (value) {
+        panel.root.querySelectorAll("input,button,select,textarea").forEach((input) => {
+          disabled.set(input, input.disabled);
+          input.disabled = true;
+        });
+      } else {
+        disabled.forEach((wasDisabled, input) => {
+          input.disabled = wasDisabled;
+        });
+        disabled.clear();
+        finish();
+        refresh();
+      }
+      originalBusy(value);
+    };
+    const originalStatus = panel.setStatus;
+    panel.setStatus = (message, tone) => {
+      originalStatus(message, tone);
+      refresh();
+    };
+    for (const event of ["input", "change", "click"]) setup.addEventListener(event, () => queueMicrotask(refresh));
+    selected.onSelect?.();
+    show(0);
+    return { refresh, show };
+  }
+
+  // src/entries/process-lite-ui.ts
+  init_constants();
+
+  // src/tabs/process-standalone.ts
+  init_utils();
+  init_api();
+  var mermaidLoadPromise = null;
+  var MERMAID_CDN_URLS = [
+    "https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js",
+    "https://unpkg.com/mermaid@10.6.1/dist/mermaid.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.6.1/mermaid.min.js"
+  ];
+  function loadScript(url) {
+    return new Promise((resolve, reject) => {
+      let cspViolation = null;
+      const onPolicyViolation = (ev) => {
+        const blocked = String(ev.blockedURI || "");
+        if (blocked === url || blocked.includes("mermaid")) {
+          cspViolation = ev;
+        }
+      };
+      const existing = document.querySelector(`script[src="${url}"]`);
+      if (existing) {
+        if (existing.dataset.loaded === "1") {
+          resolve();
+        } else if (existing.dataset.failed === "1") {
+          existing.remove();
+          loadScript(url).then(resolve).catch(reject);
+        } else {
+          existing.addEventListener("load", () => resolve(), { once: true });
+          existing.addEventListener("error", () => reject(new Error(`スクリプト読み込み失敗: ${url}`)), { once: true });
+        }
+        return;
+      }
+      const s = document.createElement("script");
+      s.src = url;
+      s.async = true;
+      document.addEventListener("securitypolicyviolation", onPolicyViolation, false);
+      const cleanup = () => document.removeEventListener("securitypolicyviolation", onPolicyViolation, false);
+      s.onload = () => {
+        cleanup();
+        s.dataset.loaded = "1";
+        resolve();
+      };
+      s.onerror = () => {
+        cleanup();
+        s.dataset.failed = "1";
+        if (cspViolation) {
+          reject(new Error(
+            `スクリプト読み込み失敗(CSP): ${url} / directive=${cspViolation.effectiveDirective || "unknown"} / blocked=${cspViolation.blockedURI || "unknown"}`
+          ));
+          return;
+        }
+        reject(new Error(`スクリプト読み込み失敗: ${url}`));
+      };
+      document.head.appendChild(s);
+    });
+  }
+  async function loadScriptWithFallback(urls) {
+    let lastErr = null;
+    for (const url of urls) {
+      try {
+        await loadScript(url);
+        return;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error("Mermaid.js の読み込みに失敗しました");
+  }
+  async function ensureMermaid() {
+    const w = window;
+    if (w.mermaid) return w.mermaid;
+    if (!mermaidLoadPromise) {
+      mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS).catch((err) => {
+        mermaidLoadPromise = null;
+        throw err;
+      });
+    }
+    await mermaidLoadPromise;
+    if (w.mermaid) {
+      w.mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "strict" });
+      return w.mermaid;
+    }
+    throw new Error("Mermaid.js の読み込みに失敗しました");
+  }
+  function mermaidDisplayName(name) {
+    return String(name ?? "").replace(/[\r\n]+/g, " ").replace(/"/g, "'").trim() || "(名称なし)";
+  }
+  function mermaidTransitionLabel(name) {
+    return String(name ?? "").replace(/[\r\n]+/g, " ").replace(/[:;]/g, "-").replace(/[#"]/g, "").trim() || "(名称なし)";
+  }
+  function buildProcessMermaidSource(states, actions, highlightState) {
+    const stateNames = Object.keys(states || {});
+    const ids = /* @__PURE__ */ new Map();
+    const idOf = (name) => {
+      const key = String(name ?? "");
+      let id = ids.get(key);
+      if (!id) {
+        id = `s${ids.size}`;
+        ids.set(key, id);
+      }
+      return id;
+    };
+    const lines = ["stateDiagram-v2"];
+    for (const st of stateNames) {
+      lines.push(`    state "${mermaidDisplayName(st)}" as ${idOf(st)}`);
+    }
+    const validActions = (Array.isArray(actions) ? actions : []).filter((a) => a && a.from != null && a.to != null);
+    for (const a of validActions) {
+      for (const name of [String(a.from), String(a.to)]) {
+        if (!ids.has(name)) lines.push(`    state "${mermaidDisplayName(name)}" as ${idOf(name)}`);
+      }
+    }
+    const initial = findInitialState(states, validActions);
+    const startStates = new Set(stateNames);
+    for (const a of validActions) startStates.delete(String(a.to));
+    if (initial != null) startStates.add(initial);
+    for (const st of stateNames) {
+      if (startStates.has(st)) lines.push(`    [*] --> ${idOf(st)}`);
+    }
+    for (const a of validActions) {
+      lines.push(`    ${idOf(String(a.from))} --> ${idOf(String(a.to))} : ${mermaidTransitionLabel(a.name)}`);
+    }
+    if (highlightState != null && highlightState !== "" && ids.has(String(highlightState))) {
+      lines.push("");
+      lines.push("    classDef current fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#0f172a");
+      lines.push(`    class ${idOf(String(highlightState))} current`);
+    }
+    return lines.join("\n") + "\n";
+  }
+  function findInitialState(states, actions) {
+    const names = Object.keys(states || {});
+    if (!names.length) return null;
+    const indexed = names.map((name) => ({ name, index: Number(states?.[name]?.index) })).filter((s) => Number.isFinite(s.index));
+    if (indexed.length === names.length) {
+      indexed.sort((a, b) => a.index - b.index);
+      return indexed[0].name;
+    }
+    const remaining = new Set(names);
+    for (const a of Array.isArray(actions) ? actions : []) {
+      if (a?.to != null) remaining.delete(String(a.to));
+    }
+    return [...remaining][0] || names[0];
+  }
+  function renderFallbackFlowHtml(states, actions, highlightState) {
+    const stateList = Object.keys(states || {});
+    const transitions = (actions || []).map((a) => {
+      const from = esc(a.from || "");
+      const to = esc(a.to || "");
+      const name = esc(a.name || "");
+      const current = highlightState && (a.from === highlightState || a.to === highlightState);
+      const style = current ? ' style="background:#dcfce7"' : "";
+      return `<tr${style}><td>${from}</td><td>${name}</td><td>${to}</td></tr>`;
+    }).join("");
+    const stateHtml = stateList.map((s) => {
+      const isCurrent = highlightState === s;
+      const style = isCurrent ? "background:#bbf7d0;border-color:#16a34a" : "background:#f8fafc;border-color:#cbd5e1";
+      return `<span style="display:inline-block;margin:2px;padding:2px 8px;border:1px solid;${style};border-radius:9999px">${esc(s)}</span>`;
+    }).join("");
+    return `
+    <div style="color:#334155;font-size:12px;line-height:1.5">
+      <div style="margin-bottom:8px;color:#b45309">Mermaid.js を読み込めなかったため、簡易表示に切り替えました。</div>
+      <div style="margin-bottom:8px">${stateHtml || '<span style="color:#94a3b8">状態なし</span>'}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">From</th><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">Action</th><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">To</th></tr></thead>
+        <tbody>${transitions || '<tr><td colspan="3" style="padding:6px;color:#94a3b8">遷移なし</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
+  }
+  async function runRenderProcessFlowStandalone(source, setStatus, targets) {
+    const app = String(source.appId || "").trim();
+    if (!app) throw new Error("アプリIDを入力してください");
+    const prefix = buildApiPrefix(source.guestId || "", false);
+    setStatus("プロセス管理を取得中...");
+    const res = await apiGet(prefix, "/app/status.json", { app });
+    if (!res.enable) {
+      targets.textEl.value = "プロセス管理は無効です。";
+      targets.viewEl.innerHTML = '<div style="color:#64748b">プロセス管理は無効です</div>';
+      if (targets.simUi) targets.simUi.container.style.display = "none";
+      setStatus("プロセス管理は無効です");
+      return null;
+    }
+    const states = res.states || {};
+    const actions = (res.actions || []).filter((a) => a && a.from != null && a.to != null);
+    const orphanActions = (res.actions || []).length - actions.length;
+    const renderMermaid = async (highlightState) => {
+      const md = buildProcessMermaidSource(states, actions, highlightState);
+      targets.textEl.value = md;
+      try {
+        const mermaidObj = await ensureMermaid();
+        const { svg } = await mermaidObj.render("mermaid-svg-generated-" + Date.now(), md);
+        targets.viewEl.innerHTML = svg;
+      } catch (e) {
+        targets.viewEl.innerHTML = renderFallbackFlowHtml(states, actions, highlightState);
+        setStatus(`Mermaid.js の読み込みに失敗したため、簡易表示に切り替えました。(${e.message || e})`, true);
+      }
+    };
+    setStatus("フロー図 生成中...");
+    await renderMermaid(null);
+    setStatus(orphanActions ? `フロー図 生成完了（from/to 未設定のアクション ${orphanActions}件は除外）` : "フロー図 生成完了", orphanActions > 0);
+    if (targets.simUi) {
+      let current = null;
+      const { container, current: curEl, select, startBtn, execBtn } = targets.simUi;
+      container.style.display = "block";
+      const updateSim = () => {
+        if (!current) {
+          curEl.textContent = "未開始";
+          curEl.style.background = "#e2e8f0";
+          select.innerHTML = '<option value="">-- 開始ボタンを押してください --</option>';
+          select.disabled = true;
+          return;
+        }
+        curEl.textContent = current;
+        curEl.style.background = "#bbf7d0";
+        select.disabled = false;
+        const avail = actions.filter((a) => a.from === current);
+        if (avail.length === 0) {
+          select.innerHTML = '<option value="">-- 次のアクションなし（完了） --</option>';
+          select.disabled = true;
+        } else {
+          select.innerHTML = avail.map((a, idx) => `<option value="${idx}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join("");
+        }
+      };
+      updateSim();
+      startBtn.onclick = async () => {
+        current = findInitialState(states, actions);
+        updateSim();
+        if (current) {
+          setStatus("シミュレーション開始: " + current);
+          await renderMermaid(current);
+        }
+      };
+      execBtn.onclick = async () => {
+        if (select.disabled) return;
+        const idx = Number(select.value);
+        if (!Number.isFinite(idx)) return;
+        const action = actions.filter((a) => a.from === current)[idx];
+        if (!action) return;
+        current = action.to;
+        updateSim();
+        setStatus(`アクション「${action.name}」実行 → 「${action.to}」`);
+        await renderMermaid(action.to);
+      };
+    }
+    return { states, actions };
+  }
+
   // src/entries/appSearchControl.ts
   init_api();
 
@@ -1782,7 +2087,7 @@ ${contextLine}`);
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:10.5px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
-  function ensureStyles() {
+  function ensureStyles2() {
     if (document.getElementById(RESULT_CSS_ID)) return;
     const st = document.createElement("style");
     st.id = RESULT_CSS_ID;
@@ -1790,7 +2095,7 @@ ${contextLine}`);
     document.head.appendChild(st);
   }
   function createAppSearchControl(panel, opts) {
-    ensureStyles();
+    ensureStyles2();
     const { details, body } = makeDetails(opts.title || "アプリ名で検索", { open: !!opts.open });
     const keyword = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide", noSubmit: true });
     const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
@@ -1898,7 +2203,7 @@ ${contextLine}`);
       subtitle: "プロセス管理を Mermaid フロー図で描画し、シミュレーションで動きを確認します。",
       accent: "process",
       badges: [{ label: "Lite" }, { label: "シミュレーション可" }],
-      hint: "Mermaid.js を CDN から動的読込し、状態遷移図を描画します。CSP で読込できない場合は簡易テーブル表示にフォールバックします。"
+      hint: "プロセスの流れと状態遷移を確認できます。シミュレーションで実際のレコードが更新されることはありません。"
     });
     const cardApp = makeCard({ title: "対象アプリ", number: 1 });
     const appInp = makeInput({ placeholder: "アプリID", value: DEFAULT_APP_ID || "", width: "id" });
@@ -1970,6 +2275,27 @@ ${contextLine}`);
         panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, "ok");
       }
     }));
+    appInp.setAttribute("aria-label", "対象アプリID");
+    guestInp.setAttribute("aria-label", "ゲストスペースID");
+    simSelect.setAttribute("aria-label", "シミュレーションのアクション");
+    textEl.setAttribute("aria-label", "プロセス図のMermaidソース");
+    installLiteWorkflow(panel, {
+      setup: [cardApp.card],
+      results: [cardDiag.card, cardSim.card, foldWorkflowSection("図のソースを確認する", cardText.card)],
+      beforeRun: () => {
+        textEl.value = "";
+        viewEl.replaceChildren();
+        cardSim.card.style.display = "none";
+      },
+      actions: [{
+        id: "render",
+        label: "プロセス図を表示",
+        description: "状態とアクションの流れを表示し、結果画面でシミュレーションできます。",
+        button: runBtn,
+        validate: () => appInp.value.trim() ? "" : "対象アプリIDを指定してください。",
+        summary: () => [["対象", connectionSummary(appInp.value.trim(), guestInp.value.trim())], ["操作", "状態遷移図を表示。シミュレーションは実データを変更しません。"]]
+      }]
+    });
   }
 
   // src/entries/process-lite-entry.ts
