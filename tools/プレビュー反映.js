@@ -1310,14 +1310,16 @@ ${base}`
     }
     return limitImportedBundleToSections(candidates[0], options.sections);
   }
-  async function readSettingsBundleFile(file, options = {}) {
-    const text = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(String(e.target.result || ""));
-      reader.onerror = () => reject(new Error("ファイルの読み取りに失敗しました"));
-      reader.readAsText(file);
-    });
-    return pickSettingsBundle(JSON.parse(text), options);
+  function pickAllSettingsBundles(raw, side) {
+    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
+      try {
+        return ensureBundleShape(item);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
+    return candidates;
   }
 
   // src/reflect/applyOutcome.ts
@@ -2505,7 +2507,7 @@ ${base}`
     presets: []
   };
   var SCOPE_QUICK_PRESETS = [
-    { id: "all", label: "すべて", hint: "反映可能なセクションを全選択" },
+    { id: "all", label: "すべての項目", hint: "反映可能なセクションを全選択" },
     {
       id: "formOnly",
       label: "フォームのみ",
@@ -2548,20 +2550,20 @@ ${base}`
   ]);
   var REFLECT_LITE_STYLE_ID = "kus-reflect-lite-styles";
   var REFLECT_LITE_CSS = `
-#kus-reflect-lite.kus-lp--wide{width:min(920px,96vw);max-height:min(94vh,960px);border-radius:24px;border-color:#cbd5e1}
-#kus-reflect-lite .kus-lp__hero{padding:20px 24px 22px;background:radial-gradient(circle at 82% -40%,rgba(251,146,60,.9),transparent 38%),linear-gradient(128deg,#172033 0%,#7f1d1d 58%,#dc2626 100%)}
+#kus-reflect-lite.kus-lp--wide{width:min(960px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px;border-color:#cbd5e1}
+#kus-reflect-lite .kus-lp__hero{padding:16px 24px;background:#172033}
 #kus-reflect-lite .kus-lp__title{font-size:20px;letter-spacing:-.01em}
 #kus-reflect-lite .kus-lp__subtitle{font-size:12.5px;max-width:560px}
-#kus-reflect-lite .kus-lp__body{padding:0;background:#f4f6f8}
+#kus-reflect-lite .kus-lp__body{padding:0;background:#f4f6f8;display:flex;flex-direction:column;overflow:hidden}
 #kus-reflect-lite .kus-lp__hint{margin:0;padding:11px 24px;border:0;border-bottom:1px solid #e2e8f0;border-radius:0;background:#fff7ed;color:#9a3412}
 #kus-reflect-lite .kus-lp__hint strong{color:#7c2d12}
 #kus-reflect-lite .kus-lp__card{border-radius:16px;padding:16px 18px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
 #kus-reflect-lite .kus-lp__card-head{border:0;margin:0 0 12px;padding:0}
 #kus-reflect-lite .kus-lp__card-title{font-size:12px;text-transform:none;letter-spacing:.01em;color:#172033}
 #kus-reflect-lite .kus-lp__card-num{background:#172033;color:#fff}
-#kus-reflect-lite .kus-rl-workspace{display:grid;grid-template-columns:184px minmax(0,1fr);min-height:480px}
-#kus-reflect-lite .kus-rl-canvas{min-width:0;padding:22px 24px 10px}
-#kus-reflect-lite .kus-rl-setup-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+#kus-reflect-lite .kus-rl-workspace{display:flex;flex-direction:column;min-height:0;flex:1}
+#kus-reflect-lite .kus-rl-canvas{min-width:0;min-height:0;overflow:auto;padding:20px 24px;scroll-padding:16px}
+#kus-reflect-lite .kus-rl-setup-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
 #kus-reflect-lite .kus-rl-setup-grid>.kus-lp__card{margin:0}
 #kus-reflect-lite .kus-rl-setup-grid>.kus-rl-card--route,#kus-reflect-lite .kus-rl-setup-grid>.kus-rl-card--preset{grid-column:1/-1}
 #kus-reflect-lite .kus-rl-route{display:grid;grid-template-columns:minmax(0,1fr) 48px minmax(0,1fr);align-items:stretch;gap:10px}
@@ -2571,6 +2573,22 @@ ${base}`
 #kus-reflect-lite .kus-rl-endpoint--target .kus-rl-endpoint__eyebrow{color:#c2410c}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.8fr);gap:7px;margin:0}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__input{width:100%;min-width:0;box-sizing:border-box}
+#kus-reflect-lite .kus-rl-endpoint .kus-lp__select{width:100%;margin-bottom:8px}
+#kus-reflect-lite .kus-rl-endpoint__note{font-size:11px;color:#9a3412;min-height:33px;margin-bottom:8px}
+#kus-reflect-lite .kus-rl-field{display:flex;flex-direction:column;gap:4px;font-size:11px;font-weight:600;margin:8px 0}
+#kus-reflect-lite .kus-rl-field .kus-lp__input{min-height:40px;font-size:14px}
+#kus-reflect-lite .kus-rl-endpoint .kus-lp__file{width:100%;min-width:0;box-sizing:border-box;margin:12px 0}
+#kus-reflect-lite .kus-rl-endpoint .kus-lp__check{margin:10px 0}
+#kus-reflect-lite .kus-rl-scope-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}
+#kus-reflect-lite .kus-rl-scope-group{min-width:0;margin:0;padding:10px;border:1px solid #e2e8f0;border-radius:10px}
+#kus-reflect-lite .kus-rl-scope-group legend{font-size:11px;font-weight:700;color:#475569;padding:0 4px}
+#kus-reflect-lite .kus-rl-scope-group .kus-lp__chips{display:flex;flex-direction:column;align-items:stretch}
+#kus-reflect-lite .kus-rl-scope-group .kus-lp__chip{border-radius:6px;white-space:normal;min-height:32px}
+#kus-reflect-lite .kus-rl-advanced{border:1px solid #e2e8f0;border-radius:12px;background:#fff;padding:2px 14px}
+#kus-reflect-lite .kus-rl-advanced>.kus-lp__details-body{padding:10px 0}
+#kus-reflect-lite .kus-rl-advanced .kus-lp__card{box-shadow:none}
+#kus-reflect-lite [hidden]{display:none!important}
+#kus-reflect-lite :is(button,input,select,summary):focus-visible{outline:3px solid #2563eb;outline-offset:3px}
 #kus-reflect-lite .kus-rl-route-arrow{display:flex;align-items:center;justify-content:center;color:#dc2626;font-size:22px;font-weight:800}
 #kus-reflect-lite .kus-rl-route-utility{margin-top:10px!important;padding-top:10px;border-top:1px dashed #e2e8f0}
 #kus-reflect-lite .kus-rl-review{display:flex;flex-direction:column;gap:10px}
@@ -2611,12 +2629,10 @@ ${base}`
 #kus-reflect-lite .kus-rl-preview-row__actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 #kus-reflect-lite .kus-rl-preview-row__state{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 #kus-reflect-lite .kus-rl-preview-mini{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:#fff;border:1px solid #e2e8f0;font-size:10.5px;font-weight:700;color:#475569}
-#kus-reflect-lite .kus-rl-nav{padding:24px 14px;background:#172033;border-right:1px solid #0f172a}
-#kus-reflect-lite .kus-rl-nav::before{content:'WORKFLOW';display:block;margin:0 10px 13px;color:#94a3b8;font-size:9.5px;font-weight:800;letter-spacing:.14em}
-#kus-reflect-lite .kus-rl-nav__btn{appearance:none;width:100%;border:1px solid transparent;border-radius:12px;background:transparent;color:#94a3b8;padding:11px 10px;cursor:pointer;font:700 12px/1.3 inherit;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:9px;text-align:left}
-#kus-reflect-lite .kus-rl-nav__btn+.kus-rl-nav__btn{margin-top:5px}
-#kus-reflect-lite .kus-rl-nav__btn:hover{background:#202c42;color:#e2e8f0}
-#kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"]{background:#fff;color:#991b1b;border-color:#fff;box-shadow:0 8px 20px rgba(0,0,0,.2)}
+#kus-reflect-lite .kus-rl-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px 24px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
+#kus-reflect-lite .kus-rl-nav__btn{appearance:none;width:100%;border:1px solid transparent;border-radius:10px;background:transparent;color:#64748b;padding:10px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:9px;text-align:left}
+#kus-reflect-lite .kus-rl-nav__btn:hover{background:#f1f5f9;color:#172033}
+#kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"]{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
 #kus-reflect-lite .kus-rl-nav__num{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#e2e8f0;color:#475569;font-size:10px}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"] .kus-rl-nav__num{background:#fee2e2;color:#b91c1c}
 #kus-reflect-lite .kus-rl-nav__copy{display:block;font-size:9.5px;font-weight:500;color:#94a3b8;margin-top:2px}
@@ -2625,13 +2641,21 @@ ${base}`
 #kus-reflect-lite .kus-rl-stage-head{margin:0 2px 16px}
 #kus-reflect-lite .kus-rl-stage-head h2{margin:0;font-size:19px;letter-spacing:-.02em;color:#0f172a}
 #kus-reflect-lite .kus-rl-stage-head p{margin:4px 0 0;font-size:12px;color:#64748b}
-#kus-reflect-lite .kus-rl-action-dock{position:sticky;bottom:0;z-index:9;padding:12px 24px 16px 208px;background:rgba(255,255,255,.96);border-top:1px solid #e2e8f0;box-shadow:0 -8px 24px rgba(15,23,42,.07);backdrop-filter:blur(10px)}
+#kus-reflect-lite .kus-rl-action-dock{flex-shrink:0;padding:12px 24px;background:#fff;border-top:1px solid #e2e8f0}
+#kus-reflect-lite .kus-rl-dock-row{display:flex;align-items:center;gap:10px}
+#kus-reflect-lite .kus-rl-dock-copy{flex:1;min-width:0;font-size:12px;color:#475569;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-dock-copy strong{display:block;color:#0f172a}
+#kus-reflect-lite .kus-rl-dock-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+#kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{min-height:42px}
+#kus-reflect-lite .kus-rl-action-dock .kus-lp__result{max-height:80px;overflow:auto}
+#kus-reflect-lite .kus-rl-action-dock .kus-lp__status-text{max-height:48px;overflow:auto}
 #kus-reflect-lite .kus-rl-action-dock .kus-lp__status{margin-top:8px}
 #kus-reflect-lite .kus-rl-stage .kus-lp__card:last-child{margin-bottom:0}
 @media(max-width:720px){
-  #kus-reflect-lite.kus-lp--wide{width:min(96vw,640px)}
-  #kus-reflect-lite .kus-rl-workspace{display:block;min-height:0}
-  #kus-reflect-lite .kus-rl-nav{position:sticky;top:0;z-index:8;display:grid;grid-template-columns:repeat(3,1fr);padding:8px;background:rgba(23,32,51,.98);border:0}
+  #kus-reflect-lite.kus-lp--wide{width:calc(100vw - 16px);right:8px;top:8px;max-height:calc(100dvh - 16px)}
+  #kus-reflect-lite .kus-lp__hero{padding:12px 16px}
+  #kus-reflect-lite .kus-lp__hint,#kus-reflect-lite .kus-lp__badge-row{display:none}
+  #kus-reflect-lite .kus-rl-nav{padding:8px;gap:4px}
   #kus-reflect-lite .kus-rl-nav::before,#kus-reflect-lite .kus-rl-nav__copy{display:none}
   #kus-reflect-lite .kus-rl-nav__btn{display:flex;justify-content:center;text-align:center;padding:8px 4px;font-size:11px}
   #kus-reflect-lite .kus-rl-nav__btn+.kus-rl-nav__btn{margin:0}
@@ -2642,7 +2666,16 @@ ${base}`
   #kus-reflect-lite .kus-rl-route-arrow{height:24px;transform:rotate(90deg)}
   #kus-reflect-lite .kus-rl-action-dock{padding:12px 16px 15px}
   #kus-reflect-lite .kus-rl-review-grid{grid-template-columns:1fr}
+  #kus-reflect-lite .kus-rl-scope-groups{grid-template-columns:1fr}
+  #kus-reflect-lite .kus-rl-dock-row{align-items:stretch;flex-direction:column;gap:8px}
+  #kus-reflect-lite .kus-rl-dock-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{min-width:0;white-space:normal}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn--danger,#kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn--primary{grid-column:1/-1}
+  #kus-reflect-lite .kus-lp__card{padding:12px}
+  #kus-reflect-lite .kus-lp__card-head{flex-wrap:wrap}
+  #kus-reflect-lite .kus-lp__select{min-width:0!important;max-width:100%}
 }
+@media(prefers-reduced-motion:reduce){#kus-reflect-lite{animation:none}#kus-reflect-lite *{scroll-behavior:auto!important}}
 `;
   function ensureReflectLiteStyles() {
     if (document.getElementById(REFLECT_LITE_STYLE_ID)) return;
@@ -2658,12 +2691,16 @@ ${base}`
       title: "プレビュー反映",
       subtitle: "比較元アプリの設定を比較先プレビューへ一括反映します。",
       accent: "reflect",
-      badges: [{ label: "Lite" }, { label: "比較先プレビューへ" }],
-      hint: "<strong>反映先は常にプレビュー</strong>環境です。まず差分プレビューで変更内容を確認し、そのまま反映判断につなげます。",
+      badges: [],
+      hint: "<strong>差分を確認してから反映</strong> · 反映先はプレビューです。本番への公開は設定画面で行います。",
       wide: true
     });
     let showWorkflowStage = () => {
     };
+    let refreshWorkflow = () => {
+    };
+    let busy = false;
+    let sourceMode = "app";
     const srcApp = makeInput({ placeholder: "比較元アプリID", value: memoryState.sourceAppId || "", width: "id" });
     const srcGuest = makeInput({ placeholder: "ゲストID", value: memoryState.sourceGuestId || "", width: "guest" });
     const tgtApp = makeInput({ placeholder: "比較先アプリID", value: memoryState.targetAppId || DEFAULT_APP_ID || "", width: "id" });
@@ -2673,11 +2710,16 @@ ${base}`
     tgtApp.setAttribute("aria-label", "比較先アプリID");
     tgtGuest.setAttribute("aria-label", "比較先ゲストスペースID");
     let sourceBundleFromJson = null;
+    let sourceJsonBundles = [];
     let sourceBundleToken = "";
     const srcJsonFile = document.createElement("input");
     srcJsonFile.type = "file";
     srcJsonFile.accept = ".json,application/json";
     srcJsonFile.className = "kus-lp__file";
+    const sourceJsonAppSelect = document.createElement("select");
+    sourceJsonAppSelect.className = "kus-lp__select";
+    sourceJsonAppSelect.setAttribute("aria-label", "設定JSON内の比較元アプリ");
+    sourceJsonAppSelect.hidden = true;
     const srcJsonClearBtn = makeButton("クリア", "ghost");
     srcJsonClearBtn.style.display = "none";
     const srcJsonNote = document.createElement("div");
@@ -2693,26 +2735,57 @@ ${base}`
     route.className = "kus-rl-route";
     const sourceEndpoint = document.createElement("section");
     sourceEndpoint.className = "kus-rl-endpoint";
-    sourceEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">Source · 読み取り</div>';
-    sourceEndpoint.appendChild(makeRow([srcApp, srcGuest]));
+    sourceEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">比較元 · 設定を読み取る</div>';
+    const sourceModeSelect = document.createElement("select");
+    sourceModeSelect.className = "kus-lp__select";
+    sourceModeSelect.setAttribute("aria-label", "比較元の取得方法");
+    sourceModeSelect.innerHTML = '<option value="app">アプリから取得</option><option value="json">設定JSONから取得</option>';
+    sourceEndpoint.appendChild(sourceModeSelect);
+    const sourceAppFields = document.createElement("div");
+    function labeledInput(input, caption) {
+      const label = document.createElement("label");
+      label.className = "kus-rl-field";
+      const text = document.createElement("span");
+      text.textContent = caption;
+      label.append(text, input);
+      input.inputMode = "numeric";
+      return label;
+    }
+    sourceAppFields.appendChild(labeledInput(srcApp, "アプリID"));
+    const sourceGuestDetails = makeDetails("ゲストスペースを指定", { open: !!srcGuest.value });
+    sourceGuestDetails.body.appendChild(labeledInput(srcGuest, "ゲストスペースID（任意）"));
+    sourceAppFields.append(sourceGuestDetails.details, currentSrcBtn);
+    sourceEndpoint.appendChild(sourceAppFields);
+    const sourceJsonFields = document.createElement("div");
+    sourceJsonFields.hidden = true;
+    srcJsonFile.setAttribute("aria-label", "比較元の設定JSON");
+    sourceJsonFields.append(srcJsonFile, sourceJsonAppSelect, srcJsonClearBtn, srcJsonNote);
+    sourceEndpoint.appendChild(sourceJsonFields);
     const routeArrow = document.createElement("div");
     routeArrow.className = "kus-rl-route-arrow";
     routeArrow.setAttribute("aria-hidden", "true");
     routeArrow.textContent = "→";
     const targetEndpoint = document.createElement("section");
     targetEndpoint.className = "kus-rl-endpoint kus-rl-endpoint--target";
-    targetEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">Target · Preview only</div>';
-    targetEndpoint.appendChild(makeRow([tgtApp, tgtGuest]));
+    targetEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">比較先 · プレビューへ反映</div><div class="kus-rl-endpoint__note">本番への公開は設定画面から行います</div>';
+    targetEndpoint.appendChild(labeledInput(tgtApp, "アプリID"));
+    const targetGuestDetails = makeDetails("ゲストスペースを指定", { open: !!tgtGuest.value });
+    targetGuestDetails.body.appendChild(labeledInput(tgtGuest, "ゲストスペースID（任意）"));
+    targetEndpoint.append(targetGuestDetails.details, currentBtn);
     route.appendChild(sourceEndpoint);
     route.appendChild(routeArrow);
     route.appendChild(targetEndpoint);
     cardApp.body.appendChild(route);
-    cardApp.body.appendChild(makeRow([srcJsonFile, srcJsonClearBtn], { label: "比較元JSON" }));
-    cardApp.body.appendChild(srcJsonNote);
-    const quickRow = makeRow([currentSrcBtn, copyBtn, currentBtn, swapBtn]);
+    const quickRow = makeRow([swapBtn, copyBtn]);
     quickRow.classList.add("kus-rl-route-utility");
     cardApp.body.appendChild(quickRow);
     function refreshSrcJsonNote() {
+      sourceAppFields.hidden = sourceMode === "json";
+      sourceJsonFields.hidden = sourceMode !== "json";
+      sourceModeSelect.value = sourceMode;
+      swapBtn.disabled = sourceMode === "json";
+      copyBtn.disabled = sourceMode === "json";
+      sourceJsonAppSelect.hidden = sourceJsonBundles.length < 2;
       if (sourceBundleFromJson) {
         srcJsonNote.textContent = `比較元JSON読み込み済み: App ${sourceBundleFromJson?.appId || "-"}（比較元はこのJSONから取得し、アプリからの取得は行いません）`;
         srcJsonNote.style.display = "block";
@@ -2722,26 +2795,54 @@ ${base}`
         srcJsonClearBtn.style.display = "none";
       }
     }
+    sourceModeSelect.addEventListener("change", () => {
+      sourceMode = sourceModeSelect.value === "json" ? "json" : "app";
+      sourceBundleFromJson = null;
+      sourceJsonBundles = [];
+      sourceBundleToken = "";
+      srcJsonFile.value = "";
+      refreshSrcJsonNote();
+      refreshSameConnBanner();
+      refreshReviewCard();
+    });
     srcJsonFile.addEventListener("change", () => liteRun(panel, "比較元JSONを読み込み中…", async () => {
       const file = srcJsonFile.files?.[0];
       if (!file) return;
-      sourceBundleFromJson = await readSettingsBundleFile(file, { side: "source", appId: srcApp.value.trim() });
+      sourceBundleFromJson = null;
+      sourceJsonBundles = [];
+      sourceBundleToken = "";
+      sourceJsonBundles = pickAllSettingsBundles(JSON.parse(await file.text()), "source");
+      sourceJsonAppSelect.replaceChildren(...sourceJsonBundles.map((bundle, index) => {
+        const option = document.createElement("option");
+        option.value = String(index);
+        option.textContent = `アプリ #${bundle.appId}`;
+        return option;
+      }));
+      sourceBundleFromJson = sourceJsonBundles[0];
       sourceBundleToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
-      if (!srcApp.value.trim() && sourceBundleFromJson?.appId) srcApp.value = String(sourceBundleFromJson.appId);
+      if (sourceBundleFromJson?.appId) srcApp.value = String(sourceBundleFromJson.appId);
       panel.setStatus(`比較元JSONを読み込みました: App ${sourceBundleFromJson?.appId || "-"}`, "ok");
       saveState();
       refreshSrcJsonNote();
       refreshSameConnBanner();
       refreshReviewCard();
     }));
+    sourceJsonAppSelect.addEventListener("change", () => {
+      sourceBundleFromJson = sourceJsonBundles[Number(sourceJsonAppSelect.value)];
+      srcApp.value = String(sourceBundleFromJson.appId);
+      saveState();
+      refreshSrcJsonNote();
+      refreshReviewCard();
+    });
     srcJsonClearBtn.addEventListener("click", () => {
       sourceBundleFromJson = null;
+      sourceJsonBundles = [];
       sourceBundleToken = "";
       srcJsonFile.value = "";
       refreshSrcJsonNote();
       refreshSameConnBanner();
       refreshReviewCard();
-      panel.setStatus("比較元JSONをクリアしました（比較元アプリIDから取得します）", "info");
+      panel.setStatus("比較元JSONをクリアしました。設定JSONを選んでください。", "info");
     });
     const sameConnBanner = document.createElement("div");
     sameConnBanner.className = "kus-lp__note--warn";
@@ -2751,6 +2852,8 @@ ${base}`
     cardApp.body.appendChild(createAppSearchControl(panel, {
       targets: [
         { label: "比較元", apply: (id, _name, guestId) => {
+          sourceModeSelect.value = "app";
+          sourceModeSelect.dispatchEvent(new Event("change"));
           srcApp.value = id;
           if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId;
           saveState();
@@ -2768,7 +2871,9 @@ ${base}`
     }));
     panel.body.insertBefore(cardApp.card, panel.status);
     function refreshSameConnBanner() {
-      const same = !sourceBundleFromJson && !!srcApp.value.trim() && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim();
+      if (srcGuest.value) sourceGuestDetails.details.open = true;
+      if (tgtGuest.value) targetGuestDetails.details.open = true;
+      const same = sourceMode === "app" && !!srcApp.value.trim() && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim();
       sameConnBanner.style.display = same ? "block" : "none";
     }
     currentSrcBtn.addEventListener("click", () => {
@@ -2812,10 +2917,10 @@ ${base}`
         refreshReviewCard();
       });
     });
-    const cardScope = makeCard({ title: "反映するセクション", number: 2 });
+    const cardScope = makeCard({ title: "反映する項目", number: 2, subtitle: "目的に近いセットを選び、必要な項目を調整できます。" });
     const putSections = SECTION_DEFS.filter((d) => d.put);
     const initialSelected = new Set(
-      Array.isArray(memoryState.selectedScopes) && memoryState.selectedScopes.length ? memoryState.selectedScopes : putSections.map((d) => d.key)
+      Array.isArray(memoryState.selectedScopes) ? memoryState.selectedScopes : putSections.map((d) => d.key)
     );
     const chips = putSections.map((d) => makeChip({
       label: d.label,
@@ -2824,7 +2929,24 @@ ${base}`
     }));
     const chipBox = document.createElement("div");
     chipBox.className = "kus-lp__chips";
-    chips.forEach((c) => chipBox.appendChild(c.label));
+    const scopeGroups = [
+      { label: "フォーム・表示", keys: ["fieldSettings", "layoutSettings", "viewSettings", "reportSettings", "categories"] },
+      { label: "動作・カスタマイズ", keys: ["processSettings", "actionSettings", "pluginSettings", "customizeSettings"] },
+      { label: "権限・通知", keys: ["appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications"] }
+    ];
+    chipBox.className = "kus-rl-scope-groups";
+    scopeGroups.forEach((group) => {
+      const fieldset = document.createElement("fieldset");
+      fieldset.className = "kus-rl-scope-group";
+      const legend = document.createElement("legend");
+      legend.textContent = group.label;
+      fieldset.appendChild(legend);
+      const list = document.createElement("div");
+      list.className = "kus-lp__chips";
+      chips.filter((c) => group.keys.includes(c.checkbox.value)).forEach((c) => list.appendChild(c.label));
+      fieldset.appendChild(list);
+      chipBox.appendChild(fieldset);
+    });
     cardScope.body.appendChild(chipBox);
     const scopeCountLabel = document.createElement("div");
     scopeCountLabel.className = "kus-lp__small";
@@ -2864,7 +2986,7 @@ ${base}`
       });
       presetRow.appendChild(btn);
     }
-    cardScope.body.appendChild(presetRow);
+    cardScope.body.prepend(presetRow);
     const allBtn = makeButton("全選択", "sub");
     const noneBtn = makeButton("全解除", "sub");
     cardScope.actions.appendChild(allBtn);
@@ -2913,7 +3035,7 @@ ${base}`
       help: "反映前に比較先プレビューの設定を JSON で書き出します"
     });
     const srcPreview = makeCheck({
-      label: "比較元をプレビューから取得",
+      label: "プレビューの設定を取得",
       checked: memoryState.sourcePreview !== false,
       help: "OFF にすると比較元の本番（運用中）設定を取得します"
     });
@@ -2935,7 +3057,7 @@ ${base}`
     const optGrid = document.createElement("div");
     optGrid.className = "kus-lp__check-grid";
     optGrid.appendChild(backup.label);
-    optGrid.appendChild(srcPreview.label);
+    sourceAppFields.insertBefore(srcPreview.label, sourceGuestDetails.details);
     optGrid.appendChild(stop.label);
     optGrid.appendChild(onlyChanged.label);
     optGrid.appendChild(excludePreviewErrors.label);
@@ -2947,6 +3069,7 @@ ${base}`
       placeholder: '{"旧AppID":"新AppID", ...}',
       value: memoryState.lookupMapText || ""
     });
+    lookupTa.setAttribute("aria-label", "ルックアップの参照アプリID変換");
     lookupDetails.body.appendChild(lookupTa);
     const lookupHint = document.createElement("div");
     lookupHint.className = "kus-lp__small";
@@ -3040,6 +3163,8 @@ ${base}`
       const name = presetSelect.value;
       const preset = (memoryState.presets || []).find((p) => p.name === name);
       if (!preset) return;
+      sourceModeSelect.value = "app";
+      sourceModeSelect.dispatchEvent(new Event("change"));
       srcApp.value = preset.source.appId;
       srcGuest.value = preset.source.guestId;
       tgtApp.value = preset.target.appId;
@@ -3064,9 +3189,9 @@ ${base}`
       refreshPresetSelect();
       panel.setStatus(`プリセット「${name}」を削除しました`, "info");
     });
-    const previewBtn = makeButton("差分プレビューを更新", "primary", { icon: "👁" });
+    const previewBtn = makeButton("差分プレビューを更新", "primary");
     const changedOnlyBtn = makeButton("差分ありだけ選択", "sub");
-    const reviewCard = makeCard({ title: "実行前チェック", number: 4, soft: true });
+    const reviewCard = makeCard({ title: "反映予定を確認", soft: true });
     reviewCard.actions.style.flexWrap = "wrap";
     reviewCard.actions.appendChild(changedOnlyBtn);
     reviewCard.actions.appendChild(previewBtn);
@@ -3079,6 +3204,13 @@ ${base}`
     const previewTools = document.createElement("div");
     previewTools.className = "kus-rl-preview-tools";
     const previewSearch = makeInput({ placeholder: "セクション名や詳細で検索", width: "wide" });
+    previewSearch.setAttribute("aria-label", "差分を検索");
+    previewSearch.type = "search";
+    const previewFilter = document.createElement("select");
+    previewFilter.className = "kus-lp__select";
+    previewFilter.setAttribute("aria-label", "差分の状態で絞り込み");
+    previewFilter.innerHTML = '<option value="all">すべての状態</option><option value="change">差分あり</option><option value="error">取得失敗</option><option value="same">一致</option>';
+    previewFilter.addEventListener("change", () => rerenderPreviewCard());
     const previewActions = document.createElement("div");
     previewActions.className = "kus-rl-preview-tools__actions";
     const previewKeepShownBtn = makeButton("表示中だけ選択", "sub");
@@ -3089,8 +3221,10 @@ ${base}`
     previewActions.appendChild(previewAddShownBtn);
     previewActions.appendChild(previewRemoveShownBtn);
     previewActions.appendChild(previewRiskyBtn);
-    previewTools.appendChild(previewSearch);
-    previewTools.appendChild(previewActions);
+    previewTools.appendChild(makeRow([previewFilter, previewSearch]));
+    const selectionDetails = makeDetails("表示中の項目をまとめて選択");
+    selectionDetails.body.appendChild(previewActions);
+    previewTools.appendChild(selectionDetails.details);
     const previewBody = document.createElement("div");
     previewCard.body.appendChild(previewTools);
     previewCard.body.appendChild(previewBody);
@@ -3112,6 +3246,8 @@ ${base}`
       };
     }
     function getPreviewState(scopes = collectSelectedScopes(), lookupState = tryParseLookupMap(lookupTa.value)) {
+      const preview = memoryState.lastPreview || null;
+      const coveredScopes = preview?.scopes || scopes;
       const signature = lookupState.ok ? buildPreviewSignature({
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
@@ -3119,11 +3255,10 @@ ${base}`
         sourceBundleToken,
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
-        scopes,
+        scopes: coveredScopes,
         lookupMap: lookupState.value
       }) : "";
-      const preview = memoryState.lastPreview || null;
-      const fresh = !!preview && !!signature && preview.signature === signature;
+      const fresh = !!preview && !!signature && preview.signature === signature && scopes.every((key) => coveredScopes.includes(key)) && (sourceMode !== "json" || !!sourceBundleFromJson);
       return { scopes, lookupState, signature, preview, fresh };
     }
     function getExecutionPlan(scopes, previewResult) {
@@ -3179,8 +3314,9 @@ ${base}`
         return;
       }
       const selectedScopes = collectSelectedScopes();
-      const plan = getExecutionPlan(selectedScopes, previewResult);
-      const filteredEntries = filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase());
+      const { fresh } = getPreviewState();
+      const plan = fresh ? getExecutionPlan(selectedScopes, previewResult) : null;
+      const filteredEntries = filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value);
       const filteredScopeKeys = uniqueSectionKeys(filteredEntries);
       const currentSelected = new Set(selectedScopes);
       previewKeepShownBtn.disabled = filteredScopeKeys.length === 0;
@@ -3191,13 +3327,15 @@ ${base}`
         selectedScopes,
         plan,
         searchKeyword: previewSearch.value.trim().toLowerCase(),
-        onSelectOnly: (sectionKey) => setSelectedScopes([sectionKey]),
+        statusFilter: previewFilter.value,
+        fresh,
         onAdd: (sectionKey) => setSelectedScopes([.../* @__PURE__ */ new Set([...collectSelectedScopes(), sectionKey])]),
         onRemove: (sectionKey) => setSelectedScopes(collectSelectedScopes().filter((key) => key !== sectionKey))
       });
       previewCard.card.style.display = "block";
     }
     async function runPreview(scopes, lookupMap) {
+      memoryState.lastPreview = null;
       const signature = buildPreviewSignature({
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
@@ -3225,6 +3363,7 @@ ${base}`
         ...memoryState,
         lastPreview: {
           signature,
+          scopes: [...scopes],
           at: Date.now(),
           result
         }
@@ -3243,10 +3382,10 @@ ${base}`
       const riskyHit = scopes.filter((key) => RISKY_SCOPE_KEYS.has(key));
       const previewResult = preview?.result || null;
       const plan = fresh ? getExecutionPlan(scopes, previewResult) : getExecutionPlan(scopes, null);
-      const canRunBase = (!!src || !!sourceBundleFromJson) && !!tgt && scopes.length > 0 && lookupState.ok;
-      previewBtn.disabled = !canRunBase;
-      changedOnlyBtn.disabled = !(fresh && previewResult && previewResult.changedSections > 0);
-      runBtn.disabled = !canRunBase;
+      const canRunBase = (sourceMode === "json" ? !!sourceBundleFromJson : !!src) && !!tgt && scopes.length > 0 && lookupState.ok;
+      previewBtn.disabled = busy || !canRunBase;
+      changedOnlyBtn.disabled = busy || !(fresh && previewResult && previewResult.changedSections > 0);
+      runBtn.disabled = busy || !canRunBase || !fresh || !plan.effectiveScopes.length;
       if (fresh && previewResult) {
         if (plan.effectiveScopes.length > 0) {
           setButtonText(runBtn, `プレビュー反映を実行（予定 ${plan.effectiveScopes.length}）`);
@@ -3270,14 +3409,14 @@ ${base}`
       if (!preview) {
         issues.push("差分プレビューが未取得です。");
       } else if (!fresh) {
-        issues.push("入力変更後に差分プレビューが未更新です。実行時に自動更新されます。");
+        issues.push("条件が変わりました。差分を再取得してから反映してください。");
       } else if (previewResult) {
         if (previewResult.errorSections > 0) issues.push(`差分プレビューで取得失敗が ${previewResult.errorSections} 件あります。`);
         if (previewResult.changedSections === 0) issues.push("差分プレビューでは変更対象がありません。通常は反映不要です。");
         if (!plan.effectiveScopes.length) issues.push("現在の実行オプションでは、実行対象セクションが 0 件です。");
       }
       let nextTone = "warn";
-      let nextTitle = "次の一手";
+      const nextTitle = "次の操作";
       let nextText = "比較元 / 比較先 / セクションを確認してください。";
       if (!src && !sourceBundleFromJson || !tgt) {
         nextText = "比較元（アプリIDまたはJSON）と比較先のアプリIDを埋めてください。比較先は通常、いま開いているアプリです。";
@@ -3290,7 +3429,7 @@ ${base}`
         nextText = "差分プレビューを更新して、どのセクションに差分があるか確認してください。";
       } else if (!fresh) {
         nextTone = "info";
-        nextText = "入力変更があります。差分プレビューを更新すると内容を確認できます。実行時も自動で最新化します。";
+        nextText = "条件が変わりました。「差分を再取得」で変更内容を確認してください。";
       } else if (!plan.effectiveScopes.length) {
         nextTone = "info";
         nextText = "現在のオプションでは実行対象がありません。差分ありだけ実行 / 取得失敗除外の設定か、選択セクションを見直してください。";
@@ -3303,24 +3442,9 @@ ${base}`
         nextTone = "ok";
         nextText = "差分プレビューで内容を確認できています。そのままプレビュー反映へ進めます。";
       }
-      const selectedLabels = scopes.map((key) => getSectionLabel(key));
-      const selectedSummary = selectedLabels.length ? `${selectedLabels.slice(0, 4).join(" / ")}${selectedLabels.length > 4 ? ` ほか ${selectedLabels.length - 4} 件` : ""}` : "未選択";
-      const effectiveSummary = plan.effectiveScopes.length ? `${plan.effectiveScopes.slice(0, 4).map((key) => getSectionLabel(key)).join(" / ")}${plan.effectiveScopes.length > 4 ? ` ほか ${plan.effectiveScopes.length - 4} 件` : ""}` : "なし";
-      const previewMeta = previewResult ? `${fresh ? "最新" : "前回"}: 差分 ${previewResult.changedSections} / 一致 ${previewResult.sameSections} / 失敗 ${previewResult.errorSections}` : "まだ取得していません";
-      const previewPills = [];
-      if (previewResult) {
-        previewPills.push(`<span class="kus-rl-pill kus-rl-pill--change">差分 ${previewResult.changedSections}</span>`);
-        previewPills.push(`<span class="kus-rl-pill kus-rl-pill--same">一致 ${previewResult.sameSections}</span>`);
-        if (previewResult.errorSections > 0) previewPills.push(`<span class="kus-rl-pill kus-rl-pill--error">失敗 ${previewResult.errorSections}</span>`);
-        if (fresh) previewPills.push(`<span class="kus-rl-pill">実行予定 ${plan.effectiveScopes.length}</span>`);
-        if (fresh && plan.skippedSameScopes.length > 0) previewPills.push(`<span class="kus-rl-pill">一致除外 ${plan.skippedSameScopes.length}</span>`);
-        if (fresh && plan.skippedErrorScopes.length > 0) previewPills.push(`<span class="kus-rl-pill kus-rl-pill--error">失敗除外 ${plan.skippedErrorScopes.length}</span>`);
-        if (!fresh) previewPills.push('<span class="kus-rl-pill kus-rl-pill--stale">古い結果</span>');
-      } else {
-        previewPills.push('<span class="kus-rl-pill kus-rl-pill--stale">未取得</span>');
-      }
-      reviewBody.innerHTML = `<div class="kus-rl-review-grid">  <div class="kus-rl-stat"><div class="kus-rl-stat__label">比較元</div><div class="kus-rl-stat__value">${escapeHtml(sourceBundleFromJson ? `設定JSON${src ? ` (App ${src})` : ""}` : formatConnection(src, srcGuest.value.trim(), srcPreview.checkbox.checked ? "preview" : "prod"))}</div><div class="kus-rl-stat__meta">取得元: ${sourceBundleFromJson ? "読み込み済みJSON" : srcPreview.checkbox.checked ? "プレビュー" : "本番"}</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">比較先</div><div class="kus-rl-stat__value">${escapeHtml(formatConnection(tgt, tgtGuest.value.trim(), "preview"))}</div><div class="kus-rl-stat__meta">反映先は常に比較先プレビューです</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">反映対象</div><div class="kus-rl-stat__value">${scopes.length ? `${scopes.length} セクション` : "未選択"}</div><div class="kus-rl-stat__meta">${escapeHtml(selectedSummary)}</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">差分プレビュー</div><div class="kus-rl-stat__value">${preview ? escapeHtml(formatPreviewStamp(preview.at)) : "未取得"}</div><div class="kus-rl-stat__meta">${escapeHtml(previewMeta)}</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">実行予定</div><div class="kus-rl-stat__value">${fresh ? `${plan.effectiveScopes.length} セクション` : "プレビュー後に確定"}</div><div class="kus-rl-stat__meta">${escapeHtml(fresh ? effectiveSummary : "差分プレビューと実行オプションから自動算出します")}</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">自動除外</div><div class="kus-rl-stat__value">${fresh ? `${plan.skippedSameScopes.length + plan.skippedErrorScopes.length} 件` : "未計算"}</div><div class="kus-rl-stat__meta">${escapeHtml(fresh ? buildSkipSummary(plan) : "差分なし / 取得失敗セクションをここに表示します")}</div></div></div><div class="kus-rl-pills">${previewPills.join("")}</div><div class="kus-rl-next kus-rl-next--${nextTone}"><strong>${nextTitle}</strong>${escapeHtml(nextText)}</div>` + (issues.length ? `<ul class="kus-rl-issues">${issues.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : '<div class="kus-rl-quiet">この条件では大きな注意点は見つかっていません。</div>');
+      reviewBody.innerHTML = `<div class="kus-rl-review-grid"><div class="kus-rl-stat"><div class="kus-rl-stat__label">反映予定</div><div class="kus-rl-stat__value">${fresh ? plan.effectiveScopes.length + " 項目" : "差分の確認が必要"}</div><div class="kus-rl-stat__meta">${escapeHtml(fresh ? buildSkipSummary(plan) : "差分を取得すると反映予定を表示します")}</div></div><div class="kus-rl-stat"><div class="kus-rl-stat__label">確認状況</div><div class="kus-rl-stat__value">${fresh ? "確認済み" : preview ? "再取得が必要" : "未取得"}</div><div class="kus-rl-stat__meta">${preview ? escapeHtml(formatPreviewStamp(preview.at)) : "アプリ設定への書き込みはまだ行いません"}</div></div></div><div class="kus-rl-next kus-rl-next--${nextTone}"><strong>${nextTitle}</strong>${escapeHtml(nextText)}</div>` + (issues.length ? `<details class="kus-lp__details"><summary>注意点を確認（${issues.length}件）</summary><ul class="kus-rl-issues">${issues.map((line) => "<li>" + escapeHtml(line) + "</li>").join("")}</ul></details>` : "");
       rerenderPreviewCard();
+      refreshWorkflow();
     }
     previewSearch.addEventListener("input", () => {
       rerenderPreviewCard();
@@ -3331,7 +3455,7 @@ ${base}`
         panel.setStatus("先に差分プレビューを取得してください", "warn");
         return;
       }
-      const scopeKeys = uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase()));
+      const scopeKeys = uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value));
       setSelectedScopes(scopeKeys);
       panel.setStatus(`表示中の ${scopeKeys.length} セクションだけを選択しました`, scopeKeys.length ? "ok" : "info");
     });
@@ -3341,7 +3465,7 @@ ${base}`
         panel.setStatus("先に差分プレビューを取得してください", "warn");
         return;
       }
-      const scopeKeys = uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase()));
+      const scopeKeys = uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value));
       setSelectedScopes([.../* @__PURE__ */ new Set([...collectSelectedScopes(), ...scopeKeys])]);
       panel.setStatus(`表示中の ${scopeKeys.length} セクションを追加しました`, scopeKeys.length ? "ok" : "info");
     });
@@ -3351,7 +3475,7 @@ ${base}`
         panel.setStatus("先に差分プレビューを取得してください", "warn");
         return;
       }
-      const scopeKeys = new Set(uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase())));
+      const scopeKeys = new Set(uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value)));
       setSelectedScopes(collectSelectedScopes().filter((key) => !scopeKeys.has(key)));
       panel.setStatus(`表示中の ${scopeKeys.size} セクションを選択から外しました`, scopeKeys.size ? "ok" : "info");
     });
@@ -3366,6 +3490,7 @@ ${base}`
       panel.setStatus(`高リスク ${riskyScopes.length} セクションだけを選択しました`, riskyScopes.length ? "warn" : "info");
     });
     previewBtn.addEventListener("click", () => {
+      if (busy || previewBtn.disabled) return;
       const { scopes, lookupState } = getPreviewState();
       const lookupError = getLookupError(lookupState);
       const lookupMap = getLookupValue(lookupState);
@@ -3391,12 +3516,11 @@ ${base}`
       setSelectedScopes(changedScopes);
       panel.setStatus(`差分あり ${changedScopes.length} セクションだけを選択しました`, changedScopes.length ? "ok" : "info");
     });
-    const runBtn = makeButton("プレビュー反映を実行", "run", { icon: "⤴" });
+    const runBtn = makeButton("プレビュー反映を実行", "run");
     runBtn.classList.add("kus-lp__btn--danger");
     runBtn.classList.remove("kus-lp__btn--run");
     runBtn.style.cssText = "";
     runBtn.classList.add("kus-lp__btn--danger");
-    runBtn.style.width = "100%";
     runBtn.style.padding = "11px 16px";
     runBtn.style.fontSize = "13px";
     runBtn.style.fontWeight = "700";
@@ -3456,6 +3580,7 @@ ${base}`
     }
     renderLastResult();
     runBtn.addEventListener("click", async () => {
+      if (busy || runBtn.disabled) return;
       const { scopes, lookupState } = getPreviewState();
       const lookupError = getLookupError(lookupState);
       const lookupMap = getLookupValue(lookupState);
@@ -3468,15 +3593,12 @@ ${base}`
         return;
       }
       saveState();
-      logCard.card.style.display = "block";
-      logPre.style.display = "block";
-      logPre.textContent = "";
       const outcome = await liteRun(panel, "プレビュー反映 実行中…", async () => {
         let previewState = getPreviewState(scopes, lookupState);
         let previewResult = previewState.fresh ? previewState.preview?.result || null : null;
         if (!previewResult) {
-          previewResult = await runPreview(scopes, lookupMap);
-          previewState = getPreviewState(scopes, lookupState);
+          panel.setStatus("差分を再取得して、変更内容を確認してください。", "warn");
+          return { cancelled: true };
         }
         const plan = getExecutionPlan(scopes, previewResult);
         if (!plan.effectiveScopes.length) {
@@ -3514,6 +3636,13 @@ ${detail}
             if (!cont) throw new Error("Lookup プリフライトで中断しました");
           }
         }
+        logCard.card.style.display = "block";
+        logPre.style.display = "block";
+        logPre.textContent = "";
+        showWorkflowStage("result");
+        memoryState.lastPreview = null;
+        memoryState.lastResult = null;
+        renderLastResult();
         const applyOutcome = await runApplyPreviewStandalone(
           {
             sourceAppId: srcApp.value.trim(),
@@ -3565,9 +3694,9 @@ ${detail}
     nav.setAttribute("aria-label", "プレビュー反映の手順");
     nav.setAttribute("role", "tablist");
     const stageDefs = [
-      { id: "setup", number: "1", label: "対象と設定", copy: "反映ルートを作る" },
-      { id: "review", number: "2", label: "差分を確認", copy: "変更前に審査する" },
-      { id: "result", number: "3", label: "実行結果", copy: "成否と次手を確認" }
+      { id: "setup", number: "1", label: "対象を選ぶ", copy: "アプリと反映項目" },
+      { id: "review", number: "2", label: "差分を確認", copy: "変更内容を見て反映" },
+      { id: "result", number: "3", label: "反映結果", copy: "結果と次の操作" }
     ];
     const stages = {};
     const navButtons = {};
@@ -3590,26 +3719,53 @@ ${detail}
       stages[def.id] = stage;
       button.addEventListener("click", () => showWorkflowStage(def.id));
       button.addEventListener("keydown", (event) => {
-        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
         const current = stageDefs.findIndex((item) => item.id === def.id);
         const direction = event.key === "ArrowRight" ? 1 : -1;
-        const next = stageDefs[(current + direction + stageDefs.length) % stageDefs.length];
+        const next = stageDefs[event.key === "Home" ? 0 : event.key === "End" ? stageDefs.length - 1 : (current + direction + stageDefs.length) % stageDefs.length];
         showWorkflowStage(next.id);
       });
     }
-    stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>反映条件を決める</h2><p>接続先、セクション、安全オプションを設定します。</p></header>';
+    stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>どの設定を、どこへ反映しますか？</h2><p>比較元と比較先を指定し、反映したい項目を選びます。</p></header>';
     stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>差分と実行予定を確認</h2><p>実際に変更されるセクションと注意点を確認します。</p></header>';
     stages.result.innerHTML = '<header class="kus-rl-stage-head"><h2>実行結果と次の操作</h2><p>成功・失敗と、再実行が必要なセクションを確認します。</p></header>';
     const setupGrid = document.createElement("div");
     setupGrid.className = "kus-rl-setup-grid";
-    [cardApp.card, cardScope.card, cardOpt.card, cardPreset.card].forEach((node) => setupGrid.appendChild(node));
+    [cardApp.card, cardScope.card].forEach((node) => setupGrid.appendChild(node));
+    const advanced = makeDetails("詳細設定 · バックアップ・エラー時の動作・参照先変換");
+    advanced.details.classList.add("kus-rl-advanced");
+    advanced.body.appendChild(cardOpt.card);
+    const presetDetails = makeDetails("よく使う設定を保存・読み込み");
+    presetDetails.details.classList.add("kus-rl-advanced");
+    presetDetails.body.appendChild(cardPreset.card);
+    setupGrid.append(advanced.details, presetDetails.details);
     stages.setup.appendChild(setupGrid);
     [reviewCard.card, previewCard.card].forEach((node) => stages.review.appendChild(node));
     [lastResultCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
+    const resultEmpty = document.createElement("div");
+    resultEmpty.className = "kus-rl-preview-empty";
+    resultEmpty.textContent = "まだ反映していません。対象を選び、差分を確認してから反映してください。";
+    stages.result.appendChild(resultEmpty);
     const dock = document.createElement("div");
     dock.className = "kus-rl-action-dock";
-    dock.appendChild(runBtn);
+    const dockRow = document.createElement("div");
+    dockRow.className = "kus-rl-dock-row";
+    const dockCopy = document.createElement("div");
+    dockCopy.className = "kus-rl-dock-copy";
+    dockCopy.setAttribute("aria-live", "polite");
+    const dockActions = document.createElement("div");
+    dockActions.className = "kus-rl-dock-actions";
+    const backBtn = makeButton("対象を変更", "sub");
+    backBtn.addEventListener("click", () => showWorkflowStage("setup"));
+    const nextBtn = makeButton("差分を確認する", "primary");
+    nextBtn.addEventListener("click", () => {
+      if (getPreviewState().fresh) showWorkflowStage("review");
+      else previewBtn.click();
+    });
+    dockActions.append(backBtn, previewBtn, nextBtn, runBtn);
+    dockRow.append(dockCopy, dockActions);
+    dock.appendChild(dockRow);
     dock.appendChild(panel.status);
     dock.appendChild(panel.result);
     const hint = panel.body.querySelector(".kus-lp__hint");
@@ -3622,7 +3778,37 @@ ${detail}
     workspace.appendChild(canvas);
     hint?.insertAdjacentElement("afterend", workspace);
     panel.body.appendChild(dock);
+    let activeStage = "setup";
+    refreshWorkflow = () => {
+      const { scopes, fresh, preview, lookupState } = getPreviewState();
+      const plan = fresh ? getExecutionPlan(scopes, preview?.result) : null;
+      backBtn.hidden = activeStage === "setup";
+      nextBtn.hidden = activeStage !== "setup";
+      previewBtn.hidden = activeStage !== "review";
+      runBtn.hidden = activeStage !== "review";
+      backBtn.disabled = busy;
+      nextBtn.disabled = previewBtn.disabled || busy;
+      setButtonText(nextBtn, fresh ? "確認した差分へ進む" : "差分を確認する");
+      setButtonText(previewBtn, "差分を再取得");
+      previewBtn.classList.toggle("kus-lp__btn--primary", !fresh);
+      previewBtn.classList.toggle("kus-lp__btn--sub", fresh);
+      resultEmpty.hidden = !!memoryState.lastResult || logCard.card.style.display !== "none";
+      let message = `${scopes.length} 項目を比較します。設定の書き込みは行いません。`;
+      if (sourceMode === "json" && !sourceBundleFromJson) message = "比較元の設定JSONを選んでください。";
+      else if (!srcApp.value.trim() || !tgtApp.value.trim()) message = "比較元と比較先のアプリIDを入力してください。";
+      else if (!scopes.length) message = "反映したい項目を1つ以上選んでください。";
+      else if (!lookupState.ok) message = "詳細設定の参照先変換JSONを修正してください。";
+      else if (activeStage === "review") message = !fresh ? "条件が変わったか、差分が未取得です。再取得して確認してください。" : plan?.effectiveScopes.length ? `${plan.effectiveScopes.length} 項目を反映予定 · バックアップ ${backup.checkbox.checked ? "あり" : "なし"}` : "反映予定は0件です。差分と取得失敗の有無を確認してください。";
+      else if (activeStage === "result") message = memoryState.lastResult ? "結果を確認し、比較先の設定画面へ進めます。" : "反映結果はここに表示されます。";
+      const sourceLabel = sourceMode === "json" ? `設定JSON #${sourceBundleFromJson?.appId || "未読込"}` : `#${srcApp.value.trim() || "未入力"}${srcGuest.value.trim() ? `（ゲスト ${srcGuest.value.trim()}）` : ""}・${srcPreview.checkbox.checked ? "プレビュー" : "本番"}`;
+      const targetLabel = `#${tgtApp.value.trim() || "未入力"}${tgtGuest.value.trim() ? `（ゲスト ${tgtGuest.value.trim()}）` : ""}・プレビュー`;
+      dockCopy.innerHTML = `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong>${escapeHtml(message)}`;
+      const advancedSummary = advanced.details.querySelector("summary");
+      if (advancedSummary) advancedSummary.textContent = `詳細設定 · バックアップ${backup.checkbox.checked ? "あり" : "なし"} / ${stop.checkbox.checked ? "エラー時に中断" : "エラー後も続行"}${lookupTa.value.trim() ? " / 参照先変換あり" : ""}`;
+      panel.setPrimaryAction(activeStage === "setup" ? nextBtn : activeStage === "review" ? fresh ? runBtn : previewBtn : backBtn);
+    };
     showWorkflowStage = (active) => {
+      activeStage = active;
       stageDefs.forEach((def) => {
         const selected = def.id === active;
         stages[def.id].hidden = !selected;
@@ -3630,7 +3816,31 @@ ${detail}
         navButtons[def.id].tabIndex = selected ? 0 : -1;
       });
       navButtons[active].focus({ preventScroll: true });
-      panel.body.scrollTo({ top: 0, behavior: "smooth" });
+      canvas.scrollTo({ top: 0 });
+      refreshWorkflow();
+    };
+    const setPanelBusy = panel.setBusy;
+    const disabledBefore = /* @__PURE__ */ new Map();
+    panel.setBusy = (value) => {
+      busy = value;
+      panel.root.setAttribute("aria-busy", String(value));
+      workspace.inert = value;
+      if (value) {
+        panel.root.querySelectorAll("input,button,select,textarea").forEach((control) => {
+          disabledBefore.set(control, control.disabled);
+          control.disabled = true;
+        });
+      } else {
+        disabledBefore.forEach((disabled, control) => {
+          control.disabled = disabled;
+        });
+        disabledBefore.clear();
+        refreshSrcJsonNote();
+        refreshPresetSelect();
+        refreshReviewCard();
+        navButtons[activeStage].focus({ preventScroll: true });
+      }
+      setPanelBusy(value);
     };
     showWorkflowStage(memoryState.lastResult ? "result" : memoryState.lastPreview ? "review" : "setup");
     refreshSameConnBanner();
@@ -3647,11 +3857,6 @@ ${detail}
   }
   function getSectionLabel(key) {
     return SECTION_DEFS.find((def) => def.key === key)?.label || key;
-  }
-  function formatConnection(appId, guestId, envLabel) {
-    const base = appId ? `#${appId}` : "(未入力)";
-    const guest = guestId ? ` / guest:${guestId}` : "";
-    return `${base}${guest} / ${envLabel}`;
   }
   function formatPreviewStamp(at) {
     const diffSec = Math.max(0, Math.floor((Date.now() - at) / 1e3));
@@ -3705,7 +3910,8 @@ ${detail}
       lookupPairs
     });
   }
-  function filterPreviewEntries(entries, keyword) {
+  function filterPreviewEntries(entries, keyword, status = "all") {
+    entries = entries.filter((entry) => status === "all" || (status === "error" ? !["change", "same"].includes(entry.status) : entry.status === status));
     if (!keyword) return entries;
     return entries.filter((entry) => {
       const hay = [entry.label, entry.message, entry.sectionKey].filter(Boolean).join("\n").toLowerCase();
@@ -3717,7 +3923,7 @@ ${detail}
   }
   function renderPreviewResult(host, result, opts = {}) {
     host.innerHTML = "";
-    const filteredEntries = filterPreviewEntries(result.entries, String(opts.searchKeyword || "").trim().toLowerCase());
+    const filteredEntries = filterPreviewEntries(result.entries, String(opts.searchKeyword || "").trim().toLowerCase(), opts.statusFilter);
     const selectedSet = new Set(opts.selectedScopes || []);
     const plan = opts.plan || null;
     const effectiveSet = new Set(plan?.effectiveScopes || []);
@@ -3750,11 +3956,14 @@ ${detail}
         entries: filteredEntries.filter((entry) => entry.status === "src-missing" || entry.status === "tgt-missing" || entry.status === "error")
       }
     ];
+    groups.sort((a, b) => ["error", "change", "same"].indexOf(a.tone) - ["error", "change", "same"].indexOf(b.tone));
     for (const group of groups) {
       if (!group.entries.length) continue;
-      const wrap = document.createElement("section");
+      const collapsed = group.tone === "same" && opts.statusFilter === "all" && !opts.searchKeyword;
+      const wrap = document.createElement(collapsed ? "details" : "section");
       wrap.className = "kus-rl-preview-group";
-      wrap.innerHTML = `<div class="kus-rl-preview-group__head"><span>${escapeHtml(group.title)}</span><span>${group.entries.length} 件</span></div>`;
+      const headTag = collapsed ? "summary" : "div";
+      wrap.innerHTML = `<${headTag} class="kus-rl-preview-group__head"><span>${escapeHtml(group.title)}${collapsed ? " · 開いて確認" : ""}</span><span>${group.entries.length} 件</span></${headTag}>`;
       const list = document.createElement("div");
       list.className = "kus-rl-preview-list";
       for (const entry of group.entries) {
@@ -3771,40 +3980,21 @@ ${detail}
         if (selectedSet.has(entry.sectionKey)) statePills.push('<span class="kus-rl-preview-mini">選択中</span>');
         else statePills.push('<span class="kus-rl-preview-mini">未選択</span>');
         if (effectiveSet.has(entry.sectionKey)) statePills.push('<span class="kus-rl-preview-mini">実行予定</span>');
+        if (!opts.fresh) statePills.push('<span class="kus-rl-preview-mini">再取得が必要</span>');
         if (skippedSameSet.has(entry.sectionKey)) statePills.push('<span class="kus-rl-preview-mini">一致のため除外</span>');
         if (skippedErrorSet.has(entry.sectionKey)) statePills.push('<span class="kus-rl-preview-mini">取得失敗のため除外</span>');
         if (RISKY_SCOPE_KEYS.has(entry.sectionKey)) statePills.push('<span class="kus-rl-preview-mini">高リスク</span>');
         row.innerHTML = `<div class="kus-rl-preview-row__head">  <div class="kus-rl-preview-row__title">${escapeHtml(entry.label)}</div>  <span class="kus-rl-pill kus-rl-pill--${group.tone}">${statusLabel}</span></div><div class="kus-rl-preview-row__detail">${escapeHtml(entry.message)}</div>` + (statePills.length ? `<div class="kus-rl-preview-row__state">${statePills.join("")}</div>` : "") + (metaPills.length ? `<div class="kus-rl-preview-row__meta">${metaPills.join("")}</div>` : "");
-        if (opts.onSelectOnly || opts.onAdd || opts.onRemove) {
-          const actions = document.createElement("div");
-          actions.className = "kus-rl-preview-row__actions";
-          if (opts.onSelectOnly) {
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "kus-lp__btn kus-lp__btn--sub";
-            btn.textContent = "このセクションだけ";
-            btn.addEventListener("click", () => opts.onSelectOnly?.(entry.sectionKey));
-            actions.appendChild(btn);
-          }
-          if (opts.onAdd) {
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "kus-lp__btn kus-lp__btn--sub";
-            btn.textContent = "追加";
-            btn.disabled = selectedSet.has(entry.sectionKey);
-            btn.addEventListener("click", () => opts.onAdd?.(entry.sectionKey));
-            actions.appendChild(btn);
-          }
-          if (opts.onRemove) {
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "kus-lp__btn kus-lp__btn--ghost";
-            btn.textContent = "除外";
-            btn.disabled = !selectedSet.has(entry.sectionKey);
-            btn.addEventListener("click", () => opts.onRemove?.(entry.sectionKey));
-            actions.appendChild(btn);
-          }
-          row.appendChild(actions);
+        if (opts.onAdd && opts.onRemove) {
+          const selection = makeCheck({ label: "反映候補に含める", checked: selectedSet.has(entry.sectionKey) });
+          selection.checkbox.setAttribute("aria-label", `${entry.label}を反映候補に含める`);
+          selection.checkbox.dataset.reflectScope = entry.sectionKey;
+          selection.checkbox.addEventListener("change", () => {
+            if (selection.checkbox.checked) opts.onAdd?.(entry.sectionKey);
+            else opts.onRemove?.(entry.sectionKey);
+            Array.from(host.querySelectorAll("input[data-reflect-scope]")).find((input) => input.dataset.reflectScope === entry.sectionKey)?.focus({ preventScroll: true });
+          });
+          row.appendChild(selection.label);
         }
         list.appendChild(row);
       }

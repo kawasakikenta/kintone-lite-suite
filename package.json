@@ -27,9 +27,11 @@
     "test:diff-pair-folders-dom": "node tools/test-harness/run-diff-lite-pair-folders-dom.cjs",
     "test:diff-compare": "node tools/test-harness/run-diff-lite-compare.cjs",
     "test:er-compare": "node tools/test-harness/run-er-diagram-compare.cjs",
+    "test:reflect-dom": "node tools/test-harness/run-reflect-lite-dom.cjs",
     "snippet": "node scripts/build-snippet.js",
     "mcp:playwright": "node node_modules/@playwright/mcp/cli.js --browser=chrome --output-dir=.playwright-mcp --save-session",
-    "verify:playwright-mcp": "node scripts/verify-playwright-mcp.cjs"
+    "verify:playwright-mcp": "node scripts/verify-playwright-mcp.cjs",
+    "test:lite-workflows": "node tools/test-harness/run-lite-workflows-dom.cjs"
   },
   "engines": {
     "node": ">=20",

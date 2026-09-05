@@ -1,5 +1,7 @@
 'use strict';
 
+import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
+
 import { DEFAULT_APP_ID } from '../constants.js';
 import { runRenderProcessFlowStandalone } from '../tabs/process-standalone.js';
 import {
@@ -20,7 +22,7 @@ export function mountProcessLitePanel() {
     subtitle: 'プロセス管理を Mermaid フロー図で描画し、シミュレーションで動きを確認します。',
     accent: 'process',
     badges: [{ label: 'Lite' }, { label: 'シミュレーション可' }],
-    hint: 'Mermaid.js を CDN から動的読込し、状態遷移図を描画します。CSP で読込できない場合は簡易テーブル表示にフォールバックします。'
+    hint: 'プロセスの流れと状態遷移を確認できます。シミュレーションで実際のレコードが更新されることはありません。'
   });
 
   // ---- 入力 ----
@@ -102,4 +104,18 @@ export function mountProcessLitePanel() {
       panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, 'ok');
     }
   }));
+
+  appInp.setAttribute('aria-label', '対象アプリID');
+  guestInp.setAttribute('aria-label', 'ゲストスペースID');
+  simSelect.setAttribute('aria-label', 'シミュレーションのアクション');
+  textEl.setAttribute('aria-label', 'プロセス図のMermaidソース');
+  installLiteWorkflow(panel, {
+    setup: [cardApp.card], results: [cardDiag.card, cardSim.card, foldWorkflowSection('図のソースを確認する', cardText.card)],
+    beforeRun: () => { textEl.value = ''; viewEl.replaceChildren(); cardSim.card.style.display = 'none'; },
+    actions: [{ id: 'render', label: 'プロセス図を表示', description: '状態とアクションの流れを表示し、結果画面でシミュレーションできます。', button: runBtn,
+      validate: () => appInp.value.trim() ? '' : '対象アプリIDを指定してください。',
+      summary: () => [['対象', connectionSummary(appInp.value.trim(), guestInp.value.trim())], ['操作', '状態遷移図を表示。シミュレーションは実データを変更しません。']]
+    }]
+  });
+
 }
