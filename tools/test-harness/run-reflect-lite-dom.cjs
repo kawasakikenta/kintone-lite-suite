@@ -25,7 +25,7 @@ const mockEngine = `
         message: status === 'change' ? '入力欄のラベルと必須設定が変更されています。' : status === 'same' ? '設定は一致しています。' : '比較先の取得に失敗しました。アクセス権を確認してください。',
         ...(sectionKey === 'fieldSettings' ? { fieldStats: { add: 2, update: 3, tgtOnly: 1 } } : {}) };
     });
-    return { entries, totalSections: entries.length, changedSections: entries.filter(e => e.status === 'change').length,
+    return { baseline: { connection: 'sample-' + opts.targetAppId, source: {}, target: {} }, entries, totalSections: entries.length, changedSections: entries.filter(e => e.status === 'change').length,
       sameSections: entries.filter(e => e.status === 'same').length, errorSections: entries.filter(e => e.status === 'error').length };
   }
   export async function preflightLookupMapStandalone() { return { ok: true, missing: [] }; }
@@ -133,6 +133,7 @@ async function main() {
     assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), 1);
     assert.equal(await page.evaluate(() => window.__reflectMock.applies[0].targetAppId), '303');
     assert.equal(await page.evaluate(() => window.__reflectMock.applies[0].doDeploy), false);
+    assert.equal(await page.evaluate(() => window.__reflectMock.applies[0].reviewBaseline.connection), 'sample-303', '確認した比較結果の基準を反映処理へ渡す');
     assert.match(await page.locator('#kus-rl-stage-result').innerText(), /全成功/);
     await tab('差分を確認').click();
     assert.equal(await run().isDisabled(), true, '反映後に古い差分を再実行しない');

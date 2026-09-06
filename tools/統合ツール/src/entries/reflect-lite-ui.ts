@@ -1362,6 +1362,7 @@ export function mountReflectLitePanel() {
           sourceGuestId: srcGuest.value.trim(),
           sourcePreview: srcPreview.checkbox.checked,
           sourceBundle: sourceBundleFromJson,
+          reviewBaseline: previewResult.baseline,
           targetAppId: tgtApp.value.trim(),
           targetGuestId: tgtGuest.value.trim(),
           scopes: plan.effectiveScopes,

@@ -2,7 +2,8 @@
 
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone, stableStringify, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
-import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, fetchBundle, pickRevision } from '../api.js';
+import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, fetchBundle, pickRevision, isRevisionConflictError } from '../api.js';
+import { captureReflectBaseline, assertReflectBaselineMatches, assertCompleteReflectBackup, isCompleteReflectSection, type ReflectBaseline } from '../reflect/standalonePreflight.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { pushReflectErrorLog as pushErrorLog, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
 
@@ -33,8 +34,7 @@ function convertLookup(fieldDef: any, map: Record<string, any>) {
 }
 
 /** @returns 失敗した手順数（0 なら全手順成功） */
-async function applyFieldSection(prefix, app, sourceProps, logs, lookupMap, stopOnError): Promise<number> {
-  const current = await apiGet(prefix, '/app/form/fields.json', { app });
+async function applyFieldSection(app, sourceProps, current, logs, lookupMap, stopOnError, write): Promise<number> {
   const currentMap = current.properties || ({} as any);
   const srcWritable = filterWritable(sourceProps);
 
@@ -50,44 +50,33 @@ async function applyFieldSection(prefix, app, sourceProps, logs, lookupMap, stop
   }
 
   let failedSteps = 0;
-  let revision = pickRevision(current);
-  const withRevision = (body: Record<string, unknown>) => revision ? { ...body, revision } : body;
   if (Object.keys(adds).length) {
     try {
-      const res = await apiPost(prefix, '/app/form/fields.json', withRevision({ app, properties: adds }));
-      revision = pickRevision(res) || revision;
+      await write('POST', '/app/form/fields.json', { app, properties: adds }, 'フィールド追加');
       logs.push(`  OK フィールド追加: ${Object.keys(adds).length}件`);
     } catch (e) {
       failedSteps += 1;
-      const reported = decorateRevisionConflict(e, 'フィールド追加');
+      const reported = e;
       pushErrorLog(logs, `  NG フィールド追加: ${reported.message}`, reported.message);
-      if (stopOnError) throw reported;
+      if (stopOnError || mustStopReflection(reported)) throw reported;
     }
   }
   if (Object.keys(updates).length) {
     try {
-      await apiPut(prefix, '/app/form/fields.json', withRevision({ app, properties: updates }));
+      await write('PUT', '/app/form/fields.json', { app, properties: updates }, 'フィールド更新');
       logs.push(`  OK フィールド更新: ${Object.keys(updates).length}件`);
     } catch (e) {
       failedSteps += 1;
-      const reported = decorateRevisionConflict(e, 'フィールド更新');
+      const reported = e;
       pushErrorLog(logs, `  NG フィールド更新: ${reported.message}`, reported.message);
-      if (stopOnError) throw reported;
+      if (stopOnError || mustStopReflection(reported)) throw reported;
     }
   }
   return failedSteps;
 }
 
-async function applyViewsSection(prefix, app, sourceViews) {
-  const current = await apiGet(prefix, '/app/views.json', { app });
-  const revision = pickRevision(current);
-  try {
-    await apiPut(prefix, '/app/views.json', revision
-      ? { app, views: sourceViews.views || sourceViews, revision }
-      : { app, views: sourceViews.views || sourceViews });
-  } catch (e) {
-    throw decorateRevisionConflict(e, '一覧・グラフ設定の反映');
-  }
+function mustStopReflection(error: any): boolean {
+  return !!error?.stopReflection || isRevisionConflictError(error);
 }
 
 /**
@@ -101,7 +90,8 @@ async function applyViewsSection(prefix, app, sourceViews) {
  *   scopes: string[],
  *   lookupMap?: Record<string,string>,
  *   stopOnError?: boolean,
- *   doBackup?: boolean
+ *   doBackup?: boolean,
+ *   reviewBaseline: ReflectBaseline
  * }} opts
  * @param {(msg: string, err?: boolean) => void} setStatus
  * @param {(logs: string[]) => void} onProgress
@@ -119,6 +109,7 @@ export async function runApplyPreviewStandalone(
   const scopes = (opts.scopes || []).filter(Boolean);
   if (!scopes.length) throw new Error('反映するセクションを選択してください');
 
+  if (!opts.reviewBaseline) throw new Error('反映前に差分を取得して確認してください。');
   const lookupMap = opts.lookupMap || ({} as any);
   const stopOnError = !!opts.stopOnError;
   const logs = [];
@@ -134,15 +125,19 @@ export async function runApplyPreviewStandalone(
       onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
     });
 
+  setStatus(opts.doBackup ? '比較先プレビューのバックアップ取得中...' : '確認済みの比較先プレビューと照合中...');
+  const targetBundle = await fetchBundle({
+    appId: targetAppId,
+    guestId: targetGuestId || '',
+    preview: true,
+    sections: scopes,
+    onProgress: (p, l) => setStatus(`比較先再取得 ${Math.round(p * 100)}% (${l})`)
+  });
+  if (opts.doBackup) assertCompleteReflectBackup(targetBundle, scopes);
+  let revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes }, sourceBundle, targetBundle);
+
   if (opts.doBackup) {
-    setStatus('比較先プレビューのバックアップ取得中...');
-    const backup = await fetchBundle({
-      appId: targetAppId,
-      guestId: targetGuestId || '',
-      preview: true,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`バックアップ取得 ${Math.round(p * 100)}% (${l})`)
-    });
+    const backup = targetBundle;
     const payload = JSON.stringify({ generatedAt: new Date().toISOString(), scopes, bundle: backup }, null, 2);
     const blob = new Blob([payload], { type: 'application/json' });
     const a = document.createElement('a');
@@ -150,11 +145,26 @@ export async function runApplyPreviewStandalone(
     a.download = buildExportFilename('反映前バックアップ', 'json', { appLabel: buildAppFilenameLabel(targetAppId, '') });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    logs.push('バックアップ保存完了');
+    logs.push('バックアップ取得完了（保存を開始しました）');
   }
 
   const prefix = buildApiPrefix(targetGuestId || '', true);
   const app = targetAppId;
+  // 確認時のrevisionから、自分の更新応答だけで進める。途中GETの最新値で上書きしない。
+  const write = async (method: 'POST' | 'PUT', endpoint: string, body: Record<string, unknown>, subject: string) => {
+    try {
+      const response = await (method === 'POST' ? apiPost : apiPut)(prefix, endpoint, { ...body, revision });
+      const nextRevision = pickRevision(response);
+      if (!/^\d+$/.test(nextRevision)) {
+        const error = new Error(`${subject}の書き込みは完了しましたが、更新後のrevisionを確認できません。以降の反映を中止します。差分を取得し直して状態を確認してください。`) as Error & { stopReflection: boolean };
+        error.stopReflection = true;
+        throw error;
+      }
+      revision = nextRevision;
+    } catch (error) {
+      throw decorateRevisionConflict(error, subject);
+    }
+  };
 
   logs.push(`比較元: ${opts.sourceBundle ? `設定JSON${sourceAppId ? ` (App ${sourceAppId})` : ''}` : sourceAppId} → 比較先(プレビュー): ${targetAppId}`);
   logs.push(`セクション: ${scopes.length}件`);
@@ -183,7 +193,7 @@ export async function runApplyPreviewStandalone(
     setStatus(`反映中 ${i + 1}/${scopes.length}: ${def.label}`);
     try {
       if (secKey === 'fieldSettings') {
-        const failedSteps = await applyFieldSection(prefix, app, sourceSec.properties || sourceSec, logs, lookupMap, stopOnError);
+        const failedSteps = await applyFieldSection(app, sourceSec.properties || sourceSec, targetBundle.sections.fieldSettings, logs, lookupMap, stopOnError, write);
         if (failedSteps > 0) {
           hadError = true;
           logs.push(`NG ${def.label}: 一部の手順が失敗しました（詳細は上の行）`);
@@ -192,19 +202,8 @@ export async function runApplyPreviewStandalone(
           logs.push(`OK ${def.label}`);
           sections.push({ sectionKey: secKey, label: def.label, status: 'ok' });
         }
-      } else if (secKey === 'viewSettings') {
-        await applyViewsSection(prefix, app, sourceSec);
-        logs.push(`OK ${def.label}`);
-        sections.push({ sectionKey: secKey, label: def.label, status: 'ok' });
       } else {
-        const current = await apiGet(prefix, def.endpoint, { app });
-        const revision = pickRevision(current);
-        const body = { app, ...def.putBuilder(sourceSec), ...(revision ? { revision } : {}) };
-        try {
-          await apiPut(prefix, def.endpoint, body);
-        } catch (e) {
-          throw decorateRevisionConflict(e, `${def.label}の反映`);
-        }
+        await write('PUT', def.endpoint, { app, ...def.putBuilder(sourceSec) }, `${def.label}の反映`);
         logs.push(`OK ${def.label}`);
         sections.push({ sectionKey: secKey, label: def.label, status: 'ok' });
       }
@@ -213,7 +212,7 @@ export async function runApplyPreviewStandalone(
       const msg = e.message || String(e);
       pushErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
       sections.push({ sectionKey: secKey, label: def.label, status: 'ng', message: msg });
-      if (stopOnError) {
+      if (stopOnError || mustStopReflection(e)) {
         // 残りのセクションは未実行として記録し、再実行の対象にできるようにする
         for (let j = i + 1; j < scopes.length; j++) {
           const restKey = scopes[j];
@@ -299,6 +298,7 @@ export interface PreviewReflectResult {
   sameSections: number;
   errorSections: number;
   entries: PreviewSectionEntry[];
+  baseline: ReflectBaseline;
 }
 
 /**
@@ -351,12 +351,12 @@ export async function previewReflectStandalone(
     const srcSec = source.sections?.[secKey];
     const tgtSec = target.sections?.[secKey];
 
-    if (!srcSec || (srcSec as any)._fetchError) {
-      entries.push({ sectionKey: secKey, label, status: 'src-missing', message: `比較元未取得: ${(srcSec as any)?._fetchError || '不明'}` });
+    if (!isCompleteReflectSection(srcSec)) {
+      entries.push({ sectionKey: secKey, label, status: 'src-missing', message: `比較元未取得: ${(srcSec as any)?._fetchError || (srcSec as any)?._partial?.message || '不明'}` });
       continue;
     }
-    if (!tgtSec || (tgtSec as any)._fetchError) {
-      entries.push({ sectionKey: secKey, label, status: 'tgt-missing', message: `比較先未取得: ${(tgtSec as any)?._fetchError || '不明'}` });
+    if (!isCompleteReflectSection(tgtSec)) {
+      entries.push({ sectionKey: secKey, label, status: 'tgt-missing', message: `比較先未取得: ${(tgtSec as any)?._fetchError || (tgtSec as any)?._partial?.message || '不明'}` });
       continue;
     }
 
@@ -404,6 +404,7 @@ export async function previewReflectStandalone(
     changedSections: entries.filter((e) => e.status === 'change').length,
     sameSections: entries.filter((e) => e.status === 'same').length,
     errorSections: entries.filter((e) => e.status === 'src-missing' || e.status === 'tgt-missing' || e.status === 'error').length,
-    entries
+    entries,
+    baseline: captureReflectBaseline({ ...opts, scopes }, source, target)
   };
 }

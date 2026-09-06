@@ -286,7 +286,7 @@ describe('diff/html export', () => {
     expect(() => new Function(script)).not.toThrow();
     expect(script).toContain('"_reportDisplayTitle":"説明"');
     expect(script).toContain('id="reviewQueueHost"');
-    expect(script).toContain('レビュー受信箱');
+    expect(script).toContain('aria-labelledby="reviewQueueTitle"');
     expect(script).toContain('未確認の差分を上から確認できます');
     expect(script).not.toContain('data-priority-filter');
     expect(script).toContain('data-clear-filter');
@@ -885,9 +885,66 @@ describe('diff/html export', () => {
     expect(output.filename).toMatch(/\.html$/);
     expect(output.html).toContain('data-objective-counts');
     expect(output.html).toContain('<span>差分は見つかりませんでした</span><strong>0</strong>');
+    expect(output.html).toContain('選択した設定は一致しています');
+    expect(output.html).toContain('data-comparison-status="complete"');
+    expect(output.html).not.toContain('確認できた差分は0件です');
+    expect(output.html).not.toContain('この出力範囲の差分は0件です');
     expect(output.html).toContain('アプリ 101');
     expect(output.html).toContain('アプリ 202');
     expect(() => new Function(extractInlineScript(output.html))).not.toThrow();
+  });
+
+  it.each([
+    ['設定取得失敗', {
+      fetchIssues: [{ sectionKey: 'appSettings', section: 'アプリ設定', side: 'source', message: '403' }],
+      partialIssues: [],
+      truncation: null
+    }],
+    ['本文未検証', {
+      fetchIssues: [],
+      partialIssues: [{ sectionKey: 'customizeSettings', section: 'JS/CSS', side: 'target', message: 'oversize' }],
+      truncation: null
+    }],
+    ['差分検出上限', {
+      fetchIssues: [],
+      partialIssues: [],
+      truncation: {
+        truncated: true, diffLimit: 1000,
+        sections: [{ sectionKey: 'appSettings', section: 'アプリ設定', scanStatus: 'unscanned', omittedDiffCount: null }]
+      }
+    }]
+  ])('does not claim equality when an incomplete report has zero detected differences: %s', (_label, incompleteOptions) => {
+    const bundle = { appId: '101', guestId: '', preview: false, sections: { appSettings: { name: 'アプリ' } }, meta: {} };
+    const html = buildDiffHtml(bundle, { ...bundle, appId: '202' }, [], ['appSettings'], '', incompleteOptions);
+
+    expect(html).toContain('data-comparison-status="incomplete"');
+    expect(html).toContain('確認できた差分は0件です');
+    expect(html).toContain('未取得・未検証の範囲があるため、一致とは判断できません');
+    expect(html).not.toContain('<span>差分は見つかりませんでした</span><strong>0</strong>');
+    expect(html).not.toContain('選択した設定は一致しています');
+    expect(html).not.toContain('この出力範囲の差分は0件です');
+  });
+
+  it('distinguishes an empty filtered report from a complete zero-difference comparison', () => {
+    const sourceBundle = {
+      appId: '101', guestId: '', preview: false,
+      sections: { appSettings: { name: '旧アプリ' } }, meta: {}
+    };
+    const targetBundle = {
+      appId: '202', guestId: '', preview: false,
+      sections: { appSettings: { name: '新アプリ' } }, meta: {}
+    };
+    const html = buildDiffHtml(sourceBundle, targetBundle, [], ['appSettings'], '', {
+      fetchIssues: [], partialIssues: [], truncation: null, exportMode: 'filtered', exportLabel: '表示中'
+    });
+
+    expect(html).toContain('data-comparison-status="complete"');
+    expect(extractInlineJsonConst(html, 'REPORT_ROWS')).toEqual([]);
+    expect(html).toContain('この出力範囲の差分は0件です');
+    expect(html).toContain('全比較結果の一致を意味するものではありません');
+    expect(html).not.toContain('<span>差分は見つかりませんでした</span><strong>0</strong>');
+    expect(html).not.toContain('選択した設定は一致しています');
+    expect(html).not.toContain('確認できた差分は0件です');
   });
 
   it('keeps pure ordering differences separate from content changes', () => {

@@ -1,12 +1,13 @@
 # 次にやる作業（kintone-lite-suite）
 
-更新: 2026-08-20。前提と検証方法は `CLAUDE.md` を先に確認してください。
+更新: 2026-09-06。前提と検証方法は `CLAUDE.md` を先に確認してください。
 
-## T1. Playwright 比較ハーネスの CI 分離
+## T1. Playwright 比較ハーネスの CI 分離（実装済み）
 
-- `test:diff-multi-dom` は通常 PR で実行する。
-- 重い `test:diff-compare` と `test:er-compare` は UI 変更時または手動実行に分ける。
-- 比較 HTML、JSON、PNG は短期 Actions artifact とし、Git へ追加しない。
+- 通常 PR と main 更新で複数比較先・ペア・フォルダペア・プレビュー反映・lite 操作の DOM ハーネスを実行する。
+- 重い `test:diff-compare` と `test:er-compare` は対応する UI／出力ソース・生成物・共通依存・ハーネスの変更時、または `workflow_dispatch` で実行する。
+- PR は比較元ブランチの SHA、main 更新は push 前の SHA を比較基準にする。詳細は `tools/test-harness/README.md` を参照。
+- 比較 HTML、JSON、PNG などは 7 日間の Actions artifact とし、Git へ追加しない。
 
 ## T2. ER 図の外部依存固定
 

@@ -730,12 +730,16 @@ async function captureReport(context, variant, reportFile, outDir) {
       return {
         before: !!before,
         after: !!after,
+        beforeEnvironment: before?.textContent?.replace(/\s+/g, ' ').trim() || '',
+        afterEnvironment: after?.textContent?.replace(/\s+/g, ' ').trim() || '',
         order: !!before && !!after && (before.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
       };
     }, { source: SOURCE_APP_ID, target: TARGET_APP_ID });
     assert.equal(desktopHeader.before, true, 'after: topbar に構造化された比較元レーンがありません');
     assert.equal(desktopHeader.after, true, 'after: topbar に構造化された比較先レーンがありません');
     assert.equal(desktopHeader.order, true, 'after: topbar の比較元/比較先の順序が逆です');
+    assert.match(desktopHeader.beforeEnvironment, /運用環境[\s\S]*通常スペース/, 'after: 比較元カードが実際の取得環境を表示していません');
+    assert.match(desktopHeader.afterEnvironment, /運用環境[\s\S]*通常スペース/, 'after: 比較先カードが実際の取得環境を表示していません');
 
     const progressbar = await firstVisibleLocator(page.locator('[role="progressbar"]'));
     assert.ok(progressbar, 'after: レビュー進捗の progressbar が見つかりません');
@@ -799,6 +803,108 @@ async function captureReport(context, variant, reportFile, outDir) {
     }), null, { timeout: 5000 });
     assert.equal(await searchInput.inputValue(), '', 'after: 条件解除後も検索語が残っています');
     assert.match(await filterStatus.textContent(), /^表示 \d+件、全体 \d+件、未確認 \d+件$/, 'after: 条件解除後のlive region文言が不正です');
+
+    // 概要件数から、検索0件や追加の一覧条件を解除して該当種別へ移動できること。
+    const overviewCards = await page.locator('button[data-report-kind]').evaluateAll((cards) => cards.map((card) => ({
+      kind: card.getAttribute('data-report-kind'),
+      count: Number(card.querySelector('strong')?.textContent || 0)
+    })));
+    assert.ok(overviewCards.length > 0, 'after: 概要件数から差分へ移動するボタンがありません');
+    assert.ok(overviewCards.every((card) => ['added', 'removed', 'changed', 'moved', 'same'].includes(card.kind)
+      && card.count > 0), 'after: 概要件数ボタンの種別または件数が不正です');
+    const overviewNavigationInitial = await page.evaluate(() => ({
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+      focusId: document.activeElement?.id || '',
+      rows: [...document.querySelectorAll('#main [data-diff-row-key]')].map((row) => row.getAttribute('data-diff-row-key')).sort()
+    }));
+    const overviewNavigationViewport = page.viewportSize();
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      for (let cardIndex = 0; cardIndex < overviewCards.length; cardIndex += 1) {
+        const { kind, count } = overviewCards[cardIndex];
+        const label = `after: ${viewport.width}px 概要 ${kind}`;
+        await page.evaluate(() => {
+          const section = document.getElementById('diffSectionSel');
+          const sectionOption = [...section.options].find((option) => option.value !== 'all');
+          if (sectionOption) {
+            section.value = sectionOption.value;
+            section.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          for (const id of ['hideSame', 'hideReviewed']) {
+            const input = document.getElementById(id);
+            input.checked = true;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          const extraIgnore = document.getElementById('extraIgnoreKeys');
+          if (extraIgnore) {
+            extraIgnore.value = 'label';
+            extraIgnore.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          const preset = document.querySelector('[data-preset-toggle]:not(:disabled)');
+          if (preset) {
+            preset.checked = true;
+            preset.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          const search = document.getElementById('search');
+          search.value = '__codex_no_matching_overview_diff__';
+          search.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await page.waitForFunction(() => document.getElementById('main')?.getAttribute('aria-busy') === 'false'
+          && /^表示 0件、/.test(document.getElementById('reportFilterStatus')?.textContent || ''), null, { timeout: 5000 });
+        const card = page.locator(`button[data-report-kind="${kind}"]`);
+        assert.equal(Number(await card.locator('strong').textContent()), count, `${label}: 検索0件で概要の客観件数が変わりました`);
+        assert.equal(await card.getAttribute('aria-pressed'), 'false', `${label}: 種別指定前から押下状態です`);
+        if (cardIndex === 0) {
+          await card.focus();
+          await card.press('Enter');
+        } else {
+          await card.click();
+        }
+        await page.waitForFunction((expected) => {
+          const review = document.getElementById('reportReview');
+          const rect = review?.getBoundingClientRect();
+          return document.getElementById('main')?.getAttribute('aria-busy') === 'false'
+            && document.activeElement === review && rect.top < window.innerHeight && rect.bottom > 0
+            && Number(document.getElementById('stat-total')?.textContent || 0) === expected;
+        }, count, { timeout: 5000 });
+        const selectedState = await page.evaluate((selectedKind) => {
+          const review = document.getElementById('reportReview');
+          const rect = review.getBoundingClientRect();
+          return {
+            pressed: [...document.querySelectorAll('button[data-report-kind]')]
+              .filter((button) => button.getAttribute('aria-pressed') === 'true').map((button) => button.getAttribute('data-report-kind')),
+            toolbarPressed: document.querySelector('[data-type-chip="' + selectedKind + '"]')?.getAttribute('aria-pressed'),
+            diffSelected: document.querySelector('[data-report-tab="diff"]')?.getAttribute('aria-selected'),
+            reviewVisible: rect.top < window.innerHeight && rect.bottom > 0,
+            search: document.getElementById('search').value,
+            section: document.getElementById('diffSectionSel').value,
+            hideSame: document.getElementById('hideSame').checked,
+            hideReviewed: document.getElementById('hideReviewed').checked,
+            extraIgnore: document.getElementById('extraIgnoreKeys')?.value || '',
+            presets: document.querySelectorAll('[data-preset-toggle]:not(:disabled):checked').length
+          };
+        }, kind);
+        assert.deepEqual(selectedState, {
+          pressed: [kind], toolbarPressed: 'true', diffSelected: 'true', reviewVisible: true,
+          search: '', section: 'all', hideSame: false, hideReviewed: false, extraIgnore: '', presets: 0
+        }, `${label}: 種別の選択・一覧への移動・既存条件の解除が揃っていません`);
+        assert.match(await filterStatus.textContent(), new RegExp(`^表示 ${count}件、`), `${label}: 概要件数と移動先の表示件数が一致しません`);
+        const clearOverview = viewport.width > 390
+          ? page.locator('[data-type-chip="all"]')
+          : page.locator('[data-clear-filter="all"]').first();
+        await clearOverview.click();
+        await page.waitForFunction(() => document.querySelector('[data-type-chip="all"]')?.getAttribute('aria-pressed') === 'true'
+          && !document.querySelector('button[data-report-kind][aria-pressed="true"]'), null, { timeout: 5000 });
+        const restoredRows = await page.locator('#main [data-diff-row-key]').evaluateAll((rows) => rows.map((row) => row.getAttribute('data-diff-row-key')).sort());
+        assert.deepEqual(restoredRows, overviewNavigationInitial.rows, `${label}: 解除後に元の全差分一覧へ復帰しません`);
+      }
+    }
+    await page.setViewportSize(overviewNavigationViewport);
+    await page.evaluate(({ scrollX, scrollY, focusId }) => {
+      if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
+      window.scrollTo({ left: scrollX, top: scrollY, behavior: 'instant' });
+    }, overviewNavigationInitial);
 
     // レビュー対象へ移動して「確認して次へ」が確認済み化とフォーカス移動を同時に行うこと。
     let focusedRow = await firstVisibleLocator(page.locator('#main [data-diff-row-key][aria-current="true"],#main .drow--focus'));
@@ -1026,8 +1132,13 @@ async function captureReport(context, variant, reportFile, outDir) {
     assert.equal(mobileReport.reviewTargetAttached, true, 'after: mobileにレビュー開始CTAまたは差分行がありません');
     assert.equal(mobileReport.horizontalOverflow, false, 'after: mobile HTML report has horizontal overflow');
     if (mobileReport.laneColumns) assert.ok(!mobileReport.laneColumns.includes(' '), `after: mobile comparison values are not single-column: ${mobileReport.laneColumns}`);
-    await page.evaluate(() => window.scrollTo(0, Math.min(120, document.documentElement.scrollHeight - window.innerHeight)));
-    await page.waitForTimeout(50);
+    // scroll-behavior:smooth の移動途中をドロワーによるレイアウト移動と誤判定しない。
+    const drawerStartScrollY = await page.evaluate(() => {
+      const top = Math.max(0, Math.min(120, document.documentElement.scrollHeight - window.innerHeight));
+      window.scrollTo({ left: 0, top, behavior: 'instant' });
+      return top;
+    });
+    await page.waitForFunction((expected) => window.scrollY === expected, drawerStartScrollY, { timeout: 5000 });
     const contentFrameBeforeDrawer = await page.locator('.settings-shell').evaluate((element) => ({
       top: element.getBoundingClientRect().top,
       scrollY: window.scrollY,
@@ -1082,6 +1193,7 @@ async function captureReport(context, variant, reportFile, outDir) {
     await page.waitForTimeout(100);
     dom.v3 = {
       structuredHeader: desktopHeader,
+      overviewCardNavigation: { widths: [1440, 390], kinds: overviewCards.map((card) => card.kind), keyboard: true },
       progressMax: initialProgress.max,
       confirmNext: true,
       reviewStateRoundTrip: true,
