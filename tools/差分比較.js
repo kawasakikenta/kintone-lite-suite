@@ -5315,18 +5315,24 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const diffTotal = summary.added + summary.removed + summary.changed;
     const objectiveContentChangedCount = Math.max(0, summary.changed - summary.moved);
     const objectiveFactCards = [
-      summary.added > 0 ? `<article class="report-fact report-fact--added"><span>比較先のみに存在</span><strong>${summary.added}</strong><small>比較元にはありません</small></article>` : "",
-      summary.removed > 0 ? `<article class="report-fact report-fact--removed"><span>比較元のみに存在</span><strong>${summary.removed}</strong><small>比較先にはありません</small></article>` : "",
-      objectiveContentChangedCount > 0 ? `<article class="report-fact report-fact--changed"><span>両方に存在・内容が異なる</span><strong>${objectiveContentChangedCount}</strong><small>値または設定が異なります</small></article>` : "",
-      summary.moved > 0 ? `<article class="report-fact report-fact--moved"><span>並び順が異なる</span><strong>${summary.moved}</strong><small>内容とは別に集計</small></article>` : "",
-      includesComparedContent && summary.same > 0 ? `<article class="report-fact report-fact--same"><span>内容は同じ</span><strong>${summary.same}</strong><small>比較証跡として収録</small></article>` : ""
-    ].filter(Boolean);
-    const objectiveFactCardsHtml = objectiveFactCards.length ? objectiveFactCards.join("") : '<article class="report-fact report-fact--same report-fact--empty"><span>差分は見つかりませんでした</span><strong>0</strong><small>選択した設定は一致しています</small></article>';
+      { kind: "added", label: "比較先のみに存在", count: summary.added, note: "比較元にはありません" },
+      { kind: "removed", label: "比較元のみに存在", count: summary.removed, note: "比較先にはありません" },
+      { kind: "changed", label: "両方に存在・内容が異なる", count: objectiveContentChangedCount, note: "値または設定が異なります" },
+      { kind: "moved", label: "並び順が異なる", count: summary.moved, note: "内容とは別に集計" },
+      { kind: "same", label: "内容は同じ", count: includesComparedContent ? summary.same : 0, note: "比較証跡として収録" }
+    ].filter((fact) => fact.count > 0);
+    const emptyFactTitle = reportMeta.incompleteComparison ? "確認できた差分は0件です" : reportMeta.exportMode !== "all" ? "この出力範囲の差分は0件です" : "差分は見つかりませんでした";
+    const emptyFactNote = reportMeta.incompleteComparison ? "未取得・未検証の範囲があるため、一致とは判断できません" : reportMeta.exportMode !== "all" ? "全比較結果の一致を意味するものではありません" : "選択した設定は一致しています";
+    const objectiveFactCardsHtml = objectiveFactCards.map((fact) => `<button type="button" class="report-fact report-fact--${fact.kind}" data-report-kind="${fact.kind}" aria-pressed="false" aria-controls="reportPaneDiff" aria-label="${esc(fact.label)}（検出 ${fact.count}件）の収録行を表示" title="ほかの絞り込みを解除して、この種別を表示"><span>${esc(fact.label)}</span><strong>${fact.count}</strong><small>${esc(fact.note)}</small><em aria-hidden="true">収録行を見る →</em></button>`).join("") + (diffTotal > 0 ? "" : `<article class="report-fact report-fact--same report-fact--empty"><span>${emptyFactTitle}</span><strong>0</strong><small>${emptyFactNote}</small></article>`);
     const formatAppDisplay = (meta) => {
       const id = String(meta?.appId || "-");
       const name = String(meta?.appName || "").trim();
       return name ? `${name}（アプリ ${id}）` : `アプリ ${id}`;
     };
+    const formatEnvironment = (meta) => [
+      meta.preview ? "プレビュー環境" : "運用環境",
+      meta.guestId ? `ゲスト ${meta.guestId}` : "通常スペース"
+    ].join(" · ");
     const sourceAppDisplay = formatAppDisplay(reportMeta.source);
     const targetAppDisplay = formatAppDisplay(reportMeta.target);
     const clientNormalizationPresets = Object.entries(DIFF_NORMALIZATION_PRESETS).map(([key, preset]) => ({
@@ -6178,10 +6184,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function renderInlineLane(side, tone, content) {
     const isSource = side === 'source';
     const lane = isSource ? 'before' : 'after';
-    const english = isSource ? 'BEFORE' : 'AFTER';
     const japanese = isSource ? '比較元' : '比較先';
     return '<span class="val-lane val-lane--' + lane + '">'
-      + '<span class="val-lane-label"><b>' + english + '</b><small>' + japanese + '</small></span>'
+      + '<span class="val-lane-label"><b>' + japanese + '</b></span>'
       + '<span class="vi-val vi-val--' + tone + '">' + content + '</span>'
       + '</span>';
   }
@@ -6189,8 +6194,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function renderDuoLaneHeader(side, detail) {
     const isSource = side === 'source';
     return '<span class="duo-lane duo-lane--' + (isSource ? 'before' : 'after') + '">'
-      + '<b>' + (isSource ? 'BEFORE' : 'AFTER') + '</b>'
-      + '<small>' + escHtml(detail || (isSource ? '比較元' : '比較先')) + '</small>'
+      + '<b>' + (isSource ? '比較元' : '比較先') + '</b>'
+      + (detail && detail !== (isSource ? '比較元' : '比較先') ? '<small>' + escHtml(detail) + '</small>' : '')
       + '</span>';
   }
 
@@ -8547,6 +8552,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
 
   function finishReportRender(viewState) {
+    document.querySelectorAll('[data-report-kind]').forEach((button) => {
+      button.setAttribute('aria-pressed', button.getAttribute('data-report-kind') === typeFilterValue ? 'true' : 'false');
+    });
     setReportRenderBusy(false);
     syncReportFilterStatus(viewState);
   }
@@ -8599,9 +8607,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return '<section class="review-queue review-queue--' + (pending.length ? 'pending' : 'clear') + '" aria-labelledby="reviewQueueTitle" tabindex="-1">'
       + '<div class="review-queue-mark" aria-hidden="true">' + (pending.length ? '→' : '✓') + '</div>'
       + '<div class="review-queue-main">'
-      +   '<span class="review-queue-kicker">レビュー受信箱</span>'
       +   '<strong id="reviewQueueTitle">' + escHtml(headline) + '</strong>'
-      +   '<span class="review-queue-note">未確認 ' + pending.length + '件 / レビュー対象 ' + progress.total + '件。判断による並び替えをせず、レポートの定義順で表示します。</span>'
+      +   '<span class="review-queue-note">未確認 ' + pending.length + '件 / レビュー対象 ' + progress.total + '件。定義順に確認できます。</span>'
       +   '<div class="review-progress review-progress--queue">'
       +     '<div class="review-progress-copy"><span>確認済み</span><strong>' + progress.reviewed + ' / ' + progress.total + '（' + progress.percent + '%）</strong></div>'
       +     '<div class="review-progress-track" role="progressbar" aria-label="レビュー進捗" aria-valuemin="0" aria-valuemax="' + progress.total + '" aria-valuenow="' + progress.reviewed + '" aria-valuetext="確認済み ' + progress.reviewed + '件 / 全 ' + progress.total + '件（' + progress.percent + '%）"><span style="width:' + progress.percent + '%"></span></div>'
@@ -8672,7 +8679,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       +   '<button type="button" class="mobile-toolbar-toggle" data-mobile-toolbar-toggle aria-expanded="' + (mobileToolbarExpanded ? 'true' : 'false') + '" aria-controls="diffToolbarFilters diffToolbarSort">' + (mobileToolbarExpanded ? '条件を閉じる' : '条件を開く') + '</button>'
       + '</div>'
       + '<div class="focus-context" aria-label="集中表示中の比較対象">'
-      +   '<span class="focus-context-pair" title="' + escHtml(sourceContextLabel + ' → ' + targetContextLabel) + '"><span class="focus-context-side"><small>BEFORE</small><b>' + escHtml(sourceContextLabel) + '</b></span><i aria-hidden="true">→</i><span class="focus-context-side"><small>AFTER</small><b>' + escHtml(targetContextLabel) + '</b></span></span>'
+      +   '<span class="focus-context-pair" title="' + escHtml(sourceContextLabel + ' → ' + targetContextLabel) + '"><span class="focus-context-side"><small>比較元</small><b>' + escHtml(sourceContextLabel) + '</b></span><i aria-hidden="true">→</i><span class="focus-context-side"><small>比較先</small><b>' + escHtml(targetContextLabel) + '</b></span></span>'
       +   '<span class="focus-context-stat">現在 <strong id="focusContextPosition">0 / 0</strong></span>'
       +   '<span class="focus-context-stat">未確認 <strong>' + pendingCount + '</strong></span>'
       + '</div>'
@@ -9090,6 +9097,41 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     jumpToReviewKey(rowStateKey(firstPending));
   }
 
+  function clearReportFilters(key) {
+    const clearAll = key === 'all';
+    if (clearAll || key === 'type') typeFilterValue = 'all';
+    if (clearAll || key === 'section') sectionFilterValue = 'all';
+    if (clearAll || key === 'search') document.getElementById('search').value = '';
+    if (clearAll || key === 'hideSame') document.getElementById('hideSame').checked = false;
+    if (clearAll || key === 'hideReviewed') document.getElementById('hideReviewed').checked = false;
+    if (clearAll || key === 'extraIgnore') {
+      const input = document.getElementById('extraIgnoreKeys');
+      if (input) input.value = '';
+      extraIgnoreRules = null;
+    }
+    if (clearAll || key === 'presets') {
+      activePresetKeys.clear();
+      document.querySelectorAll('[data-preset-toggle]:not(:disabled)').forEach((cb) => { cb.checked = false; });
+    }
+  }
+
+  function showReportKind(kind) {
+    cancelScheduledReportSearch();
+    clearReportFilters('all');
+    typeFilterValue = kind;
+    focusModeEnabled = false;
+    collapsed.clear();
+    const rawJson = document.getElementById('rawJson');
+    if (rawJson) rawJson.checked = false;
+    applyDisplayModeClasses();
+    setActiveTab('diff');
+    const workspace = document.getElementById('reportReview');
+    if (workspace) {
+      workspace.focus({ preventScroll: true });
+      workspace.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' });
+    }
+  }
+
   function handleMainClick(e) {
     const mobileToolbarToggle = e.target.closest('[data-mobile-toolbar-toggle]');
     if (mobileToolbarToggle) {
@@ -9138,21 +9180,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const clearFilter = e.target.closest('[data-clear-filter]');
     if (clearFilter) {
       const key = clearFilter.getAttribute('data-clear-filter') || '';
-      const clearAll = key === 'all';
-      if (clearAll || key === 'type') typeFilterValue = 'all';
-      if (clearAll || key === 'section') sectionFilterValue = 'all';
-      if (clearAll || key === 'search') document.getElementById('search').value = '';
-      if (clearAll || key === 'hideSame') document.getElementById('hideSame').checked = false;
-      if (clearAll || key === 'hideReviewed') document.getElementById('hideReviewed').checked = false;
-      if (clearAll || key === 'extraIgnore') {
-        const input = document.getElementById('extraIgnoreKeys');
-        if (input) input.value = '';
-        extraIgnoreRules = null;
-      }
-      if (clearAll || key === 'presets') {
-        activePresetKeys.clear();
-        document.querySelectorAll('[data-preset-toggle]:not(:disabled)').forEach((cb) => { cb.checked = false; });
-      }
+      clearReportFilters(key);
       render();
       requestAnimationFrame(() => {
         const focusTarget = key === 'type'
@@ -9495,6 +9523,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
   });
   document.getElementById('main').addEventListener('click', handleMainClick);
+  document.querySelectorAll('[data-report-kind]').forEach((button) => {
+    button.onclick = () => showReportKind(button.getAttribute('data-report-kind'));
+  });
   const startPendingReviewBtn = document.getElementById('startPendingReviewBtn');
   if (startPendingReviewBtn) startPendingReviewBtn.onclick = jumpToFirstPendingReview;
   document.getElementById('main').addEventListener('keydown', (e) => {
@@ -9951,13 +9982,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .val-inline--lanes{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:9px}
     .val-inline--lanes>.val-lane:only-child{grid-column:1/-1}
     .val-lane{display:flex;flex-direction:column;gap:5px;min-width:0;padding:8px;border:1px solid var(--border);border-radius:11px;background:var(--card-soft)}
-    .val-lane--before{border-top:3px solid #dc2626}
-    .val-lane--after{border-top:3px solid #16a34a}
+    .val-lane--before{border-top:3px solid var(--muted)}
+    .val-lane--after{border-top:3px solid var(--accent)}
     .val-lane-label{display:flex;align-items:baseline;gap:7px;padding:0 2px}
-    .val-lane-label b{font-size:10px;letter-spacing:.08em;color:var(--fg)}
+    .val-lane-label b{font-size:12px;letter-spacing:.08em;color:var(--fg)}
     .val-lane-label small{font-size:9px;font-weight:700;color:var(--muted)}
     .val-lane .vi-val{display:block;width:100%}
-    .vi-val{display:inline-block;max-width:100%;padding:3px 10px;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;word-break:break-word;border:1px solid transparent}
+    .vi-val{display:inline-block;max-width:100%;padding:3px 10px;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;word-break:break-word;border:1px solid transparent}
     .vi-val--del{background:var(--del);color:var(--del-fg);border-color:rgba(220,38,38,.18)}
     .vi-val--add{background:var(--add);color:var(--add-fg);border-color:rgba(22,163,74,.18)}
     .vi-val--same{background:var(--card-soft);color:var(--muted);border-color:var(--border)}
@@ -9976,14 +10007,14 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .duo-wrap{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--card)}
     .duo-head{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-bottom:1px solid var(--border);background:var(--pad)}
     .duo-head .duo-lane{display:flex;align-items:baseline;gap:8px;padding:8px 12px;border-top:3px solid transparent}
-    .duo-head .duo-lane--before{border-top-color:#dc2626}
-    .duo-head .duo-lane--after{border-top-color:#16a34a}
-    .duo-head .duo-lane b{font-size:10px;letter-spacing:.08em;color:var(--fg)}
+    .duo-head .duo-lane--before{border-top-color:var(--muted)}
+    .duo-head .duo-lane--after{border-top-color:var(--accent)}
+    .duo-head .duo-lane b{font-size:12px;letter-spacing:.08em;color:var(--fg)}
     .duo-head .duo-lane small{font-size:9px;font-weight:700;color:var(--muted)}
     .duo-head .duo-lane + .duo-lane{border-left:1px solid var(--border)}
     .duo{max-height:320px}
     .duo-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
-    .duo-cell{display:flex;min-width:0;min-height:1.6em;line-height:1.6;padding:0 8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:pre-wrap;word-break:break-word}
+    .duo-cell{display:flex;min-width:0;min-height:1.6em;line-height:1.6;padding:0 8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word}
     .duo-cell + .duo-cell{border-left:1px solid var(--border)}
     .duo-cell.del{background:var(--del);color:var(--del-fg)}
     .duo-cell.add{background:var(--add);color:var(--add-fg)}
@@ -10430,20 +10461,20 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .skip-link{position:fixed;left:12px;top:10px;z-index:120;transform:translateY(-160%);padding:10px 14px;border-radius:8px;background:var(--fg);color:var(--card);font-size:12px;font-weight:800;text-decoration:none}
     .skip-link:focus{transform:translateY(0);outline:3px solid var(--accent);outline-offset:2px}
     .report-hero,.report-workspace{width:min(calc(100% - 32px),1440px);margin-inline:auto}
-    .report-hero{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);align-items:stretch;gap:11px 16px;margin-top:16px;padding:21px 22px;border-radius:20px;background:linear-gradient(145deg,var(--card) 0%,color-mix(in srgb,var(--card) 90%,var(--accent-soft)) 100%);box-shadow:0 22px 56px -38px rgba(15,37,63,.62);overflow:visible}
+    .report-hero{display:grid;grid-template-columns:minmax(0,1fr);align-items:stretch;gap:12px;margin-top:16px;padding:18px 22px;border-radius:20px;background:linear-gradient(145deg,var(--card) 0%,color-mix(in srgb,var(--card) 90%,var(--accent-soft)) 100%);box-shadow:0 22px 56px -38px rgba(15,37,63,.62);overflow:visible}
     .report-hero::before{height:4px;background:var(--accent)}
-    .report-hero .topbar-main{grid-column:1/-1;display:grid;grid-template-columns:minmax(260px,.78fr) minmax(480px,1.22fr);grid-template-rows:auto auto 1fr;align-items:start;gap:7px 28px}
+    .report-hero .topbar-main{grid-column:1/-1;display:grid;grid-template-columns:minmax(260px,.78fr) minmax(480px,1.22fr);grid-template-rows:auto 1fr;align-items:center;gap:7px 24px}
     .report-hero .topbar-eyebrow-row,.report-hero .topbar-title,.report-hero .topbar-lead{grid-column:1}
-    .report-hero .topbar-compare{grid-column:2;grid-row:1/4;align-self:stretch}
-    .report-hero .topbar-title{margin:0;font-size:clamp(1.45rem,3vw,2rem)}
+    .report-hero .topbar-compare{grid-column:2;grid-row:1/3;align-self:stretch}
+    .report-hero .topbar-title{margin:0;font-size:clamp(1.4rem,2.5vw,1.8rem)}
     .topbar-lead{max-width:72ch;margin:0;color:var(--muted);font-size:13px;line-height:1.7}
     .report-hero .topbar-compare{width:100%;max-width:none;gap:12px}
-    .report-hero .topbar-app-card{grid-template-columns:1fr;align-content:center;gap:3px;min-height:78px;padding:12px 15px;border-top:1px solid var(--border);border-left:4px solid #475569;background:var(--card-soft)}
+    .report-hero .topbar-app-card{grid-template-columns:1fr;align-content:center;gap:4px;min-height:78px;padding:12px 15px;border-top:1px solid var(--border);border-left:4px solid #475569;background:var(--card-soft)}
     .report-hero .topbar-app-card--source{border-left-color:#475569;background:var(--card-soft)}
     .report-hero .topbar-app-card--target{border-left-color:var(--accent);background:var(--card-soft)}
     body.dark .report-hero .topbar-app-card--source,body.dark .report-hero .topbar-app-card--target{background:var(--card-soft)}
     .report-hero .topbar-app-eyebrow{font-size:12px;letter-spacing:.04em}
-    .report-hero .topbar-app-side{font-size:11px}
+    .report-hero .topbar-app-side{font-size:11px;white-space:normal;overflow-wrap:anywhere}
     .report-hero .topbar-app-card strong{font-size:14px;white-space:normal;overflow:visible;word-break:break-word}
     .report-content-disclosure{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 12px;padding:11px 14px;border:1px solid #d6b456;border-left:4px solid #9a6700;border-radius:12px;background:#fffaf0;color:#5f4300;font-size:12px;line-height:1.6}
     .report-content-disclosure strong{white-space:nowrap;font-size:12px}
@@ -10451,7 +10482,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     body.dark .report-content-disclosure{border-color:#8b6824;background:#2a210d;color:#fde68a}
     body.dark .report-content-disclosure--caution{border-color:#9a5a24;background:#2f190d;color:#fed7aa}
     .report-step-label{display:block;margin-bottom:3px;color:var(--muted);font-size:11px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}
-    .report-completeness{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 13px;padding:13px 14px;border:1px solid var(--border);border-radius:14px;background:var(--card-soft)}
+    .report-completeness{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 13px;padding:10px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card-soft)}
     .report-completeness--incomplete{border-color:#f0c36a;background:#fffaf0}
     .report-completeness--complete{border-color:#9bc8ac;background:#f4fbf6}
     body.dark .report-completeness--incomplete{border-color:#8b6824;background:#2a210d}
@@ -10459,29 +10490,40 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .report-completeness-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#334155;color:#fff;font-size:17px;font-weight:900}
     .report-completeness--incomplete .report-completeness-mark{background:#a16207}
     .report-completeness--complete .report-completeness-mark{background:#15803d}
-    .report-completeness-copy h2,.report-facts h2{margin:0;color:var(--fg);font-size:16px;line-height:1.45}
+    .report-completeness-copy h2,.report-facts h2{margin:0;color:var(--fg);font-size:15px;line-height:1.5}
+    .report-completeness-copy .report-step-label{display:inline;margin-right:8px}
+    .report-completeness-copy h2{display:inline}
     .report-completeness-copy p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.65}
     .report-diagnostics{grid-column:2;min-width:0;border-top:1px solid color-mix(in srgb,var(--border) 80%,transparent);padding-top:9px}
     .report-diagnostics>summary{display:inline-flex;align-items:center;min-height:36px;color:var(--accent-strong);font-size:11px;font-weight:800;cursor:pointer}
     .report-diagnostics>summary:focus-visible,.tool-details-summary:focus-visible,.related-settings>summary:focus-visible{outline:none;box-shadow:var(--focus);border-radius:7px}
     .report-diagnostics .report-notices{margin:8px 0 0}
-    .report-review-start{grid-column:1/-1;display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:16px;padding:13px 16px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--border));border-radius:16px;background:color-mix(in srgb,var(--accent-soft) 58%,var(--card))}
-    .report-review-start span{color:var(--muted);font-size:12px;line-height:1.65}
-    .report-review-start button{min-height:46px;padding:10px 16px;border:1px solid var(--accent);border-radius:11px;background:linear-gradient(180deg,#3b82f6,var(--accent));color:#fff;font-size:13px;font-weight:850;cursor:pointer;white-space:normal;box-shadow:0 10px 24px -16px rgba(37,99,235,.9)}
+    .report-review-start{display:flex;flex:0 1 auto;min-width:0}
+    .report-review-start button{min-height:42px;padding:9px 15px;border:1px solid var(--accent);border-radius:9px;background:linear-gradient(180deg,#3b82f6,var(--accent));color:#fff;font-size:13px;font-weight:850;cursor:pointer;white-space:normal;box-shadow:0 10px 24px -16px rgba(37,99,235,.9)}
     .report-review-start button:hover{filter:brightness(.96)}
     .report-review-start button:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:3px}
     .report-facts{grid-column:1/-1;padding-top:4px}
-    .report-facts-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:10px}
+    .report-facts-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:10px}
     .report-facts-head>p{max-width:52ch;margin:0;color:var(--muted);font-size:11px;line-height:1.6;text-align:right}
-    .report-fact-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px}
-    .report-fact-grid article{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;min-width:0;padding:13px 14px 12px;border:1px solid var(--border);border-radius:14px;background:var(--card);overflow:hidden}
-    .report-fact-grid article::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:#64748b}
+    .report-fact-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+    .report-fact-grid .report-fact{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;min-width:0;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card);color:var(--fg);font:inherit;text-align:left;overflow:hidden}
+    .report-fact-grid .report-fact::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:#64748b}
     .report-fact--added::before{background:#15803d!important}
     .report-fact--removed::before{background:#b91c1c!important}
     .report-fact--changed::before{background:#b45309!important}
     .report-fact--moved::before{background:#7c3aed!important}
     .report-fact--same::before{background:#64748b!important}
+    button.report-fact{cursor:pointer;transition:border-color .15s,background .15s}
+    button.report-fact:hover,button.report-fact[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+    button.report-fact:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+    .report-fact-grid em{grid-column:1/-1;margin-top:3px;color:var(--accent-strong);font-size:11px;font-weight:700;font-style:normal}
     .report-fact--empty{grid-column:1/-1}
+    .report-source-details{min-width:0}
+    .report-source-details summary{cursor:pointer;color:var(--accent-strong);font-weight:700}
+    .report-source-details summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+    .report-source-details dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 12px;margin:10px 0 0;line-height:1.6}
+    .report-source-details dt{font-weight:700}
+    .report-source-details dd{margin:0;overflow-wrap:anywhere}
     .report-fact-grid span{align-self:center;color:var(--fg);font-size:12px;font-weight:750;line-height:1.5}
     .report-fact-grid strong{grid-row:1/3;grid-column:2;align-self:center;font-size:24px;font-variant-numeric:tabular-nums}
     .report-fact-grid small{color:var(--muted);font-size:11px;line-height:1.5}
@@ -10489,6 +10531,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .report-workspace{display:grid;grid-template-columns:minmax(248px,282px) minmax(0,1fr);align-items:start;gap:16px;margin-top:16px;margin-bottom:36px}
     .report-workspace>aside{position:sticky;top:12px;width:auto;min-width:0;height:calc(100vh - 24px);max-height:calc(100vh - 24px);border:1px solid var(--border);border-radius:16px;background:var(--sidebar);overflow:auto;box-shadow:none;backdrop-filter:none}
     .report-workspace>main{min-width:0;padding:0;overflow:visible}
+    .report-workspace .sb-head{padding:14px 16px;background:var(--card)}
+    .report-workspace .sb-title{margin:0;font-size:16px}
+    .report-workspace .sb-panel{margin:0;border:0;border-bottom:1px solid var(--border);border-radius:0;box-shadow:none}
     .report-workspace .settings-shell{margin-top:0;border-radius:16px;box-shadow:0 12px 40px -30px rgba(15,23,42,.45)}
     .report-workspace .settings-tabs{border-radius:16px 16px 0 0}
     .tool-details{padding:0!important}
@@ -10500,8 +10545,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .tool-details-body>.field-label:first-child{margin-top:14px}
     .drow-list{gap:9px;padding:10px;background:var(--card-soft);overflow:visible}
     .drow{border:1px solid var(--border);border-left:4px solid #94a3b8;border-radius:14px;background:var(--card);box-shadow:0 12px 28px -30px rgba(15,37,63,.62)}
-    .drow--added{border-left-color:#0f766e}
-    .drow--removed{border-left-color:#475569}
+    .drow--added{border-left-color:var(--pill-add)}
+    .drow--removed{border-left-color:var(--pill-del)}
     .drow--changed{border-left-color:#b45309}
     .drow-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px 12px}
     .drow-facts{display:flex;grid-column:1/-1;gap:6px;flex-wrap:wrap}
@@ -10509,8 +10554,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .drow-actions{grid-column:2;align-self:start}
     .fact-chip{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:var(--card-soft);color:var(--fg);font-size:11px;font-weight:750;line-height:1.35}
     .fact-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#64748b;flex:0 0 auto}
-    .fact-chip--added::before{background:#0f766e}
-    .fact-chip--removed::before{background:#475569}
+    .fact-chip--added::before{background:var(--pill-add)}
+    .fact-chip--removed::before{background:var(--pill-del)}
     .fact-chip--changed::before{background:#b45309}
     .fact-chip--same::before{background:#64748b}
     .fact-chip--difference{background:var(--card)}
@@ -10523,7 +10568,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .related-settings li{font-size:11px;line-height:1.5;color:var(--fg)}
     .related-settings code{display:block;color:var(--muted);font-size:11px;word-break:break-all}
     .related-settings p{margin:2px 0 0;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;color:var(--muted);font-size:11px}
-    .review-queue{border-color:var(--border);background:var(--card);box-shadow:none}
+    .review-queue{border-color:var(--border);background:var(--card-soft);box-shadow:none;padding:9px 12px}
+    .review-queue-samples{display:none}
+    .review-queue-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(140px,.45fr);gap:3px 18px;align-items:center}
+    .review-queue-main>strong,.review-queue-note{grid-column:1}
+    .review-queue-main>.review-progress{grid-column:2;grid-row:1/3;margin:0}
     .review-queue--pending .review-queue-mark{background:var(--accent);color:#fff}
     .review-queue--clear .review-queue-mark{background:#15803d;color:#fff}
     .review-queue-note{line-height:1.5}
@@ -10535,7 +10584,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .report-hero{display:flex;flex-direction:column}
       .report-hero .topbar-main{display:flex;flex-direction:column;gap:9px}
       .report-hero .topbar-compare{width:100%;max-width:980px}
-      .report-hero .topbar-app-card{grid-template-columns:auto auto minmax(0,1fr);min-height:66px;padding:12px 14px}
+      .report-hero .topbar-app-card{grid-template-columns:1fr;min-height:66px;padding:10px 14px}
       .report-review-start{display:flex;flex-direction:row;align-items:center;justify-content:space-between}
     }
     @media (max-width:1080px){
@@ -10554,7 +10603,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .report-content-disclosure{grid-template-columns:1fr}
       .report-content-disclosure strong{white-space:normal}
       .report-diagnostics{grid-column:1/-1}
-      .report-facts-head{display:block}
+      .report-facts-head{display:flex;flex-wrap:wrap;gap:10px}
+      .report-review-start{width:100%}
+      .review-queue-main{display:flex;flex-direction:column;align-items:stretch;gap:5px}
       .report-facts-head>p{margin-top:5px;text-align:left}
       .report-fact-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
       .val-inline--lanes,.duo-row,.fd-entry-grid,.sl-pair{grid-template-columns:1fr}
@@ -10578,10 +10629,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .report-completeness{grid-template-columns:auto minmax(0,1fr);gap:9px;padding:11px}
       .report-completeness-copy h2{font-size:15px}
       .report-completeness-copy p{font-size:11px;line-height:1.55}
-      .report-review-start{gap:8px;padding:10px 12px}
+      .report-review-start{padding:0}
       .report-fact-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-      .report-fact-grid article{padding:10px 12px}
-      .report-fact-grid article:last-child:nth-child(odd){grid-column:1/-1}
+      .report-fact-grid .report-fact{padding:10px 12px}
+      .report-fact-grid .report-fact:last-child:nth-child(odd){grid-column:1/-1}
       .report-completeness-mark{width:30px;height:30px}
       .topbar-eyebrow-row{align-items:flex-start;flex-direction:column}
       .header-badge{white-space:normal}
@@ -10593,7 +10644,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .review-queue-actions{grid-column:1}
     }
     @media (forced-colors:active){
-      .report-content-disclosure,.report-completeness,.report-review-start,.report-fact-grid article,.drow,.fact-chip{forced-color-adjust:auto;border:1px solid CanvasText}
+      .report-content-disclosure,.report-completeness,.report-review-start,.report-fact-grid .report-fact,.drow,.fact-chip{forced-color-adjust:auto;border:1px solid CanvasText}
       .fact-chip::before{border:1px solid CanvasText;background:CanvasText}
       :focus-visible{outline:2px solid Highlight!important;outline-offset:2px;box-shadow:none!important}
     }
@@ -10609,6 +10660,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .report-hero,.report-workspace{width:100%;margin:0}
       .report-hero{display:block;padding:0 0 14px;border:none;background:#fff}
       .report-hero>*{margin-bottom:10px}
+      .report-fact-grid em{display:none}
+      button.report-fact[aria-pressed="true"]{background:var(--card);border-color:var(--border)}
       .report-hero .topbar-main{display:block}
       .report-hero .topbar-compare{margin-top:10px}
       .report-workspace{display:block}
@@ -10618,7 +10671,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .report-diagnostics>.report-notices{display:flex!important}
       .drow-list{gap:6px;padding:6px;background:#fff}
       .sec-head{break-after:avoid}
-      .drow,.fj-block,.fc-card,.duo-wrap,.report-fact-grid article{break-inside:avoid}
+      .drow,.fj-block,.fc-card,.duo-wrap,.report-fact-grid .report-fact{break-inside:avoid}
       details:not([open])>*:not(summary){display:block!important}
       details>summary{break-after:avoid}
       .drow,.fj-block,.fc-card{content-visibility:visible!important;contain-intrinsic-size:none!important}
@@ -10637,17 +10690,16 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <span class="header-badge">${esc(reportMeta.exportLabel || "全差分")} · ${esc(reportMeta.exportContentLabel)}</span>
       </div>
       <h1 id="reportTitle" class="topbar-title">設定差分レポート</h1>
-      <p class="topbar-lead">比較元の設定と比較先の設定を、同じ項目どうしで確認するためのレポートです。</p>
       <div class="topbar-compare" role="group" aria-label="比較方向">
         <section class="topbar-app-card topbar-app-card--source" aria-label="比較元アプリ">
           <span class="topbar-app-eyebrow">比較元</span>
-          <span class="topbar-app-side">現在の値</span>
+          <span class="topbar-app-side">${esc(formatEnvironment(reportMeta.source))}</span>
           <strong>${esc(sourceAppDisplay)}</strong>
         </section>
         <span class="topbar-arrow" aria-hidden="true">→</span>
         <section class="topbar-app-card topbar-app-card--target" aria-label="比較先アプリ">
           <span class="topbar-app-eyebrow">比較先</span>
-          <span class="topbar-app-side">比較する値</span>
+          <span class="topbar-app-side">${esc(formatEnvironment(reportMeta.target))}</span>
           <strong>${esc(targetAppDisplay)}</strong>
         </section>
       </div>
@@ -10665,15 +10717,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       ${noticesHtml ? `<details class="report-diagnostics"${reportMeta.incompleteComparison ? " open" : ""}><summary>${reportMeta.incompleteComparison ? "未完了の要因を確認" : "取得範囲と収録内容の詳細"}</summary><div class="report-notices">${noticesHtml}</div></details>` : ""}
     </section>
 
-    ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-review-start><span>未確認の差分を定義順に確認します。確認状態はレポート内で記録できます。</span><button type="button" id="startPendingReviewBtn">未確認レビューを開始（${preparedReviewRows.reviewKeys.length}件）</button></div>` : ""}
-
     <section class="report-facts" data-objective-counts aria-labelledby="objectiveCountsTitle">
       <div class="report-facts-head">
         <div>
-          <span class="report-step-label">2 · 確認できた客観的な件数</span>
+          <span class="report-step-label">2 · 検出した差分の件数</span>
           <h2 id="objectiveCountsTitle">存在状況と差分内容</h2>
         </div>
-        <p>判断や優先順位は付けず、比較で確認できた事実だけを表示します。</p>
+${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-review-start><button type="button" id="startPendingReviewBtn">未確認レビューを開始（${preparedReviewRows.reviewKeys.length}件）</button></div>` : ""}
       </div>
       <div class="report-fact-grid">
         ${objectiveFactCardsHtml}
@@ -10681,9 +10731,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     </section>
 
     <div class="report-meta-line">
-      <span>生成 ${esc(reportMeta.generatedAt)}</span>
-      <span>対象 ${esc(sectionText || "-")}</span>
-      <span>${esc(comparedContentModeNote)}</span>
+      <details class="report-source-details">
+        <summary>比較対象・出力条件（${(scopes || []).length}セクション）</summary>
+        <dl><dt>生成日時</dt><dd><time datetime="${esc(reportMeta.generatedAt)}">${esc(reportMeta.generatedAt.replace("T", " ").replace(/\.\d+Z$/, " UTC"))}</time></dd><dt>比較対象</dt><dd>${esc(sectionText || "-")}</dd><dt>出力範囲</dt><dd>${esc(reportMeta.exportLabel)} · ${esc(comparedContentModeNote)}</dd></dl>
+      </details>
       <span data-applied-ignore>${esc(appliedIgnoreSummary)}</span>
       <span data-applied-normalization>${esc(appliedNormalizationSummary)}</span>
     </div>
@@ -10692,16 +10743,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   <div class="report-workspace" data-report-workspace>
   <aside data-report-tools>
     <div class="sb-head">
-      <div class="sb-kicker">kintone アプリ設定の比較</div>
       <div class="sb-head-row">
         <div class="sb-title">検索・表示</div>
         <button type="button" id="mobileSidebarToggle" class="mobile-filter-toggle" aria-expanded="false" aria-controls="sidebarPanels">条件・出力</button>
-      </div>
-      <div class="sb-meta">
-        生成日時: ${esc(reportMeta.generatedAt)}<br>
-        対象: ${esc(sectionText || "-")}<br>
-        出力対象: ${esc(reportMeta.exportLabel || "全差分")}<br>
-        内容: ${esc(comparedContentModeNote)}
       </div>
     </div>
     <button type="button" id="sidebarBackdrop" class="sidebar-backdrop" aria-label="絞り込みを閉じる" hidden></button>
@@ -10802,7 +10846,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     </div>
     </div>
   </aside>
-  <main id="reportReview" data-review-workspace tabindex="-1">
+  <main id="reportReview" data-review-workspace tabindex="-1" aria-label="差分レビュー">
     <div class="settings-shell">
       <div class="settings-tabs" role="tablist" aria-label="レポート表示切替">
         <button id="reportTabDiff" type="button" role="tab" class="settings-tab" data-report-tab="diff" aria-selected="true" aria-controls="reportPaneDiff" tabindex="0">差分一覧</button>

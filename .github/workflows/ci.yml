@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,9 +14,14 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      comparisons: ${{ steps.comparisons.outputs.comparisons }}
+      before_ref: ${{ steps.comparisons.outputs.before_ref }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v5
@@ -25,6 +31,48 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             tools/統合ツール/package-lock.json
+
+      - name: Select UI comparison harnesses and baseline
+        id: comparisons
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+          const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+          const candidate = event.pull_request?.base.sha || event.before;
+          function resolveCommit(ref) {
+            if (!ref || /^0+$/.test(ref)) return '';
+            try { return git('rev-parse', '--verify', `${ref}^{commit}`).trim(); }
+            catch { return ''; }
+          }
+          const beforeRef = resolveCommit(candidate) || resolveCommit('HEAD^') || resolveCommit('HEAD');
+          const files = beforeRef === resolveCommit('HEAD')
+            ? git('ls-files', '-z').split('\0')
+            : git('diff', '--name-only', '-z', beforeRef, 'HEAD').split('\0');
+          const shared = file => [
+            '.github/workflows/ci.yml', 'package.json', 'package-lock.json',
+            'tools/統合ツール/package.json', 'tools/統合ツール/package-lock.json',
+            'tools/統合ツール/build.js'
+          ].includes(file)
+            || /^tools\/統合ツール\/src\/[^/]+\.(ts|mjs)$/.test(file)
+            || /^tools\/統合ツール\/src\/(ui\/|entries\/(litePanelTheme|appSearchControl)\.ts$)/.test(file);
+          const targets = {
+            diff: file => file === 'tools/差分比較.js'
+              || /^tools\/統合ツール\/src\/(diff\/|entries\/diff-|tabs\/diff)/.test(file)
+              || /^tools\/test-harness\/run-diff-lite-/.test(file),
+            er: file => file === 'tools/ER図.js'
+              || /^tools\/統合ツール\/src\/(entries\/er-|tabs\/er)/.test(file)
+              || /^tools\/test-harness\/(run-er-diagram-compare\.cjs|shot-er\.mjs)$/.test(file)
+          };
+          const comparisons = Object.keys(targets).filter(target =>
+            process.env.GITHUB_EVENT_NAME === 'workflow_dispatch'
+              || files.some(file => shared(file) || targets[target](file)));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,
+            `before_ref=${beforeRef}\ncomparisons=${JSON.stringify(comparisons)}\n`);
+          console.log(`UI comparisons: ${comparisons.join(', ') || 'none'}; baseline: ${beforeRef}`);
+          NODE
 
       - name: Install root dependencies
         run: npm ci
@@ -40,3 +88,96 @@ jobs:
 
       - name: Test standalone output layouts
         run: npm run test:output-layouts
+
+  browser-dom:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tools/統合ツール/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm run setup
+          npx --no-install playwright install --with-deps chromium
+
+      - name: Test multi-target comparison
+        run: npm run test:diff-multi-dom -- --browser chromium
+
+      - name: Test pair comparison
+        run: npm run test:diff-pairs-dom -- --browser chromium
+
+      - name: Test folder pair comparison
+        run: npm run test:diff-pair-folders-dom -- --browser chromium
+
+      - name: Test preview reflection
+        run: npm run test:reflect-dom -- --browser chromium
+
+      - name: Test lite tool workflows
+        run: npm run test:lite-workflows -- --browser chromium
+
+      - name: Save DOM test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-dom-results
+          path: .iter-shots/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
+  browser-compare:
+    needs: verify
+    if: needs.verify.outputs.comparisons != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: ${{ fromJSON(needs.verify.outputs.comparisons) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tools/統合ツール/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm run setup
+          npx --no-install playwright install --with-deps chromium
+
+      - name: Compare committed baseline and current bundle
+        env:
+          BEFORE_REF: ${{ needs.verify.outputs.before_ref }}
+        run: npm run test:${{ matrix.harness }}-compare -- --browser chromium --before-ref "$BEFORE_REF"
+
+      - name: Save UI comparison evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.harness }}-comparison-results
+          path: .iter-shots/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7

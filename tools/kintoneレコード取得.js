@@ -862,6 +862,13 @@ ${contextLine}`);
       throw apiErrorWithContext(e, { method: "DELETE", prefix, path, payload: body });
     }
   }
+  function isRevisionConflictError(error) {
+    if (!error) return false;
+    const codes = [error?.code, error?.original?.code, error?.original?.error?.code].map((c) => String(c || "").toUpperCase()).filter(Boolean);
+    if (codes.some((c) => REVISION_CONFLICT_CODES.has(c))) return true;
+    const text = String(error?.message || "");
+    return /GAIA_CO02|リビジョン.*(最新|一致|異な)|revision.*(latest|mismatch|conflict)/i.test(text);
+  }
   function throwIfPagingClause(query) {
     if (hasKintonePagingClause(query)) {
       throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
@@ -1157,7 +1164,7 @@ ${contextLine}`);
     }
     return bundle;
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1187,6 +1194,7 @@ ${contextLine}`);
         lastError: "",
         byPath: {}
       };
+      REVISION_CONFLICT_CODES = /* @__PURE__ */ new Set(["GAIA_CO02"]);
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
       CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
       TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
@@ -2345,30 +2353,58 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   // src/jszipLoader.ts
   init_constants();
   var loadPromise = null;
+  var failedScripts = /* @__PURE__ */ new WeakSet();
+  var JSZIP_LOAD_TIMEOUT_MS = 3e4;
   function loadJSZipLite() {
     const w = window;
     if (w.JSZip) return Promise.resolve(w.JSZip);
     if (loadPromise) return loadPromise;
     const src = EXTERNAL_LIBRARIES.jszip.cdnUrl || "";
     loadPromise = new Promise((resolve, reject) => {
-      const settle = () => {
-        const ctor = window.JSZip;
-        if (ctor) resolve(ctor);
-        else reject(new Error("JSZipのロード後もグローバル変数が見つかりません"));
+      const existing = Array.from(document.querySelectorAll(`script[src="${src}"]`)).find((script2) => !failedScripts.has(script2));
+      const script = existing || document.createElement("script");
+      let settled = false;
+      let timer;
+      const cleanup = () => {
+        if (timer !== void 0) clearTimeout(timer);
+        script.removeEventListener("load", settle);
+        script.removeEventListener("error", onError);
       };
-      const fail = () => reject(new Error(`JSZipの読み込みに失敗しました（${src}）。CSP やネットワーク制限を確認してください`));
-      const existing = document.querySelector(`script[src="${src}"]`);
-      if (existing) {
-        existing.addEventListener("load", settle, { once: true });
-        existing.addEventListener("error", fail, { once: true });
-        return;
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        failedScripts.add(script);
+        if (!existing) script.remove();
+        reject(error);
+      };
+      const settle = () => {
+        if (settled) return;
+        const ctor = w.JSZip;
+        if (!ctor) {
+          fail(new Error("JSZipのロード後もグローバル変数が見つかりません"));
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(ctor);
+      };
+      const onError = () => fail(new Error(`JSZipの読み込みに失敗しました（${src}）。CSP やネットワーク制限を確認してください`));
+      script.addEventListener("load", settle, { once: true });
+      script.addEventListener("error", onError, { once: true });
+      timer = setTimeout(() => {
+        if (w.JSZip) settle();
+        else fail(new Error("JSZipの読み込みが30秒以内に完了しませんでした。CSP やネットワーク制限を確認して再試行してください"));
+      }, JSZIP_LOAD_TIMEOUT_MS);
+      if (!existing) {
+        try {
+          script.src = src;
+          script.async = true;
+          document.head.appendChild(script);
+        } catch (error) {
+          fail(error instanceof Error ? error : new Error(String(error)));
+        }
       }
-      const s = document.createElement("script");
-      s.src = src;
-      s.async = true;
-      s.onload = settle;
-      s.onerror = fail;
-      document.head.appendChild(s);
     }).catch((error) => {
       loadPromise = null;
       throw error;
@@ -2449,6 +2485,89 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return done;
   }
 
+  // src/tabs/record-csv-export.ts
+  var DETAIL_ID_COLUMNS = ["$id", "$rowId", "$rowIndex"];
+  function tableFileName(fieldCode, used) {
+    let stem = sanitizeZipSegment(fieldCode, "table").normalize("NFC").replace(/[\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").replace(/^\.+|[. ]+$/g, "");
+    stem = Array.from(stem).slice(0, 50).join("").replace(/[. ]+$/g, "") || "table";
+    if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(stem)) stem = `_${stem}`;
+    const canonicalStem = stem.toLowerCase();
+    const unique = uniqueZipEntryName(used, `${canonicalStem}.csv`);
+    const suffix = unique.slice(canonicalStem.length, -".csv".length);
+    return `tables/${stem}${suffix}.csv`;
+  }
+  function parentRecordId(record, index) {
+    const value = record?.$id?.value;
+    if (typeof value !== "string" && typeof value !== "number" || !String(value).trim() || typeof value === "number" && !Number.isFinite(value)) {
+      throw new Error(`${index + 1}件目のレコードID（$id）がありません。サブテーブル明細を親レコードへ紐付けられないためCSV出力を中止しました。`);
+    }
+    return String(value);
+  }
+  function buildRecordCsvExport(records, properties) {
+    const parentColumns = Object.keys(properties || {});
+    const tableFields = /* @__PURE__ */ new Map();
+    for (const code of parentColumns) {
+      if (properties[code]?.type === "SUBTABLE") tableFields.set(code, properties[code].fields || {});
+    }
+    for (const record of records) {
+      for (const [code, field] of Object.entries(record || {})) {
+        if (field?.type !== "SUBTABLE" || tableFields.has(code)) continue;
+        if (Object.prototype.hasOwnProperty.call(properties || {}, code)) {
+          throw new Error(`フィールド ${code} の設定と取得レコードの型が一致しません。フィールド情報とレコードを取得し直してください。`);
+        }
+        tableFields.set(code, {});
+        parentColumns.push(code);
+      }
+    }
+    if (!tableFields.size) return { parentCsv: buildRecordsCsvText(records, parentColumns), tables: [], warnings: [] };
+    const recordIds = records.map(parentRecordId);
+    const warnings = [];
+    const tables = [];
+    const usedNames = /* @__PURE__ */ new Set();
+    for (const [fieldCode, childProperties] of tableFields) {
+      const childColumns = new Set(Object.keys(childProperties));
+      const detailRecords = [];
+      records.forEach((record, recordIndex) => {
+        const parentId = recordIds[recordIndex];
+        const field = Object.prototype.hasOwnProperty.call(record || {}, fieldCode) ? record[fieldCode] : void 0;
+        if (field == null) {
+          warnings.push(`レコードID ${parentId}: テーブル ${fieldCode} を取得できませんでした（閲覧権限などを確認してください）。空テーブルとは区別して明細を省略しています。`);
+          return;
+        }
+        if (field.type !== "SUBTABLE" || !Array.isArray(field.value)) {
+          throw new Error(`レコードID ${parentId}: テーブル ${fieldCode} の型または行データが不正なためCSV出力を中止しました。`);
+        }
+        field.value.forEach((row, rowIndex) => {
+          if (!row || typeof row.value !== "object" || row.value === null || Array.isArray(row.value)) {
+            throw new Error(`レコードID ${parentId}: テーブル ${fieldCode} の${rowIndex + 1}行目の値が不正なためCSV出力を中止しました。`);
+          }
+          Object.keys(row.value).forEach((code) => childColumns.add(code));
+          detailRecords.push({
+            ...row.value,
+            $id: { value: parentId },
+            $rowId: { value: row.id ?? "" },
+            $rowIndex: { value: rowIndex + 1 }
+          });
+        });
+      });
+      const collision = DETAIL_ID_COLUMNS.find((code) => childColumns.has(code));
+      if (collision) {
+        throw new Error(`テーブル ${fieldCode} の子フィールド ${collision} が明細の識別列と重複するためCSV出力を中止しました。`);
+      }
+      tables.push({
+        fieldCode,
+        fileName: tableFileName(fieldCode, usedNames),
+        csvText: buildRecordsCsvText(detailRecords, [...DETAIL_ID_COLUMNS, ...childColumns]),
+        rowCount: detailRecords.length
+      });
+    }
+    return {
+      parentCsv: buildRecordsCsvText(records, ["$id", ...parentColumns.filter((code) => code !== "$id")]),
+      tables,
+      warnings
+    };
+  }
+
   // src/tabs/record-standalone.ts
   function parseRecordAppIds(value) {
     const tokens = String(value ?? "").split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
@@ -2460,18 +2579,28 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const appIds = parseRecordAppIds(appIdsValue);
     if (!appIds.length) throw new Error("対象アプリIDを1件以上入力してください");
     const failures = [];
+    const warnings = [];
     for (let i = 0; i < appIds.length; i++) {
       const appId = appIds[i];
       setStatus(`App ${appId}: 実行中 (${i + 1}/${appIds.length})`);
       try {
-        await operation(appId, i, appIds.length);
+        const result = await operation(appId, i, appIds.length);
+        if (result && result.warning) warnings.push(`App ${appId}: ${result.warning}`);
       } catch (error) {
         failures.push(`App ${appId}: ${error?.message || String(error)}`);
       }
     }
+    const warningSummary = warnings.length ? `警告 ${warnings.length}アプリ:
+${warnings.join("\n")}` : "";
     if (failures.length) {
       throw new Error(`${appIds.length}件中${failures.length}件が失敗しました
-${failures.join("\n")}`);
+${failures.join("\n")}${warningSummary ? `
+${warningSummary}` : ""}`);
+    }
+    if (warningSummary) {
+      setStatus(`${appIds.length}アプリの操作が完了しました
+${warningSummary}`, true);
+      return;
     }
     setStatus(`${appIds.length}アプリの操作が完了しました`);
   }
@@ -2509,21 +2638,66 @@ ${failures.join("\n")}`);
     });
     return result.records;
   }
-  async function fetchRecordIds(prefix, app, query, setStatus) {
+  async function fetchRecordStatusTargets(prefix, app, query, setStatus) {
     setStatus("対象レコード取得中...");
     const result = await fetchRecordsByQuery(prefix, app, query || "", {
-      fields: ["$id"],
+      fields: ["$id", "$revision"],
       onProgress: (n, mode) => setStatus(`対象レコード取得中... (${n}件${describeFetchMode(mode)})`)
     });
-    return result.records.map((r) => Number(r?.$id?.value)).filter((id) => Number.isFinite(id) && id > 0);
+    return result.records.map((record) => {
+      const id = Number(record?.$id?.value);
+      if (!Number.isSafeInteger(id) || id <= 0) {
+        throw new Error("対象レコードのIDを確認できないため、ステータス更新を中止しました。対象レコードを取得し直してください。");
+      }
+      const rawRevision = record?.$revision?.value;
+      const revision = typeof rawRevision === "string" || typeof rawRevision === "number" ? String(rawRevision) : "";
+      if (!/^\d+$/.test(revision)) {
+        throw new Error(`レコード ${id} の revision を確認できないため、ステータス更新を中止しました。対象レコードを取得し直してください。`);
+      }
+      return { id, revision };
+    });
+  }
+  function csvExportManifest(appId, guestId, recordCount, csv) {
+    return {
+      schemaVersion: 1,
+      appId,
+      guestId: guestId || "",
+      recordCount,
+      parentFile: "records.csv",
+      recordIdColumn: csv.tables.length ? "$id" : null,
+      tables: csv.tables.map((table) => ({
+        fieldCode: table.fieldCode,
+        fileName: table.fileName,
+        rowCount: table.rowCount,
+        parentIdColumn: "$id",
+        rowIdColumn: "$rowId",
+        rowIndexColumn: "$rowIndex"
+      })),
+      warnings: csv.warnings,
+      notes: [
+        "親の records.csv は1レコード1行です。テーブル列は行数を表示します。",
+        "明細CSVの $id は親レコードID、$rowId はテーブル行ID、$rowIndex はテーブル内の行番号（1始まり）です。",
+        "テーブルごとに独立したCSVです。別のテーブルとの行の組み合わせは作りません。",
+        "CSVは閲覧・集計用です。このツールのCSV取込でテーブルを復元することはできません。",
+        "添付フィールドはファイル名のみです。実体を保存する場合はバックアップで「添付ファイルも保存」を選択してください。"
+      ]
+    };
+  }
+  function addRecordCsvFiles(zip, csv, prefix = "") {
+    zip.file(`${prefix}records.csv`, csv.parentCsv);
+    for (const table of csv.tables) zip.file(`${prefix}${table.fileName}`, table.csvText);
+  }
+  function recordExportFilename(filename, extension, fallback) {
+    const requested = String(filename || "").trim();
+    return requested ? `${requested.replace(/\.(csv|zip)$/i, "")}.${extension}` : fallback;
   }
   async function buildCsvExportForApp(appId, guestId, query, setStatus) {
     if (!appId) throw new Error("アプリIDを入力してください");
     const prefix = buildApiPrefix(guestId || "", false);
     setStatus(`App ${appId}: フィールド情報取得中...`);
     const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
-    const propKeys = Object.keys(fields.properties || {});
-    if (!propKeys.length) throw new Error(`App ${appId}: 出力できるフィールドがありません`);
+    const properties = fields.properties || {};
+    if (!Object.keys(properties).length) throw new Error(`App ${appId}: 出力できるフィールドがありません`);
     const records = await fetchAllRecords(prefix, appId, query || "", (message) => setStatus(`App ${appId}: ${message}`));
     if (!records.length) throw new Error(`App ${appId}: 出力するレコードがありません`);
     setStatus(`App ${appId}: CSV生成中... (${records.length}件)`);
@@ -2531,15 +2705,32 @@ ${failures.join("\n")}`);
       appId,
       guestId: guestId || "",
       recordCount: records.length,
-      csvText: buildRecordsCsvText(records, propKeys)
+      csv: buildRecordCsvExport(records, properties)
     };
   }
   async function runCsvExportStandalone(opts, setStatus) {
     const { appId, guestId, query, filename } = opts;
     const result = await buildCsvExportForApp(appId, guestId, query || "", setStatus);
-    const blob = new Blob([result.csvText], { type: "text/csv;charset=utf-8;" });
-    downloadBlob(filename || buildExportFilename("レコード", "csv", { appLabel: buildAppFilenameLabel(appId, "") }), blob);
-    setStatus(`CSV出力完了 (${result.recordCount}件)`);
+    const appLabel = buildAppFilenameLabel(appId, "");
+    if (!result.csv.tables.length) {
+      const blob2 = new Blob([result.csv.parentCsv], { type: "text/csv;charset=utf-8;" });
+      downloadBlob(recordExportFilename(filename, "csv", buildExportFilename("レコード", "csv", { appLabel })), blob2);
+      setStatus(`CSV出力完了 (${result.recordCount}件)`);
+      return;
+    }
+    const JSZipCtor = await loadJSZipLite();
+    const zip = new JSZipCtor();
+    addRecordCsvFiles(zip, result.csv);
+    zip.file("manifest.json", JSON.stringify({
+      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      query: query || "",
+      ...csvExportManifest(result.appId, result.guestId, result.recordCount, result.csv)
+    }, null, 2));
+    setStatus(`ZIP生成中... (${result.recordCount}件 / テーブル ${result.csv.tables.length}件)`);
+    const blob = await zip.generateAsync({ type: "blob" });
+    downloadBlob(recordExportFilename(filename, "zip", buildExportFilename("レコード", "zip", { appLabel })), blob);
+    const warningNote = result.csv.warnings.length ? `（未取得のテーブル ${result.csv.warnings.length}件、詳細は manifest.json）` : "";
+    setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0);
   }
   async function runCsvExportBatchStandalone(opts, setStatus) {
     const apps = (opts?.apps || []).filter((a) => a?.appId);
@@ -2555,20 +2746,30 @@ ${failures.join("\n")}`);
     const zip = new JSZip();
     const used = /* @__PURE__ */ new Set();
     let totalRecords = 0;
+    let warningCount = 0;
+    const successes = [];
     const failures = [];
     for (let i = 0; i < apps.length; i++) {
       const app = apps[i];
+      let folder = "";
       setStatus(`CSV出力中... (${i + 1}/${apps.length})`);
       try {
         const result = await buildCsvExportForApp(app.appId, app.guestId || "", query, setStatus);
-        totalRecords += result.recordCount;
-        const label = buildAppFilenameLabel(result.appId, app.appName || "");
-        const baseName = buildExportFilename("レコード", "csv", { appLabel: label }).replace(/\.csv$/i, "");
         const guestSuffix = result.guestId ? `_guest${sanitizeZipSegment(result.guestId)}` : "";
-        const entryName = uniqueZipName(used, `${baseName}${guestSuffix}.csv`, result.appId, i);
-        zip.file(entryName, result.csvText);
+        folder = uniqueZipEntryName(used, `app_${sanitizeZipSegment(result.appId)}${guestSuffix}`);
+        addRecordCsvFiles(zip, result.csv, `${folder}/`);
+        zip.file(`${folder}/manifest.json`, JSON.stringify({
+          generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          appName: app.appName || "",
+          query,
+          ...csvExportManifest(result.appId, result.guestId, result.recordCount, result.csv)
+        }, null, 2));
+        totalRecords += result.recordCount;
+        warningCount += result.csv.warnings.length;
+        successes.push(`${folder}/: App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ""} / ${result.recordCount}件 / テーブル ${result.csv.tables.length}件${result.csv.warnings.length ? ` / 未取得 ${result.csv.warnings.length}件（フォルダ内manifest.json参照）` : ""}`);
       } catch (error) {
-        failures.push(`App ${app.appId}: ${error?.message || String(error)}`);
+        if (folder) zip.remove(folder);
+        failures.push(`App ${app.appId}${app.guestId ? ` / Guest ${app.guestId}` : ""}: ${error?.message || String(error)}`);
       }
     }
     if (failures.length === apps.length) {
@@ -2578,23 +2779,24 @@ ${failures.join("\n")}`);
     const manifest = [
       "kintone CSV 一括出力マニフェスト",
       `出力日時: ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`,
-      `対象アプリ数: ${apps.length}（成功 ${apps.length - failures.length} / 失敗 ${failures.length}）`,
+      `対象アプリ数: ${apps.length}（成功 ${successes.length} / 失敗 ${failures.length}）`,
       `総レコード数: ${totalRecords}`,
+      `未取得のテーブル: ${warningCount}件`,
       `共通クエリ: ${query || "(なし)"}`,
       "",
-      ...apps.map((a, i) => `${i + 1}. App ${a.appId}${a.guestId ? ` / Guest ${a.guestId}` : ""}${a.appName ? ` / ${a.appName}` : ""}`),
+      "アプリごとのフォルダに親 records.csv、tables/ 配下の明細CSV、対応関係を記載した manifest.json を格納しています。",
+      "明細CSVの $id を同じフォルダの親 records.csv の $id に紐付けてください。",
+      "",
+      ...successes,
       ...failures.length ? ["", "失敗:", ...failures] : []
     ].join("\n");
     zip.file("manifest.txt", manifest);
-    setStatus(`ZIP生成中... (${apps.length}アプリ / ${totalRecords}件)`);
+    setStatus(`ZIP生成中... (${successes.length}アプリ / ${totalRecords}件)`);
     const blob = await zip.generateAsync({ type: "blob" });
-    const zipName = filename || buildExportFilename("CSV出力", "zip");
-    downloadBlob(zipName.toLowerCase().endsWith(".zip") ? zipName : `${zipName}.zip`, blob);
-    if (failures.length) {
-      setStatus(`CSV一括出力完了（失敗 ${failures.length}アプリ、詳細は manifest.txt）: ${apps.length - failures.length}アプリ / ${totalRecords}件`, true);
-      return;
-    }
-    setStatus(`CSV一括出力完了 (${apps.length}アプリ / ${totalRecords}件)`);
+    downloadBlob(recordExportFilename(filename, "zip", buildExportFilename("CSV出力", "zip")), blob);
+    const issues = [failures.length ? `失敗 ${failures.length}アプリ` : "", warningCount ? `未取得のテーブル ${warningCount}件` : ""].filter(Boolean);
+    const issueNote = issues.length ? `（${issues.join(" / ")}、詳細は manifest.txt）` : "";
+    setStatus(`CSV一括出力完了${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
   }
   var CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = /* @__PURE__ */ new Set([
     "RECORD_NUMBER",
@@ -2737,10 +2939,10 @@ ${failures.join("\n")}`);
     if (!appId) throw new Error("アプリIDを入力してください");
     if (!action) throw new Error("アクション名を入力してください");
     const prefix = buildApiPrefix(guestId || "", false);
-    const ids = await fetchRecordIds(prefix, appId, query || "", setStatus);
-    if (!ids.length) throw new Error("処理対象のレコードが0件です");
+    const targets = await fetchRecordStatusTargets(prefix, appId, query || "", setStatus);
+    if (!targets.length) throw new Error("処理対象のレコードが0件です");
     const confirmText = [
-      `App ${appId}${guestId ? `（ゲスト ${guestId}）` : ""} の ${ids.length}件 にアクション「${action}」を実行します${assignee ? `（作業者: ${assignee}）` : ""}。`,
+      `App ${appId}${guestId ? `（ゲスト ${guestId}）` : ""} の ${targets.length}件 にアクション「${action}」を実行します${assignee ? `（作業者: ${assignee}）` : ""}。`,
       `条件: ${query || "(全件)"}`,
       "本番レコードのステータスが変わり、自動では元に戻せません。実行しますか？"
     ].join("\n");
@@ -2749,16 +2951,24 @@ ${failures.join("\n")}`);
       return;
     }
     const ok = await writeInChunks(
-      ids,
+      targets,
       `App ${appId} のステータス更新`,
-      (batch) => apiPut(prefix, "/records/status.json", {
-        app: appId,
-        records: batch.map((id) => {
-          const r = { id, action };
-          if (assignee) r.assignee = assignee;
-          return r;
-        })
-      }),
+      async (batch) => {
+        try {
+          await apiPut(prefix, "/records/status.json", {
+            app: appId,
+            records: batch.map(({ id, revision }) => ({ id, revision, action, ...assignee ? { assignee } : {} }))
+          });
+        } catch (error) {
+          if (!isRevisionConflictError(error)) throw error;
+          const reported = new Error(
+            `App ${appId} の対象レコードは取得後に別の更新が入ったため中止しました（revision 競合）。対象レコードを取得し直し、条件と内容を確認してから再実行してください。
+${error?.message || String(error)}`
+          );
+          Object.assign(reported, { revisionConflict: true, original: error, ...error?.code ? { code: error.code } : {} });
+          throw reported;
+        }
+      },
       (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`)
     );
     setStatus(`ステータス一括更新完了 (${ok}件)`);
@@ -2931,7 +3141,9 @@ ${formatFileFailures(failures)}
     const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
     const notes = [];
-    zip.file("records.csv", buildRecordsCsvText(records, propKeys));
+    const csvExport = buildRecordCsvExport(records, fields.properties);
+    addRecordCsvFiles(zip, csvExport);
+    notes.push(...csvExport.warnings);
     zip.file("records.json", JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, recordCount: records.length, records }, null, 2));
     let fileCount = 0;
     const fileFailures = [];
@@ -3048,6 +3260,7 @@ ${formatFileFailures(failures)}
       appId,
       query: query || "",
       recordCount: records.length,
+      csvExport: csvExportManifest(appId, guestId || "", records.length, csvExport),
       fileCount,
       fileFailures,
       commentCount,
@@ -3058,9 +3271,11 @@ ${formatFileFailures(failures)}
     setStatus(`ZIP生成中 (${records.length}件 / 添付 ${fileCount} / コメント ${commentCount})`);
     const blob = await zip.generateAsync({ type: "blob" });
     downloadBlob(zipName || buildExportFilename("レコードバックアップ", "zip", { appLabel: buildAppFilenameLabel(appId, "") }), blob);
-    const failureCount = fileFailures.length + commentFailures.length + appNg;
-    const failureNote = failureCount ? `（取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg} → manifest.json 参照）` : "";
-    setStatus(`バックアップ完了: ${records.length}件 / 添付 ${fileCount} / コメント ${commentCount}${failureNote}`, failureCount > 0);
+    const failureCount = fileFailures.length + commentFailures.length + appNg + csvExport.warnings.length;
+    const failureNote = failureCount ? `（取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg} / テーブル ${csvExport.warnings.length} → manifest.json 参照）` : "";
+    const completionMessage = `バックアップ完了: ${records.length}件 / テーブル明細 ${csvExport.tables.length}ファイル / 添付 ${fileCount} / コメント ${commentCount}${failureNote}`;
+    setStatus(completionMessage, failureCount > 0);
+    return { warning: failureCount > 0 ? completionMessage : void 0 };
   }
   async function runLoadStatusActionsStandalone(opts, setStatus) {
     const { appId, guestId } = opts;
@@ -3319,11 +3534,13 @@ ${formatFileFailures(failures)}
         label: "CSV出力",
         build: (root2) => {
           const query = makeInput({ placeholder: '空欄で全件（例: 更新日時 >= "2026-01-01T00:00:00Z"）', width: "wide" });
-          const fname = makeInput({ placeholder: "空欄で自動命名（レコード_アプリ_日時.csv）", width: "wide" });
+          const fname = makeInput({ placeholder: "空欄で自動命名（CSV / テーブルあり・複数アプリはZIP）", width: "wide" });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
           root2.appendChild(makeRow(fname, { label: "ファイル名" }));
+          root2.appendChild(makeNote("1アプリはCSVで保存します。テーブルがある場合は親レコードとテーブル明細を別CSVにしてZIPにまとめます。複数アプリはアプリ別フォルダを1つのZIPに保存します。"));
+          root2.appendChild(makeNote("テーブル明細は親レコードの $id で紐付けできます。出力は閲覧・集計用で、CSV取込用の互換形式ではありません。添付はファイル名のみです。ファイル本体はバックアップの「添付ファイルも保存」で取得できます。"));
           const run = makeButton("CSVを出力", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "CSV出力中…", async () => {
@@ -3333,7 +3550,7 @@ ${formatFileFailures(failures)}
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             );
           }));
-          addAction({ id: "csv-export", label: "CSVを出力", description: "条件に合うレコードをCSV / ZIPで保存します。", button: run, validate: requiredApps, summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["ファイル名", fname.value.trim() || "自動命名"]] });
+          addAction({ id: "csv-export", label: "CSVを出力", description: "条件に合うレコードとテーブル明細をCSV / ZIPで保存します。", button: run, validate: requiredApps, summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["保存形式", !requiredApps() && parseRecordAppIds(tgtApp.value).length > 1 ? "ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）" : "CSV（テーブルがある場合は親CSV・明細CSVのZIP）"], ["ファイル名", fname.value.trim() || "自動命名"]] });
           root2.appendChild(makeRow(run));
         }
       },
@@ -3505,7 +3722,8 @@ ${formatFileFailures(failures)}
           incSettings.checkbox.addEventListener("change", () => {
             scopeBox.style.display = incSettings.checkbox.checked ? "flex" : "none";
           });
-          root2.appendChild(makeNote("ZIP には records.csv / records.json と manifest.json を含みます。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。"));
+          root2.appendChild(makeNote("ZIPには親レコードの records.csv / records.json と manifest.json を含みます。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。添付のファイル本体は「添付ファイルも保存」で取得します。"));
+          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。"));
           const run = makeButton("バックアップ ZIP を保存", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "レコードバックアップ中…", async () => {
@@ -3523,7 +3741,7 @@ ${formatFileFailures(failures)}
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
-          addAction({ id: "backup", label: "バックアップを保存", description: "レコードと選択した関連データをZIPで保存します。", button: run, validate: requiredApps, summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["保存内容", ["レコード", incFiles.checkbox.checked ? "添付ファイル" : "", incComments.checkbox.checked ? "コメント" : "", incSettings.checkbox.checked ? "選択したアプリ設定" : ""].filter(Boolean).join("、")]] });
+          addAction({ id: "backup", label: "バックアップを保存", description: "レコード・テーブル明細と選択した関連データをZIPで保存します。", button: run, validate: requiredApps, summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["保存内容", ["レコード・テーブル明細", incFiles.checkbox.checked ? "添付ファイル" : "", incComments.checkbox.checked ? "コメント" : "", incSettings.checkbox.checked ? "選択したアプリ設定" : ""].filter(Boolean).join("、")]] });
           root2.appendChild(makeRow(run));
         }
       }

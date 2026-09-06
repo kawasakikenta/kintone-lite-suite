@@ -21,10 +21,10 @@ export function mountCsvExportLitePanel() {
   const panel = createLitePanel({
     id: 'kus-csv-export-lite',
     title: 'CSV出力',
-    subtitle: '複数アプリのレコードを CSV / ZIP で一括出力する lite 版',
+    subtitle: 'レコードとテーブル明細を CSV / ZIP で保存します。複数アプリもまとめて出力できます。',
     accent: 'record',
     badges: [{ label: 'Lite' }, { label: '複数アプリ対応' }, { label: '読み取り専用' }],
-    hint: '対象アプリ表に 1 行なら CSV を直接保存、複数行ならアプリごとの CSV を 1 つの ZIP にまとめて保存します。',
+    hint: '1アプリはCSVで保存します。テーブルがある場合は親レコードとテーブル明細を別CSVにしてZIPにまとめます。複数アプリはアプリ別フォルダを1つのZIPに保存します。',
     wide: true
   });
 
@@ -51,13 +51,14 @@ export function mountCsvExportLitePanel() {
   const viewSelect = makeSelect([['', '一覧を選択（任意）']]);
   const loadViews = makeButton('一覧読込', 'sub');
   const useView = makeButton('▼ 条件へ反映', 'sub');
-  const filename = makeInput({ placeholder: '空欄で自動命名（単一: レコード_アプリ_日時.csv / 複数: CSV出力_日時.zip）', width: 'wide' });
+  const filename = makeInput({ placeholder: '空欄で自動命名（CSV / テーブルあり・複数アプリはZIP）', width: 'wide' });
 
   cardCond.body.appendChild(makeRow([query, useView], { label: '共通クエリ' }));
   cardCond.body.appendChild(makeRow([viewApp, viewGuest, loadViews], { label: '一覧取得元' }));
   cardCond.body.appendChild(makeRow(viewSelect, { label: '一覧' }));
   cardCond.body.appendChild(makeRow(filename, { label: 'ファイル名' }));
-  cardCond.body.appendChild(makeNote('クエリは全対象アプリへ共通適用します。アプリごとにフィールド構成が異なる場合も、各アプリのフィールドコードをヘッダーにして別 CSV を作成します。'));
+  cardCond.body.appendChild(makeNote('クエリは全対象アプリへ共通適用します。各アプリのフィールドコードをヘッダーにし、テーブル明細は1行ずつ別CSVに出力します。親レコードの $id で明細を紐付けできます。'));
+  cardCond.body.appendChild(makeNote('出力は閲覧・集計用です。CSV取込用の互換形式ではありません。添付はファイル名のみを出力します。ファイル本体も必要な場合は、レコード管理のバックアップで「添付ファイルも保存」を選んでください。'));
   cardCond.body.appendChild(makeNote('limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します。複数アプリで一部が失敗しても成功分は ZIP に保存し、失敗一覧を manifest.txt に記録します。'));
   panel.body.insertBefore(cardCond.card, panel.status);
 
@@ -100,9 +101,9 @@ export function mountCsvExportLitePanel() {
   cardCond.body.appendChild(viewHelper);
   installLiteWorkflow(panel, {
     setup: [cardApps.card, cardCond.card],
-    actions: [{ id: 'csv', label: 'CSVを出力', description: '1アプリならCSV、複数アプリならアプリごとのCSVをZIPで保存します。', button: run,
+    actions: [{ id: 'csv', label: 'CSVを出力', description: '1アプリはCSV、テーブルあり・複数アプリは親CSVと明細CSVをZIPで保存します。', button: run,
       validate: () => appTable.count() ? '' : '対象アプリを1件以上指定してください。',
-      summary: () => [['対象', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId)).join('\n')], ['絞り込み条件', query.value.trim() || '全件'], ['保存形式', appTable.count() > 1 ? '複数CSVをZIPで保存' : 'CSV'], ['ファイル名', filename.value.trim() || '自動命名']]
+      summary: () => [['対象', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId)).join('\n')], ['絞り込み条件', query.value.trim() || '全件'], ['保存形式', appTable.count() > 1 ? 'ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）' : 'CSV（テーブルがある場合は親CSV・明細CSVのZIP）'], ['ファイル名', filename.value.trim() || '自動命名']]
     }]
   });
 

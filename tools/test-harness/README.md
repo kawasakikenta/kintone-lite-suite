@@ -18,7 +18,7 @@ Playwrightハーネスは既定でChromeを使用します。`--browser chromium
 
 | コマンド | 確認内容 |
 | --- | --- |
-| `npm run test:output-layouts` | HTML、Markdown、CSV、Mermaidなどの出力を合成データで生成 |
+| `npm run test:output-layouts` | HTML、Markdown、CSV、Mermaidなどを合成データで生成。親CSV・複数テーブルの明細CSVは `outputs/record-subtables/` に保存し、ID・件数・空テーブル・値の保持も検証 |
 | `npm run test:diff-multi-dom` | 複数比較先、途中失敗、二重実行防止を実ブラウザDOMで検証 |
 | `npm run test:diff-pairs-dom` | 1対1ペア一括の入力検証、接続先別キャッシュ、途中失敗、結果対応、出力導線を実ブラウザDOMで検証 |
 | `npm run test:diff-pair-folders-dom` | 複数対複数のフォルダ取込、安全な自動対応、明示的な対応確認、JSONだけの比較、出力導線を実ブラウザDOMで検証 |
@@ -32,6 +32,14 @@ before/after比較は、作業ツリーの生成物を更新してから実行�
 ER図のレイアウト検証では、CDNをローカル依存に置き換えるため、検証専用HTMLのSRIを差し替えた実体から再計算します。生成HTMLの原本は保持し、CDN遮断時のフォールバックは原本で検証します。
 
 差分比較ハーネスは、見た目のCSSクラスではなく、ARIA名と `data-kus-dl-*` / `data-report-*` の公開操作契約を優先して操作します。作業ツリー版では320 / 390 / 768 / 1024 / 1440pxと、固定1440×900画面に対する80 / 100 / 125 / 150 / 200%相当を撮影し、横はみ出し、固定UI同士の重なり、操作要素の被覆、フォーカス喪失を検査します。画像・HTML・Excel・JSONはGit管理外の `.iter-shots/` にだけ保存します。
+
+## CIでの実行
+
+通常の PR と main への push では、基本検証の後に `browser-dom` ジョブで複数比較先・ペア・フォルダペア・プレビュー反映・lite 操作の DOM ハーネスを実行します。ブラウザはロック済みの Playwright に対応する Chromium を導入し、各コマンドへ `--browser chromium` を指定します。
+
+`browser-compare` は差分比較／ER図の対応する UI・出力ソース、生成バンドル、ハーネス、共通 UI・依存・CI 設定の変更時に対象だけを実行します。GitHub Actions の `Run workflow`（`workflow_dispatch`）では両方を実行します。比較元は PR の base SHA、push 前の SHA、手動実行では直前コミットです。基準コミットを取得できない場合は直前コミット、履歴がない場合は現在のコミットを使います。現在のコミットを基準とした場合も現行版の操作・レイアウト検査は行いますが、変更前後の差はありません。
+
+ハーネスは合成データを使用し、実際の kintone アプリには通信しません。HTML・JSON・PNG・Excel などは成功／失敗時とも `.iter-shots/` から Actions artifact として 7 日間保存し、Git には追加しません。GitHub Actions 上の初回実行結果は、ワークフロー反映後に確認してください。
 
 ## ER図HTMLの単体撮影
 

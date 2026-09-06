@@ -3,6 +3,7 @@
 // `outputs/` for manual inspection.
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import vm from 'node:vm';
@@ -257,6 +258,55 @@ const csv = buildRecordsCsvString(sampleRecords, ['$id', 'レコード番号', '
 writeFileSync(resolve(outDir, 'records.csv'), csv, 'utf8');
 console.log(`[harness] wrote records.csv`);
 
+// ------------ 6b) Parent/detail CSVs for independently repeating subtables -----
+const valueField = (type, value) => ({ type, value });
+const tableSchema = {
+  顧客名: { type: 'SINGLE_LINE_TEXT' },
+  明細: { type: 'SUBTABLE', fields: { 商品名: { type: 'SINGLE_LINE_TEXT' }, 数量: { type: 'NUMBER' }, メモ: { type: 'MULTI_LINE_TEXT' } } },
+  承認履歴: { type: 'SUBTABLE', fields: { 担当者: { type: 'SINGLE_LINE_TEXT' } } },
+  空テーブル: { type: 'SUBTABLE', fields: { 備考: { type: 'SINGLE_LINE_TEXT' } } }
+};
+const detailRow = (id, product, quantity, memo) => ({ id, value: {
+  商品名: valueField('SINGLE_LINE_TEXT', product), 数量: valueField('NUMBER', quantity), メモ: valueField('MULTI_LINE_TEXT', memo)
+} });
+const reviewRow = (id, name) => ({ id, value: { 担当者: valueField('SINGLE_LINE_TEXT', name) } });
+const subtableRecords = [
+  {
+    $id: valueField('__ID__', '101'), 顧客名: valueField('SINGLE_LINE_TEXT', '株式会社サンプル'),
+    明細: valueField('SUBTABLE', [detailRow('11', '商品"A",特別版', 0, '1行目\n2行目'), detailRow('12', '商品B', 2, '')]),
+    承認履歴: valueField('SUBTABLE', [reviewRow('31', '佐藤'), reviewRow('32', '鈴木')]),
+    空テーブル: valueField('SUBTABLE', [])
+  },
+  {
+    $id: valueField('__ID__', '102'), 顧客名: valueField('SINGLE_LINE_TEXT', 'テスト商事'),
+    明細: valueField('SUBTABLE', [detailRow('21', '商品C', 3, '改行なし')]),
+    承認履歴: valueField('SUBTABLE', [reviewRow('33', '田中')]),
+    空テーブル: valueField('SUBTABLE', [])
+  }
+];
+const subtableExport = api.buildRecordCsvExport(subtableRecords, tableSchema);
+const subtableOutDir = resolve(outDir, 'record-subtables');
+mkdirSync(resolve(subtableOutDir, 'tables'), { recursive: true });
+writeFileSync(resolve(subtableOutDir, 'records.csv'), subtableExport.parentCsv, 'utf8');
+for (const table of subtableExport.tables) {
+  writeFileSync(resolve(subtableOutDir, table.fileName), table.csvText, 'utf8');
+}
+assert.equal(subtableExport.warnings.length, 0, '空テーブルを未取得として警告しない');
+assert.deepEqual(Array.from(subtableExport.tables, table => [table.fieldCode, table.rowCount]), [
+  ['明細', 3], ['承認履歴', 3], ['空テーブル', 0]
+]);
+// Fixed expectations verify the saved CSVs, including IDs, independent table
+// row counts, BOM, escaped quotes/commas, embedded newlines, and numeric zero.
+assert.equal(readFileSync(resolve(subtableOutDir, 'records.csv'), 'utf8'),
+  '\uFEFF$id,顧客名,明細,承認履歴,空テーブル\n101,株式会社サンプル,2行,2行,0行\n102,テスト商事,1行,1行,0行');
+assert.equal(readFileSync(resolve(subtableOutDir, 'tables/明細.csv'), 'utf8'),
+  '\uFEFF$id,$rowId,$rowIndex,商品名,数量,メモ\n101,11,1,"商品""A"",特別版",0,"1行目\n2行目"\n101,12,2,商品B,2,\n102,21,1,商品C,3,改行なし');
+assert.equal(readFileSync(resolve(subtableOutDir, 'tables/承認履歴.csv'), 'utf8'),
+  '\uFEFF$id,$rowId,$rowIndex,担当者\n101,31,1,佐藤\n101,32,2,鈴木\n102,33,1,田中');
+assert.equal(readFileSync(resolve(subtableOutDir, 'tables/空テーブル.csv'), 'utf8'),
+  '\uFEFF$id,$rowId,$rowIndex,備考');
+console.log('[harness] wrote record-subtables/ (親2件 / 明細3行 / 承認履歴3行 / 空テーブル0行; IDs and CSV values verified)');
+
 // ------------ 7) Process Mermaid (real builder from tabs/process-standalone.ts)
 // 状態名に空白・記号を含めて、別名宣言方式で壊れないことを出力で確認できるようにする。
 const pfStates = {
@@ -287,4 +337,5 @@ console.log('  bundle.json       (比較バンドル JSON)');
 console.log('  design-doc.md     (設計書 Markdown)');
 console.log('  er-diagram.html   (ER図ビューア)');
 console.log('  records.csv       (レコード CSV)');
+console.log('  record-subtables/ (親CSVとテーブル別明細CSV: 2親レコード・3テーブル)');
 console.log('  process-flow.mmd  (プロセス図 Mermaid)');

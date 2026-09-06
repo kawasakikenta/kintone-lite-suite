@@ -1269,6 +1269,77 @@ ${base}`
   init_utils();
   init_api();
 
+  // src/reflect/standalonePreflight.ts
+  init_constants();
+  init_utils();
+  function connectionKey(opts) {
+    return stableStringify({
+      sourceAppId: String(opts.sourceAppId || "").trim(),
+      sourceGuestId: String(opts.sourceGuestId || "").trim(),
+      sourcePreview: !!opts.sourcePreview,
+      sourceMode: opts.sourceBundle ? "json" : "api",
+      targetAppId: String(opts.targetAppId || "").trim(),
+      targetGuestId: String(opts.targetGuestId || "").trim(),
+      lookupMap: opts.lookupMap || {}
+    });
+  }
+  function isCompleteReflectSection(section) {
+    return !!section && typeof section === "object" && !Array.isArray(section) && !section._fetchError && !section._partial;
+  }
+  function captureSections(bundle, scopes) {
+    return Object.fromEntries(scopes.map((key) => {
+      const section = bundle?.sections?.[key];
+      return [key, {
+        content: stableStringify(section) ?? "",
+        revision: String(bundle?.meta?.sectionRevisions?.[key] ?? section?.revision ?? ""),
+        complete: isCompleteReflectSection(section)
+      }];
+    }));
+  }
+  function captureReflectBaseline(opts, source, target) {
+    return {
+      connection: connectionKey(opts),
+      source: captureSections(source, opts.scopes),
+      target: captureSections(target, opts.scopes)
+    };
+  }
+  function assertCompleteReflectBackup(bundle, scopes) {
+    const incomplete = scopes.filter((key) => !isCompleteReflectSection(bundle?.sections?.[key]));
+    if (!incomplete.length) return;
+    const labels = incomplete.map((key) => SECTION_DEFS.find((def) => def.key === key)?.label || key);
+    throw new Error(`バックアップを完全に取得できなかったため反映を中止しました。対象: ${labels.join("、")}。差分を取得し直してから再実行してください。`);
+  }
+  function assertReflectBaselineMatches(baseline, opts, source, target) {
+    if (!baseline || baseline.connection !== connectionKey(opts)) {
+      throw new Error("確認済みの差分と反映条件が一致しません。差分を取得し直してから再実行してください。");
+    }
+    const current = captureReflectBaseline(opts, source, target);
+    for (const side of ["source", "target"]) {
+      const label = side === "source" ? "比較元" : "比較先プレビュー";
+      const revisions = /* @__PURE__ */ new Set();
+      const requireRevision = side === "target" || !opts.sourceBundle;
+      for (const key of opts.scopes) {
+        const before = baseline[side]?.[key];
+        const after = current[side][key];
+        const sectionLabel = SECTION_DEFS.find((def) => def.key === key)?.label || key;
+        if (!before?.complete || !after.complete) {
+          throw new Error(`${label}の${sectionLabel}を完全に確認できないため反映を中止しました。差分を取得し直してください。`);
+        }
+        if (requireRevision && (!/^\d+$/.test(before.revision) || !/^\d+$/.test(after.revision))) {
+          throw new Error(`${label}の${sectionLabel}のrevisionを確認できないため反映を中止しました。差分を取得し直してください。`);
+        }
+        if (before.content !== after.content || before.revision !== after.revision) {
+          throw new Error(`差分確認後に${label}の${sectionLabel}が変更されたため反映を中止しました。差分を取得し直して、変更内容を再確認してください。`);
+        }
+        if (requireRevision) revisions.add(after.revision);
+      }
+      if (requireRevision && revisions.size !== 1) {
+        throw new Error(`${label}の取得中に設定が更新された可能性があるため反映を中止しました。差分を取得し直してください。`);
+      }
+    }
+    return current.target[opts.scopes[0]].revision;
+  }
+
   // src/settingsBundleImport.ts
   init_api();
   function limitImportedBundleToSections(bundle, sections) {
@@ -1404,8 +1475,7 @@ ${base}`
     walk(def);
     return def;
   }
-  async function applyFieldSection(prefix, app, sourceProps, logs, lookupMap, stopOnError) {
-    const current = await apiGet(prefix, "/app/form/fields.json", { app });
+  async function applyFieldSection(app, sourceProps, current, logs, lookupMap, stopOnError, write) {
     const currentMap = current.properties || {};
     const srcWritable = filterWritable(sourceProps);
     const adds = {};
@@ -1419,41 +1489,32 @@ ${base}`
       }
     }
     let failedSteps = 0;
-    let revision = pickRevision(current);
-    const withRevision = (body) => revision ? { ...body, revision } : body;
     if (Object.keys(adds).length) {
       try {
-        const res = await apiPost(prefix, "/app/form/fields.json", withRevision({ app, properties: adds }));
-        revision = pickRevision(res) || revision;
+        await write("POST", "/app/form/fields.json", { app, properties: adds }, "フィールド追加");
         logs.push(`  OK フィールド追加: ${Object.keys(adds).length}件`);
       } catch (e) {
         failedSteps += 1;
-        const reported = decorateRevisionConflict(e, "フィールド追加");
+        const reported = e;
         pushReflectErrorLog(logs, `  NG フィールド追加: ${reported.message}`, reported.message);
-        if (stopOnError) throw reported;
+        if (stopOnError || mustStopReflection(reported)) throw reported;
       }
     }
     if (Object.keys(updates).length) {
       try {
-        await apiPut(prefix, "/app/form/fields.json", withRevision({ app, properties: updates }));
+        await write("PUT", "/app/form/fields.json", { app, properties: updates }, "フィールド更新");
         logs.push(`  OK フィールド更新: ${Object.keys(updates).length}件`);
       } catch (e) {
         failedSteps += 1;
-        const reported = decorateRevisionConflict(e, "フィールド更新");
+        const reported = e;
         pushReflectErrorLog(logs, `  NG フィールド更新: ${reported.message}`, reported.message);
-        if (stopOnError) throw reported;
+        if (stopOnError || mustStopReflection(reported)) throw reported;
       }
     }
     return failedSteps;
   }
-  async function applyViewsSection(prefix, app, sourceViews) {
-    const current = await apiGet(prefix, "/app/views.json", { app });
-    const revision = pickRevision(current);
-    try {
-      await apiPut(prefix, "/app/views.json", revision ? { app, views: sourceViews.views || sourceViews, revision } : { app, views: sourceViews.views || sourceViews });
-    } catch (e) {
-      throw decorateRevisionConflict(e, "一覧・グラフ設定の反映");
-    }
+  function mustStopReflection(error) {
+    return !!error?.stopReflection || isRevisionConflictError(error);
   }
   async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
     const { sourceAppId, sourceGuestId, sourcePreview, targetAppId, targetGuestId } = opts;
@@ -1461,6 +1522,7 @@ ${base}`
     if (!targetAppId) throw new Error("比較先アプリIDを入力してください");
     const scopes = (opts.scopes || []).filter(Boolean);
     if (!scopes.length) throw new Error("反映するセクションを選択してください");
+    if (!opts.reviewBaseline) throw new Error("反映前に差分を取得して確認してください。");
     const lookupMap = opts.lookupMap || {};
     const stopOnError = !!opts.stopOnError;
     const logs = [];
@@ -1472,15 +1534,18 @@ ${base}`
       sections: scopes,
       onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
     });
+    setStatus(opts.doBackup ? "比較先プレビューのバックアップ取得中..." : "確認済みの比較先プレビューと照合中...");
+    const targetBundle = await fetchBundle({
+      appId: targetAppId,
+      guestId: targetGuestId || "",
+      preview: true,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`比較先再取得 ${Math.round(p * 100)}% (${l})`)
+    });
+    if (opts.doBackup) assertCompleteReflectBackup(targetBundle, scopes);
+    let revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes }, sourceBundle, targetBundle);
     if (opts.doBackup) {
-      setStatus("比較先プレビューのバックアップ取得中...");
-      const backup = await fetchBundle({
-        appId: targetAppId,
-        guestId: targetGuestId || "",
-        preview: true,
-        sections: scopes,
-        onProgress: (p, l) => setStatus(`バックアップ取得 ${Math.round(p * 100)}% (${l})`)
-      });
+      const backup = targetBundle;
       const payload = JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), scopes, bundle: backup }, null, 2);
       const blob = new Blob([payload], { type: "application/json" });
       const a = document.createElement("a");
@@ -1488,10 +1553,24 @@ ${base}`
       a.download = buildExportFilename("反映前バックアップ", "json", { appLabel: buildAppFilenameLabel(targetAppId, "") });
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 5e3);
-      logs.push("バックアップ保存完了");
+      logs.push("バックアップ取得完了（保存を開始しました）");
     }
     const prefix = buildApiPrefix(targetGuestId || "", true);
     const app = targetAppId;
+    const write = async (method, endpoint, body, subject) => {
+      try {
+        const response = await (method === "POST" ? apiPost : apiPut)(prefix, endpoint, { ...body, revision });
+        const nextRevision = pickRevision(response);
+        if (!/^\d+$/.test(nextRevision)) {
+          const error = new Error(`${subject}の書き込みは完了しましたが、更新後のrevisionを確認できません。以降の反映を中止します。差分を取得し直して状態を確認してください。`);
+          error.stopReflection = true;
+          throw error;
+        }
+        revision = nextRevision;
+      } catch (error) {
+        throw decorateRevisionConflict(error, subject);
+      }
+    };
     logs.push(`比較元: ${opts.sourceBundle ? `設定JSON${sourceAppId ? ` (App ${sourceAppId})` : ""}` : sourceAppId} → 比較先(プレビュー): ${targetAppId}`);
     logs.push(`セクション: ${scopes.length}件`);
     logs.push("");
@@ -1515,7 +1594,7 @@ ${base}`
       setStatus(`反映中 ${i + 1}/${scopes.length}: ${def.label}`);
       try {
         if (secKey === "fieldSettings") {
-          const failedSteps = await applyFieldSection(prefix, app, sourceSec.properties || sourceSec, logs, lookupMap, stopOnError);
+          const failedSteps = await applyFieldSection(app, sourceSec.properties || sourceSec, targetBundle.sections.fieldSettings, logs, lookupMap, stopOnError, write);
           if (failedSteps > 0) {
             hadError = true;
             logs.push(`NG ${def.label}: 一部の手順が失敗しました（詳細は上の行）`);
@@ -1524,19 +1603,8 @@ ${base}`
             logs.push(`OK ${def.label}`);
             sections.push({ sectionKey: secKey, label: def.label, status: "ok" });
           }
-        } else if (secKey === "viewSettings") {
-          await applyViewsSection(prefix, app, sourceSec);
-          logs.push(`OK ${def.label}`);
-          sections.push({ sectionKey: secKey, label: def.label, status: "ok" });
         } else {
-          const current = await apiGet(prefix, def.endpoint, { app });
-          const revision = pickRevision(current);
-          const body = { app, ...def.putBuilder(sourceSec), ...revision ? { revision } : {} };
-          try {
-            await apiPut(prefix, def.endpoint, body);
-          } catch (e) {
-            throw decorateRevisionConflict(e, `${def.label}の反映`);
-          }
+          await write("PUT", def.endpoint, { app, ...def.putBuilder(sourceSec) }, `${def.label}の反映`);
           logs.push(`OK ${def.label}`);
           sections.push({ sectionKey: secKey, label: def.label, status: "ok" });
         }
@@ -1545,7 +1613,7 @@ ${base}`
         const msg = e.message || String(e);
         pushReflectErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
         sections.push({ sectionKey: secKey, label: def.label, status: "ng", message: msg });
-        if (stopOnError) {
+        if (stopOnError || mustStopReflection(e)) {
           for (let j = i + 1; j < scopes.length; j++) {
             const restKey = scopes[j];
             const restDef = SECTION_DEFS.find((d) => d.key === restKey);
@@ -1613,12 +1681,12 @@ ${base}`
       const label = def?.label || secKey;
       const srcSec = source.sections?.[secKey];
       const tgtSec = target.sections?.[secKey];
-      if (!srcSec || srcSec._fetchError) {
-        entries.push({ sectionKey: secKey, label, status: "src-missing", message: `比較元未取得: ${srcSec?._fetchError || "不明"}` });
+      if (!isCompleteReflectSection(srcSec)) {
+        entries.push({ sectionKey: secKey, label, status: "src-missing", message: `比較元未取得: ${srcSec?._fetchError || srcSec?._partial?.message || "不明"}` });
         continue;
       }
-      if (!tgtSec || tgtSec._fetchError) {
-        entries.push({ sectionKey: secKey, label, status: "tgt-missing", message: `比較先未取得: ${tgtSec?._fetchError || "不明"}` });
+      if (!isCompleteReflectSection(tgtSec)) {
+        entries.push({ sectionKey: secKey, label, status: "tgt-missing", message: `比較先未取得: ${tgtSec?._fetchError || tgtSec?._partial?.message || "不明"}` });
         continue;
       }
       if (secKey === "fieldSettings") {
@@ -1666,7 +1734,8 @@ ${base}`
       changedSections: entries.filter((e) => e.status === "change").length,
       sameSections: entries.filter((e) => e.status === "same").length,
       errorSections: entries.filter((e) => e.status === "src-missing" || e.status === "tgt-missing" || e.status === "error").length,
-      entries
+      entries,
+      baseline: captureReflectBaseline({ ...opts, scopes }, source, target)
     };
   }
 
@@ -3649,6 +3718,7 @@ ${detail}
             sourceGuestId: srcGuest.value.trim(),
             sourcePreview: srcPreview.checkbox.checked,
             sourceBundle: sourceBundleFromJson,
+            reviewBaseline: previewResult.baseline,
             targetAppId: tgtApp.value.trim(),
             targetGuestId: tgtGuest.value.trim(),
             scopes: plan.effectiveScopes,

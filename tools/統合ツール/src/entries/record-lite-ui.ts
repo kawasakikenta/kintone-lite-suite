@@ -98,11 +98,13 @@ export function mountRecordLitePanel() {
     {
       id: 'csv-export', label: 'CSV出力', build: (root) => {
         const query = makeInput({ placeholder: '空欄で全件（例: 更新日時 >= \"2026-01-01T00:00:00Z\"）', width: 'wide' });
-        const fname = makeInput({ placeholder: '空欄で自動命名（レコード_アプリ_日時.csv）', width: 'wide' });
+        const fname = makeInput({ placeholder: '空欄で自動命名（CSV / テーブルあり・複数アプリはZIP）', width: 'wide' });
         const useView = makeButton('▼ 一覧から', 'sub');
         useView.addEventListener('click', () => applyViewQuery(query));
         root.appendChild(makeRow([query, useView], { label: 'クエリ' }));
         root.appendChild(makeRow(fname, { label: 'ファイル名' }));
+        root.appendChild(makeNote('1アプリはCSVで保存します。テーブルがある場合は親レコードとテーブル明細を別CSVにしてZIPにまとめます。複数アプリはアプリ別フォルダを1つのZIPに保存します。'));
+        root.appendChild(makeNote('テーブル明細は親レコードの $id で紐付けできます。出力は閲覧・集計用で、CSV取込用の互換形式ではありません。添付はファイル名のみです。ファイル本体はバックアップの「添付ファイルも保存」で取得できます。'));
         const run = makeButton('CSVを出力', 'primary', { icon: '↓' });
         run.style.width = '100%';
         run.addEventListener('click', () => liteRun(panel, 'CSV出力中…', async () => {
@@ -112,7 +114,7 @@ export function mountRecordLitePanel() {
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           );
         }));
-        addAction({ id: 'csv-export', label: 'CSVを出力', description: '条件に合うレコードをCSV / ZIPで保存します。', button: run, validate: requiredApps, summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['ファイル名', fname.value.trim() || '自動命名']] });
+        addAction({ id: 'csv-export', label: 'CSVを出力', description: '条件に合うレコードとテーブル明細をCSV / ZIPで保存します。', button: run, validate: requiredApps, summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['保存形式', !requiredApps() && parseRecordAppIds(tgtApp.value).length > 1 ? 'ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）' : 'CSV（テーブルがある場合は親CSV・明細CSVのZIP）'], ['ファイル名', fname.value.trim() || '自動命名']] });
         root.appendChild(makeRow(run));
       }
     },
@@ -272,7 +274,8 @@ export function mountRecordLitePanel() {
         incSettings.checkbox.addEventListener('change', () => {
           scopeBox.style.display = incSettings.checkbox.checked ? 'flex' : 'none';
         });
-        root.appendChild(makeNote('ZIP には records.csv / records.json と manifest.json を含みます。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。'));
+        root.appendChild(makeNote('ZIPには親レコードの records.csv / records.json と manifest.json を含みます。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。添付のファイル本体は「添付ファイルも保存」で取得します。'));
+        root.appendChild(makeNote('CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。'));
 
         const run = makeButton('バックアップ ZIP を保存', 'primary', { icon: '↓' });
         run.style.width = '100%';
@@ -291,7 +294,7 @@ export function mountRecordLitePanel() {
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
-        addAction({ id: 'backup', label: 'バックアップを保存', description: 'レコードと選択した関連データをZIPで保存します。', button: run, validate: requiredApps, summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['保存内容', ['レコード', incFiles.checkbox.checked ? '添付ファイル' : '', incComments.checkbox.checked ? 'コメント' : '', incSettings.checkbox.checked ? '選択したアプリ設定' : ''].filter(Boolean).join('、')]] });
+        addAction({ id: 'backup', label: 'バックアップを保存', description: 'レコード・テーブル明細と選択した関連データをZIPで保存します。', button: run, validate: requiredApps, summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['保存内容', ['レコード・テーブル明細', incFiles.checkbox.checked ? '添付ファイル' : '', incComments.checkbox.checked ? 'コメント' : '', incSettings.checkbox.checked ? '選択したアプリ設定' : ''].filter(Boolean).join('、')]] });
         root.appendChild(makeRow(run));
       }
     }
