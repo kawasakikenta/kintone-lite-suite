@@ -785,13 +785,13 @@ describe('diff/xlsx-builder', () => {
     const text = match![1];
     expect(text.length).toBeLessThanOrEqual(32767);
     expect(text).toContain('Excelセル上限32,767文字のため省略');
-    expect(text).toMatch(/元40000文字・識別:[0-9a-f]{8}/);
+    expect(text).toMatch(/元40000文字・識別:SHA256-[0-9A-F]{16}/);
     expect(/[\uD800-\uDBFF]$/.test(text)).toBe(false);
   });
 
   it('truncates oversized text only at grapheme boundaries', async () => {
     const originalLength = 40000;
-    const suffixLength = `\n…（Excelセル上限32,767文字のため省略・元${originalLength}文字・識別:00000000）`.length;
+    const suffixLength = `\n…（Excelセル上限32,767文字のため省略・元${originalLength}文字・識別:SHA256-0000000000000000）`.length;
     const keep = 32767 - suffixLength;
     const atBoundary = (cluster: string, naiveClusterUnits: number): { value: string; expectedPrefix: string } => {
       const expectedPrefix = 'a'.repeat(keep - naiveClusterUnits);
@@ -828,14 +828,14 @@ describe('diff/xlsx-builder', () => {
     expect(text.length).toBeLessThanOrEqual(32767);
     expect(text).toContain('⟦U+0001⟧');
     expect(text).not.toContain('\u0001');
-    expect(text).toMatch(/\n…（Excelセル上限32,767文字のため省略・元48000文字・識別:[0-9a-f]{8}）$/);
+    expect(text).toMatch(/\n…（Excelセル上限32,767文字のため省略・元48000文字・識別:SHA256-[0-9A-F]{16}）$/);
   });
 
   it('adds a distinct hash when long values differ only after the visible prefix', async () => {
     const common = 'x'.repeat(39999);
     const sheets: XlsxSheet[] = [{ name: 'S', rows: [['value'], [`${common}A`], [`${common}B`]] }];
     const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
-    const hashes = [...xml.matchAll(/識別:([0-9a-f]{8})/g)].map((match) => match[1]);
+    const hashes = [...xml.matchAll(/識別:(SHA256-[0-9A-F]{16})/g)].map((match) => match[1]);
     expect(hashes).toHaveLength(2);
     expect(hashes[0]).not.toBe(hashes[1]);
   });

@@ -1,5 +1,7 @@
 'use strict';
 
+import { contentIdentifier } from './export-safety.js';
+
 import { buildStoredZip, type StoredZipEntry } from '../archive/stored-zip.js';
 
 /**
@@ -308,15 +310,6 @@ function assertWorkbookShape(sheets: XlsxSheet[]): void {
   });
 }
 
-function shortTextHash(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
-}
-
 function truncateUtf16AtGraphemeBoundary(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   const IntlAny: any = (globalThis as any).Intl;
@@ -341,7 +334,7 @@ function truncateUtf16AtGraphemeBoundary(text: string, maxLength: number): strin
 function normalizeExcelCellText(value: unknown): string {
   const text = String(value ?? '');
   if (text.length <= EXCEL_CELL_TEXT_LIMIT) return text;
-  const suffix = `\n…（Excelセル上限32,767文字のため省略・元${text.length}文字・識別:${shortTextHash(text)}）`;
+  const suffix = `\n…（Excelセル上限32,767文字のため省略・元${text.length}文字・識別:${contentIdentifier(text)}）`;
   const keep = Math.max(0, EXCEL_CELL_TEXT_LIMIT - suffix.length);
   return truncateUtf16AtGraphemeBoundary(text, keep) + suffix;
 }
