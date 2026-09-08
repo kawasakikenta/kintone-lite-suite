@@ -52,25 +52,13 @@ import {
   type DiffBatchFolderMatchKind
 } from '../diff/batch-folder-import.js';
 
-const SCOPE_OPTS: Array<[string, string, boolean]> = [
-  ['fieldSettings', 'フィールド', true],
-  ['layoutSettings', 'レイアウト', true],
-  ['viewSettings', 'ビュー', true],
-  ['reportSettings', 'グラフ', false],
-  ['processSettings', 'プロセス', true],
-  ['appSettings', 'アプリ設定', false],
-  ['formSettings', 'フォーム', false],
-  ['customizeSettings', 'JS/CSS', false],
-  ['pluginSettings', 'プラグイン', false],
-  ['actionSettings', 'アクション', false],
-  ['appAcl', 'アプリ権限', false],
-  ['fieldAcl', 'フィールド権限', false],
-  ['recordPermissions', 'レコード権限', false],
-  ['notifications', '通知', false],
-  ['perRecordNotifications', 'レコード条件通知', false],
-  ['reminderNotifications', 'リマインダー', false],
-  ['categories', 'カテゴリ', false]
-];
+// 取得定義を単一の正とし、新しい設定 API が UI だけから漏れるのを防ぐ。
+// 初期状態では全設定を選び、未選択の設定を「差分なし」と誤解しないようにする。
+export function buildLiteDiffScopeOptions(): Array<[string, string, boolean]> {
+  return SECTION_DEFS.map((section) => [section.key, section.label, true]);
+}
+
+const SCOPE_OPTS = buildLiteDiffScopeOptions();
 
 const TYPE_LABEL: Record<string, string> = { added: '追加', removed: '削除', changed: '変更', moved: '移動', same: '同一' };
 const FACT_LABEL: Record<string, string> = {
@@ -2193,6 +2181,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   // ---- セクション ----
   const cardScope = makeCard({ title: '比較セクション', number: 2 });
+  cardScope.body.appendChild(makeNote(`kintone のアプリ設定 API に対応する ${SCOPE_OPTS.length} セクションをすべて初期選択します。意図的に除外する場合だけ選択を外してください。`));
   const chipBox = document.createElement('div');
   chipBox.className = 'kus-lp__chips';
   const chips = SCOPE_OPTS.map(([key, label, def]) => makeChip({ label, value: key, checked: def }));

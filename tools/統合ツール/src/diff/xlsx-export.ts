@@ -12,6 +12,7 @@ import {
 import { stringifyForDiff, stringifyRowValueForDiff } from './export.js';
 import {
   isSensitiveSameDiffRow,
+  contentIdentifier,
   SENSITIVE_DIFF_SECTION_KEYS,
   SENSITIVE_SAME_VALUE_REDACTION
 } from './export-safety.js';
@@ -742,6 +743,7 @@ function rowNote(row: DiffXlsxRow): string {
 
 const XLSX_DIFF_VALUE_PREVIEW_LIMIT = 4000;
 
+// ブック内の短い差分 ID は従来の形式を維持する。原文照合用は contentIdentifier を使う。
 function shortStableHash(text: string): string {
   let hash = 0x811c9dc5;
   for (let i = 0; i < text.length; i += 1) {
@@ -753,7 +755,7 @@ function shortStableHash(text: string): string {
 
 function xlsxDiffValuePreview(text: string, originalUtf16Length = text.length): string {
   if (text.length <= XLSX_DIFF_VALUE_PREVIEW_LIMIT) return text;
-  const hash = shortStableHash(text);
+  const hash = contentIdentifier(text);
   const prefix = `[一部表示: 元データ ${originalUtf16Length}文字（UTF-16） / 識別:${hash}]\n`;
   const suffix = `\n…（Excel表示用に省略・元UTF-16長 ${originalUtf16Length}・識別:${hash}）`;
   const keep = XLSX_DIFF_VALUE_PREVIEW_LIMIT - prefix.length - suffix.length;

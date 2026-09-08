@@ -3,6 +3,7 @@ import {
   buildLiteDiffHtmlContext,
   buildLiteDiffFilterDescription,
   buildLiteDiffRowKey,
+  buildLiteDiffScopeOptions,
   buildLiteDiffXlsxContext,
   getLiteHtmlExportContentLabel,
   isIncompleteLiteDiff,
@@ -12,6 +13,7 @@ import {
   summarizeLiteIgnoreRules,
   summarizeLiteDiffRows
 } from '../../src/entries/diff-lite-ui';
+import { SECTION_DEFS } from '../../src/constants';
 
 function cache(rows: any[], overrides: Record<string, any> = {}) {
   return {
@@ -36,6 +38,16 @@ function cache(rows: any[], overrides: Record<string, any> = {}) {
 }
 
 describe('diff lite result presentation', () => {
+  it('offers every fetchable kintone setting section and selects all of them by default', () => {
+    const options = buildLiteDiffScopeOptions();
+
+    expect(options.map(([key]) => key)).toEqual(SECTION_DEFS.map(({ key }) => key));
+    expect(options.map(([, label]) => label)).toEqual(SECTION_DEFS.map(({ label }) => label));
+    expect(options).toHaveLength(18);
+    expect(options.every(([, , checked]) => checked)).toBe(true);
+    expect(options.some(([key]) => key === 'appInfo')).toBe(true);
+  });
+
   it('maps the current result and selected rows to the Excel export context', () => {
     const full = cache([
       { sectionKey: 'appAcl', section: 'アプリ権限', path: 'appAcl.rights[0]', type: 'added', right: {} },
