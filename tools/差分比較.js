@@ -4779,6 +4779,118 @@ ${contextLine}`);
   });
 
   // src/diff/export-safety.ts
+  function sha256Hex(text2) {
+    const bytes = new TextEncoder().encode(text2);
+    const bitLength = bytes.length * 8;
+    const paddedLength = Math.ceil((bytes.length + 9) / 64) * 64;
+    const message = new Uint8Array(paddedLength);
+    message.set(bytes);
+    message[bytes.length] = 128;
+    const view = new DataView(message.buffer);
+    view.setUint32(paddedLength - 8, Math.floor(bitLength / 4294967296), false);
+    view.setUint32(paddedLength - 4, bitLength >>> 0, false);
+    const constants = [
+      1116352408,
+      1899447441,
+      3049323471,
+      3921009573,
+      961987163,
+      1508970993,
+      2453635748,
+      2870763221,
+      3624381080,
+      310598401,
+      607225278,
+      1426881987,
+      1925078388,
+      2162078206,
+      2614888103,
+      3248222580,
+      3835390401,
+      4022224774,
+      264347078,
+      604807628,
+      770255983,
+      1249150122,
+      1555081692,
+      1996064986,
+      2554220882,
+      2821834349,
+      2952996808,
+      3210313671,
+      3336571891,
+      3584528711,
+      113926993,
+      338241895,
+      666307205,
+      773529912,
+      1294757372,
+      1396182291,
+      1695183700,
+      1986661051,
+      2177026350,
+      2456956037,
+      2730485921,
+      2820302411,
+      3259730800,
+      3345764771,
+      3516065817,
+      3600352804,
+      4094571909,
+      275423344,
+      430227734,
+      506948616,
+      659060556,
+      883997877,
+      958139571,
+      1322822218,
+      1537002063,
+      1747873779,
+      1955562222,
+      2024104815,
+      2227730452,
+      2361852424,
+      2428436474,
+      2756734187,
+      3204031479,
+      3329325298
+    ];
+    const state3 = [1779033703, 3144134277, 1013904242, 2773480762, 1359893119, 2600822924, 528734635, 1541459225];
+    const words = new Uint32Array(64);
+    const rotateRight = (value, amount) => value >>> amount | value << 32 - amount;
+    for (let offset = 0; offset < paddedLength; offset += 64) {
+      for (let i = 0; i < 16; i += 1) words[i] = view.getUint32(offset + i * 4, false);
+      for (let i = 16; i < 64; i += 1) {
+        const a2 = words[i - 15];
+        const b2 = words[i - 2];
+        const s0 = rotateRight(a2, 7) ^ rotateRight(a2, 18) ^ a2 >>> 3;
+        const s1 = rotateRight(b2, 17) ^ rotateRight(b2, 19) ^ b2 >>> 10;
+        words[i] = words[i - 16] + s0 + words[i - 7] + s1 >>> 0;
+      }
+      let [a, b, c, d, e, f, g, h] = state3;
+      for (let i = 0; i < 64; i += 1) {
+        const sum1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
+        const choice = e & f ^ ~e & g;
+        const temp1 = h + sum1 + choice + constants[i] + words[i] >>> 0;
+        const sum0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
+        const majority = a & b ^ a & c ^ b & c;
+        const temp2 = sum0 + majority >>> 0;
+        [a, b, c, d, e, f, g, h] = [temp1 + temp2 >>> 0, a, b, c, d + temp1 >>> 0, e, f, g];
+      }
+      state3[0] = state3[0] + a >>> 0;
+      state3[1] = state3[1] + b >>> 0;
+      state3[2] = state3[2] + c >>> 0;
+      state3[3] = state3[3] + d >>> 0;
+      state3[4] = state3[4] + e >>> 0;
+      state3[5] = state3[5] + f >>> 0;
+      state3[6] = state3[6] + g >>> 0;
+      state3[7] = state3[7] + h >>> 0;
+    }
+    return state3.map((value) => value.toString(16).padStart(8, "0")).join("");
+  }
+  function contentIdentifier(text2) {
+    return `SHA256-${sha256Hex(text2).slice(0, 16).toUpperCase()}`;
+  }
   function sectionKeyOf(row) {
     const explicit = String(row?.sectionKey || "").trim();
     if (explicit) return explicit;
@@ -12126,6 +12238,9 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   init_engine();
   init_kintone_enums();
 
+  // src/diff/xlsx-builder.ts
+  init_export_safety();
+
   // src/archive/stored-zip.ts
   var CLASSIC_ZIP_MAX_ENTRIES = 65535;
   var CLASSIC_ZIP_MAX_BYTES = 4294967295;
@@ -12403,14 +12518,6 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       });
     });
   }
-  function shortTextHash(text2) {
-    let hash = 2166136261;
-    for (let i = 0; i < text2.length; i += 1) {
-      hash ^= text2.charCodeAt(i);
-      hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0).toString(16).padStart(8, "0");
-  }
   function truncateUtf16AtGraphemeBoundary(text2, maxLength) {
     if (text2.length <= maxLength) return text2;
     const IntlAny = globalThis.Intl;
@@ -12434,7 +12541,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const text2 = String(value ?? "");
     if (text2.length <= EXCEL_CELL_TEXT_LIMIT) return text2;
     const suffix = `
-…（Excelセル上限32,767文字のため省略・元${text2.length}文字・識別:${shortTextHash(text2)}）`;
+…（Excelセル上限32,767文字のため省略・元${text2.length}文字・識別:${contentIdentifier(text2)}）`;
     const keep = Math.max(0, EXCEL_CELL_TEXT_LIMIT - suffix.length);
     return truncateUtf16AtGraphemeBoundary(text2, keep) + suffix;
   }
@@ -13279,7 +13386,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   }
   function xlsxDiffValuePreview(text2, originalUtf16Length = text2.length) {
     if (text2.length <= XLSX_DIFF_VALUE_PREVIEW_LIMIT) return text2;
-    const hash = shortStableHash(text2);
+    const hash = contentIdentifier(text2);
     const prefix = `[一部表示: 元データ ${originalUtf16Length}文字（UTF-16） / 識別:${hash}]
 `;
     const suffix = `
@@ -18660,25 +18767,10 @@ ${item.target}` : item.target;
   }
 
   // src/entries/diff-lite-ui.ts
-  var SCOPE_OPTS = [
-    ["fieldSettings", "フィールド", true],
-    ["layoutSettings", "レイアウト", true],
-    ["viewSettings", "ビュー", true],
-    ["reportSettings", "グラフ", false],
-    ["processSettings", "プロセス", true],
-    ["appSettings", "アプリ設定", false],
-    ["formSettings", "フォーム", false],
-    ["customizeSettings", "JS/CSS", false],
-    ["pluginSettings", "プラグイン", false],
-    ["actionSettings", "アクション", false],
-    ["appAcl", "アプリ権限", false],
-    ["fieldAcl", "フィールド権限", false],
-    ["recordPermissions", "レコード権限", false],
-    ["notifications", "通知", false],
-    ["perRecordNotifications", "レコード条件通知", false],
-    ["reminderNotifications", "リマインダー", false],
-    ["categories", "カテゴリ", false]
-  ];
+  function buildLiteDiffScopeOptions() {
+    return SECTION_DEFS.map((section) => [section.key, section.label, true]);
+  }
+  var SCOPE_OPTS = buildLiteDiffScopeOptions();
   var TYPE_LABEL = { added: "追加", removed: "削除", changed: "変更", moved: "移動", same: "同一" };
   var FACT_LABEL = {
     added: "比較先にのみ存在",
@@ -20526,6 +20618,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     cardApp.body.appendChild(pairEditor);
     panel.body.insertBefore(cardApp.card, panel.status);
     const cardScope = makeCard({ title: "比較セクション", number: 2 });
+    cardScope.body.appendChild(makeNote(`kintone のアプリ設定 API に対応する ${SCOPE_OPTS.length} セクションをすべて初期選択します。意図的に除外する場合だけ選択を外してください。`));
     const chipBox = document.createElement("div");
     chipBox.className = "kus-lp__chips";
     const chips = SCOPE_OPTS.map(([key, label, def]) => makeChip({ label, value: key, checked: def }));
