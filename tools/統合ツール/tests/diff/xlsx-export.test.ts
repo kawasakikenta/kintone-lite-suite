@@ -2996,7 +2996,7 @@ describe('diff/xlsx-export', () => {
         right: `${common}RIGHT_ONLY_TAIL`
       }]
     }), '差分一覧');
-    const hashes = [...new Set([...list.matchAll(/識別:([0-9A-F]{8})/g)].map((match) => match[1]))];
+    const hashes = [...new Set([...list.matchAll(/識別:(SHA256-[0-9A-F]{16})/g)].map((match) => match[1]))];
     expect(hashes).toHaveLength(2);
     expect(hashes[0]).not.toBe(hashes[1]);
     expect(list).toContain('[一部表示: 元データ 5014文字（UTF-16） / 識別:');
@@ -3037,7 +3037,7 @@ describe('diff/xlsx-export', () => {
         right: `${common}FIELD_RIGHT_TAIL`
       }]
     }), 'フィールド差分詳細');
-    const hashes = [...new Set([...detail.matchAll(/識別:([0-9A-F]{8})/g)].map((match) => match[1]))];
+    const hashes = [...new Set([...detail.matchAll(/識別:(SHA256-[0-9A-F]{16})/g)].map((match) => match[1]))];
     expect(hashes).toHaveLength(2);
     expect(hashes[0]).not.toBe(hashes[1]);
     expect(detail).toContain('[一部表示: 元データ 5015文字（UTF-16） / 識別:');
