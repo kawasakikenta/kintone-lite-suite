@@ -1945,6 +1945,47 @@ ${contextLine}`);
     }
     pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules);
   }
+  function stableStringifyForCompare(value) {
+    if (Array.isArray(value)) return `[${value.map(stableStringifyForCompare).join(",")}]`;
+    if (value && typeof value === "object") {
+      return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${stableStringifyForCompare(value[k])}`).join(",")}}`;
+    }
+    return JSON.stringify(value === void 0 ? null : value);
+  }
+  function actionMappingSortKey(mapping) {
+    const part = (v) => v == null ? "" : String(v);
+    if (!isPlainObject(mapping)) return `${stableStringifyForCompare(mapping)}`;
+    return [
+      part(mapping.srcField),
+      part(mapping.destField),
+      part(mapping.srcType),
+      stableStringifyForCompare(mapping)
+    ].join("\0");
+  }
+  function sortActionMappingsForCompare(mappings) {
+    if (!Array.isArray(mappings) || mappings.length < 2) return mappings;
+    return mappings.map((item, index) => ({ item, index, key: actionMappingSortKey(item) })).sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : a.index - b.index).map((entry) => entry.item);
+  }
+  function preprocessActionSettingsForDiff(section) {
+    if (!section || typeof section !== "object") return section;
+    const actions = section.actions;
+    const sortAction = (action) => {
+      if (!isPlainObject(action) || !Array.isArray(action.mappings)) return action;
+      const sorted = sortActionMappingsForCompare(action.mappings);
+      return sorted === action.mappings ? action : { ...action, mappings: sorted };
+    };
+    if (Array.isArray(actions)) {
+      return { ...section, actions: actions.map(sortAction) };
+    }
+    if (isPlainObject(actions)) {
+      const out = {};
+      Object.keys(actions).forEach((key) => {
+        out[key] = sortAction(actions[key]);
+      });
+      return { ...section, actions: out };
+    }
+    return section;
+  }
   function preprocessCustomizePairForDiff(src, tgt) {
     const sClone = src && typeof src === "object" ? deepClone(src) : src;
     const tClone = tgt && typeof tgt === "object" ? deepClone(tgt) : tgt;
@@ -2198,6 +2239,9 @@ ${contextLine}`);
       } else if (sec === "pluginSettings") {
         sourceForSection = preprocessPluginSettingsForDiff(s);
         targetForSection = preprocessPluginSettingsForDiff(t);
+      } else if (sec === "actionSettings") {
+        sourceForSection = preprocessActionSettingsForDiff(s);
+        targetForSection = preprocessActionSettingsForDiff(t);
       }
       const sourceForDiff = normalizeSectionForCompare(sec, sourceForSection, presetState);
       const targetForDiff = normalizeSectionForCompare(sec, targetForSection, presetState);
