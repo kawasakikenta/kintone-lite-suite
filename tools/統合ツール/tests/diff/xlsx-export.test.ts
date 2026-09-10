@@ -1214,6 +1214,25 @@ describe('diff/xlsx-export', () => {
     expect(worksheetInlineTexts(views, 'F', 3)).toEqual(['5番目']);
   });
 
+  it('アプリアクションの表示順差分で何の並び順かを明示する', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      rows: [{
+        sectionKey: 'actionSettings',
+        type: 'changed',
+        path: 'actionSettings.actions.案件転記.index',
+        left: '0',
+        right: '2'
+      }]
+    });
+    const list = await readWorksheetByName(blob, '変更一覧');
+    const actions = await readWorksheetByName(blob, '13_アプリアクション');
+
+    expect(worksheetInlineTexts(list, 'E', 2)).toEqual(['アプリアクションの並び順']);
+    expect(worksheetInlineTexts(list, 'F', 2)).toEqual(['1番目']);
+    expect(worksheetInlineTexts(list, 'G', 2)).toEqual(['3番目']);
+    expect(worksheetInlineTexts(actions, 'E', 3)).toEqual(['アプリアクションの並び順']);
+  });
+
   it('uses one fully bordered state row and no empty navigation or category table when there is no difference', async () => {
     const blob = buildDiffXlsxBlobWithSafeDefault({
       scopes: ['fieldSettings'],
