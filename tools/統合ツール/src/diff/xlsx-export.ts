@@ -3035,6 +3035,9 @@ function customerGenericSettingLabel(sectionKey: string, path: string, decodedLa
       ? 'コピー元のアプリ（アプリID）'
       : 'レコードを追加するアプリ（アプリID）';
   }
+  if (sectionKey === 'actionSettings' && /\.actions(?:\[[^\]]+\]|\.[^.]+)\.index$/.test(path)) {
+    return 'アプリアクションの並び順';
+  }
   if (sectionKey === 'actionSettings' && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(path)) {
     const mappingIndex = Number(path.match(/\.mappings\[(\d+)\]/)?.[1]);
     const mappingProperty = path.match(/\.(srcField|destField|srcType|destType)$/)?.[1] || '';
