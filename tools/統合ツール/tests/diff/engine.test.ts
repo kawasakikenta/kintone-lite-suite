@@ -949,6 +949,60 @@ describe('diff/engine', () => {
     });
   });
 
+  describe('アプリアクションのフィールド関連付けの並び順', () => {
+    const mapping = (srcField: string, destField: string, srcType = 'FIELD') => ({ srcType, srcField, destField });
+
+    it('mappings の並び順だけが違う場合は差分にしない', () => {
+      const source = makeBundle({ actionSettings: { actions: {
+        '案件転記': { name: '案件転記', index: '0', mappings: [mapping('a', 'x'), mapping('b', 'y'), mapping('', 'url', 'RECORD_URL')] }
+      } } });
+      const target = makeBundle({ actionSettings: { actions: {
+        '案件転記': { name: '案件転記', index: '0', mappings: [mapping('', 'url', 'RECORD_URL'), mapping('b', 'y'), mapping('a', 'x')] }
+      } } });
+
+      const rows = computeDiffRows(source, target, ['actionSettings'], '').rows;
+      expect(rows.filter((row: any) => row.type !== 'same')).toEqual([]);
+      expect(rows.some((row: any) => row.moved)).toBe(false);
+    });
+
+    it('配列形式の actions でも並び順だけの違いは差分にしない', () => {
+      const source = makeBundle({ actionSettings: { actions: [
+        { name: '複製', mappings: [mapping('a', 'x'), mapping('b', 'y')] }
+      ] } });
+      const target = makeBundle({ actionSettings: { actions: [
+        { name: '複製', mappings: [mapping('b', 'y'), mapping('a', 'x')] }
+      ] } });
+
+      const rows = diffRows(source.sections, target.sections, ['actionSettings']);
+      expect(rows).toEqual([]);
+    });
+
+    it('並び替えと内容変更が混在する場合は内容変更だけを差分にする', () => {
+      const source = makeBundle({ actionSettings: { actions: {
+        '案件転記': { name: '案件転記', mappings: [mapping('a', 'x'), mapping('b', 'y'), mapping('c', 'z')] }
+      } } });
+      const target = makeBundle({ actionSettings: { actions: {
+        '案件転記': { name: '案件転記', mappings: [mapping('c', 'z'), mapping('b', 'y2'), mapping('a', 'x')] }
+      } } });
+
+      const rows = diffRows(source.sections, target.sections, ['actionSettings']);
+      expect(rows.some((row: any) => row.moved)).toBe(false);
+      expect(rows.map((row: any) => row.path)).toEqual(['actionSettings.actions.案件転記.mappings[1].destField']);
+      expect(rows[0].left).toBe('y');
+      expect(rows[0].right).toBe('y2');
+    });
+
+    it('比較元バンドルの mappings は並べ替えない（反映は元の順序を使う）', () => {
+      const mappings = [mapping('b', 'y'), mapping('a', 'x')];
+      const source = makeBundle({ actionSettings: { actions: { '複製': { name: '複製', mappings } } } });
+      const target = makeBundle({ actionSettings: { actions: { '複製': { name: '複製', mappings: [mapping('a', 'x'), mapping('b', 'y')] } } } });
+
+      computeDiffRows(source, target, ['actionSettings'], '');
+      expect(source.sections.actionSettings.actions['複製'].mappings).toBe(mappings);
+      expect(mappings.map((m) => m.srcField)).toEqual(['b', 'a']);
+    });
+  });
+
   describe('LCS moved pairing (mixed move + add/remove)', () => {
     const rowOf = (code: string, type = 'SINGLE_LINE_TEXT') => ({ type: 'ROW', fields: [{ type, code }] });
 
