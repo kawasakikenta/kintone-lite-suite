@@ -546,11 +546,51 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('比較先から削除：');
     expect(list).toContain('比較先に追加：');
     expect(worksheetInlineTexts(list, 'E', 2)).toEqual([
-      'フィールドの関連付け（1件目）',
-      'フィールドの関連付け（1件目）'
+      'フィールドの関連付け（取得価額 → 取得価額）',
+      'フィールドの関連付け（取得価額 → 税抜取得価額）'
     ]);
+    expect(list).not.toContain('件目）');
     expect(list).not.toContain('アプリアクション「取得価額」');
     expect(list).not.toContain('アプリアクション「税抜取得価額」');
+  });
+
+  it('関連付けの子項目の変更行でも、どの関連付けかをコピー元 → コピー先で示す', async () => {
+    const mappings = (destField: string) => [
+      { srcType: 'FIELD', srcField: '売上', destField: '売上' },
+      { srcType: 'FIELD', srcField: '対象月', destField },
+      { srcType: 'RECORD_URL', srcField: '', destField: '元レコード' }
+    ];
+    const sourceBundle = { sections: { actionSettings: { actions: { 次月作成: { name: '次月作成', mappings: mappings('対象月') } } } } };
+    const targetBundle = { sections: { actionSettings: { actions: { 次月作成: { name: '次月作成', mappings: mappings('翌月') } } } } };
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      sourceBundle,
+      targetBundle,
+      rows: [
+        {
+          sectionKey: 'actionSettings', type: 'changed', arrayKey: 'srcField', arrayKeyValue: '対象月',
+          path: 'actionSettings.actions.次月作成.mappings[7].destField',
+          left: '対象月', right: '翌月'
+        },
+        {
+          sectionKey: 'actionSettings', type: 'changed', arrayKey: 'srcField', arrayKeyValue: 'RECORD_URL',
+          path: 'actionSettings.actions.次月作成.mappings[2].destField',
+          left: '元レコード', right: '元レコード'
+        },
+        {
+          sectionKey: 'actionSettings', type: 'changed', arrayKey: 'srcField', arrayKeyValue: '不明キー',
+          path: 'actionSettings.actions.次月作成.mappings[3].destField',
+          left: 'a', right: 'b'
+        }
+      ]
+    });
+    const list = await readWorksheetByName(blob, '変更一覧');
+
+    expect(worksheetInlineTexts(list, 'E', 2)).toEqual([
+      'フィールドの関連付け（対象月 → 翌月）：コピー先フィールド',
+      'フィールドの関連付け（レコードのURL → 元レコード）：コピー先フィールド',
+      'フィールドの関連付け（コピー元: 不明キー）：コピー先フィールド'
+    ]);
+    expect(list).not.toContain('8件目');
   });
 
   it('フィールドの関連付けの値をコピー元/コピー先ラベルで表示し内部キーを出さない', async () => {

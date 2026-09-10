@@ -1594,7 +1594,7 @@ ${contextLine}`);
       const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
       const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
       if (leftSig === rightSig) {
-        if (left.idx !== right.idx) {
+        if (left.idx !== right.idx && !isUnorderedArrayPath(path)) {
           pushDiffRow(out, {
             type: "changed",
             path: `${path}[${right.idx}]`,
@@ -1635,6 +1635,111 @@ ${contextLine}`);
     const code = entity.code != null ? String(entity.code) : entity.login != null ? String(entity.login) : "";
     if (!type && !code) return null;
     return `${type}:${code}`;
+  }
+  function isUnorderedArrayPath(path) {
+    return ACTION_MAPPINGS_ARRAY_PATH.test(String(path || ""));
+  }
+  function actionMappingSourceIdentity(item) {
+    if (!isPlainObject(item)) return void 0;
+    const srcField = item.srcField != null ? String(item.srcField).trim() : "";
+    if (srcField) return item.srcField;
+    const srcType = item.srcType != null ? String(item.srcType).trim() : "";
+    return srcType || void 0;
+  }
+  function collectActionMappingDiffs(a, b, path, out, ignoreRules) {
+    if (!isUnorderedArrayPath(path)) return false;
+    if (!a.length && !b.length) return false;
+    if (!a.every(isPlainObject) || !b.every(isPlainObject)) return false;
+    const text2 = (v) => v == null ? "" : String(v).trim();
+    const sourceSig = (item) => {
+      const sig = `${text2(item.srcType)}|${text2(item.srcField)}`;
+      return sig === "|" ? null : sig;
+    };
+    const destSig = (item) => text2(item.destField) || null;
+    const leftEntries = a.map((item, idx) => ({ idx, item }));
+    const rightEntries = b.map((item, idx) => ({ idx, item }));
+    const pairs = [];
+    const pairBy = (sigOf) => {
+      const buckets = /* @__PURE__ */ new Map();
+      for (const entry of rightEntries) {
+        const sig = sigOf(entry.item);
+        if (sig == null) continue;
+        if (!buckets.has(sig)) buckets.set(sig, []);
+        buckets.get(sig).push(entry);
+      }
+      const matchedRight = /* @__PURE__ */ new Set();
+      const remainingLeft = [];
+      for (const entry of leftEntries) {
+        const sig = sigOf(entry.item);
+        const bucket = sig == null ? void 0 : buckets.get(sig);
+        const partner = bucket?.shift();
+        if (!partner) {
+          remainingLeft.push(entry);
+          continue;
+        }
+        matchedRight.add(partner);
+        pairs.push({ left: entry, right: partner });
+      }
+      leftEntries.splice(0, leftEntries.length, ...remainingLeft);
+      rightEntries.splice(0, rightEntries.length, ...rightEntries.filter((entry) => !matchedRight.has(entry)));
+    };
+    pairBy(sourceSig);
+    pairBy(destSig);
+    const keyValueOf = (right, left) => {
+      const value = actionMappingSourceIdentity(right.item);
+      return value !== void 0 ? value : actionMappingSourceIdentity(left.item);
+    };
+    const ordered = [
+      ...pairs.map((pair) => ({ kind: "pair", order: pair.right.idx, pair })),
+      ...leftEntries.map((entry) => ({ kind: "removed", order: entry.idx, entry })),
+      ...rightEntries.map((entry) => ({ kind: "added", order: entry.idx, entry }))
+    ].sort((x, y) => x.order - y.order);
+    for (const step of ordered) {
+      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      if (step.kind === "removed") {
+        pushDiffRow(out, {
+          type: "removed",
+          path: `${path}[${step.entry.idx}]`,
+          left: step.entry.item,
+          right: void 0,
+          arrayKey: "srcField",
+          arrayKeyValue: actionMappingSourceIdentity(step.entry.item)
+        }, ignoreRules);
+        continue;
+      }
+      if (step.kind === "added") {
+        pushDiffRow(out, {
+          type: "added",
+          path: `${path}[${step.entry.idx}]`,
+          left: void 0,
+          right: step.entry.item,
+          arrayKey: "srcField",
+          arrayKeyValue: actionMappingSourceIdentity(step.entry.item)
+        }, ignoreRules);
+        continue;
+      }
+      const { left, right } = step.pair;
+      const itemPath = `${path}[${right.idx}]`;
+      const keyValue = keyValueOf(right, left);
+      if (makeArrayItemSignature(left.item, ignoreRules, itemPath) === makeArrayItemSignature(right.item, ignoreRules, itemPath)) {
+        pushSameDiffRow(out, {
+          path: itemPath,
+          left: left.item,
+          right: right.item,
+          severity: "low",
+          arrayKey: "srcField",
+          arrayKeyValue: keyValue
+        }, ignoreRules);
+        continue;
+      }
+      const start = out.length;
+      collectDeepDiffs(left.item, right.item, itemPath, out, ignoreRules);
+      for (let oi = start; oi < out.length; oi++) {
+        if (!out[oi].arrayKey) out[oi].arrayKey = "srcField";
+        if (out[oi].arrayKeyValue === void 0) out[oi].arrayKeyValue = keyValue;
+      }
+    }
+    return true;
   }
   function findCompositeArrayRule(path) {
     const p = String(path || "");
@@ -1707,7 +1812,7 @@ ${contextLine}`);
       const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
       const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
       if (leftSig === rightSig) {
-        if (left.idx !== right.idx) {
+        if (left.idx !== right.idx && !isUnorderedArrayPath(path)) {
           pushDiffRow(out, {
             type: "changed",
             path: `${path}[${right.idx}]`,
@@ -1759,7 +1864,7 @@ ${contextLine}`);
       }
       if (from < 0) continue;
       used[from] = true;
-      if (from === j) {
+      if (from === j || isUnorderedArrayPath(path)) {
         pushSameDiffRow(out, { path: `${path}[${j}]`, left: a[from], right: b[j], severity: "low" }, ignoreRules);
         continue;
       }
@@ -1780,6 +1885,7 @@ ${contextLine}`);
   }
   function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules) {
     const childRe = new RegExp(`^${escapeRegExpLiteral(path)}\\[(\\d+)\\]$`);
+    const unordered = isUnorderedArrayPath(path);
     const removedBySig = /* @__PURE__ */ new Map();
     for (let i = startIdx; i < out.length; i++) {
       const row = out[i];
@@ -1802,6 +1908,12 @@ ${contextLine}`);
       if (!bucket || !bucket.length) continue;
       const removedIdx = bucket.shift();
       const removedRow = out[removedIdx];
+      if (unordered) {
+        consumed.add(removedIdx);
+        consumed.add(i);
+        merged += 2;
+        continue;
+      }
       const fromMatch = childRe.exec(String(removedRow.path || ""));
       out[i] = {
         ...row,
@@ -1889,6 +2001,7 @@ ${contextLine}`);
     return true;
   }
   function collectArrayDiffs(a, b, path, out, ignoreRules) {
+    if (collectActionMappingDiffs(a, b, path, out, ignoreRules)) return;
     if (collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules)) return;
     if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules)) return;
     if (collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules)) return;
@@ -2685,7 +2798,7 @@ ${contextLine}`);
     });
     return out;
   }
-  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES, LOW_PRIORITY_LEAF_KEYS, ACL_GRANT_FLAG_KEYS, FIELD_ACL_LEVEL_ORDER, EXACT_IGNORE_PATH_PREFIX, COMPOSITE_ARRAY_RULES, SUBTABLE_ROOT_PATH_RE, ENTITY_EXPAND_LIMIT;
+  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES, LOW_PRIORITY_LEAF_KEYS, ACL_GRANT_FLAG_KEYS, FIELD_ACL_LEVEL_ORDER, EXACT_IGNORE_PATH_PREFIX, ACTION_MAPPINGS_ARRAY_PATH, COMPOSITE_ARRAY_RULES, SUBTABLE_ROOT_PATH_RE, ENTITY_EXPAND_LIMIT;
   var init_engine = __esm({
     "src/diff/engine.ts"() {
       "use strict";
@@ -2754,6 +2867,7 @@ ${contextLine}`);
       ]);
       FIELD_ACL_LEVEL_ORDER = ["NONE", "READ", "WRITE"];
       EXACT_IGNORE_PATH_PREFIX = "path:";
+      ACTION_MAPPINGS_ARRAY_PATH = /^actionSettings\.actions(?:\.|\[).*\.mappings$/;
       COMPOSITE_ARRAY_RULES = [
         // アプリ権限：エンティティが識別子
         {
@@ -15401,6 +15515,42 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const normalizedTargets = decodedTargets.map((target) => target.replace(/^デスクトップ\s*\/\s*JS$/i, "デスクトップ JavaScript").replace(/^モバイル\s*\/\s*JS$/i, "モバイル JavaScript").replace(/^デスクトップ\s*\/\s*CSS$/i, "デスクトップ CSS").replace(/^モバイル\s*\/\s*CSS$/i, "モバイル CSS"));
     return normalizedTargets.length ? normalizedTargets.join(" › ") : `${customerSectionLabel(sectionKey)}全体`;
   }
+  function actionMappingsOf(bundle, actionName) {
+    const actions = bundle?.sections?.actionSettings?.actions;
+    if (!actions || typeof actions !== "object") return [];
+    const action = Array.isArray(actions) ? actions.find((item) => item && typeof item === "object" && String(item.name ?? "") === actionName) : actions[actionName];
+    return Array.isArray(action?.mappings) ? action.mappings : [];
+  }
+  function isActionMappingPayload(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value) && ("srcField" in value || "srcType" in value || "destField" in value);
+  }
+  function customerActionMappingIdentity(row, actionName, preferredBundle, fallbackBundle) {
+    const describe = (mapping) => {
+      const srcField = customerPlainText(String(mapping.srcField ?? "").trim());
+      const srcType = String(mapping.srcType ?? "").trim();
+      const destField = customerPlainText(String(mapping.destField ?? "").trim());
+      const source = srcField || (srcType ? customerTypeLabel(srcType) : "");
+      if (!source && !destField) return "";
+      return destField ? `${source || "（未設定）"} → ${destField}` : source;
+    };
+    const payloads = [row.type === "removed" ? row.left : row.right, row.type === "removed" ? row.right : row.left];
+    for (const payload of payloads) {
+      if (isActionMappingPayload(payload)) {
+        const label = describe(payload);
+        if (label) return label;
+      }
+    }
+    const sourceKey = row.arrayKey === "srcField" ? String(row.arrayKeyValue ?? "").trim() : "";
+    if (!sourceKey) return "";
+    for (const bundle of [preferredBundle, fallbackBundle]) {
+      const found = actionMappingsOf(bundle, actionName).find((mapping) => isActionMappingPayload(mapping) && (String(mapping.srcField ?? "").trim() === sourceKey || !String(mapping.srcField ?? "").trim() && String(mapping.srcType ?? "").trim() === sourceKey));
+      if (found) {
+        const label = describe(found);
+        if (label) return label;
+      }
+    }
+    return `コピー元: ${customerPlainText(sourceKey)}`;
+  }
   function customerActionItemParts(row, sourceBundle, targetBundle) {
     const path = String(row.path || "");
     if (sectionKeyOfRow(row) !== "actionSettings" || !/^actionSettings\.actions(?:\.|\[)/.test(path)) {
@@ -15424,6 +15574,12 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     );
     const actionName = actionNames(preferredBundle)[0] || actionNames(fallbackBundle)[0] || (entityKind === "appAction" ? entityLabel : "") || keyedActionName || pathActionName || "名称不明";
     let settingItem = customerGenericSettingLabel("actionSettings", path, "");
+    if (/\.mappings\[\d+\](?:\.|$)/.test(path)) {
+      const identity = customerActionMappingIdentity(row, actionName, preferredBundle, fallbackBundle);
+      if (identity) {
+        settingItem = settingItem.replace(/^フィールドの関連付け（\d+件目）/, `フィールドの関連付け（${identity}）`);
+      }
+    }
     const actionPrefix = actionName === "名称不明" ? "" : `actionSettings.actions.${actionName}`;
     if (actionPrefix && path === actionPrefix) {
       settingItem = row.type === "added" ? "アクションを追加" : row.type === "removed" ? "アクションを削除" : "アクション全体";

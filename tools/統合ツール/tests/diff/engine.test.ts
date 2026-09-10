@@ -992,6 +992,35 @@ describe('diff/engine', () => {
       expect(rows[0].right).toBe('y2');
     });
 
+    it('削除と並び替えが混在しても、後続の関連付けを並び順変更にしない', () => {
+      const all = Array.from({ length: 12 }, (_, i) => mapping(`f${String(i).padStart(2, '0')}`, `g${i}`));
+      const source = makeBundle({ actionSettings: { actions: { '次月作成': { name: '次月作成', mappings: all } } } });
+      const target = makeBundle({ actionSettings: { actions: { '次月作成': {
+        name: '次月作成', mappings: all.filter((m) => m.srcField !== 'f03').reverse()
+      } } } });
+
+      const rows = diffRows(source.sections, target.sections, ['actionSettings']);
+      expect(rows.some((row: any) => row.moved)).toBe(false);
+      expect(rows.map((row: any) => [row.type, row.arrayKey, row.arrayKeyValue])).toEqual([['removed', 'srcField', 'f03']]);
+      expect(rows[0].left).toEqual(mapping('f03', 'g3'));
+    });
+
+    it('関連付けはコピー元で対応付け、レコードURLの関連付けは種類を識別子にする', () => {
+      const source = makeBundle({ actionSettings: { actions: { '複製': { name: '複製', mappings: [
+        mapping('a', 'x'), mapping('', 'url', 'RECORD_URL')
+      ] } } } });
+      const target = makeBundle({ actionSettings: { actions: { '複製': { name: '複製', mappings: [
+        mapping('', 'url2', 'RECORD_URL'), mapping('a', 'x2')
+      ] } } } });
+
+      const rows = diffRows(source.sections, target.sections, ['actionSettings']);
+      expect(rows.some((row: any) => row.moved)).toBe(false);
+      expect(rows.map((row: any) => [row.type, row.arrayKeyValue, row.left, row.right]).sort()).toEqual([
+        ['changed', 'RECORD_URL', 'url', 'url2'],
+        ['changed', 'a', 'x', 'x2']
+      ]);
+    });
+
     it('比較元バンドルの mappings は並べ替えない（反映は元の順序を使う）', () => {
       const mappings = [mapping('b', 'y'), mapping('a', 'x')];
       const source = makeBundle({ actionSettings: { actions: { '複製': { name: '複製', mappings } } } });

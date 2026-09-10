@@ -482,7 +482,7 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
     const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
     const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
     if (leftSig === rightSig) {
-      if (left.idx !== right.idx) {
+      if (left.idx !== right.idx && !isUnorderedArrayPath(path)) {
         pushDiffRow(out, {
           type: 'changed',
           path: `${path}[${right.idx}]`,
@@ -545,6 +545,10 @@ interface CompositeArrayRule {
   applies?: (a: any[], b: any[]) => boolean;
 }
 
+// アプリアクションの mappings[] は並び順に意味を持たない配列。
+// この配列では同一要素の位置違いを moved 行にせず same として扱う。
+const ACTION_MAPPINGS_ARRAY_PATH = /^actionSettings\.actions(?:\.|\[).*\.mappings$/;
+
 const COMPOSITE_ARRAY_RULES: ReadonlyArray<CompositeArrayRule> = [
   // アプリ権限：エンティティが識別子
   {
@@ -592,6 +596,128 @@ const COMPOSITE_ARRAY_RULES: ReadonlyArray<CompositeArrayRule> = [
     applies: (a, b) => !(hasUniquePrimitiveKey(a, 'name') && hasUniquePrimitiveKey(b, 'name'))
   }
 ];
+
+export function isUnorderedArrayPath(path): boolean {
+  return ACTION_MAPPINGS_ARRAY_PATH.test(String(path || ''));
+}
+
+/** 関連付けのコピー元を表す値（フィールドコード。レコードURLなら種類）。 */
+export function actionMappingSourceIdentity(item) {
+  if (!isPlainObject(item)) return undefined;
+  const srcField = item.srcField != null ? String(item.srcField).trim() : '';
+  if (srcField) return item.srcField;
+  const srcType = item.srcType != null ? String(item.srcType).trim() : '';
+  return srcType || undefined;
+}
+
+// ---------------------------------------------------------------------------
+// アプリアクションのフィールドの関連付け専用マッチング
+// ---------------------------------------------------------------------------
+// 1) コピー元（種類＋フィールド）が同じもの同士を対応付け、
+// 2) 残りはコピー先フィールドが同じもの同士を対応付ける（コピー元の差し替えを
+//    「変更」として見せる）。対応相手がないものだけ追加/削除にする。
+// 並び順は識別に使わず、内容が同じ要素は位置が違っても same として扱う。
+// 汎用の objectKey 検出は先頭キー（srcType）が偶然ユニークなときにそれを識別子に
+// 採用してしまうため、この配列では使わない。
+// ---------------------------------------------------------------------------
+export function collectActionMappingDiffs(a, b, path, out, ignoreRules) {
+  if (!isUnorderedArrayPath(path)) return false;
+  if (!a.length && !b.length) return false;
+  if (!a.every(isPlainObject) || !b.every(isPlainObject)) return false;
+
+  const text = (v) => (v == null ? '' : String(v).trim());
+  const sourceSig = (item) => {
+    const sig = `${text(item.srcType)}|${text(item.srcField)}`;
+    return sig === '|' ? null : sig;
+  };
+  const destSig = (item) => text(item.destField) || null;
+
+  type Entry = { idx: number; item: any };
+  const leftEntries: Entry[] = a.map((item, idx) => ({ idx, item }));
+  const rightEntries: Entry[] = b.map((item, idx) => ({ idx, item }));
+  const pairs: Array<{ left: Entry; right: Entry }> = [];
+
+  const pairBy = (sigOf: (item: any) => string | null) => {
+    const buckets = new Map<string, Entry[]>();
+    for (const entry of rightEntries) {
+      const sig = sigOf(entry.item);
+      if (sig == null) continue;
+      if (!buckets.has(sig)) buckets.set(sig, []);
+      buckets.get(sig)!.push(entry);
+    }
+    const matchedRight = new Set<Entry>();
+    const remainingLeft: Entry[] = [];
+    for (const entry of leftEntries) {
+      const sig = sigOf(entry.item);
+      const bucket = sig == null ? undefined : buckets.get(sig);
+      const partner = bucket?.shift();
+      if (!partner) { remainingLeft.push(entry); continue; }
+      matchedRight.add(partner);
+      pairs.push({ left: entry, right: partner });
+    }
+    leftEntries.splice(0, leftEntries.length, ...remainingLeft);
+    rightEntries.splice(0, rightEntries.length, ...rightEntries.filter((entry) => !matchedRight.has(entry)));
+  };
+  pairBy(sourceSig);
+  pairBy(destSig);
+
+  const keyValueOf = (right: Entry, left: Entry) => {
+    const value = actionMappingSourceIdentity(right.item);
+    return value !== undefined ? value : actionMappingSourceIdentity(left.item);
+  };
+  const ordered = [
+    ...pairs.map((pair) => ({ kind: 'pair' as const, order: pair.right.idx, pair })),
+    ...leftEntries.map((entry) => ({ kind: 'removed' as const, order: entry.idx, entry })),
+    ...rightEntries.map((entry) => ({ kind: 'added' as const, order: entry.idx, entry }))
+  ].sort((x, y) => x.order - y.order);
+
+  for (const step of ordered) {
+    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+    if (step.kind === 'removed') {
+      pushDiffRow(out, {
+        type: 'removed',
+        path: `${path}[${step.entry.idx}]`,
+        left: step.entry.item,
+        right: undefined,
+        arrayKey: 'srcField',
+        arrayKeyValue: actionMappingSourceIdentity(step.entry.item)
+      }, ignoreRules);
+      continue;
+    }
+    if (step.kind === 'added') {
+      pushDiffRow(out, {
+        type: 'added',
+        path: `${path}[${step.entry.idx}]`,
+        left: undefined,
+        right: step.entry.item,
+        arrayKey: 'srcField',
+        arrayKeyValue: actionMappingSourceIdentity(step.entry.item)
+      }, ignoreRules);
+      continue;
+    }
+    const { left, right } = step.pair;
+    const itemPath = `${path}[${right.idx}]`;
+    const keyValue = keyValueOf(right, left);
+    if (makeArrayItemSignature(left.item, ignoreRules, itemPath) === makeArrayItemSignature(right.item, ignoreRules, itemPath)) {
+      pushSameDiffRow(out, {
+        path: itemPath,
+        left: left.item,
+        right: right.item,
+        severity: 'low',
+        arrayKey: 'srcField',
+        arrayKeyValue: keyValue
+      }, ignoreRules);
+      continue;
+    }
+    const start = out.length;
+    collectDeepDiffs(left.item, right.item, itemPath, out, ignoreRules);
+    for (let oi = start; oi < out.length; oi++) {
+      if (!out[oi].arrayKey) out[oi].arrayKey = 'srcField';
+      if (out[oi].arrayKeyValue === undefined) out[oi].arrayKeyValue = keyValue;
+    }
+  }
+  return true;
+}
 
 function findCompositeArrayRule(path): CompositeArrayRule | null {
   const p = String(path || '');
@@ -659,7 +785,7 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
     const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
     const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
     if (leftSig === rightSig) {
-      if (left.idx !== right.idx) {
+      if (left.idx !== right.idx && !isUnorderedArrayPath(path)) {
         pushDiffRow(out, {
           type: 'changed',
           path: `${path}[${right.idx}]`,
@@ -717,7 +843,7 @@ export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules) {
     }
     if (from < 0) continue; // 多重集合一致済みのため理論上到達しない
     used[from] = true;
-    if (from === j) {
+    if (from === j || isUnorderedArrayPath(path)) {
       pushSameDiffRow(out, { path: `${path}[${j}]`, left: a[from], right: b[j], severity: 'low' }, ignoreRules);
       continue;
     }
@@ -747,6 +873,7 @@ function escapeRegExpLiteral(s) {
 // ---------------------------------------------------------------------------
 export function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules) {
   const childRe = new RegExp(`^${escapeRegExpLiteral(path)}\\[(\\d+)\\]$`);
+  const unordered = isUnorderedArrayPath(path);
   const removedBySig = new Map<string, number[]>();
   for (let i = startIdx; i < out.length; i++) {
     const row = out[i];
@@ -769,6 +896,13 @@ export function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules) {
     if (!bucket || !bucket.length) continue;
     const removedIdx = bucket.shift()!;
     const removedRow = out[removedIdx];
+    if (unordered) {
+      // 並び順に意味のない配列では、同一要素の追加＋削除は差分ではない。
+      consumed.add(removedIdx);
+      consumed.add(i);
+      merged += 2;
+      continue;
+    }
     const fromMatch = childRe.exec(String(removedRow.path || ''));
     out[i] = {
       ...row,
@@ -863,6 +997,8 @@ export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
 }
 
 export function collectArrayDiffs(a, b, path, out, ignoreRules) {
+  // 0) アプリアクションの関連付けは並び順を持たない専用マッチング
+  if (collectActionMappingDiffs(a, b, path, out, ignoreRules)) return;
   // 1) 権限/通知/遷移などドメイン識別子（entity, title, name|from|to）での安定マッチ
   //    （objectKey のフォールバック候補が accessibility 等の「値」を識別子に
   //      誤採用してミスペアリングするのを防ぐため、ルールがある場合は先に試す）

@@ -3197,6 +3197,61 @@ function customerGenericTargetLabel(row: DiffXlsxRow, sectionKey: string, decode
   return normalizedTargets.length ? normalizedTargets.join(' › ') : `${customerSectionLabel(sectionKey)}全体`;
 }
 
+function actionMappingsOf(bundle: DiffXlsxBundle | undefined, actionName: string): any[] {
+  const actions = bundle?.sections?.actionSettings?.actions;
+  if (!actions || typeof actions !== 'object') return [];
+  const action = Array.isArray(actions)
+    ? actions.find((item) => item && typeof item === 'object' && String(item.name ?? '') === actionName)
+    : actions[actionName];
+  return Array.isArray(action?.mappings) ? action.mappings : [];
+}
+
+function isActionMappingPayload(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+    && ('srcField' in value || 'srcType' in value || 'destField' in value);
+}
+
+/**
+ * フィールドの関連付け1件を「コピー元 → コピー先」で表す。
+ * 行が関連付け全体を持つ場合はその内容から、子項目（コピー先など）の変更行は
+ * エンジンが付与したコピー元キー（arrayKeyValue）から比較元/比較先の関連付けを引く。
+ */
+function customerActionMappingIdentity(
+  row: DiffXlsxRow,
+  actionName: string,
+  preferredBundle?: DiffXlsxBundle,
+  fallbackBundle?: DiffXlsxBundle
+): string {
+  const describe = (mapping: Record<string, unknown>): string => {
+    const srcField = customerPlainText(String(mapping.srcField ?? '').trim());
+    const srcType = String(mapping.srcType ?? '').trim();
+    const destField = customerPlainText(String(mapping.destField ?? '').trim());
+    const source = srcField || (srcType ? customerTypeLabel(srcType) : '');
+    if (!source && !destField) return '';
+    return destField ? `${source || '（未設定）'} → ${destField}` : source;
+  };
+  const payloads = [row.type === 'removed' ? row.left : row.right, row.type === 'removed' ? row.right : row.left];
+  for (const payload of payloads) {
+    if (isActionMappingPayload(payload)) {
+      const label = describe(payload);
+      if (label) return label;
+    }
+  }
+  const sourceKey = (row as any).arrayKey === 'srcField' ? String((row as any).arrayKeyValue ?? '').trim() : '';
+  if (!sourceKey) return '';
+  for (const bundle of [preferredBundle, fallbackBundle]) {
+    const found = actionMappingsOf(bundle, actionName).find((mapping) => isActionMappingPayload(mapping) && (
+      String(mapping.srcField ?? '').trim() === sourceKey
+      || (!String(mapping.srcField ?? '').trim() && String(mapping.srcType ?? '').trim() === sourceKey)
+    ));
+    if (found) {
+      const label = describe(found as Record<string, unknown>);
+      if (label) return label;
+    }
+  }
+  return `コピー元: ${customerPlainText(sourceKey)}`;
+}
+
 function customerActionItemParts(
   row: DiffXlsxRow,
   sourceBundle?: DiffXlsxBundle,
@@ -3236,6 +3291,13 @@ function customerActionItemParts(
     || '名称不明';
 
   let settingItem = customerGenericSettingLabel('actionSettings', path, '');
+  if (/\.mappings\[\d+\](?:\.|$)/.test(path)) {
+    // 関連付けは並び順に意味がなく「N件目」では特定できないため、どの関連付けかを示す。
+    const identity = customerActionMappingIdentity(row, actionName, preferredBundle, fallbackBundle);
+    if (identity) {
+      settingItem = settingItem.replace(/^フィールドの関連付け（\d+件目）/, `フィールドの関連付け（${identity}）`);
+    }
+  }
   const actionPrefix = actionName === '名称不明' ? '' : `actionSettings.actions.${actionName}`;
   if (actionPrefix && path === actionPrefix) {
     settingItem = row.type === 'added'
