@@ -932,6 +932,61 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
 }
 
 // ---------------------------------------------------------------------------
+// actionSettings preprocessing
+// ---------------------------------------------------------------------------
+// アプリアクションの「フィールドの関連付け」（mappings[]）は、kintone 上で
+// 並び順に意味を持たない。取得順や保存順の違いだけで added/removed/moved が
+// 出ないよう、比較前に両側とも内容で決まる同じ順序（コピー元 → コピー先 →
+// 種類 → 残りの内容）に並べ替える。反映処理は比較元バンドルをそのまま使う
+// ため、この並べ替えは差分表示にのみ影響する。
+// ---------------------------------------------------------------------------
+function stableStringifyForCompare(value): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringifyForCompare).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${stableStringifyForCompare(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+function actionMappingSortKey(mapping): string {
+  const part = (v) => (v == null ? '' : String(v));
+  if (!isPlainObject(mapping)) return `\u0001${stableStringifyForCompare(mapping)}`;
+  return [
+    part(mapping.srcField),
+    part(mapping.destField),
+    part(mapping.srcType),
+    stableStringifyForCompare(mapping)
+  ].join('\u0000');
+}
+
+export function sortActionMappingsForCompare(mappings) {
+  if (!Array.isArray(mappings) || mappings.length < 2) return mappings;
+  return mappings
+    .map((item, index) => ({ item, index, key: actionMappingSortKey(item) }))
+    .sort((a, b) => (a.key < b.key ? -1 : (a.key > b.key ? 1 : a.index - b.index)))
+    .map((entry) => entry.item);
+}
+
+export function preprocessActionSettingsForDiff(section) {
+  if (!section || typeof section !== 'object') return section;
+  const actions = (section as any).actions;
+  const sortAction = (action) => {
+    if (!isPlainObject(action) || !Array.isArray(action.mappings)) return action;
+    const sorted = sortActionMappingsForCompare(action.mappings);
+    return sorted === action.mappings ? action : { ...action, mappings: sorted };
+  };
+  if (Array.isArray(actions)) {
+    return { ...(section as any), actions: actions.map(sortAction) };
+  }
+  if (isPlainObject(actions)) {
+    const out = {};
+    Object.keys(actions).forEach((key) => { out[key] = sortAction(actions[key]); });
+    return { ...(section as any), actions: out };
+  }
+  return section;
+}
+
+// ---------------------------------------------------------------------------
 // customizeSettings preprocessing
 // ---------------------------------------------------------------------------
 // JS/CSS の各 FILE/URL アイテムに安定キー (`name`) を注入し、配列キー検出
@@ -1243,6 +1298,11 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
       // プラグイン設定：取得済 _config を比較対象に取り込む
       sourceForSection = preprocessPluginSettingsForDiff(s);
       targetForSection = preprocessPluginSettingsForDiff(t);
+    } else if (sec === 'actionSettings') {
+      // アプリアクション：フィールドの関連付け（mappings）は並び順に意味がないため、
+      // 両側を同じ規則で並べ替えてから比較し、順序だけの違いを差分にしない。
+      sourceForSection = preprocessActionSettingsForDiff(s);
+      targetForSection = preprocessActionSettingsForDiff(t);
     }
     const sourceForDiff = normalizeSectionForCompare(sec, sourceForSection, presetState);
     const targetForDiff = normalizeSectionForCompare(sec, targetForSection, presetState);
