@@ -2261,6 +2261,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   const includeSame = makeCheck({ label: '同一行も差分行に含める' });
   const showResultList = makeCheck({ label: '画面に差分明細を表示（200件ずつ）', checked: true, help: '大量差分でも固まりにくいよう、明細は200件ずつ段階表示します' });
+  const nAction = makeCheck({
+    label: 'アプリアクションの並び順を無視',
+    checked: false,
+    help: 'アクションの設定内容は比較し、表示順の違いだけを差分から除外します'
+  });
   const nView = makeCheck({ label: 'ビュー/グラフ/アクション順序を無視', checked: false });
   const nPerm = makeCheck({ label: '権限/通知/カテゴリ順序を無視', checked: false });
   const nAll = makeCheck({ label: 'すべての配列順序を無視', checked: false });
@@ -2272,6 +2277,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const nFileKeys = makeCheck({ label: '添付/JS/CSS fileKeyを無視', checked: false });
   const nEnabled = makeCheck({ label: '有効/無効フラグを無視', checked: false });
   const normalizationControls: Record<string, HTMLInputElement> = {
+    actionOrder: nAction.checkbox,
     viewOrder: nView.checkbox,
     permissionOrder: nPerm.checkbox,
     generalArrayOrder: nAll.checkbox,
@@ -2289,6 +2295,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   [
     includeSame.label,
     showResultList.label,
+    nAction.label,
     nView.label,
     nPerm.label,
     nAll.label,
@@ -2702,6 +2709,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       ignoreKeys: ignTa.value,
       includeSame: includeSame.checkbox.checked,
       normalizationPresetState: {
+        actionOrder: nAction.checkbox.checked,
         viewOrder: nView.checkbox.checked,
         permissionOrder: nPerm.checkbox.checked,
         generalArrayOrder: nAll.checkbox.checked,
