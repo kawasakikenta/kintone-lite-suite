@@ -205,6 +205,7 @@ function truncationSectionName(section: DiffTruncationSection): string {
 }
 
 const NORMALIZATION_LABELS: Record<string, string> = {
+  actionOrder: 'アプリアクション内の並び順',
   viewOrder: 'ビュー順序',
   permissionOrder: '権限順序',
   generalArrayOrder: '一般配列順序',
@@ -3035,6 +3036,9 @@ function customerGenericSettingLabel(sectionKey: string, path: string, decodedLa
       ? 'コピー元のアプリ（アプリID）'
       : 'レコードを追加するアプリ（アプリID）';
   }
+  if (sectionKey === 'actionSettings' && /\.actions(?:\[[^\]]+\]|\.[^.]+)\.index$/.test(path)) {
+    return 'アプリアクションの並び順';
+  }
   if (sectionKey === 'actionSettings' && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(path)) {
     const mappingIndex = Number(path.match(/\.mappings\[(\d+)\]/)?.[1]);
     const mappingProperty = path.match(/\.(srcField|destField|srcType|destType)$/)?.[1] || '';
@@ -3232,6 +3236,17 @@ function customerActionItemParts(
     || '名称不明';
 
   let settingItem = customerGenericSettingLabel('actionSettings', path, '');
+  const mappingRoot = /\.mappings\[\d+\]$/.test(path);
+  if (mappingRoot && (row.moved || row.type === 'moved')) {
+    const mapping = [row.right, row.left].find((value) => (
+      value && typeof value === 'object' && !Array.isArray(value)
+    )) as Record<string, unknown> | undefined;
+    if (mapping?.srcField || mapping?.destField) {
+      const sourceField = customerPlainText(mapping.srcField || '(不明)');
+      const destinationField = customerPlainText(mapping.destField || '(不明)');
+      settingItem = `フィールドの関連付け（コピー元: ${sourceField} / コピー先: ${destinationField}）`;
+    }
+  }
   const actionPrefix = actionName === '名称不明' ? '' : `actionSettings.actions.${actionName}`;
   if (actionPrefix && path === actionPrefix) {
     settingItem = row.type === 'added'
@@ -3370,7 +3385,9 @@ function customerFieldSettingLabel(settingKey: string, fallback: string): string
 function movedSettingItemLabel(settingItem: string): string {
   // 「表示するフィールド（3件目）」のような一覧項目の移動は、何の並び順が変わったかを明示する。
   const listItem = /^(.+?)（\d+件目）$/.exec(settingItem);
-  return listItem ? `${listItem[1]}の並び順` : '並び順';
+  if (listItem) return `${listItem[1]}の並び順`;
+  if (settingItem.startsWith('フィールドの関連付け（')) return `${settingItem}の並び順`;
+  return '並び順';
 }
 
 function customerLayoutItemParts(
@@ -5487,179 +5504,77 @@ function buildCustomerIssuesSheet(items: CustomerCoverageIssueItem[]): XlsxSheet
 
 const CUSTOMER_GUIDE_SHEET_NAME = 'このファイルの見方';
 
-interface CustomerGuideEntry {
-  label: string;
-  text: string;
-}
-
-interface CustomerGuideSection {
-  title: string;
-  entries: CustomerGuideEntry[];
-}
-
-/** 利用者向けの説明シートの本文。比較結果に依存しない静的な案内と、このファイルに含まれるシートの有無だけを載せる。 */
-function buildCustomerGuideSections(
-  ctx: DiffXlsxContext,
-  availability: CustomerSummarySheetAvailability
-): CustomerGuideSection[] {
-  const sourceName = customerHeaderAppName(ctx.sourceBundle, '比較元のアプリ');
-  const targetName = customerHeaderAppName(ctx.targetBundle, '比較先のアプリ');
-  const issuesNote = availability.hasIssues
-    ? 'このファイルには含まれています。その範囲は比較結果に含まれていないため、先に確認してください。'
-    : 'このファイルには含まれていません。';
-  const featureNote = availability.hasFeatureSheets
-    ? '差分があった機能のシートだけを作っています。差分がない機能のシートはありません。'
-    : 'このファイルには差分のある機能がないため、機能別シートはありません。';
-  return [
-    {
-      title: 'シートの構成',
-      entries: [
-        {
-          label: '比較概要',
-          text: '比較元・比較先のアプリ名、比較日時、比較した設定領域、変更対象の件数（追加・削除・変更・並び順変更）と、機能別の差分明細件数をまとめた表紙です。'
-        },
-        {
-          label: '確認できなかった範囲',
-          text: `取得に失敗した、または一部しか確認できなかった設定領域がある場合にだけ作られるシートです。${issuesNote}`
-        },
-        {
-          label: '変更対象一覧',
-          text: '「何が変わったか」を、フィールドや一覧などの対象ごとに1行でまとめた目次です。細かい設定値は載せておらず、対象が追加・削除・設定変更のどれに当たるかだけが分かります。'
-        },
-        {
-          label: '変更一覧',
-          text: '変わった設定項目を1件ずつ、変更前と変更後の値を並べて示した明細です。変更対象一覧の1行が、ここでは設定項目ごとの複数行に分かれます。'
-        },
-        {
-          label: '機能別シート（01_～20_、99_）',
-          text: `変更一覧と同じ明細を kintone の機能ごとに分けたシートです。${featureNote}`
-        }
-      ]
-    },
-    {
-      title: '確認の手順',
-      entries: [
-        { label: '手順1', text: '「確認できなかった範囲」シートがある場合は先に確認し、比較できていない領域を把握します。' },
-        { label: '手順2', text: '変更対象一覧で、変更のあった対象と「対象の変更」（追加・削除・設定変更など）を確認し、確認する優先順位を決めます。' },
-        { label: '手順3', text: '詳細が必要な対象は、変更対象一覧の右端にある「変更一覧へ」のリンクから変更一覧の該当行へ移動します。' },
-        { label: '手順4', text: '変更一覧の「設定対象／変更内容」のセル内1行目で、対象（フィールド名や一覧名）を確認します。' },
-        { label: '手順5', text: '「差分プロパティ」で、その対象のどの設定項目かを確認します。kintone の設定画面で開く項目に当たります。' },
-        { label: '手順6', text: '「変更前」「変更後」で、正確な値を確認します。「存在しません」は、その側のアプリに対象そのものがないことを表します。' },
-        { label: '手順7', text: '特定の機能に絞って確認したい場合は、変更一覧の「分類」のリンクから機能別シートを開きます。' }
-      ]
-    },
-    {
-      title: '変更対象一覧の列',
-      entries: [
-        { label: '変更対象', text: '変更があったフィールド名や一覧名などです。特定できない場合は「未識別の設定項目」と表示されます。' },
-        {
-          label: '対象の変更',
-          text: '対象そのものがどうなったかです。「追加」「削除」はフィールドや一覧そのものが増えた・消えた場合、「設定変更」は対象は残っていて設定の一部が変わった場合、「並び順変更」は順番だけが変わった場合、「複合変更」はこれらが混在している場合です。選択肢1つの追加などは「設定変更」に入ります。'
-        },
-        { label: '変更箇所', text: '変わった設定項目の名前を最大4つ並べています。5つ以上あるときは「ほかN項目」と付きます。' },
-        { label: '明細件数', text: 'その対象について、変更一覧に何行の明細があるかです。' },
-        { label: '変更一覧', text: '「変更一覧へ」のリンクです。クリックすると、その対象の明細行へ移動します。' }
-      ]
-    },
-    {
-      title: '変更一覧の列',
-      entries: [
-        {
-          label: '設定対象／変更内容',
-          text: '「どの対象か」と「変更の要約」です。1つのセルの中に2行で記載しており、セル内の1行目が対象の名前（フィールド名や一覧名など）、2行目が変更のあらまし（「変更前 → 変更後」「比較先に追加：値」など）です。行の高さが足りないと2行目が隠れることがあります。'
-        },
-        {
-          label: '差分プロパティ',
-          text: 'その対象の「どの設定項目」が変わったかです。たとえば「必須項目」「絞り込み条件」「表示するフィールドの並び順」などが入ります。フィールドや一覧そのものの追加・削除は「フィールド自体」「テーブル自体」と表示されます。'
-        },
-        {
-          label: '変更前／変更後',
-          text: `変わった値そのものです。変更前は比較元（${sourceName}）、変更後は比較先（${targetName}）の値で、変更前は淡い赤、変更後は淡い緑の背景です。`
-        },
-        {
-          label: '読み方の例',
-          text: '設定対象／変更内容のセルに「顧客名」「いいえ → はい」、差分プロパティに「必須項目」とあれば、「顧客名フィールドの必須設定が、いいえからはいに変わった」と読みます。設定対象／変更内容だけでは「顧客名の何かが変わった」ことしか分からないため、差分プロパティと合わせて読むことで意味が確定します。'
-        },
-        {
-          label: '要約だけで判断しない',
-          text: '変更内容の要約は、値の1行目を約30文字までに短くしたものです。絞り込み条件や長い文章は途中で「…」と省略されるため、完全な値は変更前／変更後の列で確認してください。同じ対象について複数の設定項目が変わっている場合は1項目1行に分かれるため、どの行がどの設定項目に当たるかは差分プロパティで見分けます。'
-        }
-      ]
-    },
-    {
-      title: '機能別シートの列',
-      entries: [
-        { label: '基本の列', text: '「変更区分」「設定対象」「差分プロパティ」「変更前」「変更後」で、変更一覧と同じ読み方です。機能によっては対象を特定しやすいように列が増えています。' },
-        {
-          label: '03_フォームフィールド',
-          text: '「配置」「フィールド名」「フィールドコード」「フィールドの種類」が加わり、どのフィールドかをコードでも確認できます。「フィールド存在」「設定値存在」は、そのフィールドや設定値が比較元・比較先のどちらにあるかを示します。'
-        },
-        { label: '06_一覧設定', text: '「一覧名」でどの一覧の変更かを示します。' },
-        { label: '13_アプリアクション', text: '「アクション種別」「アクション名」でどのアクションの変更かを示します。' },
-        { label: '05_フォーム設計情報', text: '03 と 04 の内容を別の形で再掲したものです。参考として残しており、変更対象一覧・変更一覧・件数には含めていません。' },
-        { label: '99_その他の設定', text: 'どの機能の設定か特定できなかった差分をまとめています。' }
-      ]
-    },
-    {
-      title: '値の表記',
-      entries: [
-        { label: '存在しません', text: 'その側のアプリに対象そのもの（フィールドや一覧など）がないことを表します。背景色は付きません。' },
-        { label: '（未設定）（値なし）（空文字）', text: '対象はあるものの値が入っていない状態です。設定画面で空欄になっているものと、値が空文字で保存されているものを区別しています。' },
-        { label: 'N番目', text: '並び順の変更は、比較元・比較先での位置を1始まりの「N番目」で示します。' },
-        { label: 'はい／いいえ', text: 'オン・オフの設定は「はい」「いいえ」で表示します。' },
-        { label: '要約の「…」', text: '設定対象／変更内容の要約で値が長い場合の省略記号です。完全な値は変更前／変更後の列にあります。' }
-      ]
-    }
-  ];
-}
-
+/** 利用者が最初に開く説明シート。長い文章ではなく、目的→シート→見る列の順で案内する。 */
 function buildCustomerGuideSheet(
   ctx: DiffXlsxContext,
   availability: CustomerSummarySheetAvailability
 ): XlsxSheet {
-  const sections = buildCustomerGuideSections(ctx, availability);
-  const labelWidth = 26;
-  const textWidth = 96;
+  const sourceName = customerHeaderAppName(ctx.sourceBundle, '比較元のアプリ');
+  const targetName = customerHeaderAppName(ctx.targetBundle, '比較先のアプリ');
+  const issueGuide = availability.hasIssues
+    ? '最初に確認してください。未取得の範囲は差分結果に含まれません。'
+    : 'このファイルにはありません（取得上の注意なし）。';
+  const featureGuide = availability.hasFeatureSheets
+    ? '差分がある機能だけシートがあります。'
+    : 'このファイルには機能別シートがありません。';
   const rows: (string | number | null)[][] = [
-    ['このファイルの見方', ''],
-    ['このシートは各シートの役割と列の読み方をまとめた説明です。比較結果そのものは含みません。', '']
+    ['このファイルの見方', '', ''],
+    ['迷ったら「変更対象一覧」から始めます。詳しい値は「変更一覧」、機能ごとの確認は番号付きシートを開いてください。', '', ''],
+    ['まず見る順番', '', ''],
+    ['目的', '開くシート', 'ここを見る'],
+    ['比較できなかった範囲がないか確認', '確認できなかった範囲', issueGuide],
+    ['何が変わったかを短時間で把握', '変更対象一覧', '「変更対象」と「対象の変更」を確認。詳しく見る対象は「変更一覧へ」をクリック。'],
+    ['変更前と変更後を詳しく確認', '変更一覧', '「設定対象」→「差分プロパティ」→「変更前／変更後」の順に横へ読む。'],
+    ['特定の機能だけ確認', '01_～20_、99_ の機能別シート', featureGuide],
+    ['変更一覧の読み方', '', ''],
+    ['列', '意味', '読み方の例'],
+    ['設定対象／変更内容', 'どのフィールド・一覧・アクションが変わったか', '1行目が対象名、2行目は短い要約。要約は途中で「…」になる場合があります。'],
+    ['差分プロパティ', '対象のどの設定が変わったか', '例: 必須項目、絞り込み条件、フィールドの関連付けの並び順'],
+    ['変更前', `比較元（${sourceName}）の値`, '淡い赤の列。並び順は「N番目」で表示。'],
+    ['変更後', `比較先（${targetName}）の値`, '淡い緑の列。並び順は「N番目」で表示。'],
+    ['表示の意味', '', ''],
+    ['表示', '意味', '確認方法'],
+    ['追加／削除', '対象そのものが増えた／なくなった', '反対側には「存在しません」と表示されます。'],
+    ['設定変更', '対象は同じで、設定値が変わった', '変更前／変更後を横に見比べます。'],
+    ['並び順変更', '同じ項目の位置だけが変わった', '差分プロパティで「何の並び順か」、変更前／変更後で位置を確認します。'],
+    ['複合変更', '追加・削除・設定変更・並び順変更が混在', '「変更一覧へ」から明細を確認します。'],
+    ['（未設定）／（値なし）／（空文字）', '対象は存在するが値が空', '「存在しません」とは異なります。']
   ];
-  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['title'], ['info']];
-  const rowHeights: number[] = [42, 30];
-  const merges: string[] = ['A1:B1', 'A2:B2'];
-  for (const section of sections) {
-    rows.push([section.title, '']);
-    cellStyles.push(['sectionHeader', 'sectionHeader']);
-    rowHeights.push(30);
-    merges.push(`A${rows.length}:B${rows.length}`);
-    section.entries.forEach((entry, index) => {
-      rows.push([entry.label, entry.text]);
-      cellStyles.push(['summaryLabel', index % 2 === 1 ? 'zebra' : 'normal']);
-      rowHeights.push(readableCustomerRowHeight([
-        { value: entry.label, width: labelWidth },
-        { value: entry.text, width: textWidth }
-      ], 160));
-    });
-  }
+  const sectionRows = new Set([3, 9, 15]);
+  const headingRows = new Set([4, 10, 16]);
+  const cellStyles: Array<Array<XlsxCellStyle | undefined>> = rows.map((_, index) => {
+    const rowNumber = index + 1;
+    if (rowNumber === 1) return ['title', 'title', 'title'];
+    if (rowNumber === 2) return ['info', 'info', 'info'];
+    if (sectionRows.has(rowNumber)) return ['sectionHeader', 'sectionHeader', 'sectionHeader'];
+    if (headingRows.has(rowNumber)) return ['summaryLabel', 'summaryLabel', 'summaryLabel'];
+    return ['summaryLabel', index % 2 === 0 ? 'normal' : 'zebra', index % 2 === 0 ? 'normal' : 'zebra'];
+  });
+  const merges = ['A1:C1', 'A2:C2', ...[3, 9, 15].map((row) => `A${row}:C${row}`)];
+  const widths = [34, 38, 82];
   return {
     name: CUSTOMER_GUIDE_SHEET_NAME,
     rows,
-    colWidths: [labelWidth, textWidth],
+    colWidths: widths,
     rowStyles: rows.map(() => 'normal'),
     cellStyles,
     autoFilter: false,
-    freezeRows: 1,
-    rowHeights,
+    freezeRows: 4,
+    rowHeights: rows.map((row, index) => index < 2 ? (index === 0 ? 42 : 34) : readableCustomerRowHeight([
+      { value: row[0], width: widths[0] },
+      { value: row[1], width: widths[1] },
+      { value: row[2], width: widths[2] }
+    ], 96)),
     styledEmptyCellsAsBlank: true,
     materializeEmptyCellsFromRow: 3,
     merges,
     showGridLines: false,
-    zoomScale: 100,
+    zoomScale: 95,
     print: {
       orientation: 'landscape',
       fitToWidth: 1,
       fitToHeight: 0,
-      repeatRows: { from: 1, to: 1 },
+      repeatRows: { from: 1, to: 4 },
       footer: '&Lこのファイルの見方&Rページ &P / &N'
     }
   };

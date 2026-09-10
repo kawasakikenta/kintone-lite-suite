@@ -929,6 +929,42 @@ describe('diff/engine', () => {
     });
   });
 
+  describe('アプリアクションの並び順オプション', () => {
+    it('未選択では表示順差分を残し、選択時だけ index 差分を除外する', () => {
+      const source = makeBundle({ actionSettings: { actions: {
+        '案件転記': { name: '案件転記', index: '0', enabled: true }
+      } } });
+      const target = makeBundle({ actionSettings: { actions: {
+        '案件転記': { name: '案件転記', index: '2', enabled: false }
+      } } });
+
+      const defaultRows = computeDiffRows(source, target, ['actionSettings'], '').rows;
+      const ignoredRows = computeDiffRows(source, target, ['actionSettings'], '', {
+        normalizationPresetState: { actionOrder: true }
+      }).rows;
+
+      expect(defaultRows.map((row: any) => row.path)).toContain('actionSettings.actions.案件転記.index');
+      expect(ignoredRows.map((row: any) => row.path)).not.toContain('actionSettings.actions.案件転記.index');
+      expect(ignoredRows.map((row: any) => row.path)).toContain('actionSettings.actions.案件転記.enabled');
+    });
+
+    it('選択時はフィールドの関連付けの順序差分も除外する', () => {
+      const mappingA = { srcField: '請求金額', destField: '翌月請求金額' };
+      const mappingB = { srcField: '担当者', destField: '引継担当者' };
+      const source = makeBundle({ actionSettings: { actions: {
+        '案件転記': { name: '案件転記', index: '0', mappings: [mappingA, mappingB] }
+      } } });
+      const target = makeBundle({ actionSettings: { actions: {
+        '案件転記': { name: '案件転記', index: '0', mappings: [mappingB, mappingA] }
+      } } });
+
+      expect(computeDiffRows(source, target, ['actionSettings'], '').rows.length).toBeGreaterThan(0);
+      expect(computeDiffRows(source, target, ['actionSettings'], '', {
+        normalizationPresetState: { actionOrder: true }
+      }).rows).toHaveLength(0);
+    });
+  });
+
   describe('LCS moved pairing (mixed move + add/remove)', () => {
     const rowOf = (code: string, type = 'SINGLE_LINE_TEXT') => ({ type: 'ROW', fields: [{ type, code }] });
 

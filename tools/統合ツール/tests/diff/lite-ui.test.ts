@@ -272,13 +272,14 @@ describe('diff lite result presentation', () => {
 
   it('always states the applied ignore and normalization comparison conditions', () => {
     const applied = renderLiteDiffOverviewHtml(cache([], {
-      normalizationPresetState: { viewOrder: true, appearance: true, unknownPreset: true }
+      normalizationPresetState: { actionOrder: true, viewOrder: true, appearance: true, unknownPreset: true }
     }));
     const none = renderLiteDiffOverviewHtml(cache([]));
 
     expect(applied).toContain('適用した比較条件');
     expect(applied).toContain('無視ルールは適用していません');
-    expect(applied).toContain('正規化 2件を適用しています');
+    expect(applied).toContain('正規化 3件を適用しています');
+    expect(applied).toContain('アプリアクション内の並び順');
     expect(applied).toContain('ビュー/グラフ/アクション順序');
     expect(applied).toContain('見た目/幅/座標');
     expect(applied).not.toContain('unknownPreset');

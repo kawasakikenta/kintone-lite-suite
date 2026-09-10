@@ -455,6 +455,12 @@ export interface DiffNormalizationPreset {
 }
 
 export const DIFF_NORMALIZATION_PRESETS: Record<string, DiffNormalizationPreset> = {
+  actionOrder: {
+    label: 'アプリアクション内の並び順',
+    sections: new Set(['actionSettings']),
+    ignoreKeys: new Set(['index']),
+    unorderedArrays: true
+  },
   viewOrder: {
     label: 'ビュー/グラフ/アクション順序',
     sections: new Set(['viewSettings', 'reportSettings', 'actionSettings']),

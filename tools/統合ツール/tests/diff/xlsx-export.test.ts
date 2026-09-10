@@ -748,10 +748,9 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('このファイルの見方');
 
     for (const text of [
-      'シートの構成', '確認の手順', '変更対象一覧の列', '変更一覧の列', '機能別シートの列', '値の表記',
-      '設定対象／変更内容', '差分プロパティ', '対象の変更', '複合変更',
-      'セル内の1行目が対象の名前', '約30文字', '存在しません',
-      '確認できなかった範囲', 'このファイルには含まれていません。'
+      'まず見る順番', '目的', '開くシート', 'ここを見る', '変更一覧の読み方', '表示の意味',
+      '設定対象／変更内容', '差分プロパティ', '複合変更', '存在しません',
+      '確認できなかった範囲', 'このファイルにはありません（取得上の注意なし）。'
     ]) {
       expect(guide).toContain(text);
     }
@@ -759,7 +758,7 @@ describe('diff/xlsx-export', () => {
     expect(guide).not.toContain('appSettings.name');
     expect(guide).not.toContain('旧名称');
     expect(guide).not.toContain('<hyperlink');
-    expect(guide).toContain('<mergeCell ref="A1:B1"/>');
+    expect(guide).toContain('<mergeCell ref="A1:C1"/>');
   });
 
   it('取得状態の注意があるときは「確認できなかった範囲」の後に「このファイルの見方」を置く', async () => {
@@ -781,7 +780,7 @@ describe('diff/xlsx-export', () => {
     expect(names.indexOf('確認できなかった範囲')).toBe(1);
     expect(names.indexOf('このファイルの見方')).toBe(2);
     expect(names.indexOf('変更対象一覧')).toBe(3);
-    expect(guide).toContain('このファイルには含まれています。');
+    expect(guide).toContain('最初に確認してください。未取得の範囲は差分結果に含まれません。');
   });
 
   it('does not describe an empty filtered export as a complete no-difference result', async () => {
@@ -1212,6 +1211,48 @@ describe('diff/xlsx-export', () => {
     expect(worksheetInlineTexts(list, 'G', 2)).toEqual(['5番目']);
     expect(worksheetInlineTexts(views, 'E', 3)).toEqual(['1番目']);
     expect(worksheetInlineTexts(views, 'F', 3)).toEqual(['5番目']);
+  });
+
+  it('アプリアクションの関連付け順序にコピー元とコピー先を表示する', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      rows: [{
+        sectionKey: 'actionSettings',
+        type: 'moved',
+        moved: true,
+        movedFrom: 25,
+        movedTo: 26,
+        path: 'actionSettings.actions.次月作成.mappings[25]',
+        left: { srcField: '請求金額', destField: '翌月請求金額' },
+        right: { srcField: '請求金額', destField: '翌月請求金額' }
+      }]
+    });
+    const list = await readWorksheetByName(blob, '変更一覧');
+    const actions = await readWorksheetByName(blob, '13_アプリアクション');
+    const label = 'フィールドの関連付け（コピー元: 請求金額 / コピー先: 翌月請求金額）の並び順';
+
+    expect(worksheetInlineTexts(list, 'E', 2)).toEqual([label]);
+    expect(worksheetInlineTexts(list, 'F', 2)).toEqual(['26番目']);
+    expect(worksheetInlineTexts(list, 'G', 2)).toEqual(['27番目']);
+    expect(worksheetInlineTexts(actions, 'E', 3)).toEqual([label]);
+  });
+
+  it('アプリアクションの表示順差分で何の並び順かを明示する', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      rows: [{
+        sectionKey: 'actionSettings',
+        type: 'changed',
+        path: 'actionSettings.actions.案件転記.index',
+        left: '0',
+        right: '2'
+      }]
+    });
+    const list = await readWorksheetByName(blob, '変更一覧');
+    const actions = await readWorksheetByName(blob, '13_アプリアクション');
+
+    expect(worksheetInlineTexts(list, 'E', 2)).toEqual(['アプリアクションの並び順']);
+    expect(worksheetInlineTexts(list, 'F', 2)).toEqual(['1番目']);
+    expect(worksheetInlineTexts(list, 'G', 2)).toEqual(['3番目']);
+    expect(worksheetInlineTexts(actions, 'E', 3)).toEqual(['アプリアクションの並び順']);
   });
 
   it('uses one fully bordered state row and no empty navigation or category table when there is no difference', async () => {
