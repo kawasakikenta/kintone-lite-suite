@@ -473,6 +473,12 @@
         "sort"
       ]);
       DIFF_NORMALIZATION_PRESETS = {
+        actionOrder: {
+          label: "アプリアクションの並び順",
+          sections: /* @__PURE__ */ new Set(["actionSettings"]),
+          ignoreKeys: /* @__PURE__ */ new Set(["index"]),
+          unorderedArrays: false
+        },
         viewOrder: {
           label: "ビュー/グラフ/アクション順序",
           sections: /* @__PURE__ */ new Set(["viewSettings", "reportSettings", "actionSettings"]),
@@ -12923,6 +12929,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     return sectionLabelOf(section.sectionKey || section.section || "全体");
   }
   var NORMALIZATION_LABELS = {
+    actionOrder: "アプリアクションの並び順",
     viewOrder: "ビュー順序",
     permissionOrder: "権限順序",
     generalArrayOrder: "一般配列順序",
@@ -15206,6 +15213,9 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const actionAppRef = /\.((?:destApp|targetApp|sourceApp)\.(?:app|appId)|destAppId|targetAppId|sourceAppId)$/.exec(path);
     if (sectionKey === "actionSettings" && actionAppRef) {
       return actionAppRef[1].startsWith("sourceApp") ? "コピー元のアプリ（アプリID）" : "レコードを追加するアプリ（アプリID）";
+    }
+    if (sectionKey === "actionSettings" && /\.actions(?:\[[^\]]+\]|\.[^.]+)\.index$/.test(path)) {
+      return "アプリアクションの並び順";
     }
     if (sectionKey === "actionSettings" && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(path)) {
       const mappingIndex = Number(path.match(/\.mappings\[(\d+)\]/)?.[1]);
@@ -20694,6 +20704,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     advDetails.body.appendChild(makeNote("⚠ 完全パスとワイルドカードは別アプリにもそのまま適用され、該当差分は結果から除外されます。プロファイル読込後と再比較前に内容を確認してください。"));
     const includeSame = makeCheck({ label: "同一行も差分行に含める" });
     const showResultList = makeCheck({ label: "画面に差分明細を表示（200件ずつ）", checked: true, help: "大量差分でも固まりにくいよう、明細は200件ずつ段階表示します" });
+    const nAction = makeCheck({
+      label: "アプリアクションの並び順を無視",
+      checked: false,
+      help: "アクションの設定内容は比較し、表示順の違いだけを差分から除外します"
+    });
     const nView = makeCheck({ label: "ビュー/グラフ/アクション順序を無視", checked: false });
     const nPerm = makeCheck({ label: "権限/通知/カテゴリ順序を無視", checked: false });
     const nAll = makeCheck({ label: "すべての配列順序を無視", checked: false });
@@ -20705,6 +20720,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const nFileKeys = makeCheck({ label: "添付/JS/CSS fileKeyを無視", checked: false });
     const nEnabled = makeCheck({ label: "有効/無効フラグを無視", checked: false });
     const normalizationControls = {
+      actionOrder: nAction.checkbox,
       viewOrder: nView.checkbox,
       permissionOrder: nPerm.checkbox,
       generalArrayOrder: nAll.checkbox,
@@ -20722,6 +20738,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     [
       includeSame.label,
       showResultList.label,
+      nAction.label,
       nView.label,
       nPerm.label,
       nAll.label,
@@ -21111,6 +21128,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         ignoreKeys: ignTa.value,
         includeSame: includeSame.checkbox.checked,
         normalizationPresetState: {
+          actionOrder: nAction.checkbox.checked,
           viewOrder: nView.checkbox.checked,
           permissionOrder: nPerm.checkbox.checked,
           generalArrayOrder: nAll.checkbox.checked,

@@ -205,6 +205,7 @@ function truncationSectionName(section: DiffTruncationSection): string {
 }
 
 const NORMALIZATION_LABELS: Record<string, string> = {
+  actionOrder: 'アプリアクションの並び順',
   viewOrder: 'ビュー順序',
   permissionOrder: '権限順序',
   generalArrayOrder: '一般配列順序',
@@ -3034,6 +3035,9 @@ function customerGenericSettingLabel(sectionKey: string, path: string, decodedLa
     return actionAppRef[1].startsWith('sourceApp')
       ? 'コピー元のアプリ（アプリID）'
       : 'レコードを追加するアプリ（アプリID）';
+  }
+  if (sectionKey === 'actionSettings' && /\.actions(?:\[[^\]]+\]|\.[^.]+)\.index$/.test(path)) {
+    return 'アプリアクションの並び順';
   }
   if (sectionKey === 'actionSettings' && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(path)) {
     const mappingIndex = Number(path.match(/\.mappings\[(\d+)\]/)?.[1]);
