@@ -205,6 +205,7 @@ function truncationSectionName(section: DiffTruncationSection): string {
 }
 
 const NORMALIZATION_LABELS: Record<string, string> = {
+  actionOrder: 'アプリアクションの並び順',
   viewOrder: 'ビュー順序',
   permissionOrder: '権限順序',
   generalArrayOrder: '一般配列順序',
