@@ -28,7 +28,7 @@ Playwrightハーネスは既定でChromeを使用します。`--browser chromium
 | `npm run test:diff-pair-folders-dom` | 複数対複数のフォルダ取込、安全な自動対応、明示的な対応確認、JSONだけの比較、出力導線を実ブラウザDOMで検証 |
 | `npm run test:diff-compare` | `tools/差分比較.js` のHEAD版と作業ツリー版を比較。作業ツリー版は意味・操作契約、完全／不完全、差分0件、レビュー、出力、技術情報とモバイル差分値の初期折りたたみ、完了後CTA、画面幅・倍率相当も検証 |
 | `npm run test:er-compare` | `tools/ER図.js` のHEAD版と作業ツリー版を倍率・画面幅別に比較 |
-| `npm run test:reflect-dom` | プレビュー反映の3ステップ、二重実行防止、差分の鮮度、対象選択、JSON読込、部分失敗・再試行、キーボード操作、320〜1440pxの5サイズを合成データで検証。実アプリには通信せず、`.iter-shots/reflect-lite-dom/` に画面・結果・操作デモを保存 |
+| `npm run test:reflect-dom` | プレビュー反映の4ステップ、実エンジン＋合成APIで送信内容・revision・バックアップ順序・外部更新時の停止・削除確認・参照不足、二重実行防止、差分の鮮度、対象選択、JSON読込、部分失敗・再試行、キーボード操作、320〜1440pxの5サイズを合成データで検証。実アプリには通信せず、`.iter-shots/reflect-lite-dom/` に画面・結果・操作デモを保存 |
 | `npm run test:lite-workflows` | 設計書・設定取得・ER図・プロセス図・CSV出力・フィールド・JS/CSS・レコードの操作選択、確認、実行、二重実行防止、入力検証、失敗復帰、320〜1440pxの4サイズを合成データで検証。`.iter-shots/lite-workflows/` に画面・結果・操作デモを保存 |
 
 `test:record-metadata` は、CSVの全アプリ事前検査・行/フィールド別エラー・構成の異なるアプリ・先頭行プレビュー・不正CSVの書込前停止・実行時再検査・キャンセルも検証します。プロセスでは同名アクションの遷移元区別、実行できない同名重複、次の作業者、SECONDARYアクション、生成クエリの取り違え防止を検証します。

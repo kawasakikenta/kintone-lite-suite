@@ -45,13 +45,13 @@ describe('lite preview reflection revisions', () => {
 
   it('sends the reviewed target revision when replacing views', async () => {
     const server = setup(
-      { viewSettings: { views: { List: { type: 'LIST', index: 0 } } } },
+      { viewSettings: { views: { List: { type: 'LIST', fields: [], index: 0 } } } },
       { viewSettings: { views: {} } }, 42
     );
     const result = await server.apply();
     expect(result.sections[0].status).toBe('ok');
     expect(server.writes()).toEqual([['/k/v1/preview/app/views.json', 'PUT', {
-      app: '2', views: { List: { type: 'LIST', index: 0 } }, revision: '42'
+      app: '2', views: { List: { type: 'LIST', fields: [], index: '0' } }, revision: '42'
     }]]);
   });
 
@@ -59,9 +59,9 @@ describe('lite preview reflection revisions', () => {
     const server = setup({
       fieldSettings: { properties: {
         added: { type: 'SINGLE_LINE_TEXT', code: 'added' },
-        existing: { type: 'NUMBER', code: 'existing' }
+        existing: { type: 'NUMBER', code: 'existing', label: '更新後' }
       } },
-      viewSettings: { views: { List: { type: 'LIST', index: 0 } } }
+      viewSettings: { views: { List: { type: 'LIST', fields: [], index: 0 } } }
     }, {
       fieldSettings: { properties: { existing: { type: 'NUMBER', code: 'existing' } } },
       viewSettings: { views: {} }
@@ -76,7 +76,7 @@ describe('lite preview reflection revisions', () => {
   it('stops after a concurrent update between sections even when stopOnError is false', async () => {
     const server = setup({
       layoutSettings: { layout: [{ type: 'ROW', fields: [] }] },
-      viewSettings: { views: { List: { type: 'LIST', index: 0 } } },
+      viewSettings: { views: { List: { type: 'LIST', fields: [], index: 0 } } },
       reportSettings: { reports: {} }
     }, { layoutSettings: { layout: [] }, viewSettings: { views: {} }, reportSettings: { reports: {} } });
     server.afterWrite((response) => { server.advanceRevision(); return response; });
@@ -92,7 +92,7 @@ describe('lite preview reflection revisions', () => {
     const server = setup({
       fieldSettings: { properties: {
         added: { type: 'SINGLE_LINE_TEXT', code: 'added' },
-        existing: { type: 'NUMBER', code: 'existing' }
+        existing: { type: 'NUMBER', code: 'existing', label: '更新後' }
       } }, viewSettings: { views: {} }
     }, {
       fieldSettings: { properties: { existing: { type: 'NUMBER', code: 'existing' } } },
@@ -109,7 +109,7 @@ describe('lite preview reflection revisions', () => {
   });
 
   it('does not continue with an unverified revision when a write response omits it', async () => {
-    const server = setup({ viewSettings: { views: {} }, layoutSettings: { layout: [] } },
+    const server = setup({ viewSettings: { views: {} }, layoutSettings: { layout: [{ type: 'ROW', fields: [] }] } },
       { viewSettings: { views: {} }, layoutSettings: { layout: [] } });
     server.afterWrite(() => ({}));
     const result = await server.apply({ stopOnError: false });

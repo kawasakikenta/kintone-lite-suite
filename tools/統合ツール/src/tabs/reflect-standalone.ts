@@ -1,410 +1,176 @@
 'use strict';
 
-import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
-import { deepClone, stableStringify, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
+import { SECTION_DEFS } from '../constants.js';
+import { buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, fetchBundle, pickRevision, isRevisionConflictError } from '../api.js';
-import { captureReflectBaseline, assertReflectBaselineMatches, assertCompleteReflectBackup, isCompleteReflectSection, type ReflectBaseline } from '../reflect/standalonePreflight.js';
+import { captureReflectBaseline, assertReflectBaselineMatches, assertCompleteReflectBackup, type ReflectBaseline } from '../reflect/standalonePreflight.js';
+import { buildReflectSectionPlan, reflectInspectionScopes, reflectSelectionBlockers, listReflectFieldCodes, type ReflectSectionPlan } from '../reflect/standalonePlan.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { pushReflectErrorLog as pushErrorLog, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
 
-function filterWritable(props: any) {
-  const out: Record<string, any> = {};
-  for (const [k, def] of Object.entries(props || {}) as Array<[string, any]>) {
-    if (!def || typeof def !== 'object') continue;
-    if (SYSTEM_FIELD_TYPES.has(def.type)) continue;
-    out[k] = deepClone(def);
+export interface ReflectOptions {
+  sourceAppId: string; sourceGuestId?: string; sourcePreview?: boolean; sourceBundle?: unknown;
+  targetAppId: string; targetGuestId?: string; scopes: string[];
+  lookupMap?: Record<string, string>; preserveTargetOnly?: boolean;
+}
+export type PreviewSectionEntry = ReflectSectionPlan;
+export interface PreviewReflectResult {
+  totalSections: number; changedSections: number; sameSections: number; errorSections: number;
+  entries: PreviewSectionEntry[]; baseline: ReflectBaseline; sourceFieldCodes: string[]; targetFieldCodes: string[];
+}
+export interface ReflectAppIdentity { appId: string; name: string; code: string; guestId: string }
+export interface ReflectIdentities { source: ReflectAppIdentity; target: ReflectAppIdentity }
+
+export function reflectConnectionError(opts: Pick<ReflectOptions, 'sourceAppId' | 'sourceGuestId' | 'sourcePreview' | 'sourceBundle' | 'targetAppId' | 'targetGuestId'>): string {
+  for (const [label, value, optional] of [
+    ['反映元アプリID', opts.sourceAppId, !!opts.sourceBundle], ['反映先アプリID', opts.targetAppId, false],
+    ['反映元ゲストスペースID', opts.sourceGuestId, true], ['反映先ゲストスペースID', opts.targetGuestId, true]
+  ] as const) {
+    if (optional && !value) continue;
+    if (!/^[1-9]\d*$/.test(String(value || ''))) return `${label}には正の整数を入力してください。`;
   }
-  return out;
+  if (!opts.sourceBundle && opts.sourcePreview && opts.sourceAppId === opts.targetAppId && (opts.sourceGuestId || '') === (opts.targetGuestId || '')) return '反映元と反映先が同じプレビューです。別のアプリ、または反映元の本番設定を選んでください。';
+  return '';
 }
 
-function convertLookup(fieldDef: any, map: Record<string, any>) {
-  const def: any = deepClone(fieldDef || ({} as any));
-  if (!Object.keys(map).length) return def;
-  const walk = (node: any) => {
-    if (!node || typeof node !== 'object') return;
-    const rel = node.lookup?.relatedApp;
-    if (rel?.app != null) {
-      const after = map[String(rel.app)];
-      if (after && String(after) !== String(rel.app)) node.lookup.relatedApp.app = String(after);
-    }
-    if (node.type === 'SUBTABLE' && node.fields) Object.values(node.fields).forEach(walk);
+/** Resolve IDs through the non-preview app-info endpoint, so confirmation uses verified names. */
+export async function resolveReflectAppsStandalone(opts: ReflectOptions): Promise<ReflectIdentities> {
+  const invalid = reflectConnectionError(opts);
+  if (invalid) throw new Error(invalid);
+  const resolve = async (appId: string, guestId = ''): Promise<ReflectAppIdentity> => {
+    const info = await apiGet(buildApiPrefix(guestId, false), '/app.json', { id: appId });
+    if (String(info?.appId) !== appId || typeof info?.name !== 'string' || !info.name) throw new Error(`App ${appId} の名前とIDを確認できません。入力と閲覧権限を確認してください。`);
+    return { appId, guestId, name: info.name, code: String(info.code || '') };
   };
-  walk(def);
-  return def;
+  const target = await resolve(opts.targetAppId, opts.targetGuestId);
+  const source = opts.sourceBundle ? { appId: opts.sourceAppId, guestId: '', name: '設定JSON', code: '' } : await resolve(opts.sourceAppId, opts.sourceGuestId);
+  return { source, target };
 }
 
-/** @returns 失敗した手順数（0 なら全手順成功） */
-async function applyFieldSection(app, sourceProps, current, logs, lookupMap, stopOnError, write): Promise<number> {
-  const currentMap = current.properties || ({} as any);
-  const srcWritable = filterWritable(sourceProps);
-
-  const adds = {};
-  const updates = {};
-  for (const [code, def] of Object.entries(srcWritable) as Array<[string, any]>) {
-    const converted = convertLookup(def, lookupMap);
-    if (currentMap[code]) {
-      updates[code] = converted;
-    } else {
-      adds[code] = converted;
-    }
-  }
-
-  let failedSteps = 0;
-  if (Object.keys(adds).length) {
-    try {
-      await write('POST', '/app/form/fields.json', { app, properties: adds }, 'フィールド追加');
-      logs.push(`  OK フィールド追加: ${Object.keys(adds).length}件`);
-    } catch (e) {
-      failedSteps += 1;
-      const reported = e;
-      pushErrorLog(logs, `  NG フィールド追加: ${reported.message}`, reported.message);
-      if (stopOnError || mustStopReflection(reported)) throw reported;
-    }
-  }
-  if (Object.keys(updates).length) {
-    try {
-      await write('PUT', '/app/form/fields.json', { app, properties: updates }, 'フィールド更新');
-      logs.push(`  OK フィールド更新: ${Object.keys(updates).length}件`);
-    } catch (e) {
-      failedSteps += 1;
-      const reported = e;
-      pushErrorLog(logs, `  NG フィールド更新: ${reported.message}`, reported.message);
-      if (stopOnError || mustStopReflection(reported)) throw reported;
-    }
-  }
-  return failedSteps;
+function orderedScopes(scopes: string[]): string[] {
+  if (!scopes?.length) throw new Error('反映する項目を選択してください。');
+  const supported = SECTION_DEFS.filter(def => def.put);
+  if (scopes.some(key => !supported.some(def => def.key === key))) throw new Error('反映に対応していない項目が含まれています。');
+  return supported.filter(def => scopes.includes(def.key)).map(def => def.key);
 }
 
-function mustStopReflection(error: any): boolean {
-  return !!error?.stopReflection || isRevisionConflictError(error);
-}
-
-/**
- * @param {{
- *   sourceAppId: string,
- *   sourceGuestId?: string,
- *   sourcePreview?: boolean,
- *   sourceBundle?: unknown,
- *   targetAppId: string,
- *   targetGuestId?: string,
- *   scopes: string[],
- *   lookupMap?: Record<string,string>,
- *   stopOnError?: boolean,
- *   doBackup?: boolean,
- *   reviewBaseline: ReflectBaseline
- * }} opts
- * @param {(msg: string, err?: boolean) => void} setStatus
- * @param {(logs: string[]) => void} onProgress
- * @returns 実行ログと、セクション単位の実行結果（再実行準備に使う）
- */
-export async function runApplyPreviewStandalone(
-  opts,
-  setStatus,
-  onProgress
-): Promise<{ logs: string[]; sections: ApplySectionOutcome[] }> {
-  const { sourceAppId, sourceGuestId, sourcePreview, targetAppId, targetGuestId } = opts;
-  if (!sourceAppId && !opts.sourceBundle) throw new Error('比較元アプリIDまたは設定JSONを指定してください');
-  if (!targetAppId) throw new Error('比較先アプリIDを入力してください');
-
-  const scopes = (opts.scopes || []).filter(Boolean);
-  if (!scopes.length) throw new Error('反映するセクションを選択してください');
-
-  if (!opts.reviewBaseline) throw new Error('反映前に差分を取得して確認してください。');
-  const lookupMap = opts.lookupMap || ({} as any);
-  const stopOnError = !!opts.stopOnError;
-  const logs = [];
-
-  setStatus(opts.sourceBundle ? '比較元設定を設定JSONから読み込み中...' : '比較元設定を取得中...');
-  const sourceBundle = opts.sourceBundle
-    ? pickSettingsBundle(opts.sourceBundle, { side: 'source', appId: String(sourceAppId || '').trim() })
-    : await fetchBundle({
-      appId: sourceAppId,
-      guestId: sourceGuestId || '',
-      preview: !!sourcePreview,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
-    });
-
-  setStatus(opts.doBackup ? '比較先プレビューのバックアップ取得中...' : '確認済みの比較先プレビューと照合中...');
-  const targetBundle = await fetchBundle({
-    appId: targetAppId,
-    guestId: targetGuestId || '',
-    preview: true,
-    sections: scopes,
-    onProgress: (p, l) => setStatus(`比較先再取得 ${Math.round(p * 100)}% (${l})`)
+async function getReflectBundles(opts: ReflectOptions, scopes: string[], setStatus: (message: string) => void) {
+  setStatus(opts.sourceBundle ? '反映元の設定JSONを読み込み中...' : '反映元の設定を取得中...');
+  const source = opts.sourceBundle ? pickSettingsBundle(opts.sourceBundle, { side: 'source', appId: String(opts.sourceAppId || '').trim(), rawSettings: true }) : await fetchBundle({
+    rawSettings: true,
+    appId: opts.sourceAppId, guestId: opts.sourceGuestId || '', preview: !!opts.sourcePreview, sections: scopes,
+    onProgress: (p, label) => setStatus(`反映元取得 ${Math.round(p * 100)}% (${label})`)
   });
-  if (opts.doBackup) assertCompleteReflectBackup(targetBundle, scopes);
-  let revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes }, sourceBundle, targetBundle);
+  setStatus('反映先プレビューの設定を確認中...');
+  const target = await fetchBundle({
+    rawSettings: true,
+    appId: opts.targetAppId, guestId: opts.targetGuestId || '', preview: true, sections: reflectInspectionScopes(scopes),
+    onProgress: (p, label) => setStatus(`反映先取得 ${Math.round(p * 100)}% (${label})`)
+  });
+  return { source, target };
+}
 
-  if (opts.doBackup) {
-    const backup = targetBundle;
-    const payload = JSON.stringify({ generatedAt: new Date().toISOString(), scopes, bundle: backup }, null, 2);
-    const blob = new Blob([payload], { type: 'application/json' });
+export async function previewReflectStandalone(opts: ReflectOptions, setStatus: (message: string) => void): Promise<PreviewReflectResult> {
+  const invalid = reflectConnectionError(opts);
+  if (invalid) throw new Error(invalid);
+  const scopes = orderedScopes(opts.scopes);
+  const { source, target } = await getReflectBundles(opts, scopes, setStatus);
+  const entries = scopes.map(key => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], opts));
+  const baseline = captureReflectBaseline({ ...opts, scopes: reflectInspectionScopes(scopes) }, source, target);
+  for (const entry of entries.filter(entry => !entry.blockers.length)) {
+    try {
+      assertReflectBaselineMatches(baseline, { ...opts, scopes: [entry.sectionKey], targetDependencies: entry.requiredFields?.length ? ['fieldSettings'] : [] }, source, target);
+    } catch (error: any) { entry.status = 'error'; entry.blockers.push(error.message); entry.message = error.message; }
+  }
+  return {
+    totalSections: entries.length, changedSections: entries.filter(entry => entry.status === 'change').length,
+    sameSections: entries.filter(entry => entry.status === 'same').length,
+    errorSections: entries.filter(entry => !['change', 'same'].includes(entry.status)).length,
+    entries, sourceFieldCodes: listReflectFieldCodes(source, true), targetFieldCodes: listReflectFieldCodes(target), baseline
+  };
+}
+
+export async function runApplyPreviewStandalone(
+  opts: ReflectOptions & { stopOnError?: boolean; doBackup?: boolean; doDeploy?: boolean; reviewBaseline: ReflectBaseline },
+  setStatus: (message: string, error?: boolean) => void, onProgress: (logs: string[]) => void
+): Promise<{ logs: string[]; sections: ApplySectionOutcome[] }> {
+  if (!opts.reviewBaseline) throw new Error('反映前に差分を取得して確認してください。');
+  if (opts.doDeploy) throw new Error('この機能はプレビューへの反映専用です。本番公開には対応していません。');
+  const invalid = reflectConnectionError(opts);
+  if (invalid) throw new Error(invalid);
+  const scopes = orderedScopes(opts.scopes);
+  const { source, target } = await getReflectBundles(opts, scopes, setStatus);
+  if (opts.doBackup) assertCompleteReflectBackup(target, scopes);
+  let revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes }, source, target);
+  const plans = scopes.map(key => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], opts));
+  const issues = reflectSelectionBlockers(plans, scopes, listReflectFieldCodes(source, true), listReflectFieldCodes(target));
+  if (issues.length) throw new Error(`反映前の検査で停止しました。まだ書き込んでいません。\n${issues.join('\n')}`);
+  if (plans.some(plan => plan.requiredFields?.length)) revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes, targetDependencies: ['fieldSettings'] }, source, target);
+  if (Object.keys(opts.lookupMap || {}).length) {
+    const lookup = await preflightLookupMapStandalone(opts.lookupMap!, { targetGuestId: opts.targetGuestId });
+    if (!lookup.ok) throw new Error(`ルックアップ変換先を確認できないため反映を中止しました。\n${lookup.missing.map(item => `${item.from} → ${item.to}: ${item.reason}`).join('\n')}`);
+  }
+  const logs: string[] = [];
+  if (opts.doBackup && plans.some(plan => plan.operations.length)) {
+    const blob = new Blob([JSON.stringify({ generatedAt: new Date().toISOString(), scopes, bundle: target }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = buildExportFilename('反映前バックアップ', 'json', { appLabel: buildAppFilenameLabel(targetAppId, '') });
+    a.download = buildExportFilename('反映前バックアップ', 'json', { appLabel: buildAppFilenameLabel(opts.targetAppId, '') });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     logs.push('バックアップ取得完了（保存を開始しました）');
   }
-
-  const prefix = buildApiPrefix(targetGuestId || '', true);
-  const app = targetAppId;
-  // 確認時のrevisionから、自分の更新応答だけで進める。途中GETの最新値で上書きしない。
-  const write = async (method: 'POST' | 'PUT', endpoint: string, body: Record<string, unknown>, subject: string) => {
+  const prefix = buildApiPrefix(opts.targetGuestId || '', true);
+  const write = async (operation: ReflectSectionPlan['operations'][number]) => {
     try {
-      const response = await (method === 'POST' ? apiPost : apiPut)(prefix, endpoint, { ...body, revision });
-      const nextRevision = pickRevision(response);
-      if (!/^\d+$/.test(nextRevision)) {
-        const error = new Error(`${subject}の書き込みは完了しましたが、更新後のrevisionを確認できません。以降の反映を中止します。差分を取得し直して状態を確認してください。`) as Error & { stopReflection: boolean };
-        error.stopReflection = true;
-        throw error;
+      const response = await (operation.method === 'POST' ? apiPost : apiPut)(prefix, operation.endpoint, { ...operation.body, app: opts.targetAppId, revision });
+      const next = pickRevision(response);
+      if (!/^\d+$/.test(next)) {
+        const error = new Error(`${operation.label}の書き込みは完了しましたが、更新後のrevisionを確認できません。以降の反映を中止します。差分を取得し直して状態を確認してください。`) as Error & { stopReflection: boolean };
+        error.stopReflection = true; throw error;
       }
-      revision = nextRevision;
-    } catch (error) {
-      throw decorateRevisionConflict(error, subject);
-    }
+      revision = next;
+    } catch (error) { throw decorateRevisionConflict(error, operation.label); }
   };
-
-  logs.push(`比較元: ${opts.sourceBundle ? `設定JSON${sourceAppId ? ` (App ${sourceAppId})` : ''}` : sourceAppId} → 比較先(プレビュー): ${targetAppId}`);
-  logs.push(`セクション: ${scopes.length}件`);
-  logs.push('');
-
-  let hadError = false;
+  logs.push(`反映元: ${opts.sourceBundle ? '設定JSON' : opts.sourceAppId} → 反映先(プレビュー): ${opts.targetAppId}`);
   const sections: ApplySectionOutcome[] = [];
-
-  for (let i = 0; i < scopes.length; i++) {
-    const secKey = scopes[i];
-    const def = SECTION_DEFS.find((d) => d.key === secKey);
-    if (!def || !def.put) {
-      logs.push(`SKIP ${def?.label || secKey}`);
-      sections.push({ sectionKey: secKey, label: def?.label || secKey, status: 'skip', message: '反映非対応セクション' });
-      continue;
+  for (const [index, plan] of plans.entries()) {
+    const outcome = { sectionKey: plan.sectionKey, label: plan.label };
+    if (!plan.operations.length) {
+      sections.push({ ...outcome, status: 'skip', message: '変更なし（書き込み不要）' });
+      logs.push(`SKIP ${plan.label}: 書き込み不要`); onProgress(logs); continue;
     }
-
-    const sourceSec = deepClone(sourceBundle.sections?.[secKey]);
-    if (!sourceSec || sourceSec._fetchError) {
-      logs.push(`SKIP ${def.label}: source未取得`);
-      sections.push({ sectionKey: secKey, label: def.label, status: 'skip', message: '比較元未取得' });
-      onProgress(logs);
-      continue;
-    }
-
-    setStatus(`反映中 ${i + 1}/${scopes.length}: ${def.label}`);
+    setStatus(`反映中 ${index + 1}/${plans.length}: ${plan.label}`);
     try {
-      if (secKey === 'fieldSettings') {
-        const failedSteps = await applyFieldSection(app, sourceSec.properties || sourceSec, targetBundle.sections.fieldSettings, logs, lookupMap, stopOnError, write);
-        if (failedSteps > 0) {
-          hadError = true;
-          logs.push(`NG ${def.label}: 一部の手順が失敗しました（詳細は上の行）`);
-          sections.push({ sectionKey: secKey, label: def.label, status: 'ng', message: '一部の手順が失敗' });
-        } else {
-          logs.push(`OK ${def.label}`);
-          sections.push({ sectionKey: secKey, label: def.label, status: 'ok' });
-        }
-      } else {
-        await write('PUT', def.endpoint, { app, ...def.putBuilder(sourceSec) }, `${def.label}の反映`);
-        logs.push(`OK ${def.label}`);
-        sections.push({ sectionKey: secKey, label: def.label, status: 'ok' });
-      }
-    } catch (e) {
-      hadError = true;
-      const msg = e.message || String(e);
-      pushErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
-      sections.push({ sectionKey: secKey, label: def.label, status: 'ng', message: msg });
-      if (stopOnError || mustStopReflection(e)) {
-        // 残りのセクションは未実行として記録し、再実行の対象にできるようにする
-        for (let j = i + 1; j < scopes.length; j++) {
-          const restKey = scopes[j];
-          const restDef = SECTION_DEFS.find((d) => d.key === restKey);
-          sections.push({ sectionKey: restKey, label: restDef?.label || restKey, status: 'pending', message: '中断のため未実行' });
-        }
-        logs.push(`中断（未実行 ${scopes.length - i - 1} 件）`);
-        break;
+      for (const operation of plan.operations) { await write(operation); logs.push(`  OK ${operation.label}`); }
+      sections.push({ ...outcome, status: 'ok' }); logs.push(`OK ${plan.label}`);
+    } catch (error: any) {
+      const message = error.message || String(error);
+      sections.push({ ...outcome, status: 'ng', message }); pushErrorLog(logs, `NG ${plan.label}: ${message}`, message);
+      if (opts.stopOnError !== false || error.stopReflection || isRevisionConflictError(error)) {
+        for (const pending of plans.slice(index + 1)) sections.push({ sectionKey: pending.sectionKey, label: pending.label, status: 'pending', message: '中断のため未実行' });
+        logs.push(`中断（未実行 ${plans.length - index - 1} 件）`); break;
       }
     }
     onProgress(logs);
   }
-
-  const ok = sections.filter((s) => s.status === 'ok').length;
-  const ng = sections.filter((s) => s.status === 'ng').length;
-  const pending = sections.filter((s) => s.status === 'pending').length;
-  logs.push('');
-  logs.push(`=== 完了: OK ${ok} / NG ${ng}${pending ? ` / 未実行 ${pending}` : ''} ===`);
-  onProgress(logs);
-  setStatus(hadError ? '反映完了（一部エラーあり）' : '反映完了');
+  const count = (status: ApplySectionOutcome['status']) => sections.filter(section => section.status === status).length;
+  logs.push(`=== 完了: OK ${count('ok')} / NG ${count('ng')} / 未実行 ${count('pending')} / 変更なし ${count('skip')} ===`);
+  onProgress(logs); setStatus(count('ng') ? '反映完了（一部エラーあり）' : '反映完了');
   return { logs, sections };
 }
 
-// =============================================================================
-// Lite 版向け追加ヘルパー（フル版の安全機能と同等の最小実装）
-// =============================================================================
-
-export interface LookupPreflightOptions {
-  /** ゲストID（API prefix 解決に使用） */
-  targetGuestId?: string;
-}
-
-export interface LookupPreflightIssue {
-  from: string;
-  to: string;
-  reason: string;
-}
-
-export interface LookupPreflightResult {
-  ok: boolean;
-  missing: LookupPreflightIssue[];
-}
-
-/**
- * Lookup AppID マッピングの変換先アプリが実在するかをチェックする。
- * フル版の preflightLookupMap の lite 版相当（TTL キャッシュなし）。
- */
-export async function preflightLookupMapStandalone(
-  lookupMap: Record<string, string>,
-  opts: LookupPreflightOptions = {}
-): Promise<LookupPreflightResult> {
-  const entries = Object.entries(lookupMap || {});
-  if (!entries.length) return { ok: true, missing: [] };
-  const prefix = buildApiPrefix(opts.targetGuestId || '', true);
+export interface LookupPreflightOptions { targetGuestId?: string }
+export interface LookupPreflightIssue { from: string; to: string; reason: string }
+export interface LookupPreflightResult { ok: boolean; missing: LookupPreflightIssue[] }
+export async function preflightLookupMapStandalone(lookupMap: Record<string, string>, opts: LookupPreflightOptions = {}): Promise<LookupPreflightResult> {
   const missing: LookupPreflightIssue[] = [];
-  for (const [from, to] of entries) {
-    const target = String(to || '').trim();
-    if (!target || !/^\d+$/.test(target)) {
-      missing.push({ from, to: target, reason: 'AppID形式が不正' });
-      continue;
-    }
+  for (const [from, to] of Object.entries(lookupMap || {})) {
+    if (!/^[1-9]\d*$/.test(from) || !/^[1-9]\d*$/.test(String(to))) { missing.push({ from, to, reason: 'AppID形式が不正' }); continue; }
     try {
-      await apiGet(prefix, '/app.json', { id: target });
-    } catch (e: any) {
-      missing.push({ from, to: target, reason: `取得失敗: ${e?.message || String(e)}` });
-    }
+      const info = await apiGet(buildApiPrefix(opts.targetGuestId || '', false), '/app.json', { id: to });
+      if (String(info?.appId) !== to) throw new Error('応答のアプリIDが一致しません');
+    } catch (error: any) { missing.push({ from, to, reason: `取得失敗: ${error.message || String(error)}` }); }
   }
-  return { ok: missing.length === 0, missing };
-}
-
-export interface PreviewSectionEntry {
-  sectionKey: string;
-  label: string;
-  status: 'change' | 'same' | 'src-missing' | 'tgt-missing' | 'error';
-  message: string;
-  /** フィールド設定の場合のみ、追加/更新/削除候補件数を返す */
-  fieldStats?: { add: number; update: number; tgtOnly: number };
-}
-
-export interface PreviewReflectResult {
-  totalSections: number;
-  changedSections: number;
-  sameSections: number;
-  errorSections: number;
-  entries: PreviewSectionEntry[];
-  baseline: ReflectBaseline;
-}
-
-/**
- * 反映実行前に「比較元と比較先プレビューでどのセクションが変わるか」を比較する。
- * フル版の差分エンジン相当のフル機能はないが、セクション単位の一致/不一致と、
- * フィールド設定のみ追加/更新/比較先のみ件数を返す。
- */
-export async function previewReflectStandalone(
-  opts: {
-    sourceAppId: string;
-    sourceGuestId?: string;
-    sourcePreview?: boolean;
-    sourceBundle?: unknown;
-    targetAppId: string;
-    targetGuestId?: string;
-    scopes: string[];
-    lookupMap?: Record<string, string>;
-  },
-  setStatus: (msg: string) => void
-): Promise<PreviewReflectResult> {
-  const scopes = (opts.scopes || []).filter(Boolean);
-  const lookupMap = opts.lookupMap || ({} as any);
-  if (!scopes.length) throw new Error('プレビュー対象セクションが空です');
-  if (!opts.sourceAppId && !opts.sourceBundle) throw new Error('比較元アプリIDまたは設定JSONを指定してください');
-  if (!opts.targetAppId) throw new Error('比較先アプリIDを入力してください');
-
-  setStatus(opts.sourceBundle ? '比較元設定を設定JSONから読み込み中...' : '比較元設定を取得中...');
-  const source = opts.sourceBundle
-    ? pickSettingsBundle(opts.sourceBundle, { side: 'source', appId: String(opts.sourceAppId || '').trim() })
-    : await fetchBundle({
-      appId: opts.sourceAppId,
-      guestId: opts.sourceGuestId || '',
-      preview: !!opts.sourcePreview,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`比較元取得 ${Math.round(p * 100)}% (${l})`)
-    });
-  setStatus('比較先プレビューを取得中...');
-  const target = await fetchBundle({
-    appId: opts.targetAppId,
-    guestId: opts.targetGuestId || '',
-    preview: true,
-    sections: scopes,
-    onProgress: (p, l) => setStatus(`比較先取得 ${Math.round(p * 100)}% (${l})`)
-  });
-
-  const entries: PreviewSectionEntry[] = [];
-  for (const secKey of scopes) {
-    const def = SECTION_DEFS.find((d) => d.key === secKey);
-    const label = def?.label || secKey;
-    const srcSec = source.sections?.[secKey];
-    const tgtSec = target.sections?.[secKey];
-
-    if (!isCompleteReflectSection(srcSec)) {
-      entries.push({ sectionKey: secKey, label, status: 'src-missing', message: `比較元未取得: ${(srcSec as any)?._fetchError || (srcSec as any)?._partial?.message || '不明'}` });
-      continue;
-    }
-    if (!isCompleteReflectSection(tgtSec)) {
-      entries.push({ sectionKey: secKey, label, status: 'tgt-missing', message: `比較先未取得: ${(tgtSec as any)?._fetchError || (tgtSec as any)?._partial?.message || '不明'}` });
-      continue;
-    }
-
-    // フィールド設定のみ詳細件数を出す
-    if (secKey === 'fieldSettings') {
-      const srcPropsRaw = filterWritable((srcSec as any).properties || srcSec);
-      const srcProps: Record<string, any> = {};
-      for (const [code, def] of Object.entries(srcPropsRaw) as Array<[string, any]>) {
-        srcProps[code] = convertLookup(def, lookupMap);
-      }
-      const tgtProps = filterWritable((tgtSec as any).properties || tgtSec || {});
-      if (stableStringify(srcProps) === stableStringify(tgtProps)) {
-        entries.push({ sectionKey: secKey, label, status: 'same', message: '差分なし' });
-        continue;
-      }
-      let add = 0;
-      let update = 0;
-      let tgtOnly = 0;
-      for (const code of Object.keys(srcProps)) {
-        if (!tgtProps[code]) { add += 1; continue; }
-        if (stableStringify(srcProps[code]) !== stableStringify(tgtProps[code])) update += 1;
-      }
-      for (const code of Object.keys(tgtProps)) {
-        if (!srcProps[code]) tgtOnly += 1;
-      }
-      const detail = `追加 ${add} / 更新 ${update} / 比較先のみ ${tgtOnly}`;
-      entries.push({
-        sectionKey: secKey,
-        label,
-        status: 'change',
-        message: detail,
-        fieldStats: { add, update, tgtOnly }
-      });
-    } else {
-      if (stableStringify(srcSec) === stableStringify(tgtSec)) {
-        entries.push({ sectionKey: secKey, label, status: 'same', message: '差分なし' });
-        continue;
-      }
-      entries.push({ sectionKey: secKey, label, status: 'change', message: '差分あり（セクション単位）' });
-    }
-  }
-
-  return {
-    totalSections: entries.length,
-    changedSections: entries.filter((e) => e.status === 'change').length,
-    sameSections: entries.filter((e) => e.status === 'same').length,
-    errorSections: entries.filter((e) => e.status === 'src-missing' || e.status === 'tgt-missing' || e.status === 'error').length,
-    entries,
-    baseline: captureReflectBaseline({ ...opts, scopes }, source, target)
-  };
+  return { ok: !missing.length, missing };
 }

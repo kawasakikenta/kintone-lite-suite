@@ -3,6 +3,7 @@
 import { ensureBundleShape, pickBundleSections } from './api.js';
 
 export interface SettingsBundlePickOptions {
+  rawSettings?: boolean;
   side?: 'source' | 'target';
   appId?: string;
   sections?: readonly string[];
@@ -36,7 +37,7 @@ export function pickSettingsBundle(raw: any, options: SettingsBundlePickOptions 
   const appId = String(options.appId || '').trim();
   const candidates = unwrapBundleCandidates(raw, side)
     .map((item) => {
-      try { return ensureBundleShape(item); } catch { return null; }
+      try { return ensureBundleShape(item, options.rawSettings); } catch { return null; }
     })
     .filter(Boolean);
   if (!candidates.length) throw new Error('設定JSON内にアプリ設定バンドルが見つかりません');
@@ -52,10 +53,10 @@ export function pickSettingsBundle(raw: any, options: SettingsBundlePickOptions 
  * 設定JSON（設定一括取得の apps 配列、単体バンドル等）に含まれる全アプリのバンドルを返す。
  * 設計書の複数アプリ一括生成など、1ファイルから複数アプリ分を取り込みたい場合に使う。
  */
-export function pickAllSettingsBundles(raw: any, side?: 'source' | 'target') {
+export function pickAllSettingsBundles(raw: any, side?: 'source' | 'target', rawSettings = false) {
   const candidates = unwrapBundleCandidates(raw, side)
     .map((item) => {
-      try { return ensureBundleShape(item); } catch { return null; }
+      try { return ensureBundleShape(item, rawSettings); } catch { return null; }
     })
     .filter(Boolean);
   if (!candidates.length) throw new Error('設定JSON内にアプリ設定バンドルが見つかりません');

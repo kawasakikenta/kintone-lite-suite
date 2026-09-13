@@ -508,6 +508,8 @@ async function captureResponsivePanelMatrix(page, outDir) {
       await mobileValueToggle.click();
       assert.equal(await mobileValueToggle.getAttribute('aria-expanded'), 'true', `${viewport.width}px: 差分値を展開できません`);
       assert.equal(await page.locator(`#${controlledId}`).isVisible(), true, `${viewport.width}px: 展開した比較元・比較先の値が見えません`);
+      // The rerendered control receives focus on the next animation frame.
+      await page.waitForFunction(() => document.querySelector('#kus-diff-lite [data-kus-dl-mobile-row-toggle]') === document.activeElement, null, { timeout: 5000 });
       assert.equal(await mobileValueToggle.evaluate((element) => element === document.activeElement), true,
         `${viewport.width}px: 差分値の展開後にフォーカスが失われました`);
       await mobileValueToggle.click();
@@ -516,6 +518,8 @@ async function captureResponsivePanelMatrix(page, outDir) {
       const changedMetric = page.locator('#kus-diff-lite [data-kus-dl-type-filter="changed"]').first();
       assert.equal(await changedMetric.count(), 1, '390px: 変更件数から絞り込む操作がありません');
       await changedMetric.click();
+      // focusAppliedFilter restores focus after the result DOM has been replaced.
+      await page.waitForFunction(() => !!document.activeElement?.closest('#kus-diff-lite'), null, { timeout: 5000 });
       const mobileFilterFocus = await page.evaluate(() => {
         const active = document.activeElement;
         if (!(active instanceof HTMLElement)) return { inside: false, visible: false, label: '' };
