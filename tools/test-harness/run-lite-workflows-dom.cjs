@@ -16,7 +16,7 @@ const MODULES = {
   process: ['runRenderProcessFlowStandalone'],
   field: ['runFieldApplyStandalone', 'runLoadFieldsStandalone', 'runBulkRenameFieldStandalone'],
   jsconfig: ['runApplyJsConfigStandalone', 'runFetchJsConfigStandalone', 'runBatchJsConfigDownloadStandalone'],
-  record: ['runCsvExportBatchStandalone', 'runCsvImportStandalone', 'runBatchProcessStandalone', 'runRecordCopyStandalone', 'runAttachmentDownloadStandalone', 'runRecordBackupStandalone', 'runLoadStatusActionsStandalone', 'runLoadViewsStandalone']
+  record: ['runCsvExportBatchStandalone', 'runCsvImportStandalone', 'runCsvImportBatchStandalone', 'runPreviewCsvImportStandalone', 'runBatchProcessStandalone', 'runRecordCopyStandalone', 'runAttachmentDownloadStandalone', 'runRecordBackupStandalone', 'runLoadStatusActionsStandalone', 'runLoadViewsStandalone', 'runLoadAttachmentFieldsStandalone']
 };
 const CASES = [
   ['design', 'mountDesignLitePanel', '設計書', 'Excel設計書を保存'],
@@ -61,7 +61,8 @@ function fixtures() {
       if (name === 'runRenderProcessFlowStandalone') return { states: { new: {}, done: {} }, actions: [{ name: '完了' }] };
       if (name === 'runBulkRenameFieldStandalone') return { properties: { renamed: { type: 'SINGLE_LINE_TEXT' } }, renamePairs: [{ from: 'memo', to: 'renamed' }] };
       if (name === 'runLoadStatusActionsStandalone') return { actions: [{ name: '完了にする', from: '新規', to: '完了' }] };
-      if (name === 'runLoadViewsStandalone') return [{ name: '全件', filter: '' }];
+      if (name === 'runLoadViewsStandalone') return [{ id: '11', name: '全件', type: 'LIST', filter: '', sort: '', query: '' }];
+      if (name === 'runLoadAttachmentFieldsStandalone') return [];
       if (name.includes('Search') || name.includes('Space')) return [];
       return {};
     }

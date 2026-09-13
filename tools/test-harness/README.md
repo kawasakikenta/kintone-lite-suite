@@ -16,8 +16,12 @@ Playwrightハーネスは既定でChromeを使用します。`--browser chromium
 
 ## ハーネス一覧
 
+全機能をまとめて検証する場合は `npm run test:all` を実行します。型検査・単体テスト・ビルドに続けて全ハーネスを実行し、結果を `.iter-shots/all-tests/results.json` に保存します。Chromium を使用する場合は `npm run test:all -- --browser chromium` を指定してください。
+
 | コマンド | 確認内容 |
 | --- | --- |
+| `npm run test:lite-shared` | 共通検索の100件超・再試行・重複防止・古い応答の破棄・ゲスト切り替え、タブのキーボード操作、選択範囲への一括貼り付け、1000行入力、警告保持・失敗復帰、320〜1440px、パネル再起動を実ブラウザで検証 |
+| `npm run test:record-metadata` | 公式API形式の合成応答で一覧の条件・並び順・全件への解除・対象変更時の無効化、添付フィールド名からの選択・テーブルコード・確認画面・ゲスト切替・320〜1440pxを実ブラウザで検証。`.iter-shots/record-metadata/` に画面と結果を保存 |
 | `npm run test:output-layouts` | HTML、Markdown、CSV、Mermaidなどを合成データで生成。親CSV・複数テーブルの明細CSVは `outputs/record-subtables/` に保存し、ID・件数・空テーブル・値の保持も検証 |
 | `npm run test:diff-multi-dom` | 複数比較先、途中失敗、二重実行防止を実ブラウザDOMで検証 |
 | `npm run test:diff-pairs-dom` | 1対1ペア一括の入力検証、接続先別キャッシュ、途中失敗、結果対応、出力導線を実ブラウザDOMで検証 |
@@ -26,6 +30,8 @@ Playwrightハーネスは既定でChromeを使用します。`--browser chromium
 | `npm run test:er-compare` | `tools/ER図.js` のHEAD版と作業ツリー版を倍率・画面幅別に比較 |
 | `npm run test:reflect-dom` | プレビュー反映の3ステップ、二重実行防止、差分の鮮度、対象選択、JSON読込、部分失敗・再試行、キーボード操作、320〜1440pxの5サイズを合成データで検証。実アプリには通信せず、`.iter-shots/reflect-lite-dom/` に画面・結果・操作デモを保存 |
 | `npm run test:lite-workflows` | 設計書・設定取得・ER図・プロセス図・CSV出力・フィールド・JS/CSS・レコードの操作選択、確認、実行、二重実行防止、入力検証、失敗復帰、320〜1440pxの4サイズを合成データで検証。`.iter-shots/lite-workflows/` に画面・結果・操作デモを保存 |
+
+`test:record-metadata` は、CSVの全アプリ事前検査・行/フィールド別エラー・構成の異なるアプリ・先頭行プレビュー・不正CSVの書込前停止・実行時再検査・キャンセルも検証します。プロセスでは同名アクションの遷移元区別、実行できない同名重複、次の作業者、SECONDARYアクション、生成クエリの取り違え防止を検証します。
 
 before/after比較は、作業ツリーの生成物を更新してから実行します。`--before-ref`、`--before-file`、`--after-file`、`--out`、`--browser` などの詳細は各スクリプトの `--help` を参照してください。
 

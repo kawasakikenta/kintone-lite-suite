@@ -1,0 +1,60 @@
+{
+  "apps": {
+    "apps": [
+      { "appId": "9223372036854775807", "code": "ClientB", "name": "顧客台帳", "description": "", "spaceId": "18", "threadId": "21", "createdAt": "2026-01-10T00:00:00Z", "creator": { "code": "owner", "name": "管理者" }, "modifiedAt": "2026-09-01T03:00:00Z", "modifier": { "code": "editor", "name": "更新担当" } },
+      { "appId": "9223372036854775806", "code": "ClientA", "name": "顧客台帳 <img src=x onerror=alert(1)>", "description": "", "spaceId": null, "threadId": null, "createdAt": "2026-01-10T00:00:00Z", "creator": { "code": "", "name": "" }, "modifiedAt": "2026-09-02T04:00:00Z", "modifier": { "code": "", "name": "" } }
+    ]
+  },
+  "views": {
+    "views": {
+      "カレンダー": { "type": "CALENDAR", "name": "カレンダー", "id": "310", "date": "due", "title": "title", "filterCond": "amount > 1000", "sort": "due asc, $id desc", "index": "10" },
+      "全件": { "type": "LIST", "name": "全件", "id": "300", "fields": ["title"], "filterCond": "", "sort": "", "index": "0" },
+      "担当分": { "type": "LIST", "builtinType": "ASSIGNEE", "name": "担当分", "id": "301", "fields": ["title"], "filterCond": "作業者 in (LOGINUSER())", "sort": "$id desc", "index": "1" },
+      "カード": { "type": "CUSTOM", "name": "カード", "id": "302", "html": "<div>カスタマイズの内容</div>", "pager": true, "device": "ANY", "filterCond": "amount > 1000", "sort": "title asc", "index": "2" }
+    },
+    "revision": "12"
+  },
+  "fields": {
+    "properties": {
+      "title": { "type": "SINGLE_LINE_TEXT", "code": "title", "label": "件名", "required": true },
+      "amount": { "type": "NUMBER", "code": "amount", "label": "金額", "required": false },
+      "priority": { "type": "DROP_DOWN", "code": "priority", "label": "優先度", "options": { "高": { "label": "高", "index": "0" }, "低": { "label": "低", "index": "1" } } },
+      "workflow_status": { "type": "STATUS", "code": "workflow_status", "label": "状態", "enabled": true },
+      "receipt": { "type": "FILE", "code": "receipt", "label": "領収書", "required": false, "thumbnailSize": "150" },
+      "documents": { "type": "SUBTABLE", "code": "documents", "label": "書類明細", "fields": {
+        "evidence": { "type": "FILE", "code": "evidence", "label": "証跡ファイル", "required": false, "thumbnailSize": "150" },
+        "memo": { "type": "SINGLE_LINE_TEXT", "code": "memo", "label": "備考", "required": false }
+      } }
+    },
+    "revision": "12"
+  },
+  "process": {
+    "enable": true,
+    "states": {
+      "新規": { "name": "新規", "index": "0", "assignee": { "type": "ONE", "entities": [] } },
+      "確認中": { "name": "確認中", "index": "1", "assignee": { "type": "ONE", "entities": [{ "entity": { "type": "USER", "code": "reviewer" }, "includeSubs": false }, { "entity": { "type": "FIELD_ENTITY", "code": "owner" }, "includeSubs": false }] } },
+      "完了": { "name": "完了", "index": "2", "assignee": { "type": "ALL", "entities": [] } }
+    },
+    "actions": [
+      { "name": "進める", "from": "新規", "to": "確認中", "filterCond": "amount >= 1000", "type": "PRIMARY" },
+      { "name": "進める", "from": "確認中", "to": "完了", "filterCond": "", "type": "PRIMARY" },
+      { "name": "決裁", "from": "確認中", "to": "完了", "filterCond": "amount < 1000", "type": "PRIMARY" },
+      { "name": "決裁", "from": "確認中", "to": "新規", "filterCond": "amount >= 1000", "type": "PRIMARY" },
+      { "name": "管理者が戻す", "from": "完了", "to": "新規", "filterCond": "", "type": "SECONDARY", "executableUser": { "entities": [{ "entity": { "type": "ORGANIZATION", "code": "approval_team" }, "includeSubs": true }] } }
+    ],
+    "revision": "12"
+  },
+  "records": [
+    { "$id": { "type": "__ID__", "value": "41" }, "title": { "type": "SINGLE_LINE_TEXT", "value": "同じ保存先" },
+      "receipt": { "type": "FILE", "value": [{ "fileKey": "SAMEPREFIX12-file1", "name": "領収書.txt", "contentType": "text/plain", "size": "5" }] },
+      "documents": { "type": "SUBTABLE", "value": [
+        { "id": "501", "value": { "evidence": { "type": "FILE", "value": [{ "fileKey": "SAMEPREFIX12-file1", "name": "領収書.txt", "contentType": "text/plain", "size": "5" }] } } },
+        { "id": "502", "value": { "evidence": { "type": "FILE", "value": [{ "fileKey": "SAMEPREFIX12-file2", "name": "領収書.txt", "contentType": "text/plain", "size": "6" }] } } }
+      ] }
+    },
+    { "$id": { "type": "__ID__", "value": "42" }, "title": { "type": "SINGLE_LINE_TEXT", "value": "同じ保存先" },
+      "receipt": { "type": "FILE", "value": [{ "fileKey": "SAMEPREFIX12-file2", "name": "領収書.txt", "contentType": "text/plain", "size": "6" }] },
+      "documents": { "type": "SUBTABLE", "value": [] }
+    }
+  ]
+}

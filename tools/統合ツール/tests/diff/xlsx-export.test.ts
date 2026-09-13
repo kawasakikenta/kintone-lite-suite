@@ -1154,9 +1154,9 @@ describe('diff/xlsx-export', () => {
     expect(allText).not.toContain('詳細は安全のため非表示');
   });
 
-  it.skip('shows identifiers, URLs, long values, and app names without masking them', async () => {
+  it('shows identifiers, URLs, long values, and app names in the explicit internal export', async () => {
     const longValue = `${'長文設定'.repeat(300)}LONG_VALUE_END`;
-    const result = buildDiffXlsxExportWithSafeDefault({
+    const result = buildDiffXlsxExport({
       comparedAt: 'not-a-date',
       sourceBundle: {
         appId: 202,
@@ -1205,15 +1205,13 @@ describe('diff/xlsx-export', () => {
         }
       ]
     });
-    const summary = await readWorksheetByName(result.blob, '比較概要');
-    const list = await readWorksheetByName(result.blob, '変更一覧');
+    const summary = await readWorksheetByName(result.blob, '概要');
     const allText = await readAllEntryText(result.blob);
 
-    expect(summary).toContain('比較元\nCustomer App 991122 Prod');
-    expect(summary).toContain('比較先\nPortal Guest 7');
+    expect(summary).toContain('Customer App 991122 Prod');
+    expect(summary).toContain('Portal Guest 7');
     expect(summary).toContain('未記録');
     expect(result.filename).toContain('Customer App 991122 Prod(app202)_vs_Portal Guest 7(app303)');
-    expect((list.match(/<row r="/g) || []).length).toBe(6);
     for (const value of [
       'TARGET_APP_661144', 'TARGET_APP_771155',
       'VIEW_ID_LEFT', 'VIEW_ID_RIGHT',
