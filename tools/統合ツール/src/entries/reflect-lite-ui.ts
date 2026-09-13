@@ -4,7 +4,9 @@ import { DEFAULT_APP_ID, SECTION_DEFS } from '../constants.js';
 import {
   runApplyPreviewStandalone,
   previewReflectStandalone,
-  preflightLookupMapStandalone,
+  resolveReflectAppsStandalone,
+  reflectConnectionError,
+  type ReflectIdentities,
   type PreviewReflectResult
 } from '../tabs/reflect-standalone.js';
 import {
@@ -17,11 +19,12 @@ import {
   makeCard,
   makeTextarea,
   makeDetails,
-  liteRun,
-  type LitePanelHandle
+  liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
 import { pickAllSettingsBundles } from '../settingsBundleImport.js';
+import { reflectSelectionBlockers } from '../reflect/standalonePlan.js';
+import { appendReflectChanges, renderReflectRoute, reflectIdentityLabel } from './reflectPlanView.js';
 import { collectRetrySectionKeys, summarizeApplyOutcome } from '../reflect/applyOutcome.js';
 
 // =============================================================================
@@ -29,6 +32,7 @@ import { collectRetrySectionKeys, summarizeApplyOutcome } from '../reflect/apply
 // =============================================================================
 
 interface PreviewSnapshot {
+  identities: ReflectIdentities;
   signature: string;
   scopes?: string[];
   at: number;
@@ -36,15 +40,12 @@ interface PreviewSnapshot {
 }
 
 interface LiteMemoryState {
+  preserveTargetOnly?: boolean;
   sourceAppId?: string;
   sourceGuestId?: string;
   targetAppId?: string;
   targetGuestId?: string;
   sourcePreview?: boolean;
-  stopOnError?: boolean;
-  doBackup?: boolean;
-  onlyChanged?: boolean;
-  excludePreviewErrors?: boolean;
   selectedScopes?: string[];
   lookupMapText?: string;
   lastPreview?: PreviewSnapshot | null;
@@ -67,16 +68,13 @@ interface LiteMemoryState {
 }
 
 interface ReflectLitePreset {
+  preserveTargetOnly?: boolean;
   name: string;
   createdAt: string;
   source: { appId: string; guestId: string; preview: boolean };
   target: { appId: string; guestId: string };
   scopes: string[];
   lookupMapText: string;
-  doBackup: boolean;
-  stopOnError: boolean;
-  onlyChanged: boolean;
-  excludePreviewErrors: boolean;
 }
 
 let memoryState: LiteMemoryState = {
@@ -222,7 +220,7 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-preview-row__actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 #kus-reflect-lite .kus-rl-preview-row__state{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 #kus-reflect-lite .kus-rl-preview-mini{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:#fff;border:1px solid #e2e8f0;font-size:10.5px;font-weight:700;color:#475569}
-#kus-reflect-lite .kus-rl-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px 24px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
+#kus-reflect-lite .kus-rl-nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 24px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
 #kus-reflect-lite .kus-rl-nav__btn{appearance:none;width:100%;border:1px solid transparent;border-radius:10px;background:transparent;color:#64748b;padding:10px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:9px;text-align:left}
 #kus-reflect-lite .kus-rl-nav__btn:hover{background:#f1f5f9;color:#172033}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"]{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
@@ -244,7 +242,23 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-action-dock .kus-lp__status-text{max-height:48px;overflow:auto}
 #kus-reflect-lite .kus-rl-action-dock .kus-lp__status{margin-top:8px}
 #kus-reflect-lite .kus-rl-stage .kus-lp__card:last-child{margin-bottom:0}
+#kus-reflect-lite .kus-rl-confirm-route{display:grid;gap:8px;margin-bottom:12px}
+#kus-reflect-lite .kus-rl-confirm-route>div{padding:12px;border-radius:10px;border:1px solid #cbd5e1;background:#f8fafc;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-confirm-route>div:last-child{border:2px solid #ea580c;background:#fff7ed}
+#kus-reflect-lite .kus-rl-confirm-route span{display:block;font-size:11px;color:#64748b;margin-bottom:4px}
+#kus-reflect-lite .kus-rl-changes{margin-top:10px;font-size:12px;min-width:0}
+#kus-reflect-lite .kus-rl-changes summary{cursor:pointer;padding:8px 0;font-weight:700}
+#kus-reflect-lite .kus-rl-change{border-top:1px solid #cbd5e1;padding:10px 0;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-change[data-kind="削除"]>strong{color:#b91c1c}
+#kus-reflect-lite .kus-rl-change__values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}
+#kus-reflect-lite .kus-rl-change__values>div{min-width:0;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:8px}
+#kus-reflect-lite .kus-rl-change__values span{font-size:10px;color:#64748b}
+#kus-reflect-lite .kus-rl-change__values pre{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.6 ui-monospace,monospace}
+#kus-reflect-lite .kus-rl-nav__btn:disabled{opacity:.45;cursor:not-allowed}
 @media(max-width:720px){
+  #kus-reflect-lite .kus-rl-change__values{grid-template-columns:1fr}
+  #kus-reflect-lite .kus-rl-nav__num{display:none}
+
   #kus-reflect-lite.kus-lp--wide{width:calc(100vw - 16px);right:8px;top:8px;max-height:calc(100dvh - 16px)}
   #kus-reflect-lite .kus-lp__hero{padding:12px 16px}
   #kus-reflect-lite .kus-lp__hint,#kus-reflect-lite .kus-lp__badge-row{display:none}
@@ -320,7 +334,7 @@ export function mountReflectLitePanel() {
     hint: '<strong>差分を確認してから反映</strong> · 反映先はプレビューです。本番への公開は設定画面で行います。',
     wide: true
   });
-  let showWorkflowStage: (stage: 'setup' | 'review' | 'result') => void = () => {};
+  let showWorkflowStage: (stage: 'setup' | 'review' | 'confirm' | 'result') => void = () => {};
   let refreshWorkflow = () => {};
   let busy = false;
   let sourceMode: 'app' | 'json' = 'app';
@@ -442,7 +456,7 @@ export function mountReflectLitePanel() {
     sourceBundleFromJson = null;
     sourceJsonBundles = [];
     sourceBundleToken = '';
-    sourceJsonBundles = pickAllSettingsBundles(JSON.parse(await file.text()), 'source');
+    sourceJsonBundles = pickAllSettingsBundles(JSON.parse(await file.text()), 'source', true);
     sourceJsonAppSelect.replaceChildren(...sourceJsonBundles.map((bundle, index) => {
       const option = document.createElement('option');
       option.value = String(index);
@@ -490,12 +504,12 @@ export function mountReflectLitePanel() {
         sourceModeSelect.value = 'app';
         sourceModeSelect.dispatchEvent(new Event('change'));
         srcApp.value = id;
-        if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId;
+        srcGuest.value = guestId || '';
         saveState(); refreshSameConnBanner(); refreshReviewCard();
       } },
       { label: '比較先', apply: (id, _name, guestId) => {
         tgtApp.value = id;
-        if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId;
+        tgtGuest.value = guestId || '';
         saveState(); refreshSameConnBanner(); refreshReviewCard();
       } }
     ]
@@ -511,6 +525,9 @@ export function mountReflectLitePanel() {
       && srcApp.value.trim() === tgtApp.value.trim()
       && srcGuest.value.trim() === tgtGuest.value.trim();
     sameConnBanner.style.display = same ? 'block' : 'none';
+    sameConnBanner.textContent = sourceEnvironment.value === 'preview'
+      ? '同じプレビュー同士は反映できません。反映元の取得環境かアプリIDを変更してください。'
+      : '同じアプリの本番設定でプレビューを更新します。未公開の編集への影響を、次の画面で確認してください。';
   }
 
   currentSrcBtn.addEventListener('click', () => {
@@ -562,7 +579,7 @@ export function mountReflectLitePanel() {
   const initialSelected = new Set(
     Array.isArray(memoryState.selectedScopes)
       ? memoryState.selectedScopes
-      : putSections.map((d) => d.key)
+      : ['fieldSettings', 'layoutSettings', 'viewSettings']
   );
   const chips = putSections.map((d) => makeChip({
     label: d.label,
@@ -670,39 +687,17 @@ export function mountReflectLitePanel() {
 
   // ---- オプション ----
   const cardOpt = makeCard({ title: '実行オプション', number: 3, soft: true });
-  const backup = makeCheck({
-    label: '比較先プレビューのバックアップを保存',
-    checked: memoryState.doBackup !== false,
-    help: '反映前に比較先プレビューの設定を JSON で書き出します'
-  });
-  const srcPreview = makeCheck({
-    label: 'プレビューの設定を取得',
-    checked: memoryState.sourcePreview !== false,
-    help: 'OFF にすると比較元の本番（運用中）設定を取得します'
-  });
-  const stop = makeCheck({
-    label: 'エラー時に中断する',
-    checked: memoryState.stopOnError !== false,
-    help: '途中で失敗したらそこで止めます（推奨）'
-  });
-  const onlyChanged = makeCheck({
-    label: '差分ありセクションだけ実行',
-    checked: memoryState.onlyChanged !== false,
-    help: '最新の差分プレビュー結果を使い、一致セクションは実行対象から自動で外します'
-  });
-  const excludePreviewErrors = makeCheck({
-    label: '取得失敗セクションを自動除外',
-    checked: memoryState.excludePreviewErrors !== false,
-    help: '差分プレビューで取得失敗したセクションは、実行対象から自動で外します'
-  });
-  const optGrid = document.createElement('div');
-  optGrid.className = 'kus-lp__check-grid';
-  optGrid.appendChild(backup.label);
-  sourceAppFields.insertBefore(srcPreview.label, sourceGuestDetails.details);
-  optGrid.appendChild(stop.label);
-  optGrid.appendChild(onlyChanged.label);
-  optGrid.appendChild(excludePreviewErrors.label);
-  cardOpt.body.appendChild(optGrid);
+  const sourceEnvironment = document.createElement('select');
+  sourceEnvironment.className = 'kus-lp__select';
+  sourceEnvironment.setAttribute('aria-label', '反映元の取得環境');
+  sourceEnvironment.innerHTML = '<option value="production">本番設定（運用中）を取得</option><option value="preview">プレビュー設定（未公開）を取得</option>';
+  sourceEnvironment.value = memoryState.sourcePreview ? 'preview' : 'production';
+  sourceAppFields.insertBefore(sourceEnvironment, sourceGuestDetails.details);
+  const preserve = makeCheck({ label: '反映先だけの一覧・グラフ・アクションを保持する', checked: memoryState.preserveTargetOnly !== false, help: '標準は保持。OFFにすると反映元にない設定を削除します。フィールドは常に保持します。' });
+  cardScope.body.prepend(preserve.label);
+  const safetyNote = document.createElement('p'); safetyNote.className = 'kus-rl-quiet';
+  safetyNote.textContent = '反映前のバックアップを自動保存します。変更のない項目は送信せず、書き込みエラーが起きたら中断します。';
+  cardOpt.body.appendChild(safetyNote);
 
   // Lookup mapping
   const lookupDetails = makeDetails('Lookup AppID マッピング（任意）');
@@ -721,9 +716,10 @@ export function mountReflectLitePanel() {
   lookupDetails.body.appendChild(lookupHint);
   cardOpt.body.appendChild(lookupDetails.details);
 
-  [backup.checkbox, srcPreview.checkbox, stop.checkbox, onlyChanged.checkbox, excludePreviewErrors.checkbox].forEach((cb) => {
+  [sourceEnvironment, preserve.checkbox].forEach((cb) => {
     cb.addEventListener('change', () => {
       saveState();
+      refreshSameConnBanner();
       refreshReviewCard();
     });
   });
@@ -789,7 +785,7 @@ export function mountReflectLitePanel() {
       source: {
         appId: srcApp.value.trim(),
         guestId: srcGuest.value.trim(),
-        preview: srcPreview.checkbox.checked
+        preview: (sourceEnvironment.value === 'preview')
       },
       target: {
         appId: tgtApp.value.trim(),
@@ -797,10 +793,7 @@ export function mountReflectLitePanel() {
       },
       scopes: collectSelectedScopes(),
       lookupMapText: lookupTa.value,
-      doBackup: backup.checkbox.checked,
-      stopOnError: stop.checkbox.checked,
-      onlyChanged: onlyChanged.checkbox.checked,
-      excludePreviewErrors: excludePreviewErrors.checkbox.checked
+      preserveTargetOnly: preserve.checkbox.checked,
     };
     memoryState.presets = (memoryState.presets || []).filter((p) => p.name !== trimmed);
     memoryState.presets.unshift(preset);
@@ -819,11 +812,8 @@ export function mountReflectLitePanel() {
     srcGuest.value = preset.source.guestId;
     tgtApp.value = preset.target.appId;
     tgtGuest.value = preset.target.guestId;
-    srcPreview.checkbox.checked = !!preset.source.preview;
-    backup.checkbox.checked = !!preset.doBackup;
-    stop.checkbox.checked = !!preset.stopOnError;
-    onlyChanged.checkbox.checked = preset.onlyChanged !== false;
-    excludePreviewErrors.checkbox.checked = preset.excludePreviewErrors !== false;
+    sourceEnvironment.value = preset.source.preview ? 'preview' : 'production';
+    preserve.checkbox.checked = preset.preserveTargetOnly !== false;
     lookupTa.value = preset.lookupMapText || '';
     setSelectedScopes(preset.scopes || []);
     refreshSameConnBanner();
@@ -892,14 +882,16 @@ export function mountReflectLitePanel() {
       sourceGuestId: srcGuest.value.trim(),
       targetAppId: tgtApp.value.trim(),
       targetGuestId: tgtGuest.value.trim(),
-      sourcePreview: srcPreview.checkbox.checked,
-      stopOnError: stop.checkbox.checked,
-      doBackup: backup.checkbox.checked,
-      onlyChanged: onlyChanged.checkbox.checked,
-      excludePreviewErrors: excludePreviewErrors.checkbox.checked,
+      sourcePreview: (sourceEnvironment.value === 'preview'),
       selectedScopes: collectSelectedScopes(),
-      lookupMapText: lookupTa.value
+      lookupMapText: lookupTa.value,
+      preserveTargetOnly: preserve.checkbox.checked
     };
+  }
+
+  function currentOptions(scopes = collectSelectedScopes()) {
+    return { sourceAppId: srcApp.value.trim(), sourceGuestId: srcGuest.value.trim(), sourcePreview: sourceEnvironment.value === 'preview', sourceBundle: sourceBundleFromJson,
+      targetAppId: tgtApp.value.trim(), targetGuestId: tgtGuest.value.trim(), scopes, lookupMap: getLookupValue(tryParseLookupMap(lookupTa.value)), preserveTargetOnly: preserve.checkbox.checked };
   }
 
   function getPreviewState(scopes = collectSelectedScopes(), lookupState = tryParseLookupMap(lookupTa.value)) {
@@ -909,12 +901,13 @@ export function mountReflectLitePanel() {
       ? buildPreviewSignature({
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
-        sourcePreview: srcPreview.checkbox.checked,
+        sourcePreview: (sourceEnvironment.value === 'preview'),
         sourceBundleToken,
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         scopes: coveredScopes,
-        lookupMap: lookupState.value
+        lookupMap: lookupState.value,
+        preserveTargetOnly: preserve.checkbox.checked
       })
       : '';
     const fresh = !!preview && !!signature && preview.signature === signature
@@ -947,20 +940,9 @@ export function mountReflectLitePanel() {
       else errorSet.add(entry.sectionKey);
     }
 
-    let effective = [...selectedSet];
-    let skippedSameScopes: string[] = [];
-    let skippedErrorScopes: string[] = [];
-
-    if (onlyChanged.checkbox.checked) {
-      skippedSameScopes = effective.filter((key) => sameSet.has(key));
-      skippedErrorScopes = effective.filter((key) => errorSet.has(key));
-      effective = effective.filter((key) => changedSet.has(key));
-    }
-    if (excludePreviewErrors.checkbox.checked) {
-      const additionallySkipped = effective.filter((key) => errorSet.has(key));
-      skippedErrorScopes = [...new Set([...skippedErrorScopes, ...additionallySkipped])];
-      effective = effective.filter((key) => !errorSet.has(key));
-    }
+    const effective = [...selectedSet].filter(key => changedSet.has(key));
+    const skippedSameScopes = [...sameSet];
+    const skippedErrorScopes: string[] = [];
 
     return {
       effectiveScopes: effective,
@@ -1006,127 +988,54 @@ export function mountReflectLitePanel() {
 
   async function runPreview(scopes: string[], lookupMap: Record<string, string>) {
     memoryState.lastPreview = null;
-    const signature = buildPreviewSignature({
-      sourceAppId: srcApp.value.trim(),
-      sourceGuestId: srcGuest.value.trim(),
-      sourcePreview: srcPreview.checkbox.checked,
-      sourceBundleToken,
-      targetAppId: tgtApp.value.trim(),
-      targetGuestId: tgtGuest.value.trim(),
-      scopes,
-      lookupMap
-    });
-    const result = await previewReflectStandalone(
-      {
-        sourceAppId: srcApp.value.trim(),
-        sourceGuestId: srcGuest.value.trim(),
-        sourcePreview: srcPreview.checkbox.checked,
-        sourceBundle: sourceBundleFromJson,
-        targetAppId: tgtApp.value.trim(),
-        targetGuestId: tgtGuest.value.trim(),
-        scopes,
-        lookupMap
-      },
-      (m) => panel.setStatus(m, 'busy')
-    );
-    memoryState = {
-      ...memoryState,
-      lastPreview: {
-        signature,
-        scopes: [...scopes],
-        at: Date.now(),
-        result
-      }
-    };
-    rerenderPreviewCard();
-    refreshReviewCard();
-    showWorkflowStage('review');
+    clearConfirmation();
+    const options = { ...currentOptions(scopes), lookupMap };
+    const signature = buildPreviewSignature({ ...options, sourceBundleToken });
+    panel.setStatus('アプリ名と接続先を確認中…', 'busy');
+    const identities = await resolveReflectAppsStandalone(options);
+    const result = await previewReflectStandalone(options, (message) => panel.setStatus(message, 'busy'));
+    memoryState.lastPreview = { signature, scopes: [...scopes], at: Date.now(), result, identities };
+    rerenderPreviewCard(); refreshReviewCard(); showWorkflowStage('review');
     return result;
+  }
+
+  function selectionIssues(result: PreviewReflectResult | undefined, scopes: string[]): string[] {
+    return result ? reflectSelectionBlockers(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes) : [];
   }
 
   function refreshReviewCard() {
     const { scopes, lookupState, preview, fresh } = getPreviewState();
-    const lookupError = getLookupError(lookupState);
-    const src = srcApp.value.trim();
-    const tgt = tgtApp.value.trim();
-    const sameConn = !sourceBundleFromJson && !!src && src === tgt && srcGuest.value.trim() === tgtGuest.value.trim();
-    const riskyHit = scopes.filter((key) => RISKY_SCOPE_KEYS.has(key));
-    const previewResult = preview?.result || null;
-    const plan = fresh ? getExecutionPlan(scopes, previewResult) : getExecutionPlan(scopes, null);
-    const canRunBase = (sourceMode === 'json' ? !!sourceBundleFromJson : !!src) && !!tgt && scopes.length > 0 && lookupState.ok;
-    previewBtn.disabled = busy || !canRunBase;
-    changedOnlyBtn.disabled = busy || !(fresh && previewResult && previewResult.changedSections > 0);
-    runBtn.disabled = busy || !canRunBase || !fresh || !plan.effectiveScopes.length;
-
-    if (fresh && previewResult) {
-      if (plan.effectiveScopes.length > 0) {
-        setButtonText(runBtn, `プレビュー反映を実行（予定 ${plan.effectiveScopes.length}）`);
-      } else if (previewResult.changedSections > 0) {
-        setButtonText(runBtn, `プレビュー反映を実行（差分 ${previewResult.changedSections}）`);
-      } else {
-        setButtonText(runBtn, 'プレビュー反映を実行（差分なし）');
-      }
-    } else {
-      setButtonText(runBtn, 'プレビュー反映を実行');
+    const invalid = reflectConnectionError(currentOptions());
+    const result = preview?.result;
+    const plan = getExecutionPlan(scopes, fresh ? result : null);
+    const blockers = fresh ? selectionIssues(result, scopes) : [];
+    const canCompare = !invalid && !!scopes.length && lookupState.ok && (sourceMode !== 'json' || !!sourceBundleFromJson);
+    previewBtn.disabled = busy || !canCompare;
+    changedOnlyBtn.disabled = busy || !fresh || !result?.changedSections;
+    confirmBtn.disabled = busy || !canCompare || !fresh || !plan.effectiveScopes.length || !!blockers.length;
+    const token = confirmationToken();
+    if (confirmedToken && confirmedToken !== token) clearConfirmation();
+    runBtn.disabled = busy || !confirmationReady();
+    setButtonText(runBtn, `確認した ${plan.effectiveScopes.length} 項目をプレビューへ反映`);
+    let message = invalid || getLookupError(lookupState) || (!scopes.length ? '反映する項目を選んでください。' : '変更前と変更後を確認し、最終確認に進んでください。');
+    if (!preview) message = '対象を指定して差分を取得してください。';
+    else if (!fresh) message = '条件が変わりました。差分を再取得してください。';
+    else if (blockers.length) message = '確認できない項目が選択されています。問題を解決して再取得するか、対象から外してください。';
+    else if (!plan.effectiveScopes.length) message = '書き込みが必要な項目はありません。反映先だけの項目を保持した場合も書き込み不要です。';
+    reviewBody.innerHTML = '';
+    if (preview?.identities && fresh) renderReflectRoute(reviewBody, preview.identities, sourceMode === 'json' ? '設定JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー' : '本番');
+    const info = document.createElement('div'); info.className = 'kus-rl-next ' + (blockers.length ? 'kus-rl-next--warn' : 'kus-rl-next--info');
+    info.textContent = message; reviewBody.appendChild(info);
+    const summary = document.createElement('p'); summary.className = 'kus-rl-quiet';
+    summary.textContent = fresh ? `反映予定 ${plan.effectiveScopes.length} 項目 / 変更なし ${plan.sameScopes.length} 項目 / 確認が必要 ${plan.errorScopes.length} 項目 · ${formatPreviewStamp(preview!.at)}` : 'この段階では書き込みを行いません。';
+    reviewBody.appendChild(summary);
+    if (blockers.length) {
+      const list = document.createElement('ul'); list.className = 'kus-rl-issues';
+      for (const message of blockers) { const item = document.createElement('li'); item.textContent = message; list.appendChild(item); }
+      reviewBody.appendChild(list);
     }
-
-    const issues: string[] = [];
-    if (!src && !sourceBundleFromJson) issues.push('比較元アプリIDまたは比較元JSONが未入力です。');
-    if (!tgt) issues.push('比較先アプリIDが未入力です。');
-    if (!scopes.length) issues.push('反映対象セクションが未選択です。');
-    if (lookupError) issues.push(lookupError);
-    if (sameConn) issues.push('比較元と比較先が同一接続です。');
-    if (riskyHit.length) issues.push(`影響範囲の広いセクションを含みます: ${riskyHit.map((key) => getSectionLabel(key)).join(', ')}`);
-    if (!backup.checkbox.checked) issues.push('バックアップ保存が OFF です。');
-    if (!stop.checkbox.checked) issues.push('エラー時中断が OFF です。');
-    if (!preview) {
-      issues.push('差分プレビューが未取得です。');
-    } else if (!fresh) {
-      issues.push('条件が変わりました。差分を再取得してから反映してください。');
-    } else if (previewResult) {
-      if (previewResult.errorSections > 0) issues.push(`差分プレビューで取得失敗が ${previewResult.errorSections} 件あります。`);
-      if (previewResult.changedSections === 0) issues.push('差分プレビューでは変更対象がありません。通常は反映不要です。');
-      if (!plan.effectiveScopes.length) issues.push('現在の実行オプションでは、実行対象セクションが 0 件です。');
-    }
-
-    let nextTone: 'ok' | 'info' | 'warn' = 'warn';
-    const nextTitle = '次の操作';
-    let nextText = '比較元 / 比較先 / セクションを確認してください。';
-    if ((!src && !sourceBundleFromJson) || !tgt) {
-      nextText = '比較元（アプリIDまたはJSON）と比較先のアプリIDを埋めてください。比較先は通常、いま開いているアプリです。';
-    } else if (!scopes.length) {
-      nextText = '反映したいセクションを選んでください。迷う場合は「フォームのみ」から始めるのが安全です。';
-    } else if (!lookupState.ok) {
-      nextText = lookupError || 'Lookup AppID マッピング JSON を修正してください。';
-    } else if (!preview) {
-      nextTone = 'info';
-      nextText = '差分プレビューを更新して、どのセクションに差分があるか確認してください。';
-    } else if (!fresh) {
-      nextTone = 'info';
-      nextText = '条件が変わりました。「差分を再取得」で変更内容を確認してください。';
-    } else if (!plan.effectiveScopes.length) {
-      nextTone = 'info';
-      nextText = '現在のオプションでは実行対象がありません。差分ありだけ実行 / 取得失敗除外の設定か、選択セクションを見直してください。';
-    } else if (previewResult && previewResult.errorSections > 0) {
-      nextText = '取得失敗セクションを確認してから実行してください。必要なら対象セクションを絞って再プレビューします。';
-    } else if (previewResult && previewResult.changedSections === 0) {
-      nextTone = 'info';
-      nextText = '差分なしです。反映は通常不要です。必要ならセクション選択か比較元 / 比較先を見直してください。';
-    } else {
-      nextTone = 'ok';
-      nextText = '差分プレビューで内容を確認できています。そのままプレビュー反映へ進めます。';
-    }
-
-    reviewBody.innerHTML = ''
-      + '<div class="kus-rl-review-grid">'
-      + `<div class="kus-rl-stat"><div class="kus-rl-stat__label">反映予定</div><div class="kus-rl-stat__value">${fresh ? plan.effectiveScopes.length + ' 項目' : '差分の確認が必要'}</div><div class="kus-rl-stat__meta">${escapeHtml(fresh ? buildSkipSummary(plan) : '差分を取得すると反映予定を表示します')}</div></div>`
-      + `<div class="kus-rl-stat"><div class="kus-rl-stat__label">確認状況</div><div class="kus-rl-stat__value">${fresh ? '確認済み' : preview ? '再取得が必要' : '未取得'}</div><div class="kus-rl-stat__meta">${preview ? escapeHtml(formatPreviewStamp(preview.at)) : 'アプリ設定への書き込みはまだ行いません'}</div></div>`
-      + '</div>'
-      + `<div class="kus-rl-next kus-rl-next--${nextTone}"><strong>${nextTitle}</strong>${escapeHtml(nextText)}</div>`
-      + (issues.length ? `<details class="kus-lp__details"><summary>注意点を確認（${issues.length}件）</summary><ul class="kus-rl-issues">${issues.map((line) => '<li>' + escapeHtml(line) + '</li>').join('')}</ul></details>` : '');
-
-    rerenderPreviewCard();
-    refreshWorkflow();
+    exportPlanBtn.disabled = busy || !fresh;
+    rerenderPreviewCard(); refreshWorkflow();
   }
 
   previewSearch.addEventListener('input', () => {
@@ -1206,6 +1115,81 @@ export function mountReflectLitePanel() {
       .map((entry) => entry.sectionKey);
     setSelectedScopes(changedScopes);
     panel.setStatus(`差分あり ${changedScopes.length} セクションだけを選択しました`, changedScopes.length ? 'ok' : 'info');
+  });
+
+  // ---- 最終確認：確認済みの条件だけを実行可能にする ----
+  const confirmBtn = makeButton('最終確認に進む', 'primary');
+  const confirmCard = makeCard({ title: 'この内容をプレビューへ反映します' });
+  const confirmBody = document.createElement('div'); confirmCard.body.appendChild(confirmBody);
+  const acknowledged = makeCheck({ label: '反映先と変更・削除の内容を確認しました', checked: false });
+  acknowledged.checkbox.setAttribute('aria-label', '反映内容の確認');
+  const targetCheck = makeInput({ placeholder: '反映先アプリIDを入力', width: 'wide' });
+  targetCheck.setAttribute('aria-label', '確認用の反映先アプリID'); targetCheck.setAttribute('data-lp-no-submit', '');
+  targetCheck.inputMode = 'numeric'; targetCheck.autocomplete = 'off';
+  const targetCheckRow = makeRow([targetCheck], { label: '反映先IDの再確認' });
+  const confirmStatus = document.createElement('p'); confirmStatus.className = 'kus-rl-quiet'; confirmStatus.setAttribute('aria-live', 'polite');
+  confirmCard.body.append(acknowledged.label, targetCheckRow, confirmStatus);
+  let confirmedToken = '';
+  function confirmationToken() {
+    const state = getPreviewState();
+    return state.fresh ? JSON.stringify([state.preview!.signature, state.preview!.at, [...state.scopes].sort()]) : '';
+  }
+  function clearConfirmation() {
+    confirmedToken = ''; acknowledged.checkbox.checked = false; targetCheck.value = '';
+    confirmStatus.textContent = '反映先と変更内容を確認してチェックを入れてください。';
+  }
+  function highImpactReasons() {
+    const { preview, scopes } = getPreviewState();
+    const entries = preview?.result.entries.filter(entry => scopes.includes(entry.sectionKey) && entry.status === 'change') || [];
+    const reasons: string[] = [];
+    const removals = entries.reduce((sum, entry) => sum + entry.removalCount, 0);
+    if (removals) reasons.push(`削除・置換される設定が ${removals} 件あります`);
+    if (entries.some(entry => RISKY_SCOPE_KEYS.has(entry.sectionKey))) reasons.push('権限・通知・プロセス管理の変更を含みます');
+    if (!sourceBundleFromJson && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim()) reasons.push('同じアプリの本番設定でプレビューを更新します');
+    return reasons;
+  }
+  function confirmationReady() {
+    const state = getPreviewState();
+    return !!confirmedToken && confirmedToken === confirmationToken() && acknowledged.checkbox.checked
+      && !selectionIssues(state.preview?.result, state.scopes).length
+      && (!highImpactReasons().length || targetCheck.value.trim() === tgtApp.value.trim());
+  }
+  function openConfirmation() {
+    if (busy || confirmBtn.disabled) return;
+    clearConfirmation(); confirmedToken = confirmationToken();
+    const state = getPreviewState(); if (!confirmedToken || !state.preview) return;
+    confirmBody.innerHTML = '';
+    renderReflectRoute(confirmBody, state.preview.identities, sourceMode === 'json' ? '設定JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー' : '本番');
+    const entries = state.preview.result.entries.filter(entry => state.scopes.includes(entry.sectionKey) && entry.status === 'change');
+    const summary = document.createElement('p'); summary.textContent = `反映する項目（${entries.length}）：${entries.map(entry => entry.label).join('、')}`; confirmBody.appendChild(summary);
+    const reasons = highImpactReasons(); targetCheckRow.hidden = !reasons.length;
+    if (reasons.length) { const note = document.createElement('p'); note.className = 'kus-rl-next kus-rl-next--warn'; note.textContent = reasons.join('。') + '。反映先IDを入力して確認してください。'; confirmBody.appendChild(note); }
+    const removals = entries.flatMap(entry => entry.changes.filter(change => change.kind === '削除').map(change => ({ label: entry.label, change })));
+    if (removals.length) {
+      const list = document.createElement('ul'); list.className = 'kus-rl-issues';
+      for (const { label, change } of removals.slice(0, 30)) {
+        const item = document.createElement('li'); item.textContent = `${label} / ${change.path}：${change.before.slice(0, 180)}${change.before.length > 180 ? '…' : ''}`; list.appendChild(item);
+      }
+      if (removals.length > 30) { const item = document.createElement('li'); item.textContent = `ほか ${removals.length - 30} 件。下の各項目の内訳、または反映計画JSONで全件を確認してください。`; list.appendChild(item); }
+      confirmBody.appendChild(list);
+    }
+    const policy = document.createElement('p'); policy.className = 'kus-rl-quiet';
+    policy.textContent = '反映前の設定JSONを自動保存します。実行直前に設定を再取得し、確認後の変更があれば中止します。途中エラーでは中断します。複数項目の一括取消はできません。本番公開はアプリ設定画面で行います。'; confirmBody.appendChild(policy);
+    for (const entry of entries) appendReflectChanges(confirmBody, entry);
+    showWorkflowStage('confirm'); refreshReviewCard();
+  }
+  confirmBtn.addEventListener('click', openConfirmation);
+  for (const control of [acknowledged.checkbox, targetCheck]) control.addEventListener('input', () => {
+    runBtn.disabled = busy || !confirmationReady();
+    confirmStatus.textContent = confirmationReady() ? '確認が完了しました。下の反映ボタンから実行できます。' : '確認チェックと、表示されている場合は反映先IDの入力が必要です。';
+  });
+  const exportPlanBtn = makeButton('反映計画JSONを保存', 'sub'); reviewCard.actions.appendChild(exportPlanBtn);
+  exportPlanBtn.addEventListener('click', () => {
+    const state = getPreviewState(); if (!state.fresh || !state.preview) return;
+    const payload = { generatedAt: new Date().toISOString(), identities: state.preview.identities, sourceEnvironment: sourceMode === 'json' ? 'json' : sourceEnvironment.value,
+      preserveTargetOnly: preserve.checkbox.checked, scopes: state.scopes, entries: state.preview.result.entries.filter(entry => state.scopes.includes(entry.sectionKey)), baseline: state.preview.result.baseline };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a'); link.href = url; link.download = `プレビュー反映計画_App${tgtApp.value.trim()}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
   });
 
   // ---- 実行 ----
@@ -1289,7 +1273,7 @@ export function mountReflectLitePanel() {
   renderLastResult();
 
   runBtn.addEventListener('click', async () => {
-    if (busy || runBtn.disabled) return;
+    if (busy || runBtn.disabled || activeStage !== 'confirm' || !confirmationReady()) return;
     const { scopes, lookupState } = getPreviewState();
     const lookupError = getLookupError(lookupState);
     const lookupMap = getLookupValue(lookupState);
@@ -1319,34 +1303,9 @@ export function mountReflectLitePanel() {
         throw new Error(`現在の実行オプションでは実行対象が 0 件です。${buildSkipSummary(plan)}`);
       }
 
-      if (!confirmReflectRisk(panel, {
-        sourceAppId: srcApp.value.trim(),
-        sourceGuestId: srcGuest.value.trim(),
-        hasSourceBundle: !!sourceBundleFromJson,
-        targetAppId: tgtApp.value.trim(),
-        targetGuestId: tgtGuest.value.trim(),
-        scopes,
-        effectiveScopes: plan.effectiveScopes,
-        skippedSameScopes: plan.skippedSameScopes,
-        skippedErrorScopes: plan.skippedErrorScopes,
-        doBackup: backup.checkbox.checked,
-        stopOnError: stop.checkbox.checked,
-        lookupMapText: lookupTa.value,
-        preview: previewState.preview?.result || previewResult || undefined
-      })) {
-        return { cancelled: true };
-      }
-
-      // Lookup preflight
-      if (Object.keys(lookupMap).length) {
-        panel.setStatus('Lookup マッピング先 AppID を確認中…', 'busy');
-        const pf = await preflightLookupMapStandalone(lookupMap, { targetGuestId: tgtGuest.value.trim() });
-        if (!pf.ok) {
-          const detail = pf.missing.map((m) => ` - ${m.from} → ${m.to || '(空)'}: ${m.reason}`).join('\n');
-          const cont = window.confirm(`Lookup 変換ルールに問題があります:\n${detail}\n\n[OK] 続行 / [キャンセル] 中断`);
-          if (!cont) throw new Error('Lookup プリフライトで中断しました');
-        }
-      }
+      if (selectionIssues(previewResult, scopes).length) throw new Error('確認できない項目が含まれています。差分確認へ戻ってください。');
+      const applyOptions = { ...currentOptions(plan.effectiveScopes), reviewBaseline: previewResult.baseline, doDeploy: false, doBackup: true, stopOnError: true };
+      clearConfirmation();
 
       logCard.card.style.display = 'block';
       logPre.style.display = 'block';
@@ -1357,20 +1316,7 @@ export function mountReflectLitePanel() {
       memoryState.lastResult = null;
       renderLastResult();
       const applyOutcome = await runApplyPreviewStandalone(
-        {
-          sourceAppId: srcApp.value.trim(),
-          sourceGuestId: srcGuest.value.trim(),
-          sourcePreview: srcPreview.checkbox.checked,
-          sourceBundle: sourceBundleFromJson,
-          reviewBaseline: previewResult.baseline,
-          targetAppId: tgtApp.value.trim(),
-          targetGuestId: tgtGuest.value.trim(),
-          scopes: plan.effectiveScopes,
-          lookupMap,
-          doDeploy: false,
-          doBackup: backup.checkbox.checked,
-          stopOnError: stop.checkbox.checked
-        },
+        applyOptions,
         (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
         (logsArr: string[]) => {
           logPre.textContent = logsArr.join('\n');
@@ -1384,8 +1330,8 @@ export function mountReflectLitePanel() {
         ng: counts.ng,
         pending: counts.pending,
         at: Date.now(),
-        appId: tgtApp.value.trim(),
-        guestId: tgtGuest.value.trim(),
+        appId: applyOptions.targetAppId,
+        guestId: applyOptions.targetGuestId,
         retryScopes: collectRetrySectionKeys(applyOutcome.sections),
         failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng').map((s) => s.label)
       };
@@ -1406,7 +1352,7 @@ export function mountReflectLitePanel() {
     panel.setStatus('プレビュー反映が完了しました。運用環境への反映は「比較先の設定画面を開く」からデプロイしてください。', 'ok');
   });
 
-  // ---- 3ステップ・ワークフロー ----
+  // ---- 4ステップ・ワークフロー ----
   // 現在の段階に必要な主操作だけを固定フッターに置く。
   const nav = document.createElement('nav');
   nav.className = 'kus-rl-nav';
@@ -1414,11 +1360,12 @@ export function mountReflectLitePanel() {
   nav.setAttribute('role', 'tablist');
   const stageDefs = [
     { id: 'setup' as const, number: '1', label: '対象を選ぶ', copy: 'アプリと反映項目' },
-    { id: 'review' as const, number: '2', label: '差分を確認', copy: '変更内容を見て反映' },
-    { id: 'result' as const, number: '3', label: '反映結果', copy: '結果と次の操作' }
+    { id: 'review' as const, number: '2', label: '差分を確認', copy: '変更前・変更後' },
+    { id: 'confirm' as const, number: '3', label: '最終確認', copy: '反映先と変更を確定' },
+    { id: 'result' as const, number: '4', label: '反映結果', copy: '結果と次の操作' }
   ];
-  const stages = {} as Record<'setup' | 'review' | 'result', HTMLElement>;
-  const navButtons = {} as Record<'setup' | 'review' | 'result', HTMLButtonElement>;
+  const stages = {} as Record<'setup' | 'review' | 'confirm' | 'result', HTMLElement>;
+  const navButtons = {} as Record<'setup' | 'review' | 'confirm' | 'result', HTMLButtonElement>;
   for (const def of stageDefs) {
     const button = document.createElement('button');
     button.type = 'button';
@@ -1436,18 +1383,20 @@ export function mountReflectLitePanel() {
     stage.setAttribute('role', 'tabpanel');
     stage.setAttribute('aria-labelledby', button.id);
     stages[def.id] = stage;
-    button.addEventListener('click', () => showWorkflowStage(def.id));
+    button.addEventListener('click', () => def.id === 'confirm' ? openConfirmation() : showWorkflowStage(def.id));
     button.addEventListener('keydown', (event) => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
       const current = stageDefs.findIndex((item) => item.id === def.id);
       const direction = event.key === 'ArrowRight' ? 1 : -1;
       const next = stageDefs[event.key === 'Home' ? 0 : event.key === 'End' ? stageDefs.length - 1 : (current + direction + stageDefs.length) % stageDefs.length];
-      showWorkflowStage(next.id);
+      if (next.id === 'confirm') openConfirmation(); else showWorkflowStage(next.id);
     });
   }
   stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>どの設定を、どこへ反映しますか？</h2><p>比較元と比較先を指定し、反映したい項目を選びます。</p></header>';
   stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>差分と実行予定を確認</h2><p>実際に変更されるセクションと注意点を確認します。</p></header>';
+  stages.confirm.innerHTML = '<header class="kus-rl-stage-head"><h2>書き込み先と内容の最終確認</h2><p>この画面で確認した条件だけを実行します。</p></header>';
+  stages.confirm.appendChild(confirmCard.card);
   stages.result.innerHTML = '<header class="kus-rl-stage-head"><h2>実行結果と次の操作</h2><p>成功・失敗と、再実行が必要なセクションを確認します。</p></header>';
   const setupGrid = document.createElement('div');
   setupGrid.className = 'kus-rl-setup-grid';
@@ -1476,13 +1425,13 @@ export function mountReflectLitePanel() {
   const dockActions = document.createElement('div');
   dockActions.className = 'kus-rl-dock-actions';
   const backBtn = makeButton('対象を変更', 'sub');
-  backBtn.addEventListener('click', () => showWorkflowStage('setup'));
+  backBtn.addEventListener('click', () => showWorkflowStage(activeStage === 'confirm' ? 'review' : 'setup'));
   const nextBtn = makeButton('差分を確認する', 'primary');
   nextBtn.addEventListener('click', () => {
     if (getPreviewState().fresh) showWorkflowStage('review');
     else previewBtn.click();
   });
-  dockActions.append(backBtn, previewBtn, nextBtn, runBtn);
+  dockActions.append(backBtn, previewBtn, nextBtn, confirmBtn, runBtn);
   dockRow.append(dockCopy, dockActions);
   dock.appendChild(dockRow);
   dock.appendChild(panel.status);
@@ -1497,39 +1446,37 @@ export function mountReflectLitePanel() {
   workspace.appendChild(canvas);
   hint?.insertAdjacentElement('afterend', workspace);
   panel.body.appendChild(dock);
-  let activeStage: 'setup' | 'review' | 'result' = 'setup';
+  let activeStage: 'setup' | 'review' | 'confirm' | 'result' = 'setup';
+  const noInputSubmit = document.createElement('button'); noInputSubmit.disabled = true;
   refreshWorkflow = () => {
-    const { scopes, fresh, preview, lookupState } = getPreviewState();
+    const { scopes, fresh, preview } = getPreviewState();
     const plan = fresh ? getExecutionPlan(scopes, preview?.result) : null;
-    backBtn.hidden = activeStage === 'setup';
-    nextBtn.hidden = activeStage !== 'setup';
-    previewBtn.hidden = activeStage !== 'review';
-    runBtn.hidden = activeStage !== 'review';
-    backBtn.disabled = busy;
-    nextBtn.disabled = previewBtn.disabled || busy;
-    setButtonText(nextBtn, fresh ? '確認した差分へ進む' : '差分を確認する');
-    setButtonText(previewBtn, '差分を再取得');
-    previewBtn.classList.toggle('kus-lp__btn--primary', !fresh);
-    previewBtn.classList.toggle('kus-lp__btn--sub', fresh);
+    backBtn.hidden = activeStage === 'setup'; nextBtn.hidden = activeStage !== 'setup';
+    previewBtn.hidden = activeStage !== 'review'; confirmBtn.hidden = activeStage !== 'review'; runBtn.hidden = activeStage !== 'confirm';
+    backBtn.disabled = busy; nextBtn.disabled = previewBtn.disabled || busy; navButtons.confirm.disabled = confirmBtn.disabled;
+    setButtonText(backBtn, activeStage === 'confirm' ? '差分に戻る' : '対象を変更');
+    setButtonText(nextBtn, fresh ? '確認した差分へ進む' : '差分を確認する'); setButtonText(previewBtn, '差分を再取得');
+    previewBtn.classList.toggle('kus-lp__btn--primary', !fresh); previewBtn.classList.toggle('kus-lp__btn--sub', fresh);
     resultEmpty.hidden = !!memoryState.lastResult || logCard.card.style.display !== 'none';
-    let message = `${scopes.length} 項目を比較します。設定の書き込みは行いません。`;
-    if (sourceMode === 'json' && !sourceBundleFromJson) message = '比較元の設定JSONを選んでください。';
-    else if (!srcApp.value.trim() || !tgtApp.value.trim()) message = '比較元と比較先のアプリIDを入力してください。';
-    else if (!scopes.length) message = '反映したい項目を1つ以上選んでください。';
-    else if (!lookupState.ok) message = '詳細設定の参照先変換JSONを修正してください。';
-    else if (activeStage === 'review') message = !fresh ? '条件が変わったか、差分が未取得です。再取得して確認してください。'
-      : plan?.effectiveScopes.length ? `${plan.effectiveScopes.length} 項目を反映予定 · バックアップ ${backup.checkbox.checked ? 'あり' : 'なし'}`
-      : '反映予定は0件です。差分と取得失敗の有無を確認してください。';
-    else if (activeStage === 'result') message = memoryState.lastResult ? '結果を確認し、比較先の設定画面へ進めます。' : '反映結果はここに表示されます。';
-    const sourceLabel = sourceMode === 'json' ? `設定JSON #${sourceBundleFromJson?.appId || '未読込'}`
-      : `#${srcApp.value.trim() || '未入力'}${srcGuest.value.trim() ? `（ゲスト ${srcGuest.value.trim()}）` : ''}・${srcPreview.checkbox.checked ? 'プレビュー' : '本番'}`;
-    const targetLabel = `#${tgtApp.value.trim() || '未入力'}${tgtGuest.value.trim() ? `（ゲスト ${tgtGuest.value.trim()}）` : ''}・プレビュー`;
-    dockCopy.innerHTML = `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong>${escapeHtml(message)}`;
+    let message = `${scopes.length} 項目を比較します。書き込みは行いません。`;
+    if (activeStage === 'review') message = !fresh ? '差分の取得が必要です。' : confirmBtn.disabled ? '確認が必要な項目、または変更の有無を確認してください。' : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
+    if (activeStage === 'confirm') message = fresh && confirmedToken ? '反映前バックアップを自動保存 / エラー時は中断 / 本番公開は行いません' : '条件が変わりました。差分の取得と最終確認をやり直してください。';
+    if (activeStage === 'result') message = '結果を確認してください。再実行には差分の再取得が必要です。';
+    const sourceLabel = fresh && preview?.identities ? reflectIdentityLabel(preview.identities, 'source', sourceMode === 'json' ? 'JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー' : '本番') : `反映元 #${srcApp.value.trim() || '未入力'}`;
+    const targetLabel = fresh && preview?.identities ? reflectIdentityLabel(preview.identities, 'target', '') : `反映先 #${tgtApp.value.trim() || '未入力'} / プレビュー`;
+    // The complete route stays in the confirmation card. Keep the fixed footer short on small screens.
+    dockCopy.innerHTML = activeStage === 'confirm' && fresh && preview?.identities
+      ? `<strong>書き込み先 #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong>${escapeHtml(confirmedToken ? '内容を確認してから反映してください。' : '条件が変わりました。差分を再取得してください。')}`
+      : `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong>${escapeHtml(message)}`;
+    panel.result.hidden = activeStage === 'confirm';
     const advancedSummary = advanced.details.querySelector('summary');
-    if (advancedSummary) advancedSummary.textContent = `詳細設定 · バックアップ${backup.checkbox.checked ? 'あり' : 'なし'} / ${stop.checkbox.checked ? 'エラー時に中断' : 'エラー後も続行'}${lookupTa.value.trim() ? ' / 参照先変換あり' : ''}`;
-    panel.setPrimaryAction(activeStage === 'setup' ? nextBtn : activeStage === 'review' ? (fresh ? runBtn : previewBtn) : backBtn);
+    if (advancedSummary) advancedSummary.textContent = '詳細設定 · 自動バックアップ / 参照先変換';
+    // Text-entry Enter must never start a settings write.
+    panel.setPrimaryAction(activeStage === 'setup' ? nextBtn : activeStage === 'review' ? (fresh ? confirmBtn : previewBtn) : noInputSubmit);
   };
   showWorkflowStage = (active) => {
+    if (active === 'confirm' && !confirmedToken) return;
+    if (activeStage === 'confirm' && active !== 'confirm') clearConfirmation();
     activeStage = active;
     stageDefs.forEach((def) => {
       const selected = def.id === active;
@@ -1610,9 +1557,11 @@ function tryParseLookupMap(text: string): LookupParseResult {
   if (!t) return { ok: true, value: {} };
   try {
     const parsed = JSON.parse(t);
-    const out: Record<string, string> = {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false, error: '参照先変換は {"旧AppID":"新AppID"} 形式のJSONを入力してください。' };
+    const out: Record<string, string> = Object.create(null);
     for (const [k, v] of Object.entries(parsed || {})) {
-      if (k && v != null) out[String(k).trim()] = String(v).trim();
+      if (!/^[1-9]\d*$/.test(k) || !/^[1-9]\d*$/.test(String(v))) return { ok: false, error: '参照先変換のアプリIDには正の整数を指定してください。' };
+      out[k] = String(v);
     }
     return { ok: true, value: out };
   } catch {
@@ -1638,6 +1587,7 @@ function buildPreviewSignature(args: {
   targetGuestId: string;
   scopes: string[];
   lookupMap: Record<string, string>;
+  preserveTargetOnly: boolean;
 }): string {
   const lookupPairs = Object.keys(args.lookupMap || {})
     .sort()
@@ -1650,7 +1600,8 @@ function buildPreviewSignature(args: {
     targetAppId: args.targetAppId,
     targetGuestId: args.targetGuestId,
     scopes: [...(args.scopes || [])].sort(),
-    lookupPairs
+    lookupPairs,
+    preserveTargetOnly: args.preserveTargetOnly
   });
 }
 
@@ -1659,7 +1610,7 @@ function filterPreviewEntries(entries: PreviewEntry[], keyword: string, status =
     ? !['change', 'same'].includes(entry.status) : entry.status === status));
   if (!keyword) return entries;
   return entries.filter((entry) => {
-    const hay = [entry.label, entry.message, entry.sectionKey]
+    const hay = [entry.label, entry.message, entry.sectionKey, ...entry.changes.map(change => [change.path, change.before, change.after].join(" "))]
       .filter(Boolean)
       .join('\n')
       .toLowerCase();
@@ -1765,131 +1716,10 @@ function renderPreviewResult(host: HTMLElement, result: PreviewReflectResult, op
         });
         row.appendChild(selection.label);
       }
+      appendReflectChanges(row, entry);
       list.appendChild(row);
     }
     wrap.appendChild(list);
     host.appendChild(wrap);
   }
-}
-
-function confirmReflectRisk(
-  panel: LitePanelHandle,
-  ctx: {
-    sourceAppId: string;
-    sourceGuestId: string;
-    /** 比較元を設定JSONファイルから読み込んでいる場合 true */
-    hasSourceBundle?: boolean;
-    targetAppId: string;
-    targetGuestId: string;
-    scopes: string[];
-    effectiveScopes: string[];
-    skippedSameScopes: string[];
-    skippedErrorScopes: string[];
-    doBackup: boolean;
-    stopOnError: boolean;
-    lookupMapText: string;
-    preview?: PreviewReflectResult;
-  }
-): boolean {
-  if (!ctx.sourceAppId && !ctx.hasSourceBundle) {
-    panel.setStatus('比較元アプリIDを入力するか、比較元JSONを読み込んでください', 'warn');
-    return false;
-  }
-  if (!ctx.targetAppId) {
-    panel.setStatus('比較先アプリIDを入力してください', 'warn');
-    return false;
-  }
-
-  const issues: string[] = [];
-  const sameConn = !ctx.hasSourceBundle && ctx.sourceAppId === ctx.targetAppId && ctx.sourceGuestId === ctx.targetGuestId;
-  if (sameConn) {
-    issues.push('比較元と比較先が同一接続です（同じアプリID・ゲストID）');
-  }
-  if (ctx.scopes.length >= 10) {
-    issues.push(`対象セクション数が多いです（${ctx.scopes.length}件）`);
-  }
-  if (ctx.effectiveScopes.length >= 10) {
-    issues.push(`実行予定セクション数が多いです（${ctx.effectiveScopes.length}件）`);
-  }
-  const riskyHit = ctx.scopes.filter((s) => RISKY_SCOPE_KEYS.has(s));
-  if (riskyHit.length) {
-    const labels = riskyHit.map((s) => getSectionLabel(s)).join(', ');
-    issues.push(`影響範囲の広いセクションを含みます: ${labels}`);
-  }
-  if (!ctx.doBackup) {
-    issues.push('「バックアップを保存」が OFF です（ロールバック用ファイルが残りません）');
-  }
-  if (!ctx.stopOnError) {
-    issues.push('「エラー時に中断」が OFF です（失敗後も残りの反映を続行します）');
-  }
-  if (ctx.preview) {
-    if (ctx.preview.errorSections > 0) {
-      issues.push(`差分プレビューで取得失敗が ${ctx.preview.errorSections} 件あります`);
-    }
-    if (ctx.preview.changedSections === 0) {
-      issues.push('差分プレビューでは変更対象がありません');
-    }
-  }
-  if (ctx.skippedSameScopes.length > 0) {
-    issues.push(`一致セクション ${ctx.skippedSameScopes.length} 件は自動で除外されます`);
-  }
-  if (ctx.skippedErrorScopes.length > 0) {
-    issues.push(`取得失敗セクション ${ctx.skippedErrorScopes.length} 件は自動で除外されます`);
-  }
-  if (!ctx.effectiveScopes.length) {
-    issues.push('実行予定セクションが 0 件です');
-  }
-
-  const scopeLabels = ctx.scopes.map((s) => getSectionLabel(s)).join(', ');
-  const effectiveLabels = ctx.effectiveScopes.map((s) => getSectionLabel(s)).join(', ');
-  const changedLabels = ctx.preview
-    ? ctx.preview.entries.filter((entry) => entry.status === 'change').map((entry) => entry.label)
-    : [];
-  const changedPreview = changedLabels.length
-    ? `${changedLabels.slice(0, 6).join(', ')}${changedLabels.length > 6 ? ` ほか ${changedLabels.length - 6} 件` : ''}`
-    : 'なし';
-  // 高リスク判定とその理由（追加確認を求めるときに、なぜ必要かを必ず提示する）
-  const highRiskReasons: string[] = [];
-  if (sameConn) highRiskReasons.push('比較元と比較先が同一接続');
-  if (riskyHit.length > 0) highRiskReasons.push(`影響範囲の広いセクションを含む（${riskyHit.map((s) => getSectionLabel(s)).join(', ')}）`);
-  if (!ctx.doBackup) highRiskReasons.push('バックアップ保存が OFF');
-  if (!ctx.stopOnError) highRiskReasons.push('エラー時中断が OFF');
-  if ((ctx.preview?.errorSections || 0) > 0) highRiskReasons.push(`差分プレビューに取得失敗が ${ctx.preview?.errorSections} 件`);
-  if (ctx.effectiveScopes.length >= 10) highRiskReasons.push(`実行予定セクションが ${ctx.effectiveScopes.length} 件と多い`);
-  const highRisk = highRiskReasons.length > 0;
-
-  const lines = [
-    '【最終確認: プレビュー反映】',
-    ctx.hasSourceBundle
-      ? `比較元: 設定JSON${ctx.sourceAppId ? ` (App ${ctx.sourceAppId})` : ''}`
-      : `比較元: #${ctx.sourceAppId}${ctx.sourceGuestId ? ` (guest:${ctx.sourceGuestId})` : ''}`,
-    `比較先: #${ctx.targetAppId}${ctx.targetGuestId ? ` (guest:${ctx.targetGuestId})` : ''} ※プレビュー`,
-    `対象セクション (${ctx.scopes.length}): ${scopeLabels}`,
-    `実行予定セクション (${ctx.effectiveScopes.length}): ${effectiveLabels || 'なし'}`,
-    `オプション: バックアップ=${ctx.doBackup ? 'ON' : 'OFF'} / エラー時中断=${ctx.stopOnError ? 'ON' : 'OFF'}${ctx.lookupMapText.trim() ? ' / Lookup変換あり' : ''}`,
-    ctx.preview
-      ? `差分プレビュー: 差分 ${ctx.preview.changedSections} / 一致 ${ctx.preview.sameSections} / 取得失敗 ${ctx.preview.errorSections}`
-      : '差分プレビュー: 未確認',
-    ctx.preview ? `差分ありセクション: ${changedPreview}` : '',
-    '',
-    issues.length ? `注意点:\n  - ${issues.join('\n  - ')}` : '注意点: なし'
-  ].filter(Boolean);
-  if (!window.confirm(lines.join('\n') + '\n\n本当に実行しますか？')) return false;
-  if (highRisk) {
-    const typed = window.prompt(
-      '高リスク実行のため追加確認します。\n'
-      + `理由:\n  - ${highRiskReasons.join('\n  - ')}\n\n`
-      + `確認のため比較先アプリID「${ctx.targetAppId}」を入力してください。`,
-      ''
-    );
-    if (typed === null) {
-      panel.setStatus('反映実行をキャンセルしました', 'info');
-      return false;
-    }
-    if (typed.trim() !== ctx.targetAppId) {
-      panel.setStatus('確認入力が一致しないため、中断しました', 'warn');
-      return false;
-    }
-  }
-  return true;
 }

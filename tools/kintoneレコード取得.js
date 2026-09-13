@@ -583,6 +583,9 @@
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
+  function deepClone(v) {
+    return v == null ? v : JSON.parse(JSON.stringify(v));
+  }
   function normalize(v) {
     if (Array.isArray(v)) return v.map(normalize);
     if (v && typeof v === "object") {
@@ -1100,7 +1103,7 @@ ${contextLine}`);
     await runTaskFactoriesWithConcurrency(tasks, CUSTOMIZE_BODY_FETCH_CONCURRENCY);
     return stats;
   }
-  async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
+  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
     const bundle = {
@@ -1124,7 +1127,7 @@ ${contextLine}`);
         const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
         const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);
-        results[index] = { value: normalize(res), revision };
+        results[index] = { value: rawSettings ? deepClone(res) : normalize(res), revision };
       } catch (e) {
         results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
@@ -1136,7 +1139,7 @@ ${contextLine}`);
       bundle.sections[def.key] = value;
       if (revision) bundle.meta.sectionRevisions[def.key] = revision;
     });
-    if (sections.includes("customizeSettings")) {
+    if (!rawSettings && sections.includes("customizeSettings")) {
       const cust = bundle.sections.customizeSettings;
       if (cust && !cust._fetchError) {
         try {
@@ -1157,7 +1160,7 @@ ${contextLine}`);
         }
       }
     }
-    if (sections.includes("pluginSettings")) {
+    if (!rawSettings && sections.includes("pluginSettings")) {
       const plug = bundle.sections.pluginSettings;
       if (plug && !plug._fetchError) {
         try {

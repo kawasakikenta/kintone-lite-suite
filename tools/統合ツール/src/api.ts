@@ -428,7 +428,7 @@ export function extractSectionRevision(res: any): string {
   return '';
 }
 
-export function ensureBundleShape(bundle: any): Bundle {
+export function ensureBundleShape(bundle: any, rawSettings = false): Bundle {
   if (!bundle || typeof bundle !== 'object') throw new Error('バンドル形式が不正です');
   if (!bundle.sections || typeof bundle.sections !== 'object') throw new Error('sections がありません');
   return {
@@ -437,7 +437,7 @@ export function ensureBundleShape(bundle: any): Bundle {
     preview: !!bundle.preview,
     fetchedAt: bundle.fetchedAt || new Date().toISOString(),
     meta: sanitizeBundleMeta(bundle.meta),
-    sections: normalize(bundle.sections)
+    sections: rawSettings ? deepClone(bundle.sections) : normalize(bundle.sections)
   };
 }
 
@@ -463,6 +463,8 @@ export function pickBundleSections(bundle: any, sections: readonly string[]): Bu
 }
 
 export interface FetchBundleParams {
+  /** Reflection uses exact setting names and needs no auxiliary file bodies/plugin configs. */
+  rawSettings?: boolean;
   appId: string | number;
   guestId?: string | number;
   preview: boolean;
@@ -691,7 +693,7 @@ export async function fetchPluginConfigs(
 /** 読み取りを小さな並列数に抑え、他のツールの API 利用にも余裕を残す。 */
 export const BUNDLE_FETCH_CONCURRENCY = 3;
 
-export async function fetchBundle({ appId, guestId, preview, sections, onProgress }: FetchBundleParams): Promise<Bundle> {
+export async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false }: FetchBundleParams): Promise<Bundle> {
   const app = String(appId || '').trim();
   if (!app) throw new Error('アプリIDが必要です');
 
@@ -717,7 +719,7 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
       const params: Record<string, unknown> = typeof def.paramBuilder === 'function' ? def.paramBuilder(app) : { app };
       const res = await apiGet(prefix, def.endpoint, params);
       const revision = extractSectionRevision(res);
-      results[index] = { value: normalize(res), revision };
+      results[index] = { value: rawSettings ? deepClone(res) : normalize(res), revision };
     } catch (e: any) {
       results[index] = { value: { _fetchError: e?.message || String(e) }, revision: '' };
     }
@@ -734,7 +736,7 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
   // 一部だけ取得できた値を通常差分として扱うと「設定追加/削除」の偽差分になるため、
   // 1 件でも失敗したセクションは既存の _fetchError 契約で比較不能として扱う。
   // 取得件数の内部統計はセクション本体へ混ぜず、設定差分のノイズにしない。
-  if (sections.includes('customizeSettings')) {
+  if (!rawSettings && sections.includes('customizeSettings')) {
     const cust = bundle.sections.customizeSettings;
     if (cust && !cust._fetchError) {
       try {
@@ -756,7 +758,7 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
       }
     }
   }
-  if (sections.includes('pluginSettings')) {
+  if (!rawSettings && sections.includes('pluginSettings')) {
     const plug = bundle.sections.pluginSettings;
     if (plug && !plug._fetchError) {
       try {

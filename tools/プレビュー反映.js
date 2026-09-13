@@ -480,9 +480,6 @@
     }
     return v;
   }
-  function stableStringify(v) {
-    return JSON.stringify(normalize(v));
-  }
   function compactForLog(value, max = 220) {
     try {
       const raw = typeof value === "string" ? value : JSON.stringify(value);
@@ -724,7 +721,7 @@ ${base}`
     }
     return "";
   }
-  function ensureBundleShape(bundle) {
+  function ensureBundleShape(bundle, rawSettings = false) {
     if (!bundle || typeof bundle !== "object") throw new Error("バンドル形式が不正です");
     if (!bundle.sections || typeof bundle.sections !== "object") throw new Error("sections がありません");
     return {
@@ -733,7 +730,7 @@ ${base}`
       preview: !!bundle.preview,
       fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
       meta: sanitizeBundleMeta(bundle.meta),
-      sections: normalize(bundle.sections)
+      sections: rawSettings ? deepClone(bundle.sections) : normalize(bundle.sections)
     };
   }
   function pickBundleSections(bundle, sections) {
@@ -915,7 +912,7 @@ ${base}`
     await runTaskFactoriesWithConcurrency(tasks, CUSTOMIZE_BODY_FETCH_CONCURRENCY);
     return stats;
   }
-  async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
+  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
     const bundle = {
@@ -939,7 +936,7 @@ ${base}`
         const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
         const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);
-        results[index] = { value: normalize(res), revision };
+        results[index] = { value: rawSettings ? deepClone(res) : normalize(res), revision };
       } catch (e) {
         results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
@@ -951,7 +948,7 @@ ${base}`
       bundle.sections[def.key] = value;
       if (revision) bundle.meta.sectionRevisions[def.key] = revision;
     });
-    if (sections.includes("customizeSettings")) {
+    if (!rawSettings && sections.includes("customizeSettings")) {
       const cust = bundle.sections.customizeSettings;
       if (cust && !cust._fetchError) {
         try {
@@ -972,7 +969,7 @@ ${base}`
         }
       }
     }
-    if (sections.includes("pluginSettings")) {
+    if (!rawSettings && sections.includes("pluginSettings")) {
       const plug = bundle.sections.pluginSettings;
       if (plug && !plug._fetchError) {
         try {
@@ -1280,16 +1277,20 @@ ${base}`
 
   // src/reflect/standalonePreflight.ts
   init_constants();
-  init_utils();
+  function stableReflectStringify(value) {
+    const sort = (input) => Array.isArray(input) ? input.map(sort) : input && typeof input === "object" ? Object.fromEntries(Object.keys(input).sort().map((key) => [key, sort(input[key])])) : input;
+    return JSON.stringify(sort(value));
+  }
   function connectionKey(opts) {
-    return stableStringify({
+    return stableReflectStringify({
       sourceAppId: String(opts.sourceAppId || "").trim(),
       sourceGuestId: String(opts.sourceGuestId || "").trim(),
       sourcePreview: !!opts.sourcePreview,
       sourceMode: opts.sourceBundle ? "json" : "api",
       targetAppId: String(opts.targetAppId || "").trim(),
       targetGuestId: String(opts.targetGuestId || "").trim(),
-      lookupMap: opts.lookupMap || {}
+      lookupMap: opts.lookupMap || {},
+      preserveTargetOnly: opts.preserveTargetOnly !== false
     });
   }
   function isCompleteReflectSection(section) {
@@ -1299,7 +1300,7 @@ ${base}`
     return Object.fromEntries(scopes.map((key) => {
       const section = bundle?.sections?.[key];
       return [key, {
-        content: stableStringify(section) ?? "",
+        content: stableReflectStringify(section) ?? "",
         revision: String(bundle?.meta?.sectionRevisions?.[key] ?? section?.revision ?? ""),
         complete: isCompleteReflectSection(section)
       }];
@@ -1315,19 +1316,20 @@ ${base}`
   function assertCompleteReflectBackup(bundle, scopes) {
     const incomplete = scopes.filter((key) => !isCompleteReflectSection(bundle?.sections?.[key]));
     if (!incomplete.length) return;
-    const labels = incomplete.map((key) => SECTION_DEFS.find((def) => def.key === key)?.label || key);
-    throw new Error(`バックアップを完全に取得できなかったため反映を中止しました。対象: ${labels.join("、")}。差分を取得し直してから再実行してください。`);
+    const labels2 = incomplete.map((key) => SECTION_DEFS.find((def) => def.key === key)?.label || key);
+    throw new Error(`バックアップを完全に取得できなかったため反映を中止しました。対象: ${labels2.join("、")}。差分を取得し直してから再実行してください。`);
   }
   function assertReflectBaselineMatches(baseline, opts, source, target) {
     if (!baseline || baseline.connection !== connectionKey(opts)) {
       throw new Error("確認済みの差分と反映条件が一致しません。差分を取得し直してから再実行してください。");
     }
-    const current = captureReflectBaseline(opts, source, target);
+    const current = captureReflectBaseline({ ...opts, scopes: [.../* @__PURE__ */ new Set([...opts.scopes, ...opts.targetDependencies || []])] }, source, target);
     for (const side of ["source", "target"]) {
       const label = side === "source" ? "比較元" : "比較先プレビュー";
       const revisions = /* @__PURE__ */ new Set();
       const requireRevision = side === "target" || !opts.sourceBundle;
-      for (const key of opts.scopes) {
+      const checkedScopes = side === "source" ? opts.scopes : [.../* @__PURE__ */ new Set([...opts.scopes, ...opts.targetDependencies || []])];
+      for (const key of checkedScopes) {
         const before = baseline[side]?.[key];
         const after = current[side][key];
         const sectionLabel = SECTION_DEFS.find((def) => def.key === key)?.label || key;
@@ -1347,6 +1349,290 @@ ${base}`
       }
     }
     return current.target[opts.scopes[0]].revision;
+  }
+
+  // src/reflect/standalonePlan.ts
+  init_constants();
+  init_utils();
+  var namedSections = { viewSettings: "views", reportSettings: "reports", actionSettings: "actions" };
+  var own = (object2, key) => Object.prototype.hasOwnProperty.call(object2, key);
+  var object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+  var equal = (a, b) => stableReflectStringify(a) === stableReflectStringify(b);
+  var valueText = (value) => value === void 0 ? "（なし）" : typeof value === "string" ? value : JSON.stringify(value);
+  var labels = { properties: "フィールド", layout: "配置", views: "一覧", reports: "グラフ", actions: "アクション", rights: "アクセス権", notifications: "通知", categories: "カテゴリー", label: "表示名", required: "必須", unique: "重複禁止", options: "選択肢", defaultValue: "初期値", type: "種類", index: "表示順", filterCond: "絞り込み", sort: "並び順", enable: "有効", states: "状態", scope: "適用範囲", fields: "フィールド", desktop: "PC", mobile: "モバイル" };
+  function diffValues(before, after, path, output) {
+    if (equal(before, after)) return;
+    if (object(before) && object(after)) {
+      for (const key of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own(before, key) ? before[key] : void 0, own(after, key) ? after[key] : void 0, [...path, own(labels, key) ? labels[key] : key], output);
+    } else if (Array.isArray(before) && Array.isArray(after)) {
+      const remaining = [...after];
+      for (const [index, value] of before.entries()) {
+        const found = remaining.findIndex((item) => equal(item, value));
+        if (found >= 0) remaining.splice(found, 1);
+        else output.push({ kind: "削除", path: [...path, `${index + 1}件目`].join(" / "), before: valueText(value), after: "（なし）" });
+      }
+      for (const value of remaining) output.push({ kind: "追加", path: path.join(" / "), before: "（なし）", after: valueText(value) });
+      if (!remaining.length && before.length === after.length && before.every((value) => after.some((item) => equal(item, value)))) {
+        output.push({ kind: "変更", path: path.join(" / ") + " / 順序", before: valueText(before), after: valueText(after) });
+      }
+    } else output.push({ kind: before === void 0 ? "追加" : after === void 0 ? "削除" : "変更", path: path.join(" / "), before: valueText(before), after: valueText(after) });
+  }
+  function fieldDefinitions(section) {
+    const properties = section?.properties;
+    if (!object(properties)) throw new Error("フィールド設定の properties を取得できません。");
+    return properties;
+  }
+  function mergeFields(source, target, lookupMap, path, plan) {
+    const after = Object.assign(/* @__PURE__ */ Object.create(null), deepClone(target));
+    for (const [code, def] of Object.entries(source)) {
+      if (!object(def) || !def.type) {
+        plan.blockers.push(`${[...path, code].join(" / ")}: フィールドの種類がありません。`);
+        continue;
+      }
+      if (SYSTEM_FIELD_TYPES.has(def.type)) continue;
+      const current = own(target, code) ? target[code] : void 0;
+      if (current && current.type !== def.type) {
+        plan.blockers.push(`${[...path, code].join(" / ")}: 種類が異なります（${current.type} → ${def.type}）。既存項目の種類はこの反映では変更できません。`);
+        continue;
+      }
+      const next = { code, ...deepClone(current || {}), ...deepClone(def) };
+      if (!current && next.label === void 0) next.label = code;
+      if (next.code && next.code !== code) plan.blockers.push(`${code}: フィールドコードの変更を含みます。フィールド追加ツールで確認してください。`);
+      if (next.lookup?.relatedApp?.app && lookupMap[String(next.lookup.relatedApp.app)]) {
+        next.lookup.relatedApp.app = lookupMap[String(next.lookup.relatedApp.app)];
+        delete next.lookup.relatedApp.code;
+      }
+      if (def.type === "SUBTABLE") {
+        if (!object(def.fields)) throw new Error(`${code}: テーブル内のフィールド定義がありません。`);
+        next.fields = mergeFields(def.fields, current?.fields || {}, lookupMap, [...path, code], plan);
+      }
+      after[code] = next;
+    }
+    for (const [code, def] of Object.entries(target)) if (!own(source, code) && !SYSTEM_FIELD_TYPES.has(def?.type)) {
+      plan.changes.push({ kind: "保持", path: [...path, code].join(" / "), before: valueText(def), after: "反映先の設定を保持" });
+    }
+    return after;
+  }
+  function namedPayload(section, property) {
+    if (!object(section?.[property])) throw new Error(`${property} の設定を取得できません。`);
+    return Object.fromEntries(Object.entries(section[property]).map(([key, raw]) => {
+      if (!object(raw)) throw new Error(`${key}: 設定の形式が不正です。`);
+      const value = deepClone(raw);
+      delete value.id;
+      return [key, value];
+    }));
+  }
+  function mergeLayout(source, target, plan) {
+    const result = deepClone(source), locations = /* @__PURE__ */ new Map();
+    const collect = (nodes) => {
+      for (const node of nodes) {
+        if (!object(node)) throw new Error("レイアウトに不正な項目があります。");
+        if (node.code) {
+          if (locations.has(node.code)) throw new Error(`配置が重複しています: ${node.code}`);
+          locations.set(node.code, node);
+        }
+        if (Array.isArray(node.fields)) collect(node.fields);
+        if (Array.isArray(node.layout)) collect(node.layout);
+      }
+    };
+    collect(result);
+    const retain = (field) => {
+      if (!field.code || locations.has(field.code)) return false;
+      locations.set(field.code, field);
+      plan.changes.push({ kind: "保持", path: `配置 / ${field.code}`, before: valueText(field), after: "既存の配置を末尾に保持" });
+      return true;
+    };
+    const appendMissing = (nodes, destination) => {
+      for (const node of deepClone(nodes)) {
+        if (node.type === "ROW") {
+          node.fields = (node.fields || []).filter(retain);
+          if (node.fields.length) destination.push(node);
+        } else if (node.type === "GROUP") {
+          const existing = locations.get(node.code);
+          if (existing) appendMissing(node.layout || [], existing.layout || (existing.layout = []));
+          else {
+            retain(node);
+            const children = node.layout || [];
+            node.layout = [];
+            appendMissing(children, node.layout);
+            destination.push(node);
+          }
+        } else if (node.type === "SUBTABLE") {
+          const existing = locations.get(node.code);
+          const fields = (node.fields || []).filter(retain);
+          if (existing) existing.fields.push(...fields);
+          else {
+            retain(node);
+            node.fields = fields;
+            destination.push(node);
+          }
+        }
+      }
+    };
+    appendMissing(target, result);
+    return result;
+  }
+  function reflectInspectionScopes(scopes) {
+    return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => ["layoutSettings", "viewSettings"].includes(key)) ? ["fieldSettings"] : []])];
+  }
+  function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields) {
+    const selected = entries.filter((entry) => scopes.includes(entry.sectionKey));
+    const available = /* @__PURE__ */ new Set([...targetFields, ...scopes.includes("fieldSettings") && !selected.find((entry) => entry.sectionKey === "fieldSettings")?.blockers.length ? sourceFields : []]);
+    const issues = selected.flatMap((entry) => entry.blockers.map((message) => `${entry.label}: ${message}`));
+    for (const entry of selected) for (const code of entry.requiredFields || []) if (!available.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
+    return [...new Set(issues)];
+  }
+  function buildReflectSectionPlan(key, source, target, options = {}) {
+    const def = SECTION_DEFS.find((item) => item.key === key);
+    const plan = { sectionKey: key, label: def?.label || key, status: "same", message: "", behavior: "全置換", changes: [], changeCount: 0, removalCount: 0, warnings: [], blockers: [], operations: [] };
+    const fail = (side, section) => {
+      plan.status = side === "src" ? "src-missing" : "tgt-missing";
+      plan.message = `${side === "src" ? "反映元" : "反映先"}を完全に取得できません: ${section?._fetchError || section?._partial?.message || "設定がありません"}`;
+      plan.blockers.push(plan.message);
+      return plan;
+    };
+    if (!isCompleteReflectSection(source)) return fail("src", source);
+    if (!isCompleteReflectSection(target)) return fail("tgt", target);
+    if (!def?.put || !def.putBuilder) {
+      plan.status = "error";
+      plan.blockers.push("この項目は反映に対応していません。");
+      return plan;
+    }
+    try {
+      let before, after;
+      if (key === "fieldSettings") {
+        plan.behavior = "追加・更新（反映先だけの項目は保持）";
+        const sourceProps = fieldDefinitions(source), targetProps = fieldDefinitions(target);
+        const positions = (props) => {
+          const map = /* @__PURE__ */ new Map();
+          const add = (code, parent) => {
+            if (map.has(code)) throw new Error(`フィールドコードが重複しています: ${code}`);
+            map.set(code, parent);
+          };
+          for (const [code, field] of Object.entries(props)) {
+            add(code, "フォーム");
+            if (field?.type === "SUBTABLE") for (const child of Object.keys(field.fields || {})) add(child, code);
+          }
+          return map;
+        };
+        const sourcePositions = positions(sourceProps), targetPositions = positions(targetProps);
+        for (const [code, parent] of sourcePositions) if (targetPositions.has(code) && parent !== targetPositions.get(code)) plan.blockers.push(`${code}: フォームとテーブル間、またはテーブル間の移動には対応していません。`);
+        const merged = mergeFields(sourceProps, targetProps, options.lookupMap || {}, ["フィールド"], plan);
+        const adds = /* @__PURE__ */ Object.create(null), updates = /* @__PURE__ */ Object.create(null);
+        for (const [code, value] of Object.entries(merged)) {
+          if (!own(sourceProps, code) || SYSTEM_FIELD_TYPES.has(value?.type)) continue;
+          if (!own(targetProps, code)) adds[code] = value;
+          else if (value.type === "SUBTABLE") {
+            const current = targetProps[code], addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own(current.fields || {}, child)));
+            if (Object.keys(addedFields).length) adds[code] = { type: "SUBTABLE", code, fields: addedFields };
+            const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own(current.fields || {}, child) && !equal(childDef, current.fields[child])));
+            const { fields: _nextFields, ...nextTable } = value, { fields: _currentFields, ...currentTable } = current;
+            if (Object.keys(updatedFields).length || !equal(nextTable, currentTable)) updates[code] = { ...nextTable, fields: updatedFields };
+          } else if (!equal(value, targetProps[code])) updates[code] = value;
+        }
+        const fieldCounts = { add: Object.keys(adds).length, update: Object.keys(updates).length, tgtOnly: Object.keys(targetProps).filter((code) => !own(sourceProps, code) && !SYSTEM_FIELD_TYPES.has(targetProps[code]?.type)).length };
+        plan.fieldStats = fieldCounts;
+        if (fieldCounts.add) plan.operations.push({ method: "POST", endpoint: def.endpoint, body: { properties: adds }, label: "フィールド追加" });
+        if (fieldCounts.update) plan.operations.push({ method: "PUT", endpoint: def.endpoint, body: { properties: updates }, label: "フィールド更新" });
+        before = { properties: targetProps };
+        after = { properties: merged };
+      } else if (namedSections[key]) {
+        const property = namedSections[key];
+        const from = namedPayload(source, property), to = namedPayload(target, property);
+        for (const name of Object.keys(from)) if (own(to, name)) from[name] = { ...to[name], ...from[name] };
+        const preserve = options.preserveTargetOnly !== false;
+        const combined = preserve ? { ...to, ...from } : from;
+        const ordered = [...Object.keys(from).sort((a, b) => Number(from[a].index || 0) - Number(from[b].index || 0)), ...preserve ? Object.keys(to).filter((name) => !own(from, name)).sort((a, b) => Number(to[a].index || 0) - Number(to[b].index || 0)) : []];
+        for (const [index, name] of ordered.entries()) combined[name] = { ...combined[name], index: String(index) };
+        if (key === "viewSettings") for (const [name, view] of Object.entries(combined)) {
+          if (!["LIST", "CALENDAR", "CUSTOM"].includes(view.type)) throw new Error(`${name}: 一覧の種類を取得できません。`);
+          if (view.type === "LIST" && (!Array.isArray(view.fields) || view.fields.some((code) => typeof code !== "string"))) throw new Error(`${name}: 一覧のフィールド定義が不完全です。`);
+          if (view.type === "CUSTOM" && typeof view.html !== "string") throw new Error(`${name}: カスタマイズ一覧のHTMLを取得できません。`);
+        }
+        for (const item of Object.values(to)) if (item.index !== void 0) item.index = String(item.index);
+        before = { [property]: to };
+        after = { [property]: combined };
+        plan.behavior = preserve ? "追加・更新（反映先だけの設定は保持）" : "全置換（反映元にない設定を削除）";
+        if (preserve) for (const name of Object.keys(to).filter((name2) => !own(from, name2))) plan.changes.push({ kind: "保持", path: `${labels[property]} / ${name}`, before: valueText(to[name]), after: "内容を保持（表示順は反映元の後）" });
+        if (key === "viewSettings") plan.requiredFields = [...new Set(Object.values(combined).flatMap((view) => view.type === "LIST" ? view.fields || [] : view.type === "CALENDAR" ? [view.date, view.title].filter(Boolean) : []).filter((code) => !["$id", "$revision"].includes(code)))];
+      } else if (key === "pluginSettings") {
+        if (!Array.isArray(source.plugins) || !Array.isArray(target.plugins)) throw new Error("プラグイン一覧の形式が不正です。");
+        const existing = new Set(target.plugins.map((item) => item.id));
+        const additions = source.plugins.filter((item) => !existing.has(item.id));
+        if (additions.some((item) => typeof item.id !== "string" || !item.id)) throw new Error("プラグインIDがありません。");
+        plan.behavior = "未追加のプラグインを追加（設定値は対象外）";
+        plan.warnings.push("プラグイン本体はkintoneシステム管理に導入済みである必要があります。プラグイン固有の設定はコピーしません。");
+        before = { plugins: target.plugins.map((item) => item.id) };
+        after = { plugins: [...before.plugins, ...additions.map((item) => item.id)] };
+        if (additions.length) plan.operations.push({ method: "POST", endpoint: def.endpoint, body: { ids: additions.map((item) => item.id) }, label: "プラグイン追加" });
+      } else {
+        for (const section of [source, target]) {
+          const arrayKey = ["appAcl", "fieldAcl", "recordPermissions"].includes(key) ? "rights" : ["notifications", "perRecordNotifications", "reminderNotifications"].includes(key) ? "notifications" : "";
+          if (arrayKey && !Array.isArray(section[arrayKey])) throw new Error(`${arrayKey} の設定がありません。空の設定で上書きしないため、反映を停止します。`);
+          if (key === "reminderNotifications" && (typeof section.timezone !== "string" || !section.timezone)) throw new Error("リマインダー通知のタイムゾーンを取得できません。");
+          if (key === "categories" && (typeof section.enabled !== "boolean" || !object(section.categories))) throw new Error("カテゴリーの enabled / categories を取得できません。");
+          if (key === "processSettings" && (typeof section.enable !== "boolean" || section.enable && (!object(section.states) || !Array.isArray(section.actions)))) throw new Error("プロセス管理の enable / states / actions を取得できません。");
+          if (key === "customizeSettings") {
+            if (!["ALL", "ADMIN", "NONE"].includes(section.scope)) throw new Error("JS/CSSの適用範囲を取得できません。");
+            for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) {
+              const list = section[platform]?.[kind];
+              if (!Array.isArray(list) || list.some((item) => !item || (item.type === "URL" ? typeof item.url !== "string" || !item.url : item.type === "FILE" ? typeof item.file?.fileKey !== "string" || !item.file.fileKey : true))) throw new Error(`${platform}/${kind}: JS/CSS一覧が不完全です。`);
+            }
+          }
+        }
+        before = def.putBuilder(target);
+        after = def.putBuilder(source);
+        if (key === "categories") {
+          before.enabled = target.enabled;
+          after.enabled = source.enabled;
+        }
+        if (key === "notifications") {
+          if (typeof target.notifyToCommenter === "boolean") before.notifyToCommenter = after.notifyToCommenter = target.notifyToCommenter;
+          if (typeof source.notifyToCommenter === "boolean") after.notifyToCommenter = source.notifyToCommenter;
+        }
+        if (key === "customizeSettings") {
+          plan.warnings.push("JSONバックアップにはJS/CSSのファイル本体を含みません。ファイルの取り外しや差し替えを行う場合は、元のファイルも別途保管してください。");
+          if (source.scope !== void 0) after.scope = source.scope;
+          if (target.scope !== void 0) before.scope = target.scope;
+          const currentKeys = new Set(["desktop", "mobile"].flatMap((platform) => ["js", "css"].flatMap((kind) => (target[platform]?.[kind] || []).map((item) => item.file?.fileKey).filter(Boolean))));
+          for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) for (const item of source[platform]?.[kind] || []) {
+            if (item.type === "FILE" && !currentKeys.has(item.file?.fileKey)) plan.blockers.push(`${platform}/${kind}: 「${item.file?.name || "アップロードファイル"}」は反映先に存在しません。JS/CSS設定画面でファイルをアップロードしてから比較してください。`);
+          }
+        }
+        if (key === "layoutSettings") {
+          if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error("レイアウトの形式が不正です。");
+          after.layout = mergeLayout(source.layout, target.layout, plan);
+          plan.behavior = "配置を更新（反映先だけのフィールド配置は保持）";
+          const codes = [];
+          const walk = (nodes) => {
+            for (const node of nodes) {
+              if (node.code) codes.push(String(node.code));
+              if (Array.isArray(node.fields)) walk(node.fields);
+              if (Array.isArray(node.layout)) walk(node.layout);
+            }
+          };
+          walk(after.layout);
+          plan.requiredFields = [...new Set(codes)];
+        }
+      }
+      diffValues(before, after, [], plan.changes);
+      plan.changeCount = plan.changes.filter((change) => change.kind !== "保持").length;
+      plan.removalCount = plan.changes.filter((change) => change.kind === "削除").length;
+      if (key !== "fieldSettings" && key !== "pluginSettings" && plan.changeCount) plan.operations.push({ method: "PUT", endpoint: def.endpoint, body: after, label: def.label });
+      if (plan.blockers.length) plan.status = "error";
+      else plan.status = plan.operations.length ? "change" : "same";
+      plan.message = plan.blockers.length ? plan.blockers.join("\n") : plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : `書き込み不要${plan.changes.some((change) => change.kind === "保持") ? "（反映先だけの設定は保持）" : "（一致）"}`;
+    } catch (error) {
+      plan.status = "error";
+      plan.blockers.push(error.message || String(error));
+      plan.message = plan.blockers.join("\n");
+    }
+    return plan;
+  }
+  function listReflectFieldCodes(bundle, writableOnly = false) {
+    const props = bundle?.sections?.fieldSettings?.properties;
+    if (!object(props)) return [];
+    return Object.entries(props).filter(([, def]) => !writableOnly || !SYSTEM_FIELD_TYPES.has(def?.type)).flatMap(([code, def]) => [code, ...Object.keys(def?.type === "SUBTABLE" ? def.fields || {} : {})]);
   }
 
   // src/settingsBundleImport.ts
@@ -1377,7 +1663,7 @@ ${base}`
     const appId = String(options.appId || "").trim();
     const candidates = unwrapBundleCandidates(raw, side).map((item) => {
       try {
-        return ensureBundleShape(item);
+        return ensureBundleShape(item, options.rawSettings);
       } catch {
         return null;
       }
@@ -1390,10 +1676,10 @@ ${base}`
     }
     return limitImportedBundleToSections(candidates[0], options.sections);
   }
-  function pickAllSettingsBundles(raw, side) {
+  function pickAllSettingsBundles(raw, side, rawSettings = false) {
     const candidates = unwrapBundleCandidates(raw, side).map((item) => {
       try {
-        return ensureBundleShape(item);
+        return ensureBundleShape(item, rawSettings);
       } catch {
         return null;
       }
@@ -1460,292 +1746,180 @@ ${base}`
   }
 
   // src/tabs/reflect-standalone.ts
-  function filterWritable(props) {
-    const out = {};
-    for (const [k, def] of Object.entries(props || {})) {
-      if (!def || typeof def !== "object") continue;
-      if (SYSTEM_FIELD_TYPES.has(def.type)) continue;
-      out[k] = deepClone(def);
+  function reflectConnectionError(opts) {
+    for (const [label, value, optional] of [
+      ["反映元アプリID", opts.sourceAppId, !!opts.sourceBundle],
+      ["反映先アプリID", opts.targetAppId, false],
+      ["反映元ゲストスペースID", opts.sourceGuestId, true],
+      ["反映先ゲストスペースID", opts.targetGuestId, true]
+    ]) {
+      if (optional && !value) continue;
+      if (!/^[1-9]\d*$/.test(String(value || ""))) return `${label}には正の整数を入力してください。`;
     }
-    return out;
+    if (!opts.sourceBundle && opts.sourcePreview && opts.sourceAppId === opts.targetAppId && (opts.sourceGuestId || "") === (opts.targetGuestId || "")) return "反映元と反映先が同じプレビューです。別のアプリ、または反映元の本番設定を選んでください。";
+    return "";
   }
-  function convertLookup(fieldDef, map) {
-    const def = deepClone(fieldDef || {});
-    if (!Object.keys(map).length) return def;
-    const walk = (node) => {
-      if (!node || typeof node !== "object") return;
-      const rel = node.lookup?.relatedApp;
-      if (rel?.app != null) {
-        const after = map[String(rel.app)];
-        if (after && String(after) !== String(rel.app)) node.lookup.relatedApp.app = String(after);
-      }
-      if (node.type === "SUBTABLE" && node.fields) Object.values(node.fields).forEach(walk);
+  async function resolveReflectAppsStandalone(opts) {
+    const invalid = reflectConnectionError(opts);
+    if (invalid) throw new Error(invalid);
+    const resolve = async (appId, guestId = "") => {
+      const info = await apiGet(buildApiPrefix(guestId, false), "/app.json", { id: appId });
+      if (String(info?.appId) !== appId || typeof info?.name !== "string" || !info.name) throw new Error(`App ${appId} の名前とIDを確認できません。入力と閲覧権限を確認してください。`);
+      return { appId, guestId, name: info.name, code: String(info.code || "") };
     };
-    walk(def);
-    return def;
+    const target = await resolve(opts.targetAppId, opts.targetGuestId);
+    const source = opts.sourceBundle ? { appId: opts.sourceAppId, guestId: "", name: "設定JSON", code: "" } : await resolve(opts.sourceAppId, opts.sourceGuestId);
+    return { source, target };
   }
-  async function applyFieldSection(app, sourceProps, current, logs, lookupMap, stopOnError, write) {
-    const currentMap = current.properties || {};
-    const srcWritable = filterWritable(sourceProps);
-    const adds = {};
-    const updates = {};
-    for (const [code, def] of Object.entries(srcWritable)) {
-      const converted = convertLookup(def, lookupMap);
-      if (currentMap[code]) {
-        updates[code] = converted;
-      } else {
-        adds[code] = converted;
-      }
-    }
-    let failedSteps = 0;
-    if (Object.keys(adds).length) {
-      try {
-        await write("POST", "/app/form/fields.json", { app, properties: adds }, "フィールド追加");
-        logs.push(`  OK フィールド追加: ${Object.keys(adds).length}件`);
-      } catch (e) {
-        failedSteps += 1;
-        const reported = e;
-        pushReflectErrorLog(logs, `  NG フィールド追加: ${reported.message}`, reported.message);
-        if (stopOnError || mustStopReflection(reported)) throw reported;
-      }
-    }
-    if (Object.keys(updates).length) {
-      try {
-        await write("PUT", "/app/form/fields.json", { app, properties: updates }, "フィールド更新");
-        logs.push(`  OK フィールド更新: ${Object.keys(updates).length}件`);
-      } catch (e) {
-        failedSteps += 1;
-        const reported = e;
-        pushReflectErrorLog(logs, `  NG フィールド更新: ${reported.message}`, reported.message);
-        if (stopOnError || mustStopReflection(reported)) throw reported;
-      }
-    }
-    return failedSteps;
+  function orderedScopes(scopes) {
+    if (!scopes?.length) throw new Error("反映する項目を選択してください。");
+    const supported = SECTION_DEFS.filter((def) => def.put);
+    if (scopes.some((key) => !supported.some((def) => def.key === key))) throw new Error("反映に対応していない項目が含まれています。");
+    return supported.filter((def) => scopes.includes(def.key)).map((def) => def.key);
   }
-  function mustStopReflection(error) {
-    return !!error?.stopReflection || isRevisionConflictError(error);
+  async function getReflectBundles(opts, scopes, setStatus) {
+    setStatus(opts.sourceBundle ? "反映元の設定JSONを読み込み中..." : "反映元の設定を取得中...");
+    const source = opts.sourceBundle ? pickSettingsBundle(opts.sourceBundle, { side: "source", appId: String(opts.sourceAppId || "").trim(), rawSettings: true }) : await fetchBundle({
+      rawSettings: true,
+      appId: opts.sourceAppId,
+      guestId: opts.sourceGuestId || "",
+      preview: !!opts.sourcePreview,
+      sections: scopes,
+      onProgress: (p, label) => setStatus(`反映元取得 ${Math.round(p * 100)}% (${label})`)
+    });
+    setStatus("反映先プレビューの設定を確認中...");
+    const target = await fetchBundle({
+      rawSettings: true,
+      appId: opts.targetAppId,
+      guestId: opts.targetGuestId || "",
+      preview: true,
+      sections: reflectInspectionScopes(scopes),
+      onProgress: (p, label) => setStatus(`反映先取得 ${Math.round(p * 100)}% (${label})`)
+    });
+    return { source, target };
+  }
+  async function previewReflectStandalone(opts, setStatus) {
+    const invalid = reflectConnectionError(opts);
+    if (invalid) throw new Error(invalid);
+    const scopes = orderedScopes(opts.scopes);
+    const { source, target } = await getReflectBundles(opts, scopes, setStatus);
+    const entries = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], opts));
+    const baseline = captureReflectBaseline({ ...opts, scopes: reflectInspectionScopes(scopes) }, source, target);
+    for (const entry of entries.filter((entry2) => !entry2.blockers.length)) {
+      try {
+        assertReflectBaselineMatches(baseline, { ...opts, scopes: [entry.sectionKey], targetDependencies: entry.requiredFields?.length ? ["fieldSettings"] : [] }, source, target);
+      } catch (error) {
+        entry.status = "error";
+        entry.blockers.push(error.message);
+        entry.message = error.message;
+      }
+    }
+    return {
+      totalSections: entries.length,
+      changedSections: entries.filter((entry) => entry.status === "change").length,
+      sameSections: entries.filter((entry) => entry.status === "same").length,
+      errorSections: entries.filter((entry) => !["change", "same"].includes(entry.status)).length,
+      entries,
+      sourceFieldCodes: listReflectFieldCodes(source, true),
+      targetFieldCodes: listReflectFieldCodes(target),
+      baseline
+    };
   }
   async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
-    const { sourceAppId, sourceGuestId, sourcePreview, targetAppId, targetGuestId } = opts;
-    if (!sourceAppId && !opts.sourceBundle) throw new Error("比較元アプリIDまたは設定JSONを指定してください");
-    if (!targetAppId) throw new Error("比較先アプリIDを入力してください");
-    const scopes = (opts.scopes || []).filter(Boolean);
-    if (!scopes.length) throw new Error("反映するセクションを選択してください");
     if (!opts.reviewBaseline) throw new Error("反映前に差分を取得して確認してください。");
-    const lookupMap = opts.lookupMap || {};
-    const stopOnError = !!opts.stopOnError;
+    if (opts.doDeploy) throw new Error("この機能はプレビューへの反映専用です。本番公開には対応していません。");
+    const invalid = reflectConnectionError(opts);
+    if (invalid) throw new Error(invalid);
+    const scopes = orderedScopes(opts.scopes);
+    const { source, target } = await getReflectBundles(opts, scopes, setStatus);
+    if (opts.doBackup) assertCompleteReflectBackup(target, scopes);
+    let revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes }, source, target);
+    const plans = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], opts));
+    const issues = reflectSelectionBlockers(plans, scopes, listReflectFieldCodes(source, true), listReflectFieldCodes(target));
+    if (issues.length) throw new Error(`反映前の検査で停止しました。まだ書き込んでいません。
+${issues.join("\n")}`);
+    if (plans.some((plan) => plan.requiredFields?.length)) revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes, targetDependencies: ["fieldSettings"] }, source, target);
+    if (Object.keys(opts.lookupMap || {}).length) {
+      const lookup = await preflightLookupMapStandalone(opts.lookupMap, { targetGuestId: opts.targetGuestId });
+      if (!lookup.ok) throw new Error(`ルックアップ変換先を確認できないため反映を中止しました。
+${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).join("\n")}`);
+    }
     const logs = [];
-    setStatus(opts.sourceBundle ? "比較元設定を設定JSONから読み込み中..." : "比較元設定を取得中...");
-    const sourceBundle = opts.sourceBundle ? pickSettingsBundle(opts.sourceBundle, { side: "source", appId: String(sourceAppId || "").trim() }) : await fetchBundle({
-      appId: sourceAppId,
-      guestId: sourceGuestId || "",
-      preview: !!sourcePreview,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
-    });
-    setStatus(opts.doBackup ? "比較先プレビューのバックアップ取得中..." : "確認済みの比較先プレビューと照合中...");
-    const targetBundle = await fetchBundle({
-      appId: targetAppId,
-      guestId: targetGuestId || "",
-      preview: true,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`比較先再取得 ${Math.round(p * 100)}% (${l})`)
-    });
-    if (opts.doBackup) assertCompleteReflectBackup(targetBundle, scopes);
-    let revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes }, sourceBundle, targetBundle);
-    if (opts.doBackup) {
-      const backup = targetBundle;
-      const payload = JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), scopes, bundle: backup }, null, 2);
-      const blob = new Blob([payload], { type: "application/json" });
+    if (opts.doBackup && plans.some((plan) => plan.operations.length)) {
+      const blob = new Blob([JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), scopes, bundle: target }, null, 2)], { type: "application/json" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = buildExportFilename("反映前バックアップ", "json", { appLabel: buildAppFilenameLabel(targetAppId, "") });
+      a.download = buildExportFilename("反映前バックアップ", "json", { appLabel: buildAppFilenameLabel(opts.targetAppId, "") });
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 5e3);
       logs.push("バックアップ取得完了（保存を開始しました）");
     }
-    const prefix = buildApiPrefix(targetGuestId || "", true);
-    const app = targetAppId;
-    const write = async (method, endpoint, body, subject) => {
+    const prefix = buildApiPrefix(opts.targetGuestId || "", true);
+    const write = async (operation) => {
       try {
-        const response = await (method === "POST" ? apiPost : apiPut)(prefix, endpoint, { ...body, revision });
-        const nextRevision = pickRevision(response);
-        if (!/^\d+$/.test(nextRevision)) {
-          const error = new Error(`${subject}の書き込みは完了しましたが、更新後のrevisionを確認できません。以降の反映を中止します。差分を取得し直して状態を確認してください。`);
+        const response = await (operation.method === "POST" ? apiPost : apiPut)(prefix, operation.endpoint, { ...operation.body, app: opts.targetAppId, revision });
+        const next = pickRevision(response);
+        if (!/^\d+$/.test(next)) {
+          const error = new Error(`${operation.label}の書き込みは完了しましたが、更新後のrevisionを確認できません。以降の反映を中止します。差分を取得し直して状態を確認してください。`);
           error.stopReflection = true;
           throw error;
         }
-        revision = nextRevision;
+        revision = next;
       } catch (error) {
-        throw decorateRevisionConflict(error, subject);
+        throw decorateRevisionConflict(error, operation.label);
       }
     };
-    logs.push(`比較元: ${opts.sourceBundle ? `設定JSON${sourceAppId ? ` (App ${sourceAppId})` : ""}` : sourceAppId} → 比較先(プレビュー): ${targetAppId}`);
-    logs.push(`セクション: ${scopes.length}件`);
-    logs.push("");
-    let hadError = false;
+    logs.push(`反映元: ${opts.sourceBundle ? "設定JSON" : opts.sourceAppId} → 反映先(プレビュー): ${opts.targetAppId}`);
     const sections = [];
-    for (let i = 0; i < scopes.length; i++) {
-      const secKey = scopes[i];
-      const def = SECTION_DEFS.find((d) => d.key === secKey);
-      if (!def || !def.put) {
-        logs.push(`SKIP ${def?.label || secKey}`);
-        sections.push({ sectionKey: secKey, label: def?.label || secKey, status: "skip", message: "反映非対応セクション" });
-        continue;
-      }
-      const sourceSec = deepClone(sourceBundle.sections?.[secKey]);
-      if (!sourceSec || sourceSec._fetchError) {
-        logs.push(`SKIP ${def.label}: source未取得`);
-        sections.push({ sectionKey: secKey, label: def.label, status: "skip", message: "比較元未取得" });
+    for (const [index, plan] of plans.entries()) {
+      const outcome = { sectionKey: plan.sectionKey, label: plan.label };
+      if (!plan.operations.length) {
+        sections.push({ ...outcome, status: "skip", message: "変更なし（書き込み不要）" });
+        logs.push(`SKIP ${plan.label}: 書き込み不要`);
         onProgress(logs);
         continue;
       }
-      setStatus(`反映中 ${i + 1}/${scopes.length}: ${def.label}`);
+      setStatus(`反映中 ${index + 1}/${plans.length}: ${plan.label}`);
       try {
-        if (secKey === "fieldSettings") {
-          const failedSteps = await applyFieldSection(app, sourceSec.properties || sourceSec, targetBundle.sections.fieldSettings, logs, lookupMap, stopOnError, write);
-          if (failedSteps > 0) {
-            hadError = true;
-            logs.push(`NG ${def.label}: 一部の手順が失敗しました（詳細は上の行）`);
-            sections.push({ sectionKey: secKey, label: def.label, status: "ng", message: "一部の手順が失敗" });
-          } else {
-            logs.push(`OK ${def.label}`);
-            sections.push({ sectionKey: secKey, label: def.label, status: "ok" });
-          }
-        } else {
-          await write("PUT", def.endpoint, { app, ...def.putBuilder(sourceSec) }, `${def.label}の反映`);
-          logs.push(`OK ${def.label}`);
-          sections.push({ sectionKey: secKey, label: def.label, status: "ok" });
+        for (const operation of plan.operations) {
+          await write(operation);
+          logs.push(`  OK ${operation.label}`);
         }
-      } catch (e) {
-        hadError = true;
-        const msg = e.message || String(e);
-        pushReflectErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
-        sections.push({ sectionKey: secKey, label: def.label, status: "ng", message: msg });
-        if (stopOnError || mustStopReflection(e)) {
-          for (let j = i + 1; j < scopes.length; j++) {
-            const restKey = scopes[j];
-            const restDef = SECTION_DEFS.find((d) => d.key === restKey);
-            sections.push({ sectionKey: restKey, label: restDef?.label || restKey, status: "pending", message: "中断のため未実行" });
-          }
-          logs.push(`中断（未実行 ${scopes.length - i - 1} 件）`);
+        sections.push({ ...outcome, status: "ok" });
+        logs.push(`OK ${plan.label}`);
+      } catch (error) {
+        const message = error.message || String(error);
+        sections.push({ ...outcome, status: "ng", message });
+        pushReflectErrorLog(logs, `NG ${plan.label}: ${message}`, message);
+        if (opts.stopOnError !== false || error.stopReflection || isRevisionConflictError(error)) {
+          for (const pending of plans.slice(index + 1)) sections.push({ sectionKey: pending.sectionKey, label: pending.label, status: "pending", message: "中断のため未実行" });
+          logs.push(`中断（未実行 ${plans.length - index - 1} 件）`);
           break;
         }
       }
       onProgress(logs);
     }
-    const ok = sections.filter((s) => s.status === "ok").length;
-    const ng = sections.filter((s) => s.status === "ng").length;
-    const pending = sections.filter((s) => s.status === "pending").length;
-    logs.push("");
-    logs.push(`=== 完了: OK ${ok} / NG ${ng}${pending ? ` / 未実行 ${pending}` : ""} ===`);
+    const count = (status) => sections.filter((section) => section.status === status).length;
+    logs.push(`=== 完了: OK ${count("ok")} / NG ${count("ng")} / 未実行 ${count("pending")} / 変更なし ${count("skip")} ===`);
     onProgress(logs);
-    setStatus(hadError ? "反映完了（一部エラーあり）" : "反映完了");
+    setStatus(count("ng") ? "反映完了（一部エラーあり）" : "反映完了");
     return { logs, sections };
   }
   async function preflightLookupMapStandalone(lookupMap, opts = {}) {
-    const entries = Object.entries(lookupMap || {});
-    if (!entries.length) return { ok: true, missing: [] };
-    const prefix = buildApiPrefix(opts.targetGuestId || "", true);
     const missing = [];
-    for (const [from, to] of entries) {
-      const target = String(to || "").trim();
-      if (!target || !/^\d+$/.test(target)) {
-        missing.push({ from, to: target, reason: "AppID形式が不正" });
+    for (const [from, to] of Object.entries(lookupMap || {})) {
+      if (!/^[1-9]\d*$/.test(from) || !/^[1-9]\d*$/.test(String(to))) {
+        missing.push({ from, to, reason: "AppID形式が不正" });
         continue;
       }
       try {
-        await apiGet(prefix, "/app.json", { id: target });
-      } catch (e) {
-        missing.push({ from, to: target, reason: `取得失敗: ${e?.message || String(e)}` });
+        const info = await apiGet(buildApiPrefix(opts.targetGuestId || "", false), "/app.json", { id: to });
+        if (String(info?.appId) !== to) throw new Error("応答のアプリIDが一致しません");
+      } catch (error) {
+        missing.push({ from, to, reason: `取得失敗: ${error.message || String(error)}` });
       }
     }
-    return { ok: missing.length === 0, missing };
-  }
-  async function previewReflectStandalone(opts, setStatus) {
-    const scopes = (opts.scopes || []).filter(Boolean);
-    const lookupMap = opts.lookupMap || {};
-    if (!scopes.length) throw new Error("プレビュー対象セクションが空です");
-    if (!opts.sourceAppId && !opts.sourceBundle) throw new Error("比較元アプリIDまたは設定JSONを指定してください");
-    if (!opts.targetAppId) throw new Error("比較先アプリIDを入力してください");
-    setStatus(opts.sourceBundle ? "比較元設定を設定JSONから読み込み中..." : "比較元設定を取得中...");
-    const source = opts.sourceBundle ? pickSettingsBundle(opts.sourceBundle, { side: "source", appId: String(opts.sourceAppId || "").trim() }) : await fetchBundle({
-      appId: opts.sourceAppId,
-      guestId: opts.sourceGuestId || "",
-      preview: !!opts.sourcePreview,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`比較元取得 ${Math.round(p * 100)}% (${l})`)
-    });
-    setStatus("比較先プレビューを取得中...");
-    const target = await fetchBundle({
-      appId: opts.targetAppId,
-      guestId: opts.targetGuestId || "",
-      preview: true,
-      sections: scopes,
-      onProgress: (p, l) => setStatus(`比較先取得 ${Math.round(p * 100)}% (${l})`)
-    });
-    const entries = [];
-    for (const secKey of scopes) {
-      const def = SECTION_DEFS.find((d) => d.key === secKey);
-      const label = def?.label || secKey;
-      const srcSec = source.sections?.[secKey];
-      const tgtSec = target.sections?.[secKey];
-      if (!isCompleteReflectSection(srcSec)) {
-        entries.push({ sectionKey: secKey, label, status: "src-missing", message: `比較元未取得: ${srcSec?._fetchError || srcSec?._partial?.message || "不明"}` });
-        continue;
-      }
-      if (!isCompleteReflectSection(tgtSec)) {
-        entries.push({ sectionKey: secKey, label, status: "tgt-missing", message: `比較先未取得: ${tgtSec?._fetchError || tgtSec?._partial?.message || "不明"}` });
-        continue;
-      }
-      if (secKey === "fieldSettings") {
-        const srcPropsRaw = filterWritable(srcSec.properties || srcSec);
-        const srcProps = {};
-        for (const [code, def2] of Object.entries(srcPropsRaw)) {
-          srcProps[code] = convertLookup(def2, lookupMap);
-        }
-        const tgtProps = filterWritable(tgtSec.properties || tgtSec || {});
-        if (stableStringify(srcProps) === stableStringify(tgtProps)) {
-          entries.push({ sectionKey: secKey, label, status: "same", message: "差分なし" });
-          continue;
-        }
-        let add = 0;
-        let update = 0;
-        let tgtOnly = 0;
-        for (const code of Object.keys(srcProps)) {
-          if (!tgtProps[code]) {
-            add += 1;
-            continue;
-          }
-          if (stableStringify(srcProps[code]) !== stableStringify(tgtProps[code])) update += 1;
-        }
-        for (const code of Object.keys(tgtProps)) {
-          if (!srcProps[code]) tgtOnly += 1;
-        }
-        const detail = `追加 ${add} / 更新 ${update} / 比較先のみ ${tgtOnly}`;
-        entries.push({
-          sectionKey: secKey,
-          label,
-          status: "change",
-          message: detail,
-          fieldStats: { add, update, tgtOnly }
-        });
-      } else {
-        if (stableStringify(srcSec) === stableStringify(tgtSec)) {
-          entries.push({ sectionKey: secKey, label, status: "same", message: "差分なし" });
-          continue;
-        }
-        entries.push({ sectionKey: secKey, label, status: "change", message: "差分あり（セクション単位）" });
-      }
-    }
-    return {
-      totalSections: entries.length,
-      changedSections: entries.filter((e) => e.status === "change").length,
-      sameSections: entries.filter((e) => e.status === "same").length,
-      errorSections: entries.filter((e) => e.status === "src-missing" || e.status === "tgt-missing" || e.status === "error").length,
-      entries,
-      baseline: captureReflectBaseline({ ...opts, scopes }, source, target)
-    };
+    return { ok: !missing.length, missing };
   }
 
   // src/ui/components.ts
@@ -2718,6 +2892,74 @@ ${base}`
     return details;
   }
 
+  // src/entries/reflectPlanView.ts
+  function appendReflectChanges(host, plan) {
+    for (const warning of plan.warnings) {
+      const note = document.createElement("p");
+      note.className = "kus-rl-next kus-rl-next--warn";
+      note.textContent = warning;
+      host.appendChild(note);
+    }
+    if (!plan.changes.length) return;
+    const details = document.createElement("details");
+    details.className = "kus-rl-changes";
+    const summary = document.createElement("summary");
+    summary.textContent = `${plan.label}の内訳（変更 ${plan.changeCount}件・保持 ${plan.changes.length - plan.changeCount}件）`;
+    details.appendChild(summary);
+    host.appendChild(details);
+    let rendered = 0;
+    const list = document.createElement("div");
+    details.appendChild(list);
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "kus-lp__btn kus-lp__btn--sub";
+    more.textContent = "続きを50件表示";
+    const append = () => {
+      for (const change of plan.changes.slice(rendered, rendered + 50)) {
+        const row = document.createElement("div");
+        row.className = "kus-rl-change";
+        row.dataset.kind = change.kind;
+        const title = document.createElement("strong");
+        title.textContent = `${change.kind} · ${change.path}`;
+        row.appendChild(title);
+        const grid = document.createElement("div");
+        grid.className = "kus-rl-change__values";
+        for (const [label, value] of [["反映先の現在", change.before], ["反映後", change.after]]) {
+          const cell = document.createElement("div"), caption = document.createElement("span"), content = document.createElement("pre");
+          caption.textContent = label;
+          content.textContent = value.length > 1600 ? value.slice(0, 1600) + "\n…（全内容は計画JSONで確認できます）" : value;
+          cell.append(caption, content);
+          grid.appendChild(cell);
+        }
+        row.appendChild(grid);
+        list.appendChild(row);
+      }
+      rendered = Math.min(rendered + 50, plan.changes.length);
+      more.hidden = rendered >= plan.changes.length;
+    };
+    more.addEventListener("click", append);
+    details.appendChild(more);
+    details.addEventListener("toggle", () => {
+      if (details.open && !rendered) append();
+    });
+  }
+  function reflectIdentityLabel(identities, side, sourceEnvironment) {
+    const app = identities[side];
+    return `${app.name}${app.appId ? `（ID: ${app.appId}）` : ""} / ${app.guestId ? `ゲスト ${app.guestId}` : "通常スペース"} / ${side === "target" ? "プレビュー" : sourceEnvironment}`;
+  }
+  function renderReflectRoute(host, identities, environment) {
+    const route = document.createElement("div");
+    route.className = "kus-rl-confirm-route";
+    for (const side of ["source", "target"]) {
+      const block = document.createElement("div"), label = document.createElement("span"), name = document.createElement("strong");
+      label.textContent = side === "source" ? "反映元 ↓" : "書き込み先";
+      name.textContent = reflectIdentityLabel(identities, side, environment);
+      block.append(label, name);
+      route.appendChild(block);
+    }
+    host.appendChild(route);
+  }
+
   // src/entries/reflect-lite-ui.ts
   var memoryState = {
     presets: []
@@ -2845,7 +3087,7 @@ ${base}`
 #kus-reflect-lite .kus-rl-preview-row__actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 #kus-reflect-lite .kus-rl-preview-row__state{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 #kus-reflect-lite .kus-rl-preview-mini{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:#fff;border:1px solid #e2e8f0;font-size:10.5px;font-weight:700;color:#475569}
-#kus-reflect-lite .kus-rl-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px 24px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
+#kus-reflect-lite .kus-rl-nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 24px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
 #kus-reflect-lite .kus-rl-nav__btn{appearance:none;width:100%;border:1px solid transparent;border-radius:10px;background:transparent;color:#64748b;padding:10px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:9px;text-align:left}
 #kus-reflect-lite .kus-rl-nav__btn:hover{background:#f1f5f9;color:#172033}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"]{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
@@ -2867,7 +3109,23 @@ ${base}`
 #kus-reflect-lite .kus-rl-action-dock .kus-lp__status-text{max-height:48px;overflow:auto}
 #kus-reflect-lite .kus-rl-action-dock .kus-lp__status{margin-top:8px}
 #kus-reflect-lite .kus-rl-stage .kus-lp__card:last-child{margin-bottom:0}
+#kus-reflect-lite .kus-rl-confirm-route{display:grid;gap:8px;margin-bottom:12px}
+#kus-reflect-lite .kus-rl-confirm-route>div{padding:12px;border-radius:10px;border:1px solid #cbd5e1;background:#f8fafc;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-confirm-route>div:last-child{border:2px solid #ea580c;background:#fff7ed}
+#kus-reflect-lite .kus-rl-confirm-route span{display:block;font-size:11px;color:#64748b;margin-bottom:4px}
+#kus-reflect-lite .kus-rl-changes{margin-top:10px;font-size:12px;min-width:0}
+#kus-reflect-lite .kus-rl-changes summary{cursor:pointer;padding:8px 0;font-weight:700}
+#kus-reflect-lite .kus-rl-change{border-top:1px solid #cbd5e1;padding:10px 0;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-change[data-kind="削除"]>strong{color:#b91c1c}
+#kus-reflect-lite .kus-rl-change__values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}
+#kus-reflect-lite .kus-rl-change__values>div{min-width:0;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:8px}
+#kus-reflect-lite .kus-rl-change__values span{font-size:10px;color:#64748b}
+#kus-reflect-lite .kus-rl-change__values pre{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.6 ui-monospace,monospace}
+#kus-reflect-lite .kus-rl-nav__btn:disabled{opacity:.45;cursor:not-allowed}
 @media(max-width:720px){
+  #kus-reflect-lite .kus-rl-change__values{grid-template-columns:1fr}
+  #kus-reflect-lite .kus-rl-nav__num{display:none}
+
   #kus-reflect-lite.kus-lp--wide{width:calc(100vw - 16px);right:8px;top:8px;max-height:calc(100dvh - 16px)}
   #kus-reflect-lite .kus-lp__hero{padding:12px 16px}
   #kus-reflect-lite .kus-lp__hint,#kus-reflect-lite .kus-lp__badge-row{display:none}
@@ -3027,7 +3285,7 @@ ${base}`
       sourceBundleFromJson = null;
       sourceJsonBundles = [];
       sourceBundleToken = "";
-      sourceJsonBundles = pickAllSettingsBundles(JSON.parse(await file.text()), "source");
+      sourceJsonBundles = pickAllSettingsBundles(JSON.parse(await file.text()), "source", true);
       sourceJsonAppSelect.replaceChildren(...sourceJsonBundles.map((bundle, index) => {
         const option = document.createElement("option");
         option.value = String(index);
@@ -3071,14 +3329,14 @@ ${base}`
           sourceModeSelect.value = "app";
           sourceModeSelect.dispatchEvent(new Event("change"));
           srcApp.value = id;
-          if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId;
+          srcGuest.value = guestId || "";
           saveState();
           refreshSameConnBanner();
           refreshReviewCard();
         } },
         { label: "比較先", apply: (id, _name, guestId) => {
           tgtApp.value = id;
-          if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId;
+          tgtGuest.value = guestId || "";
           saveState();
           refreshSameConnBanner();
           refreshReviewCard();
@@ -3091,6 +3349,7 @@ ${base}`
       if (tgtGuest.value) targetGuestDetails.details.open = true;
       const same = sourceMode === "app" && !!srcApp.value.trim() && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim();
       sameConnBanner.style.display = same ? "block" : "none";
+      sameConnBanner.textContent = sourceEnvironment.value === "preview" ? "同じプレビュー同士は反映できません。反映元の取得環境かアプリIDを変更してください。" : "同じアプリの本番設定でプレビューを更新します。未公開の編集への影響を、次の画面で確認してください。";
     }
     currentSrcBtn.addEventListener("click", () => {
       srcApp.value = DEFAULT_APP_ID || "";
@@ -3136,7 +3395,7 @@ ${base}`
     const cardScope = makeCard({ title: "反映する項目", number: 2, subtitle: "目的に近いセットを選び、必要な項目を調整できます。" });
     const putSections = SECTION_DEFS.filter((d) => d.put);
     const initialSelected = new Set(
-      Array.isArray(memoryState.selectedScopes) ? memoryState.selectedScopes : putSections.map((d) => d.key)
+      Array.isArray(memoryState.selectedScopes) ? memoryState.selectedScopes : ["fieldSettings", "layoutSettings", "viewSettings"]
     );
     const chips = putSections.map((d) => makeChip({
       label: d.label,
@@ -3245,39 +3504,18 @@ ${base}`
     }
     panel.body.insertBefore(cardScope.card, panel.status);
     const cardOpt = makeCard({ title: "実行オプション", number: 3, soft: true });
-    const backup = makeCheck({
-      label: "比較先プレビューのバックアップを保存",
-      checked: memoryState.doBackup !== false,
-      help: "反映前に比較先プレビューの設定を JSON で書き出します"
-    });
-    const srcPreview = makeCheck({
-      label: "プレビューの設定を取得",
-      checked: memoryState.sourcePreview !== false,
-      help: "OFF にすると比較元の本番（運用中）設定を取得します"
-    });
-    const stop = makeCheck({
-      label: "エラー時に中断する",
-      checked: memoryState.stopOnError !== false,
-      help: "途中で失敗したらそこで止めます（推奨）"
-    });
-    const onlyChanged = makeCheck({
-      label: "差分ありセクションだけ実行",
-      checked: memoryState.onlyChanged !== false,
-      help: "最新の差分プレビュー結果を使い、一致セクションは実行対象から自動で外します"
-    });
-    const excludePreviewErrors = makeCheck({
-      label: "取得失敗セクションを自動除外",
-      checked: memoryState.excludePreviewErrors !== false,
-      help: "差分プレビューで取得失敗したセクションは、実行対象から自動で外します"
-    });
-    const optGrid = document.createElement("div");
-    optGrid.className = "kus-lp__check-grid";
-    optGrid.appendChild(backup.label);
-    sourceAppFields.insertBefore(srcPreview.label, sourceGuestDetails.details);
-    optGrid.appendChild(stop.label);
-    optGrid.appendChild(onlyChanged.label);
-    optGrid.appendChild(excludePreviewErrors.label);
-    cardOpt.body.appendChild(optGrid);
+    const sourceEnvironment = document.createElement("select");
+    sourceEnvironment.className = "kus-lp__select";
+    sourceEnvironment.setAttribute("aria-label", "反映元の取得環境");
+    sourceEnvironment.innerHTML = '<option value="production">本番設定（運用中）を取得</option><option value="preview">プレビュー設定（未公開）を取得</option>';
+    sourceEnvironment.value = memoryState.sourcePreview ? "preview" : "production";
+    sourceAppFields.insertBefore(sourceEnvironment, sourceGuestDetails.details);
+    const preserve = makeCheck({ label: "反映先だけの一覧・グラフ・アクションを保持する", checked: memoryState.preserveTargetOnly !== false, help: "標準は保持。OFFにすると反映元にない設定を削除します。フィールドは常に保持します。" });
+    cardScope.body.prepend(preserve.label);
+    const safetyNote = document.createElement("p");
+    safetyNote.className = "kus-rl-quiet";
+    safetyNote.textContent = "反映前のバックアップを自動保存します。変更のない項目は送信せず、書き込みエラーが起きたら中断します。";
+    cardOpt.body.appendChild(safetyNote);
     const lookupDetails = makeDetails("Lookup AppID マッピング（任意）");
     const lookupTa = makeTextarea({
       rows: 3,
@@ -3293,9 +3531,10 @@ ${base}`
     lookupHint.textContent = "フィールドの参照アプリ（ルックアップ）を別 AppID に置換します。差分プレビューにも反映し、実行前に変換先 AppID の存在を確認します。";
     lookupDetails.body.appendChild(lookupHint);
     cardOpt.body.appendChild(lookupDetails.details);
-    [backup.checkbox, srcPreview.checkbox, stop.checkbox, onlyChanged.checkbox, excludePreviewErrors.checkbox].forEach((cb) => {
+    [sourceEnvironment, preserve.checkbox].forEach((cb) => {
       cb.addEventListener("change", () => {
         saveState();
+        refreshSameConnBanner();
         refreshReviewCard();
       });
     });
@@ -3356,7 +3595,7 @@ ${base}`
         source: {
           appId: srcApp.value.trim(),
           guestId: srcGuest.value.trim(),
-          preview: srcPreview.checkbox.checked
+          preview: sourceEnvironment.value === "preview"
         },
         target: {
           appId: tgtApp.value.trim(),
@@ -3364,10 +3603,7 @@ ${base}`
         },
         scopes: collectSelectedScopes(),
         lookupMapText: lookupTa.value,
-        doBackup: backup.checkbox.checked,
-        stopOnError: stop.checkbox.checked,
-        onlyChanged: onlyChanged.checkbox.checked,
-        excludePreviewErrors: excludePreviewErrors.checkbox.checked
+        preserveTargetOnly: preserve.checkbox.checked
       };
       memoryState.presets = (memoryState.presets || []).filter((p) => p.name !== trimmed);
       memoryState.presets.unshift(preset);
@@ -3385,11 +3621,8 @@ ${base}`
       srcGuest.value = preset.source.guestId;
       tgtApp.value = preset.target.appId;
       tgtGuest.value = preset.target.guestId;
-      srcPreview.checkbox.checked = !!preset.source.preview;
-      backup.checkbox.checked = !!preset.doBackup;
-      stop.checkbox.checked = !!preset.stopOnError;
-      onlyChanged.checkbox.checked = preset.onlyChanged !== false;
-      excludePreviewErrors.checkbox.checked = preset.excludePreviewErrors !== false;
+      sourceEnvironment.value = preset.source.preview ? "preview" : "production";
+      preserve.checkbox.checked = preset.preserveTargetOnly !== false;
       lookupTa.value = preset.lookupMapText || "";
       setSelectedScopes(preset.scopes || []);
       refreshSameConnBanner();
@@ -3452,13 +3685,23 @@ ${base}`
         sourceGuestId: srcGuest.value.trim(),
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
-        sourcePreview: srcPreview.checkbox.checked,
-        stopOnError: stop.checkbox.checked,
-        doBackup: backup.checkbox.checked,
-        onlyChanged: onlyChanged.checkbox.checked,
-        excludePreviewErrors: excludePreviewErrors.checkbox.checked,
+        sourcePreview: sourceEnvironment.value === "preview",
         selectedScopes: collectSelectedScopes(),
-        lookupMapText: lookupTa.value
+        lookupMapText: lookupTa.value,
+        preserveTargetOnly: preserve.checkbox.checked
+      };
+    }
+    function currentOptions(scopes = collectSelectedScopes()) {
+      return {
+        sourceAppId: srcApp.value.trim(),
+        sourceGuestId: srcGuest.value.trim(),
+        sourcePreview: sourceEnvironment.value === "preview",
+        sourceBundle: sourceBundleFromJson,
+        targetAppId: tgtApp.value.trim(),
+        targetGuestId: tgtGuest.value.trim(),
+        scopes,
+        lookupMap: getLookupValue(tryParseLookupMap(lookupTa.value)),
+        preserveTargetOnly: preserve.checkbox.checked
       };
     }
     function getPreviewState(scopes = collectSelectedScopes(), lookupState = tryParseLookupMap(lookupTa.value)) {
@@ -3467,12 +3710,13 @@ ${base}`
       const signature = lookupState.ok ? buildPreviewSignature({
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
-        sourcePreview: srcPreview.checkbox.checked,
+        sourcePreview: sourceEnvironment.value === "preview",
         sourceBundleToken,
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         scopes: coveredScopes,
-        lookupMap: lookupState.value
+        lookupMap: lookupState.value,
+        preserveTargetOnly: preserve.checkbox.checked
       }) : "";
       const fresh = !!preview && !!signature && preview.signature === signature && scopes.every((key) => coveredScopes.includes(key)) && (sourceMode !== "json" || !!sourceBundleFromJson);
       return { scopes, lookupState, signature, preview, fresh };
@@ -3498,19 +3742,9 @@ ${base}`
         else if (entry.status === "same") sameSet.add(entry.sectionKey);
         else errorSet.add(entry.sectionKey);
       }
-      let effective = [...selectedSet];
-      let skippedSameScopes = [];
-      let skippedErrorScopes = [];
-      if (onlyChanged.checkbox.checked) {
-        skippedSameScopes = effective.filter((key) => sameSet.has(key));
-        skippedErrorScopes = effective.filter((key) => errorSet.has(key));
-        effective = effective.filter((key) => changedSet.has(key));
-      }
-      if (excludePreviewErrors.checkbox.checked) {
-        const additionallySkipped = effective.filter((key) => errorSet.has(key));
-        skippedErrorScopes = [.../* @__PURE__ */ new Set([...skippedErrorScopes, ...additionallySkipped])];
-        effective = effective.filter((key) => !errorSet.has(key));
-      }
+      const effective = [...selectedSet].filter((key) => changedSet.has(key));
+      const skippedSameScopes = [...sameSet];
+      const skippedErrorScopes = [];
       return {
         effectiveScopes: effective,
         changedScopes: [...changedSet],
@@ -3552,113 +3786,61 @@ ${base}`
     }
     async function runPreview(scopes, lookupMap) {
       memoryState.lastPreview = null;
-      const signature = buildPreviewSignature({
-        sourceAppId: srcApp.value.trim(),
-        sourceGuestId: srcGuest.value.trim(),
-        sourcePreview: srcPreview.checkbox.checked,
-        sourceBundleToken,
-        targetAppId: tgtApp.value.trim(),
-        targetGuestId: tgtGuest.value.trim(),
-        scopes,
-        lookupMap
-      });
-      const result = await previewReflectStandalone(
-        {
-          sourceAppId: srcApp.value.trim(),
-          sourceGuestId: srcGuest.value.trim(),
-          sourcePreview: srcPreview.checkbox.checked,
-          sourceBundle: sourceBundleFromJson,
-          targetAppId: tgtApp.value.trim(),
-          targetGuestId: tgtGuest.value.trim(),
-          scopes,
-          lookupMap
-        },
-        (m) => panel.setStatus(m, "busy")
-      );
-      memoryState = {
-        ...memoryState,
-        lastPreview: {
-          signature,
-          scopes: [...scopes],
-          at: Date.now(),
-          result
-        }
-      };
+      clearConfirmation();
+      const options = { ...currentOptions(scopes), lookupMap };
+      const signature = buildPreviewSignature({ ...options, sourceBundleToken });
+      panel.setStatus("アプリ名と接続先を確認中…", "busy");
+      const identities = await resolveReflectAppsStandalone(options);
+      const result = await previewReflectStandalone(options, (message) => panel.setStatus(message, "busy"));
+      memoryState.lastPreview = { signature, scopes: [...scopes], at: Date.now(), result, identities };
       rerenderPreviewCard();
       refreshReviewCard();
       showWorkflowStage("review");
       return result;
     }
+    function selectionIssues(result, scopes) {
+      return result ? reflectSelectionBlockers(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes) : [];
+    }
     function refreshReviewCard() {
       const { scopes, lookupState, preview, fresh } = getPreviewState();
-      const lookupError = getLookupError(lookupState);
-      const src = srcApp.value.trim();
-      const tgt = tgtApp.value.trim();
-      const sameConn = !sourceBundleFromJson && !!src && src === tgt && srcGuest.value.trim() === tgtGuest.value.trim();
-      const riskyHit = scopes.filter((key) => RISKY_SCOPE_KEYS.has(key));
-      const previewResult = preview?.result || null;
-      const plan = fresh ? getExecutionPlan(scopes, previewResult) : getExecutionPlan(scopes, null);
-      const canRunBase = (sourceMode === "json" ? !!sourceBundleFromJson : !!src) && !!tgt && scopes.length > 0 && lookupState.ok;
-      previewBtn.disabled = busy || !canRunBase;
-      changedOnlyBtn.disabled = busy || !(fresh && previewResult && previewResult.changedSections > 0);
-      runBtn.disabled = busy || !canRunBase || !fresh || !plan.effectiveScopes.length;
-      if (fresh && previewResult) {
-        if (plan.effectiveScopes.length > 0) {
-          setButtonText(runBtn, `プレビュー反映を実行（予定 ${plan.effectiveScopes.length}）`);
-        } else if (previewResult.changedSections > 0) {
-          setButtonText(runBtn, `プレビュー反映を実行（差分 ${previewResult.changedSections}）`);
-        } else {
-          setButtonText(runBtn, "プレビュー反映を実行（差分なし）");
+      const invalid = reflectConnectionError(currentOptions());
+      const result = preview?.result;
+      const plan = getExecutionPlan(scopes, fresh ? result : null);
+      const blockers = fresh ? selectionIssues(result, scopes) : [];
+      const canCompare = !invalid && !!scopes.length && lookupState.ok && (sourceMode !== "json" || !!sourceBundleFromJson);
+      previewBtn.disabled = busy || !canCompare;
+      changedOnlyBtn.disabled = busy || !fresh || !result?.changedSections;
+      confirmBtn.disabled = busy || !canCompare || !fresh || !plan.effectiveScopes.length || !!blockers.length;
+      const token = confirmationToken();
+      if (confirmedToken && confirmedToken !== token) clearConfirmation();
+      runBtn.disabled = busy || !confirmationReady();
+      setButtonText(runBtn, `確認した ${plan.effectiveScopes.length} 項目をプレビューへ反映`);
+      let message = invalid || getLookupError(lookupState) || (!scopes.length ? "反映する項目を選んでください。" : "変更前と変更後を確認し、最終確認に進んでください。");
+      if (!preview) message = "対象を指定して差分を取得してください。";
+      else if (!fresh) message = "条件が変わりました。差分を再取得してください。";
+      else if (blockers.length) message = "確認できない項目が選択されています。問題を解決して再取得するか、対象から外してください。";
+      else if (!plan.effectiveScopes.length) message = "書き込みが必要な項目はありません。反映先だけの項目を保持した場合も書き込み不要です。";
+      reviewBody.innerHTML = "";
+      if (preview?.identities && fresh) renderReflectRoute(reviewBody, preview.identities, sourceMode === "json" ? "設定JSON" : sourceEnvironment.value === "preview" ? "プレビュー" : "本番");
+      const info = document.createElement("div");
+      info.className = "kus-rl-next " + (blockers.length ? "kus-rl-next--warn" : "kus-rl-next--info");
+      info.textContent = message;
+      reviewBody.appendChild(info);
+      const summary = document.createElement("p");
+      summary.className = "kus-rl-quiet";
+      summary.textContent = fresh ? `反映予定 ${plan.effectiveScopes.length} 項目 / 変更なし ${plan.sameScopes.length} 項目 / 確認が必要 ${plan.errorScopes.length} 項目 · ${formatPreviewStamp(preview.at)}` : "この段階では書き込みを行いません。";
+      reviewBody.appendChild(summary);
+      if (blockers.length) {
+        const list = document.createElement("ul");
+        list.className = "kus-rl-issues";
+        for (const message2 of blockers) {
+          const item = document.createElement("li");
+          item.textContent = message2;
+          list.appendChild(item);
         }
-      } else {
-        setButtonText(runBtn, "プレビュー反映を実行");
+        reviewBody.appendChild(list);
       }
-      const issues = [];
-      if (!src && !sourceBundleFromJson) issues.push("比較元アプリIDまたは比較元JSONが未入力です。");
-      if (!tgt) issues.push("比較先アプリIDが未入力です。");
-      if (!scopes.length) issues.push("反映対象セクションが未選択です。");
-      if (lookupError) issues.push(lookupError);
-      if (sameConn) issues.push("比較元と比較先が同一接続です。");
-      if (riskyHit.length) issues.push(`影響範囲の広いセクションを含みます: ${riskyHit.map((key) => getSectionLabel(key)).join(", ")}`);
-      if (!backup.checkbox.checked) issues.push("バックアップ保存が OFF です。");
-      if (!stop.checkbox.checked) issues.push("エラー時中断が OFF です。");
-      if (!preview) {
-        issues.push("差分プレビューが未取得です。");
-      } else if (!fresh) {
-        issues.push("条件が変わりました。差分を再取得してから反映してください。");
-      } else if (previewResult) {
-        if (previewResult.errorSections > 0) issues.push(`差分プレビューで取得失敗が ${previewResult.errorSections} 件あります。`);
-        if (previewResult.changedSections === 0) issues.push("差分プレビューでは変更対象がありません。通常は反映不要です。");
-        if (!plan.effectiveScopes.length) issues.push("現在の実行オプションでは、実行対象セクションが 0 件です。");
-      }
-      let nextTone = "warn";
-      const nextTitle = "次の操作";
-      let nextText = "比較元 / 比較先 / セクションを確認してください。";
-      if (!src && !sourceBundleFromJson || !tgt) {
-        nextText = "比較元（アプリIDまたはJSON）と比較先のアプリIDを埋めてください。比較先は通常、いま開いているアプリです。";
-      } else if (!scopes.length) {
-        nextText = "反映したいセクションを選んでください。迷う場合は「フォームのみ」から始めるのが安全です。";
-      } else if (!lookupState.ok) {
-        nextText = lookupError || "Lookup AppID マッピング JSON を修正してください。";
-      } else if (!preview) {
-        nextTone = "info";
-        nextText = "差分プレビューを更新して、どのセクションに差分があるか確認してください。";
-      } else if (!fresh) {
-        nextTone = "info";
-        nextText = "条件が変わりました。「差分を再取得」で変更内容を確認してください。";
-      } else if (!plan.effectiveScopes.length) {
-        nextTone = "info";
-        nextText = "現在のオプションでは実行対象がありません。差分ありだけ実行 / 取得失敗除外の設定か、選択セクションを見直してください。";
-      } else if (previewResult && previewResult.errorSections > 0) {
-        nextText = "取得失敗セクションを確認してから実行してください。必要なら対象セクションを絞って再プレビューします。";
-      } else if (previewResult && previewResult.changedSections === 0) {
-        nextTone = "info";
-        nextText = "差分なしです。反映は通常不要です。必要ならセクション選択か比較元 / 比較先を見直してください。";
-      } else {
-        nextTone = "ok";
-        nextText = "差分プレビューで内容を確認できています。そのままプレビュー反映へ進めます。";
-      }
-      reviewBody.innerHTML = `<div class="kus-rl-review-grid"><div class="kus-rl-stat"><div class="kus-rl-stat__label">反映予定</div><div class="kus-rl-stat__value">${fresh ? plan.effectiveScopes.length + " 項目" : "差分の確認が必要"}</div><div class="kus-rl-stat__meta">${escapeHtml(fresh ? buildSkipSummary(plan) : "差分を取得すると反映予定を表示します")}</div></div><div class="kus-rl-stat"><div class="kus-rl-stat__label">確認状況</div><div class="kus-rl-stat__value">${fresh ? "確認済み" : preview ? "再取得が必要" : "未取得"}</div><div class="kus-rl-stat__meta">${preview ? escapeHtml(formatPreviewStamp(preview.at)) : "アプリ設定への書き込みはまだ行いません"}</div></div></div><div class="kus-rl-next kus-rl-next--${nextTone}"><strong>${nextTitle}</strong>${escapeHtml(nextText)}</div>` + (issues.length ? `<details class="kus-lp__details"><summary>注意点を確認（${issues.length}件）</summary><ul class="kus-rl-issues">${issues.map((line) => "<li>" + escapeHtml(line) + "</li>").join("")}</ul></details>` : "");
+      exportPlanBtn.disabled = busy || !fresh;
       rerenderPreviewCard();
       refreshWorkflow();
     }
@@ -3732,6 +3914,117 @@ ${base}`
       setSelectedScopes(changedScopes);
       panel.setStatus(`差分あり ${changedScopes.length} セクションだけを選択しました`, changedScopes.length ? "ok" : "info");
     });
+    const confirmBtn = makeButton("最終確認に進む", "primary");
+    const confirmCard = makeCard({ title: "この内容をプレビューへ反映します" });
+    const confirmBody = document.createElement("div");
+    confirmCard.body.appendChild(confirmBody);
+    const acknowledged = makeCheck({ label: "反映先と変更・削除の内容を確認しました", checked: false });
+    acknowledged.checkbox.setAttribute("aria-label", "反映内容の確認");
+    const targetCheck = makeInput({ placeholder: "反映先アプリIDを入力", width: "wide" });
+    targetCheck.setAttribute("aria-label", "確認用の反映先アプリID");
+    targetCheck.setAttribute("data-lp-no-submit", "");
+    targetCheck.inputMode = "numeric";
+    targetCheck.autocomplete = "off";
+    const targetCheckRow = makeRow([targetCheck], { label: "反映先IDの再確認" });
+    const confirmStatus = document.createElement("p");
+    confirmStatus.className = "kus-rl-quiet";
+    confirmStatus.setAttribute("aria-live", "polite");
+    confirmCard.body.append(acknowledged.label, targetCheckRow, confirmStatus);
+    let confirmedToken = "";
+    function confirmationToken() {
+      const state3 = getPreviewState();
+      return state3.fresh ? JSON.stringify([state3.preview.signature, state3.preview.at, [...state3.scopes].sort()]) : "";
+    }
+    function clearConfirmation() {
+      confirmedToken = "";
+      acknowledged.checkbox.checked = false;
+      targetCheck.value = "";
+      confirmStatus.textContent = "反映先と変更内容を確認してチェックを入れてください。";
+    }
+    function highImpactReasons() {
+      const { preview, scopes } = getPreviewState();
+      const entries = preview?.result.entries.filter((entry) => scopes.includes(entry.sectionKey) && entry.status === "change") || [];
+      const reasons = [];
+      const removals = entries.reduce((sum, entry) => sum + entry.removalCount, 0);
+      if (removals) reasons.push(`削除・置換される設定が ${removals} 件あります`);
+      if (entries.some((entry) => RISKY_SCOPE_KEYS.has(entry.sectionKey))) reasons.push("権限・通知・プロセス管理の変更を含みます");
+      if (!sourceBundleFromJson && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim()) reasons.push("同じアプリの本番設定でプレビューを更新します");
+      return reasons;
+    }
+    function confirmationReady() {
+      const state3 = getPreviewState();
+      return !!confirmedToken && confirmedToken === confirmationToken() && acknowledged.checkbox.checked && !selectionIssues(state3.preview?.result, state3.scopes).length && (!highImpactReasons().length || targetCheck.value.trim() === tgtApp.value.trim());
+    }
+    function openConfirmation() {
+      if (busy || confirmBtn.disabled) return;
+      clearConfirmation();
+      confirmedToken = confirmationToken();
+      const state3 = getPreviewState();
+      if (!confirmedToken || !state3.preview) return;
+      confirmBody.innerHTML = "";
+      renderReflectRoute(confirmBody, state3.preview.identities, sourceMode === "json" ? "設定JSON" : sourceEnvironment.value === "preview" ? "プレビュー" : "本番");
+      const entries = state3.preview.result.entries.filter((entry) => state3.scopes.includes(entry.sectionKey) && entry.status === "change");
+      const summary = document.createElement("p");
+      summary.textContent = `反映する項目（${entries.length}）：${entries.map((entry) => entry.label).join("、")}`;
+      confirmBody.appendChild(summary);
+      const reasons = highImpactReasons();
+      targetCheckRow.hidden = !reasons.length;
+      if (reasons.length) {
+        const note = document.createElement("p");
+        note.className = "kus-rl-next kus-rl-next--warn";
+        note.textContent = reasons.join("。") + "。反映先IDを入力して確認してください。";
+        confirmBody.appendChild(note);
+      }
+      const removals = entries.flatMap((entry) => entry.changes.filter((change) => change.kind === "削除").map((change) => ({ label: entry.label, change })));
+      if (removals.length) {
+        const list = document.createElement("ul");
+        list.className = "kus-rl-issues";
+        for (const { label, change } of removals.slice(0, 30)) {
+          const item = document.createElement("li");
+          item.textContent = `${label} / ${change.path}：${change.before.slice(0, 180)}${change.before.length > 180 ? "…" : ""}`;
+          list.appendChild(item);
+        }
+        if (removals.length > 30) {
+          const item = document.createElement("li");
+          item.textContent = `ほか ${removals.length - 30} 件。下の各項目の内訳、または反映計画JSONで全件を確認してください。`;
+          list.appendChild(item);
+        }
+        confirmBody.appendChild(list);
+      }
+      const policy = document.createElement("p");
+      policy.className = "kus-rl-quiet";
+      policy.textContent = "反映前の設定JSONを自動保存します。実行直前に設定を再取得し、確認後の変更があれば中止します。途中エラーでは中断します。複数項目の一括取消はできません。本番公開はアプリ設定画面で行います。";
+      confirmBody.appendChild(policy);
+      for (const entry of entries) appendReflectChanges(confirmBody, entry);
+      showWorkflowStage("confirm");
+      refreshReviewCard();
+    }
+    confirmBtn.addEventListener("click", openConfirmation);
+    for (const control of [acknowledged.checkbox, targetCheck]) control.addEventListener("input", () => {
+      runBtn.disabled = busy || !confirmationReady();
+      confirmStatus.textContent = confirmationReady() ? "確認が完了しました。下の反映ボタンから実行できます。" : "確認チェックと、表示されている場合は反映先IDの入力が必要です。";
+    });
+    const exportPlanBtn = makeButton("反映計画JSONを保存", "sub");
+    reviewCard.actions.appendChild(exportPlanBtn);
+    exportPlanBtn.addEventListener("click", () => {
+      const state3 = getPreviewState();
+      if (!state3.fresh || !state3.preview) return;
+      const payload = {
+        generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        identities: state3.preview.identities,
+        sourceEnvironment: sourceMode === "json" ? "json" : sourceEnvironment.value,
+        preserveTargetOnly: preserve.checkbox.checked,
+        scopes: state3.scopes,
+        entries: state3.preview.result.entries.filter((entry) => state3.scopes.includes(entry.sectionKey)),
+        baseline: state3.preview.result.baseline
+      };
+      const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `プレビュー反映計画_App${tgtApp.value.trim()}.json`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5e3);
+    });
     const runBtn = makeButton("プレビュー反映を実行", "run");
     runBtn.classList.add("kus-lp__btn--danger");
     runBtn.classList.remove("kus-lp__btn--run");
@@ -3796,7 +4089,7 @@ ${base}`
     }
     renderLastResult();
     runBtn.addEventListener("click", async () => {
-      if (busy || runBtn.disabled) return;
+      if (busy || runBtn.disabled || activeStage !== "confirm" || !confirmationReady()) return;
       const { scopes, lookupState } = getPreviewState();
       const lookupError = getLookupError(lookupState);
       const lookupMap = getLookupValue(lookupState);
@@ -3823,35 +4116,9 @@ ${base}`
           }
           throw new Error(`現在の実行オプションでは実行対象が 0 件です。${buildSkipSummary(plan)}`);
         }
-        if (!confirmReflectRisk(panel, {
-          sourceAppId: srcApp.value.trim(),
-          sourceGuestId: srcGuest.value.trim(),
-          hasSourceBundle: !!sourceBundleFromJson,
-          targetAppId: tgtApp.value.trim(),
-          targetGuestId: tgtGuest.value.trim(),
-          scopes,
-          effectiveScopes: plan.effectiveScopes,
-          skippedSameScopes: plan.skippedSameScopes,
-          skippedErrorScopes: plan.skippedErrorScopes,
-          doBackup: backup.checkbox.checked,
-          stopOnError: stop.checkbox.checked,
-          lookupMapText: lookupTa.value,
-          preview: previewState.preview?.result || previewResult || void 0
-        })) {
-          return { cancelled: true };
-        }
-        if (Object.keys(lookupMap).length) {
-          panel.setStatus("Lookup マッピング先 AppID を確認中…", "busy");
-          const pf = await preflightLookupMapStandalone(lookupMap, { targetGuestId: tgtGuest.value.trim() });
-          if (!pf.ok) {
-            const detail = pf.missing.map((m) => ` - ${m.from} → ${m.to || "(空)"}: ${m.reason}`).join("\n");
-            const cont = window.confirm(`Lookup 変換ルールに問題があります:
-${detail}
-
-[OK] 続行 / [キャンセル] 中断`);
-            if (!cont) throw new Error("Lookup プリフライトで中断しました");
-          }
-        }
+        if (selectionIssues(previewResult, scopes).length) throw new Error("確認できない項目が含まれています。差分確認へ戻ってください。");
+        const applyOptions = { ...currentOptions(plan.effectiveScopes), reviewBaseline: previewResult.baseline, doDeploy: false, doBackup: true, stopOnError: true };
+        clearConfirmation();
         logCard.card.style.display = "block";
         logPre.style.display = "block";
         logPre.textContent = "";
@@ -3860,20 +4127,7 @@ ${detail}
         memoryState.lastResult = null;
         renderLastResult();
         const applyOutcome = await runApplyPreviewStandalone(
-          {
-            sourceAppId: srcApp.value.trim(),
-            sourceGuestId: srcGuest.value.trim(),
-            sourcePreview: srcPreview.checkbox.checked,
-            sourceBundle: sourceBundleFromJson,
-            reviewBaseline: previewResult.baseline,
-            targetAppId: tgtApp.value.trim(),
-            targetGuestId: tgtGuest.value.trim(),
-            scopes: plan.effectiveScopes,
-            lookupMap,
-            doDeploy: false,
-            doBackup: backup.checkbox.checked,
-            stopOnError: stop.checkbox.checked
-          },
+          applyOptions,
           (m, e) => panel.setStatus(m, e ? "err" : "busy"),
           (logsArr) => {
             logPre.textContent = logsArr.join("\n");
@@ -3886,8 +4140,8 @@ ${detail}
           ng: counts.ng,
           pending: counts.pending,
           at: Date.now(),
-          appId: tgtApp.value.trim(),
-          guestId: tgtGuest.value.trim(),
+          appId: applyOptions.targetAppId,
+          guestId: applyOptions.targetGuestId,
           retryScopes: collectRetrySectionKeys(applyOutcome.sections),
           failedLabels: applyOutcome.sections.filter((s) => s.status === "ng").map((s) => s.label)
         };
@@ -3912,8 +4166,9 @@ ${detail}
     nav.setAttribute("role", "tablist");
     const stageDefs = [
       { id: "setup", number: "1", label: "対象を選ぶ", copy: "アプリと反映項目" },
-      { id: "review", number: "2", label: "差分を確認", copy: "変更内容を見て反映" },
-      { id: "result", number: "3", label: "反映結果", copy: "結果と次の操作" }
+      { id: "review", number: "2", label: "差分を確認", copy: "変更前・変更後" },
+      { id: "confirm", number: "3", label: "最終確認", copy: "反映先と変更を確定" },
+      { id: "result", number: "4", label: "反映結果", copy: "結果と次の操作" }
     ];
     const stages = {};
     const navButtons = {};
@@ -3934,18 +4189,21 @@ ${detail}
       stage.setAttribute("role", "tabpanel");
       stage.setAttribute("aria-labelledby", button.id);
       stages[def.id] = stage;
-      button.addEventListener("click", () => showWorkflowStage(def.id));
+      button.addEventListener("click", () => def.id === "confirm" ? openConfirmation() : showWorkflowStage(def.id));
       button.addEventListener("keydown", (event) => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
         const current = stageDefs.findIndex((item) => item.id === def.id);
         const direction = event.key === "ArrowRight" ? 1 : -1;
         const next = stageDefs[event.key === "Home" ? 0 : event.key === "End" ? stageDefs.length - 1 : (current + direction + stageDefs.length) % stageDefs.length];
-        showWorkflowStage(next.id);
+        if (next.id === "confirm") openConfirmation();
+        else showWorkflowStage(next.id);
       });
     }
     stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>どの設定を、どこへ反映しますか？</h2><p>比較元と比較先を指定し、反映したい項目を選びます。</p></header>';
     stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>差分と実行予定を確認</h2><p>実際に変更されるセクションと注意点を確認します。</p></header>';
+    stages.confirm.innerHTML = '<header class="kus-rl-stage-head"><h2>書き込み先と内容の最終確認</h2><p>この画面で確認した条件だけを実行します。</p></header>';
+    stages.confirm.appendChild(confirmCard.card);
     stages.result.innerHTML = '<header class="kus-rl-stage-head"><h2>実行結果と次の操作</h2><p>成功・失敗と、再実行が必要なセクションを確認します。</p></header>';
     const setupGrid = document.createElement("div");
     setupGrid.className = "kus-rl-setup-grid";
@@ -3974,13 +4232,13 @@ ${detail}
     const dockActions = document.createElement("div");
     dockActions.className = "kus-rl-dock-actions";
     const backBtn = makeButton("対象を変更", "sub");
-    backBtn.addEventListener("click", () => showWorkflowStage("setup"));
+    backBtn.addEventListener("click", () => showWorkflowStage(activeStage === "confirm" ? "review" : "setup"));
     const nextBtn = makeButton("差分を確認する", "primary");
     nextBtn.addEventListener("click", () => {
       if (getPreviewState().fresh) showWorkflowStage("review");
       else previewBtn.click();
     });
-    dockActions.append(backBtn, previewBtn, nextBtn, runBtn);
+    dockActions.append(backBtn, previewBtn, nextBtn, confirmBtn, runBtn);
     dockRow.append(dockCopy, dockActions);
     dock.appendChild(dockRow);
     dock.appendChild(panel.status);
@@ -3996,35 +4254,40 @@ ${detail}
     hint?.insertAdjacentElement("afterend", workspace);
     panel.body.appendChild(dock);
     let activeStage = "setup";
+    const noInputSubmit = document.createElement("button");
+    noInputSubmit.disabled = true;
     refreshWorkflow = () => {
-      const { scopes, fresh, preview, lookupState } = getPreviewState();
+      const { scopes, fresh, preview } = getPreviewState();
       const plan = fresh ? getExecutionPlan(scopes, preview?.result) : null;
       backBtn.hidden = activeStage === "setup";
       nextBtn.hidden = activeStage !== "setup";
       previewBtn.hidden = activeStage !== "review";
-      runBtn.hidden = activeStage !== "review";
+      confirmBtn.hidden = activeStage !== "review";
+      runBtn.hidden = activeStage !== "confirm";
       backBtn.disabled = busy;
       nextBtn.disabled = previewBtn.disabled || busy;
+      navButtons.confirm.disabled = confirmBtn.disabled;
+      setButtonText(backBtn, activeStage === "confirm" ? "差分に戻る" : "対象を変更");
       setButtonText(nextBtn, fresh ? "確認した差分へ進む" : "差分を確認する");
       setButtonText(previewBtn, "差分を再取得");
       previewBtn.classList.toggle("kus-lp__btn--primary", !fresh);
       previewBtn.classList.toggle("kus-lp__btn--sub", fresh);
       resultEmpty.hidden = !!memoryState.lastResult || logCard.card.style.display !== "none";
-      let message = `${scopes.length} 項目を比較します。設定の書き込みは行いません。`;
-      if (sourceMode === "json" && !sourceBundleFromJson) message = "比較元の設定JSONを選んでください。";
-      else if (!srcApp.value.trim() || !tgtApp.value.trim()) message = "比較元と比較先のアプリIDを入力してください。";
-      else if (!scopes.length) message = "反映したい項目を1つ以上選んでください。";
-      else if (!lookupState.ok) message = "詳細設定の参照先変換JSONを修正してください。";
-      else if (activeStage === "review") message = !fresh ? "条件が変わったか、差分が未取得です。再取得して確認してください。" : plan?.effectiveScopes.length ? `${plan.effectiveScopes.length} 項目を反映予定 · バックアップ ${backup.checkbox.checked ? "あり" : "なし"}` : "反映予定は0件です。差分と取得失敗の有無を確認してください。";
-      else if (activeStage === "result") message = memoryState.lastResult ? "結果を確認し、比較先の設定画面へ進めます。" : "反映結果はここに表示されます。";
-      const sourceLabel = sourceMode === "json" ? `設定JSON #${sourceBundleFromJson?.appId || "未読込"}` : `#${srcApp.value.trim() || "未入力"}${srcGuest.value.trim() ? `（ゲスト ${srcGuest.value.trim()}）` : ""}・${srcPreview.checkbox.checked ? "プレビュー" : "本番"}`;
-      const targetLabel = `#${tgtApp.value.trim() || "未入力"}${tgtGuest.value.trim() ? `（ゲスト ${tgtGuest.value.trim()}）` : ""}・プレビュー`;
-      dockCopy.innerHTML = `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong>${escapeHtml(message)}`;
+      let message = `${scopes.length} 項目を比較します。書き込みは行いません。`;
+      if (activeStage === "review") message = !fresh ? "差分の取得が必要です。" : confirmBtn.disabled ? "確認が必要な項目、または変更の有無を確認してください。" : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
+      if (activeStage === "confirm") message = fresh && confirmedToken ? "反映前バックアップを自動保存 / エラー時は中断 / 本番公開は行いません" : "条件が変わりました。差分の取得と最終確認をやり直してください。";
+      if (activeStage === "result") message = "結果を確認してください。再実行には差分の再取得が必要です。";
+      const sourceLabel = fresh && preview?.identities ? reflectIdentityLabel(preview.identities, "source", sourceMode === "json" ? "JSON" : sourceEnvironment.value === "preview" ? "プレビュー" : "本番") : `反映元 #${srcApp.value.trim() || "未入力"}`;
+      const targetLabel = fresh && preview?.identities ? reflectIdentityLabel(preview.identities, "target", "") : `反映先 #${tgtApp.value.trim() || "未入力"} / プレビュー`;
+      dockCopy.innerHTML = activeStage === "confirm" && fresh && preview?.identities ? `<strong>書き込み先 #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong>${escapeHtml(confirmedToken ? "内容を確認してから反映してください。" : "条件が変わりました。差分を再取得してください。")}` : `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong>${escapeHtml(message)}`;
+      panel.result.hidden = activeStage === "confirm";
       const advancedSummary = advanced.details.querySelector("summary");
-      if (advancedSummary) advancedSummary.textContent = `詳細設定 · バックアップ${backup.checkbox.checked ? "あり" : "なし"} / ${stop.checkbox.checked ? "エラー時に中断" : "エラー後も続行"}${lookupTa.value.trim() ? " / 参照先変換あり" : ""}`;
-      panel.setPrimaryAction(activeStage === "setup" ? nextBtn : activeStage === "review" ? fresh ? runBtn : previewBtn : backBtn);
+      if (advancedSummary) advancedSummary.textContent = "詳細設定 · 自動バックアップ / 参照先変換";
+      panel.setPrimaryAction(activeStage === "setup" ? nextBtn : activeStage === "review" ? fresh ? confirmBtn : previewBtn : noInputSubmit);
     };
     showWorkflowStage = (active) => {
+      if (active === "confirm" && !confirmedToken) return;
+      if (activeStage === "confirm" && active !== "confirm") clearConfirmation();
       activeStage = active;
       stageDefs.forEach((def) => {
         const selected = def.id === active;
@@ -4072,9 +4335,6 @@ ${detail}
       "'": "&#39;"
     })[ch]);
   }
-  function getSectionLabel(key) {
-    return SECTION_DEFS.find((def) => def.key === key)?.label || key;
-  }
   function formatPreviewStamp(at) {
     const diffSec = Math.max(0, Math.floor((Date.now() - at) / 1e3));
     if (diffSec < 60) return `たった今 (${new Date(at).toLocaleTimeString()})`;
@@ -4099,9 +4359,11 @@ ${detail}
     if (!t) return { ok: true, value: {} };
     try {
       const parsed = JSON.parse(t);
-      const out = {};
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ok: false, error: '参照先変換は {"旧AppID":"新AppID"} 形式のJSONを入力してください。' };
+      const out = /* @__PURE__ */ Object.create(null);
       for (const [k, v] of Object.entries(parsed || {})) {
-        if (k && v != null) out[String(k).trim()] = String(v).trim();
+        if (!/^[1-9]\d*$/.test(k) || !/^[1-9]\d*$/.test(String(v))) return { ok: false, error: "参照先変換のアプリIDには正の整数を指定してください。" };
+        out[k] = String(v);
       }
       return { ok: true, value: out };
     } catch {
@@ -4124,14 +4386,15 @@ ${detail}
       targetAppId: args.targetAppId,
       targetGuestId: args.targetGuestId,
       scopes: [...args.scopes || []].sort(),
-      lookupPairs
+      lookupPairs,
+      preserveTargetOnly: args.preserveTargetOnly
     });
   }
   function filterPreviewEntries(entries, keyword, status = "all") {
     entries = entries.filter((entry) => status === "all" || (status === "error" ? !["change", "same"].includes(entry.status) : entry.status === status));
     if (!keyword) return entries;
     return entries.filter((entry) => {
-      const hay = [entry.label, entry.message, entry.sectionKey].filter(Boolean).join("\n").toLowerCase();
+      const hay = [entry.label, entry.message, entry.sectionKey, ...entry.changes.map((change) => [change.path, change.before, change.after].join(" "))].filter(Boolean).join("\n").toLowerCase();
       return hay.includes(keyword);
     });
   }
@@ -4213,105 +4476,12 @@ ${detail}
           });
           row.appendChild(selection.label);
         }
+        appendReflectChanges(row, entry);
         list.appendChild(row);
       }
       wrap.appendChild(list);
       host.appendChild(wrap);
     }
-  }
-  function confirmReflectRisk(panel, ctx) {
-    if (!ctx.sourceAppId && !ctx.hasSourceBundle) {
-      panel.setStatus("比較元アプリIDを入力するか、比較元JSONを読み込んでください", "warn");
-      return false;
-    }
-    if (!ctx.targetAppId) {
-      panel.setStatus("比較先アプリIDを入力してください", "warn");
-      return false;
-    }
-    const issues = [];
-    const sameConn = !ctx.hasSourceBundle && ctx.sourceAppId === ctx.targetAppId && ctx.sourceGuestId === ctx.targetGuestId;
-    if (sameConn) {
-      issues.push("比較元と比較先が同一接続です（同じアプリID・ゲストID）");
-    }
-    if (ctx.scopes.length >= 10) {
-      issues.push(`対象セクション数が多いです（${ctx.scopes.length}件）`);
-    }
-    if (ctx.effectiveScopes.length >= 10) {
-      issues.push(`実行予定セクション数が多いです（${ctx.effectiveScopes.length}件）`);
-    }
-    const riskyHit = ctx.scopes.filter((s) => RISKY_SCOPE_KEYS.has(s));
-    if (riskyHit.length) {
-      const labels = riskyHit.map((s) => getSectionLabel(s)).join(", ");
-      issues.push(`影響範囲の広いセクションを含みます: ${labels}`);
-    }
-    if (!ctx.doBackup) {
-      issues.push("「バックアップを保存」が OFF です（ロールバック用ファイルが残りません）");
-    }
-    if (!ctx.stopOnError) {
-      issues.push("「エラー時に中断」が OFF です（失敗後も残りの反映を続行します）");
-    }
-    if (ctx.preview) {
-      if (ctx.preview.errorSections > 0) {
-        issues.push(`差分プレビューで取得失敗が ${ctx.preview.errorSections} 件あります`);
-      }
-      if (ctx.preview.changedSections === 0) {
-        issues.push("差分プレビューでは変更対象がありません");
-      }
-    }
-    if (ctx.skippedSameScopes.length > 0) {
-      issues.push(`一致セクション ${ctx.skippedSameScopes.length} 件は自動で除外されます`);
-    }
-    if (ctx.skippedErrorScopes.length > 0) {
-      issues.push(`取得失敗セクション ${ctx.skippedErrorScopes.length} 件は自動で除外されます`);
-    }
-    if (!ctx.effectiveScopes.length) {
-      issues.push("実行予定セクションが 0 件です");
-    }
-    const scopeLabels = ctx.scopes.map((s) => getSectionLabel(s)).join(", ");
-    const effectiveLabels = ctx.effectiveScopes.map((s) => getSectionLabel(s)).join(", ");
-    const changedLabels = ctx.preview ? ctx.preview.entries.filter((entry) => entry.status === "change").map((entry) => entry.label) : [];
-    const changedPreview = changedLabels.length ? `${changedLabels.slice(0, 6).join(", ")}${changedLabels.length > 6 ? ` ほか ${changedLabels.length - 6} 件` : ""}` : "なし";
-    const highRiskReasons = [];
-    if (sameConn) highRiskReasons.push("比較元と比較先が同一接続");
-    if (riskyHit.length > 0) highRiskReasons.push(`影響範囲の広いセクションを含む（${riskyHit.map((s) => getSectionLabel(s)).join(", ")}）`);
-    if (!ctx.doBackup) highRiskReasons.push("バックアップ保存が OFF");
-    if (!ctx.stopOnError) highRiskReasons.push("エラー時中断が OFF");
-    if ((ctx.preview?.errorSections || 0) > 0) highRiskReasons.push(`差分プレビューに取得失敗が ${ctx.preview?.errorSections} 件`);
-    if (ctx.effectiveScopes.length >= 10) highRiskReasons.push(`実行予定セクションが ${ctx.effectiveScopes.length} 件と多い`);
-    const highRisk = highRiskReasons.length > 0;
-    const lines = [
-      "【最終確認: プレビュー反映】",
-      ctx.hasSourceBundle ? `比較元: 設定JSON${ctx.sourceAppId ? ` (App ${ctx.sourceAppId})` : ""}` : `比較元: #${ctx.sourceAppId}${ctx.sourceGuestId ? ` (guest:${ctx.sourceGuestId})` : ""}`,
-      `比較先: #${ctx.targetAppId}${ctx.targetGuestId ? ` (guest:${ctx.targetGuestId})` : ""} ※プレビュー`,
-      `対象セクション (${ctx.scopes.length}): ${scopeLabels}`,
-      `実行予定セクション (${ctx.effectiveScopes.length}): ${effectiveLabels || "なし"}`,
-      `オプション: バックアップ=${ctx.doBackup ? "ON" : "OFF"} / エラー時中断=${ctx.stopOnError ? "ON" : "OFF"}${ctx.lookupMapText.trim() ? " / Lookup変換あり" : ""}`,
-      ctx.preview ? `差分プレビュー: 差分 ${ctx.preview.changedSections} / 一致 ${ctx.preview.sameSections} / 取得失敗 ${ctx.preview.errorSections}` : "差分プレビュー: 未確認",
-      ctx.preview ? `差分ありセクション: ${changedPreview}` : "",
-      "",
-      issues.length ? `注意点:
-  - ${issues.join("\n  - ")}` : "注意点: なし"
-    ].filter(Boolean);
-    if (!window.confirm(lines.join("\n") + "\n\n本当に実行しますか？")) return false;
-    if (highRisk) {
-      const typed = window.prompt(
-        `高リスク実行のため追加確認します。
-理由:
-  - ${highRiskReasons.join("\n  - ")}
-
-確認のため比較先アプリID「${ctx.targetAppId}」を入力してください。`,
-        ""
-      );
-      if (typed === null) {
-        panel.setStatus("反映実行をキャンセルしました", "info");
-        return false;
-      }
-      if (typed.trim() !== ctx.targetAppId) {
-        panel.setStatus("確認入力が一致しないため、中断しました", "warn");
-        return false;
-      }
-    }
-    return true;
   }
 
   // src/entries/reflect-lite-entry.ts
