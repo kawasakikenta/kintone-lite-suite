@@ -18,7 +18,7 @@ function makeBundle(appId: string, revision: string): SettingsBundle {
     appId,
     meta: { sectionRevisions: { viewSettings: revision, layoutSettings: revision } },
     sections: {
-      viewSettings: { views: { Review: { type: 'LIST', name: `App ${appId}`, index: 0 } } },
+      viewSettings: { views: { Review: { type: 'LIST', fields: [], name: `App ${appId}`, index: '0' } } },
       layoutSettings: { layout: [{ type: 'ROW', fields: [{ type: 'SPACER', elementId: `space${appId}` }] }] }
     }
   };

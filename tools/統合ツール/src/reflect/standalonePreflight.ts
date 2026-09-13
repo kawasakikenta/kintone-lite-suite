@@ -1,5 +1,11 @@
 import { SECTION_DEFS } from '../constants.js';
-import { stableStringify } from '../utils.js';
+
+/** Reflection must preserve user-defined names, including revision / __proto__. */
+export function stableReflectStringify(value: any): string {
+  const sort = (input: any): any => Array.isArray(input) ? input.map(sort) : input && typeof input === 'object'
+    ? Object.fromEntries(Object.keys(input).sort().map(key => [key, sort(input[key])])) : input;
+  return JSON.stringify(sort(value));
+}
 
 interface SectionBaseline {
   content: string;
@@ -14,14 +20,15 @@ export interface ReflectBaseline {
 }
 
 function connectionKey(opts: any): string {
-  return stableStringify({
+  return stableReflectStringify({
     sourceAppId: String(opts.sourceAppId || '').trim(),
     sourceGuestId: String(opts.sourceGuestId || '').trim(),
     sourcePreview: !!opts.sourcePreview,
     sourceMode: opts.sourceBundle ? 'json' : 'api',
     targetAppId: String(opts.targetAppId || '').trim(),
     targetGuestId: String(opts.targetGuestId || '').trim(),
-    lookupMap: opts.lookupMap || {}
+    lookupMap: opts.lookupMap || {},
+    preserveTargetOnly: opts.preserveTargetOnly !== false
   });
 }
 
@@ -34,7 +41,7 @@ function captureSections(bundle: any, scopes: string[]): Record<string, SectionB
   return Object.fromEntries(scopes.map((key) => {
     const section = bundle?.sections?.[key];
     return [key, {
-      content: stableStringify(section) ?? '',
+      content: stableReflectStringify(section) ?? '',
       revision: String(bundle?.meta?.sectionRevisions?.[key] ?? section?.revision ?? ''),
       complete: isCompleteReflectSection(section)
     }];
@@ -64,12 +71,13 @@ export function assertReflectBaselineMatches(
   if (!baseline || baseline.connection !== connectionKey(opts)) {
     throw new Error('確認済みの差分と反映条件が一致しません。差分を取得し直してから再実行してください。');
   }
-  const current = captureReflectBaseline(opts, source, target);
+  const current = captureReflectBaseline({ ...opts, scopes: [...new Set([...opts.scopes, ...(opts.targetDependencies || [])])] }, source, target);
   for (const side of ['source', 'target'] as const) {
     const label = side === 'source' ? '比較元' : '比較先プレビュー';
     const revisions = new Set<string>();
     const requireRevision = side === 'target' || !opts.sourceBundle;
-    for (const key of opts.scopes as string[]) {
+    const checkedScopes: string[] = side === 'source' ? opts.scopes : [...new Set<string>([...opts.scopes, ...(opts.targetDependencies || [])])];
+    for (const key of checkedScopes) {
       const before = baseline[side]?.[key];
       const after = current[side][key];
       const sectionLabel = SECTION_DEFS.find((def) => def.key === key)?.label || key;
