@@ -4,10 +4,8 @@ import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './l
 
 import { SETTINGS_EXPORT_SCOPE_DEFS, DEFAULT_APP_ID } from '../constants.js';
 import {
-  runSettingsExportSearchStandalone,
   runSettingsExportStandalone,
-  runSettingsExportListSpaceAppsStandalone,
-  renderSettingsExportSearchResultsHtml
+  runSettingsExportListSpaceAppsStandalone
 } from '../tabs/settings-export-standalone.js';
 import {
   createLitePanel,
@@ -21,7 +19,7 @@ import {
   makeNote,
   liteRun
 } from './litePanelTheme.js';
-import { extractGuestIdFromInput } from '../handlers/diffFocus.js';
+import { createAppSearchControl } from './appSearchControl.js';
 
 export function mountSettingsExportLitePanel() {
   const panel = createLitePanel({
@@ -42,22 +40,21 @@ export function mountSettingsExportLitePanel() {
   });
 
   // ---- アプリ検索 / スペース取込（検索用ゲストIDで照会し、表に行を追加） ----
-  const searchKw = makeInput({ placeholder: 'アプリ名 / アプリID / URL', width: 'wide' });
   const searchGuest = makeInput({ placeholder: '検索用ゲストID（任意）', width: 'guest' });
-  const searchBtn = makeButton('検索', 'sub');
-  cardTarget.body.appendChild(makeRow([searchKw, searchGuest, searchBtn], { label: 'アプリ検索' }));
-
-  const searchOut = document.createElement('div');
-  searchOut.className = 'kus-lp__panel-html kus-lp__panel-html--empty';
-  searchOut.style.maxHeight = '180px';
-  cardTarget.body.appendChild(searchOut);
+  const searchControl = createAppSearchControl(panel, {
+    guestEl: searchGuest,
+    targets: [{ apply: (appId, appName, guestId) => {
+      const result = appTable.putApp(appId, guestId, { appName, focus: true });
+      return { message: `アプリ #${appId}${appName ? ` (${appName})` : ''} を対象表に設定しました${result.action === 'existing' ? '（追加済み）' : ''}` };
+    } }]
+  });
 
   cardTarget.body.appendChild(appTable.element);
   cardTarget.body.appendChild(makeNote('各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。'));
 
   const spaceKw = makeInput({ placeholder: 'スペースID', width: 'narrow' });
   const spaceBtn = makeButton('スペース内アプリを表に追加', 'sub');
-  cardTarget.body.appendChild(makeRow([spaceKw, spaceBtn], { label: 'スペース' }));
+  cardTarget.body.appendChild(makeRow([spaceKw, searchGuest, spaceBtn], { label: 'スペース' }));
   panel.body.insertBefore(cardTarget.card, panel.status);
 
   // ---- 取得セクション ----
@@ -108,38 +105,6 @@ export function mountSettingsExportLitePanel() {
     };
   }
 
-  searchBtn.addEventListener('click', () => liteRun(panel, 'アプリ検索中…', async () => {
-    const urlGuestId = extractGuestIdFromInput(searchKw.value);
-    if (urlGuestId && !searchGuest.value.trim()) searchGuest.value = urlGuestId;
-    const apps = await runSettingsExportSearchStandalone(
-      searchKw.value,
-      searchGuest.value.trim(),
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
-    );
-    searchOut.innerHTML = renderSettingsExportSearchResultsHtml(apps);
-    searchOut.classList.toggle('kus-lp__panel-html--empty', !apps.length);
-  }));
-
-  searchOut.addEventListener('click', (ev) => {
-    const t = ev.target;
-    if (!(t instanceof HTMLElement)) return;
-    const btn = t.closest('.kus-se-add');
-    if (!btn) return;
-    const id = btn.getAttribute('data-app');
-    if (!id) return;
-    const name = btn.getAttribute('data-name') || '';
-    const result = appTable.putApp(id, searchGuest.value.trim(), { appName: name, focus: true });
-    const note = result.action === 'existing' ? '（追加済み）' : result.action === 'filled' ? '（空行へ設定）' : '';
-    if (btn instanceof HTMLButtonElement) {
-      btn.textContent = result.action === 'existing' ? '追加済み' : '設定済み';
-      btn.setAttribute('aria-pressed', 'true');
-      btn.style.background = '#ecfdf5';
-      btn.style.borderColor = '#a7f3d0';
-      btn.style.color = '#065f46';
-    }
-    panel.setStatus(`アプリ #${id}${name ? ` (${name})` : ''} を対象表に設定しました${note}`, result.action === 'existing' ? 'info' : 'ok');
-  });
-
   spaceBtn.addEventListener('click', () => liteRun(panel, 'スペース内アプリ取得中…', async () => {
     const guest = searchGuest.value.trim();
     const apps = await runSettingsExportListSpaceAppsStandalone(
@@ -175,11 +140,15 @@ export function mountSettingsExportLitePanel() {
     summary.classList.remove('kus-lp__panel-html--empty');
   }));
 
-  searchKw.type = 'search';
-  searchKw.setAttribute('aria-label', 'アプリを検索');
-  cardTarget.body.appendChild(foldWorkflowSection('アプリ名で検索・スペースから追加', searchKw.closest('.kus-lp__row') as HTMLElement, searchOut, spaceKw.closest('.kus-lp__row') as HTMLElement));
+  cardTarget.body.appendChild(searchControl);
+  cardTarget.body.appendChild(foldWorkflowSection('スペースから追加', spaceKw.closest('.kus-lp__row') as HTMLElement));
   cardTarget.body.appendChild(prev.label);
-  const exportProblem = () => !appTable.count() ? '対象アプリを1件以上指定してください。' : chips.some(c => c.checkbox.checked) ? '' : '取得する設定を1つ以上選んでください。';
+  const exportProblem = () => {
+    const rows = appTable.getApps();
+    if (!rows.length) return '対象アプリを1件以上指定してください。';
+    if (rows.some(row => !/^\d+$/.test(row.appId) || (row.guestId && !/^\d+$/.test(row.guestId)))) return 'アプリID・ゲストIDは数値で入力してください。';
+    return chips.some(c => c.checkbox.checked) ? '' : '取得する設定を1つ以上選んでください。';
+  };
   const exportSummary = (format: string): Array<[string, string]> => [
     ['対象アプリ', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId, prev.checkbox.checked ? 'プレビュー' : '本番')).join('\n')],
     ['取得する設定', chips.filter(c => c.checkbox.checked).map(c => c.label.textContent || '').join('、')],

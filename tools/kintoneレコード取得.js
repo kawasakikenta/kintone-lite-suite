@@ -1111,23 +1111,31 @@ ${contextLine}`);
       meta: { sectionRevisions: {} },
       sections: {}
     };
-    for (let i = 0; i < sections.length; i++) {
-      const sec = sections[i];
+    const defs = [...new Set(sections)].flatMap((sec) => {
       const def = SECTION_DEFS.find((x) => x.key === sec);
-      if (!def) continue;
+      return def ? [def] : [];
+    });
+    const results = new Array(defs.length);
+    let completed = 0;
+    await runTaskFactoriesWithConcurrency(defs.map((def, index) => async () => {
       try {
         const sectionPreview = def.previewEndpoint === false ? false : preview;
         const prefix = buildApiPrefix(guestId, sectionPreview);
         const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
         const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);
-        if (revision) bundle.meta.sectionRevisions[sec] = revision;
-        bundle.sections[sec] = normalize(res);
+        results[index] = { value: normalize(res), revision };
       } catch (e) {
-        bundle.sections[sec] = { _fetchError: e?.message || String(e) };
+        results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
-      if (onProgress) onProgress((i + 1) / sections.length, def.label);
-    }
+      completed += 1;
+      onProgress?.(completed / defs.length, def.label);
+    }), BUNDLE_FETCH_CONCURRENCY);
+    defs.forEach((def, index) => {
+      const { value, revision } = results[index];
+      bundle.sections[def.key] = value;
+      if (revision) bundle.meta.sectionRevisions[def.key] = revision;
+    });
     if (sections.includes("customizeSettings")) {
       const cust = bundle.sections.customizeSettings;
       if (cust && !cust._fetchError) {
@@ -1164,7 +1172,7 @@ ${contextLine}`);
     }
     return bundle;
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, BUNDLE_FETCH_CONCURRENCY;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1198,6 +1206,7 @@ ${contextLine}`);
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
       CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
       TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
+      BUNDLE_FETCH_CONCURRENCY = 3;
     }
   });
 
@@ -1433,7 +1442,8 @@ ${contextLine}`);
   z-index:999999;
   top:max(16px,2vh);
   right:max(16px,2vw);
-  width:min(520px,96vw);
+  box-sizing:border-box;
+  width:min(520px,calc(100vw - max(32px,4vw)));
   max-height:min(92vh,920px);
   overflow:hidden;
   display:flex;
@@ -1502,7 +1512,7 @@ ${contextLine}`);
   content:'';position:absolute;left:8px;right:8px;bottom:-1px;height:2px;border-radius:2px;
   background:linear-gradient(90deg,var(--c-accent-via),var(--c-accent-to));
 }
-.kus-lp__tab-panel[hidden]{display:none}
+.kus-lp [hidden]{display:none!important}
 
 /* ===== Card ===== */
 .kus-lp__card{
@@ -1660,7 +1670,7 @@ ${contextLine}`);
 .kus-lp__details-body{padding:0 14px 12px}
 
 /* Wide variant (一部 lite 用に幅広にしたい場合) */
-.kus-lp--wide{width:min(640px,96vw)}
+.kus-lp--wide{width:min(640px,calc(100vw - max(32px,4vw)))}
 
 /* ===== App table (複数アプリ × per-app ゲストスペース入力) ===== */
 .kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
@@ -1707,7 +1717,11 @@ ${contextLine}`);
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
-    if (old) old.remove();
+    if (old) {
+      old.dispatchEvent(new Event("kus-lite-dispose"));
+      old.remove();
+    }
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const root2 = document.createElement("div");
     root2.id = opts.id;
     root2.className = `kus-lp${opts.wide ? " kus-lp--wide" : ""}`;
@@ -1759,6 +1773,9 @@ ${contextLine}`);
     const status = document.createElement("div");
     status.className = "kus-lp__status";
     status.dataset.tone = "neutral";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.setAttribute("aria-atomic", "true");
     status.innerHTML = '<span class="kus-lp__status-icon">·</span><span class="kus-lp__status-text">準備完了</span>';
     const result = document.createElement("pre");
     result.className = "kus-lp__result kus-lp__result--empty";
@@ -1794,12 +1811,17 @@ ${contextLine}`);
     }
     function setBusy(busy) {
       closeBtn.disabled = busy;
+      root2.setAttribute("aria-busy", String(busy));
       root2.style.cursor = busy ? "progress" : "";
+      root2.dispatchEvent(new Event("kus-lite-busy-change"));
     }
     function close() {
+      if (closeBtn.disabled) return;
+      const restoreFocus = root2.contains(document.activeElement);
       document.removeEventListener("keydown", onDocKeydown, true);
       root2.remove();
       setRootElement(null);
+      if (restoreFocus && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
     }
     closeBtn.addEventListener("click", close);
     let primaryBtn = null;
@@ -1837,6 +1859,7 @@ ${contextLine}`);
       }
     }
     document.addEventListener("keydown", onDocKeydown, true);
+    root2.addEventListener("kus-lite-dispose", () => document.removeEventListener("keydown", onDocKeydown, true), { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
     requestAnimationFrame(() => {
@@ -1899,6 +1922,7 @@ ${contextLine}`);
     if (opts.icon) {
       const i = document.createElement("span");
       i.textContent = opts.icon;
+      i.setAttribute("aria-hidden", "true");
       i.style.cssText = "font-size:14px;line-height:1";
       b.appendChild(i);
     }
@@ -1981,6 +2005,7 @@ ${contextLine}`);
     d.appendChild(b);
     return { details: d, body: b };
   }
+  var tabSequence = 0;
   function makeTabs(specs, opts = {}) {
     const bar = document.createElement("div");
     bar.className = "kus-lp__tabs";
@@ -1993,6 +2018,7 @@ ${contextLine}`);
       specs.forEach((spec, i) => {
         const on = spec.id === id;
         tabBtns[i].setAttribute("aria-selected", on ? "true" : "false");
+        tabBtns[i].tabIndex = on ? 0 : -1;
         tabPanels[i].hidden = !on;
       });
     }
@@ -2003,18 +2029,34 @@ ${contextLine}`);
       btn.setAttribute("role", "tab");
       btn.textContent = spec.label;
       btn.dataset.tab = spec.id;
+      let tabId;
+      do {
+        tabId = `kus-lite-tab-${++tabSequence}`;
+      } while (document.getElementById(tabId));
+      btn.id = tabId;
+      btn.setAttribute("aria-controls", `${tabId}-panel`);
       btn.addEventListener("click", () => activate(spec.id));
+      btn.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const index = specs.indexOf(spec);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? specs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : specs.length - 1)) % specs.length;
+        activate(specs[next].id);
+        tabBtns[next].focus();
+      });
       bar.appendChild(btn);
       tabBtns.push(btn);
       const panel = document.createElement("div");
       panel.className = "kus-lp__tab-panel";
       panel.setAttribute("role", "tabpanel");
+      panel.id = `${tabId}-panel`;
+      panel.setAttribute("aria-labelledby", tabId);
       panel.hidden = true;
       spec.build(panel);
       panels.appendChild(panel);
       tabPanels.push(panel);
     });
-    const initial = opts.initial || specs[0]?.id;
+    const initial = specs.find((spec) => spec.id === opts.initial)?.id || specs[0]?.id;
     if (initial) activate(initial);
     return { bar, panels };
   }
@@ -2024,7 +2066,7 @@ ${contextLine}`);
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
-      if (okMsg && tone !== "err") {
+      if (okMsg && tone !== "err" && tone !== "warn") {
         panel.setStatus(okMsg, "ok");
       } else if (tone === "busy") {
         const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
@@ -2238,8 +2280,9 @@ ${contextLine}`);
     const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll("input,select,textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
     function show(index) {
       if (busy) return;
-      if (index === 1 && selected.validate()) {
-        panel.setStatus(selected.validate(), "warn");
+      const problem = index === 1 ? selected.validate() : "";
+      if (problem) {
+        panel.setStatus(problem, "warn");
         return;
       }
       active = index;
@@ -2266,8 +2309,8 @@ ${contextLine}`);
       refresh();
     }
     function refresh() {
-      const problem = selected.validate();
-      const fresh = reviewedSignature === signature();
+      const problem = busy ? "" : selected.validate();
+      const fresh = !busy && active === 1 && reviewedSignature === signature();
       next.hidden = active !== 0;
       execute.hidden = active !== 1;
       back.hidden = active === 0;
@@ -2337,7 +2380,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       originalStatus(message, tone);
       refresh();
     };
-    for (const event of ["input", "change", "click"]) setup.addEventListener(event, () => queueMicrotask(refresh));
+    let refreshQueued = false;
+    const scheduleRefresh = () => {
+      if (refreshQueued) return;
+      refreshQueued = true;
+      queueMicrotask(() => {
+        refreshQueued = false;
+        refresh();
+      });
+    };
+    for (const event of ["input", "change", "click"]) setup.addEventListener(event, scheduleRefresh);
     selected.onSelect?.();
     show(0);
     return { refresh, show };
@@ -2439,7 +2491,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   }
   function sanitizeZipSegment(value, fallback = "item") {
     const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim();
-    return cleaned || fallback;
+    return !cleaned || /^\.+$/.test(cleaned) ? fallback : cleaned;
   }
   function uniqueZipName(used, raw, fileKey, idx) {
     const safeName = sanitizeZipSegment(raw || "file.bin", "file.bin");
@@ -2566,6 +2618,247 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       tables,
       warnings
     };
+  }
+
+  // src/tabs/record-metadata.ts
+  function isObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+  function readRecordViews(response) {
+    if (!isObject(response?.views)) throw new Error("一覧設定の応答が不正です。再取得してください");
+    return Object.entries(response.views).flatMap(([name, view]) => {
+      if (!isObject(view) || !["LIST", "CALENDAR", "CUSTOM"].includes(view.type)) return [];
+      const filter = String(view.filterCond || "").trim();
+      const sort = String(view.sort || "").trim();
+      return [{
+        id: String(view.id ?? name),
+        name: String(view.name || name),
+        type: view.type,
+        index: Number(view.index) || 0,
+        filter,
+        sort,
+        query: [filter, sort ? `order by ${sort}` : ""].filter(Boolean).join(" ")
+      }];
+    }).sort((a, b) => a.index - b.index);
+  }
+  function readAttachmentFields(response) {
+    if (!isObject(response?.properties)) throw new Error("フィールド設定の応答が不正です。再取得してください");
+    const choices = [];
+    for (const [key, field] of Object.entries(response.properties)) {
+      if (!isObject(field)) continue;
+      const code = String(field.code || key);
+      const label = String(field.label || code);
+      if (field.type === "FILE") choices.push({ fileFieldCode: code, fileLabel: label, tableFieldCode: "", tableLabel: "" });
+      if (field.type !== "SUBTABLE" || !isObject(field.fields)) continue;
+      for (const [childKey, child] of Object.entries(field.fields)) {
+        if (!isObject(child) || child.type !== "FILE") continue;
+        const childCode = String(child.code || childKey);
+        choices.push({ fileFieldCode: childCode, fileLabel: String(child.label || childCode), tableFieldCode: code, tableLabel: label });
+      }
+    }
+    return choices;
+  }
+
+  // src/tabs/record-csv-import.ts
+  var SUPPORTED = /* @__PURE__ */ new Set([
+    "SINGLE_LINE_TEXT",
+    "MULTI_LINE_TEXT",
+    "RICH_TEXT",
+    "NUMBER",
+    "LINK",
+    "RADIO_BUTTON",
+    "DROP_DOWN",
+    "CHECK_BOX",
+    "MULTI_SELECT",
+    "DATE",
+    "TIME",
+    "DATETIME",
+    "USER_SELECT",
+    "ORGANIZATION_SELECT",
+    "GROUP_SELECT"
+  ]);
+  var enabled = (value) => value === true || value === "true";
+  var has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+  var writable = (field) => SUPPORTED.has(String(field?.type || "")) && !field?.expression;
+  function csvImportUnsupportedFields(properties) {
+    const targets = new Set(Object.values(properties).flatMap((field) => (field?.lookup?.fieldMappings || []).map((mapping) => String(mapping.field))));
+    return new Map(Object.entries(properties).filter(([code, field]) => !writable(field) || targets.has(code)).map(([code, field]) => [code, `${String(field?.type || "不明な種類")}${field?.expression ? "・自動計算" : ""}${targets.has(code) ? "・ルックアップのコピー先" : ""}`]));
+  }
+  function splitCsvListValue(value) {
+    const text = String(value ?? "").trim();
+    return text ? text.split(",").map((item) => item.trim()).filter(Boolean) : [];
+  }
+  function coerceCsvImportValue(rawValue, fieldDef) {
+    const type = String(fieldDef?.type || "");
+    if (type === "CHECK_BOX" || type === "MULTI_SELECT") return splitCsvListValue(rawValue);
+    if (["USER_SELECT", "ORGANIZATION_SELECT", "GROUP_SELECT"].includes(type)) return splitCsvListValue(rawValue).map((code) => ({ code }));
+    return type === "NUMBER" ? String(rawValue ?? "").trim() : rawValue;
+  }
+  function validateCsvImportHeader(header, properties) {
+    if (header.includes("$id")) throw new Error("CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。");
+    if (!header.length || header.some((code) => !code)) throw new Error("CSVヘッダに空の列があります。すべての列にフィールドコードを指定してください。");
+    const duplicate = header.filter((code, index) => header.indexOf(code) !== index);
+    if (duplicate.length) throw new Error(`CSVヘッダが重複しています: ${[...new Set(duplicate)].join(", ")}`);
+    const unknown = header.filter((code) => !has(properties, code));
+    if (unknown.length) throw new Error(`CSVヘッダに存在しないフィールドコードがあります: ${unknown.join(", ")}`);
+    const excluded = csvImportUnsupportedFields(properties);
+    const unsupported = header.filter((code) => excluded.has(code)).map((code) => `${code}(${excluded.get(code)})`);
+    if (unsupported.length) throw new Error(`CSVインポート非対応のフィールドが含まれています: ${unsupported.join(", ")}`);
+  }
+  function parseCsvText(csv) {
+    const rows = [];
+    let current = [];
+    let cell = "";
+    let quoted = false;
+    let closed = false;
+    const error = (message) => new Error(`CSV ${rows.length + 1}行目・${current.length + 1}列目: ${message}`);
+    const pushCell = () => {
+      current.push(cell);
+      cell = "";
+      closed = false;
+    };
+    for (let i = 0; i < csv.length; i++) {
+      const char = csv[i];
+      if (quoted) {
+        if (char === '"' && csv[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else if (char === '"') {
+          quoted = false;
+          closed = true;
+        } else cell += char;
+        continue;
+      }
+      if (char === ",") pushCell();
+      else if (char === "\r" || char === "\n") {
+        if (char === "\r" && csv[i + 1] === "\n") i++;
+        pushCell();
+        rows.push(current);
+        current = [];
+      } else if (char === '"' && !cell && !closed) quoted = true;
+      else {
+        if (char === '"' || closed) throw error("ダブルクォートの位置が不正です");
+        cell += char;
+      }
+    }
+    if (quoted) throw error("ダブルクォートが閉じられていません");
+    if (cell || current.length || closed) {
+      pushCell();
+      rows.push(current);
+    }
+    return rows;
+  }
+  function planCsvImport(rows, properties) {
+    if (!properties || typeof properties !== "object" || Array.isArray(properties)) throw new Error("フィールド設定の応答が不正です");
+    if (rows.length < 2) throw new Error("ヘッダ行とデータ行が必要です");
+    const header = rows[0].map((code) => code.trim());
+    validateCsvImportHeader(header, properties);
+    const columns = header.map((code) => ({ code, label: String(properties[code].label || code), type: String(properties[code].type || "") }));
+    const records = [], issues = [], sample = [];
+    let issueCount = 0, count = 0;
+    const issue = (row, field, message) => {
+      issueCount++;
+      if (issues.length < 100) issues.push({ row, field, message });
+    };
+    const mapped = new Set(header.flatMap((code) => (properties[code]?.lookup?.fieldMappings || []).map((mapping) => String(mapping.field))));
+    for (const [code, field] of Object.entries(properties)) {
+      const defaultValue = field?.defaultValue;
+      const hasDefault = enabled(field?.defaultNowValue) || (Array.isArray(defaultValue) ? defaultValue.length > 0 : defaultValue !== void 0 && defaultValue !== null && String(defaultValue) !== "");
+      if (enabled(field?.required) && writable(field) && !header.includes(code) && !mapped.has(code) && !hasDefault) {
+        issue(1, `${field.label || code}［${code}］`, "必須フィールドの列がなく、初期値もありません");
+      }
+    }
+    const seenValues = /* @__PURE__ */ new Map();
+    for (let index = 1; index < rows.length; index++) {
+      const values = rows[index], row = index + 1;
+      if (values.length === 1 && values[0] === "") continue;
+      count++;
+      if (sample.length < 5) sample.push({ row, values: values.slice(0, 6).map((value) => value.length > 120 ? value.slice(0, 120) + "…" : value) });
+      if (values.length !== header.length) {
+        issue(row, "", `列数が一致しません（ヘッダ ${header.length}列 / データ ${values.length}列）`);
+        continue;
+      }
+      const record = /* @__PURE__ */ Object.create(null);
+      for (let col = 0; col < header.length; col++) {
+        const code = header[col], def = properties[code], value = coerceCsvImportValue(values[col], def);
+        const label = `${def.label || code}［${code}］`;
+        const empty = Array.isArray(value) ? value.length === 0 : value === "";
+        if (enabled(def.required) && empty) issue(row, label, "必須項目が空です");
+        if (!empty && def.type === "NUMBER" && !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(String(value))) issue(row, label, "数値の形式が不正です");
+        if (["RADIO_BUTTON", "DROP_DOWN", "CHECK_BOX", "MULTI_SELECT"].includes(def.type)) {
+          const choices = Array.isArray(value) ? value : empty ? [] : [value];
+          for (const choice of choices) if (!has(def.options || {}, String(choice))) issue(row, label, `選択肢にありません: ${choice}`);
+        }
+        if (enabled(def.unique) && !empty && typeof value === "string") {
+          const seen = seenValues.get(code) || /* @__PURE__ */ new Map();
+          if (seen.has(value)) issue(row, label, `CSV内で同じ値が重複しています（${seen.get(value)}行目）`);
+          else seen.set(value, row);
+          seenValues.set(code, seen);
+        }
+        record[code] = { value };
+      }
+      records.push(record);
+    }
+    if (!count) throw new Error("登録するデータがありません");
+    return { count, columns, issues, issueCount, sample, records };
+  }
+  function formatCsvImportReport(report) {
+    const lines = [
+      `${report.count}件 / ${report.columns.length}フィールド / 検出した問題 ${report.issueCount}件`,
+      `列: ${report.columns.map((col) => `${col.label}［${col.code}］`).join(", ")}`
+    ];
+    for (const issue of report.issues) lines.push(`${issue.row}行目${issue.field ? `・${issue.field}` : ""}: ${issue.message}`);
+    if (report.issueCount > report.issues.length) lines.push(`ほか ${report.issueCount - report.issues.length}件（表示は先頭100件）`);
+    return lines.join("\n");
+  }
+
+  // src/tabs/record-process-metadata.ts
+  function describeEntities(entities) {
+    if (!Array.isArray(entities)) return [];
+    const types = { USER: "ユーザー", GROUP: "グループ", ORGANIZATION: "組織", FIELD_ENTITY: "フィールド", CREATOR: "アプリ作成者", CUSTOM_FIELD: "共通管理項目" };
+    return entities.map((item) => {
+      const entity = item?.entity || {};
+      return `${types[entity.type] || entity.type || "不明"}${entity.code ? `: ${entity.code}` : ""}${item?.includeSubs ? "（下位組織を含む）" : ""}`;
+    });
+  }
+  function readProcessActionChoices(response) {
+    if (!Array.isArray(response?.actions)) throw new Error("プロセス管理のアクション情報が不正です。再取得してください。");
+    const counts = /* @__PURE__ */ new Map();
+    for (const action of response.actions) {
+      const key = JSON.stringify([action?.from, action?.name]);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return response.actions.map((action) => {
+      if (!action || typeof action.name !== "string" || typeof action.from !== "string" || typeof action.to !== "string") throw new Error("プロセス管理のアクション情報が不正です。再取得してください。");
+      const assignee = response.states?.[action.to]?.assignee;
+      return {
+        name: action.name,
+        from: action.from,
+        to: action.to,
+        filterCond: String(action.filterCond || ""),
+        type: String(action.type || "PRIMARY"),
+        assigneeType: String(assignee?.type || ""),
+        assigneeCandidates: describeEntities(assignee?.entities),
+        executableUsers: describeEntities(action.executableUser?.entities),
+        ambiguous: counts.get(JSON.stringify([action.from, action.name])) > 1
+      };
+    });
+  }
+  function describeProcessAction(action) {
+    const assignees = { ONE: "候補から1人を選択", ALL: "候補全員", ANY: "候補のうち1人" };
+    return [
+      `${action.from} → ${action.to}`,
+      `実行条件: ${action.filterCond || "条件なし"}`,
+      `実行者: ${action.type === "SECONDARY" ? action.executableUsers.join(" / ") || "レコード閲覧可能なユーザー全員" : "現在の作業者（未指定時はレコード閲覧可能なユーザー）"}`,
+      `次の作業者: ${assignees[action.assigneeType] || "設定なし"}${action.assigneeCandidates.length ? ` / ${action.assigneeCandidates.join(" / ")}` : " / 候補設定なし"}`,
+      action.assigneeType === "ONE" && action.assigneeCandidates.length ? "作業者ログイン名の指定が必要になる場合があります。フィールド・組織等の候補はレコードごとに異なります。" : "",
+      action.ambiguous ? "同じ遷移元に同名アクションが複数あります。この名前はREST APIで指定できません。kintone側のアクション名を見直してください。" : ""
+    ].filter(Boolean).join("\n");
+  }
+  function processActionQuery(action, statusFieldCode) {
+    if (action.ambiguous) throw new Error("同じ遷移元に同名アクションが複数あるため、REST APIで指定できません。");
+    if (!statusFieldCode) throw new Error("ステータスのフィールドコードを取得できません。アクションを再取得してください。");
+    return [`${statusFieldCode} in (${JSON.stringify(action.from)})`, action.filterCond ? `(${action.filterCond})` : ""].filter(Boolean).join(" and ");
   }
 
   // src/tabs/record-standalone.ts
@@ -2798,141 +3091,69 @@ ${failures.join("\n")}`);
     const issueNote = issues.length ? `（${issues.join(" / ")}、詳細は manifest.txt）` : "";
     setStatus(`CSV一括出力完了${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
   }
-  var CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = /* @__PURE__ */ new Set([
-    "RECORD_NUMBER",
-    "CREATOR",
-    "CREATED_TIME",
-    "MODIFIER",
-    "UPDATED_TIME",
-    "STATUS",
-    "STATUS_ASSIGNEE",
-    "CALC",
-    "CATEGORY",
-    "__ID__",
-    "__REVISION__",
-    "FILE",
-    "SUBTABLE",
-    "REFERENCE_TABLE",
-    "LABEL",
-    "HR",
-    "SPACER"
-  ]);
-  function splitCsvListValue(value) {
-    const text = String(value == null ? "" : value).trim();
-    if (!text) return [];
-    return text.split(",").map((item) => item.trim()).filter(Boolean);
-  }
-  function coerceCsvImportValue(rawValue, fieldDef) {
-    const type = String(fieldDef?.type || "");
-    if (type === "CHECK_BOX" || type === "MULTI_SELECT") return splitCsvListValue(rawValue);
-    if (type === "USER_SELECT" || type === "ORGANIZATION_SELECT" || type === "GROUP_SELECT") {
-      return splitCsvListValue(rawValue).map((code) => ({ code }));
-    }
-    if (type === "NUMBER") return String(rawValue == null ? "" : rawValue).trim();
-    return rawValue;
-  }
-  function validateCsvImportHeader(header, properties) {
-    if (header.includes("$id")) throw new Error("CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。");
-    const unknown = [];
-    const unsupported = [];
-    for (const code of header) {
-      if (!code) continue;
-      const def = properties?.[code];
-      if (!def) {
-        unknown.push(code);
-        continue;
-      }
-      if (CSV_IMPORT_UNSUPPORTED_FIELD_TYPES.has(String(def.type || ""))) {
-        unsupported.push(`${code}(${def.type})`);
-      }
-    }
-    if (unknown.length) throw new Error(`CSVヘッダに存在しないフィールドコードがあります: ${unknown.join(", ")}`);
-    if (unsupported.length) throw new Error(`CSVインポート非対応のフィールドが含まれています: ${unsupported.join(", ")}`);
-  }
-  function parseCsvText(csv) {
-    const rows = [];
-    let current = [];
-    let cell = "";
-    let inQ = false;
-    for (let i = 0; i < csv.length; i++) {
-      const c = csv[i];
-      const n = csv[i + 1];
-      if (inQ) {
-        if (c === '"') {
-          if (n === '"') {
-            cell += '"';
-            i++;
-          } else inQ = false;
-        } else {
-          cell += c;
-        }
-        continue;
-      }
-      if (c === '"') inQ = true;
-      else if (c === ",") {
-        current.push(cell);
-        cell = "";
-      } else if (c === "\n" || c === "\r") {
-        if (c === "\r" && n === "\n") i++;
-        current.push(cell);
-        rows.push(current);
-        current = [];
-        cell = "";
-      } else cell += c;
-    }
-    if (cell || current.length) {
-      current.push(cell);
-      rows.push(current);
-    }
-    return rows;
-  }
-  async function runCsvImportStandalone(opts, setStatus) {
-    const { appId, guestId, file } = opts;
-    if (!appId) throw new Error("アプリIDを入力してください");
+  async function readImportFile(file) {
     if (!file) throw new Error("CSVファイルを選択してください");
-    const prefix = buildApiPrefix(guestId || "", false);
-    setStatus("CSVファイルを読み込み中...");
-    const text = await new Promise((resolve, reject) => {
+    if (typeof file.text === "function") return file.text();
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => resolve(String(e.target.result || ""));
       reader.onerror = () => reject(new Error("ファイルの読み取りに失敗"));
       reader.readAsText(file);
     });
-    const rows = parseCsvText(text.replace(/^\uFEFF/, ""));
-    if (rows.length < 2) throw new Error("ヘッダ行とデータ行が必要です");
-    const header = rows[0].map((h) => h.trim());
-    setStatus("フィールド情報を確認中...");
-    const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
-    const properties = fields?.properties || {};
-    validateCsvImportHeader(header, properties);
-    const records = [];
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i].length === 1 && rows[i][0] === "") continue;
-      const rec = {};
-      for (let j = 0; j < header.length; j++) {
-        if (!header[j]) continue;
-        const val = rows[i][j] !== void 0 ? rows[i][j] : "";
-        rec[header[j]] = { value: coerceCsvImportValue(val, properties[header[j]]) };
+  }
+  async function inspectCsvImportBatch(opts, setStatus) {
+    const appIds = parseRecordAppIds(opts.appIdsText || opts.appId);
+    if (!appIds.length) throw new Error("対象アプリIDを入力してください");
+    setStatus("CSVファイルを読み込み中...");
+    const rows = parseCsvText((await readImportFile(opts.file)).replace(/^\uFEFF/, ""));
+    const prefix = buildApiPrefix(opts.guestId || "", false);
+    const plans = [];
+    for (const appId of appIds) {
+      setStatus(`App ${appId}: CSVを事前検査中...`);
+      try {
+        const response = await apiGet(prefix, "/app/form/fields.json", { app: appId });
+        const { records: _records, ...report } = planCsvImport(rows, response?.properties);
+        plans.push({ appId, properties: response.properties, report });
+      } catch (error) {
+        plans.push({ appId, properties: {}, error: error?.message || String(error) || "事前検査に失敗しました" });
       }
-      records.push(rec);
     }
-    if (!records.length) throw new Error("登録するデータがありません");
+    return { prefix, rows, plans };
+  }
+  async function runPreviewCsvImportStandalone(opts, setStatus) {
+    const { plans } = await inspectCsvImportBatch(opts, setStatus);
+    const result = plans.map(({ appId, report, error }) => ({ appId, report, error }));
+    const problems = plans.filter((plan) => plan.error || plan.report.issueCount).length;
+    setStatus(problems ? `事前検査: ${problems}アプリに問題があります。まだ書き込んでいません。` : `事前検査完了: ${plans.length}アプリ。まだ書き込んでいません。`, problems > 0);
+    return result;
+  }
+  async function runCsvImportBatchStandalone(opts, setStatus) {
+    const { prefix, rows, plans } = await inspectCsvImportBatch(opts, setStatus);
+    const problems = plans.filter((plan) => plan.error || plan.report.issueCount);
+    if (problems.length) throw new Error(`CSVの事前検査で問題を検出しました。全対象アプリへの書き込みを中止しました。
+${problems.map((plan) => `App ${plan.appId}: ${plan.error || formatCsvImportReport(plan.report)}`).join("\n\n")}`);
     const confirmText = [
-      `App ${appId}${guestId ? `（ゲスト ${guestId}）` : ""} の本番レコードへ CSV から ${records.length}件 を追加します。`,
-      `対象フィールド: ${header.filter(Boolean).length}件`,
+      `CSVから ${plans.length}アプリの本番レコードへ追加します${opts.guestId ? `（ゲスト ${opts.guestId}）` : ""}。`,
+      ...plans.map((plan) => `App ${plan.appId}: ${plan.report.count}件 / ${plan.report.columns.length}フィールド`),
       "追加したレコードは自動では取り消せません。実行しますか？"
     ].join("\n");
     if (!kusConfirm(confirmText)) {
-      setStatus("CSV取込をキャンセルしました");
-      return;
+      const warning = "CSV取込をキャンセルしました";
+      setStatus(warning, true);
+      return { warning };
     }
-    const ok = await writeInChunks(
-      records,
-      `App ${appId} の CSV取込`,
-      (batch) => apiPost(prefix, "/records.json", { app: appId, records: batch }),
-      (done, total) => setStatus(`インポート中... (${done} / ${total}件)`)
-    );
-    setStatus(`インポート完了: ${ok}件`);
+    await runRecordAppBatchStandalone(plans.map((plan) => plan.appId).join(","), async (appId) => {
+      const plan = plans.find((item) => item.appId === appId);
+      const { records } = planCsvImport(rows, plan.properties);
+      const ok = await writeInChunks(
+        records,
+        `App ${appId} の CSV取込`,
+        (batch) => apiPost(prefix, "/records.json", { app: appId, records: batch }),
+        (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`)
+      );
+      setStatus(`App ${appId}: インポート完了 ${ok}件`);
+    }, setStatus);
+    setStatus(`CSV取込完了: ${plans.length}アプリ / ${plans.reduce((sum, plan) => sum + plan.report.count, 0)}件`);
   }
   async function runBatchProcessStandalone(opts, setStatus) {
     const { appId, guestId, query, action, assignee } = opts;
@@ -3075,35 +3296,78 @@ ${error?.message || String(error)}`
   }
   async function runAttachmentDownloadStandalone(opts, setStatus) {
     const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
+    const tableFieldCode = String(opts.tableFieldCode || "");
     if (!appId) throw new Error("アプリIDを入力してください");
     if (!fileFieldCode) throw new Error("ファイルフィールドコードを入力してください");
     const prefix = buildApiPrefix(guestId || "", false);
+    const fields = await runLoadAttachmentFieldsStandalone({ appId, guestId }, setStatus);
+    if (!fields.some((field) => field.fileFieldCode === fileFieldCode && field.tableFieldCode === tableFieldCode)) {
+      throw new Error(`添付フィールド「${tableFieldCode ? `${tableFieldCode} / ` : ""}${fileFieldCode}」がありません。フィールド名ではなくコードと、テーブルの指定を確認してください`);
+    }
     const records = await fetchAllRecords(prefix, appId, query || "", setStatus);
     if (!records.length) throw new Error("対象レコードが0件です");
-    const fieldMissing = records.every((rec) => !rec?.[fileFieldCode]);
-    if (fieldMissing) throw new Error(`フィールド「${fileFieldCode}」が取得結果に存在しません。フィールドコードを確認してください`);
+    const groups = records.flatMap((rec, index) => {
+      const recordId = String(rec.$id?.value || index + 1);
+      const parent = rec?.[tableFieldCode || fileFieldCode];
+      if (!parent || parent.type !== (tableFieldCode ? "SUBTABLE" : "FILE") || !Array.isArray(parent.value)) {
+        throw new Error(`レコード ${recordId}: フィールド「${tableFieldCode || fileFieldCode}」を取得できません。閲覧権限を確認してください`);
+      }
+      const rows = tableFieldCode ? parent.value : [{ value: { [fileFieldCode]: parent } }];
+      return rows.map((row, rowIndex) => {
+        const field = row.value?.[fileFieldCode];
+        if (field?.type !== "FILE" || !Array.isArray(field.value)) {
+          throw new Error(`レコード ${recordId} / テーブル行 ${rowIndex + 1}: 添付フィールド「${fileFieldCode}」を取得できません。閲覧権限を確認してください`);
+        }
+        return { rec, recordId, rowId: tableFieldCode ? String(row.id || rowIndex + 1) : "", files: field.value };
+      });
+    });
+    if (!groups.some((group) => group.files.length)) {
+      const warning = "ダウンロード対象の添付がありませんでした";
+      setStatus(warning, true);
+      return { warning };
+    }
     const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
     let fileCount = 0;
     const failures = [];
-    for (let i = 0; i < records.length; i++) {
-      const rec = records[i];
-      setStatus(`添付DL中 (${i + 1}/${records.length}${failures.length ? ` / 失敗 ${failures.length}` : ""})`);
-      const files = rec?.[fileFieldCode]?.value || [];
+    const manifest = [];
+    const usedByFolder = /* @__PURE__ */ new Map();
+    for (let i = 0; i < groups.length; i++) {
+      const { rec, recordId, rowId, files } = groups[i];
+      setStatus(`添付DL中 (${i + 1}/${groups.length}${failures.length ? ` / 失敗 ${failures.length}` : ""})`);
       if (!files.length) continue;
-      const recordId = String(rec.$id?.value || i + 1);
       let folderName = folderFieldCode && rec[folderFieldCode]?.value;
       if (!folderName) folderName = `Record_${recordId}`;
-      const folder = zip.folder(sanitizeZipSegment(folderName, `Record_${recordId}`));
-      const used = /* @__PURE__ */ new Set();
+      const folderPath = [
+        sanitizeZipSegment(folderName, `Record_${recordId}`),
+        ...tableFieldCode ? [...folderName === `Record_${recordId}` ? [] : [`Record_${recordId}`], sanitizeZipSegment(tableFieldCode), `Row_${sanitizeZipSegment(rowId)}`] : []
+      ].join("/");
+      const folder = zip.folder(folderPath);
+      const used = usedByFolder.get(folderPath) || /* @__PURE__ */ new Set();
+      usedByFolder.set(folderPath, used);
       for (const f of files) {
         const result = await downloadFileBlob(prefix, f.fileKey);
+        const entry = {
+          recordId,
+          tableFieldCode,
+          rowId,
+          fileFieldCode,
+          name: String(f.name || ""),
+          size: String(f.size ?? ""),
+          contentType: String(f.contentType || ""),
+          path: "",
+          error: ""
+        };
         if (result.ok === true) {
-          folder.file(uniqueZipName(used, f.name || "file.bin", f.fileKey, fileCount), result.blob);
+          const name = uniqueZipName(used, f.name || "file.bin", f.fileKey, fileCount);
+          folder.file(name, result.blob);
+          entry.path = `${folderPath}/${name}`;
           fileCount++;
         } else {
-          failures.push({ recordId, fileName: String(f.name || ""), fileKey: String(f.fileKey || ""), reason: result.reason });
+          entry.error = result.reason;
+          failures.push({ recordId, fileName: String(f.name || ""), fileKey: String(f.fileKey || ""), reason: `${rowId ? `テーブル ${tableFieldCode} / 行 ${rowId}: ` : ""}${result.reason}` });
         }
+        manifest.push(entry);
       }
     }
     if (!fileCount) {
@@ -3112,19 +3376,21 @@ ${error?.message || String(error)}`
 ${formatFileFailures(failures.slice(0, 5))}${failures.length > 5 ? "\n…" : ""}`);
       }
       setStatus("ダウンロード対象の添付がありませんでした", true);
-      return;
+      return { warning: "ダウンロード対象の添付がありませんでした" };
     }
     if (failures.length) {
       zip.file("download_errors.txt", `取得できなかった添付ファイル ${failures.length}件
 ${formatFileFailures(failures)}
 `);
     }
+    zip.file("manifest.json", JSON.stringify({ appId: String(appId), guestId: String(guestId || ""), query: query || "", files: manifest }, null, 2));
     setStatus(`ZIP生成中 (${fileCount}ファイル)`);
     const zipBlob = await zip.generateAsync({ type: "blob" });
     downloadBlob(zipName || buildExportFilename("添付ファイル", "zip", { appLabel: buildAppFilenameLabel(appId, "") }), zipBlob);
     if (failures.length) {
-      setStatus(`添付一括DL完了: ${fileCount}ファイル（取得失敗 ${failures.length}件、詳細は download_errors.txt）`, true);
-      return;
+      const warning = `添付一括DL完了: ${fileCount}ファイル（取得失敗 ${failures.length}件、詳細は download_errors.txt）`;
+      setStatus(warning, true);
+      return { warning };
     }
     setStatus(`添付一括DL完了: ${fileCount}ファイル`);
   }
@@ -3282,25 +3548,36 @@ ${formatFileFailures(failures)}
     if (!appId) throw new Error("アプリIDを入力してください");
     const prefix = buildApiPrefix(guestId || "", false);
     setStatus("プロセス管理情報を取得中...");
-    const res = await apiGet(prefix, "/app/status.json", { app: appId });
+    const res = await apiGet(prefix, "/app/status.json", { app: appId, lang: "user" });
     if (!res.enable) {
       setStatus("プロセス管理は無効です", true);
-      return { enabled: false, states: [], actions: [] };
+      return { enabled: false, states: [], actions: [], statusFieldCode: "" };
     }
-    const states = Object.keys(res.states || {});
-    const actions = (res.actions || []).map((a) => ({ name: a.name, from: a.from, to: a.to }));
+    const states = Object.keys(res.states || {}).sort((a, b) => Number(res.states[a].index) - Number(res.states[b].index));
+    const actions = readProcessActionChoices(res);
+    const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId, lang: "user" });
+    const statusField = Object.entries(fields?.properties || {}).find(([, field]) => field?.type === "STATUS");
+    const statusFieldCode = statusField ? String(statusField[1].code || statusField[0]) : "";
     setStatus(`プロセス管理: 状態 ${states.length}件 / アクション ${actions.length}件`);
-    return { enabled: true, states, actions };
+    return { enabled: true, states, actions, statusFieldCode };
   }
   async function runLoadViewsStandalone(opts, setStatus) {
     const { appId, guestId } = opts;
     if (!appId) throw new Error("アプリIDを入力してください");
     const prefix = buildApiPrefix(guestId || "", false);
     setStatus("一覧情報を取得中...");
-    const resp = await apiGet(prefix, "/app/views.json", { app: appId });
-    const views = Object.entries(resp.views || {}).map(([name, v]) => ({ name, id: String(v.id), filter: String(v.filterCond || ""), type: String(v.type), index: Number(v.index || 0) })).filter((v) => v.type === "LIST").sort((a, b) => a.index - b.index);
+    const resp = await apiGet(prefix, "/app/views.json", { app: appId, lang: "user" });
+    const views = readRecordViews(resp);
     setStatus(`一覧: ${views.length}件`);
     return views;
+  }
+  async function runLoadAttachmentFieldsStandalone(opts, setStatus) {
+    if (!opts.appId) throw new Error("アプリIDを入力してください");
+    setStatus("添付フィールド情報を取得中...");
+    const response = await apiGet(buildApiPrefix(opts.guestId || "", false), "/app/form/fields.json", { app: opts.appId, lang: "user" });
+    const fields = readAttachmentFields(response);
+    setStatus(`添付フィールド: ${fields.length}件${fields.length ? "" : "（添付フィールドがありません）"}`);
+    return fields;
   }
 
   // src/entries/appSearchControl.ts
@@ -3351,6 +3628,7 @@ ${formatFileFailures(failures)}
 .kus-as__table tr:last-child td{border-bottom:none}
 .kus-as__id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--c-text-2);white-space:nowrap}
 .kus-as__name{color:var(--c-text);word-break:break-all}
+.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:10.5px;line-height:1.5}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:10.5px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
@@ -3362,18 +3640,76 @@ ${formatFileFailures(failures)}
     st.textContent = RESULT_CSS;
     document.head.appendChild(st);
   }
+  function appCandidate(info, appId) {
+    return {
+      appId,
+      name: String(info?.name || ""),
+      code: info?.code == null ? void 0 : String(info.code),
+      spaceId: info?.spaceId === null ? null : info?.spaceId === void 0 ? void 0 : String(info.spaceId),
+      modifiedAt: String(info?.modifiedAt || ""),
+      modifierName: String(info?.modifier?.name || info?.modifier?.code || "")
+    };
+  }
+  function candidateDetails(app) {
+    const parts = [
+      app.code === void 0 ? "コード未取得" : app.code ? `コード: ${app.code}` : "コード未設定",
+      app.spaceId === null ? "スペース外" : app.spaceId ? `スペース: ${app.spaceId}` : "所属スペース未取得"
+    ];
+    if (app.modifiedAt) {
+      const date = new Date(app.modifiedAt);
+      const time = Number.isNaN(date.getTime()) ? app.modifiedAt : date.toLocaleString("ja-JP");
+      parts.push(`更新: ${time}${app.modifierName ? ` / ${app.modifierName}` : ""}`);
+    }
+    return parts.join(" · ");
+  }
   function createAppSearchControl(panel, opts) {
     ensureStyles2();
-    const { details, body } = makeDetails(opts.title || "アプリ名で検索", { open: !!opts.open });
+    const { details, body } = makeDetails(opts.title || "アプリを検索（名前・コード・ID）", { open: !!opts.open });
     const keyword = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide", noSubmit: true });
     const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
+    const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
+    searchMode.setAttribute("aria-label", "検索方法");
+    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
+    body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
-    body.appendChild(makeNote("スペース内のアプリを名前で検索します。アプリIDや一覧画面のURLを貼り付けると直接候補にできます。"));
+    body.appendChild(makeNote("閲覧できるアプリを名前（部分一致）またはコード（大文字・小文字を区別する完全一致）で検索します。スペースIDで検索範囲を絞れます。ID / URL の直接指定ではスペースIDの絞り込みは使いません。"));
     const resultBox = document.createElement("div");
     resultBox.className = "kus-as__result kus-as__result--empty";
     body.appendChild(resultBox);
+    const moreBtn = makeButton("さらに100件を取得", "sub");
+    moreBtn.hidden = true;
+    body.appendChild(moreBtn);
+    let generation = 0;
+    let running = false;
+    let candidates = [];
+    let nextOffset = 0;
+    let resultGuest = "";
+    function invalidate() {
+      generation += 1;
+      candidates = [];
+      nextOffset = 0;
+      resultBox.replaceChildren();
+      resultBox.className = "kus-as__result kus-as__result--empty";
+      moreBtn.hidden = true;
+    }
+    keyword.addEventListener("input", invalidate);
+    guest.addEventListener("input", invalidate);
+    space.addEventListener("input", invalidate);
+    searchMode.addEventListener("change", () => {
+      keyword.placeholder = searchMode.value === "code" ? "アプリコード（完全一致）" : "アプリ名 / アプリID / URL";
+      invalidate();
+    });
+    function syncBusyControls() {
+      const busy = panel.root.getAttribute("aria-busy") === "true";
+      searchBtn.disabled = running || busy;
+      moreBtn.disabled = running || busy;
+    }
+    panel.root.addEventListener("kus-lite-busy-change", () => {
+      if (running && panel.root.getAttribute("aria-busy") === "true") invalidate();
+      syncBusyControls();
+    });
     function renderResults(apps) {
       if (!apps.length) {
         resultBox.className = "kus-as__result";
@@ -3388,7 +3724,7 @@ ${formatFileFailures(failures)}
         }).join("");
         return `<tr>
         <td class="kus-as__id">${esc(app.appId)}</td>
-        <td class="kus-as__name" title="${esc(app.name)}">${esc(app.name)}</td>
+        <td class="kus-as__name"><div>${esc(app.name)}</div><div class="kus-as__meta">${esc(candidateDetails(app))}</div></td>
         <td><div class="kus-as__assign">${buttons}</div></td>
       </tr>`;
       }).join("");
@@ -3403,9 +3739,14 @@ ${formatFileFailures(failures)}
           const app = apps[Number(btn.dataset.asPick)];
           const target = opts.targets[Number(btn.dataset.asTarget)];
           if (!app || !target) return;
-          const searchGuest = guest.value.trim();
+          if (running || panel.root.getAttribute("aria-busy") === "true") return;
+          const searchGuest = resultGuest;
           const outcome = target.apply(app.appId, app.name, searchGuest) || {};
-          if (searchGuest && opts.guestEl && !opts.guestEl.value.trim()) opts.guestEl.value = searchGuest;
+          if (opts.guestEl && opts.guestEl.value.trim() !== searchGuest) {
+            opts.guestEl.value = searchGuest;
+            opts.guestEl.dispatchEvent(new Event("input", { bubbles: true }));
+            opts.guestEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
           const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : "";
           btn.classList.add("kus-as__picked");
           btn.setAttribute("aria-pressed", "true");
@@ -3417,42 +3758,89 @@ ${formatFileFailures(failures)}
         });
       });
     }
-    async function runSearch() {
+    async function runSearch(append = false) {
+      if (running || panel.root.getAttribute("aria-busy") === "true") return;
+      if (!append) invalidate();
       const raw = keyword.value.trim();
-      const urlGuestId = extractGuestIdFromInput(raw);
-      if (urlGuestId && !guest.value.trim()) guest.value = urlGuestId;
-      const guestId = guest.value.trim() || urlGuestId || "";
-      const prefix = buildApiPrefix(guestId, false);
-      const directAppId = extractAppIdFromInput(raw);
-      if (directAppId) {
-        panel.setStatus("アプリIDを確認中…", "busy");
-        let name = "";
-        try {
-          const info = await apiGet(prefix, "/app.json", { id: directAppId });
-          name = String(info?.name || "").trim();
-        } catch {
-          name = "ID指定（名称未取得）";
-        }
-        renderResults([{ appId: directAppId, name: name || "ID指定" }]);
-        panel.setStatus(`アプリID ${directAppId}${guestId ? ` / ゲスト ${guestId}` : ""} を候補に表示しました`, "ok");
+      const codeSearch = searchMode.value === "code";
+      const directAppId = codeSearch ? "" : extractAppIdFromInput(raw);
+      if (!directAppId && ([...raw].length > 64 || codeSearch && !raw)) {
+        panel.setStatus(codeSearch ? "アプリコードを1〜64文字で入力してください" : "アプリ名は64文字以内で入力してください", "warn");
         return;
       }
-      const params = { limit: 100 };
-      if (raw) params.name = raw;
-      panel.setStatus("アプリ検索中…", "busy");
+      const spaceId = space.value.trim();
+      if (!directAppId && spaceId && !/^[1-9]\d*$/.test(spaceId)) {
+        panel.setStatus("スペースIDは正の数値で入力してください", "warn");
+        return;
+      }
+      const urlGuestId = codeSearch ? "" : extractGuestIdFromInput(raw);
+      if (urlGuestId) guest.value = urlGuestId;
+      else if (!codeSearch && /\/k\/\d+(?:[/?#]|$)/i.test(raw)) guest.value = "";
+      const guestId = guest.value.trim() || urlGuestId || "";
+      if (guestId && !/^\d+$/.test(guestId)) {
+        panel.setStatus("ゲストIDは数値で入力してください", "warn");
+        return;
+      }
+      const requestGeneration = generation;
+      const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
+      const prefix = buildApiPrefix(guestId, false);
+      running = true;
+      searchBtn.disabled = true;
+      moreBtn.disabled = true;
+      resultBox.setAttribute("aria-busy", "true");
       try {
+        if (directAppId) {
+          panel.setStatus("アプリIDを確認中…", "busy");
+          let candidate = { appId: directAppId, name: "ID指定（名称未取得）" };
+          try {
+            const info = await apiGet(prefix, "/app.json", { id: directAppId });
+            candidate = appCandidate(info, directAppId);
+          } catch {
+          }
+          if (!isCurrent()) return;
+          resultGuest = guestId;
+          renderResults([candidate]);
+          panel.setStatus(`アプリID ${directAppId}${guestId ? ` / ゲスト ${guestId}` : ""} を候補に表示しました`, "ok");
+          return;
+        }
+        const params = { limit: 100, offset: append ? nextOffset : 0 };
+        if (raw) {
+          if (codeSearch) params.codes = [raw];
+          else params.name = raw;
+        }
+        if (spaceId) params.spaceIds = [spaceId];
+        panel.setStatus("アプリ検索中…", "busy");
         const res = await apiGet(prefix, "/apps.json", params);
-        const apps = (res?.apps || []).map((a) => ({ appId: String(a.appId || "").trim(), name: String(a.name || "") })).filter((a) => /^\d+$/.test(a.appId)).sort((a, b) => Number(a.appId) - Number(b.appId));
-        renderResults(apps);
-        panel.setStatus(`アプリ検索完了: ${apps.length}件`, apps.length ? "ok" : "info");
+        if (!isCurrent()) return;
+        if (!Array.isArray(res?.apps)) throw new Error("アプリ一覧の応答が不正です。再検索してください");
+        const byId = new Map(candidates.map((app) => [app.appId, app]));
+        for (const app of res.apps) {
+          const appId = String(app?.appId || "").trim();
+          if (/^\d+$/.test(appId)) byId.set(appId, appCandidate(app, appId));
+        }
+        candidates = [...byId.values()].sort((a, b) => BigInt(a.appId) < BigInt(b.appId) ? -1 : BigInt(a.appId) > BigInt(b.appId) ? 1 : 0);
+        nextOffset = Number(params.offset) + 100;
+        resultGuest = guestId;
+        renderResults(candidates);
+        moreBtn.hidden = res.apps.length < 100;
+        panel.setStatus(`アプリ検索完了: ${candidates.length}件${moreBtn.hidden ? "" : "。続きは「さらに100件を取得」で表示できます"}`, candidates.length ? "ok" : "info");
       } catch (e) {
-        resultBox.className = "kus-as__result kus-as__result--empty";
-        resultBox.innerHTML = "";
+        if (!isCurrent()) return;
         panel.setStatus(`アプリ検索エラー: ${e?.message || String(e)}`, "err");
+      } finally {
+        running = false;
+        syncBusyControls();
+        resultBox.setAttribute("aria-busy", "false");
+        if (!isCurrent() && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true" && panel.status.dataset.tone === "busy") {
+          panel.setStatus("検索条件が変わりました。もう一度検索してください", "info");
+        }
       }
     }
     searchBtn.addEventListener("click", () => {
       void runSearch();
+    });
+    moreBtn.addEventListener("click", () => {
+      void runSearch(true);
     });
     keyword.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
@@ -3463,12 +3851,400 @@ ${formatFileFailures(failures)}
     return details;
   }
 
+  // src/tabs/record-quality-standalone.ts
+  init_api();
+  init_utils();
+
+  // src/tabs/record-quality.ts
+  var SCALAR = /* @__PURE__ */ new Set(["SINGLE_LINE_TEXT", "MULTI_LINE_TEXT", "LINK", "NUMBER", "DATE", "TIME", "DATETIME", "DROP_DOWN", "RADIO_BUTTON"]);
+  var MULTI = /* @__PURE__ */ new Set(["CHECK_BOX", "MULTI_SELECT", "USER_SELECT", "ORGANIZATION_SELECT", "GROUP_SELECT"]);
+  var TEXT = /* @__PURE__ */ new Set(["SINGLE_LINE_TEXT", "MULTI_LINE_TEXT", "LINK"]);
+  var has2 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  function readQualityFields(properties) {
+    if (!properties || typeof properties !== "object" || Array.isArray(properties)) throw new Error("フィールド設定の応答が不正です");
+    return Object.entries(properties).filter(([, field]) => SCALAR.has(field?.type) || MULTI.has(field?.type)).map(([code, field]) => ({ code, label: String(field.label || code), type: String(field.type) }));
+  }
+  function selectQualityFields(properties, codes) {
+    if (!codes.length || codes.length > 5 || new Set(codes).size !== codes.length) throw new Error("検査するフィールドを1〜5個選んでください");
+    const available = new Map(readQualityFields(properties).map((field) => [field.code, field]));
+    return codes.map((code) => {
+      const field = available.get(code);
+      if (!field) throw new Error(`検査に使えないフィールドです: ${code}（存在・種類を確認してください）`);
+      return field;
+    });
+  }
+  function numberKey(value) {
+    const match = /^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(value.trim());
+    if (!match || !(match[2] || match[3])) return value;
+    let digits = (match[2] + (match[3] || "")).replace(/^0+/, "");
+    if (!digits) return "0";
+    const trailing = digits.length - digits.replace(/0+$/, "").length;
+    digits = digits.slice(0, digits.length - trailing);
+    return `${match[1] === "-" ? "-" : ""}${digits}e${BigInt(match[4] || "0") - BigInt((match[3] || "").length) + BigInt(trailing)}`;
+  }
+  function inspectRecordQuality(records, fields, options) {
+    const report = { fields, total: records.length, duplicateGroups: 0, duplicateRecords: 0, emptyRecords: 0, unavailableRecords: 0, findings: [] };
+    const groups = /* @__PURE__ */ new Map();
+    for (const record of records) {
+      const recordId = String(record?.$id?.value ?? "");
+      if (!/^[1-9]\d*$/.test(recordId)) throw new Error("レコードIDを取得できませんでした。検査をやり直してください");
+      const empty = [], unavailable = [], values = [], keys = [];
+      for (const field of fields) {
+        const cell = record && has2(record, field.code) ? record[field.code] : void 0;
+        const multi = MULTI.has(field.type), value = cell?.value;
+        if (!cell || cell.type !== field.type || !has2(cell, "value") || value === void 0 || (multi ? !Array.isArray(value) || value.some((item) => ["USER_SELECT", "ORGANIZATION_SELECT", "GROUP_SELECT"].includes(field.type) ? !item || typeof item.code !== "string" : typeof item !== "string") : value !== null && typeof value !== "string")) {
+          unavailable.push(field.code);
+          values.push("（取得不可）");
+          keys.push("");
+          continue;
+        }
+        values.push(multi ? JSON.stringify(value.map((item) => typeof item === "string" ? item : item.code)) : String(value ?? ""));
+        let key = multi ? JSON.stringify([...new Set(value.map((item) => typeof item === "string" ? item : item.code))].sort()) : String(value ?? "");
+        if (TEXT.has(field.type)) {
+          if (options.trimText) key = key.trim();
+          if (options.ignoreCase) key = key.toLowerCase();
+        }
+        if (multi ? !value.length : !key) empty.push(field.code);
+        keys.push(field.type === "NUMBER" && key ? numberKey(key) : key);
+      }
+      if (empty.length) {
+        report.emptyRecords++;
+        report.findings.push({ recordId, kind: "未入力", group: 0, fields: empty, values });
+      }
+      if (unavailable.length) {
+        report.unavailableRecords++;
+        report.findings.push({ recordId, kind: "取得不可", group: 0, fields: unavailable, values });
+      }
+      if (!empty.length && !unavailable.length) {
+        const key = JSON.stringify(keys), group = groups.get(key) || [];
+        group.push({ recordId, values });
+        groups.set(key, group);
+      }
+    }
+    for (const group of groups.values()) if (group.length > 1) {
+      report.duplicateGroups++;
+      report.duplicateRecords += group.length;
+      for (const item of group) report.findings.push({ ...item, kind: "重複", group: report.duplicateGroups, fields: fields.map((field) => field.code) });
+    }
+    return report;
+  }
+  function reportCsv(rows) {
+    return "\uFEFF" + rows.map((row) => row.map((value) => {
+      const text = String(value ?? "");
+      return csvEscape(/^[\s\uFEFF]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text) ? "'" + text : text);
+    }).join(",")).join("\r\n") + "\r\n";
+  }
+  function qualityRecordPath(appId, guestId, recordId) {
+    if (![appId, recordId].every((id) => /^[1-9]\d*$/.test(id)) || guestId && !/^[1-9]\d*$/.test(guestId)) return "";
+    return `/k/${guestId ? `guest/${guestId}/` : ""}${appId}/show#record=${recordId}`;
+  }
+  function qualityReportCsv(results, guestId, origin, options, query) {
+    const codes = [...new Set(results.flatMap((result) => result.report?.fields.map((field) => field.code) || []))];
+    const rows = [["アプリID", "種別", "レコードID", "レコードURL", "重複グループ", "対象フィールド", "説明", ...codes.map((code) => `値:${code}`)]];
+    for (const result of results) {
+      const report = result.report;
+      rows.push([result.appId, report ? "集計" : "エラー", "", "", "", report?.fields.map((field) => field.code).join(", "), result.error || `検査 ${report.total}件 / 重複 ${report.duplicateGroups}組・${report.duplicateRecords}件 / 未入力 ${report.emptyRecords}件 / 取得不可 ${report.unavailableRecords}件 / 条件: ${query || "全件"} / 前後空白を無視: ${options.trimText} / 大小文字を無視: ${options.ignoreCase}`]);
+      if (!report) continue;
+      for (const finding of report.findings) {
+        const recordPath = qualityRecordPath(result.appId, guestId, finding.recordId);
+        rows.push([
+          result.appId,
+          finding.kind,
+          finding.recordId,
+          recordPath ? origin + recordPath : "",
+          finding.group || "",
+          finding.fields.join(", "),
+          "",
+          ...codes.map((code) => {
+            const index = report.fields.findIndex((field) => field.code === code);
+            return index < 0 ? "" : finding.values[index];
+          })
+        ]);
+      }
+    }
+    return reportCsv(rows);
+  }
+
+  // src/tabs/record-template.ts
+  function buildCsvImportTemplate(properties) {
+    if (!properties || typeof properties !== "object" || Array.isArray(properties)) throw new Error("フィールド設定の応答が不正です");
+    const codes = [], excluded = [];
+    const unsupported = csvImportUnsupportedFields(properties);
+    const guide = [["フィールドコード", "フィールド名", "種類", "必須", "重複禁止", "初期値（設定値）", "選択肢（表示順）", "入力方法・制約"]];
+    for (const [code, field] of Object.entries(properties)) {
+      if (unsupported.has(code)) {
+        excluded.push({ code, reason: unsupported.get(code) });
+        continue;
+      }
+      codes.push(code);
+      const notes = [];
+      if (["USER_SELECT", "ORGANIZATION_SELECT", "GROUP_SELECT"].includes(field.type)) notes.push("表示名ではなくログイン名・組織コード・グループコード。複数はセル内カンマ区切り");
+      if (["CHECK_BOX", "MULTI_SELECT"].includes(field.type)) notes.push("選択肢の値をセル内カンマ区切り（カンマを含む選択肢はこの取込機能で指定不可）");
+      if (field.type === "DATE") notes.push("YYYY-MM-DD");
+      if (field.type === "TIME") notes.push("HH:mm");
+      if (field.type === "DATETIME") notes.push("タイムゾーン付き日時（例: 2026-01-01T09:00:00+09:00）");
+      if (field.type === "NUMBER") notes.push("桁区切り・単位なしの数値");
+      if (field.lookup) notes.push("ルックアップ元のキー値。参照先の権限と値の一致を確認");
+      for (const [key, label] of [["minLength", "最小文字数"], ["maxLength", "最大文字数"], ["minValue", "最小値"], ["maxValue", "最大値"]]) {
+        if (field[key] !== void 0 && field[key] !== null && field[key] !== "") notes.push(`${label}: ${field[key]}`);
+      }
+      const defaults = field.defaultNowValue === true || field.defaultNowValue === "true" ? "現在の日付・日時" : JSON.stringify(field.defaultValue ?? "");
+      const choices = Object.entries(field.options || {}).sort(([, a], [, b]) => Number(a.index) - Number(b.index)).map(([value]) => value);
+      guide.push([code, field.label || code, field.type, field.required === true || field.required === "true" ? "必須" : "", field.unique === true || field.unique === "true" ? "禁止" : "", defaults, JSON.stringify(choices), notes.join(" / ")]);
+    }
+    if (!codes.length) throw new Error("CSV取込に対応するフィールドがありません");
+    return {
+      columnCount: codes.length,
+      csv: "\uFEFF" + codes.map(csvEscape).join(",") + "\r\n",
+      guideCsv: reportCsv(guide),
+      excludedCsv: reportCsv([["除外フィールドコード", "理由"], ...excluded.map((item) => [item.code, item.reason])]),
+      readme: [
+        "1. import.csv の2行目からデータを入力し、UTF-8のCSVとして保存してください。1行目はフィールドコードです。",
+        "2. fields.csv で必須・選択肢・初期値・入力形式を確認できます。excluded.csv はこの取込機能の対象外です。",
+        "3. 「CSVからレコードを追加」でファイルを選び、「CSVを事前検査」を実行してください。",
+        "初期値は説明用です。ひな形にサンプルレコードや初期値は挿入していません。空セルを送っても初期値に置き換わるとは限りません。初期値を使う項目は列を削除するか、値を明示してください。",
+        "取込は新規追加です。ファイル・テーブル・計算結果・システム項目・ルックアップのコピー先は含めません。",
+        "Excelで編集する場合、先頭ゼロ・長い番号・日付の自動変換に注意し、文字列として読み込んでください。",
+        "fields.csv / excluded.csv は閲覧用で、数式と解釈される文字列の先頭にアポストロフィを付けています。import.csv のコードは変更していません。",
+        "フィールド設定だけでは実行ユーザーの登録権限やルックアップ先の値は判定できません。取得時点の設定です。"
+      ].join("\r\n")
+    };
+  }
+
+  // src/tabs/record-quality-standalone.ts
+  function connection(appIdsText, guestId) {
+    const appIds = parseRecordAppIds(appIdsText);
+    if (!appIds.length) throw new Error("対象アプリを指定してください");
+    if (guestId && !/^[1-9]\d*$/.test(guestId)) throw new Error("ゲストIDは正の数値で入力してください");
+    return { appIds, prefix: buildApiPrefix(guestId, false) };
+  }
+  async function runLoadQualityFieldsStandalone(options) {
+    const { appIds, prefix } = connection(options.appIdsText, options.guestId);
+    return readQualityFields((await apiGet(prefix, "/app/form/fields.json", { app: appIds[0], lang: "user" })).properties);
+  }
+  async function runRecordQualityStandalone(options, setStatus) {
+    const { appIds, prefix } = connection(options.appIdsText, options.guestId);
+    const results = [];
+    for (const appId of appIds) {
+      setStatus(`App ${appId}: 検査用の設定を取得中…`);
+      try {
+        const properties = (await apiGet(prefix, "/app/form/fields.json", { app: appId, lang: "user" })).properties;
+        const fields = selectQualityFields(properties, options.codes);
+        const { records } = await fetchRecordsByQuery(prefix, appId, options.query, { fields: ["$id", ...options.codes], onProgress: (count) => setStatus(`App ${appId}: ${count}件を取得済み…`) });
+        results.push({ appId, report: inspectRecordQuality(records, fields, options) });
+      } catch (error) {
+        results.push({ appId, error: error.message || String(error) });
+      }
+    }
+    return results;
+  }
+  async function runCsvTemplateStandalone(options, setStatus) {
+    const { appIds, prefix } = connection(options.appIdsText, options.guestId);
+    const templates = [];
+    const failures = [];
+    for (const appId of appIds) {
+      setStatus(`App ${appId}: CSVひな形を作成中…`);
+      try {
+        const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
+        templates.push({ appId, template: buildCsvImportTemplate(fields.properties) });
+      } catch (error) {
+        failures.push(`App ${appId}: ${error.message || String(error)}`);
+      }
+    }
+    if (!templates.length) throw new Error(`ひな形を作成できませんでした
+${failures.join("\n")}`);
+    const JSZip = await loadJSZipLite(), zip = new JSZip();
+    for (const { appId, template } of templates) {
+      const folder = `app_${appId}/`;
+      zip.file(folder + "import.csv", template.csv);
+      zip.file(folder + "fields.csv", template.guideCsv);
+      zip.file(folder + "excluded.csv", template.excludedCsv);
+      zip.file(folder + "README.txt", `App ${appId}${options.guestId ? ` / ゲスト ${options.guestId}` : ""}\r
+${template.readme}`);
+    }
+    zip.file("manifest.json", JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), guestId: options.guestId, templates: templates.map((item) => ({ appId: item.appId, columns: item.template.columnCount })), failures }, null, 2));
+    downloadBlob(buildExportFilename("CSV取込ひな形", "zip"), await zip.generateAsync({ type: "blob" }));
+    if (failures.length) return { warning: `${templates.length}アプリのひな形を保存 / 失敗 ${failures.length}アプリ
+${failures.join("\n")}` };
+    setStatus(`${templates.length}アプリのCSVひな形と入力ガイドを保存しました`);
+    return {};
+  }
+
+  // src/entries/record-quality-ui.ts
+  init_utils();
+  function buildRecordQualityTab(root2, context) {
+    const { panel, tgtApp, tgtGuest, resetMetadata, requiredApps, targetSummary, applyViewQuery } = context;
+    const query = makeInput({ placeholder: "空欄で全件。検査対象を一覧から絞り込めます", width: "wide", ariaLabel: "データ検査のクエリ" });
+    const useView = makeButton("▼ 一覧から", "sub");
+    useView.addEventListener("click", () => applyViewQuery(query));
+    root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
+    const load = makeButton("検査フィールド読込", "sub");
+    const search = makeInput({ placeholder: "フィールド名・コードで絞り込み", width: "wide", ariaLabel: "検査フィールド検索" });
+    const fieldBox = document.createElement("div");
+    fieldBox.setAttribute("role", "group");
+    fieldBox.setAttribute("aria-label", "検査するフィールド");
+    fieldBox.style.cssText = "max-height:210px;overflow:auto;display:grid;gap:6px;padding:4px;overflow-wrap:anywhere";
+    const note = makeNote("先頭の対象アプリからフィールドを読み込み、1〜5項目を選んでください。");
+    const trim = makeCheck({ label: "文字列・リンクの前後の空白を無視", checked: false });
+    const ignoreCase = makeCheck({ label: "文字列・リンクの英字の大小を無視", checked: false });
+    root2.append(makeRow(load), search, fieldBox, note, makeRow([trim.label, ignoreCase.label]));
+    root2.appendChild(makeNote("選んだ項目すべてが一致するレコードを、アプリごとに重複として検出します。空の項目があるレコードは未入力として別集計します。複数選択は順序を無視して比較します。"));
+    root2.appendChild(makeNote("テーブル内・添付・計算・システム項目は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。アプリ間の重複は検査しません。"));
+    let fields = [], selected = /* @__PURE__ */ new Set(), version = 0, fieldsVersion = 0;
+    let results = [];
+    const output = document.createElement("div");
+    output.setAttribute("aria-label", "データ検査結果");
+    output.setAttribute("aria-live", "polite");
+    const save = makeButton("検査結果をCSVで保存", "sub");
+    save.hidden = true;
+    const resetResults = () => {
+      version++;
+      results = [];
+      output.replaceChildren();
+      save.hidden = true;
+    };
+    const refreshNote = () => {
+      note.textContent = `選択 ${selected.size}/5項目: ${fields.filter((field) => selected.has(field.code)).map((field) => `${field.label}［${field.code}］`).join("、") || "未選択"}`;
+    };
+    resetMetadata.push(() => {
+      fieldsVersion++;
+      fields = [];
+      selected.clear();
+      fieldBox.replaceChildren();
+      resetResults();
+      note.textContent = "対象アプリが変わりました。検査フィールドを再取得してください。";
+    });
+    for (const input of [query, trim.checkbox, ignoreCase.checkbox]) {
+      input.addEventListener("input", resetResults);
+      input.addEventListener("change", resetResults);
+    }
+    function renderFields() {
+      const filter = search.value.toLowerCase();
+      fieldBox.replaceChildren();
+      for (const field of fields.filter((field2) => `${field2.label} ${field2.code}`.toLowerCase().includes(filter))) {
+        const check = makeCheck({ label: `${field.label}［${field.code}］ / ${field.type}`, checked: selected.has(field.code) });
+        check.checkbox.addEventListener("change", () => {
+          if (check.checkbox.checked && selected.size >= 5) {
+            check.checkbox.checked = false;
+            panel.setStatus("フィールドは5項目まで選べます。", "warn");
+            return;
+          }
+          if (check.checkbox.checked) selected.add(field.code);
+          else selected.delete(field.code);
+          resetResults();
+          refreshNote();
+        });
+        fieldBox.appendChild(check.label);
+      }
+      if (fields.length && !fieldBox.childElementCount) fieldBox.appendChild(makeNote("一致するフィールドがありません。検索語を変えてください。"));
+    }
+    search.addEventListener("input", renderFields);
+    load.addEventListener("click", () => liteRun(panel, "検査フィールドを取得中…", async () => {
+      const current = ++fieldsVersion;
+      fields = [];
+      selected.clear();
+      fieldBox.replaceChildren();
+      resetResults();
+      refreshNote();
+      const loaded = await runLoadQualityFieldsStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() });
+      if (current !== fieldsVersion) {
+        panel.setStatus("対象が変わりました。再取得してください。", "warn");
+        return;
+      }
+      fields = loaded;
+      renderFields();
+      note.textContent = `${fields.length}項目を取得しました。1〜5項目を選んでください。`;
+      panel.setStatus(note.textContent, fields.length ? "ok" : "warn");
+    }));
+    const run = makeButton("重複・未入力を検査", "primary");
+    run.addEventListener("click", () => liteRun(panel, "レコードを検査中…", async () => {
+      resetResults();
+      const current = version;
+      const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked };
+      const queryText = query.value.trim();
+      const inspected = await runRecordQualityStandalone({ appIdsText: tgtApp.value, guestId, codes: [...selected], query: queryText, ...options }, (message) => panel.setStatus(message, "busy"));
+      if (current !== version) {
+        panel.setStatus("対象や条件が変わりました。もう一度検査してください。", "warn");
+        return;
+      }
+      results = inspected;
+      let warning = false;
+      for (const result of results) {
+        const report = result.report;
+        if (!report) {
+          warning = true;
+          output.appendChild(makeNote(`App ${result.appId}: 検査失敗 / ${result.error}`));
+          continue;
+        }
+        warning || (warning = report.unavailableRecords > 0);
+        output.appendChild(makeNote(`App ${result.appId}: ${report.total}件を検査 / 重複 ${report.duplicateGroups}組・${report.duplicateRecords}件 / 未入力 ${report.emptyRecords}件 / 取得不可 ${report.unavailableRecords}件`));
+        const list = document.createElement("ol");
+        list.style.cssText = "max-height:320px;overflow:auto;padding-left:24px;overflow-wrap:anywhere;font-size:12px";
+        for (const finding of report.findings.slice(0, 50)) {
+          const row = document.createElement("li"), link = document.createElement("a");
+          link.textContent = `レコード ${finding.recordId}`;
+          const recordPath = qualityRecordPath(result.appId, guestId, finding.recordId);
+          if (recordPath) {
+            link.href = recordPath;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+          }
+          row.append(
+            document.createTextNode(`${finding.kind}${finding.group ? ` #${finding.group}` : ""} / `),
+            link,
+            document.createTextNode(` / ${finding.fields.join(", ")} / ${finding.values.map((value) => value.length > 120 ? value.slice(0, 120) + "…" : value).join(" | ")}`)
+          );
+          list.appendChild(row);
+        }
+        if (list.childElementCount) output.appendChild(list);
+        if (report.findings.length > 50) output.appendChild(makeNote(`詳細表示は先頭50件です。CSVには全 ${report.findings.length}件を保存します。`));
+      }
+      save.onclick = () => {
+        if (!results.length || current !== version) return;
+        downloadBlob(buildExportFilename("データ検査結果", "csv"), new Blob([qualityReportCsv(results, guestId, location.origin, options, queryText)], { type: "text/csv;charset=utf-8" }));
+        panel.setStatus("検査結果を保存しました。", warning ? "warn" : "ok");
+      };
+      save.hidden = false;
+      panel.setStatus(`${results.length}アプリの検査が完了しました。${warning ? "取得不可・失敗の詳細を確認してください。" : "結果を確認し、必要に応じてCSVを保存できます。"}`, warning ? "warn" : "ok");
+    }));
+    root2.appendChild(makeRow(run));
+    context.resultHost.append(output, makeRow(save));
+    return {
+      id: "quality",
+      label: "重複・未入力を検査",
+      description: "複数項目の重複・未入力を調べ、該当レコードを確認します。",
+      button: run,
+      validate: () => requiredApps() || (selected.size ? "" : "検査フィールドを読み込んで1〜5項目を選んでください。"),
+      summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["検査項目", [...selected].join("、")], ["比較", `前後空白 ${trim.checkbox.checked ? "無視" : "区別"} / 大小文字 ${ignoreCase.checkbox.checked ? "無視" : "区別"}`]]
+    };
+  }
+  function buildCsvTemplateTab(root2, context) {
+    const { panel, tgtApp, tgtGuest, requiredApps, targetSummary } = context;
+    root2.appendChild(makeNote("対象アプリの設定から、このツールのCSV取込に使えるひな形を作成します。フィールドコードを調べて入力する手間を省けます。"));
+    root2.appendChild(makeNote("ZIP内のアプリ別フォルダに import.csv、必須・選択肢・初期値などをまとめた fields.csv、除外項目の excluded.csv、使い方の README.txt を保存します。ひな形にはデータ行を入れません。"));
+    root2.appendChild(makeNote("取込に非対応のテーブル・添付・計算項目・ルックアップのコピー先は除外します。設定を取得できなかったアプリは完了メッセージと manifest.json に記録します。"));
+    const run = makeButton("CSVひな形をZIPで保存", "primary");
+    run.addEventListener("click", () => liteRun(panel, "CSVひな形を作成中…", async () => {
+      const result = await runCsvTemplateStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() }, (message) => panel.setStatus(message, "busy"));
+      if (result.warning) panel.setStatus(result.warning, "warn");
+    }));
+    root2.appendChild(makeRow(run));
+    return {
+      id: "csv-template",
+      label: "CSV取込ひな形を作成",
+      description: "アプリのフィールドから取込CSVと入力ガイドを作ります。",
+      button: run,
+      validate: requiredApps,
+      summary: () => [targetSummary(), ["保存内容", "CSVひな形・入力ガイド・除外項目・使い方（ZIP）"], ["データ行", "なし（2行目から入力してください）"]]
+    };
+  }
+
   // src/entries/record-lite-ui.ts
   function mountRecordLitePanel() {
     const panel = createLitePanel({
       id: "kus-record-lite",
       title: "レコード管理",
-      subtitle: "CSV / バッチ更新 / 添付DL / コピー / バックアップを 1 つにまとめた lite 版",
+      subtitle: "CSV / データ検査 / バッチ更新 / 添付DL / コピー / バックアップ",
       accent: "record",
       badges: [{ label: "Lite" }, { label: "本番データ操作あり" }],
       hint: "<strong>本番データに直接書き込み・更新・コピーします。</strong>バックアップ取得を強く推奨します。",
@@ -3476,6 +4252,18 @@ ${formatFileFailures(failures)}
     });
     const tgtApp = makeInput({ placeholder: "アプリID（カンマ区切りで複数指定）", value: DEFAULT_APP_ID || "", width: "wide", ariaLabel: "対象アプリID" });
     const tgtGuest = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
+    let connectionVersion = 0;
+    const resetMetadata = [];
+    for (const input of [tgtApp, tgtGuest]) {
+      for (const event of ["input", "change"]) input.addEventListener(event, () => {
+        connectionVersion++;
+        resetMetadata.forEach((reset) => reset());
+      });
+    }
+    function notifyInput(input) {
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
     const cardApp = makeCard({ title: "接続情報", number: 1 });
     cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "対象アプリ" }));
     cardApp.body.appendChild(makeNote("複数アプリは「463,464,469」のようにカンマ、改行、または空白で区切って指定できます。選択した操作を上から順にすべてのアプリへ実行します。"));
@@ -3485,29 +4273,60 @@ ${formatFileFailures(failures)}
       targets: [{ label: "対象アプリ", apply: (id, _name, guestId) => {
         tgtApp.value = id;
         if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId;
+        notifyInput(tgtApp);
       } }]
     }));
     panel.body.insertBefore(cardApp.card, panel.status);
     const viewSelect = makeSelect([["", "一覧を選択（任意）"]]);
+    viewSelect.setAttribute("aria-label", "取得した一覧");
     const loadViewsBtn = makeButton("一覧読込", "sub");
     cardApp.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: "一覧から条件" }));
+    const viewNote = makeNote("先頭の対象アプリから一覧を取得し、各操作の「一覧から」で絞り込みと並び順をクエリに反映します。カレンダーの日付範囲やカスタマイズ画面の独自処理は含みません。");
+    cardApp.body.appendChild(viewNote);
+    let loadedViews = [];
+    resetMetadata.push(() => {
+      loadedViews = [];
+      viewSelect.replaceChildren(new Option("一覧を選択（任意）", ""));
+      viewNote.textContent = "対象アプリが変わりました。「一覧読込」で再取得してください。";
+    });
+    viewSelect.addEventListener("change", () => {
+      const view = loadedViews.find((item) => item.id === viewSelect.value);
+      const scopeNote = view?.type === "CALENDAR" ? "（カレンダーの表示月による絞り込みは含みません）" : view?.type === "CUSTOM" ? "（カスタマイズ画面の独自処理は含みません）" : "";
+      viewNote.textContent = view ? `${view.name} / 条件: ${view.filter || "全件"} / 並び順: ${view.sort || "レコードID順"}${scopeNote}` : "適用する一覧を選んでください。";
+    });
     loadViewsBtn.addEventListener("click", () => liteRun(panel, "一覧情報を取得中…", async () => {
+      const version = connectionVersion;
       const [appId] = parseRecordAppIds(tgtApp.value);
+      loadedViews = [];
+      viewSelect.replaceChildren(new Option("一覧を選択（任意）", ""));
       const views = await runLoadViewsStandalone(
         { appId, guestId: tgtGuest.value.trim() },
         (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
-      viewSelect.innerHTML = '<option value="">一覧を選択（任意）</option>';
+      if (version !== connectionVersion) {
+        panel.setStatus("対象アプリが変わりました。一覧を再取得してください。", "warn");
+        return;
+      }
+      loadedViews = views;
       for (const v of views) {
         const opt = document.createElement("option");
-        opt.value = v.filter;
-        opt.textContent = `${v.name} ${v.filter ? `(${v.filter.slice(0, 60)})` : ""}`;
+        opt.value = v.id;
+        const typeLabel = { LIST: "表", CALENDAR: "カレンダー", CUSTOM: "カスタマイズ" }[v.type] || v.type;
+        opt.textContent = `${v.name}（${typeLabel}）`;
         viewSelect.appendChild(opt);
       }
-    }, "一覧を読み込みました。プルダウンから条件を選択できます"));
+      viewNote.textContent = `App ${appId} から ${views.length}件を取得しました。選択した一覧の絞り込み・並び順をクエリに反映できます。`;
+      panel.setStatus(viewNote.textContent, views.length ? "ok" : "warn");
+    }));
     function applyViewQuery(target) {
-      const q = viewSelect.value;
-      if (q) target.value = q;
+      const view = loadedViews.find((item) => item.id === viewSelect.value);
+      if (!view) {
+        panel.setStatus("接続情報で一覧を読み込み、適用する一覧を選んでください。", "warn");
+        return;
+      }
+      target.value = view.query;
+      notifyInput(target);
+      panel.setStatus(`「${view.name}」をクエリに反映しました: ${view.query || "全件"}`, "ok");
     }
     const tabHost = document.createElement("div");
     panel.body.insertBefore(tabHost, panel.status);
@@ -3528,6 +4347,8 @@ ${formatFileFailures(failures)}
       };
       recordActions.push(action);
     };
+    const qualityResults = document.createElement("div");
+    const qualityContext = { panel, tgtApp, tgtGuest, resetMetadata, requiredApps, targetSummary, applyViewQuery, resultHost: qualityResults };
     const tabs = makeTabs([
       {
         id: "csv-export",
@@ -3562,19 +4383,66 @@ ${formatFileFailures(failures)}
           fileInput.type = "file";
           fileInput.accept = ".csv";
           fileInput.className = "kus-lp__file";
+          fileInput.setAttribute("aria-label", "取込CSV");
           root2.appendChild(makeRow(fileInput, { label: "CSV" }));
           root2.appendChild(makeNote("UTF-8 / Excel BOM 対応。ヘッダ行はフィールドコード。ファイル・サブテーブル・ステータスは取込対象外です。100 件単位で追加し、途中で失敗した場合は確定済み件数と未処理件数を表示します。"));
+          const preview = makeButton("CSVを事前検査", "sub");
+          const previewText = document.createElement("pre");
+          previewText.setAttribute("aria-label", "CSV事前検査結果");
+          previewText.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto;font-size:12px";
+          previewText.hidden = true;
+          let csvVersion = 0;
+          let previewSummary = "未実施（実行時にも検査します）";
+          const clearPreview = () => {
+            csvVersion++;
+            previewSummary = "対象やCSVが変わりました。再検査できます。";
+            previewText.textContent = "";
+            previewText.hidden = true;
+          };
+          resetMetadata.push(clearPreview);
+          fileInput.addEventListener("change", clearPreview);
+          preview.addEventListener("click", () => liteRun(panel, "CSVを事前検査中…", async () => {
+            const version = csvVersion;
+            const results = await runPreviewCsvImportStandalone(
+              { appIdsText: tgtApp.value, guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
+              (message, error) => panel.setStatus(message, error ? "warn" : "busy")
+            );
+            if (version !== csvVersion) {
+              panel.setStatus("対象やCSVが変わりました。もう一度事前検査してください。", "warn");
+              return;
+            }
+            const problemApps = results.filter((result) => result.error || result.report?.issueCount).length;
+            previewSummary = `${results.length}アプリを検査 / 問題あり ${problemApps}アプリ`;
+            previewText.textContent = results.map((result) => `App ${result.appId}
+${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先頭5行・6列まで:\n" + result.report.sample.map((sample) => `${sample.row}行目: ${sample.values.map((value) => JSON.stringify(value)).join(" | ")}`).join("\n") : ""}`).join("\n\n");
+            previewText.hidden = false;
+            panel.setStatus(`${previewSummary}。まだ書き込んでいません。`, problemApps ? "warn" : "ok");
+          }));
+          root2.appendChild(makeRow(preview));
+          root2.appendChild(previewText);
+          root2.appendChild(makeNote("全対象アプリで列数・必須項目・選択肢・数値形式・CSV内の同一値重複を確認します。問題があれば最初の書き込み前に止めます。権限や既存データとの重複などは登録時に確認されます。"));
           const run = makeButton("レコードを取込", "primary", { icon: "↑" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "CSV取込中…", async () => {
-            await runRecordAppBatchStandalone(tgtApp.value, (appId) => runCsvImportStandalone(
-              { appId, guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
+            const result = await runCsvImportBatchStandalone(
+              { appIdsText: tgtApp.value, guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+            );
+            if (result?.warning) panel.setStatus(result.warning, "warn");
           }));
-          addAction({ id: "csv-import", label: "CSVからレコードを追加", description: "CSVのレコードを対象アプリに新規追加します。", button: run, writes: true, validate: () => requiredApps() || (fileInput.files?.length ? "" : "取り込むCSVを選んでください。"), summary: () => [targetSummary(), ["CSV", fileInput.files?.[0]?.name || "未選択"], ["処理", "各対象アプリへ新規レコードを追加"]] });
+          addAction({ id: "csv-import", label: "CSVからレコードを追加", description: "CSVのレコードを対象アプリに新規追加します。", button: run, writes: true, validate: () => requiredApps() || (fileInput.files?.length ? "" : "取り込むCSVを選んでください。"), summary: () => [targetSummary(), ["CSV", fileInput.files?.[0]?.name || "未選択"], ["事前検査", previewSummary], ["処理", "全対象を再検査してから各アプリへ新規レコードを追加"]] });
           root2.appendChild(makeRow(run));
         }
+      },
+      {
+        id: "csv-template",
+        label: "CSVひな形",
+        build: (root2) => addAction(buildCsvTemplateTab(root2, qualityContext))
+      },
+      {
+        id: "quality",
+        label: "データ検査",
+        build: (root2) => addAction(buildRecordQualityTab(root2, qualityContext))
       },
       {
         id: "status",
@@ -3582,34 +4450,87 @@ ${formatFileFailures(failures)}
         build: (root2) => {
           const query = makeInput({ placeholder: '条件 (例: status = "新規")', width: "wide" });
           const action = makeInput({ placeholder: "アクション名", width: "medium" });
-          const assignee = makeInput({ placeholder: "作業者ログイン名 (任意)", width: "medium" });
+          const assignee = makeInput({ placeholder: "次の作業者ログイン名（必要な場合）", width: "medium" });
           const actionSelect = makeSelect([["", "--"]]);
-          const loadActions = makeButton("読込", "sub");
+          actionSelect.setAttribute("aria-label", "取得したプロセスアクション");
+          const loadActions = makeButton("アクション読込", "sub");
+          const applyActionQuery = makeButton("選択アクションの対象条件を入力", "sub");
+          const actionNote = makeNote("先頭アプリからアクションを取得し、遷移元・実行条件・次の作業者設定を確認できます。");
+          actionNote.style.whiteSpace = "pre-wrap";
+          let loadedActions = [];
+          let statusFieldCode = "";
+          let lastAppliedQuery = "";
+          let lastAppliedChoice;
+          const selectedAction = () => actionSelect.value === "" ? void 0 : loadedActions[Number(actionSelect.value)];
+          const staleActionQuery = () => !!lastAppliedChoice && !!selectedAction() && selectedAction() !== lastAppliedChoice && query.value === lastAppliedQuery;
+          const clearActions = () => {
+            loadedActions = [];
+            statusFieldCode = "";
+            lastAppliedChoice = void 0;
+            lastAppliedQuery = "";
+            actionSelect.replaceChildren(new Option("--", ""));
+            actionNote.textContent = "アクションを読み込んで選択してください。入力済みの名前とクエリは変更しません。";
+          };
+          resetMetadata.push(clearActions);
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
           root2.appendChild(makeRow([action, actionSelect, loadActions], { label: "アクション" }));
+          action.addEventListener("input", () => {
+            actionSelect.value = "";
+            actionNote.textContent = "アクション名を手入力しています。対象条件と作業者を確認してください。";
+          });
           actionSelect.addEventListener("change", () => {
-            if (actionSelect.value) action.value = actionSelect.value;
+            const choice = selectedAction();
+            if (!choice) return;
+            const selected = actionSelect.value;
+            action.value = choice.name;
+            notifyInput(action);
+            actionSelect.value = selected;
+            actionNote.textContent = describeProcessAction(choice);
+            if (staleActionQuery()) actionNote.textContent += "\nクエリには前のアクションの条件が残っています。「対象条件を入力」で更新するか、クエリを編集してください。";
+          });
+          applyActionQuery.addEventListener("click", () => {
+            try {
+              const choice = selectedAction();
+              if (!choice) throw new Error("先にアクションを読み込んで選択してください。");
+              query.value = processActionQuery(choice, statusFieldCode);
+              lastAppliedQuery = query.value;
+              lastAppliedChoice = choice;
+              actionNote.textContent = describeProcessAction(choice);
+              notifyInput(query);
+              panel.setStatus("遷移元と実行条件をクエリに入力しました。対象と次の作業者を確認してください。", "ok");
+            } catch (error) {
+              panel.setStatus(error.message || String(error), "warn");
+            }
           });
           loadActions.addEventListener("click", () => liteRun(panel, "プロセス管理を取得中…", async () => {
+            const version = connectionVersion;
+            clearActions();
             const [appId] = parseRecordAppIds(tgtApp.value);
             const info = await runLoadStatusActionsStandalone(
               { appId, guestId: tgtGuest.value.trim() },
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             );
-            actionSelect.innerHTML = '<option value="">--</option>';
-            const seen = /* @__PURE__ */ new Set();
-            for (const a of info.actions) {
-              if (seen.has(a.name)) continue;
-              seen.add(a.name);
-              const opt = document.createElement("option");
-              opt.value = a.name;
-              opt.textContent = `${a.name} (${a.from} → ${a.to})`;
+            if (version !== connectionVersion) {
+              panel.setStatus("対象アプリが変わりました。アクションを再取得してください。", "warn");
+              return;
+            }
+            loadedActions = info.actions;
+            statusFieldCode = info.statusFieldCode;
+            for (const [index, a] of info.actions.entries()) {
+              const opt = new Option(`${a.name} (${a.from} → ${a.to})${a.type === "SECONDARY" ? "・作業者以外も可" : ""}${a.ambiguous ? "・同名重複のため指定不可" : ""}`, String(index));
+              opt.disabled = a.ambiguous;
               actionSelect.appendChild(opt);
             }
+            const ambiguous = info.actions.filter((a) => a.ambiguous).length;
+            actionNote.textContent = !info.enabled ? "プロセス管理は無効です。" : `App ${appId}: ${info.actions.length}アクションを取得しました。${ambiguous ? `同じ遷移元の同名アクション ${ambiguous}件はREST APIで指定できません。` : "アクションを選んで実行条件を確認してください。"}`;
+            panel.setStatus(actionNote.textContent, ambiguous || !info.enabled ? "warn" : "ok");
           }));
-          root2.appendChild(makeRow(assignee, { label: "作業者" }));
+          root2.appendChild(actionNote);
+          root2.appendChild(makeRow(applyActionQuery));
+          root2.appendChild(makeNote("「対象条件を入力」は現在のクエリを置き換えます。複数アプリでは同じフィールドコード・状態名を使うことを確認してください。実行権限や作業者候補はkintone側で判定されます。"));
+          root2.appendChild(makeRow(assignee, { label: "次の作業者" }));
           root2.appendChild(makeNote("対象 100 件単位でステータス更新します。元に戻せません。"));
           const run = makeButton("ステータスを一括更新", "primary");
           run.style.width = "100%";
@@ -3620,7 +4541,7 @@ ${formatFileFailures(failures)}
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
-          addAction({ id: "status", label: "ステータスを一括更新", description: "指定条件に合うレコードの状態を更新します。", button: run, writes: true, validate: () => requiredApps() || (action.value.trim() ? "" : "実行するアクションを指定してください。"), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["アクション", action.value.trim()], ["作業者", assignee.value.trim() || "指定なし"]] });
+          addAction({ id: "status", label: "ステータスを一括更新", description: "指定条件に合うレコードの状態を更新します。", button: run, writes: true, validate: () => requiredApps() || (action.value.trim() ? "" : "実行するアクションを指定してください。") || (staleActionQuery() ? "前のアクションの対象条件が残っています。条件を入力し直すかクエリを編集してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["アクション", action.value.trim()], ["選択した遷移", selectedAction() ? `${selectedAction().from} → ${selectedAction().to}` : "手入力"], ["次の作業者", assignee.value.trim() || "指定なし"]] });
           root2.appendChild(makeRow(run));
         }
       },
@@ -3630,15 +4551,68 @@ ${formatFileFailures(failures)}
         build: (root2) => {
           const query = makeInput({ placeholder: "条件 (任意)", width: "wide" });
           const fileCode = makeInput({ placeholder: "例: attached_file", width: "medium" });
+          fileCode.setAttribute("aria-label", "添付フィールドコード");
+          const tableCode = makeInput({ placeholder: "テーブル内の場合のみ指定", width: "medium", ariaLabel: "添付のテーブルコード" });
+          const fileSelect = makeSelect([["", "添付フィールドを選択"]]);
+          fileSelect.setAttribute("aria-label", "取得した添付フィールド");
+          const loadFields = makeButton("添付フィールド読込", "sub");
+          const fieldNote = makeNote("先頭アプリのフィールド名から選べます。複数アプリへ実行するときは、各アプリで同じフィールドコードが使われていることを確認してください。");
+          let loadedFields = [];
+          const resetFields = () => {
+            loadedFields = [];
+            fileSelect.replaceChildren(new Option("添付フィールドを選択", ""));
+          };
+          resetMetadata.push(() => {
+            resetFields();
+            fieldNote.textContent = "対象アプリが変わりました。フィールドを再取得し、入力済みのコードを確認してください。";
+          });
+          for (const input of [fileCode, tableCode]) input.addEventListener("input", () => {
+            fileSelect.value = "";
+          });
+          fileSelect.addEventListener("change", () => {
+            if (fileSelect.value === "") return;
+            const choice = loadedFields[Number(fileSelect.value)];
+            if (!choice) return;
+            const selected = fileSelect.value;
+            fileCode.value = choice.fileFieldCode;
+            tableCode.value = choice.tableFieldCode;
+            notifyInput(fileCode);
+            notifyInput(tableCode);
+            fileSelect.value = selected;
+          });
+          loadFields.addEventListener("click", () => liteRun(panel, "添付フィールドを取得中…", async () => {
+            const version = connectionVersion;
+            const [appId] = parseRecordAppIds(tgtApp.value);
+            resetFields();
+            const fields = await runLoadAttachmentFieldsStandalone(
+              { appId, guestId: tgtGuest.value.trim() },
+              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+            );
+            if (version !== connectionVersion) {
+              panel.setStatus("対象アプリが変わりました。フィールドを再取得してください。", "warn");
+              return;
+            }
+            loadedFields = fields;
+            fields.forEach((field, index) => fileSelect.appendChild(new Option(
+              `${field.tableFieldCode ? `${field.tableLabel}［${field.tableFieldCode}］ / ` : ""}${field.fileLabel}［${field.fileFieldCode}］`,
+              String(index)
+            )));
+            fieldNote.textContent = `App ${appId}: 添付フィールド ${fields.length}件。${fields.length ? "名前を選ぶとコードが入力されます。" : "添付フィールドがありません。"}`;
+            panel.setStatus(fieldNote.textContent, fields.length ? "ok" : "warn");
+          }));
           const folderCode = makeInput({ placeholder: "任意（フォルダ名にするフィールド）", width: "medium" });
           const zipName = makeInput({ placeholder: "空欄で自動命名（添付ファイル_アプリ_日時.zip）", width: "wide" });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
+          root2.appendChild(makeRow([loadFields, fileSelect], { label: "名前から選択" }));
+          root2.appendChild(fieldNote);
           root2.appendChild(makeRow(fileCode, { label: "ファイル" }));
+          root2.appendChild(makeRow(tableCode, { label: "テーブル" }));
           root2.appendChild(makeRow(folderCode, { label: "フォルダ" }));
           root2.appendChild(makeRow(zipName, { label: "ZIP名" }));
           root2.appendChild(makeNote("取得できなかったファイル（閲覧権限なし等）は ZIP 内の download_errors.txt に記録し、完了メッセージに件数を表示します。"));
+          root2.appendChild(makeNote("テーブル内の添付はレコード・テーブル行ごとに保存します。manifest.json で元レコード、行ID、ファイル名、サイズ、保存先を確認できます。"));
           const run = makeButton("添付ファイルをZIPで保存", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "添付ファイル取得中…", async () => {
@@ -3648,13 +4622,14 @@ ${formatFileFailures(failures)}
                 guestId: tgtGuest.value.trim(),
                 query: query.value.trim(),
                 fileFieldCode: fileCode.value.trim(),
+                tableFieldCode: tableCode.value.trim(),
                 folderFieldCode: folderCode.value.trim(),
                 zipName: zipName.value.trim()
               },
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
-          addAction({ id: "attach", label: "添付ファイルを保存", description: "添付ファイルを取得しZIPにまとめます。", button: run, validate: () => requiredApps() || (fileCode.value.trim() ? "" : "添付ファイルのフィールドコードを指定してください。"), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["添付フィールド", fileCode.value.trim()], ["ZIP名", zipName.value.trim() || "自動命名"]] });
+          addAction({ id: "attach", label: "添付ファイルを保存", description: "添付ファイルを取得しZIPにまとめます。", button: run, validate: () => requiredApps() || (fileCode.value.trim() ? "" : "添付ファイルのフィールドコードを指定してください。"), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["添付フィールド", [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(" / ")], ["ZIP名", zipName.value.trim() || "自動命名"]] });
           root2.appendChild(makeRow(run));
         }
       },
@@ -3750,7 +4725,7 @@ ${formatFileFailures(failures)}
     tabHost.appendChild(tabs.panels);
     tabs.bar.hidden = true;
     tgtGuest.setAttribute("aria-label", "対象のゲストスペースID");
-    installLiteWorkflow(panel, { setup: [cardApp.card, tabHost], actions: recordActions });
+    installLiteWorkflow(panel, { setup: [cardApp.card, tabHost], actions: recordActions, results: [qualityResults], resultActions: ["quality"] });
   }
 
   // src/entries/record-lite-entry.ts

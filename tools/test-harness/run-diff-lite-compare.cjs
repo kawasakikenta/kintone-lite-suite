@@ -105,7 +105,7 @@ function containsObjectKey(value, forbiddenKeys) {
 
 function buildMockFixture() {
   const field = (type, code, label, extra = {}) => ({ type, code, label, ...extra });
-  return {
+  const fixture = {
     apps: {
       [SOURCE_APP_ID]: {
         '/app/settings.json': {
@@ -205,6 +205,23 @@ function buildMockFixture() {
       }
     }
   };
+  // 現行の全比較セクションを正常系の fixture に含める。未定義 API は引き続き失敗させる。
+  const extraSections = {
+    '/form.json': { properties: {} },
+    '/app/reports.json': { reports: {} },
+    '/app/plugins.json': { plugins: [] },
+    '/app/customize.json': { desktop: { js: [], css: [] }, mobile: { js: [], css: [] }, scope: 'ALL' },
+    '/app/actions.json': { actions: {} },
+    '/app/acl.json': { rights: [] },
+    '/field/acl.json': { rights: [] },
+    '/record/acl.json': { rights: [] },
+    '/app/notifications/general.json': { notifications: [] },
+    '/app/notifications/perRecord.json': { notifications: [] },
+    '/app/notifications/reminder.json': { reminders: [] },
+    '/app/categories.json': { categories: [] }
+  };
+  for (const app of Object.values(fixture.apps)) Object.assign(app, clone(extraSections));
+  return fixture;
 }
 
 async function installMockKintone(page, fixture) {
@@ -296,7 +313,7 @@ async function fillComparisonForm(page) {
   await sourceInput.fill(SOURCE_APP_ID);
   await targetInput.fill(TARGET_APP_ID);
 
-  // アプリ名も比較結果に含めるため、既定4セクションにアプリ設定を追加する。
+  // 基準版の既定セクションに関わらず、アプリ設定を比較対象に含める。
   const appSettings = root.locator('input[type="checkbox"][value="appSettings"]').first();
   if (await appSettings.count()) {
     if (!(await appSettings.isChecked())) {
@@ -546,6 +563,10 @@ async function runPanelScenario(context, label, bundleSource, fixture, screensho
   await page.addScriptTag({ content: bundleSource });
   await page.waitForSelector('#kus-diff-lite[role="dialog"]', { timeout: 15000 });
   await fillComparisonForm(page);
+  // 別アプリのIDは仕様上初期状態で比較する。同一設定のケースでは明示的に除外する。
+  if (label === 'zero') {
+    await page.getByRole('checkbox', { name: '環境固有ID（アプリ・一覧・グラフ・アクション）を比較から除外', exact: true }).check();
+  }
   const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
   await page.getByRole('button', { name: /差分比較を実行/ }).click();
   await downloadPromise;
@@ -1396,14 +1417,14 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     await exportRange.selectOption('filtered');
     await typeFilter.selectOption('changed');
     const filteredRows = await page.locator('#kus-diff-lite [data-kus-dl-row-key]').count();
-    assert.ok(filteredRows > 0 && filteredRows < 18, 'after: 完了CTAの全件出力を検証する絞り込み状態を作れません');
+    assert.ok(filteredRows > 0 && filteredRows < panelDom.resultRows, 'after: 完了CTAの全件出力を検証する絞り込み状態を作れません');
     const completionXlsxDownloadPromise = page.waitForEvent('download', { timeout: 30000 });
     await completionXlsx.click();
     const completionXlsxDownload = await completionXlsxDownloadPromise;
     const completionXlsxFile = path.join(outDir, 'after-diff-list-completion-full.xlsx');
     await completionXlsxDownload.saveAs(completionXlsxFile);
-    await page.waitForFunction(() => [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
-      .some((element) => /Excel.*全差分 \/ 18件/.test(element.textContent || '')), null, { timeout: 10000 });
+    await page.waitForFunction(total => [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
+      .some((element) => /Excel/.test(element.textContent || '') && (element.textContent || '').includes(`全差分 / ${total}件`)), panelDom.resultRows, { timeout: 10000 });
     assert.equal(await exportRange.inputValue(), 'filtered', 'after: 完了CTAが利用者の出力範囲選択を書き換えました');
     await xlsxButton.waitFor({ state: 'visible' });
     await page.waitForFunction(() => !document.querySelector('#kus-diff-lite [data-kus-dl-export="xlsx"]')?.hasAttribute('disabled'), null, { timeout: 10000 });

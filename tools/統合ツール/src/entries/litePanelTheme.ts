@@ -64,7 +64,8 @@ const THEME_CSS = `
   z-index:999999;
   top:max(16px,2vh);
   right:max(16px,2vw);
-  width:min(520px,96vw);
+  box-sizing:border-box;
+  width:min(520px,calc(100vw - max(32px,4vw)));
   max-height:min(92vh,920px);
   overflow:hidden;
   display:flex;
@@ -133,7 +134,7 @@ const THEME_CSS = `
   content:'';position:absolute;left:8px;right:8px;bottom:-1px;height:2px;border-radius:2px;
   background:linear-gradient(90deg,var(--c-accent-via),var(--c-accent-to));
 }
-.kus-lp__tab-panel[hidden]{display:none}
+.kus-lp [hidden]{display:none!important}
 
 /* ===== Card ===== */
 .kus-lp__card{
@@ -291,7 +292,7 @@ const THEME_CSS = `
 .kus-lp__details-body{padding:0 14px 12px}
 
 /* Wide variant (一部 lite 用に幅広にしたい場合) */
-.kus-lp--wide{width:min(640px,96vw)}
+.kus-lp--wide{width:min(640px,calc(100vw - max(32px,4vw)))}
 
 /* ===== App table (複数アプリ × per-app ゲストスペース入力) ===== */
 .kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
@@ -375,7 +376,11 @@ export interface LitePanelHandle {
 export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   ensureThemeStyles();
   const old = document.getElementById(opts.id);
-  if (old) old.remove();
+  if (old) {
+    old.dispatchEvent(new Event('kus-lite-dispose'));
+    old.remove();
+  }
+  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
   const root = document.createElement('div');
   root.id = opts.id;
@@ -438,6 +443,9 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   const status = document.createElement('div');
   status.className = 'kus-lp__status';
   status.dataset.tone = 'neutral';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.setAttribute('aria-atomic', 'true');
   status.innerHTML = '<span class="kus-lp__status-icon">·</span><span class="kus-lp__status-text">準備完了</span>';
 
   const result = document.createElement('pre');
@@ -488,13 +496,18 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
 
   function setBusy(busy: boolean) {
     closeBtn.disabled = busy;
+    root.setAttribute('aria-busy', String(busy));
     root.style.cursor = busy ? 'progress' : '';
+    root.dispatchEvent(new Event('kus-lite-busy-change'));
   }
 
   function close() {
+    if (closeBtn.disabled) return;
+    const restoreFocus = root.contains(document.activeElement);
     document.removeEventListener('keydown', onDocKeydown, true);
     root.remove();
     setRootElement(null);
+    if (restoreFocus && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
   }
 
   closeBtn.addEventListener('click', close);
@@ -536,6 +549,7 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     }
   }
   document.addEventListener('keydown', onDocKeydown, true);
+  root.addEventListener('kus-lite-dispose', () => document.removeEventListener('keydown', onDocKeydown, true), { once: true });
 
   setRootElement(root);
 
@@ -630,6 +644,7 @@ export function makeButton(label: string, variant: ButtonVariant = 'primary', op
   if (opts.icon) {
     const i = document.createElement('span');
     i.textContent = opts.icon;
+    i.setAttribute('aria-hidden', 'true');
     i.style.cssText = 'font-size:14px;line-height:1';
     b.appendChild(i);
   }
@@ -975,7 +990,9 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
       const text = ev.clipboardData?.getData('text') || '';
       if (!/[,、\s]/.test(text)) return;
       ev.preventDefault();
-      const combined = [app.value.trim(), text].filter(Boolean).join(',');
+      const start = app.selectionStart ?? app.value.length;
+      const end = app.selectionEnd ?? start;
+      const combined = app.value.slice(0, start) + text + app.value.slice(end);
       app.value = combined;
       if (distributeAppTokens(entry)) emitChange();
     });
@@ -984,7 +1001,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     if (at >= rows.length) tbody.appendChild(tr);
     else tbody.insertBefore(tr, rows[at].tr);
     rows.splice(at, 0, entry);
-    refresh();
+    // 呼び出し側の emitChange() でまとめて更新し、一括入力時の全行走査を避ける。
     if (focus) app.focus();
     return entry;
   }
@@ -1001,7 +1018,8 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     const guest = String(guestId || '').trim();
     const appName = String(o.appName || '').trim();
     const empty = rows.find((r) => !r.app.value.trim());
-    const targetGuest = guest || empty?.guest.value.trim() || '';
+    // 空文字は通常スペース。空き行に残った別のゲストIDを流用しない。
+    const targetGuest = guest;
     const existing = rows.find((r) => r.app.value.trim() === id && r.guest.value.trim() === targetGuest);
     if (existing) {
       if (appName && existing.appName !== appName) {
@@ -1063,6 +1081,8 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
 
 export interface TabSpec { id: string; label: string; build: (panel: HTMLElement) => void }
 
+let tabSequence = 0;
+
 export function makeTabs(specs: TabSpec[], opts: { initial?: string } = {}): { bar: HTMLElement; panels: HTMLElement } {
   const bar = document.createElement('div');
   bar.className = 'kus-lp__tabs';
@@ -1077,6 +1097,7 @@ export function makeTabs(specs: TabSpec[], opts: { initial?: string } = {}): { b
     specs.forEach((spec, i) => {
       const on = spec.id === id;
       tabBtns[i].setAttribute('aria-selected', on ? 'true' : 'false');
+      tabBtns[i].tabIndex = on ? 0 : -1;
       tabPanels[i].hidden = !on;
     });
   }
@@ -1088,20 +1109,35 @@ export function makeTabs(specs: TabSpec[], opts: { initial?: string } = {}): { b
     btn.setAttribute('role', 'tab');
     btn.textContent = spec.label;
     btn.dataset.tab = spec.id;
+    let tabId: string;
+    do { tabId = `kus-lite-tab-${++tabSequence}`; } while (document.getElementById(tabId));
+    btn.id = tabId;
+    btn.setAttribute('aria-controls', `${tabId}-panel`);
     btn.addEventListener('click', () => activate(spec.id));
+    btn.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const index = specs.indexOf(spec);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? specs.length - 1
+        : (index + (event.key === 'ArrowRight' ? 1 : specs.length - 1)) % specs.length;
+      activate(specs[next].id);
+      tabBtns[next].focus();
+    });
     bar.appendChild(btn);
     tabBtns.push(btn);
 
     const panel = document.createElement('div');
     panel.className = 'kus-lp__tab-panel';
     panel.setAttribute('role', 'tabpanel');
+    panel.id = `${tabId}-panel`;
+    panel.setAttribute('aria-labelledby', tabId);
     panel.hidden = true;
     spec.build(panel);
     panels.appendChild(panel);
     tabPanels.push(panel);
   });
 
-  const initial = opts.initial || specs[0]?.id;
+  const initial = specs.find(spec => spec.id === opts.initial)?.id || specs[0]?.id;
   if (initial) activate(initial);
   return { bar, panels };
 }
@@ -1120,8 +1156,8 @@ export async function liteRun<T>(
   try {
     const out = await fn();
     const tone = panel.status.dataset.tone;
-    if (okMsg && tone !== 'err') {
-      // 処理側が警告（err トーン）を出して正常終了した場合は、成功メッセージで上書きしない
+    if (okMsg && tone !== 'err' && tone !== 'warn') {
+      // 部分成功・比較未完了の警告を成功メッセージで上書きしない。
       panel.setStatus(okMsg, 'ok');
     } else if (tone === 'busy') {
       // 処理側の最終メッセージ（「…完了」など）がスピナー付きのまま残らないよう成功トーンへ切り替える

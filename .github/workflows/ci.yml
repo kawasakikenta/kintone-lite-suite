@@ -127,6 +127,15 @@ jobs:
       - name: Test lite tool workflows
         run: npm run test:lite-workflows -- --browser chromium
 
+      - name: Test shared lite controls
+        run: npm run test:lite-shared -- --browser chromium
+
+      - name: Test record metadata from API responses
+        run: npm run test:record-metadata -- --browser chromium
+
+      - name: Test record quality checks and CSV templates
+        run: npm run test:record-quality -- --browser chromium
+
       - name: Save DOM test evidence
         if: always()
         uses: actions/upload-artifact@v4
