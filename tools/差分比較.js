@@ -862,7 +862,7 @@ ${contextLine}`);
     }
     return "";
   }
-  function ensureBundleShape(bundle) {
+  function ensureBundleShape(bundle, rawSettings = false) {
     if (!bundle || typeof bundle !== "object") throw new Error("バンドル形式が不正です");
     if (!bundle.sections || typeof bundle.sections !== "object") throw new Error("sections がありません");
     return {
@@ -871,7 +871,7 @@ ${contextLine}`);
       preview: !!bundle.preview,
       fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
       meta: sanitizeBundleMeta(bundle.meta),
-      sections: normalize(bundle.sections)
+      sections: rawSettings ? deepClone(bundle.sections) : normalize(bundle.sections)
     };
   }
   function pickBundleSections(bundle, sections) {
@@ -1053,7 +1053,7 @@ ${contextLine}`);
     await runTaskFactoriesWithConcurrency(tasks, CUSTOMIZE_BODY_FETCH_CONCURRENCY);
     return stats;
   }
-  async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
+  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
     const bundle = {
@@ -1077,7 +1077,7 @@ ${contextLine}`);
         const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
         const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);
-        results[index] = { value: normalize(res), revision };
+        results[index] = { value: rawSettings ? deepClone(res) : normalize(res), revision };
       } catch (e) {
         results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
@@ -1089,7 +1089,7 @@ ${contextLine}`);
       bundle.sections[def.key] = value;
       if (revision) bundle.meta.sectionRevisions[def.key] = revision;
     });
-    if (sections.includes("customizeSettings")) {
+    if (!rawSettings && sections.includes("customizeSettings")) {
       const cust = bundle.sections.customizeSettings;
       if (cust && !cust._fetchError) {
         try {
@@ -1110,7 +1110,7 @@ ${contextLine}`);
         }
       }
     }
-    if (sections.includes("pluginSettings")) {
+    if (!rawSettings && sections.includes("pluginSettings")) {
       const plug = bundle.sections.pluginSettings;
       if (plug && !plug._fetchError) {
         try {
@@ -11268,7 +11268,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const appId = String(options.appId || "").trim();
     const candidates = unwrapBundleCandidates(raw, side).map((item) => {
       try {
-        return ensureBundleShape(item);
+        return ensureBundleShape(item, options.rawSettings);
       } catch {
         return null;
       }
@@ -11281,10 +11281,10 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     }
     return limitImportedBundleToSections(candidates[0], options.sections);
   }
-  function pickAllSettingsBundles(raw, side) {
+  function pickAllSettingsBundles(raw, side, rawSettings = false) {
     const candidates = unwrapBundleCandidates(raw, side).map((item) => {
       try {
-        return ensureBundleShape(item);
+        return ensureBundleShape(item, rawSettings);
       } catch {
         return null;
       }

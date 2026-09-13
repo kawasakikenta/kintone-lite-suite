@@ -12,6 +12,10 @@ const TOOL = path.join(ROOT, 'tools/統合ツール');
 const OUT = path.join(ROOT, '.iter-shots/reflect-lite-dom');
 const esbuild = require(path.join(TOOL, 'node_modules/esbuild'));
 const mockEngine = `
+  export function reflectConnectionError(opts) { return !opts.targetAppId || (!opts.sourceAppId && !opts.sourceBundle) ? 'アプリIDが未入力です' : ''; }
+  export async function resolveReflectAppsStandalone(opts) {
+    return { source: { appId: opts.sourceAppId, name: '営業テンプレート', guestId: opts.sourceGuestId || '' }, target: { appId: opts.targetAppId, name: '東京営業所', guestId: opts.targetGuestId || '' } };
+  }
   export async function previewReflectStandalone(opts, progress) {
     const mock = window.__reflectMock;
     mock.previews.push(opts);
@@ -22,10 +26,12 @@ const mockEngine = `
     const entries = opts.scopes.map((sectionKey, i) => {
       const status = mock.mode === 'same' ? 'same' : sectionKey === 'layoutSettings' ? 'same' : sectionKey === 'viewSettings' ? 'error' : 'change';
       return { sectionKey, label: names[sectionKey] || sectionKey, status,
+        behavior: '追加・更新', blockers: status === 'error' ? ['比較先の取得失敗'] : [], warnings: [], operations: [], requiredFields: [],
+        changes: status === 'change' ? [{kind: '変更', path: 'フィールド / 顧客名 / 必須', before: 'false', after: 'true'}] : [], changeCount: status === 'change' ? 1 : 0, removalCount: 0,
         message: status === 'change' ? '入力欄のラベルと必須設定が変更されています。' : status === 'same' ? '設定は一致しています。' : '比較先の取得に失敗しました。アクセス権を確認してください。',
         ...(sectionKey === 'fieldSettings' ? { fieldStats: { add: 2, update: 3, tgtOnly: 1 } } : {}) };
     });
-    return { baseline: { connection: 'sample-' + opts.targetAppId, source: {}, target: {} }, entries, totalSections: entries.length, changedSections: entries.filter(e => e.status === 'change').length,
+    return { sourceFieldCodes: [], targetFieldCodes: [], baseline: { connection: 'sample-' + opts.targetAppId, source: {}, target: {} }, entries, totalSections: entries.length, changedSections: entries.filter(e => e.status === 'change').length,
       sameSections: entries.filter(e => e.status === 'same').length, errorSections: entries.filter(e => e.status === 'error').length };
   }
   export async function preflightLookupMapStandalone() { return { ok: true, missing: [] }; }
@@ -77,7 +83,21 @@ async function main() {
   }
   const button = name => page.getByRole('button', { name, exact: true });
   const tab = name => page.getByRole('tab', { name: new RegExp(name) });
-  const run = () => page.getByRole('button', { name: /^プレビュー反映を実行/ });
+  const run = () => button('最終確認に進む');
+  const applyButton = () => page.getByRole('button', { name: /^確認した .* 項目をプレビューへ反映/ });
+  async function execute() {
+    await run().click();
+    assert.equal(await applyButton().isDisabled(), true, '確認前は書き込み不可');
+    await page.getByRole('checkbox', { name: '反映内容の確認', exact: true }).check();
+    const idCheck = page.getByRole('textbox', { name: '確認用の反映先アプリID', exact: true });
+    if (await idCheck.isVisible()) {
+      await idCheck.fill('wrong'); assert.equal(await applyButton().isDisabled(), true);
+      await idCheck.fill(await page.evaluate(() => document.querySelector('[aria-label="比較先アプリID"]').value));
+      const count = await page.evaluate(() => window.__reflectMock.applies.length);
+      await idCheck.press('Enter'); assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), count, '確認IDのEnterで書き込まない');
+    }
+    await applyButton().evaluate(button => { button.click(); button.click(); }); await idle();
+  }
   async function idle() { await page.waitForFunction(() => document.querySelector('#kus-reflect-lite').getAttribute('aria-busy') !== 'true'); }
   async function setup() {
     await page.getByRole('textbox', { name: '比較元アプリID', exact: true }).fill('101');
@@ -98,13 +118,14 @@ async function main() {
     await idle();
     assert.equal(await page.evaluate(() => window.__reflectMock.previews.length), 1, '二重比較を防ぐ');
     assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), 0, '差分確認では書き込まない');
-    assert.equal(await run().isEnabled(), true);
+    assert.equal(await run().isDisabled(), true, '取得失敗は暗黙に除外せず確認を止める');
     assert.equal(await button('閉じる').isEnabled(), true, '比較完了後はパネルを閉じられる');
     assert.match(await page.locator('#kus-rl-stage-review').innerText(), /取得失敗/);
     const filter = page.getByRole('combobox', { name: '差分の状態で絞り込み' });
     await filter.selectOption('error');
     assert.equal(await page.getByRole('checkbox', { name: 'ビュー設定を反映候補に含める', exact: true }).count(), 1);
     assert.equal(await page.getByRole('checkbox', { name: 'フィールド設定を反映候補に含める', exact: true }).count(), 0);
+    await page.getByRole('checkbox', { name: 'ビュー設定を反映候補に含める', exact: true }).uncheck();
     await filter.selectOption('change');
     const field = page.getByRole('checkbox', { name: 'フィールド設定を反映候補に含める', exact: true });
     await field.uncheck();
@@ -128,7 +149,7 @@ async function main() {
     await button('差分を再取得').click();
     await idle();
     page.on('dialog', async dialog => { await dialog.accept(dialog.type() === 'prompt' ? dialog.message().match(/「(\d+)」/)?.[1] : undefined); });
-    await run().click();
+    await execute();
     await idle();
     assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), 1);
     assert.equal(await page.evaluate(() => window.__reflectMock.applies[0].targetAppId), '303');
@@ -142,7 +163,7 @@ async function main() {
     assert.equal(await run().isDisabled(), true);
     await reset('partial'); await setup();
     await page.getByRole('checkbox', { name: 'プロセス管理', exact: true }).check();
-    await compare(); await run().click(); await idle();
+    await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
     assert.match(await page.locator('#kus-rl-stage-result').innerText(), /一部エラー/);
     assert.equal(await button('失敗・未実行だけ選択').isVisible(), true);
     await button('失敗・未実行だけ選択').click();
@@ -212,7 +233,9 @@ async function main() {
     await page.setContent(demo);
     assert.equal(await page.getByRole('textbox', { name: '比較元アプリID', exact: true }).inputValue(), '101');
     await compare();
+    await button('差分ありだけ選択').click();
     assert.equal(await run().isEnabled(), true, '配布する操作デモも単独で動作する');
+    await require('./reflect-engine-scenarios.cjs')({ page, esbuild, tool: TOOL, out: OUT });
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ passed: true, sizes, checks: ['guided workflow', 'no write on compare', 'busy lock', 'scope reuse', 'freshness', 'search and status filters', 'keyboard focus', 'JSON source and errors', 'partial results and retry', 'responsive geometry'], pageErrors: errors }, null, 2));
     console.log('PASS reflect-lite: workflow, freshness, filters, JSON, partial results, keyboard, 5 viewport sizes');
