@@ -1122,23 +1122,31 @@ ${contextLine}`);
       meta: { sectionRevisions: {} },
       sections: {}
     };
-    for (let i = 0; i < sections.length; i++) {
-      const sec = sections[i];
+    const defs = [...new Set(sections)].flatMap((sec) => {
       const def = SECTION_DEFS.find((x) => x.key === sec);
-      if (!def) continue;
+      return def ? [def] : [];
+    });
+    const results = new Array(defs.length);
+    let completed = 0;
+    await runTaskFactoriesWithConcurrency(defs.map((def, index) => async () => {
       try {
         const sectionPreview = def.previewEndpoint === false ? false : preview;
         const prefix = buildApiPrefix(guestId, sectionPreview);
         const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
         const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);
-        if (revision) bundle.meta.sectionRevisions[sec] = revision;
-        bundle.sections[sec] = normalize(res);
+        results[index] = { value: normalize(res), revision };
       } catch (e) {
-        bundle.sections[sec] = { _fetchError: e?.message || String(e) };
+        results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
-      if (onProgress) onProgress((i + 1) / sections.length, def.label);
-    }
+      completed += 1;
+      onProgress?.(completed / defs.length, def.label);
+    }), BUNDLE_FETCH_CONCURRENCY);
+    defs.forEach((def, index) => {
+      const { value, revision } = results[index];
+      bundle.sections[def.key] = value;
+      if (revision) bundle.meta.sectionRevisions[def.key] = revision;
+    });
     if (sections.includes("customizeSettings")) {
       const cust = bundle.sections.customizeSettings;
       if (cust && !cust._fetchError) {
@@ -1175,7 +1183,7 @@ ${contextLine}`);
     }
     return bundle;
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, BUNDLE_FETCH_CONCURRENCY;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1197,6 +1205,7 @@ ${contextLine}`);
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
       CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
       TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
+      BUNDLE_FETCH_CONCURRENCY = 3;
     }
   });
 
@@ -2122,7 +2131,8 @@ ${body}`;
   z-index:999999;
   top:max(16px,2vh);
   right:max(16px,2vw);
-  width:min(520px,96vw);
+  box-sizing:border-box;
+  width:min(520px,calc(100vw - max(32px,4vw)));
   max-height:min(92vh,920px);
   overflow:hidden;
   display:flex;
@@ -2191,7 +2201,7 @@ ${body}`;
   content:'';position:absolute;left:8px;right:8px;bottom:-1px;height:2px;border-radius:2px;
   background:linear-gradient(90deg,var(--c-accent-via),var(--c-accent-to));
 }
-.kus-lp__tab-panel[hidden]{display:none}
+.kus-lp [hidden]{display:none!important}
 
 /* ===== Card ===== */
 .kus-lp__card{
@@ -2349,7 +2359,7 @@ ${body}`;
 .kus-lp__details-body{padding:0 14px 12px}
 
 /* Wide variant (一部 lite 用に幅広にしたい場合) */
-.kus-lp--wide{width:min(640px,96vw)}
+.kus-lp--wide{width:min(640px,calc(100vw - max(32px,4vw)))}
 
 /* ===== App table (複数アプリ × per-app ゲストスペース入力) ===== */
 .kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
@@ -2396,7 +2406,11 @@ ${body}`;
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
-    if (old) old.remove();
+    if (old) {
+      old.dispatchEvent(new Event("kus-lite-dispose"));
+      old.remove();
+    }
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const root2 = document.createElement("div");
     root2.id = opts.id;
     root2.className = `kus-lp${opts.wide ? " kus-lp--wide" : ""}`;
@@ -2448,6 +2462,9 @@ ${body}`;
     const status = document.createElement("div");
     status.className = "kus-lp__status";
     status.dataset.tone = "neutral";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.setAttribute("aria-atomic", "true");
     status.innerHTML = '<span class="kus-lp__status-icon">·</span><span class="kus-lp__status-text">準備完了</span>';
     const result = document.createElement("pre");
     result.className = "kus-lp__result kus-lp__result--empty";
@@ -2483,12 +2500,17 @@ ${body}`;
     }
     function setBusy(busy) {
       closeBtn.disabled = busy;
+      root2.setAttribute("aria-busy", String(busy));
       root2.style.cursor = busy ? "progress" : "";
+      root2.dispatchEvent(new Event("kus-lite-busy-change"));
     }
     function close() {
+      if (closeBtn.disabled) return;
+      const restoreFocus = root2.contains(document.activeElement);
       document.removeEventListener("keydown", onDocKeydown, true);
       root2.remove();
       setRootElement(null);
+      if (restoreFocus && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
     }
     closeBtn.addEventListener("click", close);
     let primaryBtn = null;
@@ -2526,6 +2548,7 @@ ${body}`;
       }
     }
     document.addEventListener("keydown", onDocKeydown, true);
+    root2.addEventListener("kus-lite-dispose", () => document.removeEventListener("keydown", onDocKeydown, true), { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
     requestAnimationFrame(() => {
@@ -2569,6 +2592,18 @@ ${body}`;
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
+  function makeSelect(options, defaultValue) {
+    const sel = document.createElement("select");
+    sel.className = "kus-lp__select";
+    for (const [v, t] of options) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = t;
+      if (defaultValue !== void 0 && v === defaultValue) o.selected = true;
+      sel.appendChild(o);
+    }
+    return sel;
+  }
   function makeButton(label, variant = "primary", opts = {}) {
     const b = document.createElement("button");
     b.type = "button";
@@ -2576,6 +2611,7 @@ ${body}`;
     if (opts.icon) {
       const i = document.createElement("span");
       i.textContent = opts.icon;
+      i.setAttribute("aria-hidden", "true");
       i.style.cssText = "font-size:14px;line-height:1";
       b.appendChild(i);
     }
@@ -2837,7 +2873,9 @@ ${body}`;
         const text = ev.clipboardData?.getData("text") || "";
         if (!/[,、\s]/.test(text)) return;
         ev.preventDefault();
-        const combined = [app.value.trim(), text].filter(Boolean).join(",");
+        const start = app.selectionStart ?? app.value.length;
+        const end = app.selectionEnd ?? start;
+        const combined = app.value.slice(0, start) + text + app.value.slice(end);
         app.value = combined;
         if (distributeAppTokens(entry)) emitChange();
       });
@@ -2845,7 +2883,6 @@ ${body}`;
       if (at >= rows.length) tbody.appendChild(tr);
       else tbody.insertBefore(tr, rows[at].tr);
       rows.splice(at, 0, entry);
-      refresh();
       if (focus) app.focus();
       return entry;
     }
@@ -2860,7 +2897,7 @@ ${body}`;
       const guest = String(guestId || "").trim();
       const appName = String(o.appName || "").trim();
       const empty = rows.find((r) => !r.app.value.trim());
-      const targetGuest = guest || empty?.guest.value.trim() || "";
+      const targetGuest = guest;
       const existing = rows.find((r) => r.app.value.trim() === id && r.guest.value.trim() === targetGuest);
       if (existing) {
         if (appName && existing.appName !== appName) {
@@ -2922,7 +2959,7 @@ ${body}`;
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
-      if (okMsg && tone !== "err") {
+      if (okMsg && tone !== "err" && tone !== "warn") {
         panel.setStatus(okMsg, "ok");
       } else if (tone === "busy") {
         const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
@@ -3141,8 +3178,9 @@ ${body}`;
     const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll("input,select,textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
     function show(index) {
       if (busy) return;
-      if (index === 1 && selected.validate()) {
-        panel.setStatus(selected.validate(), "warn");
+      const problem = index === 1 ? selected.validate() : "";
+      if (problem) {
+        panel.setStatus(problem, "warn");
         return;
       }
       active = index;
@@ -3169,8 +3207,8 @@ ${body}`;
       refresh();
     }
     function refresh() {
-      const problem = selected.validate();
-      const fresh = reviewedSignature === signature();
+      const problem = busy ? "" : selected.validate();
+      const fresh = !busy && active === 1 && reviewedSignature === signature();
       next.hidden = active !== 0;
       execute.hidden = active !== 1;
       back.hidden = active === 0;
@@ -3240,7 +3278,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       originalStatus(message, tone);
       refresh();
     };
-    for (const event of ["input", "change", "click"]) setup.addEventListener(event, () => queueMicrotask(refresh));
+    let refreshQueued = false;
+    const scheduleRefresh = () => {
+      if (refreshQueued) return;
+      refreshQueued = true;
+      queueMicrotask(() => {
+        refreshQueued = false;
+        refresh();
+      });
+    };
+    for (const event of ["input", "change", "click"]) setup.addEventListener(event, scheduleRefresh);
     selected.onSelect?.();
     show(0);
     return { refresh, show };
@@ -6147,6 +6194,7 @@ ${diffMd}
 .kus-as__table tr:last-child td{border-bottom:none}
 .kus-as__id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--c-text-2);white-space:nowrap}
 .kus-as__name{color:var(--c-text);word-break:break-all}
+.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:10.5px;line-height:1.5}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:10.5px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
@@ -6158,18 +6206,76 @@ ${diffMd}
     st.textContent = RESULT_CSS;
     document.head.appendChild(st);
   }
+  function appCandidate(info, appId) {
+    return {
+      appId,
+      name: String(info?.name || ""),
+      code: info?.code == null ? void 0 : String(info.code),
+      spaceId: info?.spaceId === null ? null : info?.spaceId === void 0 ? void 0 : String(info.spaceId),
+      modifiedAt: String(info?.modifiedAt || ""),
+      modifierName: String(info?.modifier?.name || info?.modifier?.code || "")
+    };
+  }
+  function candidateDetails(app) {
+    const parts = [
+      app.code === void 0 ? "コード未取得" : app.code ? `コード: ${app.code}` : "コード未設定",
+      app.spaceId === null ? "スペース外" : app.spaceId ? `スペース: ${app.spaceId}` : "所属スペース未取得"
+    ];
+    if (app.modifiedAt) {
+      const date = new Date(app.modifiedAt);
+      const time = Number.isNaN(date.getTime()) ? app.modifiedAt : date.toLocaleString("ja-JP");
+      parts.push(`更新: ${time}${app.modifierName ? ` / ${app.modifierName}` : ""}`);
+    }
+    return parts.join(" · ");
+  }
   function createAppSearchControl(panel, opts) {
     ensureStyles2();
-    const { details, body } = makeDetails(opts.title || "アプリ名で検索", { open: !!opts.open });
+    const { details, body } = makeDetails(opts.title || "アプリを検索（名前・コード・ID）", { open: !!opts.open });
     const keyword = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide", noSubmit: true });
     const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
+    const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
+    searchMode.setAttribute("aria-label", "検索方法");
+    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
+    body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
-    body.appendChild(makeNote("スペース内のアプリを名前で検索します。アプリIDや一覧画面のURLを貼り付けると直接候補にできます。"));
+    body.appendChild(makeNote("閲覧できるアプリを名前（部分一致）またはコード（大文字・小文字を区別する完全一致）で検索します。スペースIDで検索範囲を絞れます。ID / URL の直接指定ではスペースIDの絞り込みは使いません。"));
     const resultBox = document.createElement("div");
     resultBox.className = "kus-as__result kus-as__result--empty";
     body.appendChild(resultBox);
+    const moreBtn = makeButton("さらに100件を取得", "sub");
+    moreBtn.hidden = true;
+    body.appendChild(moreBtn);
+    let generation = 0;
+    let running = false;
+    let candidates = [];
+    let nextOffset = 0;
+    let resultGuest = "";
+    function invalidate() {
+      generation += 1;
+      candidates = [];
+      nextOffset = 0;
+      resultBox.replaceChildren();
+      resultBox.className = "kus-as__result kus-as__result--empty";
+      moreBtn.hidden = true;
+    }
+    keyword.addEventListener("input", invalidate);
+    guest.addEventListener("input", invalidate);
+    space.addEventListener("input", invalidate);
+    searchMode.addEventListener("change", () => {
+      keyword.placeholder = searchMode.value === "code" ? "アプリコード（完全一致）" : "アプリ名 / アプリID / URL";
+      invalidate();
+    });
+    function syncBusyControls() {
+      const busy = panel.root.getAttribute("aria-busy") === "true";
+      searchBtn.disabled = running || busy;
+      moreBtn.disabled = running || busy;
+    }
+    panel.root.addEventListener("kus-lite-busy-change", () => {
+      if (running && panel.root.getAttribute("aria-busy") === "true") invalidate();
+      syncBusyControls();
+    });
     function renderResults(apps) {
       if (!apps.length) {
         resultBox.className = "kus-as__result";
@@ -6184,7 +6290,7 @@ ${diffMd}
         }).join("");
         return `<tr>
         <td class="kus-as__id">${esc(app.appId)}</td>
-        <td class="kus-as__name" title="${esc(app.name)}">${esc(app.name)}</td>
+        <td class="kus-as__name"><div>${esc(app.name)}</div><div class="kus-as__meta">${esc(candidateDetails(app))}</div></td>
         <td><div class="kus-as__assign">${buttons}</div></td>
       </tr>`;
       }).join("");
@@ -6199,9 +6305,14 @@ ${diffMd}
           const app = apps[Number(btn.dataset.asPick)];
           const target = opts.targets[Number(btn.dataset.asTarget)];
           if (!app || !target) return;
-          const searchGuest = guest.value.trim();
+          if (running || panel.root.getAttribute("aria-busy") === "true") return;
+          const searchGuest = resultGuest;
           const outcome = target.apply(app.appId, app.name, searchGuest) || {};
-          if (searchGuest && opts.guestEl && !opts.guestEl.value.trim()) opts.guestEl.value = searchGuest;
+          if (opts.guestEl && opts.guestEl.value.trim() !== searchGuest) {
+            opts.guestEl.value = searchGuest;
+            opts.guestEl.dispatchEvent(new Event("input", { bubbles: true }));
+            opts.guestEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
           const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : "";
           btn.classList.add("kus-as__picked");
           btn.setAttribute("aria-pressed", "true");
@@ -6213,42 +6324,89 @@ ${diffMd}
         });
       });
     }
-    async function runSearch() {
+    async function runSearch(append = false) {
+      if (running || panel.root.getAttribute("aria-busy") === "true") return;
+      if (!append) invalidate();
       const raw = keyword.value.trim();
-      const urlGuestId = extractGuestIdFromInput(raw);
-      if (urlGuestId && !guest.value.trim()) guest.value = urlGuestId;
-      const guestId = guest.value.trim() || urlGuestId || "";
-      const prefix = buildApiPrefix(guestId, false);
-      const directAppId = extractAppIdFromInput(raw);
-      if (directAppId) {
-        panel.setStatus("アプリIDを確認中…", "busy");
-        let name = "";
-        try {
-          const info = await apiGet(prefix, "/app.json", { id: directAppId });
-          name = String(info?.name || "").trim();
-        } catch {
-          name = "ID指定（名称未取得）";
-        }
-        renderResults([{ appId: directAppId, name: name || "ID指定" }]);
-        panel.setStatus(`アプリID ${directAppId}${guestId ? ` / ゲスト ${guestId}` : ""} を候補に表示しました`, "ok");
+      const codeSearch = searchMode.value === "code";
+      const directAppId = codeSearch ? "" : extractAppIdFromInput(raw);
+      if (!directAppId && ([...raw].length > 64 || codeSearch && !raw)) {
+        panel.setStatus(codeSearch ? "アプリコードを1〜64文字で入力してください" : "アプリ名は64文字以内で入力してください", "warn");
         return;
       }
-      const params = { limit: 100 };
-      if (raw) params.name = raw;
-      panel.setStatus("アプリ検索中…", "busy");
+      const spaceId = space.value.trim();
+      if (!directAppId && spaceId && !/^[1-9]\d*$/.test(spaceId)) {
+        panel.setStatus("スペースIDは正の数値で入力してください", "warn");
+        return;
+      }
+      const urlGuestId = codeSearch ? "" : extractGuestIdFromInput(raw);
+      if (urlGuestId) guest.value = urlGuestId;
+      else if (!codeSearch && /\/k\/\d+(?:[/?#]|$)/i.test(raw)) guest.value = "";
+      const guestId = guest.value.trim() || urlGuestId || "";
+      if (guestId && !/^\d+$/.test(guestId)) {
+        panel.setStatus("ゲストIDは数値で入力してください", "warn");
+        return;
+      }
+      const requestGeneration = generation;
+      const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
+      const prefix = buildApiPrefix(guestId, false);
+      running = true;
+      searchBtn.disabled = true;
+      moreBtn.disabled = true;
+      resultBox.setAttribute("aria-busy", "true");
       try {
+        if (directAppId) {
+          panel.setStatus("アプリIDを確認中…", "busy");
+          let candidate = { appId: directAppId, name: "ID指定（名称未取得）" };
+          try {
+            const info = await apiGet(prefix, "/app.json", { id: directAppId });
+            candidate = appCandidate(info, directAppId);
+          } catch {
+          }
+          if (!isCurrent()) return;
+          resultGuest = guestId;
+          renderResults([candidate]);
+          panel.setStatus(`アプリID ${directAppId}${guestId ? ` / ゲスト ${guestId}` : ""} を候補に表示しました`, "ok");
+          return;
+        }
+        const params = { limit: 100, offset: append ? nextOffset : 0 };
+        if (raw) {
+          if (codeSearch) params.codes = [raw];
+          else params.name = raw;
+        }
+        if (spaceId) params.spaceIds = [spaceId];
+        panel.setStatus("アプリ検索中…", "busy");
         const res = await apiGet(prefix, "/apps.json", params);
-        const apps = (res?.apps || []).map((a) => ({ appId: String(a.appId || "").trim(), name: String(a.name || "") })).filter((a) => /^\d+$/.test(a.appId)).sort((a, b) => Number(a.appId) - Number(b.appId));
-        renderResults(apps);
-        panel.setStatus(`アプリ検索完了: ${apps.length}件`, apps.length ? "ok" : "info");
+        if (!isCurrent()) return;
+        if (!Array.isArray(res?.apps)) throw new Error("アプリ一覧の応答が不正です。再検索してください");
+        const byId = new Map(candidates.map((app) => [app.appId, app]));
+        for (const app of res.apps) {
+          const appId = String(app?.appId || "").trim();
+          if (/^\d+$/.test(appId)) byId.set(appId, appCandidate(app, appId));
+        }
+        candidates = [...byId.values()].sort((a, b) => BigInt(a.appId) < BigInt(b.appId) ? -1 : BigInt(a.appId) > BigInt(b.appId) ? 1 : 0);
+        nextOffset = Number(params.offset) + 100;
+        resultGuest = guestId;
+        renderResults(candidates);
+        moreBtn.hidden = res.apps.length < 100;
+        panel.setStatus(`アプリ検索完了: ${candidates.length}件${moreBtn.hidden ? "" : "。続きは「さらに100件を取得」で表示できます"}`, candidates.length ? "ok" : "info");
       } catch (e) {
-        resultBox.className = "kus-as__result kus-as__result--empty";
-        resultBox.innerHTML = "";
+        if (!isCurrent()) return;
         panel.setStatus(`アプリ検索エラー: ${e?.message || String(e)}`, "err");
+      } finally {
+        running = false;
+        syncBusyControls();
+        resultBox.setAttribute("aria-busy", "false");
+        if (!isCurrent() && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true" && panel.status.dataset.tone === "busy") {
+          panel.setStatus("検索条件が変わりました。もう一度検索してください", "info");
+        }
       }
     }
     searchBtn.addEventListener("click", () => {
       void runSearch();
+    });
+    moreBtn.addEventListener("click", () => {
+      void runSearch(true);
     });
     keyword.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {

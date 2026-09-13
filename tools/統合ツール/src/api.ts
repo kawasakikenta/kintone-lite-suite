@@ -688,6 +688,9 @@ export async function fetchPluginConfigs(
   return stats;
 }
 
+/** 読み取りを小さな並列数に抑え、他のツールの API 利用にも余裕を残す。 */
+export const BUNDLE_FETCH_CONCURRENCY = 3;
+
 export async function fetchBundle({ appId, guestId, preview, sections, onProgress }: FetchBundleParams): Promise<Bundle> {
   const app = String(appId || '').trim();
   if (!app) throw new Error('アプリIDが必要です');
@@ -701,23 +704,32 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
     sections: {}
   };
 
-  for (let i = 0; i < sections.length; i++) {
-    const sec = sections[i];
-    const def = SECTION_DEFS.find((x) => x.key === sec);
-    if (!def) continue;
+  const defs = [...new Set(sections)].flatMap(sec => {
+    const def = SECTION_DEFS.find(x => x.key === sec);
+    return def ? [def] : [];
+  });
+  const results: Array<{ value: any; revision: string }> = new Array(defs.length);
+  let completed = 0;
+  await runTaskFactoriesWithConcurrency(defs.map((def, index) => async () => {
     try {
       const sectionPreview = def.previewEndpoint === false ? false : preview;
       const prefix = buildApiPrefix(guestId, sectionPreview);
       const params: Record<string, unknown> = typeof def.paramBuilder === 'function' ? def.paramBuilder(app) : { app };
       const res = await apiGet(prefix, def.endpoint, params);
       const revision = extractSectionRevision(res);
-      if (revision) bundle.meta.sectionRevisions[sec] = revision;
-      bundle.sections[sec] = normalize(res);
+      results[index] = { value: normalize(res), revision };
     } catch (e: any) {
-      bundle.sections[sec] = { _fetchError: e?.message || String(e) };
+      results[index] = { value: { _fetchError: e?.message || String(e) }, revision: '' };
     }
-    if (onProgress) onProgress((i + 1) / sections.length, def.label);
-  }
+    completed += 1;
+    onProgress?.(completed / defs.length, def.label);
+  }), BUNDLE_FETCH_CONCURRENCY);
+  // 応答順によって JSON の項目順や revision の選択が変わらないよう、入力順で格納する。
+  defs.forEach((def, index) => {
+    const { value, revision } = results[index];
+    bundle.sections[def.key] = value;
+    if (revision) bundle.meta.sectionRevisions[def.key] = revision;
+  });
   // 差分比較精度向上のための補助取得。
   // 一部だけ取得できた値を通常差分として扱うと「設定追加/削除」の偽差分になるため、
   // 1 件でも失敗したセクションは既存の _fetchError 契約で比較不能として扱う。

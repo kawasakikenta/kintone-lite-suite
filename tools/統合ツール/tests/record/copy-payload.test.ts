@@ -62,6 +62,7 @@ describe('validateCsvImportHeader', () => {
     expect(() => validateCsvImportHeader(['$id'], props)).toThrow(/システムフィールド/);
     expect(() => validateCsvImportHeader(['nope'], props)).toThrow(/存在しないフィールドコード.*nope/);
     expect(() => validateCsvImportHeader(['attach'], props)).toThrow(/非対応.*attach\(FILE\)/);
-    expect(() => validateCsvImportHeader(['title', ''], props)).not.toThrow();
+    expect(() => validateCsvImportHeader(['title', ''], props)).toThrow(/空の列/);
+    expect(() => validateCsvImportHeader(['title'], props)).not.toThrow();
   });
 });

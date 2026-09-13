@@ -31,7 +31,11 @@
     "snippet": "node scripts/build-snippet.js",
     "mcp:playwright": "node node_modules/@playwright/mcp/cli.js --browser=chrome --output-dir=.playwright-mcp --save-session",
     "verify:playwright-mcp": "node scripts/verify-playwright-mcp.cjs",
-    "test:lite-workflows": "node tools/test-harness/run-lite-workflows-dom.cjs"
+    "test:lite-workflows": "node tools/test-harness/run-lite-workflows-dom.cjs",
+    "test:lite-shared": "node tools/test-harness/run-lite-shared-dom.cjs",
+    "test:record-metadata": "node tools/test-harness/run-record-metadata-dom.cjs",
+    "test:record-quality": "node tools/test-harness/run-record-quality-dom.cjs",
+    "test:all": "node scripts/test-all.cjs"
   },
   "engines": {
     "node": ">=20",
