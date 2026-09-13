@@ -972,23 +972,31 @@ ${contextLine}`);
       meta: { sectionRevisions: {} },
       sections: {}
     };
-    for (let i = 0; i < sections.length; i++) {
-      const sec = sections[i];
+    const defs = [...new Set(sections)].flatMap((sec) => {
       const def = SECTION_DEFS.find((x) => x.key === sec);
-      if (!def) continue;
+      return def ? [def] : [];
+    });
+    const results = new Array(defs.length);
+    let completed = 0;
+    await runTaskFactoriesWithConcurrency(defs.map((def, index) => async () => {
       try {
         const sectionPreview = def.previewEndpoint === false ? false : preview;
         const prefix = buildApiPrefix(guestId, sectionPreview);
         const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
         const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);
-        if (revision) bundle.meta.sectionRevisions[sec] = revision;
-        bundle.sections[sec] = normalize(res);
+        results[index] = { value: normalize(res), revision };
       } catch (e) {
-        bundle.sections[sec] = { _fetchError: e?.message || String(e) };
+        results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
-      if (onProgress) onProgress((i + 1) / sections.length, def.label);
-    }
+      completed += 1;
+      onProgress?.(completed / defs.length, def.label);
+    }), BUNDLE_FETCH_CONCURRENCY);
+    defs.forEach((def, index) => {
+      const { value, revision } = results[index];
+      bundle.sections[def.key] = value;
+      if (revision) bundle.meta.sectionRevisions[def.key] = revision;
+    });
     if (sections.includes("customizeSettings")) {
       const cust = bundle.sections.customizeSettings;
       if (cust && !cust._fetchError) {
@@ -1046,7 +1054,7 @@ ${contextLine}`);
     apps.sort((a, b) => Number(a.appId) - Number(b.appId));
     return apps;
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, BUNDLE_FETCH_CONCURRENCY;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1068,6 +1076,7 @@ ${contextLine}`);
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
       CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
       TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
+      BUNDLE_FETCH_CONCURRENCY = 3;
     }
   });
 
@@ -1303,7 +1312,8 @@ ${contextLine}`);
   z-index:999999;
   top:max(16px,2vh);
   right:max(16px,2vw);
-  width:min(520px,96vw);
+  box-sizing:border-box;
+  width:min(520px,calc(100vw - max(32px,4vw)));
   max-height:min(92vh,920px);
   overflow:hidden;
   display:flex;
@@ -1372,7 +1382,7 @@ ${contextLine}`);
   content:'';position:absolute;left:8px;right:8px;bottom:-1px;height:2px;border-radius:2px;
   background:linear-gradient(90deg,var(--c-accent-via),var(--c-accent-to));
 }
-.kus-lp__tab-panel[hidden]{display:none}
+.kus-lp [hidden]{display:none!important}
 
 /* ===== Card ===== */
 .kus-lp__card{
@@ -1530,7 +1540,7 @@ ${contextLine}`);
 .kus-lp__details-body{padding:0 14px 12px}
 
 /* Wide variant (一部 lite 用に幅広にしたい場合) */
-.kus-lp--wide{width:min(640px,96vw)}
+.kus-lp--wide{width:min(640px,calc(100vw - max(32px,4vw)))}
 
 /* ===== App table (複数アプリ × per-app ゲストスペース入力) ===== */
 .kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
@@ -1577,7 +1587,11 @@ ${contextLine}`);
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
-    if (old) old.remove();
+    if (old) {
+      old.dispatchEvent(new Event("kus-lite-dispose"));
+      old.remove();
+    }
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const root2 = document.createElement("div");
     root2.id = opts.id;
     root2.className = `kus-lp${opts.wide ? " kus-lp--wide" : ""}`;
@@ -1629,6 +1643,9 @@ ${contextLine}`);
     const status = document.createElement("div");
     status.className = "kus-lp__status";
     status.dataset.tone = "neutral";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.setAttribute("aria-atomic", "true");
     status.innerHTML = '<span class="kus-lp__status-icon">·</span><span class="kus-lp__status-text">準備完了</span>';
     const result = document.createElement("pre");
     result.className = "kus-lp__result kus-lp__result--empty";
@@ -1664,12 +1681,17 @@ ${contextLine}`);
     }
     function setBusy(busy) {
       closeBtn.disabled = busy;
+      root2.setAttribute("aria-busy", String(busy));
       root2.style.cursor = busy ? "progress" : "";
+      root2.dispatchEvent(new Event("kus-lite-busy-change"));
     }
     function close() {
+      if (closeBtn.disabled) return;
+      const restoreFocus = root2.contains(document.activeElement);
       document.removeEventListener("keydown", onDocKeydown, true);
       root2.remove();
       setRootElement(null);
+      if (restoreFocus && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
     }
     closeBtn.addEventListener("click", close);
     let primaryBtn = null;
@@ -1707,6 +1729,7 @@ ${contextLine}`);
       }
     }
     document.addEventListener("keydown", onDocKeydown, true);
+    root2.addEventListener("kus-lite-dispose", () => document.removeEventListener("keydown", onDocKeydown, true), { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
     requestAnimationFrame(() => {
@@ -1750,6 +1773,18 @@ ${contextLine}`);
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
+  function makeSelect(options, defaultValue) {
+    const sel = document.createElement("select");
+    sel.className = "kus-lp__select";
+    for (const [v, t] of options) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = t;
+      if (defaultValue !== void 0 && v === defaultValue) o.selected = true;
+      sel.appendChild(o);
+    }
+    return sel;
+  }
   function makeButton(label, variant = "primary", opts = {}) {
     const b = document.createElement("button");
     b.type = "button";
@@ -1757,6 +1792,7 @@ ${contextLine}`);
     if (opts.icon) {
       const i = document.createElement("span");
       i.textContent = opts.icon;
+      i.setAttribute("aria-hidden", "true");
       i.style.cssText = "font-size:14px;line-height:1";
       b.appendChild(i);
     }
@@ -2030,7 +2066,9 @@ ${contextLine}`);
         const text = ev.clipboardData?.getData("text") || "";
         if (!/[,、\s]/.test(text)) return;
         ev.preventDefault();
-        const combined = [app.value.trim(), text].filter(Boolean).join(",");
+        const start = app.selectionStart ?? app.value.length;
+        const end = app.selectionEnd ?? start;
+        const combined = app.value.slice(0, start) + text + app.value.slice(end);
         app.value = combined;
         if (distributeAppTokens(entry)) emitChange();
       });
@@ -2038,7 +2076,6 @@ ${contextLine}`);
       if (at >= rows.length) tbody.appendChild(tr);
       else tbody.insertBefore(tr, rows[at].tr);
       rows.splice(at, 0, entry);
-      refresh();
       if (focus) app.focus();
       return entry;
     }
@@ -2053,7 +2090,7 @@ ${contextLine}`);
       const guest = String(guestId || "").trim();
       const appName = String(o.appName || "").trim();
       const empty = rows.find((r) => !r.app.value.trim());
-      const targetGuest = guest || empty?.guest.value.trim() || "";
+      const targetGuest = guest;
       const existing = rows.find((r) => r.app.value.trim() === id && r.guest.value.trim() === targetGuest);
       if (existing) {
         if (appName && existing.appName !== appName) {
@@ -2115,7 +2152,7 @@ ${contextLine}`);
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
-      if (okMsg && tone !== "err") {
+      if (okMsg && tone !== "err" && tone !== "warn") {
         panel.setStatus(okMsg, "ok");
       } else if (tone === "busy") {
         const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
@@ -2334,8 +2371,9 @@ ${contextLine}`);
     const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll("input,select,textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
     function show(index) {
       if (busy) return;
-      if (index === 1 && selected.validate()) {
-        panel.setStatus(selected.validate(), "warn");
+      const problem = index === 1 ? selected.validate() : "";
+      if (problem) {
+        panel.setStatus(problem, "warn");
         return;
       }
       active = index;
@@ -2362,8 +2400,8 @@ ${contextLine}`);
       refresh();
     }
     function refresh() {
-      const problem = selected.validate();
-      const fresh = reviewedSignature === signature();
+      const problem = busy ? "" : selected.validate();
+      const fresh = !busy && active === 1 && reviewedSignature === signature();
       next.hidden = active !== 0;
       execute.hidden = active !== 1;
       back.hidden = active === 0;
@@ -2433,7 +2471,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       originalStatus(message, tone);
       refresh();
     };
-    for (const event of ["input", "change", "click"]) setup.addEventListener(event, () => queueMicrotask(refresh));
+    let refreshQueued = false;
+    const scheduleRefresh = () => {
+      if (refreshQueued) return;
+      refreshQueued = true;
+      queueMicrotask(() => {
+        refreshQueued = false;
+        refresh();
+      });
+    };
+    for (const event of ["input", "change", "click"]) setup.addEventListener(event, scheduleRefresh);
     selected.onSelect?.();
     show(0);
     return { refresh, show };
@@ -2542,17 +2589,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   }
 
   // src/tabs/settings-export-standalone.ts
-  var APP_SEARCH_LIMIT = 100;
   function settingsExportLabel(bundles) {
     if (bundles.length === 1) return appLabelFromBundle(bundles[0]);
     return `${bundles.length}件`;
   }
   function parseAppIdList(text) {
-    const tokens = String(text || "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+    const tokens = String(text || "").split(/[\s,、]+/).map((s) => s.trim()).filter(Boolean);
     const out = [];
     const seen = /* @__PURE__ */ new Set();
     for (const tk of tokens) {
-      if (!/^\d+$/.test(tk)) continue;
+      if (!/^\d+$/.test(tk)) throw new Error(`アプリIDは数値で入力してください: ${tk}`);
       if (seen.has(tk)) continue;
       seen.add(tk);
       out.push(tk);
@@ -2578,53 +2624,6 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     </table>
   `;
   }
-  function renderSettingsExportSearchResultsHtml(apps) {
-    const list = Array.isArray(apps) ? apps : [];
-    if (!list.length) {
-      return '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
-    }
-    const rows = list.map(
-      (app) => `<tr>
-    <td>${esc(String(app.appId || ""))}</td>
-    <td title="${esc(String(app.name || ""))}">${esc(String(app.name || ""))}</td>
-    <td style="text-align:right"><button type="button" class="kus-se-add" data-app="${esc(String(app.appId || ""))}" data-name="${esc(String(app.name || ""))}" style="padding:4px 8px;font-size:10px;border:1px solid #e2e8f0;border-radius:4px;background:#f8fafc;cursor:pointer">追加</button></td>
-  </tr>`
-    ).join("");
-    return `<table style="width:100%;font-size:11px;border-collapse:collapse">
-    <thead><tr><th style="width:90px">アプリID</th><th>アプリ名</th><th style="width:70px"></th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
-  }
-  async function runSettingsExportSearchStandalone(keyword, guestId, setStatus) {
-    const kw = String(keyword || "").trim();
-    const guest = String(guestId || "").trim() || extractGuestIdFromInput(kw);
-    const prefix = buildApiPrefix(guest, false);
-    const directAppId = extractAppIdFromInput(kw);
-    if (directAppId) {
-      setStatus("アプリIDを確認中...");
-      let name = "";
-      try {
-        const info = await apiGet(prefix, "/app.json", { id: directAppId });
-        name = String(info?.name || "").trim();
-      } catch {
-        name = "ID指定（名称未取得）";
-      }
-      setStatus(`アプリID ${directAppId}${guest ? ` / ゲスト ${guest}` : ""} を候補に表示しました`);
-      return [{ appId: directAppId, name: name || "ID指定" }];
-    }
-    const params = { limit: APP_SEARCH_LIMIT };
-    if (kw) params.name = kw;
-    setStatus("アプリ検索中...");
-    const res = await apiGet(prefix, "/apps.json", params);
-    const rawCount = Array.isArray(res.apps) ? res.apps.length : 0;
-    const apps = (res.apps || []).map((a) => ({ appId: String(a.appId || ""), name: String(a.name || "") })).filter((a) => /^\d+$/.test(a.appId)).sort((a, b) => Number(a.appId) - Number(b.appId));
-    if (rawCount >= APP_SEARCH_LIMIT) {
-      setStatus(`アプリ検索完了: 先頭 ${apps.length}件のみ表示（上限 ${APP_SEARCH_LIMIT}件）。目的のアプリが無い場合はキーワードで絞り込むかアプリIDを直接入力してください`, true);
-      return apps;
-    }
-    setStatus(`アプリ検索完了: ${apps.length}件`);
-    return apps;
-  }
   async function runSettingsExportListSpaceAppsStandalone(spaceId, guestId, setStatus) {
     const sid = String(spaceId || "").trim();
     if (!/^\d+$/.test(sid)) throw new Error("スペースIDを数値で入力してください");
@@ -2642,8 +2641,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const seen = /* @__PURE__ */ new Set();
     const push = (appId, guestId) => {
       const id = String(appId || "").trim();
-      if (!/^\d+$/.test(id)) return;
+      if (!id) return;
+      if (!/^\d+$/.test(id)) throw new Error(`アプリIDは数値で入力してください: ${id}`);
       const g = String(guestId || "").trim();
+      if (g && !/^\d+$/.test(g)) throw new Error(`ゲストIDは数値で入力してください: ${g}`);
       const key = `${id}::${g}`;
       if (seen.has(key)) return;
       seen.add(key);
@@ -2658,6 +2659,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return out;
   }
   async function runSettingsExportStandalone(mode, opts, setStatus) {
+    if (!["json", "zip"].includes(mode)) throw new Error("保存形式は json または zip を指定してください");
     const targets = resolveExportTargets(opts);
     if (!targets.length) throw new Error("対象アプリIDを1件以上入力してください");
     const scopes = selectedScopeKeys(opts.scopeRoot);
@@ -2698,6 +2700,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       scopeLabels,
       apps: bundles
     };
+    const failedSections = rows.reduce((sum, row) => sum + row.ngCount, 0);
+    const failureNote = failedSections ? `。${rows.filter((row) => row.ngCount > 0).length}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : "";
     if (mode === "zip") {
       const JSZipCtor = await loadJSZipLite();
       const zip = new JSZipCtor();
@@ -2725,12 +2729,249 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       }
       const zipBlob = await zip.generateAsync({ type: "blob" });
       downloadBlob(buildExportFilename("設定一括取得", "zip", { appLabel: settingsExportLabel(bundles) }), zipBlob);
-      setStatus(`設定一括取得ZIPを保存しました（${bundles.length} apps）`);
+      setStatus(`設定一括取得ZIPを保存しました（${bundles.length}アプリ）${failureNote}`, failedSections > 0);
       return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
     }
     downloadText(buildExportFilename("設定一括取得", "json", { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), "application/json");
-    setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）`);
+    setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}`, failedSections > 0);
     return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
+  }
+
+  // src/entries/appSearchControl.ts
+  init_api();
+  init_utils();
+  var RESULT_CSS_ID = "kus-app-search-styles";
+  var RESULT_CSS = `
+.kus-as__result{margin-top:6px;border:1px solid var(--c-border);border-radius:8px;overflow:hidden;max-height:240px;overflow-y:auto}
+.kus-as__result--empty{display:none}
+.kus-as__head{padding:6px 10px;background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);position:sticky;top:0}
+.kus-as__table{border-collapse:collapse;width:100%;font-size:11.5px}
+.kus-as__table th,.kus-as__table td{padding:5px 8px;border-bottom:1px solid var(--c-border);text-align:left;vertical-align:top}
+.kus-as__table th{background:var(--c-surface);font-weight:600;color:var(--c-text-2);font-size:11px}
+.kus-as__table tr:last-child td{border-bottom:none}
+.kus-as__id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--c-text-2);white-space:nowrap}
+.kus-as__name{color:var(--c-text);word-break:break-all}
+.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:10.5px;line-height:1.5}
+.kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
+.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:10.5px}
+.kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
+`;
+  function ensureStyles2() {
+    if (document.getElementById(RESULT_CSS_ID)) return;
+    const st = document.createElement("style");
+    st.id = RESULT_CSS_ID;
+    st.textContent = RESULT_CSS;
+    document.head.appendChild(st);
+  }
+  function appCandidate(info, appId) {
+    return {
+      appId,
+      name: String(info?.name || ""),
+      code: info?.code == null ? void 0 : String(info.code),
+      spaceId: info?.spaceId === null ? null : info?.spaceId === void 0 ? void 0 : String(info.spaceId),
+      modifiedAt: String(info?.modifiedAt || ""),
+      modifierName: String(info?.modifier?.name || info?.modifier?.code || "")
+    };
+  }
+  function candidateDetails(app) {
+    const parts = [
+      app.code === void 0 ? "コード未取得" : app.code ? `コード: ${app.code}` : "コード未設定",
+      app.spaceId === null ? "スペース外" : app.spaceId ? `スペース: ${app.spaceId}` : "所属スペース未取得"
+    ];
+    if (app.modifiedAt) {
+      const date = new Date(app.modifiedAt);
+      const time = Number.isNaN(date.getTime()) ? app.modifiedAt : date.toLocaleString("ja-JP");
+      parts.push(`更新: ${time}${app.modifierName ? ` / ${app.modifierName}` : ""}`);
+    }
+    return parts.join(" · ");
+  }
+  function createAppSearchControl(panel, opts) {
+    ensureStyles2();
+    const { details, body } = makeDetails(opts.title || "アプリを検索（名前・コード・ID）", { open: !!opts.open });
+    const keyword = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide", noSubmit: true });
+    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
+    if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
+    const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
+    const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
+    searchMode.setAttribute("aria-label", "検索方法");
+    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
+    body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
+    body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
+    body.appendChild(makeNote("閲覧できるアプリを名前（部分一致）またはコード（大文字・小文字を区別する完全一致）で検索します。スペースIDで検索範囲を絞れます。ID / URL の直接指定ではスペースIDの絞り込みは使いません。"));
+    const resultBox = document.createElement("div");
+    resultBox.className = "kus-as__result kus-as__result--empty";
+    body.appendChild(resultBox);
+    const moreBtn = makeButton("さらに100件を取得", "sub");
+    moreBtn.hidden = true;
+    body.appendChild(moreBtn);
+    let generation = 0;
+    let running = false;
+    let candidates = [];
+    let nextOffset = 0;
+    let resultGuest = "";
+    function invalidate() {
+      generation += 1;
+      candidates = [];
+      nextOffset = 0;
+      resultBox.replaceChildren();
+      resultBox.className = "kus-as__result kus-as__result--empty";
+      moreBtn.hidden = true;
+    }
+    keyword.addEventListener("input", invalidate);
+    guest.addEventListener("input", invalidate);
+    space.addEventListener("input", invalidate);
+    searchMode.addEventListener("change", () => {
+      keyword.placeholder = searchMode.value === "code" ? "アプリコード（完全一致）" : "アプリ名 / アプリID / URL";
+      invalidate();
+    });
+    function syncBusyControls() {
+      const busy = panel.root.getAttribute("aria-busy") === "true";
+      searchBtn.disabled = running || busy;
+      moreBtn.disabled = running || busy;
+    }
+    panel.root.addEventListener("kus-lite-busy-change", () => {
+      if (running && panel.root.getAttribute("aria-busy") === "true") invalidate();
+      syncBusyControls();
+    });
+    function renderResults(apps) {
+      if (!apps.length) {
+        resultBox.className = "kus-as__result";
+        resultBox.innerHTML = '<div class="kus-as__head">検索結果なし</div>';
+        return;
+      }
+      const single = opts.targets.length <= 1;
+      const rowsHtml = apps.map((app, idx) => {
+        const buttons = opts.targets.map((t, ti) => {
+          const label = single ? "選択" : `${t.label || "設定"}へ`;
+          return `<button type="button" class="kus-lp__btn kus-lp__btn--sub" data-as-pick="${idx}" data-as-target="${ti}">${esc(label)}</button>`;
+        }).join("");
+        return `<tr>
+        <td class="kus-as__id">${esc(app.appId)}</td>
+        <td class="kus-as__name"><div>${esc(app.name)}</div><div class="kus-as__meta">${esc(candidateDetails(app))}</div></td>
+        <td><div class="kus-as__assign">${buttons}</div></td>
+      </tr>`;
+      }).join("");
+      resultBox.className = "kus-as__result";
+      resultBox.innerHTML = `<div class="kus-as__head">${apps.length}件の候補</div>
+      <table class="kus-as__table">
+        <thead><tr><th style="width:74px">アプリID</th><th>アプリ名</th><th style="width:1%"></th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>`;
+      resultBox.querySelectorAll("button[data-as-pick]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const app = apps[Number(btn.dataset.asPick)];
+          const target = opts.targets[Number(btn.dataset.asTarget)];
+          if (!app || !target) return;
+          if (running || panel.root.getAttribute("aria-busy") === "true") return;
+          const searchGuest = resultGuest;
+          const outcome = target.apply(app.appId, app.name, searchGuest) || {};
+          if (opts.guestEl && opts.guestEl.value.trim() !== searchGuest) {
+            opts.guestEl.value = searchGuest;
+            opts.guestEl.dispatchEvent(new Event("input", { bubbles: true }));
+            opts.guestEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : "";
+          btn.classList.add("kus-as__picked");
+          btn.setAttribute("aria-pressed", "true");
+          btn.textContent = outcome.pickedLabel || (opts.targets.length > 1 && target.label ? `${target.label}済み` : "設定済み");
+          panel.setStatus(
+            outcome.message || `App ${app.appId}${app.name ? ` (${app.name})` : ""} を設定しました${where}`,
+            outcome.tone || "ok"
+          );
+        });
+      });
+    }
+    async function runSearch(append = false) {
+      if (running || panel.root.getAttribute("aria-busy") === "true") return;
+      if (!append) invalidate();
+      const raw = keyword.value.trim();
+      const codeSearch = searchMode.value === "code";
+      const directAppId = codeSearch ? "" : extractAppIdFromInput(raw);
+      if (!directAppId && ([...raw].length > 64 || codeSearch && !raw)) {
+        panel.setStatus(codeSearch ? "アプリコードを1〜64文字で入力してください" : "アプリ名は64文字以内で入力してください", "warn");
+        return;
+      }
+      const spaceId = space.value.trim();
+      if (!directAppId && spaceId && !/^[1-9]\d*$/.test(spaceId)) {
+        panel.setStatus("スペースIDは正の数値で入力してください", "warn");
+        return;
+      }
+      const urlGuestId = codeSearch ? "" : extractGuestIdFromInput(raw);
+      if (urlGuestId) guest.value = urlGuestId;
+      else if (!codeSearch && /\/k\/\d+(?:[/?#]|$)/i.test(raw)) guest.value = "";
+      const guestId = guest.value.trim() || urlGuestId || "";
+      if (guestId && !/^\d+$/.test(guestId)) {
+        panel.setStatus("ゲストIDは数値で入力してください", "warn");
+        return;
+      }
+      const requestGeneration = generation;
+      const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
+      const prefix = buildApiPrefix(guestId, false);
+      running = true;
+      searchBtn.disabled = true;
+      moreBtn.disabled = true;
+      resultBox.setAttribute("aria-busy", "true");
+      try {
+        if (directAppId) {
+          panel.setStatus("アプリIDを確認中…", "busy");
+          let candidate = { appId: directAppId, name: "ID指定（名称未取得）" };
+          try {
+            const info = await apiGet(prefix, "/app.json", { id: directAppId });
+            candidate = appCandidate(info, directAppId);
+          } catch {
+          }
+          if (!isCurrent()) return;
+          resultGuest = guestId;
+          renderResults([candidate]);
+          panel.setStatus(`アプリID ${directAppId}${guestId ? ` / ゲスト ${guestId}` : ""} を候補に表示しました`, "ok");
+          return;
+        }
+        const params = { limit: 100, offset: append ? nextOffset : 0 };
+        if (raw) {
+          if (codeSearch) params.codes = [raw];
+          else params.name = raw;
+        }
+        if (spaceId) params.spaceIds = [spaceId];
+        panel.setStatus("アプリ検索中…", "busy");
+        const res = await apiGet(prefix, "/apps.json", params);
+        if (!isCurrent()) return;
+        if (!Array.isArray(res?.apps)) throw new Error("アプリ一覧の応答が不正です。再検索してください");
+        const byId = new Map(candidates.map((app) => [app.appId, app]));
+        for (const app of res.apps) {
+          const appId = String(app?.appId || "").trim();
+          if (/^\d+$/.test(appId)) byId.set(appId, appCandidate(app, appId));
+        }
+        candidates = [...byId.values()].sort((a, b) => BigInt(a.appId) < BigInt(b.appId) ? -1 : BigInt(a.appId) > BigInt(b.appId) ? 1 : 0);
+        nextOffset = Number(params.offset) + 100;
+        resultGuest = guestId;
+        renderResults(candidates);
+        moreBtn.hidden = res.apps.length < 100;
+        panel.setStatus(`アプリ検索完了: ${candidates.length}件${moreBtn.hidden ? "" : "。続きは「さらに100件を取得」で表示できます"}`, candidates.length ? "ok" : "info");
+      } catch (e) {
+        if (!isCurrent()) return;
+        panel.setStatus(`アプリ検索エラー: ${e?.message || String(e)}`, "err");
+      } finally {
+        running = false;
+        syncBusyControls();
+        resultBox.setAttribute("aria-busy", "false");
+        if (!isCurrent() && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true" && panel.status.dataset.tone === "busy") {
+          panel.setStatus("検索条件が変わりました。もう一度検索してください", "info");
+        }
+      }
+    }
+    searchBtn.addEventListener("click", () => {
+      void runSearch();
+    });
+    moreBtn.addEventListener("click", () => {
+      void runSearch(true);
+    });
+    keyword.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
+        e.preventDefault();
+        void runSearch();
+      }
+    });
+    return details;
   }
 
   // src/entries/settings-export-lite-ui.ts
@@ -2749,19 +2990,19 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       currentAppId: String(DEFAULT_APP_ID || ""),
       initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: "" }] : []
     });
-    const searchKw = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide" });
     const searchGuest = makeInput({ placeholder: "検索用ゲストID（任意）", width: "guest" });
-    const searchBtn = makeButton("検索", "sub");
-    cardTarget.body.appendChild(makeRow([searchKw, searchGuest, searchBtn], { label: "アプリ検索" }));
-    const searchOut = document.createElement("div");
-    searchOut.className = "kus-lp__panel-html kus-lp__panel-html--empty";
-    searchOut.style.maxHeight = "180px";
-    cardTarget.body.appendChild(searchOut);
+    const searchControl = createAppSearchControl(panel, {
+      guestEl: searchGuest,
+      targets: [{ apply: (appId, appName, guestId) => {
+        const result = appTable.putApp(appId, guestId, { appName, focus: true });
+        return { message: `アプリ #${appId}${appName ? ` (${appName})` : ""} を対象表に設定しました${result.action === "existing" ? "（追加済み）" : ""}` };
+      } }]
+    });
     cardTarget.body.appendChild(appTable.element);
     cardTarget.body.appendChild(makeNote("各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。"));
     const spaceKw = makeInput({ placeholder: "スペースID", width: "narrow" });
     const spaceBtn = makeButton("スペース内アプリを表に追加", "sub");
-    cardTarget.body.appendChild(makeRow([spaceKw, spaceBtn], { label: "スペース" }));
+    cardTarget.body.appendChild(makeRow([spaceKw, searchGuest, spaceBtn], { label: "スペース" }));
     panel.body.insertBefore(cardTarget.card, panel.status);
     const cardScope = makeCard({ title: "取得セクション", number: 2 });
     const chipBox = document.createElement("div");
@@ -2803,36 +3044,6 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         scopeRoot
       };
     }
-    searchBtn.addEventListener("click", () => liteRun(panel, "アプリ検索中…", async () => {
-      const urlGuestId = extractGuestIdFromInput(searchKw.value);
-      if (urlGuestId && !searchGuest.value.trim()) searchGuest.value = urlGuestId;
-      const apps = await runSettingsExportSearchStandalone(
-        searchKw.value,
-        searchGuest.value.trim(),
-        (m, e) => panel.setStatus(m, e ? "err" : "busy")
-      );
-      searchOut.innerHTML = renderSettingsExportSearchResultsHtml(apps);
-      searchOut.classList.toggle("kus-lp__panel-html--empty", !apps.length);
-    }));
-    searchOut.addEventListener("click", (ev) => {
-      const t = ev.target;
-      if (!(t instanceof HTMLElement)) return;
-      const btn = t.closest(".kus-se-add");
-      if (!btn) return;
-      const id = btn.getAttribute("data-app");
-      if (!id) return;
-      const name = btn.getAttribute("data-name") || "";
-      const result = appTable.putApp(id, searchGuest.value.trim(), { appName: name, focus: true });
-      const note = result.action === "existing" ? "（追加済み）" : result.action === "filled" ? "（空行へ設定）" : "";
-      if (btn instanceof HTMLButtonElement) {
-        btn.textContent = result.action === "existing" ? "追加済み" : "設定済み";
-        btn.setAttribute("aria-pressed", "true");
-        btn.style.background = "#ecfdf5";
-        btn.style.borderColor = "#a7f3d0";
-        btn.style.color = "#065f46";
-      }
-      panel.setStatus(`アプリ #${id}${name ? ` (${name})` : ""} を対象表に設定しました${note}`, result.action === "existing" ? "info" : "ok");
-    });
     spaceBtn.addEventListener("click", () => liteRun(panel, "スペース内アプリ取得中…", async () => {
       const guest = searchGuest.value.trim();
       const apps = await runSettingsExportListSpaceAppsStandalone(
@@ -2865,11 +3076,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       summary.innerHTML = summaryHtml;
       summary.classList.remove("kus-lp__panel-html--empty");
     }));
-    searchKw.type = "search";
-    searchKw.setAttribute("aria-label", "アプリを検索");
-    cardTarget.body.appendChild(foldWorkflowSection("アプリ名で検索・スペースから追加", searchKw.closest(".kus-lp__row"), searchOut, spaceKw.closest(".kus-lp__row")));
+    cardTarget.body.appendChild(searchControl);
+    cardTarget.body.appendChild(foldWorkflowSection("スペースから追加", spaceKw.closest(".kus-lp__row")));
     cardTarget.body.appendChild(prev.label);
-    const exportProblem = () => !appTable.count() ? "対象アプリを1件以上指定してください。" : chips.some((c) => c.checkbox.checked) ? "" : "取得する設定を1つ以上選んでください。";
+    const exportProblem = () => {
+      const rows = appTable.getApps();
+      if (!rows.length) return "対象アプリを1件以上指定してください。";
+      if (rows.some((row) => !/^\d+$/.test(row.appId) || row.guestId && !/^\d+$/.test(row.guestId))) return "アプリID・ゲストIDは数値で入力してください。";
+      return chips.some((c) => c.checkbox.checked) ? "" : "取得する設定を1つ以上選んでください。";
+    };
     const exportSummary = (format) => [
       ["対象アプリ", appTable.getApps().map((r) => connectionSummary(r.appId, r.guestId, prev.checkbox.checked ? "プレビュー" : "本番")).join("\n")],
       ["取得する設定", chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent || "").join("、")],

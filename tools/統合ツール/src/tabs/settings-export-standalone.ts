@@ -17,13 +17,13 @@ function settingsExportLabel(bundles: any[]): string {
 
 function parseAppIdList(text) {
   const tokens = String(text || '')
-    .split(/[\s,]+/)
+    .split(/[\s,、]+/)
     .map((s) => s.trim())
     .filter(Boolean);
   const out = [];
   const seen = new Set();
   for (const tk of tokens) {
-    if (!/^\d+$/.test(tk)) continue;
+    if (!/^\d+$/.test(tk)) throw new Error(`アプリIDは数値で入力してください: ${tk}`);
     if (seen.has(tk)) continue;
     seen.add(tk);
     out.push(tk);
@@ -137,8 +137,10 @@ function resolveExportTargets(opts: any): Array<{ appId: string; guestId: string
   const seen = new Set<string>();
   const push = (appId: string, guestId: string) => {
     const id = String(appId || '').trim();
-    if (!/^\d+$/.test(id)) return;
+    if (!id) return;
+    if (!/^\d+$/.test(id)) throw new Error(`アプリIDは数値で入力してください: ${id}`);
     const g = String(guestId || '').trim();
+    if (g && !/^\d+$/.test(g)) throw new Error(`ゲストIDは数値で入力してください: ${g}`);
     const key = `${id}::${g}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -154,6 +156,7 @@ function resolveExportTargets(opts: any): Array<{ appId: string; guestId: string
 }
 
 export async function runSettingsExportStandalone(mode: string, opts: any, setStatus: (msg: string, isError?: boolean) => void) {
+  if (!['json', 'zip'].includes(mode)) throw new Error('保存形式は json または zip を指定してください');
   const targets = resolveExportTargets(opts);
   if (!targets.length) throw new Error('対象アプリIDを1件以上入力してください');
   const scopes = selectedScopeKeys(opts.scopeRoot);
@@ -201,6 +204,9 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     apps: bundles
   };
 
+  const failedSections = rows.reduce((sum, row) => sum + row.ngCount, 0);
+  const failureNote = failedSections ? `。${rows.filter(row => row.ngCount > 0).length}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : '';
+
   if (mode === 'zip') {
     const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
@@ -228,11 +234,11 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     }
     const zipBlob = await zip.generateAsync({ type: 'blob' });
     downloadBlob(buildExportFilename('設定一括取得', 'zip', { appLabel: settingsExportLabel(bundles) }), zipBlob);
-    setStatus(`設定一括取得ZIPを保存しました（${bundles.length} apps）`);
+    setStatus(`設定一括取得ZIPを保存しました（${bundles.length}アプリ）${failureNote}`, failedSections > 0);
     return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
   }
 
   downloadText(buildExportFilename('設定一括取得', 'json', { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), 'application/json');
-  setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）`);
+  setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}`, failedSections > 0);
   return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
 }

@@ -98,7 +98,7 @@ export function sanitizeZipSegment(value: unknown, fallback = 'item'): string {
     .replace(/[\\/:*?"<>|]/g, '_')
     .replace(/[\u0000-\u001f]/g, '')
     .trim();
-  return cleaned || fallback;
+  return !cleaned || /^\.+$/.test(cleaned) ? fallback : cleaned;
 }
 
 /** ZIP 内で衝突しないファイル名を払い出す（fileKey 先頭 12 文字を接頭辞にする）。 */

@@ -10,6 +10,10 @@ import {
   writeInChunks
 } from './record-query.js';
 import { buildRecordCsvExport } from './record-csv-export.js';
+import { readRecordViews, readAttachmentFields } from './record-metadata.js';
+import { parseCsvText, planCsvImport, formatCsvImportReport, type CsvImportReport } from './record-csv-import.js';
+import { readProcessActionChoices } from './record-process-metadata.js';
+export { parseCsvText, validateCsvImportHeader, coerceCsvImportValue, splitCsvListValue } from './record-csv-import.js';
 
 /**
  * Paste-friendly parser used by every record-management operation.
@@ -304,129 +308,73 @@ export async function runCsvExportBatchStandalone(opts, setStatus) {
 // ---------------------------------------------------------------------------
 // CSV 取込
 // ---------------------------------------------------------------------------
-const CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = new Set([
-  'RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME',
-  'STATUS', 'STATUS_ASSIGNEE', 'CALC', 'CATEGORY', '__ID__', '__REVISION__',
-  'FILE', 'SUBTABLE', 'REFERENCE_TABLE', 'LABEL', 'HR', 'SPACER'
-]);
-
-export function splitCsvListValue(value: unknown): string[] {
-  const text = String(value == null ? '' : value).trim();
-  if (!text) return [];
-  return text.split(',').map((item) => item.trim()).filter(Boolean);
-}
-
-export function coerceCsvImportValue(rawValue: unknown, fieldDef: any): unknown {
-  const type = String(fieldDef?.type || '');
-  if (type === 'CHECK_BOX' || type === 'MULTI_SELECT') return splitCsvListValue(rawValue);
-  if (type === 'USER_SELECT' || type === 'ORGANIZATION_SELECT' || type === 'GROUP_SELECT') {
-    return splitCsvListValue(rawValue).map((code) => ({ code }));
-  }
-  if (type === 'NUMBER') return String(rawValue == null ? '' : rawValue).trim();
-  return rawValue;
-}
-
-export function validateCsvImportHeader(header: string[], properties: Record<string, any>): void {
-  if (header.includes('$id')) throw new Error('CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。');
-  const unknown: string[] = [];
-  const unsupported: string[] = [];
-  for (const code of header) {
-    if (!code) continue;
-    const def = properties?.[code];
-    if (!def) {
-      unknown.push(code);
-      continue;
-    }
-    if (CSV_IMPORT_UNSUPPORTED_FIELD_TYPES.has(String(def.type || ''))) {
-      unsupported.push(`${code}(${def.type})`);
-    }
-  }
-  if (unknown.length) throw new Error(`CSVヘッダに存在しないフィールドコードがあります: ${unknown.join(', ')}`);
-  if (unsupported.length) throw new Error(`CSVインポート非対応のフィールドが含まれています: ${unsupported.join(', ')}`);
-}
-
-/** RFC4180 風の最小 CSV パーサ（ダブルクォート内の改行・"" エスケープ対応）。 */
-export function parseCsvText(csv: string): string[][] {
-  const rows: string[][] = [];
-  let current: string[] = [];
-  let cell = '';
-  let inQ = false;
-  for (let i = 0; i < csv.length; i++) {
-    const c = csv[i];
-    const n = csv[i + 1];
-    if (inQ) {
-      if (c === '"') {
-        if (n === '"') { cell += '"'; i++; } else inQ = false;
-      } else {
-        cell += c;
-      }
-      continue;
-    }
-    if (c === '"') inQ = true;
-    else if (c === ',') { current.push(cell); cell = ''; }
-    else if (c === '\n' || c === '\r') {
-      if (c === '\r' && n === '\n') i++;
-      current.push(cell);
-      rows.push(current);
-      current = [];
-      cell = '';
-    } else cell += c;
-  }
-  if (cell || current.length) { current.push(cell); rows.push(current); }
-  return rows;
-}
-
-export async function runCsvImportStandalone(opts, setStatus) {
-  const { appId, guestId, file } = opts;
-  if (!appId) throw new Error('アプリIDを入力してください');
+async function readImportFile(file: File): Promise<string> {
   if (!file) throw new Error('CSVファイルを選択してください');
-  const prefix = buildApiPrefix(guestId || '', false);
-
-  setStatus('CSVファイルを読み込み中...');
-  const text = await new Promise<string>((resolve, reject) => {
+  if (typeof file.text === 'function') return file.text();
+  return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => resolve(String((e.target as FileReader).result || ''));
     reader.onerror = () => reject(new Error('ファイルの読み取りに失敗'));
     reader.readAsText(file);
   });
+}
 
-  const rows = parseCsvText(text.replace(/^\uFEFF/, ''));
-  if (rows.length < 2) throw new Error('ヘッダ行とデータ行が必要です');
-  const header = rows[0].map((h) => h.trim());
-  setStatus('フィールド情報を確認中...');
-  const fields = await apiGet(prefix, '/app/form/fields.json', { app: appId });
-  const properties = fields?.properties || ({} as any);
-  validateCsvImportHeader(header, properties);
-
-  const records: any[] = [];
-  for (let i = 1; i < rows.length; i++) {
-    if (rows[i].length === 1 && rows[i][0] === '') continue;
-    const rec: Record<string, any> = {};
-    for (let j = 0; j < header.length; j++) {
-      if (!header[j]) continue;
-      const val = rows[i][j] !== undefined ? rows[i][j] : '';
-      rec[header[j]] = { value: coerceCsvImportValue(val, properties[header[j]]) };
-    }
-    records.push(rec);
+async function inspectCsvImportBatch(opts, setStatus) {
+  const appIds = parseRecordAppIds(opts.appIdsText || opts.appId);
+  if (!appIds.length) throw new Error('対象アプリIDを入力してください');
+  setStatus('CSVファイルを読み込み中...');
+  const rows = parseCsvText((await readImportFile(opts.file)).replace(/^\uFEFF/, ''));
+  const prefix = buildApiPrefix(opts.guestId || '', false);
+  const plans: Array<{ appId: string; properties: Record<string, any>; report?: CsvImportReport; error?: string }> = [];
+  for (const appId of appIds) {
+    setStatus(`App ${appId}: CSVを事前検査中...`);
+    try {
+      const response = await apiGet(prefix, '/app/form/fields.json', { app: appId });
+      const { records: _records, ...report } = planCsvImport(rows, response?.properties);
+      plans.push({ appId, properties: response.properties, report });
+    } catch (error: any) { plans.push({ appId, properties: {}, error: error?.message || String(error) || '事前検査に失敗しました' }); }
   }
-  if (!records.length) throw new Error('登録するデータがありません');
+  return { prefix, rows, plans };
+}
+
+/** Read-only inspection for all destination apps; no records are created. */
+export async function runPreviewCsvImportStandalone(opts, setStatus) {
+  const { plans } = await inspectCsvImportBatch(opts, setStatus);
+  const result = plans.map(({ appId, report, error }) => ({ appId, report, error }));
+  const problems = plans.filter(plan => plan.error || plan.report.issueCount).length;
+  setStatus(problems ? `事前検査: ${problems}アプリに問題があります。まだ書き込んでいません。` : `事前検査完了: ${plans.length}アプリ。まだ書き込んでいません。`, problems > 0);
+  return result;
+}
+
+export async function runCsvImportBatchStandalone(opts, setStatus) {
+  // Recheck all apps before the first write. Never reuse a stale UI preview.
+  const { prefix, rows, plans } = await inspectCsvImportBatch(opts, setStatus);
+  const problems = plans.filter(plan => plan.error || plan.report.issueCount);
+  if (problems.length) throw new Error(`CSVの事前検査で問題を検出しました。全対象アプリへの書き込みを中止しました。\n${problems.map(plan => `App ${plan.appId}: ${plan.error || formatCsvImportReport(plan.report)}`).join('\n\n')}`);
   const confirmText = [
-    `App ${appId}${guestId ? `（ゲスト ${guestId}）` : ''} の本番レコードへ CSV から ${records.length}件 を追加します。`,
-    `対象フィールド: ${header.filter(Boolean).length}件`,
+    `CSVから ${plans.length}アプリの本番レコードへ追加します${opts.guestId ? `（ゲスト ${opts.guestId}）` : ''}。`,
+    ...plans.map(plan => `App ${plan.appId}: ${plan.report.count}件 / ${plan.report.columns.length}フィールド`),
     '追加したレコードは自動では取り消せません。実行しますか？'
   ].join('\n');
   if (!kusConfirm(confirmText)) {
-    setStatus('CSV取込をキャンセルしました');
-    return;
+    const warning = 'CSV取込をキャンセルしました';
+    setStatus(warning, true);
+    return { warning };
   }
+  await runRecordAppBatchStandalone(plans.map(plan => plan.appId).join(','), async (appId) => {
+    const plan = plans.find(item => item.appId === appId);
+    // Build just one app's payload at a time, keeping multi-app memory bounded.
+    const { records } = planCsvImport(rows, plan.properties);
+    const ok = await writeInChunks(records, `App ${appId} の CSV取込`,
+      batch => apiPost(prefix, '/records.json', { app: appId, records: batch }),
+      (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`));
+    setStatus(`App ${appId}: インポート完了 ${ok}件`);
+  }, setStatus);
+  setStatus(`CSV取込完了: ${plans.length}アプリ / ${plans.reduce((sum, plan) => sum + plan.report.count, 0)}件`);
+}
 
-  const ok = await writeInChunks(
-    records,
-    `App ${appId} の CSV取込`,
-    (batch) => apiPost(prefix, '/records.json', { app: appId, records: batch }),
-    (done, total) => setStatus(`インポート中... (${done} / ${total}件)`)
-  );
-  setStatus(`インポート完了: ${ok}件`);
+export async function runCsvImportStandalone(opts, setStatus) {
+  return runCsvImportBatchStandalone({ ...opts, appIdsText: opts.appId }, setStatus);
 }
 
 // ---------------------------------------------------------------------------
@@ -577,38 +525,72 @@ export async function runRecordCopyStandalone(opts, setStatus) {
 /** 添付ファイル一括ダウンロード（条件で絞り、指定したファイルフィールドの中身を ZIP 化） */
 export async function runAttachmentDownloadStandalone(opts, setStatus) {
   const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
+  const tableFieldCode = String(opts.tableFieldCode || '');
   if (!appId) throw new Error('アプリIDを入力してください');
   if (!fileFieldCode) throw new Error('ファイルフィールドコードを入力してください');
   const prefix = buildApiPrefix(guestId || '', false);
 
+  const fields = await runLoadAttachmentFieldsStandalone({ appId, guestId }, setStatus);
+  if (!fields.some(field => field.fileFieldCode === fileFieldCode && field.tableFieldCode === tableFieldCode)) {
+    throw new Error(`添付フィールド「${tableFieldCode ? `${tableFieldCode} / ` : ''}${fileFieldCode}」がありません。フィールド名ではなくコードと、テーブルの指定を確認してください`);
+  }
+
   const records = await fetchAllRecords(prefix, appId, query || '', setStatus);
   if (!records.length) throw new Error('対象レコードが0件です');
-  const fieldMissing = records.every((rec) => !rec?.[fileFieldCode]);
-  if (fieldMissing) throw new Error(`フィールド「${fileFieldCode}」が取得結果に存在しません。フィールドコードを確認してください`);
+  // Empty tables are valid. Missing fields are distinct from empty file arrays.
+  const groups = records.flatMap((rec, index) => {
+    const recordId = String(rec.$id?.value || index + 1);
+    const parent = rec?.[tableFieldCode || fileFieldCode];
+    if (!parent || parent.type !== (tableFieldCode ? 'SUBTABLE' : 'FILE') || !Array.isArray(parent.value)) {
+      throw new Error(`レコード ${recordId}: フィールド「${tableFieldCode || fileFieldCode}」を取得できません。閲覧権限を確認してください`);
+    }
+    const rows = tableFieldCode ? parent.value : [{ value: { [fileFieldCode]: parent } }];
+    return rows.map((row, rowIndex) => {
+      const field = row.value?.[fileFieldCode];
+      if (field?.type !== 'FILE' || !Array.isArray(field.value)) {
+        throw new Error(`レコード ${recordId} / テーブル行 ${rowIndex + 1}: 添付フィールド「${fileFieldCode}」を取得できません。閲覧権限を確認してください`);
+      }
+      return { rec, recordId, rowId: tableFieldCode ? String(row.id || rowIndex + 1) : '', files: field.value };
+    });
+  });
 
+  if (!groups.some(group => group.files.length)) {
+    const warning = 'ダウンロード対象の添付がありませんでした';
+    setStatus(warning, true);
+    return { warning };
+  }
   const JSZipCtor = await loadJSZipLite();
   const zip = new JSZipCtor();
   let fileCount = 0;
   const failures: FileFailure[] = [];
+  const manifest: any[] = [];
+  const usedByFolder = new Map<string, Set<string>>();
 
-  for (let i = 0; i < records.length; i++) {
-    const rec = records[i];
-    setStatus(`添付DL中 (${i + 1}/${records.length}${failures.length ? ` / 失敗 ${failures.length}` : ''})`);
-    const files: any[] = rec?.[fileFieldCode]?.value || [];
+  for (let i = 0; i < groups.length; i++) {
+    const { rec, recordId, rowId, files } = groups[i];
+    setStatus(`添付DL中 (${i + 1}/${groups.length}${failures.length ? ` / 失敗 ${failures.length}` : ''})`);
     if (!files.length) continue;
-    const recordId = String(rec.$id?.value || i + 1);
     let folderName = folderFieldCode && rec[folderFieldCode]?.value;
     if (!folderName) folderName = `Record_${recordId}`;
-    const folder = zip.folder(sanitizeZipSegment(folderName, `Record_${recordId}`));
-    const used = new Set<string>();
+    const folderPath = [sanitizeZipSegment(folderName, `Record_${recordId}`),
+      ...(tableFieldCode ? [...(folderName === `Record_${recordId}` ? [] : [`Record_${recordId}`]), sanitizeZipSegment(tableFieldCode), `Row_${sanitizeZipSegment(rowId)}`] : [])].join('/');
+    const folder = zip.folder(folderPath);
+    const used = usedByFolder.get(folderPath) || new Set<string>();
+    usedByFolder.set(folderPath, used);
     for (const f of files) {
       const result = await downloadFileBlob(prefix, f.fileKey);
+      const entry = { recordId, tableFieldCode, rowId, fileFieldCode, name: String(f.name || ''),
+        size: String(f.size ?? ''), contentType: String(f.contentType || ''), path: '', error: '' };
       if (result.ok === true) {
-        folder.file(uniqueZipName(used, f.name || 'file.bin', f.fileKey, fileCount), result.blob);
+        const name = uniqueZipName(used, f.name || 'file.bin', f.fileKey, fileCount);
+        folder.file(name, result.blob);
+        entry.path = `${folderPath}/${name}`;
         fileCount++;
       } else {
-        failures.push({ recordId, fileName: String(f.name || ''), fileKey: String(f.fileKey || ''), reason: result.reason });
+        entry.error = result.reason;
+        failures.push({ recordId, fileName: String(f.name || ''), fileKey: String(f.fileKey || ''), reason: `${rowId ? `テーブル ${tableFieldCode} / 行 ${rowId}: ` : ''}${result.reason}` });
       }
+      manifest.push(entry);
     }
   }
   if (!fileCount) {
@@ -616,17 +598,19 @@ export async function runAttachmentDownloadStandalone(opts, setStatus) {
       throw new Error(`添付ファイルを1件も取得できませんでした（失敗 ${failures.length}件）\n${formatFileFailures(failures.slice(0, 5))}${failures.length > 5 ? '\n…' : ''}`);
     }
     setStatus('ダウンロード対象の添付がありませんでした', true);
-    return;
+    return { warning: 'ダウンロード対象の添付がありませんでした' };
   }
   if (failures.length) {
     zip.file('download_errors.txt', `取得できなかった添付ファイル ${failures.length}件\n${formatFileFailures(failures)}\n`);
   }
+  zip.file('manifest.json', JSON.stringify({ appId: String(appId), guestId: String(guestId || ''), query: query || '', files: manifest }, null, 2));
   setStatus(`ZIP生成中 (${fileCount}ファイル)`);
   const zipBlob = await zip.generateAsync({ type: 'blob' });
   downloadBlob(zipName || buildExportFilename('添付ファイル', 'zip', { appLabel: buildAppFilenameLabel(appId, '') }), zipBlob);
   if (failures.length) {
-    setStatus(`添付一括DL完了: ${fileCount}ファイル（取得失敗 ${failures.length}件、詳細は download_errors.txt）`, true);
-    return;
+    const warning = `添付一括DL完了: ${fileCount}ファイル（取得失敗 ${failures.length}件、詳細は download_errors.txt）`;
+    setStatus(warning, true);
+    return { warning };
   }
   setStatus(`添付一括DL完了: ${fileCount}ファイル`);
 }
@@ -811,15 +795,18 @@ export async function runLoadStatusActionsStandalone(opts, setStatus) {
   if (!appId) throw new Error('アプリIDを入力してください');
   const prefix = buildApiPrefix(guestId || '', false);
   setStatus('プロセス管理情報を取得中...');
-  const res = await apiGet(prefix, '/app/status.json', { app: appId });
+  const res = await apiGet(prefix, '/app/status.json', { app: appId, lang: 'user' });
   if (!res.enable) {
     setStatus('プロセス管理は無効です', true);
-    return { enabled: false, states: [], actions: [] };
+    return { enabled: false, states: [], actions: [], statusFieldCode: '' };
   }
-  const states = Object.keys(res.states || ({} as any));
-  const actions = (res.actions || []).map((a: any) => ({ name: a.name, from: a.from, to: a.to }));
+  const states = Object.keys(res.states || {}).sort((a, b) => Number(res.states[a].index) - Number(res.states[b].index));
+  const actions = readProcessActionChoices(res);
+  const fields = await apiGet(prefix, '/app/form/fields.json', { app: appId, lang: 'user' });
+  const statusField = Object.entries(fields?.properties || {}).find(([, field]: [string, any]) => field?.type === 'STATUS');
+  const statusFieldCode = statusField ? String((statusField[1] as any).code || statusField[0]) : '';
   setStatus(`プロセス管理: 状態 ${states.length}件 / アクション ${actions.length}件`);
-  return { enabled: true, states, actions };
+  return { enabled: true, states, actions, statusFieldCode };
 }
 
 /** 一覧（views）を取得 — クエリ補助用 */
@@ -828,11 +815,18 @@ export async function runLoadViewsStandalone(opts, setStatus) {
   if (!appId) throw new Error('アプリIDを入力してください');
   const prefix = buildApiPrefix(guestId || '', false);
   setStatus('一覧情報を取得中...');
-  const resp = await apiGet(prefix, '/app/views.json', { app: appId });
-  const views = (Object.entries(resp.views || ({} as any)) as Array<[string, any]>)
-    .map(([name, v]) => ({ name, id: String(v.id), filter: String(v.filterCond || ''), type: String(v.type), index: Number(v.index || 0) }))
-    .filter((v) => v.type === 'LIST')
-    .sort((a, b) => a.index - b.index);
+  const resp = await apiGet(prefix, '/app/views.json', { app: appId, lang: 'user' });
+  const views = readRecordViews(resp);
   setStatus(`一覧: ${views.length}件`);
   return views;
+}
+
+/** Field labels and codes, including FILE fields nested in SUBTABLE.fields. */
+export async function runLoadAttachmentFieldsStandalone(opts, setStatus) {
+  if (!opts.appId) throw new Error('アプリIDを入力してください');
+  setStatus('添付フィールド情報を取得中...');
+  const response = await apiGet(buildApiPrefix(opts.guestId || '', false), '/app/form/fields.json', { app: opts.appId, lang: 'user' });
+  const fields = readAttachmentFields(response);
+  setStatus(`添付フィールド: ${fields.length}件${fields.length ? '' : '（添付フィールドがありません）'}`);
+  return fields;
 }

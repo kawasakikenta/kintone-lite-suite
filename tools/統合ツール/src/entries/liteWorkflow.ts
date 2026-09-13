@@ -226,7 +226,8 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
   const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input,select,textarea')).map(input => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map(file => [file.name, file.size, file.lastModified]) : null])]);
   function show(index: number) {
     if (busy) return;
-    if (index === 1 && selected.validate()) { panel.setStatus(selected.validate(), 'warn'); return; }
+    const problem = index === 1 ? selected.validate() : '';
+    if (problem) { panel.setStatus(problem, 'warn'); return; }
     active = index;
     if (index === 1) {
       summary.replaceChildren();
@@ -247,8 +248,9 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
     refresh();
   }
   function refresh() {
-    const problem = selected.validate();
-    const fresh = reviewedSignature === signature();
+    const problem = busy ? '' : selected.validate();
+    // 取得進捗や入力段階では、大きな対象表・JSONの確認用署名を作り直さない。
+    const fresh = !busy && active === 1 && reviewedSignature === signature();
     next.hidden = active !== 0;
     execute.hidden = active !== 1;
     back.hidden = active === 0;
@@ -304,7 +306,13 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
   };
   const originalStatus = panel.setStatus;
   panel.setStatus = (message, tone) => { originalStatus(message, tone); refresh(); };
-  for (const event of ['input', 'change', 'click']) setup.addEventListener(event, () => queueMicrotask(refresh));
+  let refreshQueued = false;
+  const scheduleRefresh = () => {
+    if (refreshQueued) return;
+    refreshQueued = true;
+    queueMicrotask(() => { refreshQueued = false; refresh(); });
+  };
+  for (const event of ['input', 'change', 'click']) setup.addEventListener(event, scheduleRefresh);
   selected.onSelect?.();
   show(0);
   return { refresh, show };
