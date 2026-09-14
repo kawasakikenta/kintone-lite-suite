@@ -249,6 +249,7 @@ export async function runBatchJsConfigDownloadStandalone(
   const zip = new JSZipCtor();
   const failedApps: BatchJsConfigDownloadResult['failedApps'] = [];
   const failedFiles: BatchJsConfigDownloadResult['failedFiles'] = [];
+  const manifestApps: Array<{ appId: string; name: string; folder: string; scope: string; files: Array<{ entry: string; area: string; kind: string; name: string; fileKey: string; size: string }> }> = [];
   let fileCount = 0;
 
   for (let i = 0; i < apps.length; i++) {
@@ -266,30 +267,31 @@ export async function runBatchJsConfigDownloadStandalone(
       continue;
     }
 
-    const files = [
-      ...(customize?.desktop?.js || []),
-      ...(customize?.desktop?.css || []),
-      ...(customize?.mobile?.js || []),
-      ...(customize?.mobile?.css || [])
-    ];
+    const files = (['desktop', 'mobile'] as const).flatMap((area) =>
+      (['js', 'css'] as const).flatMap((kind) => ((customize?.[area]?.[kind] || []) as any[]).map((f: any) => ({ ...f, area, kind })))
+    );
     const fileTargets = files.filter((f: any) => f?.type === 'FILE' && f?.file?.fileKey);
     if (!fileTargets.length) continue;
 
     const folderName = guestId ? `guest${guestId}_${app.appId}_${safeName}` : `${app.appId}_${safeName}`;
     const appFolder = zip.folder(folderName);
     const used = new Set<string>();
+    const manifestFiles: (typeof manifestApps)[number]['files'] = [];
 
     for (const file of fileTargets) {
       const fileName = String(file.file.name || `${file.file.fileKey}.bin`);
       const result = await downloadFileBlobForJsConfig(baseListPrefix, file.file.fileKey);
       if (result.ok === true) {
         // desktop/mobile で同名ファイルがあっても上書きしない
-        appFolder.file(uniqueZipEntryName(used, sanitizeFolderName(fileName) || 'file.bin'), result.blob);
+        const entry = uniqueZipEntryName(used, sanitizeFolderName(fileName) || 'file.bin');
+        appFolder.file(entry, result.blob);
+        manifestFiles.push({ entry: `${folderName}/${entry}`, area: file.area, kind: file.kind, name: fileName, fileKey: String(file.file.fileKey), size: String(file.file.size ?? '') });
         fileCount++;
       } else {
         failedFiles.push({ appId: app.appId, fileName, reason: result.reason });
       }
     }
+    manifestApps.push({ appId: String(app.appId), name: String(app.name || ''), folder: folderName, scope: String(customize?.scope || ''), files: manifestFiles });
     await new Promise((r) => setTimeout(r, 80));
   }
 
@@ -307,6 +309,18 @@ export async function runBatchJsConfigDownloadStandalone(
     ];
     zip.file('download_errors.txt', lines.join('\n') + '\n');
   }
+
+  // どのアプリのどの読み込み枠（PC/モバイル × JS/CSS）から取ったファイルかを ZIP 内に残す
+  zip.file('manifest.json', JSON.stringify({
+    generatedAt: new Date().toISOString(),
+    guestId: guestId || '',
+    appCount: apps.length,
+    fileCount,
+    apps: manifestApps,
+    failedApps,
+    failedFiles,
+    note: 'URL 形式の JS/CSS は含みません。entry は ZIP 内のパス、area は desktop/mobile、kind は js/css です。'
+  }, null, 2));
 
   setStatus('ZIPファイル作成中...');
   const zipBlob = await zip.generateAsync({ type: 'blob' });

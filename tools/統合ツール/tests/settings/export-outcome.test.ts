@@ -6,12 +6,13 @@ import { runSettingsExportStandalone } from '../../src/tabs/settings-export-stan
 vi.mock('../../src/api', async importOriginal => ({ ...await importOriginal<typeof import('../../src/api')>(), fetchBundle: vi.fn() }));
 vi.mock('../../src/utils', async importOriginal => ({ ...await importOriginal<typeof import('../../src/utils')>(),
   downloadText: vi.fn(), downloadBlob: vi.fn(), selectedScopeKeys: () => ['appSettings', 'fieldSettings'] }));
+const zipFiles = vi.hoisted(() => new Map<string, string>());
 vi.mock('../../src/jszipLoader', () => ({ loadJSZipLite: async () => class {
-  file() { return this; }
+  file(name: string, content: string) { zipFiles.set(name, content); return this; }
   async generateAsync() { return new Blob(['zip fixture']); }
 } }));
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => { vi.clearAllMocks(); zipFiles.clear(); });
 describe('settings export completion', () => {
   it.each([
     { apps: [{ appId: '1' }, { appId: 'invalid' }] },
@@ -41,5 +42,19 @@ describe('settings export completion', () => {
     const status = vi.fn();
     await runSettingsExportStandalone('json', { apps: [{ appId: '1' }] }, status);
     expect(status).toHaveBeenLastCalledWith(expect.stringContaining('保存しました'), false);
+  });
+  it('ZIP の manifest.json にアプリごとのファイル名・アプリ名・失敗セクションを記録する', async () => {
+    vi.mocked(fetchBundle).mockResolvedValue({ appId: '1', guestId: '', preview: false, fetchedAt: '2026-09-14T00:00:00.000Z', meta: { sectionRevisions: {} },
+      sections: { appSettings: { name: '対象アプリ' }, fieldSettings: { _fetchError: '権限不足' } } });
+    await runSettingsExportStandalone('zip', { apps: [{ appId: '1', guestId: '7' }], scopeRoot: {} }, vi.fn());
+    const manifest = JSON.parse(zipFiles.get('manifest.json')!);
+    expect(manifest.environment).toBe('production');
+    expect(manifest.scopeLabels).toEqual(['アプリ設定', 'フィールド設定']);
+    expect(manifest.appCount).toBe(1);
+    expect(manifest.failedAppCount).toBe(1);
+    expect(manifest.apps[0]).toMatchObject({ appId: '1', appName: '対象アプリ', guestId: '7', fetchedAt: '2026-09-14T00:00:00.000Z', sections: { ok: 1, ng: 1 } });
+    expect(manifest.apps[0].file).toMatch(/_ゲスト7_本番\.json$/);
+    expect(manifest.apps[0].failedSections).toEqual([{ key: 'fieldSettings', label: 'フィールド設定', error: '権限不足' }]);
+    expect(zipFiles.has(manifest.apps[0].file)).toBe(true);
   });
 });

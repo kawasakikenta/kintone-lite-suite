@@ -2526,6 +2526,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const zip = new JSZipCtor();
     const failedApps = [];
     const failedFiles = [];
+    const manifestApps = [];
     let fileCount = 0;
     for (let i = 0; i < apps.length; i++) {
       const app = apps[i];
@@ -2538,27 +2539,28 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         failedApps.push({ appId: app.appId, name: app.name, reason: e?.message || String(e) });
         continue;
       }
-      const files = [
-        ...customize?.desktop?.js || [],
-        ...customize?.desktop?.css || [],
-        ...customize?.mobile?.js || [],
-        ...customize?.mobile?.css || []
-      ];
+      const files = ["desktop", "mobile"].flatMap(
+        (area) => ["js", "css"].flatMap((kind) => (customize?.[area]?.[kind] || []).map((f) => ({ ...f, area, kind })))
+      );
       const fileTargets = files.filter((f) => f?.type === "FILE" && f?.file?.fileKey);
       if (!fileTargets.length) continue;
       const folderName = guestId ? `guest${guestId}_${app.appId}_${safeName}` : `${app.appId}_${safeName}`;
       const appFolder = zip.folder(folderName);
       const used = /* @__PURE__ */ new Set();
+      const manifestFiles = [];
       for (const file of fileTargets) {
         const fileName = String(file.file.name || `${file.file.fileKey}.bin`);
         const result = await downloadFileBlobForJsConfig(baseListPrefix, file.file.fileKey);
         if (result.ok === true) {
-          appFolder.file(uniqueZipEntryName(used, sanitizeFolderName(fileName) || "file.bin"), result.blob);
+          const entry = uniqueZipEntryName(used, sanitizeFolderName(fileName) || "file.bin");
+          appFolder.file(entry, result.blob);
+          manifestFiles.push({ entry: `${folderName}/${entry}`, area: file.area, kind: file.kind, name: fileName, fileKey: String(file.file.fileKey), size: String(file.file.size ?? "") });
           fileCount++;
         } else {
           failedFiles.push({ appId: app.appId, fileName, reason: result.reason });
         }
       }
+      manifestApps.push({ appId: String(app.appId), name: String(app.name || ""), folder: folderName, scope: String(customize?.scope || ""), files: manifestFiles });
       await new Promise((r) => setTimeout(r, 80));
     }
     const failed = failedApps.length + failedFiles.length;
@@ -2574,6 +2576,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       ];
       zip.file("download_errors.txt", lines.join("\n") + "\n");
     }
+    zip.file("manifest.json", JSON.stringify({
+      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      guestId: guestId || "",
+      appCount: apps.length,
+      fileCount,
+      apps: manifestApps,
+      failedApps,
+      failedFiles,
+      note: "URL 形式の JS/CSS は含みません。entry は ZIP 内のパス、area は desktop/mobile、kind は js/css です。"
+    }, null, 2));
     setStatus("ZIPファイル作成中...");
     const zipBlob = await zip.generateAsync({ type: "blob" });
     downloadBlob(`customize_scripts_${nowStamp()}.zip`, zipBlob);

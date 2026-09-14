@@ -1445,6 +1445,41 @@ function mdRenderAppSettings(sec: any) {
   return mdTable(['項目', '値'], rows);
 }
 
+function mdFieldNotes(f: any): string {
+  if (!f || typeof f !== 'object') return '';
+  const notes: string[] = [];
+  const lookup = f.lookup;
+  if (lookup && typeof lookup === 'object') {
+    const app = lookup.relatedApp?.app ? `App ${lookup.relatedApp.app}` : (lookup.relatedApp?.code ? `コード ${lookup.relatedApp.code}` : '参照先不明');
+    const key = lookup.relatedKeyField ? ` キー \`${lookup.relatedKeyField}\`` : '';
+    const mappings = Array.isArray(lookup.fieldMappings) ? lookup.fieldMappings.length : 0;
+    notes.push(`ルックアップ: ${app}${key}${mappings ? ` / 転記 ${mappings}項目` : ''}`);
+  }
+  const ref = f.referenceTable;
+  if (ref && typeof ref === 'object') {
+    const app = ref.relatedApp?.app ? `App ${ref.relatedApp.app}` : (ref.relatedApp?.code ? `コード ${ref.relatedApp.code}` : '参照先不明');
+    const cond = ref.condition?.field && ref.condition?.relatedField ? ` 条件 \`${ref.condition.field}\` = \`${ref.condition.relatedField}\`` : '';
+    const shown = Array.isArray(ref.displayFields) ? ref.displayFields.length : 0;
+    notes.push(`関連レコード: ${app}${cond}${shown ? ` / 表示 ${shown}項目` : ''}${ref.size ? ` / ${ref.size}件表示` : ''}`);
+  }
+  if (f.unit) notes.push(`単位: ${decodeHtmlEntities(f.unit)}${f.unitPosition === 'BEFORE' ? '（前）' : f.unitPosition === 'AFTER' ? '（後）' : ''}`);
+  if (f.digit === true || f.digit === 'true') notes.push('桁区切りあり');
+  if (f.displayScale !== undefined && f.displayScale !== null && f.displayScale !== '') notes.push(`小数 ${f.displayScale}桁`);
+  if (f.format && f.type === 'CALC') notes.push(`表示形式: ${f.format}`);
+  const range = (min: any, max: any) => (min !== undefined && min !== null && min !== '') || (max !== undefined && max !== null && max !== '')
+    ? `${min ?? ''}〜${max ?? ''}` : '';
+  const len = range(f.minLength, f.maxLength);
+  if (len) notes.push(`文字数 ${len}`);
+  const val = range(f.minValue, f.maxValue);
+  if (val) notes.push(`値 ${val}`);
+  if (f.defaultNowValue === true || f.defaultNowValue === 'true') notes.push('初期値: 現在日時');
+  if (f.protocol) notes.push(`リンク種別: ${f.protocol}`);
+  if (f.hideExpression === true || f.hideExpression === 'true') notes.push('計算式を非表示');
+  if (f.noLabel === true || f.noLabel === 'true') notes.push('ラベル非表示');
+  if (f.thumbnailSize) notes.push(`サムネイル ${f.thumbnailSize}px`);
+  return notes.join(' / ');
+}
+
 function mdRenderFieldSettings(sec: any) {
   const props = sec?.properties || ({} as any);
   const rows: any[][] = [];
@@ -1458,7 +1493,8 @@ function mdRenderFieldSettings(sec: any) {
       f.required ? '○' : '',
       f.unique ? '○' : '',
       mdFormatDefaultValue(f.defaultValue),
-      mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : '')
+      mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ''),
+      mdFieldNotes(f)
     ]);
     if (f.type === 'SUBTABLE' && f.fields) {
       subtables.push(f);
@@ -1469,7 +1505,7 @@ function mdRenderFieldSettings(sec: any) {
   parts.push(`- フィールド数: ${rows.length}`);
   parts.push('');
   parts.push(mdTable(
-    ['コード', 'フィールド名', '種別', '必須', '重複禁止', '初期値', '選択肢/式'],
+    ['コード', 'フィールド名', '種別', '必須', '重複禁止', '初期値', '選択肢/式', '参照先/制約'],
     rows
   ));
   subtables.forEach((tbl: any) => {
@@ -1482,10 +1518,11 @@ function mdRenderFieldSettings(sec: any) {
       mdFieldTypeLabel(f.type),
       f.required ? '○' : '',
       mdFormatDefaultValue(f.defaultValue),
-      mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : '')
+      mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ''),
+      mdFieldNotes(f)
     ]);
     subRows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-    parts.push(mdTable(['コード', 'フィールド名', '種別', '必須', '初期値', '選択肢/式'], subRows));
+    parts.push(mdTable(['コード', 'フィールド名', '種別', '必須', '初期値', '選択肢/式', '参照先/制約'], subRows));
   });
   return parts.join('\n');
 }
@@ -1885,7 +1922,27 @@ function mdDesignSectionRows(bundle: any) {
     });
 }
 
-export function bundleToMarkdown(bundle: any) {
+function mdFetchedAt(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  // ISO 8601 の場合だけ日本時間の読みやすい表記を添える（ローカル書式の文字列はそのまま）
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(raw)) return raw;
+  try {
+    return `${date.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour12: false })} JST（${raw}）`;
+  } catch {
+    return raw;
+  }
+}
+
+export interface BundleToMarkdownOptions {
+  /** 各セクションの末尾に API レスポンスの生データ（折りたたみ）を付ける。既定 true */
+  rawJson?: boolean;
+}
+
+export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions = {}) {
+  const includeRawJson = options.rawJson !== false;
   const sections = bundle?.sections || ({} as any);
   const appName = decodeHtmlEntities(sections.appSettings?.name || '');
   const lines: string[] = [];
@@ -1895,11 +1952,14 @@ export function bundleToMarkdown(bundle: any) {
     lines.push(`> ${appName}`);
     lines.push('');
   }
+  const failedSections = SECTION_DEFS.filter((def) => sections[def.key]?._fetchError);
   lines.push(mdTable(['項目', '値'], [
     ['アプリID', bundle.appId],
+    ['アプリ名', appName || '（取得なし）'],
     ['ゲストスペースID', bundle.guestId || '(通常空間)'],
-    ['プレビュー取得', bundle.preview ? 'はい' : 'いいえ'],
-    ['取得日時', bundle.fetchedAt]
+    ['取得環境', bundle.preview ? 'プレビュー（未公開の設定）' : '本番（運用中の設定）'],
+    ['取得日時', mdFetchedAt(bundle.fetchedAt)],
+    ['取得できなかったセクション', failedSections.length ? failedSections.map((def) => def.label).join('、') : 'なし']
   ]));
   lines.push('');
 
@@ -1952,8 +2012,10 @@ export function bundleToMarkdown(bundle: any) {
       lines.push('（データなし）');
       lines.push('');
     }
-    lines.push(mdRawJson(sec));
-    lines.push('');
+    if (includeRawJson) {
+      lines.push(mdRawJson(sec));
+      lines.push('');
+    }
   }
   return lines.join('\n');
 }
