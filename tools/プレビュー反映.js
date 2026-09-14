@@ -3087,6 +3087,15 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
 #kus-reflect-lite .kus-rl-preview-row__actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 #kus-reflect-lite .kus-rl-preview-row__state{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 #kus-reflect-lite .kus-rl-preview-mini{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:#fff;border:1px solid #e2e8f0;font-size:10.5px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-result-list{display:grid;gap:6px;margin-top:10px}
+#kus-reflect-lite .kus-rl-result-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:start;padding:8px 10px;border:1px solid #e2e8f0;border-radius:9px;background:#fff}
+#kus-reflect-lite .kus-rl-result-row__status{display:inline-flex;min-width:50px;justify-content:center;padding:2px 6px;border-radius:999px;font-size:10px;font-weight:800}
+#kus-reflect-lite .kus-rl-result-row[data-status="ok"] .kus-rl-result-row__status{background:#dcfce7;color:#166534}
+#kus-reflect-lite .kus-rl-result-row[data-status="ng"] .kus-rl-result-row__status{background:#fee2e2;color:#991b1b}
+#kus-reflect-lite .kus-rl-result-row[data-status="pending"] .kus-rl-result-row__status{background:#fef3c7;color:#92400e}
+#kus-reflect-lite .kus-rl-result-row[data-status="skip"] .kus-rl-result-row__status{background:#e2e8f0;color:#475569}
+#kus-reflect-lite .kus-rl-result-row__label{font-size:12px;font-weight:700;color:#0f172a}
+#kus-reflect-lite .kus-rl-result-row__message{margin-top:2px;font-size:11px;line-height:1.5;color:#64748b;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 24px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
 #kus-reflect-lite .kus-rl-nav__btn{appearance:none;width:100%;border:1px solid transparent;border-radius:10px;background:transparent;color:#64748b;padding:10px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:9px;text-align:left}
 #kus-reflect-lite .kus-rl-nav__btn:hover{background:#f1f5f9;color:#172033}
@@ -4051,7 +4060,10 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     retryFailedBtn.title = "失敗または中断で未実行のセクションだけを反映対象に選び直します";
     const openTargetBtn = makeButton("比較先の設定画面を開く", "sub");
     openTargetBtn.title = "比較先アプリの設定画面を新しいタブで開きます（運用環境への反映はそこから実行できます）";
+    const exportResultBtn = makeButton("実行結果JSONを保存", "sub");
+    exportResultBtn.title = "実行時の対象、セクション別結果、ログを監査用JSONとして保存します";
     lastResultActions.appendChild(retryFailedBtn);
+    lastResultActions.appendChild(exportResultBtn);
     lastResultActions.appendChild(openTargetBtn);
     lastResultCard.body.appendChild(lastResultActions);
     lastResultCard.card.style.display = "none";
@@ -4072,6 +4084,24 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       window.open(url, "_blank", "noopener");
       panel.setStatus(`比較先アプリ #${last.appId} の設定画面を開きました`, "info");
     });
+    exportResultBtn.addEventListener("click", () => {
+      const last = memoryState.lastResult;
+      if (!last) return;
+      const payload = {
+        schemaVersion: 1,
+        executedAt: new Date(last.at).toISOString(),
+        durationMs: last.durationMs,
+        summary: { ok: last.ok, ng: last.ng, pending: last.pending, skip: last.skip },
+        retryScopes: last.retryScopes,
+        ...last.report
+      };
+      const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `プレビュー反映結果_App${last.appId}_${new Date(last.at).toISOString().replace(/[:.]/g, "-")}.json`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5e3);
+    });
     function renderLastResult() {
       const last = memoryState.lastResult;
       if (!last) {
@@ -4082,8 +4112,15 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       const hasIssue = last.ng > 0 || last.pending > 0;
       const tone = hasIssue ? "color:#9a3412" : "color:#065f46";
       const failedSummary = last.failedLabels.length ? `<div>失敗: ${escapeHtml(last.failedLabels.slice(0, 5).join(" / "))}${last.failedLabels.length > 5 ? ` ほか ${last.failedLabels.length - 5} 件` : ""}</div>` : "";
-      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${hasIssue ? "⚠ 一部エラー" : "✓ 全成功"}</div><div>比較先 #${escapeHtml(last.appId || "-")} / OK ${last.ok} / NG ${last.ng}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? '<div style="margin-top:4px">「失敗・未実行だけ選択」で対象を絞って再実行できます。</div>' : '<div style="margin-top:4px">反映先はプレビューです。運用環境への反映（デプロイ）は比較先の設定画面から実行してください。</div>');
+      const statusLabels = { ok: "成功", ng: "失敗", pending: "未実行", skip: "変更なし" };
+      const sectionRows = last.report.sections.map((section) => `
+      <div class="kus-rl-result-row" data-status="${section.status}">
+        <span class="kus-rl-result-row__status">${statusLabels[section.status]}</span>
+        <div><div class="kus-rl-result-row__label">${escapeHtml(section.label)}</div>${section.message ? `<div class="kus-rl-result-row__message">${escapeHtml(section.message)}</div>` : ""}</div>
+      </div>`).join("");
+      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${hasIssue ? "⚠ 一部エラー" : "✓ 全成功"}</div><div>比較先 #${escapeHtml(last.appId || "-")} / 成功 ${last.ok} / 失敗 ${last.ng} / 未実行 ${last.pending} / 変更なし ${last.skip}</div>` + failedSummary + `<div>${stamp} / ${(last.durationMs / 1e3).toFixed(1)} 秒</div><div class="kus-rl-result-list" aria-label="セクション別実行結果">${sectionRows}</div>` + (hasIssue ? '<div style="margin-top:4px">「失敗・未実行だけ選択」で対象を絞って再実行できます。</div>' : '<div style="margin-top:4px">反映先はプレビューです。運用環境への反映（デプロイ）は比較先の設定画面から実行してください。</div>');
       retryFailedBtn.style.display = last.retryScopes.length ? "" : "none";
+      exportResultBtn.style.display = "";
       openTargetBtn.style.display = last.appId ? "" : "none";
       lastResultCard.card.style.display = "block";
     }
@@ -4126,6 +4163,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
         memoryState.lastPreview = null;
         memoryState.lastResult = null;
         renderLastResult();
+        const startedAt = Date.now();
         const applyOutcome = await runApplyPreviewStandalone(
           applyOptions,
           (m, e) => panel.setStatus(m, e ? "err" : "busy"),
@@ -4139,11 +4177,25 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
           ok: counts.ok,
           ng: counts.ng,
           pending: counts.pending,
+          skip: counts.skip,
           at: Date.now(),
+          durationMs: Date.now() - startedAt,
           appId: applyOptions.targetAppId,
           guestId: applyOptions.targetGuestId,
           retryScopes: collectRetrySectionKeys(applyOutcome.sections),
-          failedLabels: applyOutcome.sections.filter((s) => s.status === "ng").map((s) => s.label)
+          failedLabels: applyOutcome.sections.filter((s) => s.status === "ng").map((s) => s.label),
+          report: {
+            source: {
+              appId: applyOptions.sourceBundle ? String(applyOptions.sourceBundle?.appId || "") : applyOptions.sourceAppId,
+              guestId: applyOptions.sourceGuestId || "",
+              environment: sourceMode === "json" ? "json" : applyOptions.sourcePreview ? "preview" : "production"
+            },
+            target: { appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || "", environment: "preview" },
+            preserveTargetOnly: !!applyOptions.preserveTargetOnly,
+            scopes: plan.effectiveScopes.slice(),
+            sections: applyOutcome.sections,
+            logs: applyOutcome.logs.slice()
+          }
         };
         renderLastResult();
         showWorkflowStage("result");
