@@ -62,6 +62,15 @@ interface LiteMemoryState {
     retryScopes: string[];
     /** 失敗セクションの表示ラベル */
     failedLabels: string[];
+    /** 監査用に保存できる実行時の全セクション結果とログ */
+    report: {
+      source: { appId: string; guestId: string; environment: 'production' | 'preview' | 'json' };
+      target: { appId: string; guestId: string; environment: 'preview' };
+      preserveTargetOnly: boolean;
+      scopes: string[];
+      sections: unknown[];
+      logs: string[];
+    };
   } | null;
   /** ユーザー定義プリセット（接続情報＋スコープ） */
   presets?: ReflectLitePreset[];
@@ -1223,7 +1232,10 @@ export function mountReflectLitePanel() {
   retryFailedBtn.title = '失敗または中断で未実行のセクションだけを反映対象に選び直します';
   const openTargetBtn = makeButton('比較先の設定画面を開く', 'sub');
   openTargetBtn.title = '比較先アプリの設定画面を新しいタブで開きます（運用環境への反映はそこから実行できます）';
+  const exportResultBtn = makeButton('実行結果JSONを保存', 'sub');
+  exportResultBtn.title = '実行時の対象、セクション別結果、ログを監査用JSONとして保存します';
   lastResultActions.appendChild(retryFailedBtn);
+  lastResultActions.appendChild(exportResultBtn);
   lastResultActions.appendChild(openTargetBtn);
   lastResultCard.body.appendChild(lastResultActions);
   lastResultCard.card.style.display = 'none';
@@ -1247,6 +1259,23 @@ export function mountReflectLitePanel() {
     panel.setStatus(`比較先アプリ #${last.appId} の設定画面を開きました`, 'info');
   });
 
+  exportResultBtn.addEventListener('click', () => {
+    const last = memoryState.lastResult;
+    if (!last) return;
+    const payload = {
+      schemaVersion: 1,
+      executedAt: new Date(last.at).toISOString(),
+      summary: { ok: last.ok, ng: last.ng, pending: last.pending },
+      ...last.report
+    };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `プレビュー反映結果_App${last.appId}_${new Date(last.at).toISOString().replace(/[:.]/g, '-')}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
+
   function renderLastResult() {
     const last = memoryState.lastResult;
     if (!last) {
@@ -1267,6 +1296,7 @@ export function mountReflectLitePanel() {
         ? '<div style="margin-top:4px">「失敗・未実行だけ選択」で対象を絞って再実行できます。</div>'
         : '<div style="margin-top:4px">反映先はプレビューです。運用環境への反映（デプロイ）は比較先の設定画面から実行してください。</div>');
     retryFailedBtn.style.display = last.retryScopes.length ? '' : 'none';
+    exportResultBtn.style.display = '';
     openTargetBtn.style.display = last.appId ? '' : 'none';
     lastResultCard.card.style.display = 'block';
   }
@@ -1333,7 +1363,19 @@ export function mountReflectLitePanel() {
         appId: applyOptions.targetAppId,
         guestId: applyOptions.targetGuestId,
         retryScopes: collectRetrySectionKeys(applyOutcome.sections),
-        failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng').map((s) => s.label)
+        failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng').map((s) => s.label),
+        report: {
+          source: {
+            appId: applyOptions.sourceBundle ? String((applyOptions.sourceBundle as any)?.appId || '') : applyOptions.sourceAppId,
+            guestId: applyOptions.sourceGuestId || '',
+            environment: sourceMode === 'json' ? 'json' : applyOptions.sourcePreview ? 'preview' : 'production'
+          },
+          target: { appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || '', environment: 'preview' },
+          preserveTargetOnly: !!applyOptions.preserveTargetOnly,
+          scopes: plan.effectiveScopes.slice(),
+          sections: applyOutcome.sections,
+          logs: applyOutcome.logs.slice()
+        }
       };
       renderLastResult();
       showWorkflowStage('result');
