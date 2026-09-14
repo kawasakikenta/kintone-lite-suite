@@ -18,6 +18,7 @@ import {
   makeCard,
   makeDetails,
   makeNote,
+  makePickList,
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
@@ -106,52 +107,25 @@ export function mountErLitePanel() {
 
   // ---- スペース内アプリピッカー（読み込んだ一覧は生成時に再利用しAPIを節約） ----
   const spaceLoadBtn = makeButton('スペース内アプリを読込', 'sub');
-  const spacePickerHost = document.createElement('div');
-  Object.assign(spacePickerHost.style, {
-    display: 'none', width: '100%', maxHeight: '200px', overflowY: 'auto',
-    border: '1px solid #e2e8f0', borderRadius: '8px', background: '#f8fafc', padding: '8px', marginTop: '4px'
+  let pickerSpaceId = '';
+  const spacePicker = makePickList({
+    ariaLabel: '起点にするスペース内アプリ',
+    filterPlaceholder: 'アプリ名・IDで絞り込み',
+    emptyText: 'このスペースにアプリが見つかりませんでした。',
+    footer: (selected, total) => `スペース #${pickerSpaceId} のアプリ ${total}件中 ${selected}件を起点にします。${selected ? '' : '1件以上選ぶか、起点IDを入力してください。'}`
   });
   let spaceAppsCache: { key: string; apps: Array<{ appId: string; name: string }> } | null = null;
   const spaceCacheKey = () => `${spaceInp.value.trim()}|${guestInp.value.trim()}`;
 
   function renderSpacePicker(spaceId: string, apps: Array<{ appId: string; name: string }>) {
-    spacePickerHost.innerHTML = '';
-    spacePickerHost.dataset.spaceId = spaceId;
-    spacePickerHost.style.display = 'block';
-    if (!apps.length) {
-      spacePickerHost.textContent = 'このスペースにアプリが見つかりませんでした。';
-      return;
-    }
-    const head = document.createElement('div');
-    Object.assign(head.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' });
-    const lbl = document.createElement('span');
-    lbl.textContent = `スペース #${spaceId} のアプリ（${apps.length}件）— 起点にするアプリを選択`;
-    Object.assign(lbl.style, { fontSize: '11px', fontWeight: '700', color: '#334155' });
-    const btns = document.createElement('span');
-    for (const [text, on] of [['全選択', true], ['全解除', false]] as Array<[string, boolean]>) {
-      const b = makeButton(text, 'sub');
-      b.addEventListener('click', () => {
-        spacePickerHost.querySelectorAll<HTMLInputElement>('input[data-space-app]').forEach((c) => { c.checked = on; });
-      });
-      btns.appendChild(b);
-    }
-    head.appendChild(lbl);
-    head.appendChild(btns);
-    spacePickerHost.appendChild(head);
-    for (const a of apps) {
-      const item = document.createElement('label');
-      Object.assign(item.style, { display: 'flex', alignItems: 'center', gap: '6px', padding: '3px 4px', fontSize: '11px', cursor: 'pointer' });
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = true;
-      cb.dataset.spaceApp = String(a.appId);
-      const name = document.createElement('span');
-      name.textContent = `${a.name || `アプリ ${a.appId}`} (#${a.appId})`;
-      Object.assign(name.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-      item.appendChild(cb);
-      item.appendChild(name);
-      spacePickerHost.appendChild(item);
-    }
+    pickerSpaceId = spaceId;
+    spacePicker.setItems(apps.map((a) => ({ value: String(a.appId), label: a.name || `アプリ ${a.appId}`, sub: `#${a.appId}`, checked: true })));
+  }
+  // 読み込んだスペース・接続先と食い違ったピッカーは使わない
+  for (const input of [spaceInp, guestInp]) {
+    input.addEventListener('input', () => {
+      if (spaceCacheKey() !== (spaceAppsCache?.key || '')) spacePicker.clear();
+    });
   }
 
   async function loadSpaceApps() {
@@ -172,7 +146,7 @@ export function mountErLitePanel() {
 
   details.body.appendChild(makeRow(extra, { label: '追加起点' }));
   details.body.appendChild(makeRow([spaceInp, spaceLoadBtn], { label: 'スペースID' }));
-  details.body.appendChild(spacePickerHost);
+  details.body.appendChild(spacePicker.element);
   details.body.appendChild(makeRow(layoutSel, { label: 'レイアウト' }));
   details.body.appendChild(makeRow(densitySel, { label: '表示密度' }));
   details.body.appendChild(makeRow(depthInp, { label: '探索深さ' }));
@@ -188,12 +162,8 @@ export function mountErLitePanel() {
     // ピッカーで読み込み済みの一覧・選択状態を引き渡す（生成時の再取得を防ぐ）
     const spaceId = spaceInp.value.trim();
     const cacheHit = !!(spaceAppsCache && spaceAppsCache.key === spaceCacheKey());
-    const pickerMatches = cacheHit && spacePickerHost.dataset.spaceId === spaceId && spacePickerHost.style.display !== 'none';
-    const selectedIds = pickerMatches
-      ? Array.from(spacePickerHost.querySelectorAll<HTMLInputElement>('input[data-space-app]'))
-          .filter((c) => c.checked)
-          .map((c) => String(c.dataset.spaceApp || ''))
-      : null;
+    const pickerMatches = cacheHit && pickerSpaceId === spaceId && !spacePicker.element.hidden;
+    const selectedIds = pickerMatches ? spacePicker.selected() : null;
     return {
       appId: appInp.value.trim(),
       appIds: parseAppIds(appInp.value),
@@ -223,7 +193,13 @@ export function mountErLitePanel() {
   guestInp.setAttribute('aria-label', 'ゲストスペースID');
   const erSummary = (): Array<[string, string]> => [
     ['起点', connectionSummary(appInp.value.trim(), guestInp.value.trim())],
-    ['追加起点', extra.value.trim() || 'なし'], ['スペース', spaceInp.value.trim() || '指定なし'],
+    ['追加起点', extra.value.trim() || 'なし'],
+    ['スペース', (() => {
+      const spaceId = spaceInp.value.trim();
+      if (!spaceId) return '指定なし';
+      const picked = source().spaceSelectedAppIds;
+      return picked ? `${spaceId}（読み込んだ ${spacePicker.count()} アプリ中 ${picked.length} 件を起点にする）` : `${spaceId}（スペース内の全アプリを起点にする）`;
+    })()],
     ['探索の深さ', depthInp.value === '0' ? '無制限' : depthInp.value],
     ['表示', (layoutSel.selectedOptions[0]?.textContent || '') + ' / ' + (densitySel.selectedOptions[0]?.textContent || '')],
     ['逆引き', reverseCb.checkbox.checked ? 'あり' : 'なし']
