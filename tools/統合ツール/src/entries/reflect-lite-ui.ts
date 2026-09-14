@@ -26,6 +26,17 @@ import { pickAllSettingsBundles } from '../settingsBundleImport.js';
 import { reflectSelectionBlockers } from '../reflect/standalonePlan.js';
 import { appendReflectChanges, renderReflectRoute, reflectIdentityLabel } from './reflectPlanView.js';
 import { collectRetrySectionKeys, summarizeApplyOutcome } from '../reflect/applyOutcome.js';
+import {
+  parseAppReference,
+  needsAppReferenceParse,
+  parseLookupMapText,
+  lookupMapError,
+  lookupMapValue,
+  describeReflectSetupBlocker,
+  summarizePostApplyCheck
+} from '../reflect/liteSetup.js';
+import { buildReflectPresetsExport, normalizeImportedReflectPresets, mergeReflectPresets, type ReflectPreset } from '../reflect/presetIo.js';
+import { buildExportFilename, downloadText, readTextFile } from '../utils.js';
 
 // =============================================================================
 // メモリ状態（リロードで消える。lite はブラウザ永続ストレージを使わない方針）
@@ -37,6 +48,8 @@ interface PreviewSnapshot {
   scopes?: string[];
   at: number;
   result: PreviewReflectResult;
+  /** 反映直後に同じ条件で再取得した差分（反映先が反映元と一致したかの確認用） */
+  postApplyCheck?: { scopeCount: number };
 }
 
 interface LiteMemoryState {
@@ -72,19 +85,11 @@ interface LiteMemoryState {
       logs: string[];
     };
   } | null;
-  /** ユーザー定義プリセット（接続情報＋スコープ） */
-  presets?: ReflectLitePreset[];
+  /** ユーザー定義プリセット（接続情報＋スコープ）。JSON ファイルで書き出し・読み込みできる */
+  presets?: ReflectPreset[];
 }
 
-interface ReflectLitePreset {
-  preserveTargetOnly?: boolean;
-  name: string;
-  createdAt: string;
-  source: { appId: string; guestId: string; preview: boolean };
-  target: { appId: string; guestId: string };
-  scopes: string[];
-  lookupMapText: string;
-}
+const REFLECT_PRESET_LIMIT = 30;
 
 let memoryState: LiteMemoryState = {
   presets: []
@@ -211,6 +216,11 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-issues{margin:0;padding-left:18px;font-size:12px;line-height:1.6;color:#92400e}
 #kus-reflect-lite .kus-rl-issues li+li{margin-top:3px}
 #kus-reflect-lite .kus-rl-quiet{font-size:11.5px;color:#64748b}
+#kus-reflect-lite .kus-rl-lookup-status{margin-top:6px;font-size:11.5px;color:#475569}
+#kus-reflect-lite .kus-rl-lookup-status--err{color:#b91c1c;font-weight:700}
+#kus-reflect-lite .kus-rl-preset-name{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;margin-bottom:8px}
+#kus-reflect-lite .kus-rl-preset-name .kus-lp__input{width:100%;min-width:0;box-sizing:border-box}
+#kus-reflect-lite .kus-rl-dock-reason{color:#9a3412;font-weight:600}
 #kus-reflect-lite .kus-rl-preview-summary{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 #kus-reflect-lite .kus-rl-preview-tools{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
 #kus-reflect-lite .kus-rl-preview-tools__actions{display:flex;flex-wrap:wrap;gap:6px}
@@ -293,10 +303,6 @@ const REFLECT_LITE_CSS = `
 }
 @media(prefers-reduced-motion:reduce){#kus-reflect-lite{animation:none}#kus-reflect-lite *{scroll-behavior:auto!important}}
 `;
-
-type LookupParseResult =
-  | { ok: true; value: Record<string, string> }
-  | { ok: false; error: string };
 
 type PreviewEntry = PreviewReflectResult['entries'][number];
 
@@ -582,6 +588,37 @@ export function mountReflectLitePanel() {
     });
   });
 
+  // アプリ URL の貼り付け・入力から ID を読み取る（/k/123/、/k/guest/5/123/、?app=123）。
+  function adoptAppReference(appInput: HTMLInputElement, guestInput: HTMLInputElement, guestDetails: HTMLDetailsElement, sideLabel: string, text = appInput.value) {
+    if (!needsAppReferenceParse(text)) return false;
+    const reference = parseAppReference(text);
+    if (!reference) {
+      panel.setStatus(`${sideLabel}のアプリIDを読み取れません。数字のID、またはアプリのURLを入力してください。`, 'warn');
+      return false;
+    }
+    appInput.value = reference.appId;
+    if (reference.guestId) {
+      guestInput.value = reference.guestId;
+      guestDetails.open = true;
+    }
+    saveState();
+    refreshSameConnBanner();
+    refreshReviewCard();
+    panel.setStatus(`URLから${sideLabel}のアプリID ${reference.appId}${reference.guestId ? `（ゲストスペース ${reference.guestId}）` : ''}を読み取りました。`, 'ok');
+    return true;
+  }
+  for (const [appInput, guestInput, guestDetails, sideLabel] of [
+    [srcApp, srcGuest, sourceGuestDetails.details, '比較元'],
+    [tgtApp, tgtGuest, targetGuestDetails.details, '比較先']
+  ] as const) {
+    appInput.addEventListener('paste', (event) => {
+      const pasted = event.clipboardData?.getData('text') || '';
+      if (!needsAppReferenceParse(pasted)) return;
+      if (adoptAppReference(appInput, guestInput, guestDetails, sideLabel, pasted)) event.preventDefault();
+    });
+    appInput.addEventListener('change', () => { adoptAppReference(appInput, guestInput, guestDetails, sideLabel); });
+  }
+
   // ---- セクション選択 ----
   const cardScope = makeCard({ title: '反映する項目', number: 2, subtitle: '目的に近いセットを選び、必要な項目を調整できます。' });
   const putSections = SECTION_DEFS.filter((d) => d.put);
@@ -713,17 +750,29 @@ export function mountReflectLitePanel() {
   const lookupTa = makeTextarea({
     rows: 3,
     code: true,
-    placeholder: '{"旧AppID":"新AppID", ...}',
+    placeholder: '旧AppID → 新AppID（1行に1組）\n例: 101 → 202',
     value: memoryState.lookupMapText || ''
   });
   lookupTa.setAttribute('aria-label', 'ルックアップの参照アプリID変換');
   lookupDetails.body.appendChild(lookupTa);
+  const lookupStatus = document.createElement('div');
+  lookupStatus.className = 'kus-rl-lookup-status';
+  lookupStatus.setAttribute('aria-live', 'polite');
+  lookupDetails.body.appendChild(lookupStatus);
   const lookupHint = document.createElement('div');
   lookupHint.className = 'kus-lp__small';
   lookupHint.style.marginTop = '6px';
-  lookupHint.textContent = 'フィールドの参照アプリ（ルックアップ）を別 AppID に置換します。差分プレビューにも反映し、実行前に変換先 AppID の存在を確認します。';
+  lookupHint.textContent = 'フィールドの参照アプリ（ルックアップ）を別 AppID に置換します。1行に「旧ID → 新ID」（→ / = / : / カンマ区切り）か、{"旧AppID":"新AppID"} のJSONで入力します。差分プレビューにも反映し、実行前に変換先 AppID の存在を確認します。';
   lookupDetails.body.appendChild(lookupHint);
   cardOpt.body.appendChild(lookupDetails.details);
+
+  function refreshLookupStatus() {
+    const parsed = parseLookupMapText(lookupTa.value);
+    lookupStatus.classList.toggle('kus-rl-lookup-status--err', !parsed.ok);
+    lookupStatus.textContent = 'error' in parsed ? parsed.error : parsed.count ? `参照先変換 ${parsed.count} 件を適用します。` : '';
+    if (!parsed.ok) lookupDetails.details.open = true;
+  }
+  refreshLookupStatus();
 
   [sourceEnvironment, preserve.checkbox].forEach((cb) => {
     cb.addEventListener('change', () => {
@@ -734,6 +783,7 @@ export function mountReflectLitePanel() {
   });
   lookupTa.addEventListener('input', () => {
     saveState();
+    refreshLookupStatus();
     refreshReviewCard();
   });
 
@@ -745,13 +795,31 @@ export function mountReflectLitePanel() {
   const presetSelect = document.createElement('select');
   presetSelect.className = 'kus-lp__select';
   presetSelect.style.minWidth = '180px';
+  presetSelect.setAttribute('aria-label', '保存済みプリセット');
+  const presetName = makeInput({ placeholder: '例: 本番テンプレ → 東京営業所', width: 'wide', noSubmit: true });
+  presetName.setAttribute('aria-label', 'プリセット名');
+  presetName.maxLength = 60;
   const saveBtn = makeButton('現在の設定を保存', 'sub');
   const loadBtn = makeButton('読み込み', 'sub');
   const delBtn = makeButton('削除', 'sub');
-  cardPreset.body.appendChild(makeRow([presetSelect, loadBtn, saveBtn, delBtn], { label: '名前' }));
+  const exportPresetsBtn = makeButton('JSONで書き出し', 'sub');
+  exportPresetsBtn.title = '保存済みプリセットをJSONファイルに書き出します。次回はこのファイルを読み込んで再利用できます。';
+  const importPresetsBtn = makeButton('JSONを読み込み', 'sub');
+  importPresetsBtn.title = '書き出したプリセットJSONを読み込みます。同名のプリセットは読み込んだ内容で置き換えます。';
+  const importPresetsFile = document.createElement('input');
+  importPresetsFile.type = 'file';
+  importPresetsFile.accept = '.json,application/json';
+  importPresetsFile.hidden = true;
+  importPresetsFile.setAttribute('aria-label', 'プリセットJSON');
+  const presetNameRow = document.createElement('div');
+  presetNameRow.className = 'kus-rl-preset-name';
+  presetNameRow.append(presetName, saveBtn);
+  cardPreset.body.appendChild(presetNameRow);
+  cardPreset.body.appendChild(makeRow([presetSelect, loadBtn, delBtn], { label: '保存済み' }));
+  cardPreset.body.appendChild(makeRow([exportPresetsBtn, importPresetsBtn, importPresetsFile]));
   const presetHint = document.createElement('div');
   presetHint.className = 'kus-lp__small';
-  presetHint.textContent = 'プリセットはこのタブを閉じるまで保持されます（ブラウザに永続保存はしません）。';
+  presetHint.textContent = 'プリセットはこのタブを閉じるまで保持されます（ブラウザに永続保存はしません）。次回も使う場合は「JSONで書き出し」で保存し、「JSONを読み込み」で復元してください。';
   cardPreset.body.appendChild(presetHint);
   panel.body.insertBefore(cardPreset.card, panel.status);
 
@@ -778,17 +846,23 @@ export function mountReflectLitePanel() {
       presetSelect.appendChild(opt);
     }
   }
+  function refreshPresetButtons() {
+    exportPresetsBtn.disabled = busy || !(memoryState.presets || []).length;
+    importPresetsBtn.disabled = busy;
+    saveBtn.disabled = busy || !presetName.value.trim();
+  }
   refreshPresetSelect();
+  refreshPresetButtons();
+  presetName.addEventListener('input', refreshPresetButtons);
 
   saveBtn.addEventListener('click', () => {
-    const name = window.prompt('プリセット名を入力してください', '');
-    if (!name) return;
-    const trimmed = name.trim();
+    const trimmed = presetName.value.trim();
     if (!trimmed) {
-      panel.setStatus('プリセット名が空です', 'warn');
+      panel.setStatus('プリセット名を入力してください', 'warn');
+      presetName.focus();
       return;
     }
-    const preset: ReflectLitePreset = {
+    const preset: ReflectPreset = {
       name: trimmed,
       createdAt: new Date().toISOString(),
       source: {
@@ -798,18 +872,56 @@ export function mountReflectLitePanel() {
       },
       target: {
         appId: tgtApp.value.trim(),
-        guestId: tgtGuest.value.trim()
+        guestId: tgtGuest.value.trim(),
+        preview: false
       },
       scopes: collectSelectedScopes(),
-      lookupMapText: lookupTa.value,
-      preserveTargetOnly: preserve.checkbox.checked,
+      applyDiffOnly: false,
+      lookupMap: lookupTa.value,
+      preserveTargetOnly: preserve.checkbox.checked
     };
-    memoryState.presets = (memoryState.presets || []).filter((p) => p.name !== trimmed);
-    memoryState.presets.unshift(preset);
+    const replaced = (memoryState.presets || []).some((p) => p.name === trimmed);
+    memoryState.presets = mergeReflectPresets(memoryState.presets, [preset], REFLECT_PRESET_LIMIT).presets;
     refreshPresetSelect();
+    refreshPresetButtons();
     presetSelect.value = trimmed;
-    panel.setStatus(`プリセット「${trimmed}」を保存しました`, 'ok');
+    presetName.value = '';
+    refreshPresetButtons();
+    panel.setStatus(`プリセット「${trimmed}」を${replaced ? '上書き保存' : '保存'}しました。次回も使う場合は「JSONで書き出し」で保存してください。`, 'ok');
   });
+
+  exportPresetsBtn.addEventListener('click', () => {
+    const payload = buildReflectPresetsExport(memoryState.presets);
+    if (!payload.count) {
+      panel.setStatus('書き出せるプリセットがありません', 'warn');
+      return;
+    }
+    const filename = buildExportFilename('プレビュー反映プリセット', 'json');
+    downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
+    panel.setStatus(`プリセット ${payload.count} 件を ${filename} に書き出しました`, 'ok');
+  });
+
+  importPresetsBtn.addEventListener('click', () => importPresetsFile.click());
+  importPresetsFile.addEventListener('change', () => liteRun(panel, 'プリセットJSONを読み込み中…', async () => {
+    const file = importPresetsFile.files?.[0];
+    importPresetsFile.value = '';
+    if (!file) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readTextFile(file));
+    } catch {
+      throw new Error('プリセットJSONの読み込みに失敗しました（JSON形式が不正です）');
+    }
+    const { presets, error } = normalizeImportedReflectPresets(parsed);
+    if (error) throw new Error(error);
+    if (!presets.length) throw new Error('取り込めるプリセットが見つかりませんでした');
+    const merged = mergeReflectPresets(memoryState.presets, presets, REFLECT_PRESET_LIMIT);
+    memoryState.presets = merged.presets;
+    refreshPresetSelect();
+    refreshPresetButtons();
+    presetSelect.value = presets[0].name;
+    panel.setStatus(`プリセットを読み込みました（追加 ${merged.added} 件 / 上書き ${merged.replaced} 件 / 合計 ${merged.presets.length} 件）。「読み込み」で適用できます。`, 'ok');
+  }));
 
   loadBtn.addEventListener('click', () => {
     const name = presetSelect.value;
@@ -823,7 +935,8 @@ export function mountReflectLitePanel() {
     tgtGuest.value = preset.target.guestId;
     sourceEnvironment.value = preset.source.preview ? 'preview' : 'production';
     preserve.checkbox.checked = preset.preserveTargetOnly !== false;
-    lookupTa.value = preset.lookupMapText || '';
+    lookupTa.value = preset.lookupMap || '';
+    refreshLookupStatus();
     setSelectedScopes(preset.scopes || []);
     refreshSameConnBanner();
     saveState();
@@ -837,6 +950,7 @@ export function mountReflectLitePanel() {
     if (!window.confirm(`プリセット「${name}」を削除しますか？`)) return;
     memoryState.presets = (memoryState.presets || []).filter((p) => p.name !== name);
     refreshPresetSelect();
+    refreshPresetButtons();
     panel.setStatus(`プリセット「${name}」を削除しました`, 'info');
   });
 
@@ -900,10 +1014,10 @@ export function mountReflectLitePanel() {
 
   function currentOptions(scopes = collectSelectedScopes()) {
     return { sourceAppId: srcApp.value.trim(), sourceGuestId: srcGuest.value.trim(), sourcePreview: sourceEnvironment.value === 'preview', sourceBundle: sourceBundleFromJson,
-      targetAppId: tgtApp.value.trim(), targetGuestId: tgtGuest.value.trim(), scopes, lookupMap: getLookupValue(tryParseLookupMap(lookupTa.value)), preserveTargetOnly: preserve.checkbox.checked };
+      targetAppId: tgtApp.value.trim(), targetGuestId: tgtGuest.value.trim(), scopes, lookupMap: lookupMapValue(parseLookupMapText(lookupTa.value)), preserveTargetOnly: preserve.checkbox.checked };
   }
 
-  function getPreviewState(scopes = collectSelectedScopes(), lookupState = tryParseLookupMap(lookupTa.value)) {
+  function getPreviewState(scopes = collectSelectedScopes(), lookupState = parseLookupMapText(lookupTa.value)) {
     const preview = memoryState.lastPreview || null;
     const coveredScopes = preview?.scopes || scopes;
     const signature = lookupState.ok
@@ -995,7 +1109,7 @@ export function mountReflectLitePanel() {
     previewCard.card.style.display = 'block';
   }
 
-  async function runPreview(scopes: string[], lookupMap: Record<string, string>) {
+  async function runPreview(scopes: string[], lookupMap: Record<string, string>, postApplyCheck = false) {
     memoryState.lastPreview = null;
     clearConfirmation();
     const options = { ...currentOptions(scopes), lookupMap };
@@ -1003,9 +1117,21 @@ export function mountReflectLitePanel() {
     panel.setStatus('アプリ名と接続先を確認中…', 'busy');
     const identities = await resolveReflectAppsStandalone(options);
     const result = await previewReflectStandalone(options, (message) => panel.setStatus(message, 'busy'));
-    memoryState.lastPreview = { signature, scopes: [...scopes], at: Date.now(), result, identities };
+    memoryState.lastPreview = { signature, scopes: [...scopes], at: Date.now(), result, identities, ...(postApplyCheck ? { postApplyCheck: { scopeCount: scopes.length } } : {}) };
     rerenderPreviewCard(); refreshReviewCard(); showWorkflowStage('review');
     return result;
+  }
+
+  /** 反映直後の再確認結果（差分が残っていないか）。再確認以外、または条件が変わった後は null。 */
+  function postApplySummary() {
+    const { scopes, preview, fresh } = getPreviewState();
+    if (!fresh || !preview?.postApplyCheck) return null;
+    const entries = preview.result.entries.filter((entry) => scopes.includes(entry.sectionKey));
+    return summarizePostApplyCheck({
+      scopeCount: entries.length,
+      changedLabels: entries.filter((entry) => entry.status === 'change').map((entry) => entry.label),
+      errorLabels: entries.filter((entry) => !['change', 'same'].includes(entry.status)).map((entry) => entry.label)
+    });
   }
 
   function selectionIssues(result: PreviewReflectResult | undefined, scopes: string[]): string[] {
@@ -1026,14 +1152,16 @@ export function mountReflectLitePanel() {
     if (confirmedToken && confirmedToken !== token) clearConfirmation();
     runBtn.disabled = busy || !confirmationReady();
     setButtonText(runBtn, `確認した ${plan.effectiveScopes.length} 項目をプレビューへ反映`);
-    let message = invalid || getLookupError(lookupState) || (!scopes.length ? '反映する項目を選んでください。' : '変更前と変更後を確認し、最終確認に進んでください。');
+    let message = invalid || lookupMapError(lookupState) || (!scopes.length ? '反映する項目を選んでください。' : '変更前と変更後を確認し、最終確認に進んでください。');
     if (!preview) message = '対象を指定して差分を取得してください。';
     else if (!fresh) message = '条件が変わりました。差分を再取得してください。';
     else if (blockers.length) message = '確認できない項目が選択されています。問題を解決して再取得するか、対象から外してください。';
     else if (!plan.effectiveScopes.length) message = '書き込みが必要な項目はありません。反映先だけの項目を保持した場合も書き込み不要です。';
+    const postApply = postApplySummary();
+    if (postApply && !blockers.length) message = postApply.message;
     reviewBody.innerHTML = '';
     if (preview?.identities && fresh) renderReflectRoute(reviewBody, preview.identities, sourceMode === 'json' ? '設定JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー' : '本番');
-    const info = document.createElement('div'); info.className = 'kus-rl-next ' + (blockers.length ? 'kus-rl-next--warn' : 'kus-rl-next--info');
+    const info = document.createElement('div'); info.className = 'kus-rl-next ' + (blockers.length ? 'kus-rl-next--warn' : postApply ? `kus-rl-next--${postApply.tone}` : 'kus-rl-next--info');
     info.textContent = message; reviewBody.appendChild(info);
     const summary = document.createElement('p'); summary.className = 'kus-rl-quiet';
     summary.textContent = fresh ? `反映予定 ${plan.effectiveScopes.length} 項目 / 変更なし ${plan.sameScopes.length} 項目 / 確認が必要 ${plan.errorScopes.length} 項目 · ${formatPreviewStamp(preview!.at)}` : 'この段階では書き込みを行いません。';
@@ -1098,8 +1226,8 @@ export function mountReflectLitePanel() {
   previewBtn.addEventListener('click', () => {
     if (busy || previewBtn.disabled) return;
     const { scopes, lookupState } = getPreviewState();
-    const lookupError = getLookupError(lookupState);
-    const lookupMap = getLookupValue(lookupState);
+    const lookupError = lookupMapError(lookupState);
+    const lookupMap = lookupMapValue(lookupState);
     if (!scopes.length) {
       panel.setStatus('対象セクションを選択してください', 'warn');
       return;
@@ -1234,9 +1362,30 @@ export function mountReflectLitePanel() {
   openTargetBtn.title = '比較先アプリの設定画面を新しいタブで開きます（運用環境への反映はそこから実行できます）';
   const exportResultBtn = makeButton('実行結果JSONを保存', 'sub');
   exportResultBtn.title = '実行時の対象、セクション別結果、ログを監査用JSONとして保存します';
+  const verifyResultBtn = makeButton('反映後の差分を再確認', 'primary');
+  verifyResultBtn.title = '反映した項目を同じ条件で再取得し、反映先が反映元と一致したかを確認します（書き込みは行いません）';
+  lastResultActions.appendChild(verifyResultBtn);
   lastResultActions.appendChild(retryFailedBtn);
   lastResultActions.appendChild(exportResultBtn);
   lastResultActions.appendChild(openTargetBtn);
+
+  verifyResultBtn.addEventListener('click', () => {
+    if (busy) return;
+    const scopes = memoryState.lastResult?.report.scopes || [];
+    if (!scopes.length) return;
+    const lookupState = parseLookupMapText(lookupTa.value);
+    const invalid = reflectConnectionError(currentOptions(scopes)) || lookupMapError(lookupState) || (sourceMode === 'json' && !sourceBundleFromJson ? '比較元の設定JSONを読み込んでください。' : '');
+    if (invalid) {
+      panel.setStatus(`再確認できません。${invalid}`, 'warn');
+      return;
+    }
+    setSelectedScopes(scopes);
+    return liteRun(panel, '反映後の差分を再取得中…', async () => {
+      await runPreview(scopes, lookupMapValue(lookupState), true);
+      const summary = postApplySummary();
+      if (summary) panel.setStatus(summary.message, summary.tone);
+    });
+  });
   lastResultCard.body.appendChild(lastResultActions);
   lastResultCard.card.style.display = 'none';
   panel.body.insertBefore(lastResultCard.card, panel.status);
@@ -1296,6 +1445,7 @@ export function mountReflectLitePanel() {
         ? '<div style="margin-top:4px">「失敗・未実行だけ選択」で対象を絞って再実行できます。</div>'
         : '<div style="margin-top:4px">反映先はプレビューです。運用環境への反映（デプロイ）は比較先の設定画面から実行してください。</div>');
     retryFailedBtn.style.display = last.retryScopes.length ? '' : 'none';
+    verifyResultBtn.style.display = last.report.scopes.length ? '' : 'none';
     exportResultBtn.style.display = '';
     openTargetBtn.style.display = last.appId ? '' : 'none';
     lastResultCard.card.style.display = 'block';
@@ -1305,8 +1455,8 @@ export function mountReflectLitePanel() {
   runBtn.addEventListener('click', async () => {
     if (busy || runBtn.disabled || activeStage !== 'confirm' || !confirmationReady()) return;
     const { scopes, lookupState } = getPreviewState();
-    const lookupError = getLookupError(lookupState);
-    const lookupMap = getLookupValue(lookupState);
+    const lookupError = lookupMapError(lookupState);
+    const lookupMap = lookupMapValue(lookupState);
     if (!scopes.length) {
       panel.setStatus('反映するセクションを選択してください', 'warn');
       return;
@@ -1500,8 +1650,16 @@ export function mountReflectLitePanel() {
     setButtonText(nextBtn, fresh ? '確認した差分へ進む' : '差分を確認する'); setButtonText(previewBtn, '差分を再取得');
     previewBtn.classList.toggle('kus-lp__btn--primary', !fresh); previewBtn.classList.toggle('kus-lp__btn--sub', fresh);
     resultEmpty.hidden = !!memoryState.lastResult || logCard.card.style.display !== 'none';
-    let message = `${scopes.length} 項目を比較します。書き込みは行いません。`;
-    if (activeStage === 'review') message = !fresh ? '差分の取得が必要です。' : confirmBtn.disabled ? '確認が必要な項目、または変更の有無を確認してください。' : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
+    const setupBlocker = activeStage === 'setup' ? describeReflectSetupBlocker({
+      connectionError: reflectConnectionError(currentOptions()),
+      sourceMode,
+      hasSourceBundle: !!sourceBundleFromJson,
+      scopeCount: scopes.length,
+      lookupError: lookupMapError(parseLookupMapText(lookupTa.value))
+    }) : '';
+    let message = setupBlocker ? `次に進むには：${setupBlocker}` : `${scopes.length} 項目を比較します。書き込みは行いません。`;
+    const postApply = activeStage === 'review' ? postApplySummary() : null;
+    if (activeStage === 'review') message = !fresh ? '差分の取得が必要です。' : postApply ? postApply.message : confirmBtn.disabled ? '確認が必要な項目、または変更の有無を確認してください。' : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
     if (activeStage === 'confirm') message = fresh && confirmedToken ? '反映前バックアップを自動保存 / エラー時は中断 / 本番公開は行いません' : '条件が変わりました。差分の取得と最終確認をやり直してください。';
     if (activeStage === 'result') message = '結果を確認してください。再実行には差分の再取得が必要です。';
     const sourceLabel = fresh && preview?.identities ? reflectIdentityLabel(preview.identities, 'source', sourceMode === 'json' ? 'JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー' : '本番') : `反映元 #${srcApp.value.trim() || '未入力'}`;
@@ -1509,7 +1667,7 @@ export function mountReflectLitePanel() {
     // The complete route stays in the confirmation card. Keep the fixed footer short on small screens.
     dockCopy.innerHTML = activeStage === 'confirm' && fresh && preview?.identities
       ? `<strong>書き込み先 #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong>${escapeHtml(confirmedToken ? '内容を確認してから反映してください。' : '条件が変わりました。差分を再取得してください。')}`
-      : `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong>${escapeHtml(message)}`;
+      : `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong>${setupBlocker ? `<span class="kus-rl-dock-reason">${escapeHtml(message)}</span>` : escapeHtml(message)}`;
     panel.result.hidden = activeStage === 'confirm';
     const advancedSummary = advanced.details.querySelector('summary');
     if (advancedSummary) advancedSummary.textContent = '詳細設定 · 自動バックアップ / 参照先変換';
@@ -1547,6 +1705,7 @@ export function mountReflectLitePanel() {
       disabledBefore.clear();
       refreshSrcJsonNote();
       refreshPresetSelect();
+      refreshPresetButtons();
       refreshReviewCard();
       navButtons[activeStage].focus({ preventScroll: true });
     }
@@ -1592,31 +1751,6 @@ function setButtonText(button: HTMLButtonElement, text: string) {
   const label = spans[spans.length - 1] as HTMLElement | undefined;
   if (label) label.textContent = text;
   else button.textContent = text;
-}
-
-function tryParseLookupMap(text: string): LookupParseResult {
-  const t = text.trim();
-  if (!t) return { ok: true, value: {} };
-  try {
-    const parsed = JSON.parse(t);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false, error: '参照先変換は {"旧AppID":"新AppID"} 形式のJSONを入力してください。' };
-    const out: Record<string, string> = Object.create(null);
-    for (const [k, v] of Object.entries(parsed || {})) {
-      if (!/^[1-9]\d*$/.test(k) || !/^[1-9]\d*$/.test(String(v))) return { ok: false, error: '参照先変換のアプリIDには正の整数を指定してください。' };
-      out[k] = String(v);
-    }
-    return { ok: true, value: out };
-  } catch {
-    return { ok: false, error: 'Lookup マッピング JSON が壊れています。JSON 形式を修正してください。' };
-  }
-}
-
-function getLookupError(result: LookupParseResult): string {
-  return 'error' in result ? result.error : '';
-}
-
-function getLookupValue(result: LookupParseResult): Record<string, string> {
-  return 'value' in result ? result.value : {};
 }
 
 function buildPreviewSignature(args: {

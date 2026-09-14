@@ -21,6 +21,8 @@ export interface ReflectPreset {
   scopes: string[];
   applyDiffOnly: boolean;
   lookupMap: string;
+  /** 反映先だけの一覧・グラフ・アクションを保持するか（lite 版）。省略時は保持する */
+  preserveTargetOnly?: boolean;
 }
 
 function normalizeEndpoint(raw: any): ReflectPresetEndpoint {
@@ -62,7 +64,8 @@ export function normalizeReflectPreset(raw: any): ReflectPreset | null {
     target: normalizeEndpoint(raw.target),
     scopes: normalizeScopes(raw.scopes),
     applyDiffOnly: !!raw.applyDiffOnly,
-    lookupMap: String(raw.lookupMap == null ? '' : raw.lookupMap)
+    lookupMap: String(raw.lookupMap == null ? '' : raw.lookupMap),
+    preserveTargetOnly: raw.preserveTargetOnly === undefined ? true : !!raw.preserveTargetOnly
   };
 }
 
