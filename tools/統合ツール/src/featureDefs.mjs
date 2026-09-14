@@ -295,5 +295,13 @@ export const STANDALONE_LAUNCH_ENTRIES = [
     label: 'CSV出力',
     subTab: 'csv',
     bundleEntry: 'csv-export-lite-entry.js'
+  },
+  {
+    tab: 'recordMgr',
+    module: 'tabs/record-quality-standalone.js',
+    file: 'データ品質チェック.js',
+    label: 'データ品質チェック',
+    subTab: 'quality',
+    bundleEntry: 'record-quality-lite-entry.js'
   }
 ];
