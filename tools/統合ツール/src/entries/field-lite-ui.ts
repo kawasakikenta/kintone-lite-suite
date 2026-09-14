@@ -18,6 +18,7 @@ import {
   makeCard,
   makeDetails,
   makeNote,
+  makePickList,
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
@@ -138,26 +139,18 @@ export function mountFieldLitePanel() {
   const pickDetails = makeDetails('比較元からフィールドを選んでマージ', { open: false });
   const bLoadPickList = makeButton('比較元フィールド一覧を取得', 'sub');
   pickDetails.body.appendChild(makeRow(bLoadPickList));
-  const pickListBox = document.createElement('div');
-  pickListBox.style.cssText = 'display:none;margin-top:8px;max-height:240px;overflow:auto;border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:6px';
-  const pickTable = document.createElement('table');
-  pickTable.style.cssText = 'width:100%;font-size:11.5px;border-collapse:collapse';
-  const pickHead = document.createElement('thead');
-  pickHead.innerHTML = '<tr style="position:sticky;top:-6px;background:#f8fafc;z-index:1;box-shadow:0 1px 0 #e2e8f0">'
-    + '<th style="width:30px;text-align:center;padding:4px"><input type="checkbox" id="kus-field-lite-check-all" title="表示中の全行を選択"></th>'
-    + '<th style="text-align:left;padding:4px">コード / ラベル</th>'
-    + '<th style="text-align:left;padding:4px;width:130px">タイプ</th>'
-    + '</tr>';
-  const pickBody = document.createElement('tbody');
-  pickTable.appendChild(pickHead);
-  pickTable.appendChild(pickBody);
-  pickListBox.appendChild(pickTable);
-  pickDetails.body.appendChild(pickListBox);
-
   const bInsertPicked = makeButton('選択したフィールドを JSON に挿入（マージ）', 'primary');
-  const bClosePick = makeButton('閉じる', 'ghost');
+  const bClosePick = makeButton('候補を閉じる', 'ghost');
+  const pickList = makePickList({
+    ariaLabel: 'マージする比較元フィールド',
+    filterPlaceholder: 'コード・ラベル・タイプで絞り込み',
+    emptyText: '比較元にフィールドがありません。',
+    footer: (selected, total) => `${total}件中 ${selected}件を選択。挿入すると同じコードの既存定義は候補の内容で置き換えます。`
+  });
+  pickDetails.body.appendChild(pickList.element);
   const pickActions = makeRow([bInsertPicked, bClosePick]);
-  pickActions.style.cssText = 'display:none;margin-top:8px';
+  pickActions.hidden = true;
+  pickActions.style.marginTop = '8px';
   pickDetails.body.appendChild(pickActions);
 
   let pickedPropsCache: Record<string, any> = {};
@@ -168,47 +161,24 @@ export function mountFieldLitePanel() {
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
     pickedPropsCache = props || {};
-    pickBody.innerHTML = '';
     const entries = Object.entries(pickedPropsCache) as Array<[string, any]>;
     entries.sort(([a], [b]) => a.localeCompare(b));
-    for (const [code, def] of entries) {
-      const tr = document.createElement('tr');
-      tr.style.cssText = 'border-bottom:1px solid #f1f5f9';
-      const tdCb = document.createElement('td');
-      tdCb.style.cssText = 'padding:4px;text-align:center';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.dataset.code = code;
-      tdCb.appendChild(cb);
-      const tdCode = document.createElement('td');
-      tdCode.style.cssText = 'padding:4px;font-family:ui-monospace,monospace';
-      tdCode.textContent = `${code}${def?.label ? `  /  ${def.label}` : ''}`;
-      const tdType = document.createElement('td');
-      tdType.style.cssText = 'padding:4px;color:#475569';
-      tdType.textContent = String(def?.type || '');
-      tr.appendChild(tdCb);
-      tr.appendChild(tdCode);
-      tr.appendChild(tdType);
-      pickBody.appendChild(tr);
-    }
-    pickListBox.style.display = 'block';
-    pickActions.style.display = 'flex';
-  }, `${Object.keys(pickedPropsCache).length}件のフィールド候補を表示中（左クリックで選択）`));
-
-  pickHead.querySelector<HTMLInputElement>('#kus-field-lite-check-all')?.addEventListener('change', (ev) => {
-    const all = (ev.target as HTMLInputElement).checked;
-    pickBody.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach((cb) => { cb.checked = all; });
-  });
+    pickList.setItems(entries.map(([code, def]) => ({
+      value: code,
+      label: `${code}${def?.label ? ` / ${def.label}` : ''}`,
+      sub: String(def?.type || '')
+    })));
+    pickActions.hidden = false;
+    panel.setStatus(`${entries.length}件のフィールド候補を表示中。絞り込んでチェックし、「挿入」で JSON にマージします`, entries.length ? 'ok' : 'warn');
+  }));
 
   bClosePick.addEventListener('click', () => {
-    pickListBox.style.display = 'none';
-    pickActions.style.display = 'none';
+    pickList.clear();
+    pickActions.hidden = true;
   });
 
   bInsertPicked.addEventListener('click', () => {
-    const codes = Array.from(pickBody.querySelectorAll<HTMLInputElement>('input[type=checkbox]:checked'))
-      .map((cb) => cb.dataset.code || '')
-      .filter(Boolean);
+    const codes = pickList.selected();
     if (!codes.length) {
       panel.setStatus('挿入するフィールドにチェックを入れてください', 'warn');
       return;

@@ -125,4 +125,46 @@ describe('design/bundleToMarkdown (REST API レスポンス準拠の日本語化
     expect(visible).not.toContain('&amp;#65289;');
     expect(visible).not.toContain('<div>');
   });
+
+  it('ヘッダーに取得環境・アプリ名・失敗セクションを出し、ISO の取得日時には日本時間を添える', () => {
+    const md = bundleToMarkdown({ appId: '10', guestId: '3', preview: false, fetchedAt: '2026-05-02T09:00:00.000Z', sections: {
+      appSettings: { name: '営業案件' },
+      viewSettings: { _fetchError: '権限不足' }
+    } });
+    expect(md).toContain('| 取得環境 | 本番（運用中の設定） |');
+    expect(md).toContain('| アプリ名 | 営業案件 |');
+    expect(md).toContain('| ゲストスペースID | 3 |');
+    expect(md).toContain('| 取得できなかったセクション | ビュー設定 |');
+    expect(md).toMatch(/\| 取得日時 \| 2026\/5\/2 18:00:00 JST（2026-05-02T09:00:00.000Z） \|/);
+    const local = bundleToMarkdown(makeBundle({ appSettings: { name: 'x' } }));
+    expect(local).toContain('| 取得環境 | プレビュー（未公開の設定） |');
+    expect(local).toContain('| 取得日時 | 2026-01-01 00:00:00 |');
+  });
+
+  it('フィールド表にルックアップ・関連レコード・単位・文字数などの参照先/制約を出す', () => {
+    const md = visibleMarkdown(bundleToMarkdown(makeBundle({
+      fieldSettings: {
+        properties: {
+          customer: { code: 'customer', label: '顧客', type: 'SINGLE_LINE_TEXT', minLength: '1', maxLength: '64',
+            lookup: { relatedApp: { app: '12', code: '' }, relatedKeyField: 'name', fieldMappings: [{ field: 'addr', relatedField: 'addr' }] } },
+          amount: { code: 'amount', label: '金額', type: 'NUMBER', unit: '円', unitPosition: 'AFTER', digit: true, minValue: '0' },
+          related: { code: 'related', label: '履歴', type: 'REFERENCE_TABLE', referenceTable: { relatedApp: { app: '20' }, condition: { field: 'customer', relatedField: 'customer' }, displayFields: ['date', 'memo'], size: '5' } },
+          table: { code: 'table', label: '明細', type: 'SUBTABLE', fields: { qty: { code: 'qty', label: '数量', type: 'NUMBER', unit: '個' } } }
+        }
+      }
+    })));
+    expect(md).toContain('| 参照先/制約 |');
+    expect(md).toContain('ルックアップ: App 12 キー `name` / 転記 1項目 / 文字数 1〜64');
+    expect(md).toContain('単位: 円（後） / 桁区切りあり / 値 0〜');
+    expect(md).toContain('関連レコード: App 20 条件 `customer` = `customer` / 表示 2項目 / 5件表示');
+    expect(md).toContain('| qty | 数量 | 数値 |  |  |  | 単位: 個 |');
+  });
+
+  it('rawJson: false では API レスポンスの生データを含めない', () => {
+    const bundle = makeBundle({ appSettings: { name: 'x', theme: 'WHITE' } });
+    expect(bundleToMarkdown(bundle)).toContain('APIレスポンス（生データ）');
+    const md = bundleToMarkdown(bundle, { rawJson: false });
+    expect(md).not.toContain('APIレスポンス（生データ）');
+    expect(md).toContain('| アプリ名 | x |');
+  });
 });

@@ -24,13 +24,24 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
   root.appendChild(makeRow([query, useView], { label: 'クエリ' }));
   const load = makeButton('検査フィールド読込', 'sub');
   const search = makeInput({ placeholder: 'フィールド名・コードで絞り込み', width: 'wide', ariaLabel: '検査フィールド検索' });
+  const clearSelection = makeButton('選択解除', 'sub');
+  const countBadge = document.createElement('span');
+  countBadge.className = 'kus-lp__count';
+  countBadge.textContent = '選択 0 / 5';
+  const pickWrap = document.createElement('div');
+  pickWrap.className = 'kus-lp__picklist';
+  pickWrap.hidden = true;
+  const pickHead = document.createElement('div');
+  pickHead.className = 'kus-lp__picklist-head';
+  pickHead.append(search, countBadge, clearSelection);
   const fieldBox = document.createElement('div');
+  fieldBox.className = 'kus-lp__picklist-body';
   fieldBox.setAttribute('role', 'group'); fieldBox.setAttribute('aria-label', '検査するフィールド');
-  fieldBox.style.cssText = 'max-height:210px;overflow:auto;display:grid;gap:6px;padding:4px;overflow-wrap:anywhere';
+  pickWrap.append(pickHead, fieldBox);
   const note = makeNote('先頭の対象アプリからフィールドを読み込み、1〜5項目を選んでください。');
   const trim = makeCheck({ label: '文字列・リンクの前後の空白を無視', checked: false });
   const ignoreCase = makeCheck({ label: '文字列・リンクの英字の大小を無視', checked: false });
-  root.append(makeRow(load), search, fieldBox, note, makeRow([trim.label, ignoreCase.label]));
+  root.append(makeRow(load), pickWrap, note, makeRow([trim.label, ignoreCase.label]));
   root.appendChild(makeNote('選んだ項目すべてが一致するレコードを、アプリごとに重複として検出します。空の項目があるレコードは未入力として別集計します。複数選択は順序を無視して比較します。'));
   root.appendChild(makeNote('テーブル内・添付・計算・システム項目は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。アプリ間の重複は検査しません。'));
   let fields: QualityField[] = [], selected = new Set<string>(), version = 0, fieldsVersion = 0;
@@ -39,10 +50,20 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
   output.setAttribute('aria-live', 'polite');
   const save = makeButton('検査結果をCSVで保存', 'sub'); save.hidden = true;
   const resetResults = () => { version++; results = []; output.replaceChildren(); save.hidden = true; };
-  const refreshNote = () => { note.textContent = `選択 ${selected.size}/5項目: ${fields.filter(field => selected.has(field.code)).map(field => `${field.label}［${field.code}］`).join('、') || '未選択'}`; };
+  const refreshNote = () => {
+    note.textContent = `選択 ${selected.size}/5項目: ${fields.filter(field => selected.has(field.code)).map(field => `${field.label}［${field.code}］`).join('、') || '未選択'}`;
+    countBadge.textContent = `選択 ${selected.size} / 5`;
+  };
   resetMetadata.push(() => {
-    fieldsVersion++; fields = []; selected.clear(); fieldBox.replaceChildren(); resetResults();
+    fieldsVersion++; fields = []; selected.clear(); fieldBox.replaceChildren(); pickWrap.hidden = true; resetResults();
     note.textContent = '対象アプリが変わりました。検査フィールドを再取得してください。';
+    countBadge.textContent = '選択 0 / 5';
+  });
+  clearSelection.addEventListener('click', () => {
+    if (!selected.size) return;
+    selected.clear();
+    fieldBox.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(box => { box.checked = false; });
+    resetResults(); refreshNote();
   });
   for (const input of [query, trim.checkbox, ignoreCase.checkbox]) {
     input.addEventListener('input', resetResults); input.addEventListener('change', resetResults);
@@ -51,6 +72,7 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
     const filter = search.value.toLowerCase(); fieldBox.replaceChildren();
     for (const field of fields.filter(field => `${field.label} ${field.code}`.toLowerCase().includes(filter))) {
       const check = makeCheck({ label: `${field.label}［${field.code}］ / ${field.type}`, checked: selected.has(field.code) });
+      check.label.classList.add('kus-lp__picklist-item');
       check.checkbox.addEventListener('change', () => {
         if (check.checkbox.checked && selected.size >= 5) { check.checkbox.checked = false; panel.setStatus('フィールドは5項目まで選べます。', 'warn'); return; }
         if (check.checkbox.checked) selected.add(field.code); else selected.delete(field.code);
@@ -66,7 +88,7 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
     fields = []; selected.clear(); fieldBox.replaceChildren(); resetResults(); refreshNote();
     const loaded = await runLoadQualityFieldsStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() });
     if (current !== fieldsVersion) { panel.setStatus('対象が変わりました。再取得してください。', 'warn'); return; }
-    fields = loaded; renderFields();
+    fields = loaded; pickWrap.hidden = false; renderFields();
     note.textContent = `${fields.length}項目を取得しました。1〜5項目を選んでください。`;
     panel.setStatus(note.textContent, fields.length ? 'ok' : 'warn');
   }));

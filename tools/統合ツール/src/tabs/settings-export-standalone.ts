@@ -210,27 +210,46 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
   if (mode === 'zip') {
     const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
+    const entries = bundles.map((bundle, i) => {
+      const guestId = targets[i].guestId;
+      const suffix = `${guestId ? `_ゲスト${guestId}` : ''}${preview ? '_プレビュー' : '_本番'}`;
+      const file = `${buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle))}${suffix}.json`;
+      const failedSections = scopes.filter((key) => bundle.sections?.[key]?._fetchError);
+      return {
+        appId: String(bundle.appId),
+        appName: extractAppNameFromBundle(bundle) || '',
+        guestId,
+        file,
+        fetchedAt: bundle.fetchedAt || '',
+        sections: { ok: rows[i].okCount, ng: rows[i].ngCount },
+        failedSections: failedSections.map((key) => ({
+          key,
+          label: SECTION_DEFS.find((s) => s.key === key)?.label || key,
+          error: String(bundle.sections[key]._fetchError?.message || bundle.sections[key]._fetchError || '')
+        }))
+      };
+    });
     zip.file(
       'manifest.json',
       JSON.stringify(
         {
           generatedAt: payload.generatedAt,
+          environment: preview ? 'preview' : 'production',
           guestIds,
           targets,
           preview: payload.preview,
           scopes: payload.scopes,
-          appCount: bundles.length
+          scopeLabels,
+          appCount: bundles.length,
+          failedAppCount: entries.filter((entry) => entry.sections.ng > 0).length,
+          apps: entries
         },
         null,
         2
       )
     );
     for (let i = 0; i < bundles.length; i++) {
-      const bundle = bundles[i];
-      const guestId = targets[i].guestId;
-      const suffix = `${guestId ? `_ゲスト${guestId}` : ''}${preview ? '_プレビュー' : '_本番'}`;
-      const name = `${buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle))}${suffix}.json`;
-      zip.file(name, JSON.stringify(bundle, null, 2));
+      zip.file(entries[i].file, JSON.stringify(bundles[i], null, 2));
     }
     const zipBlob = await zip.generateAsync({ type: 'blob' });
     downloadBlob(buildExportFilename('設定一括取得', 'zip', { appLabel: settingsExportLabel(bundles) }), zipBlob);
