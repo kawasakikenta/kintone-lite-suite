@@ -156,6 +156,18 @@ async function main() {
     assert.equal(await page.evaluate(() => window.__reflectMock.applies[0].doDeploy), false);
     assert.equal(await page.evaluate(() => window.__reflectMock.applies[0].reviewBaseline.connection), 'sample-303', '確認した比較結果の基準を反映処理へ渡す');
     assert.match(await page.locator('#kus-rl-stage-result').innerText(), /全成功/);
+    const downloadPromise = page.waitForEvent('download');
+    await button('実行結果JSONを保存').click();
+    const resultDownload = await downloadPromise;
+    assert.match(resultDownload.suggestedFilename(), /^プレビュー反映結果_App303_/);
+    const resultReport = JSON.parse(await fs.promises.readFile(await resultDownload.path(), 'utf8'));
+    assert.deepEqual(resultReport.summary, { ok: 1, ng: 0, pending: 0, skip: 0 });
+    assert.equal(typeof resultReport.durationMs, 'number');
+    assert.deepEqual(resultReport.retryScopes, []);
+    assert.equal(resultReport.target.appId, '303');
+    assert.equal(resultReport.target.environment, 'preview');
+    assert.deepEqual(resultReport.scopes, ['fieldSettings']);
+    assert.equal(resultReport.sections[0].status, 'ok');
     await tab('差分を確認').click();
     assert.equal(await run().isDisabled(), true, '反映後に古い差分を再実行しない');
 
@@ -165,6 +177,11 @@ async function main() {
     await page.getByRole('checkbox', { name: 'プロセス管理', exact: true }).check();
     await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
     assert.match(await page.locator('#kus-rl-stage-result').innerText(), /一部エラー/);
+    const resultRows = page.getByLabel('セクション別実行結果').locator('.kus-rl-result-row');
+    assert.equal(await resultRows.count(), 2, '失敗と未実行をセクション別に表示する');
+    assert.equal(await resultRows.nth(0).getAttribute('data-status'), 'ng');
+    assert.equal(await resultRows.nth(1).getAttribute('data-status'), 'pending');
+    assert.match(await page.locator('#kus-rl-stage-result').innerText(), /失敗 1 \/ 未実行 1 \/ 変更なし 0/);
     assert.equal(await button('失敗・未実行だけ選択').isVisible(), true);
     await button('失敗・未実行だけ選択').click();
     assert.equal(await tab('対象を選ぶ').getAttribute('aria-selected'), 'true');
@@ -237,8 +254,8 @@ async function main() {
     assert.equal(await run().isEnabled(), true, '配布する操作デモも単独で動作する');
     await require('./reflect-engine-scenarios.cjs')({ page, esbuild, tool: TOOL, out: OUT });
     assert.deepEqual(errors, []);
-    fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ passed: true, sizes, checks: ['guided workflow', 'no write on compare', 'busy lock', 'scope reuse', 'freshness', 'search and status filters', 'keyboard focus', 'JSON source and errors', 'partial results and retry', 'responsive geometry'], pageErrors: errors }, null, 2));
-    console.log('PASS reflect-lite: workflow, freshness, filters, JSON, partial results, keyboard, 5 viewport sizes');
+    fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ passed: true, sizes, checks: ['guided workflow', 'no write on compare', 'busy lock', 'scope reuse', 'freshness', 'search and status filters', 'keyboard focus', 'JSON source and errors', 'partial results and retry', 'result report export', 'responsive geometry'], pageErrors: errors }, null, 2));
+    console.log('PASS reflect-lite: workflow, freshness, filters, JSON, partial results, result export, keyboard, 5 viewport sizes');
     console.log(`Artifacts: ${OUT}`);
   } catch (error) {
     await page.screenshot({ path: path.join(OUT, 'failure.png') });
