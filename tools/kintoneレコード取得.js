@@ -682,6 +682,35 @@ ${contextLine}`);
   function downloadBlob(filename, blob) {
     triggerDownload(filename, blob);
   }
+  function legacyCopy(text) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.setAttribute("aria-hidden", "true");
+    ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    ta.remove();
+    return ok;
+  }
+  async function copyTextToClipboard(text) {
+    if (!text) return false;
+    const clip = typeof navigator !== "undefined" ? navigator.clipboard : void 0;
+    if (clip && typeof clip.writeText === "function") {
+      try {
+        await clip.writeText(text);
+        return true;
+      } catch {
+      }
+    }
+    return legacyCopy(text);
+  }
   var init_utils = __esm({
     "src/utils.ts"() {
       "use strict";
@@ -1397,6 +1426,7 @@ ${contextLine}`);
 
   // src/entries/litePanelTheme.ts
   init_dialog();
+  init_utils();
   var STYLE_ID = "kus-lp-theme-styles";
   var ACCENTS = {
     diff: { from: "#1d4ed8", via: "#2563eb", to: "#0ea5e9", chip: "#dbeafe", ring: "rgba(37,99,235,.16)" },
@@ -1412,6 +1442,7 @@ ${contextLine}`);
   var THEME_CSS = `
 @keyframes kus-lp-spin { to { transform: rotate(360deg); } }
 @keyframes kus-lp-fade-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes kus-lp-indeterminate { from { transform: translateX(-100%); } to { transform: translateX(350%); } }
 
 .kus-lp{
   --c-bg:#ffffff;
@@ -1459,6 +1490,12 @@ ${contextLine}`);
   color:var(--c-text);
   animation:kus-lp-fade-in .18s ease-out;
 }
+/* ドラッグ移動中は文字選択とアニメーションを止める */
+.kus-lp--dragging{user-select:none;animation:none;transition:none}
+.kus-lp--dragging .kus-lp__hero{cursor:grabbing}
+/* 最小化: ヒーローだけ残して本文を畳む（kintone 画面を確認しやすくする） */
+.kus-lp--collapsed .kus-lp__body{display:none!important}
+.kus-lp--collapsed .kus-lp__hero{padding-bottom:16px}
 
 .kus-lp__hero{
   flex-shrink:0;
@@ -1470,8 +1507,23 @@ ${contextLine}`);
   align-items:flex-start;
   justify-content:space-between;
   gap:12px;
+  cursor:grab;
+  touch-action:none;
 }
 .kus-lp__hero-main{min-width:0;flex:1}
+.kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
+.kus-lp__elapsed{
+  font-size:11px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
+  font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
+}
+.kus-lp__elapsed::before{
+  content:'';display:inline-block;width:9px;height:9px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.85);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
+}
+/* 実行中の進捗ストリップ（ヒーロー下端） */
+.kus-lp__progress{position:absolute;left:0;right:0;bottom:0;height:3px;overflow:hidden;background:rgba(255,255,255,.22);display:none;z-index:1}
+.kus-lp[aria-busy="true"] .kus-lp__progress{display:block}
+.kus-lp__progress::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:#fff;opacity:.95;animation:kus-lp-indeterminate 1.4s ease-in-out infinite}
 .kus-lp__title{margin:0;font-size:17px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
 .kus-lp__title-icon{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;background:rgba(255,255,255,.22);border-radius:7px}
 .kus-lp__subtitle{margin:4px 0 0;font-size:12px;color:rgba(255,255,255,.85);line-height:1.45}
@@ -1481,12 +1533,23 @@ ${contextLine}`);
   font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close{
+.kus-lp__close,.kus-lp__toggle{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
+  font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
-.kus-lp__close:hover{background:rgba(255,255,255,.24)}
+.kus-lp__toggle{padding:6px 9px;min-width:34px}
+.kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+
+/* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
+.kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
+.kus-lp__hero :is(button):focus-visible{outline-color:#fff}
+@media(prefers-reduced-motion:reduce){
+  .kus-lp,.kus-lp *,.kus-lp *::before,.kus-lp *::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+  .kus-lp__progress::after{width:100%;opacity:.6}
+}
 
 .kus-lp__body{padding:16px 18px 18px;overflow-y:auto;flex:1;min-height:0}
 .kus-lp__body::-webkit-scrollbar{width:10px;height:10px}
@@ -1637,6 +1700,14 @@ ${contextLine}`);
   border:1px solid #1e293b;
 }
 .kus-lp__result--empty{display:none}
+/* ログ右上に貼り付くコピー操作（ログ本文の選択・スクロールを妨げない） */
+.kus-lp__result-copy{
+  float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;
+  padding:3px 8px;font:600 10.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  color:#cbd5e1;background:rgba(30,41,59,.92);border:1px solid #334155;border-radius:7px;cursor:pointer;white-space:nowrap;
+}
+.kus-lp__result-copy:hover{color:#fff;background:#334155}
+.kus-lp__result-copy[data-copied="true"]{color:#bbf7d0;border-color:#166534}
 .kus-lp__panel-html{
   margin-top:10px;border:1px solid var(--c-border);border-radius:10px;
   background:var(--c-surface);max-height:240px;overflow:auto;font-size:11.5px;
@@ -1652,6 +1723,41 @@ ${contextLine}`);
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
 .kus-lp__small{font-size:11px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
+
+/* ===== Toolbar / Count / Pill ===== */
+.kus-lp__toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px}
+.kus-lp__toolbar-spacer{flex:1;min-width:8px}
+.kus-lp__count{
+  display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;white-space:nowrap;
+  color:var(--c-accent-from);background:var(--c-accent-chip);padding:2px 9px;border-radius:999px;font-variant-numeric:tabular-nums;
+}
+.kus-lp__pill{
+  display:inline-flex;align-items:center;gap:6px;padding:4px 11px;font-size:11.5px;font-weight:600;border-radius:999px;
+  background:var(--c-surface-2);color:var(--c-text);border:1px solid var(--c-border);line-height:1.4;max-width:100%;
+}
+.kus-lp__pill--ok{background:var(--c-ok-bg);color:var(--c-ok-fg);border-color:var(--c-ok-bd)}
+.kus-lp__pill--accent{background:var(--c-accent-chip);color:var(--c-accent-from);border-color:transparent}
+
+/* ===== Pick list（絞り込み付きチェック一覧） ===== */
+.kus-lp__picklist{border:1px solid var(--c-border);border-radius:10px;background:var(--c-bg);overflow:hidden}
+.kus-lp__picklist-head{
+  display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:7px 8px;
+  background:var(--c-surface);border-bottom:1px solid var(--c-border);
+}
+.kus-lp__picklist-head .kus-lp__input{flex:1;min-width:120px;padding:5px 8px;font-size:12px}
+.kus-lp__picklist-head .kus-lp__btn{padding:4px 8px;font-size:11px;border-radius:7px}
+.kus-lp__picklist-body{max-height:220px;overflow:auto;padding:4px}
+.kus-lp__picklist-item{
+  display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;font-size:12px;color:var(--c-text);
+  cursor:pointer;user-select:none;min-width:0;
+}
+.kus-lp__picklist-item:hover{background:var(--c-surface)}
+.kus-lp__picklist-item:has(input:checked){background:var(--c-accent-chip)}
+.kus-lp__picklist-item input{accent-color:var(--c-accent-via);width:14px;height:14px;margin:0;flex-shrink:0}
+.kus-lp__picklist-main{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kus-lp__picklist-sub{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--c-muted);font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.kus-lp__picklist-empty{padding:10px 8px;color:var(--c-muted);font-size:11.5px}
+.kus-lp__picklist-foot{padding:6px 8px;border-top:1px solid var(--c-border);background:var(--c-surface);font-size:11px;color:var(--c-muted);line-height:1.5;overflow-wrap:anywhere}
 
 /* セクション折りたたみ (details) */
 .kus-lp__details{
@@ -1762,11 +1868,34 @@ ${contextLine}`);
     closeBtn.type = "button";
     closeBtn.className = "kus-lp__close";
     closeBtn.textContent = "閉じる";
+    const elapsedEl = document.createElement("span");
+    elapsedEl.className = "kus-lp__elapsed";
+    elapsedEl.setAttribute("aria-hidden", "true");
+    elapsedEl.hidden = true;
+    const bodyId = `${opts.id}-body`;
+    const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.className = "kus-lp__toggle";
+    toggleBtn.setAttribute("aria-controls", bodyId);
+    toggleBtn.setAttribute("aria-expanded", "true");
+    toggleBtn.setAttribute("aria-label", "折りたたむ");
+    toggleBtn.title = "折りたたむ（ヒーローだけ残して kintone 画面を確認）";
+    toggleBtn.textContent = "－";
+    const heroActions = document.createElement("div");
+    heroActions.className = "kus-lp__hero-actions";
+    heroActions.appendChild(elapsedEl);
+    heroActions.appendChild(toggleBtn);
+    heroActions.appendChild(closeBtn);
+    const progress = document.createElement("div");
+    progress.className = "kus-lp__progress";
+    progress.setAttribute("aria-hidden", "true");
     hero.appendChild(heroMain);
-    hero.appendChild(closeBtn);
+    hero.appendChild(heroActions);
+    hero.appendChild(progress);
     root2.appendChild(hero);
     const body = document.createElement("div");
     body.className = "kus-lp__body";
+    body.id = bodyId;
     if (opts.hint) {
       const hint = document.createElement("div");
       hint.className = "kus-lp__hint";
@@ -1794,6 +1923,31 @@ ${contextLine}`);
       status.innerHTML = `<span class="${iconCls}">${icon}</span><span class="kus-lp__status-text"></span>`;
       status.querySelector(".kus-lp__status-text").textContent = msg || "";
     }
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "kus-lp__result-copy";
+    copyBtn.textContent = "コピー";
+    copyBtn.setAttribute("aria-label", "ログをコピー");
+    let copyResetTimer = 0;
+    function resultText() {
+      const clone = result.cloneNode(true);
+      clone.querySelector(".kus-lp__result-copy")?.remove();
+      return (clone.innerText || clone.textContent || "").replace(/^\s+|\s+$/g, "");
+    }
+    function flashCopy(label, copied) {
+      copyBtn.textContent = label;
+      copyBtn.dataset.copied = String(copied);
+      window.clearTimeout(copyResetTimer);
+      copyResetTimer = window.setTimeout(() => {
+        copyBtn.textContent = "コピー";
+        delete copyBtn.dataset.copied;
+      }, 1600);
+    }
+    copyBtn.addEventListener("click", () => {
+      const text = resultText();
+      if (!text) return;
+      void copyTextToClipboard(text).then((ok) => flashCopy(ok ? "コピー済み" : "コピー失敗", ok));
+    });
     function setResult(text) {
       if (!text) {
         result.textContent = "";
@@ -1801,6 +1955,7 @@ ${contextLine}`);
         return;
       }
       result.textContent = text;
+      result.prepend(copyBtn);
       result.classList.remove("kus-lp__result--empty");
     }
     function setResultHtml(html) {
@@ -1810,18 +1965,127 @@ ${contextLine}`);
         return;
       }
       result.innerHTML = html;
+      result.prepend(copyBtn);
       result.classList.remove("kus-lp__result--empty");
+    }
+    let busyTimer = 0;
+    let busyStartedAt = 0;
+    function formatElapsed(ms) {
+      const total = Math.max(0, Math.floor(ms / 1e3));
+      const m = Math.floor(total / 60);
+      const s = total % 60;
+      return m ? `${m}分${s}秒` : `${s}秒`;
+    }
+    function tickElapsed() {
+      elapsedEl.textContent = `処理中 ${formatElapsed(Date.now() - busyStartedAt)}`;
+    }
+    function stopElapsed() {
+      if (busyTimer) window.clearInterval(busyTimer);
+      busyTimer = 0;
+      elapsedEl.hidden = true;
+      elapsedEl.textContent = "";
     }
     function setBusy(busy) {
       closeBtn.disabled = busy;
       root2.setAttribute("aria-busy", String(busy));
       root2.style.cursor = busy ? "progress" : "";
+      if (busy) {
+        if (!busyTimer) {
+          busyStartedAt = Date.now();
+          tickElapsed();
+          elapsedEl.hidden = false;
+          busyTimer = window.setInterval(tickElapsed, 1e3);
+        }
+      } else {
+        stopElapsed();
+      }
       root2.dispatchEvent(new Event("kus-lite-busy-change"));
+    }
+    function setCollapsed(collapsed) {
+      root2.classList.toggle("kus-lp--collapsed", collapsed);
+      toggleBtn.setAttribute("aria-expanded", String(!collapsed));
+      toggleBtn.setAttribute("aria-label", collapsed ? "展開する" : "折りたたむ");
+      toggleBtn.title = collapsed ? "展開する" : "折りたたむ（ヒーローだけ残して kintone 画面を確認）";
+      toggleBtn.textContent = collapsed ? "＋" : "－";
+      if (!collapsed) clampIntoViewport();
+    }
+    toggleBtn.addEventListener("click", () => setCollapsed(!root2.classList.contains("kus-lp--collapsed")));
+    let customPlaced = false;
+    function clampIntoViewport() {
+      if (!customPlaced || !root2.isConnected) return;
+      const rect = root2.getBoundingClientRect();
+      place(rect.left, rect.top);
+    }
+    function place(left, top) {
+      const w = root2.offsetWidth;
+      const h = root2.offsetHeight;
+      const maxLeft = Math.max(0, window.innerWidth - w);
+      const maxTop = Math.max(0, window.innerHeight - h);
+      const nextLeft = Math.min(Math.max(0, left), maxLeft);
+      const nextTop = Math.min(Math.max(0, top), maxTop);
+      root2.style.left = `${Math.round(nextLeft)}px`;
+      root2.style.top = `${Math.round(nextTop)}px`;
+      root2.style.right = "auto";
+      customPlaced = true;
+    }
+    function resetPosition() {
+      customPlaced = false;
+      root2.style.left = "";
+      root2.style.top = "";
+      root2.style.right = "";
+    }
+    let drag = null;
+    hero.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      const target = e.target;
+      if (!target || target.closest("button,a,input,select,textarea,[contenteditable]")) return;
+      const rect = root2.getBoundingClientRect();
+      drag = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, left: rect.left, top: rect.top, moved: false };
+      try {
+        hero.setPointerCapture(e.pointerId);
+      } catch {
+      }
+    });
+    hero.addEventListener("pointermove", (e) => {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      const dx = e.clientX - drag.x;
+      const dy = e.clientY - drag.y;
+      if (!drag.moved) {
+        if (Math.hypot(dx, dy) < 4) return;
+        drag.moved = true;
+        root2.classList.add("kus-lp--dragging");
+      }
+      e.preventDefault();
+      place(drag.left + dx, drag.top + dy);
+    });
+    function endDrag(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      drag = null;
+      root2.classList.remove("kus-lp--dragging");
+      try {
+        hero.releasePointerCapture(e.pointerId);
+      } catch {
+      }
+    }
+    hero.addEventListener("pointerup", endDrag);
+    hero.addEventListener("pointercancel", endDrag);
+    hero.addEventListener("dblclick", (e) => {
+      const target = e.target;
+      if (target && target.closest("button,a,input,select,textarea")) return;
+      resetPosition();
+    });
+    const onWindowResize = () => clampIntoViewport();
+    window.addEventListener("resize", onWindowResize);
+    function dispose() {
+      document.removeEventListener("keydown", onDocKeydown, true);
+      window.removeEventListener("resize", onWindowResize);
+      stopElapsed();
+      window.clearTimeout(copyResetTimer);
     }
     function close() {
       if (closeBtn.disabled) return;
       const restoreFocus = root2.contains(document.activeElement);
-      document.removeEventListener("keydown", onDocKeydown, true);
+      dispose();
       root2.remove();
       setRootElement(null);
       if (restoreFocus && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
@@ -1862,7 +2126,7 @@ ${contextLine}`);
       }
     }
     document.addEventListener("keydown", onDocKeydown, true);
-    root2.addEventListener("kus-lite-dispose", () => document.removeEventListener("keydown", onDocKeydown, true), { once: true });
+    root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
     requestAnimationFrame(() => {
@@ -1874,7 +2138,7 @@ ${contextLine}`);
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setPrimaryAction };
+    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
@@ -2365,6 +2629,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       nav.inert = value;
       if (value) {
         panel.root.querySelectorAll("input,button,select,textarea").forEach((input) => {
+          if (input.classList.contains("kus-lp__toggle")) return;
           disabled.set(input, input.disabled);
           input.disabled = true;
         });
@@ -4002,14 +4267,22 @@ ${formatFileFailures(failures)}
       guideCsv: reportCsv(guide),
       excludedCsv: reportCsv([["除外フィールドコード", "理由"], ...excluded.map((item) => [item.code, item.reason])]),
       readme: [
+        "【使い方】",
         "1. import.csv の2行目からデータを入力し、UTF-8のCSVとして保存してください。1行目はフィールドコードです。",
         "2. fields.csv で必須・選択肢・初期値・入力形式を確認できます。excluded.csv はこの取込機能の対象外です。",
         "3. 「CSVからレコードを追加」でファイルを選び、「CSVを事前検査」を実行してください。",
-        "初期値は説明用です。ひな形にサンプルレコードや初期値は挿入していません。空セルを送っても初期値に置き換わるとは限りません。初期値を使う項目は列を削除するか、値を明示してください。",
-        "取込は新規追加です。ファイル・テーブル・計算結果・システム項目・ルックアップのコピー先は含めません。",
-        "Excelで編集する場合、先頭ゼロ・長い番号・日付の自動変換に注意し、文字列として読み込んでください。",
-        "fields.csv / excluded.csv は閲覧用で、数式と解釈される文字列の先頭にアポストロフィを付けています。import.csv のコードは変更していません。",
-        "フィールド設定だけでは実行ユーザーの登録権限やルックアップ先の値は判定できません。取得時点の設定です。"
+        "",
+        "【同梱ファイル】",
+        "- import.csv   … 取込用ひな形（ヘッダー行のみ）",
+        "- fields.csv   … 列ごとの入力ガイド（必須・重複禁止・初期値・選択肢・制約）",
+        "- excluded.csv … 取込に使えないフィールドと理由",
+        "",
+        "【注意】",
+        "- 初期値は説明用です。ひな形にサンプルレコードや初期値は挿入していません。空セルを送っても初期値に置き換わるとは限りません。初期値を使う項目は列を削除するか、値を明示してください。",
+        "- 取込は新規追加です。ファイル・テーブル・計算結果・システム項目・ルックアップのコピー先は含めません。",
+        "- Excelで編集する場合、先頭ゼロ・長い番号・日付の自動変換に注意し、文字列として読み込んでください。",
+        "- fields.csv / excluded.csv は閲覧用で、数式と解釈される文字列の先頭にアポストロフィを付けています。import.csv のコードは変更していません。",
+        "- フィールド設定だけでは実行ユーザーの登録権限やルックアップ先の値は判定できません。取得時点の設定です。"
       ].join("\r\n")
     };
   }
@@ -4057,15 +4330,22 @@ ${formatFileFailures(failures)}
     if (!templates.length) throw new Error(`ひな形を作成できませんでした
 ${failures.join("\n")}`);
     const JSZip = await loadJSZipLite(), zip = new JSZip();
+    const generatedAt = (/* @__PURE__ */ new Date()).toISOString();
     for (const { appId, template } of templates) {
       const folder = `app_${appId}/`;
       zip.file(folder + "import.csv", template.csv);
       zip.file(folder + "fields.csv", template.guideCsv);
       zip.file(folder + "excluded.csv", template.excludedCsv);
-      zip.file(folder + "README.txt", `App ${appId}${options.guestId ? ` / ゲスト ${options.guestId}` : ""}\r
-${template.readme}`);
+      const head = [
+        "kintone CSV取込ひな形",
+        `対象: App ${appId}${options.guestId ? ` / ゲストスペース ${options.guestId}` : ""}`,
+        `生成: ${generatedAt}`,
+        `取込できる列: ${template.columnCount}列`,
+        ""
+      ].join("\r\n");
+      zip.file(folder + "README.txt", head + template.readme + "\r\n");
     }
-    zip.file("manifest.json", JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), guestId: options.guestId, templates: templates.map((item) => ({ appId: item.appId, columns: item.template.columnCount })), failures }, null, 2));
+    zip.file("manifest.json", JSON.stringify({ createdAt: generatedAt, guestId: options.guestId, templates: templates.map((item) => ({ appId: item.appId, columns: item.template.columnCount })), failures }, null, 2));
     downloadBlob(buildExportFilename("CSV取込ひな形", "zip"), await zip.generateAsync({ type: "blob" }));
     if (failures.length) return { warning: `${templates.length}アプリのひな形を保存 / 失敗 ${failures.length}アプリ
 ${failures.join("\n")}` };
@@ -4083,14 +4363,25 @@ ${failures.join("\n")}` };
     root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
     const load = makeButton("検査フィールド読込", "sub");
     const search = makeInput({ placeholder: "フィールド名・コードで絞り込み", width: "wide", ariaLabel: "検査フィールド検索" });
+    const clearSelection = makeButton("選択解除", "sub");
+    const countBadge = document.createElement("span");
+    countBadge.className = "kus-lp__count";
+    countBadge.textContent = "選択 0 / 5";
+    const pickWrap = document.createElement("div");
+    pickWrap.className = "kus-lp__picklist";
+    pickWrap.hidden = true;
+    const pickHead = document.createElement("div");
+    pickHead.className = "kus-lp__picklist-head";
+    pickHead.append(search, countBadge, clearSelection);
     const fieldBox = document.createElement("div");
+    fieldBox.className = "kus-lp__picklist-body";
     fieldBox.setAttribute("role", "group");
     fieldBox.setAttribute("aria-label", "検査するフィールド");
-    fieldBox.style.cssText = "max-height:210px;overflow:auto;display:grid;gap:6px;padding:4px;overflow-wrap:anywhere";
+    pickWrap.append(pickHead, fieldBox);
     const note = makeNote("先頭の対象アプリからフィールドを読み込み、1〜5項目を選んでください。");
     const trim = makeCheck({ label: "文字列・リンクの前後の空白を無視", checked: false });
     const ignoreCase = makeCheck({ label: "文字列・リンクの英字の大小を無視", checked: false });
-    root2.append(makeRow(load), search, fieldBox, note, makeRow([trim.label, ignoreCase.label]));
+    root2.append(makeRow(load), pickWrap, note, makeRow([trim.label, ignoreCase.label]));
     root2.appendChild(makeNote("選んだ項目すべてが一致するレコードを、アプリごとに重複として検出します。空の項目があるレコードは未入力として別集計します。複数選択は順序を無視して比較します。"));
     root2.appendChild(makeNote("テーブル内・添付・計算・システム項目は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。アプリ間の重複は検査しません。"));
     let fields = [], selected = /* @__PURE__ */ new Set(), version = 0, fieldsVersion = 0;
@@ -4108,14 +4399,26 @@ ${failures.join("\n")}` };
     };
     const refreshNote = () => {
       note.textContent = `選択 ${selected.size}/5項目: ${fields.filter((field) => selected.has(field.code)).map((field) => `${field.label}［${field.code}］`).join("、") || "未選択"}`;
+      countBadge.textContent = `選択 ${selected.size} / 5`;
     };
     resetMetadata.push(() => {
       fieldsVersion++;
       fields = [];
       selected.clear();
       fieldBox.replaceChildren();
+      pickWrap.hidden = true;
       resetResults();
       note.textContent = "対象アプリが変わりました。検査フィールドを再取得してください。";
+      countBadge.textContent = "選択 0 / 5";
+    });
+    clearSelection.addEventListener("click", () => {
+      if (!selected.size) return;
+      selected.clear();
+      fieldBox.querySelectorAll("input[type=checkbox]").forEach((box) => {
+        box.checked = false;
+      });
+      resetResults();
+      refreshNote();
     });
     for (const input of [query, trim.checkbox, ignoreCase.checkbox]) {
       input.addEventListener("input", resetResults);
@@ -4126,6 +4429,7 @@ ${failures.join("\n")}` };
       fieldBox.replaceChildren();
       for (const field of fields.filter((field2) => `${field2.label} ${field2.code}`.toLowerCase().includes(filter))) {
         const check = makeCheck({ label: `${field.label}［${field.code}］ / ${field.type}`, checked: selected.has(field.code) });
+        check.label.classList.add("kus-lp__picklist-item");
         check.checkbox.addEventListener("change", () => {
           if (check.checkbox.checked && selected.size >= 5) {
             check.checkbox.checked = false;
@@ -4155,6 +4459,7 @@ ${failures.join("\n")}` };
         return;
       }
       fields = loaded;
+      pickWrap.hidden = false;
       renderFields();
       note.textContent = `${fields.length}項目を取得しました。1〜5項目を選んでください。`;
       panel.setStatus(note.textContent, fields.length ? "ok" : "warn");

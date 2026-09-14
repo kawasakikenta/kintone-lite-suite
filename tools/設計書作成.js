@@ -792,6 +792,35 @@ ${contextLine}`);
       console.log(`[Toast ${type}] ${message}`);
     }
   }
+  function legacyCopy(text) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.setAttribute("aria-hidden", "true");
+    ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    ta.remove();
+    return ok;
+  }
+  async function copyTextToClipboard(text) {
+    if (!text) return false;
+    const clip = typeof navigator !== "undefined" ? navigator.clipboard : void 0;
+    if (clip && typeof clip.writeText === "function") {
+      try {
+        await clip.writeText(text);
+        return true;
+      } catch {
+      }
+    }
+    return legacyCopy(text);
+  }
   var HTML_ENTITY_NAMES;
   var init_utils = __esm({
     "src/utils.ts"() {
@@ -1381,6 +1410,39 @@ ${body}`;
     ].filter((r) => r[1] !== "");
     return mdTable(["項目", "値"], rows);
   }
+  function mdFieldNotes(f) {
+    if (!f || typeof f !== "object") return "";
+    const notes = [];
+    const lookup = f.lookup;
+    if (lookup && typeof lookup === "object") {
+      const app = lookup.relatedApp?.app ? `App ${lookup.relatedApp.app}` : lookup.relatedApp?.code ? `コード ${lookup.relatedApp.code}` : "参照先不明";
+      const key = lookup.relatedKeyField ? ` キー \`${lookup.relatedKeyField}\`` : "";
+      const mappings = Array.isArray(lookup.fieldMappings) ? lookup.fieldMappings.length : 0;
+      notes.push(`ルックアップ: ${app}${key}${mappings ? ` / 転記 ${mappings}項目` : ""}`);
+    }
+    const ref = f.referenceTable;
+    if (ref && typeof ref === "object") {
+      const app = ref.relatedApp?.app ? `App ${ref.relatedApp.app}` : ref.relatedApp?.code ? `コード ${ref.relatedApp.code}` : "参照先不明";
+      const cond = ref.condition?.field && ref.condition?.relatedField ? ` 条件 \`${ref.condition.field}\` = \`${ref.condition.relatedField}\`` : "";
+      const shown = Array.isArray(ref.displayFields) ? ref.displayFields.length : 0;
+      notes.push(`関連レコード: ${app}${cond}${shown ? ` / 表示 ${shown}項目` : ""}${ref.size ? ` / ${ref.size}件表示` : ""}`);
+    }
+    if (f.unit) notes.push(`単位: ${decodeHtmlEntities(f.unit)}${f.unitPosition === "BEFORE" ? "（前）" : f.unitPosition === "AFTER" ? "（後）" : ""}`);
+    if (f.digit === true || f.digit === "true") notes.push("桁区切りあり");
+    if (f.displayScale !== void 0 && f.displayScale !== null && f.displayScale !== "") notes.push(`小数 ${f.displayScale}桁`);
+    if (f.format && f.type === "CALC") notes.push(`表示形式: ${f.format}`);
+    const range = (min, max) => min !== void 0 && min !== null && min !== "" || max !== void 0 && max !== null && max !== "" ? `${min ?? ""}〜${max ?? ""}` : "";
+    const len = range(f.minLength, f.maxLength);
+    if (len) notes.push(`文字数 ${len}`);
+    const val = range(f.minValue, f.maxValue);
+    if (val) notes.push(`値 ${val}`);
+    if (f.defaultNowValue === true || f.defaultNowValue === "true") notes.push("初期値: 現在日時");
+    if (f.protocol) notes.push(`リンク種別: ${f.protocol}`);
+    if (f.hideExpression === true || f.hideExpression === "true") notes.push("計算式を非表示");
+    if (f.noLabel === true || f.noLabel === "true") notes.push("ラベル非表示");
+    if (f.thumbnailSize) notes.push(`サムネイル ${f.thumbnailSize}px`);
+    return notes.join(" / ");
+  }
   function mdRenderFieldSettings(sec) {
     const props = sec?.properties || {};
     const rows = [];
@@ -1394,7 +1456,8 @@ ${body}`;
         f.required ? "○" : "",
         f.unique ? "○" : "",
         mdFormatDefaultValue(f.defaultValue),
-        mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : "")
+        mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ""),
+        mdFieldNotes(f)
       ]);
       if (f.type === "SUBTABLE" && f.fields) {
         subtables.push(f);
@@ -1405,7 +1468,7 @@ ${body}`;
     parts.push(`- フィールド数: ${rows.length}`);
     parts.push("");
     parts.push(mdTable(
-      ["コード", "フィールド名", "種別", "必須", "重複禁止", "初期値", "選択肢/式"],
+      ["コード", "フィールド名", "種別", "必須", "重複禁止", "初期値", "選択肢/式", "参照先/制約"],
       rows
     ));
     subtables.forEach((tbl) => {
@@ -1418,10 +1481,11 @@ ${body}`;
         mdFieldTypeLabel(f.type),
         f.required ? "○" : "",
         mdFormatDefaultValue(f.defaultValue),
-        mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : "")
+        mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ""),
+        mdFieldNotes(f)
       ]);
       subRows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-      parts.push(mdTable(["コード", "フィールド名", "種別", "必須", "初期値", "選択肢/式"], subRows));
+      parts.push(mdTable(["コード", "フィールド名", "種別", "必須", "初期値", "選択肢/式", "参照先/制約"], subRows));
     });
     return parts.join("\n");
   }
@@ -1776,7 +1840,20 @@ ${body}`;
       return [def.label, def.key, count === "" ? "-" : String(count)];
     });
   }
-  function bundleToMarkdown(bundle) {
+  function mdFetchedAt(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return raw;
+    if (!/^\d{4}-\d{2}-\d{2}T/.test(raw)) return raw;
+    try {
+      return `${date.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", hour12: false })} JST（${raw}）`;
+    } catch {
+      return raw;
+    }
+  }
+  function bundleToMarkdown(bundle, options = {}) {
+    const includeRawJson = options.rawJson !== false;
     const sections = bundle?.sections || {};
     const appName = decodeHtmlEntities(sections.appSettings?.name || "");
     const lines = [];
@@ -1786,11 +1863,14 @@ ${body}`;
       lines.push(`> ${appName}`);
       lines.push("");
     }
+    const failedSections = SECTION_DEFS.filter((def) => sections[def.key]?._fetchError);
     lines.push(mdTable(["項目", "値"], [
       ["アプリID", bundle.appId],
+      ["アプリ名", appName || "（取得なし）"],
       ["ゲストスペースID", bundle.guestId || "(通常空間)"],
-      ["プレビュー取得", bundle.preview ? "はい" : "いいえ"],
-      ["取得日時", bundle.fetchedAt]
+      ["取得環境", bundle.preview ? "プレビュー（未公開の設定）" : "本番（運用中の設定）"],
+      ["取得日時", mdFetchedAt(bundle.fetchedAt)],
+      ["取得できなかったセクション", failedSections.length ? failedSections.map((def) => def.label).join("、") : "なし"]
     ]));
     lines.push("");
     const available = SECTION_DEFS.filter((def) => sections[def.key]);
@@ -1842,8 +1922,10 @@ ${body}`;
         lines.push("（データなし）");
         lines.push("");
       }
-      lines.push(mdRawJson(sec));
-      lines.push("");
+      if (includeRawJson) {
+        lines.push(mdRawJson(sec));
+        lines.push("");
+      }
     }
     return lines.join("\n");
   }
@@ -2083,6 +2165,7 @@ ${body}`;
 
   // src/entries/litePanelTheme.ts
   init_dialog();
+  init_utils();
   var STYLE_ID = "kus-lp-theme-styles";
   var ACCENTS = {
     diff: { from: "#1d4ed8", via: "#2563eb", to: "#0ea5e9", chip: "#dbeafe", ring: "rgba(37,99,235,.16)" },
@@ -2098,6 +2181,7 @@ ${body}`;
   var THEME_CSS = `
 @keyframes kus-lp-spin { to { transform: rotate(360deg); } }
 @keyframes kus-lp-fade-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes kus-lp-indeterminate { from { transform: translateX(-100%); } to { transform: translateX(350%); } }
 
 .kus-lp{
   --c-bg:#ffffff;
@@ -2145,6 +2229,12 @@ ${body}`;
   color:var(--c-text);
   animation:kus-lp-fade-in .18s ease-out;
 }
+/* ドラッグ移動中は文字選択とアニメーションを止める */
+.kus-lp--dragging{user-select:none;animation:none;transition:none}
+.kus-lp--dragging .kus-lp__hero{cursor:grabbing}
+/* 最小化: ヒーローだけ残して本文を畳む（kintone 画面を確認しやすくする） */
+.kus-lp--collapsed .kus-lp__body{display:none!important}
+.kus-lp--collapsed .kus-lp__hero{padding-bottom:16px}
 
 .kus-lp__hero{
   flex-shrink:0;
@@ -2156,8 +2246,23 @@ ${body}`;
   align-items:flex-start;
   justify-content:space-between;
   gap:12px;
+  cursor:grab;
+  touch-action:none;
 }
 .kus-lp__hero-main{min-width:0;flex:1}
+.kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
+.kus-lp__elapsed{
+  font-size:11px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
+  font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
+}
+.kus-lp__elapsed::before{
+  content:'';display:inline-block;width:9px;height:9px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.85);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
+}
+/* 実行中の進捗ストリップ（ヒーロー下端） */
+.kus-lp__progress{position:absolute;left:0;right:0;bottom:0;height:3px;overflow:hidden;background:rgba(255,255,255,.22);display:none;z-index:1}
+.kus-lp[aria-busy="true"] .kus-lp__progress{display:block}
+.kus-lp__progress::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:#fff;opacity:.95;animation:kus-lp-indeterminate 1.4s ease-in-out infinite}
 .kus-lp__title{margin:0;font-size:17px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
 .kus-lp__title-icon{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;background:rgba(255,255,255,.22);border-radius:7px}
 .kus-lp__subtitle{margin:4px 0 0;font-size:12px;color:rgba(255,255,255,.85);line-height:1.45}
@@ -2167,12 +2272,23 @@ ${body}`;
   font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close{
+.kus-lp__close,.kus-lp__toggle{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
+  font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
-.kus-lp__close:hover{background:rgba(255,255,255,.24)}
+.kus-lp__toggle{padding:6px 9px;min-width:34px}
+.kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+
+/* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
+.kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
+.kus-lp__hero :is(button):focus-visible{outline-color:#fff}
+@media(prefers-reduced-motion:reduce){
+  .kus-lp,.kus-lp *,.kus-lp *::before,.kus-lp *::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+  .kus-lp__progress::after{width:100%;opacity:.6}
+}
 
 .kus-lp__body{padding:16px 18px 18px;overflow-y:auto;flex:1;min-height:0}
 .kus-lp__body::-webkit-scrollbar{width:10px;height:10px}
@@ -2323,6 +2439,14 @@ ${body}`;
   border:1px solid #1e293b;
 }
 .kus-lp__result--empty{display:none}
+/* ログ右上に貼り付くコピー操作（ログ本文の選択・スクロールを妨げない） */
+.kus-lp__result-copy{
+  float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;
+  padding:3px 8px;font:600 10.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  color:#cbd5e1;background:rgba(30,41,59,.92);border:1px solid #334155;border-radius:7px;cursor:pointer;white-space:nowrap;
+}
+.kus-lp__result-copy:hover{color:#fff;background:#334155}
+.kus-lp__result-copy[data-copied="true"]{color:#bbf7d0;border-color:#166534}
 .kus-lp__panel-html{
   margin-top:10px;border:1px solid var(--c-border);border-radius:10px;
   background:var(--c-surface);max-height:240px;overflow:auto;font-size:11.5px;
@@ -2338,6 +2462,41 @@ ${body}`;
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
 .kus-lp__small{font-size:11px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
+
+/* ===== Toolbar / Count / Pill ===== */
+.kus-lp__toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px}
+.kus-lp__toolbar-spacer{flex:1;min-width:8px}
+.kus-lp__count{
+  display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;white-space:nowrap;
+  color:var(--c-accent-from);background:var(--c-accent-chip);padding:2px 9px;border-radius:999px;font-variant-numeric:tabular-nums;
+}
+.kus-lp__pill{
+  display:inline-flex;align-items:center;gap:6px;padding:4px 11px;font-size:11.5px;font-weight:600;border-radius:999px;
+  background:var(--c-surface-2);color:var(--c-text);border:1px solid var(--c-border);line-height:1.4;max-width:100%;
+}
+.kus-lp__pill--ok{background:var(--c-ok-bg);color:var(--c-ok-fg);border-color:var(--c-ok-bd)}
+.kus-lp__pill--accent{background:var(--c-accent-chip);color:var(--c-accent-from);border-color:transparent}
+
+/* ===== Pick list（絞り込み付きチェック一覧） ===== */
+.kus-lp__picklist{border:1px solid var(--c-border);border-radius:10px;background:var(--c-bg);overflow:hidden}
+.kus-lp__picklist-head{
+  display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:7px 8px;
+  background:var(--c-surface);border-bottom:1px solid var(--c-border);
+}
+.kus-lp__picklist-head .kus-lp__input{flex:1;min-width:120px;padding:5px 8px;font-size:12px}
+.kus-lp__picklist-head .kus-lp__btn{padding:4px 8px;font-size:11px;border-radius:7px}
+.kus-lp__picklist-body{max-height:220px;overflow:auto;padding:4px}
+.kus-lp__picklist-item{
+  display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;font-size:12px;color:var(--c-text);
+  cursor:pointer;user-select:none;min-width:0;
+}
+.kus-lp__picklist-item:hover{background:var(--c-surface)}
+.kus-lp__picklist-item:has(input:checked){background:var(--c-accent-chip)}
+.kus-lp__picklist-item input{accent-color:var(--c-accent-via);width:14px;height:14px;margin:0;flex-shrink:0}
+.kus-lp__picklist-main{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kus-lp__picklist-sub{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--c-muted);font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.kus-lp__picklist-empty{padding:10px 8px;color:var(--c-muted);font-size:11.5px}
+.kus-lp__picklist-foot{padding:6px 8px;border-top:1px solid var(--c-border);background:var(--c-surface);font-size:11px;color:var(--c-muted);line-height:1.5;overflow-wrap:anywhere}
 
 /* セクション折りたたみ (details) */
 .kus-lp__details{
@@ -2448,11 +2607,34 @@ ${body}`;
     closeBtn.type = "button";
     closeBtn.className = "kus-lp__close";
     closeBtn.textContent = "閉じる";
+    const elapsedEl = document.createElement("span");
+    elapsedEl.className = "kus-lp__elapsed";
+    elapsedEl.setAttribute("aria-hidden", "true");
+    elapsedEl.hidden = true;
+    const bodyId = `${opts.id}-body`;
+    const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.className = "kus-lp__toggle";
+    toggleBtn.setAttribute("aria-controls", bodyId);
+    toggleBtn.setAttribute("aria-expanded", "true");
+    toggleBtn.setAttribute("aria-label", "折りたたむ");
+    toggleBtn.title = "折りたたむ（ヒーローだけ残して kintone 画面を確認）";
+    toggleBtn.textContent = "－";
+    const heroActions = document.createElement("div");
+    heroActions.className = "kus-lp__hero-actions";
+    heroActions.appendChild(elapsedEl);
+    heroActions.appendChild(toggleBtn);
+    heroActions.appendChild(closeBtn);
+    const progress = document.createElement("div");
+    progress.className = "kus-lp__progress";
+    progress.setAttribute("aria-hidden", "true");
     hero.appendChild(heroMain);
-    hero.appendChild(closeBtn);
+    hero.appendChild(heroActions);
+    hero.appendChild(progress);
     root2.appendChild(hero);
     const body = document.createElement("div");
     body.className = "kus-lp__body";
+    body.id = bodyId;
     if (opts.hint) {
       const hint = document.createElement("div");
       hint.className = "kus-lp__hint";
@@ -2480,6 +2662,31 @@ ${body}`;
       status.innerHTML = `<span class="${iconCls}">${icon}</span><span class="kus-lp__status-text"></span>`;
       status.querySelector(".kus-lp__status-text").textContent = msg || "";
     }
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "kus-lp__result-copy";
+    copyBtn.textContent = "コピー";
+    copyBtn.setAttribute("aria-label", "ログをコピー");
+    let copyResetTimer = 0;
+    function resultText() {
+      const clone = result.cloneNode(true);
+      clone.querySelector(".kus-lp__result-copy")?.remove();
+      return (clone.innerText || clone.textContent || "").replace(/^\s+|\s+$/g, "");
+    }
+    function flashCopy(label, copied) {
+      copyBtn.textContent = label;
+      copyBtn.dataset.copied = String(copied);
+      window.clearTimeout(copyResetTimer);
+      copyResetTimer = window.setTimeout(() => {
+        copyBtn.textContent = "コピー";
+        delete copyBtn.dataset.copied;
+      }, 1600);
+    }
+    copyBtn.addEventListener("click", () => {
+      const text = resultText();
+      if (!text) return;
+      void copyTextToClipboard(text).then((ok) => flashCopy(ok ? "コピー済み" : "コピー失敗", ok));
+    });
     function setResult(text) {
       if (!text) {
         result.textContent = "";
@@ -2487,6 +2694,7 @@ ${body}`;
         return;
       }
       result.textContent = text;
+      result.prepend(copyBtn);
       result.classList.remove("kus-lp__result--empty");
     }
     function setResultHtml(html) {
@@ -2496,18 +2704,127 @@ ${body}`;
         return;
       }
       result.innerHTML = html;
+      result.prepend(copyBtn);
       result.classList.remove("kus-lp__result--empty");
+    }
+    let busyTimer = 0;
+    let busyStartedAt = 0;
+    function formatElapsed(ms) {
+      const total = Math.max(0, Math.floor(ms / 1e3));
+      const m = Math.floor(total / 60);
+      const s = total % 60;
+      return m ? `${m}分${s}秒` : `${s}秒`;
+    }
+    function tickElapsed() {
+      elapsedEl.textContent = `処理中 ${formatElapsed(Date.now() - busyStartedAt)}`;
+    }
+    function stopElapsed() {
+      if (busyTimer) window.clearInterval(busyTimer);
+      busyTimer = 0;
+      elapsedEl.hidden = true;
+      elapsedEl.textContent = "";
     }
     function setBusy(busy) {
       closeBtn.disabled = busy;
       root2.setAttribute("aria-busy", String(busy));
       root2.style.cursor = busy ? "progress" : "";
+      if (busy) {
+        if (!busyTimer) {
+          busyStartedAt = Date.now();
+          tickElapsed();
+          elapsedEl.hidden = false;
+          busyTimer = window.setInterval(tickElapsed, 1e3);
+        }
+      } else {
+        stopElapsed();
+      }
       root2.dispatchEvent(new Event("kus-lite-busy-change"));
+    }
+    function setCollapsed(collapsed) {
+      root2.classList.toggle("kus-lp--collapsed", collapsed);
+      toggleBtn.setAttribute("aria-expanded", String(!collapsed));
+      toggleBtn.setAttribute("aria-label", collapsed ? "展開する" : "折りたたむ");
+      toggleBtn.title = collapsed ? "展開する" : "折りたたむ（ヒーローだけ残して kintone 画面を確認）";
+      toggleBtn.textContent = collapsed ? "＋" : "－";
+      if (!collapsed) clampIntoViewport();
+    }
+    toggleBtn.addEventListener("click", () => setCollapsed(!root2.classList.contains("kus-lp--collapsed")));
+    let customPlaced = false;
+    function clampIntoViewport() {
+      if (!customPlaced || !root2.isConnected) return;
+      const rect = root2.getBoundingClientRect();
+      place(rect.left, rect.top);
+    }
+    function place(left, top) {
+      const w = root2.offsetWidth;
+      const h = root2.offsetHeight;
+      const maxLeft = Math.max(0, window.innerWidth - w);
+      const maxTop = Math.max(0, window.innerHeight - h);
+      const nextLeft = Math.min(Math.max(0, left), maxLeft);
+      const nextTop = Math.min(Math.max(0, top), maxTop);
+      root2.style.left = `${Math.round(nextLeft)}px`;
+      root2.style.top = `${Math.round(nextTop)}px`;
+      root2.style.right = "auto";
+      customPlaced = true;
+    }
+    function resetPosition() {
+      customPlaced = false;
+      root2.style.left = "";
+      root2.style.top = "";
+      root2.style.right = "";
+    }
+    let drag = null;
+    hero.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      const target = e.target;
+      if (!target || target.closest("button,a,input,select,textarea,[contenteditable]")) return;
+      const rect = root2.getBoundingClientRect();
+      drag = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, left: rect.left, top: rect.top, moved: false };
+      try {
+        hero.setPointerCapture(e.pointerId);
+      } catch {
+      }
+    });
+    hero.addEventListener("pointermove", (e) => {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      const dx = e.clientX - drag.x;
+      const dy = e.clientY - drag.y;
+      if (!drag.moved) {
+        if (Math.hypot(dx, dy) < 4) return;
+        drag.moved = true;
+        root2.classList.add("kus-lp--dragging");
+      }
+      e.preventDefault();
+      place(drag.left + dx, drag.top + dy);
+    });
+    function endDrag(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      drag = null;
+      root2.classList.remove("kus-lp--dragging");
+      try {
+        hero.releasePointerCapture(e.pointerId);
+      } catch {
+      }
+    }
+    hero.addEventListener("pointerup", endDrag);
+    hero.addEventListener("pointercancel", endDrag);
+    hero.addEventListener("dblclick", (e) => {
+      const target = e.target;
+      if (target && target.closest("button,a,input,select,textarea")) return;
+      resetPosition();
+    });
+    const onWindowResize = () => clampIntoViewport();
+    window.addEventListener("resize", onWindowResize);
+    function dispose() {
+      document.removeEventListener("keydown", onDocKeydown, true);
+      window.removeEventListener("resize", onWindowResize);
+      stopElapsed();
+      window.clearTimeout(copyResetTimer);
     }
     function close() {
       if (closeBtn.disabled) return;
       const restoreFocus = root2.contains(document.activeElement);
-      document.removeEventListener("keydown", onDocKeydown, true);
+      dispose();
       root2.remove();
       setRootElement(null);
       if (restoreFocus && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
@@ -2548,7 +2865,7 @@ ${body}`;
       }
     }
     document.addEventListener("keydown", onDocKeydown, true);
-    root2.addEventListener("kus-lite-dispose", () => document.removeEventListener("keydown", onDocKeydown, true), { once: true });
+    root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
     requestAnimationFrame(() => {
@@ -2560,7 +2877,7 @@ ${body}`;
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setPrimaryAction };
+    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
@@ -3260,6 +3577,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       nav.inert = value;
       if (value) {
         panel.root.querySelectorAll("input,button,select,textarea").forEach((input) => {
+          if (input.classList.contains("kus-lp__toggle")) return;
           disabled.set(input, input.disabled);
           input.disabled = true;
         });
@@ -6034,12 +6352,10 @@ ${detail}`);
     const bundle = await resolveDesignBundle(source, "source", setStatus);
     state.lastSourceBundle = bundle;
     const md = bundleToMarkdown(bundle);
-    try {
-      await navigator.clipboard.writeText(md);
-      setStatus("設計書Markdownをクリップボードにコピーしました");
-    } catch (e) {
-      throw new Error(`クリップボードへのコピーに失敗しました: ${e.message}`);
+    if (!await copyTextToClipboard(md)) {
+      throw new Error("クリップボードへのコピーに失敗しました。ブラウザのクリップボード権限を確認するか、Markdown 保存を使ってください");
     }
+    setStatus("設計書Markdownをクリップボードにコピーしました");
   }
   async function runDesignExportXlsxStandalone(source, setStatus) {
     const appId = String(source.appId || "").trim();
@@ -6117,6 +6433,71 @@ ${detail}`);
     }
     return result.join("\n");
   }
+  function summarizeDesignDiff(diff) {
+    const bySection = /* @__PURE__ */ new Map();
+    let current = "（ヘッダー）";
+    let added = 0;
+    let removed = 0;
+    for (const line of String(diff || "").split("\n")) {
+      const body = line.slice(2);
+      if (/^## /.test(body)) current = body.slice(3).trim() || current;
+      const kind = line.startsWith("+ ") ? "added" : line.startsWith("- ") ? "removed" : "";
+      if (!kind) continue;
+      if (!bySection.has(current)) bySection.set(current, { section: current, added: 0, removed: 0 });
+      const entry = bySection.get(current);
+      entry[kind] += 1;
+      if (kind === "added") added += 1;
+      else removed += 1;
+    }
+    return { added, removed, sections: [...bySection.values()] };
+  }
+  function describeDesignDiffSide(bundle, side, imported) {
+    return {
+      appId: String(bundle?.appId || side?.appId || "").trim(),
+      appName: extractAppNameFromBundle(bundle) || "",
+      guestId: String(bundle?.guestId || side?.guestId || "").trim(),
+      environment: imported ? "読み込んだ設定JSON" : bundle?.preview ?? side?.preview ? "プレビュー（未公開）" : "本番（運用中）"
+    };
+  }
+  function designDiffSideLabel(side) {
+    return `App ${side.appId || "?"}${side.appName ? ` ${side.appName}` : ""}${side.guestId ? `（ゲスト ${side.guestId}）` : ""} · ${side.environment}`;
+  }
+  function buildDesignDiffReport(input) {
+    const summary = summarizeDesignDiff(input.diff);
+    const lines = [];
+    lines.push("# 設計書差分レポート");
+    lines.push("");
+    lines.push("| 項目 | 値 |");
+    lines.push("| --- | --- |");
+    lines.push(`| 生成日時 | ${input.generatedAt} |`);
+    lines.push(`| 比較元（追加・更新後の姿） | ${designDiffSideLabel(input.source)} |`);
+    lines.push(`| 比較先（現在の設定） | ${designDiffSideLabel(input.target)} |`);
+    lines.push(`| 差分行数 | 追加 ${summary.added} 行 / 削除 ${summary.removed} 行 |`);
+    lines.push("");
+    lines.push("## 見方");
+    lines.push("");
+    lines.push("- `+` の行は比較元にあって比較先にない内容、`-` の行は比較先にだけある内容です。比較先を比較元へ揃えるときの変更に相当します。");
+    lines.push("- 設計書の表と要約を行単位で比べた簡易差分です。API レスポンスの生データは含めていません。厳密な差分は「差分比較」ツールの HTML / Excel を使ってください。");
+    lines.push("- 並び順だけが異なる行も追加・削除として現れます。");
+    lines.push("");
+    lines.push("## セクション別の差分");
+    lines.push("");
+    if (summary.sections.length) {
+      lines.push("| セクション | 追加 | 削除 |");
+      lines.push("| --- | ---: | ---: |");
+      for (const entry of summary.sections) lines.push(`| ${entry.section.replace(/\|/g, "\\|")} | ${entry.added} | ${entry.removed} |`);
+    } else {
+      lines.push("差分はありません。比較元と比較先の設計書は同じ内容です。");
+    }
+    lines.push("");
+    lines.push("## 差分");
+    lines.push("");
+    lines.push("```diff");
+    lines.push(input.diff);
+    lines.push("```");
+    lines.push("");
+    return lines.join("\n");
+  }
   async function runDesignDiffMdStandalone(opts, setStatus) {
     const srcAppId = String(opts.source?.appId || "").trim();
     const tgtAppId = String(opts.target?.appId || "").trim();
@@ -6126,18 +6507,15 @@ ${detail}`);
     const srcBundle = await resolveDesignBundle(opts.source, "source", setStatus, "比較元: ");
     const tgtBundle = await resolveDesignBundle(opts.target, "target", setStatus, "比較先: ");
     setStatus("差分レポート生成中...");
-    const srcMd = bundleToMarkdown(srcBundle);
-    const tgtMd = bundleToMarkdown(tgtBundle);
+    const srcMd = bundleToMarkdown(srcBundle, { rawJson: false });
+    const tgtMd = bundleToMarkdown(tgtBundle, { rawJson: false });
     const diffMd = simpleLineDiffLite(tgtMd, srcMd);
-    const finalMd = `# 設計書差分レポート
-- 生成日時: ${nowStamp()}
-- 比較元App: ${srcAppId} (追加/更新後)
-- 比較先App: ${tgtAppId} (現在の設定)
-
-\`\`\`diff
-${diffMd}
-\`\`\`
-`;
+    const finalMd = buildDesignDiffReport({
+      diff: diffMd,
+      generatedAt: nowStamp(),
+      source: describeDesignDiffSide(srcBundle, opts.source, importedSource),
+      target: describeDesignDiffSide(tgtBundle, opts.target, importedTarget)
+    });
     const diffLabel = `${appLabelFromBundle(srcBundle)}_vs_${appLabelFromBundle(tgtBundle)}`;
     downloadText(buildExportFilename("設計書差分", "md", { appLabel: diffLabel }), finalMd, "text/markdown");
     setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）`);

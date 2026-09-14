@@ -295,7 +295,8 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
     canvas.inert = value;
     nav.inert = value;
     if (value) {
-      panel.root.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement>('input,button,select,textarea').forEach(input => { disabled.set(input, input.disabled); input.disabled = true; });
+      // 折りたたみは実行中でも使えるようにし、長い処理中に kintone 画面を確認できるようにする。
+      panel.root.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement>('input,button,select,textarea').forEach(input => { if (input.classList.contains('kus-lp__toggle')) return; disabled.set(input, input.disabled); input.disabled = true; });
     } else {
       disabled.forEach((wasDisabled, input) => { input.disabled = wasDisabled; });
       disabled.clear();

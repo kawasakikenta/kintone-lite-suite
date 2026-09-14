@@ -49,14 +49,22 @@ export async function runCsvTemplateStandalone(options: { appIdsText: string; gu
   }
   if (!templates.length) throw new Error(`ひな形を作成できませんでした\n${failures.join('\n')}`);
   const JSZip = await loadJSZipLite(), zip = new JSZip();
+  const generatedAt = new Date().toISOString();
   for (const { appId, template } of templates) {
     const folder = `app_${appId}/`;
     zip.file(folder + 'import.csv', template.csv);
     zip.file(folder + 'fields.csv', template.guideCsv);
     zip.file(folder + 'excluded.csv', template.excludedCsv);
-    zip.file(folder + 'README.txt', `App ${appId}${options.guestId ? ` / ゲスト ${options.guestId}` : ''}\r\n${template.readme}`);
+    const head = [
+      'kintone CSV取込ひな形',
+      `対象: App ${appId}${options.guestId ? ` / ゲストスペース ${options.guestId}` : ''}`,
+      `生成: ${generatedAt}`,
+      `取込できる列: ${template.columnCount}列`,
+      ''
+    ].join('\r\n');
+    zip.file(folder + 'README.txt', head + template.readme + '\r\n');
   }
-  zip.file('manifest.json', JSON.stringify({ createdAt: new Date().toISOString(), guestId: options.guestId, templates: templates.map(item => ({ appId: item.appId, columns: item.template.columnCount })), failures }, null, 2));
+  zip.file('manifest.json', JSON.stringify({ createdAt: generatedAt, guestId: options.guestId, templates: templates.map(item => ({ appId: item.appId, columns: item.template.columnCount })), failures }, null, 2));
   downloadBlob(buildExportFilename('CSV取込ひな形', 'zip'), await zip.generateAsync({ type: 'blob' }));
   if (failures.length) return { warning: `${templates.length}アプリのひな形を保存 / 失敗 ${failures.length}アプリ\n${failures.join('\n')}` };
   setStatus(`${templates.length}アプリのCSVひな形と入力ガイドを保存しました`);
