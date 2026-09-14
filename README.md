@@ -57,6 +57,7 @@ npm run test:er-compare
 
 ## 資料
 
+- [技術構成・ライブラリ一覧・設計資料](docs/technology-and-architecture.md) — アーキテクチャ、npm / CDN 依存、データフロー、ビルド・保守方針
 - [プレビュー反映の使い方と反映範囲](docs/preview-reflection.md) — 4段階の確認、既存設定の保持、実行前検査、再試行
 - [差分比較ロジック説明](docs/diff-comparison-logic.md) — 比較方向、取得完全性、無視・正規化、配列の対応付け、HTML / Excel出力の違い
 - [統合ツールの開発・ビルド](tools/統合ツール/README.md)
