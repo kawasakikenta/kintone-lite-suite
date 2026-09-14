@@ -666,3 +666,35 @@ export async function showToast(message: unknown, type: string = 'info'): Promis
     console.log(`[Toast ${type}] ${message}`);
   }
 }
+
+// ===== Clipboard =====
+
+function legacyCopy(text: string): boolean {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.setAttribute('aria-hidden', 'true');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+/**
+ * テキストをクリップボードへ書き込む。Clipboard API が使えない環境（権限なし・非セキュアコンテキスト）では
+ * 選択＋execCommand へフォールバックし、成否を返す。
+ */
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+  const clip = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+  if (clip && typeof clip.writeText === 'function') {
+    try {
+      await clip.writeText(text);
+      return true;
+    } catch { /* フォールバックへ */ }
+  }
+  return legacyCopy(text);
+}

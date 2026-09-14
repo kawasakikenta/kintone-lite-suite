@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS } from '../constants.js';
 import { state } from '../state.js';
-import { nowStamp, downloadText, buildExportFilename, appLabelFromBundle } from '../utils.js';
+import { nowStamp, downloadText, buildExportFilename, appLabelFromBundle, copyTextToClipboard } from '../utils.js';
 import { fetchBundle } from '../api.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { bundleToMarkdown } from '../diff/export.js';
@@ -75,12 +75,10 @@ export async function runDesignCopyMdStandalone(source, setStatus) {
   state.lastSourceBundle = bundle;
 
   const md = bundleToMarkdown(bundle);
-  try {
-    await navigator.clipboard.writeText(md);
-    setStatus('設計書Markdownをクリップボードにコピーしました');
-  } catch (e) {
-    throw new Error(`クリップボードへのコピーに失敗しました: ${e.message}`);
+  if (!(await copyTextToClipboard(md))) {
+    throw new Error('クリップボードへのコピーに失敗しました。ブラウザのクリップボード権限を確認するか、Markdown 保存を使ってください');
   }
+  setStatus('設計書Markdownをクリップボードにコピーしました');
 }
 
 /**

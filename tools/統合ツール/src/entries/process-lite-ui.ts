@@ -11,9 +11,11 @@ import {
   makeButton,
   makeCard,
   makeNote,
-  liteRun
+  liteRun,
+  copyTextToClipboard
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 
 export function mountProcessLitePanel() {
   const panel = createLitePanel({
@@ -55,18 +57,41 @@ export function mountProcessLitePanel() {
   textEl.readOnly = true;
   textEl.placeholder = 'Mermaid 用ソースがここに表示されます';
   cardText.body.appendChild(textEl);
+  cardText.body.appendChild(makeNote('ソースは Mermaid Live Editor や Markdown（```mermaid）にそのまま貼り付けて共有できます。'));
+  const copySource = makeButton('ソースをコピー', 'sub', { icon: '⎘' });
+  const saveSource = makeButton('.mmd で保存', 'sub', { icon: '↓' });
+  cardText.actions.appendChild(copySource);
+  cardText.actions.appendChild(saveSource);
+  copySource.addEventListener('click', async () => {
+    const text = textEl.value.trim();
+    if (!text) { panel.setStatus('コピーするソースがありません。先にフロー図を描画してください', 'warn'); return; }
+    if (await copyTextToClipboard(text)) {
+      panel.setStatus('Mermaid ソースをクリップボードにコピーしました', 'ok');
+    } else {
+      textEl.focus();
+      textEl.select();
+      panel.setStatus('クリップボードを使えないため、ソースを選択しました。Ctrl/Cmd+C でコピーしてください', 'warn');
+    }
+  });
+  saveSource.addEventListener('click', () => {
+    const text = textEl.value.trim();
+    if (!text) { panel.setStatus('保存するソースがありません。先にフロー図を描画してください', 'warn'); return; }
+    downloadText(buildExportFilename('プロセス図', 'mmd', { appLabel: buildAppFilenameLabel(appInp.value.trim(), '') }), text, 'text/plain');
+    panel.setStatus('Mermaid ソースを保存しました', 'ok');
+  });
   panel.body.insertBefore(cardText.card, panel.status);
 
   // ---- シミュレーション ----
   const cardSim = makeCard({ title: 'シミュレーション', number: 3 });
   cardSim.card.style.display = 'none';
   const curRow = document.createElement('div');
-  curRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px';
+  curRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap';
   const curLabel = document.createElement('span');
   curLabel.className = 'kus-lp__label';
   curLabel.textContent = '現在状態';
   const curEl = document.createElement('span');
-  curEl.style.cssText = 'display:inline-block;padding:4px 10px;font-size:11.5px;border-radius:6px;background:#e2e8f0;color:#1e293b;font-weight:600';
+  curEl.className = 'kus-lp__pill';
+  curEl.setAttribute('aria-live', 'polite');
   curEl.textContent = '未開始';
   curRow.appendChild(curLabel);
   curRow.appendChild(curEl);
