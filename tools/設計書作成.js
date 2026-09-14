@@ -1410,6 +1410,39 @@ ${body}`;
     ].filter((r) => r[1] !== "");
     return mdTable(["項目", "値"], rows);
   }
+  function mdFieldNotes(f) {
+    if (!f || typeof f !== "object") return "";
+    const notes = [];
+    const lookup = f.lookup;
+    if (lookup && typeof lookup === "object") {
+      const app = lookup.relatedApp?.app ? `App ${lookup.relatedApp.app}` : lookup.relatedApp?.code ? `コード ${lookup.relatedApp.code}` : "参照先不明";
+      const key = lookup.relatedKeyField ? ` キー \`${lookup.relatedKeyField}\`` : "";
+      const mappings = Array.isArray(lookup.fieldMappings) ? lookup.fieldMappings.length : 0;
+      notes.push(`ルックアップ: ${app}${key}${mappings ? ` / 転記 ${mappings}項目` : ""}`);
+    }
+    const ref = f.referenceTable;
+    if (ref && typeof ref === "object") {
+      const app = ref.relatedApp?.app ? `App ${ref.relatedApp.app}` : ref.relatedApp?.code ? `コード ${ref.relatedApp.code}` : "参照先不明";
+      const cond = ref.condition?.field && ref.condition?.relatedField ? ` 条件 \`${ref.condition.field}\` = \`${ref.condition.relatedField}\`` : "";
+      const shown = Array.isArray(ref.displayFields) ? ref.displayFields.length : 0;
+      notes.push(`関連レコード: ${app}${cond}${shown ? ` / 表示 ${shown}項目` : ""}${ref.size ? ` / ${ref.size}件表示` : ""}`);
+    }
+    if (f.unit) notes.push(`単位: ${decodeHtmlEntities(f.unit)}${f.unitPosition === "BEFORE" ? "（前）" : f.unitPosition === "AFTER" ? "（後）" : ""}`);
+    if (f.digit === true || f.digit === "true") notes.push("桁区切りあり");
+    if (f.displayScale !== void 0 && f.displayScale !== null && f.displayScale !== "") notes.push(`小数 ${f.displayScale}桁`);
+    if (f.format && f.type === "CALC") notes.push(`表示形式: ${f.format}`);
+    const range = (min, max) => min !== void 0 && min !== null && min !== "" || max !== void 0 && max !== null && max !== "" ? `${min ?? ""}〜${max ?? ""}` : "";
+    const len = range(f.minLength, f.maxLength);
+    if (len) notes.push(`文字数 ${len}`);
+    const val = range(f.minValue, f.maxValue);
+    if (val) notes.push(`値 ${val}`);
+    if (f.defaultNowValue === true || f.defaultNowValue === "true") notes.push("初期値: 現在日時");
+    if (f.protocol) notes.push(`リンク種別: ${f.protocol}`);
+    if (f.hideExpression === true || f.hideExpression === "true") notes.push("計算式を非表示");
+    if (f.noLabel === true || f.noLabel === "true") notes.push("ラベル非表示");
+    if (f.thumbnailSize) notes.push(`サムネイル ${f.thumbnailSize}px`);
+    return notes.join(" / ");
+  }
   function mdRenderFieldSettings(sec) {
     const props = sec?.properties || {};
     const rows = [];
@@ -1423,7 +1456,8 @@ ${body}`;
         f.required ? "○" : "",
         f.unique ? "○" : "",
         mdFormatDefaultValue(f.defaultValue),
-        mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : "")
+        mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ""),
+        mdFieldNotes(f)
       ]);
       if (f.type === "SUBTABLE" && f.fields) {
         subtables.push(f);
@@ -1434,7 +1468,7 @@ ${body}`;
     parts.push(`- フィールド数: ${rows.length}`);
     parts.push("");
     parts.push(mdTable(
-      ["コード", "フィールド名", "種別", "必須", "重複禁止", "初期値", "選択肢/式"],
+      ["コード", "フィールド名", "種別", "必須", "重複禁止", "初期値", "選択肢/式", "参照先/制約"],
       rows
     ));
     subtables.forEach((tbl) => {
@@ -1447,10 +1481,11 @@ ${body}`;
         mdFieldTypeLabel(f.type),
         f.required ? "○" : "",
         mdFormatDefaultValue(f.defaultValue),
-        mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : "")
+        mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ""),
+        mdFieldNotes(f)
       ]);
       subRows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-      parts.push(mdTable(["コード", "フィールド名", "種別", "必須", "初期値", "選択肢/式"], subRows));
+      parts.push(mdTable(["コード", "フィールド名", "種別", "必須", "初期値", "選択肢/式", "参照先/制約"], subRows));
     });
     return parts.join("\n");
   }
@@ -1805,7 +1840,20 @@ ${body}`;
       return [def.label, def.key, count === "" ? "-" : String(count)];
     });
   }
-  function bundleToMarkdown(bundle) {
+  function mdFetchedAt(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return raw;
+    if (!/^\d{4}-\d{2}-\d{2}T/.test(raw)) return raw;
+    try {
+      return `${date.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", hour12: false })} JST（${raw}）`;
+    } catch {
+      return raw;
+    }
+  }
+  function bundleToMarkdown(bundle, options = {}) {
+    const includeRawJson = options.rawJson !== false;
     const sections = bundle?.sections || {};
     const appName = decodeHtmlEntities(sections.appSettings?.name || "");
     const lines = [];
@@ -1815,11 +1863,14 @@ ${body}`;
       lines.push(`> ${appName}`);
       lines.push("");
     }
+    const failedSections = SECTION_DEFS.filter((def) => sections[def.key]?._fetchError);
     lines.push(mdTable(["項目", "値"], [
       ["アプリID", bundle.appId],
+      ["アプリ名", appName || "（取得なし）"],
       ["ゲストスペースID", bundle.guestId || "(通常空間)"],
-      ["プレビュー取得", bundle.preview ? "はい" : "いいえ"],
-      ["取得日時", bundle.fetchedAt]
+      ["取得環境", bundle.preview ? "プレビュー（未公開の設定）" : "本番（運用中の設定）"],
+      ["取得日時", mdFetchedAt(bundle.fetchedAt)],
+      ["取得できなかったセクション", failedSections.length ? failedSections.map((def) => def.label).join("、") : "なし"]
     ]));
     lines.push("");
     const available = SECTION_DEFS.filter((def) => sections[def.key]);
@@ -1871,8 +1922,10 @@ ${body}`;
         lines.push("（データなし）");
         lines.push("");
       }
-      lines.push(mdRawJson(sec));
-      lines.push("");
+      if (includeRawJson) {
+        lines.push(mdRawJson(sec));
+        lines.push("");
+      }
     }
     return lines.join("\n");
   }
@@ -6380,6 +6433,71 @@ ${detail}`);
     }
     return result.join("\n");
   }
+  function summarizeDesignDiff(diff) {
+    const bySection = /* @__PURE__ */ new Map();
+    let current = "（ヘッダー）";
+    let added = 0;
+    let removed = 0;
+    for (const line of String(diff || "").split("\n")) {
+      const body = line.slice(2);
+      if (/^## /.test(body)) current = body.slice(3).trim() || current;
+      const kind = line.startsWith("+ ") ? "added" : line.startsWith("- ") ? "removed" : "";
+      if (!kind) continue;
+      if (!bySection.has(current)) bySection.set(current, { section: current, added: 0, removed: 0 });
+      const entry = bySection.get(current);
+      entry[kind] += 1;
+      if (kind === "added") added += 1;
+      else removed += 1;
+    }
+    return { added, removed, sections: [...bySection.values()] };
+  }
+  function describeDesignDiffSide(bundle, side, imported) {
+    return {
+      appId: String(bundle?.appId || side?.appId || "").trim(),
+      appName: extractAppNameFromBundle(bundle) || "",
+      guestId: String(bundle?.guestId || side?.guestId || "").trim(),
+      environment: imported ? "読み込んだ設定JSON" : bundle?.preview ?? side?.preview ? "プレビュー（未公開）" : "本番（運用中）"
+    };
+  }
+  function designDiffSideLabel(side) {
+    return `App ${side.appId || "?"}${side.appName ? ` ${side.appName}` : ""}${side.guestId ? `（ゲスト ${side.guestId}）` : ""} · ${side.environment}`;
+  }
+  function buildDesignDiffReport(input) {
+    const summary = summarizeDesignDiff(input.diff);
+    const lines = [];
+    lines.push("# 設計書差分レポート");
+    lines.push("");
+    lines.push("| 項目 | 値 |");
+    lines.push("| --- | --- |");
+    lines.push(`| 生成日時 | ${input.generatedAt} |`);
+    lines.push(`| 比較元（追加・更新後の姿） | ${designDiffSideLabel(input.source)} |`);
+    lines.push(`| 比較先（現在の設定） | ${designDiffSideLabel(input.target)} |`);
+    lines.push(`| 差分行数 | 追加 ${summary.added} 行 / 削除 ${summary.removed} 行 |`);
+    lines.push("");
+    lines.push("## 見方");
+    lines.push("");
+    lines.push("- `+` の行は比較元にあって比較先にない内容、`-` の行は比較先にだけある内容です。比較先を比較元へ揃えるときの変更に相当します。");
+    lines.push("- 設計書の表と要約を行単位で比べた簡易差分です。API レスポンスの生データは含めていません。厳密な差分は「差分比較」ツールの HTML / Excel を使ってください。");
+    lines.push("- 並び順だけが異なる行も追加・削除として現れます。");
+    lines.push("");
+    lines.push("## セクション別の差分");
+    lines.push("");
+    if (summary.sections.length) {
+      lines.push("| セクション | 追加 | 削除 |");
+      lines.push("| --- | ---: | ---: |");
+      for (const entry of summary.sections) lines.push(`| ${entry.section.replace(/\|/g, "\\|")} | ${entry.added} | ${entry.removed} |`);
+    } else {
+      lines.push("差分はありません。比較元と比較先の設計書は同じ内容です。");
+    }
+    lines.push("");
+    lines.push("## 差分");
+    lines.push("");
+    lines.push("```diff");
+    lines.push(input.diff);
+    lines.push("```");
+    lines.push("");
+    return lines.join("\n");
+  }
   async function runDesignDiffMdStandalone(opts, setStatus) {
     const srcAppId = String(opts.source?.appId || "").trim();
     const tgtAppId = String(opts.target?.appId || "").trim();
@@ -6389,18 +6507,15 @@ ${detail}`);
     const srcBundle = await resolveDesignBundle(opts.source, "source", setStatus, "比較元: ");
     const tgtBundle = await resolveDesignBundle(opts.target, "target", setStatus, "比較先: ");
     setStatus("差分レポート生成中...");
-    const srcMd = bundleToMarkdown(srcBundle);
-    const tgtMd = bundleToMarkdown(tgtBundle);
+    const srcMd = bundleToMarkdown(srcBundle, { rawJson: false });
+    const tgtMd = bundleToMarkdown(tgtBundle, { rawJson: false });
     const diffMd = simpleLineDiffLite(tgtMd, srcMd);
-    const finalMd = `# 設計書差分レポート
-- 生成日時: ${nowStamp()}
-- 比較元App: ${srcAppId} (追加/更新後)
-- 比較先App: ${tgtAppId} (現在の設定)
-
-\`\`\`diff
-${diffMd}
-\`\`\`
-`;
+    const finalMd = buildDesignDiffReport({
+      diff: diffMd,
+      generatedAt: nowStamp(),
+      source: describeDesignDiffSide(srcBundle, opts.source, importedSource),
+      target: describeDesignDiffSide(tgtBundle, opts.target, importedTarget)
+    });
     const diffLabel = `${appLabelFromBundle(srcBundle)}_vs_${appLabelFromBundle(tgtBundle)}`;
     downloadText(buildExportFilename("設計書差分", "md", { appLabel: diffLabel }), finalMd, "text/markdown");
     setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）`);

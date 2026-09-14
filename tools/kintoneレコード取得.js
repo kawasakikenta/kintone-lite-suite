@@ -4267,14 +4267,22 @@ ${formatFileFailures(failures)}
       guideCsv: reportCsv(guide),
       excludedCsv: reportCsv([["除外フィールドコード", "理由"], ...excluded.map((item) => [item.code, item.reason])]),
       readme: [
+        "【使い方】",
         "1. import.csv の2行目からデータを入力し、UTF-8のCSVとして保存してください。1行目はフィールドコードです。",
         "2. fields.csv で必須・選択肢・初期値・入力形式を確認できます。excluded.csv はこの取込機能の対象外です。",
         "3. 「CSVからレコードを追加」でファイルを選び、「CSVを事前検査」を実行してください。",
-        "初期値は説明用です。ひな形にサンプルレコードや初期値は挿入していません。空セルを送っても初期値に置き換わるとは限りません。初期値を使う項目は列を削除するか、値を明示してください。",
-        "取込は新規追加です。ファイル・テーブル・計算結果・システム項目・ルックアップのコピー先は含めません。",
-        "Excelで編集する場合、先頭ゼロ・長い番号・日付の自動変換に注意し、文字列として読み込んでください。",
-        "fields.csv / excluded.csv は閲覧用で、数式と解釈される文字列の先頭にアポストロフィを付けています。import.csv のコードは変更していません。",
-        "フィールド設定だけでは実行ユーザーの登録権限やルックアップ先の値は判定できません。取得時点の設定です。"
+        "",
+        "【同梱ファイル】",
+        "- import.csv   … 取込用ひな形（ヘッダー行のみ）",
+        "- fields.csv   … 列ごとの入力ガイド（必須・重複禁止・初期値・選択肢・制約）",
+        "- excluded.csv … 取込に使えないフィールドと理由",
+        "",
+        "【注意】",
+        "- 初期値は説明用です。ひな形にサンプルレコードや初期値は挿入していません。空セルを送っても初期値に置き換わるとは限りません。初期値を使う項目は列を削除するか、値を明示してください。",
+        "- 取込は新規追加です。ファイル・テーブル・計算結果・システム項目・ルックアップのコピー先は含めません。",
+        "- Excelで編集する場合、先頭ゼロ・長い番号・日付の自動変換に注意し、文字列として読み込んでください。",
+        "- fields.csv / excluded.csv は閲覧用で、数式と解釈される文字列の先頭にアポストロフィを付けています。import.csv のコードは変更していません。",
+        "- フィールド設定だけでは実行ユーザーの登録権限やルックアップ先の値は判定できません。取得時点の設定です。"
       ].join("\r\n")
     };
   }
@@ -4322,15 +4330,22 @@ ${formatFileFailures(failures)}
     if (!templates.length) throw new Error(`ひな形を作成できませんでした
 ${failures.join("\n")}`);
     const JSZip = await loadJSZipLite(), zip = new JSZip();
+    const generatedAt = (/* @__PURE__ */ new Date()).toISOString();
     for (const { appId, template } of templates) {
       const folder = `app_${appId}/`;
       zip.file(folder + "import.csv", template.csv);
       zip.file(folder + "fields.csv", template.guideCsv);
       zip.file(folder + "excluded.csv", template.excludedCsv);
-      zip.file(folder + "README.txt", `App ${appId}${options.guestId ? ` / ゲスト ${options.guestId}` : ""}\r
-${template.readme}`);
+      const head = [
+        "kintone CSV取込ひな形",
+        `対象: App ${appId}${options.guestId ? ` / ゲストスペース ${options.guestId}` : ""}`,
+        `生成: ${generatedAt}`,
+        `取込できる列: ${template.columnCount}列`,
+        ""
+      ].join("\r\n");
+      zip.file(folder + "README.txt", head + template.readme + "\r\n");
     }
-    zip.file("manifest.json", JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), guestId: options.guestId, templates: templates.map((item) => ({ appId: item.appId, columns: item.template.columnCount })), failures }, null, 2));
+    zip.file("manifest.json", JSON.stringify({ createdAt: generatedAt, guestId: options.guestId, templates: templates.map((item) => ({ appId: item.appId, columns: item.template.columnCount })), failures }, null, 2));
     downloadBlob(buildExportFilename("CSV取込ひな形", "zip"), await zip.generateAsync({ type: "blob" }));
     if (failures.length) return { warning: `${templates.length}アプリのひな形を保存 / 失敗 ${failures.length}アプリ
 ${failures.join("\n")}` };

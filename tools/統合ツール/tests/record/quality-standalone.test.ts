@@ -56,6 +56,9 @@ describe('quality inspection and CSV templates from API settings', () => {
     expect(guide[1]).toEqual(['title', '件名', 'SINGLE_LINE_TEXT', '必須', '', '"初期値"', '[]', '最小文字数: 1']);
     expect(guide[2][6]).toBe('["高","低"]');
     expect(template.readme).toContain('初期値を使う項目は列を削除');
+    expect(template.readme.split('\r\n')[0]).toBe('【使い方】');
+    expect(template.readme).toContain('【同梱ファイル】');
+    expect(template.readme).toContain('【注意】');
   });
   it('excludes tables/files/computed/lookup-copy/unknown fields using the importer rules', () => {
     const schema = { ...props, copied: { type: 'SINGLE_LINE_TEXT' }, lookup: { type: 'SINGLE_LINE_TEXT', lookup: { fieldMappings: [{ field: 'copied' }] } }, auto: { type: 'SINGLE_LINE_TEXT', expression: '1' }, table: { type: 'SUBTABLE' }, file: { type: 'FILE' }, newType: { type: 'UNKNOWN' } };

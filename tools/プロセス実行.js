@@ -2740,7 +2740,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         panel.setStatus("保存するソースがありません。先にフロー図を描画してください", "warn");
         return;
       }
-      downloadText(buildExportFilename("プロセス図", "mmd", { appLabel: buildAppFilenameLabel(appInp.value.trim(), "") }), text, "text/plain");
+      const appId = appInp.value.trim();
+      const guestId = guestInp.value.trim();
+      const header = [
+        `%% kintone プロセス図 / アプリ ${appId || "?"}${guestId ? ` / ゲストスペース ${guestId}` : ""} / 生成 ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP", { hour12: false })}`,
+        "%% Mermaid Live Editor（https://mermaid.live）や Markdown の ```mermaid ブロックに貼り付けると図として表示できます。"
+      ].join("\n");
+      downloadText(buildExportFilename("プロセス図", "mmd", { appLabel: buildAppFilenameLabel(appId, "") }), `${header}
+${text}
+`, "text/plain");
       panel.setStatus("Mermaid ソースを保存しました", "ok");
     });
     panel.body.insertBefore(cardText.card, panel.status);
