@@ -462,6 +462,21 @@
   });
 
   // src/utils.ts
+  function getToolWindowSafe() {
+    try {
+      const popWin = window.__KUS_TOOL_WINDOW__;
+      if (popWin && !popWin.closed && popWin.document) return popWin;
+    } catch (e) {
+    }
+    return window;
+  }
+  function getToolDocumentSafe() {
+    try {
+      return getToolWindowSafe().document || document;
+    } catch (e) {
+      return document;
+    }
+  }
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
@@ -539,6 +554,38 @@ ${contextLine}`);
     if (suffix) parts.push(sanitizeFilenamePart(suffix));
     parts.push(sanitizeFilenamePart(stamp, nowStamp()));
     return `${parts.join("_")}.${normalizedExt}`;
+  }
+  function triggerDownload(filename, blob) {
+    const doc = getToolDocumentSafe();
+    const win = getToolWindowSafe();
+    const url = URL.createObjectURL(blob);
+    const a = doc.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.style.display = "none";
+    doc.body.appendChild(a);
+    a.click();
+    win.setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (e) {
+      }
+      try {
+        a.remove();
+      } catch (e) {
+      }
+    }, 0);
+  }
+  function downloadText(filename, text, type) {
+    triggerDownload(filename, new Blob([text], { type: type || "text/plain" }));
+  }
+  function readTextFile(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result || ""));
+      r.onerror = () => reject(r.error || new Error("ファイル読み込みに失敗しました"));
+      r.readAsText(file, "utf-8");
+    });
   }
   var init_utils = __esm({
     "src/utils.ts"() {
@@ -2960,7 +3007,159 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     host.appendChild(route);
   }
 
+  // src/reflect/liteSetup.ts
+  function parseAppReference(text) {
+    const raw = String(text || "").trim();
+    if (!raw) return null;
+    if (/^[1-9]\d*$/.test(raw)) return { appId: raw, guestId: "" };
+    const appId = extractAppIdFromInput(raw);
+    if (!/^[1-9]\d*$/.test(appId)) return null;
+    return { appId, guestId: extractGuestIdFromInput(raw) };
+  }
+  function needsAppReferenceParse(text) {
+    const raw = String(text || "").trim();
+    return !!raw && !/^\d+$/.test(raw);
+  }
+  var LOOKUP_PAIR_SEPARATOR = /\s*(?:→|->|=>|=|:|,|\t)\s*|\s+/;
+  function parseLookupMapText(text) {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return { ok: true, value: {}, count: 0 };
+    const pairs = [];
+    if (trimmed.startsWith("{")) {
+      let parsed;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        return { ok: false, error: '参照先変換の JSON が壊れています。{"旧AppID":"新AppID"} 形式か、1 行ずつ「旧ID → 新ID」で入力してください。' };
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ok: false, error: '参照先変換は {"旧AppID":"新AppID"} 形式のJSONを入力してください。' };
+      for (const [key, value] of Object.entries(parsed)) pairs.push([key, String(value)]);
+    } else {
+      for (const [index, line] of trimmed.split(/\r?\n/).entries()) {
+        const body = line.trim();
+        if (!body || body.startsWith("#")) continue;
+        const parts = body.split(LOOKUP_PAIR_SEPARATOR).filter(Boolean);
+        if (parts.length !== 2) return { ok: false, error: `参照先変換の ${index + 1} 行目を読み取れません。「旧ID → 新ID」の形式で入力してください。` };
+        pairs.push([parts[0], parts[1]]);
+      }
+    }
+    const out = /* @__PURE__ */ Object.create(null);
+    for (const [from, to] of pairs) {
+      if (!/^[1-9]\d*$/.test(from) || !/^[1-9]\d*$/.test(to)) return { ok: false, error: `参照先変換のアプリIDには正の整数を指定してください（${from} → ${to}）。` };
+      if (out[from] !== void 0 && out[from] !== to) return { ok: false, error: `参照先変換で旧ID ${from} が複数の変換先（${out[from]}, ${to}）に指定されています。` };
+      out[from] = to;
+    }
+    return { ok: true, value: out, count: Object.keys(out).length };
+  }
+  function lookupMapError(result) {
+    return "error" in result ? result.error : "";
+  }
+  function lookupMapValue(result) {
+    return "value" in result ? result.value : {};
+  }
+  function describeReflectSetupBlocker(input) {
+    if (input.sourceMode === "json" && !input.hasSourceBundle) return "比較元の設定JSONを読み込んでください。";
+    if (input.connectionError) return input.connectionError;
+    if (!input.scopeCount) return "反映する項目を 1 つ以上選んでください。";
+    if (input.lookupError) return `詳細設定の参照先変換に誤りがあります。${input.lookupError}`;
+    return "";
+  }
+  function summarizePostApplyCheck(input) {
+    const list = (labels2) => labels2.slice(0, 5).join("、") + (labels2.length > 5 ? ` ほか ${labels2.length - 5} 件` : "");
+    if (input.errorLabels.length) return { tone: "warn", message: `反映後の再確認：${input.errorLabels.length} 項目を取得できませんでした（${list(input.errorLabels)}）。取得し直して確認してください。` };
+    if (input.changedLabels.length) return { tone: "warn", message: `反映後の再確認：${input.changedLabels.length} 項目に差分が残っています（${list(input.changedLabels)}）。内容を確認して再反映してください。` };
+    return { tone: "ok", message: `反映後の再確認：${input.scopeCount} 項目はすべて反映元と一致しています。本番への公開は比較先の設定画面で行います。` };
+  }
+
+  // src/reflect/presetIo.ts
+  var REFLECT_PRESETS_EXPORT_KIND = "reflect-presets";
+  function normalizeEndpoint(raw) {
+    const obj = raw && typeof raw === "object" ? raw : {};
+    return {
+      appId: String(obj.appId == null ? "" : obj.appId).trim(),
+      guestId: String(obj.guestId == null ? "" : obj.guestId).trim(),
+      preview: !!obj.preview
+    };
+  }
+  function normalizeScopes(raw) {
+    if (!Array.isArray(raw)) return [];
+    const seen = /* @__PURE__ */ new Set();
+    const out = [];
+    for (const item of raw) {
+      const key = String(item == null ? "" : item).trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(key);
+    }
+    return out;
+  }
+  function normalizeReflectPreset(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const name = String(raw.name == null ? "" : raw.name).trim();
+    if (!name) return null;
+    const createdAt = typeof raw.createdAt === "string" && raw.createdAt ? raw.createdAt : (/* @__PURE__ */ new Date()).toISOString();
+    return {
+      name,
+      createdAt,
+      source: normalizeEndpoint(raw.source),
+      target: normalizeEndpoint(raw.target),
+      scopes: normalizeScopes(raw.scopes),
+      applyDiffOnly: !!raw.applyDiffOnly,
+      lookupMap: String(raw.lookupMap == null ? "" : raw.lookupMap),
+      preserveTargetOnly: raw.preserveTargetOnly === void 0 ? true : !!raw.preserveTargetOnly
+    };
+  }
+  function buildReflectPresetsExport(presets) {
+    const normalized = (Array.isArray(presets) ? presets : []).map(normalizeReflectPreset).filter((p) => p !== null);
+    return {
+      kind: REFLECT_PRESETS_EXPORT_KIND,
+      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      count: normalized.length,
+      presets: normalized
+    };
+  }
+  function normalizeImportedReflectPresets(parsed) {
+    let rawList;
+    if (Array.isArray(parsed)) {
+      rawList = parsed;
+    } else if (parsed && typeof parsed === "object") {
+      if (parsed.kind && parsed.kind !== REFLECT_PRESETS_EXPORT_KIND) {
+        return { presets: [], error: `この形式は反映プリセットとして認識できません（kind="${REFLECT_PRESETS_EXPORT_KIND}" を想定）` };
+      }
+      rawList = Array.isArray(parsed.presets) ? parsed.presets : null;
+    } else {
+      rawList = null;
+    }
+    if (!Array.isArray(rawList)) {
+      return { presets: [], error: "プリセットJSONの形式が不正です（presets 配列が見つかりません）" };
+    }
+    const presets = rawList.map(normalizeReflectPreset).filter((p) => p !== null);
+    return { presets };
+  }
+  function mergeReflectPresets(existing, incoming, limit = 30) {
+    const base = (Array.isArray(existing) ? existing : []).map(normalizeReflectPreset).filter((p) => p !== null);
+    const incomingList = (Array.isArray(incoming) ? incoming : []).map(normalizeReflectPreset).filter((p) => p !== null);
+    const incomingNames = new Set(incomingList.map((p) => p.name));
+    let replaced = 0;
+    const kept = [];
+    for (const preset of base) {
+      if (incomingNames.has(preset.name)) {
+        replaced += 1;
+        continue;
+      }
+      kept.push(preset);
+    }
+    const merged = [...incomingList, ...kept].slice(0, Math.max(0, limit));
+    return {
+      presets: merged,
+      added: incomingList.length - replaced,
+      replaced
+    };
+  }
+
   // src/entries/reflect-lite-ui.ts
+  init_utils();
+  var REFLECT_PRESET_LIMIT = 30;
   var memoryState = {
     presets: []
   };
@@ -3069,6 +3268,11 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
 #kus-reflect-lite .kus-rl-issues{margin:0;padding-left:18px;font-size:12px;line-height:1.6;color:#92400e}
 #kus-reflect-lite .kus-rl-issues li+li{margin-top:3px}
 #kus-reflect-lite .kus-rl-quiet{font-size:11.5px;color:#64748b}
+#kus-reflect-lite .kus-rl-lookup-status{margin-top:6px;font-size:11.5px;color:#475569}
+#kus-reflect-lite .kus-rl-lookup-status--err{color:#b91c1c;font-weight:700}
+#kus-reflect-lite .kus-rl-preset-name{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;margin-bottom:8px}
+#kus-reflect-lite .kus-rl-preset-name .kus-lp__input{width:100%;min-width:0;box-sizing:border-box}
+#kus-reflect-lite .kus-rl-dock-reason{color:#9a3412;font-weight:600}
 #kus-reflect-lite .kus-rl-preview-summary{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 #kus-reflect-lite .kus-rl-preview-tools{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
 #kus-reflect-lite .kus-rl-preview-tools__actions{display:flex;flex-wrap:wrap;gap:6px}
@@ -3392,6 +3596,37 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
         refreshReviewCard();
       });
     });
+    function adoptAppReference(appInput, guestInput, guestDetails, sideLabel, text = appInput.value) {
+      if (!needsAppReferenceParse(text)) return false;
+      const reference = parseAppReference(text);
+      if (!reference) {
+        panel.setStatus(`${sideLabel}のアプリIDを読み取れません。数字のID、またはアプリのURLを入力してください。`, "warn");
+        return false;
+      }
+      appInput.value = reference.appId;
+      if (reference.guestId) {
+        guestInput.value = reference.guestId;
+        guestDetails.open = true;
+      }
+      saveState();
+      refreshSameConnBanner();
+      refreshReviewCard();
+      panel.setStatus(`URLから${sideLabel}のアプリID ${reference.appId}${reference.guestId ? `（ゲストスペース ${reference.guestId}）` : ""}を読み取りました。`, "ok");
+      return true;
+    }
+    for (const [appInput, guestInput, guestDetails, sideLabel] of [
+      [srcApp, srcGuest, sourceGuestDetails.details, "比較元"],
+      [tgtApp, tgtGuest, targetGuestDetails.details, "比較先"]
+    ]) {
+      appInput.addEventListener("paste", (event) => {
+        const pasted = event.clipboardData?.getData("text") || "";
+        if (!needsAppReferenceParse(pasted)) return;
+        if (adoptAppReference(appInput, guestInput, guestDetails, sideLabel, pasted)) event.preventDefault();
+      });
+      appInput.addEventListener("change", () => {
+        adoptAppReference(appInput, guestInput, guestDetails, sideLabel);
+      });
+    }
     const cardScope = makeCard({ title: "反映する項目", number: 2, subtitle: "目的に近いセットを選び、必要な項目を調整できます。" });
     const putSections = SECTION_DEFS.filter((d) => d.put);
     const initialSelected = new Set(
@@ -3520,17 +3755,28 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     const lookupTa = makeTextarea({
       rows: 3,
       code: true,
-      placeholder: '{"旧AppID":"新AppID", ...}',
+      placeholder: "旧AppID → 新AppID（1行に1組）\n例: 101 → 202",
       value: memoryState.lookupMapText || ""
     });
     lookupTa.setAttribute("aria-label", "ルックアップの参照アプリID変換");
     lookupDetails.body.appendChild(lookupTa);
+    const lookupStatus = document.createElement("div");
+    lookupStatus.className = "kus-rl-lookup-status";
+    lookupStatus.setAttribute("aria-live", "polite");
+    lookupDetails.body.appendChild(lookupStatus);
     const lookupHint = document.createElement("div");
     lookupHint.className = "kus-lp__small";
     lookupHint.style.marginTop = "6px";
-    lookupHint.textContent = "フィールドの参照アプリ（ルックアップ）を別 AppID に置換します。差分プレビューにも反映し、実行前に変換先 AppID の存在を確認します。";
+    lookupHint.textContent = 'フィールドの参照アプリ（ルックアップ）を別 AppID に置換します。1行に「旧ID → 新ID」（→ / = / : / カンマ区切り）か、{"旧AppID":"新AppID"} のJSONで入力します。差分プレビューにも反映し、実行前に変換先 AppID の存在を確認します。';
     lookupDetails.body.appendChild(lookupHint);
     cardOpt.body.appendChild(lookupDetails.details);
+    function refreshLookupStatus() {
+      const parsed = parseLookupMapText(lookupTa.value);
+      lookupStatus.classList.toggle("kus-rl-lookup-status--err", !parsed.ok);
+      lookupStatus.textContent = "error" in parsed ? parsed.error : parsed.count ? `参照先変換 ${parsed.count} 件を適用します。` : "";
+      if (!parsed.ok) lookupDetails.details.open = true;
+    }
+    refreshLookupStatus();
     [sourceEnvironment, preserve.checkbox].forEach((cb) => {
       cb.addEventListener("change", () => {
         saveState();
@@ -3540,6 +3786,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     });
     lookupTa.addEventListener("input", () => {
       saveState();
+      refreshLookupStatus();
       refreshReviewCard();
     });
     panel.body.insertBefore(cardOpt.card, panel.status);
@@ -3548,13 +3795,31 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     const presetSelect = document.createElement("select");
     presetSelect.className = "kus-lp__select";
     presetSelect.style.minWidth = "180px";
+    presetSelect.setAttribute("aria-label", "保存済みプリセット");
+    const presetName = makeInput({ placeholder: "例: 本番テンプレ → 東京営業所", width: "wide", noSubmit: true });
+    presetName.setAttribute("aria-label", "プリセット名");
+    presetName.maxLength = 60;
     const saveBtn = makeButton("現在の設定を保存", "sub");
     const loadBtn = makeButton("読み込み", "sub");
     const delBtn = makeButton("削除", "sub");
-    cardPreset.body.appendChild(makeRow([presetSelect, loadBtn, saveBtn, delBtn], { label: "名前" }));
+    const exportPresetsBtn = makeButton("JSONで書き出し", "sub");
+    exportPresetsBtn.title = "保存済みプリセットをJSONファイルに書き出します。次回はこのファイルを読み込んで再利用できます。";
+    const importPresetsBtn = makeButton("JSONを読み込み", "sub");
+    importPresetsBtn.title = "書き出したプリセットJSONを読み込みます。同名のプリセットは読み込んだ内容で置き換えます。";
+    const importPresetsFile = document.createElement("input");
+    importPresetsFile.type = "file";
+    importPresetsFile.accept = ".json,application/json";
+    importPresetsFile.hidden = true;
+    importPresetsFile.setAttribute("aria-label", "プリセットJSON");
+    const presetNameRow = document.createElement("div");
+    presetNameRow.className = "kus-rl-preset-name";
+    presetNameRow.append(presetName, saveBtn);
+    cardPreset.body.appendChild(presetNameRow);
+    cardPreset.body.appendChild(makeRow([presetSelect, loadBtn, delBtn], { label: "保存済み" }));
+    cardPreset.body.appendChild(makeRow([exportPresetsBtn, importPresetsBtn, importPresetsFile]));
     const presetHint = document.createElement("div");
     presetHint.className = "kus-lp__small";
-    presetHint.textContent = "プリセットはこのタブを閉じるまで保持されます（ブラウザに永続保存はしません）。";
+    presetHint.textContent = "プリセットはこのタブを閉じるまで保持されます（ブラウザに永続保存はしません）。次回も使う場合は「JSONで書き出し」で保存し、「JSONを読み込み」で復元してください。";
     cardPreset.body.appendChild(presetHint);
     panel.body.insertBefore(cardPreset.card, panel.status);
     function refreshPresetSelect() {
@@ -3580,13 +3845,19 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
         presetSelect.appendChild(opt);
       }
     }
+    function refreshPresetButtons() {
+      exportPresetsBtn.disabled = busy || !(memoryState.presets || []).length;
+      importPresetsBtn.disabled = busy;
+      saveBtn.disabled = busy || !presetName.value.trim();
+    }
     refreshPresetSelect();
+    refreshPresetButtons();
+    presetName.addEventListener("input", refreshPresetButtons);
     saveBtn.addEventListener("click", () => {
-      const name = window.prompt("プリセット名を入力してください", "");
-      if (!name) return;
-      const trimmed = name.trim();
+      const trimmed = presetName.value.trim();
       if (!trimmed) {
-        panel.setStatus("プリセット名が空です", "warn");
+        panel.setStatus("プリセット名を入力してください", "warn");
+        presetName.focus();
         return;
       }
       const preset = {
@@ -3599,18 +3870,54 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
         },
         target: {
           appId: tgtApp.value.trim(),
-          guestId: tgtGuest.value.trim()
+          guestId: tgtGuest.value.trim(),
+          preview: false
         },
         scopes: collectSelectedScopes(),
-        lookupMapText: lookupTa.value,
+        applyDiffOnly: false,
+        lookupMap: lookupTa.value,
         preserveTargetOnly: preserve.checkbox.checked
       };
-      memoryState.presets = (memoryState.presets || []).filter((p) => p.name !== trimmed);
-      memoryState.presets.unshift(preset);
+      const replaced = (memoryState.presets || []).some((p) => p.name === trimmed);
+      memoryState.presets = mergeReflectPresets(memoryState.presets, [preset], REFLECT_PRESET_LIMIT).presets;
       refreshPresetSelect();
+      refreshPresetButtons();
       presetSelect.value = trimmed;
-      panel.setStatus(`プリセット「${trimmed}」を保存しました`, "ok");
+      presetName.value = "";
+      refreshPresetButtons();
+      panel.setStatus(`プリセット「${trimmed}」を${replaced ? "上書き保存" : "保存"}しました。次回も使う場合は「JSONで書き出し」で保存してください。`, "ok");
     });
+    exportPresetsBtn.addEventListener("click", () => {
+      const payload = buildReflectPresetsExport(memoryState.presets);
+      if (!payload.count) {
+        panel.setStatus("書き出せるプリセットがありません", "warn");
+        return;
+      }
+      const filename = buildExportFilename("プレビュー反映プリセット", "json");
+      downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
+      panel.setStatus(`プリセット ${payload.count} 件を ${filename} に書き出しました`, "ok");
+    });
+    importPresetsBtn.addEventListener("click", () => importPresetsFile.click());
+    importPresetsFile.addEventListener("change", () => liteRun(panel, "プリセットJSONを読み込み中…", async () => {
+      const file = importPresetsFile.files?.[0];
+      importPresetsFile.value = "";
+      if (!file) return;
+      let parsed;
+      try {
+        parsed = JSON.parse(await readTextFile(file));
+      } catch {
+        throw new Error("プリセットJSONの読み込みに失敗しました（JSON形式が不正です）");
+      }
+      const { presets, error } = normalizeImportedReflectPresets(parsed);
+      if (error) throw new Error(error);
+      if (!presets.length) throw new Error("取り込めるプリセットが見つかりませんでした");
+      const merged = mergeReflectPresets(memoryState.presets, presets, REFLECT_PRESET_LIMIT);
+      memoryState.presets = merged.presets;
+      refreshPresetSelect();
+      refreshPresetButtons();
+      presetSelect.value = presets[0].name;
+      panel.setStatus(`プリセットを読み込みました（追加 ${merged.added} 件 / 上書き ${merged.replaced} 件 / 合計 ${merged.presets.length} 件）。「読み込み」で適用できます。`, "ok");
+    }));
     loadBtn.addEventListener("click", () => {
       const name = presetSelect.value;
       const preset = (memoryState.presets || []).find((p) => p.name === name);
@@ -3623,7 +3930,8 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       tgtGuest.value = preset.target.guestId;
       sourceEnvironment.value = preset.source.preview ? "preview" : "production";
       preserve.checkbox.checked = preset.preserveTargetOnly !== false;
-      lookupTa.value = preset.lookupMapText || "";
+      lookupTa.value = preset.lookupMap || "";
+      refreshLookupStatus();
       setSelectedScopes(preset.scopes || []);
       refreshSameConnBanner();
       saveState();
@@ -3636,6 +3944,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       if (!window.confirm(`プリセット「${name}」を削除しますか？`)) return;
       memoryState.presets = (memoryState.presets || []).filter((p) => p.name !== name);
       refreshPresetSelect();
+      refreshPresetButtons();
       panel.setStatus(`プリセット「${name}」を削除しました`, "info");
     });
     const previewBtn = makeButton("差分プレビューを更新", "primary");
@@ -3700,11 +4009,11 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         scopes,
-        lookupMap: getLookupValue(tryParseLookupMap(lookupTa.value)),
+        lookupMap: lookupMapValue(parseLookupMapText(lookupTa.value)),
         preserveTargetOnly: preserve.checkbox.checked
       };
     }
-    function getPreviewState(scopes = collectSelectedScopes(), lookupState = tryParseLookupMap(lookupTa.value)) {
+    function getPreviewState(scopes = collectSelectedScopes(), lookupState = parseLookupMapText(lookupTa.value)) {
       const preview = memoryState.lastPreview || null;
       const coveredScopes = preview?.scopes || scopes;
       const signature = lookupState.ok ? buildPreviewSignature({
@@ -3784,7 +4093,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       });
       previewCard.card.style.display = "block";
     }
-    async function runPreview(scopes, lookupMap) {
+    async function runPreview(scopes, lookupMap, postApplyCheck = false) {
       memoryState.lastPreview = null;
       clearConfirmation();
       const options = { ...currentOptions(scopes), lookupMap };
@@ -3792,11 +4101,21 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       panel.setStatus("アプリ名と接続先を確認中…", "busy");
       const identities = await resolveReflectAppsStandalone(options);
       const result = await previewReflectStandalone(options, (message) => panel.setStatus(message, "busy"));
-      memoryState.lastPreview = { signature, scopes: [...scopes], at: Date.now(), result, identities };
+      memoryState.lastPreview = { signature, scopes: [...scopes], at: Date.now(), result, identities, ...postApplyCheck ? { postApplyCheck: { scopeCount: scopes.length } } : {} };
       rerenderPreviewCard();
       refreshReviewCard();
       showWorkflowStage("review");
       return result;
+    }
+    function postApplySummary() {
+      const { scopes, preview, fresh } = getPreviewState();
+      if (!fresh || !preview?.postApplyCheck) return null;
+      const entries = preview.result.entries.filter((entry) => scopes.includes(entry.sectionKey));
+      return summarizePostApplyCheck({
+        scopeCount: entries.length,
+        changedLabels: entries.filter((entry) => entry.status === "change").map((entry) => entry.label),
+        errorLabels: entries.filter((entry) => !["change", "same"].includes(entry.status)).map((entry) => entry.label)
+      });
     }
     function selectionIssues(result, scopes) {
       return result ? reflectSelectionBlockers(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes) : [];
@@ -3815,15 +4134,17 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       if (confirmedToken && confirmedToken !== token) clearConfirmation();
       runBtn.disabled = busy || !confirmationReady();
       setButtonText(runBtn, `確認した ${plan.effectiveScopes.length} 項目をプレビューへ反映`);
-      let message = invalid || getLookupError(lookupState) || (!scopes.length ? "反映する項目を選んでください。" : "変更前と変更後を確認し、最終確認に進んでください。");
+      let message = invalid || lookupMapError(lookupState) || (!scopes.length ? "反映する項目を選んでください。" : "変更前と変更後を確認し、最終確認に進んでください。");
       if (!preview) message = "対象を指定して差分を取得してください。";
       else if (!fresh) message = "条件が変わりました。差分を再取得してください。";
       else if (blockers.length) message = "確認できない項目が選択されています。問題を解決して再取得するか、対象から外してください。";
       else if (!plan.effectiveScopes.length) message = "書き込みが必要な項目はありません。反映先だけの項目を保持した場合も書き込み不要です。";
+      const postApply = postApplySummary();
+      if (postApply && !blockers.length) message = postApply.message;
       reviewBody.innerHTML = "";
       if (preview?.identities && fresh) renderReflectRoute(reviewBody, preview.identities, sourceMode === "json" ? "設定JSON" : sourceEnvironment.value === "preview" ? "プレビュー" : "本番");
       const info = document.createElement("div");
-      info.className = "kus-rl-next " + (blockers.length ? "kus-rl-next--warn" : "kus-rl-next--info");
+      info.className = "kus-rl-next " + (blockers.length ? "kus-rl-next--warn" : postApply ? `kus-rl-next--${postApply.tone}` : "kus-rl-next--info");
       info.textContent = message;
       reviewBody.appendChild(info);
       const summary = document.createElement("p");
@@ -3890,8 +4211,8 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     previewBtn.addEventListener("click", () => {
       if (busy || previewBtn.disabled) return;
       const { scopes, lookupState } = getPreviewState();
-      const lookupError = getLookupError(lookupState);
-      const lookupMap = getLookupValue(lookupState);
+      const lookupError = lookupMapError(lookupState);
+      const lookupMap = lookupMapValue(lookupState);
       if (!scopes.length) {
         panel.setStatus("対象セクションを選択してください", "warn");
         return;
@@ -4053,9 +4374,29 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     openTargetBtn.title = "比較先アプリの設定画面を新しいタブで開きます（運用環境への反映はそこから実行できます）";
     const exportResultBtn = makeButton("実行結果JSONを保存", "sub");
     exportResultBtn.title = "実行時の対象、セクション別結果、ログを監査用JSONとして保存します";
+    const verifyResultBtn = makeButton("反映後の差分を再確認", "primary");
+    verifyResultBtn.title = "反映した項目を同じ条件で再取得し、反映先が反映元と一致したかを確認します（書き込みは行いません）";
+    lastResultActions.appendChild(verifyResultBtn);
     lastResultActions.appendChild(retryFailedBtn);
     lastResultActions.appendChild(exportResultBtn);
     lastResultActions.appendChild(openTargetBtn);
+    verifyResultBtn.addEventListener("click", () => {
+      if (busy) return;
+      const scopes = memoryState.lastResult?.report.scopes || [];
+      if (!scopes.length) return;
+      const lookupState = parseLookupMapText(lookupTa.value);
+      const invalid = reflectConnectionError(currentOptions(scopes)) || lookupMapError(lookupState) || (sourceMode === "json" && !sourceBundleFromJson ? "比較元の設定JSONを読み込んでください。" : "");
+      if (invalid) {
+        panel.setStatus(`再確認できません。${invalid}`, "warn");
+        return;
+      }
+      setSelectedScopes(scopes);
+      return liteRun(panel, "反映後の差分を再取得中…", async () => {
+        await runPreview(scopes, lookupMapValue(lookupState), true);
+        const summary = postApplySummary();
+        if (summary) panel.setStatus(summary.message, summary.tone);
+      });
+    });
     lastResultCard.body.appendChild(lastResultActions);
     lastResultCard.card.style.display = "none";
     panel.body.insertBefore(lastResultCard.card, panel.status);
@@ -4103,6 +4444,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       const failedSummary = last.failedLabels.length ? `<div>失敗: ${escapeHtml(last.failedLabels.slice(0, 5).join(" / "))}${last.failedLabels.length > 5 ? ` ほか ${last.failedLabels.length - 5} 件` : ""}</div>` : "";
       lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${hasIssue ? "⚠ 一部エラー" : "✓ 全成功"}</div><div>比較先 #${escapeHtml(last.appId || "-")} / OK ${last.ok} / NG ${last.ng}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? '<div style="margin-top:4px">「失敗・未実行だけ選択」で対象を絞って再実行できます。</div>' : '<div style="margin-top:4px">反映先はプレビューです。運用環境への反映（デプロイ）は比較先の設定画面から実行してください。</div>');
       retryFailedBtn.style.display = last.retryScopes.length ? "" : "none";
+      verifyResultBtn.style.display = last.report.scopes.length ? "" : "none";
       exportResultBtn.style.display = "";
       openTargetBtn.style.display = last.appId ? "" : "none";
       lastResultCard.card.style.display = "block";
@@ -4111,8 +4453,8 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     runBtn.addEventListener("click", async () => {
       if (busy || runBtn.disabled || activeStage !== "confirm" || !confirmationReady()) return;
       const { scopes, lookupState } = getPreviewState();
-      const lookupError = getLookupError(lookupState);
-      const lookupMap = getLookupValue(lookupState);
+      const lookupError = lookupMapError(lookupState);
+      const lookupMap = lookupMapValue(lookupState);
       if (!scopes.length) {
         panel.setStatus("反映するセクションを選択してください", "warn");
         return;
@@ -4305,13 +4647,21 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       previewBtn.classList.toggle("kus-lp__btn--primary", !fresh);
       previewBtn.classList.toggle("kus-lp__btn--sub", fresh);
       resultEmpty.hidden = !!memoryState.lastResult || logCard.card.style.display !== "none";
-      let message = `${scopes.length} 項目を比較します。書き込みは行いません。`;
-      if (activeStage === "review") message = !fresh ? "差分の取得が必要です。" : confirmBtn.disabled ? "確認が必要な項目、または変更の有無を確認してください。" : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
+      const setupBlocker = activeStage === "setup" ? describeReflectSetupBlocker({
+        connectionError: reflectConnectionError(currentOptions()),
+        sourceMode,
+        hasSourceBundle: !!sourceBundleFromJson,
+        scopeCount: scopes.length,
+        lookupError: lookupMapError(parseLookupMapText(lookupTa.value))
+      }) : "";
+      let message = setupBlocker ? `次に進むには：${setupBlocker}` : `${scopes.length} 項目を比較します。書き込みは行いません。`;
+      const postApply = activeStage === "review" ? postApplySummary() : null;
+      if (activeStage === "review") message = !fresh ? "差分の取得が必要です。" : postApply ? postApply.message : confirmBtn.disabled ? "確認が必要な項目、または変更の有無を確認してください。" : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
       if (activeStage === "confirm") message = fresh && confirmedToken ? "反映前バックアップを自動保存 / エラー時は中断 / 本番公開は行いません" : "条件が変わりました。差分の取得と最終確認をやり直してください。";
       if (activeStage === "result") message = "結果を確認してください。再実行には差分の再取得が必要です。";
       const sourceLabel = fresh && preview?.identities ? reflectIdentityLabel(preview.identities, "source", sourceMode === "json" ? "JSON" : sourceEnvironment.value === "preview" ? "プレビュー" : "本番") : `反映元 #${srcApp.value.trim() || "未入力"}`;
       const targetLabel = fresh && preview?.identities ? reflectIdentityLabel(preview.identities, "target", "") : `反映先 #${tgtApp.value.trim() || "未入力"} / プレビュー`;
-      dockCopy.innerHTML = activeStage === "confirm" && fresh && preview?.identities ? `<strong>書き込み先 #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong>${escapeHtml(confirmedToken ? "内容を確認してから反映してください。" : "条件が変わりました。差分を再取得してください。")}` : `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong>${escapeHtml(message)}`;
+      dockCopy.innerHTML = activeStage === "confirm" && fresh && preview?.identities ? `<strong>書き込み先 #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong>${escapeHtml(confirmedToken ? "内容を確認してから反映してください。" : "条件が変わりました。差分を再取得してください。")}` : `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong>${setupBlocker ? `<span class="kus-rl-dock-reason">${escapeHtml(message)}</span>` : escapeHtml(message)}`;
       panel.result.hidden = activeStage === "confirm";
       const advancedSummary = advanced.details.querySelector("summary");
       if (advancedSummary) advancedSummary.textContent = "詳細設定 · 自動バックアップ / 参照先変換";
@@ -4349,6 +4699,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
         disabledBefore.clear();
         refreshSrcJsonNote();
         refreshPresetSelect();
+        refreshPresetButtons();
         refreshReviewCard();
         navButtons[activeStage].focus({ preventScroll: true });
       }
@@ -4385,28 +4736,6 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     const label = spans[spans.length - 1];
     if (label) label.textContent = text;
     else button.textContent = text;
-  }
-  function tryParseLookupMap(text) {
-    const t = text.trim();
-    if (!t) return { ok: true, value: {} };
-    try {
-      const parsed = JSON.parse(t);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ok: false, error: '参照先変換は {"旧AppID":"新AppID"} 形式のJSONを入力してください。' };
-      const out = /* @__PURE__ */ Object.create(null);
-      for (const [k, v] of Object.entries(parsed || {})) {
-        if (!/^[1-9]\d*$/.test(k) || !/^[1-9]\d*$/.test(String(v))) return { ok: false, error: "参照先変換のアプリIDには正の整数を指定してください。" };
-        out[k] = String(v);
-      }
-      return { ok: true, value: out };
-    } catch {
-      return { ok: false, error: "Lookup マッピング JSON が壊れています。JSON 形式を修正してください。" };
-    }
-  }
-  function getLookupError(result) {
-    return "error" in result ? result.error : "";
-  }
-  function getLookupValue(result) {
-    return "value" in result ? result.value : {};
   }
   function buildPreviewSignature(args) {
     const lookupPairs = Object.keys(args.lookupMap || {}).sort().map((key) => [key, args.lookupMap[key]]);
