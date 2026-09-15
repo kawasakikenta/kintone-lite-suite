@@ -885,7 +885,10 @@ ${contextLine}`);
         const params = { app, query: q };
         if (fields) params.fields = fields.includes("$id") ? fields : [...fields, "$id"];
         const resp = await apiGet(prefix, "/records.json", params);
-        const batch = Array.isArray(resp?.records) ? resp.records : [];
+        if (!Array.isArray(resp?.records)) {
+          throw new Error("レコード取得の応答形式が不正です（records がありません）");
+        }
+        const batch = resp.records;
         if (!batch.length) break;
         all2.push(...batch);
         onProgress(all2.length, "keyset");
@@ -908,7 +911,13 @@ ${contextLine}`);
     try {
       while (true) {
         const resp = await apiGet(prefix, "/records/cursor.json", { id: cursorId });
-        const batch = Array.isArray(resp?.records) ? resp.records : [];
+        if (!Array.isArray(resp?.records)) {
+          throw new Error("cursor 取得の応答形式が不正です（records がありません）");
+        }
+        const batch = resp.records;
+        if (!batch.length && resp?.next) {
+          throw new Error("cursor が次ページを示したままレコードを返さないため中断しました");
+        }
         all.push(...batch);
         onProgress(all.length, "cursor");
         if (!resp?.next) {
