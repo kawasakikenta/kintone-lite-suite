@@ -102,6 +102,22 @@ describe('fetchRecordsByQuery', () => {
     expect(api.mock.calls[0][2].query).toBe(`(${query}) and $id > 0 order by $id asc limit 500`);
   });
 
+  it('rejects malformed keyset responses instead of treating them as an empty result', async () => {
+    api.mockResolvedValueOnce({});
+    await expect(fetchRecordsByQuery('/k/v1', '7', '')).rejects.toThrow(/records/);
+  });
+
+  it('stops and deletes a cursor that reports an empty page with more data', async () => {
+    api
+      .mockResolvedValueOnce({ id: 'cur-stalled' })
+      .mockResolvedValueOnce({ records: [], next: true })
+      .mockResolvedValueOnce({});
+    await expect(fetchRecordsByQuery('/k/v1', '7', 'order by 金額 desc')).rejects.toThrow(/レコードを返さない/);
+    expect(api.mock.calls.find((c) => c[1] === 'DELETE')).toEqual([
+      '/k/v1/records/cursor.json', 'DELETE', { id: 'cur-stalled' },
+    ]);
+  });
+
   it('deletes the cursor when reading fails midway', async () => {
     api
       .mockResolvedValueOnce({ id: 'cur-2' })
