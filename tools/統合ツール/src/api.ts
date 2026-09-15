@@ -354,7 +354,10 @@ export async function fetchRecordsByQuery(
       const params: Record<string, unknown> = { app, query: q };
       if (fields) params.fields = fields.includes('$id') ? fields : [...fields, '$id'];
       const resp = await apiGet(prefix, '/records.json', params);
-      const batch: any[] = Array.isArray(resp?.records) ? resp.records : [];
+      if (!Array.isArray(resp?.records)) {
+        throw new Error('レコード取得の応答形式が不正です（records がありません）');
+      }
+      const batch: any[] = resp.records;
       if (!batch.length) break;
       all.push(...batch);
       onProgress(all.length, 'keyset');
@@ -378,7 +381,13 @@ export async function fetchRecordsByQuery(
   try {
     while (true) {
       const resp = await apiGet(prefix, '/records/cursor.json', { id: cursorId });
-      const batch: any[] = Array.isArray(resp?.records) ? resp.records : [];
+      if (!Array.isArray(resp?.records)) {
+        throw new Error('cursor 取得の応答形式が不正です（records がありません）');
+      }
+      const batch: any[] = resp.records;
+      if (!batch.length && resp?.next) {
+        throw new Error('cursor が次ページを示したままレコードを返さないため中断しました');
+      }
       all.push(...batch);
       onProgress(all.length, 'cursor');
       if (!resp?.next) { finished = true; break; }
