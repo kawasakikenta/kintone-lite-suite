@@ -16181,7 +16181,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     }
     return { state: typeof value, text: String(value) };
   }
-  var CUSTOMER_MAIN_VALUE_COLUMN_WIDTH = 26;
+  var CUSTOMER_MAIN_VALUE_COLUMN_WIDTH = 32;
   function customerFieldCodeLabel(codeValue, bundle) {
     const code = String(codeValue ?? "").trim();
     if (!code) return code;
@@ -16977,6 +16977,12 @@ ${targetName}`, "", ""],
       guideRows.push(["フォーム・一覧など、特定の機能に絞って確認する", "", "", "", "機能別シート（上の表から開けます）", ""]);
     }
     guideRows.push(["各シートの役割と列の読み方を確認する", "", "", "", CUSTOMER_GUIDE_SHEET_NAME, ""]);
+    const guideSheetNames = /* @__PURE__ */ new Set([
+      "変更対象一覧",
+      "変更一覧",
+      CUSTOMER_GUIDE_SHEET_NAME,
+      ...availability.hasIssues ? ["確認できなかった範囲"] : []
+    ]);
     rows.push(
       ["シートの使い分け", "", "", "", "", ""],
       ["確認したいこと", "", "", "", "開くシート", ""],
@@ -17044,7 +17050,7 @@ ${targetName}`, "", ""],
       const rowIndex = guideHeaderRow + 1 + index;
       const alternate = index % 2 === 1;
       const textStyle = alternate ? "zebra" : "normal";
-      const sheetStyle = alternate ? "category" : "categoryPlain";
+      const sheetStyle = guideSheetNames.has(String(guideRows[index][4])) ? "actionLink" : alternate ? "category" : "categoryPlain";
       cellStyles[rowIndex] = [textStyle, textStyle, textStyle, textStyle, sheetStyle, sheetStyle];
     });
     return {
@@ -17105,12 +17111,20 @@ ${targetName}`, "", ""],
           `E${guideHeaderRow + 2 + index}:F${guideHeaderRow + 2 + index}`
         ])
       ],
-      internalHyperlinks: breakdownHeaderRow >= 0 ? apiGroups.map((group, index) => ({
-        ref: `A${breakdownHeaderRow + 2 + index}`,
-        targetSheet: group.definition.sheetName,
-        targetCell: "A1",
-        tooltip: `${group.definition.label}を開く`
-      })) : [],
+      internalHyperlinks: [
+        ...apiGroups.map((group, index) => ({
+          ref: `A${breakdownHeaderRow + 2 + index}`,
+          targetSheet: group.definition.sheetName,
+          targetCell: "A1",
+          tooltip: `${group.definition.label}を開く`
+        })),
+        ...guideRows.flatMap((row, index) => guideSheetNames.has(String(row[4])) ? [{
+          ref: `E${guideHeaderRow + 2 + index}`,
+          targetSheet: String(row[4]),
+          targetCell: "A1",
+          tooltip: `${row[4]}を開く`
+        }] : [])
+      ],
       showGridLines: false,
       zoomScale: 100,
       print: {
@@ -17127,7 +17141,7 @@ ${targetName}`, "", ""],
     const afterStyle = item.rawAfter.state === "存在しません" ? "diffAbsent" : "diffAfter";
     return [beforeStyle, afterStyle];
   }
-  function buildCustomerListSheet(ctx, allItems, apiGroups) {
+  function buildCustomerListSheet(ctx, allItems, apiSheets) {
     const items = customerPrimaryItems(allItems);
     const sourceName = customerHeaderAppName(ctx.sourceBundle, "比較元");
     const targetName = customerHeaderAppName(ctx.targetBundle, "比較先");
@@ -17135,7 +17149,7 @@ ${targetName}`, "", ""],
       "No.",
       "変更区分",
       "分類",
-      "設定対象／変更内容",
+      "設定対象",
       "差分プロパティ",
       `変更前
 ${sourceName}`,
@@ -17156,9 +17170,13 @@ ${targetName}`
       "並び順変更": "changeMoved"
     };
     const internalHyperlinks = [];
-    const apiDefinitionByItem = /* @__PURE__ */ new Map();
-    for (const group of apiGroups) {
-      for (const item of group.items) apiDefinitionByItem.set(item, group.definition);
+    const featureLocationByNumber = /* @__PURE__ */ new Map();
+    for (const sheet of apiSheets) {
+      sheet.rows.forEach((row, index) => {
+        if (typeof row[0] === "number") {
+          featureLocationByNumber.set(row[0], { targetSheet: sheet.name, targetCell: `A${index + 1}` });
+        }
+      });
     }
     if (!items.length) {
       const emptyState = customerIncomplete(ctx) ? {
@@ -17180,14 +17198,12 @@ ${targetName}`
       ], 120)));
     }
     items.forEach((item, index) => {
-      const listTarget = customerPlainText(item.target, 48);
-      const changeSummary = item.changeType === "追加" ? `比較先に追加：${conciseReviewValue(item.after, 32)}` : item.changeType === "削除" ? `比較先から削除：${conciseReviewValue(item.before, 32)}` : item.changeType === "並び順変更" ? "並び順を変更" : `${conciseReviewValue(item.before, 32)} → ${conciseReviewValue(item.after, 32)}`;
+      const listTarget = customerPlainText(item.targetDetail);
       rows.push([
         index + 1,
         item.changeType,
         item.sectionLabel,
-        `${listTarget}
-${changeSummary}`,
+        listTarget,
         item.settingItem,
         item.before,
         item.after
@@ -17204,20 +17220,18 @@ ${changeSummary}`,
       styles[5] = beforeStyle;
       styles[6] = afterStyle;
       cellStyles.push(styles);
-      const apiDefinition = apiDefinitionByItem.get(item);
-      if (apiDefinition) {
+      const featureLocation = featureLocationByNumber.get(item.index + 1);
+      if (featureLocation) {
         internalHyperlinks.push({
           ref: `C${index + 2}`,
-          targetSheet: apiDefinition.sheetName,
-          targetCell: "A1",
-          tooltip: `${apiDefinition.label}を開く`
+          ...featureLocation,
+          tooltip: `${featureLocation.targetSheet}の同じ明細（No. ${item.index + 1}）を開く`
         });
       }
       rowHeights.push(readableCustomerRowHeight([
-        { value: item.sectionLabel, width: 14 },
-        { value: `${listTarget}
-${changeSummary}`, width: 24 },
-        { value: item.settingItem, width: 22 },
+        { value: item.sectionLabel, width: 16 },
+        { value: listTarget, width: 28 },
+        { value: item.settingItem, width: 24 },
         { value: item.before, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH },
         { value: item.after, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH }
       ], 220));
@@ -17225,13 +17239,13 @@ ${changeSummary}`, width: 24 },
     return {
       name: "変更一覧",
       rows,
-      colWidths: [7, 10, 14, 24, 22, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH],
+      colWidths: [7, 12, 16, 28, 24, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH],
       rowStyles,
       cellStyles,
       headerRow: 1,
       autoFilter: items.length > 0,
       freezeRows: 1,
-      freezeColumns: items.length > 0 ? 5 : void 0,
+      freezeColumns: items.length > 0 ? 4 : void 0,
       rowHeights,
       styledEmptyCellsAsBlank: true,
       materializeEmptyCellsFromRow: 1,
@@ -17244,7 +17258,7 @@ ${changeSummary}`, width: 24 },
         fitToWidth: 1,
         fitToHeight: 0,
         repeatRows: { from: 1, to: 1 },
-        repeatColumns: items.length > 0 ? { from: 1, to: 5 } : void 0,
+        repeatColumns: items.length > 0 ? { from: 1, to: 4 } : void 0,
         footer: "&L変更一覧&Rページ &P / &N"
       }
     };
@@ -17386,14 +17400,14 @@ ${item.target}` : item.target;
       rowHeights.push(readableCustomerRowHeight([
         { value: viewName, width: 28 },
         { value: item.settingItem, width: 24 },
-        { value: item.before, width: 30 },
-        { value: item.after, width: 30 }
-      ], 96));
+        { value: item.before, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH },
+        { value: item.after, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH }
+      ], 220));
     });
     return {
       name: definition.sheetName,
       rows,
-      colWidths: [7, 11, 28, 24, 30, 30],
+      colWidths: [7, 12, 28, 24, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH],
       rowStyles,
       cellStyles,
       headerRow: 2,
@@ -17464,14 +17478,14 @@ ${item.target}` : item.target;
         { value: actionKind, width: 19 },
         { value: actionName, width: 28 },
         { value: item.settingItem, width: 24 },
-        { value: item.before, width: 28 },
-        { value: item.after, width: 28 }
-      ], 96));
+        { value: item.before, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH },
+        { value: item.after, width: CUSTOMER_MAIN_VALUE_COLUMN_WIDTH }
+      ], 220));
     });
     return {
       name: definition.sheetName,
       rows,
-      colWidths: [7, 11, 19, 28, 24, 28, 28],
+      colWidths: [7, 12, 19, 28, 24, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH],
       rowStyles,
       cellStyles,
       headerRow: 2,
@@ -17759,10 +17773,10 @@ ${item.target}` : item.target;
           { label: "手順1", text: "「確認できなかった範囲」シートがある場合は先に確認し、比較できていない領域を把握します。" },
           { label: "手順2", text: "変更対象一覧で、変更のあった対象と「対象の変更」（追加・削除・設定変更など）を確認し、確認する優先順位を決めます。" },
           { label: "手順3", text: "詳細が必要な対象は、変更対象一覧の右端にある「変更一覧へ」のリンクから変更一覧の該当行へ移動します。" },
-          { label: "手順4", text: "変更一覧の「設定対象／変更内容」のセル内1行目で、対象（フィールド名や一覧名）を確認します。" },
+          { label: "手順4", text: "変更一覧の「設定対象」で、対象（フィールド名や一覧名）を確認します。" },
           { label: "手順5", text: "「差分プロパティ」で、その対象のどの設定項目かを確認します。kintone の設定画面で開く項目に当たります。" },
           { label: "手順6", text: "「変更前」「変更後」で、正確な値を確認します。「存在しません」は、その側のアプリに対象そのものがないことを表します。" },
-          { label: "手順7", text: "特定の機能に絞って確認したい場合は、変更一覧の「分類」のリンクから機能別シートを開きます。" }
+          { label: "手順7", text: "特定の機能に絞って確認したい場合は、変更一覧の「分類」のリンクから機能別シートの同じNo.の明細へ移動します。" }
         ]
       },
       {
@@ -17782,8 +17796,8 @@ ${item.target}` : item.target;
         title: "変更一覧の列",
         entries: [
           {
-            label: "設定対象／変更内容",
-            text: "「どの対象か」と「変更の要約」です。1つのセルの中に2行で記載しており、セル内の1行目が対象の名前（フィールド名や一覧名など）、2行目が変更のあらまし（「変更前 → 変更後」「比較先に追加：値」など）です。行の高さが足りないと2行目が隠れることがあります。"
+            label: "設定対象",
+            text: "変更があった対象の名前（フィールド名や一覧名など）です。長い名前は折り返して表示します。「差分プロパティ」と合わせて、どの対象の何が変わったかを確認します。"
           },
           {
             label: "差分プロパティ",
@@ -17795,11 +17809,11 @@ ${item.target}` : item.target;
           },
           {
             label: "読み方の例",
-            text: "設定対象／変更内容のセルに「顧客名」「いいえ → はい」、差分プロパティに「必須項目」とあれば、「顧客名フィールドの必須設定が、いいえからはいに変わった」と読みます。設定対象／変更内容だけでは「顧客名の何かが変わった」ことしか分からないため、差分プロパティと合わせて読むことで意味が確定します。"
+            text: "設定対象が「顧客名」、差分プロパティが「必須項目」、変更前が「いいえ」、変更後が「はい」なら、「顧客名フィールドの必須設定が、いいえからはいに変わった」と読みます。"
           },
           {
-            label: "要約だけで判断しない",
-            text: "変更内容の要約は、値の1行目を約30文字までに短くしたものです。絞り込み条件や長い文章は途中で「…」と省略されるため、完全な値は変更前／変更後の列で確認してください。同じ対象について複数の設定項目が変わっている場合は1項目1行に分かれるため、どの行がどの設定項目に当たるかは差分プロパティで見分けます。"
+            label: "同じ対象に複数の変更がある場合",
+            text: "1項目1行で表示します。「設定対象」が同じでも、「差分プロパティ」が異なれば別の変更です。対象名と設定項目を確認したうえで、右側の変更前／変更後を読み比べてください。"
           }
         ]
       },
@@ -17824,7 +17838,7 @@ ${item.target}` : item.target;
           { label: "（未設定）（値なし）（空文字）", text: "対象はあるものの値が入っていない状態です。設定画面で空欄になっているものと、値が空文字で保存されているものを区別しています。" },
           { label: "N番目", text: "並び順の変更は、比較元・比較先での位置を1始まりの「N番目」で示します。" },
           { label: "はい／いいえ", text: "オン・オフの設定は「はい」「いいえ」で表示します。" },
-          { label: "要約の「…」", text: "設定対象／変更内容の要約で値が長い場合の省略記号です。完全な値は変更前／変更後の列にあります。" }
+          { label: "長い設定値", text: "変更前／変更後はセル内で折り返して表示します。行の高さに収まらない長文は、セルを選択して数式バーで確認するか、行の高さを広げてください。Excelのセル文字数上限を超える場合は、セル末尾に省略の注記が付きます。" }
         ]
       }
     ];
@@ -17892,7 +17906,7 @@ ${item.target}` : item.target;
     if (issues) sheets.push(issues);
     sheets.push(buildCustomerGuideSheet(ctx, availability));
     sheets.push(buildCustomerCoarseTargetSheet(ctx, items));
-    sheets.push(buildCustomerListSheet(ctx, items, apiGroups));
+    sheets.push(buildCustomerListSheet(ctx, items, apiSheets));
     sheets.push(...apiSheets);
     return sheets;
   }
