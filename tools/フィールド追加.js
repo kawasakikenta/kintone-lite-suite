@@ -1749,7 +1749,7 @@ ${base}`
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
     function dispose() {
-      document.removeEventListener("keydown", onDocKeydown, true);
+      document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed();
       window.clearTimeout(copyResetTimer);
@@ -1791,13 +1791,13 @@ ${base}`
       }
     });
     function onDocKeydown(e) {
-      if (e.key === "Escape" && !closeBtn.disabled && document.body.contains(root2)) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
     }
-    document.addEventListener("keydown", onDocKeydown, true);
+    document.addEventListener("keydown", onDocKeydown);
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
@@ -2458,6 +2458,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     const props = parsed.properties && typeof parsed.properties === "object" ? parsed.properties : parsed;
     if (!Object.keys(props).length) throw new Error("フィールドJSONに反映対象のフィールドがありません");
+    for (const [code, definition] of Object.entries(props)) {
+      if (!definition || typeof definition !== "object" || Array.isArray(definition)) {
+        throw new Error(`フィールドコード「${code}」の定義がオブジェクトではありません`);
+      }
+      if (!String(definition.type || "").trim()) {
+        throw new Error(`フィールドコード「${code}」の定義に type がありません`);
+      }
+    }
     return props;
   }
   function parseLookupMapInput(text) {
@@ -2536,18 +2544,25 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       logs.push("反映対象なし");
       return logs;
     }
+    let revision = pickRevision(current);
+    if (!/^\d+$/.test(revision)) {
+      throw new Error("比較先フィールド設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください");
+    }
     if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(String(targetAppId), String(targetGuestId || ""), plan))) {
       setStatus("フィールド反映をキャンセルしました");
       logs.push("キャンセル");
       return logs;
     }
-    let revision = pickRevision(current);
     const withRevision = (body) => revision ? { ...body, revision } : body;
     if (addCount) {
       setStatus(`フィールド追加中... (${addCount}件)`);
       try {
         const res = await apiPost(prefix, "/app/form/fields.json", withRevision({ app: targetAppId, properties: plan.adds }));
-        revision = pickRevision(res) || revision;
+        const nextRevision = pickRevision(res);
+        if (!/^\d+$/.test(nextRevision)) {
+          throw new Error("フィールド追加は完了しましたが、更新後の revision を確認できないため以降の反映を中止しました。差分を取得し直して状態を確認してください");
+        }
+        revision = nextRevision;
         logs.push(`OK フィールド追加 ${addCount}件${revision ? ` (revision ${revision})` : ""}`);
       } catch (e) {
         logs.push(`NG フィールド追加 ${addCount}件`);
@@ -2558,7 +2573,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       setStatus(`フィールド更新中... (${updateCount}件)`);
       try {
         const res = await apiPut(prefix, "/app/form/fields.json", withRevision({ app: targetAppId, properties: plan.updates }));
-        revision = pickRevision(res) || revision;
+        const nextRevision = pickRevision(res);
+        if (!/^\d+$/.test(nextRevision)) {
+          throw new Error("フィールド更新は完了しましたが、更新後の revision を確認できません。差分を取得し直して状態を確認してください");
+        }
+        revision = nextRevision;
         logs.push(`OK フィールド更新 ${updateCount}件${revision ? ` (revision ${revision})` : ""}`);
       } catch (e) {
         logs.push(`NG フィールド更新 ${updateCount}件${addCount ? "（追加 " + addCount + "件は反映済み）" : ""}`);

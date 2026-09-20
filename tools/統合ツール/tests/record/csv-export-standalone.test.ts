@@ -149,6 +149,19 @@ describe('standalone record CSV export', () => {
     expect(fetchRecordsByQuery).toHaveBeenCalledWith('/k/v1', '7', 'order by title asc', expect.any(Object));
   });
 
+  it('downloads a header-only CSV when the query matches zero records', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ properties: flatProperties });
+    vi.mocked(fetchRecordsByQuery).mockResolvedValue({ records: [], mode: 'keyset' } as any);
+
+    await runCsvExportStandalone({ ...options(), filename: 'empty.csv', query: 'status = "closed"' }, status);
+
+    const [name, blob] = vi.mocked(downloadBlob).mock.calls[0];
+    expect(name).toBe('empty.csv');
+    expect(await blob.text()).toBe('title');
+    expect(Array.from(new Uint8Array(await blob.arrayBuffer()).slice(0, 3))).toEqual([239, 187, 191]);
+    expect(status).toHaveBeenLastCalledWith('CSV出力完了 (0件)');
+  });
+
   it('exports related parent and detail CSVs in a ZIP and replaces a supplied CSV extension', async () => {
     await runCsvExportStandalone(options(), status);
 

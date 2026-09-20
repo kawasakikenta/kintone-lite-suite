@@ -1645,7 +1645,7 @@ ${contextLine}`);
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
     function dispose() {
-      document.removeEventListener("keydown", onDocKeydown, true);
+      document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed();
       window.clearTimeout(copyResetTimer);
@@ -1687,13 +1687,13 @@ ${contextLine}`);
       }
     });
     function onDocKeydown(e) {
-      if (e.key === "Escape" && !closeBtn.disabled && document.body.contains(root2)) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
     }
-    document.addEventListener("keydown", onDocKeydown, true);
+    document.addEventListener("keydown", onDocKeydown);
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
@@ -2302,6 +2302,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return [...remaining][0] || names[0];
   }
+  function validateProcessConnection(appId, guestId = "") {
+    const app = String(appId ?? "").trim();
+    if (!/^[1-9]\d*$/.test(app)) throw new Error("アプリIDは正の数値で入力してください");
+    const guest = String(guestId ?? "").trim();
+    if (guest && !/^[1-9]\d*$/.test(guest)) throw new Error("ゲストIDは正の数値で入力してください");
+    return { appId: app, guestId: guest };
+  }
   function renderFallbackFlowHtml(states, actions, highlightState) {
     const stateList = Object.keys(states || {});
     const transitions = (actions || []).map((a) => {
@@ -2329,36 +2336,56 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   `;
   }
   async function runRenderProcessFlowStandalone(source, setStatus, targets) {
-    const app = String(source.appId || "").trim();
-    if (!app) throw new Error("アプリIDを入力してください");
-    const prefix = buildApiPrefix(source.guestId || "", false);
-    setStatus("プロセス管理を取得中...");
+    const isCurrent = typeof targets?.isCurrent === "function" ? targets.isCurrent : () => true;
+    const commitStatus = (message, error) => {
+      if (isCurrent()) setStatus(message, error);
+    };
+    if (!isCurrent()) return null;
+    const connection = validateProcessConnection(source.appId, source.guestId);
+    const app = connection.appId;
+    const prefix = buildApiPrefix(connection.guestId, false);
+    commitStatus("プロセス管理を取得中...");
     const res = await apiGet(prefix, "/app/status.json", { app });
+    if (!isCurrent()) return null;
     if (!res.enable) {
       targets.textEl.value = "プロセス管理は無効です。";
       targets.viewEl.innerHTML = '<div style="color:#64748b">プロセス管理は無効です</div>';
       if (targets.simUi) targets.simUi.container.style.display = "none";
-      setStatus("プロセス管理は無効です");
+      commitStatus("プロセス管理は無効です");
       return null;
     }
-    const states = res.states || {};
-    const actions = (res.actions || []).filter((a) => a && a.from != null && a.to != null);
-    const orphanActions = (res.actions || []).length - actions.length;
+    const states = res.states && typeof res.states === "object" && !Array.isArray(res.states) ? res.states : {};
+    const rawActions = Array.isArray(res.actions) ? res.actions : [];
+    const actions = rawActions.filter((a) => a && a.from != null && a.to != null && String(a.from).trim() && String(a.to).trim());
+    const orphanActions = rawActions.length - actions.length;
+    let renderError = "";
     const renderMermaid = async (highlightState) => {
+      if (!isCurrent()) return false;
       const md = buildProcessMermaidSource(states, actions, highlightState);
       targets.textEl.value = md;
       try {
         const mermaidObj = await ensureMermaid();
+        if (!isCurrent()) return false;
         const { svg } = await mermaidObj.render("mermaid-svg-generated-" + Date.now(), md);
+        if (!isCurrent()) return false;
         targets.viewEl.innerHTML = svg;
+        return true;
       } catch (e) {
+        if (!isCurrent()) return false;
         targets.viewEl.innerHTML = renderFallbackFlowHtml(states, actions, highlightState);
-        setStatus(`Mermaid.js の読み込みに失敗したため、簡易表示に切り替えました。(${e.message || e})`, true);
+        renderError = e instanceof Error ? e.message : String(e);
+        commitStatus(`Mermaid.js の読み込みに失敗したため、簡易表示に切り替えました。(${renderError})`, true);
+        return false;
       }
     };
-    setStatus("フロー図 生成中...");
+    commitStatus("フロー図 生成中...");
     await renderMermaid(null);
-    setStatus(orphanActions ? `フロー図 生成完了（from/to 未設定のアクション ${orphanActions}件は除外）` : "フロー図 生成完了", orphanActions > 0);
+    if (!isCurrent()) return null;
+    if (renderError) {
+      commitStatus(`フロー図生成完了（簡易表示。Mermaid.js の読み込みに失敗しました: ${renderError}）`, true);
+    } else {
+      commitStatus(orphanActions ? `フロー図 生成完了（from/to 未設定のアクション ${orphanActions}件は除外）` : "フロー図 生成完了", orphanActions > 0);
+    }
     if (targets.simUi) {
       let current = null;
       const { container, current: curEl, select, startBtn, execBtn } = targets.simUi;
@@ -2384,14 +2411,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       };
       updateSim();
       startBtn.onclick = async () => {
+        if (!isCurrent()) return;
         current = findInitialState(states, actions);
         updateSim();
         if (current) {
-          setStatus("シミュレーション開始: " + current);
+          commitStatus("シミュレーション開始: " + current);
           await renderMermaid(current);
         }
       };
       execBtn.onclick = async () => {
+        if (!isCurrent()) return;
         if (select.disabled) return;
         const idx = Number(select.value);
         if (!Number.isFinite(idx)) return;
@@ -2399,7 +2428,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         if (!action) return;
         current = action.to;
         updateSim();
-        setStatus(`アクション「${action.name}」実行 → 「${action.to}」`);
+        commitStatus(`アクション「${action.name}」実行 → 「${action.to}」`);
         await renderMermaid(action.to);
       };
     }
@@ -2692,11 +2721,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const appInp = makeInput({ placeholder: "アプリID", value: DEFAULT_APP_ID || "", width: "id" });
     const guestInp = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
     cardApp.body.appendChild(makeRow([appInp, guestInp], { label: "アプリ" }));
+    let notifyConnectionChange = () => {
+    };
     cardApp.body.appendChild(createAppSearchControl(panel, {
       guestEl: guestInp,
       targets: [{ apply: (id, _name, guestId) => {
         appInp.value = id;
-        if (guestId && !guestInp.value.trim()) guestInp.value = guestId;
+        guestInp.value = guestId || "";
+        notifyConnectionChange();
       } }]
     }));
     const runBtn = makeButton("フロー図を描画", "run", { icon: "◐" });
@@ -2775,24 +2807,69 @@ ${text}
     cardSim.body.appendChild(makeRow([simStartBtn, simExecBtn]));
     cardSim.body.appendChild(makeNote("シミュレーションは実データを変更しません。状態遷移の確認用です。"));
     panel.body.insertBefore(cardSim.card, panel.status);
+    let renderedConnection = "";
+    let renderPending = false;
+    let connectionVersion = 0;
+    const connectionKey = () => `${appInp.value.trim()}::${guestInp.value.trim()}`;
+    const clearSimulationHandlers = () => {
+      simStartBtn.onclick = null;
+      simExecBtn.onclick = null;
+    };
+    const clearRenderedFlow = () => {
+      renderedConnection = "";
+      clearSimulationHandlers();
+      textEl.value = "";
+      viewEl.innerHTML = '<span class="kus-lp__small">対象アプリが変わりました。フロー図を再描画してください。</span>';
+      cardSim.card.style.display = "none";
+      curEl.textContent = "未開始";
+      curEl.style.background = "#e2e8f0";
+      simSelect.replaceChildren(new Option("--"));
+      simSelect.disabled = true;
+    };
+    notifyConnectionChange = () => {
+      connectionVersion++;
+      if (!renderedConnection && !renderPending) return;
+      clearRenderedFlow();
+      panel.setStatus("対象アプリが変わりました。フロー図を再描画してください。", "warn");
+    };
+    for (const input of [appInp, guestInp]) {
+      input.addEventListener("input", notifyConnectionChange);
+      input.addEventListener("change", notifyConnectionChange);
+    }
     runBtn.addEventListener("click", () => liteRun(panel, "プロセスフロー生成中…", async () => {
-      const result = await runRenderProcessFlowStandalone(
-        { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
-        (m, e) => panel.setStatus(m, e ? "err" : "busy"),
-        {
-          textEl,
-          viewEl,
-          simUi: {
-            container: cardSim.card,
-            current: curEl,
-            select: simSelect,
-            startBtn: simStartBtn,
-            execBtn: simExecBtn
+      const runVersion = connectionVersion;
+      const runConnection = connectionKey();
+      const isCurrent = () => connectionVersion === runVersion && connectionKey() === runConnection;
+      renderPending = true;
+      try {
+        const result = await runRenderProcessFlowStandalone(
+          { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
+          (m, e) => {
+            if (isCurrent()) panel.setStatus(m, e ? "err" : "busy");
+          },
+          {
+            textEl,
+            viewEl,
+            isCurrent,
+            simUi: {
+              container: cardSim.card,
+              current: curEl,
+              select: simSelect,
+              startBtn: simStartBtn,
+              execBtn: simExecBtn
+            }
           }
+        );
+        if (!isCurrent()) {
+          panel.setStatus("対象アプリが変わりました。フロー図を再描画してください。", "warn");
+          return;
         }
-      );
-      if (result && panel.status.dataset.tone !== "err") {
-        panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, "ok");
+        renderedConnection = runConnection;
+        if (result && panel.status.dataset.tone !== "err") {
+          panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, "ok");
+        }
+      } finally {
+        renderPending = false;
       }
     }));
     appInp.setAttribute("aria-label", "対象アプリID");
@@ -2803,16 +2880,28 @@ ${text}
       setup: [cardApp.card],
       results: [cardDiag.card, cardSim.card, foldWorkflowSection("図のソースを確認する", cardText.card)],
       beforeRun: () => {
+        connectionVersion++;
+        renderedConnection = "";
+        clearSimulationHandlers();
         textEl.value = "";
         viewEl.replaceChildren();
         cardSim.card.style.display = "none";
+        simSelect.replaceChildren(new Option("--"));
+        simSelect.disabled = true;
       },
       actions: [{
         id: "render",
         label: "プロセス図を表示",
         description: "状態とアクションの流れを表示し、結果画面でシミュレーションできます。",
         button: runBtn,
-        validate: () => appInp.value.trim() ? "" : "対象アプリIDを指定してください。",
+        validate: () => {
+          try {
+            validateProcessConnection(appInp.value, guestInp.value);
+            return "";
+          } catch (error) {
+            return error?.message || String(error);
+          }
+        },
         summary: () => [["対象", connectionSummary(appInp.value.trim(), guestInp.value.trim())], ["操作", "状態遷移図を表示。シミュレーションは実データを変更しません。"]]
       }]
     });

@@ -155,6 +155,30 @@ function resolveExportTargets(opts: any): Array<{ appId: string; guestId: string
   return out;
 }
 
+/**
+ * アプリ単位の取得が開始できなかった場合も、選択したセクションを
+ * すべて取得失敗として記録して一括出力を継続する。
+ * fetchBundle は通常セクション単位で失敗を返すが、通信層や拡張実装が
+ * アプリ単位で reject する場合に成功した他アプリまで巻き込まないための形。
+ */
+function makeFailedBundle(
+  appId: string,
+  guestId: string,
+  preview: boolean,
+  scopes: string[],
+  error: unknown
+) {
+  const message = error instanceof Error ? error.message : String(error || '設定取得に失敗しました');
+  return {
+    appId,
+    guestId,
+    preview,
+    fetchedAt: new Date().toISOString(),
+    meta: { sectionRevisions: {} },
+    sections: Object.fromEntries(scopes.map((key) => [key, { _fetchError: message }]))
+  };
+}
+
 export async function runSettingsExportStandalone(mode: string, opts: any, setStatus: (msg: string, isError?: boolean) => void) {
   if (!['json', 'zip'].includes(mode)) throw new Error('保存形式は json または zip を指定してください');
   const targets = resolveExportTargets(opts);
@@ -170,14 +194,21 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     const { appId, guestId } = targets[i];
     const guestNote = guestId ? ` (guest:${guestId})` : '';
     setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote}`);
-    const bundle = await fetchBundle({
-      appId,
-      guestId,
-      preview,
-      sections: scopes,
-      onProgress: (p, l) =>
-        setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
-    });
+    let bundle;
+    try {
+      bundle = await fetchBundle({
+        appId,
+        guestId,
+        preview,
+        sections: scopes,
+        onProgress: (p, l) =>
+          setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
+      });
+    } catch (error) {
+      bundle = makeFailedBundle(appId, guestId, preview, scopes, error);
+      const message = error instanceof Error ? error.message : String(error || '設定取得に失敗しました');
+      setStatus(`アプリ ${appId}${guestNote} の設定取得に失敗しました。選択したセクションを取得失敗として出力します: ${message}`, true);
+    }
     // ゲストスペース情報を bundle にも残しておく（ファイル名・突合用）
     if (guestId && !(bundle as any).guestId) (bundle as any).guestId = guestId;
     bundles.push(bundle);
@@ -189,7 +220,13 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
       if (sec && sec._fetchError) ngCount += 1;
       else okCount += 1;
     }
-    rows.push({ appId, guestId, okCount, ngCount, note: ngCount ? '一部セクション取得失敗あり' : 'OK' });
+    rows.push({
+      appId,
+      guestId,
+      okCount,
+      ngCount,
+      note: ngCount === scopes.length ? 'アプリ取得失敗' : ngCount ? '一部セクション取得失敗あり' : 'OK'
+    });
   }
 
   const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];

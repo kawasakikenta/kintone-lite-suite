@@ -1799,7 +1799,7 @@ ${contextLine}`);
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
     function dispose() {
-      document.removeEventListener("keydown", onDocKeydown, true);
+      document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed();
       window.clearTimeout(copyResetTimer);
@@ -1841,13 +1841,13 @@ ${contextLine}`);
       }
     });
     function onDocKeydown(e) {
-      if (e.key === "Escape" && !closeBtn.disabled && document.body.contains(root2)) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
     }
-    document.addEventListener("keydown", onDocKeydown, true);
+    document.addEventListener("keydown", onDocKeydown);
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
@@ -2223,6 +2223,7 @@ ${contextLine}`);
       fieldsVersion++;
       fields = [];
       selected.clear();
+      search.value = "";
       fieldBox.replaceChildren();
       pickWrap.hidden = true;
       resetResults();
@@ -2268,6 +2269,7 @@ ${contextLine}`);
       const current = ++fieldsVersion;
       fields = [];
       selected.clear();
+      search.value = "";
       fieldBox.replaceChildren();
       resetResults();
       refreshNote();

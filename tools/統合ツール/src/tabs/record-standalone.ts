@@ -27,6 +27,15 @@ export function parseRecordAppIds(value: unknown): string[] {
   return [...new Set(tokens)];
 }
 
+/** Validate one app/guest pair before constructing a REST path. */
+export function validateRecordConnection(appId: unknown, guestId: unknown = ''): { appId: string; guestId: string } {
+  const ids = parseRecordAppIds(appId);
+  if (ids.length !== 1) throw new Error('アプリIDは1件ずつ指定してください');
+  const guest = String(guestId ?? '').trim();
+  if (guest && !/^[1-9]\d*$/.test(guest)) throw new Error('ゲストIDは正の数値で入力してください');
+  return { appId: ids[0], guestId: guest };
+}
+
 /** Run every pasted app ID and retain per-app warnings in the final outcome. */
 export async function runRecordAppBatchStandalone(
   appIdsValue: unknown,
@@ -188,8 +197,10 @@ function recordExportFilename(filename: unknown, extension: 'csv' | 'zip', fallb
 }
 
 async function buildCsvExportForApp(appId: string, guestId: string, query: string, setStatus: (m: string) => void) {
-  if (!appId) throw new Error('アプリIDを入力してください');
-  const prefix = buildApiPrefix(guestId || '', false);
+  const target = validateRecordConnection(appId, guestId);
+  appId = target.appId;
+  guestId = target.guestId;
+  const prefix = buildApiPrefix(guestId, false);
 
   setStatus(`App ${appId}: フィールド情報取得中...`);
   const fields = await apiGet(prefix, '/app/form/fields.json', { app: appId });
@@ -197,7 +208,6 @@ async function buildCsvExportForApp(appId: string, guestId: string, query: strin
   if (!Object.keys(properties).length) throw new Error(`App ${appId}: 出力できるフィールドがありません`);
 
   const records = await fetchAllRecords(prefix, appId, query || '', (message) => setStatus(`App ${appId}: ${message}`));
-  if (!records.length) throw new Error(`App ${appId}: 出力するレコードがありません`);
 
   setStatus(`App ${appId}: CSV生成中... (${records.length}件)`);
   return {
@@ -235,7 +245,13 @@ export async function runCsvExportStandalone(opts, setStatus) {
 }
 
 export async function runCsvExportBatchStandalone(opts, setStatus) {
-  const apps = (opts?.apps || []).filter((a) => a?.appId);
+  const rawApps = Array.isArray(opts?.apps) ? opts.apps : [];
+  const apps = rawApps
+    .filter((a) => a?.appId != null && String(a.appId).trim())
+    .map((app) => {
+      const target = validateRecordConnection(app.appId, app.guestId || '');
+      return { ...app, appId: target.appId, guestId: target.guestId };
+    });
   const query = opts?.query || '';
   const filename = String(opts?.filename || '').trim();
   if (!apps.length) throw new Error('対象アプリを1件以上入力してください');
@@ -381,10 +397,12 @@ export async function runCsvImportStandalone(opts, setStatus) {
 // ステータス一括更新
 // ---------------------------------------------------------------------------
 export async function runBatchProcessStandalone(opts, setStatus) {
-  const { appId, guestId, query, action, assignee } = opts;
-  if (!appId) throw new Error('アプリIDを入力してください');
-  if (!action) throw new Error('アクション名を入力してください');
-  const prefix = buildApiPrefix(guestId || '', false);
+  const { appId: rawAppId, guestId: rawGuestId, query, action: rawAction, assignee: rawAssignee } = opts;
+  const { appId, guestId } = validateRecordConnection(rawAppId, rawGuestId);
+  const action = String(rawAction ?? '');
+  const assignee = String(rawAssignee ?? '').trim();
+  if (!action.trim()) throw new Error('アクション名を入力してください');
+  const prefix = buildApiPrefix(guestId, false);
 
   const targets = await fetchRecordStatusTargets(prefix, appId, query || '', setStatus);
   if (!targets.length) throw new Error('処理対象のレコードが0件です');
@@ -791,9 +809,8 @@ export async function runRecordBackupStandalone(opts, setStatus) {
 // ---------------------------------------------------------------------------
 /** ステータス管理（アクション/状態リスト）を取得 — シミュレーション/プルダウン用 */
 export async function runLoadStatusActionsStandalone(opts, setStatus) {
-  const { appId, guestId } = opts;
-  if (!appId) throw new Error('アプリIDを入力してください');
-  const prefix = buildApiPrefix(guestId || '', false);
+  const { appId, guestId } = validateRecordConnection(opts.appId, opts.guestId);
+  const prefix = buildApiPrefix(guestId, false);
   setStatus('プロセス管理情報を取得中...');
   const res = await apiGet(prefix, '/app/status.json', { app: appId, lang: 'user' });
   if (!res.enable) {
@@ -811,9 +828,8 @@ export async function runLoadStatusActionsStandalone(opts, setStatus) {
 
 /** 一覧（views）を取得 — クエリ補助用 */
 export async function runLoadViewsStandalone(opts, setStatus) {
-  const { appId, guestId } = opts;
-  if (!appId) throw new Error('アプリIDを入力してください');
-  const prefix = buildApiPrefix(guestId || '', false);
+  const { appId, guestId } = validateRecordConnection(opts.appId, opts.guestId);
+  const prefix = buildApiPrefix(guestId, false);
   setStatus('一覧情報を取得中...');
   const resp = await apiGet(prefix, '/app/views.json', { app: appId, lang: 'user' });
   const views = readRecordViews(resp);
@@ -823,9 +839,9 @@ export async function runLoadViewsStandalone(opts, setStatus) {
 
 /** Field labels and codes, including FILE fields nested in SUBTABLE.fields. */
 export async function runLoadAttachmentFieldsStandalone(opts, setStatus) {
-  if (!opts.appId) throw new Error('アプリIDを入力してください');
+  const { appId, guestId } = validateRecordConnection(opts.appId, opts.guestId);
   setStatus('添付フィールド情報を取得中...');
-  const response = await apiGet(buildApiPrefix(opts.guestId || '', false), '/app/form/fields.json', { app: opts.appId, lang: 'user' });
+  const response = await apiGet(buildApiPrefix(guestId, false), '/app/form/fields.json', { app: appId, lang: 'user' });
   const fields = readAttachmentFields(response);
   setStatus(`添付フィールド: ${fields.length}件${fields.length ? '' : '（添付フィールドがありません）'}`);
   return fields;

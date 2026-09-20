@@ -1822,6 +1822,15 @@ ${base}`
   }
 
   // src/tabs/reflect-standalone.ts
+  function reflectResultMatchesOptions(report, options) {
+    if (!report?.source || !report.target) return false;
+    const sourceBundleAppId = String(options.sourceBundle?.appId || "");
+    const sourceAppId = sourceBundleAppId || String(options.sourceAppId || "");
+    const sourceEnvironment = options.sourceBundle ? "json" : options.sourcePreview ? "preview" : "production";
+    const sortScopes = (values) => [...values || []].map(String).sort();
+    const mapSignature = (map) => Object.entries(map || {}).map(([from, to]) => [String(from), String(to)]).sort(([a], [b]) => a.localeCompare(b)).map(([from, to]) => `${from}\0${to}`).join("");
+    return String(report.source.appId || "") === sourceAppId && String(report.source.guestId || "") === String(options.sourceBundle ? "" : options.sourceGuestId || "") && String(report.source.environment || "") === sourceEnvironment && String(report.target.appId || "") === String(options.targetAppId || "") && String(report.target.guestId || "") === String(options.targetGuestId || "") && String(report.target.environment || "") === "preview" && report.preserveTargetOnly === (options.preserveTargetOnly !== false) && JSON.stringify(sortScopes(report.scopes)) === JSON.stringify(sortScopes(options.scopes)) && mapSignature(report.lookupMap) === mapSignature(options.lookupMap);
+  }
   function reflectConnectionError(opts) {
     for (const [label, value, optional] of [
       ["反映元アプリID", opts.sourceAppId, !!opts.sourceBundle],
@@ -2704,7 +2713,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
     function dispose() {
-      document.removeEventListener("keydown", onDocKeydown, true);
+      document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed();
       window.clearTimeout(copyResetTimer);
@@ -2746,13 +2755,13 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       }
     });
     function onDocKeydown(e) {
-      if (e.key === "Escape" && !closeBtn.disabled && document.body.contains(root2)) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
     }
-    document.addEventListener("keydown", onDocKeydown, true);
+    document.addEventListener("keydown", onDocKeydown);
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
@@ -4385,6 +4394,19 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       return result ? reflectSelectionBlockers(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes) : [];
     }
     function refreshReviewCard() {
+      const staleResult = memoryState.lastResult;
+      const currentSourceBundleToken = sourceMode === "json" ? sourceBundleToken : "";
+      if (staleResult && (!reflectResultMatchesOptions(staleResult.report, currentOptions(staleResult.report.scopes)) || staleResult.sourceBundleToken !== currentSourceBundleToken)) {
+        memoryState.lastResult = null;
+        if (memoryState.lastPreview?.postApplyCheck) {
+          memoryState.lastPreview = { ...memoryState.lastPreview, postApplyCheck: void 0 };
+        }
+        logCard.card.style.display = "none";
+        logPre.style.display = "none";
+        logPre.textContent = "";
+        renderLastResult();
+        panel.setStatus("対象が変わったため、まだ反映していません。現在の条件で差分を再取得してから反映してください。", "info");
+      }
       const { scopes, lookupState, preview, fresh } = getPreviewState();
       const invalid = reflectConnectionError(currentOptions());
       const result = preview?.result;
@@ -4770,15 +4792,17 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
           guestId: applyOptions.targetGuestId,
           retryScopes: collectRetrySectionKeys(applyOutcome.sections),
           failedLabels: applyOutcome.sections.filter((s) => s.status === "ng").map((s) => s.label),
+          sourceBundleToken: sourceMode === "json" ? sourceBundleToken : "",
           report: {
             source: {
               appId: applyOptions.sourceBundle ? String(applyOptions.sourceBundle?.appId || "") : applyOptions.sourceAppId,
-              guestId: applyOptions.sourceGuestId || "",
+              guestId: applyOptions.sourceBundle ? "" : applyOptions.sourceGuestId || "",
               environment: sourceMode === "json" ? "json" : applyOptions.sourcePreview ? "preview" : "production"
             },
             target: { appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || "", environment: "preview" },
             preserveTargetOnly: !!applyOptions.preserveTargetOnly,
             scopes: plan.effectiveScopes.slice(),
+            lookupMap: { ...applyOptions.lookupMap || {} },
             sections: applyOutcome.sections,
             logs: applyOutcome.logs.slice()
           }

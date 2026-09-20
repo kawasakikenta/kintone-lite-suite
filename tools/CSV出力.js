@@ -1804,7 +1804,7 @@ ${contextLine}`);
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
     function dispose() {
-      document.removeEventListener("keydown", onDocKeydown, true);
+      document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed();
       window.clearTimeout(copyResetTimer);
@@ -1846,13 +1846,13 @@ ${contextLine}`);
       }
     });
     function onDocKeydown(e) {
-      if (e.key === "Escape" && !closeBtn.disabled && document.body.contains(root2)) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
     }
-    document.addEventListener("keydown", onDocKeydown, true);
+    document.addEventListener("keydown", onDocKeydown);
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
@@ -2802,6 +2802,19 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   }
 
   // src/tabs/record-standalone.ts
+  function parseRecordAppIds(value) {
+    const tokens = String(value ?? "").split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
+    const invalid = tokens.filter((id) => !/^\d+$/.test(id) || Number(id) <= 0);
+    if (invalid.length) throw new Error(`アプリIDは正の数値で入力してください: ${invalid.join(", ")}`);
+    return [...new Set(tokens)];
+  }
+  function validateRecordConnection(appId, guestId = "") {
+    const ids = parseRecordAppIds(appId);
+    if (ids.length !== 1) throw new Error("アプリIDは1件ずつ指定してください");
+    const guest = String(guestId ?? "").trim();
+    if (guest && !/^[1-9]\d*$/.test(guest)) throw new Error("ゲストIDは正の数値で入力してください");
+    return { appId: ids[0], guestId: guest };
+  }
   function describeFetchMode(mode) {
     return mode === "cursor" ? " / cursor API" : "";
   }
@@ -2847,14 +2860,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return requested ? `${requested.replace(/\.(csv|zip)$/i, "")}.${extension}` : fallback;
   }
   async function buildCsvExportForApp(appId, guestId, query, setStatus) {
-    if (!appId) throw new Error("アプリIDを入力してください");
-    const prefix = buildApiPrefix(guestId || "", false);
+    const target = validateRecordConnection(appId, guestId);
+    appId = target.appId;
+    guestId = target.guestId;
+    const prefix = buildApiPrefix(guestId, false);
     setStatus(`App ${appId}: フィールド情報取得中...`);
     const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
     const properties = fields.properties || {};
     if (!Object.keys(properties).length) throw new Error(`App ${appId}: 出力できるフィールドがありません`);
     const records = await fetchAllRecords(prefix, appId, query || "", (message) => setStatus(`App ${appId}: ${message}`));
-    if (!records.length) throw new Error(`App ${appId}: 出力するレコードがありません`);
     setStatus(`App ${appId}: CSV生成中... (${records.length}件)`);
     return {
       appId,
@@ -2888,7 +2902,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0);
   }
   async function runCsvExportBatchStandalone(opts, setStatus) {
-    const apps = (opts?.apps || []).filter((a) => a?.appId);
+    const rawApps = Array.isArray(opts?.apps) ? opts.apps : [];
+    const apps = rawApps.filter((a) => a?.appId != null && String(a.appId).trim()).map((app) => {
+      const target = validateRecordConnection(app.appId, app.guestId || "");
+      return { ...app, appId: target.appId, guestId: target.guestId };
+    });
     const query = opts?.query || "";
     const filename = String(opts?.filename || "").trim();
     if (!apps.length) throw new Error("対象アプリを1件以上入力してください");
@@ -2954,9 +2972,8 @@ ${failures.join("\n")}`);
     setStatus(`CSV一括出力完了${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
   }
   async function runLoadViewsStandalone(opts, setStatus) {
-    const { appId, guestId } = opts;
-    if (!appId) throw new Error("アプリIDを入力してください");
-    const prefix = buildApiPrefix(guestId || "", false);
+    const { appId, guestId } = validateRecordConnection(opts.appId, opts.guestId);
+    const prefix = buildApiPrefix(guestId, false);
     setStatus("一覧情報を取得中...");
     const resp = await apiGet(prefix, "/app/views.json", { app: appId, lang: "user" });
     const views = readRecordViews(resp);
@@ -3272,26 +3289,73 @@ ${failures.join("\n")}`);
     cardCond.body.appendChild(makeRow([query, useView], { label: "共通クエリ" }));
     cardCond.body.appendChild(makeRow([viewApp, viewGuest, loadViews], { label: "一覧取得元" }));
     cardCond.body.appendChild(makeRow(viewSelect, { label: "一覧" }));
+    const viewNote = makeNote("一覧を読み込むと、絞り込みと並び順を共通クエリへ反映できます。");
+    cardCond.body.appendChild(viewNote);
     cardCond.body.appendChild(makeRow(filename, { label: "ファイル名" }));
     cardCond.body.appendChild(makeNote("クエリは全対象アプリへ共通適用します。各アプリのフィールドコードをヘッダーにし、テーブル明細は1行ずつ別CSVに出力します。親レコードの $id で明細を紐付けできます。"));
     cardCond.body.appendChild(makeNote("出力は閲覧・集計用です。CSV取込用の互換形式ではありません。添付はファイル名のみを出力します。ファイル本体も必要な場合は、レコード管理のバックアップで「添付ファイルも保存」を選んでください。"));
     cardCond.body.appendChild(makeNote("limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します。複数アプリで一部が失敗しても成功分は ZIP に保存し、失敗一覧を manifest.txt に記録します。"));
     panel.body.insertBefore(cardCond.card, panel.status);
+    let loadedViews = [];
+    let viewContext = "";
+    const viewKey = () => `${viewApp.value.trim()}::${viewGuest.value.trim()}`;
+    const clearLoadedViews = (message = "一覧を読み込んでください。") => {
+      loadedViews = [];
+      viewContext = "";
+      viewSelect.replaceChildren(new Option("一覧を選択（任意）", ""));
+      viewNote.textContent = message;
+    };
+    for (const input of [viewApp, viewGuest]) {
+      input.addEventListener("input", () => clearLoadedViews("一覧取得元が変わりました。一覧を再取得してください。"));
+      input.addEventListener("change", () => clearLoadedViews("一覧取得元が変わりました。一覧を再取得してください。"));
+    }
     loadViews.addEventListener("click", () => liteRun(panel, "一覧情報を取得中…", async () => {
-      const views = await runLoadViewsStandalone(
-        { appId: viewApp.value.trim(), guestId: viewGuest.value.trim() },
-        (m, e) => panel.setStatus(m, e ? "err" : "busy")
-      );
-      viewSelect.innerHTML = '<option value="">一覧を選択（任意）</option>';
+      const sourceKey = viewKey();
+      const source = validateRecordConnection(viewApp.value, viewGuest.value);
+      clearLoadedViews("一覧を取得中…");
+      let views;
+      try {
+        views = await runLoadViewsStandalone(
+          source,
+          (m, e) => panel.setStatus(m, e ? "err" : "busy")
+        );
+      } catch (error) {
+        viewNote.textContent = "一覧を取得できませんでした。取得元を確認して、もう一度お試しください。";
+        throw error;
+      }
+      if (sourceKey !== viewKey()) {
+        viewNote.textContent = "一覧取得中に取得元が変わりました。一覧を再取得してください。";
+        panel.setStatus("一覧取得中に取得元が変わりました。一覧を再取得してください。", "warn");
+        return;
+      }
+      loadedViews = views;
+      viewContext = sourceKey;
+      viewSelect.replaceChildren(new Option("一覧を選択（任意）", ""));
       for (const v of views) {
         const opt = document.createElement("option");
-        opt.value = v.filter;
-        opt.textContent = `${v.name} ${v.filter ? `(${v.filter.slice(0, 60)})` : ""}`;
+        opt.value = v.id;
+        opt.textContent = `${v.name} ${v.query ? `(${v.query.slice(0, 80)})` : "(全件)"}`;
         viewSelect.appendChild(opt);
       }
+      viewNote.textContent = `${source.appId} から ${views.length}件の一覧を取得しました。全件の一覧を選ぶと既存のクエリを消去します。`;
     }, "一覧を読み込みました"));
     useView.addEventListener("click", () => {
-      if (viewSelect.value) query.value = viewSelect.value;
+      if (viewContext !== viewKey()) {
+        panel.setStatus("一覧取得元が変わりました。一覧を再取得して選択してください。", "warn");
+        return;
+      }
+      if (!viewSelect.value) {
+        panel.setStatus("適用する一覧を選択してください。", "warn");
+        return;
+      }
+      const view = loadedViews.find((item) => item.id === viewSelect.value);
+      if (!view) {
+        panel.setStatus("適用する一覧を選択してください。", "warn");
+        return;
+      }
+      query.value = view.query;
+      query.dispatchEvent(new Event("input", { bubbles: true }));
+      panel.setStatus(`「${view.name}」の条件を反映しました: ${view.query || "全件"}`, "ok");
     });
     const cardRun = makeCard({ title: "実行", number: 3 });
     const run = makeButton("CSVを出力", "primary", { icon: "↓" });
@@ -3310,6 +3374,18 @@ ${failures.join("\n")}`);
     viewSelect.setAttribute("aria-label", "一覧の条件");
     const viewHelper = foldWorkflowSection("一覧の条件を利用する", viewApp.closest(".kus-lp__row"), viewSelect.closest(".kus-lp__row"), useView);
     cardCond.body.appendChild(viewHelper);
+    const validateApps = () => {
+      const apps = appTable.getApps();
+      if (!apps.length) return "対象アプリを1件以上指定してください。";
+      for (const app of apps) {
+        try {
+          validateRecordConnection(app.appId, app.guestId);
+        } catch (error) {
+          return `App ${app.appId}: ${error?.message || String(error)}`;
+        }
+      }
+      return "";
+    };
     installLiteWorkflow(panel, {
       setup: [cardApps.card, cardCond.card],
       actions: [{
@@ -3317,7 +3393,7 @@ ${failures.join("\n")}`);
         label: "CSVを出力",
         description: "1アプリはCSV、テーブルあり・複数アプリは親CSVと明細CSVをZIPで保存します。",
         button: run,
-        validate: () => appTable.count() ? "" : "対象アプリを1件以上指定してください。",
+        validate: validateApps,
         summary: () => [["対象", appTable.getApps().map((r) => connectionSummary(r.appId, r.guestId)).join("\n")], ["絞り込み条件", query.value.trim() || "全件"], ["保存形式", appTable.count() > 1 ? "ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）" : "CSV（テーブルがある場合は親CSV・明細CSVのZIP）"], ["ファイル名", filename.value.trim() || "自動命名"]]
       }]
     });

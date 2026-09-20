@@ -1785,7 +1785,7 @@ ${contextLine}`);
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
     function dispose() {
-      document.removeEventListener("keydown", onDocKeydown, true);
+      document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed();
       window.clearTimeout(copyResetTimer);
@@ -1827,13 +1827,13 @@ ${contextLine}`);
       }
     });
     function onDocKeydown(e) {
-      if (e.key === "Escape" && !closeBtn.disabled && document.body.contains(root2)) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
     }
-    document.addEventListener("keydown", onDocKeydown, true);
+    document.addEventListener("keydown", onDocKeydown);
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
@@ -7036,10 +7036,39 @@ applySavedViewState();
       (v, i, a) => /^\d+$/.test(String(v)) && a.indexOf(v) === i
     );
   }
+  function splitErAppIds(value) {
+    return String(value || "").split(/[\s,、，]+/).map((v) => v.trim()).filter(Boolean);
+  }
+  function erAppIdValues(opts, key, fallback = "") {
+    const value = opts?.[key];
+    if (Array.isArray(value)) {
+      if (!value.length && fallback) return splitErAppIds(fallback);
+      return value.flatMap((v) => splitErAppIds(v));
+    }
+    return splitErAppIds(value ?? fallback);
+  }
+  function validateErOptions(opts) {
+    const appId = String(opts?.appId || "").trim();
+    const primaryIds = erAppIdValues(opts, "appIds", appId);
+    const extraIds = erAppIdValues(opts, "extraAppIds");
+    const invalidAppId = [...primaryIds, ...extraIds].find((v) => !/^\d+$/.test(v));
+    if (invalidAppId) return `アプリIDは数値で入力してください: ${invalidAppId}`;
+    const guestId = String(opts?.guestId || "").trim();
+    if (guestId && !/^\d+$/.test(guestId)) return `ゲストIDは数値で入力してください: ${guestId}`;
+    const spaceId = String(opts?.spaceId || "").trim();
+    if (spaceId && !/^\d+$/.test(spaceId)) return `スペースIDは数値で入力してください: ${spaceId}`;
+    const depthText = String(opts?.maxDepth ?? "").trim();
+    if (depthText) {
+      const depth = Number(depthText);
+      if (!Number.isFinite(depth) || depth < 0 || !Number.isInteger(depth)) return "探索深さは0以上の整数で入力してください";
+    }
+    if (!primaryIds.length && !spaceId) return "アプリID または スペースID を入力してください";
+    return "";
+  }
   function buildErCrawlOptions(opts) {
     const appId = String(opts?.appId || "").trim();
-    const primaryAppIds = Array.isArray(opts?.appIds) && opts.appIds.length ? opts.appIds : [appId];
-    const startAppIds = [...primaryAppIds, ...opts?.extraAppIds || []].map((v) => String(v || "").trim()).filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
+    const primaryAppIds = erAppIdValues(opts, "appIds", appId);
+    const startAppIds = [...primaryAppIds, ...erAppIdValues(opts, "extraAppIds")].map((v) => String(v || "").trim()).filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
     const maxDepthRaw = Number(opts?.maxDepth);
     return {
       startAppId: startAppIds[0] || appId,
@@ -7055,9 +7084,10 @@ applySavedViewState();
     };
   }
   async function resolveErOptions(opts, setStatus2) {
+    const validationError = validateErOptions(opts);
+    if (validationError) throw new Error(validationError);
     const appId = String(opts.appId || "").trim();
     const spaceId = String(opts.spaceId || "").trim();
-    if (!appId && !spaceId) throw new Error("アプリID または スペースID を入力してください");
     const options = buildErCrawlOptions(opts);
     await applySpaceToErOptions(opts, options, setStatus2);
     if (!options.startAppIds.length) throw new Error("対象アプリが見つかりませんでした");
@@ -7539,7 +7569,7 @@ applySavedViewState();
         preview: false,
         layoutName: layoutSel.value,
         fieldDensity: densitySel.value,
-        maxDepth: Number(depthInp.value) || 0,
+        maxDepth: depthInp.value.trim(),
         includeSubtableFields: subtableCb.checkbox.checked,
         includeReverseLookup: reverseCb.checkbox.checked,
         extraAppIds: parseAppIds(extra.value),
@@ -7549,9 +7579,19 @@ applySavedViewState();
       };
     }
     bOpen.addEventListener("click", () => liteRun(panel, "ER 図を生成中…", async () => {
+      const validationError = validateErOptions(source());
+      if (validationError) {
+        panel.setStatus(validationError, "warn");
+        return;
+      }
       await runGenerateERDiagramStandalone(source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
     }));
     bSave.addEventListener("click", () => liteRun(panel, "HTML 生成中…", async () => {
+      const validationError = validateErOptions(source());
+      if (validationError) {
+        panel.setStatus(validationError, "warn");
+        return;
+      }
       await runExportERDiagramHtmlStandalone(source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
     }));
     appInp.setAttribute("aria-label", "起点アプリID");
@@ -7569,7 +7609,7 @@ applySavedViewState();
       ["表示", (layoutSel.selectedOptions[0]?.textContent || "") + " / " + (densitySel.selectedOptions[0]?.textContent || "")],
       ["逆引き", reverseCb.checkbox.checked ? "あり" : "なし"]
     ];
-    const erProblem = () => appInp.value.trim() || extra.value.trim() || spaceInp.value.trim() ? "" : "起点アプリまたはスペースを指定してください。";
+    const erProblem = () => validateErOptions(source());
     installLiteWorkflow(panel, {
       setup: [cardMain.card, presetCard.card, details.details],
       actions: [

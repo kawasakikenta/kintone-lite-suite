@@ -43,6 +43,24 @@ describe('settings export completion', () => {
     await runSettingsExportStandalone('json', { apps: [{ appId: '1' }] }, status);
     expect(status).toHaveBeenLastCalledWith(expect.stringContaining('保存しました'), false);
   });
+  it('continues after an app-level fetch failure and records the failed app in JSON', async () => {
+    vi.mocked(fetchBundle)
+      .mockRejectedValueOnce(new Error('通信タイムアウト'))
+      .mockResolvedValueOnce({ appId: '2', guestId: '', preview: false, fetchedAt: '', meta: { sectionRevisions: {} },
+        sections: { appSettings: { name: '対象2' }, fieldSettings: { properties: {} } } });
+    const status = vi.fn();
+    const result = await runSettingsExportStandalone('json', { apps: [{ appId: '1' }, { appId: '2' }] }, status);
+
+    expect(fetchBundle).toHaveBeenCalledTimes(2);
+    expect(downloadText).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(vi.mocked(downloadText).mock.calls[0][1]);
+    expect(payload.apps).toHaveLength(2);
+    expect(payload.apps[0].appId).toBe('1');
+    expect(payload.apps[0].sections.appSettings._fetchError).toBe('通信タイムアウト');
+    expect(payload.apps[1].sections.appSettings.name).toBe('対象2');
+    expect(result.summaryHtml).toContain('アプリ取得失敗');
+    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('1アプリ・2セクションの取得に失敗'), true);
+  });
   it('ZIP の manifest.json にアプリごとのファイル名・アプリ名・失敗セクションを記録する', async () => {
     vi.mocked(fetchBundle).mockResolvedValue({ appId: '1', guestId: '', preview: false, fetchedAt: '2026-09-14T00:00:00.000Z', meta: { sectionRevisions: {} },
       sections: { appSettings: { name: '対象アプリ' }, fieldSettings: { _fetchError: '権限不足' } } });

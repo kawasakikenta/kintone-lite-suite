@@ -11,7 +11,8 @@ import {
   renderRowsHtml,
   rowMatchesFilters,
   summarizeLiteIgnoreRules,
-  summarizeLiteDiffRows
+  summarizeLiteDiffRows,
+  validateLiteDiffStart
 } from '../../src/entries/diff-lite-ui';
 import { SECTION_DEFS } from '../../src/constants';
 
@@ -38,6 +39,14 @@ function cache(rows: any[], overrides: Record<string, any> = {}) {
 }
 
 describe('diff lite result presentation', () => {
+  it('validates comparison inputs before allowing an existing result to be cleared', () => {
+    expect(validateLiteDiffStart({ sourceAppId: '', targetAppId: '2', scopes: ['viewSettings'] })).toContain('比較元アプリID');
+    expect(validateLiteDiffStart({ sourceAppId: '1', targetAppId: '2', scopes: [] })).toContain('比較セクション');
+    expect(validateLiteDiffStart({ sourceAppId: 'abc', targetAppId: '2', scopes: ['viewSettings'] })).toContain('正の整数');
+    expect(validateLiteDiffStart({ sourceAppId: '1', targetAppId: '2', scopes: ['viewSettings'], ignoreKeys: 'views[0].name' })).toContain('位置依存');
+    expect(validateLiteDiffStart({ sourceAppId: '', targetAppId: '', scopes: ['viewSettings'], hasImportedSource: true, hasImportedTarget: true })).toBe('');
+  });
+
   it('offers every fetchable kintone setting section and selects all of them by default', () => {
     const options = buildLiteDiffScopeOptions();
 

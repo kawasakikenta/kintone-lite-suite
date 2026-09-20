@@ -15,6 +15,9 @@ async function main() {
   const build = await esbuild.build({ absWorkingDir: TOOL, bundle: true, write: false,
     entryPoints: ['src/entries/record-lite-ui.ts'], format: 'iife', globalName: 'RecordUI',
     platform: 'browser', target: ['chrome110'], logLevel: 'silent' });
+  const csvBuild = await esbuild.build({ absWorkingDir: TOOL, bundle: true, write: false,
+    entryPoints: ['src/entries/csv-export-lite-ui.ts'], format: 'iife', globalName: 'CsvUI',
+    platform: 'browser', target: ['chrome110'], logLevel: 'silent' });
   const browserName = process.argv.includes('--browser') ? process.argv[process.argv.indexOf('--browser') + 1] : 'chrome';
   const browser = await chromium.launch({ headless: true, ...(browserName === 'chromium' ? {} : { channel: browserName }) });
   const results = [];
@@ -38,6 +41,7 @@ async function main() {
       }, { url: value => value }) };
     }, metadata);
     await page.addScriptTag({ content: build.outputFiles[0].text });
+    await page.addScriptTag({ content: csvBuild.outputFiles[0].text });
     await page.evaluate(() => RecordUI.mountRecordLitePanel());
     const button = name => page.getByRole('button', { name, exact: true });
     const app = page.getByRole('textbox', { name: '対象アプリID', exact: true });
@@ -184,6 +188,49 @@ async function main() {
     await idle();
     assert.equal(await csvResult.isVisible(), false, '対象変更後の古い検査応答は表示しない');
     results.push('CSV: 全アプリ事前検査・行/フィールド別エラー・差異のあるスキーマ・先頭行プレビュー・安全な文字表示・書込前停止・再検査・キャンセル・320〜1440px');
+
+    // The standalone CSV panel has its own view lookup state. Verify that it
+    // keeps sort clauses, can clear an existing query with an all-records view,
+    // and never applies options returned for a different lookup app.
+    await page.locator('#kus-record-lite .kus-lp__close').click();
+    await page.evaluate(() => CsvUI.mountCsvExportLitePanel());
+    const csvPanel = page.locator('#kus-csv-export-lite');
+    const csvSourceApp = csvPanel.getByPlaceholder('一覧取得元アプリID', { exact: true });
+    const csvSourceGuest = csvPanel.getByPlaceholder('ゲストID（任意）', { exact: true }).last();
+    const csvViews = csvPanel.getByRole('combobox', { name: '一覧の条件', exact: true });
+    const csvQuery = csvPanel.getByRole('textbox', { name: '全対象アプリの絞り込み条件', exact: true });
+    const csvLoadViews = csvPanel.getByRole('button', { name: '一覧読込', exact: true });
+    const csvUseView = csvPanel.getByRole('button', { name: '▼ 条件へ反映', exact: true });
+    const csvIdle = () => page.waitForFunction(() => document.querySelector('#kus-csv-export-lite').getAttribute('aria-busy') === 'false');
+    await csvPanel.locator('details').filter({ hasText: '一覧の条件を利用する' }).locator('summary').click({ force: true });
+    await csvSourceApp.scrollIntoViewIfNeeded();
+    await csvSourceApp.fill('7', { force: true }); await csvSourceGuest.fill('9', { force: true });
+    await csvLoadViews.click({ force: true }); await csvIdle();
+    assert.deepEqual(await csvViews.locator('option').evaluateAll(options => options.map(o => o.value)), ['', '300', '301', '302', '310']);
+    await csvQuery.fill('stale = "query"', { force: true });
+    await csvViews.selectOption('310', { force: true }); await csvUseView.click({ force: true });
+    assert.equal(await csvQuery.inputValue(), 'amount > 1000 order by due asc, $id desc', 'CSV一覧は並び順込みで反映する');
+    await csvViews.selectOption('300', { force: true }); await csvUseView.click({ force: true });
+    assert.equal(await csvQuery.inputValue(), '', 'CSVの全件一覧は以前の条件を消す');
+    await csvSourceApp.fill('8', { force: true });
+    assert.equal(await csvViews.locator('option').count(), 1, 'CSVの取得元変更で古い候補を消す');
+    await csvQuery.fill('manual = "keep"', { force: true });
+    await csvUseView.click({ force: true });
+    assert.equal(await csvQuery.inputValue(), 'manual = "keep"', 'CSV候補未選択時は手入力条件を変えない');
+    await page.evaluate(() => { window.defer = true; window.resolveApi = null; });
+    await csvSourceApp.fill('7', { force: true }); await csvLoadViews.click({ force: true });
+    await page.waitForFunction(() => typeof window.resolveApi === 'function');
+    await page.evaluate(() => {
+      const input = document.querySelector('#kus-csv-export-lite input[placeholder="一覧取得元アプリID"]');
+      input.value = '8'; input.dispatchEvent(new Event('input', { bubbles: true }));
+      window.defer = false; window.resolveApi(window.metadata.views);
+    });
+    await csvIdle(); assert.equal(await csvViews.locator('option').count(), 1, '遅れて届いたCSV一覧応答を破棄する');
+    await page.evaluate(() => { window.fail = true; });
+    await csvLoadViews.click({ force: true }); await csvIdle();
+    assert.match(await csvPanel.innerText(), /一覧を取得できませんでした.*もう一度/);
+    await page.evaluate(() => { window.fail = false; });
+    results.push('CSV一覧: 全件解除・並び順保持・取得元変更/遅延応答の無効化・取得失敗からの再試行');
     assert.deepEqual(errors, []);
     assert.equal(await page.evaluate(() => window.calls.every(call => call.method === 'GET')), true);
     results.push('320〜1440px・画面例外なし・すべて読み取りAPI');

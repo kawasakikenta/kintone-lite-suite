@@ -52,7 +52,10 @@ async function bundle() {
     format: 'iife', globalName: 'ReflectHarness', platform: 'browser', target: ['chrome110'], logLevel: 'silent',
     plugins: [{ name: 'reflect-fixtures', setup(build) {
       build.onResolve({ filter: /reflect-standalone\.js$/ }, () => ({ path: 'reflect-engine', namespace: 'fixture' }));
-      build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: mockEngine, loader: 'js' }));
+      build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({
+        contents: `export { reflectResultMatchesOptions } from ${JSON.stringify(path.join(TOOL, 'src/tabs/reflect-standalone.ts'))};\n` + mockEngine,
+        loader: 'js', resolveDir: TOOL
+      }));
     } }]
   });
   return result.outputFiles[0].text;
@@ -221,6 +224,15 @@ async function main() {
     assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), 1, '再確認では書き込まない');
     assert.equal(await run().isDisabled(), true);
 
+    await tab('対象を選ぶ').click();
+    await page.getByRole('textbox', { name: '比較先アプリID', exact: true }).fill('404');
+    await tab('反映結果').click();
+    assert.match(await page.locator('.kus-lp__status').innerText(), /まだ反映していません/, '対象変更後は現在の条件で再確認が必要と案内する');
+    assert.doesNotMatch(await page.locator('#kus-rl-stage-result').innerText(), /全成功|サンプルの反映ログ|実行ログ/, '旧対象の成功結果と実行ログを表示しない');
+    assert.notEqual(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'ok', '旧対象の確認成功ステータスを残さない');
+    assert.equal(await button('実行結果JSONを保存').isVisible(), false, '別対象の結果を現在の結果として保存させない');
+    assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), 1, '対象変更や結果表示では書き込まない');
+
     await reset('same'); await setup(); await compare();
     assert.equal(await run().isDisabled(), true);
     await reset('partial'); await setup();
@@ -239,7 +251,16 @@ async function main() {
     assert.equal(await button('差分を確認する').isEnabled(), true);
     await compare();
     assert.equal(await page.evaluate(() => window.__reflectMock.previews[0].sourceBundle.appId), '901');
-    await button('対象を変更').click();
+    await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.match(await page.locator('#kus-rl-stage-result').innerText(), /全成功/);
+    await tab('対象を選ぶ').click();
+    await page.getByLabel('比較元の設定JSON', { exact: true }).setInputFiles({ name: 'replacement.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ appId: '901', sections: { fieldSettings: { properties: { updated: { type: 'SINGLE_LINE_TEXT', code: 'updated' } } } } })) });
+    await idle();
+    await tab('反映結果').click();
+    assert.equal(await button('実行結果JSONを保存').isVisible(), false, '同じアプリの別JSONに差し替えても古い実行結果を保存させない');
+    assert.doesNotMatch(await page.locator('#kus-rl-stage-result').innerText(), /全成功|サンプルの反映ログ/, '同じアプリのJSON差替えで旧結果とログを消す');
+    assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), 1, 'JSON差替えだけでは書き込まない');
+    await tab('対象を選ぶ').click();
     await page.getByLabel('比較元の設定JSON', { exact: true }).setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{bad') });
     await idle();
     assert.equal(await button('差分を確認する').isDisabled(), true, '不正なJSONの読込失敗後に古いJSONを使用しない');
@@ -299,7 +320,7 @@ async function main() {
     assert.equal(await run().isEnabled(), true, '配布する操作デモも単独で動作する');
     await require('./reflect-engine-scenarios.cjs')({ page, esbuild, tool: TOOL, out: OUT });
     assert.deepEqual(errors, []);
-    fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ passed: true, sizes, checks: ['guided workflow', 'setup blockers', 'app URL input', 'lookup map lines', 'preset export and import', 'no write on compare', 'busy lock', 'scope reuse', 'freshness', 'search and status filters', 'keyboard focus', 'JSON source and errors', 'partial results and retry', 'result report export', 'post-apply verification', 'responsive geometry'], pageErrors: errors }, null, 2));
+    fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ passed: true, sizes, checks: ['guided workflow', 'setup blockers', 'app URL input', 'lookup map lines', 'preset export and import', 'no write on compare', 'busy lock', 'scope reuse', 'freshness', 'search and status filters', 'keyboard focus', 'JSON source and errors', 'partial results and retry', 'result report export', 'post-apply verification', 'result invalidation on target change', 'result invalidation on JSON replacement', 'responsive geometry'], pageErrors: errors }, null, 2));
     console.log('PASS reflect-lite: workflow, setup blockers, URL input, lookup lines, presets, freshness, filters, JSON, partial results, result export, post-apply check, keyboard, 5 viewport sizes');
     console.log(`Artifacts: ${OUT}`);
   } catch (error) {

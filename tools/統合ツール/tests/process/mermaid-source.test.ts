@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { buildProcessMermaidSource, findInitialState } from '../../src/tabs/process-standalone';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { apiGet } from '../../src/api';
+import { buildProcessMermaidSource, findInitialState, runRenderProcessFlowStandalone, validateProcessConnection } from '../../src/tabs/process-standalone';
+
+vi.mock('../../src/api', async original => ({
+  ...await original<typeof import('../../src/api')>(),
+  apiGet: vi.fn()
+}));
+
+beforeEach(() => vi.clearAllMocks());
 
 // プロセス図は状態名をそのまま Mermaid のノード ID にしていたため、空白や記号を含む
 // 状態名（「承認 待ち」「完了(仮)」など）で描画が壊れていた。別名宣言方式を固定する。
@@ -52,5 +60,69 @@ describe('findInitialState', () => {
     );
     expect(src).toContain('[*] --> s0');
     expect(src).not.toContain('[*] --> s1');
+  });
+});
+
+describe('validateProcessConnection', () => {
+  it('rejects path-like app or guest identifiers before API access', () => {
+    expect(validateProcessConnection('7', '3')).toEqual({ appId: '7', guestId: '3' });
+    expect(() => validateProcessConnection('', '')).toThrow(/アプリID/);
+    expect(() => validateProcessConnection('7/records', '')).toThrow(/アプリID/);
+    expect(() => validateProcessConnection('7', '../3')).toThrow(/ゲストID/);
+  });
+});
+
+describe('runRenderProcessFlowStandalone freshness', () => {
+  it('does not commit a deferred simulation render after the connection changes', async () => {
+    const previousWindow = (globalThis as any).window;
+    const gate = new Promise<void>(resolve => { (globalThis as any).__resolveMermaid = resolve; });
+    let renderCalls = 0;
+    const mermaid = {
+      render: vi.fn(async () => {
+        renderCalls++;
+        if (renderCalls === 2) await gate;
+        return { svg: renderCalls === 2 ? '<svg>stale</svg>' : '<svg>initial</svg>' };
+      })
+    };
+    (globalThis as any).window = { mermaid };
+    const statuses: string[] = [];
+    const textEl: any = { value: '' };
+    const viewEl: any = { innerHTML: '' };
+    const simUi: any = {
+      container: { style: {} },
+      current: { textContent: '', style: {} },
+      select: { disabled: true, innerHTML: '', value: '' },
+      startBtn: { onclick: null },
+      execBtn: { onclick: null }
+    };
+    let current = true;
+    try {
+      vi.mocked(apiGet).mockResolvedValue({ enable: true, states: { Start: {} }, actions: [] });
+      await runRenderProcessFlowStandalone(
+        { appId: '7' },
+        message => statuses.push(message),
+        { textEl, viewEl, simUi, isCurrent: () => current }
+      );
+      expect(renderCalls).toBe(1);
+      expect(simUi.startBtn.onclick).toEqual(expect.any(Function));
+
+      const pending = simUi.startBtn.onclick();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(renderCalls).toBe(2);
+      const statusCount = statuses.length;
+      current = false;
+      textEl.value = 'new connection source';
+      viewEl.innerHTML = '<span>new connection</span>';
+      (globalThis as any).__resolveMermaid();
+      await pending;
+
+      expect(textEl.value).toBe('new connection source');
+      expect(viewEl.innerHTML).toBe('<span>new connection</span>');
+      expect(statuses).toHaveLength(statusCount);
+    } finally {
+      delete (globalThis as any).__resolveMermaid;
+      if (previousWindow === undefined) delete (globalThis as any).window;
+      else (globalThis as any).window = previousWindow;
+    }
   });
 });

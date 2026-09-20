@@ -8,7 +8,9 @@ import {
   runDesignDiffMdStandalone,
   runDesignExportStandalone,
   runDesignExportXlsxStandalone,
-  runBatchDesignExportXlsxZipStandalone
+  runBatchDesignExportXlsxZipStandalone,
+  validateDesignTarget,
+  validateDesignExportTargets
 } from '../tabs/design-standalone.js';
 import { pickAllSettingsBundles } from '../settingsBundleImport.js';
 import { extractAppNameFromBundle } from '../utils.js';
@@ -107,8 +109,9 @@ export function mountDesignLitePanel() {
     return { appId: r.appId, guestId: r.guestId, preview: prev.checkbox.checked, importedBundle: importedBundles.get(r.appId) || null };
   };
   const requireFirstApp = (): boolean => {
-    if (!appTable.first().appId) {
-      panel.setStatus('対象アプリ表の1行目にアプリIDを入力してください', 'warn');
+    const message = validateDesignTarget(source(), '対象アプリ表の1行目: ');
+    if (message) {
+      panel.setStatus(message, 'warn');
       return false;
     }
     return true;
@@ -150,7 +153,8 @@ export function mountDesignLitePanel() {
   cardBatch.body.appendChild(bBatchZip);
   bBatchZip.addEventListener('click', () => {
     const apps = appTable.getApps().map((r) => ({ appId: r.appId, guestId: r.guestId, bundle: importedBundles.get(r.appId) || null }));
-    if (!apps.length) { panel.setStatus('対象アプリ表にアプリIDを1件以上入力してください', 'warn'); return; }
+    const targetError = validateDesignExportTargets(apps, '対象アプリ表: ');
+    if (targetError) { panel.setStatus(targetError, 'warn'); return; }
     liteRun(panel, '複数アプリ Excel 生成中…', async () => {
       await runBatchDesignExportXlsxZipStandalone(
         { apps },
@@ -187,16 +191,20 @@ export function mountDesignLitePanel() {
     ['取得元', importedBundles.has(appTable.first().appId) ? '読み込んだ設定JSON' : 'アプリから取得'],
     ['出力形式', format], ['対象範囲', '対象表の1行目のみ']
   ];
-  const firstRequired = () => appTable.first().appId ? '' : '対象表の1行目にアプリIDを入力してください。';
+  const firstTargetRequired = () => validateDesignTarget(source(), '対象表の1行目: ');
   installLiteWorkflow(panel, {
     setup: [cardTarget.card, foldWorkflowSection('保存済みの設定JSONを使う', cardImport.card)],
     actions: [
-      { id: 'xlsx', label: 'Excel設計書を保存', description: '1行目のアプリをExcelの設計書にします。', button: bXlsx, validate: firstRequired, summary: () => singleSummary('Excel (.xlsx)') },
-      { id: 'zip', label: '全対象をExcel ZIPで保存', description: '本番の設定または読込済みJSONから全対象を保存します。', button: bBatchZip, validate: () => appTable.count() ? '' : '対象アプリを1件以上指定してください。', summary: () => [['対象', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId, importedBundles.has(r.appId) ? '読込済みJSON' : '本番')).join('\n')], ['出力', appTable.count() + ' アプリのExcelをZIPに保存'], ['取得環境', 'ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。']] },
-      { id: 'md', label: 'Markdown設計書を保存', description: '1行目のアプリを文章で確認できる形式にします。', button: bMd, validate: firstRequired, summary: () => singleSummary('Markdown') },
-      { id: 'json', label: '設計書JSONを保存', description: '1行目のアプリの設定をJSONで保存します。', button: bJson, validate: firstRequired, summary: () => singleSummary('JSON') },
-      { id: 'copy', label: 'Markdownをコピー', description: '1行目の設計書をクリップボードにコピーします。', button: bCopy, validate: firstRequired, summary: () => singleSummary('クリップボード') },
-      { id: 'diff', label: '2アプリの設計差分を保存', description: '表の先頭2アプリを比較したMarkdownを保存します。', button: bDiff, validate: () => appTable.count() >= 2 ? '' : '対象アプリを2件以上指定してください。', summary: () => appTable.getApps().slice(0, 2).map((r, i) => [i ? '比較先' : '比較元', connectionSummary(r.appId, r.guestId, importedBundles.has(r.appId) ? '読込済みJSON' : prev.checkbox.checked ? 'プレビュー' : '本番')]) }
+      { id: 'xlsx', label: 'Excel設計書を保存', description: '1行目のアプリをExcelの設計書にします。', button: bXlsx, validate: firstTargetRequired, summary: () => singleSummary('Excel (.xlsx)') },
+      { id: 'zip', label: '全対象をExcel ZIPで保存', description: '本番の設定または読込済みJSONから全対象を保存します。', button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r) => ({ ...r, bundle: importedBundles.get(r.appId) || null })), '対象アプリ表: '), summary: () => [['対象', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId, importedBundles.has(r.appId) ? '読込済みJSON' : '本番')).join('\n')], ['出力', appTable.count() + ' アプリのExcelをZIPに保存'], ['取得環境', 'ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。']] },
+      { id: 'md', label: 'Markdown設計書を保存', description: '1行目のアプリを文章で確認できる形式にします。', button: bMd, validate: firstTargetRequired, summary: () => singleSummary('Markdown') },
+      { id: 'json', label: '設計書JSONを保存', description: '1行目のアプリの設定をJSONで保存します。', button: bJson, validate: firstTargetRequired, summary: () => singleSummary('JSON') },
+      { id: 'copy', label: 'Markdownをコピー', description: '1行目の設計書をクリップボードにコピーします。', button: bCopy, validate: firstTargetRequired, summary: () => singleSummary('クリップボード') },
+      { id: 'diff', label: '2アプリの設計差分を保存', description: '表の先頭2アプリを比較したMarkdownを保存します。', button: bDiff, validate: () => {
+        const rows = appTable.getApps().slice(0, 2);
+        if (rows.length < 2) return '対象アプリを2件以上指定してください。';
+        return validateDesignExportTargets(rows.map((r) => ({ ...r, bundle: importedBundles.get(r.appId) || null })), '比較対象: ');
+      }, summary: () => appTable.getApps().slice(0, 2).map((r, i) => [i ? '比較先' : '比較元', connectionSummary(r.appId, r.guestId, importedBundles.has(r.appId) ? '読込済みJSON' : prev.checkbox.checked ? 'プレビュー' : '本番')]) }
     ]
   });
 

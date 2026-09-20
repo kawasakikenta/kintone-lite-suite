@@ -12162,7 +12162,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
     function dispose() {
-      document.removeEventListener("keydown", onDocKeydown, true);
+      document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed();
       window.clearTimeout(copyResetTimer);
@@ -12204,13 +12204,13 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       }
     });
     function onDocKeydown(e) {
-      if (e.key === "Escape" && !closeBtn.disabled && document.body.contains(root2)) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
     }
-    document.addEventListener("keydown", onDocKeydown, true);
+    document.addEventListener("keydown", onDocKeydown);
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
@@ -19393,6 +19393,20 @@ ${item.target}` : item.target;
   function buildLiteDiffScopeOptions() {
     return SECTION_DEFS.map((section) => [section.key, section.label, true]);
   }
+  function validateLiteDiffStart(options) {
+    if (!options.scopes?.length) return "比較セクションを 1 つ以上選択してください";
+    const sourceAppId = String(options.sourceAppId || "").trim();
+    const targetAppId = String(options.targetAppId || "").trim();
+    if (!options.hasImportedSource && !sourceAppId) return "比較元アプリIDを入力してください";
+    if (!options.hasImportedTarget && !targetAppId) return "比較先アプリIDを入力してください";
+    if (sourceAppId && !/^[1-9]\d*$/.test(sourceAppId)) return "比較元アプリIDには正の整数を入力してください";
+    if (targetAppId && !/^[1-9]\d*$/.test(targetAppId)) return "比較先アプリIDには正の整数を入力してください";
+    const positionalRuleCount = summarizeLiteIgnoreRules(options.ignoreKeys || "").positionalRules;
+    if (positionalRuleCount) {
+      return `配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`;
+    }
+    return "";
+  }
   var SCOPE_OPTS = buildLiteDiffScopeOptions();
   var TYPE_LABEL = { added: "追加", removed: "削除", changed: "変更", moved: "移動", same: "同一" };
   var FACT_LABEL = {
@@ -22519,9 +22533,16 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         panel.setStatus("比較セクションを 1 つ以上選択してください", "warn");
         return;
       }
-      const positionalRuleCount = summarizeLiteIgnoreRules(base.ignoreKeys).positionalRules;
-      if (positionalRuleCount) {
-        panel.setStatus(`配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`, "warn");
+      const commonValidation = validateLiteDiffStart({
+        sourceAppId: base.source.appId,
+        targetAppId: targets[0].appId,
+        scopes: base.scopes,
+        ignoreKeys: base.ignoreKeys,
+        hasImportedSource: !!importedSourceBundle,
+        hasImportedTarget: false
+      });
+      if (commonValidation) {
+        panel.setStatus(commonValidation, "warn");
         return;
       }
       cache = null;
@@ -22626,6 +22647,19 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       });
     });
     runBtn.addEventListener("click", () => {
+      const f = readForm();
+      const validation = validateLiteDiffStart({
+        sourceAppId: f.source.appId,
+        targetAppId: f.target.appId,
+        scopes: f.scopes,
+        ignoreKeys: f.ignoreKeys,
+        hasImportedSource: !!importedSourceBundle,
+        hasImportedTarget: !!importedTargetBundle
+      });
+      if (validation) {
+        panel.setStatus(validation, "warn");
+        return;
+      }
       cache = null;
       multiXlsxExports = [];
       currentRowKey = "";
@@ -22641,16 +22675,6 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       cardFilter.card.style.display = "none";
       filterDetails.style.display = "none";
       reviewEmpty.style.display = "";
-      const f = readForm();
-      if (!f.scopes.length) {
-        panel.setStatus("比較セクションを 1 つ以上選択してください", "warn");
-        return;
-      }
-      const positionalRuleCount = summarizeLiteIgnoreRules(f.ignoreKeys).positionalRules;
-      if (positionalRuleCount) {
-        panel.setStatus(`配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`, "warn");
-        return;
-      }
       runDiffTask("差分比較を実行中…", async () => {
         const out = await runDiffStandalone2({
           source: f.source,

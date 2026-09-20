@@ -61,7 +61,10 @@ function fixtures() {
       if (name === 'runRenderProcessFlowStandalone') return { states: { new: {}, done: {} }, actions: [{ name: '完了' }] };
       if (name === 'runBulkRenameFieldStandalone') return { properties: { renamed: { type: 'SINGLE_LINE_TEXT' } }, renamePairs: [{ from: 'memo', to: 'renamed' }] };
       if (name === 'runLoadStatusActionsStandalone') return { actions: [{ name: '完了にする', from: '新規', to: '完了' }] };
-      if (name === 'runLoadViewsStandalone') return [{ id: '11', name: '全件', type: 'LIST', filter: '', sort: '', query: '' }];
+      if (name === 'runLoadViewsStandalone') return [
+        { id: '11', name: '全件', type: 'LIST', filter: '', sort: '', query: '' },
+        { id: '12', name: '新しい順', type: 'LIST', filter: 'status = "新規"', sort: '更新日時 desc', query: 'status = "新規" order by 更新日時 desc' }
+      ];
       if (name === 'runLoadAttachmentFieldsStandalone') return [];
       if (name.includes('Search') || name.includes('Space')) return [];
       return {};
@@ -80,14 +83,16 @@ async function makeBundle(entry) {
         return MODULES[key] ? { path: key, namespace: 'fixture' } : null;
       });
       build.onLoad({ filter: /.*/, namespace: 'fixture' }, args => {
-        let contents = MODULES[args.path].map(name => `export const ${name} = (...args) => window.__workflowFixture.invoke('${name}', args);`).join('\n');
+        const actualStandalone = path.join(TOOL, 'src/tabs', `${args.path}-standalone.ts`);
+        let contents = `export * from ${JSON.stringify(actualStandalone)};\n`;
+        contents += MODULES[args.path].map(name => `export const ${name} = (...args) => window.__workflowFixture.invoke('${name}', args);`).join('\n');
         if (args.path === 'settings-export') contents += '\nexport function renderSettingsExportSearchResultsHtml(){ return ""; }';
         if (args.path === 'jsconfig') contents += '\nexport function runExportJsConfigStandalone(text, app, status){window.__workflowFixture.calls.push({name:"runExportJsConfigStandalone",input:text});status("JSON保存完了");}';
         if (args.path === 'record') contents += `
           export function parseRecordAppIds(value){const ids=String(value).split(/[\\s,、]+/).filter(Boolean);if(ids.some(id=>!/^\\d+$/.test(id)))throw new Error('アプリIDは数値で指定してください。');return [...new Set(ids)];}
           export async function runRecordAppBatchStandalone(value, fn, status){for(const id of parseRecordAppIds(value))await fn(id);status('全アプリの処理が完了しました。');}
         `;
-        return { contents, loader: 'js' };
+        return { contents, loader: 'js', resolveDir: TOOL };
       });
     } }]
   });
@@ -114,6 +119,58 @@ async function main() {
         await page.setContent(demo);
         assert.equal(await stage(0).isVisible(), true, id + ': 初期状態');
         assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), 0);
+        if (id === 'design') {
+          const appId = page.getByRole('textbox', { name: 'アプリID', exact: true }).first();
+          const guestId = page.getByRole('textbox', { name: 'ゲストID', exact: true }).first();
+          await appId.fill('bad');
+          assert.equal(await button('内容を確認する').isDisabled(), true, '設計書: 不正なアプリIDを確認前に止める');
+          await appId.fill('202');
+          await guestId.fill('bad');
+          assert.equal(await button('内容を確認する').isDisabled(), true, '設計書: 不正なゲストIDを確認前に止める');
+          await guestId.fill('');
+        }
+        if (id === 'er') {
+          const appId = page.getByRole('textbox', { name: '起点アプリID', exact: true });
+          const guestId = page.getByRole('textbox', { name: 'ゲストスペースID', exact: true });
+          const depth = page.getByPlaceholder('0=無制限', { exact: true });
+          await page.locator('details').filter({ hasText: '詳細オプション' }).locator('summary').click();
+          await appId.fill('bad');
+          assert.equal(await button('内容を確認する').isDisabled(), true, 'ER図: 不正なアプリIDを確認前に止める');
+          await appId.fill('202');
+          await guestId.fill('bad');
+          assert.equal(await button('内容を確認する').isDisabled(), true, 'ER図: 不正なゲストIDを確認前に止める');
+          await guestId.fill('');
+          await depth.fill('1.5');
+          assert.equal(await button('内容を確認する').isDisabled(), true, 'ER図: 探索深さの小数を確認前に止める');
+          await depth.fill('0');
+        }
+        if (id === 'process') {
+          const appId = page.getByRole('textbox', { name: '対象アプリID', exact: true });
+          const guestId = page.getByRole('textbox', { name: 'ゲストスペースID', exact: true });
+          await appId.fill('bad');
+          assert.equal(await button('内容を確認する').isDisabled(), true, 'プロセス図: 不正なアプリIDを確認前に止める');
+          await appId.fill('202');
+          await guestId.fill('bad');
+          assert.equal(await button('内容を確認する').isDisabled(), true, 'プロセス図: 不正なゲストIDを確認前に止める');
+          await guestId.fill('');
+        }
+        if (id === 'csv-export') {
+          const appId = page.locator('.kus-lp__apptable input[aria-label="アプリID"]').first();
+          const guestId = page.locator('.kus-lp__apptable input[aria-label="ゲストID"]').first();
+          await appId.fill('bad');
+          assert.equal(await button('内容を確認する').isDisabled(), true, 'CSV出力: 不正なアプリIDを確認前に止める');
+          await appId.fill('202');
+          await guestId.fill('bad');
+          assert.equal(await button('内容を確認する').isDisabled(), true, 'CSV出力: 不正なゲストIDを確認前に止める');
+          await guestId.fill('');
+          await page.locator('details').filter({ hasText: '一覧の条件を利用する' }).locator('summary').click();
+          await button('一覧読込').click(); await idle();
+          const viewSelect = page.getByRole('combobox', { name: '一覧の条件', exact: true });
+          await viewSelect.selectOption('12');
+          await button('▼ 条件へ反映').click();
+          assert.equal(await page.getByRole('textbox', { name: '全対象アプリの絞り込み条件', exact: true }).inputValue(), 'status = "新規" order by 更新日時 desc', 'CSV出力: 一覧の絞り込みと並び順を保持する');
+          await page.evaluate(() => { window.__workflowFixture.calls = []; });
+        }
         if (id === 'field') {
           assert.equal(await button('内容を確認する').isDisabled(), true);
           await page.getByRole('textbox', { name: '比較先アプリID', exact: true }).fill('303');
@@ -151,6 +208,14 @@ async function main() {
         if (id === 'process') {
           await page.getByRole('button', { name: /アクション実行/ }).click();
           assert.match(await stage(2).innerText(), /完了/);
+          await button('対象・条件を変更').click();
+          const appId = page.getByRole('textbox', { name: '対象アプリID', exact: true });
+          await appId.fill('303');
+          assert.equal(await page.locator('textarea[aria-label="プロセス図のMermaidソース"]').evaluate(el => el.value), '', 'プロセス図: アプリ変更時に古いソースを消す');
+          assert.equal(await page.locator('.kus-lp__card').filter({ hasText: 'シミュレーション' }).first().isHidden(), true, 'プロセス図: アプリ変更時にシミュレーションを隠す');
+          assert.equal(await page.locator('select[aria-label="シミュレーションのアクション"]').evaluate(el => el.disabled), true, 'プロセス図: アプリ変更時に古いシミュレーションを無効化する');
+          assert.match(await page.locator('.kus-lp__card').filter({ hasText: 'プロセス図' }).first().innerText(), /再描画してください/);
+          await appId.fill('202');
         }
         if (id === 'jsconfig') {
           await button('対象・条件を変更').click();
@@ -187,6 +252,23 @@ async function main() {
           await page.getByRole('radio', {name:defaultAction,exact:true}).check();
         }
         if (id === 'record') {
+          await button('対象・条件を変更').click();
+          await button('一覧読込').click(); await idle();
+          const viewSelect = page.getByRole('combobox', { name: '取得した一覧', exact: true });
+          const recordQuery = page.getByPlaceholder('空欄で全件（例: 更新日時 >= "2026-01-01T00:00:00Z"）', { exact: true });
+          await recordQuery.fill('古い条件 = "残る"');
+          await viewSelect.selectOption('12');
+          await page.getByRole('button', { name: '▼ 一覧から', exact: true }).click();
+          assert.equal(await recordQuery.inputValue(), 'status = "新規" order by 更新日時 desc', 'レコード管理: 一覧の並び順をクエリへ反映する');
+          await viewSelect.selectOption('11');
+          await page.getByRole('button', { name: '▼ 一覧から', exact: true }).click();
+          assert.equal(await recordQuery.inputValue(), '', 'レコード管理: 全件一覧で古いクエリを消す');
+          await viewSelect.selectOption('12');
+          await page.getByRole('button', { name: '▼ 一覧から', exact: true }).click();
+          await page.getByRole('textbox', { name: '対象アプリID', exact: true }).fill('303');
+          assert.equal(await viewSelect.inputValue(), '', 'レコード管理: 取得元変更時に古い一覧選択を消す');
+          await page.getByRole('textbox', { name: '対象アプリID', exact: true }).fill('202');
+          await button('内容を確認する').click();
           for (const action of ['CSVからレコードを追加','ステータスを一括更新','添付ファイルを保存','レコードをコピー','バックアップを保存']) {
             await button('対象・条件を変更').click();
             await page.getByRole('radio', {name:action,exact:true}).check();
