@@ -32,3 +32,9 @@ UI または出力レイアウトを変更した場合は、`tools/test-harness/
 取得失敗、処理上限、部分成功は隠さず利用者に表示します。反映操作では対象、方向、削除件数を最終確認に示します。
 
 内部構成は `tools/統合ツール/AGENTS.md`、次の作業は `docs/next-tasks.md` を参照してください。
+
+## オーケストレーション
+
+@docs/agent-orchestration.md
+
+サブエージェントを使うときは同文書の役割分担とモデル設定に従う。Codex/GPT は `gpt-5.6-luna` / `max`、Claude Code は `repo-executor`（Sonnet / `high`）を実行担当にする。
