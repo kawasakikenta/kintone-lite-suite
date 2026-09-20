@@ -6,6 +6,7 @@ import {
   previewReflectStandalone,
   resolveReflectAppsStandalone,
   reflectConnectionError,
+  reflectResultMatchesOptions,
   type ReflectIdentities,
   type PreviewReflectResult
 } from '../tabs/reflect-standalone.js';
@@ -75,12 +76,15 @@ interface LiteMemoryState {
     retryScopes: string[];
     /** 失敗セクションの表示ラベル */
     failedLabels: string[];
+    /** JSON 反映元が差し替えられたかを検知する UI 内の一時トークン。 */
+    sourceBundleToken?: string;
     /** 監査用に保存できる実行時の全セクション結果とログ */
     report: {
       source: { appId: string; guestId: string; environment: 'production' | 'preview' | 'json' };
       target: { appId: string; guestId: string; environment: 'preview' };
       preserveTargetOnly: boolean;
       scopes: string[];
+      lookupMap?: Record<string, string>;
       sections: unknown[];
       logs: string[];
     };
@@ -1139,6 +1143,24 @@ export function mountReflectLitePanel() {
   }
 
   function refreshReviewCard() {
+    const staleResult = memoryState.lastResult;
+    const currentSourceBundleToken = sourceMode === 'json' ? sourceBundleToken : '';
+    if (staleResult && (
+      !reflectResultMatchesOptions(staleResult.report, currentOptions(staleResult.report.scopes))
+      || staleResult.sourceBundleToken !== currentSourceBundleToken
+    )) {
+      memoryState.lastResult = null;
+      if (memoryState.lastPreview?.postApplyCheck) {
+        memoryState.lastPreview = { ...memoryState.lastPreview, postApplyCheck: undefined };
+      }
+      // 結果カードと同じ実行に属するログ・成功ステータスも捨てる。対象を
+      // 変更したあとに旧対象の成功を現在の対象へ誤って帰属させない。
+      logCard.card.style.display = 'none';
+      logPre.style.display = 'none';
+      logPre.textContent = '';
+      renderLastResult();
+      panel.setStatus('対象が変わったため、まだ反映していません。現在の条件で差分を再取得してから反映してください。', 'info');
+    }
     const { scopes, lookupState, preview, fresh } = getPreviewState();
     const invalid = reflectConnectionError(currentOptions());
     const result = preview?.result;
@@ -1514,15 +1536,17 @@ export function mountReflectLitePanel() {
         guestId: applyOptions.targetGuestId,
         retryScopes: collectRetrySectionKeys(applyOutcome.sections),
         failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng').map((s) => s.label),
+        sourceBundleToken: sourceMode === 'json' ? sourceBundleToken : '',
         report: {
           source: {
             appId: applyOptions.sourceBundle ? String((applyOptions.sourceBundle as any)?.appId || '') : applyOptions.sourceAppId,
-            guestId: applyOptions.sourceGuestId || '',
+            guestId: applyOptions.sourceBundle ? '' : (applyOptions.sourceGuestId || ''),
             environment: sourceMode === 'json' ? 'json' : applyOptions.sourcePreview ? 'preview' : 'production'
           },
           target: { appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || '', environment: 'preview' },
           preserveTargetOnly: !!applyOptions.preserveTargetOnly,
           scopes: plan.effectiveScopes.slice(),
+          lookupMap: { ...(applyOptions.lookupMap || {}) },
           sections: applyOutcome.sections,
           logs: applyOutcome.logs.slice()
         }

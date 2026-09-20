@@ -55,7 +55,7 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
     countBadge.textContent = `選択 ${selected.size} / 5`;
   };
   resetMetadata.push(() => {
-    fieldsVersion++; fields = []; selected.clear(); fieldBox.replaceChildren(); pickWrap.hidden = true; resetResults();
+    fieldsVersion++; fields = []; selected.clear(); search.value = ''; fieldBox.replaceChildren(); pickWrap.hidden = true; resetResults();
     note.textContent = '対象アプリが変わりました。検査フィールドを再取得してください。';
     countBadge.textContent = '選択 0 / 5';
   });
@@ -85,7 +85,7 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
   search.addEventListener('input', renderFields);
   load.addEventListener('click', () => liteRun(panel, '検査フィールドを取得中…', async () => {
     const current = ++fieldsVersion;
-    fields = []; selected.clear(); fieldBox.replaceChildren(); resetResults(); refreshNote();
+    fields = []; selected.clear(); search.value = ''; fieldBox.replaceChildren(); resetResults(); refreshNote();
     const loaded = await runLoadQualityFieldsStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() });
     if (current !== fieldsVersion) { panel.setStatus('対象が変わりました。再取得してください。', 'warn'); return; }
     fields = loaded; pickWrap.hidden = false; renderFields();

@@ -58,6 +58,33 @@ export function buildLiteDiffScopeOptions(): Array<[string, string, boolean]> {
   return SECTION_DEFS.map((section) => [section.key, section.label, true]);
 }
 
+/**
+ * 比較を開始する前に、結果を破棄してもよい入力かを検査する。
+ * 入力不足で再比較を押したとき、直前の確認可能な結果を消さないために
+ * UI と単体テストで同じ検査を使う。
+ */
+export function validateLiteDiffStart(options: {
+  sourceAppId?: string;
+  targetAppId?: string;
+  scopes?: string[];
+  ignoreKeys?: string;
+  hasImportedSource?: boolean;
+  hasImportedTarget?: boolean;
+}): string {
+  if (!options.scopes?.length) return '比較セクションを 1 つ以上選択してください';
+  const sourceAppId = String(options.sourceAppId || '').trim();
+  const targetAppId = String(options.targetAppId || '').trim();
+  if (!options.hasImportedSource && !sourceAppId) return '比較元アプリIDを入力してください';
+  if (!options.hasImportedTarget && !targetAppId) return '比較先アプリIDを入力してください';
+  if (sourceAppId && !/^[1-9]\d*$/.test(sourceAppId)) return '比較元アプリIDには正の整数を入力してください';
+  if (targetAppId && !/^[1-9]\d*$/.test(targetAppId)) return '比較先アプリIDには正の整数を入力してください';
+  const positionalRuleCount = summarizeLiteIgnoreRules(options.ignoreKeys || '').positionalRules;
+  if (positionalRuleCount) {
+    return `配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`;
+  }
+  return '';
+}
+
 const SCOPE_OPTS = buildLiteDiffScopeOptions();
 
 const TYPE_LABEL: Record<string, string> = { added: '追加', removed: '削除', changed: '変更', moved: '移動', same: '同一' };
@@ -3543,9 +3570,16 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       panel.setStatus('比較セクションを 1 つ以上選択してください', 'warn');
       return;
     }
-    const positionalRuleCount = summarizeLiteIgnoreRules(base.ignoreKeys).positionalRules;
-    if (positionalRuleCount) {
-      panel.setStatus(`配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`, 'warn');
+    const commonValidation = validateLiteDiffStart({
+      sourceAppId: base.source.appId,
+      targetAppId: targets[0].appId,
+      scopes: base.scopes,
+      ignoreKeys: base.ignoreKeys,
+      hasImportedSource: !!importedSourceBundle,
+      hasImportedTarget: false
+    });
+    if (commonValidation) {
+      panel.setStatus(commonValidation, 'warn');
       return;
     }
     cache = null;
@@ -3655,6 +3689,19 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   });
 
   runBtn.addEventListener('click', () => {
+    const f = readForm();
+    const validation = validateLiteDiffStart({
+      sourceAppId: f.source.appId,
+      targetAppId: f.target.appId,
+      scopes: f.scopes,
+      ignoreKeys: f.ignoreKeys,
+      hasImportedSource: !!importedSourceBundle,
+      hasImportedTarget: !!importedTargetBundle
+    });
+    if (validation) {
+      panel.setStatus(validation, 'warn');
+      return;
+    }
     cache = null;
     multiXlsxExports = [];
     currentRowKey = '';
@@ -3670,16 +3717,6 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     cardFilter.card.style.display = 'none';
     filterDetails.style.display = 'none';
     reviewEmpty.style.display = '';
-    const f = readForm();
-    if (!f.scopes.length) {
-      panel.setStatus('比較セクションを 1 つ以上選択してください', 'warn');
-      return;
-    }
-    const positionalRuleCount = summarizeLiteIgnoreRules(f.ignoreKeys).positionalRules;
-    if (positionalRuleCount) {
-      panel.setStatus(`配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`, 'warn');
-      return;
-    }
     runDiffTask('差分比較を実行中…', async () => {
       const out = await runDiffStandalone({
         source: f.source,

@@ -200,6 +200,37 @@ async function main() {
       return listeners.size;
     });
     assert.equal(listenerCount, 0, '再起動でdocumentのリスナーを残さない');
+    await page.locator('#launcher').focus();
+    await page.evaluate(() => {
+      window.firstPanel = Shared.createLitePanel({ id: 'escape-first', title: '一つ目', accent: 'settings' });
+      const input = Shared.makeInput({ ariaLabel: '一つ目の入力' });
+      window.firstPanel.body.append(input);
+    });
+    await page.getByRole('textbox', { name: '一つ目の入力', exact: true }).focus();
+    await page.evaluate(() => {
+      window.secondPanel = Shared.createLitePanel({ id: 'escape-second', title: '二つ目', accent: 'settings' });
+      const input = Shared.makeInput({ ariaLabel: '二つ目の入力' });
+      window.secondPanel.body.append(input);
+    });
+    const secondInput = page.getByRole('textbox', { name: '二つ目の入力', exact: true });
+    await secondInput.focus();
+    await page.locator('#launcher').focus();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.kus-lp').count(), 2, 'kintone側のEscでツールを閉じない');
+    await secondInput.focus();
+    await secondInput.dispatchEvent('keydown', { key: 'Escape', isComposing: true });
+    assert.equal(await page.locator('.kus-lp').count(), 2, '日本語変換の取消でツールを閉じない');
+    await secondInput.evaluate(input => input.addEventListener('keydown', event => event.preventDefault(), { once: true }));
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.kus-lp').count(), 2, '子コントロールが処理したEscを横取りしない');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#escape-second').count(), 0);
+    assert.equal(await page.locator('#escape-first').count(), 1, '操作していない別ツールを閉じない');
+    assert.equal(await page.getByRole('textbox', { name: '一つ目の入力', exact: true }).evaluate(input => document.activeElement === input), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.kus-lp').count(), 0);
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'launcher');
+    results.push('Esc: 操作中のパネルのみ閉じる・日本語変換と子操作を優先・kintone側操作を保持');
     assert.deepEqual(errors, []);
     results.push('320〜1440px・実行中の閉じる防止・フォーカス復帰・再起動の後始末');
   } finally {

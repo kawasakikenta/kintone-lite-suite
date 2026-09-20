@@ -3,7 +3,8 @@
 import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
 
 import { DEFAULT_APP_ID } from '../constants.js';
-import { runCsvExportBatchStandalone, runLoadViewsStandalone } from '../tabs/record-standalone.js';
+import { runCsvExportBatchStandalone, runLoadViewsStandalone, validateRecordConnection } from '../tabs/record-standalone.js';
+import type { RecordViewChoice } from '../tabs/record-metadata.js';
 import {
   createLitePanel,
   makeAppTable,
@@ -56,28 +57,79 @@ export function mountCsvExportLitePanel() {
   cardCond.body.appendChild(makeRow([query, useView], { label: '共通クエリ' }));
   cardCond.body.appendChild(makeRow([viewApp, viewGuest, loadViews], { label: '一覧取得元' }));
   cardCond.body.appendChild(makeRow(viewSelect, { label: '一覧' }));
+  const viewNote = makeNote('一覧を読み込むと、絞り込みと並び順を共通クエリへ反映できます。');
+  cardCond.body.appendChild(viewNote);
   cardCond.body.appendChild(makeRow(filename, { label: 'ファイル名' }));
   cardCond.body.appendChild(makeNote('クエリは全対象アプリへ共通適用します。各アプリのフィールドコードをヘッダーにし、テーブル明細は1行ずつ別CSVに出力します。親レコードの $id で明細を紐付けできます。'));
   cardCond.body.appendChild(makeNote('出力は閲覧・集計用です。CSV取込用の互換形式ではありません。添付はファイル名のみを出力します。ファイル本体も必要な場合は、レコード管理のバックアップで「添付ファイルも保存」を選んでください。'));
   cardCond.body.appendChild(makeNote('limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します。複数アプリで一部が失敗しても成功分は ZIP に保存し、失敗一覧を manifest.txt に記録します。'));
   panel.body.insertBefore(cardCond.card, panel.status);
 
+  let loadedViews: RecordViewChoice[] = [];
+  let viewContext = '';
+  const viewKey = () => `${viewApp.value.trim()}::${viewGuest.value.trim()}`;
+  const clearLoadedViews = (message = '一覧を読み込んでください。') => {
+    loadedViews = [];
+    viewContext = '';
+    viewSelect.replaceChildren(new Option('一覧を選択（任意）', ''));
+    viewNote.textContent = message;
+  };
+  for (const input of [viewApp, viewGuest]) {
+    input.addEventListener('input', () => clearLoadedViews('一覧取得元が変わりました。一覧を再取得してください。'));
+    input.addEventListener('change', () => clearLoadedViews('一覧取得元が変わりました。一覧を再取得してください。'));
+  }
+
   loadViews.addEventListener('click', () => liteRun(panel, '一覧情報を取得中…', async () => {
-    const views = await runLoadViewsStandalone(
-      { appId: viewApp.value.trim(), guestId: viewGuest.value.trim() },
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
-    );
-    viewSelect.innerHTML = '<option value="">一覧を選択（任意）</option>';
+    const sourceKey = viewKey();
+    const source = validateRecordConnection(viewApp.value, viewGuest.value);
+    clearLoadedViews('一覧を取得中…');
+    let views: RecordViewChoice[];
+    try {
+      views = await runLoadViewsStandalone(
+        source,
+        (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+      );
+    } catch (error) {
+      viewNote.textContent = '一覧を取得できませんでした。取得元を確認して、もう一度お試しください。';
+      throw error;
+    }
+    if (sourceKey !== viewKey()) {
+      viewNote.textContent = '一覧取得中に取得元が変わりました。一覧を再取得してください。';
+      panel.setStatus('一覧取得中に取得元が変わりました。一覧を再取得してください。', 'warn');
+      return;
+    }
+    loadedViews = views;
+    viewContext = sourceKey;
+    viewSelect.replaceChildren(new Option('一覧を選択（任意）', ''));
     for (const v of views) {
       const opt = document.createElement('option');
-      opt.value = v.filter;
-      opt.textContent = `${v.name} ${v.filter ? `(${v.filter.slice(0, 60)})` : ''}`;
+      // The filter-only value used to lose sort order and made an all-records
+      // view indistinguishable from the placeholder. Keep the view ID and
+      // apply its complete query only after the user selects it.
+      opt.value = v.id;
+      opt.textContent = `${v.name} ${v.query ? `(${v.query.slice(0, 80)})` : '(全件)'}`;
       viewSelect.appendChild(opt);
     }
+    viewNote.textContent = `${source.appId} から ${views.length}件の一覧を取得しました。全件の一覧を選ぶと既存のクエリを消去します。`;
   }, '一覧を読み込みました'));
 
   useView.addEventListener('click', () => {
-    if (viewSelect.value) query.value = viewSelect.value;
+    if (viewContext !== viewKey()) {
+      panel.setStatus('一覧取得元が変わりました。一覧を再取得して選択してください。', 'warn');
+      return;
+    }
+    if (!viewSelect.value) {
+      panel.setStatus('適用する一覧を選択してください。', 'warn');
+      return;
+    }
+    const view = loadedViews.find(item => item.id === viewSelect.value);
+    if (!view) {
+      panel.setStatus('適用する一覧を選択してください。', 'warn');
+      return;
+    }
+    query.value = view.query;
+    query.dispatchEvent(new Event('input', { bubbles: true }));
+    panel.setStatus(`「${view.name}」の条件を反映しました: ${view.query || '全件'}`, 'ok');
   });
 
   const cardRun = makeCard({ title: '実行', number: 3 });
@@ -99,10 +151,19 @@ export function mountCsvExportLitePanel() {
   viewSelect.setAttribute('aria-label', '一覧の条件');
   const viewHelper = foldWorkflowSection('一覧の条件を利用する', viewApp.closest('.kus-lp__row') as HTMLElement, viewSelect.closest('.kus-lp__row') as HTMLElement, useView);
   cardCond.body.appendChild(viewHelper);
+  const validateApps = () => {
+    const apps = appTable.getApps();
+    if (!apps.length) return '対象アプリを1件以上指定してください。';
+    for (const app of apps) {
+      try { validateRecordConnection(app.appId, app.guestId); }
+      catch (error: any) { return `App ${app.appId}: ${error?.message || String(error)}`; }
+    }
+    return '';
+  };
   installLiteWorkflow(panel, {
     setup: [cardApps.card, cardCond.card],
     actions: [{ id: 'csv', label: 'CSVを出力', description: '1アプリはCSV、テーブルあり・複数アプリは親CSVと明細CSVをZIPで保存します。', button: run,
-      validate: () => appTable.count() ? '' : '対象アプリを1件以上指定してください。',
+      validate: validateApps,
       summary: () => [['対象', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId)).join('\n')], ['絞り込み条件', query.value.trim() || '全件'], ['保存形式', appTable.count() > 1 ? 'ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）' : 'CSV（テーブルがある場合は親CSV・明細CSVのZIP）'], ['ファイル名', filename.value.trim() || '自動命名']]
     }]
   });

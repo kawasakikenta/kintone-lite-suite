@@ -2086,7 +2086,7 @@ ${contextLine}`);
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
     function dispose() {
-      document.removeEventListener("keydown", onDocKeydown, true);
+      document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed();
       window.clearTimeout(copyResetTimer);
@@ -2128,13 +2128,13 @@ ${contextLine}`);
       }
     });
     function onDocKeydown(e) {
-      if (e.key === "Escape" && !closeBtn.disabled && document.body.contains(root2)) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
     }
-    document.addEventListener("keydown", onDocKeydown, true);
+    document.addEventListener("keydown", onDocKeydown);
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
@@ -3145,6 +3145,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (invalid.length) throw new Error(`アプリIDは正の数値で入力してください: ${invalid.join(", ")}`);
     return [...new Set(tokens)];
   }
+  function validateRecordConnection(appId, guestId = "") {
+    const ids = parseRecordAppIds(appId);
+    if (ids.length !== 1) throw new Error("アプリIDは1件ずつ指定してください");
+    const guest = String(guestId ?? "").trim();
+    if (guest && !/^[1-9]\d*$/.test(guest)) throw new Error("ゲストIDは正の数値で入力してください");
+    return { appId: ids[0], guestId: guest };
+  }
   async function runRecordAppBatchStandalone(appIdsValue, operation, setStatus) {
     const appIds = parseRecordAppIds(appIdsValue);
     if (!appIds.length) throw new Error("対象アプリIDを1件以上入力してください");
@@ -3262,14 +3269,15 @@ ${warningSummary}`, true);
     return requested ? `${requested.replace(/\.(csv|zip)$/i, "")}.${extension}` : fallback;
   }
   async function buildCsvExportForApp(appId, guestId, query, setStatus) {
-    if (!appId) throw new Error("アプリIDを入力してください");
-    const prefix = buildApiPrefix(guestId || "", false);
+    const target = validateRecordConnection(appId, guestId);
+    appId = target.appId;
+    guestId = target.guestId;
+    const prefix = buildApiPrefix(guestId, false);
     setStatus(`App ${appId}: フィールド情報取得中...`);
     const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
     const properties = fields.properties || {};
     if (!Object.keys(properties).length) throw new Error(`App ${appId}: 出力できるフィールドがありません`);
     const records = await fetchAllRecords(prefix, appId, query || "", (message) => setStatus(`App ${appId}: ${message}`));
-    if (!records.length) throw new Error(`App ${appId}: 出力するレコードがありません`);
     setStatus(`App ${appId}: CSV生成中... (${records.length}件)`);
     return {
       appId,
@@ -3303,7 +3311,11 @@ ${warningSummary}`, true);
     setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0);
   }
   async function runCsvExportBatchStandalone(opts, setStatus) {
-    const apps = (opts?.apps || []).filter((a) => a?.appId);
+    const rawApps = Array.isArray(opts?.apps) ? opts.apps : [];
+    const apps = rawApps.filter((a) => a?.appId != null && String(a.appId).trim()).map((app) => {
+      const target = validateRecordConnection(app.appId, app.guestId || "");
+      return { ...app, appId: target.appId, guestId: target.guestId };
+    });
     const query = opts?.query || "";
     const filename = String(opts?.filename || "").trim();
     if (!apps.length) throw new Error("対象アプリを1件以上入力してください");
@@ -3433,10 +3445,12 @@ ${problems.map((plan) => `App ${plan.appId}: ${plan.error || formatCsvImportRepo
     setStatus(`CSV取込完了: ${plans.length}アプリ / ${plans.reduce((sum, plan) => sum + plan.report.count, 0)}件`);
   }
   async function runBatchProcessStandalone(opts, setStatus) {
-    const { appId, guestId, query, action, assignee } = opts;
-    if (!appId) throw new Error("アプリIDを入力してください");
-    if (!action) throw new Error("アクション名を入力してください");
-    const prefix = buildApiPrefix(guestId || "", false);
+    const { appId: rawAppId, guestId: rawGuestId, query, action: rawAction, assignee: rawAssignee } = opts;
+    const { appId, guestId } = validateRecordConnection(rawAppId, rawGuestId);
+    const action = String(rawAction ?? "");
+    const assignee = String(rawAssignee ?? "").trim();
+    if (!action.trim()) throw new Error("アクション名を入力してください");
+    const prefix = buildApiPrefix(guestId, false);
     const targets = await fetchRecordStatusTargets(prefix, appId, query || "", setStatus);
     if (!targets.length) throw new Error("処理対象のレコードが0件です");
     const confirmText = [
@@ -3821,9 +3835,8 @@ ${formatFileFailures(failures)}
     return { warning: failureCount > 0 ? completionMessage : void 0 };
   }
   async function runLoadStatusActionsStandalone(opts, setStatus) {
-    const { appId, guestId } = opts;
-    if (!appId) throw new Error("アプリIDを入力してください");
-    const prefix = buildApiPrefix(guestId || "", false);
+    const { appId, guestId } = validateRecordConnection(opts.appId, opts.guestId);
+    const prefix = buildApiPrefix(guestId, false);
     setStatus("プロセス管理情報を取得中...");
     const res = await apiGet(prefix, "/app/status.json", { app: appId, lang: "user" });
     if (!res.enable) {
@@ -3839,9 +3852,8 @@ ${formatFileFailures(failures)}
     return { enabled: true, states, actions, statusFieldCode };
   }
   async function runLoadViewsStandalone(opts, setStatus) {
-    const { appId, guestId } = opts;
-    if (!appId) throw new Error("アプリIDを入力してください");
-    const prefix = buildApiPrefix(guestId || "", false);
+    const { appId, guestId } = validateRecordConnection(opts.appId, opts.guestId);
+    const prefix = buildApiPrefix(guestId, false);
     setStatus("一覧情報を取得中...");
     const resp = await apiGet(prefix, "/app/views.json", { app: appId, lang: "user" });
     const views = readRecordViews(resp);
@@ -3849,9 +3861,9 @@ ${formatFileFailures(failures)}
     return views;
   }
   async function runLoadAttachmentFieldsStandalone(opts, setStatus) {
-    if (!opts.appId) throw new Error("アプリIDを入力してください");
+    const { appId, guestId } = validateRecordConnection(opts.appId, opts.guestId);
     setStatus("添付フィールド情報を取得中...");
-    const response = await apiGet(buildApiPrefix(opts.guestId || "", false), "/app/form/fields.json", { app: opts.appId, lang: "user" });
+    const response = await apiGet(buildApiPrefix(guestId, false), "/app/form/fields.json", { app: appId, lang: "user" });
     const fields = readAttachmentFields(response);
     setStatus(`添付フィールド: ${fields.length}件${fields.length ? "" : "（添付フィールドがありません）"}`);
     return fields;
@@ -4414,6 +4426,7 @@ ${failures.join("\n")}` };
       fieldsVersion++;
       fields = [];
       selected.clear();
+      search.value = "";
       fieldBox.replaceChildren();
       pickWrap.hidden = true;
       resetResults();
@@ -4459,6 +4472,7 @@ ${failures.join("\n")}` };
       const current = ++fieldsVersion;
       fields = [];
       selected.clear();
+      search.value = "";
       fieldBox.replaceChildren();
       resetResults();
       refreshNote();

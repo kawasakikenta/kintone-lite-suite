@@ -21,6 +21,10 @@ describe('parseFieldJsonInput', () => {
     expect(() => parseFieldJsonInput('{oops')).toThrow(/解析できません/);
     expect(() => parseFieldJsonInput('[]')).toThrow(/properties/);
     expect(() => parseFieldJsonInput('{"properties":{}}')).toThrow(/反映対象/);
+    expect(() => parseFieldJsonInput('{"properties":{"name":null}}')).toThrow(/定義がオブジェクト/);
+    expect(() => parseFieldJsonInput('{"properties":{"name":{"label":"名前"}}}')).toThrow(/type がありません/);
+    expect(parseFieldJsonInput('{"properties":{"old_name":{"type":"SINGLE_LINE_TEXT","code":"new_name"}}}'))
+      .toEqual({ old_name: { type: 'SINGLE_LINE_TEXT', code: 'new_name' } });
   });
 
   it('parses lookup maps and rejects malformed input', () => {
@@ -58,6 +62,16 @@ describe('planFieldApply', () => {
     const text = buildFieldApplyConfirmText('99', '3', plan);
     expect(text).toContain('App 99（ゲスト 3）');
     expect(text).toContain('追加 2件 / 更新 1件 / スキップ 1件');
+  });
+
+  it('preserves an explicit new code for an existing field rename', () => {
+    const plan = planFieldApply(
+      { old_name: { type: 'SINGLE_LINE_TEXT', code: 'new_name' } },
+      { old_name: { type: 'SINGLE_LINE_TEXT', code: 'old_name' } },
+      {},
+      true
+    );
+    expect(plan.updates).toEqual({ old_name: { type: 'SINGLE_LINE_TEXT', code: 'new_name' } });
   });
 });
 

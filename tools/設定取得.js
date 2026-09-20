@@ -1947,7 +1947,7 @@ ${contextLine}`);
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
     function dispose() {
-      document.removeEventListener("keydown", onDocKeydown, true);
+      document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed();
       window.clearTimeout(copyResetTimer);
@@ -1989,13 +1989,13 @@ ${contextLine}`);
       }
     });
     function onDocKeydown(e) {
-      if (e.key === "Escape" && !closeBtn.disabled && document.body.contains(root2)) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
     }
-    document.addEventListener("keydown", onDocKeydown, true);
+    document.addEventListener("keydown", onDocKeydown);
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
@@ -2926,6 +2926,17 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return out;
   }
+  function makeFailedBundle(appId, guestId, preview, scopes, error) {
+    const message = error instanceof Error ? error.message : String(error || "設定取得に失敗しました");
+    return {
+      appId,
+      guestId,
+      preview,
+      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      meta: { sectionRevisions: {} },
+      sections: Object.fromEntries(scopes.map((key) => [key, { _fetchError: message }]))
+    };
+  }
   async function runSettingsExportStandalone(mode, opts, setStatus) {
     if (!["json", "zip"].includes(mode)) throw new Error("保存形式は json または zip を指定してください");
     const targets = resolveExportTargets(opts);
@@ -2939,13 +2950,20 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const { appId, guestId } = targets[i];
       const guestNote = guestId ? ` (guest:${guestId})` : "";
       setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote}`);
-      const bundle = await fetchBundle({
-        appId,
-        guestId,
-        preview,
-        sections: scopes,
-        onProgress: (p, l) => setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
-      });
+      let bundle;
+      try {
+        bundle = await fetchBundle({
+          appId,
+          guestId,
+          preview,
+          sections: scopes,
+          onProgress: (p, l) => setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
+        });
+      } catch (error) {
+        bundle = makeFailedBundle(appId, guestId, preview, scopes, error);
+        const message = error instanceof Error ? error.message : String(error || "設定取得に失敗しました");
+        setStatus(`アプリ ${appId}${guestNote} の設定取得に失敗しました。選択したセクションを取得失敗として出力します: ${message}`, true);
+      }
       if (guestId && !bundle.guestId) bundle.guestId = guestId;
       bundles.push(bundle);
       let okCount = 0;
@@ -2955,7 +2973,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         if (sec && sec._fetchError) ngCount += 1;
         else okCount += 1;
       }
-      rows.push({ appId, guestId, okCount, ngCount, note: ngCount ? "一部セクション取得失敗あり" : "OK" });
+      rows.push({
+        appId,
+        guestId,
+        okCount,
+        ngCount,
+        note: ngCount === scopes.length ? "アプリ取得失敗" : ngCount ? "一部セクション取得失敗あり" : "OK"
+      });
     }
     const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
     const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);

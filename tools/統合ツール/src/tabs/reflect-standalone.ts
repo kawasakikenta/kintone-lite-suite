@@ -21,6 +21,38 @@ export interface PreviewReflectResult {
 export interface ReflectAppIdentity { appId: string; name: string; code: string; guestId: string }
 export interface ReflectIdentities { source: ReflectAppIdentity; target: ReflectAppIdentity }
 
+/**
+ * 実行結果カードを現在の入力へ再利用できるか判定する。
+ * 対象・環境・選択項目・参照先変換が変わった結果を「直近結果」として
+ * 再確認しないため、UI の stale 状態判定とテストで共有する。
+ */
+export function reflectResultMatchesOptions(report: {
+  source?: { appId?: string; guestId?: string; environment?: string };
+  target?: { appId?: string; guestId?: string; environment?: string };
+  preserveTargetOnly?: boolean;
+  scopes?: string[];
+  lookupMap?: Record<string, string>;
+}, options: Pick<ReflectOptions, 'sourceAppId' | 'sourceGuestId' | 'sourcePreview' | 'sourceBundle' | 'targetAppId' | 'targetGuestId' | 'preserveTargetOnly' | 'scopes' | 'lookupMap'>): boolean {
+  if (!report?.source || !report.target) return false;
+  const sourceBundleAppId = String((options.sourceBundle as any)?.appId || '');
+  const sourceAppId = sourceBundleAppId || String(options.sourceAppId || '');
+  const sourceEnvironment = options.sourceBundle ? 'json' : options.sourcePreview ? 'preview' : 'production';
+  const sortScopes = (values: string[] | undefined) => [...(values || [])].map(String).sort();
+  const mapSignature = (map: Record<string, string> | undefined) => Object.entries(map || {})
+    .map(([from, to]) => [String(from), String(to)] as const)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([from, to]) => `${from}\u0000${to}`).join('\u0001');
+  return String(report.source.appId || '') === sourceAppId
+    && String(report.source.guestId || '') === String(options.sourceBundle ? '' : (options.sourceGuestId || ''))
+    && String(report.source.environment || '') === sourceEnvironment
+    && String(report.target.appId || '') === String(options.targetAppId || '')
+    && String(report.target.guestId || '') === String(options.targetGuestId || '')
+    && String(report.target.environment || '') === 'preview'
+    && report.preserveTargetOnly === (options.preserveTargetOnly !== false)
+    && JSON.stringify(sortScopes(report.scopes)) === JSON.stringify(sortScopes(options.scopes))
+    && mapSignature(report.lookupMap) === mapSignature(options.lookupMap);
+}
+
 export function reflectConnectionError(opts: Pick<ReflectOptions, 'sourceAppId' | 'sourceGuestId' | 'sourcePreview' | 'sourceBundle' | 'targetAppId' | 'targetGuestId'>): string {
   for (const [label, value, optional] of [
     ['反映元アプリID', opts.sourceAppId, !!opts.sourceBundle], ['反映先アプリID', opts.targetAppId, false],

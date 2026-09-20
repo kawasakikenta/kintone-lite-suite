@@ -31,14 +31,52 @@ async function applySpaceToErOptions(opts: any, options: any, setStatus: (msg: s
   );
 }
 
+function splitErAppIds(value: unknown): string[] {
+  return String(value || '')
+    .split(/[\s,、，]+/)
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function erAppIdValues(opts: any, key: 'appIds' | 'extraAppIds', fallback = ''): string[] {
+  const value = opts?.[key];
+  if (Array.isArray(value)) {
+    if (!value.length && fallback) return splitErAppIds(fallback);
+    return value.flatMap((v) => splitErAppIds(v));
+  }
+  return splitErAppIds(value ?? fallback);
+}
+
+/** ER図の取得前に、入力の誤りを対象欄ごとに明示する。 */
+export function validateErOptions(opts: any): string {
+  const appId = String(opts?.appId || '').trim();
+  const primaryIds = erAppIdValues(opts, 'appIds', appId);
+  const extraIds = erAppIdValues(opts, 'extraAppIds');
+  const invalidAppId = [...primaryIds, ...extraIds].find((v) => !/^\d+$/.test(v));
+  if (invalidAppId) return `アプリIDは数値で入力してください: ${invalidAppId}`;
+
+  const guestId = String(opts?.guestId || '').trim();
+  if (guestId && !/^\d+$/.test(guestId)) return `ゲストIDは数値で入力してください: ${guestId}`;
+  const spaceId = String(opts?.spaceId || '').trim();
+  if (spaceId && !/^\d+$/.test(spaceId)) return `スペースIDは数値で入力してください: ${spaceId}`;
+
+  const depthText = String(opts?.maxDepth ?? '').trim();
+  if (depthText) {
+    const depth = Number(depthText);
+    if (!Number.isFinite(depth) || depth < 0 || !Number.isInteger(depth)) return '探索深さは0以上の整数で入力してください';
+  }
+  if (!primaryIds.length && !spaceId) return 'アプリID または スペースID を入力してください';
+  return '';
+}
+
 /**
  * 入力値から crawl/buildHTML 用のオプションを組み立てる（生成・HTML保存で共通）。
  * 起点アプリ ID は数値のみ残し、重複を除いて順序を保つ。
  */
 export function buildErCrawlOptions(opts: any) {
   const appId = String(opts?.appId || '').trim();
-  const primaryAppIds = Array.isArray(opts?.appIds) && opts.appIds.length ? opts.appIds : [appId];
-  const startAppIds = [...primaryAppIds, ...(opts?.extraAppIds || [])]
+  const primaryAppIds = erAppIdValues(opts, 'appIds', appId);
+  const startAppIds = [...primaryAppIds, ...erAppIdValues(opts, 'extraAppIds')]
     .map((v) => String(v || '').trim())
     .filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
   const maxDepthRaw = Number(opts?.maxDepth);
@@ -57,9 +95,10 @@ export function buildErCrawlOptions(opts: any) {
 }
 
 async function resolveErOptions(opts: any, setStatus: (msg: string, err?: boolean) => void) {
+  const validationError = validateErOptions(opts);
+  if (validationError) throw new Error(validationError);
   const appId = String(opts.appId || '').trim();
   const spaceId = String(opts.spaceId || '').trim();
-  if (!appId && !spaceId) throw new Error('アプリID または スペースID を入力してください');
   const options: any = buildErCrawlOptions(opts);
   await applySpaceToErOptions(opts, options, setStatus);
   if (!options.startAppIds.length) throw new Error('対象アプリが見つかりませんでした');

@@ -169,6 +169,9 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
   setStatus('反映先の現在設定を確認中...');
   const current = await apiGet(prefix, '/app/customize.json', { app: targetAppId });
   const revision = pickRevision(current);
+  if (!/^\d+$/.test(revision)) {
+    throw new Error('比較先 JS/CSS 設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください');
+  }
 
   if (!p.skipConfirm && !kusConfirm(buildJsConfigApplyConfirmText(targetAppId, guestId, plan))) {
     setStatus('JS/CSS設定反映をキャンセルしました');

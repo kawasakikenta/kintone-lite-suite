@@ -3,7 +3,7 @@
 import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
 
 import { DEFAULT_APP_ID } from '../constants.js';
-import { runRenderProcessFlowStandalone } from '../tabs/process-standalone.js';
+import { runRenderProcessFlowStandalone, validateProcessConnection } from '../tabs/process-standalone.js';
 import {
   createLitePanel,
   makeRow,
@@ -32,9 +32,10 @@ export function mountProcessLitePanel() {
   const appInp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
   const guestInp = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
   cardApp.body.appendChild(makeRow([appInp, guestInp], { label: 'アプリ' }));
+  let notifyConnectionChange: () => void = () => {};
   cardApp.body.appendChild(createAppSearchControl(panel, {
     guestEl: guestInp,
-    targets: [{ apply: (id, _name, guestId) => { appInp.value = id; if (guestId && !guestInp.value.trim()) guestInp.value = guestId; } }]
+    targets: [{ apply: (id, _name, guestId) => { appInp.value = id; guestInp.value = guestId || ''; notifyConnectionChange(); } }]
   }));
 
   const runBtn = makeButton('フロー図を描画', 'run', { icon: '◐' });
@@ -114,25 +115,69 @@ export function mountProcessLitePanel() {
   cardSim.body.appendChild(makeNote('シミュレーションは実データを変更しません。状態遷移の確認用です。'));
   panel.body.insertBefore(cardSim.card, panel.status);
 
+  let renderedConnection = '';
+  let renderPending = false;
+  let connectionVersion = 0;
+  const connectionKey = () => `${appInp.value.trim()}::${guestInp.value.trim()}`;
+  const clearSimulationHandlers = () => {
+    simStartBtn.onclick = null;
+    simExecBtn.onclick = null;
+  };
+  const clearRenderedFlow = () => {
+    renderedConnection = '';
+    clearSimulationHandlers();
+    textEl.value = '';
+    viewEl.innerHTML = '<span class="kus-lp__small">対象アプリが変わりました。フロー図を再描画してください。</span>';
+    cardSim.card.style.display = 'none';
+    curEl.textContent = '未開始';
+    curEl.style.background = '#e2e8f0';
+    simSelect.replaceChildren(new Option('--'));
+    simSelect.disabled = true;
+  };
+  notifyConnectionChange = () => {
+    connectionVersion++;
+    if (!renderedConnection && !renderPending) return;
+    clearRenderedFlow();
+    panel.setStatus('対象アプリが変わりました。フロー図を再描画してください。', 'warn');
+  };
+  for (const input of [appInp, guestInp]) {
+    input.addEventListener('input', notifyConnectionChange);
+    input.addEventListener('change', notifyConnectionChange);
+  }
+
   runBtn.addEventListener('click', () => liteRun(panel, 'プロセスフロー生成中…', async () => {
-    const result = await runRenderProcessFlowStandalone(
-      { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
-      {
-        textEl,
-        viewEl,
-        simUi: {
-          container: cardSim.card,
-          current: curEl,
-          select: simSelect,
-          startBtn: simStartBtn,
-          execBtn: simExecBtn
+    const runVersion = connectionVersion;
+    const runConnection = connectionKey();
+    const isCurrent = () => connectionVersion === runVersion && connectionKey() === runConnection;
+    renderPending = true;
+    try {
+      const result = await runRenderProcessFlowStandalone(
+        { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
+        (m: string, e?: boolean) => { if (isCurrent()) panel.setStatus(m, e ? 'err' : 'busy'); },
+        {
+          textEl,
+          viewEl,
+          isCurrent,
+          simUi: {
+            container: cardSim.card,
+            current: curEl,
+            select: simSelect,
+            startBtn: simStartBtn,
+            execBtn: simExecBtn
+          }
         }
+      );
+      if (!isCurrent()) {
+        panel.setStatus('対象アプリが変わりました。フロー図を再描画してください。', 'warn');
+        return;
       }
-    );
-    // 描画側が警告（Mermaid 読込失敗 / from-to 未設定のアクション除外）を出している場合は残す
-    if (result && panel.status.dataset.tone !== 'err') {
-      panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, 'ok');
+      renderedConnection = runConnection;
+      // 描画側が警告（Mermaid 読込失敗 / from-to 未設定のアクション除外）を出している場合は残す
+      if (result && panel.status.dataset.tone !== 'err') {
+        panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, 'ok');
+      }
+    } finally {
+      renderPending = false;
     }
   }));
 
@@ -142,9 +187,21 @@ export function mountProcessLitePanel() {
   textEl.setAttribute('aria-label', 'プロセス図のMermaidソース');
   installLiteWorkflow(panel, {
     setup: [cardApp.card], results: [cardDiag.card, cardSim.card, foldWorkflowSection('図のソースを確認する', cardText.card)],
-    beforeRun: () => { textEl.value = ''; viewEl.replaceChildren(); cardSim.card.style.display = 'none'; },
+    beforeRun: () => {
+      connectionVersion++;
+      renderedConnection = '';
+      clearSimulationHandlers();
+      textEl.value = '';
+      viewEl.replaceChildren();
+      cardSim.card.style.display = 'none';
+      simSelect.replaceChildren(new Option('--'));
+      simSelect.disabled = true;
+    },
     actions: [{ id: 'render', label: 'プロセス図を表示', description: '状態とアクションの流れを表示し、結果画面でシミュレーションできます。', button: runBtn,
-      validate: () => appInp.value.trim() ? '' : '対象アプリIDを指定してください。',
+      validate: () => {
+        try { validateProcessConnection(appInp.value, guestInp.value); return ''; }
+        catch (error: any) { return error?.message || String(error); }
+      },
       summary: () => [['対象', connectionSummary(appInp.value.trim(), guestInp.value.trim())], ['操作', '状態遷移図を表示。シミュレーションは実データを変更しません。']]
     }]
   });

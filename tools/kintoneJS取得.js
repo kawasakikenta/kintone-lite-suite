@@ -1719,7 +1719,7 @@ ${base}`
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
     function dispose() {
-      document.removeEventListener("keydown", onDocKeydown, true);
+      document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed();
       window.clearTimeout(copyResetTimer);
@@ -1761,13 +1761,13 @@ ${base}`
       }
     });
     function onDocKeydown(e) {
-      if (e.key === "Escape" && !closeBtn.disabled && document.body.contains(root2)) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
     }
-    document.addEventListener("keydown", onDocKeydown, true);
+    document.addEventListener("keydown", onDocKeydown);
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
@@ -2472,6 +2472,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     setStatus("反映先の現在設定を確認中...");
     const current = await apiGet(prefix, "/app/customize.json", { app: targetAppId });
     const revision = pickRevision(current);
+    if (!/^\d+$/.test(revision)) {
+      throw new Error("比較先 JS/CSS 設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください");
+    }
     if (!p.skipConfirm && !kusConfirm(buildJsConfigApplyConfirmText(targetAppId, guestId, plan))) {
       setStatus("JS/CSS設定反映をキャンセルしました");
       return;

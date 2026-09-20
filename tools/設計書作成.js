@@ -2816,7 +2816,7 @@ ${body}`;
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
     function dispose() {
-      document.removeEventListener("keydown", onDocKeydown, true);
+      document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed();
       window.clearTimeout(copyResetTimer);
@@ -2858,13 +2858,13 @@ ${body}`;
       }
     });
     function onDocKeydown(e) {
-      if (e.key === "Escape" && !closeBtn.disabled && document.body.contains(root2)) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
     }
-    document.addEventListener("keydown", onDocKeydown, true);
+    document.addEventListener("keydown", onDocKeydown);
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
@@ -6316,10 +6316,29 @@ ${detail}`);
   }
 
   // src/tabs/design-standalone.ts
+  function validateDesignTarget(source, label = "") {
+    const appId = String(source?.appId || "").trim();
+    const importedBundle = source?.importedBundle;
+    if (!appId && !importedBundle) return `${label}アプリIDまたは設定JSONを指定してください`.trim();
+    if (appId && !/^\d+$/.test(appId)) return `${label}アプリIDは数値で入力してください: ${appId}`;
+    const guestId = String(source?.guestId || "").trim();
+    if (guestId && !/^\d+$/.test(guestId)) return `${label}ゲストIDは数値で入力してください: ${guestId}`;
+    return "";
+  }
+  function validateDesignExportTargets(apps, label = "") {
+    if (!Array.isArray(apps) || apps.length === 0) return `${label}アプリIDを1件以上入力してください`;
+    for (let i = 0; i < apps.length; i += 1) {
+      const target = apps[i] || {};
+      const error = validateDesignTarget(target, `${label}${i + 1}行目: `);
+      if (error) return error;
+    }
+    return "";
+  }
   async function resolveDesignBundle(source, side, setStatus, labelPrefix = "") {
     const appId = String(source?.appId || "").trim();
     const importedBundle = source?.importedBundle;
-    if (!appId && !importedBundle) throw new Error(`${labelPrefix || ""}アプリIDまたは設定JSONを指定してください`.trim());
+    const validationError = validateDesignTarget(source, labelPrefix);
+    if (validationError) throw new Error(validationError);
     const scopes = SECTION_DEFS.map((s) => s.key);
     setStatus(importedBundle ? `${labelPrefix}設定JSONから設計情報を読み込み中...` : `${labelPrefix}設計情報を取得中...`);
     const bundle = importedBundle ? pickSettingsBundle(importedBundle, { side, appId }) : await fetchBundle({
@@ -6358,10 +6377,12 @@ ${detail}`);
     setStatus("設計書Markdownをクリップボードにコピーしました");
   }
   async function runDesignExportXlsxStandalone(source, setStatus) {
-    const appId = String(source.appId || "").trim();
-    const importedBundle = source.importedBundle;
-    if (!appId && !importedBundle) throw new Error("アプリIDまたは設定JSONを指定してください");
-    const guestId = String(source.guestId || "").trim();
+    const target = source || {};
+    const appId = String(target.appId || "").trim();
+    const importedBundle = target.importedBundle;
+    const validationError = validateDesignTarget(target);
+    if (validationError) throw new Error(validationError);
+    const guestId = String(target.guestId || "").trim();
     setStatus(importedBundle ? "設計書Excel出力を開始（設定JSONから生成）..." : "設計書Excel出力を開始...");
     const done = await runAdvancedDesignExporter({
       appId,
@@ -6378,12 +6399,20 @@ ${detail}`);
   async function runBatchDesignExportXlsxZipStandalone(source, setStatus) {
     let apps;
     if (Array.isArray(source.apps)) {
-      apps = source.apps.map((a) => ({ appId: String(a.appId || "").trim(), guestId: String(a.guestId || "").trim(), bundle: a.bundle || null })).filter((a) => /^\d+$/.test(a.appId));
+      const validationError = validateDesignExportTargets(source.apps);
+      if (validationError) throw new Error(validationError);
+      apps = source.apps.map((a) => ({
+        appId: String(a.appId || "").trim(),
+        guestId: String(a.guestId || "").trim(),
+        bundle: a.bundle || null
+      }));
     } else {
       const guestId = String(source.guestId || "").trim();
-      apps = String(source.appIdsText || "").split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s)).map((appId) => ({ appId, guestId, bundle: null }));
+      const appIds = String(source.appIdsText || "").split(/[\s,、]+/).map((s) => s.trim()).filter(Boolean);
+      const validationError = validateDesignExportTargets(appIds.map((appId) => ({ appId, guestId })));
+      if (validationError) throw new Error(validationError);
+      apps = appIds.map((appId) => ({ appId, guestId, bundle: null }));
     }
-    if (apps.length === 0) throw new Error("アプリIDを1件以上入力してください（数値のみ）");
     const importedCount = apps.filter((a) => a.bundle).length;
     setStatus(`設計書ZIP出力を開始（${apps.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ""}）...`);
     const done = await runBatchDesignExportXlsxZip({ apps });
@@ -6872,8 +6901,9 @@ ${detail}`);
       return { appId: r.appId, guestId: r.guestId, preview: prev.checkbox.checked, importedBundle: importedBundles.get(r.appId) || null };
     };
     const requireFirstApp = () => {
-      if (!appTable.first().appId) {
-        panel.setStatus("対象アプリ表の1行目にアプリIDを入力してください", "warn");
+      const message = validateDesignTarget(source(), "対象アプリ表の1行目: ");
+      if (message) {
+        panel.setStatus(message, "warn");
         return false;
       }
       return true;
@@ -6922,8 +6952,9 @@ ${detail}`);
     cardBatch.body.appendChild(bBatchZip);
     bBatchZip.addEventListener("click", () => {
       const apps = appTable.getApps().map((r) => ({ appId: r.appId, guestId: r.guestId, bundle: importedBundles.get(r.appId) || null }));
-      if (!apps.length) {
-        panel.setStatus("対象アプリ表にアプリIDを1件以上入力してください", "warn");
+      const targetError = validateDesignExportTargets(apps, "対象アプリ表: ");
+      if (targetError) {
+        panel.setStatus(targetError, "warn");
         return;
       }
       liteRun(panel, "複数アプリ Excel 生成中…", async () => {
@@ -6962,16 +6993,20 @@ ${detail}`);
       ["出力形式", format],
       ["対象範囲", "対象表の1行目のみ"]
     ];
-    const firstRequired = () => appTable.first().appId ? "" : "対象表の1行目にアプリIDを入力してください。";
+    const firstTargetRequired = () => validateDesignTarget(source(), "対象表の1行目: ");
     installLiteWorkflow(panel, {
       setup: [cardTarget.card, foldWorkflowSection("保存済みの設定JSONを使う", cardImport.card)],
       actions: [
-        { id: "xlsx", label: "Excel設計書を保存", description: "1行目のアプリをExcelの設計書にします。", button: bXlsx, validate: firstRequired, summary: () => singleSummary("Excel (.xlsx)") },
-        { id: "zip", label: "全対象をExcel ZIPで保存", description: "本番の設定または読込済みJSONから全対象を保存します。", button: bBatchZip, validate: () => appTable.count() ? "" : "対象アプリを1件以上指定してください。", summary: () => [["対象", appTable.getApps().map((r) => connectionSummary(r.appId, r.guestId, importedBundles.has(r.appId) ? "読込済みJSON" : "本番")).join("\n")], ["出力", appTable.count() + " アプリのExcelをZIPに保存"], ["取得環境", "ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。"]] },
-        { id: "md", label: "Markdown設計書を保存", description: "1行目のアプリを文章で確認できる形式にします。", button: bMd, validate: firstRequired, summary: () => singleSummary("Markdown") },
-        { id: "json", label: "設計書JSONを保存", description: "1行目のアプリの設定をJSONで保存します。", button: bJson, validate: firstRequired, summary: () => singleSummary("JSON") },
-        { id: "copy", label: "Markdownをコピー", description: "1行目の設計書をクリップボードにコピーします。", button: bCopy, validate: firstRequired, summary: () => singleSummary("クリップボード") },
-        { id: "diff", label: "2アプリの設計差分を保存", description: "表の先頭2アプリを比較したMarkdownを保存します。", button: bDiff, validate: () => appTable.count() >= 2 ? "" : "対象アプリを2件以上指定してください。", summary: () => appTable.getApps().slice(0, 2).map((r, i) => [i ? "比較先" : "比較元", connectionSummary(r.appId, r.guestId, importedBundles.has(r.appId) ? "読込済みJSON" : prev.checkbox.checked ? "プレビュー" : "本番")]) }
+        { id: "xlsx", label: "Excel設計書を保存", description: "1行目のアプリをExcelの設計書にします。", button: bXlsx, validate: firstTargetRequired, summary: () => singleSummary("Excel (.xlsx)") },
+        { id: "zip", label: "全対象をExcel ZIPで保存", description: "本番の設定または読込済みJSONから全対象を保存します。", button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r) => ({ ...r, bundle: importedBundles.get(r.appId) || null })), "対象アプリ表: "), summary: () => [["対象", appTable.getApps().map((r) => connectionSummary(r.appId, r.guestId, importedBundles.has(r.appId) ? "読込済みJSON" : "本番")).join("\n")], ["出力", appTable.count() + " アプリのExcelをZIPに保存"], ["取得環境", "ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。"]] },
+        { id: "md", label: "Markdown設計書を保存", description: "1行目のアプリを文章で確認できる形式にします。", button: bMd, validate: firstTargetRequired, summary: () => singleSummary("Markdown") },
+        { id: "json", label: "設計書JSONを保存", description: "1行目のアプリの設定をJSONで保存します。", button: bJson, validate: firstTargetRequired, summary: () => singleSummary("JSON") },
+        { id: "copy", label: "Markdownをコピー", description: "1行目の設計書をクリップボードにコピーします。", button: bCopy, validate: firstTargetRequired, summary: () => singleSummary("クリップボード") },
+        { id: "diff", label: "2アプリの設計差分を保存", description: "表の先頭2アプリを比較したMarkdownを保存します。", button: bDiff, validate: () => {
+          const rows = appTable.getApps().slice(0, 2);
+          if (rows.length < 2) return "対象アプリを2件以上指定してください。";
+          return validateDesignExportTargets(rows.map((r) => ({ ...r, bundle: importedBundles.get(r.appId) || null })), "比較対象: ");
+        }, summary: () => appTable.getApps().slice(0, 2).map((r, i) => [i ? "比較先" : "比較元", connectionSummary(r.appId, r.guestId, importedBundles.has(r.appId) ? "読込済みJSON" : prev.checkbox.checked ? "プレビュー" : "本番")]) }
       ]
     });
   }

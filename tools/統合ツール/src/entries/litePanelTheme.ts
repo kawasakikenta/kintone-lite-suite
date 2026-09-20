@@ -742,7 +742,7 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   window.addEventListener('resize', onWindowResize);
 
   function dispose() {
-    document.removeEventListener('keydown', onDocKeydown, true);
+    document.removeEventListener('keydown', onDocKeydown);
     window.removeEventListener('resize', onWindowResize);
     stopElapsed();
     window.clearTimeout(copyResetTimer);
@@ -787,15 +787,15 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     }
   });
 
-  // ===== Esc で閉じる（実行中は閉じない）=====
+  // ===== 操作中のパネルだけ Esc で閉じる（IME・子コントロールの処理を優先）=====
   function onDocKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && !closeBtn.disabled && document.body.contains(root)) {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-    }
+    if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+    if (closeBtn.disabled || !root.isConnected || !(e.target instanceof Node) || !root.contains(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    close();
   }
-  document.addEventListener('keydown', onDocKeydown, true);
+  document.addEventListener('keydown', onDocKeydown);
   root.addEventListener('kus-lite-dispose', dispose, { once: true });
 
   setRootElement(root);

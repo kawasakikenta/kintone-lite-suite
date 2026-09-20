@@ -15,6 +15,31 @@ interface DesignSourceInput {
   importedBundle?: any;
 }
 
+/** 設計書 Lite の対象指定を API／出力処理の前に検証する。 */
+export function validateDesignTarget(source: DesignSourceInput | undefined, label = ''): string {
+  const appId = String(source?.appId || '').trim();
+  const importedBundle = source?.importedBundle;
+  if (!appId && !importedBundle) return `${label}アプリIDまたは設定JSONを指定してください`.trim();
+  if (appId && !/^\d+$/.test(appId)) return `${label}アプリIDは数値で入力してください: ${appId}`;
+  const guestId = String(source?.guestId || '').trim();
+  if (guestId && !/^\d+$/.test(guestId)) return `${label}ゲストIDは数値で入力してください: ${guestId}`;
+  return '';
+}
+
+/** 複数アプリ出力の入力を検証し、無効な行を黙って捨てない。 */
+export function validateDesignExportTargets(
+  apps: Array<{ appId?: string; guestId?: string; bundle?: any }> | undefined,
+  label = ''
+): string {
+  if (!Array.isArray(apps) || apps.length === 0) return `${label}アプリIDを1件以上入力してください`;
+  for (let i = 0; i < apps.length; i += 1) {
+    const target = apps[i] || {};
+    const error = validateDesignTarget(target, `${label}${i + 1}行目: `);
+    if (error) return error;
+  }
+  return '';
+}
+
 /**
  * 設定JSON（importedBundle）があればそれを、無ければ API から全セクションを取得して bundle を返す。
  * 設計書出力・Markdownコピー・差分レポートで共通。取得できなかったセクション数を status に出す。
@@ -27,7 +52,8 @@ async function resolveDesignBundle(
 ) {
   const appId = String(source?.appId || '').trim();
   const importedBundle = source?.importedBundle;
-  if (!appId && !importedBundle) throw new Error(`${labelPrefix || ''}アプリIDまたは設定JSONを指定してください`.trim());
+  const validationError = validateDesignTarget(source, labelPrefix);
+  if (validationError) throw new Error(validationError);
   const scopes = SECTION_DEFS.map((s) => s.key);
   setStatus(importedBundle ? `${labelPrefix}設定JSONから設計情報を読み込み中...` : `${labelPrefix}設計情報を取得中...`);
   const bundle = importedBundle
@@ -86,10 +112,12 @@ export async function runDesignCopyMdStandalone(source, setStatus) {
  * @param {(msg: string, err?: boolean) => void} setStatus
  */
 export async function runDesignExportXlsxStandalone(source, setStatus) {
-  const appId = String(source.appId || '').trim();
-  const importedBundle = (source as any).importedBundle;
-  if (!appId && !importedBundle) throw new Error('アプリIDまたは設定JSONを指定してください');
-  const guestId = String(source.guestId || '').trim();
+  const target = source || {};
+  const appId = String(target.appId || '').trim();
+  const importedBundle = (target as any).importedBundle;
+  const validationError = validateDesignTarget(target);
+  if (validationError) throw new Error(validationError);
+  const guestId = String(target.guestId || '').trim();
   setStatus(importedBundle ? '設計書Excel出力を開始（設定JSONから生成）...' : '設計書Excel出力を開始...');
   const done = await runAdvancedDesignExporter({
     appId,
@@ -116,18 +144,23 @@ export async function runBatchDesignExportXlsxZipStandalone(
 ) {
   let apps: Array<{ appId: string; guestId: string; bundle?: any }>;
   if (Array.isArray(source.apps)) {
-    apps = source.apps
-      .map((a) => ({ appId: String(a.appId || '').trim(), guestId: String(a.guestId || '').trim(), bundle: a.bundle || null }))
-      .filter((a) => /^\d+$/.test(a.appId));
+    const validationError = validateDesignExportTargets(source.apps);
+    if (validationError) throw new Error(validationError);
+    apps = source.apps.map((a) => ({
+      appId: String(a.appId || '').trim(),
+      guestId: String(a.guestId || '').trim(),
+      bundle: a.bundle || null
+    }));
   } else {
     const guestId = String(source.guestId || '').trim();
-    apps = String(source.appIdsText || '')
-      .split(/[\s,]+/)
+    const appIds = String(source.appIdsText || '')
+      .split(/[\s,、]+/)
       .map((s) => s.trim())
-      .filter((s) => /^\d+$/.test(s))
-      .map((appId) => ({ appId, guestId, bundle: null }));
+      .filter(Boolean);
+    const validationError = validateDesignExportTargets(appIds.map((appId) => ({ appId, guestId })));
+    if (validationError) throw new Error(validationError);
+    apps = appIds.map((appId) => ({ appId, guestId, bundle: null }));
   }
-  if (apps.length === 0) throw new Error('アプリIDを1件以上入力してください（数値のみ）');
   const importedCount = apps.filter((a) => a.bundle).length;
   setStatus(`設計書ZIP出力を開始（${apps.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ''}）...`);
   const done = await runBatchDesignExportXlsxZip({ apps });

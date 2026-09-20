@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { parseRecordAppIds, runRecordAppBatchStandalone } from '../../src/tabs/record-standalone';
+import { parseRecordAppIds, runRecordAppBatchStandalone, validateRecordConnection } from '../../src/tabs/record-standalone';
 
 describe('record app ID batch operations', () => {
   it('accepts pasted comma, Japanese comma, whitespace and newline separated IDs', () => {
@@ -8,6 +8,12 @@ describe('record app ID batch operations', () => {
 
   it('rejects invalid and non-positive IDs', () => {
     expect(() => parseRecordAppIds('463,abc,0')).toThrow('アプリIDは正の数値');
+  });
+
+  it('validates a single app and guest pair before building a REST path', () => {
+    expect(validateRecordConnection('463', '9')).toEqual({ appId: '463', guestId: '9' });
+    expect(() => validateRecordConnection('463,464', '')).toThrow(/1件ずつ/);
+    expect(() => validateRecordConnection('463', '../9')).toThrow(/ゲストID/);
   });
 
   it('runs every app in order and reports failures after continuing', async () => {

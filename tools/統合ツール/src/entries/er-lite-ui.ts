@@ -5,7 +5,8 @@ import { installLiteWorkflow, connectionSummary } from './liteWorkflow.js';
 import { DEFAULT_APP_ID } from '../constants.js';
 import {
   runGenerateERDiagramStandalone,
-  runExportERDiagramHtmlStandalone
+  runExportERDiagramHtmlStandalone,
+  validateErOptions
 } from '../tabs/er-standalone.js';
 import { fetchAppsInSpace } from '../api.js';
 import {
@@ -171,7 +172,7 @@ export function mountErLitePanel() {
       preview: false,
       layoutName: layoutSel.value,
       fieldDensity: densitySel.value,
-      maxDepth: Number(depthInp.value) || 0,
+      maxDepth: depthInp.value.trim(),
       includeSubtableFields: subtableCb.checkbox.checked,
       includeReverseLookup: reverseCb.checkbox.checked,
       extraAppIds: parseAppIds(extra.value),
@@ -182,10 +183,14 @@ export function mountErLitePanel() {
   }
 
   bOpen.addEventListener('click', () => liteRun(panel, 'ER 図を生成中…', async () => {
+    const validationError = validateErOptions(source());
+    if (validationError) { panel.setStatus(validationError, 'warn'); return; }
     await runGenerateERDiagramStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }));
 
   bSave.addEventListener('click', () => liteRun(panel, 'HTML 生成中…', async () => {
+    const validationError = validateErOptions(source());
+    if (validationError) { panel.setStatus(validationError, 'warn'); return; }
     await runExportERDiagramHtmlStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }));
 
@@ -204,7 +209,7 @@ export function mountErLitePanel() {
     ['表示', (layoutSel.selectedOptions[0]?.textContent || '') + ' / ' + (densitySel.selectedOptions[0]?.textContent || '')],
     ['逆引き', reverseCb.checkbox.checked ? 'あり' : 'なし']
   ];
-  const erProblem = () => appInp.value.trim() || extra.value.trim() || spaceInp.value.trim() ? '' : '起点アプリまたはスペースを指定してください。';
+  const erProblem = () => validateErOptions(source());
   installLiteWorkflow(panel, {
     setup: [cardMain.card, presetCard.card, details.details],
     actions: [
