@@ -47,6 +47,64 @@ describe('diff lite result presentation', () => {
     expect(validateLiteDiffStart({ sourceAppId: '', targetAppId: '', scopes: ['viewSettings'], hasImportedSource: true, hasImportedTarget: true })).toBe('');
   });
 
+  describe('validateLiteDiffStart with targets (1対多比較)', () => {
+    const scopes = ['viewSettings'];
+    const sourceAppId = '1';
+
+    it('returns empty string when all targets are valid', () => {
+      const targets = [
+        { appId: '10', guestId: '', rowNumber: 1 },
+        { appId: '20', guestId: '5', rowNumber: 2 },
+        { appId: '30', guestId: '', rowNumber: 3 }
+      ];
+      expect(validateLiteDiffStart({ sourceAppId, scopes, targets })).toBe('');
+    });
+
+    it('returns row-numbered error when the second target appId is invalid', () => {
+      const targets = [
+        { appId: '10', guestId: '', rowNumber: 1 },
+        { appId: '12a', guestId: '', rowNumber: 2 },
+        { appId: '30', guestId: '', rowNumber: 3 }
+      ];
+      const msg = validateLiteDiffStart({ sourceAppId, scopes, targets });
+      expect(msg).toContain('2 行目');
+      expect(msg).toContain('正の整数');
+    });
+
+    it('returns row-numbered error when the third target guestId is invalid', () => {
+      const targets = [
+        { appId: '10', guestId: '', rowNumber: 1 },
+        { appId: '20', guestId: '', rowNumber: 2 },
+        { appId: '30', guestId: 'abc', rowNumber: 3 }
+      ];
+      const msg = validateLiteDiffStart({ sourceAppId, scopes, targets });
+      expect(msg).toContain('3 行目');
+      expect(msg).toContain('ゲストID');
+    });
+
+    it('reports the duplicate target with both row numbers', () => {
+      const targets = [
+        { appId: '10', guestId: '', rowNumber: 1 },
+        { appId: '20', guestId: '', rowNumber: 2 },
+        { appId: '10', guestId: '', rowNumber: 4 }
+      ];
+      const msg = validateLiteDiffStart({ sourceAppId, scopes, targets });
+      expect(msg).toContain('4 行目');
+      expect(msg).toContain('1 行目');
+      expect(msg).toContain('同じ接続先');
+    });
+
+    it('does not validate targetAppId when targets is provided (backward compat)', () => {
+      // targets 指定時は既存の targetAppId チェックを行わない
+      expect(validateLiteDiffStart({ sourceAppId, scopes, targets: [] })).toBe('');
+    });
+
+    it('keeps existing single-comparison behaviour when targets is undefined', () => {
+      expect(validateLiteDiffStart({ sourceAppId, targetAppId: '', scopes })).toContain('比較先アプリID');
+      expect(validateLiteDiffStart({ sourceAppId, targetAppId: '2', scopes })).toBe('');
+    });
+  });
+
   it('offers every fetchable kintone setting section and selects all of them by default', () => {
     const options = buildLiteDiffScopeOptions();
 

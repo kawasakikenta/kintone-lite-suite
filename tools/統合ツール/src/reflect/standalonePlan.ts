@@ -59,6 +59,10 @@ function mergeFields(source: Record<string, any>, target: Record<string, any>, l
       next.lookup.relatedApp.app = lookupMap[String(next.lookup.relatedApp.app)];
       delete next.lookup.relatedApp.code;
     }
+    if (next.referenceTable?.relatedApp?.app && lookupMap[String(next.referenceTable.relatedApp.app)]) {
+      next.referenceTable.relatedApp.app = lookupMap[String(next.referenceTable.relatedApp.app)];
+      delete next.referenceTable.relatedApp.code;
+    }
     if (def.type === 'SUBTABLE') {
       if (!object(def.fields)) throw new Error(`${code}: テーブル内のフィールド定義がありません。`);
       next.fields = mergeFields(def.fields, current?.fields || {}, lookupMap, [...path, code], plan);

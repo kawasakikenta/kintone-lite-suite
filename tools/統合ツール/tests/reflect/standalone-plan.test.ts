@@ -34,6 +34,18 @@ describe('preview reflection plans match actual write effects', () => {
     const result = plan('fieldSettings', source, { properties: {} }, { lookupMap: { '10': '20' } });
     expect(result.operations[0].body.properties.table.fields.lookup.lookup.relatedApp).toEqual({ app: '20' });
   });
+  it('(a/b) converts referenceTable relatedApp.app and removes code', () => {
+    const relDef = { type: 'RELATED_RECORDS', referenceTable: { relatedApp: { app: '10', code: 'OLD' }, condition: { field: { code: 'k' }, relatedField: { code: 'k' } }, filterCond: '', displayFields: [], sort: '', size: '5' } };
+    const source = { properties: { rel: { ...field('rel'), ...relDef } } };
+    const result = plan('fieldSettings', source, { properties: {} }, { lookupMap: { '10': '20' } });
+    expect(result.operations[0].body.properties.rel.referenceTable.relatedApp).toEqual({ app: '20' });
+  });
+  it('(c) does not touch referenceTable app or code when absent from the lookup map', () => {
+    const relDef = { type: 'RELATED_RECORDS', referenceTable: { relatedApp: { app: '99', code: 'KEEP' }, condition: { field: { code: 'k' }, relatedField: { code: 'k' } }, filterCond: '', displayFields: [], sort: '', size: '5' } };
+    const source = { properties: { rel: { ...field('rel'), ...relDef } } };
+    const result = plan('fieldSettings', source, { properties: {} }, { lookupMap: { '10': '20' } });
+    expect(result.operations[0].body.properties.rel.referenceTable.relatedApp).toEqual({ app: '99', code: 'KEEP' });
+  });
   it('blocks field type conflicts before any section can be written', () => {
     const result = plan('fieldSettings', { properties: { code: field('code') } }, { properties: { code: { type: 'NUMBER', code: 'code' } } });
     expect(result.status).toBe('error'); expect(result.blockers.join()).toContain('種類が異なります');

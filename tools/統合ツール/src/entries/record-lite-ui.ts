@@ -149,7 +149,7 @@ export function mountRecordLitePanel() {
         root.appendChild(makeRow([query, useView], { label: 'クエリ' }));
         root.appendChild(makeRow(fname, { label: 'ファイル名' }));
         root.appendChild(makeNote('1アプリはCSVで保存します。テーブルがある場合は親レコードとテーブル明細を別CSVにしてZIPにまとめます。複数アプリはアプリ別フォルダを1つのZIPに保存します。'));
-        root.appendChild(makeNote('テーブル明細は親レコードの $id で紐付けできます。出力は閲覧・集計用で、CSV取込用の互換形式ではありません。添付はファイル名のみです。ファイル本体はバックアップの「添付ファイルも保存」で取得できます。'));
+        root.appendChild(makeNote('テーブル明細は親レコードの $id で紐付けできます。出力は閲覧・集計用で、CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に \' を付けます（数値は対象外）。添付はファイル名のみです。ファイル本体はバックアップの「添付ファイルも保存」で取得できます。'));
         const run = makeButton('CSVを出力', 'primary', { icon: '↓' });
         run.style.width = '100%';
         run.addEventListener('click', () => liteRun(panel, 'CSV出力中…', async () => {
@@ -433,7 +433,7 @@ export function mountRecordLitePanel() {
           scopeBox.style.display = incSettings.checkbox.checked ? 'flex' : 'none';
         });
         root.appendChild(makeNote('ZIPには親レコードの records.csv / records.json と manifest.json を含みます。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。添付のファイル本体は「添付ファイルも保存」で取得します。'));
-        root.appendChild(makeNote('CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。'));
+        root.appendChild(makeNote('CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に \' を付けます（数値は対象外）。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。'));
 
         const run = makeButton('バックアップ ZIP を保存', 'primary', { icon: '↓' });
         run.style.width = '100%';

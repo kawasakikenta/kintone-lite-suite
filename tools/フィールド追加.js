@@ -2431,11 +2431,21 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     let changed = false;
     const walk = (node) => {
       if (!node || typeof node !== "object") return;
-      const rel = node.lookup?.relatedApp;
-      if (rel?.app != null) {
-        const after = map[String(rel.app)];
-        if (after && String(after) !== String(rel.app)) {
+      const lookupRel = node.lookup?.relatedApp;
+      if (lookupRel?.app != null) {
+        const after = map[String(lookupRel.app)];
+        if (after && String(after) !== String(lookupRel.app)) {
           node.lookup.relatedApp.app = String(after);
+          delete node.lookup.relatedApp.code;
+          changed = true;
+        }
+      }
+      const refRel = node.referenceTable?.relatedApp;
+      if (refRel?.app != null) {
+        const after = map[String(refRel.app)];
+        if (after && String(after) !== String(refRel.app)) {
+          node.referenceTable.relatedApp.app = String(after);
+          delete node.referenceTable.relatedApp.code;
           changed = true;
         }
       }
@@ -2504,14 +2514,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       if (currentMap[code]) {
         if (overwrite) {
           plan.updates[code] = def;
-          plan.logs.push(`UPDATE ${code}${changed ? " (lookup変換)" : ""}`);
+          plan.logs.push(`UPDATE ${code}${changed ? " (参照先AppID変換)" : ""}`);
         } else {
           plan.skippedExisting.push(code);
           plan.logs.push(`SKIP ${code} (exists)`);
         }
       } else {
         plan.adds[code] = def;
-        plan.logs.push(`ADD ${code}${changed ? " (lookup変換)" : ""}`);
+        plan.logs.push(`ADD ${code}${changed ? " (参照先AppID変換)" : ""}`);
       }
     }
     return plan;
@@ -2522,7 +2532,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const skipCount = plan.skippedSystem.length + plan.skippedExisting.length;
     return [
       `比較先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ""} のプレビュー環境へフィールドを反映します。`,
-      `追加 ${addCount}件 / 更新 ${updateCount}件 / スキップ ${skipCount}件${plan.lookupConverted.length ? ` / Lookup変換 ${plan.lookupConverted.length}件` : ""}`,
+      `追加 ${addCount}件 / 更新 ${updateCount}件 / スキップ ${skipCount}件${plan.lookupConverted.length ? ` / 参照先AppID変換 ${plan.lookupConverted.length}件` : ""}`,
       updateCount ? "更新対象は既存の定義を比較元の内容で置き換えます。" : "",
       "本番には反映されません（管理画面から手動デプロイ）。実行しますか？"
     ].filter(Boolean).join("\n");

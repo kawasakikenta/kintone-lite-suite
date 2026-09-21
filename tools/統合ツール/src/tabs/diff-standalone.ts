@@ -136,6 +136,8 @@ export async function runDiffStandalone(opts) {
   const warning = warningInfoForStandalone(rows, fetchIssues, partialIssues);
   const truncation = diffResult.truncation?.truncated ? diffResult.truncation : null;
   const actualDiffTruncated = hasIncompleteActualDiffTruncation(truncation);
+  const matchingNotices = diffResult.matchingNotices || { items: [], omitted: 0 };
+  const noticeCount = matchingNotices.items.length + matchingNotices.omitted;
   const incompleteNotes = [
     actualDiffTruncated ? `差分上限 ${truncation?.diffLimit}件に到達` : '',
     partialIssues.length ? `本文未検証 ${partialIssues.length}件` : ''
@@ -145,7 +147,8 @@ export async function runDiffStandalone(opts) {
   const sameOmissionNote = droppedSame > 0
     ? ` / 同一証跡 ${droppedSame}件を上限により省略${actualDiffTruncated ? '' : '（実差分の走査は完了）'}`
     : '';
-  const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件 / 一部未検証 ${partialIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''}${incompleteNote}${sameOmissionNote} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved})`;
+  const noticeNote = noticeCount > 0 ? ` / 対応付けの注意 ${noticeCount}件` : '';
+  const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件 / 一部未検証 ${partialIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''}${incompleteNote}${sameOmissionNote}${noticeNote} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved})`;
   onStatus(statusLine);
 
   return {
@@ -155,6 +158,7 @@ export async function runDiffStandalone(opts) {
     sourceBundle,
     targetBundle,
     truncation,
+    matchingNotices,
     summary: {
       text: statusLine,
       counts: s,
