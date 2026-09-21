@@ -70,14 +70,48 @@ export function validateLiteDiffStart(options: {
   ignoreKeys?: string;
   hasImportedSource?: boolean;
   hasImportedTarget?: boolean;
+  /** 1対多比較の全比較先。指定時は全件を検証し、単一比較の targetAppId チェックは行わない。 */
+  targets?: Array<{ appId?: string; guestId?: string; rowNumber?: number }>;
 }): string {
   if (!options.scopes?.length) return '比較セクションを 1 つ以上選択してください';
   const sourceAppId = String(options.sourceAppId || '').trim();
-  const targetAppId = String(options.targetAppId || '').trim();
   if (!options.hasImportedSource && !sourceAppId) return '比較元アプリIDを入力してください';
-  if (!options.hasImportedTarget && !targetAppId) return '比較先アプリIDを入力してください';
   if (sourceAppId && !/^[1-9]\d*$/.test(sourceAppId)) return '比較元アプリIDには正の整数を入力してください';
-  if (targetAppId && !/^[1-9]\d*$/.test(targetAppId)) return '比較先アプリIDには正の整数を入力してください';
+
+  if (options.targets !== undefined) {
+    // 1対多比較: 全比較先（空行除外済み）を順番に検証する
+    for (const t of options.targets) {
+      const rowNum = Number.isInteger(t.rowNumber) ? t.rowNumber : '?';
+      const appId = String(t.appId || '').trim();
+      const guestId = String(t.guestId || '').trim();
+      if (appId && !/^[1-9]\d*$/.test(appId)) {
+        return `比較先 ${rowNum} 行目: アプリIDには正の整数を入力してください`;
+      }
+      if (guestId && !/^\d+$/.test(guestId)) {
+        return `比較先 ${rowNum} 行目: ゲストIDは半角数字で入力してください`;
+      }
+    }
+    // 重複チェック（App ID + ゲスト ID が同じ比較先）
+    const seen = new Map<string, number>();
+    for (const t of options.targets) {
+      const appId = String(t.appId || '').trim();
+      if (!appId) continue;
+      const guestId = String(t.guestId || '').trim();
+      const key = `${appId}::${guestId}`;
+      const rowNum = Number.isInteger(t.rowNumber) ? t.rowNumber! : 0;
+      const prevRow = seen.get(key);
+      if (prevRow != null) {
+        return `比較先 ${rowNum} 行目は ${prevRow} 行目と同じ接続先です`;
+      }
+      seen.set(key, rowNum);
+    }
+  } else {
+    // 単一比較: 従来の targetAppId 検証（後方互換）
+    const targetAppId = String(options.targetAppId || '').trim();
+    if (!options.hasImportedTarget && !targetAppId) return '比較先アプリIDを入力してください';
+    if (targetAppId && !/^[1-9]\d*$/.test(targetAppId)) return '比較先アプリIDには正の整数を入力してください';
+  }
+
   const positionalRuleCount = summarizeLiteIgnoreRules(options.ignoreKeys || '').positionalRules;
   if (positionalRuleCount) {
     return `配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`;
@@ -561,6 +595,8 @@ export interface DiffCache {
   comparedAt?: string | number;
   /** 差分または同一証跡の上限打ち切り情報（打ち切りなしなら null） */
   truncation: any;
+  /** 配列の対応付けフォールバック通知。精度が下がった箇所の一覧 */
+  matchingNotices?: { items: any[]; omitted: number };
 }
 
 export type LiteHtmlExportContentMode = 'diffOnly' | 'withCompared';
@@ -964,6 +1000,28 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
     alerts.push(`本文サイズまたは形式の制約により ${partialIssues.length} 件を fileKey で比較しました。本文内容は未検証です。${details.join(' / ')}${remainder}`);
   }
 
+  const matchingNoticesData = cache.matchingNotices;
+  let matchingNoticesHtml = '';
+  if (matchingNoticesData?.items?.length || matchingNoticesData?.omitted) {
+    const noticeItems: any[] = matchingNoticesData.items || [];
+    const noticesOmitted = Number(matchingNoticesData.omitted || 0);
+    const totalNoticeCount = noticeItems.length + noticesOmitted;
+    const displayItems = noticeItems.slice(0, 5);
+    const noticeLines = displayItems.map((item: any) => {
+      const sectionLabel = esc(item.section || item.sectionKey || '不明なセクション');
+      const pathStr = esc(item.path || '');
+      const reasonText = item.reason === 'lcs-size-limit'
+        ? esc(`要素数が多いため（比較元 ${item.leftLength}件 × 比較先 ${item.rightLength}件）並び替えの検出を省略し、先頭から順に比較しました。並び順が違う場合、実際とは異なる追加・削除・変更として表示されることがあります。`)
+        : item.reason === 'key-missing'
+          ? 'タイトル等の識別子が空の項目があるため、別の項目の値や内容の近さで対応付けました。対応付けがずれると、1件の変更が追加と削除に分かれて表示されることがあります。'
+          : 'タイトル等の識別子が重複しているため、別の項目の値や内容の近さで対応付けました。対応付けがずれると、1件の変更が追加と削除に分かれて表示されることがあります。';
+      return `<span>${sectionLabel} の ${pathStr}: ${reasonText}</span>`;
+    }).join('');
+    const remainCount = noticeItems.length - displayItems.length + noticesOmitted;
+    const omittedLine = remainCount > 0 ? `<span>ほか ${remainCount} 件</span>` : '';
+    matchingNoticesHtml = `<div class="kus-dl-alert" role="note"><strong>対応付けの注意 ${totalNoticeCount}件</strong>${noticeLines}${omittedLine}</div>`;
+  }
+
   const announceAttrs = options.announce === false ? '' : ' role="status"';
   const alertAttrs = options.announce === false ? '' : ' role="alert"';
   const completeness = incomplete ? 'incomplete' : 'complete';
@@ -984,6 +1042,7 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
       metric('added', '比較先のみ', '追加として検出', counts.added) + metric('removed', '比較元のみ', '削除として検出', counts.removed) +
       metric('changed', '内容が異なる', '変更として検出', contentChanged) + metric('moved', '並び順', '移動として検出', counts.moved) + '</div>' +
     (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションで絞り込む</span>${sectionButtons}</div>` : '') +
+    matchingNoticesHtml +
     `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div>` +
     '<div class="kus-dl-legend">「比較先のみ」は追加、「比較元のみ」は削除として検出しています。比較方向は上の矢印で確認できます。</div></section>';
 }
@@ -2716,16 +2775,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   pairClearImportBtn.addEventListener('click', clearImportedBundles);
 
   function readTargets() {
-    const seen = new Set<string>();
+    // 行番号は表示順（空行を含む）と一致させるため、filter 前のインデックスを保持する。
+    // 重複除外は validateLiteDiffStart の targets 検証で行番号付きエラーとして報告する。
     return targetRows
-      .map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim(), preview: tgtPrev.checkbox.checked, appName: r.appName }))
-      .filter((t) => t.appId)
-      .filter((t) => {
-        const key = `${t.appId}::${t.guestId}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+      .map((r, i) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim(), preview: tgtPrev.checkbox.checked, appName: r.appName, rowNumber: i + 1 }))
+      .filter((t) => t.appId);
   }
 
   function readForm() {
@@ -3523,6 +3577,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         ].filter(Boolean);
         if (needsReview) incomplete += 1;
         const comparedAt = new Date().toISOString();
+        const pairNoticeCount = (out.matchingNotices?.items?.length || 0) + (out.matchingNotices?.omitted || 0);
+        if (pairNoticeCount > 0) incompleteReasons.push(`対応付けの注意 ${pairNoticeCount}件`);
         const multiExportIndex = multiXlsxExports.push({
           label: `ペア ${result.pair.rowNumber}: ${sourceLabel} → ${targetLabel}`,
           cache: {
@@ -3535,7 +3591,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
             ignoreKeys: base.ignoreKeys,
             normalizationPresetState: base.normalizationPresetState,
             comparedAt,
-            truncation: out.truncation || null
+            truncation: out.truncation || null,
+            matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
           }
         }) - 1;
         const stateLabel = needsReview ? '要確認' : (counts.actual ? '完了' : '一致');
@@ -3572,11 +3629,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     }
     const commonValidation = validateLiteDiffStart({
       sourceAppId: base.source.appId,
-      targetAppId: targets[0].appId,
       scopes: base.scopes,
       ignoreKeys: base.ignoreKeys,
       hasImportedSource: !!importedSourceBundle,
-      hasImportedTarget: false
+      targets
     });
     if (commonValidation) {
       panel.setStatus(commonValidation, 'warn');
@@ -3654,6 +3710,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
             exportFailed += 1;
           }
           const targetLabel = t.appName ? `${t.appName}（App ${t.appId}）` : `App ${t.appId}`;
+          const multiNoticeCount = (out.matchingNotices?.items?.length || 0) + (out.matchingNotices?.omitted || 0);
           const multiExportIndex = multiXlsxExports.push({
             label: targetLabel,
             cache: {
@@ -3666,12 +3723,13 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
               ignoreKeys: base.ignoreKeys,
               normalizationPresetState: base.normalizationPresetState,
               comparedAt,
-              truncation: out.truncation || null
+              truncation: out.truncation || null,
+              matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
             }
           }) - 1;
           resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : '通常スペース')} / ${t.preview ? 'プレビュー' : '運用'}</small></td>` +
             `<td class="${needsReview || exportNote ? 'kus-dl-multi__warn' : 'kus-dl-multi__ok'}">${exportNote ? '出力失敗' : (needsReview ? '要確認' : '完了')}${esc(exportNote)}</td>` +
-            `<td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ''}</td>` +
+            `<td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ''}${multiNoticeCount ? ` / 注意 ${multiNoticeCount}` : ''}</td>` +
             `<td><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}">Excel保存</button></td></tr>`);
         } catch (e: any) {
           failed += 1;
@@ -3741,7 +3799,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         ignoreKeys: f.ignoreKeys,
         normalizationPresetState: f.normalizationPresetState,
         comparedAt: new Date().toISOString(),
-        truncation: out.truncation || null
+        truncation: out.truncation || null,
+        matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
       };
       announceResultOverview = true;
       summaryText = out.summary?.text || '完了';
