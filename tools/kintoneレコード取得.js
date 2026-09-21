@@ -2748,6 +2748,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const s = String(val == null ? "" : val);
     return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r") ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
+  var CSV_FORMULA_RE = /^[\s\uFEFF]*[=+\-@]/;
+  var CSV_CONTROL_RE = /^[\t\r\n]/;
+  var CSV_NUMERIC_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+  function neutralizeCsvFormula(text) {
+    if (CSV_NUMERIC_RE.test(text)) return text;
+    if (CSV_FORMULA_RE.test(text) || CSV_CONTROL_RE.test(text)) return "'" + text;
+    return text;
+  }
   function extractRecordCsvValue(rec, code) {
     const f = rec?.[code];
     if (!f) return "";
@@ -2762,8 +2770,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return f.value == null ? "" : String(f.value);
   }
   function buildRecordsCsvText(records, propKeys) {
-    const lines = [propKeys.map(csvEscape).join(",")];
-    for (const rec of records) lines.push(propKeys.map((k) => csvEscape(extractRecordCsvValue(rec, k))).join(","));
+    const lines = [propKeys.map((k) => csvEscape(neutralizeCsvFormula(k))).join(",")];
+    for (const rec of records) lines.push(propKeys.map((k) => csvEscape(neutralizeCsvFormula(extractRecordCsvValue(rec, k)))).join(","));
     return "\uFEFF" + lines.join("\n");
   }
   function sanitizeZipSegment(value, fallback = "item") {
@@ -3256,7 +3264,8 @@ ${warningSummary}`, true);
         "明細CSVの $id は親レコードID、$rowId はテーブル行ID、$rowIndex はテーブル内の行番号（1始まり）です。",
         "テーブルごとに独立したCSVです。別のテーブルとの行の組み合わせは作りません。",
         "CSVは閲覧・集計用です。このツールのCSV取込でテーブルを復元することはできません。",
-        "添付フィールドはファイル名のみです。実体を保存する場合はバックアップで「添付ファイルも保存」を選択してください。"
+        "添付フィールドはファイル名のみです。実体を保存する場合はバックアップで「添付ファイルも保存」を選択してください。",
+        "= + - @ で始まる文字列セルは Excel の数式実行を防ぐため先頭に ' を付けています（数値は対象外）。"
       ]
     };
   }
@@ -3506,9 +3515,15 @@ ${error?.message || String(error)}`
   var COPY_SYSTEM_CODES = /* @__PURE__ */ new Set(["$id", "$revision", "作成者", "作成日時", "更新者", "更新日時", "レコード番号", "ステータス", "作業者"]);
   function buildCopyRecordPayloads(records, targetProps) {
     const dropped = /* @__PURE__ */ new Set();
+    const fileFields = /* @__PURE__ */ new Set();
+    let recordsWithFiles = 0;
     const targetKnown = targetProps && typeof targetProps === "object" ? targetProps : null;
     const canWriteTop = (code, field) => {
-      if (COPY_SYSTEM_CODES.has(code) || COPY_SYSTEM_TYPES.has(field?.type) || field?.type === "FILE") return false;
+      if (COPY_SYSTEM_CODES.has(code) || COPY_SYSTEM_TYPES.has(field?.type)) return false;
+      if (field?.type === "FILE") {
+        fileFields.add(code);
+        return false;
+      }
       if (targetKnown && !targetKnown[code]) {
         dropped.add(code);
         return false;
@@ -3521,9 +3536,13 @@ ${error?.message || String(error)}`
     };
     const out = records.map((rec) => {
       const payload = {};
+      let recHasFile = false;
       for (const [code, field] of Object.entries(rec || {})) {
         if (!field || typeof field !== "object") continue;
-        if (!canWriteTop(code, field)) continue;
+        if (!canWriteTop(code, field)) {
+          if (field?.type === "FILE" && Array.isArray(field.value) && field.value.length > 0) recHasFile = true;
+          continue;
+        }
         if (field.type === "SUBTABLE") {
           const childDefs = targetKnown ? targetKnown[code]?.fields || {} : null;
           const rows = Array.isArray(field.value) ? field.value : [];
@@ -3533,7 +3552,12 @@ ${error?.message || String(error)}`
               const cells = {};
               for (const [childCode, childField] of Object.entries(inner)) {
                 if (!childField || typeof childField !== "object") continue;
-                if (COPY_SYSTEM_CODES.has(childCode) || COPY_SYSTEM_TYPES.has(childField.type) || childField.type === "FILE") continue;
+                if (COPY_SYSTEM_CODES.has(childCode) || COPY_SYSTEM_TYPES.has(childField.type)) continue;
+                if (childField.type === "FILE") {
+                  fileFields.add(`${code}.${childCode}`);
+                  if (Array.isArray(childField.value) && childField.value.length > 0) recHasFile = true;
+                  continue;
+                }
                 if (childDefs && !childDefs[childCode]) {
                   dropped.add(`${code}.${childCode}`);
                   continue;
@@ -3547,9 +3571,10 @@ ${error?.message || String(error)}`
           payload[code] = { value: field.value };
         }
       }
+      if (recHasFile) recordsWithFiles++;
       return payload;
     });
-    return { records: out, droppedFields: [...dropped].sort() };
+    return { records: out, droppedFields: [...dropped].sort(), droppedFileFields: [...fileFields].sort(), recordsWithFiles };
   }
   async function runRecordCopyStandalone(opts, setStatus) {
     const { sourceAppId, sourceGuestId, targetAppId, targetGuestId, query } = opts;
@@ -3566,10 +3591,12 @@ ${error?.message || String(error)}`
     }
     const plan = buildCopyRecordPayloads(records, targetProps);
     const droppedNote = plan.droppedFields.length ? `コピー先に無い/型が違うため除外: ${plan.droppedFields.slice(0, 10).join(", ")}${plan.droppedFields.length > 10 ? ` 他${plan.droppedFields.length - 10}件` : ""}` : "";
+    const fileNote = plan.droppedFileFields.length ? `添付ファイルはコピーされません: ${plan.droppedFileFields.slice(0, 10).join(", ")}${plan.droppedFileFields.length > 10 ? ` 他${plan.droppedFileFields.length - 10}件` : ""}（${plan.droppedFileFields.length}フィールド、添付ありレコード ${plan.recordsWithFiles}件）。必要な場合はコピー後に手動で再アップロードしてください。` : "";
     const confirmText = [
       `コピー元 App ${sourceAppId} → コピー先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ""}`,
       `${plan.records.length}件を本番レコードとして新規追加します（既存レコードは変更しません）。`,
       "ファイル・システム項目・計算項目は除外されます。",
+      fileNote,
       droppedNote,
       "実行しますか？"
     ].filter(Boolean).join("\n");
@@ -3583,7 +3610,8 @@ ${error?.message || String(error)}`
       (batch) => apiPost(tgtPrefix, "/records.json", { app: targetAppId, records: batch }),
       (done, total) => setStatus(`コピー中... ${done} / ${total}件`)
     );
-    setStatus(`レコードコピー完了: ${ok}件${droppedNote ? `（${droppedNote}）` : ""}`, plan.droppedFields.length > 0);
+    const fileDropNote = plan.droppedFileFields.length ? ` / 添付除外 ${plan.droppedFileFields.length}フィールド` : "";
+    setStatus(`レコードコピー完了: ${ok}件${fileDropNote}${droppedNote ? `（${droppedNote}）` : ""}`, plan.droppedFields.length > 0 || plan.droppedFileFields.length > 0);
   }
   async function runAttachmentDownloadStandalone(opts, setStatus) {
     const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
@@ -4692,7 +4720,7 @@ ${failures.join("\n")}` };
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
           root2.appendChild(makeRow(fname, { label: "ファイル名" }));
           root2.appendChild(makeNote("1アプリはCSVで保存します。テーブルがある場合は親レコードとテーブル明細を別CSVにしてZIPにまとめます。複数アプリはアプリ別フォルダを1つのZIPに保存します。"));
-          root2.appendChild(makeNote("テーブル明細は親レコードの $id で紐付けできます。出力は閲覧・集計用で、CSV取込用の互換形式ではありません。添付はファイル名のみです。ファイル本体はバックアップの「添付ファイルも保存」で取得できます。"));
+          root2.appendChild(makeNote("テーブル明細は親レコードの $id で紐付けできます。出力は閲覧・集計用で、CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に ' を付けます（数値は対象外）。添付はファイル名のみです。ファイル本体はバックアップの「添付ファイルも保存」で取得できます。"));
           const run = makeButton("CSVを出力", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "CSV出力中…", async () => {
@@ -5029,7 +5057,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
             scopeBox.style.display = incSettings.checkbox.checked ? "flex" : "none";
           });
           root2.appendChild(makeNote("ZIPには親レコードの records.csv / records.json と manifest.json を含みます。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。添付のファイル本体は「添付ファイルも保存」で取得します。"));
-          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。"));
+          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に ' を付けます（数値は対象外）。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。"));
           const run = makeButton("バックアップ ZIP を保存", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "レコードバックアップ中…", async () => {

@@ -5,12 +5,43 @@ import {
   csvEscape,
   describeBatchWriteFailure,
   extractRecordCsvValue,
+  neutralizeCsvFormula,
   uniqueZipEntryName,
   writeInChunks
 } from '../../src/tabs/record-query';
 
 // lite 版レコード管理（CSV出力 / 取込 / コピー / バックアップ）が共有する純粋ヘルパー。
 // 部分成功の報告と CSV の引用規則はデータ破損に直結するため回帰を固定する。
+
+describe('neutralizeCsvFormula', () => {
+  it('prepends apostrophe for formula-start characters', () => {
+    expect(neutralizeCsvFormula('=SUM(A1)')).toBe("'=SUM(A1)");
+    expect(neutralizeCsvFormula('+81-3-1234')).toBe("'+81-3-1234");
+    expect(neutralizeCsvFormula('@user')).toBe("'@user");
+    expect(neutralizeCsvFormula('-5円')).toBe("'-5円");
+  });
+
+  it('does not neutralize pure numeric strings', () => {
+    expect(neutralizeCsvFormula('-5')).toBe('-5');
+    expect(neutralizeCsvFormula('+3.14')).toBe('+3.14');
+    expect(neutralizeCsvFormula('-1.2e5')).toBe('-1.2e5');
+  });
+
+  it('handles leading whitespace as formula trigger', () => {
+    expect(neutralizeCsvFormula(' =1')).toBe("' =1");
+  });
+
+  it('handles tab/CR/LF start', () => {
+    expect(neutralizeCsvFormula('\t=evil')).toBe("'\t=evil");
+    expect(neutralizeCsvFormula('\r\ndata')).toBe("'\r\ndata");
+  });
+
+  it('leaves empty string and normal strings unchanged', () => {
+    expect(neutralizeCsvFormula('')).toBe('');
+    expect(neutralizeCsvFormula('hello')).toBe('hello');
+    expect(neutralizeCsvFormula('123')).toBe('123');
+  });
+});
 
 describe('csv helpers', () => {
   it('quotes values containing comma, quote, LF or CR', () => {
@@ -44,6 +75,43 @@ describe('csv helpers', () => {
     const text = buildRecordsCsvText([{ a: { type: 'SINGLE_LINE_TEXT', value: 'x,y' } }], ['a', 'b']);
     expect(text.charCodeAt(0)).toBe(0xfeff);
     expect(text.slice(1)).toBe('a,b\n"x,y",');
+  });
+
+  it('neutralizes formula characters in data cells', () => {
+    const rec = {
+      formula: { type: 'SINGLE_LINE_TEXT', value: '=SUM(A1)' },
+      phone:   { type: 'SINGLE_LINE_TEXT', value: '+81-3-1234' },
+      negnum:  { type: 'NUMBER', value: '-5' },
+      negtext: { type: 'SINGLE_LINE_TEXT', value: '-5円' },
+      atuser:  { type: 'SINGLE_LINE_TEXT', value: '@user' },
+      normal:  { type: 'SINGLE_LINE_TEXT', value: 'hello' },
+      empty:   { type: 'SINGLE_LINE_TEXT', value: '' }
+    };
+    const text = buildRecordsCsvText([rec], ['formula', 'phone', 'negnum', 'negtext', 'atuser', 'normal', 'empty']);
+    const lines = text.slice(1).split('\n');
+    // header row: plain column names, no formula chars
+    expect(lines[0]).toBe('formula,phone,negnum,negtext,atuser,normal,empty');
+    // data row: formula-start cells get apostrophe; pure number (-5) does not
+    expect(lines[1]).toBe("'=SUM(A1),'+81-3-1234,-5,'-5円,'@user,hello,");
+  });
+
+  it('neutralizes formula characters in header cells', () => {
+    const text = buildRecordsCsvText([], ['=id', '+count', 'normal']);
+    expect(text.slice(1)).toBe("'=id,'+count,normal");
+  });
+
+  it('properly escapes value after adding apostrophe when value contains comma', () => {
+    const rec = { x: { type: 'SINGLE_LINE_TEXT', value: '=sum,hello' } };
+    const text = buildRecordsCsvText([rec], ['x']);
+    // apostrophe prepended, then quoted because of comma
+    expect(text.slice(1)).toBe("x\n\"'=sum,hello\"");
+  });
+
+  it('neutralizes tab-started values and does not double-quote unless also containing comma/quote/newline', () => {
+    const rec = { t: { type: 'SINGLE_LINE_TEXT', value: '\t=evil' } };
+    const text = buildRecordsCsvText([rec], ['t']);
+    // apostrophe prepended; tab alone does not trigger csvEscape quoting
+    expect(text.slice(1)).toBe("t\n'\t=evil");
   });
 });
 

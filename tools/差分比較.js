@@ -1490,6 +1490,22 @@ ${contextLine}`);
     const entry = bySection[sectionKey] || (bySection[sectionKey] = { diff: 0, same: 0 });
     entry[kind] += 1;
   }
+  function recordMatchingNotice(out, path, reason, leftLength, rightLength) {
+    if (!out) return;
+    if (leftLength <= 1 && rightLength <= 1) return;
+    const outAny = out;
+    const notices = outAny.__matchingNotices || (outAny.__matchingNotices = []);
+    const existing = notices.find((n) => n.path === path);
+    if (existing) {
+      if (reason === "lcs-size-limit") existing.reason = reason;
+      return;
+    }
+    if (notices.length >= MATCHING_NOTICE_LIMIT) {
+      outAny.__matchingNoticesOmitted = Number(outAny.__matchingNoticesOmitted || 0) + 1;
+      return;
+    }
+    notices.push({ path, reason, leftLength, rightLength });
+  }
   function pushDiffRow(out, row, ignoreRules) {
     if (!row) return false;
     if (isIgnoredPath(ignoreRules, row.path)) return false;
@@ -1792,19 +1808,29 @@ ${contextLine}`);
     if (!a.length && !b.length) return false;
     if (!a.every(isPlainObject) || !b.every(isPlainObject)) return false;
     if (rule.applies && !rule.applies(a, b)) return false;
+    let noticeReason = null;
     const buildMap = (arr) => {
       const map = /* @__PURE__ */ new Map();
       for (let i = 0; i < arr.length; i++) {
         const sig = rule.makeSig(arr[i]);
-        if (sig == null) return null;
-        if (map.has(sig)) return null;
+        if (sig == null) {
+          if (!noticeReason) noticeReason = "key-missing";
+          return null;
+        }
+        if (map.has(sig)) {
+          if (!noticeReason) noticeReason = "key-duplicate";
+          return null;
+        }
         map.set(sig, { idx: i, item: arr[i] });
       }
       return map;
     };
     const mapA = buildMap(a);
     const mapB = buildMap(b);
-    if (!mapA || !mapB) return false;
+    if (!mapA || !mapB) {
+      if (out) out.__pendingKeyFallback = noticeReason;
+      return false;
+    }
     const ordered = [];
     const seen = /* @__PURE__ */ new Set();
     for (const sig of mapA.keys()) {
@@ -2040,10 +2066,20 @@ ${contextLine}`);
   }
   function collectArrayDiffs(a, b, path, out, ignoreRules) {
     if (collectActionMappingDiffs(a, b, path, out, ignoreRules)) return;
+    if (out) out.__pendingKeyFallback = null;
     if (collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules)) return;
-    if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules)) return;
+    const keyFallback = out ? out.__pendingKeyFallback || null : null;
+    if (out) out.__pendingKeyFallback = null;
+    if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules)) {
+      if (keyFallback) recordMatchingNotice(out, path, keyFallback, a.length, b.length);
+      return;
+    }
     if (collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules)) return;
+    if (keyFallback) recordMatchingNotice(out, path, keyFallback, a.length, b.length);
     if (collectArrayDiffsByLcs(a, b, path, out, ignoreRules)) return;
+    if (a.length > 0 && b.length > 0) {
+      recordMatchingNotice(out, path, "lcs-size-limit", a.length, b.length);
+    }
     const max = Math.max(a.length, b.length);
     for (let i = 0; i < max; i++) {
       if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
@@ -2332,6 +2368,8 @@ ${contextLine}`);
     rows.__diffDropped = 0;
     rows.__sameDropped = 0;
     rows.__includeSame = includeSame;
+    rows.__matchingNotices = [];
+    rows.__matchingNoticesOmitted = 0;
     const fetchIssues = [];
     const limitHitSectionKeys = [];
     const unscannedSectionKeys = [];
@@ -2420,10 +2458,18 @@ ${contextLine}`);
     for (const row of rows) {
       if (!row.severity) row.severity = detectRowSeverity(row);
     }
+    const rawNoticeItems = rows.__matchingNotices || [];
+    const noticesOmitted = Number(rows.__matchingNoticesOmitted || 0);
+    const noticeItems = rawNoticeItems.map((n) => {
+      const sectionKey = String(n.path || "").split(".")[0].split("[")[0];
+      const section = (SECTION_DEFS.find((x) => x.key === sectionKey) || {}).label || sectionKey;
+      return { path: n.path, reason: n.reason, leftLength: n.leftLength, rightLength: n.rightLength, sectionKey, section };
+    });
     return {
       rows: rows.map((row, idx) => ({ ...row, _id: `d${idx}` })),
       fetchIssues,
-      truncation: buildDiffTruncationInfo(rows, limitHitSectionKeys, unscannedSectionKeys)
+      truncation: buildDiffTruncationInfo(rows, limitHitSectionKeys, unscannedSectionKeys),
+      matchingNotices: { items: noticeItems, omitted: noticesOmitted }
     };
   }
   function buildDiffTruncationInfo(rows, limitHitSectionKeys = [], unscannedSectionKeys = []) {
@@ -2836,7 +2882,7 @@ ${contextLine}`);
     });
     return out;
   }
-  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES, LOW_PRIORITY_LEAF_KEYS, ACL_GRANT_FLAG_KEYS, FIELD_ACL_LEVEL_ORDER, EXACT_IGNORE_PATH_PREFIX, ACTION_MAPPINGS_ARRAY_PATH, COMPOSITE_ARRAY_RULES, SUBTABLE_ROOT_PATH_RE, ENTITY_EXPAND_LIMIT;
+  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, MATCHING_NOTICE_LIMIT, ARRAY_KEY_CANDIDATES, LOW_PRIORITY_LEAF_KEYS, ACL_GRANT_FLAG_KEYS, FIELD_ACL_LEVEL_ORDER, EXACT_IGNORE_PATH_PREFIX, ACTION_MAPPINGS_ARRAY_PATH, COMPOSITE_ARRAY_RULES, SUBTABLE_ROOT_PATH_RE, ENTITY_EXPAND_LIMIT;
   var init_engine = __esm({
     "src/diff/engine.ts"() {
       "use strict";
@@ -2864,6 +2910,7 @@ ${contextLine}`);
       ARRAY_DIFF_LIMIT = 1e3;
       SAME_ROW_LIMIT = 3e3;
       ARRAY_LCS_MAX_CELLS = 6e4;
+      MATCHING_NOTICE_LIMIT = 50;
       ARRAY_KEY_CANDIDATES = [
         "code",
         "id",
@@ -11432,6 +11479,8 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const warning = warningInfoForStandalone(rows, fetchIssues, partialIssues);
     const truncation = diffResult.truncation?.truncated ? diffResult.truncation : null;
     const actualDiffTruncated = hasIncompleteActualDiffTruncation(truncation);
+    const matchingNotices = diffResult.matchingNotices || { items: [], omitted: 0 };
+    const noticeCount = matchingNotices.items.length + matchingNotices.omitted;
     const incompleteNotes = [
       actualDiffTruncated ? `差分上限 ${truncation?.diffLimit}件に到達` : "",
       partialIssues.length ? `本文未検証 ${partialIssues.length}件` : ""
@@ -11439,7 +11488,8 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const incompleteNote = incompleteNotes.length ? ` / ⚠ 結果は不完全（${incompleteNotes.join(" / ")}）` : "";
     const droppedSame = Number(truncation?.droppedSame || 0);
     const sameOmissionNote = droppedSame > 0 ? ` / 同一証跡 ${droppedSame}件を上限により省略${actualDiffTruncated ? "" : "（実差分の走査は完了）"}` : "";
-    const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件 / 一部未検証 ${partialIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ""}${incompleteNote}${sameOmissionNote} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved})`;
+    const noticeNote = noticeCount > 0 ? ` / 対応付けの注意 ${noticeCount}件` : "";
+    const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件 / 一部未検証 ${partialIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ""}${incompleteNote}${sameOmissionNote}${noticeNote} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved})`;
     onStatus(statusLine);
     return {
       rows,
@@ -11448,6 +11498,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       sourceBundle,
       targetBundle,
       truncation,
+      matchingNotices,
       summary: {
         text: statusLine,
         counts: s,
@@ -19396,11 +19447,38 @@ ${item.target}` : item.target;
   function validateLiteDiffStart(options) {
     if (!options.scopes?.length) return "比較セクションを 1 つ以上選択してください";
     const sourceAppId = String(options.sourceAppId || "").trim();
-    const targetAppId = String(options.targetAppId || "").trim();
     if (!options.hasImportedSource && !sourceAppId) return "比較元アプリIDを入力してください";
-    if (!options.hasImportedTarget && !targetAppId) return "比較先アプリIDを入力してください";
     if (sourceAppId && !/^[1-9]\d*$/.test(sourceAppId)) return "比較元アプリIDには正の整数を入力してください";
-    if (targetAppId && !/^[1-9]\d*$/.test(targetAppId)) return "比較先アプリIDには正の整数を入力してください";
+    if (options.targets !== void 0) {
+      for (const t of options.targets) {
+        const rowNum = Number.isInteger(t.rowNumber) ? t.rowNumber : "?";
+        const appId = String(t.appId || "").trim();
+        const guestId = String(t.guestId || "").trim();
+        if (appId && !/^[1-9]\d*$/.test(appId)) {
+          return `比較先 ${rowNum} 行目: アプリIDには正の整数を入力してください`;
+        }
+        if (guestId && !/^\d+$/.test(guestId)) {
+          return `比較先 ${rowNum} 行目: ゲストIDは半角数字で入力してください`;
+        }
+      }
+      const seen = /* @__PURE__ */ new Map();
+      for (const t of options.targets) {
+        const appId = String(t.appId || "").trim();
+        if (!appId) continue;
+        const guestId = String(t.guestId || "").trim();
+        const key = `${appId}::${guestId}`;
+        const rowNum = Number.isInteger(t.rowNumber) ? t.rowNumber : 0;
+        const prevRow = seen.get(key);
+        if (prevRow != null) {
+          return `比較先 ${rowNum} 行目は ${prevRow} 行目と同じ接続先です`;
+        }
+        seen.set(key, rowNum);
+      }
+    } else {
+      const targetAppId = String(options.targetAppId || "").trim();
+      if (!options.hasImportedTarget && !targetAppId) return "比較先アプリIDを入力してください";
+      if (targetAppId && !/^[1-9]\d*$/.test(targetAppId)) return "比較先アプリIDには正の整数を入力してください";
+    }
     const positionalRuleCount = summarizeLiteIgnoreRules(options.ignoreKeys || "").positionalRules;
     if (positionalRuleCount) {
       return `配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`;
@@ -20165,13 +20243,30 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const remainder = partialIssues.length > details.length ? ` / ほか ${partialIssues.length - details.length} 件` : "";
       alerts.push(`本文サイズまたは形式の制約により ${partialIssues.length} 件を fileKey で比較しました。本文内容は未検証です。${details.join(" / ")}${remainder}`);
     }
+    const matchingNoticesData = cache.matchingNotices;
+    let matchingNoticesHtml = "";
+    if (matchingNoticesData?.items?.length || matchingNoticesData?.omitted) {
+      const noticeItems = matchingNoticesData.items || [];
+      const noticesOmitted = Number(matchingNoticesData.omitted || 0);
+      const totalNoticeCount = noticeItems.length + noticesOmitted;
+      const displayItems = noticeItems.slice(0, 5);
+      const noticeLines = displayItems.map((item) => {
+        const sectionLabel = esc(item.section || item.sectionKey || "不明なセクション");
+        const pathStr = esc(item.path || "");
+        const reasonText = item.reason === "lcs-size-limit" ? esc(`要素数が多いため（比較元 ${item.leftLength}件 × 比較先 ${item.rightLength}件）並び替えの検出を省略し、先頭から順に比較しました。並び順が違う場合、実際とは異なる追加・削除・変更として表示されることがあります。`) : item.reason === "key-missing" ? "タイトル等の識別子が空の項目があるため、別の項目の値や内容の近さで対応付けました。対応付けがずれると、1件の変更が追加と削除に分かれて表示されることがあります。" : "タイトル等の識別子が重複しているため、別の項目の値や内容の近さで対応付けました。対応付けがずれると、1件の変更が追加と削除に分かれて表示されることがあります。";
+        return `<span>${sectionLabel} の ${pathStr}: ${reasonText}</span>`;
+      }).join("");
+      const remainCount = noticeItems.length - displayItems.length + noticesOmitted;
+      const omittedLine = remainCount > 0 ? `<span>ほか ${remainCount} 件</span>` : "";
+      matchingNoticesHtml = `<div class="kus-dl-alert" role="note"><strong>対応付けの注意 ${totalNoticeCount}件</strong>${noticeLines}${omittedLine}</div>`;
+    }
     const announceAttrs = options.announce === false ? "" : ' role="status"';
     const alertAttrs = options.announce === false ? "" : ' role="alert"';
     const completeness = incomplete ? "incomplete" : "complete";
     const alertsHtml = alerts.map((message) => `<div class="kus-dl-alert"${alertAttrs}>${esc(message)}</div>`).join("");
     const ignoreCondition = ignoreRuleSummary.total ? `無視ルール ${ignoreRuleSummary.total}件を適用した後の結果です。ルールに一致した設定差分は一覧に含まれません${ignoreRuleSummary.contextualRules ? `（完全パス/パターン ${ignoreRuleSummary.contextualRules}件）` : ""}。` : "無視ルールは適用していません。";
     const normalizationCondition = normalizationLabels.length ? `正規化 ${normalizationLabels.length}件を適用しています（${normalizationLabels.join("、")}）。` : "正規化は適用していません。";
-    return `<section id="kus-dl-overview" class="kus-dl-overview" data-kus-dl-overview tabindex="-1" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "比較完了"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションで絞り込む</span>${sectionButtons}</div>` : "") + `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div><div class="kus-dl-legend">「比較先のみ」は追加、「比較元のみ」は削除として検出しています。比較方向は上の矢印で確認できます。</div></section>`;
+    return `<section id="kus-dl-overview" class="kus-dl-overview" data-kus-dl-overview tabindex="-1" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "比較完了"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションで絞り込む</span>${sectionButtons}</div>` : "") + matchingNoticesHtml + `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div><div class="kus-dl-legend">「比較先のみ」は追加、「比較元のみ」は削除として検出しています。比較方向は上の矢印で確認できます。</div></section>`;
   }
   function renderRowsHtml(rows, useCharDiff, summary, allFilteredRows = rows, options = {}) {
     if (!rows.length) return `<div class="kus-dl-empty">該当する差分はありません${summary ? ` — ${summary}` : ""}</div>`;
@@ -21739,13 +21834,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     clearImportBtn.addEventListener("click", clearImportedBundles);
     pairClearImportBtn.addEventListener("click", clearImportedBundles);
     function readTargets() {
-      const seen = /* @__PURE__ */ new Set();
-      return targetRows.map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim(), preview: tgtPrev.checkbox.checked, appName: r.appName })).filter((t) => t.appId).filter((t) => {
-        const key = `${t.appId}::${t.guestId}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+      return targetRows.map((r, i) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim(), preview: tgtPrev.checkbox.checked, appName: r.appName, rowNumber: i + 1 })).filter((t) => t.appId);
     }
     function readForm() {
       return {
@@ -22492,6 +22581,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           ].filter(Boolean);
           if (needsReview) incomplete += 1;
           const comparedAt = (/* @__PURE__ */ new Date()).toISOString();
+          const pairNoticeCount = (out.matchingNotices?.items?.length || 0) + (out.matchingNotices?.omitted || 0);
+          if (pairNoticeCount > 0) incompleteReasons.push(`対応付けの注意 ${pairNoticeCount}件`);
           const multiExportIndex = multiXlsxExports.push({
             label: `ペア ${result.pair.rowNumber}: ${sourceLabel} → ${targetLabel}`,
             cache: {
@@ -22504,7 +22595,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
               ignoreKeys: base.ignoreKeys,
               normalizationPresetState: base.normalizationPresetState,
               comparedAt,
-              truncation: out.truncation || null
+              truncation: out.truncation || null,
+              matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
             }
           }) - 1;
           const stateLabel = needsReview ? "要確認" : counts.actual ? "完了" : "一致";
@@ -22535,11 +22627,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       }
       const commonValidation = validateLiteDiffStart({
         sourceAppId: base.source.appId,
-        targetAppId: targets[0].appId,
         scopes: base.scopes,
         ignoreKeys: base.ignoreKeys,
         hasImportedSource: !!importedSourceBundle,
-        hasImportedTarget: false
+        targets
       });
       if (commonValidation) {
         panel.setStatus(commonValidation, "warn");
@@ -22616,6 +22707,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
               exportFailed += 1;
             }
             const targetLabel = t.appName ? `${t.appName}（App ${t.appId}）` : `App ${t.appId}`;
+            const multiNoticeCount = (out.matchingNotices?.items?.length || 0) + (out.matchingNotices?.omitted || 0);
             const multiExportIndex = multiXlsxExports.push({
               label: targetLabel,
               cache: {
@@ -22628,10 +22720,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
                 ignoreKeys: base.ignoreKeys,
                 normalizationPresetState: base.normalizationPresetState,
                 comparedAt,
-                truncation: out.truncation || null
+                truncation: out.truncation || null,
+                matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
               }
             }) - 1;
-            resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : "通常スペース")} / ${t.preview ? "プレビュー" : "運用"}</small></td><td class="${needsReview || exportNote ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${exportNote ? "出力失敗" : needsReview ? "要確認" : "完了"}${esc(exportNote)}</td><td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ""}</td><td><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}">Excel保存</button></td></tr>`);
+            resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : "通常スペース")} / ${t.preview ? "プレビュー" : "運用"}</small></td><td class="${needsReview || exportNote ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${exportNote ? "出力失敗" : needsReview ? "要確認" : "完了"}${esc(exportNote)}</td><td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ""}${multiNoticeCount ? ` / 注意 ${multiNoticeCount}` : ""}</td><td><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}">Excel保存</button></td></tr>`);
           } catch (e) {
             failed += 1;
             const targetLabel = t.appName ? `${t.appName}（App ${t.appId}）` : `App ${t.appId}`;
@@ -22699,7 +22792,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           ignoreKeys: f.ignoreKeys,
           normalizationPresetState: f.normalizationPresetState,
           comparedAt: (/* @__PURE__ */ new Date()).toISOString(),
-          truncation: out.truncation || null
+          truncation: out.truncation || null,
+          matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
         };
         announceResultOverview = true;
         summaryText = out.summary?.text || "完了";

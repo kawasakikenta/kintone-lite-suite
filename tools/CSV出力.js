@@ -2662,6 +2662,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const s = String(val == null ? "" : val);
     return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r") ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
+  var CSV_FORMULA_RE = /^[\s\uFEFF]*[=+\-@]/;
+  var CSV_CONTROL_RE = /^[\t\r\n]/;
+  var CSV_NUMERIC_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+  function neutralizeCsvFormula(text) {
+    if (CSV_NUMERIC_RE.test(text)) return text;
+    if (CSV_FORMULA_RE.test(text) || CSV_CONTROL_RE.test(text)) return "'" + text;
+    return text;
+  }
   function extractRecordCsvValue(rec, code) {
     const f = rec?.[code];
     if (!f) return "";
@@ -2676,8 +2684,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return f.value == null ? "" : String(f.value);
   }
   function buildRecordsCsvText(records, propKeys) {
-    const lines = [propKeys.map(csvEscape).join(",")];
-    for (const rec of records) lines.push(propKeys.map((k) => csvEscape(extractRecordCsvValue(rec, k))).join(","));
+    const lines = [propKeys.map((k) => csvEscape(neutralizeCsvFormula(k))).join(",")];
+    for (const rec of records) lines.push(propKeys.map((k) => csvEscape(neutralizeCsvFormula(extractRecordCsvValue(rec, k)))).join(","));
     return "\uFEFF" + lines.join("\n");
   }
   function sanitizeZipSegment(value, fallback = "item") {
@@ -2847,7 +2855,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         "明細CSVの $id は親レコードID、$rowId はテーブル行ID、$rowIndex はテーブル内の行番号（1始まり）です。",
         "テーブルごとに独立したCSVです。別のテーブルとの行の組み合わせは作りません。",
         "CSVは閲覧・集計用です。このツールのCSV取込でテーブルを復元することはできません。",
-        "添付フィールドはファイル名のみです。実体を保存する場合はバックアップで「添付ファイルも保存」を選択してください。"
+        "添付フィールドはファイル名のみです。実体を保存する場合はバックアップで「添付ファイルも保存」を選択してください。",
+        "= + - @ で始まる文字列セルは Excel の数式実行を防ぐため先頭に ' を付けています（数値は対象外）。"
       ]
     };
   }
@@ -3293,7 +3302,7 @@ ${failures.join("\n")}`);
     cardCond.body.appendChild(viewNote);
     cardCond.body.appendChild(makeRow(filename, { label: "ファイル名" }));
     cardCond.body.appendChild(makeNote("クエリは全対象アプリへ共通適用します。各アプリのフィールドコードをヘッダーにし、テーブル明細は1行ずつ別CSVに出力します。親レコードの $id で明細を紐付けできます。"));
-    cardCond.body.appendChild(makeNote("出力は閲覧・集計用です。CSV取込用の互換形式ではありません。添付はファイル名のみを出力します。ファイル本体も必要な場合は、レコード管理のバックアップで「添付ファイルも保存」を選んでください。"));
+    cardCond.body.appendChild(makeNote("出力は閲覧・集計用です。CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に ' を付けます（数値は対象外）。添付はファイル名のみを出力します。ファイル本体も必要な場合は、レコード管理のバックアップで「添付ファイルも保存」を選んでください。"));
     cardCond.body.appendChild(makeNote("limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します。複数アプリで一部が失敗しても成功分は ZIP に保存し、失敗一覧を manifest.txt に記録します。"));
     panel.body.insertBefore(cardCond.card, panel.status);
     let loadedViews = [];

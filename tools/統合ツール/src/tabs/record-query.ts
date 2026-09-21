@@ -72,6 +72,21 @@ export function csvEscape(val: unknown): string {
     : s;
 }
 
+const CSV_FORMULA_RE = /^[\s\uFEFF]*[=+\-@]/;
+const CSV_CONTROL_RE = /^[\t\r\n]/;
+const CSV_NUMERIC_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
+/**
+ * Excel の数式実行を防ぐため、= + - @ やタブ・CR・LF で始まる文字列の先頭に
+ * アポストロフィを付ける。ただし値全体が数値として読める場合は無害化しない。
+ * （負の数値フィールドにアポストロフィが付くと集計用データが壊れるため）
+ */
+export function neutralizeCsvFormula(text: string): string {
+  if (CSV_NUMERIC_RE.test(text)) return text;
+  if (CSV_FORMULA_RE.test(text) || CSV_CONTROL_RE.test(text)) return "'" + text;
+  return text;
+}
+
 export function extractRecordCsvValue(rec: any, code: string): string {
   const f = rec?.[code];
   if (!f) return '';
@@ -88,8 +103,8 @@ export function extractRecordCsvValue(rec: any, code: string): string {
 
 /** BOM 付き UTF-8 の CSV テキスト。Excel でそのまま開ける。 */
 export function buildRecordsCsvText(records: any[], propKeys: string[]): string {
-  const lines = [propKeys.map(csvEscape).join(',')];
-  for (const rec of records) lines.push(propKeys.map((k) => csvEscape(extractRecordCsvValue(rec, k))).join(','));
+  const lines = [propKeys.map((k) => csvEscape(neutralizeCsvFormula(k))).join(',')];
+  for (const rec of records) lines.push(propKeys.map((k) => csvEscape(neutralizeCsvFormula(extractRecordCsvValue(rec, k)))).join(','));
   return '\uFEFF' + lines.join('\n');
 }
 

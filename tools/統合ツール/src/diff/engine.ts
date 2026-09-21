@@ -27,6 +27,7 @@ const MEDIUM_IMPACT_SECTIONS = new Set([
 const ARRAY_DIFF_LIMIT = 1000;
 const SAME_ROW_LIMIT = 3000;
 const ARRAY_LCS_MAX_CELLS = 60000;
+const MATCHING_NOTICE_LIMIT = 50;
 const ARRAY_KEY_CANDIDATES = [
   'code',
   'id',
@@ -323,6 +324,36 @@ function markDroppedDiffRow(out, row, kind: 'diff' | 'same') {
   const bySection = out.__droppedBySection || (out.__droppedBySection = {});
   const entry = bySection[sectionKey] || (bySection[sectionKey] = { diff: 0, same: 0 });
   entry[kind] += 1;
+}
+
+/**
+ * 配列の対応付けが精度の低い方式へフォールバックしたことを記録する。
+ * `out.__matchingNotices` に追記し、上限を超えた分は `__matchingNoticesOmitted` へ積む。
+ * 両配列の長さがどちらも 1 以下なら対応付けの曖昧さが無いので記録しない。
+ * 同一パスの重複は記録しない。ただし位置比較へ落ちた 'lcs-size-limit' は
+ * 誤った追加・削除を生みやすいため、同一パスの識別子フォールバックより優先する。
+ */
+function recordMatchingNotice(
+  out: any[],
+  path: string,
+  reason: 'lcs-size-limit' | 'key-missing' | 'key-duplicate',
+  leftLength: number,
+  rightLength: number
+): void {
+  if (!out) return;
+  if (leftLength <= 1 && rightLength <= 1) return;
+  const outAny = out as any;
+  const notices: any[] = outAny.__matchingNotices || (outAny.__matchingNotices = []);
+  const existing = notices.find((n: any) => n.path === path);
+  if (existing) {
+    if (reason === 'lcs-size-limit') existing.reason = reason;
+    return;
+  }
+  if (notices.length >= MATCHING_NOTICE_LIMIT) {
+    outAny.__matchingNoticesOmitted = Number(outAny.__matchingNoticesOmitted || 0) + 1;
+    return;
+  }
+  notices.push({ path, reason, leftLength, rightLength });
 }
 
 export function pushDiffRow(out, row, ignoreRules) {
@@ -734,19 +765,30 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
   if (!a.every(isPlainObject) || !b.every(isPlainObject)) return false;
   if (rule.applies && !rule.applies(a, b)) return false;
 
+  let noticeReason: 'key-missing' | 'key-duplicate' | null = null;
   const buildMap = (arr) => {
     const map = new Map<string, { idx: number; item: any }>();
     for (let i = 0; i < arr.length; i++) {
       const sig = rule.makeSig(arr[i]);
-      if (sig == null) return null; // 識別子なし → このルールでは扱えない
-      if (map.has(sig)) return null; // 片側内で重複 → 安全にフォールバック
+      if (sig == null) {
+        if (!noticeReason) noticeReason = 'key-missing';
+        return null; // 識別子なし → このルールでは扱えない
+      }
+      if (map.has(sig)) {
+        if (!noticeReason) noticeReason = 'key-duplicate';
+        return null; // 片側内で重複 → 安全にフォールバック
+      }
       map.set(sig, { idx: i, item: arr[i] });
     }
     return map;
   };
   const mapA = buildMap(a);
   const mapB = buildMap(b);
-  if (!mapA || !mapB) return false;
+  if (!mapA || !mapB) {
+    // 後段が並び替えだけで正確に解決できる場合は通知不要なので、記録は呼び出し元で判断する。
+    if (out) (out as any).__pendingKeyFallback = noticeReason;
+    return false;
+  }
 
   const ordered: string[] = [];
   const seen = new Set<string>();
@@ -1002,12 +1044,25 @@ export function collectArrayDiffs(a, b, path, out, ignoreRules) {
   // 1) 権限/通知/遷移などドメイン識別子（entity, title, name|from|to）での安定マッチ
   //    （objectKey のフォールバック候補が accessibility 等の「値」を識別子に
   //      誤採用してミスペアリングするのを防ぐため、ルールがある場合は先に試す）
+  if (out) (out as any).__pendingKeyFallback = null;
   if (collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules)) return;
+  // 識別子が空/重複でドメイン識別子マッチを諦めた理由。入れ子の配列比較で上書きされる前に取り出す。
+  const keyFallback: 'key-missing' | 'key-duplicate' | null = out ? (out as any).__pendingKeyFallback || null : null;
+  if (out) (out as any).__pendingKeyFallback = null;
   // 2) 単一 primitive キー（code/name 等）での安定マッチ
-  if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules)) return;
-  // 3) 中身が同じで並びだけ違う配列は moved 行に集約
+  if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules)) {
+    if (keyFallback) recordMatchingNotice(out, path, keyFallback, a.length, b.length);
+    return;
+  }
+  // 3) 中身が同じで並びだけ違う配列は moved 行に集約（対応付けは正確なので通知しない）
   if (collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules)) return;
+  if (keyFallback) recordMatchingNotice(out, path, keyFallback, a.length, b.length);
   if (collectArrayDiffsByLcs(a, b, path, out, ignoreRules)) return;
+  // LCS のサイズ上限で落ちた場合: 位置（インデックス）比較へのフォールバックを記録する。
+  // collectArrayDiffsByLcs は n*m > ARRAY_LCS_MAX_CELLS かつ両側非空のときだけ false を返す。
+  if (a.length > 0 && b.length > 0) {
+    recordMatchingNotice(out, path, 'lcs-size-limit', a.length, b.length);
+  }
   const max = Math.max(a.length, b.length);
   for (let i = 0; i < max; i++) {
     if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
@@ -1358,6 +1413,8 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
   (rows as any).__diffDropped = 0;
   (rows as any).__sameDropped = 0;
   (rows as any).__includeSame = includeSame;
+  (rows as any).__matchingNotices = [];
+  (rows as any).__matchingNoticesOmitted = 0;
   const fetchIssues: DiffFetchIssue[] = [];
   // 上限到達後は各コレクタが行の列挙自体を打ち切る（pushDiffRow を経由しない）ため、
   // セクション処理の前後で上限到達を観測して打ち切り発生セクションを記録する。
@@ -1468,10 +1525,18 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
   for (const row of rows) {
     if (!row.severity) row.severity = detectRowSeverity(row);
   }
+  const rawNoticeItems: any[] = (rows as any).__matchingNotices || [];
+  const noticesOmitted = Number((rows as any).__matchingNoticesOmitted || 0);
+  const noticeItems = rawNoticeItems.map((n: any) => {
+    const sectionKey = String(n.path || '').split('.')[0].split('[')[0];
+    const section = (SECTION_DEFS.find((x) => x.key === sectionKey) || ({} as any)).label || sectionKey;
+    return { path: n.path, reason: n.reason, leftLength: n.leftLength, rightLength: n.rightLength, sectionKey, section };
+  });
   return {
     rows: rows.map((row, idx) => ({ ...row, _id: `d${idx}` })),
     fetchIssues,
-    truncation: buildDiffTruncationInfo(rows, limitHitSectionKeys, unscannedSectionKeys)
+    truncation: buildDiffTruncationInfo(rows, limitHitSectionKeys, unscannedSectionKeys),
+    matchingNotices: { items: noticeItems, omitted: noticesOmitted }
   };
 }
 
