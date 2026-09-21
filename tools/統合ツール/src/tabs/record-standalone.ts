@@ -181,7 +181,8 @@ function csvExportManifest(appId: string, guestId: string, recordCount: number, 
       '明細CSVの $id は親レコードID、$rowId はテーブル行ID、$rowIndex はテーブル内の行番号（1始まり）です。',
       'テーブルごとに独立したCSVです。別のテーブルとの行の組み合わせは作りません。',
       'CSVは閲覧・集計用です。このツールのCSV取込でテーブルを復元することはできません。',
-      '添付フィールドはファイル名のみです。実体を保存する場合はバックアップで「添付ファイルも保存」を選択してください。'
+      '添付フィールドはファイル名のみです。実体を保存する場合はバックアップで「添付ファイルも保存」を選択してください。',
+      "= + - @ で始まる文字列セルは Excel の数式実行を防ぐため先頭に ' を付けています（数値は対象外）。"
     ]
   };
 }
@@ -453,6 +454,10 @@ export interface CopyPayloadPlan {
   records: Array<Record<string, any>>;
   /** コピー元にあるがコピー先に無い、または書き込めないため除外したフィールドコード */
   droppedFields: string[];
+  /** コピー元に存在した FILE フィールドコード（サブテーブル内は テーブルコード.フィールドコード）、重複なし・ソート済み */
+  droppedFileFields: string[];
+  /** コピー元レコードのうち添付が 1 件以上あったレコードの件数 */
+  recordsWithFiles: number;
 }
 
 /**
@@ -463,18 +468,25 @@ export interface CopyPayloadPlan {
  */
 export function buildCopyRecordPayloads(records: any[], targetProps?: Record<string, any> | null): CopyPayloadPlan {
   const dropped = new Set<string>();
+  const fileFields = new Set<string>();
+  let recordsWithFiles = 0;
   const targetKnown = targetProps && typeof targetProps === 'object' ? targetProps : null;
   const canWriteTop = (code: string, field: any): boolean => {
-    if (COPY_SYSTEM_CODES.has(code) || COPY_SYSTEM_TYPES.has(field?.type) || field?.type === 'FILE') return false;
+    if (COPY_SYSTEM_CODES.has(code) || COPY_SYSTEM_TYPES.has(field?.type)) return false;
+    if (field?.type === 'FILE') { fileFields.add(code); return false; }
     if (targetKnown && !targetKnown[code]) { dropped.add(code); return false; }
     if (targetKnown && targetKnown[code]?.type !== field?.type) { dropped.add(`${code}(型不一致)`); return false; }
     return true;
   };
   const out = records.map((rec) => {
     const payload: Record<string, any> = {};
+    let recHasFile = false;
     for (const [code, field] of Object.entries(rec || {}) as Array<[string, any]>) {
       if (!field || typeof field !== 'object') continue;
-      if (!canWriteTop(code, field)) continue;
+      if (!canWriteTop(code, field)) {
+        if (field?.type === 'FILE' && Array.isArray(field.value) && field.value.length > 0) recHasFile = true;
+        continue;
+      }
       if (field.type === 'SUBTABLE') {
         const childDefs = targetKnown ? targetKnown[code]?.fields || {} : null;
         const rows = Array.isArray(field.value) ? field.value : [];
@@ -484,7 +496,12 @@ export function buildCopyRecordPayloads(records: any[], targetProps?: Record<str
             const cells: Record<string, any> = {};
             for (const [childCode, childField] of Object.entries(inner) as Array<[string, any]>) {
               if (!childField || typeof childField !== 'object') continue;
-              if (COPY_SYSTEM_CODES.has(childCode) || COPY_SYSTEM_TYPES.has(childField.type) || childField.type === 'FILE') continue;
+              if (COPY_SYSTEM_CODES.has(childCode) || COPY_SYSTEM_TYPES.has(childField.type)) continue;
+              if (childField.type === 'FILE') {
+                fileFields.add(`${code}.${childCode}`);
+                if (Array.isArray(childField.value) && childField.value.length > 0) recHasFile = true;
+                continue;
+              }
               if (childDefs && !childDefs[childCode]) { dropped.add(`${code}.${childCode}`); continue; }
               cells[childCode] = { value: childField.value };
             }
@@ -495,9 +512,10 @@ export function buildCopyRecordPayloads(records: any[], targetProps?: Record<str
         payload[code] = { value: field.value };
       }
     }
+    if (recHasFile) recordsWithFiles++;
     return payload;
   });
-  return { records: out, droppedFields: [...dropped].sort() };
+  return { records: out, droppedFields: [...dropped].sort(), droppedFileFields: [...fileFields].sort(), recordsWithFiles };
 }
 
 export async function runRecordCopyStandalone(opts, setStatus) {
@@ -516,10 +534,14 @@ export async function runRecordCopyStandalone(opts, setStatus) {
   const droppedNote = plan.droppedFields.length
     ? `コピー先に無い/型が違うため除外: ${plan.droppedFields.slice(0, 10).join(', ')}${plan.droppedFields.length > 10 ? ` 他${plan.droppedFields.length - 10}件` : ''}`
     : '';
+  const fileNote = plan.droppedFileFields.length
+    ? `添付ファイルはコピーされません: ${plan.droppedFileFields.slice(0, 10).join(', ')}${plan.droppedFileFields.length > 10 ? ` 他${plan.droppedFileFields.length - 10}件` : ''}（${plan.droppedFileFields.length}フィールド、添付ありレコード ${plan.recordsWithFiles}件）。必要な場合はコピー後に手動で再アップロードしてください。`
+    : '';
   const confirmText = [
     `コピー元 App ${sourceAppId} → コピー先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ''}`,
     `${plan.records.length}件を本番レコードとして新規追加します（既存レコードは変更しません）。`,
     'ファイル・システム項目・計算項目は除外されます。',
+    fileNote,
     droppedNote,
     '実行しますか？'
   ].filter(Boolean).join('\n');
@@ -534,7 +556,8 @@ export async function runRecordCopyStandalone(opts, setStatus) {
     (batch) => apiPost(tgtPrefix, '/records.json', { app: targetAppId, records: batch }),
     (done, total) => setStatus(`コピー中... ${done} / ${total}件`)
   );
-  setStatus(`レコードコピー完了: ${ok}件${droppedNote ? `（${droppedNote}）` : ''}`, plan.droppedFields.length > 0);
+  const fileDropNote = plan.droppedFileFields.length ? ` / 添付除外 ${plan.droppedFileFields.length}フィールド` : '';
+  setStatus(`レコードコピー完了: ${ok}件${fileDropNote}${droppedNote ? `（${droppedNote}）` : ''}`, plan.droppedFields.length > 0 || plan.droppedFileFields.length > 0);
 }
 
 // ---------------------------------------------------------------------------

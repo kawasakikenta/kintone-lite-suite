@@ -228,4 +228,25 @@ describe('diff/standalone imported bundles', () => {
     expect(result.summary.warning).toMatchObject({ issueCount: 1, partialIssueCount: 0, total: 1 });
     expect(result.summary.text).not.toContain('本文未検証 1件');
   });
+
+  it('includes matching notice count in status line when composite key fallback occurs', async () => {
+    // タイトルが空の通知はキー識別子なしのフォールバックが発生し、matchingNotices に記録される
+    const notiCount = 3;
+    const makeNotif = (title: string | null) => ({ title, timing: { condition: {} } });
+    const srcNotifs = [makeNotif(null), makeNotif('通知A'), makeNotif('通知B')];
+    const tgtNotifs = [makeNotif(null), makeNotif('通知A改'), makeNotif('通知B')];
+    const srcBundle = makeBundle('1', { perRecordNotifications: { notifications: srcNotifs } });
+    const tgtBundle = makeBundle('2', { perRecordNotifications: { notifications: tgtNotifs } });
+
+    const result = await runDiffStandalone({
+      source: { appId: '1' },
+      target: { appId: '2' },
+      scopes: ['perRecordNotifications'],
+      importedSourceBundle: srcBundle,
+      importedTargetBundle: tgtBundle
+    });
+
+    expect(result.matchingNotices.items.length).toBeGreaterThan(0);
+    expect(result.summary.text).toContain('対応付けの注意');
+  });
 });

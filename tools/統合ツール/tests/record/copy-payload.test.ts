@@ -35,6 +35,64 @@ describe('buildCopyRecordPayloads', () => {
     expect(plan.droppedFields).toEqual([]);
   });
 
+  it('collects top-level FILE fields in droppedFileFields', () => {
+    const plan = buildCopyRecordPayloads([record]);
+    expect(plan.droppedFileFields).toContain('attach');
+    expect(plan.droppedFields).not.toContain('attach');
+  });
+
+  it('collects subtable FILE fields as tableCode.fieldCode in droppedFileFields', () => {
+    const plan = buildCopyRecordPayloads([record]);
+    expect(plan.droppedFileFields).toContain('table.rowFile');
+    expect(plan.droppedFields).not.toContain('table.rowFile');
+  });
+
+  it('counts records that have at least one non-empty file attachment', () => {
+    // record has attach with 1 file → recordsWithFiles = 1
+    const plan = buildCopyRecordPayloads([record]);
+    expect(plan.recordsWithFiles).toBe(1);
+  });
+
+  it('does not count records where all FILE values are empty arrays', () => {
+    const recNoFile = {
+      ...record,
+      attach: { type: 'FILE', value: [] },
+      table: {
+        type: 'SUBTABLE',
+        value: [{ id: '55', value: { item: { type: 'SINGLE_LINE_TEXT', value: 'row' }, rowFile: { type: 'FILE', value: [] } } }]
+      }
+    };
+    const plan = buildCopyRecordPayloads([recNoFile]);
+    expect(plan.droppedFileFields).toContain('attach');
+    expect(plan.droppedFileFields).toContain('table.rowFile');
+    expect(plan.recordsWithFiles).toBe(0);
+  });
+
+  it('returns empty droppedFileFields and zero recordsWithFiles when no FILE fields exist', () => {
+    const recNoFile = { title: { type: 'SINGLE_LINE_TEXT', value: 'x' } };
+    const plan = buildCopyRecordPayloads([recNoFile]);
+    expect(plan.droppedFileFields).toEqual([]);
+    expect(plan.recordsWithFiles).toBe(0);
+  });
+
+  it('preserves existing droppedFields behavior unchanged', () => {
+    const targetProps = {
+      title: { type: 'SINGLE_LINE_TEXT', code: 'title' },
+      table: { type: 'SUBTABLE', code: 'table', fields: { other: { type: 'SINGLE_LINE_TEXT' } } }
+    };
+    const plan = buildCopyRecordPayloads([{ ...record, extra: { type: 'NUMBER', value: '1' }, title: { type: 'MULTI_LINE_TEXT', value: 'x' } }], targetProps);
+    expect(plan.records).toEqual([{ table: { value: [{ value: {} }] } }]);
+    expect(plan.droppedFields).toEqual(['extra', 'table.item', 'title(型不一致)']);
+  });
+
+  it('does not include id in subtable rows (regression)', () => {
+    const plan = buildCopyRecordPayloads([record]);
+    const row = plan.records[0]?.table?.value?.[0];
+    expect(row).toBeDefined();
+    expect(Object.keys(row)).toEqual(['value']);
+    expect('id' in row).toBe(false);
+  });
+
   it('drops fields the target app does not have (or has with another type) and reports them', () => {
     const targetProps = {
       title: { type: 'SINGLE_LINE_TEXT', code: 'title' },

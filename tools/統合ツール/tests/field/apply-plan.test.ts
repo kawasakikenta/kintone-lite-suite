@@ -52,7 +52,7 @@ describe('planFieldApply', () => {
     expect(plan.skippedSystem).toEqual(['rec']);
     expect(plan.skippedExisting).toEqual(['existing']);
     expect(plan.lookupConverted).toEqual(['ref']);
-    expect(plan.logs).toEqual(['ADD title', 'SKIP rec (system)', 'ADD ref (lookup変換)', 'SKIP existing (exists)']);
+    expect(plan.logs).toEqual(['ADD title', 'SKIP rec (system)', 'ADD ref (参照先AppID変換)', 'SKIP existing (exists)']);
   });
 
   it('updates existing fields when overwrite is on', () => {
@@ -72,6 +72,69 @@ describe('planFieldApply', () => {
       true
     );
     expect(plan.updates).toEqual({ old_name: { type: 'SINGLE_LINE_TEXT', code: 'new_name' } });
+  });
+});
+
+describe('参照先AppID変換 (lookup & referenceTable)', () => {
+  const refTableDef = (app: string, code?: string) => ({
+    type: 'RELATED_RECORDS',
+    referenceTable: {
+      relatedApp: code != null ? { app, code } : { app },
+      condition: { field: { code: 'k' }, relatedField: { code: 'k' } },
+      filterCond: '', displayFields: [], sort: '', size: '5'
+    }
+  });
+
+  it('(a) referenceTable の relatedApp.app が変換される', () => {
+    const plan = planFieldApply({ rel: refTableDef('10', 'OLD') }, {}, { '10': '20' }, false);
+    expect(plan.adds.rel.referenceTable.relatedApp.app).toBe('20');
+    expect(plan.lookupConverted).toEqual(['rel']);
+  });
+
+  it('(b) 変換時に referenceTable.relatedApp.code が削除される', () => {
+    const plan = planFieldApply({ rel: refTableDef('10', 'OLD') }, {}, { '10': '20' }, false);
+    expect(plan.adds.rel.referenceTable.relatedApp).toEqual({ app: '20' });
+  });
+
+  it('(b) 変換時に lookup.relatedApp.code が削除される (field-standalone)', () => {
+    const incoming = {
+      lk: { type: 'SINGLE_LINE_TEXT', lookup: { relatedApp: { app: '10', code: 'OLD' }, relatedKeyField: 'k', fieldMappings: [] } }
+    };
+    const plan = planFieldApply(incoming, {}, { '10': '20' }, false);
+    expect(plan.adds.lk.lookup.relatedApp).toEqual({ app: '20' });
+  });
+
+  it('(c) マップに無い app は app も code も変わらない', () => {
+    const plan = planFieldApply(
+      {
+        lk: { type: 'SINGLE_LINE_TEXT', lookup: { relatedApp: { app: '99', code: 'KEEP_L' }, relatedKeyField: 'k', fieldMappings: [] } },
+        rel: refTableDef('88', 'KEEP_R')
+      },
+      {},
+      { '10': '20' },
+      false
+    );
+    expect(plan.adds.lk.lookup.relatedApp).toEqual({ app: '99', code: 'KEEP_L' });
+    expect(plan.adds.rel.referenceTable.relatedApp).toEqual({ app: '88', code: 'KEEP_R' });
+    expect(plan.lookupConverted).toEqual([]);
+  });
+
+  it('(d) lookup の既存変換動作が変わらない', () => {
+    const incoming = {
+      ref: { type: 'SINGLE_LINE_TEXT', lookup: { relatedApp: { app: '10' }, relatedKeyField: 'k' } }
+    };
+    const plan = planFieldApply(incoming, {}, { '10': '20' }, false);
+    expect(plan.adds.ref.lookup.relatedApp.app).toBe('20');
+    expect(plan.lookupConverted).toEqual(['ref']);
+  });
+
+  it('(e) lookup 変換時にも code が削除される (上書きモード)', () => {
+    const incoming = {
+      lk: { type: 'SINGLE_LINE_TEXT', code: 'lk', lookup: { relatedApp: { app: '10', code: 'OLD' }, relatedKeyField: 'k', fieldMappings: [] } }
+    };
+    const current = { lk: { type: 'SINGLE_LINE_TEXT', code: 'lk' } };
+    const plan = planFieldApply(incoming, current, { '10': '20' }, true);
+    expect(plan.updates.lk.lookup.relatedApp).toEqual({ app: '20' });
   });
 });
 

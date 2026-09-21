@@ -61,7 +61,7 @@ export function mountCsvExportLitePanel() {
   cardCond.body.appendChild(viewNote);
   cardCond.body.appendChild(makeRow(filename, { label: 'ファイル名' }));
   cardCond.body.appendChild(makeNote('クエリは全対象アプリへ共通適用します。各アプリのフィールドコードをヘッダーにし、テーブル明細は1行ずつ別CSVに出力します。親レコードの $id で明細を紐付けできます。'));
-  cardCond.body.appendChild(makeNote('出力は閲覧・集計用です。CSV取込用の互換形式ではありません。添付はファイル名のみを出力します。ファイル本体も必要な場合は、レコード管理のバックアップで「添付ファイルも保存」を選んでください。'));
+  cardCond.body.appendChild(makeNote('出力は閲覧・集計用です。CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に \' を付けます（数値は対象外）。添付はファイル名のみを出力します。ファイル本体も必要な場合は、レコード管理のバックアップで「添付ファイルも保存」を選んでください。'));
   cardCond.body.appendChild(makeNote('limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します。複数アプリで一部が失敗しても成功分は ZIP に保存し、失敗一覧を manifest.txt に記録します。'));
   panel.body.insertBefore(cardCond.card, panel.status);
 

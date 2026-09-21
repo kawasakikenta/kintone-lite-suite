@@ -1230,4 +1230,111 @@ describe('diff/engine', () => {
       expect(hasIncompleteActualDiffTruncation(result.truncation)).toBe(false);
     });
   });
+
+  describe('matchingNotices — 配列対応付けフォールバック通知', () => {
+    function makeNotificationBundle(titleMaker: (i: number) => string | null, count: number) {
+      // レコード条件通知セクション（タイトルが識別子）のバンドルを生成する
+      const notifications = Array.from({ length: count }, (_, i) => ({
+        title: titleMaker(i),
+        timing: { condition: {} }
+      }));
+      return makeBundle({ perRecordNotifications: { notifications } });
+    }
+
+    it('(a) records lcs-size-limit when n*m > 60000 and arrays are different, and rows content is identical to pre-change behavior', () => {
+      // √60000 ≈ 245 なので 246×247 = 60762 > 60000。要素を変えて実差分が1件出るようにする
+      const count = 246;
+      // 各要素はネストオブジェクト値のみ（プリミティブ値キーなし）を持つ。
+      // hasUniquePrimitiveKey がすべてのキー候補で false を返すため、
+      // collectArrayDiffsByObjectKey がマッチせず LCS に到達する。
+      // 246×247 = 60762 > ARRAY_LCS_MAX_CELLS(60000) なので LCS も false を返し、
+      // lcs-size-limit 通知が記録される。
+      const sourceItems = Array.from({ length: count }, (_, i) => ({ nested: { a: i } }));
+      const targetItems = [...sourceItems.slice(0, 200), { nested: { a: 9999 } }, ...sourceItems.slice(200)];
+      const src = makeBundle({ fieldSettings: { properties: { f: { options: sourceItems } } } });
+      const tgt = makeBundle({ fieldSettings: { properties: { f: { options: targetItems } } } });
+      const result = computeDiffRows(src, tgt, ['fieldSettings'], '');
+
+      expect(result.matchingNotices.items.length).toBeGreaterThan(0);
+      const notice = result.matchingNotices.items.find((n: any) => n.reason === 'lcs-size-limit');
+      expect(notice).toBeDefined();
+      expect(notice.leftLength).toBe(count);
+      expect(notice.rightLength).toBe(count + 1);
+      // 挙動不変の確認: 実差分が出ていること（件数は0ではない）
+      const diffRows = result.rows.filter((r: any) => r.type !== 'same');
+      expect(diffRows.length).toBeGreaterThan(0);
+      // truncation の actualDiffIncomplete に含まれない
+      expect(result.truncation.actualDiffIncomplete).toBe(false);
+    });
+
+    it('(b) does not record lcs-size-limit for small arrays', () => {
+      const src = makeBundle({ fieldSettings: { properties: { f: { options: [{ value: 1 }, { value: 2 }] } } } });
+      const tgt = makeBundle({ fieldSettings: { properties: { f: { options: [{ value: 2 }, { value: 3 }] } } } });
+      const result = computeDiffRows(src, tgt, ['fieldSettings'], '');
+      const lcsNotices = result.matchingNotices.items.filter((n: any) => n.reason === 'lcs-size-limit');
+      expect(lcsNotices).toHaveLength(0);
+    });
+
+    it('(c) records key-missing when perRecordNotifications title is empty', () => {
+      // タイトルが空（null）→ key-missing
+      const src = makeNotificationBundle((i) => i === 0 ? null : `通知${i}`, 3);
+      const tgt = makeNotificationBundle((i) => i === 0 ? null : `通知${i}_v2`, 3);
+      const result = computeDiffRows(src, tgt, ['perRecordNotifications'], '');
+      const notice = result.matchingNotices.items.find((n: any) => n.reason === 'key-missing');
+      expect(notice).toBeDefined();
+      expect(notice.sectionKey).toBe('perRecordNotifications');
+    });
+
+    it('(d) records key-duplicate when perRecordNotifications has duplicate titles', () => {
+      // 同じタイトルが片側で重複 → key-duplicate
+      const src = makeBundle({
+        perRecordNotifications: { notifications: [
+          { title: '重複通知', timing: {} },
+          { title: '重複通知', timing: {} },
+          { title: '別通知', timing: {} }
+        ] }
+      });
+      const tgt = makeBundle({
+        perRecordNotifications: { notifications: [
+          { title: '重複通知', timing: {} },
+          { title: '別通知', timing: {} }
+        ] }
+      });
+      const result = computeDiffRows(src, tgt, ['perRecordNotifications'], '');
+      const notice = result.matchingNotices.items.find((n: any) => n.reason === 'key-duplicate');
+      expect(notice).toBeDefined();
+    });
+
+    it('(e) notices present does not make actualDiffIncomplete true', () => {
+      const src = makeNotificationBundle((i) => i === 0 ? null : `通知${i}`, 3);
+      const tgt = makeNotificationBundle((i) => i === 0 ? null : `通知${i}更新`, 3);
+      const result = computeDiffRows(src, tgt, ['perRecordNotifications'], '');
+      expect(result.matchingNotices.items.length).toBeGreaterThan(0);
+      expect(result.truncation.actualDiffIncomplete).toBe(false);
+    });
+
+    it('(g) does not record a key fallback when the arrays differ only by order', () => {
+      // タイトルが重複していても、中身が同じで並びだけ違う配列は moved 行で正確に解決できる。
+      const items = [
+        { title: '重複通知', timing: { a: 1 } },
+        { title: '重複通知', timing: { a: 2 } },
+        { title: '別通知', timing: { a: 3 } }
+      ];
+      const src = makeBundle({ perRecordNotifications: { notifications: items } });
+      const tgt = makeBundle({ perRecordNotifications: { notifications: [items[2], items[0], items[1]] } });
+      const result = computeDiffRows(src, tgt, ['perRecordNotifications'], '');
+      const diffs = result.rows.filter((r: any) => r.type !== 'same');
+      expect(diffs.length).toBeGreaterThan(0);
+      expect(diffs.every((r: any) => r.moved === true)).toBe(true);
+      expect(result.matchingNotices.items).toHaveLength(0);
+    });
+
+    it('(f) does not record notice for arrays where both sides have length 1 or less', () => {
+      // 片側が1要素の通知（long-enough guestId key pattern で LCS に誘導）
+      const src = makeBundle({ fieldSettings: { properties: { f: { options: [{ value: 1 }] } } } });
+      const tgt = makeBundle({ fieldSettings: { properties: { f: { options: [{ value: 2 }] } } } });
+      const result = computeDiffRows(src, tgt, ['fieldSettings'], '');
+      expect(result.matchingNotices.items).toHaveLength(0);
+    });
+  });
 });
