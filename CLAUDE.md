@@ -37,4 +37,4 @@ UI または出力レイアウトを変更した場合は、`tools/test-harness/
 
 @docs/agent-orchestration.md
 
-サブエージェントを使うときは同文書の役割分担とモデル設定に従う。Codex/GPT は `gpt-5.6-luna` / `max`、Claude Code は `repo-executor`（Sonnet / `high`）を実行担当にする。
+サブエージェントを使うときは同文書の役割分担とモデル設定に従う。Codex/GPT は `gpt-luna` / `max`、Claude Code は `repo-executor`（Sonnet 5（最新版） / `high`）を実行担当にする。

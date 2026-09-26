@@ -6,4 +6,4 @@
 
 ## オーケストレーション
 
-作業開始前に [docs/agent-orchestration.md](docs/agent-orchestration.md) を必ず読み、親エージェントが計画・統合、子エージェントが実行を担当する分担に従う。Codex/GPT の実行担当は `gpt-5.6-luna` / `max`、Claude Code の実行担当は `repo-executor`（Sonnet / `high`）を使う。
+作業開始前に [docs/agent-orchestration.md](docs/agent-orchestration.md) を必ず読み、親エージェントが計画・統合、子エージェントが実行を担当する分担に従う。Codex/GPT の実行担当は `gpt-luna` / `max`、Claude Code の実行担当は `repo-executor`（Sonnet 5（最新版） / `high`）を使う。
