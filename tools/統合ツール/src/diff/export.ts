@@ -31,6 +31,7 @@ import {
   redactSensitiveSameDiffRows,
   SENSITIVE_SAME_VALUE_REDACTION
 } from './export-safety.js';
+import { buildDesignSnapshot } from '../design/snapshot.js';
 
 // ---------------------------------------------------------------------------
 // Diff display helpers
@@ -1396,13 +1397,31 @@ function mdTable(headers, rows) {
   return `${head}\n${sep}\n${body}`;
 }
 
+function mdLongestBacktickRun(value: string): number {
+  let longest = 0;
+  let current = 0;
+  for (const char of String(value || '')) {
+    if (char === '`') {
+      current += 1;
+      if (current > longest) longest = current;
+    } else {
+      current = 0;
+    }
+  }
+  return longest;
+}
+
 function mdRawJson(sec) {
+  let body = '';
+  try { body = JSON.stringify(sec, null, 2); } catch { body = String(sec); }
+  if (body == null) body = String(sec);
+  const fence = '`'.repeat(Math.max(3, mdLongestBacktickRun(body) + 1));
   return [
     '<details><summary>APIレスポンス（生データ）</summary>',
     '',
-    '```json',
-    JSON.stringify(sec, null, 2),
-    '```',
+    `${fence}json`,
+    body,
+    fence,
     '',
     '</details>'
   ].join('\n');
@@ -1944,7 +1963,19 @@ export interface BundleToMarkdownOptions {
 export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions = {}) {
   const includeRawJson = options.rawJson !== false;
   const sections = bundle?.sections || ({} as any);
+  const designSnapshot = buildDesignSnapshot(bundle);
+  const snapshotByKey = new Map(designSnapshot.sections.map((row) => [row.key, row]));
   const appName = decodeHtmlEntities(sections.appSettings?.name || '');
+  const hasGuestId = Object.prototype.hasOwnProperty.call(bundle || {}, 'guestId');
+  const hasPreview = Object.prototype.hasOwnProperty.call(bundle || {}, 'preview');
+  const guestIdKnown = hasGuestId && bundle.guestId !== null && bundle.guestId !== undefined;
+  const previewKnown = hasPreview && bundle.preview !== null && bundle.preview !== undefined;
+  const guestIdLabel = guestIdKnown
+    ? (bundle.guestId === '' ? '(通常空間)' : String(bundle.guestId))
+    : '不明（設定JSONに記載なし）';
+  const environmentLabel = previewKnown
+    ? (bundle.preview ? 'プレビュー（未公開の設定）' : '本番（運用中の設定）')
+    : '不明（設定JSONに記載なし）';
   const lines: string[] = [];
   lines.push('# kintone アプリ設計書');
   lines.push('');
@@ -1956,11 +1987,25 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
   lines.push(mdTable(['項目', '値'], [
     ['アプリID', bundle.appId],
     ['アプリ名', appName || '（取得なし）'],
-    ['ゲストスペースID', bundle.guestId || '(通常空間)'],
-    ['取得環境', bundle.preview ? 'プレビュー（未公開の設定）' : '本番（運用中の設定）'],
+    ['ゲストスペースID', guestIdLabel],
+    ['取得環境', environmentLabel],
     ['取得日時', mdFetchedAt(bundle.fetchedAt)],
     ['取得できなかったセクション', failedSections.length ? failedSections.map((def) => def.label).join('、') : 'なし']
   ]));
+  lines.push('');
+
+  lines.push('## 取得状態');
+  lines.push('');
+  lines.push(mdTable(
+    ['セクション', 'キー', '状態', '件数', '詳細'],
+    designSnapshot.sections.map((row) => [
+      row.label,
+      row.key,
+      row.status,
+      row.count == null ? '不明' : String(row.count),
+      row.detail
+    ])
+  ));
   lines.push('');
 
   const available = SECTION_DEFS.filter((def) => sections[def.key]);
@@ -1996,22 +2041,38 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
   }
 
   for (const def of SECTION_DEFS) {
+    if (!Object.prototype.hasOwnProperty.call(sections, def.key)) continue;
     const sec = sections[def.key];
-    if (!sec) continue;
+    const snapshotSection = snapshotByKey.get(def.key);
     lines.push(`## ${def.label}`);
     lines.push('');
     const renderer = MD_SECTION_RENDERERS[def.key];
     let rendered = '';
-    if (renderer) {
-      try { rendered = renderer(sec) || ''; } catch (e) { rendered = ''; }
-    }
-    if (rendered.trim()) {
-      lines.push(rendered);
-      lines.push('');
+    if (snapshotSection?.status === 'fetch-error') {
+      lines.push(`（取得失敗: ${snapshotSection.detail}）`);
+      if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
+    } else if (snapshotSection?.status === 'partial') {
+      lines.push(`（部分取得: ${snapshotSection.detail}）`);
+      if (renderer) {
+        try { rendered = renderer(sec) || ''; } catch { rendered = ''; }
+        if (rendered.trim()) lines.push('', rendered);
+      }
+      if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
+    } else if (snapshotSection?.status === 'empty') {
+      lines.push('（設定コレクションは空です）');
+    } else if (!renderer) {
+      lines.push('（整形表示は未対応です。設定データは下の原文を参照してください）');
+      if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
     } else {
-      lines.push('（データなし）');
-      lines.push('');
+      try { rendered = renderer(sec) || ''; } catch { rendered = ''; }
+      if (rendered.trim()) {
+        lines.push(rendered);
+      } else {
+        lines.push('（整形表示できる項目はありません。設定データは下の原文を参照してください）');
+        if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
+      }
     }
+    lines.push('');
     if (includeRawJson) {
       lines.push(mdRawJson(sec));
       lines.push('');
@@ -2176,6 +2237,205 @@ export function selectDiffHtmlRowsForExport(
       }
     }
   };
+}
+
+export type DiffHtmlHumanOverviewKind = 'added' | 'removed' | 'changed' | 'moved';
+
+export interface DiffHtmlHumanOverviewExample {
+  label: string;
+  kind: DiffHtmlHumanOverviewKind;
+  kindLabel: string;
+}
+
+export interface DiffHtmlHumanOverviewSection {
+  sectionKey: string;
+  sectionLabel: string;
+  diffCount: number;
+  added: number;
+  removed: number;
+  changed: number;
+  moved: number;
+  renderedDiffCount: number;
+  examples: DiffHtmlHumanOverviewExample[];
+}
+
+export interface DiffHtmlHumanOverview {
+  diffCount: number;
+  added: number;
+  removed: number;
+  changed: number;
+  moved: number;
+  same: number;
+  sections: DiffHtmlHumanOverviewSection[];
+}
+
+const DIFF_HTML_HUMAN_OVERVIEW_EXAMPLE_LIMIT = 3;
+const DIFF_HTML_HUMAN_OVERVIEW_SECTION_LIMIT = 4;
+const DIFF_HTML_HUMAN_OVERVIEW_LABEL_LIMIT = 120;
+const HUMAN_OVERVIEW_ENTITY_KIND_LABELS: Record<string, string> = {
+  view: 'ビュー',
+  report: 'グラフ',
+  state: 'ステータス',
+  action: '遷移アクション',
+  appAction: 'アクション',
+  aclEntry: '権限エントリー',
+  fieldAclEntry: 'フィールド権限',
+  recordAclEntry: 'レコード権限',
+  notification: '通知',
+  perRecordNotification: 'レコード条件通知',
+  reminderNotification: 'リマインダー通知',
+  category: 'カテゴリ',
+  plugin: 'プラグイン',
+  jsCss: 'JS/CSS',
+  layoutRow: 'レイアウト行'
+};
+
+function boundedHumanOverviewText(value: unknown, maxLength = DIFF_HTML_HUMAN_OVERVIEW_LABEL_LIMIT): string {
+  const raw = stripHtmlToText(String(value ?? ''))
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!raw) return '';
+  const chars = Array.from(raw);
+  return chars.length > maxLength ? `${chars.slice(0, Math.max(1, maxLength - 1)).join('')}…` : raw;
+}
+
+function humanOverviewKindOf(row: any): DiffHtmlHumanOverviewKind | null {
+  if (!row || row._displayOnly || row.type === 'same') return null;
+  if (row.type === 'added') return 'added';
+  if (row.type === 'removed') return 'removed';
+  if (row.moved || row.type === 'moved') return 'moved';
+  return 'changed';
+}
+
+function humanOverviewKindLabel(kind: DiffHtmlHumanOverviewKind): string {
+  return ({ added: '追加', removed: '削除', changed: '内容変更', moved: '並び順変更' } as Record<DiffHtmlHumanOverviewKind, string>)[kind];
+}
+
+function humanOverviewFieldLabel(row: any, sourceBundle: any, targetBundle: any): string {
+  const info = extractFieldPathInfo(row?.path);
+  if (!info) return '';
+  const readProperties = (bundle: any): any => bundle?.sections?.fieldSettings?.properties;
+  const sourceRoot = readProperties(sourceBundle)?.[info.rootCode];
+  const targetRoot = readProperties(targetBundle)?.[info.rootCode];
+  const root = info.isSubField
+    ? (sourceRoot?.fields?.[info.subFieldCode] || targetRoot?.fields?.[info.subFieldCode])
+    : (sourceRoot || targetRoot);
+  const label = boundedHumanOverviewText(root?.label || root?.name || info.activeCode);
+  const property = boundedHumanOverviewText(fieldChangePropTitleFromInfo(info, row));
+  return [label, property].filter(Boolean).join(' / ');
+}
+
+function humanOverviewRowLabel(row: any, sourceBundle: any, targetBundle: any): string {
+  const entityKind = HUMAN_OVERVIEW_ENTITY_KIND_LABELS[String(row?.entityKind || '')] || '';
+  const entityLabel = boundedHumanOverviewText(row?.entityLabel);
+  const entity = entityLabel
+    ? (entityKind ? `${entityKind}「${entityLabel}」` : entityLabel)
+    : '';
+  const decoded = decodeRow(row);
+  const where = decoded?.whereChips
+    ?.filter((chip) => !chip.muted)
+    .map((chip) => boundedHumanOverviewText(chip.label))
+    .filter(Boolean) || [];
+  const decodedProperty = boundedHumanOverviewText(decoded?.propLabel);
+  const semantic = [entity || '', ...where, decodedProperty].filter(Boolean).join(' / ');
+  const field = row?.sectionKey === 'fieldSettings'
+    ? humanOverviewFieldLabel(row, sourceBundle, targetBundle)
+    : '';
+  const title = boundedHumanOverviewText(row?._reportDisplayTitle)
+    || boundedHumanOverviewText(field)
+    || boundedHumanOverviewText(semantic)
+    || boundedHumanOverviewText(row?.reasonSummary)?.split(' / ')[0]
+    || `${getSectionLabel(row?.sectionKey || row?.section)}の設定`;
+  return title || '設定項目';
+}
+
+/**
+ * 人向け HTML の冒頭に出す短い変更概要を作る。
+ * 集計は比較結果の基準行だけを対象にし、展開した `_displayOnly` 行や同一行を
+ * 差分件数へ二重計上しない。例は設定値を含めず、セクションごとに少数へ制限する。
+ */
+export function buildDiffHtmlHumanOverview(
+  rows: any[] = [],
+  options: { sourceBundle?: any; targetBundle?: any; exampleRows?: any[]; maxExamples?: number } = {}
+): DiffHtmlHumanOverview {
+  const sectionMap = new Map<string, DiffHtmlHumanOverviewSection>();
+  const summary: DiffHtmlHumanOverview = {
+    diffCount: 0,
+    added: 0,
+    removed: 0,
+    changed: 0,
+    moved: 0,
+    same: 0,
+    sections: []
+  };
+  const ensureSection = (row: any): DiffHtmlHumanOverviewSection => {
+    const sectionKey = String(row?.sectionKey || row?.section || '未分類').trim() || '未分類';
+    const existing = sectionMap.get(sectionKey);
+    if (existing) return existing;
+    const section = {
+      sectionKey,
+      sectionLabel: getSectionLabel(sectionKey),
+      diffCount: 0,
+      added: 0,
+      removed: 0,
+      changed: 0,
+      moved: 0,
+      renderedDiffCount: 0,
+      examples: []
+    };
+    sectionMap.set(sectionKey, section);
+    return section;
+  };
+  const countRows = Array.isArray(rows) ? rows : [];
+  countRows.forEach((row) => {
+    if (!row || row._displayOnly) return;
+    if (row.type === 'same') {
+      summary.same += 1;
+      return;
+    }
+    const kind = humanOverviewKindOf(row);
+    if (!kind) return;
+    const section = ensureSection(row);
+    section.diffCount += 1;
+    summary.diffCount += 1;
+    if (kind === 'added') {
+      summary.added += 1;
+      section.added += 1;
+    } else if (kind === 'removed') {
+      summary.removed += 1;
+      section.removed += 1;
+    } else if (kind === 'moved') {
+      summary.moved += 1;
+      section.moved += 1;
+    } else {
+      summary.changed += 1;
+      section.changed += 1;
+    }
+  });
+  const exampleRows = Array.isArray(options.exampleRows) ? options.exampleRows : countRows;
+  const maxExamples = Number.isFinite(options.maxExamples)
+    ? Math.max(0, Math.floor(options.maxExamples as number))
+    : DIFF_HTML_HUMAN_OVERVIEW_EXAMPLE_LIMIT;
+  const seenExamples = new Map<string, Set<string>>();
+  exampleRows.forEach((row) => {
+    const kind = humanOverviewKindOf(row);
+    if (!kind) return;
+    const section = ensureSection(row);
+    section.renderedDiffCount += 1;
+    if (section.examples.length >= maxExamples) return;
+    const label = humanOverviewRowLabel(row, options.sourceBundle, options.targetBundle);
+    const key = `${kind}|${label}`;
+    if (!seenExamples.has(section.sectionKey)) seenExamples.set(section.sectionKey, new Set<string>());
+    const sectionSeen = seenExamples.get(section.sectionKey)!;
+    if (sectionSeen.has(key)) return;
+    sectionSeen.add(key);
+    section.examples.push({ label, kind, kindLabel: humanOverviewKindLabel(kind) });
+  });
+  summary.sections = [...sectionMap.values()]
+    .filter((section) => section.diffCount > 0)
+    .sort((a, b) => getSectionOrder(a.sectionKey) - getSectionOrder(b.sectionKey)
+      || a.sectionLabel.localeCompare(b.sectionLabel));
+  return summary;
 }
 
 const DIFF_HTML_REVIEW_STATE_KIND = 'kintone-diff-review-state';
@@ -2351,6 +2611,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const title = [...contextLabels, String(decoded.propLabel || '').trim()].filter(Boolean).join(' / ');
     return title ? { ...row, _reportDisplayTitle: title } : row;
   });
+  const humanOverview = buildDiffHtmlHumanOverview(withSameSections, {
+    sourceBundle: includesComparedContent ? sourceBundle : null,
+    targetBundle: includesComparedContent ? targetBundle : null,
+    exampleRows: baseReportRows
+  });
   const preparedReviewRows = prepareDiffHtmlReviewRows(baseReportRows);
   const reportRows = includesComparedContent
     ? preparedReviewRows.rows
@@ -2474,6 +2739,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     source: sourceExportMeta,
     target: targetExportMeta,
     summary,
+    humanOverview,
     fetchIssues,
     partialIssueCount: partialIssues.length,
     partialIssues,
@@ -2500,14 +2766,14 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const targetPreviewApiPrefix = targetGuestId
     ? `/k/guest/${encodeURIComponent(targetGuestId)}/v1/preview`
     : '/k/v1/preview';
-  const diffTotal = summary.added + summary.removed + summary.changed;
-  const objectiveContentChangedCount = Math.max(0, summary.changed - summary.moved);
+  const diffTotal = humanOverview.diffCount;
+  const objectiveContentChangedCount = humanOverview.changed;
   const objectiveFactCards = [
-    { kind: 'added', label: '比較先のみに存在', count: summary.added, note: '比較元にはありません' },
-    { kind: 'removed', label: '比較元のみに存在', count: summary.removed, note: '比較先にはありません' },
+    { kind: 'added', label: '比較先のみに存在', count: humanOverview.added, note: '比較元にはありません' },
+    { kind: 'removed', label: '比較元のみに存在', count: humanOverview.removed, note: '比較先にはありません' },
     { kind: 'changed', label: '両方に存在・内容が異なる', count: objectiveContentChangedCount, note: '値または設定が異なります' },
-    { kind: 'moved', label: '並び順が異なる', count: summary.moved, note: '内容とは別に集計' },
-    { kind: 'same', label: '内容は同じ', count: includesComparedContent ? summary.same : 0, note: '比較証跡として収録' }
+    { kind: 'moved', label: '並び順が異なる', count: humanOverview.moved, note: '内容とは別に集計' },
+    { kind: 'same', label: '内容は同じ', count: includesComparedContent ? humanOverview.same : 0, note: '比較証跡として収録' }
   ].filter((fact) => fact.count > 0);
   const emptyFactTitle = reportMeta.incompleteComparison
     ? '確認できた差分は0件です'
@@ -2517,6 +2783,42 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     : reportMeta.exportMode !== 'all' ? '全比較結果の一致を意味するものではありません' : '選択した設定は一致しています';
   const objectiveFactCardsHtml = objectiveFactCards.map((fact) => `<button type="button" class="report-fact report-fact--${fact.kind}" data-report-kind="${fact.kind}" aria-pressed="false" aria-controls="reportPaneDiff" aria-label="${esc(fact.label)}（検出 ${fact.count}件）の収録行を表示" title="ほかの絞り込みを解除して、この種別を表示"><span>${esc(fact.label)}</span><strong>${fact.count}</strong><small>${esc(fact.note)}</small><em aria-hidden="true">収録行を見る →</em></button>`).join('')
     + (diffTotal > 0 ? '' : `<article class="report-fact report-fact--same report-fact--empty"><span>${emptyFactTitle}</span><strong>0</strong><small>${emptyFactNote}</small></article>`);
+  const humanOverviewRangeNote = [
+    `対象 ${sectionText || '選択したセクション'} · 収録 ${reportMeta.exportLabel || '全差分'}（${reportMeta.exportContentLabel}）`,
+    reportMeta.exportMode !== 'all' ? '表示中の出力範囲のみです。' : '',
+    '件数は設定・プロパティの差分行です（フィールド数やアプリ数ではありません）。',
+    reportMeta.incompleteComparison ? '比較不完全: 件数は確認範囲の下限です。' : '',
+    reportMeta.rowSelection?.truncated
+      ? `HTML収録上限で${reportMeta.rowSelection.omittedRows}件を省略。例は収録された差分から各セクション最大3件です。` : '例は各セクション最大3件。全件は下の差分レビューで確認できます。'
+  ].filter(Boolean).join(' ');
+  const renderHumanOverviewSection = (section: DiffHtmlHumanOverviewSection): string => {
+    const breakdown = [
+      section.added ? `追加 ${section.added}` : '',
+      section.removed ? `削除 ${section.removed}` : '',
+      section.changed ? `内容変更 ${section.changed}` : '',
+      section.moved ? `並び順変更 ${section.moved}` : ''
+    ].filter(Boolean).join(' / ') || '差分 0';
+    const examples = section.examples.length
+      ? `<ul class="diff-human-overview-examples">${section.examples.map((example) => `<li><span>${esc(example.label)}</span><small>${esc(example.kindLabel)}</small></li>`).join('')}</ul>`
+      : `<p class="diff-human-overview-empty-example">このセクションの例は収録されていません。</p>`;
+    const reviewButton = section.renderedDiffCount > 0
+      ? `<button type="button" class="diff-human-overview-link" data-overview-section="${esc(section.sectionKey)}" aria-controls="reportPaneDiff">このセクションの差分を見る →</button>`
+      : `<span class="diff-human-overview-link diff-human-overview-link--disabled">差分行はHTML収録上限のため省略されています</span>`;
+    return `<article class="diff-human-overview-card" data-overview-section-key="${esc(section.sectionKey)}"><div class="diff-human-overview-card-head"><h3>${esc(section.sectionLabel)}</h3><strong>${section.diffCount}件</strong></div><p class="diff-human-overview-breakdown">${esc(breakdown)}</p>${examples}${reviewButton}</article>`;
+  };
+  const visibleHumanOverviewSections = humanOverview.sections.slice(0, DIFF_HTML_HUMAN_OVERVIEW_SECTION_LIMIT);
+  const remainingHumanOverviewSections = humanOverview.sections.slice(DIFF_HTML_HUMAN_OVERVIEW_SECTION_LIMIT);
+  const humanOverviewSectionsHtml = visibleHumanOverviewSections.map(renderHumanOverviewSection).join('');
+  const humanOverviewOverflowHtml = remainingHumanOverviewSections.length
+    ? `<details class="diff-human-overview-more"><summary>残り ${remainingHumanOverviewSections.length}セクションを表示</summary><div class="diff-human-overview-grid">${remainingHumanOverviewSections.map(renderHumanOverviewSection).join('')}</div></details>`
+    : '';
+  const humanOverviewBodyHtml = humanOverviewSectionsHtml
+    ? `<div class="diff-human-overview-grid">${humanOverviewSectionsHtml}</div>${humanOverviewOverflowHtml}`
+    : `<div class="diff-human-overview-empty" data-overview-empty>${reportMeta.incompleteComparison
+      ? '確認できた範囲に差分行はありません。未取得・未検証の範囲があるため、一致とは判断できません。'
+      : reportMeta.exportMode !== 'all'
+        ? 'この出力範囲に差分行はありません。全比較結果の一致を意味するものではありません。'
+        : '選択した比較範囲に差分行はありません。'}</div>`;
   const formatAppDisplay = (meta: any) => {
     const id = String(meta?.appId || '-');
     const name = String(meta?.appName || '').trim();
@@ -6355,6 +6657,25 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     }
   }
 
+  function showReportSection(sectionKey) {
+    cancelScheduledReportSearch();
+    clearReportFilters('all');
+    sectionFilterValue = String(sectionKey || 'all');
+    typeFilterValue = 'all';
+    focusModeEnabled = false;
+    collapsed.clear();
+    const rawJson = document.getElementById('rawJson');
+    if (rawJson) rawJson.checked = false;
+    applyDisplayModeClasses();
+    setActiveTab('diff');
+    const workspace = document.getElementById('reportReview');
+    if (workspace) {
+      workspace.focus({ preventScroll: true });
+      workspace.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' });
+    }
+    requestAnimationFrame(() => document.getElementById('diffSectionSel')?.focus());
+  }
+
   function handleMainClick(e) {
     const mobileToolbarToggle = e.target.closest('[data-mobile-toolbar-toggle]');
     if (mobileToolbarToggle) {
@@ -6748,6 +7069,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   document.getElementById('main').addEventListener('click', handleMainClick);
   document.querySelectorAll('[data-report-kind]').forEach((button) => {
     button.onclick = () => showReportKind(button.getAttribute('data-report-kind'));
+  });
+  document.querySelectorAll('[data-overview-section]').forEach((button) => {
+    button.onclick = () => showReportSection(button.getAttribute('data-overview-section'));
   });
   const startPendingReviewBtn = document.getElementById('startPendingReviewBtn');
   if (startPendingReviewBtn) startPendingReviewBtn.onclick = jumpToFirstPendingReview;
@@ -7751,6 +8075,30 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .report-fact-grid span{align-self:center;color:var(--fg);font-size:12px;font-weight:750;line-height:1.5}
     .report-fact-grid strong{grid-row:1/3;grid-column:2;align-self:center;font-size:24px;font-variant-numeric:tabular-nums}
     .report-fact-grid small{color:var(--muted);font-size:11px;line-height:1.5}
+    .diff-human-overview{grid-column:1/-1;padding-top:13px;border-top:1px solid var(--border)}
+    .diff-human-overview-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:5px}
+    .diff-human-overview-head h2{margin:0;color:var(--fg);font-size:15px;line-height:1.5}
+    .diff-human-overview-note{margin:0 0 10px;color:var(--muted);font-size:11px;line-height:1.65}
+    .diff-human-overview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px}
+    .diff-human-overview-card{display:flex;min-width:0;flex-direction:column;gap:6px;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:0 8px 20px -24px rgba(15,37,63,.65)}
+    .diff-human-overview-card-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+    .diff-human-overview-card-head h3{min-width:0;margin:0;color:var(--fg);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+    .diff-human-overview-card-head strong{flex:0 0 auto;color:var(--fg);font-size:17px;font-variant-numeric:tabular-nums}
+    .diff-human-overview-breakdown{margin:0;color:var(--muted);font-size:10px;line-height:1.45}
+    .diff-human-overview-examples{display:grid;gap:3px;margin:0;padding:0;list-style:none}
+    .diff-human-overview-examples li{display:flex;min-width:0;align-items:baseline;justify-content:space-between;gap:8px;color:var(--fg);font-size:11px;line-height:1.45}
+    .diff-human-overview-examples li span{min-width:0;overflow-wrap:anywhere}
+    .diff-human-overview-examples li small{flex:0 0 auto;color:var(--muted);font-size:10px;white-space:nowrap}
+    .diff-human-overview-link{align-self:flex-start;margin-top:auto;padding:4px 0;border:0;background:none;color:var(--accent-strong);font:inherit;font-size:10px;font-weight:800;cursor:pointer;text-align:left}
+    .diff-human-overview-link:hover{text-decoration:underline}
+    .diff-human-overview-link:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+    .diff-human-overview-link--disabled{color:var(--muted);cursor:default}
+    .diff-human-overview-more{margin-top:8px}
+    .diff-human-overview-more>summary{display:inline-flex;align-items:center;min-height:34px;padding:4px 0;color:var(--accent-strong);font-size:11px;font-weight:800;cursor:pointer}
+    .diff-human-overview-more>summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+    .diff-human-overview-more>.diff-human-overview-grid{margin-top:4px}
+    .diff-human-overview-empty,.diff-human-overview-empty-example{margin:0;padding:10px 12px;border:1px dashed var(--border);border-radius:10px;color:var(--muted);font-size:11px;line-height:1.6}
+    .diff-human-overview-empty-example{padding:5px 0;border:0}
     .report-meta-line{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;line-height:1.5}
     .report-workspace{display:grid;grid-template-columns:minmax(248px,282px) minmax(0,1fr);align-items:start;gap:16px;margin-top:16px;margin-bottom:36px}
     .report-workspace>aside{position:sticky;top:12px;width:auto;min-width:0;height:calc(100vh - 24px);max-height:calc(100vh - 24px);border:1px solid var(--border);border-radius:16px;background:var(--sidebar);overflow:auto;box-shadow:none;backdrop-filter:none}
@@ -7832,6 +8180,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .review-queue-main{display:flex;flex-direction:column;align-items:stretch;gap:5px}
       .report-facts-head>p{margin-top:5px;text-align:left}
       .report-fact-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .diff-human-overview-grid{grid-template-columns:1fr}
+      .diff-human-overview-head{gap:9px}
       .val-inline--lanes,.duo-row,.fd-entry-grid,.sl-pair{grid-template-columns:1fr}
       .duo-head{display:none}
       .drow-head{grid-template-columns:1fr}
@@ -7868,7 +8218,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .review-queue-actions{grid-column:1}
     }
     @media (forced-colors:active){
-      .report-content-disclosure,.report-completeness,.report-review-start,.report-fact-grid .report-fact,.drow,.fact-chip{forced-color-adjust:auto;border:1px solid CanvasText}
+      .report-content-disclosure,.report-completeness,.report-review-start,.report-fact-grid .report-fact,.diff-human-overview-card,.diff-human-overview-empty,.drow,.fact-chip{forced-color-adjust:auto;border:1px solid CanvasText}
       .fact-chip::before{border:1px solid CanvasText;background:CanvasText}
       :focus-visible{outline:2px solid Highlight!important;outline-offset:2px;box-shadow:none!important}
     }
@@ -7879,7 +8229,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       body.dark .report-content-disclosure--caution{border-color:#e0a06b;border-left-color:#b45309;background:#fff7ed;color:#7c2d12}
       body.dark .report-completeness--incomplete{border-color:#f0c36a;background:#fffaf0}
       body.dark .report-completeness--complete{border-color:#9bc8ac;background:#f4fbf6}
-      aside,.sb-panel .btn,.settings-tabs,.search-hint,.diff-toolbar,.drow-actions,.review-queue-actions,.skip-link,.report-review-start{display:none!important}
+      aside,.sb-panel .btn,.settings-tabs,.search-hint,.diff-toolbar,.drow-actions,.review-queue-actions,.skip-link,.report-review-start,.diff-human-overview-link{display:none!important}
       body{display:block;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .report-hero,.report-workspace{width:100%;margin:0}
       .report-hero{display:block;padding:0 0 14px;border:none;background:#fff}
@@ -7895,7 +8245,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .report-diagnostics>.report-notices{display:flex!important}
       .drow-list{gap:6px;padding:6px;background:#fff}
       .sec-head{break-after:avoid}
-      .drow,.fj-block,.fc-card,.duo-wrap,.report-fact-grid .report-fact{break-inside:avoid}
+      .drow,.fj-block,.fc-card,.duo-wrap,.report-fact-grid .report-fact,.diff-human-overview-card{break-inside:avoid}
       details:not([open])>*:not(summary){display:block!important}
       details>summary{break-after:avoid}
       .drow,.fj-block,.fc-card{content-visibility:visible!important;contain-intrinsic-size:none!important}
@@ -7954,6 +8304,17 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       <div class="report-fact-grid">
         ${objectiveFactCardsHtml}
       </div>
+    </section>
+
+    <section class="diff-human-overview" data-diff-human-overview aria-labelledby="humanOverviewTitle">
+      <div class="diff-human-overview-head">
+        <div>
+          <span class="report-step-label">3 · 変更の要点</span>
+          <h2 id="humanOverviewTitle">セクション別の差分</h2>
+        </div>
+      </div>
+      <p class="diff-human-overview-note" data-overview-range>${esc(humanOverviewRangeNote)}</p>
+      ${humanOverviewBodyHtml}
     </section>
 
     <div class="report-meta-line">
@@ -8015,11 +8376,11 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
         <summary>件数の内訳</summary>
         <div class="sb-stat-grid">
           <div class="sb-stat"><span>表示中</span><b id="stat-total">${summary.total}</b></div>
-          <div class="sb-stat"><span>比較先のみ</span><b id="stat-added">${summary.added}</b></div>
-          <div class="sb-stat"><span>比較元のみ</span><b id="stat-removed">${summary.removed}</b></div>
+          <div class="sb-stat"><span>比較先のみ</span><b id="stat-added">${humanOverview.added}</b></div>
+          <div class="sb-stat"><span>比較元のみ</span><b id="stat-removed">${humanOverview.removed}</b></div>
           <div class="sb-stat"><span>内容差</span><b id="stat-changed">${objectiveContentChangedCount}</b></div>
-          <div class="sb-stat"><span>並び順差</span><b id="stat-moved">${summary.moved}</b></div>
-          <div class="sb-stat"><span>同じ</span><b id="stat-same">${summary.same}</b></div>
+          <div class="sb-stat"><span>並び順差</span><b id="stat-moved">${humanOverview.moved}</b></div>
+          <div class="sb-stat"><span>同じ</span><b id="stat-same">${humanOverview.same}</b></div>
           <div class="sb-stat"><span>確認済み</span><b id="stat-reviewed">0</b></div>
           <div class="sb-stat"><span>選択中</span><b id="stat-selected">0</b></div>
         </div>

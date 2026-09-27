@@ -1,6 +1,7 @@
 'use strict';
 
-import { TOOL_ID, EXTERNAL_LIBRARIES } from '../constants.js';
+import { TOOL_ID, EXTERNAL_LIBRARIES, SECTION_DEFS } from '../constants.js';
+import { buildDesignSnapshot } from '../design/snapshot.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { showToast, stripHtmlToText, extractAppNameFromBundle } from '../utils.js';
 
@@ -12,6 +13,18 @@ const SHEETLIB_FALLBACK_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xls
 let rememberedSheetSelection: Set<string> | null = null;
 
 type SheetDef = { key: string; label: string; default: boolean; required?: boolean; cat: string };
+
+/** Excel生成完了時に呼び出し元へ返す、取得状態の最小サマリー。 */
+export interface DesignExporterCompletionSummary {
+  source: 'live' | 'bundle';
+  complete: boolean;
+  incompleteSectionCount: number;
+  missingSectionCount: number;
+  fetchErrorSectionCount: number;
+  partialSectionCount: number;
+  supplementalMissingCount: number;
+  supplementalIncompleteCount: number;
+}
 
 const EXPORT_SHEET_DEFS: Array<SheetDef> = [
   { key: 'summary', label: 'サマリー', default: true, cat: 'basic' },
@@ -390,9 +403,27 @@ export async function runAdvancedDesignExporter(params: any = {}) {
   // params.bundle: 設定一括取得などで事前取得済みの設定バンドル（{appId, sections:{...}}）。
   // 指定された場合はライブAPIを一切呼ばず、バンドル内のセクションのみから設計書を生成する（オフライン生成）。
   const bundle: any = params.bundle || null;
-  const sourceAppId = Number(params.appId) || Number(bundle?.appId) || 0;
+  const sourceAppId = Number(bundle?.appId) || Number(params.appId) || 0;
   if (!sourceAppId) throw new Error('有効な比較元アプリIDまたは設定JSONが指定されませんでした。');
-  const sourceGuestId = String(params.guestId || '').trim();
+  // Imported settings are authoritative.  A caller may still pass the values
+  // for live mode, but must not be able to relabel an imported snapshot.
+  const hasBundleKey = (key: string): boolean => !!bundle && Object.prototype.hasOwnProperty.call(bundle, key);
+  const bundleGuestKnown = !bundle || hasBundleKey('guestId');
+  const bundlePreviewKnown = !bundle || (hasBundleKey('preview') && typeof bundle.preview === 'boolean');
+  const bundleFetchedAtKnown = !bundle || (hasBundleKey('fetchedAt') && String(bundle.fetchedAt || '').trim() !== '');
+  const sourceGuestId = bundle
+    ? (bundleGuestKnown ? String(bundle.guestId ?? '').trim() : '')
+    : String(params.guestId || '').trim();
+  const sourcePreview = bundle ? (bundlePreviewKnown ? bundle.preview === true : false) : !!params.preview;
+  const sourceFetchedAt = bundle
+    ? (bundleFetchedAtKnown ? String(bundle.fetchedAt).trim() : '不明（設定JSONに記載なし）')
+    : new Date().toISOString();
+  const sourceEnvironmentLabel = bundle && !bundlePreviewKnown
+    ? '不明（設定JSONに記載なし）'
+    : sourcePreview ? 'プレビュー' : '本番';
+  const sourceGuestLabel = bundle && !bundleGuestKnown
+    ? '不明（設定JSONに記載なし）'
+    : sourceGuestId || '通常空間';
   // 参照先アプリ名の解決用（同じ設定一括取得JSONに含まれる他アプリの名前を、API取得なしで引き当てる）
   const appNameLookup: Record<string, string> = params.appNameLookup || {};
   const preselectedSheets: Set<string> | null = params.preselectedSheets instanceof Set ? params.preselectedSheets : null;
@@ -400,6 +431,9 @@ export async function runAdvancedDesignExporter(params: any = {}) {
   const lightweightMode: boolean = !!params.lightweightMode;
   const progressLabel: string = params.progressLabel ? String(params.progressLabel) : '';
   const suppressToast: boolean = !!params.suppressToast;
+  const onComplete: ((summary: DesignExporterCompletionSummary) => void) | null = typeof params.onComplete === 'function'
+    ? params.onComplete
+    : null;
 
   const CONFIG = {
     SHEETLIB_PRIMARY_URL: 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js',
@@ -853,7 +887,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       scanFilterCond(r.filterCond, `グラフ「${name}」絞込`);
     });
 
-    (status?.actions || []).forEach((a: any) => scanFilterCond(a.filterCond, `プロセス遷移「${a.name || ''}」条件`));
+    UtilsX.ensureArray(status?.actions).forEach((a: any) => scanFilterCond(a.filterCond, `プロセス遷移「${a.name || ''}」条件`));
 
     const scanNotif = (payload: any, label: string) => {
       UtilsX.ensureArray(payload?.notifications).forEach((n: any, i: number) => {
@@ -900,6 +934,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     throw lastErr;
   }
 
+  const liveSections: Record<string, any> = {};
+
   // sectionKey を渡すと、bundle（オフライン設定JSON）が指定されている場合はライブAPIを呼ばず
   // bundle.sections[sectionKey] を返す（取得失敗 or セクション欠落なら null）。
   // sectionKey を渡さない項目（レコード件数・管理者メモ・Webhook・参照アプリ名など）は
@@ -908,11 +944,19 @@ export async function runAdvancedDesignExporter(params: any = {}) {
   async function fetchJob<T = any>(name: string, promiseFn: () => Promise<T>, sectionKey?: string): Promise<T | null> {
     if (bundle) {
       if (!sectionKey) return null;
-      const sec = (bundle.sections || {})[sectionKey];
+      const sections = bundle.sections || {};
+      if (!Object.prototype.hasOwnProperty.call(sections, sectionKey)) return null;
+      const sec = sections[sectionKey];
       return (sec && !sec._fetchError) ? (sec as T) : null;
     }
-    try { return await apiSemaphore.run(() => retry(promiseFn)); }
-    catch (e) { console.warn(`[${name}] Failed:`, e); UI.logError(name, e); return null; }
+    try {
+      const value = await apiSemaphore.run(() => retry(promiseFn));
+      if (sectionKey) liveSections[sectionKey] = value;
+      return value;
+    } catch (e) {
+      if (sectionKey) liveSections[sectionKey] = { _fetchError: e?.message || String(e) };
+      console.warn(`[${name}] Failed:`, e); UI.logError(name, e); return null;
+    }
   }
 
   try {
@@ -945,23 +989,27 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     const { styled } = await loadSheetLib();
 
     const api = (kintone.api as any);
-    const apiUrl = (path: any): string => {
-      let p = String(path || '');
-      if (sourceGuestId) {
-        p = p.replace('/k/v1/preview/', `/k/guest/${sourceGuestId}/v1/preview/`).replace('/k/v1/', `/k/guest/${sourceGuestId}/v1/`);
-      }
-      return kintone.api.url(p, true);
+    const apiUrl = (path: any, usePreview = sourcePreview): string => {
+      const raw = String(path || '');
+      const resource = raw.replace(/^\/k\/v1(?:\/preview)?/, '') || '/';
+      const prefix = sourceGuestId
+        ? `/k/guest/${sourceGuestId}/v1${usePreview ? '/preview' : ''}`
+        : `/k/v1${usePreview ? '/preview' : ''}`;
+      return kintone.api.url(`${prefix}${resource}`, true);
     };
+    const sectionUsesPreview = (sectionKey: string): boolean => {
+      const def = SECTION_DEFS.find((item) => item.key === sectionKey);
+      return sourcePreview && def?.previewEndpoint !== false;
+    };
+    const sectionApiUrl = (path: any, sectionKey: string): string => apiUrl(path, sectionUsesPreview(sectionKey));
 
     UI.update(bundle ? '基本情報を設定JSONから読込中...' : '基本情報を取得中...');
-    const appSettings = await fetchJob('App', () => api(apiUrl('/k/v1/app.json'), 'GET', { id: APP_ID }), 'appInfo');
-    const generalSettings = await fetchJob('Settings', () => api(apiUrl('/k/v1/app/settings.json'), 'GET', { app: APP_ID }), 'appSettings');
+    const appSettings = await fetchJob('App', () => api(sectionApiUrl('/k/v1/app.json', 'appInfo'), 'GET', { id: APP_ID }), 'appInfo');
+    const generalSettings = await fetchJob('Settings', () => api(sectionApiUrl('/k/v1/app/settings.json', 'appSettings'), 'GET', { app: APP_ID }), 'appSettings');
 
     UI.update(bundle ? 'フィールド・レイアウトを設定JSONから読込中...' : 'フィールド・レイアウトを取得中...');
-    let fieldResp = await fetchJob('FieldsPrev', () => api(apiUrl('/k/v1/preview/app/form/fields.json'), 'GET', { app: APP_ID }), 'fieldSettings');
-    if (!fieldResp) fieldResp = await fetchJob('FieldsProd', () => api(apiUrl('/k/v1/app/form/fields.json'), 'GET', { app: APP_ID }), 'fieldSettings');
-    let layout = await fetchJob('LayoutPrev', () => api(apiUrl('/k/v1/preview/app/form/layout.json'), 'GET', { app: APP_ID }), 'layoutSettings');
-    if (!layout) layout = await fetchJob('LayoutProd', () => api(apiUrl('/k/v1/app/form/layout.json'), 'GET', { app: APP_ID }), 'layoutSettings');
+    const fieldResp = await fetchJob('Fields', () => api(sectionApiUrl('/k/v1/app/form/fields.json', 'fieldSettings'), 'GET', { app: APP_ID }), 'fieldSettings');
+    const layout = await fetchJob('Layout', () => api(sectionApiUrl('/k/v1/app/form/layout.json', 'layoutSettings'), 'GET', { app: APP_ID }), 'layoutSettings');
 
     const fields = filterUserFields(fieldResp?.properties || ({} as any));
 
@@ -970,30 +1018,36 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     UI.update(bundle ? 'レコード件数: 設定JSONには含まれないためスキップします' : 'レコード件数を取得中...');
     let recordCount = null;
     try {
-      const countResp = await fetchJob('RecordCount', () => api(apiUrl('/k/v1/records.json'), 'GET', { app: APP_ID, query: 'limit 1', totalCount: true }));
-      recordCount = countResp?.totalCount ?? null;
+      const countResp = await fetchJob('RecordCount', () => api(apiUrl('/k/v1/records.json', false), 'GET', { app: APP_ID, query: 'limit 1', totalCount: true }));
+      const rawCount = countResp?.totalCount;
+      const numericCount = rawCount == null ? NaN : Number(rawCount);
+      recordCount = Number.isFinite(numericCount) && numericCount >= 0 ? numericCount : null;
     } catch (e) { /* ignore */ }
 
     UI.update(bundle ? '一覧・権限・通知設定を設定JSONから読込中...' : '一覧・権限・通知設定を取得中...');
-    const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif] = await Promise.all([
-      fetchJob('Views', () => api(apiUrl('/k/v1/app/views.json'), 'GET', { app: APP_ID }), 'viewSettings'),
-      fetchJob('Reports', () => api(apiUrl('/k/v1/app/reports.json'), 'GET', { app: APP_ID }), 'reportSettings'),
-      fetchJob('Status', () => api(apiUrl('/k/v1/app/status.json'), 'GET', { app: APP_ID }), 'processSettings'),
-      fetchJob('アプリ権限', () => api(apiUrl('/k/v1/app/acl.json'), 'GET', { app: APP_ID }), 'appAcl'),
-      fetchJob('レコード権限', () => api(apiUrl('/k/v1/record/acl.json'), 'GET', { app: APP_ID }), 'recordPermissions'),
-      fetchJob('フィールド権限', () => api(apiUrl('/k/v1/field/acl.json'), 'GET', { app: APP_ID }), 'fieldAcl'),
-      fetchJob('Customize', () => api(apiUrl('/k/v1/app/customize.json'), 'GET', { app: APP_ID }), 'customizeSettings'),
-      fetchJob('Actions', () => api(apiUrl('/k/v1/preview/app/actions.json'), 'GET', { app: APP_ID }), 'actionSettings'),
-      fetchJob('Plugins', () => api(apiUrl('/k/v1/app/plugins.json'), 'GET', { app: APP_ID }), 'pluginSettings'),
+    const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif, formSettings, categories] = await Promise.all([
+      fetchJob('Views', () => api(sectionApiUrl('/k/v1/app/views.json', 'viewSettings'), 'GET', { app: APP_ID }), 'viewSettings'),
+      fetchJob('Reports', () => api(sectionApiUrl('/k/v1/app/reports.json', 'reportSettings'), 'GET', { app: APP_ID }), 'reportSettings'),
+      fetchJob('Status', () => api(sectionApiUrl('/k/v1/app/status.json', 'processSettings'), 'GET', { app: APP_ID }), 'processSettings'),
+      fetchJob('アプリ権限', () => api(sectionApiUrl('/k/v1/app/acl.json', 'appAcl'), 'GET', { app: APP_ID }), 'appAcl'),
+      fetchJob('レコード権限', () => api(sectionApiUrl('/k/v1/record/acl.json', 'recordPermissions'), 'GET', { app: APP_ID }), 'recordPermissions'),
+      fetchJob('フィールド権限', () => api(sectionApiUrl('/k/v1/field/acl.json', 'fieldAcl'), 'GET', { app: APP_ID }), 'fieldAcl'),
+      fetchJob('Customize', () => api(sectionApiUrl('/k/v1/app/customize.json', 'customizeSettings'), 'GET', { app: APP_ID }), 'customizeSettings'),
+      fetchJob('Actions', () => api(sectionApiUrl('/k/v1/app/actions.json', 'actionSettings'), 'GET', { app: APP_ID }), 'actionSettings'),
+      fetchJob('Plugins', () => api(sectionApiUrl('/k/v1/app/plugins.json', 'pluginSettings'), 'GET', { app: APP_ID }), 'pluginSettings'),
       // 管理者メモ・Webhookは設定一括取得の対象外のため bundle モードでは常に取得不可
-      fetchJob('AdminNotes', () => api(apiUrl('/k/v1/app/adminNotes.json'), 'GET', { app: APP_ID })),
-      fetchJob('Webhooks', () => api(apiUrl('/k/v1/app/webhook.json'), 'GET', { app: APP_ID })),
-      fetchJob('GenNotif', () => api(apiUrl('/k/v1/app/notifications/general.json'), 'GET', { app: APP_ID }), 'notifications'),
-      fetchJob('RecNotif', () => api(apiUrl('/k/v1/app/notifications/perRecord.json'), 'GET', { app: APP_ID }), 'perRecordNotifications'),
-      fetchJob('RemNotif', () => api(apiUrl('/k/v1/app/notifications/reminder.json'), 'GET', { app: APP_ID }), 'reminderNotifications')
+      fetchJob('AdminNotes', () => api(apiUrl('/k/v1/app/adminNotes.json', false), 'GET', { app: APP_ID })),
+      fetchJob('Webhooks', () => api(apiUrl('/k/v1/app/webhook.json', false), 'GET', { app: APP_ID })),
+      fetchJob('GenNotif', () => api(sectionApiUrl('/k/v1/app/notifications/general.json', 'notifications'), 'GET', { app: APP_ID }), 'notifications'),
+      fetchJob('RecNotif', () => api(sectionApiUrl('/k/v1/app/notifications/perRecord.json', 'perRecordNotifications'), 'GET', { app: APP_ID }), 'perRecordNotifications'),
+      fetchJob('RemNotif', () => api(sectionApiUrl('/k/v1/app/notifications/reminder.json', 'reminderNotifications'), 'GET', { app: APP_ID }), 'reminderNotifications'),
+      fetchJob('FormSettings', () => api(sectionApiUrl('/k/v1/form.json', 'formSettings'), 'GET', { app: APP_ID }), 'formSettings'),
+      fetchJob('Categories', () => api(sectionApiUrl('/k/v1/app/categories.json', 'categories'), 'GET', { app: APP_ID }), 'categories')
     ]);
 
-    const actions = UtilsX.safeGet(actionsResp, 'actions', {});
+    // null は「取得できなかった」、空配列/空オブジェクトは「取得できたが0件」
+    // として後段の集計・取得状況シートでも区別する。
+    const actions = actionsResp == null ? null : UtilsX.safeGet(actionsResp, 'actions', null);
 
     UI.update('関連アプリ名を解決中...');
     const referencedAppIds = new Set<any>();
@@ -1005,33 +1059,95 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       scanField(f);
       if (f.type === 'SUBTABLE' && f.fields) (Object.values(f.fields) as any[]).forEach(scanField);
     });
-    (Object.values(actions) as any[]).forEach((a: any) => { if (a.destApp?.app) referencedAppIds.add(a.destApp.app); });
+    (Object.values(actions || {}) as any[]).forEach((a: any) => { if (a.destApp?.app) referencedAppIds.add(a.destApp.app); });
 
     const appNames: Record<string, string> = {};
     const refPromises = [...referencedAppIds].map((id: any) => {
       // 同じ設定一括取得JSONに参照先アプリの設定も含まれていれば、API取得なしで名前を解決できる
       const known = appNameLookup[String(id)];
       if (known) { appNames[id] = known; return Promise.resolve(); }
-      return fetchJob(`RefApp_${id}`, () => api(apiUrl('/k/v1/app.json'), 'GET', { id })).then((info: any) => { appNames[id] = info?.name || `(ID:${id})`; });
+      return fetchJob(`RefApp_${id}`, () => api(apiUrl('/k/v1/app.json', false), 'GET', { id })).then((info: any) => { appNames[id] = info?.name || `(ID:${id})`; });
     });
     await Promise.all(refPromises);
 
-    UI.update('Excelファイルを生成中...', 10);
+    const snapshotInput = bundle || {
+      appId: APP_ID,
+      guestId: sourceGuestId,
+      preview: sourcePreview,
+      fetchedAt: sourceFetchedAt,
+      sections: liveSections
+    };
+    const designSnapshot = buildDesignSnapshot(snapshotInput);
+    const snapshotSectionMap = new Map(designSnapshot.sections.map((row) => [row.key, row]));
+    const snapshotCounts = designSnapshot.counts || ({} as any);
+    const displayCount = (value: any): string => value == null ? '未取得' : String(value);
+    const statusLabel = (value: any): string => ({
+      available: '取得済み',
+      empty: '空（0件）',
+      missing: '未取得',
+      'fetch-error': '取得失敗',
+      partial: '部分取得'
+    } as any)[value] || '未取得';
+    const hasFailedAPI = (name: string): boolean => UI.failedAPIs.some((entry: any) => entry?.name === name);
+    const sectionRow = (key: string): any => snapshotSectionMap.get(key) || {
+      key,
+      label: SECTION_DEFS.find((def) => def.key === key)?.label || key,
+      status: 'missing',
+      count: null,
+      detail: '取得結果がありません'
+    };
 
-    const fieldCount = Object.keys(fields).length;
-    const viewCount = Object.keys(views?.views || ({} as any)).length;
-    const reportCount = Object.keys(reports?.reports || ({} as any)).length;
-    const processStateCount = Object.keys(status?.states || ({} as any)).length;
-    const processActionCount = (status?.actions || []).length;
-    const pluginCount = (pluginsResp?.plugins || []).length;
-    const webhookCount = (webhooksResp?.webhooks || []).length;
-    const appAclCount = (appAcl?.rights || []).length;
-    const recordAclCount = (recordAcl?.rights || []).length;
-    const fieldAclCount = (fieldAcl?.rights || []).length;
-    const customizeCount = (customize?.desktop?.js || []).length
-      + (customize?.desktop?.css || []).length
-      + (customize?.mobile?.js || []).length
-      + (customize?.mobile?.css || []).length;
+    // bundle 内の _fetchError も UI の失敗一覧へ引き継ぐ。設定JSONからの
+    // オフライン出力で失敗を隠さないための補完で、missing/empty は失敗扱いにしない。
+    designSnapshot.sections.filter((row) => row.status === 'fetch-error').forEach((row) => {
+      if (!UI.failedAPIs.some((entry: any) => entry?.name === row.label)) {
+        UI.failedAPIs.push({ name: row.label, error: row.detail });
+      }
+    });
+
+    const collectionCount = (value: any, key: string): number | null => {
+      if (value == null || typeof value !== 'object') return null;
+      if (!Object.prototype.hasOwnProperty.call(value, key)) return null;
+      const collection = value[key];
+      if (Array.isArray(collection)) return collection.length;
+      if (collection && typeof collection === 'object') return Object.keys(collection).length;
+      return null;
+    };
+    const processActionCount = status == null
+      ? null
+      : collectionCount(status, 'actions');
+    const actionCount = collectionCount(actionsResp, 'actions');
+    const fieldCount = snapshotCounts.total ?? null;
+    const subFieldTotal = snapshotCounts.subtableChildren ?? null;
+    const viewCount = collectionCount(views, 'views');
+    const reportCount = collectionCount(reports, 'reports');
+    const processStateCount = collectionCount(status, 'states');
+    const pluginCount = collectionCount(pluginsResp, 'plugins');
+    const webhookCount = Array.isArray(webhooksResp?.webhooks) ? webhooksResp.webhooks.length : null;
+    const appAclCount = collectionCount(appAcl, 'rights');
+    const recordAclCount = collectionCount(recordAcl, 'rights');
+    const fieldAclCount = collectionCount(fieldAcl, 'rights');
+    const permissionCount = [appAclCount, recordAclCount, fieldAclCount].every((value) => value != null)
+      ? (appAclCount as number) + (recordAclCount as number) + (fieldAclCount as number)
+      : null;
+    const notificationCount = (payload: any): number | null => collectionCount(payload, 'notifications');
+    const customizeCount = customize == null ? null : (() => {
+      let total = 0;
+      let known = false;
+      for (const area of ['desktop', 'mobile']) {
+        const zone = customize?.[area];
+        if (!zone || typeof zone !== 'object') continue;
+        for (const kind of ['js', 'css']) {
+          if (!Object.prototype.hasOwnProperty.call(zone, kind)) continue;
+          if (!Array.isArray(zone[kind])) return null;
+          known = true;
+          total += zone[kind].length;
+        }
+      }
+      return known ? total : null;
+    })();
+
+    UI.update('Excelファイルを生成中...', 10);
 
     const fieldGroupMap = buildFieldGroupMap(layout || ({} as any));
     const fieldUsageMap = buildFieldUsageMap({
@@ -1277,6 +1393,131 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       options: { headerRowIndex: title ? 1 : 0, titleRows: title ? [0] : [], freezeRows: 2 }
     });
 
+    // 取得元をシートごとに明示する。appInfo とレコード件数等はプレビュー
+    // APIで取得できないため、本番由来/設定JSON対象外であることを残す。
+    const snapshotSourceLabel = (key: string): string => {
+      const env = sourceEnvironmentLabel;
+      if (bundle) {
+        return key === 'appInfo'
+          ? `設定JSON（${env}）／アプリ情報は本番API由来`
+          : `設定JSON（${env}）`;
+      }
+      if (key === 'appInfo') return 'ライブAPI（本番／アプリ情報）';
+      if (['recordCount', 'webhook', 'adminNotes'].includes(key)) return 'ライブAPI（本番）';
+      return `ライブAPI（${env}）`;
+    };
+    const auxiliaryStatus = (key: string, value: any, apiName: string): any => {
+      if (bundle) {
+        return { key, label: key === 'recordCount' ? 'レコード件数' : key === 'webhook' ? 'Webhook' : '管理者メモ', status: 'missing', count: null, detail: '設定JSONの対象外（ライブAPI取得なし）' };
+      }
+      if (value == null) {
+        return {
+          key,
+          label: key === 'recordCount' ? 'レコード件数' : key === 'webhook' ? 'Webhook' : '管理者メモ',
+          status: hasFailedAPI(apiName) ? 'fetch-error' : 'missing',
+          count: null,
+          detail: hasFailedAPI(apiName) ? '取得失敗（詳細はAPI取得失敗レポート）' : '応答がありません'
+        };
+      }
+      if (key === 'recordCount') return { key, label: 'レコード件数', status: 'available', count: Number(value), detail: 'records.json の totalCount' };
+      if (key === 'webhook') {
+        const list = Array.isArray(value?.webhooks) ? value.webhooks : null;
+        return { key, label: 'Webhook', status: list && list.length ? 'available' : list ? 'empty' : 'partial', count: list ? list.length : null, detail: list ? `webhooks の要素数=${list.length}` : 'webhooks コレクションを確認できません' };
+      }
+      const content = value?.content ?? value?.note;
+      return { key, label: '管理者メモ', status: content ? 'available' : content === '' ? 'empty' : 'partial', count: content == null ? null : (content ? 1 : 0), detail: content == null ? 'content/note が応答にありません' : content ? 'メモ本文を取得済み' : 'メモ本文は空です' };
+    };
+
+    const displaySectionCount = (row: any, count: any, key: string): string => {
+      if (count != null) return String(count);
+      // オブジェクト本体は取得済みでも、標準的なコレクション件数を
+      // 定義できないセクション（アプリ情報など）は未取得と混同しない。
+      if (row.status === 'available' || row.status === 'empty') {
+        if (key !== 'fieldSettings') return '集計対象外';
+      }
+      return '未取得';
+    };
+
+    const auxiliaryStatusRows = [
+      auxiliaryStatus('recordCount', recordCount, 'RecordCount'),
+      auxiliaryStatus('webhook', webhooksResp, 'Webhooks'),
+      auxiliaryStatus('adminNotes', adminNotes, 'AdminNotes')
+    ];
+    const auxiliaryComplete = auxiliaryStatusRows.every((row) => row.status === 'available' || row.status === 'empty');
+    const acquisitionOverview = `基本設定${SECTION_DEFS.length}種：${designSnapshot.complete ? '完了' : '未完了'}／補足情報3種：${auxiliaryComplete ? '完了' : '未取得あり'}`;
+    const basicSectionRows = designSnapshot.sections.filter((row) => SECTION_DEFS.some((def) => def.key === row.key));
+    const incompleteSectionRows = basicSectionRows.filter((row) => !['available', 'empty'].includes(row.status));
+    const countSectionStatus = (rows: any[], status: string): number => rows.filter((row) => row.status === status).length;
+    const supplementalIncompleteCount = auxiliaryStatusRows.filter((row) => !['available', 'empty'].includes(row.status)).length;
+    const completionSummary: DesignExporterCompletionSummary = {
+      source: bundle ? 'bundle' : 'live',
+      complete: incompleteSectionRows.length === 0 && supplementalIncompleteCount === 0,
+      incompleteSectionCount: incompleteSectionRows.length,
+      missingSectionCount: countSectionStatus(basicSectionRows, 'missing'),
+      fetchErrorSectionCount: countSectionStatus(basicSectionRows, 'fetch-error'),
+      partialSectionCount: countSectionStatus(basicSectionRows, 'partial'),
+      supplementalMissingCount: countSectionStatus(auxiliaryStatusRows, 'missing'),
+      supplementalIncompleteCount
+    };
+    const notifyCompletion = (): void => {
+      if (!onComplete) return;
+      try {
+        onComplete(completionSummary);
+      } catch (error) {
+        // 完了コールバックのUIエラーで、生成済みExcelの完了処理を失敗させない。
+        console.warn('設計書Excel完了通知に失敗しました:', error);
+      }
+    };
+
+    // 取得状況は選択シートに依存せず常に出力する。空のコレクションの0件、
+    // 件数定義のない取得済みオブジェクト、未取得/失敗を表示上も区別する。
+    {
+      const statusAoa: any[][] = [
+        ['取得状況'],
+        ['アプリID', APP_ID],
+        ['取得環境', sourceEnvironmentLabel],
+        ['ゲストスペースID', sourceGuestLabel],
+        ['スナップショット取得日時', sourceFetchedAt],
+        ['全体状態', acquisitionOverview],
+        [],
+        ['セクション', '状態', '件数（定義/要素）', '詳細', '取得元']
+      ];
+      const statusRows: any[][] = [];
+      for (const def of SECTION_DEFS) {
+        const row = sectionRow(def.key);
+        let count = row.count;
+        let detail = row.detail;
+        if (def.key === 'fieldSettings') {
+          count = snapshotCounts.total;
+          const inner = [
+            `トップレベル=${displayCount(snapshotCounts.topLevel)}`,
+            `サブテーブル子=${displayCount(snapshotCounts.subtableChildren)}`,
+            `グループ=${displayCount(snapshotCounts.groups)}`,
+            `テーブル=${displayCount(snapshotCounts.tables)}`,
+            `システム項目=${displayCount(snapshotCounts.system)}（項目定義シートでは除外）`
+          ].join(' / ');
+          detail = [detail, inner].filter(Boolean).join(' / ');
+        }
+        statusRows.push([row.label, statusLabel(row.status), displaySectionCount(row, count, def.key), detail, snapshotSourceLabel(def.key)]);
+      }
+      auxiliaryStatusRows.forEach((row) => {
+        statusRows.push([row.label, statusLabel(row.status), displayCount(row.count), row.detail, snapshotSourceLabel(row.key)]);
+      });
+      statusAoa.push(...statusRows);
+      appendSheet('取得状況', {
+        aoa: statusAoa,
+        options: {
+          headerRowIndex: 7,
+          titleRows: [0],
+          headerInfoRows: [1, 2, 3, 4, 5],
+          emptyRows: [6],
+          freezeRows: 8,
+          centerCols: [1, 2]
+        },
+        pageSetup: { orientation: 'landscape', printTitleRows: 8 }
+      }, { description: '設定セクションの取得状態・環境・未取得理由', recordCount: statusRows.length });
+    }
+
     if (selectedSheets.has('summary')) {
       const sAoa = [];
       const sectionRows = [];
@@ -1284,7 +1525,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
       sAoa.push(['kintone アプリ設計書']);
       sAoa.push([appSettings?.name || `App ${APP_ID}`]);
-      sAoa.push([`App ID: ${APP_ID} / 出力日時: ${UtilsX.dt()} / ゲストスペース: ${sourceGuestId || '通常空間'}`]);
+      sAoa.push([`App ID: ${APP_ID} / 出力日時: ${UtilsX.dt()} / ゲストスペース: ${sourceGuestLabel}`]);
       sAoa.push([]);
 
       sAoa.push(['基本情報']); sectionRows.push(sAoa.length - 1);
@@ -1307,38 +1548,36 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
       sAoa.push(['設定統計']); sectionRows.push(sAoa.length - 1);
       sAoa.push(['項目', '件数']); headerInfoRows.push(sAoa.length - 1);
-      sAoa.push(['総レコード数', recordCount != null ? recordCount : '(取得不可)']);
-      sAoa.push(['フィールド数', fieldCount]);
-      let subFieldTotal = 0;
-      Object.values(fields).forEach((f) => {
-        if (f.type === 'SUBTABLE' && f.fields) subFieldTotal += Object.keys(f.fields).length;
-      });
-      sAoa.push(['サブテーブル内フィールド数', subFieldTotal]);
-      sAoa.push(['ビュー数', viewCount]);
-      sAoa.push(['グラフ数', reportCount]);
-      sAoa.push(['プロセス管理', status?.enable ? '有効' : '無効']);
-      sAoa.push(['ステータス数', processStateCount]);
-      sAoa.push(['アクション数(プロセス)', processActionCount]);
-      sAoa.push(['アクション数(レコード)', Object.keys(actions || ({} as any)).length]);
-      sAoa.push(['プラグイン数', pluginCount]);
-      sAoa.push(['Webhook数', webhookCount]);
-      sAoa.push(['通知(一般)件数', (genNotif?.notifications || []).length]);
-      sAoa.push(['通知(レコード)件数', (recNotif?.notifications || []).length]);
-      sAoa.push(['通知(リマインダー)件数', (remNotif?.notifications || []).length]);
-      sAoa.push(['アプリ権限エントリ数', appAclCount]);
-      sAoa.push(['レコード権限エントリ数', recordAclCount]);
-      sAoa.push(['フィールド権限エントリ数', fieldAclCount]);
-      sAoa.push(['JSカスタマイズ(PC)件数', (customize?.desktop?.js || []).length]);
-      sAoa.push(['CSSカスタマイズ(PC)件数', (customize?.desktop?.css || []).length]);
-      sAoa.push(['JSカスタマイズ(モバイル)件数', (customize?.mobile?.js || []).length]);
-      sAoa.push(['CSSカスタマイズ(モバイル)件数', (customize?.mobile?.css || []).length]);
+      sAoa.push(['総レコード数', displayCount(recordCount)]);
+      sAoa.push(['フィールド定義総数（システム含む）', displayCount(fieldCount)]);
+      sAoa.push(['トップレベル定義数', displayCount(snapshotCounts.topLevel)]);
+      sAoa.push(['サブテーブル内フィールド数', displayCount(subFieldTotal)]);
+      sAoa.push(['グループ定義数', displayCount(snapshotCounts.groups)]);
+      sAoa.push(['テーブル定義数', displayCount(snapshotCounts.tables)]);
+      sAoa.push(['システム項目数（項目定義シート除外）', displayCount(snapshotCounts.system)]);
+      sAoa.push(['ビュー数', displayCount(viewCount)]);
+      sAoa.push(['グラフ数', displayCount(reportCount)]);
+      sAoa.push(['プロセス管理', status == null ? '未取得/不明' : status.enable == null ? '未取得/不明' : status.enable ? '有効' : '無効']);
+      sAoa.push(['ステータス数', displayCount(processStateCount)]);
+      sAoa.push(['アクション数(プロセス)', displayCount(processActionCount)]);
+      sAoa.push(['アクション数(レコード)', displayCount(actionCount)]);
+      sAoa.push(['プラグイン数', displayCount(pluginCount)]);
+      sAoa.push(['Webhook数', displayCount(webhookCount)]);
+      sAoa.push(['通知(一般)件数', displayCount(notificationCount(genNotif))]);
+      sAoa.push(['通知(レコード)件数', displayCount(notificationCount(recNotif))]);
+      sAoa.push(['通知(リマインダー)件数', displayCount(notificationCount(remNotif))]);
+      sAoa.push(['アプリ権限エントリ数', displayCount(appAclCount)]);
+      sAoa.push(['レコード権限エントリ数', displayCount(recordAclCount)]);
+      sAoa.push(['フィールド権限エントリ数', displayCount(fieldAclCount)]);
+      sAoa.push(['JS/CSSカスタマイズ件数', displayCount(customizeCount)]);
+      sAoa.push(['取得状況', acquisitionOverview]);
       sAoa.push([]);
 
       sAoa.push(['フィールドタイプ別集計']); sectionRows.push(sAoa.length - 1);
       sAoa.push(['タイプ', '件数']); headerInfoRows.push(sAoa.length - 1);
       const typeCounts = new Map();
-      Object.values(fields).forEach((f) => {
-        const key = FIELD_TYPE[f.type] || f.type || '(不明)';
+      designSnapshot.fields.forEach((field) => {
+        const key = FIELD_TYPE[field.type] || field.type || '(不明)';
         typeCounts.set(key, (typeCounts.get(key) || 0) + 1);
       });
       [...typeCounts.entries()]
@@ -1349,13 +1588,14 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       sAoa.push(['項目属性サマリー']); sectionRows.push(sAoa.length - 1);
       sAoa.push(['属性', '件数']); headerInfoRows.push(sAoa.length - 1);
       const attrCounts = { required: 0, unique: 0, lookup: 0, calc: 0, reference: 0, subtable: 0, noLabel: 0, hasDefault: 0 };
-      Object.values(fields).forEach((f) => {
+      designSnapshot.fields.forEach((field) => {
+        const f = field.definition || {};
         if (f.required) attrCounts.required++;
         if (f.unique) attrCounts.unique++;
         if (f.lookup) attrCounts.lookup++;
         if (f.expression || f.formula) attrCounts.calc++;
         if (f.referenceTable) attrCounts.reference++;
-        if (f.type === 'SUBTABLE') attrCounts.subtable++;
+        if (field.type === 'SUBTABLE') attrCounts.subtable++;
         if (f.noLabel) attrCounts.noLabel++;
         if (f.defaultValue != null && f.defaultValue !== '' && !(Array.isArray(f.defaultValue) && f.defaultValue.length === 0)) attrCounts.hasDefault++;
       });
@@ -1373,8 +1613,10 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       sAoa.push(['観点', '確認内容']); headerInfoRows.push(sAoa.length - 1);
       sAoa.push(['参照関係', `ルックアップ ${attrCounts.lookup}件 / 関連レコード ${attrCounts.reference}件 / 計算式 ${attrCounts.calc}件`]);
       sAoa.push(['権限', `アプリ ${appAclCount}件 / レコード ${recordAclCount}件 / フィールド ${fieldAclCount}件`]);
-      sAoa.push(['カスタマイズ', `JS/CSS ${customizeCount}件 / プラグイン ${pluginCount}件 / Webhook ${webhookCount}件`]);
-      sAoa.push(['プロセス', status?.enable ? `有効: ステータス ${processStateCount}件 / アクション ${processActionCount}件` : '無効']);
+      sAoa.push(['カスタマイズ', `JS/CSS ${displayCount(customizeCount)}件 / プラグイン ${displayCount(pluginCount)}件 / Webhook ${displayCount(webhookCount)}件`]);
+      sAoa.push(['プロセス', status == null || status.enable == null
+        ? `未取得/不明: ステータス ${displayCount(processStateCount)}件 / アクション ${displayCount(processActionCount)}件`
+        : status.enable ? `有効: ステータス ${displayCount(processStateCount)}件 / アクション ${displayCount(processActionCount)}件` : '無効']);
       sAoa.push([]);
 
       sAoa.push(['出力情報']); sectionRows.push(sAoa.length - 1);
@@ -1383,6 +1625,13 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       try { sAoa.push(['出力者', (typeof kintone !== 'undefined' && kintone.getLoginUser && kintone.getLoginUser()?.name) || '-']); }
       catch { sAoa.push(['出力者', '-']); }
       sAoa.push(['エクスポーターVer', 'v2.1']);
+
+      if (incompleteSectionRows.length > 0) {
+        sAoa.push([]);
+        sAoa.push(['⚠ 取得状態レポート']); sectionRows.push(sAoa.length - 1);
+        sAoa.push(['セクション', '状態', '詳細']); headerInfoRows.push(sAoa.length - 1);
+        incompleteSectionRows.forEach((row) => sAoa.push([row.label, statusLabel(row.status), row.detail]));
+      }
 
       if (UI.failedAPIs && UI.failedAPIs.length > 0) {
         sAoa.push([]);
@@ -1461,6 +1710,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       const COL_COUNT = fieldHeaders.length;
       const fAoa = [['項目定義'], fieldHeaders];
       const specialCells = {};
+      const fieldDetailRows = new Map<string, number>();
+      const fieldIndexKey = (tableCode: any, code: any): string => `${String(tableCode || '')}\u0000${String(code || '')}`;
       const { subtableFieldOrder } = collectLayoutInfo(layout || ({} as any));
 
       const orderedItems = [];
@@ -1504,7 +1755,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
       let no = 1;
       const padRow = (arr) => { const r = arr.slice(); while (r.length < COL_COUNT) r.push(''); return r; };
-      const pushRow = (label: string, code: string, f: any, parentLabel: string, isSubtableField: boolean, groupLabelOverride?: string) => {
+      const pushRow = (label: string, code: string, f: any, parentLabel: string, isSubtableField: boolean, groupLabelOverride?: string, parentCode?: string) => {
         const typeJ = f?.lookup ? `ルックアップ(${FIELD_TYPE[f?.type] || f?.type})` : (FIELD_TYPE[f?.type] || f?.type || '');
 
         let optionsStr = '-';
@@ -1580,6 +1831,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         ];
         const rowIdx = fAoa.length;
         fAoa.push(rowData);
+        fieldDetailRows.set(fieldIndexKey(isSubtableField ? parentCode : '', code), rowIdx + 1);
 
         if (f.required) {
           specialCells[`${rowIdx},5`] = {
@@ -1599,13 +1851,15 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
       const pushGroupRow = (item, groupLabel) => {
         const rowIdx = fAoa.length;
+        const code = item.code || '';
         fAoa.push(padRow([
           no++,
           groupLabel || '-',
           item.label || item.code || '',
-          item.code || '-',
+          code || '-',
           FIELD_TYPE['GROUP'] || 'グループ'
         ]));
+        if (code) fieldDetailRows.set(fieldIndexKey('', code), rowIdx + 1);
         for (let c = 1; c <= 4; c++) {
           specialCells[`${rowIdx},${c}`] = {
             ...Sty.cell('left'),
@@ -1643,7 +1897,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         const f = fields[code];
         if (!f || f.type === 'GROUP') continue;
         if (isFieldTypeExcluded(f.type)) continue;
-        pushRow(f.label || '', code, f, null, false, entry.groupLabel);
+        pushRow(f.label || '', code, f, null, false, entry.groupLabel, '');
         if (f.type === 'SUBTABLE' && f.fields) {
           const subCodes = subtableFieldOrder.get(code) || Object.keys(f.fields);
           const visibleSubCodes = subCodes.filter((sc) => f.fields[sc] && !isFieldTypeExcluded(f.fields[sc].type));
@@ -1651,12 +1905,12 @@ export async function runAdvancedDesignExporter(params: any = {}) {
           fAoa.push(padRow([`▼ テーブル「${f.label || code}」(${visibleSubCodes.length}列)`]));
           sectionRowsFields.push(subHeaderRow);
           for (const sc of visibleSubCodes) {
-            pushRow(f.fields[sc].label || '', sc, f.fields[sc], f.label || code, true);
+            pushRow(f.fields[sc].label || '', sc, f.fields[sc], f.label || code, true, undefined, code);
           }
         }
       }
 
-      appendSheet('項目定義', {
+      const detailSheetName = appendSheet('項目定義', {
         aoa: fAoa,
         options: {
           headerRowIndex: 1, titleRows: [0], freezeRows: 2, freezeCols: 3,
@@ -1664,6 +1918,70 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         },
         pageSetup: { orientation: 'landscape', printTitleRows: 2 }
       }, { description: 'フィールド別詳細定義・制約・依存関係', recordCount: no - 1 });
+
+      // 詳細18列はそのまま残し、先に全フィールドを俯瞰できる短い索引を追加する。
+      // system/type exclusion の影響を受ける詳細行にはリンクを付けず、対象外理由を明記する。
+      const tableLabels = new Map<string, string>();
+      designSnapshot.fields.forEach((field) => {
+        if (field.type === 'SUBTABLE') tableLabels.set(field.code, field.label || field.code);
+      });
+      const indexHeaders = ['No.', '所属グループ', 'テーブル', '項目名', 'フィールドコード', '種別', '必須', '詳細'];
+      const indexRows = designSnapshot.fields.map((field, index) => {
+        const definition = field.definition || {};
+        const detailRow = fieldDetailRows.get(fieldIndexKey(field.tableCode || '', field.code));
+        return [
+          index + 1,
+          field.group || '-',
+          field.tableCode ? `${tableLabels.get(field.tableCode) || field.tableCode}（${field.tableCode}）` : '-',
+          field.label || field.code || '-',
+          field.code || '-',
+          FIELD_TYPE[field.type] || field.type || '不明',
+          definition.required == null ? '-' : UtilsX.formatBoolean(definition.required),
+          detailRow ? '詳細へ' : '詳細シート対象外'
+        ];
+      });
+      const indexSheetName = appendSheet('項目一覧', {
+        aoa: [['項目一覧（全フィールド索引）'], indexHeaders, ...indexRows],
+        options: {
+          headerRowIndex: 1,
+          titleRows: [0],
+          freezeRows: 2,
+          centerCols: [0, 6]
+        },
+        pageSetup: { orientation: 'landscape', printTitleRows: 2 }
+      }, { description: '全フィールドの簡易一覧（詳細シートへのリンク付き）', recordCount: indexRows.length });
+
+      if (indexSheetName && detailSheetName) {
+        const indexWs = wb.Sheets[indexSheetName];
+        designSnapshot.fields.forEach((field, index) => {
+          const detailRow = fieldDetailRows.get(fieldIndexKey(field.tableCode || '', field.code));
+          const addr = UtilsX.a1(index + 3, 8);
+          const cell = indexWs?.[addr];
+          if (!cell || !detailRow) return;
+          cell.l = {
+            Target: `#'${String(detailSheetName).replace(/'/g, "''")}'!A${detailRow}`,
+            Tooltip: '項目定義の詳細行へ移動'
+          };
+          cell.s = {
+            ...(cell.s || Sty.cell('left')),
+            font: { ...(cell.s?.font || Sty.baseFont()), color: { rgb: 'FF0563C1' }, underline: true }
+          };
+        });
+
+        // 俯瞰を詳細より前に並べ、目次にもこの順序で掲載する。
+        const indexWorkbookPos = wb.SheetNames.indexOf(indexSheetName);
+        const detailWorkbookPos = wb.SheetNames.indexOf(detailSheetName);
+        if (indexWorkbookPos > detailWorkbookPos) {
+          wb.SheetNames.splice(indexWorkbookPos, 1);
+          wb.SheetNames.splice(detailWorkbookPos, 0, indexSheetName);
+        }
+        const indexMetaPos = sheetMetadata.findIndex((meta: any) => meta.name === indexSheetName);
+        const detailMetaPos = sheetMetadata.findIndex((meta: any) => meta.name === detailSheetName);
+        if (indexMetaPos > detailMetaPos && detailMetaPos >= 0) {
+          const [indexMeta] = sheetMetadata.splice(indexMetaPos, 1);
+          sheetMetadata.splice(detailMetaPos, 0, indexMeta);
+        }
+      }
     }
 
     if (selectedSheets.has('layout') && Array.isArray(layout?.layout)) {
@@ -1819,6 +2137,28 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       appendSheet('グラフ', { ...buildSimpleAOA('グラフ', headers, rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } }, { description: 'グラフ/集計レポートの定義' });
     }
 
+    // 読み込んだ設定は、状態名がキーにのみある場合も name を持つ場合も扱う。
+    // from/to も単一文字列・配列の両方を許容し、表示と集計で同じ正規化を使う。
+    const processEndpointValues = (value: any): string[] => {
+      if (Array.isArray(value)) return value.reduce((all: string[], item: any) => all.concat(processEndpointValues(item)), []);
+      if (value == null) return [];
+      const text = String(value);
+      return text !== '' ? [text] : [];
+    };
+    const processEndpointLabel = (value: any): string => processEndpointValues(value).join(' / ') || '-';
+    const processStateEntries = (states: any): Array<{ key: string; state: any; name: string }> =>
+      (Object.entries(states && typeof states === 'object' ? states : {}) as Array<[string, any]>)
+        .sort(([, a], [, b]) => (Number(a?.index) || 0) - (Number(b?.index) || 0))
+        .map(([key, rawState]) => {
+          const state = rawState && typeof rawState === 'object' ? rawState : {};
+          const explicitName = String(state.name ?? '');
+          return { key, state, name: explicitName !== '' ? explicitName : key || '(名称不明)' };
+        });
+    const processActionTouchesState = (value: any, entry: { key: string; name: string }): boolean =>
+      processEndpointValues(value).some((endpoint) => endpoint === entry.name || endpoint === entry.key);
+    const processActions = Array.isArray(status?.actions) ? status.actions : [];
+    const processStateEntriesForOutput = processStateEntries(status?.states);
+
     if (selectedSheets.has('status') && status) {
       const pAoa = [['プロセス管理']];
       const pSectionRows = [];
@@ -1828,30 +2168,31 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       pAoa.push([]); pEmptyRows.push(pAoa.length - 1);
       pAoa.push(['■ 基本情報']); pSectionRows.push(pAoa.length - 1);
       pAoa.push(['項目', '値']); pHeaderInfoRows.push(pAoa.length - 1);
-      pAoa.push(['プロセス管理', status.enable ? '有効' : '無効']);
-      pAoa.push(['ステータス数', String(Object.keys(status.states || ({} as any)).length)]);
-      pAoa.push(['アクション(遷移)数', String((status.actions || []).length)]);
+      const hasProcessStates = status.states != null && typeof status.states === 'object';
+      const hasProcessActions = Array.isArray(status.actions) || (status.actions != null && typeof status.actions === 'object');
+      pAoa.push(['プロセス管理', status.enable == null ? '未取得/不明' : status.enable ? '有効' : '無効']);
+      pAoa.push(['ステータス数', hasProcessStates ? String(Object.keys(status.states).length) : '未取得']);
+      pAoa.push(['アクション(遷移)数', hasProcessActions ? String(Array.isArray(status.actions) ? status.actions.length : Object.keys(status.actions).length) : '未取得']);
       pAoa.push([]); pEmptyRows.push(pAoa.length - 1);
 
       pAoa.push(['■ ステータス一覧']); pSectionRows.push(pAoa.length - 1);
       pAoa.push(['順序', 'ステータス名', '作業者の選び方', '作業者候補', '入ってくる遷移数', '出て行く遷移数']); pHeaderInfoRows.push(pAoa.length - 1);
-      const stateEntries = (Object.entries(status.states || ({} as any)) as Array<[string, any]>)
-        .sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0));
-      stateEntries.forEach(([name, st]: [string, any]) => {
+      processStateEntriesForOutput.forEach((entry) => {
+        const { key, state: st, name } = entry;
         const asgnType = st.assignee?.type ? (ENUM_LOOKUP(ASSIGNEE_TYPE_LABEL, st.assignee.type) || st.assignee.type) : '-';
         const asgnList = Array.isArray(st.assignee?.entities)
           ? st.assignee.entities.map(UtilsX.formatEntityDetailed).join('\n')
           : '-';
-        const inCount = (status.actions || []).filter((a: any) => a.to === name).length;
-        const outCount = (status.actions || []).filter((a: any) => a.from === name).length;
-        pAoa.push([String(st.index || '-'), name, asgnType, asgnList, String(inCount), String(outCount)]);
+        const inCount = processActions.filter((a: any) => processActionTouchesState(a?.to, { key, name })).length;
+        const outCount = processActions.filter((a: any) => processActionTouchesState(a?.from, { key, name })).length;
+        pAoa.push([st.index == null ? '-' : String(st.index), name, asgnType, asgnList, String(inCount), String(outCount)]);
       });
       pAoa.push([]); pEmptyRows.push(pAoa.length - 1);
 
       pAoa.push(['■ アクション(遷移)一覧']); pSectionRows.push(pAoa.length - 1);
       pAoa.push(['No.', 'アクション名', '遷移元', '遷移先', '遷移条件']); pHeaderInfoRows.push(pAoa.length - 1);
-      (status.actions || []).forEach((a: any, i: number) => {
-        pAoa.push([String(i + 1), a.name || '-', a.from || '-', a.to || '-', UtilsX.formatFilterCond(a.filterCond)]);
+      processActions.forEach((a: any, i: number) => {
+        pAoa.push([String(i + 1), a.name || '-', processEndpointLabel(a?.from), processEndpointLabel(a?.to), UtilsX.formatFilterCond(a.filterCond)]);
       });
 
       appendSheet('プロセス管理', {
@@ -1870,15 +2211,16 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     }
 
     if (selectedSheets.has('statusMatrix') && status?.enable && status?.states && Array.isArray(status?.actions)) {
-      const stateNames = (Object.entries(status.states || ({} as any)) as Array<[string, any]>)
-        .sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0))
-        .map(([, s]: [string, any]) => s.name || '');
-      if (stateNames.length) {
+      const stateEntries = processStateEntriesForOutput;
+      if (stateEntries.length) {
+        const stateNames = stateEntries.map((entry) => entry.name);
         const mAoa = [['遷移マトリクス'], ['遷移元 \\ 遷移先', ...stateNames]];
-        for (const from of stateNames) {
-          const row = [from];
-          for (const to of stateNames) {
-            const matched = status.actions.filter((a: any) => a.from === from && a.to === to).map((a: any) => a.name || '●');
+        for (const from of stateEntries) {
+          const row = [from.name];
+          for (const to of stateEntries) {
+            const matched = processActions
+              .filter((a: any) => processActionTouchesState(a?.from, from) && processActionTouchesState(a?.to, to))
+              .map((a: any) => a.name || '●');
             row.push(matched.join('\n'));
           }
           mAoa.push(row);
@@ -2176,7 +2518,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         }
       });
 
-      (status?.actions || []).forEach((a: any) => {
+      UtilsX.ensureArray(status?.actions).forEach((a: any) => {
         if (a.filterCond) {
           const refs = Object.keys(fields).filter((c) => {
             const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
@@ -2201,7 +2543,17 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       scanNotifRefs(recNotif, '通知レコード');
       scanNotifRefs(remNotif, '通知リマインダー');
 
-      if (dAoa.length === 2) dAoa.push(['', '依存関係なし', '-', '-', '-', '-']);
+      if (dAoa.length === 2) {
+        const fieldState = sectionRow('fieldSettings');
+        const viewState = sectionRow('viewSettings');
+        const reportState = sectionRow('reportSettings');
+        const derivedStates = [fieldState, viewState, reportState];
+        const unavailable = derivedStates.filter((row) => !['available', 'empty'].includes(row.status));
+        const note = unavailable.length
+          ? `依存関係を判定できません（${unavailable.map((row) => `${row.label}: ${statusLabel(row.status)}`).join(' / ')}）`
+          : '取得できた範囲で依存関係なし';
+        dAoa.push(['', note, '-', '-', '-', '-']);
+      }
 
       appendSheet('フィールド依存関係', {
         aoa: dAoa,
@@ -2217,9 +2569,9 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       tocAoa.push([`App ID: ${APP_ID} / 出力: ${UtilsX.dt()} / 取得失敗: ${UI.failedAPIs.length}件`]);
       tocAoa.push([]);
       tocAoa.push(['キーメトリクス', '件数', 'キーメトリクス', '件数']);
-      tocAoa.push(['フィールド', String(fieldCount), 'ビュー', String(viewCount)]);
-      tocAoa.push(['プロセスステータス', String(processStateCount), 'プロセスアクション', String(processActionCount)]);
-      tocAoa.push(['権限エントリ', String(appAclCount + recordAclCount + fieldAclCount), 'JS/CSSカスタマイズ', String(customizeCount)]);
+      tocAoa.push(['フィールド定義（再帰）', displayCount(fieldCount), 'ビュー', displayCount(viewCount)]);
+      tocAoa.push(['プロセスステータス', displayCount(processStateCount), 'プロセスアクション', displayCount(processActionCount)]);
+      tocAoa.push(['権限エントリ', displayCount(permissionCount), 'JS/CSSカスタマイズ', displayCount(customizeCount)]);
       tocAoa.push([]);
       tocAoa.push(['No.', 'シート名', '内容', '件数']);
       sheetMetadata.forEach((m: any, i: number) => {
@@ -2286,12 +2638,14 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
     if (returnWorkbook) {
       // バッチ用: ダウンロードせず、ワークブックと付帯情報を返す。UI の表示制御は呼び出し元に委ねる。
+      notifyCompletion();
       return {
         wb,
         filename,
         appId: APP_ID,
         appName: appSettings?.name || `App${APP_ID}`,
-        failedAPIs: UI.failedAPIs.slice()
+        failedAPIs: UI.failedAPIs.slice(),
+        completionSummary
       };
     }
 
@@ -2307,6 +2661,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     downloadExcel(wb, filename);
 
     UI.hide();
+    notifyCompletion();
     if (!suppressToast) {
       const errorMsg = UI.failedAPIs.length > 0 ? `\n⚠ ${UI.failedAPIs.length}件のAPI取得に失敗しました` : '';
       showToast(`✅ エクスポート完了${errorMsg}`, UI.failedAPIs.length > 0 ? 'warn' : 'success');

@@ -10,7 +10,7 @@ const OUT = path.join(ROOT, '.iter-shots/lite-workflows');
 const esbuild = require(path.join(TOOL, 'node_modules/esbuild'));
 
 const MODULES = {
-  design: ['runDesignCopyMdStandalone', 'runDesignDiffMdStandalone', 'runDesignExportStandalone', 'runDesignExportXlsxStandalone', 'runBatchDesignExportXlsxZipStandalone'],
+  design: ['runDesignCopyAiMdStandalone', 'runDesignCopyMdStandalone', 'runDesignDiffMdStandalone', 'runDesignExportStandalone', 'runDesignExportXlsxStandalone', 'runBatchDesignExportXlsxZipStandalone'],
   'settings-export': ['runSettingsExportSearchStandalone', 'runSettingsExportStandalone', 'runSettingsExportListSpaceAppsStandalone'],
   er: ['runGenerateERDiagramStandalone', 'runExportERDiagramHtmlStandalone'],
   process: ['runRenderProcessFlowStandalone'],
@@ -248,6 +248,20 @@ async function main() {
           await page.getByRole('checkbox', {name:'プレビュー環境から取得（単一出力・2アプリ差分）',exact:true}).check();
           await button('内容を確認する').click();
           assert.match(await stage(1).innerText(), /#202 · 本番/);
+          await button('対象・条件を変更').click();
+          await page.getByRole('radio', {name:defaultAction,exact:true}).check();
+          await page.getByRole('radio', {name:'AI向けMarkdownを保存',exact:true}).check();
+          await button('内容を確認する').click();
+          const aiCallsBefore = await page.evaluate(() => window.__workflowFixture.calls.length);
+          await button('AI向けMarkdownを保存').click(); await idle();
+          assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), aiCallsBefore + 1, '設計書: AI向けMarkdown保存を実行する');
+          assert.equal(await page.evaluate(() => window.__workflowFixture.calls.at(-1).input), 'ai-md', '設計書: AI向けMarkdown形式を渡す');
+          await button('対象・条件を変更').click();
+          await page.getByRole('radio', {name:'AI向けMarkdownをコピー',exact:true}).check();
+          await button('内容を確認する').click();
+          const aiCopyCallsBefore = await page.evaluate(() => window.__workflowFixture.calls.length);
+          await button('AI向けMarkdownをコピー').click(); await idle();
+          assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), aiCopyCallsBefore + 1, '設計書: AI向けMarkdownコピーを実行する');
           await button('対象・条件を変更').click();
           await page.getByRole('radio', {name:defaultAction,exact:true}).check();
         }

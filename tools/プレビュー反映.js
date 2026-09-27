@@ -1295,6 +1295,14 @@ ${base}`
     }
   });
 
+  // src/design/snapshot.ts
+  var init_snapshot = __esm({
+    "src/design/snapshot.ts"() {
+      "use strict";
+      init_constants();
+    }
+  });
+
   // src/diff/export.ts
   var DIFF_HTML_REVIEW_STATE_MAX_BYTES;
   var init_export = __esm({
@@ -1310,6 +1318,7 @@ ${base}`
       init_category_view();
       init_path_decoder();
       init_export_safety();
+      init_snapshot();
       DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
     }
   });
@@ -1717,8 +1726,23 @@ ${base}`
 
   // src/settingsBundleImport.ts
   init_api();
-  function limitImportedBundleToSections(bundle, sections) {
-    if (!Array.isArray(sections) || !sections.length) return bundle;
+  function preserveImportedMetadata(bundle, raw, preserve) {
+    if (!preserve || !bundle || !raw || typeof raw !== "object") return bundle;
+    bundle.fetchedAt = Object.prototype.hasOwnProperty.call(raw, "fetchedAt") ? raw.fetchedAt : null;
+    if (Object.prototype.hasOwnProperty.call(raw, "guestId")) bundle.guestId = raw.guestId;
+    else delete bundle.guestId;
+    if (Object.prototype.hasOwnProperty.call(raw, "preview")) bundle.preview = raw.preview;
+    else delete bundle.preview;
+    if (raw.meta && typeof raw.meta === "object" && !Array.isArray(raw.meta)) {
+      bundle.meta = {
+        ...raw.meta,
+        sectionRevisions: bundle.meta?.sectionRevisions || {}
+      };
+    }
+    return bundle;
+  }
+  function limitImportedBundleToSections(bundle, sections, raw, preserveMetadata = false) {
+    if (!Array.isArray(sections) || !sections.length) return preserveImportedMetadata(bundle, raw, preserveMetadata);
     const sourceSections = bundle?.sections || {};
     const picked = pickBundleSections(bundle, sections);
     sections.forEach((sectionKey) => {
@@ -1727,7 +1751,7 @@ ${base}`
         _fetchError: "読み込んだ設定JSONに比較対象セクションが含まれていません"
       };
     });
-    return picked;
+    return preserveImportedMetadata(picked, raw, preserveMetadata);
   }
   function unwrapBundleCandidates(raw, side) {
     if (!raw || typeof raw !== "object") return [];
@@ -1743,23 +1767,23 @@ ${base}`
     const appId = String(options.appId || "").trim();
     const candidates = unwrapBundleCandidates(raw, side).map((item) => {
       try {
-        return ensureBundleShape(item, options.rawSettings);
+        return { bundle: ensureBundleShape(item, options.rawSettings), raw: item };
       } catch {
         return null;
       }
     }).filter(Boolean);
     if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
     if (appId) {
-      const matched = candidates.find((b) => String(b?.appId || "") === appId);
-      if (matched) return limitImportedBundleToSections(matched, options.sections);
+      const matched = candidates.find((entry) => String(entry?.bundle?.appId || "") === appId);
+      if (matched) return limitImportedBundleToSections(matched.bundle, options.sections, matched.raw, !!options.preserveMetadata);
       throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
     }
-    return limitImportedBundleToSections(candidates[0], options.sections);
+    return limitImportedBundleToSections(candidates[0].bundle, options.sections, candidates[0].raw, !!options.preserveMetadata);
   }
-  function pickAllSettingsBundles(raw, side, rawSettings = false) {
+  function pickAllSettingsBundles(raw, side, rawSettings = false, preserveMetadata = false) {
     const candidates = unwrapBundleCandidates(raw, side).map((item) => {
       try {
-        return ensureBundleShape(item, rawSettings);
+        return preserveImportedMetadata(ensureBundleShape(item, rawSettings), item, preserveMetadata);
       } catch {
         return null;
       }

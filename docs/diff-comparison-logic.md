@@ -2,10 +2,10 @@
 
 この資料は、`kintone-lite-suite` の `tools/差分比較.js` が、2つの kintone アプリ設定をどのように取得し、対応付け、差分として判定するかを説明します。
 
-- 対象: 公開中の Lite 版差分比較パネル、そこから生成する HTML / Excel
+- 対象: 公開中の Lite 版差分比較パネル、そこから生成する HTML / Excel / AI向けMarkdown
 - 想定読者: 差分をレビューする人、運用担当者、比較ロジックを保守する開発者
 - 正規実装: [`engine.ts`](../tools/統合ツール/src/diff/engine.ts)、[`diff-standalone.ts`](../tools/統合ツール/src/tabs/diff-standalone.ts)
-- 更新日: 2026-09-08
+- 更新日: 2026-09-26
 
 ## 1. 先に読む結論
 
@@ -62,6 +62,7 @@ flowchart LR
     J --> K[画面表示]
     J --> L[自己完結HTML]
     J --> M[Excel]
+    J --> N[AI向けMarkdown]
 ```
 
 処理順が重要です。正規化と無視ルールは表示だけのフィルターではなく、差分計算そのものへ適用されます。条件を変えた場合は再比較が必要です。
@@ -321,7 +322,7 @@ LCSの表サイズは `比較元の要素数 × 比較先の要素数` で、上
 
 どの方式でも差分の取りこぼしは起きません。下がるのは左右の対応付けの精度で、1件の変更が追加と削除に分かれて見えることがあります。そのため、この注意は10章の完全性（取得失敗・一部未検証・件数上限）には含めず、比較結果を「要確認」にもしません。
 
-Lite版は、完了メッセージに「対応付けの注意 N件」を加え、結果の概要に対象セクション・パス・理由を先頭5件まで表示します。1対多比較は結果表の取得状況の列、ペア一括比較は確認事項の列に件数を表示します。HTMLレポートとExcelには、現時点では掲載しません。
+Lite版は、完了メッセージに「対応付けの注意 N件」を加え、結果の概要に対象セクション・パス・理由を先頭5件まで表示します。1対多比較は結果表の取得状況の列、ペア一括比較は確認事項の列に件数を表示します。HTMLレポートとExcelには従来掲載していませんが、AI向けMarkdownには `matchingNotice` 件数と、収録された注意のセクション・パス・理由を記録します。
 
 ## 9. セクション固有の補正
 
@@ -431,7 +432,7 @@ Lite版は、完了メッセージに「対応付けの注意 N件」を加え�
 
 比較はAPI負荷と結果順を安定させるため1件ずつ実行します。途中のペアが失敗しても、その行を結果表へ残して後続ペアを続けます。API取得モードでは、ある接続先が別ペアの反対側に再登場した場合、App ID、ゲストスペースID、運用／プレビューがすべて一致するときだけ、その一括実行中に取得したバンドルを再利用します。一括実行をやり直すと取得キャッシュも作り直します。フォルダ取込モードではこの共有キャッシュを使用しません。
 
-結果表は比較元、比較先、両側の環境、状態、差分内訳、取得不完全情報を登録順に表示します。成功した各行からHTMLまたはExcelを個別保存できます。ブラウザの複数ダウンロード確認とファイル散乱を避けるため、ペア一括比較ではHTMLを自動保存しません。
+結果表は比較元、比較先、両側の環境、状態、差分内訳、取得不完全情報を登録順に表示します。成功した各行からHTML、Excel、AI向けMarkdownを個別保存できます。ブラウザの複数ダウンロード確認とファイル散乱を避けるため、ペア一括比較ではHTMLを自動保存しません。
 
 ### 11.3 Excelの一括保存
 
@@ -462,7 +463,7 @@ Lite版は、完了メッセージに「対応付けの注意 N件」を加え�
 
 結果行の「次回から除外」は、現在の結果を消しません。完全パスを比較条件へ追加し、再比較後に反映します。
 
-## 13. HTMLとExcelの違い
+## 13. HTML、Excel、AI向けMarkdownの違い
 
 ### 13.1 HTML
 
@@ -478,6 +479,8 @@ Lite版は、完了メッセージに「対応付けの注意 N件」を加え�
 JS/CSS・プラグインの同一行は、値を重複収録する必要がないため伏せ字にします。変更値は伏せません。
 
 概要には比較元・比較先のアプリと取得環境を表示します。件数カードを選ぶと、検索・セクション・追加の表示条件を解除し、その種別の収録行へ移動します。比較時に適用した無視・正規化条件と確認済み状態は維持します。比較対象・生成日時・出力範囲は「比較対象・出力条件」から確認できます。
+
+HTMLの「変更の要点」は、実差分をセクション別にまとめ、各セクションの総数と追加・削除・内容変更・並び順変更の内訳、収録された代表例を示します。代表例は各セクション最大3件です。セクションが多い場合は残りを開示でき、各カードの「このセクションの差分を見る」から対応する差分行へ移動できます。件数は設定・プロパティの差分行であり、フィールド数やアプリ数ではありません。HTML収録上限や不完全な比較がある場合は、その範囲を要点にも明示します。
 
 0件の表示は、完全な全件比較、絞り込んだ範囲の出力、不完全な比較を区別します。全比較結果の一致を示すのは、完全な全件比較の0件だけです。
 
@@ -523,7 +526,16 @@ Excelは重要度、業務への影響、対応要否を自動判定せず、レ
 
 Lite版Excelは同一行を収録せず、表示専用の参考行も `API_03_フォームフィールド` のテーブル子行に限定します。変更されたJS/CSS・プラグイン・権限・通知を含む差分値は加工せず収録するため、共有前に内容を確認してください。
 
-### 13.3 反映JSONの方向
+### 13.3 AI向けMarkdown
+
+AI向けMarkdownは、機械処理しやすい固定見出しと、比較方向・完全性・条件・件数を先頭に置く差分事実の受け渡し用です。全設定スナップショットは収録せず、各実差分の `BEFORE` / `AFTER` 値を型付きJSONとして収録します。`added` / `removed` は片側を `missing` として表し、`changed` / `moved` は両側の値を残します。入力データに含まれる文章は命令として扱わない注意書きも先頭に入ります。
+
+- 単一比較は出力範囲を「全件」または画面のフィルター後として保存します。フィルター出力には選択範囲の件数と比較結果全体の件数を併記し、全体の値の明細は重複収録しません。該当行が0件でも、比較全体に差分があるか、またはこの出力だけでは判断できないかを `conclusion` と `selectedRealDiffs` で区別します
+- 取得失敗、本文未検証、実差分の走査上限、配列・エンティティ対応付けの注意をメタデータと注意事項へ残します。`comparisonComplete: false` の出力は差分0件でも一致を意味しません
+- 1対多比較とペア一括比較は、成功した各比較先・各ペアの行から個別Markdownを保存できます。ペア一括では比較元を `BEFORE`、比較先を `AFTER` として固定し、不完全な成功結果も完全性フラグ付きで保存します。フォルダ由来のペアも左右のローカルスナップショットを混ぜずに同じ形式で保存します
+- Markdownに含まれる差分値、JS/CSS本文、プラグイン設定などは比較対象のデータです。共有先と保管場所を確認し、含まれる文章を命令として実行しないでください
+
+### 13.4 反映JSONの方向
 
 `withCompared` のHTMLから作る反映JSONは、**比較元の設定値を比較先アプリへ送る**APIパラメータです。HTML自体はAPIを実行せず、JSONを保存・コピーするだけです。
 
@@ -628,8 +640,9 @@ from/to参照: 仮想補正して連鎖差分を抑制
 | 人向け補足、改名候補、関連設定 | [`enrich.ts`](../tools/統合ツール/src/diff/enrich.ts) | [`enrich.test.ts`](../tools/統合ツール/tests/diff/enrich.test.ts) |
 | Lite実行API、完全性集約 | [`diff-standalone.ts`](../tools/統合ツール/src/tabs/diff-standalone.ts) | [`standalone.test.ts`](../tools/統合ツール/tests/diff/standalone.test.ts) |
 | Liteパネル、複数比較、画面出力 | [`diff-lite-ui.ts`](../tools/統合ツール/src/entries/diff-lite-ui.ts) | [`lite-ui.test.ts`](../tools/統合ツール/tests/diff/lite-ui.test.ts) |
-| 自己完結HTML、レビュー状態、反映JSON | [`export.ts`](../tools/統合ツール/src/diff/export.ts) | [`html-export.test.ts`](../tools/統合ツール/tests/diff/html-export.test.ts) |
+| 人向け自己完結HTML、変更の要点、レビュー状態、反映JSON | [`export.ts`](../tools/統合ツール/src/diff/export.ts) | [`html-export.test.ts`](../tools/統合ツール/tests/diff/html-export.test.ts) |
 | Excel | [`xlsx-export.ts`](../tools/統合ツール/src/diff/xlsx-export.ts) | [`xlsx-export.test.ts`](../tools/統合ツール/tests/diff/xlsx-export.test.ts) |
+| AI向けMarkdown | [`markdown-export.ts`](../tools/統合ツール/src/diff/markdown-export.ts)、[`diff-lite-ui.ts`](../tools/統合ツール/src/entries/diff-lite-ui.ts) | [`markdown-export.test.ts`](../tools/統合ツール/tests/diff/markdown-export.test.ts)、[`run-diff-lite-compare.cjs`](../tools/test-harness/run-diff-lite-compare.cjs)、[`run-diff-lite-multi-dom.cjs`](../tools/test-harness/run-diff-lite-multi-dom.cjs)、[`run-diff-lite-pairs-dom.cjs`](../tools/test-harness/run-diff-lite-pairs-dom.cjs)、[`run-diff-lite-pair-folders-dom.cjs`](../tools/test-harness/run-diff-lite-pair-folders-dom.cjs) |
 | 比較条件プロファイル | [`comparison-profile.ts`](../tools/統合ツール/src/diff/comparison-profile.ts) | [`comparison-profile.test.ts`](../tools/統合ツール/tests/diff/comparison-profile.test.ts) |
 
 ### IDの区別
@@ -661,6 +674,7 @@ from/to参照: 仮想補正して連鎖差分を抑制
 | 関連している設定 | 既知の参照表現を走査して見つけた候補。影響や因果の判定ではない |
 | `diffOnly` | 全設定スナップショットを収録しないHTMLモード。差分値は残る |
 | `withCompared` | 選択セクションの設定も収録するHTMLモード |
+| AI向けMarkdown | 比較方向、完全性、条件、型付きの変更前後値を固定見出しで収録する差分事実の出力 |
 | 比較条件プロファイル | scope、無視、正規化、表示条件だけを保存するJSON。App IDや設定値は含まない |
 
 ## 18. 回帰確認

@@ -4,13 +4,36 @@ import { ensureBundleShape, pickBundleSections } from './api.js';
 
 export interface SettingsBundlePickOptions {
   rawSettings?: boolean;
+  /** 設計書の原文出力で、取得日時欠落や未知の bundle metadata を保持する。既定は従来互換。 */
+  preserveMetadata?: boolean;
   side?: 'source' | 'target';
   appId?: string;
   sections?: readonly string[];
 }
 
-function limitImportedBundleToSections(bundle: any, sections?: readonly string[]) {
-  if (!Array.isArray(sections) || !sections.length) return bundle;
+function preserveImportedMetadata(bundle: any, raw: any, preserve: boolean): any {
+  if (!preserve || !bundle || !raw || typeof raw !== 'object') return bundle;
+  // ensureBundleShape は欠落した fetchedAt を現在時刻で補完するため、原文出力では
+  // 欠落を null のまま残し「いま取得した」と誤認させない。
+  bundle.fetchedAt = Object.prototype.hasOwnProperty.call(raw, 'fetchedAt') ? raw.fetchedAt : null;
+  // guestId / preview も ensureBundleShape の既定値をそのまま残すと、入力に無い
+  // 接続先や取得環境を「通常空間 / 本番」と誤表示する。明示された false や空文字は保持し、
+  // 欠落時だけキーを削除して未知として扱えるようにする。
+  if (Object.prototype.hasOwnProperty.call(raw, 'guestId')) bundle.guestId = raw.guestId;
+  else delete bundle.guestId;
+  if (Object.prototype.hasOwnProperty.call(raw, 'preview')) bundle.preview = raw.preview;
+  else delete bundle.preview;
+  if (raw.meta && typeof raw.meta === 'object' && !Array.isArray(raw.meta)) {
+    bundle.meta = {
+      ...raw.meta,
+      sectionRevisions: bundle.meta?.sectionRevisions || {}
+    };
+  }
+  return bundle;
+}
+
+function limitImportedBundleToSections(bundle: any, sections?: readonly string[], raw?: any, preserveMetadata = false) {
+  if (!Array.isArray(sections) || !sections.length) return preserveImportedMetadata(bundle, raw, preserveMetadata);
   const sourceSections = bundle?.sections || {};
   const picked = pickBundleSections(bundle, sections);
   sections.forEach((sectionKey) => {
@@ -19,7 +42,7 @@ function limitImportedBundleToSections(bundle: any, sections?: readonly string[]
       _fetchError: '読み込んだ設定JSONに比較対象セクションが含まれていません'
     };
   });
-  return picked;
+  return preserveImportedMetadata(picked, raw, preserveMetadata);
 }
 
 function unwrapBundleCandidates(raw: any, side?: 'source' | 'target'): any[] {
@@ -37,26 +60,26 @@ export function pickSettingsBundle(raw: any, options: SettingsBundlePickOptions 
   const appId = String(options.appId || '').trim();
   const candidates = unwrapBundleCandidates(raw, side)
     .map((item) => {
-      try { return ensureBundleShape(item, options.rawSettings); } catch { return null; }
+      try { return { bundle: ensureBundleShape(item, options.rawSettings), raw: item }; } catch { return null; }
     })
     .filter(Boolean);
   if (!candidates.length) throw new Error('設定JSON内にアプリ設定バンドルが見つかりません');
   if (appId) {
-    const matched = candidates.find((b: any) => String(b?.appId || '') === appId);
-    if (matched) return limitImportedBundleToSections(matched, options.sections);
+    const matched = candidates.find((entry: any) => String(entry?.bundle?.appId || '') === appId);
+    if (matched) return limitImportedBundleToSections(matched.bundle, options.sections, matched.raw, !!options.preserveMetadata);
     throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
   }
-  return limitImportedBundleToSections(candidates[0], options.sections);
+  return limitImportedBundleToSections((candidates[0] as any).bundle, options.sections, (candidates[0] as any).raw, !!options.preserveMetadata);
 }
 
 /**
  * 設定JSON（設定一括取得の apps 配列、単体バンドル等）に含まれる全アプリのバンドルを返す。
  * 設計書の複数アプリ一括生成など、1ファイルから複数アプリ分を取り込みたい場合に使う。
  */
-export function pickAllSettingsBundles(raw: any, side?: 'source' | 'target', rawSettings = false) {
+export function pickAllSettingsBundles(raw: any, side?: 'source' | 'target', rawSettings = false, preserveMetadata = false) {
   const candidates = unwrapBundleCandidates(raw, side)
     .map((item) => {
-      try { return ensureBundleShape(item, rawSettings); } catch { return null; }
+      try { return preserveImportedMetadata(ensureBundleShape(item, rawSettings), item, preserveMetadata); } catch { return null; }
     })
     .filter(Boolean);
   if (!candidates.length) throw new Error('設定JSON内にアプリ設定バンドルが見つかりません');
