@@ -4,6 +4,7 @@ import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './l
 
 import { DEFAULT_APP_ID } from '../constants.js';
 import {
+  runDesignCopyAiMdStandalone,
   runDesignCopyMdStandalone,
   runDesignDiffMdStandalone,
   runDesignExportStandalone,
@@ -31,9 +32,9 @@ export function mountDesignLitePanel() {
   const panel = createLitePanel({
     id: 'kus-design-lite',
     title: '設計書',
-    subtitle: 'アプリ設定を取得し、Markdown / JSON / Excel で設計書を出力します。',
+    subtitle: 'アプリ設定を取得し、Excel（人向け）または AI向けMarkdown（AIへの受け渡し用）で設計書を出力します。',
     accent: 'design',
-    badges: [{ label: 'Lite' }, { label: '4 形式出力' }],
+    badges: [{ label: 'Lite' }, { label: '5 形式出力' }],
     hint: '対象アプリ表に 1 行入力すれば 1 アプリ出力、複数行で ZIP 一括出力。<strong>アプリごとに別ゲストスペース</strong>も指定できます。'
   });
 
@@ -59,7 +60,7 @@ export function mountDesignLitePanel() {
   cardTarget.body.appendChild(appTable.element);
   const prev = makeCheck({ label: 'プレビュー環境から取得（単一出力・2アプリ差分）' });
   cardTarget.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
-  cardTarget.body.appendChild(makeNote('単一出力（Markdown / JSON / Excel / コピー）は1行目のアプリが対象です。ZIP 一括出力は表の全行を対象にします。各行「↑コピー」で上の行を複製できます。'));
+  cardTarget.body.appendChild(makeNote('単一出力（Excel / Markdown / JSON / AI向けMarkdown / コピー）は1行目のアプリが対象です。Excelは人向け確認用、AI向けMarkdownはAIへの受け渡し用です。ZIP 一括出力は表の全行を対象にします。各行「↑コピー」で上の行を複製できます。'));
   panel.body.insertBefore(cardTarget.card, panel.status);
 
   // ---- 設定JSON読込（任意）：設定一括取得の出力（apps 配列）を取り込んで、API取得なしで設計書を作る ----
@@ -86,7 +87,9 @@ export function mountDesignLitePanel() {
     const file = importFile.files?.[0];
     if (!file) return;
     const text = await file.text();
-    const bundles = pickAllSettingsBundles(JSON.parse(text));
+    // AI向けMarkdownでは入力JSONの型・空値・未知キーを原文として扱うため、
+    // 読み込み時に normalize して情報を失わない。
+    const bundles = pickAllSettingsBundles(JSON.parse(text), undefined, true, true);
     let added = 0;
     for (const b of bundles) {
       const appId = String(b?.appId || '').trim();
@@ -122,24 +125,34 @@ export function mountDesignLitePanel() {
   const grid = document.createElement('div');
   grid.className = 'kus-lp__btn-grid';
   const bMd = makeButton('Markdown 保存', 'primary', { icon: '↓' });
+  const bAiMd = makeButton('AI向けMarkdown 保存', 'primary', { icon: '↓' });
   const bJson = makeButton('JSON 保存', 'ghost', { icon: '↓' });
   const bCopy = makeButton('Markdown クリップボード', 'sub', { icon: '⎘' });
+  const bAiCopy = makeButton('AI向けMarkdown コピー', 'sub', { icon: '⎘' });
   const bXlsx = makeButton('Excel (.xlsx) 保存', 'primary', { icon: '↓' });
   grid.appendChild(bMd);
+  grid.appendChild(bAiMd);
   grid.appendChild(bXlsx);
   grid.appendChild(bJson);
   grid.appendChild(bCopy);
+  grid.appendChild(bAiCopy);
   cardOut.body.appendChild(grid);
   panel.body.insertBefore(cardOut.card, panel.status);
 
   bMd.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, '設計書 Markdown 生成中…', async () => {
     await runDesignExportStandalone('md', source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }); });
+  bAiMd.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, 'AI向けMarkdown 生成中…', async () => {
+    await runDesignExportStandalone('ai-md', { ...source(), rawSettings: true }, (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
+  }); });
   bJson.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, '設計書 JSON 生成中…', async () => {
     await runDesignExportStandalone('json', source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }); });
   bCopy.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, 'Markdown コピー中…', async () => {
     await runDesignCopyMdStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
+  }); });
+  bAiCopy.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, 'AI向けMarkdown コピー中…', async () => {
+    await runDesignCopyAiMdStandalone({ ...source(), rawSettings: true }, (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }); });
   bXlsx.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, 'Excel 生成中…', async () => {
     await runDesignExportXlsxStandalone({ ...source(), appNameLookup: appNameLookup() }, (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
@@ -198,6 +211,8 @@ export function mountDesignLitePanel() {
       { id: 'xlsx', label: 'Excel設計書を保存', description: '1行目のアプリをExcelの設計書にします。', button: bXlsx, validate: firstTargetRequired, summary: () => singleSummary('Excel (.xlsx)') },
       { id: 'zip', label: '全対象をExcel ZIPで保存', description: '本番の設定または読込済みJSONから全対象を保存します。', button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r) => ({ ...r, bundle: importedBundles.get(r.appId) || null })), '対象アプリ表: '), summary: () => [['対象', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId, importedBundles.has(r.appId) ? '読込済みJSON' : '本番')).join('\n')], ['出力', appTable.count() + ' アプリのExcelをZIPに保存'], ['取得環境', 'ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。']] },
       { id: 'md', label: 'Markdown設計書を保存', description: '1行目のアプリを文章で確認できる形式にします。', button: bMd, validate: firstTargetRequired, summary: () => singleSummary('Markdown') },
+      { id: 'ai-md', label: 'AI向けMarkdownを保存', description: '1行目のアプリ設定をAIへ渡しやすい専用Markdownにします。', button: bAiMd, validate: firstTargetRequired, summary: () => singleSummary('AI向けMarkdown（AIへの受け渡し）') },
+      { id: 'ai-copy', label: 'AI向けMarkdownをコピー', description: '1行目の設計書をAIへ渡す専用Markdownとしてコピーします。', button: bAiCopy, validate: firstTargetRequired, summary: () => singleSummary('AI向けMarkdown（クリップボード）') },
       { id: 'json', label: '設計書JSONを保存', description: '1行目のアプリの設定をJSONで保存します。', button: bJson, validate: firstTargetRequired, summary: () => singleSummary('JSON') },
       { id: 'copy', label: 'Markdownをコピー', description: '1行目の設計書をクリップボードにコピーします。', button: bCopy, validate: firstTargetRequired, summary: () => singleSummary('クリップボード') },
       { id: 'diff', label: '2アプリの設計差分を保存', description: '表の先頭2アプリを比較したMarkdownを保存します。', button: bDiff, validate: () => {

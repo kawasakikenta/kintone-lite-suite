@@ -34,6 +34,11 @@ function hasFlag(name) {
   return process.argv.includes(name);
 }
 
+function extractMarkdownAppIds(markdown) {
+  return [...String(markdown || '').matchAll(/^\s*-\s*appId:\s*`\s*([^`\r\n]*?)\s*`/gm)]
+    .map((match) => match[1]);
+}
+
 function resolveFromRoot(value, fallback) {
   const raw = value || fallback;
   return path.isAbsolute(raw) ? raw : path.resolve(ROOT, raw);
@@ -194,14 +199,21 @@ async function mountWithControlledDiff(page) {
         if (targetAppId === '303') throw new Error('synthetic target failure: App 303');
 
         return {
-          rows: [],
+          rows: [{
+            sectionKey: 'fieldSettings',
+            section: 'フィールド設定',
+            path: 'fieldSettings.properties.Sample.label',
+            type: 'changed',
+            left: `source-${sourceBundle.appId}`,
+            right: `target-${targetAppId}`
+          }],
           fetchIssues: [],
           sourceBundle,
           targetBundle: makeBundle(targetAppId),
           truncation: null,
           summary: {
             text: `差分比較完了: App ${targetAppId}`,
-            counts: { added: 0, removed: 0, changed: 0, moved: 0, same: 0 }
+            counts: { added: 0, removed: 0, changed: 1, moved: 0, same: 0 }
           }
         };
       } finally {
@@ -299,6 +311,7 @@ async function inspectResult(page) {
       [...row.querySelectorAll('td')].map((cell) => cell.textContent.replace(/\s+/g, ' ').trim())
     );
     const excelButtons = [...(root?.querySelectorAll('[data-kus-dl-multi-xlsx]') || [])];
+    const markdownButtons = [...(root?.querySelectorAll('[data-kus-dl-multi-md]') || [])];
     const batchButton = root?.querySelector('[data-kus-dl-multi-xlsx-all]');
     const resultScroll = root?.querySelector('.kus-dl-table-scroll');
     return {
@@ -309,6 +322,8 @@ async function inspectResult(page) {
       runAllDisabled: !!runAll?.disabled,
       excelButtonCount: excelButtons.length,
       excelButtonsEnabled: excelButtons.every((button) => !button.disabled),
+      markdownButtonCount: markdownButtons.length,
+      markdownButtonsEnabled: markdownButtons.every((button) => !button.disabled),
       batchButtonCount: batchButton ? 1 : 0,
       batchButtonText: batchButton?.textContent?.replace(/\s+/g, ' ').trim() || '',
       batchButtonOutsideScroll: !!batchButton && !!resultScroll && !resultScroll.contains(batchButton),
@@ -336,6 +351,8 @@ function verifyResult(result, pageErrors) {
   assert.match(result.rows[2].join(' '), /App 404.*完了/, '中間失敗後の比較先が処理されていません');
   assert.equal(result.excelButtonCount, 2, '成功した比較先ごとのExcel保存ボタン数が不正です');
   assert.equal(result.excelButtonsEnabled, true, '複数比較のExcel保存ボタンが無効です');
+  assert.equal(result.markdownButtonCount, 2, '成功した比較先ごとのMarkdown保存ボタン数が不正です');
+  assert.equal(result.markdownButtonsEnabled, true, '複数比較のMarkdown保存ボタンが無効です');
   assert.equal(result.batchButtonCount, 1, '成功した比較結果の一括Excel保存ボタンがありません');
   assert.match(result.batchButtonText, /Excelをまとめて保存（2件・ZIP）/, '一括Excel保存ボタンの成功件数が不正です');
   assert.equal(result.batchButtonOutsideScroll, true, '一括Excel保存ボタンが結果表の横スクロール内にあります');
@@ -390,6 +407,8 @@ async function main() {
       '複数比較後の表示設定変更で結果表が消えました');
     assert.equal(await page.locator('[data-kus-dl-multi-xlsx]').count(), 2,
       '複数比較後の表示設定変更でExcel保存ボタンが消えました');
+    assert.equal(await page.locator('[data-kus-dl-multi-md]').count(), 2,
+      '複数比較後の表示設定変更でMarkdown保存ボタンが消えました');
     assert.equal(await page.locator('[data-kus-dl-multi-xlsx-all]').count(), 1,
       '複数比較後の表示設定変更で一括Excel保存ボタンが消えました');
     await showDetails.evaluate((checkbox) => {
@@ -410,6 +429,23 @@ async function main() {
     result.downloadsAfterExcel = await page.evaluate(() => Number(window.__downloadCount || 0));
     assert.equal(result.downloadsAfterExcel, 3, 'Excel保存の二重クリックで重複ダウンロードされました');
     assert.deepEqual(pageErrors, [], 'Excel保存時にブラウザエラーが発生しました');
+
+    const firstMarkdownButton = page.locator('[data-kus-dl-multi-md]').first();
+    const markdownDownloadIndex = result.downloadsAfterExcel;
+    await firstMarkdownButton.click();
+    await page.waitForFunction((count) => window.__downloadCount === count + 1, markdownDownloadIndex, { timeout: 10000 });
+    const markdownExport = await page.evaluate(async (index) => ({
+      filename: window.__downloadNames[index] || '',
+      type: window.__downloadBlobs[index]?.type || '',
+      text: window.__downloadBlobs[index] instanceof Blob ? await window.__downloadBlobs[index].text() : ''
+    }), markdownDownloadIndex);
+    assert.match(markdownExport.filename, /\.md$/i, 'Markdown保存のダウンロード名が.mdではありません');
+    assert.match(markdownExport.type, /markdown|text/i, 'Markdown保存のMIME typeが不正です');
+    assert.deepEqual(extractMarkdownAppIds(markdownExport.text), ['101', '202'],
+      '1件目のMarkdownの比較元・比較先App IDが不正です');
+    assert.match(markdownExport.text, /target-202/, '1件目のMarkdownに比較先の差分値がありません');
+    assert.doesNotMatch(markdownExport.text, /target-303|target-404/, '別比較先の内容が1件目のMarkdownへ混入しました');
+    result.markdown = { filename: markdownExport.filename, type: markdownExport.type, bytes: Buffer.byteLength(markdownExport.text) };
 
     const bulkButton = page.locator('[data-kus-dl-multi-xlsx-all]');
     const downloadsBeforeBulk = await page.evaluate(() => Number(window.__downloadCount || 0));
@@ -445,12 +481,16 @@ async function main() {
       'アプリID除外条件の変更後も古い比較結果が表示されています');
     assert.equal(await page.locator('[data-kus-dl-multi-xlsx]').count(), 0,
       'アプリID除外条件の変更後も古いExcel保存ボタンが残っています');
+    assert.equal(await page.locator('[data-kus-dl-multi-md]').count(), 0,
+      'アプリID除外条件の変更後も古いMarkdown保存ボタンが残っています');
     assert.equal(await page.locator('[data-kus-dl-multi-xlsx-all]').count(), 0,
       'アプリID除外条件の変更後も古い一括Excel保存ボタンが残っています');
     assert.equal(await page.locator('[data-kus-dl-export="xlsx"]').isDisabled(), true,
       'アプリID除外条件の変更後もExcel出力が有効です');
     assert.equal(await page.locator('[data-kus-dl-export="html"]').isDisabled(), true,
       'アプリID除外条件の変更後もHTML出力が有効です');
+    assert.equal(await page.locator('[data-kus-dl-export="md"]').isDisabled(), true,
+      'アプリID除外条件の変更後もMarkdown出力が有効です');
     assert.equal(await page.locator('[data-kus-dl-completion="xlsx"]').isVisible(), false,
       'アプリID除外条件の変更後も完了時のExcel保存導線が表示されています');
     assert.equal(await page.getByText(/前回の結果と保存機能を無効にしました。新しい条件で再比較してください/).isVisible(), true,
@@ -459,21 +499,25 @@ async function main() {
     await runAll.click();
     result.rowsImmediatelyAfterRerun = await multiResultRows(page).count();
     result.excelButtonsImmediatelyAfterRerun = await page.locator('[data-kus-dl-multi-xlsx]').count();
+    result.markdownButtonsImmediatelyAfterRerun = await page.locator('[data-kus-dl-multi-md]').count();
     result.batchButtonsImmediatelyAfterRerun = await page.locator('[data-kus-dl-multi-xlsx-all]').count();
     assert.equal(result.rowsImmediatelyAfterRerun, 0, '複数比較の再実行開始時に古い結果表が残っています');
     assert.equal(result.excelButtonsImmediatelyAfterRerun, 0, '複数比較の再実行開始時に古いExcel保存ボタンが残っています');
     assert.equal(result.batchButtonsImmediatelyAfterRerun, 0, '複数比較の再実行開始時に古い一括Excel保存ボタンが残っています');
+    assert.equal(result.markdownButtonsImmediatelyAfterRerun, 0, '複数比較の再実行開始時に古いMarkdown保存ボタンが残っています');
     await page.waitForFunction(() => {
       const complete = [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
         .some((element) => (element.textContent || '').includes('全比較先の比較が完了'));
       return complete && window.__multiProbe.calls.length === 6;
     }, null, { timeout: 15000 });
     result.downloadsAfterRerun = await page.evaluate(() => Number(window.__downloadCount || 0));
-    assert.equal(result.downloadsAfterRerun, 6, '再実行後のHTML出力回数が不正です');
+    assert.equal(result.downloadsAfterRerun, 7, '再実行後のHTML・Markdownを含む出力回数が不正です');
     assert.equal(await multiResultRows(page).count(), 3,
       'アプリID除外条件を反映した再比較後に結果表が復元されませんでした');
     assert.equal(await page.locator('[data-kus-dl-multi-xlsx]').count(), 2,
       'アプリID除外条件を反映した再比較後にExcel保存ボタンが復元されませんでした');
+    assert.equal(await page.locator('[data-kus-dl-multi-md]').count(), 2,
+      'アプリID除外条件を反映した再比較後にMarkdown保存ボタンが復元されませんでした');
     assert.equal(await page.locator('[data-kus-dl-multi-xlsx-all]').count(), 1,
       'アプリID除外条件を反映した再比較後に一括Excel保存ボタンが復元されませんでした');
     result.rerunAppReferenceFlags = await page.evaluate(() =>

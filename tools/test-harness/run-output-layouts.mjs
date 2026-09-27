@@ -190,6 +190,12 @@ const md = api.bundleToMarkdown(targetBundle);
 writeFileSync(resolve(outDir, 'design-doc.md'), md, 'utf8');
 console.log(`[harness] wrote design-doc.md (${(md.length / 1024).toFixed(1)} KB)`);
 
+const aiDesignMd = api.buildDesignAiMarkdown(targetBundle);
+assert.ok(aiDesignMd.includes('viewSettings'));
+assert.ok(aiDesignMd.includes('missing'), '未取得セクションをAI用Markdownに明示する');
+writeFileSync(resolve(outDir, 'design-ai.md'), aiDesignMd, 'utf8');
+console.log(`[harness] wrote design-ai.md (${(aiDesignMd.length / 1024).toFixed(1)} KB)`);
+
 // ------------ 5) ER HTML viewer ---------------------------------------------
 const erApps = [
   { id: '100', name: '営業案件管理', recordCount: 1240, ok: true, depth: 0,
@@ -335,6 +341,7 @@ console.log('  diff-report.html  (差分HTML)');
 console.log('  diff-patch.json   (差分パッチ JSON)');
 console.log('  bundle.json       (比較バンドル JSON)');
 console.log('  design-doc.md     (設計書 Markdown)');
+console.log('  design-ai.md      (AI向け設計書 Markdown)');
 console.log('  er-diagram.html   (ER図ビューア)');
 console.log('  records.csv       (レコード CSV)');
 console.log('  record-subtables/ (親CSVとテーブル別明細CSV: 2親レコード・3テーブル)');

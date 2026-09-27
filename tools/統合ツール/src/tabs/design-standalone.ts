@@ -6,12 +6,15 @@ import { nowStamp, downloadText, buildExportFilename, appLabelFromBundle, copyTe
 import { fetchBundle } from '../api.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { bundleToMarkdown } from '../diff/export.js';
-import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip } from './design-xlsx.js';
+import { buildDesignAiMarkdown } from '../design/ai-markdown.js';
+import { buildDesignSnapshot } from '../design/snapshot.js';
+import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip, type DesignExporterCompletionSummary } from './design-xlsx.js';
 
 interface DesignSourceInput {
   appId?: string;
   guestId?: string;
   preview?: boolean;
+  rawSettings?: boolean;
   importedBundle?: any;
 }
 
@@ -48,7 +51,8 @@ async function resolveDesignBundle(
   source: DesignSourceInput,
   side: 'source' | 'target',
   setStatus: (msg: string, err?: boolean) => void,
-  labelPrefix = ''
+  labelPrefix = '',
+  rawSettings = false
 ) {
   const appId = String(source?.appId || '').trim();
   const importedBundle = source?.importedBundle;
@@ -57,39 +61,102 @@ async function resolveDesignBundle(
   const scopes = SECTION_DEFS.map((s) => s.key);
   setStatus(importedBundle ? `${labelPrefix}設定JSONから設計情報を読み込み中...` : `${labelPrefix}設計情報を取得中...`);
   const bundle = importedBundle
-    ? pickSettingsBundle(importedBundle, { side, appId })
+    ? pickSettingsBundle(importedBundle, { side, appId, rawSettings: true, preserveMetadata: true })
     : await fetchBundle({
+      rawSettings,
       appId,
       guestId: String(source?.guestId || '').trim(),
       preview: !!source?.preview,
       sections: scopes,
       onProgress: (p, l) => setStatus(`${labelPrefix}取得中 ${Math.round(p * 100)}% (${l})`)
     });
-  const failed = scopes.filter((key) => bundle?.sections?.[key]?._fetchError);
-  if (failed.length) {
-    const labels = failed.map((key) => SECTION_DEFS.find((s) => s.key === key)?.label || key);
-    setStatus(`${labelPrefix}取得できなかったセクション ${failed.length}件（${labels.join(', ')}）は設計書に「取得失敗」として載ります`, true);
+  if (!importedBundle && rawSettings && bundle?.meta && typeof bundle.meta === 'object') {
+    // rawSettings は normalize を避ける代わりに、JS/CSS本文とプラグイン個別設定の
+    // 補助取得を行わない。AI向けMarkdownの bundle metadata に取得方針を残す。
+    bundle.meta.designSource = 'raw-settings-api';
+    bundle.meta.supplements = 'not-requested';
+  }
+  const sections = bundle?.sections && typeof bundle.sections === 'object' ? bundle.sections : null;
+  const snapshot = sections ? buildDesignSnapshot(bundle) : null;
+  const statusRows = snapshot?.sections.filter((row) => scopes.includes(row.key)) || [];
+  const missing = statusRows.filter((row) => row.status === 'missing');
+  const failed = statusRows.filter((row) => row.status === 'fetch-error');
+  const partial = statusRows.filter((row) => row.status === 'partial');
+  const labelsFor = (rows: Array<{ key: string; label: string }>) => rows.map((row) => row.label || row.key);
+  if (missing.length || failed.length || partial.length) {
+    const parts: string[] = [];
+    if (missing.length) {
+      parts.push(`未取得のセクション ${missing.length}件（${labelsFor(missing).join(', ')}）`);
+    }
+    if (failed.length) {
+      parts.push(`取得できなかったセクション ${failed.length}件（${labelsFor(failed).join(', ')}）`);
+    }
+    if (partial.length) {
+      parts.push(`部分取得のセクション ${partial.length}件（${labelsFor(partial).join(', ')}）`);
+    }
+    setStatus(`${labelPrefix}${parts.join(' / ')}は設計書に状態を付けて載ります`, true);
   }
   return bundle;
 }
 
+/** 出力完了メッセージにも、取得失敗・部分取得の状態を残す。 */
+function designBundleCompletionNote(bundle: any): string {
+  if (!bundle?.sections || typeof bundle.sections !== 'object') return '';
+  const known = new Set(SECTION_DEFS.map((s) => s.key));
+  const rows = buildDesignSnapshot(bundle).sections.filter((row) => known.has(row.key));
+  const missing = rows.filter((row) => row.status === 'missing').length;
+  const failed = rows.filter((row) => row.status === 'fetch-error').length;
+  const partial = rows.filter((row) => row.status === 'partial').length;
+  if (!missing && !failed && !partial) return '';
+  const parts: string[] = [];
+  if (missing) parts.push(`未取得 ${missing}件`);
+  if (failed) parts.push(`取得失敗 ${failed}件`);
+  if (partial) parts.push(`部分取得 ${partial}件`);
+  return `（${parts.join(' / ')}。内容を確認してください）`;
+}
+
+function designBundleSourceNote(bundle: any): string {
+  return bundle?.meta?.designSource === 'raw-settings-api'
+    ? '（原文取得。JS/CSS本文・プラグイン個別設定の補助取得なし）'
+    : '';
+}
+
+/** ライブExcel出力の完了通知。取得状況シートと同じsnapshot集計を表示する。 */
+function designExcelCompletionNote(summary: DesignExporterCompletionSummary | undefined): string {
+  if (!summary || summary.complete) return '';
+  const parts: string[] = [];
+  if (summary.missingSectionCount) parts.push(`未取得 ${summary.missingSectionCount}件`);
+  if (summary.fetchErrorSectionCount) parts.push(`取得失敗 ${summary.fetchErrorSectionCount}件`);
+  if (summary.partialSectionCount) parts.push(`部分取得 ${summary.partialSectionCount}件`);
+  if (summary.supplementalMissingCount) parts.push(`補足情報未取得 ${summary.supplementalMissingCount}件`);
+  const supplementalOther = Math.max(0, summary.supplementalIncompleteCount - summary.supplementalMissingCount);
+  if (supplementalOther) parts.push(`補足情報未完了 ${supplementalOther}件`);
+  return parts.length ? `（${parts.join(' / ')}。内容を確認してください）` : '（取得状態を確認してください）';
+}
+
+function designBundleExportMarkdown(kind: 'md' | 'ai-md', bundle: any): string {
+  return kind === 'ai-md' ? buildDesignAiMarkdown(bundle) : bundleToMarkdown(bundle);
+}
+
 /**
- * @param {'md'|'json'} kind
+ * @param {'md'|'json'|'ai-md'} kind
  * @param {{ appId: string, guestId: string, preview: boolean }} source
  * @param {(msg: string, err?: boolean) => void} setStatus
  */
 export async function runDesignExportStandalone(kind, source, setStatus) {
-  if (kind !== 'md' && kind !== 'json') throw new Error('設計書の出力形式は md または json を指定してください');
-  const bundle = await resolveDesignBundle(source, 'source', setStatus);
+  if (kind !== 'md' && kind !== 'json' && kind !== 'ai-md') throw new Error('設計書の出力形式は md、json または ai-md を指定してください');
+  const bundle = await resolveDesignBundle(source, 'source', setStatus, '', kind === 'ai-md');
   state.lastSourceBundle = bundle;
 
   const appLabel = appLabelFromBundle(bundle);
   if (kind === 'json') {
     downloadText(buildExportFilename('設計書', 'json', { appLabel }), JSON.stringify(bundle, null, 2), 'application/json');
   } else {
-    downloadText(buildExportFilename('設計書', 'md', { appLabel }), bundleToMarkdown(bundle), 'text/markdown');
+    const baseLabel = kind === 'ai-md' ? '設計書_AI向けMarkdown' : '設計書';
+    downloadText(buildExportFilename(baseLabel, 'md', { appLabel }), designBundleExportMarkdown(kind, bundle), 'text/markdown');
   }
-  setStatus(`設計書出力完了（App ${bundle.appId}）`);
+  const completionNote = designBundleCompletionNote(bundle);
+  setStatus(`${kind === 'ai-md' ? 'AI向けMarkdown' : '設計書'}出力完了（App ${bundle.appId}）${completionNote}${kind === 'ai-md' ? designBundleSourceNote(bundle) : ''}`, !!completionNote);
 }
 
 /**
@@ -104,7 +171,21 @@ export async function runDesignCopyMdStandalone(source, setStatus) {
   if (!(await copyTextToClipboard(md))) {
     throw new Error('クリップボードへのコピーに失敗しました。ブラウザのクリップボード権限を確認するか、Markdown 保存を使ってください');
   }
-  setStatus('設計書Markdownをクリップボードにコピーしました');
+  const completionNote = designBundleCompletionNote(bundle);
+  setStatus(`設計書Markdownをクリップボードにコピーしました${completionNote}`, !!completionNote);
+}
+
+/** AIへの受け渡し用 Markdown をクリップボードへコピーする。 */
+export async function runDesignCopyAiMdStandalone(source, setStatus) {
+  const bundle = await resolveDesignBundle(source, 'source', setStatus, '', true);
+  state.lastSourceBundle = bundle;
+
+  const md = buildDesignAiMarkdown(bundle);
+  if (!(await copyTextToClipboard(md))) {
+    throw new Error('AI向けMarkdownのコピーに失敗しました。ブラウザのクリップボード権限を確認するか、AI向けMarkdown 保存を使ってください');
+  }
+  const completionNote = designBundleCompletionNote(bundle);
+  setStatus(`AI向けMarkdownをクリップボードにコピーしました${completionNote}${designBundleSourceNote(bundle)}`, !!completionNote);
 }
 
 /**
@@ -114,22 +195,42 @@ export async function runDesignCopyMdStandalone(source, setStatus) {
 export async function runDesignExportXlsxStandalone(source, setStatus) {
   const target = source || {};
   const appId = String(target.appId || '').trim();
-  const importedBundle = (target as any).importedBundle;
+  const importedRaw = (target as any).importedBundle;
   const validationError = validateDesignTarget(target);
   if (validationError) throw new Error(validationError);
+  // 設定一括取得の apps 配列や source/target wrapper を直接 Excel exporter に渡さず、
+  // 指定 App のバンドルだけを選ぶ。選択後の bundle metadata を exporter 側で尊重する。
+  const importedBundle = importedRaw
+    ? pickSettingsBundle(importedRaw, { side: 'source', appId, rawSettings: true, preserveMetadata: true })
+    : null;
+  state.lastSourceBundle = importedBundle || state.lastSourceBundle;
   const guestId = String(target.guestId || '').trim();
   setStatus(importedBundle ? '設計書Excel出力を開始（設定JSONから生成）...' : '設計書Excel出力を開始...');
-  const done = await runAdvancedDesignExporter({
-    appId,
+  let liveCompletionNotified = false;
+  const exporterParams: any = {
+    appId: appId || String(importedBundle?.appId || '').trim(),
     guestId,
     bundle: importedBundle || null,
+    preview: target.preview === true,
     appNameLookup: (source as any).appNameLookup || {}
-  });
+  };
+  // 設定JSON出力は既存のcompletion noteを使い、同じ警告を二重表示しない。
+  // live出力だけ、exporterが実際に使ったsnapshotの完了集計を受け取る。
+  if (!importedBundle) {
+    exporterParams.onComplete = (summary: DesignExporterCompletionSummary) => {
+      liveCompletionNotified = true;
+      const note = designExcelCompletionNote(summary);
+      setStatus(`設計書Excel出力完了${note}`, !!note);
+    };
+  }
+  const done = await runAdvancedDesignExporter(exporterParams);
   if (done === false) {
     setStatus('設計書Excel出力をキャンセルしました');
     return;
   }
-  setStatus('設計書Excel出力完了');
+  if (liveCompletionNotified) return;
+  const completionNote = designBundleCompletionNote(importedBundle);
+  setStatus(`設計書Excel出力完了${completionNote}`, !!completionNote);
 }
 
 /**
@@ -317,5 +418,8 @@ export async function runDesignDiffMdStandalone(
   });
   const diffLabel = `${appLabelFromBundle(srcBundle)}_vs_${appLabelFromBundle(tgtBundle)}`;
   downloadText(buildExportFilename('設計書差分', 'md', { appLabel: diffLabel }), finalMd, 'text/markdown');
-  setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）`);
+  const completeness = [designBundleCompletionNote(srcBundle), designBundleCompletionNote(tgtBundle)]
+    .filter(Boolean)
+    .join(' / ');
+  setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）${completeness ? ` ${completeness}` : ''}`);
 }

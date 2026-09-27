@@ -16,6 +16,8 @@ import {
 } from '../diff/engine.js';
 import { runExportDiffXlsx, type DiffXlsxContext } from '../diff/xlsx-export.js';
 import { buildDiffXlsxBatchExport } from '../diff/xlsx-batch-export.js';
+import { runExportDiffMarkdown } from '../tabs/diff-markdown-export-standalone.js';
+import type { DiffMarkdownContext } from '../diff/markdown-export.js';
 import { decodeRow, type DecodedRow } from '../diff/path-decoder.js';
 import { downloadBlob, downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify } from '../utils.js';
 import { runExportDiffHtmlStandalone } from '../tabs/diff-export-standalone.js';
@@ -657,6 +659,35 @@ export function buildLiteDiffXlsxContext(
   };
 }
 
+export function buildLiteDiffMarkdownContext(
+  cache: DiffCache,
+  rows: DiffRow[],
+  exportMode: string,
+  exportLabel: string,
+  filterDescription?: string
+): DiffMarkdownContext {
+  return {
+    rows,
+    allRows: cache.rows,
+    fetchIssues: cache.fetchIssues || [],
+    partialIssues: cache.partialIssues || [],
+    truncation: cache.truncation || null,
+    matchingNotices: cache.matchingNotices || { items: [], omitted: 0 },
+    sourceBundle: cache.sourceBundle,
+    targetBundle: cache.targetBundle,
+    scopes: cache.scopes,
+    ignoreKeys: cache.ignoreKeys,
+    normalizationPresetState: cache.normalizationPresetState || {},
+    comparedAt: cache.comparedAt,
+    exportMode,
+    exportLabel,
+    filterDescription: filterDescription || (exportMode === 'filtered'
+      ? '画面の絞り込み結果（比較条件は比較実行時のスナップショット）'
+      : 'フィルターなし（比較結果の全件）'),
+    exportContentMode: 'diffOnly'
+  };
+}
+
 export function buildLiteDiffFilterDescription(input: {
   section?: string;
   sectionLabel?: string;
@@ -1143,10 +1174,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const panel: LitePanelHandle = createLitePanel({
     id: 'kus-diff-lite',
     title: '差分比較',
-    subtitle: 'アプリ設定を1件ずつ、1対多、または複数の1対1ペアで比較し、HTMLとExcelで確認',
+    subtitle: 'アプリ設定を1件ずつ、1対多、または複数の1対1ペアで比較し、HTML・Excel・AI向け Markdown で確認',
     accent: 'diff',
     badges: [{ label: 'Lite' }, { label: '出力対応' }],
-    hint: '1対1比較と1対多比較は完了時にレビュー用HTMLを自動保存します。ペア一括比較は結果行から個別保存でき、成功したExcelはZIPでまとめて保存できます。Excelには差分値と取得不完全時のエラー等の原文が含まれるため、共有前に内容を確認してください。',
+    hint: 'HTMLは人が確認するレビュー用、Excelは一覧・共有用、AI向け Markdown は差分の事実をAIへ渡す用途です。1対1比較と1対多比較は完了時にレビュー用HTMLを自動保存します。',
     wide: true
   });
   panel.status.setAttribute('role', 'status');
@@ -2532,7 +2563,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   // ---- 出力（再出力用。初回は比較実行時に自動保存される） ----
   const cardOut = makeCard({ title: '出力', number: 3, soft: true });
-  cardOut.body.appendChild(makeNote('レビュー用 HTML は比較実行時に自動保存されます。共有する場合は、全件または画面で絞り込んだ範囲を Excel で保存してください。Excel には差分値と取得不完全時のエラー等の原文を収録し、長い原文は可視シートへ分割して全文を保持します。'));
+  cardOut.body.appendChild(makeNote('HTML は人が確認するレビュー用、Excel は一覧・共有用です。AI向け Markdown は比較方向・条件・完全性・変更前後の値と型を含み、AIへ差分の事実を渡すために使います。'));
   cardOut.body.appendChild(makeNote('変更箇所のみの HTML にも比較元・比較先の値が含まれます。比較設定を含む社内用 HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。'));
   const htmlContentMode = makeSelect([
     ['diffOnly', 'レビュー用（変更箇所のみ）'],
@@ -2551,17 +2582,30 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   grid.className = 'kus-lp__btn-grid';
   const bXlsx = makeButton('Excel を保存 (.xlsx)', 'primary', { icon: '↓' });
   const bHtml = makeButton('レビュー用 HTML を再出力', 'sub', { icon: '↓' });
+  const bMd = makeButton('AI向け Markdown を保存 (.md)', 'sub', { icon: '↓' });
   bXlsx.dataset.kusDlExport = 'xlsx';
   bHtml.dataset.kusDlExport = 'html';
+  bMd.dataset.kusDlExport = 'md';
   grid.appendChild(bXlsx);
   grid.appendChild(bHtml);
+  grid.appendChild(bMd);
   cardOut.body.appendChild(grid);
   let forceFullXlsxExport = false;
+  let forceFullMarkdownExport = false;
   completionReviewBtn.addEventListener('click', () => {
     const overview = resultBox.querySelector<HTMLElement>('[data-kus-dl-overview]');
     if (!overview) return;
     overview.focus({ preventScroll: true });
     overview.scrollIntoView({ block: 'start', behavior: 'auto' });
+  });
+  const completionMdBtn = makeButton('AI向け Markdownを保存（全件）', 'sub', { icon: '↓' });
+  completionMdBtn.dataset.kusDlCompletion = 'md';
+  completionMdBtn.setAttribute('aria-label', '比較結果全件のAI向けMarkdownを保存');
+  completionRow.appendChild(completionMdBtn);
+  completionMdBtn.addEventListener('click', () => {
+    if (bMd.disabled) return;
+    forceFullMarkdownExport = true;
+    bMd.click();
   });
   completionXlsxBtn.addEventListener('click', () => {
     if (bXlsx.disabled) return;
@@ -2588,7 +2632,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   };
   const targetStep = makeWorkflowStep('target', '1', '比較対象を決める', '比較元から比較先へ、どの設定が変わったかを確認します。');
   const reviewStep = makeWorkflowStep('review', '2', '結果を確認する', '取得の完全性を確認してから、差分を順にレビューします。');
-  const exportStep = makeWorkflowStep('export', '3', '結果を出力する', 'Excel または社内確認用の HTML を保存できます。');
+  const exportStep = makeWorkflowStep('export', '3', '結果を出力する', '人向けの HTML・Excel、AI向け Markdown を保存できます。');
 
   const configDetails = document.createElement('details');
   configDetails.className = 'kus-dl-disclosure';
@@ -2637,8 +2681,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     expRange.disabled = !enabled;
     bXlsx.disabled = !enabled;
     bHtml.disabled = !enabled;
+    bMd.disabled = !enabled;
     completionReviewBtn.disabled = !enabled;
     completionXlsxBtn.disabled = !enabled;
+    completionMdBtn.disabled = !enabled;
   };
   setExportControlsEnabled(false);
 
@@ -2646,6 +2692,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   let cache: DiffCache | null = null;
   let multiXlsxExports: MultiXlsxExportItem[] = [];
   let multiXlsxExportActive = false;
+  let markdownExportActive = false;
   let diffRunActive = false;
   let profileIoActive = false;
   let summaryText = '';
@@ -3181,7 +3228,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       const exportStartedAt = Date.now();
       const sourceItems = multiXlsxExports;
       const snapshot = sourceItems.slice();
-      const buttons = [...resultBox.querySelectorAll<HTMLButtonElement>('[data-kus-dl-multi-html], [data-kus-dl-multi-xlsx], [data-kus-dl-multi-xlsx-all]')];
+      const buttons = [...resultBox.querySelectorAll<HTMLButtonElement>('[data-kus-dl-multi-html], [data-kus-dl-multi-md], [data-kus-dl-multi-xlsx], [data-kus-dl-multi-xlsx-all]')];
       multiXlsxExportActive = true;
       buttons.forEach((button) => { button.disabled = true; });
       try {
@@ -3260,6 +3307,35 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       } finally {
         multiXlsxExportActive = false;
         multiHtmlButton.disabled = false;
+      }
+      return;
+    }
+    const multiMarkdownButton = target?.closest<HTMLButtonElement>('[data-kus-dl-multi-md]');
+    if (multiMarkdownButton) {
+      if (pairFolderLoadActive()) {
+        panel.setStatus('フォルダの読込が完了してから前回結果を保存してください', 'warn');
+        return;
+      }
+      const index = Number(multiMarkdownButton.dataset.kusDlMultiMd);
+      const item = Number.isInteger(index) ? multiXlsxExports[index] : null;
+      if (!item || multiMarkdownButton.disabled || multiXlsxExportActive) return;
+      multiXlsxExportActive = true;
+      multiMarkdownButton.disabled = true;
+      try {
+        const result = runExportDiffMarkdown(buildLiteDiffMarkdownContext(
+          item.cache,
+          item.cache.rows,
+          'all',
+          '全件',
+          'フィルターなし（比較結果の全件）'
+        ));
+        const incomplete = isIncompleteLiteDiff(item.cache);
+        panel.setStatus(`${item.label} の AI向け Markdown のダウンロードを開始しました: ${result.filename}${incomplete ? ' — 比較結果は不完全です' : ''}`, incomplete ? 'warn' : 'ok');
+      } catch (e: any) {
+        panel.setStatus(`Markdown出力エラー: ${e?.message || String(e)}`, 'err');
+      } finally {
+        multiXlsxExportActive = false;
+        multiMarkdownButton.disabled = false;
       }
       return;
     }
@@ -3601,7 +3677,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           `<td class="${needsReview ? 'kus-dl-multi__warn' : 'kus-dl-multi__ok'}">${stateLabel}</td>` +
           `<td><span class="kus-dl-pair-breakdown"><strong>差分 ${counts.actual}</strong><small>追加 ${counts.added} / 削除 ${counts.removed} / 内容変更 ${changed} / 移動 ${counts.moved}</small></span></td>` +
           `<td>${incompleteReasons.length ? incompleteReasons.map((reason) => esc(reason)).join('<br>') : 'なし'}</td>` +
-          `<td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のHTMLを保存`)}">HTML</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のExcelを保存`)}">Excel</button></span></td></tr>`);
+          `<td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のHTMLを保存`)}">HTML</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のExcelを保存`)}">Excel</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のAI向けMarkdownを保存`)}">AI向けMD</button></span></td></tr>`);
       });
 
       cardResult.card.style.display = '';
@@ -3730,7 +3806,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : '通常スペース')} / ${t.preview ? 'プレビュー' : '運用'}</small></td>` +
             `<td class="${needsReview || exportNote ? 'kus-dl-multi__warn' : 'kus-dl-multi__ok'}">${exportNote ? '出力失敗' : (needsReview ? '要確認' : '完了')}${esc(exportNote)}</td>` +
             `<td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ''}${multiNoticeCount ? ` / 注意 ${multiNoticeCount}` : ''}</td>` +
-            `<td><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}">Excel保存</button></td></tr>`);
+            `<td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${targetLabel}のExcelを保存`)}">Excel保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${targetLabel}のAI向けMarkdownを保存`)}">AI向けMD保存</button></span></td></tr>`);
         } catch (e: any) {
           failed += 1;
           const targetLabel = t.appName ? `${t.appName}（App ${t.appId}）` : `App ${t.appId}`;
@@ -3739,7 +3815,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       }
       cardResult.card.style.display = '';
       reviewEmpty.style.display = 'none';
-      resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>Excel</th></tr></thead><tbody>${resultRows.join('')}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
+      resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>保存</th></tr></thead><tbody>${resultRows.join('')}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
       const tone = failed || exportFailed || incomplete || exported !== targets.length ? 'warn' : 'ok';
       const note = [failed ? `比較失敗 ${failed}件` : '', exportFailed ? `HTML出力失敗 ${exportFailed}件` : '', incomplete ? `要確認 ${incomplete}件` : ''].filter(Boolean).join(' / ');
       panel.setStatus(`全比較先の比較が完了: HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）${note ? ` / ${note}` : ''}。Excelは各行または一括ボタンから保存できます`, tone);
@@ -3830,6 +3906,32 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       panel.setStatus(`差分 HTML のダウンロードを開始しました（${expRange.value === 'all' ? '全件' : '表示中'} / ${getLiteHtmlExportContentLabel(htmlContentMode.value)}）${incomplete ? ' — 元の比較結果は不完全です' : ''}`, incomplete ? 'warn' : 'ok');
     } catch (e: any) {
       panel.setStatus(`エラー: ${e?.message || String(e)}`, 'err');
+    }
+  });
+
+  bMd.addEventListener('click', () => {
+    if (markdownExportActive || multiXlsxExportActive) return;
+    markdownExportActive = true;
+    setExportControlsEnabled(false);
+    try {
+      const snapshot = cache;
+      if (!snapshot) throw new Error('先に差分比較を実行してください');
+      const ctx = exportCtx(forceFullMarkdownExport);
+      const result = runExportDiffMarkdown(buildLiteDiffMarkdownContext(
+        snapshot,
+        ctx.rows,
+        ctx.exportMode,
+        ctx.exportLabel,
+        ctx.filterDescription
+      ));
+      const incomplete = isIncompleteLiteDiff(snapshot);
+      panel.setStatus(`AI向け Markdown のダウンロードを開始しました（${ctx.exportLabel} / ${ctx.rows.length}件）: ${result.filename}${incomplete ? ' — 元の比較結果は不完全です' : ''}`, incomplete ? 'warn' : 'ok');
+    } catch (e: any) {
+      panel.setStatus(`Markdown出力エラー: ${e?.message || String(e)}`, 'err');
+    } finally {
+      markdownExportActive = false;
+      forceFullMarkdownExport = false;
+      setExportControlsEnabled(!!cache);
     }
   });
 

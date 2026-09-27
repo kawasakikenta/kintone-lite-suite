@@ -141,6 +141,20 @@ describe('design/bundleToMarkdown (REST API レスポンス準拠の日本語化
     expect(local).toContain('| 取得日時 | 2026-01-01 00:00:00 |');
   });
 
+  it('guestId/preview の欠落・nullは不明とし、明示された空文字・falseは従来の既知表示を保つ', () => {
+    const missing = bundleToMarkdown({ appId: '10', sections: { appSettings: { name: 'x' } } }, { rawJson: false });
+    expect(missing).toContain('| ゲストスペースID | 不明（設定JSONに記載なし） |');
+    expect(missing).toContain('| 取得環境 | 不明（設定JSONに記載なし） |');
+
+    const explicit = bundleToMarkdown({ appId: '10', guestId: '', preview: false, sections: { appSettings: { name: 'x' } } }, { rawJson: false });
+    expect(explicit).toContain('| ゲストスペースID | (通常空間) |');
+    expect(explicit).toContain('| 取得環境 | 本番（運用中の設定） |');
+
+    const nullable = bundleToMarkdown({ appId: '10', guestId: null, preview: null, sections: { appSettings: { name: 'x' } } }, { rawJson: false });
+    expect(nullable).toContain('| ゲストスペースID | 不明（設定JSONに記載なし） |');
+    expect(nullable).toContain('| 取得環境 | 不明（設定JSONに記載なし） |');
+  });
+
   it('フィールド表にルックアップ・関連レコード・単位・文字数などの参照先/制約を出す', () => {
     const md = visibleMarkdown(bundleToMarkdown(makeBundle({
       fieldSettings: {
@@ -166,5 +180,22 @@ describe('design/bundleToMarkdown (REST API レスポンス準拠の日本語化
     const md = bundleToMarkdown(bundle, { rawJson: false });
     expect(md).not.toContain('APIレスポンス（生データ）');
     expect(md).toContain('| アプリ名 | x |');
+  });
+
+  it('取得状態の索引で missing/empty/fetch-error/partial を区別し、未対応rendererをデータなしと表現しない', () => {
+    const md = bundleToMarkdown(makeBundle({
+      appInfo: { name: 'アプリ情報' },
+      formSettings: { revision: '1' },
+      fieldSettings: { properties: {} },
+      viewSettings: { _fetchError: '権限不足' },
+      reportSettings: { _partial: { message: '一部省略' } }
+    }), { rawJson: false });
+    expect(md).toContain('| アプリ情報(ラベル) | appInfo | available |');
+    expect(md).toContain('| フィールド設定 | fieldSettings | empty | 0 |');
+    expect(md).toContain('| ビュー設定 | viewSettings | fetch-error | 不明 |');
+    expect(md).toContain('| グラフ設定 | reportSettings | partial | 不明 |');
+    expect(md).toContain('整形表示は未対応です');
+    expect(md).toContain('rawJson:false のため省略されています');
+    expect(md).not.toContain('（データなし）');
   });
 });

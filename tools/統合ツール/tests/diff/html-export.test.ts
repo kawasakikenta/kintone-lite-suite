@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildDiffExportPayload,
   buildDiffHtml,
+  buildDiffHtmlHumanOverview,
   buildDiffWarningInfo,
   buildPatchPayload,
   getDiffExportContentLabel,
@@ -218,6 +219,99 @@ describe('diff/html export', () => {
     expect(html).not.toContain('Visual Diff / Settings Review');
     expect(html).not.toContain('Kintone Settings Diff');
     expect(html).not.toContain('Field Detail Popup');
+  });
+
+  it('summarizes bounded section changes without counting display-only expansion rows', () => {
+    const sourceBundle = {
+      appId: '1',
+      sections: {
+        fieldSettings: { properties: { customer_name: { code: 'customer_name', label: '顧客名', type: 'SINGLE_LINE_TEXT' } } }
+      }
+    };
+    const targetBundle = {
+      appId: '2',
+      sections: {
+        fieldSettings: { properties: { customer_name: { code: 'customer_name', label: '顧客氏名', type: 'SINGLE_LINE_TEXT' } } }
+      }
+    };
+    const rows = [
+      {
+        sectionKey: 'fieldSettings', section: 'フィールド', type: 'changed',
+        path: 'fieldSettings.properties.customer_name.label', left: '旧値', right: '新値'
+      },
+      {
+        sectionKey: 'fieldSettings', section: 'フィールド', type: 'added', _displayOnly: true,
+        path: 'fieldSettings.properties.customer_name.fields.child', left: undefined, right: { label: '展開行' }
+      },
+      {
+        sectionKey: 'viewSettings', section: '一覧', type: 'changed', moved: true,
+        path: 'viewSettings.views.一覧.index', left: '0', right: '1',
+        entityKind: 'view', entityLabel: '一覧', entityPropLabel: '表示順'
+      },
+      {
+        sectionKey: 'fieldSettings', section: 'フィールド', type: 'same',
+        path: 'fieldSettings.properties.customer_name.type', left: 'TEXT', right: 'TEXT'
+      }
+    ];
+
+    const overview = buildDiffHtmlHumanOverview(rows, {
+      sourceBundle,
+      targetBundle,
+      exampleRows: rows
+    });
+
+    expect(overview).toMatchObject({
+      diffCount: 2,
+      added: 0,
+      removed: 0,
+      changed: 1,
+      moved: 1,
+      same: 1
+    });
+    expect(overview.sections).toHaveLength(2);
+    expect(overview.sections[0]).toMatchObject({
+      sectionKey: 'fieldSettings',
+      diffCount: 1,
+      changed: 1,
+      renderedDiffCount: 1
+    });
+    expect(overview.sections[0].examples[0]).toMatchObject({
+      label: '顧客名 / フィールド名',
+      kindLabel: '内容変更'
+    });
+    expect(JSON.stringify(overview)).not.toContain('旧値');
+    expect(JSON.stringify(overview)).not.toContain('新値');
+
+    const html = buildDiffHtml(sourceBundle, targetBundle, rows, ['fieldSettings', 'viewSettings'], '', {
+      exportContentMode: 'diffOnly',
+      exportMode: 'filtered',
+      exportLabel: '表示中'
+    });
+    expect(html).toContain('data-diff-human-overview');
+    expect(html).toContain('data-overview-section="fieldSettings"');
+    expect(html).toContain('件数は設定・プロパティの差分行です');
+    expect(html).toContain('表示中の出力範囲のみです');
+    expect(html).not.toContain('data-overview-section-key="undefined"');
+    expect(() => new Function(extractInlineScript(html))).not.toThrow();
+  });
+
+  it('bounds the first section overview cards and discloses the remainder', () => {
+    const sections = ['appSettings', 'fieldSettings', 'layoutSettings', 'viewSettings', 'reportSettings', 'processSettings', 'pluginSettings'];
+    const rows = sections.map((sectionKey, index) => ({
+      sectionKey,
+      section: sectionKey,
+      type: 'changed',
+      path: `${sectionKey}.example`,
+      left: `old-${index}`,
+      right: `new-${index}`
+    }));
+    const bundle = { appId: '1', sections: {} };
+    const html = buildDiffHtml(bundle, { ...bundle, appId: '2' }, rows, sections, '', {});
+
+    expect(html).toContain('class="diff-human-overview-more"');
+    expect(html).toContain('残り 3セクションを表示');
+    expect(html).toContain('data-overview-section-key="appSettings"');
+    expect(html).toContain('data-overview-section-key="pluginSettings"');
   });
 
   it('keeps objective section/type filtering and sticky focus treatment explicit in the generated report', () => {
