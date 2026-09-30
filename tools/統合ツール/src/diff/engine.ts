@@ -161,6 +161,8 @@ export function isEmptyLikeValue(v) {
   return false;
 }
 
+const DECIMAL_NUMBER_LITERAL_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
+
 export function isNotationOnlyChange(a, b) {
   const isPrim = (v) => v != null && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean');
   if (!isPrim(a) || !isPrim(b)) return false;
@@ -168,8 +170,17 @@ export function isNotationOnlyChange(a, b) {
   const sa = String(a).trim();
   const sb = String(b).trim();
   if (sa === sb) return true;
-  // 数値として等価（"100" ⇄ 100、"1.0" ⇄ 1）
-  if (sa !== '' && sb !== '' && !Number.isNaN(Number(sa)) && !Number.isNaN(Number(sb)) && Number(sa) === Number(sb)) return true;
+  // 数値として等価（"100" ⇄ 100、"1.0" ⇄ 1）。
+  // Number() は "0x10" や "Infinity" も数値として解釈するため、10 進の数値表記だけを対象にする。
+  // 両側が文字列で安全整数の範囲を超える場合は倍精度で丸められて別の値が一致してしまうため、
+  // 文字列として完全一致（上で判定済み）した場合だけを同値とする。
+  if (DECIMAL_NUMBER_LITERAL_RE.test(sa) && DECIMAL_NUMBER_LITERAL_RE.test(sb)) {
+    const na = Number(sa);
+    const nb = Number(sb);
+    const bothStrings = typeof a === 'string' && typeof b === 'string';
+    const precise = !bothStrings || (Math.abs(na) <= Number.MAX_SAFE_INTEGER && Math.abs(nb) <= Number.MAX_SAFE_INTEGER);
+    if (precise && na === nb) return true;
+  }
   // 真偽値として等価（"true" ⇄ true）
   const la = sa.toLowerCase();
   const lb = sb.toLowerCase();
@@ -290,8 +301,10 @@ export function isIgnoredKey(ignoreRules, key) {
 function isEntityIdentifierChildPath(path) {
   const normalizedPath = normalizeIgnoreToken(path);
   if (!normalizedPath) return false;
-  return /^(?:fieldsettings\.properties|viewsettings\.views|reportsettings\.reports|processsettings\.states|categories\.categories)\.[^.[\]]+$/.test(normalizedPath)
-    || /^fieldsettings\.properties\.[^.[\]]+\.fields\.[^.[\]]+$/.test(normalizedPath);
+  return /^(?:fieldsettings\.properties|viewsettings\.views|reportsettings\.reports|processsettings\.states|categories\.categories|actionsettings\.actions)\.[^.[\]]+$/.test(normalizedPath)
+    || /^fieldsettings\.properties\.[^.[\]]+\.fields\.[^.[\]]+$/.test(normalizedPath)
+    // 選択肢はラベルがキーになる名前付きマップ（ドロップダウン・ラジオ・チェックボックス等）。
+    || /^fieldsettings\.properties\.[^.[\]]+(?:\.fields\.[^.[\]]+)?\.options\.[^.[\]]+$/.test(normalizedPath);
 }
 
 export function isIgnoredPath(ignoreRules, path) {
@@ -392,6 +405,15 @@ export function getCollectedDiffCount(rows) {
   return rows.filter((row) => row?.type !== 'same' && !row?._displayOnly).length;
 }
 
+/** 上限到達を観測した事実を記録する。件数が後で減っても（移動統合）未列挙が残ることを示す。 */
+function markDiffLimitReached(out) {
+  if (out) (out as any).__diffLimitReached = true;
+}
+
+function hasReachedDiffLimit(rows): boolean {
+  return getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT || (rows as any)?.__diffLimitReached === true;
+}
+
 export function shouldCollectSameRows(rows) {
   if (!Array.isArray(rows)) return false;
   return !!(rows as any).__includeSame;
@@ -460,6 +482,21 @@ export function buildArrayKeyMap(arr, key) {
   return map;
 }
 
+/**
+ * 両側に対応相手がいる要素だけを数えたときの順位が変わった要素（＝実際に並び替えられた要素）を返す。
+ * 絶対位置で比べると、先頭への追加や途中の削除で後続の全要素が「移動」扱いになってしまう。
+ * 対応相手のいない追加/削除による位置ずれは移動ではないため、相対順位だけで判定する。
+ */
+function findReorderedKeys(matches: Array<{ sig: string; leftIdx: number; rightIdx: number }>): Set<string> {
+  const leftRank = new Map<string, number>();
+  [...matches].sort((x, y) => x.leftIdx - y.leftIdx).forEach((m, rank) => leftRank.set(m.sig, rank));
+  const reordered = new Set<string>();
+  [...matches].sort((x, y) => x.rightIdx - y.rightIdx).forEach((m, rank) => {
+    if (leftRank.get(m.sig) !== rank) reordered.add(m.sig);
+  });
+  return reordered;
+}
+
 export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
   const key = detectArrayObjectKey(a, b, ignoreRules);
   if (!key) return false;
@@ -480,6 +517,12 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
     seen.add(sig);
     ordered.push(sig);
   }
+
+  const reordered = findReorderedKeys(ordered.flatMap((sig) => {
+    const left = mapA.get(sig);
+    const right = mapB.get(sig);
+    return left && right ? [{ sig, leftIdx: left.idx, rightIdx: right.idx }] : [];
+  }));
 
   for (const sig of ordered) {
     if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
@@ -513,7 +556,7 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
     const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
     const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
     if (leftSig === rightSig) {
-      if (left.idx !== right.idx && !isUnorderedArrayPath(path)) {
+      if (reordered.has(sig) && !isUnorderedArrayPath(path)) {
         pushDiffRow(out, {
           type: 'changed',
           path: `${path}[${right.idx}]`,
@@ -795,6 +838,12 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
   for (const sig of mapA.keys()) { if (!seen.has(sig)) { seen.add(sig); ordered.push(sig); } }
   for (const sig of mapB.keys()) { if (!seen.has(sig)) { seen.add(sig); ordered.push(sig); } }
 
+  const reordered = findReorderedKeys(ordered.flatMap((sig) => {
+    const left = mapA.get(sig);
+    const right = mapB.get(sig);
+    return left && right ? [{ sig, leftIdx: left.idx, rightIdx: right.idx }] : [];
+  }));
+
   for (const sig of ordered) {
     if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
     const left = mapA.get(sig);
@@ -827,7 +876,7 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
     const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
     const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
     if (leftSig === rightSig) {
-      if (left.idx !== right.idx && !isUnorderedArrayPath(path)) {
+      if (reordered.has(sig) && !isUnorderedArrayPath(path)) {
         pushDiffRow(out, {
           type: 'changed',
           path: `${path}[${right.idx}]`,
@@ -1001,7 +1050,11 @@ export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
   let i = 0;
   let j = 0;
   while (i < n || j < m) {
-    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) break;
+    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) {
+      // 移動ペアの統合で件数が上限未満に戻っても、列挙を打ち切った事実は残す。
+      markDiffLimitReached(out);
+      break;
+    }
     if (i < n && j < m && sigA[i] === sigB[j]) {
       pushSameDiffRow(out, {
           path: `${path}[${j}]`,
@@ -1218,11 +1271,13 @@ export function preprocessCustomizePairForDiff(src, tgt) {
   injectName(sClone);
   injectName(tClone);
 
-  const swapBodyOrCleanup = (item, counterpart) => {
+  // 相手側の本文有無は、どちらかを掃除（_bodyText 削除）する前に確定させる。
+  // 比較元を先に掃除すると、比較先から見た相手の本文が消えて比較先だけ fileKey 比較に残り、
+  // 同一本文でも「_body 削除 / fileKey 追加」の偽差分になる。
+  const swapBodyOrCleanup = (item, counterpartHasBody: boolean) => {
     if (!item || typeof item !== 'object') return;
     const sBody = item._bodyText;
-    const cBody = counterpart?._bodyText;
-    if (item.type === 'FILE' && item.file && typeof item.file === 'object' && sBody != null && cBody != null) {
+    if (item.type === 'FILE' && item.file && typeof item.file === 'object' && sBody != null && counterpartHasBody) {
       const newFile = { ...item.file };
       newFile._body = String(sBody);
       delete newFile.fileKey;
@@ -1243,8 +1298,11 @@ export function preprocessCustomizePairForDiff(src, tgt) {
       tList.forEach((it) => { if (it && typeof it === 'object' && it.name) tByName.set(String(it.name), it); });
       const sByName = new Map<string, any>();
       sList.forEach((it) => { if (it && typeof it === 'object' && it.name) sByName.set(String(it.name), it); });
-      sList.forEach((it) => swapBodyOrCleanup(it, tByName.get(String(it?.name || ''))));
-      tList.forEach((it) => swapBodyOrCleanup(it, sByName.get(String(it?.name || ''))));
+      const hasBodyOf = (byName: Map<string, any>, it) => byName.get(String(it?.name || ''))?._bodyText != null;
+      const sPlans = sList.map((it) => [it, hasBodyOf(tByName, it)] as const);
+      const tPlans = tList.map((it) => [it, hasBodyOf(sByName, it)] as const);
+      sPlans.forEach(([it, counterpartHasBody]) => swapBodyOrCleanup(it, counterpartHasBody));
+      tPlans.forEach(([it, counterpartHasBody]) => swapBodyOrCleanup(it, counterpartHasBody));
     }
   }
   return { source: sClone, target: tClone };
@@ -1424,7 +1482,7 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
   const unscannedSectionKeys: string[] = [];
   for (const sec of sections) {
     const label = (SECTION_DEFS.find((x) => x.key === sec) || ({} as any)).label || sec;
-    const limitHitBefore = getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT;
+    const limitHitBefore = hasReachedDiffLimit(rows);
     const s = sourceBundle.sections[sec];
     const t = targetBundle.sections[sec];
 
@@ -1518,7 +1576,7 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
     if (sec === 'processSettings') {
       pushProcessStateRenameNotices(rows, sec, label, stateRenames, ignoreRules);
     }
-    if (getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT) {
+    if (hasReachedDiffLimit(rows)) {
       limitHitSectionKeys.push(sec);
     }
   }
@@ -1758,9 +1816,12 @@ export function normalizeSectionValueForCompare(value, config, path = '') {
   if (value && typeof value === 'object') {
     const out = {};
     Object.keys(value).sort().forEach((key) => {
-      if (META_KEYS.has(key)) return;
-      if (config?.ignoreKeys?.has(normalizeIgnoreToken(key))) return;
       const childPath = appendNormalizationPath(path, key);
+      // 名前付きマップ直下のキーはフィールドコードやビュー名などの識別子であり、設定プロパティ名ではない。
+      // 「order」「index」「revision」等の名前を持つ実体を、正規化だけで差分から消さない。
+      const isEntityIdentifier = isEntityIdentifierChildPath(childPath);
+      if (!isEntityIdentifier && META_KEYS.has(key)) return;
+      if (!isEntityIdentifier && config?.ignoreKeys?.has(normalizeIgnoreToken(key))) return;
       if (config?.ignoreAppReferencePaths && isAppReferenceIdPath(childPath)) return;
       out[key] = normalizeSectionValueForCompare(value[key], config, childPath);
     });
