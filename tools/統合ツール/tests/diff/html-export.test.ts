@@ -836,8 +836,8 @@ describe('diff/html export', () => {
     expect(script).toContain("rowItemLabel + 'を確認済みにして次へ'");
     expect(script).toContain("fieldItemLabel + 'を反映JSONの対象に選択'");
     expect(script).toContain("String(group.label || group.code) + (group.diffCount ? 'の設定差分を開く' : 'の設定を開く')");
-    expect(html).toContain('mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:3px;padding:0 2px;text-decoration:underline 2px');
-    expect(html).toContain('mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:3px;padding:0 2px;text-decoration:line-through 2px');
+    expect(html).toContain('mark.cadd{background:var(--mark-add);color:#065f46;border-radius:3px;padding:0 2px;text-decoration:underline 2px');
+    expect(html).toContain('mark.cdel{background:var(--mark-del);color:#7f1d1d;border-radius:3px;padding:0 2px;text-decoration:line-through 2px');
   });
 
   it('makes standalone HTML safe by default and forwards an explicit compared-content mode and label', () => {
@@ -1525,5 +1525,138 @@ describe('diff/html export', () => {
     expect(extractInlineScript(html)).toContain('"reflectJsonAvailable":false');
     expect(html).toContain('id="reflectJsonBtn" disabled aria-disabled="true"');
     expect(html).toContain('id="srcJsonBtn">比較元JSON</button>');
+  });
+});
+
+describe('diff/html export audit regressions', () => {
+  const auditBundle = (appId: string) => ({
+    appId, guestId: '', preview: false,
+    sections: { fieldSettings: { properties: {} }, layoutSettings: { layout: [] } }, meta: {}
+  });
+  const auditRows = [{
+    _id: 'audit-1', sectionKey: 'fieldSettings', section: 'フィールド', type: 'changed',
+    path: 'fieldSettings.properties.field_a.label', left: '旧', right: '新', severity: 'low'
+  }];
+  const buildAuditHtml = (rows: any[] = auditRows, options: any = {}) =>
+    buildDiffHtml(auditBundle('1'), auditBundle('2'), rows, ['fieldSettings'], '', { fetchIssues: [], truncation: null, ...options });
+
+  function hexLuminance(hex: string): number {
+    const value = hex.replace('#', '');
+    const channel = (offset: number) => {
+      const v = parseInt(value.slice(offset, offset + 2), 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+  }
+  function contrast(a: string, b: string): number {
+    const [hi, lo] = [hexLuminance(a), hexLuminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  }
+  function cssToken(html: string, block: RegExp, name: string): string {
+    const scope = html.match(block)?.[0] || '';
+    const match = scope.match(new RegExp(`${name}:(#[0-9a-fA-F]{6})`));
+    if (!match) throw new Error(`${name} was not found`);
+    return match[1];
+  }
+
+  it('expands collapsed sections while printing and restores the on-screen state afterwards', () => {
+    const script = extractInlineScript(buildAuditHtml());
+
+    expect(script).toContain("window.addEventListener('beforeprint', prepareReportForPrint)");
+    expect(script).toContain("window.addEventListener('afterprint', restoreReportAfterPrint)");
+    expect(script).toMatch(/function prepareReportForPrint\(\)[\s\S]*?collapsed\.clear\(\)[\s\S]*?render\(\)/);
+    expect(script).toMatch(/function restoreReportAfterPrint\(\)[\s\S]*?collapsed\.add\(/);
+    // OS のダーク設定に従って開いた場合も、body.dark 配下の固定色を紙面へ持ち込まない。
+    expect(script).toMatch(/function prepareReportForPrint\(\)[\s\S]*?classList\.remove\('dark'\)[\s\S]*?function restoreReportAfterPrint/);
+    expect(script).toMatch(/function restoreReportAfterPrint\(\)[\s\S]*?if \(restore\.dark\) document\.body\.classList\.add\('dark'\)/);
+    // 印刷直前のテーマ切替で始まる背景色のトランジションを、紙面へ途中の色のまま出さない。
+    expect(buildAuditHtml()).toMatch(/@media print\{\s*@page\{[^}]*\}\s*\*,\*::before,\*::after\{transition:none!important;animation:none!important\}/);
+    expect(() => new Function(script)).not.toThrow();
+  });
+
+  it('follows the OS dark preference until the reader chooses a theme explicitly', () => {
+    const script = extractInlineScript(buildAuditHtml());
+
+    expect(script).toContain("window.matchMedia('(prefers-color-scheme: dark)')");
+    expect(script).toMatch(/const storedTheme = safeStorageGet\(THEME_KEY\);/);
+    expect(script).toMatch(/storedTheme === 'dark' \|\| \(storedTheme !== 'light' && prefersDarkScheme\(\)\)/);
+  });
+
+  it('keeps small muted text and character highlights at WCAG AA contrast in both themes', () => {
+    const html = buildAuditHtml();
+    const light = /:root\{[\s\S]*?\n    \}/;
+    const dark = /body\.dark\{\s*color-scheme:dark;[\s\S]*?\n    \}/;
+    for (const bg of ['--card', '--card-soft', '--bg', '--sidebar', '--pad']) {
+      expect(contrast(cssToken(html, light, '--muted'), cssToken(html, light, bg))).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(cssToken(html, dark, '--muted'), cssToken(html, dark, bg))).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(contrast(cssToken(html, light, '--pill-same'), cssToken(html, light, '--card'))).toBeGreaterThanOrEqual(4.5);
+    // 文字単位ハイライトは背景色（--mark-*）の上に専用の文字色を使う。
+    const markDel = html.match(/mark\.cdel\{background:var\(--mark-del\);color:(#[0-9a-f]{6})/i)?.[1];
+    const markAdd = html.match(/mark\.cadd\{background:var\(--mark-add\);color:(#[0-9a-f]{6})/i)?.[1];
+    expect(markDel && contrast(markDel, cssToken(html, light, '--mark-del'))).toBeGreaterThanOrEqual(4.5);
+    expect(markAdd && contrast(markAdd, cssToken(html, light, '--mark-add'))).toBeGreaterThanOrEqual(4.5);
+    const darkMarkDel = html.match(/body\.dark mark\.cdel\{color:(#[0-9a-f]{6})/i)?.[1] || cssToken(html, dark, '--del-fg');
+    const darkMarkAdd = html.match(/body\.dark mark\.cadd\{color:(#[0-9a-f]{6})/i)?.[1] || cssToken(html, dark, '--add-fg');
+    expect(contrast(darkMarkDel, cssToken(html, dark, '--mark-del'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(darkMarkAdd, cssToken(html, dark, '--mark-add'))).toBeGreaterThanOrEqual(4.5);
+    // 白文字の塗りボタンは、明暗どちらのテーマでも 4.5:1 以上の専用色に載せる（暗いテーマの --accent は文字色向け）。
+    expect(contrast('#ffffff', cssToken(html, light, '--accent-solid'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast('#ffffff', cssToken(html, light, '--accent-solid-strong'))).toBeGreaterThanOrEqual(4.5);
+    expect(html).toContain('.row-review-next{border:1px solid var(--accent-solid-strong);background:var(--accent-solid);color:#fff;');
+    expect(html).toContain('.btn.primary{background:linear-gradient(180deg,var(--accent-solid),var(--accent-solid-strong));color:#fff;');
+    expect(html).toContain('background:linear-gradient(180deg,var(--accent-solid),var(--accent-solid-strong));color:#fff;font-size:13px');
+    expect(html).not.toMatch(/body\.dark \.btn\.primary\{background:linear-gradient\(180deg,#60a5fa/);
+  });
+
+  it('returns focus to the section header or same-item fold after a keyboard toggle re-renders the list', () => {
+    const script = extractInlineScript(buildAuditHtml());
+
+    expect(script).toContain('function restoreToggleFocus(attribute, key)');
+    expect(script).toContain("restoreToggleFocus('data-sec-toggle', key)");
+    expect(script).toContain("restoreToggleFocus('data-same-fold', key)");
+  });
+
+  it('does not tell the reader that nothing is left to review as if everything were confirmed when there is nothing to review', () => {
+    const html = buildAuditHtml([]);
+    const script = extractInlineScript(html);
+
+    expect(script).toContain('レビュー対象の差分はありません');
+    expect(script).toContain("progress.total ? progress.reviewed + ' / ' + progress.total + '（' + progress.percent + '%）' : '0 / 0'");
+    expect(script).toContain('const REPORT_EMPTY_STATE = ');
+    expect(script).toMatch(/if \(!REPORT_ROWS\.length\)[\s\S]*?REPORT_EMPTY_STATE\.title/);
+    expect(extractInlineJsonConst(html, 'REPORT_EMPTY_STATE')).toEqual({
+      title: '差分は見つかりませんでした',
+      note: '選択した設定は一致しています'
+    });
+  });
+
+  it('keeps the incomplete zero-difference empty state from claiming equality', () => {
+    const html = buildAuditHtml([], { fetchIssues: [{ sectionKey: 'appSettings', section: 'アプリ設定', side: 'source', message: '403' }] });
+    const state = extractInlineJsonConst(html, 'REPORT_EMPTY_STATE');
+
+    expect(state.title).toBe('確認できた差分は0件です');
+    expect(state.note).toContain('一致とは判断できません');
+  });
+
+  it('exposes each section header as a level-2 heading without changing its button contract', () => {
+    const html = buildAuditHtml();
+    const script = extractInlineScript(html);
+
+    expect(script).toContain('<div class="sec-heading" role="heading" aria-level="2" aria-label="');
+    expect(html).toMatch(/\.sec-heading\{display:contents/);
+    expect(script).toContain('<span class="sec-caret" aria-hidden="true">');
+    expect(html).toContain('<aside data-report-tools aria-label="検索・表示・出力">');
+    expect(script).toContain('data-sec-toggle="');
+  });
+
+  it('lets the section header wrap on narrow screens and tones the incomplete empty state as a caution', () => {
+    const html = buildAuditHtml([], { fetchIssues: [{ sectionKey: 'appSettings', section: 'アプリ設定', side: 'source', message: '403' }] });
+
+    expect(html).toContain('.sec-head{align-items:flex-start;flex-wrap:wrap;padding:10px;');
+    expect(html).toContain('.sec-head-title{flex:1 1 100%}');
+    expect(html).toContain('.no-diff--incomplete strong{color:var(--pill-chg)}');
+    expect(extractInlineScript(html)).toContain("REPORT_META.incompleteComparison ? ' no-diff--incomplete' : ''");
+    expect(contrast('#0f766e', '#ffffff')).toBeGreaterThanOrEqual(4.5);
   });
 });
