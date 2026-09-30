@@ -1371,7 +1371,13 @@ ${contextLine}`);
     const sa = String(a).trim();
     const sb = String(b).trim();
     if (sa === sb) return true;
-    if (sa !== "" && sb !== "" && !Number.isNaN(Number(sa)) && !Number.isNaN(Number(sb)) && Number(sa) === Number(sb)) return true;
+    if (DECIMAL_NUMBER_LITERAL_RE.test(sa) && DECIMAL_NUMBER_LITERAL_RE.test(sb)) {
+      const na = Number(sa);
+      const nb = Number(sb);
+      const bothStrings = typeof a === "string" && typeof b === "string";
+      const precise = !bothStrings || Math.abs(na) <= Number.MAX_SAFE_INTEGER && Math.abs(nb) <= Number.MAX_SAFE_INTEGER;
+      if (precise && na === nb) return true;
+    }
     const la = sa.toLowerCase();
     const lb = sb.toLowerCase();
     if ((la === "true" || la === "false") && la === lb) return true;
@@ -1461,7 +1467,7 @@ ${contextLine}`);
   function isEntityIdentifierChildPath(path) {
     const normalizedPath = normalizeIgnoreToken(path);
     if (!normalizedPath) return false;
-    return /^(?:fieldsettings\.properties|viewsettings\.views|reportsettings\.reports|processsettings\.states|categories\.categories)\.[^.[\]]+$/.test(normalizedPath) || /^fieldsettings\.properties\.[^.[\]]+\.fields\.[^.[\]]+$/.test(normalizedPath);
+    return /^(?:fieldsettings\.properties|viewsettings\.views|reportsettings\.reports|processsettings\.states|categories\.categories|actionsettings\.actions)\.[^.[\]]+$/.test(normalizedPath) || /^fieldsettings\.properties\.[^.[\]]+\.fields\.[^.[\]]+$/.test(normalizedPath) || /^fieldsettings\.properties\.[^.[\]]+(?:\.fields\.[^.[\]]+)?\.options\.[^.[\]]+$/.test(normalizedPath);
   }
   function isIgnoredPath(ignoreRules, path) {
     const exactPath = trimIgnoreToken(path);
@@ -1538,6 +1544,12 @@ ${contextLine}`);
     if (Number.isFinite(count)) return count;
     return rows.filter((row) => row?.type !== "same" && !row?._displayOnly).length;
   }
+  function markDiffLimitReached(out) {
+    if (out) out.__diffLimitReached = true;
+  }
+  function hasReachedDiffLimit(rows) {
+    return getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT || rows?.__diffLimitReached === true;
+  }
   function shouldCollectSameRows(rows) {
     if (!Array.isArray(rows)) return false;
     return !!rows.__includeSame;
@@ -1598,6 +1610,15 @@ ${contextLine}`);
     }
     return map;
   }
+  function findReorderedKeys(matches) {
+    const leftRank = /* @__PURE__ */ new Map();
+    [...matches].sort((x, y) => x.leftIdx - y.leftIdx).forEach((m, rank) => leftRank.set(m.sig, rank));
+    const reordered = /* @__PURE__ */ new Set();
+    [...matches].sort((x, y) => x.rightIdx - y.rightIdx).forEach((m, rank) => {
+      if (leftRank.get(m.sig) !== rank) reordered.add(m.sig);
+    });
+    return reordered;
+  }
   function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
     const key = detectArrayObjectKey(a, b, ignoreRules);
     if (!key) return false;
@@ -1617,6 +1638,11 @@ ${contextLine}`);
       seen.add(sig);
       ordered.push(sig);
     }
+    const reordered = findReorderedKeys(ordered.flatMap((sig) => {
+      const left = mapA.get(sig);
+      const right = mapB.get(sig);
+      return left && right ? [{ sig, leftIdx: left.idx, rightIdx: right.idx }] : [];
+    }));
     for (const sig of ordered) {
       if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
       const left = mapA.get(sig);
@@ -1648,7 +1674,7 @@ ${contextLine}`);
       const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
       const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
       if (leftSig === rightSig) {
-        if (left.idx !== right.idx && !isUnorderedArrayPath(path)) {
+        if (reordered.has(sig) && !isUnorderedArrayPath(path)) {
           pushDiffRow(out, {
             type: "changed",
             path: `${path}[${right.idx}]`,
@@ -1845,6 +1871,11 @@ ${contextLine}`);
         ordered.push(sig);
       }
     }
+    const reordered = findReorderedKeys(ordered.flatMap((sig) => {
+      const left = mapA.get(sig);
+      const right = mapB.get(sig);
+      return left && right ? [{ sig, leftIdx: left.idx, rightIdx: right.idx }] : [];
+    }));
     for (const sig of ordered) {
       if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
       const left = mapA.get(sig);
@@ -1876,7 +1907,7 @@ ${contextLine}`);
       const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
       const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
       if (leftSig === rightSig) {
-        if (left.idx !== right.idx && !isUnorderedArrayPath(path)) {
+        if (reordered.has(sig) && !isUnorderedArrayPath(path)) {
           pushDiffRow(out, {
             type: "changed",
             path: `${path}[${right.idx}]`,
@@ -2028,7 +2059,10 @@ ${contextLine}`);
     let i = 0;
     let j = 0;
     while (i < n || j < m) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) break;
+      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) {
+        markDiffLimitReached(out);
+        break;
+      }
       if (i < n && j < m && sigA[i] === sigB[j]) {
         pushSameDiffRow(out, {
           path: `${path}[${j}]`,
@@ -2200,11 +2234,10 @@ ${contextLine}`);
     };
     injectName(sClone);
     injectName(tClone);
-    const swapBodyOrCleanup = (item, counterpart) => {
+    const swapBodyOrCleanup = (item, counterpartHasBody) => {
       if (!item || typeof item !== "object") return;
       const sBody = item._bodyText;
-      const cBody = counterpart?._bodyText;
-      if (item.type === "FILE" && item.file && typeof item.file === "object" && sBody != null && cBody != null) {
+      if (item.type === "FILE" && item.file && typeof item.file === "object" && sBody != null && counterpartHasBody) {
         const newFile = { ...item.file };
         newFile._body = String(sBody);
         delete newFile.fileKey;
@@ -2228,8 +2261,11 @@ ${contextLine}`);
         sList.forEach((it) => {
           if (it && typeof it === "object" && it.name) sByName.set(String(it.name), it);
         });
-        sList.forEach((it) => swapBodyOrCleanup(it, tByName.get(String(it?.name || ""))));
-        tList.forEach((it) => swapBodyOrCleanup(it, sByName.get(String(it?.name || ""))));
+        const hasBodyOf = (byName, it) => byName.get(String(it?.name || ""))?._bodyText != null;
+        const sPlans = sList.map((it) => [it, hasBodyOf(tByName, it)]);
+        const tPlans = tList.map((it) => [it, hasBodyOf(sByName, it)]);
+        sPlans.forEach(([it, counterpartHasBody]) => swapBodyOrCleanup(it, counterpartHasBody));
+        tPlans.forEach(([it, counterpartHasBody]) => swapBodyOrCleanup(it, counterpartHasBody));
       }
     }
     return { source: sClone, target: tClone };
@@ -2375,7 +2411,7 @@ ${contextLine}`);
     const unscannedSectionKeys = [];
     for (const sec of sections) {
       const label = (SECTION_DEFS.find((x) => x.key === sec) || {}).label || sec;
-      const limitHitBefore = getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT;
+      const limitHitBefore = hasReachedDiffLimit(rows);
       const s = sourceBundle.sections[sec];
       const t = targetBundle.sections[sec];
       const sourceError = s?._fetchError ? String(s._fetchError) : sec === "pluginSettings" ? getLegacyPluginSettingsFetchError(s) : "";
@@ -2451,7 +2487,7 @@ ${contextLine}`);
       if (sec === "processSettings") {
         pushProcessStateRenameNotices(rows, sec, label, stateRenames, ignoreRules);
       }
-      if (getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT) {
+      if (hasReachedDiffLimit(rows)) {
         limitHitSectionKeys.push(sec);
       }
     }
@@ -2629,9 +2665,10 @@ ${contextLine}`);
     if (value && typeof value === "object") {
       const out = {};
       Object.keys(value).sort().forEach((key) => {
-        if (META_KEYS.has(key)) return;
-        if (config?.ignoreKeys?.has(normalizeIgnoreToken(key))) return;
         const childPath = appendNormalizationPath(path, key);
+        const isEntityIdentifier = isEntityIdentifierChildPath(childPath);
+        if (!isEntityIdentifier && META_KEYS.has(key)) return;
+        if (!isEntityIdentifier && config?.ignoreKeys?.has(normalizeIgnoreToken(key))) return;
         if (config?.ignoreAppReferencePaths && isAppReferenceIdPath(childPath)) return;
         out[key] = normalizeSectionValueForCompare(value[key], config, childPath);
       });
@@ -2882,7 +2919,7 @@ ${contextLine}`);
     });
     return out;
   }
-  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, MATCHING_NOTICE_LIMIT, ARRAY_KEY_CANDIDATES, LOW_PRIORITY_LEAF_KEYS, ACL_GRANT_FLAG_KEYS, FIELD_ACL_LEVEL_ORDER, EXACT_IGNORE_PATH_PREFIX, ACTION_MAPPINGS_ARRAY_PATH, COMPOSITE_ARRAY_RULES, SUBTABLE_ROOT_PATH_RE, ENTITY_EXPAND_LIMIT;
+  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, MATCHING_NOTICE_LIMIT, ARRAY_KEY_CANDIDATES, LOW_PRIORITY_LEAF_KEYS, ACL_GRANT_FLAG_KEYS, FIELD_ACL_LEVEL_ORDER, DECIMAL_NUMBER_LITERAL_RE, EXACT_IGNORE_PATH_PREFIX, ACTION_MAPPINGS_ARRAY_PATH, COMPOSITE_ARRAY_RULES, SUBTABLE_ROOT_PATH_RE, ENTITY_EXPAND_LIMIT;
   var init_engine = __esm({
     "src/diff/engine.ts"() {
       "use strict";
@@ -2951,6 +2988,7 @@ ${contextLine}`);
         "deletable"
       ]);
       FIELD_ACL_LEVEL_ORDER = ["NONE", "READ", "WRITE"];
+      DECIMAL_NUMBER_LITERAL_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
       EXACT_IGNORE_PATH_PREFIX = "path:";
       ACTION_MAPPINGS_ARRAY_PATH = /^actionSettings\.actions(?:\.|\[).*\.mappings$/;
       COMPOSITE_ARRAY_RULES = [
@@ -5766,6 +5804,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   const SECTION_LABEL_MAP = ${safeJsonForScript(sectionLabelMap)};
   const ENTITY_KIND_LABEL_MAP = ${safeJsonForScript(entityKindLabelMap)};
   const REPORT_META = ${safeJsonForScript(reportMeta)};
+  const REPORT_EMPTY_STATE = ${safeJsonForScript({ title: emptyFactTitle, note: emptyFactNote })};
   const REVIEW_STATE_KIND = String(REPORT_META.reviewState.kind || '');
   const REVIEW_STATE_VERSION = Number(REPORT_META.reviewState.version || 0);
   const REVIEW_STATE_MAX_BYTES = Number(REPORT_META.reviewState.maxBytes || ${DIFF_HTML_REVIEW_STATE_MAX_BYTES});
@@ -5893,15 +5932,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const reviewedEl = document.getElementById('stat-reviewed');
     if (reviewedEl) reviewedEl.textContent = String(progress.reviewed);
     const valueEl = document.getElementById('sidebarReviewProgressValue');
-    if (valueEl) valueEl.textContent = progress.reviewed + ' / ' + progress.total + '（' + progress.percent + '%）';
+    if (valueEl) valueEl.textContent = progress.total ? progress.reviewed + ' / ' + progress.total + '（' + progress.percent + '%）' : '0 / 0';
     const barEl = document.getElementById('sidebarReviewProgressBar');
     if (barEl) {
       barEl.setAttribute('aria-valuemax', String(progress.total));
       barEl.setAttribute('aria-valuenow', String(progress.reviewed));
-      barEl.setAttribute('aria-valuetext', '確認済み ' + progress.reviewed + '件 / 全 ' + progress.total + '件（' + progress.percent + '%）');
+      barEl.setAttribute('aria-valuetext', '確認済み ' + progress.reviewed + '件 / 全 ' + progress.total + '件' + (progress.total ? '（' + progress.percent + '%）' : ''));
     }
     const fillEl = document.getElementById('sidebarReviewProgressFill');
-    if (fillEl) fillEl.style.width = progress.percent + '%';
+    if (fillEl) fillEl.style.width = (progress.total ? progress.percent : 0) + '%';
     return progress;
   }
 
@@ -8964,15 +9003,16 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const samples = pending.slice(0, 3);
     const headline = pending.length
       ? '未確認の差分を上から確認できます'
-      : '現在の対象はすべて確認済みです';
+      : progress.total ? '現在の対象はすべて確認済みです' : 'レビュー対象の差分はありません';
+    const progressText = progress.total ? progress.reviewed + ' / ' + progress.total + '（' + progress.percent + '%）' : '0 / 0';
     return '<section class="review-queue review-queue--' + (pending.length ? 'pending' : 'clear') + '" aria-labelledby="reviewQueueTitle" tabindex="-1">'
-      + '<div class="review-queue-mark" aria-hidden="true">' + (pending.length ? '→' : '✓') + '</div>'
+      + '<div class="review-queue-mark" aria-hidden="true">' + (pending.length ? '→' : progress.total ? '✓' : '−') + '</div>'
       + '<div class="review-queue-main">'
       +   '<strong id="reviewQueueTitle">' + escHtml(headline) + '</strong>'
       +   '<span class="review-queue-note">未確認 ' + pending.length + '件 / レビュー対象 ' + progress.total + '件。定義順に確認できます。</span>'
       +   '<div class="review-progress review-progress--queue">'
-      +     '<div class="review-progress-copy"><span>確認済み</span><strong>' + progress.reviewed + ' / ' + progress.total + '（' + progress.percent + '%）</strong></div>'
-      +     '<div class="review-progress-track" role="progressbar" aria-label="レビュー進捗" aria-valuemin="0" aria-valuemax="' + progress.total + '" aria-valuenow="' + progress.reviewed + '" aria-valuetext="確認済み ' + progress.reviewed + '件 / 全 ' + progress.total + '件（' + progress.percent + '%）"><span style="width:' + progress.percent + '%"></span></div>'
+      +     '<div class="review-progress-copy"><span>確認済み</span><strong>' + progressText + '</strong></div>'
+      +     '<div class="review-progress-track" role="progressbar" aria-label="レビュー進捗" aria-valuemin="0" aria-valuemax="' + progress.total + '" aria-valuenow="' + progress.reviewed + '" aria-valuetext="確認済み ' + progress.reviewed + '件 / 全 ' + progress.total + '件' + (progress.total ? '（' + progress.percent + '%）' : '') + '"><span style="width:' + (progress.total ? progress.percent : 0) + '%"></span></div>'
       +   '</div>'
       +   (samples.length ? '<div class="review-queue-samples" aria-label="次に確認する差分">' + samples.map((row) => '<button type="button" data-review-jump="' + escHtml(rowStateKey(row)) + '">' + escHtml(reportRowTitle(row)) + '</button>').join('') + '</div>' : '')
       + '</div>'
@@ -9212,6 +9252,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       diffNavigationTargets = [];
       diffFocusKey = '';
       diffFocusIndex = -1;
+      if (!REPORT_ROWS.length) {
+        // 差分そのものが 0 件のレポートでは、絞り込みの解除を案内しても状況が変わらない。
+        html += '<div class="no-diff no-diff--empty' + (REPORT_META.incompleteComparison ? ' no-diff--incomplete' : '') + '" role="status"><strong>' + escHtml(REPORT_EMPTY_STATE.title) + '</strong><span>' + escHtml(REPORT_EMPTY_STATE.note) + '</span></div>';
+        main.innerHTML = html;
+        scheduleDiffStickyOffsetSync();
+        syncDiffNavPosition();
+        finishReportRender(viewState);
+        return;
+      }
       html += '<div class="no-diff"><strong>この条件に該当する行はありません</strong><span>上の適用中フィルターから条件を1つずつ解除するか、「一覧条件をすべて解除」を選んでください。</span><button type="button" class="btn" data-clear-filter="all">一覧条件をすべて解除</button></div>';
       main.innerHTML = html;
       scheduleDiffStickyOffsetSync();
@@ -9268,10 +9317,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         nextNavigationTargets.push({ key, sectionKey: g.key });
       });
       html += '<section class="sec" id="' + secId + '">';
-      html += '<div class="sec-head" data-sec-toggle="' + escHtml(g.key) + '" role="button" tabindex="0" aria-expanded="' + (collapsedNow ? 'false' : 'true') + '">'
-        + '<span class="sec-head-title"><span class="sec-caret">' + (collapsedNow ? '▶' : '▼') + '</span>' + escHtml(g.label) + '</span>'
+      html += '<div class="sec-heading" role="heading" aria-level="2" aria-label="' + escHtml(g.label) + '"><div class="sec-head" data-sec-toggle="' + escHtml(g.key) + '" role="button" tabindex="0" aria-expanded="' + (collapsedNow ? 'false' : 'true') + '">'
+        + '<span class="sec-head-title"><span class="sec-caret" aria-hidden="true">' + (collapsedNow ? '▶' : '▼') + '</span>' + escHtml(g.label) + '</span>'
         + '<span class="sec-counts">' + reviewProgressHtml + sectionCountChips(groupSummary) + '</span>'
-        + '</div>';
+        + '</div></div>';
       if (!collapsedNow && isRawJsonMode() && g.key === FIELD_SECTION_KEY) {
         // JSONで比較: フィールド単位に区切り、設定JSON全体を左右比較する
         const parts = fieldJsonParts;
@@ -9493,6 +9542,17 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
   }
 
+  // render() は一覧を作り直すため、キーボードで開閉した見出し・折りたたみボタンへフォーカスを戻す。
+  function restoreToggleFocus(attribute, key) {
+    const target = Array.prototype.find.call(
+      document.querySelectorAll('#main [' + attribute + ']'),
+      (el) => el.getAttribute(attribute) === key
+    );
+    if (target && typeof target.focus === 'function') {
+      try { target.focus({ preventScroll: true }); } catch (err) { target.focus(); }
+    }
+  }
+
   function handleMainClick(e) {
     const mobileToolbarToggle = e.target.closest('[data-mobile-toolbar-toggle]');
     if (mobileToolbarToggle) {
@@ -9601,6 +9661,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       if (sameOpen.has(key)) sameOpen.delete(key);
       else sameOpen.add(key);
       render();
+      restoreToggleFocus('data-same-fold', key);
       return;
     }
     const reveal = e.target.closest('[data-row-toggle]');
@@ -9617,6 +9678,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       if (collapsed.has(key)) collapsed.delete(key);
       else collapsed.add(key);
       render();
+      restoreToggleFocus('data-sec-toggle', key);
     }
   }
 
@@ -9643,6 +9705,41 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if (getActiveReportTab() !== 'diff') return;
     collapsed.clear();
     render();
+  }
+
+  // 印刷では画面上の折りたたみ状態に関係なく全セクションの差分を出す。
+  // 折りたたみ中の行は DOM に存在しないため、印刷の間だけ展開して描画し直し、終了後に元へ戻す。
+  // body.dark 配下の固定色（暗い背景など）は白い紙面で読めなくなるため、印刷の間はライト表示にする。
+  let printRestoreState = null;
+  function rerenderActiveReportTab() {
+    const tab = getActiveReportTab();
+    if (tab === 'diff') render();
+    else if (tab === 'settingsLike') renderSettingsLikeView();
+  }
+  function prepareReportForPrint() {
+    if (printRestoreState) return;
+    printRestoreState = { collapsed: new Set(collapsed), dark: document.body.classList.contains('dark') };
+    if (!collapsed.size && !printRestoreState.dark) return;
+    collapsed.clear();
+    document.body.classList.remove('dark');
+    rerenderActiveReportTab();
+  }
+  function restoreReportAfterPrint() {
+    if (!printRestoreState) return;
+    const restore = printRestoreState;
+    printRestoreState = null;
+    if (!restore.collapsed.size && !restore.dark) return;
+    restore.collapsed.forEach((key) => collapsed.add(key));
+    if (restore.dark) document.body.classList.add('dark');
+    rerenderActiveReportTab();
+  }
+  window.addEventListener('beforeprint', prepareReportForPrint);
+  window.addEventListener('afterprint', restoreReportAfterPrint);
+  if (window.matchMedia) {
+    const printQuery = window.matchMedia('print');
+    const onPrintQueryChange = (event) => { if (event.matches) prepareReportForPrint(); else restoreReportAfterPrint(); };
+    if (typeof printQuery.addEventListener === 'function') printQuery.addEventListener('change', onPrintQueryChange);
+    else if (typeof printQuery.addListener === 'function') printQuery.addListener(onPrintQueryChange);
   }
 
   window.__diffReport = { render, toggleTheme, collapseAll, expandAll, setActiveTab };
@@ -10031,7 +10128,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     });
   }
 
-  if (safeStorageGet(THEME_KEY) === 'dark') document.body.classList.add('dark');
+  // 利用者が明示的に選んだテーマを優先し、未選択のときだけ OS の配色設定に従う。
+  const storedTheme = safeStorageGet(THEME_KEY);
+  const prefersDarkScheme = () => !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  if (storedTheme === 'dark' || (storedTheme !== 'light' && prefersDarkScheme())) document.body.classList.add('dark');
   syncThemeButtonLabel();
   setActiveTab(safeStorageGet(ACTIVE_TAB_KEY) || 'diff');
 })();
@@ -10046,9 +10146,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     :root{
       --bg:#f1f5f9;--fg:#0f172a;--card:#ffffff;--card-soft:#f8fafc;--border:#e2e8f0;--sidebar:#eef2f7;--sidebar-fg:#334155;
       --accent:#2563eb;--accent-strong:#1d4ed8;--accent-soft:#dbeafe;--header:#ffffff;--header-border:#e2e8f0;
-      --add:#ecfdf5;--add-fg:#047857;--del:#fef2f2;--del-fg:#b91c1c;--pad:#f1f5f9;--muted:#64748b;
+      --add:#ecfdf5;--add-fg:#047857;--del:#fef2f2;--del-fg:#b91c1c;--pad:#f1f5f9;--muted:#566579;
       --mark-add:#86efac;--mark-del:#fca5a5;--shadow:0 4px 6px -1px rgba(15,23,42,.06),0 12px 24px -4px rgba(15,23,42,.08);
-      --pill-total:#475569;--pill-add:#15803d;--pill-del:#b91c1c;--pill-chg:#b45309;--pill-move:#7c3aed;--pill-same:#0d9488;--pill-err:#c2410c;
+      --pill-total:#475569;--pill-add:#15803d;--pill-del:#b91c1c;--pill-chg:#b45309;--pill-move:#7c3aed;--pill-same:#0f766e;--pill-err:#c2410c;
+      --accent-solid:#2563eb;--accent-solid-strong:#1d4ed8;
       --focus:0 0 0 3px rgba(37,99,235,.35);--diff-toolbar-offset:64px;
     }
     body.dark{
@@ -10121,9 +10222,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .btn:focus-visible{outline:none;box-shadow:var(--focus)}
     button:disabled,.btn:disabled,.tchip:disabled,.row-act:disabled,select:disabled,input:disabled{cursor:not-allowed!important;box-shadow:none!important;filter:saturate(.25);opacity:.58}
     .chk:has(input:disabled),.vs-opt:has(input:disabled),.row-select:has(input:disabled){color:var(--muted)!important;cursor:not-allowed!important;opacity:.62}
-    .btn.primary{background:linear-gradient(180deg,#3b82f6,var(--accent));color:#fff;border-color:#1d4ed8;box-shadow:0 2px 8px rgba(37,99,235,.35)}
+    .btn.primary{background:linear-gradient(180deg,var(--accent-solid),var(--accent-solid-strong));color:#fff;border-color:#1d4ed8;box-shadow:0 2px 8px rgba(37,99,235,.35)}
     .btn.primary:hover{filter:brightness(1.06)}
-    body.dark .btn.primary{background:linear-gradient(180deg,#60a5fa,var(--accent));border-color:#2563eb}
     #navWrap{flex:1;min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--border);margin-top:4px;padding-top:8px}
     .nav-label{padding:4px 18px 8px;font-size:10px;font-weight:800;letter-spacing:.05em;color:var(--muted);text-transform:uppercase}
     #nav{flex:1;overflow:auto;padding:0 10px 20px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
@@ -10264,6 +10364,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .active-filter-clear{border:none;background:transparent;color:var(--accent-strong);padding:4px 6px;font-size:10px;font-weight:800;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
     .active-filters--empty{opacity:.78}
     .sec{border:1px solid var(--border);border-radius:16px;background:var(--card);margin-bottom:14px;box-shadow:0 8px 26px -14px rgba(15,23,42,.32);scroll-margin-top:calc(var(--diff-toolbar-offset) + 12px)}
+    .sec-heading{display:contents;margin:0;font:inherit}
     .sec-head{position:sticky;top:var(--diff-toolbar-offset);z-index:5;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 14px;border-radius:15px 15px 0 0;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card) 0%,var(--card-soft) 100%);font-size:13px;font-weight:850;cursor:pointer;user-select:none;transition:filter .15s,box-shadow .15s}
     .sec-head:hover{filter:brightness(.985)}
     .sec-head:focus-visible{outline:none;box-shadow:var(--focus)}
@@ -10308,7 +10409,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .row-act{border:1px solid var(--border);background:var(--card-soft);color:var(--muted);border-radius:8px;padding:3px 9px;font-size:11px;font-weight:700;cursor:pointer;transition:color .15s,border-color .15s}
     .row-act:hover{color:var(--fg);border-color:var(--muted)}
     .row-act:focus-visible{outline:none;box-shadow:var(--focus)}
-    .row-review-next{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap}
+    .row-review-next{border:1px solid var(--accent-solid-strong);background:var(--accent-solid);color:#fff;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap}
     .row-review-next:hover{filter:brightness(1.06)}
     .row-review-next:focus-visible{outline:none;box-shadow:var(--focus)}
     .row-reviewed{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
@@ -10449,9 +10550,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .scroll::-webkit-scrollbar{width:6px;height:6px}
     .scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:999px}
     .ln{min-width:34px;display:inline-block;text-align:right;margin-right:8px;padding-right:6px;border-right:1px solid var(--border);font-size:10px;color:var(--muted);user-select:none;flex-shrink:0}
+    body.dark .ln{color:#b4c0d1}
     .blk{margin:0;padding:10px 12px;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.55;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-    mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:3px;padding:0 2px;text-decoration:underline 2px;text-underline-offset:2px}
-    mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:3px;padding:0 2px;text-decoration:line-through 2px}
+    mark.cadd{background:var(--mark-add);color:#065f46;border-radius:3px;padding:0 2px;text-decoration:underline 2px;text-underline-offset:2px}
+    mark.cdel{background:var(--mark-del);color:#7f1d1d;border-radius:3px;padding:0 2px;text-decoration:line-through 2px}
+    body.dark mark.cadd,body.dark .sl-mini-table mark.cadd,body.dark .st-fields mark.cadd{color:var(--add-fg)}
+    body.dark mark.cdel,body.dark .sl-mini-table mark.cdel,body.dark .st-fields mark.cdel{color:var(--del-fg)}
     .sb-advanced .adv-summary{cursor:pointer;font-size:11px;font-weight:800;color:var(--fg);list-style:none;display:flex;align-items:center;gap:6px}
     .sb-advanced .adv-summary::-webkit-details-marker{display:none}
     .sb-advanced .adv-summary::before{content:"▸";display:inline-block;font-size:9px;color:var(--muted);transition:transform .15s}
@@ -10466,7 +10570,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .adv-chk.is-baked{opacity:.65}
     .adv-baked-tag{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;background:var(--accent-soft);color:var(--accent-strong);font-size:9px;font-weight:800;white-space:nowrap}
     .no-diff{display:flex;flex-direction:column;align-items:center;gap:9px;text-align:center;font-size:12px;font-weight:500;padding:24px;color:var(--muted);background:linear-gradient(180deg,var(--card-soft),var(--card));border:1px dashed var(--border);border-radius:16px}
-    .no-diff strong{font-size:14px;color:#0d9488}
+    .no-diff strong{font-size:14px;color:#0f766e}
+    .no-diff--incomplete strong{color:var(--pill-chg)}
+    body.dark .no-diff strong{color:#5eead4}
+    body.dark .no-diff--incomplete strong{color:var(--pill-chg)}
     .no-diff span{max-width:62ch;line-height:1.6}
     body.dark .no-diff{color:#5eead4}
     body.has-modal-open{overflow:hidden}
@@ -10524,8 +10631,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     body.dark tr.kv-chg>td{background:#78350f;color:#fde68a}
     tr.kv-del>th,tr.kv-add>th,tr.kv-chg>th{box-shadow:inset 3px 0 0 #ca8a04}
     tr.kv-ghost>td,tr.kv-ghost>th{background:var(--pad);color:var(--muted);font-style:italic}
-    .sl-mini-table mark.cdel,.st-fields mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:2px;padding:0 1px;text-decoration:line-through 2px}
-    .sl-mini-table mark.cadd,.st-fields mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:2px;padding:0 1px;text-decoration:underline 2px;text-underline-offset:2px}
+    .sl-mini-table mark.cdel,.st-fields mark.cdel{background:var(--mark-del);color:#7f1d1d;border-radius:2px;padding:0 1px;text-decoration:line-through 2px}
+    .sl-mini-table mark.cadd,.st-fields mark.cadd{background:var(--mark-add);color:#065f46;border-radius:2px;padding:0 1px;text-decoration:underline 2px;text-underline-offset:2px}
     .kf-row--diff .kf-value{border-color:#f59e0b;box-shadow:inset 3px 0 0 #f59e0b,inset 0 1px 2px rgba(15,23,42,.04);background:#fffbeb}
     body.dark .kf-row--diff .kf-value{background:#2a2008;border-color:#b45309}
     .kf-diff-chip{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:9px;font-weight:800;vertical-align:middle;white-space:nowrap}
@@ -10677,8 +10784,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .focus-context-pair{grid-column:1/-1}
       .focus-context-pair b{font-size:10px}
       .sec{border-radius:14px}
-      .sec-head{align-items:flex-start;padding:10px;border-radius:13px 13px 0 0}
-      .sec-counts{gap:4px}
+      .sec-head{align-items:flex-start;flex-wrap:wrap;padding:10px;border-radius:13px 13px 0 0}
+      .sec-head-title{flex:1 1 100%}
+      .sec-counts{gap:4px;justify-content:flex-start}
       .cnt{padding:3px 6px;font-size:9px}
       .drow{padding:10px 9px 12px}
       .report-toast{margin:7px 8px 0;padding:8px 10px;font-size:10px}
@@ -10860,7 +10968,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .report-diagnostics>summary:focus-visible,.tool-details-summary:focus-visible,.related-settings>summary:focus-visible{outline:none;box-shadow:var(--focus);border-radius:7px}
     .report-diagnostics .report-notices{margin:8px 0 0}
     .report-review-start{display:flex;flex:0 1 auto;min-width:0}
-    .report-review-start button{min-height:42px;padding:9px 15px;border:1px solid var(--accent);border-radius:9px;background:linear-gradient(180deg,#3b82f6,var(--accent));color:#fff;font-size:13px;font-weight:850;cursor:pointer;white-space:normal;box-shadow:0 10px 24px -16px rgba(37,99,235,.9)}
+    .report-review-start button{min-height:42px;padding:9px 15px;border:1px solid var(--accent-solid-strong);border-radius:9px;background:linear-gradient(180deg,var(--accent-solid),var(--accent-solid-strong));color:#fff;font-size:13px;font-weight:850;cursor:pointer;white-space:normal;box-shadow:0 10px 24px -16px rgba(37,99,235,.9)}
     .report-review-start button:hover{filter:brightness(.96)}
     .report-review-start button:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:3px}
     .report-facts{grid-column:1/-1;padding-top:4px}
@@ -11011,6 +11119,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
     @media print{
       @page{size:A4;margin:12mm}
+      *,*::before,*::after{transition:none!important;animation:none!important}
       :root,body.dark{--bg:#fff;--fg:#0f172a;--card:#fff;--card-soft:#f8fafc;--border:#cbd5e1;--sidebar:#f8fafc;--sidebar-fg:#334155;--accent:#2563eb;--accent-strong:#1d4ed8;--accent-soft:#dbeafe;--muted:#475569;color-scheme:light}
       body.dark .report-content-disclosure{border-color:#d6b456;border-left-color:#9a6700;background:#fffaf0;color:#5f4300}
       body.dark .report-content-disclosure--caution{border-color:#e0a06b;border-left-color:#b45309;background:#fff7ed;color:#7c2d12}
@@ -11102,7 +11211,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   </header>
 
   <div class="report-workspace" data-report-workspace>
-  <aside data-report-tools>
+  <aside data-report-tools aria-label="検索・表示・出力">
     <div class="sb-head">
       <div class="sb-head-row">
         <div class="sb-title">検索・表示</div>
@@ -11117,8 +11226,8 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     </div>
     <div class="sb-panel sb-stats">
       <div class="sidebar-review-progress sidebar-review-progress--solo">
-        <div class="review-progress-copy"><span>レビュー進捗</span><strong id="sidebarReviewProgressValue">0 / ${diffTotal}（0%）</strong></div>
-        <div id="sidebarReviewProgressBar" class="review-progress-track" role="progressbar" aria-label="レビュー進捗" aria-valuemin="0" aria-valuemax="${diffTotal}" aria-valuenow="0" aria-valuetext="確認済み 0件 / 全 ${diffTotal}件（0%）"><span id="sidebarReviewProgressFill" style="width:0%"></span></div>
+        <div class="review-progress-copy"><span>レビュー進捗</span><strong id="sidebarReviewProgressValue">${diffTotal ? `0 / ${diffTotal}（0%）` : "0 / 0"}</strong></div>
+        <div id="sidebarReviewProgressBar" class="review-progress-track" role="progressbar" aria-label="レビュー進捗" aria-valuemin="0" aria-valuemax="${diffTotal}" aria-valuenow="0" aria-valuetext="確認済み 0件 / 全 ${diffTotal}件${diffTotal ? "（0%）" : ""}"><span id="sidebarReviewProgressFill" style="width:0%"></span></div>
       </div>
     </div>
     <div class="sb-panel sb-ctrl">
