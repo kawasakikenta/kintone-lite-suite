@@ -1138,6 +1138,41 @@ export function renderRowsHtml(
   return parts.join('');
 }
 
+type LiteDiffJsonSide = 'source' | 'target';
+
+/** Only the latest read on each side may change the selected JSON or report an error. */
+export function createLiteDiffJsonImporter<TBundle>(onBusyChange: () => void = () => {}) {
+  const generations: Record<LiteDiffJsonSide, number> = { source: 0, target: 0 };
+  const loading: Record<LiteDiffJsonSide, boolean> = { source: false, target: false };
+  return {
+    isLoading: (side?: LiteDiffJsonSide) => side ? loading[side] : loading.source || loading.target,
+    cancel(side: LiteDiffJsonSide) {
+      const wasLoading = loading[side];
+      generations[side] += 1;
+      loading[side] = false;
+      onBusyChange();
+      return wasLoading;
+    },
+    async load(side: LiteDiffJsonSide, read: () => Promise<TBundle>): Promise<TBundle | null> {
+      const generation = ++generations[side];
+      loading[side] = true;
+      onBusyChange();
+      try {
+        const bundle = await read();
+        return generation === generations[side] ? bundle : null;
+      } catch (error) {
+        if (generation !== generations[side]) return null;
+        throw error;
+      } finally {
+        if (generation === generations[side]) {
+          loading[side] = false;
+          onBusyChange();
+        }
+      }
+    }
+  };
+}
+
 export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any>) {
   ensureResultStyles();
   const panel: LitePanelHandle = createLitePanel({
@@ -1282,6 +1317,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       entry.app.value = tokens[0];
       setTargetName(entry, '');
       const guestVal = entry.guest.value.trim();
+      if (entry === targetRows[0]) cancelJsonImportForAppChange('target');
       for (let k = 1; k < tokens.length; k += 1) addTargetRow(tokens[k], guestVal);
       invalidateResultAfterAppSelectionChange();
       applyComparisonMode('multi');
@@ -1298,16 +1334,18 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   };
   srcApp.addEventListener('input', () => {
     if (sourceAppName) setSourceName('');
+    cancelJsonImportForAppChange('source');
     invalidateResultAfterAppSelectionChange();
   });
   tgtApp.addEventListener('input', () => {
     if (targetRows[0]?.appName) setTargetName(targetRows[0], '');
+    cancelJsonImportForAppChange('target');
     invalidateResultAfterAppSelectionChange();
   });
-  srcGuest.addEventListener('input', invalidateResultAfterAppSelectionChange);
-  tgtGuest.addEventListener('input', invalidateResultAfterAppSelectionChange);
-  srcPrev.checkbox.addEventListener('change', invalidateResultAfterAppSelectionChange);
-  tgtPrev.checkbox.addEventListener('change', invalidateResultAfterAppSelectionChange);
+  srcGuest.addEventListener('input', () => { cancelJsonImportForAppChange('source'); invalidateResultAfterAppSelectionChange(); });
+  tgtGuest.addEventListener('input', () => { cancelJsonImportForAppChange('target'); invalidateResultAfterAppSelectionChange(); });
+  srcPrev.checkbox.addEventListener('change', () => { cancelJsonImportForAppChange('source'); invalidateResultAfterAppSelectionChange(); });
+  tgtPrev.checkbox.addEventListener('change', () => { cancelJsonImportForAppChange('target'); invalidateResultAfterAppSelectionChange(); });
   attachTargetSplit(targetRows[0]);
   const addTargetBtn = makeButton('比較先行を追加', 'sub');
   addTargetBtn.addEventListener('click', () => { addTargetRow(); applyComparisonMode('multi'); panel.setStatus('比較先行を追加しました', 'info'); });
@@ -1320,9 +1358,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     targets: [
       { label: '比較元', apply: (id, name, guestId) => {
         if (diffRunActive) return { message: '比較を実行中です。完了してからアプリを設定してください', tone: 'warn' as const };
+        cancelJsonImportForAppChange('source', id, guestId);
         srcApp.value = id;
         setSourceName(name);
-        if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId;
+        srcGuest.value = guestId;
         const invalidated = invalidateResultAfterAppSelectionChange();
         return { message: invalidated
           ? '比較元を変更したため、前回の結果を無効にしました。再比較してください'
@@ -1330,10 +1369,13 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       } },
       { label: '比較先', apply: (id, name, guestId) => {
         if (diffRunActive) return { message: '比較を実行中です。完了してからアプリを設定してください', tone: 'warn' as const };
-        const empty = targetRows.find((r) => !r.app.value.trim()) || addTargetRow();
+        const empty = comparisonMode === 'single'
+          ? targetRows[0]
+          : targetRows.find((r) => !r.app.value.trim()) || addTargetRow();
+        if (empty === targetRows[0]) cancelJsonImportForAppChange('target', id, guestId);
         empty.app.value = id;
         setTargetName(empty, name);
-        if (guestId && !empty.guest.value.trim()) empty.guest.value = guestId;
+        empty.guest.value = guestId;
         const invalidated = invalidateResultAfterAppSelectionChange();
         return { message: invalidated
           ? '比較先を変更したため、前回の結果を無効にしました。再比較してください'
@@ -1931,9 +1973,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     addPairBtn.disabled = active;
     pairBulkTextarea.disabled = active;
     pairBulkApply.disabled = active;
-    runBtn.disabled = loading || diffRunActive || profileIoActive;
-    runAllBtn.disabled = loading || diffRunActive || profileIoActive;
-    runPairsBtn.disabled = loading || diffRunActive || profileIoActive;
+    runBtn.disabled = loading || diffRunActive || profileIoActive || jsonImporter.isLoading();
+    runAllBtn.disabled = loading || diffRunActive || profileIoActive || jsonImporter.isLoading();
+    runPairsBtn.disabled = loading || diffRunActive || profileIoActive || jsonImporter.isLoading();
     pairRows.forEach((entry) => {
       entry.duplicate.disabled = active;
       entry.swap.disabled = active;
@@ -2657,6 +2699,40 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const expandedRowKeys = new Set<string>();
   let importedSourceBundle: any = null;
   let importedTargetBundle: any = null;
+  const jsonImporter = createLiteDiffJsonImporter<any>(syncJsonImportControls);
+
+  function syncJsonImportControls() {
+    const busy = jsonImporter.isLoading() || diffRunActive || profileIoActive || pairFolderLoadActive();
+    runBtn.disabled = busy;
+    runAllBtn.disabled = busy;
+    runPairsBtn.disabled = busy;
+    panel.setBusy(busy);
+  }
+
+  function syncImportedBundleControls() {
+    const hasImportedBundle = !!(importedSourceBundle || importedTargetBundle);
+    pairClearImportBtn.disabled = !hasImportedBundle;
+    pairClearImportBtn.hidden = !hasImportedBundle;
+  }
+
+  function cancelJsonImportForAppChange(side: LiteDiffJsonSide, selectedAppId?: string, selectedGuestId?: string) {
+    const bundle = side === 'source' ? importedSourceBundle : importedTargetBundle;
+    const keepBundle = selectedAppId !== undefined && String(bundle?.appId || '') === selectedAppId &&
+      String(bundle?.guestId || '') === selectedGuestId;
+    const cancelledRead = jsonImporter.cancel(side);
+    if (cancelledRead) {
+      const otherSide = side === 'source' ? 'target' : 'source';
+      if (jsonImporter.isLoading(otherSide)) {
+        panel.setStatus(`${otherSide === 'source' ? '比較元' : '比較先'}JSONを読み込み中…`, 'busy');
+      } else {
+        panel.setStatus('アプリまたは環境を変更したため、設定JSONの読込を取り消しました', 'info');
+      }
+    }
+    if (keepBundle) return;
+    if (side === 'source') { importedSourceBundle = null; srcFile.value = ''; }
+    else { importedTargetBundle = null; tgtFile.value = ''; }
+    syncImportedBundleControls();
+  }
 
   function invalidateComparisonResult(statusMessage: string): boolean {
     const hadResult = !!cache || multiXlsxExports.length > 0 || resultBox.childElementCount > 0;
@@ -2714,7 +2790,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       panel.setStatus('このボタンでの比較方向の入れ替えは、1対1比較で利用できます', 'warn');
       return;
     }
-    if (importedSourceBundle || importedTargetBundle) {
+    if (importedSourceBundle || importedTargetBundle || jsonImporter.isLoading()) {
       panel.setStatus('設定JSONを読み込んでいる間は方向を入れ替えられません。読込を解除してから実行してください', 'warn');
       return;
     }
@@ -2736,31 +2812,51 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     if (!invalidated) panel.setStatus('比較元と比較先を入れ替えました。矢印の向きを確認して比較してください', 'info');
   });
 
-  srcFile.addEventListener('change', () => liteRun(panel, '比較元JSONを読み込み中…', async () => {
-    const file = srcFile.files?.[0];
+  async function loadImportedBundle(side: LiteDiffJsonSide) {
+    const input = side === 'source' ? srcFile : tgtFile;
+    const app = side === 'source' ? srcApp : tgtApp;
+    const file = input.files?.[0];
     if (!file) return;
+    if (diffRunActive || profileIoActive || pairFolderLoadActive()) {
+      input.value = '';
+      panel.setStatus('現在の処理が完了してから設定JSONを読み込んでください', 'warn');
+      return;
+    }
+    const appId = app.value.trim();
+    if (side === 'source') importedSourceBundle = null;
+    else importedTargetBundle = null;
+    syncImportedBundleControls();
     setCompletionActionsVisible(false);
-    importedSourceBundle = await readSettingsBundleFile(file, { side: 'source', appId: srcApp.value.trim() });
-    if (!srcApp.value.trim() && importedSourceBundle?.appId) srcApp.value = String(importedSourceBundle.appId);
-    setSourceName(extractAppNameFromBundle(importedSourceBundle));
-    pairClearImportBtn.disabled = false;
-    pairClearImportBtn.hidden = false;
     const invalidated = invalidateResultAfterAppSelectionChange();
-    panel.setStatus(`比較元JSONを読み込みました: App ${importedSourceBundle?.appId || '-'}${invalidated ? '。結果を更新するため再比較してください' : ''}`, invalidated ? 'warn' : 'ok');
-  }));
-  tgtFile.addEventListener('change', () => liteRun(panel, '比較先JSONを読み込み中…', async () => {
-    const file = tgtFile.files?.[0];
-    if (!file) return;
-    setCompletionActionsVisible(false);
-    importedTargetBundle = await readSettingsBundleFile(file, { side: 'target', appId: tgtApp.value.trim() });
-    if (!tgtApp.value.trim() && importedTargetBundle?.appId) tgtApp.value = String(importedTargetBundle.appId);
-    setTargetName(targetRows[0], extractAppNameFromBundle(importedTargetBundle));
-    pairClearImportBtn.disabled = false;
-    pairClearImportBtn.hidden = false;
-    const invalidated = invalidateResultAfterAppSelectionChange();
-    panel.setStatus(`比較先JSONを読み込みました: App ${importedTargetBundle?.appId || '-'}${invalidated ? '。結果を更新するため再比較してください' : ''}`, invalidated ? 'warn' : 'ok');
-  }));
+    const label = side === 'source' ? '比較元' : '比較先';
+    panel.setStatus(`${label}JSONを読み込み中…`, 'busy');
+    try {
+      const bundle = await jsonImporter.load(side, () => readSettingsBundleFile(file, { side, appId }));
+      if (!bundle) return;
+      if (!app.value.trim() && bundle.appId) app.value = String(bundle.appId);
+      if (side === 'source') {
+        importedSourceBundle = bundle;
+        srcGuest.value = String(bundle.guestId || '');
+        srcPrev.checkbox.checked = !!bundle.preview;
+        setSourceName(extractAppNameFromBundle(bundle));
+      } else {
+        importedTargetBundle = bundle;
+        tgtGuest.value = String(bundle.guestId || '');
+        tgtPrev.checkbox.checked = !!bundle.preview;
+        setTargetName(targetRows[0], extractAppNameFromBundle(bundle));
+      }
+      syncImportedBundleControls();
+      panel.setStatus(`${label}JSONを読み込みました: App ${bundle.appId || '-'}${invalidated ? '。結果を更新するため再比較してください' : ''}`, invalidated ? 'warn' : 'ok');
+    } catch (error: any) {
+      input.value = '';
+      panel.setStatus(`エラー: ${error?.message || String(error)}`, 'err');
+    }
+  }
+  srcFile.addEventListener('change', () => { void loadImportedBundle('source'); });
+  tgtFile.addEventListener('change', () => { void loadImportedBundle('target'); });
   const clearImportedBundles = () => {
+    jsonImporter.cancel('source');
+    jsonImporter.cancel('target');
     importedSourceBundle = null;
     importedTargetBundle = null;
     srcFile.value = '';
@@ -2807,8 +2903,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   }
 
   profileSaveBtn.addEventListener('click', () => {
-    if (diffRunActive || profileIoActive) {
-      panel.setStatus('比較または比較条件の読込が完了してから保存してください', 'warn');
+    if (diffRunActive || profileIoActive || jsonImporter.isLoading()) {
+      panel.setStatus('比較または設定JSON・比較条件の読込が完了してから保存してください', 'warn');
       return;
     }
     try {
@@ -2834,8 +2930,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     }
   });
   profileLoadBtn.addEventListener('click', () => {
-    if (diffRunActive || profileIoActive) {
-      panel.setStatus('比較が完了してから比較条件を読み込んでください', 'warn');
+    if (diffRunActive || profileIoActive || jsonImporter.isLoading()) {
+      panel.setStatus('比較または設定JSONの読込が完了してから比較条件を読み込んでください', 'warn');
       return;
     }
     profileFile.click();
@@ -2843,7 +2939,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   profileFile.addEventListener('change', async () => {
     const file = profileFile.files?.[0];
     if (!file) return;
-    if (diffRunActive || profileIoActive) {
+    if (diffRunActive || profileIoActive || jsonImporter.isLoading()) {
       profileFile.value = '';
       panel.setStatus('比較が完了してから比較条件を読み込んでください', 'warn');
       return;
@@ -2900,9 +2996,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       profileIoActive = false;
       profileSaveBtn.disabled = false;
       profileLoadBtn.disabled = false;
-      runBtn.disabled = diffRunActive || pairFolderLoadActive();
-      runAllBtn.disabled = diffRunActive || pairFolderLoadActive();
-      runPairsBtn.disabled = diffRunActive || pairFolderLoadActive();
+      runBtn.disabled = diffRunActive || pairFolderLoadActive() || jsonImporter.isLoading();
+      runAllBtn.disabled = diffRunActive || pairFolderLoadActive() || jsonImporter.isLoading();
+      runPairsBtn.disabled = diffRunActive || pairFolderLoadActive() || jsonImporter.isLoading();
     }
   });
 
@@ -3369,6 +3465,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   }
 
   async function runDiffTask(busyMessage: string, task: () => Promise<void>) {
+    if (jsonImporter.isLoading()) {
+      panel.setStatus('設定JSONの読込が完了してから比較してください', 'warn');
+      return;
+    }
     if (pairFolderLoadActive()) {
       panel.setStatus('フォルダの読込が完了してから比較してください', 'warn');
       return;

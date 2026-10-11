@@ -5,6 +5,7 @@ import {
   buildLiteDiffRowKey,
   buildLiteDiffScopeOptions,
   buildLiteDiffXlsxContext,
+  createLiteDiffJsonImporter,
   getLiteHtmlExportContentLabel,
   isIncompleteLiteDiff,
   renderLiteDiffOverviewHtml,
@@ -593,5 +594,77 @@ describe('diff lite result presentation', () => {
     expect(html).toContain('フィールド は部分走査');
     expect(html).toContain('プラグイン は未走査');
     expect(html).toContain('未検出件数も不明');
+  });
+});
+
+
+describe('diff lite JSON selection lifecycle', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((ok, fail) => { resolve = ok; reject = fail; });
+    return { promise, resolve, reject };
+  }
+
+  it.each(['source', 'target'] as const)('discards a late %s read after import was cleared', async (side) => {
+    const importer = createLiteDiffJsonImporter<{ appId: string }>();
+    const read = deferred<{ appId: string }>();
+    const pending = importer.load(side, () => read.promise);
+    expect(importer.isLoading()).toBe(true);
+
+    importer.cancel(side);
+    read.resolve({ appId: '101' });
+
+    expect(await pending).toBeNull();
+    expect(importer.isLoading()).toBe(false);
+  });
+
+  it('keeps the latest file when the earlier file finishes last', async () => {
+    const importer = createLiteDiffJsonImporter<string>();
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const oldRead = importer.load('source', () => first.promise);
+    const latestRead = importer.load('source', () => second.promise);
+
+    second.resolve('latest snapshot');
+    expect(await latestRead).toBe('latest snapshot');
+    first.resolve('older snapshot');
+    expect(await oldRead).toBeNull();
+    expect(importer.isLoading()).toBe(false);
+  });
+
+  it('does not unlock comparison while a newer read or the opposite side is pending', async () => {
+    const busy: boolean[] = [];
+    const importer = createLiteDiffJsonImporter<string>(() => busy.push(importer.isLoading()));
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const target = deferred<string>();
+    const oldRead = importer.load('source', () => first.promise);
+    const latestRead = importer.load('source', () => second.promise);
+    const targetRead = importer.load('target', () => target.promise);
+
+    first.resolve('old');
+    expect(await oldRead).toBeNull();
+    expect(importer.isLoading()).toBe(true);
+    importer.cancel('source');
+    second.resolve('cancelled');
+    expect(await latestRead).toBeNull();
+    expect(importer.isLoading()).toBe(true);
+    target.resolve('target');
+    expect(await targetRead).toBe('target');
+    expect(busy.at(-1)).toBe(false);
+  });
+
+  it('suppresses a cancelled file error but reports an error from the current file', async () => {
+    const importer = createLiteDiffJsonImporter<string>();
+    const stale = deferred<string>();
+    const oldRead = importer.load('target', () => stale.promise);
+    importer.cancel('target');
+    stale.reject(new Error('old malformed file'));
+    expect(await oldRead).toBeNull();
+
+    await expect(importer.load('target', async () => { throw new Error('current malformed file'); }))
+      .rejects.toThrow('current malformed file');
+    expect(importer.isLoading()).toBe(false);
   });
 });

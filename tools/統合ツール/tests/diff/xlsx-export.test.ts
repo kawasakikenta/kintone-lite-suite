@@ -3,6 +3,7 @@ import {
   buildDiffXlsxBlob as buildDiffXlsxBlobWithSafeDefault,
   buildDiffXlsxExport as buildDiffXlsxExportWithSafeDefault,
   buildDiffXlsxFieldModel,
+  buildDiffXlsxSheets as buildDiffXlsxSheetsWithSafeDefault,
   type DiffXlsxContext
 } from '../../src/diff/xlsx-export';
 import { computeDiffRows } from '../../src/diff/engine';
@@ -3329,4 +3330,62 @@ describe('diff/xlsx-export', () => {
     expect(list).not.toContain('srcField');
   });
 
+});
+
+
+describe('customer Excel permission entry evidence', () => {
+  const permissionEntry = {
+    entity: { type: 'USER', code: 'alice' }, includeSubs: false,
+    appEditable: false, recordViewable: true, recordAddable: false, recordEditable: false,
+    recordDeletable: false, recordImportable: true, recordExportable: false
+  };
+  const permissionText = [
+    'アプリ管理: 不許可', 'レコード閲覧: 許可', 'レコード追加: 不許可', 'レコード編集: 不許可',
+    'レコード削除: 不許可', 'ファイル読み込み: 許可', 'ファイル書き出し: 不許可'
+  ];
+  const contextFor = (sourceRights: any[], targetRights: any[]): DiffXlsxContext => {
+    const sourceBundle = { appId: '1', sections: { appAcl: { rights: sourceRights } }, meta: {} };
+    const targetBundle = { appId: '2', sections: { appAcl: { rights: targetRights } }, meta: {} };
+    const rows = enrichDiffRows(computeDiffRows(sourceBundle, targetBundle, ['appAcl'], '').rows, sourceBundle, targetBundle);
+    return { sourceBundle, targetBundle, rows, scopes: ['appAcl'], generatedAt: '2026-10-11T00:00:00Z' };
+  };
+
+  it.each(['added', 'removed'])('preserves every permission flag of an %s ACL entry in both human sheets and the workbook', async (type) => {
+    const ctx = type === 'added' ? contextFor([], [permissionEntry]) : contextFor([permissionEntry], []);
+    const sheets = buildDiffXlsxSheetsWithSafeDefault(ctx);
+    for (const sheetName of ['変更一覧', '14_アプリ権限']) {
+      const sheet = sheets.find((sheet) => sheet.name === sheetName)!;
+      const text = JSON.stringify(sheet.rows);
+      for (const permission of permissionText) expect(text).toContain(permission);
+      const permissionCell = sheet.rows.flat().find((value) => typeof value === 'string' && value.includes('アプリ管理:'));
+      expect(String(permissionCell).split('\n')).toEqual(expect.arrayContaining(permissionText));
+      expect(text).toContain('alice');
+    }
+    const blob = buildDiffXlsxBlobWithSafeDefault(ctx);
+    const allEntryText = await readAllEntryText(blob);
+    for (const permission of permissionText) expect(allEntryText).toContain(permission);
+    expect(await readWorkbookSheetNames(blob)).not.toContain('設定値詳細');
+  });
+
+  it('distinguishes opposite ACL permissions in the sheet values and generated Excel', async () => {
+    const firstCtx = contextFor([], [permissionEntry]);
+    const oppositeCtx = contextFor([], [{ ...permissionEntry, recordViewable: false, recordDeletable: true }]);
+    const first = buildDiffXlsxSheetsWithSafeDefault(firstCtx).map((sheet) => [sheet.name, sheet.rows]);
+    const opposite = buildDiffXlsxSheetsWithSafeDefault(oppositeCtx).map((sheet) => [sheet.name, sheet.rows]);
+    expect(first).not.toEqual(opposite);
+    const oppositeText = await readAllEntryText(buildDiffXlsxBlobWithSafeDefault(oppositeCtx));
+    expect(oppositeText).toContain('レコード閲覧: 不許可');
+    expect(oppositeText).toContain('レコード削除: 許可');
+    expect(await readAllEntryText(buildDiffXlsxBlobWithSafeDefault(firstCtx))).not.toEqual(oppositeText);
+  });
+
+  it('retains permissions inside an added record permission rule', async () => {
+    const sourceBundle = { appId: '1', sections: { recordPermissions: { rights: [] } }, meta: {} };
+    const targetBundle = { appId: '2', sections: { recordPermissions: { rights: [{
+      filterCond: 'status = "対応中"', entities: [{ entity: { type: 'USER', code: 'alice' }, viewable: true, editable: false, deletable: false }]
+    }] } }, meta: {} };
+    const rows = enrichDiffRows(computeDiffRows(sourceBundle, targetBundle, ['recordPermissions'], '').rows, sourceBundle, targetBundle);
+    const text = await readAllEntryText(buildDiffXlsxBlobWithSafeDefault({ sourceBundle, targetBundle, rows, scopes: ['recordPermissions'] }));
+    for (const value of ['alice', '閲覧: 許可', '編集: 不許可', '削除: 不許可', 'レコードの条件:']) expect(text).toContain(value);
+  });
 });

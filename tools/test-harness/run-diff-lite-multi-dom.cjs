@@ -348,6 +348,136 @@ function verifyResult(result, pageErrors) {
   assert.deepEqual(pageErrors, [], 'ブラウザ実行中にエラーが発生しました');
 }
 
+async function verifyJsonAndSearchSelection(context, browserBundle) {
+  const page = await context.newPage();
+  const pageErrors = collectPageErrors(page);
+  await page.setContent('<!doctype html><html lang="ja"><head><meta charset="utf-8"></head><body></body></html>');
+  await installBrowserFixtures(page);
+  await page.addScriptTag({ content: browserBundle });
+  await page.evaluate(() => {
+    window.kintone.api = Object.assign(async (url, method, params) => ({ appId: String(params.id), name: `App ${params.id}` }),
+      { url: (resource, preview) => `/k/v1${preview ? '/preview' : ''}${resource}` });
+    window.__jsonReads = [];
+    window.FileReader = class {
+      readAsText(file) { window.__jsonReads.push({ name: file.name, file, reader: this }); }
+    };
+    window.__finishJsonRead = async (name, fail = false) => {
+      const index = window.__jsonReads.findIndex((read) => read.name === name);
+      if (index < 0) throw new Error(`Pending read not found: ${name}`);
+      const [read] = window.__jsonReads.splice(index, 1);
+      if (fail) read.reader.onerror(new Event('error'));
+      else read.reader.onload({ target: { result: await read.file.text() } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    window.__jsonSelectionCalls = [];
+    window.DiffLiteHarness.mountDiffLitePanel(async (opts) => {
+      const makeBundle = (endpoint) => ({ ...endpoint, sections: {}, meta: { sectionRevisions: {} } });
+      window.__jsonSelectionCalls.push({
+        targetAppId: opts.target.appId,
+        sourceImport: opts.importedSourceBundle?.sections?.fieldSettings?.properties?.x?.label || null,
+        targetImport: opts.importedTargetBundle?.sections?.fieldSettings?.properties?.x?.label || null
+      });
+      return {
+        rows: [], fetchIssues: [], partialIssues: [],
+        sourceBundle: opts.importedSourceBundle || makeBundle(opts.source),
+        targetBundle: opts.importedTargetBundle || makeBundle(opts.target),
+        summary: { text: 'selection regression complete' }
+      };
+    });
+  });
+  const sourceApp = page.getByLabel('比較元アプリID', { exact: true });
+  const targetApp = page.getByLabel('比較先1アプリID', { exact: true });
+  const run = page.getByRole('button', { name: '差分比較を実行', exact: true });
+  const clear = page.getByRole('button', { name: '読込解除', exact: true });
+  const status = page.locator('#kus-diff-lite .kus-lp__status-text');
+  await sourceApp.fill('101');
+  await targetApp.fill('202');
+
+  const search = page.locator('details').filter({ has: page.locator('input[placeholder="アプリ名 / アプリID / URL"]') }).first();
+  await search.locator('summary').click();
+  const assignTarget = async (appId) => {
+    await search.getByPlaceholder('アプリ名 / アプリID / URL', { exact: true }).fill(appId);
+    await search.getByRole('button', { name: '検索', exact: true }).click();
+    await search.getByRole('button', { name: '比較先へ', exact: true }).click();
+  };
+  await assignTarget('303');
+  assert.equal(await targetApp.inputValue(), '303', '1対1検索選択が表示中の比較先1を置き換えていません');
+  assert.equal(await page.getByLabel('比較先2アプリID', { exact: true }).count(), 0, '1対1検索で非表示の比較先行が追加されました');
+  await run.click();
+  await page.waitForFunction(() => window.__jsonSelectionCalls.length === 1);
+  await page.waitForFunction(() => document.querySelector('#kus-diff-lite').getAttribute('aria-busy') === 'false');
+  assert.equal(await page.evaluate(() => window.__jsonSelectionCalls[0].targetAppId), '303', '検索選択先が実比較に使われていません');
+
+  await page.locator('summary').filter({ hasText: '比較範囲と詳細設定' }).click();
+  const load = async (side, name, label) => {
+    const appId = side === 'source' ? '101' : '303';
+    await page.getByLabel(side === 'source' ? '比較元設定JSON' : '比較先設定JSON', { exact: true }).setInputFiles({
+      name, mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({ appId, guestId: '', preview: false, sections: { fieldSettings: { properties: { x: { code: 'x', type: 'SINGLE_LINE_TEXT', label } } } } }))
+    });
+    await page.waitForFunction((fileName) => window.__jsonReads.some((read) => read.name === fileName), name);
+    assert.equal(await run.isDisabled(), true, 'JSON読込中も比較を開始できます');
+  };
+  const finish = (name, fail = false) => page.evaluate(({ name, fail }) => window.__finishJsonRead(name, fail), { name, fail });
+  const compare = async () => {
+    const count = await page.evaluate(() => window.__jsonSelectionCalls.length);
+    await run.click();
+    await page.waitForFunction((previous) => window.__jsonSelectionCalls.length === previous + 1, count);
+    await page.waitForFunction(() => document.querySelector('#kus-diff-lite').getAttribute('aria-busy') === 'false');
+    return page.evaluate(() => window.__jsonSelectionCalls.at(-1));
+  };
+
+  // Clearing either side cancels both queued reads, including a late failure.
+  await load('source', 'clear-source.json', 'cleared source');
+  await load('target', 'clear-target.json', 'cleared target');
+  await clear.click();
+  const clearedStatus = await status.textContent();
+  await finish('clear-source.json');
+  await finish('clear-target.json', true);
+  assert.equal(await status.textContent(), clearedStatus, '解除後の古い成功/失敗がステータスを上書きしました');
+  assert.equal(await page.getByLabel('比較元設定JSON', { exact: true }).inputValue(), '', '解除後にJSONのファイル欄が復活しました');
+  assert.deepEqual(await compare(), { targetAppId: '303', sourceImport: null, targetImport: null }, '読込解除したJSONが比較へ復活しました');
+
+  // The newer file wins even when the older file completes last.
+  for (const side of ['source', 'target']) {
+    await load(side, `${side}-older.json`, 'older');
+    await load(side, `${side}-latest.json`, 'latest');
+    await finish(`${side}-latest.json`);
+    const latestStatus = await status.textContent();
+    await finish(`${side}-older.json`);
+    assert.equal(await status.textContent(), latestStatus, '古いファイル完了で最新のステータスが変更されました');
+  }
+  assert.deepEqual(await compare(), { targetAppId: '303', sourceImport: 'latest', targetImport: 'latest' }, '再選択した最新JSONが両側へ反映されていません');
+
+  // A failed replacement cannot silently keep the previously selected snapshot.
+  await load('source', 'failed-replacement.json', 'unread');
+  await finish('failed-replacement.json', true);
+  assert.match(await status.textContent(), /エラー.*読み取り/, '現在のJSON読込失敗を表示していません');
+  assert.equal(await page.getByLabel('比較元設定JSON', { exact: true }).inputValue(), '', '読込失敗したファイル欄が残っています');
+  assert.equal((await compare()).sourceImport, null, '読込失敗後に前回のJSONを使用しました');
+
+  // Editing the selected App ID cancels an outstanding import and detaches loaded JSON.
+  await load('source', 'changed-app.json', 'stale app');
+  await sourceApp.fill('404');
+  const changedStatus = await status.textContent();
+  await finish('changed-app.json');
+  assert.match(changedStatus, /読込を取り消しました/, 'App変更後も古い読込中ステータスが残っています');
+  assert.equal(await sourceApp.inputValue(), '404', '古いJSON読込が編集したApp IDを上書きしました');
+  assert.equal(await status.textContent(), changedStatus, '古いJSON読込がApp変更後のステータスを上書きしました');
+  assert.equal((await compare()).sourceImport, null, 'App変更後も旧JSONで比較しています');
+
+  await clear.click();
+  await page.getByRole('button', { name: '1対多比較', exact: true }).click();
+  await assignTarget('505');
+  assert.equal(await targetApp.inputValue(), '303', '1対多検索が既存の比較先を置き換えました');
+  assert.equal(await page.getByLabel('比較先2アプリID', { exact: true }).inputValue(), '505', '1対多検索の比較先行追加が失われました');
+  assert.equal(await page.getByLabel('比較先2アプリID', { exact: true }).isVisible(), true, '1対多検索先が非表示です');
+  assert.deepEqual(pageErrors, [], 'JSON・検索の回帰検証でブラウザエラーが発生しました');
+  const result = { assertions: 'passed', comparisons: await page.evaluate(() => window.__jsonSelectionCalls) };
+  await page.close();
+  return result;
+}
+
 async function main() {
   if (hasFlag('--help')) {
     printHelp();
@@ -485,6 +615,7 @@ async function main() {
       path: path.join(outDir, 'multi-dom-panel.png'),
       animations: 'disabled'
     });
+    result.jsonAndSearchSelection = await verifyJsonAndSearchSelection(context, browserBundle);
     await context.close();
   } finally {
     await browser.close();
@@ -492,7 +623,7 @@ async function main() {
 
   const report = { generatedAt: new Date().toISOString(), assertions: 'passed', ...result };
   fs.writeFileSync(path.join(outDir, 'multi-dom-result.json'), JSON.stringify(report, null, 2), 'utf8');
-  console.log('[multi-dom] PASS: source reuse / failure continuation / duplicate-run guard / Excel / rerun reset');
+  console.log('[multi-dom] PASS: source reuse / failure continuation / duplicate-run guard / Excel / rerun reset / JSON cancellation / search selection');
   console.log(`[multi-dom] output: ${outDir}`);
 }
 

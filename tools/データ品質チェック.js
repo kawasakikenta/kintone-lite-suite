@@ -688,12 +688,20 @@ ${contextLine}`);
   });
 
   // src/diff/engine.ts
+  var ENTITY_PATH_SEGMENT, ENTITY_IDENTIFIER_PATH_PATTERNS;
   var init_engine = __esm({
     "src/diff/engine.ts"() {
       "use strict";
       init_constants();
       init_state();
       init_utils();
+      ENTITY_PATH_SEGMENT = String.raw`(?:\.[^.[\]]+|\["(?:[^"\\]|\\.)*"\])`;
+      ENTITY_IDENTIFIER_PATH_PATTERNS = [
+        new RegExp(`^(?:fieldsettings\\.properties|viewsettings\\.views|reportsettings\\.reports|processsettings\\.states|categories\\.categories|actionsettings\\.actions)${ENTITY_PATH_SEGMENT}$`),
+        new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}\\.fields${ENTITY_PATH_SEGMENT}$`),
+        // 選択肢のキーもラベルを識別子とする名前付きマップ。
+        new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}(?:\\.fields${ENTITY_PATH_SEGMENT})?\\.options${ENTITY_PATH_SEGMENT}$`)
+      ];
     }
   });
 

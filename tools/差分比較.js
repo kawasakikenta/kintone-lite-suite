@@ -632,6 +632,16 @@
     }
     return v;
   }
+  function normalizeSettingsSection(value) {
+    const sortValue = (current, responseRoot = false) => {
+      if (Array.isArray(current)) return current.map((item) => sortValue(item));
+      if (current && typeof current === "object") {
+        return Object.fromEntries(Object.keys(current).sort().filter((key) => !responseRoot || !META_KEYS.has(key)).map((key) => [key, sortValue(current[key])]));
+      }
+      return current;
+    };
+    return sortValue(value, true);
+  }
   function stableStringify(v) {
     return JSON.stringify(normalize(v));
   }
@@ -900,7 +910,9 @@ ${contextLine}`);
       preview: !!bundle.preview,
       fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
       meta: sanitizeBundleMeta(bundle.meta),
-      sections: rawSettings ? deepClone(bundle.sections) : normalize(bundle.sections)
+      sections: rawSettings ? deepClone(bundle.sections) : Object.fromEntries(
+        Object.keys(bundle.sections).sort().map((key) => [key, normalizeSettingsSection(bundle.sections[key])])
+      )
     };
   }
   function pickBundleSections(bundle, sections) {
@@ -1106,7 +1118,7 @@ ${contextLine}`);
         const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
         const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);
-        results[index] = { value: rawSettings ? deepClone(res) : normalize(res), revision };
+        results[index] = { value: rawSettings ? deepClone(res) : normalizeSettingsSection(res), revision };
       } catch (e) {
         results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
@@ -1388,10 +1400,6 @@ ${contextLine}`);
     if (isNotationOnlyChange(a, b)) return { notationOnly: true };
     return null;
   }
-  function getPathLeafKey(path) {
-    const m = String(path || "").match(/([^[.\]]+)(?:\[\d+\])?$/);
-    return m ? m[1] : "";
-  }
   function normalizeIgnoreToken(token) {
     return String(token || "").replace(/[\u200b\u200c\u200d\ufeff]/g, "").replace(/^[\s\u3000]+|[\s\u3000]+$/g, "").toLowerCase();
   }
@@ -1466,25 +1474,37 @@ ${contextLine}`);
   }
   function isEntityIdentifierChildPath(path) {
     const normalizedPath = normalizeIgnoreToken(path);
-    if (!normalizedPath) return false;
-    return /^(?:fieldsettings\.properties|viewsettings\.views|reportsettings\.reports|processsettings\.states|categories\.categories|actionsettings\.actions)\.[^.[\]]+$/.test(normalizedPath) || /^fieldsettings\.properties\.[^.[\]]+\.fields\.[^.[\]]+$/.test(normalizedPath) || /^fieldsettings\.properties\.[^.[\]]+(?:\.fields\.[^.[\]]+)?\.options\.[^.[\]]+$/.test(normalizedPath);
+    return !!normalizedPath && ENTITY_IDENTIFIER_PATH_PATTERNS.some((pattern) => pattern.test(normalizedPath));
   }
-  function isIgnoredPath(ignoreRules, path) {
+  function getComparisonPathLeafKey(path) {
+    const text2 = String(path || "");
+    const quoted = text2.match(/\[("(?:[^"\\]|\\.)*")\](?:\[\d+\])*$/);
+    if (quoted) {
+      try {
+        return JSON.parse(quoted[1]);
+      } catch {
+        return "";
+      }
+    }
+    const plain = text2.match(/(?:^|\.)([^.[\]]+)(?:\[\d+\])*$/);
+    return plain ? plain[1] : "";
+  }
+  function isIgnoredPath(ignoreRules, path, comparisonPath = path) {
     const exactPath = trimIgnoreToken(path);
     if (exactPath && ignoreRules.exactPathSet?.has(exactPath)) return true;
     const normalizedPath = normalizeIgnoreToken(path);
     if (!normalizedPath) return false;
     if (ignoreRules.pathSet.has(normalizedPath)) return true;
     if (matchAnyPattern(ignoreRules.pathPatterns, normalizedPath)) return true;
-    if (isEntityIdentifierChildPath(normalizedPath)) return false;
-    const leaf = getPathLeafKey(normalizedPath);
+    if (isEntityIdentifierChildPath(comparisonPath)) return false;
+    const leaf = normalizeIgnoreToken(getComparisonPathLeafKey(comparisonPath));
     if (!leaf) return false;
     if (ignoreRules.keySet.has(leaf)) return true;
     return matchAnyPattern(ignoreRules.keyPatterns, leaf);
   }
-  function isIgnoredObjectProperty(ignoreRules, key, path) {
-    if (!isEntityIdentifierChildPath(path) && META_KEYS.has(key)) return true;
-    return isIgnoredPath(ignoreRules, path);
+  function isIgnoredObjectProperty(ignoreRules, key, path, comparisonPath = path) {
+    if (!isEntityIdentifierChildPath(comparisonPath) && META_KEYS.has(key)) return true;
+    return isIgnoredPath(ignoreRules, path, comparisonPath);
   }
   function markDroppedDiffRow(out, row, kind) {
     if (!out) return;
@@ -1512,9 +1532,9 @@ ${contextLine}`);
     }
     notices.push({ path, reason, leftLength, rightLength });
   }
-  function pushDiffRow(out, row, ignoreRules) {
+  function pushDiffRow(out, row, ignoreRules, comparisonPath = row?.path) {
     if (!row) return false;
-    if (isIgnoredPath(ignoreRules, row.path)) return false;
+    if (isIgnoredPath(ignoreRules, row.path, comparisonPath)) return false;
     if (row._displayOnly) {
       out.push(row);
       return true;
@@ -1554,25 +1574,26 @@ ${contextLine}`);
     if (!Array.isArray(rows)) return false;
     return !!rows.__includeSame;
   }
-  function pushSameDiffRow(out, row, ignoreRules) {
+  function pushSameDiffRow(out, row, ignoreRules, comparisonPath = row?.path) {
     if (!shouldCollectSameRows(out)) return false;
-    return pushDiffRow(out, { ...row, type: "same" }, ignoreRules);
+    return pushDiffRow(out, { ...row, type: "same" }, ignoreRules, comparisonPath);
   }
-  function normalizeForCompare(v, ignoreRules, path = "") {
-    if (Array.isArray(v)) return v.map((x, index) => normalizeForCompare(x, ignoreRules, `${path}[${index}]`));
+  function normalizeForCompare(v, ignoreRules, path = "", comparisonPath = path) {
+    if (Array.isArray(v)) return v.map((x, index) => normalizeForCompare(x, ignoreRules, `${path}[${index}]`, appendNormalizationArrayPath(comparisonPath, index)));
     if (v && typeof v === "object") {
       const o = {};
       Object.keys(v).sort().forEach((k) => {
         const childPath = path ? `${path}.${k}` : k;
-        if (isIgnoredObjectProperty(ignoreRules, k, childPath)) return;
-        o[k] = normalizeForCompare(v[k], ignoreRules, childPath);
+        const childComparisonPath = appendNormalizationPath(comparisonPath, k);
+        if (isIgnoredObjectProperty(ignoreRules, k, childPath, childComparisonPath)) return;
+        o[k] = normalizeForCompare(v[k], ignoreRules, childPath, childComparisonPath);
       });
       return o;
     }
     return v;
   }
-  function makeArrayItemSignature(v, ignoreRules, path = "") {
-    return JSON.stringify(normalizeForCompare(v, ignoreRules, path));
+  function makeArrayItemSignature(v, ignoreRules, path = "", comparisonPath = path) {
+    return JSON.stringify(normalizeForCompare(v, ignoreRules, path, comparisonPath));
   }
   function hasUniquePrimitiveKey(arr, key) {
     const seen = /* @__PURE__ */ new Set();
@@ -1619,7 +1640,7 @@ ${contextLine}`);
     });
     return reordered;
   }
-  function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
+  function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules, comparisonPath = path) {
     const key = detectArrayObjectKey(a, b, ignoreRules);
     if (!key) return false;
     const mapA = buildArrayKeyMap(a, key);
@@ -1655,7 +1676,7 @@ ${contextLine}`);
           right: right.item,
           arrayKey: key,
           arrayKeyValue: right.item?.[key]
-        }, ignoreRules);
+        }, ignoreRules, `${comparisonPath}[${right.idx}]`);
         continue;
       }
       if (left && !right) {
@@ -1666,13 +1687,14 @@ ${contextLine}`);
           right: void 0,
           arrayKey: key,
           arrayKeyValue: left.item?.[key]
-        }, ignoreRules);
+        }, ignoreRules, `${comparisonPath}[${left.idx}]`);
         continue;
       }
       if (!left || !right) continue;
       const itemPath = `${path}[${right.idx}]`;
-      const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
-      const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
+      const itemComparisonPath = `${comparisonPath}[${right.idx}]`;
+      const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath, itemComparisonPath);
+      const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath, itemComparisonPath);
       if (leftSig === rightSig) {
         if (reordered.has(sig) && !isUnorderedArrayPath(path)) {
           pushDiffRow(out, {
@@ -1685,7 +1707,7 @@ ${contextLine}`);
             movedTo: right.idx,
             arrayKey: key,
             arrayKeyValue: right.item?.[key]
-          }, ignoreRules);
+          }, ignoreRules, itemComparisonPath);
         } else {
           pushSameDiffRow(out, {
             path: `${path}[${right.idx}]`,
@@ -1694,12 +1716,12 @@ ${contextLine}`);
             severity: "low",
             arrayKey: key,
             arrayKeyValue: right.item?.[key]
-          }, ignoreRules);
+          }, ignoreRules, itemComparisonPath);
         }
         continue;
       }
       const start = out.length;
-      collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreRules);
+      collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreRules, itemComparisonPath);
       const keyVal = right.item?.[key] != null ? right.item[key] : left.item?.[key];
       for (let oi = start; oi < out.length; oi++) {
         if (!out[oi].arrayKey) out[oi].arrayKey = key;
@@ -1726,7 +1748,7 @@ ${contextLine}`);
     const srcType = item.srcType != null ? String(item.srcType).trim() : "";
     return srcType || void 0;
   }
-  function collectActionMappingDiffs(a, b, path, out, ignoreRules) {
+  function collectActionMappingDiffs(a, b, path, out, ignoreRules, comparisonPath = path) {
     if (!isUnorderedArrayPath(path)) return false;
     if (!a.length && !b.length) return false;
     if (!a.every(isPlainObject) || !b.every(isPlainObject)) return false;
@@ -1784,7 +1806,7 @@ ${contextLine}`);
           right: void 0,
           arrayKey: "srcField",
           arrayKeyValue: actionMappingSourceIdentity(step.entry.item)
-        }, ignoreRules);
+        }, ignoreRules, `${comparisonPath}[${step.entry.idx}]`);
         continue;
       }
       if (step.kind === "added") {
@@ -1795,13 +1817,14 @@ ${contextLine}`);
           right: step.entry.item,
           arrayKey: "srcField",
           arrayKeyValue: actionMappingSourceIdentity(step.entry.item)
-        }, ignoreRules);
+        }, ignoreRules, `${comparisonPath}[${step.entry.idx}]`);
         continue;
       }
       const { left, right } = step.pair;
       const itemPath = `${path}[${right.idx}]`;
+      const itemComparisonPath = `${comparisonPath}[${right.idx}]`;
       const keyValue = keyValueOf(right, left);
-      if (makeArrayItemSignature(left.item, ignoreRules, itemPath) === makeArrayItemSignature(right.item, ignoreRules, itemPath)) {
+      if (makeArrayItemSignature(left.item, ignoreRules, itemPath, itemComparisonPath) === makeArrayItemSignature(right.item, ignoreRules, itemPath, itemComparisonPath)) {
         pushSameDiffRow(out, {
           path: itemPath,
           left: left.item,
@@ -1809,11 +1832,11 @@ ${contextLine}`);
           severity: "low",
           arrayKey: "srcField",
           arrayKeyValue: keyValue
-        }, ignoreRules);
+        }, ignoreRules, itemComparisonPath);
         continue;
       }
       const start = out.length;
-      collectDeepDiffs(left.item, right.item, itemPath, out, ignoreRules);
+      collectDeepDiffs(left.item, right.item, itemPath, out, ignoreRules, itemComparisonPath);
       for (let oi = start; oi < out.length; oi++) {
         if (!out[oi].arrayKey) out[oi].arrayKey = "srcField";
         if (out[oi].arrayKeyValue === void 0) out[oi].arrayKeyValue = keyValue;
@@ -1828,12 +1851,69 @@ ${contextLine}`);
     }
     return null;
   }
-  function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
+  function isCompositeArrayIdentityIgnored(rule, a, b, path, ignoreRules, comparisonPath) {
+    if (!rule) return false;
+    return [a, b].some((items) => items.some((_, index) => isIgnoredPath(
+      ignoreRules,
+      `${path}[${index}].${rule.arrayKey}`,
+      appendNormalizationPath(`${comparisonPath}[${index}]`, rule.arrayKey)
+    )));
+  }
+  function buildNotificationMapsIgnoringTitle(a, b, path, ignoreRules, comparisonPath, rule) {
+    const entries = (items) => items.map((item, idx) => ({
+      idx,
+      item,
+      signature: makeArrayItemSignature(item, ignoreRules, `${path}[${idx}]`, `${comparisonPath}[${idx}]`),
+      key: ""
+    }));
+    const left = entries(a);
+    const right = entries(b);
+    let pairIndex = 0;
+    const pair = (l, r) => {
+      l.key = r.key = `pair:${pairIndex++}`;
+    };
+    const byContent = /* @__PURE__ */ new Map();
+    right.forEach((entry) => {
+      const bucket = byContent.get(entry.signature) || [];
+      bucket.push(entry);
+      byContent.set(entry.signature, bucket);
+    });
+    left.forEach((entry) => {
+      const partner = byContent.get(entry.signature)?.shift();
+      if (partner) pair(entry, partner);
+    });
+    const uniqueByTitle = (items) => {
+      const map = /* @__PURE__ */ new Map();
+      items.filter((entry) => !entry.key).forEach((entry) => {
+        const signature = rule.makeSig(entry.item);
+        if (signature != null) map.set(signature, map.has(signature) ? null : entry);
+      });
+      return map;
+    };
+    const leftByTitle = uniqueByTitle(left);
+    const rightByTitle = uniqueByTitle(right);
+    leftByTitle.forEach((entry, title) => {
+      const partner = rightByTitle.get(title);
+      if (entry && partner) pair(entry, partner);
+    });
+    const remainingLeft = left.filter((entry) => !entry.key);
+    const remainingRight = right.filter((entry) => !entry.key);
+    for (let index = 0; index < Math.min(remainingLeft.length, remainingRight.length); index++) {
+      pair(remainingLeft[index], remainingRight[index]);
+    }
+    return {
+      mapA: new Map(left.map((entry) => [entry.key || `source:${entry.idx}`, entry])),
+      mapB: new Map(right.map((entry) => [entry.key || `target:${entry.idx}`, entry]))
+    };
+  }
+  function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules, comparisonPath = path) {
     const rule = findCompositeArrayRule(path);
     if (!rule) return false;
     if (!a.length && !b.length) return false;
     if (!a.every(isPlainObject) || !b.every(isPlainObject)) return false;
     if (rule.applies && !rule.applies(a, b)) return false;
+    const ignoredIdentity = isCompositeArrayIdentityIgnored(rule, a, b, path, ignoreRules, comparisonPath);
+    if (ignoredIdentity && rule.arrayKey !== "title") return false;
     let noticeReason = null;
     const buildMap = (arr) => {
       const map = /* @__PURE__ */ new Map();
@@ -1851,8 +1931,9 @@ ${contextLine}`);
       }
       return map;
     };
-    const mapA = buildMap(a);
-    const mapB = buildMap(b);
+    const titleIgnoredMaps = ignoredIdentity ? buildNotificationMapsIgnoringTitle(a, b, path, ignoreRules, comparisonPath, rule) : null;
+    const mapA = titleIgnoredMaps ? titleIgnoredMaps.mapA : buildMap(a);
+    const mapB = titleIgnoredMaps ? titleIgnoredMaps.mapB : buildMap(b);
     if (!mapA || !mapB) {
       if (out) out.__pendingKeyFallback = noticeReason;
       return false;
@@ -1888,7 +1969,7 @@ ${contextLine}`);
           right: right.item,
           arrayKey: rule.arrayKey,
           arrayKeyValue: rule.keyValue(right.item)
-        }, ignoreRules);
+        }, ignoreRules, `${comparisonPath}[${right.idx}]`);
         continue;
       }
       if (left && !right) {
@@ -1899,13 +1980,14 @@ ${contextLine}`);
           right: void 0,
           arrayKey: rule.arrayKey,
           arrayKeyValue: rule.keyValue(left.item)
-        }, ignoreRules);
+        }, ignoreRules, `${comparisonPath}[${left.idx}]`);
         continue;
       }
       if (!left || !right) continue;
       const itemPath = `${path}[${right.idx}]`;
-      const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
-      const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
+      const itemComparisonPath = `${comparisonPath}[${right.idx}]`;
+      const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath, itemComparisonPath);
+      const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath, itemComparisonPath);
       if (leftSig === rightSig) {
         if (reordered.has(sig) && !isUnorderedArrayPath(path)) {
           pushDiffRow(out, {
@@ -1918,7 +2000,7 @@ ${contextLine}`);
             movedTo: right.idx,
             arrayKey: rule.arrayKey,
             arrayKeyValue: rule.keyValue(right.item)
-          }, ignoreRules);
+          }, ignoreRules, itemComparisonPath);
         } else {
           pushSameDiffRow(out, {
             path: `${path}[${right.idx}]`,
@@ -1927,12 +2009,12 @@ ${contextLine}`);
             severity: "low",
             arrayKey: rule.arrayKey,
             arrayKeyValue: rule.keyValue(right.item)
-          }, ignoreRules);
+          }, ignoreRules, itemComparisonPath);
         }
         continue;
       }
       const start = out.length;
-      collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreRules);
+      collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreRules, itemComparisonPath);
       const keyVal = rule.keyValue(right.item) !== void 0 ? rule.keyValue(right.item) : rule.keyValue(left.item);
       for (let oi = start; oi < out.length; oi++) {
         if (!out[oi].arrayKey) out[oi].arrayKey = rule.arrayKey;
@@ -1942,10 +2024,10 @@ ${contextLine}`);
     }
     return true;
   }
-  function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules) {
+  function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules, comparisonPath = path) {
     if (a.length !== b.length || a.length < 2) return false;
-    const sigA = a.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`));
-    const sigB = b.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`));
+    const sigA = a.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`, `${comparisonPath}[${index}]`));
+    const sigB = b.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`, `${comparisonPath}[${index}]`));
     if ([...sigA].sort().join("\0") !== [...sigB].sort().join("\0")) return false;
     const used = new Array(a.length).fill(false);
     for (let j = 0; j < b.length; j++) {
@@ -1960,7 +2042,7 @@ ${contextLine}`);
       if (from < 0) continue;
       used[from] = true;
       if (from === j || isUnorderedArrayPath(path)) {
-        pushSameDiffRow(out, { path: `${path}[${j}]`, left: a[from], right: b[j], severity: "low" }, ignoreRules);
+        pushSameDiffRow(out, { path: `${path}[${j}]`, left: a[from], right: b[j], severity: "low" }, ignoreRules, `${comparisonPath}[${j}]`);
         continue;
       }
       pushDiffRow(out, {
@@ -1971,22 +2053,23 @@ ${contextLine}`);
         moved: true,
         movedFrom: from,
         movedTo: j
-      }, ignoreRules);
+      }, ignoreRules, `${comparisonPath}[${j}]`);
     }
     return true;
   }
   function escapeRegExpLiteral(s) {
     return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
-  function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules) {
+  function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules, comparisonPath = path) {
     const childRe = new RegExp(`^${escapeRegExpLiteral(path)}\\[(\\d+)\\]$`);
     const unordered = isUnorderedArrayPath(path);
     const removedBySig = /* @__PURE__ */ new Map();
     for (let i = startIdx; i < out.length; i++) {
       const row = out[i];
       if (!row || row.type !== "removed") continue;
-      if (!childRe.test(String(row.path || ""))) continue;
-      const sig = makeArrayItemSignature(row.left, ignoreRules, row.path);
+      const fromMatch = childRe.exec(String(row.path || ""));
+      if (!fromMatch) continue;
+      const sig = makeArrayItemSignature(row.left, ignoreRules, row.path, `${comparisonPath}[${fromMatch[1]}]`);
       if (!removedBySig.has(sig)) removedBySig.set(sig, []);
       removedBySig.get(sig).push(i);
     }
@@ -1998,7 +2081,7 @@ ${contextLine}`);
       if (!row || row.type !== "added") continue;
       const toMatch = childRe.exec(String(row.path || ""));
       if (!toMatch) continue;
-      const sig = makeArrayItemSignature(row.right, ignoreRules, row.path);
+      const sig = makeArrayItemSignature(row.right, ignoreRules, row.path, `${comparisonPath}[${toMatch[1]}]`);
       const bucket = removedBySig.get(sig);
       if (!bucket || !bucket.length) continue;
       const removedIdx = bucket.shift();
@@ -2028,27 +2111,27 @@ ${contextLine}`);
     const diffCount = Number(out.__diffCount);
     if (Number.isFinite(diffCount)) out.__diffCount = Math.max(0, diffCount - merged);
   }
-  function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
+  function collectArrayDiffsByLcs(a, b, path, out, ignoreRules, comparisonPath = path) {
     const n = a.length;
     const m = b.length;
     if (!n && !m) return true;
     if (!n) {
       for (let j2 = 0; j2 < m; j2++) {
         if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
-        pushDiffRow(out, { type: "added", path: `${path}[${j2}]`, left: void 0, right: b[j2] }, ignoreRules);
+        pushDiffRow(out, { type: "added", path: `${path}[${j2}]`, left: void 0, right: b[j2] }, ignoreRules, `${comparisonPath}[${j2}]`);
       }
       return true;
     }
     if (!m) {
       for (let i2 = 0; i2 < n; i2++) {
         if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
-        pushDiffRow(out, { type: "removed", path: `${path}[${i2}]`, left: a[i2], right: void 0 }, ignoreRules);
+        pushDiffRow(out, { type: "removed", path: `${path}[${i2}]`, left: a[i2], right: void 0 }, ignoreRules, `${comparisonPath}[${i2}]`);
       }
       return true;
     }
     if (n * m > ARRAY_LCS_MAX_CELLS) return false;
-    const sigA = a.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`));
-    const sigB = b.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`));
+    const sigA = a.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`, `${comparisonPath}[${index}]`));
+    const sigB = b.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`, `${comparisonPath}[${index}]`));
     const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
     for (let i2 = n - 1; i2 >= 0; i2--) {
       for (let j2 = m - 1; j2 >= 0; j2--) {
@@ -2069,7 +2152,7 @@ ${contextLine}`);
           left: a[i],
           right: b[j],
           severity: "low"
-        }, ignoreRules);
+        }, ignoreRules, `${comparisonPath}[${j}]`);
         i += 1;
         j += 1;
         continue;
@@ -2077,7 +2160,7 @@ ${contextLine}`);
       if (i < n && j < m) {
         const sameType = Object.prototype.toString.call(a[i]) === Object.prototype.toString.call(b[j]);
         if (sameType && dp[i + 1][j + 1] >= dp[i + 1][j] && dp[i + 1][j + 1] >= dp[i][j + 1]) {
-          collectDeepDiffs(a[i], b[j], `${path}[${j}]`, out, ignoreRules);
+          collectDeepDiffs(a[i], b[j], `${path}[${j}]`, out, ignoreRules, `${comparisonPath}[${j}]`);
           i += 1;
           j += 1;
           continue;
@@ -2086,31 +2169,32 @@ ${contextLine}`);
       const down = i < n ? dp[i + 1][j] : -1;
       const right = j < m ? dp[i][j + 1] : -1;
       if (j < m && (i >= n || right >= down)) {
-        pushDiffRow(out, { type: "added", path: `${path}[${j}]`, left: void 0, right: b[j] }, ignoreRules);
+        pushDiffRow(out, { type: "added", path: `${path}[${j}]`, left: void 0, right: b[j] }, ignoreRules, `${comparisonPath}[${j}]`);
         j += 1;
       } else if (i < n) {
-        pushDiffRow(out, { type: "removed", path: `${path}[${i}]`, left: a[i], right: void 0 }, ignoreRules);
+        pushDiffRow(out, { type: "removed", path: `${path}[${i}]`, left: a[i], right: void 0 }, ignoreRules, `${comparisonPath}[${i}]`);
         i += 1;
       } else {
         break;
       }
     }
-    mergeAddRemovePairsAsMoved(out, mergeStart, path, ignoreRules);
+    mergeAddRemovePairsAsMoved(out, mergeStart, path, ignoreRules, comparisonPath);
     return true;
   }
-  function collectArrayDiffs(a, b, path, out, ignoreRules) {
-    if (collectActionMappingDiffs(a, b, path, out, ignoreRules)) return;
+  function collectArrayDiffs(a, b, path, out, ignoreRules, comparisonPath = path) {
+    if (collectActionMappingDiffs(a, b, path, out, ignoreRules, comparisonPath)) return;
     if (out) out.__pendingKeyFallback = null;
-    if (collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules)) return;
+    if (collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules, comparisonPath)) return;
     const keyFallback = out ? out.__pendingKeyFallback || null : null;
     if (out) out.__pendingKeyFallback = null;
-    if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules)) {
+    const ignoredIdentity = isCompositeArrayIdentityIgnored(findCompositeArrayRule(path), a, b, path, ignoreRules, comparisonPath);
+    if (!ignoredIdentity && collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules, comparisonPath)) {
       if (keyFallback) recordMatchingNotice(out, path, keyFallback, a.length, b.length);
       return;
     }
-    if (collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules)) return;
+    if (collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules, comparisonPath)) return;
     if (keyFallback) recordMatchingNotice(out, path, keyFallback, a.length, b.length);
-    if (collectArrayDiffsByLcs(a, b, path, out, ignoreRules)) return;
+    if (collectArrayDiffsByLcs(a, b, path, out, ignoreRules, comparisonPath)) return;
     if (a.length > 0 && b.length > 0) {
       recordMatchingNotice(out, path, "lcs-size-limit", a.length, b.length);
     }
@@ -2118,53 +2202,55 @@ ${contextLine}`);
     for (let i = 0; i < max; i++) {
       if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
       const p = `${path}[${i}]`;
-      if (i >= a.length) pushDiffRow(out, { type: "added", path: p, left: void 0, right: b[i] }, ignoreRules);
-      else if (i >= b.length) pushDiffRow(out, { type: "removed", path: p, left: a[i], right: void 0 }, ignoreRules);
-      else collectDeepDiffs(a[i], b[i], p, out, ignoreRules);
+      const itemComparisonPath = `${comparisonPath}[${i}]`;
+      if (i >= a.length) pushDiffRow(out, { type: "added", path: p, left: void 0, right: b[i] }, ignoreRules, itemComparisonPath);
+      else if (i >= b.length) pushDiffRow(out, { type: "removed", path: p, left: a[i], right: void 0 }, ignoreRules, itemComparisonPath);
+      else collectDeepDiffs(a[i], b[i], p, out, ignoreRules, itemComparisonPath);
     }
   }
-  function collectDeepDiffs(a, b, path, out, ignoreRules) {
+  function collectDeepDiffs(a, b, path, out, ignoreRules, comparisonPath = path) {
     if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
-    if (isIgnoredPath(ignoreRules, path)) return;
+    if (isIgnoredPath(ignoreRules, path, comparisonPath)) return;
     if (a === b) {
-      pushSameDiffRow(out, { path, left: a, right: b, severity: "low" }, ignoreRules);
+      pushSameDiffRow(out, { path, left: a, right: b, severity: "low" }, ignoreRules, comparisonPath);
       return;
     }
     const ta = Object.prototype.toString.call(a);
     const tb = Object.prototype.toString.call(b);
     if (ta !== tb) {
-      pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules);
+      pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules, comparisonPath);
       return;
     }
     if (a == null || b == null) {
-      pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules);
+      pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules, comparisonPath);
       return;
     }
     if (Array.isArray(a)) {
-      if (makeArrayItemSignature(a, ignoreRules, path) === makeArrayItemSignature(b, ignoreRules, path)) {
-        pushSameDiffRow(out, { path, left: a, right: b, severity: "low" }, ignoreRules);
+      if (makeArrayItemSignature(a, ignoreRules, path, comparisonPath) === makeArrayItemSignature(b, ignoreRules, path, comparisonPath)) {
+        pushSameDiffRow(out, { path, left: a, right: b, severity: "low" }, ignoreRules, comparisonPath);
         return;
       }
-      collectArrayDiffs(a, b, path, out, ignoreRules);
+      collectArrayDiffs(a, b, path, out, ignoreRules, comparisonPath);
       return;
     }
     if (typeof a === "object") {
-      if (makeArrayItemSignature(a, ignoreRules, path) === makeArrayItemSignature(b, ignoreRules, path)) {
-        pushSameDiffRow(out, { path, left: a, right: b, severity: "low" }, ignoreRules);
+      if (makeArrayItemSignature(a, ignoreRules, path, comparisonPath) === makeArrayItemSignature(b, ignoreRules, path, comparisonPath)) {
+        pushSameDiffRow(out, { path, left: a, right: b, severity: "low" }, ignoreRules, comparisonPath);
         return;
       }
       const keys = [.../* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)])].sort();
       for (const k of keys) {
         const p = path ? `${path}.${k}` : k;
-        if (isIgnoredObjectProperty(ignoreRules, k, p)) continue;
-        if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: "removed", path: p, left: a[k], right: void 0, ...isEmptyLikeValue(a[k]) ? { emptyOnly: true } : {} }, ignoreRules);
-        else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: "added", path: p, left: void 0, right: b[k], ...isEmptyLikeValue(b[k]) ? { emptyOnly: true } : {} }, ignoreRules);
-        else collectDeepDiffs(a[k], b[k], p, out, ignoreRules);
+        const childComparisonPath = appendNormalizationPath(comparisonPath, k);
+        if (isIgnoredObjectProperty(ignoreRules, k, p, childComparisonPath)) continue;
+        if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: "removed", path: p, left: a[k], right: void 0, ...isEmptyLikeValue(a[k]) ? { emptyOnly: true } : {} }, ignoreRules, childComparisonPath);
+        else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: "added", path: p, left: void 0, right: b[k], ...isEmptyLikeValue(b[k]) ? { emptyOnly: true } : {} }, ignoreRules, childComparisonPath);
+        else collectDeepDiffs(a[k], b[k], p, out, ignoreRules, childComparisonPath);
         if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
       }
       return;
     }
-    pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules);
+    pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules, comparisonPath);
   }
   function stableStringifyForCompare(value) {
     if (Array.isArray(value)) return `[${value.map(stableStringifyForCompare).join(",")}]`;
@@ -2624,10 +2710,9 @@ ${contextLine}`);
       if (/\.(?:lookup|referencetable)\.(?:relatedapp|targetapp|sourceapp)\.(?:app|appid)$/.test(normalizedPath)) return true;
       if (/\.(?:lookup|referencetable)\.(?:relatedappid|targetappid|sourceappid)$/.test(normalizedPath)) return true;
     }
-    if (/^viewsettings\.views(?:\[[^\]]+\]|\.[^.]+)\.id$/.test(normalizedPath)) return true;
-    if (/^reportsettings\.reports(?:\[[^\]]+\]|\.[^.]+)\.id$/.test(normalizedPath)) return true;
+    const entityIdPath = new RegExp(`^(?:viewsettings\\.views|reportsettings\\.reports|actionsettings\\.actions)(?:${ENTITY_PATH_SEGMENT}|\\[\\d+\\])\\.id$`);
+    if (entityIdPath.test(normalizedPath)) return true;
     if (/^actionsettings\.actions(?:\.|\[)/.test(normalizedPath)) {
-      if (/^actionsettings\.actions(?:\[[^\]]+\]|\.[^.]+)\.id$/.test(normalizedPath)) return true;
       if (/\.(?:destapp|targetapp|sourceapp)\.(?:app|appid)$/.test(normalizedPath)) return true;
       if (/\.(?:destappid|targetappid|sourceappid)$/.test(normalizedPath)) return true;
     }
@@ -2636,7 +2721,7 @@ ${contextLine}`);
   function appendNormalizationPath(parentPath, key) {
     const segment = String(key);
     if (!parentPath) return segment;
-    return segment.includes(".") || !segment ? `${parentPath}[${JSON.stringify(segment)}]` : `${parentPath}.${segment}`;
+    return /[.[\]"'\\]/.test(segment) || !segment ? `${parentPath}[${JSON.stringify(segment)}]` : `${parentPath}.${segment}`;
   }
   function appendNormalizationArrayPath(parentPath, index) {
     return `${parentPath || ""}[${index}]`;
@@ -2919,7 +3004,7 @@ ${contextLine}`);
     });
     return out;
   }
-  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, MATCHING_NOTICE_LIMIT, ARRAY_KEY_CANDIDATES, LOW_PRIORITY_LEAF_KEYS, ACL_GRANT_FLAG_KEYS, FIELD_ACL_LEVEL_ORDER, DECIMAL_NUMBER_LITERAL_RE, EXACT_IGNORE_PATH_PREFIX, ACTION_MAPPINGS_ARRAY_PATH, COMPOSITE_ARRAY_RULES, SUBTABLE_ROOT_PATH_RE, ENTITY_EXPAND_LIMIT;
+  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, MATCHING_NOTICE_LIMIT, ARRAY_KEY_CANDIDATES, LOW_PRIORITY_LEAF_KEYS, ACL_GRANT_FLAG_KEYS, FIELD_ACL_LEVEL_ORDER, DECIMAL_NUMBER_LITERAL_RE, EXACT_IGNORE_PATH_PREFIX, ENTITY_PATH_SEGMENT, ENTITY_IDENTIFIER_PATH_PATTERNS, ACTION_MAPPINGS_ARRAY_PATH, COMPOSITE_ARRAY_RULES, SUBTABLE_ROOT_PATH_RE, ENTITY_EXPAND_LIMIT;
   var init_engine = __esm({
     "src/diff/engine.ts"() {
       "use strict";
@@ -2990,6 +3075,13 @@ ${contextLine}`);
       FIELD_ACL_LEVEL_ORDER = ["NONE", "READ", "WRITE"];
       DECIMAL_NUMBER_LITERAL_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
       EXACT_IGNORE_PATH_PREFIX = "path:";
+      ENTITY_PATH_SEGMENT = String.raw`(?:\.[^.[\]]+|\["(?:[^"\\]|\\.)*"\])`;
+      ENTITY_IDENTIFIER_PATH_PATTERNS = [
+        new RegExp(`^(?:fieldsettings\\.properties|viewsettings\\.views|reportsettings\\.reports|processsettings\\.states|categories\\.categories|actionsettings\\.actions)${ENTITY_PATH_SEGMENT}$`),
+        new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}\\.fields${ENTITY_PATH_SEGMENT}$`),
+        // 選択肢のキーもラベルを識別子とする名前付きマップ。
+        new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}(?:\\.fields${ENTITY_PATH_SEGMENT})?\\.options${ENTITY_PATH_SEGMENT}$`)
+      ];
       ACTION_MAPPINGS_ARRAY_PATH = /^actionSettings\.actions(?:\.|\[).*\.mappings$/;
       COMPOSITE_ARRAY_RULES = [
         // アプリ権限：エンティティが識別子
@@ -3062,7 +3154,7 @@ ${contextLine}`);
     }
     return out;
   }
-  function getPathLeafKey2(path) {
+  function getPathLeafKey(path) {
     const m = String(path || "").match(/([^[.\]]+)(?:\[\d+\])?$/);
     return m ? m[1] : "";
   }
@@ -3662,7 +3754,7 @@ ${contextLine}`);
     const sectionKey = String(row?.sectionKey || "");
     const path = String(row?.path || "");
     const tokens = tokenizePath(path);
-    const leaf = getPathLeafKey2(path);
+    const leaf = getPathLeafKey(path);
     const propLabel = getSectionPropLabel(sectionKey, leaf);
     const empty = { entityKind: "", entityLabel: "", entityCode: "", propLabel };
     if (sectionKey === "fieldSettings") return empty;
@@ -3812,7 +3904,7 @@ ${contextLine}`);
     const sectionKey = row.sectionKey || "";
     const sectionLabel = SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey || "差分";
     const fieldInfo = extractFieldPathInfo(row.path);
-    const leafKey = normalizeIgnoreToken2(getPathLeafKey2(row.path));
+    const leafKey = normalizeIgnoreToken2(getPathLeafKey(row.path));
     if (row.moved) {
       const from = Number(row.movedFrom);
       const to = Number(row.movedTo);
@@ -6981,25 +7073,59 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
   function buildFieldReflectRequests(fieldRows, app, requests) {
     const FIELD_REFLECT_BATCH_LIMIT = 100;
-    const codes = new Set();
+    const selections = new Map();
+    const select = (code, childCode) => {
+      if (!selections.has(code)) selections.set(code, { whole: false, children: new Set() });
+      const selection = selections.get(code);
+      if (childCode) selection.children.add(childCode);
+      else selection.whole = true;
+    };
     (fieldRows || []).forEach((row) => {
       const info = extractFieldPathInfo(row.path);
-      if (info && info.rootCode) codes.add(info.rootCode);
+      if (info && info.rootCode) select(info.rootCode, info.subFieldCode);
     });
     selectedFieldCodes.forEach((code) => {
       if (!fieldCodeHasActualDiff(code)) return;
-      // フィールド単位ビューで選んだテーブル内フィールドは親テーブルのコードへ丸める
       const def = FLAT_FIELD_PROPS_SRC[code] || FLAT_FIELD_PROPS_TGT[code];
-      codes.add(def && def.__parentTableCode ? def.__parentTableCode : code);
+      if (def && def.__parentTableCode) select(def.__parentTableCode, code);
+      else select(code, '');
     });
-    if (!codes.size) return;
-    const updateProps = {};
-    const addProps = {};
+    if (!selections.size) return;
+    const updateProps = Object.create(null);
+    const addProps = Object.create(null);
     const deleteCodes = [];
-    codes.forEach((code) => {
-      const src = FIELD_PROPS_SRC[code];
-      const tgt = FIELD_PROPS_TGT[code];
-      if (src && tgt) updateProps[code] = src;
+    const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
+    selections.forEach((selection, code) => {
+      const src = hasOwn(FIELD_PROPS_SRC, code) ? FIELD_PROPS_SRC[code] : null;
+      const tgt = hasOwn(FIELD_PROPS_TGT, code) ? FIELD_PROPS_TGT[code] : null;
+      if (src && tgt && src.type === 'SUBTABLE' && tgt.type === 'SUBTABLE') {
+        const { fields: sourceFields, ...sourceTable } = src;
+        const { fields: targetFields, ...targetTable } = tgt;
+        const srcFields = sourceFields || {};
+        const tgtFields = targetFields || {};
+        const selectedChildren = selection.whole
+          ? new Set([...Object.keys(srcFields), ...Object.keys(tgtFields)])
+          : selection.children;
+        const addedFields = Object.create(null);
+        const updatedFields = Object.create(null);
+        selectedChildren.forEach((child) => {
+          if (!hasOwn(srcFields, child)) {
+            if (hasOwn(tgtFields, child)) deleteCodes.push(child);
+          } else if (!hasOwn(tgtFields, child)) addedFields[child] = srcFields[child];
+          else if (!jsonEq(srcFields[child], tgtFields[child])) updatedFields[child] = srcFields[child];
+        });
+        // 既存テーブルの新規子フィールドは更新APIでは追加できない。
+        // POSTへ分離し、PUTには比較先に存在する変更済みの子だけを含める。
+        const tableIdentity = { type: 'SUBTABLE', code: src.code || code };
+        if (Object.keys(addedFields).length) addProps[code] = { ...tableIdentity, fields: addedFields };
+        const tableChanged = selection.whole && !jsonEq(sourceTable, targetTable);
+        if (Object.keys(updatedFields).length || tableChanged) {
+          updateProps[code] = {
+            ...(selection.whole ? sourceTable : tableIdentity),
+            fields: updatedFields
+          };
+        }
+      } else if (src && tgt) updateProps[code] = src;
       else if (src) addProps[code] = src;
       else if (tgt) deleteCodes.push(code);
     });
@@ -7023,8 +7149,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         ));
       }
     };
-    pushPropertyBatches(updateProps, 'PUT', '更新');
     pushPropertyBatches(addProps, 'POST', '追加');
+    pushPropertyBatches(updateProps, 'PUT', '更新');
     if (deleteCodes.length) {
       const totalBatches = Math.ceil(deleteCodes.length / FIELD_REFLECT_BATCH_LIMIT);
       for (let offset = 0; offset < deleteCodes.length; offset += FIELD_REFLECT_BATCH_LIMIT) {
@@ -11503,16 +11629,40 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const issues = [];
     const addSide = (bundle, side) => {
       Object.entries(bundle?.sections || {}).forEach(([sectionKey, section]) => {
-        if (section?._fetchError) return;
+        if (sourceBundle?.sections?.[sectionKey]?._fetchError || targetBundle?.sections?.[sectionKey]?._fetchError) return;
         const partial = section?._partial;
-        if (!partial) return;
-        const files = Array.isArray(partial.files) ? partial.files : [];
+        const files = Array.isArray(partial?.files) ? [...partial.files] : [];
+        const fileIds = new Set(files.map((file) => JSON.stringify([String(file?.fileKey || ""), String(file?.fileName || "")])));
+        if (sectionKey === "customizeSettings") {
+          for (const platform of ["desktop", "mobile"]) {
+            for (const kind of ["js", "css"]) {
+              const items = section?.[platform]?.[kind];
+              if (!Array.isArray(items)) continue;
+              for (const item of items) {
+                if (item?.type !== "FILE" || typeof item._bodyText === "string") continue;
+                const fileName = String(item?.file?.name || "");
+                const fileKey = String(item?.file?.fileKey || "");
+                const fileId = JSON.stringify([fileKey, fileName]);
+                if (fileIds.has(fileId)) continue;
+                fileIds.add(fileId);
+                files.push({
+                  fileName,
+                  fileKey,
+                  reason: String(item?._bodyUnavailable || "missing-body"),
+                  detail: "ファイル本文を取得・読込できていないため、本文内容を比較できません",
+                  byteSize: Number(item?.file?.size || 0)
+                });
+              }
+            }
+          }
+        }
+        if (!partial && !files.length) return;
         const sectionLabel = SECTION_DEFS.find((def) => def.key === sectionKey)?.label || sectionKey;
         issues.push({
           sectionKey,
           section: sectionLabel,
           side,
-          message: String(partial.message || "一部データを取得できず、代替情報で比較しました"),
+          message: String(partial?.message || "一部データを取得できず、代替情報で比較しました"),
           files: files.map((file) => ({
             fileName: String(file?.fileName || ""),
             fileKey: String(file?.fileKey || ""),
@@ -15905,6 +16055,46 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     }
     return extras.length ? `${display} / ${extras.join(" / ")}` : display;
   }
+  var CUSTOMER_PERMISSION_FLAG_LABELS = {
+    appEditable: "アプリ管理",
+    recordViewable: "レコード閲覧",
+    recordAddable: "レコード追加",
+    recordEditable: "レコード編集",
+    recordDeletable: "レコード削除",
+    recordImportable: "ファイル読み込み",
+    recordExportable: "ファイル書き出し",
+    viewable: "閲覧",
+    editable: "編集",
+    deletable: "削除"
+  };
+  function customerAclValueSummary(row, value) {
+    if (!["appAcl", "fieldAcl", "recordPermissions"].includes(sectionKeyOfRow(row))) return null;
+    const summarize = (entry) => {
+      if (Array.isArray(entry)) {
+        if (!entry.length) return "権限設定なし";
+        const entries = entry.map(summarize);
+        return entries.every(Boolean) ? entries.join("\n\n") : null;
+      }
+      if (!entry || typeof entry !== "object") return null;
+      const object = entry;
+      const parts = [];
+      const entity = customerEntityObjectSummary(object);
+      if (entity) parts.push(entity);
+      for (const [key, label] of Object.entries(CUSTOMER_PERMISSION_FLAG_LABELS)) {
+        if (typeof object[key] === "boolean") parts.push(`${label}: ${object[key] ? "許可" : "不許可"}`);
+      }
+      if (typeof object.filterCond === "string") parts.push(`レコードの条件: ${object.filterCond || "（条件なし）"}`);
+      if (typeof object.code === "string" && Array.isArray(object.entities)) parts.push(`フィールドコード: ${object.code}`);
+      for (const key of ["rights", "entities"]) {
+        if (!Array.isArray(object[key])) continue;
+        const nested = summarize(object[key]);
+        if (!nested) return null;
+        parts.push(nested);
+      }
+      return parts.length ? parts.join("\n") : null;
+    };
+    return summarize(value);
+  }
   function customerEntityCollectionSummary(row, value) {
     if (!/(?:^|\.)(?:defaultValue|entity|entities|recipients)(?:\.|\[|$)/.test(String(row.path || ""))) return null;
     if (Array.isArray(value)) {
@@ -16569,6 +16759,8 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const fieldInfo = sectionKeyOfRow(row) === "fieldSettings" ? extractFieldPathInfo(String(row.path || "")) : null;
     const fieldSummary = fieldInfo && (fieldInfo.isFieldRoot || fieldInfo.isSubFieldRoot) ? conciseFieldDefinition(value) : null;
     if (fieldSummary) return fieldSummary;
+    const aclSummary = customerAclValueSummary(row, value);
+    if (aclSummary) return aclSummary;
     const entitySummary = customerEntityCollectionSummary(row, value);
     if (entitySummary) return entitySummary;
     const decoded = decodedListValue(row, side);
@@ -20439,6 +20631,38 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     }
     return parts.join("");
   }
+  function createLiteDiffJsonImporter(onBusyChange = () => {
+  }) {
+    const generations = { source: 0, target: 0 };
+    const loading = { source: false, target: false };
+    return {
+      isLoading: (side) => side ? loading[side] : loading.source || loading.target,
+      cancel(side) {
+        const wasLoading = loading[side];
+        generations[side] += 1;
+        loading[side] = false;
+        onBusyChange();
+        return wasLoading;
+      },
+      async load(side, read) {
+        const generation = ++generations[side];
+        loading[side] = true;
+        onBusyChange();
+        try {
+          const bundle = await read();
+          return generation === generations[side] ? bundle : null;
+        } catch (error) {
+          if (generation !== generations[side]) return null;
+          throw error;
+        } finally {
+          if (generation === generations[side]) {
+            loading[side] = false;
+            onBusyChange();
+          }
+        }
+      }
+    };
+  }
   function mountDiffLitePanel(runDiffStandalone2) {
     ensureResultStyles();
     const panel = createLitePanel({
@@ -20587,6 +20811,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         entry.app.value = tokens[0];
         setTargetName(entry, "");
         const guestVal = entry.guest.value.trim();
+        if (entry === targetRows[0]) cancelJsonImportForAppChange("target");
         for (let k = 1; k < tokens.length; k += 1) addTargetRow(tokens[k], guestVal);
         invalidateResultAfterAppSelectionChange();
         applyComparisonMode("multi");
@@ -20603,16 +20828,30 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     };
     srcApp.addEventListener("input", () => {
       if (sourceAppName) setSourceName("");
+      cancelJsonImportForAppChange("source");
       invalidateResultAfterAppSelectionChange();
     });
     tgtApp.addEventListener("input", () => {
       if (targetRows[0]?.appName) setTargetName(targetRows[0], "");
+      cancelJsonImportForAppChange("target");
       invalidateResultAfterAppSelectionChange();
     });
-    srcGuest.addEventListener("input", invalidateResultAfterAppSelectionChange);
-    tgtGuest.addEventListener("input", invalidateResultAfterAppSelectionChange);
-    srcPrev.checkbox.addEventListener("change", invalidateResultAfterAppSelectionChange);
-    tgtPrev.checkbox.addEventListener("change", invalidateResultAfterAppSelectionChange);
+    srcGuest.addEventListener("input", () => {
+      cancelJsonImportForAppChange("source");
+      invalidateResultAfterAppSelectionChange();
+    });
+    tgtGuest.addEventListener("input", () => {
+      cancelJsonImportForAppChange("target");
+      invalidateResultAfterAppSelectionChange();
+    });
+    srcPrev.checkbox.addEventListener("change", () => {
+      cancelJsonImportForAppChange("source");
+      invalidateResultAfterAppSelectionChange();
+    });
+    tgtPrev.checkbox.addEventListener("change", () => {
+      cancelJsonImportForAppChange("target");
+      invalidateResultAfterAppSelectionChange();
+    });
     attachTargetSplit(targetRows[0]);
     const addTargetBtn = makeButton("比較先行を追加", "sub");
     addTargetBtn.addEventListener("click", () => {
@@ -20632,18 +20871,20 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       targets: [
         { label: "比較元", apply: (id, name, guestId) => {
           if (diffRunActive) return { message: "比較を実行中です。完了してからアプリを設定してください", tone: "warn" };
+          cancelJsonImportForAppChange("source", id, guestId);
           srcApp.value = id;
           setSourceName(name);
-          if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId;
+          srcGuest.value = guestId;
           const invalidated = invalidateResultAfterAppSelectionChange();
           return { message: invalidated ? "比較元を変更したため、前回の結果を無効にしました。再比較してください" : `App ${id} を比較元へ設定しました`, tone: invalidated ? "warn" : "ok" };
         } },
         { label: "比較先", apply: (id, name, guestId) => {
           if (diffRunActive) return { message: "比較を実行中です。完了してからアプリを設定してください", tone: "warn" };
-          const empty = targetRows.find((r) => !r.app.value.trim()) || addTargetRow();
+          const empty = comparisonMode === "single" ? targetRows[0] : targetRows.find((r) => !r.app.value.trim()) || addTargetRow();
+          if (empty === targetRows[0]) cancelJsonImportForAppChange("target", id, guestId);
           empty.app.value = id;
           setTargetName(empty, name);
-          if (guestId && !empty.guest.value.trim()) empty.guest.value = guestId;
+          empty.guest.value = guestId;
           const invalidated = invalidateResultAfterAppSelectionChange();
           return { message: invalidated ? "比較先を変更したため、前回の結果を無効にしました。再比較してください" : `App ${id} を比較先へ設定しました`, tone: invalidated ? "warn" : "ok" };
         } }
@@ -21140,9 +21381,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       addPairBtn.disabled = active;
       pairBulkTextarea.disabled = active;
       pairBulkApply.disabled = active;
-      runBtn.disabled = loading || diffRunActive || profileIoActive;
-      runAllBtn.disabled = loading || diffRunActive || profileIoActive;
-      runPairsBtn.disabled = loading || diffRunActive || profileIoActive;
+      runBtn.disabled = loading || diffRunActive || profileIoActive || jsonImporter.isLoading();
+      runAllBtn.disabled = loading || diffRunActive || profileIoActive || jsonImporter.isLoading();
+      runPairsBtn.disabled = loading || diffRunActive || profileIoActive || jsonImporter.isLoading();
       pairRows.forEach((entry) => {
         entry.duplicate.disabled = active;
         entry.swap.disabled = active;
@@ -21835,6 +22076,41 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const expandedRowKeys = /* @__PURE__ */ new Set();
     let importedSourceBundle = null;
     let importedTargetBundle = null;
+    const jsonImporter = createLiteDiffJsonImporter(syncJsonImportControls);
+    function syncJsonImportControls() {
+      const busy = jsonImporter.isLoading() || diffRunActive || profileIoActive || pairFolderLoadActive();
+      runBtn.disabled = busy;
+      runAllBtn.disabled = busy;
+      runPairsBtn.disabled = busy;
+      panel.setBusy(busy);
+    }
+    function syncImportedBundleControls() {
+      const hasImportedBundle = !!(importedSourceBundle || importedTargetBundle);
+      pairClearImportBtn.disabled = !hasImportedBundle;
+      pairClearImportBtn.hidden = !hasImportedBundle;
+    }
+    function cancelJsonImportForAppChange(side, selectedAppId, selectedGuestId) {
+      const bundle = side === "source" ? importedSourceBundle : importedTargetBundle;
+      const keepBundle = selectedAppId !== void 0 && String(bundle?.appId || "") === selectedAppId && String(bundle?.guestId || "") === selectedGuestId;
+      const cancelledRead = jsonImporter.cancel(side);
+      if (cancelledRead) {
+        const otherSide = side === "source" ? "target" : "source";
+        if (jsonImporter.isLoading(otherSide)) {
+          panel.setStatus(`${otherSide === "source" ? "比較元" : "比較先"}JSONを読み込み中…`, "busy");
+        } else {
+          panel.setStatus("アプリまたは環境を変更したため、設定JSONの読込を取り消しました", "info");
+        }
+      }
+      if (keepBundle) return;
+      if (side === "source") {
+        importedSourceBundle = null;
+        srcFile.value = "";
+      } else {
+        importedTargetBundle = null;
+        tgtFile.value = "";
+      }
+      syncImportedBundleControls();
+    }
     function invalidateComparisonResult(statusMessage) {
       const hadResult = !!cache || multiXlsxExports.length > 0 || resultBox.childElementCount > 0;
       if (!hadResult) return false;
@@ -21884,7 +22160,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         panel.setStatus("このボタンでの比較方向の入れ替えは、1対1比較で利用できます", "warn");
         return;
       }
-      if (importedSourceBundle || importedTargetBundle) {
+      if (importedSourceBundle || importedTargetBundle || jsonImporter.isLoading()) {
         panel.setStatus("設定JSONを読み込んでいる間は方向を入れ替えられません。読込を解除してから実行してください", "warn");
         return;
       }
@@ -21905,31 +22181,55 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const invalidated = invalidateResultAfterAppSelectionChange();
       if (!invalidated) panel.setStatus("比較元と比較先を入れ替えました。矢印の向きを確認して比較してください", "info");
     });
-    srcFile.addEventListener("change", () => liteRun(panel, "比較元JSONを読み込み中…", async () => {
-      const file = srcFile.files?.[0];
+    async function loadImportedBundle(side) {
+      const input = side === "source" ? srcFile : tgtFile;
+      const app = side === "source" ? srcApp : tgtApp;
+      const file = input.files?.[0];
       if (!file) return;
+      if (diffRunActive || profileIoActive || pairFolderLoadActive()) {
+        input.value = "";
+        panel.setStatus("現在の処理が完了してから設定JSONを読み込んでください", "warn");
+        return;
+      }
+      const appId = app.value.trim();
+      if (side === "source") importedSourceBundle = null;
+      else importedTargetBundle = null;
+      syncImportedBundleControls();
       setCompletionActionsVisible(false);
-      importedSourceBundle = await readSettingsBundleFile(file, { side: "source", appId: srcApp.value.trim() });
-      if (!srcApp.value.trim() && importedSourceBundle?.appId) srcApp.value = String(importedSourceBundle.appId);
-      setSourceName(extractAppNameFromBundle(importedSourceBundle));
-      pairClearImportBtn.disabled = false;
-      pairClearImportBtn.hidden = false;
       const invalidated = invalidateResultAfterAppSelectionChange();
-      panel.setStatus(`比較元JSONを読み込みました: App ${importedSourceBundle?.appId || "-"}${invalidated ? "。結果を更新するため再比較してください" : ""}`, invalidated ? "warn" : "ok");
-    }));
-    tgtFile.addEventListener("change", () => liteRun(panel, "比較先JSONを読み込み中…", async () => {
-      const file = tgtFile.files?.[0];
-      if (!file) return;
-      setCompletionActionsVisible(false);
-      importedTargetBundle = await readSettingsBundleFile(file, { side: "target", appId: tgtApp.value.trim() });
-      if (!tgtApp.value.trim() && importedTargetBundle?.appId) tgtApp.value = String(importedTargetBundle.appId);
-      setTargetName(targetRows[0], extractAppNameFromBundle(importedTargetBundle));
-      pairClearImportBtn.disabled = false;
-      pairClearImportBtn.hidden = false;
-      const invalidated = invalidateResultAfterAppSelectionChange();
-      panel.setStatus(`比較先JSONを読み込みました: App ${importedTargetBundle?.appId || "-"}${invalidated ? "。結果を更新するため再比較してください" : ""}`, invalidated ? "warn" : "ok");
-    }));
+      const label = side === "source" ? "比較元" : "比較先";
+      panel.setStatus(`${label}JSONを読み込み中…`, "busy");
+      try {
+        const bundle = await jsonImporter.load(side, () => readSettingsBundleFile(file, { side, appId }));
+        if (!bundle) return;
+        if (!app.value.trim() && bundle.appId) app.value = String(bundle.appId);
+        if (side === "source") {
+          importedSourceBundle = bundle;
+          srcGuest.value = String(bundle.guestId || "");
+          srcPrev.checkbox.checked = !!bundle.preview;
+          setSourceName(extractAppNameFromBundle(bundle));
+        } else {
+          importedTargetBundle = bundle;
+          tgtGuest.value = String(bundle.guestId || "");
+          tgtPrev.checkbox.checked = !!bundle.preview;
+          setTargetName(targetRows[0], extractAppNameFromBundle(bundle));
+        }
+        syncImportedBundleControls();
+        panel.setStatus(`${label}JSONを読み込みました: App ${bundle.appId || "-"}${invalidated ? "。結果を更新するため再比較してください" : ""}`, invalidated ? "warn" : "ok");
+      } catch (error) {
+        input.value = "";
+        panel.setStatus(`エラー: ${error?.message || String(error)}`, "err");
+      }
+    }
+    srcFile.addEventListener("change", () => {
+      void loadImportedBundle("source");
+    });
+    tgtFile.addEventListener("change", () => {
+      void loadImportedBundle("target");
+    });
     const clearImportedBundles = () => {
+      jsonImporter.cancel("source");
+      jsonImporter.cancel("target");
       importedSourceBundle = null;
       importedTargetBundle = null;
       srcFile.value = "";
@@ -21969,8 +22269,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       };
     }
     profileSaveBtn.addEventListener("click", () => {
-      if (diffRunActive || profileIoActive) {
-        panel.setStatus("比較または比較条件の読込が完了してから保存してください", "warn");
+      if (diffRunActive || profileIoActive || jsonImporter.isLoading()) {
+        panel.setStatus("比較または設定JSON・比較条件の読込が完了してから保存してください", "warn");
         return;
       }
       try {
@@ -21996,8 +22296,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       }
     });
     profileLoadBtn.addEventListener("click", () => {
-      if (diffRunActive || profileIoActive) {
-        panel.setStatus("比較が完了してから比較条件を読み込んでください", "warn");
+      if (diffRunActive || profileIoActive || jsonImporter.isLoading()) {
+        panel.setStatus("比較または設定JSONの読込が完了してから比較条件を読み込んでください", "warn");
         return;
       }
       profileFile.click();
@@ -22005,7 +22305,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     profileFile.addEventListener("change", async () => {
       const file = profileFile.files?.[0];
       if (!file) return;
-      if (diffRunActive || profileIoActive) {
+      if (diffRunActive || profileIoActive || jsonImporter.isLoading()) {
         profileFile.value = "";
         panel.setStatus("比較が完了してから比較条件を読み込んでください", "warn");
         return;
@@ -22058,9 +22358,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         profileIoActive = false;
         profileSaveBtn.disabled = false;
         profileLoadBtn.disabled = false;
-        runBtn.disabled = diffRunActive || pairFolderLoadActive();
-        runAllBtn.disabled = diffRunActive || pairFolderLoadActive();
-        runPairsBtn.disabled = diffRunActive || pairFolderLoadActive();
+        runBtn.disabled = diffRunActive || pairFolderLoadActive() || jsonImporter.isLoading();
+        runAllBtn.disabled = diffRunActive || pairFolderLoadActive() || jsonImporter.isLoading();
+        runPairsBtn.disabled = diffRunActive || pairFolderLoadActive() || jsonImporter.isLoading();
       }
     });
     function currentFilters() {
@@ -22495,6 +22795,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       runControlSnapshot = [];
     }
     async function runDiffTask(busyMessage, task) {
+      if (jsonImporter.isLoading()) {
+        panel.setStatus("設定JSONの読込が完了してから比較してください", "warn");
+        return;
+      }
       if (pairFolderLoadActive()) {
         panel.setStatus("フォルダの読込が完了してから比較してください", "warn");
         return;

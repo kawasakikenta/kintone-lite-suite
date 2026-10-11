@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CUSTOMIZE_BODY_FETCH_CONCURRENCY,
   fetchBundle,
+  ensureBundleShape,
   fetchCustomizeFileBodies,
   isRetriableApiError,
   isRetriableMutation,
@@ -18,6 +19,47 @@ function installKintoneApi(handler: (path: string, method: string, params: any) 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe('settings acquisition normalization', () => {
+  it.each(['revision', 'creator', 'createdAt', 'modifier', 'modifiedAt'])(
+    'preserves the field code %s while collecting response revisions', async (code) => {
+      installKintoneApi(async (_path, _method, params) => ({
+        revision: params.app === '1' ? '10' : '20',
+        properties: { [code]: { code, type: 'SINGLE_LINE_TEXT', label: params.app === '1' ? '旧名称' : '新名称' } }
+      }));
+      const source = await fetchBundle({ appId: '1', preview: false, sections: ['fieldSettings'] });
+      const target = await fetchBundle({ appId: '2', preview: false, sections: ['fieldSettings'] });
+      expect(source.meta.sectionRevisions.fieldSettings).toBe('10');
+      expect(target.meta.sectionRevisions.fieldSettings).toBe('20');
+      expect(source.sections.fieldSettings).not.toHaveProperty('revision');
+      expect(source.sections.fieldSettings.properties[code]).toMatchObject({ code, label: '旧名称' });
+      expect(computeDiffRows(source, target, ['fieldSettings'], '').rows).toMatchObject([
+        { type: 'changed', path: `fieldSettings.properties.${code}.label`, left: '旧名称', right: '新名称' }
+      ]);
+    }
+  );
+
+  it('preserves nested identifiers and user settings while omitting only response metadata', () => {
+    const sections = {
+      fieldSettings: {
+        revision: '5',
+        properties: {
+          revision: { code: 'revision', type: 'DROP_DOWN', options: { creator: { label: 'creator', index: '0' } } },
+          T: { type: 'SUBTABLE', fields: { modifiedAt: { code: 'modifiedAt', type: 'SINGLE_LINE_TEXT' } } }
+        }
+      },
+      viewSettings: { revision: '5', views: { creator: { name: 'creator', filterCond: 'revision = "yes"' } } },
+      pluginSettings: { plugins: [{ id: 'p', _config: { revision: 'user value', creator: 'another value', nested: { modifiedAt: 'data' } } }] }
+    };
+    const normalized = ensureBundleShape({ appId: '1', sections });
+    expect(normalized.sections.fieldSettings).not.toHaveProperty('revision');
+    expect(normalized.sections.fieldSettings.properties).toEqual(sections.fieldSettings.properties);
+    expect(normalized.sections.viewSettings.views).toEqual(sections.viewSettings.views);
+    expect(normalized.sections.pluginSettings).toEqual(sections.pluginSettings);
+    expect(sections.fieldSettings.revision).toBe('5');
+    expect(ensureBundleShape({ appId: '1', sections }, true).sections).toEqual(sections);
+  });
 });
 
 describe('fetchBundle auxiliary diff data', () => {

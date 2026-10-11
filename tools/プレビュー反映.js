@@ -483,17 +483,15 @@
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
-  function normalize(v) {
-    if (Array.isArray(v)) return v.map(normalize);
-    if (v && typeof v === "object") {
-      const o = {};
-      Object.keys(v).sort().forEach((k) => {
-        if (META_KEYS.has(k)) return;
-        o[k] = normalize(v[k]);
-      });
-      return o;
-    }
-    return v;
+  function normalizeSettingsSection(value) {
+    const sortValue = (current, responseRoot = false) => {
+      if (Array.isArray(current)) return current.map((item) => sortValue(item));
+      if (current && typeof current === "object") {
+        return Object.fromEntries(Object.keys(current).sort().filter((key) => !responseRoot || !META_KEYS.has(key)).map((key) => [key, sortValue(current[key])]));
+      }
+      return current;
+    };
+    return sortValue(value, true);
   }
   function compactForLog(value, max = 220) {
     try {
@@ -806,7 +804,9 @@ ${base}`
       preview: !!bundle.preview,
       fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
       meta: sanitizeBundleMeta(bundle.meta),
-      sections: rawSettings ? deepClone(bundle.sections) : normalize(bundle.sections)
+      sections: rawSettings ? deepClone(bundle.sections) : Object.fromEntries(
+        Object.keys(bundle.sections).sort().map((key) => [key, normalizeSettingsSection(bundle.sections[key])])
+      )
     };
   }
   function pickBundleSections(bundle, sections) {
@@ -1012,7 +1012,7 @@ ${base}`
         const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
         const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);
-        results[index] = { value: rawSettings ? deepClone(res) : normalize(res), revision };
+        results[index] = { value: rawSettings ? deepClone(res) : normalizeSettingsSection(res), revision };
       } catch (e) {
         results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
@@ -1205,12 +1205,20 @@ ${base}`
   });
 
   // src/diff/engine.ts
+  var ENTITY_PATH_SEGMENT, ENTITY_IDENTIFIER_PATH_PATTERNS;
   var init_engine = __esm({
     "src/diff/engine.ts"() {
       "use strict";
       init_constants();
       init_state();
       init_utils();
+      ENTITY_PATH_SEGMENT = String.raw`(?:\.[^.[\]]+|\["(?:[^"\\]|\\.)*"\])`;
+      ENTITY_IDENTIFIER_PATH_PATTERNS = [
+        new RegExp(`^(?:fieldsettings\\.properties|viewsettings\\.views|reportsettings\\.reports|processsettings\\.states|categories\\.categories|actionsettings\\.actions)${ENTITY_PATH_SEGMENT}$`),
+        new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}\\.fields${ENTITY_PATH_SEGMENT}$`),
+        // 選択肢のキーもラベルを識別子とする名前付きマップ。
+        new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}(?:\\.fields${ENTITY_PATH_SEGMENT})?\\.options${ENTITY_PATH_SEGMENT}$`)
+      ];
     }
   });
 

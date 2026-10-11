@@ -298,16 +298,32 @@ export function isIgnoredKey(ignoreRules, key) {
   return matchAnyPattern(ignoreRules.keyPatterns, normalized);
 }
 
+// 比較内部では記号を含むキーを JSON 文字列の添字へエスケープする。
+// 表示パスは従来どおり維持し、設定の階層と名前内のドットを区別する。
+const ENTITY_PATH_SEGMENT = String.raw`(?:\.[^.[\]]+|\["(?:[^"\\]|\\.)*"\])`;
+const ENTITY_IDENTIFIER_PATH_PATTERNS = [
+  new RegExp(`^(?:fieldsettings\\.properties|viewsettings\\.views|reportsettings\\.reports|processsettings\\.states|categories\\.categories|actionsettings\\.actions)${ENTITY_PATH_SEGMENT}$`),
+  new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}\\.fields${ENTITY_PATH_SEGMENT}$`),
+  // 選択肢のキーもラベルを識別子とする名前付きマップ。
+  new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}(?:\\.fields${ENTITY_PATH_SEGMENT})?\\.options${ENTITY_PATH_SEGMENT}$`)
+];
+
 function isEntityIdentifierChildPath(path) {
   const normalizedPath = normalizeIgnoreToken(path);
-  if (!normalizedPath) return false;
-  return /^(?:fieldsettings\.properties|viewsettings\.views|reportsettings\.reports|processsettings\.states|categories\.categories|actionsettings\.actions)\.[^.[\]]+$/.test(normalizedPath)
-    || /^fieldsettings\.properties\.[^.[\]]+\.fields\.[^.[\]]+$/.test(normalizedPath)
-    // 選択肢はラベルがキーになる名前付きマップ（ドロップダウン・ラジオ・チェックボックス等）。
-    || /^fieldsettings\.properties\.[^.[\]]+(?:\.fields\.[^.[\]]+)?\.options\.[^.[\]]+$/.test(normalizedPath);
+  return !!normalizedPath && ENTITY_IDENTIFIER_PATH_PATTERNS.some((pattern) => pattern.test(normalizedPath));
 }
 
-export function isIgnoredPath(ignoreRules, path) {
+function getComparisonPathLeafKey(path) {
+  const text = String(path || '');
+  const quoted = text.match(/\[("(?:[^"\\]|\\.)*")\](?:\[\d+\])*$/);
+  if (quoted) {
+    try { return JSON.parse(quoted[1]); } catch { return ''; }
+  }
+  const plain = text.match(/(?:^|\.)([^.[\]]+)(?:\[\d+\])*$/);
+  return plain ? plain[1] : '';
+}
+
+export function isIgnoredPath(ignoreRules, path, comparisonPath = path) {
   const exactPath = trimIgnoreToken(path);
   if (exactPath && ignoreRules.exactPathSet?.has(exactPath)) return true;
   const normalizedPath = normalizeIgnoreToken(path);
@@ -316,16 +332,16 @@ export function isIgnoredPath(ignoreRules, path) {
   if (matchAnyPattern(ignoreRules.pathPatterns, normalizedPath)) return true;
   // Keys directly below named-entity maps are identifiers, not setting property names.
   // A leaf-only ignore such as `revision` must not erase an entity with that name.
-  if (isEntityIdentifierChildPath(normalizedPath)) return false;
-  const leaf = getPathLeafKey(normalizedPath);
+  if (isEntityIdentifierChildPath(comparisonPath)) return false;
+  const leaf = normalizeIgnoreToken(getComparisonPathLeafKey(comparisonPath));
   if (!leaf) return false;
   if (ignoreRules.keySet.has(leaf)) return true;
   return matchAnyPattern(ignoreRules.keyPatterns, leaf);
 }
 
-function isIgnoredObjectProperty(ignoreRules, key, path) {
-  if (!isEntityIdentifierChildPath(path) && META_KEYS.has(key)) return true;
-  return isIgnoredPath(ignoreRules, path);
+function isIgnoredObjectProperty(ignoreRules, key, path, comparisonPath = path) {
+  if (!isEntityIdentifierChildPath(comparisonPath) && META_KEYS.has(key)) return true;
+  return isIgnoredPath(ignoreRules, path, comparisonPath);
 }
 
 function markDroppedDiffRow(out, row, kind: 'diff' | 'same') {
@@ -369,9 +385,9 @@ function recordMatchingNotice(
   notices.push({ path, reason, leftLength, rightLength });
 }
 
-export function pushDiffRow(out, row, ignoreRules) {
+export function pushDiffRow(out, row, ignoreRules, comparisonPath = row?.path) {
   if (!row) return false;
-  if (isIgnoredPath(ignoreRules, row.path)) return false;
+  if (isIgnoredPath(ignoreRules, row.path, comparisonPath)) return false;
   // 表示専用行は反映可能な実差分ではなく、件数上限にも含めない。
   // 実差分が上限に達していても、改名通知などの診断情報は残す。
   if (row._displayOnly) {
@@ -419,27 +435,28 @@ export function shouldCollectSameRows(rows) {
   return !!(rows as any).__includeSame;
 }
 
-export function pushSameDiffRow(out, row, ignoreRules) {
+export function pushSameDiffRow(out, row, ignoreRules, comparisonPath = row?.path) {
   if (!shouldCollectSameRows(out)) return false;
-  return pushDiffRow(out, { ...row, type: 'same' }, ignoreRules);
+  return pushDiffRow(out, { ...row, type: 'same' }, ignoreRules, comparisonPath);
 }
 
-export function normalizeForCompare(v, ignoreRules, path = '') {
-  if (Array.isArray(v)) return v.map((x, index) => normalizeForCompare(x, ignoreRules, `${path}[${index}]`));
+export function normalizeForCompare(v, ignoreRules, path = '', comparisonPath = path) {
+  if (Array.isArray(v)) return v.map((x, index) => normalizeForCompare(x, ignoreRules, `${path}[${index}]`, appendNormalizationArrayPath(comparisonPath, index)));
   if (v && typeof v === 'object') {
     const o = {};
     Object.keys(v).sort().forEach((k) => {
       const childPath = path ? `${path}.${k}` : k;
-      if (isIgnoredObjectProperty(ignoreRules, k, childPath)) return;
-      o[k] = normalizeForCompare(v[k], ignoreRules, childPath);
+      const childComparisonPath = appendNormalizationPath(comparisonPath, k);
+      if (isIgnoredObjectProperty(ignoreRules, k, childPath, childComparisonPath)) return;
+      o[k] = normalizeForCompare(v[k], ignoreRules, childPath, childComparisonPath);
     });
     return o;
   }
   return v;
 }
 
-export function makeArrayItemSignature(v, ignoreRules, path = '') {
-  return JSON.stringify(normalizeForCompare(v, ignoreRules, path));
+export function makeArrayItemSignature(v, ignoreRules, path = '', comparisonPath = path) {
+  return JSON.stringify(normalizeForCompare(v, ignoreRules, path, comparisonPath));
 }
 
 export function hasUniquePrimitiveKey(arr, key) {
@@ -497,7 +514,7 @@ function findReorderedKeys(matches: Array<{ sig: string; leftIdx: number; rightI
   return reordered;
 }
 
-export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
+export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules, comparisonPath = path) {
   const key = detectArrayObjectKey(a, b, ignoreRules);
   if (!key) return false;
 
@@ -536,7 +553,7 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
         right: right.item,
         arrayKey: key,
         arrayKeyValue: right.item?.[key]
-      }, ignoreRules);
+      }, ignoreRules, `${comparisonPath}[${right.idx}]`);
       continue;
     }
     if (left && !right) {
@@ -547,14 +564,15 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
         right: undefined,
         arrayKey: key,
         arrayKeyValue: left.item?.[key]
-      }, ignoreRules);
+      }, ignoreRules, `${comparisonPath}[${left.idx}]`);
       continue;
     }
     if (!left || !right) continue;
 
     const itemPath = `${path}[${right.idx}]`;
-    const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
-    const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
+    const itemComparisonPath = `${comparisonPath}[${right.idx}]`;
+    const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath, itemComparisonPath);
+    const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath, itemComparisonPath);
     if (leftSig === rightSig) {
       if (reordered.has(sig) && !isUnorderedArrayPath(path)) {
         pushDiffRow(out, {
@@ -567,7 +585,7 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
           movedTo: right.idx,
           arrayKey: key,
           arrayKeyValue: right.item?.[key]
-        }, ignoreRules);
+        }, ignoreRules, itemComparisonPath);
       } else {
         pushSameDiffRow(out, {
           path: `${path}[${right.idx}]`,
@@ -576,12 +594,12 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
           severity: 'low',
           arrayKey: key,
           arrayKeyValue: right.item?.[key]
-        }, ignoreRules);
+        }, ignoreRules, itemComparisonPath);
       }
       continue;
     }
     const start = out.length;
-    collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreRules);
+    collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreRules, itemComparisonPath);
     const keyVal = right.item?.[key] != null ? right.item[key] : left.item?.[key];
     for (let oi = start; oi < out.length; oi++) {
       if (!out[oi].arrayKey) out[oi].arrayKey = key;
@@ -694,7 +712,7 @@ export function actionMappingSourceIdentity(item) {
 // 汎用の objectKey 検出は先頭キー（srcType）が偶然ユニークなときにそれを識別子に
 // 採用してしまうため、この配列では使わない。
 // ---------------------------------------------------------------------------
-export function collectActionMappingDiffs(a, b, path, out, ignoreRules) {
+export function collectActionMappingDiffs(a, b, path, out, ignoreRules, comparisonPath = path) {
   if (!isUnorderedArrayPath(path)) return false;
   if (!a.length && !b.length) return false;
   if (!a.every(isPlainObject) || !b.every(isPlainObject)) return false;
@@ -755,7 +773,7 @@ export function collectActionMappingDiffs(a, b, path, out, ignoreRules) {
         right: undefined,
         arrayKey: 'srcField',
         arrayKeyValue: actionMappingSourceIdentity(step.entry.item)
-      }, ignoreRules);
+      }, ignoreRules, `${comparisonPath}[${step.entry.idx}]`);
       continue;
     }
     if (step.kind === 'added') {
@@ -766,13 +784,14 @@ export function collectActionMappingDiffs(a, b, path, out, ignoreRules) {
         right: step.entry.item,
         arrayKey: 'srcField',
         arrayKeyValue: actionMappingSourceIdentity(step.entry.item)
-      }, ignoreRules);
+      }, ignoreRules, `${comparisonPath}[${step.entry.idx}]`);
       continue;
     }
     const { left, right } = step.pair;
     const itemPath = `${path}[${right.idx}]`;
+    const itemComparisonPath = `${comparisonPath}[${right.idx}]`;
     const keyValue = keyValueOf(right, left);
-    if (makeArrayItemSignature(left.item, ignoreRules, itemPath) === makeArrayItemSignature(right.item, ignoreRules, itemPath)) {
+    if (makeArrayItemSignature(left.item, ignoreRules, itemPath, itemComparisonPath) === makeArrayItemSignature(right.item, ignoreRules, itemPath, itemComparisonPath)) {
       pushSameDiffRow(out, {
         path: itemPath,
         left: left.item,
@@ -780,11 +799,11 @@ export function collectActionMappingDiffs(a, b, path, out, ignoreRules) {
         severity: 'low',
         arrayKey: 'srcField',
         arrayKeyValue: keyValue
-      }, ignoreRules);
+      }, ignoreRules, itemComparisonPath);
       continue;
     }
     const start = out.length;
-    collectDeepDiffs(left.item, right.item, itemPath, out, ignoreRules);
+    collectDeepDiffs(left.item, right.item, itemPath, out, ignoreRules, itemComparisonPath);
     for (let oi = start; oi < out.length; oi++) {
       if (!out[oi].arrayKey) out[oi].arrayKey = 'srcField';
       if (out[oi].arrayKeyValue === undefined) out[oi].arrayKeyValue = keyValue;
@@ -801,12 +820,78 @@ function findCompositeArrayRule(path): CompositeArrayRule | null {
   return null;
 }
 
-export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
+function isCompositeArrayIdentityIgnored(rule: CompositeArrayRule | null, a, b, path, ignoreRules, comparisonPath) {
+  if (!rule) return false;
+  return [a, b].some((items) => items.some((_, index) => isIgnoredPath(
+    ignoreRules,
+    `${path}[${index}].${rule.arrayKey}`,
+    appendNormalizationPath(`${comparisonPath}[${index}]`, rule.arrayKey)
+  )));
+}
+
+/** 無視された通知タイトルで追加/削除を決めず、内容一致を先に対応付ける。 */
+function buildNotificationMapsIgnoringTitle(a, b, path, ignoreRules, comparisonPath, rule: CompositeArrayRule) {
+  type Entry = { idx: number; item: any; signature: string; key: string };
+  const entries = (items) => items.map((item, idx) => ({
+    idx,
+    item,
+    signature: makeArrayItemSignature(item, ignoreRules, `${path}[${idx}]`, `${comparisonPath}[${idx}]`),
+    key: ''
+  }));
+  const left: Entry[] = entries(a);
+  const right: Entry[] = entries(b);
+  let pairIndex = 0;
+  const pair = (l: Entry, r: Entry) => { l.key = r.key = `pair:${pairIndex++}`; };
+
+  // タイトルを除いた内容が同じ通知は、改名や並び替えがあっても同じ設定。
+  const byContent = new Map<string, Entry[]>();
+  right.forEach((entry) => {
+    const bucket = byContent.get(entry.signature) || [];
+    bucket.push(entry);
+    byContent.set(entry.signature, bucket);
+  });
+  left.forEach((entry) => {
+    const partner = byContent.get(entry.signature)?.shift();
+    if (partner) pair(entry, partner);
+  });
+
+  // 残った通知の条件が変わり、同時に並びも変わった場合には、共通の一意な
+  // タイトルを対応付けの手掛かりにする。タイトル自体は差分判定に使わない。
+  const uniqueByTitle = (items: Entry[]) => {
+    const map = new Map<string, Entry | null>();
+    items.filter((entry) => !entry.key).forEach((entry) => {
+      const signature = rule.makeSig(entry.item);
+      if (signature != null) map.set(signature, map.has(signature) ? null : entry);
+    });
+    return map;
+  };
+  const leftByTitle = uniqueByTitle(left);
+  const rightByTitle = uniqueByTitle(right);
+  leftByTitle.forEach((entry, title) => {
+    const partner = rightByTitle.get(title);
+    if (entry && partner) pair(entry, partner);
+  });
+
+  // 内容もタイトルも変わった残りには識別子がないため、相対位置で比較する。
+  const remainingLeft = left.filter((entry) => !entry.key);
+  const remainingRight = right.filter((entry) => !entry.key);
+  for (let index = 0; index < Math.min(remainingLeft.length, remainingRight.length); index++) {
+    pair(remainingLeft[index], remainingRight[index]);
+  }
+  return {
+    mapA: new Map(left.map((entry) => [entry.key || `source:${entry.idx}`, entry])),
+    mapB: new Map(right.map((entry) => [entry.key || `target:${entry.idx}`, entry]))
+  };
+}
+
+export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules, comparisonPath = path) {
   const rule = findCompositeArrayRule(path);
   if (!rule) return false;
   if (!a.length && !b.length) return false;
   if (!a.every(isPlainObject) || !b.every(isPlainObject)) return false;
   if (rule.applies && !rule.applies(a, b)) return false;
+  const ignoredIdentity = isCompositeArrayIdentityIgnored(rule, a, b, path, ignoreRules, comparisonPath);
+  if (ignoredIdentity && rule.arrayKey !== 'title') return false;
 
   let noticeReason: 'key-missing' | 'key-duplicate' | null = null;
   const buildMap = (arr) => {
@@ -825,8 +910,11 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
     }
     return map;
   };
-  const mapA = buildMap(a);
-  const mapB = buildMap(b);
+  const titleIgnoredMaps = ignoredIdentity
+    ? buildNotificationMapsIgnoringTitle(a, b, path, ignoreRules, comparisonPath, rule)
+    : null;
+  const mapA = titleIgnoredMaps ? titleIgnoredMaps.mapA : buildMap(a);
+  const mapB = titleIgnoredMaps ? titleIgnoredMaps.mapB : buildMap(b);
   if (!mapA || !mapB) {
     // 後段が並び替えだけで正確に解決できる場合は通知不要なので、記録は呼び出し元で判断する。
     if (out) (out as any).__pendingKeyFallback = noticeReason;
@@ -856,7 +944,7 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
         right: right.item,
         arrayKey: rule.arrayKey,
         arrayKeyValue: rule.keyValue(right.item)
-      }, ignoreRules);
+      }, ignoreRules, `${comparisonPath}[${right.idx}]`);
       continue;
     }
     if (left && !right) {
@@ -867,14 +955,15 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
         right: undefined,
         arrayKey: rule.arrayKey,
         arrayKeyValue: rule.keyValue(left.item)
-      }, ignoreRules);
+      }, ignoreRules, `${comparisonPath}[${left.idx}]`);
       continue;
     }
     if (!left || !right) continue;
 
     const itemPath = `${path}[${right.idx}]`;
-    const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
-    const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
+    const itemComparisonPath = `${comparisonPath}[${right.idx}]`;
+    const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath, itemComparisonPath);
+    const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath, itemComparisonPath);
     if (leftSig === rightSig) {
       if (reordered.has(sig) && !isUnorderedArrayPath(path)) {
         pushDiffRow(out, {
@@ -887,7 +976,7 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
           movedTo: right.idx,
           arrayKey: rule.arrayKey,
           arrayKeyValue: rule.keyValue(right.item)
-        }, ignoreRules);
+        }, ignoreRules, itemComparisonPath);
       } else {
         pushSameDiffRow(out, {
           path: `${path}[${right.idx}]`,
@@ -896,12 +985,12 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
           severity: 'low',
           arrayKey: rule.arrayKey,
           arrayKeyValue: rule.keyValue(right.item)
-        }, ignoreRules);
+        }, ignoreRules, itemComparisonPath);
       }
       continue;
     }
     const start = out.length;
-    collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreRules);
+    collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreRules, itemComparisonPath);
     const keyVal = rule.keyValue(right.item) !== undefined ? rule.keyValue(right.item) : rule.keyValue(left.item);
     for (let oi = start; oi < out.length; oi++) {
       if (!out[oi].arrayKey) out[oi].arrayKey = rule.arrayKey;
@@ -919,10 +1008,10 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
 // added/removed の嵐ではなく moved 行（low）として出力する。レイアウト行や
 // キーを持たない配列の並び替えノイズを一掃する。
 // ---------------------------------------------------------------------------
-export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules) {
+export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules, comparisonPath = path) {
   if (a.length !== b.length || a.length < 2) return false;
-  const sigA = a.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`));
-  const sigB = b.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`));
+  const sigA = a.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`, `${comparisonPath}[${index}]`));
+  const sigB = b.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`, `${comparisonPath}[${index}]`));
   if ([...sigA].sort().join('\u0000') !== [...sigB].sort().join('\u0000')) return false;
 
   const used = new Array(a.length).fill(false);
@@ -935,7 +1024,7 @@ export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules) {
     if (from < 0) continue; // 多重集合一致済みのため理論上到達しない
     used[from] = true;
     if (from === j || isUnorderedArrayPath(path)) {
-      pushSameDiffRow(out, { path: `${path}[${j}]`, left: a[from], right: b[j], severity: 'low' }, ignoreRules);
+      pushSameDiffRow(out, { path: `${path}[${j}]`, left: a[from], right: b[j], severity: 'low' }, ignoreRules, `${comparisonPath}[${j}]`);
       continue;
     }
     pushDiffRow(out, {
@@ -946,7 +1035,7 @@ export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules) {
       moved: true,
       movedFrom: from,
       movedTo: j
-    }, ignoreRules);
+    }, ignoreRules, `${comparisonPath}[${j}]`);
   }
   return true;
 }
@@ -962,15 +1051,16 @@ function escapeRegExpLiteral(s) {
 // では、移動した要素が added + removed の 2 行に割れてしまう。同一シグネチャ
 // の added/removed ペアを moved（low）1 行に統合してノイズを減らす。
 // ---------------------------------------------------------------------------
-export function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules) {
+export function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules, comparisonPath = path) {
   const childRe = new RegExp(`^${escapeRegExpLiteral(path)}\\[(\\d+)\\]$`);
   const unordered = isUnorderedArrayPath(path);
   const removedBySig = new Map<string, number[]>();
   for (let i = startIdx; i < out.length; i++) {
     const row = out[i];
     if (!row || row.type !== 'removed') continue;
-    if (!childRe.test(String(row.path || ''))) continue;
-    const sig = makeArrayItemSignature(row.left, ignoreRules, row.path);
+    const fromMatch = childRe.exec(String(row.path || ''));
+    if (!fromMatch) continue;
+    const sig = makeArrayItemSignature(row.left, ignoreRules, row.path, `${comparisonPath}[${fromMatch[1]}]`);
     if (!removedBySig.has(sig)) removedBySig.set(sig, []);
     removedBySig.get(sig)!.push(i);
   }
@@ -982,7 +1072,7 @@ export function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules) {
     if (!row || row.type !== 'added') continue;
     const toMatch = childRe.exec(String(row.path || ''));
     if (!toMatch) continue;
-    const sig = makeArrayItemSignature(row.right, ignoreRules, row.path);
+    const sig = makeArrayItemSignature(row.right, ignoreRules, row.path, `${comparisonPath}[${toMatch[1]}]`);
     const bucket = removedBySig.get(sig);
     if (!bucket || !bucket.length) continue;
     const removedIdx = bucket.shift()!;
@@ -1014,28 +1104,28 @@ export function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules) {
   if (Number.isFinite(diffCount)) (out as any).__diffCount = Math.max(0, diffCount - merged);
 }
 
-export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
+export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules, comparisonPath = path) {
   const n = a.length;
   const m = b.length;
   if (!n && !m) return true;
   if (!n) {
     for (let j = 0; j < m; j++) {
       if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
-      pushDiffRow(out, { type: 'added', path: `${path}[${j}]`, left: undefined, right: b[j] }, ignoreRules);
+      pushDiffRow(out, { type: 'added', path: `${path}[${j}]`, left: undefined, right: b[j] }, ignoreRules, `${comparisonPath}[${j}]`);
     }
     return true;
   }
   if (!m) {
     for (let i = 0; i < n; i++) {
       if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
-      pushDiffRow(out, { type: 'removed', path: `${path}[${i}]`, left: a[i], right: undefined }, ignoreRules);
+      pushDiffRow(out, { type: 'removed', path: `${path}[${i}]`, left: a[i], right: undefined }, ignoreRules, `${comparisonPath}[${i}]`);
     }
     return true;
   }
 
   if (n * m > ARRAY_LCS_MAX_CELLS) return false;
-  const sigA = a.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`));
-  const sigB = b.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`));
+  const sigA = a.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`, `${comparisonPath}[${index}]`));
+  const sigB = b.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`, `${comparisonPath}[${index}]`));
 
   const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
   for (let i = n - 1; i >= 0; i--) {
@@ -1061,7 +1151,7 @@ export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
           left: a[i],
           right: b[j],
           severity: 'low'
-        }, ignoreRules);
+        }, ignoreRules, `${comparisonPath}[${j}]`);
       i += 1;
       j += 1;
       continue;
@@ -1069,7 +1159,7 @@ export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
     if (i < n && j < m) {
       const sameType = Object.prototype.toString.call(a[i]) === Object.prototype.toString.call(b[j]);
       if (sameType && dp[i + 1][j + 1] >= dp[i + 1][j] && dp[i + 1][j + 1] >= dp[i][j + 1]) {
-        collectDeepDiffs(a[i], b[j], `${path}[${j}]`, out, ignoreRules);
+        collectDeepDiffs(a[i], b[j], `${path}[${j}]`, out, ignoreRules, `${comparisonPath}[${j}]`);
         i += 1;
         j += 1;
         continue;
@@ -1078,39 +1168,42 @@ export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
     const down = i < n ? dp[i + 1][j] : -1;
     const right = j < m ? dp[i][j + 1] : -1;
     if (j < m && (i >= n || right >= down)) {
-      pushDiffRow(out, { type: 'added', path: `${path}[${j}]`, left: undefined, right: b[j] }, ignoreRules);
+      pushDiffRow(out, { type: 'added', path: `${path}[${j}]`, left: undefined, right: b[j] }, ignoreRules, `${comparisonPath}[${j}]`);
       j += 1;
     } else if (i < n) {
-      pushDiffRow(out, { type: 'removed', path: `${path}[${i}]`, left: a[i], right: undefined }, ignoreRules);
+      pushDiffRow(out, { type: 'removed', path: `${path}[${i}]`, left: a[i], right: undefined }, ignoreRules, `${comparisonPath}[${i}]`);
       i += 1;
     } else {
       break;
     }
   }
-  mergeAddRemovePairsAsMoved(out, mergeStart, path, ignoreRules);
+  mergeAddRemovePairsAsMoved(out, mergeStart, path, ignoreRules, comparisonPath);
   return true;
 }
 
-export function collectArrayDiffs(a, b, path, out, ignoreRules) {
+export function collectArrayDiffs(a, b, path, out, ignoreRules, comparisonPath = path) {
   // 0) アプリアクションの関連付けは並び順を持たない専用マッチング
-  if (collectActionMappingDiffs(a, b, path, out, ignoreRules)) return;
+  if (collectActionMappingDiffs(a, b, path, out, ignoreRules, comparisonPath)) return;
   // 1) 権限/通知/遷移などドメイン識別子（entity, title, name|from|to）での安定マッチ
   //    （objectKey のフォールバック候補が accessibility 等の「値」を識別子に
   //      誤採用してミスペアリングするのを防ぐため、ルールがある場合は先に試す）
   if (out) (out as any).__pendingKeyFallback = null;
-  if (collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules)) return;
+  if (collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules, comparisonPath)) return;
   // 識別子が空/重複でドメイン識別子マッチを諦めた理由。入れ子の配列比較で上書きされる前に取り出す。
   const keyFallback: 'key-missing' | 'key-duplicate' | null = out ? (out as any).__pendingKeyFallback || null : null;
   if (out) (out as any).__pendingKeyFallback = null;
-  // 2) 単一 primitive キー（code/name 等）での安定マッチ
-  if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules)) {
+  // 2) 単一 primitive キー（code/name 等）での安定マッチ。
+  // ドメイン識別子を明示的に無視した場合、filterCond 等の設定値を代わりの
+  // 識別子へ採用せず、無視適用後の内容と LCS で対応付ける。
+  const ignoredIdentity = isCompositeArrayIdentityIgnored(findCompositeArrayRule(path), a, b, path, ignoreRules, comparisonPath);
+  if (!ignoredIdentity && collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules, comparisonPath)) {
     if (keyFallback) recordMatchingNotice(out, path, keyFallback, a.length, b.length);
     return;
   }
   // 3) 中身が同じで並びだけ違う配列は moved 行に集約（対応付けは正確なので通知しない）
-  if (collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules)) return;
+  if (collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules, comparisonPath)) return;
   if (keyFallback) recordMatchingNotice(out, path, keyFallback, a.length, b.length);
-  if (collectArrayDiffsByLcs(a, b, path, out, ignoreRules)) return;
+  if (collectArrayDiffsByLcs(a, b, path, out, ignoreRules, comparisonPath)) return;
   // LCS のサイズ上限で落ちた場合: 位置（インデックス）比較へのフォールバックを記録する。
   // collectArrayDiffsByLcs は n*m > ARRAY_LCS_MAX_CELLS かつ両側非空のときだけ false を返す。
   if (a.length > 0 && b.length > 0) {
@@ -1120,59 +1213,61 @@ export function collectArrayDiffs(a, b, path, out, ignoreRules) {
   for (let i = 0; i < max; i++) {
     if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
     const p = `${path}[${i}]`;
-    if (i >= a.length) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[i] }, ignoreRules);
-    else if (i >= b.length) pushDiffRow(out, { type: 'removed', path: p, left: a[i], right: undefined }, ignoreRules);
-    else collectDeepDiffs(a[i], b[i], p, out, ignoreRules);
+    const itemComparisonPath = `${comparisonPath}[${i}]`;
+    if (i >= a.length) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[i] }, ignoreRules, itemComparisonPath);
+    else if (i >= b.length) pushDiffRow(out, { type: 'removed', path: p, left: a[i], right: undefined }, ignoreRules, itemComparisonPath);
+    else collectDeepDiffs(a[i], b[i], p, out, ignoreRules, itemComparisonPath);
   }
 }
 
-export function collectDeepDiffs(a, b, path, out, ignoreRules) {
+export function collectDeepDiffs(a, b, path, out, ignoreRules, comparisonPath = path) {
   if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
-  if (isIgnoredPath(ignoreRules, path)) return;
+  if (isIgnoredPath(ignoreRules, path, comparisonPath)) return;
 
   if (a === b) {
-    pushSameDiffRow(out, { path, left: a, right: b, severity: 'low' }, ignoreRules);
+    pushSameDiffRow(out, { path, left: a, right: b, severity: 'low' }, ignoreRules, comparisonPath);
     return;
   }
   const ta = Object.prototype.toString.call(a);
   const tb = Object.prototype.toString.call(b);
   if (ta !== tb) {
-    pushDiffRow(out, { type: 'changed', path, left: a, right: b, ...(classifyChangedValuePair(a, b) || {}) }, ignoreRules);
+    pushDiffRow(out, { type: 'changed', path, left: a, right: b, ...(classifyChangedValuePair(a, b) || {}) }, ignoreRules, comparisonPath);
     return;
   }
 
   if (a == null || b == null) {
-    pushDiffRow(out, { type: 'changed', path, left: a, right: b, ...(classifyChangedValuePair(a, b) || {}) }, ignoreRules);
+    pushDiffRow(out, { type: 'changed', path, left: a, right: b, ...(classifyChangedValuePair(a, b) || {}) }, ignoreRules, comparisonPath);
     return;
   }
 
   if (Array.isArray(a)) {
-    if (makeArrayItemSignature(a, ignoreRules, path) === makeArrayItemSignature(b, ignoreRules, path)) {
-      pushSameDiffRow(out, { path, left: a, right: b, severity: 'low' }, ignoreRules);
+    if (makeArrayItemSignature(a, ignoreRules, path, comparisonPath) === makeArrayItemSignature(b, ignoreRules, path, comparisonPath)) {
+      pushSameDiffRow(out, { path, left: a, right: b, severity: 'low' }, ignoreRules, comparisonPath);
       return;
     }
-    collectArrayDiffs(a, b, path, out, ignoreRules);
+    collectArrayDiffs(a, b, path, out, ignoreRules, comparisonPath);
     return;
   }
 
   if (typeof a === 'object') {
-    if (makeArrayItemSignature(a, ignoreRules, path) === makeArrayItemSignature(b, ignoreRules, path)) {
-      pushSameDiffRow(out, { path, left: a, right: b, severity: 'low' }, ignoreRules);
+    if (makeArrayItemSignature(a, ignoreRules, path, comparisonPath) === makeArrayItemSignature(b, ignoreRules, path, comparisonPath)) {
+      pushSameDiffRow(out, { path, left: a, right: b, severity: 'low' }, ignoreRules, comparisonPath);
       return;
     }
     const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
     for (const k of keys) {
       const p = path ? `${path}.${k}` : k;
-      if (isIgnoredObjectProperty(ignoreRules, k, p)) continue;
-      if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: 'removed', path: p, left: a[k], right: undefined, ...(isEmptyLikeValue(a[k]) ? { emptyOnly: true } : {}) }, ignoreRules);
-      else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[k], ...(isEmptyLikeValue(b[k]) ? { emptyOnly: true } : {}) }, ignoreRules);
-      else collectDeepDiffs(a[k], b[k], p, out, ignoreRules);
+      const childComparisonPath = appendNormalizationPath(comparisonPath, k);
+      if (isIgnoredObjectProperty(ignoreRules, k, p, childComparisonPath)) continue;
+      if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: 'removed', path: p, left: a[k], right: undefined, ...(isEmptyLikeValue(a[k]) ? { emptyOnly: true } : {}) }, ignoreRules, childComparisonPath);
+      else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[k], ...(isEmptyLikeValue(b[k]) ? { emptyOnly: true } : {}) }, ignoreRules, childComparisonPath);
+      else collectDeepDiffs(a[k], b[k], p, out, ignoreRules, childComparisonPath);
       if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
     }
     return;
   }
 
-  pushDiffRow(out, { type: 'changed', path, left: a, right: b, ...(classifyChangedValuePair(a, b) || {}) }, ignoreRules);
+  pushDiffRow(out, { type: 'changed', path, left: a, right: b, ...(classifyChangedValuePair(a, b) || {}) }, ignoreRules, comparisonPath);
 }
 
 // ---------------------------------------------------------------------------
@@ -1762,11 +1857,10 @@ export function isAppReferenceIdPath(path) {
     if (/\.(?:lookup|referencetable)\.(?:relatedappid|targetappid|sourceappid)$/.test(normalizedPath)) return true;
   }
 
-  if (/^viewsettings\.views(?:\[[^\]]+\]|\.[^.]+)\.id$/.test(normalizedPath)) return true;
-  if (/^reportsettings\.reports(?:\[[^\]]+\]|\.[^.]+)\.id$/.test(normalizedPath)) return true;
+  const entityIdPath = new RegExp(`^(?:viewsettings\\.views|reportsettings\\.reports|actionsettings\\.actions)(?:${ENTITY_PATH_SEGMENT}|\\[\\d+\\])\\.id$`);
+  if (entityIdPath.test(normalizedPath)) return true;
 
   if (/^actionsettings\.actions(?:\.|\[)/.test(normalizedPath)) {
-    if (/^actionsettings\.actions(?:\[[^\]]+\]|\.[^.]+)\.id$/.test(normalizedPath)) return true;
     if (/\.(?:destapp|targetapp|sourceapp)\.(?:app|appid)$/.test(normalizedPath)) return true;
     if (/\.(?:destappid|targetappid|sourceappid)$/.test(normalizedPath)) return true;
   }
@@ -1779,7 +1873,7 @@ function appendNormalizationPath(parentPath, key) {
   if (!parentPath) return segment;
   // 名前付きマップのキーにドットが含まれても、後続プロパティとの境界を失わない。
   // 例: views["営業.一覧"].id は一覧自身のID、views.営業一覧.config.id は任意の入れ子ID。
-  return segment.includes('.') || !segment
+  return /[.[\]"'\\]/.test(segment) || !segment
     ? `${parentPath}[${JSON.stringify(segment)}]`
     : `${parentPath}.${segment}`;
 }
