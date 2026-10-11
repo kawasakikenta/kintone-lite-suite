@@ -24,18 +24,42 @@ export function collectPartialComparisonIssues(sourceBundle: any, targetBundle: 
   const issues: any[] = [];
   const addSide = (bundle: any, side: 'source' | 'target') => {
     Object.entries(bundle?.sections || {}).forEach(([sectionKey, section]: [string, any]) => {
-      // _fetchError means computeDiffRows skips the whole section. In that case
-      // _partial is only supplemental detail, not a separately compared item.
-      if (section?._fetchError) return;
+      // どちらかの取得失敗でセクション全体が比較不能なら、未検証を重複計上しない。
+      if (sourceBundle?.sections?.[sectionKey]?._fetchError || targetBundle?.sections?.[sectionKey]?._fetchError) return;
       const partial = section?._partial;
-      if (!partial) return;
-      const files = Array.isArray(partial.files) ? partial.files : [];
+      const files: any[] = Array.isArray(partial?.files) ? [...partial.files] : [];
+      const fileIds = new Set(files.map((file) => JSON.stringify([String(file?.fileKey || ''), String(file?.fileName || '')])));
+      if (sectionKey === 'customizeSettings') {
+        // 旧形式やREST応答由来の設定JSONは _partial を持たないため、実際のFILEも調べる。
+        for (const platform of ['desktop', 'mobile']) {
+          for (const kind of ['js', 'css']) {
+            const items = section?.[platform]?.[kind];
+            if (!Array.isArray(items)) continue;
+            for (const item of items) {
+              if (item?.type !== 'FILE' || typeof item._bodyText === 'string') continue;
+              const fileName = String(item?.file?.name || '');
+              const fileKey = String(item?.file?.fileKey || '');
+              const fileId = JSON.stringify([fileKey, fileName]);
+              if (fileIds.has(fileId)) continue;
+              fileIds.add(fileId);
+              files.push({
+                fileName,
+                fileKey,
+                reason: String(item?._bodyUnavailable || 'missing-body'),
+                detail: 'ファイル本文を取得・読込できていないため、本文内容を比較できません',
+                byteSize: Number(item?.file?.size || 0)
+              });
+            }
+          }
+        }
+      }
+      if (!partial && !files.length) return;
       const sectionLabel = SECTION_DEFS.find((def) => def.key === sectionKey)?.label || sectionKey;
       issues.push({
         sectionKey,
         section: sectionLabel,
         side,
-        message: String(partial.message || '一部データを取得できず、代替情報で比較しました'),
+        message: String(partial?.message || '一部データを取得できず、代替情報で比較しました'),
         files: files.map((file: any) => ({
           fileName: String(file?.fileName || ''),
           fileKey: String(file?.fileKey || ''),

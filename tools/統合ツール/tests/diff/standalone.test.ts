@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { pickSettingsBundle } from '../../src/settingsBundleImport';
 import { runDiffStandalone } from '../../src/tabs/diff-standalone';
+import { buildDiffHtml } from '../../src/diff/export';
 
 function makeBundle(appId: string, sections: Record<string, any>) {
   return {
@@ -13,6 +14,23 @@ function makeBundle(appId: string, sections: Record<string, any>) {
 }
 
 describe('diff/standalone imported bundles', () => {
+  it.each(['revision', 'creator', 'createdAt', 'modifier', 'modifiedAt'])(
+    'detects imported field changes with the valid code %s', async (code) => {
+      const source = makeBundle('1', { fieldSettings: { revision: '10', properties: { [code]: { code, type: 'SINGLE_LINE_TEXT', label: '旧名称' } } } });
+      const target = makeBundle('2', { fieldSettings: { revision: '20', properties: { [code]: { code, type: 'SINGLE_LINE_TEXT', label: '新名称' } } } });
+      const result = await runDiffStandalone({
+        source: { appId: '1' }, target: { appId: '2' }, scopes: ['fieldSettings'],
+        importedSourceBundle: source, importedTargetBundle: target
+      });
+      expect(result.rows).toMatchObject([
+        { type: 'changed', path: `fieldSettings.properties.${code}.label`, left: '旧名称', right: '新名称' }
+      ]);
+      expect(result.fetchIssues).toEqual([]);
+      expect(result.sourceBundle.sections.fieldSettings.properties[code]).toEqual(source.sections.fieldSettings.properties[code]);
+      expect(source.sections.fieldSettings.revision).toBe('10');
+    }
+  );
+
   it('marks a requested scope missing from imported JSON as a fetch error', () => {
     const bundle = pickSettingsBundle(
       makeBundle('1', { fieldSettings: { properties: {} } }),
@@ -188,14 +206,90 @@ describe('diff/standalone imported bundles', () => {
       importedTargetBundle: makeBundle('2', { customizeSettings: targetSection })
     });
 
-    expect(result.partialIssues).toHaveLength(1);
+    expect(result.partialIssues).toHaveLength(2);
     expect(result.partialIssues[0]).toMatchObject({
       sectionKey: 'customizeSettings',
       side: 'source',
       files: [expect.objectContaining({ fileName: 'large.js', reason: 'oversize' })]
     });
-    expect(result.summary.text).toContain('本文未検証 1件');
+    expect(result.summary.text).toContain('本文未検証 2件');
     expect(result.summary.text).toContain('結果は不完全');
+  });
+
+  const customization = (fileKey: string, body?: string) => ({
+    desktop: { js: [{ type: 'FILE', file: { fileKey, name: 'app.js', size: '15' }, ...(body === undefined ? {} : { _bodyText: body }) }], css: [] },
+    mobile: { js: [], css: [] }
+  });
+
+  it.each([
+    ['target', 'console.log(1);', undefined, ['target']],
+    ['source', undefined, 'console.log(1);', ['source']],
+    ['both', undefined, undefined, ['source', 'target']]
+  ])('marks missing %s FILE bodies without partial metadata as incomplete and blocks HTML reflection', async (_name, sourceBody, targetBody, sides) => {
+    const result = await runDiffStandalone({
+      source: { appId: '1' }, target: { appId: '2' }, scopes: ['customizeSettings'],
+      importedSourceBundle: makeBundle('1', { customizeSettings: customization('key-a', sourceBody) }),
+      importedTargetBundle: makeBundle('2', { customizeSettings: customization('key-b', targetBody) })
+    });
+    expect(result.partialIssues.map((issue) => issue.side)).toEqual(sides);
+    expect(result.partialIssues.every((issue) => issue.files.length === 1 && issue.files[0].reason === 'missing-body')).toBe(true);
+    expect(result.summary.text).toContain('結果は不完全');
+    const html = buildDiffHtml(result.sourceBundle, result.targetBundle, result.rows, ['customizeSettings'], '', {
+      exportContentMode: 'withCompared', fetchIssues: result.fetchIssues, partialIssues: result.partialIssues
+    });
+    const reportMeta = JSON.parse(html.match(/\bconst REPORT_META = (.+);\r?\n/)![1]);
+    expect(reportMeta).toMatchObject({ incompleteComparison: true, reflectJsonAvailable: false });
+  });
+
+  it('does not report equality as complete when matching fileKeys lack file bodies', async () => {
+    const result = await runDiffStandalone({
+      source: { appId: '1' }, target: { appId: '2' }, scopes: ['customizeSettings'],
+      importedSourceBundle: makeBundle('1', { customizeSettings: customization('same-key', 'console.log(1);') }),
+      importedTargetBundle: makeBundle('2', { customizeSettings: customization('same-key') })
+    });
+    expect(result.rows).toEqual([]);
+    expect(result.partialIssues).toHaveLength(1);
+    expect(result.summary.text).toContain('結果は不完全');
+  });
+
+  it('combines inferred missing bodies with existing partial file details without duplicates', async () => {
+    const sourceSection = {
+      ...customization('key-a'),
+      _partial: { message: 'サイズ上限により未検証', files: [{ fileName: 'app.js', fileKey: 'key-a', reason: 'oversize', detail: '上限超過', byteSize: 2000000 }] }
+    };
+    const result = await runDiffStandalone({
+      source: { appId: '1' }, target: { appId: '2' }, scopes: ['customizeSettings'],
+      importedSourceBundle: makeBundle('1', { customizeSettings: sourceSection }),
+      importedTargetBundle: makeBundle('2', { customizeSettings: customization('key-b', 'console.log(1);') })
+    });
+    expect(result.partialIssues).toHaveLength(1);
+    expect(result.partialIssues[0]).toMatchObject({ side: 'source', message: 'サイズ上限により未検証', files: [{ reason: 'oversize', detail: '上限超過', byteSize: 2000000 }] });
+  });
+
+  it.each(['source', 'target'])('does not count missing bodies on either side if %s failed acquisition', async (failedSide) => {
+    const sourceSection: any = customization('key-a');
+    const targetSection: any = customization('key-b');
+    (failedSide === 'source' ? sourceSection : targetSection)._fetchError = '取得失敗';
+    const result = await runDiffStandalone({
+      source: { appId: '1' }, target: { appId: '2' }, scopes: ['customizeSettings'],
+      importedSourceBundle: makeBundle('1', { customizeSettings: sourceSection }),
+      importedTargetBundle: makeBundle('2', { customizeSettings: targetSection })
+    });
+    expect(result.fetchIssues).toHaveLength(1);
+    expect(result.partialIssues).toEqual([]);
+  });
+
+  it('treats empty file bodies as verified and does not require bodies for URL resources', async () => {
+    const section = customization('key-a', '');
+    section.desktop.js.push({ type: 'URL', url: 'https://example.test/app.js' } as any);
+    const result = await runDiffStandalone({
+      source: { appId: '1' }, target: { appId: '2' }, scopes: ['customizeSettings'],
+      importedSourceBundle: makeBundle('1', { customizeSettings: section }),
+      importedTargetBundle: makeBundle('2', { customizeSettings: section })
+    });
+    expect(result.rows).toEqual([]);
+    expect(result.partialIssues).toEqual([]);
+    expect(result.summary.text).not.toContain('結果は不完全');
   });
 
   it('does not count partial metadata when the same section is uncomparable', async () => {

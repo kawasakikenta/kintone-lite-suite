@@ -8,6 +8,8 @@ import {
   selectDiffHtmlRowsForExport
 } from '../../src/diff/export';
 import { buildDiffHtmlStandaloneExport } from '../../src/tabs/diff-export-standalone';
+import { computeDiffRows } from '../../src/diff/engine';
+import { enrichDiffRows } from '../../src/diff/enrich';
 
 function extractInlineScript(html: string): string {
   const match = html.match(/<script>([\s\S]*)<\/script>/);
@@ -21,6 +23,51 @@ function extractInlineJsonConst(html: string, name: string): any {
   if (!match) throw new Error(`${name} was not found in inline report script`);
   return JSON.parse(match[1]);
 }
+
+
+function buildFieldReflectRequestsFromHtml(
+  sourceProperties: Record<string, any>,
+  targetProperties: Record<string, any>,
+  options: { paths?: string[]; fieldCodes?: string[] } = {}
+): any[] {
+  const sourceBundle = { appId: '1', sections: { fieldSettings: { properties: sourceProperties } }, meta: {} };
+  const targetBundle = { appId: '2', sections: { fieldSettings: { properties: targetProperties } }, meta: {} };
+  const comparison = computeDiffRows(sourceBundle, targetBundle, ['fieldSettings'], '');
+  const rows = enrichDiffRows(comparison.rows, sourceBundle, targetBundle);
+  const html = buildDiffHtml(sourceBundle, targetBundle, rows, ['fieldSettings'], '', {
+    exportContentMode: 'withCompared', truncation: null
+  });
+  const script = extractInlineScript(html);
+  const declarations = [
+    'REPORT_ROWS', 'FIELD_PROPS_SRC', 'FIELD_PROPS_TGT', 'SECTION_LABEL_MAP', 'REPORT_META', 'TARGET_PREVIEW_API_PREFIX'
+  ].map((name) => `const ${name} = ${JSON.stringify(extractInlineJsonConst(html, name))};`).join('\n');
+  const functions = [
+    'withReflectRequestSafety', 'buildFieldReflectRequests', 'fieldCodeHasActualDiff',
+    'relativePathFromRow', 'tokenizePath', 'extractFieldPathInfo', 'jsonEq', 'collectFlatFieldMap'
+  ].map((name) => {
+    const start = script.indexOf(`  function ${name}(`);
+    if (start < 0) throw new Error(`${name} was not found in generated HTML`);
+    const end = script.indexOf('\n  function ', start + 1);
+    return script.slice(start, end < 0 ? undefined : end);
+  }).join('\n');
+  const selectedRows = options.fieldCodes
+    ? []
+    : options.paths ? rows.filter((row) => options.paths!.includes(row.path)) : rows;
+  return new Function('fieldRows', 'fieldCodes', `${declarations}
+    const FIELD_SECTION_KEY = 'fieldSettings';
+    const selectedFieldCodes = new Set(fieldCodes);
+    const INCOMPLETE_COMPARISON_WARNINGS = REPORT_META.comparisonWarnings;
+    ${functions}
+    const FLAT_FIELD_PROPS_SRC = collectFlatFieldMap(FIELD_PROPS_SRC);
+    const FLAT_FIELD_PROPS_TGT = collectFlatFieldMap(FIELD_PROPS_TGT);
+    const requests = [];
+    buildFieldReflectRequests(fieldRows, REPORT_META.target.appId, requests);
+    return requests;
+  `)(selectedRows, options.fieldCodes || []);
+}
+
+const reflectTextField = (code: string, label = code) => ({ code, type: 'SINGLE_LINE_TEXT', label });
+const reflectTable = (fields: Record<string, any>) => ({ code: 'T', type: 'SUBTABLE', fields });
 
 describe('diff/html export', () => {
   it('preserves partial comparison issues in warning totals and JSON metadata', () => {
@@ -1658,5 +1705,83 @@ describe('diff/html export audit regressions', () => {
     expect(html).toContain('.no-diff--incomplete strong{color:var(--pill-chg)}');
     expect(extractInlineScript(html)).toContain("REPORT_META.incompleteComparison ? ' no-diff--incomplete' : ''");
     expect(contrast('#0f766e', '#ffffff')).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+
+describe('generated HTML field reflect requests', () => {
+  it('adds a new child to an existing table with POST and leaves unchanged children out', () => {
+    const existing = reflectTextField('existing');
+    const added = reflectTextField('new_child');
+    const requests = buildFieldReflectRequestsFromHtml(
+      { T: reflectTable({ existing, new_child: added }) },
+      { T: reflectTable({ existing }) }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      method: 'POST', api: '/k/v1/preview/app/form/fields.json', destructive: false,
+      payload: { app: '2', properties: { T: { code: 'T', type: 'SUBTABLE', fields: { new_child: added } } } }
+    });
+    expect(Object.keys(requests[0].payload.properties.T.fields)).toEqual(['new_child']);
+  });
+
+  it('splits child additions and updates, and retains target-only children behind the manual-delete guard', () => {
+    const added = reflectTextField('new_child');
+    const updated = reflectTextField('existing', '反映元の名称');
+    const requests = buildFieldReflectRequestsFromHtml(
+      { T: reflectTable({ existing: updated, new_child: added }) },
+      { T: reflectTable({ existing: reflectTextField('existing', '反映先の名称'), target_only: reflectTextField('target_only') }) }
+    );
+    expect(requests.map((request) => request.method)).toEqual(['POST', 'PUT', null]);
+    expect(requests[0].payload.properties.T.fields).toEqual({ new_child: added });
+    expect(requests[1].payload.properties.T.fields).toEqual({ existing: updated });
+    expect(requests[2]).toMatchObject({
+      api: null, candidateMethod: 'DELETE', requiresExplicitDeleteOptIn: true, destructive: true,
+      payload: { app: '2', fields: ['target_only'] }
+    });
+    expect(requests[2].warnings.length).toBeGreaterThan(0);
+    expect(requests.some((request) => request.method === 'DELETE')).toBe(false);
+  });
+
+  it('reflects only the selected child without overwriting changed siblings or proposing their deletion', () => {
+    const added = reflectTextField('new_child');
+    const source = { T: reflectTable({ existing: reflectTextField('existing', '元'), new_child: added }) };
+    const target = { T: reflectTable({ existing: reflectTextField('existing', '先'), target_only: reflectTextField('target_only') }) };
+    for (const options of [
+      { paths: ['fieldSettings.properties.T.fields.new_child'] },
+      { fieldCodes: ['new_child'] }
+    ]) {
+      const requests = buildFieldReflectRequestsFromHtml(source, target, options);
+      expect(requests).toHaveLength(1);
+      expect(requests[0].method).toBe('POST');
+      expect(requests[0].payload.properties.T.fields).toEqual({ new_child: added });
+    }
+  });
+
+  it('adds an entire new table with POST and guards deletion of an entire target-only table', () => {
+    const table = reflectTable({ child: reflectTextField('child') });
+    const added = buildFieldReflectRequestsFromHtml({ T: table }, {});
+    expect(added).toHaveLength(1);
+    expect(added[0].method).toBe('POST');
+    expect(added[0].payload.properties).toEqual({ T: table });
+    const removed = buildFieldReflectRequestsFromHtml({}, { T: table });
+    expect(removed).toHaveLength(1);
+    expect(removed[0]).toMatchObject({
+      method: null, api: null, candidateMethod: 'DELETE', requiresExplicitDeleteOptIn: true,
+      payload: { fields: ['T'] }
+    });
+  });
+
+  it('keeps existing-table child additions within the field API batch limit', () => {
+    const source: Record<string, any> = {};
+    const target: Record<string, any> = {};
+    for (let index = 0; index < 101; index += 1) {
+      const code = `table_${index}`;
+      source[code] = { code, type: 'SUBTABLE', fields: { [`child_${index}`]: reflectTextField(`child_${index}`) } };
+      target[code] = { code, type: 'SUBTABLE', fields: {} };
+    }
+    const requests = buildFieldReflectRequestsFromHtml(source, target);
+    expect(requests.map((request) => request.method)).toEqual(['POST', 'POST']);
+    expect(requests.map((request) => Object.keys(request.payload.properties).length)).toEqual([100, 1]);
   });
 });

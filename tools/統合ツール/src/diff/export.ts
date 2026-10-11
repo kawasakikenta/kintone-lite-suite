@@ -3805,25 +3805,59 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   function buildFieldReflectRequests(fieldRows, app, requests) {
     const FIELD_REFLECT_BATCH_LIMIT = 100;
-    const codes = new Set();
+    const selections = new Map();
+    const select = (code, childCode) => {
+      if (!selections.has(code)) selections.set(code, { whole: false, children: new Set() });
+      const selection = selections.get(code);
+      if (childCode) selection.children.add(childCode);
+      else selection.whole = true;
+    };
     (fieldRows || []).forEach((row) => {
       const info = extractFieldPathInfo(row.path);
-      if (info && info.rootCode) codes.add(info.rootCode);
+      if (info && info.rootCode) select(info.rootCode, info.subFieldCode);
     });
     selectedFieldCodes.forEach((code) => {
       if (!fieldCodeHasActualDiff(code)) return;
-      // フィールド単位ビューで選んだテーブル内フィールドは親テーブルのコードへ丸める
       const def = FLAT_FIELD_PROPS_SRC[code] || FLAT_FIELD_PROPS_TGT[code];
-      codes.add(def && def.__parentTableCode ? def.__parentTableCode : code);
+      if (def && def.__parentTableCode) select(def.__parentTableCode, code);
+      else select(code, '');
     });
-    if (!codes.size) return;
-    const updateProps = {};
-    const addProps = {};
+    if (!selections.size) return;
+    const updateProps = Object.create(null);
+    const addProps = Object.create(null);
     const deleteCodes = [];
-    codes.forEach((code) => {
-      const src = FIELD_PROPS_SRC[code];
-      const tgt = FIELD_PROPS_TGT[code];
-      if (src && tgt) updateProps[code] = src;
+    const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
+    selections.forEach((selection, code) => {
+      const src = hasOwn(FIELD_PROPS_SRC, code) ? FIELD_PROPS_SRC[code] : null;
+      const tgt = hasOwn(FIELD_PROPS_TGT, code) ? FIELD_PROPS_TGT[code] : null;
+      if (src && tgt && src.type === 'SUBTABLE' && tgt.type === 'SUBTABLE') {
+        const { fields: sourceFields, ...sourceTable } = src;
+        const { fields: targetFields, ...targetTable } = tgt;
+        const srcFields = sourceFields || {};
+        const tgtFields = targetFields || {};
+        const selectedChildren = selection.whole
+          ? new Set([...Object.keys(srcFields), ...Object.keys(tgtFields)])
+          : selection.children;
+        const addedFields = Object.create(null);
+        const updatedFields = Object.create(null);
+        selectedChildren.forEach((child) => {
+          if (!hasOwn(srcFields, child)) {
+            if (hasOwn(tgtFields, child)) deleteCodes.push(child);
+          } else if (!hasOwn(tgtFields, child)) addedFields[child] = srcFields[child];
+          else if (!jsonEq(srcFields[child], tgtFields[child])) updatedFields[child] = srcFields[child];
+        });
+        // 既存テーブルの新規子フィールドは更新APIでは追加できない。
+        // POSTへ分離し、PUTには比較先に存在する変更済みの子だけを含める。
+        const tableIdentity = { type: 'SUBTABLE', code: src.code || code };
+        if (Object.keys(addedFields).length) addProps[code] = { ...tableIdentity, fields: addedFields };
+        const tableChanged = selection.whole && !jsonEq(sourceTable, targetTable);
+        if (Object.keys(updatedFields).length || tableChanged) {
+          updateProps[code] = {
+            ...(selection.whole ? sourceTable : tableIdentity),
+            fields: updatedFields
+          };
+        }
+      } else if (src && tgt) updateProps[code] = src;
       else if (src) addProps[code] = src;
       else if (tgt) deleteCodes.push(code);
     });
@@ -3847,8 +3881,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         ));
       }
     };
-    pushPropertyBatches(updateProps, 'PUT', '更新');
     pushPropertyBatches(addProps, 'POST', '追加');
+    pushPropertyBatches(updateProps, 'PUT', '更新');
     if (deleteCodes.length) {
       const totalBatches = Math.ceil(deleteCodes.length / FIELD_REFLECT_BATCH_LIMIT);
       for (let offset = 0; offset < deleteCodes.length; offset += FIELD_REFLECT_BATCH_LIMIT) {

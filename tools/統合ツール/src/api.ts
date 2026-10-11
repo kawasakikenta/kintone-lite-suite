@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS } from './constants.js';
 import { hasKintoneOrderByClause, hasKintonePagingClause } from './kintone-query.js';
-import { normalize, deepClone, apiErrorWithContext } from './utils.js';
+import { normalizeSettingsSection, deepClone, apiErrorWithContext } from './utils.js';
 
 export function buildApiPrefix(guestId: string | number | null | undefined, preview: boolean): string {
   const g = String(guestId || '').trim();
@@ -446,7 +446,9 @@ export function ensureBundleShape(bundle: any, rawSettings = false): Bundle {
     preview: !!bundle.preview,
     fetchedAt: bundle.fetchedAt || new Date().toISOString(),
     meta: sanitizeBundleMeta(bundle.meta),
-    sections: rawSettings ? deepClone(bundle.sections) : normalize(bundle.sections)
+    sections: rawSettings ? deepClone(bundle.sections) : Object.fromEntries(
+      Object.keys(bundle.sections).sort().map((key) => [key, normalizeSettingsSection(bundle.sections[key])])
+    )
   };
 }
 
@@ -728,7 +730,7 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
       const params: Record<string, unknown> = typeof def.paramBuilder === 'function' ? def.paramBuilder(app) : { app };
       const res = await apiGet(prefix, def.endpoint, params);
       const revision = extractSectionRevision(res);
-      results[index] = { value: rawSettings ? deepClone(res) : normalize(res), revision };
+      results[index] = { value: rawSettings ? deepClone(res) : normalizeSettingsSection(res), revision };
     } catch (e: any) {
       results[index] = { value: { _fetchError: e?.message || String(e) }, revision: '' };
     }

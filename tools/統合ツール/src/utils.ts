@@ -119,6 +119,24 @@ export function normalize(v: any): any {
   return v;
 }
 
+/**
+ * 設定APIの応答メタ情報だけを除去する。内部のキーはフィールドコード・状態名・
+ * プラグイン設定などの利用者データなので、メタ情報と同名でも保持する。
+ * normalize()/stableStringify() の共有契約とは分けて、セクション単位で呼ぶ。
+ */
+export function normalizeSettingsSection(value: any): any {
+  const sortValue = (current: any, responseRoot = false): any => {
+    if (Array.isArray(current)) return current.map((item) => sortValue(item));
+    if (current && typeof current === 'object') {
+      return Object.fromEntries(Object.keys(current).sort()
+        .filter((key) => !responseRoot || !META_KEYS.has(key))
+        .map((key) => [key, sortValue(current[key])]));
+    }
+    return current;
+  };
+  return sortValue(value, true);
+}
+
 export function stableStringify(v: unknown): string {
   return JSON.stringify(normalize(v));
 }

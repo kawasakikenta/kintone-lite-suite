@@ -3132,6 +3132,48 @@ function customerEntityObjectSummary(value: unknown): string | null {
   return extras.length ? `${display} / ${extras.join(' / ')}` : display;
 }
 
+const CUSTOMER_PERMISSION_FLAG_LABELS: Record<string, string> = {
+  appEditable: 'アプリ管理',
+  recordViewable: 'レコード閲覧',
+  recordAddable: 'レコード追加',
+  recordEditable: 'レコード編集',
+  recordDeletable: 'レコード削除',
+  recordImportable: 'ファイル読み込み',
+  recordExportable: 'ファイル書き出し',
+  viewable: '閲覧',
+  editable: '編集',
+  deletable: '削除'
+};
+
+function customerAclValueSummary(row: DiffXlsxRow, value: unknown): string | null {
+  if (!['appAcl', 'fieldAcl', 'recordPermissions'].includes(sectionKeyOfRow(row))) return null;
+  const summarize = (entry: unknown): string | null => {
+    if (Array.isArray(entry)) {
+      if (!entry.length) return '権限設定なし';
+      const entries = entry.map(summarize);
+      return entries.every(Boolean) ? entries.join('\n\n') : null;
+    }
+    if (!entry || typeof entry !== 'object') return null;
+    const object = entry as Record<string, unknown>;
+    const parts: string[] = [];
+    const entity = customerEntityObjectSummary(object);
+    if (entity) parts.push(entity);
+    for (const [key, label] of Object.entries(CUSTOMER_PERMISSION_FLAG_LABELS)) {
+      if (typeof object[key] === 'boolean') parts.push(`${label}: ${object[key] ? '許可' : '不許可'}`);
+    }
+    if (typeof object.filterCond === 'string') parts.push(`レコードの条件: ${object.filterCond || '（条件なし）'}`);
+    if (typeof object.code === 'string' && Array.isArray(object.entities)) parts.push(`フィールドコード: ${object.code}`);
+    for (const key of ['rights', 'entities']) {
+      if (!Array.isArray(object[key])) continue;
+      const nested = summarize(object[key]);
+      if (!nested) return null;
+      parts.push(nested);
+    }
+    return parts.length ? parts.join('\n') : null;
+  };
+  return summarize(value);
+}
+
 function customerEntityCollectionSummary(row: DiffXlsxRow, value: unknown): string | null {
   if (!/(?:^|\.)(?:defaultValue|entity|entities|recipients)(?:\.|\[|$)/.test(String(row.path || ''))) return null;
   if (Array.isArray(value)) {
@@ -4043,6 +4085,10 @@ function customerComplexValueSummary(row: DiffXlsxRow, side: 'source' | 'target'
     : null;
   if (fieldSummary) return fieldSummary;
 
+  // 追加・削除された権限エントリーは一行の値になる。宛先だけへ要約せず、
+  // エントリーに含まれる権限フラグをすべて残す。
+  const aclSummary = customerAclValueSummary(row, value);
+  if (aclSummary) return aclSummary;
   const entitySummary = customerEntityCollectionSummary(row, value);
   if (entitySummary) return entitySummary;
 
