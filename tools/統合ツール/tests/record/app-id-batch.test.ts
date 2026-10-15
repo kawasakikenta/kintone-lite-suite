@@ -46,6 +46,22 @@ describe('record app ID batch operations', () => {
     expect(status).toHaveBeenLastCalledWith(`2アプリの操作が完了しました\n警告 1アプリ:\nApp 463: ${warning}`, true);
   });
 
+  it('does not report an app whose confirmation was declined as completed', async () => {
+    const status = vi.fn();
+    await runRecordAppBatchStandalone('463,464', async (appId) => (appId === '464' ? { cancelled: true } : undefined), status);
+    expect(status).toHaveBeenLastCalledWith('2アプリの操作が完了しました\n確認でキャンセルしたため実行していません（1アプリ）: App 464', true);
+    expect(status).not.toHaveBeenCalledWith('2アプリの操作が完了しました');
+  });
+
+  it('keeps cancelled apps in the failure summary', async () => {
+    const error = await runRecordAppBatchStandalone('463,464', async (appId) => {
+      if (appId === '463') return { cancelled: true };
+      throw new Error('権限がありません');
+    }, vi.fn()).catch((caught) => caught);
+    expect(error.message).toContain('2件中1件が失敗しました');
+    expect(error.message).toContain('確認でキャンセルしたため実行していません（1アプリ）: App 463');
+  });
+
   it('includes warnings with failures while continuing the remaining apps', async () => {
     const visited: string[] = [];
     const status = vi.fn();

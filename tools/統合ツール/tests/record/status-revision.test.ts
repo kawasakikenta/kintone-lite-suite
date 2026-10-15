@@ -127,9 +127,10 @@ describe('record status updates preserve the reviewed revisions', () => {
     api.mockResolvedValueOnce({ records: makeRecords(1) });
     confirm.mockReturnValue(false);
 
-    await runBatchProcessStandalone(options, status);
+    const result = await runBatchProcessStandalone(options, status);
 
     expect(writes()).toHaveLength(0);
     expect(status).toHaveBeenLastCalledWith('ステータス一括更新をキャンセルしました');
+    expect(result).toEqual({ cancelled: true });
   });
 });
