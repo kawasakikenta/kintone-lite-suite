@@ -136,4 +136,23 @@ describe('field apply revision guard', () => {
     expect(apiGet).not.toHaveBeenCalled();
     expect(apiPost).not.toHaveBeenCalled();
   });
+
+  it('writes nothing when the plan would create a duplicate field code', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      properties: { a: { type: 'NUMBER', code: 'a' }, b: { type: 'NUMBER', code: 'b' } },
+      revision: '10'
+    });
+
+    await expect(runFieldApplyStandalone({
+      targetAppId: '5',
+      fieldJson: JSON.stringify({ properties: {
+        added: { type: 'SINGLE_LINE_TEXT' },
+        a: { type: 'NUMBER', code: 'b' }
+      } }),
+      overwrite: true,
+      skipConfirm: true
+    }, vi.fn())).rejects.toThrow(/何も反映せずに中止.*a → b/);
+    expect(apiPost).not.toHaveBeenCalled();
+    expect(apiPut).not.toHaveBeenCalled();
+  });
 });

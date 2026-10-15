@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildFieldApplyConfirmText,
   findFieldApplyProblem,
+  findFieldCodeConflicts,
   parseFieldJsonInput,
   parseLookupMapInput,
   planBulkRename,
@@ -233,5 +234,43 @@ describe('findFieldApplyProblem', () => {
     expect(findFieldApplyProblem({ ...valid, fieldJson: '{}' })).toMatch(/反映対象/);
     expect(findFieldApplyProblem({ ...valid, fieldJson: '{"a":{"label":"x"}}' })).toMatch(/type がありません/);
     expect(findFieldApplyProblem({ ...valid, lookupMapJson: '[1]' })).toMatch(/Lookup/);
+  });
+});
+
+describe('findFieldCodeConflicts', () => {
+  const current = {
+    a: { type: 'NUMBER', code: 'a' },
+    b: { type: 'NUMBER', code: 'b' }
+  };
+
+  it('is empty for plain adds and updates', () => {
+    const plan = planFieldApply({ c: { type: 'NUMBER' }, a: { type: 'NUMBER', label: 'x' } }, current, {}, true);
+    expect(findFieldCodeConflicts(plan, current)).toEqual([]);
+  });
+
+  it('reports a rename onto an existing code and two renames onto the same code', () => {
+    const toExisting = planFieldApply({ a: { type: 'NUMBER', code: 'b' } }, current, {}, true);
+    expect(findFieldCodeConflicts(toExisting, current)).toEqual(['a → b']);
+    const twice = planFieldApply({ a: { type: 'NUMBER', code: 'z' }, b: { type: 'NUMBER', code: 'z' } }, current, {}, true);
+    expect(findFieldCodeConflicts(twice, current)).toEqual(['a → z', 'b → z']);
+  });
+
+  it('allows swapping into a code that is renamed away, but not adding a code that exists now', () => {
+    const chain = planFieldApply({ a: { type: 'NUMBER', code: 'c' }, b: { type: 'NUMBER', code: 'a' } }, current, {}, true);
+    expect(findFieldCodeConflicts(chain, current)).toEqual([]);
+    const add = planFieldApply({ n: { type: 'NUMBER', code: 'a' } }, current, {}, true);
+    expect(findFieldCodeConflicts(add, current)).toEqual(['n → a']);
+  });
+
+  it('does not mistake Object.prototype members for existing fields', () => {
+    const plan = planFieldApply({ toString: { type: 'NUMBER' }, constructor: { type: 'NUMBER' } }, current, {}, false);
+    expect(Object.keys(plan.adds)).toEqual(['toString', 'constructor']);
+    expect(plan.skippedExisting).toEqual([]);
+  });
+
+  it('does not treat inherited keys of the app map as lookup conversions', () => {
+    const plan = planFieldApply({ lk: { type: 'NUMBER', lookup: { relatedApp: { app: 'toString' } } } }, {}, { '10': '20' }, false);
+    expect(plan.adds.lk.lookup.relatedApp.app).toBe('toString');
+    expect(plan.lookupConverted).toEqual([]);
   });
 });

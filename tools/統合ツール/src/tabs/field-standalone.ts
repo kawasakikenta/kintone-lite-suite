@@ -10,6 +10,8 @@ function assertNumericIds(appId: unknown, guestId: unknown, appLabel: string) {
   if (String(guestId ?? '').trim() && !/^\d+$/.test(String(guestId).trim())) throw new Error(`${appLabel}ゲストIDは数値で入力してください`);
 }
 
+const hasOwn = (obj: unknown, key: string) => Object.prototype.hasOwnProperty.call(obj ?? {}, key);
+
 function filterWritable(props: any) {
   const out: Record<string, any> = {};
   for (const [k, def] of Object.entries(props || {}) as Array<[string, any]>) {
@@ -28,7 +30,7 @@ function convertLookup(fieldDef: any, map: Record<string, any>) {
     if (!node || typeof node !== 'object') return;
     const lookupRel = node.lookup?.relatedApp;
     if (lookupRel?.app != null) {
-      const after = map[String(lookupRel.app)];
+      const after = hasOwn(map, String(lookupRel.app)) ? map[String(lookupRel.app)] : undefined;
       if (after && String(after) !== String(lookupRel.app)) {
         node.lookup.relatedApp.app = String(after);
         delete node.lookup.relatedApp.code;
@@ -37,7 +39,7 @@ function convertLookup(fieldDef: any, map: Record<string, any>) {
     }
     const refRel = node.referenceTable?.relatedApp;
     if (refRel?.app != null) {
-      const after = map[String(refRel.app)];
+      const after = hasOwn(map, String(refRel.app)) ? map[String(refRel.app)] : undefined;
       if (after && String(after) !== String(refRel.app)) {
         node.referenceTable.relatedApp.app = String(after);
         delete node.referenceTable.relatedApp.code;
@@ -157,7 +159,7 @@ export function planFieldApply(
     if (changed) plan.lookupConverted.push(code);
     if (!def.code) def.code = code;
 
-    if (currentMap[code]) {
+    if (hasOwn(currentMap, code) && currentMap[code]) {
       if (overwrite) {
         plan.updates[code] = def;
         plan.logs.push(`UPDATE ${code}${changed ? ' (参照先AppID変換)' : ''}`);
@@ -177,6 +179,30 @@ function listCodes(map: Record<string, any>, limit = 10): string {
   const keys = Object.keys(map);
   const shown = keys.slice(0, limit).map((key) => (map[key]?.code && map[key].code !== key ? `${key} → ${map[key].code}` : key));
   return shown.join('、') + (keys.length > limit ? ` ほか${keys.length - limit}件` : '');
+}
+
+/**
+ * 反映すると同じフィールドコードが複数できる組み合わせを、書き込み前に洗い出す。
+ * 追加（POST）は更新（PUT）より先に実行されるので、追加するコードは「現在の」フィールドと、
+ * 更新後のコード（コード変更を含む）は追加分を含めた最終状態と照合する。
+ * API 側で拒否されても、追加だけが反映された状態で止まってしまうため。
+ */
+export function findFieldCodeConflicts(plan: FieldApplyPlan, currentProps: Record<string, any>): string[] {
+  const current = currentProps || {};
+  const conflicts: string[] = [];
+  for (const [key, def] of Object.entries(plan.adds)) {
+    const code = String(def?.code || key);
+    if (hasOwn(current, code)) conflicts.push(`${key}${code !== key ? ` → ${code}` : ''}`);
+  }
+  const finalCount = new Map<string, number>();
+  const count = (code: string) => finalCount.set(code, (finalCount.get(code) || 0) + 1);
+  for (const key of Object.keys(current)) count(hasOwn(plan.updates, key) ? String(plan.updates[key]?.code || key) : key);
+  for (const [key, def] of Object.entries(plan.adds)) count(String(def?.code || key));
+  for (const [key, def] of Object.entries(plan.updates)) {
+    const code = String(def?.code || key);
+    if (code !== key && (finalCount.get(code) || 0) > 1) conflicts.push(`${key} → ${code}`);
+  }
+  return conflicts;
 }
 
 export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: string, plan: FieldApplyPlan): string {
@@ -218,6 +244,10 @@ export async function runFieldApplyStandalone(opts, setStatus) {
     setStatus(`追加・更新対象がありません（スキップ ${plan.skippedSystem.length + plan.skippedExisting.length}件）`, true);
     logs.push('反映対象なし');
     return logs;
+  }
+  const conflicts = findFieldCodeConflicts(plan, current.properties || ({} as any));
+  if (conflicts.length) {
+    throw new Error(`反映後のフィールドコードが既存のフィールドと重複するため、何も反映せずに中止しました: ${conflicts.join('、')}`);
   }
   let revision = pickRevision(current);
   if (!/^\d+$/.test(revision)) {
