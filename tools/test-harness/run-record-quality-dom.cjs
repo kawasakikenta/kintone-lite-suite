@@ -14,6 +14,9 @@ async function main() {
   const build = await esbuild.build({ absWorkingDir: TOOL, bundle: true, write: false,
     entryPoints: ['src/entries/record-lite-ui.ts'], format: 'iife', globalName: 'RecordUI',
     platform: 'browser', target: ['chrome110'], logLevel: 'silent' });
+  const standaloneBuild = await esbuild.build({ absWorkingDir: TOOL, bundle: true, write: false,
+    entryPoints: ['src/entries/record-quality-lite-ui.ts'], format: 'iife', globalName: 'QualityUI',
+    platform: 'browser', target: ['chrome110'], logLevel: 'silent' });
   const browserName = process.argv.includes('--browser') ? process.argv[process.argv.indexOf('--browser') + 1] : 'chrome';
   const browser = await chromium.launch({ headless: true, ...(browserName === 'chromium' ? {} : { channel: browserName }) });
   const results = [];
@@ -43,6 +46,7 @@ async function main() {
           return { properties: window.properties };
         }
         if (url.endsWith('/records.json')) {
+          if (window.holdRecords) await new Promise(resolve => { window.releaseRecords = resolve; });
           const lastId = Number(/\$id > (\d+)/.exec(params.query)[1]);
           return { records: window.records.slice(lastId, lastId + 500) };
         }
@@ -152,6 +156,39 @@ async function main() {
     assert.match(await page.locator('.kus-lp__status').innerText(), /失敗 1アプリ/);
     await page.screenshot({ path: path.join(OUT, 'template-result.png') });
     results.push('CSVひな形/必須・選択肢ガイド/除外項目/使い方の同梱・複数アプリ部分失敗の維持');
+
+    // The standalone panel has no workflow wrapper, so it must guard input and double runs itself.
+    await page.evaluate(() => document.getElementById('kus-record-lite').remove());
+    await page.addScriptTag({ content: standaloneBuild.outputFiles[0].text });
+    await page.evaluate(() => { window.calls.length = 0; QualityUI.mountRecordQualityLitePanel(); });
+    const panelIdle = () => page.waitForFunction(() => document.querySelector('#kus-record-quality-lite').getAttribute('aria-busy') === 'false');
+    const status = page.locator('#kus-record-quality-lite .kus-lp__status');
+    const callCount = suffix => page.evaluate(suffix => window.calls.filter(call => call.url.endsWith(suffix)).length, suffix);
+    await button('重複・未入力を検査').click(); await panelIdle();
+    assert.match(await status.innerText(), /検査フィールドを読み込んで1〜5項目を選んでください/);
+    assert.equal(await page.evaluate(() => window.calls.length), 0, '未選択では設定もレコードも取得しない');
+    await page.evaluate(() => { window.defer = true; });
+    await button('検査フィールド読込').click(); await button('検査フィールド読込').click({ force: true });
+    await page.evaluate(() => { window.defer = false; window.resolveApi({ properties: window.properties }); });
+    await panelIdle();
+    assert.equal(await callCount('/app/form/fields.json'), 1, '読込の二重クリックでAPIを重複実行しない');
+    await fields.getByRole('checkbox', { name: '件名［title］ / SINGLE_LINE_TEXT', exact: true }).check();
+    await page.evaluate(() => { window.calls.length = 0; });
+    await page.evaluate(() => { window.holdRecords = true; });
+    await button('重複・未入力を検査').click(); await button('重複・未入力を検査').click({ force: true });
+    await page.waitForFunction(() => window.releaseRecords);
+    await page.evaluate(() => { window.holdRecords = false; window.releaseRecords(); });
+    await panelIdle();
+    assert.equal(await callCount('/records.json'), 21, '検査の二重クリックで取得を重複実行しない');
+    assert.match(await status.innerText(), /1アプリの検査が完了しました/);
+    assert.equal(await output.locator('li').count() > 0, true);
+    await page.getByLabel('データ検査のクエリ', { exact: true }).fill('amount > 0');
+    assert.equal(await output.innerText(), '');
+    assert.match(await status.innerText(), /対象や条件が変わりました/, '完了メッセージを古い結果のまま残さない');
+    await page.getByLabel('対象アプリID', { exact: true }).fill('9');
+    assert.equal(await fields.getByRole('checkbox').count(), 0);
+    results.push('単機能パネルの未選択実行防止・二重クリック防止・条件変更後の完了表示の解除');
+
     assert.deepEqual(errors, []);
     assert.equal(await page.evaluate(() => window.calls.every(call => call.method === 'GET' || call.url.endsWith('/records/cursor.json'))), true);
     fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ passed: true, results }, null, 2));

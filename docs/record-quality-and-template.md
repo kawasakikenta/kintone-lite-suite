@@ -42,6 +42,6 @@
 - [複数のレコードを取得する](https://cybozu.dev/ja/kintone/docs/rest-api/records/get-records/): `fields` に選択項目と `$id` だけを指定して取得量を抑えます。500件とoffsetの上限を踏まえ、既存の全件取得処理を共用します。
 - [複数のレコードを登録する](https://cybozu.dev/ja/kintone/docs/rest-api/records/add-records/): 登録できないフィールドの制限を、CSV取込とひな形生成の共通判定へ反映しています。
 
-`npm run test:record-quality` は実画面と実処理をChrome/Chromiumで動かし、API応答とJSZipの出力先だけを合成データへ置き換えます。10,001件、複合キー、取得不可、部分失敗、全件CSV、XSS表示、対象変更、遅延応答、ゲストURL、カーソル、320〜1440px、ひな形の内容を検証します。ZIP圧縮そのものや実kintoneの権限・認証はこのハーネスの検証対象外です。
+`npm run test:record-quality` は実画面と実処理をChrome/Chromiumで動かし、API応答とJSZipの出力先だけを合成データへ置き換えます。10,001件、複合キー、取得不可、部分失敗、全件CSV、XSS表示、対象変更、遅延応答、ゲストURL、カーソル、320〜1440px、ひな形の内容を検証します。データ品質チェックの単機能パネルでは、項目未選択での実行防止、読込・検査の二重クリック防止、条件変更後の完了表示の解除も検証します。ZIP圧縮そのものや実kintoneの権限・認証はこのハーネスの検証対象外です。
 
 単体テストは `tests/record/quality.test.ts` と `tests/record/quality-standalone.test.ts`。全体テスト `npm run test:all` とCIにも画面検証を追加しています。
