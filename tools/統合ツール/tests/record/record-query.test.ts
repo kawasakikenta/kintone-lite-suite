@@ -71,6 +71,23 @@ describe('csv helpers', () => {
     expect(extractRecordCsvValue(rec, 'missing')).toBe('');
   });
 
+  it('writes creator, modifier, assignee and category as plain codes instead of JSON', () => {
+    const rec = {
+      creator: { type: 'CREATOR', value: { code: 'u1', name: 'User 1' } },
+      modifier: { type: 'MODIFIER', value: { code: '', name: 'Name only' } },
+      noModifier: { type: 'MODIFIER', value: null },
+      assignee: { type: 'STATUS_ASSIGNEE', value: [{ code: 'a1', name: 'A' }, { code: 'a2', name: 'B' }] },
+      category: { type: 'CATEGORY', value: ['x', 'y'] },
+      status: { type: 'STATUS', value: '未処理' }
+    };
+    expect(extractRecordCsvValue(rec, 'creator')).toBe('u1');
+    expect(extractRecordCsvValue(rec, 'modifier')).toBe('Name only');
+    expect(extractRecordCsvValue(rec, 'noModifier')).toBe('');
+    expect(extractRecordCsvValue(rec, 'assignee')).toBe('a1,a2');
+    expect(extractRecordCsvValue(rec, 'category')).toBe('x,y');
+    expect(extractRecordCsvValue(rec, 'status')).toBe('未処理');
+  });
+
   it('builds a BOM-prefixed CSV with a header row', () => {
     const text = buildRecordsCsvText([{ a: { type: 'SINGLE_LINE_TEXT', value: 'x,y' } }], ['a', 'b']);
     expect(text.charCodeAt(0)).toBe(0xfeff);
