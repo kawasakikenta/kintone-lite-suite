@@ -49,7 +49,15 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
   const output = document.createElement('div'); output.setAttribute('aria-label', 'データ検査結果');
   output.setAttribute('aria-live', 'polite');
   const save = makeButton('検査結果をCSVで保存', 'sub'); save.hidden = true;
-  const resetResults = () => { version++; results = []; output.replaceChildren(); save.hidden = true; };
+  const clearResults = () => { version++; results = []; output.replaceChildren(); save.hidden = true; };
+  // Do not leave a "completed" message on screen once the result it describes is gone.
+  const resetResults = () => {
+    const stale = results.length > 0 && panel.status.dataset.tone !== 'busy';
+    clearResults();
+    if (stale) panel.setStatus('対象や条件が変わりました。もう一度検査してください。', 'warn');
+  };
+  const isBusy = () => panel.root.getAttribute('aria-busy') === 'true';
+  const validate = () => requiredApps() || (selected.size ? '' : '検査フィールドを読み込んで1〜5項目を選んでください。');
   const refreshNote = () => {
     note.textContent = `選択 ${selected.size}/5項目: ${fields.filter(field => selected.has(field.code)).map(field => `${field.label}［${field.code}］`).join('、') || '未選択'}`;
     countBadge.textContent = `選択 ${selected.size} / 5`;
@@ -83,9 +91,9 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
     if (fields.length && !fieldBox.childElementCount) fieldBox.appendChild(makeNote('一致するフィールドがありません。検索語を変えてください。'));
   }
   search.addEventListener('input', renderFields);
-  load.addEventListener('click', () => liteRun(panel, '検査フィールドを取得中…', async () => {
+  load.addEventListener('click', () => isBusy() || liteRun(panel, '検査フィールドを取得中…', async () => {
     const current = ++fieldsVersion;
-    fields = []; selected.clear(); search.value = ''; fieldBox.replaceChildren(); resetResults(); refreshNote();
+    fields = []; selected.clear(); search.value = ''; fieldBox.replaceChildren(); pickWrap.hidden = true; resetResults(); refreshNote();
     const loaded = await runLoadQualityFieldsStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() });
     if (current !== fieldsVersion) { panel.setStatus('対象が変わりました。再取得してください。', 'warn'); return; }
     fields = loaded; pickWrap.hidden = false; renderFields();
@@ -93,7 +101,9 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
     panel.setStatus(note.textContent, fields.length ? 'ok' : 'warn');
   }));
   const run = makeButton('重複・未入力を検査', 'primary');
-  run.addEventListener('click', () => liteRun(panel, 'レコードを検査中…', async () => {
+  run.addEventListener('click', () => isBusy() || liteRun(panel, 'レコードを検査中…', async () => {
+    const problem = validate();
+    if (problem) { panel.setStatus(problem, 'warn'); return; }
     resetResults(); const current = version;
     const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked };
     const queryText = query.value.trim();
@@ -131,7 +141,7 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
   root.appendChild(makeRow(run));
   context.resultHost.append(output, makeRow(save));
   return { id: 'quality', label: '重複・未入力を検査', description: '複数項目の重複・未入力を調べ、該当レコードを確認します。', button: run,
-    validate: () => requiredApps() || (selected.size ? '' : '検査フィールドを読み込んで1〜5項目を選んでください。'),
+    validate,
     summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['検査項目', [...selected].join('、')], ['比較', `前後空白 ${trim.checkbox.checked ? '無視' : '区別'} / 大小文字 ${ignoreCase.checkbox.checked ? '無視' : '区別'}`]] };
 }
 
