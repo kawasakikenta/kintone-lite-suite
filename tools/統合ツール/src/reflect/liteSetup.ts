@@ -22,6 +22,11 @@ export function parseAppReference(text: string): AppReference | null {
   return { appId, guestId: extractGuestIdFromInput(raw) };
 }
 
+/** 開いている kintone 画面のパスからゲストスペースIDを読み取る（通常スペースなら空文字）。 */
+export function guestIdFromPagePath(pathname: string): string {
+  return extractGuestIdFromInput(String(pathname || ''));
+}
+
 /** 入力値が数字だけではなく、URL などから読み取りが必要かどうか。 */
 export function needsAppReferenceParse(text: string): boolean {
   const raw = String(text || '').trim();
