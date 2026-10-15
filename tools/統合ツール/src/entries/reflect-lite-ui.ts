@@ -490,7 +490,13 @@ export function mountReflectLitePanel() {
     sourceJsonBundles = [];
     sourceBundleToken = '';
     sourceBundleFileName = '';
-    sourceJsonBundles = pickAllSettingsBundles(JSON.parse(await file.text()), 'source', true);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      throw new Error('設定JSONの読み込みに失敗しました（JSON形式が不正です）');
+    }
+    sourceJsonBundles = pickAllSettingsBundles(parsed, 'source', true);
     sourceJsonAppSelect.replaceChildren(...sourceJsonBundles.map((bundle, index) => {
       const option = document.createElement('option');
       option.value = String(index);

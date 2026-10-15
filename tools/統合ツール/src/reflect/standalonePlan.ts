@@ -18,21 +18,29 @@ const equal = (a: any, b: any) => stableReflectStringify(a) === stableReflectStr
 const valueText = (value: any) => value === undefined ? '（なし）' : typeof value === 'string' ? value : JSON.stringify(value);
 const labels: Record<string, string> = { properties: 'フィールド', layout: '配置', views: '一覧', reports: 'グラフ', actions: 'アクション', rights: 'アクセス権', notifications: '通知', categories: 'カテゴリー', label: '表示名', required: '必須', unique: '重複禁止', options: '選択肢', defaultValue: '初期値', type: '種類', index: '表示順', filterCond: '絞り込み', sort: '並び順', enable: '有効', states: '状態', scope: '適用範囲', fields: 'フィールド', desktop: 'PC', mobile: 'モバイル' };
 
+/** Objects whose keys are user-defined names (field codes, view names, option labels), not setting attributes. */
+const nameKeyedContainers = new Set(['properties', 'fields', 'views', 'reports', 'actions', 'states', 'categories', 'options']);
+
 /** Compare the payload's actual effect, not app-specific IDs or API metadata. */
-function diffValues(before: any, after: any, path: string[], output: ReflectChange[]) {
+function diffValues(before: any, after: any, path: string[], output: ReflectChange[], keysAreNames = false) {
   if (equal(before, after)) return;
   if (object(before) && object(after)) {
-    for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own(before, key) ? before[key] : undefined, own(after, key) ? after[key] : undefined, [...path, own(labels, key) ? labels[key] : key], output);
+    // A field named "label" or "type" must stay "label"/"type" in the path instead of reading as an attribute.
+    for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own(before, key) ? before[key] : undefined, own(after, key) ? after[key] : undefined, [...path, !keysAreNames && own(labels, key) ? labels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
   } else if (Array.isArray(before) && Array.isArray(after)) {
     // Align lists by content to avoid presenting a reorder as removal of every item.
-    const remaining = [...after];
+    // Each item is serialized once; pairwise comparison made a full ACL replacement quadratic (1,000 rows took seconds).
+    const queues = new Map<string, number[]>(), taken = new Set<number>();
+    after.forEach((value, index) => { const key = stableReflectStringify(value); const queue = queues.get(key); if (queue) queue.push(index); else queues.set(key, [index]); });
+    const beforeKeys = before.map(value => stableReflectStringify(value));
     for (const [index, value] of before.entries()) {
-      const found = remaining.findIndex(item => equal(item, value));
-      if (found >= 0) remaining.splice(found, 1);
+      const found = queues.get(beforeKeys[index])?.shift();
+      if (found !== undefined) taken.add(found);
       else output.push({ kind: '削除', path: [...path, `${index + 1}件目`].join(' / '), before: valueText(value), after: '（なし）' });
     }
+    const remaining = after.filter((_value, index) => !taken.has(index));
     for (const value of remaining) output.push({ kind: '追加', path: path.join(' / '), before: '（なし）', after: valueText(value) });
-    if (!remaining.length && before.length === after.length && before.every(value => after.some(item => equal(item, value)))) {
+    if (!remaining.length && before.length === after.length && beforeKeys.every(key => queues.has(key))) {
       output.push({ kind: '変更', path: path.join(' / ') + ' / 順序', before: valueText(before), after: valueText(after) });
     }
   } else output.push({ kind: before === undefined ? '追加' : after === undefined ? '削除' : '変更', path: path.join(' / '), before: valueText(before), after: valueText(after) });
