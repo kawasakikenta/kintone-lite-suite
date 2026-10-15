@@ -61,6 +61,8 @@ export function mountSettingsExportLitePanel() {
   const cardScope = makeCard({ title: '取得セクション', number: 2 });
   const chipBox = document.createElement('div');
   chipBox.className = 'kus-lp__chips';
+  chipBox.setAttribute('role', 'group');
+  chipBox.setAttribute('aria-label', '取得するセクション');
   const chips = SETTINGS_EXPORT_SCOPE_DEFS.map((s) => makeChip({ label: s.label, value: s.key, checked: true }));
   chips.forEach((c) => chipBox.appendChild(c.label));
   cardScope.body.appendChild(chipBox);

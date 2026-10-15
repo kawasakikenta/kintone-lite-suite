@@ -8,13 +8,17 @@ vi.mock('../../src/api', async importOriginal => ({ ...await importOriginal<type
 vi.mock('../../src/utils', async importOriginal => ({ ...await importOriginal<typeof import('../../src/utils')>(),
   downloadText: vi.fn(), downloadBlob: vi.fn(), selectedScopeKeys: () => scopes.keys }));
 const zipFiles = vi.hoisted(() => new Map<string, string>());
-vi.mock('../../src/jszipLoader', () => ({ loadJSZipLite: async () => class {
-  file(name: string, content: string) { zipFiles.set(name, content); return this; }
-  async generateAsync() { return new Blob(['zip fixture']); }
+const zipLoader = vi.hoisted(() => ({ fail: false }));
+vi.mock('../../src/jszipLoader', () => ({ loadJSZipLite: async () => {
+  if (zipLoader.fail) throw new Error('JSZipの読み込みに失敗しました');
+  return class {
+    file(name: string, content: string) { zipFiles.set(name, content); return this; }
+    async generateAsync() { return new Blob(['zip fixture']); }
+  };
 } }));
 
 const bundle = (sections: Record<string, unknown>) => ({ appId: '1', guestId: '', preview: false, fetchedAt: '', meta: { sectionRevisions: {} }, sections });
-beforeEach(() => { vi.clearAllMocks(); zipFiles.clear(); scopes.keys = ['appSettings', 'fieldSettings']; });
+beforeEach(() => { vi.clearAllMocks(); zipFiles.clear(); zipLoader.fail = false; scopes.keys = ['appSettings', 'fieldSettings']; });
 
 describe('settings export result details', () => {
   it('lists the failed sections and the first failure reason in the result table', async () => {
@@ -33,6 +37,15 @@ describe('settings export result details', () => {
     const { summaryHtml } = await runSettingsExportStandalone('json', { apps: [{ appId: '1' }] }, status);
     expect(summaryHtml).toContain('JS/CSS本文を省略したファイル 2件');
     expect(status).toHaveBeenLastCalledWith(expect.stringContaining('JS/CSSファイル 2件は本文を取得できず'), true);
+    expect(downloadText).toHaveBeenCalledTimes(1);
+  });
+  it('stops before fetching any app when the ZIP library cannot be loaded', async () => {
+    zipLoader.fail = true;
+    await expect(runSettingsExportStandalone('zip', { apps: [{ appId: '1' }, { appId: '2' }] }, vi.fn())).rejects.toThrow(/JSZip/);
+    expect(fetchBundle).not.toHaveBeenCalled();
+    zipLoader.fail = false;
+    vi.mocked(fetchBundle).mockResolvedValue(bundle({ appSettings: { name: 'A' }, fieldSettings: {} }));
+    await runSettingsExportStandalone('json', { apps: [{ appId: '1' }] }, vi.fn());
     expect(downloadText).toHaveBeenCalledTimes(1);
   });
   it('falls back to the app info name for file names and manifest when app settings are not selected', async () => {

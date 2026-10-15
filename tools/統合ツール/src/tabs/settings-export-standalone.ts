@@ -62,14 +62,14 @@ export function renderSettingsExportSummaryHtml(rows, scopes) {
     <td>${esc(r.guestId ? `guest:${r.guestId}` : '通常')}</td>
     <td>${esc(String(r.okCount))}</td>
     <td>${esc(String(r.ngCount))}</td>
-    <td>${esc(r.note || '-')}</td>
+    <td style="overflow-wrap:anywhere">${esc(r.note || '-')}</td>
   </tr>`
     )
     .join('');
   return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || '-')}</div>
     <table style="width:100%;font-size:11px;border-collapse:collapse">
-      <thead><tr><th style="text-align:left;padding:4px">アプリID</th><th>ゲスト</th><th>取得OK</th><th>取得NG</th><th>メモ</th></tr></thead>
+      <thead><tr><th scope="col" style="text-align:left;padding:4px">アプリID</th><th scope="col">ゲスト</th><th scope="col">取得OK</th><th scope="col">取得NG</th><th scope="col">メモ</th></tr></thead>
       <tbody>${body || '<tr><td colspan="5">結果なし</td></tr>'}</tbody>
     </table>
   `;
@@ -212,6 +212,10 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
 
   const preview = !!opts.preview;
 
+  // ZIP は全アプリの取得後に生成する。JSZip を読み込めない環境（CSP・ネットワーク制限）では、
+  // 時間のかかる取得を始める前に中止して、取得結果を無駄にしない。
+  const JSZipCtor = mode === 'zip' ? await loadJSZipLite() : null;
+
   const bundles = [];
   const rows = [];
   for (let i = 0; i < targets.length; i++) {
@@ -282,7 +286,6 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
   const hasWarning = failedSections > 0 || omittedBodies > 0;
 
   if (mode === 'zip') {
-    const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
     const entries = bundles.map((bundle, i) => {
       const guestId = targets[i].guestId;
