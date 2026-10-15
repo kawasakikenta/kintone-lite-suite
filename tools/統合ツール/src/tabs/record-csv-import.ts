@@ -99,7 +99,8 @@ export function planCsvImport(rows: string[][], properties: Record<string, any>)
   const seenValues = new Map<string, Map<string, number>>();
   for (let index = 1; index < rows.length; index++) {
     const values = rows[index], row = index + 1;
-    if (values.length === 1 && values[0] === '') continue;
+    // Excel は内容を消した行を ",,," として書き出す。全セルが空の行は空行として扱い、空レコードを作らない。
+    if (values.every(value => value === '')) continue;
     count++;
     if (sample.length < 5) sample.push({ row, values: values.slice(0, 6).map(value => value.length > 120 ? value.slice(0, 120) + '…' : value) });
     if (values.length !== header.length) { issue(row, '', `列数が一致しません（ヘッダ ${header.length}列 / データ ${values.length}列）`); continue; }

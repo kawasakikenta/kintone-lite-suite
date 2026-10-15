@@ -93,6 +93,27 @@ describe('buildCopyRecordPayloads', () => {
     expect('id' in row).toBe(false);
   });
 
+  it('drops subtable cells whose type differs from the target app and reports them', () => {
+    const targetProps = {
+      table: { type: 'SUBTABLE', code: 'table', fields: { item: { type: 'NUMBER' }, rowCalc: { type: 'CALC' } } }
+    };
+    const plan = buildCopyRecordPayloads([{
+      table: { type: 'SUBTABLE', value: [{ id: '1', value: { item: { type: 'SINGLE_LINE_TEXT', value: 'x' }, num: { type: 'NUMBER', value: '1' } } }] }
+    }], targetProps);
+    expect(plan.records).toEqual([{ table: { value: [{ value: {} }] } }]);
+    expect(plan.droppedFields).toEqual(['table.item(型不一致)', 'table.num']);
+  });
+
+  it('keeps subtable cells whose type matches the target app', () => {
+    const targetProps = {
+      title: { type: 'SINGLE_LINE_TEXT', code: 'title' },
+      table: { type: 'SUBTABLE', code: 'table', fields: { item: { type: 'SINGLE_LINE_TEXT' } } }
+    };
+    const plan = buildCopyRecordPayloads([record], targetProps);
+    expect(plan.records).toEqual([{ title: { value: 'hello' }, table: { value: [{ value: { item: { value: 'row' } } }] } }]);
+    expect(plan.droppedFields).toEqual([]);
+  });
+
   it('drops fields the target app does not have (or has with another type) and reports them', () => {
     const targetProps = {
       title: { type: 'SINGLE_LINE_TEXT', code: 'title' },
