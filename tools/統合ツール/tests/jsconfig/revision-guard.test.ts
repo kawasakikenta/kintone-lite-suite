@@ -59,4 +59,12 @@ describe('JS/CSS apply revision guard', () => {
     await expect(runApplyJsConfigStandalone({ targetAppId: '5', jsonText: json, skipConfirm: true }, vi.fn(), vi.fn()))
       .rejects.toMatchObject({ revisionConflict: true, message: expect.stringContaining('revision 競合') });
   });
+
+  it('rejects a non-numeric app or guest id before any request is built', async () => {
+    const jsonText = JSON.stringify({ desktop: { js: [], css: [] } });
+    await expect(runApplyJsConfigStandalone({ targetAppId: '１２', jsonText, skipConfirm: true }, vi.fn(), vi.fn())).rejects.toThrow(/反映先アプリID.*数値/);
+    await expect(runApplyJsConfigStandalone({ targetAppId: '5', targetGuestId: '1/../2', jsonText, skipConfirm: true }, vi.fn(), vi.fn())).rejects.toThrow(/ゲストID.*数値/);
+    expect(apiGet).not.toHaveBeenCalled();
+    expect(apiPut).not.toHaveBeenCalled();
+  });
 });

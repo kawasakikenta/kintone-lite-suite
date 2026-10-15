@@ -68,4 +68,9 @@ describe('JS/CSS batch download manifest', () => {
     expect(status).toHaveBeenLastCalledWith(expect.stringContaining('対象ファイルがありません'));
     expect(downloadBlob).not.toHaveBeenCalled();
   });
+
+  it('rejects a non-numeric guest id before listing apps', async () => {
+    await expect(runBatchJsConfigDownloadStandalone({ guestId: '1/x' }, vi.fn())).rejects.toThrow(/ゲストID.*数値/);
+    expect(apiGet).not.toHaveBeenCalled();
+  });
 });
