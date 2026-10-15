@@ -149,3 +149,53 @@ describe('ER viewer dialog focus', () => {
     expect(dom.state.focused).toEqual([]);
   });
 });
+
+describe('ER viewer navigation to unresolved targets', () => {
+  const script = viewerScript();
+
+  function createGraph(nodes: Record<string, { ghost?: boolean; hidden?: boolean }>) {
+    const calls = { animated: [] as string[], selected: [] as string[], ghostDetail: [] as string[], appDetail: [] as string[] };
+    const element = (id: string) => {
+      const info = nodes[id];
+      return {
+        length: info ? 1 : 0,
+        id: () => id,
+        hasClass: (name: string) => name === 'app-manual-hidden' && !!info?.hidden,
+        data: (key: string) => (key === 'isGhost' ? !!info?.ghost : undefined),
+        select: () => calls.selected.push(id)
+      };
+    };
+    const cy = {
+      getElementById: (id: string) => element(id),
+      animate: (options: any) => calls.animated.push(options.center.eles.id())
+    };
+    const context: any = {
+      cy,
+      appMap: new Map([[1, { id: 1 }]]),
+      focusMode: false,
+      renderAppDetail: (app: any) => calls.appDetail.push(String(app.id)),
+      renderGhostDetail: (node: any) => calls.ghostDetail.push(node.id()),
+      applyFocusToNode: () => undefined
+    };
+    runInNewContext(extractFunction(script, 'focusApp'), context);
+    return { context, calls };
+  }
+
+  it('moves to the unresolved-target node when the app was not fetched', () => {
+    const { context, calls } = createGraph({ a1: {}, g5: { ghost: true } });
+    context.focusApp(5);
+    expect(calls.animated).toEqual(['g5']);
+    expect(calls.selected).toEqual(['g5']);
+    expect(calls.ghostDetail).toEqual(['g5']);
+    expect(calls.appDetail).toEqual([]);
+  });
+
+  it('still prefers the fetched app node and ignores ids that exist nowhere', () => {
+    const { context, calls } = createGraph({ a1: {}, g5: { ghost: true } });
+    context.focusApp(1);
+    expect(calls.animated).toEqual(['a1']);
+    expect(calls.appDetail).toEqual(['1']);
+    context.focusApp(99);
+    expect(calls.animated).toEqual(['a1']);
+  });
+});

@@ -3029,6 +3029,14 @@ function focusApp(id){
     const app = appMap.get(Number(id)) || appMap.get(id);
     if(app) renderAppDetail(app);
     if(focusMode) applyFocusToNode(n, true);
+    return;
+  }
+  // 取得できていない参照先は「未取得の参照先」ノードへ移動し、詳細を表示する
+  const ghost=cy.getElementById("g"+String(id).replace(/[^0-9A-Za-z_-]/g,"_"));
+  if(ghost.length && ghost.data("isGhost") && !ghost.hasClass("app-manual-hidden")){
+    cy.animate({center:{eles:ghost},zoom:1.5},{ duration:400 });
+    ghost.select();
+    renderGhostDetail(ghost);
   }
 }
 
