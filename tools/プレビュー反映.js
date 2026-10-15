@@ -244,6 +244,17 @@
     }
     return "";
   }
+  function guestIdFromKintonePath(pathname) {
+    const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ""));
+    return match ? match[1] : "";
+  }
+  function resolveDefaultGuestId() {
+    try {
+      return typeof window === "undefined" ? "" : guestIdFromKintonePath(window.location?.pathname);
+    } catch (e) {
+      return "";
+    }
+  }
   function sanitizeCustomizeResourceList(value) {
     if (!Array.isArray(value)) return [];
     const resources = [];
@@ -275,7 +286,7 @@
       mobile: buildPlatform("mobile")
     };
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -321,6 +332,7 @@
         })
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
+      DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
@@ -973,7 +985,7 @@ ${base}`
       }
       tasks.push(async () => {
         try {
-          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
+          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id });
           if (res && typeof res === "object") {
             plugin._config = res?.config != null ? res.config : res;
             stats.fetched += 1;
@@ -1222,12 +1234,28 @@ ${base}`
     }
   });
 
+  // src/kintone-enums.ts
+  var init_kintone_enums = __esm({
+    "src/kintone-enums.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/diff/label-dict.ts
+  var init_label_dict = __esm({
+    "src/diff/label-dict.ts"() {
+      "use strict";
+      init_kintone_enums();
+    }
+  });
+
   // src/diff/enrich.ts
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      init_label_dict();
     }
   });
 
@@ -1242,21 +1270,6 @@ ${base}`
       init_constants();
       init_state();
       root = null;
-    }
-  });
-
-  // src/kintone-enums.ts
-  var init_kintone_enums = __esm({
-    "src/kintone-enums.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/diff/label-dict.ts
-  var init_label_dict = __esm({
-    "src/diff/label-dict.ts"() {
-      "use strict";
-      init_kintone_enums();
     }
   });
 
@@ -1444,19 +1457,28 @@ ${base}`
   var equal = (a, b) => stableReflectStringify(a) === stableReflectStringify(b);
   var valueText = (value) => value === void 0 ? "（なし）" : typeof value === "string" ? value : JSON.stringify(value);
   var labels = { properties: "フィールド", layout: "配置", views: "一覧", reports: "グラフ", actions: "アクション", rights: "アクセス権", notifications: "通知", categories: "カテゴリー", label: "表示名", required: "必須", unique: "重複禁止", options: "選択肢", defaultValue: "初期値", type: "種類", index: "表示順", filterCond: "絞り込み", sort: "並び順", enable: "有効", states: "状態", scope: "適用範囲", fields: "フィールド", desktop: "PC", mobile: "モバイル" };
-  function diffValues(before, after, path, output) {
+  var nameKeyedContainers = /* @__PURE__ */ new Set(["properties", "fields", "views", "reports", "actions", "states", "categories", "options"]);
+  function diffValues(before, after, path, output, keysAreNames = false) {
     if (equal(before, after)) return;
     if (object(before) && object(after)) {
-      for (const key of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own(before, key) ? before[key] : void 0, own(after, key) ? after[key] : void 0, [...path, own(labels, key) ? labels[key] : key], output);
+      for (const key of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own(before, key) ? before[key] : void 0, own(after, key) ? after[key] : void 0, [...path, !keysAreNames && own(labels, key) ? labels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
     } else if (Array.isArray(before) && Array.isArray(after)) {
-      const remaining = [...after];
+      const queues = /* @__PURE__ */ new Map(), taken = /* @__PURE__ */ new Set();
+      after.forEach((value, index) => {
+        const key = stableReflectStringify(value);
+        const queue = queues.get(key);
+        if (queue) queue.push(index);
+        else queues.set(key, [index]);
+      });
+      const beforeKeys = before.map((value) => stableReflectStringify(value));
       for (const [index, value] of before.entries()) {
-        const found = remaining.findIndex((item) => equal(item, value));
-        if (found >= 0) remaining.splice(found, 1);
+        const found = queues.get(beforeKeys[index])?.shift();
+        if (found !== void 0) taken.add(found);
         else output.push({ kind: "削除", path: [...path, `${index + 1}件目`].join(" / "), before: valueText(value), after: "（なし）" });
       }
+      const remaining = after.filter((_value, index) => !taken.has(index));
       for (const value of remaining) output.push({ kind: "追加", path: path.join(" / "), before: "（なし）", after: valueText(value) });
-      if (!remaining.length && before.length === after.length && before.every((value) => after.some((item) => equal(item, value)))) {
+      if (!remaining.length && before.length === after.length && beforeKeys.every((key) => queues.has(key))) {
         output.push({ kind: "変更", path: path.join(" / ") + " / 順序", before: valueText(before), after: valueText(after) });
       }
     } else output.push({ kind: before === void 0 ? "追加" : after === void 0 ? "削除" : "変更", path: path.join(" / "), before: valueText(before), after: valueText(after) });
@@ -1977,15 +1999,18 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
         continue;
       }
       setStatus(`反映中 ${index + 1}/${plans.length}: ${plan.label}`);
+      const written = [];
       try {
         for (const operation of plan.operations) {
           await write(operation);
+          written.push(operation.label);
           logs.push(`  OK ${operation.label}`);
         }
         sections.push({ ...outcome, status: "ok" });
         logs.push(`OK ${plan.label}`);
       } catch (error) {
-        const message = error.message || String(error);
+        const message = `${error.message || String(error)}${written.length ? `
+（この項目では ${written.join("・")} まで書き込み済みです。差分を取得し直して現在の状態を確認してください）` : ""}`;
         sections.push({ ...outcome, status: "ng", message });
         pushReflectErrorLog(logs, `NG ${plan.label}: ${message}`, message);
         if (opts.stopOnError !== false || error.stopReflection || isRevisionConflictError(error)) {
@@ -3301,6 +3326,9 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     if (!/^[1-9]\d*$/.test(appId)) return null;
     return { appId, guestId: extractGuestIdFromInput(raw) };
   }
+  function guestIdFromPagePath(pathname) {
+    return extractGuestIdFromInput(String(pathname || ""));
+  }
   function needsAppReferenceParse(text) {
     const raw = String(text || "").trim();
     return !!raw && !/^\d+$/.test(raw);
@@ -3423,7 +3451,8 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
   }
   function mergeReflectPresets(existing, incoming, limit = 30) {
     const base = (Array.isArray(existing) ? existing : []).map(normalizeReflectPreset).filter((p) => p !== null);
-    const incomingList = (Array.isArray(incoming) ? incoming : []).map(normalizeReflectPreset).filter((p) => p !== null);
+    const seenIncoming = /* @__PURE__ */ new Set();
+    const incomingList = (Array.isArray(incoming) ? incoming : []).map(normalizeReflectPreset).filter((p) => p !== null).filter((p) => !seenIncoming.has(p.name) && !!seenIncoming.add(p.name));
     const incomingNames = new Set(incomingList.map((p) => p.name));
     let replaced = 0;
     const kept = [];
@@ -3434,11 +3463,13 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       }
       kept.push(preset);
     }
-    const merged = [...incomingList, ...kept].slice(0, Math.max(0, limit));
+    const all = [...incomingList, ...kept];
+    const merged = all.slice(0, Math.max(0, limit));
     return {
       presets: merged,
       added: incomingList.length - replaced,
-      replaced
+      replaced,
+      dropped: all.length - merged.length
     };
   }
 
@@ -3545,12 +3576,12 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
 #kus-reflect-lite .kus-rl-pill--same{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
 #kus-reflect-lite .kus-rl-pill--error{background:#fef2f2;border-color:#fca5a5;color:#991b1b}
 #kus-reflect-lite .kus-rl-pill--stale{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
-#kus-reflect-lite .kus-rl-next{padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.6;border:1px solid #e2e8f0;background:#fff}
+#kus-reflect-lite .kus-rl-next{padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.6;border:1px solid #e2e8f0;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-next strong{display:block;margin-bottom:2px}
 #kus-reflect-lite .kus-rl-next--ok{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
 #kus-reflect-lite .kus-rl-next--info{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}
 #kus-reflect-lite .kus-rl-next--warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
-#kus-reflect-lite .kus-rl-issues{margin:0;padding-left:18px;font-size:12px;line-height:1.6;color:#92400e}
+#kus-reflect-lite .kus-rl-issues{margin:0;padding-left:18px;font-size:12px;line-height:1.6;color:#92400e;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-issues li+li{margin-top:3px}
 #kus-reflect-lite .kus-rl-quiet{font-size:11.5px;color:#64748b}
 #kus-reflect-lite .kus-rl-lookup-status{margin-top:6px;font-size:11.5px;color:#475569}
@@ -3565,7 +3596,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
 #kus-reflect-lite .kus-rl-preview-group{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#fff;margin-bottom:10px}
 #kus-reflect-lite .kus-rl-preview-group__head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11.5px;font-weight:700;color:#334155}
 #kus-reflect-lite .kus-rl-preview-list{display:flex;flex-direction:column;gap:8px;padding:10px}
-#kus-reflect-lite .kus-rl-preview-row{border:1px solid #e2e8f0;border-radius:10px;padding:10px;background:#fff}
+#kus-reflect-lite .kus-rl-preview-row{border:1px solid #e2e8f0;border-radius:10px;padding:10px;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-preview-row--change{border-color:#fdba74;background:#fffaf0}
 #kus-reflect-lite .kus-rl-preview-row--same{border-color:#bbf7d0;background:#f0fdf4}
 #kus-reflect-lite .kus-rl-preview-row--error{border-color:#fca5a5;background:#fff5f5}
@@ -3648,6 +3679,12 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     document.head.appendChild(st);
   }
   function mountReflectLitePanel() {
+    const running = document.getElementById("kus-reflect-lite");
+    if (running?.getAttribute("aria-busy") === "true") {
+      running.setAttribute("tabindex", "-1");
+      running.focus({ preventScroll: true });
+      return;
+    }
     ensureReflectLiteStyles();
     const panel = createLitePanel({
       id: "kus-reflect-lite",
@@ -3666,8 +3703,10 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     let sourceMode = "app";
     const srcApp = makeInput({ placeholder: "比較元アプリID", value: memoryState.sourceAppId || "", width: "id" });
     const srcGuest = makeInput({ placeholder: "ゲストID", value: memoryState.sourceGuestId || "", width: "guest" });
+    const pageGuestId = () => guestIdFromPagePath(window.location?.pathname || "");
+    const defaultsToCurrentApp = !memoryState.targetAppId && !!DEFAULT_APP_ID;
     const tgtApp = makeInput({ placeholder: "比較先アプリID", value: memoryState.targetAppId || DEFAULT_APP_ID || "", width: "id" });
-    const tgtGuest = makeInput({ placeholder: "ゲストID", value: memoryState.targetGuestId || "", width: "guest" });
+    const tgtGuest = makeInput({ placeholder: "ゲストID", value: defaultsToCurrentApp ? pageGuestId() : memoryState.targetGuestId || "", width: "guest" });
     srcApp.setAttribute("aria-label", "比較元アプリID");
     srcGuest.setAttribute("aria-label", "比較元ゲストスペースID");
     tgtApp.setAttribute("aria-label", "比較先アプリID");
@@ -3675,6 +3714,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     let sourceBundleFromJson = null;
     let sourceJsonBundles = [];
     let sourceBundleToken = "";
+    let sourceBundleFileName = "";
     const srcJsonFile = document.createElement("input");
     srcJsonFile.type = "file";
     srcJsonFile.accept = ".json,application/json";
@@ -3750,7 +3790,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       copyBtn.disabled = sourceMode === "json";
       sourceJsonAppSelect.hidden = sourceJsonBundles.length < 2;
       if (sourceBundleFromJson) {
-        srcJsonNote.textContent = `比較元JSON読み込み済み: App ${sourceBundleFromJson?.appId || "-"}（比較元はこのJSONから取得し、アプリからの取得は行いません）`;
+        srcJsonNote.textContent = `比較元JSON読み込み済み${sourceBundleFileName ? `（${sourceBundleFileName}）` : ""}: App ${sourceBundleFromJson?.appId || "-"}（比較元はこのJSONから取得し、アプリからの取得は行いません）`;
         srcJsonNote.style.display = "block";
         srcJsonClearBtn.style.display = "";
       } else {
@@ -3771,10 +3811,18 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     srcJsonFile.addEventListener("change", () => liteRun(panel, "比較元JSONを読み込み中…", async () => {
       const file = srcJsonFile.files?.[0];
       if (!file) return;
+      srcJsonFile.value = "";
       sourceBundleFromJson = null;
       sourceJsonBundles = [];
       sourceBundleToken = "";
-      sourceJsonBundles = pickAllSettingsBundles(JSON.parse(await file.text()), "source", true);
+      sourceBundleFileName = "";
+      let parsed;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch {
+        throw new Error("設定JSONの読み込みに失敗しました（JSON形式が不正です）");
+      }
+      sourceJsonBundles = pickAllSettingsBundles(parsed, "source", true);
       sourceJsonAppSelect.replaceChildren(...sourceJsonBundles.map((bundle, index) => {
         const option = document.createElement("option");
         option.value = String(index);
@@ -3783,6 +3831,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       }));
       sourceBundleFromJson = sourceJsonBundles[0];
       sourceBundleToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
+      sourceBundleFileName = file.name;
       if (sourceBundleFromJson?.appId) srcApp.value = String(sourceBundleFromJson.appId);
       panel.setStatus(`比較元JSONを読み込みました: App ${sourceBundleFromJson?.appId || "-"}`, "ok");
       saveState();
@@ -3842,6 +3891,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     }
     currentSrcBtn.addEventListener("click", () => {
       srcApp.value = DEFAULT_APP_ID || "";
+      srcGuest.value = DEFAULT_APP_ID ? pageGuestId() : srcGuest.value;
       saveState();
       refreshSameConnBanner();
       refreshReviewCard();
@@ -3857,6 +3907,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     });
     currentBtn.addEventListener("click", () => {
       tgtApp.value = DEFAULT_APP_ID || "";
+      tgtGuest.value = DEFAULT_APP_ID ? pageGuestId() : tgtGuest.value;
       saveState();
       refreshSameConnBanner();
       refreshReviewCard();
@@ -3888,15 +3939,14 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
         panel.setStatus(`${sideLabel}のアプリIDを読み取れません。数字のID、またはアプリのURLを入力してください。`, "warn");
         return false;
       }
+      const clearedGuest = !reference.guestId && !!guestInput.value.trim();
       appInput.value = reference.appId;
-      if (reference.guestId) {
-        guestInput.value = reference.guestId;
-        guestDetails.open = true;
-      }
+      guestInput.value = reference.guestId;
+      if (reference.guestId) guestDetails.open = true;
       saveState();
       refreshSameConnBanner();
       refreshReviewCard();
-      panel.setStatus(`URLから${sideLabel}のアプリID ${reference.appId}${reference.guestId ? `（ゲストスペース ${reference.guestId}）` : ""}を読み取りました。`, "ok");
+      panel.setStatus(`URLから${sideLabel}のアプリID ${reference.appId}${reference.guestId ? `（ゲストスペース ${reference.guestId}）` : ""}を読み取りました。${clearedGuest ? "ゲストスペースIDは空にしました。" : ""}`, "ok");
       return true;
     }
     for (const [appInput, guestInput, guestDetails, sideLabel] of [
@@ -4164,13 +4214,14 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
         preserveTargetOnly: preserve.checkbox.checked
       };
       const replaced = (memoryState.presets || []).some((p) => p.name === trimmed);
-      memoryState.presets = mergeReflectPresets(memoryState.presets, [preset], REFLECT_PRESET_LIMIT).presets;
+      const saved = mergeReflectPresets(memoryState.presets, [preset], REFLECT_PRESET_LIMIT);
+      memoryState.presets = saved.presets;
       refreshPresetSelect();
       refreshPresetButtons();
       presetSelect.value = trimmed;
       presetName.value = "";
       refreshPresetButtons();
-      panel.setStatus(`プリセット「${trimmed}」を${replaced ? "上書き保存" : "保存"}しました。次回も使う場合は「JSONで書き出し」で保存してください。`, "ok");
+      panel.setStatus(`プリセット「${trimmed}」を${replaced ? "上書き保存" : "保存"}しました。${saved.dropped ? `上限 ${REFLECT_PRESET_LIMIT} 件のため古いプリセット ${saved.dropped} 件を削除しました。` : ""}次回も使う場合は「JSONで書き出し」で保存してください。`, saved.dropped ? "warn" : "ok");
     });
     exportPresetsBtn.addEventListener("click", () => {
       const payload = buildReflectPresetsExport(memoryState.presets);
@@ -4201,7 +4252,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       refreshPresetSelect();
       refreshPresetButtons();
       presetSelect.value = presets[0].name;
-      panel.setStatus(`プリセットを読み込みました（追加 ${merged.added} 件 / 上書き ${merged.replaced} 件 / 合計 ${merged.presets.length} 件）。「読み込み」で適用できます。`, "ok");
+      panel.setStatus(`プリセットを読み込みました（追加 ${merged.added} 件 / 上書き ${merged.replaced} 件 / 合計 ${merged.presets.length} 件）。${merged.dropped ? `上限 ${REFLECT_PRESET_LIMIT} 件を超えた ${merged.dropped} 件は保持できませんでした。` : ""}「読み込み」で適用できます。`, merged.dropped ? "warn" : "ok");
     }));
     loadBtn.addEventListener("click", () => {
       const name = presetSelect.value;

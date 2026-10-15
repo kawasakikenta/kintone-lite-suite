@@ -247,6 +247,17 @@
     }
     return "";
   }
+  function guestIdFromKintonePath(pathname) {
+    const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ""));
+    return match ? match[1] : "";
+  }
+  function resolveDefaultGuestId() {
+    try {
+      return typeof window === "undefined" ? "" : guestIdFromKintonePath(window.location?.pathname);
+    } catch (e) {
+      return "";
+    }
+  }
   function sanitizeCustomizeResourceList(value) {
     if (!Array.isArray(value)) return [];
     const resources = [];
@@ -278,7 +289,7 @@
       mobile: buildPlatform("mobile")
     };
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -324,6 +335,7 @@
         })
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
+      DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
@@ -1079,7 +1091,7 @@ ${contextLine}`);
       }
       tasks.push(async () => {
         try {
-          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
+          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id });
           if (res && typeof res === "object") {
             plugin._config = res?.config != null ? res.config : res;
             stats.fetched += 1;
@@ -1419,6 +1431,16 @@ ${contextLine}`);
     } catch {
       return null;
     }
+  }
+  function formatIgnoreRuleForDisplay(rule) {
+    const exactPath = decodeExactIgnorePathRule(rule);
+    return exactPath == null ? String(rule ?? "") : `${EXACT_IGNORE_PATH_PREFIX}${exactPath}`;
+  }
+  function formatIgnoreRulesTextForDisplay(text2) {
+    return String(text2 ?? "").replace(/[^\n\r,、，;；]+/g, (token) => {
+      const [, leading = "", body = "", trailing = ""] = /^(\s*)([\s\S]*?)(\s*)$/.exec(token) || [];
+      return `${leading}${formatIgnoreRuleForDisplay(body)}${trailing}`;
+    });
   }
   function tokenLooksLikePath(token) {
     return token.includes(".") || token.includes("[") || SECTION_DEFS.some((section) => normalizeIgnoreToken(section.key) === normalizeIgnoreToken(token));
@@ -3135,6 +3157,528 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-enums.ts
+  function lookupEnum(map, value) {
+    if (value == null || value === "") return "";
+    const key = String(value).trim().toUpperCase();
+    return map[key] || String(value);
+  }
+  function describeReminderOffset(kind, value) {
+    const raw = String(value ?? "").trim();
+    if (!/^[+-]?\d+$/.test(raw)) return null;
+    const n = Number(raw);
+    const unit = kind === "days" ? "日" : "時間";
+    if (n === 0) return kind === "days" ? "当日" : "同時刻";
+    return n < 0 ? `${-n}${unit}前` : `${n}${unit}後`;
+  }
+  function describePeriodicReport(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const report = value;
+    if (typeof report.active !== "boolean" && !report.period) return null;
+    const period = report.period && typeof report.period === "object" ? report.period : {};
+    const schedule = [
+      lookupEnum(PERIODIC_REPORT_EVERY_JP, period.every),
+      period.month != null && period.month !== "" ? `${period.month}月` : "",
+      period.dayOfMonth != null && period.dayOfMonth !== "" ? `${period.dayOfMonth}日` : "",
+      lookupEnum(DAY_OF_WEEK_JP, period.dayOfWeek),
+      period.time != null && period.time !== "" ? String(period.time) : ""
+    ].filter(Boolean).join(" ");
+    const state3 = report.active === false ? "無効" : "有効";
+    return schedule ? `${state3}（${schedule}）` : state3;
+  }
+  var ENTITY_TYPE_JP, VIEW_TYPE_JP, VIEW_BUILTIN_TYPE_JP, VIEW_DEVICE_JP, PAGINATION_TYPE_JP, CHART_TYPE_JP, CHART_MODE_JP, AGGREGATION_TYPE_JP, GROUP_PER_JP, REPORT_SORT_BY_JP, REPORT_SORT_ORDER_JP, PERIODIC_REPORT_EVERY_JP, DAY_OF_WEEK_JP, PROCESS_ASSIGNEE_TYPE_JP, NOTIFICATION_TIMING_JP, RESOURCE_TYPE_JP, CUSTOMIZE_SCOPE_JP, ICON_TYPE_JP, APP_THEME_JP, TITLE_SELECTION_JP, ROUNDING_MODE_JP, NUMBER_FORMAT_JP, ALIGN_JP, UNIT_POSITION_JP, LINK_PROTOCOL_JP;
+  var init_kintone_enums = __esm({
+    "src/kintone-enums.ts"() {
+      "use strict";
+      ENTITY_TYPE_JP = {
+        USER: "ユーザー",
+        GROUP: "グループ",
+        ORGANIZATION: "組織",
+        FIELD_ENTITY: "フィールド値",
+        CREATOR: "作成者",
+        MODIFIER: "更新者",
+        LOGIN_USER: "ログインユーザー",
+        ALL: "全員",
+        CUSTOM_FIELD: "カスタムフィールド"
+      };
+      VIEW_TYPE_JP = {
+        LIST: "表形式",
+        CALENDAR: "カレンダー形式",
+        CUSTOM: "カスタマイズ"
+      };
+      VIEW_BUILTIN_TYPE_JP = {
+        ASSIGNEE: "作業者ビュー",
+        UNDONE: "未完了レコード",
+        ACTIVE_BY_USER: "自分が処理すべきレコード",
+        RECORDS_OF_USER: "自分が関わるレコード"
+      };
+      VIEW_DEVICE_JP = {
+        ANY: "PC・モバイル両方",
+        DESKTOP: "PC版のみ"
+      };
+      PAGINATION_TYPE_JP = {
+        ROW: "行ページャ",
+        PAGE: "ページ番号"
+      };
+      CHART_TYPE_JP = {
+        BAR: "横棒グラフ",
+        COLUMN: "縦棒グラフ",
+        LINE: "折れ線グラフ",
+        PIE: "円グラフ",
+        PIVOT_TABLE: "クロス集計表",
+        TABLE: "表",
+        AREA: "面グラフ",
+        SPLINE: "曲線グラフ",
+        SPLINE_AREA: "曲線面グラフ",
+        SCATTER: "散布図"
+      };
+      CHART_MODE_JP = {
+        NORMAL: "通常",
+        STACKED: "積み上げ",
+        PERCENTAGE: "100%積み上げ"
+      };
+      AGGREGATION_TYPE_JP = {
+        COUNT: "レコード数",
+        SUM: "合計",
+        AVG: "平均",
+        MAX: "最大値",
+        MIN: "最小値"
+      };
+      GROUP_PER_JP = {
+        YEAR: "年",
+        QUARTER: "四半期",
+        MONTH: "月",
+        WEEK: "週",
+        DAY: "日",
+        HOUR: "時",
+        MINUTE: "分"
+      };
+      REPORT_SORT_BY_JP = {
+        TOTAL: "集計値",
+        GROUP1: "分類1",
+        GROUP2: "分類2",
+        GROUP3: "分類3"
+      };
+      REPORT_SORT_ORDER_JP = {
+        ASC: "小さい順",
+        DESC: "大きい順"
+      };
+      PERIODIC_REPORT_EVERY_JP = {
+        YEAR: "毎年",
+        QUARTER: "四半期ごと",
+        MONTH: "毎月",
+        WEEK: "毎週",
+        DAY: "毎日",
+        HOUR: "毎時"
+      };
+      DAY_OF_WEEK_JP = {
+        SUNDAY: "日曜日",
+        MONDAY: "月曜日",
+        TUESDAY: "火曜日",
+        WEDNESDAY: "水曜日",
+        THURSDAY: "木曜日",
+        FRIDAY: "金曜日",
+        SATURDAY: "土曜日"
+      };
+      PROCESS_ASSIGNEE_TYPE_JP = {
+        ONE: "候補から作業者を1人選ぶ",
+        ANY: "候補のうち誰か1人が作業する",
+        ANYONE: "候補のうち誰か1人が作業する",
+        ALL: "候補の全員が作業する"
+      };
+      NOTIFICATION_TIMING_JP = {
+        CREATION: "レコード作成時",
+        DAYS_OF_WEEK: "曜日指定",
+        TIME: "時刻指定",
+        WEEKLY: "毎週",
+        MONTHLY: "毎月"
+      };
+      RESOURCE_TYPE_JP = {
+        URL: "URL指定",
+        FILE: "ファイル指定"
+      };
+      CUSTOMIZE_SCOPE_JP = {
+        ALL: "全ユーザー",
+        ADMIN: "管理者のみ",
+        NONE: "無効"
+      };
+      ICON_TYPE_JP = {
+        PRESET: "プリセット",
+        FILE: "アップロードファイル"
+      };
+      APP_THEME_JP = {
+        WHITE: "ホワイト",
+        RED: "レッド",
+        BLUE: "ブルー",
+        GREEN: "グリーン",
+        YELLOW: "イエロー",
+        BLACK: "ブラック",
+        CLIPBOARD: "クリップボード",
+        BINDER: "バインダー",
+        PENCIL: "ペンシル",
+        CLIPS: "クリップ"
+      };
+      TITLE_SELECTION_JP = {
+        AUTO: "自動選択",
+        MANUAL: "手動指定"
+      };
+      ROUNDING_MODE_JP = {
+        HALF_EVEN: "四捨五入（偶数丸め）",
+        UP: "切り上げ",
+        DOWN: "切り捨て"
+      };
+      NUMBER_FORMAT_JP = {
+        NUMBER: "数値",
+        NUMBER_DIGIT: "数値（桁区切り）",
+        PERCENT: "パーセント",
+        CURRENCY: "通貨",
+        DATE: "日付",
+        TIME: "時刻",
+        DATETIME: "日時",
+        HOUR_MINUTE: "時:分",
+        HOUR_MINUTE_SECOND: "時:分:秒"
+      };
+      ALIGN_JP = {
+        HORIZONTAL: "横並び",
+        VERTICAL: "縦並び"
+      };
+      UNIT_POSITION_JP = {
+        BEFORE: "前につける",
+        AFTER: "後につける"
+      };
+      LINK_PROTOCOL_JP = {
+        WEB: "Webサイトのアドレス",
+        CALL: "電話番号",
+        MAIL: "メールアドレス"
+      };
+    }
+  });
+
+  // src/diff/label-dict.ts
+  function labelOfProp(key) {
+    if (!key) return "";
+    return PROP_LABELS[key]?.label || String(key);
+  }
+  function iconOfProp(key) {
+    if (!key) return "";
+    return PROP_LABELS[key]?.icon || "";
+  }
+  function labelOfValue(scope, value) {
+    if (value == null) return null;
+    const dict = VALUE_LABELS[scope];
+    if (!dict) return null;
+    return dict[String(value)] || null;
+  }
+  function stateRenameName(side, fallback) {
+    const name = side && typeof side === "object" ? side.name : side;
+    return String(name ?? fallback ?? "").trim() || "(不明)";
+  }
+  function labelOfSection(sectionKey) {
+    if (!sectionKey) return { label: "-", icon: "" };
+    return SECTION_LABELS[sectionKey] || { label: String(sectionKey), icon: "" };
+  }
+  function labelOfBool(value, propKey) {
+    if (propKey && PERMISSION_KEYS.has(propKey)) {
+      return value ? "許可" : "不許可";
+    }
+    if (propKey === "enable" || propKey === "enabled" || propKey === "active") {
+      return value ? "有効" : "無効";
+    }
+    if (propKey === "pager") {
+      return value ? "表示する" : "表示しない";
+    }
+    if (propKey === "notifyToCommenter" || propKey === "notifyToMentioned" || propKey === "notifyOnUpdate") {
+      return value ? "通知する" : "通知しない";
+    }
+    return value ? "はい" : "いいえ";
+  }
+  function formatEntityText(entity, options = {}) {
+    if (!entity || typeof entity !== "object") return "";
+    const type = String(entity.type || "");
+    const code = String(entity.code || entity.login || entity.id || "");
+    const name = String(entity.name || "");
+    const functionLabel = type.toUpperCase() === "FUNCTION" ? {
+      "LOGINUSER()": "ログインユーザー",
+      "PRIMARY_ORGANIZATION()": "優先する組織"
+    }[code.trim().toUpperCase()] : "";
+    if (functionLabel && !name) return functionLabel;
+    const typed = VALUE_LABELS["entity.type"]?.[type] || (type ? `· ${type}` : "·");
+    const display = name || code || "(未設定)";
+    if (options.compact) return `${typed} ${display}`;
+    if (name && code && name !== code) return `${typed} ${name} (${code})`;
+    return `${typed} ${display}`;
+  }
+  var VALUE_LABELS, PROP_LABELS, SECTION_LABELS, PERMISSION_KEYS;
+  var init_label_dict = __esm({
+    "src/diff/label-dict.ts"() {
+      "use strict";
+      init_kintone_enums();
+      VALUE_LABELS = {
+        // entity.type
+        "entity.type": {
+          USER: "👤 ユーザー",
+          GROUP: "👥 グループ",
+          ORGANIZATION: "🏢 部署",
+          DEPARTMENT: "🏢 部署",
+          DEPT: "🏢 部署",
+          CREATOR: "✏️ 作成者",
+          MODIFIER: "✏️ 更新者",
+          FUNCTION: "⚙ 関数",
+          LOGIN_USER: "👤 ログインユーザー",
+          ALL: "🌐 全員",
+          FIELD_ENTITY: "🔗 フィールド",
+          EVERYONE: "🌐 全員",
+          CUSTOM_FIELD: "🔗 ユーザー選択フィールド"
+        },
+        // field acl level
+        accessibility: {
+          NONE: "不可",
+          READ: "閲覧のみ",
+          WRITE: "閲覧・編集可",
+          READ_WRITE: "閲覧・編集可"
+        },
+        // 一覧の表示形式（kintone の一覧設定画面の選択肢名）
+        "view.type": {
+          LIST: "表形式",
+          CALENDAR: "カレンダー形式",
+          CUSTOM: "カスタマイズ"
+        },
+        // グラフ種別（kintone のグラフ設定画面の名称）
+        "chart.type": {
+          BAR: "横棒グラフ",
+          COLUMN: "縦棒グラフ",
+          PIE: "円グラフ",
+          LINE: "折れ線グラフ",
+          PIVOT_TABLE: "クロス集計表",
+          TABLE: "表",
+          AREA: "面グラフ",
+          AREA_STACKED: "積み上げ面グラフ",
+          SPLINE: "曲線グラフ",
+          SPLINE_AREA: "曲線面グラフ",
+          BUBBLE: "バブル",
+          BAR_STACKED: "積み上げ横棒",
+          FUNNEL: "ファネル"
+        },
+        // ページ送り
+        paginationStyle: {
+          NORMAL: "通常",
+          NUMBER: "ページ番号",
+          INFINITE: "無限スクロール"
+        },
+        // 通知トリガ
+        recordTrigger: {
+          APP: "アプリ全体",
+          RECORD: "レコード単位"
+        },
+        // アプリアクションのフィールド関連付けのコピー元／コピー先の種類
+        // （actionSettings 文脈で参照。表記は xlsx 出力の customerTypeLabel と揃える）
+        srcType: {
+          FIELD: "フィールド",
+          RECORD_URL: "レコードのURL"
+        },
+        destType: {
+          FIELD: "フィールド",
+          RECORD_URL: "レコードのURL"
+        },
+        // ここから下はセクション文脈込みで参照するスコープ（path-decoder が
+        // sectionKey を見て選択する）。kintone-enums の共通辞書を単一ソースとする。
+        "assignee.type": PROCESS_ASSIGNEE_TYPE_JP,
+        "icon.type": ICON_TYPE_JP,
+        "aggregation.type": AGGREGATION_TYPE_JP,
+        "resource.type": RESOURCE_TYPE_JP,
+        builtinType: VIEW_BUILTIN_TYPE_JP,
+        device: VIEW_DEVICE_JP,
+        chartMode: CHART_MODE_JP,
+        scope: CUSTOMIZE_SCOPE_JP,
+        theme: APP_THEME_JP,
+        selectionMode: TITLE_SELECTION_JP,
+        roundingMode: ROUNDING_MODE_JP,
+        per: GROUP_PER_JP,
+        by: REPORT_SORT_BY_JP,
+        order: REPORT_SORT_ORDER_JP,
+        every: PERIODIC_REPORT_EVERY_JP,
+        dayOfWeek: DAY_OF_WEEK_JP
+      };
+      PROP_LABELS = {
+        // appAcl 操作権限（kintone のアクセス権設定画面の列名）
+        appEditable: { label: "アプリ管理", icon: "⚙" },
+        recordViewable: { label: "レコード閲覧", icon: "👁" },
+        recordAddable: { label: "レコード追加", icon: "➕" },
+        recordEditable: { label: "レコード編集", icon: "✏️" },
+        recordDeletable: { label: "レコード削除", icon: "🗑" },
+        recordImportable: { label: "ファイル読み込み", icon: "📥" },
+        recordExportable: { label: "ファイル書き出し", icon: "📤" },
+        // recordPermissions の権限
+        viewable: { label: "閲覧", icon: "👁" },
+        editable: { label: "編集", icon: "✏️" },
+        deletable: { label: "削除", icon: "🗑" },
+        // 共通
+        filterCond: { label: "絞込条件", icon: "🔍" },
+        includeSubs: { label: "配下を含む" },
+        entities: { label: "エンティティ" },
+        entity: { label: "対象" },
+        rights: { label: "権限エントリー" },
+        accessibility: { label: "アクセス権" },
+        // viewSettings（kintone の一覧設定画面の項目名）
+        fields: { label: "表示するフィールド", icon: "📋" },
+        sort: { label: "ソート", icon: "↕" },
+        index: { label: "表示順", icon: "🔢" },
+        paginationStyle: { label: "ページ送り", icon: "📄" },
+        defaultView: { label: "既定ビュー" },
+        view: { label: "ビュー" },
+        views: { label: "ビュー一覧" },
+        builtinType: { label: "標準一覧の種類" },
+        device: { label: "表示するデバイス" },
+        pager: { label: "ページ送りの表示" },
+        date: { label: "日付の基準フィールド" },
+        // reportSettings（kintone のグラフ設定画面の項目名）
+        groups: { label: "分類", icon: "📊" },
+        aggregations: { label: "集計", icon: "🧮" },
+        chartType: { label: "グラフ種別" },
+        chartMode: { label: "モード" },
+        reports: { label: "グラフ一覧" },
+        periodicReports: { label: "定期レポート" },
+        periodicReport: { label: "定期レポート" },
+        period: { label: "実行スケジュール" },
+        every: { label: "間隔" },
+        dayOfWeek: { label: "曜日" },
+        dayOfMonth: { label: "日" },
+        per: { label: "分類の時間単位" },
+        by: { label: "ソートの基準" },
+        order: { label: "ソートの順序" },
+        active: { label: "有効状態" },
+        // notifications（kintone の通知設定画面の項目名）
+        recordAdded: { label: "レコードの追加" },
+        recordEdited: { label: "レコードの編集" },
+        commentAdded: { label: "コメントの書き込み" },
+        statusChanged: { label: "ステータスの更新" },
+        fileImported: { label: "ファイルの読み込み" },
+        recipients: { label: "通知先" },
+        targets: { label: "通知先" },
+        notifications: { label: "通知ルール" },
+        timing: { label: "通知するタイミング" },
+        daysLater: { label: "通知する日" },
+        hoursLater: { label: "通知する時間" },
+        time: { label: "時刻" },
+        notifyToCommenter: { label: "コメントを書き込んだユーザーへの通知" },
+        notifyToMentioned: { label: "コメントの宛先ユーザーへの通知" },
+        notifyOnUpdate: { label: "更新時に通知" },
+        timezone: { label: "タイムゾーン" },
+        perRecordNotifications: { label: "レコード条件通知" },
+        reminderNotifications: { label: "リマインダー通知" },
+        title: { label: "タイトル" },
+        body: { label: "本文" },
+        // processSettings（kintone のプロセス管理設定画面の項目名）
+        enable: { label: "プロセス管理の有効化" },
+        states: { label: "ステータス" },
+        actions: { label: "アクション" },
+        from: { label: "実行前のステータス" },
+        to: { label: "実行後のステータス" },
+        assignee: { label: "作業者" },
+        type: { label: "種別" },
+        settings: { label: "設定" },
+        // actionSettings（kintone API の mappings[] キーは srcField/srcType/destField。
+        // sourceField は旧形式データの別名。xlsx 出力の「コピー元/コピー先」表記に揃える）
+        app: { label: "対象アプリ" },
+        mappings: { label: "フィールド対応" },
+        srcField: { label: "コピー元フィールド" },
+        sourceField: { label: "コピー元フィールド" },
+        srcType: { label: "コピー元の種類" },
+        destField: { label: "コピー先フィールド" },
+        destType: { label: "コピー先の種類" },
+        destApp: { label: "先アプリ" },
+        // customizeSettings
+        desktop: { label: "デスクトップ" },
+        mobile: { label: "モバイル" },
+        js: { label: "JS" },
+        css: { label: "CSS" },
+        file: { label: "ファイル" },
+        scope: { label: "適用範囲" },
+        url: { label: "URL" },
+        // pluginSettings
+        plugins: { label: "プラグイン一覧" },
+        version: { label: "バージョン" },
+        id: { label: "ID" },
+        enabled: { label: "有効状態" },
+        // appSettings / appInfo（kintone のアプリ設定画面の項目名）
+        name: { label: "名前" },
+        description: { label: "説明" },
+        theme: { label: "デザインテーマ" },
+        titleField: { label: "レコードのタイトル" },
+        selectionMode: { label: "選択方法" },
+        icon: { label: "アイコン" },
+        enableThumbnails: { label: "サムネイルの表示" },
+        enableBulkDeletion: { label: "レコードの一括削除" },
+        enableComments: { label: "レコードのコメント機能" },
+        enableDuplicateRecord: { label: "レコードの再利用" },
+        enableInlineRecordEditing: { label: "一覧でのレコードのインライン編集" },
+        numberPrecision: { label: "数値や計算の精度" },
+        digits: { label: "全体の桁数" },
+        decimalPlaces: { label: "小数部の桁数" },
+        roundingMode: { label: "数値の丸めかた" },
+        firstMonthOfFiscalYear: { label: "第1四半期の開始月" },
+        appId: { label: "アプリID" },
+        spaceId: { label: "スペースID" },
+        threadId: { label: "スレッドID" },
+        code: { label: "コード" },
+        label: { label: "ラベル" },
+        // categories
+        categories: { label: "カテゴリ" },
+        // layoutSettings
+        layout: { label: "レイアウト" },
+        row: { label: "行" },
+        width: { label: "横幅" },
+        height: { label: "高さ" },
+        innerHeight: { label: "入力欄の高さ" },
+        // fieldSettings: 関連レコード一覧（referenceTable）/ ルックアップ（lookup）
+        // kintone のフィールド設定画面の項目名に合わせる。
+        referenceTable: { label: "関連レコード一覧設定" },
+        lookup: { label: "ルックアップ設定" },
+        condition: { label: "表示するレコードの条件" },
+        displayFields: { label: "表示するフィールド" },
+        relatedApp: { label: "参照するアプリ" },
+        relatedField: { label: "参照するアプリのフィールド" },
+        relatedKeyField: { label: "コピー元のフィールド" },
+        fieldMappings: { label: "ほかのフィールドのコピー" },
+        lookupPickerFields: { label: "コピー元のレコード選択時に表示するフィールド" },
+        size: { label: "一度に表示する最大レコード数" }
+      };
+      SECTION_LABELS = {
+        appAcl: { label: "アプリ権限", icon: "🔐" },
+        fieldAcl: { label: "フィールド権限", icon: "🔐" },
+        recordPermissions: { label: "レコード権限", icon: "🔐" },
+        notifications: { label: "通知", icon: "🔔" },
+        perRecordNotifications: { label: "レコード条件通知", icon: "🔔" },
+        reminderNotifications: { label: "リマインダー通知", icon: "🔔" },
+        viewSettings: { label: "ビュー設定", icon: "📊" },
+        reportSettings: { label: "グラフ設定", icon: "📈" },
+        processSettings: { label: "プロセス管理", icon: "🔁" },
+        actionSettings: { label: "アクション設定", icon: "⚡" },
+        customizeSettings: { label: "JS/CSS設定", icon: "🧪" },
+        pluginSettings: { label: "プラグイン", icon: "🧩" },
+        appSettings: { label: "アプリ設定", icon: "⚙" },
+        appInfo: { label: "アプリ情報", icon: "ℹ️" },
+        formSettings: { label: "フォーム設定", icon: "📝" },
+        fieldSettings: { label: "フィールド設定", icon: "🔤" },
+        layoutSettings: { label: "レイアウト設定", icon: "🧩" },
+        categories: { label: "カテゴリ設定", icon: "🗂" }
+      };
+      PERMISSION_KEYS = /* @__PURE__ */ new Set([
+        "appEditable",
+        "recordViewable",
+        "recordAddable",
+        "recordEditable",
+        "recordDeletable",
+        "recordImportable",
+        "recordExportable",
+        "viewable",
+        "editable",
+        "deletable",
+        "includeSubs"
+      ]);
+    }
+  });
+
   // src/diff/enrich.ts
   function relativePathFromRow(path, secKey) {
     if (!path) return "";
@@ -3158,9 +3702,6 @@ ${contextLine}`);
     const m = String(path || "").match(/([^[.\]]+)(?:\[\d+\])?$/);
     return m ? m[1] : "";
   }
-  function normalizeIgnoreToken2(token) {
-    return String(token || "").replace(/[\u200b\u200c\u200d\ufeff]/g, "").replace(/^[\s\u3000]+|[\s\u3000]+$/g, "").toLowerCase();
-  }
   function normalizeLooseText(value) {
     return String(value || "").trim().toLowerCase();
   }
@@ -3168,8 +3709,9 @@ ${contextLine}`);
     return normalizeLooseText(value).split(/[^a-z0-9_]+/).filter((token) => token.length >= 2);
   }
   function scoreTokenOverlap(a, b) {
-    const setA = new Set(tokenizeLooseText(a));
-    const setB = new Set(tokenizeLooseText(b));
+    return scoreTokenSetOverlap(new Set(tokenizeLooseText(a)), new Set(tokenizeLooseText(b)));
+  }
+  function scoreTokenSetOverlap(setA, setB) {
     if (!setA.size || !setB.size) return 0;
     let common = 0;
     setA.forEach((token) => {
@@ -3218,24 +3760,44 @@ ${contextLine}`);
     if (row.type === "removed") return row.left;
     return row.right || row.left || null;
   }
-  function scoreFieldRenameCandidate(removedRow, addedRow) {
-    const leftDef = getFieldRowPayload(removedRow);
-    const rightDef = getFieldRowPayload(addedRow);
-    if (!leftDef || !rightDef) return null;
-    if (String(leftDef.type || "") !== String(rightDef.type || "")) return null;
+  function buildFieldRenameProfile(row, cache) {
+    if (cache?.has(row)) return cache.get(row) ?? null;
+    const def = getFieldRowPayload(row);
+    let profile = null;
+    if (def) {
+      const label = normalizeLooseText(def.label || def.name || "");
+      const code = normalizeLooseText(def.code || extractFieldPathInfo(row.path)?.activeCode || "");
+      profile = {
+        type: String(def.type || ""),
+        typeLabel: String(def.type || "-"),
+        exactSig: stableStringify(normalizeFieldDefForRename(def)),
+        coreSig: stableStringify(normalizeFieldDefForRename(def, { dropPresentation: true })),
+        label,
+        labelTokens: new Set(tokenizeLooseText(label)),
+        codeTokens: new Set(tokenizeLooseText(code)),
+        required: def.required,
+        hasLookup: !!def.lookup
+      };
+    }
+    cache?.set(row, profile);
+    return profile;
+  }
+  function scoreFieldRenameCandidate(removedRow, addedRow, cache) {
+    const left = buildFieldRenameProfile(removedRow, cache);
+    const right = buildFieldRenameProfile(addedRow, cache);
+    if (!left || !right) return null;
+    if (left.type !== right.type) return null;
     const reasons = [];
     let score = 0;
-    const exactSigLeft = stableStringify(normalizeFieldDefForRename(leftDef));
-    const exactSigRight = stableStringify(normalizeFieldDefForRename(rightDef));
-    const coreSigLeft = stableStringify(normalizeFieldDefForRename(leftDef, { dropPresentation: true }));
-    const coreSigRight = stableStringify(normalizeFieldDefForRename(rightDef, { dropPresentation: true }));
-    const leftLabel = normalizeLooseText(leftDef.label || leftDef.name || "");
-    const rightLabel = normalizeLooseText(rightDef.label || rightDef.name || "");
-    const leftCode = normalizeLooseText(leftDef.code || extractFieldPathInfo(removedRow.path)?.activeCode || "");
-    const rightCode = normalizeLooseText(rightDef.code || extractFieldPathInfo(addedRow.path)?.activeCode || "");
+    const exactSigLeft = left.exactSig;
+    const exactSigRight = right.exactSig;
+    const coreSigLeft = left.coreSig;
+    const coreSigRight = right.coreSig;
+    const leftLabel = left.label;
+    const rightLabel = right.label;
     let hasStrongMatch = false;
     score += 3;
-    reasons.push(`type:${leftDef.type || "-"}`);
+    reasons.push(`type:${left.typeLabel}`);
     if (exactSigLeft === exactSigRight) {
       score += 6;
       reasons.push("same-structure");
@@ -3249,12 +3811,12 @@ ${contextLine}`);
       score += 3;
       reasons.push("same-label");
       hasStrongMatch = true;
-    } else if (scoreTokenOverlap(leftLabel, rightLabel) >= 0.6) {
+    } else if (scoreTokenSetOverlap(left.labelTokens, right.labelTokens) >= 0.6) {
       score += 1;
       reasons.push("label-similar");
       hasStrongMatch = true;
     }
-    const codeOverlap = scoreTokenOverlap(leftCode, rightCode);
+    const codeOverlap = scoreTokenSetOverlap(left.codeTokens, right.codeTokens);
     if (codeOverlap >= 0.5) {
       score += 1;
       reasons.push("code-similar");
@@ -3264,11 +3826,11 @@ ${contextLine}`);
       reasons.push("code-strong");
       hasStrongMatch = true;
     }
-    if (leftDef.required === rightDef.required) {
+    if (left.required === right.required) {
       score += 1;
       reasons.push("same-required");
     }
-    if (!!leftDef.lookup === !!rightDef.lookup) {
+    if (left.hasLookup === right.hasLookup) {
       score += 1;
       reasons.push("same-lookup");
     }
@@ -3283,9 +3845,10 @@ ${contextLine}`);
     const removedRows = (rows || []).filter((row) => row.sectionKey === "fieldSettings" && row.type === "removed" && extractFieldPathInfo(row.path)?.isFieldRoot);
     const addedRows = (rows || []).filter((row) => row.sectionKey === "fieldSettings" && row.type === "added" && extractFieldPathInfo(row.path)?.isFieldRoot);
     const candidates = [];
+    const profiles = /* @__PURE__ */ new Map();
     removedRows.forEach((removedRow) => {
       addedRows.forEach((addedRow) => {
-        const scored = scoreFieldRenameCandidate(removedRow, addedRow);
+        const scored = scoreFieldRenameCandidate(removedRow, addedRow, profiles);
         if (!scored) return;
         candidates.push({
           removedRow,
@@ -3340,8 +3903,14 @@ ${contextLine}`);
     if (!fieldCode) return;
     if (!index.has(fieldCode)) index.set(fieldCode, []);
     const bucket = index.get(fieldCode);
+    let keys = impactRefKeysByBucket.get(bucket);
+    if (!keys) {
+      keys = new Set(bucket.map(getImpactRefLogicalKey));
+      impactRefKeysByBucket.set(bucket, keys);
+    }
     const sig = getImpactRefLogicalKey(ref);
-    if (bucket.some((item) => getImpactRefLogicalKey(item) === sig)) return;
+    if (keys.has(sig)) return;
+    keys.add(sig);
     bucket.push(ref);
   }
   function collectExpressionFieldRefs(text2, codeSet) {
@@ -3656,7 +4225,17 @@ ${contextLine}`);
     };
     return walk(value);
   }
-  function scoreEntityRenameCandidate(removedRow, addedRow) {
+  function entityRenameSignatures(row, payload, cache) {
+    const cached = cache?.get(row);
+    if (cached) return cached;
+    const sigs = {
+      exactSig: stableStringify(normalizeEntityBodyForRename(payload, row.sectionKey)),
+      coreSig: stableStringify(normalizeEntityBodyForRename(payload, row.sectionKey, true))
+    };
+    cache?.set(row, sigs);
+    return sigs;
+  }
+  function scoreEntityRenameCandidate(removedRow, addedRow, cache) {
     if (removedRow.sectionKey !== addedRow.sectionKey) return null;
     if (removedRow.entityKind !== addedRow.entityKind) return null;
     const left = entityPayload(removedRow);
@@ -3665,11 +4244,8 @@ ${contextLine}`);
     const lType = left.type;
     const rType = right.type;
     if (lType != null && rType != null && String(lType) !== String(rType)) return null;
-    const sectionKey = removedRow.sectionKey;
-    const exactSigLeft = stableStringify(normalizeEntityBodyForRename(left, sectionKey));
-    const exactSigRight = stableStringify(normalizeEntityBodyForRename(right, sectionKey));
-    const coreSigLeft = stableStringify(normalizeEntityBodyForRename(left, sectionKey, true));
-    const coreSigRight = stableStringify(normalizeEntityBodyForRename(right, sectionKey, true));
+    const { exactSig: exactSigLeft, coreSig: coreSigLeft } = entityRenameSignatures(removedRow, left, cache);
+    const { exactSig: exactSigRight, coreSig: coreSigRight } = entityRenameSignatures(addedRow, right, cache);
     const reasons = [];
     let score = 0;
     let strong = false;
@@ -3707,9 +4283,10 @@ ${contextLine}`);
     const addedRows = eligible.filter((r) => r.type === "added");
     if (!removedRows.length || !addedRows.length) return /* @__PURE__ */ new Map();
     const candidates = [];
+    const signatures = /* @__PURE__ */ new Map();
     removedRows.forEach((rr) => {
       addedRows.forEach((ar) => {
-        const scored = scoreEntityRenameCandidate(rr, ar);
+        const scored = scoreEntityRenameCandidate(rr, ar, signatures);
         if (!scored) return;
         candidates.push({ removedRow: rr, addedRow: ar, score: scored.score, matchedBy: scored.matchedBy });
       });
@@ -3773,6 +4350,11 @@ ${contextLine}`);
         return empty;
       }
       case "processSettings": {
+        if (row?._stateRenameNotice) {
+          const from = stateRenameName(row.left, row.renameCandidate?.fromCode);
+          const to = stateRenameName(row.right, row.renameCandidate?.toCode);
+          return { entityKind: "state", entityLabel: `${from} → ${to}`, entityCode: "", propLabel: "ステータス名" };
+        }
         if (tokens[1] === "states" && typeof tokens[2] === "string") {
           return { entityKind: "state", entityLabel: tokens[2], entityCode: tokens[2], propLabel };
         }
@@ -3901,10 +4483,11 @@ ${contextLine}`);
     }
   }
   function buildDiffReasonSummary(row) {
+    if (row._stateRenameNotice && row.reasonSummary) return String(row.reasonSummary);
     const sectionKey = row.sectionKey || "";
     const sectionLabel = SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey || "差分";
     const fieldInfo = extractFieldPathInfo(row.path);
-    const leafKey = normalizeIgnoreToken2(getPathLeafKey(row.path));
+    const leafKey = getPathLeafKey(row.path);
     if (row.moved) {
       const from = Number(row.movedFrom);
       const to = Number(row.movedTo);
@@ -3951,7 +4534,7 @@ ${contextLine}`);
       return `${kindLabel}変更：${entity.entityLabel}`;
     }
     if (entity.entityKind) {
-      const detail = propLabel || (leafKey || "");
+      const detail = propLabel || labelOfProp(leafKey);
       const head = `${kindLabel}「${entity.entityLabel}」`;
       if (row.type === "added") return detail ? `${head} / ${detail} 追加` : `${head} 追加`;
       if (row.type === "removed") return detail ? `${head} / ${detail} 削除` : `${head} 削除`;
@@ -4013,12 +4596,14 @@ ${contextLine}`);
       return next;
     });
   }
-  var RENAMABLE_ENTITY_KINDS, SECTION_PROP_LABELS, ENTITY_KIND_LABELS;
+  var impactRefKeysByBucket, RENAMABLE_ENTITY_KINDS, SECTION_PROP_LABELS, ENTITY_KIND_LABELS;
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      init_label_dict();
+      impactRefKeysByBucket = /* @__PURE__ */ new WeakMap();
       RENAMABLE_ENTITY_KINDS = /* @__PURE__ */ new Set([
         "view",
         "report",
@@ -4171,7 +4756,8 @@ ${contextLine}`);
           scope: "スコープ",
           resources: "リソース",
           _body: "JS/CSS本文",
-          name: "ファイル名"
+          name: "ファイル名",
+          size: "ファイルサイズ"
         },
         pluginSettings: {
           plugins: "プラグイン一覧",
@@ -4259,524 +4845,6 @@ ${contextLine}`);
     }
   });
 
-  // src/kintone-enums.ts
-  function lookupEnum(map, value) {
-    if (value == null || value === "") return "";
-    const key = String(value).trim().toUpperCase();
-    return map[key] || String(value);
-  }
-  function describeReminderOffset(kind, value) {
-    const raw = String(value ?? "").trim();
-    if (!/^[+-]?\d+$/.test(raw)) return null;
-    const n = Number(raw);
-    const unit = kind === "days" ? "日" : "時間";
-    if (n === 0) return kind === "days" ? "当日" : "同時刻";
-    return n < 0 ? `${-n}${unit}前` : `${n}${unit}後`;
-  }
-  function describePeriodicReport(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const report = value;
-    if (typeof report.active !== "boolean" && !report.period) return null;
-    const period = report.period && typeof report.period === "object" ? report.period : {};
-    const schedule = [
-      lookupEnum(PERIODIC_REPORT_EVERY_JP, period.every),
-      period.month != null && period.month !== "" ? `${period.month}月` : "",
-      period.dayOfMonth != null && period.dayOfMonth !== "" ? `${period.dayOfMonth}日` : "",
-      lookupEnum(DAY_OF_WEEK_JP, period.dayOfWeek),
-      period.time != null && period.time !== "" ? String(period.time) : ""
-    ].filter(Boolean).join(" ");
-    const state3 = report.active === false ? "無効" : "有効";
-    return schedule ? `${state3}（${schedule}）` : state3;
-  }
-  var ENTITY_TYPE_JP, VIEW_TYPE_JP, VIEW_BUILTIN_TYPE_JP, VIEW_DEVICE_JP, PAGINATION_TYPE_JP, CHART_TYPE_JP, CHART_MODE_JP, AGGREGATION_TYPE_JP, GROUP_PER_JP, REPORT_SORT_BY_JP, REPORT_SORT_ORDER_JP, PERIODIC_REPORT_EVERY_JP, DAY_OF_WEEK_JP, PROCESS_ASSIGNEE_TYPE_JP, NOTIFICATION_TIMING_JP, RESOURCE_TYPE_JP, CUSTOMIZE_SCOPE_JP, ICON_TYPE_JP, APP_THEME_JP, TITLE_SELECTION_JP, ROUNDING_MODE_JP, NUMBER_FORMAT_JP, ALIGN_JP, UNIT_POSITION_JP, LINK_PROTOCOL_JP;
-  var init_kintone_enums = __esm({
-    "src/kintone-enums.ts"() {
-      "use strict";
-      ENTITY_TYPE_JP = {
-        USER: "ユーザー",
-        GROUP: "グループ",
-        ORGANIZATION: "組織",
-        FIELD_ENTITY: "フィールド値",
-        CREATOR: "作成者",
-        MODIFIER: "更新者",
-        LOGIN_USER: "ログインユーザー",
-        ALL: "全員",
-        CUSTOM_FIELD: "カスタムフィールド"
-      };
-      VIEW_TYPE_JP = {
-        LIST: "表形式",
-        CALENDAR: "カレンダー形式",
-        CUSTOM: "カスタマイズ"
-      };
-      VIEW_BUILTIN_TYPE_JP = {
-        ASSIGNEE: "作業者ビュー",
-        UNDONE: "未完了レコード",
-        ACTIVE_BY_USER: "自分が処理すべきレコード",
-        RECORDS_OF_USER: "自分が関わるレコード"
-      };
-      VIEW_DEVICE_JP = {
-        ANY: "PC・モバイル両方",
-        DESKTOP: "PC版のみ"
-      };
-      PAGINATION_TYPE_JP = {
-        ROW: "行ページャ",
-        PAGE: "ページ番号"
-      };
-      CHART_TYPE_JP = {
-        BAR: "横棒グラフ",
-        COLUMN: "縦棒グラフ",
-        LINE: "折れ線グラフ",
-        PIE: "円グラフ",
-        PIVOT_TABLE: "クロス集計表",
-        TABLE: "表",
-        AREA: "面グラフ",
-        SPLINE: "曲線グラフ",
-        SPLINE_AREA: "曲線面グラフ",
-        SCATTER: "散布図"
-      };
-      CHART_MODE_JP = {
-        NORMAL: "通常",
-        STACKED: "積み上げ",
-        PERCENTAGE: "100%積み上げ"
-      };
-      AGGREGATION_TYPE_JP = {
-        COUNT: "レコード数",
-        SUM: "合計",
-        AVG: "平均",
-        MAX: "最大値",
-        MIN: "最小値"
-      };
-      GROUP_PER_JP = {
-        YEAR: "年",
-        QUARTER: "四半期",
-        MONTH: "月",
-        WEEK: "週",
-        DAY: "日",
-        HOUR: "時",
-        MINUTE: "分"
-      };
-      REPORT_SORT_BY_JP = {
-        TOTAL: "集計値",
-        GROUP1: "分類1",
-        GROUP2: "分類2",
-        GROUP3: "分類3"
-      };
-      REPORT_SORT_ORDER_JP = {
-        ASC: "小さい順",
-        DESC: "大きい順"
-      };
-      PERIODIC_REPORT_EVERY_JP = {
-        YEAR: "毎年",
-        QUARTER: "四半期ごと",
-        MONTH: "毎月",
-        WEEK: "毎週",
-        DAY: "毎日",
-        HOUR: "毎時"
-      };
-      DAY_OF_WEEK_JP = {
-        SUNDAY: "日曜日",
-        MONDAY: "月曜日",
-        TUESDAY: "火曜日",
-        WEDNESDAY: "水曜日",
-        THURSDAY: "木曜日",
-        FRIDAY: "金曜日",
-        SATURDAY: "土曜日"
-      };
-      PROCESS_ASSIGNEE_TYPE_JP = {
-        ONE: "候補から作業者を1人選ぶ",
-        ANY: "候補のうち誰か1人が作業する",
-        ANYONE: "候補のうち誰か1人が作業する",
-        ALL: "候補の全員が作業する"
-      };
-      NOTIFICATION_TIMING_JP = {
-        CREATION: "レコード作成時",
-        DAYS_OF_WEEK: "曜日指定",
-        TIME: "時刻指定",
-        WEEKLY: "毎週",
-        MONTHLY: "毎月"
-      };
-      RESOURCE_TYPE_JP = {
-        URL: "URL指定",
-        FILE: "ファイル指定"
-      };
-      CUSTOMIZE_SCOPE_JP = {
-        ALL: "全ユーザー",
-        ADMIN: "管理者のみ",
-        NONE: "無効"
-      };
-      ICON_TYPE_JP = {
-        PRESET: "プリセット",
-        FILE: "アップロードファイル"
-      };
-      APP_THEME_JP = {
-        WHITE: "ホワイト",
-        RED: "レッド",
-        BLUE: "ブルー",
-        GREEN: "グリーン",
-        YELLOW: "イエロー",
-        BLACK: "ブラック",
-        CLIPBOARD: "クリップボード",
-        BINDER: "バインダー",
-        PENCIL: "ペンシル",
-        CLIPS: "クリップ"
-      };
-      TITLE_SELECTION_JP = {
-        AUTO: "自動選択",
-        MANUAL: "手動指定"
-      };
-      ROUNDING_MODE_JP = {
-        HALF_EVEN: "四捨五入（偶数丸め）",
-        UP: "切り上げ",
-        DOWN: "切り捨て"
-      };
-      NUMBER_FORMAT_JP = {
-        NUMBER: "数値",
-        NUMBER_DIGIT: "数値（桁区切り）",
-        PERCENT: "パーセント",
-        CURRENCY: "通貨",
-        DATE: "日付",
-        TIME: "時刻",
-        DATETIME: "日時",
-        HOUR_MINUTE: "時:分",
-        HOUR_MINUTE_SECOND: "時:分:秒"
-      };
-      ALIGN_JP = {
-        HORIZONTAL: "横並び",
-        VERTICAL: "縦並び"
-      };
-      UNIT_POSITION_JP = {
-        BEFORE: "前につける",
-        AFTER: "後につける"
-      };
-      LINK_PROTOCOL_JP = {
-        WEB: "Webサイトのアドレス",
-        CALL: "電話番号",
-        MAIL: "メールアドレス"
-      };
-    }
-  });
-
-  // src/diff/label-dict.ts
-  function labelOfProp(key) {
-    if (!key) return "";
-    return PROP_LABELS[key]?.label || String(key);
-  }
-  function iconOfProp(key) {
-    if (!key) return "";
-    return PROP_LABELS[key]?.icon || "";
-  }
-  function labelOfValue(scope, value) {
-    if (value == null) return null;
-    const dict = VALUE_LABELS[scope];
-    if (!dict) return null;
-    return dict[String(value)] || null;
-  }
-  function labelOfSection(sectionKey) {
-    if (!sectionKey) return { label: "-", icon: "" };
-    return SECTION_LABELS[sectionKey] || { label: String(sectionKey), icon: "" };
-  }
-  function labelOfBool(value, propKey) {
-    if (propKey && PERMISSION_KEYS.has(propKey)) {
-      return value ? "許可" : "不許可";
-    }
-    if (propKey === "enable" || propKey === "enabled" || propKey === "active") {
-      return value ? "有効" : "無効";
-    }
-    if (propKey === "pager") {
-      return value ? "表示する" : "表示しない";
-    }
-    if (propKey === "notifyToCommenter" || propKey === "notifyToMentioned" || propKey === "notifyOnUpdate") {
-      return value ? "通知する" : "通知しない";
-    }
-    return value ? "はい" : "いいえ";
-  }
-  function formatEntityText(entity, options = {}) {
-    if (!entity || typeof entity !== "object") return "";
-    const type = String(entity.type || "");
-    const code = String(entity.code || entity.login || entity.id || "");
-    const name = String(entity.name || "");
-    const functionLabel = type.toUpperCase() === "FUNCTION" ? {
-      "LOGINUSER()": "ログインユーザー",
-      "PRIMARY_ORGANIZATION()": "優先する組織"
-    }[code.trim().toUpperCase()] : "";
-    if (functionLabel && !name) return functionLabel;
-    const typed = VALUE_LABELS["entity.type"]?.[type] || (type ? `· ${type}` : "·");
-    const display = name || code || "(未設定)";
-    if (options.compact) return `${typed} ${display}`;
-    if (name && code && name !== code) return `${typed} ${name} (${code})`;
-    return `${typed} ${display}`;
-  }
-  var VALUE_LABELS, PROP_LABELS, SECTION_LABELS, PERMISSION_KEYS;
-  var init_label_dict = __esm({
-    "src/diff/label-dict.ts"() {
-      "use strict";
-      init_kintone_enums();
-      VALUE_LABELS = {
-        // entity.type
-        "entity.type": {
-          USER: "👤 ユーザー",
-          GROUP: "👥 グループ",
-          ORGANIZATION: "🏢 部署",
-          DEPARTMENT: "🏢 部署",
-          DEPT: "🏢 部署",
-          CREATOR: "✏️ 作成者",
-          MODIFIER: "✏️ 更新者",
-          FUNCTION: "⚙ 関数",
-          LOGIN_USER: "👤 ログインユーザー",
-          ALL: "🌐 全員",
-          FIELD_ENTITY: "🔗 フィールド",
-          EVERYONE: "🌐 全員",
-          CUSTOM_FIELD: "🔗 ユーザー選択フィールド"
-        },
-        // field acl level
-        accessibility: {
-          NONE: "不可",
-          READ: "閲覧のみ",
-          WRITE: "閲覧・編集可",
-          READ_WRITE: "閲覧・編集可"
-        },
-        // 一覧の表示形式（kintone の一覧設定画面の選択肢名）
-        "view.type": {
-          LIST: "表形式",
-          CALENDAR: "カレンダー形式",
-          CUSTOM: "カスタマイズ"
-        },
-        // グラフ種別（kintone のグラフ設定画面の名称）
-        "chart.type": {
-          BAR: "横棒グラフ",
-          COLUMN: "縦棒グラフ",
-          PIE: "円グラフ",
-          LINE: "折れ線グラフ",
-          PIVOT_TABLE: "クロス集計表",
-          TABLE: "表",
-          AREA: "面グラフ",
-          AREA_STACKED: "積み上げ面グラフ",
-          SPLINE: "曲線グラフ",
-          SPLINE_AREA: "曲線面グラフ",
-          BUBBLE: "バブル",
-          BAR_STACKED: "積み上げ横棒",
-          FUNNEL: "ファネル"
-        },
-        // ページ送り
-        paginationStyle: {
-          NORMAL: "通常",
-          NUMBER: "ページ番号",
-          INFINITE: "無限スクロール"
-        },
-        // 通知トリガ
-        recordTrigger: {
-          APP: "アプリ全体",
-          RECORD: "レコード単位"
-        },
-        // アプリアクションのフィールド関連付けのコピー元／コピー先の種類
-        // （actionSettings 文脈で参照。表記は xlsx 出力の customerTypeLabel と揃える）
-        srcType: {
-          FIELD: "フィールド",
-          RECORD_URL: "レコードのURL"
-        },
-        destType: {
-          FIELD: "フィールド",
-          RECORD_URL: "レコードのURL"
-        },
-        // ここから下はセクション文脈込みで参照するスコープ（path-decoder が
-        // sectionKey を見て選択する）。kintone-enums の共通辞書を単一ソースとする。
-        "assignee.type": PROCESS_ASSIGNEE_TYPE_JP,
-        "icon.type": ICON_TYPE_JP,
-        "aggregation.type": AGGREGATION_TYPE_JP,
-        "resource.type": RESOURCE_TYPE_JP,
-        builtinType: VIEW_BUILTIN_TYPE_JP,
-        device: VIEW_DEVICE_JP,
-        chartMode: CHART_MODE_JP,
-        scope: CUSTOMIZE_SCOPE_JP,
-        theme: APP_THEME_JP,
-        selectionMode: TITLE_SELECTION_JP,
-        roundingMode: ROUNDING_MODE_JP,
-        per: GROUP_PER_JP,
-        by: REPORT_SORT_BY_JP,
-        order: REPORT_SORT_ORDER_JP,
-        every: PERIODIC_REPORT_EVERY_JP,
-        dayOfWeek: DAY_OF_WEEK_JP
-      };
-      PROP_LABELS = {
-        // appAcl 操作権限（kintone のアクセス権設定画面の列名）
-        appEditable: { label: "アプリ管理", icon: "⚙" },
-        recordViewable: { label: "レコード閲覧", icon: "👁" },
-        recordAddable: { label: "レコード追加", icon: "➕" },
-        recordEditable: { label: "レコード編集", icon: "✏️" },
-        recordDeletable: { label: "レコード削除", icon: "🗑" },
-        recordImportable: { label: "ファイル読み込み", icon: "📥" },
-        recordExportable: { label: "ファイル書き出し", icon: "📤" },
-        // recordPermissions の権限
-        viewable: { label: "閲覧", icon: "👁" },
-        editable: { label: "編集", icon: "✏️" },
-        deletable: { label: "削除", icon: "🗑" },
-        // 共通
-        filterCond: { label: "絞込条件", icon: "🔍" },
-        includeSubs: { label: "配下を含む" },
-        entities: { label: "エンティティ" },
-        entity: { label: "対象" },
-        rights: { label: "権限エントリー" },
-        accessibility: { label: "アクセス権" },
-        // viewSettings（kintone の一覧設定画面の項目名）
-        fields: { label: "表示するフィールド", icon: "📋" },
-        sort: { label: "ソート", icon: "↕" },
-        index: { label: "表示順", icon: "🔢" },
-        paginationStyle: { label: "ページ送り", icon: "📄" },
-        defaultView: { label: "既定ビュー" },
-        view: { label: "ビュー" },
-        views: { label: "ビュー一覧" },
-        builtinType: { label: "標準一覧の種類" },
-        device: { label: "表示するデバイス" },
-        pager: { label: "ページ送りの表示" },
-        date: { label: "日付の基準フィールド" },
-        // reportSettings（kintone のグラフ設定画面の項目名）
-        groups: { label: "分類", icon: "📊" },
-        aggregations: { label: "集計", icon: "🧮" },
-        chartType: { label: "グラフ種別" },
-        chartMode: { label: "モード" },
-        reports: { label: "グラフ一覧" },
-        periodicReports: { label: "定期レポート" },
-        periodicReport: { label: "定期レポート" },
-        period: { label: "実行スケジュール" },
-        every: { label: "間隔" },
-        dayOfWeek: { label: "曜日" },
-        dayOfMonth: { label: "日" },
-        per: { label: "分類の時間単位" },
-        by: { label: "ソートの基準" },
-        order: { label: "ソートの順序" },
-        active: { label: "有効状態" },
-        // notifications（kintone の通知設定画面の項目名）
-        recordAdded: { label: "レコードの追加" },
-        recordEdited: { label: "レコードの編集" },
-        commentAdded: { label: "コメントの書き込み" },
-        statusChanged: { label: "ステータスの更新" },
-        fileImported: { label: "ファイルの読み込み" },
-        recipients: { label: "通知先" },
-        targets: { label: "通知先" },
-        notifications: { label: "通知ルール" },
-        timing: { label: "通知するタイミング" },
-        daysLater: { label: "通知する日" },
-        hoursLater: { label: "通知する時間" },
-        time: { label: "時刻" },
-        notifyToCommenter: { label: "コメントを書き込んだユーザーへの通知" },
-        notifyToMentioned: { label: "コメントの宛先ユーザーへの通知" },
-        notifyOnUpdate: { label: "更新時に通知" },
-        timezone: { label: "タイムゾーン" },
-        perRecordNotifications: { label: "レコード条件通知" },
-        reminderNotifications: { label: "リマインダー通知" },
-        title: { label: "タイトル" },
-        body: { label: "本文" },
-        // processSettings（kintone のプロセス管理設定画面の項目名）
-        enable: { label: "プロセス管理の有効化" },
-        states: { label: "ステータス" },
-        actions: { label: "アクション" },
-        from: { label: "実行前のステータス" },
-        to: { label: "実行後のステータス" },
-        assignee: { label: "作業者" },
-        type: { label: "種別" },
-        settings: { label: "設定" },
-        // actionSettings（kintone API の mappings[] キーは srcField/srcType/destField。
-        // sourceField は旧形式データの別名。xlsx 出力の「コピー元/コピー先」表記に揃える）
-        app: { label: "対象アプリ" },
-        mappings: { label: "フィールド対応" },
-        srcField: { label: "コピー元フィールド" },
-        sourceField: { label: "コピー元フィールド" },
-        srcType: { label: "コピー元の種類" },
-        destField: { label: "コピー先フィールド" },
-        destType: { label: "コピー先の種類" },
-        destApp: { label: "先アプリ" },
-        // customizeSettings
-        desktop: { label: "デスクトップ" },
-        mobile: { label: "モバイル" },
-        js: { label: "JS" },
-        css: { label: "CSS" },
-        file: { label: "ファイル" },
-        scope: { label: "適用範囲" },
-        url: { label: "URL" },
-        // pluginSettings
-        plugins: { label: "プラグイン一覧" },
-        version: { label: "バージョン" },
-        id: { label: "ID" },
-        enabled: { label: "有効状態" },
-        // appSettings / appInfo（kintone のアプリ設定画面の項目名）
-        name: { label: "名前" },
-        description: { label: "説明" },
-        theme: { label: "デザインテーマ" },
-        titleField: { label: "レコードのタイトル" },
-        selectionMode: { label: "選択方法" },
-        icon: { label: "アイコン" },
-        enableThumbnails: { label: "サムネイルの表示" },
-        enableBulkDeletion: { label: "レコードの一括削除" },
-        enableComments: { label: "レコードのコメント機能" },
-        enableDuplicateRecord: { label: "レコードの再利用" },
-        enableInlineRecordEditing: { label: "一覧でのレコードのインライン編集" },
-        numberPrecision: { label: "数値や計算の精度" },
-        digits: { label: "全体の桁数" },
-        decimalPlaces: { label: "小数部の桁数" },
-        roundingMode: { label: "数値の丸めかた" },
-        firstMonthOfFiscalYear: { label: "第1四半期の開始月" },
-        appId: { label: "アプリID" },
-        spaceId: { label: "スペースID" },
-        threadId: { label: "スレッドID" },
-        code: { label: "コード" },
-        label: { label: "ラベル" },
-        // categories
-        categories: { label: "カテゴリ" },
-        // layoutSettings
-        layout: { label: "レイアウト" },
-        row: { label: "行" },
-        width: { label: "横幅" },
-        height: { label: "高さ" },
-        innerHeight: { label: "入力欄の高さ" },
-        // fieldSettings: 関連レコード一覧（referenceTable）/ ルックアップ（lookup）
-        // kintone のフィールド設定画面の項目名に合わせる。
-        referenceTable: { label: "関連レコード一覧設定" },
-        lookup: { label: "ルックアップ設定" },
-        condition: { label: "表示するレコードの条件" },
-        displayFields: { label: "表示するフィールド" },
-        relatedApp: { label: "参照するアプリ" },
-        relatedField: { label: "参照するアプリのフィールド" },
-        relatedKeyField: { label: "コピー元のフィールド" },
-        fieldMappings: { label: "ほかのフィールドのコピー" },
-        lookupPickerFields: { label: "コピー元のレコード選択時に表示するフィールド" },
-        size: { label: "一度に表示する最大レコード数" }
-      };
-      SECTION_LABELS = {
-        appAcl: { label: "アプリ権限", icon: "🔐" },
-        fieldAcl: { label: "フィールド権限", icon: "🔐" },
-        recordPermissions: { label: "レコード権限", icon: "🔐" },
-        notifications: { label: "通知", icon: "🔔" },
-        perRecordNotifications: { label: "レコード条件通知", icon: "🔔" },
-        reminderNotifications: { label: "リマインダー通知", icon: "🔔" },
-        viewSettings: { label: "ビュー設定", icon: "📊" },
-        reportSettings: { label: "グラフ設定", icon: "📈" },
-        processSettings: { label: "プロセス管理", icon: "🔁" },
-        actionSettings: { label: "アクション設定", icon: "⚡" },
-        customizeSettings: { label: "JS/CSS設定", icon: "🧪" },
-        pluginSettings: { label: "プラグイン", icon: "🧩" },
-        appSettings: { label: "アプリ設定", icon: "⚙" },
-        appInfo: { label: "アプリ情報", icon: "ℹ️" },
-        formSettings: { label: "フォーム設定", icon: "📝" },
-        fieldSettings: { label: "フィールド設定", icon: "🔤" },
-        layoutSettings: { label: "レイアウト設定", icon: "🧩" },
-        categories: { label: "カテゴリ設定", icon: "🗂" }
-      };
-      PERMISSION_KEYS = /* @__PURE__ */ new Set([
-        "appEditable",
-        "recordViewable",
-        "recordAddable",
-        "recordEditable",
-        "recordDeletable",
-        "recordImportable",
-        "recordExportable",
-        "viewable",
-        "editable",
-        "deletable",
-        "includeSubs"
-      ]);
-    }
-  });
-
   // src/diff/path-decoder.ts
   function isSemanticSection(sectionKey) {
     return !!sectionKey && SEMANTIC_SECTIONS.has(sectionKey);
@@ -4794,6 +4862,9 @@ ${contextLine}`);
   }
   function isIndex(token) {
     return typeof token === "number";
+  }
+  function propLabelIn(sectionKey, key) {
+    return SECTION_PROP_LABEL_OVERRIDES[sectionKey]?.[key] || labelOfProp(key);
   }
   function scopedEnumLabel(sectionKey, propKey, value) {
     if (propKey === "type") {
@@ -4838,7 +4909,7 @@ ${contextLine}`);
       if (value[0] && typeof value[0] === "object" && (value[0].entity || value[0].type)) {
         const compact = value.length > 4;
         const items = value.slice(0, 8).map((v) => {
-          const ent = v.entity || (v.type ? v : null);
+          const ent = v?.entity || (v?.type ? v : null);
           if (ent) return formatEntityText(ent, { compact });
           return safeStringify(v);
         });
@@ -4882,7 +4953,7 @@ ${contextLine}`);
       const v = obj[key];
       if (v === null || v === void 0) continue;
       if (typeof v === "object" && depth >= 1) continue;
-      lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
+      lines.push(`${propLabelIn(sectionKey, key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
       n++;
     }
     const remaining = Object.keys(obj).filter((k) => !SUMMARY_KEYS_PRIORITY.includes(k));
@@ -4891,10 +4962,10 @@ ${contextLine}`);
       const v = obj[key];
       if (v === null || v === void 0) continue;
       if (Array.isArray(v)) {
-        lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
+        lines.push(`${propLabelIn(sectionKey, key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
         n++;
       } else if (typeof v !== "object") {
-        lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
+        lines.push(`${propLabelIn(sectionKey, key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
         n++;
       }
     }
@@ -5018,13 +5089,14 @@ ${contextLine}`);
     const sect = labelOfSection(row.sectionKey);
     const ctx = parsePath(row.sectionKey, String(row.path || ""));
     const whereChips = buildWhereChips(row, ctx);
-    const leaf = ctx.leafKey && ctx.leafKey !== row.sectionKey && ctx.leafKey !== ctx.arrayBucketKey ? ctx.leafKey : "";
-    const propLabel = leaf ? labelOfProp(leaf) : "";
+    const isStateRename = row._stateRenameNotice === true;
+    const leaf = !isStateRename && ctx.leafKey && ctx.leafKey !== row.sectionKey && ctx.leafKey !== ctx.arrayBucketKey ? ctx.leafKey : "";
+    const propLabel = isStateRename ? "ステータス名" : leaf ? propLabelIn(String(row.sectionKey || ""), leaf) : "";
     const propIcon = leaf ? iconOfProp(leaf) : "";
     const propKey = leaf || ctx.arrayBucketKey || "";
     const sectionKey = String(row.sectionKey || "");
-    const beforeText = row.type === "added" ? "（なし）" : valueToText(row.left, propKey, 0, sectionKey);
-    const afterText = row.type === "removed" ? "（なし）" : valueToText(row.right, propKey, 0, sectionKey);
+    const beforeText = isStateRename ? stateRenameName(row.left, row.renameCandidate?.fromCode) : row.type === "added" ? "（なし）" : valueToText(row.left, propKey, 0, sectionKey);
+    const afterText = isStateRename ? stateRenameName(row.right, row.renameCandidate?.toCode) : row.type === "removed" ? "（なし）" : valueToText(row.right, propKey, 0, sectionKey);
     const oneLineSummary = buildOneLineSummary(row, propLabel, beforeText, afterText);
     const searchableTokens = [
       sect.label,
@@ -5056,7 +5128,7 @@ ${contextLine}`);
     if (row.type === "same") return propLabel ? `${propLabel}: 同一` : "同一";
     return propLabel ? `${propLabel}: ${shortLeft} → ${shortRight}` : `${shortLeft} → ${shortRight}`;
   }
-  var SEMANTIC_SECTIONS, TYPE_SCOPE_BY_SECTION, SCOPED_ENUM_SECTIONS, SUMMARY_KEYS_PRIORITY;
+  var SEMANTIC_SECTIONS, SECTION_PROP_LABEL_OVERRIDES, TYPE_SCOPE_BY_SECTION, SCOPED_ENUM_SECTIONS, SUMMARY_KEYS_PRIORITY;
   var init_path_decoder = __esm({
     "src/diff/path-decoder.ts"() {
       "use strict";
@@ -5080,6 +5152,10 @@ ${contextLine}`);
         "formSettings",
         "categories"
       ]);
+      SECTION_PROP_LABEL_OVERRIDES = {
+        customizeSettings: { size: "ファイルサイズ", _body: "ファイル本文" },
+        categories: { enable: "カテゴリ管理の有効化" }
+      };
       TYPE_SCOPE_BY_SECTION = {
         processSettings: "assignee.type",
         appSettings: "icon.type",
@@ -5838,7 +5914,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       (preset) => `<label class="chk adv-chk${preset.applied ? " is-baked" : ""}"${preset.applied ? ' title="比較時に適用済みです（該当行はレポートに含まれていません）"' : ""}><input type="checkbox" data-preset-toggle="${esc(preset.key)}"${preset.applied ? " checked disabled" : ""}> ${esc(preset.label)}を無視${preset.applied ? '<span class="adv-baked-tag">適用済</span>' : ""}</label>`
     ).join("");
     const appliedIgnoreTokens = [...new Set(String(reportMeta.ignoreKeys || "").split(/[\n\r,、，;；]+/).map((token) => token.trim()).filter(Boolean))];
-    const appliedIgnoreSummary = appliedIgnoreTokens.length ? `比較時の無視キー ${appliedIgnoreTokens.length}件: ${appliedIgnoreTokens.join("、")}` : "比較時の無視キー 0件（なし）";
+    const appliedIgnoreSummary = appliedIgnoreTokens.length ? `比較時の無視キー ${appliedIgnoreTokens.length}件: ${appliedIgnoreTokens.map(formatIgnoreRuleForDisplay).join("、")}` : "比較時の無視キー 0件（なし）";
     const appliedNormalizationSummary = reportMeta.normalizationLabels.length ? `比較時の正規化 ${reportMeta.normalizationLabels.length}件: ${reportMeta.normalizationLabels.join("、")}` : "比較時の正規化 0件（なし）";
     const contentDisclosureHtml = includesComparedContent ? `<div class="report-content-disclosure report-content-disclosure--caution" data-content-disclosure="withCompared" role="note" aria-label="収録内容と反映方向"><strong>取扱注意: 比較設定込み</strong><span>比較設定・フィールド詳細・設定証跡JSONを収録しています。反映JSONは、比較元の設定値で比較先を上書きする方向です。${canBuildReflectJson ? "" : `反映JSONは利用できません。${esc(reflectJsonBlockedReason)}`}</span></div>` : '<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note" aria-label="収録内容の注意"><strong>差分行のみ（全設定は未収録）</strong><span>全設定スナップショットは収録していませんが、変更された差分行の比較元・比較先の値は収録しています。Excelにも同じ差分値が収録され、取得不完全時はエラー等の原文も含まれるため、共有前に内容を確認してください。</span></div>';
     const stateRenameSafetyNoticeHtml = !stateRenameNoticeCount ? "" : visibleStateRenameNoticeCount === stateRenameNoticeCount ? `<div class="warn">ℹ プロセスの状態名変更が ${stateRenameNoticeCount} 件あります。変更件数に含めていますが、プロセス管理はセクション全体を置き換えるAPIのため、このレポートでは反映JSON全体を無効にしています。管理画面で手動確認してください。</div>` : `<div class="warn">ℹ 比較設定全体でプロセスの状態名変更を ${stateRenameNoticeCount} 件検出しました。この出力範囲には ${visibleStateRenameNoticeCount} 件を収録しているため、画面の変更件数は出力範囲に含まれる改名だけを数えています。プロセス管理はセクション全体を置き換えるAPIのため、このレポートでは反映JSON全体を無効にしています。管理画面で手動確認してください。</div>`;
@@ -11122,7 +11198,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .report-fact-grid span{align-self:center;color:var(--fg);font-size:12px;font-weight:750;line-height:1.5}
     .report-fact-grid strong{grid-row:1/3;grid-column:2;align-self:center;font-size:24px;font-variant-numeric:tabular-nums}
     .report-fact-grid small{color:var(--muted);font-size:11px;line-height:1.5}
-    .report-meta-line{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;line-height:1.5}
+    .report-meta-line{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;min-width:0;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;line-height:1.5}
+    .report-meta-line>span{min-width:0;overflow-wrap:anywhere}
     .report-workspace{display:grid;grid-template-columns:minmax(248px,282px) minmax(0,1fr);align-items:start;gap:16px;margin-top:16px;margin-bottom:36px}
     .report-workspace>aside{position:sticky;top:12px;width:auto;min-width:0;height:calc(100vh - 24px);max-height:calc(100vh - 24px);border:1px solid var(--border);border-radius:16px;background:var(--sidebar);overflow:auto;box-shadow:none;backdrop-filter:none}
     .report-workspace>main{min-width:0;padding:0;overflow:visible}
@@ -11418,7 +11495,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
         <p class="adv-note">出力前と同じ条件をこのレポート上でも選択できます。比較のやり直しは行わず、該当する差分行を表示から除外します。</p>
         <span class="field-label">無視キー（追加）</span>
         <textarea id="extraIgnoreKeys" class="adv-textarea" rows="2" placeholder="無視キー（カンマ区切り）" aria-label="追加の無視キー"></textarea>
-        ${reportMeta.ignoreKeys ? `<p class="adv-baked">比較時に適用済みの無視キー: ${esc(reportMeta.ignoreKeys)}</p>` : ""}
+        ${reportMeta.ignoreKeys ? `<p class="adv-baked">比較時に適用済みの無視キー: ${esc(formatIgnoreRulesTextForDisplay(reportMeta.ignoreKeys))}</p>` : ""}
         <div class="adv-checks">
           ${advPresetChecksHtml}
         </div>
@@ -18879,6 +18956,7 @@ ${item.target}` : item.target;
 
   // src/entries/diff-lite-ui.ts
   init_path_decoder();
+  init_enrich();
   init_utils();
 
   // src/tabs/diff-export-standalone.ts
@@ -19750,6 +19828,8 @@ ${item.target}` : item.target;
     const sourceAppId = String(options.sourceAppId || "").trim();
     if (!options.hasImportedSource && !sourceAppId) return "比較元アプリIDを入力してください";
     if (sourceAppId && !/^[1-9]\d*$/.test(sourceAppId)) return "比較元アプリIDには正の整数を入力してください";
+    const sourceGuestId = String(options.sourceGuestId || "").trim();
+    if (sourceGuestId && !/^\d+$/.test(sourceGuestId)) return "比較元ゲストIDは半角数字で入力してください";
     if (options.targets !== void 0) {
       for (const t of options.targets) {
         const rowNum = Number.isInteger(t.rowNumber) ? t.rowNumber : "?";
@@ -19779,12 +19859,24 @@ ${item.target}` : item.target;
       const targetAppId = String(options.targetAppId || "").trim();
       if (!options.hasImportedTarget && !targetAppId) return "比較先アプリIDを入力してください";
       if (targetAppId && !/^[1-9]\d*$/.test(targetAppId)) return "比較先アプリIDには正の整数を入力してください";
+      const targetGuestId = String(options.targetGuestId || "").trim();
+      if (targetGuestId && !/^\d+$/.test(targetGuestId)) return "比較先ゲストIDは半角数字で入力してください";
     }
     const positionalRuleCount = summarizeLiteIgnoreRules(options.ignoreKeys || "").positionalRules;
     if (positionalRuleCount) {
       return `配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`;
     }
     return "";
+  }
+  function mergePastedTargetAppIds(current, selectionStart, selectionEnd, pasted) {
+    const tokens = String(pasted || "").split(/[,、\s]+/).filter(Boolean);
+    if (tokens.length <= 1) return { merged: current, splits: false };
+    const value = String(current || "");
+    const start = Math.min(Math.max(0, selectionStart ?? value.length), value.length);
+    const end = Math.min(Math.max(start, selectionEnd ?? start), value.length);
+    const before = value.slice(0, start).replace(/[,、\s]+$/, "").trim();
+    const after = value.slice(end).replace(/^[,、\s]+/, "").trim();
+    return { merged: [before, tokens.join(","), after].filter(Boolean).join(","), splits: true };
   }
   var SCOPE_OPTS = buildLiteDiffScopeOptions();
   var TYPE_LABEL = { added: "追加", removed: "削除", changed: "変更", moved: "移動", same: "同一" };
@@ -20398,7 +20490,39 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       contextualRules: unique.filter((token) => isPathRule(token) || decodeExactIgnorePathRule(token) == null && token.includes("*")).length
     };
   }
-  function rowDisplayIdentity(row, decoded) {
+  function buildLiteFieldLabelMap(...bundles) {
+    const labels = /* @__PURE__ */ new Map();
+    for (const bundle of bundles) {
+      const properties = bundle?.sections?.fieldSettings?.properties || bundle?.sections?.fieldSettings;
+      const definitions = collectFieldDefinitions(properties && typeof properties === "object" ? properties : {});
+      for (const [code, definition] of Object.entries(definitions)) {
+        const label = stripHtmlToText(definition?.label).replace(/\s+/g, " ").trim();
+        if (label) labels.set(code, label.length > 40 ? `${label.slice(0, 39)}…` : label);
+      }
+    }
+    return labels;
+  }
+  var fieldLabelMapCache = /* @__PURE__ */ new WeakMap();
+  function fieldLabelsFor(cacheValue) {
+    if (!cacheValue) return void 0;
+    let labels = fieldLabelMapCache.get(cacheValue);
+    if (!labels) {
+      labels = buildLiteFieldLabelMap(cacheValue.sourceBundle, cacheValue.targetBundle);
+      fieldLabelMapCache.set(cacheValue, labels);
+    }
+    return labels;
+  }
+  function fieldRowIdentityText(row, fieldLabels) {
+    if (row.sectionKey !== "fieldSettings") return "";
+    const info = extractFieldPathInfo(row.path);
+    if (!info) return "";
+    const payload = getFieldRowPayload(row);
+    const payloadLabel = payload && typeof payload === "object" && typeof payload.label === "string" ? stripHtmlToText(payload.label).replace(/\s+/g, " ").trim() : "";
+    const label = fieldLabels?.get(info.activeCode) || payloadLabel;
+    const field = label && label !== info.activeCode ? `${label}（${info.activeCode}）` : info.activeCode;
+    return info.isSubField ? `テーブル「${info.rootCode}」内の ${field}` : field;
+  }
+  function rowDisplayIdentity(row, decoded, fieldLabels) {
     const path = String(row.path || "").trim();
     const semanticTitle = String(decoded?.oneLineSummary || decoded?.propLabel || "").trim();
     const reason = String(row.reasonSummary || "").trim();
@@ -20422,7 +20546,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     };
     const sectionLabel = SECTION_DEFS.find((definition) => definition.key === row.sectionKey)?.label || row.section || "設定";
     const fallbackTitle = label && label !== path ? label : `${sectionLabel}の${leafLabels[leaf] || (leaf ? `「${leaf}」` : "設定項目")}`;
-    const title = semanticTitle || reason || fallbackTitle;
+    const baseTitle = semanticTitle || reason || fallbackTitle;
+    const fieldText = decoded ? "" : fieldRowIdentityText(row, fieldLabels);
+    const title = fieldText ? `${fieldText} · ${baseTitle}` : baseTitle;
     const subtitleCandidates = [
       semanticTitle && reason !== semanticTitle ? reason : "",
       label && label !== path && label !== title ? label : ""
@@ -20608,7 +20734,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         const decoded = safeDecodeRow(r);
         const rowKey = buildLiteDiffRowKey(r);
         const cols = rowColumnsHtml(r, useCharDiff, decoded, rowKey, expandedValueKeys);
-        const identity = rowDisplayIdentity(r, decoded);
+        const identity = rowDisplayIdentity(r, decoded, options.fieldLabels);
         const rowValuesExpanded = !!options.expandedRowKeys?.has(rowKey);
         const rowValuesId = `kus-dl-row-values-${rowKey}`;
         const current = rowKey === options.currentRowKey;
@@ -20820,9 +20946,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       entry.app.addEventListener("change", distribute);
       entry.app.addEventListener("paste", (ev) => {
         const text2 = ev.clipboardData?.getData("text") || "";
-        if (!/[,、\s]/.test(text2)) return;
+        const pasted = mergePastedTargetAppIds(entry.app.value, entry.app.selectionStart, entry.app.selectionEnd, text2);
+        if (!pasted.splits) return;
         ev.preventDefault();
-        entry.app.value = [entry.app.value.trim(), text2].filter(Boolean).join(",");
+        entry.app.value = pasted.merged;
         distribute();
       });
     };
@@ -22513,7 +22640,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const target = displayBundleSide(cache.targetBundle, "比較先");
       const more = rows.length > visibleRows.length ? `<div class="kus-dl-more"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-more>さらに ${Math.min(RESULT_PAGE_SIZE, rows.length - visibleRows.length)} 件表示（残り ${rows.length - visibleRows.length} 件）</button></div>` : "";
       resultBox.className = `kus-dl-result kus-dl-result--${densitySelect.value} kus-dl-result--${layoutSelect.value}`;
-      resultBox.innerHTML = overview + `<div class="kus-dl-sticky">${renderReviewBarHtml(rows, source, target)}</div>` + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows, { collapsedSections, currentRowKey, expandedValueKeys, expandedRowKeys }) + more;
+      resultBox.innerHTML = overview + `<div class="kus-dl-sticky">${renderReviewBarHtml(rows, source, target)}</div>` + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows, { collapsedSections, currentRowKey, expandedValueKeys, expandedRowKeys, fieldLabels: fieldLabelsFor(cache) }) + more;
       cardFilter.card.style.display = "block";
       filterDetails.style.display = "";
     }
@@ -23040,6 +23167,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       }
       const commonValidation = validateLiteDiffStart({
         sourceAppId: base.source.appId,
+        sourceGuestId: base.source.guestId,
         scopes: base.scopes,
         ignoreKeys: base.ignoreKeys,
         hasImportedSource: !!importedSourceBundle,
@@ -23156,7 +23284,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const f = readForm();
       const validation = validateLiteDiffStart({
         sourceAppId: f.source.appId,
+        sourceGuestId: f.source.guestId,
         targetAppId: f.target.appId,
+        targetGuestId: f.target.guestId,
         scopes: f.scopes,
         ignoreKeys: f.ignoreKeys,
         hasImportedSource: !!importedSourceBundle,
