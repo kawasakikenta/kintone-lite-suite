@@ -213,12 +213,12 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-pill--same{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
 #kus-reflect-lite .kus-rl-pill--error{background:#fef2f2;border-color:#fca5a5;color:#991b1b}
 #kus-reflect-lite .kus-rl-pill--stale{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
-#kus-reflect-lite .kus-rl-next{padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.6;border:1px solid #e2e8f0;background:#fff}
+#kus-reflect-lite .kus-rl-next{padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.6;border:1px solid #e2e8f0;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-next strong{display:block;margin-bottom:2px}
 #kus-reflect-lite .kus-rl-next--ok{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
 #kus-reflect-lite .kus-rl-next--info{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}
 #kus-reflect-lite .kus-rl-next--warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
-#kus-reflect-lite .kus-rl-issues{margin:0;padding-left:18px;font-size:12px;line-height:1.6;color:#92400e}
+#kus-reflect-lite .kus-rl-issues{margin:0;padding-left:18px;font-size:12px;line-height:1.6;color:#92400e;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-issues li+li{margin-top:3px}
 #kus-reflect-lite .kus-rl-quiet{font-size:11.5px;color:#64748b}
 #kus-reflect-lite .kus-rl-lookup-status{margin-top:6px;font-size:11.5px;color:#475569}
@@ -233,7 +233,7 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-preview-group{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#fff;margin-bottom:10px}
 #kus-reflect-lite .kus-rl-preview-group__head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11.5px;font-weight:700;color:#334155}
 #kus-reflect-lite .kus-rl-preview-list{display:flex;flex-direction:column;gap:8px;padding:10px}
-#kus-reflect-lite .kus-rl-preview-row{border:1px solid #e2e8f0;border-radius:10px;padding:10px;background:#fff}
+#kus-reflect-lite .kus-rl-preview-row{border:1px solid #e2e8f0;border-radius:10px;padding:10px;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-preview-row--change{border-color:#fdba74;background:#fffaf0}
 #kus-reflect-lite .kus-rl-preview-row--same{border-color:#bbf7d0;background:#f0fdf4}
 #kus-reflect-lite .kus-rl-preview-row--error{border-color:#fca5a5;background:#fff5f5}
@@ -343,6 +343,13 @@ function ensureReflectLiteStyles() {
 // =============================================================================
 
 export function mountReflectLitePanel() {
+  // 取得・反映の実行中に再起動すると、実行中の処理を見失ったまま新しい操作を始められてしまう。既存のパネルを残す。
+  const running = document.getElementById('kus-reflect-lite');
+  if (running?.getAttribute('aria-busy') === 'true') {
+    running.setAttribute('tabindex', '-1');
+    running.focus({ preventScroll: true });
+    return;
+  }
   ensureReflectLiteStyles();
 
   const panel = createLitePanel({
@@ -375,6 +382,7 @@ export function mountReflectLitePanel() {
   let sourceJsonBundles: any[] = [];
   // 差分プレビューの鮮度判定（signature）に使う読み込み済みJSONの識別子
   let sourceBundleToken = '';
+  let sourceBundleFileName = '';
   const srcJsonFile = document.createElement('input');
   srcJsonFile.type = 'file';
   srcJsonFile.accept = '.json,application/json';
@@ -453,7 +461,7 @@ export function mountReflectLitePanel() {
     copyBtn.disabled = sourceMode === 'json';
     sourceJsonAppSelect.hidden = sourceJsonBundles.length < 2;
     if (sourceBundleFromJson) {
-      srcJsonNote.textContent = `比較元JSON読み込み済み: App ${sourceBundleFromJson?.appId || '-'}（比較元はこのJSONから取得し、アプリからの取得は行いません）`;
+      srcJsonNote.textContent = `比較元JSON読み込み済み${sourceBundleFileName ? `（${sourceBundleFileName}）` : ''}: App ${sourceBundleFromJson?.appId || '-'}（比較元はこのJSONから取得し、アプリからの取得は行いません）`;
       srcJsonNote.style.display = 'block';
       srcJsonClearBtn.style.display = '';
     } else {
@@ -476,9 +484,12 @@ export function mountReflectLitePanel() {
   srcJsonFile.addEventListener('change', () => liteRun(panel, '比較元JSONを読み込み中…', async () => {
     const file = srcJsonFile.files?.[0];
     if (!file) return;
+    // 同じファイルを編集して選び直したときも change が発生するよう、選択状態は読み込み後に空へ戻す。
+    srcJsonFile.value = '';
     sourceBundleFromJson = null;
     sourceJsonBundles = [];
     sourceBundleToken = '';
+    sourceBundleFileName = '';
     sourceJsonBundles = pickAllSettingsBundles(JSON.parse(await file.text()), 'source', true);
     sourceJsonAppSelect.replaceChildren(...sourceJsonBundles.map((bundle, index) => {
       const option = document.createElement('option');
@@ -488,6 +499,7 @@ export function mountReflectLitePanel() {
     }));
     sourceBundleFromJson = sourceJsonBundles[0];
     sourceBundleToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
+    sourceBundleFileName = file.name;
     if (sourceBundleFromJson?.appId) srcApp.value = String(sourceBundleFromJson.appId);
     panel.setStatus(`比較元JSONを読み込みました: App ${sourceBundleFromJson?.appId || '-'}`, 'ok');
     saveState();
