@@ -276,6 +276,7 @@ async function main() {
     await page.getByLabel('比較元の設定JSON', { exact: true }).setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{bad') });
     await idle();
     assert.equal(await button('差分を確認する').isDisabled(), true, '不正なJSONの読込失敗後に古いJSONを使用しない');
+    assert.match(await page.locator('.kus-lp__status-text').first().innerText(), /JSON形式が不正/, '不正なJSONは日本語で理由を示す');
     await page.getByLabel('比較元の設定JSON', { exact: true }).setInputFiles({ name: 'apps.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ apps: [{ appId: '901', sections: {} }, { appId: '902', sections: {} }] })) });
     await idle();
     await page.getByRole('combobox', { name: '設定JSON内の比較元アプリ', exact: true }).selectOption('1');
