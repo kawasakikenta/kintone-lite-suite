@@ -18,7 +18,9 @@ import {
   getActiveDiffNormalizationLabels, normalizeSectionForCompare,
   detectProcessStateRenames,
   expandSubtableRowsForDisplay,
-  expandEntityRowsForDisplay
+  expandEntityRowsForDisplay,
+  formatIgnoreRuleForDisplay,
+  formatIgnoreRulesTextForDisplay
 } from './engine.js';
 import { summarizeSeverity, extractFieldPathInfo, getFieldRowPayload } from './enrich.js';
 import { buildIgnoreKeySuggestions, getFilteredDiffRowsWithoutSectionFilter, getFavoriteDiffRows } from './filter.js';
@@ -2590,7 +2592,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .map((token) => token.trim())
     .filter(Boolean))];
   const appliedIgnoreSummary = appliedIgnoreTokens.length
-    ? `比較時の無視キー ${appliedIgnoreTokens.length}件: ${appliedIgnoreTokens.join('、')}`
+    ? `比較時の無視キー ${appliedIgnoreTokens.length}件: ${appliedIgnoreTokens.map(formatIgnoreRuleForDisplay).join('、')}`
     : '比較時の無視キー 0件（なし）';
   const appliedNormalizationSummary = reportMeta.normalizationLabels.length
     ? `比較時の正規化 ${reportMeta.normalizationLabels.length}件: ${reportMeta.normalizationLabels.join('、')}`
@@ -7899,7 +7901,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .report-fact-grid span{align-self:center;color:var(--fg);font-size:12px;font-weight:750;line-height:1.5}
     .report-fact-grid strong{grid-row:1/3;grid-column:2;align-self:center;font-size:24px;font-variant-numeric:tabular-nums}
     .report-fact-grid small{color:var(--muted);font-size:11px;line-height:1.5}
-    .report-meta-line{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;line-height:1.5}
+    .report-meta-line{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;min-width:0;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;line-height:1.5}
+    .report-meta-line>span{min-width:0;overflow-wrap:anywhere}
     .report-workspace{display:grid;grid-template-columns:minmax(248px,282px) minmax(0,1fr);align-items:start;gap:16px;margin-top:16px;margin-bottom:36px}
     .report-workspace>aside{position:sticky;top:12px;width:auto;min-width:0;height:calc(100vh - 24px);max-height:calc(100vh - 24px);border:1px solid var(--border);border-radius:16px;background:var(--sidebar);overflow:auto;box-shadow:none;backdrop-filter:none}
     .report-workspace>main{min-width:0;padding:0;overflow:visible}
@@ -8199,7 +8202,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
         <p class="adv-note">出力前と同じ条件をこのレポート上でも選択できます。比較のやり直しは行わず、該当する差分行を表示から除外します。</p>
         <span class="field-label">無視キー（追加）</span>
         <textarea id="extraIgnoreKeys" class="adv-textarea" rows="2" placeholder="無視キー（カンマ区切り）" aria-label="追加の無視キー"></textarea>
-        ${reportMeta.ignoreKeys ? `<p class="adv-baked">比較時に適用済みの無視キー: ${esc(reportMeta.ignoreKeys)}</p>` : ''}
+        ${reportMeta.ignoreKeys ? `<p class="adv-baked">比較時に適用済みの無視キー: ${esc(formatIgnoreRulesTextForDisplay(reportMeta.ignoreKeys))}</p>` : ''}
         <div class="adv-checks">
           ${advPresetChecksHtml}
         </div>

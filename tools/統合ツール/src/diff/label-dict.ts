@@ -323,6 +323,12 @@ export function labelOfValue(scope: string, value: any): string | null {
   return dict[String(value)] || null;
 }
 
+/** ステータス改名の通知行（left/right は { name }）から、利用者に見せる名前を取り出す。 */
+export function stateRenameName(side: any, fallback?: unknown): string {
+  const name = side && typeof side === 'object' ? side.name : side;
+  return String(name ?? fallback ?? '').trim() || '(不明)';
+}
+
 export function labelOfSection(sectionKey: string | null | undefined): PropMeta {
   if (!sectionKey) return { label: '-', icon: '' };
   return SECTION_LABELS[sectionKey] || { label: String(sectionKey), icon: '' };

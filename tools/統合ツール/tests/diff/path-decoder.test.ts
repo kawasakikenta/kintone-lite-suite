@@ -269,4 +269,58 @@ describe('path-decoder.decodeRow', () => {
     expect(view!.beforeText).toBe('表形式');
     expect(view!.afterText).toBe('カレンダー形式');
   });
+
+  it('does not throw when an entity array contains an empty element', () => {
+    const decoded = decodeRow({
+      sectionKey: 'notifications', path: 'notifications.notifications[0].recipients',
+      type: 'changed',
+      left: [{ entity: { type: 'USER', code: 'alice' } }, null],
+      right: [{ entity: { type: 'USER', code: 'bob' } }, undefined, { entity: { type: 'GROUP', code: 'sales' } }]
+    });
+    expect(decoded).not.toBeNull();
+    expect(decoded!.beforeText).toContain('alice');
+    expect(decoded!.afterText).toContain('sales');
+  });
+
+  it('describes a process state rename by the old and new names, not the internal marker', () => {
+    const decoded = decodeRow({
+      sectionKey: 'processSettings', path: 'processSettings.states.__rename__',
+      type: 'changed', left: { name: '処理中' }, right: { name: '対応中' },
+      _nonActionable: true, _stateRenameNotice: true,
+      entityKind: 'state', entityLabel: '処理中 → 対応中'
+    });
+    expect(decoded!.propLabel).toBe('ステータス名');
+    expect(decoded!.beforeText).toBe('処理中');
+    expect(decoded!.afterText).toBe('対応中');
+    expect(decoded!.oneLineSummary).toBe('ステータス名: 処理中 → 対応中');
+    expect(decoded!.whereChips.map((chip) => chip.label)).toEqual(['処理中 → 対応中']);
+    expect(JSON.stringify(decoded)).not.toContain('__rename__');
+  });
+
+  it('does not borrow list-view labels for JS/CSS file properties or the category switch', () => {
+    const size = decodeRow({
+      sectionKey: 'customizeSettings', path: 'customizeSettings.desktop.js[0].file.size',
+      type: 'changed', left: '10', right: '12'
+    });
+    expect(size!.propLabel).toBe('ファイルサイズ');
+    expect(size!.oneLineSummary).toBe('ファイルサイズ: 10 → 12');
+
+    const body = decodeRow({
+      sectionKey: 'customizeSettings', path: 'customizeSettings.desktop.js[0].file._body',
+      type: 'changed', left: 'abc', right: 'abcde'
+    });
+    expect(body!.propLabel).toBe('ファイル本文');
+
+    const categories = decodeRow({
+      sectionKey: 'categories', path: 'categories.enable', type: 'changed', left: true, right: false
+    });
+    expect(categories!.propLabel).toBe('カテゴリ管理の有効化');
+    expect(categories!.beforeText).toBe('有効');
+
+    // 同じキーでもプロセス管理では従来どおり。
+    const process = decodeRow({
+      sectionKey: 'processSettings', path: 'processSettings.enable', type: 'changed', left: true, right: false
+    });
+    expect(process!.propLabel).toBe('プロセス管理の有効化');
+  });
 });

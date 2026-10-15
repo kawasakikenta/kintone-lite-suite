@@ -17,7 +17,8 @@ import {
 import { runExportDiffXlsx, type DiffXlsxContext } from '../diff/xlsx-export.js';
 import { buildDiffXlsxBatchExport } from '../diff/xlsx-batch-export.js';
 import { decodeRow, type DecodedRow } from '../diff/path-decoder.js';
-import { downloadBlob, downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify } from '../utils.js';
+import { collectFieldDefinitions, extractFieldPathInfo, getFieldRowPayload } from '../diff/enrich.js';
+import { downloadBlob, downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify, stripHtmlToText } from '../utils.js';
 import { runExportDiffHtmlStandalone } from '../tabs/diff-export-standalone.js';
 import {
   createLitePanel,
@@ -65,7 +66,9 @@ export function buildLiteDiffScopeOptions(): Array<[string, string, boolean]> {
  */
 export function validateLiteDiffStart(options: {
   sourceAppId?: string;
+  sourceGuestId?: string;
   targetAppId?: string;
+  targetGuestId?: string;
   scopes?: string[];
   ignoreKeys?: string;
   hasImportedSource?: boolean;
@@ -77,6 +80,9 @@ export function validateLiteDiffStart(options: {
   const sourceAppId = String(options.sourceAppId || '').trim();
   if (!options.hasImportedSource && !sourceAppId) return '比較元アプリIDを入力してください';
   if (sourceAppId && !/^[1-9]\d*$/.test(sourceAppId)) return '比較元アプリIDには正の整数を入力してください';
+  // ゲストIDはそのまま REST の URL（/k/guest/{id}/v1）へ入るため、数字以外は取得前に止める。
+  const sourceGuestId = String(options.sourceGuestId || '').trim();
+  if (sourceGuestId && !/^\d+$/.test(sourceGuestId)) return '比較元ゲストIDは半角数字で入力してください';
 
   if (options.targets !== undefined) {
     // 1対多比較: 全比較先（空行除外済み）を順番に検証する
@@ -110,6 +116,8 @@ export function validateLiteDiffStart(options: {
     const targetAppId = String(options.targetAppId || '').trim();
     if (!options.hasImportedTarget && !targetAppId) return '比較先アプリIDを入力してください';
     if (targetAppId && !/^[1-9]\d*$/.test(targetAppId)) return '比較先アプリIDには正の整数を入力してください';
+    const targetGuestId = String(options.targetGuestId || '').trim();
+    if (targetGuestId && !/^\d+$/.test(targetGuestId)) return '比較先ゲストIDは半角数字で入力してください';
   }
 
   const positionalRuleCount = summarizeLiteIgnoreRules(options.ignoreKeys || '').positionalRules;
@@ -117,6 +125,27 @@ export function validateLiteDiffStart(options: {
     return `配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`;
   }
   return '';
+}
+
+/**
+ * 比較先のアプリID欄への貼り付けを、選択範囲を置き換える形で取り込む。
+ * 1件だけの貼り付け（表計算ソフトの末尾改行・空白付きを含む）は通常の貼り付けに任せ、
+ * 区切りのある複数件だけを分割対象（merged）として返す。
+ */
+export function mergePastedTargetAppIds(
+  current: string,
+  selectionStart: number | null | undefined,
+  selectionEnd: number | null | undefined,
+  pasted: string
+): { merged: string; splits: boolean } {
+  const tokens = String(pasted || '').split(/[,、\s]+/).filter(Boolean);
+  if (tokens.length <= 1) return { merged: current, splits: false };
+  const value = String(current || '');
+  const start = Math.min(Math.max(0, selectionStart ?? value.length), value.length);
+  const end = Math.min(Math.max(start, selectionEnd ?? start), value.length);
+  const before = value.slice(0, start).replace(/[,、\s]+$/, '').trim();
+  const after = value.slice(end).replace(/^[,、\s]+/, '').trim();
+  return { merged: [before, tokens.join(','), after].filter(Boolean).join(','), splits: true };
 }
 
 const SCOPE_OPTS = buildLiteDiffScopeOptions();
@@ -829,7 +858,51 @@ export function summarizeLiteIgnoreRules(text: string): { total: number; pathRul
   };
 }
 
-function rowDisplayIdentity(row: DiffRow, decoded: DecodedRow | null): { title: string; subtitle: string } {
+/** フィールドコード → 表示名。比較先を優先し、比較元にしかないフィールドは比較元の表示名を使う。 */
+export function buildLiteFieldLabelMap(...bundles: any[]): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const bundle of bundles) {
+    const properties = bundle?.sections?.fieldSettings?.properties || bundle?.sections?.fieldSettings;
+    const definitions = collectFieldDefinitions(properties && typeof properties === 'object' ? properties : {});
+    for (const [code, definition] of Object.entries<any>(definitions)) {
+      const label = stripHtmlToText(definition?.label).replace(/\s+/g, ' ').trim();
+      if (label) labels.set(code, label.length > 40 ? `${label.slice(0, 39)}…` : label);
+    }
+  }
+  return labels;
+}
+
+const fieldLabelMapCache = new WeakMap<object, Map<string, string>>();
+
+function fieldLabelsFor(cacheValue: DiffCache | null): Map<string, string> | undefined {
+  if (!cacheValue) return undefined;
+  let labels = fieldLabelMapCache.get(cacheValue);
+  if (!labels) {
+    labels = buildLiteFieldLabelMap(cacheValue.sourceBundle, cacheValue.targetBundle);
+    fieldLabelMapCache.set(cacheValue, labels);
+  }
+  return labels;
+}
+
+/** フィールド設定の行は場所を示す chip を持たないため、どのフィールドの差分かを見出しに含める。 */
+function fieldRowIdentityText(row: DiffRow, fieldLabels?: ReadonlyMap<string, string>): string {
+  if (row.sectionKey !== 'fieldSettings') return '';
+  const info = extractFieldPathInfo(row.path);
+  if (!info) return '';
+  const payload: any = getFieldRowPayload(row);
+  const payloadLabel = payload && typeof payload === 'object' && typeof payload.label === 'string'
+    ? stripHtmlToText(payload.label).replace(/\s+/g, ' ').trim()
+    : '';
+  const label = fieldLabels?.get(info.activeCode) || payloadLabel;
+  const field = label && label !== info.activeCode ? `${label}（${info.activeCode}）` : info.activeCode;
+  return info.isSubField ? `テーブル「${info.rootCode}」内の ${field}` : field;
+}
+
+function rowDisplayIdentity(
+  row: DiffRow,
+  decoded: DecodedRow | null,
+  fieldLabels?: ReadonlyMap<string, string>
+): { title: string; subtitle: string } {
   const path = String(row.path || '').trim();
   const semanticTitle = String(decoded?.oneLineSummary || decoded?.propLabel || '').trim();
   const reason = String(row.reasonSummary || '').trim();
@@ -844,7 +917,9 @@ function rowDisplayIdentity(row: DiffRow, decoded: DecodedRow | null): { title: 
   const fallbackTitle = label && label !== path
     ? label
     : `${sectionLabel}の${leafLabels[leaf] || (leaf ? `「${leaf}」` : '設定項目')}`;
-  const title = semanticTitle || reason || fallbackTitle;
+  const baseTitle = semanticTitle || reason || fallbackTitle;
+  const fieldText = decoded ? '' : fieldRowIdentityText(row, fieldLabels);
+  const title = fieldText ? `${fieldText} · ${baseTitle}` : baseTitle;
   const subtitleCandidates = [
     semanticTitle && reason !== semanticTitle ? reason : '',
     label && label !== path && label !== title ? label : ''
@@ -1048,6 +1123,8 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
 }
 
 export interface LiteRowsRenderOptions {
+  /** フィールドコード → 表示名。フィールド設定の行の見出しに使う。 */
+  fieldLabels?: ReadonlyMap<string, string>;
   collapsedSections?: ReadonlySet<string>;
   currentRowKey?: string;
   expandedValueKeys?: ReadonlySet<string>;
@@ -1104,7 +1181,7 @@ export function renderRowsHtml(
       const decoded = safeDecodeRow(r);
       const rowKey = buildLiteDiffRowKey(r);
       const cols = rowColumnsHtml(r, useCharDiff, decoded, rowKey, expandedValueKeys);
-      const identity = rowDisplayIdentity(r, decoded);
+      const identity = rowDisplayIdentity(r, decoded, options.fieldLabels);
       const rowValuesExpanded = !!options.expandedRowKeys?.has(rowKey);
       const rowValuesId = `kus-dl-row-values-${rowKey}`;
       const current = rowKey === options.currentRowKey;
@@ -1326,9 +1403,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     entry.app.addEventListener('change', distribute);
     entry.app.addEventListener('paste', (ev: ClipboardEvent) => {
       const text = ev.clipboardData?.getData('text') || '';
-      if (!/[,、\s]/.test(text)) return;
+      // 全選択して貼り付けた場合は元の値を置き換える。1件だけの貼り付けは通常動作に任せる。
+      const pasted = mergePastedTargetAppIds(entry.app.value, entry.app.selectionStart, entry.app.selectionEnd, text);
+      if (!pasted.splits) return;
       ev.preventDefault();
-      entry.app.value = [entry.app.value.trim(), text].filter(Boolean).join(',');
+      entry.app.value = pasted.merged;
       distribute();
     });
   };
@@ -3179,7 +3258,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       ? `<div class="kus-dl-more"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-more>さらに ${Math.min(RESULT_PAGE_SIZE, rows.length - visibleRows.length)} 件表示（残り ${rows.length - visibleRows.length} 件）</button></div>`
       : '';
     resultBox.className = `kus-dl-result kus-dl-result--${densitySelect.value} kus-dl-result--${layoutSelect.value}`;
-    resultBox.innerHTML = overview + `<div class="kus-dl-sticky">${renderReviewBarHtml(rows, source, target)}</div>` + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows, { collapsedSections, currentRowKey, expandedValueKeys, expandedRowKeys }) + more;
+    resultBox.innerHTML = overview + `<div class="kus-dl-sticky">${renderReviewBarHtml(rows, source, target)}</div>` + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows, { collapsedSections, currentRowKey, expandedValueKeys, expandedRowKeys, fieldLabels: fieldLabelsFor(cache) }) + more;
     cardFilter.card.style.display = 'block';
     filterDetails.style.display = '';
   }
@@ -3729,6 +3808,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     }
     const commonValidation = validateLiteDiffStart({
       sourceAppId: base.source.appId,
+      sourceGuestId: base.source.guestId,
       scopes: base.scopes,
       ignoreKeys: base.ignoreKeys,
       hasImportedSource: !!importedSourceBundle,
@@ -3850,7 +3930,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     const f = readForm();
     const validation = validateLiteDiffStart({
       sourceAppId: f.source.appId,
+      sourceGuestId: f.source.guestId,
       targetAppId: f.target.appId,
+      targetGuestId: f.target.guestId,
       scopes: f.scopes,
       ignoreKeys: f.ignoreKeys,
       hasImportedSource: !!importedSourceBundle,
