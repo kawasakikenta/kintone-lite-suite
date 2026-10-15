@@ -244,6 +244,17 @@
     }
     return "";
   }
+  function guestIdFromKintonePath(pathname) {
+    const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ""));
+    return match ? match[1] : "";
+  }
+  function resolveDefaultGuestId() {
+    try {
+      return typeof window === "undefined" ? "" : guestIdFromKintonePath(window.location?.pathname);
+    } catch (e) {
+      return "";
+    }
+  }
   function sanitizeCustomizeResourceList(value) {
     if (!Array.isArray(value)) return [];
     const resources = [];
@@ -275,7 +286,7 @@
       mobile: buildPlatform("mobile")
     };
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIALOG_STATE_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -321,6 +332,7 @@
         })
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
+      DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
@@ -818,12 +830,28 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-enums.ts
+  var init_kintone_enums = __esm({
+    "src/kintone-enums.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/diff/label-dict.ts
+  var init_label_dict = __esm({
+    "src/diff/label-dict.ts"() {
+      "use strict";
+      init_kintone_enums();
+    }
+  });
+
   // src/diff/enrich.ts
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      init_label_dict();
     }
   });
 
@@ -838,21 +866,6 @@ ${contextLine}`);
       init_constants();
       init_state();
       root = null;
-    }
-  });
-
-  // src/kintone-enums.ts
-  var init_kintone_enums = __esm({
-    "src/kintone-enums.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/diff/label-dict.ts
-  var init_label_dict = __esm({
-    "src/diff/label-dict.ts"() {
-      "use strict";
-      init_kintone_enums();
     }
   });
 
@@ -2235,27 +2248,33 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     throw lastErr || new Error("Mermaid.js の読み込みに失敗しました");
   }
+  var initializedMermaid = /* @__PURE__ */ new WeakSet();
   async function ensureMermaid() {
     const w = window;
-    if (w.mermaid) return w.mermaid;
-    if (!mermaidLoadPromise) {
-      mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS).catch((err) => {
-        mermaidLoadPromise = null;
-        throw err;
-      });
+    if (!w.mermaid) {
+      if (!mermaidLoadPromise) {
+        mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS).catch((err) => {
+          mermaidLoadPromise = null;
+          throw err;
+        });
+      }
+      await mermaidLoadPromise;
     }
-    await mermaidLoadPromise;
-    if (w.mermaid) {
+    if (!w.mermaid) throw new Error("Mermaid.js の読み込みに失敗しました");
+    if (!initializedMermaid.has(w.mermaid) && typeof w.mermaid.initialize === "function") {
       w.mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "strict" });
-      return w.mermaid;
+      initializedMermaid.add(w.mermaid);
     }
-    throw new Error("Mermaid.js の読み込みに失敗しました");
+    return w.mermaid;
+  }
+  function neutralizeHtmlTagOpen(text) {
+    return text.replace(/<(?=[A-Za-z/!?])/g, "＜");
   }
   function mermaidDisplayName(name) {
-    return String(name ?? "").replace(/[\r\n]+/g, " ").replace(/"/g, "'").trim() || "(名称なし)";
+    return neutralizeHtmlTagOpen(String(name ?? "").replace(/[\r\n]+/g, " ").replace(/"/g, "'")).trim() || "(名称なし)";
   }
   function mermaidTransitionLabel(name) {
-    return String(name ?? "").replace(/[\r\n]+/g, " ").replace(/[:;]/g, "-").replace(/[#"]/g, "").trim() || "(名称なし)";
+    return neutralizeHtmlTagOpen(String(name ?? "").replace(/[\r\n]+/g, " ").replace(/[:;]/g, "-").replace(/[#"]/g, "")).trim() || "(名称なし)";
   }
   function buildProcessMermaidSource(states, actions, highlightState) {
     const stateNames = Object.keys(states || {});
@@ -2299,7 +2318,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   function findInitialState(states, actions) {
     const names = Object.keys(states || {});
     if (!names.length) return null;
-    const indexed = names.map((name) => ({ name, index: Number(states?.[name]?.index) })).filter((s) => Number.isFinite(s.index));
+    const indexed = names.map((name) => {
+      const raw = states?.[name]?.index;
+      return { name, index: raw == null || String(raw).trim() === "" ? NaN : Number(raw) };
+    }).filter((s) => Number.isFinite(s.index));
     if (indexed.length === names.length) {
       indexed.sort((a, b) => a.index - b.index);
       return indexed[0].name;
@@ -2317,7 +2339,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (guest && !/^[1-9]\d*$/.test(guest)) throw new Error("ゲストIDは正の数値で入力してください");
     return { appId: app, guestId: guest };
   }
-  function renderFallbackFlowHtml(states, actions, highlightState) {
+  function renderFallbackFlowHtml(states, actions, highlightState, reason) {
     const stateList = Object.keys(states || {});
     const transitions = (actions || []).map((a) => {
       const from = esc(a.from || "");
@@ -2334,7 +2356,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }).join("");
     return `
     <div style="color:#334155;font-size:12px;line-height:1.5">
-      <div style="margin-bottom:8px;color:#b45309">Mermaid.js を読み込めなかったため、簡易表示に切り替えました。</div>
+      <div style="margin-bottom:8px;color:#b45309">${esc(reason)}</div>
       <div style="margin-bottom:8px">${stateHtml || '<span style="color:#94a3b8">状態なし</span>'}</div>
       <table style="width:100%;border-collapse:collapse;font-size:12px">
         <thead><tr><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">From</th><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">Action</th><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">To</th></tr></thead>
@@ -2345,8 +2367,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   }
   async function runRenderProcessFlowStandalone(source, setStatus, targets) {
     const isCurrent = typeof targets?.isCurrent === "function" ? targets.isCurrent : () => true;
-    const commitStatus = (message, error) => {
-      if (isCurrent()) setStatus(message, error);
+    const commitStatus = (message, error, tone) => {
+      if (isCurrent()) setStatus(message, error, tone);
     };
     if (!isCurrent()) return null;
     const connection = validateProcessConnection(source.appId, source.guestId);
@@ -2355,8 +2377,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     commitStatus("プロセス管理を取得中...");
     const res = await apiGet(prefix, "/app/status.json", { app });
     if (!isCurrent()) return null;
+    if (!res || typeof res !== "object") throw new Error("プロセス管理の設定を取得できませんでした（想定外の応答形式です）");
     if (!res.enable) {
-      targets.textEl.value = "プロセス管理は無効です。";
+      targets.textEl.value = "";
       targets.viewEl.innerHTML = '<div style="color:#64748b">プロセス管理は無効です</div>';
       if (targets.simUi) targets.simUi.container.style.display = "none";
       commitStatus("プロセス管理は無効です");
@@ -2367,22 +2390,26 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const actions = rawActions.filter((a) => a && a.from != null && a.to != null && String(a.from).trim() && String(a.to).trim());
     const orphanActions = rawActions.length - actions.length;
     let renderError = "";
+    let renderFailure = "";
     const renderMermaid = async (highlightState) => {
       if (!isCurrent()) return false;
       const md = buildProcessMermaidSource(states, actions, highlightState);
-      targets.textEl.value = md;
+      targets.textEl.value = highlightState ? buildProcessMermaidSource(states, actions, null) : md;
+      let phase = "読み込み";
       try {
         const mermaidObj = await ensureMermaid();
         if (!isCurrent()) return false;
+        phase = "描画";
         const { svg } = await mermaidObj.render("mermaid-svg-generated-" + Date.now(), md);
         if (!isCurrent()) return false;
         targets.viewEl.innerHTML = svg;
         return true;
       } catch (e) {
         if (!isCurrent()) return false;
-        targets.viewEl.innerHTML = renderFallbackFlowHtml(states, actions, highlightState);
+        renderFailure = `Mermaid.js の${phase}に失敗`;
+        targets.viewEl.innerHTML = renderFallbackFlowHtml(states, actions, highlightState, `${renderFailure}したため、簡易表示に切り替えました。`);
         renderError = e instanceof Error ? e.message : String(e);
-        commitStatus(`Mermaid.js の読み込みに失敗したため、簡易表示に切り替えました。(${renderError})`, true);
+        commitStatus(`${renderFailure}したため、簡易表示に切り替えました。(${renderError})`, true);
         return false;
       }
     };
@@ -2390,9 +2417,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     await renderMermaid(null);
     if (!isCurrent()) return null;
     if (renderError) {
-      commitStatus(`フロー図生成完了（簡易表示。Mermaid.js の読み込みに失敗しました: ${renderError}）`, true);
+      commitStatus(`フロー図生成完了（簡易表示。${renderFailure}しました: ${renderError}）`, true);
     } else {
-      commitStatus(orphanActions ? `フロー図 生成完了（from/to 未設定のアクション ${orphanActions}件は除外）` : "フロー図 生成完了", orphanActions > 0);
+      commitStatus(orphanActions ? `フロー図 生成完了（from/to 未設定のアクション ${orphanActions}件は除外）` : "フロー図 生成完了", false, orphanActions > 0 ? "warn" : void 0);
     }
     if (targets.simUi) {
       let current = null;
@@ -2423,20 +2450,25 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         current = findInitialState(states, actions);
         updateSim();
         if (current) {
-          commitStatus("シミュレーション開始: " + current);
+          commitStatus("シミュレーション開始: " + current, false, "ok");
           await renderMermaid(current);
+        } else {
+          commitStatus("ステータスが無いためシミュレーションを開始できません", false, "warn");
         }
       };
       execBtn.onclick = async () => {
         if (!isCurrent()) return;
-        if (select.disabled) return;
+        if (select.disabled) {
+          commitStatus(current ? `「${current}」から実行できるアクションはありません（終端のステータスです）` : "先に「最初から開始」を押してください", false, "warn");
+          return;
+        }
         const idx = Number(select.value);
         if (!Number.isFinite(idx)) return;
         const action = actions.filter((a) => a.from === current)[idx];
         if (!action) return;
         current = action.to;
         updateSim();
-        commitStatus(`アクション「${action.name}」実行 → 「${action.to}」`);
+        commitStatus(`アクション「${action.name}」実行 → 「${action.to}」`, false, "ok");
         await renderMermaid(action.to);
       };
     }
@@ -2727,7 +2759,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     });
     const cardApp = makeCard({ title: "対象アプリ", number: 1 });
     const appInp = makeInput({ placeholder: "アプリID", value: DEFAULT_APP_ID || "", width: "id" });
-    const guestInp = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
+    const guestInp = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest" });
     cardApp.body.appendChild(makeRow([appInp, guestInp], { label: "アプリ" }));
     let notifyConnectionChange = () => {
     };
@@ -2852,8 +2884,9 @@ ${text}
       try {
         const result = await runRenderProcessFlowStandalone(
           { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
-          (m, e) => {
-            if (isCurrent()) panel.setStatus(m, e ? "err" : "busy");
+          // 実行完了後（シミュレーション操作）の通知は tone を指定し、処理中スピナーのまま残さない
+          (m, e, tone) => {
+            if (isCurrent()) panel.setStatus(m, e ? "err" : tone || "busy");
           },
           {
             textEl,
@@ -2873,7 +2906,7 @@ ${text}
           return;
         }
         renderedConnection = runConnection;
-        if (result && panel.status.dataset.tone !== "err") {
+        if (result && panel.status.dataset.tone !== "err" && panel.status.dataset.tone !== "warn") {
           panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, "ok");
         }
       } finally {

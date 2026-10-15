@@ -244,6 +244,17 @@
     }
     return "";
   }
+  function guestIdFromKintonePath(pathname) {
+    const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ""));
+    return match ? match[1] : "";
+  }
+  function resolveDefaultGuestId() {
+    try {
+      return typeof window === "undefined" ? "" : guestIdFromKintonePath(window.location?.pathname);
+    } catch (e) {
+      return "";
+    }
+  }
   function sanitizeCustomizeResourceList(value) {
     if (!Array.isArray(value)) return [];
     const resources = [];
@@ -275,7 +286,7 @@
       mobile: buildPlatform("mobile")
     };
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIALOG_STATE_KEY, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -321,6 +332,7 @@
         })
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
+      DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
@@ -649,9 +661,6 @@ ${contextLine}`);
     if (name) return sanitizeFilenamePart(name);
     if (id) return `app${sanitizeFilenamePart(id)}`;
     return "";
-  }
-  function appLabelFromBundle(bundle) {
-    return buildAppFilenameLabel(bundle?.appId, extractAppNameFromBundle(bundle));
   }
   function buildExportFilename(baseLabel, ext, options = {}) {
     const normalizedExt = String(ext || "").replace(/^\./, "").trim() || "txt";
@@ -984,7 +993,7 @@ ${contextLine}`);
       }
       tasks.push(async () => {
         try {
-          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
+          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id });
           if (res && typeof res === "object") {
             plugin._config = res?.config != null ? res.config : res;
             stats.fetched += 1;
@@ -1118,12 +1127,28 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-enums.ts
+  var init_kintone_enums = __esm({
+    "src/kintone-enums.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/diff/label-dict.ts
+  var init_label_dict = __esm({
+    "src/diff/label-dict.ts"() {
+      "use strict";
+      init_kintone_enums();
+    }
+  });
+
   // src/diff/enrich.ts
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      init_label_dict();
     }
   });
 
@@ -1138,21 +1163,6 @@ ${contextLine}`);
       init_constants();
       init_state();
       root = null;
-    }
-  });
-
-  // src/kintone-enums.ts
-  var init_kintone_enums = __esm({
-    "src/kintone-enums.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/diff/label-dict.ts
-  var init_label_dict = __esm({
-    "src/diff/label-dict.ts"() {
-      "use strict";
-      init_kintone_enums();
     }
   });
 
@@ -2171,13 +2181,15 @@ ${contextLine}`);
       curBtn.title = "今開いているアプリのIDを空き行に入れます";
       curBtn.addEventListener("click", () => {
         const id = String(opts.currentAppId).trim();
-        if (rows.some((r) => r.app.value.trim() === id)) return;
+        const guestId = String(opts.currentGuestId || "").trim();
+        if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guestId)) return;
         const empty = rows.find((r) => !r.app.value.trim());
         if (empty) {
           empty.app.value = id;
+          empty.guest.value = guestId;
           setAppName(empty, "");
           empty.app.focus();
-        } else insertRow(rows.length, id, "", true);
+        } else insertRow(rows.length, id, guestId, true);
         emitChange();
       });
       foot.appendChild(curBtn);
@@ -2864,8 +2876,23 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
 
   // src/tabs/settings-export-standalone.ts
   function settingsExportLabel(bundles) {
-    if (bundles.length === 1) return appLabelFromBundle(bundles[0]);
+    if (bundles.length === 1) return buildAppFilenameLabel(bundles[0].appId, bundleAppName(bundles[0]));
     return `${bundles.length}件`;
+  }
+  function bundleAppName(bundle) {
+    return extractAppNameFromBundle(bundle) || String(bundle?.sections?.appInfo?.name || "").trim();
+  }
+  function sectionLabel(key) {
+    return SECTION_DEFS.find((s) => s.key === key)?.label || key;
+  }
+  function firstErrorLine(error) {
+    const text = String(error?.message || error || "");
+    const line = text.split("\n").map((s) => s.trim()).find(Boolean) || "理由不明";
+    return line.length > 80 ? `${line.slice(0, 80)}…` : line;
+  }
+  function omittedCustomizeBodyCount(bundle) {
+    const files = bundle?.sections?.customizeSettings?._partial?.files;
+    return Array.isArray(files) ? files.length : 0;
   }
   function parseAppIdList(text) {
     const tokens = String(text || "").split(/[\s,、]+/).map((s) => s.trim()).filter(Boolean);
@@ -2887,13 +2914,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     <td>${esc(r.guestId ? `guest:${r.guestId}` : "通常")}</td>
     <td>${esc(String(r.okCount))}</td>
     <td>${esc(String(r.ngCount))}</td>
-    <td>${esc(r.note || "-")}</td>
+    <td style="overflow-wrap:anywhere">${esc(r.note || "-")}</td>
   </tr>`
     ).join("");
     return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || "-")}</div>
     <table style="width:100%;font-size:11px;border-collapse:collapse">
-      <thead><tr><th style="text-align:left;padding:4px">アプリID</th><th>ゲスト</th><th>取得OK</th><th>取得NG</th><th>メモ</th></tr></thead>
+      <thead><tr><th scope="col" style="text-align:left;padding:4px">アプリID</th><th scope="col">ゲスト</th><th scope="col">取得OK</th><th scope="col">取得NG</th><th scope="col">メモ</th></tr></thead>
       <tbody>${body || '<tr><td colspan="5">結果なし</td></tr>'}</tbody>
     </table>
   `;
@@ -2901,6 +2928,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   async function runSettingsExportListSpaceAppsStandalone(spaceId, guestId, setStatus) {
     const sid = String(spaceId || "").trim();
     if (!/^\d+$/.test(sid)) throw new Error("スペースIDを数値で入力してください");
+    const guest = String(guestId || "").trim();
+    if (guest && !/^\d+$/.test(guest)) throw new Error(`ゲストIDは数値で入力してください: ${guest}`);
     setStatus(`スペース ${sid} のアプリ一覧を取得中...`);
     const apps = await fetchAppsInSpace(sid, guestId);
     if (!apps.length) {
@@ -2950,6 +2979,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const scopes = selectedScopeKeys(opts.scopeRoot);
     if (!scopes.length) throw new Error("取得対象セクションを選択してください");
     const preview = !!opts.preview;
+    const JSZipCtor = mode === "zip" ? await loadJSZipLite() : null;
     const bundles = [];
     const rows = [];
     for (let i = 0; i < targets.length; i++) {
@@ -2974,17 +3004,29 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       bundles.push(bundle);
       let okCount = 0;
       let ngCount = 0;
+      const failedKeys = [];
       for (const key of scopes) {
         const sec = bundle.sections[key];
-        if (sec && sec._fetchError) ngCount += 1;
-        else okCount += 1;
+        if (sec && sec._fetchError) {
+          ngCount += 1;
+          failedKeys.push(key);
+        } else okCount += 1;
       }
+      const omittedBodies2 = omittedCustomizeBodyCount(bundle);
+      const noteParts = [];
+      if (ngCount === scopes.length) {
+        noteParts.push(`アプリ取得失敗: ${firstErrorLine(bundle.sections[failedKeys[0]]._fetchError)}`);
+      } else if (ngCount) {
+        noteParts.push(`一部セクション取得失敗あり: ${failedKeys.map(sectionLabel).join("、")}`);
+      }
+      if (omittedBodies2) noteParts.push(`JS/CSS本文を省略したファイル ${omittedBodies2}件`);
       rows.push({
         appId,
         guestId,
         okCount,
         ngCount,
-        note: ngCount === scopes.length ? "アプリ取得失敗" : ngCount ? "一部セクション取得失敗あり" : "OK"
+        omittedBodies: omittedBodies2,
+        note: noteParts.join(" / ") || "OK"
       });
     }
     const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
@@ -3000,17 +3042,19 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     };
     const failedSections = rows.reduce((sum, row) => sum + row.ngCount, 0);
     const failureNote = failedSections ? `。${rows.filter((row) => row.ngCount > 0).length}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : "";
+    const omittedBodies = rows.reduce((sum, row) => sum + row.omittedBodies, 0);
+    const omittedNote = omittedBodies ? `。JS/CSSファイル ${omittedBodies}件は本文を取得できず fileKey のみ記録しています（結果表を確認してください）` : "";
+    const hasWarning = failedSections > 0 || omittedBodies > 0;
     if (mode === "zip") {
-      const JSZipCtor = await loadJSZipLite();
       const zip = new JSZipCtor();
       const entries = bundles.map((bundle, i) => {
         const guestId = targets[i].guestId;
         const suffix = `${guestId ? `_ゲスト${guestId}` : ""}${preview ? "_プレビュー" : "_本番"}`;
-        const file = `${buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle))}${suffix}.json`;
+        const file = `${buildAppFilenameLabel(bundle.appId, bundleAppName(bundle))}${suffix}.json`;
         const failedSections2 = scopes.filter((key) => bundle.sections?.[key]?._fetchError);
         return {
           appId: String(bundle.appId),
-          appName: extractAppNameFromBundle(bundle) || "",
+          appName: bundleAppName(bundle),
           guestId,
           file,
           fetchedAt: bundle.fetchedAt || "",
@@ -3046,11 +3090,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       }
       const zipBlob = await zip.generateAsync({ type: "blob" });
       downloadBlob(buildExportFilename("設定一括取得", "zip", { appLabel: settingsExportLabel(bundles) }), zipBlob);
-      setStatus(`設定一括取得ZIPを保存しました（${bundles.length}アプリ）${failureNote}`, failedSections > 0);
+      setStatus(`設定一括取得ZIPを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
       return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
     }
     downloadText(buildExportFilename("設定一括取得", "json", { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), "application/json");
-    setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}`, failedSections > 0);
+    setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
     return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
   }
 
@@ -3305,7 +3349,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const cardTarget = makeCard({ title: "対象アプリ", number: 1 });
     const appTable = makeAppTable({
       currentAppId: String(DEFAULT_APP_ID || ""),
-      initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: "" }] : []
+      currentGuestId: DEFAULT_GUEST_ID,
+      initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : []
     });
     const searchGuest = makeInput({ placeholder: "検索用ゲストID（任意）", width: "guest" });
     const searchControl = createAppSearchControl(panel, {
@@ -3324,6 +3369,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const cardScope = makeCard({ title: "取得セクション", number: 2 });
     const chipBox = document.createElement("div");
     chipBox.className = "kus-lp__chips";
+    chipBox.setAttribute("role", "group");
+    chipBox.setAttribute("aria-label", "取得するセクション");
     const chips = SETTINGS_EXPORT_SCOPE_DEFS.map((s) => makeChip({ label: s.label, value: s.key, checked: true }));
     chips.forEach((c) => chipBox.appendChild(c.label));
     cardScope.body.appendChild(chipBox);
@@ -3368,6 +3415,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         guest,
         (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
+      if (!apps.length) return;
       let added = 0;
       for (const app of apps) {
         const result = appTable.putApp(app.appId, guest, { appName: app.name });

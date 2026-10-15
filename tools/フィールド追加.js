@@ -244,6 +244,17 @@
     }
     return "";
   }
+  function guestIdFromKintonePath(pathname) {
+    const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ""));
+    return match ? match[1] : "";
+  }
+  function resolveDefaultGuestId() {
+    try {
+      return typeof window === "undefined" ? "" : guestIdFromKintonePath(window.location?.pathname);
+    } catch (e) {
+      return "";
+    }
+  }
   function sanitizeCustomizeResourceList(value) {
     if (!Array.isArray(value)) return [];
     const resources = [];
@@ -275,7 +286,7 @@
       mobile: buildPlatform("mobile")
     };
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIALOG_STATE_KEY, SECTION_DEFS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -321,6 +332,7 @@
         })
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
+      DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
@@ -922,12 +934,28 @@ ${base}`
     }
   });
 
+  // src/kintone-enums.ts
+  var init_kintone_enums = __esm({
+    "src/kintone-enums.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/diff/label-dict.ts
+  var init_label_dict = __esm({
+    "src/diff/label-dict.ts"() {
+      "use strict";
+      init_kintone_enums();
+    }
+  });
+
   // src/diff/enrich.ts
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      init_label_dict();
     }
   });
 
@@ -942,21 +970,6 @@ ${base}`
       init_constants();
       init_state();
       root = null;
-    }
-  });
-
-  // src/kintone-enums.ts
-  var init_kintone_enums = __esm({
-    "src/kintone-enums.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/diff/label-dict.ts
-  var init_label_dict = __esm({
-    "src/diff/label-dict.ts"() {
-      "use strict";
-      init_kintone_enums();
     }
   });
 
@@ -2173,14 +2186,6 @@ ${base}`
   function connectionSummary(appId, guestId = "", environment = "本番") {
     return `#${appId || "未入力"}${guestId ? `（ゲスト ${guestId}）` : ""} · ${environment}`;
   }
-  function validateJsonObject(value, label = "JSON") {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? "" : `${label}はオブジェクト形式で入力してください。`;
-    } catch {
-      return `${label}を読み込むか、有効なJSONを入力してください。`;
-    }
-  }
   function installLiteWorkflow(panel, options) {
     ensureStyles();
     panel.root.classList.add("kus-wf");
@@ -2424,6 +2429,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   init_constants();
   init_utils();
   init_api();
+  function assertNumericIds(appId, guestId, appLabel) {
+    if (!/^\d+$/.test(String(appId ?? "").trim())) throw new Error(`${appLabel}アプリIDは数値で入力してください`);
+    if (String(guestId ?? "").trim() && !/^\d+$/.test(String(guestId).trim())) throw new Error(`${appLabel}ゲストIDは数値で入力してください`);
+  }
+  var hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj ?? {}, key);
   function filterWritable(props) {
     const out = {};
     for (const [k, def] of Object.entries(props || {})) {
@@ -2441,7 +2451,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       if (!node || typeof node !== "object") return;
       const lookupRel = node.lookup?.relatedApp;
       if (lookupRel?.app != null) {
-        const after = map[String(lookupRel.app)];
+        const after = hasOwn(map, String(lookupRel.app)) ? map[String(lookupRel.app)] : void 0;
         if (after && String(after) !== String(lookupRel.app)) {
           node.lookup.relatedApp.app = String(after);
           delete node.lookup.relatedApp.code;
@@ -2450,7 +2460,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       }
       const refRel = node.referenceTable?.relatedApp;
       if (refRel?.app != null) {
-        const after = map[String(refRel.app)];
+        const after = hasOwn(map, String(refRel.app)) ? map[String(refRel.app)] : void 0;
         if (after && String(after) !== String(refRel.app)) {
           node.referenceTable.relatedApp.app = String(after);
           delete node.referenceTable.relatedApp.code;
@@ -2506,6 +2516,26 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return out;
   }
+  function withPartialNotice(error, notice) {
+    const wrapped = new Error(`${notice}
+${error?.message != null ? String(error.message) : String(error)}`);
+    for (const key of ["revisionConflict", "original", "code", "id", "__apiDiag", "stack"]) {
+      if (error && error[key] !== void 0) wrapped[key] = error[key];
+    }
+    return wrapped;
+  }
+  function findFieldApplyProblem(input) {
+    const appId = String(input.targetAppId ?? "").trim();
+    if (!appId) return "比較先アプリIDを指定してください。";
+    try {
+      assertNumericIds(appId, input.targetGuestId, "比較先");
+      parseFieldJsonInput(input.fieldJson);
+      parseLookupMapInput(input.lookupMapJson);
+    } catch (e) {
+      return String(e?.message || e);
+    }
+    return "";
+  }
   function planFieldApply(incoming, currentProps, lookupMap, overwrite) {
     const plan = { adds: {}, updates: {}, skippedSystem: [], skippedExisting: [], lookupConverted: [], logs: [] };
     const currentMap = currentProps || {};
@@ -2519,7 +2549,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const { def, changed } = convertLookup(writable[code], lookupMap);
       if (changed) plan.lookupConverted.push(code);
       if (!def.code) def.code = code;
-      if (currentMap[code]) {
+      if (hasOwn(currentMap, code) && currentMap[code]) {
         if (overwrite) {
           plan.updates[code] = def;
           plan.logs.push(`UPDATE ${code}${changed ? " (参照先AppID変換)" : ""}`);
@@ -2534,6 +2564,28 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return plan;
   }
+  function listCodes(map, limit = 10) {
+    const keys = Object.keys(map);
+    const shown = keys.slice(0, limit).map((key) => map[key]?.code && map[key].code !== key ? `${key} → ${map[key].code}` : key);
+    return shown.join("、") + (keys.length > limit ? ` ほか${keys.length - limit}件` : "");
+  }
+  function findFieldCodeConflicts(plan, currentProps) {
+    const current = currentProps || {};
+    const conflicts = [];
+    for (const [key, def] of Object.entries(plan.adds)) {
+      const code = String(def?.code || key);
+      if (hasOwn(current, code)) conflicts.push(`${key}${code !== key ? ` → ${code}` : ""}`);
+    }
+    const finalCount = /* @__PURE__ */ new Map();
+    const count = (code) => finalCount.set(code, (finalCount.get(code) || 0) + 1);
+    for (const key of Object.keys(current)) count(hasOwn(plan.updates, key) ? String(plan.updates[key]?.code || key) : key);
+    for (const [key, def] of Object.entries(plan.adds)) count(String(def?.code || key));
+    for (const [key, def] of Object.entries(plan.updates)) {
+      const code = String(def?.code || key);
+      if (code !== key && (finalCount.get(code) || 0) > 1) conflicts.push(`${key} → ${code}`);
+    }
+    return conflicts;
+  }
   function buildFieldApplyConfirmText(targetAppId, targetGuestId, plan) {
     const addCount = Object.keys(plan.adds).length;
     const updateCount = Object.keys(plan.updates).length;
@@ -2541,6 +2593,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return [
       `比較先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ""} のプレビュー環境へフィールドを反映します。`,
       `追加 ${addCount}件 / 更新 ${updateCount}件 / スキップ ${skipCount}件${plan.lookupConverted.length ? ` / 参照先AppID変換 ${plan.lookupConverted.length}件` : ""}`,
+      addCount ? `追加: ${listCodes(plan.adds)}` : "",
+      updateCount ? `更新: ${listCodes(plan.updates)}` : "",
+      "削除 0件（このツールはフィールドを削除しません）",
       updateCount ? "更新対象は既存の定義を比較元の内容で置き換えます。" : "",
       "本番には反映されません（管理画面から手動デプロイ）。実行しますか？"
     ].filter(Boolean).join("\n");
@@ -2548,6 +2603,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   async function runFieldApplyStandalone(opts, setStatus) {
     const { targetAppId, targetGuestId, fieldJson, lookupMapJson, overwrite } = opts;
     if (!targetAppId) throw new Error("比較先アプリIDを入力してください");
+    assertNumericIds(targetAppId, targetGuestId, "比較先");
     const incoming = parseFieldJsonInput(fieldJson);
     const lookupMap = parseLookupMapInput(lookupMapJson);
     const prefix = buildApiPrefix(targetGuestId || "", true);
@@ -2561,6 +2617,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       setStatus(`追加・更新対象がありません（スキップ ${plan.skippedSystem.length + plan.skippedExisting.length}件）`, true);
       logs.push("反映対象なし");
       return logs;
+    }
+    const conflicts = findFieldCodeConflicts(plan, current.properties || {});
+    if (conflicts.length) {
+      throw new Error(`反映後のフィールドコードが既存のフィールドと重複するため、何も反映せずに中止しました: ${conflicts.join("、")}`);
     }
     let revision = pickRevision(current);
     if (!/^\d+$/.test(revision)) {
@@ -2599,7 +2659,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         logs.push(`OK フィールド更新 ${updateCount}件${revision ? ` (revision ${revision})` : ""}`);
       } catch (e) {
         logs.push(`NG フィールド更新 ${updateCount}件${addCount ? "（追加 " + addCount + "件は反映済み）" : ""}`);
-        throw decorateRevisionConflict(e, "フィールド更新");
+        const failure = decorateRevisionConflict(e, "フィールド更新");
+        throw addCount ? withPartialNotice(failure, `フィールド追加 ${addCount}件は反映済みですが、フィールド更新 ${updateCount}件は反映されませんでした。`) : failure;
       }
     }
     setStatus(`フィールド反映完了: 追加 ${addCount} / 更新 ${updateCount} / スキップ ${plan.skippedSystem.length + plan.skippedExisting.length}`);
@@ -2608,6 +2669,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   async function runLoadFieldsStandalone(opts, setStatus) {
     const { appId, guestId, preview } = opts;
     if (!appId) throw new Error("アプリIDを入力してください");
+    assertNumericIds(appId, guestId, "");
     const prefix = buildApiPrefix(guestId || "", !!preview);
     setStatus("フィールド取得中...");
     const res = await apiGet(prefix, "/app/form/fields.json", { app: appId });
@@ -2634,10 +2696,20 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const newProps = {};
     const renamePairs = [];
     const collisions = [];
-    const retainedCodes = new Set(
-      Object.entries(props || {}).filter(([, field]) => field && !RENAME_EXCLUDED_TYPES.has(field.type)).map(([code]) => code)
-    );
-    for (const [code, field] of Object.entries(props || {})) {
+    const entries = Object.entries(props || {});
+    const finalCodes = /* @__PURE__ */ new Map();
+    const countCode = (code) => finalCodes.set(code, (finalCodes.get(code) || 0) + 1);
+    for (const [code, field] of entries) {
+      if (!field) continue;
+      countCode(RENAME_EXCLUDED_TYPES.has(field.type) ? code : rename(code) || code);
+      if (!RENAME_EXCLUDED_TYPES.has(field.type) && field.type === "SUBTABLE" && field.fields && typeof field.fields === "object") {
+        for (const childCode of Object.keys(field.fields)) countCode(rename(childCode) || childCode);
+      }
+    }
+    const checkDuplicate = (from, to, toCode) => {
+      if ((finalCodes.get(toCode) || 0) > 1) collisions.push(`${from} → ${to}`);
+    };
+    for (const [code, field] of entries) {
       if (!field || RENAME_EXCLUDED_TYPES.has(field.type)) continue;
       const newCode = rename(code);
       const cloned = deepClone(field);
@@ -2647,8 +2719,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           collisions.push(`${code} → (空)`);
           continue;
         }
-        retainedCodes.delete(code);
-        if (retainedCodes.has(newCode)) collisions.push(`${code} → ${newCode}`);
+        checkDuplicate(code, newCode, newCode);
         cloned.code = newCode;
         touched = true;
         renamePairs.push({ from: code, to: newCode });
@@ -2658,18 +2729,22 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         for (const [childCode, childDef] of Object.entries(cloned.fields)) {
           const newChild = rename(childCode);
           const childClone = deepClone(childDef);
-          if (newChild !== childCode && newChild) {
-            childClone.code = newChild;
-            touched = true;
-            renamePairs.push({ from: `${code}.${childCode}`, to: `${newCode}.${newChild}` });
+          if (newChild !== childCode) {
+            if (!newChild) {
+              collisions.push(`${code}.${childCode} → (空)`);
+            } else {
+              checkDuplicate(`${code}.${childCode}`, `${newCode}.${newChild}`, newChild);
+              childClone.code = newChild;
+              touched = true;
+              renamePairs.push({ from: `${code}.${childCode}`, to: `${newCode}.${newChild}` });
+            }
           }
-          children[newChild || childCode] = childClone;
+          children[childCode] = childClone;
         }
         cloned.fields = children;
       }
       if (!touched) continue;
-      if (newProps[newCode] && newCode !== code) collisions.push(`${code} → ${newCode}`);
-      newProps[newCode] = cloned;
+      newProps[code] = cloned;
       modifiedCount++;
     }
     return { properties: newProps, modifiedCount, renamePairs, collisions };
@@ -2677,6 +2752,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   async function runBulkRenameFieldStandalone(opts, setStatus) {
     const { targetAppId, targetGuestId, prefix, removeMode } = opts;
     if (!targetAppId) throw new Error("比較先アプリIDを入力してください");
+    assertNumericIds(targetAppId, targetGuestId, "比較先");
     if (!prefix || !String(prefix).trim()) throw new Error("プレフィックス文字列を入力してください");
     const apiPrefix = buildApiPrefix(targetGuestId || "", true);
     setStatus("比較先フィールドを取得中...");
@@ -2972,7 +3048,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       hint: "フィールド定義を比較先のプレビューへ追加・更新します。本番への公開は設定画面で行います。"
     });
     const srcApp = makeInput({ placeholder: "アプリID", value: DEFAULT_APP_ID || "", width: "id" });
-    const srcGuest = makeInput({ placeholder: "ゲストID (任意)", width: "guest" });
+    const srcGuest = makeInput({ placeholder: "ゲストID (任意)", value: DEFAULT_GUEST_ID, width: "guest" });
     const tgtApp = makeInput({ placeholder: "アプリID", width: "id" });
     const tgtGuest = makeInput({ placeholder: "ゲストID (任意)", width: "guest" });
     const cardApp = makeCard({ title: "アプリ", number: 1 });
@@ -2980,13 +3056,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "比較先" }));
     cardApp.body.appendChild(createAppSearchControl(panel, {
       targets: [
+        // 検索した接続先（通常スペースなら空）に合わせる。以前のゲストIDが残ると別の接続先へ書き込もうとするため。
         { label: "比較元", apply: (id, _name, guestId) => {
           srcApp.value = id;
-          if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId;
+          srcGuest.value = guestId || "";
+          resetPickList();
         } },
         { label: "比較先", apply: (id, _name, guestId) => {
           tgtApp.value = id;
-          if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId;
+          tgtGuest.value = guestId || "";
         } }
       ]
     }));
@@ -3002,6 +3080,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       fieldJson.value = "";
     });
     bFormat.addEventListener("click", () => {
+      if (!fieldJson.value.trim()) {
+        panel.setStatus("整形する JSON がありません", "warn");
+        return;
+      }
       try {
         const parsed = JSON.parse(fieldJson.value || "{}");
         fieldJson.value = JSON.stringify(parsed, null, 2);
@@ -3018,15 +3100,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const file = fileInput.files?.[0];
       if (!file) return;
       file.text().then((text) => {
-        try {
-          const parsed = JSON.parse(text);
-          fieldJson.value = JSON.stringify(parsed, null, 2);
-          panel.setStatus(`「${file.name}」を読み込みました`, "ok");
-        } catch (e) {
-          panel.setStatus(`JSON 読み込みエラー: ${e?.message || String(e)}`, "err");
-        } finally {
-          fileInput.value = "";
-        }
+        const parsed = JSON.parse(text);
+        fieldJson.value = JSON.stringify(parsed, null, 2);
+        panel.setStatus(`「${file.name}」を読み込みました`, "ok");
+      }).catch((e) => {
+        panel.setStatus(`JSON 読み込みエラー: ${e?.message || String(e)}`, "err");
+      }).finally(() => {
+        fileInput.value = "";
       });
     });
     bImport.addEventListener("click", () => fileInput.click());
@@ -3087,6 +3167,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     pickActions.style.marginTop = "8px";
     pickDetails.body.appendChild(pickActions);
     let pickedPropsCache = {};
+    function resetPickList() {
+      pickedPropsCache = {};
+      pickList.clear();
+      pickActions.hidden = true;
+    }
+    srcApp.addEventListener("input", resetPickList);
+    srcGuest.addEventListener("input", resetPickList);
     bLoadPickList.addEventListener("click", () => liteRun(panel, "比較元フィールド一覧を取得中…", async () => {
       const props = await runLoadFieldsStandalone(
         { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: true },
@@ -3103,10 +3190,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       pickActions.hidden = false;
       panel.setStatus(`${entries.length}件のフィールド候補を表示中。絞り込んでチェックし、「挿入」で JSON にマージします`, entries.length ? "ok" : "warn");
     }));
-    bClosePick.addEventListener("click", () => {
-      pickList.clear();
-      pickActions.hidden = true;
-    });
+    bClosePick.addEventListener("click", resetPickList);
     bInsertPicked.addEventListener("click", () => {
       const codes = pickList.selected();
       if (!codes.length) {
@@ -3168,7 +3252,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     renameDetails.body.appendChild(makeRow(renamePrefix, { label: "文字列" }));
     renameDetails.body.appendChild(makeRow(removeMode.label));
     renameDetails.body.appendChild(makeRow(bRename));
-    const renameNote = makeNote("比較先のフィールドコードを書き換えた JSON を生成して上のテキストエリアにセットします（反映は別途実行）。");
+    const renameNote = makeNote("比較先のフィールドコードを書き換えた JSON を生成して上のテキストエリアにセットします。既存フィールドのコード変更として反映するには「既存フィールドを上書き更新」をオンにして実行します。");
     renameDetails.body.appendChild(renameNote);
     panel.body.insertBefore(renameDetails.details, panel.status);
     bRename.addEventListener("click", () => liteRun(panel, "リネーム生成中…", async () => {
@@ -3186,7 +3270,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const list = out.renamePairs.slice(0, 50).map((p) => `${p.from}  →  ${p.to}`).join("\n");
       panel.setResult(list + (out.renamePairs.length > 50 ? `
 ... 他 ${out.renamePairs.length - 50} 件` : ""));
-    }, "対象を JSON にセットしました。反映するなら上の「反映」ボタンを押してください"));
+    }, "対象を JSON にセットしました。コードを変更するには「既存フィールドを上書き更新」をオンにして「反映」を実行してください"));
     srcApp.setAttribute("aria-label", "比較元アプリID");
     srcGuest.setAttribute("aria-label", "比較元ゲストスペースID");
     tgtApp.setAttribute("aria-label", "比較先アプリID");
@@ -3194,7 +3278,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     fieldJson.setAttribute("aria-label", "反映するフィールド定義JSON");
     lookupMap.setAttribute("aria-label", "参照アプリID変換JSON");
     cardJson.body.appendChild(foldWorkflowSection("JSONファイル・整形・クリア", bImport, bExport, bFormat, bClear));
-    const fieldProblem = () => !tgtApp.value.trim() ? "比較先アプリIDを指定してください。" : validateJsonObject(fieldJson.value, "フィールド定義JSON") || (lookupMap.value.trim() ? validateJsonObject(lookupMap.value, "参照アプリID変換JSON") : "");
+    const fieldProblem = () => findFieldApplyProblem({ targetAppId: tgtApp.value, targetGuestId: tgtGuest.value, fieldJson: fieldJson.value, lookupMapJson: lookupMap.value });
     const fieldSummary = () => {
       let codes = [];
       try {
