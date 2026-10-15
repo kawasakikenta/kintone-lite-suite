@@ -185,13 +185,13 @@ export function mountErLitePanel() {
   bOpen.addEventListener('click', () => liteRun(panel, 'ER 図を生成中…', async () => {
     const validationError = validateErOptions(source());
     if (validationError) { panel.setStatus(validationError, 'warn'); return; }
-    await runGenerateERDiagramStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
+    await runGenerateERDiagramStandalone(source(), (m: string, e?: boolean | 'warn') => panel.setStatus(m, e === 'warn' ? 'warn' : e ? 'err' : 'busy'));
   }));
 
   bSave.addEventListener('click', () => liteRun(panel, 'HTML 生成中…', async () => {
     const validationError = validateErOptions(source());
     if (validationError) { panel.setStatus(validationError, 'warn'); return; }
-    await runExportERDiagramHtmlStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
+    await runExportERDiagramHtmlStandalone(source(), (m: string, e?: boolean | 'warn') => panel.setStatus(m, e === 'warn' ? 'warn' : e ? 'err' : 'busy'));
   }));
 
   appInp.setAttribute('aria-label', '起点アプリID');

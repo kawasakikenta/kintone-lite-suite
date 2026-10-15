@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiGet } from '../src/api';
-import { crawl } from '../src/tabs/er';
+import { buildHTML, crawl, describeReverseScan } from '../src/tabs/er';
+import { summarizeCrawl } from '../src/tabs/er-standalone';
 
 vi.mock('../src/api', async original => ({
   ...await original<typeof import('../src/api')>(),
   apiGet: vi.fn()
 }));
 
-type Graph = Record<number, { name: string; lookups?: number[]; refs?: number[]; actions?: number[]; fieldsError?: string }>;
+type Graph = Record<number, { name: string; lookups?: number[]; refs?: number[]; actions?: number[]; fieldsError?: string; fieldsResponse?: unknown }>;
 
 function installGraph(graph: Graph) {
   vi.mocked(apiGet).mockImplementation(async (_prefix: string, path: string, params: any) => {
@@ -25,6 +26,7 @@ function installGraph(graph: Graph) {
     }
     if (path === '/app/form/fields.json') {
       if (app.fieldsError) throw new Error(app.fieldsError);
+      if ('fieldsResponse' in app) return app.fieldsResponse;
       const properties: Record<string, any> = {};
       (app.lookups || []).forEach((to, i) => {
         properties[`lk${i}`] = { type: 'NUMBER', code: `lk${i}`, label: `LK${i}`, lookup: { relatedApp: { app: String(to) }, relatedKeyField: 'key' } };
@@ -90,5 +92,43 @@ describe('ER crawl', () => {
     });
     const apps = await crawl(['1'], options({ includeReverseLookup: true }));
     expect(apps.map((a: any) => a.id).sort()).toEqual([1, 2]);
+  });
+
+  it('treats an unexpected fields response as a failed app instead of aborting the crawl', async () => {
+    installGraph({
+      1: { name: 'A', lookups: [2] },
+      2: { name: 'B', fieldsResponse: {} }
+    });
+    const apps = await crawl(['1'], options());
+    expect(apps.map((a: any) => [a.id, a.status])).toEqual([[1, 'complete'], [2, 'failed']]);
+  });
+
+  it('reports apps whose settings could not be read during the reverse scan', async () => {
+    installGraph({
+      1: { name: 'A' },
+      2: { name: 'B', lookups: [1] },
+      3: { name: 'C', fieldsError: 'CB_NO02 permission denied' }
+    });
+    const opts: any = options({ includeReverseLookup: true });
+    const apps = await crawl(['1'], opts);
+    expect(apps.map((a: any) => a.id).sort()).toEqual([1, 2]);
+    expect(opts.reverseScan.total).toBe(3);
+    expect(opts.reverseScan.incomplete.map((r: any) => r.appId)).toEqual([3]);
+    expect(describeReverseScan(opts)).toMatch(/全3アプリ中 1アプリ/);
+
+    const html = buildHTML(apps, { ...opts, startAppId: '1', startAppIds: ['1'], source: {} });
+    expect(html).toContain('<b>逆引き走査</b> 1/3件が不完全');
+    expect(html).toContain('"reverseScanNote":"逆引き走査: 全3アプリ中 1アプリ');
+    expect(summarizeCrawl(apps, opts)).toMatchObject({ tone: 'warn' });
+    expect(summarizeCrawl(apps, opts).note).toContain('逆引き走査');
+  });
+
+  it('stays silent about the reverse scan when every app was readable', async () => {
+    installGraph({ 1: { name: 'A' }, 2: { name: 'B', lookups: [1] } });
+    const opts: any = options({ includeReverseLookup: true });
+    const apps = await crawl(['1'], opts);
+    expect(describeReverseScan(opts)).toBe('');
+    expect(summarizeCrawl(apps, opts)).toMatchObject({ tone: false, note: '' });
+    expect(buildHTML(apps, { ...opts, startAppId: '1', startAppIds: ['1'], source: {} })).not.toContain('<b>逆引き走査</b>');
   });
 });

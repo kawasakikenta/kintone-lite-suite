@@ -260,19 +260,39 @@ const getSchema = async (rawAppId, options, cache) => {
       sourceGuestId: options?.source?.guestId || ''
     });
   } else {
-    model = buildErAppModel({
-      appId,
-      fieldsResponse: fieldsResult.value,
-      appInfoResponse,
-      actionsResponse: actionsResult.status === 'fulfilled' ? actionsResult.value : undefined,
-      appInfoError: appInfoResult.status === 'rejected' ? appInfoResult.reason : undefined,
-      actionsError: actionsResult.status === 'rejected' ? actionsResult.reason : undefined,
-      sourceGuestId: options?.source?.guestId || ''
-    });
+    try {
+      model = buildErAppModel({
+        appId,
+        fieldsResponse: fieldsResult.value,
+        appInfoResponse,
+        actionsResponse: actionsResult.status === 'fulfilled' ? actionsResult.value : undefined,
+        appInfoError: appInfoResult.status === 'rejected' ? appInfoResult.reason : undefined,
+        actionsError: actionsResult.status === 'rejected' ? actionsResult.reason : undefined,
+        sourceGuestId: options?.source?.guestId || ''
+      });
+    } catch (e) {
+      // 想定外の応答形でも1アプリの取得失敗として扱い、探索全体を止めない
+      console.error(`App ${appId}:`, e);
+      model = buildFailedErAppModel(appId, e, {
+        appInfoResponse,
+        sourceGuestId: options?.source?.guestId || ''
+      });
+    }
   }
   cache.set(appId, model);
   return model;
 };
+
+/**
+ * 逆引き走査で関連を読み取れなかったアプリの要約文。問題がなければ空文字。
+ * 走査に失敗したアプリを参照している関連は、図に含まれない可能性がある。
+ */
+export function describeReverseScan(options: any): string {
+  const report = options?.reverseScan;
+  const incomplete = Array.isArray(report?.incomplete) ? report.incomplete.length : 0;
+  if (!incomplete) return '';
+  return `逆引き走査: 全${Number(report.total) || 0}アプリ中 ${incomplete}アプリは取得失敗または一部取得のため、それらを参照する関連が図に含まれない可能性があります`;
+}
 
 export const crawl = async (startIds, options) => {
   const cache = new Map();
@@ -291,10 +311,16 @@ export const crawl = async (startIds, options) => {
     progressUi.update(3, '逆引き探索用に全アプリを走査中...');
     const allApps = await fetchAllApps(options);
     reverseLookupIndex = new Map();
+    const incomplete: Array<{ appId: number; status: string; message: string }> = [];
+    options.reverseScan = { total: allApps.length, incomplete };
     for (let i = 0; i < allApps.length; i += 1) {
       const appId = Number(allApps[i]?.appId);
       if (!appId) continue;
       const schema = await getSchema(appId, options, cache);
+      const relationIssues = (schema.issues || []).filter((issue) => issue.scope !== 'metadata');
+      if (schema.status === 'failed' || schema.ok === false || relationIssues.length) {
+        incomplete.push({ appId, status: schema.status, message: (relationIssues[0] || schema.issues?.[0])?.message || '' });
+      }
       for (const rel of schema.relations || []) {
         if (!ER_TRAVERSE_RELATION_KINDS.has(rel.kind)) continue;
         const targetId = Number(rel.toApp);
@@ -357,8 +383,12 @@ export const buildHTML = (apps, options: any = {}) => {
     spaceId: options.spaceId || '',
     spaceAppIds: Array.isArray(options.spaceAppIds) ? options.spaceAppIds.map((v) => String(v)) : [],
     sourceGuestId: options.source?.guestId || '',
-    sourcePreview: !!options.source?.preview
+    sourcePreview: !!options.source?.preview,
+    reverseScanNote: describeReverseScan(options)
   });
+  const reverseScanPill = describeReverseScan(options)
+    ? `<span class="meta-pill" title="${esc(describeReverseScan(options))}"><b>逆引き走査</b> ${esc(String(options.reverseScan.incomplete.length))}/${esc(String(options.reverseScan.total))}件が不完全</span>`
+    : '';
   const dependencyAnalysis = analyzeErDependencies(safeApps);
   const dependencyAnalysisData = safeJsonForScript(dependencyAnalysis);
   const densityLabelMap = { none: '結合のみ', compact: 'コンパクト', standard: '標準', full: '詳細' };
@@ -1007,6 +1037,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-v
   <span class="meta-pill"><b>ゲスト</b> ${esc(options.source?.guestId ? `ゲスト ${String(options.source.guestId)}` : '通常空間')}</span>
   <span class="meta-pill"><b>モード</b> ${options.source?.preview ? 'プレビュー' : '本番'}</span>
   <span class="meta-pill"><b>サブテーブル</b> ${options.includeSubtableFields ? 'ON' : 'OFF'}</span>
+  ${reverseScanPill}
 </div>
 
 <div id="overview" class="collapsed">
@@ -3601,6 +3632,7 @@ function exportProvenanceEntries(){
     ["起点アプリ",(ER_OPTIONS.startAppIds||[]).join(", ")||"-"],
     ["探索深さ",ER_OPTIONS.maxDepth?String(ER_OPTIONS.maxDepth):"無制限"],
     ["逆引き探索",ER_OPTIONS.includeReverseLookup?"ON":"OFF"],
+    ...(ER_OPTIONS.reverseScanNote?[["逆引き走査の注意",ER_OPTIONS.reverseScanNote]]:[]),
     ["サブテーブル",ER_OPTIONS.includeSubtableFields!==false?"ON":"OFF"],
     ["項目範囲","取得済み全項目（図の表示密度とは独立）"],
     ["接続",(ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+"/"+(ER_OPTIONS.sourcePreview?"プレビュー":"本番")],
@@ -3871,6 +3903,7 @@ function showMarkdown(){
   lines.push("- 起点アプリ: " + ((ER_OPTIONS.startAppIds||[]).join(", ") || "-"));
   lines.push("- 探索深さ: " + (ER_OPTIONS.maxDepth||"無制限"));
   lines.push("- 逆引き探索: " + (ER_OPTIONS.includeReverseLookup?"ON":"OFF"));
+  if(ER_OPTIONS.reverseScanNote) lines.push("- 逆引き走査の注意: " + ER_OPTIONS.reverseScanNote);
   lines.push("- サブテーブル: " + (ER_OPTIONS.includeSubtableFields!==false?"ON":"OFF"));
   lines.push("- 項目範囲: 取得済み全項目（図の表示密度とは独立）");
   lines.push("- 接続: " + (ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間") + " / " + (ER_OPTIONS.sourcePreview?"プレビュー":"本番"));
