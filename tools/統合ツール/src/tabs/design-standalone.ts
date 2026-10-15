@@ -306,8 +306,9 @@ export async function runDesignDiffMdStandalone(
 
   setStatus('差分レポート生成中...');
   // 生データ JSON は表・要約と重複して差分を読みにくくするため、比較は可読部分だけで行う
-  const srcMd = bundleToMarkdown(srcBundle, { rawJson: false });
-  const tgtMd = bundleToMarkdown(tgtBundle, { rawJson: false });
+  // 取得日時は毎回異なりノイズになるため、比較対象から外す
+  const srcMd = bundleToMarkdown(srcBundle, { rawJson: false, fetchedAt: false });
+  const tgtMd = bundleToMarkdown(tgtBundle, { rawJson: false, fetchedAt: false });
   const diffMd = simpleLineDiffLite(tgtMd, srcMd);
   const finalMd = buildDesignDiffReport({
     diff: diffMd,
