@@ -70,37 +70,48 @@ async function loadScriptWithFallback(urls: string[]): Promise<void> {
   throw lastErr || new Error('Mermaid.js の読み込みに失敗しました');
 }
 
+const initializedMermaid = new WeakSet<object>();
+
 async function ensureMermaid(): Promise<any> {
   const w = window as any;
-  if (w.mermaid) return w.mermaid;
-  if (!mermaidLoadPromise) {
-    mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS).catch((err: any) => {
-      mermaidLoadPromise = null;
-      throw err;
-    });
+  if (!w.mermaid) {
+    if (!mermaidLoadPromise) {
+      mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS).catch((err: any) => {
+        mermaidLoadPromise = null;
+        throw err;
+      });
+    }
+    await mermaidLoadPromise;
   }
-  await mermaidLoadPromise;
-  if (w.mermaid) {
+  if (!w.mermaid) throw new Error('Mermaid.js の読み込みに失敗しました');
+  // kintone 側のカスタマイズが先に mermaid を読み込んでいた場合も、ステータス名・アクション名を
+  // 描画するので securityLevel: 'strict' を必ず適用する（初期化は 1 回だけ）
+  if (!initializedMermaid.has(w.mermaid) && typeof w.mermaid.initialize === 'function') {
     w.mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'strict' });
-    return w.mermaid;
+    initializedMermaid.add(w.mermaid);
   }
-  throw new Error('Mermaid.js の読み込みに失敗しました');
+  return w.mermaid;
+}
+
+/** HTML タグとして解釈されて表示名が欠ける `<` を全角にする（`<10万円` のようにタグにならない `<` は残す）。 */
+function neutralizeHtmlTagOpen(text: string): string {
+  return text.replace(/<(?=[A-Za-z/!?])/g, '＜');
 }
 
 /** Mermaid の `state "..." as id` に入れる表示名。ダブルクォートと改行は使えないので置換する。 */
 function mermaidDisplayName(name: string): string {
-  return String(name ?? '')
+  return neutralizeHtmlTagOpen(String(name ?? '')
     .replace(/[\r\n]+/g, ' ')
-    .replace(/"/g, "'")
+    .replace(/"/g, "'"))
     .trim() || '(名称なし)';
 }
 
 /** 遷移ラベル（`A --> B : label`）。改行・コロン・セミコロンは構文と衝突するので置換する。 */
 function mermaidTransitionLabel(name: string): string {
-  return String(name ?? '')
+  return neutralizeHtmlTagOpen(String(name ?? '')
     .replace(/[\r\n]+/g, ' ')
     .replace(/[:;]/g, '-')
-    .replace(/[#"]/g, '')
+    .replace(/[#"]/g, ''))
     .trim() || '(名称なし)';
 }
 
@@ -256,7 +267,8 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
   const renderMermaid = async (highlightState) => {
     if (!isCurrent()) return false;
     const md = buildProcessMermaidSource(states, actions, highlightState);
-    targets.textEl.value = md;
+    // 共有・保存するソースにはシミュレーション中の現在状態の強調を含めない
+    targets.textEl.value = highlightState ? buildProcessMermaidSource(states, actions, null) : md;
     // 読み込み失敗と描画失敗（構文エラー・サイズ超過など）を区別して、簡易表示にした理由をそのまま示す
     let phase = '読み込み';
     try {
