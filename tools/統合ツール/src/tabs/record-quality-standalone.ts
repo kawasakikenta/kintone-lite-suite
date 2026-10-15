@@ -9,7 +9,8 @@ import { buildCsvImportTemplate } from './record-template.js';
 
 type Status = (message: string, error?: boolean) => void;
 function connection(appIdsText: string, guestId: string) {
-  const appIds = parseRecordAppIds(appIdsText);
+  // Leading zeros are accepted by the shared parser but break record links and make "7" and "07" separate targets.
+  const appIds = [...new Set(parseRecordAppIds(appIdsText).map(id => id.replace(/^0+/, '')))];
   if (!appIds.length) throw new Error('対象アプリを指定してください');
   if (guestId && !/^[1-9]\d*$/.test(guestId)) throw new Error('ゲストIDは正の数値で入力してください');
   return { appIds, prefix: buildApiPrefix(guestId, false) };
