@@ -248,7 +248,7 @@ export function mountFieldLitePanel() {
   renameDetails.body.appendChild(makeRow(renamePrefix, { label: '文字列' }));
   renameDetails.body.appendChild(makeRow(removeMode.label));
   renameDetails.body.appendChild(makeRow(bRename));
-  const renameNote = makeNote('比較先のフィールドコードを書き換えた JSON を生成して上のテキストエリアにセットします（反映は別途実行）。');
+  const renameNote = makeNote('比較先のフィールドコードを書き換えた JSON を生成して上のテキストエリアにセットします。既存フィールドのコード変更として反映するには「既存フィールドを上書き更新」をオンにして実行します。');
   renameDetails.body.appendChild(renameNote);
   panel.body.insertBefore(renameDetails.details, panel.status);
 
@@ -266,7 +266,7 @@ export function mountFieldLitePanel() {
     fieldJson.value = JSON.stringify({ properties: out.properties }, null, 2);
     const list = out.renamePairs.slice(0, 50).map((p) => `${p.from}  →  ${p.to}`).join('\n');
     panel.setResult(list + (out.renamePairs.length > 50 ? `\n... 他 ${out.renamePairs.length - 50} 件` : ''));
-  }, '対象を JSON にセットしました。反映するなら上の「反映」ボタンを押してください'));
+  }, '対象を JSON にセットしました。コードを変更するには「既存フィールドを上書き更新」をオンにして「反映」を実行してください'));
 
   srcApp.setAttribute('aria-label', '比較元アプリID'); srcGuest.setAttribute('aria-label', '比較元ゲストスペースID');
   tgtApp.setAttribute('aria-label', '比較先アプリID'); tgtGuest.setAttribute('aria-label', '比較先ゲストスペースID');

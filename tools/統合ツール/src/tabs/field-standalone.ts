@@ -241,7 +241,10 @@ const RENAME_EXCLUDED_TYPES = new Set([
 
 /**
  * フィールドコードにプレフィックスを一括付与/除去した properties を返す（純粋関数）。
- * サブテーブル内の子フィールドも同じ規則で書き換える。
+ * 返す JSON は反映時に「既存フィールドのコード変更」(PUT) として扱われるよう、キーは変更前のコード、
+ * `code` に変更後のコードを入れる。サブテーブル内の子フィールドも同じ規則で書き換える。
+ * フィールドコードはアプリ内で一意なので、変更後のコードがサブテーブルの子や対象外フィールドを
+ * 含めて重複する場合は collisions に載せる。
  */
 export function planBulkRename(props: Record<string, any>, prefixText: string, removeMode: boolean) {
   const trimmed = String(prefixText || '').trim();
@@ -253,20 +256,28 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
   const newProps: Record<string, any> = {};
   const renamePairs: Array<{ from: string; to: string }> = [];
   const collisions: string[] = [];
-  const retainedCodes = new Set(
-    Object.entries(props || {})
-      .filter(([, field]: [string, any]) => field && !RENAME_EXCLUDED_TYPES.has(field.type))
-      .map(([code]) => code)
-  );
-  for (const [code, field] of Object.entries(props || {}) as Array<[string, any]>) {
+  const entries = Object.entries(props || {}) as Array<[string, any]>;
+  // 変更後のコード（子フィールド・対象外フィールドを含む）の出現数。空になる変更は変更前のコードのまま数える。
+  const finalCodes = new Map<string, number>();
+  const countCode = (code: string) => finalCodes.set(code, (finalCodes.get(code) || 0) + 1);
+  for (const [code, field] of entries) {
+    if (!field) continue;
+    countCode(RENAME_EXCLUDED_TYPES.has(field.type) ? code : rename(code) || code);
+    if (!RENAME_EXCLUDED_TYPES.has(field.type) && field.type === 'SUBTABLE' && field.fields && typeof field.fields === 'object') {
+      for (const childCode of Object.keys(field.fields)) countCode(rename(childCode) || childCode);
+    }
+  }
+  const checkDuplicate = (from: string, to: string, toCode: string) => {
+    if ((finalCodes.get(toCode) || 0) > 1) collisions.push(`${from} → ${to}`);
+  };
+  for (const [code, field] of entries) {
     if (!field || RENAME_EXCLUDED_TYPES.has(field.type)) continue;
     const newCode = rename(code);
     const cloned = deepClone(field);
     let touched = false;
     if (newCode !== code) {
       if (!newCode) { collisions.push(`${code} → (空)`); continue; }
-      retainedCodes.delete(code);
-      if (retainedCodes.has(newCode)) collisions.push(`${code} → ${newCode}`);
+      checkDuplicate(code, newCode, newCode);
       cloned.code = newCode;
       touched = true;
       renamePairs.push({ from: code, to: newCode });
@@ -276,18 +287,22 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
       for (const [childCode, childDef] of Object.entries(cloned.fields) as Array<[string, any]>) {
         const newChild = rename(childCode);
         const childClone = deepClone(childDef);
-        if (newChild !== childCode && newChild) {
-          childClone.code = newChild;
-          touched = true;
-          renamePairs.push({ from: `${code}.${childCode}`, to: `${newCode}.${newChild}` });
+        if (newChild !== childCode) {
+          if (!newChild) {
+            collisions.push(`${code}.${childCode} → (空)`);
+          } else {
+            checkDuplicate(`${code}.${childCode}`, `${newCode}.${newChild}`, newChild);
+            childClone.code = newChild;
+            touched = true;
+            renamePairs.push({ from: `${code}.${childCode}`, to: `${newCode}.${newChild}` });
+          }
         }
-        children[newChild || childCode] = childClone;
+        children[childCode] = childClone;
       }
       cloned.fields = children;
     }
     if (!touched) continue;
-    if (newProps[newCode] && newCode !== code) collisions.push(`${code} → ${newCode}`);
-    newProps[newCode] = cloned;
+    newProps[code] = cloned;
     modifiedCount++;
   }
   return { properties: newProps, modifiedCount, renamePairs, collisions };

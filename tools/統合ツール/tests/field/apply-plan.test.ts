@@ -148,8 +148,11 @@ describe('planBulkRename', () => {
 
   it('adds a prefix to top-level and subtable child codes', () => {
     const out = planBulkRename(props, 'dev_', false);
-    expect(Object.keys(out.properties)).toEqual(['dev_title', 'dev_table']);
-    expect(out.properties.dev_table.fields).toEqual({ dev_qty: { type: 'NUMBER', code: 'dev_qty' } });
+    // キーは変更前のコード。反映時に新規追加ではなく既存フィールドのコード変更（PUT）になる。
+    expect(Object.keys(out.properties)).toEqual(['title', 'table']);
+    expect(out.properties.title.code).toBe('dev_title');
+    expect(out.properties.table.code).toBe('dev_table');
+    expect(out.properties.table.fields).toEqual({ qty: { type: 'NUMBER', code: 'dev_qty' } });
     expect(out.renamePairs).toEqual([
       { from: 'title', to: 'dev_title' },
       { from: 'table', to: 'dev_table' },
@@ -160,7 +163,8 @@ describe('planBulkRename', () => {
 
   it('removes a prefix and reports codes that would become empty', () => {
     const out = planBulkRename({ ...props, dev_: { type: 'NUMBER', code: 'dev_' } }, 'dev_', true);
-    expect(Object.keys(out.properties)).toEqual(['done']);
+    expect(Object.keys(out.properties)).toEqual(['dev_done']);
+    expect(out.properties.dev_done.code).toBe('done');
     expect(out.collisions).toEqual(['dev_ → (空)']);
   });
 
@@ -170,5 +174,31 @@ describe('planBulkRename', () => {
       dev_title: { type: 'SINGLE_LINE_TEXT', code: 'dev_title' }
     }, 'dev_', true);
     expect(out.collisions).toContain('dev_title → title');
+  });
+
+  it('reports collisions between subtable children and with fields that are not renamed', () => {
+    const out = planBulkRename({
+      qty: { type: 'NUMBER', code: 'qty' },
+      table: { type: 'SUBTABLE', code: 'table', fields: { dev_qty: { type: 'NUMBER', code: 'dev_qty' } } },
+      dev_memo: { type: 'SINGLE_LINE_TEXT', code: 'dev_memo' },
+      memo: { type: 'RECORD_NUMBER', code: 'memo' }
+    }, 'dev_', true);
+    expect(out.collisions).toEqual(['table.dev_qty → table.qty', 'dev_memo → memo']);
+  });
+
+  it('does not report a chain of renames as a collision', () => {
+    const out = planBulkRename({
+      aab: { type: 'NUMBER', code: 'aab' },
+      ab: { type: 'NUMBER', code: 'ab' }
+    }, 'a', true);
+    expect(out.collisions).toEqual([]);
+    expect(out.renamePairs).toEqual([{ from: 'aab', to: 'ab' }, { from: 'ab', to: 'b' }]);
+  });
+
+  it('turns into a rename (PUT) rather than an add when applied with overwrite', () => {
+    const out = planBulkRename(props, 'dev_', false);
+    const plan = planFieldApply(out.properties, props, {}, true);
+    expect(Object.keys(plan.adds)).toEqual([]);
+    expect(plan.updates.title.code).toBe('dev_title');
   });
 });
