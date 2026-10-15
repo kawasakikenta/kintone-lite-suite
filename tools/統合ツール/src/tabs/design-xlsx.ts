@@ -221,6 +221,15 @@ export function findReferencedFieldCodes(cond: unknown, codes: Iterable<string>)
   return found;
 }
 
+const EXCEL_CELL_TEXT_LIMIT = 32767;
+const EXCEL_CELL_TRUNCATED_NOTE = '…（Excelのセル上限のため省略）';
+
+/** Excel のセル上限を超える文字列を、省略の注記つきで切り詰める。 */
+export function clampCellText<T>(value: T): T | string {
+  if (typeof value !== 'string' || value.length <= EXCEL_CELL_TEXT_LIMIT) return value;
+  return value.slice(0, EXCEL_CELL_TEXT_LIMIT - EXCEL_CELL_TRUNCATED_NOTE.length) + EXCEL_CELL_TRUNCATED_NOTE;
+}
+
 /** ユーザーフィールドとテーブル内フィールドのコードをまとめて返す（条件式からの参照検出用）。 */
 function collectAllFieldCodes(fields: Record<string, any>): string[] {
   const codes = new Set<string>();
@@ -1296,11 +1305,13 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
     const appendSheet = (name, data, meta: any = {}) => {
       if (!data || !Array.isArray(data.aoa) || data.aoa.length === 0) return null;
-      const ws = XLSX.utils.aoa_to_sheet(data.aoa);
-      autosizeCols(ws, data.aoa, data.options || ({} as any));
-      applyStyles(ws, data.aoa, data.options || ({} as any));
+      // Excel のセルは 32,767 文字まで。長大なラベル・式 1 つでブック全体の書き出しが失敗しないよう、超過分は省略を明記して切る
+      const aoa = data.aoa.map((row) => (Array.isArray(row) ? row.map(clampCellText) : row));
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      autosizeCols(ws, aoa, data.options || ({} as any));
+      applyStyles(ws, aoa, data.options || ({} as any));
       if (data.mergeRanges) applyCellMerges(ws, data.mergeRanges);
-      applyRowHeights(ws, data.aoa, data.options || ({} as any));
+      applyRowHeights(ws, aoa, data.options || ({} as any));
       applyPageSetup(ws, data.pageSetup || ({} as any));
       const safeName = makeSafeSheetName(name, new Set(wb.SheetNames));
       XLSX.utils.book_append_sheet(wb, ws, safeName);
@@ -2319,7 +2330,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     }
 
     UI.update(returnWorkbook ? '生成完了' : 'ダウンロード中...', 12);
-    const safeAppName = String(appSettings?.name || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const safeAppName = String(appSettings?.name || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, ' ').trim();
     const appLabel = safeAppName ? `${safeAppName}(app${APP_ID})` : `app${APP_ID}`;
     const filename = `設計書_${appLabel}_${nowStampZip()}.xlsx`;
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runAdvancedDesignExporter, toManifestTargets } from '../../src/tabs/design-xlsx';
+import { clampCellText, runAdvancedDesignExporter, toManifestTargets } from '../../src/tabs/design-xlsx';
 
 type Sheet = { __aoa: any[][]; [key: string]: any };
 
@@ -151,6 +151,29 @@ describe('runAdvancedDesignExporter の取得失敗の扱い', () => {
     vi.useRealTimers();
     const summary: any[][] = result.wb.Sheets['サマリー'].__aoa;
     expect(summary.find((row) => row[0] === 'Webhook数')).toEqual(['Webhook数', '(取得不可)']);
+  });
+});
+
+describe('Excel のセル文字数上限', () => {
+  it('上限を超える文字列だけを注記つきで切り詰める', () => {
+    expect(clampCellText('短い')).toBe('短い');
+    expect(clampCellText(12)).toBe(12);
+    const exact = 'a'.repeat(32767);
+    expect(clampCellText(exact)).toBe(exact);
+    const clamped = clampCellText('a'.repeat(40000)) as string;
+    expect(clamped.length).toBe(32767);
+    expect(clamped.endsWith('省略）')).toBe(true);
+  });
+
+  it('長大な計算式があってもシートには上限内の文字列だけを渡す', async () => {
+    installEnvironment(baseResponses({
+      '/app/form/fields.json': { properties: { 長い式: { code: '長い式', label: '長い式', type: 'CALC', expression: 'A+'.repeat(30000) } } }
+    }));
+    const result: any = await runAdvancedDesignExporter({ appId: '5', preselectedSheets: new Set(['fields']), returnWorkbook: true, suppressToast: true });
+    const rows: any[][] = result.wb.Sheets['項目定義'].__aoa;
+    const cells = rows.flat().filter((v) => typeof v === 'string');
+    expect(Math.max(...cells.map((v) => v.length))).toBeLessThanOrEqual(32767);
+    expect(cells.some((v) => v.endsWith('省略）'))).toBe(true);
   });
 });
 

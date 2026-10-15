@@ -347,9 +347,12 @@ export function buildDesignDiffReport(input: { diff: string; generatedAt: string
   lines.push('');
   lines.push('## 差分');
   lines.push('');
-  lines.push('```diff');
+  // 差分本文に ``` が含まれていても、フェンスが途中で閉じないよう囲みを長くする
+  let fence = '```';
+  while (input.diff.includes(fence)) fence += '`';
+  lines.push(`${fence}diff`);
   lines.push(input.diff);
-  lines.push('```');
+  lines.push(fence);
   lines.push('');
   return lines.join('\n');
 }

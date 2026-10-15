@@ -175,6 +175,51 @@ describe('design/bundleToMarkdown (REST API レスポンス準拠の日本語化
     expect(md).toContain('| 取得できなかったセクション | フィールド設定 |');
   });
 
+  it('表のセルでは | ・改行・* ・< を壊さず、HTMLとして実行されないようにする', () => {
+    const md = visibleMarkdown(bundleToMarkdown(makeBundle({
+      fieldSettings: {
+        properties: {
+          price: { code: 'price', label: '単価|税込', type: 'NUMBER', options: { a: { label: '<img src=x onerror=alert(1)>', index: '0' } } },
+          total: { code: 'total', label: '合計', type: 'CALC', expression: '単価*数量*税率' }
+        }
+      }
+    })));
+    expect(md).toContain('単価\\|税込');
+    expect(md).toContain('&lt;img src=x onerror=alert(1)>');
+    expect(md).not.toContain('<img');
+    expect(md).toContain('式: 単価\\*数量\\*税率');
+  });
+
+  it('箇条書き・見出し・引用に入る文字列は1行にまとめ、HTMLやコードの囲みを壊さない', () => {
+    const md = visibleMarkdown(bundleToMarkdown(makeBundle({
+      appSettings: { name: '営業<script>alert(1)</script>' },
+      layoutSettings: { layout: [
+        { type: 'ROW', fields: [{ type: 'LABEL', label: '<div>1行目</div><div>2行目</div>' }] },
+        { type: 'GROUP', code: 'g', label: '見出し\n改行', layout: [] }
+      ] },
+      customizeSettings: { scope: 'ALL', desktop: { js: [{ type: 'URL', url: 'https://example.com/a.js?<img src=x>' }], css: [] } },
+      recordPermissions: { rights: [{ filterCond: 'memo = "a`b"', entities: [] }] }
+    })));
+    expect(md).toContain('- 行: [ラベル]1行目 2行目');
+    expect(md).toContain('- グループ: `g` — 見出し 改行');
+    expect(md).toContain('> 営業&lt;script>alert(1)&lt;/script>');
+    expect(md).toContain('URL指定: https://example.com/a.js?&lt;img src=x>');
+    expect(md).toContain('#### 条件 1: `` memo = "a`b" ``');
+    expect(md).not.toContain('<img');
+    expect(md).not.toMatch(/^[^`\n]*<script>/m);
+  });
+
+  it('目次のリンクは見出しのアンカーと一致させる（括弧や※は GitHub と同様に除く）', () => {
+    const md = bundleToMarkdown(makeBundle({
+      appInfo: { name: 'x' },
+      pluginSettings: { plugins: [] },
+      customizeSettings: { scope: 'ALL' }
+    }), { rawJson: false });
+    expect(md).toContain('- [アプリ情報(ラベル)](#アプリ情報ラベル)');
+    expect(md).toContain('- [プラグイン(※)](#プラグイン)');
+    expect(md).toContain('- [JS/CSS設定](#jscss設定)');
+  });
+
   it('fetchedAt: false では先頭の表から取得日時の行を外す', () => {
     const bundle = makeBundle({ appSettings: { name: 'x' } });
     expect(bundleToMarkdown(bundle)).toContain('| 取得日時 |');
