@@ -275,3 +275,44 @@ describe('addFieldImpactRef', () => {
     expect(pathReads).toBeLessThan(total * 6);
   });
 });
+
+describe('enrichDiffRows: process state rename notice', () => {
+  const state = (name: string, index: string) => ({ name, index, assignee: { type: 'ONE', entities: [] } });
+  const source = makeBundle({
+    processSettings: { enable: true, states: { 未処理: state('未処理', '0'), 処理中: state('処理中', '1') }, actions: [{ name: '着手', from: '未処理', to: '処理中', filterCond: '' }] }
+  });
+  const target = makeBundle({
+    processSettings: { enable: true, states: { 未処理: state('未処理', '0'), 対応中: state('対応中', '1') }, actions: [{ name: '着手', from: '未処理', to: '対応中', filterCond: '' }] }
+  });
+
+  it('keeps the readable rename description instead of the internal __rename__ marker', () => {
+    const { rows } = computeDiffRows(source, target, ['processSettings'], '');
+    const [row] = enrichDiffRows(rows, source, target);
+
+    expect(row.path).toBe('processSettings.states.__rename__');
+    expect(row.reasonSummary).toBe('ステータス改名：処理中 → 対応中（参照を自動補正）');
+    expect(row.entityLabel).toBe('処理中 → 対応中');
+    expect(row.entityPropLabel).toBe('ステータス名');
+    expect(JSON.stringify([row.reasonSummary, row.entityLabel, row.entityPropLabel])).not.toContain('__rename__');
+  });
+});
+
+describe('buildDiffReasonSummary: property names', () => {
+  const summary = (sectionKey: string, path: string) => buildDiffReasonSummary({ sectionKey, path, type: 'changed', left: 1, right: 2 });
+
+  it('resolves camelCase app setting and app info keys instead of dropping the property name', () => {
+    expect(summary('appSettings', 'appSettings.enableThumbnails')).toBe('アプリ設定変更：サムネイル表示');
+    expect(summary('appSettings', 'appSettings.name')).toBe('アプリ設定変更：アプリ名');
+    expect(summary('appInfo', 'appInfo.threadId')).toBe('アプリ情報変更：スレッドID');
+  });
+
+  it('shows the dictionary label, or the original-case key, for unknown entity properties', () => {
+    expect(summary('notifications', 'notifications.notifications[0].recordAdded')).toContain('/ レコードの追加 変更');
+    expect(summary('reportSettings', 'reportSettings.reports.r1.periodicReport.period.dayOfMonth')).toContain('/ 日 変更');
+    expect(summary('reportSettings', 'reportSettings.reports.r1.someFutureKey')).toContain('/ someFutureKey 変更');
+  });
+
+  it('labels the JS/CSS file size as a file size in the row summary', () => {
+    expect(summary('customizeSettings', 'customizeSettings.desktop.js[0].file.size')).toContain('/ ファイルサイズ 変更');
+  });
+});

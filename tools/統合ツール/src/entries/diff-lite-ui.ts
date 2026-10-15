@@ -17,7 +17,8 @@ import {
 import { runExportDiffXlsx, type DiffXlsxContext } from '../diff/xlsx-export.js';
 import { buildDiffXlsxBatchExport } from '../diff/xlsx-batch-export.js';
 import { decodeRow, type DecodedRow } from '../diff/path-decoder.js';
-import { downloadBlob, downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify } from '../utils.js';
+import { collectFieldDefinitions, extractFieldPathInfo, getFieldRowPayload } from '../diff/enrich.js';
+import { downloadBlob, downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify, stripHtmlToText } from '../utils.js';
 import { runExportDiffHtmlStandalone } from '../tabs/diff-export-standalone.js';
 import {
   createLitePanel,
@@ -857,7 +858,51 @@ export function summarizeLiteIgnoreRules(text: string): { total: number; pathRul
   };
 }
 
-function rowDisplayIdentity(row: DiffRow, decoded: DecodedRow | null): { title: string; subtitle: string } {
+/** フィールドコード → 表示名。比較先を優先し、比較元にしかないフィールドは比較元の表示名を使う。 */
+export function buildLiteFieldLabelMap(...bundles: any[]): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const bundle of bundles) {
+    const properties = bundle?.sections?.fieldSettings?.properties || bundle?.sections?.fieldSettings;
+    const definitions = collectFieldDefinitions(properties && typeof properties === 'object' ? properties : {});
+    for (const [code, definition] of Object.entries<any>(definitions)) {
+      const label = stripHtmlToText(definition?.label).replace(/\s+/g, ' ').trim();
+      if (label) labels.set(code, label.length > 40 ? `${label.slice(0, 39)}…` : label);
+    }
+  }
+  return labels;
+}
+
+const fieldLabelMapCache = new WeakMap<object, Map<string, string>>();
+
+function fieldLabelsFor(cacheValue: DiffCache | null): Map<string, string> | undefined {
+  if (!cacheValue) return undefined;
+  let labels = fieldLabelMapCache.get(cacheValue);
+  if (!labels) {
+    labels = buildLiteFieldLabelMap(cacheValue.sourceBundle, cacheValue.targetBundle);
+    fieldLabelMapCache.set(cacheValue, labels);
+  }
+  return labels;
+}
+
+/** フィールド設定の行は場所を示す chip を持たないため、どのフィールドの差分かを見出しに含める。 */
+function fieldRowIdentityText(row: DiffRow, fieldLabels?: ReadonlyMap<string, string>): string {
+  if (row.sectionKey !== 'fieldSettings') return '';
+  const info = extractFieldPathInfo(row.path);
+  if (!info) return '';
+  const payload: any = getFieldRowPayload(row);
+  const payloadLabel = payload && typeof payload === 'object' && typeof payload.label === 'string'
+    ? stripHtmlToText(payload.label).replace(/\s+/g, ' ').trim()
+    : '';
+  const label = fieldLabels?.get(info.activeCode) || payloadLabel;
+  const field = label && label !== info.activeCode ? `${label}（${info.activeCode}）` : info.activeCode;
+  return info.isSubField ? `テーブル「${info.rootCode}」内の ${field}` : field;
+}
+
+function rowDisplayIdentity(
+  row: DiffRow,
+  decoded: DecodedRow | null,
+  fieldLabels?: ReadonlyMap<string, string>
+): { title: string; subtitle: string } {
   const path = String(row.path || '').trim();
   const semanticTitle = String(decoded?.oneLineSummary || decoded?.propLabel || '').trim();
   const reason = String(row.reasonSummary || '').trim();
@@ -872,7 +917,9 @@ function rowDisplayIdentity(row: DiffRow, decoded: DecodedRow | null): { title: 
   const fallbackTitle = label && label !== path
     ? label
     : `${sectionLabel}の${leafLabels[leaf] || (leaf ? `「${leaf}」` : '設定項目')}`;
-  const title = semanticTitle || reason || fallbackTitle;
+  const baseTitle = semanticTitle || reason || fallbackTitle;
+  const fieldText = decoded ? '' : fieldRowIdentityText(row, fieldLabels);
+  const title = fieldText ? `${fieldText} · ${baseTitle}` : baseTitle;
   const subtitleCandidates = [
     semanticTitle && reason !== semanticTitle ? reason : '',
     label && label !== path && label !== title ? label : ''
@@ -1076,6 +1123,8 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
 }
 
 export interface LiteRowsRenderOptions {
+  /** フィールドコード → 表示名。フィールド設定の行の見出しに使う。 */
+  fieldLabels?: ReadonlyMap<string, string>;
   collapsedSections?: ReadonlySet<string>;
   currentRowKey?: string;
   expandedValueKeys?: ReadonlySet<string>;
@@ -1132,7 +1181,7 @@ export function renderRowsHtml(
       const decoded = safeDecodeRow(r);
       const rowKey = buildLiteDiffRowKey(r);
       const cols = rowColumnsHtml(r, useCharDiff, decoded, rowKey, expandedValueKeys);
-      const identity = rowDisplayIdentity(r, decoded);
+      const identity = rowDisplayIdentity(r, decoded, options.fieldLabels);
       const rowValuesExpanded = !!options.expandedRowKeys?.has(rowKey);
       const rowValuesId = `kus-dl-row-values-${rowKey}`;
       const current = rowKey === options.currentRowKey;
@@ -3209,7 +3258,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       ? `<div class="kus-dl-more"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-more>さらに ${Math.min(RESULT_PAGE_SIZE, rows.length - visibleRows.length)} 件表示（残り ${rows.length - visibleRows.length} 件）</button></div>`
       : '';
     resultBox.className = `kus-dl-result kus-dl-result--${densitySelect.value} kus-dl-result--${layoutSelect.value}`;
-    resultBox.innerHTML = overview + `<div class="kus-dl-sticky">${renderReviewBarHtml(rows, source, target)}</div>` + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows, { collapsedSections, currentRowKey, expandedValueKeys, expandedRowKeys }) + more;
+    resultBox.innerHTML = overview + `<div class="kus-dl-sticky">${renderReviewBarHtml(rows, source, target)}</div>` + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows, { collapsedSections, currentRowKey, expandedValueKeys, expandedRowKeys, fieldLabels: fieldLabelsFor(cache) }) + more;
     cardFilter.card.style.display = 'block';
     filterDetails.style.display = '';
   }

@@ -7,6 +7,7 @@ import {
 } from '../constants.js';
 import { state } from '../state.js';
 import { stableStringify } from '../utils.js';
+import { labelOfProp, stateRenameName } from './label-dict.js';
 
 // utils.js と同一ロジック。IIFE バンドルで utils からの import が欠落した場合でも動作するようローカル定義する。
 function relativePathFromRow(path, secKey) {
@@ -31,13 +32,6 @@ function tokenizePath(path): Array<string | number> {
 function getPathLeafKey(path) {
   const m = String(path || '').match(/([^[.\]]+)(?:\[\d+\])?$/);
   return m ? m[1] : '';
-}
-
-function normalizeIgnoreToken(token) {
-  return String(token || '')
-    .replace(/[\u200b\u200c\u200d\ufeff]/g, '')
-    .replace(/^[\s\u3000]+|[\s\u3000]+$/g, '')
-    .toLowerCase();
 }
 
 export function summarizeSeverity(rows) {
@@ -830,7 +824,7 @@ const SECTION_PROP_LABELS: Record<string, Record<string, string>> = {
     type: '種別', url: 'URL', file: 'ファイル', fileKey: 'ファイルキー',
     js: 'JavaScript', css: 'CSS', desktop: 'デスクトップ', mobile: 'モバイル',
     scope: 'スコープ', resources: 'リソース',
-    _body: 'JS/CSS本文', name: 'ファイル名'
+    _body: 'JS/CSS本文', name: 'ファイル名', size: 'ファイルサイズ'
   },
   pluginSettings: {
     plugins: 'プラグイン一覧', id: 'プラグインID', name: 'プラグイン名',
@@ -927,6 +921,12 @@ export function extractEntityContext(row: any): DiffEntityContext {
       return empty;
     }
     case 'processSettings': {
+      if (row?._stateRenameNotice) {
+        // パスの __rename__ は内部の目印なので、利用者には旧名 → 新名として見せる。
+        const from = stateRenameName(row.left, row.renameCandidate?.fromCode);
+        const to = stateRenameName(row.right, row.renameCandidate?.toCode);
+        return { entityKind: 'state', entityLabel: `${from} → ${to}`, entityCode: '', propLabel: 'ステータス名' };
+      }
       if (tokens[1] === 'states' && typeof tokens[2] === 'string') {
         return { entityKind: 'state', entityLabel: tokens[2], entityCode: tokens[2], propLabel };
       }
@@ -1074,10 +1074,13 @@ export function extractEntityContext(row: any): DiffEntityContext {
 }
 
 export function buildDiffReasonSummary(row) {
+  // エンジンが「ステータス改名：旧 → 新（参照を自動補正）」と説明済みの通知行は、その文言を使う。
+  if (row._stateRenameNotice && row.reasonSummary) return String(row.reasonSummary);
   const sectionKey = row.sectionKey || '';
   const sectionLabel = SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey || '差分';
   const fieldInfo = extractFieldPathInfo(row.path);
-  const leafKey = normalizeIgnoreToken(getPathLeafKey(row.path));
+  // 辞書は camelCase のキー（enableThumbnails 等）で引くため、大小文字は元のまま使う。
+  const leafKey = getPathLeafKey(row.path);
   if (row.moved) {
     const from = Number(row.movedFrom);
     const to = Number(row.movedTo);
@@ -1135,7 +1138,7 @@ export function buildDiffReasonSummary(row) {
     return `${kindLabel}変更：${entity.entityLabel}`;
   }
   if (entity.entityKind) {
-    const detail = propLabel || (leafKey || '');
+    const detail = propLabel || labelOfProp(leafKey);
     const head = `${kindLabel}「${entity.entityLabel}」`;
     if (row.type === 'added') return detail ? `${head} / ${detail} 追加` : `${head} 追加`;
     if (row.type === 'removed') return detail ? `${head} / ${detail} 削除` : `${head} 削除`;
