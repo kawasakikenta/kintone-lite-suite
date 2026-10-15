@@ -48,6 +48,18 @@ describe('diff lite result presentation', () => {
     expect(validateLiteDiffStart({ sourceAppId: '', targetAppId: '', scopes: ['viewSettings'], hasImportedSource: true, hasImportedTarget: true })).toBe('');
   });
 
+  it('rejects a non-numeric guest space ID before it reaches the REST URL', () => {
+    const base = { sourceAppId: '1', targetAppId: '2', scopes: ['viewSettings'] };
+    expect(validateLiteDiffStart({ ...base, sourceGuestId: '１２３' })).toContain('比較元ゲストID');
+    expect(validateLiteDiffStart({ ...base, targetGuestId: 'abc' })).toContain('比較先ゲストID');
+    expect(validateLiteDiffStart({ ...base, sourceGuestId: '12/../3' })).toContain('半角数字');
+    expect(validateLiteDiffStart({ ...base, sourceGuestId: ' 12 ', targetGuestId: '34' })).toBe('');
+    expect(validateLiteDiffStart({ ...base, sourceGuestId: '', targetGuestId: '' })).toBe('');
+    // 1対多比較では比較元のゲストIDも検査し、比較先は各行の検査に任せる。
+    expect(validateLiteDiffStart({ sourceAppId: '1', sourceGuestId: 'x', scopes: ['viewSettings'], targets: [{ appId: '2', rowNumber: 1 }] }))
+      .toContain('比較元ゲストID');
+  });
+
   describe('validateLiteDiffStart with targets (1対多比較)', () => {
     const scopes = ['viewSettings'];
     const sourceAppId = '1';
