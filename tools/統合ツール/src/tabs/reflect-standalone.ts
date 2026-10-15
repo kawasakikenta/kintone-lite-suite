@@ -173,11 +173,13 @@ export async function runApplyPreviewStandalone(
       logs.push(`SKIP ${plan.label}: 書き込み不要`); onProgress(logs); continue;
     }
     setStatus(`反映中 ${index + 1}/${plans.length}: ${plan.label}`);
+    const written: string[] = [];
     try {
-      for (const operation of plan.operations) { await write(operation); logs.push(`  OK ${operation.label}`); }
+      for (const operation of plan.operations) { await write(operation); written.push(operation.label); logs.push(`  OK ${operation.label}`); }
       sections.push({ ...outcome, status: 'ok' }); logs.push(`OK ${plan.label}`);
     } catch (error: any) {
-      const message = error.message || String(error);
+      // 項目内の途中で止まった場合、先に完了した書き込みは反映先に残る。失敗の内容と一緒に必ず示す。
+      const message = `${error.message || String(error)}${written.length ? `\n（この項目では ${written.join('・')} まで書き込み済みです。差分を取得し直して現在の状態を確認してください）` : ''}`;
       sections.push({ ...outcome, status: 'ng', message }); pushErrorLog(logs, `NG ${plan.label}: ${message}`, message);
       if (opts.stopOnError !== false || error.stopReflection || isRevisionConflictError(error)) {
         for (const pending of plans.slice(index + 1)) sections.push({ sectionKey: pending.sectionKey, label: pending.label, status: 'pending', message: '中断のため未実行' });
