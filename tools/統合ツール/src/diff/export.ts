@@ -7927,6 +7927,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .drow-facts{display:flex;grid-column:1/-1;gap:6px;flex-wrap:wrap}
     .drow-title{grid-column:1;min-width:0}
     .drow-actions{grid-column:2;align-self:start}
+    .drow--focus .drow-head::before{grid-column:1/-1;justify-self:start}
     .fact-chip{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:var(--card-soft);color:var(--fg);font-size:11px;font-weight:750;line-height:1.35}
     .fact-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#64748b;flex:0 0 auto}
     .fact-chip--added::before{background:var(--pill-add)}
@@ -7989,6 +7990,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .drow-facts,.drow-title,.drow-actions{grid-column:1}
       .drow-actions{width:100%;margin-left:0;justify-content:flex-start;flex-wrap:wrap}
       .report-workspace button,.report-workspace input,.report-workspace select,.report-workspace summary{min-height:44px}
+      .sb-ctrl label.chk{min-height:44px;margin-bottom:0}
+      .sb-ctrl label.chk input[type="checkbox"]{min-height:0}
       .report-review-start{align-items:stretch;flex-direction:column}
       .report-review-start button{width:100%}
     }

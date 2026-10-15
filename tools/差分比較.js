@@ -11224,6 +11224,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .drow-facts{display:flex;grid-column:1/-1;gap:6px;flex-wrap:wrap}
     .drow-title{grid-column:1;min-width:0}
     .drow-actions{grid-column:2;align-self:start}
+    .drow--focus .drow-head::before{grid-column:1/-1;justify-self:start}
     .fact-chip{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:var(--card-soft);color:var(--fg);font-size:11px;font-weight:750;line-height:1.35}
     .fact-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#64748b;flex:0 0 auto}
     .fact-chip--added::before{background:var(--pill-add)}
@@ -11286,6 +11287,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .drow-facts,.drow-title,.drow-actions{grid-column:1}
       .drow-actions{width:100%;margin-left:0;justify-content:flex-start;flex-wrap:wrap}
       .report-workspace button,.report-workspace input,.report-workspace select,.report-workspace summary{min-height:44px}
+      .sb-ctrl label.chk{min-height:44px;margin-bottom:0}
+      .sb-ctrl label.chk input[type="checkbox"]{min-height:0}
       .report-review-start{align-items:stretch;flex-direction:column}
       .report-review-start button{width:100%}
     }
@@ -19927,18 +19930,19 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-alert{margin:0 12px 10px;padding:8px 10px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font:600 11px/1.55 -apple-system,Segoe UI,sans-serif}
 .kus-dl-legend{padding:0 12px 10px;color:#64748b;font:11px/1.5 -apple-system,Segoe UI,sans-serif}
 .kus-dl-result__summary{margin:0 2px 7px;font-family:-apple-system,Segoe UI,sans-serif;font-size:11px;color:#64748b;display:flex;flex-wrap:wrap;gap:6px 12px}
-.kus-dl-sticky{position:sticky;top:0;z-index:4;margin:0 0 10px;padding:0 0 4px;background:linear-gradient(180deg,rgba(248,250,252,.995) 86%,rgba(248,250,252,0));backdrop-filter:blur(7px)}
-.kus-dl-contextbar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:7px;padding:6px;border:1px solid #cbd5e1;border-radius:10px;background:#e2e8f0;box-shadow:0 2px 10px rgba(15,23,42,.08);font-family:-apple-system,Segoe UI,sans-serif}
-.kus-dl-contextlane{min-width:0;padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#fff;box-shadow:inset 3px 0 0 #64748b}
-.kus-dl-contextlane--after{box-shadow:inset 3px 0 0 #2563eb}
+.kus-dl-sticky{position:sticky;top:-18px;z-index:4;margin:0 0 12px;padding:0;border:1px solid #cbd5e1;border-radius:0 0 12px 12px;background:#fff;box-shadow:0 8px 16px -12px rgba(15,37,63,.55)}
+.kus-dl-contextbar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;border-bottom:1px solid #e2e8f0;font-family:-apple-system,Segoe UI,sans-serif}
+.kus-dl-contextlane{min-width:0;padding:7px 12px;border-left:4px solid #475569;background:#f8fafc}
+.kus-dl-contextlane--after{border-left-color:#2563eb;background:#eff6ff}
 .kus-dl-contextlane__role{display:block;margin-bottom:1px;color:#64748b;font-size:11px;font-weight:900;letter-spacing:.08em}
 .kus-dl-contextlane--after .kus-dl-contextlane__role{color:#1d4ed8}
 .kus-dl-contextlane__name{display:block;overflow:hidden;color:#0f172a;font-size:11px;font-weight:800;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}
-.kus-dl-progress{align-self:center;min-width:72px;padding:4px 7px;text-align:center;color:#1e3a8a;font-variant-numeric:tabular-nums}
+.kus-dl-progress{align-self:center;min-width:76px;padding:2px 10px;text-align:center;color:#1e3a8a;font-variant-numeric:tabular-nums}
 .kus-dl-progress__numbers{display:flex;align-items:baseline;justify-content:center;gap:3px;line-height:1}
 .kus-dl-progress__current{color:#1d4ed8;font-size:18px;font-weight:900}
 .kus-dl-progress__total{color:#475569;font-size:11px;font-weight:800}
 .kus-dl-progress__label{display:block;margin-top:3px;color:#64748b;font-size:11px;font-weight:800;letter-spacing:.04em}
+.kus-dl-progress--idle .kus-dl-progress__current{color:#64748b;font-size:16px;font-weight:500}
 .kus-dl-result__summary strong{color:#0f172a}
 .kus-dl-section{border:1px solid #d8e0ea;border-radius:14px;margin-bottom:12px;overflow:hidden;background:#fff;box-shadow:0 12px 28px -28px rgba(15,37,63,.55)}
 .kus-dl-section>summary{padding:11px 13px;background:linear-gradient(180deg,#fff,#f4f7fa);font:700 13px/1.45 -apple-system,"Segoe UI",sans-serif;cursor:pointer;list-style:none;display:flex;align-items:center;gap:7px}
@@ -19955,30 +19959,31 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-section__stat--changed{border-color:#bfdbfe;color:#1d4ed8}
 .kus-dl-section__stat--moved{border-color:#fde68a;color:#92400e}
 .kus-dl-section__body{display:grid;gap:9px;padding:10px;background:#f4f7fa}
-.kus-dl-row{border:1px solid #d8e0ea;border-left:4px solid transparent;border-radius:12px;padding:12px 13px;background:linear-gradient(180deg,#fff,#fbfdff);font-family:-apple-system,"Segoe UI",sans-serif;font-size:13px;box-shadow:0 10px 24px -24px rgba(15,37,63,.58);transition:background-color .12s,border-color .12s,box-shadow .12s}
-.kus-dl-row--added{border-left-color:#22c55e}
-.kus-dl-row--removed{border-left-color:#ef4444}
-.kus-dl-row--changed{border-left-color:#3b82f6}
-.kus-dl-row--moved{border-left-color:#f59e0b}
-.kus-dl-row--same{border-left-color:#cbd5e1}
+.kus-dl-row{display:flex;flex-direction:column;gap:10px;border:1px solid #d8e0ea;border-left:4px solid #64748b;border-radius:12px;padding:14px 16px;background:#fff;font-family:-apple-system,"Segoe UI",sans-serif;font-size:13px;box-shadow:0 10px 24px -24px rgba(15,37,63,.58)}
+.kus-dl-row--added{border-left-color:#15803d}
+.kus-dl-row--removed{border-left-color:#b91c1c}
+.kus-dl-row--changed{border-left-color:#b45309}
+.kus-dl-row--moved{border-left-color:#7c3aed}
+.kus-dl-row--same{border-left-color:#94a3b8}
 .kus-dl-row:focus,.kus-dl-row.is-current{outline:2px solid #2563eb;outline-offset:1px;background:#f8fbff;box-shadow:0 4px 14px rgba(37,99,235,.13)}
-.kus-dl-row__head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:start;margin-bottom:7px}
+.kus-dl-row__head{min-width:0}
 .kus-dl-row__identity{min-width:0}
 .kus-dl-row__headline{display:flex;flex-wrap:wrap;align-items:center;gap:5px 6px}
 .kus-dl-row__title{min-width:150px;flex:1;color:#10253f;font-size:15px;font-weight:800;line-height:1.45}
 .kus-dl-row__subtitle{margin:4px 0 0;color:#64748b;font-size:12px;line-height:1.55}
-.kus-dl-row__context{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:0 0 6px;color:#64748b}
+.kus-dl-row__context{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:0;color:#64748b}
 .kus-dl-row__chip{display:inline-flex;align-items:center;border-radius:999px;background:#e2e8f0;color:#334155;padding:1px 6px;font-size:11px}
-.kus-dl-row__technical{margin:0 0 7px;color:#64748b;font:11px/1.4 -apple-system,Segoe UI,sans-serif}
-.kus-dl-row__technical>summary{display:inline-flex;align-items:center;gap:4px;padding:1px 4px;border-radius:4px;cursor:pointer;list-style:none;color:#64748b;font-weight:700}
+.kus-dl-row__footer{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:4px 12px;padding-top:4px;border-top:1px solid #e8edf3}
+.kus-dl-row__technical{flex:1 1 110px;min-width:0;margin:0;color:#64748b;font:11px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-row__technical>summary{display:inline-flex;align-items:center;gap:4px;min-height:44px;box-sizing:border-box;padding:0 8px 0 0;border-radius:4px;cursor:pointer;list-style:none;color:#64748b;font-weight:700}
 .kus-dl-row__technical>summary::-webkit-details-marker{display:none}
 .kus-dl-row__technical>summary::before{content:'›';font-size:12px;transition:transform .12s}
 .kus-dl-row__technical[open]>summary::before{transform:rotate(90deg)}
 .kus-dl-row__raw{display:block;margin-top:3px;padding:5px 7px;border:1px dashed #cbd5e1;border-radius:5px;background:#f8fafc;color:#475569;font:11px/1.45 ui-monospace,Menlo,monospace;word-break:break-all}
-.kus-dl-row__cols{display:grid;grid-template-columns:1fr 1fr;gap:9px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
-.kus-dl-row__mobile-toggle{display:none;width:100%;margin:0 0 7px;align-items:center;justify-content:center;border:1px solid #94a3b8;border-radius:7px;background:#f8fafc;color:#1e3a8a;padding:7px 9px;font:700 11px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer}
+.kus-dl-row__cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.kus-dl-row__mobile-toggle{display:none;width:100%;margin:0;align-items:center;justify-content:center;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#1d4ed8;padding:7px 9px;font:700 12px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer}
 .kus-dl-value{position:relative;min-width:0}
-.kus-dl-pre{box-sizing:border-box;width:100%;margin:0;padding:7px 8px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;white-space:pre-wrap;word-break:break-word;overflow:auto}
+.kus-dl-pre{box-sizing:border-box;width:100%;margin:0;padding:8px 10px;background:#f8fafc;color:#1e293b;border-radius:8px;border:1px solid #dbe3ec;white-space:pre-wrap;word-break:break-word;overflow:auto}
 .kus-dl-value.is-collapsed .kus-dl-pre{max-height:126px;overflow:hidden}
 .kus-dl-value__footer{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;padding:3px 2px 0;color:#64748b;font:11px/1.3 -apple-system,Segoe UI,sans-serif}
 .kus-dl-value__toggle{margin-left:auto;padding:2px 6px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#1d4ed8;font:700 11px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer}
@@ -19994,9 +19999,9 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-badge--same{background:#e2e8f0;color:#475569}
 .kus-dl-empty{padding:14px;text-align:center;color:#64748b;font-size:12px;background:#f8fafc;border-radius:8px}
 .kus-dl-flag{display:inline-block;padding:1px 6px;border-radius:999px;background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font:500 11px/1.4 -apple-system,Segoe UI,sans-serif}
-.kus-dl-row__action{border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569;padding:3px 7px;font:600 11px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
-.kus-dl-row__action:hover{border-color:#f59e0b;background:#fffbeb;color:#92400e}
-.kus-dl-reviewbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:5px 0 0;padding:5px 6px;border:1px solid #bfdbfe;border-radius:8px;background:rgba(239,246,255,.98);font:600 11px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-row__action{flex:0 0 auto;min-height:44px;margin-left:auto;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#475569;padding:0 12px;font:600 12px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
+.kus-dl-row__action:hover{border-color:#94a3b8;background:#f1f5f9;color:#10253f}
+.kus-dl-reviewbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:0;padding:6px 8px;border-radius:0 0 11px 11px;background:#fff;font:600 11px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-reviewbar__nav,.kus-dl-reviewbar__tools,.kus-dl-reviewbar__filters{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 .kus-dl-reviewbar__filters{min-width:120px;flex:1}
 .kus-dl-filter-empty{padding:2px 5px;color:#64748b;font-weight:600}
@@ -20005,9 +20010,12 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-filterchip::after{content:'×';color:#64748b;font-size:11px}
 .kus-dl-filterchip:hover{border-color:#2563eb;background:#dbeafe}
 .kus-dl-filterchip--all{border-style:dashed;color:#475569}
-.kus-dl-navbtn{border:1px solid #93c5fd;border-radius:6px;background:#fff;color:#1d4ed8;padding:3px 7px;font:700 11px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
-.kus-dl-navbtn:disabled{opacity:.45;cursor:not-allowed}
-.kus-dl-result--compact .kus-dl-row{padding:6px 7px;font-size:10.5px}
+.kus-dl-navbtn{min-height:44px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#334155;padding:0 12px;font:700 12px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
+.kus-dl-navbtn:hover:not(:disabled){border-color:#94a3b8;background:#f1f5f9}
+.kus-dl-navbtn[data-kus-dl-nav="next"]{border-color:#1d4ed8;background:#1d4ed8;color:#fff}
+.kus-dl-navbtn[data-kus-dl-nav="next"]:hover:not(:disabled){border-color:#1e40af;background:#1e40af}
+.kus-dl-navbtn:disabled{border-color:#e2e8f0;background:#f1f5f9;color:#94a3b8;cursor:not-allowed}
+.kus-dl-result--compact .kus-dl-row{gap:5px;padding:6px 7px;font-size:10.5px}
 .kus-dl-result--compact .kus-dl-row__context{display:none}
 .kus-dl-result--compact .kus-dl-pre{padding:4px 6px;font-size:10px}
 .kus-dl-result--compact .kus-dl-value.is-collapsed .kus-dl-pre{max-height:92px}
@@ -20016,11 +20024,12 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-result--comfortable .kus-dl-value.is-collapsed .kus-dl-pre{max-height:164px}
 .kus-dl-result--stacked .kus-dl-row__cols{grid-template-columns:1fr}
 .kus-dl-result--stacked .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 5px;color:#64748b;font:700 11px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.04em}
-.kus-dl-result mark.diff-char-del{background:#fecaca;color:#7f1d1d;border-radius:2px;padding:0 1px;text-decoration:line-through}
-.kus-dl-result mark.diff-char-add{background:#bbf7d0;color:#14532d;border-radius:2px;padding:0 1px}
+.kus-dl-result mark.diff-char-del{background:#fca5a5;color:#7f1d1d;border-radius:2px;padding:0 1px;text-decoration:line-through;text-decoration-thickness:2px}
+.kus-dl-result mark.diff-char-add{background:#86efac;color:#14532d;border-radius:2px;padding:0 1px;text-decoration:underline;text-decoration-thickness:2px}
 .kus-dl-target-field{display:flex;flex:1 1 180px;min-width:180px;flex-direction:column}
 .kus-dl-target-field .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-dl-target-name{min-height:1.35em;margin-top:3px;color:#64748b;font-size:11px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-dl-target-name--empty{min-height:0;margin-top:0}
 .kus-dl-target-name:not(.kus-dl-target-name--empty)::before{content:'アプリ名: ';color:#334155;font-weight:600}
 .kus-dl-more{display:flex;justify-content:center;padding:8px 0 2px}
 .kus-dl-multi{width:100%;border-collapse:collapse;font:11px/1.45 -apple-system,Segoe UI,sans-serif}
@@ -20056,10 +20065,16 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 #kus-diff-lite [hidden]{display:none!important}
 #kus-diff-lite .kus-lp__hint{margin-bottom:16px;padding:0 2px;border:0;background:transparent;color:#475569}
 #kus-diff-lite button,#kus-diff-lite input:not([type="checkbox"]):not([type="file"]),#kus-diff-lite select{min-height:44px}
-#kus-diff-lite input[type="file"]{min-height:44px;padding:8px 0;box-sizing:border-box}
+#kus-diff-lite input[type="file"]{min-height:44px;padding:4px 0;box-sizing:border-box;color:#475569;font-size:12px}
+#kus-diff-lite input[type="file"]::file-selector-button{min-height:36px;margin-right:12px;padding:0 14px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#334155;font:700 12px/1 -apple-system,Segoe UI,sans-serif;cursor:pointer}
+#kus-diff-lite input[type="file"]::file-selector-button:hover{border-color:#94a3b8;background:#f1f5f9}
 #kus-diff-lite .kus-lp__check{min-height:44px}
 #kus-diff-lite button:focus-visible,#kus-diff-lite input:focus-visible,#kus-diff-lite select:focus-visible,#kus-diff-lite textarea:focus-visible,#kus-diff-lite summary:focus-visible{outline:3px solid #2563eb;outline-offset:2px}
 .kus-dl-workflow{display:grid;gap:16px}
+#kus-diff-lite .kus-wf-jump{gap:8px;margin:0;padding:0;border:0;background:transparent}
+#kus-diff-lite .kus-wf-jump button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 10px;border:1px solid #d8e0ea;border-radius:10px;background:#fff;color:#334155;font-size:12px;font-weight:700}
+#kus-diff-lite .kus-wf-jump button:hover{border-color:#93c5fd;background:#eff6ff;color:#1e3a8a}
+.kus-dl-jump__num{display:inline-flex;flex:0 0 22px;width:22px;height:22px;align-items:center;justify-content:center;border-radius:50%;background:#1d4ed8;color:#fff;font-size:11px;font-weight:800;line-height:1}
 .kus-dl-step{min-width:0;padding:20px;border:1px solid #d8e0ea;border-radius:16px;background:#fff;box-shadow:0 16px 36px -32px rgba(15,37,63,.62)}
 .kus-dl-step__header{display:flex;align-items:flex-start;gap:11px;margin:0 0 15px;padding:0 0 13px;border-bottom:1px solid #e2e8f0;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-step__number{display:inline-flex;flex:0 0 30px;width:30px;height:30px;align-items:center;justify-content:center;border-radius:10px;background:linear-gradient(145deg,#16395f,#2563eb);color:#fff;font-size:12px;font-weight:800;box-shadow:0 6px 14px -8px rgba(37,99,235,.8)}
@@ -20132,11 +20147,11 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-app-card__role{margin:0 0 2px;color:#64748b;font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase}
 .kus-dl-app-card h3{margin:0;color:#10253f;font-size:14px}
 .kus-dl-app-card__help{margin:3px 0 13px;color:#64748b;font-size:11px}
-.kus-dl-app-card .kus-lp__row{align-items:flex-start;margin-bottom:7px}
+.kus-dl-app-card .kus-lp__row{align-items:flex-start;gap:4px 10px;margin-bottom:0}
 .kus-dl-app-card .kus-lp__label{width:100%;min-width:0;color:#475569;font-size:11px}
 .kus-dl-app-card .kus-lp__input{flex:1;min-width:100px;width:auto;box-sizing:border-box}
 .kus-dl-app-card .kus-dl-target-field{min-width:140px}
-.kus-dl-swap{align-self:center;justify-self:center;width:88px;padding:8px!important;white-space:normal;line-height:1.3}
+.kus-dl-swap{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;align-self:center;justify-self:center;width:auto;min-width:104px;padding:8px 12px!important;white-space:nowrap;line-height:1.3}
 .kus-dl-target-list{display:grid;gap:7px;max-height:220px;margin-top:8px;padding-right:2px;overflow-y:auto}
 .kus-dl-multi-controls{margin-top:12px!important;padding-top:10px;border-top:1px solid #e2e8f0}
 .kus-dl-common-exclusion{margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;background:#eff6ff;color:#10253f;font-family:-apple-system,Segoe UI,sans-serif}
@@ -20169,16 +20184,10 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-metrics{grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:6px;margin:10px 12px;padding:0}
 .kus-dl-metric{min-width:0!important;min-height:66px!important;border:1px solid #dbe3ec;border-radius:8px;background:#fff}
 button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
-.kus-dl-section-jump,.kus-dl-filterchip,.kus-dl-navbtn,.kus-dl-value__toggle,.kus-dl-row__action{min-height:44px!important}
+.kus-dl-section-jump,.kus-dl-filterchip,.kus-dl-value__toggle{min-height:44px!important}
 .kus-dl-section__stat,.kus-dl-section__stat--added,.kus-dl-section__stat--removed,.kus-dl-section__stat--changed,.kus-dl-section__stat--moved{border-color:#cbd5e1;background:#fff;color:#475569}
 .kus-dl-section__body{background:#f4f7fa}
 .kus-dl-section>summary{min-height:44px;box-sizing:border-box}
-.kus-dl-row{border-left-color:#64748b;background:#fff;transition:none}
-.kus-dl-row--added{border-left-color:#15803d}
-.kus-dl-row--removed{border-left-color:#b91c1c}
-.kus-dl-row--changed{border-left-color:#b45309}
-.kus-dl-row--moved{border-left-color:#7c3aed}
-.kus-dl-row--same{border-left-color:#94a3b8}
 .kus-dl-badge{display:inline-flex;align-items:center;gap:4px;border:1px solid #cbd5e1;background:#f8fafc;color:#334155;font-weight:750}
 .kus-dl-badge--added{border-color:#bbf7d0;background:#ecfdf5;color:#15803d}
 .kus-dl-badge--removed{border-color:#fecaca;background:#fef2f2;color:#b91c1c}
@@ -20194,28 +20203,19 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
 .kus-dl-badge__fact{display:inline-flex;align-items:center;color:#475569;font-weight:650}
 .kus-dl-badge__fact::before{content:'｜';margin-right:4px;color:#94a3b8}
 .kus-dl-flag{border-color:#cbd5e1;background:#f8fafc;color:#475569}
-.kus-dl-row__action:hover{border-color:#94a3b8;background:#f1f5f9;color:#10253f}
-.kus-dl-pre,.kus-dl-pre.del,.kus-dl-pre.add{border-color:#dbe3ec;background:#f8fafc;color:#1e293b}
 .kus-dl-value__label{display:block;margin:0 0 4px;color:#475569;font:800 11px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.06em}
 .kus-dl-presence{grid-column:1/-1;display:grid;grid-template-columns:minmax(150px,.38fr) minmax(0,1fr);gap:10px;align-items:start;padding:10px;border:1px dashed #9fb2c8;border-radius:8px;background:#f8fafc}
 .kus-dl-presence>p{margin:1px 0;color:#334155;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-presence>p strong,.kus-dl-presence>p span{display:block}
 .kus-dl-presence>p strong{color:#10253f;font-size:12px}
 .kus-dl-presence>p span{margin-top:3px;color:#64748b;font-size:11px}
-.kus-dl-row__technical>summary{min-height:44px;box-sizing:border-box}
 .kus-dl-row__raw>span{display:block;margin-bottom:2px;color:#64748b;font-family:-apple-system,Segoe UI,sans-serif;font-size:11px;font-weight:700}
 .kus-dl-conditions strong,.kus-dl-conditions span{display:block}
 .kus-dl-conditions strong{margin-bottom:2px;color:#334155}
 .kus-dl-completion-row{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0 0!important}
 .kus-dl-completion-row .kus-lp__btn{width:100%}
-.kus-dl-reviewbar{border-color:#cbd5e1;background:#f8fafc}
-.kus-dl-contextbar{border-color:#cbd5e1;background:rgba(226,232,240,.94);box-shadow:0 12px 30px -22px rgba(15,37,63,.72)}
-.kus-dl-contextlane,.kus-dl-contextlane--after{box-shadow:none;border-left:4px solid #475569}
-.kus-dl-contextlane--after{border-left-color:#2563eb}
 .kus-dl-filter-disclosure,.kus-dl-output-disclosure{margin:0 0 12px}
 .kus-dl-filter-disclosure .kus-lp__card,.kus-dl-output-disclosure .kus-lp__card{padding:0}
-.kus-dl-result mark.diff-char-del{background:#e2e8f0;color:#1e293b;text-decoration:line-through;text-decoration-thickness:2px}
-.kus-dl-result mark.diff-char-add{background:#dbeafe;color:#1e3a8a;text-decoration:underline;text-decoration-thickness:2px}
 @media(max-width:768px){
   #kus-diff-lite.kus-lp{width:calc(100vw - 12px);max-height:calc(100vh - 12px);top:6px;right:6px;border-radius:10px}
   #kus-diff-lite .kus-lp__hero{padding:13px 14px}
@@ -20228,10 +20228,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-pair-actions{grid-column:2/-1;flex-direction:row;justify-content:flex-end}
   .kus-dl-pair-actions .kus-lp__btn{width:auto}
   .kus-dl-pair-row__error{grid-column:2/-1}
-  .kus-dl-swap{width:100%;max-width:none}
+  .kus-dl-swap{flex-direction:row;width:100%;max-width:none}
   .kus-dl-row__cols{grid-template-columns:1fr}
   .kus-dl-presence{grid-template-columns:1fr}
-  .kus-dl-sticky{position:sticky;top:0;z-index:6;margin-inline:-2px;padding:2px 2px 5px;background:linear-gradient(180deg,rgba(244,247,250,.98) 84%,rgba(244,247,250,0));backdrop-filter:blur(10px)}
+  .kus-dl-sticky{top:-13px;z-index:6}
   .kus-dl-disclosure>summary{align-items:flex-start;flex-wrap:wrap}
   .kus-dl-disclosure>summary small{width:100%;padding-right:28px;text-align:left}
 }
@@ -20258,10 +20258,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-pair-side__preview{grid-column:1}
   .kus-dl-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .kus-dl-row__mobile-toggle{display:inline-flex;min-height:44px}
+  #kus-diff-lite .kus-wf-jump{gap:5px}
+  #kus-diff-lite .kus-wf-jump button{gap:5px;padding:0 4px;font-size:11px}
   .kus-dl-row__cols{display:none;grid-template-columns:1fr}
   .kus-dl-row__cols.is-expanded{display:grid}
-  .kus-dl-contextbar{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:4px;padding:4px}
-  .kus-dl-contextlane{padding:5px 6px}
+  .kus-dl-contextlane{padding:5px 8px}
   .kus-dl-contextlane--before{grid-column:1;grid-row:1}
   .kus-dl-contextlane--after{grid-column:3;grid-row:1}
   .kus-dl-contextlane__role{font-size:9px;letter-spacing:.04em}
@@ -20276,8 +20277,6 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-reviewbar__tools,.kus-dl-reviewbar__filters{display:none}
   .kus-dl-section>summary{align-items:flex-start;flex-wrap:wrap}
   .kus-dl-section__breakdown{width:100%;justify-content:flex-start;margin-left:20px}
-  .kus-dl-row__head{grid-template-columns:minmax(0,1fr) auto;gap:8px}
-  .kus-dl-row__action{justify-self:end;align-self:start}
   .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 4px;color:#64748b;font:700 11px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.03em}
   .kus-dl-value__label+.kus-dl-pre::before{content:none;display:none}
   .kus-dl-table-scroll>.kus-dl-multi{white-space:nowrap}
@@ -20294,7 +20293,6 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-step__header{gap:8px}
   .kus-dl-completion-row{grid-template-columns:1fr}
   .kus-dl-row{padding:11px 10px}
-  .kus-dl-row__action{padding-inline:8px!important}
 }
 @media(prefers-reduced-motion:reduce){
   #kus-diff-lite.kus-lp{animation:none}
@@ -20750,8 +20748,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         const technicalHtml = r.path ? `<details class="kus-dl-row__technical" data-kus-dl-technical><summary>技術情報</summary><code class="kus-dl-row__raw"><span>内部パス</span>${esc(r.path)}</code></details>` : "";
         const positionalPath = /\[\d+\]/.test(String(r.path || ""));
         const ignoreAction = r.type !== "same" && r.path ? positionalPath ? '<span class="kus-dl-flag" title="並び替え後に別の対象を指す可能性があるため、自動で無視ルールには追加できません">並び順に依存（自動除外不可）</span>' : `<button type="button" class="kus-dl-row__action" data-kus-dl-ignore-path="${esc(r.path)}" title="この項目だけを次回比較から除外" aria-label="${esc(`${identity.title}を次回の比較から除外（無視ルールへ追加）`)}">次回から除外</button>` : "";
+        const footerHtml = technicalHtml || ignoreAction ? `<div class="kus-dl-row__footer">${technicalHtml}${ignoreAction}</div>` : "";
         const rowValuesAction = rowValuesExpanded ? "閉じる" : "確認";
-        parts.push(`<article class="kus-dl-row kus-dl-row--${esc(typeKey)}${current ? " is-current" : ""}" data-kus-dl-row-key="${esc(rowKey)}" tabindex="-1"${current ? ' aria-current="true"' : ""} aria-label="${esc(`${typeLabel}・${factLabel}: ${identity.title}`)}"><div class="kus-dl-row__head"><div class="kus-dl-row__identity"><div class="kus-dl-row__headline">${typeBadge}<span class="kus-dl-row__title">${esc(identity.title)}</span>${flagHtml}</div>${identity.subtitle ? `<div class="kus-dl-row__subtitle">${esc(identity.subtitle)}</div>` : ""}</div>${ignoreAction}</div>${contextHtml}${technicalHtml}<button type="button" class="kus-dl-row__mobile-toggle" data-kus-dl-mobile-row-toggle="${esc(rowKey)}" aria-expanded="${rowValuesExpanded ? "true" : "false"}" aria-controls="${esc(rowValuesId)}" aria-label="${esc(`${identity.title}の比較元・比較先の値を${rowValuesAction}`)}">比較元・比較先の値を${rowValuesAction}</button><div id="${esc(rowValuesId)}" class="kus-dl-row__cols${rowValuesExpanded ? " is-expanded" : ""}">${cols.left}${cols.right}</div></article>`);
+        parts.push(`<article class="kus-dl-row kus-dl-row--${esc(typeKey)}${current ? " is-current" : ""}" data-kus-dl-row-key="${esc(rowKey)}" tabindex="-1"${current ? ' aria-current="true"' : ""} aria-label="${esc(`${typeLabel}・${factLabel}: ${identity.title}`)}"><div class="kus-dl-row__head"><div class="kus-dl-row__identity"><div class="kus-dl-row__headline">${typeBadge}<span class="kus-dl-row__title">${esc(identity.title)}</span>${flagHtml}</div>${identity.subtitle ? `<div class="kus-dl-row__subtitle">${esc(identity.subtitle)}</div>` : ""}</div></div>${contextHtml}<button type="button" class="kus-dl-row__mobile-toggle" data-kus-dl-mobile-row-toggle="${esc(rowKey)}" aria-expanded="${rowValuesExpanded ? "true" : "false"}" aria-controls="${esc(rowValuesId)}" aria-label="${esc(`${identity.title}の比較元・比較先の値を${rowValuesAction}`)}">比較元・比較先の値を${rowValuesAction}</button><div id="${esc(rowValuesId)}" class="kus-dl-row__cols${rowValuesExpanded ? " is-expanded" : ""}">${cols.left}${cols.right}</div>${footerHtml}</article>`);
       }
       parts.push("</div></details>");
     }
@@ -22180,6 +22179,19 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         outputDetails.open = true;
       } }
     ]);
+    workflow.querySelectorAll(":scope > .kus-wf-jump > button").forEach((button) => {
+      const text2 = String(button.textContent || "").trim();
+      const match = /^(\d+)\s+(.+)$/.exec(text2);
+      if (!match) return;
+      const number = document.createElement("span");
+      number.className = "kus-dl-jump__num";
+      number.setAttribute("aria-hidden", "true");
+      number.textContent = match[1];
+      const label = document.createElement("span");
+      label.textContent = match[2];
+      button.setAttribute("aria-label", text2);
+      button.replaceChildren(number, label);
+    });
     panel.body.insertBefore(workflow, panel.result);
     const setExportControlsEnabled = (enabled) => {
       expRange.disabled = !enabled;
@@ -22565,7 +22577,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const nextDisabled = !queue.length || currentIndex === queue.length - 1;
       const incomplete = isIncompleteLiteDiff(cache);
       const progressLabel = position ? `${position} / 全${queue.length}件目` : `未選択 / 全${queue.length}件`;
-      return `<div class="kus-dl-contextbar" role="group" aria-label="比較方向と確認位置"><div class="kus-dl-contextlane kus-dl-contextlane--before" title="${esc(`${source.name} · ${source.environment}`)}"><span class="kus-dl-contextlane__role">BEFORE · 比較元</span><strong class="kus-dl-contextlane__name">${esc(source.name)}</strong></div><div class="kus-dl-progress kus-dl-reviewbar__count" role="status" aria-live="polite" aria-atomic="true" aria-label="${esc(progressLabel + (incomplete ? "・比較不完全" : ""))}"><span class="kus-dl-progress__numbers"><strong class="kus-dl-progress__current">${position || "—"}</strong><span class="kus-dl-progress__total">/ ${queue.length}</span></span><span class="kus-dl-progress__label">${incomplete ? "比較不完全" : position ? "確認位置" : "未選択"}</span></div><div class="kus-dl-contextlane kus-dl-contextlane--after" title="${esc(`${target.name} · ${target.environment}`)}"><span class="kus-dl-contextlane__role">AFTER · 比較先</span><strong class="kus-dl-contextlane__name">${esc(target.name)}</strong></div></div><nav class="kus-dl-reviewbar" aria-label="差分レビュー操作"><span class="kus-dl-reviewbar__nav"><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="prev" aria-keyshortcuts="K"${prevDisabled ? " disabled" : ""}>↑ 前 (K)</button><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="next" aria-keyshortcuts="J"${nextDisabled ? " disabled" : ""}>次 (J) ↓</button></span><span class="kus-dl-reviewbar__tools"><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="collapse">すべて折りたたむ</button><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="expand">すべて展開</button></span><span class="kus-dl-reviewbar__filters" aria-label="有効なフィルタ">${renderActiveFilterChipsHtml()}</span></nav>`;
+      return `<div class="kus-dl-contextbar" role="group" aria-label="比較方向と確認位置"><div class="kus-dl-contextlane kus-dl-contextlane--before" title="${esc(`${source.name} · ${source.environment}`)}"><span class="kus-dl-contextlane__role">BEFORE · 比較元</span><strong class="kus-dl-contextlane__name">${esc(source.name)}</strong></div><div class="kus-dl-progress${position ? "" : " kus-dl-progress--idle"} kus-dl-reviewbar__count" role="status" aria-live="polite" aria-atomic="true" aria-label="${esc(progressLabel + (incomplete ? "・比較不完全" : ""))}"><span class="kus-dl-progress__numbers"><strong class="kus-dl-progress__current">${position || "–"}</strong><span class="kus-dl-progress__total">/ ${queue.length}</span></span><span class="kus-dl-progress__label">${incomplete ? "比較不完全" : position ? "確認位置" : "未選択"}</span></div><div class="kus-dl-contextlane kus-dl-contextlane--after" title="${esc(`${target.name} · ${target.environment}`)}"><span class="kus-dl-contextlane__role">AFTER · 比較先</span><strong class="kus-dl-contextlane__name">${esc(target.name)}</strong></div></div><nav class="kus-dl-reviewbar" aria-label="差分レビュー操作"><span class="kus-dl-reviewbar__nav"><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="prev" aria-keyshortcuts="K"${prevDisabled ? " disabled" : ""}>↑ 前 (K)</button><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="next" aria-keyshortcuts="J"${nextDisabled ? " disabled" : ""}>次 (J) ↓</button></span><span class="kus-dl-reviewbar__tools"><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="collapse">すべて折りたたむ</button><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="expand">すべて展開</button></span><span class="kus-dl-reviewbar__filters" aria-label="有効なフィルタ">${renderActiveFilterChipsHtml()}</span></nav>`;
     }
     function focusAppliedFilter(key) {
       window.requestAnimationFrame(() => {
