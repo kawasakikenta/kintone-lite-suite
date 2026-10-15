@@ -219,7 +219,12 @@ async function buildCsvExportForApp(appId: string, guestId: string, query: strin
   };
 }
 
-export async function runCsvExportStandalone(opts, setStatus) {
+/** 出力は完了したが利用者に見せる必要がある未取得・失敗の内訳（空なら問題なし）。 */
+export interface CsvExportOutcome {
+  issues: string[];
+}
+
+export async function runCsvExportStandalone(opts, setStatus): Promise<CsvExportOutcome> {
   const { appId, guestId, query, filename } = opts;
   const result = await buildCsvExportForApp(appId, guestId, query || '', setStatus);
   const appLabel = buildAppFilenameLabel(appId, '');
@@ -227,7 +232,7 @@ export async function runCsvExportStandalone(opts, setStatus) {
     const blob = new Blob([result.csv.parentCsv], { type: 'text/csv;charset=utf-8;' });
     downloadBlob(recordExportFilename(filename, 'csv', buildExportFilename('レコード', 'csv', { appLabel })), blob);
     setStatus(`CSV出力完了 (${result.recordCount}件)`);
-    return;
+    return { issues: [] };
   }
 
   const JSZipCtor = await loadJSZipLite();
@@ -243,9 +248,10 @@ export async function runCsvExportStandalone(opts, setStatus) {
   downloadBlob(recordExportFilename(filename, 'zip', buildExportFilename('レコード', 'zip', { appLabel })), blob);
   const warningNote = result.csv.warnings.length ? `（未取得のテーブル ${result.csv.warnings.length}件、詳細は manifest.json）` : '';
   setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0);
+  return { issues: result.csv.warnings };
 }
 
-export async function runCsvExportBatchStandalone(opts, setStatus) {
+export async function runCsvExportBatchStandalone(opts, setStatus): Promise<CsvExportOutcome> {
   const rawApps = Array.isArray(opts?.apps) ? opts.apps : [];
   const apps = rawApps
     .filter((a) => a?.appId != null && String(a.appId).trim())
@@ -258,8 +264,7 @@ export async function runCsvExportBatchStandalone(opts, setStatus) {
   if (!apps.length) throw new Error('対象アプリを1件以上入力してください');
   if (apps.length === 1) {
     const app = apps[0];
-    await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || '', query, filename }, setStatus);
-    return;
+    return await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || '', query, filename }, setStatus);
   }
 
   const JSZip = await loadJSZipLite();
@@ -269,6 +274,7 @@ export async function runCsvExportBatchStandalone(opts, setStatus) {
   let warningCount = 0;
   const successes: string[] = [];
   const failures: string[] = [];
+  const tableWarnings: string[] = [];
 
   for (let i = 0; i < apps.length; i++) {
     const app = apps[i];
@@ -288,6 +294,7 @@ export async function runCsvExportBatchStandalone(opts, setStatus) {
       }, null, 2));
       totalRecords += result.recordCount;
       warningCount += result.csv.warnings.length;
+      tableWarnings.push(...result.csv.warnings.map((warning) => `App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ''}: ${warning}`));
       successes.push(`${folder}/: App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ''} / ${result.recordCount}件 / テーブル ${result.csv.tables.length}件${result.csv.warnings.length ? ` / 未取得 ${result.csv.warnings.length}件（フォルダ内manifest.json参照）` : ''}`);
     } catch (error: any) {
       if (folder) zip.remove(folder);
@@ -320,6 +327,7 @@ export async function runCsvExportBatchStandalone(opts, setStatus) {
   const issues = [failures.length ? `失敗 ${failures.length}アプリ` : '', warningCount ? `未取得のテーブル ${warningCount}件` : ''].filter(Boolean);
   const issueNote = issues.length ? `（${issues.join(' / ')}、詳細は manifest.txt）` : '';
   setStatus(`CSV一括出力完了${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
+  return { issues: [...failures.map((failure) => `失敗 ${failure}`), ...tableWarnings] };
 }
 
 // ---------------------------------------------------------------------------

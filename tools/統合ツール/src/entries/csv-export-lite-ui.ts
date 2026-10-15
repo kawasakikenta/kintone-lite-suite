@@ -136,10 +136,12 @@ export function mountCsvExportLitePanel() {
   const run = makeButton('CSVを出力', 'primary', { icon: '↓' });
   run.style.width = '100%';
   run.addEventListener('click', () => liteRun(panel, 'CSV出力中…', async () => {
-    await runCsvExportBatchStandalone(
+    const outcome = await runCsvExportBatchStandalone(
       { apps: appTable.getApps(), query: query.value.trim(), filename: filename.value.trim() },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
+    // 一部のアプリの失敗や未取得のテーブルは、ステータスの件数だけでなく内訳も画面に残す。
+    if (outcome?.issues?.length) panel.setResult(outcome.issues.join('\n'));
   }));
   cardRun.body.appendChild(makeRow(run));
   panel.body.insertBefore(cardRun.card, panel.status);
