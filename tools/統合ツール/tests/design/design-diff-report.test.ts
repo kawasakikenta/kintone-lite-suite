@@ -41,6 +41,21 @@ describe('design diff report', () => {
     expect(md).toContain('```diff\n' + diff + '\n```');
   });
 
+  it('差分本文に ``` が含まれても diff のフェンスが途中で閉じない', () => {
+    const body = '+ ```js\n+ code\n+ ```';
+    const md = buildDesignDiffReport({ diff: body, generatedAt: 'now',
+      source: { appId: '1', appName: '', guestId: '', environment: '本番（運用中）' },
+      target: { appId: '2', appName: '', guestId: '', environment: '本番（運用中）' } });
+    expect(md).toContain('````diff\n' + body + '\n````');
+  });
+
+  it('アプリ名の | や改行で比較先の表を壊さない', () => {
+    const md = buildDesignDiffReport({ diff: '+ x', generatedAt: 'now',
+      source: { appId: '1', appName: 'A|B\nC', guestId: '', environment: '本番（運用中）' },
+      target: { appId: '2', appName: '', guestId: '', environment: '本番（運用中）' } });
+    expect(md).toContain('| 比較元（追加・更新後の姿） | App 1 A\\|B C · 本番（運用中） |');
+  });
+
   it('差分がない場合はその旨を書く', () => {
     const md = buildDesignDiffReport({ diff: '  # 同一', generatedAt: 'now',
       source: { appId: '1', appName: '', guestId: '', environment: '本番（運用中）' },

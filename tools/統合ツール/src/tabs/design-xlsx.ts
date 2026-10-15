@@ -203,6 +203,44 @@ export function getDesignExportFieldTypeMeta() {
   };
 }
 
+/**
+ * 絞り込み条件などの文字列から、フィールドコードが単語として現れるものを返す。
+ * 「金額」と「合計金額」のように日本語コードが部分一致しても別フィールドとして扱うため、
+ * 単語境界は ASCII だけでなく文字・数字全般（と `_`・中黒・全角アンダースコア）で判定する。
+ */
+export function findReferencedFieldCodes(cond: unknown, codes: Iterable<string>): string[] {
+  const text = String(cond ?? '');
+  if (!text) return [];
+  const found: string[] = [];
+  for (const code of codes) {
+    // 正規表現を作る前に単純な部分一致で絞る（フィールド数×条件数が多いアプリで遅くならないように）
+    if (!code || !text.includes(code)) continue;
+    const escaped = String(code).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(^|[^\\p{L}\\p{N}_\\u30FB\\uFF3F])${escaped}([^\\p{L}\\p{N}_\\u30FB\\uFF3F]|$)`, 'u');
+    if (re.test(text)) found.push(code);
+  }
+  return found;
+}
+
+const EXCEL_CELL_TEXT_LIMIT = 32767;
+const EXCEL_CELL_TRUNCATED_NOTE = '…（Excelのセル上限のため省略）';
+
+/** Excel のセル上限を超える文字列を、省略の注記つきで切り詰める。 */
+export function clampCellText<T>(value: T): T | string {
+  if (typeof value !== 'string' || value.length <= EXCEL_CELL_TEXT_LIMIT) return value;
+  return value.slice(0, EXCEL_CELL_TEXT_LIMIT - EXCEL_CELL_TRUNCATED_NOTE.length) + EXCEL_CELL_TRUNCATED_NOTE;
+}
+
+/** ユーザーフィールドとテーブル内フィールドのコードをまとめて返す（条件式からの参照検出用）。 */
+function collectAllFieldCodes(fields: Record<string, any>): string[] {
+  const codes = new Set<string>();
+  for (const [code, f] of Object.entries(fields || {}) as Array<[string, any]>) {
+    codes.add(code);
+    if (f?.type === 'SUBTABLE' && f.fields) Object.keys(f.fields).forEach((sc) => codes.add(sc));
+  }
+  return [...codes];
+}
+
 function escapeHtmlAttr(value: string): string {
   return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -249,7 +287,7 @@ function showSheetSelectionDialog(defs: Array<SheetDef>, title = '📊 エクス
     }).join('');
     const fieldTypeSectionHtml = `<details id="kex-ftype-details" style="margin-top:8px;border:1px solid #eee;border-radius:6px;background:#fafafa;"><summary style="cursor:pointer;font-size:12px;font-weight:bold;color:#2E5C8A;padding:6px 8px;">「項目定義」シートに出力するフィールドタイプ</summary><div style="padding:4px 10px 8px;"><div style="font-size:11px;color:#666;margin-bottom:6px;">チェックしたタイプのみ項目定義シートに出力します（ラベル・罫線などの除外に利用）。<button type="button" id="kex-ftype-all" style="font-size:10px;padding:2px 8px;margin-left:6px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-ftype-none" style="font-size:10px;padding:2px 8px;margin-left:4px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button></div>${fieldTypeGroupsHtml}</div></details>`;
 
-    overlay.innerHTML = `<div role="dialog" aria-modal="true" aria-label="${escapeHtmlAttr(title)}" tabindex="-1" style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:480px;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,0.3);outline:none;"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:8px;">${escapeHtmlAttr(title)}</div><div style="font-size:12px;color:#666;margin-bottom:10px;">出力するシートを選択してください（前回設定を自動反映 / Esc=キャンセル, Ctrl+Enter=エクスポート）</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center;"><span style="font-size:11px;color:#94a3b8;margin-right:2px;">プリセット:</span>${presetBtns}</div><div style="display:flex;gap:8px;margin-bottom:8px;"><button type="button" id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button><span id="kex-count" style="margin-left:auto;align-self:center;font-size:12px;font-weight:bold;color:#2E5C8A;"></span></div><div id="kex-sheet-options" style="flex:1;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${groupsHtml}</div>${fieldTypeSectionHtml}<div id="kex-warn" style="font-size:11px;color:#b91c1c;min-height:16px;margin-top:6px;"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;"><button type="button" id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button type="button" id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
+    overlay.innerHTML = `<div role="dialog" aria-modal="true" aria-label="${escapeHtmlAttr(title)}" tabindex="-1" style="background:#fff;border-radius:12px;padding:28px;box-sizing:border-box;min-width:min(360px,calc(100vw - 32px));max-width:min(480px,calc(100vw - 32px));max-height:84vh;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,0.3);outline:none;"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:8px;">${escapeHtmlAttr(title)}</div><div style="font-size:12px;color:#666;margin-bottom:10px;">出力するシートを選択してください（前回設定を自動反映 / Esc=キャンセル, Ctrl+Enter=エクスポート）</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center;"><span style="font-size:11px;color:#94a3b8;margin-right:2px;">プリセット:</span>${presetBtns}</div><div style="display:flex;gap:8px;margin-bottom:8px;"><button type="button" id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button><span id="kex-count" style="margin-left:auto;align-self:center;font-size:12px;font-weight:bold;color:#2E5C8A;"></span></div><div id="kex-sheet-options" style="flex:1;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${groupsHtml}</div>${fieldTypeSectionHtml}<div id="kex-warn" style="font-size:11px;color:#b91c1c;min-height:16px;margin-top:6px;"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;"><button type="button" id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button type="button" id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
     doc.body.appendChild(overlay);
 
     const box = overlay.querySelector('[role="dialog"]') as HTMLElement;
@@ -356,7 +394,7 @@ function createBatchExporterUI() {
         doc.body.appendChild(el);
       }
       el.style.zIndex = getExporterOverlayZIndex();
-      el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px 48px;text-align:center;min-width:440px;"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中断</button></div></div>`;
+      el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(440px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中断</button></div></div>`;
     },
     update(msg: string, step?: number) {
       if (step != null) currentStep = step; else currentStep++;
@@ -400,6 +438,10 @@ export async function runAdvancedDesignExporter(params: any = {}) {
   const lightweightMode: boolean = !!params.lightweightMode;
   const progressLabel: string = params.progressLabel ? String(params.progressLabel) : '';
   const suppressToast: boolean = !!params.suppressToast;
+  // 取得環境。true ならプレビュー（未公開の設定）、既定は本番（運用中の設定）。設定JSON指定時は無関係。
+  const usePreview: boolean = !!params.preview;
+  const onFinish: ((info: { failedAPIs: Array<{ name: string; error: string }> }) => void) | null =
+    typeof params.onFinish === 'function' ? params.onFinish : null;
 
   const CONFIG = {
     SHEETLIB_PRIMARY_URL: 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js',
@@ -577,7 +619,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       let el = doc.getElementById(UI.id);
       if (!el) { el = doc.createElement('div'); el.id = UI.id; Object.assign(el.style, { position: 'fixed', top: '0', left: '0', width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.7)', zIndex: getExporterOverlayZIndex(), display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', color: '#fff', fontSize: '16px', fontFamily: '"Meiryo", sans-serif' }); doc.body.appendChild(el); }
       el.style.zIndex = getExporterOverlayZIndex();
-      el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px 48px;text-align:center;min-width:400px;"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中断</button></div></div>`;
+      el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(400px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中断</button></div></div>`;
     },
     update(msg: string, step?: number) {
       if (step !== undefined) UI.currentStep = step; else UI.currentStep++;
@@ -763,7 +805,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       const targets = UtilsX.ensureArray(notification.targets);
       return targets.length ? targets.map((target: any) => formatFieldAwareEntityDetailed(target, fieldLabelMap)).join('\n') : '-';
     }
-    if (notification?.entity) return formatFieldAwareEntityDetailed(notification.entity, fieldLabelMap);
+    // 一般通知は includeSubs が entity の外（通知エントリ側）にあるため、一緒に渡して「サブ組織含」を落とさない
+    if (notification?.entity) return formatFieldAwareEntityDetailed({ entity: notification.entity, includeSubs: notification.includeSubs }, fieldLabelMap);
     if (notification?.targetField) {
       const code = notification.targetField;
       const label = fieldLabelMap[code];
@@ -819,12 +862,10 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       if (!usage.has(code)) usage.set(code, new Set<string>());
       usage.get(code)!.add(where);
     };
+    const allCodes = collectAllFieldCodes(fields);
     const scanFilterCond = (cond: any, tag: string) => {
       if (!cond) return;
-      for (const code of Object.keys(fields)) {
-        const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(code)}([^A-Za-z0-9_]|$)`);
-        if (re.test(String(cond))) add(code, tag);
-      }
+      for (const code of findReferencedFieldCodes(cond, allCodes)) add(code, tag);
     };
 
     (Object.entries(fields) as Array<[string, any]>).forEach(([code, f]) => {
@@ -905,11 +946,20 @@ export async function runAdvancedDesignExporter(params: any = {}) {
   // sectionKey を渡さない項目（レコード件数・管理者メモ・Webhook・参照アプリ名など）は
   // bundle 設定JSONに元々含まれないため、bundle モードでは常に null（=取得不可扱い）とし、
   // 意図せず別環境へライブAPIを叩かないようにする。
+  const bundleGapsLogged = new Set<string>();
   async function fetchJob<T = any>(name: string, promiseFn: () => Promise<T>, sectionKey?: string): Promise<T | null> {
     if (bundle) {
       if (!sectionKey) return null;
       const sec = (bundle.sections || {})[sectionKey];
-      return (sec && !sec._fetchError) ? (sec as T) : null;
+      if (sec && !sec._fetchError) return sec as T;
+      // 設定JSONに無い／取得失敗のセクションは、空の設計書として黙って出さず取得失敗レポートに載せる
+      if (!bundleGapsLogged.has(sectionKey)) {
+        bundleGapsLogged.add(sectionKey);
+        UI.logError(`${name}（設定JSON）`, sec?._fetchError ? String(sec._fetchError) : '設定JSONにこのセクションが含まれていません');
+      }
+      // 一覧は取得できたが付随情報（JS/CSS本文など）だけ失敗したセクションは、取得できた本体を使う
+      const hasBody = !!sec && typeof sec === 'object' && Object.keys(sec).some((key) => key !== '_fetchError' && key !== '_partial');
+      return hasBody ? (sec as T) : null;
     }
     try { return await apiSemaphore.run(() => retry(promiseFn)); }
     catch (e) { console.warn(`[${name}] Failed:`, e); UI.logError(name, e); return null; }
@@ -941,6 +991,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       UI.update = ((msg: string, step?: number) => origUpdate(`${prefix}${msg}`, step)) as typeof UI.update;
     }
 
+    // 単体出力の「中断」ボタンも効くようにする（一括出力はアプリ間でバッチ側が確認する）
+    if (!returnWorkbook) (window as any).__kusBatchCancel = false;
     UI.show('ライブラリ読み込み中...', 12);
     const { styled } = await loadSheetLib();
 
@@ -950,18 +1002,20 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       if (sourceGuestId) {
         p = p.replace('/k/v1/preview/', `/k/guest/${sourceGuestId}/v1/preview/`).replace('/k/v1/', `/k/guest/${sourceGuestId}/v1/`);
       }
-      return kintone.api.url(p, true);
+      // 空欄のゲストIDは通常スペース。第2引数 true だとゲストスペース上で実行中に現在のゲストへ書き換わるため false にする
+      return kintone.api.url(p, false);
     };
+
+    // 設定系のエンドポイントは取得環境に合わせて本番／プレビューを切り替える（app.json・records.json は本番のみ）
+    const envPath = (path: string): string => (usePreview ? path.replace('/k/v1/', '/k/v1/preview/') : path);
 
     UI.update(bundle ? '基本情報を設定JSONから読込中...' : '基本情報を取得中...');
     const appSettings = await fetchJob('App', () => api(apiUrl('/k/v1/app.json'), 'GET', { id: APP_ID }), 'appInfo');
-    const generalSettings = await fetchJob('Settings', () => api(apiUrl('/k/v1/app/settings.json'), 'GET', { app: APP_ID }), 'appSettings');
+    const generalSettings = await fetchJob('Settings', () => api(apiUrl(envPath('/k/v1/app/settings.json')), 'GET', { app: APP_ID }), 'appSettings');
 
     UI.update(bundle ? 'フィールド・レイアウトを設定JSONから読込中...' : 'フィールド・レイアウトを取得中...');
-    let fieldResp = await fetchJob('FieldsPrev', () => api(apiUrl('/k/v1/preview/app/form/fields.json'), 'GET', { app: APP_ID }), 'fieldSettings');
-    if (!fieldResp) fieldResp = await fetchJob('FieldsProd', () => api(apiUrl('/k/v1/app/form/fields.json'), 'GET', { app: APP_ID }), 'fieldSettings');
-    let layout = await fetchJob('LayoutPrev', () => api(apiUrl('/k/v1/preview/app/form/layout.json'), 'GET', { app: APP_ID }), 'layoutSettings');
-    if (!layout) layout = await fetchJob('LayoutProd', () => api(apiUrl('/k/v1/app/form/layout.json'), 'GET', { app: APP_ID }), 'layoutSettings');
+    const fieldResp = await fetchJob('Fields', () => api(apiUrl(envPath('/k/v1/app/form/fields.json')), 'GET', { app: APP_ID }), 'fieldSettings');
+    const layout = await fetchJob('Layout', () => api(apiUrl(envPath('/k/v1/app/form/layout.json')), 'GET', { app: APP_ID }), 'layoutSettings');
 
     const fields = filterUserFields(fieldResp?.properties || ({} as any));
 
@@ -976,21 +1030,21 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
     UI.update(bundle ? '一覧・権限・通知設定を設定JSONから読込中...' : '一覧・権限・通知設定を取得中...');
     const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif] = await Promise.all([
-      fetchJob('Views', () => api(apiUrl('/k/v1/app/views.json'), 'GET', { app: APP_ID }), 'viewSettings'),
-      fetchJob('Reports', () => api(apiUrl('/k/v1/app/reports.json'), 'GET', { app: APP_ID }), 'reportSettings'),
-      fetchJob('Status', () => api(apiUrl('/k/v1/app/status.json'), 'GET', { app: APP_ID }), 'processSettings'),
-      fetchJob('アプリ権限', () => api(apiUrl('/k/v1/app/acl.json'), 'GET', { app: APP_ID }), 'appAcl'),
-      fetchJob('レコード権限', () => api(apiUrl('/k/v1/record/acl.json'), 'GET', { app: APP_ID }), 'recordPermissions'),
-      fetchJob('フィールド権限', () => api(apiUrl('/k/v1/field/acl.json'), 'GET', { app: APP_ID }), 'fieldAcl'),
-      fetchJob('Customize', () => api(apiUrl('/k/v1/app/customize.json'), 'GET', { app: APP_ID }), 'customizeSettings'),
-      fetchJob('Actions', () => api(apiUrl('/k/v1/preview/app/actions.json'), 'GET', { app: APP_ID }), 'actionSettings'),
-      fetchJob('Plugins', () => api(apiUrl('/k/v1/app/plugins.json'), 'GET', { app: APP_ID }), 'pluginSettings'),
+      fetchJob('Views', () => api(apiUrl(envPath('/k/v1/app/views.json')), 'GET', { app: APP_ID }), 'viewSettings'),
+      fetchJob('Reports', () => api(apiUrl(envPath('/k/v1/app/reports.json')), 'GET', { app: APP_ID }), 'reportSettings'),
+      fetchJob('Status', () => api(apiUrl(envPath('/k/v1/app/status.json')), 'GET', { app: APP_ID }), 'processSettings'),
+      fetchJob('アプリ権限', () => api(apiUrl(envPath('/k/v1/app/acl.json')), 'GET', { app: APP_ID }), 'appAcl'),
+      fetchJob('レコード権限', () => api(apiUrl(envPath('/k/v1/record/acl.json')), 'GET', { app: APP_ID }), 'recordPermissions'),
+      fetchJob('フィールド権限', () => api(apiUrl(envPath('/k/v1/field/acl.json')), 'GET', { app: APP_ID }), 'fieldAcl'),
+      fetchJob('Customize', () => api(apiUrl(envPath('/k/v1/app/customize.json')), 'GET', { app: APP_ID }), 'customizeSettings'),
+      fetchJob('Actions', () => api(apiUrl(envPath('/k/v1/app/actions.json')), 'GET', { app: APP_ID }), 'actionSettings'),
+      fetchJob('Plugins', () => api(apiUrl(envPath('/k/v1/app/plugins.json')), 'GET', { app: APP_ID }), 'pluginSettings'),
       // 管理者メモ・Webhookは設定一括取得の対象外のため bundle モードでは常に取得不可
       fetchJob('AdminNotes', () => api(apiUrl('/k/v1/app/adminNotes.json'), 'GET', { app: APP_ID })),
       fetchJob('Webhooks', () => api(apiUrl('/k/v1/app/webhook.json'), 'GET', { app: APP_ID })),
-      fetchJob('GenNotif', () => api(apiUrl('/k/v1/app/notifications/general.json'), 'GET', { app: APP_ID }), 'notifications'),
-      fetchJob('RecNotif', () => api(apiUrl('/k/v1/app/notifications/perRecord.json'), 'GET', { app: APP_ID }), 'perRecordNotifications'),
-      fetchJob('RemNotif', () => api(apiUrl('/k/v1/app/notifications/reminder.json'), 'GET', { app: APP_ID }), 'reminderNotifications')
+      fetchJob('GenNotif', () => api(apiUrl(envPath('/k/v1/app/notifications/general.json')), 'GET', { app: APP_ID }), 'notifications'),
+      fetchJob('RecNotif', () => api(apiUrl(envPath('/k/v1/app/notifications/perRecord.json')), 'GET', { app: APP_ID }), 'perRecordNotifications'),
+      fetchJob('RemNotif', () => api(apiUrl(envPath('/k/v1/app/notifications/reminder.json')), 'GET', { app: APP_ID }), 'reminderNotifications')
     ]);
 
     const actions = UtilsX.safeGet(actionsResp, 'actions', {});
@@ -1016,6 +1070,11 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     });
     await Promise.all(refPromises);
 
+    if (!returnWorkbook && (window as any).__kusBatchCancel) {
+      UI.hide();
+      return false;
+    }
+
     UI.update('Excelファイルを生成中...', 10);
 
     const fieldCount = Object.keys(fields).length;
@@ -1025,6 +1084,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     const processActionCount = (status?.actions || []).length;
     const pluginCount = (pluginsResp?.plugins || []).length;
     const webhookCount = (webhooksResp?.webhooks || []).length;
+    // 設定JSONには Webhook が含まれず、API取得に失敗した場合もあるため、0件と区別して出す
+    const webhookCountText = webhooksResp ? `${webhookCount}` : '(取得不可)';
     const appAclCount = (appAcl?.rights || []).length;
     const recordAclCount = (recordAcl?.rights || []).length;
     const fieldAclCount = (fieldAcl?.rights || []).length;
@@ -1248,11 +1309,13 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
     const appendSheet = (name, data, meta: any = {}) => {
       if (!data || !Array.isArray(data.aoa) || data.aoa.length === 0) return null;
-      const ws = XLSX.utils.aoa_to_sheet(data.aoa);
-      autosizeCols(ws, data.aoa, data.options || ({} as any));
-      applyStyles(ws, data.aoa, data.options || ({} as any));
+      // Excel のセルは 32,767 文字まで。長大なラベル・式 1 つでブック全体の書き出しが失敗しないよう、超過分は省略を明記して切る
+      const aoa = data.aoa.map((row) => (Array.isArray(row) ? row.map(clampCellText) : row));
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      autosizeCols(ws, aoa, data.options || ({} as any));
+      applyStyles(ws, aoa, data.options || ({} as any));
       if (data.mergeRanges) applyCellMerges(ws, data.mergeRanges);
-      applyRowHeights(ws, data.aoa, data.options || ({} as any));
+      applyRowHeights(ws, aoa, data.options || ({} as any));
       applyPageSetup(ws, data.pageSetup || ({} as any));
       const safeName = makeSafeSheetName(name, new Set(wb.SheetNames));
       XLSX.utils.book_append_sheet(wb, ws, safeName);
@@ -1321,7 +1384,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       sAoa.push(['アクション数(プロセス)', processActionCount]);
       sAoa.push(['アクション数(レコード)', Object.keys(actions || ({} as any)).length]);
       sAoa.push(['プラグイン数', pluginCount]);
-      sAoa.push(['Webhook数', webhookCount]);
+      sAoa.push(['Webhook数', webhooksResp ? webhookCount : '(取得不可)']);
       sAoa.push(['通知(一般)件数', (genNotif?.notifications || []).length]);
       sAoa.push(['通知(レコード)件数', (recNotif?.notifications || []).length]);
       sAoa.push(['通知(リマインダー)件数', (remNotif?.notifications || []).length]);
@@ -1373,7 +1436,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       sAoa.push(['観点', '確認内容']); headerInfoRows.push(sAoa.length - 1);
       sAoa.push(['参照関係', `ルックアップ ${attrCounts.lookup}件 / 関連レコード ${attrCounts.reference}件 / 計算式 ${attrCounts.calc}件`]);
       sAoa.push(['権限', `アプリ ${appAclCount}件 / レコード ${recordAclCount}件 / フィールド ${fieldAclCount}件`]);
-      sAoa.push(['カスタマイズ', `JS/CSS ${customizeCount}件 / プラグイン ${pluginCount}件 / Webhook ${webhookCount}件`]);
+      sAoa.push(['カスタマイズ', `JS/CSS ${customizeCount}件 / プラグイン ${pluginCount}件 / Webhook ${webhookCountText}${webhooksResp ? '件' : ''}`]);
       sAoa.push(['プロセス', status?.enable ? `有効: ステータス ${processStateCount}件 / アクション ${processActionCount}件` : '無効']);
       sAoa.push([]);
 
@@ -2168,20 +2231,14 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
       (Object.entries(views?.views || ({} as any)) as Array<[string, any]>).forEach(([name, v]: [string, any]) => {
         if (v.filterCond) {
-          const refs = Object.keys(fields).filter((c) => {
-            const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
-            return re.test(String(v.filterCond));
-          });
+          const refs = findReferencedFieldCodes(v.filterCond, collectAllFieldCodes(fields));
           if (refs.length) addDep('(一覧)', name, '一覧絞込', refs.join(', '), UtilsX.formatFilterCond(v.filterCond), CONFIG.COLORS.INFO_BG);
         }
       });
 
       (status?.actions || []).forEach((a: any) => {
         if (a.filterCond) {
-          const refs = Object.keys(fields).filter((c) => {
-            const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
-            return re.test(String(a.filterCond));
-          });
+          const refs = findReferencedFieldCodes(a.filterCond, collectAllFieldCodes(fields));
           if (refs.length) addDep('(プロセス遷移)', a.name || '', 'プロセス条件', refs.join(', '), UtilsX.formatFilterCond(a.filterCond), CONFIG.COLORS.DEPENDENCY_BG);
         }
       });
@@ -2189,10 +2246,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       const scanNotifRefs = (payload, tag) => {
         UtilsX.ensureArray(payload?.notifications).forEach((n, i) => {
           if (n.filterCond) {
-            const refs = Object.keys(fields).filter((c) => {
-              const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
-              return re.test(String(n.filterCond));
-            });
+            const refs = findReferencedFieldCodes(n.filterCond, collectAllFieldCodes(fields));
             if (refs.length) addDep(`(${tag}#${i + 1})`, '', `${tag}条件`, refs.join(', '), UtilsX.formatFilterCond(n.filterCond), CONFIG.COLORS.SUBTABLE_BG);
           }
         });
@@ -2280,7 +2334,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     }
 
     UI.update(returnWorkbook ? '生成完了' : 'ダウンロード中...', 12);
-    const safeAppName = String(appSettings?.name || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const safeAppName = String(appSettings?.name || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, ' ').trim();
     const appLabel = safeAppName ? `${safeAppName}(app${APP_ID})` : `app${APP_ID}`;
     const filename = `設計書_${appLabel}_${nowStampZip()}.xlsx`;
 
@@ -2307,6 +2361,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     downloadExcel(wb, filename);
 
     UI.hide();
+    onFinish?.({ failedAPIs: UI.failedAPIs.slice() });
     if (!suppressToast) {
       const errorMsg = UI.failedAPIs.length > 0 ? `\n⚠ ${UI.failedAPIs.length}件のAPI取得に失敗しました` : '';
       showToast(`✅ エクスポート完了${errorMsg}`, UI.failedAPIs.length > 0 ? 'warn' : 'success');
@@ -2330,6 +2385,22 @@ function sanitizeFilename(name: string): string {
 }
 
 /**
+ * マニフェストに残す対象一覧。設定JSON（bundle）の中身は巨大で機微な設定を含むため、取得元の種別だけを残す。
+ */
+export function toManifestTargets(targets: Array<{ appId: string; guestId: string; bundle?: any }>): Array<{ appId: string; guestId: string; source: 'settings-json' | 'api' }> {
+  return targets.map((t) => ({ appId: t.appId, guestId: t.guestId, source: t.bundle ? 'settings-json' : 'api' }));
+}
+
+export interface BatchDesignExportInfo {
+  total: number;
+  successCount: number;
+  failedCount: number;
+  cancelled: boolean;
+  failedApps: Array<{ appId: string; error: string }>;
+  failedAPIs: Array<{ app: string; name: string; error: string }>;
+}
+
+/**
  * 複数アプリの設計書 Excel を一括生成し、1つの ZIP にまとめてダウンロードする。
  *
  * 仕様:
@@ -2347,6 +2418,8 @@ export async function runBatchDesignExportXlsxZip(params: {
   guestId?: string;
   /** appId をキーにした設定バンドルのマップ。指定されたアプリはライブAPIを呼ばずバンドルから生成する。 */
   bundlesByAppId?: Record<string, any>;
+  /** ZIP を保存した後に、成功・失敗件数と API 取得失敗を呼び出し元へ渡す（部分成功を利用者へ示すため）。 */
+  onFinish?: (info: BatchDesignExportInfo) => void;
 }): Promise<boolean> {
   // apps（アプリごとに別ゲスト）優先。無ければ appIds + 共通 guestId にフォールバック。
   const sharedGuest = String(params.guestId || '').trim();
@@ -2468,6 +2541,11 @@ export async function runBatchDesignExportXlsxZip(params: {
     results.push({ appId: '-', appName: '', filename: '', ok: false, error: 'ユーザーにより中断されました' });
   }
   const successCount = results.filter((r) => r.ok).length;
+  if (successCount === 0 && cancelled) {
+    // 1件も生成しないまま中断した場合はエラーではなくキャンセルとして扱う
+    batchUi.hide();
+    return false;
+  }
   if (successCount === 0) {
     batchUi.hide();
     const detail = results.map((r) => `- App ${r.appId}: ${r.error || '(原因不明)'}`).join('\n');
@@ -2501,7 +2579,7 @@ export async function runBatchDesignExportXlsxZip(params: {
     successCount,
     failedCount: appIds.length - successCount,
     guestIds: manifestGuestIds,
-    targets,
+    targets: toManifestTargets(targets),
     results,
     failedApis: failedAPIs
   }, null, 2));
@@ -2523,5 +2601,13 @@ export async function runBatchDesignExportXlsxZip(params: {
   const tone = ngCount > 0 ? 'warn' : 'success';
   const suffix = ngCount > 0 ? `（成功 ${successCount} / 失敗 ${ngCount}）` : '';
   showToast(`✅ 設計書ZIPを保存しました${suffix}`, tone);
+  params.onFinish?.({
+    total: appIds.length,
+    successCount,
+    failedCount: ngCount,
+    cancelled,
+    failedApps: results.filter((r) => !r.ok && r.appId !== '-').map((r) => ({ appId: r.appId, error: r.error || '' })),
+    failedAPIs: failedAPIs.slice()
+  });
   return true;
 }
