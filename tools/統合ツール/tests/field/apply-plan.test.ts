@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildFieldApplyConfirmText,
+  findFieldApplyProblem,
   parseFieldJsonInput,
   parseLookupMapInput,
   planBulkRename,
@@ -214,5 +215,23 @@ describe('buildFieldApplyConfirmText', () => {
     const text = buildFieldApplyConfirmText('1', '', planFieldApply(incoming, current, {}, true));
     expect(text).toContain('更新: old_name → new_name');
     expect(text).toContain('追加: f0、f1、f2、f3、f4、f5、f6、f7、f8、f9 ほか2件');
+  });
+});
+
+describe('findFieldApplyProblem', () => {
+  const valid = { targetAppId: '5', targetGuestId: '', fieldJson: '{"properties":{"a":{"type":"NUMBER"}}}', lookupMapJson: '' };
+
+  it('accepts a complete input', () => {
+    expect(findFieldApplyProblem(valid)).toBe('');
+    expect(findFieldApplyProblem({ ...valid, targetGuestId: ' 3 ', lookupMapJson: '{"1":"2"}' })).toBe('');
+  });
+
+  it('stops non-numeric ids and unusable JSON before the confirmation step', () => {
+    expect(findFieldApplyProblem({ ...valid, targetAppId: ' ' })).toMatch(/指定してください/);
+    expect(findFieldApplyProblem({ ...valid, targetAppId: '12a' })).toMatch(/アプリIDは数値/);
+    expect(findFieldApplyProblem({ ...valid, targetGuestId: 'x/1' })).toMatch(/ゲストIDは数値/);
+    expect(findFieldApplyProblem({ ...valid, fieldJson: '{}' })).toMatch(/反映対象/);
+    expect(findFieldApplyProblem({ ...valid, fieldJson: '{"a":{"label":"x"}}' })).toMatch(/type がありません/);
+    expect(findFieldApplyProblem({ ...valid, lookupMapJson: '[1]' })).toMatch(/Lookup/);
   });
 });

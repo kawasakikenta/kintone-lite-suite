@@ -4,6 +4,12 @@ import { SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone, kusConfirm } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision } from '../api.js';
 
+/** アプリID・ゲストIDは数値のみ。URL パスに組み込まれるため、空でも数値でもない値は呼び出し前に止める。 */
+function assertNumericIds(appId: unknown, guestId: unknown, appLabel: string) {
+  if (!/^\d+$/.test(String(appId ?? '').trim())) throw new Error(`${appLabel}アプリIDは数値で入力してください`);
+  if (String(guestId ?? '').trim() && !/^\d+$/.test(String(guestId).trim())) throw new Error(`${appLabel}ゲストIDは数値で入力してください`);
+}
+
 function filterWritable(props: any) {
   const out: Record<string, any> = {};
   for (const [k, def] of Object.entries(props || {}) as Array<[string, any]>) {
@@ -103,6 +109,23 @@ function withPartialNotice(error: any, notice: string): any {
   return wrapped;
 }
 
+/**
+ * 反映前の入力検査。実行時に失敗する入力（数値でないID・type の無い定義・不正な変換 JSON など）を
+ * 確認画面へ進む前に利用者へ示すための純粋関数。問題が無ければ空文字を返す。
+ */
+export function findFieldApplyProblem(input: { targetAppId: string; targetGuestId: string; fieldJson: string; lookupMapJson: string }): string {
+  const appId = String(input.targetAppId ?? '').trim();
+  if (!appId) return '比較先アプリIDを指定してください。';
+  try {
+    assertNumericIds(appId, input.targetGuestId, '比較先');
+    parseFieldJsonInput(input.fieldJson);
+    parseLookupMapInput(input.lookupMapJson);
+  } catch (e: any) {
+    return String(e?.message || e);
+  }
+  return '';
+}
+
 export interface FieldApplyPlan {
   adds: Record<string, any>;
   updates: Record<string, any>;
@@ -179,6 +202,7 @@ export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: s
 export async function runFieldApplyStandalone(opts, setStatus) {
   const { targetAppId, targetGuestId, fieldJson, lookupMapJson, overwrite } = opts;
   if (!targetAppId) throw new Error('比較先アプリIDを入力してください');
+  assertNumericIds(targetAppId, targetGuestId, '比較先');
   const incoming = parseFieldJsonInput(fieldJson);
   const lookupMap = parseLookupMapInput(lookupMapJson);
 
@@ -246,6 +270,7 @@ export async function runFieldApplyStandalone(opts, setStatus) {
 export async function runLoadFieldsStandalone(opts, setStatus) {
   const { appId, guestId, preview } = opts;
   if (!appId) throw new Error('アプリIDを入力してください');
+  assertNumericIds(appId, guestId, '');
   const prefix = buildApiPrefix(guestId || '', !!preview);
   setStatus('フィールド取得中...');
   const res = await apiGet(prefix, '/app/form/fields.json', { app: appId });
@@ -335,6 +360,7 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
 export async function runBulkRenameFieldStandalone(opts, setStatus) {
   const { targetAppId, targetGuestId, prefix, removeMode } = opts;
   if (!targetAppId) throw new Error('比較先アプリIDを入力してください');
+  assertNumericIds(targetAppId, targetGuestId, '比較先');
   if (!prefix || !String(prefix).trim()) throw new Error('プレフィックス文字列を入力してください');
   const apiPrefix = buildApiPrefix(targetGuestId || '', true);
   setStatus('比較先フィールドを取得中...');

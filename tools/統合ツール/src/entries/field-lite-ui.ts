@@ -1,12 +1,13 @@
 'use strict';
 
-import { installLiteWorkflow, foldWorkflowSection, connectionSummary, validateJsonObject } from './liteWorkflow.js';
+import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
 
 import { DEFAULT_APP_ID } from '../constants.js';
 import {
   runFieldApplyStandalone,
   runLoadFieldsStandalone,
-  runBulkRenameFieldStandalone
+  runBulkRenameFieldStandalone,
+  findFieldApplyProblem
 } from '../tabs/field-standalone.js';
 import {
   createLitePanel,
@@ -45,8 +46,9 @@ export function mountFieldLitePanel() {
   cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '比較先' }));
   cardApp.body.appendChild(createAppSearchControl(panel, {
     targets: [
-      { label: '比較元', apply: (id, _name, guestId) => { srcApp.value = id; if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId; } },
-      { label: '比較先', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; } }
+      // 検索した接続先（通常スペースなら空）に合わせる。以前のゲストIDが残ると別の接続先へ書き込もうとするため。
+      { label: '比較元', apply: (id, _name, guestId) => { srcApp.value = id; srcGuest.value = guestId || ''; resetPickList(); } },
+      { label: '比較先', apply: (id, _name, guestId) => { tgtApp.value = id; tgtGuest.value = guestId || ''; } }
     ]
   }));
   panel.body.insertBefore(cardApp.card, panel.status);
@@ -62,6 +64,10 @@ export function mountFieldLitePanel() {
   const bClear = makeButton('クリア', 'ghost');
   bClear.addEventListener('click', () => { fieldJson.value = ''; });
   bFormat.addEventListener('click', () => {
+    if (!fieldJson.value.trim()) {
+      panel.setStatus('整形する JSON がありません', 'warn');
+      return;
+    }
     try {
       const parsed = JSON.parse(fieldJson.value || '{}');
       fieldJson.value = JSON.stringify(parsed, null, 2);
@@ -79,15 +85,13 @@ export function mountFieldLitePanel() {
     const file = fileInput.files?.[0];
     if (!file) return;
     file.text().then((text) => {
-      try {
-        const parsed = JSON.parse(text);
-        fieldJson.value = JSON.stringify(parsed, null, 2);
-        panel.setStatus(`「${file.name}」を読み込みました`, 'ok');
-      } catch (e: any) {
-        panel.setStatus(`JSON 読み込みエラー: ${e?.message || String(e)}`, 'err');
-      } finally {
-        fileInput.value = '';
-      }
+      const parsed = JSON.parse(text);
+      fieldJson.value = JSON.stringify(parsed, null, 2);
+      panel.setStatus(`「${file.name}」を読み込みました`, 'ok');
+    }).catch((e: any) => {
+      panel.setStatus(`JSON 読み込みエラー: ${e?.message || String(e)}`, 'err');
+    }).finally(() => {
+      fileInput.value = '';
     });
   });
   bImport.addEventListener('click', () => fileInput.click());
@@ -154,6 +158,14 @@ export function mountFieldLitePanel() {
   pickDetails.body.appendChild(pickActions);
 
   let pickedPropsCache: Record<string, any> = {};
+  // 比較元を変えたあとに前の比較元の候補を挿入しないよう、候補は比較元の入力が変わったら閉じる
+  function resetPickList() {
+    pickedPropsCache = {};
+    pickList.clear();
+    pickActions.hidden = true;
+  }
+  srcApp.addEventListener('input', resetPickList);
+  srcGuest.addEventListener('input', resetPickList);
 
   bLoadPickList.addEventListener('click', () => liteRun(panel, '比較元フィールド一覧を取得中…', async () => {
     const props = await runLoadFieldsStandalone(
@@ -172,10 +184,7 @@ export function mountFieldLitePanel() {
     panel.setStatus(`${entries.length}件のフィールド候補を表示中。絞り込んでチェックし、「挿入」で JSON にマージします`, entries.length ? 'ok' : 'warn');
   }));
 
-  bClosePick.addEventListener('click', () => {
-    pickList.clear();
-    pickActions.hidden = true;
-  });
+  bClosePick.addEventListener('click', resetPickList);
 
   bInsertPicked.addEventListener('click', () => {
     const codes = pickList.selected();
@@ -273,7 +282,7 @@ export function mountFieldLitePanel() {
   fieldJson.setAttribute('aria-label', '反映するフィールド定義JSON');
   lookupMap.setAttribute('aria-label', '参照アプリID変換JSON');
   cardJson.body.appendChild(foldWorkflowSection('JSONファイル・整形・クリア', bImport, bExport, bFormat, bClear));
-  const fieldProblem = () => !tgtApp.value.trim() ? '比較先アプリIDを指定してください。' : validateJsonObject(fieldJson.value, 'フィールド定義JSON') || (lookupMap.value.trim() ? validateJsonObject(lookupMap.value, '参照アプリID変換JSON') : '');
+  const fieldProblem = () => findFieldApplyProblem({ targetAppId: tgtApp.value, targetGuestId: tgtGuest.value, fieldJson: fieldJson.value, lookupMapJson: lookupMap.value });
   const fieldSummary = (): Array<[string, string]> => {
     let codes: string[] = [];
     try { const data = JSON.parse(fieldJson.value); codes = Object.keys(data.properties || data); } catch { /* 入力中 */ }
