@@ -18,7 +18,7 @@ function connection(appIdsText: string, guestId: string) {
 
 export async function runLoadQualityFieldsStandalone(options: { appIdsText: string; guestId: string }) {
   const { appIds, prefix } = connection(options.appIdsText, options.guestId);
-  return readQualityFields((await apiGet(prefix, '/app/form/fields.json', { app: appIds[0], lang: 'user' })).properties);
+  return readQualityFields((await apiGet(prefix, '/app/form/fields.json', { app: appIds[0], lang: 'user' }))?.properties);
 }
 
 export async function runRecordQualityStandalone(options: QualityOptions & { appIdsText: string; guestId: string; codes: string[]; query: string }, setStatus: Status): Promise<QualityAppResult[]> {
@@ -27,7 +27,7 @@ export async function runRecordQualityStandalone(options: QualityOptions & { app
   for (const appId of appIds) {
     setStatus(`App ${appId}: 検査用の設定を取得中…`);
     try {
-      const properties = (await apiGet(prefix, '/app/form/fields.json', { app: appId, lang: 'user' })).properties;
+      const properties = (await apiGet(prefix, '/app/form/fields.json', { app: appId, lang: 'user' }))?.properties;
       const fields = selectQualityFields(properties, options.codes);
       const { records } = await fetchRecordsByQuery(prefix, appId, options.query, { fields: ['$id', ...options.codes], onProgress: count => setStatus(`App ${appId}: ${count}件を取得済み…`) });
       results.push({ appId, report: inspectRecordQuality(records, fields, options) });
@@ -45,7 +45,7 @@ export async function runCsvTemplateStandalone(options: { appIdsText: string; gu
     try {
       // Match the existing CSV importer, which validates choices in the app's default language.
       const fields = await apiGet(prefix, '/app/form/fields.json', { app: appId });
-      templates.push({ appId, template: buildCsvImportTemplate(fields.properties) });
+      templates.push({ appId, template: buildCsvImportTemplate(fields?.properties) });
     } catch (error: any) { failures.push(`App ${appId}: ${error.message || String(error)}`); }
   }
   if (!templates.length) throw new Error(`ひな形を作成できませんでした\n${failures.join('\n')}`);
