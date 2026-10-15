@@ -9,6 +9,7 @@ import {
   runDesignExportStandalone,
   runDesignExportXlsxStandalone,
   runBatchDesignExportXlsxZipStandalone,
+  classifyImportedDesignBundles,
   validateDesignTarget,
   validateDesignExportTargets
 } from '../tabs/design-standalone.js';
@@ -86,16 +87,24 @@ export function mountDesignLitePanel() {
     const file = importFile.files?.[0];
     if (!file) return;
     const text = await file.text();
-    const bundles = pickAllSettingsBundles(JSON.parse(text));
+    let parsed: any;
+    try { parsed = JSON.parse(text); }
+    catch { throw new Error('設定JSONとして読み込めません。JSON形式のファイルか確認してください'); }
+    const { entries, missingAppId, duplicatedAppIds } = classifyImportedDesignBundles(pickAllSettingsBundles(parsed));
     let added = 0;
-    for (const b of bundles) {
-      const appId = String(b?.appId || '').trim();
-      if (!appId) continue;
+    for (const { appId, bundle: b } of entries) {
       importedBundles.set(appId, b);
       const result = appTable.putApp(appId, String((b as any)?.guestId || ''), { appName: extractAppNameFromBundle(b) });
       if (result.action === 'added' || result.action === 'filled') added += 1;
     }
-    panel.setStatus(`設定JSONから${bundles.length}件のアプリ設定を読み込みました（対象表に新規追加 ${added}件）。読み込んだアプリはAPI取得を行いません。`, 'ok');
+    const warnings: string[] = [];
+    if (missingAppId) warnings.push(`アプリIDの無い設定 ${missingAppId}件は読み込めませんでした`);
+    if (duplicatedAppIds.length) warnings.push(`同じアプリIDが複数あったため後の設定を使用しました（${duplicatedAppIds.join(', ')}）`);
+    if (!entries.length) {
+      panel.setStatus(`読み込めるアプリ設定がありません。${warnings.join('。')}`, 'warn');
+      return;
+    }
+    panel.setStatus(`設定JSONから${entries.length}件のアプリ設定を読み込みました（対象表に新規追加 ${added}件）。読み込んだアプリはAPI取得を行いません。${warnings.length ? `注意: ${warnings.join('。')}` : ''}`, warnings.length ? 'warn' : 'ok');
   }));
   clearImportBtn.addEventListener('click', () => {
     importedBundles.clear();

@@ -154,6 +154,26 @@ describe('runAdvancedDesignExporter の取得失敗の扱い', () => {
   });
 });
 
+describe('単体出力の中断', () => {
+  it('取得中に中断ボタンが押されたら、ワークブックを作らず false を返す', async () => {
+    const { api } = installEnvironment(baseResponses());
+    const original = api.getMockImplementation()!;
+    api.mockImplementation(async (url: string, ...rest: unknown[]) => {
+      (globalThis as any).window.__kusBatchCancel = true;
+      return original(url, ...rest);
+    });
+    const result = await runAdvancedDesignExporter({ appId: '5', preselectedSheets: ALL_SHEETS, suppressToast: true });
+    expect(result).toBe(false);
+  });
+
+  it('前回の中断フラグが残っていても、新しい単体出力は中断扱いにならない', async () => {
+    installEnvironment(baseResponses());
+    (globalThis as any).window.__kusBatchCancel = true;
+    const result = await runAdvancedDesignExporter({ appId: '5', preselectedSheets: ALL_SHEETS, suppressToast: true });
+    expect(result).toBe(true);
+  });
+});
+
 describe('ZIP のマニフェスト', () => {
   it('対象一覧に設定JSONの中身を入れず、取得元の種別だけ残す', () => {
     const bundle = { appId: '2', sections: { fieldSettings: { properties: { secret: { label: '機微な設定' } } } } };

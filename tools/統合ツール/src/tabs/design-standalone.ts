@@ -26,6 +26,31 @@ export function validateDesignTarget(source: DesignSourceInput | undefined, labe
   return '';
 }
 
+/**
+ * 設定JSONから取り出したバンドルを、アプリIDごとの読込対象に振り分ける。
+ * アプリIDの無いバンドルは使えず、同じアプリIDが複数あると後のものだけが残るため、件数を数えて呼び出し側が利用者に示せるようにする。
+ */
+export function classifyImportedDesignBundles(bundles: any[]): {
+  entries: Array<{ appId: string; bundle: any }>;
+  missingAppId: number;
+  duplicatedAppIds: string[];
+} {
+  const entries = new Map<string, any>();
+  const duplicated = new Set<string>();
+  let missingAppId = 0;
+  for (const bundle of bundles || []) {
+    const appId = String(bundle?.appId || '').trim();
+    if (!appId) { missingAppId += 1; continue; }
+    if (entries.has(appId)) duplicated.add(appId);
+    entries.set(appId, bundle);
+  }
+  return {
+    entries: [...entries.entries()].map(([appId, bundle]) => ({ appId, bundle })),
+    missingAppId,
+    duplicatedAppIds: [...duplicated]
+  };
+}
+
 /** 複数アプリ出力の入力を検証し、無効な行を黙って捨てない。 */
 export function validateDesignExportTargets(
   apps: Array<{ appId?: string; guestId?: string; bundle?: any }> | undefined,
