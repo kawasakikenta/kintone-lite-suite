@@ -53,6 +53,12 @@ describe('findInitialState', () => {
     expect(findInitialState({}, [])).toBeNull();
   });
 
+  it('does not treat a missing or blank index as 0', () => {
+    // index が空・null の状態は Number() で 0 になり、本来の開始状態(index 0)より先に選ばれてはいけない
+    expect(findInitialState({ A: { index: '' }, B: { index: '0' } }, [{ from: 'B', to: 'A' }])).toBe('B');
+    expect(findInitialState({ A: { index: null }, B: { index: '0' } }, [])).toBe('A');
+  });
+
   it('draws the start marker into the indexed initial state even when it is a transition target', () => {
     const src = buildProcessMermaidSource(
       { 未処理: { index: '0' }, 処理中: { index: '1' } },
@@ -69,6 +75,20 @@ describe('validateProcessConnection', () => {
     expect(() => validateProcessConnection('', '')).toThrow(/アプリID/);
     expect(() => validateProcessConnection('7/records', '')).toThrow(/アプリID/);
     expect(() => validateProcessConnection('7', '../3')).toThrow(/ゲストID/);
+  });
+});
+
+describe('runRenderProcessFlowStandalone disabled process', () => {
+  it('leaves the Mermaid source empty so copy/save cannot export a non-Mermaid message', async () => {
+    const textEl: any = { value: 'previous source' };
+    const viewEl: any = { innerHTML: '' };
+    const simUi: any = { container: { style: { display: 'block' } } };
+    vi.mocked(apiGet).mockResolvedValue({ enable: false, states: {}, actions: [] });
+    const result = await runRenderProcessFlowStandalone({ appId: '7' }, () => {}, { textEl, viewEl, simUi });
+    expect(result).toBeNull();
+    expect(textEl.value).toBe('');
+    expect(viewEl.innerHTML).toContain('プロセス管理は無効です');
+    expect(simUi.container.style.display).toBe('none');
   });
 });
 
