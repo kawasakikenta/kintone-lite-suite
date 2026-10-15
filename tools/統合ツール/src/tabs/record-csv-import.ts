@@ -78,13 +78,13 @@ export interface CsvImportReport {
   sample: Array<{ row: number; values: string[] }>;
 }
 
-export function planCsvImport(rows: string[][], properties: Record<string, any>): CsvImportReport & { records: any[] } {
+export function planCsvImport(rows: string[][], properties: Record<string, any>): CsvImportReport & { records: any[]; recordRows: number[] } {
   if (!properties || typeof properties !== 'object' || Array.isArray(properties)) throw new Error('フィールド設定の応答が不正です');
   if (rows.length < 2) throw new Error('ヘッダ行とデータ行が必要です');
   const header = rows[0].map(code => code.trim());
   validateCsvImportHeader(header, properties);
   const columns = header.map(code => ({ code, label: String(properties[code].label || code), type: String(properties[code].type || '') }));
-  const records: any[] = [], issues: CsvImportIssue[] = [], sample: CsvImportReport['sample'] = [];
+  const records: any[] = [], recordRows: number[] = [], issues: CsvImportIssue[] = [], sample: CsvImportReport['sample'] = [];
   let issueCount = 0, count = 0;
   const issue = (row: number, field: string, message: string) => { issueCount++; if (issues.length < 100) issues.push({ row, field, message }); };
   // Lookup mappings may populate required fields without a CSV column.
@@ -99,7 +99,8 @@ export function planCsvImport(rows: string[][], properties: Record<string, any>)
   const seenValues = new Map<string, Map<string, number>>();
   for (let index = 1; index < rows.length; index++) {
     const values = rows[index], row = index + 1;
-    if (values.length === 1 && values[0] === '') continue;
+    // Excel は内容を消した行を ",,," として書き出す。全セルが空の行は空行として扱い、空レコードを作らない。
+    if (values.every(value => value === '')) continue;
     count++;
     if (sample.length < 5) sample.push({ row, values: values.slice(0, 6).map(value => value.length > 120 ? value.slice(0, 120) + '…' : value) });
     if (values.length !== header.length) { issue(row, '', `列数が一致しません（ヘッダ ${header.length}列 / データ ${values.length}列）`); continue; }
@@ -123,9 +124,10 @@ export function planCsvImport(rows: string[][], properties: Record<string, any>)
       record[code] = { value };
     }
     records.push(record);
+    recordRows.push(row);
   }
   if (!count) throw new Error('登録するデータがありません');
-  return { count, columns, issues, issueCount, sample, records };
+  return { count, columns, issues, issueCount, sample, records, recordRows };
 }
 
 export function formatCsvImportReport(report: CsvImportReport): string {

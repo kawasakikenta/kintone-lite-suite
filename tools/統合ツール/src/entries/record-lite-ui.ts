@@ -15,7 +15,8 @@ import {
   runLoadViewsStandalone,
   runLoadAttachmentFieldsStandalone,
   parseRecordAppIds,
-  runRecordAppBatchStandalone
+  runRecordAppBatchStandalone,
+  zipNameForApp
 } from '../tabs/record-standalone.js';
 import {
   createLitePanel,
@@ -175,6 +176,8 @@ export function mountRecordLitePanel() {
         const preview = makeButton('CSVを事前検査', 'sub');
         const previewText = document.createElement('pre');
         previewText.setAttribute('aria-label', 'CSV事前検査結果');
+        previewText.setAttribute('role', 'region');
+        previewText.tabIndex = 0; // スクロールできる結果をキーボードでも読めるようにする
         previewText.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto;font-size:12px';
         previewText.hidden = true;
         let csvVersion = 0;
@@ -364,7 +367,7 @@ export function mountRecordLitePanel() {
               fileFieldCode: fileCode.value.trim(),
               tableFieldCode: tableCode.value.trim(),
               folderFieldCode: folderCode.value.trim(),
-              zipName: zipName.value.trim()
+              zipName: zipNameForApp(zipName.value, appId, parseRecordAppIds(tgtApp.value).length > 1)
             },
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
@@ -443,7 +446,7 @@ export function mountRecordLitePanel() {
               appId,
               guestId: tgtGuest.value.trim(),
               query: query.value.trim(),
-              zipName: zipName.value.trim(),
+              zipName: zipNameForApp(zipName.value, appId, parseRecordAppIds(tgtApp.value).length > 1),
               includeFiles: incFiles.checkbox.checked,
               includeComments: incComments.checkbox.checked,
               includeAppSettings: incSettings.checkbox.checked,
@@ -452,7 +455,7 @@ export function mountRecordLitePanel() {
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
-        addAction({ id: 'backup', label: 'バックアップを保存', description: 'レコード・テーブル明細と選択した関連データをZIPで保存します。', button: run, validate: requiredApps, summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['保存内容', ['レコード・テーブル明細', incFiles.checkbox.checked ? '添付ファイル' : '', incComments.checkbox.checked ? 'コメント' : '', incSettings.checkbox.checked ? '選択したアプリ設定' : ''].filter(Boolean).join('、')]] });
+        addAction({ id: 'backup', label: 'バックアップを保存', description: 'レコード・テーブル明細と選択した関連データをZIPで保存します。', button: run, validate: () => requiredApps() || (incSettings.checkbox.checked && !chips.some((c) => c.checkbox.checked) ? 'アプリ設定の保存範囲を1つ以上選ぶか、「アプリ設定も保存」を外してください。' : ''), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['保存内容', ['レコード・テーブル明細', incFiles.checkbox.checked ? '添付ファイル' : '', incComments.checkbox.checked ? 'コメント' : '', incSettings.checkbox.checked ? `アプリ設定（${chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent).join('、')}）` : ''].filter(Boolean).join('、')]] });
         root.appendChild(makeRow(run));
       }
     }
