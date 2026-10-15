@@ -91,10 +91,12 @@ export function extractRecordCsvValue(rec: any, code: string): string {
   const f = rec?.[code];
   if (!f) return '';
   const type = String(f.type || '');
-  if (type === 'USER_SELECT' || type === 'ORGANIZATION_SELECT' || type === 'GROUP_SELECT') {
+  if (type === 'USER_SELECT' || type === 'ORGANIZATION_SELECT' || type === 'GROUP_SELECT' || type === 'STATUS_ASSIGNEE') {
     return (Array.isArray(f.value) ? f.value : []).map((v: any) => v?.code || v?.name || '').join(',');
   }
-  if (type === 'CHECK_BOX' || type === 'MULTI_SELECT') return (Array.isArray(f.value) ? f.value : []).join(',');
+  // 作成者・更新者は配列ではなく {code, name} 1件で返る。JSON 文字列のまま出力しない。
+  if (type === 'CREATOR' || type === 'MODIFIER') return f.value?.code || f.value?.name || '';
+  if (type === 'CHECK_BOX' || type === 'MULTI_SELECT' || type === 'CATEGORY') return (Array.isArray(f.value) ? f.value : []).join(',');
   if (type === 'FILE') return (Array.isArray(f.value) ? f.value : []).map((file: any) => file?.name || '').join(',');
   if (type === 'SUBTABLE') return `${(Array.isArray(f.value) ? f.value : []).length}行`;
   if (typeof f.value === 'object' && f.value !== null) return JSON.stringify(f.value);

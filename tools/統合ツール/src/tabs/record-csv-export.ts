@@ -16,6 +16,8 @@ export interface RecordCsvExport {
 }
 
 const DETAIL_ID_COLUMNS = ['$id', '$rowId', '$rowIndex'];
+// フィールド設定には載るが、レコードに値を持たない部品。空の列を作らない。
+const VALUELESS_FIELD_TYPES = new Set(['LABEL', 'SPACER', 'HR', 'GROUP', 'REFERENCE_TABLE']);
 
 function tableFileName(fieldCode: string, used: Set<string>): string {
   let stem = sanitizeZipSegment(fieldCode, 'table')
@@ -43,7 +45,7 @@ function parentRecordId(record: any, index: number): string {
 
 /** 親CSVと、親ID・行ID・行番号で紐付けるテーブル別CSVを生成する。 */
 export function buildRecordCsvExport(records: any[], properties: Record<string, any>): RecordCsvExport {
-  const parentColumns = Object.keys(properties || {});
+  const parentColumns = Object.keys(properties || {}).filter((code) => !VALUELESS_FIELD_TYPES.has(properties[code]?.type));
   const tableFields = new Map<string, Record<string, any>>();
   for (const code of parentColumns) {
     if (properties[code]?.type === 'SUBTABLE') tableFields.set(code, properties[code].fields || {});
@@ -66,7 +68,7 @@ export function buildRecordCsvExport(records: any[], properties: Record<string, 
   const tables: RecordSubtableCsv[] = [];
   const usedNames = new Set<string>();
   for (const [fieldCode, childProperties] of tableFields) {
-    const childColumns = new Set(Object.keys(childProperties));
+    const childColumns = new Set(Object.keys(childProperties).filter((code) => !VALUELESS_FIELD_TYPES.has(childProperties[code]?.type)));
     const detailRecords: any[] = [];
     records.forEach((record, recordIndex) => {
       const parentId = recordIds[recordIndex];
