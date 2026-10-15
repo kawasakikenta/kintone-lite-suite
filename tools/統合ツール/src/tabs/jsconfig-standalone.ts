@@ -112,6 +112,19 @@ export function buildJsConfigApplyPlan(parsed: any): JsConfigApplyPlan {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('JSONは { "desktop": {...}, "mobile": {...} } 形式のオブジェクトで入力してください');
   }
+  // 配列でない一覧は 0 件として扱われ、反映先の設定を黙って空にしてしまうため先に止める。
+  for (const platform of ['desktop', 'mobile'] as const) {
+    const section = parsed[platform];
+    if (section == null) continue;
+    if (typeof section !== 'object' || Array.isArray(section)) {
+      throw new Error(`${platform} は { "js": [...], "css": [...] } 形式のオブジェクトで指定してください`);
+    }
+    for (const kind of ['js', 'css'] as const) {
+      if (section[kind] != null && !Array.isArray(section[kind])) {
+        throw new Error(`${platform}.${kind} は配列で指定してください`);
+      }
+    }
+  }
   const payload = buildCustomizeSettingsPutPayload(parsed);
   const count = (platform: 'desktop' | 'mobile', kind: 'js' | 'css') => ((payload as any)[platform]?.[kind] || []) as any[];
   const all = [...count('desktop', 'js'), ...count('desktop', 'css'), ...count('mobile', 'js'), ...count('mobile', 'css')];
@@ -137,12 +150,45 @@ export function buildJsConfigApplyPlan(parsed: any): JsConfigApplyPlan {
   };
 }
 
-export function buildJsConfigApplyConfirmText(targetAppId: string, targetGuestId: string, plan: JsConfigApplyPlan): string {
+export interface JsConfigCurrentSummary {
+  desktopJs: number;
+  desktopCss: number;
+  mobileJs: number;
+  mobileCss: number;
+  /** 反映後の一覧に含まれず、全置換で外れる現在のエントリ数（FILE は fileKey、URL は url で照合） */
+  removed: number;
+}
+
+/** 反映先の現在設定（GET 応答）と反映計画から、現在の件数と外れる件数を数える。 */
+export function summarizeJsConfigCurrent(current: any, plan: JsConfigApplyPlan): JsConfigCurrentSummary {
+  const now = buildCustomizeSettingsPutPayload(current) as any;
+  const keyOf = (r: any) => (r.type === 'FILE' ? `F:${r.file?.fileKey}` : `U:${r.url}`);
+  let removed = 0;
+  for (const platform of ['desktop', 'mobile'] as const) {
+    for (const kind of ['js', 'css'] as const) {
+      const next = new Set(((plan.payload as any)[platform]?.[kind] || []).map(keyOf));
+      removed += ((now[platform]?.[kind] || []) as any[]).filter((r) => !next.has(keyOf(r))).length;
+    }
+  }
+  return {
+    desktopJs: now.desktop.js.length,
+    desktopCss: now.desktop.css.length,
+    mobileJs: now.mobile.js.length,
+    mobileCss: now.mobile.css.length,
+    removed
+  };
+}
+
+export function buildJsConfigApplyConfirmText(targetAppId: string, targetGuestId: string, plan: JsConfigApplyPlan, current?: JsConfigCurrentSummary): string {
   const c = plan.counts;
+  const nextTotal = c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss;
+  const nowTotal = current ? current.desktopJs + current.desktopCss + current.mobileJs + current.mobileCss : 0;
   return [
     `比較先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ''} のプレビュー環境へ JS/CSS 設定を反映します。`,
     `Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}（URL ${c.url}件 / FILE ${c.file}件）${plan.scope ? ` / 適用範囲 ${plan.scope}` : ''}`,
+    current ? `比較先の現在設定: Desktop JS ${current.desktopJs} / CSS ${current.desktopCss}、Mobile JS ${current.mobileJs} / CSS ${current.mobileCss}` : '',
     '比較先の JS/CSS 一覧はこの内容で全置換され、比較先のみにあるファイルは外れます。',
+    current ? `この反映で外れる現在の設定: ${current.removed}件${current.removed && nowTotal && !nextTotal ? '（すべて外れます）' : ''}` : '',
     plan.dropped ? `type/url/fileKey が不足している ${plan.dropped}件は送信しません。` : '',
     c.file
       ? 'FILE タイプは反映先で有効なアップロード済み fileKey が必要です。他アプリの取得結果にある fileKey（ダウンロード用）をそのまま流用すると kintone に拒否されます。'
@@ -173,7 +219,8 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
     throw new Error('比較先 JS/CSS 設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください');
   }
 
-  if (!p.skipConfirm && !kusConfirm(buildJsConfigApplyConfirmText(targetAppId, guestId, plan))) {
+  const currentSummary = summarizeJsConfigCurrent(current, plan);
+  if (!p.skipConfirm && !kusConfirm(buildJsConfigApplyConfirmText(targetAppId, guestId, plan, currentSummary))) {
     setStatus('JS/CSS設定反映をキャンセルしました');
     return;
   }
@@ -192,6 +239,7 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
   const logs = [
     `OK JS/CSS設定反映（アプリ: ${targetAppId}${guestId ? ` / ゲスト ${guestId}` : ''}）${pickRevision(res) ? ` revision ${pickRevision(res)}` : ''}`,
     `Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}${plan.scope ? ` / 適用範囲 ${plan.scope}` : ''}`,
+    `置き換えにより外れた現在の設定 ${currentSummary.removed}件`,
     plan.dropped ? `送信対象外 ${plan.dropped}件（type/url/fileKey 不足）` : ''
   ].filter(Boolean);
 
@@ -300,8 +348,16 @@ export async function runBatchJsConfigDownloadStandalone(
 
   const failed = failedApps.length + failedFiles.length;
   if (!fileCount) {
-    setStatus(`対象ファイルがありません。（取得失敗: アプリ ${failedApps.length} / ファイル ${failedFiles.length}）`, true);
-    return { apps: apps.length, files: 0, failed, failedApps, failedFiles };
+    if (!failed) {
+      setStatus(`対象ファイルがありません。（${apps.length}アプリを確認 / FILE 形式の JS/CSS はありませんでした）`);
+      return { apps: apps.length, files: 0, failed, failedApps, failedFiles };
+    }
+    // ZIP を作らないため、失敗の内訳はエラー詳細としてログへ出す
+    const detail = [
+      ...failedApps.map((a) => `app ${a.appId} ${a.name}: customize.json 取得失敗: ${a.reason}`),
+      ...failedFiles.map((f) => `app ${f.appId} ${f.fileName}: ${f.reason}`)
+    ];
+    throw new Error([`ZIP を作成できませんでした。取得できた JS/CSS ファイルがありません（取得失敗: アプリ ${failedApps.length} / ファイル ${failedFiles.length}）`, ...detail].join('\n'));
   }
 
   if (failed) {
