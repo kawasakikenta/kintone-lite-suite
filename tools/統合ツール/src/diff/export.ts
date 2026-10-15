@@ -1933,6 +1933,11 @@ function mdDesignReviewPoints(bundle: any) {
   return points.length ? points.join('\n') : '- 特に目立つ確認ポイントはありません。';
 }
 
+/** `_fetchError` / `_partial` 以外の本体があるか（一覧は取得できたが付随情報の取得に失敗した場合など）。 */
+function mdSectionHasData(sec: any): boolean {
+  return !!sec && typeof sec === 'object' && Object.keys(sec).some((key) => key !== '_fetchError' && key !== '_partial');
+}
+
 function mdDesignSectionRows(bundle: any) {
   const sections = bundle?.sections || ({} as any);
   return SECTION_DEFS
@@ -1940,7 +1945,7 @@ function mdDesignSectionRows(bundle: any) {
     .map((def): string[] => {
       const sec = sections[def.key];
       let count: number | string = '';
-      if (sec?._fetchError) return [def.label, def.key, '取得失敗'];
+      if (sec?._fetchError && !mdSectionHasData(sec)) return [def.label, def.key, '取得失敗'];
       if (def.key === 'fieldSettings') count = Object.keys(sec?.properties || ({} as any)).length;
       else if (def.key === 'viewSettings') count = Object.keys(sec?.views || ({} as any)).length;
       else if (def.key === 'reportSettings') count = Object.keys(sec?.reports || ({} as any)).length;
@@ -2036,7 +2041,8 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
       // 取得に失敗したセクションを「0件」や「データなし」と読み違えないよう、失敗を明示する
       lines.push(`> ⚠ 取得できませんでした: ${String(sec._fetchError).replace(/\s*\r?\n\s*/g, ' ')}`);
       lines.push('');
-      continue;
+      // 付随情報（JS/CSS本文・プラグイン設定など）だけ失敗した場合は、取得できた本体を捨てずに続けて出す
+      if (!mdSectionHasData(sec)) continue;
     }
     const renderer = MD_SECTION_RENDERERS[def.key];
     let rendered = '';

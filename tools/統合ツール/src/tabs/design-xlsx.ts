@@ -213,7 +213,8 @@ export function findReferencedFieldCodes(cond: unknown, codes: Iterable<string>)
   if (!text) return [];
   const found: string[] = [];
   for (const code of codes) {
-    if (!code) continue;
+    // 正規表現を作る前に単純な部分一致で絞る（フィールド数×条件数が多いアプリで遅くならないように）
+    if (!code || !text.includes(code)) continue;
     const escaped = String(code).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(`(^|[^\\p{L}\\p{N}_\\u30FB\\uFF3F])${escaped}([^\\p{L}\\p{N}_\\u30FB\\uFF3F]|$)`, 'u');
     if (re.test(text)) found.push(code);
@@ -804,7 +805,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       const targets = UtilsX.ensureArray(notification.targets);
       return targets.length ? targets.map((target: any) => formatFieldAwareEntityDetailed(target, fieldLabelMap)).join('\n') : '-';
     }
-    if (notification?.entity) return formatFieldAwareEntityDetailed(notification.entity, fieldLabelMap);
+    // 一般通知は includeSubs が entity の外（通知エントリ側）にあるため、一緒に渡して「サブ組織含」を落とさない
+    if (notification?.entity) return formatFieldAwareEntityDetailed({ entity: notification.entity, includeSubs: notification.includeSubs }, fieldLabelMap);
     if (notification?.targetField) {
       const code = notification.targetField;
       const label = fieldLabelMap[code];
@@ -955,7 +957,9 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         bundleGapsLogged.add(sectionKey);
         UI.logError(`${name}（設定JSON）`, sec?._fetchError ? String(sec._fetchError) : '設定JSONにこのセクションが含まれていません');
       }
-      return null;
+      // 一覧は取得できたが付随情報（JS/CSS本文など）だけ失敗したセクションは、取得できた本体を使う
+      const hasBody = !!sec && typeof sec === 'object' && Object.keys(sec).some((key) => key !== '_fetchError' && key !== '_partial');
+      return hasBody ? (sec as T) : null;
     }
     try { return await apiSemaphore.run(() => retry(promiseFn)); }
     catch (e) { console.warn(`[${name}] Failed:`, e); UI.logError(name, e); return null; }

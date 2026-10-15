@@ -220,6 +220,20 @@ describe('design/bundleToMarkdown (REST API レスポンス準拠の日本語化
     expect(md).toContain('- [JS/CSS設定](#jscss設定)');
   });
 
+  it('一覧は取得できたが付随情報だけ失敗したセクションは、警告に加えて取得できた本体も出す', () => {
+    const md = bundleToMarkdown(makeBundle({
+      customizeSettings: {
+        scope: 'ALL',
+        desktop: { js: [{ type: 'URL', url: 'https://example.com/a.js' }], css: [] },
+        _fetchError: 'JS/CSSファイル本文の取得に失敗したため、このセクションは比較できません（1件）'
+      }
+    }), { rawJson: false });
+    const part = md.slice(md.indexOf('## JS/CSS設定\n'));
+    expect(part).toContain('> ⚠ 取得できませんでした: JS/CSSファイル本文の取得に失敗');
+    expect(part).toContain('URL指定: https://example.com/a.js');
+    expect(md).not.toContain('| customizeSettings | 取得失敗 |');
+  });
+
   it('fetchedAt: false では先頭の表から取得日時の行を外す', () => {
     const bundle = makeBundle({ appSettings: { name: 'x' } });
     expect(bundleToMarkdown(bundle)).toContain('| 取得日時 |');
