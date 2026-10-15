@@ -155,6 +155,18 @@ describe('runRecordCopyStandalone', () => {
     expect(api).toHaveBeenCalledTimes(1);
   });
 
+  it('reports a declined confirmation as cancelled and an empty source as a warning', async () => {
+    api.mockResolvedValueOnce({ properties: { title: { type: 'SINGLE_LINE_TEXT', code: 'title' } } }).mockResolvedValueOnce({ records: source });
+    confirm.mockReturnValue(false);
+    await expect(runRecordCopyStandalone(options, status)).resolves.toEqual({ cancelled: true });
+    expect(posts()).toHaveLength(0);
+
+    api.mockReset();
+    api.mockResolvedValueOnce({ properties: { title: { type: 'SINGLE_LINE_TEXT', code: 'title' } } }).mockResolvedValueOnce({ records: [] });
+    await expect(runRecordCopyStandalone(options, status)).resolves.toEqual({ warning: 'コピー対象のレコードがありません' });
+    expect(status).toHaveBeenLastCalledWith('コピー対象のレコードがありません', true);
+  });
+
   it('posts matching fields after confirmation', async () => {
     api.mockResolvedValueOnce({ properties: { title: { type: 'SINGLE_LINE_TEXT', code: 'title' } } }).mockResolvedValueOnce({ records: source }).mockResolvedValue({});
     await runRecordCopyStandalone(options, status);

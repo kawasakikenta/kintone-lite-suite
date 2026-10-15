@@ -36,32 +36,39 @@ export function validateRecordConnection(appId: unknown, guestId: unknown = ''):
   return { appId: ids[0], guestId: guest };
 }
 
-/** Run every pasted app ID and retain per-app warnings in the final outcome. */
+/**
+ * Run every pasted app ID and retain per-app warnings in the final outcome.
+ * An operation returns `cancelled` when the user declined its confirmation, so the
+ * final message never reports an app that was not touched as completed.
+ */
 export async function runRecordAppBatchStandalone(
   appIdsValue: unknown,
-  operation: (appId: string, index: number, total: number) => Promise<void | { warning?: string }>,
+  operation: (appId: string, index: number, total: number) => Promise<void | { warning?: string; cancelled?: boolean }>,
   setStatus: (message: string, error?: boolean) => void
 ): Promise<void> {
   const appIds = parseRecordAppIds(appIdsValue);
   if (!appIds.length) throw new Error('対象アプリIDを1件以上入力してください');
   const failures: string[] = [];
   const warnings: string[] = [];
+  const cancelled: string[] = [];
   for (let i = 0; i < appIds.length; i++) {
     const appId = appIds[i];
     setStatus(`App ${appId}: 実行中 (${i + 1}/${appIds.length})`);
     try {
       const result = await operation(appId, i, appIds.length);
       if (result && result.warning) warnings.push(`App ${appId}: ${result.warning}`);
+      if (result && result.cancelled) cancelled.push(`App ${appId}`);
     } catch (error: any) {
       failures.push(`App ${appId}: ${error?.message || String(error)}`);
     }
   }
   const warningSummary = warnings.length ? `警告 ${warnings.length}アプリ:\n${warnings.join('\n')}` : '';
+  const cancelSummary = cancelled.length ? `確認でキャンセルしたため実行していません（${cancelled.length}アプリ）: ${cancelled.join(', ')}` : '';
   if (failures.length) {
-    throw new Error(`${appIds.length}件中${failures.length}件が失敗しました\n${failures.join('\n')}${warningSummary ? `\n${warningSummary}` : ''}`);
+    throw new Error(`${appIds.length}件中${failures.length}件が失敗しました\n${failures.join('\n')}${warningSummary ? `\n${warningSummary}` : ''}${cancelSummary ? `\n${cancelSummary}` : ''}`);
   }
-  if (warningSummary) {
-    setStatus(`${appIds.length}アプリの操作が完了しました\n${warningSummary}`, true);
+  if (warningSummary || cancelSummary) {
+    setStatus(`${appIds.length}アプリの操作が完了しました${cancelSummary ? `\n${cancelSummary}` : ''}${warningSummary ? `\n${warningSummary}` : ''}`, true);
     return;
   }
   setStatus(`${appIds.length}アプリの操作が完了しました`);
@@ -415,7 +422,7 @@ export async function runBatchProcessStandalone(opts, setStatus) {
   ].join('\n');
   if (!kusConfirm(confirmText)) {
     setStatus('ステータス一括更新をキャンセルしました');
-    return;
+    return { cancelled: true };
   }
 
   const ok = await writeInChunks(
@@ -534,7 +541,11 @@ export async function runRecordCopyStandalone(opts, setStatus) {
   if (!targetProps || typeof targetProps !== 'object' || Array.isArray(targetProps)) throw new Error(`コピー先 App ${targetAppId} のフィールド設定の応答が不正です`);
 
   const records = await fetchAllRecords(srcPrefix, sourceAppId, query || '', setStatus);
-  if (!records.length) { setStatus('コピー対象のレコードがありません'); return; }
+  if (!records.length) {
+    const warning = 'コピー対象のレコードがありません';
+    setStatus(warning, true);
+    return { warning };
+  }
   const plan = buildCopyRecordPayloads(records, targetProps);
   const droppedNote = plan.droppedFields.length
     ? `コピー先に無い/型が違うため除外: ${plan.droppedFields.slice(0, 10).join(', ')}${plan.droppedFields.length > 10 ? ` 他${plan.droppedFields.length - 10}件` : ''}`
@@ -556,7 +567,7 @@ export async function runRecordCopyStandalone(opts, setStatus) {
   ].filter(Boolean).join('\n');
   if (!kusConfirm(confirmText)) {
     setStatus('レコードコピーをキャンセルしました');
-    return;
+    return { cancelled: true };
   }
 
   const ok = await writeInChunks(
@@ -810,6 +821,8 @@ export async function runRecordBackupStandalone(opts, setStatus) {
     zip.file(`app_settings/app_${appId}.json`, JSON.stringify({ generatedAt: new Date().toISOString(), appId, scopes: appScopes, bundle: settings }, null, 2));
   } else if (!includeAppSettings) {
     notes.push('アプリ設定未取得');
+  } else {
+    notes.push('アプリ設定の保存範囲が未選択のため取得していません');
   }
 
   zip.file('manifest.json', JSON.stringify({
