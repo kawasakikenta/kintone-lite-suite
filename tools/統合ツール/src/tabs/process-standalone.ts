@@ -233,6 +233,8 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
 
   const res = await apiGet(prefix, '/app/status.json', { app });
   if (!isCurrent()) return null;
+  // 空・非オブジェクトの応答を「プロセス管理は無効」と取り違えず、TypeError でもなく原因が分かる形で止める
+  if (!res || typeof res !== 'object') throw new Error('プロセス管理の設定を取得できませんでした（想定外の応答形式です）');
 
   if (!res.enable) {
     // Mermaid ソースではない文章を入れると「コピー」「.mmd で保存」がそのまま書き出してしまう

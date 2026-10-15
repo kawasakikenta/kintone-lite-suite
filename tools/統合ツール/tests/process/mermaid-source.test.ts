@@ -92,6 +92,16 @@ describe('runRenderProcessFlowStandalone disabled process', () => {
   });
 });
 
+describe('runRenderProcessFlowStandalone API response', () => {
+  it('requests the production status.json for the guest space and rejects an empty response', async () => {
+    const targets: any = { textEl: { value: '' }, viewEl: { innerHTML: '' } };
+    vi.mocked(apiGet).mockResolvedValue(undefined);
+    await expect(runRenderProcessFlowStandalone({ appId: '7', guestId: '3' }, () => {}, targets)).rejects.toThrow(/想定外の応答/);
+    expect(apiGet).toHaveBeenCalledWith('/k/guest/3/v1', '/app/status.json', { app: '7' });
+    expect(targets.viewEl.innerHTML).toBe('');
+  });
+});
+
 describe('runRenderProcessFlowStandalone freshness', () => {
   it('does not commit a deferred simulation render after the connection changes', async () => {
     const previousWindow = (globalThis as any).window;
