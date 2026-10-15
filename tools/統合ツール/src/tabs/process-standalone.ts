@@ -161,8 +161,12 @@ export function buildProcessMermaidSource(states: any, actions: any[], highlight
 export function findInitialState(states: any, actions: any[]): string | null {
   const names = Object.keys(states || {});
   if (!names.length) return null;
+  // Number(null) や Number('') は 0 になり、index 未設定の状態を開始状態に取り違えるため数値化しない
   const indexed = names
-    .map((name) => ({ name, index: Number(states?.[name]?.index) }))
+    .map((name) => {
+      const raw = states?.[name]?.index;
+      return { name, index: raw == null || String(raw).trim() === '' ? NaN : Number(raw) };
+    })
     .filter((s) => Number.isFinite(s.index));
   if (indexed.length === names.length) {
     indexed.sort((a, b) => a.index - b.index);
@@ -231,7 +235,8 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
   if (!isCurrent()) return null;
 
   if (!res.enable) {
-    targets.textEl.value = 'プロセス管理は無効です。';
+    // Mermaid ソースではない文章を入れると「コピー」「.mmd で保存」がそのまま書き出してしまう
+    targets.textEl.value = '';
     targets.viewEl.innerHTML = '<div style="color:#64748b">プロセス管理は無効です</div>';
     if (targets.simUi) targets.simUi.container.style.display = 'none';
     commitStatus('プロセス管理は無効です');
