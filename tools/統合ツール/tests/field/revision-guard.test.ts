@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiGet, apiPost, apiPut } from '../../src/api';
-import { runFieldApplyStandalone } from '../../src/tabs/field-standalone';
+import { runBulkRenameFieldStandalone, runFieldApplyStandalone, runLoadFieldsStandalone } from '../../src/tabs/field-standalone';
 
 vi.mock('../../src/api', async original => ({
   ...await original<typeof import('../../src/api')>(),
@@ -124,5 +124,16 @@ describe('field apply revision guard', () => {
       overwrite: true,
       skipConfirm: true
     }, vi.fn())).rejects.toThrow(/^boom$/);
+  });
+
+  it('rejects non-numeric app and guest ids before any request', async () => {
+    const fieldJson = JSON.stringify({ properties: { a: { type: 'NUMBER' } } });
+    await expect(runFieldApplyStandalone({ targetAppId: '5x', fieldJson, skipConfirm: true }, vi.fn())).rejects.toThrow(/アプリIDは数値/);
+    await expect(runFieldApplyStandalone({ targetAppId: '5', targetGuestId: '../1', fieldJson, skipConfirm: true }, vi.fn())).rejects.toThrow(/ゲストIDは数値/);
+    await expect(runLoadFieldsStandalone({ appId: '5x', preview: true }, vi.fn())).rejects.toThrow(/アプリIDは数値/);
+    await expect(runLoadFieldsStandalone({ appId: '5', guestId: 'a', preview: true }, vi.fn())).rejects.toThrow(/ゲストIDは数値/);
+    await expect(runBulkRenameFieldStandalone({ targetAppId: '5x', prefix: 'dev_' }, vi.fn())).rejects.toThrow(/アプリIDは数値/);
+    expect(apiGet).not.toHaveBeenCalled();
+    expect(apiPost).not.toHaveBeenCalled();
   });
 });
