@@ -204,6 +204,15 @@ function recordExportFilename(filename: unknown, extension: 'csv' | 'zip', fallb
   return requested ? `${requested.replace(/\.(csv|zip)$/i, '')}.${extension}` : fallback;
 }
 
+/**
+ * 複数アプリに同じ ZIP 名を指定すると、どのアプリのファイルか区別できない同名ダウンロードが
+ * 並ぶ。複数アプリのときだけ `_app<ID>` を付ける（空欄の自動命名にはアプリ ID が入っている）。
+ */
+export function zipNameForApp(zipName: unknown, appId: string, multiple: boolean): string {
+  const requested = String(zipName || '').trim();
+  return requested && multiple ? `${requested.replace(/\.zip$/i, '')}_app${appId}.zip` : requested;
+}
+
 async function buildCsvExportForApp(appId: string, guestId: string, query: string, setStatus: (m: string) => void) {
   const target = validateRecordConnection(appId, guestId);
   appId = target.appId;
@@ -347,7 +356,11 @@ async function inspectCsvImportBatch(opts, setStatus) {
   const appIds = parseRecordAppIds(opts.appIdsText || opts.appId);
   if (!appIds.length) throw new Error('対象アプリIDを入力してください');
   setStatus('CSVファイルを読み込み中...');
-  const rows = parseCsvText((await readImportFile(opts.file)).replace(/^\uFEFF/, ''));
+  const text = await readImportFile(opts.file);
+  // Excel の既定の「CSV (コンマ区切り)」は Shift_JIS。UTF-8 として読むと日本語が U+FFFD に化け、
+  // 事前検査を通ったまま文字化けした値が登録されてしまう。
+  if (text.includes('\uFFFD')) throw new Error('CSVをUTF-8として読み取れず、文字化け（�）を検出しました。Excelでは「CSV UTF-8（コンマ区切り）」で保存し直してください。');
+  const rows = parseCsvText(text.replace(/^\uFEFF/, ''));
   const prefix = buildApiPrefix(opts.guestId || '', false);
   const plans: Array<{ appId: string; properties: Record<string, any>; report?: CsvImportReport; error?: string }> = [];
   for (const appId of appIds) {
@@ -669,7 +682,7 @@ export async function runAttachmentDownloadStandalone(opts, setStatus) {
   zip.file('manifest.json', JSON.stringify({ appId: String(appId), guestId: String(guestId || ''), query: query || '', files: manifest }, null, 2));
   setStatus(`ZIP生成中 (${fileCount}ファイル)`);
   const zipBlob = await zip.generateAsync({ type: 'blob' });
-  downloadBlob(zipName || buildExportFilename('添付ファイル', 'zip', { appLabel: buildAppFilenameLabel(appId, '') }), zipBlob);
+  downloadBlob(recordExportFilename(zipName, 'zip', buildExportFilename('添付ファイル', 'zip', { appLabel: buildAppFilenameLabel(appId, '') })), zipBlob);
   if (failures.length) {
     const warning = `添付一括DL完了: ${fileCount}ファイル（取得失敗 ${failures.length}件、詳細は download_errors.txt）`;
     setStatus(warning, true);
@@ -733,6 +746,7 @@ export async function runRecordBackupStandalone(opts, setStatus) {
     }
     if (!collected.length) notes.push('添付ファイルなし');
     const blobCache = new Map<string, FileFetchResult>();
+    const usedByDir = new Map<string, Set<string>>();
     for (let i = 0; i < collected.length; i++) {
       const ent = collected[i];
       setStatus(`添付ファイル取得中 (${i + 1}/${collected.length}${fileFailures.length ? ` / 失敗 ${fileFailures.length}` : ''})`);
@@ -754,9 +768,11 @@ export async function runRecordBackupStandalone(opts, setStatus) {
       } else {
         parts.push(sanitizeZipSegment(ent.fieldCode || 'files'));
       }
-      const filePrefix = sanitizeZipSegment(String(ent.file.fileKey || '').slice(0, 12) || String(ent.fileIndex + 1));
-      parts.push(`${filePrefix}_${sanitizeZipSegment(ent.file.name || 'file.bin', 'file.bin')}`);
-      zip.file(parts.join('/'), result.blob);
+      // 同じフォルダに同名・同じ fileKey 接頭辞のファイルがあっても、後続が先のファイルを上書きしない。
+      const dir = parts.join('/');
+      const used = usedByDir.get(dir) || new Set<string>();
+      usedByDir.set(dir, used);
+      zip.file(`${dir}/${uniqueZipName(used, ent.file.name || 'file.bin', ent.file.fileKey, ent.fileIndex)}`, result.blob);
       fileCount++;
     }
     if (fileFailures.length) {
@@ -841,7 +857,7 @@ export async function runRecordBackupStandalone(opts, setStatus) {
 
   setStatus(`ZIP生成中 (${records.length}件 / 添付 ${fileCount} / コメント ${commentCount})`);
   const blob = await zip.generateAsync({ type: 'blob' });
-  downloadBlob(zipName || buildExportFilename('レコードバックアップ', 'zip', { appLabel: buildAppFilenameLabel(appId, '') }), blob);
+  downloadBlob(recordExportFilename(zipName, 'zip', buildExportFilename('レコードバックアップ', 'zip', { appLabel: buildAppFilenameLabel(appId, '') })), blob);
   const failureCount = fileFailures.length + commentFailures.length + appNg + csvExport.warnings.length;
   const failureNote = failureCount
     ? `（取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg} / テーブル ${csvExport.warnings.length} → manifest.json 参照）`

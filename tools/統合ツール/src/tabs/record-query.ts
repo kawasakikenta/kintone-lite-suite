@@ -111,7 +111,7 @@ export function buildRecordsCsvText(records: any[], propKeys: string[]): string 
 export function sanitizeZipSegment(value: unknown, fallback = 'item'): string {
   const cleaned = String(value == null ? '' : value)
     .replace(/[\\/:*?"<>|]/g, '_')
-    .replace(/[\u0000-\u001f]/g, '')
+    .replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
     .trim();
   return !cleaned || /^\.+$/.test(cleaned) ? fallback : cleaned;
 }

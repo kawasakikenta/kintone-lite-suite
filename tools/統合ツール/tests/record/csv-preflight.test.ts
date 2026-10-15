@@ -91,6 +91,12 @@ describe('all-app CSV inspection before any writes', () => {
     await expect(runCsvImportBatchStandalone({ appId: '7', file: file(csv) }, status)).rejects.toThrow(/103行目.*数値/);
     expect(kusConfirm).not.toHaveBeenCalled(); expect(apiPost).not.toHaveBeenCalled();
   });
+  it('stops before any write when the file is not UTF-8 (Shift_JIS decoded as UTF-8 leaves U+FFFD)', async () => {
+    const garbled = file('title\n\uFFFD\uFFFD\uFFFD');
+    await expect(runPreviewCsvImportStandalone({ appId: '7', file: garbled }, status)).rejects.toThrow(/UTF-8.*文字化け/);
+    await expect(runCsvImportBatchStandalone({ appId: '7', file: garbled }, status)).rejects.toThrow(/UTF-8.*文字化け/);
+    expect(apiGet).not.toHaveBeenCalled(); expect(kusConfirm).not.toHaveBeenCalled(); expect(apiPost).not.toHaveBeenCalled();
+  });
   it('stops every app if the second app has a different schema', async () => {
     vi.mocked(apiGet).mockResolvedValueOnce({ properties: props }).mockResolvedValueOnce({ properties: {} });
     await expect(runCsvImportBatchStandalone({ appIdsText: '7,8', file: file('title\nA') }, status)).rejects.toThrow(/App 8:.*存在しない/);
