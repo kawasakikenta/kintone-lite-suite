@@ -108,16 +108,11 @@ export async function loadErSpaceApps(): Promise<void> {
   setStatus(`スペース ${spaceId} のアプリ ${apps.length}件を読み込みました。起点にするアプリを選択してください`);
 }
 
-function buildScriptTag(src, fallbackSrc = '', integrity = '', fallbackIntegrity = '') {
+function buildScriptTag(src, integrity = '') {
   const safeSrc = esc(src || '');
-  const safeFallback = esc(fallbackSrc || '');
   const safeIntegrity = esc(integrity || '');
-  const safeFallbackIntegrity = esc(fallbackIntegrity || '');
   const integrityAttr = safeIntegrity ? ` integrity="${safeIntegrity}" crossorigin="anonymous"` : '';
-  const fallback = safeFallback
-    ? ` onerror="this.onerror=null;this.integrity='${safeFallbackIntegrity}';this.crossOrigin='anonymous';this.src='${safeFallback}'"`
-    : '';
-  return `<script src="${safeSrc}"${integrityAttr}${fallback}><\/script>`;
+  return `<script src="${safeSrc}"${integrityAttr}><\/script>`;
 }
 
 export function readErDiagramOptions() {
@@ -414,21 +409,29 @@ export const buildHTML = (apps, options: any = {}) => {
   const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || '-');
   const cytoscapeScript = buildScriptTag(
     EXTERNAL_LIBRARIES.cytoscape.cdnUrl,
-    EXTERNAL_LIBRARIES.cytoscape.altCdnUrl,
-    'sha384-J7Q85oZE4GJ/e7+n2aOQsLXfDwwfnA8S2nZAL5BpFsfpCF84zQD7LroZ/dMnLgex',
-    'sha384-+4PsOx8pfCvP2QccNj+4PHhCkQFmbi69UlEi43BHbHopL1unxFMpqiPXNscfoiM5'
+    'sha384-J7Q85oZE4GJ/e7+n2aOQsLXfDwwfnA8S2nZAL5BpFsfpCF84zQD7LroZ/dMnLgex'
   );
   const dagreScript = buildScriptTag(
     EXTERNAL_LIBRARIES.dagre.cdnUrl,
-    '',
     'sha384-2IH3T69EIKYC4c+RXZifZRvaH5SRUdacJW7j6HtE5rQbvLhKKdawxq6vpIzJ7j9M'
   );
   const cytoscapeDagreScript = buildScriptTag(
     EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl,
-    EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl,
-    'sha384-EHCdyFVbhtbpgI+4x7ETlZUvJwOkxJublmhTpH114NSk3fqfiUgcLl6pQm8JQwg9',
-    'sha384-u69h9ebXeSjlg6q/rb1zKTRAGu/h8deCl0409xpS/QJctMKnc4M9Fzkm01VOQdeF'
+    'sha384-EHCdyFVbhtbpgI+4x7ETlZUvJwOkxJublmhTpH114NSk3fqfiUgcLl6pQm8JQwg9'
   );
+  // 失敗した script 要素の src を書き換えても再読み込みされないため、代替 CDN は起動スクリプトが新しい要素で読み込む。
+  const scriptFallbacks = safeJsonForScript([
+    {
+      global: 'cytoscape',
+      src: EXTERNAL_LIBRARIES.cytoscape.altCdnUrl,
+      integrity: 'sha384-+4PsOx8pfCvP2QccNj+4PHhCkQFmbi69UlEi43BHbHopL1unxFMpqiPXNscfoiM5'
+    },
+    {
+      global: 'cytoscapeDagre',
+      src: EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl,
+      integrity: 'sha384-u69h9ebXeSjlg6q/rb1zKTRAGu/h8deCl0409xpS/QJctMKnc4M9Fzkm01VOQdeF'
+    }
+  ]);
   const runtimeFallbackRows = safeApps.map((app) => `<tr><td>${esc(String(app?.id || '-'))}</td><td>${esc(String(app?.name || `アプリ ${app?.id || '-'}`))}</td><td>${esc(String(app?.totalFieldCount ?? app?.allFields?.length ?? app?.fields?.length ?? 0))}</td><td>${esc(String(app?.relations?.length || 0))}</td><td>${esc(app?.status === 'partial' ? '一部取得' : (app?.ok === false ? '取得失敗' : '取得完了'))}</td></tr>`).join('');
   return /*html*/`<!DOCTYPE html>
 <html lang="ja">
@@ -3543,6 +3546,8 @@ function exportEditedHtml(){
     if(oldState && oldState.parentNode) oldState.parentNode.removeChild(oldState);
     const liveRuntime=clone.querySelector("#er-runtime");
     if(liveRuntime && liveRuntime.parentNode) liveRuntime.parentNode.removeChild(liveRuntime);
+    // 代替CDNから後読みしたライブラリは保存しない（開き直すと起動スクリプトが必要なときだけ再読込する）
+    clone.querySelectorAll("script[data-er-fallback-lib]").forEach(el=>el.parentNode&&el.parentNode.removeChild(el));
     const main=clone.querySelector("#er-main");
     if(!main){toast("保存に失敗: 本体スクリプトが見つかりません");return;}
     const stateScript=document.createElement("script");
@@ -4273,6 +4278,8 @@ applySavedViewState();
 <script>
 (function(){
   const source=document.getElementById("er-main");
+  const FALLBACKS=${scriptFallbacks};
+  function start(){
   if(typeof window.cytoscape==="function"){
     const runtime=document.createElement("script");
     runtime.id="er-runtime";
@@ -4286,6 +4293,20 @@ applySavedViewState();
   const host=document.getElementById("cy");
   host.style.cssText="position:fixed;inset:0;overflow:auto;padding:32px;background:#f8fafc;color:#0f172a;font:14px/1.65 sans-serif";
   host.innerHTML='<main style="max-width:960px;margin:auto"><h1 style="font-size:22px;margin-bottom:8px">ER図ライブラリを読み込めませんでした</h1><p>ネットワークまたはCDNの制限により図を描画できません。接続を確認して再読み込みしてください。取得済みのアプリ一覧は下表で確認できます。</p><table style="width:100%;margin-top:20px;border-collapse:collapse"><thead><tr><th>アプリID</th><th>アプリ名</th><th>項目数</th><th>関連数</th><th>取得状態</th></tr></thead><tbody>'+${safeJsonForScript(runtimeFallbackRows)}+'</tbody></table></main>';
+  }
+  function loadFallback(index){
+    if(index>=FALLBACKS.length){ start(); return; }
+    const spec=FALLBACKS[index];
+    if(typeof window[spec.global]==="function"){ loadFallback(index+1); return; }
+    const script=document.createElement("script");
+    script.setAttribute("data-er-fallback-lib","1");
+    script.integrity=spec.integrity;
+    script.crossOrigin="anonymous";
+    script.onload=script.onerror=function(){ loadFallback(index+1); };
+    script.src=spec.src;
+    document.head.appendChild(script);
+  }
+  loadFallback(0);
 })();
 <\/script>
 </body>
