@@ -2,7 +2,7 @@
 
 import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
 
-import { DEFAULT_APP_ID } from '../constants.js';
+import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import { runRenderProcessFlowStandalone, validateProcessConnection } from '../tabs/process-standalone.js';
 import {
   createLitePanel,
@@ -30,7 +30,7 @@ export function mountProcessLitePanel() {
   // ---- 入力 ----
   const cardApp = makeCard({ title: '対象アプリ', number: 1 });
   const appInp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
-  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
+  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest' });
   cardApp.body.appendChild(makeRow([appInp, guestInp], { label: 'アプリ' }));
   let notifyConnectionChange: () => void = () => {};
   cardApp.body.appendChild(createAppSearchControl(panel, {
@@ -153,7 +153,8 @@ export function mountProcessLitePanel() {
     try {
       const result = await runRenderProcessFlowStandalone(
         { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
-        (m: string, e?: boolean) => { if (isCurrent()) panel.setStatus(m, e ? 'err' : 'busy'); },
+        // 実行完了後（シミュレーション操作）の通知は tone を指定し、処理中スピナーのまま残さない
+        (m: string, e?: boolean, tone?: 'ok' | 'warn') => { if (isCurrent()) panel.setStatus(m, e ? 'err' : (tone || 'busy')); },
         {
           textEl,
           viewEl,
@@ -173,7 +174,7 @@ export function mountProcessLitePanel() {
       }
       renderedConnection = runConnection;
       // 描画側が警告（Mermaid 読込失敗 / from-to 未設定のアクション除外）を出している場合は残す
-      if (result && panel.status.dataset.tone !== 'err') {
+      if (result && panel.status.dataset.tone !== 'err' && panel.status.dataset.tone !== 'warn') {
         panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, 'ok');
       }
     } finally {

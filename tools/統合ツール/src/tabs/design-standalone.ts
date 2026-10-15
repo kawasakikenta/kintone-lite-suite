@@ -6,7 +6,7 @@ import { nowStamp, downloadText, buildExportFilename, appLabelFromBundle, copyTe
 import { fetchBundle } from '../api.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { bundleToMarkdown } from '../diff/export.js';
-import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip } from './design-xlsx.js';
+import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip, type BatchDesignExportInfo } from './design-xlsx.js';
 
 interface DesignSourceInput {
   appId?: string;
@@ -26,6 +26,31 @@ export function validateDesignTarget(source: DesignSourceInput | undefined, labe
   return '';
 }
 
+/**
+ * 設定JSONから取り出したバンドルを、アプリIDごとの読込対象に振り分ける。
+ * アプリIDの無いバンドルは使えず、同じアプリIDが複数あると後のものだけが残るため、件数を数えて呼び出し側が利用者に示せるようにする。
+ */
+export function classifyImportedDesignBundles(bundles: any[]): {
+  entries: Array<{ appId: string; bundle: any }>;
+  missingAppId: number;
+  duplicatedAppIds: string[];
+} {
+  const entries = new Map<string, any>();
+  const duplicated = new Set<string>();
+  let missingAppId = 0;
+  for (const bundle of bundles || []) {
+    const appId = String(bundle?.appId || '').trim();
+    if (!appId) { missingAppId += 1; continue; }
+    if (entries.has(appId)) duplicated.add(appId);
+    entries.set(appId, bundle);
+  }
+  return {
+    entries: [...entries.entries()].map(([appId, bundle]) => ({ appId, bundle })),
+    missingAppId,
+    duplicatedAppIds: [...duplicated]
+  };
+}
+
 /** 複数アプリ出力の入力を検証し、無効な行を黙って捨てない。 */
 export function validateDesignExportTargets(
   apps: Array<{ appId?: string; guestId?: string; bundle?: any }> | undefined,
@@ -38,6 +63,16 @@ export function validateDesignExportTargets(
     if (error) return error;
   }
   return '';
+}
+
+/** 取得に失敗した（設定JSONに無い場合を含む）セクションのラベル一覧。 */
+function failedSectionLabels(bundle: any): string[] {
+  return SECTION_DEFS.filter((s) => bundle?.sections?.[s.key]?._fetchError).map((s) => s.label);
+}
+
+/** 完了メッセージに添える、取得できなかったセクションの注記。無ければ空文字。 */
+function failedSectionNote(labels: string[], prefix = ''): string {
+  return labels.length ? `${prefix}取得できなかったセクション ${labels.length}件（${labels.join(', ')}）は設計書に「取得失敗」と記載しました` : '';
 }
 
 /**
@@ -57,7 +92,7 @@ async function resolveDesignBundle(
   const scopes = SECTION_DEFS.map((s) => s.key);
   setStatus(importedBundle ? `${labelPrefix}設定JSONから設計情報を読み込み中...` : `${labelPrefix}設計情報を取得中...`);
   const bundle = importedBundle
-    ? pickSettingsBundle(importedBundle, { side, appId })
+    ? pickSettingsBundle(importedBundle, { side, appId, sections: scopes })
     : await fetchBundle({
       appId,
       guestId: String(source?.guestId || '').trim(),
@@ -89,7 +124,9 @@ export async function runDesignExportStandalone(kind, source, setStatus) {
   } else {
     downloadText(buildExportFilename('設計書', 'md', { appLabel }), bundleToMarkdown(bundle), 'text/markdown');
   }
-  setStatus(`設計書出力完了（App ${bundle.appId}）`);
+  // 取得失敗の警告は完了メッセージで上書きされないよう、エラー色のまま残す
+  const note = failedSectionNote(failedSectionLabels(bundle));
+  setStatus(`設計書出力完了（App ${bundle.appId}）${note ? `。${note}` : ''}`, !!note);
 }
 
 /**
@@ -104,11 +141,12 @@ export async function runDesignCopyMdStandalone(source, setStatus) {
   if (!(await copyTextToClipboard(md))) {
     throw new Error('クリップボードへのコピーに失敗しました。ブラウザのクリップボード権限を確認するか、Markdown 保存を使ってください');
   }
-  setStatus('設計書Markdownをクリップボードにコピーしました');
+  const note = failedSectionNote(failedSectionLabels(bundle));
+  setStatus(`設計書Markdownをクリップボードにコピーしました${note ? `。${note}` : ''}`, !!note);
 }
 
 /**
- * @param {{ appId: string, guestId: string, importedBundle?: any, appNameLookup?: Record<string, string> }} source
+ * @param {{ appId: string, guestId: string, preview?: boolean, importedBundle?: any, appNameLookup?: Record<string, string> }} source
  * @param {(msg: string, err?: boolean) => void} setStatus
  */
 export async function runDesignExportXlsxStandalone(source, setStatus) {
@@ -119,14 +157,22 @@ export async function runDesignExportXlsxStandalone(source, setStatus) {
   if (validationError) throw new Error(validationError);
   const guestId = String(target.guestId || '').trim();
   setStatus(importedBundle ? '設計書Excel出力を開始（設定JSONから生成）...' : '設計書Excel出力を開始...');
+  let failedAPIs: Array<{ name: string; error: string }> = [];
   const done = await runAdvancedDesignExporter({
     appId,
     guestId,
+    preview: !!target.preview,
     bundle: importedBundle || null,
-    appNameLookup: (source as any).appNameLookup || {}
+    appNameLookup: (source as any).appNameLookup || {},
+    onFinish: (info: { failedAPIs: Array<{ name: string; error: string }> }) => { failedAPIs = info.failedAPIs; }
   });
   if (done === false) {
     setStatus('設計書Excel出力をキャンセルしました');
+    return;
+  }
+  if (failedAPIs.length) {
+    const names = [...new Set(failedAPIs.map((f) => f.name))].join(', ');
+    setStatus(`設計書Excel出力完了。取得に失敗した項目 ${failedAPIs.length}件（${names}）があります。詳細はサマリーシートの「API取得失敗レポート」を確認してください`, true);
     return;
   }
   setStatus('設計書Excel出力完了');
@@ -163,9 +209,19 @@ export async function runBatchDesignExportXlsxZipStandalone(
   }
   const importedCount = apps.filter((a) => a.bundle).length;
   setStatus(`設計書ZIP出力を開始（${apps.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ''}）...`);
-  const done = await runBatchDesignExportXlsxZip({ apps });
+  let info: BatchDesignExportInfo | null = null;
+  const done = await runBatchDesignExportXlsxZip({ apps, onFinish: (result) => { info = result; } });
   if (done === false) {
     setStatus('設計書ZIP出力をキャンセルしました');
+    return;
+  }
+  const result = info as BatchDesignExportInfo | null;
+  if (result && (result.failedCount > 0 || result.failedAPIs.length > 0)) {
+    // 部分成功・中断・API取得失敗を「完了」だけで隠さない（詳細は ZIP 内の _manifest）
+    const parts = [`成功 ${result.successCount} / 失敗・未処理 ${result.failedCount}（全${result.total}件）${result.cancelled ? '、途中で中断' : ''}`];
+    if (result.failedApps.length) parts.push(`失敗したアプリ: ${result.failedApps.map((f) => `App ${f.appId}`).join(', ')}`);
+    if (result.failedAPIs.length) parts.push(`API取得に失敗した項目 ${result.failedAPIs.length}件`);
+    setStatus(`設計書ZIPを保存しました。${parts.join('。')}。詳細は ZIP 内の _manifest.txt を確認してください`, true);
     return;
   }
   setStatus(`設計書ZIP出力完了（${apps.length}件）`);
@@ -210,6 +266,8 @@ export interface DesignDiffSide {
   appName: string;
   guestId: string;
   environment: string;
+  /** 取得できなかったセクションのラベル（差分が不完全になる） */
+  failedSections?: string[];
 }
 
 export interface DesignDiffSectionSummary {
@@ -242,12 +300,15 @@ function describeDesignDiffSide(bundle: any, side: { appId: string; guestId?: st
     appId: String(bundle?.appId || side?.appId || '').trim(),
     appName: extractAppNameFromBundle(bundle) || '',
     guestId: String(bundle?.guestId || side?.guestId || '').trim(),
-    environment: imported ? '読み込んだ設定JSON' : (bundle?.preview ?? side?.preview) ? 'プレビュー（未公開）' : '本番（運用中）'
+    environment: imported ? '読み込んだ設定JSON' : (bundle?.preview ?? side?.preview) ? 'プレビュー（未公開）' : '本番（運用中）',
+    failedSections: failedSectionLabels(bundle)
   };
 }
 
 function designDiffSideLabel(side: DesignDiffSide): string {
-  return `App ${side.appId || '?'}${side.appName ? ` ${side.appName}` : ''}${side.guestId ? `（ゲスト ${side.guestId}）` : ''} · ${side.environment}`;
+  // アプリ名は Markdown 表のセル内に入るため、区切りの | や改行で表が崩れないようにする
+  const name = side.appName ? ` ${side.appName.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\s*\r?\n\s*/g, ' ')}` : '';
+  return `App ${side.appId || '?'}${name}${side.guestId ? `（ゲスト ${side.guestId}）` : ''} · ${side.environment}`;
 }
 
 /** 設計書差分レポート（Markdown）を組み立てる。見出し・見方・セクション別集計・diff 本体の順。 */
@@ -262,6 +323,11 @@ export function buildDesignDiffReport(input: { diff: string; generatedAt: string
   lines.push(`| 比較元（追加・更新後の姿） | ${designDiffSideLabel(input.source)} |`);
   lines.push(`| 比較先（現在の設定） | ${designDiffSideLabel(input.target)} |`);
   lines.push(`| 差分行数 | 追加 ${summary.added} 行 / 削除 ${summary.removed} 行 |`);
+  const incomplete = [
+    input.source.failedSections?.length ? `比較元: ${input.source.failedSections.join('、')}` : '',
+    input.target.failedSections?.length ? `比較先: ${input.target.failedSections.join('、')}` : ''
+  ].filter(Boolean);
+  if (incomplete.length) lines.push(`| 取得できなかったセクション（差分が不完全） | ${incomplete.join(' / ')} |`);
   lines.push('');
   lines.push('## 見方');
   lines.push('');
@@ -281,9 +347,12 @@ export function buildDesignDiffReport(input: { diff: string; generatedAt: string
   lines.push('');
   lines.push('## 差分');
   lines.push('');
-  lines.push('```diff');
+  // 差分本文に ``` が含まれていても、フェンスが途中で閉じないよう囲みを長くする
+  let fence = '```';
+  while (input.diff.includes(fence)) fence += '`';
+  lines.push(`${fence}diff`);
   lines.push(input.diff);
-  lines.push('```');
+  lines.push(fence);
   lines.push('');
   return lines.join('\n');
 }
@@ -306,8 +375,9 @@ export async function runDesignDiffMdStandalone(
 
   setStatus('差分レポート生成中...');
   // 生データ JSON は表・要約と重複して差分を読みにくくするため、比較は可読部分だけで行う
-  const srcMd = bundleToMarkdown(srcBundle, { rawJson: false });
-  const tgtMd = bundleToMarkdown(tgtBundle, { rawJson: false });
+  // 取得日時は毎回異なりノイズになるため、比較対象から外す
+  const srcMd = bundleToMarkdown(srcBundle, { rawJson: false, fetchedAt: false });
+  const tgtMd = bundleToMarkdown(tgtBundle, { rawJson: false, fetchedAt: false });
   const diffMd = simpleLineDiffLite(tgtMd, srcMd);
   const finalMd = buildDesignDiffReport({
     diff: diffMd,
@@ -317,5 +387,6 @@ export async function runDesignDiffMdStandalone(
   });
   const diffLabel = `${appLabelFromBundle(srcBundle)}_vs_${appLabelFromBundle(tgtBundle)}`;
   downloadText(buildExportFilename('設計書差分', 'md', { appLabel: diffLabel }), finalMd, 'text/markdown');
-  setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）`);
+  const notes = [failedSectionNote(failedSectionLabels(srcBundle), '比較元の'), failedSectionNote(failedSectionLabels(tgtBundle), '比較先の')].filter(Boolean);
+  setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）${notes.length ? `。${notes.join('。')}。差分は不完全です` : ''}`, notes.length > 0);
 }

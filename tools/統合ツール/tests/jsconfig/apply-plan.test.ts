@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildJsConfigApplyConfirmText, buildJsConfigApplyPlan, sanitizeFolderName } from '../../src/tabs/jsconfig-standalone';
+import { buildJsConfigApplyConfirmText, buildJsConfigApplyPlan, sanitizeFolderName, summarizeJsConfigCurrent } from '../../src/tabs/jsconfig-standalone';
 
 // JS/CSS 設定 lite の反映は取得 JSON をそのまま PUT していたため、GET 専用項目や
 // 不正なエントリがそのまま送られていた。送信形の正規化と件数表示を固定する。
@@ -41,6 +41,27 @@ describe('buildJsConfigApplyPlan', () => {
     expect(buildJsConfigApplyPlan({ desktop: { js: [], css: [] } }).counts.desktopJs).toBe(0);
   });
 
+  it('rejects non-array lists instead of treating them as an empty list', () => {
+    expect(() => buildJsConfigApplyPlan({ desktop: { js: 'a.js' } })).toThrow(/desktop\.js.*配列/);
+    expect(() => buildJsConfigApplyPlan({ mobile: [] })).toThrow(/mobile/);
+    expect(buildJsConfigApplyPlan({ desktop: null, mobile: { js: null } }).counts.desktopJs).toBe(0);
+  });
+
+  it('counts current entries that a full replacement drops', () => {
+    const plan = buildJsConfigApplyPlan({ desktop: { js: [{ type: 'URL', url: 'https://x/keep.js' }] } });
+    const current = {
+      desktop: { js: [{ type: 'URL', url: 'https://x/keep.js' }, { type: 'FILE', file: { fileKey: 'a' } }], css: [{ type: 'URL', url: 'https://x/a.css' }] },
+      mobile: { js: [{ type: 'URL', url: 'https://x/keep.js' }], css: [] }
+    };
+    const summary = summarizeJsConfigCurrent(current, plan);
+    expect(summary).toEqual({ desktopJs: 2, desktopCss: 1, mobileJs: 1, mobileCss: 0, removed: 3 });
+    const text = buildJsConfigApplyConfirmText('5', '', plan, summary);
+    expect(text).toContain('外れる現在の設定: 3件');
+    expect(text).not.toContain('すべて外れます');
+    const empty = buildJsConfigApplyPlan({});
+    expect(buildJsConfigApplyConfirmText('5', '', empty, summarizeJsConfigCurrent(current, empty))).toContain('外れる現在の設定: 4件（すべて外れます）');
+  });
+
   it('warns about FILE fileKey reuse only when FILE entries exist', () => {
     const withFile = buildJsConfigApplyPlan({ desktop: { js: [{ type: 'FILE', file: { fileKey: 'k' } }] } });
     expect(buildJsConfigApplyConfirmText('5', '', withFile)).toContain('fileKey');
@@ -55,5 +76,15 @@ describe('sanitizeFolderName', () => {
     expect(sanitizeFolderName('a/b:c*d?e"f<g>h|i')).toBe('a_b_c_d_e_f_g_h_i');
     expect(sanitizeFolderName('tab\there\u0000nul\nnl')).toBe('tabherenulnl');
     expect(sanitizeFolderName('  名前  ')).toBe('名前');
+  });
+
+  it('never yields a dot-only name, trailing dots, reserved device names or bidi overrides', () => {
+    expect(sanitizeFolderName('..')).toBe('');
+    expect(sanitizeFolderName('.')).toBe('');
+    expect(sanitizeFolderName('app.js. ')).toBe('app.js');
+    expect(sanitizeFolderName('CON.js')).toBe('_CON.js');
+    expect(sanitizeFolderName('nul')).toBe('_nul');
+    expect(sanitizeFolderName('console.js')).toBe('console.js');
+    expect(sanitizeFolderName('a\u202Egnp.js')).toBe('agnp.js');
   });
 });

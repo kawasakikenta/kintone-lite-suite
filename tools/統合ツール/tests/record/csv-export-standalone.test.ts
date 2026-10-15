@@ -149,6 +149,20 @@ describe('standalone record CSV export', () => {
     expect(fetchRecordsByQuery).toHaveBeenCalledWith('/k/v1', '7', 'order by title asc', expect.any(Object));
   });
 
+  it.each([
+    ['.csv', /^レコード_app7_.+\.csv$/],
+    ['  .ZIP ', /^レコード_app7_.+\.csv$/],
+    ['2026/01:売上?.csv', /^2026 01 売上\.csv$/],
+    ['a\u0000b\nc', /^abc\.csv$/]
+  ])('never downloads under an empty or path-like name (%j)', async (filename, expected) => {
+    vi.mocked(apiGet).mockResolvedValue({ properties: flatProperties });
+    vi.mocked(fetchRecordsByQuery).mockResolvedValue({ records: [], mode: 'keyset' } as any);
+
+    await runCsvExportStandalone({ ...options(), filename }, status);
+
+    expect(vi.mocked(downloadBlob).mock.calls[0][0]).toMatch(expected);
+  });
+
   it('downloads a header-only CSV when the query matches zero records', async () => {
     vi.mocked(apiGet).mockResolvedValue({ properties: flatProperties });
     vi.mocked(fetchRecordsByQuery).mockResolvedValue({ records: [], mode: 'keyset' } as any);
@@ -250,7 +264,9 @@ describe('batch record CSV export', () => {
       return { records: tableRecords(), mode: 'keyset' } as any;
     });
 
-    await runCsvExportBatchStandalone({ apps: [{ appId: '7' }, { appId: '8' }], filename: 'partial.csv' }, status);
+    const outcome = await runCsvExportBatchStandalone({ apps: [{ appId: '7' }, { appId: '8' }], filename: 'partial.csv' }, status);
+    // The UI shows these lines, so a partial failure is not visible only inside the downloaded manifest.
+    expect(outcome.issues).toEqual(['失敗 App 8: 明細取得中に通信が切れました']);
 
     const zip = onlyZip();
     const parentFiles = [...zip.files.keys()].filter(name => name.endsWith('/records.csv'));
@@ -342,9 +358,14 @@ describe('CSV export completeness warnings', () => {
     delete records[0].details;
     vi.mocked(fetchRecordsByQuery).mockResolvedValue({ records, mode: 'keyset' } as any);
 
-    if (mode === 'single') await runCsvExportStandalone(options(), status);
-    else if (mode === 'batch') await runCsvExportBatchStandalone({ apps: [{ appId: '7' }, { appId: '8' }] }, status);
+    let outcome: { issues: string[] } | undefined;
+    if (mode === 'single') outcome = await runCsvExportStandalone(options(), status);
+    else if (mode === 'batch') outcome = await runCsvExportBatchStandalone({ apps: [{ appId: '7' }, { appId: '8' }] }, status);
     else await runRecordBackupStandalone({ appId: '7' }, status);
+    if (outcome) {
+      const expected = mode === 'batch' ? 2 : 1;
+      expect(outcome.issues.filter(line => line.includes('レコードID 41') && line.includes('details'))).toHaveLength(expected);
+    }
 
     const zip = onlyZip();
     const manifest = JSON.parse(textFile(zip, mode === 'batch' ? 'app_7/manifest.json' : 'manifest.json'));

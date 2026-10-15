@@ -163,7 +163,17 @@ async function main() {
           await guestId.fill('bad');
           assert.equal(await button('内容を確認する').isDisabled(), true, 'CSV出力: 不正なゲストIDを確認前に止める');
           await guestId.fill('');
+          const csvQuery = page.getByRole('textbox', { name: '全対象アプリの絞り込み条件', exact: true });
+          await csvQuery.fill('status = "新規" limit 10');
+          assert.equal(await button('内容を確認する').isDisabled(), true, 'CSV出力: limit/offset を含む条件を確認前に止める');
+          await csvQuery.fill('');
           await page.locator('details').filter({ hasText: '一覧の条件を利用する' }).locator('summary').click();
+          const viewSource = page.getByPlaceholder('一覧取得元アプリID', { exact: true });
+          const viewSourceValue = await viewSource.inputValue();
+          await viewSource.fill('');
+          await button('一覧読込').click(); await idle();
+          assert.match(await page.locator('.kus-lp__status-text').first().innerText(), /一覧取得元のアプリIDを入力/, 'CSV出力: 一覧取得元が空なら入力を促す');
+          await viewSource.fill(viewSourceValue);
           await button('一覧読込').click(); await idle();
           const viewSelect = page.getByRole('combobox', { name: '一覧の条件', exact: true });
           await viewSelect.selectOption('12');

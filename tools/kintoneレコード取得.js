@@ -244,6 +244,17 @@
     }
     return "";
   }
+  function guestIdFromKintonePath(pathname) {
+    const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ""));
+    return match ? match[1] : "";
+  }
+  function resolveDefaultGuestId() {
+    try {
+      return typeof window === "undefined" ? "" : guestIdFromKintonePath(window.location?.pathname);
+    } catch (e) {
+      return "";
+    }
+  }
   function sanitizeCustomizeResourceList(value) {
     if (!Array.isArray(value)) return [];
     const resources = [];
@@ -275,7 +286,7 @@
       mobile: buildPlatform("mobile")
     };
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -321,6 +332,7 @@
         })
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
+      DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
@@ -1132,7 +1144,7 @@ ${contextLine}`);
       }
       tasks.push(async () => {
         try {
-          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
+          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id });
           if (res && typeof res === "object") {
             plugin._config = res?.config != null ? res.config : res;
             stats.fetched += 1;
@@ -1257,12 +1269,28 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-enums.ts
+  var init_kintone_enums = __esm({
+    "src/kintone-enums.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/diff/label-dict.ts
+  var init_label_dict = __esm({
+    "src/diff/label-dict.ts"() {
+      "use strict";
+      init_kintone_enums();
+    }
+  });
+
   // src/diff/enrich.ts
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      init_label_dict();
     }
   });
 
@@ -1277,21 +1305,6 @@ ${contextLine}`);
       init_constants();
       init_state();
       root = null;
-    }
-  });
-
-  // src/kintone-enums.ts
-  var init_kintone_enums = __esm({
-    "src/kintone-enums.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/diff/label-dict.ts
-  var init_label_dict = __esm({
-    "src/diff/label-dict.ts"() {
-      "use strict";
-      init_kintone_enums();
     }
   });
 
@@ -2766,10 +2779,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const f = rec?.[code];
     if (!f) return "";
     const type = String(f.type || "");
-    if (type === "USER_SELECT" || type === "ORGANIZATION_SELECT" || type === "GROUP_SELECT") {
+    if (type === "USER_SELECT" || type === "ORGANIZATION_SELECT" || type === "GROUP_SELECT" || type === "STATUS_ASSIGNEE") {
       return (Array.isArray(f.value) ? f.value : []).map((v) => v?.code || v?.name || "").join(",");
     }
-    if (type === "CHECK_BOX" || type === "MULTI_SELECT") return (Array.isArray(f.value) ? f.value : []).join(",");
+    if (type === "CREATOR" || type === "MODIFIER") return f.value?.code || f.value?.name || "";
+    if (type === "CHECK_BOX" || type === "MULTI_SELECT" || type === "CATEGORY") return (Array.isArray(f.value) ? f.value : []).join(",");
     if (type === "FILE") return (Array.isArray(f.value) ? f.value : []).map((file) => file?.name || "").join(",");
     if (type === "SUBTABLE") return `${(Array.isArray(f.value) ? f.value : []).length}行`;
     if (typeof f.value === "object" && f.value !== null) return JSON.stringify(f.value);
@@ -2781,7 +2795,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return "\uFEFF" + lines.join("\n");
   }
   function sanitizeZipSegment(value, fallback = "item") {
-    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim();
+    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
     return !cleaned || /^\.+$/.test(cleaned) ? fallback : cleaned;
   }
   function uniqueZipName(used, raw, fileKey, idx) {
@@ -2800,16 +2814,34 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     used.add(cand);
     return cand;
   }
-  function describeBatchWriteFailure(label, failure, error) {
+  var RECORD_ERROR_DETAIL_LIMIT = 10;
+  function describeKintoneRecordErrors(error, offset = 0, describeItem = (index) => `${index + 1}件目`) {
+    let errors = null;
+    for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
+      if (current.errors && typeof current.errors === "object" && !Array.isArray(current.errors)) {
+        errors = current.errors;
+        break;
+      }
+    }
+    const lines = Object.entries(errors || {}).map(([key, value]) => {
+      const messages = Array.isArray(value?.messages) ? value.messages : typeof value === "string" ? [value] : [];
+      const matched = /^records\[(\d+)\]\.?(.*)$/.exec(key);
+      const where = matched ? [describeItem(offset + Number(matched[1])), matched[2].replace(/\.value$/, "")].filter(Boolean).join("・") : key;
+      return `${where}: ${messages.map(String).join(" / ") || "(詳細なし)"}`;
+    });
+    return lines.length > RECORD_ERROR_DETAIL_LIMIT ? [...lines.slice(0, RECORD_ERROR_DETAIL_LIMIT), `ほか ${lines.length - RECORD_ERROR_DETAIL_LIMIT}件のエラー`] : lines;
+  }
+  function describeBatchWriteFailure(label, failure, error, details = []) {
     const reason = error instanceof Error ? error.message : String(error ?? "");
     const remaining = Math.max(0, failure.total - failure.done);
     return [
       `${label}が途中で失敗しました。`,
       `確定済み: ${failure.done}件 / 失敗チャンク: ${failure.from}～${failure.to}件目 / 未処理: ${remaining}件（全${failure.total}件）`,
-      reason ? `原因: ${reason}` : ""
+      reason ? `原因: ${reason}` : "",
+      ...details.length ? ["エラーの詳細（このチャンクは全体が取り消されています）:", ...details] : []
     ].filter(Boolean).join("\n");
   }
-  async function writeInChunks(items, label, writeChunk, onProgress, chunkSize = RECORDS_WRITE_CHUNK) {
+  async function writeInChunks(items, label, writeChunk, onProgress, chunkSize = RECORDS_WRITE_CHUNK, describeItem) {
     const size = Math.max(1, Math.floor(chunkSize) || RECORDS_WRITE_CHUNK);
     let done = 0;
     for (let i = 0; i < items.length; i += size) {
@@ -2817,7 +2849,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       try {
         await writeChunk(chunk, Math.floor(i / size));
       } catch (error) {
-        const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length }, error));
+        const details = describeKintoneRecordErrors(error, i, describeItem);
+        const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length }, error, details));
         wrapped.partial = { done, from: i + 1, to: i + chunk.length, total: items.length };
         wrapped.original = error;
         throw wrapped;
@@ -2830,6 +2863,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
 
   // src/tabs/record-csv-export.ts
   var DETAIL_ID_COLUMNS = ["$id", "$rowId", "$rowIndex"];
+  var VALUELESS_FIELD_TYPES = /* @__PURE__ */ new Set(["LABEL", "SPACER", "HR", "GROUP", "REFERENCE_TABLE"]);
   function tableFileName(fieldCode, used) {
     let stem = sanitizeZipSegment(fieldCode, "table").normalize("NFC").replace(/[\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").replace(/^\.+|[. ]+$/g, "");
     stem = Array.from(stem).slice(0, 50).join("").replace(/[. ]+$/g, "") || "table";
@@ -2847,7 +2881,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return String(value);
   }
   function buildRecordCsvExport(records, properties) {
-    const parentColumns = Object.keys(properties || {});
+    const parentColumns = Object.keys(properties || {}).filter((code) => !VALUELESS_FIELD_TYPES.has(properties[code]?.type));
     const tableFields = /* @__PURE__ */ new Map();
     for (const code of parentColumns) {
       if (properties[code]?.type === "SUBTABLE") tableFields.set(code, properties[code].fields || {});
@@ -2868,7 +2902,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const tables = [];
     const usedNames = /* @__PURE__ */ new Set();
     for (const [fieldCode, childProperties] of tableFields) {
-      const childColumns = new Set(Object.keys(childProperties));
+      const childColumns = new Set(Object.keys(childProperties).filter((code) => !VALUELESS_FIELD_TYPES.has(childProperties[code]?.type)));
       const detailRecords = [];
       records.forEach((record, recordIndex) => {
         const parentId = recordIds[recordIndex];
@@ -3045,7 +3079,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const header = rows[0].map((code) => code.trim());
     validateCsvImportHeader(header, properties);
     const columns = header.map((code) => ({ code, label: String(properties[code].label || code), type: String(properties[code].type || "") }));
-    const records = [], issues = [], sample = [];
+    const records = [], recordRows = [], issues = [], sample = [];
     let issueCount = 0, count = 0;
     const issue = (row, field, message) => {
       issueCount++;
@@ -3062,7 +3096,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const seenValues = /* @__PURE__ */ new Map();
     for (let index = 1; index < rows.length; index++) {
       const values = rows[index], row = index + 1;
-      if (values.length === 1 && values[0] === "") continue;
+      if (values.every((value) => value === "")) continue;
       count++;
       if (sample.length < 5) sample.push({ row, values: values.slice(0, 6).map((value) => value.length > 120 ? value.slice(0, 120) + "…" : value) });
       if (values.length !== header.length) {
@@ -3089,9 +3123,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         record[code] = { value };
       }
       records.push(record);
+      recordRows.push(row);
     }
     if (!count) throw new Error("登録するデータがありません");
-    return { count, columns, issues, issueCount, sample, records };
+    return { count, columns, issues, issueCount, sample, records, recordRows };
   }
   function formatCsvImportReport(report) {
     const lines = [
@@ -3171,26 +3206,31 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (!appIds.length) throw new Error("対象アプリIDを1件以上入力してください");
     const failures = [];
     const warnings = [];
+    const cancelled = [];
     for (let i = 0; i < appIds.length; i++) {
       const appId = appIds[i];
       setStatus(`App ${appId}: 実行中 (${i + 1}/${appIds.length})`);
       try {
         const result = await operation(appId, i, appIds.length);
         if (result && result.warning) warnings.push(`App ${appId}: ${result.warning}`);
+        if (result && result.cancelled) cancelled.push(`App ${appId}`);
       } catch (error) {
         failures.push(`App ${appId}: ${error?.message || String(error)}`);
       }
     }
     const warningSummary = warnings.length ? `警告 ${warnings.length}アプリ:
 ${warnings.join("\n")}` : "";
+    const cancelSummary = cancelled.length ? `確認でキャンセルしたため実行していません（${cancelled.length}アプリ）: ${cancelled.join(", ")}` : "";
     if (failures.length) {
       throw new Error(`${appIds.length}件中${failures.length}件が失敗しました
 ${failures.join("\n")}${warningSummary ? `
-${warningSummary}` : ""}`);
+${warningSummary}` : ""}${cancelSummary ? `
+${cancelSummary}` : ""}`);
     }
-    if (warningSummary) {
-      setStatus(`${appIds.length}アプリの操作が完了しました
-${warningSummary}`, true);
+    if (warningSummary || cancelSummary) {
+      setStatus(`${appIds.length}アプリの操作が完了しました${cancelSummary ? `
+${cancelSummary}` : ""}${warningSummary ? `
+${warningSummary}` : ""}`, true);
       return;
     }
     setStatus(`${appIds.length}アプリの操作が完了しました`);
@@ -3280,8 +3320,12 @@ ${warningSummary}`, true);
     for (const table of csv.tables) zip.file(`${prefix}${table.fileName}`, table.csvText);
   }
   function recordExportFilename(filename, extension, fallback) {
-    const requested = String(filename || "").trim();
-    return requested ? `${requested.replace(/\.(csv|zip)$/i, "")}.${extension}` : fallback;
+    const stem = String(filename || "").trim().replace(/\.(csv|zip)$/i, "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+    return stem ? `${sanitizeFilenamePart(stem)}.${extension}` : fallback;
+  }
+  function zipNameForApp(zipName, appId, multiple) {
+    const requested = String(zipName || "").trim();
+    return requested && multiple ? `${requested.replace(/\.zip$/i, "")}_app${appId}.zip` : requested;
   }
   async function buildCsvExportForApp(appId, guestId, query, setStatus) {
     const target = validateRecordConnection(appId, guestId);
@@ -3309,7 +3353,7 @@ ${warningSummary}`, true);
       const blob2 = new Blob([result.csv.parentCsv], { type: "text/csv;charset=utf-8;" });
       downloadBlob(recordExportFilename(filename, "csv", buildExportFilename("レコード", "csv", { appLabel })), blob2);
       setStatus(`CSV出力完了 (${result.recordCount}件)`);
-      return;
+      return { issues: [] };
     }
     const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
@@ -3324,6 +3368,7 @@ ${warningSummary}`, true);
     downloadBlob(recordExportFilename(filename, "zip", buildExportFilename("レコード", "zip", { appLabel })), blob);
     const warningNote = result.csv.warnings.length ? `（未取得のテーブル ${result.csv.warnings.length}件、詳細は manifest.json）` : "";
     setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0);
+    return { issues: result.csv.warnings };
   }
   async function runCsvExportBatchStandalone(opts, setStatus) {
     const rawApps = Array.isArray(opts?.apps) ? opts.apps : [];
@@ -3336,8 +3381,7 @@ ${warningSummary}`, true);
     if (!apps.length) throw new Error("対象アプリを1件以上入力してください");
     if (apps.length === 1) {
       const app = apps[0];
-      await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || "", query, filename }, setStatus);
-      return;
+      return await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || "", query, filename }, setStatus);
     }
     const JSZip = await loadJSZipLite();
     const zip = new JSZip();
@@ -3346,6 +3390,7 @@ ${warningSummary}`, true);
     let warningCount = 0;
     const successes = [];
     const failures = [];
+    const tableWarnings = [];
     for (let i = 0; i < apps.length; i++) {
       const app = apps[i];
       let folder = "";
@@ -3363,6 +3408,7 @@ ${warningSummary}`, true);
         }, null, 2));
         totalRecords += result.recordCount;
         warningCount += result.csv.warnings.length;
+        tableWarnings.push(...result.csv.warnings.map((warning) => `App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ""}: ${warning}`));
         successes.push(`${folder}/: App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ""} / ${result.recordCount}件 / テーブル ${result.csv.tables.length}件${result.csv.warnings.length ? ` / 未取得 ${result.csv.warnings.length}件（フォルダ内manifest.json参照）` : ""}`);
       } catch (error) {
         if (folder) zip.remove(folder);
@@ -3394,6 +3440,7 @@ ${failures.join("\n")}`);
     const issues = [failures.length ? `失敗 ${failures.length}アプリ` : "", warningCount ? `未取得のテーブル ${warningCount}件` : ""].filter(Boolean);
     const issueNote = issues.length ? `（${issues.join(" / ")}、詳細は manifest.txt）` : "";
     setStatus(`CSV一括出力完了${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
+    return { issues: [...failures.map((failure) => `失敗 ${failure}`), ...tableWarnings] };
   }
   async function readImportFile(file) {
     if (!file) throw new Error("CSVファイルを選択してください");
@@ -3409,14 +3456,16 @@ ${failures.join("\n")}`);
     const appIds = parseRecordAppIds(opts.appIdsText || opts.appId);
     if (!appIds.length) throw new Error("対象アプリIDを入力してください");
     setStatus("CSVファイルを読み込み中...");
-    const rows = parseCsvText((await readImportFile(opts.file)).replace(/^\uFEFF/, ""));
+    const text = await readImportFile(opts.file);
+    if (text.includes("�")) throw new Error("CSVをUTF-8として読み取れず、文字化け（�）を検出しました。Excelでは「CSV UTF-8（コンマ区切り）」で保存し直してください。");
+    const rows = parseCsvText(text.replace(/^\uFEFF/, ""));
     const prefix = buildApiPrefix(opts.guestId || "", false);
     const plans = [];
     for (const appId of appIds) {
       setStatus(`App ${appId}: CSVを事前検査中...`);
       try {
         const response = await apiGet(prefix, "/app/form/fields.json", { app: appId });
-        const { records: _records, ...report } = planCsvImport(rows, response?.properties);
+        const { records: _records, recordRows: _recordRows, ...report } = planCsvImport(rows, response?.properties);
         plans.push({ appId, properties: response.properties, report });
       } catch (error) {
         plans.push({ appId, properties: {}, error: error?.message || String(error) || "事前検査に失敗しました" });
@@ -3448,12 +3497,14 @@ ${problems.map((plan) => `App ${plan.appId}: ${plan.error || formatCsvImportRepo
     }
     await runRecordAppBatchStandalone(plans.map((plan) => plan.appId).join(","), async (appId) => {
       const plan = plans.find((item) => item.appId === appId);
-      const { records } = planCsvImport(rows, plan.properties);
+      const { records, recordRows } = planCsvImport(rows, plan.properties);
       const ok = await writeInChunks(
         records,
         `App ${appId} の CSV取込`,
         (batch) => apiPost(prefix, "/records.json", { app: appId, records: batch }),
-        (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`)
+        (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`),
+        void 0,
+        (index) => `CSV ${recordRows[index]}行目`
       );
       setStatus(`App ${appId}: インポート完了 ${ok}件`);
     }, setStatus);
@@ -3475,7 +3526,7 @@ ${problems.map((plan) => `App ${plan.appId}: ${plan.error || formatCsvImportRepo
     ].join("\n");
     if (!kusConfirm(confirmText)) {
       setStatus("ステータス一括更新をキャンセルしました");
-      return;
+      return { cancelled: true };
     }
     const ok = await writeInChunks(
       targets,
@@ -3496,7 +3547,9 @@ ${error?.message || String(error)}`
           throw reported;
         }
       },
-      (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`)
+      (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`),
+      void 0,
+      (index) => `レコードID ${targets[index]?.id}`
     );
     setStatus(`ステータス一括更新完了 (${ok}件)`);
   }
@@ -3568,6 +3621,10 @@ ${error?.message || String(error)}`
                   dropped.add(`${code}.${childCode}`);
                   continue;
                 }
+                if (childDefs && childDefs[childCode]?.type !== childField.type) {
+                  dropped.add(`${code}.${childCode}(型不一致)`);
+                  continue;
+                }
                 cells[childCode] = { value: childField.value };
               }
               return { value: cells };
@@ -3589,14 +3646,20 @@ ${error?.message || String(error)}`
     const tgtPrefix = buildApiPrefix(targetGuestId || "", false);
     setStatus(`コピー先 App ${targetAppId} のフィールド定義を確認中...`);
     const targetFields = await apiGet(tgtPrefix, "/app/form/fields.json", { app: targetAppId });
-    const targetProps = targetFields?.properties || {};
+    const targetProps = targetFields?.properties;
+    if (!targetProps || typeof targetProps !== "object" || Array.isArray(targetProps)) throw new Error(`コピー先 App ${targetAppId} のフィールド設定の応答が不正です`);
     const records = await fetchAllRecords(srcPrefix, sourceAppId, query || "", setStatus);
     if (!records.length) {
-      setStatus("コピー対象のレコードがありません");
-      return;
+      const warning = "コピー対象のレコードがありません";
+      setStatus(warning, true);
+      return { warning };
     }
     const plan = buildCopyRecordPayloads(records, targetProps);
     const droppedNote = plan.droppedFields.length ? `コピー先に無い/型が違うため除外: ${plan.droppedFields.slice(0, 10).join(", ")}${plan.droppedFields.length > 10 ? ` 他${plan.droppedFields.length - 10}件` : ""}` : "";
+    if (!plan.records.some((record) => Object.keys(record).length)) {
+      throw new Error(`コピーできるフィールドがありません（コピー先 App ${targetAppId} に一致するフィールドがありません）。コピー元とコピー先のアプリIDを確認してください。${droppedNote ? `
+${droppedNote}` : ""}`);
+    }
     const fileNote = plan.droppedFileFields.length ? `添付ファイルはコピーされません: ${plan.droppedFileFields.slice(0, 10).join(", ")}${plan.droppedFileFields.length > 10 ? ` 他${plan.droppedFileFields.length - 10}件` : ""}（${plan.droppedFileFields.length}フィールド、添付ありレコード ${plan.recordsWithFiles}件）。必要な場合はコピー後に手動で再アップロードしてください。` : "";
     const confirmText = [
       `コピー元 App ${sourceAppId} → コピー先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ""}`,
@@ -3608,16 +3671,23 @@ ${error?.message || String(error)}`
     ].filter(Boolean).join("\n");
     if (!kusConfirm(confirmText)) {
       setStatus("レコードコピーをキャンセルしました");
-      return;
+      return { cancelled: true };
     }
     const ok = await writeInChunks(
       plan.records,
       `App ${sourceAppId} → ${targetAppId} のレコードコピー`,
       (batch) => apiPost(tgtPrefix, "/records.json", { app: targetAppId, records: batch }),
-      (done, total) => setStatus(`コピー中... ${done} / ${total}件`)
+      (done, total) => setStatus(`コピー中... ${done} / ${total}件`),
+      void 0,
+      (index) => `コピー元レコードID ${records[index]?.$id?.value ?? index + 1}`
     );
     const fileDropNote = plan.droppedFileFields.length ? ` / 添付除外 ${plan.droppedFileFields.length}フィールド` : "";
     setStatus(`レコードコピー完了: ${ok}件${fileDropNote}${droppedNote ? `（${droppedNote}）` : ""}`, plan.droppedFields.length > 0 || plan.droppedFileFields.length > 0);
+  }
+  function folderLabelFromField(field) {
+    const label = (item) => item && typeof item === "object" ? String(item.code || item.name || "") : String(item ?? "");
+    const value = field?.value;
+    return (Array.isArray(value) ? value.map(label).filter(Boolean).join(",") : label(value)).trim();
   }
   async function runAttachmentDownloadStandalone(opts, setStatus) {
     const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
@@ -3661,7 +3731,7 @@ ${error?.message || String(error)}`
       const { rec, recordId, rowId, files } = groups[i];
       setStatus(`添付DL中 (${i + 1}/${groups.length}${failures.length ? ` / 失敗 ${failures.length}` : ""})`);
       if (!files.length) continue;
-      let folderName = folderFieldCode && rec[folderFieldCode]?.value;
+      let folderName = folderFieldCode ? folderLabelFromField(rec[folderFieldCode]) : "";
       if (!folderName) folderName = `Record_${recordId}`;
       const folderPath = [
         sanitizeZipSegment(folderName, `Record_${recordId}`),
@@ -3711,7 +3781,7 @@ ${formatFileFailures(failures)}
     zip.file("manifest.json", JSON.stringify({ appId: String(appId), guestId: String(guestId || ""), query: query || "", files: manifest }, null, 2));
     setStatus(`ZIP生成中 (${fileCount}ファイル)`);
     const zipBlob = await zip.generateAsync({ type: "blob" });
-    downloadBlob(zipName || buildExportFilename("添付ファイル", "zip", { appLabel: buildAppFilenameLabel(appId, "") }), zipBlob);
+    downloadBlob(recordExportFilename(zipName, "zip", buildExportFilename("添付ファイル", "zip", { appLabel: buildAppFilenameLabel(appId, "") })), zipBlob);
     if (failures.length) {
       const warning = `添付一括DL完了: ${fileCount}ファイル（取得失敗 ${failures.length}件、詳細は download_errors.txt）`;
       setStatus(warning, true);
@@ -3757,6 +3827,7 @@ ${formatFileFailures(failures)}
       }
       if (!collected.length) notes.push("添付ファイルなし");
       const blobCache = /* @__PURE__ */ new Map();
+      const usedByDir = /* @__PURE__ */ new Map();
       for (let i = 0; i < collected.length; i++) {
         const ent = collected[i];
         setStatus(`添付ファイル取得中 (${i + 1}/${collected.length}${fileFailures.length ? ` / 失敗 ${fileFailures.length}` : ""})`);
@@ -3778,9 +3849,10 @@ ${formatFileFailures(failures)}
         } else {
           parts.push(sanitizeZipSegment(ent.fieldCode || "files"));
         }
-        const filePrefix = sanitizeZipSegment(String(ent.file.fileKey || "").slice(0, 12) || String(ent.fileIndex + 1));
-        parts.push(`${filePrefix}_${sanitizeZipSegment(ent.file.name || "file.bin", "file.bin")}`);
-        zip.file(parts.join("/"), result.blob);
+        const dir = parts.join("/");
+        const used = usedByDir.get(dir) || /* @__PURE__ */ new Set();
+        usedByDir.set(dir, used);
+        zip.file(`${dir}/${uniqueZipName(used, ent.file.name || "file.bin", ent.file.fileKey, ent.fileIndex)}`, result.blob);
         fileCount++;
       }
       if (fileFailures.length) {
@@ -3845,6 +3917,8 @@ ${formatFileFailures(failures)}
       zip.file(`app_settings/app_${appId}.json`, JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, scopes: appScopes, bundle: settings }, null, 2));
     } else if (!includeAppSettings) {
       notes.push("アプリ設定未取得");
+    } else {
+      notes.push("アプリ設定の保存範囲が未選択のため取得していません");
     }
     zip.file("manifest.json", JSON.stringify({
       generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -3861,7 +3935,7 @@ ${formatFileFailures(failures)}
     }, null, 2));
     setStatus(`ZIP生成中 (${records.length}件 / 添付 ${fileCount} / コメント ${commentCount})`);
     const blob = await zip.generateAsync({ type: "blob" });
-    downloadBlob(zipName || buildExportFilename("レコードバックアップ", "zip", { appLabel: buildAppFilenameLabel(appId, "") }), blob);
+    downloadBlob(recordExportFilename(zipName, "zip", buildExportFilename("レコードバックアップ", "zip", { appLabel: buildAppFilenameLabel(appId, "") })), blob);
     const failureCount = fileFailures.length + commentFailures.length + appNg + csvExport.warnings.length;
     const failureNote = failureCount ? `（取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg} / テーブル ${csvExport.warnings.length} → manifest.json 参照）` : "";
     const completionMessage = `バックアップ完了: ${records.length}件 / テーブル明細 ${csvExport.tables.length}ファイル / 添付 ${fileCount} / コメント ${commentCount}${failureNote}`;
@@ -4254,7 +4328,7 @@ ${formatFileFailures(failures)}
   function reportCsv(rows) {
     return "\uFEFF" + rows.map((row) => row.map((value) => {
       const text = String(value ?? "");
-      return csvEscape(/^[\s\uFEFF]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text) ? "'" + text : text);
+      return csvEscape(neutralizeCsvFormula(text));
     }).join(",")).join("\r\n") + "\r\n";
   }
   function qualityRecordPath(appId, guestId, recordId) {
@@ -4344,14 +4418,14 @@ ${formatFileFailures(failures)}
 
   // src/tabs/record-quality-standalone.ts
   function connection(appIdsText, guestId) {
-    const appIds = parseRecordAppIds(appIdsText);
+    const appIds = [...new Set(parseRecordAppIds(appIdsText).map((id) => id.replace(/^0+/, "")))];
     if (!appIds.length) throw new Error("対象アプリを指定してください");
     if (guestId && !/^[1-9]\d*$/.test(guestId)) throw new Error("ゲストIDは正の数値で入力してください");
     return { appIds, prefix: buildApiPrefix(guestId, false) };
   }
   async function runLoadQualityFieldsStandalone(options) {
     const { appIds, prefix } = connection(options.appIdsText, options.guestId);
-    return readQualityFields((await apiGet(prefix, "/app/form/fields.json", { app: appIds[0], lang: "user" })).properties);
+    return readQualityFields((await apiGet(prefix, "/app/form/fields.json", { app: appIds[0], lang: "user" }))?.properties);
   }
   async function runRecordQualityStandalone(options, setStatus) {
     const { appIds, prefix } = connection(options.appIdsText, options.guestId);
@@ -4359,7 +4433,7 @@ ${formatFileFailures(failures)}
     for (const appId of appIds) {
       setStatus(`App ${appId}: 検査用の設定を取得中…`);
       try {
-        const properties = (await apiGet(prefix, "/app/form/fields.json", { app: appId, lang: "user" })).properties;
+        const properties = (await apiGet(prefix, "/app/form/fields.json", { app: appId, lang: "user" }))?.properties;
         const fields = selectQualityFields(properties, options.codes);
         const { records } = await fetchRecordsByQuery(prefix, appId, options.query, { fields: ["$id", ...options.codes], onProgress: (count) => setStatus(`App ${appId}: ${count}件を取得済み…`) });
         results.push({ appId, report: inspectRecordQuality(records, fields, options) });
@@ -4377,7 +4451,7 @@ ${formatFileFailures(failures)}
       setStatus(`App ${appId}: CSVひな形を作成中…`);
       try {
         const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
-        templates.push({ appId, template: buildCsvImportTemplate(fields.properties) });
+        templates.push({ appId, template: buildCsvImportTemplate(fields?.properties) });
       } catch (error) {
         failures.push(`App ${appId}: ${error.message || String(error)}`);
       }
@@ -4446,12 +4520,19 @@ ${failures.join("\n")}` };
     output.setAttribute("aria-live", "polite");
     const save = makeButton("検査結果をCSVで保存", "sub");
     save.hidden = true;
-    const resetResults = () => {
+    const clearResults = () => {
       version++;
       results = [];
       output.replaceChildren();
       save.hidden = true;
     };
+    const resetResults = () => {
+      const stale = results.length > 0 && panel.status.dataset.tone !== "busy";
+      clearResults();
+      if (stale) panel.setStatus("対象や条件が変わりました。もう一度検査してください。", "warn");
+    };
+    const isBusy = () => panel.root.getAttribute("aria-busy") === "true";
+    const validate = () => requiredApps() || (selected.size ? "" : "検査フィールドを読み込んで1〜5項目を選んでください。");
     const refreshNote = () => {
       note.textContent = `選択 ${selected.size}/5項目: ${fields.filter((field) => selected.has(field.code)).map((field) => `${field.label}［${field.code}］`).join("、") || "未選択"}`;
       countBadge.textContent = `選択 ${selected.size} / 5`;
@@ -4502,12 +4583,13 @@ ${failures.join("\n")}` };
       if (fields.length && !fieldBox.childElementCount) fieldBox.appendChild(makeNote("一致するフィールドがありません。検索語を変えてください。"));
     }
     search.addEventListener("input", renderFields);
-    load.addEventListener("click", () => liteRun(panel, "検査フィールドを取得中…", async () => {
+    load.addEventListener("click", () => isBusy() || liteRun(panel, "検査フィールドを取得中…", async () => {
       const current = ++fieldsVersion;
       fields = [];
       selected.clear();
       search.value = "";
       fieldBox.replaceChildren();
+      pickWrap.hidden = true;
       resetResults();
       refreshNote();
       const loaded = await runLoadQualityFieldsStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() });
@@ -4522,7 +4604,12 @@ ${failures.join("\n")}` };
       panel.setStatus(note.textContent, fields.length ? "ok" : "warn");
     }));
     const run = makeButton("重複・未入力を検査", "primary");
-    run.addEventListener("click", () => liteRun(panel, "レコードを検査中…", async () => {
+    run.addEventListener("click", () => isBusy() || liteRun(panel, "レコードを検査中…", async () => {
+      const problem = validate();
+      if (problem) {
+        panel.setStatus(problem, "warn");
+        return;
+      }
       resetResults();
       const current = version;
       const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked };
@@ -4579,7 +4666,7 @@ ${failures.join("\n")}` };
       label: "重複・未入力を検査",
       description: "複数項目の重複・未入力を調べ、該当レコードを確認します。",
       button: run,
-      validate: () => requiredApps() || (selected.size ? "" : "検査フィールドを読み込んで1〜5項目を選んでください。"),
+      validate,
       summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["検査項目", [...selected].join("、")], ["比較", `前後空白 ${trim.checkbox.checked ? "無視" : "区別"} / 大小文字 ${ignoreCase.checkbox.checked ? "無視" : "区別"}`]]
     };
   }
@@ -4616,7 +4703,7 @@ ${failures.join("\n")}` };
       wide: true
     });
     const tgtApp = makeInput({ placeholder: "アプリID（カンマ区切りで複数指定）", value: DEFAULT_APP_ID || "", width: "wide", ariaLabel: "対象アプリID" });
-    const tgtGuest = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
+    const tgtGuest = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest" });
     let connectionVersion = 0;
     const resetMetadata = [];
     for (const input of [tgtApp, tgtGuest]) {
@@ -4754,6 +4841,8 @@ ${failures.join("\n")}` };
           const preview = makeButton("CSVを事前検査", "sub");
           const previewText = document.createElement("pre");
           previewText.setAttribute("aria-label", "CSV事前検査結果");
+          previewText.setAttribute("role", "region");
+          previewText.tabIndex = 0;
           previewText.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto;font-size:12px";
           previewText.hidden = true;
           let csvVersion = 0;
@@ -4989,7 +5078,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
                 fileFieldCode: fileCode.value.trim(),
                 tableFieldCode: tableCode.value.trim(),
                 folderFieldCode: folderCode.value.trim(),
-                zipName: zipName.value.trim()
+                zipName: zipNameForApp(zipName.value, appId, parseRecordAppIds(tgtApp.value).length > 1)
               },
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
@@ -5072,7 +5161,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
                 appId,
                 guestId: tgtGuest.value.trim(),
                 query: query.value.trim(),
-                zipName: zipName.value.trim(),
+                zipName: zipNameForApp(zipName.value, appId, parseRecordAppIds(tgtApp.value).length > 1),
                 includeFiles: incFiles.checkbox.checked,
                 includeComments: incComments.checkbox.checked,
                 includeAppSettings: incSettings.checkbox.checked,
@@ -5081,7 +5170,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
-          addAction({ id: "backup", label: "バックアップを保存", description: "レコード・テーブル明細と選択した関連データをZIPで保存します。", button: run, validate: requiredApps, summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["保存内容", ["レコード・テーブル明細", incFiles.checkbox.checked ? "添付ファイル" : "", incComments.checkbox.checked ? "コメント" : "", incSettings.checkbox.checked ? "選択したアプリ設定" : ""].filter(Boolean).join("、")]] });
+          addAction({ id: "backup", label: "バックアップを保存", description: "レコード・テーブル明細と選択した関連データをZIPで保存します。", button: run, validate: () => requiredApps() || (incSettings.checkbox.checked && !chips.some((c) => c.checkbox.checked) ? "アプリ設定の保存範囲を1つ以上選ぶか、「アプリ設定も保存」を外してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["保存内容", ["レコード・テーブル明細", incFiles.checkbox.checked ? "添付ファイル" : "", incComments.checkbox.checked ? "コメント" : "", incSettings.checkbox.checked ? `アプリ設定（${chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent).join("、")}）` : ""].filter(Boolean).join("、")]] });
           root2.appendChild(makeRow(run));
         }
       }

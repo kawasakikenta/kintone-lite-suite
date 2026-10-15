@@ -7,6 +7,7 @@ import {
 } from '../constants.js';
 import { state } from '../state.js';
 import { stableStringify } from '../utils.js';
+import { labelOfProp, stateRenameName } from './label-dict.js';
 
 // utils.js と同一ロジック。IIFE バンドルで utils からの import が欠落した場合でも動作するようローカル定義する。
 function relativePathFromRow(path, secKey) {
@@ -33,13 +34,6 @@ function getPathLeafKey(path) {
   return m ? m[1] : '';
 }
 
-function normalizeIgnoreToken(token) {
-  return String(token || '')
-    .replace(/[\u200b\u200c\u200d\ufeff]/g, '')
-    .replace(/^[\s\u3000]+|[\s\u3000]+$/g, '')
-    .toLowerCase();
-}
-
 export function summarizeSeverity(rows) {
   const out = { high: 0, medium: 0, low: 0 };
   (rows || []).forEach((r) => {
@@ -61,8 +55,10 @@ export function tokenizeLooseText(value) {
 }
 
 export function scoreTokenOverlap(a, b) {
-  const setA = new Set(tokenizeLooseText(a));
-  const setB = new Set(tokenizeLooseText(b));
+  return scoreTokenSetOverlap(new Set(tokenizeLooseText(a)), new Set(tokenizeLooseText(b)));
+}
+
+function scoreTokenSetOverlap(setA: ReadonlySet<string>, setB: ReadonlySet<string>) {
   if (!setA.size || !setB.size) return 0;
   let common = 0;
   setA.forEach((token) => {
@@ -117,26 +113,62 @@ export function getFieldRowPayload(row) {
   return row.right || row.left || null;
 }
 
-export function scoreFieldRenameCandidate(removedRow, addedRow) {
-  const leftDef: any = getFieldRowPayload(removedRow);
-  const rightDef: any = getFieldRowPayload(addedRow);
-  if (!leftDef || !rightDef) return null;
-  if (String(leftDef.type || '') !== String(rightDef.type || '')) return null;
+interface FieldRenameProfile {
+  type: string;
+  typeLabel: string;
+  exactSig: string;
+  coreSig: string;
+  label: string;
+  labelTokens: ReadonlySet<string>;
+  codeTokens: ReadonlySet<string>;
+  required: unknown;
+  hasLookup: boolean;
+}
+
+/** 行ごとの比較用署名。候補の総当たりで同じ行の正規化・直列化を繰り返さないために使う。 */
+type FieldRenameProfileCache = Map<object, FieldRenameProfile | null>;
+
+function buildFieldRenameProfile(row, cache?: FieldRenameProfileCache): FieldRenameProfile | null {
+  if (cache?.has(row)) return cache.get(row) ?? null;
+  const def: any = getFieldRowPayload(row);
+  let profile: FieldRenameProfile | null = null;
+  if (def) {
+    const label = normalizeLooseText(def.label || def.name || '');
+    const code = normalizeLooseText(def.code || extractFieldPathInfo(row.path)?.activeCode || '');
+    profile = {
+      type: String(def.type || ''),
+      typeLabel: String(def.type || '-'),
+      exactSig: stableStringify(normalizeFieldDefForRename(def)),
+      coreSig: stableStringify(normalizeFieldDefForRename(def, { dropPresentation: true })),
+      label,
+      labelTokens: new Set(tokenizeLooseText(label)),
+      codeTokens: new Set(tokenizeLooseText(code)),
+      required: def.required,
+      hasLookup: !!def.lookup
+    };
+  }
+  cache?.set(row, profile);
+  return profile;
+}
+
+export function scoreFieldRenameCandidate(removedRow, addedRow, cache?: FieldRenameProfileCache) {
+  const left = buildFieldRenameProfile(removedRow, cache);
+  const right = buildFieldRenameProfile(addedRow, cache);
+  if (!left || !right) return null;
+  if (left.type !== right.type) return null;
 
   const reasons: string[] = [];
   let score = 0;
-  const exactSigLeft = stableStringify(normalizeFieldDefForRename(leftDef));
-  const exactSigRight = stableStringify(normalizeFieldDefForRename(rightDef));
-  const coreSigLeft = stableStringify(normalizeFieldDefForRename(leftDef, { dropPresentation: true }));
-  const coreSigRight = stableStringify(normalizeFieldDefForRename(rightDef, { dropPresentation: true }));
-  const leftLabel = normalizeLooseText(leftDef.label || leftDef.name || '');
-  const rightLabel = normalizeLooseText(rightDef.label || rightDef.name || '');
-  const leftCode = normalizeLooseText(leftDef.code || extractFieldPathInfo(removedRow.path)?.activeCode || '');
-  const rightCode = normalizeLooseText(rightDef.code || extractFieldPathInfo(addedRow.path)?.activeCode || '');
+  const exactSigLeft = left.exactSig;
+  const exactSigRight = right.exactSig;
+  const coreSigLeft = left.coreSig;
+  const coreSigRight = right.coreSig;
+  const leftLabel = left.label;
+  const rightLabel = right.label;
   let hasStrongMatch = false;
 
   score += 3;
-  reasons.push(`type:${leftDef.type || '-'}`);
+  reasons.push(`type:${left.typeLabel}`);
   if (exactSigLeft === exactSigRight) {
     score += 6;
     reasons.push('same-structure');
@@ -150,12 +182,12 @@ export function scoreFieldRenameCandidate(removedRow, addedRow) {
     score += 3;
     reasons.push('same-label');
     hasStrongMatch = true;
-  } else if (scoreTokenOverlap(leftLabel, rightLabel) >= 0.6) {
+  } else if (scoreTokenSetOverlap(left.labelTokens, right.labelTokens) >= 0.6) {
     score += 1;
     reasons.push('label-similar');
     hasStrongMatch = true;
   }
-  const codeOverlap = scoreTokenOverlap(leftCode, rightCode);
+  const codeOverlap = scoreTokenSetOverlap(left.codeTokens, right.codeTokens);
   if (codeOverlap >= 0.5) {
     score += 1;
     reasons.push('code-similar');
@@ -167,11 +199,11 @@ export function scoreFieldRenameCandidate(removedRow, addedRow) {
     reasons.push('code-strong');
     hasStrongMatch = true;
   }
-  if (leftDef.required === rightDef.required) {
+  if (left.required === right.required) {
     score += 1;
     reasons.push('same-required');
   }
-  if (!!leftDef.lookup === !!rightDef.lookup) {
+  if (left.hasLookup === right.hasLookup) {
     score += 1;
     reasons.push('same-lookup');
   }
@@ -188,9 +220,10 @@ export function detectFieldRenameCandidates(rows) {
   const addedRows = (rows || []).filter((row) => row.sectionKey === 'fieldSettings' && row.type === 'added' && extractFieldPathInfo(row.path)?.isFieldRoot);
   type RenameCandidate = { removedRow: any; addedRow: any; score: number; matchedBy: string };
   const candidates: RenameCandidate[] = [];
+  const profiles: FieldRenameProfileCache = new Map();
   removedRows.forEach((removedRow) => {
     addedRows.forEach((addedRow) => {
-      const scored = scoreFieldRenameCandidate(removedRow, addedRow);
+      const scored = scoreFieldRenameCandidate(removedRow, addedRow, profiles);
       if (!scored) return;
       candidates.push({
         removedRow,
@@ -247,13 +280,23 @@ function getImpactRefLogicalKey(ref: any): string {
   return [ref?.sectionKey, ref?.kind, getImpactRefLogicalLocator(ref), ref?.label].join('|');
 }
 
+// 多数のビュー等から参照されるフィールドでは、追加のたびに既存参照を総当たりすると二乗時間になる。
+// バケットごとに登録済みの論理キーを持ち、重複判定を定数時間にする。
+const impactRefKeysByBucket = new WeakMap<object, Set<string>>();
+
 export function addFieldImpactRef(index, code, ref) {
   const fieldCode = String(code || '').trim();
   if (!fieldCode) return;
   if (!index.has(fieldCode)) index.set(fieldCode, []);
   const bucket = index.get(fieldCode);
+  let keys = impactRefKeysByBucket.get(bucket);
+  if (!keys) {
+    keys = new Set(bucket.map(getImpactRefLogicalKey));
+    impactRefKeysByBucket.set(bucket, keys);
+  }
   const sig = getImpactRefLogicalKey(ref);
-  if (bucket.some((item) => getImpactRefLogicalKey(item) === sig)) return;
+  if (keys.has(sig)) return;
+  keys.add(sig);
   bucket.push(ref);
 }
 
@@ -609,7 +652,21 @@ function normalizeEntityBodyForRename(value, sectionKey, dropPresentation = fals
   return walk(value);
 }
 
-function scoreEntityRenameCandidate(removedRow, addedRow) {
+/** 行ごとの本文署名。候補の総当たりで同じ行の正規化・直列化を繰り返さないために使う。 */
+type EntityRenameSigCache = Map<object, { exactSig: string; coreSig: string }>;
+
+function entityRenameSignatures(row, payload, cache?: EntityRenameSigCache) {
+  const cached = cache?.get(row);
+  if (cached) return cached;
+  const sigs = {
+    exactSig: stableStringify(normalizeEntityBodyForRename(payload, row.sectionKey)),
+    coreSig: stableStringify(normalizeEntityBodyForRename(payload, row.sectionKey, true))
+  };
+  cache?.set(row, sigs);
+  return sigs;
+}
+
+function scoreEntityRenameCandidate(removedRow, addedRow, cache?: EntityRenameSigCache) {
   if (removedRow.sectionKey !== addedRow.sectionKey) return null;
   if (removedRow.entityKind !== addedRow.entityKind) return null;
   const left = entityPayload(removedRow);
@@ -620,11 +677,8 @@ function scoreEntityRenameCandidate(removedRow, addedRow) {
   const rType = (right as any).type;
   if (lType != null && rType != null && String(lType) !== String(rType)) return null;
 
-  const sectionKey = removedRow.sectionKey;
-  const exactSigLeft = stableStringify(normalizeEntityBodyForRename(left, sectionKey));
-  const exactSigRight = stableStringify(normalizeEntityBodyForRename(right, sectionKey));
-  const coreSigLeft = stableStringify(normalizeEntityBodyForRename(left, sectionKey, true));
-  const coreSigRight = stableStringify(normalizeEntityBodyForRename(right, sectionKey, true));
+  const { exactSig: exactSigLeft, coreSig: coreSigLeft } = entityRenameSignatures(removedRow, left, cache);
+  const { exactSig: exactSigRight, coreSig: coreSigRight } = entityRenameSignatures(addedRow, right, cache);
 
   const reasons: string[] = [];
   let score = 0;
@@ -665,9 +719,10 @@ export function detectEntityRenameCandidates(rows) {
   if (!removedRows.length || !addedRows.length) return new Map();
   type Cand = { removedRow: any; addedRow: any; score: number; matchedBy: string };
   const candidates: Cand[] = [];
+  const signatures: EntityRenameSigCache = new Map();
   removedRows.forEach((rr) => {
     addedRows.forEach((ar) => {
-      const scored = scoreEntityRenameCandidate(rr, ar);
+      const scored = scoreEntityRenameCandidate(rr, ar, signatures);
       if (!scored) return;
       candidates.push({ removedRow: rr, addedRow: ar, score: scored.score, matchedBy: scored.matchedBy });
     });
@@ -769,7 +824,7 @@ const SECTION_PROP_LABELS: Record<string, Record<string, string>> = {
     type: '種別', url: 'URL', file: 'ファイル', fileKey: 'ファイルキー',
     js: 'JavaScript', css: 'CSS', desktop: 'デスクトップ', mobile: 'モバイル',
     scope: 'スコープ', resources: 'リソース',
-    _body: 'JS/CSS本文', name: 'ファイル名'
+    _body: 'JS/CSS本文', name: 'ファイル名', size: 'ファイルサイズ'
   },
   pluginSettings: {
     plugins: 'プラグイン一覧', id: 'プラグインID', name: 'プラグイン名',
@@ -866,6 +921,12 @@ export function extractEntityContext(row: any): DiffEntityContext {
       return empty;
     }
     case 'processSettings': {
+      if (row?._stateRenameNotice) {
+        // パスの __rename__ は内部の目印なので、利用者には旧名 → 新名として見せる。
+        const from = stateRenameName(row.left, row.renameCandidate?.fromCode);
+        const to = stateRenameName(row.right, row.renameCandidate?.toCode);
+        return { entityKind: 'state', entityLabel: `${from} → ${to}`, entityCode: '', propLabel: 'ステータス名' };
+      }
       if (tokens[1] === 'states' && typeof tokens[2] === 'string') {
         return { entityKind: 'state', entityLabel: tokens[2], entityCode: tokens[2], propLabel };
       }
@@ -1013,10 +1074,13 @@ export function extractEntityContext(row: any): DiffEntityContext {
 }
 
 export function buildDiffReasonSummary(row) {
+  // エンジンが「ステータス改名：旧 → 新（参照を自動補正）」と説明済みの通知行は、その文言を使う。
+  if (row._stateRenameNotice && row.reasonSummary) return String(row.reasonSummary);
   const sectionKey = row.sectionKey || '';
   const sectionLabel = SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey || '差分';
   const fieldInfo = extractFieldPathInfo(row.path);
-  const leafKey = normalizeIgnoreToken(getPathLeafKey(row.path));
+  // 辞書は camelCase のキー（enableThumbnails 等）で引くため、大小文字は元のまま使う。
+  const leafKey = getPathLeafKey(row.path);
   if (row.moved) {
     const from = Number(row.movedFrom);
     const to = Number(row.movedTo);
@@ -1074,7 +1138,7 @@ export function buildDiffReasonSummary(row) {
     return `${kindLabel}変更：${entity.entityLabel}`;
   }
   if (entity.entityKind) {
-    const detail = propLabel || (leafKey || '');
+    const detail = propLabel || labelOfProp(leafKey);
     const head = `${kindLabel}「${entity.entityLabel}」`;
     if (row.type === 'added') return detail ? `${head} / ${detail} 追加` : `${head} 追加`;
     if (row.type === 'removed') return detail ? `${head} / ${detail} 削除` : `${head} 削除`;

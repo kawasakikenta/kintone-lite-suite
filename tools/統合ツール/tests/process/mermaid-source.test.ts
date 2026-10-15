@@ -45,12 +45,32 @@ describe('buildProcessMermaidSource', () => {
   });
 });
 
+describe('buildProcessMermaidSource HTML-like names', () => {
+  it('keeps names that would be swallowed as HTML tags, and leaves plain comparisons alone', () => {
+    const src = buildProcessMermaidSource(
+      { 'Level<High>': {}, '<10万円': {}, '<b>太字</b>': {} },
+      [{ name: '承認<script>x</script>', from: 'Level<High>', to: '<10万円' }]
+    );
+    expect(src).not.toMatch(/<[A-Za-z/]/);
+    expect(src).toContain('state "Level＜High>" as s0');
+    expect(src).toContain('state "<10万円" as s1');
+    expect(src).toContain('state "＜b>太字＜/b>" as s2');
+    expect(src).toContain('s0 --> s1 : 承認＜script>x＜/script>');
+  });
+});
+
 describe('findInitialState', () => {
   it('prefers the smallest kintone index, then the state no action transitions into', () => {
     expect(findInitialState({ B: { index: '1' }, A: { index: '0' } }, [{ from: 'A', to: 'B' }, { from: 'B', to: 'A' }])).toBe('A');
     expect(findInitialState({ B: {}, A: {} }, [{ from: 'A', to: 'B' }])).toBe('A');
     expect(findInitialState(states, actions)).toBe('未処理');
     expect(findInitialState({}, [])).toBeNull();
+  });
+
+  it('does not treat a missing or blank index as 0', () => {
+    // index が空・null の状態は Number() で 0 になり、本来の開始状態(index 0)より先に選ばれてはいけない
+    expect(findInitialState({ A: { index: '' }, B: { index: '0' } }, [{ from: 'B', to: 'A' }])).toBe('B');
+    expect(findInitialState({ A: { index: null }, B: { index: '0' } }, [])).toBe('A');
   });
 
   it('draws the start marker into the indexed initial state even when it is a transition target', () => {
@@ -69,6 +89,133 @@ describe('validateProcessConnection', () => {
     expect(() => validateProcessConnection('', '')).toThrow(/アプリID/);
     expect(() => validateProcessConnection('7/records', '')).toThrow(/アプリID/);
     expect(() => validateProcessConnection('7', '../3')).toThrow(/ゲストID/);
+  });
+});
+
+describe('runRenderProcessFlowStandalone disabled process', () => {
+  it('leaves the Mermaid source empty so copy/save cannot export a non-Mermaid message', async () => {
+    const textEl: any = { value: 'previous source' };
+    const viewEl: any = { innerHTML: '' };
+    const simUi: any = { container: { style: { display: 'block' } } };
+    vi.mocked(apiGet).mockResolvedValue({ enable: false, states: {}, actions: [] });
+    const result = await runRenderProcessFlowStandalone({ appId: '7' }, () => {}, { textEl, viewEl, simUi });
+    expect(result).toBeNull();
+    expect(textEl.value).toBe('');
+    expect(viewEl.innerHTML).toContain('プロセス管理は無効です');
+    expect(simUi.container.style.display).toBe('none');
+  });
+});
+
+describe('runRenderProcessFlowStandalone API response', () => {
+  it('requests the production status.json for the guest space and rejects an empty response', async () => {
+    const targets: any = { textEl: { value: '' }, viewEl: { innerHTML: '' } };
+    vi.mocked(apiGet).mockResolvedValue(undefined);
+    await expect(runRenderProcessFlowStandalone({ appId: '7', guestId: '3' }, () => {}, targets)).rejects.toThrow(/想定外の応答/);
+    expect(apiGet).toHaveBeenCalledWith('/k/guest/3/v1', '/app/status.json', { app: '7' });
+    expect(targets.viewEl.innerHTML).toBe('');
+  });
+});
+
+function simTargets() {
+  const textEl: any = { value: '' };
+  const viewEl: any = { innerHTML: '' };
+  const simUi: any = {
+    container: { style: {} },
+    current: { textContent: '', style: {} },
+    select: { disabled: true, innerHTML: '', value: '0' },
+    startBtn: { onclick: null },
+    execBtn: { onclick: null }
+  };
+  return { textEl, viewEl, simUi };
+}
+
+async function withMermaid<T>(mermaid: any, fn: () => Promise<T>): Promise<T> {
+  const previousWindow = (globalThis as any).window;
+  (globalThis as any).window = mermaid ? { mermaid } : {};
+  try {
+    return await fn();
+  } finally {
+    if (previousWindow === undefined) delete (globalThis as any).window;
+    else (globalThis as any).window = previousWindow;
+  }
+}
+
+describe('runRenderProcessFlowStandalone output', () => {
+  it('keeps the shareable source free of the simulation highlight while the diagram is highlighted', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ enable: true, states: { A: { index: '0' }, B: { index: '1' } }, actions: [{ name: 'go', from: 'A', to: 'B' }] });
+    const render = vi.fn(async () => ({ svg: '<svg/>' }));
+    const targets = simTargets();
+    await withMermaid({ render }, async () => {
+      await runRenderProcessFlowStandalone({ appId: '7' }, () => {}, targets);
+      await targets.simUi.startBtn.onclick();
+    });
+    expect(String((render.mock.calls.at(-1) as any[])[1])).toContain('class s0 current');
+    expect(targets.textEl.value).not.toContain('classDef');
+    expect(targets.textEl.value).toContain('s0 --> s1 : go');
+  });
+
+  it('applies the strict security level once, even when the page already provides mermaid', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ enable: true, states: { A: {} }, actions: [] });
+    const mermaid = { initialize: vi.fn(), render: vi.fn(async () => ({ svg: '<svg/>' })) };
+    await withMermaid(mermaid, async () => {
+      await runRenderProcessFlowStandalone({ appId: '7' }, () => {}, simTargets());
+      await runRenderProcessFlowStandalone({ appId: '7' }, () => {}, simTargets());
+    });
+    expect(mermaid.initialize).toHaveBeenCalledTimes(1);
+    expect(mermaid.initialize).toHaveBeenCalledWith(expect.objectContaining({ securityLevel: 'strict' }));
+  });
+});
+
+describe('runRenderProcessFlowStandalone simulation notices', () => {
+  it('reports simulation progress with a finished tone and explains buttons that cannot act', async () => {
+    const notices: Array<[string, boolean | undefined, string | undefined]> = [];
+    const targets = simTargets();
+    vi.mocked(apiGet).mockResolvedValue({
+      enable: true,
+      states: { 未処理: { index: '0' }, 完了: { index: '1' } },
+      actions: [{ name: '完了にする', from: '未処理', to: '完了' }]
+    });
+    await withMermaid({ render: vi.fn(async () => ({ svg: '<svg/>' })) }, async () => {
+      await runRenderProcessFlowStandalone({ appId: '7' }, (m, e, tone) => notices.push([m, e, tone]), targets);
+      const { startBtn, execBtn, select } = targets.simUi;
+      await execBtn.onclick();
+      expect(notices.at(-1)).toEqual(['先に「最初から開始」を押してください', false, 'warn']);
+      await startBtn.onclick();
+      expect(notices.at(-1)).toEqual(['シミュレーション開始: 未処理', false, 'ok']);
+      select.value = '0';
+      await execBtn.onclick();
+      expect(notices.at(-1)).toEqual(['アクション「完了にする」実行 → 「完了」', false, 'ok']);
+      await execBtn.onclick();
+      expect(notices.at(-1)?.[0]).toContain('実行できるアクションはありません');
+      expect(notices.at(-1)?.[2]).toBe('warn');
+    });
+  });
+
+  it('reports excluded actions as a warning, not an error', async () => {
+    const notices: Array<[string, boolean | undefined, string | undefined]> = [];
+    vi.mocked(apiGet).mockResolvedValue({
+      enable: true,
+      states: { A: {} },
+      actions: [{ name: 'broken', from: 'A', to: '' }]
+    });
+    await withMermaid({ render: vi.fn(async () => ({ svg: '<svg/>' })) }, () =>
+      runRenderProcessFlowStandalone({ appId: '7' }, (m, e, tone) => notices.push([m, e, tone]), simTargets()));
+    expect(notices.at(-1)).toEqual([expect.stringContaining('除外'), false, 'warn']);
+  });
+
+  it('tells a render failure apart from a load failure in the fallback notice', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ enable: true, states: { A: {} }, actions: [] });
+    const rendered = simTargets();
+    const renderNotices: string[] = [];
+    await withMermaid({ render: vi.fn(async () => { throw new Error('Maximum Text size in diagram exceeded'); }) }, () =>
+      runRenderProcessFlowStandalone({ appId: '7' }, m => renderNotices.push(m), rendered));
+    expect(rendered.viewEl.innerHTML).toContain('描画に失敗');
+    expect(rendered.viewEl.innerHTML).not.toContain('読み込めなかった');
+    expect(renderNotices.at(-1)).toContain('Maximum Text size');
+
+    const loaded = simTargets();
+    await withMermaid(null, () => runRenderProcessFlowStandalone({ appId: '7' }, () => {}, loaded));
+    expect(loaded.viewEl.innerHTML).toContain('読み込みに失敗');
   });
 });
 

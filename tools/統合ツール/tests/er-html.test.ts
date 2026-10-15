@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Script } from 'node:vm';
+import { Script, createContext, runInContext } from 'node:vm';
 import { buildHTML } from '../src/tabs/er.js';
 
 function extractViewerScript(html: string): string {
@@ -112,6 +112,106 @@ describe('ER diagram HTML', () => {
     expect(html).toContain('crossorigin="anonymous"');
     expect(html).toContain('Content-Security-Policy');
     expect(html).toContain("connect-src 'none'");
+  });
+
+  it('keeps the bootstrap script valid for app names with backslashes and quotes', () => {
+    const html = buildHTML([{ ...baseApps[0], name: "C:\\users\\xdata\\u00 it's" }], {
+      startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard', source: {}
+    });
+    const bootstrap = html.match(/<script>\r?\n\(function\(\)\{([\s\S]*?)\}\)\(\);\r?\n<\/script>/);
+    if (!bootstrap) throw new Error('ER bootstrap script was not found');
+    expect(() => new Script(`(function(){${bootstrap[1]}})`, { filename: 'er-bootstrap.js' })).not.toThrow();
+    expect(bootstrap[1]).toContain('C:\\\\users\\\\xdata\\\\u00 it&#39;s');
+  });
+
+  describe('CDN fallback loading', () => {
+    const html = buildHTML(baseApps, {
+      startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard', source: {}
+    });
+    const bootstrap = html.match(/<script>\r?\n(\(function\(\)\{[\s\S]*?\}\)\(\);)\r?\n<\/script>/)?.[1] ?? '';
+
+    /** 読み込み結果を src ごとに指定して起動スクリプトを実行する。 */
+    function runBootstrap(initial: Record<string, unknown>, loads: Record<string, string | null>) {
+      const requested: Array<{ src: string; integrity: string; crossOrigin: string }> = [];
+      const runtime: string[] = [];
+      const host: { innerHTML: string; style: Record<string, string> } = { innerHTML: '', style: {} };
+      const context: any = {
+        document: {
+          getElementById: (id: string) => {
+            if (id === 'er-main') return { textContent: 'VIEWER_SOURCE', after: (el: any) => runtime.push(el.textContent) };
+            if (id === 'cy') return host;
+            return { setAttribute: () => undefined };
+          },
+          createElement: () => ({ setAttribute: () => undefined }),
+          head: {
+            appendChild: (el: any) => {
+              requested.push({ src: el.src, integrity: el.integrity, crossOrigin: el.crossOrigin });
+              // 実ブラウザ同様、読み込み完了は非同期に通知する
+              setTimeout(() => {
+                const global = loads[el.src];
+                if (global) { context.window[global] = () => undefined; el.onload?.(); } else el.onerror?.();
+              }, 0);
+            }
+          }
+        }
+      };
+      context.window = context;
+      Object.assign(context, initial);
+      createContext(context);
+      runInContext(bootstrap, context);
+      return { requested, runtime, host };
+    }
+    /** 起動スクリプトが図の起動か案内表示のどちらかへ到達するまで待つ（CPU負荷でタイマーが遅れても安定させる）。 */
+    async function settled(result: ReturnType<typeof runBootstrap>) {
+      for (let i = 0; i < 400 && !result.runtime.length && !result.host.innerHTML; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+
+    it('loads the alternate CDN through new script elements when the primary scripts failed', async () => {
+      const result = runBootstrap({}, {
+        'https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js': 'cytoscape',
+        'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js': 'cytoscapeDagre'
+      });
+      await settled(result);
+      expect(result.requested.map((r) => r.src)).toEqual([
+        'https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js',
+        'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js'
+      ]);
+      expect(result.requested.every((r) => /^sha384-/.test(r.integrity) && r.crossOrigin === 'anonymous')).toBe(true);
+      expect(result.runtime).toEqual(['VIEWER_SOURCE']);
+      expect(result.host.innerHTML).toBe('');
+    });
+
+    it('marks alternate libraries so edited-HTML export does not freeze them into the saved page', () => {
+      const viewer = extractViewerScript(html);
+      expect(bootstrap).toContain('script.setAttribute("data-er-fallback-lib","1")');
+      expect(viewer).toContain('clone.querySelectorAll("script[data-er-fallback-lib]")');
+    });
+
+    it('does not reload libraries that the primary scripts already provided', async () => {
+      const result = runBootstrap({ cytoscape: () => undefined, cytoscapeDagre: () => undefined }, {});
+      await settled(result);
+      expect(result.requested).toEqual([]);
+      expect(result.runtime).toEqual(['VIEWER_SOURCE']);
+    });
+
+    it('only retries the missing layout plugin and keeps the viewer when it still fails', async () => {
+      const result = runBootstrap({ cytoscape: () => undefined }, {});
+      await settled(result);
+      expect(result.requested.map((r) => r.src)).toEqual(['https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js']);
+      expect(result.runtime).toEqual(['VIEWER_SOURCE']);
+    });
+
+    it('shows the app table only after every alternate failed', async () => {
+      const result = runBootstrap({}, {});
+      expect(result.host.innerHTML).toBe('');
+      await settled(result);
+      expect(result.requested).toHaveLength(2);
+      expect(result.runtime).toEqual([]);
+      expect(result.host.innerHTML).toContain('ER図ライブラリを読み込めませんでした');
+      expect(result.host.innerHTML).toContain('<td>物件</td>');
+    });
   });
 
   it('keeps the initial graph unobstructed and exposes retrieval and inbound relation facts', () => {

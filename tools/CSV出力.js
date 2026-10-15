@@ -244,6 +244,17 @@
     }
     return "";
   }
+  function guestIdFromKintonePath(pathname) {
+    const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ""));
+    return match ? match[1] : "";
+  }
+  function resolveDefaultGuestId() {
+    try {
+      return typeof window === "undefined" ? "" : guestIdFromKintonePath(window.location?.pathname);
+    } catch (e) {
+      return "";
+    }
+  }
   function sanitizeCustomizeResourceList(value) {
     if (!Array.isArray(value)) return [];
     const resources = [];
@@ -275,7 +286,7 @@
       mobile: buildPlatform("mobile")
     };
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIALOG_STATE_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -321,6 +332,7 @@
         })
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
+      DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
@@ -977,12 +989,28 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-enums.ts
+  var init_kintone_enums = __esm({
+    "src/kintone-enums.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/diff/label-dict.ts
+  var init_label_dict = __esm({
+    "src/diff/label-dict.ts"() {
+      "use strict";
+      init_kintone_enums();
+    }
+  });
+
   // src/diff/enrich.ts
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      init_label_dict();
     }
   });
 
@@ -997,21 +1025,6 @@ ${contextLine}`);
       init_constants();
       init_state();
       root = null;
-    }
-  });
-
-  // src/kintone-enums.ts
-  var init_kintone_enums = __esm({
-    "src/kintone-enums.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/diff/label-dict.ts
-  var init_label_dict = __esm({
-    "src/diff/label-dict.ts"() {
-      "use strict";
-      init_kintone_enums();
     }
   });
 
@@ -2006,13 +2019,15 @@ ${contextLine}`);
       curBtn.title = "今開いているアプリのIDを空き行に入れます";
       curBtn.addEventListener("click", () => {
         const id = String(opts.currentAppId).trim();
-        if (rows.some((r) => r.app.value.trim() === id)) return;
+        const guestId = String(opts.currentGuestId || "").trim();
+        if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guestId)) return;
         const empty = rows.find((r) => !r.app.value.trim());
         if (empty) {
           empty.app.value = id;
+          empty.guest.value = guestId;
           setAppName(empty, "");
           empty.app.focus();
-        } else insertRow(rows.length, id, "", true);
+        } else insertRow(rows.length, id, guestId, true);
         emitChange();
       });
       foot.appendChild(curBtn);
@@ -2666,6 +2681,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
 
   // src/tabs/record-query.ts
   init_kintone_query();
+  function hasPagingClause(query) {
+    return hasKintonePagingClause(query);
+  }
+  var PAGING_CONFLICT_MESSAGE = "クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。";
+  function buildCursorRecordsQuery(query) {
+    const base = String(query || "").trim();
+    if (hasPagingClause(base)) throw new Error(PAGING_CONFLICT_MESSAGE);
+    return base;
+  }
   function csvEscape(val) {
     const s = String(val == null ? "" : val);
     return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r") ? '"' + s.replace(/"/g, '""') + '"' : s;
@@ -2682,10 +2706,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const f = rec?.[code];
     if (!f) return "";
     const type = String(f.type || "");
-    if (type === "USER_SELECT" || type === "ORGANIZATION_SELECT" || type === "GROUP_SELECT") {
+    if (type === "USER_SELECT" || type === "ORGANIZATION_SELECT" || type === "GROUP_SELECT" || type === "STATUS_ASSIGNEE") {
       return (Array.isArray(f.value) ? f.value : []).map((v) => v?.code || v?.name || "").join(",");
     }
-    if (type === "CHECK_BOX" || type === "MULTI_SELECT") return (Array.isArray(f.value) ? f.value : []).join(",");
+    if (type === "CREATOR" || type === "MODIFIER") return f.value?.code || f.value?.name || "";
+    if (type === "CHECK_BOX" || type === "MULTI_SELECT" || type === "CATEGORY") return (Array.isArray(f.value) ? f.value : []).join(",");
     if (type === "FILE") return (Array.isArray(f.value) ? f.value : []).map((file) => file?.name || "").join(",");
     if (type === "SUBTABLE") return `${(Array.isArray(f.value) ? f.value : []).length}行`;
     if (typeof f.value === "object" && f.value !== null) return JSON.stringify(f.value);
@@ -2697,7 +2722,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return "\uFEFF" + lines.join("\n");
   }
   function sanitizeZipSegment(value, fallback = "item") {
-    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim();
+    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
     return !cleaned || /^\.+$/.test(cleaned) ? fallback : cleaned;
   }
   function uniqueZipEntryName(used, base) {
@@ -2714,6 +2739,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
 
   // src/tabs/record-csv-export.ts
   var DETAIL_ID_COLUMNS = ["$id", "$rowId", "$rowIndex"];
+  var VALUELESS_FIELD_TYPES = /* @__PURE__ */ new Set(["LABEL", "SPACER", "HR", "GROUP", "REFERENCE_TABLE"]);
   function tableFileName(fieldCode, used) {
     let stem = sanitizeZipSegment(fieldCode, "table").normalize("NFC").replace(/[\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").replace(/^\.+|[. ]+$/g, "");
     stem = Array.from(stem).slice(0, 50).join("").replace(/[. ]+$/g, "") || "table";
@@ -2731,7 +2757,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return String(value);
   }
   function buildRecordCsvExport(records, properties) {
-    const parentColumns = Object.keys(properties || {});
+    const parentColumns = Object.keys(properties || {}).filter((code) => !VALUELESS_FIELD_TYPES.has(properties[code]?.type));
     const tableFields = /* @__PURE__ */ new Map();
     for (const code of parentColumns) {
       if (properties[code]?.type === "SUBTABLE") tableFields.set(code, properties[code].fields || {});
@@ -2752,7 +2778,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const tables = [];
     const usedNames = /* @__PURE__ */ new Set();
     for (const [fieldCode, childProperties] of tableFields) {
-      const childColumns = new Set(Object.keys(childProperties));
+      const childColumns = new Set(Object.keys(childProperties).filter((code) => !VALUELESS_FIELD_TYPES.has(childProperties[code]?.type)));
       const detailRecords = [];
       records.forEach((record, recordIndex) => {
         const parentId = recordIds[recordIndex];
@@ -2873,8 +2899,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     for (const table of csv.tables) zip.file(`${prefix}${table.fileName}`, table.csvText);
   }
   function recordExportFilename(filename, extension, fallback) {
-    const requested = String(filename || "").trim();
-    return requested ? `${requested.replace(/\.(csv|zip)$/i, "")}.${extension}` : fallback;
+    const stem = String(filename || "").trim().replace(/\.(csv|zip)$/i, "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+    return stem ? `${sanitizeFilenamePart(stem)}.${extension}` : fallback;
   }
   async function buildCsvExportForApp(appId, guestId, query, setStatus) {
     const target = validateRecordConnection(appId, guestId);
@@ -2902,7 +2928,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const blob2 = new Blob([result.csv.parentCsv], { type: "text/csv;charset=utf-8;" });
       downloadBlob(recordExportFilename(filename, "csv", buildExportFilename("レコード", "csv", { appLabel })), blob2);
       setStatus(`CSV出力完了 (${result.recordCount}件)`);
-      return;
+      return { issues: [] };
     }
     const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
@@ -2917,6 +2943,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     downloadBlob(recordExportFilename(filename, "zip", buildExportFilename("レコード", "zip", { appLabel })), blob);
     const warningNote = result.csv.warnings.length ? `（未取得のテーブル ${result.csv.warnings.length}件、詳細は manifest.json）` : "";
     setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0);
+    return { issues: result.csv.warnings };
   }
   async function runCsvExportBatchStandalone(opts, setStatus) {
     const rawApps = Array.isArray(opts?.apps) ? opts.apps : [];
@@ -2929,8 +2956,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (!apps.length) throw new Error("対象アプリを1件以上入力してください");
     if (apps.length === 1) {
       const app = apps[0];
-      await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || "", query, filename }, setStatus);
-      return;
+      return await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || "", query, filename }, setStatus);
     }
     const JSZip = await loadJSZipLite();
     const zip = new JSZip();
@@ -2939,6 +2965,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     let warningCount = 0;
     const successes = [];
     const failures = [];
+    const tableWarnings = [];
     for (let i = 0; i < apps.length; i++) {
       const app = apps[i];
       let folder = "";
@@ -2956,6 +2983,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         }, null, 2));
         totalRecords += result.recordCount;
         warningCount += result.csv.warnings.length;
+        tableWarnings.push(...result.csv.warnings.map((warning) => `App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ""}: ${warning}`));
         successes.push(`${folder}/: App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ""} / ${result.recordCount}件 / テーブル ${result.csv.tables.length}件${result.csv.warnings.length ? ` / 未取得 ${result.csv.warnings.length}件（フォルダ内manifest.json参照）` : ""}`);
       } catch (error) {
         if (folder) zip.remove(folder);
@@ -2987,6 +3015,7 @@ ${failures.join("\n")}`);
     const issues = [failures.length ? `失敗 ${failures.length}アプリ` : "", warningCount ? `未取得のテーブル ${warningCount}件` : ""].filter(Boolean);
     const issueNote = issues.length ? `（${issues.join(" / ")}、詳細は manifest.txt）` : "";
     setStatus(`CSV一括出力完了${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
+    return { issues: [...failures.map((failure) => `失敗 ${failure}`), ...tableWarnings] };
   }
   async function runLoadViewsStandalone(opts, setStatus) {
     const { appId, guestId } = validateRecordConnection(opts.appId, opts.guestId);
@@ -3281,7 +3310,7 @@ ${failures.join("\n")}`);
       wide: true
     });
     const cardApps = makeCard({ title: "対象アプリ", number: 1 });
-    const appTable = makeAppTable({ minRows: 1, currentAppId: DEFAULT_APP_ID || "", initial: DEFAULT_APP_ID ? [{ appId: DEFAULT_APP_ID, guestId: "" }] : [] });
+    const appTable = makeAppTable({ minRows: 1, currentAppId: DEFAULT_APP_ID || "", currentGuestId: DEFAULT_GUEST_ID, initial: DEFAULT_APP_ID ? [{ appId: DEFAULT_APP_ID, guestId: DEFAULT_GUEST_ID }] : [] });
     cardApps.body.appendChild(appTable.element);
     cardApps.body.appendChild(createAppSearchControl(panel, {
       targets: [{ label: "対象アプリへ追加", apply: (id, name, guestId) => {
@@ -3298,7 +3327,7 @@ ${failures.join("\n")}`);
     const cardCond = makeCard({ title: "出力条件", number: 2, soft: true });
     const query = makeInput({ placeholder: '例: 更新日時 >= "2026-01-01T00:00:00Z"（空欄で全件）', width: "wide" });
     const viewApp = makeInput({ placeholder: "一覧取得元アプリID", value: DEFAULT_APP_ID || "", width: "id" });
-    const viewGuest = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
+    const viewGuest = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest" });
     const viewSelect = makeSelect([["", "一覧を選択（任意）"]]);
     const loadViews = makeButton("一覧読込", "sub");
     const useView = makeButton("▼ 条件へ反映", "sub");
@@ -3328,6 +3357,7 @@ ${failures.join("\n")}`);
     }
     loadViews.addEventListener("click", () => liteRun(panel, "一覧情報を取得中…", async () => {
       const sourceKey = viewKey();
+      if (!viewApp.value.trim()) throw new Error("一覧取得元のアプリIDを入力してください");
       const source = validateRecordConnection(viewApp.value, viewGuest.value);
       clearLoadedViews("一覧を取得中…");
       let views;
@@ -3378,10 +3408,11 @@ ${failures.join("\n")}`);
     const run = makeButton("CSVを出力", "primary", { icon: "↓" });
     run.style.width = "100%";
     run.addEventListener("click", () => liteRun(panel, "CSV出力中…", async () => {
-      await runCsvExportBatchStandalone(
+      const outcome = await runCsvExportBatchStandalone(
         { apps: appTable.getApps(), query: query.value.trim(), filename: filename.value.trim() },
         (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
+      if (outcome?.issues?.length) panel.setResult(outcome.issues.join("\n"));
     }));
     cardRun.body.appendChild(makeRow(run));
     panel.body.insertBefore(cardRun.card, panel.status);
@@ -3394,6 +3425,11 @@ ${failures.join("\n")}`);
     const validateApps = () => {
       const apps = appTable.getApps();
       if (!apps.length) return "対象アプリを1件以上指定してください。";
+      try {
+        buildCursorRecordsQuery(query.value);
+      } catch (error) {
+        return error?.message || String(error);
+      }
       for (const app of apps) {
         try {
           validateRecordConnection(app.appId, app.guestId);
