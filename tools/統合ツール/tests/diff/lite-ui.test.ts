@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLiteDiffHtmlContext,
+  buildLiteFieldLabelMap,
   buildLiteDiffFilterDescription,
   buildLiteDiffRowKey,
   buildLiteDiffScopeOptions,
@@ -12,10 +13,13 @@ import {
   renderRowsHtml,
   rowMatchesFilters,
   summarizeLiteIgnoreRules,
+  mergePastedTargetAppIds,
   summarizeLiteDiffRows,
   validateLiteDiffStart
 } from '../../src/entries/diff-lite-ui';
 import { SECTION_DEFS } from '../../src/constants';
+import { computeDiffRows } from '../../src/diff/engine';
+import { enrichDiffRows } from '../../src/diff/enrich';
 
 function cache(rows: any[], overrides: Record<string, any> = {}) {
   return {
@@ -46,6 +50,36 @@ describe('diff lite result presentation', () => {
     expect(validateLiteDiffStart({ sourceAppId: 'abc', targetAppId: '2', scopes: ['viewSettings'] })).toContain('正の整数');
     expect(validateLiteDiffStart({ sourceAppId: '1', targetAppId: '2', scopes: ['viewSettings'], ignoreKeys: 'views[0].name' })).toContain('位置依存');
     expect(validateLiteDiffStart({ sourceAppId: '', targetAppId: '', scopes: ['viewSettings'], hasImportedSource: true, hasImportedTarget: true })).toBe('');
+  });
+
+  describe('mergePastedTargetAppIds', () => {
+    it('replaces the selected text instead of appending to it', () => {
+      expect(mergePastedTargetAppIds('5', 0, 1, '200, 300')).toEqual({ merged: '200,300', splits: true });
+      expect(mergePastedTargetAppIds('100', 3, 3, '200\t300')).toEqual({ merged: '100,200,300', splits: true });
+      expect(mergePastedTargetAppIds('100,900', 4, 7, '200 300')).toEqual({ merged: '100,200,300', splits: true });
+    });
+
+    it('leaves a single pasted ID, including spreadsheet whitespace, to the normal paste', () => {
+      expect(mergePastedTargetAppIds('5', 0, 1, '123\n').splits).toBe(false);
+      expect(mergePastedTargetAppIds('', 0, 0, ' 123 ').splits).toBe(false);
+      expect(mergePastedTargetAppIds('5', 1, 1, '').splits).toBe(false);
+    });
+
+    it('tolerates a missing selection range', () => {
+      expect(mergePastedTargetAppIds('100', null, undefined, '200、300')).toEqual({ merged: '100,200,300', splits: true });
+    });
+  });
+
+  it('rejects a non-numeric guest space ID before it reaches the REST URL', () => {
+    const base = { sourceAppId: '1', targetAppId: '2', scopes: ['viewSettings'] };
+    expect(validateLiteDiffStart({ ...base, sourceGuestId: '１２３' })).toContain('比較元ゲストID');
+    expect(validateLiteDiffStart({ ...base, targetGuestId: 'abc' })).toContain('比較先ゲストID');
+    expect(validateLiteDiffStart({ ...base, sourceGuestId: '12/../3' })).toContain('半角数字');
+    expect(validateLiteDiffStart({ ...base, sourceGuestId: ' 12 ', targetGuestId: '34' })).toBe('');
+    expect(validateLiteDiffStart({ ...base, sourceGuestId: '', targetGuestId: '' })).toBe('');
+    // 1対多比較では比較元のゲストIDも検査し、比較先は各行の検査に任せる。
+    expect(validateLiteDiffStart({ sourceAppId: '1', sourceGuestId: 'x', scopes: ['viewSettings'], targets: [{ appId: '2', rowNumber: 1 }] }))
+      .toContain('比較元ゲストID');
   });
 
   describe('validateLiteDiffStart with targets (1対多比較)', () => {
@@ -528,7 +562,7 @@ describe('diff lite result presentation', () => {
     expect(openHtml).toContain('tabindex="-1"');
     expect(openHtml).toContain('aria-current="true"');
     expect(openHtml).toContain('data-kus-dl-ignore-path="fieldSettings.properties.customer.label"');
-    expect(openHtml).toContain('aria-label="フィールド設定の表示名を次回の比較から除外（無視ルールへ追加）"');
+    expect(openHtml).toContain('aria-label="customer · フィールド設定の表示名を次回の比較から除外（無視ルールへ追加）"');
     expect(openHtml).toContain('data-side-label="比較元の値"');
     expect(openHtml).toContain('data-side-label="比較先の値"');
     expect(openHtml).toContain(`data-kus-dl-mobile-row-toggle="${rowKey}"`);
@@ -666,5 +700,75 @@ describe('diff lite JSON selection lifecycle', () => {
     await expect(importer.load('target', async () => { throw new Error('current malformed file'); }))
       .rejects.toThrow('current malformed file');
     expect(importer.isLoading()).toBe(false);
+  });
+
+  it('shows a process state rename by its old and new names in the result list', () => {
+    const state = (name: string, index: string) => ({ name, index, assignee: { type: 'ONE', entities: [] } });
+    const source = { sections: { processSettings: { enable: true, states: { 未処理: state('未処理', '0'), 処理中: state('処理中', '1') }, actions: [] } } };
+    const target = { sections: { processSettings: { enable: true, states: { 未処理: state('未処理', '0'), 対応中: state('対応中', '1') }, actions: [] } } };
+    const rows = enrichDiffRows(computeDiffRows(source, target, ['processSettings'], '').rows, source, target) as any[];
+    const html = renderRowsHtml(rows, false, '', rows);
+    // 内部パスは「技術情報」にだけ残し、見出し・説明・場所のチップには出さない。
+    const visibleText = html
+      .replace(/<code class="kus-dl-row__raw">[\s\S]*?<\/code>/g, '')
+      .replace(/<[^>]+>/g, '|');
+    const labels = [...html.matchAll(/aria-label="([^"]*)"/g)].map((match) => match[1]).join('\n');
+
+    expect(visibleText).toContain('ステータス名: 処理中 → 対応中');
+    expect(visibleText).toContain('ステータス改名：処理中 → 対応中（参照を自動補正）');
+    expect(visibleText).not.toContain('__rename__');
+    expect(labels).not.toContain('__rename__');
+  });
+
+  describe('field setting rows', () => {
+    const bundle = (label: string) => ({
+      sections: {
+        fieldSettings: {
+          properties: {
+            customer_name: { code: 'customer_name', type: 'SINGLE_LINE_TEXT', label },
+            details: { code: 'details', type: 'SUBTABLE', fields: { qty: { code: 'qty', type: 'NUMBER', label: '数量' } } },
+            note: { code: 'note', type: 'LABEL', label: '<div>注意<b>書き</b></div>' }
+          }
+        }
+      }
+    });
+    const requiredRow = (code: string) => ({
+      sectionKey: 'fieldSettings', section: 'フィールド設定', type: 'changed',
+      path: `fieldSettings.properties.${code}.required`, left: false, right: true, reasonSummary: '必須設定変更'
+    }) as any;
+
+    it('names the field in each result row so same-property changes can be told apart', () => {
+      const labels = buildLiteFieldLabelMap(bundle('旧顧客名'), bundle('顧客名'));
+      expect(labels.get('customer_name')).toBe('顧客名');
+      expect(labels.get('qty')).toBe('数量');
+      expect(labels.get('note')).toBe('注意書き');
+
+      const rows = [requiredRow('customer_name'), requiredRow('details'), {
+        ...requiredRow('details'), path: 'fieldSettings.properties.details.fields.qty.required'
+      }];
+      const html = renderRowsHtml(rows, false, '', rows, { fieldLabels: labels });
+      expect(html).toContain('顧客名（customer_name） · 必須設定変更');
+      expect(html).toContain('details · 必須設定変更');
+      expect(html).toContain('テーブル「details」内の 数量（qty） · 必須設定変更');
+      expect(html).toContain('顧客名（customer_name） · 必須設定変更を次回の比較から除外');
+    });
+
+    it('falls back to the field code or the label inside a whole-field row', () => {
+      const added = {
+        sectionKey: 'fieldSettings', section: 'フィールド設定', type: 'added', reasonSummary: 'フィールド追加',
+        path: 'fieldSettings.properties.memo', right: { code: 'memo', type: 'MULTI_LINE_TEXT', label: 'メモ' }
+      } as any;
+      expect(renderRowsHtml([added], false, '', [added])).toContain('メモ（memo） · フィールド追加');
+      expect(renderRowsHtml([requiredRow('plain')], false, '', [requiredRow('plain')])).toContain('plain · 必須設定変更');
+    });
+
+    it('does not rewrite rows of other sections', () => {
+      const row = {
+        sectionKey: 'viewSettings', section: 'ビュー設定', type: 'changed', reasonSummary: 'ビュー「一覧」 / 絞り込み条件 変更',
+        path: 'viewSettings.views.一覧.filterCond', left: 'a', right: 'b'
+      } as any;
+      const html = renderRowsHtml([row], false, '', [row], { fieldLabels: new Map([['customer_name', '顧客名']]) });
+      expect(html).not.toContain('（customer_name）');
+    });
   });
 });

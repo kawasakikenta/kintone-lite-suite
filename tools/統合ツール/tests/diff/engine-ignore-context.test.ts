@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { computeDiffRows, encodeExactIgnorePathRule } from '../../src/diff/engine';
+import {
+  computeDiffRows,
+  encodeExactIgnorePathRule,
+  formatIgnoreRuleForDisplay,
+  formatIgnoreRulesTextForDisplay
+} from '../../src/diff/engine';
 
 const bundle = (section: string, value: any) => ({ sections: { [section]: value } });
 const specialNames = [
@@ -175,5 +180,23 @@ describe.each(['perRecordNotifications', 'reminderNotifications'])('diff/engine:
   it('retains title changes when the title is not ignored', () => {
     const result = compare([notification('今月のお知らせ', 'amount > 100'), notification('承認待ち', 'amount > 2000')], '');
     expect(result.rows.map((row) => row.type)).toEqual(['removed', 'changed', 'added']);
+  });
+});
+
+describe('diff/engine: ignore rule display text', () => {
+  it('turns the percent-encoded path: rule added from a result row back into readable text', () => {
+    const rule = encodeExactIgnorePathRule('viewSettings.views.営業.一覧.filterCond');
+    expect(rule).toContain('%');
+    expect(formatIgnoreRuleForDisplay(rule)).toBe('path:viewSettings.views.営業.一覧.filterCond');
+  });
+
+  it('keeps ordinary rules and separators of the typed text unchanged', () => {
+    const rule = encodeExactIgnorePathRule('fieldSettings.properties.メモ.label');
+    expect(formatIgnoreRuleForDisplay('revision')).toBe('revision');
+    expect(formatIgnoreRuleForDisplay('fieldSettings.*.label')).toBe('fieldSettings.*.label');
+    expect(formatIgnoreRulesTextForDisplay(`revision, ${rule}\n*.description`))
+      .toBe('revision, path:fieldSettings.properties.メモ.label\n*.description');
+    expect(formatIgnoreRulesTextForDisplay('')).toBe('');
+    expect(formatIgnoreRulesTextForDisplay('path:%E0%A4%A')).toBe('path:%E0%A4%A');
   });
 });

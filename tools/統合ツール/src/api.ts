@@ -685,7 +685,8 @@ export async function fetchPluginConfigs(
     if (!id) { stats.skipped += 1; continue; }
     tasks.push(async () => {
       try {
-        const res = await apiGet(prefix, '/app/plugin/config.json', { app: appId, id }, 1);
+        // 1件の一過性エラー（429/5xx 等）でプラグイン全体が比較不能にならないよう、他の GET と同じ再試行を使う。
+        const res = await apiGet(prefix, '/app/plugin/config.json', { app: appId, id });
         if (res && typeof res === 'object') {
           plugin._config = res?.config != null ? res.config : res;
           stats.fetched += 1;

@@ -128,6 +128,34 @@ describe('fetchBundle auxiliary diff data', () => {
     expect(bundle.sections.pluginSettings).not.toHaveProperty('_fetchError');
   });
 
+  it('retries a transient plug-in configuration failure instead of dropping the whole section', async () => {
+    vi.useFakeTimers();
+    try {
+      let configCalls = 0;
+      installKintoneApi(async (path) => {
+        if (path.endsWith('/app/plugins.json')) {
+          return { plugins: [{ id: 'plugin-1', name: 'Plugin 1', version: '1.0.0' }] };
+        }
+        if (path.endsWith('/app/plugin/config.json')) {
+          configCalls += 1;
+          if (configCalls === 1) throw Object.assign(new Error('rate limited'), { status: 429 });
+          return { config: { enabled: 'true' } };
+        }
+        throw new Error(`unexpected API path: ${path}`);
+      });
+
+      const pending = fetchBundle({ appId: '123', preview: false, sections: ['pluginSettings'] });
+      await vi.runAllTimersAsync();
+      const bundle = await pending;
+
+      expect(configCalls).toBe(2);
+      expect(bundle.sections.pluginSettings).not.toHaveProperty('_fetchError');
+      expect(bundle.sections.pluginSettings.plugins[0]._config).toEqual({ enabled: 'true' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('marks plug-in settings as uncomparable when any configuration fetch fails', async () => {
     installKintoneApi(async (path) => {
       if (path.endsWith('/app/plugins.json')) {

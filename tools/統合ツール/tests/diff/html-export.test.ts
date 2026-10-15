@@ -10,6 +10,7 @@ import {
 import { buildDiffHtmlStandaloneExport } from '../../src/tabs/diff-export-standalone';
 import { computeDiffRows } from '../../src/diff/engine';
 import { enrichDiffRows } from '../../src/diff/enrich';
+import { encodeExactIgnorePathRule } from '../../src/diff/engine';
 
 function extractInlineScript(html: string): string {
   const match = html.match(/<script>([\s\S]*)<\/script>/);
@@ -839,6 +840,19 @@ describe('diff/html export', () => {
     expect(html).toContain('比較時の無視キー 2件: revision、modifiedAt');
     expect(html).toContain('data-applied-normalization');
     expect(html).toContain('比較時の正規化 1件: ビュー/グラフ/アクション順序');
+  });
+
+  it('shows path rules added from result rows as readable text and lets long rules wrap on narrow screens', () => {
+    const bundle = { appId: '1', sections: { appSettings: { name: '同じ' } }, meta: {} };
+    const rule = encodeExactIgnorePathRule('fieldSettings.properties.顧客名のとても長いフィールドコード.label');
+    const html = buildDiffHtml(bundle, { ...bundle, appId: '2' }, [], ['appSettings'], `revision\n${rule}`, {
+      exportContentMode: 'diffOnly'
+    });
+
+    expect(html).toContain('比較時の無視キー 2件: revision、path:fieldSettings.properties.顧客名のとても長いフィールドコード.label');
+    // 画面に出す要約はデコード済み。機械可読な REPORT_META 側の元の規則はそのまま残す。
+    expect(html.match(/<span data-applied-ignore>([^<]*)<\/span>/)?.[1]).not.toContain('%');
+    expect(html).toMatch(/\.report-meta-line>span\{[^}]*overflow-wrap:anywhere/);
   });
 
   it('uses state-dependent completeness details and starts the first pending review from a prominent CTA', () => {

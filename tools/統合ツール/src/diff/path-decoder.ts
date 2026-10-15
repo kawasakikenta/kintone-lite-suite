@@ -15,7 +15,7 @@
 
 import {
   labelOfProp, iconOfProp, labelOfValue, labelOfSection, labelOfBool, formatEntityText,
-  VALUE_LABELS, PROP_LABELS
+  VALUE_LABELS, PROP_LABELS, stateRenameName
 } from './label-dict.js';
 import { describePeriodicReport, describeReminderOffset } from '../kintone-enums.js';
 
@@ -71,6 +71,17 @@ function tokenize(path: string | null | undefined): Array<string | number> {
 
 function isIndex(token: any): token is number {
   return typeof token === 'number';
+}
+
+// 汎用辞書の名称が、そのセクションでは別の意味になる（または内部キーが露出する）プロパティ名。
+// 例: レコード一覧の「size」は最大表示件数だが、JS/CSS ファイルの file.size はバイト数。
+const SECTION_PROP_LABEL_OVERRIDES: Record<string, Record<string, string>> = {
+  customizeSettings: { size: 'ファイルサイズ', _body: 'ファイル本文' },
+  categories: { enable: 'カテゴリ管理の有効化' }
+};
+
+function propLabelIn(sectionKey: string, key: string): string {
+  return SECTION_PROP_LABEL_OVERRIDES[sectionKey]?.[key] || labelOfProp(key);
 }
 
 // ---------------------------------------------------------------------------
@@ -151,7 +162,7 @@ function valueToText(value: any, propKey: string, depth = 0, sectionKey = ''): s
     if (value[0] && typeof value[0] === 'object' && (value[0].entity || value[0].type)) {
       const compact = value.length > 4;
       const items = value.slice(0, 8).map((v) => {
-        const ent = v.entity || (v.type ? v : null);
+        const ent = v?.entity || (v?.type ? v : null);
         if (ent) return formatEntityText(ent, { compact });
         return safeStringify(v);
       });
@@ -209,7 +220,7 @@ function summarizeObject(obj: any, depth: number, sectionKey = ''): string {
     const v = obj[key];
     if (v === null || v === undefined) continue;
     if (typeof v === 'object' && depth >= 1) continue;
-    lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
+    lines.push(`${propLabelIn(sectionKey, key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
     n++;
   }
   // 残りキー (rights/entities/recipients 等)
@@ -219,10 +230,10 @@ function summarizeObject(obj: any, depth: number, sectionKey = ''): string {
     const v = obj[key];
     if (v === null || v === undefined) continue;
     if (Array.isArray(v)) {
-      lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
+      lines.push(`${propLabelIn(sectionKey, key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
       n++;
     } else if (typeof v !== 'object') {
-      lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
+      lines.push(`${propLabelIn(sectionKey, key)}: ${valueToText(v, key, depth + 1, sectionKey)}`);
       n++;
     }
   }
@@ -403,16 +414,22 @@ export function decodeRow(row: any): DecodedRow | null {
   const whereChips = buildWhereChips(row, ctx);
 
   // leafKey が無い／配列バケット名そのもの／sectionKey なら "全体" 扱い
-  const leaf = ctx.leafKey && ctx.leafKey !== row.sectionKey && ctx.leafKey !== ctx.arrayBucketKey
+  // ステータス改名の通知行は末尾が内部の目印（__rename__）なので、項目名・値を名前そのものにする。
+  const isStateRename = row._stateRenameNotice === true;
+  const leaf = !isStateRename && ctx.leafKey && ctx.leafKey !== row.sectionKey && ctx.leafKey !== ctx.arrayBucketKey
     ? ctx.leafKey
     : '';
-  const propLabel = leaf ? labelOfProp(leaf) : '';
+  const propLabel = isStateRename ? 'ステータス名' : (leaf ? propLabelIn(String(row.sectionKey || ''), leaf) : '');
   const propIcon = leaf ? iconOfProp(leaf) : '';
 
   const propKey = leaf || ctx.arrayBucketKey || '';
   const sectionKey = String(row.sectionKey || '');
-  const beforeText = row.type === 'added' ? '（なし）' : valueToText(row.left, propKey, 0, sectionKey);
-  const afterText  = row.type === 'removed' ? '（なし）' : valueToText(row.right, propKey, 0, sectionKey);
+  const beforeText = isStateRename
+    ? stateRenameName(row.left, row.renameCandidate?.fromCode)
+    : row.type === 'added' ? '（なし）' : valueToText(row.left, propKey, 0, sectionKey);
+  const afterText = isStateRename
+    ? stateRenameName(row.right, row.renameCandidate?.toCode)
+    : row.type === 'removed' ? '（なし）' : valueToText(row.right, propKey, 0, sectionKey);
 
   const oneLineSummary = buildOneLineSummary(row, propLabel, beforeText, afterText);
 
