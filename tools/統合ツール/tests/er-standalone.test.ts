@@ -18,4 +18,15 @@ describe('ER図 Lite input validation', () => {
   it('normalizes direct comma-separated app IDs for standalone callers', () => {
     expect(buildErCrawlOptions({ appId: '1, 2', extraAppIds: '2,3' }).startAppIds).toEqual(['1', '2', '3']);
   });
+
+  it('rejects app IDs that cannot be fetched as the same number', () => {
+    expect(validateErOptions({ appId: '0' })).toMatch(/アプリIDは1以上.*0/);
+    expect(validateErOptions({ appId: '1', extraAppIds: '9007199254740993' })).toMatch(/アプリIDは.*9007199254740993/);
+    expect(validateErOptions({ appId: '9007199254740991' })).toBe('');
+  });
+
+  it('collapses zero-padded duplicates so the start app is recognised in the diagram', () => {
+    expect(buildErCrawlOptions({ appId: '007, 7', extraAppIds: '010,10' }).startAppIds).toEqual(['7', '10']);
+    expect(buildErCrawlOptions({ appId: '007' }).startAppId).toBe('7');
+  });
 });

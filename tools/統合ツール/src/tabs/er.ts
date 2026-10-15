@@ -4198,7 +4198,7 @@ applySavedViewState();
   document.getElementById("legend")?.setAttribute("hidden","");
   const host=document.getElementById("cy");
   host.style.cssText="position:fixed;inset:0;overflow:auto;padding:32px;background:#f8fafc;color:#0f172a;font:14px/1.65 sans-serif";
-  host.innerHTML='<main style="max-width:960px;margin:auto"><h1 style="font-size:22px;margin-bottom:8px">ER図ライブラリを読み込めませんでした</h1><p>ネットワークまたはCDNの制限により図を描画できません。接続を確認して再読み込みしてください。取得済みのアプリ一覧は下表で確認できます。</p><table style="width:100%;margin-top:20px;border-collapse:collapse"><thead><tr><th>アプリID</th><th>アプリ名</th><th>項目数</th><th>関連数</th><th>取得状態</th></tr></thead><tbody>${runtimeFallbackRows}</tbody></table></main>';
+  host.innerHTML='<main style="max-width:960px;margin:auto"><h1 style="font-size:22px;margin-bottom:8px">ER図ライブラリを読み込めませんでした</h1><p>ネットワークまたはCDNの制限により図を描画できません。接続を確認して再読み込みしてください。取得済みのアプリ一覧は下表で確認できます。</p><table style="width:100%;margin-top:20px;border-collapse:collapse"><thead><tr><th>アプリID</th><th>アプリ名</th><th>項目数</th><th>関連数</th><th>取得状態</th></tr></thead><tbody>'+${safeJsonForScript(runtimeFallbackRows)}+'</tbody></table></main>';
 })();
 <\/script>
 </body>

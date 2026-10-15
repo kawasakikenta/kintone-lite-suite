@@ -114,6 +114,16 @@ describe('ER diagram HTML', () => {
     expect(html).toContain("connect-src 'none'");
   });
 
+  it('keeps the bootstrap script valid for app names with backslashes and quotes', () => {
+    const html = buildHTML([{ ...baseApps[0], name: "C:\\users\\xdata\\u00 it's" }], {
+      startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard', source: {}
+    });
+    const bootstrap = html.match(/<script>\r?\n\(function\(\)\{([\s\S]*?)\}\)\(\);\r?\n<\/script>/);
+    if (!bootstrap) throw new Error('ER bootstrap script was not found');
+    expect(() => new Script(`(function(){${bootstrap[1]}})`, { filename: 'er-bootstrap.js' })).not.toThrow();
+    expect(bootstrap[1]).toContain('C:\\\\users\\\\xdata\\\\u00 it&#39;s');
+  });
+
   it('keeps the initial graph unobstructed and exposes retrieval and inbound relation facts', () => {
     const html = buildHTML(baseApps, {
       startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard', source: {}
