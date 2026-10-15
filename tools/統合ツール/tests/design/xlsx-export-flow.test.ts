@@ -45,7 +45,7 @@ function installEnvironment(responses: Record<string, any>) {
 const ALL_SHEETS = new Set(['summary', 'fields', 'dependencies', 'views']);
 const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 beforeEach(() => { consoleWarn.mockClear(); });
 
 function baseResponses(overrides: Record<string, any> = {}): Record<string, any> {
@@ -142,6 +142,26 @@ describe('runAdvancedDesignExporter の取得失敗の扱い', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
+  it('付随情報だけ失敗した設定JSONのセクションは、本体を使いつつ取得失敗として報告する', async () => {
+    installEnvironment({});
+    const bundle = {
+      appId: '5', guestId: '', preview: false,
+      sections: {
+        appInfo: { name: 'JSON由来' },
+        customizeSettings: {
+          scope: 'ALL',
+          desktop: { js: [{ type: 'URL', url: 'https://example.com/a.js' }], css: [] },
+          mobile: { js: [], css: [] },
+          _fetchError: 'JS/CSSファイル本文の取得に失敗'
+        }
+      }
+    };
+    const result: any = await runAdvancedDesignExporter({ appId: '5', bundle, preselectedSheets: new Set(['customize']), returnWorkbook: true, suppressToast: true });
+    const rows: any[][] = result.wb.Sheets['JS_CSSカスタマイズ'].__aoa;
+    expect(rows.some((row) => row.includes('https://example.com/a.js'))).toBe(true);
+    expect(result.failedAPIs.some((f: any) => f.name === 'Customize（設定JSON）' && /本文/.test(f.error))).toBe(true);
+  });
+
   it('Webhook を取得できなかった場合は0件ではなく(取得不可)と書く', async () => {
     installEnvironment(baseResponses({ '/app/webhook.json': new Error('404') }));
     vi.useFakeTimers();
@@ -206,6 +226,21 @@ describe('ZIP のマニフェスト', () => {
       { appId: '2', guestId: '3', source: 'settings-json' }
     ]);
     expect(JSON.stringify(targets)).not.toContain('機微な設定');
+  });
+});
+
+describe('通知シート', () => {
+  it('一般通知の「サブ組織含」を通知先に残す', async () => {
+    installEnvironment(baseResponses({
+      '/app/notifications/general.json': { notifications: [
+        { entity: { type: 'ORGANIZATION', code: 'sales' }, includeSubs: true, recordAdded: true },
+        { entity: { type: 'USER', code: 'u1' }, includeSubs: false, recordAdded: true }
+      ] }
+    }));
+    const result: any = await runAdvancedDesignExporter({ appId: '5', preselectedSheets: new Set(['genNotif']), returnWorkbook: true, suppressToast: true });
+    const rows: any[][] = result.wb.Sheets['通知(一般)'].__aoa;
+    expect(rows.find((row) => String(row[1]).includes('sales'))?.[1]).toContain('(サブ組織含)');
+    expect(rows.find((row) => String(row[1]).includes('u1'))?.[1]).not.toContain('サブ組織含');
   });
 });
 
