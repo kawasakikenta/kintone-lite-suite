@@ -1,6 +1,6 @@
 'use strict';
 
-import { csvEscape } from './record-query.js';
+import { csvEscape, neutralizeCsvFormula } from './record-query.js';
 
 const SCALAR = new Set(['SINGLE_LINE_TEXT', 'MULTI_LINE_TEXT', 'LINK', 'NUMBER', 'DATE', 'TIME', 'DATETIME', 'DROP_DOWN', 'RADIO_BUTTON']);
 const MULTI = new Set(['CHECK_BOX', 'MULTI_SELECT', 'USER_SELECT', 'ORGANIZATION_SELECT', 'GROUP_SELECT']);
@@ -80,7 +80,7 @@ export function inspectRecordQuality(records: any[], fields: QualityField[], opt
 export function reportCsv(rows: unknown[][]): string {
   return '\uFEFF' + rows.map(row => row.map(value => {
     const text = String(value ?? '');
-    return csvEscape(/^[\s\uFEFF]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text) ? "'" + text : text);
+    return csvEscape(neutralizeCsvFormula(text));
   }).join(',')).join('\r\n') + '\r\n';
 }
 

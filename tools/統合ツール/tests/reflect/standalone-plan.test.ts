@@ -13,6 +13,11 @@ describe('preview reflection plans match actual write effects', () => {
     expect(result.changes.map(item => item.kind)).toEqual(['保持']);
     expect(result.fieldStats).toEqual({ add: 0, update: 0, tgtOnly: 1 });
   });
+  it('does not translate user-defined field codes that look like setting attributes', () => {
+    const named = (code: string, label: string) => ({ type: 'SINGLE_LINE_TEXT', code, label, required: false });
+    const result = plan('fieldSettings', { properties: { label: named('label', '新'), type: named('type', '新') } }, { properties: { label: named('label', '旧'), type: named('type', '旧') } });
+    expect(result.changes.map(item => item.path)).toEqual(['フィールド / label / 表示名', 'フィールド / type / 表示名']);
+  });
   it('shows the actual before and after values of changed settings', () => {
     const result = plan('fieldSettings', { properties: { name: field('name', '新しい名前') } }, { properties: { name: field('name', '旧名') } });
     expect(result.changes).toContainEqual({ kind: '変更', path: 'フィールド / name / 表示名', before: '旧名', after: '新しい名前' });
@@ -124,6 +129,22 @@ describe('preview reflection plans match actual write effects', () => {
     expect(reflectSelectionBlockers([fields, views], ['viewSettings'], ['added'], [])).toHaveLength(1);
     expect(reflectSelectionBlockers([fields, views], ['fieldSettings', 'viewSettings'], ['added'], [])).toEqual([]);
     expect(listReflectFieldCodes({ sections: { fieldSettings: { properties: { table: { type: 'SUBTABLE', fields: { nested: {} } } } } } })).toEqual(['table', 'nested']);
+  });
+  it('aligns list items by content: reorders, duplicates, additions and removals', () => {
+    const right = (code: string) => ({ entity: { type: 'USER', code }, appEditable: true });
+    const [a, b, c] = [right('a'), right('b'), right('c')];
+    const changes = (before: any[], after: any[]) => plan('appAcl', { rights: after }, { rights: before }).changes.map(item => `${item.kind}:${item.path}`);
+    expect(changes([a, b], [b, a])).toEqual(['変更:アクセス権 / 順序']);
+    expect(changes([a, a, b], [a, b])).toEqual(['削除:アクセス権 / 2件目']);
+    expect(changes([a, b], [a, b, b])).toEqual(['追加:アクセス権']);
+    expect(changes([a, b], [c, a])).toEqual(['削除:アクセス権 / 2件目', '追加:アクセス権']);
+  });
+  it('compares thousands of replaced list items without quadratic work', () => {
+    const rights = (tag: string) => Array.from({ length: 1500 }, (_, index) => ({ entity: { type: 'USER', code: `${tag}${index}` }, appEditable: true, recordViewable: true }));
+    const started = Date.now();
+    const result = plan('appAcl', { rights: rights('new') }, { rights: rights('old') });
+    expect(result.removalCount).toBe(1500); expect(result.changeCount).toBe(3000);
+    expect(Date.now() - started).toBeLessThan(4000);
   });
   it('does not derive removal warnings from changed API revisions alone', () => {
     expect(plan('appAcl', { rights: [], revision: '2' }, { rights: [], revision: '1' }).status).toBe('same');

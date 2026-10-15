@@ -99,7 +99,14 @@ async function main() {
       const count = await page.evaluate(() => window.__reflectMock.applies.length);
       await idCheck.press('Enter'); assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), count, '確認IDのEnterで書き込まない');
     }
-    await applyButton().evaluate(button => { button.click(); button.click(); }); await idle();
+    // 反映中に再起動しても実行中のパネルを置き換えない（結果を見失わせない）。
+    await applyButton().evaluate(button => {
+      button.click(); button.click();
+      window.__runningPanel = document.getElementById('kus-reflect-lite');
+      ReflectHarness.mountReflectLitePanel();
+    });
+    await idle();
+    assert.equal(await page.evaluate(() => document.getElementById('kus-reflect-lite') === window.__runningPanel), true, '反映中の再起動で実行中のパネルを残す');
   }
   async function idle() { await page.waitForFunction(() => document.querySelector('#kus-reflect-lite').getAttribute('aria-busy') !== 'true'); }
   async function setup() {
@@ -122,6 +129,9 @@ async function main() {
     assert.equal(await sourceInput.inputValue(), '101', 'URLからアプリIDを読み取る');
     const sourceGuest = page.getByRole('textbox', { name: '比較元ゲストスペースID', exact: true });
     assert.equal(await sourceGuest.inputValue(), '7', 'URLからゲストスペースIDを読み取る');
+    await sourceInput.fill('https://example.cybozu.com/k/101/');
+    await sourceInput.press('Tab');
+    assert.equal(await sourceGuest.inputValue(), '', '通常スペースのURLでは以前のゲストスペースIDを残さない');
     await sourceGuest.fill('');
     await button('全解除').click();
     assert.match(await page.locator('.kus-rl-dock-copy').innerText(), /項目を 1 つ以上選んでください/, '項目未選択の理由を表示する');
@@ -248,6 +258,8 @@ async function main() {
     assert.equal(await button('差分を確認する').isDisabled(), true, 'JSON未読込では以前のアプリIDで比較しない');
     await page.getByLabel('比較元の設定JSON', { exact: true }).setInputFiles({ name: 'settings.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ appId: '901', sections: { fieldSettings: { properties: {} } } })) });
     await idle();
+    assert.equal(await page.getByLabel('比較元の設定JSON', { exact: true }).evaluate(input => input.files.length), 0, '同じJSONを編集して選び直せるよう選択状態を空に戻す');
+    assert.match(await page.getByText(/比較元JSON読み込み済み/).first().innerText(), /settings\.json/, '読み込んだファイル名を表示する');
     assert.equal(await button('差分を確認する').isEnabled(), true);
     await compare();
     assert.equal(await page.evaluate(() => window.__reflectMock.previews[0].sourceBundle.appId), '901');
@@ -264,6 +276,7 @@ async function main() {
     await page.getByLabel('比較元の設定JSON', { exact: true }).setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{bad') });
     await idle();
     assert.equal(await button('差分を確認する').isDisabled(), true, '不正なJSONの読込失敗後に古いJSONを使用しない');
+    assert.match(await page.locator('.kus-lp__status-text').first().innerText(), /JSON形式が不正/, '不正なJSONは日本語で理由を示す');
     await page.getByLabel('比較元の設定JSON', { exact: true }).setInputFiles({ name: 'apps.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ apps: [{ appId: '901', sections: {} }, { appId: '902', sections: {} }] })) });
     await idle();
     await page.getByRole('combobox', { name: '設定JSON内の比較元アプリ', exact: true }).selectOption('1');

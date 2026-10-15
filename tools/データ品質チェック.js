@@ -244,6 +244,17 @@
     }
     return "";
   }
+  function guestIdFromKintonePath(pathname) {
+    const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ""));
+    return match ? match[1] : "";
+  }
+  function resolveDefaultGuestId() {
+    try {
+      return typeof window === "undefined" ? "" : guestIdFromKintonePath(window.location?.pathname);
+    } catch (e) {
+      return "";
+    }
+  }
   function sanitizeCustomizeResourceList(value) {
     if (!Array.isArray(value)) return [];
     const resources = [];
@@ -275,7 +286,7 @@
       mobile: buildPlatform("mobile")
     };
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIALOG_STATE_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -321,6 +332,7 @@
         })
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
+      DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
@@ -969,12 +981,28 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-enums.ts
+  var init_kintone_enums = __esm({
+    "src/kintone-enums.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/diff/label-dict.ts
+  var init_label_dict = __esm({
+    "src/diff/label-dict.ts"() {
+      "use strict";
+      init_kintone_enums();
+    }
+  });
+
   // src/diff/enrich.ts
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      init_label_dict();
     }
   });
 
@@ -989,21 +1017,6 @@ ${contextLine}`);
       init_constants();
       init_state();
       root = null;
-    }
-  });
-
-  // src/kintone-enums.ts
-  var init_kintone_enums = __esm({
-    "src/kintone-enums.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/diff/label-dict.ts
-  var init_label_dict = __esm({
-    "src/diff/label-dict.ts"() {
-      "use strict";
-      init_kintone_enums();
     }
   });
 
@@ -2032,6 +2045,14 @@ ${contextLine}`);
     const s = String(val == null ? "" : val);
     return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r") ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
+  var CSV_FORMULA_RE = /^[\s\uFEFF]*[=+\-@]/;
+  var CSV_CONTROL_RE = /^[\t\r\n]/;
+  var CSV_NUMERIC_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+  function neutralizeCsvFormula(text) {
+    if (CSV_NUMERIC_RE.test(text)) return text;
+    if (CSV_FORMULA_RE.test(text) || CSV_CONTROL_RE.test(text)) return "'" + text;
+    return text;
+  }
 
   // src/tabs/record-standalone.ts
   function parseRecordAppIds(value) {
@@ -2117,7 +2138,7 @@ ${contextLine}`);
   function reportCsv(rows) {
     return "\uFEFF" + rows.map((row) => row.map((value) => {
       const text = String(value ?? "");
-      return csvEscape(/^[\s\uFEFF]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text) ? "'" + text : text);
+      return csvEscape(neutralizeCsvFormula(text));
     }).join(",")).join("\r\n") + "\r\n";
   }
   function qualityRecordPath(appId, guestId, recordId) {
@@ -2153,14 +2174,14 @@ ${contextLine}`);
 
   // src/tabs/record-quality-standalone.ts
   function connection(appIdsText, guestId) {
-    const appIds = parseRecordAppIds(appIdsText);
+    const appIds = [...new Set(parseRecordAppIds(appIdsText).map((id) => id.replace(/^0+/, "")))];
     if (!appIds.length) throw new Error("対象アプリを指定してください");
     if (guestId && !/^[1-9]\d*$/.test(guestId)) throw new Error("ゲストIDは正の数値で入力してください");
     return { appIds, prefix: buildApiPrefix(guestId, false) };
   }
   async function runLoadQualityFieldsStandalone(options) {
     const { appIds, prefix } = connection(options.appIdsText, options.guestId);
-    return readQualityFields((await apiGet(prefix, "/app/form/fields.json", { app: appIds[0], lang: "user" })).properties);
+    return readQualityFields((await apiGet(prefix, "/app/form/fields.json", { app: appIds[0], lang: "user" }))?.properties);
   }
   async function runRecordQualityStandalone(options, setStatus) {
     const { appIds, prefix } = connection(options.appIdsText, options.guestId);
@@ -2168,7 +2189,7 @@ ${contextLine}`);
     for (const appId of appIds) {
       setStatus(`App ${appId}: 検査用の設定を取得中…`);
       try {
-        const properties = (await apiGet(prefix, "/app/form/fields.json", { app: appId, lang: "user" })).properties;
+        const properties = (await apiGet(prefix, "/app/form/fields.json", { app: appId, lang: "user" }))?.properties;
         const fields = selectQualityFields(properties, options.codes);
         const { records } = await fetchRecordsByQuery(prefix, appId, options.query, { fields: ["$id", ...options.codes], onProgress: (count) => setStatus(`App ${appId}: ${count}件を取得済み…`) });
         results.push({ appId, report: inspectRecordQuality(records, fields, options) });
@@ -2217,12 +2238,19 @@ ${contextLine}`);
     output.setAttribute("aria-live", "polite");
     const save = makeButton("検査結果をCSVで保存", "sub");
     save.hidden = true;
-    const resetResults = () => {
+    const clearResults = () => {
       version++;
       results = [];
       output.replaceChildren();
       save.hidden = true;
     };
+    const resetResults = () => {
+      const stale = results.length > 0 && panel.status.dataset.tone !== "busy";
+      clearResults();
+      if (stale) panel.setStatus("対象や条件が変わりました。もう一度検査してください。", "warn");
+    };
+    const isBusy = () => panel.root.getAttribute("aria-busy") === "true";
+    const validate = () => requiredApps() || (selected.size ? "" : "検査フィールドを読み込んで1〜5項目を選んでください。");
     const refreshNote = () => {
       note.textContent = `選択 ${selected.size}/5項目: ${fields.filter((field) => selected.has(field.code)).map((field) => `${field.label}［${field.code}］`).join("、") || "未選択"}`;
       countBadge.textContent = `選択 ${selected.size} / 5`;
@@ -2273,12 +2301,13 @@ ${contextLine}`);
       if (fields.length && !fieldBox.childElementCount) fieldBox.appendChild(makeNote("一致するフィールドがありません。検索語を変えてください。"));
     }
     search.addEventListener("input", renderFields);
-    load.addEventListener("click", () => liteRun(panel, "検査フィールドを取得中…", async () => {
+    load.addEventListener("click", () => isBusy() || liteRun(panel, "検査フィールドを取得中…", async () => {
       const current = ++fieldsVersion;
       fields = [];
       selected.clear();
       search.value = "";
       fieldBox.replaceChildren();
+      pickWrap.hidden = true;
       resetResults();
       refreshNote();
       const loaded = await runLoadQualityFieldsStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() });
@@ -2293,7 +2322,12 @@ ${contextLine}`);
       panel.setStatus(note.textContent, fields.length ? "ok" : "warn");
     }));
     const run = makeButton("重複・未入力を検査", "primary");
-    run.addEventListener("click", () => liteRun(panel, "レコードを検査中…", async () => {
+    run.addEventListener("click", () => isBusy() || liteRun(panel, "レコードを検査中…", async () => {
+      const problem = validate();
+      if (problem) {
+        panel.setStatus(problem, "warn");
+        return;
+      }
       resetResults();
       const current = version;
       const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked };
@@ -2350,7 +2384,7 @@ ${contextLine}`);
       label: "重複・未入力を検査",
       description: "複数項目の重複・未入力を調べ、該当レコードを確認します。",
       button: run,
-      validate: () => requiredApps() || (selected.size ? "" : "検査フィールドを読み込んで1〜5項目を選んでください。"),
+      validate,
       summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["検査項目", [...selected].join("、")], ["比較", `前後空白 ${trim.checkbox.checked ? "無視" : "区別"} / 大小文字 ${ignoreCase.checkbox.checked ? "無視" : "区別"}`]]
     };
   }
@@ -2648,7 +2682,7 @@ ${contextLine}`);
       width: "wide",
       ariaLabel: "対象アプリID"
     });
-    const guestId = makeInput({ placeholder: "ゲストID（任意）", width: "guest", ariaLabel: "ゲストスペースID" });
+    const guestId = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest", ariaLabel: "ゲストスペースID" });
     const target = makeCard({ title: "対象アプリ", number: 1 });
     target.body.appendChild(makeRow([appId, guestId], { label: "接続先" }));
     target.body.appendChild(makeNote("複数アプリはカンマ、改行、または空白で区切ります。検査項目は先頭アプリから読み込みます。"));

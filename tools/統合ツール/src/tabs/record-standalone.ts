@@ -1,6 +1,6 @@
 'use strict';
 
-import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
+import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel, sanitizeFilenamePart } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle, fetchRecordsByQuery, isRevisionConflictError } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import {
@@ -36,32 +36,39 @@ export function validateRecordConnection(appId: unknown, guestId: unknown = ''):
   return { appId: ids[0], guestId: guest };
 }
 
-/** Run every pasted app ID and retain per-app warnings in the final outcome. */
+/**
+ * Run every pasted app ID and retain per-app warnings in the final outcome.
+ * An operation returns `cancelled` when the user declined its confirmation, so the
+ * final message never reports an app that was not touched as completed.
+ */
 export async function runRecordAppBatchStandalone(
   appIdsValue: unknown,
-  operation: (appId: string, index: number, total: number) => Promise<void | { warning?: string }>,
+  operation: (appId: string, index: number, total: number) => Promise<void | { warning?: string; cancelled?: boolean }>,
   setStatus: (message: string, error?: boolean) => void
 ): Promise<void> {
   const appIds = parseRecordAppIds(appIdsValue);
   if (!appIds.length) throw new Error('対象アプリIDを1件以上入力してください');
   const failures: string[] = [];
   const warnings: string[] = [];
+  const cancelled: string[] = [];
   for (let i = 0; i < appIds.length; i++) {
     const appId = appIds[i];
     setStatus(`App ${appId}: 実行中 (${i + 1}/${appIds.length})`);
     try {
       const result = await operation(appId, i, appIds.length);
       if (result && result.warning) warnings.push(`App ${appId}: ${result.warning}`);
+      if (result && result.cancelled) cancelled.push(`App ${appId}`);
     } catch (error: any) {
       failures.push(`App ${appId}: ${error?.message || String(error)}`);
     }
   }
   const warningSummary = warnings.length ? `警告 ${warnings.length}アプリ:\n${warnings.join('\n')}` : '';
+  const cancelSummary = cancelled.length ? `確認でキャンセルしたため実行していません（${cancelled.length}アプリ）: ${cancelled.join(', ')}` : '';
   if (failures.length) {
-    throw new Error(`${appIds.length}件中${failures.length}件が失敗しました\n${failures.join('\n')}${warningSummary ? `\n${warningSummary}` : ''}`);
+    throw new Error(`${appIds.length}件中${failures.length}件が失敗しました\n${failures.join('\n')}${warningSummary ? `\n${warningSummary}` : ''}${cancelSummary ? `\n${cancelSummary}` : ''}`);
   }
-  if (warningSummary) {
-    setStatus(`${appIds.length}アプリの操作が完了しました\n${warningSummary}`, true);
+  if (warningSummary || cancelSummary) {
+    setStatus(`${appIds.length}アプリの操作が完了しました${cancelSummary ? `\n${cancelSummary}` : ''}${warningSummary ? `\n${warningSummary}` : ''}`, true);
     return;
   }
   setStatus(`${appIds.length}アプリの操作が完了しました`);
@@ -193,8 +200,18 @@ function addRecordCsvFiles(zip: any, csv: RecordCsvExport, prefix = ''): void {
 }
 
 function recordExportFilename(filename: unknown, extension: 'csv' | 'zip', fallback: string): string {
-  const requested = String(filename || '').trim();
-  return requested ? `${requested.replace(/\.(csv|zip)$/i, '')}.${extension}` : fallback;
+  // 拡張子だけ・パス区切りや禁則文字を含む入力でも、空の名前や意図しない階層名にしない。
+  const stem = String(filename || '').trim().replace(/\.(csv|zip)$/i, '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  return stem ? `${sanitizeFilenamePart(stem)}.${extension}` : fallback;
+}
+
+/**
+ * 複数アプリに同じ ZIP 名を指定すると、どのアプリのファイルか区別できない同名ダウンロードが
+ * 並ぶ。複数アプリのときだけ `_app<ID>` を付ける（空欄の自動命名にはアプリ ID が入っている）。
+ */
+export function zipNameForApp(zipName: unknown, appId: string, multiple: boolean): string {
+  const requested = String(zipName || '').trim();
+  return requested && multiple ? `${requested.replace(/\.zip$/i, '')}_app${appId}.zip` : requested;
 }
 
 async function buildCsvExportForApp(appId: string, guestId: string, query: string, setStatus: (m: string) => void) {
@@ -219,7 +236,12 @@ async function buildCsvExportForApp(appId: string, guestId: string, query: strin
   };
 }
 
-export async function runCsvExportStandalone(opts, setStatus) {
+/** 出力は完了したが利用者に見せる必要がある未取得・失敗の内訳（空なら問題なし）。 */
+export interface CsvExportOutcome {
+  issues: string[];
+}
+
+export async function runCsvExportStandalone(opts, setStatus): Promise<CsvExportOutcome> {
   const { appId, guestId, query, filename } = opts;
   const result = await buildCsvExportForApp(appId, guestId, query || '', setStatus);
   const appLabel = buildAppFilenameLabel(appId, '');
@@ -227,7 +249,7 @@ export async function runCsvExportStandalone(opts, setStatus) {
     const blob = new Blob([result.csv.parentCsv], { type: 'text/csv;charset=utf-8;' });
     downloadBlob(recordExportFilename(filename, 'csv', buildExportFilename('レコード', 'csv', { appLabel })), blob);
     setStatus(`CSV出力完了 (${result.recordCount}件)`);
-    return;
+    return { issues: [] };
   }
 
   const JSZipCtor = await loadJSZipLite();
@@ -243,9 +265,10 @@ export async function runCsvExportStandalone(opts, setStatus) {
   downloadBlob(recordExportFilename(filename, 'zip', buildExportFilename('レコード', 'zip', { appLabel })), blob);
   const warningNote = result.csv.warnings.length ? `（未取得のテーブル ${result.csv.warnings.length}件、詳細は manifest.json）` : '';
   setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0);
+  return { issues: result.csv.warnings };
 }
 
-export async function runCsvExportBatchStandalone(opts, setStatus) {
+export async function runCsvExportBatchStandalone(opts, setStatus): Promise<CsvExportOutcome> {
   const rawApps = Array.isArray(opts?.apps) ? opts.apps : [];
   const apps = rawApps
     .filter((a) => a?.appId != null && String(a.appId).trim())
@@ -258,8 +281,7 @@ export async function runCsvExportBatchStandalone(opts, setStatus) {
   if (!apps.length) throw new Error('対象アプリを1件以上入力してください');
   if (apps.length === 1) {
     const app = apps[0];
-    await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || '', query, filename }, setStatus);
-    return;
+    return await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || '', query, filename }, setStatus);
   }
 
   const JSZip = await loadJSZipLite();
@@ -269,6 +291,7 @@ export async function runCsvExportBatchStandalone(opts, setStatus) {
   let warningCount = 0;
   const successes: string[] = [];
   const failures: string[] = [];
+  const tableWarnings: string[] = [];
 
   for (let i = 0; i < apps.length; i++) {
     const app = apps[i];
@@ -288,6 +311,7 @@ export async function runCsvExportBatchStandalone(opts, setStatus) {
       }, null, 2));
       totalRecords += result.recordCount;
       warningCount += result.csv.warnings.length;
+      tableWarnings.push(...result.csv.warnings.map((warning) => `App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ''}: ${warning}`));
       successes.push(`${folder}/: App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ''} / ${result.recordCount}件 / テーブル ${result.csv.tables.length}件${result.csv.warnings.length ? ` / 未取得 ${result.csv.warnings.length}件（フォルダ内manifest.json参照）` : ''}`);
     } catch (error: any) {
       if (folder) zip.remove(folder);
@@ -320,6 +344,7 @@ export async function runCsvExportBatchStandalone(opts, setStatus) {
   const issues = [failures.length ? `失敗 ${failures.length}アプリ` : '', warningCount ? `未取得のテーブル ${warningCount}件` : ''].filter(Boolean);
   const issueNote = issues.length ? `（${issues.join(' / ')}、詳細は manifest.txt）` : '';
   setStatus(`CSV一括出力完了${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
+  return { issues: [...failures.map((failure) => `失敗 ${failure}`), ...tableWarnings] };
 }
 
 // ---------------------------------------------------------------------------
@@ -340,14 +365,18 @@ async function inspectCsvImportBatch(opts, setStatus) {
   const appIds = parseRecordAppIds(opts.appIdsText || opts.appId);
   if (!appIds.length) throw new Error('対象アプリIDを入力してください');
   setStatus('CSVファイルを読み込み中...');
-  const rows = parseCsvText((await readImportFile(opts.file)).replace(/^\uFEFF/, ''));
+  const text = await readImportFile(opts.file);
+  // Excel の既定の「CSV (コンマ区切り)」は Shift_JIS。UTF-8 として読むと日本語が U+FFFD に化け、
+  // 事前検査を通ったまま文字化けした値が登録されてしまう。
+  if (text.includes('\uFFFD')) throw new Error('CSVをUTF-8として読み取れず、文字化け（�）を検出しました。Excelでは「CSV UTF-8（コンマ区切り）」で保存し直してください。');
+  const rows = parseCsvText(text.replace(/^\uFEFF/, ''));
   const prefix = buildApiPrefix(opts.guestId || '', false);
   const plans: Array<{ appId: string; properties: Record<string, any>; report?: CsvImportReport; error?: string }> = [];
   for (const appId of appIds) {
     setStatus(`App ${appId}: CSVを事前検査中...`);
     try {
       const response = await apiGet(prefix, '/app/form/fields.json', { app: appId });
-      const { records: _records, ...report } = planCsvImport(rows, response?.properties);
+      const { records: _records, recordRows: _recordRows, ...report } = planCsvImport(rows, response?.properties);
       plans.push({ appId, properties: response.properties, report });
     } catch (error: any) { plans.push({ appId, properties: {}, error: error?.message || String(error) || '事前検査に失敗しました' }); }
   }
@@ -381,10 +410,11 @@ export async function runCsvImportBatchStandalone(opts, setStatus) {
   await runRecordAppBatchStandalone(plans.map(plan => plan.appId).join(','), async (appId) => {
     const plan = plans.find(item => item.appId === appId);
     // Build just one app's payload at a time, keeping multi-app memory bounded.
-    const { records } = planCsvImport(rows, plan.properties);
+    const { records, recordRows } = planCsvImport(rows, plan.properties);
     const ok = await writeInChunks(records, `App ${appId} の CSV取込`,
       batch => apiPost(prefix, '/records.json', { app: appId, records: batch }),
-      (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`));
+      (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`),
+      undefined, index => `CSV ${recordRows[index]}行目`);
     setStatus(`App ${appId}: インポート完了 ${ok}件`);
   }, setStatus);
   setStatus(`CSV取込完了: ${plans.length}アプリ / ${plans.reduce((sum, plan) => sum + plan.report.count, 0)}件`);
@@ -414,7 +444,7 @@ export async function runBatchProcessStandalone(opts, setStatus) {
   ].join('\n');
   if (!kusConfirm(confirmText)) {
     setStatus('ステータス一括更新をキャンセルしました');
-    return;
+    return { cancelled: true };
   }
 
   const ok = await writeInChunks(
@@ -435,7 +465,9 @@ export async function runBatchProcessStandalone(opts, setStatus) {
         throw reported;
       }
     },
-    (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`)
+    (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`),
+    undefined,
+    index => `レコードID ${targets[index]?.id}`
   );
   setStatus(`ステータス一括更新完了 (${ok}件)`);
 }
@@ -503,6 +535,7 @@ export function buildCopyRecordPayloads(records: any[], targetProps?: Record<str
                 continue;
               }
               if (childDefs && !childDefs[childCode]) { dropped.add(`${code}.${childCode}`); continue; }
+              if (childDefs && childDefs[childCode]?.type !== childField.type) { dropped.add(`${code}.${childCode}(型不一致)`); continue; }
               cells[childCode] = { value: childField.value };
             }
             return { value: cells };
@@ -526,14 +559,23 @@ export async function runRecordCopyStandalone(opts, setStatus) {
 
   setStatus(`コピー先 App ${targetAppId} のフィールド定義を確認中...`);
   const targetFields = await apiGet(tgtPrefix, '/app/form/fields.json', { app: targetAppId });
-  const targetProps = targetFields?.properties || ({} as any);
+  const targetProps = targetFields?.properties;
+  if (!targetProps || typeof targetProps !== 'object' || Array.isArray(targetProps)) throw new Error(`コピー先 App ${targetAppId} のフィールド設定の応答が不正です`);
 
   const records = await fetchAllRecords(srcPrefix, sourceAppId, query || '', setStatus);
-  if (!records.length) { setStatus('コピー対象のレコードがありません'); return; }
+  if (!records.length) {
+    const warning = 'コピー対象のレコードがありません';
+    setStatus(warning, true);
+    return { warning };
+  }
   const plan = buildCopyRecordPayloads(records, targetProps);
   const droppedNote = plan.droppedFields.length
     ? `コピー先に無い/型が違うため除外: ${plan.droppedFields.slice(0, 10).join(', ')}${plan.droppedFields.length > 10 ? ` 他${plan.droppedFields.length - 10}件` : ''}`
     : '';
+  // コピー先を取り違えると全フィールドが除外され、空レコードを大量に作ってしまう。
+  if (!plan.records.some((record) => Object.keys(record).length)) {
+    throw new Error(`コピーできるフィールドがありません（コピー先 App ${targetAppId} に一致するフィールドがありません）。コピー元とコピー先のアプリIDを確認してください。${droppedNote ? `\n${droppedNote}` : ''}`);
+  }
   const fileNote = plan.droppedFileFields.length
     ? `添付ファイルはコピーされません: ${plan.droppedFileFields.slice(0, 10).join(', ')}${plan.droppedFileFields.length > 10 ? ` 他${plan.droppedFileFields.length - 10}件` : ''}（${plan.droppedFileFields.length}フィールド、添付ありレコード ${plan.recordsWithFiles}件）。必要な場合はコピー後に手動で再アップロードしてください。`
     : '';
@@ -547,14 +589,16 @@ export async function runRecordCopyStandalone(opts, setStatus) {
   ].filter(Boolean).join('\n');
   if (!kusConfirm(confirmText)) {
     setStatus('レコードコピーをキャンセルしました');
-    return;
+    return { cancelled: true };
   }
 
   const ok = await writeInChunks(
     plan.records,
     `App ${sourceAppId} → ${targetAppId} のレコードコピー`,
     (batch) => apiPost(tgtPrefix, '/records.json', { app: targetAppId, records: batch }),
-    (done, total) => setStatus(`コピー中... ${done} / ${total}件`)
+    (done, total) => setStatus(`コピー中... ${done} / ${total}件`),
+    undefined,
+    index => `コピー元レコードID ${records[index]?.$id?.value ?? index + 1}`
   );
   const fileDropNote = plan.droppedFileFields.length ? ` / 添付除外 ${plan.droppedFileFields.length}フィールド` : '';
   setStatus(`レコードコピー完了: ${ok}件${fileDropNote}${droppedNote ? `（${droppedNote}）` : ''}`, plan.droppedFields.length > 0 || plan.droppedFileFields.length > 0);
@@ -563,6 +607,13 @@ export async function runRecordCopyStandalone(opts, setStatus) {
 // ---------------------------------------------------------------------------
 // 添付ファイル一括ダウンロード
 // ---------------------------------------------------------------------------
+/** フォルダ名に使うフィールド値。ユーザー・組織等の選択値（オブジェクト）は code/name を使う。 */
+function folderLabelFromField(field: any): string {
+  const label = (item: any): string => item && typeof item === 'object' ? String(item.code || item.name || '') : String(item ?? '');
+  const value = field?.value;
+  return (Array.isArray(value) ? value.map(label).filter(Boolean).join(',') : label(value)).trim();
+}
+
 /** 添付ファイル一括ダウンロード（条件で絞り、指定したファイルフィールドの中身を ZIP 化） */
 export async function runAttachmentDownloadStandalone(opts, setStatus) {
   const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
@@ -611,7 +662,7 @@ export async function runAttachmentDownloadStandalone(opts, setStatus) {
     const { rec, recordId, rowId, files } = groups[i];
     setStatus(`添付DL中 (${i + 1}/${groups.length}${failures.length ? ` / 失敗 ${failures.length}` : ''})`);
     if (!files.length) continue;
-    let folderName = folderFieldCode && rec[folderFieldCode]?.value;
+    let folderName = folderFieldCode ? folderLabelFromField(rec[folderFieldCode]) : '';
     if (!folderName) folderName = `Record_${recordId}`;
     const folderPath = [sanitizeZipSegment(folderName, `Record_${recordId}`),
       ...(tableFieldCode ? [...(folderName === `Record_${recordId}` ? [] : [`Record_${recordId}`]), sanitizeZipSegment(tableFieldCode), `Row_${sanitizeZipSegment(rowId)}`] : [])].join('/');
@@ -647,7 +698,7 @@ export async function runAttachmentDownloadStandalone(opts, setStatus) {
   zip.file('manifest.json', JSON.stringify({ appId: String(appId), guestId: String(guestId || ''), query: query || '', files: manifest }, null, 2));
   setStatus(`ZIP生成中 (${fileCount}ファイル)`);
   const zipBlob = await zip.generateAsync({ type: 'blob' });
-  downloadBlob(zipName || buildExportFilename('添付ファイル', 'zip', { appLabel: buildAppFilenameLabel(appId, '') }), zipBlob);
+  downloadBlob(recordExportFilename(zipName, 'zip', buildExportFilename('添付ファイル', 'zip', { appLabel: buildAppFilenameLabel(appId, '') })), zipBlob);
   if (failures.length) {
     const warning = `添付一括DL完了: ${fileCount}ファイル（取得失敗 ${failures.length}件、詳細は download_errors.txt）`;
     setStatus(warning, true);
@@ -711,6 +762,7 @@ export async function runRecordBackupStandalone(opts, setStatus) {
     }
     if (!collected.length) notes.push('添付ファイルなし');
     const blobCache = new Map<string, FileFetchResult>();
+    const usedByDir = new Map<string, Set<string>>();
     for (let i = 0; i < collected.length; i++) {
       const ent = collected[i];
       setStatus(`添付ファイル取得中 (${i + 1}/${collected.length}${fileFailures.length ? ` / 失敗 ${fileFailures.length}` : ''})`);
@@ -732,9 +784,11 @@ export async function runRecordBackupStandalone(opts, setStatus) {
       } else {
         parts.push(sanitizeZipSegment(ent.fieldCode || 'files'));
       }
-      const filePrefix = sanitizeZipSegment(String(ent.file.fileKey || '').slice(0, 12) || String(ent.fileIndex + 1));
-      parts.push(`${filePrefix}_${sanitizeZipSegment(ent.file.name || 'file.bin', 'file.bin')}`);
-      zip.file(parts.join('/'), result.blob);
+      // 同じフォルダに同名・同じ fileKey 接頭辞のファイルがあっても、後続が先のファイルを上書きしない。
+      const dir = parts.join('/');
+      const used = usedByDir.get(dir) || new Set<string>();
+      usedByDir.set(dir, used);
+      zip.file(`${dir}/${uniqueZipName(used, ent.file.name || 'file.bin', ent.file.fileKey, ent.fileIndex)}`, result.blob);
       fileCount++;
     }
     if (fileFailures.length) {
@@ -799,6 +853,8 @@ export async function runRecordBackupStandalone(opts, setStatus) {
     zip.file(`app_settings/app_${appId}.json`, JSON.stringify({ generatedAt: new Date().toISOString(), appId, scopes: appScopes, bundle: settings }, null, 2));
   } else if (!includeAppSettings) {
     notes.push('アプリ設定未取得');
+  } else {
+    notes.push('アプリ設定の保存範囲が未選択のため取得していません');
   }
 
   zip.file('manifest.json', JSON.stringify({
@@ -817,7 +873,7 @@ export async function runRecordBackupStandalone(opts, setStatus) {
 
   setStatus(`ZIP生成中 (${records.length}件 / 添付 ${fileCount} / コメント ${commentCount})`);
   const blob = await zip.generateAsync({ type: 'blob' });
-  downloadBlob(zipName || buildExportFilename('レコードバックアップ', 'zip', { appLabel: buildAppFilenameLabel(appId, '') }), blob);
+  downloadBlob(recordExportFilename(zipName, 'zip', buildExportFilename('レコードバックアップ', 'zip', { appLabel: buildAppFilenameLabel(appId, '') })), blob);
   const failureCount = fileFailures.length + commentFailures.length + appNg + csvExport.warnings.length;
   const failureNote = failureCount
     ? `（取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg} / テーブル ${csvExport.warnings.length} → manifest.json 参照）`

@@ -1163,6 +1163,8 @@ export interface AppTableOptions {
   initial?: AppTableRow[];
   /** 「現在のアプリ」ボタンに入れる既定アプリ ID（指定時のみボタン表示） */
   currentAppId?: string;
+  /** 「現在のアプリ」ボタンで一緒に入れるゲスト ID（ゲストスペースの画面のとき） */
+  currentGuestId?: string;
   appPlaceholder?: string;
   guestPlaceholder?: string;
   /** 常に表示しておく最小行数（既定 1）。これ以下は削除せずクリアする */
@@ -1235,10 +1237,11 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     curBtn.title = '今開いているアプリのIDを空き行に入れます';
     curBtn.addEventListener('click', () => {
       const id = String(opts.currentAppId).trim();
-      if (rows.some((r) => r.app.value.trim() === id)) return;
+      const guestId = String(opts.currentGuestId || '').trim();
+      if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guestId)) return;
       const empty = rows.find((r) => !r.app.value.trim());
-      if (empty) { empty.app.value = id; setAppName(empty, ''); empty.app.focus(); }
-      else insertRow(rows.length, id, '', true);
+      if (empty) { empty.app.value = id; empty.guest.value = guestId; setAppName(empty, ''); empty.app.focus(); }
+      else insertRow(rows.length, id, guestId, true);
       emitChange();
     });
     foot.appendChild(curBtn);

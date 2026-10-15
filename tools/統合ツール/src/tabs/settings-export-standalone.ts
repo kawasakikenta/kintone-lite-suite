@@ -1,7 +1,7 @@
 'use strict';
 
 import { SECTION_DEFS } from '../constants.js';
-import { esc, downloadText, downloadBlob, selectedScopeKeys, buildExportFilename, buildAppFilenameLabel, appLabelFromBundle, extractAppNameFromBundle } from '../utils.js';
+import { esc, downloadText, downloadBlob, selectedScopeKeys, buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle } from '../utils.js';
 import { fetchBundle, buildApiPrefix, apiGet, fetchAppsInSpace } from '../api.js';
 import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
 import { loadJSZipLite } from '../jszipLoader.js';
@@ -11,8 +11,30 @@ const APP_SEARCH_LIMIT = 100;
 
 /** 設定一括取得のファイル名ラベル。1アプリならアプリ名(appID)、複数なら「N件」。 */
 function settingsExportLabel(bundles: any[]): string {
-  if (bundles.length === 1) return appLabelFromBundle(bundles[0]);
+  if (bundles.length === 1) return buildAppFilenameLabel(bundles[0].appId, bundleAppName(bundles[0]));
   return `${bundles.length}件`;
+}
+
+/** アプリ設定を取得しない（または失敗した）場合は、アプリ情報セクションのアプリ名で補う。 */
+function bundleAppName(bundle: any): string {
+  return extractAppNameFromBundle(bundle) || String(bundle?.sections?.appInfo?.name || '').trim();
+}
+
+function sectionLabel(key: string): string {
+  return SECTION_DEFS.find((s) => s.key === key)?.label || key;
+}
+
+/** 失敗理由の先頭行（API コンテキスト行を除く）を、結果表に収まる長さで返す。 */
+function firstErrorLine(error: unknown): string {
+  const text = String((error as any)?.message || error || '');
+  const line = text.split('\n').map((s) => s.trim()).find(Boolean) || '理由不明';
+  return line.length > 80 ? `${line.slice(0, 80)}…` : line;
+}
+
+/** JS/CSS 設定で、本文を取得せず fileKey のみ記録したファイル数（サイズ上限・非テキスト等）。 */
+function omittedCustomizeBodyCount(bundle: any): number {
+  const files = bundle?.sections?.customizeSettings?._partial?.files;
+  return Array.isArray(files) ? files.length : 0;
 }
 
 function parseAppIdList(text) {
@@ -40,14 +62,14 @@ export function renderSettingsExportSummaryHtml(rows, scopes) {
     <td>${esc(r.guestId ? `guest:${r.guestId}` : '通常')}</td>
     <td>${esc(String(r.okCount))}</td>
     <td>${esc(String(r.ngCount))}</td>
-    <td>${esc(r.note || '-')}</td>
+    <td style="overflow-wrap:anywhere">${esc(r.note || '-')}</td>
   </tr>`
     )
     .join('');
   return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || '-')}</div>
     <table style="width:100%;font-size:11px;border-collapse:collapse">
-      <thead><tr><th style="text-align:left;padding:4px">アプリID</th><th>ゲスト</th><th>取得OK</th><th>取得NG</th><th>メモ</th></tr></thead>
+      <thead><tr><th scope="col" style="text-align:left;padding:4px">アプリID</th><th scope="col">ゲスト</th><th scope="col">取得OK</th><th scope="col">取得NG</th><th scope="col">メモ</th></tr></thead>
       <tbody>${body || '<tr><td colspan="5">結果なし</td></tr>'}</tbody>
     </table>
   `;
@@ -117,6 +139,8 @@ export async function runSettingsExportListSpaceAppsStandalone(
 ): Promise<Array<{ appId: string; name: string }>> {
   const sid = String(spaceId || '').trim();
   if (!/^\d+$/.test(sid)) throw new Error('スペースIDを数値で入力してください');
+  const guest = String(guestId || '').trim();
+  if (guest && !/^\d+$/.test(guest)) throw new Error(`ゲストIDは数値で入力してください: ${guest}`);
   setStatus(`スペース ${sid} のアプリ一覧を取得中...`);
   const apps = await fetchAppsInSpace(sid, guestId);
   if (!apps.length) {
@@ -188,6 +212,10 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
 
   const preview = !!opts.preview;
 
+  // ZIP は全アプリの取得後に生成する。JSZip を読み込めない環境（CSP・ネットワーク制限）では、
+  // 時間のかかる取得を始める前に中止して、取得結果を無駄にしない。
+  const JSZipCtor = mode === 'zip' ? await loadJSZipLite() : null;
+
   const bundles = [];
   const rows = [];
   for (let i = 0; i < targets.length; i++) {
@@ -215,17 +243,27 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
 
     let okCount = 0;
     let ngCount = 0;
+    const failedKeys: string[] = [];
     for (const key of scopes) {
       const sec = bundle.sections[key];
-      if (sec && sec._fetchError) ngCount += 1;
+      if (sec && sec._fetchError) { ngCount += 1; failedKeys.push(key); }
       else okCount += 1;
     }
+    const omittedBodies = omittedCustomizeBodyCount(bundle);
+    const noteParts: string[] = [];
+    if (ngCount === scopes.length) {
+      noteParts.push(`アプリ取得失敗: ${firstErrorLine(bundle.sections[failedKeys[0]]._fetchError)}`);
+    } else if (ngCount) {
+      noteParts.push(`一部セクション取得失敗あり: ${failedKeys.map(sectionLabel).join('、')}`);
+    }
+    if (omittedBodies) noteParts.push(`JS/CSS本文を省略したファイル ${omittedBodies}件`);
     rows.push({
       appId,
       guestId,
       okCount,
       ngCount,
-      note: ngCount === scopes.length ? 'アプリ取得失敗' : ngCount ? '一部セクション取得失敗あり' : 'OK'
+      omittedBodies,
+      note: noteParts.join(' / ') || 'OK'
     });
   }
 
@@ -243,18 +281,20 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
 
   const failedSections = rows.reduce((sum, row) => sum + row.ngCount, 0);
   const failureNote = failedSections ? `。${rows.filter(row => row.ngCount > 0).length}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : '';
+  const omittedBodies = rows.reduce((sum, row) => sum + row.omittedBodies, 0);
+  const omittedNote = omittedBodies ? `。JS/CSSファイル ${omittedBodies}件は本文を取得できず fileKey のみ記録しています（結果表を確認してください）` : '';
+  const hasWarning = failedSections > 0 || omittedBodies > 0;
 
   if (mode === 'zip') {
-    const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
     const entries = bundles.map((bundle, i) => {
       const guestId = targets[i].guestId;
       const suffix = `${guestId ? `_ゲスト${guestId}` : ''}${preview ? '_プレビュー' : '_本番'}`;
-      const file = `${buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle))}${suffix}.json`;
+      const file = `${buildAppFilenameLabel(bundle.appId, bundleAppName(bundle))}${suffix}.json`;
       const failedSections = scopes.filter((key) => bundle.sections?.[key]?._fetchError);
       return {
         appId: String(bundle.appId),
-        appName: extractAppNameFromBundle(bundle) || '',
+        appName: bundleAppName(bundle),
         guestId,
         file,
         fetchedAt: bundle.fetchedAt || '',
@@ -290,11 +330,11 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     }
     const zipBlob = await zip.generateAsync({ type: 'blob' });
     downloadBlob(buildExportFilename('設定一括取得', 'zip', { appLabel: settingsExportLabel(bundles) }), zipBlob);
-    setStatus(`設定一括取得ZIPを保存しました（${bundles.length}アプリ）${failureNote}`, failedSections > 0);
+    setStatus(`設定一括取得ZIPを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
     return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
   }
 
   downloadText(buildExportFilename('設定一括取得', 'json', { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), 'application/json');
-  setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}`, failedSections > 0);
+  setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
   return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
 }

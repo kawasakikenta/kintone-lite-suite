@@ -43,6 +43,18 @@ describe('quality inspection and CSV templates from API settings', () => {
     expect((await runRecordQualityStandalone(options, vi.fn()))[0].error).toContain('使えない');
     expect(fetchRecordsByQuery).toHaveBeenCalledTimes(1);
   });
+  it('normalizes leading-zero app IDs so links work and duplicates are not inspected twice', async () => {
+    await runRecordQualityStandalone({ ...options, appIdsText: '007, 7\n08' }, vi.fn());
+    expect(fetchRecordsByQuery).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fetchRecordsByQuery).mock.calls.map(call => call[1])).toEqual(['7', '8']);
+  });
+  it('reports an unexpected settings response instead of a raw TypeError', async () => {
+    vi.mocked(apiGet).mockResolvedValue(null);
+    await expect(runLoadQualityFieldsStandalone(options)).rejects.toThrow(/応答が不正/);
+    expect((await runRecordQualityStandalone(options, vi.fn()))[0].error).toContain('応答が不正');
+    expect(fetchRecordsByQuery).not.toHaveBeenCalled();
+    await expect(runCsvTemplateStandalone(options, vi.fn())).rejects.toThrow(/応答が不正/);
+  });
   it('rejects invalid connection values before any API call', async () => {
     await expect(runRecordQualityStandalone({ ...options, guestId: '../' }, vi.fn())).rejects.toThrow(/ゲストID/);
     await expect(runCsvTemplateStandalone({ appIdsText: '', guestId: '' }, vi.fn())).rejects.toThrow(/対象アプリ/);

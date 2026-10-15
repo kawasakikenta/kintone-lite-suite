@@ -125,6 +125,8 @@ export interface MergeReflectPresetsResult {
   presets: ReflectPreset[];
   added: number;
   replaced: number;
+  /** 上限件数を超えたため保持できなかった件数（取り込み分・既存分の合計） */
+  dropped: number;
 }
 
 /**
@@ -139,9 +141,12 @@ export function mergeReflectPresets(
   const base = (Array.isArray(existing) ? existing : [])
     .map(normalizeReflectPreset)
     .filter((p): p is ReflectPreset => p !== null);
+  const seenIncoming = new Set<string>();
+  // 取り込みファイル内で同名が重複していたら、先に現れた（新しい）ものだけを残す。
   const incomingList = (Array.isArray(incoming) ? incoming : [])
     .map(normalizeReflectPreset)
-    .filter((p): p is ReflectPreset => p !== null);
+    .filter((p): p is ReflectPreset => p !== null)
+    .filter((p) => !seenIncoming.has(p.name) && !!seenIncoming.add(p.name));
   const incomingNames = new Set(incomingList.map((p) => p.name));
   let replaced = 0;
   const kept: ReflectPreset[] = [];
@@ -149,10 +154,12 @@ export function mergeReflectPresets(
     if (incomingNames.has(preset.name)) { replaced += 1; continue; }
     kept.push(preset);
   }
-  const merged = [...incomingList, ...kept].slice(0, Math.max(0, limit));
+  const all = [...incomingList, ...kept];
+  const merged = all.slice(0, Math.max(0, limit));
   return {
     presets: merged,
     added: incomingList.length - replaced,
-    replaced
+    replaced,
+    dropped: all.length - merged.length
   };
 }

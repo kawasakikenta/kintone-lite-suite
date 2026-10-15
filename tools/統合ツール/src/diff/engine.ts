@@ -234,6 +234,23 @@ export function decodeExactIgnorePathRule(rule) {
   }
 }
 
+/**
+ * 画面・出力に載せる無視ルール 1 件分の表示用文字列。
+ * UI が追加する path: 形式はパーセントエンコードされているため、読める文字へ戻す。
+ */
+export function formatIgnoreRuleForDisplay(rule) {
+  const exactPath = decodeExactIgnorePathRule(rule);
+  return exactPath == null ? String(rule ?? '') : `${EXACT_IGNORE_PATH_PREFIX}${exactPath}`;
+}
+
+/** 無視ルールの入力テキスト全体を、区切りや他のルールを保ったまま表示用にする。 */
+export function formatIgnoreRulesTextForDisplay(text) {
+  return String(text ?? '').replace(/[^\n\r,、，;；]+/g, (token) => {
+    const [, leading = '', body = '', trailing = ''] = /^(\s*)([\s\S]*?)(\s*)$/.exec(token) || [];
+    return `${leading}${formatIgnoreRuleForDisplay(body)}${trailing}`;
+  });
+}
+
 function tokenLooksLikePath(token) {
   return token.includes('.') || token.includes('[') || SECTION_DEFS.some((section) => normalizeIgnoreToken(section.key) === normalizeIgnoreToken(token));
 }

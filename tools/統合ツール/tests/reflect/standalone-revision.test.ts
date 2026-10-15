@@ -102,6 +102,8 @@ describe('lite preview reflection revisions', () => {
     const result = await server.apply({ stopOnError: false });
     expect(result.sections.map((entry) => entry.status)).toEqual(['ng', 'pending']);
     expect(result.sections[0].message).toContain('revision 競合');
+    expect(result.sections[0].message).toContain('フィールド追加 まで書き込み済み');
+    expect(result.logs.join('\n')).toContain('フィールド追加 まで書き込み済み');
     expect(server.writes().map(([url, method, body]) => [url, method, body.revision])).toEqual([
       ['/k/v1/preview/app/form/fields.json', 'POST', '10'],
       ['/k/v1/preview/app/form/fields.json', 'PUT', '11']

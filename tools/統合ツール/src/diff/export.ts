@@ -18,7 +18,9 @@ import {
   getActiveDiffNormalizationLabels, normalizeSectionForCompare,
   detectProcessStateRenames,
   expandSubtableRowsForDisplay,
-  expandEntityRowsForDisplay
+  expandEntityRowsForDisplay,
+  formatIgnoreRuleForDisplay,
+  formatIgnoreRulesTextForDisplay
 } from './engine.js';
 import { summarizeSeverity, extractFieldPathInfo, getFieldRowPayload } from './enrich.js';
 import { buildIgnoreKeySuggestions, getFilteredDiffRowsWithoutSectionFilter, getFavoriteDiffRows } from './filter.js';
@@ -1359,10 +1361,40 @@ function mdLookupLabel(map, value) {
 }
 
 function mdEsc(value) {
+  // `<` はHTMLタグとして解釈・実行されないよう `&lt;`、`*` は式（単価*数量*税率 など）が強調表示に化けないよう `\*` にする。
+  // 改行の `<br>` は最後に付けるため、ここで作った `<` は escape されない。
   return decodeHtmlEntities(value)
     .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')
+    .replace(/\*/g, '\\*')
+    .replace(/</g, '&lt;')
     .replace(/\r?\n/g, '<br>');
+}
+
+/** 表のセル以外（箇条書き・見出し・引用）に入れる文字列を1行にし、HTML・強調として解釈されないようにする。 */
+function mdLine(value) {
+  return decodeHtmlEntities(value)
+    .replace(/\s*\r?\n\s*/g, ' ')
+    .replace(/\*/g, '\\*')
+    .replace(/</g, '&lt;')
+    .trim();
+}
+
+/** 任意の文字列をインラインコードにする。文字列中のバッククォートで途中で閉じないよう囲みを調整する。 */
+function mdCode(value) {
+  const text = String(value ?? '').replace(/\s*\r?\n\s*/g, ' ').trim();
+  const longest = Math.max(0, ...(text.match(/`+/g) || []).map((run) => run.length));
+  const fence = '`'.repeat(longest + 1);
+  return longest ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`;
+}
+
+/** GitHub 系レンダラーの見出しアンカー（記号を除き、小文字化し、空白を - にする）。目次リンク用。 */
+function mdAnchor(label) {
+  return String(label || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}\p{Pc}\s-]/gu, '')
+    .trim()
+    .replace(/\s+/g, '-');
 }
 
 function mdFieldTypeLabel(type) {
@@ -1510,7 +1542,7 @@ function mdRenderFieldSettings(sec: any) {
   ));
   subtables.forEach((tbl: any) => {
     parts.push('');
-    parts.push(`#### テーブル: \`${tbl.code}\` — ${stripHtmlToText(tbl.label || '')}`);
+    parts.push(`#### テーブル: \`${tbl.code}\` — ${mdLine(stripHtmlToText(tbl.label || ''))}`);
     parts.push('');
     const subRows = (Object.values(tbl.fields || ({} as any)) as any[]).map((f: any) => [
       f.code || '',
@@ -1533,7 +1565,7 @@ function mdRenderLayoutItem(item, depth = 0) {
   if (!item) return out;
   if (item.type === 'ROW') {
     const codes = (item.fields || []).map((f) => {
-      if (f.type === 'LABEL') return `[ラベル]${stripHtmlToText(f.label || '')}`;
+      if (f.type === 'LABEL') return `[ラベル]${mdLine(stripHtmlToText(f.label || ''))}`;
       if (f.type === 'SPACER') return `[スペース${f.elementId ? `:${f.elementId}` : ''}]`;
       if (f.type === 'HR') return '[罫線]';
       const width = f.size?.width;
@@ -1544,7 +1576,7 @@ function mdRenderLayoutItem(item, depth = 0) {
   } else if (item.type === 'SUBTABLE') {
     out.push(`${indent}- テーブル: \`${item.code}\``);
   } else if (item.type === 'GROUP') {
-    out.push(`${indent}- グループ: \`${item.code}\` — ${stripHtmlToText(item.label || '')}`);
+    out.push(`${indent}- グループ: \`${item.code}\` — ${mdLine(stripHtmlToText(item.label || ''))}`);
     (item.layout || []).forEach((child) => {
       out.push(...mdRenderLayoutItem(child, depth + 1));
     });
@@ -1674,7 +1706,7 @@ function mdRenderCustomizeSettings(sec) {
         if (item.type === 'URL') src = item.url || '';
         else if (item.file) src = `ファイル: ${item.file.name || item.file.fileKey || ''}`;
         const typeLabel = mdLookupLabel(MD_RESOURCE_TYPE_LABELS, item.type);
-        parts.push(`  - ${typeLabel || '(種別不明)'}: ${src}`);
+        parts.push(`  - ${typeLabel || '(種別不明)'}: ${mdLine(src)}`);
       });
     });
     parts.push('');
@@ -1740,7 +1772,7 @@ function mdRenderRecordPermissions(sec) {
   const rights = sec?.rights || [];
   const parts: string[] = [];
   rights.forEach((r, idx) => {
-    parts.push(`#### 条件 ${idx + 1}${r.filterCond ? `: \`${r.filterCond}\`` : ''}`);
+    parts.push(`#### 条件 ${idx + 1}${r.filterCond ? `: ${mdCode(r.filterCond)}` : ''}`);
     parts.push('');
     parts.push(mdTable(
       ['対象', '閲覧', '編集', '削除'],
@@ -1790,7 +1822,7 @@ function mdRenderReminderNotifications(sec) {
   const list = sec?.notifications || [];
   const parts: string[] = [];
   if (sec?.timezone) {
-    parts.push(`- タイムゾーン: ${sec.timezone}`);
+    parts.push(`- タイムゾーン: ${mdLine(sec.timezone)}`);
     parts.push('');
   }
   parts.push(mdTable(
@@ -1903,6 +1935,11 @@ function mdDesignReviewPoints(bundle: any) {
   return points.length ? points.join('\n') : '- 特に目立つ確認ポイントはありません。';
 }
 
+/** `_fetchError` / `_partial` 以外の本体があるか（一覧は取得できたが付随情報の取得に失敗した場合など）。 */
+function mdSectionHasData(sec: any): boolean {
+  return !!sec && typeof sec === 'object' && Object.keys(sec).some((key) => key !== '_fetchError' && key !== '_partial');
+}
+
 function mdDesignSectionRows(bundle: any) {
   const sections = bundle?.sections || ({} as any);
   return SECTION_DEFS
@@ -1910,6 +1947,7 @@ function mdDesignSectionRows(bundle: any) {
     .map((def): string[] => {
       const sec = sections[def.key];
       let count: number | string = '';
+      if (sec?._fetchError && !mdSectionHasData(sec)) return [def.label, def.key, '取得失敗'];
       if (def.key === 'fieldSettings') count = Object.keys(sec?.properties || ({} as any)).length;
       else if (def.key === 'viewSettings') count = Object.keys(sec?.views || ({} as any)).length;
       else if (def.key === 'reportSettings') count = Object.keys(sec?.reports || ({} as any)).length;
@@ -1939,6 +1977,8 @@ function mdFetchedAt(value: unknown): string {
 export interface BundleToMarkdownOptions {
   /** 各セクションの末尾に API レスポンスの生データ（折りたたみ）を付ける。既定 true */
   rawJson?: boolean;
+  /** 先頭の表に取得日時の行を出す。差分比較では毎回異なる値がノイズになるため false にできる。既定 true */
+  fetchedAt?: boolean;
 }
 
 export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions = {}) {
@@ -1949,7 +1989,7 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
   lines.push('# kintone アプリ設計書');
   lines.push('');
   if (appName) {
-    lines.push(`> ${appName}`);
+    lines.push(`> ${mdLine(appName)}`);
     lines.push('');
   }
   const failedSections = SECTION_DEFS.filter((def) => sections[def.key]?._fetchError);
@@ -1958,7 +1998,7 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
     ['アプリ名', appName || '（取得なし）'],
     ['ゲストスペースID', bundle.guestId || '(通常空間)'],
     ['取得環境', bundle.preview ? 'プレビュー（未公開の設定）' : '本番（運用中の設定）'],
-    ['取得日時', mdFetchedAt(bundle.fetchedAt)],
+    ...(options.fetchedAt === false ? [] : [['取得日時', mdFetchedAt(bundle.fetchedAt)]]),
     ['取得できなかったセクション', failedSections.length ? failedSections.map((def) => def.label).join('、') : 'なし']
   ]));
   lines.push('');
@@ -1968,8 +2008,7 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
     lines.push('## 目次');
     lines.push('');
     available.forEach((def) => {
-      const slug = def.label.replace(/\s+/g, '-');
-      lines.push(`- [${def.label}](#${slug})`);
+      lines.push(`- [${def.label}](#${mdAnchor(def.label)})`);
     });
     lines.push('');
   }
@@ -2000,6 +2039,13 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
     if (!sec) continue;
     lines.push(`## ${def.label}`);
     lines.push('');
+    if (sec._fetchError) {
+      // 取得に失敗したセクションを「0件」や「データなし」と読み違えないよう、失敗を明示する
+      lines.push(`> ⚠ 取得できませんでした: ${String(sec._fetchError).replace(/\s*\r?\n\s*/g, ' ')}`);
+      lines.push('');
+      // 付随情報（JS/CSS本文・プラグイン設定など）だけ失敗した場合は、取得できた本体を捨てずに続けて出す
+      if (!mdSectionHasData(sec)) continue;
+    }
     const renderer = MD_SECTION_RENDERERS[def.key];
     let rendered = '';
     if (renderer) {
@@ -2546,7 +2592,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .map((token) => token.trim())
     .filter(Boolean))];
   const appliedIgnoreSummary = appliedIgnoreTokens.length
-    ? `比較時の無視キー ${appliedIgnoreTokens.length}件: ${appliedIgnoreTokens.join('、')}`
+    ? `比較時の無視キー ${appliedIgnoreTokens.length}件: ${appliedIgnoreTokens.map(formatIgnoreRuleForDisplay).join('、')}`
     : '比較時の無視キー 0件（なし）';
   const appliedNormalizationSummary = reportMeta.normalizationLabels.length
     ? `比較時の正規化 ${reportMeta.normalizationLabels.length}件: ${reportMeta.normalizationLabels.join('、')}`
@@ -7855,7 +7901,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .report-fact-grid span{align-self:center;color:var(--fg);font-size:12px;font-weight:750;line-height:1.5}
     .report-fact-grid strong{grid-row:1/3;grid-column:2;align-self:center;font-size:24px;font-variant-numeric:tabular-nums}
     .report-fact-grid small{color:var(--muted);font-size:11px;line-height:1.5}
-    .report-meta-line{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;line-height:1.5}
+    .report-meta-line{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;min-width:0;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;line-height:1.5}
+    .report-meta-line>span{min-width:0;overflow-wrap:anywhere}
     .report-workspace{display:grid;grid-template-columns:minmax(248px,282px) minmax(0,1fr);align-items:start;gap:16px;margin-top:16px;margin-bottom:36px}
     .report-workspace>aside{position:sticky;top:12px;width:auto;min-width:0;height:calc(100vh - 24px);max-height:calc(100vh - 24px);border:1px solid var(--border);border-radius:16px;background:var(--sidebar);overflow:auto;box-shadow:none;backdrop-filter:none}
     .report-workspace>main{min-width:0;padding:0;overflow:visible}
@@ -8155,7 +8202,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
         <p class="adv-note">出力前と同じ条件をこのレポート上でも選択できます。比較のやり直しは行わず、該当する差分行を表示から除外します。</p>
         <span class="field-label">無視キー（追加）</span>
         <textarea id="extraIgnoreKeys" class="adv-textarea" rows="2" placeholder="無視キー（カンマ区切り）" aria-label="追加の無視キー"></textarea>
-        ${reportMeta.ignoreKeys ? `<p class="adv-baked">比較時に適用済みの無視キー: ${esc(reportMeta.ignoreKeys)}</p>` : ''}
+        ${reportMeta.ignoreKeys ? `<p class="adv-baked">比較時に適用済みの無視キー: ${esc(formatIgnoreRulesTextForDisplay(reportMeta.ignoreKeys))}</p>` : ''}
         <div class="adv-checks">
           ${advPresetChecksHtml}
         </div>

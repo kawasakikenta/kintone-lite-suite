@@ -58,6 +58,7 @@ npm run test:er-compare
 ## 資料
 
 - [全11ツールの改善と検証結果](docs/lite-suite-improvements.md) — 入力検証、対象変更時の表示、部分失敗への対応、3回の見直し
+- [全11ツールの5回レビュー](docs/lite-suite-review-5rounds.md) — 観点別の見直し、ツール別の修正、検証結果、未対応の点
 - [技術構成・ライブラリ一覧・設計資料](docs/technology-and-architecture.md) — アーキテクチャ、npm / CDN 依存、データフロー、ビルド・保守方針
 - [プレビュー反映の使い方と反映範囲](docs/preview-reflection.md) — 4段階の確認、既存設定の保持、実行前検査、再試行
 - [差分比較ロジック説明](docs/diff-comparison-logic.md) — 比較方向、取得完全性、無視・正規化、配列の対応付け、HTML / Excel出力の違い

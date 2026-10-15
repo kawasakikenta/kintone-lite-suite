@@ -70,37 +70,48 @@ async function loadScriptWithFallback(urls: string[]): Promise<void> {
   throw lastErr || new Error('Mermaid.js の読み込みに失敗しました');
 }
 
+const initializedMermaid = new WeakSet<object>();
+
 async function ensureMermaid(): Promise<any> {
   const w = window as any;
-  if (w.mermaid) return w.mermaid;
-  if (!mermaidLoadPromise) {
-    mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS).catch((err: any) => {
-      mermaidLoadPromise = null;
-      throw err;
-    });
+  if (!w.mermaid) {
+    if (!mermaidLoadPromise) {
+      mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS).catch((err: any) => {
+        mermaidLoadPromise = null;
+        throw err;
+      });
+    }
+    await mermaidLoadPromise;
   }
-  await mermaidLoadPromise;
-  if (w.mermaid) {
+  if (!w.mermaid) throw new Error('Mermaid.js の読み込みに失敗しました');
+  // kintone 側のカスタマイズが先に mermaid を読み込んでいた場合も、ステータス名・アクション名を
+  // 描画するので securityLevel: 'strict' を必ず適用する（初期化は 1 回だけ）
+  if (!initializedMermaid.has(w.mermaid) && typeof w.mermaid.initialize === 'function') {
     w.mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'strict' });
-    return w.mermaid;
+    initializedMermaid.add(w.mermaid);
   }
-  throw new Error('Mermaid.js の読み込みに失敗しました');
+  return w.mermaid;
+}
+
+/** HTML タグとして解釈されて表示名が欠ける `<` を全角にする（`<10万円` のようにタグにならない `<` は残す）。 */
+function neutralizeHtmlTagOpen(text: string): string {
+  return text.replace(/<(?=[A-Za-z/!?])/g, '＜');
 }
 
 /** Mermaid の `state "..." as id` に入れる表示名。ダブルクォートと改行は使えないので置換する。 */
 function mermaidDisplayName(name: string): string {
-  return String(name ?? '')
+  return neutralizeHtmlTagOpen(String(name ?? '')
     .replace(/[\r\n]+/g, ' ')
-    .replace(/"/g, "'")
+    .replace(/"/g, "'"))
     .trim() || '(名称なし)';
 }
 
 /** 遷移ラベル（`A --> B : label`）。改行・コロン・セミコロンは構文と衝突するので置換する。 */
 function mermaidTransitionLabel(name: string): string {
-  return String(name ?? '')
+  return neutralizeHtmlTagOpen(String(name ?? '')
     .replace(/[\r\n]+/g, ' ')
     .replace(/[:;]/g, '-')
-    .replace(/[#"]/g, '')
+    .replace(/[#"]/g, ''))
     .trim() || '(名称なし)';
 }
 
@@ -161,8 +172,12 @@ export function buildProcessMermaidSource(states: any, actions: any[], highlight
 export function findInitialState(states: any, actions: any[]): string | null {
   const names = Object.keys(states || {});
   if (!names.length) return null;
+  // Number(null) や Number('') は 0 になり、index 未設定の状態を開始状態に取り違えるため数値化しない
   const indexed = names
-    .map((name) => ({ name, index: Number(states?.[name]?.index) }))
+    .map((name) => {
+      const raw = states?.[name]?.index;
+      return { name, index: raw == null || String(raw).trim() === '' ? NaN : Number(raw) };
+    })
     .filter((s) => Number.isFinite(s.index));
   if (indexed.length === names.length) {
     indexed.sort((a, b) => a.index - b.index);
@@ -184,7 +199,7 @@ export function validateProcessConnection(appId: unknown, guestId: unknown = '')
   return { appId: app, guestId: guest };
 }
 
-function renderFallbackFlowHtml(states: any, actions: any, highlightState: string | undefined) {
+function renderFallbackFlowHtml(states: any, actions: any, highlightState: string | undefined, reason: string) {
   const stateList = Object.keys(states || ({} as any));
   const transitions = (actions || []).map((a: any) => {
     const from = esc(a.from || '');
@@ -201,7 +216,7 @@ function renderFallbackFlowHtml(states: any, actions: any, highlightState: strin
   }).join('');
   return `
     <div style="color:#334155;font-size:12px;line-height:1.5">
-      <div style="margin-bottom:8px;color:#b45309">Mermaid.js を読み込めなかったため、簡易表示に切り替えました。</div>
+      <div style="margin-bottom:8px;color:#b45309">${esc(reason)}</div>
       <div style="margin-bottom:8px">${stateHtml || '<span style="color:#94a3b8">状態なし</span>'}</div>
       <table style="width:100%;border-collapse:collapse;font-size:12px">
         <thead><tr><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">From</th><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">Action</th><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">To</th></tr></thead>
@@ -213,13 +228,13 @@ function renderFallbackFlowHtml(states: any, actions: any, highlightState: strin
 
 /**
  * @param {{ appId: string, guestId?: string }} source
- * @param {(msg: string, err?: boolean) => void} setStatus
+ * @param {(msg: string, err?: boolean, tone?: 'ok' | 'warn') => void} setStatus err を指定しない通知は処理中表示になるため、完了後の通知は tone を渡す
  * @param {{ textEl: HTMLTextAreaElement, viewEl: HTMLElement, simUi?: { container: HTMLElement, current: HTMLElement, select: HTMLSelectElement, startBtn: HTMLButtonElement, execBtn: HTMLButtonElement }, isCurrent?: () => boolean }} targets
  */
 export async function runRenderProcessFlowStandalone(source, setStatus, targets) {
   const isCurrent = typeof targets?.isCurrent === 'function' ? targets.isCurrent : () => true;
-  const commitStatus = (message: string, error?: boolean) => {
-    if (isCurrent()) setStatus(message, error);
+  const commitStatus = (message: string, error?: boolean, tone?: 'ok' | 'warn') => {
+    if (isCurrent()) setStatus(message, error, tone);
   };
   if (!isCurrent()) return null;
   const connection = validateProcessConnection(source.appId, source.guestId);
@@ -229,9 +244,12 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
 
   const res = await apiGet(prefix, '/app/status.json', { app });
   if (!isCurrent()) return null;
+  // 空・非オブジェクトの応答を「プロセス管理は無効」と取り違えず、TypeError でもなく原因が分かる形で止める
+  if (!res || typeof res !== 'object') throw new Error('プロセス管理の設定を取得できませんでした（想定外の応答形式です）');
 
   if (!res.enable) {
-    targets.textEl.value = 'プロセス管理は無効です。';
+    // Mermaid ソースではない文章を入れると「コピー」「.mmd で保存」がそのまま書き出してしまう
+    targets.textEl.value = '';
     targets.viewEl.innerHTML = '<div style="color:#64748b">プロセス管理は無効です</div>';
     if (targets.simUi) targets.simUi.container.style.display = 'none';
     commitStatus('プロセス管理は無効です');
@@ -244,23 +262,29 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
     && String(a.from).trim() && String(a.to).trim());
   const orphanActions = rawActions.length - actions.length;
   let renderError = '';
+  let renderFailure = '';
 
   const renderMermaid = async (highlightState) => {
     if (!isCurrent()) return false;
     const md = buildProcessMermaidSource(states, actions, highlightState);
-    targets.textEl.value = md;
+    // 共有・保存するソースにはシミュレーション中の現在状態の強調を含めない
+    targets.textEl.value = highlightState ? buildProcessMermaidSource(states, actions, null) : md;
+    // 読み込み失敗と描画失敗（構文エラー・サイズ超過など）を区別して、簡易表示にした理由をそのまま示す
+    let phase = '読み込み';
     try {
       const mermaidObj = await ensureMermaid();
       if (!isCurrent()) return false;
+      phase = '描画';
       const { svg } = await mermaidObj.render('mermaid-svg-generated-' + Date.now(), md);
       if (!isCurrent()) return false;
       targets.viewEl.innerHTML = svg;
       return true;
     } catch (e) {
       if (!isCurrent()) return false;
-      targets.viewEl.innerHTML = renderFallbackFlowHtml(states, actions, highlightState);
+      renderFailure = `Mermaid.js の${phase}に失敗`;
+      targets.viewEl.innerHTML = renderFallbackFlowHtml(states, actions, highlightState, `${renderFailure}したため、簡易表示に切り替えました。`);
       renderError = e instanceof Error ? e.message : String(e);
-      commitStatus(`Mermaid.js の読み込みに失敗したため、簡易表示に切り替えました。(${renderError})`, true);
+      commitStatus(`${renderFailure}したため、簡易表示に切り替えました。(${renderError})`, true);
       return false;
     }
   };
@@ -269,9 +293,9 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
   await renderMermaid(null);
   if (!isCurrent()) return null;
   if (renderError) {
-    commitStatus(`フロー図生成完了（簡易表示。Mermaid.js の読み込みに失敗しました: ${renderError}）`, true);
+    commitStatus(`フロー図生成完了（簡易表示。${renderFailure}しました: ${renderError}）`, true);
   } else {
-    commitStatus(orphanActions ? `フロー図 生成完了（from/to 未設定のアクション ${orphanActions}件は除外）` : 'フロー図 生成完了', orphanActions > 0);
+    commitStatus(orphanActions ? `フロー図 生成完了（from/to 未設定のアクション ${orphanActions}件は除外）` : 'フロー図 生成完了', false, orphanActions > 0 ? 'warn' : undefined);
   }
 
   if (targets.simUi) {
@@ -305,13 +329,19 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
       current = findInitialState(states, actions);
       updateSim();
       if (current) {
-        commitStatus('シミュレーション開始: ' + current);
+        commitStatus('シミュレーション開始: ' + current, false, 'ok');
         await renderMermaid(current);
+      } else {
+        commitStatus('ステータスが無いためシミュレーションを開始できません', false, 'warn');
       }
     };
     execBtn.onclick = async () => {
       if (!isCurrent()) return;
-      if (select.disabled) return;
+      if (select.disabled) {
+        // 何も起きないボタンにならないよう、押せない理由を示す
+        commitStatus(current ? `「${current}」から実行できるアクションはありません（終端のステータスです）` : '先に「最初から開始」を押してください', false, 'warn');
+        return;
+      }
       const idx = Number(select.value);
       if (!Number.isFinite(idx)) return;
       // 同名アクションが複数ある場合でも、表示中の選択肢（from に一致する並び）から確実に選ぶ
@@ -319,7 +349,7 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
       if (!action) return;
       current = action.to;
       updateSim();
-      commitStatus(`アクション「${action.name}」実行 → 「${action.to}」`);
+      commitStatus(`アクション「${action.name}」実行 → 「${action.to}」`, false, 'ok');
       await renderMermaid(action.to);
     };
   }

@@ -2,7 +2,7 @@
 
 import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
 
-import { SETTINGS_EXPORT_SCOPE_DEFS, DEFAULT_APP_ID } from '../constants.js';
+import { SETTINGS_EXPORT_SCOPE_DEFS, DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import {
   runSettingsExportStandalone,
   runSettingsExportListSpaceAppsStandalone
@@ -36,7 +36,8 @@ export function mountSettingsExportLitePanel() {
   const cardTarget = makeCard({ title: '対象アプリ', number: 1 });
   const appTable = makeAppTable({
     currentAppId: String(DEFAULT_APP_ID || ''),
-    initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: '' }] : []
+    currentGuestId: DEFAULT_GUEST_ID,
+    initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : []
   });
 
   // ---- アプリ検索 / スペース取込（検索用ゲストIDで照会し、表に行を追加） ----
@@ -61,6 +62,8 @@ export function mountSettingsExportLitePanel() {
   const cardScope = makeCard({ title: '取得セクション', number: 2 });
   const chipBox = document.createElement('div');
   chipBox.className = 'kus-lp__chips';
+  chipBox.setAttribute('role', 'group');
+  chipBox.setAttribute('aria-label', '取得するセクション');
   const chips = SETTINGS_EXPORT_SCOPE_DEFS.map((s) => makeChip({ label: s.label, value: s.key, checked: true }));
   chips.forEach((c) => chipBox.appendChild(c.label));
   cardScope.body.appendChild(chipBox);
@@ -112,6 +115,8 @@ export function mountSettingsExportLitePanel() {
       guest,
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
+    // 対象アプリが無い警告は取得処理側のステータスを残し、成功メッセージで上書きしない。
+    if (!apps.length) return;
     let added = 0;
     for (const app of apps) {
       const result = appTable.putApp(app.appId, guest, { appName: app.name });

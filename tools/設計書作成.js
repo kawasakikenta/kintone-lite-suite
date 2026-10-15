@@ -247,6 +247,17 @@
     }
     return "";
   }
+  function guestIdFromKintonePath(pathname) {
+    const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ""));
+    return match ? match[1] : "";
+  }
+  function resolveDefaultGuestId() {
+    try {
+      return typeof window === "undefined" ? "" : guestIdFromKintonePath(window.location?.pathname);
+    } catch (e) {
+      return "";
+    }
+  }
   function sanitizeCustomizeResourceList(value) {
     if (!Array.isArray(value)) return [];
     const resources = [];
@@ -278,7 +289,7 @@
       mobile: buildPlatform("mobile")
     };
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -324,6 +335,7 @@
         })
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
+      DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
@@ -1133,7 +1145,7 @@ ${contextLine}`);
       }
       tasks.push(async () => {
         try {
-          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
+          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id });
           if (res && typeof res === "object") {
             plugin._config = res?.config != null ? res.config : res;
             stats.fetched += 1;
@@ -1246,12 +1258,28 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-enums.ts
+  var init_kintone_enums = __esm({
+    "src/kintone-enums.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/diff/label-dict.ts
+  var init_label_dict = __esm({
+    "src/diff/label-dict.ts"() {
+      "use strict";
+      init_kintone_enums();
+    }
+  });
+
   // src/diff/enrich.ts
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      init_label_dict();
     }
   });
 
@@ -1269,21 +1297,6 @@ ${contextLine}`);
       init_constants();
       init_state();
       root = null;
-    }
-  });
-
-  // src/kintone-enums.ts
-  var init_kintone_enums = __esm({
-    "src/kintone-enums.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/diff/label-dict.ts
-  var init_label_dict = __esm({
-    "src/diff/label-dict.ts"() {
-      "use strict";
-      init_kintone_enums();
     }
   });
 
@@ -1342,7 +1355,19 @@ ${contextLine}`);
     return map[key] || key;
   }
   function mdEsc(value) {
-    return decodeHtmlEntities(value).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+    return decodeHtmlEntities(value).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\*/g, "\\*").replace(/</g, "&lt;").replace(/\r?\n/g, "<br>");
+  }
+  function mdLine(value) {
+    return decodeHtmlEntities(value).replace(/\s*\r?\n\s*/g, " ").replace(/\*/g, "\\*").replace(/</g, "&lt;").trim();
+  }
+  function mdCode(value) {
+    const text = String(value ?? "").replace(/\s*\r?\n\s*/g, " ").trim();
+    const longest = Math.max(0, ...(text.match(/`+/g) || []).map((run) => run.length));
+    const fence = "`".repeat(longest + 1);
+    return longest ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`;
+  }
+  function mdAnchor(label) {
+    return String(label || "").toLowerCase().replace(/[^\p{L}\p{M}\p{N}\p{Pc}\s-]/gu, "").trim().replace(/\s+/g, "-");
   }
   function mdFieldTypeLabel(type) {
     const key = String(type || "").trim();
@@ -1481,7 +1506,7 @@ ${body}`;
     ));
     subtables.forEach((tbl) => {
       parts.push("");
-      parts.push(`#### テーブル: \`${tbl.code}\` — ${stripHtmlToText(tbl.label || "")}`);
+      parts.push(`#### テーブル: \`${tbl.code}\` — ${mdLine(stripHtmlToText(tbl.label || ""))}`);
       parts.push("");
       const subRows = Object.values(tbl.fields || {}).map((f) => [
         f.code || "",
@@ -1503,7 +1528,7 @@ ${body}`;
     if (!item) return out;
     if (item.type === "ROW") {
       const codes = (item.fields || []).map((f) => {
-        if (f.type === "LABEL") return `[ラベル]${stripHtmlToText(f.label || "")}`;
+        if (f.type === "LABEL") return `[ラベル]${mdLine(stripHtmlToText(f.label || ""))}`;
         if (f.type === "SPACER") return `[スペース${f.elementId ? `:${f.elementId}` : ""}]`;
         if (f.type === "HR") return "[罫線]";
         const width = f.size?.width;
@@ -1514,7 +1539,7 @@ ${body}`;
     } else if (item.type === "SUBTABLE") {
       out.push(`${indent}- テーブル: \`${item.code}\``);
     } else if (item.type === "GROUP") {
-      out.push(`${indent}- グループ: \`${item.code}\` — ${stripHtmlToText(item.label || "")}`);
+      out.push(`${indent}- グループ: \`${item.code}\` — ${mdLine(stripHtmlToText(item.label || ""))}`);
       (item.layout || []).forEach((child) => {
         out.push(...mdRenderLayoutItem(child, depth + 1));
       });
@@ -1636,7 +1661,7 @@ ${body}`;
           if (item.type === "URL") src = item.url || "";
           else if (item.file) src = `ファイル: ${item.file.name || item.file.fileKey || ""}`;
           const typeLabel = mdLookupLabel(MD_RESOURCE_TYPE_LABELS, item.type);
-          parts.push(`  - ${typeLabel || "(種別不明)"}: ${src}`);
+          parts.push(`  - ${typeLabel || "(種別不明)"}: ${mdLine(src)}`);
         });
       });
       parts.push("");
@@ -1697,7 +1722,7 @@ ${body}`;
     const rights = sec?.rights || [];
     const parts = [];
     rights.forEach((r, idx) => {
-      parts.push(`#### 条件 ${idx + 1}${r.filterCond ? `: \`${r.filterCond}\`` : ""}`);
+      parts.push(`#### 条件 ${idx + 1}${r.filterCond ? `: ${mdCode(r.filterCond)}` : ""}`);
       parts.push("");
       parts.push(mdTable(
         ["対象", "閲覧", "編集", "削除"],
@@ -1744,7 +1769,7 @@ ${body}`;
     const list = sec?.notifications || [];
     const parts = [];
     if (sec?.timezone) {
-      parts.push(`- タイムゾーン: ${sec.timezone}`);
+      parts.push(`- タイムゾーン: ${mdLine(sec.timezone)}`);
       parts.push("");
     }
     parts.push(mdTable(
@@ -1832,11 +1857,15 @@ ${body}`;
     if (sections.processSettings?.enable) points.push("- プロセス管理が有効です。ステータス、作業者、アクション条件を確認してください。");
     return points.length ? points.join("\n") : "- 特に目立つ確認ポイントはありません。";
   }
+  function mdSectionHasData(sec) {
+    return !!sec && typeof sec === "object" && Object.keys(sec).some((key) => key !== "_fetchError" && key !== "_partial");
+  }
   function mdDesignSectionRows(bundle) {
     const sections = bundle?.sections || {};
     return SECTION_DEFS.filter((def) => sections[def.key]).map((def) => {
       const sec = sections[def.key];
       let count = "";
+      if (sec?._fetchError && !mdSectionHasData(sec)) return [def.label, def.key, "取得失敗"];
       if (def.key === "fieldSettings") count = Object.keys(sec?.properties || {}).length;
       else if (def.key === "viewSettings") count = Object.keys(sec?.views || {}).length;
       else if (def.key === "reportSettings") count = Object.keys(sec?.reports || {}).length;
@@ -1868,7 +1897,7 @@ ${body}`;
     lines.push("# kintone アプリ設計書");
     lines.push("");
     if (appName) {
-      lines.push(`> ${appName}`);
+      lines.push(`> ${mdLine(appName)}`);
       lines.push("");
     }
     const failedSections = SECTION_DEFS.filter((def) => sections[def.key]?._fetchError);
@@ -1877,7 +1906,7 @@ ${body}`;
       ["アプリ名", appName || "（取得なし）"],
       ["ゲストスペースID", bundle.guestId || "(通常空間)"],
       ["取得環境", bundle.preview ? "プレビュー（未公開の設定）" : "本番（運用中の設定）"],
-      ["取得日時", mdFetchedAt(bundle.fetchedAt)],
+      ...options.fetchedAt === false ? [] : [["取得日時", mdFetchedAt(bundle.fetchedAt)]],
       ["取得できなかったセクション", failedSections.length ? failedSections.map((def) => def.label).join("、") : "なし"]
     ]));
     lines.push("");
@@ -1886,8 +1915,7 @@ ${body}`;
       lines.push("## 目次");
       lines.push("");
       available.forEach((def) => {
-        const slug = def.label.replace(/\s+/g, "-");
-        lines.push(`- [${def.label}](#${slug})`);
+        lines.push(`- [${def.label}](#${mdAnchor(def.label)})`);
       });
       lines.push("");
     }
@@ -1914,6 +1942,11 @@ ${body}`;
       if (!sec) continue;
       lines.push(`## ${def.label}`);
       lines.push("");
+      if (sec._fetchError) {
+        lines.push(`> ⚠ 取得できませんでした: ${String(sec._fetchError).replace(/\s*\r?\n\s*/g, " ")}`);
+        lines.push("");
+        if (!mdSectionHasData(sec)) continue;
+      }
       const renderer = MD_SECTION_RENDERERS[def.key];
       let rendered = "";
       if (renderer) {
@@ -3030,13 +3063,15 @@ ${body}`;
       curBtn.title = "今開いているアプリのIDを空き行に入れます";
       curBtn.addEventListener("click", () => {
         const id = String(opts.currentAppId).trim();
-        if (rows.some((r) => r.app.value.trim() === id)) return;
+        const guestId = String(opts.currentGuestId || "").trim();
+        if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guestId)) return;
         const empty = rows.find((r) => !r.app.value.trim());
         if (empty) {
           empty.app.value = id;
+          empty.guest.value = guestId;
           setAppName(empty, "");
           empty.app.focus();
-        } else insertRow(rows.length, id, "", true);
+        } else insertRow(rows.length, id, guestId, true);
         emitChange();
       });
       foot.appendChild(curBtn);
@@ -3874,6 +3909,32 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   function resolveExportSheetDefs() {
     return EXPORT_SHEET_DEFS;
   }
+  function findReferencedFieldCodes(cond, codes) {
+    const text = String(cond ?? "");
+    if (!text) return [];
+    const found = [];
+    for (const code of codes) {
+      if (!code || !text.includes(code)) continue;
+      const escaped = String(code).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`(^|[^\\p{L}\\p{N}_\\u30FB\\uFF3F])${escaped}([^\\p{L}\\p{N}_\\u30FB\\uFF3F]|$)`, "u");
+      if (re.test(text)) found.push(code);
+    }
+    return found;
+  }
+  var EXCEL_CELL_TEXT_LIMIT = 32767;
+  var EXCEL_CELL_TRUNCATED_NOTE = "…（Excelのセル上限のため省略）";
+  function clampCellText(value) {
+    if (typeof value !== "string" || value.length <= EXCEL_CELL_TEXT_LIMIT) return value;
+    return value.slice(0, EXCEL_CELL_TEXT_LIMIT - EXCEL_CELL_TRUNCATED_NOTE.length) + EXCEL_CELL_TRUNCATED_NOTE;
+  }
+  function collectAllFieldCodes(fields) {
+    const codes = /* @__PURE__ */ new Set();
+    for (const [code, f] of Object.entries(fields || {})) {
+      codes.add(code);
+      if (f?.type === "SUBTABLE" && f.fields) Object.keys(f.fields).forEach((sc) => codes.add(sc));
+    }
+    return [...codes];
+  }
   function escapeHtmlAttr(value) {
     return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
@@ -3919,7 +3980,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         return `<div style="margin-bottom:6px;"><div style="font-size:11px;font-weight:bold;color:#2E5C8A;margin:2px 0 3px;">${escapeHtmlAttr(cat.label)}</div><div style="display:flex;flex-wrap:wrap;">${rows}</div></div>`;
       }).join("");
       const fieldTypeSectionHtml = `<details id="kex-ftype-details" style="margin-top:8px;border:1px solid #eee;border-radius:6px;background:#fafafa;"><summary style="cursor:pointer;font-size:12px;font-weight:bold;color:#2E5C8A;padding:6px 8px;">「項目定義」シートに出力するフィールドタイプ</summary><div style="padding:4px 10px 8px;"><div style="font-size:11px;color:#666;margin-bottom:6px;">チェックしたタイプのみ項目定義シートに出力します（ラベル・罫線などの除外に利用）。<button type="button" id="kex-ftype-all" style="font-size:10px;padding:2px 8px;margin-left:6px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-ftype-none" style="font-size:10px;padding:2px 8px;margin-left:4px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button></div>${fieldTypeGroupsHtml}</div></details>`;
-      overlay.innerHTML = `<div role="dialog" aria-modal="true" aria-label="${escapeHtmlAttr(title)}" tabindex="-1" style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:480px;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,0.3);outline:none;"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:8px;">${escapeHtmlAttr(title)}</div><div style="font-size:12px;color:#666;margin-bottom:10px;">出力するシートを選択してください（前回設定を自動反映 / Esc=キャンセル, Ctrl+Enter=エクスポート）</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center;"><span style="font-size:11px;color:#94a3b8;margin-right:2px;">プリセット:</span>${presetBtns}</div><div style="display:flex;gap:8px;margin-bottom:8px;"><button type="button" id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button><span id="kex-count" style="margin-left:auto;align-self:center;font-size:12px;font-weight:bold;color:#2E5C8A;"></span></div><div id="kex-sheet-options" style="flex:1;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${groupsHtml}</div>${fieldTypeSectionHtml}<div id="kex-warn" style="font-size:11px;color:#b91c1c;min-height:16px;margin-top:6px;"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;"><button type="button" id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button type="button" id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
+      overlay.innerHTML = `<div role="dialog" aria-modal="true" aria-label="${escapeHtmlAttr(title)}" tabindex="-1" style="background:#fff;border-radius:12px;padding:28px;box-sizing:border-box;min-width:min(360px,calc(100vw - 32px));max-width:min(480px,calc(100vw - 32px));max-height:84vh;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,0.3);outline:none;"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:8px;">${escapeHtmlAttr(title)}</div><div style="font-size:12px;color:#666;margin-bottom:10px;">出力するシートを選択してください（前回設定を自動反映 / Esc=キャンセル, Ctrl+Enter=エクスポート）</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center;"><span style="font-size:11px;color:#94a3b8;margin-right:2px;">プリセット:</span>${presetBtns}</div><div style="display:flex;gap:8px;margin-bottom:8px;"><button type="button" id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button><span id="kex-count" style="margin-left:auto;align-self:center;font-size:12px;font-weight:bold;color:#2E5C8A;"></span></div><div id="kex-sheet-options" style="flex:1;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${groupsHtml}</div>${fieldTypeSectionHtml}<div id="kex-warn" style="font-size:11px;color:#b91c1c;min-height:16px;margin-top:6px;"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;"><button type="button" id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button type="button" id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
       doc.body.appendChild(overlay);
       const box = overlay.querySelector('[role="dialog"]');
       const optionBoxes = () => Array.from(overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]'));
@@ -4042,7 +4103,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           doc.body.appendChild(el);
         }
         el.style.zIndex = getExporterOverlayZIndex();
-        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px 48px;text-align:center;min-width:440px;"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中断</button></div></div>`;
+        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(440px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中断</button></div></div>`;
       },
       update(msg, step) {
         if (step != null) currentStep = step;
@@ -4087,6 +4148,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const lightweightMode = !!params.lightweightMode;
     const progressLabel = params.progressLabel ? String(params.progressLabel) : "";
     const suppressToast = !!params.suppressToast;
+    const usePreview = !!params.preview;
+    const onFinish = typeof params.onFinish === "function" ? params.onFinish : null;
     const CONFIG = {
       SHEETLIB_PRIMARY_URL: "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js",
       SHEETLIB_FALLBACK_URL: "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",
@@ -4369,7 +4432,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           doc.body.appendChild(el);
         }
         el.style.zIndex = getExporterOverlayZIndex2();
-        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px 48px;text-align:center;min-width:400px;"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中断</button></div></div>`;
+        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(400px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中断</button></div></div>`;
       },
       update(msg, step) {
         if (step !== void 0) UI.currentStep = step;
@@ -4655,7 +4718,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         const targets = UtilsX.ensureArray(notification.targets);
         return targets.length ? targets.map((target) => formatFieldAwareEntityDetailed(target, fieldLabelMap)).join("\n") : "-";
       }
-      if (notification?.entity) return formatFieldAwareEntityDetailed(notification.entity, fieldLabelMap);
+      if (notification?.entity) return formatFieldAwareEntityDetailed({ entity: notification.entity, includeSubs: notification.includeSubs }, fieldLabelMap);
       if (notification?.targetField) {
         const code = notification.targetField;
         const label = fieldLabelMap[code];
@@ -4714,12 +4777,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         if (!usage.has(code)) usage.set(code, /* @__PURE__ */ new Set());
         usage.get(code).add(where);
       };
+      const allCodes = collectAllFieldCodes(fields);
       const scanFilterCond = (cond, tag) => {
         if (!cond) return;
-        for (const code of Object.keys(fields)) {
-          const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(code)}([^A-Za-z0-9_]|$)`);
-          if (re.test(String(cond))) add(code, tag);
-        }
+        for (const code of findReferencedFieldCodes(cond, allCodes)) add(code, tag);
       };
       Object.entries(fields).forEach(([code, f]) => {
         const expr = f.expression || f.formula;
@@ -4793,11 +4854,18 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       }
       throw lastErr;
     }
+    const bundleGapsLogged = /* @__PURE__ */ new Set();
     async function fetchJob(name, promiseFn, sectionKey) {
       if (bundle) {
         if (!sectionKey) return null;
         const sec = (bundle.sections || {})[sectionKey];
-        return sec && !sec._fetchError ? sec : null;
+        if (sec && !sec._fetchError) return sec;
+        if (!bundleGapsLogged.has(sectionKey)) {
+          bundleGapsLogged.add(sectionKey);
+          UI.logError(`${name}（設定JSON）`, sec?._fetchError ? String(sec._fetchError) : "設定JSONにこのセクションが含まれていません");
+        }
+        const hasBody = !!sec && typeof sec === "object" && Object.keys(sec).some((key) => key !== "_fetchError" && key !== "_partial");
+        return hasBody ? sec : null;
       }
       try {
         return await apiSemaphore.run(() => retry(promiseFn));
@@ -4825,6 +4893,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         UI.show = ((msg, totalSteps) => origShow(`${prefix}${msg}`, totalSteps));
         UI.update = ((msg, step) => origUpdate(`${prefix}${msg}`, step));
       }
+      if (!returnWorkbook) window.__kusBatchCancel = false;
       UI.show("ライブラリ読み込み中...", 12);
       const { styled } = await loadSheetLib();
       const api = kintone.api;
@@ -4833,16 +4902,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         if (sourceGuestId) {
           p = p.replace("/k/v1/preview/", `/k/guest/${sourceGuestId}/v1/preview/`).replace("/k/v1/", `/k/guest/${sourceGuestId}/v1/`);
         }
-        return kintone.api.url(p, true);
+        return kintone.api.url(p, false);
       };
+      const envPath = (path) => usePreview ? path.replace("/k/v1/", "/k/v1/preview/") : path;
       UI.update(bundle ? "基本情報を設定JSONから読込中..." : "基本情報を取得中...");
       const appSettings = await fetchJob("App", () => api(apiUrl("/k/v1/app.json"), "GET", { id: APP_ID }), "appInfo");
-      const generalSettings = await fetchJob("Settings", () => api(apiUrl("/k/v1/app/settings.json"), "GET", { app: APP_ID }), "appSettings");
+      const generalSettings = await fetchJob("Settings", () => api(apiUrl(envPath("/k/v1/app/settings.json")), "GET", { app: APP_ID }), "appSettings");
       UI.update(bundle ? "フィールド・レイアウトを設定JSONから読込中..." : "フィールド・レイアウトを取得中...");
-      let fieldResp = await fetchJob("FieldsPrev", () => api(apiUrl("/k/v1/preview/app/form/fields.json"), "GET", { app: APP_ID }), "fieldSettings");
-      if (!fieldResp) fieldResp = await fetchJob("FieldsProd", () => api(apiUrl("/k/v1/app/form/fields.json"), "GET", { app: APP_ID }), "fieldSettings");
-      let layout = await fetchJob("LayoutPrev", () => api(apiUrl("/k/v1/preview/app/form/layout.json"), "GET", { app: APP_ID }), "layoutSettings");
-      if (!layout) layout = await fetchJob("LayoutProd", () => api(apiUrl("/k/v1/app/form/layout.json"), "GET", { app: APP_ID }), "layoutSettings");
+      const fieldResp = await fetchJob("Fields", () => api(apiUrl(envPath("/k/v1/app/form/fields.json")), "GET", { app: APP_ID }), "fieldSettings");
+      const layout = await fetchJob("Layout", () => api(apiUrl(envPath("/k/v1/app/form/layout.json")), "GET", { app: APP_ID }), "layoutSettings");
       const fields = filterUserFields(fieldResp?.properties || {});
       UI.update(bundle ? "レコード件数: 設定JSONには含まれないためスキップします" : "レコード件数を取得中...");
       let recordCount = null;
@@ -4853,21 +4921,21 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       }
       UI.update(bundle ? "一覧・権限・通知設定を設定JSONから読込中..." : "一覧・権限・通知設定を取得中...");
       const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif] = await Promise.all([
-        fetchJob("Views", () => api(apiUrl("/k/v1/app/views.json"), "GET", { app: APP_ID }), "viewSettings"),
-        fetchJob("Reports", () => api(apiUrl("/k/v1/app/reports.json"), "GET", { app: APP_ID }), "reportSettings"),
-        fetchJob("Status", () => api(apiUrl("/k/v1/app/status.json"), "GET", { app: APP_ID }), "processSettings"),
-        fetchJob("アプリ権限", () => api(apiUrl("/k/v1/app/acl.json"), "GET", { app: APP_ID }), "appAcl"),
-        fetchJob("レコード権限", () => api(apiUrl("/k/v1/record/acl.json"), "GET", { app: APP_ID }), "recordPermissions"),
-        fetchJob("フィールド権限", () => api(apiUrl("/k/v1/field/acl.json"), "GET", { app: APP_ID }), "fieldAcl"),
-        fetchJob("Customize", () => api(apiUrl("/k/v1/app/customize.json"), "GET", { app: APP_ID }), "customizeSettings"),
-        fetchJob("Actions", () => api(apiUrl("/k/v1/preview/app/actions.json"), "GET", { app: APP_ID }), "actionSettings"),
-        fetchJob("Plugins", () => api(apiUrl("/k/v1/app/plugins.json"), "GET", { app: APP_ID }), "pluginSettings"),
+        fetchJob("Views", () => api(apiUrl(envPath("/k/v1/app/views.json")), "GET", { app: APP_ID }), "viewSettings"),
+        fetchJob("Reports", () => api(apiUrl(envPath("/k/v1/app/reports.json")), "GET", { app: APP_ID }), "reportSettings"),
+        fetchJob("Status", () => api(apiUrl(envPath("/k/v1/app/status.json")), "GET", { app: APP_ID }), "processSettings"),
+        fetchJob("アプリ権限", () => api(apiUrl(envPath("/k/v1/app/acl.json")), "GET", { app: APP_ID }), "appAcl"),
+        fetchJob("レコード権限", () => api(apiUrl(envPath("/k/v1/record/acl.json")), "GET", { app: APP_ID }), "recordPermissions"),
+        fetchJob("フィールド権限", () => api(apiUrl(envPath("/k/v1/field/acl.json")), "GET", { app: APP_ID }), "fieldAcl"),
+        fetchJob("Customize", () => api(apiUrl(envPath("/k/v1/app/customize.json")), "GET", { app: APP_ID }), "customizeSettings"),
+        fetchJob("Actions", () => api(apiUrl(envPath("/k/v1/app/actions.json")), "GET", { app: APP_ID }), "actionSettings"),
+        fetchJob("Plugins", () => api(apiUrl(envPath("/k/v1/app/plugins.json")), "GET", { app: APP_ID }), "pluginSettings"),
         // 管理者メモ・Webhookは設定一括取得の対象外のため bundle モードでは常に取得不可
         fetchJob("AdminNotes", () => api(apiUrl("/k/v1/app/adminNotes.json"), "GET", { app: APP_ID })),
         fetchJob("Webhooks", () => api(apiUrl("/k/v1/app/webhook.json"), "GET", { app: APP_ID })),
-        fetchJob("GenNotif", () => api(apiUrl("/k/v1/app/notifications/general.json"), "GET", { app: APP_ID }), "notifications"),
-        fetchJob("RecNotif", () => api(apiUrl("/k/v1/app/notifications/perRecord.json"), "GET", { app: APP_ID }), "perRecordNotifications"),
-        fetchJob("RemNotif", () => api(apiUrl("/k/v1/app/notifications/reminder.json"), "GET", { app: APP_ID }), "reminderNotifications")
+        fetchJob("GenNotif", () => api(apiUrl(envPath("/k/v1/app/notifications/general.json")), "GET", { app: APP_ID }), "notifications"),
+        fetchJob("RecNotif", () => api(apiUrl(envPath("/k/v1/app/notifications/perRecord.json")), "GET", { app: APP_ID }), "perRecordNotifications"),
+        fetchJob("RemNotif", () => api(apiUrl(envPath("/k/v1/app/notifications/reminder.json")), "GET", { app: APP_ID }), "reminderNotifications")
       ]);
       const actions = UtilsX.safeGet(actionsResp, "actions", {});
       UI.update("関連アプリ名を解決中...");
@@ -4895,6 +4963,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         });
       });
       await Promise.all(refPromises);
+      if (!returnWorkbook && window.__kusBatchCancel) {
+        UI.hide();
+        return false;
+      }
       UI.update("Excelファイルを生成中...", 10);
       const fieldCount = Object.keys(fields).length;
       const viewCount = Object.keys(views?.views || {}).length;
@@ -4903,6 +4975,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const processActionCount = (status?.actions || []).length;
       const pluginCount = (pluginsResp?.plugins || []).length;
       const webhookCount = (webhooksResp?.webhooks || []).length;
+      const webhookCountText = webhooksResp ? `${webhookCount}` : "(取得不可)";
       const appAclCount = (appAcl?.rights || []).length;
       const recordAclCount = (recordAcl?.rights || []).length;
       const fieldAclCount = (fieldAcl?.rights || []).length;
@@ -5123,11 +5196,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       };
       const appendSheet = (name, data, meta = {}) => {
         if (!data || !Array.isArray(data.aoa) || data.aoa.length === 0) return null;
-        const ws = XLSX.utils.aoa_to_sheet(data.aoa);
-        autosizeCols(ws, data.aoa, data.options || {});
-        applyStyles(ws, data.aoa, data.options || {});
+        const aoa = data.aoa.map((row) => Array.isArray(row) ? row.map(clampCellText) : row);
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        autosizeCols(ws, aoa, data.options || {});
+        applyStyles(ws, aoa, data.options || {});
         if (data.mergeRanges) applyCellMerges(ws, data.mergeRanges);
-        applyRowHeights(ws, data.aoa, data.options || {});
+        applyRowHeights(ws, aoa, data.options || {});
         applyPageSetup(ws, data.pageSetup || {});
         const safeName = makeSafeSheetName(name, new Set(wb.SheetNames));
         XLSX.utils.book_append_sheet(wb, ws, safeName);
@@ -5189,7 +5263,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         sAoa.push(["アクション数(プロセス)", processActionCount]);
         sAoa.push(["アクション数(レコード)", Object.keys(actions || {}).length]);
         sAoa.push(["プラグイン数", pluginCount]);
-        sAoa.push(["Webhook数", webhookCount]);
+        sAoa.push(["Webhook数", webhooksResp ? webhookCount : "(取得不可)"]);
         sAoa.push(["通知(一般)件数", (genNotif?.notifications || []).length]);
         sAoa.push(["通知(レコード)件数", (recNotif?.notifications || []).length]);
         sAoa.push(["通知(リマインダー)件数", (remNotif?.notifications || []).length]);
@@ -5242,7 +5316,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         headerInfoRows.push(sAoa.length - 1);
         sAoa.push(["参照関係", `ルックアップ ${attrCounts.lookup}件 / 関連レコード ${attrCounts.reference}件 / 計算式 ${attrCounts.calc}件`]);
         sAoa.push(["権限", `アプリ ${appAclCount}件 / レコード ${recordAclCount}件 / フィールド ${fieldAclCount}件`]);
-        sAoa.push(["カスタマイズ", `JS/CSS ${customizeCount}件 / プラグイン ${pluginCount}件 / Webhook ${webhookCount}件`]);
+        sAoa.push(["カスタマイズ", `JS/CSS ${customizeCount}件 / プラグイン ${pluginCount}件 / Webhook ${webhookCountText}${webhooksResp ? "件" : ""}`]);
         sAoa.push(["プロセス", status?.enable ? `有効: ステータス ${processStateCount}件 / アクション ${processActionCount}件` : "無効"]);
         sAoa.push([]);
         sAoa.push(["出力情報"]);
@@ -6020,29 +6094,20 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         });
         Object.entries(views?.views || {}).forEach(([name, v]) => {
           if (v.filterCond) {
-            const refs = Object.keys(fields).filter((c) => {
-              const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
-              return re.test(String(v.filterCond));
-            });
+            const refs = findReferencedFieldCodes(v.filterCond, collectAllFieldCodes(fields));
             if (refs.length) addDep("(一覧)", name, "一覧絞込", refs.join(", "), UtilsX.formatFilterCond(v.filterCond), CONFIG.COLORS.INFO_BG);
           }
         });
         (status?.actions || []).forEach((a) => {
           if (a.filterCond) {
-            const refs = Object.keys(fields).filter((c) => {
-              const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
-              return re.test(String(a.filterCond));
-            });
+            const refs = findReferencedFieldCodes(a.filterCond, collectAllFieldCodes(fields));
             if (refs.length) addDep("(プロセス遷移)", a.name || "", "プロセス条件", refs.join(", "), UtilsX.formatFilterCond(a.filterCond), CONFIG.COLORS.DEPENDENCY_BG);
           }
         });
         const scanNotifRefs = (payload, tag) => {
           UtilsX.ensureArray(payload?.notifications).forEach((n, i) => {
             if (n.filterCond) {
-              const refs = Object.keys(fields).filter((c) => {
-                const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
-                return re.test(String(n.filterCond));
-              });
+              const refs = findReferencedFieldCodes(n.filterCond, collectAllFieldCodes(fields));
               if (refs.length) addDep(`(${tag}#${i + 1})`, "", `${tag}条件`, refs.join(", "), UtilsX.formatFilterCond(n.filterCond), CONFIG.COLORS.SUBTABLE_BG);
             }
           });
@@ -6123,7 +6188,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         }
       }
       UI.update(returnWorkbook ? "生成完了" : "ダウンロード中...", 12);
-      const safeAppName = String(appSettings?.name || "").replace(/[\\/:*?"<>|]/g, "_").trim();
+      const safeAppName = String(appSettings?.name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, " ").trim();
       const appLabel = safeAppName ? `${safeAppName}(app${APP_ID})` : `app${APP_ID}`;
       const filename = `設計書_${appLabel}_${nowStampZip()}.xlsx`;
       if (returnWorkbook) {
@@ -6149,6 +6214,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       };
       downloadExcel(wb, filename);
       UI.hide();
+      onFinish?.({ failedAPIs: UI.failedAPIs.slice() });
       if (!suppressToast) {
         const errorMsg = UI.failedAPIs.length > 0 ? `
 ⚠ ${UI.failedAPIs.length}件のAPI取得に失敗しました` : "";
@@ -6170,6 +6236,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   }
   function sanitizeFilename(name) {
     return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim() || "untitled";
+  }
+  function toManifestTargets(targets) {
+    return targets.map((t) => ({ appId: t.appId, guestId: t.guestId, source: t.bundle ? "settings-json" : "api" }));
   }
   async function runBatchDesignExportXlsxZip(params) {
     const sharedGuest = String(params.guestId || "").trim();
@@ -6267,6 +6336,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       results.push({ appId: "-", appName: "", filename: "", ok: false, error: "ユーザーにより中断されました" });
     }
     const successCount = results.filter((r) => r.ok).length;
+    if (successCount === 0 && cancelled) {
+      batchUi.hide();
+      return false;
+    }
     if (successCount === 0) {
       batchUi.hide();
       const detail = results.map((r) => `- App ${r.appId}: ${r.error || "(原因不明)"}`).join("\n");
@@ -6299,7 +6372,7 @@ ${detail}`);
       successCount,
       failedCount: appIds.length - successCount,
       guestIds: manifestGuestIds,
-      targets,
+      targets: toManifestTargets(targets),
       results,
       failedApis: failedAPIs
     }, null, 2));
@@ -6320,6 +6393,14 @@ ${detail}`);
     const tone = ngCount > 0 ? "warn" : "success";
     const suffix = ngCount > 0 ? `（成功 ${successCount} / 失敗 ${ngCount}）` : "";
     showToast(`✅ 設計書ZIPを保存しました${suffix}`, tone);
+    params.onFinish?.({
+      total: appIds.length,
+      successCount,
+      failedCount: ngCount,
+      cancelled,
+      failedApps: results.filter((r) => !r.ok && r.appId !== "-").map((r) => ({ appId: r.appId, error: r.error || "" })),
+      failedAPIs: failedAPIs.slice()
+    });
     return true;
   }
 
@@ -6333,6 +6414,25 @@ ${detail}`);
     if (guestId && !/^\d+$/.test(guestId)) return `${label}ゲストIDは数値で入力してください: ${guestId}`;
     return "";
   }
+  function classifyImportedDesignBundles(bundles) {
+    const entries = /* @__PURE__ */ new Map();
+    const duplicated = /* @__PURE__ */ new Set();
+    let missingAppId = 0;
+    for (const bundle of bundles || []) {
+      const appId = String(bundle?.appId || "").trim();
+      if (!appId) {
+        missingAppId += 1;
+        continue;
+      }
+      if (entries.has(appId)) duplicated.add(appId);
+      entries.set(appId, bundle);
+    }
+    return {
+      entries: [...entries.entries()].map(([appId, bundle]) => ({ appId, bundle })),
+      missingAppId,
+      duplicatedAppIds: [...duplicated]
+    };
+  }
   function validateDesignExportTargets(apps, label = "") {
     if (!Array.isArray(apps) || apps.length === 0) return `${label}アプリIDを1件以上入力してください`;
     for (let i = 0; i < apps.length; i += 1) {
@@ -6342,6 +6442,12 @@ ${detail}`);
     }
     return "";
   }
+  function failedSectionLabels(bundle) {
+    return SECTION_DEFS.filter((s) => bundle?.sections?.[s.key]?._fetchError).map((s) => s.label);
+  }
+  function failedSectionNote(labels, prefix = "") {
+    return labels.length ? `${prefix}取得できなかったセクション ${labels.length}件（${labels.join(", ")}）は設計書に「取得失敗」と記載しました` : "";
+  }
   async function resolveDesignBundle(source, side, setStatus, labelPrefix = "") {
     const appId = String(source?.appId || "").trim();
     const importedBundle = source?.importedBundle;
@@ -6349,7 +6455,7 @@ ${detail}`);
     if (validationError) throw new Error(validationError);
     const scopes = SECTION_DEFS.map((s) => s.key);
     setStatus(importedBundle ? `${labelPrefix}設定JSONから設計情報を読み込み中...` : `${labelPrefix}設計情報を取得中...`);
-    const bundle = importedBundle ? pickSettingsBundle(importedBundle, { side, appId }) : await fetchBundle({
+    const bundle = importedBundle ? pickSettingsBundle(importedBundle, { side, appId, sections: scopes }) : await fetchBundle({
       appId,
       guestId: String(source?.guestId || "").trim(),
       preview: !!source?.preview,
@@ -6373,7 +6479,8 @@ ${detail}`);
     } else {
       downloadText(buildExportFilename("設計書", "md", { appLabel }), bundleToMarkdown(bundle), "text/markdown");
     }
-    setStatus(`設計書出力完了（App ${bundle.appId}）`);
+    const note = failedSectionNote(failedSectionLabels(bundle));
+    setStatus(`設計書出力完了（App ${bundle.appId}）${note ? `。${note}` : ""}`, !!note);
   }
   async function runDesignCopyMdStandalone(source, setStatus) {
     const bundle = await resolveDesignBundle(source, "source", setStatus);
@@ -6382,7 +6489,8 @@ ${detail}`);
     if (!await copyTextToClipboard(md)) {
       throw new Error("クリップボードへのコピーに失敗しました。ブラウザのクリップボード権限を確認するか、Markdown 保存を使ってください");
     }
-    setStatus("設計書Markdownをクリップボードにコピーしました");
+    const note = failedSectionNote(failedSectionLabels(bundle));
+    setStatus(`設計書Markdownをクリップボードにコピーしました${note ? `。${note}` : ""}`, !!note);
   }
   async function runDesignExportXlsxStandalone(source, setStatus) {
     const target = source || {};
@@ -6392,14 +6500,24 @@ ${detail}`);
     if (validationError) throw new Error(validationError);
     const guestId = String(target.guestId || "").trim();
     setStatus(importedBundle ? "設計書Excel出力を開始（設定JSONから生成）..." : "設計書Excel出力を開始...");
+    let failedAPIs = [];
     const done = await runAdvancedDesignExporter({
       appId,
       guestId,
+      preview: !!target.preview,
       bundle: importedBundle || null,
-      appNameLookup: source.appNameLookup || {}
+      appNameLookup: source.appNameLookup || {},
+      onFinish: (info) => {
+        failedAPIs = info.failedAPIs;
+      }
     });
     if (done === false) {
       setStatus("設計書Excel出力をキャンセルしました");
+      return;
+    }
+    if (failedAPIs.length) {
+      const names = [...new Set(failedAPIs.map((f) => f.name))].join(", ");
+      setStatus(`設計書Excel出力完了。取得に失敗した項目 ${failedAPIs.length}件（${names}）があります。詳細はサマリーシートの「API取得失敗レポート」を確認してください`, true);
       return;
     }
     setStatus("設計書Excel出力完了");
@@ -6423,9 +6541,20 @@ ${detail}`);
     }
     const importedCount = apps.filter((a) => a.bundle).length;
     setStatus(`設計書ZIP出力を開始（${apps.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ""}）...`);
-    const done = await runBatchDesignExportXlsxZip({ apps });
+    let info = null;
+    const done = await runBatchDesignExportXlsxZip({ apps, onFinish: (result2) => {
+      info = result2;
+    } });
     if (done === false) {
       setStatus("設計書ZIP出力をキャンセルしました");
+      return;
+    }
+    const result = info;
+    if (result && (result.failedCount > 0 || result.failedAPIs.length > 0)) {
+      const parts = [`成功 ${result.successCount} / 失敗・未処理 ${result.failedCount}（全${result.total}件）${result.cancelled ? "、途中で中断" : ""}`];
+      if (result.failedApps.length) parts.push(`失敗したアプリ: ${result.failedApps.map((f) => `App ${f.appId}`).join(", ")}`);
+      if (result.failedAPIs.length) parts.push(`API取得に失敗した項目 ${result.failedAPIs.length}件`);
+      setStatus(`設計書ZIPを保存しました。${parts.join("。")}。詳細は ZIP 内の _manifest.txt を確認してください`, true);
       return;
     }
     setStatus(`設計書ZIP出力完了（${apps.length}件）`);
@@ -6493,11 +6622,13 @@ ${detail}`);
       appId: String(bundle?.appId || side?.appId || "").trim(),
       appName: extractAppNameFromBundle(bundle) || "",
       guestId: String(bundle?.guestId || side?.guestId || "").trim(),
-      environment: imported ? "読み込んだ設定JSON" : bundle?.preview ?? side?.preview ? "プレビュー（未公開）" : "本番（運用中）"
+      environment: imported ? "読み込んだ設定JSON" : bundle?.preview ?? side?.preview ? "プレビュー（未公開）" : "本番（運用中）",
+      failedSections: failedSectionLabels(bundle)
     };
   }
   function designDiffSideLabel(side) {
-    return `App ${side.appId || "?"}${side.appName ? ` ${side.appName}` : ""}${side.guestId ? `（ゲスト ${side.guestId}）` : ""} · ${side.environment}`;
+    const name = side.appName ? ` ${side.appName.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\s*\r?\n\s*/g, " ")}` : "";
+    return `App ${side.appId || "?"}${name}${side.guestId ? `（ゲスト ${side.guestId}）` : ""} · ${side.environment}`;
   }
   function buildDesignDiffReport(input) {
     const summary = summarizeDesignDiff(input.diff);
@@ -6510,6 +6641,11 @@ ${detail}`);
     lines.push(`| 比較元（追加・更新後の姿） | ${designDiffSideLabel(input.source)} |`);
     lines.push(`| 比較先（現在の設定） | ${designDiffSideLabel(input.target)} |`);
     lines.push(`| 差分行数 | 追加 ${summary.added} 行 / 削除 ${summary.removed} 行 |`);
+    const incomplete = [
+      input.source.failedSections?.length ? `比較元: ${input.source.failedSections.join("、")}` : "",
+      input.target.failedSections?.length ? `比較先: ${input.target.failedSections.join("、")}` : ""
+    ].filter(Boolean);
+    if (incomplete.length) lines.push(`| 取得できなかったセクション（差分が不完全） | ${incomplete.join(" / ")} |`);
     lines.push("");
     lines.push("## 見方");
     lines.push("");
@@ -6529,9 +6665,11 @@ ${detail}`);
     lines.push("");
     lines.push("## 差分");
     lines.push("");
-    lines.push("```diff");
+    let fence = "```";
+    while (input.diff.includes(fence)) fence += "`";
+    lines.push(`${fence}diff`);
     lines.push(input.diff);
-    lines.push("```");
+    lines.push(fence);
     lines.push("");
     return lines.join("\n");
   }
@@ -6544,8 +6682,8 @@ ${detail}`);
     const srcBundle = await resolveDesignBundle(opts.source, "source", setStatus, "比較元: ");
     const tgtBundle = await resolveDesignBundle(opts.target, "target", setStatus, "比較先: ");
     setStatus("差分レポート生成中...");
-    const srcMd = bundleToMarkdown(srcBundle, { rawJson: false });
-    const tgtMd = bundleToMarkdown(tgtBundle, { rawJson: false });
+    const srcMd = bundleToMarkdown(srcBundle, { rawJson: false, fetchedAt: false });
+    const tgtMd = bundleToMarkdown(tgtBundle, { rawJson: false, fetchedAt: false });
     const diffMd = simpleLineDiffLite(tgtMd, srcMd);
     const finalMd = buildDesignDiffReport({
       diff: diffMd,
@@ -6555,7 +6693,8 @@ ${detail}`);
     });
     const diffLabel = `${appLabelFromBundle(srcBundle)}_vs_${appLabelFromBundle(tgtBundle)}`;
     downloadText(buildExportFilename("設計書差分", "md", { appLabel: diffLabel }), finalMd, "text/markdown");
-    setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）`);
+    const notes = [failedSectionNote(failedSectionLabels(srcBundle), "比較元の"), failedSectionNote(failedSectionLabels(tgtBundle), "比較先の")].filter(Boolean);
+    setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）${notes.length ? `。${notes.join("。")}。差分は不完全です` : ""}`, notes.length > 0);
   }
 
   // src/entries/design-lite-ui.ts
@@ -6845,7 +6984,8 @@ ${detail}`);
     const cardTarget = makeCard({ title: "対象アプリ", number: 1 });
     const appTable = makeAppTable({
       currentAppId: String(DEFAULT_APP_ID || ""),
-      initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: "" }] : []
+      currentGuestId: DEFAULT_GUEST_ID,
+      initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : []
     });
     cardTarget.body.appendChild(createAppSearchControl(panel, {
       targets: [
@@ -6888,16 +7028,27 @@ ${detail}`);
       const file = importFile.files?.[0];
       if (!file) return;
       const text = await file.text();
-      const bundles = pickAllSettingsBundles(JSON.parse(text));
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error("設定JSONとして読み込めません。JSON形式のファイルか確認してください");
+      }
+      const { entries, missingAppId, duplicatedAppIds } = classifyImportedDesignBundles(pickAllSettingsBundles(parsed));
       let added = 0;
-      for (const b of bundles) {
-        const appId = String(b?.appId || "").trim();
-        if (!appId) continue;
+      for (const { appId, bundle: b } of entries) {
         importedBundles.set(appId, b);
         const result = appTable.putApp(appId, String(b?.guestId || ""), { appName: extractAppNameFromBundle(b) });
         if (result.action === "added" || result.action === "filled") added += 1;
       }
-      panel.setStatus(`設定JSONから${bundles.length}件のアプリ設定を読み込みました（対象表に新規追加 ${added}件）。読み込んだアプリはAPI取得を行いません。`, "ok");
+      const warnings = [];
+      if (missingAppId) warnings.push(`アプリIDの無い設定 ${missingAppId}件は読み込めませんでした`);
+      if (duplicatedAppIds.length) warnings.push(`同じアプリIDが複数あったため後の設定を使用しました（${duplicatedAppIds.join(", ")}）`);
+      if (!entries.length) {
+        panel.setStatus(`読み込めるアプリ設定がありません。${warnings.join("。")}`, "warn");
+        return;
+      }
+      panel.setStatus(`設定JSONから${entries.length}件のアプリ設定を読み込みました（対象表に新規追加 ${added}件）。読み込んだアプリはAPI取得を行いません。${warnings.length ? `注意: ${warnings.join("。")}` : ""}`, warnings.length ? "warn" : "ok");
     }));
     clearImportBtn.addEventListener("click", () => {
       importedBundles.clear();
@@ -6980,7 +7131,7 @@ ${detail}`);
     diffDetails.body.appendChild(bDiff);
     panel.body.insertBefore(diffDetails.details, panel.status);
     bDiff.addEventListener("click", () => {
-      const all = appTable.getAllRows().filter((r) => r.appId);
+      const all = appTable.getApps();
       if (all.length < 2) {
         panel.setStatus("差分には対象アプリ表に2行以上のアプリIDが必要です", "warn");
         return;

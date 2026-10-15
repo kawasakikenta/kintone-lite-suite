@@ -247,6 +247,17 @@
     }
     return "";
   }
+  function guestIdFromKintonePath(pathname) {
+    const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ""));
+    return match ? match[1] : "";
+  }
+  function resolveDefaultGuestId() {
+    try {
+      return typeof window === "undefined" ? "" : guestIdFromKintonePath(window.location?.pathname);
+    } catch (e) {
+      return "";
+    }
+  }
   function sanitizeCustomizeResourceList(value) {
     if (!Array.isArray(value)) return [];
     const resources = [];
@@ -278,7 +289,7 @@
       mobile: buildPlatform("mobile")
     };
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIALOG_STATE_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -324,6 +335,7 @@
         })
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
+      DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
@@ -852,12 +864,28 @@ ${contextLine}`);
     }
   });
 
+  // src/kintone-enums.ts
+  var init_kintone_enums = __esm({
+    "src/kintone-enums.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/diff/label-dict.ts
+  var init_label_dict = __esm({
+    "src/diff/label-dict.ts"() {
+      "use strict";
+      init_kintone_enums();
+    }
+  });
+
   // src/diff/enrich.ts
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      init_label_dict();
     }
   });
 
@@ -875,21 +903,6 @@ ${contextLine}`);
       init_constants();
       init_state();
       root = null;
-    }
-  });
-
-  // src/kintone-enums.ts
-  var init_kintone_enums = __esm({
-    "src/kintone-enums.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/diff/label-dict.ts
-  var init_label_dict = __esm({
-    "src/diff/label-dict.ts"() {
-      "use strict";
-      init_kintone_enums();
     }
   });
 
@@ -2943,14 +2956,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     includeReverseLookup: false
   };
   var ER_TRAVERSE_RELATION_KINDS = /* @__PURE__ */ new Set(["LOOKUP", "REF", "ACTION"]);
-  function buildScriptTag(src, fallbackSrc = "", integrity = "", fallbackIntegrity = "") {
+  function buildScriptTag(src, integrity = "") {
     const safeSrc = esc(src || "");
-    const safeFallback = esc(fallbackSrc || "");
     const safeIntegrity = esc(integrity || "");
-    const safeFallbackIntegrity = esc(fallbackIntegrity || "");
     const integrityAttr = safeIntegrity ? ` integrity="${safeIntegrity}" crossorigin="anonymous"` : "";
-    const fallback = safeFallback ? ` onerror="this.onerror=null;this.integrity='${safeFallbackIntegrity}';this.crossOrigin='anonymous';this.src='${safeFallback}'"` : "";
-    return `<script src="${safeSrc}"${integrityAttr}${fallback}><\/script>`;
+    return `<script src="${safeSrc}"${integrityAttr}><\/script>`;
   }
   function formatErLayoutLabel(layoutName) {
     const map = {
@@ -3083,19 +3093,33 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         sourceGuestId: options?.source?.guestId || ""
       });
     } else {
-      model = buildErAppModel({
-        appId,
-        fieldsResponse: fieldsResult.value,
-        appInfoResponse,
-        actionsResponse: actionsResult.status === "fulfilled" ? actionsResult.value : void 0,
-        appInfoError: appInfoResult.status === "rejected" ? appInfoResult.reason : void 0,
-        actionsError: actionsResult.status === "rejected" ? actionsResult.reason : void 0,
-        sourceGuestId: options?.source?.guestId || ""
-      });
+      try {
+        model = buildErAppModel({
+          appId,
+          fieldsResponse: fieldsResult.value,
+          appInfoResponse,
+          actionsResponse: actionsResult.status === "fulfilled" ? actionsResult.value : void 0,
+          appInfoError: appInfoResult.status === "rejected" ? appInfoResult.reason : void 0,
+          actionsError: actionsResult.status === "rejected" ? actionsResult.reason : void 0,
+          sourceGuestId: options?.source?.guestId || ""
+        });
+      } catch (e) {
+        console.error(`App ${appId}:`, e);
+        model = buildFailedErAppModel(appId, e, {
+          appInfoResponse,
+          sourceGuestId: options?.source?.guestId || ""
+        });
+      }
     }
     cache.set(appId, model);
     return model;
   };
+  function describeReverseScan(options) {
+    const report = options?.reverseScan;
+    const incomplete = Array.isArray(report?.incomplete) ? report.incomplete.length : 0;
+    if (!incomplete) return "";
+    return `逆引き走査: 全${Number(report.total) || 0}アプリ中 ${incomplete}アプリは取得失敗または一部取得のため、それらを参照する関連が図に含まれない可能性があります`;
+  }
   var crawl = async (startIds, options) => {
     const cache = /* @__PURE__ */ new Map();
     const visited = /* @__PURE__ */ new Set();
@@ -3112,10 +3136,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       progressUi.update(3, "逆引き探索用に全アプリを走査中...");
       const allApps = await fetchAllApps(options);
       reverseLookupIndex = /* @__PURE__ */ new Map();
+      const incomplete = [];
+      options.reverseScan = { total: allApps.length, incomplete };
       for (let i = 0; i < allApps.length; i += 1) {
         const appId = Number(allApps[i]?.appId);
         if (!appId) continue;
         const schema = await getSchema(appId, options, cache);
+        const relationIssues = (schema.issues || []).filter((issue) => issue.scope !== "metadata");
+        if (schema.status === "failed" || schema.ok === false || relationIssues.length) {
+          incomplete.push({ appId, status: schema.status, message: (relationIssues[0] || schema.issues?.[0])?.message || "" });
+        }
         for (const rel of schema.relations || []) {
           if (!ER_TRAVERSE_RELATION_KINDS.has(rel.kind)) continue;
           const targetId = Number(rel.toApp);
@@ -3176,8 +3206,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       spaceId: options.spaceId || "",
       spaceAppIds: Array.isArray(options.spaceAppIds) ? options.spaceAppIds.map((v) => String(v)) : [],
       sourceGuestId: options.source?.guestId || "",
-      sourcePreview: !!options.source?.preview
+      sourcePreview: !!options.source?.preview,
+      reverseScanNote: describeReverseScan(options)
     });
+    const reverseScanPill = describeReverseScan(options) ? `<span class="meta-pill" title="${esc(describeReverseScan(options))}"><b>逆引き走査</b> ${esc(String(options.reverseScan.incomplete.length))}/${esc(String(options.reverseScan.total))}件が不完全</span>` : "";
     const dependencyAnalysis = analyzeErDependencies(safeApps);
     const dependencyAnalysisData = safeJsonForScript(dependencyAnalysis);
     const densityLabelMap = { none: "結合のみ", compact: "コンパクト", standard: "標準", full: "詳細" };
@@ -3199,21 +3231,28 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || "-");
     const cytoscapeScript = buildScriptTag(
       EXTERNAL_LIBRARIES.cytoscape.cdnUrl,
-      EXTERNAL_LIBRARIES.cytoscape.altCdnUrl,
-      "sha384-J7Q85oZE4GJ/e7+n2aOQsLXfDwwfnA8S2nZAL5BpFsfpCF84zQD7LroZ/dMnLgex",
-      "sha384-+4PsOx8pfCvP2QccNj+4PHhCkQFmbi69UlEi43BHbHopL1unxFMpqiPXNscfoiM5"
+      "sha384-J7Q85oZE4GJ/e7+n2aOQsLXfDwwfnA8S2nZAL5BpFsfpCF84zQD7LroZ/dMnLgex"
     );
     const dagreScript = buildScriptTag(
       EXTERNAL_LIBRARIES.dagre.cdnUrl,
-      "",
       "sha384-2IH3T69EIKYC4c+RXZifZRvaH5SRUdacJW7j6HtE5rQbvLhKKdawxq6vpIzJ7j9M"
     );
     const cytoscapeDagreScript = buildScriptTag(
       EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl,
-      EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl,
-      "sha384-EHCdyFVbhtbpgI+4x7ETlZUvJwOkxJublmhTpH114NSk3fqfiUgcLl6pQm8JQwg9",
-      "sha384-u69h9ebXeSjlg6q/rb1zKTRAGu/h8deCl0409xpS/QJctMKnc4M9Fzkm01VOQdeF"
+      "sha384-EHCdyFVbhtbpgI+4x7ETlZUvJwOkxJublmhTpH114NSk3fqfiUgcLl6pQm8JQwg9"
     );
+    const scriptFallbacks = safeJsonForScript([
+      {
+        global: "cytoscape",
+        src: EXTERNAL_LIBRARIES.cytoscape.altCdnUrl,
+        integrity: "sha384-+4PsOx8pfCvP2QccNj+4PHhCkQFmbi69UlEi43BHbHopL1unxFMpqiPXNscfoiM5"
+      },
+      {
+        global: "cytoscapeDagre",
+        src: EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl,
+        integrity: "sha384-u69h9ebXeSjlg6q/rb1zKTRAGu/h8deCl0409xpS/QJctMKnc4M9Fzkm01VOQdeF"
+      }
+    ]);
     const runtimeFallbackRows = safeApps.map((app) => `<tr><td>${esc(String(app?.id || "-"))}</td><td>${esc(String(app?.name || `アプリ ${app?.id || "-"}`))}</td><td>${esc(String(app?.totalFieldCount ?? app?.allFields?.length ?? app?.fields?.length ?? 0))}</td><td>${esc(String(app?.relations?.length || 0))}</td><td>${esc(app?.status === "partial" ? "一部取得" : app?.ok === false ? "取得失敗" : "取得完了")}</td></tr>`).join("");
     return (
       /*html*/
@@ -3824,6 +3863,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-v
   <span class="meta-pill"><b>ゲスト</b> ${esc(options.source?.guestId ? `ゲスト ${String(options.source.guestId)}` : "通常空間")}</span>
   <span class="meta-pill"><b>モード</b> ${options.source?.preview ? "プレビュー" : "本番"}</span>
   <span class="meta-pill"><b>サブテーブル</b> ${options.includeSubtableFields ? "ON" : "OFF"}</span>
+  ${reverseScanPill}
 </div>
 
 <div id="overview" class="collapsed">
@@ -5026,6 +5066,7 @@ updateFocusOptions();
 // ─── Manual additions (アプリ / 項目 / 関連線の手動追加 UI) ───
 let editorMode="";
 let pendingNodePos=null;
+let editorReturnFocus=null;
 
 function appOptionsHtml(selectedId){
   return APPS.map(a=>'<option value="'+escapeHtml(String(a.id))+'"'+(String(a.id)===String(selectedId)?" selected":"")+'>'+escapeHtml(a.name)+(a.isCustom?"（手動）":" (App "+escapeHtml(String(a.id))+")")+'</option>').join("");
@@ -5041,13 +5082,18 @@ function openEditor(mode, title, sub, bodyHtml, opts){
   if(submitBtn) submitBtn.textContent=o.submitLabel||"追加";
   const delBtn=document.getElementById("editor-delete");
   if(delBtn) delBtn.style.display=o.showDelete?"":"none";
-  document.getElementById("editor-overlay").classList.add("open");
+  const editorOverlay=document.getElementById("editor-overlay");
+  if(!editorOverlay.classList.contains("open")) editorReturnFocus=rememberDialogFocus();
+  editorOverlay.classList.add("open");
   const first=document.querySelector("#editor-body input,#editor-body select,#editor-body textarea");
   if(first) setTimeout(()=>{try{first.focus();}catch(_){}},50);
 }
 function closeEditor(){
   editorMode=""; pendingNodePos=null; editingNoteId=""; editingAppId=""; editingFieldRef=null; editingRelRef=null;
-  document.getElementById("editor-overlay").classList.remove("open");
+  const editorOverlay=document.getElementById("editor-overlay");
+  const wasOpen=editorOverlay.classList.contains("open");
+  editorOverlay.classList.remove("open");
+  if(wasOpen){ const back=editorReturnFocus; editorReturnFocus=null; restoreDialogFocus(back); }
 }
 function submitEditor(){
   if(editorMode==="app") addCustomApp();
@@ -5806,6 +5852,14 @@ function focusApp(id){
     const app = appMap.get(Number(id)) || appMap.get(id);
     if(app) renderAppDetail(app);
     if(focusMode) applyFocusToNode(n, true);
+    return;
+  }
+  // 取得できていない参照先は「未取得の参照先」ノードへ移動し、詳細を表示する
+  const ghost=cy.getElementById("g"+String(id).replace(/[^0-9A-Za-z_-]/g,"_"));
+  if(ghost.length && ghost.data("isGhost") && !ghost.hasClass("app-manual-hidden")){
+    cy.animate({center:{eles:ghost},zoom:1.5},{ duration:400 });
+    ghost.select();
+    renderGhostDetail(ghost);
   }
 }
 
@@ -6323,6 +6377,8 @@ function exportEditedHtml(){
     if(oldState && oldState.parentNode) oldState.parentNode.removeChild(oldState);
     const liveRuntime=clone.querySelector("#er-runtime");
     if(liveRuntime && liveRuntime.parentNode) liveRuntime.parentNode.removeChild(liveRuntime);
+    // 代替CDNから後読みしたライブラリは保存しない（開き直すと起動スクリプトが必要なときだけ再読込する）
+    clone.querySelectorAll("script[data-er-fallback-lib]").forEach(el=>el.parentNode&&el.parentNode.removeChild(el));
     const main=clone.querySelector("#er-main");
     if(!main){toast("保存に失敗: 本体スクリプトが見つかりません");return;}
     const stateScript=document.createElement("script");
@@ -6394,9 +6450,28 @@ function applySavedViewState(){
 }
 
 let _md={text:"",filename:""};
-function openModal(t,text,fn){_md={text,filename:fn};document.getElementById("modal-title").textContent=t;document.getElementById("modal-content").textContent=text;document.getElementById("modal-overlay").classList.add("open");}
-function closeModal(){document.getElementById("modal-overlay").classList.remove("open");}
-function copyModal(){navigator.clipboard.writeText(_md.text).then(()=>toast("コピーしました！"));}
+let modalReturnFocus=null;
+function openModal(t,text,fn){
+  _md={text,filename:fn};
+  document.getElementById("modal-title").textContent=t;
+  document.getElementById("modal-content").textContent=text;
+  const overlay=document.getElementById("modal-overlay");
+  if(!overlay.classList.contains("open")) modalReturnFocus=rememberDialogFocus();
+  overlay.classList.add("open");
+  const primary=document.querySelector("#modal .actions .primary");
+  if(primary) primary.focus();
+}
+function closeModal(){
+  const overlay=document.getElementById("modal-overlay");
+  const wasOpen=overlay.classList.contains("open");
+  overlay.classList.remove("open");
+  if(wasOpen){ const back=modalReturnFocus; modalReturnFocus=null; restoreDialogFocus(back); }
+}
+function copyModal(){
+  const failed=()=>toast("コピーに失敗しました。内容を選択して手動でコピーしてください");
+  try{ navigator.clipboard.writeText(_md.text).then(()=>toast("コピーしました！"),failed); }
+  catch(_){ failed(); }
+}
 function downloadModal(){const b=new Blob([_md.text],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=_md.filename;a.click();toast("ダウンロード: "+_md.filename);}
 
 // safe name helper
@@ -6418,6 +6493,7 @@ function exportProvenanceEntries(){
     ["起点アプリ",(ER_OPTIONS.startAppIds||[]).join(", ")||"-"],
     ["探索深さ",ER_OPTIONS.maxDepth?String(ER_OPTIONS.maxDepth):"無制限"],
     ["逆引き探索",ER_OPTIONS.includeReverseLookup?"ON":"OFF"],
+    ...(ER_OPTIONS.reverseScanNote?[["逆引き走査の注意",ER_OPTIONS.reverseScanNote]]:[]),
     ["サブテーブル",ER_OPTIONS.includeSubtableFields!==false?"ON":"OFF"],
     ["項目範囲","取得済み全項目（図の表示密度とは独立）"],
     ["接続",(ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+"/"+(ER_OPTIONS.sourcePreview?"プレビュー":"本番")],
@@ -6688,6 +6764,7 @@ function showMarkdown(){
   lines.push("- 起点アプリ: " + ((ER_OPTIONS.startAppIds||[]).join(", ") || "-"));
   lines.push("- 探索深さ: " + (ER_OPTIONS.maxDepth||"無制限"));
   lines.push("- 逆引き探索: " + (ER_OPTIONS.includeReverseLookup?"ON":"OFF"));
+  if(ER_OPTIONS.reverseScanNote) lines.push("- 逆引き走査の注意: " + ER_OPTIONS.reverseScanNote);
   lines.push("- サブテーブル: " + (ER_OPTIONS.includeSubtableFields!==false?"ON":"OFF"));
   lines.push("- 項目範囲: 取得済み全項目（図の表示密度とは独立）");
   lines.push("- 接続: " + (ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間") + " / " + (ER_OPTIONS.sourcePreview?"プレビュー":"本番"));
@@ -6878,9 +6955,33 @@ if(window.matchMedia&&window.matchMedia("(max-width:640px)").matches){
   document.getElementById("overview")?.classList.add("collapsed");
 }
 
+// ─── ダイアログのフォーカス管理（開くと中へ移し、閉じると開いた操作の位置へ戻す） ───
+function rememberDialogFocus(){
+  const active=document.activeElement;
+  if(!active||active===document.body||typeof active.focus!=="function") return null;
+  // メニュー項目から開いた場合、項目はメニューを閉じると消えるため、メニューの開閉ボタンへ戻す
+  const menu=typeof active.closest==="function"?active.closest(".tb-menu"):null;
+  return (menu&&menu.querySelector(".tb-menu-btn"))||active;
+}
+function restoreDialogFocus(target){
+  if(target&&target.isConnected&&target.getClientRects().length>0) target.focus();
+}
+
 // ─── Help modal ───
-function openHelp(){ document.getElementById("help-overlay").classList.add("open"); }
-function closeHelp(){ document.getElementById("help-overlay").classList.remove("open"); }
+let helpReturnFocus=null;
+function openHelp(){
+  const overlay=document.getElementById("help-overlay");
+  if(!overlay.classList.contains("open")) helpReturnFocus=rememberDialogFocus();
+  overlay.classList.add("open");
+  const close=document.querySelector("#help-box .close-row button");
+  if(close) close.focus();
+}
+function closeHelp(){
+  const overlay=document.getElementById("help-overlay");
+  const wasOpen=overlay.classList.contains("open");
+  overlay.classList.remove("open");
+  if(wasOpen){ const back=helpReturnFocus; helpReturnFocus=null; restoreDialogFocus(back); }
+}
 
 // ─── Share URL (encodes current state in hash) ───
 function encodeState(){
@@ -6918,11 +7019,16 @@ function applyStateFromHash(){
   }catch(_){ /* ignore */ }
 }
 function copyShareUrl(){
-  const url=location.origin+location.pathname+"#"+encodeState();
+  // blob: や file: のページでは origin + pathname だと不正なURLになるため、現在のURLからハッシュだけを置き換える
+  const url=location.href.split("#")[0]+"#"+encodeState();
+  const done=()=>toast(location.protocol==="blob:"
+    ? "表示状態のURLをコピーしました（この画面を閉じると開けません。共有にはHTML保存を使ってください）"
+    : "表示状態のURLをコピーしました");
+  const manual=()=>prompt("URLをコピーしてください", url);
   try{
-    navigator.clipboard.writeText(url).then(()=>toast("表示状態のURLをコピーしました"));
+    navigator.clipboard.writeText(url).then(done,manual);
   }catch(_){
-    prompt("URLをコピーしてください", url);
+    manual();
   }
 }
 setTimeout(applyStateFromHash, 350);
@@ -7003,6 +7109,8 @@ applySavedViewState();
 <script>
 (function(){
   const source=document.getElementById("er-main");
+  const FALLBACKS=${scriptFallbacks};
+  function start(){
   if(typeof window.cytoscape==="function"){
     const runtime=document.createElement("script");
     runtime.id="er-runtime";
@@ -7015,7 +7123,21 @@ applySavedViewState();
   document.getElementById("legend")?.setAttribute("hidden","");
   const host=document.getElementById("cy");
   host.style.cssText="position:fixed;inset:0;overflow:auto;padding:32px;background:#f8fafc;color:#0f172a;font:14px/1.65 sans-serif";
-  host.innerHTML='<main style="max-width:960px;margin:auto"><h1 style="font-size:22px;margin-bottom:8px">ER図ライブラリを読み込めませんでした</h1><p>ネットワークまたはCDNの制限により図を描画できません。接続を確認して再読み込みしてください。取得済みのアプリ一覧は下表で確認できます。</p><table style="width:100%;margin-top:20px;border-collapse:collapse"><thead><tr><th>アプリID</th><th>アプリ名</th><th>項目数</th><th>関連数</th><th>取得状態</th></tr></thead><tbody>${runtimeFallbackRows}</tbody></table></main>';
+  host.innerHTML='<main style="max-width:960px;margin:auto"><h1 style="font-size:22px;margin-bottom:8px">ER図ライブラリを読み込めませんでした</h1><p>ネットワークまたはCDNの制限により図を描画できません。接続を確認して再読み込みしてください。取得済みのアプリ一覧は下表で確認できます。</p><table style="width:100%;margin-top:20px;border-collapse:collapse"><thead><tr><th>アプリID</th><th>アプリ名</th><th>項目数</th><th>関連数</th><th>取得状態</th></tr></thead><tbody>'+${safeJsonForScript(runtimeFallbackRows)}+'</tbody></table></main>';
+  }
+  function loadFallback(index){
+    if(index>=FALLBACKS.length){ start(); return; }
+    const spec=FALLBACKS[index];
+    if(typeof window[spec.global]==="function"){ loadFallback(index+1); return; }
+    const script=document.createElement("script");
+    script.setAttribute("data-er-fallback-lib","1");
+    script.integrity=spec.integrity;
+    script.crossOrigin="anonymous";
+    script.onload=script.onerror=function(){ loadFallback(index+1); };
+    script.src=spec.src;
+    document.head.appendChild(script);
+  }
+  loadFallback(0);
 })();
 <\/script>
 </body>
@@ -7055,12 +7177,17 @@ applySavedViewState();
     }
     return splitErAppIds(value ?? fallback);
   }
+  function isUsableErAppId(value) {
+    return /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0;
+  }
   function validateErOptions(opts) {
     const appId = String(opts?.appId || "").trim();
     const primaryIds = erAppIdValues(opts, "appIds", appId);
     const extraIds = erAppIdValues(opts, "extraAppIds");
     const invalidAppId = [...primaryIds, ...extraIds].find((v) => !/^\d+$/.test(v));
     if (invalidAppId) return `アプリIDは数値で入力してください: ${invalidAppId}`;
+    const unusableAppId = [...primaryIds, ...extraIds].find((v) => !isUsableErAppId(v));
+    if (unusableAppId) return `アプリIDは1以上${Number.MAX_SAFE_INTEGER}以下の整数で入力してください: ${unusableAppId}`;
     const guestId = String(opts?.guestId || "").trim();
     if (guestId && !/^\d+$/.test(guestId)) return `ゲストIDは数値で入力してください: ${guestId}`;
     const spaceId = String(opts?.spaceId || "").trim();
@@ -7071,12 +7198,15 @@ applySavedViewState();
       if (!Number.isFinite(depth) || depth < 0 || !Number.isInteger(depth)) return "探索深さは0以上の整数で入力してください";
     }
     if (!primaryIds.length && !spaceId) return "アプリID または スペースID を入力してください";
+    if (spaceId && !primaryIds.length && !extraIds.length && Array.isArray(opts?.spaceSelectedAppIds) && !opts.spaceSelectedAppIds.length) {
+      return "スペース内のアプリを1件以上選択するか、起点アプリIDを入力してください";
+    }
     return "";
   }
   function buildErCrawlOptions(opts) {
     const appId = String(opts?.appId || "").trim();
     const primaryAppIds = erAppIdValues(opts, "appIds", appId);
-    const startAppIds = [...primaryAppIds, ...erAppIdValues(opts, "extraAppIds")].map((v) => String(v || "").trim()).filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
+    const startAppIds = [...primaryAppIds, ...erAppIdValues(opts, "extraAppIds")].map((v) => String(v || "").trim()).filter(isUsableErAppId).map((v) => String(Number(v))).filter((v, i, a) => a.indexOf(v) === i);
     const maxDepthRaw = Number(opts?.maxDepth);
     return {
       startAppId: startAppIds[0] || appId,
@@ -7101,13 +7231,17 @@ applySavedViewState();
     if (!options.startAppIds.length) throw new Error("対象アプリが見つかりませんでした");
     return options;
   }
-  function summarizeCrawl(apps) {
+  function summarizeCrawl(apps, options) {
     const partialCount = apps.filter((app) => app?.status === "partial").length;
     const failedCount = apps.filter((app) => app?.status === "failed" || app?.ok === false).length;
-    return { partialCount, failedCount, note: partialCount || failedCount ? `（一部取得 ${partialCount} / 取得失敗 ${failedCount}）` : "" };
+    const reverseNote = describeReverseScan(options);
+    const appNote = partialCount || failedCount ? `（一部取得 ${partialCount} / 取得失敗 ${failedCount}）` : "";
+    const tone = failedCount ? true : partialCount || reverseNote ? "warn" : false;
+    return { partialCount, failedCount, note: `${appNote}${reverseNote ? `。${reverseNote}` : ""}`, tone };
   }
   async function runGenerateERDiagramStandalone(opts, setStatus2) {
-    const options = await resolveErOptions(opts, setStatus2);
+    const validationError = validateErOptions(opts);
+    if (validationError) throw new Error(validationError);
     const popup = window.open("", "_blank");
     if (!popup) throw new Error("別タブを開けませんでした。ポップアップブロックを確認してください");
     try {
@@ -7115,6 +7249,16 @@ applySavedViewState();
     } catch (_) {
     }
     popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
+    let options;
+    try {
+      options = await resolveErOptions(opts, setStatus2);
+    } catch (e) {
+      try {
+        popup.close();
+      } catch (_) {
+      }
+      throw e;
+    }
     setStatus2(`ER図を生成中... 起点 ${options.startAppIds.join(",")}`);
     progressUi.init();
     progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
@@ -7126,8 +7270,8 @@ applySavedViewState();
       const url = URL.createObjectURL(blob);
       popup.location.href = url;
       progressUi.close();
-      const summary = summarizeCrawl(apps);
-      setStatus2(summary.note ? `ER図を生成しました: ${apps.length}アプリ${summary.note}` : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました`, !!summary.failedCount);
+      const summary = summarizeCrawl(apps, options);
+      setStatus2(summary.note ? `ER図を生成しました: ${apps.length}アプリ${summary.note}` : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました`, summary.tone);
       setTimeout(() => URL.revokeObjectURL(url), 60 * 1e3);
     } catch (e) {
       try {
@@ -7157,8 +7301,8 @@ applySavedViewState();
         "text/html"
       );
       progressUi.close();
-      const summary = summarizeCrawl(apps);
-      setStatus2(summary.note ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}` : `ER図HTMLを保存しました (${apps.length}アプリ)`, !!summary.failedCount);
+      const summary = summarizeCrawl(apps, options);
+      setStatus2(summary.note ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}` : `ER図HTMLを保存しました (${apps.length}アプリ)`, summary.tone);
     } catch (e) {
       progressUi.error(e.message || String(e));
       throw e;
@@ -7451,7 +7595,7 @@ applySavedViewState();
     });
     const cardMain = makeCard({ title: "起点アプリ", number: 1 });
     const appInp = makeInput({ placeholder: "アプリID（複数はカンマ区切り）", value: DEFAULT_APP_ID || "", width: "wide" });
-    const guestInp = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
+    const guestInp = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest" });
     cardMain.body.appendChild(makeRow([appInp, guestInp], { label: "起点ID" }));
     cardMain.body.appendChild(createAppSearchControl(panel, {
       guestEl: guestInp,
@@ -7592,7 +7736,7 @@ applySavedViewState();
         panel.setStatus(validationError, "warn");
         return;
       }
-      await runGenerateERDiagramStandalone(source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+      await runGenerateERDiagramStandalone(source(), (m, e) => panel.setStatus(m, e === "warn" ? "warn" : e ? "err" : "busy"));
     }));
     bSave.addEventListener("click", () => liteRun(panel, "HTML 生成中…", async () => {
       const validationError = validateErOptions(source());
@@ -7600,7 +7744,7 @@ applySavedViewState();
         panel.setStatus(validationError, "warn");
         return;
       }
-      await runExportERDiagramHtmlStandalone(source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+      await runExportERDiagramHtmlStandalone(source(), (m, e) => panel.setStatus(m, e === "warn" ? "warn" : e ? "err" : "busy"));
     }));
     appInp.setAttribute("aria-label", "起点アプリID");
     guestInp.setAttribute("aria-label", "ゲストスペースID");
@@ -7613,7 +7757,7 @@ applySavedViewState();
         const picked = source().spaceSelectedAppIds;
         return picked ? `${spaceId}（読み込んだ ${spacePicker.count()} アプリ中 ${picked.length} 件を起点にする）` : `${spaceId}（スペース内の全アプリを起点にする）`;
       })()],
-      ["探索の深さ", depthInp.value === "0" ? "無制限" : depthInp.value],
+      ["探索の深さ", !depthInp.value.trim() || Number(depthInp.value) === 0 ? "無制限" : depthInp.value.trim()],
       ["表示", (layoutSel.selectedOptions[0]?.textContent || "") + " / " + (densitySel.selectedOptions[0]?.textContent || "")],
       ["逆引き", reverseCb.checkbox.checked ? "あり" : "なし"]
     ];
