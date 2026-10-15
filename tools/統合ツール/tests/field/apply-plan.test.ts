@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildFieldApplyConfirmText,
+  findFieldApplyProblem,
+  findFieldCodeConflicts,
   parseFieldJsonInput,
   parseLookupMapInput,
   planBulkRename,
@@ -62,6 +64,9 @@ describe('planFieldApply', () => {
     const text = buildFieldApplyConfirmText('99', '3', plan);
     expect(text).toContain('App 99（ゲスト 3）');
     expect(text).toContain('追加 2件 / 更新 1件 / スキップ 1件');
+    expect(text).toContain('追加: title、ref');
+    expect(text).toContain('更新: existing');
+    expect(text).toContain('削除 0件');
   });
 
   it('preserves an explicit new code for an existing field rename', () => {
@@ -148,8 +153,11 @@ describe('planBulkRename', () => {
 
   it('adds a prefix to top-level and subtable child codes', () => {
     const out = planBulkRename(props, 'dev_', false);
-    expect(Object.keys(out.properties)).toEqual(['dev_title', 'dev_table']);
-    expect(out.properties.dev_table.fields).toEqual({ dev_qty: { type: 'NUMBER', code: 'dev_qty' } });
+    // キーは変更前のコード。反映時に新規追加ではなく既存フィールドのコード変更（PUT）になる。
+    expect(Object.keys(out.properties)).toEqual(['title', 'table']);
+    expect(out.properties.title.code).toBe('dev_title');
+    expect(out.properties.table.code).toBe('dev_table');
+    expect(out.properties.table.fields).toEqual({ qty: { type: 'NUMBER', code: 'dev_qty' } });
     expect(out.renamePairs).toEqual([
       { from: 'title', to: 'dev_title' },
       { from: 'table', to: 'dev_table' },
@@ -160,7 +168,8 @@ describe('planBulkRename', () => {
 
   it('removes a prefix and reports codes that would become empty', () => {
     const out = planBulkRename({ ...props, dev_: { type: 'NUMBER', code: 'dev_' } }, 'dev_', true);
-    expect(Object.keys(out.properties)).toEqual(['done']);
+    expect(Object.keys(out.properties)).toEqual(['dev_done']);
+    expect(out.properties.dev_done.code).toBe('done');
     expect(out.collisions).toEqual(['dev_ → (空)']);
   });
 
@@ -170,5 +179,98 @@ describe('planBulkRename', () => {
       dev_title: { type: 'SINGLE_LINE_TEXT', code: 'dev_title' }
     }, 'dev_', true);
     expect(out.collisions).toContain('dev_title → title');
+  });
+
+  it('reports collisions between subtable children and with fields that are not renamed', () => {
+    const out = planBulkRename({
+      qty: { type: 'NUMBER', code: 'qty' },
+      table: { type: 'SUBTABLE', code: 'table', fields: { dev_qty: { type: 'NUMBER', code: 'dev_qty' } } },
+      dev_memo: { type: 'SINGLE_LINE_TEXT', code: 'dev_memo' },
+      memo: { type: 'RECORD_NUMBER', code: 'memo' }
+    }, 'dev_', true);
+    expect(out.collisions).toEqual(['table.dev_qty → table.qty', 'dev_memo → memo']);
+  });
+
+  it('does not report a chain of renames as a collision', () => {
+    const out = planBulkRename({
+      aab: { type: 'NUMBER', code: 'aab' },
+      ab: { type: 'NUMBER', code: 'ab' }
+    }, 'a', true);
+    expect(out.collisions).toEqual([]);
+    expect(out.renamePairs).toEqual([{ from: 'aab', to: 'ab' }, { from: 'ab', to: 'b' }]);
+  });
+
+  it('turns into a rename (PUT) rather than an add when applied with overwrite', () => {
+    const out = planBulkRename(props, 'dev_', false);
+    const plan = planFieldApply(out.properties, props, {}, true);
+    expect(Object.keys(plan.adds)).toEqual([]);
+    expect(plan.updates.title.code).toBe('dev_title');
+  });
+});
+
+describe('buildFieldApplyConfirmText', () => {
+  it('shows renamed codes and truncates a long list in the confirmation', () => {
+    const incoming: Record<string, any> = { old_name: { type: 'NUMBER', code: 'new_name' } };
+    const current: Record<string, any> = { old_name: { type: 'NUMBER', code: 'old_name' } };
+    for (let i = 0; i < 12; i++) incoming[`f${i}`] = { type: 'NUMBER' };
+    const text = buildFieldApplyConfirmText('1', '', planFieldApply(incoming, current, {}, true));
+    expect(text).toContain('更新: old_name → new_name');
+    expect(text).toContain('追加: f0、f1、f2、f3、f4、f5、f6、f7、f8、f9 ほか2件');
+  });
+});
+
+describe('findFieldApplyProblem', () => {
+  const valid = { targetAppId: '5', targetGuestId: '', fieldJson: '{"properties":{"a":{"type":"NUMBER"}}}', lookupMapJson: '' };
+
+  it('accepts a complete input', () => {
+    expect(findFieldApplyProblem(valid)).toBe('');
+    expect(findFieldApplyProblem({ ...valid, targetGuestId: ' 3 ', lookupMapJson: '{"1":"2"}' })).toBe('');
+  });
+
+  it('stops non-numeric ids and unusable JSON before the confirmation step', () => {
+    expect(findFieldApplyProblem({ ...valid, targetAppId: ' ' })).toMatch(/指定してください/);
+    expect(findFieldApplyProblem({ ...valid, targetAppId: '12a' })).toMatch(/アプリIDは数値/);
+    expect(findFieldApplyProblem({ ...valid, targetGuestId: 'x/1' })).toMatch(/ゲストIDは数値/);
+    expect(findFieldApplyProblem({ ...valid, fieldJson: '{}' })).toMatch(/反映対象/);
+    expect(findFieldApplyProblem({ ...valid, fieldJson: '{"a":{"label":"x"}}' })).toMatch(/type がありません/);
+    expect(findFieldApplyProblem({ ...valid, lookupMapJson: '[1]' })).toMatch(/Lookup/);
+  });
+});
+
+describe('findFieldCodeConflicts', () => {
+  const current = {
+    a: { type: 'NUMBER', code: 'a' },
+    b: { type: 'NUMBER', code: 'b' }
+  };
+
+  it('is empty for plain adds and updates', () => {
+    const plan = planFieldApply({ c: { type: 'NUMBER' }, a: { type: 'NUMBER', label: 'x' } }, current, {}, true);
+    expect(findFieldCodeConflicts(plan, current)).toEqual([]);
+  });
+
+  it('reports a rename onto an existing code and two renames onto the same code', () => {
+    const toExisting = planFieldApply({ a: { type: 'NUMBER', code: 'b' } }, current, {}, true);
+    expect(findFieldCodeConflicts(toExisting, current)).toEqual(['a → b']);
+    const twice = planFieldApply({ a: { type: 'NUMBER', code: 'z' }, b: { type: 'NUMBER', code: 'z' } }, current, {}, true);
+    expect(findFieldCodeConflicts(twice, current)).toEqual(['a → z', 'b → z']);
+  });
+
+  it('allows swapping into a code that is renamed away, but not adding a code that exists now', () => {
+    const chain = planFieldApply({ a: { type: 'NUMBER', code: 'c' }, b: { type: 'NUMBER', code: 'a' } }, current, {}, true);
+    expect(findFieldCodeConflicts(chain, current)).toEqual([]);
+    const add = planFieldApply({ n: { type: 'NUMBER', code: 'a' } }, current, {}, true);
+    expect(findFieldCodeConflicts(add, current)).toEqual(['n → a']);
+  });
+
+  it('does not mistake Object.prototype members for existing fields', () => {
+    const plan = planFieldApply({ toString: { type: 'NUMBER' }, constructor: { type: 'NUMBER' } }, current, {}, false);
+    expect(Object.keys(plan.adds)).toEqual(['toString', 'constructor']);
+    expect(plan.skippedExisting).toEqual([]);
+  });
+
+  it('does not treat inherited keys of the app map as lookup conversions', () => {
+    const plan = planFieldApply({ lk: { type: 'NUMBER', lookup: { relatedApp: { app: 'toString' } } } }, {}, { '10': '20' }, false);
+    expect(plan.adds.lk.lookup.relatedApp.app).toBe('toString');
+    expect(plan.lookupConverted).toEqual([]);
   });
 });

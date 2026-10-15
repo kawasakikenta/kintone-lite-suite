@@ -4,6 +4,14 @@ import { SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone, kusConfirm } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision } from '../api.js';
 
+/** アプリID・ゲストIDは数値のみ。URL パスに組み込まれるため、空でも数値でもない値は呼び出し前に止める。 */
+function assertNumericIds(appId: unknown, guestId: unknown, appLabel: string) {
+  if (!/^\d+$/.test(String(appId ?? '').trim())) throw new Error(`${appLabel}アプリIDは数値で入力してください`);
+  if (String(guestId ?? '').trim() && !/^\d+$/.test(String(guestId).trim())) throw new Error(`${appLabel}ゲストIDは数値で入力してください`);
+}
+
+const hasOwn = (obj: unknown, key: string) => Object.prototype.hasOwnProperty.call(obj ?? {}, key);
+
 function filterWritable(props: any) {
   const out: Record<string, any> = {};
   for (const [k, def] of Object.entries(props || {}) as Array<[string, any]>) {
@@ -22,7 +30,7 @@ function convertLookup(fieldDef: any, map: Record<string, any>) {
     if (!node || typeof node !== 'object') return;
     const lookupRel = node.lookup?.relatedApp;
     if (lookupRel?.app != null) {
-      const after = map[String(lookupRel.app)];
+      const after = hasOwn(map, String(lookupRel.app)) ? map[String(lookupRel.app)] : undefined;
       if (after && String(after) !== String(lookupRel.app)) {
         node.lookup.relatedApp.app = String(after);
         delete node.lookup.relatedApp.code;
@@ -31,7 +39,7 @@ function convertLookup(fieldDef: any, map: Record<string, any>) {
     }
     const refRel = node.referenceTable?.relatedApp;
     if (refRel?.app != null) {
-      const after = map[String(refRel.app)];
+      const after = hasOwn(map, String(refRel.app)) ? map[String(refRel.app)] : undefined;
       if (after && String(after) !== String(refRel.app)) {
         node.referenceTable.relatedApp.app = String(after);
         delete node.referenceTable.relatedApp.code;
@@ -95,6 +103,31 @@ export function parseLookupMapInput(text: unknown): Record<string, string> {
   return out;
 }
 
+function withPartialNotice(error: any, notice: string): any {
+  const wrapped = new Error(`${notice}\n${error?.message != null ? String(error.message) : String(error)}`) as any;
+  for (const key of ['revisionConflict', 'original', 'code', 'id', '__apiDiag', 'stack']) {
+    if (error && error[key] !== undefined) wrapped[key] = error[key];
+  }
+  return wrapped;
+}
+
+/**
+ * 反映前の入力検査。実行時に失敗する入力（数値でないID・type の無い定義・不正な変換 JSON など）を
+ * 確認画面へ進む前に利用者へ示すための純粋関数。問題が無ければ空文字を返す。
+ */
+export function findFieldApplyProblem(input: { targetAppId: string; targetGuestId: string; fieldJson: string; lookupMapJson: string }): string {
+  const appId = String(input.targetAppId ?? '').trim();
+  if (!appId) return '比較先アプリIDを指定してください。';
+  try {
+    assertNumericIds(appId, input.targetGuestId, '比較先');
+    parseFieldJsonInput(input.fieldJson);
+    parseLookupMapInput(input.lookupMapJson);
+  } catch (e: any) {
+    return String(e?.message || e);
+  }
+  return '';
+}
+
 export interface FieldApplyPlan {
   adds: Record<string, any>;
   updates: Record<string, any>;
@@ -126,7 +159,7 @@ export function planFieldApply(
     if (changed) plan.lookupConverted.push(code);
     if (!def.code) def.code = code;
 
-    if (currentMap[code]) {
+    if (hasOwn(currentMap, code) && currentMap[code]) {
       if (overwrite) {
         plan.updates[code] = def;
         plan.logs.push(`UPDATE ${code}${changed ? ' (参照先AppID変換)' : ''}`);
@@ -142,6 +175,36 @@ export function planFieldApply(
   return plan;
 }
 
+function listCodes(map: Record<string, any>, limit = 10): string {
+  const keys = Object.keys(map);
+  const shown = keys.slice(0, limit).map((key) => (map[key]?.code && map[key].code !== key ? `${key} → ${map[key].code}` : key));
+  return shown.join('、') + (keys.length > limit ? ` ほか${keys.length - limit}件` : '');
+}
+
+/**
+ * 反映すると同じフィールドコードが複数できる組み合わせを、書き込み前に洗い出す。
+ * 追加（POST）は更新（PUT）より先に実行されるので、追加するコードは「現在の」フィールドと、
+ * 更新後のコード（コード変更を含む）は追加分を含めた最終状態と照合する。
+ * API 側で拒否されても、追加だけが反映された状態で止まってしまうため。
+ */
+export function findFieldCodeConflicts(plan: FieldApplyPlan, currentProps: Record<string, any>): string[] {
+  const current = currentProps || {};
+  const conflicts: string[] = [];
+  for (const [key, def] of Object.entries(plan.adds)) {
+    const code = String(def?.code || key);
+    if (hasOwn(current, code)) conflicts.push(`${key}${code !== key ? ` → ${code}` : ''}`);
+  }
+  const finalCount = new Map<string, number>();
+  const count = (code: string) => finalCount.set(code, (finalCount.get(code) || 0) + 1);
+  for (const key of Object.keys(current)) count(hasOwn(plan.updates, key) ? String(plan.updates[key]?.code || key) : key);
+  for (const [key, def] of Object.entries(plan.adds)) count(String(def?.code || key));
+  for (const [key, def] of Object.entries(plan.updates)) {
+    const code = String(def?.code || key);
+    if (code !== key && (finalCount.get(code) || 0) > 1) conflicts.push(`${key} → ${code}`);
+  }
+  return conflicts;
+}
+
 export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: string, plan: FieldApplyPlan): string {
   const addCount = Object.keys(plan.adds).length;
   const updateCount = Object.keys(plan.updates).length;
@@ -149,6 +212,9 @@ export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: s
   return [
     `比較先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ''} のプレビュー環境へフィールドを反映します。`,
     `追加 ${addCount}件 / 更新 ${updateCount}件 / スキップ ${skipCount}件${plan.lookupConverted.length ? ` / 参照先AppID変換 ${plan.lookupConverted.length}件` : ''}`,
+    addCount ? `追加: ${listCodes(plan.adds)}` : '',
+    updateCount ? `更新: ${listCodes(plan.updates)}` : '',
+    '削除 0件（このツールはフィールドを削除しません）',
     updateCount ? '更新対象は既存の定義を比較元の内容で置き換えます。' : '',
     '本番には反映されません（管理画面から手動デプロイ）。実行しますか？'
   ].filter(Boolean).join('\n');
@@ -162,6 +228,7 @@ export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: s
 export async function runFieldApplyStandalone(opts, setStatus) {
   const { targetAppId, targetGuestId, fieldJson, lookupMapJson, overwrite } = opts;
   if (!targetAppId) throw new Error('比較先アプリIDを入力してください');
+  assertNumericIds(targetAppId, targetGuestId, '比較先');
   const incoming = parseFieldJsonInput(fieldJson);
   const lookupMap = parseLookupMapInput(lookupMapJson);
 
@@ -177,6 +244,10 @@ export async function runFieldApplyStandalone(opts, setStatus) {
     setStatus(`追加・更新対象がありません（スキップ ${plan.skippedSystem.length + plan.skippedExisting.length}件）`, true);
     logs.push('反映対象なし');
     return logs;
+  }
+  const conflicts = findFieldCodeConflicts(plan, current.properties || ({} as any));
+  if (conflicts.length) {
+    throw new Error(`反映後のフィールドコードが既存のフィールドと重複するため、何も反映せずに中止しました: ${conflicts.join('、')}`);
   }
   let revision = pickRevision(current);
   if (!/^\d+$/.test(revision)) {
@@ -216,7 +287,9 @@ export async function runFieldApplyStandalone(opts, setStatus) {
       logs.push(`OK フィールド更新 ${updateCount}件${revision ? ` (revision ${revision})` : ''}`);
     } catch (e) {
       logs.push(`NG フィールド更新 ${updateCount}件${addCount ? '（追加 ' + addCount + '件は反映済み）' : ''}`);
-      throw decorateRevisionConflict(e, 'フィールド更新');
+      const failure = decorateRevisionConflict(e, 'フィールド更新');
+      // 例外ではログが渡らないため、追加が反映済みであることをエラー文面に含める（部分成功を隠さない）
+      throw addCount ? withPartialNotice(failure, `フィールド追加 ${addCount}件は反映済みですが、フィールド更新 ${updateCount}件は反映されませんでした。`) : failure;
     }
   }
 
@@ -227,6 +300,7 @@ export async function runFieldApplyStandalone(opts, setStatus) {
 export async function runLoadFieldsStandalone(opts, setStatus) {
   const { appId, guestId, preview } = opts;
   if (!appId) throw new Error('アプリIDを入力してください');
+  assertNumericIds(appId, guestId, '');
   const prefix = buildApiPrefix(guestId || '', !!preview);
   setStatus('フィールド取得中...');
   const res = await apiGet(prefix, '/app/form/fields.json', { app: appId });
@@ -241,7 +315,10 @@ const RENAME_EXCLUDED_TYPES = new Set([
 
 /**
  * フィールドコードにプレフィックスを一括付与/除去した properties を返す（純粋関数）。
- * サブテーブル内の子フィールドも同じ規則で書き換える。
+ * 返す JSON は反映時に「既存フィールドのコード変更」(PUT) として扱われるよう、キーは変更前のコード、
+ * `code` に変更後のコードを入れる。サブテーブル内の子フィールドも同じ規則で書き換える。
+ * フィールドコードはアプリ内で一意なので、変更後のコードがサブテーブルの子や対象外フィールドを
+ * 含めて重複する場合は collisions に載せる。
  */
 export function planBulkRename(props: Record<string, any>, prefixText: string, removeMode: boolean) {
   const trimmed = String(prefixText || '').trim();
@@ -253,20 +330,28 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
   const newProps: Record<string, any> = {};
   const renamePairs: Array<{ from: string; to: string }> = [];
   const collisions: string[] = [];
-  const retainedCodes = new Set(
-    Object.entries(props || {})
-      .filter(([, field]: [string, any]) => field && !RENAME_EXCLUDED_TYPES.has(field.type))
-      .map(([code]) => code)
-  );
-  for (const [code, field] of Object.entries(props || {}) as Array<[string, any]>) {
+  const entries = Object.entries(props || {}) as Array<[string, any]>;
+  // 変更後のコード（子フィールド・対象外フィールドを含む）の出現数。空になる変更は変更前のコードのまま数える。
+  const finalCodes = new Map<string, number>();
+  const countCode = (code: string) => finalCodes.set(code, (finalCodes.get(code) || 0) + 1);
+  for (const [code, field] of entries) {
+    if (!field) continue;
+    countCode(RENAME_EXCLUDED_TYPES.has(field.type) ? code : rename(code) || code);
+    if (!RENAME_EXCLUDED_TYPES.has(field.type) && field.type === 'SUBTABLE' && field.fields && typeof field.fields === 'object') {
+      for (const childCode of Object.keys(field.fields)) countCode(rename(childCode) || childCode);
+    }
+  }
+  const checkDuplicate = (from: string, to: string, toCode: string) => {
+    if ((finalCodes.get(toCode) || 0) > 1) collisions.push(`${from} → ${to}`);
+  };
+  for (const [code, field] of entries) {
     if (!field || RENAME_EXCLUDED_TYPES.has(field.type)) continue;
     const newCode = rename(code);
     const cloned = deepClone(field);
     let touched = false;
     if (newCode !== code) {
       if (!newCode) { collisions.push(`${code} → (空)`); continue; }
-      retainedCodes.delete(code);
-      if (retainedCodes.has(newCode)) collisions.push(`${code} → ${newCode}`);
+      checkDuplicate(code, newCode, newCode);
       cloned.code = newCode;
       touched = true;
       renamePairs.push({ from: code, to: newCode });
@@ -276,18 +361,22 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
       for (const [childCode, childDef] of Object.entries(cloned.fields) as Array<[string, any]>) {
         const newChild = rename(childCode);
         const childClone = deepClone(childDef);
-        if (newChild !== childCode && newChild) {
-          childClone.code = newChild;
-          touched = true;
-          renamePairs.push({ from: `${code}.${childCode}`, to: `${newCode}.${newChild}` });
+        if (newChild !== childCode) {
+          if (!newChild) {
+            collisions.push(`${code}.${childCode} → (空)`);
+          } else {
+            checkDuplicate(`${code}.${childCode}`, `${newCode}.${newChild}`, newChild);
+            childClone.code = newChild;
+            touched = true;
+            renamePairs.push({ from: `${code}.${childCode}`, to: `${newCode}.${newChild}` });
+          }
         }
-        children[newChild || childCode] = childClone;
+        children[childCode] = childClone;
       }
       cloned.fields = children;
     }
     if (!touched) continue;
-    if (newProps[newCode] && newCode !== code) collisions.push(`${code} → ${newCode}`);
-    newProps[newCode] = cloned;
+    newProps[code] = cloned;
     modifiedCount++;
   }
   return { properties: newProps, modifiedCount, renamePairs, collisions };
@@ -301,6 +390,7 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
 export async function runBulkRenameFieldStandalone(opts, setStatus) {
   const { targetAppId, targetGuestId, prefix, removeMode } = opts;
   if (!targetAppId) throw new Error('比較先アプリIDを入力してください');
+  assertNumericIds(targetAppId, targetGuestId, '比較先');
   if (!prefix || !String(prefix).trim()) throw new Error('プレフィックス文字列を入力してください');
   const apiPrefix = buildApiPrefix(targetGuestId || '', true);
   setStatus('比較先フィールドを取得中...');
