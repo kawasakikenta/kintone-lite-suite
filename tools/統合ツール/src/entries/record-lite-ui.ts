@@ -15,7 +15,8 @@ import {
   runLoadViewsStandalone,
   runLoadAttachmentFieldsStandalone,
   parseRecordAppIds,
-  runRecordAppBatchStandalone
+  runRecordAppBatchStandalone,
+  zipNameForApp
 } from '../tabs/record-standalone.js';
 import {
   createLitePanel,
@@ -366,7 +367,7 @@ export function mountRecordLitePanel() {
               fileFieldCode: fileCode.value.trim(),
               tableFieldCode: tableCode.value.trim(),
               folderFieldCode: folderCode.value.trim(),
-              zipName: zipName.value.trim()
+              zipName: zipNameForApp(zipName.value, appId, parseRecordAppIds(tgtApp.value).length > 1)
             },
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
@@ -445,7 +446,7 @@ export function mountRecordLitePanel() {
               appId,
               guestId: tgtGuest.value.trim(),
               query: query.value.trim(),
-              zipName: zipName.value.trim(),
+              zipName: zipNameForApp(zipName.value, appId, parseRecordAppIds(tgtApp.value).length > 1),
               includeFiles: incFiles.checkbox.checked,
               includeComments: incComments.checkbox.checked,
               includeAppSettings: incSettings.checkbox.checked,
