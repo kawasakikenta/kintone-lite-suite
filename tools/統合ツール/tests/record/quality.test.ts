@@ -74,5 +74,6 @@ describe('record quality checks', () => {
     expect(rows[4][1]).toBe('エラー');
     expect(rows[4][6]).toMatch(/^'/);
     expect(reportCsv([['\t=evil', '+123', '@bad', 'a,"b"\n次']])).toContain("'\t=evil");
+    expect(parseCsvText(reportCsv([['-5', '+1.5e3', '-5+1', ' -5', '-']]).replace(/^\uFEFF/, ''))[0]).toEqual(['-5', '+1.5e3', "'-5+1", "' -5", "'-"]);
   });
 });
