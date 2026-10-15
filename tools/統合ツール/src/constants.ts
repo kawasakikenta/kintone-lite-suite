@@ -63,6 +63,23 @@ function resolveDefaultAppId(): string {
 }
 
 export const DEFAULT_APP_ID: string = resolveDefaultAppId();
+
+/**
+ * 開いている画面がゲストスペースならその ID（通常スペースや kintone 外では空）。
+ * 現在のアプリを既定の対象にするとき、アプリ ID と組で使う。空のままだと通常スペースの API を呼んでしまう。
+ */
+export function guestIdFromKintonePath(pathname: unknown): string {
+  const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ''));
+  return match ? match[1] : '';
+}
+
+function resolveDefaultGuestId(): string {
+  try {
+    return typeof window === 'undefined' ? '' : guestIdFromKintonePath(window.location?.pathname);
+  } catch (e) { return ''; }
+}
+
+export const DEFAULT_GUEST_ID: string = DEFAULT_APP_ID ? resolveDefaultGuestId() : '';
 export const DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
 
 export const DIALOG_MARGIN = 16;

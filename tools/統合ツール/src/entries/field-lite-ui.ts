@@ -2,7 +2,7 @@
 
 import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
 
-import { DEFAULT_APP_ID } from '../constants.js';
+import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import {
   runFieldApplyStandalone,
   runLoadFieldsStandalone,
@@ -37,7 +37,7 @@ export function mountFieldLitePanel() {
 
   // ---- アプリ ----
   const srcApp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
-  const srcGuest = makeInput({ placeholder: 'ゲストID (任意)', width: 'guest' });
+  const srcGuest = makeInput({ placeholder: 'ゲストID (任意)', value: DEFAULT_GUEST_ID, width: 'guest' });
   const tgtApp = makeInput({ placeholder: 'アプリID', width: 'id' });
   const tgtGuest = makeInput({ placeholder: 'ゲストID (任意)', width: 'guest' });
 

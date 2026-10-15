@@ -2,7 +2,7 @@
 
 import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
 
-import { DEFAULT_APP_ID } from '../constants.js';
+import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import { runRenderProcessFlowStandalone, validateProcessConnection } from '../tabs/process-standalone.js';
 import {
   createLitePanel,
@@ -30,7 +30,7 @@ export function mountProcessLitePanel() {
   // ---- 入力 ----
   const cardApp = makeCard({ title: '対象アプリ', number: 1 });
   const appInp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
-  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
+  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest' });
   cardApp.body.appendChild(makeRow([appInp, guestInp], { label: 'アプリ' }));
   let notifyConnectionChange: () => void = () => {};
   cardApp.body.appendChild(createAppSearchControl(panel, {

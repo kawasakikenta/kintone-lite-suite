@@ -1,6 +1,6 @@
 'use strict';
 
-import { DEFAULT_APP_ID } from '../constants.js';
+import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import { buildRecordQualityTab } from './record-quality-ui.js';
 import { createAppSearchControl } from './appSearchControl.js';
 import { connectionSummary } from './liteWorkflow.js';
@@ -25,7 +25,7 @@ export function mountRecordQualityLitePanel() {
     width: 'wide',
     ariaLabel: '対象アプリID'
   });
-  const guestId = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest', ariaLabel: 'ゲストスペースID' });
+  const guestId = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest', ariaLabel: 'ゲストスペースID' });
   const target = makeCard({ title: '対象アプリ', number: 1 });
   target.body.appendChild(makeRow([appId, guestId], { label: '接続先' }));
   target.body.appendChild(makeNote('複数アプリはカンマ、改行、または空白で区切ります。検査項目は先頭アプリから読み込みます。'));
