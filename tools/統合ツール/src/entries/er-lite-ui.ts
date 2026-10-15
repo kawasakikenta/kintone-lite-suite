@@ -185,13 +185,13 @@ export function mountErLitePanel() {
   bOpen.addEventListener('click', () => liteRun(panel, 'ER 図を生成中…', async () => {
     const validationError = validateErOptions(source());
     if (validationError) { panel.setStatus(validationError, 'warn'); return; }
-    await runGenerateERDiagramStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
+    await runGenerateERDiagramStandalone(source(), (m: string, e?: boolean | 'warn') => panel.setStatus(m, e === 'warn' ? 'warn' : e ? 'err' : 'busy'));
   }));
 
   bSave.addEventListener('click', () => liteRun(panel, 'HTML 生成中…', async () => {
     const validationError = validateErOptions(source());
     if (validationError) { panel.setStatus(validationError, 'warn'); return; }
-    await runExportERDiagramHtmlStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
+    await runExportERDiagramHtmlStandalone(source(), (m: string, e?: boolean | 'warn') => panel.setStatus(m, e === 'warn' ? 'warn' : e ? 'err' : 'busy'));
   }));
 
   appInp.setAttribute('aria-label', '起点アプリID');
@@ -205,7 +205,7 @@ export function mountErLitePanel() {
       const picked = source().spaceSelectedAppIds;
       return picked ? `${spaceId}（読み込んだ ${spacePicker.count()} アプリ中 ${picked.length} 件を起点にする）` : `${spaceId}（スペース内の全アプリを起点にする）`;
     })()],
-    ['探索の深さ', depthInp.value === '0' ? '無制限' : depthInp.value],
+    ['探索の深さ', !depthInp.value.trim() || Number(depthInp.value) === 0 ? '無制限' : depthInp.value.trim()],
     ['表示', (layoutSel.selectedOptions[0]?.textContent || '') + ' / ' + (densitySel.selectedOptions[0]?.textContent || '')],
     ['逆引き', reverseCb.checkbox.checked ? 'あり' : 'なし']
   ];
