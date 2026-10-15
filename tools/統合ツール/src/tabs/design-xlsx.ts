@@ -428,6 +428,10 @@ export async function runAdvancedDesignExporter(params: any = {}) {
   const lightweightMode: boolean = !!params.lightweightMode;
   const progressLabel: string = params.progressLabel ? String(params.progressLabel) : '';
   const suppressToast: boolean = !!params.suppressToast;
+  // 取得環境。true ならプレビュー（未公開の設定）、既定は本番（運用中の設定）。設定JSON指定時は無関係。
+  const usePreview: boolean = !!params.preview;
+  const onFinish: ((info: { failedAPIs: Array<{ name: string; error: string }> }) => void) | null =
+    typeof params.onFinish === 'function' ? params.onFinish : null;
 
   const CONFIG = {
     SHEETLIB_PRIMARY_URL: 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js',
@@ -931,11 +935,18 @@ export async function runAdvancedDesignExporter(params: any = {}) {
   // sectionKey を渡さない項目（レコード件数・管理者メモ・Webhook・参照アプリ名など）は
   // bundle 設定JSONに元々含まれないため、bundle モードでは常に null（=取得不可扱い）とし、
   // 意図せず別環境へライブAPIを叩かないようにする。
+  const bundleGapsLogged = new Set<string>();
   async function fetchJob<T = any>(name: string, promiseFn: () => Promise<T>, sectionKey?: string): Promise<T | null> {
     if (bundle) {
       if (!sectionKey) return null;
       const sec = (bundle.sections || {})[sectionKey];
-      return (sec && !sec._fetchError) ? (sec as T) : null;
+      if (sec && !sec._fetchError) return sec as T;
+      // 設定JSONに無い／取得失敗のセクションは、空の設計書として黙って出さず取得失敗レポートに載せる
+      if (!bundleGapsLogged.has(sectionKey)) {
+        bundleGapsLogged.add(sectionKey);
+        UI.logError(`${name}（設定JSON）`, sec?._fetchError ? String(sec._fetchError) : '設定JSONにこのセクションが含まれていません');
+      }
+      return null;
     }
     try { return await apiSemaphore.run(() => retry(promiseFn)); }
     catch (e) { console.warn(`[${name}] Failed:`, e); UI.logError(name, e); return null; }
@@ -976,18 +987,20 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       if (sourceGuestId) {
         p = p.replace('/k/v1/preview/', `/k/guest/${sourceGuestId}/v1/preview/`).replace('/k/v1/', `/k/guest/${sourceGuestId}/v1/`);
       }
-      return kintone.api.url(p, true);
+      // 空欄のゲストIDは通常スペース。第2引数 true だとゲストスペース上で実行中に現在のゲストへ書き換わるため false にする
+      return kintone.api.url(p, false);
     };
+
+    // 設定系のエンドポイントは取得環境に合わせて本番／プレビューを切り替える（app.json・records.json は本番のみ）
+    const envPath = (path: string): string => (usePreview ? path.replace('/k/v1/', '/k/v1/preview/') : path);
 
     UI.update(bundle ? '基本情報を設定JSONから読込中...' : '基本情報を取得中...');
     const appSettings = await fetchJob('App', () => api(apiUrl('/k/v1/app.json'), 'GET', { id: APP_ID }), 'appInfo');
-    const generalSettings = await fetchJob('Settings', () => api(apiUrl('/k/v1/app/settings.json'), 'GET', { app: APP_ID }), 'appSettings');
+    const generalSettings = await fetchJob('Settings', () => api(apiUrl(envPath('/k/v1/app/settings.json')), 'GET', { app: APP_ID }), 'appSettings');
 
     UI.update(bundle ? 'フィールド・レイアウトを設定JSONから読込中...' : 'フィールド・レイアウトを取得中...');
-    let fieldResp = await fetchJob('FieldsPrev', () => api(apiUrl('/k/v1/preview/app/form/fields.json'), 'GET', { app: APP_ID }), 'fieldSettings');
-    if (!fieldResp) fieldResp = await fetchJob('FieldsProd', () => api(apiUrl('/k/v1/app/form/fields.json'), 'GET', { app: APP_ID }), 'fieldSettings');
-    let layout = await fetchJob('LayoutPrev', () => api(apiUrl('/k/v1/preview/app/form/layout.json'), 'GET', { app: APP_ID }), 'layoutSettings');
-    if (!layout) layout = await fetchJob('LayoutProd', () => api(apiUrl('/k/v1/app/form/layout.json'), 'GET', { app: APP_ID }), 'layoutSettings');
+    const fieldResp = await fetchJob('Fields', () => api(apiUrl(envPath('/k/v1/app/form/fields.json')), 'GET', { app: APP_ID }), 'fieldSettings');
+    const layout = await fetchJob('Layout', () => api(apiUrl(envPath('/k/v1/app/form/layout.json')), 'GET', { app: APP_ID }), 'layoutSettings');
 
     const fields = filterUserFields(fieldResp?.properties || ({} as any));
 
@@ -1002,21 +1015,21 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
     UI.update(bundle ? '一覧・権限・通知設定を設定JSONから読込中...' : '一覧・権限・通知設定を取得中...');
     const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif] = await Promise.all([
-      fetchJob('Views', () => api(apiUrl('/k/v1/app/views.json'), 'GET', { app: APP_ID }), 'viewSettings'),
-      fetchJob('Reports', () => api(apiUrl('/k/v1/app/reports.json'), 'GET', { app: APP_ID }), 'reportSettings'),
-      fetchJob('Status', () => api(apiUrl('/k/v1/app/status.json'), 'GET', { app: APP_ID }), 'processSettings'),
-      fetchJob('アプリ権限', () => api(apiUrl('/k/v1/app/acl.json'), 'GET', { app: APP_ID }), 'appAcl'),
-      fetchJob('レコード権限', () => api(apiUrl('/k/v1/record/acl.json'), 'GET', { app: APP_ID }), 'recordPermissions'),
-      fetchJob('フィールド権限', () => api(apiUrl('/k/v1/field/acl.json'), 'GET', { app: APP_ID }), 'fieldAcl'),
-      fetchJob('Customize', () => api(apiUrl('/k/v1/app/customize.json'), 'GET', { app: APP_ID }), 'customizeSettings'),
-      fetchJob('Actions', () => api(apiUrl('/k/v1/preview/app/actions.json'), 'GET', { app: APP_ID }), 'actionSettings'),
-      fetchJob('Plugins', () => api(apiUrl('/k/v1/app/plugins.json'), 'GET', { app: APP_ID }), 'pluginSettings'),
+      fetchJob('Views', () => api(apiUrl(envPath('/k/v1/app/views.json')), 'GET', { app: APP_ID }), 'viewSettings'),
+      fetchJob('Reports', () => api(apiUrl(envPath('/k/v1/app/reports.json')), 'GET', { app: APP_ID }), 'reportSettings'),
+      fetchJob('Status', () => api(apiUrl(envPath('/k/v1/app/status.json')), 'GET', { app: APP_ID }), 'processSettings'),
+      fetchJob('アプリ権限', () => api(apiUrl(envPath('/k/v1/app/acl.json')), 'GET', { app: APP_ID }), 'appAcl'),
+      fetchJob('レコード権限', () => api(apiUrl(envPath('/k/v1/record/acl.json')), 'GET', { app: APP_ID }), 'recordPermissions'),
+      fetchJob('フィールド権限', () => api(apiUrl(envPath('/k/v1/field/acl.json')), 'GET', { app: APP_ID }), 'fieldAcl'),
+      fetchJob('Customize', () => api(apiUrl(envPath('/k/v1/app/customize.json')), 'GET', { app: APP_ID }), 'customizeSettings'),
+      fetchJob('Actions', () => api(apiUrl(envPath('/k/v1/app/actions.json')), 'GET', { app: APP_ID }), 'actionSettings'),
+      fetchJob('Plugins', () => api(apiUrl(envPath('/k/v1/app/plugins.json')), 'GET', { app: APP_ID }), 'pluginSettings'),
       // 管理者メモ・Webhookは設定一括取得の対象外のため bundle モードでは常に取得不可
       fetchJob('AdminNotes', () => api(apiUrl('/k/v1/app/adminNotes.json'), 'GET', { app: APP_ID })),
       fetchJob('Webhooks', () => api(apiUrl('/k/v1/app/webhook.json'), 'GET', { app: APP_ID })),
-      fetchJob('GenNotif', () => api(apiUrl('/k/v1/app/notifications/general.json'), 'GET', { app: APP_ID }), 'notifications'),
-      fetchJob('RecNotif', () => api(apiUrl('/k/v1/app/notifications/perRecord.json'), 'GET', { app: APP_ID }), 'perRecordNotifications'),
-      fetchJob('RemNotif', () => api(apiUrl('/k/v1/app/notifications/reminder.json'), 'GET', { app: APP_ID }), 'reminderNotifications')
+      fetchJob('GenNotif', () => api(apiUrl(envPath('/k/v1/app/notifications/general.json')), 'GET', { app: APP_ID }), 'notifications'),
+      fetchJob('RecNotif', () => api(apiUrl(envPath('/k/v1/app/notifications/perRecord.json')), 'GET', { app: APP_ID }), 'perRecordNotifications'),
+      fetchJob('RemNotif', () => api(apiUrl(envPath('/k/v1/app/notifications/reminder.json')), 'GET', { app: APP_ID }), 'reminderNotifications')
     ]);
 
     const actions = UtilsX.safeGet(actionsResp, 'actions', {});
@@ -1051,6 +1064,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     const processActionCount = (status?.actions || []).length;
     const pluginCount = (pluginsResp?.plugins || []).length;
     const webhookCount = (webhooksResp?.webhooks || []).length;
+    // 設定JSONには Webhook が含まれず、API取得に失敗した場合もあるため、0件と区別して出す
+    const webhookCountText = webhooksResp ? `${webhookCount}` : '(取得不可)';
     const appAclCount = (appAcl?.rights || []).length;
     const recordAclCount = (recordAcl?.rights || []).length;
     const fieldAclCount = (fieldAcl?.rights || []).length;
@@ -1347,7 +1362,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       sAoa.push(['アクション数(プロセス)', processActionCount]);
       sAoa.push(['アクション数(レコード)', Object.keys(actions || ({} as any)).length]);
       sAoa.push(['プラグイン数', pluginCount]);
-      sAoa.push(['Webhook数', webhookCount]);
+      sAoa.push(['Webhook数', webhooksResp ? webhookCount : '(取得不可)']);
       sAoa.push(['通知(一般)件数', (genNotif?.notifications || []).length]);
       sAoa.push(['通知(レコード)件数', (recNotif?.notifications || []).length]);
       sAoa.push(['通知(リマインダー)件数', (remNotif?.notifications || []).length]);
@@ -1399,7 +1414,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       sAoa.push(['観点', '確認内容']); headerInfoRows.push(sAoa.length - 1);
       sAoa.push(['参照関係', `ルックアップ ${attrCounts.lookup}件 / 関連レコード ${attrCounts.reference}件 / 計算式 ${attrCounts.calc}件`]);
       sAoa.push(['権限', `アプリ ${appAclCount}件 / レコード ${recordAclCount}件 / フィールド ${fieldAclCount}件`]);
-      sAoa.push(['カスタマイズ', `JS/CSS ${customizeCount}件 / プラグイン ${pluginCount}件 / Webhook ${webhookCount}件`]);
+      sAoa.push(['カスタマイズ', `JS/CSS ${customizeCount}件 / プラグイン ${pluginCount}件 / Webhook ${webhookCountText}${webhooksResp ? '件' : ''}`]);
       sAoa.push(['プロセス', status?.enable ? `有効: ステータス ${processStateCount}件 / アクション ${processActionCount}件` : '無効']);
       sAoa.push([]);
 
@@ -2324,6 +2339,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     downloadExcel(wb, filename);
 
     UI.hide();
+    onFinish?.({ failedAPIs: UI.failedAPIs.slice() });
     if (!suppressToast) {
       const errorMsg = UI.failedAPIs.length > 0 ? `\n⚠ ${UI.failedAPIs.length}件のAPI取得に失敗しました` : '';
       showToast(`✅ エクスポート完了${errorMsg}`, UI.failedAPIs.length > 0 ? 'warn' : 'success');
@@ -2347,6 +2363,22 @@ function sanitizeFilename(name: string): string {
 }
 
 /**
+ * マニフェストに残す対象一覧。設定JSON（bundle）の中身は巨大で機微な設定を含むため、取得元の種別だけを残す。
+ */
+export function toManifestTargets(targets: Array<{ appId: string; guestId: string; bundle?: any }>): Array<{ appId: string; guestId: string; source: 'settings-json' | 'api' }> {
+  return targets.map((t) => ({ appId: t.appId, guestId: t.guestId, source: t.bundle ? 'settings-json' : 'api' }));
+}
+
+export interface BatchDesignExportInfo {
+  total: number;
+  successCount: number;
+  failedCount: number;
+  cancelled: boolean;
+  failedApps: Array<{ appId: string; error: string }>;
+  failedAPIs: Array<{ app: string; name: string; error: string }>;
+}
+
+/**
  * 複数アプリの設計書 Excel を一括生成し、1つの ZIP にまとめてダウンロードする。
  *
  * 仕様:
@@ -2364,6 +2396,8 @@ export async function runBatchDesignExportXlsxZip(params: {
   guestId?: string;
   /** appId をキーにした設定バンドルのマップ。指定されたアプリはライブAPIを呼ばずバンドルから生成する。 */
   bundlesByAppId?: Record<string, any>;
+  /** ZIP を保存した後に、成功・失敗件数と API 取得失敗を呼び出し元へ渡す（部分成功を利用者へ示すため）。 */
+  onFinish?: (info: BatchDesignExportInfo) => void;
 }): Promise<boolean> {
   // apps（アプリごとに別ゲスト）優先。無ければ appIds + 共通 guestId にフォールバック。
   const sharedGuest = String(params.guestId || '').trim();
@@ -2485,6 +2519,11 @@ export async function runBatchDesignExportXlsxZip(params: {
     results.push({ appId: '-', appName: '', filename: '', ok: false, error: 'ユーザーにより中断されました' });
   }
   const successCount = results.filter((r) => r.ok).length;
+  if (successCount === 0 && cancelled) {
+    // 1件も生成しないまま中断した場合はエラーではなくキャンセルとして扱う
+    batchUi.hide();
+    return false;
+  }
   if (successCount === 0) {
     batchUi.hide();
     const detail = results.map((r) => `- App ${r.appId}: ${r.error || '(原因不明)'}`).join('\n');
@@ -2518,7 +2557,7 @@ export async function runBatchDesignExportXlsxZip(params: {
     successCount,
     failedCount: appIds.length - successCount,
     guestIds: manifestGuestIds,
-    targets,
+    targets: toManifestTargets(targets),
     results,
     failedApis: failedAPIs
   }, null, 2));
@@ -2540,5 +2579,13 @@ export async function runBatchDesignExportXlsxZip(params: {
   const tone = ngCount > 0 ? 'warn' : 'success';
   const suffix = ngCount > 0 ? `（成功 ${successCount} / 失敗 ${ngCount}）` : '';
   showToast(`✅ 設計書ZIPを保存しました${suffix}`, tone);
+  params.onFinish?.({
+    total: appIds.length,
+    successCount,
+    failedCount: ngCount,
+    cancelled,
+    failedApps: results.filter((r) => !r.ok && r.appId !== '-').map((r) => ({ appId: r.appId, error: r.error || '' })),
+    failedAPIs: failedAPIs.slice()
+  });
   return true;
 }
