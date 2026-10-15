@@ -95,6 +95,14 @@ export function parseLookupMapInput(text: unknown): Record<string, string> {
   return out;
 }
 
+function withPartialNotice(error: any, notice: string): any {
+  const wrapped = new Error(`${notice}\n${error?.message != null ? String(error.message) : String(error)}`) as any;
+  for (const key of ['revisionConflict', 'original', 'code', 'id', '__apiDiag', 'stack']) {
+    if (error && error[key] !== undefined) wrapped[key] = error[key];
+  }
+  return wrapped;
+}
+
 export interface FieldApplyPlan {
   adds: Record<string, any>;
   updates: Record<string, any>;
@@ -142,6 +150,12 @@ export function planFieldApply(
   return plan;
 }
 
+function listCodes(map: Record<string, any>, limit = 10): string {
+  const keys = Object.keys(map);
+  const shown = keys.slice(0, limit).map((key) => (map[key]?.code && map[key].code !== key ? `${key} → ${map[key].code}` : key));
+  return shown.join('、') + (keys.length > limit ? ` ほか${keys.length - limit}件` : '');
+}
+
 export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: string, plan: FieldApplyPlan): string {
   const addCount = Object.keys(plan.adds).length;
   const updateCount = Object.keys(plan.updates).length;
@@ -149,6 +163,9 @@ export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: s
   return [
     `比較先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ''} のプレビュー環境へフィールドを反映します。`,
     `追加 ${addCount}件 / 更新 ${updateCount}件 / スキップ ${skipCount}件${plan.lookupConverted.length ? ` / 参照先AppID変換 ${plan.lookupConverted.length}件` : ''}`,
+    addCount ? `追加: ${listCodes(plan.adds)}` : '',
+    updateCount ? `更新: ${listCodes(plan.updates)}` : '',
+    '削除 0件（このツールはフィールドを削除しません）',
     updateCount ? '更新対象は既存の定義を比較元の内容で置き換えます。' : '',
     '本番には反映されません（管理画面から手動デプロイ）。実行しますか？'
   ].filter(Boolean).join('\n');
@@ -216,7 +233,9 @@ export async function runFieldApplyStandalone(opts, setStatus) {
       logs.push(`OK フィールド更新 ${updateCount}件${revision ? ` (revision ${revision})` : ''}`);
     } catch (e) {
       logs.push(`NG フィールド更新 ${updateCount}件${addCount ? '（追加 ' + addCount + '件は反映済み）' : ''}`);
-      throw decorateRevisionConflict(e, 'フィールド更新');
+      const failure = decorateRevisionConflict(e, 'フィールド更新');
+      // 例外ではログが渡らないため、追加が反映済みであることをエラー文面に含める（部分成功を隠さない）
+      throw addCount ? withPartialNotice(failure, `フィールド追加 ${addCount}件は反映済みですが、フィールド更新 ${updateCount}件は反映されませんでした。`) : failure;
     }
   }
 

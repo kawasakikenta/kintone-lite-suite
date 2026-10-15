@@ -58,4 +58,71 @@ describe('field apply revision guard', () => {
     expect(apiPost).toHaveBeenCalledTimes(1);
     expect(apiPut).not.toHaveBeenCalled();
   });
+
+  it('chains the revision from the add response into the update and targets the preview API', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      properties: { existing: { type: 'NUMBER', code: 'existing' } },
+      revision: '10'
+    });
+    vi.mocked(apiPost).mockResolvedValue({ revision: '11' });
+    vi.mocked(apiPut).mockResolvedValue({ revision: '12' });
+
+    const logs = await runFieldApplyStandalone({
+      targetAppId: '5',
+      targetGuestId: '7',
+      fieldJson: JSON.stringify({ properties: {
+        added: { type: 'SINGLE_LINE_TEXT' },
+        existing: { type: 'NUMBER', label: '更新後' }
+      } }),
+      overwrite: true,
+      skipConfirm: true
+    }, vi.fn());
+
+    expect(apiPost).toHaveBeenCalledWith('/k/guest/7/v1/preview', '/app/form/fields.json', {
+      app: '5', properties: { added: { type: 'SINGLE_LINE_TEXT', code: 'added' } }, revision: '10'
+    });
+    expect(apiPut).toHaveBeenCalledWith('/k/guest/7/v1/preview', '/app/form/fields.json', {
+      app: '5', properties: { existing: { type: 'NUMBER', label: '更新後', code: 'existing' } }, revision: '11'
+    });
+    expect(logs.join('\n')).toContain('revision 12');
+  });
+
+  it('tells the user that the add was applied when the following update fails', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      properties: { existing: { type: 'NUMBER', code: 'existing' } },
+      revision: '10'
+    });
+    vi.mocked(apiPost).mockResolvedValue({ revision: '11' });
+    vi.mocked(apiPut).mockRejectedValue(Object.assign(new Error('revision mismatch'), { code: 'GAIA_CO02' }));
+
+    const error: any = await runFieldApplyStandalone({
+      targetAppId: '5',
+      fieldJson: JSON.stringify({ properties: {
+        added: { type: 'SINGLE_LINE_TEXT' },
+        existing: { type: 'NUMBER' }
+      } }),
+      overwrite: true,
+      skipConfirm: true
+    }, vi.fn()).catch(e => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message.split('\n')[0]).toMatch(/追加 1件は反映済み/);
+    expect(error.message).toMatch(/revision 競合/);
+    expect(error.revisionConflict).toBe(true);
+  });
+
+  it('does not add a partial-success notice when only an update is attempted', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      properties: { existing: { type: 'NUMBER', code: 'existing' } },
+      revision: '10'
+    });
+    vi.mocked(apiPut).mockRejectedValue(new Error('boom'));
+
+    await expect(runFieldApplyStandalone({
+      targetAppId: '5',
+      fieldJson: JSON.stringify({ properties: { existing: { type: 'NUMBER' } } }),
+      overwrite: true,
+      skipConfirm: true
+    }, vi.fn())).rejects.toThrow(/^boom$/);
+  });
 });

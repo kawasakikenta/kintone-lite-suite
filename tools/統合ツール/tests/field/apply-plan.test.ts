@@ -62,6 +62,9 @@ describe('planFieldApply', () => {
     const text = buildFieldApplyConfirmText('99', '3', plan);
     expect(text).toContain('App 99（ゲスト 3）');
     expect(text).toContain('追加 2件 / 更新 1件 / スキップ 1件');
+    expect(text).toContain('追加: title、ref');
+    expect(text).toContain('更新: existing');
+    expect(text).toContain('削除 0件');
   });
 
   it('preserves an explicit new code for an existing field rename', () => {
@@ -200,5 +203,16 @@ describe('planBulkRename', () => {
     const plan = planFieldApply(out.properties, props, {}, true);
     expect(Object.keys(plan.adds)).toEqual([]);
     expect(plan.updates.title.code).toBe('dev_title');
+  });
+});
+
+describe('buildFieldApplyConfirmText', () => {
+  it('shows renamed codes and truncates a long list in the confirmation', () => {
+    const incoming: Record<string, any> = { old_name: { type: 'NUMBER', code: 'new_name' } };
+    const current: Record<string, any> = { old_name: { type: 'NUMBER', code: 'old_name' } };
+    for (let i = 0; i < 12; i++) incoming[`f${i}`] = { type: 'NUMBER' };
+    const text = buildFieldApplyConfirmText('1', '', planFieldApply(incoming, current, {}, true));
+    expect(text).toContain('更新: old_name → new_name');
+    expect(text).toContain('追加: f0、f1、f2、f3、f4、f5、f6、f7、f8、f9 ほか2件');
   });
 });
