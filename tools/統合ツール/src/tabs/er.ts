@@ -2240,6 +2240,7 @@ updateFocusOptions();
 // ─── Manual additions (アプリ / 項目 / 関連線の手動追加 UI) ───
 let editorMode="";
 let pendingNodePos=null;
+let editorReturnFocus=null;
 
 function appOptionsHtml(selectedId){
   return APPS.map(a=>'<option value="'+escapeHtml(String(a.id))+'"'+(String(a.id)===String(selectedId)?" selected":"")+'>'+escapeHtml(a.name)+(a.isCustom?"（手動）":" (App "+escapeHtml(String(a.id))+")")+'</option>').join("");
@@ -2255,13 +2256,18 @@ function openEditor(mode, title, sub, bodyHtml, opts){
   if(submitBtn) submitBtn.textContent=o.submitLabel||"追加";
   const delBtn=document.getElementById("editor-delete");
   if(delBtn) delBtn.style.display=o.showDelete?"":"none";
-  document.getElementById("editor-overlay").classList.add("open");
+  const editorOverlay=document.getElementById("editor-overlay");
+  if(!editorOverlay.classList.contains("open")) editorReturnFocus=rememberDialogFocus();
+  editorOverlay.classList.add("open");
   const first=document.querySelector("#editor-body input,#editor-body select,#editor-body textarea");
   if(first) setTimeout(()=>{try{first.focus();}catch(_){}},50);
 }
 function closeEditor(){
   editorMode=""; pendingNodePos=null; editingNoteId=""; editingAppId=""; editingFieldRef=null; editingRelRef=null;
-  document.getElementById("editor-overlay").classList.remove("open");
+  const editorOverlay=document.getElementById("editor-overlay");
+  const wasOpen=editorOverlay.classList.contains("open");
+  editorOverlay.classList.remove("open");
+  if(wasOpen){ const back=editorReturnFocus; editorReturnFocus=null; restoreDialogFocus(back); }
 }
 function submitEditor(){
   if(editorMode==="app") addCustomApp();
@@ -3608,9 +3614,28 @@ function applySavedViewState(){
 }
 
 let _md={text:"",filename:""};
-function openModal(t,text,fn){_md={text,filename:fn};document.getElementById("modal-title").textContent=t;document.getElementById("modal-content").textContent=text;document.getElementById("modal-overlay").classList.add("open");}
-function closeModal(){document.getElementById("modal-overlay").classList.remove("open");}
-function copyModal(){navigator.clipboard.writeText(_md.text).then(()=>toast("コピーしました！"));}
+let modalReturnFocus=null;
+function openModal(t,text,fn){
+  _md={text,filename:fn};
+  document.getElementById("modal-title").textContent=t;
+  document.getElementById("modal-content").textContent=text;
+  const overlay=document.getElementById("modal-overlay");
+  if(!overlay.classList.contains("open")) modalReturnFocus=rememberDialogFocus();
+  overlay.classList.add("open");
+  const primary=document.querySelector("#modal .actions .primary");
+  if(primary) primary.focus();
+}
+function closeModal(){
+  const overlay=document.getElementById("modal-overlay");
+  const wasOpen=overlay.classList.contains("open");
+  overlay.classList.remove("open");
+  if(wasOpen){ const back=modalReturnFocus; modalReturnFocus=null; restoreDialogFocus(back); }
+}
+function copyModal(){
+  const failed=()=>toast("コピーに失敗しました。内容を選択して手動でコピーしてください");
+  try{ navigator.clipboard.writeText(_md.text).then(()=>toast("コピーしました！"),failed); }
+  catch(_){ failed(); }
+}
 function downloadModal(){const b=new Blob([_md.text],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=_md.filename;a.click();toast("ダウンロード: "+_md.filename);}
 
 // safe name helper
@@ -4094,9 +4119,33 @@ if(window.matchMedia&&window.matchMedia("(max-width:640px)").matches){
   document.getElementById("overview")?.classList.add("collapsed");
 }
 
+// ─── ダイアログのフォーカス管理（開くと中へ移し、閉じると開いた操作の位置へ戻す） ───
+function rememberDialogFocus(){
+  const active=document.activeElement;
+  if(!active||active===document.body||typeof active.focus!=="function") return null;
+  // メニュー項目から開いた場合、項目はメニューを閉じると消えるため、メニューの開閉ボタンへ戻す
+  const menu=typeof active.closest==="function"?active.closest(".tb-menu"):null;
+  return (menu&&menu.querySelector(".tb-menu-btn"))||active;
+}
+function restoreDialogFocus(target){
+  if(target&&target.isConnected&&target.getClientRects().length>0) target.focus();
+}
+
 // ─── Help modal ───
-function openHelp(){ document.getElementById("help-overlay").classList.add("open"); }
-function closeHelp(){ document.getElementById("help-overlay").classList.remove("open"); }
+let helpReturnFocus=null;
+function openHelp(){
+  const overlay=document.getElementById("help-overlay");
+  if(!overlay.classList.contains("open")) helpReturnFocus=rememberDialogFocus();
+  overlay.classList.add("open");
+  const close=document.querySelector("#help-box .close-row button");
+  if(close) close.focus();
+}
+function closeHelp(){
+  const overlay=document.getElementById("help-overlay");
+  const wasOpen=overlay.classList.contains("open");
+  overlay.classList.remove("open");
+  if(wasOpen){ const back=helpReturnFocus; helpReturnFocus=null; restoreDialogFocus(back); }
+}
 
 // ─── Share URL (encodes current state in hash) ───
 function encodeState(){
@@ -4134,11 +4183,16 @@ function applyStateFromHash(){
   }catch(_){ /* ignore */ }
 }
 function copyShareUrl(){
-  const url=location.origin+location.pathname+"#"+encodeState();
+  // blob: や file: のページでは origin + pathname だと不正なURLになるため、現在のURLからハッシュだけを置き換える
+  const url=location.href.split("#")[0]+"#"+encodeState();
+  const done=()=>toast(location.protocol==="blob:"
+    ? "表示状態のURLをコピーしました（この画面を閉じると開けません。共有にはHTML保存を使ってください）"
+    : "表示状態のURLをコピーしました");
+  const manual=()=>prompt("URLをコピーしてください", url);
   try{
-    navigator.clipboard.writeText(url).then(()=>toast("表示状態のURLをコピーしました"));
+    navigator.clipboard.writeText(url).then(done,manual);
   }catch(_){
-    prompt("URLをコピーしてください", url);
+    manual();
   }
 }
 setTimeout(applyStateFromHash, 350);

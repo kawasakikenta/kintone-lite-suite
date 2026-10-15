@@ -73,6 +73,9 @@ export function validateErOptions(opts: any): string {
     if (!Number.isFinite(depth) || depth < 0 || !Number.isInteger(depth)) return '探索深さは0以上の整数で入力してください';
   }
   if (!primaryIds.length && !spaceId) return 'アプリID または スペースID を入力してください';
+  if (spaceId && !primaryIds.length && !extraIds.length && Array.isArray(opts?.spaceSelectedAppIds) && !opts.spaceSelectedAppIds.length) {
+    return 'スペース内のアプリを1件以上選択するか、起点アプリIDを入力してください';
+  }
   return '';
 }
 
@@ -142,12 +145,22 @@ export function summarizeCrawl(apps: any[], options?: any) {
  * @param {(msg: string, err?: boolean | 'warn') => void} setStatus
  */
 export async function runGenerateERDiagramStandalone(opts, setStatus) {
-  const options = await resolveErOptions(opts, setStatus);
+  const validationError = validateErOptions(opts);
+  if (validationError) throw new Error(validationError);
 
+  // ポップアップは利用者の操作直後でないとブロックされるため、スペース内アプリ取得などの通信を待つ前に開く
   const popup = window.open('', '_blank');
   if (!popup) throw new Error('別タブを開けませんでした。ポップアップブロックを確認してください');
   try { popup.opener = null; } catch (_) { /* noop */ }
   popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
+
+  let options;
+  try {
+    options = await resolveErOptions(opts, setStatus);
+  } catch (e) {
+    try { popup.close(); } catch (_) { /* noop */ }
+    throw e;
+  }
 
   setStatus(`ER図を生成中... 起点 ${options.startAppIds.join(',')}`);
   progressUi.init();
