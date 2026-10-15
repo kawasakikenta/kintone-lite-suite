@@ -33,6 +33,13 @@ describe('CSV preflight against field settings', () => {
   it.each(['title,title\nA,B', 'title,\nA,B'])('rejects duplicate or unnamed columns: %s', csv => {
     expect(() => plan(csv)).toThrow(/ヘッダ/);
   });
+  it('ignores rows whose cells are all empty (Excel leaves ",," lines) without shifting row numbers', () => {
+    const result = plan('title,amount\nA,1\n,\n\n,,\nB,2\n,');
+    expect(result.count).toBe(2);
+    expect(result.records.map(record => record.title.value)).toEqual(['A', 'B']);
+    expect(result.issueCount).toBe(0);
+    expect(plan('title,amount\nA,1\n,\nB').issues.map(issue => issue.row)).toEqual([4]);
+  });
   it('does not silently discard extra columns or fill missing ones', () => {
     const result = plan('title,amount\nA,1,余分\nB\nC,3');
     expect(result.count).toBe(3);

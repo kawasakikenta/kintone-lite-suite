@@ -503,6 +503,7 @@ export function buildCopyRecordPayloads(records: any[], targetProps?: Record<str
                 continue;
               }
               if (childDefs && !childDefs[childCode]) { dropped.add(`${code}.${childCode}`); continue; }
+              if (childDefs && childDefs[childCode]?.type !== childField.type) { dropped.add(`${code}.${childCode}(型不一致)`); continue; }
               cells[childCode] = { value: childField.value };
             }
             return { value: cells };
