@@ -205,7 +205,7 @@ export function mountErLitePanel() {
       const picked = source().spaceSelectedAppIds;
       return picked ? `${spaceId}（読み込んだ ${spacePicker.count()} アプリ中 ${picked.length} 件を起点にする）` : `${spaceId}（スペース内の全アプリを起点にする）`;
     })()],
-    ['探索の深さ', depthInp.value === '0' ? '無制限' : depthInp.value],
+    ['探索の深さ', !depthInp.value.trim() || Number(depthInp.value) === 0 ? '無制限' : depthInp.value.trim()],
     ['表示', (layoutSel.selectedOptions[0]?.textContent || '') + ' / ' + (densitySel.selectedOptions[0]?.textContent || '')],
     ['逆引き', reverseCb.checkbox.checked ? 'あり' : 'なし']
   ];

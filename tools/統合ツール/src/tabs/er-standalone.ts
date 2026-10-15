@@ -47,6 +47,11 @@ function erAppIdValues(opts: any, key: 'appIds' | 'extraAppIds', fallback = ''):
   return splitErAppIds(value ?? fallback);
 }
 
+/** Number へ変換しても同じ ID を指せる正の整数だけを起点アプリ ID として受け付ける。 */
+function isUsableErAppId(value: string): boolean {
+  return /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0;
+}
+
 /** ER図の取得前に、入力の誤りを対象欄ごとに明示する。 */
 export function validateErOptions(opts: any): string {
   const appId = String(opts?.appId || '').trim();
@@ -54,6 +59,8 @@ export function validateErOptions(opts: any): string {
   const extraIds = erAppIdValues(opts, 'extraAppIds');
   const invalidAppId = [...primaryIds, ...extraIds].find((v) => !/^\d+$/.test(v));
   if (invalidAppId) return `アプリIDは数値で入力してください: ${invalidAppId}`;
+  const unusableAppId = [...primaryIds, ...extraIds].find((v) => !isUsableErAppId(v));
+  if (unusableAppId) return `アプリIDは1以上${Number.MAX_SAFE_INTEGER}以下の整数で入力してください: ${unusableAppId}`;
 
   const guestId = String(opts?.guestId || '').trim();
   if (guestId && !/^\d+$/.test(guestId)) return `ゲストIDは数値で入力してください: ${guestId}`;
@@ -78,7 +85,10 @@ export function buildErCrawlOptions(opts: any) {
   const primaryAppIds = erAppIdValues(opts, 'appIds', appId);
   const startAppIds = [...primaryAppIds, ...erAppIdValues(opts, 'extraAppIds')]
     .map((v) => String(v || '').trim())
-    .filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
+    .filter(isUsableErAppId)
+    // "007" と "7" は同じアプリ。図内の起点判定（アプリID文字列との一致）が崩れないよう正規化する
+    .map((v) => String(Number(v)))
+    .filter((v, i, a) => a.indexOf(v) === i);
   const maxDepthRaw = Number(opts?.maxDepth);
   return {
     startAppId: startAppIds[0] || appId,
