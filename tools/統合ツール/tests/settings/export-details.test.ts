@@ -30,6 +30,12 @@ describe('settings export result details', () => {
     expect(summaryHtml).toContain('アプリ取得失敗: アプリが見つかりません');
     expect(summaryHtml).not.toContain('[API]');
   });
+  it('escapes failure reasons in the result table', async () => {
+    vi.mocked(fetchBundle).mockResolvedValue(bundle({ appSettings: { _fetchError: '<img src=x onerror=alert(1)>' }, fieldSettings: { _fetchError: 'x' } }));
+    const { summaryHtml } = await runSettingsExportStandalone('json', { apps: [{ appId: '1' }] }, vi.fn());
+    expect(summaryHtml).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(summaryHtml).not.toContain('<img');
+  });
   it('does not report omitted JS/CSS bodies as a plain success', async () => {
     scopes.keys = ['customizeSettings'];
     vi.mocked(fetchBundle).mockResolvedValue(bundle({ customizeSettings: { desktop: { js: [] }, _partial: { kind: 'customizeBody', files: [{ fileName: 'big.js', reason: 'oversize' }, { fileName: 'a.png', reason: 'unsupported' }] } } }));
