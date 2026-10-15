@@ -1,6 +1,6 @@
 'use strict';
 
-import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
+import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel, sanitizeFilenamePart } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle, fetchRecordsByQuery, isRevisionConflictError } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import {
@@ -193,8 +193,9 @@ function addRecordCsvFiles(zip: any, csv: RecordCsvExport, prefix = ''): void {
 }
 
 function recordExportFilename(filename: unknown, extension: 'csv' | 'zip', fallback: string): string {
-  const requested = String(filename || '').trim();
-  return requested ? `${requested.replace(/\.(csv|zip)$/i, '')}.${extension}` : fallback;
+  // 拡張子だけ・パス区切りや禁則文字を含む入力でも、空の名前や意図しない階層名にしない。
+  const stem = String(filename || '').trim().replace(/\.(csv|zip)$/i, '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  return stem ? `${sanitizeFilenamePart(stem)}.${extension}` : fallback;
 }
 
 async function buildCsvExportForApp(appId: string, guestId: string, query: string, setStatus: (m: string) => void) {

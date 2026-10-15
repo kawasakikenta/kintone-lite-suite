@@ -149,6 +149,20 @@ describe('standalone record CSV export', () => {
     expect(fetchRecordsByQuery).toHaveBeenCalledWith('/k/v1', '7', 'order by title asc', expect.any(Object));
   });
 
+  it.each([
+    ['.csv', /^レコード_app7_.+\.csv$/],
+    ['  .ZIP ', /^レコード_app7_.+\.csv$/],
+    ['2026/01:売上?.csv', /^2026 01 売上\.csv$/],
+    ['a\u0000b\nc', /^abc\.csv$/]
+  ])('never downloads under an empty or path-like name (%j)', async (filename, expected) => {
+    vi.mocked(apiGet).mockResolvedValue({ properties: flatProperties });
+    vi.mocked(fetchRecordsByQuery).mockResolvedValue({ records: [], mode: 'keyset' } as any);
+
+    await runCsvExportStandalone({ ...options(), filename }, status);
+
+    expect(vi.mocked(downloadBlob).mock.calls[0][0]).toMatch(expected);
+  });
+
   it('downloads a header-only CSV when the query matches zero records', async () => {
     vi.mocked(apiGet).mockResolvedValue({ properties: flatProperties });
     vi.mocked(fetchRecordsByQuery).mockResolvedValue({ records: [], mode: 'keyset' } as any);
