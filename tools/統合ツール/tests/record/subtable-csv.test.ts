@@ -16,6 +16,19 @@ describe('buildRecordCsvExport', () => {
     });
   });
 
+  it('does not create always-empty columns for labels, spacers, rules, groups and related-record lists', () => {
+    const properties = {
+      name: { type: 'SINGLE_LINE_TEXT' }, note: { type: 'LABEL' }, gap: { type: 'SPACER' }, rule: { type: 'HR' },
+      grp: { type: 'GROUP' }, related: { type: 'REFERENCE_TABLE' }
+    };
+    const records = [{ name: text('a') }];
+    expect(buildRecordCsvExport(records, properties).parentCsv).toBe('\uFEFFname\na');
+    const withTable = buildRecordCsvExport([{ $id: text('1'), name: text('a'), Lines: table([row('9', { item: text('A') })]) }],
+      { ...properties, Lines: tableSchema({ item: { type: 'SINGLE_LINE_TEXT' }, gap: { type: 'SPACER' } }) });
+    expect(withTable.parentCsv).toBe('\uFEFF$id,name,Lines\n1,a,1行');
+    expect(withTable.tables[0].csvText).toBe('\uFEFF$id,$rowId,$rowIndex,item\n1,9,1,A');
+  });
+
   it('keeps parent rows and table counts while exporting each table separately without a Cartesian product', () => {
     const records = [
       { $id: text('10'), name: text('first'), Lines: table([row('101', { item: text('A') }), row('102', { item: text('B') })]), Notes: table([row('201', { note: text('x') })]) },

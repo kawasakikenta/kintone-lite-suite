@@ -4,6 +4,7 @@ import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './l
 
 import { DEFAULT_APP_ID } from '../constants.js';
 import { runCsvExportBatchStandalone, runLoadViewsStandalone, validateRecordConnection } from '../tabs/record-standalone.js';
+import { buildCursorRecordsQuery } from '../tabs/record-query.js';
 import type { RecordViewChoice } from '../tabs/record-metadata.js';
 import {
   createLitePanel,
@@ -81,6 +82,7 @@ export function mountCsvExportLitePanel() {
 
   loadViews.addEventListener('click', () => liteRun(panel, '一覧情報を取得中…', async () => {
     const sourceKey = viewKey();
+    if (!viewApp.value.trim()) throw new Error('一覧取得元のアプリIDを入力してください');
     const source = validateRecordConnection(viewApp.value, viewGuest.value);
     clearLoadedViews('一覧を取得中…');
     let views: RecordViewChoice[];
@@ -136,10 +138,12 @@ export function mountCsvExportLitePanel() {
   const run = makeButton('CSVを出力', 'primary', { icon: '↓' });
   run.style.width = '100%';
   run.addEventListener('click', () => liteRun(panel, 'CSV出力中…', async () => {
-    await runCsvExportBatchStandalone(
+    const outcome = await runCsvExportBatchStandalone(
       { apps: appTable.getApps(), query: query.value.trim(), filename: filename.value.trim() },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
+    // 一部のアプリの失敗や未取得のテーブルは、ステータスの件数だけでなく内訳も画面に残す。
+    if (outcome?.issues?.length) panel.setResult(outcome.issues.join('\n'));
   }));
   cardRun.body.appendChild(makeRow(run));
   panel.body.insertBefore(cardRun.card, panel.status);
@@ -154,6 +158,9 @@ export function mountCsvExportLitePanel() {
   const validateApps = () => {
     const apps = appTable.getApps();
     if (!apps.length) return '対象アプリを1件以上指定してください。';
+    // limit / offset はページング処理と競合する。各アプリへ問い合わせる前に確認画面へ進ませない。
+    try { buildCursorRecordsQuery(query.value); }
+    catch (error: any) { return error?.message || String(error); }
     for (const app of apps) {
       try { validateRecordConnection(app.appId, app.guestId); }
       catch (error: any) { return `App ${app.appId}: ${error?.message || String(error)}`; }
