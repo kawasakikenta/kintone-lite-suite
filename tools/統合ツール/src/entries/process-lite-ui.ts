@@ -153,7 +153,8 @@ export function mountProcessLitePanel() {
     try {
       const result = await runRenderProcessFlowStandalone(
         { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
-        (m: string, e?: boolean) => { if (isCurrent()) panel.setStatus(m, e ? 'err' : 'busy'); },
+        // 実行完了後（シミュレーション操作）の通知は tone を指定し、処理中スピナーのまま残さない
+        (m: string, e?: boolean, tone?: 'ok' | 'warn') => { if (isCurrent()) panel.setStatus(m, e ? 'err' : (tone || 'busy')); },
         {
           textEl,
           viewEl,
@@ -173,7 +174,7 @@ export function mountProcessLitePanel() {
       }
       renderedConnection = runConnection;
       // 描画側が警告（Mermaid 読込失敗 / from-to 未設定のアクション除外）を出している場合は残す
-      if (result && panel.status.dataset.tone !== 'err') {
+      if (result && panel.status.dataset.tone !== 'err' && panel.status.dataset.tone !== 'warn') {
         panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, 'ok');
       }
     } finally {
