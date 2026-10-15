@@ -117,6 +117,8 @@ export async function runSettingsExportListSpaceAppsStandalone(
 ): Promise<Array<{ appId: string; name: string }>> {
   const sid = String(spaceId || '').trim();
   if (!/^\d+$/.test(sid)) throw new Error('スペースIDを数値で入力してください');
+  const guest = String(guestId || '').trim();
+  if (guest && !/^\d+$/.test(guest)) throw new Error(`ゲストIDは数値で入力してください: ${guest}`);
   setStatus(`スペース ${sid} のアプリ一覧を取得中...`);
   const apps = await fetchAppsInSpace(sid, guestId);
   if (!apps.length) {

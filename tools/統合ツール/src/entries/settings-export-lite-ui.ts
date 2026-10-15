@@ -112,6 +112,8 @@ export function mountSettingsExportLitePanel() {
       guest,
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
+    // 対象アプリが無い警告は取得処理側のステータスを残し、成功メッセージで上書きしない。
+    if (!apps.length) return;
     let added = 0;
     for (const app of apps) {
       const result = appTable.putApp(app.appId, guest, { appName: app.name });
