@@ -598,6 +598,13 @@ export async function runRecordCopyStandalone(opts, setStatus) {
 // ---------------------------------------------------------------------------
 // 添付ファイル一括ダウンロード
 // ---------------------------------------------------------------------------
+/** フォルダ名に使うフィールド値。ユーザー・組織等の選択値（オブジェクト）は code/name を使う。 */
+function folderLabelFromField(field: any): string {
+  const label = (item: any): string => item && typeof item === 'object' ? String(item.code || item.name || '') : String(item ?? '');
+  const value = field?.value;
+  return (Array.isArray(value) ? value.map(label).filter(Boolean).join(',') : label(value)).trim();
+}
+
 /** 添付ファイル一括ダウンロード（条件で絞り、指定したファイルフィールドの中身を ZIP 化） */
 export async function runAttachmentDownloadStandalone(opts, setStatus) {
   const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
@@ -646,7 +653,7 @@ export async function runAttachmentDownloadStandalone(opts, setStatus) {
     const { rec, recordId, rowId, files } = groups[i];
     setStatus(`添付DL中 (${i + 1}/${groups.length}${failures.length ? ` / 失敗 ${failures.length}` : ''})`);
     if (!files.length) continue;
-    let folderName = folderFieldCode && rec[folderFieldCode]?.value;
+    let folderName = folderFieldCode ? folderLabelFromField(rec[folderFieldCode]) : '';
     if (!folderName) folderName = `Record_${recordId}`;
     const folderPath = [sanitizeZipSegment(folderName, `Record_${recordId}`),
       ...(tableFieldCode ? [...(folderName === `Record_${recordId}` ? [] : [`Record_${recordId}`]), sanitizeZipSegment(tableFieldCode), `Row_${sanitizeZipSegment(rowId)}`] : [])].join('/');

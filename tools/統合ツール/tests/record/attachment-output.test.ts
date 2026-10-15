@@ -62,6 +62,18 @@ describe('ZIP file names for multiple apps', () => {
   });
 });
 
+describe('attachment folder names from a field', () => {
+  it('names the folder after a user/option value instead of "[object Object]"', async () => {
+    const rows = records();
+    Object.assign(rows[0], { 作成者: { type: 'CREATOR', value: { code: 'tanaka', name: '田中' } } });
+    vi.mocked(fetchRecordsByQuery).mockResolvedValue({ records: rows, mode: 'keyset' } as any);
+    await runAttachmentDownloadStandalone({ appId: '7', fileFieldCode: 'attach', folderFieldCode: '作成者' }, status);
+    const paths = [...FakeZip.instances[0].files.keys()].filter((name) => name !== 'manifest.json');
+    expect(paths.every((name) => name.startsWith('tanaka/'))).toBe(true);
+    expect(paths).toHaveLength(2);
+  });
+});
+
 describe('backup attachment paths', () => {
   it('keeps both files when two attachments in one field share a name and a fileKey prefix', async () => {
     await runRecordBackupStandalone({ appId: '7', includeFiles: true, includeComments: false, includeAppSettings: false }, status);
