@@ -269,4 +269,16 @@ describe('path-decoder.decodeRow', () => {
     expect(view!.beforeText).toBe('表形式');
     expect(view!.afterText).toBe('カレンダー形式');
   });
+
+  it('does not throw when an entity array contains an empty element', () => {
+    const decoded = decodeRow({
+      sectionKey: 'notifications', path: 'notifications.notifications[0].recipients',
+      type: 'changed',
+      left: [{ entity: { type: 'USER', code: 'alice' } }, null],
+      right: [{ entity: { type: 'USER', code: 'bob' } }, undefined, { entity: { type: 'GROUP', code: 'sales' } }]
+    });
+    expect(decoded).not.toBeNull();
+    expect(decoded!.beforeText).toContain('alice');
+    expect(decoded!.afterText).toContain('sales');
+  });
 });

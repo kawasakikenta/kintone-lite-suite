@@ -151,7 +151,7 @@ function valueToText(value: any, propKey: string, depth = 0, sectionKey = ''): s
     if (value[0] && typeof value[0] === 'object' && (value[0].entity || value[0].type)) {
       const compact = value.length > 4;
       const items = value.slice(0, 8).map((v) => {
-        const ent = v.entity || (v.type ? v : null);
+        const ent = v?.entity || (v?.type ? v : null);
         if (ent) return formatEntityText(ent, { compact });
         return safeStringify(v);
       });

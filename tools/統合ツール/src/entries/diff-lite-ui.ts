@@ -65,7 +65,9 @@ export function buildLiteDiffScopeOptions(): Array<[string, string, boolean]> {
  */
 export function validateLiteDiffStart(options: {
   sourceAppId?: string;
+  sourceGuestId?: string;
   targetAppId?: string;
+  targetGuestId?: string;
   scopes?: string[];
   ignoreKeys?: string;
   hasImportedSource?: boolean;
@@ -77,6 +79,9 @@ export function validateLiteDiffStart(options: {
   const sourceAppId = String(options.sourceAppId || '').trim();
   if (!options.hasImportedSource && !sourceAppId) return '比較元アプリIDを入力してください';
   if (sourceAppId && !/^[1-9]\d*$/.test(sourceAppId)) return '比較元アプリIDには正の整数を入力してください';
+  // ゲストIDはそのまま REST の URL（/k/guest/{id}/v1）へ入るため、数字以外は取得前に止める。
+  const sourceGuestId = String(options.sourceGuestId || '').trim();
+  if (sourceGuestId && !/^\d+$/.test(sourceGuestId)) return '比較元ゲストIDは半角数字で入力してください';
 
   if (options.targets !== undefined) {
     // 1対多比較: 全比較先（空行除外済み）を順番に検証する
@@ -110,6 +115,8 @@ export function validateLiteDiffStart(options: {
     const targetAppId = String(options.targetAppId || '').trim();
     if (!options.hasImportedTarget && !targetAppId) return '比較先アプリIDを入力してください';
     if (targetAppId && !/^[1-9]\d*$/.test(targetAppId)) return '比較先アプリIDには正の整数を入力してください';
+    const targetGuestId = String(options.targetGuestId || '').trim();
+    if (targetGuestId && !/^\d+$/.test(targetGuestId)) return '比較先ゲストIDは半角数字で入力してください';
   }
 
   const positionalRuleCount = summarizeLiteIgnoreRules(options.ignoreKeys || '').positionalRules;
@@ -3729,6 +3736,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     }
     const commonValidation = validateLiteDiffStart({
       sourceAppId: base.source.appId,
+      sourceGuestId: base.source.guestId,
       scopes: base.scopes,
       ignoreKeys: base.ignoreKeys,
       hasImportedSource: !!importedSourceBundle,
@@ -3850,7 +3858,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     const f = readForm();
     const validation = validateLiteDiffStart({
       sourceAppId: f.source.appId,
+      sourceGuestId: f.source.guestId,
       targetAppId: f.target.appId,
+      targetGuestId: f.target.guestId,
       scopes: f.scopes,
       ignoreKeys: f.ignoreKeys,
       hasImportedSource: !!importedSourceBundle,
