@@ -122,6 +122,9 @@ async function main() {
     assert.equal(await sourceInput.inputValue(), '101', 'URLからアプリIDを読み取る');
     const sourceGuest = page.getByRole('textbox', { name: '比較元ゲストスペースID', exact: true });
     assert.equal(await sourceGuest.inputValue(), '7', 'URLからゲストスペースIDを読み取る');
+    await sourceInput.fill('https://example.cybozu.com/k/101/');
+    await sourceInput.press('Tab');
+    assert.equal(await sourceGuest.inputValue(), '', '通常スペースのURLでは以前のゲストスペースIDを残さない');
     await sourceGuest.fill('');
     await button('全解除').click();
     assert.match(await page.locator('.kus-rl-dock-copy').innerText(), /項目を 1 つ以上選んでください/, '項目未選択の理由を表示する');
