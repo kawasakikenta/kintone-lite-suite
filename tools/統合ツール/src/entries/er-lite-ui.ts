@@ -2,7 +2,7 @@
 
 import { installLiteWorkflow, connectionSummary } from './liteWorkflow.js';
 
-import { DEFAULT_APP_ID } from '../constants.js';
+import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import {
   runGenerateERDiagramStandalone,
   runExportERDiagramHtmlStandalone,
@@ -37,7 +37,7 @@ export function mountErLitePanel() {
   // ---- 起点 ----
   const cardMain = makeCard({ title: '起点アプリ', number: 1 });
   const appInp = makeInput({ placeholder: 'アプリID（複数はカンマ区切り）', value: DEFAULT_APP_ID || '', width: 'wide' });
-  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
+  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest' });
   cardMain.body.appendChild(makeRow([appInp, guestInp], { label: '起点ID' }));
   cardMain.body.appendChild(createAppSearchControl(panel, {
     guestEl: guestInp,

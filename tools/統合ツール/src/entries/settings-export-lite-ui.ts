@@ -2,7 +2,7 @@
 
 import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
 
-import { SETTINGS_EXPORT_SCOPE_DEFS, DEFAULT_APP_ID } from '../constants.js';
+import { SETTINGS_EXPORT_SCOPE_DEFS, DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import {
   runSettingsExportStandalone,
   runSettingsExportListSpaceAppsStandalone
@@ -36,7 +36,8 @@ export function mountSettingsExportLitePanel() {
   const cardTarget = makeCard({ title: '対象アプリ', number: 1 });
   const appTable = makeAppTable({
     currentAppId: String(DEFAULT_APP_ID || ''),
-    initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: '' }] : []
+    currentGuestId: DEFAULT_GUEST_ID,
+    initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : []
   });
 
   // ---- アプリ検索 / スペース取込（検索用ゲストIDで照会し、表に行を追加） ----

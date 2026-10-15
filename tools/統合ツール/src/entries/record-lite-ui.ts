@@ -2,7 +2,7 @@
 
 import { installLiteWorkflow, connectionSummary, type LiteWorkflowAction } from './liteWorkflow.js';
 
-import { DEFAULT_APP_ID, SECTION_DEFS } from '../constants.js';
+import { DEFAULT_APP_ID, DEFAULT_GUEST_ID, SECTION_DEFS } from '../constants.js';
 import {
   runCsvExportBatchStandalone,
   runCsvImportBatchStandalone,
@@ -50,7 +50,7 @@ export function mountRecordLitePanel() {
 
   // ---- 接続情報（共通） ----
   const tgtApp = makeInput({ placeholder: 'アプリID（カンマ区切りで複数指定）', value: DEFAULT_APP_ID || '', width: 'wide', ariaLabel: '対象アプリID' });
-  const tgtGuest = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
+  const tgtGuest = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest' });
   let connectionVersion = 0;
   const resetMetadata: Array<() => void> = [];
   for (const input of [tgtApp, tgtGuest]) {

@@ -2,7 +2,7 @@
 
 import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
 
-import { DEFAULT_APP_ID } from '../constants.js';
+import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import {
   runDesignCopyMdStandalone,
   runDesignDiffMdStandalone,
@@ -42,7 +42,8 @@ export function mountDesignLitePanel() {
   const cardTarget = makeCard({ title: '対象アプリ', number: 1 });
   const appTable = makeAppTable({
     currentAppId: String(DEFAULT_APP_ID || ''),
-    initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: '' }] : []
+    currentGuestId: DEFAULT_GUEST_ID,
+    initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : []
   });
   cardTarget.body.appendChild(createAppSearchControl(panel, {
     targets: [

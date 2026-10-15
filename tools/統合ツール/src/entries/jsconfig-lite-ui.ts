@@ -2,7 +2,7 @@
 
 import { installLiteWorkflow, connectionSummary, validateJsonObject } from './liteWorkflow.js';
 
-import { DEFAULT_APP_ID } from '../constants.js';
+import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import { kusConfirm } from '../utils.js';
 import {
   buildJsConfigApplyPlan,
@@ -38,7 +38,7 @@ export function mountJsconfigLitePanel() {
   // 取得
   const cardFetch = makeCard({ title: '取得', number: 1 });
   const srcApp = makeInput({ placeholder: '取得元アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
-  const srcGuest = makeInput({ placeholder: 'ゲストID', width: 'guest' });
+  const srcGuest = makeInput({ placeholder: 'ゲストID', value: DEFAULT_GUEST_ID, width: 'guest' });
   const srcPrev = makeCheck({ label: 'プレビュー環境から取得' });
   cardFetch.body.appendChild(makeRow([srcApp, srcGuest, srcPrev.label], { label: '取得元' }));
   const fetchAppSearch = createAppSearchControl(panel, {
