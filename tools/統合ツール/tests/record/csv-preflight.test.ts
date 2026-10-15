@@ -33,6 +33,13 @@ describe('CSV preflight against field settings', () => {
   it.each(['title,title\nA,B', 'title,\nA,B'])('rejects duplicate or unnamed columns: %s', csv => {
     expect(() => plan(csv)).toThrow(/ヘッダ/);
   });
+  it('ignores rows whose cells are all empty (Excel leaves ",," lines) without shifting row numbers', () => {
+    const result = plan('title,amount\nA,1\n,\n\n,,\nB,2\n,');
+    expect(result.count).toBe(2);
+    expect(result.records.map(record => record.title.value)).toEqual(['A', 'B']);
+    expect(result.issueCount).toBe(0);
+    expect(plan('title,amount\nA,1\n,\nB').issues.map(issue => issue.row)).toEqual([4]);
+  });
   it('does not silently discard extra columns or fill missing ones', () => {
     const result = plan('title,amount\nA,1,余分\nB\nC,3');
     expect(result.count).toBe(3);
@@ -84,6 +91,12 @@ describe('all-app CSV inspection before any writes', () => {
     await expect(runCsvImportBatchStandalone({ appId: '7', file: file(csv) }, status)).rejects.toThrow(/103行目.*数値/);
     expect(kusConfirm).not.toHaveBeenCalled(); expect(apiPost).not.toHaveBeenCalled();
   });
+  it('stops before any write when the file is not UTF-8 (Shift_JIS decoded as UTF-8 leaves U+FFFD)', async () => {
+    const garbled = file('title\n\uFFFD\uFFFD\uFFFD');
+    await expect(runPreviewCsvImportStandalone({ appId: '7', file: garbled }, status)).rejects.toThrow(/UTF-8.*文字化け/);
+    await expect(runCsvImportBatchStandalone({ appId: '7', file: garbled }, status)).rejects.toThrow(/UTF-8.*文字化け/);
+    expect(apiGet).not.toHaveBeenCalled(); expect(kusConfirm).not.toHaveBeenCalled(); expect(apiPost).not.toHaveBeenCalled();
+  });
   it('stops every app if the second app has a different schema', async () => {
     vi.mocked(apiGet).mockResolvedValueOnce({ properties: props }).mockResolvedValueOnce({ properties: {} });
     await expect(runCsvImportBatchStandalone({ appIdsText: '7,8', file: file('title\nA') }, status)).rejects.toThrow(/App 8:.*存在しない/);
@@ -116,6 +129,19 @@ describe('all-app CSV inspection before any writes', () => {
     vi.mocked(kusConfirm).mockReturnValue(false);
     expect(await runCsvImportBatchStandalone({ appId: '7', file: file('title\nA') }, status)).toEqual({ warning: 'CSV取込をキャンセルしました' });
     expect(apiPost).not.toHaveBeenCalled();
+  });
+  it('names the CSV row and field that kintone rejected inside a failed 100-record chunk', async () => {
+    const rejection = Object.assign(new Error('入力内容が正しくありません。'), {
+      code: 'CB_VA01',
+      errors: { 'records[1].amount.value': { messages: ['数字でなければなりません。'] }, 'records[5].title.value': { messages: ['必須です。'] } }
+    });
+    vi.mocked(apiPost).mockResolvedValueOnce({}).mockRejectedValueOnce(Object.assign(new Error('wrapped'), { original: rejection }));
+    // 空行を挟むため、2つ目のチャンク(CSV 103行目から)の行番号が全体位置とずれる。
+    const csv = 'title\n' + Array.from({ length: 100 }, (_, i) => `件名${i}`).join('\n') + '\n\n' + Array.from({ length: 6 }, (_, i) => `後続${i}`).join('\n');
+    const error = await runCsvImportBatchStandalone({ appId: '7', file: file(csv) }, status).catch(caught => caught);
+    expect(error.message).toContain('確定済み: 100件');
+    expect(error.message).toContain('CSV 104行目・amount: 数字でなければなりません。');
+    expect(error.message).toContain('CSV 108行目・title: 必須です。');
   });
   it('retains the committed count on an actual chunk failure', async () => {
     vi.mocked(apiPost).mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('権限が変更されました'));

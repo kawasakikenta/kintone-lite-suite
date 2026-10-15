@@ -4,6 +4,7 @@ import {
   buildRecordsCsvText,
   csvEscape,
   describeBatchWriteFailure,
+  describeKintoneRecordErrors,
   extractRecordCsvValue,
   neutralizeCsvFormula,
   uniqueZipEntryName,
@@ -171,6 +172,33 @@ describe('writeInChunks', () => {
       partial: { done: 100, from: 101, to: 200, total: 250 }
     });
     expect(write).toHaveBeenCalledTimes(2);
+  });
+
+  it('adds the rejected record and field from kintone errors, mapped to the whole list', async () => {
+    const items = Array.from({ length: 150 }, (_, i) => i);
+    const rejection = { code: 'CB_VA01', message: '入力内容が正しくありません。', errors: {
+      'records[2].price.value': { messages: ['必須です。', '数字でなければなりません。'] },
+      'records[7].table.value[0].value.qty.value': { messages: ['不正です。'] },
+      app: { messages: ['不明'] }
+    } };
+    const write = async (_chunk: number[], index: number) => { if (index === 1) throw Object.assign(new Error('wrapped'), { original: rejection }); };
+    const error = await writeInChunks(items, 'コピー', write, undefined, 100, (index) => `ID ${1000 + index}`).catch((caught) => caught);
+    expect(error.message).toContain('ID 1102・price: 必須です。 / 数字でなければなりません。');
+    expect(error.message).toContain('ID 1107・table.value[0].value.qty: 不正です。');
+    expect(error.message).toContain('app: 不明');
+    expect(error.message).toContain('このチャンクは全体が取り消されています');
+  });
+
+  it('limits the number of listed error details and tolerates unknown error shapes', () => {
+    const errors = Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`records[${i}].f.value`, { messages: ['x'] }]));
+    const lines = describeKintoneRecordErrors({ errors });
+    expect(lines).toHaveLength(11);
+    expect(lines[0]).toBe('1件目・f: x');
+    expect(lines.at(-1)).toBe('ほか 3件のエラー');
+    expect(describeKintoneRecordErrors(new Error('boom'))).toEqual([]);
+    expect(describeKintoneRecordErrors(null)).toEqual([]);
+    expect(describeKintoneRecordErrors({ errors: [1] })).toEqual([]);
+    expect(describeKintoneRecordErrors({ errors: { 'records[0].f.value': {} } })).toEqual(['1件目・f: (詳細なし)']);
   });
 
   it('formats a failure description with the original reason', () => {

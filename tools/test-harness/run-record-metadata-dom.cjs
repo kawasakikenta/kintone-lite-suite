@@ -139,6 +139,20 @@ async function main() {
     await guest.fill('3'); assert.equal(await actions.locator('option').count(), 1);
     results.push('プロセス: 同名アクションの遷移元区別・APIで指定できない重複の表示・実行条件・作業者と組織・対象クエリ');
 
+    await page.getByRole('radio', { name: 'バックアップを保存', exact: true }).check();
+    const settingsToggle = page.getByRole('checkbox', { name: 'アプリ設定も保存', exact: true });
+    const scopes = active.locator('.kus-lp__chips input[type=checkbox]');
+    await settingsToggle.check();
+    for (let i = 0; i < await scopes.count(); i++) await scopes.nth(i).uncheck();
+    assert.equal(await button('内容を確認する').isDisabled(), true, '設定の保存範囲が空のまま設定なしで成功させない');
+    await scopes.first().check();
+    assert.equal(await button('内容を確認する').isEnabled(), true);
+    await button('内容を確認する').click();
+    assert.match(await page.locator('.kus-wf-stage').nth(1).innerText(), /アプリ設定（/);
+    await button('対象・条件を変更').click();
+    await settingsToggle.uncheck();
+    results.push('バックアップ: アプリ設定の保存範囲が空なら確認へ進めない・確認画面に範囲を表示');
+
     await page.getByRole('radio', { name: 'CSVからレコードを追加', exact: true }).check();
     await app.fill('7,8');
     const csvInput = page.getByLabel('取込CSV', { exact: true });

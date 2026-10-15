@@ -118,4 +118,9 @@ describe('attachment downloads based on FILE and SUBTABLE responses', () => {
   it.each(['.', '..', '...'])('prevents relative-directory ZIP segments: %s', value => {
     expect(sanitizeZipSegment(value, 'Record_41')).toBe('Record_41');
   });
+  it('removes bidirectional override characters that disguise an extension in file managers', () => {
+    expect(sanitizeZipSegment('invoice\u202Efdp.exe')).toBe('invoicefdp.exe');
+    expect(sanitizeZipSegment('\u200Fa\u2066b\u2069\u007f.txt')).toBe('ab.txt');
+    expect(sanitizeZipSegment('\u202E', 'file.bin')).toBe('file.bin');
+  });
 });
