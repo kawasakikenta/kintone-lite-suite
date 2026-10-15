@@ -146,17 +146,47 @@ export interface BatchWriteFailure {
   total: number;
 }
 
+const RECORD_ERROR_DETAIL_LIMIT = 10;
+
+/**
+ * kintone のレコード登録・更新エラー（`errors: { "records[3].title.value": { messages } }`）から、
+ * どのレコードのどのフィールドが原因かを取り出す。一括リクエストは全体が取り消されるため、
+ * この詳細が無いと利用者は 100 件のどれが不正か分からない。
+ * @param offset 失敗したチャンク先頭の、全体での 0 始まり位置
+ * @param describeItem 全体での 0 始まり位置を利用者向けの呼び名（CSV の行番号など）にする
+ */
+export function describeKintoneRecordErrors(
+  error: unknown,
+  offset = 0,
+  describeItem: (index: number) => string = (index) => `${index + 1}件目`
+): string[] {
+  let errors: any = null;
+  for (let current: any = error, depth = 0; current && typeof current === 'object' && depth < 5; current = current.original, depth++) {
+    if (current.errors && typeof current.errors === 'object' && !Array.isArray(current.errors)) { errors = current.errors; break; }
+  }
+  const lines = Object.entries(errors || {}).map(([key, value]: [string, any]) => {
+    const messages = Array.isArray(value?.messages) ? value.messages : typeof value === 'string' ? [value] : [];
+    const matched = /^records\[(\d+)\]\.?(.*)$/.exec(key);
+    const where = matched ? [describeItem(offset + Number(matched[1])), matched[2].replace(/\.value$/, '')].filter(Boolean).join('・') : key;
+    return `${where}: ${messages.map(String).join(' / ') || '(詳細なし)'}`;
+  });
+  return lines.length > RECORD_ERROR_DETAIL_LIMIT
+    ? [...lines.slice(0, RECORD_ERROR_DETAIL_LIMIT), `ほか ${lines.length - RECORD_ERROR_DETAIL_LIMIT}件のエラー`]
+    : lines;
+}
+
 /**
  * 100 件単位の書き込みが途中で失敗したとき、どこまで確定しどこから未処理かを
  * 利用者に伝えるメッセージ。部分成功を隠さない。
  */
-export function describeBatchWriteFailure(label: string, failure: BatchWriteFailure, error: unknown): string {
+export function describeBatchWriteFailure(label: string, failure: BatchWriteFailure, error: unknown, details: string[] = []): string {
   const reason = error instanceof Error ? error.message : String(error ?? '');
   const remaining = Math.max(0, failure.total - failure.done);
   return [
     `${label}が途中で失敗しました。`,
     `確定済み: ${failure.done}件 / 失敗チャンク: ${failure.from}～${failure.to}件目 / 未処理: ${remaining}件（全${failure.total}件）`,
-    reason ? `原因: ${reason}` : ''
+    reason ? `原因: ${reason}` : '',
+    ...(details.length ? ['エラーの詳細（このチャンクは全体が取り消されています）:', ...details] : [])
   ].filter(Boolean).join('\n');
 }
 
@@ -169,7 +199,8 @@ export async function writeInChunks<T>(
   label: string,
   writeChunk: (chunk: T[], chunkIndex: number) => Promise<void>,
   onProgress?: (done: number, total: number) => void,
-  chunkSize: number = RECORDS_WRITE_CHUNK
+  chunkSize: number = RECORDS_WRITE_CHUNK,
+  describeItem?: (index: number) => string
 ): Promise<number> {
   const size = Math.max(1, Math.floor(chunkSize) || RECORDS_WRITE_CHUNK);
   let done = 0;
@@ -178,7 +209,8 @@ export async function writeInChunks<T>(
     try {
       await writeChunk(chunk, Math.floor(i / size));
     } catch (error) {
-      const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length }, error));
+      const details = describeKintoneRecordErrors(error, i, describeItem);
+      const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length }, error, details));
       (wrapped as any).partial = { done, from: i + 1, to: i + chunk.length, total: items.length };
       (wrapped as any).original = error;
       throw wrapped;

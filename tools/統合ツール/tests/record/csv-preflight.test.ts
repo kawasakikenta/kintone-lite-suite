@@ -124,6 +124,19 @@ describe('all-app CSV inspection before any writes', () => {
     expect(await runCsvImportBatchStandalone({ appId: '7', file: file('title\nA') }, status)).toEqual({ warning: 'CSV取込をキャンセルしました' });
     expect(apiPost).not.toHaveBeenCalled();
   });
+  it('names the CSV row and field that kintone rejected inside a failed 100-record chunk', async () => {
+    const rejection = Object.assign(new Error('入力内容が正しくありません。'), {
+      code: 'CB_VA01',
+      errors: { 'records[1].amount.value': { messages: ['数字でなければなりません。'] }, 'records[5].title.value': { messages: ['必須です。'] } }
+    });
+    vi.mocked(apiPost).mockResolvedValueOnce({}).mockRejectedValueOnce(Object.assign(new Error('wrapped'), { original: rejection }));
+    // 空行を挟むため、2つ目のチャンク(CSV 103行目から)の行番号が全体位置とずれる。
+    const csv = 'title\n' + Array.from({ length: 100 }, (_, i) => `件名${i}`).join('\n') + '\n\n' + Array.from({ length: 6 }, (_, i) => `後続${i}`).join('\n');
+    const error = await runCsvImportBatchStandalone({ appId: '7', file: file(csv) }, status).catch(caught => caught);
+    expect(error.message).toContain('確定済み: 100件');
+    expect(error.message).toContain('CSV 104行目・amount: 数字でなければなりません。');
+    expect(error.message).toContain('CSV 108行目・title: 必須です。');
+  });
   it('retains the committed count on an actual chunk failure', async () => {
     vi.mocked(apiPost).mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('権限が変更されました'));
     const csv = 'title\n' + Array.from({ length: 201 }, (_, i) => `件名${i}`).join('\n');

@@ -103,6 +103,15 @@ describe('record status updates preserve the reviewed revisions', () => {
     expect(status).not.toHaveBeenCalledWith(expect.stringContaining('ステータス一括更新完了'));
   });
 
+  it('lists the rejected record IDs from the kintone error details', async () => {
+    api.mockResolvedValueOnce({ records: makeRecords(3) })
+      .mockRejectedValueOnce({ code: 'CB_VA01', message: '入力内容が正しくありません。', errors: { 'records[2].action': { messages: ['アクションが存在しません。'] } } });
+
+    const error = await runBatchProcessStandalone(options, status).catch((caught) => caught);
+
+    expect(error.message).toContain('レコードID 3・action: アクションが存在しません。');
+  });
+
   it('keeps non-conflict failures separate from revision conflicts', async () => {
     api.mockResolvedValueOnce({ records: makeRecords(1) })
       .mockRejectedValueOnce({ code: 'GAIA_NO01', message: '権限がありません。' });

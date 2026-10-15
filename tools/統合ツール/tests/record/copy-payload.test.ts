@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { buildCopyRecordPayloads, parseCsvText, validateCsvImportHeader } from '../../src/tabs/record-standalone';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { buildCopyRecordPayloads, parseCsvText, runRecordCopyStandalone, validateCsvImportHeader } from '../../src/tabs/record-standalone';
 
 // レコードコピーの payload は本番アプリへ POST される。システム項目・ファイルの除外と
 // サブテーブル行に id を含めないことは kintone REST の制約なので回帰を固定する。
@@ -122,6 +122,43 @@ describe('buildCopyRecordPayloads', () => {
     const plan = buildCopyRecordPayloads([{ ...record, extra: { type: 'NUMBER', value: '1' }, title: { type: 'MULTI_LINE_TEXT', value: 'x' } }], targetProps);
     expect(plan.records).toEqual([{ table: { value: [{ value: {} }] } }]);
     expect(plan.droppedFields).toEqual(['extra', 'table.item', 'title(型不一致)']);
+  });
+});
+
+describe('runRecordCopyStandalone', () => {
+  const api = vi.fn();
+  const confirm = vi.fn();
+  const status = vi.fn();
+  const options = { sourceAppId: '1', sourceGuestId: '', targetAppId: '2', targetGuestId: '', query: '' };
+  const source = [{ $id: { type: '__ID__', value: '1' }, title: { type: 'SINGLE_LINE_TEXT', value: 'a' } }];
+  const posts = () => api.mock.calls.filter((call) => call[1] === 'POST');
+
+  beforeEach(() => {
+    api.mockReset();
+    confirm.mockReset().mockReturnValue(true);
+    status.mockReset();
+    vi.stubGlobal('kintone', { api });
+    vi.stubGlobal('window', { confirm });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('refuses to create empty records when no field of the target app matches the source', async () => {
+    api.mockResolvedValueOnce({ properties: { other: { type: 'SINGLE_LINE_TEXT', code: 'other' } } }).mockResolvedValueOnce({ records: source });
+    await expect(runRecordCopyStandalone(options, status)).rejects.toThrow(/コピーできるフィールドがありません.*title/s);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(posts()).toHaveLength(0);
+  });
+
+  it('rejects a malformed field settings response instead of treating every field as missing', async () => {
+    api.mockResolvedValueOnce({});
+    await expect(runRecordCopyStandalone(options, status)).rejects.toThrow(/フィールド設定の応答が不正/);
+    expect(api).toHaveBeenCalledTimes(1);
+  });
+
+  it('posts matching fields after confirmation', async () => {
+    api.mockResolvedValueOnce({ properties: { title: { type: 'SINGLE_LINE_TEXT', code: 'title' } } }).mockResolvedValueOnce({ records: source }).mockResolvedValue({});
+    await runRecordCopyStandalone(options, status);
+    expect(posts().map((call) => call[2])).toEqual([{ app: '2', records: [{ title: { value: 'a' } }] }]);
   });
 });
 
