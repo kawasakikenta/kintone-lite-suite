@@ -48,4 +48,42 @@ describe('JS/CSS batch download manifest', () => {
     expect(zip.files.get('download_errors.txt')).toContain('403');
     expect(downloadBlob).toHaveBeenCalledTimes(1);
   });
+
+  it('throws the failure details instead of a bare count when no ZIP can be made', async () => {
+    vi.mocked(apiGet).mockImplementation(async (_prefix: string, path: string) => {
+      if (path === '/apps.json') return { apps: [{ appId: '5', name: 'A' }, { appId: '6', name: 'B' }] };
+      if (path === '/app/customize.json') throw new Error('権限がありません');
+      return customize;
+    });
+    const status = vi.fn();
+    await expect(runBatchJsConfigDownloadStandalone({}, status)).rejects.toThrow(/app 5 A: customize\.json 取得失敗: 権限がありません\napp 6 B/);
+    expect(downloadBlob).not.toHaveBeenCalled();
+  });
+
+  it('is not an error when there are simply no FILE entries', async () => {
+    vi.mocked(apiGet).mockImplementation(async (_prefix: string, path: string) =>
+      path === '/apps.json' ? { apps: [{ appId: '5', name: 'A' }] } : { desktop: { js: [{ type: 'URL', url: 'https://x' }], css: [] }, mobile: { js: [], css: [] } });
+    const status = vi.fn();
+    await expect(runBatchJsConfigDownloadStandalone({}, status)).resolves.toMatchObject({ files: 0, failed: 0 });
+    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('対象ファイルがありません'));
+    expect(downloadBlob).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-numeric guest id before listing apps', async () => {
+    await expect(runBatchJsConfigDownloadStandalone({ guestId: '1/x' }, vi.fn())).rejects.toThrow(/ゲストID.*数値/);
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+
+  it('keeps names that differ only by case and dot-only names from colliding or escaping the folder', async () => {
+    vi.mocked(apiGet).mockImplementation(async (_prefix: string, path: string) => path === '/apps.json'
+      ? { apps: [{ appId: '5', name: '..' }] }
+      : { desktop: { js: [{ type: 'FILE', file: { fileKey: 'a', name: 'App.js' } }, { type: 'FILE', file: { fileKey: 'b', name: '..' } }], css: [] },
+        mobile: { js: [{ type: 'FILE', file: { fileKey: 'c', name: 'app.js' } }], css: [] } });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('x')));
+    await runBatchJsConfigDownloadStandalone({}, vi.fn());
+    const manifest = JSON.parse(zip.files.get('manifest.json') as string);
+    expect(manifest.apps[0].folder).toBe('5_app5');
+    expect(manifest.apps[0].files.map((f: any) => f.entry)).toEqual(['5_app5/App.js', '5_app5/file.bin', '5_app5/app_2.js']);
+    expect([...zip.files.keys()].some(k => k.includes('..'))).toBe(false);
+  });
 });
