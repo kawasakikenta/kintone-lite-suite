@@ -126,6 +126,27 @@ export function validateLiteDiffStart(options: {
   return '';
 }
 
+/**
+ * 比較先のアプリID欄への貼り付けを、選択範囲を置き換える形で取り込む。
+ * 1件だけの貼り付け（表計算ソフトの末尾改行・空白付きを含む）は通常の貼り付けに任せ、
+ * 区切りのある複数件だけを分割対象（merged）として返す。
+ */
+export function mergePastedTargetAppIds(
+  current: string,
+  selectionStart: number | null | undefined,
+  selectionEnd: number | null | undefined,
+  pasted: string
+): { merged: string; splits: boolean } {
+  const tokens = String(pasted || '').split(/[,、\s]+/).filter(Boolean);
+  if (tokens.length <= 1) return { merged: current, splits: false };
+  const value = String(current || '');
+  const start = Math.min(Math.max(0, selectionStart ?? value.length), value.length);
+  const end = Math.min(Math.max(start, selectionEnd ?? start), value.length);
+  const before = value.slice(0, start).replace(/[,、\s]+$/, '').trim();
+  const after = value.slice(end).replace(/^[,、\s]+/, '').trim();
+  return { merged: [before, tokens.join(','), after].filter(Boolean).join(','), splits: true };
+}
+
 const SCOPE_OPTS = buildLiteDiffScopeOptions();
 
 const TYPE_LABEL: Record<string, string> = { added: '追加', removed: '削除', changed: '変更', moved: '移動', same: '同一' };
@@ -1333,9 +1354,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     entry.app.addEventListener('change', distribute);
     entry.app.addEventListener('paste', (ev: ClipboardEvent) => {
       const text = ev.clipboardData?.getData('text') || '';
-      if (!/[,、\s]/.test(text)) return;
+      // 全選択して貼り付けた場合は元の値を置き換える。1件だけの貼り付けは通常動作に任せる。
+      const pasted = mergePastedTargetAppIds(entry.app.value, entry.app.selectionStart, entry.app.selectionEnd, text);
+      if (!pasted.splits) return;
       ev.preventDefault();
-      entry.app.value = [entry.app.value.trim(), text].filter(Boolean).join(',');
+      entry.app.value = pasted.merged;
       distribute();
     });
   };

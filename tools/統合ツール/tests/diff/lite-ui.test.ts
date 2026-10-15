@@ -12,6 +12,7 @@ import {
   renderRowsHtml,
   rowMatchesFilters,
   summarizeLiteIgnoreRules,
+  mergePastedTargetAppIds,
   summarizeLiteDiffRows,
   validateLiteDiffStart
 } from '../../src/entries/diff-lite-ui';
@@ -46,6 +47,24 @@ describe('diff lite result presentation', () => {
     expect(validateLiteDiffStart({ sourceAppId: 'abc', targetAppId: '2', scopes: ['viewSettings'] })).toContain('正の整数');
     expect(validateLiteDiffStart({ sourceAppId: '1', targetAppId: '2', scopes: ['viewSettings'], ignoreKeys: 'views[0].name' })).toContain('位置依存');
     expect(validateLiteDiffStart({ sourceAppId: '', targetAppId: '', scopes: ['viewSettings'], hasImportedSource: true, hasImportedTarget: true })).toBe('');
+  });
+
+  describe('mergePastedTargetAppIds', () => {
+    it('replaces the selected text instead of appending to it', () => {
+      expect(mergePastedTargetAppIds('5', 0, 1, '200, 300')).toEqual({ merged: '200,300', splits: true });
+      expect(mergePastedTargetAppIds('100', 3, 3, '200\t300')).toEqual({ merged: '100,200,300', splits: true });
+      expect(mergePastedTargetAppIds('100,900', 4, 7, '200 300')).toEqual({ merged: '100,200,300', splits: true });
+    });
+
+    it('leaves a single pasted ID, including spreadsheet whitespace, to the normal paste', () => {
+      expect(mergePastedTargetAppIds('5', 0, 1, '123\n').splits).toBe(false);
+      expect(mergePastedTargetAppIds('', 0, 0, ' 123 ').splits).toBe(false);
+      expect(mergePastedTargetAppIds('5', 1, 1, '').splits).toBe(false);
+    });
+
+    it('tolerates a missing selection range', () => {
+      expect(mergePastedTargetAppIds('100', null, undefined, '200、300')).toEqual({ merged: '100,200,300', splits: true });
+    });
   });
 
   it('rejects a non-numeric guest space ID before it reaches the REST URL', () => {
