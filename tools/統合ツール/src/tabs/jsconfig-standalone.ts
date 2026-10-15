@@ -70,10 +70,17 @@ export function renderCustomizeResultHtml(data) {
   </table>`;
 }
 
+/** アプリID・ゲストIDは API の URL / クエリに入るため、数字だけを受け付ける。 */
+export function assertNumericAppAndGuestId(appId: string, guestId: string, appLabel = 'アプリID'): void {
+  if (!/^\d+$/.test(appId)) throw new Error(`${appLabel}は数値で入力してください`);
+  if (guestId && !/^\d+$/.test(guestId)) throw new Error('ゲストIDは数値で入力してください');
+}
+
 export async function runFetchJsConfigStandalone(p, setStatus, ui) {
   const appId = String(p.sourceAppId || '').trim();
   if (!appId) throw new Error('アプリIDを入力してください');
   const guestId = String(p.sourceGuestId || '').trim();
+  assertNumericAppAndGuestId(appId, guestId);
   const isPreview = !!p.preview;
   const prefix = buildApiPrefix(guestId, isPreview);
   setStatus('JS/CSS設定を取得中...');
@@ -200,6 +207,7 @@ export function buildJsConfigApplyConfirmText(targetAppId: string, targetGuestId
 export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
   const targetAppId = String(p.targetAppId || '').trim();
   if (!targetAppId) throw new Error('反映先アプリIDを入力してください');
+  assertNumericAppAndGuestId(targetAppId, String(p.targetGuestId || '').trim(), '反映先アプリID');
   const text = String(p.jsonText || '').trim();
   if (!text) throw new Error('JS/CSS設定JSONを入力してください');
   let parsed: any;
@@ -268,6 +276,7 @@ export async function runBatchJsConfigDownloadStandalone(
   setStatus: (msg: string, err?: boolean) => void
 ): Promise<BatchJsConfigDownloadResult> {
   const guestId = String(p.guestId || '').trim();
+  if (guestId && !/^\d+$/.test(guestId)) throw new Error('ゲストIDは数値で入力してください');
   const baseListPrefix = buildApiPrefix(guestId, false);
 
   setStatus('対象スペースの全アプリを取得中...');
