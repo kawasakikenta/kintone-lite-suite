@@ -1,5 +1,16 @@
-import { describe, expect, it } from 'vitest';
-import { buildErCrawlOptions, validateErOptions } from '../src/tabs/er-standalone';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fetchAppsInSpace } from '../src/api';
+import { buildErCrawlOptions, runGenerateERDiagramStandalone, validateErOptions } from '../src/tabs/er-standalone';
+
+vi.mock('../src/api', async original => ({
+  ...await original<typeof import('../src/api')>(),
+  fetchAppsInSpace: vi.fn()
+}));
+
+afterEach(() => {
+  vi.clearAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('ER図 Lite input validation', () => {
   it('reports the field that contains a malformed target before crawling', () => {
@@ -28,5 +39,36 @@ describe('ER図 Lite input validation', () => {
   it('collapses zero-padded duplicates so the start app is recognised in the diagram', () => {
     expect(buildErCrawlOptions({ appId: '007, 7', extraAppIds: '010,10' }).startAppIds).toEqual(['7', '10']);
     expect(buildErCrawlOptions({ appId: '007' }).startAppId).toBe('7');
+  });
+
+  it('rejects a space target whose picker has no app selected and no start ID', () => {
+    expect(validateErOptions({ spaceId: '7', spaceSelectedAppIds: [] })).toMatch(/1件以上選択/);
+    expect(validateErOptions({ spaceId: '7', spaceSelectedAppIds: ['3'] })).toBe('');
+    expect(validateErOptions({ spaceId: '7', spaceSelectedAppIds: [], appId: '2' })).toBe('');
+    expect(validateErOptions({ spaceId: '7', spaceSelectedAppIds: [], extraAppIds: ['2'] })).toBe('');
+  });
+});
+
+describe('ER図 Lite popup', () => {
+  it('opens the tab before waiting for the space app list and closes it when that fails', async () => {
+    const popup = { document: { write: vi.fn() }, close: vi.fn(), opener: {} };
+    const open = vi.fn(() => popup);
+    vi.stubGlobal('window', { open });
+    let rejectList: (reason: Error) => void = () => undefined;
+    vi.mocked(fetchAppsInSpace).mockImplementation(() => new Promise((_resolve, reject) => { rejectList = reject; }));
+
+    const run = runGenerateERDiagramStandalone({ spaceId: '7' }, vi.fn());
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(popup.close).not.toHaveBeenCalled();
+    rejectList(new Error('スペースを取得できません'));
+    await expect(run).rejects.toThrow('スペースを取得できません');
+    expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not open a tab for invalid input', async () => {
+    const open = vi.fn();
+    vi.stubGlobal('window', { open });
+    await expect(runGenerateERDiagramStandalone({ appId: 'abc' }, vi.fn())).rejects.toThrow(/アプリIDは数値/);
+    expect(open).not.toHaveBeenCalled();
   });
 });
