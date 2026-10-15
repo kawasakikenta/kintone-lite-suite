@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseAppReference,
+  guestIdFromPagePath,
   needsAppReferenceParse,
   parseLookupMapText,
   describeReflectSetupBlocker,
@@ -30,6 +31,15 @@ describe('parseAppReference', () => {
     expect(needsAppReferenceParse('123')).toBe(false);
     expect(needsAppReferenceParse('')).toBe(false);
     expect(needsAppReferenceParse('https://example.cybozu.com/k/123/')).toBe(true);
+  });
+});
+
+describe('guestIdFromPagePath', () => {
+  it('reads the guest space of the open kintone page, and is empty for the normal space', () => {
+    expect(guestIdFromPagePath('/k/guest/5/123/show')).toBe('5');
+    expect(guestIdFromPagePath('/k/guest/5/')).toBe('5');
+    expect(guestIdFromPagePath('/k/123/')).toBe('');
+    expect(guestIdFromPagePath('')).toBe('');
   });
 });
 

@@ -34,7 +34,8 @@ import {
   lookupMapError,
   lookupMapValue,
   describeReflectSetupBlocker,
-  summarizePostApplyCheck
+  summarizePostApplyCheck,
+  guestIdFromPagePath
 } from '../reflect/liteSetup.js';
 import { buildReflectPresetsExport, normalizeImportedReflectPresets, mergeReflectPresets, type ReflectPreset } from '../reflect/presetIo.js';
 import { buildExportFilename, downloadText, readTextFile } from '../utils.js';
@@ -361,8 +362,11 @@ export function mountReflectLitePanel() {
   // ---- アプリ ----
   const srcApp = makeInput({ placeholder: '比較元アプリID', value: memoryState.sourceAppId || '', width: 'id' });
   const srcGuest = makeInput({ placeholder: 'ゲストID', value: memoryState.sourceGuestId || '', width: 'guest' });
+  // 開いているアプリがゲストスペースにある場合、アプリIDだけを入れると別の（通常）スペースを指してしまう。
+  const pageGuestId = () => guestIdFromPagePath(window.location?.pathname || '');
+  const defaultsToCurrentApp = !memoryState.targetAppId && !!DEFAULT_APP_ID;
   const tgtApp = makeInput({ placeholder: '比較先アプリID', value: memoryState.targetAppId || DEFAULT_APP_ID || '', width: 'id' });
-  const tgtGuest = makeInput({ placeholder: 'ゲストID', value: memoryState.targetGuestId || '', width: 'guest' });
+  const tgtGuest = makeInput({ placeholder: 'ゲストID', value: defaultsToCurrentApp ? pageGuestId() : (memoryState.targetGuestId || ''), width: 'guest' });
   srcApp.setAttribute('aria-label', '比較元アプリID');
   srcGuest.setAttribute('aria-label', '比較元ゲストスペースID');
   tgtApp.setAttribute('aria-label', '比較先アプリID');
@@ -551,6 +555,7 @@ export function mountReflectLitePanel() {
 
   currentSrcBtn.addEventListener('click', () => {
     srcApp.value = DEFAULT_APP_ID || '';
+    srcGuest.value = DEFAULT_APP_ID ? pageGuestId() : srcGuest.value;
     saveState();
     refreshSameConnBanner();
     refreshReviewCard();
@@ -566,6 +571,7 @@ export function mountReflectLitePanel() {
   });
   currentBtn.addEventListener('click', () => {
     tgtApp.value = DEFAULT_APP_ID || '';
+    tgtGuest.value = DEFAULT_APP_ID ? pageGuestId() : tgtGuest.value;
     saveState();
     refreshSameConnBanner();
     refreshReviewCard();
@@ -600,15 +606,15 @@ export function mountReflectLitePanel() {
       panel.setStatus(`${sideLabel}のアプリIDを読み取れません。数字のID、またはアプリのURLを入力してください。`, 'warn');
       return false;
     }
+    // 通常スペースのURLなら、以前入力したゲストスペースIDを残さない（別スペースのアプリを指してしまうため）。
+    const clearedGuest = !reference.guestId && !!guestInput.value.trim();
     appInput.value = reference.appId;
-    if (reference.guestId) {
-      guestInput.value = reference.guestId;
-      guestDetails.open = true;
-    }
+    guestInput.value = reference.guestId;
+    if (reference.guestId) guestDetails.open = true;
     saveState();
     refreshSameConnBanner();
     refreshReviewCard();
-    panel.setStatus(`URLから${sideLabel}のアプリID ${reference.appId}${reference.guestId ? `（ゲストスペース ${reference.guestId}）` : ''}を読み取りました。`, 'ok');
+    panel.setStatus(`URLから${sideLabel}のアプリID ${reference.appId}${reference.guestId ? `（ゲストスペース ${reference.guestId}）` : ''}を読み取りました。${clearedGuest ? 'ゲストスペースIDは空にしました。' : ''}`, 'ok');
     return true;
   }
   for (const [appInput, guestInput, guestDetails, sideLabel] of [
@@ -885,13 +891,14 @@ export function mountReflectLitePanel() {
       preserveTargetOnly: preserve.checkbox.checked
     };
     const replaced = (memoryState.presets || []).some((p) => p.name === trimmed);
-    memoryState.presets = mergeReflectPresets(memoryState.presets, [preset], REFLECT_PRESET_LIMIT).presets;
+    const saved = mergeReflectPresets(memoryState.presets, [preset], REFLECT_PRESET_LIMIT);
+    memoryState.presets = saved.presets;
     refreshPresetSelect();
     refreshPresetButtons();
     presetSelect.value = trimmed;
     presetName.value = '';
     refreshPresetButtons();
-    panel.setStatus(`プリセット「${trimmed}」を${replaced ? '上書き保存' : '保存'}しました。次回も使う場合は「JSONで書き出し」で保存してください。`, 'ok');
+    panel.setStatus(`プリセット「${trimmed}」を${replaced ? '上書き保存' : '保存'}しました。${saved.dropped ? `上限 ${REFLECT_PRESET_LIMIT} 件のため古いプリセット ${saved.dropped} 件を削除しました。` : ''}次回も使う場合は「JSONで書き出し」で保存してください。`, saved.dropped ? 'warn' : 'ok');
   });
 
   exportPresetsBtn.addEventListener('click', () => {
@@ -924,7 +931,7 @@ export function mountReflectLitePanel() {
     refreshPresetSelect();
     refreshPresetButtons();
     presetSelect.value = presets[0].name;
-    panel.setStatus(`プリセットを読み込みました（追加 ${merged.added} 件 / 上書き ${merged.replaced} 件 / 合計 ${merged.presets.length} 件）。「読み込み」で適用できます。`, 'ok');
+    panel.setStatus(`プリセットを読み込みました（追加 ${merged.added} 件 / 上書き ${merged.replaced} 件 / 合計 ${merged.presets.length} 件）。${merged.dropped ? `上限 ${REFLECT_PRESET_LIMIT} 件を超えた ${merged.dropped} 件は保持できませんでした。` : ''}「読み込み」で適用できます。`, merged.dropped ? 'warn' : 'ok');
   }));
 
   loadBtn.addEventListener('click', () => {

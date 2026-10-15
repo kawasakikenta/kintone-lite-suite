@@ -105,9 +105,19 @@ describe('mergeReflectPresets', () => {
     const res = mergeReflectPresets(existing, incoming, 3);
     expect(res.presets).toHaveLength(3);
     expect(res.presets[0].name).toBe('new');
+    expect(res.dropped).toBe(3);
+  });
+
+  it('keeps only the first of same-named imported presets and reports the limit overflow', () => {
+    const incoming = ['a', 'b', 'a', 'c'].map((name, index) => normalizeReflectPreset({ name, scopes: [`s${index}`] })!);
+    const res = mergeReflectPresets([{ name: 'z' }], incoming, 3);
+    expect(res.presets.map((p) => p.name)).toEqual(['a', 'b', 'c']);
+    expect(res.presets[0].scopes).toEqual(['s0']);
+    expect(res.added).toBe(3);
+    expect(res.dropped).toBe(1);
   });
 
   it('is defensive against nullish inputs', () => {
-    expect(mergeReflectPresets(null, null)).toEqual({ presets: [], added: 0, replaced: 0 });
+    expect(mergeReflectPresets(null, null)).toEqual({ presets: [], added: 0, replaced: 0, dropped: 0 });
   });
 });
