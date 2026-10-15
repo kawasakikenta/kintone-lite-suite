@@ -102,6 +102,83 @@ describe('runRenderProcessFlowStandalone API response', () => {
   });
 });
 
+function simTargets() {
+  const textEl: any = { value: '' };
+  const viewEl: any = { innerHTML: '' };
+  const simUi: any = {
+    container: { style: {} },
+    current: { textContent: '', style: {} },
+    select: { disabled: true, innerHTML: '', value: '0' },
+    startBtn: { onclick: null },
+    execBtn: { onclick: null }
+  };
+  return { textEl, viewEl, simUi };
+}
+
+async function withMermaid<T>(mermaid: any, fn: () => Promise<T>): Promise<T> {
+  const previousWindow = (globalThis as any).window;
+  (globalThis as any).window = mermaid ? { mermaid } : {};
+  try {
+    return await fn();
+  } finally {
+    if (previousWindow === undefined) delete (globalThis as any).window;
+    else (globalThis as any).window = previousWindow;
+  }
+}
+
+describe('runRenderProcessFlowStandalone simulation notices', () => {
+  it('reports simulation progress with a finished tone and explains buttons that cannot act', async () => {
+    const notices: Array<[string, boolean | undefined, string | undefined]> = [];
+    const targets = simTargets();
+    vi.mocked(apiGet).mockResolvedValue({
+      enable: true,
+      states: { 未処理: { index: '0' }, 完了: { index: '1' } },
+      actions: [{ name: '完了にする', from: '未処理', to: '完了' }]
+    });
+    await withMermaid({ render: vi.fn(async () => ({ svg: '<svg/>' })) }, async () => {
+      await runRenderProcessFlowStandalone({ appId: '7' }, (m, e, tone) => notices.push([m, e, tone]), targets);
+      const { startBtn, execBtn, select } = targets.simUi;
+      await execBtn.onclick();
+      expect(notices.at(-1)).toEqual(['先に「最初から開始」を押してください', false, 'warn']);
+      await startBtn.onclick();
+      expect(notices.at(-1)).toEqual(['シミュレーション開始: 未処理', false, 'ok']);
+      select.value = '0';
+      await execBtn.onclick();
+      expect(notices.at(-1)).toEqual(['アクション「完了にする」実行 → 「完了」', false, 'ok']);
+      await execBtn.onclick();
+      expect(notices.at(-1)?.[0]).toContain('実行できるアクションはありません');
+      expect(notices.at(-1)?.[2]).toBe('warn');
+    });
+  });
+
+  it('reports excluded actions as a warning, not an error', async () => {
+    const notices: Array<[string, boolean | undefined, string | undefined]> = [];
+    vi.mocked(apiGet).mockResolvedValue({
+      enable: true,
+      states: { A: {} },
+      actions: [{ name: 'broken', from: 'A', to: '' }]
+    });
+    await withMermaid({ render: vi.fn(async () => ({ svg: '<svg/>' })) }, () =>
+      runRenderProcessFlowStandalone({ appId: '7' }, (m, e, tone) => notices.push([m, e, tone]), simTargets()));
+    expect(notices.at(-1)).toEqual([expect.stringContaining('除外'), false, 'warn']);
+  });
+
+  it('tells a render failure apart from a load failure in the fallback notice', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ enable: true, states: { A: {} }, actions: [] });
+    const rendered = simTargets();
+    const renderNotices: string[] = [];
+    await withMermaid({ render: vi.fn(async () => { throw new Error('Maximum Text size in diagram exceeded'); }) }, () =>
+      runRenderProcessFlowStandalone({ appId: '7' }, m => renderNotices.push(m), rendered));
+    expect(rendered.viewEl.innerHTML).toContain('描画に失敗');
+    expect(rendered.viewEl.innerHTML).not.toContain('読み込めなかった');
+    expect(renderNotices.at(-1)).toContain('Maximum Text size');
+
+    const loaded = simTargets();
+    await withMermaid(null, () => runRenderProcessFlowStandalone({ appId: '7' }, () => {}, loaded));
+    expect(loaded.viewEl.innerHTML).toContain('読み込みに失敗');
+  });
+});
+
 describe('runRenderProcessFlowStandalone freshness', () => {
   it('does not commit a deferred simulation render after the connection changes', async () => {
     const previousWindow = (globalThis as any).window;
