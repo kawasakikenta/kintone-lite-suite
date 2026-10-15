@@ -45,6 +45,20 @@ describe('buildProcessMermaidSource', () => {
   });
 });
 
+describe('buildProcessMermaidSource HTML-like names', () => {
+  it('keeps names that would be swallowed as HTML tags, and leaves plain comparisons alone', () => {
+    const src = buildProcessMermaidSource(
+      { 'Level<High>': {}, '<10万円': {}, '<b>太字</b>': {} },
+      [{ name: '承認<script>x</script>', from: 'Level<High>', to: '<10万円' }]
+    );
+    expect(src).not.toMatch(/<[A-Za-z/]/);
+    expect(src).toContain('state "Level＜High>" as s0');
+    expect(src).toContain('state "<10万円" as s1');
+    expect(src).toContain('state "＜b>太字＜/b>" as s2');
+    expect(src).toContain('s0 --> s1 : 承認＜script>x＜/script>');
+  });
+});
+
 describe('findInitialState', () => {
   it('prefers the smallest kintone index, then the state no action transitions into', () => {
     expect(findInitialState({ B: { index: '1' }, A: { index: '0' } }, [{ from: 'A', to: 'B' }, { from: 'B', to: 'A' }])).toBe('A');
@@ -125,6 +139,32 @@ async function withMermaid<T>(mermaid: any, fn: () => Promise<T>): Promise<T> {
     else (globalThis as any).window = previousWindow;
   }
 }
+
+describe('runRenderProcessFlowStandalone output', () => {
+  it('keeps the shareable source free of the simulation highlight while the diagram is highlighted', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ enable: true, states: { A: { index: '0' }, B: { index: '1' } }, actions: [{ name: 'go', from: 'A', to: 'B' }] });
+    const render = vi.fn(async () => ({ svg: '<svg/>' }));
+    const targets = simTargets();
+    await withMermaid({ render }, async () => {
+      await runRenderProcessFlowStandalone({ appId: '7' }, () => {}, targets);
+      await targets.simUi.startBtn.onclick();
+    });
+    expect(String((render.mock.calls.at(-1) as any[])[1])).toContain('class s0 current');
+    expect(targets.textEl.value).not.toContain('classDef');
+    expect(targets.textEl.value).toContain('s0 --> s1 : go');
+  });
+
+  it('applies the strict security level once, even when the page already provides mermaid', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ enable: true, states: { A: {} }, actions: [] });
+    const mermaid = { initialize: vi.fn(), render: vi.fn(async () => ({ svg: '<svg/>' })) };
+    await withMermaid(mermaid, async () => {
+      await runRenderProcessFlowStandalone({ appId: '7' }, () => {}, simTargets());
+      await runRenderProcessFlowStandalone({ appId: '7' }, () => {}, simTargets());
+    });
+    expect(mermaid.initialize).toHaveBeenCalledTimes(1);
+    expect(mermaid.initialize).toHaveBeenCalledWith(expect.objectContaining({ securityLevel: 'strict' }));
+  });
+});
 
 describe('runRenderProcessFlowStandalone simulation notices', () => {
   it('reports simulation progress with a finished tone and explains buttons that cannot act', async () => {
