@@ -1,6 +1,6 @@
 'use strict';
 
-import { crawl, buildHTML, progressUi, ER_DEFAULTS, formatErLayoutLabel } from './er.js';
+import { crawl, buildHTML, progressUi, ER_DEFAULTS, formatErLayoutLabel, describeReverseScan } from './er.js';
 import { fetchAppsInSpace } from '../api.js';
 import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 
@@ -10,7 +10,7 @@ import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../uti
  * - opts.spaceApps: UI 側で読み込み済みのアプリ一覧（渡されると再取得しない = APIリクエスト節約）
  * - opts.spaceSelectedAppIds: 配列を渡すと選択したアプリだけを起点に追加する（null/未指定なら全アプリ）
  */
-async function applySpaceToErOptions(opts: any, options: any, setStatus: (msg: string, err?: boolean) => void): Promise<void> {
+async function applySpaceToErOptions(opts: any, options: any, setStatus: (msg: string, err?: ErStatusTone) => void): Promise<void> {
   const spaceId = String(opts.spaceId || '').trim();
   if (!/^\d+$/.test(spaceId)) return;
   let apps = Array.isArray(opts.spaceApps) ? opts.spaceApps : null;
@@ -47,6 +47,11 @@ function erAppIdValues(opts: any, key: 'appIds' | 'extraAppIds', fallback = ''):
   return splitErAppIds(value ?? fallback);
 }
 
+/** Number へ変換しても同じ ID を指せる正の整数だけを起点アプリ ID として受け付ける。 */
+function isUsableErAppId(value: string): boolean {
+  return /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0;
+}
+
 /** ER図の取得前に、入力の誤りを対象欄ごとに明示する。 */
 export function validateErOptions(opts: any): string {
   const appId = String(opts?.appId || '').trim();
@@ -54,6 +59,8 @@ export function validateErOptions(opts: any): string {
   const extraIds = erAppIdValues(opts, 'extraAppIds');
   const invalidAppId = [...primaryIds, ...extraIds].find((v) => !/^\d+$/.test(v));
   if (invalidAppId) return `アプリIDは数値で入力してください: ${invalidAppId}`;
+  const unusableAppId = [...primaryIds, ...extraIds].find((v) => !isUsableErAppId(v));
+  if (unusableAppId) return `アプリIDは1以上${Number.MAX_SAFE_INTEGER}以下の整数で入力してください: ${unusableAppId}`;
 
   const guestId = String(opts?.guestId || '').trim();
   if (guestId && !/^\d+$/.test(guestId)) return `ゲストIDは数値で入力してください: ${guestId}`;
@@ -66,6 +73,9 @@ export function validateErOptions(opts: any): string {
     if (!Number.isFinite(depth) || depth < 0 || !Number.isInteger(depth)) return '探索深さは0以上の整数で入力してください';
   }
   if (!primaryIds.length && !spaceId) return 'アプリID または スペースID を入力してください';
+  if (spaceId && !primaryIds.length && !extraIds.length && Array.isArray(opts?.spaceSelectedAppIds) && !opts.spaceSelectedAppIds.length) {
+    return 'スペース内のアプリを1件以上選択するか、起点アプリIDを入力してください';
+  }
   return '';
 }
 
@@ -78,7 +88,10 @@ export function buildErCrawlOptions(opts: any) {
   const primaryAppIds = erAppIdValues(opts, 'appIds', appId);
   const startAppIds = [...primaryAppIds, ...erAppIdValues(opts, 'extraAppIds')]
     .map((v) => String(v || '').trim())
-    .filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
+    .filter(isUsableErAppId)
+    // "007" と "7" は同じアプリ。図内の起点判定（アプリID文字列との一致）が崩れないよう正規化する
+    .map((v) => String(Number(v)))
+    .filter((v, i, a) => a.indexOf(v) === i);
   const maxDepthRaw = Number(opts?.maxDepth);
   return {
     startAppId: startAppIds[0] || appId,
@@ -94,7 +107,7 @@ export function buildErCrawlOptions(opts: any) {
   };
 }
 
-async function resolveErOptions(opts: any, setStatus: (msg: string, err?: boolean) => void) {
+async function resolveErOptions(opts: any, setStatus: (msg: string, err?: ErStatusTone) => void) {
   const validationError = validateErOptions(opts);
   if (validationError) throw new Error(validationError);
   const appId = String(opts.appId || '').trim();
@@ -105,10 +118,16 @@ async function resolveErOptions(opts: any, setStatus: (msg: string, err?: boolea
   return options;
 }
 
-function summarizeCrawl(apps: any[]) {
+/** 状態表示の種類。true は取得失敗あり、'warn' は部分成功（図は生成済み）。 */
+export type ErStatusTone = boolean | 'warn';
+
+export function summarizeCrawl(apps: any[], options?: any) {
   const partialCount = apps.filter((app: any) => app?.status === 'partial').length;
   const failedCount = apps.filter((app: any) => app?.status === 'failed' || app?.ok === false).length;
-  return { partialCount, failedCount, note: partialCount || failedCount ? `（一部取得 ${partialCount} / 取得失敗 ${failedCount}）` : '' };
+  const reverseNote = describeReverseScan(options);
+  const appNote = partialCount || failedCount ? `（一部取得 ${partialCount} / 取得失敗 ${failedCount}）` : '';
+  const tone: ErStatusTone = failedCount ? true : (partialCount || reverseNote ? 'warn' : false);
+  return { partialCount, failedCount, note: `${appNote}${reverseNote ? `。${reverseNote}` : ''}`, tone };
 }
 
 /**
@@ -123,15 +142,25 @@ function summarizeCrawl(apps: any[]) {
  * @param {boolean} [opts.includeSubtableFields]
  * @param {boolean} [opts.includeReverseLookup]
  * @param {string[]} [opts.extraAppIds]
- * @param {(msg: string, err?: boolean) => void} setStatus
+ * @param {(msg: string, err?: boolean | 'warn') => void} setStatus
  */
 export async function runGenerateERDiagramStandalone(opts, setStatus) {
-  const options = await resolveErOptions(opts, setStatus);
+  const validationError = validateErOptions(opts);
+  if (validationError) throw new Error(validationError);
 
+  // ポップアップは利用者の操作直後でないとブロックされるため、スペース内アプリ取得などの通信を待つ前に開く
   const popup = window.open('', '_blank');
   if (!popup) throw new Error('別タブを開けませんでした。ポップアップブロックを確認してください');
   try { popup.opener = null; } catch (_) { /* noop */ }
   popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
+
+  let options;
+  try {
+    options = await resolveErOptions(opts, setStatus);
+  } catch (e) {
+    try { popup.close(); } catch (_) { /* noop */ }
+    throw e;
+  }
 
   setStatus(`ER図を生成中... 起点 ${options.startAppIds.join(',')}`);
   progressUi.init();
@@ -145,10 +174,10 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
     const url = URL.createObjectURL(blob);
     popup.location.href = url;
     progressUi.close();
-    const summary = summarizeCrawl(apps);
+    const summary = summarizeCrawl(apps, options);
     setStatus(summary.note
       ? `ER図を生成しました: ${apps.length}アプリ${summary.note}`
-      : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました`, !!summary.failedCount);
+      : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました`, summary.tone);
     setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
   } catch (e) {
     try { popup.close(); } catch (_) { /* noop */ }
@@ -178,10 +207,10 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
       'text/html'
     );
     progressUi.close();
-    const summary = summarizeCrawl(apps);
+    const summary = summarizeCrawl(apps, options);
     setStatus(summary.note
       ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}`
-      : `ER図HTMLを保存しました (${apps.length}アプリ)`, !!summary.failedCount);
+      : `ER図HTMLを保存しました (${apps.length}アプリ)`, summary.tone);
   } catch (e) {
     progressUi.error(e.message || String(e));
     throw e;
