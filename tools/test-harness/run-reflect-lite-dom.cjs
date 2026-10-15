@@ -99,7 +99,14 @@ async function main() {
       const count = await page.evaluate(() => window.__reflectMock.applies.length);
       await idCheck.press('Enter'); assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), count, '確認IDのEnterで書き込まない');
     }
-    await applyButton().evaluate(button => { button.click(); button.click(); }); await idle();
+    // 反映中に再起動しても実行中のパネルを置き換えない（結果を見失わせない）。
+    await applyButton().evaluate(button => {
+      button.click(); button.click();
+      window.__runningPanel = document.getElementById('kus-reflect-lite');
+      ReflectHarness.mountReflectLitePanel();
+    });
+    await idle();
+    assert.equal(await page.evaluate(() => document.getElementById('kus-reflect-lite') === window.__runningPanel), true, '反映中の再起動で実行中のパネルを残す');
   }
   async function idle() { await page.waitForFunction(() => document.querySelector('#kus-reflect-lite').getAttribute('aria-busy') !== 'true'); }
   async function setup() {
@@ -251,6 +258,8 @@ async function main() {
     assert.equal(await button('差分を確認する').isDisabled(), true, 'JSON未読込では以前のアプリIDで比較しない');
     await page.getByLabel('比較元の設定JSON', { exact: true }).setInputFiles({ name: 'settings.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ appId: '901', sections: { fieldSettings: { properties: {} } } })) });
     await idle();
+    assert.equal(await page.getByLabel('比較元の設定JSON', { exact: true }).evaluate(input => input.files.length), 0, '同じJSONを編集して選び直せるよう選択状態を空に戻す');
+    assert.match(await page.getByText(/比較元JSON読み込み済み/).first().innerText(), /settings\.json/, '読み込んだファイル名を表示する');
     assert.equal(await button('差分を確認する').isEnabled(), true);
     await compare();
     assert.equal(await page.evaluate(() => window.__reflectMock.previews[0].sourceBundle.appId), '901');
