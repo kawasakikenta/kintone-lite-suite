@@ -67,4 +67,20 @@ describe('JS/CSS apply revision guard', () => {
     expect(apiGet).not.toHaveBeenCalled();
     expect(apiPut).not.toHaveBeenCalled();
   });
+
+  it('stops before the confirmation when the target changed after the JSON was fetched (baseRevision)', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ ...current, revision: '9' });
+    await expect(runApplyJsConfigStandalone({ targetAppId: '5', jsonText: json, baseRevision: '7' }, vi.fn(), vi.fn()))
+      .rejects.toMatchObject({ revisionConflict: true, message: expect.stringContaining('revision 7') });
+    expect(kusConfirm).not.toHaveBeenCalled();
+    expect(apiPut).not.toHaveBeenCalled();
+  });
+
+  it('applies and reports the new revision when baseRevision still matches', async () => {
+    vi.mocked(apiGet).mockResolvedValue(current);
+    vi.mocked(apiPut).mockResolvedValue({ revision: '8' });
+    await expect(runApplyJsConfigStandalone({ targetAppId: '5', jsonText: json, baseRevision: '7', skipConfirm: true }, vi.fn(), vi.fn()))
+      .resolves.toEqual({ revision: '8' });
+    expect(apiPut).toHaveBeenCalledWith('/k/v1/preview', '/app/customize.json', expect.objectContaining({ revision: '7' }));
+  });
 });

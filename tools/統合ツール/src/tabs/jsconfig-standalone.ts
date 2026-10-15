@@ -26,12 +26,27 @@ async function downloadFileBlobForJsConfig(prefix: string, fileKey: string): Pro
   return { ok: false, reason: lastReason || '取得失敗' };
 }
 
-/** ZIP フォルダ名に使えない文字と制御文字を除く。 */
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+/**
+ * ZIP のフォルダ名・ファイル名に使えない文字と制御文字を除く。
+ * 空文字を返すことがあるため、呼び出し側で代替名を用意する。
+ */
 export function sanitizeFolderName(name: string): string {
-  return String(name || '')
+  const safe = String(name || '')
     .replace(/[\\/:*?"<>|]/g, '_')
-    .replace(/[\u0000-\u001f]/g, '')
-    .trim();
+    // 制御文字、双方向制御・ゼロ幅文字（表示上の名前偽装）を除く
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '')
+    .trim()
+    // Windows は末尾のドット・空白を落とす。".." のみの名前もここで空になり、上位ディレクトリ指定にならない。
+    .replace(/[. ]+$/, '');
+  return WINDOWS_RESERVED_NAME.test(safe) ? '_' + safe : safe;
+}
+
+/** 大文字小文字だけが異なる名前も重複として扱う（Windows / macOS で展開時に上書きされるため）。 */
+class CaseInsensitiveNameSet extends Set<string> {
+  has(value: string) { return super.has(value.toLowerCase()); }
+  add(value: string) { return super.add(value.toLowerCase()); }
 }
 
 export function renderCustomizeResultHtml(data) {
@@ -87,6 +102,8 @@ export async function runFetchJsConfigStandalone(p, setStatus, ui) {
   const res = await apiGet(prefix, '/app/customize.json', { app: appId });
   const data = normalize(res);
   ui.setJson(JSON.stringify(data, null, 2));
+  // 編集後の反映で、取得後の別更新を検出する基準にする
+  ui.setRevision?.(pickRevision(res));
   ui.setCustomizeHtml(renderCustomizeResultHtml(data));
   setStatus(`JS/CSS設定を取得しました（アプリ: ${appId}${isPreview ? ' / プレビュー' : ''}）`);
 }
@@ -228,6 +245,15 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
   }
 
   const currentSummary = summarizeJsConfigCurrent(current, plan);
+  // 反映先のプレビューを取得した JSON を編集して戻す場合は、取得時の revision を基準にする。
+  // 反映直前に取り直した revision だけを使うと、取得後〜反映前の別更新を黙って上書きしてしまう。
+  const baseRevision = String(p.baseRevision || '').trim();
+  if (baseRevision && baseRevision !== revision) {
+    const stale = new Error(`取得時の revision ${baseRevision} と現在の revision ${revision} が異なります`) as any;
+    stale.code = 'GAIA_CO02';
+    throw decorateRevisionConflict(stale, 'JS/CSS設定の反映');
+  }
+
   if (!p.skipConfirm && !kusConfirm(buildJsConfigApplyConfirmText(targetAppId, guestId, plan, currentSummary))) {
     setStatus('JS/CSS設定反映をキャンセルしました');
     return;
@@ -253,6 +279,7 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
 
   setLogHtml(`<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`);
   setStatus('JS/CSS設定反映完了');
+  return { revision: pickRevision(res) };
 }
 
 export interface BatchJsConfigDownloadResult {
@@ -314,7 +341,7 @@ export async function runBatchJsConfigDownloadStandalone(
 
   for (let i = 0; i < apps.length; i++) {
     const app = apps[i];
-    const safeName = sanitizeFolderName(app.name || `app${app.appId}`);
+    const safeName = sanitizeFolderName(app.name) || `app${app.appId}`;
     // apps.json に spaceId が付くのはゲストスペース所属アプリではなく通常スペースのアプリなので、
     // ゲスト prefix は利用者が指定した guestId からのみ決める。
     setStatus(`[${i + 1}/${apps.length}] アプリ "${safeName}" (${app.appId}) をチェック...`);
@@ -335,7 +362,7 @@ export async function runBatchJsConfigDownloadStandalone(
 
     const folderName = guestId ? `guest${guestId}_${app.appId}_${safeName}` : `${app.appId}_${safeName}`;
     const appFolder = zip.folder(folderName);
-    const used = new Set<string>();
+    const used = new CaseInsensitiveNameSet();
     const manifestFiles: (typeof manifestApps)[number]['files'] = [];
 
     for (const file of fileTargets) {

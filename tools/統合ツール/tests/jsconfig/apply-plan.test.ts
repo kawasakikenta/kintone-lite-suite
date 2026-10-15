@@ -77,4 +77,14 @@ describe('sanitizeFolderName', () => {
     expect(sanitizeFolderName('tab\there\u0000nul\nnl')).toBe('tabherenulnl');
     expect(sanitizeFolderName('  名前  ')).toBe('名前');
   });
+
+  it('never yields a dot-only name, trailing dots, reserved device names or bidi overrides', () => {
+    expect(sanitizeFolderName('..')).toBe('');
+    expect(sanitizeFolderName('.')).toBe('');
+    expect(sanitizeFolderName('app.js. ')).toBe('app.js');
+    expect(sanitizeFolderName('CON.js')).toBe('_CON.js');
+    expect(sanitizeFolderName('nul')).toBe('_nul');
+    expect(sanitizeFolderName('console.js')).toBe('console.js');
+    expect(sanitizeFolderName('a\u202Egnp.js')).toBe('agnp.js');
+  });
 });
