@@ -203,6 +203,34 @@ export function getDesignExportFieldTypeMeta() {
   };
 }
 
+/**
+ * 絞り込み条件などの文字列から、フィールドコードが単語として現れるものを返す。
+ * 「金額」と「合計金額」のように日本語コードが部分一致しても別フィールドとして扱うため、
+ * 単語境界は ASCII だけでなく文字・数字全般（と `_`・中黒・全角アンダースコア）で判定する。
+ */
+export function findReferencedFieldCodes(cond: unknown, codes: Iterable<string>): string[] {
+  const text = String(cond ?? '');
+  if (!text) return [];
+  const found: string[] = [];
+  for (const code of codes) {
+    if (!code) continue;
+    const escaped = String(code).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(^|[^\\p{L}\\p{N}_\\u30FB\\uFF3F])${escaped}([^\\p{L}\\p{N}_\\u30FB\\uFF3F]|$)`, 'u');
+    if (re.test(text)) found.push(code);
+  }
+  return found;
+}
+
+/** ユーザーフィールドとテーブル内フィールドのコードをまとめて返す（条件式からの参照検出用）。 */
+function collectAllFieldCodes(fields: Record<string, any>): string[] {
+  const codes = new Set<string>();
+  for (const [code, f] of Object.entries(fields || {}) as Array<[string, any]>) {
+    codes.add(code);
+    if (f?.type === 'SUBTABLE' && f.fields) Object.keys(f.fields).forEach((sc) => codes.add(sc));
+  }
+  return [...codes];
+}
+
 function escapeHtmlAttr(value: string): string {
   return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -819,12 +847,10 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       if (!usage.has(code)) usage.set(code, new Set<string>());
       usage.get(code)!.add(where);
     };
+    const allCodes = collectAllFieldCodes(fields);
     const scanFilterCond = (cond: any, tag: string) => {
       if (!cond) return;
-      for (const code of Object.keys(fields)) {
-        const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(code)}([^A-Za-z0-9_]|$)`);
-        if (re.test(String(cond))) add(code, tag);
-      }
+      for (const code of findReferencedFieldCodes(cond, allCodes)) add(code, tag);
     };
 
     (Object.entries(fields) as Array<[string, any]>).forEach(([code, f]) => {
@@ -2168,20 +2194,14 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
       (Object.entries(views?.views || ({} as any)) as Array<[string, any]>).forEach(([name, v]: [string, any]) => {
         if (v.filterCond) {
-          const refs = Object.keys(fields).filter((c) => {
-            const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
-            return re.test(String(v.filterCond));
-          });
+          const refs = findReferencedFieldCodes(v.filterCond, collectAllFieldCodes(fields));
           if (refs.length) addDep('(一覧)', name, '一覧絞込', refs.join(', '), UtilsX.formatFilterCond(v.filterCond), CONFIG.COLORS.INFO_BG);
         }
       });
 
       (status?.actions || []).forEach((a: any) => {
         if (a.filterCond) {
-          const refs = Object.keys(fields).filter((c) => {
-            const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
-            return re.test(String(a.filterCond));
-          });
+          const refs = findReferencedFieldCodes(a.filterCond, collectAllFieldCodes(fields));
           if (refs.length) addDep('(プロセス遷移)', a.name || '', 'プロセス条件', refs.join(', '), UtilsX.formatFilterCond(a.filterCond), CONFIG.COLORS.DEPENDENCY_BG);
         }
       });
@@ -2189,10 +2209,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       const scanNotifRefs = (payload, tag) => {
         UtilsX.ensureArray(payload?.notifications).forEach((n, i) => {
           if (n.filterCond) {
-            const refs = Object.keys(fields).filter((c) => {
-              const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
-              return re.test(String(n.filterCond));
-            });
+            const refs = findReferencedFieldCodes(n.filterCond, collectAllFieldCodes(fields));
             if (refs.length) addDep(`(${tag}#${i + 1})`, '', `${tag}条件`, refs.join(', '), UtilsX.formatFilterCond(n.filterCond), CONFIG.COLORS.SUBTABLE_BG);
           }
         });

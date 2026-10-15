@@ -1910,6 +1910,7 @@ function mdDesignSectionRows(bundle: any) {
     .map((def): string[] => {
       const sec = sections[def.key];
       let count: number | string = '';
+      if (sec?._fetchError) return [def.label, def.key, '取得失敗'];
       if (def.key === 'fieldSettings') count = Object.keys(sec?.properties || ({} as any)).length;
       else if (def.key === 'viewSettings') count = Object.keys(sec?.views || ({} as any)).length;
       else if (def.key === 'reportSettings') count = Object.keys(sec?.reports || ({} as any)).length;
@@ -1939,6 +1940,8 @@ function mdFetchedAt(value: unknown): string {
 export interface BundleToMarkdownOptions {
   /** 各セクションの末尾に API レスポンスの生データ（折りたたみ）を付ける。既定 true */
   rawJson?: boolean;
+  /** 先頭の表に取得日時の行を出す。差分比較では毎回異なる値がノイズになるため false にできる。既定 true */
+  fetchedAt?: boolean;
 }
 
 export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions = {}) {
@@ -1958,7 +1961,7 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
     ['アプリ名', appName || '（取得なし）'],
     ['ゲストスペースID', bundle.guestId || '(通常空間)'],
     ['取得環境', bundle.preview ? 'プレビュー（未公開の設定）' : '本番（運用中の設定）'],
-    ['取得日時', mdFetchedAt(bundle.fetchedAt)],
+    ...(options.fetchedAt === false ? [] : [['取得日時', mdFetchedAt(bundle.fetchedAt)]]),
     ['取得できなかったセクション', failedSections.length ? failedSections.map((def) => def.label).join('、') : 'なし']
   ]));
   lines.push('');
@@ -2000,6 +2003,12 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
     if (!sec) continue;
     lines.push(`## ${def.label}`);
     lines.push('');
+    if (sec._fetchError) {
+      // 取得に失敗したセクションを「0件」や「データなし」と読み違えないよう、失敗を明示する
+      lines.push(`> ⚠ 取得できませんでした: ${String(sec._fetchError).replace(/\s*\r?\n\s*/g, ' ')}`);
+      lines.push('');
+      continue;
+    }
     const renderer = MD_SECTION_RENDERERS[def.key];
     let rendered = '';
     if (renderer) {

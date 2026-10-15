@@ -173,7 +173,8 @@ export function mountDesignLitePanel() {
   panel.body.insertBefore(diffDetails.details, panel.status);
 
   bDiff.addEventListener('click', () => {
-    const all = appTable.getAllRows().filter((r) => r.appId);
+    // 確認画面の検証（getApps の先頭2件）と同じ行を使う。重複行を含む getAllRows だと別の組み合わせになる。
+    const all = appTable.getApps();
     if (all.length < 2) { panel.setStatus('差分には対象アプリ表に2行以上のアプリIDが必要です', 'warn'); return; }
     liteRun(panel, '設計書差分 MD 生成中…', async () => {
       await runDesignDiffMdStandalone(

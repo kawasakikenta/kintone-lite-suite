@@ -160,6 +160,29 @@ describe('design/bundleToMarkdown (REST API レスポンス準拠の日本語化
     expect(md).toContain('| qty | 数量 | 数値 |  |  |  | 単位: 個 |');
   });
 
+  it('取得に失敗したセクションは「0件」ではなく取得失敗として出し、件数欄にも失敗と書く', () => {
+    const md = bundleToMarkdown(makeBundle({
+      appSettings: { name: '営業案件' },
+      fieldSettings: { _fetchError: '403 権限がありません\nCB_NO02' },
+      viewSettings: { views: { 一覧: { type: 'LIST', index: '0', fields: ['a'] } } }
+    }));
+    const fieldPart = md.slice(md.indexOf('## フィールド設定\n'), md.indexOf('## ビュー設定\n'));
+    expect(fieldPart).toContain('> ⚠ 取得できませんでした: 403 権限がありません CB_NO02');
+    expect(fieldPart).not.toContain('フィールド数');
+    expect(fieldPart).not.toContain('データなし');
+    expect(md).toContain('| フィールド設定 | fieldSettings | 取得失敗 |');
+    expect(md).toContain('| ビュー設定 | viewSettings | 1 |');
+    expect(md).toContain('| 取得できなかったセクション | フィールド設定 |');
+  });
+
+  it('fetchedAt: false では先頭の表から取得日時の行を外す', () => {
+    const bundle = makeBundle({ appSettings: { name: 'x' } });
+    expect(bundleToMarkdown(bundle)).toContain('| 取得日時 |');
+    const md = bundleToMarkdown(bundle, { fetchedAt: false });
+    expect(md).not.toContain('取得日時');
+    expect(md).toContain('| 取得環境 |');
+  });
+
   it('rawJson: false では API レスポンスの生データを含めない', () => {
     const bundle = makeBundle({ appSettings: { name: 'x', theme: 'WHITE' } });
     expect(bundleToMarkdown(bundle)).toContain('APIレスポンス（生データ）');
