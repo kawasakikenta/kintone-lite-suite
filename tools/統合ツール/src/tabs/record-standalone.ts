@@ -347,7 +347,7 @@ async function inspectCsvImportBatch(opts, setStatus) {
     setStatus(`App ${appId}: CSVを事前検査中...`);
     try {
       const response = await apiGet(prefix, '/app/form/fields.json', { app: appId });
-      const { records: _records, ...report } = planCsvImport(rows, response?.properties);
+      const { records: _records, recordRows: _recordRows, ...report } = planCsvImport(rows, response?.properties);
       plans.push({ appId, properties: response.properties, report });
     } catch (error: any) { plans.push({ appId, properties: {}, error: error?.message || String(error) || '事前検査に失敗しました' }); }
   }
@@ -381,10 +381,11 @@ export async function runCsvImportBatchStandalone(opts, setStatus) {
   await runRecordAppBatchStandalone(plans.map(plan => plan.appId).join(','), async (appId) => {
     const plan = plans.find(item => item.appId === appId);
     // Build just one app's payload at a time, keeping multi-app memory bounded.
-    const { records } = planCsvImport(rows, plan.properties);
+    const { records, recordRows } = planCsvImport(rows, plan.properties);
     const ok = await writeInChunks(records, `App ${appId} の CSV取込`,
       batch => apiPost(prefix, '/records.json', { app: appId, records: batch }),
-      (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`));
+      (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`),
+      undefined, index => `CSV ${recordRows[index]}行目`);
     setStatus(`App ${appId}: インポート完了 ${ok}件`);
   }, setStatus);
   setStatus(`CSV取込完了: ${plans.length}アプリ / ${plans.reduce((sum, plan) => sum + plan.report.count, 0)}件`);
@@ -435,7 +436,9 @@ export async function runBatchProcessStandalone(opts, setStatus) {
         throw reported;
       }
     },
-    (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`)
+    (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`),
+    undefined,
+    index => `レコードID ${targets[index]?.id}`
   );
   setStatus(`ステータス一括更新完了 (${ok}件)`);
 }
@@ -527,7 +530,8 @@ export async function runRecordCopyStandalone(opts, setStatus) {
 
   setStatus(`コピー先 App ${targetAppId} のフィールド定義を確認中...`);
   const targetFields = await apiGet(tgtPrefix, '/app/form/fields.json', { app: targetAppId });
-  const targetProps = targetFields?.properties || ({} as any);
+  const targetProps = targetFields?.properties;
+  if (!targetProps || typeof targetProps !== 'object' || Array.isArray(targetProps)) throw new Error(`コピー先 App ${targetAppId} のフィールド設定の応答が不正です`);
 
   const records = await fetchAllRecords(srcPrefix, sourceAppId, query || '', setStatus);
   if (!records.length) { setStatus('コピー対象のレコードがありません'); return; }
@@ -535,6 +539,10 @@ export async function runRecordCopyStandalone(opts, setStatus) {
   const droppedNote = plan.droppedFields.length
     ? `コピー先に無い/型が違うため除外: ${plan.droppedFields.slice(0, 10).join(', ')}${plan.droppedFields.length > 10 ? ` 他${plan.droppedFields.length - 10}件` : ''}`
     : '';
+  // コピー先を取り違えると全フィールドが除外され、空レコードを大量に作ってしまう。
+  if (!plan.records.some((record) => Object.keys(record).length)) {
+    throw new Error(`コピーできるフィールドがありません（コピー先 App ${targetAppId} に一致するフィールドがありません）。コピー元とコピー先のアプリIDを確認してください。${droppedNote ? `\n${droppedNote}` : ''}`);
+  }
   const fileNote = plan.droppedFileFields.length
     ? `添付ファイルはコピーされません: ${plan.droppedFileFields.slice(0, 10).join(', ')}${plan.droppedFileFields.length > 10 ? ` 他${plan.droppedFileFields.length - 10}件` : ''}（${plan.droppedFileFields.length}フィールド、添付ありレコード ${plan.recordsWithFiles}件）。必要な場合はコピー後に手動で再アップロードしてください。`
     : '';
@@ -555,7 +563,9 @@ export async function runRecordCopyStandalone(opts, setStatus) {
     plan.records,
     `App ${sourceAppId} → ${targetAppId} のレコードコピー`,
     (batch) => apiPost(tgtPrefix, '/records.json', { app: targetAppId, records: batch }),
-    (done, total) => setStatus(`コピー中... ${done} / ${total}件`)
+    (done, total) => setStatus(`コピー中... ${done} / ${total}件`),
+    undefined,
+    index => `コピー元レコードID ${records[index]?.$id?.value ?? index + 1}`
   );
   const fileDropNote = plan.droppedFileFields.length ? ` / 添付除外 ${plan.droppedFileFields.length}フィールド` : '';
   setStatus(`レコードコピー完了: ${ok}件${fileDropNote}${droppedNote ? `（${droppedNote}）` : ''}`, plan.droppedFields.length > 0 || plan.droppedFileFields.length > 0);
