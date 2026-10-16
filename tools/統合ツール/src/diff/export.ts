@@ -7958,7 +7958,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
     @media (max-width:900px){
       .report-hero{display:flex;flex-direction:column}
-      .report-hero .topbar-main{display:flex;flex-direction:column;gap:9px}
+      .report-hero .topbar-main{display:flex;flex-direction:column;align-items:stretch;gap:9px}
       .report-hero .topbar-compare{width:100%;max-width:980px}
       .report-hero .topbar-app-card{grid-template-columns:1fr;min-height:66px;padding:10px 14px}
       .report-review-start{display:flex;flex-direction:row;align-items:center;justify-content:space-between}
@@ -7988,7 +7988,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .duo-head{display:none}
       .drow-head{grid-template-columns:1fr}
       .drow-facts,.drow-title,.drow-actions{grid-column:1}
-      .drow-actions{width:100%;margin-left:0;justify-content:flex-start;flex-wrap:wrap}
+      .drow-actions{order:4;width:100%;margin-left:0;justify-content:flex-start;flex-wrap:wrap}
+      .report-completeness-copy .report-step-label{display:block;margin:0 0 3px}
       .report-workspace button,.report-workspace input,.report-workspace select,.report-workspace summary{min-height:44px}
       .sb-ctrl label.chk{min-height:44px;margin-bottom:0}
       .sb-ctrl label.chk input[type="checkbox"]{min-height:0}
