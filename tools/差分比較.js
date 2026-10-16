@@ -11255,7 +11255,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
     @media (max-width:900px){
       .report-hero{display:flex;flex-direction:column}
-      .report-hero .topbar-main{display:flex;flex-direction:column;gap:9px}
+      .report-hero .topbar-main{display:flex;flex-direction:column;align-items:stretch;gap:9px}
       .report-hero .topbar-compare{width:100%;max-width:980px}
       .report-hero .topbar-app-card{grid-template-columns:1fr;min-height:66px;padding:10px 14px}
       .report-review-start{display:flex;flex-direction:row;align-items:center;justify-content:space-between}
@@ -11285,7 +11285,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .duo-head{display:none}
       .drow-head{grid-template-columns:1fr}
       .drow-facts,.drow-title,.drow-actions{grid-column:1}
-      .drow-actions{width:100%;margin-left:0;justify-content:flex-start;flex-wrap:wrap}
+      .drow-actions{order:4;width:100%;margin-left:0;justify-content:flex-start;flex-wrap:wrap}
+      .report-completeness-copy .report-step-label{display:block;margin:0 0 3px}
       .report-workspace button,.report-workspace input,.report-workspace select,.report-workspace summary{min-height:44px}
       .sb-ctrl label.chk{min-height:44px;margin-bottom:0}
       .sb-ctrl label.chk input[type="checkbox"]{min-height:0}
@@ -19928,7 +19929,8 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-section-jump{border:1px solid #cbd5e1;border-radius:999px;background:#fff;color:#334155;padding:3px 8px;font:600 11px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer}
 .kus-dl-section-jump:hover{border-color:#60a5fa;background:#eff6ff;color:#1d4ed8}
 .kus-dl-alert{margin:0 12px 10px;padding:8px 10px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font:600 11px/1.55 -apple-system,Segoe UI,sans-serif}
-.kus-dl-legend{padding:0 12px 10px;color:#64748b;font:11px/1.5 -apple-system,Segoe UI,sans-serif}
+.kus-dl-legend{margin:14px 12px 0;padding:11px 2px 13px;border-top:1px solid #e2e8f0;color:#475569;font:12px/1.7 -apple-system,Segoe UI,sans-serif}
+.kus-dl-legend span{display:block}
 .kus-dl-result__summary{margin:0 2px 7px;font-family:-apple-system,Segoe UI,sans-serif;font-size:11px;color:#64748b;display:flex;flex-wrap:wrap;gap:6px 12px}
 .kus-dl-sticky{position:sticky;top:-18px;z-index:4;margin:0 0 12px;padding:0;border:1px solid #cbd5e1;border-radius:0 0 12px 12px;background:#fff;box-shadow:0 8px 16px -12px rgba(15,37,63,.55)}
 .kus-dl-contextbar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;border-bottom:1px solid #e2e8f0;font-family:-apple-system,Segoe UI,sans-serif}
@@ -19974,6 +19976,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-row__context{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:0;color:#64748b}
 .kus-dl-row__chip{display:inline-flex;align-items:center;border-radius:999px;background:#e2e8f0;color:#334155;padding:1px 6px;font-size:11px}
 .kus-dl-row__footer{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:4px 12px;padding-top:4px;border-top:1px solid #e8edf3}
+.kus-dl-row__footer>.kus-dl-flag{align-self:flex-start;margin:12px 0}
 .kus-dl-row__technical{flex:1 1 110px;min-width:0;margin:0;color:#64748b;font:11px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-row__technical>summary{display:inline-flex;align-items:center;gap:4px;min-height:44px;box-sizing:border-box;padding:0 8px 0 0;border-radius:4px;cursor:pointer;list-style:none;color:#64748b;font-weight:700}
 .kus-dl-row__technical>summary::-webkit-details-marker{display:none}
@@ -19999,8 +20002,8 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-badge--same{background:#e2e8f0;color:#475569}
 .kus-dl-empty{padding:14px;text-align:center;color:#64748b;font-size:12px;background:#f8fafc;border-radius:8px}
 .kus-dl-flag{display:inline-block;padding:1px 6px;border-radius:999px;background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font:500 11px/1.4 -apple-system,Segoe UI,sans-serif}
-.kus-dl-row__action{flex:0 0 auto;min-height:44px;margin-left:auto;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#475569;padding:0 12px;font:600 12px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
-.kus-dl-row__action:hover{border-color:#94a3b8;background:#f1f5f9;color:#10253f}
+.kus-dl-row__action{flex:0 0 auto;align-self:flex-start;min-height:44px;margin-left:auto;border:1px solid transparent;border-radius:8px;background:transparent;color:#64748b;padding:0 10px;font:600 12px/1.4 -apple-system,Segoe UI,sans-serif;text-decoration:underline;text-decoration-color:#cbd5e1;text-underline-offset:3px;cursor:pointer;white-space:nowrap}
+.kus-dl-row__action:hover,.kus-dl-row__action:focus-visible{border-color:#94a3b8;background:#f1f5f9;color:#10253f;text-decoration-color:transparent}
 .kus-dl-reviewbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:0;padding:6px 8px;border-radius:0 0 11px 11px;background:#fff;font:600 11px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-reviewbar__nav,.kus-dl-reviewbar__tools,.kus-dl-reviewbar__filters{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 .kus-dl-reviewbar__filters{min-width:120px;flex:1}
@@ -20069,6 +20072,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 #kus-diff-lite input[type="file"]::file-selector-button{min-height:36px;margin-right:12px;padding:0 14px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#334155;font:700 12px/1 -apple-system,Segoe UI,sans-serif;cursor:pointer}
 #kus-diff-lite input[type="file"]::file-selector-button:hover{border-color:#94a3b8;background:#f1f5f9}
 #kus-diff-lite .kus-lp__check{min-height:44px}
+#kus-diff-lite .kus-lp__details>summary{min-height:44px;box-sizing:border-box}
 #kus-diff-lite button:focus-visible,#kus-diff-lite input:focus-visible,#kus-diff-lite select:focus-visible,#kus-diff-lite textarea:focus-visible,#kus-diff-lite summary:focus-visible{outline:3px solid #2563eb;outline-offset:2px}
 .kus-dl-workflow{display:grid;gap:16px}
 #kus-diff-lite .kus-wf-jump{gap:8px;margin:0;padding:0;border:0;background:transparent}
@@ -20136,8 +20140,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-pair-folder__foot{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:7px;padding:9px 10px;background:#f8fafc}
 .kus-dl-pair-folder__review{min-width:0;color:#475569;font-size:11px;font-weight:700;line-height:1.5}
 .kus-dl-pair-folder__unused{margin:0;padding:8px 10px;border-top:1px solid #e2e8f0;color:#9a3412;font-size:10.5px;line-height:1.5}
-.kus-dl-pair-bulk{margin:0;border:1px solid #cbd5e1;border-radius:9px;background:#f8fafc}
-.kus-dl-pair-bulk>summary{display:flex;align-items:center;min-height:44px;padding:8px 11px;box-sizing:border-box;cursor:pointer;color:#334155;font-size:12px;font-weight:750}
+.kus-dl-pair-editor .kus-dl-pair-bulk{margin:0}
 .kus-dl-pair-bulk__body{display:grid;gap:8px;padding:10px;border-top:1px solid #e2e8f0}
 .kus-dl-pair-bulk__body textarea{box-sizing:border-box;width:100%}
 .kus-dl-pair-editor .kus-as__result{background:#fff}
@@ -20216,6 +20219,18 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
 .kus-dl-completion-row .kus-lp__btn{width:100%}
 .kus-dl-filter-disclosure,.kus-dl-output-disclosure{margin:0 0 12px}
 .kus-dl-filter-disclosure .kus-lp__card,.kus-dl-output-disclosure .kus-lp__card{padding:0}
+.kus-dl-filter-disclosure .kus-dl-filter-row{display:grid;grid-template-columns:5.5em minmax(0,1fr);align-items:end;gap:6px 14px;margin-bottom:12px}
+.kus-dl-filter-disclosure .kus-dl-filter-row:last-child{margin-bottom:0}
+.kus-dl-filter-row>.kus-lp__label{display:flex;align-items:center;min-width:0;min-height:44px;color:#334155;font-size:12px;font-weight:700}
+.kus-dl-filter-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;align-items:end;gap:8px 10px;min-width:0}
+.kus-dl-filter-controls--single{grid-template-columns:minmax(0,1fr)}
+.kus-dl-filter-field{display:flex;flex-direction:column;gap:3px;min-width:0}
+.kus-dl-filter-field__cap{color:#64748b;font-size:11px;font-weight:700;line-height:1.3}
+.kus-dl-filter-controls .kus-lp__select,.kus-dl-filter-controls .kus-lp__input{width:100%;min-width:0;box-sizing:border-box}
+.kus-dl-filter-controls .kus-lp__check{white-space:nowrap}
+.kus-dl-filter-controls .kus-lp__btn{justify-self:end}
+.kus-dl-pre:empty{border-style:dashed;border-color:#cbd5e1;background:#f1f5f9;color:#526071;font-style:italic}
+.kus-dl-pre:empty::after{content:'（空）'}
 @media(max-width:768px){
   #kus-diff-lite.kus-lp{width:calc(100vw - 12px);max-height:calc(100vh - 12px);top:6px;right:6px;border-radius:10px}
   #kus-diff-lite .kus-lp__hero{padding:13px 14px}
@@ -20232,10 +20247,23 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-row__cols{grid-template-columns:1fr}
   .kus-dl-presence{grid-template-columns:1fr}
   .kus-dl-sticky{top:-13px;z-index:6}
-  .kus-dl-disclosure>summary{align-items:flex-start;flex-wrap:wrap}
-  .kus-dl-disclosure>summary small{width:100%;padding-right:28px;text-align:left}
+  .kus-dl-disclosure>summary{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"title mark" "desc desc";align-items:center;gap:1px 10px}
+  .kus-dl-disclosure>summary>span{grid-area:title;min-width:0}
+  .kus-dl-disclosure>summary small{grid-area:desc;min-width:0;text-align:left}
+  .kus-dl-disclosure>summary::after{grid-area:mark;margin-left:0}
 }
 @media(max-width:640px){
+  #kus-diff-lite .kus-lp__body{padding:13px 6px 18px}
+  .kus-dl-step{padding:12px 8px}
+  .kus-dl-step__header{margin-bottom:12px;padding-bottom:10px}
+  .kus-dl-disclosure__body{padding:10px}
+  .kus-dl-disclosure>summary{padding:9px 11px}
+  .kus-dl-section__body{padding:6px 5px}
+  .kus-dl-row{padding:11px 9px;border-left-width:3px}
+  .kus-dl-filter-disclosure .kus-dl-filter-row{grid-template-columns:1fr;gap:2px;margin-bottom:14px}
+  .kus-dl-filter-row>.kus-lp__label{min-height:0;padding:2px 2px 4px}
+  .kus-dl-filter-controls{grid-template-columns:minmax(0,1fr);gap:8px}
+  .kus-dl-filter-controls .kus-lp__btn{min-width:104px}
   .kus-dl-pair-folder__grid{grid-template-columns:1fr}
   .kus-dl-pair-folder__mapping-scroll{overflow-x:visible}
   .kus-dl-pair-folder__mapping table{display:block;min-width:0}
@@ -20258,6 +20286,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-pair-side__preview{grid-column:1}
   .kus-dl-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .kus-dl-row__mobile-toggle{display:inline-flex;min-height:44px}
+  .kus-dl-row__title{flex-basis:100%;min-width:0}
   #kus-diff-lite .kus-wf-jump{gap:5px}
   #kus-diff-lite .kus-wf-jump button{gap:5px;padding:0 4px;font-size:11px}
   .kus-dl-row__cols{display:none;grid-template-columns:1fr}
@@ -20292,7 +20321,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .kus-dl-step__header{gap:8px}
   .kus-dl-completion-row{grid-template-columns:1fr}
-  .kus-dl-row{padding:11px 10px}
+  .kus-dl-row{padding:11px 9px}
 }
 @media(prefers-reduced-motion:reduce){
   #kus-diff-lite.kus-lp{animation:none}
@@ -20301,11 +20330,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
 }
 @media(prefers-contrast:more){
   .kus-dl-row,.kus-dl-section,.kus-dl-pre,.kus-dl-reviewbar,.kus-dl-contextbar,.kus-dl-contextlane{border-color:#334155}
-  .kus-dl-row__raw,.kus-dl-filter-empty,.kus-dl-pre.empty{color:#1e293b}
+  .kus-dl-row__raw,.kus-dl-filter-empty,.kus-dl-pre.empty,.kus-dl-pre:empty{color:#1e293b}
 }
 @media(forced-colors:active){
   .kus-dl-row,.kus-dl-contextlane{forced-color-adjust:auto;border-left-width:5px}
-  .kus-dl-filterchip,.kus-dl-value__toggle,.kus-dl-navbtn{border:1px solid ButtonText}
+  .kus-dl-filterchip,.kus-dl-value__toggle,.kus-dl-navbtn,.kus-dl-row__action{border:1px solid ButtonText}
 }
 `;
   function ensureResultStyles() {
@@ -20691,7 +20720,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const alertsHtml = alerts.map((message) => `<div class="kus-dl-alert"${alertAttrs}>${esc(message)}</div>`).join("");
     const ignoreCondition = ignoreRuleSummary.total ? `無視ルール ${ignoreRuleSummary.total}件を適用した後の結果です。ルールに一致した設定差分は一覧に含まれません${ignoreRuleSummary.contextualRules ? `（完全パス/パターン ${ignoreRuleSummary.contextualRules}件）` : ""}。` : "無視ルールは適用していません。";
     const normalizationCondition = normalizationLabels.length ? `正規化 ${normalizationLabels.length}件を適用しています（${normalizationLabels.join("、")}）。` : "正規化は適用していません。";
-    return `<section id="kus-dl-overview" class="kus-dl-overview" data-kus-dl-overview tabindex="-1" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "比較完了"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションで絞り込む</span>${sectionButtons}</div>` : "") + matchingNoticesHtml + `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div><div class="kus-dl-legend">「比較先のみ」は追加、「比較元のみ」は削除として検出しています。比較方向は上の矢印で確認できます。</div></section>`;
+    return `<section id="kus-dl-overview" class="kus-dl-overview" data-kus-dl-overview tabindex="-1" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "比較完了"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションで絞り込む</span>${sectionButtons}</div>` : "") + matchingNoticesHtml + `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div><div class="kus-dl-legend"><span>「比較先のみ」は追加、「比較元のみ」は削除として検出しています。</span><span>比較方向は上の矢印で確認できます。</span></div></section>`;
   }
   function renderRowsHtml(rows, useCharDiff, summary, allFilteredRows = rows, options = {}) {
     if (!rows.length) return `<div class="kus-dl-empty">該当する差分はありません${summary ? ` — ${summary}` : ""}</div>`;
@@ -20816,7 +20845,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     let applyComparisonMode = (mode) => {
       comparisonMode = mode;
     };
-    const cardApp = makeCard({ title: "比較するアプリ", number: 1 });
+    const cardApp = makeCard({ title: "比較するアプリ" });
     cardApp.card.classList.add("kus-dl-target-card");
     const makeTargetName = () => {
       const el = document.createElement("div");
@@ -21734,7 +21763,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     });
     updatePairFolderSummaries();
     const pairBulk = document.createElement("details");
-    pairBulk.className = "kus-dl-pair-bulk";
+    pairBulk.className = "kus-lp__details kus-dl-pair-bulk";
     pairBulk.innerHTML = "<summary>表から複数ペアをまとめて入力</summary>";
     const pairBulkBody = document.createElement("div");
     pairBulkBody.className = "kus-dl-pair-bulk__body";
@@ -21825,7 +21854,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     pairEditor.append(pairIntro, pairFolder, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote("手入力のペアはkintone APIから取得します。フォルダ取込では両側の設定JSONだけを使い、不足分をAPIで補いません。単一比較用の設定JSONを読み込んだまま切り替えた場合は「設定JSON読込を解除」を押してください。"));
     cardApp.body.appendChild(pairEditor);
     panel.body.insertBefore(cardApp.card, panel.status);
-    const cardScope = makeCard({ title: "比較セクション", number: 2 });
+    const cardScope = makeCard({ title: "比較セクション" });
     cardScope.body.appendChild(makeNote(`kintone のアプリ設定 API に対応する ${SCOPE_OPTS.length} セクションをすべて初期選択します。意図的に除外する場合だけ選択を外してください。`));
     const chipBox = document.createElement("div");
     chipBox.className = "kus-lp__chips";
@@ -22029,8 +22058,25 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     filterType.setAttribute("aria-label", "結果の種別絞り込み");
     const filterSearch = makeInput({ placeholder: "項目名・値で検索", width: "wide", noSubmit: true, ariaLabel: "差分結果を検索" });
     const filterClear = makeButton("クリア", "ghost");
-    cardFilter.body.appendChild(makeRow([filterSection, filterType, filterClear], { label: "フィルタ" }));
-    cardFilter.body.appendChild(makeRow(filterSearch, { label: "検索" }));
+    const makeFilterRow = (label, controls, single = false) => {
+      const controlBox = document.createElement("div");
+      controlBox.className = "kus-dl-filter-controls" + (single ? " kus-dl-filter-controls--single" : "");
+      controls.forEach((control) => controlBox.appendChild(control));
+      const row = makeRow(controlBox, { label });
+      row.classList.add("kus-dl-filter-row");
+      return row;
+    };
+    const makeFilterField = (caption, control) => {
+      const field = document.createElement("label");
+      field.className = "kus-dl-filter-field";
+      const cap = document.createElement("span");
+      cap.className = "kus-dl-filter-field__cap";
+      cap.textContent = caption;
+      field.append(cap, control);
+      return field;
+    };
+    cardFilter.body.appendChild(makeFilterRow("フィルタ", [filterSection, filterType, filterClear]));
+    cardFilter.body.appendChild(makeFilterRow("検索", [filterSearch], true));
     const charDiffCb = makeCheck({ label: "文字単位ハイライト", checked: true, help: "変更行で「どこが変わったか」を文字単位で強調表示します" });
     const densitySelect = makeSelect([
       ["compact", "コンパクト"],
@@ -22043,7 +22089,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       ["stacked", "上下に比較（長文向け）"]
     ], "split");
     layoutSelect.setAttribute("aria-label", "差分一覧の比較レイアウト");
-    cardFilter.body.appendChild(makeRow([charDiffCb.label, densitySelect, layoutSelect], { label: "表示" }));
+    cardFilter.body.appendChild(makeFilterRow("表示", [makeFilterField("表示密度", densitySelect), makeFilterField("並べ方", layoutSelect), charDiffCb.label]));
     let filterRenderTimer;
     const resetResultPage = () => {
       resultLimit = RESULT_PAGE_SIZE;
@@ -22085,7 +22131,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     resultBox.dataset.kusDlResult = "";
     cardResult.body.appendChild(resultBox);
     panel.body.insertBefore(cardResult.card, panel.status);
-    const cardOut = makeCard({ title: "出力", number: 3, soft: true });
+    const cardOut = makeCard({ title: "出力", soft: true });
     cardOut.body.appendChild(makeNote("レビュー用 HTML は比較実行時に自動保存されます。共有する場合は、全件または画面で絞り込んだ範囲を Excel で保存してください。Excel には差分値と取得不完全時のエラー等の原文を収録し、長い原文は可視シートへ分割して全文を保持します。"));
     cardOut.body.appendChild(makeNote("変更箇所のみの HTML にも比較元・比較先の値が含まれます。比較設定を含む社内用 HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。"));
     const htmlContentMode = makeSelect([
