@@ -22,11 +22,11 @@ Playwrightハーネスは既定でChromeを使用します。`--browser chromium
 | --- | --- |
 | `npm run test:lite-shared` | 共通検索の100件超・再試行・重複防止・古い応答の破棄・ゲスト切り替え、タブのキーボード操作、選択範囲への一括貼り付け、1000行入力、警告保持・失敗復帰、320〜1440px、パネル再起動を実ブラウザで検証 |
 | `npm run test:record-metadata` | 公式API形式の合成応答で一覧の条件・並び順・全件への解除・対象変更時の無効化、添付フィールド名からの選択・テーブルコード・確認画面・ゲスト切替・320〜1440pxを実ブラウザで検証。`.iter-shots/record-metadata/` に画面と結果を保存 |
-| `npm run test:output-layouts` | HTML、Markdown、CSV、Mermaidなどを合成データで生成。親CSV・複数テーブルの明細CSVは `outputs/record-subtables/` に保存し、ID・件数・空テーブル・値の保持も検証 |
-| `npm run test:diff-multi-dom` | 複数比較先、途中失敗、二重実行防止を実ブラウザDOMで検証 |
-| `npm run test:diff-pairs-dom` | 1対1ペア一括の入力検証、接続先別キャッシュ、途中失敗、結果対応、出力導線を実ブラウザDOMで検証 |
-| `npm run test:diff-pair-folders-dom` | 複数対複数のフォルダ取込、安全な自動対応、明示的な対応確認、JSONだけの比較、出力導線を実ブラウザDOMで検証 |
-| `npm run test:diff-compare` | `tools/差分比較.js` のHEAD版と作業ツリー版を比較。作業ツリー版は意味・操作契約、完全／不完全、差分0件、レビュー、出力、技術情報とモバイル差分値の初期折りたたみ、完了後CTA、画面幅・倍率相当も検証 |
+| `npm run test:output-layouts` | HTML、通常の設計書Markdown・AI向けMarkdown、CSV、Mermaidなどを合成データで生成。親CSV・複数テーブルの明細CSVは `outputs/record-subtables/` に保存し、ID・件数・空テーブル・値の保持も検証 |
+| `npm run test:diff-multi-dom` | 複数比較先、途中失敗、二重実行防止、成功行ごとの Markdown 内容（比較方向・別比較先の混入防止）を実ブラウザDOMで検証 |
+| `npm run test:diff-pairs-dom` | 1対1ペア一括の入力検証、接続先別キャッシュ、途中失敗、結果対応、成功ペアの Markdown スナップショット（方向・不完全状態）と出力導線を実ブラウザDOMで検証 |
+| `npm run test:diff-pair-folders-dom` | 複数対複数のフォルダ取込、安全な自動対応、明示的な対応確認、JSONだけの比較、ペア別 Markdown スナップショットと出力導線を実ブラウザDOMで検証 |
+| `npm run test:diff-compare` | `tools/差分比較.js` のHEAD版と作業ツリー版を比較。作業ツリー版は意味・操作契約、完全／不完全、差分0件、レビュー、出力（フィルタ済み／全件 Markdown を含む）、技術情報とモバイル差分値の初期折りたたみ、完了後CTA、画面幅・倍率相当も検証 |
 | `npm run test:er-compare` | `tools/ER図.js` のHEAD版と作業ツリー版を倍率・画面幅別に比較 |
 | `npm run test:reflect-dom` | プレビュー反映の4ステップ、進めない理由の表示、URL貼り付けからのID読み取り、参照先変換の行形式、プリセットのJSON書き出し・読み込み、実エンジン＋合成APIで送信内容・revision・バックアップ順序・外部更新時の停止・削除確認・参照不足、二重実行防止、差分の鮮度、対象選択、JSON読込、部分失敗・再試行、反映後の再確認、キーボード操作、320〜1440pxの5サイズを合成データで検証。実アプリには通信せず、`.iter-shots/reflect-lite-dom/` に画面・結果・操作デモを保存 |
 | `npm run test:lite-workflows` | 設計書・設定取得・ER図・プロセス図・CSV出力・フィールド・JS/CSS・レコードの操作選択、確認、実行、二重実行防止、入力検証、失敗復帰、320〜1440pxの4サイズを合成データで検証。`.iter-shots/lite-workflows/` に画面・結果・操作デモを保存 |

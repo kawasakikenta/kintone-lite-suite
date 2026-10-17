@@ -41,7 +41,27 @@ describe('設計書の完了メッセージ', () => {
 
   it('全セクションがそろっていれば通常の完了メッセージ', async () => {
     const { SECTION_DEFS } = await import('../../src/constants');
-    const sections = Object.fromEntries(SECTION_DEFS.map((d) => [d.key, { name: 'A' }]));
+    const sections = Object.fromEntries(SECTION_DEFS.map((d) => {
+      switch (d.key) {
+        case 'appSettings': return [d.key, { name: 'A' }];
+        case 'fieldSettings': return [d.key, { properties: {} }];
+        case 'layoutSettings': return [d.key, { layout: [] }];
+        case 'viewSettings': return [d.key, { views: {} }];
+        case 'reportSettings': return [d.key, { reports: {} }];
+        case 'processSettings': return [d.key, { enable: false, states: {}, actions: [] }];
+        case 'pluginSettings': return [d.key, { plugins: [] }];
+        case 'customizeSettings': return [d.key, { desktop: { js: [], css: [] }, mobile: { js: [], css: [] } }];
+        case 'actionSettings': return [d.key, { actions: [] }];
+        case 'appAcl':
+        case 'fieldAcl':
+        case 'recordPermissions': return [d.key, { rights: [] }];
+        case 'notifications':
+        case 'perRecordNotifications':
+        case 'reminderNotifications': return [d.key, { notifications: [] }];
+        case 'categories': return [d.key, { categories: [] }];
+        default: return [d.key, {}];
+      }
+    }));
     const setStatus = vi.fn();
     await runDesignExportStandalone('json', { appId: '1', importedBundle: bundle(sections) }, setStatus);
     expect(setStatus).toHaveBeenLastCalledWith('設計書出力完了（App 1）', false);

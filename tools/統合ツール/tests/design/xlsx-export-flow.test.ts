@@ -72,6 +72,8 @@ function baseResponses(overrides: Record<string, any> = {}): Record<string, any>
     '/app/notifications/general.json': { notifications: [] },
     '/app/notifications/perRecord.json': { notifications: [] },
     '/app/notifications/reminder.json': { notifications: [] },
+    '/form.json': { properties: [] },
+    '/app/categories.json': { enabled: false, categories: [] },
     ...overrides
   };
 }

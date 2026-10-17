@@ -287,12 +287,15 @@ export function createAppSearchControl(panel: LitePanelHandle, opts: AppSearchOp
 
   searchBtn.addEventListener('click', () => { void runSearch(); });
   moreBtn.addEventListener('click', () => { void runSearch(true); });
-  keyword.addEventListener('keydown', (e: KeyboardEvent) => {
+  const onEnterKey = (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !e.isComposing && (e as any).keyCode !== 229) {
       e.preventDefault();
       void runSearch();
     }
-  });
+  };
+  keyword.addEventListener('keydown', onEnterKey);
+  guest.addEventListener('keydown', onEnterKey);
+  space.addEventListener('keydown', onEnterKey);
 
   return details;
 }

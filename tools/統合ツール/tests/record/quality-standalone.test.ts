@@ -102,6 +102,13 @@ describe('quality inspection and CSV templates from API settings', () => {
     expect(fetchRecordsByQuery).not.toHaveBeenCalled();
     expect(apiGet).toHaveBeenCalledWith('/k/guest/9/v1', '/app/form/fields.json', { app: '8' });
   });
+  it('supports intersecting fields across multiple apps when intersectAll is enabled', async () => {
+    vi.mocked(apiGet)
+      .mockResolvedValueOnce({ properties: props })
+      .mockResolvedValueOnce({ properties: { title: props.title } });
+    const fields = await runLoadQualityFieldsStandalone({ ...options, intersectAll: true });
+    expect(fields.map(f => f.code)).toEqual(['title']);
+  });
   it('avoids saving empty ZIPs if no app succeeds', async () => {
     vi.mocked(apiGet).mockRejectedValue(new Error('拒否'));
     await expect(runCsvTemplateStandalone(options, vi.fn())).rejects.toThrow(/作成できません/);

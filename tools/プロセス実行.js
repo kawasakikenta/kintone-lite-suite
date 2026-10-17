@@ -568,6 +568,20 @@
     }
   });
 
+  // src/ui/dialog.ts
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
+  var init_dialog = __esm({
+    "src/ui/dialog.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      root = null;
+    }
+  });
+
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -855,20 +869,6 @@ ${contextLine}`);
     }
   });
 
-  // src/ui/dialog.ts
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
-    }
-  });
-
   // src/diff/path-decoder.ts
   var init_path_decoder = __esm({
     "src/diff/path-decoder.ts"() {
@@ -912,6 +912,14 @@ ${contextLine}`);
     }
   });
 
+  // src/design/snapshot.ts
+  var init_snapshot = __esm({
+    "src/design/snapshot.ts"() {
+      "use strict";
+      init_constants();
+    }
+  });
+
   // src/diff/export.ts
   var DIFF_HTML_REVIEW_STATE_MAX_BYTES;
   var init_export = __esm({
@@ -927,6 +935,7 @@ ${contextLine}`);
       init_category_view();
       init_path_decoder();
       init_export_safety();
+      init_snapshot();
       DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
     }
   });
@@ -958,6 +967,38 @@ ${contextLine}`);
       return;
     }
     run();
+  }
+
+  // src/handlers/diffFocus.ts
+  init_state();
+  init_dialog();
+  function extractAppIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
   }
 
   // src/ui/components.ts
@@ -1787,6 +1828,18 @@ ${contextLine}`);
     b.appendChild(t);
     return b;
   }
+  function makeCheck(opts) {
+    const lab = document.createElement("label");
+    lab.className = "kus-lp__check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    if (opts.checked) cb.checked = true;
+    if (opts.value !== void 0) cb.value = opts.value;
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(opts.label));
+    if (opts.help) lab.title = opts.help;
+    return { label: lab, checkbox: cb };
+  }
   function makeCard(opts = {}) {
     const card = document.createElement("div");
     card.className = "kus-lp__card" + (opts.soft ? " kus-lp__card--soft" : "");
@@ -1843,11 +1896,14 @@ ${contextLine}`);
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
-      if (okMsg && tone !== "err" && tone !== "warn") {
+      const currentText = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const cancelled = /キャンセルしました/.test(currentText);
+      if (cancelled && (tone === "busy" || tone === "ok")) {
+        panel.setStatus(currentText, "info");
+      } else if (okMsg && tone !== "err" && tone !== "warn" && tone !== "info") {
         panel.setStatus(okMsg, "ok");
       } else if (tone === "busy") {
-        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
-        panel.setStatus(text || "完了", "ok");
+        panel.setStatus(currentText || "完了", "ok");
       }
       return out;
     } catch (e) {
@@ -2111,6 +2167,12 @@ ${contextLine}`);
     function finish() {
       if (!pending) return;
       const status = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const tone = panel.status.dataset.tone || "";
+      if ((tone === "info" || tone === "warn" || tone === "neutral") && /キャンセルしました/.test(status)) {
+        pending = null;
+        refresh();
+        return;
+      }
       resultNote.textContent = `${lastContext}
 ${status}`;
       resultNote.dataset.write = String(!!pending.writes);
@@ -2308,6 +2370,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     for (const a of validActions) {
       lines.push(`    ${idOf(String(a.from))} --> ${idOf(String(a.to))} : ${mermaidTransitionLabel(a.name)}`);
     }
+    if (validActions.length > 0) {
+      const hasIncoming = new Set(validActions.map((a) => String(a.to)));
+      const hasOutgoing = new Set(validActions.map((a) => String(a.from)));
+      for (const st of stateNames) {
+        if (hasIncoming.has(st) && !hasOutgoing.has(st)) {
+          lines.push(`    ${idOf(st)} --> [*]`);
+        }
+      }
+    }
     if (highlightState != null && highlightState !== "" && ids.has(String(highlightState))) {
       lines.push("");
       lines.push("    classDef current fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#0f172a");
@@ -2332,12 +2403,84 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return [...remaining][0] || names[0];
   }
-  function validateProcessConnection(appId, guestId = "") {
+  function validateProcessConnection(appId, guestId = "", preview) {
     const app = String(appId ?? "").trim();
     if (!/^[1-9]\d*$/.test(app)) throw new Error("アプリIDは正の数値で入力してください");
     const guest = String(guestId ?? "").trim();
     if (guest && !/^[1-9]\d*$/.test(guest)) throw new Error("ゲストIDは正の数値で入力してください");
-    return { appId: app, guestId: guest };
+    return preview === void 0 ? { appId: app, guestId: guest } : { appId: app, guestId: guest, preview: !!preview };
+  }
+  async function fetchProcessStatusSettings(connection) {
+    const prefix = buildApiPrefix(connection.guestId || "", !!connection.preview);
+    return apiGet(prefix, "/app/status.json", { app: connection.appId, lang: "user" });
+  }
+  function summarizeProcessStructure(states, actions, orphanActionCount = 0) {
+    const stateObj = states && typeof states === "object" && !Array.isArray(states) ? states : {};
+    const stateNames = Object.keys(stateObj);
+    const validActions = (Array.isArray(actions) ? actions : []).filter(
+      (a) => a && a.from != null && a.to != null && String(a.from).trim() && String(a.to).trim()
+    );
+    const startSet = new Set(stateNames);
+    for (const a of validActions) startSet.delete(String(a.to));
+    const initial = findInitialState(stateObj, validActions);
+    if (initial != null && stateObj[initial]) startSet.add(initial);
+    const startStates = stateNames.filter((s) => startSet.has(s));
+    const endStates = stateNames.filter((s) => !validActions.some((a) => String(a.from) === s));
+    const branchingStates = stateNames.filter((s) => validActions.filter((a) => String(a.from) === s).length >= 2);
+    const undefinedSet = /* @__PURE__ */ new Set();
+    for (const a of validActions) {
+      if (!stateObj[String(a.from)]) undefinedSet.add(String(a.from));
+      if (!stateObj[String(a.to)]) undefinedSet.add(String(a.to));
+    }
+    const undefinedStates = [...undefinedSet];
+    const warnings = [];
+    if (stateNames.length > 0 && !startStates.length) warnings.push("始点状態が見つかりません");
+    if (stateNames.length > 0 && validActions.length > 0 && !endStates.length) warnings.push("終端状態（完了状態）がありません（循環のみのフロー）");
+    if (undefinedStates.length) warnings.push(`未定義の状態を参照するアクションがあります（${undefinedStates.join(", ")}）`);
+    if (orphanActionCount > 0) warnings.push(`from/to 未設定のアクション ${orphanActionCount}件を除外しました`);
+    return {
+      stateCount: stateNames.length,
+      actionCount: validActions.length,
+      startStates,
+      endStates,
+      branchingStates,
+      undefinedStates,
+      orphanActionCount,
+      warnings
+    };
+  }
+  function renderProcessStructureSummaryHtml(summary) {
+    const chip = (label, val, color) => `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;background:${color}1a;color:${color};font-size:11px;font-weight:600">${esc(label)} <span>${esc(String(val))}</span></span>`;
+    const warningHtml = summary.warnings.length ? `<div style="margin-top:6px;color:#b45309;font-size:11px;line-height:1.5">⚠ ${summary.warnings.map(esc).join(" / ")}</div>` : "";
+    return `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+    ${chip("状態", summary.stateCount, "#0f172a")}
+    ${chip("アクション", summary.actionCount, "#1e40af")}
+    ${chip("始点", summary.startStates.join(", ") || "なし", "#16a34a")}
+    ${chip("終端", summary.endStates.join(", ") || "なし", "#9333ea")}
+    ${chip("分岐状態", summary.branchingStates.length, "#d97706")}
+  </div>${warningHtml}`;
+  }
+  function describeStateAssignee(stateDef) {
+    const assignee = stateDef?.assignee;
+    if (!assignee || typeof assignee !== "object") return "作業者設定: なし";
+    const entities = Array.isArray(assignee.entities) ? assignee.entities : [];
+    if (!entities.length) return "作業者設定: なし";
+    const labels = entities.map((item) => {
+      const ent = item?.entity || item;
+      const code = String(ent?.code || "").trim();
+      const type = String(ent?.type || "").trim();
+      const sub = item?.includeSubs ? "（下位組織含む）" : "";
+      if (type === "CREATOR") return "作成者";
+      return `${code || type || "未設定"}${sub}`;
+    });
+    const mode = assignee.type === "ALL" ? "全員" : assignee.type === "ANY" ? "誰でも" : "1人";
+    return `作業者(${mode}): ${labels.join(", ")}`;
+  }
+  function describeSimActionCondition(action) {
+    if (!action) return "";
+    const cond = String(action.filterCond || "").trim();
+    const typeNote = action.type === "SECONDARY" ? "（作業者以外も実行可）" : "";
+    return `実行条件: ${cond || "条件なし"}${typeNote}`;
   }
   function renderFallbackFlowHtml(states, actions, highlightState, reason) {
     const stateList = Object.keys(states || {});
@@ -2365,22 +2508,118 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     </div>
   `;
   }
+  function bindStandaloneProcessSimulation(states, actions, simUi, options) {
+    let current = null;
+    let history = [];
+    const { container, current: curEl, select, startBtn, execBtn, undoBtn, historyEl, detailEl } = simUi;
+    const { isCurrent, commitStatus, renderMermaid } = options;
+    container.style.display = "block";
+    const getAvailableActions = () => current ? actions.filter((a) => a.from === current) : [];
+    const updateDetail = () => {
+      if (!detailEl) return;
+      if (!current) {
+        detailEl.textContent = "「最初から開始」を押すと、各状態の作業者設定と選択アクションの実行条件を表示します。";
+        return;
+      }
+      const avail = getAvailableActions();
+      const idx = Number(select.value);
+      const selectedAction = Number.isFinite(idx) ? avail[idx] : avail[0];
+      const parts = [describeStateAssignee(states?.[current])];
+      if (selectedAction) parts.push(describeSimActionCondition(selectedAction));
+      detailEl.textContent = parts.filter(Boolean).join(" / ");
+    };
+    const updateHistory = () => {
+      if (undoBtn) undoBtn.disabled = history.length === 0;
+      if (!historyEl) return;
+      if (!history.length) {
+        historyEl.textContent = current ? `開始: ${current}（遷移履歴なし）` : "遷移履歴: まだ開始していません";
+        return;
+      }
+      const chain = [history[0].from, ...history.map((h) => `[${h.action}] → ${h.to}`)].join(" ");
+      historyEl.textContent = `遷移履歴 (${history.length}手): ${chain}`;
+    };
+    const updateSim = () => {
+      if (!current) {
+        curEl.textContent = "未開始";
+        curEl.style.background = "#e2e8f0";
+        select.innerHTML = '<option value="">-- 開始ボタンを押してください --</option>';
+        select.disabled = true;
+        updateDetail();
+        updateHistory();
+        return;
+      }
+      curEl.textContent = current;
+      curEl.style.background = "#bbf7d0";
+      select.disabled = false;
+      const avail = getAvailableActions();
+      if (avail.length === 0) {
+        select.innerHTML = '<option value="">-- 次のアクションなし（完了） --</option>';
+        select.disabled = true;
+      } else {
+        select.innerHTML = avail.map((a, idx) => `<option value="${idx}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join("");
+      }
+      updateDetail();
+      updateHistory();
+    };
+    if (typeof select.addEventListener === "function") {
+      select.onchange = () => updateDetail();
+    }
+    updateSim();
+    startBtn.onclick = async () => {
+      if (!isCurrent()) return;
+      current = findInitialState(states, actions);
+      history = [];
+      updateSim();
+      if (current) {
+        commitStatus("シミュレーション開始: " + current, false, "ok");
+        await renderMermaid(current);
+      } else {
+        commitStatus("ステータスが無いためシミュレーションを開始できません", false, "warn");
+      }
+    };
+    execBtn.onclick = async () => {
+      if (!isCurrent()) return;
+      if (select.disabled) {
+        commitStatus(current ? `「${current}」から実行できるアクションはありません（終端のステータスです）` : "先に「最初から開始」を押してください", false, "warn");
+        return;
+      }
+      const idx = Number(select.value);
+      if (!Number.isFinite(idx)) return;
+      const action = getAvailableActions()[idx];
+      if (!action) return;
+      const prev = current || "";
+      current = action.to;
+      history.push({ from: prev, action: action.name, to: action.to });
+      updateSim();
+      commitStatus(`アクション「${action.name}」実行 → 「${action.to}」`, false, "ok");
+      await renderMermaid(action.to);
+    };
+    if (undoBtn) {
+      undoBtn.onclick = async () => {
+        if (!isCurrent() || !history.length) return;
+        const last = history.pop();
+        current = last.from;
+        updateSim();
+        commitStatus(`1手戻しました: 「${current}」`, false, "ok");
+        await renderMermaid(current);
+      };
+    }
+  }
   async function runRenderProcessFlowStandalone(source, setStatus, targets) {
     const isCurrent = typeof targets?.isCurrent === "function" ? targets.isCurrent : () => true;
     const commitStatus = (message, error, tone) => {
       if (isCurrent()) setStatus(message, error, tone);
     };
     if (!isCurrent()) return null;
-    const connection = validateProcessConnection(source.appId, source.guestId);
-    const app = connection.appId;
-    const prefix = buildApiPrefix(connection.guestId, false);
+    const connection = validateProcessConnection(source.appId, source.guestId, source.preview);
     commitStatus("プロセス管理を取得中...");
-    const res = await apiGet(prefix, "/app/status.json", { app });
+    const res = await fetchProcessStatusSettings(connection);
     if (!isCurrent()) return null;
     if (!res || typeof res !== "object") throw new Error("プロセス管理の設定を取得できませんでした（想定外の応答形式です）");
     if (!res.enable) {
       targets.textEl.value = "";
       targets.viewEl.innerHTML = '<div style="color:#64748b">プロセス管理は無効です</div>';
+      if (targets.summaryEl) targets.summaryEl.innerHTML = "";
       if (targets.simUi) targets.simUi.container.style.display = "none";
       commitStatus("プロセス管理は無効です");
       return null;
@@ -2389,23 +2628,30 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const rawActions = Array.isArray(res.actions) ? res.actions : [];
     const actions = rawActions.filter((a) => a && a.from != null && a.to != null && String(a.from).trim() && String(a.to).trim());
     const orphanActions = rawActions.length - actions.length;
+    const summary = summarizeProcessStructure(states, actions, orphanActions);
+    if (targets.summaryEl) {
+      targets.summaryEl.innerHTML = renderProcessStructureSummaryHtml(summary);
+    }
     let renderError = "";
     let renderFailure = "";
+    let renderSeq = 0;
     const renderMermaid = async (highlightState) => {
-      if (!isCurrent()) return false;
+      const seq = ++renderSeq;
+      const isFresh = () => isCurrent() && seq === renderSeq;
+      if (!isFresh()) return false;
       const md = buildProcessMermaidSource(states, actions, highlightState);
       targets.textEl.value = highlightState ? buildProcessMermaidSource(states, actions, null) : md;
       let phase = "読み込み";
       try {
         const mermaidObj = await ensureMermaid();
-        if (!isCurrent()) return false;
+        if (!isFresh()) return false;
         phase = "描画";
-        const { svg } = await mermaidObj.render("mermaid-svg-generated-" + Date.now(), md);
-        if (!isCurrent()) return false;
+        const { svg } = await mermaidObj.render(`mermaid-svg-generated-${Date.now()}-${seq}`, md);
+        if (!isFresh()) return false;
         targets.viewEl.innerHTML = svg;
         return true;
       } catch (e) {
-        if (!isCurrent()) return false;
+        if (!isFresh()) return false;
         renderFailure = `Mermaid.js の${phase}に失敗`;
         targets.viewEl.innerHTML = renderFallbackFlowHtml(states, actions, highlightState, `${renderFailure}したため、簡易表示に切り替えました。`);
         renderError = e instanceof Error ? e.message : String(e);
@@ -2422,95 +2668,17 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       commitStatus(orphanActions ? `フロー図 生成完了（from/to 未設定のアクション ${orphanActions}件は除外）` : "フロー図 生成完了", false, orphanActions > 0 ? "warn" : void 0);
     }
     if (targets.simUi) {
-      let current = null;
-      const { container, current: curEl, select, startBtn, execBtn } = targets.simUi;
-      container.style.display = "block";
-      const updateSim = () => {
-        if (!current) {
-          curEl.textContent = "未開始";
-          curEl.style.background = "#e2e8f0";
-          select.innerHTML = '<option value="">-- 開始ボタンを押してください --</option>';
-          select.disabled = true;
-          return;
-        }
-        curEl.textContent = current;
-        curEl.style.background = "#bbf7d0";
-        select.disabled = false;
-        const avail = actions.filter((a) => a.from === current);
-        if (avail.length === 0) {
-          select.innerHTML = '<option value="">-- 次のアクションなし（完了） --</option>';
-          select.disabled = true;
-        } else {
-          select.innerHTML = avail.map((a, idx) => `<option value="${idx}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join("");
-        }
-      };
-      updateSim();
-      startBtn.onclick = async () => {
-        if (!isCurrent()) return;
-        current = findInitialState(states, actions);
-        updateSim();
-        if (current) {
-          commitStatus("シミュレーション開始: " + current, false, "ok");
-          await renderMermaid(current);
-        } else {
-          commitStatus("ステータスが無いためシミュレーションを開始できません", false, "warn");
-        }
-      };
-      execBtn.onclick = async () => {
-        if (!isCurrent()) return;
-        if (select.disabled) {
-          commitStatus(current ? `「${current}」から実行できるアクションはありません（終端のステータスです）` : "先に「最初から開始」を押してください", false, "warn");
-          return;
-        }
-        const idx = Number(select.value);
-        if (!Number.isFinite(idx)) return;
-        const action = actions.filter((a) => a.from === current)[idx];
-        if (!action) return;
-        current = action.to;
-        updateSim();
-        commitStatus(`アクション「${action.name}」実行 → 「${action.to}」`, false, "ok");
-        await renderMermaid(action.to);
-      };
+      bindStandaloneProcessSimulation(states, actions, targets.simUi, {
+        isCurrent,
+        commitStatus,
+        renderMermaid
+      });
     }
-    return { states, actions };
+    return { states, actions, summary };
   }
 
   // src/entries/appSearchControl.ts
   init_api();
-
-  // src/handlers/diffFocus.ts
-  init_state();
-  init_dialog();
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
-  // src/entries/appSearchControl.ts
   init_utils();
   var RESULT_CSS_ID = "kus-app-search-styles";
   var RESULT_CSS = `
@@ -2737,12 +2905,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
     });
-    keyword.addEventListener("keydown", (e) => {
+    const onEnterKey = (e) => {
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         void runSearch();
       }
-    });
+    };
+    keyword.addEventListener("keydown", onEnterKey);
+    guest.addEventListener("keydown", onEnterKey);
+    space.addEventListener("keydown", onEnterKey);
     return details;
   }
 
@@ -2760,7 +2931,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const cardApp = makeCard({ title: "対象アプリ", number: 1 });
     const appInp = makeInput({ placeholder: "アプリID", value: DEFAULT_APP_ID || "", width: "id" });
     const guestInp = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest" });
+    const prevCb = makeCheck({ label: "プレビュー環境を参照", checked: false });
     cardApp.body.appendChild(makeRow([appInp, guestInp], { label: "アプリ" }));
+    cardApp.body.appendChild(makeRow(prevCb.label));
     let notifyConnectionChange = () => {
     };
     cardApp.body.appendChild(createAppSearchControl(panel, {
@@ -2775,6 +2948,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     cardApp.body.appendChild(runBtn);
     panel.body.insertBefore(cardApp.card, panel.status);
     const cardDiag = makeCard({ title: "プロセス図", number: 2, soft: true });
+    const summaryEl = document.createElement("div");
+    summaryEl.style.cssText = "margin-bottom:8px";
+    cardDiag.body.appendChild(summaryEl);
     const viewEl = document.createElement("div");
     viewEl.style.cssText = "min-height:64px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px;overflow:auto;max-height:340px";
     viewEl.innerHTML = '<span class="kus-lp__small">描画結果がここに表示されます</span>';
@@ -2790,8 +2966,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     cardText.body.appendChild(makeNote("ソースは Mermaid Live Editor や Markdown（```mermaid）にそのまま貼り付けて共有できます。"));
     const copySource = makeButton("ソースをコピー", "sub", { icon: "⎘" });
     const saveSource = makeButton(".mmd で保存", "sub", { icon: "↓" });
+    const saveSvg = makeButton("SVGで保存", "sub", { icon: "↓" });
     cardText.actions.appendChild(copySource);
     cardText.actions.appendChild(saveSource);
+    cardText.actions.appendChild(saveSvg);
     copySource.addEventListener("click", async () => {
       const text = textEl.value.trim();
       if (!text) {
@@ -2823,6 +3001,19 @@ ${text}
 `, "text/plain");
       panel.setStatus("Mermaid ソースを保存しました", "ok");
     });
+    saveSvg.addEventListener("click", () => {
+      const svg = viewEl.querySelector("svg");
+      if (!svg) {
+        panel.setStatus("保存できるSVGがありません。先にフロー図を描画してください", "warn");
+        return;
+      }
+      const clone = svg.cloneNode(true);
+      if (!clone.getAttribute("xmlns")) clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      const xml = new XMLSerializer().serializeToString(clone);
+      const appId = appInp.value.trim();
+      downloadText(buildExportFilename("プロセス図", "svg", { appLabel: buildAppFilenameLabel(appId, "") }), xml, "image/svg+xml;charset=utf-8");
+      panel.setStatus("フロー図をSVGとして保存しました", "ok");
+    });
     panel.body.insertBefore(cardText.card, panel.status);
     const cardSim = makeCard({ title: "シミュレーション", number: 3 });
     cardSim.card.style.display = "none";
@@ -2843,28 +3034,40 @@ ${text}
     simSelect.innerHTML = '<option value="">--</option>';
     cardSim.body.appendChild(makeRow(simSelect, { label: "アクション" }));
     const simStartBtn = makeButton("最初から開始", "sub", { icon: "⟲" });
+    const simUndoBtn = makeButton("1手戻す", "sub", { icon: "↶" });
+    simUndoBtn.disabled = true;
     const simExecBtn = makeButton("アクション実行", "primary", { icon: "▶" });
-    cardSim.body.appendChild(makeRow([simStartBtn, simExecBtn]));
+    cardSim.body.appendChild(makeRow([simStartBtn, simUndoBtn, simExecBtn]));
+    const simDetailEl = makeNote("「最初から開始」を押すと、各状態の作業者設定と選択アクションの実行条件を表示します。");
+    const simHistoryEl = makeNote("遷移履歴: まだ開始していません");
+    cardSim.body.appendChild(simDetailEl);
+    cardSim.body.appendChild(simHistoryEl);
     cardSim.body.appendChild(makeNote("シミュレーションは実データを変更しません。状態遷移の確認用です。"));
     panel.body.insertBefore(cardSim.card, panel.status);
     let renderedConnection = "";
     let renderPending = false;
     let connectionVersion = 0;
-    const connectionKey = () => `${appInp.value.trim()}::${guestInp.value.trim()}`;
+    const connectionKey = () => `${appInp.value.trim()}::${guestInp.value.trim()}::${prevCb.checkbox.checked ? "1" : "0"}`;
     const clearSimulationHandlers = () => {
       simStartBtn.onclick = null;
+      simUndoBtn.onclick = null;
       simExecBtn.onclick = null;
+      simSelect.onchange = null;
     };
     const clearRenderedFlow = () => {
       renderedConnection = "";
       clearSimulationHandlers();
       textEl.value = "";
+      summaryEl.innerHTML = "";
       viewEl.innerHTML = '<span class="kus-lp__small">対象アプリが変わりました。フロー図を再描画してください。</span>';
       cardSim.card.style.display = "none";
       curEl.textContent = "未開始";
       curEl.style.background = "#e2e8f0";
       simSelect.replaceChildren(new Option("--"));
       simSelect.disabled = true;
+      simUndoBtn.disabled = true;
+      simDetailEl.textContent = "";
+      simHistoryEl.textContent = "";
     };
     notifyConnectionChange = () => {
       connectionVersion++;
@@ -2872,7 +3075,7 @@ ${text}
       clearRenderedFlow();
       panel.setStatus("対象アプリが変わりました。フロー図を再描画してください。", "warn");
     };
-    for (const input of [appInp, guestInp]) {
+    for (const input of [appInp, guestInp, prevCb.checkbox]) {
       input.addEventListener("input", notifyConnectionChange);
       input.addEventListener("change", notifyConnectionChange);
     }
@@ -2883,21 +3086,26 @@ ${text}
       renderPending = true;
       try {
         const result = await runRenderProcessFlowStandalone(
-          { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
-          // 実行完了後（シミュレーション操作）の通知は tone を指定し、処理中スピナーのまま残さない
+          { appId: appInp.value.trim(), guestId: guestInp.value.trim(), preview: prevCb.checkbox.checked },
+          // 実行完了後（シミュレーション操作）の通知は tone を指定し、処理中スピナーのまま残さない。
+          // err 指定は Mermaid の簡易表示切替など描画は継続できる通知なので warn で示す
           (m, e, tone) => {
-            if (isCurrent()) panel.setStatus(m, e ? "err" : tone || "busy");
+            if (isCurrent()) panel.setStatus(m, e ? "warn" : tone || "busy");
           },
           {
             textEl,
             viewEl,
+            summaryEl,
             isCurrent,
             simUi: {
               container: cardSim.card,
               current: curEl,
               select: simSelect,
               startBtn: simStartBtn,
-              execBtn: simExecBtn
+              undoBtn: simUndoBtn,
+              execBtn: simExecBtn,
+              detailEl: simDetailEl,
+              historyEl: simHistoryEl
             }
           }
         );
@@ -2925,10 +3133,14 @@ ${text}
         renderedConnection = "";
         clearSimulationHandlers();
         textEl.value = "";
+        summaryEl.innerHTML = "";
         viewEl.replaceChildren();
         cardSim.card.style.display = "none";
         simSelect.replaceChildren(new Option("--"));
         simSelect.disabled = true;
+        simUndoBtn.disabled = true;
+        simDetailEl.textContent = "";
+        simHistoryEl.textContent = "";
       },
       actions: [{
         id: "render",
@@ -2943,7 +3155,7 @@ ${text}
             return error?.message || String(error);
           }
         },
-        summary: () => [["対象", connectionSummary(appInp.value.trim(), guestInp.value.trim())], ["操作", "状態遷移図を表示。シミュレーションは実データを変更しません。"]]
+        summary: () => [["対象", connectionSummary(appInp.value.trim(), guestInp.value.trim(), prevCb.checkbox.checked ? "プレビュー" : "本番")], ["操作", "状態遷移図を表示。シミュレーションは実データを変更しません。"]]
       }]
     });
   }

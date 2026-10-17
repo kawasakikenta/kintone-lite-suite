@@ -26,6 +26,7 @@ import { tokenizePath } from '../../src/utils';
 import { state } from '../../src/state';
 import { queueDiffRowForReflect } from '../../src/tabs/reflect';
 import { assertProcessSectionApplySafe, hasProcessStateRenameNotice, resolveApplyScopes } from '../../src/reflect/helpers';
+import { extractChangedJsonKeys } from '../../src/entries/reflectPlanView';
 
 // reflectRowDesiredValue は state.reflectNodeModes 未設定なら 'src' 扱いで row.left を返す。
 // 本テストでは left=desired, left:undefined=削除 という前提で行を組む。
@@ -530,6 +531,13 @@ describe('reflect/apply lookup app remapping', () => {
     convertLookupAppIds(field, { '10': '20' });
     expect(field.lookup.relatedApp.app).toBe('10');
   });
+
+  it('convertLookupAppIds rewrites referenceTable.relatedApp.app and removes code', () => {
+    const field = { type: 'REFERENCE_TABLE', referenceTable: { relatedApp: { app: '10', code: 'OLD' } } };
+    const res = convertLookupAppIds(field, { '10': '20' });
+    expect(res.changed).toBe(true);
+    expect(res.def.referenceTable.relatedApp).toEqual({ app: '20' });
+  });
 });
 
 describe('reflect/apply extractReferencedAppIds', () => {
@@ -546,12 +554,13 @@ describe('reflect/apply extractReferencedAppIds', () => {
         actionSettings: { actions: { 'コピー': { destApp: { app: '99' } } } }
       }
     };
-    const refs = extractReferencedAppIds(bundle, [], { '10': '20' });
+    const refs = extractReferencedAppIds(bundle, [], { '10': '20', '99': '199' });
     const byApp = Object.fromEntries(refs.map((r: any) => [r.refAppId, r]));
     expect(byApp['10'].convertedAppId).toBe('20');
     expect(byApp['11'].convertedAppId).toBeNull();
     expect(byApp['12'].fieldCode).toBe('tbl > inner');
     expect(byApp['99'].section).toBe('アクション設定');
+    expect(byApp['99'].convertedAppId).toBe('199');
   });
 
   it('respects scope filtering (fields only)', () => {
@@ -563,5 +572,14 @@ describe('reflect/apply extractReferencedAppIds', () => {
     };
     const refs = extractReferencedAppIds(bundle, ['fieldSettings'], {});
     expect(refs.map((r: any) => r.refAppId)).toEqual(['10']);
+  });
+});
+
+describe('reflectPlanView extractChangedJsonKeys', () => {
+  it('extracts only the keys whose JSON values differ between before and after', () => {
+    const before = JSON.stringify({ name: '一覧', fields: ['a', 'b'], filterCond: '' });
+    const after = JSON.stringify({ name: '一覧', fields: ['a', 'b', 'c'], filterCond: 'x = 1' });
+    expect(extractChangedJsonKeys(before, after)).toEqual(['fields', 'filterCond']);
+    expect(extractChangedJsonKeys('plain text', 'other text')).toEqual([]);
   });
 });

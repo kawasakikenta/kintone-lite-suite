@@ -315,5 +315,7 @@ describe('ER diagram HTML', () => {
     expect(script).toContain('sqlIdentifier(sourceInfo.table)');
     expect(script).toContain('shape=tableRow');
     expect(script).toContain('未取得の参照先 (App ');
+    expect(script).toContain('function recomputeErAnalysis()');
+    expect(html).not.toContain('fonts.googleapis.com');
   });
 });

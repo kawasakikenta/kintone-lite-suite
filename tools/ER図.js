@@ -571,6 +571,23 @@
     }
   });
 
+  // src/ui/dialog.ts
+  function getToolDocument() {
+    return root?.ownerDocument || document;
+  }
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
+  var init_dialog = __esm({
+    "src/ui/dialog.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      root = null;
+    }
+  });
+
   // src/reflect/applyOutcome.ts
   var init_applyOutcome = __esm({
     "src/reflect/applyOutcome.ts"() {
@@ -889,23 +906,6 @@ ${contextLine}`);
     }
   });
 
-  // src/ui/dialog.ts
-  function getToolDocument() {
-    return root?.ownerDocument || document;
-  }
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
-    }
-  });
-
   // src/diff/path-decoder.ts
   var init_path_decoder = __esm({
     "src/diff/path-decoder.ts"() {
@@ -949,6 +949,14 @@ ${contextLine}`);
     }
   });
 
+  // src/design/snapshot.ts
+  var init_snapshot = __esm({
+    "src/design/snapshot.ts"() {
+      "use strict";
+      init_constants();
+    }
+  });
+
   // src/diff/export.ts
   var DIFF_HTML_REVIEW_STATE_MAX_BYTES;
   var init_export = __esm({
@@ -964,6 +972,7 @@ ${contextLine}`);
       init_category_view();
       init_path_decoder();
       init_export_safety();
+      init_snapshot();
       DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
     }
   });
@@ -1150,6 +1159,38 @@ ${contextLine}`);
       return;
     }
     run();
+  }
+
+  // src/handlers/diffFocus.ts
+  init_state();
+  init_dialog();
+  function extractAppIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
   }
 
   // src/entries/litePanelTheme.ts
@@ -2115,11 +2156,14 @@ ${contextLine}`);
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
-      if (okMsg && tone !== "err" && tone !== "warn") {
+      const currentText = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const cancelled = /キャンセルしました/.test(currentText);
+      if (cancelled && (tone === "busy" || tone === "ok")) {
+        panel.setStatus(currentText, "info");
+      } else if (okMsg && tone !== "err" && tone !== "warn" && tone !== "info") {
         panel.setStatus(okMsg, "ok");
       } else if (tone === "busy") {
-        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
-        panel.setStatus(text || "完了", "ok");
+        panel.setStatus(currentText || "完了", "ok");
       }
       return out;
     } catch (e) {
@@ -2378,6 +2422,12 @@ ${contextLine}`);
     function finish() {
       if (!pending) return;
       const status = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const tone = panel.status.dataset.tone || "";
+      if ((tone === "info" || tone === "warn" || tone === "neutral") && /キャンセルしました/.test(status)) {
+        pending = null;
+        refresh();
+        return;
+      }
       resultNote.textContent = `${lastContext}
 ${status}`;
       resultNote.dataset.write = String(!!pending.writes);
@@ -3000,14 +3050,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         el = doc.createElement("div");
         Object.assign(el.style, {
           position: "fixed",
-          top: "20px",
-          right: "20px",
+          bottom: "20px",
+          left: "20px",
           width: "320px",
           padding: "16px",
           background: "rgba(10,10,18,0.94)",
           color: "#fff",
           borderRadius: "12px",
-          zIndex: "999999",
+          zIndex: "999990",
           fontFamily: "sans-serif",
           boxShadow: "0 8px 32px rgba(0,0,0,0.5)"
         });
@@ -3260,13 +3310,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
 <html lang="ja">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
 <title>kintone ER図 v3</title>
 ${cytoscapeScript}
 ${dagreScript}
 ${cytoscapeDagreScript}
 <style>
-@import url('${EXTERNAL_LIBRARIES.googleFontsDmSansMono.cdnUrl}');
 
 *{margin:0;padding:0;box-sizing:border-box;}
 
@@ -3290,7 +3339,7 @@ ${cytoscapeDagreScript}
   --shadow-md:0 12px 28px rgba(15,23,42,0.14);
 }
 
-body{font-family:'DM Sans',sans-serif;background:
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:
   radial-gradient(circle at top left, rgba(94,234,212,0.08), transparent 28%),
   radial-gradient(circle at top right, rgba(129,140,248,0.08), transparent 26%),
   var(--bg);
@@ -6360,6 +6409,7 @@ function captureEditState(){
 }
 function exportEditedHtml(){
   try{
+    recomputeErAnalysis();
     const payload=captureEditState();
     const clone=document.documentElement.cloneNode(true);
     const cyHost=clone.querySelector("#cy");
@@ -6698,7 +6748,59 @@ function showPlantUML(){
   openModal("PlantUML",p,"ER図.puml");
 }
 
+function recomputeErAnalysis(){
+  const activeApps=APPS.filter(a=>a&&a.id!=null&&!manuallyRemovedNodeIds.has("a"+a.id));
+  const activeIds=new Set(activeApps.map(a=>String(a.id)));
+  const fieldCount=activeApps.reduce((s,a)=>s+exportFieldsForApp(a).filter(f=>!isFieldHidden(a,f)).length,0);
+  const relationCount=activeApps.reduce((s,a)=>s+(a.relations||[]).filter((_,ri)=>!manuallyRemovedEdgeIds.has("e_"+a.id+"_"+ri)&&!nodeHiddenEdgeIds.has("e_"+a.id+"_"+ri)).length,0);
+  const unresolvedTargets=[],selfReferences=[];
+  const incoming=new Map(),outgoing=new Map();
+  activeApps.forEach(a=>{
+    const fromId=String(a.id);
+    (a.relations||[]).forEach((r,ri)=>{
+      const edgeId="e_"+a.id+"_"+ri;
+      if(manuallyRemovedEdgeIds.has(edgeId)||nodeHiddenEdgeIds.has(edgeId)) return;
+      const toId=String(r.toApp??"");
+      const kind=String(r.kind||"UNKNOWN");
+      const field=String(r.fromPath||r.from||r.fromLabel||r.controlField||r.sourceJoinField||"");
+      outgoing.set(fromId,(outgoing.get(fromId)||0)+1);
+      if(!toId||!activeIds.has(toId)){
+        unresolvedTargets.push({fromAppId:fromId,fromAppName:String(a.name||("アプリ "+fromId)),toAppId:toId,kind,field,reason:toId?"outside-diagram":"missing-target"});
+      }else{
+        incoming.set(toId,(incoming.get(toId)||0)+1);
+        if(fromId===toId) selfReferences.push({appId:fromId,appName:String(a.name||("アプリ "+fromId)),kind,field});
+      }
+    });
+  });
+  const isolatedAppIds=activeApps.filter(a=>!(incoming.get(String(a.id))||0)&&!(outgoing.get(String(a.id))||0)).map(a=>String(a.id));
+  const complete=activeApps.filter(a=>(a.status||"complete")==="complete"&&a.ok!==false&&!(Array.isArray(a.issues)&&a.issues.length)).length;
+  const failed=activeApps.filter(a=>a.status==="failed"||a.ok===false).length;
+  const partial=Math.max(0,activeApps.length-complete-failed);
+  ER_ANALYSIS.appCount=activeApps.length;
+  ER_ANALYSIS.fieldCount=fieldCount;
+  ER_ANALYSIS.relationCount=relationCount;
+  ER_ANALYSIS.edgeCount=relationCount;
+  ER_ANALYSIS.isolatedAppIds=isolatedAppIds;
+  ER_ANALYSIS.unresolvedTargets=unresolvedTargets;
+  ER_ANALYSIS.selfReferences=selfReferences;
+  if(ER_ANALYSIS.counts){
+    ER_ANALYSIS.counts.apps=activeApps.length;
+    ER_ANALYSIS.counts.appCount=activeApps.length;
+    ER_ANALYSIS.counts.fieldCount=fieldCount;
+    ER_ANALYSIS.counts.relations=relationCount;
+    ER_ANALYSIS.counts.relationCount=relationCount;
+    ER_ANALYSIS.counts.unresolvedRelations=unresolvedTargets.length;
+    ER_ANALYSIS.counts.selfReferences=selfReferences.length;
+    ER_ANALYSIS.counts.appsWithNoRelations=isolatedAppIds.length;
+    ER_ANALYSIS.counts.retrievalComplete=complete;
+    ER_ANALYSIS.counts.retrievalPartial=partial;
+    ER_ANALYSIS.counts.retrievalFailed=failed;
+  }
+  return ER_ANALYSIS;
+}
+
 function showJSON(){
+  recomputeErAnalysis();
   const schema={
     kind:"kintone-er-model",
     schemaVersion:1,
@@ -6757,6 +6859,7 @@ function showCSVRelations(){
 // ─── Markdown spec ───
 function mdEsc(s){return String(s==null?"":s).replace(/\\|/g,"\\\\|").replace(/\\n/g," ");}
 function showMarkdown(){
+  recomputeErAnalysis();
   const lines=[];
   lines.push("# kintone ER図 仕様書");
   lines.push("");
@@ -7199,7 +7302,7 @@ applySavedViewState();
     }
     if (!primaryIds.length && !spaceId) return "アプリID または スペースID を入力してください";
     if (spaceId && !primaryIds.length && !extraIds.length && Array.isArray(opts?.spaceSelectedAppIds) && !opts.spaceSelectedAppIds.length) {
-      return "スペース内のアプリを1件以上選択するか、起点アプリIDを入力してください";
+      return "起点にするスペース内アプリを1件以上選択するか、起点アプリIDを入力してください。";
     }
     return "";
   }
@@ -7314,40 +7417,6 @@ applySavedViewState();
 
   // src/entries/appSearchControl.ts
   init_api();
-
-  // src/handlers/diffFocus.ts
-  init_state();
-  init_dialog();
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
-  // src/entries/appSearchControl.ts
   init_utils();
   var RESULT_CSS_ID = "kus-app-search-styles";
   var RESULT_CSS = `
@@ -7574,12 +7643,15 @@ applySavedViewState();
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
     });
-    keyword.addEventListener("keydown", (e) => {
+    const onEnterKey = (e) => {
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         void runSearch();
       }
-    });
+    };
+    keyword.addEventListener("keydown", onEnterKey);
+    guest.addEventListener("keydown", onEnterKey);
+    space.addEventListener("keydown", onEnterKey);
     return details;
   }
 
@@ -7603,6 +7675,8 @@ applySavedViewState();
         appInp.value = id;
       } }]
     }));
+    const prevCb = makeCheck({ label: "プレビュー環境を参照", checked: false });
+    cardMain.body.appendChild(makeRow(prevCb.label));
     const bOpen = makeButton("ER 図を開く", "primary", { icon: "◉" });
     const bSave = makeButton("HTML 保存", "ghost", { icon: "↓" });
     const btnRow = makeRow([bOpen, bSave]);
@@ -7718,7 +7792,7 @@ applySavedViewState();
         appId: appInp.value.trim(),
         appIds: parseAppIds(appInp.value),
         guestId: guestInp.value.trim(),
-        preview: false,
+        preview: prevCb.checkbox.checked,
         layoutName: layoutSel.value,
         fieldDensity: densitySel.value,
         maxDepth: depthInp.value.trim(),
@@ -7750,6 +7824,7 @@ applySavedViewState();
     guestInp.setAttribute("aria-label", "ゲストスペースID");
     const erSummary = () => [
       ["起点", connectionSummary(appInp.value.trim(), guestInp.value.trim())],
+      ["参照環境", prevCb.checkbox.checked ? "プレビュー環境を参照" : "本番環境"],
       ["追加起点", extra.value.trim() || "なし"],
       ["スペース", (() => {
         const spaceId = spaceInp.value.trim();
@@ -7757,9 +7832,9 @@ applySavedViewState();
         const picked = source().spaceSelectedAppIds;
         return picked ? `${spaceId}（読み込んだ ${spacePicker.count()} アプリ中 ${picked.length} 件を起点にする）` : `${spaceId}（スペース内の全アプリを起点にする）`;
       })()],
-      ["探索の深さ", !depthInp.value.trim() || Number(depthInp.value) === 0 ? "無制限" : depthInp.value.trim()],
+      ["探索の深さ", !depthInp.value.trim() || Number(depthInp.value) === 0 ? "無制限（関連アプリを最後まで探索します）" : depthInp.value.trim()],
       ["表示", (layoutSel.selectedOptions[0]?.textContent || "") + " / " + (densitySel.selectedOptions[0]?.textContent || "")],
-      ["逆引き", reverseCb.checkbox.checked ? "あり" : "なし"]
+      ["逆引き", reverseCb.checkbox.checked ? "逆引きあり（テナント内のアプリを走査するため時間がかかる場合があります）" : "なし"]
     ];
     const erProblem = () => validateErOptions(source());
     installLiteWorkflow(panel, {

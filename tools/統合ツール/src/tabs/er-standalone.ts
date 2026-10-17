@@ -73,8 +73,9 @@ export function validateErOptions(opts: any): string {
     if (!Number.isFinite(depth) || depth < 0 || !Number.isInteger(depth)) return '探索深さは0以上の整数で入力してください';
   }
   if (!primaryIds.length && !spaceId) return 'アプリID または スペースID を入力してください';
+  // スペース指定で選択アプリが0件でも、起点アプリID（appId / appIds / extraAppIds）があれば起点は作れる
   if (spaceId && !primaryIds.length && !extraIds.length && Array.isArray(opts?.spaceSelectedAppIds) && !opts.spaceSelectedAppIds.length) {
-    return 'スペース内のアプリを1件以上選択するか、起点アプリIDを入力してください';
+    return '起点にするスペース内アプリを1件以上選択するか、起点アプリIDを入力してください。';
   }
   return '';
 }

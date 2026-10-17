@@ -50,6 +50,10 @@ describe('diff lite result presentation', () => {
     expect(validateLiteDiffStart({ sourceAppId: 'abc', targetAppId: '2', scopes: ['viewSettings'] })).toContain('正の整数');
     expect(validateLiteDiffStart({ sourceAppId: '1', targetAppId: '2', scopes: ['viewSettings'], ignoreKeys: 'views[0].name' })).toContain('位置依存');
     expect(validateLiteDiffStart({ sourceAppId: '', targetAppId: '', scopes: ['viewSettings'], hasImportedSource: true, hasImportedTarget: true })).toBe('');
+    expect(validateLiteDiffStart({ sourceAppId: '1', sourceGuestId: '0', targetAppId: '2', scopes: ['viewSettings'] })).toContain('比較元のゲストスペースID');
+    expect(validateLiteDiffStart({ sourceAppId: '1', targetAppId: '2', targetGuestId: 'abc', scopes: ['viewSettings'] })).toContain('比較先のゲストスペースID');
+    expect(validateLiteDiffStart({ sourceAppId: '10', sourceGuestId: '5', sourcePreview: true, targetAppId: '10', targetGuestId: '5', targetPreview: true, scopes: ['viewSettings'] })).toContain('同一の接続先');
+    expect(validateLiteDiffStart({ sourceAppId: '10', sourceGuestId: '5', sourcePreview: true, targetAppId: '10', targetGuestId: '5', targetPreview: false, scopes: ['viewSettings'] })).toBe('');
   });
 
   describe('mergePastedTargetAppIds', () => {
@@ -72,14 +76,14 @@ describe('diff lite result presentation', () => {
 
   it('rejects a non-numeric guest space ID before it reaches the REST URL', () => {
     const base = { sourceAppId: '1', targetAppId: '2', scopes: ['viewSettings'] };
-    expect(validateLiteDiffStart({ ...base, sourceGuestId: '１２３' })).toContain('比較元ゲストID');
-    expect(validateLiteDiffStart({ ...base, targetGuestId: 'abc' })).toContain('比較先ゲストID');
+    expect(validateLiteDiffStart({ ...base, sourceGuestId: '１２３' })).toContain('比較元のゲストスペースID');
+    expect(validateLiteDiffStart({ ...base, targetGuestId: 'abc' })).toContain('比較先のゲストスペースID');
     expect(validateLiteDiffStart({ ...base, sourceGuestId: '12/../3' })).toContain('半角数字');
     expect(validateLiteDiffStart({ ...base, sourceGuestId: ' 12 ', targetGuestId: '34' })).toBe('');
     expect(validateLiteDiffStart({ ...base, sourceGuestId: '', targetGuestId: '' })).toBe('');
     // 1対多比較では比較元のゲストIDも検査し、比較先は各行の検査に任せる。
     expect(validateLiteDiffStart({ sourceAppId: '1', sourceGuestId: 'x', scopes: ['viewSettings'], targets: [{ appId: '2', rowNumber: 1 }] }))
-      .toContain('比較元ゲストID');
+      .toContain('比較元のゲストスペースID');
   });
 
   describe('validateLiteDiffStart with targets (1対多比較)', () => {
@@ -170,6 +174,7 @@ describe('diff lite result presentation', () => {
     );
 
     expect(ctx.audience).toBe('customer');
+    expect(ctx.maskSensitive).toBe(false);
     expect(ctx.rows).toEqual(selected);
     expect(ctx.sourceBundle?.appId).toBe('10');
     expect(ctx.targetBundle?.appId).toBe('20');
@@ -182,6 +187,13 @@ describe('diff lite result presentation', () => {
     expect(ctx.exportLabel).toBe('表示中（フィルタ適用後）');
     expect(ctx.filterDescription).toBe('画面の絞り込み: ビュー設定 / 削除');
     expect(ctx.exportContentMode).toBe('diffOnly');
+
+    const internalMasked = buildLiteDiffXlsxContext(full, selected, 'all', '全件', undefined, {
+      audience: 'internal',
+      maskSensitive: true
+    });
+    expect(internalMasked.audience).toBe('internal');
+    expect(internalMasked.maskSensitive).toBe(true);
   });
 
   it('does not substitute a bundle fetch time for an unrecorded comparison time', () => {

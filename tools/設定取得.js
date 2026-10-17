@@ -570,6 +570,20 @@
     }
   });
 
+  // src/ui/dialog.ts
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
+  var init_dialog = __esm({
+    "src/ui/dialog.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      root = null;
+    }
+  });
+
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -1152,20 +1166,6 @@ ${contextLine}`);
     }
   });
 
-  // src/ui/dialog.ts
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
-    }
-  });
-
   // src/diff/path-decoder.ts
   var init_path_decoder = __esm({
     "src/diff/path-decoder.ts"() {
@@ -1209,6 +1209,14 @@ ${contextLine}`);
     }
   });
 
+  // src/design/snapshot.ts
+  var init_snapshot = __esm({
+    "src/design/snapshot.ts"() {
+      "use strict";
+      init_constants();
+    }
+  });
+
   // src/diff/export.ts
   var DIFF_HTML_REVIEW_STATE_MAX_BYTES;
   var init_export = __esm({
@@ -1224,6 +1232,7 @@ ${contextLine}`);
       init_category_view();
       init_path_decoder();
       init_export_safety();
+      init_snapshot();
       DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
     }
   });
@@ -1255,6 +1264,38 @@ ${contextLine}`);
       return;
     }
     run();
+  }
+
+  // src/handlers/diffFocus.ts
+  init_state();
+  init_dialog();
+  function extractAppIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
   }
 
   // src/ui/components.ts
@@ -2181,15 +2222,19 @@ ${contextLine}`);
       curBtn.title = "今開いているアプリのIDを空き行に入れます";
       curBtn.addEventListener("click", () => {
         const id = String(opts.currentAppId).trim();
-        const guestId = String(opts.currentGuestId || "").trim();
-        if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guestId)) return;
+        const guest = String(
+          opts.currentGuestId ?? (typeof location !== "undefined" ? extractGuestIdFromInput(location.pathname || "") : "")
+        ).trim();
+        if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guest)) return;
         const empty = rows.find((r) => !r.app.value.trim());
         if (empty) {
           empty.app.value = id;
-          empty.guest.value = guestId;
+          empty.guest.value = guest;
           setAppName(empty, "");
           empty.app.focus();
-        } else insertRow(rows.length, id, guestId, true);
+        } else {
+          insertRow(rows.length, id, guest, true);
+        }
         emitChange();
       });
       foot.appendChild(curBtn);
@@ -2200,7 +2245,7 @@ ${contextLine}`);
     wrap.appendChild(foot);
     const hint = document.createElement("div");
     hint.className = "kus-lp__apptable-hint";
-    hint.textContent = "アプリIDは「100, 120, 130」のようにカンマ区切りでまとめて入力・貼り付けすると自動で行に分割されます。";
+    hint.textContent = "アプリIDは「100, 120, 130」のようにカンマ区切りでまとめて入力・貼り付けすると自動で行に分割されます。アプリURLの貼り付けにも対応しています。";
     wrap.appendChild(hint);
     const rows = [];
     function getApps() {
@@ -2250,26 +2295,48 @@ ${contextLine}`);
       refresh();
       opts.onChange?.(getApps());
     }
+    function parseAppToken(token, fallbackGuest) {
+      const trimmed = token.trim();
+      if (!trimmed || /^\d+$/.test(trimmed)) return { appId: trimmed, guestId: fallbackGuest };
+      const extractedApp = extractAppIdFromInput(trimmed);
+      if (!extractedApp) return { appId: trimmed, guestId: fallbackGuest };
+      const extractedGuest = extractGuestIdFromInput(trimmed);
+      const guestId = extractedGuest || (/\/k\/\d+(?:[/?#]|$)/i.test(trimmed) ? "" : fallbackGuest);
+      return { appId: extractedApp, guestId };
+    }
     function distributeAppTokens(entry) {
       const raw = entry.app.value;
-      if (!/[,、\s]/.test(raw)) return false;
-      const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
-      if (tokens.length <= 1) {
-        const next = tokens[0] || "";
-        if (entry.app.value !== next) {
-          entry.app.value = next;
+      const guestVal = entry.guest.value.trim();
+      if (!/[,、\s]/.test(raw)) {
+        const parsed = parseAppToken(raw, guestVal);
+        if (parsed.appId !== raw || parsed.guestId !== guestVal) {
+          entry.app.value = parsed.appId;
+          entry.guest.value = parsed.guestId;
           setAppName(entry, "");
           return true;
         }
         return false;
       }
-      entry.app.value = tokens[0];
+      const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+      if (tokens.length <= 1) {
+        const parsed = parseAppToken(tokens[0] || "", guestVal);
+        if (entry.app.value !== parsed.appId || entry.guest.value.trim() !== parsed.guestId) {
+          entry.app.value = parsed.appId;
+          entry.guest.value = parsed.guestId;
+          setAppName(entry, "");
+          return true;
+        }
+        return false;
+      }
+      const first = parseAppToken(tokens[0], guestVal);
+      entry.app.value = first.appId;
+      entry.guest.value = first.guestId;
       setAppName(entry, "");
-      const guestVal = entry.guest.value.trim();
       const start = rows.indexOf(entry);
       let last = entry;
       for (let k = 1; k < tokens.length; k += 1) {
-        last = insertRow(start + k, tokens[k], guestVal, false);
+        const next = parseAppToken(tokens[k], guestVal);
+        last = insertRow(start + k, next.appId, next.guestId, false);
       }
       try {
         last.app.focus();
@@ -2349,7 +2416,8 @@ ${contextLine}`);
       });
       app.addEventListener("paste", (ev) => {
         const text = ev.clipboardData?.getData("text") || "";
-        if (!/[,、\s]/.test(text)) return;
+        const hasUrl = Boolean(extractAppIdFromInput(text.trim())) && !/^\d+$/.test(text.trim());
+        if (!/[,、\s]/.test(text) && !hasUrl) return;
         ev.preventDefault();
         const start = app.selectionStart ?? app.value.length;
         const end = app.selectionEnd ?? start;
@@ -2437,11 +2505,14 @@ ${contextLine}`);
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
-      if (okMsg && tone !== "err" && tone !== "warn") {
+      const currentText = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const cancelled = /キャンセルしました/.test(currentText);
+      if (cancelled && (tone === "busy" || tone === "ok")) {
+        panel.setStatus(currentText, "info");
+      } else if (okMsg && tone !== "err" && tone !== "warn" && tone !== "info") {
         panel.setStatus(okMsg, "ok");
       } else if (tone === "busy") {
-        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
-        panel.setStatus(text || "完了", "ok");
+        panel.setStatus(currentText || "完了", "ok");
       }
       return out;
     } catch (e) {
@@ -2705,6 +2776,12 @@ ${contextLine}`);
     function finish() {
       if (!pending) return;
       const status = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const tone = panel.status.dataset.tone || "";
+      if ((tone === "info" || tone === "warn" || tone === "neutral") && /キャンセルしました/.test(status)) {
+        pending = null;
+        refresh();
+        return;
+      }
       resultNote.textContent = `${lastContext}
 ${status}`;
       resultNote.dataset.write = String(!!pending.writes);
@@ -2779,38 +2856,6 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   init_constants();
   init_utils();
   init_api();
-
-  // src/handlers/diffFocus.ts
-  init_state();
-  init_dialog();
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
 
   // src/jszipLoader.ts
   init_constants();
@@ -2911,6 +2956,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const body = rows.map(
       (r) => `<tr>
     <td>${esc(r.appId)}</td>
+    <td>${esc(r.appName || "-")}</td>
     <td>${esc(r.guestId ? `guest:${r.guestId}` : "通常")}</td>
     <td>${esc(String(r.okCount))}</td>
     <td>${esc(String(r.ngCount))}</td>
@@ -2920,8 +2966,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || "-")}</div>
     <table style="width:100%;font-size:11px;border-collapse:collapse">
-      <thead><tr><th scope="col" style="text-align:left;padding:4px">アプリID</th><th scope="col">ゲスト</th><th scope="col">取得OK</th><th scope="col">取得NG</th><th scope="col">メモ</th></tr></thead>
-      <tbody>${body || '<tr><td colspan="5">結果なし</td></tr>'}</tbody>
+      <thead><tr><th scope="col" style="text-align:left;padding:4px">アプリID</th><th scope="col">アプリ名</th><th scope="col">ゲスト</th><th scope="col">取得OK</th><th scope="col">取得NG</th><th scope="col">メモ</th></tr></thead>
+      <tbody>${body || '<tr><td colspan="6">結果なし</td></tr>'}</tbody>
     </table>
   `;
   }
@@ -3022,6 +3068,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       if (omittedBodies2) noteParts.push(`JS/CSS本文を省略したファイル ${omittedBodies2}件`);
       rows.push({
         appId,
+        appName: extractAppNameFromBundle(bundle) || "",
         guestId,
         okCount,
         ngCount,
@@ -3031,6 +3078,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
     const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);
+    const failedAppCount = rows.filter((row) => row.ngCount > 0).length;
     const payload = {
       generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       guestIds,
@@ -3038,10 +3086,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       preview,
       scopes,
       scopeLabels,
+      appCount: bundles.length,
+      failedAppCount,
       apps: bundles
     };
     const failedSections = rows.reduce((sum, row) => sum + row.ngCount, 0);
-    const failureNote = failedSections ? `。${rows.filter((row) => row.ngCount > 0).length}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : "";
+    const failureNote = failedSections ? `。${failedAppCount}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : "";
     const omittedBodies = rows.reduce((sum, row) => sum + row.omittedBodies, 0);
     const omittedNote = omittedBodies ? `。JS/CSSファイル ${omittedBodies}件は本文を取得できず fileKey のみ記録しています（結果表を確認してください）` : "";
     const hasWarning = failedSections > 0 || omittedBodies > 0;
@@ -3326,12 +3376,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
     });
-    keyword.addEventListener("keydown", (e) => {
+    const onEnterKey = (e) => {
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         void runSearch();
       }
-    });
+    };
+    keyword.addEventListener("keydown", onEnterKey);
+    guest.addEventListener("keydown", onEnterKey);
+    space.addEventListener("keydown", onEnterKey);
     return details;
   }
 
@@ -3360,44 +3413,88 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         return { message: `アプリ #${appId}${appName ? ` (${appName})` : ""} を対象表に設定しました${result.action === "existing" ? "（追加済み）" : ""}` };
       } }]
     });
-    cardTarget.body.appendChild(appTable.element);
-    cardTarget.body.appendChild(makeNote("各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。"));
+    const prev = makeCheck({ label: "プレビュー環境から取得" });
     const spaceKw = makeInput({ placeholder: "スペースID", width: "narrow" });
     const spaceBtn = makeButton("スペース内アプリを表に追加", "sub");
-    cardTarget.body.appendChild(makeRow([spaceKw, searchGuest, spaceBtn], { label: "スペース" }));
+    const spaceRow = makeRow([spaceKw, searchGuest, spaceBtn], { label: "スペース" });
+    cardTarget.body.appendChild(searchControl);
+    cardTarget.body.appendChild(appTable.element);
+    cardTarget.body.appendChild(makeRow([prev.label], { label: "取得環境" }));
+    cardTarget.body.appendChild(foldWorkflowSection("スペースから追加", spaceRow));
+    cardTarget.body.appendChild(makeNote("各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。"));
     panel.body.insertBefore(cardTarget.card, panel.status);
     const cardScope = makeCard({ title: "取得セクション", number: 2 });
+    cardScope.actions.style.flexWrap = "wrap";
     const chipBox = document.createElement("div");
     chipBox.className = "kus-lp__chips";
     chipBox.setAttribute("role", "group");
     chipBox.setAttribute("aria-label", "取得するセクション");
     const chips = SETTINGS_EXPORT_SCOPE_DEFS.map((s) => makeChip({ label: s.label, value: s.key, checked: true }));
     chips.forEach((c) => chipBox.appendChild(c.label));
-    cardScope.body.appendChild(chipBox);
+    const countBadge = document.createElement("span");
+    countBadge.className = "kus-lp__count";
+    const updateScopeCount = () => {
+      const selectedCount = chips.filter((c) => c.checkbox.checked).length;
+      countBadge.textContent = `選択 ${selectedCount} / ${chips.length}`;
+    };
+    updateScopeCount();
+    chipBox.addEventListener("change", updateScopeCount);
+    const applyScopeSelection = (predicate) => {
+      chips.forEach((c) => {
+        c.checkbox.checked = predicate(c.checkbox.value);
+      });
+      updateScopeCount();
+      chips[0]?.checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+    };
     const allBtn = makeButton("全選択", "sub");
     const noneBtn = makeButton("全解除", "sub");
+    cardScope.actions.appendChild(countBadge);
     cardScope.actions.appendChild(allBtn);
     cardScope.actions.appendChild(noneBtn);
-    allBtn.addEventListener("click", () => chips.forEach((c) => {
-      c.checkbox.checked = true;
-    }));
-    noneBtn.addEventListener("click", () => chips.forEach((c) => {
-      c.checkbox.checked = false;
-    }));
+    allBtn.addEventListener("click", () => applyScopeSelection(() => true));
+    noneBtn.addEventListener("click", () => applyScopeSelection(() => false));
+    const SCOPE_PRESETS = [
+      {
+        label: "基本のみ",
+        keys: /* @__PURE__ */ new Set([
+          "appSettings",
+          "appInfo",
+          "fieldSettings",
+          "layoutSettings",
+          "formSettings",
+          "viewSettings",
+          "reportSettings",
+          "processSettings",
+          "actionSettings",
+          "categories"
+        ])
+      },
+      {
+        label: "権限のみ",
+        keys: /* @__PURE__ */ new Set(["appAcl", "fieldAcl", "recordPermissions"])
+      },
+      {
+        label: "通知のみ",
+        keys: /* @__PURE__ */ new Set(["notifications", "perRecordNotifications", "reminderNotifications"])
+      },
+      {
+        label: "カスタマイズのみ",
+        keys: /* @__PURE__ */ new Set(["pluginSettings", "customizeSettings"])
+      }
+    ];
+    const presetToolbar = document.createElement("div");
+    presetToolbar.className = "kus-lp__toolbar";
+    for (const preset of SCOPE_PRESETS) {
+      const btn = makeButton(preset.label, "sub");
+      btn.addEventListener("click", () => applyScopeSelection((key) => preset.keys.has(key)));
+      presetToolbar.appendChild(btn);
+    }
+    cardScope.body.appendChild(presetToolbar);
+    cardScope.body.appendChild(chipBox);
     const scopeRoot = chipBox;
     panel.body.insertBefore(cardScope.card, panel.status);
-    const cardOpt = makeCard({ title: "出力", number: 3, soft: true });
-    const prev = makeCheck({ label: "プレビュー環境から取得" });
-    cardOpt.body.appendChild(makeRow([prev.label], { label: "取得環境" }));
     const btnJson = makeButton("JSON で保存", "primary", { icon: "↓" });
     const btnZip = makeButton("ZIP で保存", "primary", { icon: "↓" });
-    const btnGrid = document.createElement("div");
-    btnGrid.className = "kus-lp__btn-grid";
-    btnGrid.appendChild(btnJson);
-    btnGrid.appendChild(btnZip);
-    cardOpt.body.appendChild(btnGrid);
-    cardOpt.body.appendChild(makeNote("JSON は全アプリを 1 ファイルに、ZIP は「アプリ名(appID).json」＋ manifest.json で個別保存します。"));
-    panel.body.insertBefore(cardOpt.card, panel.status);
     const summary = document.createElement("div");
     summary.className = "kus-lp__panel-html kus-lp__panel-html--empty";
     panel.body.insertBefore(summary, panel.status);
@@ -3441,9 +3538,6 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       summary.innerHTML = summaryHtml;
       summary.classList.remove("kus-lp__panel-html--empty");
     }));
-    cardTarget.body.appendChild(searchControl);
-    cardTarget.body.appendChild(foldWorkflowSection("スペースから追加", spaceKw.closest(".kus-lp__row")));
-    cardTarget.body.appendChild(prev.label);
     const exportProblem = () => {
       const rows = appTable.getApps();
       if (!rows.length) return "対象アプリを1件以上指定してください。";

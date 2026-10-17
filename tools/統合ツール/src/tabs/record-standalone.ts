@@ -9,7 +9,7 @@ import {
   uniqueZipEntryName,
   writeInChunks
 } from './record-query.js';
-import { buildRecordCsvExport } from './record-csv-export.js';
+import { buildRecordCsvExport, type RecordCsvExportOptions } from './record-csv-export.js';
 import { readRecordViews, readAttachmentFields } from './record-metadata.js';
 import { parseCsvText, planCsvImport, formatCsvImportReport, type CsvImportReport } from './record-csv-import.js';
 import { readProcessActionChoices } from './record-process-metadata.js';
@@ -199,10 +199,12 @@ function addRecordCsvFiles(zip: any, csv: RecordCsvExport, prefix = ''): void {
   for (const table of csv.tables) zip.file(`${prefix}${table.fileName}`, table.csvText);
 }
 
-function recordExportFilename(filename: unknown, extension: 'csv' | 'zip', fallback: string): string {
+export function recordExportFilename(filename: unknown, extension: 'csv' | 'zip', fallback: string): string {
   // 拡張子だけ・パス区切りや禁則文字を含む入力でも、空の名前や意図しない階層名にしない。
   const stem = String(filename || '').trim().replace(/\.(csv|zip)$/i, '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
-  return stem ? `${sanitizeFilenamePart(stem)}.${extension}` : fallback;
+  // 先頭・末尾のドットや空白だけが残る名前（`...` や `../` 由来）は隠しファイル・空名になるので除く。
+  const safe = stem ? sanitizeFilenamePart(stem, '').replace(/^[. ]+|[. ]+$/g, '') : '';
+  return safe ? `${safe}.${extension}` : fallback;
 }
 
 /**
@@ -214,14 +216,23 @@ export function zipNameForApp(zipName: unknown, appId: string, multiple: boolean
   return requested && multiple ? `${requested.replace(/\.zip$/i, '')}_app${appId}.zip` : requested;
 }
 
-async function buildCsvExportForApp(appId: string, guestId: string, query: string, setStatus: (m: string) => void) {
+async function buildCsvExportForApp(
+  appId: string,
+  guestId: string,
+  query: string,
+  setStatus: (m: string) => void,
+  exportOptions?: RecordCsvExportOptions
+) {
   const target = validateRecordConnection(appId, guestId);
   appId = target.appId;
   guestId = target.guestId;
   const prefix = buildApiPrefix(guestId, false);
 
   setStatus(`App ${appId}: フィールド情報取得中...`);
-  const fields = await apiGet(prefix, '/app/form/fields.json', { app: appId });
+  const fieldParams = exportOptions?.headerMode && exportOptions.headerMode !== 'code'
+    ? { app: appId, lang: 'user' }
+    : { app: appId };
+  const fields = await apiGet(prefix, '/app/form/fields.json', fieldParams);
   const properties = fields.properties || {};
   if (!Object.keys(properties).length) throw new Error(`App ${appId}: 出力できるフィールドがありません`);
 
@@ -232,7 +243,7 @@ async function buildCsvExportForApp(appId: string, guestId: string, query: strin
     appId,
     guestId: guestId || '',
     recordCount: records.length,
-    csv: buildRecordCsvExport(records, properties)
+    csv: buildRecordCsvExport(records, properties, exportOptions)
   };
 }
 
@@ -242,8 +253,9 @@ export interface CsvExportOutcome {
 }
 
 export async function runCsvExportStandalone(opts, setStatus): Promise<CsvExportOutcome> {
-  const { appId, guestId, query, filename } = opts;
-  const result = await buildCsvExportForApp(appId, guestId, query || '', setStatus);
+  const { appId, guestId, query, filename, headerMode, lineEnding, neutralizeFormula } = opts;
+  const exportOptions: RecordCsvExportOptions = { headerMode, lineEnding, neutralizeFormula };
+  const result = await buildCsvExportForApp(appId, guestId, query || '', setStatus, exportOptions);
   const appLabel = buildAppFilenameLabel(appId, '');
   if (!result.csv.tables.length) {
     const blob = new Blob([result.csv.parentCsv], { type: 'text/csv;charset=utf-8;' });
@@ -278,10 +290,15 @@ export async function runCsvExportBatchStandalone(opts, setStatus): Promise<CsvE
     });
   const query = opts?.query || '';
   const filename = String(opts?.filename || '').trim();
+  const exportOptions: RecordCsvExportOptions = {
+    headerMode: opts?.headerMode,
+    lineEnding: opts?.lineEnding,
+    neutralizeFormula: opts?.neutralizeFormula
+  };
   if (!apps.length) throw new Error('対象アプリを1件以上入力してください');
   if (apps.length === 1) {
     const app = apps[0];
-    return await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || '', query, filename }, setStatus);
+    return await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || '', query, filename, ...exportOptions }, setStatus);
   }
 
   const JSZip = await loadJSZipLite();
@@ -299,7 +316,7 @@ export async function runCsvExportBatchStandalone(opts, setStatus): Promise<CsvE
     setStatus(`CSV出力中... (${i + 1}/${apps.length})`);
     try {
       // 全明細を生成してから格納し、取得・変換に失敗したアプリの一部だけを保存しない。
-      const result = await buildCsvExportForApp(app.appId, app.guestId || '', query, setStatus);
+      const result = await buildCsvExportForApp(app.appId, app.guestId || '', query, setStatus, exportOptions);
       const guestSuffix = result.guestId ? `_guest${sanitizeZipSegment(result.guestId)}` : '';
       folder = uniqueZipEntryName(used, `app_${sanitizeZipSegment(result.appId)}${guestSuffix}`);
       addRecordCsvFiles(zip, result.csv, `${folder}/`);
@@ -549,6 +566,114 @@ export function buildCopyRecordPayloads(records: any[], targetProps?: Record<str
     return payload;
   });
   return { records: out, droppedFields: [...dropped].sort(), droppedFileFields: [...fileFields].sort(), recordsWithFiles };
+}
+
+export interface RecordCopyCompatibilityReport {
+  compatibleFields: string[];
+  droppedMissing: string[];
+  droppedMismatch: string[];
+  excludedSystemOrFile: string[];
+}
+
+export function inspectRecordCopyCompatibility(
+  sourceProps: Record<string, any> | null | undefined,
+  targetProps: Record<string, any> | null | undefined
+): RecordCopyCompatibilityReport {
+  const src = sourceProps && typeof sourceProps === 'object' ? sourceProps : {};
+  const tgt = targetProps && typeof targetProps === 'object' ? targetProps : {};
+  const compatibleFields: string[] = [];
+  const droppedMissing: string[] = [];
+  const droppedMismatch: string[] = [];
+  const excludedSystemOrFile: string[] = [];
+
+  for (const [code, field] of Object.entries(src)) {
+    if (!field || typeof field !== 'object') continue;
+    const type = String(field.type || '');
+    const label = String(field.label || code);
+    const display = `${label}［${code}］`;
+    if (COPY_SYSTEM_CODES.has(code) || COPY_SYSTEM_TYPES.has(type) || type === 'FILE' || field.expression) {
+      excludedSystemOrFile.push(`${display}(${type === 'FILE' ? 'FILE' : field.expression ? '自動計算' : type})`);
+      continue;
+    }
+    const targetField = tgt[code];
+    if (!targetField) {
+      droppedMissing.push(display);
+      continue;
+    }
+    const targetType = String(targetField.type || '');
+    if (targetType !== type) {
+      droppedMismatch.push(`${display}(${type} → ${targetType})`);
+      continue;
+    }
+    if (type === 'SUBTABLE') {
+      const srcChildren = field.fields && typeof field.fields === 'object' ? field.fields : {};
+      const tgtChildren = targetField.fields && typeof targetField.fields === 'object' ? targetField.fields : {};
+      let compatibleSubCount = 0;
+      for (const [childCode, childField] of Object.entries(srcChildren) as Array<[string, any]>) {
+        if (!childField || typeof childField !== 'object') continue;
+        const cType = String(childField.type || '');
+        const cDisplay = `${code}.${childCode}`;
+        if (COPY_SYSTEM_CODES.has(childCode) || COPY_SYSTEM_TYPES.has(cType) || cType === 'FILE' || childField.expression) {
+          excludedSystemOrFile.push(`${cDisplay}(${cType === 'FILE' ? 'FILE' : childField.expression ? '自動計算' : cType})`);
+          continue;
+        }
+        const tChild = tgtChildren[childCode];
+        if (!tChild) {
+          droppedMissing.push(cDisplay);
+        } else if (String(tChild.type || '') !== cType) {
+          droppedMismatch.push(`${cDisplay}(${cType} → ${String(tChild.type || '')})`);
+        } else {
+          compatibleSubCount++;
+        }
+      }
+      compatibleFields.push(`${display}(サブテーブル: 一致 ${compatibleSubCount}列)`);
+    } else {
+      compatibleFields.push(display);
+    }
+  }
+  return {
+    compatibleFields,
+    droppedMissing,
+    droppedMismatch,
+    excludedSystemOrFile
+  };
+}
+
+export function formatRecordCopyPreview(report: RecordCopyCompatibilityReport): string {
+  return [
+    `コピー対象フィールド (${report.compatibleFields.length}件): ${report.compatibleFields.join(', ') || 'なし'}`,
+    `コピー先に無いため除外 (${report.droppedMissing.length}件): ${report.droppedMissing.join(', ') || 'なし'}`,
+    `型不一致のため除外 (${report.droppedMismatch.length}件): ${report.droppedMismatch.join(', ') || 'なし'}`,
+    `システム・添付・自動計算のため除外 (${report.excludedSystemOrFile.length}件): ${report.excludedSystemOrFile.join(', ') || 'なし'}`
+  ].join('\n');
+}
+
+export async function runPreviewRecordCopyStandalone(
+  opts: { sourceAppId: string; sourceGuestId?: string; targetAppsText: string; targetGuestId?: string },
+  setStatus: (m: string, error?: boolean) => void
+): Promise<Array<{ targetAppId: string; report?: RecordCopyCompatibilityReport; error?: string }>> {
+  const srcConn = validateRecordConnection(opts.sourceAppId, opts.sourceGuestId || '');
+  const targetAppIds = parseRecordAppIds(opts.targetAppsText);
+  if (!targetAppIds.length) throw new Error('コピー先の対象アプリIDを1件以上入力してください');
+  const srcPrefix = buildApiPrefix(srcConn.guestId, false);
+  const tgtPrefix = buildApiPrefix(opts.targetGuestId || '', false);
+  setStatus(`コピー元 App ${srcConn.appId} のフィールド定義を取得中...`);
+  const srcFields = await apiGet(srcPrefix, '/app/form/fields.json', { app: srcConn.appId, lang: 'user' });
+  const srcProps = srcFields?.properties || {};
+  const results: Array<{ targetAppId: string; report?: RecordCopyCompatibilityReport; error?: string }> = [];
+  for (const targetAppId of targetAppIds) {
+    setStatus(`コピー先 App ${targetAppId} のフィールド互換性を確認中...`);
+    try {
+      const tgtFields = await apiGet(tgtPrefix, '/app/form/fields.json', { app: targetAppId, lang: 'user' });
+      const report = inspectRecordCopyCompatibility(srcProps, tgtFields?.properties || {});
+      results.push({ targetAppId, report });
+    } catch (error: any) {
+      results.push({ targetAppId, error: error?.message || String(error) });
+    }
+  }
+  const hasWarn = results.some((r) => r.error || (r.report && (!r.report.compatibleFields.length || r.report.droppedMissing.length > 0 || r.report.droppedMismatch.length > 0)));
+  setStatus(`フィールド互換性確認完了: ${results.length}アプリ。まだコピーは実行していません。`, hasWarn);
+  return results;
 }
 
 export async function runRecordCopyStandalone(opts, setStatus) {
@@ -849,7 +974,13 @@ export async function runRecordBackupStandalone(opts, setStatus) {
       const sec = settings.sections[key];
       if (sec && sec._fetchError) { appNg++; appNgSections.push(key); } else appOk++;
     }
-    if (appNg) notes.push(`アプリ設定取得失敗 ${appNg}セクション: ${appNgSections.join(', ')}`);
+    if (appNg) {
+      if (appOk === 0) {
+        notes.push(`警告: 選択されたすべてのアプリ設定セクション（${appNg}件）の取得に失敗しました（権限または環境を確認してください）: ${appNgSections.join(', ')}`);
+      } else {
+        notes.push(`アプリ設定取得失敗 ${appNg}セクション: ${appNgSections.join(', ')}`);
+      }
+    }
     zip.file(`app_settings/app_${appId}.json`, JSON.stringify({ generatedAt: new Date().toISOString(), appId, scopes: appScopes, bundle: settings }, null, 2));
   } else if (!includeAppSettings) {
     notes.push('アプリ設定未取得');
@@ -875,8 +1006,9 @@ export async function runRecordBackupStandalone(opts, setStatus) {
   const blob = await zip.generateAsync({ type: 'blob' });
   downloadBlob(recordExportFilename(zipName, 'zip', buildExportFilename('レコードバックアップ', 'zip', { appLabel: buildAppFilenameLabel(appId, '') })), blob);
   const failureCount = fileFailures.length + commentFailures.length + appNg + csvExport.warnings.length;
+  const allSettingsFailed = Boolean(includeAppSettings && appScopes?.length && appOk === 0 && appNg > 0);
   const failureNote = failureCount
-    ? `（取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg} / テーブル ${csvExport.warnings.length} → manifest.json 参照）`
+    ? `（取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg}${allSettingsFailed ? ' [全セクション失敗]' : ''} / テーブル ${csvExport.warnings.length} → manifest.json 参照）`
     : '';
   const completionMessage = `バックアップ完了: ${records.length}件 / テーブル明細 ${csvExport.tables.length}ファイル / 添付 ${fileCount} / コメント ${commentCount}${failureNote}`;
   setStatus(completionMessage, failureCount > 0);

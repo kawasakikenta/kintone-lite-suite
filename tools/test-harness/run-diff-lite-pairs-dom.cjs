@@ -53,6 +53,11 @@ function hasFlag(name) {
   return process.argv.includes(name);
 }
 
+function extractMarkdownAppIds(markdown) {
+  return [...String(markdown || '').matchAll(/^\s*-\s*appId:\s*`\s*([^`\r\n]*?)\s*`/gm)]
+    .map((match) => match[1]);
+}
+
 function resolveFromRoot(value, fallback) {
   const raw = value || fallback;
   return path.isAbsolute(raw) ? raw : path.resolve(ROOT, raw);
@@ -229,9 +234,11 @@ async function mountWithControlledDiff(page, options = {}) {
           throw new Error(`synthetic pair failure: App ${target.appId}`);
         }
         return {
-          rows: [{ section: 'form', path: 'properties.Sample', type: 'changed', before: 'before', after: 'after' }],
+          rows: [{ section: 'form', path: 'properties.Sample', type: 'changed', left: 'before', right: 'after', before: 'before', after: 'after' }],
           fetchIssues: [],
-          partialIssues: [],
+          partialIssues: target.appId === '202'
+            ? [{ sectionKey: 'customizeSettings', side: 'source', message: 'synthetic partial body' }]
+            : [],
           sourceBundle,
           targetBundle,
           truncation: null,
@@ -346,7 +353,8 @@ async function inspectMainResult(page) {
     const rows = [...(table?.querySelectorAll('tbody tr') || [])].map((row) => ({
       cells: [...row.querySelectorAll('td')].map((cell) => cell.textContent.replace(/\s+/g, ' ').trim()),
       htmlButtons: row.querySelectorAll('[data-kus-dl-multi-html]').length,
-      xlsxButtons: row.querySelectorAll('[data-kus-dl-multi-xlsx]').length
+      xlsxButtons: row.querySelectorAll('[data-kus-dl-multi-xlsx]').length,
+      markdownButtons: row.querySelectorAll('[data-kus-dl-multi-md]').length
     }));
     const runPairs = root?.querySelector('[data-kus-dl-run-pairs]');
     const batchButton = root?.querySelector('[data-kus-dl-multi-xlsx-all]');
@@ -388,6 +396,7 @@ function verifyMainResult(result, pageErrors) {
   assert.match(result.rows[2].cells[2], /App 404.*ゲスト 44.*プレビュー/, '中間失敗後の比較先が表示されていません');
   assert.deepEqual(result.rows.map((row) => row.htmlButtons), [1, 0, 1], '成功行以外にHTML保存ボタンが表示されています');
   assert.deepEqual(result.rows.map((row) => row.xlsxButtons), [1, 0, 1], '成功行以外にExcel保存ボタンが表示されています');
+  assert.deepEqual(result.rows.map((row) => row.markdownButtons), [1, 0, 1], '成功行以外にMarkdown保存ボタンが表示されています');
   assert.equal(result.batchButtonCount, 1, '成功ペアの一括Excel保存ボタンがありません');
   assert.match(result.batchButtonText, /Excelをまとめて保存（2件・ZIP）/, '一括Excel保存ボタンの成功件数が不正です');
   assert.equal(result.batchButtonOutsideScroll, true, '一括Excel保存ボタンが結果表の横スクロール内にあります');
@@ -403,9 +412,11 @@ async function verifyStaleResultInvalidation(page) {
   assert.equal(await pairResultTable(page).count(), 0, 'ペア入力変更後も古い結果表が残っています');
   assert.equal(await page.locator('[data-kus-dl-multi-html]').count(), 0, 'ペア入力変更後も古いHTML保存導線が残っています');
   assert.equal(await page.locator('[data-kus-dl-multi-xlsx]').count(), 0, 'ペア入力変更後も古いExcel保存導線が残っています');
+  assert.equal(await page.locator('[data-kus-dl-multi-md]').count(), 0, 'ペア入力変更後も古いMarkdown保存導線が残っています');
   assert.equal(await page.locator('[data-kus-dl-multi-xlsx-all]').count(), 0, 'ペア入力変更後も古い一括Excel保存導線が残っています');
   assert.equal(await page.locator('[data-kus-dl-export="html"]').isDisabled(), true, 'ペア入力変更後も全体HTML出力が有効です');
   assert.equal(await page.locator('[data-kus-dl-export="xlsx"]').isDisabled(), true, 'ペア入力変更後も全体Excel出力が有効です');
+  assert.equal(await page.locator('[data-kus-dl-export="md"]').isDisabled(), true, 'ペア入力変更後も全体Markdown出力が有効です');
   assert.equal(await page.locator('[data-kus-dl-completion="xlsx"]').isVisible(), false, 'ペア入力変更後も完了時のExcel保存導線が表示されています');
   assert.equal(await page.getByText(/比較ペアを変更したため、前回の一括結果と保存機能を無効にしました/).isVisible(), true, 'ペア入力変更後に再比較を求める警告がありません');
 }
@@ -416,10 +427,36 @@ async function verifySuccessfulPairExports(page) {
   await page.waitForFunction(() => window.__downloadCount === 1, null, { timeout: 10000 });
   await firstRow.locator('[data-kus-dl-multi-xlsx]').click();
   await page.waitForFunction(() => window.__downloadCount === 2, null, { timeout: 10000 });
+  await page.waitForFunction(() => {
+    const xlsx = document.querySelector('[data-kus-dl-multi-xlsx]');
+    const markdownButton = document.querySelector('[data-kus-dl-multi-md]');
+    return xlsx && markdownButton && !xlsx.disabled && !markdownButton.disabled;
+  }, null, { timeout: 10000 });
+  await firstRow.locator('[data-kus-dl-multi-md]').click();
+  await page.waitForFunction(() => window.__downloadCount === 3, null, { timeout: 10000 });
+  const markdown = await page.evaluate(async () => {
+    const blob = window.__downloadBlobs[2];
+    return {
+      filename: window.__downloadNames[2] || '',
+      type: blob?.type || '',
+      text: blob instanceof Blob ? await blob.text() : ''
+    };
+  });
+  assert.match(markdown.filename, /\.md$/i, '成功ペアのMarkdownファイル名が不正です');
+  assert.match(markdown.type, /markdown|text/i, '成功ペアのMarkdown MIME typeが不正です');
+  const markdownAppIds = extractMarkdownAppIds(markdown.text);
+  assert.deepEqual(markdownAppIds, ['101', '202'], '成功ペアのMarkdownの比較元・比較先App IDが不正です');
+  assert.ok(markdownAppIds.indexOf('101') < markdownAppIds.indexOf('202'),
+    '成功ペアのMarkdownで比較方向（比較元→比較先）が逆転しています');
+  assert.match(markdown.text, /"value": "before"/, '成功ペアのMarkdownに変更前スナップショット値がありません');
+  assert.match(markdown.text, /"value": "after"/, '成功ペアのMarkdownに変更後スナップショット値がありません');
+  assert.match(markdown.text, /comparisonComplete:\s*false/,
+    '不完全な成功ペアのMarkdownに判断保留の証跡がありません');
   const names = await page.evaluate(() => [...window.__downloadNames]);
-  assert.equal(names.length, 2, '成功ペアのHTML/Excel保存件数が不正です');
+  assert.equal(names.length, 3, '成功ペアのHTML/Excel/Markdown保存件数が不正です');
   assert.match(names[0], /\.html$/i, '成功ペアのHTMLファイル名が不正です');
   assert.match(names[1], /\.xlsx$/i, '成功ペアのExcelファイル名が不正です');
+  assert.match(names[2], /\.md$/i, '成功ペアのMarkdownファイル名が不正です');
   assert.match(names[0], /101.*202|202.*101/, 'HTMLファイル名が選択したペアに対応していません');
   await page.waitForTimeout(400);
   const downloadsBeforeBulk = await page.evaluate(() => Number(window.__downloadCount || 0));
@@ -448,7 +485,7 @@ async function verifySuccessfulPairExports(page) {
     'ペア一括ExcelのZIP内に正しいXLSXではないエントリがあります');
   assert.equal(individualEntries.some((entry) => /303/.test(entry.name)), false,
     '比較失敗した App 303 のExcelがペア一括ZIPへ混入しました');
-  return { names, bulkZip };
+  return { names, markdown: { filename: markdown.filename, type: markdown.type, bytes: Buffer.byteLength(markdown.text) }, bulkZip };
 }
 
 async function verifyMobileResultGeometry(page) {

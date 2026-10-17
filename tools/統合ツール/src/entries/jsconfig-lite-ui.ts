@@ -58,6 +58,15 @@ export function mountJsconfigLitePanel() {
   cardJson.body.appendChild(jsonTa);
   const exportBtn = makeButton('JSON ファイル保存', 'sub');
   const formatBtn = makeButton('整形', 'sub');
+  const loadFileBtn = makeButton('ファイル読込', 'sub');
+  const loadTargetBtn = makeButton('比較先から読込', 'sub');
+  const clearBtn = makeButton('クリア', 'sub');
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.json,application/json';
+  fileInput.style.display = 'none';
+  cardJson.body.appendChild(fileInput);
+
   formatBtn.addEventListener('click', () => {
     try {
       const parsed = JSON.parse(jsonTa.value);
@@ -67,7 +76,34 @@ export function mountJsconfigLitePanel() {
       panel.setStatus('JSON が壊れています: ' + e.message, 'err');
     }
   });
+  loadFileBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    fileInput.value = '';
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      jsonTa.value = JSON.stringify(parsed, null, 2);
+      // ファイルの内容は取得結果ではないので、取得元・取得時 revision の情報は外す
+      jsonOrigin = null;
+      loadedText = '';
+      panel.setStatus(`JSON を読み込みました: ${file.name}`, 'ok');
+    } catch (e: any) {
+      panel.setStatus('JSON ファイルの読込に失敗しました: ' + (e?.message || String(e)), 'err');
+    }
+  });
+  clearBtn.addEventListener('click', () => {
+    jsonTa.value = '';
+    jsonOrigin = null;
+    loadedText = '';
+    panel.setStatus('JSON をクリアしました', 'info');
+  });
+  cardJson.actions.style.flexWrap = 'wrap';
   cardJson.actions.appendChild(formatBtn);
+  cardJson.actions.appendChild(loadFileBtn);
+  cardJson.actions.appendChild(loadTargetBtn);
+  cardJson.actions.appendChild(clearBtn);
   cardJson.actions.appendChild(exportBtn);
   panel.body.insertBefore(cardJson.card, panel.status);
 
@@ -133,6 +169,27 @@ export function mountJsconfigLitePanel() {
     });
   });
 
+  loadTargetBtn.addEventListener('click', () => {
+    if (jsonTa.value.trim() && jsonEdited() && !kusConfirm('カスタマイズ JSON に取得結果以外の内容（手入力・編集）があります。比較先の設定で上書きしますか？')) {
+      panel.setStatus('読込をキャンセルしました（JSON は変更していません）', 'warn');
+      return;
+    }
+    const appId = tgtApp.value.trim();
+    const guestId = tgtGuest.value.trim();
+    const origin = { appId, guestId, preview: true, revision: '', text: connectionSummary(appId, guestId, 'プレビュー') };
+    fetchedRevision = '';
+    return liteRun(panel, '比較先のJS/CSS設定を取得中…', async () => {
+      if (!appId) throw new Error('比較先（反映先）アプリIDを入力してください');
+      await runFetchJsConfigStandalone(
+        { sourceAppId: appId, sourceGuestId: guestId, preview: true },
+        (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
+        uiApi
+      );
+      // 反映先のプレビューから読み込んだ JSON なので、取得時の revision が競合検出の基準になる
+      jsonOrigin = { ...origin, revision: fetchedRevision };
+    });
+  });
+
   exportBtn.addEventListener('click', () => liteRun(panel, 'JSON 保存中…', async () => {
     runExportJsConfigStandalone(jsonTa.value, jsonOrigin?.appId || '', (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }));
@@ -163,10 +220,16 @@ export function mountJsconfigLitePanel() {
   panel.body.insertBefore(batchDetails.details, panel.status);
 
   batchBtn.addEventListener('click', () => liteRun(panel, '全アプリの JS/CSS をスキャン中…', async () => {
-    await runBatchJsConfigDownloadStandalone(
+    const res = await runBatchJsConfigDownloadStandalone(
       { guestId: batchGuest.value.trim() },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
+    const lines = [
+      `走査アプリ数: ${res.apps}件 / 取得ファイル数: ${res.files}件 / 取得失敗: ${res.failed}件`,
+      ...res.failedApps.map((a) => `[アプリ失敗] App #${a.appId} (${a.name || '-'}): ${a.reason}`),
+      ...res.failedFiles.map((f) => `[ファイル失敗] App #${f.appId} / ${f.fileName}: ${f.reason}`)
+    ];
+    panel.setResult(lines.join('\n'));
   }));
 
   srcApp.setAttribute('aria-label', '取得元アプリID'); srcGuest.setAttribute('aria-label', '取得元ゲストスペースID');
@@ -175,15 +238,15 @@ export function mountJsconfigLitePanel() {
   batchGuest.setAttribute('aria-label', '一括取得のゲストスペースID');
   const selectMode = (mode: string) => {
     cardFetch.card.hidden = mode === 'batch' || mode === 'apply';
-    cardJson.card.hidden = mode === 'batch' || mode === 'fetch';
+    cardJson.card.hidden = mode === 'batch';
     cardApply.card.hidden = mode !== 'apply';
     batchDetails.details.hidden = mode !== 'batch';
     batchDetails.details.open = true;
   };
-  const idProblem = (label: string, app: string, guest: string): string => {
-    if (!app) return label + 'を指定してください。';
-    if (!/^\d+$/.test(app)) return label + 'は数値で入力してください。';
-    return guest && !/^\d+$/.test(guest) ? 'ゲストIDは数値で入力してください。' : '';
+  const idProblem = (who: string, app: string, guest: string): string => {
+    if (!app) return who + 'アプリIDを指定してください。';
+    if (!/^\d+$/.test(app)) return who + 'アプリIDは半角数字で指定してください。';
+    return guest && !/^\d+$/.test(guest) ? who + 'ゲストスペースIDは半角数字で指定してください。' : '';
   };
   // 反映できない JSON（配列でない一覧・全項目が不正）は確認画面へ進む前に止める。
   const applyProblem = (): string => {
@@ -201,16 +264,63 @@ export function mountJsconfigLitePanel() {
       ? [['PC用', 'JS ' + plan.counts.desktopJs + ' / CSS ' + plan.counts.desktopCss], ['モバイル用', 'JS ' + plan.counts.mobileJs + ' / CSS ' + plan.counts.mobileCss], ['適用範囲', plan.scope || '指定なし（反映先の現状維持）']]
       : [['PC用', 'JS ' + (data.desktop?.js?.length || 0) + ' / CSS ' + (data.desktop?.css?.length || 0)], ['モバイル用', 'JS ' + (data.mobile?.js?.length || 0) + ' / CSS ' + (data.mobile?.css?.length || 0)], ['適用範囲', data.scope || '指定なし']];
     if (plan?.dropped) rows.push(['送信しない項目', plan.dropped + '件（type/url/fileKey 不足）']);
+    if (plan) {
+      const c = plan.counts;
+      if (c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss === 0) {
+        rows.push(['⚠ 注意', '有効なJS/CSSが0件のため、反映先のJS/CSSは0件に初期化されます']);
+      }
+    }
     return [['JSONの取得元', originSummary()], ...rows];
   };
   installLiteWorkflow(panel, {
     setup: [cardFetch.card, cardJson.card, cardApply.card, batchDetails.details], results: [cardPreview.card], resultActions: ['fetch'],
     beforeRun: actionId => { if (actionId === 'fetch') { previewBox.replaceChildren(); previewBox.classList.add('kus-lp__panel-html--empty'); } },
     actions: [
-      { id: 'fetch', label: 'JS/CSS設定を取得', description: '対象アプリの設定を読み取り、ファイル一覧とJSONを確認します。', button: fetchBtn, validate: () => idProblem('取得元アプリID', srcApp.value.trim(), srcGuest.value.trim()), summary: () => [['取得元', connectionSummary(srcApp.value.trim(), srcGuest.value.trim(), srcPrev.checkbox.checked ? 'プレビュー' : '本番')]], onSelect: () => selectMode('fetch') },
-      { id: 'save', label: 'カスタマイズJSONを保存', description: '取得・編集したJSONをファイルに保存します。', button: exportBtn, validate: () => validateJsonObject(jsonTa.value), summary: jsonSummary, onSelect: () => selectMode('save') },
-      { id: 'apply', label: '比較先プレビューへ反映', description: '比較先のJS/CSS一覧をJSONの内容で置き換えます。', button: applyBtn, writes: true, validate: () => idProblem('反映先アプリID', tgtApp.value.trim(), tgtGuest.value.trim()) || applyProblem(), summary: () => [['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー')], ...jsonSummary(true), ['競合検出', baseRevision() ? '取得時の revision ' + baseRevision() + ' 以降に更新されていれば中止します。' : '反映直前に取得した revision を基準にします（反映先のプレビューから取得した JSON ではありません）。'], ['反映方法', 'JS/CSS一覧を全置換。FILEは反映先で利用可能なアップロード済みfileKeyが必要です。']], onSelect: () => selectMode('apply') },
-      { id: 'batch', label: '全アプリのJS/CSSをZIP保存', description: '対象範囲のアプリを走査してFILE形式の実ファイルをまとめます。', button: batchBtn, validate: () => batchGuest.value.trim() && !/^\d+$/.test(batchGuest.value.trim()) ? 'ゲストIDは数値で入力してください。' : '', summary: () => [['対象範囲', batchGuest.value.trim() ? 'ゲストスペース ' + batchGuest.value.trim() : 'アクセス可能な全アプリ'], ['対象ファイル', 'FILE形式のJS/CSS。URL形式は含みません。']], onSelect: () => selectMode('batch') }
+      {
+        id: 'fetch',
+        label: 'JS/CSS設定を取得',
+        description: '対象アプリの設定を読み取り、ファイル一覧とJSONを確認します。',
+        button: fetchBtn,
+        validate: () => idProblem('取得元', srcApp.value.trim(), srcGuest.value.trim()),
+        summary: () => [['取得元', connectionSummary(srcApp.value.trim(), srcGuest.value.trim(), srcPrev.checkbox.checked ? 'プレビュー' : '本番')]],
+        onSelect: () => selectMode('fetch')
+      },
+      {
+        id: 'save',
+        label: 'カスタマイズJSONを保存',
+        description: '取得・編集したJSONをファイルに保存します。',
+        button: exportBtn,
+        validate: () => validateJsonObject(jsonTa.value),
+        summary: jsonSummary,
+        onSelect: () => selectMode('save')
+      },
+      {
+        id: 'apply',
+        label: '比較先プレビューへ反映',
+        description: '比較先のJS/CSS一覧をJSONの内容で置き換えます。',
+        button: applyBtn,
+        writes: true,
+        validate: () => idProblem('反映先', tgtApp.value.trim(), tgtGuest.value.trim()) || applyProblem(),
+        summary: () => [
+          ['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー')],
+          ...jsonSummary(true),
+          ['競合検出', baseRevision() ? '取得時の revision ' + baseRevision() + ' 以降に更新されていれば中止します。' : '反映直前に取得した revision を基準にします（反映先のプレビューから取得した JSON ではありません）。'],
+          ['反映方法', 'JS/CSS一覧を全置換。FILEは反映先で利用可能なアップロード済みfileKeyが必要です。']
+        ],
+        onSelect: () => selectMode('apply')
+      },
+      {
+        id: 'batch',
+        label: '全アプリのJS/CSSをZIP保存',
+        description: '対象範囲のアプリを走査してFILE形式の実ファイルをまとめます。',
+        button: batchBtn,
+        validate: () => {
+          const guest = batchGuest.value.trim();
+          return guest && !/^\d+$/.test(guest) ? 'ゲストスペースIDは半角数字で指定してください。' : '';
+        },
+        summary: () => [['対象範囲', batchGuest.value.trim() ? 'ゲストスペース ' + batchGuest.value.trim() : 'アクセス可能な全アプリ'], ['対象ファイル', 'FILE形式のJS/CSS。URL形式は含みません。']],
+        onSelect: () => selectMode('batch')
+      }
     ]
   });
 

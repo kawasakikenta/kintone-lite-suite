@@ -53,12 +53,22 @@ function parseAppIdList(text) {
   return out;
 }
 
-export function renderSettingsExportSummaryHtml(rows, scopes) {
+export interface SettingsExportRowSummary {
+  appId: string;
+  appName?: string;
+  guestId?: string;
+  okCount: number;
+  ngCount: number;
+  note?: string;
+}
+
+export function renderSettingsExportSummaryHtml(rows: SettingsExportRowSummary[], scopes: string[]) {
   const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(', ');
   const body = rows
     .map(
       (r) => `<tr>
     <td>${esc(r.appId)}</td>
+    <td>${esc(r.appName || '-')}</td>
     <td>${esc(r.guestId ? `guest:${r.guestId}` : '通常')}</td>
     <td>${esc(String(r.okCount))}</td>
     <td>${esc(String(r.ngCount))}</td>
@@ -69,8 +79,8 @@ export function renderSettingsExportSummaryHtml(rows, scopes) {
   return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || '-')}</div>
     <table style="width:100%;font-size:11px;border-collapse:collapse">
-      <thead><tr><th scope="col" style="text-align:left;padding:4px">アプリID</th><th scope="col">ゲスト</th><th scope="col">取得OK</th><th scope="col">取得NG</th><th scope="col">メモ</th></tr></thead>
-      <tbody>${body || '<tr><td colspan="5">結果なし</td></tr>'}</tbody>
+      <thead><tr><th scope="col" style="text-align:left;padding:4px">アプリID</th><th scope="col">アプリ名</th><th scope="col">ゲスト</th><th scope="col">取得OK</th><th scope="col">取得NG</th><th scope="col">メモ</th></tr></thead>
+      <tbody>${body || '<tr><td colspan="6">結果なし</td></tr>'}</tbody>
     </table>
   `;
 }
@@ -259,6 +269,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     if (omittedBodies) noteParts.push(`JS/CSS本文を省略したファイル ${omittedBodies}件`);
     rows.push({
       appId,
+      appName: extractAppNameFromBundle(bundle) || '',
       guestId,
       okCount,
       ngCount,
@@ -269,6 +280,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
 
   const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
   const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);
+  const failedAppCount = rows.filter((row) => row.ngCount > 0).length;
   const payload = {
     generatedAt: new Date().toISOString(),
     guestIds,
@@ -276,11 +288,13 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     preview,
     scopes,
     scopeLabels,
+    appCount: bundles.length,
+    failedAppCount,
     apps: bundles
   };
 
   const failedSections = rows.reduce((sum, row) => sum + row.ngCount, 0);
-  const failureNote = failedSections ? `。${rows.filter(row => row.ngCount > 0).length}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : '';
+  const failureNote = failedSections ? `。${failedAppCount}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : '';
   const omittedBodies = rows.reduce((sum, row) => sum + row.omittedBodies, 0);
   const omittedNote = omittedBodies ? `。JS/CSSファイル ${omittedBodies}件は本文を取得できず fileKey のみ記録しています（結果表を確認してください）` : '';
   const hasWarning = failedSections > 0 || omittedBodies > 0;

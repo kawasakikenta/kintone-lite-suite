@@ -172,6 +172,7 @@ export async function runDesignExportXlsx() {
   const done = await runXlsx({
     appId: c.source.appId,
     guestId: c.source.guestId,
+    preview: c.source.preview,
     bundle,
     appNameLookup: buildKnownAppNameLookup()
   });

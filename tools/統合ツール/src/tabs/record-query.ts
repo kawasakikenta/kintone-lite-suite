@@ -103,11 +103,21 @@ export function extractRecordCsvValue(rec: any, code: string): string {
   return f.value == null ? '' : String(f.value);
 }
 
+export interface BuildRecordsCsvOptions {
+  headers?: string[];
+  lineEnding?: '\n' | '\r\n';
+  neutralizeFormula?: boolean;
+}
+
 /** BOM 付き UTF-8 の CSV テキスト。Excel でそのまま開ける。 */
-export function buildRecordsCsvText(records: any[], propKeys: string[]): string {
-  const lines = [propKeys.map((k) => csvEscape(neutralizeCsvFormula(k))).join(',')];
-  for (const rec of records) lines.push(propKeys.map((k) => csvEscape(neutralizeCsvFormula(extractRecordCsvValue(rec, k)))).join(','));
-  return '\uFEFF' + lines.join('\n');
+export function buildRecordsCsvText(records: any[], propKeys: string[], options?: BuildRecordsCsvOptions): string {
+  const headers = Array.isArray(options?.headers) && options.headers.length === propKeys.length ? options.headers : propKeys;
+  const lineEnding = options?.lineEnding === '\r\n' ? '\r\n' : '\n';
+  const neutralize = options?.neutralizeFormula !== false;
+  const norm = (val: string) => (neutralize ? neutralizeCsvFormula(val) : val);
+  const lines = [headers.map((h) => csvEscape(norm(h))).join(',')];
+  for (const rec of records) lines.push(propKeys.map((k) => csvEscape(norm(extractRecordCsvValue(rec, k)))).join(','));
+  return '\uFEFF' + lines.join(lineEnding);
 }
 
 export function sanitizeZipSegment(value: unknown, fallback = 'item'): string {

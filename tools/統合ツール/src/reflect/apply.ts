@@ -137,6 +137,17 @@ export function convertLookupAppIds(fieldDef, map) {
       const after = lookupMap[before];
       if (after && String(after) !== before) {
         node.lookup.relatedApp.app = String(after);
+        delete node.lookup.relatedApp.code;
+        changed = true;
+      }
+    }
+    const refTableApp = node.referenceTable && node.referenceTable.relatedApp;
+    if (refTableApp && refTableApp.app != null) {
+      const before = String(refTableApp.app);
+      const after = lookupMap[before];
+      if (after && String(after) !== before) {
+        node.referenceTable.relatedApp.app = String(after);
+        delete node.referenceTable.relatedApp.code;
         changed = true;
       }
     }
@@ -178,7 +189,8 @@ export function extractReferencedAppIds(sourceBundle, scopes, lookupMap) {
     for (const [name, a] of Object.entries(actions) as Array<[string, any]>) {
       if (a.destApp && a.destApp.app) {
         const appId = String(a.destApp.app);
-        refs.push({ fieldCode: name, refAppId: appId, convertedAppId: null, section: 'アクション設定', type: 'アクション' });
+        const converted = map[appId] ? String(map[appId]) : null;
+        refs.push({ fieldCode: name, refAppId: appId, convertedAppId: converted, section: 'アクション設定', type: 'アクション' });
       }
     }
   }

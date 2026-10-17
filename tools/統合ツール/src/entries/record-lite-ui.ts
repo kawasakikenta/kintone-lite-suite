@@ -9,6 +9,8 @@ import {
   runPreviewCsvImportStandalone,
   runBatchProcessStandalone,
   runRecordCopyStandalone,
+  runPreviewRecordCopyStandalone,
+  formatRecordCopyPreview,
   runAttachmentDownloadStandalone,
   runRecordBackupStandalone,
   runLoadStatusActionsStandalone,
@@ -145,10 +147,24 @@ export function mountRecordLitePanel() {
       id: 'csv-export', label: 'CSV出力', build: (root) => {
         const query = makeInput({ placeholder: '空欄で全件（例: 更新日時 >= \"2026-01-01T00:00:00Z\"）', width: 'wide' });
         const fname = makeInput({ placeholder: '空欄で自動命名（CSV / テーブルあり・複数アプリはZIP）', width: 'wide' });
+        const headerModeSelect = makeSelect([
+          ['code', 'フィールドコード（既定）'],
+          ['label', 'フィールド名（ラベル）'],
+          ['both', 'フィールド名 [コード]']
+        ]);
+        headerModeSelect.setAttribute('aria-label', 'CSVヘッダー形式');
+        const lineEndingSelect = makeSelect([
+          ['lf', 'LF（既定）'],
+          ['crlf', 'CRLF（Windows標準）']
+        ]);
+        lineEndingSelect.setAttribute('aria-label', '改行コード');
+        const neutralizeCb = makeCheck({ label: '先頭の = + - @ を数式無害化する（Excel向け・既定）', checked: true });
         const useView = makeButton('▼ 一覧から', 'sub');
         useView.addEventListener('click', () => applyViewQuery(query));
         root.appendChild(makeRow([query, useView], { label: 'クエリ' }));
         root.appendChild(makeRow(fname, { label: 'ファイル名' }));
+        root.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: '出力形式' }));
+        root.appendChild(makeRow(neutralizeCb.label, { label: 'Excel保護' }));
         root.appendChild(makeNote('1アプリはCSVで保存します。テーブルがある場合は親レコードとテーブル明細を別CSVにしてZIPにまとめます。複数アプリはアプリ別フォルダを1つのZIPに保存します。'));
         root.appendChild(makeNote('テーブル明細は親レコードの $id で紐付けできます。出力は閲覧・集計用で、CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に \' を付けます（数値は対象外）。添付はファイル名のみです。ファイル本体はバックアップの「添付ファイルも保存」で取得できます。'));
         const run = makeButton('CSVを出力', 'primary', { icon: '↓' });
@@ -156,11 +172,36 @@ export function mountRecordLitePanel() {
         run.addEventListener('click', () => liteRun(panel, 'CSV出力中…', async () => {
           const appIds = parseRecordAppIds(tgtApp.value);
           await runCsvExportBatchStandalone(
-            { apps: appIds.map((appId) => ({ appId, guestId: tgtGuest.value.trim() })), query: query.value.trim(), filename: fname.value.trim() },
+            {
+              apps: appIds.map((appId) => ({ appId, guestId: tgtGuest.value.trim() })),
+              query: query.value.trim(),
+              filename: fname.value.trim(),
+              headerMode: headerModeSelect.value as 'code' | 'label' | 'both',
+              lineEnding: lineEndingSelect.value === 'crlf' ? '\r\n' : '\n',
+              neutralizeFormula: neutralizeCb.checkbox.checked
+            },
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           );
         }));
-        addAction({ id: 'csv-export', label: 'CSVを出力', description: '条件に合うレコードとテーブル明細をCSV / ZIPで保存します。', button: run, validate: requiredApps, summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['保存形式', !requiredApps() && parseRecordAppIds(tgtApp.value).length > 1 ? 'ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）' : 'CSV（テーブルがある場合は親CSV・明細CSVのZIP）'], ['ファイル名', fname.value.trim() || '自動命名']] });
+        const headerLabelMap: Record<string, string> = {
+          code: 'フィールドコード',
+          label: 'フィールド名（ラベル）',
+          both: 'フィールド名 [コード]'
+        };
+        addAction({
+          id: 'csv-export',
+          label: 'CSVを出力',
+          description: '条件に合うレコードとテーブル明細をCSV / ZIPで保存します。',
+          button: run,
+          validate: requiredApps,
+          summary: () => [
+            targetSummary(),
+            ['条件', query.value.trim() || '全件'],
+            ['保存形式', !requiredApps() && parseRecordAppIds(tgtApp.value).length > 1 ? 'ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）' : 'CSV（テーブルがある場合は親CSV・明細CSVのZIP）'],
+            ['ヘッダー / 改行 / 数式保護', `${headerLabelMap[headerModeSelect.value] || 'フィールドコード'} / ${lineEndingSelect.value === 'crlf' ? 'CRLF' : 'LF'} / 数式無害化: ${neutralizeCb.checkbox.checked ? 'あり' : 'なし'}`],
+            ['ファイル名', fname.value.trim() || '自動命名']
+          ]
+        });
         root.appendChild(makeRow(run));
       }
     },
@@ -381,12 +422,54 @@ export function mountRecordLitePanel() {
         const srcApp = makeInput({ placeholder: 'コピー元アプリID', width: 'id' });
         const srcGuest = makeInput({ placeholder: 'ゲスト (任意)', width: 'guest' });
         const query = makeInput({ placeholder: '条件 (任意)', width: 'wide' });
+        const useView = makeButton('▼ 一覧から', 'sub');
+        useView.addEventListener('click', () => applyViewQuery(query));
         root.appendChild(makeRow([srcApp, srcGuest], { label: 'コピー元' }));
         root.appendChild(createAppSearchControl(panel, {
           guestEl: srcGuest,
-          targets: [{ label: 'コピー元', apply: (id, _name, guestId) => { srcApp.value = id; if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId; } }]
+          targets: [{ label: 'コピー元', apply: (id, _name, guestId) => { srcApp.value = id; if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId; notifyInput(srcApp); } }]
         }));
-        root.appendChild(makeRow(query, { label: 'クエリ' }));
+        root.appendChild(makeRow([query, useView], { label: 'クエリ' }));
+        const previewBtn = makeButton('フィールド互換性を事前確認', 'sub');
+        const previewText = document.createElement('pre');
+        previewText.setAttribute('aria-label', 'コピー互換性確認結果');
+        previewText.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;font-size:12px';
+        previewText.hidden = true;
+        let copyPreviewVersion = 0;
+        let copyPreviewSummary = '未実施（実行時にも除外フィールドを表示します）';
+        const clearCopyPreview = () => {
+          copyPreviewVersion++;
+          copyPreviewSummary = '未実施（実行時にも除外フィールドを表示します）';
+          previewText.textContent = '';
+          previewText.hidden = true;
+        };
+        resetMetadata.push(clearCopyPreview);
+        for (const el of [srcApp, srcGuest]) {
+          el.addEventListener('input', clearCopyPreview);
+          el.addEventListener('change', clearCopyPreview);
+        }
+        previewBtn.addEventListener('click', () => liteRun(panel, 'フィールド互換性を確認中…', async () => {
+          const version = copyPreviewVersion;
+          const results = await runPreviewRecordCopyStandalone(
+            {
+              sourceAppId: srcApp.value.trim(),
+              sourceGuestId: srcGuest.value.trim(),
+              targetAppsText: tgtApp.value,
+              targetGuestId: tgtGuest.value.trim()
+            },
+            (m: string, e?: boolean) => panel.setStatus(m, e ? 'warn' : 'busy')
+          );
+          if (version !== copyPreviewVersion) {
+            panel.setStatus('コピー元またはコピー先が変わりました。再確認してください。', 'warn');
+            return;
+          }
+          const warnApps = results.filter((r) => r.error || (r.report && (!r.report.compatibleFields.length || r.report.droppedMissing.length > 0 || r.report.droppedMismatch.length > 0))).length;
+          copyPreviewSummary = `${results.length}アプリ確認済${warnApps ? `（除外・注意あり ${warnApps}アプリ）` : '（全フィールド互換）'}`;
+          previewText.textContent = results.map((r) => `コピー先 App ${r.targetAppId}\n${r.error || (r.report ? formatRecordCopyPreview(r.report) : '')}`).join('\n\n');
+          previewText.hidden = false;
+        }));
+        root.appendChild(makeRow(previewBtn));
+        root.appendChild(previewText);
         root.appendChild(makeNote('コピー元の絞り込んだレコードを、対象アプリへ新規レコードとして追加します。ファイル・システム項目・計算項目と、対象アプリに無い（または型が異なる）フィールドは除外し、除外したフィールドコードを実行前に表示します。'));
         const run = makeButton('レコードをコピー実行', 'primary');
         run.style.width = '100%';
@@ -403,7 +486,20 @@ export function mountRecordLitePanel() {
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
-        addAction({ id: 'copy', label: 'レコードをコピー', description: 'コピー元のレコードを対象アプリへ新規追加します。', button: run, writes: true, validate: () => requiredApps() || (srcApp.value.trim() ? '' : 'コピー元アプリを指定してください。'), summary: () => [['コピー元', connectionSummary(srcApp.value.trim(), srcGuest.value.trim())], ['コピー先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())], ['コピー元の条件', query.value.trim() || '全件']] });
+        addAction({
+          id: 'copy',
+          label: 'レコードをコピー',
+          description: 'コピー元のレコードを対象アプリへ新規追加します。',
+          button: run,
+          writes: true,
+          validate: () => requiredApps() || (srcApp.value.trim() ? '' : 'コピー元アプリを指定してください。'),
+          summary: () => [
+            ['コピー元', connectionSummary(srcApp.value.trim(), srcGuest.value.trim())],
+            ['コピー先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())],
+            ['コピー元の条件', query.value.trim() || '全件'],
+            ['互換性確認', copyPreviewSummary]
+          ]
+        });
         root.appendChild(makeRow(run));
       }
     },

@@ -7,12 +7,21 @@ import {
   runFieldApplyStandalone,
   runLoadFieldsStandalone,
   runBulkRenameFieldStandalone,
-  findFieldApplyProblem
+  findFieldApplyProblem,
+  parseFieldJsonInput,
+  parseLookupMapInput,
+  type BulkRenameMode
 } from '../tabs/field-standalone.js';
+import {
+  collectFieldValidationIssues,
+  summarizeFieldProps,
+  collectFieldApplyWarnings
+} from '../tabs/field.js';
 import {
   createLitePanel,
   makeRow,
   makeInput,
+  makeSelect,
   makeButton,
   makeCheck,
   makeTextarea,
@@ -58,11 +67,15 @@ export function mountFieldLitePanel() {
 
   const bLoadSrc = makeButton('比較元から読込', 'sub');
   const bLoadTgt = makeButton('比較先から読込', 'sub');
+  const bValidate = makeButton('検証', 'sub');
   const bFormat = makeButton('整形', 'sub');
   const bImport = makeButton('ファイル読込', 'sub');
   const bExport = makeButton('保存', 'sub');
   const bClear = makeButton('クリア', 'ghost');
-  bClear.addEventListener('click', () => { fieldJson.value = ''; });
+  bClear.addEventListener('click', () => {
+    fieldJson.value = '';
+    fieldJson.dispatchEvent(new Event('input', { bubbles: true }));
+  });
   bFormat.addEventListener('click', () => {
     if (!fieldJson.value.trim()) {
       panel.setStatus('整形する JSON がありません', 'warn');
@@ -71,6 +84,7 @@ export function mountFieldLitePanel() {
     try {
       const parsed = JSON.parse(fieldJson.value || '{}');
       fieldJson.value = JSON.stringify(parsed, null, 2);
+      fieldJson.dispatchEvent(new Event('input', { bubbles: true }));
       panel.setStatus('JSON を整形しました', 'ok');
     } catch (e: any) {
       panel.setStatus(`JSON が壊れています: ${e?.message || String(e)}`, 'err');
@@ -87,6 +101,7 @@ export function mountFieldLitePanel() {
     file.text().then((text) => {
       const parsed = JSON.parse(text);
       fieldJson.value = JSON.stringify(parsed, null, 2);
+      fieldJson.dispatchEvent(new Event('input', { bubbles: true }));
       panel.setStatus(`「${file.name}」を読み込みました`, 'ok');
     }).catch((e: any) => {
       panel.setStatus(`JSON 読み込みエラー: ${e?.message || String(e)}`, 'err');
@@ -113,8 +128,10 @@ export function mountFieldLitePanel() {
   });
 
   const cardJson = makeCard({ title: 'フィールド定義 JSON', number: 2 });
+  cardJson.actions.style.flexWrap = 'wrap';
   cardJson.actions.appendChild(bLoadSrc);
   cardJson.actions.appendChild(bLoadTgt);
+  cardJson.actions.appendChild(bValidate);
   cardJson.actions.appendChild(bFormat);
   cardJson.actions.appendChild(bImport);
   cardJson.actions.appendChild(bExport);
@@ -129,6 +146,7 @@ export function mountFieldLitePanel() {
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
     fieldJson.value = JSON.stringify({ properties: props }, null, 2);
+    fieldJson.dispatchEvent(new Event('input', { bubbles: true }));
   }, '比較元のフィールド定義を読み込みました'));
 
   bLoadTgt.addEventListener('click', () => liteRun(panel, '比較先フィールド取得中…', async () => {
@@ -137,6 +155,7 @@ export function mountFieldLitePanel() {
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
     fieldJson.value = JSON.stringify({ properties: props }, null, 2);
+    fieldJson.dispatchEvent(new Event('input', { bubbles: true }));
   }, '比較先のフィールド定義を読み込みました'));
 
   // ---- 比較元からフィールドを選んでマージ ----
@@ -216,6 +235,7 @@ export function mountFieldLitePanel() {
       }
     }
     fieldJson.value = JSON.stringify(current, null, 2);
+    fieldJson.dispatchEvent(new Event('input', { bubbles: true }));
     panel.setStatus(`${added}件のフィールドを JSON にマージしました`, 'ok');
   });
 
@@ -229,6 +249,34 @@ export function mountFieldLitePanel() {
   optCard.body.appendChild(makeRow(ow.label));
   optCard.body.appendChild(makeNote('反映前に追加・更新・スキップ件数を確認します。比較先の取得後に別の更新が入っていた場合（revision 競合）は上書きせず中止するので、読み込み直してから再実行してください。'));
   panel.body.insertBefore(optCard.card, panel.status);
+
+  bValidate.addEventListener('click', () => {
+    try {
+      const props = parseFieldJsonInput(fieldJson.value);
+      const lmap = parseLookupMapInput(lookupMap.value);
+      const summary = summarizeFieldProps(props);
+      const issues = collectFieldValidationIssues(props);
+      const warnings = collectFieldApplyWarnings(props, {}, lmap);
+      const lines = [
+        `合計 ${summary.total}件（書込可 ${summary.writable} / システム ${summary.system}${summary.subtable ? ` / サブテーブル ${summary.subtable}` : ''}${summary.lookup ? ` / ルックアップ ${summary.lookup}` : ''}${summary.calc ? ` / 計算 ${summary.calc}` : ''}）`
+      ];
+      if (issues.length) {
+        lines.push(`⚠ 構造上の問題 (${issues.length}件):`, ...issues.map((i) => `  - ${i}`));
+      }
+      if (warnings.length) {
+        lines.push(`確認事項 (${warnings.length}件):`, ...warnings.map((w) => `  - ${w}`));
+      }
+      panel.setResult(lines.join('\n'));
+      panel.setStatus(
+        issues.length
+          ? `検証完了: ${issues.length}件の問題を検出しました（下のログを確認）`
+          : `検証OK: 合計 ${summary.total}件 / 書込可 ${summary.writable}件${warnings.length ? `（確認事項 ${warnings.length}件）` : ''}`,
+        issues.length ? 'warn' : 'ok'
+      );
+    } catch (e: any) {
+      panel.setStatus(e?.message || String(e), 'err');
+    }
+  });
 
   const bApply = makeButton('比較先プレビューへ反映', 'run', { icon: '⤴' });
   panel.body.insertBefore(bApply, panel.status);
@@ -253,26 +301,41 @@ export function mountFieldLitePanel() {
   const renameDetails = makeDetails('プレフィックス一括リネーム（比較先プレビュー）');
   const renamePrefix = makeInput({ placeholder: '例: dev_', width: 'medium' });
   const removeMode = makeCheck({ label: '付与ではなく除去する' });
+  const renameModeSelect = makeSelect(
+    [
+      ['put-rename', 'コード変更用（既存キー維持・PUT更新）'],
+      ['new-keys', '新規追加用（キー名も変更）']
+    ],
+    'put-rename'
+  );
+  renameModeSelect.setAttribute('aria-label', 'リネーム出力形式');
   const bRename = makeButton('リネーム結果を JSON に流し込む', 'sub');
   renameDetails.body.appendChild(makeRow(renamePrefix, { label: '文字列' }));
   renameDetails.body.appendChild(makeRow(removeMode.label));
+  renameDetails.body.appendChild(makeRow(renameModeSelect, { label: '出力形式' }));
   renameDetails.body.appendChild(makeRow(bRename));
-  const renameNote = makeNote('比較先のフィールドコードを書き換えた JSON を生成して上のテキストエリアにセットします。既存フィールドのコード変更として反映するには「既存フィールドを上書き更新」をオンにして実行します。');
+  const renameNote = makeNote('比較先のフィールドコードを書き換えた JSON を生成して上のテキストエリアにセットします（反映は別途実行）。既存フィールドのコード変更は「コード変更用」＋「既存フィールドを上書き更新」で PUT 更新します（「コード変更用」では上書き更新を自動でオンにします）。');
   renameDetails.body.appendChild(renameNote);
   panel.body.insertBefore(renameDetails.details, panel.status);
 
   bRename.addEventListener('click', () => liteRun(panel, 'リネーム生成中…', async () => {
+    const renameMode = (renameModeSelect.value as BulkRenameMode) || 'put-rename';
     const out = await runBulkRenameFieldStandalone(
       {
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         prefix: renamePrefix.value,
-        removeMode: removeMode.checkbox.checked
+        removeMode: removeMode.checkbox.checked,
+        renameMode
       },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
     if (!out) return;
+    if (renameMode === 'put-rename') {
+      ow.checkbox.checked = true;
+    }
     fieldJson.value = JSON.stringify({ properties: out.properties }, null, 2);
+    fieldJson.dispatchEvent(new Event('input', { bubbles: true }));
     const list = out.renamePairs.slice(0, 50).map((p) => `${p.from}  →  ${p.to}`).join('\n');
     panel.setResult(list + (out.renamePairs.length > 50 ? `\n... 他 ${out.renamePairs.length - 50} 件` : ''));
   }, '対象を JSON にセットしました。コードを変更するには「既存フィールドを上書き更新」をオンにして「反映」を実行してください'));
@@ -282,11 +345,49 @@ export function mountFieldLitePanel() {
   fieldJson.setAttribute('aria-label', '反映するフィールド定義JSON');
   lookupMap.setAttribute('aria-label', '参照アプリID変換JSON');
   cardJson.body.appendChild(foldWorkflowSection('JSONファイル・整形・クリア', bImport, bExport, bFormat, bClear));
-  const fieldProblem = () => findFieldApplyProblem({ targetAppId: tgtApp.value, targetGuestId: tgtGuest.value, fieldJson: fieldJson.value, lookupMapJson: lookupMap.value });
+  const fieldProblem = () => {
+    const problem = findFieldApplyProblem({ targetAppId: tgtApp.value, targetGuestId: tgtGuest.value, fieldJson: fieldJson.value, lookupMapJson: lookupMap.value });
+    if (problem) return problem;
+    const sApp = srcApp.value.trim();
+    const sGuest = srcGuest.value.trim();
+    if (sApp && !/^\d+$/.test(sApp)) return '比較元アプリIDは数値で入力してください。';
+    if (sGuest && !/^\d+$/.test(sGuest)) return '比較元ゲストIDは数値で入力してください。';
+    return '';
+  };
   const fieldSummary = (): Array<[string, string]> => {
     let codes: string[] = [];
-    try { const data = JSON.parse(fieldJson.value); codes = Object.keys(data.properties || data); } catch { /* 入力中 */ }
-    return [['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー')], ['フィールド', codes.length + ' 件 · ' + codes.join('、')], ['既存フィールド', ow.checkbox.checked ? '上書き更新する' : '既存フィールドはスキップ'], ['参照先変換', lookupMap.value.trim() || 'なし'], ['本番公開', 'この操作では公開しません']];
+    let detailLabel = '';
+    let checkNotes: string[] = [];
+    try {
+      const props = parseFieldJsonInput(fieldJson.value);
+      codes = Object.keys(props);
+      const sum = summarizeFieldProps(props);
+      const parts = [`書込可 ${sum.writable}`, `システム ${sum.system}`];
+      if (sum.subtable) parts.push(`サブテーブル ${sum.subtable}`);
+      if (sum.lookup) parts.push(`ルックアップ ${sum.lookup}`);
+      if (sum.calc) parts.push(`計算 ${sum.calc}`);
+      detailLabel = `（${parts.join(' / ')}）`;
+      const lmap = parseLookupMapInput(lookupMap.value);
+      const issues = collectFieldValidationIssues(props);
+      const warnings = collectFieldApplyWarnings(props, {}, lmap);
+      checkNotes = [...issues, ...warnings];
+    } catch {
+      try {
+        const data = JSON.parse(fieldJson.value);
+        codes = Object.keys(data.properties || data);
+      } catch { /* 入力中 */ }
+    }
+    const rows: Array<[string, string]> = [
+      ['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー')],
+      ['フィールド', `${codes.length} 件${detailLabel} · ${codes.join('、')}`],
+      ['既存フィールド', ow.checkbox.checked ? '上書き更新する' : '既存フィールドはスキップ'],
+      ['参照先変換', lookupMap.value.trim() || 'なし']
+    ];
+    if (checkNotes.length) {
+      rows.push(['事前検証', checkNotes.join('\n')]);
+    }
+    rows.push(['本番公開', 'この操作では公開しません']);
+    return rows;
   };
   installLiteWorkflow(panel, {
     setup: [cardApp.card, cardJson.card, pickDetails.details, foldWorkflowSection('反映オプション・参照先変換', optCard.card), renameDetails.details],

@@ -10,6 +10,7 @@ import {
   buildPatchPayload,
   bundleToMarkdown
 } from '../統合ツール/src/diff/export.js';
+import { buildDesignAiMarkdown } from '../統合ツール/src/design/ai-markdown.js';
 import { buildHTML as buildErHtml } from '../統合ツール/src/tabs/er.js';
 import { computeDiffRows } from '../統合ツール/src/diff/engine.js';
 import { enrichDiffRows } from '../統合ツール/src/diff/enrich.js';
@@ -23,6 +24,7 @@ declare const globalThis: any;
   buildDiffHtml,
   buildPatchPayload,
   bundleToMarkdown,
+  buildDesignAiMarkdown,
   buildErHtml,
   computeDiffRows,
   enrichDiffRows,
