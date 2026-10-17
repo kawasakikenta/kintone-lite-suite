@@ -47,7 +47,9 @@ describe('record quality checks', () => {
       { $id: cell('__ID__', '2'), tags: cell('CHECK_BOX', ['A', 'B']), users: cell('USER_SELECT', [{ code: 'alice', name: '別の表示名' }]) },
       { $id: cell('__ID__', '3'), tags: cell('CHECK_BOX', []), users: cell('USER_SELECT', [{ name: 'コードなし' }]) }
     ];
-    expect(inspect(records, ['tags', 'users'])).toMatchObject({ duplicateGroups: 1, emptyRecords: 1, unavailableRecords: 1 });
+    const res = inspect(records, ['tags', 'users']);
+    expect(res).toMatchObject({ duplicateGroups: 1, emptyRecords: 1, unavailableRecords: 1 });
+    expect(res.findings.find(f => f.kind === '重複')?.values).toEqual(['B, A', 'alice']);
   });
   it('counts zero records and rejects a missing record ID rather than producing broken links', () => {
     expect(inspect([]).total).toBe(0);

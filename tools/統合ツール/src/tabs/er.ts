@@ -177,9 +177,9 @@ const progressUi = (() => {
       const doc = (() => { try { return getToolDocument(); } catch (_) { return document; } })();
       el = doc.createElement("div");
       Object.assign(el.style, {
-        position: "fixed", top: "20px", right: "20px", width: "320px",
+        position: "fixed", bottom: "20px", left: "20px", width: "320px",
         padding: "16px", background: "rgba(10,10,18,0.94)", color: "#fff",
-        borderRadius: "12px", zIndex: "999999", fontFamily: "sans-serif",
+        borderRadius: "12px", zIndex: "999990", fontFamily: "sans-serif",
         boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
       });
       el.innerHTML = `
@@ -437,13 +437,12 @@ export const buildHTML = (apps, options: any = {}) => {
 <html lang="ja">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
 <title>kintone ER図 v3</title>
 ${cytoscapeScript}
 ${dagreScript}
 ${cytoscapeDagreScript}
 <style>
-@import url('${EXTERNAL_LIBRARIES.googleFontsDmSansMono.cdnUrl}');
 
 *{margin:0;padding:0;box-sizing:border-box;}
 
@@ -467,7 +466,7 @@ ${cytoscapeDagreScript}
   --shadow-md:0 12px 28px rgba(15,23,42,0.14);
 }
 
-body{font-family:'DM Sans',sans-serif;background:
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:
   radial-gradient(circle at top left, rgba(94,234,212,0.08), transparent 28%),
   radial-gradient(circle at top right, rgba(129,140,248,0.08), transparent 26%),
   var(--bg);
@@ -3537,6 +3536,7 @@ function captureEditState(){
 }
 function exportEditedHtml(){
   try{
+    recomputeErAnalysis();
     const payload=captureEditState();
     const clone=document.documentElement.cloneNode(true);
     const cyHost=clone.querySelector("#cy");
@@ -3875,7 +3875,59 @@ function showPlantUML(){
   openModal("PlantUML",p,"ER図.puml");
 }
 
+function recomputeErAnalysis(){
+  const activeApps=APPS.filter(a=>a&&a.id!=null&&!manuallyRemovedNodeIds.has("a"+a.id));
+  const activeIds=new Set(activeApps.map(a=>String(a.id)));
+  const fieldCount=activeApps.reduce((s,a)=>s+exportFieldsForApp(a).filter(f=>!isFieldHidden(a,f)).length,0);
+  const relationCount=activeApps.reduce((s,a)=>s+(a.relations||[]).filter((_,ri)=>!manuallyRemovedEdgeIds.has("e_"+a.id+"_"+ri)&&!nodeHiddenEdgeIds.has("e_"+a.id+"_"+ri)).length,0);
+  const unresolvedTargets=[],selfReferences=[];
+  const incoming=new Map(),outgoing=new Map();
+  activeApps.forEach(a=>{
+    const fromId=String(a.id);
+    (a.relations||[]).forEach((r,ri)=>{
+      const edgeId="e_"+a.id+"_"+ri;
+      if(manuallyRemovedEdgeIds.has(edgeId)||nodeHiddenEdgeIds.has(edgeId)) return;
+      const toId=String(r.toApp??"");
+      const kind=String(r.kind||"UNKNOWN");
+      const field=String(r.fromPath||r.from||r.fromLabel||r.controlField||r.sourceJoinField||"");
+      outgoing.set(fromId,(outgoing.get(fromId)||0)+1);
+      if(!toId||!activeIds.has(toId)){
+        unresolvedTargets.push({fromAppId:fromId,fromAppName:String(a.name||("アプリ "+fromId)),toAppId:toId,kind,field,reason:toId?"outside-diagram":"missing-target"});
+      }else{
+        incoming.set(toId,(incoming.get(toId)||0)+1);
+        if(fromId===toId) selfReferences.push({appId:fromId,appName:String(a.name||("アプリ "+fromId)),kind,field});
+      }
+    });
+  });
+  const isolatedAppIds=activeApps.filter(a=>!(incoming.get(String(a.id))||0)&&!(outgoing.get(String(a.id))||0)).map(a=>String(a.id));
+  const complete=activeApps.filter(a=>(a.status||"complete")==="complete"&&a.ok!==false&&!(Array.isArray(a.issues)&&a.issues.length)).length;
+  const failed=activeApps.filter(a=>a.status==="failed"||a.ok===false).length;
+  const partial=Math.max(0,activeApps.length-complete-failed);
+  ER_ANALYSIS.appCount=activeApps.length;
+  ER_ANALYSIS.fieldCount=fieldCount;
+  ER_ANALYSIS.relationCount=relationCount;
+  ER_ANALYSIS.edgeCount=relationCount;
+  ER_ANALYSIS.isolatedAppIds=isolatedAppIds;
+  ER_ANALYSIS.unresolvedTargets=unresolvedTargets;
+  ER_ANALYSIS.selfReferences=selfReferences;
+  if(ER_ANALYSIS.counts){
+    ER_ANALYSIS.counts.apps=activeApps.length;
+    ER_ANALYSIS.counts.appCount=activeApps.length;
+    ER_ANALYSIS.counts.fieldCount=fieldCount;
+    ER_ANALYSIS.counts.relations=relationCount;
+    ER_ANALYSIS.counts.relationCount=relationCount;
+    ER_ANALYSIS.counts.unresolvedRelations=unresolvedTargets.length;
+    ER_ANALYSIS.counts.selfReferences=selfReferences.length;
+    ER_ANALYSIS.counts.appsWithNoRelations=isolatedAppIds.length;
+    ER_ANALYSIS.counts.retrievalComplete=complete;
+    ER_ANALYSIS.counts.retrievalPartial=partial;
+    ER_ANALYSIS.counts.retrievalFailed=failed;
+  }
+  return ER_ANALYSIS;
+}
+
 function showJSON(){
+  recomputeErAnalysis();
   const schema={
     kind:"kintone-er-model",
     schemaVersion:1,
@@ -3934,6 +3986,7 @@ function showCSVRelations(){
 // ─── Markdown spec ───
 function mdEsc(s){return String(s==null?"":s).replace(/\\|/g,"\\\\|").replace(/\\n/g," ");}
 function showMarkdown(){
+  recomputeErAnalysis();
   const lines=[];
   lines.push("# kintone ER図 仕様書");
   lines.push("");

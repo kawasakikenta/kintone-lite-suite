@@ -568,6 +568,20 @@
     }
   });
 
+  // src/ui/dialog.ts
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
+  var init_dialog = __esm({
+    "src/ui/dialog.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      root = null;
+    }
+  });
+
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -824,6 +838,17 @@ ${contextLine}`);
     const jitter = Math.random() * Math.min(200, baseDelayMs);
     return Math.round(expDelay + jitter);
   }
+  function isRetriableMutation(method, error) {
+    if (!error) return false;
+    const m = String(method || "").toUpperCase();
+    const status = resolveHttpStatus(error);
+    if (status >= 400 && status < 500) {
+      if (m === "PUT" && (status === 408 || status === 429)) return true;
+      return false;
+    }
+    if (status >= 500 && status < 600) return true;
+    return isRetriableApiError(error);
+  }
   function touchApiPathMetric(path, field) {
     const key = String(path || "");
     const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
@@ -867,13 +892,27 @@ ${contextLine}`);
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
-  async function apiPost(prefix, path, body) {
-    assertAllowsMutatingRestCall(prefix, path, "POST");
-    try {
-      return await kintone.api(`${prefix}${path}`, "POST", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
+  async function executeMutatingApiWithRetry(method, prefix, path, body, retries = DEFAULT_API_GET_RETRIES) {
+    assertAllowsMutatingRestCall(prefix, path, method);
+    const maxAttempts = Math.max(1, retries);
+    let lastErr;
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        return await kintone.api(`${prefix}${path}`, method, body);
+      } catch (e) {
+        lastErr = e;
+        if (i < maxAttempts - 1 && isRetriableMutation(method, e)) {
+          const waitMs = computeRetryDelayMs(i, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        break;
+      }
     }
+    throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
+  }
+  async function apiPost(prefix, path, body) {
+    return executeMutatingApiWithRetry("POST", prefix, path, body);
   }
   async function apiDelete(prefix, path, body) {
     assertAllowsMutatingRestCall(prefix, path, "DELETE");
@@ -1014,20 +1053,6 @@ ${contextLine}`);
     }
   });
 
-  // src/ui/dialog.ts
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
-    }
-  });
-
   // src/diff/path-decoder.ts
   var init_path_decoder = __esm({
     "src/diff/path-decoder.ts"() {
@@ -1071,6 +1096,14 @@ ${contextLine}`);
     }
   });
 
+  // src/design/snapshot.ts
+  var init_snapshot = __esm({
+    "src/design/snapshot.ts"() {
+      "use strict";
+      init_constants();
+    }
+  });
+
   // src/diff/export.ts
   var DIFF_HTML_REVIEW_STATE_MAX_BYTES;
   var init_export = __esm({
@@ -1086,6 +1119,7 @@ ${contextLine}`);
       init_category_view();
       init_path_decoder();
       init_export_safety();
+      init_snapshot();
       DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
     }
   });
@@ -1117,6 +1151,38 @@ ${contextLine}`);
       return;
     }
     run();
+  }
+
+  // src/handlers/diffFocus.ts
+  init_state();
+  init_dialog();
+  function extractAppIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
   }
 
   // src/ui/components.ts
@@ -1946,6 +2012,18 @@ ${contextLine}`);
     b.appendChild(t);
     return b;
   }
+  function makeCheck(opts) {
+    const lab = document.createElement("label");
+    lab.className = "kus-lp__check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    if (opts.checked) cb.checked = true;
+    if (opts.value !== void 0) cb.value = opts.value;
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(opts.label));
+    if (opts.help) lab.title = opts.help;
+    return { label: lab, checkbox: cb };
+  }
   function makeCard(opts = {}) {
     const card = document.createElement("div");
     card.className = "kus-lp__card" + (opts.soft ? " kus-lp__card--soft" : "");
@@ -2019,15 +2097,19 @@ ${contextLine}`);
       curBtn.title = "今開いているアプリのIDを空き行に入れます";
       curBtn.addEventListener("click", () => {
         const id = String(opts.currentAppId).trim();
-        const guestId = String(opts.currentGuestId || "").trim();
-        if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guestId)) return;
+        const guest = String(
+          opts.currentGuestId ?? (typeof location !== "undefined" ? extractGuestIdFromInput(location.pathname || "") : "")
+        ).trim();
+        if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guest)) return;
         const empty = rows.find((r) => !r.app.value.trim());
         if (empty) {
           empty.app.value = id;
-          empty.guest.value = guestId;
+          empty.guest.value = guest;
           setAppName(empty, "");
           empty.app.focus();
-        } else insertRow(rows.length, id, guestId, true);
+        } else {
+          insertRow(rows.length, id, guest, true);
+        }
         emitChange();
       });
       foot.appendChild(curBtn);
@@ -2038,7 +2120,7 @@ ${contextLine}`);
     wrap.appendChild(foot);
     const hint = document.createElement("div");
     hint.className = "kus-lp__apptable-hint";
-    hint.textContent = "アプリIDは「100, 120, 130」のようにカンマ区切りでまとめて入力・貼り付けすると自動で行に分割されます。";
+    hint.textContent = "アプリIDは「100, 120, 130」のようにカンマ区切りでまとめて入力・貼り付けすると自動で行に分割されます。アプリURLの貼り付けにも対応しています。";
     wrap.appendChild(hint);
     const rows = [];
     function getApps() {
@@ -2088,26 +2170,48 @@ ${contextLine}`);
       refresh();
       opts.onChange?.(getApps());
     }
+    function parseAppToken(token, fallbackGuest) {
+      const trimmed = token.trim();
+      if (!trimmed || /^\d+$/.test(trimmed)) return { appId: trimmed, guestId: fallbackGuest };
+      const extractedApp = extractAppIdFromInput(trimmed);
+      if (!extractedApp) return { appId: trimmed, guestId: fallbackGuest };
+      const extractedGuest = extractGuestIdFromInput(trimmed);
+      const guestId = extractedGuest || (/\/k\/\d+(?:[/?#]|$)/i.test(trimmed) ? "" : fallbackGuest);
+      return { appId: extractedApp, guestId };
+    }
     function distributeAppTokens(entry) {
       const raw = entry.app.value;
-      if (!/[,、\s]/.test(raw)) return false;
-      const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
-      if (tokens.length <= 1) {
-        const next = tokens[0] || "";
-        if (entry.app.value !== next) {
-          entry.app.value = next;
+      const guestVal = entry.guest.value.trim();
+      if (!/[,、\s]/.test(raw)) {
+        const parsed = parseAppToken(raw, guestVal);
+        if (parsed.appId !== raw || parsed.guestId !== guestVal) {
+          entry.app.value = parsed.appId;
+          entry.guest.value = parsed.guestId;
           setAppName(entry, "");
           return true;
         }
         return false;
       }
-      entry.app.value = tokens[0];
+      const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+      if (tokens.length <= 1) {
+        const parsed = parseAppToken(tokens[0] || "", guestVal);
+        if (entry.app.value !== parsed.appId || entry.guest.value.trim() !== parsed.guestId) {
+          entry.app.value = parsed.appId;
+          entry.guest.value = parsed.guestId;
+          setAppName(entry, "");
+          return true;
+        }
+        return false;
+      }
+      const first = parseAppToken(tokens[0], guestVal);
+      entry.app.value = first.appId;
+      entry.guest.value = first.guestId;
       setAppName(entry, "");
-      const guestVal = entry.guest.value.trim();
       const start = rows.indexOf(entry);
       let last = entry;
       for (let k = 1; k < tokens.length; k += 1) {
-        last = insertRow(start + k, tokens[k], guestVal, false);
+        const next = parseAppToken(tokens[k], guestVal);
+        last = insertRow(start + k, next.appId, next.guestId, false);
       }
       try {
         last.app.focus();
@@ -2187,7 +2291,8 @@ ${contextLine}`);
       });
       app.addEventListener("paste", (ev) => {
         const text = ev.clipboardData?.getData("text") || "";
-        if (!/[,、\s]/.test(text)) return;
+        const hasUrl = Boolean(extractAppIdFromInput(text.trim())) && !/^\d+$/.test(text.trim());
+        if (!/[,、\s]/.test(text) && !hasUrl) return;
         ev.preventDefault();
         const start = app.selectionStart ?? app.value.length;
         const end = app.selectionEnd ?? start;
@@ -2275,11 +2380,14 @@ ${contextLine}`);
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
-      if (okMsg && tone !== "err" && tone !== "warn") {
+      const currentText = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const cancelled = /キャンセルしました/.test(currentText);
+      if (cancelled && (tone === "busy" || tone === "ok")) {
+        panel.setStatus(currentText, "info");
+      } else if (okMsg && tone !== "err" && tone !== "warn" && tone !== "info") {
         panel.setStatus(okMsg, "ok");
       } else if (tone === "busy") {
-        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
-        panel.setStatus(text || "完了", "ok");
+        panel.setStatus(currentText || "完了", "ok");
       }
       return out;
     } catch (e) {
@@ -2543,6 +2651,12 @@ ${contextLine}`);
     function finish() {
       if (!pending) return;
       const status = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const tone = panel.status.dataset.tone || "";
+      if ((tone === "info" || tone === "warn" || tone === "neutral") && /キャンセルしました/.test(status)) {
+        pending = null;
+        refresh();
+        return;
+      }
       resultNote.textContent = `${lastContext}
 ${status}`;
       resultNote.dataset.write = String(!!pending.writes);
@@ -2716,10 +2830,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (typeof f.value === "object" && f.value !== null) return JSON.stringify(f.value);
     return f.value == null ? "" : String(f.value);
   }
-  function buildRecordsCsvText(records, propKeys) {
-    const lines = [propKeys.map((k) => csvEscape(neutralizeCsvFormula(k))).join(",")];
-    for (const rec of records) lines.push(propKeys.map((k) => csvEscape(neutralizeCsvFormula(extractRecordCsvValue(rec, k)))).join(","));
-    return "\uFEFF" + lines.join("\n");
+  function buildRecordsCsvText(records, propKeys, options) {
+    const headers = Array.isArray(options?.headers) && options.headers.length === propKeys.length ? options.headers : propKeys;
+    const lineEnding = options?.lineEnding === "\r\n" ? "\r\n" : "\n";
+    const neutralize = options?.neutralizeFormula !== false;
+    const norm = (val) => neutralize ? neutralizeCsvFormula(val) : val;
+    const lines = [headers.map((h) => csvEscape(norm(h))).join(",")];
+    for (const rec of records) lines.push(propKeys.map((k) => csvEscape(norm(extractRecordCsvValue(rec, k)))).join(","));
+    return "\uFEFF" + lines.join(lineEnding);
   }
   function sanitizeZipSegment(value, fallback = "item") {
     const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
@@ -2756,7 +2874,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return String(value);
   }
-  function buildRecordCsvExport(records, properties) {
+  function formatCsvColumnHeader(code, prop, mode = "code") {
+    if (mode === "code" || DETAIL_ID_COLUMNS.includes(code) && !prop?.label) return code;
+    const label = String(prop?.label || code);
+    return mode === "both" ? `${label} [${code}]` : label;
+  }
+  function buildRecordCsvExport(records, properties, options) {
+    const headerMode = options?.headerMode || "code";
+    const lineEnding = options?.lineEnding;
+    const neutralizeFormula = options?.neutralizeFormula;
     const parentColumns = Object.keys(properties || {}).filter((code) => !VALUELESS_FIELD_TYPES.has(properties[code]?.type));
     const tableFields = /* @__PURE__ */ new Map();
     for (const code of parentColumns) {
@@ -2772,7 +2898,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         parentColumns.push(code);
       }
     }
-    if (!tableFields.size) return { parentCsv: buildRecordsCsvText(records, parentColumns), tables: [], warnings: [] };
+    if (!tableFields.size) {
+      const headers = parentColumns.map((code) => formatCsvColumnHeader(code, properties?.[code], headerMode));
+      return {
+        parentCsv: buildRecordsCsvText(records, parentColumns, { headers, lineEnding, neutralizeFormula }),
+        tables: [],
+        warnings: []
+      };
+    }
     const recordIds = records.map(parentRecordId);
     const warnings = [];
     const tables = [];
@@ -2807,15 +2940,19 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       if (collision) {
         throw new Error(`テーブル ${fieldCode} の子フィールド ${collision} が明細の識別列と重複するためCSV出力を中止しました。`);
       }
+      const tableColKeys = [...DETAIL_ID_COLUMNS, ...childColumns];
+      const tableHeaders = tableColKeys.map((code) => formatCsvColumnHeader(code, childProperties?.[code], headerMode));
       tables.push({
         fieldCode,
         fileName: tableFileName(fieldCode, usedNames),
-        csvText: buildRecordsCsvText(detailRecords, [...DETAIL_ID_COLUMNS, ...childColumns]),
+        csvText: buildRecordsCsvText(detailRecords, tableColKeys, { headers: tableHeaders, lineEnding, neutralizeFormula }),
         rowCount: detailRecords.length
       });
     }
+    const finalParentKeys = ["$id", ...parentColumns.filter((code) => code !== "$id")];
+    const finalParentHeaders = finalParentKeys.map((code) => formatCsvColumnHeader(code, properties?.[code], headerMode));
     return {
-      parentCsv: buildRecordsCsvText(records, ["$id", ...parentColumns.filter((code) => code !== "$id")]),
+      parentCsv: buildRecordsCsvText(records, finalParentKeys, { headers: finalParentHeaders, lineEnding, neutralizeFormula }),
       tables,
       warnings
     };
@@ -2900,15 +3037,17 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   }
   function recordExportFilename(filename, extension, fallback) {
     const stem = String(filename || "").trim().replace(/\.(csv|zip)$/i, "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
-    return stem ? `${sanitizeFilenamePart(stem)}.${extension}` : fallback;
+    const safe = stem ? sanitizeFilenamePart(stem, "").replace(/^[. ]+|[. ]+$/g, "") : "";
+    return safe ? `${safe}.${extension}` : fallback;
   }
-  async function buildCsvExportForApp(appId, guestId, query, setStatus) {
+  async function buildCsvExportForApp(appId, guestId, query, setStatus, exportOptions) {
     const target = validateRecordConnection(appId, guestId);
     appId = target.appId;
     guestId = target.guestId;
     const prefix = buildApiPrefix(guestId, false);
     setStatus(`App ${appId}: フィールド情報取得中...`);
-    const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
+    const fieldParams = exportOptions?.headerMode && exportOptions.headerMode !== "code" ? { app: appId, lang: "user" } : { app: appId };
+    const fields = await apiGet(prefix, "/app/form/fields.json", fieldParams);
     const properties = fields.properties || {};
     if (!Object.keys(properties).length) throw new Error(`App ${appId}: 出力できるフィールドがありません`);
     const records = await fetchAllRecords(prefix, appId, query || "", (message) => setStatus(`App ${appId}: ${message}`));
@@ -2917,12 +3056,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       appId,
       guestId: guestId || "",
       recordCount: records.length,
-      csv: buildRecordCsvExport(records, properties)
+      csv: buildRecordCsvExport(records, properties, exportOptions)
     };
   }
   async function runCsvExportStandalone(opts, setStatus) {
-    const { appId, guestId, query, filename } = opts;
-    const result = await buildCsvExportForApp(appId, guestId, query || "", setStatus);
+    const { appId, guestId, query, filename, headerMode, lineEnding, neutralizeFormula } = opts;
+    const exportOptions = { headerMode, lineEnding, neutralizeFormula };
+    const result = await buildCsvExportForApp(appId, guestId, query || "", setStatus, exportOptions);
     const appLabel = buildAppFilenameLabel(appId, "");
     if (!result.csv.tables.length) {
       const blob2 = new Blob([result.csv.parentCsv], { type: "text/csv;charset=utf-8;" });
@@ -2953,10 +3093,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     });
     const query = opts?.query || "";
     const filename = String(opts?.filename || "").trim();
+    const exportOptions = {
+      headerMode: opts?.headerMode,
+      lineEnding: opts?.lineEnding,
+      neutralizeFormula: opts?.neutralizeFormula
+    };
     if (!apps.length) throw new Error("対象アプリを1件以上入力してください");
     if (apps.length === 1) {
       const app = apps[0];
-      return await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || "", query, filename }, setStatus);
+      return await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || "", query, filename, ...exportOptions }, setStatus);
     }
     const JSZip = await loadJSZipLite();
     const zip = new JSZip();
@@ -2971,7 +3116,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       let folder = "";
       setStatus(`CSV出力中... (${i + 1}/${apps.length})`);
       try {
-        const result = await buildCsvExportForApp(app.appId, app.guestId || "", query, setStatus);
+        const result = await buildCsvExportForApp(app.appId, app.guestId || "", query, setStatus, exportOptions);
         const guestSuffix = result.guestId ? `_guest${sanitizeZipSegment(result.guestId)}` : "";
         folder = uniqueZipEntryName(used, `app_${sanitizeZipSegment(result.appId)}${guestSuffix}`);
         addRecordCsvFiles(zip, result.csv, `${folder}/`);
@@ -3029,40 +3174,6 @@ ${failures.join("\n")}`);
 
   // src/entries/appSearchControl.ts
   init_api();
-
-  // src/handlers/diffFocus.ts
-  init_state();
-  init_dialog();
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
-  // src/entries/appSearchControl.ts
   init_utils();
   var RESULT_CSS_ID = "kus-app-search-styles";
   var RESULT_CSS = `
@@ -3289,12 +3400,15 @@ ${failures.join("\n")}`);
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
     });
-    keyword.addEventListener("keydown", (e) => {
+    const onEnterKey = (e) => {
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         void runSearch();
       }
-    });
+    };
+    keyword.addEventListener("keydown", onEnterKey);
+    guest.addEventListener("keydown", onEnterKey);
+    space.addEventListener("keydown", onEnterKey);
     return details;
   }
 
@@ -3315,6 +3429,7 @@ ${failures.join("\n")}`);
     cardApps.body.appendChild(createAppSearchControl(panel, {
       targets: [{ label: "対象アプリへ追加", apply: (id, name, guestId) => {
         const result = appTable.putApp(id, guestId || "", { focus: true, appName: name });
+        syncViewAppFromTable();
         const note = result.action === "existing" ? "（追加済み）" : result.action === "filled" ? "（空行へ設定）" : "";
         return {
           message: `アプリ #${id}${name ? ` (${name})` : ""} を対象表に設定しました${note}`,
@@ -3332,18 +3447,33 @@ ${failures.join("\n")}`);
     const loadViews = makeButton("一覧読込", "sub");
     const useView = makeButton("▼ 条件へ反映", "sub");
     const filename = makeInput({ placeholder: "空欄で自動命名（CSV / テーブルあり・複数アプリはZIP）", width: "wide" });
+    const headerModeSelect = makeSelect([
+      ["code", "フィールドコード（既定）"],
+      ["label", "フィールド名（ラベル）"],
+      ["both", "フィールド名 [コード]"]
+    ]);
+    headerModeSelect.setAttribute("aria-label", "CSVヘッダー形式");
+    const lineEndingSelect = makeSelect([
+      ["lf", "LF（既定）"],
+      ["crlf", "CRLF（Windows標準）"]
+    ]);
+    lineEndingSelect.setAttribute("aria-label", "改行コード");
+    const neutralizeCb = makeCheck({ label: "先頭の = + - @ を数式無害化する（Excel向け・既定）", checked: true });
     cardCond.body.appendChild(makeRow([query, useView], { label: "共通クエリ" }));
     cardCond.body.appendChild(makeRow([viewApp, viewGuest, loadViews], { label: "一覧取得元" }));
     cardCond.body.appendChild(makeRow(viewSelect, { label: "一覧" }));
     const viewNote = makeNote("一覧を読み込むと、絞り込みと並び順を共通クエリへ反映できます。");
     cardCond.body.appendChild(viewNote);
     cardCond.body.appendChild(makeRow(filename, { label: "ファイル名" }));
-    cardCond.body.appendChild(makeNote("クエリは全対象アプリへ共通適用します。各アプリのフィールドコードをヘッダーにし、テーブル明細は1行ずつ別CSVに出力します。親レコードの $id で明細を紐付けできます。"));
+    cardCond.body.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: "出力形式" }));
+    cardCond.body.appendChild(makeRow(neutralizeCb.label, { label: "Excel保護" }));
+    cardCond.body.appendChild(makeNote("クエリは全対象アプリへ共通適用します。テーブル明細は1行ずつ別CSVに出力し、親レコードの $id で明細を紐付けできます。"));
     cardCond.body.appendChild(makeNote("出力は閲覧・集計用です。CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に ' を付けます（数値は対象外）。添付はファイル名のみを出力します。ファイル本体も必要な場合は、レコード管理のバックアップで「添付ファイルも保存」を選んでください。"));
     cardCond.body.appendChild(makeNote("limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します。複数アプリで一部が失敗しても成功分は ZIP に保存し、失敗一覧を manifest.txt に記録します。"));
     panel.body.insertBefore(cardCond.card, panel.status);
     let loadedViews = [];
     let viewContext = "";
+    let viewAppEdited = false;
     const viewKey = () => `${viewApp.value.trim()}::${viewGuest.value.trim()}`;
     const clearLoadedViews = (message = "一覧を読み込んでください。") => {
       loadedViews = [];
@@ -3351,11 +3481,38 @@ ${failures.join("\n")}`);
       viewSelect.replaceChildren(new Option("一覧を選択（任意）", ""));
       viewNote.textContent = message;
     };
-    for (const input of [viewApp, viewGuest]) {
-      input.addEventListener("input", () => clearLoadedViews("一覧取得元が変わりました。一覧を再取得してください。"));
-      input.addEventListener("change", () => clearLoadedViews("一覧取得元が変わりました。一覧を再取得してください。"));
+    function syncViewAppFromTable() {
+      if (viewAppEdited) return;
+      const first = appTable.getApps()[0];
+      if (!first) return;
+      const nextApp = first.appId || "";
+      const nextGuest = first.guestId || "";
+      if (viewApp.value !== nextApp || viewGuest.value !== nextGuest) {
+        viewApp.value = nextApp;
+        viewGuest.value = nextGuest;
+        clearLoadedViews("対象アプリの先頭行に合わせて一覧取得元を更新しました。");
+      }
     }
+    appTable.element.addEventListener("input", syncViewAppFromTable);
+    appTable.element.addEventListener("change", syncViewAppFromTable);
+    for (const input of [viewApp, viewGuest]) {
+      input.addEventListener("input", () => {
+        viewAppEdited = true;
+        clearLoadedViews("一覧取得元が変わりました。一覧を再取得してください。");
+      });
+      input.addEventListener("change", () => {
+        viewAppEdited = true;
+        clearLoadedViews("一覧取得元が変わりました。一覧を再取得してください。");
+      });
+    }
+    viewSelect.addEventListener("change", () => {
+      const view = loadedViews.find((item) => item.id === viewSelect.value);
+      if (!view) return;
+      const scopeNote = view.type === "CALENDAR" ? "（カレンダーの表示月による絞り込みは含みません）" : view.type === "CUSTOM" ? "（カスタマイズ画面の独自処理は含みません）" : "";
+      viewNote.textContent = `${view.name} / 条件: ${view.filter || "全件"} / 並び順: ${view.sort || "レコードID順"}${scopeNote}`;
+    });
     loadViews.addEventListener("click", () => liteRun(panel, "一覧情報を取得中…", async () => {
+      syncViewAppFromTable();
       const sourceKey = viewKey();
       if (!viewApp.value.trim()) throw new Error("一覧取得元のアプリIDを入力してください");
       const source = validateRecordConnection(viewApp.value, viewGuest.value);
@@ -3380,8 +3537,9 @@ ${failures.join("\n")}`);
       viewSelect.replaceChildren(new Option("一覧を選択（任意）", ""));
       for (const v of views) {
         const opt = document.createElement("option");
+        const typeLabel = { LIST: "表", CALENDAR: "カレンダー", CUSTOM: "カスタマイズ" }[v.type] || v.type;
         opt.value = v.id;
-        opt.textContent = `${v.name} ${v.query ? `(${v.query.slice(0, 80)})` : "(全件)"}`;
+        opt.textContent = `${v.name}（${typeLabel}） ${v.query ? `(${v.query.slice(0, 80)})` : "(全件)"}`;
         viewSelect.appendChild(opt);
       }
       viewNote.textContent = `${source.appId} から ${views.length}件の一覧を取得しました。全件の一覧を選ぶと既存のクエリを消去します。`;
@@ -3409,7 +3567,14 @@ ${failures.join("\n")}`);
     run.style.width = "100%";
     run.addEventListener("click", () => liteRun(panel, "CSV出力中…", async () => {
       const outcome = await runCsvExportBatchStandalone(
-        { apps: appTable.getApps(), query: query.value.trim(), filename: filename.value.trim() },
+        {
+          apps: appTable.getApps(),
+          query: query.value.trim(),
+          filename: filename.value.trim(),
+          headerMode: headerModeSelect.value,
+          lineEnding: lineEndingSelect.value === "crlf" ? "\r\n" : "\n",
+          neutralizeFormula: neutralizeCb.checkbox.checked
+        },
         (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
       if (outcome?.issues?.length) panel.setResult(outcome.issues.join("\n"));
@@ -3439,6 +3604,11 @@ ${failures.join("\n")}`);
       }
       return "";
     };
+    const headerLabelMap = {
+      code: "フィールドコード",
+      label: "フィールド名（ラベル）",
+      both: "フィールド名 [コード]"
+    };
     installLiteWorkflow(panel, {
       setup: [cardApps.card, cardCond.card],
       actions: [{
@@ -3447,7 +3617,13 @@ ${failures.join("\n")}`);
         description: "1アプリはCSV、テーブルあり・複数アプリは親CSVと明細CSVをZIPで保存します。",
         button: run,
         validate: validateApps,
-        summary: () => [["対象", appTable.getApps().map((r) => connectionSummary(r.appId, r.guestId)).join("\n")], ["絞り込み条件", query.value.trim() || "全件"], ["保存形式", appTable.count() > 1 ? "ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）" : "CSV（テーブルがある場合は親CSV・明細CSVのZIP）"], ["ファイル名", filename.value.trim() || "自動命名"]]
+        summary: () => [
+          ["対象", appTable.getApps().map((r) => connectionSummary(r.appId, r.guestId)).join("\n")],
+          ["絞り込み条件", query.value.trim() || "全件"],
+          ["保存形式", appTable.count() > 1 ? "ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）" : "CSV（テーブルがある場合は親CSV・明細CSVのZIP）"],
+          ["ヘッダー / 改行 / 数式保護", `${headerLabelMap[headerModeSelect.value] || "フィールドコード"} / ${lineEndingSelect.value === "crlf" ? "CRLF" : "LF"} / 数式無害化: ${neutralizeCb.checkbox.checked ? "あり" : "なし"}`],
+          ["ファイル名", filename.value.trim() || "自動命名"]
+        ]
       }]
     });
   }

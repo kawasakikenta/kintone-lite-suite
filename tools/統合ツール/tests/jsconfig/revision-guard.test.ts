@@ -83,4 +83,13 @@ describe('JS/CSS apply revision guard', () => {
       .resolves.toEqual({ revision: '8' });
     expect(apiPut).toHaveBeenCalledWith('/k/v1/preview', '/app/customize.json', expect.objectContaining({ revision: '7' }));
   });
+
+  it('rejects non-numeric targetAppId or targetGuestId before calling API', async () => {
+    await expect(runApplyJsConfigStandalone({
+      targetAppId: 'abc',
+      jsonText: JSON.stringify({ desktop: { js: [], css: [] } }),
+      skipConfirm: true
+    }, vi.fn(), vi.fn())).rejects.toThrow(/半角数字/);
+    expect(apiGet).not.toHaveBeenCalled();
+  });
 });

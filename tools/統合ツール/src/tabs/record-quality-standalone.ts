@@ -16,9 +16,21 @@ function connection(appIdsText: string, guestId: string) {
   return { appIds, prefix: buildApiPrefix(guestId, false) };
 }
 
-export async function runLoadQualityFieldsStandalone(options: { appIdsText: string; guestId: string }) {
+export async function runLoadQualityFieldsStandalone(options: { appIdsText: string; guestId: string; intersectAll?: boolean }) {
   const { appIds, prefix } = connection(options.appIdsText, options.guestId);
-  return readQualityFields((await apiGet(prefix, '/app/form/fields.json', { app: appIds[0], lang: 'user' }))?.properties);
+  const firstFields = readQualityFields((await apiGet(prefix, '/app/form/fields.json', { app: appIds[0], lang: 'user' }))?.properties);
+  if (!options.intersectAll || appIds.length <= 1) return firstFields;
+  let common = firstFields;
+  for (let i = 1; i < appIds.length; i++) {
+    try {
+      const nextProps = (await apiGet(prefix, '/app/form/fields.json', { app: appIds[i], lang: 'user' }))?.properties;
+      const nextMap = new Map(readQualityFields(nextProps).map(f => [f.code, f.type]));
+      common = common.filter(f => nextMap.get(f.code) === f.type);
+    } catch {
+      // Keep existing fields if a secondary app cannot be fetched during field loading
+    }
+  }
+  return common;
 }
 
 export async function runRecordQualityStandalone(options: QualityOptions & { appIdsText: string; guestId: string; codes: string[]; query: string }, setStatus: Status): Promise<QualityAppResult[]> {

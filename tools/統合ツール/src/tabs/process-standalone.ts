@@ -156,6 +156,15 @@ export function buildProcessMermaidSource(states: any, actions: any[], highlight
   for (const a of validActions) {
     lines.push(`    ${idOf(String(a.from))} --> ${idOf(String(a.to))} : ${mermaidTransitionLabel(a.name)}`);
   }
+  if (validActions.length > 0) {
+    const hasIncoming = new Set(validActions.map((a) => String(a.to)));
+    const hasOutgoing = new Set(validActions.map((a) => String(a.from)));
+    for (const st of stateNames) {
+      if (hasIncoming.has(st) && !hasOutgoing.has(st)) {
+        lines.push(`    ${idOf(st)} --> [*]`);
+      }
+    }
+  }
   if (highlightState != null && highlightState !== '' && ids.has(String(highlightState))) {
     lines.push('');
     lines.push('    classDef current fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#0f172a');
@@ -190,13 +199,110 @@ export function findInitialState(states: any, actions: any[]): string | null {
   return [...remaining][0] || names[0];
 }
 
+export interface ProcessFlowConnection {
+  appId: string;
+  guestId: string;
+  preview?: boolean;
+}
+
 /** Validate process-flow inputs before a guest-space REST path is built. */
-export function validateProcessConnection(appId: unknown, guestId: unknown = ''): { appId: string; guestId: string } {
+export function validateProcessConnection(appId: unknown, guestId: unknown = '', preview?: unknown): ProcessFlowConnection {
   const app = String(appId ?? '').trim();
   if (!/^[1-9]\d*$/.test(app)) throw new Error('アプリIDは正の数値で入力してください');
   const guest = String(guestId ?? '').trim();
   if (guest && !/^[1-9]\d*$/.test(guest)) throw new Error('ゲストIDは正の数値で入力してください');
-  return { appId: app, guestId: guest };
+  return preview === undefined ? { appId: app, guestId: guest } : { appId: app, guestId: guest, preview: !!preview };
+}
+
+export async function fetchProcessStatusSettings(connection: { appId: string; guestId?: string; preview?: boolean }) {
+  const prefix = buildApiPrefix(connection.guestId || '', !!connection.preview);
+  return apiGet(prefix, '/app/status.json', { app: connection.appId, lang: 'user' });
+}
+
+export interface ProcessStructureSummary {
+  stateCount: number;
+  actionCount: number;
+  startStates: string[];
+  endStates: string[];
+  branchingStates: string[];
+  undefinedStates: string[];
+  orphanActionCount: number;
+  warnings: string[];
+}
+
+export function summarizeProcessStructure(states: any, actions: any[], orphanActionCount = 0): ProcessStructureSummary {
+  const stateObj = states && typeof states === 'object' && !Array.isArray(states) ? states : {};
+  const stateNames = Object.keys(stateObj);
+  const validActions = (Array.isArray(actions) ? actions : []).filter(
+    (a) => a && a.from != null && a.to != null && String(a.from).trim() && String(a.to).trim()
+  );
+  const startSet = new Set(stateNames);
+  for (const a of validActions) startSet.delete(String(a.to));
+  const initial = findInitialState(stateObj, validActions);
+  if (initial != null && stateObj[initial]) startSet.add(initial);
+  const startStates = stateNames.filter((s) => startSet.has(s));
+  const endStates = stateNames.filter((s) => !validActions.some((a) => String(a.from) === s));
+  const branchingStates = stateNames.filter((s) => validActions.filter((a) => String(a.from) === s).length >= 2);
+  const undefinedSet = new Set<string>();
+  for (const a of validActions) {
+    if (!stateObj[String(a.from)]) undefinedSet.add(String(a.from));
+    if (!stateObj[String(a.to)]) undefinedSet.add(String(a.to));
+  }
+  const undefinedStates = [...undefinedSet];
+  const warnings: string[] = [];
+  if (stateNames.length > 0 && !startStates.length) warnings.push('始点状態が見つかりません');
+  if (stateNames.length > 0 && validActions.length > 0 && !endStates.length) warnings.push('終端状態（完了状態）がありません（循環のみのフロー）');
+  if (undefinedStates.length) warnings.push(`未定義の状態を参照するアクションがあります（${undefinedStates.join(', ')}）`);
+  if (orphanActionCount > 0) warnings.push(`from/to 未設定のアクション ${orphanActionCount}件を除外しました`);
+  return {
+    stateCount: stateNames.length,
+    actionCount: validActions.length,
+    startStates,
+    endStates,
+    branchingStates,
+    undefinedStates,
+    orphanActionCount,
+    warnings
+  };
+}
+
+export function renderProcessStructureSummaryHtml(summary: ProcessStructureSummary): string {
+  const chip = (label: string, val: string | number, color: string) =>
+    `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;background:${color}1a;color:${color};font-size:11px;font-weight:600">${esc(label)} <span>${esc(String(val))}</span></span>`;
+  const warningHtml = summary.warnings.length
+    ? `<div style="margin-top:6px;color:#b45309;font-size:11px;line-height:1.5">⚠ ${summary.warnings.map(esc).join(' / ')}</div>`
+    : '';
+  return `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+    ${chip('状態', summary.stateCount, '#0f172a')}
+    ${chip('アクション', summary.actionCount, '#1e40af')}
+    ${chip('始点', summary.startStates.join(', ') || 'なし', '#16a34a')}
+    ${chip('終端', summary.endStates.join(', ') || 'なし', '#9333ea')}
+    ${chip('分岐状態', summary.branchingStates.length, '#d97706')}
+  </div>${warningHtml}`;
+}
+
+export function describeStateAssignee(stateDef: any): string {
+  const assignee = stateDef?.assignee;
+  if (!assignee || typeof assignee !== 'object') return '作業者設定: なし';
+  const entities = Array.isArray(assignee.entities) ? assignee.entities : [];
+  if (!entities.length) return '作業者設定: なし';
+  const labels = entities.map((item: any) => {
+    const ent = item?.entity || item;
+    const code = String(ent?.code || '').trim();
+    const type = String(ent?.type || '').trim();
+    const sub = item?.includeSubs ? '（下位組織含む）' : '';
+    if (type === 'CREATOR') return '作成者';
+    return `${code || type || '未設定'}${sub}`;
+  });
+  const mode = assignee.type === 'ALL' ? '全員' : assignee.type === 'ANY' ? '誰でも' : '1人';
+  return `作業者(${mode}): ${labels.join(', ')}`;
+}
+
+export function describeSimActionCondition(action: any): string {
+  if (!action) return '';
+  const cond = String(action.filterCond || '').trim();
+  const typeNote = action.type === 'SECONDARY' ? '（作業者以外も実行可）' : '';
+  return `実行条件: ${cond || '条件なし'}${typeNote}`;
 }
 
 function renderFallbackFlowHtml(states: any, actions: any, highlightState: string | undefined, reason: string) {
@@ -226,10 +332,136 @@ function renderFallbackFlowHtml(states: any, actions: any, highlightState: strin
   `;
 }
 
+export interface StandaloneProcessSimUi {
+  container: HTMLElement;
+  current: HTMLElement;
+  select: HTMLSelectElement;
+  startBtn: HTMLButtonElement;
+  execBtn: HTMLButtonElement;
+  undoBtn?: HTMLButtonElement | null;
+  historyEl?: HTMLElement | null;
+  detailEl?: HTMLElement | null;
+}
+
+export function bindStandaloneProcessSimulation(
+  states: any,
+  actions: any[],
+  simUi: StandaloneProcessSimUi,
+  options: {
+    isCurrent: () => boolean;
+    commitStatus: (msg: string, err?: boolean, tone?: 'ok' | 'warn') => void;
+    renderMermaid: (highlightState: string | null) => Promise<boolean>;
+  }
+) {
+  let current: string | null = null;
+  let history: Array<{ from: string; action: string; to: string }> = [];
+  const { container, current: curEl, select, startBtn, execBtn, undoBtn, historyEl, detailEl } = simUi;
+  const { isCurrent, commitStatus, renderMermaid } = options;
+  container.style.display = 'block';
+
+  const getAvailableActions = () => (current ? actions.filter((a) => a.from === current) : []);
+
+  const updateDetail = () => {
+    if (!detailEl) return;
+    if (!current) {
+      detailEl.textContent = '「最初から開始」を押すと、各状態の作業者設定と選択アクションの実行条件を表示します。';
+      return;
+    }
+    const avail = getAvailableActions();
+    const idx = Number(select.value);
+    const selectedAction = Number.isFinite(idx) ? avail[idx] : avail[0];
+    const parts = [describeStateAssignee(states?.[current])];
+    if (selectedAction) parts.push(describeSimActionCondition(selectedAction));
+    detailEl.textContent = parts.filter(Boolean).join(' / ');
+  };
+
+  const updateHistory = () => {
+    if (undoBtn) undoBtn.disabled = history.length === 0;
+    if (!historyEl) return;
+    if (!history.length) {
+      historyEl.textContent = current ? `開始: ${current}（遷移履歴なし）` : '遷移履歴: まだ開始していません';
+      return;
+    }
+    const chain = [history[0].from, ...history.map((h) => `[${h.action}] → ${h.to}`)].join(' ');
+    historyEl.textContent = `遷移履歴 (${history.length}手): ${chain}`;
+  };
+
+  const updateSim = () => {
+    if (!current) {
+      curEl.textContent = '未開始';
+      curEl.style.background = '#e2e8f0';
+      select.innerHTML = '<option value="">-- 開始ボタンを押してください --</option>';
+      select.disabled = true;
+      updateDetail();
+      updateHistory();
+      return;
+    }
+    curEl.textContent = current;
+    curEl.style.background = '#bbf7d0';
+    select.disabled = false;
+    const avail = getAvailableActions();
+    if (avail.length === 0) {
+      select.innerHTML = '<option value="">-- 次のアクションなし（完了） --</option>';
+      select.disabled = true;
+    } else {
+      select.innerHTML = avail.map((a, idx) => `<option value="${idx}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join('');
+    }
+    updateDetail();
+    updateHistory();
+  };
+
+  if (typeof select.addEventListener === 'function') {
+    select.onchange = () => updateDetail();
+  }
+  updateSim();
+
+  startBtn.onclick = async () => {
+    if (!isCurrent()) return;
+    current = findInitialState(states, actions);
+    history = [];
+    updateSim();
+    if (current) {
+      commitStatus('シミュレーション開始: ' + current, false, 'ok');
+      await renderMermaid(current);
+    } else {
+      commitStatus('ステータスが無いためシミュレーションを開始できません', false, 'warn');
+    }
+  };
+  execBtn.onclick = async () => {
+    if (!isCurrent()) return;
+    if (select.disabled) {
+      // 何も起きないボタンにならないよう、押せない理由を示す
+      commitStatus(current ? `「${current}」から実行できるアクションはありません（終端のステータスです）` : '先に「最初から開始」を押してください', false, 'warn');
+      return;
+    }
+    const idx = Number(select.value);
+    if (!Number.isFinite(idx)) return;
+    // 同名アクションが複数ある場合でも、表示中の選択肢（from に一致する並び）から確実に選ぶ
+    const action = getAvailableActions()[idx];
+    if (!action) return;
+    const prev = current || '';
+    current = action.to;
+    history.push({ from: prev, action: action.name, to: action.to });
+    updateSim();
+    commitStatus(`アクション「${action.name}」実行 → 「${action.to}」`, false, 'ok');
+    await renderMermaid(action.to);
+  };
+  if (undoBtn) {
+    undoBtn.onclick = async () => {
+      if (!isCurrent() || !history.length) return;
+      const last = history.pop()!;
+      current = last.from;
+      updateSim();
+      commitStatus(`1手戻しました: 「${current}」`, false, 'ok');
+      await renderMermaid(current);
+    };
+  }
+}
+
 /**
- * @param {{ appId: string, guestId?: string }} source
+ * @param {{ appId: string, guestId?: string, preview?: boolean }} source
  * @param {(msg: string, err?: boolean, tone?: 'ok' | 'warn') => void} setStatus err を指定しない通知は処理中表示になるため、完了後の通知は tone を渡す
- * @param {{ textEl: HTMLTextAreaElement, viewEl: HTMLElement, simUi?: { container: HTMLElement, current: HTMLElement, select: HTMLSelectElement, startBtn: HTMLButtonElement, execBtn: HTMLButtonElement }, isCurrent?: () => boolean }} targets
+ * @param {{ textEl: HTMLTextAreaElement, viewEl: HTMLElement, summaryEl?: HTMLElement, simUi?: StandaloneProcessSimUi, isCurrent?: () => boolean }} targets
  */
 export async function runRenderProcessFlowStandalone(source, setStatus, targets) {
   const isCurrent = typeof targets?.isCurrent === 'function' ? targets.isCurrent : () => true;
@@ -237,12 +469,10 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
     if (isCurrent()) setStatus(message, error, tone);
   };
   if (!isCurrent()) return null;
-  const connection = validateProcessConnection(source.appId, source.guestId);
-  const app = connection.appId;
-  const prefix = buildApiPrefix(connection.guestId, false);
+  const connection = validateProcessConnection(source.appId, source.guestId, source.preview);
   commitStatus('プロセス管理を取得中...');
 
-  const res = await apiGet(prefix, '/app/status.json', { app });
+  const res = await fetchProcessStatusSettings(connection);
   if (!isCurrent()) return null;
   // 空・非オブジェクトの応答を「プロセス管理は無効」と取り違えず、TypeError でもなく原因が分かる形で止める
   if (!res || typeof res !== 'object') throw new Error('プロセス管理の設定を取得できませんでした（想定外の応答形式です）');
@@ -251,6 +481,7 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
     // Mermaid ソースではない文章を入れると「コピー」「.mmd で保存」がそのまま書き出してしまう
     targets.textEl.value = '';
     targets.viewEl.innerHTML = '<div style="color:#64748b">プロセス管理は無効です</div>';
+    if (targets.summaryEl) targets.summaryEl.innerHTML = '';
     if (targets.simUi) targets.simUi.container.style.display = 'none';
     commitStatus('プロセス管理は無効です');
     return null;
@@ -261,11 +492,18 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
   const actions = rawActions.filter((a: any) => a && a.from != null && a.to != null
     && String(a.from).trim() && String(a.to).trim());
   const orphanActions = rawActions.length - actions.length;
+  const summary = summarizeProcessStructure(states, actions, orphanActions);
+  if (targets.summaryEl) {
+    targets.summaryEl.innerHTML = renderProcessStructureSummaryHtml(summary);
+  }
   let renderError = '';
   let renderFailure = '';
+  let renderSeq = 0;
 
   const renderMermaid = async (highlightState) => {
-    if (!isCurrent()) return false;
+    const seq = ++renderSeq;
+    const isFresh = () => isCurrent() && seq === renderSeq;
+    if (!isFresh()) return false;
     const md = buildProcessMermaidSource(states, actions, highlightState);
     // 共有・保存するソースにはシミュレーション中の現在状態の強調を含めない
     targets.textEl.value = highlightState ? buildProcessMermaidSource(states, actions, null) : md;
@@ -273,14 +511,14 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
     let phase = '読み込み';
     try {
       const mermaidObj = await ensureMermaid();
-      if (!isCurrent()) return false;
+      if (!isFresh()) return false;
       phase = '描画';
-      const { svg } = await mermaidObj.render('mermaid-svg-generated-' + Date.now(), md);
-      if (!isCurrent()) return false;
+      const { svg } = await mermaidObj.render(`mermaid-svg-generated-${Date.now()}-${seq}`, md);
+      if (!isFresh()) return false;
       targets.viewEl.innerHTML = svg;
       return true;
     } catch (e) {
-      if (!isCurrent()) return false;
+      if (!isFresh()) return false;
       renderFailure = `Mermaid.js の${phase}に失敗`;
       targets.viewEl.innerHTML = renderFallbackFlowHtml(states, actions, highlightState, `${renderFailure}したため、簡易表示に切り替えました。`);
       renderError = e instanceof Error ? e.message : String(e);
@@ -299,60 +537,12 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
   }
 
   if (targets.simUi) {
-    let current = null;
-    const { container, current: curEl, select, startBtn, execBtn } = targets.simUi;
-    container.style.display = 'block';
-
-    const updateSim = () => {
-      if (!current) {
-        curEl.textContent = '未開始';
-        curEl.style.background = '#e2e8f0';
-        select.innerHTML = '<option value="">-- 開始ボタンを押してください --</option>';
-        select.disabled = true;
-        return;
-      }
-      curEl.textContent = current;
-      curEl.style.background = '#bbf7d0';
-      select.disabled = false;
-      const avail = actions.filter((a) => a.from === current);
-      if (avail.length === 0) {
-        select.innerHTML = '<option value="">-- 次のアクションなし（完了） --</option>';
-        select.disabled = true;
-      } else {
-        select.innerHTML = avail.map((a, idx) => `<option value="${idx}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join('');
-      }
-    };
-    updateSim();
-
-    startBtn.onclick = async () => {
-      if (!isCurrent()) return;
-      current = findInitialState(states, actions);
-      updateSim();
-      if (current) {
-        commitStatus('シミュレーション開始: ' + current, false, 'ok');
-        await renderMermaid(current);
-      } else {
-        commitStatus('ステータスが無いためシミュレーションを開始できません', false, 'warn');
-      }
-    };
-    execBtn.onclick = async () => {
-      if (!isCurrent()) return;
-      if (select.disabled) {
-        // 何も起きないボタンにならないよう、押せない理由を示す
-        commitStatus(current ? `「${current}」から実行できるアクションはありません（終端のステータスです）` : '先に「最初から開始」を押してください', false, 'warn');
-        return;
-      }
-      const idx = Number(select.value);
-      if (!Number.isFinite(idx)) return;
-      // 同名アクションが複数ある場合でも、表示中の選択肢（from に一致する並び）から確実に選ぶ
-      const action = actions.filter((a) => a.from === current)[idx];
-      if (!action) return;
-      current = action.to;
-      updateSim();
-      commitStatus(`アクション「${action.name}」実行 → 「${action.to}」`, false, 'ok');
-      await renderMermaid(action.to);
-    };
+    bindStandaloneProcessSimulation(states, actions, targets.simUi, {
+      isCurrent,
+      commitStatus,
+      renderMermaid
+    });
   }
 
-  return { states, actions };
+  return { states, actions, summary };
 }

@@ -50,50 +50,99 @@ export function mountSettingsExportLitePanel() {
     } }]
   });
 
-  cardTarget.body.appendChild(appTable.element);
-  cardTarget.body.appendChild(makeNote('各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。'));
-
+  const prev = makeCheck({ label: 'プレビュー環境から取得' });
   const spaceKw = makeInput({ placeholder: 'スペースID', width: 'narrow' });
   const spaceBtn = makeButton('スペース内アプリを表に追加', 'sub');
-  cardTarget.body.appendChild(makeRow([spaceKw, searchGuest, spaceBtn], { label: 'スペース' }));
+  const spaceRow = makeRow([spaceKw, searchGuest, spaceBtn], { label: 'スペース' });
+
+  cardTarget.body.appendChild(searchControl);
+  cardTarget.body.appendChild(appTable.element);
+  cardTarget.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
+  cardTarget.body.appendChild(foldWorkflowSection('スペースから追加', spaceRow));
+  cardTarget.body.appendChild(makeNote('各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。'));
   panel.body.insertBefore(cardTarget.card, panel.status);
 
   // ---- 取得セクション ----
   const cardScope = makeCard({ title: '取得セクション', number: 2 });
+  cardScope.actions.style.flexWrap = 'wrap';
   const chipBox = document.createElement('div');
   chipBox.className = 'kus-lp__chips';
   chipBox.setAttribute('role', 'group');
   chipBox.setAttribute('aria-label', '取得するセクション');
   const chips = SETTINGS_EXPORT_SCOPE_DEFS.map((s) => makeChip({ label: s.label, value: s.key, checked: true }));
   chips.forEach((c) => chipBox.appendChild(c.label));
-  cardScope.body.appendChild(chipBox);
+
+  const countBadge = document.createElement('span');
+  countBadge.className = 'kus-lp__count';
+  const updateScopeCount = () => {
+    const selectedCount = chips.filter((c) => c.checkbox.checked).length;
+    countBadge.textContent = `選択 ${selectedCount} / ${chips.length}`;
+  };
+  updateScopeCount();
+  chipBox.addEventListener('change', updateScopeCount);
+
+  const applyScopeSelection = (predicate: (key: string) => boolean) => {
+    chips.forEach((c) => {
+      c.checkbox.checked = predicate(c.checkbox.value);
+    });
+    updateScopeCount();
+    chips[0]?.checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+  };
 
   const allBtn = makeButton('全選択', 'sub');
   const noneBtn = makeButton('全解除', 'sub');
+  cardScope.actions.appendChild(countBadge);
   cardScope.actions.appendChild(allBtn);
   cardScope.actions.appendChild(noneBtn);
-  allBtn.addEventListener('click', () => chips.forEach((c) => { c.checkbox.checked = true; }));
-  noneBtn.addEventListener('click', () => chips.forEach((c) => { c.checkbox.checked = false; }));
+  allBtn.addEventListener('click', () => applyScopeSelection(() => true));
+  noneBtn.addEventListener('click', () => applyScopeSelection(() => false));
+
+  const SCOPE_PRESETS: Array<{ label: string; keys: Set<string> }> = [
+    {
+      label: '基本のみ',
+      keys: new Set([
+        'appSettings',
+        'appInfo',
+        'fieldSettings',
+        'layoutSettings',
+        'formSettings',
+        'viewSettings',
+        'reportSettings',
+        'processSettings',
+        'actionSettings',
+        'categories'
+      ])
+    },
+    {
+      label: '権限のみ',
+      keys: new Set(['appAcl', 'fieldAcl', 'recordPermissions'])
+    },
+    {
+      label: '通知のみ',
+      keys: new Set(['notifications', 'perRecordNotifications', 'reminderNotifications'])
+    },
+    {
+      label: 'カスタマイズのみ',
+      keys: new Set(['pluginSettings', 'customizeSettings'])
+    }
+  ];
+  const presetToolbar = document.createElement('div');
+  presetToolbar.className = 'kus-lp__toolbar';
+  for (const preset of SCOPE_PRESETS) {
+    const btn = makeButton(preset.label, 'sub');
+    btn.addEventListener('click', () => applyScopeSelection((key) => preset.keys.has(key)));
+    presetToolbar.appendChild(btn);
+  }
+  cardScope.body.appendChild(presetToolbar);
+  cardScope.body.appendChild(chipBox);
 
   // selectedScopeKeys() は配下の input[type=checkbox]:checked を集計するので
   // chipBox をそのまま scopeRoot として渡す（クローン同期は change 未発火で壊れる）
   const scopeRoot = chipBox;
   panel.body.insertBefore(cardScope.card, panel.status);
 
-  // ---- プレビュー / 出力 ----
-  const cardOpt = makeCard({ title: '出力', number: 3, soft: true });
-  const prev = makeCheck({ label: 'プレビュー環境から取得' });
-  cardOpt.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
-
   const btnJson = makeButton('JSON で保存', 'primary', { icon: '↓' });
   const btnZip = makeButton('ZIP で保存', 'primary', { icon: '↓' });
-  const btnGrid = document.createElement('div');
-  btnGrid.className = 'kus-lp__btn-grid';
-  btnGrid.appendChild(btnJson);
-  btnGrid.appendChild(btnZip);
-  cardOpt.body.appendChild(btnGrid);
-  cardOpt.body.appendChild(makeNote('JSON は全アプリを 1 ファイルに、ZIP は「アプリ名(appID).json」＋ manifest.json で個別保存します。'));
-  panel.body.insertBefore(cardOpt.card, panel.status);
 
   // ---- 結果サマリ ----
   const summary = document.createElement('div');
@@ -145,9 +194,6 @@ export function mountSettingsExportLitePanel() {
     summary.classList.remove('kus-lp__panel-html--empty');
   }));
 
-  cardTarget.body.appendChild(searchControl);
-  cardTarget.body.appendChild(foldWorkflowSection('スペースから追加', spaceKw.closest('.kus-lp__row') as HTMLElement));
-  cardTarget.body.appendChild(prev.label);
   const exportProblem = () => {
     const rows = appTable.getApps();
     if (!rows.length) return '対象アプリを1件以上指定してください。';

@@ -6,6 +6,7 @@ import { buildApiPrefix, apiGet } from '../api.js';
 import { setStatus } from '../ui/components.js';
 import { commonParams } from './diff.js';
 import { getToolDocument } from '../ui/dialog.js';
+import { buildProcessMermaidSource, findInitialState } from './process-standalone.js';
 
 let pfSimStates: any = null;
 let pfSimActions: any[] | null = null;
@@ -138,31 +139,7 @@ function renderFallbackFlowHtml(states, actions, highlightState) {
 export async function redrawProcessFlow(highlightState) {
   if (!pfSimStates) return;
 
-  let md = 'stateDiagram-v2\n';
-  const safeStateName = (n) => String(n == null ? '' : n).replace(/[*_~\[\]()]/g, '');
-  const safeActionName = (n) => String(n == null ? '' : n).replace(/[*_~\[\]()"]/g, '');
-
-  const startStates = new Set(Object.keys(pfSimStates));
-  for (const a of pfSimActions) {
-    if (a && a.to) startStates.delete(a.to);
-  }
-
-  for (const st of startStates) {
-    if (st && pfSimStates[st]) md += `    [*] --> ${safeStateName(st)}\n`;
-  }
-
-  for (const a of pfSimActions) {
-    if (!a || !a.from || !a.to) continue;
-    const from = safeStateName(a.from);
-    const to = safeStateName(a.to);
-    const actionName = safeActionName(a.name);
-    md += `    ${from} --> ${to} : ${actionName}\n`;
-  }
-
-  if (highlightState) {
-    md += `\n    classDef current fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#0f172a;\n`;
-    md += `    class ${safeStateName(highlightState)} current;\n`;
-  }
+  const md = buildProcessMermaidSource(pfSimStates, pfSimActions || [], highlightState);
 
   ui.mermaidText.value = md;
 
@@ -204,12 +181,12 @@ export function updateProcessSimulationUI() {
   elCurrEl.style.background = '#bbf7d0';
   elSelEl.disabled = false;
 
-  const available = pfSimActions.filter((a: any) => a.from === pfSimCurrent);
+  const available = (pfSimActions || []).filter((a: any) => a.from === pfSimCurrent);
   if (available.length === 0) {
     elSelEl.innerHTML = '<option value="">-- 次のアクションなし（完了） --</option>';
     elSelEl.disabled = true;
   } else {
-    elSelEl.innerHTML = available.map((a: any) => `<option value="${esc(a.name)}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join('');
+    elSelEl.innerHTML = available.map((a: any, idx: number) => `<option value="${idx}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join('');
   }
 }
 
@@ -244,9 +221,7 @@ function renderSimHistory(): void {
 
 export async function runSimStart() {
   if (!pfSimStates) return;
-  const startStates = new Set(Object.keys(pfSimStates));
-  for (const a of (pfSimActions || [])) if (a.to) startStates.delete(a.to);
-  const startSt = [...startStates][0] || Object.keys(pfSimStates)[0];
+  const startSt = findInitialState(pfSimStates, pfSimActions || []);
   if (!startSt) return;
 
   pfSimCurrent = startSt;
@@ -260,18 +235,17 @@ export async function runSimStart() {
 export async function runSimExecuteAction() {
   const sel = getToolDocument().getElementById('u_simActionSelect') as HTMLSelectElement | null;
   if (!sel || sel.disabled) return;
-  const actionName = sel.value;
-  if (!actionName) return;
-
-  const action = (pfSimActions || []).find(a => a.from === pfSimCurrent && a.name === actionName);
+  const avail = (pfSimActions || []).filter(a => a.from === pfSimCurrent);
+  const idx = Number(sel.value);
+  const action = Number.isFinite(idx) && avail[idx] ? avail[idx] : avail.find(a => a.name === sel.value);
   if (!action) return;
 
   const prev = pfSimCurrent;
   pfSimCurrent = action.to;
-  pfSimHistory.push({ from: prev || '?', action: actionName, to: action.to, at: nowTimeLabel() });
+  pfSimHistory.push({ from: prev || '?', action: action.name, to: action.to, at: nowTimeLabel() });
   renderSimHistory();
   updateProcessSimulationUI();
-  setStatus(`アクション「${actionName}」実行 → 「${action.to}」`);
+  setStatus(`アクション「${action.name}」実行 → 「${action.to}」`);
   await redrawProcessFlow(action.to);
 }
 

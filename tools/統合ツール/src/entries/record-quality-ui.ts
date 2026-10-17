@@ -118,17 +118,34 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
       output.appendChild(makeNote(`App ${result.appId}: ${report.total}件を検査 / 重複 ${report.duplicateGroups}組・${report.duplicateRecords}件 / 未入力 ${report.emptyRecords}件 / 取得不可 ${report.unavailableRecords}件`));
       const list = document.createElement('ol');
       list.style.cssText = 'max-height:320px;overflow:auto;padding-left:24px;overflow-wrap:anywhere;font-size:12px';
-      for (const finding of report.findings.slice(0, 50)) {
-        const row = document.createElement('li'), link = document.createElement('a');
-        link.textContent = `レコード ${finding.recordId}`;
-        const recordPath = qualityRecordPath(result.appId, guestId, finding.recordId);
-        if (recordPath) { link.href = recordPath; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
-        row.append(document.createTextNode(`${finding.kind}${finding.group ? ` #${finding.group}` : ''} / `), link,
-          document.createTextNode(` / ${finding.fields.join(', ')} / ${finding.values.map(value => value.length > 120 ? value.slice(0, 120) + '…' : value).join(' | ')}`));
-        list.appendChild(row);
-      }
+      const renderFindingsList = (limit: number) => {
+        list.replaceChildren();
+        for (const finding of report.findings.slice(0, limit)) {
+          const row = document.createElement('li'), link = document.createElement('a');
+          link.textContent = `レコード ${finding.recordId}`;
+          const recordPath = qualityRecordPath(result.appId, guestId, finding.recordId);
+          if (recordPath) { link.href = recordPath; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+          row.append(document.createTextNode(`${finding.kind}${finding.group ? ` #${finding.group}` : ''} / `), link,
+            document.createTextNode(` / ${finding.fields.join(', ')} / ${finding.values.map(value => value.length > 120 ? value.slice(0, 120) + '…' : value).join(' | ')}`));
+          list.appendChild(row);
+        }
+      };
+      renderFindingsList(50);
       if (list.childElementCount) output.appendChild(list);
-      if (report.findings.length > 50) output.appendChild(makeNote(`詳細表示は先頭50件です。CSVには全 ${report.findings.length}件を保存します。`));
+      if (report.findings.length > 50) {
+        const moreNote = makeNote(`詳細表示は先頭50件です。CSVには全 ${report.findings.length}件を保存します。`);
+        const toggleBtn = makeButton(`全 ${report.findings.length}件を表示`, 'sub');
+        let expanded = false;
+        toggleBtn.addEventListener('click', () => {
+          expanded = !expanded;
+          renderFindingsList(expanded ? report.findings.length : 50);
+          toggleBtn.textContent = expanded ? '先頭50件のみ表示' : `全 ${report.findings.length}件を表示`;
+          moreNote.textContent = expanded
+            ? `全 ${report.findings.length}件を表示しています。`
+            : `詳細表示は先頭50件です。CSVには全 ${report.findings.length}件を保存します。`;
+        });
+        output.append(moreNote, makeRow(toggleBtn));
+      }
     }
     save.onclick = () => {
       if (!results.length || current !== version) return;

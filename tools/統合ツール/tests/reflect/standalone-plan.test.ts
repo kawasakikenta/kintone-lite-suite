@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReflectSectionPlan as plan, reflectSelectionBlockers, listReflectFieldCodes } from '../../src/reflect/standalonePlan';
+import { buildReflectSectionPlan as plan, reflectInspectionScopes, reflectSelectionBlockers, listReflectFieldCodes } from '../../src/reflect/standalonePlan';
 
 const field = (code: string, label = code) => ({ type: 'SINGLE_LINE_TEXT', code, label, required: false });
 const view = (name: string, fields: string[] = [], index = '0') => ({ name, type: 'LIST', fields, index, filterCond: '', sort: '' });
@@ -148,5 +148,36 @@ describe('preview reflection plans match actual write effects', () => {
   });
   it('does not derive removal warnings from changed API revisions alone', () => {
     expect(plan('appAcl', { rights: [], revision: '2' }, { rights: [], revision: '1' }).status).toBe('same');
+  });
+  it('includes fieldSettings in reflectInspectionScopes when reportSettings or actionSettings is selected', () => {
+    expect(reflectInspectionScopes(['reportSettings'])).toEqual(['reportSettings', 'fieldSettings']);
+    expect(reflectInspectionScopes(['actionSettings'])).toEqual(['actionSettings', 'fieldSettings']);
+  });
+  it('remaps actionSettings destApp.app via lookupMap, removes destApp.code, and warns on unmapped cross-app destApp', () => {
+    const source = {
+      actions: {
+        mapped: { name: 'mapped', index: '0', destApp: { app: '10', code: 'OLD' }, mappings: [{ srcType: 'FIELD', srcField: 'customer', destField: 'name' }] },
+        unmapped: { name: 'unmapped', index: '1', destApp: { app: '99', code: 'KEEP' }, mappings: [{ srcType: 'FIELD_URL', srcField: 'Record_number', destField: 'url' }] }
+      }
+    };
+    const result = plan('actionSettings', source, { actions: {} }, { lookupMap: { '10': '20' }, isCrossApp: true });
+    expect(result.operations[0].body.actions.mapped.destApp).toEqual({ app: '20' });
+    expect(result.operations[0].body.actions.unmapped.destApp).toEqual({ app: '99', code: 'KEEP' });
+    expect(result.warnings.some(w => w.includes('unmapped') && w.includes('(99)'))).toBe(true);
+    expect(result.requiredFields).toEqual(['customer']);
+  });
+  it('collects requiredFields from reportSettings groups and aggregations', () => {
+    const source = {
+      reports: {
+        sales: {
+          name: 'sales',
+          index: '0',
+          groups: [{ code: 'dept' }],
+          aggregations: [{ type: 'SUM', code: 'amount' }, { type: 'COUNT', code: 'ignored' }]
+        }
+      }
+    };
+    const result = plan('reportSettings', source, { reports: {} });
+    expect(result.requiredFields).toEqual(['dept', 'amount']);
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchBundle } from '../../src/api';
-import { previewReflectStandalone, runApplyPreviewStandalone } from '../../src/tabs/reflect-standalone';
+import { previewReflectStandalone, resolveReflectAppsStandalone, runApplyPreviewStandalone } from '../../src/tabs/reflect-standalone';
 
 vi.mock('../../src/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/api')>();
@@ -254,5 +254,15 @@ describe('standalone reflection review and backup preflight', () => {
     expect(writes).toHaveBeenCalledOnce();
     const backup = JSON.parse(await backupBlobs[0].text());
     expect(Object.keys(backup.bundle.sections)).toEqual(['viewSettings']);
+  });
+
+  it('extracts the app name from sourceBundle in resolveReflectAppsStandalone', async () => {
+    writes.mockResolvedValueOnce({ appId: '2', name: '受注管理（検証）', code: 'ORD' });
+    const identities = await resolveReflectAppsStandalone({
+      ...defaultOptions(),
+      sourceBundle: { appId: '10', sections: { appSettings: { name: '顧客台帳' } } }
+    });
+    expect(identities.source.name).toBe('設定JSON（顧客台帳）');
+    expect(identities.target.name).toBe('受注管理（検証）');
   });
 });

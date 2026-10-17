@@ -60,6 +60,11 @@ function hasFlag(name) {
   return process.argv.includes(name);
 }
 
+function extractMarkdownAppIds(markdown) {
+  return [...String(markdown || '').matchAll(/^\s*-\s*appId:\s*`\s*([^`\r\n]*?)\s*`/gm)]
+    .map((match) => match[1]);
+}
+
 function printHelp() {
   console.log(`Usage: node tools/test-harness/run-diff-lite-compare.cjs [options]
 
@@ -385,7 +390,8 @@ async function inspectPanel(page) {
       technicalDetails: technicalDetails.length,
       technicalDetailsCollapsed: technicalDetails.filter((element) => !element.open).length,
       reviewActions: root.querySelectorAll('[data-kus-dl-nav="prev"],[data-kus-dl-nav="next"]').length,
-      exportActions: root.querySelectorAll('[data-kus-dl-export="xlsx"],[data-kus-dl-export="html"]').length,
+      exportActions: root.querySelectorAll('[data-kus-dl-export="xlsx"],[data-kus-dl-export="html"],[data-kus-dl-export="md"]').length,
+      markdownExportActions: root.querySelectorAll('[data-kus-dl-export="md"]').length,
       subjectiveControls: subjectiveControls.length,
       horizontalOverflow: root.scrollWidth > root.clientWidth + 2,
       resultHorizontalOverflow: !!result && result.scrollWidth > result.clientWidth + 2
@@ -583,8 +589,29 @@ async function runPanelScenario(context, label, bundleSource, fixture, screensho
   const panel = await inspectPanel(page);
   const layout = await inspectPanelLayout(page);
   await page.screenshot({ path: screenshotFile, fullPage: false, animations: 'disabled' });
+  let markdown = null;
+  if (label === 'partial') {
+    const outputDisclosure = page.locator('#kus-diff-lite [data-kus-dl-step="export"] details').first();
+    if ((await outputDisclosure.count()) && !(await outputDisclosure.getAttribute('open'))) {
+      await outputDisclosure.locator('summary').click();
+    }
+    const markdownButton = page.locator('#kus-diff-lite [data-kus-dl-export="md"]');
+    assert.equal(await markdownButton.count(), 1, 'after: 不完全比較のMarkdown保存ボタンが見つかりません');
+    const markdownDownloadPromise = page.waitForEvent('download', { timeout: 30000 });
+    await markdownButton.click();
+    const markdownDownload = await markdownDownloadPromise;
+    const markdownFile = path.join(path.dirname(screenshotFile), 'after-diff-partial.md');
+    await markdownDownload.saveAs(markdownFile);
+    const markdownText = fs.readFileSync(markdownFile, 'utf8');
+    assert.match(markdownDownload.suggestedFilename(), /\.md$/i, 'after: 不完全比較Markdownの拡張子が.mdではありません');
+    assert.deepEqual(extractMarkdownAppIds(markdownText), [SOURCE_APP_ID, TARGET_APP_ID],
+      'after: 不完全比較Markdownの比較元・比較先App IDが不正です');
+    assert.match(markdownText, /comparisonComplete:\s*false/,
+      'after: 不完全比較Markdownに完全性の判断保留が記録されていません');
+    markdown = { suggestedFilename: markdownDownload.suggestedFilename(), bytes: Buffer.byteLength(markdownText), file: path.basename(markdownFile) };
+  }
   await page.close();
-  return { panel, layout, errors };
+  return { panel, layout, errors, markdown };
 }
 
 async function captureObjectiveStateScenarios(browser, bundleSource, fixture, outDir) {
@@ -603,6 +630,7 @@ async function captureObjectiveStateScenarios(browser, bundleSource, fixture, ou
     'after: 不完全比較で判断保留の説明が見つかりません');
   assert.equal(partial.panel.technicalDetailsCollapsed, partial.panel.technicalDetails,
     'after: 不完全比較の技術情報が初期状態で展開されています');
+  assert.ok(partial.markdown?.bytes > 0, 'after: 不完全比較Markdownの保存結果が空です');
   assertPanelLayout(partial.layout, 'after: 不完全比較');
   assert.deepEqual(partial.errors, [], 'after: 不完全比較でブラウザエラーが発生しました');
 
@@ -1095,7 +1123,7 @@ async function captureReport(context, variant, reportFile, outDir) {
     await restoreDensity();
 
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.evaluate(() => window.scrollTo({ left: 0, top: 0, behavior: 'instant' }));
     await page.waitForTimeout(100);
     const mobileReport = await page.evaluate(() => {
       const toggle = document.querySelector('#mobileSidebarToggle');
@@ -1290,6 +1318,7 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
   assert.deepEqual(errors, [], `${variant}: liteパネルでブラウザエラーが発生しました`);
 
   let xlsx = null;
+  let markdown = null;
   let profile = null;
   let responsive = null;
   let objectiveStates = null;
@@ -1300,7 +1329,8 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
       'after: 比較対象・レビュー・出力のワークフロー区分が揃っていません');
     assert.equal(panelDom.subjectiveControls, 0, 'after: 人が判断すべき影響度・重要度の操作UIが残っています');
     assert.ok(panelDom.reviewActions >= 2, 'after: 前後の差分レビュー操作が揃っていません');
-    assert.ok(panelDom.exportActions >= 2, 'after: HTML/Excelの出力操作契約が揃っていません');
+    assert.ok(panelDom.exportActions >= 3, 'after: HTML/Excel/Markdownの出力操作契約が揃っていません');
+    assert.equal(panelDom.markdownExportActions, 1, 'after: Markdown保存ボタンが一意に見つかりません');
     assert.ok(panelDom.technicalDetails > 0, 'after: 技術情報の折りたたみ詳細が見つかりません');
     assert.equal(panelDom.technicalDetailsCollapsed, panelDom.technicalDetails,
       'after: 技術情報が初期状態で展開されています');
@@ -1432,8 +1462,40 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     assert.equal(await exportRange.inputValue(), 'filtered', 'after: 完了CTAが利用者の出力範囲選択を書き換えました');
     await xlsxButton.waitFor({ state: 'visible' });
     await page.waitForFunction(() => !document.querySelector('#kus-diff-lite [data-kus-dl-export="xlsx"]')?.hasAttribute('disabled'), null, { timeout: 10000 });
+    const markdownButton = page.locator('#kus-diff-lite [data-kus-dl-export="md"]');
+    assert.equal(await markdownButton.count(), 1, 'after: Markdown保存ボタンが見つかりません');
+    assert.equal(await markdownButton.isEnabled(), true, 'after: 比較完了後もMarkdown保存ボタンが無効です');
+    const markdownFilteredDownloadPromise = page.waitForEvent('download', { timeout: 30000 });
+    await markdownButton.click();
+    const markdownFilteredDownload = await markdownFilteredDownloadPromise;
+    const markdownFilteredFile = path.join(outDir, 'after-diff-list-filtered.md');
+    await markdownFilteredDownload.saveAs(markdownFilteredFile);
+    const markdownFiltered = fs.readFileSync(markdownFilteredFile, 'utf8');
+    assert.match(markdownFilteredDownload.suggestedFilename(), /\.md$/i, 'after: Markdownの拡張子が.mdではありません');
+    assert.deepEqual(extractMarkdownAppIds(markdownFiltered), [SOURCE_APP_ID, TARGET_APP_ID],
+      'after: Markdownの比較元・比較先App IDが不正です');
+    assert.match(markdownFiltered, /- exportMode:\s*`\s*filtered\s*`/, 'after: Markdownにフィルタ出力のモードがありません');
+    assert.match(markdownFiltered, /- exportRange: 表示中（フィルタ適用後）/, 'after: Markdownに出力範囲の記録がありません');
+    assert.match(markdownFiltered, /- selectedRealDiffs: [1-9]\d*/, 'after: フィルタで残した実差分件数がMarkdownにありません');
+    assert.match(markdownFiltered, /### 参考：比較結果全体/, 'after: フィルタ済みMarkdownに比較結果全体の件数参照がありません');
     await typeFilter.selectOption('');
     await exportRange.selectOption('all');
+    const markdownAllDownloadPromise = page.waitForEvent('download', { timeout: 30000 });
+    await markdownButton.click();
+    const markdownAllDownload = await markdownAllDownloadPromise;
+    const markdownAllFile = path.join(outDir, 'after-diff-list.md');
+    await markdownAllDownload.saveAs(markdownAllFile);
+    const markdownAll = fs.readFileSync(markdownAllFile, 'utf8');
+    assert.match(markdownAllDownload.suggestedFilename(), /\.md$/i, 'after: 全件Markdownの拡張子が.mdではありません');
+    assert.match(markdownAll, /- exportMode:\s*`\s*all\s*`/, 'after: 全件Markdownの出力モードが不正です');
+    const filteredRealDiffs = Number(markdownFiltered.match(/- selectedRealDiffs: (\d+)/)?.[1] || 0);
+    const allRealDiffs = Number(markdownAll.match(/- selectedRealDiffs: (\d+)/)?.[1] || 0);
+    assert.ok(allRealDiffs > filteredRealDiffs, 'after: 全件Markdownの実差分件数がフィルタ済み出力を上回りません');
+    assert.notEqual(markdownAll, markdownFiltered, 'after: Markdownが出力範囲の変更を反映していません');
+    markdown = {
+      filtered: { suggestedFilename: markdownFilteredDownload.suggestedFilename(), bytes: Buffer.byteLength(markdownFiltered), file: path.basename(markdownFiltered) },
+      all: { suggestedFilename: markdownAllDownload.suggestedFilename(), bytes: Buffer.byteLength(markdownAll), file: path.basename(markdownAllFile) }
+    };
     const xlsxDownloadPromise = page.waitForEvent('download', { timeout: 30000 });
     await xlsxButton.click();
     const xlsxDownload = await xlsxDownloadPromise;
@@ -1478,6 +1540,7 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     panel: panelDom,
     report: reportDom,
     xlsx,
+    markdown,
     profile,
     responsive,
     objectiveStates,

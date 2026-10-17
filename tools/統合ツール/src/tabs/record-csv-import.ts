@@ -22,7 +22,15 @@ export function coerceCsvImportValue(rawValue: unknown, fieldDef: any): unknown 
   const type = String(fieldDef?.type || '');
   if (type === 'CHECK_BOX' || type === 'MULTI_SELECT') return splitCsvListValue(rawValue);
   if (['USER_SELECT', 'ORGANIZATION_SELECT', 'GROUP_SELECT'].includes(type)) return splitCsvListValue(rawValue).map(code => ({ code }));
-  return type === 'NUMBER' ? String(rawValue ?? '').trim() : rawValue;
+  if (type === 'NUMBER') {
+    const trimmed = String(rawValue ?? '').trim();
+    if (fieldDef?.lookup) {
+      const m = /^[A-Za-z][A-Za-z0-9_-]*-(\d+)$/.exec(trimmed);
+      if (m) return m[1];
+    }
+    return trimmed;
+  }
+  return rawValue;
 }
 
 export function validateCsvImportHeader(header: string[], properties: Record<string, any>): void {
@@ -110,7 +118,38 @@ export function planCsvImport(rows: string[][], properties: Record<string, any>)
       const label = `${def.label || code}［${code}］`;
       const empty = Array.isArray(value) ? value.length === 0 : value === '';
       if (enabled(def.required) && empty) issue(row, label, '必須項目が空です');
-      if (!empty && def.type === 'NUMBER' && !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(String(value))) issue(row, label, '数値の形式が不正です');
+      if (!empty && def.type === 'NUMBER') {
+        const numText = String(value);
+        if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(numText)) {
+          issue(row, label, '数値の形式が不正です');
+        } else {
+          const numVal = Number(numText);
+          if (def.minValue !== undefined && def.minValue !== null && String(def.minValue) !== '' && numVal < Number(def.minValue)) {
+            issue(row, label, `最小値（${def.minValue}）を下回っています`);
+          }
+          if (def.maxValue !== undefined && def.maxValue !== null && String(def.maxValue) !== '' && numVal > Number(def.maxValue)) {
+            issue(row, label, `最大値（${def.maxValue}）を超えています`);
+          }
+        }
+      }
+      if (!empty && typeof value === 'string' && ['SINGLE_LINE_TEXT', 'MULTI_LINE_TEXT', 'LINK'].includes(def.type)) {
+        const charLen = Array.from(value).length;
+        if (def.minLength !== undefined && def.minLength !== null && String(def.minLength) !== '' && charLen < Number(def.minLength)) {
+          issue(row, label, `最小文字数（${def.minLength}文字）未満です`);
+        }
+        if (def.maxLength !== undefined && def.maxLength !== null && String(def.maxLength) !== '' && charLen > Number(def.maxLength)) {
+          issue(row, label, `最大文字数（${def.maxLength}文字）を超えています`);
+        }
+      }
+      if (!empty && def.type === 'DATE' && !/^\d{4}-\d{2}-\d{2}$/.test(String(value).trim())) {
+        issue(row, label, '日付の形式が不正です（YYYY-MM-DD）');
+      }
+      if (!empty && def.type === 'TIME' && !/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(String(value).trim())) {
+        issue(row, label, '時刻の形式が不正です（HH:MM）');
+      }
+      if (!empty && def.type === 'DATETIME' && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/.test(String(value).trim())) {
+        issue(row, label, '日時の形式が不正です（ISO 8601形式: YYYY-MM-DDTHH:MM:SSZ）');
+      }
       if (['RADIO_BUTTON', 'DROP_DOWN', 'CHECK_BOX', 'MULTI_SELECT'].includes(def.type)) {
         const choices = Array.isArray(value) ? value : empty ? [] : [value];
         for (const choice of choices) if (!has(def.options || {}, String(choice))) issue(row, label, `選択肢にありません: ${choice}`);

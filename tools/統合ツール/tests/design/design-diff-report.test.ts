@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDesignDiffReport, summarizeDesignDiff } from '../../src/tabs/design-standalone';
+import { buildDesignDiffReport, summarizeDesignDiff, simpleLineDiffLite } from '../../src/tabs/design-standalone';
 
 const diff = [
   '  # kintone アプリ設計書',
@@ -62,5 +62,42 @@ describe('design diff report', () => {
       target: { appId: '2', appName: '', guestId: '', environment: '本番（運用中）' } });
     expect(md).toContain('差分はありません');
     expect(md).toContain('| 差分行数 | 追加 0 行 / 削除 0 行 |');
+  });
+
+  it('simpleLineDiffLite は1セクション内で70行以上の追加があっても後続セクションの同期を失わない', () => {
+    const baseFields = Array.from({ length: 10 }, (_, i) => `| f_${i} | 項目${i} |`);
+    const extraFields = Array.from({ length: 75 }, (_, i) => `| new_${i} | 新項目${i} |`);
+    const targetMd = [
+      '# kintone アプリ設計書',
+      '## フィールド設定',
+      ...baseFields,
+      '## 一覧設定',
+      '| 一覧A | TABLE |',
+      '## グラフ設定',
+      '| グラフA | BAR |'
+    ].join('\n');
+    const sourceMd = [
+      '# kintone アプリ設計書',
+      '## フィールド設定',
+      ...extraFields,
+      ...baseFields,
+      '## 一覧設定',
+      '| 一覧A | TABLE |',
+      '## グラフ設定',
+      '| グラフA | BAR |'
+    ].join('\n');
+
+    // buildDesignDiffReport calls simpleLineDiffLite(targetMd, sourceMd)
+    const d = simpleLineDiffLite(targetMd, sourceMd);
+    const summary = summarizeDesignDiff(d);
+    expect(summary).toEqual({
+      added: 75,
+      removed: 0,
+      sections: [
+        { section: 'フィールド設定', added: 75, removed: 0 }
+      ]
+    });
+    expect(d).toContain('  ## 一覧設定');
+    expect(d).toContain('  ## グラフ設定');
   });
 });

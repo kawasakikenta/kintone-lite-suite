@@ -97,3 +97,63 @@ export function redactSensitiveSameDiffRows<T extends any[]>(rows: T | null | un
     };
   }) as T;
 }
+
+export const SENSITIVE_KEY_PATTERN = /(?:secret|token|password|passwd|api[_-]?key|authorization|webhook|client[_-]?secret|private[_-]?key)/i;
+
+export function isSensitiveDiffPath(path: string, sectionKey: string = ''): boolean {
+  const normalizedPath = String(path || '').trim();
+  const normalizedSec = String(sectionKey || '').trim() || normalizedPath.split(/[.\[]/, 1)[0] || '';
+  if (SENSITIVE_KEY_PATTERN.test(normalizedPath)) return true;
+  if (normalizedSec === 'customizeSettings' && /(?:^|\.)_body(?:\.|$|\[)/.test(normalizedPath)) {
+    return true;
+  }
+  if (normalizedSec === 'pluginSettings' && /(?:^|\.)(?:_config|config)(?:\.|$|\[)/.test(normalizedPath)) {
+    return true;
+  }
+  return false;
+}
+
+export function maskSensitiveDiffValue(value: unknown, path: string = '', sectionKey: string = ''): unknown {
+  if (value == null) return value;
+  if (typeof value === 'string') {
+    if (!value) return value;
+    return isSensitiveDiffPath(path, sectionKey)
+      ? `[マスク済み: ${contentIdentifier(value)}]`
+      : value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return isSensitiveDiffPath(path, sectionKey)
+      ? `[マスク済み: ${contentIdentifier(String(value))}]`
+      : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, index) => maskSensitiveDiffValue(item, `${path}[${index}]`, sectionKey));
+  }
+  if (typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      const childPath = path ? `${path}.${key}` : key;
+      out[key] = maskSensitiveDiffValue(child, childPath, sectionKey);
+    }
+    return out;
+  }
+  return value;
+}
+
+export function maskSensitiveDiffRows<T extends any[]>(rows: T | null | undefined): T {
+  const source = Array.isArray(rows) ? rows : [];
+  return source.map((row) => {
+    if (!row || typeof row !== 'object') return row;
+    const secKey = sectionKeyOf(row);
+    const rowPath = String(row.path || '');
+    const maskedLeft = row.left !== undefined ? maskSensitiveDiffValue(row.left, rowPath, secKey) : row.left;
+    const maskedRight = row.right !== undefined ? maskSensitiveDiffValue(row.right, rowPath, secKey) : row.right;
+    if (maskedLeft === row.left && maskedRight === row.right) return row;
+    return {
+      ...row,
+      left: maskedLeft,
+      right: maskedRight
+    };
+  }) as T;
+}
+

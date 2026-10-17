@@ -17,7 +17,17 @@ function filterWritable(props: any) {
   for (const [k, def] of Object.entries(props || {}) as Array<[string, any]>) {
     if (!def || typeof def !== 'object') continue;
     if (SYSTEM_FIELD_TYPES.has(def.type)) continue;
-    out[k] = deepClone(def);
+    const cloned = deepClone(def);
+    if (cloned.type === 'SUBTABLE' && cloned.fields && typeof cloned.fields === 'object') {
+      const writableChildren: Record<string, any> = {};
+      for (const [ck, cdef] of Object.entries(cloned.fields) as Array<[string, any]>) {
+        if (!cdef || typeof cdef !== 'object') continue;
+        if (SYSTEM_FIELD_TYPES.has(cdef.type)) continue;
+        writableChildren[ck] = cdef;
+      }
+      cloned.fields = writableChildren;
+    }
+    out[k] = cloned;
   }
   return out;
 }
@@ -50,6 +60,18 @@ function convertLookup(fieldDef: any, map: Record<string, any>) {
   };
   walk(def);
   return { def, changed };
+}
+
+function validateNumericId(value: unknown, label: string, required = false): string {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) {
+    if (required) throw new Error(`${label}を入力してください`);
+    return '';
+  }
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(`${label}は数値で入力してください: ${trimmed}`);
+  }
+  return trimmed;
 }
 
 /**
@@ -148,6 +170,20 @@ export function planFieldApply(
 ): FieldApplyPlan {
   const plan: FieldApplyPlan = { adds: {}, updates: {}, skippedSystem: [], skippedExisting: [], lookupConverted: [], logs: [] };
   const currentMap = currentProps || {};
+  const existingSubtableOwnerByChildCode = new Map<string, string>();
+  for (const [tblCode, tblDef] of Object.entries(currentMap) as Array<[string, any]>) {
+    if (tblDef?.type === 'SUBTABLE' && tblDef.fields && typeof tblDef.fields === 'object') {
+      for (const [childKey, childDef] of Object.entries(tblDef.fields) as Array<[string, any]>) {
+        existingSubtableOwnerByChildCode.set(childKey, tblCode);
+        if (childDef?.code) existingSubtableOwnerByChildCode.set(String(childDef.code), tblCode);
+      }
+    }
+  }
+
+  // トップレベル同士のコード重複（コード変更の連鎖・入れ替えを含む）は findFieldCodeConflicts が
+  // 最終状態で判定する。ここではサブテーブルの子フィールドが絡む階層をまたいだ重複だけを止める。
+  const seenTopLevelCodes = new Map<string, string>();
+  const seenChildOwnerByCode = new Map<string, string>();
   for (const [code, rawDef] of Object.entries(incoming || {}) as Array<[string, any]>) {
     const writable = filterWritable({ [code]: rawDef });
     if (!writable[code]) {
@@ -159,8 +195,60 @@ export function planFieldApply(
     if (changed) plan.lookupConverted.push(code);
     if (!def.code) def.code = code;
 
+    const targetCode = String(def.code || code).trim();
+    for (const tCode of new Set([code, targetCode])) {
+      const childOwner = seenChildOwnerByCode.get(tCode);
+      if (childOwner) {
+        throw new Error(`フィールドコード「${tCode}」が入力JSON内の「${childOwner}」と重複しています`);
+      }
+      const subOwner = existingSubtableOwnerByChildCode.get(tCode);
+      if (subOwner) {
+        throw new Error(`フィールドコード「${tCode}」は既存のサブテーブル「${subOwner}」内の子フィールドと重複しています`);
+      }
+    }
+    seenTopLevelCodes.set(code, code);
+    seenTopLevelCodes.set(targetCode, code);
+
+    if (def.type === 'SUBTABLE' && def.fields && typeof def.fields === 'object') {
+      for (const [childKey, childDef] of Object.entries(def.fields) as Array<[string, any]>) {
+        if (!childDef || typeof childDef !== 'object') continue;
+        if (!childDef.code) childDef.code = childKey;
+        const childTarget = String(childDef.code || childKey).trim();
+        for (const cCode of new Set([childKey, childTarget])) {
+          const prevOwner = seenChildOwnerByCode.get(cCode) || seenTopLevelCodes.get(cCode);
+          if (prevOwner) {
+            throw new Error(`サブテーブル「${code}」の子フィールドコード「${cCode}」が入力JSON内の「${prevOwner}」と重複しています`);
+          }
+          if (hasOwn(currentMap, cCode) && currentMap[cCode] && cCode !== code && cCode !== targetCode) {
+            throw new Error(`サブテーブル「${code}」の子フィールドコード「${cCode}」が既存のトップレベルフィールドと重複しています`);
+          }
+          const otherSub = existingSubtableOwnerByChildCode.get(cCode);
+          if (otherSub && otherSub !== code && otherSub !== targetCode) {
+            throw new Error(`サブテーブル「${code}」の子フィールドコード「${cCode}」が別サブテーブル「${otherSub}」内の子フィールドと重複しています`);
+          }
+        }
+        seenChildOwnerByCode.set(childKey, `${code}.${childKey}`);
+        seenChildOwnerByCode.set(childTarget, `${code}.${childTarget}`);
+      }
+    }
+
     if (hasOwn(currentMap, code) && currentMap[code]) {
       if (overwrite) {
+        const curType = String(currentMap[code]?.type || '').trim();
+        const nextType = String(def.type || '').trim();
+        if (curType && nextType && curType !== nextType) {
+          throw new Error(`フィールド「${code}」の type が一致しません（既存: ${curType} / 入力: ${nextType}）。既存フィールドの型変更はできません`);
+        }
+        if (def.type === 'SUBTABLE' && def.fields && currentMap[code]?.fields) {
+          for (const [childKey, childDef] of Object.entries(def.fields) as Array<[string, any]>) {
+            const existingChild = hasOwn(currentMap[code].fields, childKey) ? currentMap[code].fields[childKey] : undefined;
+            const curChildType = String(existingChild?.type || '').trim();
+            const nextChildType = String(childDef?.type || '').trim();
+            if (curChildType && nextChildType && curChildType !== nextChildType) {
+              throw new Error(`サブテーブル「${code}」内の子フィールド「${childKey}」の type が一致しません（既存: ${curChildType} / 入力: ${nextChildType}）`);
+            }
+          }
+        }
         plan.updates[code] = def;
         plan.logs.push(`UPDATE ${code}${changed ? ' (参照先AppID変換)' : ''}`);
       } else {
@@ -190,14 +278,15 @@ function listCodes(map: Record<string, any>, limit = 10): string {
 export function findFieldCodeConflicts(plan: FieldApplyPlan, currentProps: Record<string, any>): string[] {
   const current = currentProps || {};
   const conflicts: string[] = [];
-  for (const [key, def] of Object.entries(plan.adds)) {
-    const code = String(def?.code || key);
-    if (hasOwn(current, code)) conflicts.push(`${key}${code !== key ? ` → ${code}` : ''}`);
-  }
   const finalCount = new Map<string, number>();
   const count = (code: string) => finalCount.set(code, (finalCount.get(code) || 0) + 1);
   for (const key of Object.keys(current)) count(hasOwn(plan.updates, key) ? String(plan.updates[key]?.code || key) : key);
   for (const [key, def] of Object.entries(plan.adds)) count(String(def?.code || key));
+  for (const [key, def] of Object.entries(plan.adds)) {
+    const code = String(def?.code || key);
+    // 現在のフィールドと重なる追加、または入力内の別の追加・コード変更と同じコードになる追加
+    if (hasOwn(current, code) || (finalCount.get(code) || 0) > 1) conflicts.push(`${key}${code !== key ? ` → ${code}` : ''}`);
+  }
   for (const [key, def] of Object.entries(plan.updates)) {
     const code = String(def?.code || key);
     if (code !== key && (finalCount.get(code) || 0) > 1) conflicts.push(`${key} → ${code}`);
@@ -220,6 +309,17 @@ export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: s
   ].filter(Boolean).join('\n');
 }
 
+function attachLogsToError(err: unknown, logs: string[]): Error {
+  const baseMessage = err instanceof Error ? err.message : String(err || 'エラーが発生しました');
+  const combined = logs.length ? `${baseMessage}\n${logs.join('\n')}` : baseMessage;
+  const wrapped = new Error(combined);
+  if (err && typeof err === 'object') {
+    Object.assign(wrapped, err);
+    wrapped.message = combined;
+  }
+  return wrapped;
+}
+
 /**
  * フィールド定義 JSON を比較先プレビューへ追加・更新する。
  * - GET で得た revision を POST/PUT に添え、競合時は上書きせず利用者へ通知する
@@ -227,14 +327,14 @@ export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: s
  */
 export async function runFieldApplyStandalone(opts, setStatus) {
   const { targetAppId, targetGuestId, fieldJson, lookupMapJson, overwrite } = opts;
-  if (!targetAppId) throw new Error('比較先アプリIDを入力してください');
-  assertNumericIds(targetAppId, targetGuestId, '比較先');
+  const tgtApp = validateNumericId(targetAppId, '比較先アプリID', true);
+  const tgtGuest = validateNumericId(targetGuestId, '比較先ゲストID', false);
   const incoming = parseFieldJsonInput(fieldJson);
   const lookupMap = parseLookupMapInput(lookupMapJson);
 
-  const prefix = buildApiPrefix(targetGuestId || '', true);
+  const prefix = buildApiPrefix(tgtGuest, true);
   setStatus('比較先フィールド取得中...');
-  const current = await apiGet(prefix, '/app/form/fields.json', { app: targetAppId });
+  const current = await apiGet(prefix, '/app/form/fields.json', { app: tgtApp });
   const plan = planFieldApply(incoming, current.properties || ({} as any), lookupMap, !!overwrite);
   const logs = [...plan.logs];
   const addCount = Object.keys(plan.adds).length;
@@ -253,7 +353,7 @@ export async function runFieldApplyStandalone(opts, setStatus) {
   if (!/^\d+$/.test(revision)) {
     throw new Error('比較先フィールド設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください');
   }
-  if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(String(targetAppId), String(targetGuestId || ''), plan))) {
+  if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(tgtApp, tgtGuest, plan))) {
     setStatus('フィールド反映をキャンセルしました');
     logs.push('キャンセル');
     return logs;
@@ -263,33 +363,41 @@ export async function runFieldApplyStandalone(opts, setStatus) {
   if (addCount) {
     setStatus(`フィールド追加中... (${addCount}件)`);
     try {
-      const res = await apiPost(prefix, '/app/form/fields.json', withRevision({ app: targetAppId, properties: plan.adds }));
+      const res = await apiPost(prefix, '/app/form/fields.json', withRevision({ app: tgtApp, properties: plan.adds }));
       const nextRevision = pickRevision(res);
       if (!/^\d+$/.test(nextRevision)) {
+        logs.push(`OK フィールド追加 ${addCount}件 (revision 不明)`);
         throw new Error('フィールド追加は完了しましたが、更新後の revision を確認できないため以降の反映を中止しました。差分を取得し直して状態を確認してください');
       }
       revision = nextRevision;
       logs.push(`OK フィールド追加 ${addCount}件${revision ? ` (revision ${revision})` : ''}`);
     } catch (e) {
-      logs.push(`NG フィールド追加 ${addCount}件`);
-      throw decorateRevisionConflict(e, 'フィールド追加');
+      if (!logs.some((l) => l.startsWith('OK フィールド追加'))) {
+        logs.push(`NG フィールド追加 ${addCount}件`);
+      }
+      throw attachLogsToError(decorateRevisionConflict(e, 'フィールド追加'), logs);
     }
   }
   if (updateCount) {
     setStatus(`フィールド更新中... (${updateCount}件)`);
     try {
-      const res = await apiPut(prefix, '/app/form/fields.json', withRevision({ app: targetAppId, properties: plan.updates }));
+      const res = await apiPut(prefix, '/app/form/fields.json', withRevision({ app: tgtApp, properties: plan.updates }));
       const nextRevision = pickRevision(res);
       if (!/^\d+$/.test(nextRevision)) {
+        logs.push(`OK フィールド更新 ${updateCount}件 (revision 不明)`);
         throw new Error('フィールド更新は完了しましたが、更新後の revision を確認できません。差分を取得し直して状態を確認してください');
       }
       revision = nextRevision;
       logs.push(`OK フィールド更新 ${updateCount}件${revision ? ` (revision ${revision})` : ''}`);
     } catch (e) {
-      logs.push(`NG フィールド更新 ${updateCount}件${addCount ? '（追加 ' + addCount + '件は反映済み）' : ''}`);
-      const failure = decorateRevisionConflict(e, 'フィールド更新');
-      // 例外ではログが渡らないため、追加が反映済みであることをエラー文面に含める（部分成功を隠さない）
-      throw addCount ? withPartialNotice(failure, `フィールド追加 ${addCount}件は反映済みですが、フィールド更新 ${updateCount}件は反映されませんでした。`) : failure;
+      if (!logs.some((l) => l.startsWith('OK フィールド更新'))) {
+        logs.push(`NG フィールド更新 ${updateCount}件${addCount ? '（追加 ' + addCount + '件は反映済み）' : ''}`);
+      }
+      let failure = decorateRevisionConflict(e, 'フィールド更新');
+      // 例外ではログが渡らないため、追加が反映済みであることをエラー文面の先頭に含める（部分成功を隠さない）
+      if (addCount) failure = withPartialNotice(failure, `フィールド追加 ${addCount}件は反映済みですが、フィールド更新 ${updateCount}件は反映されませんでした。`);
+      // 完了済みの処理があるときだけログを添える（何も反映されていなければ元のエラーのまま）
+      throw logs.some((l) => l.startsWith('OK ')) ? attachLogsToError(failure, logs) : failure;
     }
   }
 
@@ -299,11 +407,11 @@ export async function runFieldApplyStandalone(opts, setStatus) {
 
 export async function runLoadFieldsStandalone(opts, setStatus) {
   const { appId, guestId, preview } = opts;
-  if (!appId) throw new Error('アプリIDを入力してください');
-  assertNumericIds(appId, guestId, '');
-  const prefix = buildApiPrefix(guestId || '', !!preview);
+  const id = validateNumericId(appId, 'アプリID', true);
+  const guest = validateNumericId(guestId, 'ゲストID', false);
+  const prefix = buildApiPrefix(guest, !!preview);
   setStatus('フィールド取得中...');
-  const res = await apiGet(prefix, '/app/form/fields.json', { app: appId });
+  const res = await apiGet(prefix, '/app/form/fields.json', { app: id });
   setStatus('フィールド取得完了');
   return res.properties || ({} as any);
 }
@@ -313,14 +421,26 @@ const RENAME_EXCLUDED_TYPES = new Set([
   'STATUS', 'STATUS_ASSIGNEE', 'CATEGORY'
 ]);
 
+export type BulkRenameMode = 'put-rename' | 'new-keys';
+
 /**
  * フィールドコードにプレフィックスを一括付与/除去した properties を返す（純粋関数）。
- * 返す JSON は反映時に「既存フィールドのコード変更」(PUT) として扱われるよう、キーは変更前のコード、
- * `code` に変更後のコードを入れる。サブテーブル内の子フィールドも同じ規則で書き換える。
+ * サブテーブル内の子フィールドも同じ規則で書き換える。
+ * - renameMode === 'put-rename'（既定）: 既存フィールドのコード変更用。反映時に「既存フィールドのコード変更」(PUT)
+ *   として扱われるよう、キーは変更前のコード、`code` に変更後のコードを入れる。
+ * - renameMode === 'new-keys': 新規フィールド追加用（プロパティキーも内部 code も新コードへ）
  * フィールドコードはアプリ内で一意なので、変更後のコードがサブテーブルの子や対象外フィールドを
  * 含めて重複する場合は collisions に載せる。
  */
-export function planBulkRename(props: Record<string, any>, prefixText: string, removeMode: boolean) {
+export function planBulkRename(
+  props: Record<string, any>,
+  prefixText: string,
+  removeMode: boolean,
+  options?: { renameMode?: BulkRenameMode } | BulkRenameMode
+) {
+  const renameMode: BulkRenameMode = typeof options === 'string'
+    ? options
+    : (options?.renameMode || 'put-rename');
   const trimmed = String(prefixText || '').trim();
   const rename = (code: string): string => {
     if (removeMode) return code.startsWith(trimmed) ? code.slice(trimmed.length) : code;
@@ -338,7 +458,10 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
     if (!field) continue;
     countCode(RENAME_EXCLUDED_TYPES.has(field.type) ? code : rename(code) || code);
     if (!RENAME_EXCLUDED_TYPES.has(field.type) && field.type === 'SUBTABLE' && field.fields && typeof field.fields === 'object') {
-      for (const childCode of Object.keys(field.fields)) countCode(rename(childCode) || childCode);
+      for (const [childCode, childDef] of Object.entries(field.fields) as Array<[string, any]>) {
+        if (!childDef) continue;
+        countCode(RENAME_EXCLUDED_TYPES.has(childDef.type) ? childCode : rename(childCode) || childCode);
+      }
     }
   }
   const checkDuplicate = (from: string, to: string, toCode: string) => {
@@ -359,6 +482,7 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
     if (cloned.type === 'SUBTABLE' && cloned.fields && typeof cloned.fields === 'object') {
       const children: Record<string, any> = {};
       for (const [childCode, childDef] of Object.entries(cloned.fields) as Array<[string, any]>) {
+        if (!childDef || RENAME_EXCLUDED_TYPES.has(childDef.type)) continue;
         const newChild = rename(childCode);
         const childClone = deepClone(childDef);
         if (newChild !== childCode) {
@@ -371,15 +495,16 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
             renamePairs.push({ from: `${code}.${childCode}`, to: `${newCode}.${newChild}` });
           }
         }
-        children[childCode] = childClone;
+        const childPropKey = renameMode === 'put-rename' ? childCode : (newChild || childCode);
+        children[childPropKey] = childClone;
       }
       cloned.fields = children;
     }
     if (!touched) continue;
-    newProps[code] = cloned;
+    newProps[renameMode === 'put-rename' ? code : newCode] = cloned;
     modifiedCount++;
   }
-  return { properties: newProps, modifiedCount, renamePairs, collisions };
+  return { properties: newProps, modifiedCount, renamePairs, collisions, renameMode };
 }
 
 /**
@@ -388,17 +513,17 @@ export function planBulkRename(props: Record<string, any>, prefixText: string, r
  * 反映自体は別途 runFieldApplyStandalone で実行）。
  */
 export async function runBulkRenameFieldStandalone(opts, setStatus) {
-  const { targetAppId, targetGuestId, prefix, removeMode } = opts;
-  if (!targetAppId) throw new Error('比較先アプリIDを入力してください');
-  assertNumericIds(targetAppId, targetGuestId, '比較先');
+  const { targetAppId, targetGuestId, prefix, removeMode, renameMode } = opts;
+  const tgtApp = validateNumericId(targetAppId, '比較先アプリID', true);
+  const tgtGuest = validateNumericId(targetGuestId, '比較先ゲストID', false);
   if (!prefix || !String(prefix).trim()) throw new Error('プレフィックス文字列を入力してください');
-  const apiPrefix = buildApiPrefix(targetGuestId || '', true);
+  const apiPrefix = buildApiPrefix(tgtGuest, true);
   setStatus('比較先フィールドを取得中...');
-  const fieldsResp = await apiGet(apiPrefix, '/app/form/fields.json', { app: targetAppId });
-  const result = planBulkRename(fieldsResp.properties || ({} as any), String(prefix), !!removeMode);
+  const fieldsResp = await apiGet(apiPrefix, '/app/form/fields.json', { app: tgtApp });
+  const result = planBulkRename(fieldsResp.properties || ({} as any), String(prefix), !!removeMode, { renameMode });
   if (result.collisions.length) {
     throw new Error(`リネーム後のフィールドコードが重複または空になります: ${result.collisions.join(', ')}`);
   }
   setStatus(`プレフィックス${removeMode ? '除去' : '付与'}完了: ${result.modifiedCount}件`);
-  return { properties: result.properties, modifiedCount: result.modifiedCount, renamePairs: result.renamePairs };
+  return { properties: result.properties, modifiedCount: result.modifiedCount, renamePairs: result.renamePairs, renameMode: result.renameMode };
 }

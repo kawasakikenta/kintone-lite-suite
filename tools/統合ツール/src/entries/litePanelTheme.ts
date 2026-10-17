@@ -9,6 +9,7 @@
  * - 旧 `liteMount.ts` / `litePanelHelpers.ts` の API はこのファイル経由で再エクスポート
  */
 
+import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
 import { setComponentUi } from '../ui/components.js';
 import { setRootElement } from '../ui/dialog.js';
 import { copyTextToClipboard } from '../utils.js';
@@ -1237,11 +1238,19 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     curBtn.title = '今開いているアプリのIDを空き行に入れます';
     curBtn.addEventListener('click', () => {
       const id = String(opts.currentAppId).trim();
-      const guestId = String(opts.currentGuestId || '').trim();
-      if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guestId)) return;
+      const guest = String(
+        opts.currentGuestId ?? (typeof location !== 'undefined' ? extractGuestIdFromInput(location.pathname || '') : '')
+      ).trim();
+      if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guest)) return;
       const empty = rows.find((r) => !r.app.value.trim());
-      if (empty) { empty.app.value = id; empty.guest.value = guestId; setAppName(empty, ''); empty.app.focus(); }
-      else insertRow(rows.length, id, guestId, true);
+      if (empty) {
+        empty.app.value = id;
+        empty.guest.value = guest;
+        setAppName(empty, '');
+        empty.app.focus();
+      } else {
+        insertRow(rows.length, id, guest, true);
+      }
       emitChange();
     });
     foot.appendChild(curBtn);
@@ -1253,7 +1262,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
 
   const hint = document.createElement('div');
   hint.className = 'kus-lp__apptable-hint';
-  hint.textContent = 'アプリIDは「100, 120, 130」のようにカンマ区切りでまとめて入力・貼り付けすると自動で行に分割されます。';
+  hint.textContent = 'アプリIDは「100, 120, 130」のようにカンマ区切りでまとめて入力・貼り付けすると自動で行に分割されます。アプリURLの貼り付けにも対応しています。';
   wrap.appendChild(hint);
 
   const rows: AppTableRowEntry[] = [];
@@ -1305,28 +1314,54 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     refresh();
     opts.onChange?.(getApps());
   }
+  function parseAppToken(token: string, fallbackGuest: string): { appId: string; guestId: string } {
+    const trimmed = token.trim();
+    if (!trimmed || /^\d+$/.test(trimmed)) return { appId: trimmed, guestId: fallbackGuest };
+    const extractedApp = extractAppIdFromInput(trimmed);
+    if (!extractedApp) return { appId: trimmed, guestId: fallbackGuest };
+    const extractedGuest = extractGuestIdFromInput(trimmed);
+    const guestId = extractedGuest || (/\/k\/\d+(?:[/?#]|$)/i.test(trimmed) ? '' : fallbackGuest);
+    return { appId: extractedApp, guestId };
+  }
   /**
    * 1 つのアプリID入力欄に「100, 120, 130」のようにカンマ区切りで入力された値を、
-   * 先頭をその行に残し、残りを直後の行へ分割展開する。
-   * @returns 分割が発生したら true
+   * 先頭をその行に残し、残りを直後の行へ分割展開する。URL 貼り付け時は AppID/GuestID を抽出する。
+   * @returns 分割またはURL抽出が発生したら true
    */
   function distributeAppTokens(entry: AppTableRowEntry): boolean {
     const raw = entry.app.value;
-    if (!/[,、\s]/.test(raw)) return false;
+    const guestVal = entry.guest.value.trim();
+    if (!/[,、\s]/.test(raw)) {
+      const parsed = parseAppToken(raw, guestVal);
+      if (parsed.appId !== raw || parsed.guestId !== guestVal) {
+        entry.app.value = parsed.appId;
+        entry.guest.value = parsed.guestId;
+        setAppName(entry, '');
+        return true;
+      }
+      return false;
+    }
     const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
     if (tokens.length <= 1) {
       // 区切り文字だけ / 末尾カンマなどは正規化（先頭トークンのみ残す）
-      const next = tokens[0] || '';
-      if (entry.app.value !== next) { entry.app.value = next; setAppName(entry, ''); return true; }
+      const parsed = parseAppToken(tokens[0] || '', guestVal);
+      if (entry.app.value !== parsed.appId || entry.guest.value.trim() !== parsed.guestId) {
+        entry.app.value = parsed.appId;
+        entry.guest.value = parsed.guestId;
+        setAppName(entry, '');
+        return true;
+      }
       return false;
     }
-    entry.app.value = tokens[0];
+    const first = parseAppToken(tokens[0], guestVal);
+    entry.app.value = first.appId;
+    entry.guest.value = first.guestId;
     setAppName(entry, '');
-    const guestVal = entry.guest.value.trim();
     const start = rows.indexOf(entry);
     let last = entry;
     for (let k = 1; k < tokens.length; k += 1) {
-      last = insertRow(start + k, tokens[k], guestVal, false);
+      const next = parseAppToken(tokens[k], guestVal);
+      last = insertRow(start + k, next.appId, next.guestId, false);
     }
     try { last.app.focus(); } catch { /* noop */ }
     return true;
@@ -1405,7 +1440,8 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     app.addEventListener('change', () => { if (distributeAppTokens(entry)) emitChange(); });
     app.addEventListener('paste', (ev: ClipboardEvent) => {
       const text = ev.clipboardData?.getData('text') || '';
-      if (!/[,、\s]/.test(text)) return;
+      const hasUrl = Boolean(extractAppIdFromInput(text.trim())) && !/^\d+$/.test(text.trim());
+      if (!/[,、\s]/.test(text) && !hasUrl) return;
       ev.preventDefault();
       const start = app.selectionStart ?? app.value.length;
       const end = app.selectionEnd ?? start;
@@ -1573,13 +1609,16 @@ export async function liteRun<T>(
   try {
     const out = await fn();
     const tone = panel.status.dataset.tone;
-    if (okMsg && tone !== 'err' && tone !== 'warn') {
-      // 部分成功・比較未完了の警告を成功メッセージで上書きしない。
+    const currentText = panel.status.querySelector('.kus-lp__status-text')?.textContent || '';
+    const cancelled = /キャンセルしました/.test(currentText);
+    if (cancelled && (tone === 'busy' || tone === 'ok')) {
+      panel.setStatus(currentText, 'info');
+    } else if (okMsg && tone !== 'err' && tone !== 'warn' && tone !== 'info') {
+      // 部分成功・比較未完了の警告やキャンセル案内を成功メッセージで上書きしない。
       panel.setStatus(okMsg, 'ok');
     } else if (tone === 'busy') {
       // 処理側の最終メッセージ（「…完了」など）がスピナー付きのまま残らないよう成功トーンへ切り替える
-      const text = panel.status.querySelector('.kus-lp__status-text')?.textContent || '';
-      panel.setStatus(text || '完了', 'ok');
+      panel.setStatus(currentText || '完了', 'ok');
     }
     return out;
   } catch (e: any) {

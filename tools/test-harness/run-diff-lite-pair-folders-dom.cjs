@@ -42,6 +42,11 @@ function hasFlag(name) {
   return process.argv.includes(name);
 }
 
+function extractMarkdownAppIds(markdown) {
+  return [...String(markdown || '').matchAll(/^\s*-\s*appId:\s*`\s*([^`\r\n]*?)\s*`/gm)]
+    .map((match) => match[1]);
+}
+
 function resolveFromRoot(value, fallback) {
   const raw = value || fallback;
   return path.isAbsolute(raw) ? raw : path.resolve(ROOT, raw);
@@ -488,6 +493,7 @@ async function runFolderComparison(page, pageErrors) {
     assert.match(text, new RegExp(`App ${EXPECTED_PAIRS[index].sourceAppId}[\\s\\S]*App ${EXPECTED_PAIRS[index].targetAppId}`), `${index + 1}行目の結果対応が不正です`);
     assert.equal(await rows.nth(index).locator('[data-kus-dl-multi-html]').count(), 1, `${index + 1}行目のHTML保存導線がありません`);
     assert.equal(await rows.nth(index).locator('[data-kus-dl-multi-xlsx]').count(), 1, `${index + 1}行目のExcel保存導線がありません`);
+    assert.equal(await rows.nth(index).locator('[data-kus-dl-multi-md]').count(), 1, `${index + 1}行目のMarkdown保存導線がありません`);
   }
   const batchButton = page.locator('[data-kus-dl-multi-xlsx-all]');
   assert.equal(await batchButton.count(), 1, 'フォルダ比較の一括Excel保存ボタンがありません');
@@ -505,6 +511,13 @@ async function verifyExports(page) {
   await page.waitForFunction(() => window.__folderProbe.downloadCount === 1, null, { timeout: 10000 });
   await firstRow.locator('[data-kus-dl-multi-xlsx]').click();
   await page.waitForFunction(() => window.__folderProbe.downloadCount === 2, null, { timeout: 10000 });
+  await page.waitForFunction(() => {
+    const xlsx = document.querySelector('[data-kus-dl-multi-xlsx]');
+    const markdownButton = document.querySelector('[data-kus-dl-multi-md]');
+    return xlsx && markdownButton && !xlsx.disabled && !markdownButton.disabled;
+  }, null, { timeout: 10000 });
+  await firstRow.locator('[data-kus-dl-multi-md]').click();
+  await page.waitForFunction(() => window.__folderProbe.downloadCount === 3, null, { timeout: 10000 });
   const exported = await page.evaluate(async () => ({
     names: [...window.__folderProbe.downloadNames],
     artifacts: await Promise.all(window.__folderDownloadBlobs.map(async (blob) => ({
@@ -517,7 +530,8 @@ async function verifyExports(page) {
   const { names, artifacts } = exported;
   assert.match(names[0], /\.html$/i, 'フォルダ比較のHTML出力名が不正です');
   assert.match(names[1], /\.xlsx$/i, 'フォルダ比較のExcel出力名が不正です');
-  assert.equal(artifacts.length, 2, '出力されたBlobの件数が不正です');
+  assert.match(names[2], /\.md$/i, 'フォルダ比較のMarkdown出力名が不正です');
+  assert.equal(artifacts.length, 3, '出力されたBlobの件数が不正です');
   assert.match(artifacts[0].type, /html/i, 'HTML出力のMIME typeが不正です');
   assert.match(artifacts[0].text, /アプリ\s*101/, '選択した1件目の比較元App IDがHTMLにありません');
   assert.match(artifacts[0].text, /アプリ\s*202/, '選択した1件目の比較先App IDがHTMLにありません');
@@ -529,6 +543,14 @@ async function verifyExports(page) {
   assert.match(artifacts[1].text, /A-old/, '選択した1件目の変更前値がExcel内部XMLにありません');
   assert.match(artifacts[1].text, /B-new/, '選択した1件目の変更後値がExcel内部XMLにありません');
   assert.doesNotMatch(artifacts[1].text, /B-old|C-new/, '別ペアのキャッシュが1件目のExcelへ混入しました');
+  assert.match(artifacts[2].type, /markdown|text/i, 'Markdown出力のMIME typeが不正です');
+  const markdownAppIds = extractMarkdownAppIds(artifacts[2].text);
+  assert.deepEqual(markdownAppIds, ['101', '202'], '選択した1件目のMarkdownの比較元・比較先App IDが不正です');
+  assert.ok(markdownAppIds.indexOf('101') < markdownAppIds.indexOf('202'),
+    '選択した1件目のMarkdownで比較方向（比較元→比較先）が逆転しています');
+  assert.match(artifacts[2].text, /A-old/, '選択した1件目のMarkdownに変更前スナップショット値がありません');
+  assert.match(artifacts[2].text, /B-new/, '選択した1件目のMarkdownに変更後スナップショット値がありません');
+  assert.doesNotMatch(artifacts[2].text, /B-old|C-new/, '別ペアのキャッシュが1件目のMarkdownへ混入しました');
   await page.waitForTimeout(400);
   const downloadsBeforeBulk = await page.evaluate(() => window.__folderProbe.downloadCount);
   await page.locator('[data-kus-dl-multi-xlsx-all]').evaluate((button) => {
