@@ -557,6 +557,20 @@
     }
   });
 
+  // src/ui/dialog.ts
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
+  var init_dialog = __esm({
+    "src/ui/dialog.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      root = null;
+    }
+  });
+
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -827,6 +841,17 @@ ${contextLine}`);
     const jitter = Math.random() * Math.min(200, baseDelayMs);
     return Math.round(expDelay + jitter);
   }
+  function isRetriableMutation(method, error) {
+    if (!error) return false;
+    const m = String(method || "").toUpperCase();
+    const status = resolveHttpStatus(error);
+    if (status >= 400 && status < 500) {
+      if (m === "PUT" && (status === 408 || status === 429)) return true;
+      return false;
+    }
+    if (status >= 500 && status < 600) return true;
+    return isRetriableApiError(error);
+  }
   function touchApiPathMetric(path, field) {
     const key = String(path || "");
     const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
@@ -870,21 +895,30 @@ ${contextLine}`);
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
-  async function apiPut(prefix, path, body) {
-    assertAllowsMutatingRestCall(prefix, path, "PUT");
-    try {
-      return await kintone.api(`${prefix}${path}`, "PUT", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "PUT", prefix, path, payload: body });
+  async function executeMutatingApiWithRetry(method, prefix, path, body, retries = DEFAULT_API_GET_RETRIES) {
+    assertAllowsMutatingRestCall(prefix, path, method);
+    const maxAttempts = Math.max(1, retries);
+    let lastErr;
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        return await kintone.api(`${prefix}${path}`, method, body);
+      } catch (e) {
+        lastErr = e;
+        if (i < maxAttempts - 1 && isRetriableMutation(method, e)) {
+          const waitMs = computeRetryDelayMs(i, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        break;
+      }
     }
+    throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
+  }
+  async function apiPut(prefix, path, body) {
+    return executeMutatingApiWithRetry("PUT", prefix, path, body);
   }
   async function apiPost(prefix, path, body) {
-    assertAllowsMutatingRestCall(prefix, path, "POST");
-    try {
-      return await kintone.api(`${prefix}${path}`, "POST", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
-    }
+    return executeMutatingApiWithRetry("POST", prefix, path, body);
   }
   async function apiDelete(prefix, path, body) {
     assertAllowsMutatingRestCall(prefix, path, "DELETE");
@@ -1126,7 +1160,7 @@ ${contextLine}`);
       }
       tasks.push(async () => {
         try {
-          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
+          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id });
           if (res && typeof res === "object") {
             plugin._config = res?.config != null ? res.config : res;
             stats.fetched += 1;
@@ -1260,20 +1294,6 @@ ${contextLine}`);
     }
   });
 
-  // src/ui/dialog.ts
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
-    }
-  });
-
   // src/kintone-enums.ts
   var init_kintone_enums = __esm({
     "src/kintone-enums.ts"() {
@@ -1387,6 +1407,38 @@ ${contextLine}`);
       return;
     }
     run();
+  }
+
+  // src/handlers/diffFocus.ts
+  init_state();
+  init_dialog();
+  function extractAppIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
   }
 
   // src/ui/components.ts
@@ -2351,11 +2403,14 @@ ${contextLine}`);
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
-      if (okMsg && tone !== "err" && tone !== "warn") {
+      const currentText = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const cancelled = /キャンセルしました/.test(currentText);
+      if (cancelled && (tone === "busy" || tone === "ok")) {
+        panel.setStatus(currentText, "info");
+      } else if (okMsg && tone !== "err" && tone !== "warn" && tone !== "info") {
         panel.setStatus(okMsg, "ok");
       } else if (tone === "busy") {
-        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
-        panel.setStatus(text || "完了", "ok");
+        panel.setStatus(currentText || "完了", "ok");
       }
       return out;
     } catch (e) {
@@ -2614,6 +2669,12 @@ ${contextLine}`);
     function finish() {
       if (!pending) return;
       const status = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const tone = panel.status.dataset.tone || "";
+      if ((tone === "info" || tone === "warn" || tone === "neutral") && /キャンセルしました/.test(status)) {
+        pending = null;
+        refresh();
+        return;
+      }
       resultNote.textContent = `${lastContext}
 ${status}`;
       resultNote.dataset.write = String(!!pending.writes);
@@ -2778,10 +2839,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (typeof f.value === "object" && f.value !== null) return JSON.stringify(f.value);
     return f.value == null ? "" : String(f.value);
   }
-  function buildRecordsCsvText(records, propKeys) {
-    const lines = [propKeys.map((k) => csvEscape(neutralizeCsvFormula(k))).join(",")];
-    for (const rec of records) lines.push(propKeys.map((k) => csvEscape(neutralizeCsvFormula(extractRecordCsvValue(rec, k)))).join(","));
-    return "\uFEFF" + lines.join("\n");
+  function buildRecordsCsvText(records, propKeys, options) {
+    const headers = Array.isArray(options?.headers) && options.headers.length === propKeys.length ? options.headers : propKeys;
+    const lineEnding = options?.lineEnding === "\r\n" ? "\r\n" : "\n";
+    const neutralize = options?.neutralizeFormula !== false;
+    const norm = (val) => neutralize ? neutralizeCsvFormula(val) : val;
+    const lines = [headers.map((h) => csvEscape(norm(h))).join(",")];
+    for (const rec of records) lines.push(propKeys.map((k) => csvEscape(norm(extractRecordCsvValue(rec, k)))).join(","));
+    return "\uFEFF" + lines.join(lineEnding);
   }
   function sanitizeZipSegment(value, fallback = "item") {
     const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim();
@@ -2849,7 +2914,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return String(value);
   }
-  function buildRecordCsvExport(records, properties) {
+  function formatCsvColumnHeader(code, prop, mode = "code") {
+    if (mode === "code" || DETAIL_ID_COLUMNS.includes(code) && !prop?.label) return code;
+    const label = String(prop?.label || code);
+    return mode === "both" ? `${label} [${code}]` : label;
+  }
+  function buildRecordCsvExport(records, properties, options) {
+    const headerMode = options?.headerMode || "code";
+    const lineEnding = options?.lineEnding;
+    const neutralizeFormula = options?.neutralizeFormula;
     const parentColumns = Object.keys(properties || {});
     const tableFields = /* @__PURE__ */ new Map();
     for (const code of parentColumns) {
@@ -2865,7 +2938,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         parentColumns.push(code);
       }
     }
-    if (!tableFields.size) return { parentCsv: buildRecordsCsvText(records, parentColumns), tables: [], warnings: [] };
+    if (!tableFields.size) {
+      const headers = parentColumns.map((code) => formatCsvColumnHeader(code, properties?.[code], headerMode));
+      return {
+        parentCsv: buildRecordsCsvText(records, parentColumns, { headers, lineEnding, neutralizeFormula }),
+        tables: [],
+        warnings: []
+      };
+    }
     const recordIds = records.map(parentRecordId);
     const warnings = [];
     const tables = [];
@@ -2900,15 +2980,19 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       if (collision) {
         throw new Error(`テーブル ${fieldCode} の子フィールド ${collision} が明細の識別列と重複するためCSV出力を中止しました。`);
       }
+      const tableColKeys = [...DETAIL_ID_COLUMNS, ...childColumns];
+      const tableHeaders = tableColKeys.map((code) => formatCsvColumnHeader(code, childProperties?.[code], headerMode));
       tables.push({
         fieldCode,
         fileName: tableFileName(fieldCode, usedNames),
-        csvText: buildRecordsCsvText(detailRecords, [...DETAIL_ID_COLUMNS, ...childColumns]),
+        csvText: buildRecordsCsvText(detailRecords, tableColKeys, { headers: tableHeaders, lineEnding, neutralizeFormula }),
         rowCount: detailRecords.length
       });
     }
+    const finalParentKeys = ["$id", ...parentColumns.filter((code) => code !== "$id")];
+    const finalParentHeaders = finalParentKeys.map((code) => formatCsvColumnHeader(code, properties?.[code], headerMode));
     return {
-      parentCsv: buildRecordsCsvText(records, ["$id", ...parentColumns.filter((code) => code !== "$id")]),
+      parentCsv: buildRecordsCsvText(records, finalParentKeys, { headers: finalParentHeaders, lineEnding, neutralizeFormula }),
       tables,
       warnings
     };
@@ -2986,7 +3070,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const type = String(fieldDef?.type || "");
     if (type === "CHECK_BOX" || type === "MULTI_SELECT") return splitCsvListValue(rawValue);
     if (["USER_SELECT", "ORGANIZATION_SELECT", "GROUP_SELECT"].includes(type)) return splitCsvListValue(rawValue).map((code) => ({ code }));
-    return type === "NUMBER" ? String(rawValue ?? "").trim() : rawValue;
+    if (type === "NUMBER") {
+      const trimmed = String(rawValue ?? "").trim();
+      if (fieldDef?.lookup) {
+        const m = /^[A-Za-z][A-Za-z0-9_-]*-(\d+)$/.exec(trimmed);
+        if (m) return m[1];
+      }
+      return trimmed;
+    }
+    return rawValue;
   }
   function validateCsvImportHeader(header, properties) {
     if (header.includes("$id")) throw new Error("CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。");
@@ -3078,7 +3170,38 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         const label = `${def.label || code}［${code}］`;
         const empty = Array.isArray(value) ? value.length === 0 : value === "";
         if (enabled(def.required) && empty) issue(row, label, "必須項目が空です");
-        if (!empty && def.type === "NUMBER" && !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(String(value))) issue(row, label, "数値の形式が不正です");
+        if (!empty && def.type === "NUMBER") {
+          const numText = String(value);
+          if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(numText)) {
+            issue(row, label, "数値の形式が不正です");
+          } else {
+            const numVal = Number(numText);
+            if (def.minValue !== void 0 && def.minValue !== null && String(def.minValue) !== "" && numVal < Number(def.minValue)) {
+              issue(row, label, `最小値（${def.minValue}）を下回っています`);
+            }
+            if (def.maxValue !== void 0 && def.maxValue !== null && String(def.maxValue) !== "" && numVal > Number(def.maxValue)) {
+              issue(row, label, `最大値（${def.maxValue}）を超えています`);
+            }
+          }
+        }
+        if (!empty && typeof value === "string" && ["SINGLE_LINE_TEXT", "MULTI_LINE_TEXT", "LINK"].includes(def.type)) {
+          const charLen = Array.from(value).length;
+          if (def.minLength !== void 0 && def.minLength !== null && String(def.minLength) !== "" && charLen < Number(def.minLength)) {
+            issue(row, label, `最小文字数（${def.minLength}文字）未満です`);
+          }
+          if (def.maxLength !== void 0 && def.maxLength !== null && String(def.maxLength) !== "" && charLen > Number(def.maxLength)) {
+            issue(row, label, `最大文字数（${def.maxLength}文字）を超えています`);
+          }
+        }
+        if (!empty && def.type === "DATE" && !/^\d{4}-\d{2}-\d{2}$/.test(String(value).trim())) {
+          issue(row, label, "日付の形式が不正です（YYYY-MM-DD）");
+        }
+        if (!empty && def.type === "TIME" && !/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(String(value).trim())) {
+          issue(row, label, "時刻の形式が不正です（HH:MM）");
+        }
+        if (!empty && def.type === "DATETIME" && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/.test(String(value).trim())) {
+          issue(row, label, "日時の形式が不正です（ISO 8601形式: YYYY-MM-DDTHH:MM:SSZ）");
+        }
         if (["RADIO_BUTTON", "DROP_DOWN", "CHECK_BOX", "MULTI_SELECT"].includes(def.type)) {
           const choices = Array.isArray(value) ? value : empty ? [] : [value];
           for (const choice of choices) if (!has(def.options || {}, String(choice))) issue(row, label, `選択肢にありません: ${choice}`);
@@ -3283,16 +3406,17 @@ ${warningSummary}`, true);
     for (const table of csv.tables) zip.file(`${prefix}${table.fileName}`, table.csvText);
   }
   function recordExportFilename(filename, extension, fallback) {
-    const requested = String(filename || "").trim();
-    return requested ? `${requested.replace(/\.(csv|zip)$/i, "")}.${extension}` : fallback;
+    const stem = String(filename || "").trim().replace(/\.(csv|zip)$/i, "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/^[. ]+|[. ]+$/g, "");
+    return stem ? `${stem}.${extension}` : fallback;
   }
-  async function buildCsvExportForApp(appId, guestId, query, setStatus) {
+  async function buildCsvExportForApp(appId, guestId, query, setStatus, exportOptions) {
     const target = validateRecordConnection(appId, guestId);
     appId = target.appId;
     guestId = target.guestId;
     const prefix = buildApiPrefix(guestId, false);
     setStatus(`App ${appId}: フィールド情報取得中...`);
-    const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
+    const fieldParams = exportOptions?.headerMode && exportOptions.headerMode !== "code" ? { app: appId, lang: "user" } : { app: appId };
+    const fields = await apiGet(prefix, "/app/form/fields.json", fieldParams);
     const properties = fields.properties || {};
     if (!Object.keys(properties).length) throw new Error(`App ${appId}: 出力できるフィールドがありません`);
     const records = await fetchAllRecords(prefix, appId, query || "", (message) => setStatus(`App ${appId}: ${message}`));
@@ -3301,12 +3425,13 @@ ${warningSummary}`, true);
       appId,
       guestId: guestId || "",
       recordCount: records.length,
-      csv: buildRecordCsvExport(records, properties)
+      csv: buildRecordCsvExport(records, properties, exportOptions)
     };
   }
   async function runCsvExportStandalone(opts, setStatus) {
-    const { appId, guestId, query, filename } = opts;
-    const result = await buildCsvExportForApp(appId, guestId, query || "", setStatus);
+    const { appId, guestId, query, filename, headerMode, lineEnding, neutralizeFormula } = opts;
+    const exportOptions = { headerMode, lineEnding, neutralizeFormula };
+    const result = await buildCsvExportForApp(appId, guestId, query || "", setStatus, exportOptions);
     const appLabel = buildAppFilenameLabel(appId, "");
     if (!result.csv.tables.length) {
       const blob2 = new Blob([result.csv.parentCsv], { type: "text/csv;charset=utf-8;" });
@@ -3336,10 +3461,15 @@ ${warningSummary}`, true);
     });
     const query = opts?.query || "";
     const filename = String(opts?.filename || "").trim();
+    const exportOptions = {
+      headerMode: opts?.headerMode,
+      lineEnding: opts?.lineEnding,
+      neutralizeFormula: opts?.neutralizeFormula
+    };
     if (!apps.length) throw new Error("対象アプリを1件以上入力してください");
     if (apps.length === 1) {
       const app = apps[0];
-      await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || "", query, filename }, setStatus);
+      await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || "", query, filename, ...exportOptions }, setStatus);
       return;
     }
     const JSZip = await loadJSZipLite();
@@ -3354,7 +3484,7 @@ ${warningSummary}`, true);
       let folder = "";
       setStatus(`CSV出力中... (${i + 1}/${apps.length})`);
       try {
-        const result = await buildCsvExportForApp(app.appId, app.guestId || "", query, setStatus);
+        const result = await buildCsvExportForApp(app.appId, app.guestId || "", query, setStatus, exportOptions);
         const guestSuffix = result.guestId ? `_guest${sanitizeZipSegment(result.guestId)}` : "";
         folder = uniqueZipEntryName(used, `app_${sanitizeZipSegment(result.appId)}${guestSuffix}`);
         addRecordCsvFiles(zip, result.csv, `${folder}/`);
@@ -3584,6 +3714,97 @@ ${error?.message || String(error)}`
       return payload;
     });
     return { records: out, droppedFields: [...dropped].sort(), droppedFileFields: [...fileFields].sort(), recordsWithFiles };
+  }
+  function inspectRecordCopyCompatibility(sourceProps, targetProps) {
+    const src = sourceProps && typeof sourceProps === "object" ? sourceProps : {};
+    const tgt = targetProps && typeof targetProps === "object" ? targetProps : {};
+    const compatibleFields = [];
+    const droppedMissing = [];
+    const droppedMismatch = [];
+    const excludedSystemOrFile = [];
+    for (const [code, field] of Object.entries(src)) {
+      if (!field || typeof field !== "object") continue;
+      const type = String(field.type || "");
+      const label = String(field.label || code);
+      const display = `${label}［${code}］`;
+      if (COPY_SYSTEM_CODES.has(code) || COPY_SYSTEM_TYPES.has(type) || type === "FILE" || field.expression) {
+        excludedSystemOrFile.push(`${display}(${type === "FILE" ? "FILE" : field.expression ? "自動計算" : type})`);
+        continue;
+      }
+      const targetField = tgt[code];
+      if (!targetField) {
+        droppedMissing.push(display);
+        continue;
+      }
+      const targetType = String(targetField.type || "");
+      if (targetType !== type) {
+        droppedMismatch.push(`${display}(${type} → ${targetType})`);
+        continue;
+      }
+      if (type === "SUBTABLE") {
+        const srcChildren = field.fields && typeof field.fields === "object" ? field.fields : {};
+        const tgtChildren = targetField.fields && typeof targetField.fields === "object" ? targetField.fields : {};
+        let compatibleSubCount = 0;
+        for (const [childCode, childField] of Object.entries(srcChildren)) {
+          if (!childField || typeof childField !== "object") continue;
+          const cType = String(childField.type || "");
+          const cDisplay = `${code}.${childCode}`;
+          if (COPY_SYSTEM_CODES.has(childCode) || COPY_SYSTEM_TYPES.has(cType) || cType === "FILE" || childField.expression) {
+            excludedSystemOrFile.push(`${cDisplay}(${cType === "FILE" ? "FILE" : childField.expression ? "自動計算" : cType})`);
+            continue;
+          }
+          const tChild = tgtChildren[childCode];
+          if (!tChild) {
+            droppedMissing.push(cDisplay);
+          } else if (String(tChild.type || "") !== cType) {
+            droppedMismatch.push(`${cDisplay}(${cType} → ${String(tChild.type || "")})`);
+          } else {
+            compatibleSubCount++;
+          }
+        }
+        compatibleFields.push(`${display}(サブテーブル: 一致 ${compatibleSubCount}列)`);
+      } else {
+        compatibleFields.push(display);
+      }
+    }
+    return {
+      compatibleFields,
+      droppedMissing,
+      droppedMismatch,
+      excludedSystemOrFile
+    };
+  }
+  function formatRecordCopyPreview(report) {
+    return [
+      `コピー対象フィールド (${report.compatibleFields.length}件): ${report.compatibleFields.join(", ") || "なし"}`,
+      `コピー先に無いため除外 (${report.droppedMissing.length}件): ${report.droppedMissing.join(", ") || "なし"}`,
+      `型不一致のため除外 (${report.droppedMismatch.length}件): ${report.droppedMismatch.join(", ") || "なし"}`,
+      `システム・添付・自動計算のため除外 (${report.excludedSystemOrFile.length}件): ${report.excludedSystemOrFile.join(", ") || "なし"}`
+    ].join("\n");
+  }
+  async function runPreviewRecordCopyStandalone(opts, setStatus) {
+    const srcConn = validateRecordConnection(opts.sourceAppId, opts.sourceGuestId || "");
+    const targetAppIds = parseRecordAppIds(opts.targetAppsText);
+    if (!targetAppIds.length) throw new Error("コピー先の対象アプリIDを1件以上入力してください");
+    const srcPrefix = buildApiPrefix(srcConn.guestId, false);
+    const tgtPrefix = buildApiPrefix(opts.targetGuestId || "", false);
+    setStatus(`コピー元 App ${srcConn.appId} のフィールド定義を取得中...`);
+    const srcFields = await apiGet(srcPrefix, "/app/form/fields.json", { app: srcConn.appId, lang: "user" });
+    const srcProps = srcFields?.properties || {};
+    const results = [];
+    for (const targetAppId of targetAppIds) {
+      setStatus(`コピー先 App ${targetAppId} のフィールド互換性を確認中...`);
+      try {
+        const tgtFields = await apiGet(tgtPrefix, "/app/form/fields.json", { app: targetAppId, lang: "user" });
+        const report = inspectRecordCopyCompatibility(srcProps, tgtFields?.properties || {});
+        results.push({ targetAppId, report });
+      } catch (error) {
+        results.push({ targetAppId, error: error?.message || String(error) });
+      }
+    }
+    const hasWarn = results.some((r) => r.error || r.report && (!r.report.compatibleFields.length || r.report.droppedMissing.length > 0 || r.report.droppedMismatch.length > 0));
+    setStatus(`フィールド互換性確認完了: ${results.length}アプリ。まだコピーは実行していません。`, hasWarn);
+    return results;
   }
   async function runRecordCopyStandalone(opts, setStatus) {
     const { sourceAppId, sourceGuestId, targetAppId, targetGuestId, query } = opts;
@@ -3844,7 +4065,13 @@ ${formatFileFailures(failures)}
           appNgSections.push(key);
         } else appOk++;
       }
-      if (appNg) notes.push(`アプリ設定取得失敗 ${appNg}セクション: ${appNgSections.join(", ")}`);
+      if (appNg) {
+        if (appOk === 0) {
+          notes.push(`警告: 選択されたすべてのアプリ設定セクション（${appNg}件）の取得に失敗しました（権限または環境を確認してください）: ${appNgSections.join(", ")}`);
+        } else {
+          notes.push(`アプリ設定取得失敗 ${appNg}セクション: ${appNgSections.join(", ")}`);
+        }
+      }
       zip.file(`app_settings/app_${appId}.json`, JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, scopes: appScopes, bundle: settings }, null, 2));
     } else if (!includeAppSettings) {
       notes.push("アプリ設定未取得");
@@ -3866,7 +4093,8 @@ ${formatFileFailures(failures)}
     const blob = await zip.generateAsync({ type: "blob" });
     downloadBlob(zipName || buildExportFilename("レコードバックアップ", "zip", { appLabel: buildAppFilenameLabel(appId, "") }), blob);
     const failureCount = fileFailures.length + commentFailures.length + appNg + csvExport.warnings.length;
-    const failureNote = failureCount ? `（取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg} / テーブル ${csvExport.warnings.length} → manifest.json 参照）` : "";
+    const allSettingsFailed = Boolean(includeAppSettings && appScopes?.length && appOk === 0 && appNg > 0);
+    const failureNote = failureCount ? `（取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg}${allSettingsFailed ? " [全セクション失敗]" : ""} / テーブル ${csvExport.warnings.length} → manifest.json 参照）` : "";
     const completionMessage = `バックアップ完了: ${records.length}件 / テーブル明細 ${csvExport.tables.length}ファイル / 添付 ${fileCount} / コメント ${commentCount}${failureNote}`;
     setStatus(completionMessage, failureCount > 0);
     return { warning: failureCount > 0 ? completionMessage : void 0 };
@@ -3908,40 +4136,6 @@ ${formatFileFailures(failures)}
 
   // src/entries/appSearchControl.ts
   init_api();
-
-  // src/handlers/diffFocus.ts
-  init_state();
-  init_dialog();
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
-  // src/entries/appSearchControl.ts
   init_utils();
   var RESULT_CSS_ID = "kus-app-search-styles";
   var RESULT_CSS = `
@@ -4168,12 +4362,15 @@ ${formatFileFailures(failures)}
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
     });
-    keyword.addEventListener("keydown", (e) => {
+    const onEnterKey = (e) => {
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         void runSearch();
       }
-    });
+    };
+    keyword.addEventListener("keydown", onEnterKey);
+    guest.addEventListener("keydown", onEnterKey);
+    space.addEventListener("keydown", onEnterKey);
     return details;
   }
 
@@ -4190,8 +4387,8 @@ ${formatFileFailures(failures)}
     if (!properties || typeof properties !== "object" || Array.isArray(properties)) throw new Error("フィールド設定の応答が不正です");
     return Object.entries(properties).filter(([, field]) => SCALAR.has(field?.type) || MULTI.has(field?.type)).map(([code, field]) => ({ code, label: String(field.label || code), type: String(field.type) }));
   }
-  function selectQualityFields(properties, codes) {
-    if (!codes.length || codes.length > 5 || new Set(codes).size !== codes.length) throw new Error("検査するフィールドを1〜5個選んでください");
+  function selectQualityFields(properties, codes, maxFields = 5) {
+    if (!codes.length || codes.length > maxFields || new Set(codes).size !== codes.length) throw new Error(`検査するフィールドを1〜${maxFields}個選んでください`);
     const available = new Map(readQualityFields(properties).map((field) => [field.code, field]));
     return codes.map((code) => {
       const field = available.get(code);
@@ -4224,7 +4421,7 @@ ${formatFileFailures(failures)}
           keys.push("");
           continue;
         }
-        values.push(multi ? JSON.stringify(value.map((item) => typeof item === "string" ? item : item.code)) : String(value ?? ""));
+        values.push(multi ? value.map((item) => typeof item === "string" ? item : item.code).join(", ") : String(value ?? ""));
         let key = multi ? JSON.stringify([...new Set(value.map((item) => typeof item === "string" ? item : item.code))].sort()) : String(value ?? "");
         if (TEXT.has(field.type)) {
           if (options.trimText) key = key.trim();
@@ -4354,7 +4551,18 @@ ${formatFileFailures(failures)}
   }
   async function runLoadQualityFieldsStandalone(options) {
     const { appIds, prefix } = connection(options.appIdsText, options.guestId);
-    return readQualityFields((await apiGet(prefix, "/app/form/fields.json", { app: appIds[0], lang: "user" })).properties);
+    const firstFields = readQualityFields((await apiGet(prefix, "/app/form/fields.json", { app: appIds[0], lang: "user" })).properties);
+    if (!options.intersectAll || appIds.length <= 1) return firstFields;
+    let common = firstFields;
+    for (let i = 1; i < appIds.length; i++) {
+      try {
+        const nextProps = (await apiGet(prefix, "/app/form/fields.json", { app: appIds[i], lang: "user" })).properties;
+        const nextMap = new Map(readQualityFields(nextProps).map((f) => [f.code, f.type]));
+        common = common.filter((f) => nextMap.get(f.code) === f.type);
+      } catch {
+      }
+    }
+    return common;
   }
   async function runRecordQualityStandalone(options, setStatus) {
     const { appIds, prefix } = connection(options.appIdsText, options.guestId);
@@ -4379,7 +4587,7 @@ ${formatFileFailures(failures)}
     for (const appId of appIds) {
       setStatus(`App ${appId}: CSVひな形を作成中…`);
       try {
-        const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
+        const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId, lang: "user" });
         templates.push({ appId, template: buildCsvImportTemplate(fields.properties) });
       } catch (error) {
         failures.push(`App ${appId}: ${error.message || String(error)}`);
@@ -4548,24 +4756,39 @@ ${failures.join("\n")}` };
         output.appendChild(makeNote(`App ${result.appId}: ${report.total}件を検査 / 重複 ${report.duplicateGroups}組・${report.duplicateRecords}件 / 未入力 ${report.emptyRecords}件 / 取得不可 ${report.unavailableRecords}件`));
         const list = document.createElement("ol");
         list.style.cssText = "max-height:320px;overflow:auto;padding-left:24px;overflow-wrap:anywhere;font-size:12px";
-        for (const finding of report.findings.slice(0, 50)) {
-          const row = document.createElement("li"), link = document.createElement("a");
-          link.textContent = `レコード ${finding.recordId}`;
-          const recordPath = qualityRecordPath(result.appId, guestId, finding.recordId);
-          if (recordPath) {
-            link.href = recordPath;
-            link.target = "_blank";
-            link.rel = "noopener noreferrer";
+        const renderFindingsList = (limit) => {
+          list.replaceChildren();
+          for (const finding of report.findings.slice(0, limit)) {
+            const row = document.createElement("li"), link = document.createElement("a");
+            link.textContent = `レコード ${finding.recordId}`;
+            const recordPath = qualityRecordPath(result.appId, guestId, finding.recordId);
+            if (recordPath) {
+              link.href = recordPath;
+              link.target = "_blank";
+              link.rel = "noopener noreferrer";
+            }
+            row.append(
+              document.createTextNode(`${finding.kind}${finding.group ? ` #${finding.group}` : ""} / `),
+              link,
+              document.createTextNode(` / ${finding.fields.join(", ")} / ${finding.values.map((value) => value.length > 120 ? value.slice(0, 120) + "…" : value).join(" | ")}`)
+            );
+            list.appendChild(row);
           }
-          row.append(
-            document.createTextNode(`${finding.kind}${finding.group ? ` #${finding.group}` : ""} / `),
-            link,
-            document.createTextNode(` / ${finding.fields.join(", ")} / ${finding.values.map((value) => value.length > 120 ? value.slice(0, 120) + "…" : value).join(" | ")}`)
-          );
-          list.appendChild(row);
-        }
+        };
+        renderFindingsList(50);
         if (list.childElementCount) output.appendChild(list);
-        if (report.findings.length > 50) output.appendChild(makeNote(`詳細表示は先頭50件です。CSVには全 ${report.findings.length}件を保存します。`));
+        if (report.findings.length > 50) {
+          const moreNote = makeNote(`詳細表示は先頭50件です。CSVには全 ${report.findings.length}件を保存します。`);
+          const toggleBtn = makeButton(`全 ${report.findings.length}件を表示`, "sub");
+          let expanded = false;
+          toggleBtn.addEventListener("click", () => {
+            expanded = !expanded;
+            renderFindingsList(expanded ? report.findings.length : 50);
+            toggleBtn.textContent = expanded ? "先頭50件のみ表示" : `全 ${report.findings.length}件を表示`;
+            moreNote.textContent = expanded ? `全 ${report.findings.length}件を表示しています。` : `詳細表示は先頭50件です。CSVには全 ${report.findings.length}件を保存します。`;
+          });
+          output.append(moreNote, makeRow(toggleBtn));
+        }
       }
       save.onclick = () => {
         if (!results.length || current !== version) return;
@@ -4724,10 +4947,24 @@ ${failures.join("\n")}` };
         build: (root2) => {
           const query = makeInput({ placeholder: '空欄で全件（例: 更新日時 >= "2026-01-01T00:00:00Z"）', width: "wide" });
           const fname = makeInput({ placeholder: "空欄で自動命名（CSV / テーブルあり・複数アプリはZIP）", width: "wide" });
+          const headerModeSelect = makeSelect([
+            ["code", "フィールドコード（既定）"],
+            ["label", "フィールド名（ラベル）"],
+            ["both", "フィールド名 [コード]"]
+          ]);
+          headerModeSelect.setAttribute("aria-label", "CSVヘッダー形式");
+          const lineEndingSelect = makeSelect([
+            ["lf", "LF（既定）"],
+            ["crlf", "CRLF（Windows標準）"]
+          ]);
+          lineEndingSelect.setAttribute("aria-label", "改行コード");
+          const neutralizeCb = makeCheck({ label: "先頭の = + - @ を数式無害化する（Excel向け・既定）", checked: true });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
           root2.appendChild(makeRow(fname, { label: "ファイル名" }));
+          root2.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: "出力形式" }));
+          root2.appendChild(makeRow(neutralizeCb.label, { label: "Excel保護" }));
           root2.appendChild(makeNote("1アプリはCSVで保存します。テーブルがある場合は親レコードとテーブル明細を別CSVにしてZIPにまとめます。複数アプリはアプリ別フォルダを1つのZIPに保存します。"));
           root2.appendChild(makeNote("テーブル明細は親レコードの $id で紐付けできます。出力は閲覧・集計用で、CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に ' を付けます（数値は対象外）。添付はファイル名のみです。ファイル本体はバックアップの「添付ファイルも保存」で取得できます。"));
           const run = makeButton("CSVを出力", "primary", { icon: "↓" });
@@ -4735,11 +4972,36 @@ ${failures.join("\n")}` };
           run.addEventListener("click", () => liteRun(panel, "CSV出力中…", async () => {
             const appIds = parseRecordAppIds(tgtApp.value);
             await runCsvExportBatchStandalone(
-              { apps: appIds.map((appId) => ({ appId, guestId: tgtGuest.value.trim() })), query: query.value.trim(), filename: fname.value.trim() },
+              {
+                apps: appIds.map((appId) => ({ appId, guestId: tgtGuest.value.trim() })),
+                query: query.value.trim(),
+                filename: fname.value.trim(),
+                headerMode: headerModeSelect.value,
+                lineEnding: lineEndingSelect.value === "crlf" ? "\r\n" : "\n",
+                neutralizeFormula: neutralizeCb.checkbox.checked
+              },
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             );
           }));
-          addAction({ id: "csv-export", label: "CSVを出力", description: "条件に合うレコードとテーブル明細をCSV / ZIPで保存します。", button: run, validate: requiredApps, summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["保存形式", !requiredApps() && parseRecordAppIds(tgtApp.value).length > 1 ? "ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）" : "CSV（テーブルがある場合は親CSV・明細CSVのZIP）"], ["ファイル名", fname.value.trim() || "自動命名"]] });
+          const headerLabelMap = {
+            code: "フィールドコード",
+            label: "フィールド名（ラベル）",
+            both: "フィールド名 [コード]"
+          };
+          addAction({
+            id: "csv-export",
+            label: "CSVを出力",
+            description: "条件に合うレコードとテーブル明細をCSV / ZIPで保存します。",
+            button: run,
+            validate: requiredApps,
+            summary: () => [
+              targetSummary(),
+              ["条件", query.value.trim() || "全件"],
+              ["保存形式", !requiredApps() && parseRecordAppIds(tgtApp.value).length > 1 ? "ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）" : "CSV（テーブルがある場合は親CSV・明細CSVのZIP）"],
+              ["ヘッダー / 改行 / 数式保護", `${headerLabelMap[headerModeSelect.value] || "フィールドコード"} / ${lineEndingSelect.value === "crlf" ? "CRLF" : "LF"} / 数式無害化: ${neutralizeCb.checkbox.checked ? "あり" : "なし"}`],
+              ["ファイル名", fname.value.trim() || "自動命名"]
+            ]
+          });
           root2.appendChild(makeRow(run));
         }
       },
@@ -5008,15 +5270,59 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           const srcApp = makeInput({ placeholder: "コピー元アプリID", width: "id" });
           const srcGuest = makeInput({ placeholder: "ゲスト (任意)", width: "guest" });
           const query = makeInput({ placeholder: "条件 (任意)", width: "wide" });
+          const useView = makeButton("▼ 一覧から", "sub");
+          useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([srcApp, srcGuest], { label: "コピー元" }));
           root2.appendChild(createAppSearchControl(panel, {
             guestEl: srcGuest,
             targets: [{ label: "コピー元", apply: (id, _name, guestId) => {
               srcApp.value = id;
               if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId;
+              notifyInput(srcApp);
             } }]
           }));
-          root2.appendChild(makeRow(query, { label: "クエリ" }));
+          root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
+          const previewBtn = makeButton("フィールド互換性を事前確認", "sub");
+          const previewText = document.createElement("pre");
+          previewText.setAttribute("aria-label", "コピー互換性確認結果");
+          previewText.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;font-size:12px";
+          previewText.hidden = true;
+          let copyPreviewVersion = 0;
+          let copyPreviewSummary = "未実施（実行時にも除外フィールドを表示します）";
+          const clearCopyPreview = () => {
+            copyPreviewVersion++;
+            copyPreviewSummary = "未実施（実行時にも除外フィールドを表示します）";
+            previewText.textContent = "";
+            previewText.hidden = true;
+          };
+          resetMetadata.push(clearCopyPreview);
+          for (const el of [srcApp, srcGuest]) {
+            el.addEventListener("input", clearCopyPreview);
+            el.addEventListener("change", clearCopyPreview);
+          }
+          previewBtn.addEventListener("click", () => liteRun(panel, "フィールド互換性を確認中…", async () => {
+            const version = copyPreviewVersion;
+            const results = await runPreviewRecordCopyStandalone(
+              {
+                sourceAppId: srcApp.value.trim(),
+                sourceGuestId: srcGuest.value.trim(),
+                targetAppsText: tgtApp.value,
+                targetGuestId: tgtGuest.value.trim()
+              },
+              (m, e) => panel.setStatus(m, e ? "warn" : "busy")
+            );
+            if (version !== copyPreviewVersion) {
+              panel.setStatus("コピー元またはコピー先が変わりました。再確認してください。", "warn");
+              return;
+            }
+            const warnApps = results.filter((r) => r.error || r.report && (!r.report.compatibleFields.length || r.report.droppedMissing.length > 0 || r.report.droppedMismatch.length > 0)).length;
+            copyPreviewSummary = `${results.length}アプリ確認済${warnApps ? `（除外・注意あり ${warnApps}アプリ）` : "（全フィールド互換）"}`;
+            previewText.textContent = results.map((r) => `コピー先 App ${r.targetAppId}
+${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n");
+            previewText.hidden = false;
+          }));
+          root2.appendChild(makeRow(previewBtn));
+          root2.appendChild(previewText);
           root2.appendChild(makeNote("コピー元の絞り込んだレコードを、対象アプリへ新規レコードとして追加します。ファイル・システム項目・計算項目と、対象アプリに無い（または型が異なる）フィールドは除外し、除外したフィールドコードを実行前に表示します。"));
           const run = makeButton("レコードをコピー実行", "primary");
           run.style.width = "100%";
@@ -5033,7 +5339,20 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
-          addAction({ id: "copy", label: "レコードをコピー", description: "コピー元のレコードを対象アプリへ新規追加します。", button: run, writes: true, validate: () => requiredApps() || (srcApp.value.trim() ? "" : "コピー元アプリを指定してください。"), summary: () => [["コピー元", connectionSummary(srcApp.value.trim(), srcGuest.value.trim())], ["コピー先", connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())], ["コピー元の条件", query.value.trim() || "全件"]] });
+          addAction({
+            id: "copy",
+            label: "レコードをコピー",
+            description: "コピー元のレコードを対象アプリへ新規追加します。",
+            button: run,
+            writes: true,
+            validate: () => requiredApps() || (srcApp.value.trim() ? "" : "コピー元アプリを指定してください。"),
+            summary: () => [
+              ["コピー元", connectionSummary(srcApp.value.trim(), srcGuest.value.trim())],
+              ["コピー先", connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())],
+              ["コピー元の条件", query.value.trim() || "全件"],
+              ["互換性確認", copyPreviewSummary]
+            ]
+          });
           root2.appendChild(makeRow(run));
         }
       },

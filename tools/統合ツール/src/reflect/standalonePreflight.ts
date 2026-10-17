@@ -99,3 +99,73 @@ export function assertReflectBaselineMatches(
   }
   return current.target[opts.scopes[0]].revision;
 }
+
+const SYSTEM_REF_FIELDS = new Set(['$id', '$revision']);
+
+export interface UnmappedActionDestApp {
+  actionName: string;
+  destAppId: string;
+}
+
+/** アプリアクションのコピー先アプリIDで参照先変換に未指定のものを検出する。 */
+export function findUnmappedActionDestApps(
+  sourceActions: Record<string, any> | undefined,
+  lookupMap?: Record<string, string>,
+  targetActions?: Record<string, any>
+): UnmappedActionDestApp[] {
+  if (!sourceActions || typeof sourceActions !== 'object') return [];
+  const map = lookupMap || {};
+  const unmapped: UnmappedActionDestApp[] = [];
+  for (const [actionName, action] of Object.entries(sourceActions)) {
+    const rawApp = action?.destApp?.app;
+    if (rawApp == null) continue;
+    const destAppId = String(rawApp).trim();
+    if (!destAppId || map[destAppId]) continue;
+    const targetAppId = String(targetActions?.[actionName]?.destApp?.app ?? '').trim();
+    if (targetAppId && targetAppId === destAppId) continue;
+    unmapped.push({ actionName, destAppId });
+  }
+  return unmapped;
+}
+
+/** アプリアクションのフィールドマッピングから反映先に存在が必要なコピー元フィールドコードを抽出する。 */
+export function extractActionRequiredFields(actions: Record<string, any> | undefined): string[] {
+  if (!actions || typeof actions !== 'object') return [];
+  const codes: string[] = [];
+  for (const action of Object.values(actions)) {
+    if (!Array.isArray(action?.mappings)) continue;
+    for (const mapping of action.mappings) {
+      if (mapping?.srcType === 'FIELD' && typeof mapping.srcField === 'string' && mapping.srcField.trim()) {
+        const code = mapping.srcField.trim();
+        if (!SYSTEM_REF_FIELDS.has(code)) codes.push(code);
+      }
+    }
+  }
+  return [...new Set(codes)];
+}
+
+/** グラフ設定の分類項目・集計対象から反映先に存在が必要なフィールドコードを抽出する。 */
+export function extractReportRequiredFields(reports: Record<string, any> | undefined): string[] {
+  if (!reports || typeof reports !== 'object') return [];
+  const codes: string[] = [];
+  for (const report of Object.values(reports)) {
+    if (Array.isArray(report?.groups)) {
+      for (const group of report.groups) {
+        if (typeof group?.code === 'string' && group.code.trim()) {
+          const code = group.code.trim();
+          if (!SYSTEM_REF_FIELDS.has(code)) codes.push(code);
+        }
+      }
+    }
+    if (Array.isArray(report?.aggregations)) {
+      for (const agg of report.aggregations) {
+        if (agg?.type !== 'COUNT' && typeof agg?.code === 'string' && agg.code.trim()) {
+          const code = agg.code.trim();
+          if (!SYSTEM_REF_FIELDS.has(code)) codes.push(code);
+        }
+      }
+    }
+  }
+  return [...new Set(codes)];
+}
+

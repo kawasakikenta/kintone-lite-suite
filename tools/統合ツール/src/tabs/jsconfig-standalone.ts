@@ -1,10 +1,18 @@
 'use strict';
 
 import { buildCustomizeSettingsPutPayload } from '../constants.js';
-import { normalize, nowStamp, downloadText, downloadBlob, esc, kusConfirm } from '../utils.js';
+import { normalize, nowStamp, downloadText, downloadBlob, esc, kusConfirm, buildExportFilename } from '../utils.js';
 import { apiGet, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { uniqueZipEntryName } from './record-query.js';
+
+export function formatFileSize(bytes: any): string {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
 
 /** ファイル取得結果。403 は権限、それ以外は HTTP/通信エラーとして理由を残す。 */
 async function downloadFileBlobForJsConfig(prefix: string, fileKey: string): Promise<{ ok: true; blob: Blob } | { ok: false; reason: string }> {
@@ -45,8 +53,16 @@ export function renderCustomizeResultHtml(data) {
     { label: 'モバイル CSS', items: data.mobile?.css || [] }
   ];
   const totalCount = categories.reduce((s, c) => s + c.items.length, 0);
+  let urlTotal = 0;
+  let fileTotal = 0;
+  for (const cat of categories) {
+    for (const item of cat.items) {
+      if (item?.type === 'URL') urlTotal += 1;
+      else fileTotal += 1;
+    }
+  }
   const scope = data.scope ? ` / 適用範囲: ${esc(String(data.scope))}` : '';
-  const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">合計: ${totalCount}件 (Desktop JS:${categories[0].items.length} CSS:${categories[1].items.length} / Mobile JS:${categories[2].items.length} CSS:${categories[3].items.length})${scope}</div>`;
+  const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">合計: ${totalCount}件 (Desktop JS:${categories[0].items.length} CSS:${categories[1].items.length} / Mobile JS:${categories[2].items.length} CSS:${categories[3].items.length} / URL:${urlTotal} / FILE:${fileTotal})${scope}</div>`;
   const rows = [];
   for (const cat of categories) {
     if (!cat.items.length) continue;
@@ -54,10 +70,14 @@ export function renderCustomizeResultHtml(data) {
       const fileType = item.type || '-';
       const src =
         item.type === 'URL' ? (item.url || '-') : (item.file?.name || item.file?.fileKey || '(アップロードファイル)');
+      const sizeLabel = item.type !== 'URL' ? formatFileSize(item?.file?.size) : '';
+      const srcCell = sizeLabel
+        ? `${esc(src)} <span style="margin-left:6px;color:#64748b;font-size:10px;">(${esc(sizeLabel)})</span>`
+        : esc(src);
       rows.push(`<tr>
         <td>${esc(cat.label)}</td>
         <td><span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;background:${fileType === 'URL' ? '#dbeafe' : '#dcfce7'};color:${fileType === 'URL' ? '#1d4ed8' : '#166534'}">${esc(fileType)}</span></td>
-        <td style="word-break:break-all">${esc(src)}</td>
+        <td style="word-break:break-all">${srcCell}</td>
       </tr>`);
     }
   }
@@ -73,7 +93,9 @@ export function renderCustomizeResultHtml(data) {
 export async function runFetchJsConfigStandalone(p, setStatus, ui) {
   const appId = String(p.sourceAppId || '').trim();
   if (!appId) throw new Error('アプリIDを入力してください');
+  if (!/^\d+$/.test(appId)) throw new Error('アプリIDは半角数字で入力してください');
   const guestId = String(p.sourceGuestId || '').trim();
+  if (guestId && !/^\d+$/.test(guestId)) throw new Error('ゲストスペースIDは半角数字で入力してください');
   const isPreview = !!p.preview;
   const prefix = buildApiPrefix(guestId, isPreview);
   setStatus('JS/CSS設定を取得中...');
@@ -88,8 +110,9 @@ export function runExportJsConfigStandalone(jsonText, sourceAppId, setStatus) {
   const text = String(jsonText || '').trim();
   if (!text) throw new Error('先にJS/CSS設定を取得してください');
   const parsed = JSON.parse(text);
-  const appId = String(sourceAppId || '').trim() || 'unknown';
-  downloadText(`customize_${appId}_${nowStamp()}.json`, JSON.stringify(parsed, null, 2), 'application/json');
+  const appId = String(sourceAppId || '').trim();
+  const filename = buildExportFilename('JS_CSS設定', 'json', { appLabel: appId ? `app${appId}` : undefined });
+  downloadText(filename, JSON.stringify(parsed, null, 2), 'application/json');
   setStatus('JS/CSS設定JSONを保存しました');
 }
 
@@ -111,6 +134,12 @@ export interface JsConfigApplyPlan {
 export function buildJsConfigApplyPlan(parsed: any): JsConfigApplyPlan {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('JSONは { "desktop": {...}, "mobile": {...} } 形式のオブジェクトで入力してください');
+  }
+  const hasCustomizeKey = ['desktop', 'mobile', 'scope'].some((k) =>
+    Object.prototype.hasOwnProperty.call(parsed, k)
+  );
+  if (!hasCustomizeKey) {
+    throw new Error('JSONに desktop / mobile / scope キーが含まれていません。JS/CSS設定JSON（{ "desktop": {...}, "mobile": {...} }）を指定してください');
   }
   const payload = buildCustomizeSettingsPutPayload(parsed);
   const count = (platform: 'desktop' | 'mobile', kind: 'js' | 'css') => ((payload as any)[platform]?.[kind] || []) as any[];
@@ -139,9 +168,11 @@ export function buildJsConfigApplyPlan(parsed: any): JsConfigApplyPlan {
 
 export function buildJsConfigApplyConfirmText(targetAppId: string, targetGuestId: string, plan: JsConfigApplyPlan): string {
   const c = plan.counts;
+  const totalCount = c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss;
   return [
     `比較先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ''} のプレビュー環境へ JS/CSS 設定を反映します。`,
     `Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}（URL ${c.url}件 / FILE ${c.file}件）${plan.scope ? ` / 適用範囲 ${plan.scope}` : ''}`,
+    totalCount === 0 ? '⚠ 有効な JS/CSS 設定が 0 件のため、比較先の JS/CSS 設定はすべてクリア（0件に初期化）されます。' : '',
     '比較先の JS/CSS 一覧はこの内容で全置換され、比較先のみにあるファイルは外れます。',
     plan.dropped ? `type/url/fileKey が不足している ${plan.dropped}件は送信しません。` : '',
     c.file
@@ -154,6 +185,9 @@ export function buildJsConfigApplyConfirmText(targetAppId: string, targetGuestId
 export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
   const targetAppId = String(p.targetAppId || '').trim();
   if (!targetAppId) throw new Error('反映先アプリIDを入力してください');
+  if (!/^\d+$/.test(targetAppId)) throw new Error('反映先アプリIDは半角数字で入力してください');
+  const guestId = String(p.targetGuestId || '').trim();
+  if (guestId && !/^\d+$/.test(guestId)) throw new Error('ゲストスペースIDは半角数字で入力してください');
   const text = String(p.jsonText || '').trim();
   if (!text) throw new Error('JS/CSS設定JSONを入力してください');
   let parsed: any;
@@ -163,7 +197,6 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
     throw new Error(`JS/CSS設定JSONを解析できません（「整形」ボタンで位置を確認してください）: ${e?.message || String(e)}`);
   }
   const plan = buildJsConfigApplyPlan(parsed);
-  const guestId = String(p.targetGuestId || '').trim();
   const prefix = buildApiPrefix(guestId, true);
 
   setStatus('反映先の現在設定を確認中...');
@@ -220,6 +253,7 @@ export async function runBatchJsConfigDownloadStandalone(
   setStatus: (msg: string, err?: boolean) => void
 ): Promise<BatchJsConfigDownloadResult> {
   const guestId = String(p.guestId || '').trim();
+  if (guestId && !/^\d+$/.test(guestId)) throw new Error('ゲストスペースIDは半角数字で入力してください');
   const baseListPrefix = buildApiPrefix(guestId, false);
 
   setStatus('対象スペースの全アプリを取得中...');

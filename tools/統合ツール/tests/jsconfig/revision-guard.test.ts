@@ -24,4 +24,13 @@ describe('JS/CSS apply revision guard', () => {
     }, vi.fn(), vi.fn())).rejects.toThrow(/revision.*確認できない/);
     expect(apiPut).not.toHaveBeenCalled();
   });
+
+  it('rejects non-numeric targetAppId or targetGuestId before calling API', async () => {
+    await expect(runApplyJsConfigStandalone({
+      targetAppId: 'abc',
+      jsonText: JSON.stringify({ desktop: { js: [], css: [] } }),
+      skipConfirm: true
+    }, vi.fn(), vi.fn())).rejects.toThrow(/半角数字/);
+    expect(apiGet).not.toHaveBeenCalled();
+  });
 });

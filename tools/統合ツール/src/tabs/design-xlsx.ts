@@ -1064,9 +1064,13 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     const appNames: Record<string, string> = {};
     const refPromises = [...referencedAppIds].map((id: any) => {
       // 同じ設定一括取得JSONに参照先アプリの設定も含まれていれば、API取得なしで名前を解決できる
-      const known = appNameLookup[String(id)];
+      const known = (sourceGuestId && appNameLookup[`${id}::${sourceGuestId}`]) || appNameLookup[String(id)];
       if (known) { appNames[id] = known; return Promise.resolve(); }
-      return fetchJob(`RefApp_${id}`, () => api(apiUrl('/k/v1/app.json', false), 'GET', { id })).then((info: any) => { appNames[id] = info?.name || `(ID:${id})`; });
+      if (bundle) { appNames[id] = `(ID:${id})`; return Promise.resolve(); }
+      return apiSemaphore
+        .run(() => retry(() => Promise.resolve().then(() => api(apiUrl('/k/v1/app.json', false), 'GET', { id }))))
+        .then((info: any) => { appNames[id] = info?.name || `(ID:${id})`; })
+        .catch(() => { appNames[id] = `(ID:${id})`; });
     });
     await Promise.all(refPromises);
 
@@ -1541,10 +1545,75 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         sAoa.push(['テーマ', ENUM_LOOKUP(THEME_LABEL, generalSettings.theme) || '-']);
         sAoa.push(['アイコン種類', ENUM_LOOKUP(ICON_TYPE_LABEL, generalSettings.icon?.type) || '-']);
         sAoa.push(['リビジョン', generalSettings.revision || '-']);
+        if (generalSettings.titleField != null) {
+          const tf = generalSettings.titleField;
+          const tfText = typeof tf === 'string'
+            ? tf
+            : tf?.selectionMode === 'MANUAL'
+              ? `${tf.code || '-'} (MANUAL)`
+              : tf?.selectionMode
+                ? `${tf.selectionMode}${tf.code ? ` (${tf.code})` : ''}`
+                : String(tf?.code || '-');
+          sAoa.push(['レコードタイトル (titleField)', tfText]);
+        }
+        if (generalSettings.enableComments != null) {
+          sAoa.push(['コメント機能 (enableComments)', generalSettings.enableComments ? '有効' : '無効']);
+        }
+        if (generalSettings.enableBulkDeletion != null) {
+          sAoa.push(['レコード一括削除 (enableBulkDeletion)', generalSettings.enableBulkDeletion ? '有効' : '無効']);
+        }
+        if (generalSettings.enableDuplicateRecord != null) {
+          sAoa.push(['レコード再利用 (enableDuplicateRecord)', generalSettings.enableDuplicateRecord ? '有効' : '無効']);
+        }
+        if (generalSettings.enableInlineRecordEditing != null) {
+          sAoa.push(['一覧インライン編集 (enableInlineRecordEditing)', generalSettings.enableInlineRecordEditing ? '有効' : '無効']);
+        }
+        if (generalSettings.enableThumbnails != null) {
+          sAoa.push(['サムネイル表示 (enableThumbnails)', generalSettings.enableThumbnails ? '有効' : '無効']);
+        }
+        if (generalSettings.firstMonthOfFiscalYear != null) {
+          sAoa.push(['期首月 (firstMonthOfFiscalYear)', `${generalSettings.firstMonthOfFiscalYear}月`]);
+        }
+        if (generalSettings.numberPrecision != null) {
+          const np = generalSettings.numberPrecision;
+          const npText = typeof np === 'object'
+            ? `総桁数:${np.digits ?? '-'} / 小数部:${np.decimalPlaces ?? '-'}${np.roundingMode ? ` / 丸め:${np.roundingMode}` : ''}`
+            : String(np);
+          sAoa.push(['数値計算精度 (numberPrecision)', npText]);
+        }
+        const rm = generalSettings.roundingMode ?? generalSettings.numberPrecision?.roundingMode;
+        if (rm != null) {
+          sAoa.push(['丸め方式 (roundingMode)', String(rm)]);
+        }
       }
       if (appSettings?.spaceId) sAoa.push(['スペースID', appSettings.spaceId]);
       if (appSettings?.threadId) sAoa.push(['スレッドID', appSettings.threadId]);
       sAoa.push([]);
+
+      if (categories && (categories.enabled != null || categories.enable != null || (Array.isArray(categories.categories) && categories.categories.length > 0))) {
+        sAoa.push(['カテゴリー']); sectionRows.push(sAoa.length - 1);
+        sAoa.push(['項目', '内容']); headerInfoRows.push(sAoa.length - 1);
+        const catEnabled = categories.enabled ?? categories.enable;
+        if (catEnabled != null) {
+          sAoa.push(['カテゴリー機能', catEnabled ? '有効' : '無効']);
+        }
+        const flatCategories: string[] = [];
+        const walkCategories = (items: any[], parentPath = '') => {
+          for (const item of items || []) {
+            const label = typeof item === 'string' ? item : String(item?.name || item?.label || item?.code || '').trim();
+            if (!label) continue;
+            const currentPath = parentPath ? `${parentPath} > ${label}` : label;
+            flatCategories.push(currentPath);
+            if (Array.isArray(item?.children) && item.children.length > 0) {
+              walkCategories(item.children, currentPath);
+            }
+          }
+        };
+        walkCategories(Array.isArray(categories.categories) ? categories.categories : []);
+        sAoa.push(['カテゴリー数', flatCategories.length]);
+        sAoa.push(['カテゴリー一覧', flatCategories.length > 0 ? flatCategories.join(', ') : '(なし)']);
+        sAoa.push([]);
+      }
 
       sAoa.push(['設定統計']); sectionRows.push(sAoa.length - 1);
       sAoa.push(['項目', '件数']); headerInfoRows.push(sAoa.length - 1);
@@ -2712,12 +2781,18 @@ export async function runBatchDesignExportXlsxZip(params: {
   const targets: Array<{ appId: string; guestId: string; bundle: any }> = [];
   for (const t of rawTargets) {
     const id = String(t?.appId ?? '').trim();
-    if (!id || !/^\d+$/.test(id) || seen.has(id)) continue;
-    seen.add(id);
-    targets.push({ appId: id, guestId: String(t?.guestId || '').trim(), bundle: t?.bundle || params.bundlesByAppId?.[id] || null });
+    const guestId = String(t?.guestId || '').trim();
+    const key = `${id}::${guestId}`;
+    if (!id || !/^\d+$/.test(id) || seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ appId: id, guestId, bundle: t?.bundle || params.bundlesByAppId?.[key] || params.bundlesByAppId?.[id] || null });
   }
   if (targets.length === 0) throw new Error('有効なアプリIDが1件もありません。');
   const appIds = targets.map((t) => t.appId);
+  const appIdCounts = new Map<string, number>();
+  for (const t of targets) {
+    appIdCounts.set(t.appId, (appIdCounts.get(t.appId) || 0) + 1);
+  }
 
   // 参照アプリ名解決用: バンドルが渡された全アプリの名前をあらかじめ引けるようにしておく
   // （ルックアップ/関連レコードの参照先が同じ一括取得に含まれていれば、API取得なしで名前を解決できる）
@@ -2725,7 +2800,10 @@ export async function runBatchDesignExportXlsxZip(params: {
   for (const t of targets) {
     if (t.bundle) {
       const name = extractAppNameFromBundle(t.bundle);
-      if (name) appNameLookup[t.appId] = name;
+      if (name) {
+        if (t.guestId) appNameLookup[`${t.appId}::${t.guestId}`] = name;
+        if (!appNameLookup[t.appId]) appNameLookup[t.appId] = name;
+      }
     }
   }
 
@@ -2794,7 +2872,10 @@ export async function runBatchDesignExportXlsxZip(params: {
       batchUi.show(`${label} ZIP に追加中...`, appIds.length + 2);
       batchUi.update(`${label} ZIP に追加中...`, i + 2);
 
-      const baseName = sanitizeFilename(filename);
+      const rawFilename = (guestId && (appIdCounts.get(appId) || 0) > 1)
+        ? `guest${guestId}_${filename}`
+        : filename;
+      const baseName = sanitizeFilename(rawFilename);
       let uniqueName = baseName;
       let n = 2;
       while (usedFilenames.has(uniqueName)) {
@@ -2808,7 +2889,7 @@ export async function runBatchDesignExportXlsxZip(params: {
 
       const buf = (window as any).XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
       zip.file(uniqueName, buf);
-      if (failedAPIs && failedAPIs.length) batchUi.addFailedAPIs(`App ${appId}`, failedAPIs);
+      if (failedAPIs && failedAPIs.length) batchUi.addFailedAPIs(`App ${appId}${guestId ? ` (guest:${guestId})` : ''}`, failedAPIs);
       results.push({ appId, appName, filename: uniqueName, ok: true });
     } catch (e: any) {
       console.error(`[batch design xlsx] app ${appId} failed:`, e);

@@ -269,6 +269,12 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
   function finish() {
     if (!pending) return;
     const status = panel.status.querySelector('.kus-lp__status-text')?.textContent || '';
+    const tone = panel.status.dataset.tone || '';
+    if ((tone === 'info' || tone === 'warn' || tone === 'neutral') && /キャンセルしました/.test(status)) {
+      pending = null;
+      refresh();
+      return;
+    }
     resultNote.textContent = `${lastContext}\n${status}`;
     resultNote.dataset.write = String(!!pending.writes);
     const showResults = !options.resultActions || options.resultActions.includes(pending.id);

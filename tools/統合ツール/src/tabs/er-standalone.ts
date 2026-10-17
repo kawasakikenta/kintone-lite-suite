@@ -65,6 +65,9 @@ export function validateErOptions(opts: any): string {
     const depth = Number(depthText);
     if (!Number.isFinite(depth) || depth < 0 || !Number.isInteger(depth)) return '探索深さは0以上の整数で入力してください';
   }
+  if (primaryIds.length === 0 && Array.isArray(opts?.spaceSelectedAppIds) && opts.spaceSelectedAppIds.length === 0) {
+    return '起点にするスペース内アプリを1件以上選択するか、起点アプリIDを入力してください。';
+  }
   if (!primaryIds.length && !spaceId) return 'アプリID または スペースID を入力してください';
   return '';
 }

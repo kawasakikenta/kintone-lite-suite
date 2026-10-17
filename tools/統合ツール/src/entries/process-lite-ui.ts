@@ -9,6 +9,7 @@ import {
   makeRow,
   makeInput,
   makeButton,
+  makeCheck,
   makeCard,
   makeNote,
   liteRun,
@@ -31,7 +32,9 @@ export function mountProcessLitePanel() {
   const cardApp = makeCard({ title: '対象アプリ', number: 1 });
   const appInp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
   const guestInp = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
+  const prevCb = makeCheck({ label: 'プレビュー環境を参照', checked: false });
   cardApp.body.appendChild(makeRow([appInp, guestInp], { label: 'アプリ' }));
+  cardApp.body.appendChild(makeRow(prevCb.label));
   let notifyConnectionChange: () => void = () => {};
   cardApp.body.appendChild(createAppSearchControl(panel, {
     guestEl: guestInp,
@@ -44,6 +47,9 @@ export function mountProcessLitePanel() {
 
   // ---- 描画 ----
   const cardDiag = makeCard({ title: 'プロセス図', number: 2, soft: true });
+  const summaryEl = document.createElement('div');
+  summaryEl.style.cssText = 'margin-bottom:8px';
+  cardDiag.body.appendChild(summaryEl);
   const viewEl = document.createElement('div');
   viewEl.style.cssText = 'min-height:64px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px;overflow:auto;max-height:340px';
   viewEl.innerHTML = '<span class="kus-lp__small">描画結果がここに表示されます</span>';
@@ -61,8 +67,10 @@ export function mountProcessLitePanel() {
   cardText.body.appendChild(makeNote('ソースは Mermaid Live Editor や Markdown（```mermaid）にそのまま貼り付けて共有できます。'));
   const copySource = makeButton('ソースをコピー', 'sub', { icon: '⎘' });
   const saveSource = makeButton('.mmd で保存', 'sub', { icon: '↓' });
+  const saveSvg = makeButton('SVGで保存', 'sub', { icon: '↓' });
   cardText.actions.appendChild(copySource);
   cardText.actions.appendChild(saveSource);
+  cardText.actions.appendChild(saveSvg);
   copySource.addEventListener('click', async () => {
     const text = textEl.value.trim();
     if (!text) { panel.setStatus('コピーするソースがありません。先にフロー図を描画してください', 'warn'); return; }
@@ -85,6 +93,16 @@ export function mountProcessLitePanel() {
     ].join('\n');
     downloadText(buildExportFilename('プロセス図', 'mmd', { appLabel: buildAppFilenameLabel(appId, '') }), `${header}\n${text}\n`, 'text/plain');
     panel.setStatus('Mermaid ソースを保存しました', 'ok');
+  });
+  saveSvg.addEventListener('click', () => {
+    const svg = viewEl.querySelector('svg');
+    if (!svg) { panel.setStatus('保存できるSVGがありません。先にフロー図を描画してください', 'warn'); return; }
+    const clone = svg.cloneNode(true) as SVGElement;
+    if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    const xml = new XMLSerializer().serializeToString(clone);
+    const appId = appInp.value.trim();
+    downloadText(buildExportFilename('プロセス図', 'svg', { appLabel: buildAppFilenameLabel(appId, '') }), xml, 'image/svg+xml;charset=utf-8');
+    panel.setStatus('フロー図をSVGとして保存しました', 'ok');
   });
   panel.body.insertBefore(cardText.card, panel.status);
 
@@ -110,29 +128,41 @@ export function mountProcessLitePanel() {
   cardSim.body.appendChild(makeRow(simSelect, { label: 'アクション' }));
 
   const simStartBtn = makeButton('最初から開始', 'sub', { icon: '⟲' });
+  const simUndoBtn = makeButton('1手戻す', 'sub', { icon: '↶' });
+  simUndoBtn.disabled = true;
   const simExecBtn = makeButton('アクション実行', 'primary', { icon: '▶' });
-  cardSim.body.appendChild(makeRow([simStartBtn, simExecBtn]));
+  cardSim.body.appendChild(makeRow([simStartBtn, simUndoBtn, simExecBtn]));
+  const simDetailEl = makeNote('「最初から開始」を押すと、各状態の作業者設定と選択アクションの実行条件を表示します。');
+  const simHistoryEl = makeNote('遷移履歴: まだ開始していません');
+  cardSim.body.appendChild(simDetailEl);
+  cardSim.body.appendChild(simHistoryEl);
   cardSim.body.appendChild(makeNote('シミュレーションは実データを変更しません。状態遷移の確認用です。'));
   panel.body.insertBefore(cardSim.card, panel.status);
 
   let renderedConnection = '';
   let renderPending = false;
   let connectionVersion = 0;
-  const connectionKey = () => `${appInp.value.trim()}::${guestInp.value.trim()}`;
+  const connectionKey = () => `${appInp.value.trim()}::${guestInp.value.trim()}::${prevCb.checkbox.checked ? '1' : '0'}`;
   const clearSimulationHandlers = () => {
     simStartBtn.onclick = null;
+    simUndoBtn.onclick = null;
     simExecBtn.onclick = null;
+    simSelect.onchange = null;
   };
   const clearRenderedFlow = () => {
     renderedConnection = '';
     clearSimulationHandlers();
     textEl.value = '';
+    summaryEl.innerHTML = '';
     viewEl.innerHTML = '<span class="kus-lp__small">対象アプリが変わりました。フロー図を再描画してください。</span>';
     cardSim.card.style.display = 'none';
     curEl.textContent = '未開始';
     curEl.style.background = '#e2e8f0';
     simSelect.replaceChildren(new Option('--'));
     simSelect.disabled = true;
+    simUndoBtn.disabled = true;
+    simDetailEl.textContent = '';
+    simHistoryEl.textContent = '';
   };
   notifyConnectionChange = () => {
     connectionVersion++;
@@ -140,7 +170,7 @@ export function mountProcessLitePanel() {
     clearRenderedFlow();
     panel.setStatus('対象アプリが変わりました。フロー図を再描画してください。', 'warn');
   };
-  for (const input of [appInp, guestInp]) {
+  for (const input of [appInp, guestInp, prevCb.checkbox]) {
     input.addEventListener('input', notifyConnectionChange);
     input.addEventListener('change', notifyConnectionChange);
   }
@@ -152,18 +182,22 @@ export function mountProcessLitePanel() {
     renderPending = true;
     try {
       const result = await runRenderProcessFlowStandalone(
-        { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
-        (m: string, e?: boolean) => { if (isCurrent()) panel.setStatus(m, e ? 'err' : 'busy'); },
+        { appId: appInp.value.trim(), guestId: guestInp.value.trim(), preview: prevCb.checkbox.checked },
+        (m: string, e?: boolean) => { if (isCurrent()) panel.setStatus(m, e ? 'warn' : 'busy'); },
         {
           textEl,
           viewEl,
+          summaryEl,
           isCurrent,
           simUi: {
             container: cardSim.card,
             current: curEl,
             select: simSelect,
             startBtn: simStartBtn,
-            execBtn: simExecBtn
+            undoBtn: simUndoBtn,
+            execBtn: simExecBtn,
+            detailEl: simDetailEl,
+            historyEl: simHistoryEl
           }
         }
       );
@@ -173,7 +207,7 @@ export function mountProcessLitePanel() {
       }
       renderedConnection = runConnection;
       // 描画側が警告（Mermaid 読込失敗 / from-to 未設定のアクション除外）を出している場合は残す
-      if (result && panel.status.dataset.tone !== 'err') {
+      if (result && panel.status.dataset.tone !== 'err' && panel.status.dataset.tone !== 'warn') {
         panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, 'ok');
       }
     } finally {
@@ -192,17 +226,21 @@ export function mountProcessLitePanel() {
       renderedConnection = '';
       clearSimulationHandlers();
       textEl.value = '';
+      summaryEl.innerHTML = '';
       viewEl.replaceChildren();
       cardSim.card.style.display = 'none';
       simSelect.replaceChildren(new Option('--'));
       simSelect.disabled = true;
+      simUndoBtn.disabled = true;
+      simDetailEl.textContent = '';
+      simHistoryEl.textContent = '';
     },
     actions: [{ id: 'render', label: 'プロセス図を表示', description: '状態とアクションの流れを表示し、結果画面でシミュレーションできます。', button: runBtn,
       validate: () => {
         try { validateProcessConnection(appInp.value, guestInp.value); return ''; }
         catch (error: any) { return error?.message || String(error); }
       },
-      summary: () => [['対象', connectionSummary(appInp.value.trim(), guestInp.value.trim())], ['操作', '状態遷移図を表示。シミュレーションは実データを変更しません。']]
+      summary: () => [['対象', connectionSummary(appInp.value.trim(), guestInp.value.trim(), prevCb.checkbox.checked ? 'プレビュー' : '本番')], ['操作', '状態遷移図を表示。シミュレーションは実データを変更しません。']]
     }]
   });
 

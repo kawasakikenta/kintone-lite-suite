@@ -37,7 +37,7 @@ import {
   summarizePostApplyCheck
 } from '../reflect/liteSetup.js';
 import { buildReflectPresetsExport, normalizeImportedReflectPresets, mergeReflectPresets, type ReflectPreset } from '../reflect/presetIo.js';
-import { buildExportFilename, downloadText, readTextFile } from '../utils.js';
+import { buildAppFilenameLabel, buildExportFilename, downloadText, extractAppNameFromBundle, readTextFile } from '../utils.js';
 
 // =============================================================================
 // メモリ状態（リロードで消える。lite はブラウザ永続ストレージを使わない方針）
@@ -449,7 +449,8 @@ export function mountReflectLitePanel() {
     copyBtn.disabled = sourceMode === 'json';
     sourceJsonAppSelect.hidden = sourceJsonBundles.length < 2;
     if (sourceBundleFromJson) {
-      srcJsonNote.textContent = `比較元JSON読み込み済み: App ${sourceBundleFromJson?.appId || '-'}（比較元はこのJSONから取得し、アプリからの取得は行いません）`;
+      const appName = extractAppNameFromBundle(sourceBundleFromJson);
+      srcJsonNote.textContent = `比較元JSON読み込み済み: App ${sourceBundleFromJson?.appId || '-'}${appName ? ` (${appName})` : ''}（比較元はこのJSONから取得し、アプリからの取得は行いません）`;
       srcJsonNote.style.display = 'block';
       srcJsonClearBtn.style.display = '';
     } else {
@@ -479,7 +480,8 @@ export function mountReflectLitePanel() {
     sourceJsonAppSelect.replaceChildren(...sourceJsonBundles.map((bundle, index) => {
       const option = document.createElement('option');
       option.value = String(index);
-      option.textContent = `アプリ #${bundle.appId}`;
+      const appName = extractAppNameFromBundle(bundle);
+      option.textContent = `アプリ #${bundle.appId}${appName ? ` (${appName})` : ''}`;
       return option;
     }));
     sourceBundleFromJson = sourceJsonBundles[0];
@@ -1348,7 +1350,8 @@ export function mountReflectLitePanel() {
     const payload = { generatedAt: new Date().toISOString(), identities: state.preview.identities, sourceEnvironment: sourceMode === 'json' ? 'json' : sourceEnvironment.value,
       preserveTargetOnly: preserve.checkbox.checked, scopes: state.scopes, entries: state.preview.result.entries.filter(entry => state.scopes.includes(entry.sectionKey)), baseline: state.preview.result.baseline };
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
-    const link = document.createElement('a'); link.href = url; link.download = `プレビュー反映計画_App${tgtApp.value.trim()}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+    const appLabel = buildAppFilenameLabel(tgtApp.value.trim(), state.preview.identities?.target?.name || '');
+    const link = document.createElement('a'); link.href = url; link.download = buildExportFilename('プレビュー反映計画', 'json', { appLabel }); link.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
   });
 
   // ---- 実行 ----
@@ -1442,7 +1445,7 @@ export function mountReflectLitePanel() {
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = `プレビュー反映結果_App${last.appId}_${new Date(last.at).toISOString().replace(/[:.]/g, '-')}.json`;
+    link.download = buildExportFilename('プレビュー反映結果', 'json', { appLabel: `App${last.appId}` });
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   });

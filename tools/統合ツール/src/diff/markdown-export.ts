@@ -10,7 +10,7 @@ import {
 } from '../utils.js';
 import { hasIncompleteActualDiffTruncation } from './engine.js';
 import { extractFieldPathInfo } from './enrich.js';
-import { isSensitiveSameDiffRow } from './export-safety.js';
+import { contentIdentifier, isSensitiveSameDiffRow } from './export-safety.js';
 import { decodeRow } from './path-decoder.js';
 import { labelOfProp, labelOfSection } from './label-dict.js';
 
@@ -214,6 +214,8 @@ function jsonType(value: unknown): string {
   return typeof value;
 }
 
+export const MAX_MARKDOWN_STRING_CHARS = 2000;
+
 function jsonSafeValue(value: unknown, seen: Set<object>): unknown {
   if (value === undefined) return { $kusType: 'undefined' };
   if (value === null) return null;
@@ -224,7 +226,13 @@ function jsonSafeValue(value: unknown, seen: Set<object>): unknown {
     return value;
   }
   if (typeof value === 'bigint') return { $kusType: 'bigint', value: String(value) };
-  if (typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    if (value.length > MAX_MARKDOWN_STRING_CHARS) {
+      return `${value.slice(0, MAX_MARKDOWN_STRING_CHARS)}... [...長文省略 (${value.length}文字, ${contentIdentifier(value)})]`;
+    }
+    return value;
+  }
+  if (typeof value === 'boolean') return value;
   if (typeof value === 'function') return { $kusType: 'function', value: String(value) };
   if (typeof value === 'symbol') return { $kusType: 'symbol', value: String(value) };
   if (value instanceof Date) return { $kusType: 'date', value: value.toISOString() };

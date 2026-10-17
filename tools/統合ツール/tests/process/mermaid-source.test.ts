@@ -1,6 +1,14 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { apiGet } from '../../src/api';
-import { buildProcessMermaidSource, findInitialState, runRenderProcessFlowStandalone, validateProcessConnection } from '../../src/tabs/process-standalone';
+import {
+  buildProcessMermaidSource,
+  findInitialState,
+  summarizeProcessStructure,
+  describeStateAssignee,
+  describeSimActionCondition,
+  runRenderProcessFlowStandalone,
+  validateProcessConnection
+} from '../../src/tabs/process-standalone';
 
 vi.mock('../../src/api', async original => ({
   ...await original<typeof import('../../src/api')>(),
@@ -20,7 +28,7 @@ const actions = [
 ];
 
 describe('buildProcessMermaidSource', () => {
-  it('declares every state with an alias and references aliases in transitions', () => {
+  it('declares every state with an alias, references aliases in transitions, and marks terminal states', () => {
     const src = buildProcessMermaidSource(states, actions);
     expect(src.startsWith('stateDiagram-v2\n')).toBe(true);
     expect(src).toContain('state "未処理" as s0');
@@ -29,6 +37,7 @@ describe('buildProcessMermaidSource', () => {
     expect(src).toContain('[*] --> s0');
     expect(src).toContain('s0 --> s1 : 申請する');
     expect(src).toContain('s1 --> s2 : 承認- OK');
+    expect(src).toContain('s2 --> [*]');
     expect(src).not.toMatch(/-->\s*承認/);
   });
 
@@ -42,6 +51,27 @@ describe('buildProcessMermaidSource', () => {
     expect(src).toContain('state "B" as s1');
     expect(src).toContain('s0 --> s1 : x');
     expect(src).not.toContain('broken');
+  });
+
+  it('summarizes process structure and describes assignee and action conditions', () => {
+    const summary = summarizeProcessStructure(
+      { 未処理: { index: '0' }, 承認待ち: { index: '1' }, 完了: { index: '2' } },
+      [
+        { name: '申請', from: '未処理', to: '承認待ち' },
+        { name: '即時完了', from: '未処理', to: '完了' },
+        { name: '承認', from: '承認待ち', to: '未定义状態' }
+      ],
+      1
+    );
+    expect(summary.stateCount).toBe(3);
+    expect(summary.actionCount).toBe(3);
+    expect(summary.startStates).toEqual(['未処理']);
+    expect(summary.endStates).toEqual(['完了']);
+    expect(summary.branchingStates).toEqual(['未処理']);
+    expect(summary.undefinedStates).toEqual(['未定义状態']);
+    expect(summary.orphanActionCount).toBe(1);
+    expect(describeStateAssignee({ assignee: { type: 'ONE', entities: [{ entity: { type: 'USER', code: 'alice' } }] } })).toContain('alice');
+    expect(describeSimActionCondition({ type: 'SECONDARY', filterCond: 'amount > 100' })).toContain('amount > 100');
   });
 });
 

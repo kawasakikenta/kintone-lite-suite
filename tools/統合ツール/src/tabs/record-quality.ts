@@ -21,8 +21,8 @@ export function readQualityFields(properties: Record<string, any>): QualityField
     .map(([code, field]) => ({ code, label: String(field.label || code), type: String(field.type) }));
 }
 
-export function selectQualityFields(properties: Record<string, any>, codes: string[]): QualityField[] {
-  if (!codes.length || codes.length > 5 || new Set(codes).size !== codes.length) throw new Error('検査するフィールドを1〜5個選んでください');
+export function selectQualityFields(properties: Record<string, any>, codes: string[], maxFields = 5): QualityField[] {
+  if (!codes.length || codes.length > maxFields || new Set(codes).size !== codes.length) throw new Error(`検査するフィールドを1〜${maxFields}個選んでください`);
   const available = new Map(readQualityFields(properties).map(field => [field.code, field]));
   return codes.map(code => {
     const field = available.get(code);
@@ -56,7 +56,7 @@ export function inspectRecordQuality(records: any[], fields: QualityField[], opt
           (multi ? !Array.isArray(value) || value.some(item => ['USER_SELECT', 'ORGANIZATION_SELECT', 'GROUP_SELECT'].includes(field.type) ? !item || typeof item.code !== 'string' : typeof item !== 'string') : value !== null && typeof value !== 'string')) {
         unavailable.push(field.code); values.push('（取得不可）'); keys.push(''); continue;
       }
-      values.push(multi ? JSON.stringify(value.map(item => typeof item === 'string' ? item : item.code)) : String(value ?? ''));
+      values.push(multi ? value.map(item => typeof item === 'string' ? item : item.code).join(', ') : String(value ?? ''));
       let key = multi ? JSON.stringify([...new Set(value.map(item => typeof item === 'string' ? item : item.code))].sort()) : String(value ?? '');
       if (TEXT.has(field.type)) { if (options.trimText) key = key.trim(); if (options.ignoreCase) key = key.toLowerCase(); }
       if (multi ? !value.length : !key) empty.push(field.code);

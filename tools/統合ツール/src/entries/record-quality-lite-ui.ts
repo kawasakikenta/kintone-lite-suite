@@ -3,9 +3,10 @@
 import { DEFAULT_APP_ID } from '../constants.js';
 import { buildRecordQualityTab } from './record-quality-ui.js';
 import { createAppSearchControl } from './appSearchControl.js';
-import { connectionSummary } from './liteWorkflow.js';
-import { createLitePanel, makeCard, makeInput, makeNote, makeRow } from './litePanelTheme.js';
-import { parseRecordAppIds } from '../tabs/record-standalone.js';
+import { connectionSummary, installLiteWorkflow } from './liteWorkflow.js';
+import { createLitePanel, makeButton, makeCard, makeInput, makeNote, makeRow, makeSelect, liteRun } from './litePanelTheme.js';
+import { parseRecordAppIds, runLoadViewsStandalone } from '../tabs/record-standalone.js';
+import type { RecordViewChoice } from '../tabs/record-metadata.js';
 
 /** Read-only, focused entry point for the data-quality checks in Record Manager. */
 export function mountRecordQualityLitePanel() {
@@ -26,6 +27,21 @@ export function mountRecordQualityLitePanel() {
     ariaLabel: '対象アプリID'
   });
   const guestId = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest', ariaLabel: 'ゲストスペースID' });
+  let connectionVersion = 0;
+  const resetMetadata: Array<() => void> = [];
+  for (const input of [appId, guestId]) {
+    for (const event of ['input', 'change']) {
+      input.addEventListener(event, () => {
+        connectionVersion++;
+        resetMetadata.forEach(reset => reset());
+      });
+    }
+  }
+  function notifyInput(input: HTMLInputElement) {
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
   const target = makeCard({ title: '対象アプリ', number: 1 });
   target.body.appendChild(makeRow([appId, guestId], { label: '接続先' }));
   target.body.appendChild(makeNote('複数アプリはカンマ、改行、または空白で区切ります。検査項目は先頭アプリから読み込みます。'));
@@ -34,9 +50,58 @@ export function mountRecordQualityLitePanel() {
     targets: [{ label: '対象アプリ', apply: (id, _name, guest) => {
       appId.value = id;
       if (guest && !guestId.value.trim()) guestId.value = guest;
-      appId.dispatchEvent(new Event('input', { bubbles: true }));
+      notifyInput(appId);
     } }]
   }));
+
+  const viewSelect = makeSelect([['', '一覧を選択（任意）']]);
+  viewSelect.setAttribute('aria-label', '取得した一覧');
+  const loadViewsBtn = makeButton('一覧読込', 'sub');
+  target.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: '一覧から条件' }));
+  const viewNote = makeNote('先頭の対象アプリから一覧を取得し、「▼ 一覧から」で絞り込みと並び順をクエリに反映できます。');
+  target.body.appendChild(viewNote);
+  let loadedViews: RecordViewChoice[] = [];
+  resetMetadata.push(() => {
+    loadedViews = [];
+    viewSelect.replaceChildren(new Option('一覧を選択（任意）', ''));
+    viewNote.textContent = '対象アプリが変わりました。「一覧読込」で再取得してください。';
+  });
+  viewSelect.addEventListener('change', () => {
+    const view = loadedViews.find(item => item.id === viewSelect.value);
+    const scopeNote = view?.type === 'CALENDAR' ? '（カレンダーの表示月による絞り込みは含みません）'
+      : view?.type === 'CUSTOM' ? '（カスタマイズ画面の独自処理は含みません）' : '';
+    viewNote.textContent = view ? `${view.name} / 条件: ${view.filter || '全件'} / 並び順: ${view.sort || 'レコードID順'}${scopeNote}` : '適用する一覧を選んでください。';
+  });
+  loadViewsBtn.addEventListener('click', () => liteRun(panel, '一覧情報を取得中…', async () => {
+    const version = connectionVersion;
+    const [firstAppId] = parseRecordAppIds(appId.value);
+    loadedViews = [];
+    viewSelect.replaceChildren(new Option('一覧を選択（任意）', ''));
+    const views = await runLoadViewsStandalone(
+      { appId: firstAppId, guestId: guestId.value.trim() },
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+    );
+    if (version !== connectionVersion) { panel.setStatus('対象アプリが変わりました。一覧を再取得してください。', 'warn'); return; }
+    loadedViews = views;
+    for (const v of views) {
+      const opt = document.createElement('option');
+      opt.value = v.id;
+      const typeLabel = { LIST: '表', CALENDAR: 'カレンダー', CUSTOM: 'カスタマイズ' }[v.type] || v.type;
+      opt.textContent = `${v.name}（${typeLabel}）`;
+      viewSelect.appendChild(opt);
+    }
+    viewNote.textContent = `App ${firstAppId} から ${views.length}件を取得しました。選択した一覧の絞り込み・並び順をクエリに反映できます。`;
+    panel.setStatus(viewNote.textContent, views.length ? 'ok' : 'warn');
+  }));
+
+  function applyViewQuery(targetInput: HTMLInputElement) {
+    const view = loadedViews.find(item => item.id === viewSelect.value);
+    if (!view) { panel.setStatus('対象アプリで一覧を読み込み、適用する一覧を選んでください。', 'warn'); return; }
+    targetInput.value = view.query;
+    notifyInput(targetInput);
+    panel.setStatus(`「${view.name}」をクエリに反映しました: ${view.query || '全件'}`, 'ok');
+  }
+
   panel.body.insertBefore(target.card, panel.status);
 
   const conditions = makeCard({ title: '検査条件', number: 2 });
@@ -45,11 +110,7 @@ export function mountRecordQualityLitePanel() {
   resultHost.setAttribute('aria-label', '検査結果');
   panel.body.insertBefore(resultHost, panel.status);
 
-  const resetMetadata: Array<() => void> = [];
-  for (const input of [appId, guestId]) {
-    input.addEventListener('input', () => resetMetadata.forEach(reset => reset()));
-  }
-  buildRecordQualityTab(conditions.body, {
+  const qualityAction = buildRecordQualityTab(conditions.body, {
     panel,
     tgtApp: appId,
     tgtGuest: guestId,
@@ -62,7 +123,14 @@ export function mountRecordQualityLitePanel() {
       }
     },
     targetSummary: () => ['対象アプリ', connectionSummary(appId.value.trim(), guestId.value.trim())],
-    applyViewQuery: () => panel.setStatus('この単機能版では、クエリを直接入力してください。', 'warn'),
+    applyViewQuery,
     resultHost
+  });
+
+  installLiteWorkflow(panel, {
+    setup: [target.card, conditions.card],
+    actions: [qualityAction],
+    results: [resultHost],
+    resultActions: ['quality']
   });
 }

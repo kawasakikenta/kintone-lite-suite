@@ -566,6 +566,27 @@
     }
   });
 
+  // src/ui/dialog.ts
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
+  var init_dialog = __esm({
+    "src/ui/dialog.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      root = null;
+    }
+  });
+
+  // src/reflect/applyOutcome.ts
+  var init_applyOutcome = __esm({
+    "src/reflect/applyOutcome.ts"() {
+      "use strict";
+    }
+  });
+
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -796,6 +817,17 @@ ${contextLine}`);
     const jitter = Math.random() * Math.min(200, baseDelayMs);
     return Math.round(expDelay + jitter);
   }
+  function isRetriableMutation(method, error) {
+    if (!error) return false;
+    const m = String(method || "").toUpperCase();
+    const status = resolveHttpStatus(error);
+    if (status >= 400 && status < 500) {
+      if (m === "PUT" && (status === 408 || status === 429)) return true;
+      return false;
+    }
+    if (status >= 500 && status < 600) return true;
+    return isRetriableApiError(error);
+  }
   function touchApiPathMetric(path, field) {
     const key = String(path || "");
     const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
@@ -839,21 +871,30 @@ ${contextLine}`);
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
-  async function apiPut(prefix, path, body) {
-    assertAllowsMutatingRestCall(prefix, path, "PUT");
-    try {
-      return await kintone.api(`${prefix}${path}`, "PUT", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "PUT", prefix, path, payload: body });
+  async function executeMutatingApiWithRetry(method, prefix, path, body, retries = DEFAULT_API_GET_RETRIES) {
+    assertAllowsMutatingRestCall(prefix, path, method);
+    const maxAttempts = Math.max(1, retries);
+    let lastErr;
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        return await kintone.api(`${prefix}${path}`, method, body);
+      } catch (e) {
+        lastErr = e;
+        if (i < maxAttempts - 1 && isRetriableMutation(method, e)) {
+          const waitMs = computeRetryDelayMs(i, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        break;
+      }
     }
+    throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
+  }
+  async function apiPut(prefix, path, body) {
+    return executeMutatingApiWithRetry("PUT", prefix, path, body);
   }
   async function apiPost(prefix, path, body) {
-    assertAllowsMutatingRestCall(prefix, path, "POST");
-    try {
-      return await kintone.api(`${prefix}${path}`, "POST", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
-    }
+    return executeMutatingApiWithRetry("POST", prefix, path, body);
   }
   function isRevisionConflictError(error) {
     if (!error) return false;
@@ -920,20 +961,6 @@ ${base}`
       "use strict";
       init_constants();
       init_utils();
-    }
-  });
-
-  // src/ui/dialog.ts
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
     }
   });
 
@@ -1039,6 +1066,298 @@ ${base}`
     }
   });
 
+  // src/diff/ignore-presets.ts
+  var init_ignore_presets = __esm({
+    "src/diff/ignore-presets.ts"() {
+      "use strict";
+      init_state();
+    }
+  });
+
+  // src/reflect/nodeModeUi.ts
+  var init_nodeModeUi = __esm({
+    "src/reflect/nodeModeUi.ts"() {
+      "use strict";
+      init_state();
+    }
+  });
+
+  // src/reflect/footerLabel.ts
+  var init_footerLabel = __esm({
+    "src/reflect/footerLabel.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/reflect/applyHistorySummary.ts
+  var APPLY_HISTORY_MODE_LABELS;
+  var init_applyHistorySummary = __esm({
+    "src/reflect/applyHistorySummary.ts"() {
+      "use strict";
+      APPLY_HISTORY_MODE_LABELS = Object.freeze({
+        section: "まとめ反映",
+        nodes: "差分選択",
+        patch: "JSONパッチ",
+        retry: "再反映",
+        restore: "復元"
+      });
+    }
+  });
+
+  // src/oss_integrations.ts
+  var init_oss_integrations = __esm({
+    "src/oss_integrations.ts"() {
+      "use strict";
+      init_utils();
+      init_dialog();
+    }
+  });
+
+  // src/ui/components.ts
+  function setComponentUi(uiRefs) {
+    ui2 = uiRefs;
+  }
+  var ui2, SCOPE_PICKER_META;
+  var init_components = __esm({
+    "src/ui/components.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      init_applyOutcome();
+      init_utils();
+      init_filter();
+      init_ignore_presets();
+      init_engine();
+      init_enrich();
+      init_nodeModeUi();
+      init_footerLabel();
+      init_applyHistorySummary();
+      init_constants();
+      init_dialog();
+      init_oss_integrations();
+      ui2 = {};
+      SCOPE_PICKER_META = Object.freeze({
+        diff: Object.freeze({
+          title: "比較対象セクション",
+          sub: "差分比較で取得する API 設定を選びます。"
+        }),
+        reflect: Object.freeze({
+          title: "反映するセクション",
+          sub: "プレビュー反映でまとめて適用するセクションを選びます。"
+        }),
+        settingsExport: Object.freeze({
+          title: "取得対象セクション",
+          sub: "設定一括取得で保存する API 設定を、JS/CSS設定も含めて選びます。"
+        })
+      });
+    }
+  });
+
+  // src/ui/psychology.ts
+  var init_psychology = __esm({
+    "src/ui/psychology.ts"() {
+      "use strict";
+      init_utils();
+      init_dialog();
+    }
+  });
+
+  // src/ui/appTargetTable.ts
+  var init_appTargetTable = __esm({
+    "src/ui/appTargetTable.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/settingsBundleImport.ts
+  var init_settingsBundleImport = __esm({
+    "src/settingsBundleImport.ts"() {
+      "use strict";
+      init_api();
+    }
+  });
+
+  // src/tabs/diff-standalone.ts
+  var init_diff_standalone = __esm({
+    "src/tabs/diff-standalone.ts"() {
+      "use strict";
+      init_api();
+      init_settingsBundleImport();
+      init_engine();
+      init_enrich();
+      init_utils();
+      init_constants();
+    }
+  });
+
+  // src/tabs/preview-compare.ts
+  var init_preview_compare = __esm({
+    "src/tabs/preview-compare.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/tabs/diff.ts
+  var init_diff = __esm({
+    "src/tabs/diff.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      init_psychology();
+      init_appTargetTable();
+      init_utils();
+      init_api();
+      init_settingsBundleImport();
+      init_engine();
+      init_enrich();
+      init_diff_standalone();
+      init_filter();
+      init_export();
+      init_export();
+      init_components();
+      init_dialog();
+      init_preview_compare();
+      init_nodeModeUi();
+    }
+  });
+
+  // src/tabs/field.ts
+  function collectFieldValidationIssues(props) {
+    const issues = [];
+    const seenCodes = /* @__PURE__ */ new Set();
+    const visit = (fieldMap, path) => {
+      for (const [key, def] of Object.entries(fieldMap || {})) {
+        const code = String(def?.code || key || "").trim();
+        const label = String(def?.label || "").trim();
+        const type = String(def?.type || "").trim();
+        const fieldPath = path ? `${path}.${key}` : key;
+        if (!code) issues.push(`${fieldPath}: code が空です`);
+        if (code && seenCodes.has(code)) issues.push(`${fieldPath}: code "${code}" が重複しています`);
+        if (code) seenCodes.add(code);
+        if (code && String(key) !== code) issues.push(`${fieldPath}: JSONキー "${key}" と code "${code}" が一致していません`);
+        if (!type) issues.push(`${fieldPath}: type がありません`);
+        if (!label && type !== "SPACER" && type !== "HR" && type !== "LABEL") issues.push(`${fieldPath}: label がありません`);
+        if (def?.lookup && !def.lookup.relatedApp?.app) issues.push(`${fieldPath}: lookup.relatedApp.app がありません`);
+        if (def?.referenceTable && !def.referenceTable.relatedApp?.app) issues.push(`${fieldPath}: referenceTable.relatedApp.app がありません`);
+        if (type === "SUBTABLE" && (!def.fields || typeof def.fields !== "object")) issues.push(`${fieldPath}: SUBTABLE に fields がありません`);
+        if (type === "SUBTABLE") visit(def.fields, fieldPath);
+      }
+    };
+    visit(props, "");
+    return issues;
+  }
+  function summarizeFieldProps(props) {
+    const byType = {};
+    let total = 0;
+    let system = 0;
+    let writable = 0;
+    let subtable = 0;
+    let lookup = 0;
+    let calc = 0;
+    for (const [, def] of Object.entries(props || {})) {
+      if (!def || typeof def !== "object") continue;
+      total += 1;
+      const type = String(def.type || "").trim();
+      byType[type] = (byType[type] || 0) + 1;
+      if (SYSTEM_FIELD_TYPES.has(type)) system += 1;
+      else writable += 1;
+      if (type === "SUBTABLE") subtable += 1;
+      if (def.lookup) lookup += 1;
+      if (type === "CALC" || def.expression) calc += 1;
+    }
+    return { total, system, writable, subtable, lookup, calc, byType };
+  }
+  function collectFormulaRefs(expression) {
+    const refs = /* @__PURE__ */ new Set();
+    String(expression || "").replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (token) => {
+      if (!FORMULA_WORDS.has(token.toUpperCase())) refs.add(token);
+      return token;
+    });
+    return [...refs];
+  }
+  function collectFieldApplyWarnings(incomingProps, currentProps, lookupMap = {}) {
+    const warnings = [];
+    const currentCodes = new Set(Object.keys(currentProps || {}));
+    const incomingCodes = new Set(Object.keys(incomingProps || {}));
+    const allCodes = /* @__PURE__ */ new Set([...currentCodes, ...incomingCodes]);
+    const addSubtableChildCodes = (propsMap) => {
+      for (const [key, def] of Object.entries(propsMap || {})) {
+        if (def?.code) allCodes.add(String(def.code));
+        if (def?.type === "SUBTABLE" && def?.fields && typeof def.fields === "object") {
+          for (const [ck, cdef] of Object.entries(def.fields)) {
+            allCodes.add(ck);
+            if (cdef?.code) allCodes.add(String(cdef.code));
+          }
+        } else {
+          void key;
+        }
+      }
+    };
+    addSubtableChildCodes(currentProps);
+    addSubtableChildCodes(incomingProps);
+    const conflicts = [...incomingCodes].filter((code) => currentCodes.has(code));
+    if (conflicts.length) {
+      warnings.push(`既存フィールドと同じ code が ${conflicts.length} 件あります: ${conflicts.slice(0, 12).join(", ")}${conflicts.length > 12 ? " ..." : ""}`);
+    }
+    const converted = [];
+    const unconvertedRefs = [];
+    const walk = (fieldMap, parent = "") => {
+      for (const [key, def] of Object.entries(fieldMap || {})) {
+        const label = parent ? `${parent}.${key}` : key;
+        const relatedApp = def?.lookup?.relatedApp?.app ?? def?.referenceTable?.relatedApp?.app;
+        if (relatedApp != null) {
+          const before = String(relatedApp);
+          if (lookupMap[before]) converted.push(`${label}: ${before} -> ${lookupMap[before]}`);
+          else unconvertedRefs.push(`${label}: ${before}`);
+        }
+        if (def?.expression) {
+          const missing = collectFormulaRefs(def.expression).filter((code) => !allCodes.has(code));
+          if (missing.length) warnings.push(`${label}: 計算式の参照候補が見つかりません: ${missing.join(", ")}`);
+        }
+        if (def?.type === "SUBTABLE") walk(def.fields, label);
+      }
+    };
+    walk(incomingProps);
+    if (converted.length) warnings.push(`参照先アプリID変換: ${converted.slice(0, 8).join(" / ")}${converted.length > 8 ? " ..." : ""}`);
+    if (unconvertedRefs.length) warnings.push(`変換されない参照先アプリIDがあります: ${unconvertedRefs.slice(0, 8).join(" / ")}${unconvertedRefs.length > 8 ? " ..." : ""}`);
+    if ([...incomingCodes].some((code) => !currentCodes.has(code))) {
+      warnings.push("新規追加フィールドはフォームレイアウトには自動配置されません。必要に応じてkintoneのフォーム設定で配置してください。");
+    }
+    return warnings;
+  }
+  var FORMULA_WORDS;
+  var init_field = __esm({
+    "src/tabs/field.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      init_utils();
+      init_api();
+      init_components();
+      init_diff();
+      init_dialog();
+      FORMULA_WORDS = /* @__PURE__ */ new Set([
+        "IF",
+        "AND",
+        "OR",
+        "NOT",
+        "SUM",
+        "ROUND",
+        "ROUNDDOWN",
+        "ROUNDUP",
+        "DATE_FORMAT",
+        "DATE",
+        "TIME",
+        "DATETIME_FORMAT",
+        "CONTAINS",
+        "NUMBER",
+        "VALUE",
+        "TRUE",
+        "FALSE"
+      ]);
+    }
+  });
+
   // src/kintoneGuard.ts
   var NOT_KINTONE_PAGE_MESSAGE = "kintone画面で実行してください";
   function isKintonePage() {
@@ -1052,60 +1371,40 @@ ${base}`
     run();
   }
 
-  // src/ui/components.ts
-  init_constants();
+  // src/handlers/diffFocus.ts
   init_state();
-  init_utils();
-  init_filter();
-
-  // src/diff/ignore-presets.ts
-  init_state();
-
-  // src/ui/components.ts
-  init_engine();
-  init_enrich();
-
-  // src/reflect/nodeModeUi.ts
-  init_state();
-
-  // src/reflect/applyHistorySummary.ts
-  var APPLY_HISTORY_MODE_LABELS = Object.freeze({
-    section: "まとめ反映",
-    nodes: "差分選択",
-    patch: "JSONパッチ",
-    retry: "再反映",
-    restore: "復元"
-  });
-
-  // src/ui/components.ts
-  init_constants();
   init_dialog();
-
-  // src/oss_integrations.ts
-  init_utils();
-  init_dialog();
-
-  // src/ui/components.ts
-  var ui2 = {};
-  function setComponentUi(uiRefs) {
-    ui2 = uiRefs;
+  function extractAppIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
   }
-  var SCOPE_PICKER_META = Object.freeze({
-    diff: Object.freeze({
-      title: "比較対象セクション",
-      sub: "差分比較で取得する API 設定を選びます。"
-    }),
-    reflect: Object.freeze({
-      title: "反映するセクション",
-      sub: "プレビュー反映でまとめて適用するセクションを選びます。"
-    }),
-    settingsExport: Object.freeze({
-      title: "取得対象セクション",
-      sub: "設定一括取得で保存する API 設定を、JS/CSS設定も含めて選びます。"
-    })
-  });
+  function extractGuestIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
+  }
 
   // src/entries/litePanelTheme.ts
+  init_components();
   init_dialog();
   init_utils();
   var STYLE_ID = "kus-lp-theme-styles";
@@ -1596,7 +1895,7 @@ ${base}`
     document.body.appendChild(root2);
     body.appendChild(status);
     body.appendChild(result);
-    function setStatus(msg, tone = "neutral") {
+    function setStatus2(msg, tone = "neutral") {
       status.dataset.tone = tone;
       status.className = "kus-lp__status" + (tone !== "neutral" ? ` kus-lp__status--${tone}` : "");
       const icon = tone === "ok" ? "✓" : tone === "err" ? "⚠" : tone === "warn" ? "!" : tone === "info" ? "i" : tone === "busy" ? "" : "·";
@@ -1666,7 +1965,7 @@ ${base}`
       elapsedEl.hidden = true;
       elapsedEl.textContent = "";
     }
-    function setBusy(busy) {
+    function setBusy2(busy) {
       closeBtn.disabled = busy;
       root2.setAttribute("aria-busy", String(busy));
       root2.style.cursor = busy ? "progress" : "";
@@ -1819,7 +2118,7 @@ ${base}`
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
+    return { root: root2, body, status, result, setStatus: setStatus2, setResult, setResultHtml, setBusy: setBusy2, close, setCollapsed, resetPosition, setPrimaryAction };
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
@@ -2075,11 +2374,14 @@ ${base}`
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
-      if (okMsg && tone !== "err" && tone !== "warn") {
+      const currentText = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const cancelled = /キャンセルしました/.test(currentText);
+      if (cancelled && (tone === "busy" || tone === "ok")) {
+        panel.setStatus(currentText, "info");
+      } else if (okMsg && tone !== "err" && tone !== "warn" && tone !== "info") {
         panel.setStatus(okMsg, "ok");
       } else if (tone === "busy") {
-        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
-        panel.setStatus(text || "完了", "ok");
+        panel.setStatus(currentText || "完了", "ok");
       }
       return out;
     } catch (e) {
@@ -2351,6 +2653,12 @@ ${base}`
     function finish() {
       if (!pending) return;
       const status = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const tone = panel.status.dataset.tone || "";
+      if ((tone === "info" || tone === "warn" || tone === "neutral") && /キャンセルしました/.test(status)) {
+        pending = null;
+        refresh();
+        return;
+      }
       resultNote.textContent = `${lastContext}
 ${status}`;
       resultNote.dataset.write = String(!!pending.writes);
@@ -2430,7 +2738,17 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     for (const [k, def] of Object.entries(props || {})) {
       if (!def || typeof def !== "object") continue;
       if (SYSTEM_FIELD_TYPES.has(def.type)) continue;
-      out[k] = deepClone(def);
+      const cloned = deepClone(def);
+      if (cloned.type === "SUBTABLE" && cloned.fields && typeof cloned.fields === "object") {
+        const writableChildren = {};
+        for (const [ck, cdef] of Object.entries(cloned.fields)) {
+          if (!cdef || typeof cdef !== "object") continue;
+          if (SYSTEM_FIELD_TYPES.has(cdef.type)) continue;
+          writableChildren[ck] = cdef;
+        }
+        cloned.fields = writableChildren;
+      }
+      out[k] = cloned;
     }
     return out;
   }
@@ -2462,6 +2780,17 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     };
     walk(def);
     return { def, changed };
+  }
+  function validateNumericId(value, label, required = false) {
+    const trimmed = String(value ?? "").trim();
+    if (!trimmed) {
+      if (required) throw new Error(`${label}を入力してください`);
+      return "";
+    }
+    if (!/^\d+$/.test(trimmed)) {
+      throw new Error(`${label}は数値で入力してください: ${trimmed}`);
+    }
+    return trimmed;
   }
   function parseFieldJsonInput(text) {
     const raw = String(text ?? "").trim();
@@ -2510,6 +2839,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   function planFieldApply(incoming, currentProps, lookupMap, overwrite) {
     const plan = { adds: {}, updates: {}, skippedSystem: [], skippedExisting: [], lookupConverted: [], logs: [] };
     const currentMap = currentProps || {};
+    const existingSubtableOwnerByChildCode = /* @__PURE__ */ new Map();
+    for (const [tblCode, tblDef] of Object.entries(currentMap)) {
+      if (tblDef?.type === "SUBTABLE" && tblDef.fields && typeof tblDef.fields === "object") {
+        for (const [childKey, childDef] of Object.entries(tblDef.fields)) {
+          existingSubtableOwnerByChildCode.set(childKey, tblCode);
+          if (childDef?.code) existingSubtableOwnerByChildCode.set(String(childDef.code), tblCode);
+        }
+      }
+    }
+    const seenIncomingOwnerByCode = /* @__PURE__ */ new Map();
     for (const [code, rawDef] of Object.entries(incoming || {})) {
       const writable = filterWritable({ [code]: rawDef });
       if (!writable[code]) {
@@ -2520,8 +2859,63 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const { def, changed } = convertLookup(writable[code], lookupMap);
       if (changed) plan.lookupConverted.push(code);
       if (!def.code) def.code = code;
+      const targetCode = String(def.code || code).trim();
+      const prevIncomingOwner = seenIncomingOwnerByCode.get(targetCode) || seenIncomingOwnerByCode.get(code);
+      if (prevIncomingOwner) {
+        throw new Error(`フィールドコード「${targetCode}」が入力JSON内の「${prevIncomingOwner}」と重複しています`);
+      }
+      seenIncomingOwnerByCode.set(code, code);
+      seenIncomingOwnerByCode.set(targetCode, code);
+      const subOwnerForKey = existingSubtableOwnerByChildCode.get(code);
+      if (subOwnerForKey) {
+        throw new Error(`フィールドコード「${code}」は既存のサブテーブル「${subOwnerForKey}」内の子フィールドと重複しています`);
+      }
+      const subOwnerForTarget = existingSubtableOwnerByChildCode.get(targetCode);
+      if (subOwnerForTarget) {
+        throw new Error(`フィールドコード「${targetCode}」は既存のサブテーブル「${subOwnerForTarget}」内の子フィールドと重複しています`);
+      }
+      if (def.type === "SUBTABLE" && def.fields && typeof def.fields === "object") {
+        for (const [childKey, childDef] of Object.entries(def.fields)) {
+          if (!childDef || typeof childDef !== "object") continue;
+          if (!childDef.code) childDef.code = childKey;
+          const childTarget = String(childDef.code || childKey).trim();
+          for (const cCode of /* @__PURE__ */ new Set([childKey, childTarget])) {
+            const prevOwner = seenIncomingOwnerByCode.get(cCode);
+            if (prevOwner) {
+              throw new Error(`サブテーブル「${code}」の子フィールドコード「${cCode}」が入力JSON内の「${prevOwner}」と重複しています`);
+            }
+            if (currentMap[cCode] && cCode !== code && cCode !== targetCode) {
+              throw new Error(`サブテーブル「${code}」の子フィールドコード「${cCode}」が既存のトップレベルフィールドと重複しています`);
+            }
+            const otherSub = existingSubtableOwnerByChildCode.get(cCode);
+            if (otherSub && otherSub !== code && otherSub !== targetCode) {
+              throw new Error(`サブテーブル「${code}」の子フィールドコード「${cCode}」が別サブテーブル「${otherSub}」内の子フィールドと重複しています`);
+            }
+          }
+          seenIncomingOwnerByCode.set(childKey, `${code}.${childKey}`);
+          seenIncomingOwnerByCode.set(childTarget, `${code}.${childTarget}`);
+        }
+      }
       if (currentMap[code]) {
         if (overwrite) {
+          const curType = String(currentMap[code]?.type || "").trim();
+          const nextType = String(def.type || "").trim();
+          if (curType && nextType && curType !== nextType) {
+            throw new Error(`フィールド「${code}」の type が一致しません（既存: ${curType} / 入力: ${nextType}）。既存フィールドの型変更はできません`);
+          }
+          if (targetCode !== code && currentMap[targetCode]) {
+            throw new Error(`フィールド「${code}」の変更先コード「${targetCode}」は既存フィールドと重複しています`);
+          }
+          if (def.type === "SUBTABLE" && def.fields && currentMap[code]?.fields) {
+            for (const [childKey, childDef] of Object.entries(def.fields)) {
+              const existingChild = currentMap[code].fields[childKey];
+              const curChildType = String(existingChild?.type || "").trim();
+              const nextChildType = String(childDef?.type || "").trim();
+              if (curChildType && nextChildType && curChildType !== nextChildType) {
+                throw new Error(`サブテーブル「${code}」内の子フィールド「${childKey}」の type が一致しません（既存: ${curChildType} / 入力: ${nextChildType}）`);
+              }
+            }
+          }
           plan.updates[code] = def;
           plan.logs.push(`UPDATE ${code}${changed ? " (参照先AppID変換)" : ""}`);
         } else {
@@ -2529,6 +2923,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           plan.logs.push(`SKIP ${code} (exists)`);
         }
       } else {
+        if (targetCode !== code && currentMap[targetCode]) {
+          throw new Error(`フィールド「${code}」の code「${targetCode}」は既存フィールドと重複しています`);
+        }
         plan.adds[code] = def;
         plan.logs.push(`ADD ${code}${changed ? " (参照先AppID変換)" : ""}`);
       }
@@ -2546,20 +2943,32 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       "本番には反映されません（管理画面から手動デプロイ）。実行しますか？"
     ].filter(Boolean).join("\n");
   }
-  async function runFieldApplyStandalone(opts, setStatus) {
+  function attachLogsToError(err, logs) {
+    const baseMessage = err instanceof Error ? err.message : String(err || "エラーが発生しました");
+    const combined = logs.length ? `${baseMessage}
+${logs.join("\n")}` : baseMessage;
+    const wrapped = new Error(combined);
+    if (err && typeof err === "object") {
+      Object.assign(wrapped, err);
+      wrapped.message = combined;
+    }
+    return wrapped;
+  }
+  async function runFieldApplyStandalone(opts, setStatus2) {
     const { targetAppId, targetGuestId, fieldJson, lookupMapJson, overwrite } = opts;
-    if (!targetAppId) throw new Error("比較先アプリIDを入力してください");
+    const tgtApp = validateNumericId(targetAppId, "比較先アプリID", true);
+    const tgtGuest = validateNumericId(targetGuestId, "比較先ゲストID", false);
     const incoming = parseFieldJsonInput(fieldJson);
     const lookupMap = parseLookupMapInput(lookupMapJson);
-    const prefix = buildApiPrefix(targetGuestId || "", true);
-    setStatus("比較先フィールド取得中...");
-    const current = await apiGet(prefix, "/app/form/fields.json", { app: targetAppId });
+    const prefix = buildApiPrefix(tgtGuest, true);
+    setStatus2("比較先フィールド取得中...");
+    const current = await apiGet(prefix, "/app/form/fields.json", { app: tgtApp });
     const plan = planFieldApply(incoming, current.properties || {}, lookupMap, !!overwrite);
     const logs = [...plan.logs];
     const addCount = Object.keys(plan.adds).length;
     const updateCount = Object.keys(plan.updates).length;
     if (!addCount && !updateCount) {
-      setStatus(`追加・更新対象がありません（スキップ ${plan.skippedSystem.length + plan.skippedExisting.length}件）`, true);
+      setStatus2(`追加・更新対象がありません（スキップ ${plan.skippedSystem.length + plan.skippedExisting.length}件）`, true);
       logs.push("反映対象なし");
       return logs;
     }
@@ -2567,52 +2976,59 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (!/^\d+$/.test(revision)) {
       throw new Error("比較先フィールド設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください");
     }
-    if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(String(targetAppId), String(targetGuestId || ""), plan))) {
-      setStatus("フィールド反映をキャンセルしました");
+    if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(tgtApp, tgtGuest, plan))) {
+      setStatus2("フィールド反映をキャンセルしました");
       logs.push("キャンセル");
       return logs;
     }
     const withRevision = (body) => revision ? { ...body, revision } : body;
     if (addCount) {
-      setStatus(`フィールド追加中... (${addCount}件)`);
+      setStatus2(`フィールド追加中... (${addCount}件)`);
       try {
-        const res = await apiPost(prefix, "/app/form/fields.json", withRevision({ app: targetAppId, properties: plan.adds }));
+        const res = await apiPost(prefix, "/app/form/fields.json", withRevision({ app: tgtApp, properties: plan.adds }));
         const nextRevision = pickRevision(res);
         if (!/^\d+$/.test(nextRevision)) {
+          logs.push(`OK フィールド追加 ${addCount}件 (revision 不明)`);
           throw new Error("フィールド追加は完了しましたが、更新後の revision を確認できないため以降の反映を中止しました。差分を取得し直して状態を確認してください");
         }
         revision = nextRevision;
         logs.push(`OK フィールド追加 ${addCount}件${revision ? ` (revision ${revision})` : ""}`);
       } catch (e) {
-        logs.push(`NG フィールド追加 ${addCount}件`);
-        throw decorateRevisionConflict(e, "フィールド追加");
+        if (!logs.some((l) => l.startsWith("OK フィールド追加"))) {
+          logs.push(`NG フィールド追加 ${addCount}件`);
+        }
+        throw attachLogsToError(decorateRevisionConflict(e, "フィールド追加"), logs);
       }
     }
     if (updateCount) {
-      setStatus(`フィールド更新中... (${updateCount}件)`);
+      setStatus2(`フィールド更新中... (${updateCount}件)`);
       try {
-        const res = await apiPut(prefix, "/app/form/fields.json", withRevision({ app: targetAppId, properties: plan.updates }));
+        const res = await apiPut(prefix, "/app/form/fields.json", withRevision({ app: tgtApp, properties: plan.updates }));
         const nextRevision = pickRevision(res);
         if (!/^\d+$/.test(nextRevision)) {
+          logs.push(`OK フィールド更新 ${updateCount}件 (revision 不明)`);
           throw new Error("フィールド更新は完了しましたが、更新後の revision を確認できません。差分を取得し直して状態を確認してください");
         }
         revision = nextRevision;
         logs.push(`OK フィールド更新 ${updateCount}件${revision ? ` (revision ${revision})` : ""}`);
       } catch (e) {
-        logs.push(`NG フィールド更新 ${updateCount}件${addCount ? "（追加 " + addCount + "件は反映済み）" : ""}`);
-        throw decorateRevisionConflict(e, "フィールド更新");
+        if (!logs.some((l) => l.startsWith("OK フィールド更新"))) {
+          logs.push(`NG フィールド更新 ${updateCount}件${addCount ? "（追加 " + addCount + "件は反映済み）" : ""}`);
+        }
+        throw attachLogsToError(decorateRevisionConflict(e, "フィールド更新"), logs);
       }
     }
-    setStatus(`フィールド反映完了: 追加 ${addCount} / 更新 ${updateCount} / スキップ ${plan.skippedSystem.length + plan.skippedExisting.length}`);
+    setStatus2(`フィールド反映完了: 追加 ${addCount} / 更新 ${updateCount} / スキップ ${plan.skippedSystem.length + plan.skippedExisting.length}`);
     return logs;
   }
-  async function runLoadFieldsStandalone(opts, setStatus) {
+  async function runLoadFieldsStandalone(opts, setStatus2) {
     const { appId, guestId, preview } = opts;
-    if (!appId) throw new Error("アプリIDを入力してください");
-    const prefix = buildApiPrefix(guestId || "", !!preview);
-    setStatus("フィールド取得中...");
-    const res = await apiGet(prefix, "/app/form/fields.json", { app: appId });
-    setStatus("フィールド取得完了");
+    const id = validateNumericId(appId, "アプリID", true);
+    const guest = validateNumericId(guestId, "ゲストID", false);
+    const prefix = buildApiPrefix(guest, !!preview);
+    setStatus2("フィールド取得中...");
+    const res = await apiGet(prefix, "/app/form/fields.json", { app: id });
+    setStatus2("フィールド取得完了");
     return res.properties || {};
   }
   var RENAME_EXCLUDED_TYPES = /* @__PURE__ */ new Set([
@@ -2625,7 +3041,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     "STATUS_ASSIGNEE",
     "CATEGORY"
   ]);
-  function planBulkRename(props, prefixText, removeMode) {
+  function planBulkRename(props, prefixText, removeMode, options) {
+    const renameMode = typeof options === "string" ? options : options?.renameMode || "new-keys";
     const trimmed = String(prefixText || "").trim();
     const rename = (code) => {
       if (removeMode) return code.startsWith(trimmed) ? code.slice(trimmed.length) : code;
@@ -2635,9 +3052,18 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const newProps = {};
     const renamePairs = [];
     const collisions = [];
-    const retainedCodes = new Set(
-      Object.entries(props || {}).filter(([, field]) => field && !RENAME_EXCLUDED_TYPES.has(field.type)).map(([code]) => code)
-    );
+    const retainedCodes = /* @__PURE__ */ new Set();
+    for (const [code, field] of Object.entries(props || {})) {
+      if (!field || RENAME_EXCLUDED_TYPES.has(field.type)) continue;
+      retainedCodes.add(code);
+      if (field.type === "SUBTABLE" && field.fields && typeof field.fields === "object") {
+        for (const [childCode, childDef] of Object.entries(field.fields)) {
+          if (!childDef || RENAME_EXCLUDED_TYPES.has(childDef.type)) continue;
+          retainedCodes.add(childCode);
+        }
+      }
+    }
+    const producedCodes = /* @__PURE__ */ new Set();
     for (const [code, field] of Object.entries(props || {})) {
       if (!field || RENAME_EXCLUDED_TYPES.has(field.type)) continue;
       const newCode = rename(code);
@@ -2649,7 +3075,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           continue;
         }
         retainedCodes.delete(code);
-        if (retainedCodes.has(newCode)) collisions.push(`${code} → ${newCode}`);
+        if (retainedCodes.has(newCode) || producedCodes.has(newCode)) {
+          collisions.push(`${code} → ${newCode}`);
+        }
+        producedCodes.add(newCode);
         cloned.code = newCode;
         touched = true;
         renamePairs.push({ from: code, to: newCode });
@@ -2657,75 +3086,57 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       if (cloned.type === "SUBTABLE" && cloned.fields && typeof cloned.fields === "object") {
         const children = {};
         for (const [childCode, childDef] of Object.entries(cloned.fields)) {
+          if (!childDef || RENAME_EXCLUDED_TYPES.has(childDef.type)) continue;
           const newChild = rename(childCode);
           const childClone = deepClone(childDef);
-          if (newChild !== childCode && newChild) {
+          if (newChild !== childCode) {
+            if (!newChild) {
+              collisions.push(`${code}.${childCode} → (空)`);
+              continue;
+            }
+            retainedCodes.delete(childCode);
+            if (retainedCodes.has(newChild) || producedCodes.has(newChild) || newChild === newCode) {
+              collisions.push(`${code}.${childCode} → ${newChild}`);
+            }
+            producedCodes.add(newChild);
             childClone.code = newChild;
             touched = true;
             renamePairs.push({ from: `${code}.${childCode}`, to: `${newCode}.${newChild}` });
           }
-          children[newChild || childCode] = childClone;
+          const childPropKey = renameMode === "put-rename" ? childCode : newChild || childCode;
+          children[childPropKey] = childClone;
         }
         cloned.fields = children;
       }
       if (!touched) continue;
-      if (newProps[newCode] && newCode !== code) collisions.push(`${code} → ${newCode}`);
-      newProps[newCode] = cloned;
+      const propKey = renameMode === "put-rename" ? code : newCode;
+      if (newProps[propKey] && propKey !== code) collisions.push(`${code} → ${newCode}`);
+      newProps[propKey] = cloned;
       modifiedCount++;
     }
-    return { properties: newProps, modifiedCount, renamePairs, collisions };
+    return { properties: newProps, modifiedCount, renamePairs, collisions, renameMode };
   }
-  async function runBulkRenameFieldStandalone(opts, setStatus) {
-    const { targetAppId, targetGuestId, prefix, removeMode } = opts;
-    if (!targetAppId) throw new Error("比較先アプリIDを入力してください");
+  async function runBulkRenameFieldStandalone(opts, setStatus2) {
+    const { targetAppId, targetGuestId, prefix, removeMode, renameMode } = opts;
+    const tgtApp = validateNumericId(targetAppId, "比較先アプリID", true);
+    const tgtGuest = validateNumericId(targetGuestId, "比較先ゲストID", false);
     if (!prefix || !String(prefix).trim()) throw new Error("プレフィックス文字列を入力してください");
-    const apiPrefix = buildApiPrefix(targetGuestId || "", true);
-    setStatus("比較先フィールドを取得中...");
-    const fieldsResp = await apiGet(apiPrefix, "/app/form/fields.json", { app: targetAppId });
-    const result = planBulkRename(fieldsResp.properties || {}, String(prefix), !!removeMode);
+    const apiPrefix = buildApiPrefix(tgtGuest, true);
+    setStatus2("比較先フィールドを取得中...");
+    const fieldsResp = await apiGet(apiPrefix, "/app/form/fields.json", { app: tgtApp });
+    const result = planBulkRename(fieldsResp.properties || {}, String(prefix), !!removeMode, { renameMode });
     if (result.collisions.length) {
       throw new Error(`リネーム後のフィールドコードが重複または空になります: ${result.collisions.join(", ")}`);
     }
-    setStatus(`プレフィックス${removeMode ? "除去" : "付与"}完了: ${result.modifiedCount}件`);
-    return { properties: result.properties, modifiedCount: result.modifiedCount, renamePairs: result.renamePairs };
+    setStatus2(`プレフィックス${removeMode ? "除去" : "付与"}完了: ${result.modifiedCount}件`);
+    return { properties: result.properties, modifiedCount: result.modifiedCount, renamePairs: result.renamePairs, renameMode: result.renameMode };
   }
+
+  // src/entries/field-lite-ui.ts
+  init_field();
 
   // src/entries/appSearchControl.ts
   init_api();
-
-  // src/handlers/diffFocus.ts
-  init_state();
-  init_dialog();
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
-  // src/entries/appSearchControl.ts
   init_utils();
   var RESULT_CSS_ID = "kus-app-search-styles";
   var RESULT_CSS = `
@@ -2952,12 +3363,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
     });
-    keyword.addEventListener("keydown", (e) => {
+    const onEnterKey = (e) => {
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         void runSearch();
       }
-    });
+    };
+    keyword.addEventListener("keydown", onEnterKey);
+    guest.addEventListener("keydown", onEnterKey);
+    space.addEventListener("keydown", onEnterKey);
     return details;
   }
 
@@ -2995,17 +3409,20 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const fieldJson = makeTextarea({ rows: 8, code: true, placeholder: 'フィールド定義 JSON（{ "properties": { ... } } 形式）' });
     const bLoadSrc = makeButton("比較元から読込", "sub");
     const bLoadTgt = makeButton("比較先から読込", "sub");
+    const bValidate = makeButton("検証", "sub");
     const bFormat = makeButton("整形", "sub");
     const bImport = makeButton("ファイル読込", "sub");
     const bExport = makeButton("保存", "sub");
     const bClear = makeButton("クリア", "ghost");
     bClear.addEventListener("click", () => {
       fieldJson.value = "";
+      fieldJson.dispatchEvent(new Event("input", { bubbles: true }));
     });
     bFormat.addEventListener("click", () => {
       try {
         const parsed = JSON.parse(fieldJson.value || "{}");
         fieldJson.value = JSON.stringify(parsed, null, 2);
+        fieldJson.dispatchEvent(new Event("input", { bubbles: true }));
         panel.setStatus("JSON を整形しました", "ok");
       } catch (e) {
         panel.setStatus(`JSON が壊れています: ${e?.message || String(e)}`, "err");
@@ -3022,6 +3439,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         try {
           const parsed = JSON.parse(text);
           fieldJson.value = JSON.stringify(parsed, null, 2);
+          fieldJson.dispatchEvent(new Event("input", { bubbles: true }));
           panel.setStatus(`「${file.name}」を読み込みました`, "ok");
         } catch (e) {
           panel.setStatus(`JSON 読み込みエラー: ${e?.message || String(e)}`, "err");
@@ -3048,8 +3466,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       panel.setStatus("フィールド JSON を保存しました", "ok");
     });
     const cardJson = makeCard({ title: "フィールド定義 JSON", number: 2 });
+    cardJson.actions.style.flexWrap = "wrap";
     cardJson.actions.appendChild(bLoadSrc);
     cardJson.actions.appendChild(bLoadTgt);
+    cardJson.actions.appendChild(bValidate);
     cardJson.actions.appendChild(bFormat);
     cardJson.actions.appendChild(bImport);
     cardJson.actions.appendChild(bExport);
@@ -3063,6 +3483,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
       fieldJson.value = JSON.stringify({ properties: props }, null, 2);
+      fieldJson.dispatchEvent(new Event("input", { bubbles: true }));
     }, "比較元のフィールド定義を読み込みました"));
     bLoadTgt.addEventListener("click", () => liteRun(panel, "比較先フィールド取得中…", async () => {
       const props = await runLoadFieldsStandalone(
@@ -3070,6 +3491,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
       fieldJson.value = JSON.stringify({ properties: props }, null, 2);
+      fieldJson.dispatchEvent(new Event("input", { bubbles: true }));
     }, "比較先のフィールド定義を読み込みました"));
     const pickDetails = makeDetails("比較元からフィールドを選んでマージ", { open: false });
     const bLoadPickList = makeButton("比較元フィールド一覧を取得", "sub");
@@ -3136,6 +3558,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         }
       }
       fieldJson.value = JSON.stringify(current, null, 2);
+      fieldJson.dispatchEvent(new Event("input", { bubbles: true }));
       panel.setStatus(`${added}件のフィールドを JSON にマージしました`, "ok");
     });
     panel.body.insertBefore(pickDetails.details, panel.status);
@@ -3146,6 +3569,31 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     optCard.body.appendChild(makeRow(ow.label));
     optCard.body.appendChild(makeNote("反映前に追加・更新・スキップ件数を確認します。比較先の取得後に別の更新が入っていた場合（revision 競合）は上書きせず中止するので、読み込み直してから再実行してください。"));
     panel.body.insertBefore(optCard.card, panel.status);
+    bValidate.addEventListener("click", () => {
+      try {
+        const props = parseFieldJsonInput(fieldJson.value);
+        const lmap = parseLookupMapInput(lookupMap.value);
+        const summary = summarizeFieldProps(props);
+        const issues = collectFieldValidationIssues(props);
+        const warnings = collectFieldApplyWarnings(props, {}, lmap);
+        const lines = [
+          `合計 ${summary.total}件（書込可 ${summary.writable} / システム ${summary.system}${summary.subtable ? ` / サブテーブル ${summary.subtable}` : ""}${summary.lookup ? ` / ルックアップ ${summary.lookup}` : ""}${summary.calc ? ` / 計算 ${summary.calc}` : ""}）`
+        ];
+        if (issues.length) {
+          lines.push(`⚠ 構造上の問題 (${issues.length}件):`, ...issues.map((i) => `  - ${i}`));
+        }
+        if (warnings.length) {
+          lines.push(`確認事項 (${warnings.length}件):`, ...warnings.map((w) => `  - ${w}`));
+        }
+        panel.setResult(lines.join("\n"));
+        panel.setStatus(
+          issues.length ? `検証完了: ${issues.length}件の問題を検出しました（下のログを確認）` : `検証OK: 合計 ${summary.total}件 / 書込可 ${summary.writable}件${warnings.length ? `（確認事項 ${warnings.length}件）` : ""}`,
+          issues.length ? "warn" : "ok"
+        );
+      } catch (e) {
+        panel.setStatus(e?.message || String(e), "err");
+      }
+    });
     const bApply = makeButton("比較先プレビューへ反映", "run", { icon: "⤴" });
     panel.body.insertBefore(bApply, panel.status);
     bApply.addEventListener("click", () => liteRun(panel, "反映中…", async () => {
@@ -3165,25 +3613,40 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const renameDetails = makeDetails("プレフィックス一括リネーム（比較先プレビュー）");
     const renamePrefix = makeInput({ placeholder: "例: dev_", width: "medium" });
     const removeMode = makeCheck({ label: "付与ではなく除去する" });
+    const renameModeSelect = makeSelect(
+      [
+        ["put-rename", "コード変更用（既存キー維持・PUT更新）"],
+        ["new-keys", "新規追加用（キー名も変更）"]
+      ],
+      "put-rename"
+    );
+    renameModeSelect.setAttribute("aria-label", "リネーム出力形式");
     const bRename = makeButton("リネーム結果を JSON に流し込む", "sub");
     renameDetails.body.appendChild(makeRow(renamePrefix, { label: "文字列" }));
     renameDetails.body.appendChild(makeRow(removeMode.label));
+    renameDetails.body.appendChild(makeRow(renameModeSelect, { label: "出力形式" }));
     renameDetails.body.appendChild(makeRow(bRename));
-    const renameNote = makeNote("比較先のフィールドコードを書き換えた JSON を生成して上のテキストエリアにセットします（反映は別途実行）。");
+    const renameNote = makeNote("比較先のフィールドコードを書き換えた JSON を生成して上のテキストエリアにセットします（反映は別途実行）。既存フィールドのコード変更は「コード変更用」＋「既存フィールドを上書き更新」で PUT 更新します。");
     renameDetails.body.appendChild(renameNote);
     panel.body.insertBefore(renameDetails.details, panel.status);
     bRename.addEventListener("click", () => liteRun(panel, "リネーム生成中…", async () => {
+      const renameMode = renameModeSelect.value || "put-rename";
       const out = await runBulkRenameFieldStandalone(
         {
           targetAppId: tgtApp.value.trim(),
           targetGuestId: tgtGuest.value.trim(),
           prefix: renamePrefix.value,
-          removeMode: removeMode.checkbox.checked
+          removeMode: removeMode.checkbox.checked,
+          renameMode
         },
         (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
       if (!out) return;
+      if (renameMode === "put-rename") {
+        ow.checkbox.checked = true;
+      }
       fieldJson.value = JSON.stringify({ properties: out.properties }, null, 2);
+      fieldJson.dispatchEvent(new Event("input", { bubbles: true }));
       const list = out.renamePairs.slice(0, 50).map((p) => `${p.from}  →  ${p.to}`).join("\n");
       panel.setResult(list + (out.renamePairs.length > 50 ? `
 ... 他 ${out.renamePairs.length - 50} 件` : ""));
@@ -3195,15 +3658,64 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     fieldJson.setAttribute("aria-label", "反映するフィールド定義JSON");
     lookupMap.setAttribute("aria-label", "参照アプリID変換JSON");
     cardJson.body.appendChild(foldWorkflowSection("JSONファイル・整形・クリア", bImport, bExport, bFormat, bClear));
-    const fieldProblem = () => !tgtApp.value.trim() ? "比較先アプリIDを指定してください。" : validateJsonObject(fieldJson.value, "フィールド定義JSON") || (lookupMap.value.trim() ? validateJsonObject(lookupMap.value, "参照アプリID変換JSON") : "");
+    const fieldProblem = () => {
+      const tApp = tgtApp.value.trim();
+      const tGuest = tgtGuest.value.trim();
+      const sApp = srcApp.value.trim();
+      const sGuest = srcGuest.value.trim();
+      if (!tApp) return "比較先アプリIDを指定してください。";
+      if (!/^\d+$/.test(tApp)) return "比較先アプリIDは数値で入力してください。";
+      if (tGuest && !/^\d+$/.test(tGuest)) return "比較先ゲストIDは数値で入力してください。";
+      if (sApp && !/^\d+$/.test(sApp)) return "比較元アプリIDは数値で入力してください。";
+      if (sGuest && !/^\d+$/.test(sGuest)) return "比較元ゲストIDは数値で入力してください。";
+      const jsonErr = validateJsonObject(fieldJson.value, "フィールド定義JSON");
+      if (jsonErr) return jsonErr;
+      try {
+        parseFieldJsonInput(fieldJson.value);
+      } catch (e) {
+        return e?.message || "フィールド定義JSONを確認してください。";
+      }
+      if (lookupMap.value.trim()) {
+        const lErr = validateJsonObject(lookupMap.value, "参照アプリID変換JSON");
+        if (lErr) return lErr;
+      }
+      return "";
+    };
     const fieldSummary = () => {
       let codes = [];
+      let detailLabel = "";
+      let checkNotes = [];
       try {
-        const data = JSON.parse(fieldJson.value);
-        codes = Object.keys(data.properties || data);
+        const props = parseFieldJsonInput(fieldJson.value);
+        codes = Object.keys(props);
+        const sum = summarizeFieldProps(props);
+        const parts = [`書込可 ${sum.writable}`, `システム ${sum.system}`];
+        if (sum.subtable) parts.push(`サブテーブル ${sum.subtable}`);
+        if (sum.lookup) parts.push(`ルックアップ ${sum.lookup}`);
+        if (sum.calc) parts.push(`計算 ${sum.calc}`);
+        detailLabel = `（${parts.join(" / ")}）`;
+        const lmap = parseLookupMapInput(lookupMap.value);
+        const issues = collectFieldValidationIssues(props);
+        const warnings = collectFieldApplyWarnings(props, {}, lmap);
+        checkNotes = [...issues, ...warnings];
       } catch {
+        try {
+          const data = JSON.parse(fieldJson.value);
+          codes = Object.keys(data.properties || data);
+        } catch {
+        }
       }
-      return [["反映先", connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), "プレビュー")], ["フィールド", codes.length + " 件 · " + codes.join("、")], ["既存フィールド", ow.checkbox.checked ? "上書き更新する" : "既存フィールドはスキップ"], ["参照先変換", lookupMap.value.trim() || "なし"], ["本番公開", "この操作では公開しません"]];
+      const rows = [
+        ["反映先", connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), "プレビュー")],
+        ["フィールド", `${codes.length} 件${detailLabel} · ${codes.join("、")}`],
+        ["既存フィールド", ow.checkbox.checked ? "上書き更新する" : "既存フィールドはスキップ"],
+        ["参照先変換", lookupMap.value.trim() || "なし"]
+      ];
+      if (checkNotes.length) {
+        rows.push(["事前検証", checkNotes.join("\n")]);
+      }
+      rows.push(["本番公開", "この操作では公開しません"]);
+      return rows;
     };
     installLiteWorkflow(panel, {
       setup: [cardApp.card, cardJson.card, pickDetails.details, foldWorkflowSection("反映オプション・参照先変換", optCard.card), renameDetails.details],

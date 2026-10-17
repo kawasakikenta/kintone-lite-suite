@@ -272,34 +272,171 @@ export async function runBatchDesignExportXlsxZipStandalone(
   setStatus(`設計書ZIP出力完了（${apps.length}件）`);
 }
 
-function simpleLineDiffLite(oStr: string, nStr: string): string {
-  const oLines = oStr.split('\n');
-  const nLines = nStr.split('\n');
-  const result: string[] = [];
-  let i = 0, j = 0;
-  while (i < oLines.length || j < nLines.length) {
-    if (i < oLines.length && j < nLines.length && oLines[i] === nLines[j]) {
-      result.push('  ' + oLines[i]); i++; j++;
-    } else {
-      let rsI = -1, rsJ = -1;
-      for (let k = 1; k < 60; k++) {
-        if (i + k < oLines.length && oLines[i + k] === nLines[j]) { rsI = i + k; rsJ = j; break; }
-        if (j + k < nLines.length && oLines[i] === nLines[j + k]) { rsI = i; rsJ = j + k; break; }
-      }
-      if (rsI !== -1) {
-        if (rsI > i) {
-          for (let scan = i; scan < rsI; scan++) result.push('- ' + oLines[scan]);
-          i = rsI;
+function diffLinesBlock(oLines: string[], nLines: string[]): string[] {
+  let start = 0;
+  while (start < oLines.length && start < nLines.length && oLines[start] === nLines[start]) {
+    start++;
+  }
+  let oEnd = oLines.length;
+  let nEnd = nLines.length;
+  while (oEnd > start && nEnd > start && oLines[oEnd - 1] === nLines[nEnd - 1]) {
+    oEnd--;
+    nEnd--;
+  }
+
+  const out: string[] = [];
+  for (let idx = 0; idx < start; idx++) out.push('  ' + oLines[idx]);
+
+  const oMid = oLines.slice(start, oEnd);
+  const nMid = nLines.slice(start, nEnd);
+  const M = oMid.length;
+  const N = nMid.length;
+
+  if (M === 0) {
+    for (let j = 0; j < N; j++) out.push('+ ' + nMid[j]);
+  } else if (N === 0) {
+    for (let i = 0; i < M; i++) out.push('- ' + oMid[i]);
+  } else if (M * N <= 400_000) {
+    const stride = N + 1;
+    const dp = new Int32Array((M + 1) * stride);
+    for (let i = M - 1; i >= 0; i--) {
+      const rowOffset = i * stride;
+      const nextRowOffset = (i + 1) * stride;
+      const oLine = oMid[i];
+      for (let j = N - 1; j >= 0; j--) {
+        if (oLine === nMid[j]) {
+          dp[rowOffset + j] = dp[nextRowOffset + j + 1] + 1;
         } else {
-          for (let scan = j; scan < rsJ; scan++) result.push('+ ' + nLines[scan]);
-          j = rsJ;
+          const down = dp[nextRowOffset + j];
+          const right = dp[rowOffset + j + 1];
+          dp[rowOffset + j] = down >= right ? down : right;
         }
+      }
+    }
+    let i = 0;
+    let j = 0;
+    while (i < M || j < N) {
+      if (i < M && j < N && oMid[i] === nMid[j]) {
+        out.push('  ' + oMid[i]);
+        i++;
+        j++;
+      } else if (i < M && (j === N || dp[(i + 1) * stride + j] >= dp[i * stride + j + 1])) {
+        out.push('- ' + oMid[i++]);
       } else {
-        if (i < oLines.length) result.push('- ' + oLines[i++]);
-        if (j < nLines.length) result.push('+ ' + nLines[j++]);
+        out.push('+ ' + nMid[j++]);
+      }
+    }
+  } else {
+    let i = 0;
+    let j = 0;
+    while (i < M || j < N) {
+      if (i < M && j < N && oMid[i] === nMid[j]) {
+        out.push('  ' + oMid[i]);
+        i++;
+        j++;
+      } else {
+        let rsI = -1;
+        let rsJ = -1;
+        for (let k = 1; k < 500; k++) {
+          if (i + k < M && oMid[i + k] === nMid[j]) { rsI = i + k; rsJ = j; break; }
+          if (j + k < N && oMid[i] === nMid[j + k]) { rsI = i; rsJ = j + k; break; }
+        }
+        if (rsI !== -1) {
+          if (rsI > i) {
+            for (let scan = i; scan < rsI; scan++) out.push('- ' + oMid[scan]);
+            i = rsI;
+          } else {
+            for (let scan = j; scan < rsJ; scan++) out.push('+ ' + nMid[scan]);
+            j = rsJ;
+          }
+        } else {
+          if (i < M) out.push('- ' + oMid[i++]);
+          if (j < N) out.push('+ ' + nMid[j++]);
+        }
       }
     }
   }
+
+  for (let idx = oEnd; idx < oLines.length; idx++) out.push('  ' + oLines[idx]);
+  return out;
+}
+
+interface MarkdownSectionBlock {
+  heading: string;
+  lines: string[];
+}
+
+function splitMarkdownSections(text: string): { preamble: string[]; hasPreamble: boolean; sections: MarkdownSectionBlock[] } {
+  const allLines = String(text ?? '').split('\n');
+  const preamble: string[] = [];
+  const sections: MarkdownSectionBlock[] = [];
+  let current: MarkdownSectionBlock | null = null;
+  for (const line of allLines) {
+    if (/^## /.test(line)) {
+      current = { heading: line, lines: [] };
+      sections.push(current);
+    } else if (current) {
+      current.lines.push(line);
+    } else {
+      preamble.push(line);
+    }
+  }
+  return {
+    preamble,
+    hasPreamble: sections.length === 0 || preamble.length > 0,
+    sections
+  };
+}
+
+export function simpleLineDiffLite(oStr: string, nStr: string): string {
+  const oParsed = splitMarkdownSections(oStr);
+  const nParsed = splitMarkdownSections(nStr);
+  if (oParsed.sections.length === 0 && nParsed.sections.length === 0) {
+    return diffLinesBlock(oParsed.preamble, nParsed.preamble).join('\n');
+  }
+
+  const result: string[] = [];
+  if (oParsed.preamble.length > 0 || nParsed.preamble.length > 0) {
+    result.push(...diffLinesBlock(oParsed.preamble, nParsed.preamble));
+  }
+
+  const oSecs = oParsed.sections;
+  const nSecs = nParsed.sections;
+  const M = oSecs.length;
+  const N = nSecs.length;
+  const stride = N + 1;
+  const dp = new Int32Array((M + 1) * stride);
+  for (let i = M - 1; i >= 0; i--) {
+    for (let j = N - 1; j >= 0; j--) {
+      if (oSecs[i].heading === nSecs[j].heading) {
+        dp[i * stride + j] = dp[(i + 1) * stride + j + 1] + 1;
+      } else {
+        const down = dp[(i + 1) * stride + j];
+        const right = dp[i * stride + j + 1];
+        dp[i * stride + j] = down >= right ? down : right;
+      }
+    }
+  }
+
+  let i = 0;
+  let j = 0;
+  while (i < M || j < N) {
+    if (i < M && j < N && oSecs[i].heading === nSecs[j].heading) {
+      result.push('  ' + oSecs[i].heading);
+      result.push(...diffLinesBlock(oSecs[i].lines, nSecs[j].lines));
+      i++;
+      j++;
+    } else if (i < M && (j === N || dp[(i + 1) * stride + j] >= dp[i * stride + j + 1])) {
+      result.push('- ' + oSecs[i].heading);
+      for (const line of oSecs[i].lines) result.push('- ' + line);
+      i++;
+    } else {
+      result.push('+ ' + nSecs[j].heading);
+      for (const line of nSecs[j].lines) result.push('+ ' + line);
+      j++;
+    }
+  }
+
   return result.join('\n');
 }
 

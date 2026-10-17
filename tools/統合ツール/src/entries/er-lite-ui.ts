@@ -44,6 +44,9 @@ export function mountErLitePanel() {
     targets: [{ apply: (id, _name) => { appInp.value = id; } }]
   }));
 
+  const prevCb = makeCheck({ label: 'プレビュー環境を参照', checked: false });
+  cardMain.body.appendChild(makeRow(prevCb.label));
+
   const bOpen = makeButton('ER 図を開く', 'primary', { icon: '◉' });
   const bSave = makeButton('HTML 保存', 'ghost', { icon: '↓' });
   const btnRow = makeRow([bOpen, bSave]);
@@ -169,7 +172,7 @@ export function mountErLitePanel() {
       appId: appInp.value.trim(),
       appIds: parseAppIds(appInp.value),
       guestId: guestInp.value.trim(),
-      preview: false,
+      preview: prevCb.checkbox.checked,
       layoutName: layoutSel.value,
       fieldDensity: densitySel.value,
       maxDepth: depthInp.value.trim(),
@@ -198,6 +201,7 @@ export function mountErLitePanel() {
   guestInp.setAttribute('aria-label', 'ゲストスペースID');
   const erSummary = (): Array<[string, string]> => [
     ['起点', connectionSummary(appInp.value.trim(), guestInp.value.trim())],
+    ['参照環境', prevCb.checkbox.checked ? 'プレビュー環境を参照' : '本番環境'],
     ['追加起点', extra.value.trim() || 'なし'],
     ['スペース', (() => {
       const spaceId = spaceInp.value.trim();
@@ -205,9 +209,9 @@ export function mountErLitePanel() {
       const picked = source().spaceSelectedAppIds;
       return picked ? `${spaceId}（読み込んだ ${spacePicker.count()} アプリ中 ${picked.length} 件を起点にする）` : `${spaceId}（スペース内の全アプリを起点にする）`;
     })()],
-    ['探索の深さ', depthInp.value === '0' ? '無制限' : depthInp.value],
+    ['探索の深さ', depthInp.value === '0' ? '無制限（関連アプリを最後まで探索します）' : depthInp.value],
     ['表示', (layoutSel.selectedOptions[0]?.textContent || '') + ' / ' + (densitySel.selectedOptions[0]?.textContent || '')],
-    ['逆引き', reverseCb.checkbox.checked ? 'あり' : 'なし']
+    ['逆引き', reverseCb.checkbox.checked ? '逆引きあり（テナント内のアプリを走査するため時間がかかる場合があります）' : 'なし']
   ];
   const erProblem = () => validateErOptions(source());
   installLiteWorkflow(panel, {

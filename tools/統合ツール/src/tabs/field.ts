@@ -243,7 +243,7 @@ const FORMULA_WORDS = new Set([
   'DATE', 'TIME', 'DATETIME_FORMAT', 'CONTAINS', 'NUMBER', 'VALUE', 'TRUE', 'FALSE'
 ]);
 
-function collectFormulaRefs(expression: string): string[] {
+export function collectFormulaRefs(expression: string): string[] {
   const refs = new Set<string>();
   String(expression || '').replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (token) => {
     if (!FORMULA_WORDS.has(token.toUpperCase())) refs.add(token);
@@ -252,11 +252,26 @@ function collectFormulaRefs(expression: string): string[] {
   return [...refs];
 }
 
-function collectFieldApplyWarnings(incomingProps: any, currentProps: any, lookupMap: Record<string, string>): string[] {
+export function collectFieldApplyWarnings(incomingProps: any, currentProps: any, lookupMap: Record<string, string> = {}): string[] {
   const warnings: string[] = [];
   const currentCodes = new Set(Object.keys(currentProps || {}));
   const incomingCodes = new Set(Object.keys(incomingProps || {}));
   const allCodes = new Set([...currentCodes, ...incomingCodes]);
+  const addSubtableChildCodes = (propsMap: any) => {
+    for (const [key, def] of Object.entries(propsMap || {}) as Array<[string, any]>) {
+      if (def?.code) allCodes.add(String(def.code));
+      if (def?.type === 'SUBTABLE' && def?.fields && typeof def.fields === 'object') {
+        for (const [ck, cdef] of Object.entries(def.fields) as Array<[string, any]>) {
+          allCodes.add(ck);
+          if (cdef?.code) allCodes.add(String(cdef.code));
+        }
+      } else {
+        void key;
+      }
+    }
+  };
+  addSubtableChildCodes(currentProps);
+  addSubtableChildCodes(incomingProps);
   const conflicts = [...incomingCodes].filter((code) => currentCodes.has(code));
   if (conflicts.length) {
     warnings.push(`既存フィールドと同じ code が ${conflicts.length} 件あります: ${conflicts.slice(0, 12).join(', ')}${conflicts.length > 12 ? ' ...' : ''}`);

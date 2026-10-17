@@ -41,8 +41,27 @@ function parentRecordId(record: any, index: number): string {
   return String(value);
 }
 
+export interface RecordCsvExportOptions {
+  headerMode?: 'code' | 'label' | 'both';
+  lineEnding?: '\n' | '\r\n';
+  neutralizeFormula?: boolean;
+}
+
+function formatCsvColumnHeader(code: string, prop: any, mode: 'code' | 'label' | 'both' = 'code'): string {
+  if (mode === 'code' || (DETAIL_ID_COLUMNS.includes(code) && !prop?.label)) return code;
+  const label = String(prop?.label || code);
+  return mode === 'both' ? `${label} [${code}]` : label;
+}
+
 /** 親CSVと、親ID・行ID・行番号で紐付けるテーブル別CSVを生成する。 */
-export function buildRecordCsvExport(records: any[], properties: Record<string, any>): RecordCsvExport {
+export function buildRecordCsvExport(
+  records: any[],
+  properties: Record<string, any>,
+  options?: RecordCsvExportOptions
+): RecordCsvExport {
+  const headerMode = options?.headerMode || 'code';
+  const lineEnding = options?.lineEnding;
+  const neutralizeFormula = options?.neutralizeFormula;
   const parentColumns = Object.keys(properties || {});
   const tableFields = new Map<string, Record<string, any>>();
   for (const code of parentColumns) {
@@ -59,7 +78,14 @@ export function buildRecordCsvExport(records: any[], properties: Record<string, 
       parentColumns.push(code);
     }
   }
-  if (!tableFields.size) return { parentCsv: buildRecordsCsvText(records, parentColumns), tables: [], warnings: [] };
+  if (!tableFields.size) {
+    const headers = parentColumns.map((code) => formatCsvColumnHeader(code, properties?.[code], headerMode));
+    return {
+      parentCsv: buildRecordsCsvText(records, parentColumns, { headers, lineEnding, neutralizeFormula }),
+      tables: [],
+      warnings: []
+    };
+  }
 
   const recordIds = records.map(parentRecordId);
   const warnings: string[] = [];
@@ -95,15 +121,19 @@ export function buildRecordCsvExport(records: any[], properties: Record<string, 
     if (collision) {
       throw new Error(`テーブル ${fieldCode} の子フィールド ${collision} が明細の識別列と重複するためCSV出力を中止しました。`);
     }
+    const tableColKeys = [...DETAIL_ID_COLUMNS, ...childColumns];
+    const tableHeaders = tableColKeys.map((code) => formatCsvColumnHeader(code, childProperties?.[code], headerMode));
     tables.push({
       fieldCode,
       fileName: tableFileName(fieldCode, usedNames),
-      csvText: buildRecordsCsvText(detailRecords, [...DETAIL_ID_COLUMNS, ...childColumns]),
+      csvText: buildRecordsCsvText(detailRecords, tableColKeys, { headers: tableHeaders, lineEnding, neutralizeFormula }),
       rowCount: detailRecords.length
     });
   }
+  const finalParentKeys = ['$id', ...parentColumns.filter((code) => code !== '$id')];
+  const finalParentHeaders = finalParentKeys.map((code) => formatCsvColumnHeader(code, properties?.[code], headerMode));
   return {
-    parentCsv: buildRecordsCsvText(records, ['$id', ...parentColumns.filter((code) => code !== '$id')]),
+    parentCsv: buildRecordsCsvText(records, finalParentKeys, { headers: finalParentHeaders, lineEnding, neutralizeFormula }),
     tables,
     warnings
   };
