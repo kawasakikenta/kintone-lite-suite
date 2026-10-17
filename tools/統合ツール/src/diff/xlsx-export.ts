@@ -13,6 +13,7 @@ import { stringifyForDiff, stringifyRowValueForDiff } from './export.js';
 import {
   isSensitiveSameDiffRow,
   contentIdentifier,
+  maskSensitiveDiffRows,
   SENSITIVE_DIFF_SECTION_KEYS,
   SENSITIVE_SAME_VALUE_REDACTION
 } from './export-safety.js';
@@ -139,6 +140,8 @@ export interface DiffXlsxBundle {
 export interface DiffXlsxContext {
   /** customer は提出用の簡潔な構成。未指定時も customer を採用する。 */
   audience?: 'customer' | 'internal';
+  /** 共有用に機密キーやJS/CSS本文・プラグイン設定値をマスクするか */
+  maskSensitive?: boolean;
   rows: DiffXlsxRow[];
   fetchIssues?: DiffXlsxFetchIssue[];
   partialIssues?: DiffXlsxPartialIssue[];
@@ -5764,7 +5767,12 @@ function buildCustomerDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
   return sheets;
 }
 
-export function buildDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
+export const MAX_SINGLE_DIFF_XLSX_BYTES = 100 * 1024 * 1024;
+
+export function buildDiffXlsxSheets(rawCtx: DiffXlsxContext): XlsxSheet[] {
+  const ctx: DiffXlsxContext = rawCtx.maskSensitive
+    ? { ...rawCtx, rows: maskSensitiveDiffRows(rawCtx.rows) }
+    : rawCtx;
   if (ctx.audience !== 'internal') return buildCustomerDiffXlsxSheets(ctx);
   const rows = ctx.rows || [];
   const grouped = groupRowsBySection(rows);
@@ -5823,7 +5831,13 @@ export function buildDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
 }
 
 export function buildDiffXlsxBlob(ctx: DiffXlsxContext): Blob {
-  return buildXlsxBlob(buildDiffXlsxSheets(ctx));
+  const blob = buildXlsxBlob(buildDiffXlsxSheets(ctx));
+  if (blob.size > MAX_SINGLE_DIFF_XLSX_BYTES) {
+    throw new Error(
+      `Excelファイルが上限サイズ（${Math.round(MAX_SINGLE_DIFF_XLSX_BYTES / (1024 * 1024))}MB）を超えました。フィルタや出力対象セクションを絞って再出力してください。`
+    );
+  }
+  return blob;
 }
 
 const XLSX_FILENAME_EXTENSION = '.xlsx';

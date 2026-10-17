@@ -535,6 +535,18 @@ ${contextLine}`);
     const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
     return cleaned || fallback;
   }
+  function extractAppNameFromBundle(bundle) {
+    const appSettings = bundle?.sections?.appSettings;
+    const candidates = [
+      appSettings?.name,
+      appSettings?.app?.name,
+      appSettings?.general?.name,
+      bundle?.meta?.appName,
+      bundle?.appName
+    ];
+    const found = candidates.find((item) => String(item || "").trim());
+    return found ? String(found).trim() : "";
+  }
   function buildAppFilenameLabel(appId, appName) {
     const id = String(appId || "").trim();
     const name = String(appName || "").trim();
@@ -694,6 +706,17 @@ ${contextLine}`);
     const jitter = Math.random() * Math.min(200, baseDelayMs);
     return Math.round(expDelay + jitter);
   }
+  function isRetriableMutation(method, error) {
+    if (!error) return false;
+    const m = String(method || "").toUpperCase();
+    const status = resolveHttpStatus(error);
+    if (status >= 400 && status < 500) {
+      if (m === "PUT" && (status === 408 || status === 429)) return true;
+      return false;
+    }
+    if (status >= 500 && status < 600) return true;
+    return isRetriableApiError(error);
+  }
   function touchApiPathMetric(path, field) {
     const key = String(path || "");
     const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
@@ -737,21 +760,30 @@ ${contextLine}`);
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
-  async function apiPut(prefix, path, body) {
-    assertAllowsMutatingRestCall(prefix, path, "PUT");
-    try {
-      return await kintone.api(`${prefix}${path}`, "PUT", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "PUT", prefix, path, payload: body });
+  async function executeMutatingApiWithRetry(method, prefix, path, body, retries = DEFAULT_API_GET_RETRIES) {
+    assertAllowsMutatingRestCall(prefix, path, method);
+    const maxAttempts = Math.max(1, retries);
+    let lastErr;
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        return await kintone.api(`${prefix}${path}`, method, body);
+      } catch (e) {
+        lastErr = e;
+        if (i < maxAttempts - 1 && isRetriableMutation(method, e)) {
+          const waitMs = computeRetryDelayMs(i, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        break;
+      }
     }
+    throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
+  }
+  async function apiPut(prefix, path, body) {
+    return executeMutatingApiWithRetry("PUT", prefix, path, body);
   }
   async function apiPost(prefix, path, body) {
-    assertAllowsMutatingRestCall(prefix, path, "POST");
-    try {
-      return await kintone.api(`${prefix}${path}`, "POST", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
-    }
+    return executeMutatingApiWithRetry("POST", prefix, path, body);
   }
   function isRevisionConflictError(error) {
     if (!error) return false;
@@ -973,7 +1005,7 @@ ${base}`
       }
       tasks.push(async () => {
         try {
-          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
+          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id });
           if (res && typeof res === "object") {
             plugin._config = res?.config != null ? res.config : res;
             stats.fetched += 1;
@@ -1204,6 +1236,20 @@ ${base}`
     }
   });
 
+  // src/ui/dialog.ts
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
+  var init_dialog = __esm({
+    "src/ui/dialog.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      root = null;
+    }
+  });
+
   // src/diff/engine.ts
   var init_engine = __esm({
     "src/diff/engine.ts"() {
@@ -1220,20 +1266,6 @@ ${base}`
       "use strict";
       init_constants();
       init_utils();
-    }
-  });
-
-  // src/ui/dialog.ts
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
     }
   });
 
@@ -1435,6 +1467,59 @@ ${base}`
     }
     return current.target[opts.scopes[0]].revision;
   }
+  var SYSTEM_REF_FIELDS = /* @__PURE__ */ new Set(["$id", "$revision"]);
+  function findUnmappedActionDestApps(sourceActions, lookupMap, targetActions) {
+    if (!sourceActions || typeof sourceActions !== "object") return [];
+    const map = lookupMap || {};
+    const unmapped = [];
+    for (const [actionName, action] of Object.entries(sourceActions)) {
+      const rawApp = action?.destApp?.app;
+      if (rawApp == null) continue;
+      const destAppId = String(rawApp).trim();
+      if (!destAppId || map[destAppId]) continue;
+      const targetAppId = String(targetActions?.[actionName]?.destApp?.app ?? "").trim();
+      if (targetAppId && targetAppId === destAppId) continue;
+      unmapped.push({ actionName, destAppId });
+    }
+    return unmapped;
+  }
+  function extractActionRequiredFields(actions) {
+    if (!actions || typeof actions !== "object") return [];
+    const codes = [];
+    for (const action of Object.values(actions)) {
+      if (!Array.isArray(action?.mappings)) continue;
+      for (const mapping of action.mappings) {
+        if (mapping?.srcType === "FIELD" && typeof mapping.srcField === "string" && mapping.srcField.trim()) {
+          const code = mapping.srcField.trim();
+          if (!SYSTEM_REF_FIELDS.has(code)) codes.push(code);
+        }
+      }
+    }
+    return [...new Set(codes)];
+  }
+  function extractReportRequiredFields(reports) {
+    if (!reports || typeof reports !== "object") return [];
+    const codes = [];
+    for (const report of Object.values(reports)) {
+      if (Array.isArray(report?.groups)) {
+        for (const group of report.groups) {
+          if (typeof group?.code === "string" && group.code.trim()) {
+            const code = group.code.trim();
+            if (!SYSTEM_REF_FIELDS.has(code)) codes.push(code);
+          }
+        }
+      }
+      if (Array.isArray(report?.aggregations)) {
+        for (const agg of report.aggregations) {
+          if (agg?.type !== "COUNT" && typeof agg?.code === "string" && agg.code.trim()) {
+            const code = agg.code.trim();
+            if (!SYSTEM_REF_FIELDS.has(code)) codes.push(code);
+          }
+        }
+      }
+    }
+    return [...new Set(codes)];
+  }
 
   // src/reflect/standalonePlan.ts
   init_constants();
@@ -1562,7 +1647,7 @@ ${base}`
     return result;
   }
   function reflectInspectionScopes(scopes) {
-    return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => ["layoutSettings", "viewSettings"].includes(key)) ? ["fieldSettings"] : []])];
+    return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => ["layoutSettings", "viewSettings", "reportSettings", "actionSettings"].includes(key)) ? ["fieldSettings"] : []])];
   }
   function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields) {
     const selected = entries.filter((entry) => scopes.includes(entry.sectionKey));
@@ -1628,7 +1713,21 @@ ${base}`
       } else if (namedSections[key]) {
         const property = namedSections[key];
         const from = namedPayload(source, property), to = namedPayload(target, property);
-        for (const name of Object.keys(from)) if (own(to, name)) from[name] = { ...to[name], ...from[name] };
+        if (key === "actionSettings") {
+          for (const unmapped of findUnmappedActionDestApps(from, options.lookupMap, to)) {
+            plan.warnings.push(`アクション「${unmapped.actionName}」のコピー先アプリID (${unmapped.destAppId}) が参照先変換に未指定のため、そのままのIDで反映します。`);
+          }
+        }
+        for (const name of Object.keys(from)) {
+          if (own(to, name)) from[name] = { ...to[name], ...from[name] };
+          if (key === "actionSettings" && from[name]?.destApp?.app != null) {
+            const mappedApp = options.lookupMap?.[String(from[name].destApp.app)];
+            if (mappedApp) {
+              from[name].destApp = { ...from[name].destApp, app: mappedApp };
+              delete from[name].destApp.code;
+            }
+          }
+        }
         const preserve = options.preserveTargetOnly !== false;
         const combined = preserve ? { ...to, ...from } : from;
         const ordered = [...Object.keys(from).sort((a, b) => Number(from[a].index || 0) - Number(from[b].index || 0)), ...preserve ? Object.keys(to).filter((name) => !own(from, name)).sort((a, b) => Number(to[a].index || 0) - Number(to[b].index || 0)) : []];
@@ -1644,6 +1743,8 @@ ${base}`
         plan.behavior = preserve ? "追加・更新（反映先だけの設定は保持）" : "全置換（反映元にない設定を削除）";
         if (preserve) for (const name of Object.keys(to).filter((name2) => !own(from, name2))) plan.changes.push({ kind: "保持", path: `${labels[property]} / ${name}`, before: valueText(to[name]), after: "内容を保持（表示順は反映元の後）" });
         if (key === "viewSettings") plan.requiredFields = [...new Set(Object.values(combined).flatMap((view) => view.type === "LIST" ? view.fields || [] : view.type === "CALENDAR" ? [view.date, view.title].filter(Boolean) : []).filter((code) => !["$id", "$revision"].includes(code)))];
+        if (key === "actionSettings") plan.requiredFields = extractActionRequiredFields(combined);
+        if (key === "reportSettings") plan.requiredFields = extractReportRequiredFields(combined);
       } else if (key === "pluginSettings") {
         if (!Array.isArray(source.plugins) || !Array.isArray(target.plugins)) throw new Error("プラグイン一覧の形式が不正です。");
         const existing = new Set(target.plugins.map((item) => item.id));
@@ -1881,7 +1982,8 @@ ${base}`
       return { appId, guestId, name: info.name, code: String(info.code || "") };
     };
     const target = await resolve(opts.targetAppId, opts.targetGuestId);
-    const source = opts.sourceBundle ? { appId: opts.sourceAppId, guestId: "", name: "設定JSON", code: "" } : await resolve(opts.sourceAppId, opts.sourceGuestId);
+    const jsonAppName = opts.sourceBundle ? extractAppNameFromBundle(opts.sourceBundle) : "";
+    const source = opts.sourceBundle ? { appId: opts.sourceAppId, guestId: "", name: jsonAppName ? `設定JSON（${jsonAppName}）` : "設定JSON", code: "" } : await resolve(opts.sourceAppId, opts.sourceGuestId);
     return { source, target };
   }
   function orderedScopes(scopes) {
@@ -1927,6 +2029,18 @@ ${base}`
         entry.message = error.message;
       }
     }
+    if (Object.keys(opts.lookupMap || {}).length && scopes.some((key) => key === "fieldSettings" || key === "actionSettings")) {
+      const lookup = await preflightLookupMapStandalone(opts.lookupMap, { targetGuestId: opts.targetGuestId });
+      if (!lookup.ok) {
+        const lookupErr = `ルックアップ変換先を確認できません: ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).join(" / ")}`;
+        const affected = entries.filter((entry) => entry.sectionKey === "fieldSettings" || entry.sectionKey === "actionSettings");
+        for (const entry of affected.length ? affected : entries.slice(0, 1)) {
+          entry.status = "error";
+          entry.blockers.push(lookupErr);
+          entry.message = entry.blockers.join("\n");
+        }
+      }
+    }
     return {
       totalSections: entries.length,
       changedSections: entries.filter((entry) => entry.status === "change").length,
@@ -1962,7 +2076,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       const blob = new Blob([JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), scopes, bundle: target }, null, 2)], { type: "application/json" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = buildExportFilename("反映前バックアップ", "json", { appLabel: buildAppFilenameLabel(opts.targetAppId, "") });
+      a.download = buildExportFilename("反映前バックアップ", "json", { appLabel: buildAppFilenameLabel(opts.targetAppId, extractAppNameFromBundle(target)) });
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 5e3);
       logs.push("バックアップ取得完了（保存を開始しました）");
@@ -2033,6 +2147,38 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       }
     }
     return { ok: !missing.length, missing };
+  }
+
+  // src/handlers/diffFocus.ts
+  init_state();
+  init_dialog();
+  function extractAppIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
   }
 
   // src/ui/components.ts
@@ -2950,11 +3096,14 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
-      if (okMsg && tone !== "err" && tone !== "warn") {
+      const currentText = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const cancelled = /キャンセルしました/.test(currentText);
+      if (cancelled && (tone === "busy" || tone === "ok")) {
+        panel.setStatus(currentText, "info");
+      } else if (okMsg && tone !== "err" && tone !== "warn" && tone !== "info") {
         panel.setStatus(okMsg, "ok");
       } else if (tone === "busy") {
-        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
-        panel.setStatus(text || "完了", "ok");
+        panel.setStatus(currentText || "完了", "ok");
       }
       return out;
     } catch (e) {
@@ -2971,40 +3120,6 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
 
   // src/entries/appSearchControl.ts
   init_api();
-
-  // src/handlers/diffFocus.ts
-  init_state();
-  init_dialog();
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
-  // src/entries/appSearchControl.ts
   init_utils();
   var RESULT_CSS_ID = "kus-app-search-styles";
   var RESULT_CSS = `
@@ -3231,16 +3346,34 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
     });
-    keyword.addEventListener("keydown", (e) => {
+    const onEnterKey = (e) => {
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         void runSearch();
       }
-    });
+    };
+    keyword.addEventListener("keydown", onEnterKey);
+    guest.addEventListener("keydown", onEnterKey);
+    space.addEventListener("keydown", onEnterKey);
     return details;
   }
 
   // src/entries/reflectPlanView.ts
+  function extractChangedJsonKeys(beforeText, afterText) {
+    const bTrim = String(beforeText || "").trim();
+    const aTrim = String(afterText || "").trim();
+    if (!bTrim.startsWith("{") || !aTrim.startsWith("{")) return [];
+    try {
+      const bObj = JSON.parse(bTrim);
+      const aObj = JSON.parse(aTrim);
+      if (!bObj || typeof bObj !== "object" || Array.isArray(bObj)) return [];
+      if (!aObj || typeof aObj !== "object" || Array.isArray(aObj)) return [];
+      const keys = [.../* @__PURE__ */ new Set([...Object.keys(bObj), ...Object.keys(aObj)])];
+      return keys.filter((key) => JSON.stringify(bObj[key]) !== JSON.stringify(aObj[key]));
+    } catch {
+      return [];
+    }
+  }
   function appendReflectChanges(host, plan) {
     for (const warning of plan.warnings) {
       const note = document.createElement("p");
@@ -3255,7 +3388,36 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     summary.textContent = `${plan.label}の内訳（変更 ${plan.changeCount}件・保持 ${plan.changes.length - plan.changeCount}件）`;
     details.appendChild(summary);
     host.appendChild(details);
+    let activeKind = "すべて";
     let rendered = 0;
+    const filteredChanges = () => activeKind === "すべて" ? plan.changes : plan.changes.filter((change) => change.kind === activeKind);
+    if (plan.changes.length > 1) {
+      const filterBar = document.createElement("div");
+      filterBar.className = "kus-rl-change-filters";
+      const filterButtons = [];
+      for (const kind of ["すべて", "削除", "変更", "追加"]) {
+        const count = kind === "すべて" ? plan.changes.length : plan.changes.filter((c) => c.kind === kind).length;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "kus-lp__btn kus-lp__btn--sub";
+        btn.dataset.filterKind = kind;
+        btn.setAttribute("aria-pressed", kind === activeKind ? "true" : "false");
+        btn.textContent = `${kind} (${count})`;
+        btn.disabled = kind !== "すべて" && count === 0;
+        btn.addEventListener("click", () => {
+          activeKind = kind;
+          for (const b of filterButtons) {
+            b.setAttribute("aria-pressed", b.dataset.filterKind === activeKind ? "true" : "false");
+          }
+          rendered = 0;
+          list.replaceChildren();
+          append();
+        });
+        filterButtons.push(btn);
+        filterBar.appendChild(btn);
+      }
+      details.appendChild(filterBar);
+    }
     const list = document.createElement("div");
     details.appendChild(list);
     const more = document.createElement("button");
@@ -3263,13 +3425,21 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
     more.className = "kus-lp__btn kus-lp__btn--sub";
     more.textContent = "続きを50件表示";
     const append = () => {
-      for (const change of plan.changes.slice(rendered, rendered + 50)) {
+      const sourceChanges = filteredChanges();
+      for (const change of sourceChanges.slice(rendered, rendered + 50)) {
         const row = document.createElement("div");
         row.className = "kus-rl-change";
         row.dataset.kind = change.kind;
         const title = document.createElement("strong");
         title.textContent = `${change.kind} · ${change.path}`;
         row.appendChild(title);
+        const changedKeys = extractChangedJsonKeys(change.before, change.after);
+        if (changedKeys.length) {
+          const keyNote = document.createElement("span");
+          keyNote.className = "kus-rl-change__keys";
+          keyNote.textContent = `変更キー: ${changedKeys.join(", ")}`;
+          row.appendChild(keyNote);
+        }
         const grid = document.createElement("div");
         grid.className = "kus-rl-change__values";
         for (const [label, value] of [["反映先の現在", change.before], ["反映後", change.after]]) {
@@ -3282,8 +3452,8 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
         row.appendChild(grid);
         list.appendChild(row);
       }
-      rendered = Math.min(rendered + 50, plan.changes.length);
-      more.hidden = rendered >= plan.changes.length;
+      rendered = Math.min(rendered + 50, sourceChanges.length);
+      more.hidden = rendered >= sourceChanges.length;
     };
     more.addEventListener("click", append);
     details.appendChild(more);
@@ -3766,7 +3936,8 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       copyBtn.disabled = sourceMode === "json";
       sourceJsonAppSelect.hidden = sourceJsonBundles.length < 2;
       if (sourceBundleFromJson) {
-        srcJsonNote.textContent = `比較元JSON読み込み済み: App ${sourceBundleFromJson?.appId || "-"}（比較元はこのJSONから取得し、アプリからの取得は行いません）`;
+        const appName = extractAppNameFromBundle(sourceBundleFromJson);
+        srcJsonNote.textContent = `比較元JSON読み込み済み: App ${sourceBundleFromJson?.appId || "-"}${appName ? ` (${appName})` : ""}（比較元はこのJSONから取得し、アプリからの取得は行いません）`;
         srcJsonNote.style.display = "block";
         srcJsonClearBtn.style.display = "";
       } else {
@@ -3794,7 +3965,8 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       sourceJsonAppSelect.replaceChildren(...sourceJsonBundles.map((bundle, index) => {
         const option = document.createElement("option");
         option.value = String(index);
-        option.textContent = `アプリ #${bundle.appId}`;
+        const appName = extractAppNameFromBundle(bundle);
+        option.textContent = `アプリ #${bundle.appId}${appName ? ` (${appName})` : ""}`;
         return option;
       }));
       sourceBundleFromJson = sourceJsonBundles[0];
@@ -4654,9 +4826,10 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
         baseline: state3.preview.result.baseline
       };
       const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+      const appLabel = buildAppFilenameLabel(tgtApp.value.trim(), state3.preview.identities?.target?.name || "");
       const link = document.createElement("a");
       link.href = url;
-      link.download = `プレビュー反映計画_App${tgtApp.value.trim()}.json`;
+      link.download = buildExportFilename("プレビュー反映計画", "json", { appLabel });
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 5e3);
     });
@@ -4742,7 +4915,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
       const link = document.createElement("a");
       link.href = url;
-      link.download = `プレビュー反映結果_App${last.appId}_${new Date(last.at).toISOString().replace(/[:.]/g, "-")}.json`;
+      link.download = buildExportFilename("プレビュー反映結果", "json", { appLabel: `App${last.appId}` });
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 5e3);
     });

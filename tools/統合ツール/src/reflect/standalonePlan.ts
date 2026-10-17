@@ -1,6 +1,12 @@
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone } from '../utils.js';
-import { isCompleteReflectSection, stableReflectStringify } from './standalonePreflight.js';
+import {
+  extractActionRequiredFields,
+  extractReportRequiredFields,
+  findUnmappedActionDestApps,
+  isCompleteReflectSection,
+  stableReflectStringify
+} from './standalonePreflight.js';
 
 export interface ReflectChange { kind: '追加' | '変更' | '削除' | '保持'; path: string; before: string; after: string }
 export interface ReflectOperation { method: 'POST' | 'PUT'; endpoint: string; body: Record<string, any>; label: string }
@@ -120,7 +126,7 @@ function mergeLayout(source: any[], target: any[], plan: ReflectSectionPlan): an
 }
 
 export function reflectInspectionScopes(scopes: string[]): string[] {
-  return [...new Set([...scopes, ...(scopes.some(key => ['layoutSettings', 'viewSettings'].includes(key)) ? ['fieldSettings'] : [])])];
+  return [...new Set([...scopes, ...(scopes.some(key => ['layoutSettings', 'viewSettings', 'reportSettings', 'actionSettings'].includes(key)) ? ['fieldSettings'] : [])])];
 }
 
 export function reflectSelectionBlockers(entries: ReflectSectionPlan[], scopes: string[], sourceFields: string[], targetFields: string[]): string[] {
@@ -176,7 +182,21 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
     } else if (namedSections[key]) {
       const property = namedSections[key];
       const from = namedPayload(source, property), to = namedPayload(target, property);
-      for (const name of Object.keys(from)) if (own(to, name)) from[name] = { ...to[name], ...from[name] };
+      if (key === 'actionSettings') {
+        for (const unmapped of findUnmappedActionDestApps(from, options.lookupMap, to)) {
+          plan.warnings.push(`アクション「${unmapped.actionName}」のコピー先アプリID (${unmapped.destAppId}) が参照先変換に未指定のため、そのままのIDで反映します。`);
+        }
+      }
+      for (const name of Object.keys(from)) {
+        if (own(to, name)) from[name] = { ...to[name], ...from[name] };
+        if (key === 'actionSettings' && from[name]?.destApp?.app != null) {
+          const mappedApp = options.lookupMap?.[String(from[name].destApp.app)];
+          if (mappedApp) {
+            from[name].destApp = { ...from[name].destApp, app: mappedApp };
+            delete from[name].destApp.code;
+          }
+        }
+      }
       const preserve = options.preserveTargetOnly !== false;
       const combined = preserve ? { ...to, ...from } : from;
       // New names must not collide with retained target indices. Make their final order explicit.
@@ -193,6 +213,8 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
       plan.behavior = preserve ? '追加・更新（反映先だけの設定は保持）' : '全置換（反映元にない設定を削除）';
       if (preserve) for (const name of Object.keys(to).filter(name => !own(from, name))) plan.changes.push({ kind: '保持', path: `${labels[property]} / ${name}`, before: valueText(to[name]), after: '内容を保持（表示順は反映元の後）' });
       if (key === 'viewSettings') plan.requiredFields = [...new Set(Object.values(combined).flatMap(view => view.type === 'LIST' ? (view.fields || []) : view.type === 'CALENDAR' ? [view.date, view.title].filter(Boolean) : []).filter(code => !['$id', '$revision'].includes(code)))];
+      if (key === 'actionSettings') plan.requiredFields = extractActionRequiredFields(combined);
+      if (key === 'reportSettings') plan.requiredFields = extractReportRequiredFields(combined);
     } else if (key === 'pluginSettings') {
       if (!Array.isArray(source.plugins) || !Array.isArray(target.plugins)) throw new Error('プラグイン一覧の形式が不正です。');
       const existing = new Set(target.plugins.map(item => item.id));

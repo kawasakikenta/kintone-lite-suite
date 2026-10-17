@@ -38,6 +38,7 @@ import {
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
 import { readSettingsBundleFile } from '../settingsBundleImport.js';
+import { needsAppReferenceParse, parseAppReference } from '../reflect/liteSetup.js';
 import {
   DEFAULT_MAX_DIFF_BATCH_PAIRS,
   prepareDiffBatchPairs,
@@ -68,6 +69,10 @@ export function buildLiteDiffScopeOptions(): Array<[string, string, boolean]> {
 export function validateLiteDiffStart(options: {
   sourceAppId?: string;
   targetAppId?: string;
+  sourceGuestId?: string;
+  targetGuestId?: string;
+  sourcePreview?: boolean;
+  targetPreview?: boolean;
   scopes?: string[];
   ignoreKeys?: string;
   hasImportedSource?: boolean;
@@ -77,8 +82,12 @@ export function validateLiteDiffStart(options: {
 }): string {
   if (!options.scopes?.length) return '比較セクションを 1 つ以上選択してください';
   const sourceAppId = String(options.sourceAppId || '').trim();
+  const sourceGuestId = String(options.sourceGuestId || '').trim();
   if (!options.hasImportedSource && !sourceAppId) return '比較元アプリIDを入力してください';
   if (sourceAppId && !/^[1-9]\d*$/.test(sourceAppId)) return '比較元アプリIDには正の整数を入力してください';
+  if (!options.hasImportedSource && sourceGuestId && !/^[1-9]\d*$/.test(sourceGuestId)) {
+    return '比較元のゲストスペースIDは正の整数で入力してください';
+  }
 
   if (options.targets !== undefined) {
     // 1対多比較: 全比較先（空行除外済み）を順番に検証する
@@ -89,8 +98,8 @@ export function validateLiteDiffStart(options: {
       if (appId && !/^[1-9]\d*$/.test(appId)) {
         return `比較先 ${rowNum} 行目: アプリIDには正の整数を入力してください`;
       }
-      if (guestId && !/^\d+$/.test(guestId)) {
-        return `比較先 ${rowNum} 行目: ゲストIDは半角数字で入力してください`;
+      if (guestId && !/^[1-9]\d*$/.test(guestId)) {
+        return `比較先 ${rowNum} 行目: ゲストIDは正の整数で入力してください`;
       }
     }
     // 重複チェック（App ID + ゲスト ID が同じ比較先）
@@ -110,8 +119,22 @@ export function validateLiteDiffStart(options: {
   } else {
     // 単一比較: 従来の targetAppId 検証（後方互換）
     const targetAppId = String(options.targetAppId || '').trim();
+    const targetGuestId = String(options.targetGuestId || '').trim();
     if (!options.hasImportedTarget && !targetAppId) return '比較先アプリIDを入力してください';
     if (targetAppId && !/^[1-9]\d*$/.test(targetAppId)) return '比較先アプリIDには正の整数を入力してください';
+    if (!options.hasImportedTarget && targetGuestId && !/^[1-9]\d*$/.test(targetGuestId)) {
+      return '比較先のゲストスペースIDは正の整数で入力してください';
+    }
+    if (
+      !options.hasImportedSource
+      && !options.hasImportedTarget
+      && sourceAppId
+      && sourceAppId === targetAppId
+      && sourceGuestId === targetGuestId
+      && Boolean(options.sourcePreview) === Boolean(options.targetPreview)
+    ) {
+      return '比較元と比較先に同一の接続先（同じアプリID・ゲストID・環境）は指定できません';
+    }
   }
 
   const positionalRuleCount = summarizeLiteIgnoreRules(options.ignoreKeys || '').positionalRules;
@@ -636,10 +659,12 @@ export function buildLiteDiffXlsxContext(
   rows: DiffRow[],
   exportMode: string,
   exportLabel: string,
-  filterDescription?: string
+  filterDescription?: string,
+  options?: { audience?: 'customer' | 'internal'; maskSensitive?: boolean }
 ): DiffXlsxContext {
   return {
-    audience: 'customer',
+    audience: options?.audience === 'internal' ? 'internal' : 'customer',
+    maskSensitive: Boolean(options?.maskSensitive),
     rows,
     fetchIssues: cache.fetchIssues || [],
     partialIssues: cache.partialIssues || [],
@@ -1303,9 +1328,30 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     attachTargetSplit(entry);
     return entry;
   };
+  const adoptDiffAppReference = (
+    appInput: HTMLInputElement,
+    guestInput: HTMLInputElement,
+    sideLabel: string,
+    clearName?: () => void,
+    text = appInput.value
+  ): boolean => {
+    if (!needsAppReferenceParse(text)) return false;
+    const reference = parseAppReference(text);
+    if (!reference) return false;
+    appInput.value = reference.appId;
+    if (reference.guestId) guestInput.value = reference.guestId;
+    clearName?.();
+    invalidateResultAfterAppSelectionChange();
+    panel.setStatus(
+      `URLから${sideLabel}のアプリID ${reference.appId}${reference.guestId ? `（ゲストスペース ${reference.guestId}）` : ''}を読み取りました`,
+      'info'
+    );
+    return true;
+  };
   // 比較先のアプリID欄に「100, 120, 130」のようにカンマ区切りで入力したら比較先行へ分割する
   const attachTargetSplit = (entry: TargetRowEntry) => {
     const distribute = () => {
+      if (adoptDiffAppReference(entry.app, entry.guest, '比較先', () => setTargetName(entry, ''))) return;
       const raw = entry.app.value;
       if (!/[,、\s]/.test(raw)) return;
       const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
@@ -1321,6 +1367,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     entry.app.addEventListener('change', distribute);
     entry.app.addEventListener('paste', (ev: ClipboardEvent) => {
       const text = ev.clipboardData?.getData('text') || '';
+      if (adoptDiffAppReference(entry.app, entry.guest, '比較先', () => setTargetName(entry, ''), text)) {
+        ev.preventDefault();
+        return;
+      }
       if (!/[,、\s]/.test(text)) return;
       ev.preventDefault();
       entry.app.value = [entry.app.value.trim(), text].filter(Boolean).join(',');
@@ -1330,6 +1380,15 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   srcApp.addEventListener('input', () => {
     if (sourceAppName) setSourceName('');
     invalidateResultAfterAppSelectionChange();
+  });
+  srcApp.addEventListener('change', () => {
+    adoptDiffAppReference(srcApp, srcGuest, '比較元', () => setSourceName(''));
+  });
+  srcApp.addEventListener('paste', (ev: ClipboardEvent) => {
+    const text = ev.clipboardData?.getData('text') || '';
+    if (adoptDiffAppReference(srcApp, srcGuest, '比較元', () => setSourceName(''), text)) {
+      ev.preventDefault();
+    }
   });
   tgtApp.addEventListener('input', () => {
     if (targetRows[0]?.appName) setTargetName(targetRows[0], '');
@@ -1344,7 +1403,12 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   addTargetBtn.addEventListener('click', () => { addTargetRow(); applyComparisonMode('multi'); panel.setStatus('比較先行を追加しました', 'info'); });
   const copyFirstBtn = makeButton('比較先1を複製', 'sub');
   copyFirstBtn.addEventListener('click', () => { addTargetRow(tgtApp.value.trim(), tgtGuest.value.trim(), targetRows[0]?.appName || ''); applyComparisonMode('multi'); });
-  const multiControls = makeRow([addTargetBtn, copyFirstBtn], { label: '比較先を増やす' });
+  const multiAutoHtml = makeCheck({
+    label: '1対多比較完了時にHTMLを自動保存',
+    checked: true,
+    help: 'オフにすると自動ダウンロードせず、結果表の各行から必要な分だけHTML/Excel/Markdownを保存できます'
+  });
+  const multiControls = makeRow([addTargetBtn, copyFirstBtn, multiAutoHtml.label], { label: '比較先を増やす' });
   multiControls.classList.add('kus-dl-multi-controls');
   targetCard.appendChild(multiControls);
   const singleAppSearch = createAppSearchControl(panel, {
@@ -1618,6 +1682,24 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     };
     source.app.addEventListener('input', () => onEndpointInput(source));
     target.app.addEventListener('input', () => onEndpointInput(target));
+    source.app.addEventListener('change', () => {
+      adoptDiffAppReference(source.app, source.guest, '比較元', () => setPairEndpointName(source, ''));
+    });
+    source.app.addEventListener('paste', (ev: ClipboardEvent) => {
+      const text = ev.clipboardData?.getData('text') || '';
+      if (adoptDiffAppReference(source.app, source.guest, '比較元', () => setPairEndpointName(source, ''), text)) {
+        ev.preventDefault();
+      }
+    });
+    target.app.addEventListener('change', () => {
+      adoptDiffAppReference(target.app, target.guest, '比較先', () => setPairEndpointName(target, ''));
+    });
+    target.app.addEventListener('paste', (ev: ClipboardEvent) => {
+      const text = ev.clipboardData?.getData('text') || '';
+      if (adoptDiffAppReference(target.app, target.guest, '比較先', () => setPairEndpointName(target, ''), text)) {
+        ev.preventDefault();
+      }
+    });
     [source.guest, target.guest].forEach((input) => input.addEventListener('input', () => {
       clearPairRowValidation(entry);
       invalidateResultAfterPairConditionChange();
@@ -2571,12 +2653,28 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   ], 'diffOnly');
   htmlContentMode.setAttribute('aria-label', 'HTMLに含める内容');
   cardOut.body.appendChild(makeRow(htmlContentMode, { label: 'HTML内容' }));
+  const xlsxAudience = makeSelect([
+    ['customer', 'レビュー用（標準）'],
+    ['internal', '社内・技術明細込み']
+  ], 'customer');
+  xlsxAudience.setAttribute('aria-label', 'Excelの出力構成');
+  cardOut.body.appendChild(makeRow(xlsxAudience, { label: 'Excel構成' }));
+  const maskSensitiveCb = makeCheck({
+    label: '共有用マスキング（機密キー・本文を秘匿）',
+    checked: false,
+    help: 'Excel出力時にトークン・パスワード等の機密キーやJS/CSS本文・プラグイン設定値をSHA-256識別子でマスクします'
+  });
+  cardOut.body.appendChild(makeRow(maskSensitiveCb.label, { label: '機密保護' }));
   const expRange = makeSelect([
     ['all', '全件'],
     ['filtered', '表示中（フィルタ適用後）']
   ], 'all');
   expRange.setAttribute('aria-label', 'ファイルへ出力する差分の範囲');
   cardOut.body.appendChild(makeRow(expRange, { label: '範囲' }));
+  const currentXlsxOptions = (): { audience: 'customer' | 'internal'; maskSensitive: boolean } => ({
+    audience: xlsxAudience.value === 'internal' ? 'internal' : 'customer',
+    maskSensitive: maskSensitiveCb.checkbox.checked
+  });
 
   const grid = document.createElement('div');
   grid.className = 'kus-lp__btn-grid';
@@ -2787,24 +2885,44 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     const file = srcFile.files?.[0];
     if (!file) return;
     setCompletionActionsVisible(false);
-    importedSourceBundle = await readSettingsBundleFile(file, { side: 'source', appId: srcApp.value.trim() });
+    importedSourceBundle = null;
+    setSourceName('');
+    const invalidatedBefore = invalidateResultAfterAppSelectionChange();
+    try {
+      importedSourceBundle = await readSettingsBundleFile(file, { side: 'source', appId: srcApp.value.trim() });
+    } catch (err) {
+      srcFile.value = '';
+      pairClearImportBtn.disabled = !importedSourceBundle && !importedTargetBundle;
+      pairClearImportBtn.hidden = !importedSourceBundle && !importedTargetBundle;
+      throw err;
+    }
     if (!srcApp.value.trim() && importedSourceBundle?.appId) srcApp.value = String(importedSourceBundle.appId);
     setSourceName(extractAppNameFromBundle(importedSourceBundle));
     pairClearImportBtn.disabled = false;
     pairClearImportBtn.hidden = false;
-    const invalidated = invalidateResultAfterAppSelectionChange();
+    const invalidated = invalidateResultAfterAppSelectionChange() || invalidatedBefore;
     panel.setStatus(`比較元JSONを読み込みました: App ${importedSourceBundle?.appId || '-'}${invalidated ? '。結果を更新するため再比較してください' : ''}`, invalidated ? 'warn' : 'ok');
   }));
   tgtFile.addEventListener('change', () => liteRun(panel, '比較先JSONを読み込み中…', async () => {
     const file = tgtFile.files?.[0];
     if (!file) return;
     setCompletionActionsVisible(false);
-    importedTargetBundle = await readSettingsBundleFile(file, { side: 'target', appId: tgtApp.value.trim() });
+    importedTargetBundle = null;
+    setTargetName(targetRows[0], '');
+    const invalidatedBefore = invalidateResultAfterAppSelectionChange();
+    try {
+      importedTargetBundle = await readSettingsBundleFile(file, { side: 'target', appId: tgtApp.value.trim() });
+    } catch (err) {
+      tgtFile.value = '';
+      pairClearImportBtn.disabled = !importedSourceBundle && !importedTargetBundle;
+      pairClearImportBtn.hidden = !importedSourceBundle && !importedTargetBundle;
+      throw err;
+    }
     if (!tgtApp.value.trim() && importedTargetBundle?.appId) tgtApp.value = String(importedTargetBundle.appId);
     setTargetName(targetRows[0], extractAppNameFromBundle(importedTargetBundle));
     pairClearImportBtn.disabled = false;
     pairClearImportBtn.hidden = false;
-    const invalidated = invalidateResultAfterAppSelectionChange();
+    const invalidated = invalidateResultAfterAppSelectionChange() || invalidatedBefore;
     panel.setStatus(`比較先JSONを読み込みました: App ${importedTargetBundle?.appId || '-'}${invalidated ? '。結果を更新するため再比較してください' : ''}`, invalidated ? 'warn' : 'ok');
   }));
   const clearImportedBundles = () => {
@@ -3242,7 +3360,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
               item.cache.rows,
               'all',
               '全件',
-              'フィルターなし（比較結果の全件）'
+              'フィルターなし（比較結果の全件）',
+              currentXlsxOptions()
             )
           })),
           {
@@ -3359,7 +3478,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           item.cache.rows,
           'all',
           '全件',
-          'フィルターなし（比較結果の全件）'
+          'フィルターなし（比較結果の全件）',
+          currentXlsxOptions()
         ));
         const incomplete = isIncompleteLiteDiff(item.cache);
         panel.setStatus(`${item.label} の差分一覧 Excel のダウンロードを開始しました: ${result.filename}${incomplete ? ' — 比較結果は不完全です' : ''}`, incomplete ? 'warn' : 'ok');
@@ -3605,6 +3725,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
               attachKnownAppName(bundle, pair.source.appName);
               if (!folderMode) context.onSourceBundle(bundle);
             },
+            onProgress: (side: 'source' | 'target', progress: number, label: string) =>
+              panel.setStatus(
+                `比較 ${position}/${prepared.pairs.length}・入力ペア ${pair.rowNumber}（${sourceText} → ${targetText}）: ${side === 'source' ? '比較元' : '比較先'}を取得中 (${Math.round(progress * 100)}%: ${label})`,
+                'busy'
+              ),
             onStatus: (message: string) => panel.setStatus(`比較 ${position}/${prepared.pairs.length}・入力ペア ${pair.rowNumber}（${sourceText} → ${targetText}）: ${message}`, 'busy')
           });
           attachKnownAppName(out.sourceBundle, pair.source.appName);
@@ -3705,6 +3830,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     }
     const commonValidation = validateLiteDiffStart({
       sourceAppId: base.source.appId,
+      sourceGuestId: base.source.guestId,
       scopes: base.scopes,
       ignoreKeys: base.ignoreKeys,
       hasImportedSource: !!importedSourceBundle,
@@ -3732,7 +3858,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     runDiffTask('全比較先を比較中…', async () => {
       const resultRows: string[] = [];
       let sharedSourceBundle = importedSourceBundle;
+      const autoExportHtml = multiAutoHtml.checkbox.checked;
       let exported = 0;
+      let succeeded = 0;
       let failed = 0;
       let exportFailed = 0;
       let incomplete = 0;
@@ -3752,11 +3880,17 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
               attachKnownAppName(bundle, base.source.appName);
               sharedSourceBundle = bundle;
             },
+            onProgress: (side: 'source' | 'target', progress: number, label: string) =>
+              panel.setStatus(
+                `比較中 (${i + 1}/${targets.length}) ${side === 'source' ? '比較元' : '比較先'}を取得中 (${Math.round(progress * 100)}%: ${label})`,
+                'busy'
+              ),
             onStatus: (m: string) => panel.setStatus(m, 'busy')
           });
           if (!sharedSourceBundle) sharedSourceBundle = out.sourceBundle;
           attachKnownAppName(out.sourceBundle, base.source.appName);
           attachKnownAppName(out.targetBundle, t.appName);
+          succeeded += 1;
           const counts = summarizeLiteDiffRows(out.rows || []);
           const contentChanged = contentChangedCount(counts);
           const issueCount = (out.fetchIssues || []).length;
@@ -3766,24 +3900,26 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           if (needsReview) incomplete += 1;
 
           let exportNote = '';
-          try {
-            runExportDiffHtmlStandalone({
-              rows: out.rows,
-              fetchIssues: out.fetchIssues || [],
-              partialIssues: out.partialIssues || [],
-              sourceBundle: out.sourceBundle,
-              targetBundle: out.targetBundle,
-              scopes: base.scopes,
-              ignoreKeys: base.ignoreKeys,
-              normalizationPresetState: base.normalizationPresetState,
-              truncation: out.truncation || null,
-              exportContentMode: normalizeLiteHtmlExportContentMode(htmlContentMode.value),
-              exportContentLabel: getLiteHtmlExportContentLabel(htmlContentMode.value)
-            });
-            exported += 1;
-          } catch (e: any) {
-            exportNote = ` / HTML出力失敗: ${e?.message || String(e)}`;
-            exportFailed += 1;
+          if (autoExportHtml) {
+            try {
+              runExportDiffHtmlStandalone({
+                rows: out.rows,
+                fetchIssues: out.fetchIssues || [],
+                partialIssues: out.partialIssues || [],
+                sourceBundle: out.sourceBundle,
+                targetBundle: out.targetBundle,
+                scopes: base.scopes,
+                ignoreKeys: base.ignoreKeys,
+                normalizationPresetState: base.normalizationPresetState,
+                truncation: out.truncation || null,
+                exportContentMode: normalizeLiteHtmlExportContentMode(htmlContentMode.value),
+                exportContentLabel: getLiteHtmlExportContentLabel(htmlContentMode.value)
+              });
+              exported += 1;
+            } catch (e: any) {
+              exportNote = ` / HTML出力失敗: ${e?.message || String(e)}`;
+              exportFailed += 1;
+            }
           }
           const targetLabel = t.appName ? `${t.appName}（App ${t.appId}）` : `App ${t.appId}`;
           const multiNoticeCount = (out.matchingNotices?.items?.length || 0) + (out.matchingNotices?.omitted || 0);
@@ -3806,7 +3942,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : '通常スペース')} / ${t.preview ? 'プレビュー' : '運用'}</small></td>` +
             `<td class="${needsReview || exportNote ? 'kus-dl-multi__warn' : 'kus-dl-multi__ok'}">${exportNote ? '出力失敗' : (needsReview ? '要確認' : '完了')}${esc(exportNote)}</td>` +
             `<td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ''}${multiNoticeCount ? ` / 注意 ${multiNoticeCount}` : ''}</td>` +
-            `<td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${targetLabel}のExcelを保存`)}">Excel保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${targetLabel}のAI向けMarkdownを保存`)}">AI向けMD保存</button></span></td></tr>`);
+            `<td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${targetLabel}のHTMLを保存`)}">HTML保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${targetLabel}のExcelを保存`)}">Excel保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${targetLabel}のAI向けMarkdownを保存`)}">AI向けMD保存</button></span></td></tr>`);
         } catch (e: any) {
           failed += 1;
           const targetLabel = t.appName ? `${t.appName}（App ${t.appId}）` : `App ${t.appId}`;
@@ -3816,9 +3952,12 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       cardResult.card.style.display = '';
       reviewEmpty.style.display = 'none';
       resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>保存</th></tr></thead><tbody>${resultRows.join('')}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
-      const tone = failed || exportFailed || incomplete || exported !== targets.length ? 'warn' : 'ok';
+      const tone = failed || exportFailed || incomplete || (autoExportHtml && exported !== targets.length) ? 'warn' : 'ok';
       const note = [failed ? `比較失敗 ${failed}件` : '', exportFailed ? `HTML出力失敗 ${exportFailed}件` : '', incomplete ? `要確認 ${incomplete}件` : ''].filter(Boolean).join(' / ');
-      panel.setStatus(`全比較先の比較が完了: HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）${note ? ` / ${note}` : ''}。Excelは各行または一括ボタンから保存できます`, tone);
+      const exportSummary = autoExportHtml
+        ? `HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）`
+        : `成功 ${succeeded}/${targets.length}件（HTML自動保存オフ）`;
+      panel.setStatus(`全比較先の比較が完了: ${exportSummary}${note ? ` / ${note}` : ''}。HTML/Excel/Markdownは各行または一括ボタンから保存できます`, tone);
     });
   });
 
@@ -3827,6 +3966,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     const validation = validateLiteDiffStart({
       sourceAppId: f.source.appId,
       targetAppId: f.target.appId,
+      sourceGuestId: f.source.guestId,
+      targetGuestId: f.target.guestId,
+      sourcePreview: f.source.preview,
+      targetPreview: f.target.preview,
       scopes: f.scopes,
       ignoreKeys: f.ignoreKeys,
       hasImportedSource: !!importedSourceBundle,
@@ -3861,6 +4004,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         normalizationPresetState: f.normalizationPresetState,
         importedSourceBundle,
         importedTargetBundle,
+        onProgress: (side: 'source' | 'target', progress: number, label: string) =>
+          panel.setStatus(
+            `${side === 'source' ? '比較元' : '比較先'}を取得中 (${Math.round(progress * 100)}%: ${label})`,
+            'busy'
+          ),
         onStatus: (m: string) => panel.setStatus(m, 'busy')
       });
       attachKnownAppName(out.sourceBundle, f.source.appName);
@@ -3956,7 +4104,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         ctx.rows,
         ctx.exportMode,
         ctx.exportLabel,
-        ctx.filterDescription
+        ctx.filterDescription,
+        currentXlsxOptions()
       ));
       const incomplete = isIncompleteLiteDiff(snapshot);
       panel.setStatus(`差分一覧 Excel のダウンロードを開始しました（${ctx.exportLabel} / ${ctx.rows.length}件）: ${result.filename}${incomplete ? ' — 元の比較結果は不完全です' : ''}`, incomplete ? 'warn' : 'ok');

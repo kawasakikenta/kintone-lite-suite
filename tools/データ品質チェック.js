@@ -556,6 +556,20 @@
     }
   });
 
+  // src/ui/dialog.ts
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
+  var init_dialog = __esm({
+    "src/ui/dialog.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      root = null;
+    }
+  });
+
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -796,6 +810,17 @@ ${contextLine}`);
     const jitter = Math.random() * Math.min(200, baseDelayMs);
     return Math.round(expDelay + jitter);
   }
+  function isRetriableMutation(method, error) {
+    if (!error) return false;
+    const m = String(method || "").toUpperCase();
+    const status = resolveHttpStatus(error);
+    if (status >= 400 && status < 500) {
+      if (m === "PUT" && (status === 408 || status === 429)) return true;
+      return false;
+    }
+    if (status >= 500 && status < 600) return true;
+    return isRetriableApiError(error);
+  }
   function touchApiPathMetric(path, field) {
     const key = String(path || "");
     const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
@@ -839,13 +864,27 @@ ${contextLine}`);
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
-  async function apiPost(prefix, path, body) {
-    assertAllowsMutatingRestCall(prefix, path, "POST");
-    try {
-      return await kintone.api(`${prefix}${path}`, "POST", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
+  async function executeMutatingApiWithRetry(method, prefix, path, body, retries = DEFAULT_API_GET_RETRIES) {
+    assertAllowsMutatingRestCall(prefix, path, method);
+    const maxAttempts = Math.max(1, retries);
+    let lastErr;
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        return await kintone.api(`${prefix}${path}`, method, body);
+      } catch (e) {
+        lastErr = e;
+        if (i < maxAttempts - 1 && isRetriableMutation(method, e)) {
+          const waitMs = computeRetryDelayMs(i, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        break;
+      }
     }
+    throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
+  }
+  async function apiPost(prefix, path, body) {
+    return executeMutatingApiWithRetry("POST", prefix, path, body);
   }
   async function apiDelete(prefix, path, body) {
     assertAllowsMutatingRestCall(prefix, path, "DELETE");
@@ -970,20 +1009,6 @@ ${contextLine}`);
     }
   });
 
-  // src/ui/dialog.ts
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
-    }
-  });
-
   // src/kintone-enums.ts
   var init_kintone_enums = __esm({
     "src/kintone-enums.ts"() {
@@ -1101,6 +1126,38 @@ ${contextLine}`);
 
   // src/entries/record-quality-lite-ui.ts
   init_constants();
+
+  // src/handlers/diffFocus.ts
+  init_state();
+  init_dialog();
+  function extractAppIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
+  }
 
   // src/ui/components.ts
   init_constants();
@@ -1997,11 +2054,14 @@ ${contextLine}`);
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
-      if (okMsg && tone !== "err" && tone !== "warn") {
+      const currentText = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const cancelled = /キャンセルしました/.test(currentText);
+      if (cancelled && (tone === "busy" || tone === "ok")) {
+        panel.setStatus(currentText, "info");
+      } else if (okMsg && tone !== "err" && tone !== "warn" && tone !== "info") {
         panel.setStatus(okMsg, "ok");
       } else if (tone === "busy") {
-        const text = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
-        panel.setStatus(text || "完了", "ok");
+        panel.setStatus(currentText || "完了", "ok");
       }
       return out;
     } catch (e) {
@@ -2034,12 +2094,50 @@ ${contextLine}`);
     return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r") ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
 
+  // src/tabs/record-metadata.ts
+  function isObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+  function readRecordViews(response) {
+    if (!isObject(response?.views)) throw new Error("一覧設定の応答が不正です。再取得してください");
+    return Object.entries(response.views).flatMap(([name, view]) => {
+      if (!isObject(view) || !["LIST", "CALENDAR", "CUSTOM"].includes(view.type)) return [];
+      const filter = String(view.filterCond || "").trim();
+      const sort = String(view.sort || "").trim();
+      return [{
+        id: String(view.id ?? name),
+        name: String(view.name || name),
+        type: view.type,
+        index: Number(view.index) || 0,
+        filter,
+        sort,
+        query: [filter, sort ? `order by ${sort}` : ""].filter(Boolean).join(" ")
+      }];
+    }).sort((a, b) => a.index - b.index);
+  }
+
   // src/tabs/record-standalone.ts
   function parseRecordAppIds(value) {
     const tokens = String(value ?? "").split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
     const invalid = tokens.filter((id) => !/^\d+$/.test(id) || Number(id) <= 0);
     if (invalid.length) throw new Error(`アプリIDは正の数値で入力してください: ${invalid.join(", ")}`);
     return [...new Set(tokens)];
+  }
+  function validateRecordConnection(appId, guestId = "") {
+    const ids = parseRecordAppIds(appId);
+    if (ids.length !== 1) throw new Error("アプリIDは1件ずつ指定してください");
+    const guest = String(guestId ?? "").trim();
+    if (guest && !/^[1-9]\d*$/.test(guest)) throw new Error("ゲストIDは正の数値で入力してください");
+    return { appId: ids[0], guestId: guest };
+  }
+  async function runLoadViewsStandalone(opts, setStatus) {
+    const { appId, guestId } = validateRecordConnection(opts.appId, opts.guestId);
+    const prefix = buildApiPrefix(guestId, false);
+    setStatus("一覧情報を取得中...");
+    const resp = await apiGet(prefix, "/app/views.json", { app: appId, lang: "user" });
+    const views = readRecordViews(resp);
+    setStatus(`一覧: ${views.length}件`);
+    return views;
   }
 
   // src/tabs/record-quality.ts
@@ -2051,8 +2149,8 @@ ${contextLine}`);
     if (!properties || typeof properties !== "object" || Array.isArray(properties)) throw new Error("フィールド設定の応答が不正です");
     return Object.entries(properties).filter(([, field]) => SCALAR.has(field?.type) || MULTI.has(field?.type)).map(([code, field]) => ({ code, label: String(field.label || code), type: String(field.type) }));
   }
-  function selectQualityFields(properties, codes) {
-    if (!codes.length || codes.length > 5 || new Set(codes).size !== codes.length) throw new Error("検査するフィールドを1〜5個選んでください");
+  function selectQualityFields(properties, codes, maxFields = 5) {
+    if (!codes.length || codes.length > maxFields || new Set(codes).size !== codes.length) throw new Error(`検査するフィールドを1〜${maxFields}個選んでください`);
     const available = new Map(readQualityFields(properties).map((field) => [field.code, field]));
     return codes.map((code) => {
       const field = available.get(code);
@@ -2085,7 +2183,7 @@ ${contextLine}`);
           keys.push("");
           continue;
         }
-        values.push(multi ? JSON.stringify(value.map((item) => typeof item === "string" ? item : item.code)) : String(value ?? ""));
+        values.push(multi ? value.map((item) => typeof item === "string" ? item : item.code).join(", ") : String(value ?? ""));
         let key = multi ? JSON.stringify([...new Set(value.map((item) => typeof item === "string" ? item : item.code))].sort()) : String(value ?? "");
         if (TEXT.has(field.type)) {
           if (options.trimText) key = key.trim();
@@ -2161,7 +2259,18 @@ ${contextLine}`);
   }
   async function runLoadQualityFieldsStandalone(options) {
     const { appIds, prefix } = connection(options.appIdsText, options.guestId);
-    return readQualityFields((await apiGet(prefix, "/app/form/fields.json", { app: appIds[0], lang: "user" })).properties);
+    const firstFields = readQualityFields((await apiGet(prefix, "/app/form/fields.json", { app: appIds[0], lang: "user" })).properties);
+    if (!options.intersectAll || appIds.length <= 1) return firstFields;
+    let common = firstFields;
+    for (let i = 1; i < appIds.length; i++) {
+      try {
+        const nextProps = (await apiGet(prefix, "/app/form/fields.json", { app: appIds[i], lang: "user" })).properties;
+        const nextMap = new Map(readQualityFields(nextProps).map((f) => [f.code, f.type]));
+        common = common.filter((f) => nextMap.get(f.code) === f.type);
+      } catch {
+      }
+    }
+    return common;
   }
   async function runRecordQualityStandalone(options, setStatus) {
     const { appIds, prefix } = connection(options.appIdsText, options.guestId);
@@ -2317,24 +2426,39 @@ ${contextLine}`);
         output.appendChild(makeNote(`App ${result.appId}: ${report.total}件を検査 / 重複 ${report.duplicateGroups}組・${report.duplicateRecords}件 / 未入力 ${report.emptyRecords}件 / 取得不可 ${report.unavailableRecords}件`));
         const list = document.createElement("ol");
         list.style.cssText = "max-height:320px;overflow:auto;padding-left:24px;overflow-wrap:anywhere;font-size:12px";
-        for (const finding of report.findings.slice(0, 50)) {
-          const row = document.createElement("li"), link = document.createElement("a");
-          link.textContent = `レコード ${finding.recordId}`;
-          const recordPath = qualityRecordPath(result.appId, guestId, finding.recordId);
-          if (recordPath) {
-            link.href = recordPath;
-            link.target = "_blank";
-            link.rel = "noopener noreferrer";
+        const renderFindingsList = (limit) => {
+          list.replaceChildren();
+          for (const finding of report.findings.slice(0, limit)) {
+            const row = document.createElement("li"), link = document.createElement("a");
+            link.textContent = `レコード ${finding.recordId}`;
+            const recordPath = qualityRecordPath(result.appId, guestId, finding.recordId);
+            if (recordPath) {
+              link.href = recordPath;
+              link.target = "_blank";
+              link.rel = "noopener noreferrer";
+            }
+            row.append(
+              document.createTextNode(`${finding.kind}${finding.group ? ` #${finding.group}` : ""} / `),
+              link,
+              document.createTextNode(` / ${finding.fields.join(", ")} / ${finding.values.map((value) => value.length > 120 ? value.slice(0, 120) + "…" : value).join(" | ")}`)
+            );
+            list.appendChild(row);
           }
-          row.append(
-            document.createTextNode(`${finding.kind}${finding.group ? ` #${finding.group}` : ""} / `),
-            link,
-            document.createTextNode(` / ${finding.fields.join(", ")} / ${finding.values.map((value) => value.length > 120 ? value.slice(0, 120) + "…" : value).join(" | ")}`)
-          );
-          list.appendChild(row);
-        }
+        };
+        renderFindingsList(50);
         if (list.childElementCount) output.appendChild(list);
-        if (report.findings.length > 50) output.appendChild(makeNote(`詳細表示は先頭50件です。CSVには全 ${report.findings.length}件を保存します。`));
+        if (report.findings.length > 50) {
+          const moreNote = makeNote(`詳細表示は先頭50件です。CSVには全 ${report.findings.length}件を保存します。`);
+          const toggleBtn = makeButton(`全 ${report.findings.length}件を表示`, "sub");
+          let expanded = false;
+          toggleBtn.addEventListener("click", () => {
+            expanded = !expanded;
+            renderFindingsList(expanded ? report.findings.length : 50);
+            toggleBtn.textContent = expanded ? "先頭50件のみ表示" : `全 ${report.findings.length}件を表示`;
+            moreNote.textContent = expanded ? `全 ${report.findings.length}件を表示しています。` : `詳細表示は先頭50件です。CSVには全 ${report.findings.length}件を保存します。`;
+          });
+          output.append(moreNote, makeRow(toggleBtn));
+        }
       }
       save.onclick = () => {
         if (!results.length || current !== version) return;
@@ -2358,40 +2482,6 @@ ${contextLine}`);
 
   // src/entries/appSearchControl.ts
   init_api();
-
-  // src/handlers/diffFocus.ts
-  init_state();
-  init_dialog();
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
-  // src/entries/appSearchControl.ts
   init_utils();
   var RESULT_CSS_ID = "kus-app-search-styles";
   var RESULT_CSS = `
@@ -2618,18 +2708,333 @@ ${contextLine}`);
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
     });
-    keyword.addEventListener("keydown", (e) => {
+    const onEnterKey = (e) => {
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         void runSearch();
       }
-    });
+    };
+    keyword.addEventListener("keydown", onEnterKey);
+    guest.addEventListener("keydown", onEnterKey);
+    space.addEventListener("keydown", onEnterKey);
     return details;
   }
 
   // src/entries/liteWorkflow.ts
+  var CSS2 = `
+.kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
+.kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
+.kus-wf .kus-lp__badge-row{display:none}
+.kus-wf .kus-lp__body{padding:0;display:flex;flex-direction:column;overflow:hidden;min-height:0;background:#f5f7fa}
+.kus-wf .kus-lp__hint{margin:0;padding:10px 22px;border-radius:0;flex-shrink:0}
+.kus-wf [hidden]{display:none!important}
+.kus-wf .kus-lp__card{padding:16px;border-radius:14px;min-width:0}
+.kus-wf .kus-lp__card-head{flex-wrap:wrap}
+.kus-wf .kus-lp__row{min-width:0;flex-wrap:wrap}
+.kus-wf :is(input,select,textarea){max-width:100%;box-sizing:border-box}
+.kus-wf .kus-lp__input{min-width:0}
+.kus-wf .kus-lp__file{min-width:0;width:100%}
+.kus-wf .kus-lp__btn{white-space:normal}
+.kus-wf .kus-lp__tab-panel{min-width:0}
+.kus-wf .kus-lp__note{overflow-wrap:anywhere}
+.kus-wf :is(button,input,select,textarea,summary):focus-visible,.kus-wf-nav button:focus-visible{outline:3px solid #2563eb;outline-offset:3px}
+.kus-wf-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px 22px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
+.kus-wf-nav button{font-family:inherit;font-size:12px;font-weight:600;line-height:1.4;border:1px solid #e2e8f0;padding:10px;border-radius:9px;background:#fff;color:#475569;cursor:pointer}
+.kus-wf-nav button[aria-selected=true],.kus-wf-nav button[aria-current=step]{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+.kus-wf-nav button:disabled{opacity:.5;cursor:not-allowed}
+.kus-wf-canvas{overflow:auto;min-height:0;min-width:0;flex:1;padding:18px 22px;scroll-padding:16px}
+.kus-wf-stage{min-width:0}
+.kus-wf-heading{margin:0 0 4px;font-size:19px;color:#0f172a}
+.kus-wf-intro{margin:0 0 16px;color:#64748b;font-size:12px}
+.kus-wf-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin-bottom:16px}
+.kus-wf-action{padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:white;cursor:pointer;display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:12px;min-width:0;align-items:start}
+.kus-wf-action:has(input:checked){border-color:#60a5fa;background:#eff6ff}
+.kus-wf-action strong{display:block;color:#0f172a}
+.kus-wf-action small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
+.kus-wf-action em{display:inline-block;font-size:10px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
+.kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
+.kus-wf-summary>div:last-child{border:0}
+.kus-wf-summary dt{color:#64748b;font-size:12px}
+.kus-wf-summary dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#0f172a;font-size:13px}
+.kus-wf-notice{padding:12px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;margin:14px 0;color:#1e40af;font-size:12px;overflow-wrap:anywhere;white-space:pre-wrap}
+.kus-wf-notice[data-write=true]{border-color:#fed7aa;background:#fff7ed;color:#9a3412}
+.kus-wf-footer{padding:12px 22px;background:#fff;border-top:1px solid #e2e8f0;flex-shrink:0}
+.kus-wf-footer-row{display:flex;align-items:center;gap:12px}
+.kus-wf-footer-copy{flex:1;min-width:0;font-size:12px;color:#475569;overflow-wrap:anywhere}
+.kus-wf-footer-buttons{display:flex;gap:8px;flex-shrink:0}
+.kus-wf-footer-buttons button{min-height:42px;max-width:320px}
+.kus-wf-footer .kus-lp__status{margin-top:8px}
+.kus-wf-footer .kus-lp__status-text{max-height:44px;overflow:auto}
+.kus-wf .kus-lp__result{white-space:pre-wrap;max-height:none;overflow-wrap:anywhere}
+.kus-wf .kus-lp__apptable-scroll{overflow:auto}
+.kus-wf-jump{border:1px solid #e2e8f0;border-radius:12px;margin-bottom:14px}
+@media(max-width:720px){
+ .kus-wf.kus-lp{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);top:8px;right:8px}
+ .kus-wf .kus-lp__hero{padding:12px 16px}
+ .kus-wf .kus-lp__hint{display:none}
+ .kus-wf-nav{padding:8px;gap:4px}
+ .kus-wf-nav button{padding:9px 3px;font-size:11px}
+ .kus-wf-canvas{padding:16px}
+ .kus-wf .kus-lp__card{padding:12px}
+ .kus-wf-actions{grid-template-columns:1fr}
+ .kus-wf-summary>div{grid-template-columns:1fr;gap:4px}
+ .kus-wf-footer{padding:10px 16px}
+ .kus-wf-footer-row{display:block}
+ .kus-wf-footer-buttons{display:flex;margin-top:8px}
+ .kus-wf-footer-buttons button{flex:1;min-width:0;max-width:none}
+}
+`;
+  function ensureStyles2() {
+    if (document.getElementById("kus-workflow-style")) return;
+    const style = document.createElement("style");
+    style.id = "kus-workflow-style";
+    style.textContent = CSS2;
+    document.head.appendChild(style);
+  }
   function connectionSummary(appId, guestId = "", environment = "本番") {
     return `#${appId || "未入力"}${guestId ? `（ゲスト ${guestId}）` : ""} · ${environment}`;
+  }
+  function installLiteWorkflow(panel, options) {
+    ensureStyles2();
+    panel.root.classList.add("kus-wf");
+    const nav = document.createElement("nav");
+    nav.className = "kus-wf-nav";
+    nav.setAttribute("role", "tablist");
+    nav.setAttribute("aria-label", "操作の手順");
+    const canvas = document.createElement("div");
+    canvas.className = "kus-wf-canvas";
+    const setup = document.createElement("section");
+    const review = document.createElement("section");
+    const result = document.createElement("section");
+    const stages = [setup, review, result];
+    const labels = ["1 対象と操作", "2 内容を確認", "3 実行結果"];
+    const headings = ["対象と操作を選ぶ", "この内容で実行します", "実行結果を確認"];
+    const tabs = labels.map((label, index) => {
+      const tab = makeButton(label, "ghost");
+      tab.id = `${panel.root.id}-workflow-tab-${index}`;
+      tab.setAttribute("role", "tab");
+      const stage = stages[index];
+      stage.id = `${panel.root.id}-workflow-stage-${index}`;
+      stage.className = "kus-wf-stage";
+      stage.setAttribute("role", "tabpanel");
+      stage.setAttribute("aria-labelledby", tab.id);
+      tab.setAttribute("aria-controls", stage.id);
+      const heading = document.createElement("h2");
+      heading.className = "kus-wf-heading";
+      heading.textContent = headings[index];
+      stage.appendChild(heading);
+      tab.addEventListener("click", () => show(index));
+      tab.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const next2 = event.key === "Home" ? 0 : event.key === "End" ? 2 : (index + (event.key === "ArrowRight" ? 1 : 2)) % 3;
+        show(next2);
+      });
+      nav.appendChild(tab);
+      canvas.appendChild(stage);
+      return tab;
+    });
+    const intro = document.createElement("p");
+    intro.className = "kus-wf-intro";
+    intro.textContent = "入力後に対象と条件を確認してから実行できます。";
+    setup.appendChild(intro);
+    const choices = document.createElement("div");
+    choices.className = "kus-wf-actions";
+    choices.setAttribute("role", "radiogroup");
+    choices.setAttribute("aria-label", "行う操作");
+    let selected = options.actions[0];
+    const hiddenActions = document.createElement("div");
+    hiddenActions.hidden = true;
+    options.actions.forEach((action, index) => {
+      const label = document.createElement("label");
+      label.className = "kus-wf-action";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = `${panel.root.id}-workflow-action`;
+      radio.value = action.id;
+      radio.checked = index === 0;
+      radio.setAttribute("aria-label", action.label);
+      const copy = document.createElement("span");
+      const title = document.createElement("strong");
+      title.textContent = action.label;
+      const description = document.createElement("small");
+      description.textContent = action.description;
+      copy.append(title, description);
+      if (action.writes) {
+        const badge = document.createElement("em");
+        badge.textContent = "書き込みあり · 実行前に対象を確認";
+        copy.appendChild(badge);
+      }
+      radio.addEventListener("change", () => {
+        selected = action;
+        reviewedSignature = "";
+        action.onSelect?.();
+        refresh();
+      });
+      label.append(radio, copy);
+      choices.appendChild(label);
+      hiddenActions.appendChild(action.button);
+    });
+    if (options.actions.length > 1) setup.appendChild(choices);
+    setup.append(...options.setup);
+    const summary = document.createElement("dl");
+    summary.className = "kus-wf-summary";
+    const notice = document.createElement("div");
+    notice.className = "kus-wf-notice";
+    review.append(summary, notice);
+    const resultNote = document.createElement("div");
+    resultNote.className = "kus-wf-notice";
+    resultNote.textContent = "まだ実行していません。対象と操作を選んでください。";
+    result.append(resultNote, ...options.results || [], panel.result);
+    options.results?.forEach((element) => {
+      element.hidden = true;
+    });
+    const footer = document.createElement("footer");
+    footer.className = "kus-wf-footer";
+    const footerRow = document.createElement("div");
+    footerRow.className = "kus-wf-footer-row";
+    const footerCopy = document.createElement("div");
+    footerCopy.className = "kus-wf-footer-copy";
+    footerCopy.setAttribute("aria-live", "polite");
+    const buttons = document.createElement("div");
+    buttons.className = "kus-wf-footer-buttons";
+    const back = makeButton("対象・条件を変更", "sub");
+    const next = makeButton("内容を確認する", "primary");
+    const execute = makeButton(selected.label, "primary");
+    buttons.append(back, next, execute);
+    footerRow.append(footerCopy, buttons);
+    footer.append(footerRow, panel.status);
+    const hint = panel.body.querySelector(".kus-lp__hint");
+    panel.body.replaceChildren(...hint ? [hint] : [], nav, canvas, footer, hiddenActions);
+    let active = 0;
+    let busy = false;
+    let pending = null;
+    let reviewedSignature = "";
+    let lastContext = "";
+    const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll("input,select,textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
+    function show(index) {
+      if (busy) return;
+      const problem = index === 1 ? selected.validate() : "";
+      if (problem) {
+        panel.setStatus(problem, "warn");
+        return;
+      }
+      active = index;
+      if (index === 1) {
+        summary.replaceChildren();
+        for (const [label, value] of [["操作", selected.label], ...selected.summary()]) {
+          const row = document.createElement("div");
+          const term = document.createElement("dt");
+          const description = document.createElement("dd");
+          term.textContent = label;
+          description.textContent = value;
+          row.append(term, description);
+          summary.appendChild(row);
+        }
+        reviewedSignature = signature();
+      }
+      stages.forEach((stage, i) => {
+        stage.hidden = i !== active;
+        tabs[i].setAttribute("aria-selected", String(i === active));
+        tabs[i].tabIndex = i === active ? 0 : -1;
+      });
+      canvas.scrollTop = 0;
+      tabs[index].focus({ preventScroll: true });
+      refresh();
+    }
+    function refresh() {
+      const problem = busy ? "" : selected.validate();
+      const fresh = !busy && active === 1 && reviewedSignature === signature();
+      next.hidden = active !== 0;
+      execute.hidden = active !== 1;
+      back.hidden = active === 0;
+      next.disabled = busy || !!problem;
+      execute.disabled = busy || !!problem || !fresh;
+      execute.textContent = selected.label;
+      execute.classList.toggle("kus-lp__btn--danger", !!selected.writes);
+      tabs[1].disabled = busy || !!problem;
+      footerCopy.textContent = busy ? "処理中です。完了すると結果を表示します。" : problem || (active === 0 ? `${selected.label} · 対象と条件を確認してください。` : active === 1 ? fresh ? "表示内容を確認し、実行してください。" : "条件が変わりました。対象・条件に戻って確認してください。" : "結果を確認してから、次の操作へ進めます。");
+      notice.dataset.write = String(!!selected.writes);
+      notice.textContent = selected.description + (selected.writes ? "\n書き込み先と内容を確認してください。続いて、変更内容の最終確認が表示されます。" : "\nアプリ設定やレコードの書き込みは行いません。");
+      panel.setPrimaryAction(next);
+    }
+    back.addEventListener("click", () => show(0));
+    next.addEventListener("click", () => show(1));
+    function finish() {
+      if (!pending) return;
+      const status = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const tone = panel.status.dataset.tone || "";
+      if ((tone === "info" || tone === "warn" || tone === "neutral") && /キャンセルしました/.test(status)) {
+        pending = null;
+        refresh();
+        return;
+      }
+      resultNote.textContent = `${lastContext}
+${status}`;
+      resultNote.dataset.write = String(!!pending.writes);
+      const showResults = !options.resultActions || options.resultActions.includes(pending.id);
+      options.results?.forEach((element) => {
+        element.hidden = !showResults;
+      });
+      pending = null;
+      reviewedSignature = "";
+      show(2);
+    }
+    execute.addEventListener("click", () => {
+      if (busy || pending || selected.validate() || reviewedSignature !== signature()) return;
+      pending = selected;
+      options.beforeRun?.(selected.id);
+      panel.setResult("");
+      options.results?.forEach((element) => {
+        element.hidden = true;
+      });
+      lastContext = `${selected.label}
+${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
+      selected.button.click();
+      if (!busy) finish();
+    });
+    const originalBusy = panel.setBusy;
+    const disabled = /* @__PURE__ */ new Map();
+    panel.setBusy = (value) => {
+      busy = value;
+      panel.root.setAttribute("aria-busy", String(value));
+      canvas.inert = value;
+      nav.inert = value;
+      if (value) {
+        panel.root.querySelectorAll("input,button,select,textarea").forEach((input) => {
+          if (input.classList.contains("kus-lp__toggle")) return;
+          disabled.set(input, input.disabled);
+          input.disabled = true;
+        });
+      } else {
+        disabled.forEach((wasDisabled, input) => {
+          input.disabled = wasDisabled;
+        });
+        disabled.clear();
+        finish();
+        refresh();
+      }
+      originalBusy(value);
+    };
+    const originalStatus = panel.setStatus;
+    panel.setStatus = (message, tone) => {
+      originalStatus(message, tone);
+      refresh();
+    };
+    let refreshQueued = false;
+    const scheduleRefresh = () => {
+      if (refreshQueued) return;
+      refreshQueued = true;
+      queueMicrotask(() => {
+        refreshQueued = false;
+        refresh();
+      });
+    };
+    for (const event of ["input", "change", "click"]) setup.addEventListener(event, scheduleRefresh);
+    selected.onSelect?.();
+    show(0);
+    return { refresh, show };
   }
 
   // src/entries/record-quality-lite-ui.ts
@@ -2650,6 +3055,20 @@ ${contextLine}`);
       ariaLabel: "対象アプリID"
     });
     const guestId = makeInput({ placeholder: "ゲストID（任意）", width: "guest", ariaLabel: "ゲストスペースID" });
+    let connectionVersion = 0;
+    const resetMetadata = [];
+    for (const input of [appId, guestId]) {
+      for (const event of ["input", "change"]) {
+        input.addEventListener(event, () => {
+          connectionVersion++;
+          resetMetadata.forEach((reset) => reset());
+        });
+      }
+    }
+    function notifyInput(input) {
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
     const target = makeCard({ title: "対象アプリ", number: 1 });
     target.body.appendChild(makeRow([appId, guestId], { label: "接続先" }));
     target.body.appendChild(makeNote("複数アプリはカンマ、改行、または空白で区切ります。検査項目は先頭アプリから読み込みます。"));
@@ -2658,20 +3077,67 @@ ${contextLine}`);
       targets: [{ label: "対象アプリ", apply: (id, _name, guest) => {
         appId.value = id;
         if (guest && !guestId.value.trim()) guestId.value = guest;
-        appId.dispatchEvent(new Event("input", { bubbles: true }));
+        notifyInput(appId);
       } }]
     }));
+    const viewSelect = makeSelect([["", "一覧を選択（任意）"]]);
+    viewSelect.setAttribute("aria-label", "取得した一覧");
+    const loadViewsBtn = makeButton("一覧読込", "sub");
+    target.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: "一覧から条件" }));
+    const viewNote = makeNote("先頭の対象アプリから一覧を取得し、「▼ 一覧から」で絞り込みと並び順をクエリに反映できます。");
+    target.body.appendChild(viewNote);
+    let loadedViews = [];
+    resetMetadata.push(() => {
+      loadedViews = [];
+      viewSelect.replaceChildren(new Option("一覧を選択（任意）", ""));
+      viewNote.textContent = "対象アプリが変わりました。「一覧読込」で再取得してください。";
+    });
+    viewSelect.addEventListener("change", () => {
+      const view = loadedViews.find((item) => item.id === viewSelect.value);
+      const scopeNote = view?.type === "CALENDAR" ? "（カレンダーの表示月による絞り込みは含みません）" : view?.type === "CUSTOM" ? "（カスタマイズ画面の独自処理は含みません）" : "";
+      viewNote.textContent = view ? `${view.name} / 条件: ${view.filter || "全件"} / 並び順: ${view.sort || "レコードID順"}${scopeNote}` : "適用する一覧を選んでください。";
+    });
+    loadViewsBtn.addEventListener("click", () => liteRun(panel, "一覧情報を取得中…", async () => {
+      const version = connectionVersion;
+      const [firstAppId] = parseRecordAppIds(appId.value);
+      loadedViews = [];
+      viewSelect.replaceChildren(new Option("一覧を選択（任意）", ""));
+      const views = await runLoadViewsStandalone(
+        { appId: firstAppId, guestId: guestId.value.trim() },
+        (m, e) => panel.setStatus(m, e ? "err" : "busy")
+      );
+      if (version !== connectionVersion) {
+        panel.setStatus("対象アプリが変わりました。一覧を再取得してください。", "warn");
+        return;
+      }
+      loadedViews = views;
+      for (const v of views) {
+        const opt = document.createElement("option");
+        opt.value = v.id;
+        const typeLabel = { LIST: "表", CALENDAR: "カレンダー", CUSTOM: "カスタマイズ" }[v.type] || v.type;
+        opt.textContent = `${v.name}（${typeLabel}）`;
+        viewSelect.appendChild(opt);
+      }
+      viewNote.textContent = `App ${firstAppId} から ${views.length}件を取得しました。選択した一覧の絞り込み・並び順をクエリに反映できます。`;
+      panel.setStatus(viewNote.textContent, views.length ? "ok" : "warn");
+    }));
+    function applyViewQuery(targetInput) {
+      const view = loadedViews.find((item) => item.id === viewSelect.value);
+      if (!view) {
+        panel.setStatus("対象アプリで一覧を読み込み、適用する一覧を選んでください。", "warn");
+        return;
+      }
+      targetInput.value = view.query;
+      notifyInput(targetInput);
+      panel.setStatus(`「${view.name}」をクエリに反映しました: ${view.query || "全件"}`, "ok");
+    }
     panel.body.insertBefore(target.card, panel.status);
     const conditions = makeCard({ title: "検査条件", number: 2 });
     panel.body.insertBefore(conditions.card, panel.status);
     const resultHost = document.createElement("section");
     resultHost.setAttribute("aria-label", "検査結果");
     panel.body.insertBefore(resultHost, panel.status);
-    const resetMetadata = [];
-    for (const input of [appId, guestId]) {
-      input.addEventListener("input", () => resetMetadata.forEach((reset) => reset()));
-    }
-    buildRecordQualityTab(conditions.body, {
+    const qualityAction = buildRecordQualityTab(conditions.body, {
       panel,
       tgtApp: appId,
       tgtGuest: guestId,
@@ -2684,8 +3150,14 @@ ${contextLine}`);
         }
       },
       targetSummary: () => ["対象アプリ", connectionSummary(appId.value.trim(), guestId.value.trim())],
-      applyViewQuery: () => panel.setStatus("この単機能版では、クエリを直接入力してください。", "warn"),
+      applyViewQuery,
       resultHost
+    });
+    installLiteWorkflow(panel, {
+      setup: [target.card, conditions.card],
+      actions: [qualityAction],
+      results: [resultHost],
+      resultActions: ["quality"]
     });
   }
 

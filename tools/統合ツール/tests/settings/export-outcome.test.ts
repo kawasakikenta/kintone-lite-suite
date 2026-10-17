@@ -29,10 +29,13 @@ describe('settings export completion', () => {
     const status = vi.fn();
     const result = await runSettingsExportStandalone(mode, { apps: [{ appId: '1' }], scopeRoot: {} }, status);
     expect(status).toHaveBeenLastCalledWith(expect.stringContaining('1アプリ・1セクションの取得に失敗'), true);
-    expect(result.summaryHtml).toContain('一部セクション取得失敗あり');
+    expect(result.summaryHtml).toContain('一部セクション取得失敗: フィールド設定');
+    expect(result.summaryHtml).toContain('対象');
     expect(mode === 'json' ? downloadText : downloadBlob).toHaveBeenCalledTimes(1);
     if (mode === 'json') {
       const payload = JSON.parse(vi.mocked(downloadText).mock.calls[0][1]);
+      expect(payload.appCount).toBe(1);
+      expect(payload.failedAppCount).toBe(1);
       expect(payload.apps[0].sections.fieldSettings._fetchError).toBe('権限不足');
     }
   });

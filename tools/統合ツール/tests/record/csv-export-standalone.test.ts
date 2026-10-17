@@ -5,7 +5,9 @@ import { downloadBlob } from '../../src/utils';
 import {
   runCsvExportStandalone,
   runCsvExportBatchStandalone,
-  runRecordBackupStandalone
+  runRecordBackupStandalone,
+  recordExportFilename,
+  inspectRecordCopyCompatibility
 } from '../../src/tabs/record-standalone';
 
 vi.mock('../../src/api', async (importOriginal) => {
@@ -354,5 +356,47 @@ describe('CSV export completeness warnings', () => {
     expect(csv.warnings[0]).toContain('details');
     expect(status).toHaveBeenLastCalledWith(expect.stringMatching(/未取得|取得失敗/), true);
     expect(downloadBlob).toHaveBeenCalledOnce();
+  });
+
+  it('supports headerMode, CRLF lineEnding, and optional formula neutralization', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ properties: flatProperties });
+    vi.mocked(fetchRecordsByQuery).mockResolvedValue({
+      records: [{ $id: field('__ID__', '41'), title: field('SINGLE_LINE_TEXT', '=SUM(1,2)') }],
+      mode: 'cursor'
+    } as any);
+
+    await runCsvExportStandalone({
+      ...options(),
+      filename: 'bad/name:test*.csv',
+      headerMode: 'both',
+      lineEnding: '\r\n',
+      neutralizeFormula: false
+    }, status);
+
+    expect(apiGet).toHaveBeenCalledWith('/k/v1', '/app/form/fields.json', { app: '7', lang: 'user' });
+    const [name, blob] = vi.mocked(downloadBlob).mock.calls[0];
+    expect(name).toBe('bad_name_test_.csv');
+    expect(await blob.text()).toBe('件名 [title]\r\n"=SUM(1,2)"');
+  });
+
+  it('sanitizes export filenames and inspects record copy field compatibility', () => {
+    expect(recordExportFilename('../evil/path:name?.csv', 'csv', 'fallback.csv')).toBe('_evil_path_name_.csv');
+    expect(recordExportFilename('...', 'csv', 'fallback.csv')).toBe('fallback.csv');
+    const report = inspectRecordCopyCompatibility(
+      {
+        title: { type: 'SINGLE_LINE_TEXT', label: '件名' },
+        amount: { type: 'NUMBER', label: '金額' },
+        onlySrc: { type: 'DATE', label: '日付' },
+        fileField: { type: 'FILE', label: '添付' }
+      },
+      {
+        title: { type: 'SINGLE_LINE_TEXT', label: '件名' },
+        amount: { type: 'SINGLE_LINE_TEXT', label: '金額' }
+      }
+    );
+    expect(report.compatibleFields).toEqual(['件名［title］']);
+    expect(report.droppedMissing).toEqual(['日付［onlySrc］']);
+    expect(report.droppedMismatch).toEqual(['金額［amount］(NUMBER → SINGLE_LINE_TEXT)']);
+    expect(report.excludedSystemOrFile).toEqual(['添付［fileField］(FILE)']);
   });
 });

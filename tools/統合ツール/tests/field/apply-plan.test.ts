@@ -6,6 +6,7 @@ import {
   planBulkRename,
   planFieldApply
 } from '../../src/tabs/field-standalone';
+import { collectFieldApplyWarnings } from '../../src/tabs/field';
 
 // フィールド追加 lite の反映計画。API を呼ぶ前に何を追加・更新・スキップするかを
 // 確認ダイアログとログで見せるため、計画は純粋関数として固定する。
@@ -72,6 +73,72 @@ describe('planFieldApply', () => {
       true
     );
     expect(plan.updates).toEqual({ old_name: { type: 'SINGLE_LINE_TEXT', code: 'new_name' } });
+  });
+
+  it('filters out system child fields inside SUBTABLE and ensures child code is set', () => {
+    const plan = planFieldApply(
+      {
+        tbl: {
+          type: 'SUBTABLE',
+          fields: {
+            row_id: { type: 'RECORD_NUMBER', code: 'row_id' },
+            qty: { type: 'NUMBER', label: '数量' }
+          }
+        }
+      },
+      {},
+      {},
+      false
+    );
+    expect(plan.adds.tbl.fields).toEqual({
+      qty: { type: 'NUMBER', label: '数量', code: 'qty' }
+    });
+  });
+
+  it('rejects cross-level field code collisions between top-level and SUBTABLE child fields', () => {
+    expect(() =>
+      planFieldApply(
+        {
+          dup_code: { type: 'SINGLE_LINE_TEXT' },
+          tbl: {
+            type: 'SUBTABLE',
+            fields: {
+              dup_code: { type: 'NUMBER' }
+            }
+          }
+        },
+        {},
+        {},
+        false
+      )
+    ).toThrow(/重複/);
+
+    expect(() =>
+      planFieldApply(
+        {
+          tbl: {
+            type: 'SUBTABLE',
+            fields: {
+              existing_top: { type: 'NUMBER' }
+            }
+          }
+        },
+        { existing_top: { type: 'SINGLE_LINE_TEXT', code: 'existing_top' } },
+        {},
+        false
+      )
+    ).toThrow(/重複/);
+  });
+
+  it('rejects overwrite when field type differs from existing field type', () => {
+    expect(() =>
+      planFieldApply(
+        { existing: { type: 'SINGLE_LINE_TEXT' } },
+        { existing: { type: 'NUMBER', code: 'existing' } },
+        {},
+        true
+      )
+    ).toThrow(/type が一致しません/);
   });
 });
 
@@ -146,7 +213,7 @@ describe('planBulkRename', () => {
     table: { type: 'SUBTABLE', code: 'table', fields: { qty: { type: 'NUMBER', code: 'qty' } } }
   };
 
-  it('adds a prefix to top-level and subtable child codes', () => {
+  it('adds a prefix to top-level and subtable child codes in new-keys mode', () => {
     const out = planBulkRename(props, 'dev_', false);
     expect(Object.keys(out.properties)).toEqual(['dev_title', 'dev_table']);
     expect(out.properties.dev_table.fields).toEqual({ dev_qty: { type: 'NUMBER', code: 'dev_qty' } });
@@ -158,17 +225,50 @@ describe('planBulkRename', () => {
     expect(out.collisions).toEqual([]);
   });
 
+  it('preserves original object keys and updates .code in put-rename mode', () => {
+    const out = planBulkRename(props, 'dev_', false, 'put-rename');
+    expect(Object.keys(out.properties)).toEqual(['title', 'table']);
+    expect(out.properties.title.code).toBe('dev_title');
+    expect(out.properties.table.code).toBe('dev_table');
+    expect(out.properties.table.fields).toEqual({ qty: { type: 'NUMBER', code: 'dev_qty' } });
+  });
+
   it('removes a prefix and reports codes that would become empty', () => {
     const out = planBulkRename({ ...props, dev_: { type: 'NUMBER', code: 'dev_' } }, 'dev_', true);
     expect(Object.keys(out.properties)).toEqual(['done']);
     expect(out.collisions).toEqual(['dev_ → (空)']);
   });
 
-  it('reports a collision with an unchanged existing field', () => {
+  it('reports a collision with an unchanged existing field at top-level or inside SUBTABLE', () => {
     const out = planBulkRename({
       title: { type: 'SINGLE_LINE_TEXT', code: 'title' },
-      dev_title: { type: 'SINGLE_LINE_TEXT', code: 'dev_title' }
+      dev_title: { type: 'SINGLE_LINE_TEXT', code: 'dev_title' },
+      table: {
+        type: 'SUBTABLE',
+        code: 'table',
+        fields: {
+          qty: { type: 'NUMBER', code: 'qty' },
+          dev_qty: { type: 'NUMBER', code: 'dev_qty' }
+        }
+      }
     }, 'dev_', true);
     expect(out.collisions).toContain('dev_title → title');
+    expect(out.collisions).toContain('table.dev_qty → qty');
+  });
+});
+
+describe('collectFieldApplyWarnings', () => {
+  it('recognizes SUBTABLE child codes in formula references without false-positive warnings', () => {
+    const props = {
+      total: { type: 'CALC', expression: 'SUM(sub_amount)' },
+      tbl: {
+        type: 'SUBTABLE',
+        fields: {
+          sub_amount: { type: 'NUMBER', code: 'sub_amount' }
+        }
+      }
+    };
+    const warnings = collectFieldApplyWarnings(props, {});
+    expect(warnings.some((w) => w.includes('sub_amount'))).toBe(false);
   });
 });

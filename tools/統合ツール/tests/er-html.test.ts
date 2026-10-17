@@ -215,5 +215,8 @@ describe('ER diagram HTML', () => {
     expect(script).toContain('sqlIdentifier(sourceInfo.table)');
     expect(script).toContain('shape=tableRow');
     expect(script).toContain('未取得の参照先 (App ');
+    expect(script).toContain('function recomputeErAnalysis()');
+    expect(html).not.toContain('fonts.googleapis.com');
+    expect(html).toContain('https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js');
   });
 });

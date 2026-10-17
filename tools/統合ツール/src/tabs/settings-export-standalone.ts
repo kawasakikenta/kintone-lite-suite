@@ -31,12 +31,22 @@ function parseAppIdList(text) {
   return out;
 }
 
-export function renderSettingsExportSummaryHtml(rows, scopes) {
+export interface SettingsExportRowSummary {
+  appId: string;
+  appName?: string;
+  guestId?: string;
+  okCount: number;
+  ngCount: number;
+  note?: string;
+}
+
+export function renderSettingsExportSummaryHtml(rows: SettingsExportRowSummary[], scopes: string[]) {
   const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(', ');
   const body = rows
     .map(
       (r) => `<tr>
     <td>${esc(r.appId)}</td>
+    <td>${esc(r.appName || '-')}</td>
     <td>${esc(r.guestId ? `guest:${r.guestId}` : '通常')}</td>
     <td>${esc(String(r.okCount))}</td>
     <td>${esc(String(r.ngCount))}</td>
@@ -47,8 +57,8 @@ export function renderSettingsExportSummaryHtml(rows, scopes) {
   return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || '-')}</div>
     <table style="width:100%;font-size:11px;border-collapse:collapse">
-      <thead><tr><th style="text-align:left;padding:4px">アプリID</th><th>ゲスト</th><th>取得OK</th><th>取得NG</th><th>メモ</th></tr></thead>
-      <tbody>${body || '<tr><td colspan="5">結果なし</td></tr>'}</tbody>
+      <thead><tr><th style="text-align:left;padding:4px">アプリID</th><th>アプリ名</th><th>ゲスト</th><th>取得OK</th><th>取得NG</th><th>メモ</th></tr></thead>
+      <tbody>${body || '<tr><td colspan="6">結果なし</td></tr>'}</tbody>
     </table>
   `;
 }
@@ -215,22 +225,33 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
 
     let okCount = 0;
     let ngCount = 0;
+    const failedSectionLabels: string[] = [];
     for (const key of scopes) {
       const sec = bundle.sections[key];
-      if (sec && sec._fetchError) ngCount += 1;
-      else okCount += 1;
+      if (sec && sec._fetchError) {
+        ngCount += 1;
+        failedSectionLabels.push(SECTION_DEFS.find((s) => s.key === key)?.label || key);
+      } else {
+        okCount += 1;
+      }
     }
     rows.push({
       appId,
+      appName: extractAppNameFromBundle(bundle) || '',
       guestId,
       okCount,
       ngCount,
-      note: ngCount === scopes.length ? 'アプリ取得失敗' : ngCount ? '一部セクション取得失敗あり' : 'OK'
+      note: ngCount === scopes.length
+        ? 'アプリ取得失敗'
+        : ngCount
+          ? `一部セクション取得失敗: ${failedSectionLabels.join(', ')}`
+          : 'OK'
     });
   }
 
   const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
   const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);
+  const failedAppCount = rows.filter((row) => row.ngCount > 0).length;
   const payload = {
     generatedAt: new Date().toISOString(),
     guestIds,
@@ -238,11 +259,13 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     preview,
     scopes,
     scopeLabels,
+    appCount: bundles.length,
+    failedAppCount,
     apps: bundles
   };
 
   const failedSections = rows.reduce((sum, row) => sum + row.ngCount, 0);
-  const failureNote = failedSections ? `。${rows.filter(row => row.ngCount > 0).length}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : '';
+  const failureNote = failedSections ? `。${failedAppCount}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : '';
 
   if (mode === 'zip') {
     const JSZipCtor = await loadJSZipLite();

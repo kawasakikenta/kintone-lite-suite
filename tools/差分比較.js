@@ -1071,7 +1071,7 @@ ${contextLine}`);
       }
       tasks.push(async () => {
         try {
-          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
+          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id });
           if (res && typeof res === "object") {
             plugin._config = res?.config != null ? res.config : res;
             stats.fetched += 1;
@@ -5152,7 +5152,57 @@ ${contextLine}`);
   function isSensitiveSameDiffRow(row) {
     return row?.type === "same" && SENSITIVE_DIFF_SECTION_KEYS.has(sectionKeyOf(row));
   }
-  var SENSITIVE_DIFF_SECTION_KEYS, SENSITIVE_SAME_VALUE_REDACTION;
+  function isSensitiveDiffPath(path, sectionKey = "") {
+    const normalizedPath = String(path || "").trim();
+    const normalizedSec = String(sectionKey || "").trim() || normalizedPath.split(/[.\[]/, 1)[0] || "";
+    if (SENSITIVE_KEY_PATTERN.test(normalizedPath)) return true;
+    if (normalizedSec === "customizeSettings" && /(?:^|\.)_body(?:\.|$|\[)/.test(normalizedPath)) {
+      return true;
+    }
+    if (normalizedSec === "pluginSettings" && /(?:^|\.)(?:_config|config)(?:\.|$|\[)/.test(normalizedPath)) {
+      return true;
+    }
+    return false;
+  }
+  function maskSensitiveDiffValue(value, path = "", sectionKey = "") {
+    if (value == null) return value;
+    if (typeof value === "string") {
+      if (!value) return value;
+      return isSensitiveDiffPath(path, sectionKey) ? `[マスク済み: ${contentIdentifier(value)}]` : value;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return isSensitiveDiffPath(path, sectionKey) ? `[マスク済み: ${contentIdentifier(String(value))}]` : value;
+    }
+    if (Array.isArray(value)) {
+      return value.map((item, index) => maskSensitiveDiffValue(item, `${path}[${index}]`, sectionKey));
+    }
+    if (typeof value === "object") {
+      const out = {};
+      for (const [key, child] of Object.entries(value)) {
+        const childPath = path ? `${path}.${key}` : key;
+        out[key] = maskSensitiveDiffValue(child, childPath, sectionKey);
+      }
+      return out;
+    }
+    return value;
+  }
+  function maskSensitiveDiffRows(rows) {
+    const source = Array.isArray(rows) ? rows : [];
+    return source.map((row) => {
+      if (!row || typeof row !== "object") return row;
+      const secKey = sectionKeyOf(row);
+      const rowPath = String(row.path || "");
+      const maskedLeft = row.left !== void 0 ? maskSensitiveDiffValue(row.left, rowPath, secKey) : row.left;
+      const maskedRight = row.right !== void 0 ? maskSensitiveDiffValue(row.right, rowPath, secKey) : row.right;
+      if (maskedLeft === row.left && maskedRight === row.right) return row;
+      return {
+        ...row,
+        left: maskedLeft,
+        right: maskedRight
+      };
+    });
+  }
+  var SENSITIVE_DIFF_SECTION_KEYS, SENSITIVE_SAME_VALUE_REDACTION, SENSITIVE_KEY_PATTERN;
   var init_export_safety = __esm({
     "src/diff/export-safety.ts"() {
       "use strict";
@@ -5161,6 +5211,7 @@ ${contextLine}`);
         "pluginSettings"
       ]);
       SENSITIVE_SAME_VALUE_REDACTION = "（同一の機密値は安全のため省略しました）";
+      SENSITIVE_KEY_PATTERN = /(?:secret|token|password|passwd|api[_-]?key|authorization|webhook|client[_-]?secret|private[_-]?key)/i;
     }
   });
 
@@ -11804,6 +11855,38 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     };
   }
 
+  // src/handlers/diffFocus.ts
+  init_state();
+  init_dialog();
+  function extractAppIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
+  }
+
   // src/ui/components.ts
   init_constants();
   init_state();
@@ -12719,11 +12802,14 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
-      if (okMsg && tone !== "err" && tone !== "warn") {
+      const currentText = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+      const cancelled = /キャンセルしました/.test(currentText);
+      if (cancelled && (tone === "busy" || tone === "ok")) {
+        panel.setStatus(currentText, "info");
+      } else if (okMsg && tone !== "err" && tone !== "warn" && tone !== "info") {
         panel.setStatus(okMsg, "ok");
       } else if (tone === "busy") {
-        const text2 = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
-        panel.setStatus(text2 || "完了", "ok");
+        panel.setStatus(currentText || "完了", "ok");
       }
       return out;
     } catch (e) {
@@ -13604,9 +13690,9 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       out.push("<hyperlinks>");
       for (const hyperlink of internalHyperlinks) {
         const formulaSheetName = hyperlink.targetSheet.replace(/'/g, "''");
-        const location = `'${formulaSheetName}'!${hyperlink.targetCell}`;
+        const location2 = `'${formulaSheetName}'!${hyperlink.targetCell}`;
         const tooltip = hyperlink.tooltip ? ` tooltip="${escapeXml(hyperlink.tooltip)}"` : "";
-        out.push(`<hyperlink ref="${hyperlink.ref}" location="${escapeXml(location)}"${tooltip}/>`);
+        out.push(`<hyperlink ref="${hyperlink.ref}" location="${escapeXml(location2)}"${tooltip}/>`);
       }
       out.push("</hyperlinks>");
     }
@@ -17891,12 +17977,12 @@ ${item.target}` : item.target;
     fieldItems.forEach((item, index) => {
       const field = item.field;
       const actualIndex = actualIndexByRow.get(item.row);
-      const location = field.structure === "└ テーブル内フィールド" ? `テーブル「${field.parentTableName}」（コード: ${field.parentTableCode}）
+      const location2 = field.structure === "└ テーブル内フィールド" ? `テーブル「${field.parentTableName}」（コード: ${field.parentTableCode}）
 └ テーブル内フィールド` : field.structure;
       rows.push([
         actualIndex == null ? "" : actualIndex + 1,
         item.changeType,
-        location,
+        location2,
         field.fieldName,
         field.fieldCode,
         field.fieldType,
@@ -17922,7 +18008,7 @@ ${item.target}` : item.target;
       styles[10] = afterStyle;
       cellStyles.push(styles);
       rowHeights.push(readableCustomerRowHeight([
-        { value: location, width: 30 },
+        { value: location2, width: 30 },
         { value: field.fieldName, width: 22 },
         { value: field.fieldCode, width: 22 },
         { value: field.fieldType, width: 17 },
@@ -18258,7 +18344,9 @@ ${item.target}` : item.target;
     sheets.push(...apiSheets);
     return sheets;
   }
-  function buildDiffXlsxSheets(ctx) {
+  var MAX_SINGLE_DIFF_XLSX_BYTES = 100 * 1024 * 1024;
+  function buildDiffXlsxSheets(rawCtx) {
+    const ctx = rawCtx.maskSensitive ? { ...rawCtx, rows: maskSensitiveDiffRows(rawCtx.rows) } : rawCtx;
     if (ctx.audience !== "internal") return buildCustomerDiffXlsxSheets(ctx);
     const rows = ctx.rows || [];
     const grouped = groupRowsBySection(rows);
@@ -18312,7 +18400,13 @@ ${item.target}` : item.target;
     return sheets;
   }
   function buildDiffXlsxBlob(ctx) {
-    return buildXlsxBlob(buildDiffXlsxSheets(ctx));
+    const blob = buildXlsxBlob(buildDiffXlsxSheets(ctx));
+    if (blob.size > MAX_SINGLE_DIFF_XLSX_BYTES) {
+      throw new Error(
+        `Excelファイルが上限サイズ（${Math.round(MAX_SINGLE_DIFF_XLSX_BYTES / (1024 * 1024))}MB）を超えました。フィルタや出力対象セクションを絞って再出力してください。`
+      );
+    }
+    return blob;
   }
   var XLSX_FILENAME_EXTENSION = ".xlsx";
   var XLSX_FILENAME_MAX_UTF16_LENGTH = 180;
@@ -18951,6 +19045,7 @@ ${fence}`;
     if (typeof value === "object") return "object";
     return typeof value;
   }
+  var MAX_MARKDOWN_STRING_CHARS = 2e3;
   function jsonSafeValue(value, seen) {
     if (value === void 0) return { $kusType: "undefined" };
     if (value === null) return null;
@@ -18961,7 +19056,13 @@ ${fence}`;
       return value;
     }
     if (typeof value === "bigint") return { $kusType: "bigint", value: String(value) };
-    if (typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      if (value.length > MAX_MARKDOWN_STRING_CHARS) {
+        return `${value.slice(0, MAX_MARKDOWN_STRING_CHARS)}... [...長文省略 (${value.length}文字, ${contentIdentifier(value)})]`;
+      }
+      return value;
+    }
+    if (typeof value === "boolean") return value;
     if (typeof value === "function") return { $kusType: "function", value: String(value) };
     if (typeof value === "symbol") return { $kusType: "symbol", value: String(value) };
     if (value instanceof Date) return { $kusType: "date", value: value.toISOString() };
@@ -19460,40 +19561,6 @@ ${fence}`;
 
   // src/entries/appSearchControl.ts
   init_api();
-
-  // src/handlers/diffFocus.ts
-  init_state();
-  init_dialog();
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
-  // src/entries/appSearchControl.ts
   init_utils();
   var RESULT_CSS_ID = "kus-app-search-styles";
   var RESULT_CSS = `
@@ -19720,13 +19787,30 @@ ${fence}`;
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
     });
-    keyword.addEventListener("keydown", (e) => {
+    const onEnterKey = (e) => {
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         void runSearch();
       }
-    });
+    };
+    keyword.addEventListener("keydown", onEnterKey);
+    guest.addEventListener("keydown", onEnterKey);
+    space.addEventListener("keydown", onEnterKey);
     return details;
+  }
+
+  // src/reflect/liteSetup.ts
+  function parseAppReference(text2) {
+    const raw = String(text2 || "").trim();
+    if (!raw) return null;
+    if (/^[1-9]\d*$/.test(raw)) return { appId: raw, guestId: "" };
+    const appId = extractAppIdFromInput(raw);
+    if (!/^[1-9]\d*$/.test(appId)) return null;
+    return { appId, guestId: extractGuestIdFromInput(raw) };
+  }
+  function needsAppReferenceParse(text2) {
+    const raw = String(text2 || "").trim();
+    return !!raw && !/^\d+$/.test(raw);
   }
 
   // src/diff/batch-comparison.ts
@@ -20279,8 +20363,12 @@ ${fence}`;
   function validateLiteDiffStart(options) {
     if (!options.scopes?.length) return "比較セクションを 1 つ以上選択してください";
     const sourceAppId = String(options.sourceAppId || "").trim();
+    const sourceGuestId = String(options.sourceGuestId || "").trim();
     if (!options.hasImportedSource && !sourceAppId) return "比較元アプリIDを入力してください";
     if (sourceAppId && !/^[1-9]\d*$/.test(sourceAppId)) return "比較元アプリIDには正の整数を入力してください";
+    if (!options.hasImportedSource && sourceGuestId && !/^[1-9]\d*$/.test(sourceGuestId)) {
+      return "比較元のゲストスペースIDは正の整数で入力してください";
+    }
     if (options.targets !== void 0) {
       for (const t of options.targets) {
         const rowNum = Number.isInteger(t.rowNumber) ? t.rowNumber : "?";
@@ -20289,8 +20377,8 @@ ${fence}`;
         if (appId && !/^[1-9]\d*$/.test(appId)) {
           return `比較先 ${rowNum} 行目: アプリIDには正の整数を入力してください`;
         }
-        if (guestId && !/^\d+$/.test(guestId)) {
-          return `比較先 ${rowNum} 行目: ゲストIDは半角数字で入力してください`;
+        if (guestId && !/^[1-9]\d*$/.test(guestId)) {
+          return `比較先 ${rowNum} 行目: ゲストIDは正の整数で入力してください`;
         }
       }
       const seen = /* @__PURE__ */ new Map();
@@ -20308,8 +20396,15 @@ ${fence}`;
       }
     } else {
       const targetAppId = String(options.targetAppId || "").trim();
+      const targetGuestId = String(options.targetGuestId || "").trim();
       if (!options.hasImportedTarget && !targetAppId) return "比較先アプリIDを入力してください";
       if (targetAppId && !/^[1-9]\d*$/.test(targetAppId)) return "比較先アプリIDには正の整数を入力してください";
+      if (!options.hasImportedTarget && targetGuestId && !/^[1-9]\d*$/.test(targetGuestId)) {
+        return "比較先のゲストスペースIDは正の整数で入力してください";
+      }
+      if (!options.hasImportedSource && !options.hasImportedTarget && sourceAppId && sourceAppId === targetAppId && sourceGuestId === targetGuestId && Boolean(options.sourcePreview) === Boolean(options.targetPreview)) {
+        return "比較元と比較先に同一の接続先（同じアプリID・ゲストID・環境）は指定できません";
+      }
     }
     const positionalRuleCount = summarizeLiteIgnoreRules(options.ignoreKeys || "").positionalRules;
     if (positionalRuleCount) {
@@ -20773,9 +20868,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       exportContentLabel: getLiteHtmlExportContentLabel(safeContentMode)
     };
   }
-  function buildLiteDiffXlsxContext(cache, rows, exportMode, exportLabel, filterDescription) {
+  function buildLiteDiffXlsxContext(cache, rows, exportMode, exportLabel, filterDescription, options) {
     return {
-      audience: "customer",
+      audience: options?.audience === "internal" ? "internal" : "customer",
+      maskSensitive: Boolean(options?.maskSensitive),
       rows,
       fetchIssues: cache.fetchIssues || [],
       partialIssues: cache.partialIssues || [],
@@ -21317,8 +21413,23 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       attachTargetSplit(entry);
       return entry;
     };
+    const adoptDiffAppReference = (appInput, guestInput, sideLabel, clearName, text2 = appInput.value) => {
+      if (!needsAppReferenceParse(text2)) return false;
+      const reference = parseAppReference(text2);
+      if (!reference) return false;
+      appInput.value = reference.appId;
+      if (reference.guestId) guestInput.value = reference.guestId;
+      clearName?.();
+      invalidateResultAfterAppSelectionChange();
+      panel.setStatus(
+        `URLから${sideLabel}のアプリID ${reference.appId}${reference.guestId ? `（ゲストスペース ${reference.guestId}）` : ""}を読み取りました`,
+        "info"
+      );
+      return true;
+    };
     const attachTargetSplit = (entry) => {
       const distribute = () => {
+        if (adoptDiffAppReference(entry.app, entry.guest, "比較先", () => setTargetName(entry, ""))) return;
         const raw = entry.app.value;
         if (!/[,、\s]/.test(raw)) return;
         const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
@@ -21338,6 +21449,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       entry.app.addEventListener("change", distribute);
       entry.app.addEventListener("paste", (ev) => {
         const text2 = ev.clipboardData?.getData("text") || "";
+        if (adoptDiffAppReference(entry.app, entry.guest, "比較先", () => setTargetName(entry, ""), text2)) {
+          ev.preventDefault();
+          return;
+        }
         if (!/[,、\s]/.test(text2)) return;
         ev.preventDefault();
         entry.app.value = [entry.app.value.trim(), text2].filter(Boolean).join(",");
@@ -21347,6 +21462,15 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     srcApp.addEventListener("input", () => {
       if (sourceAppName) setSourceName("");
       invalidateResultAfterAppSelectionChange();
+    });
+    srcApp.addEventListener("change", () => {
+      adoptDiffAppReference(srcApp, srcGuest, "比較元", () => setSourceName(""));
+    });
+    srcApp.addEventListener("paste", (ev) => {
+      const text2 = ev.clipboardData?.getData("text") || "";
+      if (adoptDiffAppReference(srcApp, srcGuest, "比較元", () => setSourceName(""), text2)) {
+        ev.preventDefault();
+      }
     });
     tgtApp.addEventListener("input", () => {
       if (targetRows[0]?.appName) setTargetName(targetRows[0], "");
@@ -21368,7 +21492,12 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       addTargetRow(tgtApp.value.trim(), tgtGuest.value.trim(), targetRows[0]?.appName || "");
       applyComparisonMode("multi");
     });
-    const multiControls = makeRow([addTargetBtn, copyFirstBtn], { label: "比較先を増やす" });
+    const multiAutoHtml = makeCheck({
+      label: "1対多比較完了時にHTMLを自動保存",
+      checked: true,
+      help: "オフにすると自動ダウンロードせず、結果表の各行から必要な分だけHTML/Excel/Markdownを保存できます"
+    });
+    const multiControls = makeRow([addTargetBtn, copyFirstBtn, multiAutoHtml.label], { label: "比較先を増やす" });
     multiControls.classList.add("kus-dl-multi-controls");
     targetCard.appendChild(multiControls);
     const singleAppSearch = createAppSearchControl(panel, {
@@ -21598,6 +21727,24 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       };
       source.app.addEventListener("input", () => onEndpointInput(source));
       target.app.addEventListener("input", () => onEndpointInput(target));
+      source.app.addEventListener("change", () => {
+        adoptDiffAppReference(source.app, source.guest, "比較元", () => setPairEndpointName(source, ""));
+      });
+      source.app.addEventListener("paste", (ev) => {
+        const text2 = ev.clipboardData?.getData("text") || "";
+        if (adoptDiffAppReference(source.app, source.guest, "比較元", () => setPairEndpointName(source, ""), text2)) {
+          ev.preventDefault();
+        }
+      });
+      target.app.addEventListener("change", () => {
+        adoptDiffAppReference(target.app, target.guest, "比較先", () => setPairEndpointName(target, ""));
+      });
+      target.app.addEventListener("paste", (ev) => {
+        const text2 = ev.clipboardData?.getData("text") || "";
+        if (adoptDiffAppReference(target.app, target.guest, "比較先", () => setPairEndpointName(target, ""), text2)) {
+          ev.preventDefault();
+        }
+      });
       [source.guest, target.guest].forEach((input) => input.addEventListener("input", () => {
         clearPairRowValidation(entry);
         invalidateResultAfterPairConditionChange();
@@ -22470,12 +22617,28 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     ], "diffOnly");
     htmlContentMode.setAttribute("aria-label", "HTMLに含める内容");
     cardOut.body.appendChild(makeRow(htmlContentMode, { label: "HTML内容" }));
+    const xlsxAudience = makeSelect([
+      ["customer", "レビュー用（標準）"],
+      ["internal", "社内・技術明細込み"]
+    ], "customer");
+    xlsxAudience.setAttribute("aria-label", "Excelの出力構成");
+    cardOut.body.appendChild(makeRow(xlsxAudience, { label: "Excel構成" }));
+    const maskSensitiveCb = makeCheck({
+      label: "共有用マスキング（機密キー・本文を秘匿）",
+      checked: false,
+      help: "Excel出力時にトークン・パスワード等の機密キーやJS/CSS本文・プラグイン設定値をSHA-256識別子でマスクします"
+    });
+    cardOut.body.appendChild(makeRow(maskSensitiveCb.label, { label: "機密保護" }));
     const expRange = makeSelect([
       ["all", "全件"],
       ["filtered", "表示中（フィルタ適用後）"]
     ], "all");
     expRange.setAttribute("aria-label", "ファイルへ出力する差分の範囲");
     cardOut.body.appendChild(makeRow(expRange, { label: "範囲" }));
+    const currentXlsxOptions = () => ({
+      audience: xlsxAudience.value === "internal" ? "internal" : "customer",
+      maskSensitive: maskSensitiveCb.checkbox.checked
+    });
     const grid = document.createElement("div");
     grid.className = "kus-lp__btn-grid";
     const bXlsx = makeButton("Excel を保存 (.xlsx)", "primary", { icon: "↓" });
@@ -22668,24 +22831,44 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const file = srcFile.files?.[0];
       if (!file) return;
       setCompletionActionsVisible(false);
-      importedSourceBundle = await readSettingsBundleFile(file, { side: "source", appId: srcApp.value.trim() });
+      importedSourceBundle = null;
+      setSourceName("");
+      const invalidatedBefore = invalidateResultAfterAppSelectionChange();
+      try {
+        importedSourceBundle = await readSettingsBundleFile(file, { side: "source", appId: srcApp.value.trim() });
+      } catch (err) {
+        srcFile.value = "";
+        pairClearImportBtn.disabled = !importedSourceBundle && !importedTargetBundle;
+        pairClearImportBtn.hidden = !importedSourceBundle && !importedTargetBundle;
+        throw err;
+      }
       if (!srcApp.value.trim() && importedSourceBundle?.appId) srcApp.value = String(importedSourceBundle.appId);
       setSourceName(extractAppNameFromBundle(importedSourceBundle));
       pairClearImportBtn.disabled = false;
       pairClearImportBtn.hidden = false;
-      const invalidated = invalidateResultAfterAppSelectionChange();
+      const invalidated = invalidateResultAfterAppSelectionChange() || invalidatedBefore;
       panel.setStatus(`比較元JSONを読み込みました: App ${importedSourceBundle?.appId || "-"}${invalidated ? "。結果を更新するため再比較してください" : ""}`, invalidated ? "warn" : "ok");
     }));
     tgtFile.addEventListener("change", () => liteRun(panel, "比較先JSONを読み込み中…", async () => {
       const file = tgtFile.files?.[0];
       if (!file) return;
       setCompletionActionsVisible(false);
-      importedTargetBundle = await readSettingsBundleFile(file, { side: "target", appId: tgtApp.value.trim() });
+      importedTargetBundle = null;
+      setTargetName(targetRows[0], "");
+      const invalidatedBefore = invalidateResultAfterAppSelectionChange();
+      try {
+        importedTargetBundle = await readSettingsBundleFile(file, { side: "target", appId: tgtApp.value.trim() });
+      } catch (err) {
+        tgtFile.value = "";
+        pairClearImportBtn.disabled = !importedSourceBundle && !importedTargetBundle;
+        pairClearImportBtn.hidden = !importedSourceBundle && !importedTargetBundle;
+        throw err;
+      }
       if (!tgtApp.value.trim() && importedTargetBundle?.appId) tgtApp.value = String(importedTargetBundle.appId);
       setTargetName(targetRows[0], extractAppNameFromBundle(importedTargetBundle));
       pairClearImportBtn.disabled = false;
       pairClearImportBtn.hidden = false;
-      const invalidated = invalidateResultAfterAppSelectionChange();
+      const invalidated = invalidateResultAfterAppSelectionChange() || invalidatedBefore;
       panel.setStatus(`比較先JSONを読み込みました: App ${importedTargetBundle?.appId || "-"}${invalidated ? "。結果を更新するため再比較してください" : ""}`, invalidated ? "warn" : "ok");
     }));
     const clearImportedBundles = () => {
@@ -23084,7 +23267,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
                 item.cache.rows,
                 "all",
                 "全件",
-                "フィルターなし（比較結果の全件）"
+                "フィルターなし（比較結果の全件）",
+                currentXlsxOptions()
               )
             })),
             {
@@ -23201,7 +23385,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
             item.cache.rows,
             "all",
             "全件",
-            "フィルターなし（比較結果の全件）"
+            "フィルターなし（比較結果の全件）",
+            currentXlsxOptions()
           ));
           const incomplete = isIncompleteLiteDiff(item.cache);
           panel.setStatus(`${item.label} の差分一覧 Excel のダウンロードを開始しました: ${result.filename}${incomplete ? " — 比較結果は不完全です" : ""}`, incomplete ? "warn" : "ok");
@@ -23434,6 +23619,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
                 attachKnownAppName(bundle, pair.source.appName);
                 if (!folderMode) context.onSourceBundle(bundle);
               },
+              onProgress: (side, progress, label) => panel.setStatus(
+                `比較 ${position}/${prepared.pairs.length}・入力ペア ${pair.rowNumber}（${sourceText} → ${targetText}）: ${side === "source" ? "比較元" : "比較先"}を取得中 (${Math.round(progress * 100)}%: ${label})`,
+                "busy"
+              ),
               onStatus: (message) => panel.setStatus(`比較 ${position}/${prepared.pairs.length}・入力ペア ${pair.rowNumber}（${sourceText} → ${targetText}）: ${message}`, "busy")
             });
             attachKnownAppName(out.sourceBundle, pair.source.appName);
@@ -23524,6 +23713,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       }
       const commonValidation = validateLiteDiffStart({
         sourceAppId: base.source.appId,
+        sourceGuestId: base.source.guestId,
         scopes: base.scopes,
         ignoreKeys: base.ignoreKeys,
         hasImportedSource: !!importedSourceBundle,
@@ -23551,7 +23741,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       runDiffTask("全比較先を比較中…", async () => {
         const resultRows = [];
         let sharedSourceBundle = importedSourceBundle;
+        const autoExportHtml = multiAutoHtml.checkbox.checked;
         let exported = 0;
+        let succeeded = 0;
         let failed = 0;
         let exportFailed = 0;
         let incomplete = 0;
@@ -23571,11 +23763,16 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
                 attachKnownAppName(bundle, base.source.appName);
                 sharedSourceBundle = bundle;
               },
+              onProgress: (side, progress, label) => panel.setStatus(
+                `比較中 (${i + 1}/${targets.length}) ${side === "source" ? "比較元" : "比較先"}を取得中 (${Math.round(progress * 100)}%: ${label})`,
+                "busy"
+              ),
               onStatus: (m) => panel.setStatus(m, "busy")
             });
             if (!sharedSourceBundle) sharedSourceBundle = out.sourceBundle;
             attachKnownAppName(out.sourceBundle, base.source.appName);
             attachKnownAppName(out.targetBundle, t.appName);
+            succeeded += 1;
             const counts = summarizeLiteDiffRows(out.rows || []);
             const contentChanged = contentChangedCount(counts);
             const issueCount = (out.fetchIssues || []).length;
@@ -23584,24 +23781,26 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
             const comparedAt = (/* @__PURE__ */ new Date()).toISOString();
             if (needsReview) incomplete += 1;
             let exportNote = "";
-            try {
-              runExportDiffHtmlStandalone({
-                rows: out.rows,
-                fetchIssues: out.fetchIssues || [],
-                partialIssues: out.partialIssues || [],
-                sourceBundle: out.sourceBundle,
-                targetBundle: out.targetBundle,
-                scopes: base.scopes,
-                ignoreKeys: base.ignoreKeys,
-                normalizationPresetState: base.normalizationPresetState,
-                truncation: out.truncation || null,
-                exportContentMode: normalizeLiteHtmlExportContentMode(htmlContentMode.value),
-                exportContentLabel: getLiteHtmlExportContentLabel(htmlContentMode.value)
-              });
-              exported += 1;
-            } catch (e) {
-              exportNote = ` / HTML出力失敗: ${e?.message || String(e)}`;
-              exportFailed += 1;
+            if (autoExportHtml) {
+              try {
+                runExportDiffHtmlStandalone({
+                  rows: out.rows,
+                  fetchIssues: out.fetchIssues || [],
+                  partialIssues: out.partialIssues || [],
+                  sourceBundle: out.sourceBundle,
+                  targetBundle: out.targetBundle,
+                  scopes: base.scopes,
+                  ignoreKeys: base.ignoreKeys,
+                  normalizationPresetState: base.normalizationPresetState,
+                  truncation: out.truncation || null,
+                  exportContentMode: normalizeLiteHtmlExportContentMode(htmlContentMode.value),
+                  exportContentLabel: getLiteHtmlExportContentLabel(htmlContentMode.value)
+                });
+                exported += 1;
+              } catch (e) {
+                exportNote = ` / HTML出力失敗: ${e?.message || String(e)}`;
+                exportFailed += 1;
+              }
             }
             const targetLabel = t.appName ? `${t.appName}（App ${t.appId}）` : `App ${t.appId}`;
             const multiNoticeCount = (out.matchingNotices?.items?.length || 0) + (out.matchingNotices?.omitted || 0);
@@ -23621,7 +23820,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
                 matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
               }
             }) - 1;
-            resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : "通常スペース")} / ${t.preview ? "プレビュー" : "運用"}</small></td><td class="${needsReview || exportNote ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${exportNote ? "出力失敗" : needsReview ? "要確認" : "完了"}${esc(exportNote)}</td><td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ""}${multiNoticeCount ? ` / 注意 ${multiNoticeCount}` : ""}</td><td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${targetLabel}のExcelを保存`)}">Excel保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${targetLabel}のAI向けMarkdownを保存`)}">AI向けMD保存</button></span></td></tr>`);
+            resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : "通常スペース")} / ${t.preview ? "プレビュー" : "運用"}</small></td><td class="${needsReview || exportNote ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${exportNote ? "出力失敗" : needsReview ? "要確認" : "完了"}${esc(exportNote)}</td><td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ""}${multiNoticeCount ? ` / 注意 ${multiNoticeCount}` : ""}</td><td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${targetLabel}のHTMLを保存`)}">HTML保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${targetLabel}のExcelを保存`)}">Excel保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${targetLabel}のAI向けMarkdownを保存`)}">AI向けMD保存</button></span></td></tr>`);
           } catch (e) {
             failed += 1;
             const targetLabel = t.appName ? `${t.appName}（App ${t.appId}）` : `App ${t.appId}`;
@@ -23631,9 +23830,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         cardResult.card.style.display = "";
         reviewEmpty.style.display = "none";
         resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>保存</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
-        const tone = failed || exportFailed || incomplete || exported !== targets.length ? "warn" : "ok";
+        const tone = failed || exportFailed || incomplete || autoExportHtml && exported !== targets.length ? "warn" : "ok";
         const note = [failed ? `比較失敗 ${failed}件` : "", exportFailed ? `HTML出力失敗 ${exportFailed}件` : "", incomplete ? `要確認 ${incomplete}件` : ""].filter(Boolean).join(" / ");
-        panel.setStatus(`全比較先の比較が完了: HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）${note ? ` / ${note}` : ""}。Excelは各行または一括ボタンから保存できます`, tone);
+        const exportSummary = autoExportHtml ? `HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）` : `成功 ${succeeded}/${targets.length}件（HTML自動保存オフ）`;
+        panel.setStatus(`全比較先の比較が完了: ${exportSummary}${note ? ` / ${note}` : ""}。HTML/Excel/Markdownは各行または一括ボタンから保存できます`, tone);
       });
     });
     runBtn.addEventListener("click", () => {
@@ -23641,6 +23841,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const validation = validateLiteDiffStart({
         sourceAppId: f.source.appId,
         targetAppId: f.target.appId,
+        sourceGuestId: f.source.guestId,
+        targetGuestId: f.target.guestId,
+        sourcePreview: f.source.preview,
+        targetPreview: f.target.preview,
         scopes: f.scopes,
         ignoreKeys: f.ignoreKeys,
         hasImportedSource: !!importedSourceBundle,
@@ -23675,6 +23879,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           normalizationPresetState: f.normalizationPresetState,
           importedSourceBundle,
           importedTargetBundle,
+          onProgress: (side, progress, label) => panel.setStatus(
+            `${side === "source" ? "比較元" : "比較先"}を取得中 (${Math.round(progress * 100)}%: ${label})`,
+            "busy"
+          ),
           onStatus: (m) => panel.setStatus(m, "busy")
         });
         attachKnownAppName(out.sourceBundle, f.source.appName);
@@ -23766,7 +23974,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           ctx.rows,
           ctx.exportMode,
           ctx.exportLabel,
-          ctx.filterDescription
+          ctx.filterDescription,
+          currentXlsxOptions()
         ));
         const incomplete = isIncompleteLiteDiff(snapshot);
         panel.setStatus(`差分一覧 Excel のダウンロードを開始しました（${ctx.exportLabel} / ${ctx.rows.length}件）: ${result.filename}${incomplete ? " — 元の比較結果は不完全です" : ""}`, incomplete ? "warn" : "ok");

@@ -198,4 +198,13 @@ describe('design/bundleToMarkdown (REST API レスポンス準拠の日本語化
     expect(md).toContain('rawJson:false のため省略されています');
     expect(md).not.toContain('（データなし）');
   });
+
+  it('目次のアンカースラッグから括弧・スラッシュ・中黒を除去してGFM見出しアンカーに揃える', () => {
+    const md = bundleToMarkdown(makeBundle({
+      appInfo: { name: 'アプリ情報' },
+      appSettings: { name: '受注管理' }
+    }), { rawJson: false });
+    expect(md).toContain('- [アプリ情報(ラベル)](#アプリ情報ラベル)');
+    expect(md).not.toContain('](#アプリ情報(ラベル))');
+  });
 });

@@ -367,4 +367,95 @@ describe('design xlsx output', () => {
     expect(statusValues).toContain('不明（設定JSONに記載なし）');
     expect(allCellValues(result.wb.Sheets['サマリー']).some((value) => String(value).includes('ゲストスペース: 不明（設定JSONに記載なし）'))).toBe(true);
   });
+
+  it('renders generalSettings details and categories in the summary sheet', async () => {
+    installBrowserStubs(() => {
+      throw new Error('bundle output must not call the API');
+    });
+    const bundle: any = makeBundle();
+    bundle.sections.appSettings = {
+      name: 'テストアプリ',
+      description: '概要',
+      titleField: { selectionMode: 'MANUAL', code: 'field_004' },
+      enableComments: true,
+      enableBulkDeletion: false,
+      enableDuplicateRecord: true,
+      enableInlineRecordEditing: true,
+      enableThumbnails: true,
+      firstMonthOfFiscalYear: '4',
+      numberPrecision: { digits: '16', decimalPlaces: '4', roundingMode: 'HALF_EVEN' }
+    };
+    bundle.sections.categories = {
+      enabled: true,
+      categories: [
+        { name: '親カテゴリ', children: [{ name: '子カテゴリ', children: [] }] }
+      ]
+    };
+
+    const result: any = await runAdvancedDesignExporter({
+      bundle,
+      appId: 9100,
+      preselectedSheets: new Set(['summary']),
+      returnWorkbook: true,
+      suppressToast: true,
+      fieldTypeExclusion: new Set()
+    });
+    const summaryValues = allCellValues(result.wb.Sheets['サマリー']);
+    expect(summaryValues).toContain('レコードタイトル (titleField)');
+    expect(summaryValues).toContain('field_004 (MANUAL)');
+    expect(summaryValues).toContain('コメント機能 (enableComments)');
+    expect(summaryValues).toContain('数値計算精度 (numberPrecision)');
+    expect(summaryValues).toContain('総桁数:16 / 小数部:4 / 丸め:HALF_EVEN');
+    expect(summaryValues).toContain('カテゴリー');
+    expect(summaryValues.some((v) => String(v).includes('親カテゴリ > 子カテゴリ'))).toBe(true);
+  });
+
+  it('does not mark the target app design doc as failed when referenced app lookup returns 403', async () => {
+    const completions: any[] = [];
+    installBrowserStubs((path, _method, params) => {
+      if (path.endsWith('/app.json') && String(params?.id) === '9999') {
+        throw new Error('403 Forbidden: 閲覧権限がありません');
+      }
+      if (path.includes('/records.json')) return { totalCount: 0 };
+      if (path.includes('/form/fields.json')) {
+        return {
+          properties: {
+            lk: {
+              code: 'lk',
+              label: 'ルックアップ',
+              type: 'SINGLE_LINE_TEXT',
+              lookup: { relatedApp: { app: '9999' }, relatedKeyField: 'k', fieldMappings: [] }
+            }
+          }
+        };
+      }
+      if (path.includes('/form/layout.json')) return { layout: [] };
+      if (path.includes('/views.json')) return { views: {} };
+      if (path.includes('/reports.json')) return { reports: {} };
+      if (path.includes('/status.json')) return { enable: false, states: {}, actions: [] };
+      if (path.includes('/plugins.json')) return { plugins: [] };
+      if (path.includes('/actions.json')) return { actions: [] };
+      if (path.includes('/customize.json')) return { desktop: { js: [], css: [] }, mobile: { js: [], css: [] } };
+      if (path.includes('/acl.json') || path.includes('/field/acl.json') || path.includes('/record/acl.json')) return { rights: [] };
+      if (path.includes('/notifications/')) return { notifications: [] };
+      if (path.includes('/webhook.json')) return { webhooks: [] };
+      if (path.includes('/adminNotes.json')) return { content: '' };
+      if (path.includes('/categories.json')) return { categories: [] };
+      if (path.endsWith('/form.json')) return { revision: '1' };
+      if (path.endsWith('/app.json')) return { name: 'メインアプリ' };
+      return {};
+    });
+
+    const result: any = await runAdvancedDesignExporter({
+      appId: 9100,
+      preselectedSheets: new Set(['summary', 'dependencies']),
+      returnWorkbook: true,
+      suppressToast: true,
+      fieldTypeExclusion: new Set(),
+      onComplete: (summary: any) => completions.push(summary)
+    });
+
+    expect(result.failedAPIs).toEqual([]);
+    expect(completions[0]).toMatchObject({ complete: true, incompleteSectionCount: 0 });
+  });
 });

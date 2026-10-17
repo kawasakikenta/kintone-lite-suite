@@ -1,7 +1,7 @@
 'use strict';
 
 import { SECTION_DEFS } from '../constants.js';
-import { buildExportFilename, buildAppFilenameLabel } from '../utils.js';
+import { buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, fetchBundle, pickRevision, isRevisionConflictError } from '../api.js';
 import { captureReflectBaseline, assertReflectBaselineMatches, assertCompleteReflectBackup, type ReflectBaseline } from '../reflect/standalonePreflight.js';
 import { buildReflectSectionPlan, reflectInspectionScopes, reflectSelectionBlockers, listReflectFieldCodes, type ReflectSectionPlan } from '../reflect/standalonePlan.js';
@@ -75,7 +75,10 @@ export async function resolveReflectAppsStandalone(opts: ReflectOptions): Promis
     return { appId, guestId, name: info.name, code: String(info.code || '') };
   };
   const target = await resolve(opts.targetAppId, opts.targetGuestId);
-  const source = opts.sourceBundle ? { appId: opts.sourceAppId, guestId: '', name: '設定JSON', code: '' } : await resolve(opts.sourceAppId, opts.sourceGuestId);
+  const jsonAppName = opts.sourceBundle ? extractAppNameFromBundle(opts.sourceBundle) : '';
+  const source = opts.sourceBundle
+    ? { appId: opts.sourceAppId, guestId: '', name: jsonAppName ? `設定JSON（${jsonAppName}）` : '設定JSON', code: '' }
+    : await resolve(opts.sourceAppId, opts.sourceGuestId);
   return { source, target };
 }
 
@@ -114,6 +117,18 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
       assertReflectBaselineMatches(baseline, { ...opts, scopes: [entry.sectionKey], targetDependencies: entry.requiredFields?.length ? ['fieldSettings'] : [] }, source, target);
     } catch (error: any) { entry.status = 'error'; entry.blockers.push(error.message); entry.message = error.message; }
   }
+  if (Object.keys(opts.lookupMap || {}).length && scopes.some(key => key === 'fieldSettings' || key === 'actionSettings')) {
+    const lookup = await preflightLookupMapStandalone(opts.lookupMap!, { targetGuestId: opts.targetGuestId });
+    if (!lookup.ok) {
+      const lookupErr = `ルックアップ変換先を確認できません: ${lookup.missing.map(item => `${item.from} → ${item.to}: ${item.reason}`).join(' / ')}`;
+      const affected = entries.filter(entry => entry.sectionKey === 'fieldSettings' || entry.sectionKey === 'actionSettings');
+      for (const entry of (affected.length ? affected : entries.slice(0, 1))) {
+        entry.status = 'error';
+        entry.blockers.push(lookupErr);
+        entry.message = entry.blockers.join('\n');
+      }
+    }
+  }
   return {
     totalSections: entries.length, changedSections: entries.filter(entry => entry.status === 'change').length,
     sameSections: entries.filter(entry => entry.status === 'same').length,
@@ -147,7 +162,7 @@ export async function runApplyPreviewStandalone(
     const blob = new Blob([JSON.stringify({ generatedAt: new Date().toISOString(), scopes, bundle: target }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = buildExportFilename('反映前バックアップ', 'json', { appLabel: buildAppFilenameLabel(opts.targetAppId, '') });
+    a.download = buildExportFilename('反映前バックアップ', 'json', { appLabel: buildAppFilenameLabel(opts.targetAppId, extractAppNameFromBundle(target)) });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     logs.push('バックアップ取得完了（保存を開始しました）');

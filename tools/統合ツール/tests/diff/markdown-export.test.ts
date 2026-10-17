@@ -212,5 +212,24 @@ describe('diff/markdown export', () => {
     expect(markdown).toContain('改名候補（確定ではありません）');
     expect(markdown).toContain('確認専用（自動反映対象外）');
   });
+
+  it('truncates strings exceeding 2,000 characters with a SHA-256 identifier', () => {
+    const hugeBefore = 'A'.repeat(2500);
+    const hugeAfter = 'B'.repeat(2500);
+    const { markdown } = buildDiffMarkdownExport(baseContext({
+      rows: [{
+        sectionKey: 'customizeSettings',
+        section: 'カスタマイズ',
+        type: 'changed',
+        path: 'customizeSettings.desktop.js[0]._body',
+        left: hugeBefore,
+        right: hugeAfter
+      }]
+    }));
+
+    expect(markdown).toContain('... [...長文省略 (2500文字, SHA256-');
+    expect(markdown).not.toContain(hugeBefore);
+    expect(markdown).not.toContain(hugeAfter);
+  });
 });
 

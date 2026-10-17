@@ -2013,7 +2013,7 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
     lines.push('## 目次');
     lines.push('');
     available.forEach((def) => {
-      const slug = def.label.replace(/\s+/g, '-');
+      const slug = def.label.toLowerCase().replace(/[()（）/／・]/g, '').replace(/\s+/g, '-');
       lines.push(`- [${def.label}](#${slug})`);
     });
     lines.push('');

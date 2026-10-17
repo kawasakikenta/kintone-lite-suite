@@ -54,8 +54,45 @@ describe('field apply revision guard', () => {
       } }),
       overwrite: true,
       skipConfirm: true
-    }, vi.fn())).rejects.toThrow(/更新後の revision/);
+    }, vi.fn())).rejects.toThrow(/更新後の revision[\s\S]*OK フィールド追加 1件/);
     expect(apiPost).toHaveBeenCalledTimes(1);
     expect(apiPut).not.toHaveBeenCalled();
+  });
+
+  it('preserves completed ADD logs in the thrown error when subsequent PUT fails', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      properties: { existing: { type: 'NUMBER', code: 'existing' } },
+      revision: '10'
+    });
+    vi.mocked(apiPost).mockResolvedValue({ revision: '11' });
+    vi.mocked(apiPut).mockRejectedValue(new Error('PUT失敗: バリデーションエラー'));
+
+    let caught: any = null;
+    try {
+      await runFieldApplyStandalone({
+        targetAppId: '5',
+        fieldJson: JSON.stringify({ properties: {
+          added: { type: 'SINGLE_LINE_TEXT' },
+          existing: { type: 'NUMBER', label: '更新後' }
+        } }),
+        overwrite: true,
+        skipConfirm: true
+      }, vi.fn());
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain('PUT失敗: バリデーションエラー');
+    expect(caught.message).toContain('OK フィールド追加 1件 (revision 11)');
+    expect(caught.message).toContain('NG フィールド更新 1件（追加 1件は反映済み）');
+  });
+
+  it('rejects non-numeric targetAppId or targetGuestId before calling API', async () => {
+    await expect(runFieldApplyStandalone({
+      targetAppId: 'abc',
+      fieldJson: JSON.stringify({ properties: { title: { type: 'SINGLE_LINE_TEXT' } } }),
+      skipConfirm: true
+    }, vi.fn())).rejects.toThrow(/数値で入力してください/);
+    expect(apiGet).not.toHaveBeenCalled();
   });
 });

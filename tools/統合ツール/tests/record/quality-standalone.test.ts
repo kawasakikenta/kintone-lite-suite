@@ -88,7 +88,14 @@ describe('quality inspection and CSV templates from API settings', () => {
     expect(JSON.parse(FakeZip.files.get('manifest.json')!).failures).toEqual(['App 7: 設定権限なし']);
     expect(downloadBlob).toHaveBeenCalledTimes(1);
     expect(fetchRecordsByQuery).not.toHaveBeenCalled();
-    expect(apiGet).toHaveBeenCalledWith('/k/guest/9/v1', '/app/form/fields.json', { app: '8' });
+    expect(apiGet).toHaveBeenCalledWith('/k/guest/9/v1', '/app/form/fields.json', { app: '8', lang: 'user' });
+  });
+  it('supports intersecting fields across multiple apps when intersectAll is enabled', async () => {
+    vi.mocked(apiGet)
+      .mockResolvedValueOnce({ properties: props })
+      .mockResolvedValueOnce({ properties: { title: props.title } });
+    const fields = await runLoadQualityFieldsStandalone({ ...options, intersectAll: true });
+    expect(fields.map(f => f.code)).toEqual(['title']);
   });
   it('avoids saving empty ZIPs if no app succeeds', async () => {
     vi.mocked(apiGet).mockRejectedValue(new Error('拒否'));

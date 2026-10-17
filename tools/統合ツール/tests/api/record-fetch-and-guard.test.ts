@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  apiPost,
+  apiPut,
   assertAllowsMutatingRestCall,
   decorateRevisionConflict,
   fetchRecordsByQuery,
@@ -21,6 +23,26 @@ describe('assertAllowsMutatingRestCall', () => {
     expect(() => assertAllowsMutatingRestCall('/k/v1', '/app/form/fields.json', 'PUT')).toThrow(/本番API/);
     expect(() => assertAllowsMutatingRestCall('/k/v1/preview', '/app/deploy.json', 'POST')).toThrow(/デプロイ/);
     expect(() => assertAllowsMutatingRestCall('/k/v1', '/records.json', 'POST')).not.toThrow();
+  });
+
+  it('retries transient 429/503 errors on apiPut and apiPost without retrying 4xx validation errors', async () => {
+    const api = vi.fn()
+      .mockRejectedValueOnce(new Error('HTTP status 429'))
+      .mockResolvedValueOnce({ revision: '10' });
+    (globalThis as any).kintone = { api };
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: any) => { fn(); return 0 as any; }) as any);
+
+    const putRes = await apiPut('/k/v1/preview', '/app/form/fields.json', { app: '7', properties: {} });
+    expect(putRes).toEqual({ revision: '10' });
+    expect(api).toHaveBeenCalledTimes(2);
+
+    api.mockReset();
+    api.mockRejectedValueOnce({ status: 400, message: 'CB_VA01' });
+    await expect(apiPost('/k/v1/preview', '/app/form/fields.json', { app: '7', properties: {} })).rejects.toThrow(/CB_VA01/);
+    expect(api).toHaveBeenCalledTimes(1);
+
+    vi.restoreAllMocks();
+    delete (globalThis as any).kintone;
   });
 });
 

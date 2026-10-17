@@ -67,6 +67,21 @@ describe('CSV preflight against field settings', () => {
     expect(result.issueCount).toBe(150); expect(result.issues).toHaveLength(100); expect(result.sample).toHaveLength(5);
     expect(formatCsvImportReport(result)).toContain('ほか 50件');
   });
+  it('validates DATE/TIME/DATETIME formats, text length limits, numeric range limits, and normalizes lookup RECORD_NUMBER prefixes', () => {
+    const extProps = {
+      ...props,
+      title: { ...props.title, minLength: '2', maxLength: '5' },
+      amount: { ...props.amount, minValue: '10', maxValue: '100', lookup: { relatedKeyField: 'レコード番号', fieldMappings: [] } },
+      dt: { type: 'DATE', label: '日付' },
+      tm: { type: 'TIME', label: '時刻' },
+      dttm: { type: 'DATETIME', label: '日時' }
+    };
+    const bad = plan('title,amount,dt,tm,dttm\nA,5,2026/01/01,25:99,not-iso', extProps);
+    expect(bad.issueCount).toBe(5);
+    const ok = plan('title,amount,dt,tm,dttm\n案件A,APP-50,2026-01-01,09:30,2026-01-01T09:30:00Z', extProps);
+    expect(ok.issueCount).toBe(0);
+    expect(ok.records[0].amount).toEqual({ value: '50' });
+  });
 });
 
 describe('all-app CSV inspection before any writes', () => {

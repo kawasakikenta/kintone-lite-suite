@@ -241,22 +241,38 @@ export async function apiGet(prefix: string, path: string, params: Record<string
   throw apiErrorWithContext(err, { method: 'GET', prefix, path, payload: params });
 }
 
-export async function apiPut(prefix: string, path: string, body: Record<string, unknown>): Promise<any> {
-  assertAllowsMutatingRestCall(prefix, path, 'PUT');
-  try {
-    return await (kintone as any).api(`${prefix}${path}`, 'PUT', body);
-  } catch (e) {
-    throw apiErrorWithContext(e, { method: 'PUT', prefix, path, payload: body });
+async function executeMutatingApiWithRetry(
+  method: 'PUT' | 'POST',
+  prefix: string,
+  path: string,
+  body: Record<string, unknown>,
+  retries = DEFAULT_API_GET_RETRIES
+): Promise<any> {
+  assertAllowsMutatingRestCall(prefix, path, method);
+  const maxAttempts = Math.max(1, retries);
+  let lastErr: any;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      return await (kintone as any).api(`${prefix}${path}`, method, body);
+    } catch (e) {
+      lastErr = e;
+      if (i < maxAttempts - 1 && isRetriableMutation(method, e)) {
+        const waitMs = computeRetryDelayMs(i, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS);
+        await new Promise<void>((r) => setTimeout(r, waitMs));
+        continue;
+      }
+      break;
+    }
   }
+  throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
+}
+
+export async function apiPut(prefix: string, path: string, body: Record<string, unknown>): Promise<any> {
+  return executeMutatingApiWithRetry('PUT', prefix, path, body);
 }
 
 export async function apiPost(prefix: string, path: string, body: Record<string, unknown>): Promise<any> {
-  assertAllowsMutatingRestCall(prefix, path, 'POST');
-  try {
-    return await (kintone as any).api(`${prefix}${path}`, 'POST', body);
-  } catch (e) {
-    throw apiErrorWithContext(e, { method: 'POST', prefix, path, payload: body });
-  }
+  return executeMutatingApiWithRetry('POST', prefix, path, body);
 }
 
 export async function apiDelete(prefix: string, path: string, body: Record<string, unknown>): Promise<any> {
@@ -683,7 +699,7 @@ export async function fetchPluginConfigs(
     if (!id) { stats.skipped += 1; continue; }
     tasks.push(async () => {
       try {
-        const res = await apiGet(prefix, '/app/plugin/config.json', { app: appId, id }, 1);
+        const res = await apiGet(prefix, '/app/plugin/config.json', { app: appId, id });
         if (res && typeof res === 'object') {
           plugin._config = res?.config != null ? res.config : res;
           stats.fetched += 1;
