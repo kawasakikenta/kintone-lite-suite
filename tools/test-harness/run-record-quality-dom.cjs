@@ -157,15 +157,16 @@ async function main() {
     await page.screenshot({ path: path.join(OUT, 'template-result.png') });
     results.push('CSVひな形/必須・選択肢ガイド/除外項目/使い方の同梱・複数アプリ部分失敗の維持');
 
-    // The standalone panel has no workflow wrapper, so it must guard input and double runs itself.
+    // The standalone panel uses the same select → confirm → run workflow as the other lite panels.
     await page.evaluate(() => document.getElementById('kus-record-lite').remove());
     await page.addScriptTag({ content: standaloneBuild.outputFiles[0].text });
     await page.evaluate(() => { window.calls.length = 0; QualityUI.mountRecordQualityLitePanel(); });
     const panelIdle = () => page.waitForFunction(() => document.querySelector('#kus-record-quality-lite').getAttribute('aria-busy') === 'false');
     const status = page.locator('#kus-record-quality-lite .kus-lp__status');
     const callCount = suffix => page.evaluate(suffix => window.calls.filter(call => call.url.endsWith(suffix)).length, suffix);
-    await button('重複・未入力を検査').click(); await panelIdle();
-    assert.match(await status.innerText(), /検査フィールドを読み込んで1〜5項目を選んでください/);
+    const quality = page.getByRole('radio', { name: '重複・未入力を検査', exact: true });
+    if (await quality.count()) await quality.check();
+    assert.equal(await button('内容を確認する').isDisabled(), true, '検査項目が未選択なら確認へ進めない');
     assert.equal(await page.evaluate(() => window.calls.length), 0, '未選択では設定もレコードも取得しない');
     await page.evaluate(() => { window.defer = true; });
     await button('検査フィールド読込').click(); await button('検査フィールド読込').click({ force: true });
@@ -175,6 +176,7 @@ async function main() {
     await fields.getByRole('checkbox', { name: '件名［title］ / SINGLE_LINE_TEXT', exact: true }).check();
     await page.evaluate(() => { window.calls.length = 0; });
     await page.evaluate(() => { window.holdRecords = true; });
+    await button('内容を確認する').click();
     await button('重複・未入力を検査').click(); await button('重複・未入力を検査').click({ force: true });
     await page.waitForFunction(() => window.releaseRecords);
     await page.evaluate(() => { window.holdRecords = false; window.releaseRecords(); });
@@ -182,6 +184,7 @@ async function main() {
     assert.equal(await callCount('/records.json'), 21, '検査の二重クリックで取得を重複実行しない');
     assert.match(await status.innerText(), /1アプリの検査が完了しました/);
     assert.equal(await output.locator('li').count() > 0, true);
+    await button('対象・条件を変更').click();
     await page.getByLabel('データ検査のクエリ', { exact: true }).fill('amount > 0');
     assert.equal(await output.innerText(), '');
     assert.match(await status.innerText(), /対象や条件が変わりました/, '完了メッセージを古い結果のまま残さない');
