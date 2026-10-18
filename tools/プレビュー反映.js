@@ -5167,7 +5167,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
   }
 
-  // src/reflect/liteSetup.ts
+  // src/reflect/appReference.ts
   function parseAppReference(text) {
     const raw = String(text || "").trim();
     if (!raw) return null;
@@ -5183,6 +5183,44 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const raw = String(text || "").trim();
     return !!raw && !/^\d+$/.test(raw);
   }
+
+  // src/reflect/rolloutQueue.ts
+  var ROLLOUT_QUEUE_LIMIT = 50;
+  var keyOf = (ref) => `${ref.guestId || ""}:${ref.appId}`;
+  function parseRolloutQueue(text, excluded = []) {
+    const tokens = String(text || "").split(/[\s,、，]+/).map((token) => token.trim()).filter(Boolean);
+    const seen = new Set(excluded.map(keyOf));
+    const targets = [];
+    for (const token of tokens) {
+      const ref = parseAppReference(token);
+      if (!ref) return { ok: false, error: `「${Array.from(token).length > 40 ? Array.from(token).slice(0, 39).join("") + "…" : token}」をアプリIDとして読み取れません。数字のID、またはアプリのURLを入力してください。` };
+      if (seen.has(keyOf(ref))) continue;
+      seen.add(keyOf(ref));
+      targets.push(ref);
+    }
+    if (targets.length > ROLLOUT_QUEUE_LIMIT) return { ok: false, error: `続けて反映する反映先は ${ROLLOUT_QUEUE_LIMIT} 件までです（${targets.length} 件）。` };
+    return { ok: true, targets };
+  }
+  function formatRolloutTarget(target) {
+    return `#${target.appId}${target.guestId ? `（ゲスト ${target.guestId}）` : ""}`;
+  }
+  var ROLLOUT_LOG_LIMIT = 100;
+  function upsertRolloutLog(log, entry, limit = ROLLOUT_LOG_LIMIT) {
+    const index = log.findIndex((item) => keyOf(item) === keyOf(entry));
+    const next = index >= 0 ? log.map((item, i) => i === index ? entry : item) : [...log, entry];
+    return next.slice(-limit);
+  }
+  function describeRolloutLookupNotice(lookupCount) {
+    return lookupCount > 0 ? `参照先変換（${lookupCount} 件）を、すべての反映先に同じように使います。反映先ごとに変換先が違う場合は、反映先を切り替えた後に参照先変換を直してください。` : "";
+  }
+  function serializeRolloutQueue(targets) {
+    return targets.map((target) => target.guestId ? `/k/guest/${target.guestId}/${target.appId}/` : target.appId).join("\n");
+  }
+
+  // src/entries/reflectPlanView.ts
+  init_constants();
+
+  // src/reflect/liteSetup.ts
   var LOOKUP_PAIR_SEPARATOR = /\s*(?:→|->|=>|=|:|,|\t)\s*|\s+/;
   function parseLookupMapText(text) {
     const trimmed = String(text || "").trim();
@@ -5314,42 +5352,6 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return out;
   }
   var REFLECT_UNDO_GUIDANCE = "取り消す場合: 反映前に反映先プレビューへ未公開の変更が無ければ、アプリの設定画面の『変更を中止』で今回の反映を含む未公開の変更をすべて破棄できます。または自動保存したバックアップJSONを『設定JSONから取得』で反映元に読み込み、差分を確認して戻せます（追加したフィールドは削除されません）。";
-
-  // src/reflect/rolloutQueue.ts
-  var ROLLOUT_QUEUE_LIMIT = 50;
-  var keyOf = (ref) => `${ref.guestId || ""}:${ref.appId}`;
-  function parseRolloutQueue(text, excluded = []) {
-    const tokens = String(text || "").split(/[\s,、，]+/).map((token) => token.trim()).filter(Boolean);
-    const seen = new Set(excluded.map(keyOf));
-    const targets = [];
-    for (const token of tokens) {
-      const ref = parseAppReference(token);
-      if (!ref) return { ok: false, error: `「${Array.from(token).length > 40 ? Array.from(token).slice(0, 39).join("") + "…" : token}」をアプリIDとして読み取れません。数字のID、またはアプリのURLを入力してください。` };
-      if (seen.has(keyOf(ref))) continue;
-      seen.add(keyOf(ref));
-      targets.push(ref);
-    }
-    if (targets.length > ROLLOUT_QUEUE_LIMIT) return { ok: false, error: `続けて反映する反映先は ${ROLLOUT_QUEUE_LIMIT} 件までです（${targets.length} 件）。` };
-    return { ok: true, targets };
-  }
-  function formatRolloutTarget(target) {
-    return `#${target.appId}${target.guestId ? `（ゲスト ${target.guestId}）` : ""}`;
-  }
-  var ROLLOUT_LOG_LIMIT = 100;
-  function upsertRolloutLog(log, entry, limit = ROLLOUT_LOG_LIMIT) {
-    const index = log.findIndex((item) => keyOf(item) === keyOf(entry));
-    const next = index >= 0 ? log.map((item, i) => i === index ? entry : item) : [...log, entry];
-    return next.slice(-limit);
-  }
-  function describeRolloutLookupNotice(lookupCount) {
-    return lookupCount > 0 ? `参照先変換（${lookupCount} 件）を、すべての反映先に同じように使います。反映先ごとに変換先が違う場合は、反映先を切り替えた後に参照先変換を直してください。` : "";
-  }
-  function serializeRolloutQueue(targets) {
-    return targets.map((target) => target.guestId ? `/k/guest/${target.guestId}/${target.appId}/` : target.appId).join("\n");
-  }
-
-  // src/entries/reflectPlanView.ts
-  init_constants();
 
   // src/reflect/applyProgress.ts
   function describeApplyProgressStatus(status) {

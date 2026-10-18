@@ -39,7 +39,7 @@ import {
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
 import { readSettingsBundleFile } from '../settingsBundleImport.js';
-import { needsAppReferenceParse, parseAppReference } from '../reflect/liteSetup.js';
+import { needsAppReferenceParse, parseAppReference } from '../reflect/appReference.js';
 import {
   DEFAULT_MAX_DIFF_BATCH_PAIRS,
   prepareDiffBatchPairs,
