@@ -49,7 +49,7 @@ describe('一般設定の反映計画', () => {
     for (const key of ['name', 'description', 'icon', 'revision']) expect(operation.body).not.toHaveProperty(key);
     expect(result.changes).toEqual([
       { kind: '変更', path: 'テーマ', before: 'WHITE', after: 'RED' },
-      { kind: '変更', path: 'コメント', before: 'true', after: 'false' }
+      { kind: '変更', path: 'コメント機能', before: 'true', after: 'false' }
     ]);
   });
   it('反映元に無いキーは変更なしとして送らない（古いJSONとの互換）', () => {
