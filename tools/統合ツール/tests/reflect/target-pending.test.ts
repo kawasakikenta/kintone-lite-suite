@@ -8,7 +8,7 @@ const previewBundle = (sections: Record<string, any>, revision = '20') => ({ app
 
 /** 本番とプレビューの設定を URL で出し分けるモック。 */
 function mockKintone(production: { revision: string; sections?: Record<string, any>; fail?: string }) {
-  const endpoints: Record<string, string> = { '/app/settings.json': 'appSettings', '/app/form/fields.json': 'fieldSettings', '/app/views.json': 'viewSettings' };
+  const endpoints: Record<string, string> = { '/app/settings.json': 'appSettings', '/app/form/fields.json': 'fieldSettings', '/app/views.json': 'viewSettings', '/app/customize.json': 'customizeSettings' };
   const api = vi.fn(async (url: string, method: string) => {
     if (method !== 'GET') throw new Error(`Unexpected write: ${method} ${url}`);
     if (production.fail) throw new Error(production.fail);
@@ -29,6 +29,15 @@ describe('反映先プレビューの未公開の変更の確認', () => {
     const result = await inspectTargetPendingChanges({ targetAppId: '2', scopes: ['fieldSettings', 'viewSettings'] }, previewBundle({ fieldSettings: { properties: {}, revision: '20' } }));
     expect(result).toEqual({ state: 'clean', productionRevision: '20', previewRevision: '20', sectionKeys: [], message: '反映先プレビューに未公開の変更はありません。' });
     expect(api.mock.calls.map(([url, method, params]) => [url, method, params])).toEqual([['/k/v1/app/settings.json', 'GET', { app: '2' }]]);
+  });
+  it('JS/CSS は fileKey の違いではなく、ファイル名とサイズの違いだけを未公開の変更として扱う', async () => {
+    const js = (fileKey: string, name = 'app.js', size = '10') => ({ type: 'FILE', file: { fileKey, name, size } });
+    const customize = (list: any[]) => ({ scope: 'ALL', desktop: { js: list, css: [] }, mobile: { js: [], css: [] } });
+    mockKintone({ revision: '18', sections: { customizeSettings: customize([js('prod-key')]) } });
+    const sameContent = await inspectTargetPendingChanges({ targetAppId: '2', scopes: ['customizeSettings'] }, previewBundle({ customizeSettings: { ...customize([js('preview-key')]), revision: '20' } }));
+    expect(sameContent.sectionKeys).toEqual([]);
+    const changed = await inspectTargetPendingChanges({ targetAppId: '2', scopes: ['customizeSettings'] }, previewBundle({ customizeSettings: { ...customize([js('preview-key', 'app.js', '12')]), revision: '20' } }));
+    expect(changed.sectionKeys).toEqual(['customizeSettings']);
   });
   it('revision が異なれば pending とし、内容が異なるセクションを列挙する', async () => {
     const api = mockKintone({ revision: '18', sections: {
