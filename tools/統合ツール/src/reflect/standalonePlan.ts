@@ -1,7 +1,8 @@
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone } from '../utils.js';
-import { APP_SETTINGS_REFLECT_KEYS, reflectSectionLabel } from './sections.js';
+import { APP_SETTINGS_LABELS, APP_SETTINGS_REFLECT_KEYS, reflectSectionLabel } from './sections.js';
 import { comparableCustomizePayload, customizeFileNames, type CustomizeFileResolution } from './customizeFiles.js';
+import { retainedItemNames, summarizeReflectItems, type ReflectItemSummary } from './changeSummary.js';
 import {
   extractActionRequiredFields,
   extractReportRequiredFields,
@@ -19,8 +20,9 @@ export interface ReflectSectionPlan {
   behavior: string; changes: ReflectChange[]; changeCount: number; removalCount: number; warnings: string[]; blockers: string[];
   operations: ReflectOperation[]; fieldStats?: { add: number; update: number; tgtOnly: number };
   requiredFields?: string[]; fileUploads?: ReflectFileUpload[];
+  items?: ReflectItemSummary[];
 }
-export interface ReflectPlanOptions { lookupMap?: Record<string, string>; preserveTargetOnly?: boolean; customizeFiles?: CustomizeFileResolution }
+export interface ReflectPlanOptions { lookupMap?: Record<string, string>; preserveTargetOnly?: boolean; customizeFiles?: CustomizeFileResolution; fieldLabels?: Record<string, string> }
 const formatBytes = (bytes: number) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
 const namedSections: Record<string, string> = { viewSettings: 'views', reportSettings: 'reports', actionSettings: 'actions' };
 const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
@@ -150,11 +152,10 @@ export function reflectSelectionBlockers(entries: ReflectSectionPlan[], scopes: 
   return [...new Set(issues)];
 }
 
-const appSettingLabels: Record<string, string> = { theme: 'テーマ', titleField: 'レコードのタイトル', enableThumbnails: 'サムネイル表示', enableBulkDeletion: 'レコード一括削除', enableComments: 'コメント', enableDuplicateRecord: 'レコードの再利用', enableInlineRecordEditing: '一覧のインライン編集', numberPrecision: '数値の精度', firstMonthOfFiscalYear: '年度の始まりの月' };
 const settingValue = (value: any): any => typeof value === 'number' ? String(value) : Array.isArray(value) ? value.map(settingValue) : object(value) ? Object.fromEntries(Object.entries(value).map(([name, item]) => [name, settingValue(item)])) : value;
 
 /** 一般設定。反映元に無いキーは「変更なし」として送らない（古いJSONとの互換）。アプリ名・説明・アイコンは対象外。 */
-function buildAppSettingsPlan(plan: ReflectSectionPlan, source: any, target: any): ReflectSectionPlan {
+function buildAppSettingsPlan(plan: ReflectSectionPlan, source: any, target: any, options: ReflectPlanOptions): ReflectSectionPlan {
   try {
     if (own(source, 'titleField') && !object(source.titleField)) throw new Error('レコードのタイトルの設定形式が不正です。');
     plan.behavior = '動作・表示の設定を更新（アプリ名・説明・アイコンは対象外）';
@@ -162,7 +163,8 @@ function buildAppSettingsPlan(plan: ReflectSectionPlan, source: any, target: any
     const before = pick(target), after = pick(source);
     if (after.titleField?.selectionMode === 'MANUAL' && typeof after.titleField.code === 'string' && after.titleField.code) plan.requiredFields = [after.titleField.code];
     diffValues(before, after, [], plan.changes);
-    for (const change of plan.changes) { const [head, ...rest] = change.path.split(' / '); change.path = [appSettingLabels[head] || head, ...rest].join(' / '); }
+    try { plan.items = summarizeReflectItems('appSettings', before, after, { fieldLabels: options.fieldLabels }); } catch { plan.items = []; }
+    for (const change of plan.changes) { const [head, ...rest] = change.path.split(' / '); change.path = [APP_SETTINGS_LABELS[head] || head, ...rest].join(' / '); }
     plan.changeCount = plan.changes.filter(change => change.kind !== '保持').length;
     plan.removalCount = plan.changes.filter(change => change.kind === '削除').length;
     if (plan.changeCount) plan.operations.push({ method: 'PUT', endpoint: SECTION_DEFS.find(item => item.key === 'appSettings')?.endpoint || '/app/settings.json', body: after, label: plan.label });
@@ -182,7 +184,7 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
   };
   if (!isCompleteReflectSection(source)) return fail('src', source);
   if (!isCompleteReflectSection(target)) return fail('tgt', target);
-  if (key === 'appSettings') return buildAppSettingsPlan(plan, source, target);
+  if (key === 'appSettings') return buildAppSettingsPlan(plan, source, target, options);
   if (!def?.put || !def.putBuilder) { plan.status = 'error'; plan.blockers.push('この項目は反映に対応していません。'); return plan; }
   try {
     let before: any, after: any, comparable: ((value: any) => any) | undefined;
@@ -309,7 +311,9 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
         walk(after.layout); plan.requiredFields = [...new Set(codes)];
       }
     }
-    diffValues(comparable ? comparable(before) : before, comparable ? comparable(after) : after, [], plan.changes);
+    const shownBefore = comparable ? comparable(before) : before, shownAfter = comparable ? comparable(after) : after;
+    diffValues(shownBefore, shownAfter, [], plan.changes);
+    try { plan.items = summarizeReflectItems(key, shownBefore, shownAfter, { fieldLabels: options.fieldLabels, retained: retainedItemNames(key, plan.changes, options.fieldLabels) }); } catch { plan.items = []; }
     plan.changeCount = plan.changes.filter(change => change.kind !== '保持').length;
     plan.removalCount = plan.changes.filter(change => change.kind === '削除').length;
     if (key !== 'fieldSettings' && key !== 'pluginSettings' && plan.changeCount) plan.operations.push({ method: 'PUT', endpoint: def.endpoint, body: after, label: def.label, ...(uploads.length ? { uploads } : {}) });

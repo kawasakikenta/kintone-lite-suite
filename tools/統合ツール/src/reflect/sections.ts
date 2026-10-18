@@ -10,6 +10,13 @@ export const REFLECT_SECTION_KEYS: readonly string[] = SECTION_DEFS.filter(def =
 /** 反映する一般設定のキー。アプリ名・説明・アイコンはアプリ固有の情報なので反映しない。 */
 export const APP_SETTINGS_REFLECT_KEYS: readonly string[] = ['theme', 'titleField', 'enableThumbnails', 'enableBulkDeletion', 'enableComments', 'enableDuplicateRecord', 'enableInlineRecordEditing', 'numberPrecision', 'firstMonthOfFiscalYear'];
 
+/** 一般設定の項目名（差分の内訳と変更の要約で共通）。 */
+export const APP_SETTINGS_LABELS: Record<string, string> = {
+  theme: 'テーマ', titleField: 'レコードのタイトル', enableThumbnails: 'サムネイル表示', enableBulkDeletion: '一括削除',
+  enableComments: 'コメント機能', enableDuplicateRecord: 'レコードの再利用', enableInlineRecordEditing: '一覧でのインライン編集',
+  numberPrecision: '数値の桁数と丸め', firstMonthOfFiscalYear: '年度の開始月'
+};
+
 export function isReflectableSection(key: string): boolean { return REFLECT_SECTION_KEYS.includes(key); }
 
 export function reflectSectionLabel(key: string): string {
