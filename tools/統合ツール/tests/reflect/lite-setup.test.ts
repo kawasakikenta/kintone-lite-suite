@@ -5,8 +5,19 @@ import {
   needsAppReferenceParse,
   parseLookupMapText,
   describeReflectSetupBlocker,
-  summarizePostApplyCheck
+  summarizePostApplyCheck,
+  REFLECT_SCOPE_GROUPS,
+  REFLECT_SCOPE_HINTS,
+  groupReflectScopes,
+  describeReflectScope,
+  shouldWarnMissingFieldSettings,
+  findMissingFieldReferences,
+  canResolveByIncludingFieldSettings,
+  describeApplySectionStatus,
+  normalizeApplySections
 } from '../../src/reflect/liteSetup';
+import { SECTION_DEFS } from '../../src/constants';
+import { reflectSelectionBlockers } from '../../src/reflect/standalonePlan';
 
 describe('parseAppReference', () => {
   it('accepts a plain app id', () => {
@@ -90,7 +101,7 @@ describe('describeReflectSetupBlocker', () => {
 
   it('asks for the JSON before anything else in JSON mode', () => {
     expect(describeReflectSetupBlocker({ ...base, sourceMode: 'json', connectionError: '反映先アプリIDには正の整数を入力してください。', scopeCount: 0 }))
-      .toBe('比較元の設定JSONを読み込んでください。');
+      .toBe('反映元の設定JSONを読み込んでください。');
   });
 
   it('surfaces the connection error, then the scope count, then the lookup error', () => {
@@ -118,5 +129,134 @@ describe('summarizePostApplyCheck', () => {
     const res = summarizePostApplyCheck({ scopeCount: 2, changedLabels: ['a'], errorLabels: ['b'] });
     expect(res.tone).toBe('warn');
     expect(res.message).toMatch(/1 項目を取得できませんでした（b）/);
+  });
+});
+
+describe('反映する項目のグループと説明', () => {
+  const putKeys = SECTION_DEFS.filter((def) => def.put).map((def) => def.key);
+
+  it('反映可能な項目はすべてグループに入り、説明が付く', () => {
+    const grouped = groupReflectScopes(putKeys).flatMap((group) => group.keys);
+    expect([...grouped].sort()).toEqual([...putKeys].sort());
+    for (const key of putKeys) expect(describeReflectScope(key), key).not.toBe('');
+  });
+
+  it('グループに無い項目は「その他」へ入り、取りこぼさない', () => {
+    const groups = groupReflectScopes([...putKeys, 'futureSettings']);
+    expect(groups[groups.length - 1]).toEqual({ id: 'other', label: 'その他', keys: ['futureSettings'] });
+  });
+
+  it('対象が無いグループは返さない', () => {
+    const groups = groupReflectScopes(['appAcl']);
+    expect(groups.map((group) => group.id)).toEqual(['access']);
+  });
+
+  it('一般設定（appSettings）はキー一覧に足してあり、反映可能になれば動作グループへ入る', () => {
+    expect(REFLECT_SCOPE_GROUPS.find((group) => group.id === 'behavior')?.keys).toContain('appSettings');
+    expect(REFLECT_SCOPE_HINTS.appSettings).toBeTruthy();
+    expect(groupReflectScopes(['fieldSettings', 'appSettings']).find((group) => group.id === 'behavior')?.keys).toEqual(['appSettings']);
+  });
+
+  it('説明は docs の保持・置換の区分に沿う', () => {
+    expect(describeReflectScope('fieldSettings')).toContain('反映先だけのフィールドは保持');
+    expect(describeReflectScope('layoutSettings')).toContain('末尾に保持');
+    expect(describeReflectScope('viewSettings')).toContain('「保持」の設定に従います');
+    expect(describeReflectScope('pluginSettings')).toContain('設定値はコピーしません');
+    expect(describeReflectScope('customizeSettings')).toContain('ファイル一覧');
+    for (const key of ['appAcl', 'notifications', 'processSettings', 'categories']) expect(describeReflectScope(key)).toContain('置き換えます');
+  });
+});
+
+describe('shouldWarnMissingFieldSettings', () => {
+  it('レイアウト・一覧・グラフ・アクションを選んでフィールド設定を選ばないときに注意する', () => {
+    for (const key of ['layoutSettings', 'viewSettings', 'reportSettings', 'actionSettings']) {
+      expect(shouldWarnMissingFieldSettings([key])).toBe(true);
+    }
+    expect(shouldWarnMissingFieldSettings(['layoutSettings', 'fieldSettings'])).toBe(false);
+  });
+
+  it('フィールドを参照しない項目だけなら注意しない', () => {
+    expect(shouldWarnMissingFieldSettings([])).toBe(false);
+    expect(shouldWarnMissingFieldSettings(['appAcl', 'notifications', 'pluginSettings'])).toBe(false);
+    expect(shouldWarnMissingFieldSettings(['fieldSettings'])).toBe(false);
+  });
+});
+
+describe('findMissingFieldReferences', () => {
+  const view = { sectionKey: 'viewSettings', label: 'ビュー設定', blockers: [] as string[], requiredFields: ['name', 'tag'] };
+  const layout = { sectionKey: 'layoutSettings', label: 'レイアウト設定', blockers: [] as string[], requiredFields: ['name'] };
+
+  it('反映先に無い参照フィールドを、メッセージではなく requiredFields から求める', () => {
+    expect(findMissingFieldReferences([view, layout], ['viewSettings'], [], ['name', 'local'])).toEqual([
+      { sectionKey: 'viewSettings', label: 'ビュー設定', code: 'tag', inSource: undefined }
+    ]);
+  });
+
+  it('反映元のフィールドコードが分かるときは、反映元にあるかも示す', () => {
+    const missing = findMissingFieldReferences([view], ['viewSettings'], ['name', 'tag'], ['name']);
+    expect(missing).toEqual([{ sectionKey: 'viewSettings', label: 'ビュー設定', code: 'tag', inSource: true }]);
+    expect(findMissingFieldReferences([view], ['viewSettings'], ['name'], ['name'])[0].inSource).toBe(false);
+  });
+
+  it('選択していない項目は見ない', () => {
+    expect(findMissingFieldReferences([view, layout], ['layoutSettings'], [], ['name'])).toEqual([]);
+  });
+
+  it('フィールド設定を選んでいて問題が無ければ、反映元のフィールドは追加されるので不足にしない', () => {
+    const fields = { sectionKey: 'fieldSettings', label: 'フィールド設定', blockers: [] as string[] };
+    expect(findMissingFieldReferences([fields, view], ['fieldSettings', 'viewSettings'], ['name', 'tag'], ['name'])).toEqual([]);
+    const blocked = { ...fields, blockers: ['種類が異なります'] };
+    expect(findMissingFieldReferences([blocked, view], ['fieldSettings', 'viewSettings'], ['name', 'tag'], ['name']).map((item) => item.code)).toEqual(['tag']);
+  });
+
+  it('reflectSelectionBlockers が不足と判定する場合と一致する', () => {
+    const entries = [view, layout].map((entry) => ({ ...entry, status: 'change', message: '', behavior: '', changes: [], changeCount: 0, removalCount: 0, warnings: [], operations: [] }));
+    const scopes = ['viewSettings', 'layoutSettings'];
+    const blockers = reflectSelectionBlockers(entries as any, scopes, ['name', 'tag'], ['name']);
+    const missing = findMissingFieldReferences(entries, scopes, ['name', 'tag'], ['name']);
+    expect(blockers.length).toBe(missing.length);
+    expect(blockers[0]).toContain(`「${missing[0].code}」`);
+  });
+});
+
+describe('canResolveByIncludingFieldSettings', () => {
+  const missing = (inSource: boolean | undefined) => [{ sectionKey: 'viewSettings', label: 'ビュー設定', code: 'tag', inSource }];
+
+  it('フィールド設定が未選択で、反映元にある（または不明な）不足があれば案内する', () => {
+    expect(canResolveByIncludingFieldSettings(missing(true), ['viewSettings'])).toBe(true);
+    expect(canResolveByIncludingFieldSettings(missing(undefined), ['viewSettings'])).toBe(true);
+  });
+
+  it('反映元にも無いと分かっている不足だけなら案内しない（再取得しても解消しない）', () => {
+    expect(canResolveByIncludingFieldSettings(missing(false), ['viewSettings'])).toBe(false);
+  });
+
+  it('フィールド設定を選択済み、または不足が無ければ案内しない', () => {
+    expect(canResolveByIncludingFieldSettings(missing(true), ['viewSettings', 'fieldSettings'])).toBe(false);
+    expect(canResolveByIncludingFieldSettings([], ['viewSettings'])).toBe(false);
+  });
+});
+
+describe('反映結果の表示用ヘルパー', () => {
+  it('状態を文字とアイコンで表す', () => {
+    expect(describeApplySectionStatus('ok')).toEqual({ icon: '✓', text: '成功', tone: 'ok' });
+    expect(describeApplySectionStatus('ng')).toEqual({ icon: '✕', text: '失敗', tone: 'ng' });
+    expect(describeApplySectionStatus('skip')).toEqual({ icon: '－', text: '変更なし', tone: 'skip' });
+    expect(describeApplySectionStatus('pending')).toEqual({ icon: '○', text: '未実行', tone: 'pending' });
+    expect(describeApplySectionStatus('unknown').text).toBe('未実行');
+  });
+
+  it('保存済みの結果から表示できるセクションだけを取り出す', () => {
+    expect(normalizeApplySections(undefined)).toEqual([]);
+    expect(normalizeApplySections([
+      { sectionKey: 'fieldSettings', label: 'フィールド設定', status: 'ng', message: '失敗\n詳細' },
+      { sectionKey: 'viewSettings', label: 'ビュー設定', status: 'bogus' },
+      null,
+      'text',
+      {}
+    ])).toEqual([
+      { sectionKey: 'fieldSettings', label: 'フィールド設定', status: 'ng', message: '失敗\n詳細' },
+      { sectionKey: 'viewSettings', label: 'ビュー設定', status: 'pending' }
+    ]);
   });
 });

@@ -25,7 +25,7 @@ import {
 import { createAppSearchControl } from './appSearchControl.js';
 import { pickAllSettingsBundles } from '../settingsBundleImport.js';
 import { reflectSelectionBlockers } from '../reflect/standalonePlan.js';
-import { appendReflectChanges, renderReflectRoute, reflectIdentityLabel } from './reflectPlanView.js';
+import { appendReflectChanges, renderReflectRoute, renderReflectSummaryTable, renderApplySectionResults } from './reflectPlanView.js';
 import { collectRetrySectionKeys, summarizeApplyOutcome } from '../reflect/applyOutcome.js';
 import {
   parseAppReference,
@@ -35,8 +35,16 @@ import {
   lookupMapValue,
   describeReflectSetupBlocker,
   summarizePostApplyCheck,
-  guestIdFromPagePath
+  guestIdFromPagePath,
+  groupReflectScopes,
+  describeReflectScope,
+  shouldWarnMissingFieldSettings,
+  FIELD_SETTINGS_OMITTED_NOTICE,
+  findMissingFieldReferences,
+  canResolveByIncludingFieldSettings,
+  REFLECT_UNDO_GUIDANCE
 } from '../reflect/liteSetup.js';
+import { createReflectAppLookupCache, formatReflectAppName, isLookupableReflectApp, REFLECT_APP_LOOKUP_FAILURE, type ReflectAppLookupOk } from '../reflect/appLookup.js';
 import { buildReflectPresetsExport, normalizeImportedReflectPresets, mergeReflectPresets, type ReflectPreset } from '../reflect/presetIo.js';
 import { buildAppFilenameLabel, buildExportFilename, downloadText, extractAppNameFromBundle, readTextFile } from '../utils.js';
 
@@ -279,6 +287,60 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-change__values span{font-size:10px;color:#64748b}
 #kus-reflect-lite .kus-rl-change__values pre{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.6 ui-monospace,monospace}
 #kus-reflect-lite .kus-rl-nav__btn:disabled{opacity:.45;cursor:not-allowed}
+#kus-reflect-lite .kus-rl-app-note{margin:-2px 0 8px;min-height:18px;font-size:11.5px;line-height:1.5;color:#64748b;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-app-note--ok{color:#065f46;font-weight:600}
+#kus-reflect-lite .kus-rl-app-note--warn{color:#b91c1c;font-weight:700}
+#kus-reflect-lite .kus-rl-scope-group .kus-lp__chip{display:flex;align-items:center;gap:6px}
+#kus-reflect-lite .kus-rl-chip__badge{margin-left:auto;flex:none;padding:0 6px;border:1px solid #fb923c;border-radius:4px;background:#fff7ed;color:#9a3412;font-size:10px;font-weight:800;line-height:16px;letter-spacing:.04em}
+#kus-reflect-lite .kus-rl-scope-notice{margin:10px 0 0}
+#kus-reflect-lite .kus-rl-scope-option{margin-top:12px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc}
+#kus-reflect-lite .kus-rl-scope-option__title{margin-bottom:6px;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-scope-option .kus-lp__check{margin:0}
+#kus-reflect-lite .kus-rl-scope-option__help{margin:4px 0 0 22px;font-size:11.5px;line-height:1.5;color:#475569}
+#kus-reflect-lite .kus-rl-scope-option__help--warn{color:#9a3412;font-weight:700}
+#kus-reflect-lite .kus-rl-scope-help{margin:0;display:grid;gap:8px;font-size:11.5px;line-height:1.55}
+#kus-reflect-lite .kus-rl-scope-help dt{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-weight:700;color:#0f172a}
+#kus-reflect-lite .kus-rl-scope-help dd{margin:2px 0 0;color:#475569}
+#kus-reflect-lite .kus-rl-fix{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+#kus-reflect-lite .kus-rl-fix__note{font-size:11.5px;color:#475569}
+#kus-reflect-lite .kus-rl-summary{margin:0 0 12px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#fff}
+#kus-reflect-lite .kus-rl-summary__title{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:9px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11.5px;color:#475569}
+#kus-reflect-lite .kus-rl-summary__title strong{color:#0f172a}
+#kus-reflect-lite .kus-rl-summary__table{width:100%;border-collapse:collapse;font-size:12px}
+#kus-reflect-lite .kus-rl-summary__table th{padding:7px 10px;text-align:left;font-size:11px;font-weight:700;color:#475569;background:#fff;border-bottom:1px solid #e2e8f0;white-space:nowrap}
+#kus-reflect-lite .kus-rl-summary__table td{padding:8px 10px;border-top:1px solid #f1f5f9;vertical-align:middle;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-summary__table tbody tr{cursor:pointer}
+#kus-reflect-lite .kus-rl-summary__table tbody tr:hover{background:#f8fafc}
+#kus-reflect-lite .kus-rl-summary__table th.kus-rl-summary__num,#kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+#kus-reflect-lite .kus-rl-summary__link{appearance:none;border:0;background:none;padding:2px 0;font:inherit;font-weight:700;color:#1d4ed8;text-align:left;text-decoration:underline;cursor:pointer}
+#kus-reflect-lite .kus-rl-preview-row{scroll-margin-top:8px}
+#kus-reflect-lite .kus-rl-preview-row--focus{box-shadow:0 0 0 3px #93c5fd}
+#kus-reflect-lite .kus-rl-result-heading{margin-top:10px;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-result-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+#kus-reflect-lite .kus-rl-result-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-result-item--ok{border-color:#a7f3d0}
+#kus-reflect-lite .kus-rl-result-item--ng{border-color:#fca5a5;background:#fff5f5}
+#kus-reflect-lite .kus-rl-result-item--pending{border-color:#fde68a;background:#fffbeb}
+#kus-reflect-lite .kus-rl-result-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px}
+#kus-reflect-lite .kus-rl-result-state{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-result-state--ok{border-color:#a7f3d0;background:#ecfdf5;color:#065f46}
+#kus-reflect-lite .kus-rl-result-state--ng{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
+#kus-reflect-lite .kus-rl-result-state--pending{border-color:#fde68a;background:#fffbeb;color:#92400e}
+#kus-reflect-lite .kus-rl-result-item__message{margin-top:6px;font-size:11.5px;line-height:1.6;color:#334155;white-space:pre-wrap;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-result-item__hint{margin-top:4px;font-size:11.5px;line-height:1.5;font-weight:600;color:#9a3412}
+#kus-reflect-lite .kus-rl-undo{margin:10px 0 0}
+@media(max-width:760px){
+  #kus-reflect-lite .kus-rl-summary__table,#kus-reflect-lite .kus-rl-summary__table tbody{display:block}
+  #kus-reflect-lite .kus-rl-summary__table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  #kus-reflect-lite .kus-rl-summary__table tbody tr{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px 8px;padding:10px 12px;border-top:1px solid #e2e8f0}
+  #kus-reflect-lite .kus-rl-summary__table tbody tr:first-child{border-top:0}
+  #kus-reflect-lite .kus-rl-summary__table td{display:block;padding:0;border:0;min-width:0}
+  #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__name{grid-column:1/5}
+  #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__status{grid-column:5/7;justify-self:end}
+  #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__num{grid-column:span 2;text-align:left}
+  #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__how,#kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__sel{grid-column:1/-1}
+  #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__num::before,#kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__how::before{content:attr(data-label) " ";font-size:10.5px;font-weight:700;color:#64748b}
+}
 @media(max-width:720px){
   #kus-reflect-lite .kus-rl-change__values{grid-template-columns:1fr}
   #kus-reflect-lite .kus-rl-nav__num{display:none}
@@ -328,6 +390,8 @@ interface PreviewRenderOptions {
   fresh?: boolean;
   onAdd?: (sectionKey: string) => void;
   onRemove?: (sectionKey: string) => void;
+  /** 要約表から移動する項目が絞り込みで隠れているとき、絞り込みを解除して再描画する。 */
+  onShowAll?: () => void;
 }
 
 function ensureReflectLiteStyles() {
@@ -355,7 +419,7 @@ export function mountReflectLitePanel() {
   const panel = createLitePanel({
     id: 'kus-reflect-lite',
     title: 'プレビュー反映',
-    subtitle: '比較元アプリの設定を比較先プレビューへ一括反映します。',
+    subtitle: '反映元アプリの設定を、反映先アプリのプレビューへまとめて反映します。',
     accent: 'reflect',
     badges: [],
     hint: '<strong>差分を確認してから反映</strong> · 反映先はプレビューです。本番への公開は設定画面で行います。',
@@ -367,17 +431,67 @@ export function mountReflectLitePanel() {
   let sourceMode: 'app' | 'json' = 'app';
 
   // ---- アプリ ----
-  const srcApp = makeInput({ placeholder: '比較元アプリID', value: memoryState.sourceAppId || '', width: 'id' });
+  const srcApp = makeInput({ placeholder: '反映元アプリID', value: memoryState.sourceAppId || '', width: 'id' });
   const srcGuest = makeInput({ placeholder: 'ゲストID', value: memoryState.sourceGuestId || '', width: 'guest' });
   // 開いているアプリがゲストスペースにある場合、アプリIDだけを入れると別の（通常）スペースを指してしまう。
   const pageGuestId = () => guestIdFromPagePath(window.location?.pathname || '');
   const defaultsToCurrentApp = !memoryState.targetAppId && !!DEFAULT_APP_ID;
-  const tgtApp = makeInput({ placeholder: '比較先アプリID', value: memoryState.targetAppId || DEFAULT_APP_ID || '', width: 'id' });
+  const tgtApp = makeInput({ placeholder: '反映先アプリID', value: memoryState.targetAppId || DEFAULT_APP_ID || '', width: 'id' });
   const tgtGuest = makeInput({ placeholder: 'ゲストID', value: defaultsToCurrentApp ? pageGuestId() : (memoryState.targetGuestId || ''), width: 'guest' });
-  srcApp.setAttribute('aria-label', '比較元アプリID');
-  srcGuest.setAttribute('aria-label', '比較元ゲストスペースID');
-  tgtApp.setAttribute('aria-label', '比較先アプリID');
-  tgtGuest.setAttribute('aria-label', '比較先ゲストスペースID');
+  // ---- 入力中のアプリ名確認（進行はブロックしない。厳密な確認は差分取得時の resolveReflectAppsStandalone） ----
+  const appLookupCache = createReflectAppLookupCache();
+  const APP_LOOKUP_DELAY_MS = 350;
+  function createAppNote(appInput: HTMLInputElement, guestInput: HTMLInputElement, isActive: () => boolean, onResolved: () => void) {
+    const el = document.createElement('div');
+    el.className = 'kus-rl-app-note';
+    el.setAttribute('aria-live', 'polite');
+    let key = '\u0000';
+    let seq = 0;
+    let timer: number | undefined;
+    let known: ReflectAppLookupOk | null = null;
+    const paint = (text: string, tone: '' | 'ok' | 'warn' = '') => {
+      el.textContent = text;
+      el.classList.toggle('kus-rl-app-note--ok', tone === 'ok');
+      el.classList.toggle('kus-rl-app-note--warn', tone === 'warn');
+    };
+    const show = (info: ReflectAppLookupOk, open: boolean) => {
+      known = info;
+      paint(`✓ ${formatReflectAppName(info)}${open ? ' · 開いているアプリ' : ''}`, 'ok');
+      onResolved();
+    };
+    function refresh() {
+      const appId = appInput.value.trim();
+      const guest = guestInput.value.trim();
+      const active = isActive() && isLookupableReflectApp(appId, guest);
+      const nextKey = active ? `${guest}|${appId}` : '';
+      if (nextKey === key) return;
+      key = nextKey;
+      seq += 1;
+      known = null;
+      window.clearTimeout(timer);
+      if (!active) { paint(''); return; }
+      const open = !!DEFAULT_APP_ID && appId === DEFAULT_APP_ID && guest === pageGuestId();
+      const cached = appLookupCache.peek(appId, guest);
+      if (cached) { show(cached, open); return; }
+      paint(open ? '· 開いているアプリ' : '確認中…');
+      const mine = seq;
+      timer = window.setTimeout(async () => {
+        const result = await appLookupCache.get(appId, guest);
+        // 入力が変わった後に返ってきた古い応答は捨てる。
+        if (mine !== seq) return;
+        if (result.ok) show(result, open);
+        else if (!open) paint('message' in result ? result.message : REFLECT_APP_LOOKUP_FAILURE, 'warn');
+      }, APP_LOOKUP_DELAY_MS);
+    }
+    return { el, refresh, known: () => known };
+  }
+  // 名前が分かったらフッターの経路表示も更新する。
+  const sourceNote = createAppNote(srcApp, srcGuest, () => sourceMode === 'app', () => refreshWorkflow());
+  const targetNote = createAppNote(tgtApp, tgtGuest, () => true, () => refreshWorkflow());
+  srcApp.setAttribute('aria-label', '反映元アプリID');
+  srcGuest.setAttribute('aria-label', '反映元ゲストスペースID');
+  tgtApp.setAttribute('aria-label', '反映先アプリID');
+  tgtGuest.setAttribute('aria-label', '反映先ゲストスペースID');
   let sourceBundleFromJson: any = null;
   let sourceJsonBundles: any[] = [];
   // 差分プレビューの鮮度判定（signature）に使う読み込み済みJSONの識別子
@@ -389,7 +503,7 @@ export function mountReflectLitePanel() {
   srcJsonFile.className = 'kus-lp__file';
   const sourceJsonAppSelect = document.createElement('select');
   sourceJsonAppSelect.className = 'kus-lp__select';
-  sourceJsonAppSelect.setAttribute('aria-label', '設定JSON内の比較元アプリ');
+  sourceJsonAppSelect.setAttribute('aria-label', '設定JSON内の反映元アプリ');
   sourceJsonAppSelect.hidden = true;
   const srcJsonClearBtn = makeButton('クリア', 'ghost');
   srcJsonClearBtn.style.display = 'none';
@@ -397,9 +511,9 @@ export function mountReflectLitePanel() {
   srcJsonNote.className = 'kus-lp__small';
   srcJsonNote.style.display = 'none';
 
-  const currentSrcBtn = makeButton('現在のアプリを比較元', 'sub');
-  const copyBtn = makeButton('比較元 → 比較先', 'sub');
-  const currentBtn = makeButton('現在のアプリを比較先', 'sub');
+  const currentSrcBtn = makeButton('現在のアプリを反映元', 'sub');
+  const copyBtn = makeButton('反映元 → 反映先', 'sub');
+  const currentBtn = makeButton('現在のアプリを反映先', 'sub');
   const swapBtn = makeButton('入れ替え', 'sub');
 
   const cardApp = makeCard({ title: 'アプリ', number: 1 });
@@ -408,10 +522,10 @@ export function mountReflectLitePanel() {
   route.className = 'kus-rl-route';
   const sourceEndpoint = document.createElement('section');
   sourceEndpoint.className = 'kus-rl-endpoint';
-  sourceEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">比較元 · 設定を読み取る</div>';
+  sourceEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">反映元 · 設定を読み取る</div>';
   const sourceModeSelect = document.createElement('select');
   sourceModeSelect.className = 'kus-lp__select';
-  sourceModeSelect.setAttribute('aria-label', '比較元の取得方法');
+  sourceModeSelect.setAttribute('aria-label', '反映元の取得方法');
   sourceModeSelect.innerHTML = '<option value="app">アプリから取得</option><option value="json">設定JSONから取得</option>';
   sourceEndpoint.appendChild(sourceModeSelect);
   const sourceAppFields = document.createElement('div');
@@ -425,13 +539,14 @@ export function mountReflectLitePanel() {
     return label;
   }
   sourceAppFields.appendChild(labeledInput(srcApp, 'アプリID'));
+  sourceAppFields.appendChild(sourceNote.el);
   const sourceGuestDetails = makeDetails('ゲストスペースを指定', { open: !!srcGuest.value });
   sourceGuestDetails.body.appendChild(labeledInput(srcGuest, 'ゲストスペースID（任意）'));
   sourceAppFields.append(sourceGuestDetails.details, currentSrcBtn);
   sourceEndpoint.appendChild(sourceAppFields);
   const sourceJsonFields = document.createElement('div');
   sourceJsonFields.hidden = true;
-  srcJsonFile.setAttribute('aria-label', '比較元の設定JSON');
+  srcJsonFile.setAttribute('aria-label', '反映元の設定JSON');
   sourceJsonFields.append(srcJsonFile, sourceJsonAppSelect, srcJsonClearBtn, srcJsonNote);
   sourceEndpoint.appendChild(sourceJsonFields);
   const routeArrow = document.createElement('div');
@@ -440,8 +555,9 @@ export function mountReflectLitePanel() {
   routeArrow.textContent = '→';
   const targetEndpoint = document.createElement('section');
   targetEndpoint.className = 'kus-rl-endpoint kus-rl-endpoint--target';
-  targetEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">比較先 · プレビューへ反映</div><div class="kus-rl-endpoint__note">本番への公開は設定画面から行います</div>';
+  targetEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">反映先 · プレビューへ反映</div><div class="kus-rl-endpoint__note">本番への公開は設定画面から行います</div>';
   targetEndpoint.appendChild(labeledInput(tgtApp, 'アプリID'));
+  targetEndpoint.appendChild(targetNote.el);
   const targetGuestDetails = makeDetails('ゲストスペースを指定', { open: !!tgtGuest.value });
   targetGuestDetails.body.appendChild(labeledInput(tgtGuest, 'ゲストスペースID（任意）'));
   targetEndpoint.append(targetGuestDetails.details, currentBtn);
@@ -462,7 +578,7 @@ export function mountReflectLitePanel() {
     sourceJsonAppSelect.hidden = sourceJsonBundles.length < 2;
     if (sourceBundleFromJson) {
       const appName = extractAppNameFromBundle(sourceBundleFromJson);
-      srcJsonNote.textContent = `比較元JSON読み込み済み${sourceBundleFileName ? `（${sourceBundleFileName}）` : ''}: App ${sourceBundleFromJson?.appId || '-'}${appName ? ` (${appName})` : ''}（比較元はこのJSONから取得し、アプリからの取得は行いません）`;
+      srcJsonNote.textContent = `反映元JSON読み込み済み${sourceBundleFileName ? `（${sourceBundleFileName}）` : ''}: App ${sourceBundleFromJson?.appId || '-'}${appName ? ` (${appName})` : ''}（反映元はこのJSONから取得し、アプリからの取得は行いません）`;
       srcJsonNote.style.display = 'block';
       srcJsonClearBtn.style.display = '';
     } else {
@@ -482,7 +598,7 @@ export function mountReflectLitePanel() {
     refreshReviewCard();
   });
 
-  srcJsonFile.addEventListener('change', () => liteRun(panel, '比較元JSONを読み込み中…', async () => {
+  srcJsonFile.addEventListener('change', () => liteRun(panel, '反映元JSONを読み込み中…', async () => {
     const file = srcJsonFile.files?.[0];
     if (!file) return;
     // 同じファイルを編集して選び直したときも change が発生するよう、選択状態は読み込み後に空へ戻す。
@@ -509,7 +625,7 @@ export function mountReflectLitePanel() {
     sourceBundleToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
     sourceBundleFileName = file.name;
     if (sourceBundleFromJson?.appId) srcApp.value = String(sourceBundleFromJson.appId);
-    panel.setStatus(`比較元JSONを読み込みました: App ${sourceBundleFromJson?.appId || '-'}`, 'ok');
+    panel.setStatus(`反映元JSONを読み込みました: App ${sourceBundleFromJson?.appId || '-'}`, 'ok');
     saveState();
     refreshSrcJsonNote();
     refreshSameConnBanner();
@@ -532,25 +648,25 @@ export function mountReflectLitePanel() {
     refreshSrcJsonNote();
     refreshSameConnBanner();
     refreshReviewCard();
-    panel.setStatus('比較元JSONをクリアしました。設定JSONを選んでください。', 'info');
+    panel.setStatus('反映元JSONをクリアしました。設定JSONを選んでください。', 'info');
   });
 
   const sameConnBanner = document.createElement('div');
   sameConnBanner.className = 'kus-lp__note--warn';
   sameConnBanner.style.display = 'none';
-  sameConnBanner.textContent = '⚠ 比較元と比較先が同一接続です（同じアプリID・ゲストID）。同一アプリのプレビューを上書きする状態です。';
+  sameConnBanner.textContent = '⚠ 反映元と反映先が同一接続です（同じアプリID・ゲストID）。同一アプリのプレビューを上書きする状態です。';
   cardApp.body.appendChild(sameConnBanner);
 
   cardApp.body.appendChild(createAppSearchControl(panel, {
     targets: [
-      { label: '比較元', apply: (id, _name, guestId) => {
+      { label: '反映元', apply: (id, _name, guestId) => {
         sourceModeSelect.value = 'app';
         sourceModeSelect.dispatchEvent(new Event('change'));
         srcApp.value = id;
         srcGuest.value = guestId || '';
         saveState(); refreshSameConnBanner(); refreshReviewCard();
       } },
-      { label: '比較先', apply: (id, _name, guestId) => {
+      { label: '反映先', apply: (id, _name, guestId) => {
         tgtApp.value = id;
         tgtGuest.value = guestId || '';
         saveState(); refreshSameConnBanner(); refreshReviewCard();
@@ -561,6 +677,8 @@ export function mountReflectLitePanel() {
   panel.body.insertBefore(cardApp.card, panel.status);
 
   function refreshSameConnBanner() {
+    sourceNote.refresh();
+    targetNote.refresh();
     if (srcGuest.value) sourceGuestDetails.details.open = true;
     if (tgtGuest.value) targetGuestDetails.details.open = true;
     const same = sourceMode === 'app'
@@ -579,7 +697,7 @@ export function mountReflectLitePanel() {
     saveState();
     refreshSameConnBanner();
     refreshReviewCard();
-    panel.setStatus('現在のアプリIDを比較元にセットしました', 'info');
+    panel.setStatus('現在のアプリIDを反映元にセットしました', 'info');
   });
   copyBtn.addEventListener('click', () => {
     tgtApp.value = srcApp.value.trim();
@@ -587,7 +705,7 @@ export function mountReflectLitePanel() {
     saveState();
     refreshSameConnBanner();
     refreshReviewCard();
-    panel.setStatus('比較元IDを比較先へコピーしました', 'info');
+    panel.setStatus('反映元IDを反映先へコピーしました', 'info');
   });
   currentBtn.addEventListener('click', () => {
     tgtApp.value = DEFAULT_APP_ID || '';
@@ -595,7 +713,7 @@ export function mountReflectLitePanel() {
     saveState();
     refreshSameConnBanner();
     refreshReviewCard();
-    panel.setStatus('現在のアプリIDを比較先にセットしました', 'info');
+    panel.setStatus('現在のアプリIDを反映先にセットしました', 'info');
   });
   swapBtn.addEventListener('click', () => {
     const sa = srcApp.value;
@@ -607,7 +725,7 @@ export function mountReflectLitePanel() {
     saveState();
     refreshSameConnBanner();
     refreshReviewCard();
-    panel.setStatus('比較元と比較先を入れ替えました', 'info');
+    panel.setStatus('反映元と反映先を入れ替えました', 'info');
   });
 
   [srcApp, srcGuest, tgtApp, tgtGuest].forEach((el) => {
@@ -638,8 +756,8 @@ export function mountReflectLitePanel() {
     return true;
   }
   for (const [appInput, guestInput, guestDetails, sideLabel] of [
-    [srcApp, srcGuest, sourceGuestDetails.details, '比較元'],
-    [tgtApp, tgtGuest, targetGuestDetails.details, '比較先']
+    [srcApp, srcGuest, sourceGuestDetails.details, '反映元'],
+    [tgtApp, tgtGuest, targetGuestDetails.details, '反映先']
   ] as const) {
     appInput.addEventListener('paste', (event) => {
       const pasted = event.clipboardData?.getData('text') || '';
@@ -657,20 +775,34 @@ export function mountReflectLitePanel() {
       ? memoryState.selectedScopes
       : ['fieldSettings', 'layoutSettings', 'viewSettings']
   );
-  const chips = putSections.map((d) => makeChip({
-    label: d.label,
-    checked: initialSelected.has(d.key),
-    value: d.key
-  }));
+  // チップとグループは SECTION_DEFS の put:true と liteSetup.ts のキー一覧（REFLECT_SCOPE_GROUPS / REFLECT_SCOPE_HINTS）から作る。
+  // 項目を増やすときは、そのキー一覧に足す。どのグループにも無い項目は「その他」に入る。
+  const chips = putSections.map((d) => {
+    const chip = makeChip({ label: d.label, checked: initialSelected.has(d.key), value: d.key });
+    const hint = describeReflectScope(d.key);
+    // 名前は項目名だけに保ち、説明は title と aria-describedby で伝える。「置換」の目印は色だけに頼らず文字でも示す。
+    chip.checkbox.setAttribute('aria-label', d.label);
+    if (hint) {
+      chip.label.title = `${d.label}: ${hint}`;
+      const description = document.createElement('span');
+      description.id = `kus-rl-scope-hint-${d.key}`;
+      description.hidden = true;
+      description.textContent = `${RISKY_SCOPE_KEYS.has(d.key) ? '置換型の項目。' : ''}${hint}`;
+      chip.label.appendChild(description);
+      chip.checkbox.setAttribute('aria-describedby', description.id);
+    }
+    if (RISKY_SCOPE_KEYS.has(d.key)) {
+      const badge = document.createElement('span');
+      badge.className = 'kus-rl-chip__badge';
+      badge.setAttribute('aria-hidden', 'true');
+      badge.textContent = '置換';
+      chip.label.appendChild(badge);
+    }
+    return chip;
+  });
   const chipBox = document.createElement('div');
-  chipBox.className = 'kus-lp__chips';
-  const scopeGroups = [
-    { label: 'フォーム・表示', keys: ['fieldSettings', 'layoutSettings', 'viewSettings', 'reportSettings', 'categories'] },
-    { label: '動作・カスタマイズ', keys: ['processSettings', 'actionSettings', 'pluginSettings', 'customizeSettings'] },
-    { label: '権限・通知', keys: ['appAcl', 'fieldAcl', 'recordPermissions', 'notifications', 'perRecordNotifications', 'reminderNotifications'] }
-  ];
   chipBox.className = 'kus-rl-scope-groups';
-  scopeGroups.forEach((group) => {
+  groupReflectScopes(putSections.map((d) => d.key)).forEach((group) => {
     const fieldset = document.createElement('fieldset');
     fieldset.className = 'kus-rl-scope-group';
     const legend = document.createElement('legend');
@@ -678,24 +810,84 @@ export function mountReflectLitePanel() {
     fieldset.appendChild(legend);
     const list = document.createElement('div');
     list.className = 'kus-lp__chips';
-    chips.filter((c) => group.keys.includes(c.checkbox.value)).forEach((c) => list.appendChild(c.label));
+    group.keys.forEach((key) => {
+      const chip = chips.find((c) => c.checkbox.value === key);
+      if (chip) list.appendChild(chip.label);
+    });
     fieldset.appendChild(list);
     chipBox.appendChild(fieldset);
   });
   cardScope.body.appendChild(chipBox);
 
+  // フィールド設定を選ばずに、フィールドを参照する項目だけを選んだときの注意
+  const fieldSettingsNotice = document.createElement('p');
+  fieldSettingsNotice.className = 'kus-rl-next kus-rl-next--warn kus-rl-scope-notice';
+  fieldSettingsNotice.textContent = FIELD_SETTINGS_OMITTED_NOTICE;
+  fieldSettingsNotice.hidden = true;
+  cardScope.body.appendChild(fieldSettingsNotice);
+
+  // 一覧・グラフ・アクションに関係する設定（項目の選択より後に置く）
+  const preserve = makeCheck({ label: '反映先だけの一覧・グラフ・アクションを保持する', checked: memoryState.preserveTargetOnly !== false, help: '標準は保持。OFFにすると反映元にない設定を削除します。フィールドは常に保持します。' });
+  const preserveBox = document.createElement('div');
+  preserveBox.className = 'kus-rl-scope-option';
+  const preserveTitle = document.createElement('div');
+  preserveTitle.className = 'kus-rl-scope-option__title';
+  preserveTitle.textContent = '一覧・グラフ・アクションの扱い';
+  const preserveHelp = document.createElement('p');
+  preserveHelp.className = 'kus-rl-scope-option__help';
+  preserveHelp.setAttribute('aria-live', 'polite');
+  preserveBox.append(preserveTitle, preserve.label, preserveHelp);
+  cardScope.body.appendChild(preserveBox);
+
   const scopeCountLabel = document.createElement('div');
   scopeCountLabel.className = 'kus-lp__small';
-  scopeCountLabel.style.marginTop = '4px';
+  scopeCountLabel.style.marginTop = '8px';
   cardScope.body.appendChild(scopeCountLabel);
+
+  // 項目ごとの反映方法（タッチ操作では title が見えないため、一覧でも読めるようにする）
+  const scopeHelp = makeDetails('各項目の反映方法');
+  const scopeHelpList = document.createElement('dl');
+  scopeHelpList.className = 'kus-rl-scope-help';
+  putSections.forEach((d) => {
+    const hint = describeReflectScope(d.key);
+    if (!hint) return;
+    const term = document.createElement('dt');
+    term.textContent = d.label;
+    if (RISKY_SCOPE_KEYS.has(d.key)) {
+      const badge = document.createElement('span');
+      badge.className = 'kus-rl-chip__badge';
+      badge.textContent = '置換';
+      term.appendChild(badge);
+    }
+    const desc = document.createElement('dd');
+    desc.textContent = hint;
+    const item = document.createElement('div');
+    item.append(term, desc);
+    scopeHelpList.appendChild(item);
+  });
+  scopeHelp.body.appendChild(scopeHelpList);
+  cardScope.body.appendChild(scopeHelp.details);
 
   function collectSelectedScopes() {
     return chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value);
   }
 
+  function refreshScopeNotices() {
+    const selected = collectSelectedScopes();
+    fieldSettingsNotice.hidden = !shouldWarnMissingFieldSettings(selected);
+    const keeps = preserve.checkbox.checked;
+    const usesNamedSections = ['viewSettings', 'reportSettings', 'actionSettings'].some((key) => selected.includes(key));
+    preserveHelp.classList.toggle('kus-rl-scope-option__help--warn', !keeps);
+    preserveHelp.textContent = (keeps
+      ? '反映先だけの一覧・グラフ・アクションは削除せず残します（標準）。フィールドは常に保持します。'
+      : '反映元にない一覧・グラフ・アクションを反映先から削除します。フィールドは常に保持します。')
+      + (usesNamedSections ? '' : ' 今の選択（一覧・グラフ・アクションなし）では使われません。');
+  }
+
   function refreshScopeCount() {
     const sel = collectSelectedScopes().length;
     scopeCountLabel.textContent = `選択中: ${sel} / ${chips.length} セクション`;
+    refreshScopeNotices();
   }
 
   function setSelectedScopes(scopeKeys: string[]) {
@@ -715,7 +907,7 @@ export function mountReflectLitePanel() {
 
   const presetRow = document.createElement('div');
   presetRow.className = 'kus-lp__btn-row';
-  presetRow.style.marginTop = '8px';
+  presetRow.style.margin = '8px 0 10px';
   for (const preset of SCOPE_QUICK_PRESETS) {
     const btn = makeButton(preset.label, 'sub');
     btn.title = preset.hint;
@@ -769,8 +961,6 @@ export function mountReflectLitePanel() {
   sourceEnvironment.innerHTML = '<option value="production">本番設定（運用中）を取得</option><option value="preview">プレビュー設定（未公開）を取得</option>';
   sourceEnvironment.value = memoryState.sourcePreview ? 'preview' : 'production';
   sourceAppFields.insertBefore(sourceEnvironment, sourceGuestDetails.details);
-  const preserve = makeCheck({ label: '反映先だけの一覧・グラフ・アクションを保持する', checked: memoryState.preserveTargetOnly !== false, help: '標準は保持。OFFにすると反映元にない設定を削除します。フィールドは常に保持します。' });
-  cardScope.body.prepend(preserve.label);
   const safetyNote = document.createElement('p'); safetyNote.className = 'kus-rl-quiet';
   safetyNote.textContent = '反映前のバックアップを自動保存します。変更のない項目は送信せず、書き込みエラーが起きたら中断します。';
   cardOpt.body.appendChild(safetyNote);
@@ -806,6 +996,7 @@ export function mountReflectLitePanel() {
 
   [sourceEnvironment, preserve.checkbox].forEach((cb) => {
     cb.addEventListener('change', () => {
+      refreshScopeNotices();
       saveState();
       refreshSameConnBanner();
       refreshReviewCard();
@@ -1135,7 +1326,12 @@ export function mountReflectLitePanel() {
       statusFilter: previewFilter.value,
       fresh,
       onAdd: (sectionKey) => setSelectedScopes([...new Set([...collectSelectedScopes(), sectionKey])]),
-      onRemove: (sectionKey) => setSelectedScopes(collectSelectedScopes().filter((key) => key !== sectionKey))
+      onRemove: (sectionKey) => setSelectedScopes(collectSelectedScopes().filter((key) => key !== sectionKey)),
+      onShowAll: () => {
+        previewSearch.value = '';
+        previewFilter.value = 'all';
+        rerenderPreviewCard();
+      }
     });
     previewCard.card.style.display = 'block';
   }
@@ -1219,6 +1415,23 @@ export function mountReflectLitePanel() {
       const list = document.createElement('ul'); list.className = 'kus-rl-issues';
       for (const message of blockers) { const item = document.createElement('li'); item.textContent = message; list.appendChild(item); }
       reviewBody.appendChild(list);
+      // フィールド不足は、メッセージの文字列ではなく requiredFields と取得済みフィールドコードから構造的に判定する。
+      const missing = result ? findMissingFieldReferences(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes) : [];
+      if (canResolveByIncludingFieldSettings(missing, scopes)) {
+        const fix = document.createElement('div'); fix.className = 'kus-rl-fix';
+        const fixBtn = makeButton('フィールド設定も反映対象に含めて再取得', 'sub');
+        fixBtn.dataset.reflectFix = 'include-field-settings';
+        fixBtn.disabled = busy;
+        fixBtn.addEventListener('click', () => { includeFieldSettingsAndRefetch(); });
+        const candidates = missing.filter((item) => item.inSource !== false);
+        const codes = [...new Set(candidates.map((item) => item.code))];
+        const codeList = `${codes.slice(0, 5).join('、')}${codes.length > 5 ? ' ほか' : ''}`;
+        const fixNote = document.createElement('span'); fixNote.className = 'kus-rl-fix__note';
+        fixNote.textContent = candidates.every((item) => item.inSource)
+          ? `反映元にある ${codes.length} 件のフィールド（${codeList}）を、フィールド設定の反映で追加します。差分を取得し直してから確認してください。`
+          : `不足しているフィールド（${codeList}）が反映元にあれば、フィールド設定の反映で追加できます。反映元にも無い場合は、再取得後も停止します。`;
+        fix.append(fixBtn, fixNote); reviewBody.appendChild(fix);
+      }
     }
     exportPlanBtn.disabled = busy || !fresh;
     rerenderPreviewCard(); refreshWorkflow();
@@ -1272,7 +1485,7 @@ export function mountReflectLitePanel() {
     panel.setStatus(`高リスク ${riskyScopes.length} セクションだけを選択しました`, riskyScopes.length ? 'warn' : 'info');
   });
 
-  previewBtn.addEventListener('click', () => {
+  function startPreview(okMessage?: string) {
     if (busy || previewBtn.disabled) return;
     const { scopes, lookupState } = getPreviewState();
     const lookupError = lookupMapError(lookupState);
@@ -1287,8 +1500,21 @@ export function mountReflectLitePanel() {
     }
     return liteRun(panel, '差分プレビューを取得中…', async () => {
       await runPreview(scopes, lookupMap);
-    }, `差分プレビュー完了（${scopes.length}セクションを比較）`);
-  });
+    }, okMessage || `差分プレビュー完了（${scopes.length}セクションを比較）`);
+  }
+  previewBtn.addEventListener('click', () => { startPreview(); });
+
+  /** フィールド設定を反映対象に加えて、同じ条件で差分を取得し直す（フィールド不足による停止の解消用）。 */
+  function includeFieldSettingsAndRefetch() {
+    if (busy) return;
+    const chip = chips.find((c) => c.checkbox.value === 'fieldSettings');
+    if (!chip) return;
+    chip.checkbox.checked = true;
+    refreshScopeCount();
+    saveState();
+    refreshReviewCard();
+    return startPreview('フィールド設定も反映対象に含めて差分を再取得しました。');
+  }
 
   changedOnlyBtn.addEventListener('click', () => {
     const { preview, fresh } = getPreviewState();
@@ -1403,13 +1629,20 @@ export function mountReflectLitePanel() {
   const lastResultBody = document.createElement('div');
   lastResultBody.className = 'kus-lp__small';
   lastResultCard.body.appendChild(lastResultBody);
+  // セクション別の結果と、反映後の取り消し方の案内
+  const lastResultSections = document.createElement('div');
+  lastResultCard.body.appendChild(lastResultSections);
+  const undoNote = document.createElement('p');
+  undoNote.className = 'kus-rl-next kus-rl-next--info kus-rl-undo';
+  undoNote.textContent = REFLECT_UNDO_GUIDANCE;
+  lastResultCard.body.appendChild(undoNote);
   const lastResultActions = document.createElement('div');
   lastResultActions.className = 'kus-lp__btn-row';
   lastResultActions.style.marginTop = '8px';
   const retryFailedBtn = makeButton('失敗・未実行だけ選択', 'sub');
   retryFailedBtn.title = '失敗または中断で未実行のセクションだけを反映対象に選び直します';
-  const openTargetBtn = makeButton('比較先の設定画面を開く', 'sub');
-  openTargetBtn.title = '比較先アプリの設定画面を新しいタブで開きます（運用環境への反映はそこから実行できます）';
+  const openTargetBtn = makeButton('反映先の設定画面を開く', 'sub');
+  openTargetBtn.title = '反映先アプリの設定画面を新しいタブで開きます（運用環境への反映はそこから実行できます）';
   const exportResultBtn = makeButton('実行結果JSONを保存', 'sub');
   exportResultBtn.title = '実行時の対象、セクション別結果、ログを監査用JSONとして保存します';
   const verifyResultBtn = makeButton('反映後の差分を再確認', 'primary');
@@ -1424,7 +1657,7 @@ export function mountReflectLitePanel() {
     const scopes = memoryState.lastResult?.report.scopes || [];
     if (!scopes.length) return;
     const lookupState = parseLookupMapText(lookupTa.value);
-    const invalid = reflectConnectionError(currentOptions(scopes)) || lookupMapError(lookupState) || (sourceMode === 'json' && !sourceBundleFromJson ? '比較元の設定JSONを読み込んでください。' : '');
+    const invalid = reflectConnectionError(currentOptions(scopes)) || lookupMapError(lookupState) || (sourceMode === 'json' && !sourceBundleFromJson ? '反映元の設定JSONを読み込んでください。' : '');
     if (invalid) {
       panel.setStatus(`再確認できません。${invalid}`, 'warn');
       return;
@@ -1455,7 +1688,7 @@ export function mountReflectLitePanel() {
     const base = last.guestId ? `/k/guest/${encodeURIComponent(last.guestId)}` : '/k';
     const url = `${window.location.origin}${base}/admin/app/flow?app=${encodeURIComponent(last.appId)}`;
     window.open(url, '_blank', 'noopener');
-    panel.setStatus(`比較先アプリ #${last.appId} の設定画面を開きました`, 'info');
+    panel.setStatus(`反映先アプリ #${last.appId} の設定画面を開きました`, 'info');
   });
 
   exportResultBtn.addEventListener('click', () => {
@@ -1488,12 +1721,13 @@ export function mountReflectLitePanel() {
       ? `<div>失敗: ${escapeHtml(last.failedLabels.slice(0, 5).join(' / '))}${last.failedLabels.length > 5 ? ` ほか ${last.failedLabels.length - 5} 件` : ''}</div>`
       : '';
     lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${hasIssue ? '⚠ 一部エラー' : '✓ 全成功'}</div>`
-      + `<div>比較先 #${escapeHtml(last.appId || '-')} / OK ${last.ok} / NG ${last.ng}${last.pending ? ` / 未実行 ${last.pending}` : ''}</div>`
+      + `<div>反映先 #${escapeHtml(last.appId || '-')} / 成功 ${last.ok} / 失敗 ${last.ng}${last.pending ? ` / 未実行 ${last.pending}` : ''}</div>`
       + failedSummary
       + `<div>${stamp}</div>`
       + (hasIssue
         ? '<div style="margin-top:4px">「失敗・未実行だけ選択」で対象を絞って再実行できます。</div>'
-        : '<div style="margin-top:4px">反映先はプレビューです。運用環境への反映（デプロイ）は比較先の設定画面から実行してください。</div>');
+        : '<div style="margin-top:4px">反映先はプレビューです。運用環境への反映（デプロイ）は反映先の設定画面から実行してください。</div>');
+    renderApplySectionResults(lastResultSections, last.report.sections);
     retryFailedBtn.style.display = last.retryScopes.length ? '' : 'none';
     verifyResultBtn.style.display = last.report.scopes.length ? '' : 'none';
     exportResultBtn.style.display = '';
@@ -1593,7 +1827,7 @@ export function mountReflectLitePanel() {
       panel.setStatus('プレビュー反映が一部失敗しました。「直近の実行結果」から失敗・未実行だけ選択して再実行できます。', 'warn');
       return;
     }
-    panel.setStatus('プレビュー反映が完了しました。運用環境への反映は「比較先の設定画面を開く」からデプロイしてください。', 'ok');
+    panel.setStatus('プレビュー反映が完了しました。運用環境への反映は「反映先の設定画面を開く」からデプロイしてください。', 'ok');
   });
 
   // ---- 4ステップ・ワークフロー ----
@@ -1637,7 +1871,7 @@ export function mountReflectLitePanel() {
       if (next.id === 'confirm') openConfirmation(); else showWorkflowStage(next.id);
     });
   }
-  stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>どの設定を、どこへ反映しますか？</h2><p>比較元と比較先を指定し、反映したい項目を選びます。</p></header>';
+  stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>どの設定を、どこへ反映しますか？</h2><p>反映元と反映先を指定し、反映したい項目を選びます。</p></header>';
   stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>差分と実行予定を確認</h2><p>実際に変更されるセクションと注意点を確認します。</p></header>';
   stages.confirm.innerHTML = '<header class="kus-rl-stage-head"><h2>書き込み先と内容の最終確認</h2><p>この画面で確認した条件だけを実行します。</p></header>';
   stages.confirm.appendChild(confirmCard.card);
@@ -1692,6 +1926,30 @@ export function mountReflectLitePanel() {
   panel.body.appendChild(dock);
   let activeStage: 'setup' | 'review' | 'confirm' | 'result' = 'setup';
   const noInputSubmit = document.createElement('button'); noInputSubmit.disabled = true;
+  /** フッターの経路表示。差分取得済みなら確認済みの名前、未取得なら入力中に確認できた名前を使う。 */
+  function dockEndpointLabel(side: 'source' | 'target', identities?: ReflectIdentities | null): string {
+    const role = side === 'source' ? '反映元' : '反映先';
+    let id: string;
+    let name = '';
+    let guest: string;
+    if (identities) {
+      ({ appId: id, name, guestId: guest } = identities[side]);
+    } else if (side === 'source' && sourceMode === 'json') {
+      id = String(sourceBundleFromJson?.appId || srcApp.value.trim());
+      name = sourceBundleFromJson ? extractAppNameFromBundle(sourceBundleFromJson) : '';
+      guest = '';
+    } else {
+      id = (side === 'source' ? srcApp : tgtApp).value.trim();
+      guest = (side === 'source' ? srcGuest : tgtGuest).value.trim();
+      name = (side === 'source' ? sourceNote : targetNote).known()?.name || '';
+    }
+    const head = name ? `${role}: ${name}（#${id}）` : `${role}: ${id ? `#${id}` : '未入力'}`;
+    const tail = [
+      guest ? `ゲスト ${guest}` : '',
+      side === 'target' ? 'プレビュー' : sourceMode === 'json' ? '設定JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー設定' : ''
+    ].filter(Boolean);
+    return tail.length ? `${head} / ${tail.join(' / ')}` : head;
+  }
   refreshWorkflow = () => {
     const { scopes, fresh, preview } = getPreviewState();
     const plan = fresh ? getExecutionPlan(scopes, preview?.result) : null;
@@ -1714,8 +1972,8 @@ export function mountReflectLitePanel() {
     if (activeStage === 'review') message = !fresh ? '差分の取得が必要です。' : postApply ? postApply.message : confirmBtn.disabled ? '確認が必要な項目、または変更の有無を確認してください。' : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
     if (activeStage === 'confirm') message = fresh && confirmedToken ? '反映前バックアップを自動保存 / エラー時は中断 / 本番公開は行いません' : '条件が変わりました。差分の取得と最終確認をやり直してください。';
     if (activeStage === 'result') message = '結果を確認してください。再実行には差分の再取得が必要です。';
-    const sourceLabel = fresh && preview?.identities ? reflectIdentityLabel(preview.identities, 'source', sourceMode === 'json' ? 'JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー' : '本番') : `反映元 #${srcApp.value.trim() || '未入力'}`;
-    const targetLabel = fresh && preview?.identities ? reflectIdentityLabel(preview.identities, 'target', '') : `反映先 #${tgtApp.value.trim() || '未入力'} / プレビュー`;
+    const sourceLabel = dockEndpointLabel('source', fresh ? preview?.identities : null);
+    const targetLabel = dockEndpointLabel('target', fresh ? preview?.identities : null);
     // The complete route stays in the confirmation card. Keep the fixed footer short on small screens.
     dockCopy.innerHTML = activeStage === 'confirm' && fresh && preview?.identities
       ? `<strong>書き込み先 #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong>${escapeHtml(confirmedToken ? '内容を確認してから反映してください。' : '条件が変わりました。差分を再取得してください。')}`
@@ -1809,7 +2067,7 @@ function buildPreviewSignature(args: {
   sourceAppId: string;
   sourceGuestId: string;
   sourcePreview: boolean;
-  /** 比較元JSONを読み込んでいる場合の識別子（ファイルが変わったら差分プレビューを古い扱いにする） */
+  /** 反映元JSONを読み込んでいる場合の識別子（ファイルが変わったら差分プレビューを古い扱いにする） */
   sourceBundleToken?: string;
   targetAppId: string;
   targetGuestId: string;
@@ -1850,6 +2108,27 @@ function uniqueSectionKeys(entries: PreviewEntry[]): string[] {
   return [...new Set(entries.map((entry) => entry.sectionKey).filter(Boolean))];
 }
 
+/** 要約表の行から、該当項目の詳細（内訳）を開いてスクロールする。 */
+function revealPreviewEntry(host: HTMLElement, sectionKey: string, opts: PreviewRenderOptions) {
+  const find = () => Array.from(host.querySelectorAll<HTMLElement>('[data-reflect-entry]')).find((node) => node.dataset.reflectEntry === sectionKey);
+  let row = find();
+  if (!row) {
+    // 絞り込みで隠れている項目は、絞り込みを解除して探し直す。
+    opts.onShowAll?.();
+    row = find();
+  }
+  if (!row) return;
+  const group = row.closest('details.kus-rl-preview-group') as HTMLDetailsElement | null;
+  if (group) group.open = true;
+  const changes = row.querySelector('details.kus-rl-changes') as HTMLDetailsElement | null;
+  if (changes) changes.open = true;
+  const reduceMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  row.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+  row.focus({ preventScroll: true });
+  row.classList.add('kus-rl-preview-row--focus');
+  window.setTimeout(() => row?.classList.remove('kus-rl-preview-row--focus'), 1800);
+}
+
 function renderPreviewResult(host: HTMLElement, result: PreviewReflectResult, opts: PreviewRenderOptions = {}) {
   host.innerHTML = '';
   const filteredEntries = filterPreviewEntries(result.entries, String(opts.searchKeyword || '').trim().toLowerCase(), opts.statusFilter);
@@ -1868,6 +2147,13 @@ function renderPreviewResult(host: HTMLElement, result: PreviewReflectResult, op
     + `<span class="kus-rl-pill">${result.totalSections} セクション</span>`
     + (opts.searchKeyword ? `<span class="kus-rl-pill kus-rl-pill--stale">検索一致 ${filteredEntries.length}</span>` : '');
   host.appendChild(summary);
+
+  if (result.entries.length) {
+    renderReflectSummaryTable(host, result.entries, {
+      selectedScopes: selectedSet,
+      onNavigate: (sectionKey) => revealPreviewEntry(host, sectionKey, opts)
+    });
+  }
 
   if (!result.entries.length) {
     const empty = document.createElement('div');
@@ -1907,13 +2193,15 @@ function renderPreviewResult(host: HTMLElement, result: PreviewReflectResult, op
     for (const entry of group.entries) {
       const row = document.createElement('div');
       row.className = `kus-rl-preview-row kus-rl-preview-row--${group.tone}`;
+      row.dataset.reflectEntry = entry.sectionKey;
+      row.tabIndex = -1;
       const statusLabel = group.tone === 'change' ? '差分あり' : (group.tone === 'same' ? '一致' : '取得失敗');
       const metaPills: string[] = [];
       const statePills: string[] = [];
       if (entry.fieldStats) {
         metaPills.push(`<span class="kus-rl-preview-mini">追加 ${entry.fieldStats.add}</span>`);
         metaPills.push(`<span class="kus-rl-preview-mini">更新 ${entry.fieldStats.update}</span>`);
-        metaPills.push(`<span class="kus-rl-preview-mini">比較先のみ ${entry.fieldStats.tgtOnly}</span>`);
+        metaPills.push(`<span class="kus-rl-preview-mini">反映先のみ ${entry.fieldStats.tgtOnly}</span>`);
       }
       if (selectedSet.has(entry.sectionKey)) statePills.push('<span class="kus-rl-preview-mini">選択中</span>');
       else statePills.push('<span class="kus-rl-preview-mini">未選択</span>');

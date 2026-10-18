@@ -100,10 +100,10 @@ describe('standalone reflection review and backup preflight', () => {
   });
 
   it.each([
-    ['source', 'content', '比較元'],
-    ['source', 'revision', '比較元'],
-    ['target', 'content', '比較先プレビュー'],
-    ['target', 'revision', '比較先プレビュー']
+    ['source', 'content', '反映元'],
+    ['source', 'revision', '反映元'],
+    ['target', 'content', '反映先プレビュー'],
+    ['target', 'revision', '反映先プレビュー']
   ])('rejects an external %s %s change before backup or writes', async (side, change, label) => {
     const opts = defaultOptions();
     const reviewed = await previewReflectStandalone(opts, () => {});
@@ -227,7 +227,7 @@ describe('standalone reflection review and backup preflight', () => {
     opts.sourceBundle.sections.viewSettings.views.Review.name = '確認後のJSON編集';
 
     await expect(apply({ ...opts, doBackup: true, reviewBaseline: reviewed.baseline }))
-      .rejects.toThrow('差分確認後に比較元');
+      .rejects.toThrow('差分確認後に反映元');
     expectNoSavedBackupOrWrites();
   });
 
@@ -247,7 +247,7 @@ describe('standalone reflection review and backup preflight', () => {
     expect(reviewed.errorSections).toBe(1);
     expect(reviewed.entries.find((entry) => entry.sectionKey === 'layoutSettings')?.status).toBe('src-missing');
     await expect(apply({ ...opts, doBackup: true, reviewBaseline: reviewed.baseline }))
-      .rejects.toThrow('比較元のレイアウト設定を完全に確認できないため反映を中止');
+      .rejects.toThrow('反映元のレイアウト設定を完全に確認できないため反映を中止');
     expectNoSavedBackupOrWrites();
 
     const result = await apply({ ...opts, scopes: ['viewSettings'], doBackup: true, reviewBaseline: reviewed.baseline });
