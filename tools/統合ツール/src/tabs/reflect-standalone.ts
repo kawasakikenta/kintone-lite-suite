@@ -1,11 +1,12 @@
 'use strict';
 
-import { SECTION_DEFS } from '../constants.js';
 import { buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, fetchBundle, pickRevision, isRevisionConflictError } from '../api.js';
 import { captureReflectBaseline, assertReflectBaselineMatches, assertCompleteReflectBackup, type ReflectBaseline } from '../reflect/standalonePreflight.js';
 import { buildReflectSectionPlan, reflectInspectionScopes, reflectSelectionBlockers, listReflectFieldCodes, type ReflectSectionPlan } from '../reflect/standalonePlan.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
+import { REFLECT_SECTION_KEYS } from '../reflect/sections.js';
+import { inspectTargetPendingChanges, type ReflectTargetPending } from '../reflect/targetPending.js';
 import { pushReflectErrorLog as pushErrorLog, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
 
 export interface ReflectOptions {
@@ -17,6 +18,7 @@ export type PreviewSectionEntry = ReflectSectionPlan;
 export interface PreviewReflectResult {
   totalSections: number; changedSections: number; sameSections: number; errorSections: number;
   entries: PreviewSectionEntry[]; baseline: ReflectBaseline; sourceFieldCodes: string[]; targetFieldCodes: string[];
+  targetPending?: ReflectTargetPending;
 }
 export interface ReflectAppIdentity { appId: string; name: string; code: string; guestId: string }
 export interface ReflectIdentities { source: ReflectAppIdentity; target: ReflectAppIdentity }
@@ -84,9 +86,8 @@ export async function resolveReflectAppsStandalone(opts: ReflectOptions): Promis
 
 function orderedScopes(scopes: string[]): string[] {
   if (!scopes?.length) throw new Error('反映する項目を選択してください。');
-  const supported = SECTION_DEFS.filter(def => def.put);
-  if (scopes.some(key => !supported.some(def => def.key === key))) throw new Error('反映に対応していない項目が含まれています。');
-  return supported.filter(def => scopes.includes(def.key)).map(def => def.key);
+  if (scopes.some(key => !REFLECT_SECTION_KEYS.includes(key))) throw new Error('反映に対応していない項目が含まれています。');
+  return REFLECT_SECTION_KEYS.filter(key => scopes.includes(key));
 }
 
 async function getReflectBundles(opts: ReflectOptions, scopes: string[], setStatus: (message: string) => void) {
@@ -110,6 +111,8 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
   if (invalid) throw new Error(invalid);
   const scopes = orderedScopes(opts.scopes);
   const { source, target } = await getReflectBundles(opts, scopes, setStatus);
+  setStatus('反映先の未公開の変更を確認中…');
+  const targetPending = await inspectTargetPendingChanges({ targetAppId: opts.targetAppId, targetGuestId: opts.targetGuestId, scopes: reflectInspectionScopes(scopes) }, target);
   const entries = scopes.map(key => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], opts));
   const baseline = captureReflectBaseline({ ...opts, scopes: reflectInspectionScopes(scopes) }, source, target);
   for (const entry of entries.filter(entry => !entry.blockers.length)) {
@@ -133,7 +136,7 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
     totalSections: entries.length, changedSections: entries.filter(entry => entry.status === 'change').length,
     sameSections: entries.filter(entry => entry.status === 'same').length,
     errorSections: entries.filter(entry => !['change', 'same'].includes(entry.status)).length,
-    entries, sourceFieldCodes: listReflectFieldCodes(source, true), targetFieldCodes: listReflectFieldCodes(target), baseline
+    entries, sourceFieldCodes: listReflectFieldCodes(source, true), targetFieldCodes: listReflectFieldCodes(target), baseline, targetPending
   };
 }
 
