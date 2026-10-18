@@ -1,4 +1,4 @@
-import { SECTION_DEFS } from '../constants.js';
+import { reflectSectionLabel } from './sections.js';
 
 /** Reflection must preserve user-defined names, including revision / __proto__. */
 export function stableReflectStringify(value: any): string {
@@ -60,7 +60,7 @@ export function captureReflectBaseline(opts: any, source: any, target: any): Ref
 export function assertCompleteReflectBackup(bundle: any, scopes: string[]): void {
   const incomplete = scopes.filter((key) => !isCompleteReflectSection(bundle?.sections?.[key]));
   if (!incomplete.length) return;
-  const labels = incomplete.map((key) => SECTION_DEFS.find((def) => def.key === key)?.label || key);
+  const labels = incomplete.map(reflectSectionLabel);
   throw new Error(`バックアップを完全に取得できなかったため反映を中止しました。対象: ${labels.join('、')}。差分を取得し直してから再実行してください。`);
 }
 
@@ -80,7 +80,7 @@ export function assertReflectBaselineMatches(
     for (const key of checkedScopes) {
       const before = baseline[side]?.[key];
       const after = current[side][key];
-      const sectionLabel = SECTION_DEFS.find((def) => def.key === key)?.label || key;
+      const sectionLabel = reflectSectionLabel(key);
       if (!before?.complete || !after.complete) {
         throw new Error(`${label}の${sectionLabel}を完全に確認できないため反映を中止しました。差分を取得し直してください。`);
       }

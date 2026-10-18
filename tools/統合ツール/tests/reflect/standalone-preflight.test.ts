@@ -257,6 +257,34 @@ describe('standalone reflection review and backup preflight', () => {
     expect(Object.keys(backup.bundle.sections)).toEqual(['viewSettings']);
   });
 
+  it('一般設定の確認エラーは、セクションキーではなく「一般設定」と表示する', async () => {
+    const opts = { ...defaultOptions(), scopes: ['appSettings'] };
+    source.sections.appSettings = { _fetchError: '取得できませんでした' };
+    target.sections.appSettings = { theme: 'WHITE' };
+    target.meta.sectionRevisions.appSettings = '20';
+    const reviewed = await previewReflectStandalone(opts, () => {});
+    await expect(apply({ ...opts, doBackup: true, reviewBaseline: reviewed.baseline }))
+      .rejects.toThrow('反映元の一般設定を完全に確認できないため反映を中止');
+    source.sections.appSettings = { theme: 'BLUE' };
+    target.sections.appSettings = { _fetchError: '取得できませんでした' };
+    const reviewedAgain = await previewReflectStandalone(opts, () => {});
+    await expect(apply({ ...opts, doBackup: true, reviewBaseline: reviewedAgain.baseline }))
+      .rejects.toThrow('対象: 一般設定');
+    expectNoSavedBackupOrWrites();
+  });
+
+  it('フィールド設定を選んでいなくても、アプリから取得する反映元のフィールドコードを取得する', async () => {
+    source.sections.fieldSettings = { properties: { subject: { type: 'SINGLE_LINE_TEXT', code: 'subject', label: '件名' } } };
+    target.sections.fieldSettings = { properties: { name: { type: 'SINGLE_LINE_TEXT', code: 'name', label: '氏名' } } };
+    const preview = await previewReflectStandalone({ ...defaultOptions(), scopes: ['layoutSettings'] }, () => {});
+    expect(preview.sourceFieldCodes).toEqual(['subject']);
+    expect(preview.targetFieldCodes).toEqual(['name']);
+    const sourceFetch = vi.mocked(fetchBundle).mock.calls.map(([fetchOptions]) => fetchOptions).find((fetchOptions) => fetchOptions.appId === '1');
+    expect(sourceFetch?.sections).toEqual(['layoutSettings', 'fieldSettings']);
+    // 反映元の照合は選択した項目だけで行う。選んでいないフィールド設定の取得結果は、反映の可否に影響しない。
+    expect(preview.entries.map((entry) => [entry.sectionKey, entry.status])).toEqual([['layoutSettings', 'change']]);
+  });
+
   it('extracts the app name from sourceBundle in resolveReflectAppsStandalone', async () => {
     writes.mockResolvedValueOnce({ appId: '2', name: '受注管理（検証）', code: 'ORD' });
     const identities = await resolveReflectAppsStandalone({

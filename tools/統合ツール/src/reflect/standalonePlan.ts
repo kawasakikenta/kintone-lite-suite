@@ -23,7 +23,7 @@ export interface ReflectSectionPlan {
   items?: ReflectItemSummary[];
 }
 export interface ReflectPlanOptions { lookupMap?: Record<string, string>; preserveTargetOnly?: boolean; customizeFiles?: CustomizeFileResolution; fieldLabels?: Record<string, string> }
-const formatBytes = (bytes: number) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
+export const formatBytes = (bytes: number) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
 const namedSections: Record<string, string> = { viewSettings: 'views', reportSettings: 'reports', actionSettings: 'actions' };
 const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 const object = (value: any): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value);

@@ -142,7 +142,7 @@ const REFLECT_OTHER_SCOPE_GROUP: ReflectScopeGroupDef = { id: 'other', label: '�
 
 /** 項目ごとの「何をするか」の説明（docs/preview-reflection.md の「何を保持し、何を置き換えるか」に対応）。 */
 export const REFLECT_SCOPE_HINTS: Record<string, string> = {
-  appSettings: 'アプリの一般設定を反映元の内容に合わせます。',
+  appSettings: 'テーマ、レコードのタイトル、サムネイル表示、一括削除、コメント機能、レコードの再利用、一覧でのインライン編集、数値の桁数と丸め、年度の開始月を反映元に合わせます。アプリ名・説明・アイコンは変えません。',
   fieldSettings: '不足しているフィールドを追加し、変更のある定義だけ更新します。反映先だけのフィールドは保持します。',
   layoutSettings: '配置を反映元に合わせます。反映先だけのフィールドは、フォーム・グループ・テーブルの末尾に保持します。',
   viewSettings: '一覧を追加・更新します。反映先だけの一覧は「保持」の設定に従います。',
