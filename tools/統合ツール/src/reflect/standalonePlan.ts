@@ -1,6 +1,7 @@
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone } from '../utils.js';
 import { APP_SETTINGS_REFLECT_KEYS, reflectSectionLabel } from './sections.js';
+import { comparableCustomizePayload, customizeFileNames, type CustomizeFileResolution } from './customizeFiles.js';
 import {
   extractActionRequiredFields,
   extractReportRequiredFields,
@@ -10,14 +11,17 @@ import {
 } from './standalonePreflight.js';
 
 export interface ReflectChange { kind: '追加' | '変更' | '削除' | '保持'; path: string; before: string; after: string }
-export interface ReflectOperation { method: 'POST' | 'PUT'; endpoint: string; body: Record<string, any>; label: string }
+/** 反映先へアップロードしてから設定する JS/CSS ファイル（index は PUT body の platform/kind 配列内の位置）。 */
+export interface ReflectFileUpload { platform: 'desktop' | 'mobile'; kind: 'js' | 'css'; index: number; sourceFileKey: string; name: string; byteSize: number }
+export interface ReflectOperation { method: 'POST' | 'PUT'; endpoint: string; body: Record<string, any>; label: string; uploads?: ReflectFileUpload[] }
 export interface ReflectSectionPlan {
   sectionKey: string; label: string; status: 'change' | 'same' | 'src-missing' | 'tgt-missing' | 'error'; message: string;
   behavior: string; changes: ReflectChange[]; changeCount: number; removalCount: number; warnings: string[]; blockers: string[];
   operations: ReflectOperation[]; fieldStats?: { add: number; update: number; tgtOnly: number };
-  requiredFields?: string[];
+  requiredFields?: string[]; fileUploads?: ReflectFileUpload[];
 }
-export interface ReflectPlanOptions { lookupMap?: Record<string, string>; preserveTargetOnly?: boolean }
+export interface ReflectPlanOptions { lookupMap?: Record<string, string>; preserveTargetOnly?: boolean; customizeFiles?: CustomizeFileResolution }
+const formatBytes = (bytes: number) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
 const namedSections: Record<string, string> = { viewSettings: 'views', reportSettings: 'reports', actionSettings: 'actions' };
 const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 const object = (value: any): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -181,7 +185,8 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
   if (key === 'appSettings') return buildAppSettingsPlan(plan, source, target);
   if (!def?.put || !def.putBuilder) { plan.status = 'error'; plan.blockers.push('この項目は反映に対応していません。'); return plan; }
   try {
-    let before: any, after: any;
+    let before: any, after: any, comparable: ((value: any) => any) | undefined;
+    const uploads: ReflectFileUpload[] = [];
     if (key === 'fieldSettings') {
       plan.behavior = '追加・更新（反映先だけの項目は保持）';
       const sourceProps = fieldDefinitions(source), targetProps = fieldDefinitions(target);
@@ -279,13 +284,21 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
         if (typeof source.notifyToCommenter === 'boolean') after.notifyToCommenter = source.notifyToCommenter;
       }
       if (key === 'customizeSettings') {
-        plan.warnings.push('JSONバックアップにはJS/CSSのファイル本体を含みません。ファイルの取り外しや差し替えを行う場合は、元のファイルも別途保管してください。');
         if (source.scope !== undefined) after.scope = source.scope;
         if (target.scope !== undefined) before.scope = target.scope;
+        // 別アプリの fileKey は流用できない。解決済みなら再利用・アップロードに置き換え、未解決は停止する。
+        const resolution = options.customizeFiles, names = customizeFileNames(source, target);
+        comparable = value => comparableCustomizePayload(value, resolution, names);
         const currentKeys = new Set(['desktop', 'mobile'].flatMap(platform => ['js', 'css'].flatMap(kind => (target[platform]?.[kind] || []).map(item => item.file?.fileKey).filter(Boolean))));
-        for (const platform of ['desktop', 'mobile']) for (const kind of ['js', 'css']) for (const item of source[platform]?.[kind] || []) {
-          if (item.type === 'FILE' && !currentKeys.has(item.file?.fileKey)) plan.blockers.push(`${platform}/${kind}: 「${item.file?.name || 'アップロードファイル'}」は反映先に存在しません。JS/CSS設定画面でファイルをアップロードしてから比較してください。`);
+        for (const platform of ['desktop', 'mobile'] as const) for (const kind of ['js', 'css'] as const) for (const [index, item] of (after[platform][kind] as any[]).entries()) {
+          if (item.type !== 'FILE') continue;
+          const fileKey = item.file.fileKey, name = names[fileKey] || 'アップロードファイル', state = resolution?.files[fileKey];
+          if (state?.status === 'reuse') item.file.fileKey = state.targetFileKey;
+          else if (state?.status === 'upload') uploads.push({ platform, kind, index, sourceFileKey: fileKey, name, byteSize: state.byteSize });
+          else if (state?.status === 'unavailable') plan.blockers.push(`${platform}/${kind}: 「${name}」を反映元から取得できません（${state.reason}）。反映元でファイルを確認してください。`);
+          else if (!state && !currentKeys.has(fileKey)) plan.blockers.push(`${platform}/${kind}: 「${name}」は反映先に存在せず、反映元のファイル本体を確認できません。`);
         }
+        if (uploads.length) plan.warnings.push(`${new Set(uploads.map(upload => upload.sourceFileKey)).size} 件のファイル（合計 ${formatBytes([...new Map(uploads.map(upload => [upload.sourceFileKey, upload.byteSize])).values()].reduce((sum, size) => sum + size, 0))}）を反映先へアップロードしてから設定します。`);
       }
       if (key === 'layoutSettings') {
         if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error('レイアウトの形式が不正です。');
@@ -296,10 +309,11 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
         walk(after.layout); plan.requiredFields = [...new Set(codes)];
       }
     }
-    diffValues(before, after, [], plan.changes);
+    diffValues(comparable ? comparable(before) : before, comparable ? comparable(after) : after, [], plan.changes);
     plan.changeCount = plan.changes.filter(change => change.kind !== '保持').length;
     plan.removalCount = plan.changes.filter(change => change.kind === '削除').length;
-    if (key !== 'fieldSettings' && key !== 'pluginSettings' && plan.changeCount) plan.operations.push({ method: 'PUT', endpoint: def.endpoint, body: after, label: def.label });
+    if (key !== 'fieldSettings' && key !== 'pluginSettings' && plan.changeCount) plan.operations.push({ method: 'PUT', endpoint: def.endpoint, body: after, label: def.label, ...(uploads.length ? { uploads } : {}) });
+    if (uploads.length && plan.changeCount) plan.fileUploads = uploads;
     if (plan.blockers.length) plan.status = 'error';
     else plan.status = plan.operations.length ? 'change' : 'same';
     plan.message = plan.blockers.length ? plan.blockers.join('\n') : plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : `書き込み不要${plan.changes.some(change => change.kind === '保持') ? '（反映先だけの設定は保持）' : '（一致）'}`;

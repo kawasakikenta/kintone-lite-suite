@@ -36,6 +36,12 @@ const RECORD_DATA_MUTATION_PATHS: ReadonlySet<string> = new Set([
  * 必要なため、本番 prefix でも POST/DELETE を許可する。
  */
 const RECORD_CURSOR_PATH = '/records/cursor.json';
+/**
+ * ファイルアップロード（POST /file.json）は、未使用の一時ファイルと fileKey を作るだけで、
+ * アプリ設定にもレコードにも書き込まない。別アプリの JS/CSS を反映先へ渡すために
+ * 本番 prefix でも POST のみ許可する（PUT/DELETE は従来どおり拒否）。
+ */
+const FILE_UPLOAD_PATH = '/file.json';
 
 export interface ApiPathMetric {
   calls: number;
@@ -98,6 +104,7 @@ export function assertAllowsMutatingRestCall(prefix: string, path: string, metho
     if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
     return;
   }
+  if (normalizeApiResourcePath(rel) === FILE_UPLOAD_PATH && m === 'POST' && !isPreviewRestPrefix(prefix)) return;
   if (!isPreviewRestPrefix(prefix)) {
     throw new Error(ERR_NO_PROD_WRITE);
   }
@@ -564,6 +571,59 @@ export async function fetchTextFileBody(prefix: string, fileKey: string): Promis
       detail: error instanceof Error ? error.message : String(error)
     };
   }
+}
+
+const FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024; // 20 MB
+
+/**
+ * ファイルの本体を取得する。ファイルAPIにプレビュー用エンドポイントはないため常に通常 prefix を使う。
+ * 差分比較用の fetchTextFileBody とは別に、アップロード・バックアップ用に Blob のまま返す。
+ */
+export async function downloadKintoneFile(guestId: string, fileKey: string, opts: { maxBytes?: number } = {}): Promise<Blob> {
+  if (!fileKey) throw new Error('fileKey がありません。');
+  const maxBytes = Number.isFinite(opts.maxBytes) && Number(opts.maxBytes) > 0 ? Number(opts.maxBytes) : FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
+  const limitText = `${Math.round(maxBytes / (1024 * 1024))}MB`;
+  const url = `${buildApiPrefix(guestId, false)}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
+  let resp: Response;
+  try {
+    resp = await fetch(url, { method: 'GET', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+  } catch (error) {
+    throw new Error(`ファイルを取得できません（${error instanceof Error ? error.message : String(error)}）`);
+  }
+  if (!resp.ok) throw new Error(`ファイルを取得できません（HTTP ${resp.status || 'error'}）`);
+  const contentLength = Number(resp.headers?.get?.('content-length') || '');
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
+  const blob = await resp.blob();
+  if (blob.size > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
+  return blob;
+}
+
+/**
+ * ファイルをアップロードして新しい fileKey を返す。通常 prefix の POST /file.json のみ書き込みガードを通る。
+ */
+export async function uploadKintoneFile(guestId: string, blob: Blob, fileName: string): Promise<string> {
+  const prefix = buildApiPrefix(guestId, false);
+  assertAllowsMutatingRestCall(prefix, FILE_UPLOAD_PATH, 'POST');
+  const token = typeof kintone !== 'undefined' ? (kintone as any)?.getRequestToken?.() : '';
+  if (!token) throw new Error('リクエストトークンを取得できないため、ファイルをアップロードできません。');
+  const form = new FormData();
+  form.append('__REQUEST_TOKEN__', String(token));
+  form.append('file', blob, fileName);
+  let resp: Response;
+  try {
+    resp = await fetch(`${prefix}${FILE_UPLOAD_PATH}`, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: form });
+  } catch (error) {
+    throw new Error(`ファイルをアップロードできません（${error instanceof Error ? error.message : String(error)}）`);
+  }
+  let data: any = null;
+  try { data = await resp.json(); } catch { data = null; }
+  if (!resp.ok) {
+    const detail = [data?.code, data?.message].filter(Boolean).join(' ');
+    throw new Error(`ファイルをアップロードできません（HTTP ${resp.status || 'error'}${detail ? `: ${detail}` : ''}）`);
+  }
+  const fileKey = data?.fileKey;
+  if (typeof fileKey !== 'string' || !fileKey) throw new Error('アップロード応答にfileKeyがありません。');
+  return fileKey;
 }
 
 async function fetchTextFileBodyWithRetry(prefix: string, fileKey: string): Promise<TextFileBodyFetchResult> {
