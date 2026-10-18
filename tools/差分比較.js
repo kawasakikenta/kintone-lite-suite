@@ -1191,7 +1191,7 @@ ${contextLine}`);
     const first = Object.values(revisions).find((value) => value != null && value !== "");
     return first != null ? String(first) : "";
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, BUNDLE_FETCH_CONCURRENCY;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1213,6 +1213,7 @@ ${contextLine}`);
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
       CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
       TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
+      FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
       BUNDLE_FETCH_CONCURRENCY = 3;
     }
   });
@@ -20181,6 +20182,44 @@ ${fence}`;
     space.addEventListener("keydown", onEnterKey);
     return details;
   }
+
+  // src/reflect/standalonePlan.ts
+  init_constants();
+  init_utils();
+
+  // src/reflect/sections.ts
+  init_constants();
+  var REFLECT_SECTION_KEYS = SECTION_DEFS.filter((def) => def.put).map((def) => def.key).flatMap((key) => key === "layoutSettings" ? [key, "appSettings"] : [key]);
+
+  // src/reflect/customizeFiles.ts
+  init_api();
+  init_utils();
+
+  // src/reflect/changeSummary.ts
+  init_kintone_enums();
+  init_label_dict();
+  var ENUM_BY_KEY = {
+    theme: APP_THEME_JP,
+    roundingMode: ROUNDING_MODE_JP,
+    selectionMode: TITLE_SELECTION_JP,
+    scope: CUSTOMIZE_SCOPE_JP,
+    chartType: CHART_TYPE_JP,
+    chartMode: CHART_MODE_JP,
+    per: GROUP_PER_JP,
+    by: REPORT_SORT_BY_JP,
+    order: REPORT_SORT_ORDER_JP,
+    every: PERIODIC_REPORT_EVERY_JP,
+    dayOfWeek: DAY_OF_WEEK_JP,
+    builtinType: VIEW_BUILTIN_TYPE_JP,
+    device: VIEW_DEVICE_JP,
+    paginationStyle: VALUE_LABELS.paginationStyle,
+    accessibility: VALUE_LABELS.accessibility,
+    recordTrigger: VALUE_LABELS.recordTrigger,
+    format: NUMBER_FORMAT_JP,
+    align: ALIGN_JP,
+    unitPosition: UNIT_POSITION_JP,
+    protocol: LINK_PROTOCOL_JP
+  };
 
   // src/reflect/liteSetup.ts
   function parseAppReference(text2) {
