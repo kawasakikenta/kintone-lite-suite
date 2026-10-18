@@ -142,7 +142,8 @@ const ordinal = (value: any): string => {
   return Number.isFinite(number) ? `${number + 1}番目` : fmt(value);
 };
 
-const listText = (items: string[]): string => clip(items.join('、'));
+/** 一覧を1行にまとめる。長くて省略した場合は件数を添える。 */
+const listText = (items: string[]): string => { const joined = items.join('、'), text = clip(joined); return text !== joined && items.length > 1 ? `${text}（計 ${items.length} 件）` : text; };
 
 // ---------------------------------------------------------------------------
 // 要素ごとの短い表現
@@ -361,16 +362,17 @@ function layoutItems(before: any, after: any, labels: Labels, push: Push) {
     if (lines.length) emit('変更', nameOf(now), lines);
   }
   for (const [code, prev] of b.placed) if (!a.placed.has(code)) emit('削除', fieldName(code, labels, prev.node.type === 'GROUP' ? prev.node.label : undefined), [`配置: ${prev.where} → なし`]);
-  // ラベル・スペース・罫線は識別子が無いので個数でまとめる。
-  const plainLines: string[] = [];
+  // ラベル・スペース・罫線は識別子が無いので、個数の増減（削除・追加）と、同数のときの内容・大きさの変化でまとめる。
+  const plainLines: Record<'削除' | '追加' | '変更', string[]> = { 削除: [], 追加: [], 変更: [] };
   for (const type of new Set([...b.plain.keys(), ...a.plain.keys()])) {
     const x = b.plain.get(type) || [], y = a.plain.get(type) || [], name = dictGet(LAYOUT_PLAIN_LABELS, type) ?? type;
-    if (x.length !== y.length) { plainLines.push(`${name}: ${x.length}個 → ${y.length}個`); continue; }
-    if (type !== 'LABEL') continue;
+    if (x.length !== y.length) { plainLines[x.length > y.length ? '削除' : '追加'].push(`${name}: ${x.length}個 → ${y.length}個`); continue; }
     const texts = (items: any[]) => items.map(item => String(item.label ?? ''));
-    if (!same(texts(x), texts(y))) plainLines.push(arrayLine('label', `${name}の内容`, texts(x), texts(y), labels, 'layoutSettings'));
+    if (type === 'LABEL' && !same(texts(x), texts(y))) plainLines.変更.push(arrayLine('label', `${name}の内容`, texts(x), texts(y), labels, 'layoutSettings'));
+    const sizes = (items: any[]) => items.map(item => stable(item.size ?? null));
+    if (!same(sizes(x), sizes(y))) plainLines.変更.push(`${name}の大きさを変更`);
   }
-  if (plainLines.length) emit('変更', 'ラベル・スペース・罫線', plainLines);
+  for (const kind of ['削除', '変更', '追加'] as const) if (plainLines[kind].length) emit(kind, 'ラベル・スペース・罫線', plainLines[kind]);
   if (!count && !same(bl, al)) emit('変更', 'レイアウト', ['行や要素の並びを変更']);
 }
 

@@ -104,7 +104,8 @@ export function assertAllowsMutatingRestCall(prefix: string, path: string, metho
     if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
     return;
   }
-  if (normalizeApiResourcePath(rel) === FILE_UPLOAD_PATH && m === 'POST' && !isPreviewRestPrefix(prefix)) return;
+  // 正規化で別のパスを /file.json に見せかけられないよう、呼び出し元が渡すパスそのものと一致する場合だけ許可する。
+  if (path === FILE_UPLOAD_PATH && m === 'POST' && !isPreviewRestPrefix(prefix)) return;
   if (!isPreviewRestPrefix(prefix)) {
     throw new Error(ERR_NO_PROD_WRITE);
   }

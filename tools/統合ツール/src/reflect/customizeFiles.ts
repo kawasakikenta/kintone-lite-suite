@@ -91,7 +91,13 @@ function guessContentType(name: string): string {
   return /\.css$/i.test(name) ? 'text/css' : /\.js$/i.test(name) ? 'text/javascript' : '';
 }
 
-const defaultDownload: CustomizeFileDownloader = (guestId, fileKey) => downloadKintoneFile(guestId, fileKey);
+/** 一過性の通信失敗で反映全体が止まらないよう、上限超過以外は1回だけ再試行する。 */
+const defaultDownload: CustomizeFileDownloader = async (guestId, fileKey) => {
+  try { return await downloadKintoneFile(guestId, fileKey); } catch (error) {
+    if (/大きすぎ/.test(messageOf(error))) throw error;
+    return downloadKintoneFile(guestId, fileKey);
+  }
+};
 
 async function pool<T>(items: T[], worker: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
@@ -168,7 +174,7 @@ export function comparableCustomizePayload(payload: any, resolution: CustomizeFi
 }
 
 /** バックアップ用に、各 FILE 項目へファイル本体（base64）を埋め込んだ深いコピーを返す。元のオブジェクトは変更しない。 */
-export async function embedCustomizeFileContents(section: any, opts: { guestId: string; download?: CustomizeFileDownloader }): Promise<{ section: any; unavailable: Array<{ name: string; reason: string }> }> {
+export async function embedCustomizeFileContents(section: any, opts: { guestId: string; download?: CustomizeFileDownloader }): Promise<{ section: any; unavailable: Array<{ fileKey: string; name: string; reason: string }> }> {
   const download = opts.download || defaultDownload;
   const copy = deepClone(section);
   const entries = listFileEntries(copy);
@@ -181,13 +187,13 @@ export async function embedCustomizeFileContents(section: any, opts: { guestId: 
       results.set(entry.fileKey, { content: { base64: bytesToBase64(await blobBytes(blob)), contentType: blob.type || String(entry.item.file?.contentType || '') || guessContentType(entry.name), byteSize: blob.size } });
     } catch (error) { results.set(entry.fileKey, { reason: messageOf(error) }); }
   });
-  const unavailable: Array<{ name: string; reason: string }> = [], reported = new Set<string>();
+  const unavailable: Array<{ fileKey: string; name: string; reason: string }> = [], reported = new Set<string>();
   for (const entry of entries) {
     const result = results.get(entry.fileKey)!;
     if ('content' in result) entry.item.file._content = { ...result.content };
     else {
       entry.item.file._contentUnavailable = result.reason;
-      if (!reported.has(entry.fileKey)) { reported.add(entry.fileKey); unavailable.push({ name: entry.name || entry.fileKey, reason: result.reason }); }
+      if (!reported.has(entry.fileKey)) { reported.add(entry.fileKey); unavailable.push({ fileKey: entry.fileKey, name: entry.name || entry.fileKey, reason: result.reason }); }
     }
   }
   return { section: copy, unavailable };

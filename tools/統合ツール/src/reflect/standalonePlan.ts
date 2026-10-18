@@ -161,8 +161,13 @@ function buildAppSettingsPlan(plan: ReflectSectionPlan, source: any, target: any
     plan.behavior = '動作・表示の設定を更新（アプリ名・説明・アイコンは対象外）';
     const pick = (section: any) => Object.fromEntries(APP_SETTINGS_REFLECT_KEYS.filter(name => own(source, name) && own(section, name)).map(name => [name, name === 'titleField' && object(section[name]) && section[name].selectionMode === 'AUTO' ? { selectionMode: 'AUTO' } : settingValue(section[name])]));
     const before = pick(target), after = pick(source);
-    if (after.titleField?.selectionMode === 'MANUAL' && typeof after.titleField.code === 'string' && after.titleField.code) plan.requiredFields = [after.titleField.code];
+    if (after.titleField?.selectionMode === 'MANUAL') {
+      if (typeof after.titleField.code !== 'string' || !after.titleField.code) throw new Error('レコードのタイトルに使うフィールドが指定されていません。');
+      plan.requiredFields = [after.titleField.code];
+    }
     diffValues(before, after, [], plan.changes);
+    // 一般設定のAPIは設定を削除しない（例: タイトルを自動にするとフィールド指定は不要になるだけ）ため、削除としては数えない。
+    for (const change of plan.changes) if (change.kind === '削除') change.kind = '変更';
     try { plan.items = summarizeReflectItems('appSettings', before, after, { fieldLabels: options.fieldLabels }); } catch { plan.items = []; }
     for (const change of plan.changes) { const [head, ...rest] = change.path.split(' / '); change.path = [APP_SETTINGS_LABELS[head] || head, ...rest].join(' / '); }
     plan.changeCount = plan.changes.filter(change => change.kind !== '保持').length;

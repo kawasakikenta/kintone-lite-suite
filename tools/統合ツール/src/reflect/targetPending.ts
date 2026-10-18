@@ -24,8 +24,13 @@ export async function inspectTargetPendingChanges(opts: { targetAppId: string; t
   const unknown = (productionRevision: string, previewRevision: string, reason: string): ReflectTargetPending => ({ state: 'unknown', productionRevision, previewRevision, sectionKeys: [], message: `反映先プレビューに未公開の変更があるか確認できませんでした（${reason}）。` });
   let productionRevision = '', previewRevision = '';
   try {
-    previewRevision = [...Object.values(targetPreviewBundle?.meta?.sectionRevisions || {}), ...Object.values(targetPreviewBundle?.sections || {}).map((section: any) => section?.revision)].map(value => String(value ?? '')).find(value => /^\d+$/.test(value)) || '';
-    if (!previewRevision) return unknown('', '', '反映先プレビューのrevisionがありません');
+    // 取得できていない項目や、取得中の更新で revision が食い違う状態では「未公開の変更なし」と言えない。
+    const incomplete = opts.scopes.find(key => !isCompleteReflectSection(targetPreviewBundle?.sections?.[key]));
+    if (incomplete) return unknown('', '', `反映先プレビューの${reflectSectionLabel(incomplete)}を取得できません`);
+    const revisions = new Set(opts.scopes.map(key => String(targetPreviewBundle?.meta?.sectionRevisions?.[key] ?? targetPreviewBundle?.sections?.[key]?.revision ?? '')));
+    if (revisions.size !== 1) return unknown('', '', '取得中に反映先プレビューが更新された可能性があります');
+    previewRevision = [...revisions][0];
+    if (!/^\d+$/.test(previewRevision)) return unknown('', '', '反映先プレビューのrevisionがありません');
     const response = await apiGet(buildApiPrefix(opts.targetGuestId || '', false), '/app/settings.json', { app: opts.targetAppId });
     productionRevision = String(response?.revision ?? '');
     if (!/^\d+$/.test(productionRevision)) return unknown('', previewRevision, '本番のrevisionがありません');

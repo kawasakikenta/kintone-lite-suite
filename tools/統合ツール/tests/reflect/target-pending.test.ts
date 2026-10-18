@@ -26,9 +26,20 @@ describe('反映先プレビューの未公開の変更の確認', () => {
 
   it('revision が一致すれば clean とし、本番のバンドルは取得しない', async () => {
     const api = mockKintone({ revision: '20' });
-    const result = await inspectTargetPendingChanges({ targetAppId: '2', scopes: ['fieldSettings', 'viewSettings'] }, previewBundle({ fieldSettings: { properties: {}, revision: '20' } }));
+    const result = await inspectTargetPendingChanges({ targetAppId: '2', scopes: ['fieldSettings', 'viewSettings'] }, previewBundle({ fieldSettings: { properties: {}, revision: '20' }, viewSettings: { views: {}, revision: '20' } }));
     expect(result).toEqual({ state: 'clean', productionRevision: '20', previewRevision: '20', sectionKeys: [], message: '反映先プレビューに未公開の変更はありません。' });
     expect(api.mock.calls.map(([url, method, params]) => [url, method, params])).toEqual([['/k/v1/app/settings.json', 'GET', { app: '2' }]]);
+  });
+  it('取得できていない項目や、項目間で revision が食い違う場合は clean と判定しない', async () => {
+    const api = mockKintone({ revision: '18' });
+    const failed = await inspectTargetPendingChanges({ targetAppId: '2', scopes: ['fieldSettings', 'viewSettings'] }, previewBundle({ fieldSettings: { properties: {}, revision: '18' }, viewSettings: { _fetchError: '取得失敗' } }, '18'));
+    expect(failed.state).toBe('unknown');
+    const mixed = previewBundle({ fieldSettings: { properties: {}, revision: '18' }, viewSettings: { views: {}, revision: '20' } });
+    mixed.meta.sectionRevisions = { fieldSettings: '18', viewSettings: '20' };
+    const result = await inspectTargetPendingChanges({ targetAppId: '2', scopes: ['fieldSettings', 'viewSettings'] }, mixed);
+    expect(result.state).toBe('unknown');
+    expect(result.message).toContain('更新された可能性');
+    expect(api).not.toHaveBeenCalled();
   });
   it('JS/CSS は fileKey の違いではなく、ファイル名とサイズの違いだけを未公開の変更として扱う', async () => {
     const js = (fileKey: string, name = 'app.js', size = '10') => ({ type: 'FILE', file: { fileKey, name, size } });

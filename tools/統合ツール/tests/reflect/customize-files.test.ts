@@ -113,7 +113,7 @@ describe('embedCustomizeFileContents', () => {
     expect(a.file._content).toEqual({ base64: bytesToBase64(new TextEncoder().encode('AAA')), contentType: 'text/javascript', byteSize: 3 });
     expect(b.file._contentUnavailable).toBe('HTTP 500');
     expect(url).toEqual({ type: 'URL', url: 'https://example.com/x.js' });
-    expect(result.unavailable).toEqual([{ name: 'b.js', reason: 'HTTP 500' }]);
+    expect(result.unavailable).toEqual([{ fileKey: 'b', name: 'b.js', reason: 'HTTP 500' }]);
     expect(download).toHaveBeenCalledWith('9', 'a');
   });
 });
@@ -289,6 +289,22 @@ describe('preview reflection with file upload', () => {
     expect(new TextDecoder().decode(base64ToBytes(second.file._content.base64))).toBe(bodies.tgt2);
   });
 
+  it('stops before any upload or PUT when a target file that the write removes cannot be backed up', async () => {
+    const preview = await previewReflectStandalone(baseOpts, () => {});
+    // 確認後に反映先ファイル（置き換えで外れる tgt1）の本体が取得できなくなった想定。
+    const original = bodies.tgt1;
+    (fetch as any).mockImplementation(async (url: string, init: any = {}) => {
+      if (init.method === 'POST') { order.push('UPLOAD'); return new Response(JSON.stringify({ fileKey: 'new' })); }
+      const key = new URL(url, 'https://x.example').searchParams.get('fileKey')!;
+      if (key === 'tgt1' && downloads.filter(item => item.includes('fileKey=tgt1')).length >= 2) return new Response('', { status: 503 });
+      downloads.push(url);
+      return new Response(blobOf(bodies[key] ?? ''));
+    });
+    await expect(runApplyPreviewStandalone({ ...baseOpts, reviewBaseline: preview.baseline, doBackup: true }, () => {}, () => {})).rejects.toThrow(/バックアップに保存できないため、反映を中止しました。まだ書き込んでいません。\n「old\.js」/);
+    expect(order).toEqual([]);
+    expect(writes).toEqual([]);
+    bodies.tgt1 = original;
+  });
   it('returns no backup when nothing is written', async () => {
     const same = { ...baseOpts, sourceAppId: '2' };
     (kintone as any).api.mockImplementation(async () => ({ ...structuredClone(targetSection()), revision: '30' }));
