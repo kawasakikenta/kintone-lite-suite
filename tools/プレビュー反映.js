@@ -5099,8 +5099,73 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return details;
   }
 
-  // src/entries/reflectPlanView.ts
-  init_constants();
+  // src/reflect/planReport.ts
+  var ENVIRONMENT_LABELS = { production: "本番設定", preview: "プレビュー設定", json: "設定JSON" };
+  var STATUS_LABELS = { change: "差分あり", same: "一致", "src-missing": "確認が必要", "tgt-missing": "確認が必要", error: "確認が必要" };
+  var OUTCOME_LABELS = { ok: "成功", ng: "失敗", skip: "変更なし", pending: "未実行" };
+  var KIND_ORDER2 = ["削除", "変更", "追加", "保持"];
+  function escapeReflectMarkdown(value) {
+    return String(value ?? "").replace(/\r?\n/g, " ").replace(/([\\`*_[\]<>|~])/g, "\\$1");
+  }
+  function cell(value) {
+    return escapeReflectMarkdown(value) || "－";
+  }
+  function appLine(app, environment) {
+    const parts = [`App ${app.appId || "－"}`, app.guestId ? `ゲストスペース ${app.guestId}` : "通常スペース", environment];
+    if (app.code) parts.splice(1, 0, `コード ${app.code}`);
+    return `${escapeReflectMarkdown(app.name || "（名前なし）")}（${parts.map(escapeReflectMarkdown).join(" / ")}）`;
+  }
+  function formatStamp(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value || "") : date.toLocaleString("ja-JP", { hour12: false });
+  }
+  function buildReflectReportMarkdown(input) {
+    const lines = [];
+    const record = !!input.outcome;
+    lines.push(`# プレビュー反映の${record ? "記録" : "計画"}`, "");
+    lines.push(`- ${record ? "実行日時" : "作成日時"}: ${escapeReflectMarkdown(formatStamp(record ? input.outcome.executedAt : input.generatedAt))}`);
+    lines.push(`- 反映元: ${appLine(input.source, ENVIRONMENT_LABELS[input.sourceEnvironment] || input.sourceEnvironment)}`);
+    lines.push(`- 反映先: ${appLine(input.target, "プレビュー")}`);
+    lines.push(`- 反映先だけの一覧・グラフ・アクション: ${input.preserveTargetOnly ? "保持する" : "削除する"}`);
+    const lookupPairs = Object.entries(input.lookupMap || {});
+    if (lookupPairs.length) lines.push(`- 参照先変換: ${lookupPairs.map(([from, to]) => `${escapeReflectMarkdown(from)} → ${escapeReflectMarkdown(to)}`).join("、")}`);
+    if (input.targetPending) lines.push(`- 反映先の未公開の変更: ${escapeReflectMarkdown(input.targetPending.message)}`);
+    lines.push("- 書き込み先はプレビューです。本番への公開はアプリの設定画面で行います。", "");
+    lines.push("## 概要", "");
+    const outcomeOf = (key) => input.outcome?.sections.find((section) => section.sectionKey === key);
+    lines.push(record ? "| 項目 | 結果 | 変更 | 削除 | 反映方法 |" : "| 項目 | 状態 | 変更 | 削除 | 保持 | 反映方法 |");
+    lines.push(record ? "| --- | --- | ---: | ---: | --- |" : "| --- | --- | ---: | ---: | ---: | --- |");
+    for (const entry of input.entries) {
+      const kept = entry.changes.filter((change) => change.kind === "保持").length;
+      const outcome = outcomeOf(entry.sectionKey);
+      lines.push(record ? `| ${cell(entry.label)} | ${cell(outcome ? OUTCOME_LABELS[outcome.status] : "対象外")} | ${entry.changeCount} | ${entry.removalCount} | ${cell(entry.behavior)} |` : `| ${cell(entry.label)} | ${cell(STATUS_LABELS[entry.status] || entry.status)} | ${entry.changeCount} | ${entry.removalCount} | ${kept} | ${cell(entry.behavior)} |`);
+    }
+    lines.push("");
+    for (const entry of input.entries) {
+      lines.push(`## ${escapeReflectMarkdown(entry.label)}`, "");
+      const outcome = outcomeOf(entry.sectionKey);
+      if (outcome) {
+        lines.push(`- 結果: ${OUTCOME_LABELS[outcome.status]}`);
+        if (outcome.message) lines.push(`- 詳細: ${escapeReflectMarkdown(outcome.message)}`);
+      }
+      lines.push(`- 状態: ${escapeReflectMarkdown(entry.message || STATUS_LABELS[entry.status] || entry.status)}`);
+      for (const blocker of entry.blockers) lines.push(`- 停止理由: ${escapeReflectMarkdown(blocker)}`);
+      for (const warning of entry.warnings) lines.push(`- 注意: ${escapeReflectMarkdown(warning)}`);
+      for (const upload of entry.fileUploads || []) lines.push(`- アップロードするファイル: ${upload.platform === "desktop" ? "PC" : "モバイル"} ${upload.kind.toUpperCase()} / ${escapeReflectMarkdown(upload.name)}`);
+      const items = [...entry.items || []].sort((a, b) => KIND_ORDER2.indexOf(a.kind) - KIND_ORDER2.indexOf(b.kind));
+      if (items.length) {
+        lines.push("", "### 変更の要約", "");
+        for (const item of items) {
+          lines.push(`- **${item.kind}** ${escapeReflectMarkdown(item.name)}`);
+          for (const detail of item.details) lines.push(`  - ${escapeReflectMarkdown(detail)}`);
+        }
+      } else if (entry.status === "change") {
+        lines.push("", `変更 ${entry.changeCount} 件（要約を作成できませんでした。詳細は反映計画JSONで確認してください）`);
+      }
+      lines.push("");
+    }
+    return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+  }
 
   // src/reflect/liteSetup.ts
   function parseAppReference(text) {
@@ -5249,6 +5314,33 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return out;
   }
   var REFLECT_UNDO_GUIDANCE = "取り消す場合: 反映前に反映先プレビューへ未公開の変更が無ければ、アプリの設定画面の『変更を中止』で今回の反映を含む未公開の変更をすべて破棄できます。または自動保存したバックアップJSONを『設定JSONから取得』で反映元に読み込み、差分を確認して戻せます（追加したフィールドは削除されません）。";
+
+  // src/reflect/rolloutQueue.ts
+  var ROLLOUT_QUEUE_LIMIT = 50;
+  var keyOf = (ref) => `${ref.guestId || ""}:${ref.appId}`;
+  function parseRolloutQueue(text, excluded = []) {
+    const tokens = String(text || "").split(/[\s,、，]+/).map((token) => token.trim()).filter(Boolean);
+    const seen = new Set(excluded.map(keyOf));
+    const targets = [];
+    for (const token of tokens) {
+      const ref = parseAppReference(token);
+      if (!ref) return { ok: false, error: `「${Array.from(token).length > 40 ? Array.from(token).slice(0, 39).join("") + "…" : token}」をアプリIDとして読み取れません。数字のID、またはアプリのURLを入力してください。` };
+      if (seen.has(keyOf(ref))) continue;
+      seen.add(keyOf(ref));
+      targets.push(ref);
+    }
+    if (targets.length > ROLLOUT_QUEUE_LIMIT) return { ok: false, error: `続けて反映する反映先は ${ROLLOUT_QUEUE_LIMIT} 件までです（${targets.length} 件）。` };
+    return { ok: true, targets };
+  }
+  function formatRolloutTarget(target) {
+    return `#${target.appId}${target.guestId ? `（ゲスト ${target.guestId}）` : ""}`;
+  }
+  function serializeRolloutQueue(targets) {
+    return targets.map((target) => target.guestId ? `/k/guest/${target.guestId}/${target.appId}/` : target.appId).join("\n");
+  }
+
+  // src/entries/reflectPlanView.ts
+  init_constants();
 
   // src/reflect/applyProgress.ts
   function describeApplyProgressStatus(status) {
@@ -5510,11 +5602,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         grid.className = "kus-rl-change__values";
         for (const [label, raw] of [["反映先の現在", change.before], ["反映後", change.after]]) {
           const value = formatReflectChangeValue(raw);
-          const cell = document.createElement("div"), caption = document.createElement("span"), content = document.createElement("pre");
+          const cell2 = document.createElement("div"), caption = document.createElement("span"), content = document.createElement("pre");
           caption.textContent = label;
           content.textContent = value.length > 1600 ? value.slice(0, 1600) + "\n…（全内容は計画JSONで確認できます）" : value;
-          cell.append(caption, content);
-          grid.appendChild(cell);
+          cell2.append(caption, content);
+          grid.appendChild(cell2);
         }
         row.appendChild(grid);
         list2.appendChild(row);
@@ -5532,13 +5624,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const app = identities[side];
     return `${app.name}${app.appId ? `（ID: ${app.appId}）` : ""} / ${app.guestId ? `ゲスト ${app.guestId}` : "通常スペース"} / ${side === "target" ? "プレビュー" : sourceEnvironment}`;
   }
-  function renderReflectRoute(host, identities, environment) {
+  function renderReflectRoute(host, identities, environment, options = {}) {
     const route = document.createElement("div");
     route.className = "kus-rl-confirm-route";
     for (const side of ["source", "target"]) {
       const block = document.createElement("div"), label = document.createElement("span"), name = document.createElement("strong");
       label.textContent = side === "source" ? "反映元 ↓" : "書き込み先";
-      name.textContent = reflectIdentityLabel(identities, side, environment);
+      name.textContent = side === "source" && options.sourceLabel ? options.sourceLabel : reflectIdentityLabel(identities, side, environment);
       block.append(label, name);
       route.appendChild(block);
     }
@@ -5585,7 +5677,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const tr = document.createElement("tr");
       tr.setAttribute("role", "row");
       tr.dataset.reflectSummary = entry.sectionKey;
-      const cell = (kind, label) => {
+      const cell2 = (kind, label) => {
         const td = document.createElement("td");
         td.setAttribute("role", "cell");
         td.className = `kus-rl-summary__${kind}`;
@@ -5598,21 +5690,21 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       nameButton.className = "kus-rl-summary__link";
       nameButton.textContent = entry.label;
       nameButton.title = `${entry.label}の詳細へ移動`;
-      cell("name", "項目").appendChild(nameButton);
+      cell2("name", "項目").appendChild(nameButton);
       const pill = document.createElement("span");
       pill.className = `kus-rl-pill kus-rl-pill--${SUMMARY_STATUS[tone].pill}`;
       pill.textContent = SUMMARY_STATUS[tone].text;
-      cell("status", "状態").appendChild(pill);
+      cell2("status", "状態").appendChild(pill);
       const kept = Math.max(0, entry.changes.length - entry.changeCount);
-      cell("num", "変更").textContent = computed ? String(entry.changeCount) : "－";
-      cell("num", "削除").textContent = computed ? String(entry.removalCount) : "－";
-      cell("num", "保持").textContent = computed ? String(kept) : "－";
-      cell("how", "反映方法").textContent = computed ? entry.behavior : "－";
+      cell2("num", "変更").textContent = computed ? String(entry.changeCount) : "－";
+      cell2("num", "削除").textContent = computed ? String(entry.removalCount) : "－";
+      cell2("num", "保持").textContent = computed ? String(kept) : "－";
+      cell2("how", "反映方法").textContent = computed ? entry.behavior : "－";
       const selected = options.selectedScopes.has(entry.sectionKey);
       const mark = document.createElement("span");
       mark.className = "kus-rl-preview-mini";
       mark.textContent = selected ? "選択中" : "未選択";
-      cell("sel", "選択").appendChild(mark);
+      cell2("sel", "選択").appendChild(mark);
       tr.addEventListener("click", () => options.onNavigate(entry.sectionKey));
       tbody.appendChild(tr);
     }
@@ -5744,13 +5836,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   function createReflectAppLookupCache(lookup = lookupReflectApp) {
     const done = /* @__PURE__ */ new Map();
     const pending = /* @__PURE__ */ new Map();
-    const keyOf = (appId, guestId) => `${String(guestId || "").trim()}|${String(appId || "").trim()}`;
+    const keyOf2 = (appId, guestId) => `${String(guestId || "").trim()}|${String(appId || "").trim()}`;
     return {
       peek(appId, guestId) {
-        return done.get(keyOf(appId, guestId));
+        return done.get(keyOf2(appId, guestId));
       },
       get(appId, guestId) {
-        const key = keyOf(appId, guestId);
+        const key = keyOf2(appId, guestId);
         const cached = done.get(key);
         if (cached) return Promise.resolve(cached);
         const inFlight = pending.get(key);
@@ -5805,7 +5897,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       scopes: normalizeScopes(raw.scopes),
       applyDiffOnly: !!raw.applyDiffOnly,
       lookupMap: String(raw.lookupMap == null ? "" : raw.lookupMap),
-      preserveTargetOnly: raw.preserveTargetOnly === void 0 ? true : !!raw.preserveTargetOnly
+      preserveTargetOnly: raw.preserveTargetOnly === void 0 ? true : !!raw.preserveTargetOnly,
+      rolloutQueue: String(raw.rolloutQueue == null ? "" : raw.rolloutQueue)
     };
   }
   function buildReflectPresetsExport(presets) {
@@ -6101,6 +6194,17 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 #kus-reflect-lite .kus-rl-confirm-entry{margin-top:12px;padding-top:10px;border-top:1px solid #cbd5e1}
 #kus-reflect-lite .kus-rl-confirm-entry h3{margin:0 0 6px;font-size:13px;color:#0f172a}
 #kus-reflect-lite .kus-rl-confirm-heading{margin:10px 0 4px;font-size:12px;font-weight:700;color:#991b1b}
+#kus-reflect-lite .kus-rl-rollout__input{width:100%;min-width:0;box-sizing:border-box;min-height:84px}
+#kus-reflect-lite .kus-rl-rollout__status{margin-top:6px;font-size:11.5px;line-height:1.5;color:#475569;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-rollout__status--err{color:#b91c1c;font-weight:700}
+#kus-reflect-lite .kus-rl-rollout-card .kus-rl-next{margin-bottom:8px}
+#kus-reflect-lite .kus-rl-rollout-heading{margin-top:12px;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-rollout-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+#kus-reflect-lite .kus-rl-rollout-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-rollout-item--ng{border-color:#fca5a5;background:#fff5f5}
+#kus-reflect-lite .kus-rl-rollout-item--pending{border-color:#fde68a;background:#fffbeb}
+#kus-reflect-lite .kus-rl-rollout-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px}
+#kus-reflect-lite .kus-rl-rollout-card .kus-rl-next[hidden]{display:none}
 @media(max-width:760px){
   #kus-reflect-lite .kus-rl-summary__table,#kus-reflect-lite .kus-rl-summary__table tbody{display:block}
   #kus-reflect-lite .kus-rl-summary__table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
@@ -6832,7 +6936,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         scopes: collectSelectedScopes(),
         applyDiffOnly: false,
         lookupMap: lookupTa.value,
-        preserveTargetOnly: preserve.checkbox.checked
+        preserveTargetOnly: preserve.checkbox.checked,
+        rolloutQueue: rolloutTa.value
       };
       const replaced = (memoryState.presets || []).some((p) => p.name === trimmed);
       const saved = mergeReflectPresets(memoryState.presets, [preset], REFLECT_PRESET_LIMIT);
@@ -6889,6 +6994,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       preserve.checkbox.checked = preset.preserveTargetOnly !== false;
       lookupTa.value = preset.lookupMap || "";
       refreshLookupStatus();
+      rolloutTa.value = preset.rolloutQueue || "";
+      if (rolloutTa.value.trim()) rolloutDetails.details.open = true;
       setSelectedScopes(preset.scopes || []);
       refreshSameConnBanner();
       saveState();
@@ -6904,6 +7011,121 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshPresetButtons();
       panel.setStatus(`プリセット「${name}」を削除しました`, "info");
     });
+    const rolloutDetails = makeDetails("続けて反映する反映先（複数アプリへ展開）", { open: !!(memoryState.rolloutQueueText || "").trim() });
+    rolloutDetails.details.classList.add("kus-rl-advanced", "kus-rl-rollout");
+    const rolloutHelp = document.createElement("p");
+    rolloutHelp.className = "kus-rl-quiet";
+    rolloutHelp.textContent = "同じ反映元・項目・設定で、ほかのアプリにも順番に反映します。反映先ごとに差分確認と最終確認を行います。数字だけのIDは通常スペースのアプリ、ゲストスペースのアプリはURLで指定します。";
+    const rolloutTa = makeTextarea({ rows: 4, code: true, placeholder: "1行に1件（改行・カンマ区切りも可）\n例: 203\nhttps://example.cybozu.com/k/guest/5/204/", value: memoryState.rolloutQueueText || "" });
+    rolloutTa.classList.add("kus-rl-rollout__input");
+    rolloutTa.setAttribute("aria-label", "続けて反映する反映先");
+    const rolloutStatus = document.createElement("div");
+    rolloutStatus.className = "kus-rl-rollout__status";
+    rolloutStatus.setAttribute("aria-live", "polite");
+    rolloutDetails.body.append(rolloutHelp, rolloutTa, rolloutStatus);
+    rolloutTa.addEventListener("input", () => {
+      saveState();
+      refreshReviewCard();
+    });
+    function currentRollout() {
+      const appId = tgtApp.value.trim();
+      return parseRolloutQueue(rolloutTa.value, appId ? [{ appId, guestId: tgtGuest.value.trim() }] : []);
+    }
+    function rolloutConditionKey() {
+      const lookup = parseLookupMapText(lookupTa.value);
+      return JSON.stringify({
+        source: sourceMode === "json" ? ["json", sourceBundleToken, String(sourceBundleFromJson?.appId || "")] : ["app", srcApp.value.trim(), srcGuest.value.trim(), sourceEnvironment.value],
+        // 反映項目は「失敗・未実行だけ選択」などの再実行で変わるため、展開の記録を引き継ぐ条件には含めない。
+        preserve: preserve.checkbox.checked,
+        lookup: lookup.ok ? Object.entries(lookup.value).sort() : lookupTa.value.trim()
+      });
+    }
+    function recordRolloutResult(entry) {
+      const key = rolloutConditionKey();
+      const log = memoryState.rolloutKey === key ? memoryState.rolloutLog || [] : [];
+      memoryState.rolloutKey = key;
+      memoryState.rolloutLog = [...log, entry].slice(-100);
+    }
+    const rolloutCard = makeCard({ title: "続けて反映", soft: true });
+    rolloutCard.card.classList.add("kus-rl-rollout-card");
+    rolloutCard.card.style.display = "none";
+    const rolloutNote = document.createElement("div");
+    rolloutNote.className = "kus-rl-next kus-rl-next--info";
+    rolloutNote.dataset.rolloutNote = "next";
+    const rolloutWarn = document.createElement("div");
+    rolloutWarn.className = "kus-rl-next kus-rl-next--warn";
+    rolloutWarn.dataset.rolloutNote = "warn";
+    const rolloutError = document.createElement("div");
+    rolloutError.className = "kus-rl-next kus-rl-next--warn";
+    rolloutError.dataset.rolloutNote = "error";
+    const rolloutNextBtn = makeButton("次の反映先の差分を確認", "primary");
+    rolloutNextBtn.dataset.rolloutNext = "true";
+    const rolloutNextRow = document.createElement("div");
+    rolloutNextRow.className = "kus-lp__btn-row";
+    rolloutNextRow.appendChild(rolloutNextBtn);
+    const rolloutLogBox = document.createElement("div");
+    rolloutLogBox.dataset.rolloutLog = "true";
+    rolloutCard.body.append(rolloutNote, rolloutWarn, rolloutError, rolloutNextRow, rolloutLogBox);
+    function renderRollout() {
+      const text = rolloutTa.value.trim();
+      const queue = currentRollout();
+      rolloutStatus.classList.toggle("kus-rl-rollout__status--err", !queue.ok);
+      if (!text) rolloutStatus.textContent = "";
+      else if ("error" in queue) {
+        rolloutStatus.textContent = queue.error;
+        rolloutDetails.details.open = true;
+      } else if (!queue.targets.length) rolloutStatus.textContent = "続けて反映する反映先はありません（現在の反映先は除いています）。";
+      else {
+        const shown = queue.targets.slice(0, 10).map(formatRolloutTarget).join("、");
+        rolloutStatus.textContent = `${queue.targets.length} 件: ${shown}${queue.targets.length > 10 ? ` ほか ${queue.targets.length - 10} 件` : ""}`;
+      }
+      const last = memoryState.lastResult;
+      const log = memoryState.rolloutLog || [];
+      const next = queue.ok ? queue.targets[0] : void 0;
+      const show = !!last && !restoreMode && (!queue.ok || !!next || log.length >= 2);
+      rolloutCard.card.style.display = show ? "block" : "none";
+      renderRolloutLog(rolloutLogBox, log);
+      if (!show) return;
+      rolloutNote.hidden = !next;
+      if (next) {
+        const rest = queue.ok ? queue.targets.length - 1 : 0;
+        rolloutNote.replaceChildren();
+        const head = document.createElement("strong");
+        head.textContent = `次の反映先: ${formatRolloutTarget(next)}（${rest ? `残り ${rest} 件` : "最後の反映先"}）`;
+        const body = document.createElement("span");
+        body.textContent = "同じ反映元・項目・設定で差分を取得します。反映先ごとに差分確認と最終確認を行うため、ここでは書き込みません。";
+        rolloutNote.append(head, body);
+      }
+      rolloutWarn.hidden = !(last && (last.ng > 0 || last.pending > 0));
+      rolloutWarn.textContent = "直前の反映先に失敗・未実行の項目があります。結果を確認してから進んでください。";
+      rolloutError.hidden = queue.ok;
+      rolloutError.textContent = "error" in queue ? `続けて反映する反映先を読み取れません。${queue.error}` : "";
+      rolloutNextRow.hidden = !next && queue.ok;
+      setButtonText(rolloutNextBtn, next ? `次の反映先 ${formatRolloutTarget(next)} の差分を確認` : "次の反映先の差分を確認");
+      rolloutNextBtn.disabled = busy || !next;
+    }
+    rolloutNextBtn.addEventListener("click", () => {
+      startNextRollout();
+    });
+    function startNextRollout() {
+      if (busy || restoreMode) return;
+      const queue = currentRollout();
+      if (!queue.ok || !queue.targets.length) return;
+      const [next, ...rest] = queue.targets;
+      const lookupState = parseLookupMapText(lookupTa.value);
+      const invalid = reflectConnectionError({ ...currentOptions(), targetAppId: next.appId, targetGuestId: next.guestId }) || lookupMapError(lookupState);
+      if (invalid) {
+        panel.setStatus(`次の反映先 ${formatRolloutTarget(next)} へ進めません。${invalid}`, "warn");
+        return;
+      }
+      tgtApp.value = next.appId;
+      tgtGuest.value = next.guestId;
+      rolloutTa.value = serializeRolloutQueue(rest);
+      saveState();
+      refreshSameConnBanner();
+      refreshReviewCard();
+      return startPreview(`次の反映先 ${formatRolloutTarget(next)} の差分を取得しました。内容を確認してから反映してください（まだ書き込んでいません）。`);
+    }
     const previewBtn = makeButton("差分プレビューを更新", "primary");
     const changedOnlyBtn = makeButton("差分ありだけ選択", "sub");
     const reviewCard = makeCard({ title: "反映予定を確認", soft: true });
@@ -6954,6 +7176,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         sourcePreview: sourceEnvironment.value === "preview",
         selectedScopes: collectSelectedScopes(),
         lookupMapText: lookupTa.value,
+        rolloutQueueText: rolloutTa.value,
         preserveTargetOnly: preserve.checkbox.checked
       };
     }
@@ -7084,6 +7307,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     }
     function refreshReviewCard() {
       if (restoreMode && (sourceMode !== "json" || sourceBundleToken !== restoreMode.token || tgtApp.value.trim() !== restoreMode.targetAppId || tgtGuest.value.trim() !== restoreMode.targetGuestId)) restoreMode = null;
+      if (memoryState.rolloutLog?.length && memoryState.rolloutKey !== rolloutConditionKey()) {
+        memoryState.rolloutLog = [];
+        memoryState.rolloutKey = "";
+      }
       const staleResult = memoryState.lastResult;
       const currentSourceBundleToken = sourceMode === "json" ? sourceBundleToken : "";
       if (staleResult && (!reflectResultMatchesOptions(staleResult.report, currentOptions(staleResult.report.scopes)) || staleResult.sourceBundleToken !== currentSourceBundleToken)) {
@@ -7118,7 +7345,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const postApply = postApplySummary();
       if (postApply && !blockers.length) message = postApply.message;
       reviewBody.innerHTML = "";
-      if (preview?.identities && fresh) renderReflectRoute(reviewBody, preview.identities, sourceMode === "json" ? "設定JSON" : sourceEnvironment.value === "preview" ? "プレビュー" : "本番");
+      if (preview?.identities && fresh) renderReflectRoute(reviewBody, preview.identities, sourceMode === "json" ? "設定JSON" : sourceEnvironment.value === "preview" ? "プレビュー" : "本番", restoreRouteOptions(preview.identities));
       if (fresh && restoreMode) appendRestoreNotice(reviewBody);
       if (fresh && result) appendTargetPendingNotice(reviewBody, result.targetPending);
       const info = document.createElement("div");
@@ -7159,6 +7386,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         }
       }
       exportPlanBtn.disabled = busy || !fresh;
+      exportPlanMdBtn.disabled = busy || !fresh;
+      copyPlanMdBtn.disabled = busy || !fresh;
+      renderRollout();
       rerenderPreviewCard();
       refreshWorkflow();
     }
@@ -7294,7 +7524,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const state3 = getPreviewState();
       if (!confirmedToken || !state3.preview) return;
       confirmBody.innerHTML = "";
-      renderReflectRoute(confirmBody, state3.preview.identities, sourceMode === "json" ? "設定JSON" : sourceEnvironment.value === "preview" ? "プレビュー" : "本番");
+      renderReflectRoute(confirmBody, state3.preview.identities, sourceMode === "json" ? "設定JSON" : sourceEnvironment.value === "preview" ? "プレビュー" : "本番", restoreRouteOptions(state3.preview.identities));
       const entries = state3.preview.result.entries.filter((entry) => state3.scopes.includes(entry.sectionKey) && entry.status === "change");
       const summary = document.createElement("p");
       summary.textContent = `反映する項目（${entries.length}）：${entries.map((entry) => entry.label).join("、")}`;
@@ -7396,6 +7626,48 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 5e3);
     });
+    const exportPlanMdBtn = makeButton("計画をMarkdownで保存", "sub");
+    exportPlanMdBtn.title = "選択中の項目の計画（経路・変更の要約・未公開の変更）をMarkdownで保存します";
+    const copyPlanMdBtn = makeButton("Markdownをコピー", "sub");
+    copyPlanMdBtn.title = "選択中の項目の計画をMarkdownとしてクリップボードへコピーします";
+    reviewCard.actions.append(exportPlanMdBtn, copyPlanMdBtn);
+    function buildPlanMarkdown() {
+      const state3 = getPreviewState();
+      if (!state3.fresh || !state3.preview) return null;
+      const identities = reportIdentities(state3.preview.identities);
+      const text = buildReflectReportMarkdown({
+        generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        source: identities.source,
+        target: identities.target,
+        sourceEnvironment: sourceMode === "json" ? "json" : sourceEnvironment.value === "preview" ? "preview" : "production",
+        preserveTargetOnly: preserve.checkbox.checked,
+        lookupMap: lookupMapValue(state3.lookupState),
+        entries: state3.preview.result.entries.filter((entry) => state3.scopes.includes(entry.sectionKey)),
+        targetPending: state3.preview.result.targetPending
+      });
+      return { text, appLabel: buildAppFilenameLabel(tgtApp.value.trim(), identities.target.name) };
+    }
+    async function copyMarkdown(text, what) {
+      if (!text) {
+        panel.setStatus(`${what}を作成できません。最新の差分を取得してください。`, "warn");
+        return;
+      }
+      const copied = await copyTextToClipboard(text);
+      panel.setStatus(copied ? `${what}のMarkdownをコピーしました。` : `コピーできませんでした。ブラウザの権限を確認するか、Markdownで保存してください。`, copied ? "ok" : "warn");
+    }
+    exportPlanMdBtn.addEventListener("click", () => {
+      const built = buildPlanMarkdown();
+      if (!built) {
+        panel.setStatus("反映計画を作成できません。最新の差分を取得してください。", "warn");
+        return;
+      }
+      const filename = buildExportFilename("プレビュー反映計画", "md", { appLabel: built.appLabel });
+      downloadText(filename, built.text, "text/markdown");
+      panel.setStatus(`反映計画を ${filename} に保存しました。`, "ok");
+    });
+    copyPlanMdBtn.addEventListener("click", () => {
+      void copyMarkdown(buildPlanMarkdown()?.text, "反映計画");
+    });
     const runBtn = makeButton("プレビュー反映を実行", "run");
     runBtn.classList.add("kus-lp__btn--danger");
     runBtn.classList.remove("kus-lp__btn--run");
@@ -7446,6 +7718,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     lastResultActions.appendChild(retryFailedBtn);
     lastResultActions.appendChild(restoreBtn);
     lastResultActions.appendChild(exportResultBtn);
+    const exportResultMdBtn = makeButton("記録をMarkdownで保存", "sub");
+    exportResultMdBtn.title = "実行した項目の計画と結果（成功・失敗）をMarkdownの反映記録として保存します";
+    const copyResultMdBtn = makeButton("Markdownをコピー", "sub");
+    copyResultMdBtn.title = "反映記録をMarkdownとしてクリップボードへコピーします";
+    lastResultActions.append(exportResultMdBtn, copyResultMdBtn);
     lastResultActions.appendChild(openTargetBtn);
     verifyResultBtn.addEventListener("click", () => {
       if (busy) return;
@@ -7511,7 +7788,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         chip.checkbox.checked = restoreScopes.has(chip.checkbox.value);
       });
       refreshScopeCount();
-      restoreMode = { token: sourceBundleToken, targetAppId, targetGuestId };
+      restoreMode = { token: sourceBundleToken, targetAppId, targetGuestId, at: last.at };
       saveState();
       refreshSrcJsonNote();
       refreshSameConnBanner();
@@ -7521,6 +7798,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     restoreBtn.addEventListener("click", () => {
       startRestoreFromBackup();
     });
+    function restoreSourceLabel(targetName) {
+      return `反映前のバックアップ（${[targetName, restoreMode ? formatReflectDateTime(restoreMode.at) : ""].filter(Boolean).join("・")}）`;
+    }
+    function restoreRouteOptions(identities) {
+      return restoreMode ? { sourceLabel: restoreSourceLabel(identities.target.name) } : {};
+    }
+    function reportIdentities(identities) {
+      return restoreMode ? { ...identities, source: { ...identities.source, name: restoreSourceLabel(identities.target.name) } } : identities;
+    }
     retryFailedBtn.addEventListener("click", () => {
       const retryScopes = memoryState.lastResult?.retryScopes || [];
       if (!retryScopes.length) return;
@@ -7553,6 +7839,36 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 5e3);
     });
+    function buildResultMarkdown() {
+      const last = memoryState.lastResult;
+      if (!last?.planned) return null;
+      const { identities, entries } = last.planned;
+      const text = buildReflectReportMarkdown({
+        generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        source: identities.source,
+        target: identities.target,
+        sourceEnvironment: last.report.source.environment,
+        preserveTargetOnly: last.report.preserveTargetOnly,
+        lookupMap: last.report.lookupMap,
+        entries,
+        targetPending: last.report.targetPending,
+        outcome: { executedAt: new Date(last.at).toISOString(), sections: normalizeApplySections(last.report.sections) }
+      });
+      return { text, appLabel: buildAppFilenameLabel(last.appId, identities.target.name) };
+    }
+    exportResultMdBtn.addEventListener("click", () => {
+      const built = buildResultMarkdown();
+      if (!built) {
+        panel.setStatus("反映記録を作成できません。", "warn");
+        return;
+      }
+      const filename = buildExportFilename("プレビュー反映記録", "md", { appLabel: built.appLabel });
+      downloadText(filename, built.text, "text/markdown");
+      panel.setStatus(`反映記録を ${filename} に保存しました。`, "ok");
+    });
+    copyResultMdBtn.addEventListener("click", () => {
+      void copyMarkdown(buildResultMarkdown()?.text, "反映記録");
+    });
     function renderLastResult() {
       const last = memoryState.lastResult;
       if (!last) {
@@ -7575,6 +7891,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       retryFailedBtn.style.display = last.retryScopes.length ? "" : "none";
       verifyResultBtn.style.display = last.report.scopes.length ? "" : "none";
       exportResultBtn.style.display = "";
+      exportResultMdBtn.style.display = last.planned ? "" : "none";
+      copyResultMdBtn.style.display = last.planned ? "" : "none";
       openTargetBtn.style.display = last.appId ? "" : "none";
       lastResultCard.card.style.display = "block";
     }
@@ -7608,6 +7926,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
           throw new Error(`現在の実行オプションでは実行対象が 0 件です。${buildSkipSummary(plan)}`);
         }
         if (selectionIssues(previewResult, scopes).length) throw new Error("確認できない項目が含まれています。差分確認へ戻ってください。");
+        const plannedSnapshot = { identities: reportIdentities(previewState.preview.identities), entries: previewResult.entries.filter((entry) => plan.effectiveScopes.includes(entry.sectionKey)) };
+        const wasRestoreMode = !!restoreMode;
         const progressRows = createApplyProgressRows(plan.effectiveScopes, (key) => previewResult.entries.find((entry) => entry.sectionKey === key)?.label || reflectSectionLabel(key));
         const applyOptions = {
           ...currentOptions(plan.effectiveScopes),
@@ -7661,6 +7981,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
           failedLabels: applyOutcome.sections.filter((s) => s.status === "ng").map((s) => s.label),
           sourceBundleToken: sourceMode === "json" ? sourceBundleToken : "",
           ...applyOutcome.backup ? { backup: applyOutcome.backup } : {},
+          planned: plannedSnapshot,
           report: {
             source: {
               appId: applyOptions.sourceBundle ? String(applyOptions.sourceBundle?.appId || "") : applyOptions.sourceAppId,
@@ -7676,6 +7997,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
             logs: applyOutcome.logs.slice()
           }
         };
+        if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || "", name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, pending: counts.pending, at: memoryState.lastResult.at });
         renderLastResult();
         showWorkflowStage("result");
         return { cancelled: false, hadError: counts.ng > 0 || counts.pending > 0 };
@@ -7745,10 +8067,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const presetDetails = makeDetails("よく使う設定を保存・読み込み");
     presetDetails.details.classList.add("kus-rl-advanced");
     presetDetails.body.appendChild(cardPreset.card);
-    setupGrid.append(advanced.details, presetDetails.details);
+    setupGrid.append(rolloutDetails.details, advanced.details, presetDetails.details);
     stages.setup.appendChild(setupGrid);
     [reviewCard.card, previewCard.card].forEach((node) => stages.review.appendChild(node));
-    [progressCard.card, lastResultCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
+    [progressCard.card, lastResultCard.card, rolloutCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
     const resultEmpty = document.createElement("div");
     resultEmpty.className = "kus-rl-preview-empty";
     resultEmpty.textContent = "まだ反映していません。対象を選び、差分を確認してから反映してください。";
@@ -7789,6 +8111,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     noInputSubmit.disabled = true;
     function dockEndpointLabel(side, identities) {
       const role = side === "source" ? "反映元" : "反映先";
+      if (side === "source" && restoreMode) return `${role}: ${restoreSourceLabel(identities?.target.name || targetNote.known()?.name || "")}`;
       let id;
       let name = "";
       let guest;
@@ -7939,6 +8262,38 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     if (plan.skippedSameScopes.length > 0) parts.push(`一致除外 ${plan.skippedSameScopes.length}件`);
     if (plan.skippedErrorScopes.length > 0) parts.push(`失敗除外 ${plan.skippedErrorScopes.length}件`);
     return parts.length ? parts.join(" / ") : "除外なし";
+  }
+  function renderRolloutLog(host, log) {
+    host.replaceChildren();
+    if (!log.length) return;
+    const heading = document.createElement("div");
+    heading.className = "kus-rl-rollout-heading";
+    heading.textContent = `これまでの反映先（${log.length} 件）`;
+    const list2 = document.createElement("ul");
+    list2.className = "kus-rl-rollout-list";
+    for (const entry of log) {
+      const tone = entry.ng > 0 ? "ng" : entry.pending > 0 ? "pending" : "ok";
+      const item = document.createElement("li");
+      item.className = `kus-rl-rollout-item kus-rl-rollout-item--${tone}`;
+      item.dataset.rolloutEntry = `${entry.guestId ? `${entry.guestId}:` : ""}${entry.appId}`;
+      const head = document.createElement("div");
+      head.className = "kus-rl-rollout-item__head";
+      const state3 = document.createElement("span");
+      state3.className = `kus-rl-result-state kus-rl-result-state--${tone}`;
+      const icon = document.createElement("span");
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = tone === "ok" ? "✓" : "⚠";
+      state3.append(icon, document.createTextNode(tone === "ok" ? "成功" : tone === "ng" ? "失敗あり" : "未実行あり"));
+      const name = document.createElement("strong");
+      name.textContent = `${formatRolloutTarget(entry)}${entry.name ? ` ${entry.name}` : ""}`;
+      head.append(state3, name);
+      const meta = document.createElement("div");
+      meta.className = "kus-rl-quiet";
+      meta.textContent = `成功 ${entry.ok} / 失敗 ${entry.ng} / 未実行 ${entry.pending} · ${formatReflectDateTime(entry.at)}`;
+      item.append(head, meta);
+      list2.appendChild(item);
+    }
+    host.append(heading, list2);
   }
   function setButtonText(button, text) {
     const spans = button.querySelectorAll("span");
