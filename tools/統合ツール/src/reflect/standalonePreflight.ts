@@ -73,7 +73,7 @@ export function assertReflectBaselineMatches(
   }
   const current = captureReflectBaseline({ ...opts, scopes: [...new Set([...opts.scopes, ...(opts.targetDependencies || [])])] }, source, target);
   for (const side of ['source', 'target'] as const) {
-    const label = side === 'source' ? '比較元' : '比較先プレビュー';
+    const label = side === 'source' ? '反映元' : '反映先プレビュー';
     const revisions = new Set<string>();
     const requireRevision = side === 'target' || !opts.sourceBundle;
     const checkedScopes: string[] = side === 'source' ? opts.scopes : [...new Set<string>([...opts.scopes, ...(opts.targetDependencies || [])])];

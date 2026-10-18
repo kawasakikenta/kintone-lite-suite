@@ -1,5 +1,27 @@
+import { SECTION_DEFS } from '../constants.js';
+import { buildReflectErrorHint } from '../reflect/applyOutcome.js';
+import { describeApplySectionStatus, normalizeApplySections } from '../reflect/liteSetup.js';
 import type { ReflectSectionPlan } from '../reflect/standalonePlan.js';
 import type { ReflectIdentities } from '../tabs/reflect-standalone.js';
+
+/** 整形のために解析する値の上限（巨大な文字列の解析で画面が止まるのを避ける）。 */
+const PRETTY_JSON_PARSE_LIMIT = 200_000;
+
+/**
+ * 内訳の値が JSON（オブジェクト・配列）の文字列なら、2 スペースのインデントで整形して返す。
+ * それ以外（通常の文字列・数値・「（なし）」・壊れた JSON）はそのまま返す。
+ */
+export function formatReflectChangeValue(value: string): string {
+  const text = String(value ?? '');
+  const head = text.trimStart()[0];
+  if ((head !== '{' && head !== '[') || text.length > PRETTY_JSON_PARSE_LIMIT) return text;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' ? JSON.stringify(parsed, null, 2) : text;
+  } catch {
+    return text;
+  }
+}
 
 export function extractChangedJsonKeys(beforeText: string, afterText: string): string[] {
   const bTrim = String(beforeText || '').trim();
@@ -77,7 +99,8 @@ export function appendReflectChanges(host: HTMLElement, plan: ReflectSectionPlan
         row.appendChild(keyNote);
       }
       const grid = document.createElement('div'); grid.className = 'kus-rl-change__values';
-      for (const [label, value] of [['反映先の現在', change.before], ['反映後', change.after]]) {
+      for (const [label, raw] of [['反映先の現在', change.before], ['反映後', change.after]]) {
+        const value = formatReflectChangeValue(raw);
         const cell = document.createElement('div'), caption = document.createElement('span'), content = document.createElement('pre');
         caption.textContent = label; content.textContent = value.length > 1600 ? value.slice(0, 1600) + '\n…（全内容は計画JSONで確認できます）' : value;
         cell.append(caption, content); grid.appendChild(cell);
@@ -103,4 +126,143 @@ export function renderReflectRoute(host: HTMLElement, identities: ReflectIdentit
     name.textContent = reflectIdentityLabel(identities, side, environment); block.append(label, name); route.appendChild(block);
   }
   host.appendChild(route);
+}
+
+// =============================================================================
+// 差分確認: 取得した全項目の要約表
+// =============================================================================
+
+export interface ReflectSummaryTableOptions {
+  selectedScopes: ReadonlySet<string>;
+  /** 行（または項目名）が押されたとき。該当項目の詳細へ移動する。 */
+  onNavigate: (sectionKey: string) => void;
+}
+
+const SUMMARY_STATUS: Record<'change' | 'same' | 'error', { text: string; pill: string }> = {
+  change: { text: '差分あり', pill: 'change' },
+  same: { text: '一致', pill: 'same' },
+  error: { text: '確認が必要', pill: 'error' }
+};
+
+/** 項目名｜状態｜変更｜削除｜保持｜反映方法｜選択中 の一覧。狭い画面では CSS で縦積みにする。 */
+export function renderReflectSummaryTable(host: HTMLElement, entries: readonly ReflectSectionPlan[], options: ReflectSummaryTableOptions) {
+  const wrap = document.createElement('section');
+  wrap.className = 'kus-rl-summary';
+  wrap.setAttribute('aria-label', `取得した全 ${entries.length} 項目の要約`);
+  const title = document.createElement('div');
+  title.className = 'kus-rl-summary__title';
+  const heading = document.createElement('strong');
+  heading.textContent = `取得した全 ${entries.length} 項目`;
+  const note = document.createElement('span');
+  note.textContent = '項目名を押すと、下の詳細へ移動します。';
+  title.append(heading, note);
+  const table = document.createElement('table');
+  table.className = 'kus-rl-summary__table';
+  table.setAttribute('role', 'table');
+  const thead = document.createElement('thead');
+  thead.setAttribute('role', 'rowgroup');
+  const headRow = document.createElement('tr');
+  headRow.setAttribute('role', 'row');
+  const columns: Array<[string, string]> = [['name', '項目'], ['status', '状態'], ['num', '変更'], ['num', '削除'], ['num', '保持'], ['how', '反映方法'], ['sel', '選択']];
+  for (const [kind, text] of columns) {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.setAttribute('role', 'columnheader');
+    th.className = `kus-rl-summary__${kind}`;
+    th.textContent = text;
+    headRow.appendChild(th);
+  }
+  thead.appendChild(headRow);
+  const tbody = document.createElement('tbody');
+  tbody.setAttribute('role', 'rowgroup');
+  for (const entry of entries) {
+    const tone = entry.status === 'change' || entry.status === 'same' ? entry.status : 'error';
+    const computed = tone !== 'error';
+    const tr = document.createElement('tr');
+    tr.setAttribute('role', 'row');
+    tr.dataset.reflectSummary = entry.sectionKey;
+    const cell = (kind: string, label: string) => {
+      const td = document.createElement('td');
+      td.setAttribute('role', 'cell');
+      td.className = `kus-rl-summary__${kind}`;
+      td.dataset.label = label;
+      tr.appendChild(td);
+      return td;
+    };
+    const nameButton = document.createElement('button');
+    nameButton.type = 'button';
+    nameButton.className = 'kus-rl-summary__link';
+    nameButton.textContent = entry.label;
+    nameButton.title = `${entry.label}の詳細へ移動`;
+    cell('name', '項目').appendChild(nameButton);
+    const pill = document.createElement('span');
+    pill.className = `kus-rl-pill kus-rl-pill--${SUMMARY_STATUS[tone].pill}`;
+    pill.textContent = SUMMARY_STATUS[tone].text;
+    cell('status', '状態').appendChild(pill);
+    const kept = Math.max(0, entry.changes.length - entry.changeCount);
+    cell('num', '変更').textContent = computed ? String(entry.changeCount) : '－';
+    cell('num', '削除').textContent = computed ? String(entry.removalCount) : '－';
+    cell('num', '保持').textContent = computed ? String(kept) : '－';
+    cell('how', '反映方法').textContent = computed ? entry.behavior : '－';
+    const selected = options.selectedScopes.has(entry.sectionKey);
+    const mark = document.createElement('span');
+    mark.className = 'kus-rl-preview-mini';
+    mark.textContent = selected ? '選択中' : '未選択';
+    cell('sel', '選択').appendChild(mark);
+    tr.addEventListener('click', () => options.onNavigate(entry.sectionKey));
+    tbody.appendChild(tr);
+  }
+  table.append(thead, tbody);
+  wrap.append(title, table);
+  host.appendChild(wrap);
+}
+
+// =============================================================================
+// 反映結果: セクション別の結果一覧
+// =============================================================================
+
+/** セクションごとの結果（状態アイコン＋文字、項目名、メッセージ、失敗時は対処のヒント）。すべて textContent で描画する。 */
+export function renderApplySectionResults(host: HTMLElement, rawSections: unknown) {
+  host.replaceChildren();
+  const sections = normalizeApplySections(rawSections);
+  if (!sections.length) return;
+  const heading = document.createElement('div');
+  heading.className = 'kus-rl-result-heading';
+  heading.textContent = '項目ごとの結果';
+  const list = document.createElement('ul');
+  list.className = 'kus-rl-result-list';
+  for (const section of sections) {
+    const display = describeApplySectionStatus(section.status);
+    const item = document.createElement('li');
+    item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
+    const head = document.createElement('div');
+    head.className = 'kus-rl-result-item__head';
+    const state = document.createElement('span');
+    state.className = `kus-rl-result-state kus-rl-result-state--${display.tone}`;
+    const icon = document.createElement('span');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = display.icon;
+    state.append(icon, document.createTextNode(display.text));
+    const name = document.createElement('strong');
+    name.textContent = section.label && section.label !== section.sectionKey
+      ? section.label
+      : SECTION_DEFS.find((def) => def.key === section.sectionKey)?.label || section.label || section.sectionKey;
+    head.append(state, name);
+    item.appendChild(head);
+    if (section.message) {
+      const message = document.createElement('div');
+      message.className = 'kus-rl-result-item__message';
+      message.textContent = section.message;
+      item.appendChild(message);
+    }
+    const hint = section.status === 'ng' ? buildReflectErrorHint(section.message || '') : '';
+    if (hint) {
+      const hintNode = document.createElement('div');
+      hintNode.className = 'kus-rl-result-item__hint';
+      hintNode.textContent = `ヒント: ${hint}`;
+      item.appendChild(hintNode);
+    }
+    list.appendChild(item);
+  }
+  host.append(heading, list);
 }

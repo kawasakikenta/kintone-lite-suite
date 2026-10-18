@@ -45,7 +45,7 @@ module.exports = async function verifyReflectEngine({ page, esbuild, tool, out }
     }, mode);
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
     await page.evaluate(() => ReflectActual.mountReflectLitePanel());
-    await page.getByRole('textbox', { name: '比較元アプリID', exact: true }).fill('101');
+    await page.getByRole('textbox', { name: '反映元アプリID', exact: true }).fill('101');
   }
   async function compare() { await button('差分を確認する').click(); await idle(); }
   async function acknowledge() {
@@ -59,10 +59,32 @@ module.exports = async function verifyReflectEngine({ page, esbuild, tool, out }
     }
   }
 
+  async function assertNoLegacyTerms(where) {
+    const found = await page.evaluate(() => {
+      const root = document.querySelector('#kus-reflect-lite');
+      const texts = [root.textContent];
+      root.querySelectorAll('[aria-label],[placeholder],[title]').forEach(el => texts.push(el.getAttribute('aria-label') || '', el.getAttribute('placeholder') || '', el.getAttribute('title') || ''));
+      return texts.join('\n').match(/比較[元先]/g) || [];
+    });
+    assert.deepEqual(found, [], `${where}に「比較元／比較先」が残っている`);
+  }
+
   await reset();
   assert.equal(await page.getByRole('combobox', { name: '反映元の取得環境' }).inputValue(), 'production');
+  // 実エンジンでも、入力中にアプリ名を確認する（本番側の app.json を問い合わせ、書き込みはしない）。
+  await page.waitForFunction(() => /✓ 営業テンプレート/.test(document.querySelectorAll('.kus-rl-app-note')[0].textContent));
+  assert.match(await page.locator('.kus-rl-app-note').nth(1).innerText(), /✓ 東京営業所 · 開いているアプリ/);
+  assert.equal((await writes()).length, 0);
   await compare();
   assert.equal((await writes()).length, 0); assert.equal(await final().isEnabled(), true);
+  assert.equal(await page.locator('.kus-rl-summary tbody tr').count(), 3, '実エンジンの差分にも要約表を出す');
+  assert.deepEqual(await page.locator('.kus-rl-summary tbody tr').nth(0).locator('td').allInnerTexts(), ['フィールド設定', '差分あり', '2', '0', '1', '追加・更新（反映先だけの項目は保持）', '選択中']);
+  await assertNoLegacyTerms('実エンジンの差分確認画面');
+  // JSON の値は 2 スペースで整形して読みやすく示す。
+  await page.locator('.kus-rl-summary tbody tr').nth(2).getByRole('button', { name: 'ビュー設定', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[data-reflect-entry="viewSettings"] details.kus-rl-changes')?.open);
+  await page.locator('[data-reflect-entry="viewSettings"] .kus-rl-change[data-kind="保持"] pre').first().waitFor();
+  assert.match(await page.locator('[data-reflect-entry="viewSettings"] .kus-rl-change[data-kind="保持"] pre').first().innerText(), /^\{\n  "type": "LIST",\n  "name": "営業所専用"/, '内訳のJSON値を2スペースで整形する');
   await page.locator('.kus-rl-changes summary').first().click();
   await page.getByText('取引先', { exact: true }).waitFor();
   assert.match(await page.locator('#kus-rl-stage-review').innerText(), /取引先/);
@@ -71,6 +93,7 @@ module.exports = async function verifyReflectEngine({ page, esbuild, tool, out }
   assert.equal(exported.identities.target.name, '東京営業所');
   assert.equal(exported.entries.find(entry => entry.sectionKey === 'viewSettings').operations[0].body.views['営業所専用'].name, '営業所専用');
   await acknowledge();
+  await assertNoLegacyTerms('実エンジンの最終確認画面');
   await button('差分に戻る').click();
   await final().click(); assert.equal(await page.getByRole('checkbox', { name: '反映内容の確認', exact: true }).isChecked(), false, '戻る操作で同意を解除');
   await button('差分に戻る').click(); await acknowledge();
@@ -100,6 +123,28 @@ module.exports = async function verifyReflectEngine({ page, esbuild, tool, out }
   }
   await reset(); await button('全解除').click(); await page.getByRole('checkbox', { name: 'ビュー設定', exact: true }).check(); await compare();
   assert.equal(await final().isDisabled(), true); assert.match(await page.locator('#kus-rl-stage-review').innerText(), /tag.*反映先にありません/);
+  // 反映先に無いフィールドの参照で止まったときは、フィールド設定も含めて再取得できる（requiredFields と取得済みのフィールドコードから構造的に判定）。
+  const includeFields = button('フィールド設定も反映対象に含めて再取得');
+  assert.equal(await includeFields.isVisible(), true, 'フィールド設定が未選択なら再取得の操作を出す');
+  assert.equal(await page.evaluate(() => document.querySelector('input[aria-label="フィールド設定"]').checked), false);
+  await page.screenshot({ path: path.join(out, 'review-missing-fields-desktop.png') });
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.screenshot({ path: path.join(out, 'review-missing-fields-320.png') });
+  assert.ok(await page.locator('.kus-rl-canvas').evaluate(element => element.scrollWidth - element.clientWidth <= 1), '320pxで再取得の案内がはみ出さない');
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const eventsBefore = await page.evaluate(() => window.__actual.events.length);
+  const busyState = await includeFields.evaluate(node => {
+    node.click();
+    return { busy: document.querySelector('#kus-reflect-lite').getAttribute('aria-busy'), locked: document.querySelector('input[aria-label="ビュー設定"]').disabled };
+  });
+  assert.deepEqual(busyState, { busy: 'true', locked: true }, '再取得中は操作を受け付けない');
+  await idle();
+  assert.equal(await page.evaluate(() => document.querySelector('input[aria-label="フィールド設定"]').checked), true, 'フィールド設定が反映対象に加わる');
+  assert.ok(await page.evaluate(() => window.__actual.events.length) > eventsBefore, '差分を取得し直す');
+  assert.equal(await includeFields.count(), 0, '解消したら再取得の操作を消す');
+  assert.equal(await final().isEnabled(), true, 'フィールド設定を含めた差分で最終確認に進める');
+  assert.match(await page.locator('.kus-rl-summary').innerText(), /フィールド設定[\s\S]*ビュー設定/, '要約表にフィールド設定が加わる');
+  assert.equal((await writes()).length, 0, '再取得では書き込まない');
   await reset('incomplete'); await compare(); assert.equal(await final().isDisabled(), true); assert.equal((await writes()).length, 0);
   await reset('wrong-identity'); await compare(); assert.match(await page.locator('.kus-lp__status').innerText(), /名前とIDを確認できません/); assert.equal((await writes()).length, 0);
 
@@ -109,10 +154,10 @@ module.exports = async function verifyReflectEngine({ page, esbuild, tool, out }
   assert.match(await page.locator('#kus-rl-stage-confirm').innerText(), /削除・置換される設定が 1 件/);
   await run().click(); await idle(); assert.deepEqual(Object.keys((await writes())[0].body.views), ['All']);
 
-  await reset(); await page.getByRole('textbox', { name: '比較元アプリID', exact: true }).fill('202');
+  await reset(); await page.getByRole('textbox', { name: '反映元アプリID', exact: true }).fill('202');
   await page.getByRole('combobox', { name: '反映元の取得環境' }).selectOption('preview');
   assert.equal(await button('差分を確認する').isDisabled(), true, 'same preview is not a valid route');
   await page.getByRole('combobox', { name: '反映元の取得環境' }).selectOption('production');
   assert.equal(await button('差分を確認する').isEnabled(), true, 'same app production to preview is allowed');
-  console.log('PASS reflect production engine + UI: preserved settings, exact payload/revisions, backup, identity, dependencies, stale-state stop, destructive confirmation, no double/Enter writes');
+  console.log('PASS reflect production engine + UI: app names, summary table, pretty JSON, field-settings refetch, preserved settings, exact payload/revisions, backup, identity, dependencies, stale-state stop, destructive confirmation, no double/Enter writes');
 };
