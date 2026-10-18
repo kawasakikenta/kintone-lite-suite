@@ -22,11 +22,14 @@ import {
   makeCard,
   makeTextarea,
   makeDetails,
-  liteRun
+  liteRun,
+  copyTextToClipboard
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
 import { pickAllSettingsBundles } from '../settingsBundleImport.js';
 import { reflectSelectionBlockers } from '../reflect/standalonePlan.js';
+import { buildReflectReportMarkdown } from '../reflect/planReport.js';
+import { formatRolloutTarget, parseRolloutQueue, serializeRolloutQueue } from '../reflect/rolloutQueue.js';
 import { appendReflectChanges, appendReflectItems, renderReflectRoute, renderReflectSummaryTable, renderApplySectionResults, createApplyProgressView, type ApplyProgressView } from './reflectPlanView.js';
 import { REFLECT_SECTION_KEYS, reflectSectionLabel } from '../reflect/sections.js';
 import {
@@ -55,7 +58,8 @@ import {
   shouldWarnMissingFieldSettings,
   FIELD_SETTINGS_OMITTED_NOTICE,
   findMissingFieldReferences,
-  canResolveByIncludingFieldSettings
+  canResolveByIncludingFieldSettings,
+  normalizeApplySections
 } from '../reflect/liteSetup.js';
 import { createReflectAppLookupCache, formatReflectAppName, isLookupableReflectApp, REFLECT_APP_LOOKUP_FAILURE, type ReflectAppLookupOk } from '../reflect/appLookup.js';
 import { buildReflectPresetsExport, normalizeImportedReflectPresets, mergeReflectPresets, type ReflectPreset } from '../reflect/presetIo.js';
@@ -75,6 +79,17 @@ interface PreviewSnapshot {
   postApplyCheck?: { scopeCount: number };
 }
 
+/** 複数アプリへ順次展開したときの、反映先ごとの記録（メモリのみ）。 */
+interface RolloutLogEntry {
+  appId: string;
+  guestId: string;
+  name: string;
+  ok: number;
+  ng: number;
+  pending: number;
+  at: number;
+}
+
 interface LiteMemoryState {
   preserveTargetOnly?: boolean;
   sourceAppId?: string;
@@ -84,6 +99,11 @@ interface LiteMemoryState {
   sourcePreview?: boolean;
   selectedScopes?: string[];
   lookupMapText?: string;
+  /** 「続けて反映する反映先」の入力欄の内容 */
+  rolloutQueueText?: string;
+  /** 展開の記録と、その記録を作った条件（反映元・項目・保持・参照先変換）。条件が変わったら捨てる。 */
+  rolloutLog?: RolloutLogEntry[];
+  rolloutKey?: string;
   lastPreview?: PreviewSnapshot | null;
   /** 直近の反映結果（成功 / 失敗の最終サマリ） */
   lastResult?: {
@@ -102,6 +122,8 @@ interface LiteMemoryState {
     sourceBundleToken?: string;
     /** 反映前に自動保存したバックアップと同じ内容（「バックアップから戻す」用）。実行結果JSONには含めない。 */
     backup?: ReflectBackup;
+    /** Markdown の反映記録用に、実行した計画（実行項目の差分）と反映元・反映先の名前を控える。実行結果JSONには含めない。 */
+    planned?: { identities: ReflectIdentities; entries: PreviewEntry[] };
     /** 監査用に保存できる実行時の全セクション結果とログ */
     report: {
       source: { appId: string; guestId: string; environment: 'production' | 'preview' | 'json' };
@@ -377,6 +399,17 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-confirm-entry{margin-top:12px;padding-top:10px;border-top:1px solid #cbd5e1}
 #kus-reflect-lite .kus-rl-confirm-entry h3{margin:0 0 6px;font-size:13px;color:#0f172a}
 #kus-reflect-lite .kus-rl-confirm-heading{margin:10px 0 4px;font-size:12px;font-weight:700;color:#991b1b}
+#kus-reflect-lite .kus-rl-rollout__input{width:100%;min-width:0;box-sizing:border-box;min-height:84px}
+#kus-reflect-lite .kus-rl-rollout__status{margin-top:6px;font-size:11.5px;line-height:1.5;color:#475569;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-rollout__status--err{color:#b91c1c;font-weight:700}
+#kus-reflect-lite .kus-rl-rollout-card .kus-rl-next{margin-bottom:8px}
+#kus-reflect-lite .kus-rl-rollout-heading{margin-top:12px;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-rollout-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+#kus-reflect-lite .kus-rl-rollout-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-rollout-item--ng{border-color:#fca5a5;background:#fff5f5}
+#kus-reflect-lite .kus-rl-rollout-item--pending{border-color:#fde68a;background:#fffbeb}
+#kus-reflect-lite .kus-rl-rollout-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px}
+#kus-reflect-lite .kus-rl-rollout-card .kus-rl-next[hidden]{display:none}
 @media(max-width:760px){
   #kus-reflect-lite .kus-rl-summary__table,#kus-reflect-lite .kus-rl-summary__table tbody{display:block}
   #kus-reflect-lite .kus-rl-summary__table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
@@ -508,7 +541,7 @@ export function mountReflectLitePanel() {
   let busy = false;
   let sourceMode: 'app' | 'json' = 'app';
   // 「バックアップから戻す」で反映元を切り替えている間だけ値を持つ。反映元・反映先を手で変えたら解除する（refreshReviewCard で判定）。
-  let restoreMode: { token: string; targetAppId: string; targetGuestId: string } | null = null;
+  let restoreMode: { token: string; targetAppId: string; targetGuestId: string; at: number } | null = null;
 
   // ---- アプリ ----
   const srcApp = makeInput({ placeholder: '反映元アプリID', value: memoryState.sourceAppId || '', width: 'id' });
@@ -1180,7 +1213,8 @@ export function mountReflectLitePanel() {
       scopes: collectSelectedScopes(),
       applyDiffOnly: false,
       lookupMap: lookupTa.value,
-      preserveTargetOnly: preserve.checkbox.checked
+      preserveTargetOnly: preserve.checkbox.checked,
+      rolloutQueue: rolloutTa.value
     };
     const replaced = (memoryState.presets || []).some((p) => p.name === trimmed);
     const saved = mergeReflectPresets(memoryState.presets, [preset], REFLECT_PRESET_LIMIT);
@@ -1240,6 +1274,8 @@ export function mountReflectLitePanel() {
     preserve.checkbox.checked = preset.preserveTargetOnly !== false;
     lookupTa.value = preset.lookupMap || '';
     refreshLookupStatus();
+    rolloutTa.value = preset.rolloutQueue || '';
+    if (rolloutTa.value.trim()) rolloutDetails.details.open = true;
     setSelectedScopes(preset.scopes || []);
     refreshSameConnBanner();
     saveState();
@@ -1256,6 +1292,126 @@ export function mountReflectLitePanel() {
     refreshPresetButtons();
     panel.setStatus(`プリセット「${name}」を削除しました`, 'info');
   });
+
+  // ---- 続けて反映する反映先（同じ反映元・項目・設定で、ほかのアプリにも順番に反映する） ----
+  const rolloutDetails = makeDetails('続けて反映する反映先（複数アプリへ展開）', { open: !!(memoryState.rolloutQueueText || '').trim() });
+  rolloutDetails.details.classList.add('kus-rl-advanced', 'kus-rl-rollout');
+  const rolloutHelp = document.createElement('p');
+  rolloutHelp.className = 'kus-rl-quiet';
+  rolloutHelp.textContent = '同じ反映元・項目・設定で、ほかのアプリにも順番に反映します。反映先ごとに差分確認と最終確認を行います。数字だけのIDは通常スペースのアプリ、ゲストスペースのアプリはURLで指定します。';
+  const rolloutTa = makeTextarea({ rows: 4, code: true, placeholder: '1行に1件（改行・カンマ区切りも可）\n例: 203\nhttps://example.cybozu.com/k/guest/5/204/', value: memoryState.rolloutQueueText || '' });
+  rolloutTa.classList.add('kus-rl-rollout__input');
+  rolloutTa.setAttribute('aria-label', '続けて反映する反映先');
+  const rolloutStatus = document.createElement('div');
+  rolloutStatus.className = 'kus-rl-rollout__status';
+  rolloutStatus.setAttribute('aria-live', 'polite');
+  rolloutDetails.body.append(rolloutHelp, rolloutTa, rolloutStatus);
+  rolloutTa.addEventListener('input', () => {
+    saveState();
+    refreshReviewCard();
+  });
+  /** 入力欄の内容。現在の反映先と重複する指定は除く。 */
+  function currentRollout() {
+    const appId = tgtApp.value.trim();
+    return parseRolloutQueue(rolloutTa.value, appId ? [{ appId, guestId: tgtGuest.value.trim() }] : []);
+  }
+  /** 展開の記録を作った条件。反映先は含めない（反映先を切り替えても記録を続ける）。 */
+  function rolloutConditionKey() {
+    const lookup = parseLookupMapText(lookupTa.value);
+    return JSON.stringify({
+      source: sourceMode === 'json' ? ['json', sourceBundleToken, String(sourceBundleFromJson?.appId || '')] : ['app', srcApp.value.trim(), srcGuest.value.trim(), sourceEnvironment.value],
+      // 反映項目は「失敗・未実行だけ選択」などの再実行で変わるため、展開の記録を引き継ぐ条件には含めない。
+      preserve: preserve.checkbox.checked,
+      lookup: lookup.ok ? Object.entries(lookup.value).sort() : lookupTa.value.trim()
+    });
+  }
+  function recordRolloutResult(entry: RolloutLogEntry) {
+    const key = rolloutConditionKey();
+    const log = memoryState.rolloutKey === key ? memoryState.rolloutLog || [] : [];
+    memoryState.rolloutKey = key;
+    memoryState.rolloutLog = [...log, entry].slice(-100);
+  }
+  const rolloutCard = makeCard({ title: '続けて反映', soft: true });
+  rolloutCard.card.classList.add('kus-rl-rollout-card');
+  rolloutCard.card.style.display = 'none';
+  const rolloutNote = document.createElement('div');
+  rolloutNote.className = 'kus-rl-next kus-rl-next--info';
+  rolloutNote.dataset.rolloutNote = 'next';
+  const rolloutWarn = document.createElement('div');
+  rolloutWarn.className = 'kus-rl-next kus-rl-next--warn';
+  rolloutWarn.dataset.rolloutNote = 'warn';
+  const rolloutError = document.createElement('div');
+  rolloutError.className = 'kus-rl-next kus-rl-next--warn';
+  rolloutError.dataset.rolloutNote = 'error';
+  const rolloutNextBtn = makeButton('次の反映先の差分を確認', 'primary');
+  rolloutNextBtn.dataset.rolloutNext = 'true';
+  const rolloutNextRow = document.createElement('div');
+  rolloutNextRow.className = 'kus-lp__btn-row';
+  rolloutNextRow.appendChild(rolloutNextBtn);
+  const rolloutLogBox = document.createElement('div');
+  rolloutLogBox.dataset.rolloutLog = 'true';
+  rolloutCard.body.append(rolloutNote, rolloutWarn, rolloutError, rolloutNextRow, rolloutLogBox);
+
+  /** 入力欄の解析結果と、反映結果画面の「続けて反映」カードを現在の状態に合わせる。 */
+  function renderRollout() {
+    const text = rolloutTa.value.trim();
+    const queue = currentRollout();
+    rolloutStatus.classList.toggle('kus-rl-rollout__status--err', !queue.ok);
+    if (!text) rolloutStatus.textContent = '';
+    else if ('error' in queue) { rolloutStatus.textContent = queue.error; rolloutDetails.details.open = true; }
+    else if (!queue.targets.length) rolloutStatus.textContent = '続けて反映する反映先はありません（現在の反映先は除いています）。';
+    else {
+      const shown = queue.targets.slice(0, 10).map(formatRolloutTarget).join('、');
+      rolloutStatus.textContent = `${queue.targets.length} 件: ${shown}${queue.targets.length > 10 ? ` ほか ${queue.targets.length - 10} 件` : ''}`;
+    }
+    const last = memoryState.lastResult;
+    const log = memoryState.rolloutLog || [];
+    const next = queue.ok ? queue.targets[0] : undefined;
+    const show = !!last && !restoreMode && (!queue.ok || !!next || log.length >= 2);
+    rolloutCard.card.style.display = show ? 'block' : 'none';
+    renderRolloutLog(rolloutLogBox, log);
+    if (!show) return;
+    rolloutNote.hidden = !next;
+    if (next) {
+      const rest = queue.ok ? queue.targets.length - 1 : 0;
+      rolloutNote.replaceChildren();
+      const head = document.createElement('strong');
+      head.textContent = `次の反映先: ${formatRolloutTarget(next)}（${rest ? `残り ${rest} 件` : '最後の反映先'}）`;
+      const body = document.createElement('span');
+      body.textContent = '同じ反映元・項目・設定で差分を取得します。反映先ごとに差分確認と最終確認を行うため、ここでは書き込みません。';
+      rolloutNote.append(head, body);
+    }
+    rolloutWarn.hidden = !(last && (last.ng > 0 || last.pending > 0));
+    rolloutWarn.textContent = '直前の反映先に失敗・未実行の項目があります。結果を確認してから進んでください。';
+    rolloutError.hidden = queue.ok;
+    rolloutError.textContent = 'error' in queue ? `続けて反映する反映先を読み取れません。${queue.error}` : '';
+    rolloutNextRow.hidden = !next && queue.ok;
+    setButtonText(rolloutNextBtn, next ? `次の反映先 ${formatRolloutTarget(next)} の差分を確認` : '次の反映先の差分を確認');
+    rolloutNextBtn.disabled = busy || !next;
+  }
+  rolloutNextBtn.addEventListener('click', () => { startNextRollout(); });
+
+  /** 次の反映先へ切り替えて、差分確認へ進む（書き込みは確認後だけ）。 */
+  function startNextRollout() {
+    if (busy || restoreMode) return;
+    const queue = currentRollout();
+    if (!queue.ok || !queue.targets.length) return;
+    const [next, ...rest] = queue.targets;
+    const lookupState = parseLookupMapText(lookupTa.value);
+    // 切り替える前に、次の反映先で差分を取得できるかを確かめる（できないなら今の結果と入力を残す）。
+    const invalid = reflectConnectionError({ ...currentOptions(), targetAppId: next.appId, targetGuestId: next.guestId }) || lookupMapError(lookupState);
+    if (invalid) {
+      panel.setStatus(`次の反映先 ${formatRolloutTarget(next)} へ進めません。${invalid}`, 'warn');
+      return;
+    }
+    tgtApp.value = next.appId;
+    tgtGuest.value = next.guestId;
+    rolloutTa.value = serializeRolloutQueue(rest);
+    saveState();
+    refreshSameConnBanner();
+    refreshReviewCard();
+    return startPreview(`次の反映先 ${formatRolloutTarget(next)} の差分を取得しました。内容を確認してから反映してください（まだ書き込んでいません）。`);
+  }
 
   // ---- 実行前サマリ / 差分プレビュー ----
   const previewBtn = makeButton('差分プレビューを更新', 'primary');
@@ -1311,6 +1467,7 @@ export function mountReflectLitePanel() {
       sourcePreview: (sourceEnvironment.value === 'preview'),
       selectedScopes: collectSelectedScopes(),
       lookupMapText: lookupTa.value,
+      rolloutQueueText: rolloutTa.value,
       preserveTargetOnly: preserve.checkbox.checked
     };
   }
@@ -1448,6 +1605,8 @@ export function mountReflectLitePanel() {
 
   function refreshReviewCard() {
     if (restoreMode && (sourceMode !== 'json' || sourceBundleToken !== restoreMode.token || tgtApp.value.trim() !== restoreMode.targetAppId || tgtGuest.value.trim() !== restoreMode.targetGuestId)) restoreMode = null;
+    // 反映元・項目・保持・参照先変換が変わったら、展開の記録は引き継がない（反映先の切り替えでは残す）。
+    if (memoryState.rolloutLog?.length && memoryState.rolloutKey !== rolloutConditionKey()) { memoryState.rolloutLog = []; memoryState.rolloutKey = ''; }
     const staleResult = memoryState.lastResult;
     const currentSourceBundleToken = sourceMode === 'json' ? sourceBundleToken : '';
     if (staleResult && (
@@ -1487,7 +1646,7 @@ export function mountReflectLitePanel() {
     const postApply = postApplySummary();
     if (postApply && !blockers.length) message = postApply.message;
     reviewBody.innerHTML = '';
-    if (preview?.identities && fresh) renderReflectRoute(reviewBody, preview.identities, sourceMode === 'json' ? '設定JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー' : '本番');
+    if (preview?.identities && fresh) renderReflectRoute(reviewBody, preview.identities, sourceMode === 'json' ? '設定JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー' : '本番', restoreRouteOptions(preview.identities));
     if (fresh && restoreMode) appendRestoreNotice(reviewBody);
     if (fresh && result) appendTargetPendingNotice(reviewBody, result.targetPending);
     const info = document.createElement('div'); info.className = 'kus-rl-next ' + (blockers.length ? 'kus-rl-next--warn' : postApply ? `kus-rl-next--${postApply.tone}` : 'kus-rl-next--info');
@@ -1518,6 +1677,9 @@ export function mountReflectLitePanel() {
       }
     }
     exportPlanBtn.disabled = busy || !fresh;
+    exportPlanMdBtn.disabled = busy || !fresh;
+    copyPlanMdBtn.disabled = busy || !fresh;
+    renderRollout();
     rerenderPreviewCard(); refreshWorkflow();
   }
 
@@ -1656,7 +1818,7 @@ export function mountReflectLitePanel() {
     clearConfirmation(); confirmedToken = confirmationToken();
     const state = getPreviewState(); if (!confirmedToken || !state.preview) return;
     confirmBody.innerHTML = '';
-    renderReflectRoute(confirmBody, state.preview.identities, sourceMode === 'json' ? '設定JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー' : '本番');
+    renderReflectRoute(confirmBody, state.preview.identities, sourceMode === 'json' ? '設定JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー' : '本番', restoreRouteOptions(state.preview.identities));
     const entries = state.preview.result.entries.filter(entry => state.scopes.includes(entry.sectionKey) && entry.status === 'change');
     const summary = document.createElement('p'); summary.textContent = `反映する項目（${entries.length}）：${entries.map(entry => entry.label).join('、')}`; confirmBody.appendChild(summary);
     if (restoreMode) appendRestoreNotice(confirmBody);
@@ -1710,6 +1872,41 @@ export function mountReflectLitePanel() {
     const appLabel = buildAppFilenameLabel(tgtApp.value.trim(), state.preview.identities?.target?.name || '');
     const link = document.createElement('a'); link.href = url; link.download = buildExportFilename('プレビュー反映計画', 'json', { appLabel }); link.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
   });
+  // 承認依頼や作業記録に貼れるよう、変更の要約を中心にした Markdown でも出力する（設定値の生JSONは含めない）。
+  const exportPlanMdBtn = makeButton('計画をMarkdownで保存', 'sub');
+  exportPlanMdBtn.title = '選択中の項目の計画（経路・変更の要約・未公開の変更）をMarkdownで保存します';
+  const copyPlanMdBtn = makeButton('Markdownをコピー', 'sub');
+  copyPlanMdBtn.title = '選択中の項目の計画をMarkdownとしてクリップボードへコピーします';
+  reviewCard.actions.append(exportPlanMdBtn, copyPlanMdBtn);
+  function buildPlanMarkdown() {
+    const state = getPreviewState();
+    if (!state.fresh || !state.preview) return null;
+    const identities = reportIdentities(state.preview.identities);
+    const text = buildReflectReportMarkdown({
+      generatedAt: new Date().toISOString(),
+      source: identities.source,
+      target: identities.target,
+      sourceEnvironment: sourceMode === 'json' ? 'json' : sourceEnvironment.value === 'preview' ? 'preview' : 'production',
+      preserveTargetOnly: preserve.checkbox.checked,
+      lookupMap: lookupMapValue(state.lookupState),
+      entries: state.preview.result.entries.filter(entry => state.scopes.includes(entry.sectionKey)),
+      targetPending: state.preview.result.targetPending
+    });
+    return { text, appLabel: buildAppFilenameLabel(tgtApp.value.trim(), identities.target.name) };
+  }
+  async function copyMarkdown(text: string | undefined, what: string) {
+    if (!text) { panel.setStatus(`${what}を作成できません。最新の差分を取得してください。`, 'warn'); return; }
+    const copied = await copyTextToClipboard(text);
+    panel.setStatus(copied ? `${what}のMarkdownをコピーしました。` : `コピーできませんでした。ブラウザの権限を確認するか、Markdownで保存してください。`, copied ? 'ok' : 'warn');
+  }
+  exportPlanMdBtn.addEventListener('click', () => {
+    const built = buildPlanMarkdown();
+    if (!built) { panel.setStatus('反映計画を作成できません。最新の差分を取得してください。', 'warn'); return; }
+    const filename = buildExportFilename('プレビュー反映計画', 'md', { appLabel: built.appLabel });
+    downloadText(filename, built.text, 'text/markdown');
+    panel.setStatus(`反映計画を ${filename} に保存しました。`, 'ok');
+  });
+  copyPlanMdBtn.addEventListener('click', () => { void copyMarkdown(buildPlanMarkdown()?.text, '反映計画'); });
 
   // ---- 実行 ----
   const runBtn = makeButton('プレビュー反映を実行', 'run');
@@ -1769,6 +1966,11 @@ export function mountReflectLitePanel() {
   lastResultActions.appendChild(retryFailedBtn);
   lastResultActions.appendChild(restoreBtn);
   lastResultActions.appendChild(exportResultBtn);
+  const exportResultMdBtn = makeButton('記録をMarkdownで保存', 'sub');
+  exportResultMdBtn.title = '実行した項目の計画と結果（成功・失敗）をMarkdownの反映記録として保存します';
+  const copyResultMdBtn = makeButton('Markdownをコピー', 'sub');
+  copyResultMdBtn.title = '反映記録をMarkdownとしてクリップボードへコピーします';
+  lastResultActions.append(exportResultMdBtn, copyResultMdBtn);
   lastResultActions.appendChild(openTargetBtn);
 
   verifyResultBtn.addEventListener('click', () => {
@@ -1839,7 +2041,7 @@ export function mountReflectLitePanel() {
     const restoreScopes = new Set(scopes);
     chips.forEach((chip) => { chip.checkbox.checked = restoreScopes.has(chip.checkbox.value); });
     refreshScopeCount();
-    restoreMode = { token: sourceBundleToken, targetAppId, targetGuestId };
+    restoreMode = { token: sourceBundleToken, targetAppId, targetGuestId, at: last.at };
     saveState();
     refreshSrcJsonNote();
     refreshSameConnBanner();
@@ -1847,6 +2049,17 @@ export function mountReflectLitePanel() {
     return startPreview('バックアップから戻す内容の差分を取得しました。反映前の状態に戻る内容を確認してください。');
   }
   restoreBtn.addEventListener('click', () => { startRestoreFromBackup(); });
+  /** バックアップから戻しているときの反映元の表示（反映先の名前とバックアップの日時から作る）。 */
+  function restoreSourceLabel(targetName: string) {
+    return `反映前のバックアップ（${[targetName, restoreMode ? formatReflectDateTime(restoreMode.at) : ''].filter(Boolean).join('・')}）`;
+  }
+  function restoreRouteOptions(identities: ReflectIdentities) {
+    return restoreMode ? { sourceLabel: restoreSourceLabel(identities.target.name) } : {};
+  }
+  /** Markdown や反映記録へ書く反映元・反映先。バックアップから戻しているときは反映元をバックアップとして示す。 */
+  function reportIdentities(identities: ReflectIdentities): ReflectIdentities {
+    return restoreMode ? { ...identities, source: { ...identities.source, name: restoreSourceLabel(identities.target.name) } } : identities;
+  }
 
   retryFailedBtn.addEventListener('click', () => {
     const retryScopes = memoryState.lastResult?.retryScopes || [];
@@ -1883,6 +2096,32 @@ export function mountReflectLitePanel() {
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   });
 
+  function buildResultMarkdown() {
+    const last = memoryState.lastResult;
+    if (!last?.planned) return null;
+    const { identities, entries } = last.planned;
+    const text = buildReflectReportMarkdown({
+      generatedAt: new Date().toISOString(),
+      source: identities.source,
+      target: identities.target,
+      sourceEnvironment: last.report.source.environment,
+      preserveTargetOnly: last.report.preserveTargetOnly,
+      lookupMap: last.report.lookupMap,
+      entries,
+      targetPending: last.report.targetPending,
+      outcome: { executedAt: new Date(last.at).toISOString(), sections: normalizeApplySections(last.report.sections) }
+    });
+    return { text, appLabel: buildAppFilenameLabel(last.appId, identities.target.name) };
+  }
+  exportResultMdBtn.addEventListener('click', () => {
+    const built = buildResultMarkdown();
+    if (!built) { panel.setStatus('反映記録を作成できません。', 'warn'); return; }
+    const filename = buildExportFilename('プレビュー反映記録', 'md', { appLabel: built.appLabel });
+    downloadText(filename, built.text, 'text/markdown');
+    panel.setStatus(`反映記録を ${filename} に保存しました。`, 'ok');
+  });
+  copyResultMdBtn.addEventListener('click', () => { void copyMarkdown(buildResultMarkdown()?.text, '反映記録'); });
+
   function renderLastResult() {
     const last = memoryState.lastResult;
     if (!last) {
@@ -1914,6 +2153,8 @@ export function mountReflectLitePanel() {
     retryFailedBtn.style.display = last.retryScopes.length ? '' : 'none';
     verifyResultBtn.style.display = last.report.scopes.length ? '' : 'none';
     exportResultBtn.style.display = '';
+    exportResultMdBtn.style.display = last.planned ? '' : 'none';
+    copyResultMdBtn.style.display = last.planned ? '' : 'none';
     openTargetBtn.style.display = last.appId ? '' : 'none';
     lastResultCard.card.style.display = 'block';
   }
@@ -1951,6 +2192,9 @@ export function mountReflectLitePanel() {
       }
 
       if (selectionIssues(previewResult, scopes).length) throw new Error('確認できない項目が含まれています。差分確認へ戻ってください。');
+      // Markdown の反映記録用に、実行する計画（実行項目の差分）と反映元・反映先の名前を控える。
+      const plannedSnapshot = { identities: reportIdentities(previewState.preview!.identities), entries: previewResult.entries.filter((entry) => plan.effectiveScopes.includes(entry.sectionKey)) };
+      const wasRestoreMode = !!restoreMode;
       // 反映の進捗は、実行予定の全項目を「待機中」で並べ、エンジンの通知に合わせて更新する。
       const progressRows = createApplyProgressRows(plan.effectiveScopes, (key) => previewResult!.entries.find((entry) => entry.sectionKey === key)?.label || reflectSectionLabel(key));
       const applyOptions = {
@@ -2006,6 +2250,7 @@ export function mountReflectLitePanel() {
         failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng').map((s) => s.label),
         sourceBundleToken: sourceMode === 'json' ? sourceBundleToken : '',
         ...(applyOutcome.backup ? { backup: applyOutcome.backup } : {}),
+        planned: plannedSnapshot,
         report: {
           source: {
             appId: applyOptions.sourceBundle ? String((applyOptions.sourceBundle as any)?.appId || '') : applyOptions.sourceAppId,
@@ -2021,6 +2266,8 @@ export function mountReflectLitePanel() {
           logs: applyOutcome.logs.slice()
         }
       };
+      // 複数アプリへの展開の記録。バックアップから戻す操作は展開に含めない。
+      if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || '', name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, pending: counts.pending, at: memoryState.lastResult.at });
       renderLastResult();
       showWorkflowStage('result');
       return { cancelled: false, hadError: counts.ng > 0 || counts.pending > 0 };
@@ -2093,10 +2340,10 @@ export function mountReflectLitePanel() {
   const presetDetails = makeDetails('よく使う設定を保存・読み込み');
   presetDetails.details.classList.add('kus-rl-advanced');
   presetDetails.body.appendChild(cardPreset.card);
-  setupGrid.append(advanced.details, presetDetails.details);
+  setupGrid.append(rolloutDetails.details, advanced.details, presetDetails.details);
   stages.setup.appendChild(setupGrid);
   [reviewCard.card, previewCard.card].forEach((node) => stages.review.appendChild(node));
-  [progressCard.card, lastResultCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
+  [progressCard.card, lastResultCard.card, rolloutCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
   const resultEmpty = document.createElement('div');
   resultEmpty.className = 'kus-rl-preview-empty';
   resultEmpty.textContent = 'まだ反映していません。対象を選び、差分を確認してから反映してください。';
@@ -2137,6 +2384,8 @@ export function mountReflectLitePanel() {
   /** フッターの経路表示。差分取得済みなら確認済みの名前、未取得なら入力中に確認できた名前を使う。 */
   function dockEndpointLabel(side: 'source' | 'target', identities?: ReflectIdentities | null): string {
     const role = side === 'source' ? '反映元' : '反映先';
+    // バックアップから戻している間は、反映元を「反映前のバックアップ（…）」と示す。
+    if (side === 'source' && restoreMode) return `${role}: ${restoreSourceLabel(identities?.target.name || targetNote.known()?.name || '')}`;
     let id: string;
     let name = '';
     let guest: string;
@@ -2297,6 +2546,40 @@ function buildSkipSummary(plan: ExecutionPlan): string {
   if (plan.skippedSameScopes.length > 0) parts.push(`一致除外 ${plan.skippedSameScopes.length}件`);
   if (plan.skippedErrorScopes.length > 0) parts.push(`失敗除外 ${plan.skippedErrorScopes.length}件`);
   return parts.length ? parts.join(' / ') : '除外なし';
+}
+
+/** 展開の記録（これまでの反映先）。失敗・未実行があるものは文字でも目印を付ける。textContent で描画する。 */
+function renderRolloutLog(host: HTMLElement, log: readonly RolloutLogEntry[]) {
+  host.replaceChildren();
+  if (!log.length) return;
+  const heading = document.createElement('div');
+  heading.className = 'kus-rl-rollout-heading';
+  heading.textContent = `これまでの反映先（${log.length} 件）`;
+  const list = document.createElement('ul');
+  list.className = 'kus-rl-rollout-list';
+  for (const entry of log) {
+    const tone = entry.ng > 0 ? 'ng' : entry.pending > 0 ? 'pending' : 'ok';
+    const item = document.createElement('li');
+    item.className = `kus-rl-rollout-item kus-rl-rollout-item--${tone}`;
+    item.dataset.rolloutEntry = `${entry.guestId ? `${entry.guestId}:` : ''}${entry.appId}`;
+    const head = document.createElement('div');
+    head.className = 'kus-rl-rollout-item__head';
+    const state = document.createElement('span');
+    state.className = `kus-rl-result-state kus-rl-result-state--${tone}`;
+    const icon = document.createElement('span');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = tone === 'ok' ? '✓' : '⚠';
+    state.append(icon, document.createTextNode(tone === 'ok' ? '成功' : tone === 'ng' ? '失敗あり' : '未実行あり'));
+    const name = document.createElement('strong');
+    name.textContent = `${formatRolloutTarget(entry)}${entry.name ? ` ${entry.name}` : ''}`;
+    head.append(state, name);
+    const meta = document.createElement('div');
+    meta.className = 'kus-rl-quiet';
+    meta.textContent = `成功 ${entry.ok} / 失敗 ${entry.ng} / 未実行 ${entry.pending} · ${formatReflectDateTime(entry.at)}`;
+    item.append(head, meta);
+    list.appendChild(item);
+  }
+  host.append(heading, list);
 }
 
 function setButtonText(button: HTMLButtonElement, text: string) {

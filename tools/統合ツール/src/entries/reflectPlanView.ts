@@ -217,12 +217,13 @@ export function reflectIdentityLabel(identities: ReflectIdentities, side: 'sourc
   return `${app.name}${app.appId ? `（ID: ${app.appId}）` : ''} / ${app.guestId ? `ゲスト ${app.guestId}` : '通常スペース'} / ${side === 'target' ? 'プレビュー' : sourceEnvironment}`;
 }
 
-export function renderReflectRoute(host: HTMLElement, identities: ReflectIdentities, environment: string) {
+/** sourceLabel を渡すと、反映元の表示を差し替える（バックアップから戻すときに「反映前のバックアップ（…）」と示すため）。 */
+export function renderReflectRoute(host: HTMLElement, identities: ReflectIdentities, environment: string, options: { sourceLabel?: string } = {}) {
   const route = document.createElement('div'); route.className = 'kus-rl-confirm-route';
   for (const side of ['source', 'target'] as const) {
     const block = document.createElement('div'), label = document.createElement('span'), name = document.createElement('strong');
     label.textContent = side === 'source' ? '反映元 ↓' : '書き込み先';
-    name.textContent = reflectIdentityLabel(identities, side, environment); block.append(label, name); route.appendChild(block);
+    name.textContent = side === 'source' && options.sourceLabel ? options.sourceLabel : reflectIdentityLabel(identities, side, environment); block.append(label, name); route.appendChild(block);
   }
   host.appendChild(route);
 }
