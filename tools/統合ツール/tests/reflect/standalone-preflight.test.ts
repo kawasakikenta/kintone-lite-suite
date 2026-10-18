@@ -61,7 +61,8 @@ beforeEach(() => {
     events.push('write');
     return { revision: '21' };
   });
-  vi.stubGlobal('kintone', { api: writes });
+  // 反映先の未公開の変更確認（本番の一般設定を読むGET）は書き込みではない。revision一致（変更なし）で応答する。
+  vi.stubGlobal('kintone', { api: vi.fn(async (url: string, method: string, ...rest: unknown[]) => method === 'GET' && url.endsWith('/app/settings.json') ? { revision: Object.values(target.meta.sectionRevisions)[0] } : (writes as any)(url, method, ...rest)) });
   saveBackup = vi.fn(() => { events.push('backup'); });
   vi.stubGlobal('document', {
     createElement: vi.fn(() => ({ href: '', download: '', click: saveBackup }))
