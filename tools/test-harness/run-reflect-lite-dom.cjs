@@ -1074,7 +1074,7 @@ async function main() {
     assert.equal(await page.locator('#kus-rl-stage-result').getByText('全成功').first().isVisible(), true);
     assert.equal(await rolloutCard().isVisible(), false, 'バックアップから戻した直後は「続けて反映」を出さない');
     assert.match((await downloadOf('記録をMarkdownで保存')).text, /- 反映元: 反映前のバックアップ（東京営業所・/, '復元の記録にも「反映前のバックアップ」と示す');
-    assert.deepEqual(await rolloutEntries(), [], '復元は展開の記録に加えない');
+    assert.deepEqual(await rolloutEntries(), ['202'], '復元は展開の記録に加えない（それまでの記録は消さない）');
 
     // ---- 続けて反映：プリセットでの保存・読み込み・JSON書き出し ----
     await reset(); await setup(); await openRollout();
@@ -1097,6 +1097,239 @@ async function main() {
     await page.getByRole('combobox', { name: '保存済みプリセット', exact: true }).selectOption('旧形式');
     await button('読み込み').click();
     assert.equal(await rolloutBox().inputValue(), '', '反映先の一覧が無い古いプリセットでは空にする');
+
+    // =========================================================================
+    // 第4段階: バックアップから戻す（復元の終了と入力の復元）・続けて反映の安全性・アプリ名確認の更新
+    // =========================================================================
+    // 画面が切り替わっていても読めるよう、役割ではなく要素で指す。
+    const preserveBox = () => page.locator('label.kus-lp__check', { hasText: '反映先だけの一覧・グラフ・アクションを保持する' }).locator('input');
+    const lookupBox = () => page.locator('textarea[aria-label="ルックアップの参照アプリID変換"]');
+    const openAllDetails = () => page.evaluate(() => document.querySelectorAll('#kus-reflect-lite details').forEach(item => { item.open = true; }));
+    const sourceModeValue = () => page.locator('select[aria-label="反映元の取得方法"]').inputValue();
+    const sourceIdValue = () => page.locator('input[aria-label="反映元アプリID"]').inputValue();
+    const rolloutValue = () => page.locator('textarea[aria-label="続けて反映する反映先"]').inputValue();
+    const targetInput = () => page.locator('input[aria-label="反映先アプリID"]');
+    const selectedScopeKeys = () => page.evaluate(() => Array.from(document.querySelectorAll('.kus-rl-scope-group input:checked')).map(input => input.value).sort());
+    const restoreNotices = stage => page.locator(`#kus-rl-stage-${stage} [data-restore-notice]`).count();
+    const RESTORE_ENDED = /バックアップからの復元を終了しました。保持設定・参照先変換などを復元前の値に戻しました。/;
+    const lastPreviewOptions = () => page.evaluate(() => { const last = window.__reflectMock.previews.at(-1); return { preserve: last.preserveTargetOnly, lookup: last.lookupMap, scopes: last.scopes.slice().sort(), bundle: !!last.sourceBundle, source: last.sourceAppId, target: last.targetAppId }; });
+    /** 復元前の入力は「反映元101・保持ON・参照先変換 10 → 20・項目はフィールド+レイアウト」。反映してから、反映結果の画面で復元を始める。 */
+    async function applyThenRestore(extra = {}) {
+      await reset('mixed', { targetPending: cleanPending, ...extra }); await setup();
+      await openAllDetails(); await lookupBox().fill('10 → 20');
+      await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+      await tab('対象を選ぶ').click(); await checkbox('レイアウト設定').check();
+      await tab('反映結果').click();
+      await restoreButton().click(); await idle();
+      assert.equal(await restoreNotices('review'), 1, '復元の差分には注意を出す');
+      assert.equal(await preserveBox().isChecked(), false);
+      assert.equal(await lookupBox().inputValue(), '');
+      assert.deepEqual(await selectedScopeKeys(), ['fieldSettings']);
+    }
+    const EXPECT_BEFORE_RESTORE = { source: '101', mode: 'app', preserve: true, lookup: '10 → 20', scopes: ['fieldSettings', 'layoutSettings'] };
+    const currentInputs = async () => ({ source: await sourceIdValue(), mode: await sourceModeValue(), preserve: await preserveBox().isChecked(), lookup: await lookupBox().inputValue(), scopes: await selectedScopeKeys() });
+
+    // ---- 復元：保持を手で変えたら復元を終え、復元用の差分と注意を残さず、変えていない入力は復元前へ戻す ----
+    await applyThenRestore();
+    await tab('対象を選ぶ').click();
+    await preserveBox().check();
+    assert.match(await statusText(), RESTORE_ENDED, '復元を終えたことと、入力を戻したことを知らせる');
+    assert.deepEqual(await currentInputs(), EXPECT_BEFORE_RESTORE, '利用者が変えていない取得方法・反映元ID・参照先変換・項目は復元前へ戻す（保持は利用者が選んだONのまま）');
+    await tab('差分を確認').click();
+    assert.equal(await restoreNotices('review'), 0, '復元を終えたら注意を出さない');
+    assert.match(await page.locator('#kus-rl-stage-review .kus-rl-review').innerText(), /対象を指定して差分を取得してください。/, '復元用に取得した差分は使えない');
+    assert.equal(await button('差分ありだけ選択').isDisabled(), true);
+    assert.equal(await run().isDisabled(), true, '復元用の差分のまま最終確認へ進めない');
+    assert.equal(await page.locator('#kus-rl-stage-review .kus-rl-confirm-route').count(), 0, '復元用の経路表示も残さない');
+    await page.getByRole('button', { name: '差分を再取得', exact: true }).click(); await idle();
+    assert.deepEqual(await lastPreviewOptions(), { preserve: true, lookup: { 10: '20' }, scopes: ['fieldSettings', 'layoutSettings'], bundle: false, source: '101', target: '202' }, '復元を終えた後の差分は通常の入力で取得する');
+    assert.equal(await restoreNotices('review'), 0);
+    await button('差分ありだけ選択').click(); await run().click();
+    assert.equal(await restoreNotices('confirm'), 0);
+
+    // ---- 復元：参照先変換を手で入力したら復元を終える（入力は上書きしない） ----
+    await applyThenRestore();
+    await tab('対象を選ぶ').click();
+    await lookupBox().fill('7 → 8');
+    assert.match(await statusText(), RESTORE_ENDED);
+    assert.deepEqual(await currentInputs(), { ...EXPECT_BEFORE_RESTORE, lookup: '7 → 8' }, '利用者が入力した参照先変換は残し、保持などは復元前へ戻す');
+    await tab('差分を確認').click();
+    assert.equal(await restoreNotices('review'), 0);
+    assert.equal(await run().isDisabled(), true);
+
+    // ---- 復元：復元する項目の範囲を超えて項目を足したら復元を終える ----
+    await applyThenRestore();
+    await tab('対象を選ぶ').click();
+    await checkbox('プロセス管理').check();
+    assert.match(await statusText(), /バックアップからの復元を終了しました。/);
+    assert.deepEqual(await currentInputs(), { ...EXPECT_BEFORE_RESTORE, scopes: ['fieldSettings', 'processSettings'] }, '利用者が選んだ項目は残す');
+    await tab('差分を確認').click();
+    assert.equal(await restoreNotices('review'), 0);
+
+    // ---- 復元：差分ありだけ選択のように項目を絞っても復元のまま ----
+    await applyThenRestore();
+    await button('差分ありだけ選択').click();
+    assert.equal(await restoreNotices('review'), 1, '項目を絞るだけでは復元を終えない');
+    assert.equal(await preserveBox().isChecked(), false);
+
+    // ---- 復元：反映先を変えて戻しても復元用の差分は使えず、入力は復元前に戻る ----
+    await applyThenRestore();
+    await tab('対象を選ぶ').click();
+    await targetInput().fill('2020');
+    assert.match(await statusText(), /バックアップからの復元を終了しました。/);
+    await targetInput().fill('202');
+    assert.deepEqual(await currentInputs(), EXPECT_BEFORE_RESTORE);
+    await tab('差分を確認').click();
+    assert.equal(await restoreNotices('review'), 0, '反映先を変えて戻しても、復元の注意が消えたまま反映できる状態にしない');
+    assert.equal(await button('差分ありだけ選択').isDisabled(), true);
+    assert.equal(await run().isDisabled(), true);
+
+    // ---- 復元：「アプリから取得」に戻したら、反映元IDも復元前の値へ戻る ----
+    await applyThenRestore();
+    await button('対象を変更').click();
+    await page.getByRole('combobox', { name: '反映元の取得方法' }).selectOption('app');
+    assert.deepEqual(await currentInputs(), EXPECT_BEFORE_RESTORE, '反映元IDが復元時の値（202）のままなら変更前の101へ戻す');
+    assert.match(await statusText(), RESTORE_ENDED);
+    // 戻した後に利用者が入力した反映元IDは尊重する。
+    await page.getByRole('textbox', { name: '反映元アプリID', exact: true }).fill('505');
+    assert.equal(await sourceIdValue(), '505');
+    assert.equal(await preserveBox().isChecked(), true);
+
+    // ---- 復元：差分の取得に失敗しても復元のまま、もう一度「差分を確認する」で再取得できる ----
+    await reset('mixed', { targetPending: cleanPending }); await setup(); await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    await page.evaluate(() => { window.__reflectMock.mode = 'preview-failure'; });
+    await restoreButton().click(); await idle();
+    assert.match(await statusText(), /サンプル取得エラー/, '復元の差分取得の失敗を表示する');
+    await tab('対象を選ぶ').click();
+    assert.equal(await sourceModeValue(), 'json', '失敗しても復元のまま');
+    assert.equal(await preserveBox().isChecked(), false);
+    await page.evaluate(() => { window.__reflectMock.mode = 'mixed'; });
+    await compare();
+    assert.equal(await restoreNotices('review'), 1, '再取得すると復元の注意つきで差分を確認できる');
+    assert.equal(await page.evaluate(() => window.__reflectMock.previews.at(-1).sourceBundle.sections.fieldSettings.marker), 'before-fieldSettings');
+    await page.getByRole('button', { name: '差分を再取得', exact: true }).click(); await idle();
+    assert.equal(await restoreNotices('review'), 1, '「差分を再取得」でも復元のまま');
+    await button('差分ありだけ選択').click(); await run().click();
+    assert.equal(await restoreNotices('confirm'), 1, '最終確認にも復元の注意を出す');
+
+    // ---- 復元：展開の記録は復元で消えず、復元を終えて入力が戻れば引き継ぐ ----
+    await reset('mixed', { targetPending: cleanPending }); await setup(); await openRollout();
+    await rolloutBox().fill('303\n404');
+    await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.deepEqual(await rolloutEntries(), ['202']);
+    await restoreButton().click(); await idle();
+    assert.deepEqual(await rolloutEntries(), ['202'], '復元を始めても展開の記録を初期化しない');
+    await tab('対象を選ぶ').click();
+    await targetInput().fill('303');
+    assert.match(await statusText(), RESTORE_ENDED);
+    assert.equal(await preserveBox().isChecked(), true);
+    await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.deepEqual(await rolloutEntries(), ['202', '303'], '復元を終えて入力が戻った後は、展開の記録を引き継ぐ');
+
+    // ---- 次の反映先：反映項目が0件・JSON反映元が未読込なら、切り替えず理由を示す ----
+    await reset(); await setup(); await openRollout();
+    await rolloutBox().fill('303\n404');
+    await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    await tab('対象を選ぶ').click(); await button('全解除').click();
+    await tab('反映結果').click();
+    let previewsBeforeBlocked = await previewsCount();
+    await nextRolloutButton().click(); await idle();
+    assert.equal(await targetValue(), '202', '反映項目が無いときは反映先を切り替えない');
+    assert.equal(await rolloutValue(), '303\n404', '入力欄から取り除かない');
+    assert.match(await statusText(), /次の反映先 #303 へ進めません。反映する項目を 1 つ以上選んでください。/);
+    assert.equal(await previewsCount(), previewsBeforeBlocked, '差分取得も始めない');
+    assert.equal(await rolloutCard().isVisible(), true, '結果と「続けて反映」は残す');
+    await reset(); await setup(); await openRollout();
+    await rolloutBox().fill('303\n404');
+    await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    await tab('対象を選ぶ').click();
+    await page.getByRole('combobox', { name: '反映元の取得方法' }).selectOption('json');
+    await tab('反映結果').click();
+    assert.equal(await rolloutCard().isVisible(), true);
+    previewsBeforeBlocked = await previewsCount();
+    await nextRolloutButton().click(); await idle();
+    assert.equal(await targetValue(), '202', '設定JSONが未読込のときは反映先を切り替えない');
+    assert.equal(await rolloutValue(), '303\n404');
+    assert.match(await statusText(), /次の反映先 #303 へ進めません。反映元の設定JSONを読み込んでください。/);
+    assert.equal(await previewsCount(), previewsBeforeBlocked);
+
+    // ---- 同じ反映先へ再実行：古い「続けて反映」を残さず、記録は重複せず最新の結果にする ----
+    await reset('partial'); await setup(); await openRollout();
+    await rolloutBox().fill('303\n404');
+    await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.equal(await rolloutCard().isVisible(), true);
+    assert.match(await page.locator('[data-rollout-entry="202"]').innerText(), /失敗あり[\s\S]*成功 0 \/ 失敗 1 \/ 未実行 0/);
+    await button('失敗・未実行だけ選択').click();
+    await page.evaluate(() => { window.__reflectMock.mode = 'mixed'; window.__reflectMock.stepMode = true; });
+    await compare();
+    await run().click();
+    await page.getByRole('checkbox', { name: '反映内容の確認', exact: true }).check();
+    const rerunIdCheck = page.getByRole('textbox', { name: '確認用の反映先アプリID', exact: true });
+    if (await rerunIdCheck.isVisible()) await rerunIdCheck.fill('202');
+    await applyButton().click();
+    await page.waitForFunction(() => !!window.__reflectMock.waiting);
+    assert.equal(await rolloutCard().isVisible(), false, '再実行中は前の結果に対する失敗の注意・次へ進む操作を残さない');
+    assert.equal(await nextRolloutButton().isVisible(), false);
+    for (let i = 0; i < 8; i++) { await page.waitForTimeout(150); await page.evaluate(() => { const waiting = window.__reflectMock.waiting; if (waiting) { window.__reflectMock.waiting = null; waiting(); } }); }
+    await idle();
+    assert.deepEqual(await rolloutEntries(), ['202'], '同じ反映先の記録を重複させない');
+    assert.match(await page.locator('[data-rollout-entry="202"]').innerText(), /成功\s*#202[\s\S]*成功 1 \/ 失敗 0 \/ 未実行 0/, '最新の結果で置き換える');
+    assert.equal(await page.locator('[data-rollout-note="warn"]').isHidden(), true, '成功した再実行の後は失敗の注意を消す');
+    // 先に反映した順序は保つ（途中の反映先を再実行しても末尾へ移さない）。
+    await page.evaluate(() => { window.__reflectMock.stepMode = false; });
+    await nextRolloutButton().click(); await idle();
+    await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.deepEqual(await rolloutEntries(), ['202', '303']);
+    await tab('対象を選ぶ').click();
+    await targetInput().fill('202');
+    await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.deepEqual(await rolloutEntries(), ['202', '303'], '途中の反映先を再実行しても記録の順序は変えない');
+
+    // ---- 続けて反映は参照先変換をすべての反映先に使う：注意を出す ----
+    await reset(); await setup(); await openRollout();
+    const lookupSetupNote = page.locator('[data-rollout-lookup-note="setup"]');
+    assert.equal(await lookupSetupNote.isHidden(), true, '参照先変換が無いときは注意を出さない');
+    await openAllDetails(); await lookupBox().fill('10 → 20\n11 → 21');
+    assert.equal(await lookupSetupNote.isVisible(), true);
+    assert.equal(await lookupSetupNote.innerText(), '参照先変換（2 件）を、すべての反映先に同じように使います。反映先ごとに変換先が違う場合は、反映先を切り替えた後に参照先変換を直してください。', '入力欄の説明に注意を出す');
+    await rolloutBox().fill('303\n404');
+    await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    const lookupCardNote = page.locator('[data-rollout-lookup-note="card"]');
+    assert.equal(await lookupCardNote.isVisible(), true);
+    assert.match(await lookupCardNote.innerText(), /^参照先変換（2 件）を、すべての反映先に同じように使います。/, '結果画面のカードにも注意を出す');
+    await assertNoLegacyTerms('参照先変換の注意のある反映結果画面');
+    await reset(); await setup(); await openRollout();
+    await rolloutBox().fill('303\n404');
+    await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.equal(await page.locator('[data-rollout-lookup-note="card"]').isHidden(), true, '参照先変換が無ければカードにも出さない');
+
+    // ---- 入力中のアプリ名確認：差分取得で確認できた名前で更新し、失敗は欄の change で確認し直す ----
+    await reset();
+    const targetField = page.getByRole('textbox', { name: '反映先アプリID', exact: true });
+    await targetField.fill('303');
+    await noteIs(1, /✓ 旧名称アプリ/, '入力中の確認で名前を表示する');
+    await page.getByRole('textbox', { name: '反映元アプリID', exact: true }).fill('101');
+    await button('フォームのみ').click();
+    await compare();
+    await tab('対象を選ぶ').click();
+    await noteIs(1, /✓ 東京営業所/, '差分取得で確認できた名前（API）へ入力欄の下の表示を更新する');
+    const lookupsAfterCompare = (await lookupLog()).length;
+    await targetField.fill('505'); await noteIs(1, /✓ 大阪営業所/);
+    await targetField.fill('303');
+    await noteIs(1, /✓ 東京営業所/, '同じ値へ戻したときも、更新した名前を使う');
+    assert.equal((await lookupLog()).length, lookupsAfterCompare + 1, '更新した名前は確認キャッシュにも反映し、再確認しない');
+    await targetField.fill('999');
+    await noteIs(1, /アプリを確認できません/, '確認できない値は警告を出す');
+    await page.evaluate(() => { window.__reflectMock.apps['999'] = { name: '回復したアプリ' }; });
+    const lookupsBeforeChange = (await lookupLog()).length;
+    await page.waitForTimeout(500);
+    assert.equal((await lookupLog()).length, lookupsBeforeChange, '値が同じままでは確認し直さない');
+    await targetField.dispatchEvent('change');
+    await noteIs(1, /✓ 回復したアプリ/, '失敗した欄は、フォーカスを外したとき（change）に確認し直す');
+    assert.equal((await lookupLog()).length, lookupsBeforeChange + 1);
+    await targetField.dispatchEvent('change');
+    await page.waitForTimeout(500);
+    assert.equal((await lookupLog()).length, lookupsBeforeChange + 1, '成功している欄は change で確認し直さない');
 
     // ---- 続けて反映：入力欄の見た目（5つの幅） ----
     await reset(); await setup(); await openRollout();

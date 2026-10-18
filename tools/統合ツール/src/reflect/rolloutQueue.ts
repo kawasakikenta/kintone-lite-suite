@@ -41,6 +41,26 @@ export function formatRolloutTarget(target: AppReference): string {
   return `#${target.appId}${target.guestId ? `（ゲスト ${target.guestId}）` : ''}`;
 }
 
+/** 展開の記録に残す件数の上限。 */
+export const ROLLOUT_LOG_LIMIT = 100;
+
+/**
+ * 展開の記録へ反映結果を加える。同じ反映先（アプリID＋ゲストスペースID）の行があれば、順序はそのままに最新の結果で置き換える
+ * （同じ反映先へ再実行したときに記録が重複しないようにする）。
+ */
+export function upsertRolloutLog<T extends AppReference>(log: readonly T[], entry: T, limit = ROLLOUT_LOG_LIMIT): T[] {
+  const index = log.findIndex(item => keyOf(item) === keyOf(entry));
+  const next = index >= 0 ? log.map((item, i) => (i === index ? entry : item)) : [...log, entry];
+  return next.slice(-limit);
+}
+
+/** 続けて反映は参照先変換をすべての反映先へそのまま使う。変換が 1 件以上あるときの注意文（無ければ空文字）。 */
+export function describeRolloutLookupNotice(lookupCount: number): string {
+  return lookupCount > 0
+    ? `参照先変換（${lookupCount} 件）を、すべての反映先に同じように使います。反映先ごとに変換先が違う場合は、反映先を切り替えた後に参照先変換を直してください。`
+    : '';
+}
+
 /** 入力欄へ戻すための文字列（parseRolloutQueue で同じ内容に戻る形）。 */
 export function serializeRolloutQueue(targets: AppReference[]): string {
   return targets.map(target => target.guestId ? `/k/guest/${target.guestId}/${target.appId}/` : target.appId).join('\n');

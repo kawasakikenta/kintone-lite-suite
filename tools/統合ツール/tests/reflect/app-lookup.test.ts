@@ -89,6 +89,38 @@ describe('createReflectAppLookupCache', () => {
     expect(cache.peek('1', '')).toBeUndefined();
   });
 
+  it('差分取得で得た名前で成功済みの結果を更新し、以後はその名前を返す', async () => {
+    const lookup = vi.fn(async (appId: string) => ok(appId));
+    const cache = createReflectAppLookupCache(lookup);
+    await cache.get('1', '');
+    cache.remember({ ok: true, appId: '1', name: '改名後', code: 'renamed' }, '');
+    expect(cache.peek('1', '')).toEqual({ ok: true, appId: '1', name: '改名後', code: 'renamed' });
+    await expect(cache.get('1', '')).resolves.toMatchObject({ name: '改名後' });
+    expect(lookup).toHaveBeenCalledTimes(1);
+    // 未確認の組み合わせにも覚えさせられ、ゲストスペースが違えば別扱い
+    cache.remember({ ok: true, appId: '2', name: '新規', code: '' }, '5');
+    expect(cache.peek('2', '5')).toMatchObject({ name: '新規' });
+    expect(cache.peek('2', '')).toBeUndefined();
+  });
+
+  it('問い合わせ中に更新された名前を、遅れて返った古い応答で上書きしない', async () => {
+    let release: (value: ReflectAppLookupResult) => void = () => {};
+    const lookup = vi.fn(() => new Promise<ReflectAppLookupResult>((resolve) => { release = resolve; }));
+    const cache = createReflectAppLookupCache(lookup);
+    const request = cache.get('1', '');
+    cache.remember({ ok: true, appId: '1', name: '最新', code: '' }, '');
+    release({ ok: true, appId: '1', name: '古い', code: '' });
+    await expect(request).resolves.toMatchObject({ name: '最新' });
+    expect(cache.peek('1', '')).toMatchObject({ name: '最新' });
+  });
+
+  it('失敗した確認の後でも、差分取得で得た名前を覚えさせれば表示できる', async () => {
+    const cache = createReflectAppLookupCache(async (): Promise<ReflectAppLookupResult> => ({ ok: false, message: 'ng' }));
+    await cache.get('1', '');
+    cache.remember({ ok: true, appId: '1', name: '確認できた', code: '' }, '');
+    expect(cache.peek('1', '')).toMatchObject({ name: '確認できた' });
+  });
+
   it('問い合わせ関数が例外を投げても ok:false を返す', async () => {
     const cache = createReflectAppLookupCache(async () => { throw new Error('boom'); });
     await expect(cache.get('1', '')).resolves.toEqual({ ok: false, message: REFLECT_APP_LOOKUP_FAILURE });

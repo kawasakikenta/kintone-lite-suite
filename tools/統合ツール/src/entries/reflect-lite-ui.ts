@@ -29,7 +29,7 @@ import { createAppSearchControl } from './appSearchControl.js';
 import { pickAllSettingsBundles } from '../settingsBundleImport.js';
 import { reflectSelectionBlockers } from '../reflect/standalonePlan.js';
 import { buildReflectReportMarkdown } from '../reflect/planReport.js';
-import { formatRolloutTarget, parseRolloutQueue, serializeRolloutQueue } from '../reflect/rolloutQueue.js';
+import { describeRolloutLookupNotice, formatRolloutTarget, parseRolloutQueue, serializeRolloutQueue, upsertRolloutLog } from '../reflect/rolloutQueue.js';
 import { appendReflectChanges, appendReflectItems, renderReflectRoute, renderReflectSummaryTable, renderApplySectionResults, createApplyProgressView, type ApplyProgressView } from './reflectPlanView.js';
 import { REFLECT_SECTION_KEYS, reflectSectionLabel } from '../reflect/sections.js';
 import {
@@ -75,8 +75,40 @@ interface PreviewSnapshot {
   scopes?: string[];
   at: number;
   result: PreviewReflectResult;
+  /** 「バックアップから戻す」の間に取得した差分なら、その復元の識別子（バックアップ JSON の鮮度トークン）。復元が終わったら古い扱いにする。 */
+  restore?: string;
   /** 反映直後に同じ条件で再取得した差分（反映先が反映元と一致したかの確認用） */
   postApplyCheck?: { scopeCount: number };
+}
+
+/** 「バックアップから戻す」を始める前の入力。復元が終わったとき、利用者が変えていない値だけをここへ戻す。 */
+interface RestoreBefore {
+  sourceMode: 'app' | 'json';
+  sourceAppId: string;
+  sourceGuestId: string;
+  preserve: boolean;
+  lookupText: string;
+  scopes: string[];
+  /** 復元前に設定JSONを読み込んでいた場合の、その内容（読み込み済みのファイル・選択中のアプリ・鮮度トークン） */
+  bundle: any;
+  bundles: any[];
+  bundleIndex: number;
+  bundleToken: string;
+  bundleFileName: string;
+}
+
+/** 「バックアップから戻す」で反映元を切り替えている間の状態。 */
+interface RestoreMode {
+  /** バックアップ JSON の鮮度トークン。復元の識別子として差分・最終確認の鮮度判定にも使う。 */
+  token: string;
+  targetAppId: string;
+  targetGuestId: string;
+  at: number;
+  /** 復元で自動設定した値。ここから利用者が変えたら復元を終える（保持はOFF・参照先変換は空にしている）。 */
+  scopes: string[];
+  sourceAppId: string;
+  sourceGuestId: string;
+  before: RestoreBefore;
 }
 
 /** 複数アプリへ順次展開したときの、反映先ごとの記録（メモリのみ）。 */
@@ -540,8 +572,9 @@ export function mountReflectLitePanel() {
   let refreshWorkflow = () => {};
   let busy = false;
   let sourceMode: 'app' | 'json' = 'app';
-  // 「バックアップから戻す」で反映元を切り替えている間だけ値を持つ。反映元・反映先を手で変えたら解除する（refreshReviewCard で判定）。
-  let restoreMode: { token: string; targetAppId: string; targetGuestId: string; at: number } | null = null;
+  // 「バックアップから戻す」で反映元を切り替えている間だけ値を持つ。復元で設定した値（反映元・反映先・項目・保持・参照先変換）を
+  // 利用者が変えたら解除し、変えていない値は復元前へ戻す（syncRestoreMode。refreshReviewCard から呼ぶ）。
+  let restoreMode: RestoreMode | null = null;
 
   // ---- アプリ ----
   const srcApp = makeInput({ placeholder: '反映元アプリID', value: memoryState.sourceAppId || '', width: 'id' });
@@ -562,6 +595,8 @@ export function mountReflectLitePanel() {
     let seq = 0;
     let timer: number | undefined;
     let known: ReflectAppLookupOk | null = null;
+    // 確認に失敗した状態か。同じ値のままでは再確認されないため、欄の change（フォーカスを外したとき）で確認し直す。
+    let failed = false;
     const paint = (text: string, tone: '' | 'ok' | 'warn' = '') => {
       el.textContent = text;
       el.classList.toggle('kus-rl-app-note--ok', tone === 'ok');
@@ -569,6 +604,7 @@ export function mountReflectLitePanel() {
     };
     const show = (info: ReflectAppLookupOk, open: boolean) => {
       known = info;
+      failed = false;
       paint(`✓ ${formatReflectAppName(info)}${open ? ' · 開いているアプリ' : ''}`, 'ok');
       onResolved();
     };
@@ -581,6 +617,7 @@ export function mountReflectLitePanel() {
       key = nextKey;
       seq += 1;
       known = null;
+      failed = false;
       window.clearTimeout(timer);
       if (!active) { paint(''); return; }
       const open = !!DEFAULT_APP_ID && appId === DEFAULT_APP_ID && guest === pageGuestId();
@@ -593,10 +630,32 @@ export function mountReflectLitePanel() {
         // 入力が変わった後に返ってきた古い応答は捨てる。
         if (mine !== seq) return;
         if (result.ok) show(result, open);
-        else if (!open) paint('message' in result ? result.message : REFLECT_APP_LOOKUP_FAILURE, 'warn');
+        else {
+          failed = true;
+          if (!open) paint('message' in result ? result.message : REFLECT_APP_LOOKUP_FAILURE, 'warn');
+        }
       }, APP_LOOKUP_DELAY_MS);
     }
-    return { el, refresh, known: () => known };
+    /** 差分取得で確認できた名前を、いま入力されているアプリと一致するときだけ表示へ反映する。 */
+    function adopt(info: ReflectAppLookupOk) {
+      const appId = appInput.value.trim();
+      const guest = guestInput.value.trim();
+      if (!isActive() || info.appId !== appId || !isLookupableReflectApp(appId, guest)) return;
+      const open = !!DEFAULT_APP_ID && appId === DEFAULT_APP_ID && guest === pageGuestId();
+      key = `${guest}|${appId}`;
+      seq += 1;
+      window.clearTimeout(timer);
+      show(info, open);
+    }
+    /** 失敗していた確認を、欄の change でもう一度行う（権限やネットワークが回復した場合に備える）。 */
+    function recheck() {
+      if (!failed) return;
+      key = '\u0000';
+      refresh();
+    }
+    appInput.addEventListener('change', recheck);
+    guestInput.addEventListener('change', recheck);
+    return { el, refresh, known: () => known, adopt };
   }
   // 名前が分かったらフッターの経路表示も更新する。
   const sourceNote = createAppNote(srcApp, srcGuest, () => sourceMode === 'app', () => refreshWorkflow());
@@ -618,6 +677,16 @@ export function mountReflectLitePanel() {
   sourceJsonAppSelect.className = 'kus-lp__select';
   sourceJsonAppSelect.setAttribute('aria-label', '設定JSON内の反映元アプリ');
   sourceJsonAppSelect.hidden = true;
+  /** 読み込み済みの設定JSON（sourceJsonBundles）の一覧を選択肢に反映する。 */
+  function renderJsonAppSelect() {
+    sourceJsonAppSelect.replaceChildren(...sourceJsonBundles.map((bundle, index) => {
+      const option = document.createElement('option');
+      option.value = String(index);
+      const appName = extractAppNameFromBundle(bundle);
+      option.textContent = `アプリ #${bundle.appId}${appName ? ` (${appName})` : ''}`;
+      return option;
+    }));
+  }
   const srcJsonClearBtn = makeButton('クリア', 'ghost');
   srcJsonClearBtn.style.display = 'none';
   const srcJsonNote = document.createElement('div');
@@ -727,13 +796,7 @@ export function mountReflectLitePanel() {
       throw new Error('設定JSONの読み込みに失敗しました（JSON形式が不正です）');
     }
     sourceJsonBundles = pickAllSettingsBundles(parsed, 'source', true);
-    sourceJsonAppSelect.replaceChildren(...sourceJsonBundles.map((bundle, index) => {
-      const option = document.createElement('option');
-      option.value = String(index);
-      const appName = extractAppNameFromBundle(bundle);
-      option.textContent = `アプリ #${bundle.appId}${appName ? ` (${appName})` : ''}`;
-      return option;
-    }));
+    renderJsonAppSelect();
     sourceBundleFromJson = sourceJsonBundles[0];
     sourceBundleToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
     sourceBundleFileName = file.name;
@@ -1305,7 +1368,12 @@ export function mountReflectLitePanel() {
   const rolloutStatus = document.createElement('div');
   rolloutStatus.className = 'kus-rl-rollout__status';
   rolloutStatus.setAttribute('aria-live', 'polite');
-  rolloutDetails.body.append(rolloutHelp, rolloutTa, rolloutStatus);
+  // 参照先変換は、続けて反映するすべての反映先に同じものを使う（反映先ごとには変えない）。
+  const rolloutLookupSetupNote = document.createElement('p');
+  rolloutLookupSetupNote.className = 'kus-rl-next kus-rl-next--warn';
+  rolloutLookupSetupNote.dataset.rolloutLookupNote = 'setup';
+  rolloutLookupSetupNote.hidden = true;
+  rolloutDetails.body.append(rolloutHelp, rolloutTa, rolloutStatus, rolloutLookupSetupNote);
   rolloutTa.addEventListener('input', () => {
     saveState();
     refreshReviewCard();
@@ -1329,7 +1397,8 @@ export function mountReflectLitePanel() {
     const key = rolloutConditionKey();
     const log = memoryState.rolloutKey === key ? memoryState.rolloutLog || [] : [];
     memoryState.rolloutKey = key;
-    memoryState.rolloutLog = [...log, entry].slice(-100);
+    // 同じ反映先へ再実行したときは、記録が重複しないよう最新の結果で置き換える（順序は最初に反映した位置のまま）。
+    memoryState.rolloutLog = upsertRolloutLog(log, entry);
   }
   const rolloutCard = makeCard({ title: '続けて反映', soft: true });
   rolloutCard.card.classList.add('kus-rl-rollout-card');
@@ -1350,8 +1419,12 @@ export function mountReflectLitePanel() {
   rolloutNextRow.appendChild(rolloutNextBtn);
   const rolloutLogBox = document.createElement('div');
   rolloutLogBox.dataset.rolloutLog = 'true';
-  rolloutCard.body.append(rolloutNote, rolloutWarn, rolloutError, rolloutNextRow, rolloutLogBox);
+  const rolloutLookupNote = document.createElement('div');
+  rolloutLookupNote.className = 'kus-rl-next kus-rl-next--warn';
+  rolloutLookupNote.dataset.rolloutLookupNote = 'card';
+  rolloutCard.body.append(rolloutNote, rolloutLookupNote, rolloutWarn, rolloutError, rolloutNextRow, rolloutLogBox);
 
+  const lookupCountOf = (state: ReturnType<typeof parseLookupMapText>) => (state.ok ? state.count : 0);
   /** 入力欄の解析結果と、反映結果画面の「続けて反映」カードを現在の状態に合わせる。 */
   function renderRollout() {
     const text = rolloutTa.value.trim();
@@ -1364,6 +1437,9 @@ export function mountReflectLitePanel() {
       const shown = queue.targets.slice(0, 10).map(formatRolloutTarget).join('、');
       rolloutStatus.textContent = `${queue.targets.length} 件: ${shown}${queue.targets.length > 10 ? ` ほか ${queue.targets.length - 10} 件` : ''}`;
     }
+    const lookupNotice = describeRolloutLookupNotice(lookupCountOf(parseLookupMapText(lookupTa.value)));
+    rolloutLookupSetupNote.hidden = !lookupNotice;
+    rolloutLookupSetupNote.textContent = lookupNotice;
     const last = memoryState.lastResult;
     const log = memoryState.rolloutLog || [];
     const next = queue.ok ? queue.targets[0] : undefined;
@@ -1372,6 +1448,8 @@ export function mountReflectLitePanel() {
     renderRolloutLog(rolloutLogBox, log);
     if (!show) return;
     rolloutNote.hidden = !next;
+    rolloutLookupNote.hidden = !next || !lookupNotice;
+    rolloutLookupNote.textContent = lookupNotice;
     if (next) {
       const rest = queue.ok ? queue.targets.length - 1 : 0;
       rolloutNote.replaceChildren();
@@ -1397,11 +1475,17 @@ export function mountReflectLitePanel() {
     const queue = currentRollout();
     if (!queue.ok || !queue.targets.length) return;
     const [next, ...rest] = queue.targets;
-    const lookupState = parseLookupMapText(lookupTa.value);
     // 切り替える前に、次の反映先で差分を取得できるかを確かめる（できないなら今の結果と入力を残す）。
-    const invalid = reflectConnectionError({ ...currentOptions(), targetAppId: next.appId, targetGuestId: next.guestId }) || lookupMapError(lookupState);
-    if (invalid) {
-      panel.setStatus(`次の反映先 ${formatRolloutTarget(next)} へ進めません。${invalid}`, 'warn');
+    // 「差分を確認する」へ進める条件（反映元・反映項目・参照先変換）と同じ判定を使う。
+    const blocker = describeReflectSetupBlocker({
+      connectionError: reflectConnectionError({ ...currentOptions(), targetAppId: next.appId, targetGuestId: next.guestId }),
+      sourceMode,
+      hasSourceBundle: !!sourceBundleFromJson,
+      scopeCount: collectSelectedScopes().length,
+      lookupError: lookupMapError(parseLookupMapText(lookupTa.value))
+    });
+    if (blocker) {
+      panel.setStatus(`次の反映先 ${formatRolloutTarget(next)} へ進めません。${blocker}`, 'warn');
       return;
     }
     tgtApp.value = next.appId;
@@ -1493,9 +1577,11 @@ export function mountReflectLitePanel() {
         preserveTargetOnly: preserve.checkbox.checked
       })
       : '';
+    // バックアップから戻している間に取得した差分は、復元を終えたら（反映元JSONが同じでも）古い扱いにする。
     const fresh = !!preview && !!signature && preview.signature === signature
       && scopes.every((key) => coveredScopes.includes(key))
-      && (sourceMode !== 'json' || !!sourceBundleFromJson);
+      && (sourceMode !== 'json' || !!sourceBundleFromJson)
+      && (preview.restore || '') === (restoreMode?.token || '');
     return { scopes, lookupState, signature, preview, fresh };
   }
 
@@ -1574,6 +1660,19 @@ export function mountReflectLitePanel() {
     previewCard.card.style.display = 'block';
   }
 
+  /** 差分取得で確認できたアプリ名で、入力欄の下の確認結果（と確認キャッシュ）を更新する。入力中の確認と食い違わないようにする。 */
+  function adoptResolvedAppNames(identities: ReflectIdentities, sourceIsJson: boolean) {
+    for (const [side, note] of [['source', sourceNote], ['target', targetNote]] as const) {
+      if (side === 'source' && sourceIsJson) continue;
+      const identity = identities[side];
+      if (!identity?.appId || !identity.name) continue;
+      const guestId = identity.guestId || '';
+      const info: ReflectAppLookupOk = { ok: true, appId: identity.appId, name: identity.name, code: identity.code ?? appLookupCache.peek(identity.appId, guestId)?.code ?? '' };
+      appLookupCache.remember(info, guestId);
+      note.adopt(info);
+    }
+  }
+
   async function runPreview(scopes: string[], lookupMap: Record<string, string>, postApplyCheck = false) {
     memoryState.lastPreview = null;
     clearConfirmation();
@@ -1581,8 +1680,9 @@ export function mountReflectLitePanel() {
     const signature = buildPreviewSignature({ ...options, sourceBundleToken });
     panel.setStatus('アプリ名と接続先を確認中…', 'busy');
     const identities = await resolveReflectAppsStandalone(options);
+    adoptResolvedAppNames(identities, !!options.sourceBundle);
     const result = await previewReflectStandalone(options, (message) => panel.setStatus(message, 'busy'));
-    memoryState.lastPreview = { signature, scopes: [...scopes], at: Date.now(), result, identities, ...(postApplyCheck ? { postApplyCheck: { scopeCount: scopes.length } } : {}) };
+    memoryState.lastPreview = { signature, scopes: [...scopes], at: Date.now(), result, identities, ...(restoreMode ? { restore: restoreMode.token } : {}), ...(postApplyCheck ? { postApplyCheck: { scopeCount: scopes.length } } : {}) };
     rerenderPreviewCard(); refreshReviewCard(); showWorkflowStage('review');
     return result;
   }
@@ -1604,9 +1704,12 @@ export function mountReflectLitePanel() {
   }
 
   function refreshReviewCard() {
-    if (restoreMode && (sourceMode !== 'json' || sourceBundleToken !== restoreMode.token || tgtApp.value.trim() !== restoreMode.targetAppId || tgtGuest.value.trim() !== restoreMode.targetGuestId)) restoreMode = null;
+    // 復元で設定した値を利用者が変えたら、復元を終えて、変えていない値は復元前へ戻す。
+    const restoreEndNote = restoreMode && !restoreStillApplies(restoreMode) ? endRestoreMode() : '';
     // 反映元・項目・保持・参照先変換が変わったら、展開の記録は引き継がない（反映先の切り替えでは残す）。
-    if (memoryState.rolloutLog?.length && memoryState.rolloutKey !== rolloutConditionKey()) { memoryState.rolloutLog = []; memoryState.rolloutKey = ''; }
+    // 復元中は復元のために値を切り替えているだけなので比べない（復元を終えて値が戻れば、記録を引き継ぐ）。
+    if (!restoreMode && memoryState.rolloutLog?.length && memoryState.rolloutKey !== rolloutConditionKey()) { memoryState.rolloutLog = []; memoryState.rolloutKey = ''; }
+    let staleNote = '';
     const staleResult = memoryState.lastResult;
     const currentSourceBundleToken = sourceMode === 'json' ? sourceBundleToken : '';
     if (staleResult && (
@@ -1623,8 +1726,9 @@ export function mountReflectLitePanel() {
       logPre.style.display = 'none';
       logPre.textContent = '';
       renderLastResult();
-      panel.setStatus('対象が変わったため、まだ反映していません。現在の条件で差分を再取得してから反映してください。', 'info');
+      staleNote = '対象が変わったため、まだ反映していません。現在の条件で差分を再取得してから反映してください。';
     }
+    if (restoreEndNote || staleNote) panel.setStatus([restoreEndNote, staleNote].filter(Boolean).join(' '), 'info');
     const { scopes, lookupState, preview, fresh } = getPreviewState();
     const invalid = reflectConnectionError(currentOptions());
     const result = preview?.result;
@@ -1790,7 +1894,7 @@ export function mountReflectLitePanel() {
   let confirmedToken = '';
   function confirmationToken() {
     const state = getPreviewState();
-    return state.fresh ? JSON.stringify([state.preview!.signature, state.preview!.at, [...state.scopes].sort()]) : '';
+    return state.fresh ? JSON.stringify([state.preview!.signature, state.preview!.at, [...state.scopes].sort(), state.preview!.restore || '']) : '';
   }
   function clearConfirmation() {
     confirmedToken = ''; acknowledged.checkbox.checked = false; targetCheck.value = '';
@@ -2016,17 +2120,25 @@ export function mountReflectLitePanel() {
     }
     const targetAppId = last.appId;
     const targetGuestId = last.guestId;
+    // 復元前の入力を控える（復元が終わったとき、利用者が変えていない値だけを戻す）。続けて復元するときは、最初の復元前の値を引き継ぐ。
+    const before: RestoreBefore = restoreMode ? restoreMode.before : {
+      sourceMode,
+      sourceAppId: srcApp.value,
+      sourceGuestId: srcGuest.value,
+      preserve: preserve.checkbox.checked,
+      lookupText: lookupTa.value,
+      scopes: collectSelectedScopes(),
+      bundle: sourceBundleFromJson,
+      bundles: sourceJsonBundles,
+      bundleIndex: Math.max(0, sourceJsonBundles.indexOf(sourceBundleFromJson)),
+      bundleToken: sourceBundleToken,
+      bundleFileName: sourceBundleFileName
+    };
     // 反映元を「設定JSONから取得」に切り替え、手でファイルを選んだときと同じ状態（読み込み済みJSON・鮮度トークン・表示）にする。
     sourceMode = 'json';
     sourceModeSelect.value = 'json';
     sourceJsonBundles = bundles;
-    sourceJsonAppSelect.replaceChildren(...bundles.map((item, index) => {
-      const option = document.createElement('option');
-      option.value = String(index);
-      const appName = extractAppNameFromBundle(item);
-      option.textContent = `アプリ #${item.appId}${appName ? ` (${appName})` : ''}`;
-      return option;
-    }));
+    renderJsonAppSelect();
     sourceBundleFromJson = bundle;
     sourceBundleToken = `backup:${last.at}:${Date.now()}`;
     sourceBundleFileName = `反映前バックアップ（${formatReflectDateTime(last.at)}）`;
@@ -2041,7 +2153,7 @@ export function mountReflectLitePanel() {
     const restoreScopes = new Set(scopes);
     chips.forEach((chip) => { chip.checkbox.checked = restoreScopes.has(chip.checkbox.value); });
     refreshScopeCount();
-    restoreMode = { token: sourceBundleToken, targetAppId, targetGuestId, at: last.at };
+    restoreMode = { token: sourceBundleToken, targetAppId, targetGuestId, at: last.at, scopes: collectSelectedScopes(), sourceAppId: srcApp.value, sourceGuestId: srcGuest.value, before };
     saveState();
     refreshSrcJsonNote();
     refreshSameConnBanner();
@@ -2049,6 +2161,65 @@ export function mountReflectLitePanel() {
     return startPreview('バックアップから戻す内容の差分を取得しました。反映前の状態に戻る内容を確認してください。');
   }
   restoreBtn.addEventListener('click', () => { startRestoreFromBackup(); });
+  /** 復元で設定した状態（反映元のバックアップJSON・反映先・保持OFF・参照先変換なし・復元する項目の範囲内）が、利用者の操作で崩れていないか。 */
+  function restoreStillApplies(mode: RestoreMode) {
+    return sourceMode === 'json' && sourceBundleToken === mode.token
+      && tgtApp.value.trim() === mode.targetAppId && tgtGuest.value.trim() === mode.targetGuestId
+      && !preserve.checkbox.checked
+      && lookupTa.value === ''
+      // 復元する項目を絞るのは復元のまま。バックアップに無い項目を足したときは復元ではなくなる。
+      && collectSelectedScopes().every((key) => mode.scopes.includes(key));
+  }
+  /**
+   * 復元を終える。復元のために自動設定した値のうち、利用者がまだ変えていないものだけを復元前の値へ戻し、
+   * 復元用に取得した差分と最終確認は無効にする（復元の注意が出ないまま反映されないようにする）。戻り値は利用者への通知文。
+   */
+  function endRestoreMode(): string {
+    const mode = restoreMode;
+    if (!mode) return '';
+    restoreMode = null;
+    const before = mode.before;
+    let reverted = false;
+    if (sourceMode === 'json' && sourceBundleToken === mode.token) {
+      // バックアップJSONを反映元にしたままなら、復元前の反映元（取得方法・読み込み済みJSON・アプリID）へ戻す。
+      sourceMode = before.sourceMode;
+      sourceModeSelect.value = before.sourceMode;
+      sourceBundleFromJson = before.bundle;
+      sourceJsonBundles = before.bundles;
+      sourceBundleToken = before.bundleToken;
+      sourceBundleFileName = before.bundleFileName;
+      renderJsonAppSelect();
+      if (before.bundles.length) sourceJsonAppSelect.value = String(before.bundleIndex);
+      srcJsonFile.value = '';
+      srcApp.value = before.sourceAppId;
+      srcGuest.value = before.sourceGuestId;
+      reverted = true;
+    } else if (sourceMode === 'app' && srcApp.value.trim() === mode.sourceAppId && srcGuest.value.trim() === mode.sourceGuestId) {
+      // 利用者が「アプリから取得」に戻しただけで、反映元IDが復元時の値のままなら、変更前のIDへ戻す。
+      srcApp.value = before.sourceAppId;
+      srcGuest.value = before.sourceGuestId;
+      reverted = true;
+    }
+    if (!preserve.checkbox.checked && before.preserve) { preserve.checkbox.checked = true; reverted = true; }
+    if (lookupTa.value === '' && before.lookupText !== '') { lookupTa.value = before.lookupText; reverted = true; }
+    const selected = collectSelectedScopes();
+    if (selected.length === mode.scopes.length && selected.every((key) => mode.scopes.includes(key))
+      && !(before.scopes.length === selected.length && before.scopes.every((key) => selected.includes(key)))) {
+      const restoredScopes = new Set(before.scopes);
+      chips.forEach((chip) => { chip.checkbox.checked = restoredScopes.has(chip.checkbox.value); });
+      reverted = true;
+    }
+    refreshLookupStatus();
+    refreshScopeCount();
+    refreshSrcJsonNote();
+    refreshSameConnBanner();
+    saveState();
+    memoryState.lastPreview = null;
+    clearConfirmation();
+    return reverted
+      ? 'バックアップからの復元を終了しました。保持設定・参照先変換などを復元前の値に戻しました。'
+      : 'バックアップからの復元を終了しました。';
+  }
   /** バックアップから戻しているときの反映元の表示（反映先の名前とバックアップの日時から作る）。 */
   function restoreSourceLabel(targetName: string) {
     return `反映前のバックアップ（${[targetName, restoreMode ? formatReflectDateTime(restoreMode.at) : ''].filter(Boolean).join('・')}）`;
@@ -2219,6 +2390,8 @@ export function mountReflectLitePanel() {
       memoryState.lastPreview = null;
       memoryState.lastResult = null;
       renderLastResult();
+      // 前の結果に対する「続けて反映」の注意・次へ進む操作を、反映中は残さない。
+      renderRollout();
       progressView = createApplyProgressView(progressHost, progressRows);
       progressCard.card.style.display = 'block';
       let applyOutcome: Awaited<ReturnType<typeof runApplyPreviewStandalone>>;
