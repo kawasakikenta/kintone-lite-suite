@@ -24,6 +24,8 @@ export interface PreviewReflectResult {
   entries: PreviewSectionEntry[]; baseline: ReflectBaseline; sourceFieldCodes: string[]; targetFieldCodes: string[];
   targetPending?: ReflectTargetPending;
 }
+/** 反映の進捗通知。項目ごとに running → ok / ng / skip、中断で残った項目は pending。 */
+export interface ReflectSectionUpdate { sectionKey: string; label: string; status: 'running' | 'ok' | 'ng' | 'skip' | 'pending'; message?: string }
 export interface ReflectAppIdentity { appId: string; name: string; code: string; guestId: string }
 export interface ReflectIdentities { source: ReflectAppIdentity; target: ReflectAppIdentity }
 
@@ -98,7 +100,8 @@ async function getReflectBundles(opts: ReflectOptions, scopes: string[], setStat
   setStatus(opts.sourceBundle ? '反映元の設定JSONを読み込み中...' : '反映元の設定を取得中...');
   const source = opts.sourceBundle ? pickSettingsBundle(opts.sourceBundle, { side: 'source', appId: String(opts.sourceAppId || '').trim(), rawSettings: true }) : await fetchBundle({
     rawSettings: true,
-    appId: opts.sourceAppId, guestId: opts.sourceGuestId || '', preview: !!opts.sourcePreview, sections: scopes,
+    // フィールド設定を選んでいなくても、参照するフィールドの有無と表示名を示せるよう反映先と同じ範囲を取得する。
+    appId: opts.sourceAppId, guestId: opts.sourceGuestId || '', preview: !!opts.sourcePreview, sections: reflectInspectionScopes(scopes),
     onProgress: (p, label) => setStatus(`反映元取得 ${Math.round(p * 100)}% (${label})`)
   });
   setStatus('反映先プレビューの設定を確認中...');
@@ -157,7 +160,7 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
 }
 
 export async function runApplyPreviewStandalone(
-  opts: ReflectOptions & { stopOnError?: boolean; doBackup?: boolean; doDeploy?: boolean; reviewBaseline: ReflectBaseline },
+  opts: ReflectOptions & { stopOnError?: boolean; doBackup?: boolean; doDeploy?: boolean; reviewBaseline: ReflectBaseline; onSectionUpdate?: (update: ReflectSectionUpdate) => void },
   setStatus: (message: string, error?: boolean) => void, onProgress: (logs: string[]) => void
 ): Promise<{ logs: string[]; sections: ApplySectionOutcome[]; backup?: ReflectBackup }> {
   if (!opts.reviewBaseline) throw new Error('反映前に差分を取得して確認してください。');
@@ -237,23 +240,29 @@ export async function runApplyPreviewStandalone(
   };
   logs.push(`反映元: ${opts.sourceBundle ? '設定JSON' : opts.sourceAppId} → 反映先(プレビュー): ${opts.targetAppId}`);
   const sections: ApplySectionOutcome[] = [];
+  // 画面の進捗表示が失敗しても、書き込みの処理には影響させない。
+  const notify = (plan: ReflectSectionPlan, status: ReflectSectionUpdate['status'], message?: string) => {
+    try { opts.onSectionUpdate?.({ sectionKey: plan.sectionKey, label: plan.label, status, ...(message ? { message } : {}) }); } catch { /* 表示側の例外は無視する */ }
+  };
   for (const [index, plan] of plans.entries()) {
     const outcome = { sectionKey: plan.sectionKey, label: plan.label };
     if (!plan.operations.length) {
       sections.push({ ...outcome, status: 'skip', message: '変更なし（書き込み不要）' });
+      notify(plan, 'skip', '変更なし（書き込み不要）');
       logs.push(`SKIP ${plan.label}: 書き込み不要`); onProgress(logs); continue;
     }
     setStatus(`反映中 ${index + 1}/${plans.length}: ${plan.label}`);
+    notify(plan, 'running');
     const written: string[] = [];
     try {
       for (const operation of plan.operations) { await write(operation, await bodyWithUploads(operation)); written.push(operation.label); logs.push(`  OK ${operation.label}`); }
-      sections.push({ ...outcome, status: 'ok' }); logs.push(`OK ${plan.label}`);
+      sections.push({ ...outcome, status: 'ok' }); notify(plan, 'ok'); logs.push(`OK ${plan.label}`);
     } catch (error: any) {
       // 項目内の途中で止まった場合、先に完了した書き込みは反映先に残る。失敗の内容と一緒に必ず示す。
       const message = `${error.message || String(error)}${written.length ? `\n（この項目では ${written.join('・')} まで書き込み済みです。差分を取得し直して現在の状態を確認してください）` : ''}`;
-      sections.push({ ...outcome, status: 'ng', message }); pushErrorLog(logs, `NG ${plan.label}: ${message}`, message);
+      sections.push({ ...outcome, status: 'ng', message }); notify(plan, 'ng', message); pushErrorLog(logs, `NG ${plan.label}: ${message}`, message);
       if (opts.stopOnError !== false || error.stopReflection || isRevisionConflictError(error)) {
-        for (const pending of plans.slice(index + 1)) sections.push({ sectionKey: pending.sectionKey, label: pending.label, status: 'pending', message: '中断のため未実行' });
+        for (const pending of plans.slice(index + 1)) { sections.push({ sectionKey: pending.sectionKey, label: pending.label, status: 'pending', message: '中断のため未実行' }); notify(pending, 'pending', '中断のため未実行'); }
         logs.push(`中断（未実行 ${plans.length - index - 1} 件）`); break;
       }
     }

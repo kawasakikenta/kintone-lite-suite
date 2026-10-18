@@ -153,7 +153,7 @@ describe('反映する項目のグループと説明', () => {
 
   it('一般設定（appSettings）はキー一覧に足してあり、反映可能になれば動作グループへ入る', () => {
     expect(REFLECT_SCOPE_GROUPS.find((group) => group.id === 'behavior')?.keys).toContain('appSettings');
-    expect(REFLECT_SCOPE_HINTS.appSettings).toBeTruthy();
+    expect(REFLECT_SCOPE_HINTS.appSettings).toBe('テーマ、レコードのタイトル、サムネイル表示、一括削除、コメント機能、レコードの再利用、一覧でのインライン編集、数値の桁数と丸め、年度の開始月を反映元に合わせます。アプリ名・説明・アイコンは変えません。');
     expect(groupReflectScopes(['fieldSettings', 'appSettings']).find((group) => group.id === 'behavior')?.keys).toEqual(['appSettings']);
   });
 
