@@ -187,7 +187,11 @@ export async function runApplyPreviewStandalone(
       setStatus('バックアップ用にJS/CSSファイルを取得中…');
       const embedded = await embedCustomizeFileContents(target.sections.customizeSettings, { guestId: opts.targetGuestId || '' });
       bundle = { ...target, sections: { ...target.sections, customizeSettings: embedded.section } };
-      for (const item of embedded.unavailable) logs.push(`警告: JS/CSSファイル「${item.name}」の本体をバックアップに保存できませんでした（${item.reason}）`);
+      // 書き込み後に設定から外れる（差し替わる）ファイルは、本体を保存できないと元に戻せない。書き込む前に止める。
+      const keptKeys = new Set(plans.filter(plan => plan.sectionKey === 'customizeSettings').flatMap(plan => plan.operations).flatMap(operation => ['desktop', 'mobile'].flatMap(platform => ['js', 'css'].flatMap(kind => (operation.body?.[platform]?.[kind] || []).map((item: any) => item?.file?.fileKey).filter(Boolean)))));
+      const lost = embedded.unavailable.filter(item => !keptKeys.has(item.fileKey));
+      if (lost.length) throw new Error(`反映先のJS/CSSファイルの本体をバックアップに保存できないため、反映を中止しました。まだ書き込んでいません。\n${lost.map(item => `「${item.name}」: ${item.reason}`).join('\n')}\n時間をおいて差分を取得し直すか、JS/CSS設定を反映対象から外してください。`);
+      for (const item of embedded.unavailable) logs.push(`警告: JS/CSSファイル「${item.name}」の本体をバックアップに保存できませんでした（${item.reason}）。この反映では外さないため、設定には残ります`);
     }
     backup = { generatedAt: new Date().toISOString(), scopes, bundle };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });

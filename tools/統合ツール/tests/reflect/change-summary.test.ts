@@ -74,8 +74,20 @@ describe('layoutSettings', () => {
     const before = { layout: [{ type: 'ROW', fields: [{ type: 'LABEL', label: 'a' }, { type: 'HR' }] }, { type: 'SUBTABLE', code: 'tbl', fields: [text('q'), text('r')] }] };
     const after = { layout: [{ type: 'ROW', fields: [{ type: 'LABEL', label: 'a' }, { type: 'LABEL', label: 'b' }, { type: 'SPACER', elementId: 's' }] }, { type: 'SUBTABLE', code: 'tbl', fields: [text('r'), text('q')] }] };
     const items = summarize('layoutSettings', before, after, { fieldLabels: labels });
-    expect(find(items, 'ラベル・スペース・罫線')!.details).toEqual(['ラベル: 1個 → 2個', '罫線: 1個 → 0個', 'スペース: 0個 → 1個']);
+    const plain = items.filter(item => item.name === 'ラベル・スペース・罫線').map(item => [item.kind, item.details]);
+    expect(plain).toEqual([['削除', ['罫線: 1個 → 0個']], ['追加', ['ラベル: 1個 → 2個', 'スペース: 0個 → 1個']]]);
     expect(find(items, 'q')!.details).toEqual(['位置: テーブル「明細（tbl）」の1番目 → テーブル「明細（tbl）」の2番目']);
+  });
+  it('reports size changes of spacers even when other fields also change', () => {
+    const before = { layout: [{ type: 'ROW', fields: [{ type: 'SPACER', elementId: 's', size: { width: '20' } }, text('q')] }] };
+    const after = { layout: [{ type: 'ROW', fields: [{ type: 'SPACER', elementId: 's', size: { width: '50' } }, text('r'), text('q')] }] };
+    const items = summarize('layoutSettings', before, after, { fieldLabels: labels });
+    expect(find(items, 'ラベル・スペース・罫線')).toMatchObject({ kind: '変更', details: ['スペースの大きさを変更'] });
+  });
+  it('adds a total count when a long list is shortened', () => {
+    const fields = Array.from({ length: 30 }, (_, i) => `field_with_long_code_${i}`);
+    const items = summarize('viewSettings', { views: { 一覧: { type: 'LIST', index: '0', fields } } }, { views: { 一覧: { type: 'LIST', index: '0', fields: [] } } });
+    expect(items[0].details[0]).toMatch(/…（計 30 件）$/);
   });
   it('still reports a layout that changed only in row order', () => {
     const rows = (...rows: any[]) => ({ layout: rows.map(fields => ({ type: 'ROW', fields })) });

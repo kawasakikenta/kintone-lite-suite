@@ -80,6 +80,13 @@ describe('一般設定の反映計画', () => {
     expect(reflectSelectionBlockers([result], ['appSettings'], [], [])[0]).toContain('参照するフィールド「subject」が反映先にありません');
     expect(reflectSelectionBlockers([result], ['appSettings'], [], ['subject'])).toEqual([]);
   });
+  it('タイトルを手動から自動へ戻す変更は削除として数えず、手動なのにフィールドが無い設定は止める', () => {
+    const toAuto = plan('appSettings', settings(), settings({ titleField: { selectionMode: 'MANUAL', code: 'subject' } }));
+    expect(toAuto.status).toBe('change'); expect(toAuto.removalCount).toBe(0);
+    expect(toAuto.operations[0].body.titleField).toEqual({ selectionMode: 'AUTO' });
+    const missing = plan('appSettings', settings({ titleField: { selectionMode: 'MANUAL' } }), settings());
+    expect(missing.status).toBe('error'); expect(missing.blockers.join()).toContain('フィールドが指定されていません');
+  });
   it('不正な形の取得値は書き込まずエラーにする', () => {
     for (const bad of [undefined, null, [], 'text', { _fetchError: '失敗' }]) {
       const result = plan('appSettings', bad, settings());
