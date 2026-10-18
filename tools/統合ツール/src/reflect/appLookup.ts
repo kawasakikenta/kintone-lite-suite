@@ -45,6 +45,8 @@ export interface ReflectAppLookupCache {
   get(appId: string, guestId: string): Promise<ReflectAppLookupResult>;
   /** 成功済みの結果があれば返す（待たずに表示するため）。 */
   peek(appId: string, guestId: string): ReflectAppLookupOk | undefined;
+  /** 別の確認（差分取得時の厳密な確認）で得た名前で、成功済みの結果を更新する。入力欄の確認と食い違わないようにする。 */
+  remember(info: ReflectAppLookupOk, guestId: string): void;
 }
 
 export function createReflectAppLookupCache(
@@ -57,6 +59,9 @@ export function createReflectAppLookupCache(
     peek(appId, guestId) {
       return done.get(keyOf(appId, guestId));
     },
+    remember(info, guestId) {
+      done.set(keyOf(info.appId, guestId), { ok: true, appId: String(info.appId).trim(), name: info.name, code: info.code });
+    },
     get(appId, guestId) {
       const key = keyOf(appId, guestId);
       const cached = done.get(key);
@@ -67,7 +72,11 @@ export function createReflectAppLookupCache(
         .catch((): ReflectAppLookupResult => ({ ok: false, message: REFLECT_APP_LOOKUP_FAILURE }))
         .then((result) => {
           pending.delete(key);
-          if (result.ok) done.set(key, result);
+          if (!result.ok) return result;
+          // 問い合わせ中に remember で更新されていれば、新しい方を残す。
+          const kept = done.get(key);
+          if (kept) return kept;
+          done.set(key, result);
           return result;
         });
       pending.set(key, request);
