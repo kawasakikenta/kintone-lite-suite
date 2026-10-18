@@ -4,36 +4,10 @@
  * 純粋関数として切り出し、単体テストの対象にする。
  */
 
-import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
 import type { ApplySectionOutcome } from './applyOutcome.js';
 import { reflectInspectionScopes } from './standalonePlan.js';
 
-export interface AppReference { appId: string; guestId: string }
-
-/**
- * 入力欄に貼り付けられた文字列からアプリIDとゲストスペースIDを読み取る。
- * 数字だけならそのまま、kintone の URL（/k/123/、/k/guest/5/123/、?app=123）なら抽出する。
- * 読み取れない場合は null。
- */
-export function parseAppReference(text: string): AppReference | null {
-  const raw = String(text || '').trim();
-  if (!raw) return null;
-  if (/^[1-9]\d*$/.test(raw)) return { appId: raw, guestId: '' };
-  const appId = extractAppIdFromInput(raw);
-  if (!/^[1-9]\d*$/.test(appId)) return null;
-  return { appId, guestId: extractGuestIdFromInput(raw) };
-}
-
-/** 開いている kintone 画面のパスからゲストスペースIDを読み取る（通常スペースなら空文字）。 */
-export function guestIdFromPagePath(pathname: string): string {
-  return extractGuestIdFromInput(String(pathname || ''));
-}
-
-/** 入力値が数字だけではなく、URL などから読み取りが必要かどうか。 */
-export function needsAppReferenceParse(text: string): boolean {
-  const raw = String(text || '').trim();
-  return !!raw && !/^\d+$/.test(raw);
-}
+export { parseAppReference, guestIdFromPagePath, needsAppReferenceParse, type AppReference } from './appReference.js';
 
 export type LookupMapParseResult =
   | { ok: true; value: Record<string, string>; count: number }

@@ -20183,45 +20183,7 @@ ${fence}`;
     return details;
   }
 
-  // src/reflect/standalonePlan.ts
-  init_constants();
-  init_utils();
-
-  // src/reflect/sections.ts
-  init_constants();
-  var REFLECT_SECTION_KEYS = SECTION_DEFS.filter((def) => def.put).map((def) => def.key).flatMap((key) => key === "layoutSettings" ? [key, "appSettings"] : [key]);
-
-  // src/reflect/customizeFiles.ts
-  init_api();
-  init_utils();
-
-  // src/reflect/changeSummary.ts
-  init_kintone_enums();
-  init_label_dict();
-  var ENUM_BY_KEY = {
-    theme: APP_THEME_JP,
-    roundingMode: ROUNDING_MODE_JP,
-    selectionMode: TITLE_SELECTION_JP,
-    scope: CUSTOMIZE_SCOPE_JP,
-    chartType: CHART_TYPE_JP,
-    chartMode: CHART_MODE_JP,
-    per: GROUP_PER_JP,
-    by: REPORT_SORT_BY_JP,
-    order: REPORT_SORT_ORDER_JP,
-    every: PERIODIC_REPORT_EVERY_JP,
-    dayOfWeek: DAY_OF_WEEK_JP,
-    builtinType: VIEW_BUILTIN_TYPE_JP,
-    device: VIEW_DEVICE_JP,
-    paginationStyle: VALUE_LABELS.paginationStyle,
-    accessibility: VALUE_LABELS.accessibility,
-    recordTrigger: VALUE_LABELS.recordTrigger,
-    format: NUMBER_FORMAT_JP,
-    align: ALIGN_JP,
-    unitPosition: UNIT_POSITION_JP,
-    protocol: LINK_PROTOCOL_JP
-  };
-
-  // src/reflect/liteSetup.ts
+  // src/reflect/appReference.ts
   function parseAppReference(text2) {
     const raw = String(text2 || "").trim();
     if (!raw) return null;

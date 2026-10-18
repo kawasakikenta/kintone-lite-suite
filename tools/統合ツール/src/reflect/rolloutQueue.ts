@@ -5,7 +5,7 @@
 // 反映先ごとに差分確認と最終確認を行う前提で、入力の解析と順番の管理だけを扱う。
 // =============================================================================
 
-import { parseAppReference, type AppReference } from './liteSetup.js';
+import { parseAppReference, type AppReference } from './appReference.js';
 
 export type RolloutQueueParseResult =
   | { ok: true; targets: AppReference[] }
