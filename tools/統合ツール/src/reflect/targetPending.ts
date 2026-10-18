@@ -4,10 +4,14 @@ import { isCompleteReflectSection, stableReflectStringify } from './standalonePr
 
 export interface ReflectTargetPending { state: 'clean' | 'pending' | 'unknown'; productionRevision: string; previewRevision: string; sectionKeys: string[]; message: string }
 
+/** JS/CSS の fileKey は環境ごとに異なりうるため、ファイル名とサイズで比べる。 */
+const comparableResources = (list: any) => Array.isArray(list) ? list.map((item: any) => item?.type === 'FILE' ? { type: 'FILE', name: item.file?.name ?? '', size: String(item.file?.size ?? '') } : item) : list;
+
 /** revision など取得のたびに変わるメタ情報を除き、設定内容だけを比較する。 */
-const comparable = (section: any) => {
+const comparable = (key: string, section: any) => {
   if (!section || typeof section !== 'object' || Array.isArray(section)) return stableReflectStringify(section);
   const { revision: _revision, ...rest } = section;
+  if (key === 'customizeSettings') for (const platform of ['desktop', 'mobile']) if (rest[platform] && typeof rest[platform] === 'object') rest[platform] = { ...rest[platform], js: comparableResources(rest[platform].js), css: comparableResources(rest[platform].css) };
   return stableReflectStringify(rest);
 };
 
@@ -31,7 +35,7 @@ export async function inspectTargetPendingChanges(opts: { targetAppId: string; t
     for (const key of opts.scopes) {
       const before = production.sections?.[key], after = targetPreviewBundle?.sections?.[key];
       if (!isCompleteReflectSection(before) || !isCompleteReflectSection(after)) return unknown(productionRevision, previewRevision, `${reflectSectionLabel(key)}を取得できません`);
-      if (comparable(before) !== comparable(after)) sectionKeys.push(key);
+      if (comparable(key, before) !== comparable(key, after)) sectionKeys.push(key);
     }
     const message = sectionKeys.length
       ? `反映先プレビューには未公開の変更があります（${sectionKeys.map(reflectSectionLabel).join('、')}）。公開すると今回の反映と一緒に本番へ反映されます。`
