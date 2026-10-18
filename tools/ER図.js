@@ -858,7 +858,7 @@ ${contextLine}`);
     apps.sort((a, b) => Number(a.appId) - Number(b.appId));
     return apps;
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -878,6 +878,7 @@ ${contextLine}`);
         byPath: {}
       };
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
+      FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
     }
   });
 
