@@ -268,7 +268,9 @@ module.exports = async function verifyReflectEngine({ page, esbuild, tool, out }
   assert.match(restoreSetup.note, /反映前バックアップ（\d{4}\/\d{1,2}\/\d{1,2} \d{1,2}:\d{2}:\d{2}））: App 202/);
   const restoreReview = await page.locator('#kus-rl-stage-review').innerText();
   assert.match(restoreReview, /バックアップから戻しています。反映で追加したフィールドは削除されません（保持として表示）/);
-  assert.match(restoreReview, /以前からの未公開の変更があります/, '反映した後のプレビューは未公開の変更ありとして示す');
+  // 反映前は未公開の変更が無く、その後にこの画面が書き込んだだけなので、未公開の変更は自分の反映分と判定する。
+  assert.match(restoreReview, /未公開の変更はこのツールの反映分だけ/, '反映した直後の再確認では、未公開の変更を自分の反映分として示す');
+  assert.doesNotMatch(restoreReview, /以前からの未公開の変更があります/);
   await page.screenshot({ path: path.join(out, 'review-restore-actual-desktop.png') });
   const viewRow = page.locator('.kus-rl-summary tbody tr', { hasText: 'ビュー設定' });
   assert.equal((await viewRow.locator('td').allInnerTexts())[3], '2', '反映で追加した一覧と、一覧の表示フィールドの削除を示す');

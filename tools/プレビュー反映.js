@@ -7388,8 +7388,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const identities = await resolveReflectAppsStandalone(options);
       adoptResolvedAppNames(identities, !!options.sourceBundle);
       const result = await previewReflectStandalone(options, (message) => panel.setStatus(message, "busy"));
-      const lastRun = memoryState.lastResult;
-      result.targetPending = reconcileOwnPendingChanges(result.targetPending, lastRun?.finalRevision ? { targetAppId: lastRun.appId, targetGuestId: lastRun.guestId || "", finalRevision: lastRun.finalRevision, priorState: lastRun.report.targetPending?.state } : null, { appId: options.targetAppId, guestId: options.targetGuestId || "" });
+      result.targetPending = reconcileOwnPendingChanges(result.targetPending, memoryState.lastWrite, { appId: options.targetAppId, guestId: options.targetGuestId || "" });
       memoryState.lastPreview = { signature, scopes: [...scopes], at: Date.now(), result, identities, ...restoreMode ? { restore: restoreMode.token } : {}, ...postApplyCheck ? { postApplyCheck: { scopeCount: scopes.length } } : {} };
       rerenderPreviewCard();
       refreshReviewCard();
@@ -8173,6 +8172,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
             logs: applyOutcome.logs.slice()
           }
         };
+        if (applyOutcome.finalRevision) memoryState.lastWrite = { targetAppId: applyOptions.targetAppId, targetGuestId: applyOptions.targetGuestId || "", finalRevision: applyOutcome.finalRevision, priorState: targetPendingAtApply?.state };
         if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || "", name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, pending: counts.pending, at: memoryState.lastResult.at });
         renderLastResult();
         showWorkflowStage("result");
