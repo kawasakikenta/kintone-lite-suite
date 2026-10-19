@@ -1260,7 +1260,7 @@ ${contextLine}`);
     }
     return bundle;
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, BUNDLE_FETCH_CONCURRENCY;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1282,6 +1282,7 @@ ${contextLine}`);
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
       CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
       TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
+      FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
       BUNDLE_FETCH_CONCURRENCY = 3;
     }
   });
@@ -4217,7 +4218,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }).filter(Boolean);
     if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
     if (appId) {
-      const matched = candidates.find((entry) => String(entry?.bundle?.appId || "") === appId);
+      const matched = candidates.find((entry) => String(entry?.bundle?.appId || "") === appId) || (candidates.length === 1 && !String(candidates[0]?.bundle?.appId || "") ? candidates[0] : void 0);
       if (matched) return limitImportedBundleToSections(matched.bundle, options.sections, matched.raw, !!options.preserveMetadata);
       throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
     }

@@ -23,6 +23,8 @@ export interface ReflectPreset {
   lookupMap: string;
   /** 反映先だけの一覧・グラフ・アクションを保持するか（lite 版）。省略時は保持する */
   preserveTargetOnly?: boolean;
+  /** 続けて反映する反映先の入力（複数アプリへ順次展開。lite 版）。未指定は空文字 */
+  rolloutQueue?: string;
 }
 
 function normalizeEndpoint(raw: any): ReflectPresetEndpoint {
@@ -65,7 +67,8 @@ export function normalizeReflectPreset(raw: any): ReflectPreset | null {
     scopes: normalizeScopes(raw.scopes),
     applyDiffOnly: !!raw.applyDiffOnly,
     lookupMap: String(raw.lookupMap == null ? '' : raw.lookupMap),
-    preserveTargetOnly: raw.preserveTargetOnly === undefined ? true : !!raw.preserveTargetOnly
+    preserveTargetOnly: raw.preserveTargetOnly === undefined ? true : !!raw.preserveTargetOnly,
+    rolloutQueue: String(raw.rolloutQueue == null ? '' : raw.rolloutQueue)
   };
 }
 

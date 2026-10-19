@@ -1,4 +1,4 @@
-import { SECTION_DEFS } from '../constants.js';
+import { reflectSectionLabel } from './sections.js';
 
 /** Reflection must preserve user-defined names, including revision / __proto__. */
 export function stableReflectStringify(value: any): string {
@@ -60,7 +60,7 @@ export function captureReflectBaseline(opts: any, source: any, target: any): Ref
 export function assertCompleteReflectBackup(bundle: any, scopes: string[]): void {
   const incomplete = scopes.filter((key) => !isCompleteReflectSection(bundle?.sections?.[key]));
   if (!incomplete.length) return;
-  const labels = incomplete.map((key) => SECTION_DEFS.find((def) => def.key === key)?.label || key);
+  const labels = incomplete.map(reflectSectionLabel);
   throw new Error(`バックアップを完全に取得できなかったため反映を中止しました。対象: ${labels.join('、')}。差分を取得し直してから再実行してください。`);
 }
 
@@ -73,14 +73,14 @@ export function assertReflectBaselineMatches(
   }
   const current = captureReflectBaseline({ ...opts, scopes: [...new Set([...opts.scopes, ...(opts.targetDependencies || [])])] }, source, target);
   for (const side of ['source', 'target'] as const) {
-    const label = side === 'source' ? '比較元' : '比較先プレビュー';
+    const label = side === 'source' ? '反映元' : '反映先プレビュー';
     const revisions = new Set<string>();
     const requireRevision = side === 'target' || !opts.sourceBundle;
     const checkedScopes: string[] = side === 'source' ? opts.scopes : [...new Set<string>([...opts.scopes, ...(opts.targetDependencies || [])])];
     for (const key of checkedScopes) {
       const before = baseline[side]?.[key];
       const after = current[side][key];
-      const sectionLabel = SECTION_DEFS.find((def) => def.key === key)?.label || key;
+      const sectionLabel = reflectSectionLabel(key);
       if (!before?.complete || !after.complete) {
         throw new Error(`${label}の${sectionLabel}を完全に確認できないため反映を中止しました。差分を取得し直してください。`);
       }

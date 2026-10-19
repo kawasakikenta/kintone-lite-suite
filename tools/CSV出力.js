@@ -808,6 +808,7 @@ ${contextLine}`);
       if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
       return;
     }
+    if (path === FILE_UPLOAD_PATH && m === "POST" && !isPreviewRestPrefix(prefix)) return;
     if (!isPreviewRestPrefix(prefix)) {
       throw new Error(ERR_NO_PROD_WRITE);
     }
@@ -994,7 +995,7 @@ ${contextLine}`);
     }
     return { records: all, mode: "cursor" };
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1016,6 +1017,7 @@ ${contextLine}`);
         "/records/status.json"
       ]);
       RECORD_CURSOR_PATH = "/records/cursor.json";
+      FILE_UPLOAD_PATH = "/file.json";
       apiGetMetrics = {
         calls: 0,
         retries: 0,
@@ -1025,6 +1027,7 @@ ${contextLine}`);
         byPath: {}
       };
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
+      FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
     }
   });
 

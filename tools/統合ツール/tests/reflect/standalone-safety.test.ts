@@ -83,3 +83,22 @@ describe('reflection API boundaries and early stopping', () => {
     expect(api).not.toHaveBeenCalled();
   });
 });
+
+describe('imported settings JSON used as the reflection source', () => {
+  it('ignores the diff-only partial marker for JS/CSS bodies, so an exported JSON can still be reflected', async () => {
+    const customize = (list: any[]) => ({ scope: 'ALL', desktop: { js: list, css: [] }, mobile: { js: [], css: [] } });
+    const api = vi.fn(async (url: string, method: string) => {
+      if (method !== 'GET') throw new Error('書き込みなし');
+      if (url.endsWith('/app/settings.json')) return { revision: '3' };
+      if (url.endsWith('/app/customize.json')) return { ...customize([{ type: 'URL', url: 'https://example.com/a.js' }]), revision: '3' };
+      throw new Error('unexpected ' + url);
+    });
+    vi.stubGlobal('kintone', { api });
+    const sourceBundle = { appId: '1', sections: { customizeSettings: { ...customize([{ type: 'URL', url: 'https://example.com/b.js' }]), _partial: { kind: 'customizeBody', message: '一部ファイルは本文比較を省略し、fileKey で比較します', files: [] } } } };
+    const result = await previewReflectStandalone({ sourceAppId: '1', targetAppId: '2', scopes: ['customizeSettings'], sourceBundle }, () => {});
+    expect(result.entries[0].status).toBe('change');
+    expect(result.entries[0].blockers).toEqual([]);
+    // 入力のJSON自体は変更しない。
+    expect((sourceBundle.sections.customizeSettings as any)._partial).toBeDefined();
+  });
+});

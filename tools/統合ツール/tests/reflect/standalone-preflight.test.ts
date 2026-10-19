@@ -61,7 +61,8 @@ beforeEach(() => {
     events.push('write');
     return { revision: '21' };
   });
-  vi.stubGlobal('kintone', { api: writes });
+  // 反映先の未公開の変更確認（本番の一般設定を読むGET）は書き込みではない。revision一致（変更なし）で応答する。
+  vi.stubGlobal('kintone', { api: vi.fn(async (url: string, method: string, ...rest: unknown[]) => method === 'GET' && url.endsWith('/app/settings.json') ? { revision: Object.values(target.meta.sectionRevisions)[0] } : (writes as any)(url, method, ...rest)) });
   saveBackup = vi.fn(() => { events.push('backup'); });
   vi.stubGlobal('document', {
     createElement: vi.fn(() => ({ href: '', download: '', click: saveBackup }))
@@ -99,10 +100,10 @@ describe('standalone reflection review and backup preflight', () => {
   });
 
   it.each([
-    ['source', 'content', '比較元'],
-    ['source', 'revision', '比較元'],
-    ['target', 'content', '比較先プレビュー'],
-    ['target', 'revision', '比較先プレビュー']
+    ['source', 'content', '反映元'],
+    ['source', 'revision', '反映元'],
+    ['target', 'content', '反映先プレビュー'],
+    ['target', 'revision', '反映先プレビュー']
   ])('rejects an external %s %s change before backup or writes', async (side, change, label) => {
     const opts = defaultOptions();
     const reviewed = await previewReflectStandalone(opts, () => {});
@@ -226,7 +227,7 @@ describe('standalone reflection review and backup preflight', () => {
     opts.sourceBundle.sections.viewSettings.views.Review.name = '確認後のJSON編集';
 
     await expect(apply({ ...opts, doBackup: true, reviewBaseline: reviewed.baseline }))
-      .rejects.toThrow('差分確認後に比較元');
+      .rejects.toThrow('差分確認後に反映元');
     expectNoSavedBackupOrWrites();
   });
 
@@ -246,7 +247,7 @@ describe('standalone reflection review and backup preflight', () => {
     expect(reviewed.errorSections).toBe(1);
     expect(reviewed.entries.find((entry) => entry.sectionKey === 'layoutSettings')?.status).toBe('src-missing');
     await expect(apply({ ...opts, doBackup: true, reviewBaseline: reviewed.baseline }))
-      .rejects.toThrow('比較元のレイアウト設定を完全に確認できないため反映を中止');
+      .rejects.toThrow('反映元のレイアウト設定を完全に確認できないため反映を中止');
     expectNoSavedBackupOrWrites();
 
     const result = await apply({ ...opts, scopes: ['viewSettings'], doBackup: true, reviewBaseline: reviewed.baseline });
@@ -254,6 +255,34 @@ describe('standalone reflection review and backup preflight', () => {
     expect(writes).toHaveBeenCalledOnce();
     const backup = JSON.parse(await backupBlobs[0].text());
     expect(Object.keys(backup.bundle.sections)).toEqual(['viewSettings']);
+  });
+
+  it('一般設定の確認エラーは、セクションキーではなく「一般設定」と表示する', async () => {
+    const opts = { ...defaultOptions(), scopes: ['appSettings'] };
+    source.sections.appSettings = { _fetchError: '取得できませんでした' };
+    target.sections.appSettings = { theme: 'WHITE' };
+    target.meta.sectionRevisions.appSettings = '20';
+    const reviewed = await previewReflectStandalone(opts, () => {});
+    await expect(apply({ ...opts, doBackup: true, reviewBaseline: reviewed.baseline }))
+      .rejects.toThrow('反映元の一般設定を完全に確認できないため反映を中止');
+    source.sections.appSettings = { theme: 'BLUE' };
+    target.sections.appSettings = { _fetchError: '取得できませんでした' };
+    const reviewedAgain = await previewReflectStandalone(opts, () => {});
+    await expect(apply({ ...opts, doBackup: true, reviewBaseline: reviewedAgain.baseline }))
+      .rejects.toThrow('対象: 一般設定');
+    expectNoSavedBackupOrWrites();
+  });
+
+  it('フィールド設定を選んでいなくても、アプリから取得する反映元のフィールドコードを取得する', async () => {
+    source.sections.fieldSettings = { properties: { subject: { type: 'SINGLE_LINE_TEXT', code: 'subject', label: '件名' } } };
+    target.sections.fieldSettings = { properties: { name: { type: 'SINGLE_LINE_TEXT', code: 'name', label: '氏名' } } };
+    const preview = await previewReflectStandalone({ ...defaultOptions(), scopes: ['layoutSettings'] }, () => {});
+    expect(preview.sourceFieldCodes).toEqual(['subject']);
+    expect(preview.targetFieldCodes).toEqual(['name']);
+    const sourceFetch = vi.mocked(fetchBundle).mock.calls.map(([fetchOptions]) => fetchOptions).find((fetchOptions) => fetchOptions.appId === '1');
+    expect(sourceFetch?.sections).toEqual(['layoutSettings', 'fieldSettings']);
+    // 反映元の照合は選択した項目だけで行う。選んでいないフィールド設定の取得結果は、反映の可否に影響しない。
+    expect(preview.entries.map((entry) => [entry.sectionKey, entry.status])).toEqual([['layoutSettings', 'change']]);
   });
 
   it('extracts the app name from sourceBundle in resolveReflectAppsStandalone', async () => {

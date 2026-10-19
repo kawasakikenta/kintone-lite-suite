@@ -121,3 +121,30 @@ describe('mergeReflectPresets', () => {
     expect(mergeReflectPresets(null, null)).toEqual({ presets: [], added: 0, replaced: 0, dropped: 0 });
   });
 });
+
+describe('rolloutQueue in presets', () => {
+  it('defaults to an empty string and stringifies other values', () => {
+    expect(normalizeReflectPreset({ name: 'x' })!.rolloutQueue).toBe('');
+    expect(normalizeReflectPreset({ name: 'x', rolloutQueue: null })!.rolloutQueue).toBe('');
+    expect(normalizeReflectPreset({ name: 'x', rolloutQueue: 203 })!.rolloutQueue).toBe('203');
+    expect(normalizeReflectPreset({ name: 'x', rolloutQueue: '203\n/k/guest/5/204/' })!.rolloutQueue).toBe('203\n/k/guest/5/204/');
+  });
+
+  it('survives the export and import round trip', () => {
+    const preset = normalizeReflectPreset({ name: '展開', rolloutQueue: '203\n204' })!;
+    const payload = buildReflectPresetsExport([preset]);
+    expect(payload.presets[0].rolloutQueue).toBe('203\n204');
+    const imported = normalizeImportedReflectPresets(JSON.parse(JSON.stringify(payload)));
+    expect(imported.presets[0].rolloutQueue).toBe('203\n204');
+  });
+
+  it('accepts presets saved before the field existed', () => {
+    const imported = normalizeImportedReflectPresets({ kind: REFLECT_PRESETS_EXPORT_KIND, presets: [{ name: '旧', scopes: ['fieldSettings'] }] });
+    expect(imported.presets[0].rolloutQueue).toBe('');
+  });
+
+  it('keeps the queue when merging', () => {
+    const incoming = [normalizeReflectPreset({ name: 'a', rolloutQueue: '203' })!];
+    expect(mergeReflectPresets([{ name: 'a', rolloutQueue: '999' }], incoming).presets[0].rolloutQueue).toBe('203');
+  });
+});
