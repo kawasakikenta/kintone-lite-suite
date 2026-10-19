@@ -57,9 +57,10 @@ describe('一般設定の反映計画', () => {
     expect(result.operations[0].body).toEqual({ theme: 'RED' });
     expect(result.changeCount).toBe(1);
   });
-  it('反映元に対象キーが一つも無ければ書き込まない', () => {
+  it('反映元に対象キーが一つも無ければ「一致」とせず、比較できない旨で止める', () => {
     const result = plan('appSettings', { name: 'のみ', revision: '5' }, settings());
-    expect(result.status).toBe('same'); expect(result.operations).toEqual([]);
+    expect(result.status).toBe('error'); expect(result.operations).toEqual([]);
+    expect(result.blockers.join()).toContain('比較できる一般設定がありません');
   });
   it('数値は文字列に正規化して比較する', () => {
     const same = plan('appSettings', settings({ numberPrecision: { digits: 16, decimalPlaces: 4, roundingMode: 'HALF_EVEN' }, firstMonthOfFiscalYear: 1 }), settings());

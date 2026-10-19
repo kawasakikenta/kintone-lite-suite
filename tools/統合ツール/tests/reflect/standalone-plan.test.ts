@@ -181,3 +181,44 @@ describe('preview reflection plans match actual write effects', () => {
     expect(result.requiredFields).toEqual(['dept', 'amount']);
   });
 });
+
+describe('lookup conversion and named-section merging keep the target consistent', () => {
+  it('reuses the target relatedApp (with its code) when the conversion lands on the same app, so a re-check reports no diff', () => {
+    const lookupField = (app: string, code?: string) => ({ ...field('lk'), lookup: { relatedApp: { app, ...(code ? { code } : {}) }, relatedKeyField: 'id', fieldMappings: [], lookupPickerFields: [], filterCond: '', sort: '' } });
+    const result = plan('fieldSettings', { properties: { lk: lookupField('5') } }, { properties: { lk: lookupField('9', 'app9') } }, { lookupMap: { '5': '9' } });
+    expect(result.status).toBe('same'); expect(result.removalCount).toBe(0);
+    const changed = plan('fieldSettings', { properties: { lk: lookupField('5') } }, { properties: { lk: lookupField('8', 'app8') } }, { lookupMap: { '5': '9' } });
+    expect(changed.operations[0].body.properties.lk.lookup.relatedApp).toEqual({ app: '9' });
+  });
+  it('reuses the target destApp when an action copy target already points at the converted app', () => {
+    const action = (app: string, code = '') => ({ name: 'copy', index: '0', destApp: { app, code }, mappings: [], entities: [] });
+    const result = plan('actionSettings', { actions: { copy: action('5') } }, { actions: { copy: action('9', 'app9') } }, { lookupMap: { '5': '9' } });
+    expect(result.status).toBe('same');
+  });
+  it('warns when the target field is a lookup but the source definition is not', () => {
+    const result = plan('fieldSettings', { properties: { lk: field('lk') } }, { properties: { lk: { ...field('lk'), lookup: { relatedApp: { app: '9' } } } } });
+    expect(result.status).toBe('same');
+    expect(result.warnings.join()).toContain('ルックアップの設定がありますが、反映元にはありません');
+  });
+  it('does not merge stale type-specific attributes when a same-name view changes type', () => {
+    const target = { views: { 月: { ...view('月', ['x']), sort: 'x asc', pager: true, builtinType: 'ASSIGNEE' } } };
+    const source = { views: { 月: { name: '月', type: 'CALENDAR', date: 'd', title: 't', index: '0', filterCond: '' } } };
+    const result = plan('viewSettings', source, target);
+    const body = result.operations[0].body.views['月'];
+    expect(body.type).toBe('CALENDAR'); expect(body).not.toHaveProperty('fields'); expect(body).not.toHaveProperty('pager'); expect(body).not.toHaveProperty('builtinType');
+  });
+  it('collects referenced fields for field ACL, reminder timing and process assignee fields', () => {
+    expect(plan('fieldAcl', { rights: [{ code: 'secret', entities: [] }] }, { rights: [] }).requiredFields).toEqual(['secret']);
+    expect(plan('reminderNotifications', { timezone: 'Asia/Tokyo', notifications: [{ timing: { code: 'due', daysLater: '1', hoursLater: '0' }, filterCond: '', title: '', targets: [] }] }, { timezone: 'Asia/Tokyo', notifications: [] }).requiredFields).toEqual(['due']);
+    const process = { enable: true, states: { 未処理: { name: '未処理', index: '0', assignee: { type: 'ONE', entities: [{ entity: { type: 'FIELD_ENTITY', code: 'owner' } }] } } }, actions: [] };
+    expect(plan('processSettings', process, { enable: false, states: {}, actions: [] }).requiredFields).toEqual(['owner']);
+    const blockers = reflectSelectionBlockers([plan('fieldAcl', { rights: [{ code: 'secret', entities: [] }] }, { rights: [] })], ['fieldAcl'], [], []);
+    expect(blockers[0]).toContain('参照するフィールド「secret」が反映先にありません');
+  });
+  it('explains system-field code mismatches instead of suggesting field settings', () => {
+    const entry = plan('viewSettings', { views: { 一覧: view('一覧', ['Record_number']) } }, { views: {} });
+    const blockers = reflectSelectionBlockers([entry], ['viewSettings', 'fieldSettings'], [], ['レコード番号'], ['Record_number']);
+    expect(blockers[0]).toContain('反映元のシステムフィールド');
+    expect(blockers[0]).not.toContain('フィールド設定も反映対象に含める');
+  });
+});

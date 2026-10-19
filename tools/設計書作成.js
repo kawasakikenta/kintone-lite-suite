@@ -4218,7 +4218,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }).filter(Boolean);
     if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
     if (appId) {
-      const matched = candidates.find((entry) => String(entry?.bundle?.appId || "") === appId);
+      const matched = candidates.find((entry) => String(entry?.bundle?.appId || "") === appId) || (candidates.length === 1 && !String(candidates[0]?.bundle?.appId || "") ? candidates[0] : void 0);
       if (matched) return limitImportedBundleToSections(matched.bundle, options.sections, matched.raw, !!options.preserveMetadata);
       throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
     }

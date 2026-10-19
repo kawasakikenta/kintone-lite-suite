@@ -5,7 +5,7 @@ import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, fetc
 import { captureReflectBaseline, assertReflectBaselineMatches, assertCompleteReflectBackup, isCompleteReflectSection, type ReflectBaseline } from '../reflect/standalonePreflight.js';
 import { embedCustomizeFileContents, resolveCustomizeFiles, type CustomizeFileResolution } from '../reflect/customizeFiles.js';
 import { reflectFieldLabels } from '../reflect/changeSummary.js';
-import { buildReflectSectionPlan, reflectInspectionScopes, reflectSelectionBlockers, listReflectFieldCodes, type ReflectSectionPlan } from '../reflect/standalonePlan.js';
+import { buildReflectSectionPlan, reflectInspectionScopes, reflectSelectionBlockers, listReflectFieldCodes, listReflectSystemFieldCodes, type ReflectSectionPlan } from '../reflect/standalonePlan.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { REFLECT_SECTION_KEYS } from '../reflect/sections.js';
 import { inspectTargetPendingChanges, type ReflectTargetPending } from '../reflect/targetPending.js';
@@ -22,6 +22,8 @@ export interface ReflectBackup { generatedAt: string; scopes: string[]; bundle: 
 export interface PreviewReflectResult {
   totalSections: number; changedSections: number; sameSections: number; errorSections: number;
   entries: PreviewSectionEntry[]; baseline: ReflectBaseline; sourceFieldCodes: string[]; targetFieldCodes: string[];
+  /** 反映元のシステムフィールド（フィールド設定の反映では追加されない）のコード。参照不足の案内に使う */
+  sourceSystemFieldCodes: string[];
   targetPending?: ReflectTargetPending;
 }
 /** 反映の進捗通知。項目ごとに running → ok / ng / skip、中断で残った項目は pending。 */
@@ -90,6 +92,11 @@ export async function resolveReflectAppsStandalone(opts: ReflectOptions): Promis
   return { source, target };
 }
 
+/** 参照先変換はルックアップ・関連レコード一覧（フィールド設定）とアクションのコピー先にだけ使う。 */
+function usesLookupMap(opts: ReflectOptions, scopes: string[]): boolean {
+  return Object.keys(opts.lookupMap || {}).length > 0 && scopes.some(key => key === 'fieldSettings' || key === 'actionSettings');
+}
+
 function orderedScopes(scopes: string[]): string[] {
   if (!scopes?.length) throw new Error('反映する項目を選択してください。');
   if (scopes.some(key => !REFLECT_SECTION_KEYS.includes(key))) throw new Error('反映に対応していない項目が含まれています。');
@@ -98,7 +105,7 @@ function orderedScopes(scopes: string[]): string[] {
 
 async function getReflectBundles(opts: ReflectOptions, scopes: string[], setStatus: (message: string) => void) {
   setStatus(opts.sourceBundle ? '反映元の設定JSONを読み込み中...' : '反映元の設定を取得中...');
-  const source = opts.sourceBundle ? pickSettingsBundle(opts.sourceBundle, { side: 'source', appId: String(opts.sourceAppId || '').trim(), rawSettings: true }) : await fetchBundle({
+  const source = opts.sourceBundle ? importedReflectSource(opts) : await fetchBundle({
     rawSettings: true,
     // フィールド設定を選んでいなくても、参照するフィールドの有無と表示名を示せるよう反映先と同じ範囲を取得する。
     appId: opts.sourceAppId, guestId: opts.sourceGuestId || '', preview: !!opts.sourcePreview, sections: reflectInspectionScopes(scopes),
@@ -111,6 +118,17 @@ async function getReflectBundles(opts: ReflectOptions, scopes: string[], setStat
     onProgress: (p, label) => setStatus(`反映先取得 ${Math.round(p * 100)}% (${label})`)
   });
   return { source, target };
+}
+
+/**
+ * 設定JSONを反映元として読み込む。差分比較用の補助情報（JS/CSS本文の省略を示す _partial など）は
+ * 反映では本体を fileKey から取得し直すため、不完全の印にしない。
+ */
+function importedReflectSource(opts: ReflectOptions) {
+  const bundle = pickSettingsBundle(opts.sourceBundle, { side: 'source', appId: String(opts.sourceAppId || '').trim(), rawSettings: true });
+  const customize = bundle.sections?.customizeSettings;
+  if (customize && typeof customize === 'object' && customize._partial?.kind === 'customizeBody' && !customize._fetchError) delete customize._partial;
+  return bundle;
 }
 
 /** JS/CSS の FILE 項目を反映先へ渡せるか解決する（両側のセクションが完全なときだけ）。 */
@@ -139,7 +157,7 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
       assertReflectBaselineMatches(baseline, { ...opts, scopes: [entry.sectionKey], targetDependencies: entry.requiredFields?.length ? ['fieldSettings'] : [] }, source, target);
     } catch (error: any) { entry.status = 'error'; entry.blockers.push(error.message); entry.message = error.message; }
   }
-  if (Object.keys(opts.lookupMap || {}).length && scopes.some(key => key === 'fieldSettings' || key === 'actionSettings')) {
+  if (usesLookupMap(opts, scopes)) {
     const lookup = await preflightLookupMapStandalone(opts.lookupMap!, { targetGuestId: opts.targetGuestId });
     if (!lookup.ok) {
       const lookupErr = `ルックアップ変換先を確認できません: ${lookup.missing.map(item => `${item.from} → ${item.to}: ${item.reason}`).join(' / ')}`;
@@ -155,7 +173,7 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
     totalSections: entries.length, changedSections: entries.filter(entry => entry.status === 'change').length,
     sameSections: entries.filter(entry => entry.status === 'same').length,
     errorSections: entries.filter(entry => !['change', 'same'].includes(entry.status)).length,
-    entries, sourceFieldCodes: listReflectFieldCodes(source, true), targetFieldCodes: listReflectFieldCodes(target), baseline, targetPending
+    entries, sourceFieldCodes: listReflectFieldCodes(source, true), targetFieldCodes: listReflectFieldCodes(target), sourceSystemFieldCodes: listReflectSystemFieldCodes(source), baseline, targetPending
   };
 }
 
@@ -174,10 +192,11 @@ export async function runApplyPreviewStandalone(
   const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
   const fieldLabels = reflectFieldLabels(target, source);
   const plans = scopes.map(key => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels }));
-  const issues = reflectSelectionBlockers(plans, scopes, listReflectFieldCodes(source, true), listReflectFieldCodes(target));
+  const issues = reflectSelectionBlockers(plans, scopes, listReflectFieldCodes(source, true), listReflectFieldCodes(target), listReflectSystemFieldCodes(source));
   if (issues.length) throw new Error(`反映前の検査で停止しました。まだ書き込んでいません。\n${issues.join('\n')}`);
   if (plans.some(plan => plan.requiredFields?.length)) revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes, targetDependencies: ['fieldSettings'] }, source, target);
-  if (Object.keys(opts.lookupMap || {}).length) {
+  // 参照先変換が使われる項目（フィールド・アクション）を書くときだけ変換先を確認する（差分確認と同じ条件）。
+  if (usesLookupMap(opts, scopes)) {
     const lookup = await preflightLookupMapStandalone(opts.lookupMap!, { targetGuestId: opts.targetGuestId });
     if (!lookup.ok) throw new Error(`ルックアップ変換先を確認できないため反映を中止しました。\n${lookup.missing.map(item => `${item.from} → ${item.to}: ${item.reason}`).join('\n')}`);
   }
@@ -226,6 +245,13 @@ export async function runApplyPreviewStandalone(
     }
     return body;
   };
+  // アップロードは最初の書き込みより前にまとめて行い、失敗したら何も書き込まずに止める（使わなかった一時ファイルは残るだけで無害）。
+  const bodies = new Map<ReflectSectionPlan['operations'][number], Record<string, any>>();
+  if (plans.some(plan => plan.operations.some(operation => operation.uploads?.length))) setStatus('JS/CSSファイルを反映先へアップロード中…');
+  for (const plan of plans) for (const operation of plan.operations) {
+    try { bodies.set(operation, await bodyWithUploads(operation)); }
+    catch (error: any) { throw new Error(`${error.message || String(error)}\nまだ何も書き込んでいません。`); }
+  }
   const write = async (operation: ReflectSectionPlan['operations'][number], body: Record<string, any>) => {
     try {
       const response = await (operation.method === 'POST' ? apiPost : apiPut)(prefix, operation.endpoint, { ...body, app: opts.targetAppId, revision });
@@ -254,7 +280,7 @@ export async function runApplyPreviewStandalone(
     notify(plan, 'running');
     const written: string[] = [];
     try {
-      for (const operation of plan.operations) { await write(operation, await bodyWithUploads(operation)); written.push(operation.label); logs.push(`  OK ${operation.label}`); }
+      for (const operation of plan.operations) { await write(operation, bodies.get(operation) || operation.body); written.push(operation.label); logs.push(`  OK ${operation.label}`); }
       sections.push({ ...outcome, status: 'ok' }); notify(plan, 'ok'); logs.push(`OK ${plan.label}`);
     } catch (error: any) {
       // 項目内の途中で止まった場合、先に完了した書き込みは反映先に残る。失敗の内容と一緒に必ず示す。

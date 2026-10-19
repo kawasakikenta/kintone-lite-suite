@@ -237,6 +237,7 @@ function entityListLines(label: string, beforeList: any[], afterList: any[], lab
   if (added.length) parts.push(`追加 ${listText(added)}`);
   if (removed.length) parts.push(`削除 ${listText(removed)}`);
   if (parts.length) lines.push(`${label}: ${parts.join(' / ')}`);
+  if (!parts.length && !changed.length && !same(beforeList, afterList)) lines.push(`${label}: 並び順のみ変更`);
   return [...lines, ...changed];
 }
 
@@ -271,6 +272,8 @@ function attrLines(before: any, after: any, options: AttrOptions): string[] {
     }
     const x = fmt(bv, key, options.typeDict), y = fmt(av, key, options.typeDict);
     if (x !== y) lines.push(`${label}: ${x} → ${y}`);
+    // 長い値は省略して表示するため、省略した範囲だけが違う場合も変更として示す。
+    else if (!same(bv, av)) lines.push(`${label}: 内容を変更（長いため省略）`);
   }
   return lines;
 }

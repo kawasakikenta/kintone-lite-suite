@@ -61,9 +61,10 @@ export async function inspectTargetPendingChanges(opts: { targetAppId: string; t
       if (!isCompleteReflectSection(before) || !isCompleteReflectSection(after)) return unknown(productionRevision, previewRevision, `${reflectSectionLabel(key)}を取得できません`);
       if (comparable(key, before) !== comparable(key, after)) sectionKeys.push(key);
     }
+    const customizeNote = opts.scopes.includes('customizeSettings') ? '。JS/CSSのファイルは名前とサイズだけで比べています' : '';
     const message = sectionKeys.length
       ? `反映先プレビューには未公開の変更があります（${sectionKeys.map(reflectSectionLabel).join('、')}）。公開すると今回の反映と一緒に本番へ反映されます。`
-      : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（本番 revision ${productionRevision} / プレビュー revision ${previewRevision}）。`;
+      : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（本番 revision ${productionRevision} / プレビュー revision ${previewRevision}${customizeNote}）。`;
     return { state: 'pending', productionRevision, previewRevision, sectionKeys, message };
   } catch (error: any) { return unknown(productionRevision, previewRevision, error?.message || String(error)); }
 }

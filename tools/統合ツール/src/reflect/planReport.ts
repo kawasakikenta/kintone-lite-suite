@@ -29,10 +29,12 @@ const ENVIRONMENT_LABELS: Record<ReflectReportInput['sourceEnvironment'], string
 const STATUS_LABELS: Record<string, string> = { change: '差分あり', same: '一致', 'src-missing': '確認が必要', 'tgt-missing': '確認が必要', error: '確認が必要' };
 const OUTCOME_LABELS: Record<ApplySectionOutcome['status'], string> = { ok: '成功', ng: '失敗', skip: '変更なし', pending: '未実行' };
 const KIND_ORDER = ['削除', '変更', '追加', '保持'] as const;
+const outcomeLabel = (status: string) => OUTCOME_LABELS[status as ApplySectionOutcome['status']] || status;
+const listOf = <T,>(value: T[] | undefined): T[] => Array.isArray(value) ? value : [];
 
 /** 本文中で強調・リンク・表・HTMLとして解釈される記号を退避する（行頭には置かないため見出し等は対象外。改行は空白にまとめる）。 */
 export function escapeReflectMarkdown(value: unknown): string {
-  return String(value ?? '').replace(/\r?\n/g, ' ').replace(/([\\`*_[\]<>|~])/g, '\\$1');
+  return String(value ?? '').replace(/[\r\n]+/g, ' ').replace(/([\\`*_[\]<>|~])/g, '\\$1');
 }
 
 function cell(value: unknown): string {
@@ -68,10 +70,10 @@ export function buildReflectReportMarkdown(input: ReflectReportInput): string {
   lines.push(record ? '| 項目 | 結果 | 変更 | 削除 | 反映方法 |' : '| 項目 | 状態 | 変更 | 削除 | 保持 | 反映方法 |');
   lines.push(record ? '| --- | --- | ---: | ---: | --- |' : '| --- | --- | ---: | ---: | ---: | --- |');
   for (const entry of input.entries) {
-    const kept = entry.changes.filter(change => change.kind === '保持').length;
+    const kept = listOf(entry.changes).filter(change => change.kind === '保持').length;
     const outcome = outcomeOf(entry.sectionKey);
     lines.push(record
-      ? `| ${cell(entry.label)} | ${cell(outcome ? OUTCOME_LABELS[outcome.status] : '対象外')} | ${entry.changeCount} | ${entry.removalCount} | ${cell(entry.behavior)} |`
+      ? `| ${cell(entry.label)} | ${cell(outcome ? outcomeLabel(outcome.status) : '対象外')} | ${entry.changeCount} | ${entry.removalCount} | ${cell(entry.behavior)} |`
       : `| ${cell(entry.label)} | ${cell(STATUS_LABELS[entry.status] || entry.status)} | ${entry.changeCount} | ${entry.removalCount} | ${kept} | ${cell(entry.behavior)} |`);
   }
   lines.push('');
@@ -80,12 +82,12 @@ export function buildReflectReportMarkdown(input: ReflectReportInput): string {
     lines.push(`## ${escapeReflectMarkdown(entry.label)}`, '');
     const outcome = outcomeOf(entry.sectionKey);
     if (outcome) {
-      lines.push(`- 結果: ${OUTCOME_LABELS[outcome.status]}`);
+      lines.push(`- 結果: ${outcomeLabel(outcome.status)}`);
       if (outcome.message) lines.push(`- 詳細: ${escapeReflectMarkdown(outcome.message)}`);
     }
     lines.push(`- 状態: ${escapeReflectMarkdown(entry.message || STATUS_LABELS[entry.status] || entry.status)}`);
-    for (const blocker of entry.blockers) lines.push(`- 停止理由: ${escapeReflectMarkdown(blocker)}`);
-    for (const warning of entry.warnings) lines.push(`- 注意: ${escapeReflectMarkdown(warning)}`);
+    for (const blocker of listOf(entry.blockers)) lines.push(`- 停止理由: ${escapeReflectMarkdown(blocker)}`);
+    for (const warning of listOf(entry.warnings)) lines.push(`- 注意: ${escapeReflectMarkdown(warning)}`);
     for (const upload of entry.fileUploads || []) lines.push(`- アップロードするファイル: ${upload.platform === 'desktop' ? 'PC' : 'モバイル'} ${upload.kind.toUpperCase()} / ${escapeReflectMarkdown(upload.name)}`);
     const items = [...(entry.items || [])].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
     if (items.length) {
