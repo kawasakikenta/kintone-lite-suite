@@ -173,6 +173,11 @@ interface LiteMemoryState {
   } | null;
   /** ユーザー定義プリセット（接続情報＋スコープ）。JSON ファイルで書き出し・読み込みできる */
   presets?: ReflectPreset[];
+  /**
+   * この画面が最後に書き込んだ反映先と、その後の revision。次の差分確認で、未公開の変更が自分の反映分だけかを判定する。
+   * 反映元や条件を変えても（バックアップから戻す、など）反映先が同じなら判定に使えるため、直近結果とは別に持つ。
+   */
+  lastWrite?: { targetAppId: string; targetGuestId: string; finalRevision: string; priorState?: ReflectTargetPending['state'] };
 }
 
 const REFLECT_PRESET_LIMIT = 30;
@@ -1685,8 +1690,7 @@ export function mountReflectLitePanel() {
     adoptResolvedAppNames(identities, !!options.sourceBundle);
     const result = await previewReflectStandalone(options, (message) => panel.setStatus(message, 'busy'));
     // 直前にこの画面が同じ反映先へ書き込んだ直後なら、その反映分を「以前からの未公開の変更」として扱わない。
-    const lastRun = memoryState.lastResult;
-    result.targetPending = reconcileOwnPendingChanges(result.targetPending, lastRun?.finalRevision ? { targetAppId: lastRun.appId, targetGuestId: lastRun.guestId || '', finalRevision: lastRun.finalRevision, priorState: lastRun.report.targetPending?.state } : null, { appId: options.targetAppId, guestId: options.targetGuestId || '' });
+    result.targetPending = reconcileOwnPendingChanges(result.targetPending, memoryState.lastWrite, { appId: options.targetAppId, guestId: options.targetGuestId || '' });
     memoryState.lastPreview = { signature, scopes: [...scopes], at: Date.now(), result, identities, ...(restoreMode ? { restore: restoreMode.token } : {}), ...(postApplyCheck ? { postApplyCheck: { scopeCount: scopes.length } } : {}) };
     rerenderPreviewCard(); refreshReviewCard(); showWorkflowStage('review');
     return result;
@@ -2456,6 +2460,7 @@ export function mountReflectLitePanel() {
           logs: applyOutcome.logs.slice()
         }
       };
+      if (applyOutcome.finalRevision) memoryState.lastWrite = { targetAppId: applyOptions.targetAppId, targetGuestId: applyOptions.targetGuestId || '', finalRevision: applyOutcome.finalRevision, priorState: targetPendingAtApply?.state };
       // 複数アプリへの展開の記録。バックアップから戻す操作は展開に含めない。
       if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || '', name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, pending: counts.pending, at: memoryState.lastResult.at });
       renderLastResult();
