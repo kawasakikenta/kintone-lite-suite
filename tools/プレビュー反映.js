@@ -5389,15 +5389,16 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return reflectInspectionScopes([...scopes]).includes("fieldSettings");
   }
   var FIELD_SETTINGS_OMITTED_NOTICE = "フィールド設定を含めない場合、反映先に無いフィールドを参照していると差分確認で停止します。";
-  function findMissingFieldReferences(entries, scopes, sourceFieldCodes, targetFieldCodes) {
+  function findMissingFieldReferences(entries, scopes, sourceFieldCodes, targetFieldCodes, sourceSystemFieldCodes = []) {
     const selected = entries.filter((entry) => scopes.includes(entry.sectionKey));
     const fieldEntry = selected.find((entry) => entry.sectionKey === "fieldSettings");
     const sourceCodes = new Set(sourceFieldCodes);
+    const systemCodes = new Set(sourceSystemFieldCodes);
     const available = /* @__PURE__ */ new Set([...targetFieldCodes, ...scopes.includes("fieldSettings") && !fieldEntry?.blockers.length ? sourceFieldCodes : []]);
     const out = [];
     for (const entry of selected) {
       for (const code of entry.requiredFields || []) {
-        if (!available.has(code)) out.push({ sectionKey: entry.sectionKey, label: entry.label, code, inSource: sourceCodes.size ? sourceCodes.has(code) : void 0 });
+        if (!available.has(code)) out.push({ sectionKey: entry.sectionKey, label: entry.label, code, inSource: systemCodes.has(code) ? false : sourceCodes.size ? sourceCodes.has(code) : void 0 });
       }
     }
     return out;
@@ -5566,6 +5567,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const root2 = document.createElement(onlyKept ? "details" : "section");
     root2.className = `kus-rl-items${onlyKept ? " kus-rl-items--quiet" : ""}`;
     root2.dataset.reflectItems = "true";
+    if (plan.sectionKey) {
+      root2.dataset.reflectSection = plan.sectionKey;
+      if (onlyKept) root2.dataset.reflectDetails = `${plan.sectionKey}:kept`;
+    }
     const countText = REFLECT_ITEM_KIND_ORDER.filter((kind) => counts[kind]).map((kind) => `${kind} ${counts[kind]}`).join("・");
     const list2 = document.createElement("ul");
     list2.className = "kus-rl-items__list";
@@ -5631,6 +5636,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     if (!plan.changes.length) return;
     const details = document.createElement("details");
     details.className = "kus-rl-changes";
+    if (plan.sectionKey) details.dataset.reflectDetails = `${plan.sectionKey}:changes`;
     const summary = document.createElement("summary");
     summary.textContent = `${plan.label}：設定値の内訳（変更 ${plan.changeCount}件・保持 ${plan.changes.length - plan.changeCount}件）`;
     details.appendChild(summary);
@@ -6050,6 +6056,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   // src/entries/reflect-lite-ui.ts
   init_utils();
   var REFLECT_PRESET_LIMIT = 30;
+  var STALE_RESULT_NOTICE = "直近の反映結果は現在の対象と異なるため表示していません。対象を戻すと表示されます。";
+  var RESTORE_FIELD_SETTINGS_NOTE = "バックアップから戻している間はフィールド設定を追加できません。この項目を対象から外してください。";
   var memoryState = {
     presets: []
   };
@@ -6386,6 +6394,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       return;
     }
     ensureReflectLiteStyles();
+    if (memoryState.lastPreview?.restore) memoryState.lastPreview = null;
     const panel = createLitePanel({
       id: "kus-reflect-lite",
       title: "プレビュー反映",
@@ -6395,6 +6404,23 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       hint: "<strong>差分を確認してから反映</strong> · 反映先はプレビューです。本番への公開は設定画面で行います。",
       wide: true
     });
+    let pendingNotice = "";
+    const rawSetStatus = panel.setStatus;
+    panel.setStatus = (msg, tone) => {
+      const notice = pendingNotice;
+      pendingNotice = "";
+      rawSetStatus(notice && msg ? `${notice} ${msg}` : msg, tone);
+    };
+    function holdNoticeForNextStatus(notice) {
+      pendingNotice = notice;
+      window.setTimeout(() => {
+        if (pendingNotice === notice) pendingNotice = "";
+      }, 0);
+    }
+    const runLite = (busyMsg, fn, okMsg) => liteRun(panel, busyMsg, async () => {
+      panel.setResult("");
+      return fn();
+    }, okMsg);
     let showWorkflowStage = () => {
     };
     let refreshWorkflow = () => {
@@ -6454,8 +6480,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         paint(open ? "· 開いているアプリ" : "確認中…");
         const mine = seq;
         timer = window.setTimeout(async () => {
+          if (!panel.root.isConnected) return;
           const result = await appLookupCache.get(appId, guest);
-          if (mine !== seq) return;
+          if (mine !== seq || !panel.root.isConnected) return;
           if (result.ok) show(result, open);
           else {
             failed = true;
@@ -6480,10 +6507,18 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       }
       appInput.addEventListener("change", recheck);
       guestInput.addEventListener("change", recheck);
-      return { el, refresh, known: () => known, adopt };
+      function stop() {
+        seq += 1;
+        window.clearTimeout(timer);
+      }
+      return { el, refresh, known: () => known, adopt, stop };
     }
     const sourceNote = createAppNote(srcApp, srcGuest, () => sourceMode === "app", () => refreshWorkflow());
     const targetNote = createAppNote(tgtApp, tgtGuest, () => true, () => refreshWorkflow());
+    panel.root.addEventListener("kus-lite-dispose", () => {
+      sourceNote.stop();
+      targetNote.stop();
+    }, { once: true });
     srcApp.setAttribute("aria-label", "反映元アプリID");
     srcGuest.setAttribute("aria-label", "反映元ゲストスペースID");
     tgtApp.setAttribute("aria-label", "反映先アプリID");
@@ -6597,7 +6632,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshSameConnBanner();
       refreshReviewCard();
     });
-    srcJsonFile.addEventListener("change", () => liteRun(panel, "反映元JSONを読み込み中…", async () => {
+    srcJsonFile.addEventListener("change", () => runLite("反映元JSONを読み込み中…", async () => {
       const file = srcJsonFile.files?.[0];
       if (!file) return;
       srcJsonFile.value = "";
@@ -7004,6 +7039,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     cardPreset.body.appendChild(presetHint);
     panel.body.insertBefore(cardPreset.card, panel.status);
     function refreshPresetSelect() {
+      const keep = presetSelect.value;
       presetSelect.innerHTML = "";
       const presets = memoryState.presets || [];
       if (!presets.length) {
@@ -7025,6 +7061,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         opt.textContent = `${p.name} (src#${p.source.appId} → tgt#${p.target.appId})`;
         presetSelect.appendChild(opt);
       }
+      if (keep && presets.some((p) => p.name === keep)) presetSelect.value = keep;
     }
     function refreshPresetButtons() {
       exportPresetsBtn.disabled = busy || !(memoryState.presets || []).length;
@@ -7081,7 +7118,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       panel.setStatus(`プリセット ${payload.count} 件を ${filename} に書き出しました`, "ok");
     });
     importPresetsBtn.addEventListener("click", () => importPresetsFile.click());
-    importPresetsFile.addEventListener("change", () => liteRun(panel, "プリセットJSONを読み込み中…", async () => {
+    importPresetsFile.addEventListener("change", () => runLite("プリセットJSONを読み込み中…", async () => {
       const file = importPresetsFile.files?.[0];
       importPresetsFile.value = "";
       if (!file) return;
@@ -7105,6 +7142,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const name = presetSelect.value;
       const preset = (memoryState.presets || []).find((p) => p.name === name);
       if (!preset) return;
+      const discardsLoadedJson = !restoreMode && !!sourceBundleFromJson;
       sourceModeSelect.value = "app";
       sourceModeSelect.dispatchEvent(new Event("change"));
       srcApp.value = preset.source.appId;
@@ -7121,7 +7159,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshSameConnBanner();
       saveState();
       refreshReviewCard();
-      panel.setStatus(`プリセット「${name}」を読み込みました`, "ok");
+      const dropped = (preset.scopes || []).filter((key) => !REFLECT_SECTION_KEYS.includes(key));
+      const notes = [];
+      if (dropped.length) notes.push(`未対応の項目 ${dropped.length} 件（${dropped.slice(0, 5).join("、")}${dropped.length > 5 ? " ほか" : ""}）は選択できませんでした。`);
+      if (discardsLoadedJson) notes.push("読み込み済みの反映元JSONは破棄しました。");
+      const presetLookupError = lookupMapError(parseLookupMapText(lookupTa.value));
+      if (presetLookupError) notes.push(`参照先変換を読み取れません。${presetLookupError}`);
+      const presetRollout = currentRollout();
+      if ("error" in presetRollout) notes.push(`続けて反映する反映先を読み取れません。${presetRollout.error}`);
+      panel.setStatus([`プリセット「${name}」を読み込みました。`, ...notes].join(" "), notes.length ? "warn" : "ok");
     });
     delBtn.addEventListener("click", () => {
       const name = presetSelect.value;
@@ -7306,17 +7352,18 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     previewCard.body.appendChild(previewBody);
     panel.body.insertBefore(previewCard.card, panel.status);
     function saveState() {
+      const before = restoreMode?.before;
       memoryState = {
         ...memoryState,
-        sourceAppId: srcApp.value.trim(),
-        sourceGuestId: srcGuest.value.trim(),
+        sourceAppId: (before ? before.sourceAppId : srcApp.value).trim(),
+        sourceGuestId: (before ? before.sourceGuestId : srcGuest.value).trim(),
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         sourcePreview: sourceEnvironment.value === "preview",
-        selectedScopes: collectSelectedScopes(),
-        lookupMapText: lookupTa.value,
+        selectedScopes: before ? [...before.scopes] : collectSelectedScopes(),
+        lookupMapText: before ? before.lookupText : lookupTa.value,
         rolloutQueueText: rolloutTa.value,
-        preserveTargetOnly: preserve.checkbox.checked
+        preserveTargetOnly: before ? before.preserve : preserve.checkbox.checked
       };
     }
     function currentOptions(scopes = collectSelectedScopes()) {
@@ -7382,9 +7429,32 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         skippedErrorScopes
       };
     }
+    let renderedPreviewResult = null;
+    function captureDisclosure() {
+      const open = /* @__PURE__ */ new Set();
+      previewBody.querySelectorAll("details[data-reflect-details]").forEach((node) => {
+        if (node.open && node.dataset.reflectDetails) open.add(node.dataset.reflectDetails);
+      });
+      const shown = /* @__PURE__ */ new Map();
+      previewBody.querySelectorAll("[data-reflect-items][data-reflect-section]").forEach((node) => {
+        if (node.dataset.reflectSection) shown.set(node.dataset.reflectSection, node.querySelectorAll(".kus-rl-items__list > li").length);
+      });
+      return { open, shown };
+    }
+    function restoreDisclosure(state3) {
+      previewBody.querySelectorAll("[data-reflect-items][data-reflect-section]").forEach((node) => {
+        const want = state3.shown.get(node.dataset.reflectSection || "") || 0;
+        const more = node.querySelector(".kus-rl-items__more");
+        while (more && !more.hidden && node.querySelectorAll(".kus-rl-items__list > li").length < want) more.click();
+      });
+      previewBody.querySelectorAll("details[data-reflect-details]").forEach((node) => {
+        if (state3.open.has(node.dataset.reflectDetails || "")) node.open = true;
+      });
+    }
     function rerenderPreviewCard() {
       const previewResult = memoryState.lastPreview?.result || null;
       if (!previewResult) {
+        renderedPreviewResult = null;
         previewCard.card.style.display = "none";
         [previewKeepShownBtn, previewAddShownBtn, previewRemoveShownBtn, previewRiskyBtn].forEach((btn) => {
           btn.disabled = true;
@@ -7401,6 +7471,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       previewAddShownBtn.disabled = filteredScopeKeys.every((key) => currentSelected.has(key));
       previewRemoveShownBtn.disabled = filteredScopeKeys.every((key) => !currentSelected.has(key));
       previewRiskyBtn.disabled = !previewResult.entries.some((entry) => RISKY_SCOPE_KEYS.has(entry.sectionKey));
+      const disclosure = renderedPreviewResult === previewResult ? captureDisclosure() : null;
       renderPreviewResult(previewBody, previewResult, {
         selectedScopes,
         plan,
@@ -7415,6 +7486,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
           rerenderPreviewCard();
         }
       });
+      renderedPreviewResult = previewResult;
+      if (disclosure) restoreDisclosure(disclosure);
       previewCard.card.style.display = "block";
     }
     function adoptResolvedAppNames(identities, sourceIsJson) {
@@ -7455,7 +7528,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       });
     }
     function selectionIssues(result, scopes) {
-      return result ? reflectSelectionBlockers(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes) : [];
+      return result ? reflectSelectionBlockers(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes, result.sourceSystemFieldCodes) : [];
     }
     function refreshReviewCard() {
       const restoreEndNote = restoreMode && !restoreStillApplies(restoreMode) ? endRestoreMode() : "";
@@ -7464,9 +7537,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         memoryState.rolloutKey = "";
       }
       let staleNote = "";
-      const staleResult = memoryState.lastResult;
       const currentSourceBundleToken = sourceMode === "json" ? sourceBundleToken : "";
-      if (staleResult && (!reflectResultMatchesOptions(staleResult.report, currentOptions(staleResult.report.scopes)) || staleResult.sourceBundleToken !== currentSourceBundleToken)) {
+      const resultMatchesInputs = (candidate) => reflectResultMatchesOptions(candidate.report, currentOptions(candidate.report.scopes)) && (candidate.sourceBundleToken || "") === currentSourceBundleToken;
+      const shownResult = memoryState.lastResult;
+      if (shownResult && !resultMatchesInputs(shownResult)) {
+        memoryState.staleResult = { result: shownResult, log: logPre.textContent || "" };
         memoryState.lastResult = null;
         if (memoryState.lastPreview?.postApplyCheck) {
           memoryState.lastPreview = { ...memoryState.lastPreview, postApplyCheck: void 0 };
@@ -7475,9 +7550,20 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         logPre.style.display = "none";
         logPre.textContent = "";
         renderLastResult();
-        staleNote = "対象が変わったため、まだ反映していません。現在の条件で差分を再取得してから反映してください。";
+        staleNote = STALE_RESULT_NOTICE;
+      } else if (!shownResult && !busy && memoryState.staleResult && resultMatchesInputs(memoryState.staleResult.result)) {
+        const { result: restored, log } = memoryState.staleResult;
+        memoryState.lastResult = restored;
+        memoryState.staleResult = null;
+        logPre.textContent = log;
+        logPre.style.display = log ? "block" : "none";
+        logCard.card.style.display = log ? "block" : "none";
+        renderLastResult();
       }
-      if (restoreEndNote || staleNote) panel.setStatus([restoreEndNote, staleNote].filter(Boolean).join(" "), "info");
+      if (restoreEndNote || staleNote) {
+        panel.setStatus([restoreEndNote, staleNote].filter(Boolean).join(" "), "info");
+        if (restoreEndNote) holdNoticeForNextStatus(restoreEndNote);
+      }
       const { scopes, lookupState, preview, fresh } = getPreviewState();
       const invalid = reflectConnectionError(currentOptions());
       const result = preview?.result;
@@ -7519,23 +7605,31 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
           list2.appendChild(item);
         }
         reviewBody.appendChild(list2);
-        const missing = result ? findMissingFieldReferences(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes) : [];
+        const missing = result ? findMissingFieldReferences(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes, result.sourceSystemFieldCodes) : [];
         if (canResolveByIncludingFieldSettings(missing, scopes)) {
           const fix = document.createElement("div");
           fix.className = "kus-rl-fix";
-          const fixBtn = makeButton("フィールド設定も反映対象に含めて再取得", "sub");
-          fixBtn.dataset.reflectFix = "include-field-settings";
-          fixBtn.disabled = busy;
-          fixBtn.addEventListener("click", () => {
-            includeFieldSettingsAndRefetch();
-          });
-          const candidates = missing.filter((item) => item.inSource !== false);
-          const codes = [...new Set(candidates.map((item) => item.code))];
-          const codeList = `${codes.slice(0, 5).join("、")}${codes.length > 5 ? " ほか" : ""}`;
-          const fixNote = document.createElement("span");
-          fixNote.className = "kus-rl-fix__note";
-          fixNote.textContent = candidates.every((item) => item.inSource) ? `反映元にある ${codes.length} 件のフィールド（${codeList}）を、フィールド設定の反映で追加します。差分を取得し直してから確認してください。` : `不足しているフィールド（${codeList}）が反映元にあれば、フィールド設定の反映で追加できます。反映元にも無い場合は、再取得後も停止します。`;
-          fix.append(fixBtn, fixNote);
+          if (restoreMode) {
+            const restoreNote = document.createElement("span");
+            restoreNote.className = "kus-rl-fix__note";
+            restoreNote.dataset.reflectFixNote = "restore";
+            restoreNote.textContent = RESTORE_FIELD_SETTINGS_NOTE;
+            fix.appendChild(restoreNote);
+          } else {
+            const fixBtn = makeButton("フィールド設定も反映対象に含めて再取得", "sub");
+            fixBtn.dataset.reflectFix = "include-field-settings";
+            fixBtn.disabled = busy;
+            fixBtn.addEventListener("click", () => {
+              includeFieldSettingsAndRefetch();
+            });
+            const candidates = missing.filter((item) => item.inSource !== false);
+            const codes = [...new Set(candidates.map((item) => item.code))];
+            const codeList = `${codes.slice(0, 5).join("、")}${codes.length > 5 ? " ほか" : ""}`;
+            const fixNote = document.createElement("span");
+            fixNote.className = "kus-rl-fix__note";
+            fixNote.textContent = candidates.every((item) => item.inSource) ? `反映元にある ${codes.length} 件のフィールド（${codeList}）を、フィールド設定の反映で追加します。差分を取得し直してから確認してください。` : `不足しているフィールド（${codeList}）が反映元にあれば、フィールド設定の反映で追加できます。反映元にも無い場合は、再取得後も停止します。`;
+            fix.append(fixBtn, fixNote);
+          }
           reviewBody.appendChild(fix);
         }
       }
@@ -7602,7 +7696,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         panel.setStatus(lookupError, "warn");
         return;
       }
-      return liteRun(panel, "差分プレビューを取得中…", async () => {
+      return runLite("差分プレビューを取得中…", async () => {
         await runPreview(scopes, lookupMap);
       }, okMessage || `差分プレビュー完了（${scopes.length}セクションを比較）`);
     }
@@ -7610,7 +7704,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       startPreview();
     });
     function includeFieldSettingsAndRefetch() {
-      if (busy) return;
+      if (busy || restoreMode) return;
       const chip = chips.find((c) => c.checkbox.value === "fieldSettings");
       if (!chip) return;
       chip.checkbox.checked = true;
@@ -7889,7 +7983,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         return;
       }
       setSelectedScopes(scopes);
-      return liteRun(panel, "反映後の差分を再取得中…", async () => {
+      return runLite("反映後の差分を再取得中…", async () => {
         await runPreview(scopes, lookupMapValue(lookupState), true);
         const summary = postApplySummary();
         if (summary) panel.setStatus(summary.message, summary.tone);
@@ -8124,7 +8218,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         return;
       }
       saveState();
-      const outcome = await liteRun(panel, "プレビュー反映 実行中…", async () => {
+      const outcome = await runLite("プレビュー反映 実行中…", async () => {
         let previewState = getPreviewState(scopes, lookupState);
         let previewResult = previewState.fresh ? previewState.preview?.result || null : null;
         if (!previewResult) {
@@ -8186,6 +8280,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
           logCard.card.style.display = previous.logVisible ? "block" : "none";
           renderLastResult();
           renderRollout();
+          showWorkflowStage("review");
           throw error;
         } finally {
           progressCard.card.style.display = "none";
@@ -8221,6 +8316,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
             logs: applyOutcome.logs.slice()
           }
         };
+        memoryState.staleResult = null;
         if (applyOutcome.finalRevision) memoryState.lastWrite = { targetAppId: applyOptions.targetAppId, targetGuestId: applyOptions.targetGuestId || "", finalRevision: applyOutcome.finalRevision, priorState: targetPendingAtApply?.state };
         if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || "", name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, pending: counts.pending, at: memoryState.lastResult.at });
         renderLastResult();
@@ -8271,9 +8367,25 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       button.addEventListener("keydown", (event) => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
+        const count = stageDefs.length;
         const current = stageDefs.findIndex((item) => item.id === def.id);
-        const direction = event.key === "ArrowRight" ? 1 : -1;
-        const next = stageDefs[event.key === "Home" ? 0 : event.key === "End" ? stageDefs.length - 1 : (current + direction + stageDefs.length) % stageDefs.length];
+        const enabledAt = (index) => !navButtons[stageDefs[index].id].disabled;
+        let nextIndex = -1;
+        if (event.key === "Home" || event.key === "End") {
+          const order = stageDefs.map((_, index) => event.key === "Home" ? index : count - 1 - index);
+          nextIndex = order.find(enabledAt) ?? -1;
+        } else {
+          const direction = event.key === "ArrowRight" ? 1 : -1;
+          for (let step = 1; step < count; step += 1) {
+            const index = (current + direction * step + count) % count;
+            if (enabledAt(index)) {
+              nextIndex = index;
+              break;
+            }
+          }
+        }
+        if (nextIndex < 0 || nextIndex === current) return;
+        const next = stageDefs[nextIndex];
         if (next.id === "confirm") openConfirmation();
         else showWorkflowStage(next.id);
       });
@@ -8298,7 +8410,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     [progressCard.card, lastResultCard.card, rolloutCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
     const resultEmpty = document.createElement("div");
     resultEmpty.className = "kus-rl-preview-empty";
-    resultEmpty.textContent = "まだ反映していません。対象を選び、差分を確認してから反映してください。";
+    const RESULT_EMPTY_TEXT = "まだ反映していません。対象を選び、差分を確認してから反映してください。";
+    resultEmpty.textContent = RESULT_EMPTY_TEXT;
     stages.result.appendChild(resultEmpty);
     const dock = document.createElement("div");
     dock.className = "kus-rl-action-dock";
@@ -8375,6 +8488,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       previewBtn.classList.toggle("kus-lp__btn--primary", !fresh);
       previewBtn.classList.toggle("kus-lp__btn--sub", fresh);
       resultEmpty.hidden = !!memoryState.lastResult || logCard.card.style.display !== "none";
+      resultEmpty.textContent = !memoryState.lastResult && memoryState.staleResult ? STALE_RESULT_NOTICE : RESULT_EMPTY_TEXT;
       const setupBlocker = activeStage === "setup" ? describeReflectSetupBlocker({
         connectionError: reflectConnectionError(currentOptions()),
         sourceMode,
@@ -8420,10 +8534,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       });
       if (value) {
         panel.root.querySelectorAll("input,button,select,textarea").forEach((control) => {
-          disabledBefore.set(control, control.disabled);
+          if (!disabledBefore.has(control)) disabledBefore.set(control, control.disabled);
           control.disabled = true;
         });
-      } else {
+        setPanelBusy(value);
+        return;
+      }
+      try {
         disabledBefore.forEach((disabled, control) => {
           control.disabled = disabled;
         });
@@ -8433,12 +8550,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         refreshPresetButtons();
         refreshReviewCard();
         navButtons[activeStage].focus({ preventScroll: true });
+      } finally {
+        setPanelBusy(value);
       }
-      setPanelBusy(value);
     };
-    showWorkflowStage(memoryState.lastResult ? "result" : memoryState.lastPreview ? "review" : "setup");
     refreshSameConnBanner();
     refreshReviewCard();
+    showWorkflowStage(memoryState.lastResult ? "result" : memoryState.lastPreview ? "review" : "setup");
   }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (ch) => ({
@@ -8630,6 +8748,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const collapsed = group.tone === "same" && opts.statusFilter === "all" && !opts.searchKeyword;
       const wrap = document.createElement(collapsed ? "details" : "section");
       wrap.className = "kus-rl-preview-group";
+      if (collapsed) wrap.dataset.reflectDetails = `group:${group.tone}`;
       const headTag = collapsed ? "summary" : "div";
       wrap.innerHTML = `<${headTag} class="kus-rl-preview-group__head"><span>${escapeHtml(group.title)}${collapsed ? " · 開いて確認" : ""}</span><span>${group.entries.length} 件</span></${headTag}>`;
       const list2 = document.createElement("div");
