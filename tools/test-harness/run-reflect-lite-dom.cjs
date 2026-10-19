@@ -35,7 +35,7 @@ const mockEngine = `
     mock.previews.push(opts);
     progress('サンプルデータを比較中…');
     await new Promise(resolve => setTimeout(resolve, 160));
-    if (mock.mode === 'preview-failure') throw new Error('サンプル取得エラー');
+    if (mock.mode === 'preview-failure') throw new Error(mock.previewError || 'サンプル取得エラー');
     const entries = opts.scopes.map((sectionKey, i) => {
       const status = mock.mode === 'same' ? 'same' : sectionKey === 'layoutSettings' ? 'same' : sectionKey === 'viewSettings' ? 'error' : 'change';
       const items = status === 'change' ? sampleItems(sectionKey, mock.itemsMode) : undefined;
@@ -50,10 +50,11 @@ const mockEngine = `
         changes: status === 'change' ? [{ kind: '変更', path: 'フィールド / 顧客名 / 必須', before: 'false', after: 'true' }].concat(rawRemoval ? [{ kind: '削除', path: 'フィールド / 旧項目', before: '{"type":"SINGLE_LINE_TEXT","code":"old","label":"旧項目"}', after: '（なし）' }] : []) : [],
         changeCount: status === 'change' ? 1 + (rawRemoval ? 1 : 0) : 0, removalCount: rawRemoval ? 1 : 0,
         message: status === 'change' ? '入力欄のラベルと必須設定が変更されています。' : status === 'same' ? '設定は一致しています。' : '反映先の取得に失敗しました。アクセス権を確認してください。',
+        ...(mock.requiredFields && mock.requiredFields[sectionKey] ? { requiredFields: mock.requiredFields[sectionKey] } : {}),
         ...(sectionKey === 'fieldSettings' ? { fieldStats: { add: 2, update: 3, tgtOnly: 1 } } : {}),
         ...(items ? { items } : {}), ...(uploads ? { fileUploads: uploads } : {}) };
     });
-    return { sourceFieldCodes: [], targetFieldCodes: [], baseline: { connection: 'sample-' + opts.targetAppId, source: {}, target: {} }, entries, totalSections: entries.length, changedSections: entries.filter(e => e.status === 'change').length,
+    return { sourceFieldCodes: mock.sourceFieldCodes || [], targetFieldCodes: mock.targetFieldCodes || [], sourceSystemFieldCodes: mock.sourceSystemFieldCodes || [], baseline: { connection: 'sample-' + opts.targetAppId, source: {}, target: {} }, entries, totalSections: entries.length, changedSections: entries.filter(e => e.status === 'change').length,
       sameSections: entries.filter(e => e.status === 'same').length, errorSections: entries.filter(e => e.status === 'error').length,
       ...(mock.targetPending ? { targetPending: mock.targetPending } : {}) };
   }
@@ -314,7 +315,7 @@ async function main() {
     await tab('対象を選ぶ').click();
     await page.getByRole('textbox', { name: '反映先アプリID', exact: true }).fill('404');
     await tab('反映結果').click();
-    assert.match(await page.locator('.kus-lp__status').innerText(), /まだ反映していません/, '対象変更後は現在の条件で再確認が必要と案内する');
+    assert.match(await page.locator('.kus-lp__status').innerText(), /直近の反映結果は現在の対象と異なるため表示していません。対象を戻すと表示されます。/, '対象変更後は直近の結果を表示していないことと戻し方を案内する');
     assert.doesNotMatch(await page.locator('#kus-rl-stage-result').innerText(), /全成功|サンプルの反映ログ|実行ログ/, '旧対象の成功結果と実行ログを表示しない');
     assert.notEqual(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'ok', '旧対象の確認成功ステータスを残さない');
     assert.equal(await button('実行結果JSONを保存').isVisible(), false, '別対象の結果を現在の結果として保存させない');
@@ -801,6 +802,9 @@ async function main() {
     await page.evaluate(() => { window.__reflectMock.applyThrows = '確認済みの差分と反映条件が一致しません。差分を取得し直してから再実行してください。'; });
     await tab('差分を確認').click(); await button('差分を再取得').click(); await idle(); await button('差分ありだけ選択').click(); await execute(); await idle();
     assert.match(await page.locator('.kus-lp__status').innerText(), /反映条件が一致しません/, '書き込み前の停止は理由を表示する');
+    assert.equal(await tab('差分を確認').getAttribute('aria-selected'), 'true', '書き込み前の停止では、空の実行ログを出した反映結果の画面ではなく差分の確認へ戻す');
+    assert.equal(await button('差分を再取得').isEnabled(), true, '差分を取得し直せる');
+    assert.equal(await page.locator('#kus-rl-stage-result [data-progress-section]').count(), 0);
     await tab('反映結果').click();
     assert.equal(await button('バックアップから戻す（差分を確認）').isVisible(), true, '書き込み前に止まった場合は直前の反映のバックアップから戻す導線を残す');
     assert.equal(await button('実行結果JSONを保存').isVisible(), true, '直前の結果を残す');
@@ -1365,6 +1369,304 @@ async function main() {
     await targetField.dispatchEvent('change');
     await page.waitForTimeout(500);
     assert.equal((await lookupLog()).length, lookupsBeforeChange + 1, '成功している欄は change で確認し直さない');
+
+    // =========================================================================
+    // 第5段階: 結果の保持・復元中の安全性・通知・操作性
+    // =========================================================================
+    const STALE = /直近の反映結果は現在の対象と異なるため表示していません。対象を戻すと表示されます。/;
+    const resultStage = () => page.locator('#kus-rl-stage-result');
+    const resultJsonShown = () => button('実行結果JSONを保存').isVisible();
+    const dockResult = () => page.locator('.kus-lp__result');
+    const sourceEnvSelect = () => page.getByRole('combobox', { name: '反映元の取得環境' });
+    const previewFilterSelect = () => page.getByRole('combobox', { name: '差分の状態で絞り込み' });
+    async function applyOnce(extra = {}) {
+      await reset('mixed', { targetPending: cleanPending, ...extra }); await setup();
+      await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    }
+
+    // ---- 直近の結果は、入力の一時的な編集だけでは失われない（戻すと復帰する） ----
+    await applyOnce();
+    assert.equal(await resultJsonShown(), true);
+    await tab('対象を選ぶ').click();
+    await targetInput().fill('2020');
+    assert.match(await statusText(), STALE, '結果を表示しない理由と戻し方を知らせる');
+    await tab('反映結果').click();
+    assert.equal(await resultJsonShown(), false, '対象が違う間は結果を表示しない');
+    assert.match(await resultStage().innerText(), STALE, '「まだ反映していません」とは言わない');
+    assert.doesNotMatch(await resultStage().innerText(), /まだ反映していません|全成功|サンプルの反映ログ/);
+    await tab('対象を選ぶ').click();
+    await targetInput().fill('202');
+    await tab('反映結果').click();
+    assert.equal(await resultJsonShown(), true, '反映先IDを元に戻すと結果が戻る');
+    assert.match(await resultStage().innerText(), /全成功/);
+    assert.match(await resultStage().innerText(), /サンプルの反映ログ/, '実行ログも戻る');
+    assert.equal(await restoreButton().isVisible(), true, 'バックアップから戻す導線も戻る');
+    assert.doesNotMatch(await resultStage().innerText(), STALE);
+    // 保持・参照先変換・取得環境の一時的な編集でも同じ。
+    await tab('対象を選ぶ').click();
+    await preserveBox().uncheck();
+    await tab('反映結果').click(); assert.equal(await resultJsonShown(), false);
+    await tab('対象を選ぶ').click(); await preserveBox().check();
+    await tab('反映結果').click(); assert.equal(await resultJsonShown(), true, '保持を元に戻すと結果が戻る');
+    await tab('対象を選ぶ').click(); await openAllDetails(); await lookupBox().fill('1 → 2');
+    await tab('反映結果').click(); assert.equal(await resultJsonShown(), false);
+    await tab('対象を選ぶ').click(); await lookupBox().fill('');
+    await tab('反映結果').click(); assert.equal(await resultJsonShown(), true, '参照先変換を消すと結果が戻る');
+    await tab('対象を選ぶ').click(); await sourceEnvSelect().selectOption('preview');
+    await tab('反映結果').click(); assert.equal(await resultJsonShown(), false);
+    await tab('対象を選ぶ').click(); await sourceEnvSelect().selectOption('production');
+    await tab('反映結果').click(); assert.equal(await resultJsonShown(), true, '取得環境を戻すと結果が戻る');
+    const savedResult = await downloadOf('実行結果JSONを保存');
+    assert.deepEqual(JSON.parse(savedResult.text).summary, { ok: 1, ng: 0, pending: 0 }, '戻した結果は実行結果JSONとして保存できる');
+
+    // ---- 表示を外している間にパネルを開き直しても、入力が戻れば結果が復帰する ----
+    await tab('対象を選ぶ').click(); await targetInput().fill('2020');
+    await page.evaluate(() => ReflectHarness.mountReflectLitePanel());
+    assert.equal(await targetValue(), '2020');
+    await tab('反映結果').click();
+    assert.equal(await resultJsonShown(), false);
+    assert.match(await resultStage().innerText(), STALE);
+    await tab('対象を選ぶ').click(); await targetInput().fill('202');
+    await tab('反映結果').click();
+    assert.equal(await resultJsonShown(), true, '開き直した後も、入力が戻れば結果が復帰する');
+    // 新しい反映が完了したら、表示を外していた前の結果は破棄する。
+    await tab('対象を選ぶ').click(); await targetInput().fill('2020');
+    await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.equal(await resultJsonShown(), true);
+    assert.match(await resultStage().innerText(), /反映先 #2020/);
+    await tab('対象を選ぶ').click(); await targetInput().fill('202');
+    await tab('反映結果').click();
+    assert.equal(await resultJsonShown(), false, '新しい反映の後は、前の結果を戻さない');
+    assert.match(await resultStage().innerText(), STALE);
+
+    // ---- バックアップから戻す：差分取得の失敗や中止で、直近の結果を失わない ----
+    await applyOnce();
+    await page.evaluate(() => { window.__reflectMock.mode = 'preview-failure'; });
+    await restoreButton().click(); await idle();
+    assert.match(await statusText(), /サンプル取得エラー/);
+    await tab('反映結果').click();
+    assert.equal(await resultJsonShown(), false);
+    assert.match(await resultStage().innerText(), STALE, '復元の差分取得に失敗しても「まだ反映していません」とは言わない');
+    assert.doesNotMatch(await resultStage().innerText(), /まだ反映していません/);
+    await tab('対象を選ぶ').click(); await preserveBox().check();
+    assert.match(await statusText(), RESTORE_ENDED);
+    await tab('反映結果').click();
+    assert.equal(await resultJsonShown(), true, '復元をやめて入力が戻れば、結果が復帰する');
+    assert.equal(await restoreButton().isVisible(), true, 'バックアップから戻す導線も復帰する');
+    assert.deepEqual(JSON.parse((await downloadOf('実行結果JSONを保存')).text).summary, { ok: 1, ng: 0, pending: 0 });
+    // 復元の差分を取得できた後に中止しても同じ。
+    await page.evaluate(() => { window.__reflectMock.mode = 'mixed'; });
+    await restoreButton().click(); await idle();
+    assert.equal(await restoreNotices('review'), 1);
+    await tab('対象を選ぶ').click(); await preserveBox().check();
+    await tab('反映結果').click();
+    assert.equal(await resultJsonShown(), true, '復元の差分を取得した後に中止しても、結果が復帰する');
+
+    // ---- 復元中にパネルを閉じて開き直したら、復元用に設定した値ではなく復元前の値で、通常の状態で開く ----
+    await applyThenRestore();
+    await page.evaluate(() => ReflectHarness.mountReflectLitePanel());
+    await openAllDetails();
+    assert.deepEqual(await currentInputs(), EXPECT_BEFORE_RESTORE, '開き直したら復元前の値（反映元・保持・参照先変換・項目）で開く');
+    assert.equal(await targetValue(), '202');
+    assert.equal(await restoreNotices('review'), 0, '復元の状態は引き継がない');
+    assert.equal(await tab('反映結果').getAttribute('aria-selected'), 'true', '結果が復帰するため反映結果の画面で開く');
+    assert.equal(await resultJsonShown(), true);
+    await tab('差分を確認').click();
+    assert.equal(await run().isDisabled(), true, '復元用の差分は鮮度が無く、最終確認へ進めない');
+    assert.match(await page.locator('#kus-rl-stage-review .kus-rl-review').innerText(), /対象を指定して差分を取得してください。/);
+
+    // ---- 復元中は「フィールド設定も反映対象に含めて再取得」を出さない ----
+    const fieldRefs = { requiredFields: { appSettings: ['code_x'] }, sourceFieldCodes: ['code_x'] };
+    await reset('mixed', { targetPending: cleanPending, ...fieldRefs }); await setup();
+    await button('全解除').click(); await checkbox('一般設定').check(); await compare();
+    assert.equal(await button('フィールド設定も反映対象に含めて再取得').count(), 1, '通常は不足フィールドの解消ボタンを出す');
+    await reset('mixed', { targetPending: cleanPending }); await setup();
+    await button('全解除').click(); await checkbox('一般設定').check(); await compare();
+    await button('差分ありだけ選択').click(); await execute(); await idle();
+    await page.evaluate(refs => Object.assign(window.__reflectMock, refs), fieldRefs);
+    await restoreButton().click(); await idle();
+    assert.equal(await restoreNotices('review'), 1);
+    assert.equal(await button('フィールド設定も反映対象に含めて再取得').count(), 0, '復元中は解消ボタンを出さない');
+    assert.match(await page.locator('#kus-rl-stage-review [data-reflect-fix-note="restore"]').innerText(), /バックアップから戻している間はフィールド設定を追加できません/);
+    assert.equal(await sourceModeValue(), 'json', '復元のまま');
+    assert.equal((await selectedScopeKeys()).includes('fieldSettings'), false, 'フィールド設定を足さない');
+
+    // ---- 反映元のシステムフィールドを参照する一覧：反映先で合わせる案内を出し、フィールド設定の追加は案内しない ----
+    const systemRef = { requiredFields: { appSettings: ['Record_number'] }, sourceSystemFieldCodes: ['Record_number'], targetFieldCodes: ['レコード番号'] };
+    for (const sourceFieldCodes of [[], ['code_x']]) {
+      await reset('mixed', { targetPending: cleanPending, sourceFieldCodes, ...systemRef }); await setup();
+      await button('全解除').click(); await checkbox('一般設定').check(); await compare();
+      const reviewText = await page.locator('#kus-rl-stage-review').innerText();
+      assert.match(reviewText, /参照するフィールド「Record_number」は反映元のシステムフィールド/, `システムフィールドのコード違いを区別して案内する（反映元のフィールド ${JSON.stringify(sourceFieldCodes)}）`);
+      assert.doesNotMatch(reviewText, /「Record_number」が反映先にありません/);
+      assert.equal(await button('フィールド設定も反映対象に含めて再取得').count(), 0, 'システムフィールドの不足ではフィールド設定の追加を案内しない');
+      assert.equal(await run().isDisabled(), true, '確認できない項目が選択されている間は最終確認へ進めない');
+    }
+    // 通常のフィールドが不足するときは従来どおり案内する。
+    await reset('mixed', { targetPending: cleanPending, requiredFields: { appSettings: ['code_x'] }, sourceFieldCodes: ['code_x'], sourceSystemFieldCodes: ['Record_number'] }); await setup();
+    await button('全解除').click(); await checkbox('一般設定').check(); await compare();
+    assert.match(await page.locator('#kus-rl-stage-review').innerText(), /参照するフィールド「code_x」が反映先にありません/);
+    assert.equal(await button('フィールド設定も反映対象に含めて再取得').count(), 1);
+
+    // ---- 前の失敗の詳細ログ（ドック下部）を、次の操作の結果として残さない ----
+    await reset('preview-failure', { previewError: '一時的な通信エラー\n詳細1: 接続を確認してください\n詳細2: 再試行してください' });
+    await setup(); await compare();
+    assert.equal(await dockResult().isVisible(), true, '複数行のエラーは詳細ログを出す');
+    assert.match(await dockResult().innerText(), /詳細1: 接続を確認してください/);
+    await page.evaluate(() => { window.__reflectMock.mode = 'mixed'; });
+    await compare();
+    assert.equal(await dockResult().isVisible(), false, '次の差分取得の開始時に詳細ログを消す');
+    assert.equal(await dockResult().innerText(), '');
+    await page.evaluate(() => { window.__reflectMock.applyThrows = '確認が一致しません\n詳細A: 差分を取り直してください\n詳細B'; });
+    await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.equal(await dockResult().isVisible(), true, '書き込み前の停止の詳細ログを出す');
+    await page.evaluate(() => { window.__reflectMock.applyThrows = ''; });
+    await button('差分を再取得').click();
+    assert.equal(await dockResult().isVisible(), false);
+    await idle();
+    await page.evaluate(() => { window.__reflectMock.applyThrows = '確認が一致しません\n詳細A\n詳細B'; });
+    await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.equal(await dockResult().isVisible(), true);
+    await page.evaluate(() => { window.__reflectMock.applyThrows = ''; });
+    await button('差分を再取得').click(); await idle();
+    await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.equal(await dockResult().isVisible(), false, '反映の成功後に前の詳細ログを残さない');
+    await page.evaluate(() => { window.__reflectMock.mode = 'preview-failure'; });
+    await tab('反映結果').click(); await button('反映後の差分を再確認').click(); await idle();
+    assert.equal(await dockResult().isVisible(), true);
+    await page.evaluate(() => { window.__reflectMock.mode = 'mixed'; });
+    await button('反映後の差分を再確認').click();
+    assert.equal(await dockResult().isVisible(), false, '再確認の開始時にも詳細ログを消す');
+    await idle();
+    // 反映の開始時にも消す（書き込み前の停止の詳細ログが、次の反映に残らない）。
+    await page.evaluate(() => { window.__reflectMock.mode = 'preview-failure'; });
+    await tab('差分を確認').click(); await button('差分を再取得').click(); await idle();
+    assert.equal(await dockResult().isVisible(), true);
+    // プリセットJSONの読み込みでも消す。
+    await page.getByLabel('プリセットJSON', { exact: true }).setInputFiles({ name: 'p.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ kind: 'reflect-presets', presets: [{ name: 'A', source: { appId: '101' }, target: { appId: '202' }, scopes: ['fieldSettings'] }] })) });
+    await idle();
+    assert.equal(await dockResult().isVisible(), false, 'プリセットJSONの読み込み開始時にも詳細ログを消す');
+
+    // ---- 復元の終了通知は、同じ操作の後続のステータス（プリセット適用など）で上書きしない ----
+    await applyThenRestore();
+    await tab('対象を選ぶ').click();
+    await button('すべての項目').click();
+    const noticeStatus = await statusText();
+    assert.match(noticeStatus, /バックアップからの復元を終了しました。/, '復元の終了通知を残す');
+    assert.match(noticeStatus, /プリセット適用: すべての項目/, '後続の通知も表示する');
+    assert.ok(noticeStatus.indexOf('バックアップからの復元を終了しました。') < noticeStatus.indexOf('プリセット適用'), '終了通知を先頭に置く');
+    await button('フォームのみ').click();
+    assert.doesNotMatch(await statusText(), /バックアップからの復元を終了しました。/, '通知は1回だけ付ける');
+
+    // ---- プリセットの選択は、処理後の再構築で先頭へ戻らない。読み込み時の通知 ----
+    const presetPick = () => page.locator('select[aria-label="保存済みプリセット"]');
+    await reset(); await setup(); await openAllDetails();
+    const settingsBundle = { name: 'settings.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ appId: '901', sections: { fieldSettings: { properties: {} } } })) };
+    await page.getByLabel('プリセットJSON', { exact: true }).setInputFiles({ name: 'presets.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ kind: 'reflect-presets', presets: [
+      { name: '一件目', source: { appId: '101' }, target: { appId: '202' }, scopes: ['fieldSettings'] },
+      { name: '二件目', source: { appId: '101' }, target: { appId: '303' }, scopes: ['fieldSettings', 'legacyScope', 'futureScope'], lookupMap: 'abc', rolloutQueue: 'not an app' }
+    ] })) });
+    await idle();
+    await presetPick().selectOption('二件目');
+    await compare();
+    assert.equal(await presetPick().inputValue(), '二件目', '処理後に選択したプリセットを保つ');
+    await tab('対象を選ぶ').click();
+    await page.getByRole('combobox', { name: '反映元の取得方法' }).selectOption('json');
+    await page.getByLabel('反映元の設定JSON', { exact: true }).setInputFiles(settingsBundle); await idle();
+    assert.match(await page.locator('.kus-lp__small', { hasText: '反映元JSON読み込み済み' }).first().evaluate(el => el.textContent), /App 901/);
+    await openAllDetails();
+    await presetPick().selectOption('二件目');
+    await button('読み込み').click();
+    const loadStatus = await statusText();
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn', '読み込みで落ちた内容があれば警告にする');
+    assert.match(loadStatus, /プリセット「二件目」を読み込みました。/);
+    assert.match(loadStatus, /読み込み済みの反映元JSONは破棄しました/);
+    assert.match(loadStatus, /未対応の項目 2 件（legacyScope、futureScope）は選択できませんでした/);
+    assert.match(loadStatus, /参照先変換を読み取れません。/);
+    assert.match(loadStatus, /続けて反映する反映先を読み取れません。/);
+    await presetPick().selectOption('一件目');
+    await button('読み込み').click();
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'ok', '問題が無い読み込みは通常どおり成功にする');
+    assert.doesNotMatch(await statusText(), /破棄|未対応|読み取れません/);
+
+    // ---- 差分一覧を再描画しても、開いていた details を閉じない ----
+    await reset('mixed', { itemsMode: 'many', targetPending: cleanPending }); await setup(); await compare();
+    const previewFieldRow = '[data-reflect-entry="fieldSettings"]';
+    await page.locator(`${previewFieldRow} .kus-rl-items__more`).click();
+    assert.equal(await page.locator(`${previewFieldRow} .kus-rl-items__list > li`).count(), 27, '変更の要約の続きを表示した');
+    await page.locator(`${previewFieldRow} details.kus-rl-changes > summary`).click();
+    await page.locator('details[data-reflect-details="group:same"] > summary').click();
+    assert.equal(await page.locator('details[data-reflect-details="fieldSettings:changes"]').evaluate(node => node.open), true);
+    assert.equal(await page.locator('details[data-reflect-details="group:same"]').evaluate(node => node.open), true);
+    await page.locator('input[data-reflect-scope="fieldSettings"]').uncheck();
+    await page.locator('input[data-reflect-scope="fieldSettings"]').check();
+    assert.equal(await page.locator('details[data-reflect-details="fieldSettings:changes"]').evaluate(node => node.open), true, '設定値の内訳は開いたままにする');
+    assert.equal(await page.locator('details[data-reflect-details="group:same"]').evaluate(node => node.open), true, '差分なしのグループは開いたままにする');
+    assert.equal(await page.locator(`${previewFieldRow} .kus-rl-items__list > li`).count(), 27, '変更の要約の続きも表示したままにする');
+    await previewFilterSelect().selectOption('change');
+    await previewFilterSelect().selectOption('all');
+    assert.equal(await page.locator('details[data-reflect-details="fieldSettings:changes"]').evaluate(node => node.open), true, '絞り込みを戻しても開いていた内訳を保つ');
+    // 新しく差分を取得し直したときは、前の開閉状態を引き継がない。
+    await button('差分を再取得').click(); await idle();
+    assert.equal(await page.locator('details[data-reflect-details="fieldSettings:changes"]').evaluate(node => node.open), false, '再取得した差分は閉じた状態から始める');
+
+    // ---- 「最終確認」が無効でも、矢印キーは次の有効な段階へ移る ----
+    await reset(); await setup();
+    await tab('対象を選ぶ').focus();
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await tab('差分を確認').getAttribute('aria-selected'), 'true');
+    assert.equal(await tab('最終確認').isDisabled(), true);
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await tab('反映結果').getAttribute('aria-selected'), 'true', '無効な「最終確認」を飛ばして反映結果へ移る');
+    await page.keyboard.press('ArrowLeft');
+    assert.equal(await tab('差分を確認').getAttribute('aria-selected'), 'true', '戻るときも無効な段階を飛ばす');
+    await tab('対象を選ぶ').click(); await compare();
+    await button('差分ありだけ選択').click();
+    await tab('差分を確認').focus();
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await tab('最終確認').getAttribute('aria-selected'), 'true', '有効なら最終確認へ進める');
+
+    // ---- パネルを閉じた後は、待機中のアプリ名確認を行わない ----
+    await reset();
+    await page.waitForTimeout(700);
+    const lookupsBeforeClose = (await lookupLog()).length;
+    await page.getByRole('textbox', { name: '反映先アプリID', exact: true }).fill('303');
+    await page.locator('#kus-reflect-lite .kus-lp__close').click();
+    await page.waitForTimeout(800);
+    assert.equal(await page.locator('#kus-reflect-lite').count(), 0);
+    assert.equal((await lookupLog()).length, lookupsBeforeClose, '閉じた後に /app.json を呼ばない');
+    await reset();
+    await page.waitForTimeout(700);
+    const lookupsBeforeReplace = (await lookupLog()).length;
+    await page.getByRole('textbox', { name: '反映先アプリID', exact: true }).fill('404');
+    await page.evaluate(() => { const root = document.getElementById('kus-reflect-lite'); root.dispatchEvent(new Event('kus-lite-dispose')); root.remove(); });
+    await page.waitForTimeout(800);
+    assert.equal((await lookupLog()).length, lookupsBeforeReplace, '置き換え・破棄の後も /app.json を呼ばない');
+
+    // ---- 後処理が例外を出しても処理中の表示を止める。処理中の二重呼び出しで無効化の記録を壊さない ----
+    await reset(); await setup();
+    await page.evaluate(() => {
+      Object.defineProperty(document.querySelector('select[aria-label="保存済みプリセット"]'), 'innerHTML', { configurable: true, set() { throw new Error('再計算の失敗'); } });
+    });
+    const errorsBefore = errors.length;
+    await button('差分を確認する').click();
+    await page.waitForFunction(() => document.querySelector('#kus-reflect-lite').style.cursor !== 'progress');
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('#kus-reflect-lite .kus-lp__elapsed').isHidden(), true, '後処理が失敗しても経過時間の表示を止める');
+    assert.equal(await page.locator('#kus-reflect-lite .kus-lp__close').isEnabled(), true, '閉じるボタンを戻す');
+    const injectedErrors = errors.splice(errorsBefore);
+    assert.ok(injectedErrors.length >= 1 && injectedErrors.every(message => /再計算の失敗/.test(message)), '注入した後処理の例外だけが起きる: ' + injectedErrors.join(' / '));
+    await reset(); await setup();
+    await page.evaluate(() => {
+      const start = Array.from(document.querySelectorAll('button')).find(node => node.textContent.includes('差分を確認する'));
+      start.click();
+      // 処理中に別の処理が始まっても（二重呼び出し）、元の無効化状態の記録を上書きしない。
+      document.querySelector('input[aria-label="反映元の設定JSON"]').dispatchEvent(new Event('change'));
+    });
+    await idle();
+    assert.equal(await checkbox('一般設定').isEnabled(), true, '二重呼び出しの後に、項目の選択が無効のまま残らない');
+    assert.equal(await button('全選択').isEnabled(), true);
+    assert.equal(await page.getByRole('textbox', { name: '反映先アプリID', exact: true }).isEnabled(), true);
 
     // ---- 続けて反映：入力欄の見た目（5つの幅） ----
     await reset(); await setup(); await openRollout();

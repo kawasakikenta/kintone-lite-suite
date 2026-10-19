@@ -76,7 +76,7 @@ function buildReflectItem(item: ReflectItemSummary): HTMLLIElement {
  * 「変更の要約」。削除・変更・追加・保持をバッジ付きで並べる（項目名と内容はすべて textContent で描画する）。
  * 多いときは先頭 20 件だけ表示し、「残り N 件を表示」で続きを出す。保持だけの項目は折りたたんで控えめに示す。
  */
-export function appendReflectItems(host: HTMLElement, plan: Pick<ReflectSectionPlan, 'label' | 'items'>) {
+export function appendReflectItems(host: HTMLElement, plan: Pick<ReflectSectionPlan, 'label' | 'items'> & Partial<Pick<ReflectSectionPlan, 'sectionKey'>>) {
   const items = orderReflectItems(plan.items);
   if (!items.length) return;
   const counts = countReflectItemKinds(items);
@@ -84,6 +84,11 @@ export function appendReflectItems(host: HTMLElement, plan: Pick<ReflectSectionP
   const root = document.createElement(onlyKept ? 'details' : 'section');
   root.className = `kus-rl-items${onlyKept ? ' kus-rl-items--quiet' : ''}`;
   root.dataset.reflectItems = 'true';
+  // 一覧を再描画しても、開いていた内訳や表示済みの件数を戻せるよう、項目の識別子を付ける。
+  if (plan.sectionKey) {
+    root.dataset.reflectSection = plan.sectionKey;
+    if (onlyKept) root.dataset.reflectDetails = `${plan.sectionKey}:kept`;
+  }
   const countText = REFLECT_ITEM_KIND_ORDER.filter((kind) => counts[kind]).map((kind) => `${kind} ${counts[kind]}`).join('・');
   const list = document.createElement('ul');
   list.className = 'kus-rl-items__list';
@@ -145,6 +150,7 @@ export function appendReflectChanges(host: HTMLElement, plan: ReflectSectionPlan
   if (options.uploads !== false) appendReflectUploads(host, plan);
   if (!plan.changes.length) return;
   const details = document.createElement('details'); details.className = 'kus-rl-changes';
+  if (plan.sectionKey) details.dataset.reflectDetails = `${plan.sectionKey}:changes`;
   const summary = document.createElement('summary'); summary.textContent = `${plan.label}：設定値の内訳（変更 ${plan.changeCount}件・保持 ${plan.changes.length - plan.changeCount}件）`;
   details.appendChild(summary); host.appendChild(details);
   let activeKind: 'すべて' | '削除' | '変更' | '追加' = 'すべて';

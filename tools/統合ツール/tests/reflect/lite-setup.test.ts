@@ -202,6 +202,17 @@ describe('findMissingFieldReferences', () => {
     expect(findMissingFieldReferences([view, layout], ['layoutSettings'], [], ['name'])).toEqual([]);
   });
 
+  it('反映元のシステムフィールドは、フィールド設定を反映しても追加されないため、反映元にあるとは扱わない', () => {
+    const recordNumber = { sectionKey: 'viewSettings', label: 'ビュー設定', blockers: [] as string[], requiredFields: ['Record_number', 'tag'] };
+    // 反映元の書き込み可能なフィールドが分からない（空）ときも、システムフィールドは解消できない不足として示す。
+    expect(findMissingFieldReferences([recordNumber], ['viewSettings'], [], ['レコード番号'], ['Record_number'])).toEqual([
+      { sectionKey: 'viewSettings', label: 'ビュー設定', code: 'Record_number', inSource: false },
+      { sectionKey: 'viewSettings', label: 'ビュー設定', code: 'tag', inSource: undefined }
+    ]);
+    const onlySystem = findMissingFieldReferences([{ ...recordNumber, requiredFields: ['Record_number'] }], ['viewSettings'], [], [], ['Record_number']);
+    expect(canResolveByIncludingFieldSettings(onlySystem, ['viewSettings'])).toBe(false);
+  });
+
   it('フィールド設定を選んでいて問題が無ければ、反映元のフィールドは追加されるので不足にしない', () => {
     const fields = { sectionKey: 'fieldSettings', label: 'フィールド設定', blockers: [] as string[] };
     expect(findMissingFieldReferences([fields, view], ['fieldSettings', 'viewSettings'], ['name', 'tag'], ['name'])).toEqual([]);

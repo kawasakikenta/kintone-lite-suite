@@ -187,16 +187,19 @@ export function findMissingFieldReferences(
   entries: readonly FieldDependencyEntry[],
   scopes: readonly string[],
   sourceFieldCodes: readonly string[],
-  targetFieldCodes: readonly string[]
+  targetFieldCodes: readonly string[],
+  sourceSystemFieldCodes: readonly string[] = []
 ): MissingFieldReference[] {
   const selected = entries.filter((entry) => scopes.includes(entry.sectionKey));
+  // 反映元のシステムフィールド（レコード番号・ステータスなど）は、フィールド設定の反映では追加されない。
   const fieldEntry = selected.find((entry) => entry.sectionKey === 'fieldSettings');
   const sourceCodes = new Set(sourceFieldCodes);
+  const systemCodes = new Set(sourceSystemFieldCodes);
   const available = new Set([...targetFieldCodes, ...(scopes.includes('fieldSettings') && !fieldEntry?.blockers.length ? sourceFieldCodes : [])]);
   const out: MissingFieldReference[] = [];
   for (const entry of selected) {
     for (const code of entry.requiredFields || []) {
-      if (!available.has(code)) out.push({ sectionKey: entry.sectionKey, label: entry.label, code, inSource: sourceCodes.size ? sourceCodes.has(code) : undefined });
+      if (!available.has(code)) out.push({ sectionKey: entry.sectionKey, label: entry.label, code, inSource: systemCodes.has(code) ? false : sourceCodes.size ? sourceCodes.has(code) : undefined });
     }
   }
   return out;
