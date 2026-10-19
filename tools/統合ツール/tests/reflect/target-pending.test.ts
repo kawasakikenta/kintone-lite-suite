@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { inspectTargetPendingChanges } from '../../src/reflect/targetPending';
+import { inspectTargetPendingChanges, reconcileOwnPendingChanges } from '../../src/reflect/targetPending';
 import { previewReflectStandalone } from '../../src/tabs/reflect-standalone';
 
 const field = (code: string, label = code) => ({ type: 'SINGLE_LINE_TEXT', code, label, required: false });
@@ -125,5 +125,29 @@ describe('反映先プレビューの未公開の変更の確認', () => {
     const preview = await previewReflectStandalone({ sourceAppId: '1', targetAppId: '2', scopes: ['fieldSettings'], sourceBundle: { appId: '1', sections: { fieldSettings: { properties: { name: field('name') } } } } }, () => {});
     expect(preview.targetPending?.state).toBe('unknown');
     expect(preview.entries[0].status).toBe('change');
+  });
+});
+
+describe('直前の反映分を「以前からの未公開の変更」と区別する', () => {
+  const pending = { state: 'pending' as const, productionRevision: '20', previewRevision: '24', sectionKeys: ['fieldSettings'], message: '未公開あり' };
+  const target = { appId: '2', guestId: '' };
+  it('同じ反映先で、最終 revision が一致し、反映前が clean なら own にする', () => {
+    const result = reconcileOwnPendingChanges(pending, { targetAppId: '2', targetGuestId: '', finalRevision: '24', priorState: 'clean' }, target);
+    expect(result?.state).toBe('own');
+    expect(result?.message).toContain('直前の反映によるものだけ');
+    expect(reconcileOwnPendingChanges(pending, { targetAppId: '2', targetGuestId: '', finalRevision: '24', priorState: 'own' }, target)?.state).toBe('own');
+  });
+  it('別の反映先・別の revision・反映前から未公開の変更があった場合は pending のまま', () => {
+    expect(reconcileOwnPendingChanges(pending, { targetAppId: '3', targetGuestId: '', finalRevision: '24', priorState: 'clean' }, target)?.state).toBe('pending');
+    expect(reconcileOwnPendingChanges(pending, { targetAppId: '2', targetGuestId: '5', finalRevision: '24', priorState: 'clean' }, target)?.state).toBe('pending');
+    expect(reconcileOwnPendingChanges(pending, { targetAppId: '2', targetGuestId: '', finalRevision: '23', priorState: 'clean' }, target)?.state).toBe('pending');
+    expect(reconcileOwnPendingChanges(pending, { targetAppId: '2', targetGuestId: '', finalRevision: '24', priorState: 'pending' }, target)?.state).toBe('pending');
+    expect(reconcileOwnPendingChanges(pending, { targetAppId: '2', targetGuestId: '', finalRevision: '', priorState: 'clean' }, target)?.state).toBe('pending');
+    expect(reconcileOwnPendingChanges(pending, null, target)?.state).toBe('pending');
+  });
+  it('clean / unknown / 未取得はそのまま返す', () => {
+    const clean = { ...pending, state: 'clean' as const };
+    expect(reconcileOwnPendingChanges(clean, { targetAppId: '2', targetGuestId: '', finalRevision: '24', priorState: 'clean' }, target)).toBe(clean);
+    expect(reconcileOwnPendingChanges(undefined, { targetAppId: '2', targetGuestId: '', finalRevision: '24', priorState: 'clean' }, target)).toBeUndefined();
   });
 });

@@ -1939,7 +1939,12 @@ ${base}`
 
   // src/reflect/sections.ts
   init_constants();
-  var REFLECT_SECTION_KEYS = SECTION_DEFS.filter((def) => def.put).map((def) => def.key).flatMap((key) => key === "layoutSettings" ? [key, "appSettings"] : [key]);
+  var REFLECT_SECTION_KEYS = (() => {
+    const keys = SECTION_DEFS.filter((def) => def.put).map((def) => def.key).filter((key) => key !== "appSettings");
+    const anchor = Math.max(keys.indexOf("layoutSettings"), keys.indexOf("fieldSettings"));
+    keys.splice(anchor + 1, 0, "appSettings");
+    return keys;
+  })();
   var APP_SETTINGS_REFLECT_KEYS = ["theme", "titleField", "enableThumbnails", "enableBulkDeletion", "enableComments", "enableDuplicateRecord", "enableInlineRecordEditing", "numberPrecision", "firstMonthOfFiscalYear"];
   var APP_SETTINGS_LABELS = {
     theme: "テーマ",
@@ -2087,6 +2092,9 @@ ${base}`
   // src/reflect/customizeFiles.ts
   init_api();
   init_utils();
+  function customizeSlotKey(platform, kind, fileKey) {
+    return `${platform}/${kind}/${fileKey}`;
+  }
   var PLATFORMS = ["desktop", "mobile"];
   var KINDS = ["js", "css"];
   var DOWNLOAD_CONCURRENCY = 4;
@@ -2100,7 +2108,7 @@ ${base}`
       if (!Array.isArray(list2)) continue;
       for (const item of list2) {
         const fileKey = item?.type === "FILE" ? item?.file?.fileKey : void 0;
-        if (typeof fileKey === "string" && fileKey) entries.push({ item, fileKey, name: String(item.file.name || "") });
+        if (typeof fileKey === "string" && fileKey) entries.push({ item, fileKey, name: String(item.file.name || ""), platform, kind });
       }
     }
     return entries;
@@ -2151,7 +2159,7 @@ ${base}`
     try {
       return await downloadKintoneFile(guestId, fileKey);
     } catch (error) {
-      if (/大きすぎ/.test(messageOf(error))) throw error;
+      if (/大きすぎ|HTTP 4\d\d/.test(messageOf(error))) throw error;
       return downloadKintoneFile(guestId, fileKey);
     }
   };
@@ -2177,21 +2185,24 @@ ${base}`
   }
   async function resolveCustomizeFiles(sourceSection, targetSection, opts) {
     const download = opts.download || defaultDownload;
-    const resolution = { files: dict(), hashes: dict(), blobs: /* @__PURE__ */ new Map() };
+    const resolution = { files: dict(), hashes: dict(), blobs: /* @__PURE__ */ new Map(), targetBlobs: /* @__PURE__ */ new Map(), targetUnavailable: [] };
+    const slotOf = (entry) => customizeSlotKey(entry.platform, entry.kind, entry.fileKey);
     const targetEntries = listFileEntries(targetSection);
-    const targetKeys = new Set(targetEntries.map((entry) => entry.fileKey));
-    const pending = /* @__PURE__ */ new Map();
+    const targetSlots = new Set(targetEntries.map(slotOf));
+    const pending = [];
     for (const entry of listFileEntries(sourceSection)) {
-      if (targetKeys.has(entry.fileKey)) resolution.files[entry.fileKey] = { status: "existing" };
-      else if (!pending.has(entry.fileKey)) pending.set(entry.fileKey, entry);
+      if (targetSlots.has(slotOf(entry))) resolution.files[slotOf(entry)] = { status: "existing" };
+      else if (!pending.some((item) => slotOf(item) === slotOf(entry))) pending.push(entry);
     }
-    if (!pending.size) return resolution;
-    const sourceBodies = /* @__PURE__ */ new Map();
-    await pool([...pending.values()], async (entry) => {
+    if (!pending.length) return resolution;
+    const sourceBodies = /* @__PURE__ */ new Map(), sourceErrors = /* @__PURE__ */ new Map();
+    const sourceByKey = /* @__PURE__ */ new Map();
+    for (const entry of pending) if (!sourceByKey.has(entry.fileKey)) sourceByKey.set(entry.fileKey, entry);
+    await pool([...sourceByKey.values()], async (entry) => {
       try {
         sourceBodies.set(entry.fileKey, await loadBody(entry, opts.sourceGuestId, download, true));
       } catch (error) {
-        resolution.files[entry.fileKey] = { status: "unavailable", reason: messageOf(error) };
+        sourceErrors.set(entry.fileKey, messageOf(error));
       }
     });
     const targetByKey = /* @__PURE__ */ new Map();
@@ -2200,16 +2211,26 @@ ${base}`
     if (sourceBodies.size) await pool([...targetByKey.values()], async (entry) => {
       try {
         targetBodies.set(entry.fileKey, await loadBody(entry, opts.targetGuestId, download, false));
-      } catch {
+      } catch (error) {
+        resolution.targetUnavailable.push({ fileKey: entry.fileKey, name: entry.name || entry.fileKey, reason: messageOf(error) });
       }
     });
-    for (const [key, body] of targetBodies) resolution.hashes[key] = body.hash;
-    for (const [key, body] of sourceBodies) {
-      const entry = pending.get(key);
+    for (const [key, body] of targetBodies) {
       resolution.hashes[key] = body.hash;
-      resolution.blobs.set(key, body.blob);
-      const reused = [...targetBodies].find(([targetKey, targetBody]) => targetBody.hash === body.hash && targetByKey.get(targetKey).name === entry.name);
-      resolution.files[key] = reused ? { status: "reuse", targetFileKey: reused[0], hash: body.hash, byteSize: body.blob.size } : { status: "upload", hash: body.hash, byteSize: body.blob.size, contentType: body.blob.type || String(entry.item.file?.contentType || "") || guessContentType(entry.name) };
+      resolution.targetBlobs.set(key, body.blob);
+    }
+    const reusedTargetSlots = /* @__PURE__ */ new Set();
+    for (const entry of pending) {
+      const slot = slotOf(entry), body = sourceBodies.get(entry.fileKey);
+      if (!body) {
+        resolution.files[slot] = { status: "unavailable", reason: sourceErrors.get(entry.fileKey) || "本体を取得できません" };
+        continue;
+      }
+      resolution.hashes[entry.fileKey] = body.hash;
+      resolution.blobs.set(entry.fileKey, body.blob);
+      const reused = entry.name ? targetEntries.find((candidate) => candidate.platform === entry.platform && candidate.kind === entry.kind && candidate.name === entry.name && targetBodies.get(candidate.fileKey)?.hash === body.hash && !reusedTargetSlots.has(slotOf(candidate))) : void 0;
+      if (reused) reusedTargetSlots.add(slotOf(reused));
+      resolution.files[slot] = reused ? { status: "reuse", targetFileKey: reused.fileKey, hash: body.hash, byteSize: body.blob.size } : { status: "upload", hash: body.hash, byteSize: body.blob.size, contentType: body.blob.type || String(entry.item.file?.contentType || "") || guessContentType(entry.name) };
     }
     return resolution;
   }
@@ -2227,7 +2248,7 @@ ${base}`
     return result;
   }
   async function embedCustomizeFileContents(section, opts) {
-    const download = opts.download || defaultDownload;
+    const download = async (guestId, fileKey) => opts.cached?.get(fileKey) || (opts.download || defaultDownload)(guestId, fileKey);
     const copy = deepClone(section);
     const entries = listFileEntries(copy);
     const results = /* @__PURE__ */ new Map();
@@ -3408,13 +3429,17 @@ ${base}`
           const currentKeys = new Set(["desktop", "mobile"].flatMap((platform) => ["js", "css"].flatMap((kind) => (target[platform]?.[kind] || []).map((item) => item.file?.fileKey).filter(Boolean))));
           for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) for (const [index, item] of after[platform][kind].entries()) {
             if (item.type !== "FILE") continue;
-            const fileKey = item.file.fileKey, name = names[fileKey] || "アップロードファイル", state3 = resolution?.files[fileKey];
+            const fileKey = item.file.fileKey, name = names[fileKey] || "", state3 = resolution?.files[customizeSlotKey(platform, kind, fileKey)];
+            const shown = name || "アップロードファイル";
             if (state3?.status === "reuse") item.file.fileKey = state3.targetFileKey;
-            else if (state3?.status === "upload") uploads.push({ platform, kind, index, sourceFileKey: fileKey, name, byteSize: state3.byteSize });
-            else if (state3?.status === "unavailable") plan.blockers.push(`${platform}/${kind}: 「${name}」を反映元から取得できません（${state3.reason}）。反映元でファイルを確認してください。`);
-            else if (!state3 && !currentKeys.has(fileKey)) plan.blockers.push(`${platform}/${kind}: 「${name}」は反映先に存在せず、反映元のファイル本体を確認できません。`);
+            else if (state3?.status === "upload") {
+              if (!name) plan.blockers.push(`${platform}/${kind}: 反映元のファイル（${fileKey}）にファイル名がありません。反映元のJS/CSS設定を確認してください。`);
+              else uploads.push({ platform, kind, index, sourceFileKey: fileKey, name, byteSize: state3.byteSize });
+            } else if (state3?.status === "unavailable") plan.blockers.push(`${platform}/${kind}: 「${shown}」を反映元から取得できません（${state3.reason}）。反映元でファイルを確認してください。`);
+            else if (!state3 && !currentKeys.has(fileKey)) plan.blockers.push(`${platform}/${kind}: 「${shown}」は反映先に存在せず、反映元のファイル本体を確認できません。`);
           }
-          if (uploads.length) plan.warnings.push(`${new Set(uploads.map((upload) => upload.sourceFileKey)).size} 件のファイル（合計 ${formatBytes([...new Map(uploads.map((upload) => [upload.sourceFileKey, upload.byteSize])).values()].reduce((sum, size) => sum + size, 0))}）を反映先へアップロードしてから設定します。`);
+          if (uploads.length) plan.warnings.push(`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`);
+          if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map((item) => `「${item.name}」（${item.reason}）`).join("、")} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
         }
         if (key === "layoutSettings") {
           if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error("レイアウトの形式が不正です。");
@@ -3529,6 +3554,13 @@ ${base}`
 
   // src/reflect/targetPending.ts
   init_api();
+  function reconcileOwnPendingChanges(pending, lastRun, target) {
+    if (!pending || pending.state !== "pending" || !lastRun) return pending;
+    if (lastRun.targetAppId !== target.appId || (lastRun.targetGuestId || "") !== (target.guestId || "")) return pending;
+    if (!/^\d+$/.test(lastRun.finalRevision) || lastRun.finalRevision !== pending.previewRevision) return pending;
+    if (lastRun.priorState !== "clean" && lastRun.priorState !== "own") return pending;
+    return { ...pending, state: "own", message: `反映先プレビューの未公開の変更は、このツールの直前の反映によるものだけです（本番 revision ${pending.productionRevision} / プレビュー revision ${pending.previewRevision}）。アプリの設定画面の「変更を中止」で取り消せます。` };
+  }
   var comparableResources = (list2) => Array.isArray(list2) ? list2.map((item) => item?.type === "FILE" ? { type: "FILE", name: item.file?.name ?? "", size: String(item.file?.size ?? "") } : item) : list2;
   var comparable = (key, section) => {
     if (!section || typeof section !== "object" || Array.isArray(section)) return stableReflectStringify(section);
@@ -3765,7 +3797,7 @@ ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).jo
       let bundle = target;
       if (plans.some((plan) => plan.sectionKey === "customizeSettings" && plan.operations.length)) {
         setStatus("バックアップ用にJS/CSSファイルを取得中…");
-        const embedded = await embedCustomizeFileContents(target.sections.customizeSettings, { guestId: opts.targetGuestId || "" });
+        const embedded = await embedCustomizeFileContents(target.sections.customizeSettings, { guestId: opts.targetGuestId || "", cached: customizeFiles?.targetBlobs });
         bundle = { ...target, sections: { ...target.sections, customizeSettings: embedded.section } };
         const keptKeys = new Set(plans.filter((plan) => plan.sectionKey === "customizeSettings").flatMap((plan) => plan.operations).flatMap((operation) => ["desktop", "mobile"].flatMap((platform) => ["js", "css"].flatMap((kind) => (operation.body?.[platform]?.[kind] || []).map((item) => item?.file?.fileKey).filter(Boolean)))));
         const lost = embedded.unavailable.filter((item) => !keptKeys.has(item.fileKey));
@@ -3784,23 +3816,19 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       logs.push("バックアップ取得完了（保存を開始しました）");
     }
     const prefix = buildApiPrefix(opts.targetGuestId || "", true);
-    const uploadedKeys = /* @__PURE__ */ new Map();
     const bodyWithUploads = async (operation) => {
       if (!operation.uploads?.length) return operation.body;
       const body = deepClone(operation.body);
       for (const upload of operation.uploads) {
-        let fileKey = uploadedKeys.get(upload.sourceFileKey);
-        if (!fileKey) {
-          const blob = customizeFiles?.blobs.get(upload.sourceFileKey);
-          if (!blob) throw new Error(`「${upload.name}」のファイル本体がないためアップロードできません。`);
-          try {
-            fileKey = await uploadKintoneFile(opts.targetGuestId || "", blob, upload.name);
-          } catch (error) {
-            throw new Error(`「${upload.name}」のアップロードに失敗しました（${error.message || String(error)}）。${operation.label}は書き込んでいません。`);
-          }
-          uploadedKeys.set(upload.sourceFileKey, fileKey);
-          logs.push(`  OK ファイルアップロード: ${upload.name}`);
+        const blob = customizeFiles?.blobs.get(upload.sourceFileKey);
+        if (!blob) throw new Error(`「${upload.name}」のファイル本体がないためアップロードできません。`);
+        let fileKey;
+        try {
+          fileKey = await uploadKintoneFile(opts.targetGuestId || "", blob, upload.name);
+        } catch (error) {
+          throw new Error(`「${upload.name}」のアップロードに失敗しました（${error.message || String(error)}）。${operation.label}は書き込んでいません。`);
         }
+        logs.push(`  OK ファイルアップロード: ${upload.name}（${upload.platform === "desktop" ? "PC" : "モバイル"} ${upload.kind.toUpperCase()}）`);
         const item = body[upload.platform]?.[upload.kind]?.[upload.index];
         if (item?.file?.fileKey !== upload.sourceFileKey) throw new Error(`「${upload.name}」の反映位置を特定できません。${operation.label}は書き込んでいません。`);
         item.file.fileKey = fileKey;
@@ -3871,7 +3899,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     logs.push(`=== 完了: OK ${count("ok")} / NG ${count("ng")} / 未実行 ${count("pending")} / 変更なし ${count("skip")} ===`);
     onProgress(logs);
     setStatus(count("ng") ? "反映完了（一部エラーあり）" : "反映完了");
-    return { logs, sections, backup };
+    return { logs, sections, backup, finalRevision: revision };
   }
   async function preflightLookupMapStandalone(lookupMap, opts = {}) {
     const missing = [];
@@ -5217,9 +5245,6 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return targets.map((target) => target.guestId ? `/k/guest/${target.guestId}/${target.appId}/` : target.appId).join("\n");
   }
 
-  // src/entries/reflectPlanView.ts
-  init_constants();
-
   // src/reflect/liteSetup.ts
   var LOOKUP_PAIR_SEPARATOR = /\s*(?:→|->|=>|=|:|,|\t)\s*|\s+/;
   function parseLookupMapText(text) {
@@ -5285,7 +5310,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     reportSettings: "グラフを追加・更新します。反映先だけのグラフは「保持」の設定に従います。",
     actionSettings: "アクションを追加・更新します。反映先だけのアクションは「保持」の設定に従います。",
     pluginSettings: "反映先にまだ無いプラグインだけ追加します。プラグインの設定値はコピーしません。",
-    customizeSettings: "適用範囲と、PC・モバイルのJS/CSSファイル一覧を更新します。",
+    customizeSettings: "適用範囲と、PC・モバイルのJS/CSSファイル一覧を反映元の内容に置き換えます。反映先だけのファイル・URLは外れます。別アプリのファイルは反映先へアップロードして設定します。",
     processSettings: "反映元の内容で置き換えます。状態・アクション・作業者が変わり、運用中の申請に影響することがあります。",
     appAcl: "反映元の内容で置き換えます。反映先だけの権限は削除されます。",
     fieldAcl: "反映元の内容で置き換えます。反映先だけの権限は削除されます。",
@@ -5374,14 +5399,18 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   }
   function summarizeApplyProgress(rows) {
     if (!rows.length) return "";
-    const settled = rows.filter((row) => ["ok", "ng", "skip", "pending"].includes(row.status)).length;
+    const settled = rows.filter((row) => ["ok", "ng", "skip"].includes(row.status)).length;
     const failed = rows.filter((row) => row.status === "ng").length;
+    const skipped = rows.filter((row) => row.status === "pending").length;
     const running = rows.find((row) => row.status === "running");
-    return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ""}${running ? `。実行中: ${running.label}` : ""}`;
+    return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ""}${skipped ? `、未実行 ${skipped}` : ""}${running ? `。実行中: ${running.label}` : ""}`;
   }
   function describeUndoGuidance(targetPending) {
     if (targetPending?.state === "clean") {
       return { tone: "ok", openSettings: true, text: "反映前、反映先プレビューに未公開の変更はありませんでした。アプリの設定画面で『変更を中止』を押すと、今回の反映をすべて取り消せます。" };
+    }
+    if (targetPending?.state === "own") {
+      return { tone: "ok", openSettings: true, text: "反映前の未公開の変更は、このツールによる反映分だけでした。アプリの設定画面で『変更を中止』を押すと、それらを含む未公開の変更をすべて取り消せます。" };
     }
     if (targetPending?.state === "pending") {
       return { tone: "warn", openSettings: false, text: "反映前から未公開の変更があったため、『変更を中止』ではそれらも破棄されます。今回の反映だけを戻す場合は『バックアップから戻す』を使ってください。" };
@@ -5745,7 +5774,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       icon.textContent = display.icon;
       state3.append(icon, document.createTextNode(display.text));
       const name = document.createElement("strong");
-      name.textContent = section.label && section.label !== section.sectionKey ? section.label : SECTION_DEFS.find((def) => def.key === section.sectionKey)?.label || section.label || section.sectionKey;
+      name.textContent = section.label && section.label !== section.sectionKey ? section.label : reflectSectionLabel(section.sectionKey);
       head.append(state3, name);
       item.appendChild(head);
       if (section.message) {
@@ -7359,6 +7388,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const identities = await resolveReflectAppsStandalone(options);
       adoptResolvedAppNames(identities, !!options.sourceBundle);
       const result = await previewReflectStandalone(options, (message) => panel.setStatus(message, "busy"));
+      const lastRun = memoryState.lastResult;
+      result.targetPending = reconcileOwnPendingChanges(result.targetPending, lastRun?.finalRevision ? { targetAppId: lastRun.appId, targetGuestId: lastRun.guestId || "", finalRevision: lastRun.finalRevision, priorState: lastRun.report.targetPending?.state } : null, { appId: options.targetAppId, guestId: options.targetGuestId || "" });
       memoryState.lastPreview = { signature, scopes: [...scopes], at: Date.now(), result, identities, ...restoreMode ? { restore: restoreMode.token } : {}, ...postApplyCheck ? { postApplyCheck: { scopeCount: scopes.length } } : {} };
       rerenderPreviewCard();
       refreshReviewCard();
@@ -8079,6 +8110,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         };
         const targetPendingAtApply = previewResult.targetPending;
         clearConfirmation();
+        const previous = { result: memoryState.lastResult, log: logPre.textContent || "", logVisible: logCard.card.style.display !== "none" };
         logCard.card.style.display = "block";
         logPre.style.display = "block";
         logPre.textContent = "";
@@ -8099,6 +8131,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
               logPre.scrollTop = logPre.scrollHeight;
             }
           );
+        } catch (error) {
+          memoryState.lastResult = previous.result;
+          logPre.textContent = previous.log;
+          logPre.style.display = previous.log ? "block" : "none";
+          logCard.card.style.display = previous.logVisible ? "block" : "none";
+          renderLastResult();
+          renderRollout();
+          throw error;
         } finally {
           progressCard.card.style.display = "none";
           progressHost.replaceChildren();
@@ -8116,6 +8156,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
           failedLabels: applyOutcome.sections.filter((s) => s.status === "ng").map((s) => s.label),
           sourceBundleToken: sourceMode === "json" ? sourceBundleToken : "",
           ...applyOutcome.backup ? { backup: applyOutcome.backup } : {},
+          ...applyOutcome.finalRevision ? { finalRevision: applyOutcome.finalRevision } : {},
           planned: plannedSnapshot,
           report: {
             source: {
@@ -8378,9 +8419,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       title.textContent = "反映先に以前からの未公開の変更があります";
       box.append(title, text);
     } else {
-      box.className = `kus-rl-pending kus-rl-pending--${pending.state === "clean" ? "clean" : "unknown"}`;
+      box.className = `kus-rl-pending kus-rl-pending--${pending.state === "clean" || pending.state === "own" ? "clean" : "unknown"}`;
       const mark = document.createElement("strong");
-      mark.textContent = pending.state === "clean" ? "✓ 未公開の変更なし" : "ⓘ 未公開の変更は未確認";
+      mark.textContent = pending.state === "clean" ? "✓ 未公開の変更なし" : pending.state === "own" ? "✓ 未公開の変更はこのツールの反映分だけ" : "ⓘ 未公開の変更は未確認";
       box.append(mark, text);
     }
     host.appendChild(box);

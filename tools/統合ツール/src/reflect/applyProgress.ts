@@ -49,10 +49,12 @@ export function applyProgressUpdate(rows: readonly ApplyProgressRow[], update: {
 /** 「完了 2 / 5 項目」のような進み具合の 1 文。 */
 export function summarizeApplyProgress(rows: readonly ApplyProgressRow[]): string {
   if (!rows.length) return '';
-  const settled = rows.filter((row) => ['ok', 'ng', 'skip', 'pending'].includes(row.status)).length;
+  // 中断で実行されなかった項目は「完了」に数えない。
+  const settled = rows.filter((row) => ['ok', 'ng', 'skip'].includes(row.status)).length;
   const failed = rows.filter((row) => row.status === 'ng').length;
+  const skipped = rows.filter((row) => row.status === 'pending').length;
   const running = rows.find((row) => row.status === 'running');
-  return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ''}${running ? `。実行中: ${running.label}` : ''}`;
+  return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ''}${skipped ? `、未実行 ${skipped}` : ''}${running ? `。実行中: ${running.label}` : ''}`;
 }
 
 // =============================================================================
@@ -65,6 +67,9 @@ export interface UndoGuidance { tone: 'info' | 'warn' | 'ok'; text: string; /** 
 export function describeUndoGuidance(targetPending?: { state?: string } | null): UndoGuidance {
   if (targetPending?.state === 'clean') {
     return { tone: 'ok', openSettings: true, text: '反映前、反映先プレビューに未公開の変更はありませんでした。アプリの設定画面で『変更を中止』を押すと、今回の反映をすべて取り消せます。' };
+  }
+  if (targetPending?.state === 'own') {
+    return { tone: 'ok', openSettings: true, text: '反映前の未公開の変更は、このツールによる反映分だけでした。アプリの設定画面で『変更を中止』を押すと、それらを含む未公開の変更をすべて取り消せます。' };
   }
   if (targetPending?.state === 'pending') {
     return { tone: 'warn', openSettings: false, text: '反映前から未公開の変更があったため、『変更を中止』ではそれらも破棄されます。今回の反映だけを戻す場合は『バックアップから戻す』を使ってください。' };

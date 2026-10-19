@@ -1,4 +1,4 @@
-import { SECTION_DEFS } from '../constants.js';
+import { reflectSectionLabel } from '../reflect/sections.js';
 import { buildReflectErrorHint } from '../reflect/applyOutcome.js';
 import { describeApplySectionStatus, normalizeApplySections } from '../reflect/liteSetup.js';
 import { REFLECT_ITEM_KIND_ORDER, applyProgressUpdate, countReflectItemKinds, describeApplyProgressStatus, formatUploadList, orderReflectItems, summarizeApplyProgress, type ApplyProgressRow, type ApplyProgressStatus } from '../reflect/applyProgress.js';
@@ -344,9 +344,7 @@ export function renderApplySectionResults(host: HTMLElement, rawSections: unknow
     icon.textContent = display.icon;
     state.append(icon, document.createTextNode(display.text));
     const name = document.createElement('strong');
-    name.textContent = section.label && section.label !== section.sectionKey
-      ? section.label
-      : SECTION_DEFS.find((def) => def.key === section.sectionKey)?.label || section.label || section.sectionKey;
+    name.textContent = section.label && section.label !== section.sectionKey ? section.label : reflectSectionLabel(section.sectionKey);
     head.append(state, name);
     item.appendChild(head);
     if (section.message) {

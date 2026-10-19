@@ -2,7 +2,26 @@ import { apiGet, buildApiPrefix, fetchBundle } from '../api.js';
 import { reflectSectionLabel } from './sections.js';
 import { isCompleteReflectSection, stableReflectStringify } from './standalonePreflight.js';
 
-export interface ReflectTargetPending { state: 'clean' | 'pending' | 'unknown'; productionRevision: string; previewRevision: string; sectionKeys: string[]; message: string }
+/**
+ * clean: 本番とプレビューの revision が一致（未公開の変更なし）。
+ * own: 未公開の変更があるが、このツールの直前の反映によるものだけ（UI が直前の実行結果から判定する）。
+ * pending: 以前からの未公開の変更がある。unknown: 確認できない。
+ */
+export interface ReflectTargetPending { state: 'clean' | 'own' | 'pending' | 'unknown'; productionRevision: string; previewRevision: string; sectionKeys: string[]; message: string }
+
+export interface ReflectLastRunInfo { targetAppId: string; targetGuestId: string; /** 最後の書き込み後のプレビュー revision */ finalRevision: string; /** その反映の差分確認時の判定 */ priorState?: ReflectTargetPending['state'] }
+
+/**
+ * 直前にこのツールが同じ反映先へ書き込んだ直後の再確認では、未公開の変更は自分の反映分なので「以前からの変更」と扱わない。
+ * プレビューの revision が直前の反映の最終 revision と一致し、その反映前に未公開の変更が無かった場合だけ own にする。
+ */
+export function reconcileOwnPendingChanges(pending: ReflectTargetPending | undefined, lastRun: ReflectLastRunInfo | null | undefined, target: { appId: string; guestId: string }): ReflectTargetPending | undefined {
+  if (!pending || pending.state !== 'pending' || !lastRun) return pending;
+  if (lastRun.targetAppId !== target.appId || (lastRun.targetGuestId || '') !== (target.guestId || '')) return pending;
+  if (!/^\d+$/.test(lastRun.finalRevision) || lastRun.finalRevision !== pending.previewRevision) return pending;
+  if (lastRun.priorState !== 'clean' && lastRun.priorState !== 'own') return pending;
+  return { ...pending, state: 'own', message: `反映先プレビューの未公開の変更は、このツールの直前の反映によるものだけです（本番 revision ${pending.productionRevision} / プレビュー revision ${pending.previewRevision}）。アプリの設定画面の「変更を中止」で取り消せます。` };
+}
 
 /** JS/CSS の fileKey は環境ごとに異なりうるため、ファイル名とサイズで比べる。 */
 const comparableResources = (list: any) => Array.isArray(list) ? list.map((item: any) => item?.type === 'FILE' ? { type: 'FILE', name: item.file?.name ?? '', size: String(item.file?.size ?? '') } : item) : list;

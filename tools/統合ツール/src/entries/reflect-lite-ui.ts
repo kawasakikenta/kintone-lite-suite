@@ -30,7 +30,7 @@ import { pickAllSettingsBundles } from '../settingsBundleImport.js';
 import { reflectSelectionBlockers } from '../reflect/standalonePlan.js';
 import { buildReflectReportMarkdown } from '../reflect/planReport.js';
 import { describeRolloutLookupNotice, formatRolloutTarget, parseRolloutQueue, serializeRolloutQueue, upsertRolloutLog } from '../reflect/rolloutQueue.js';
-import { appendReflectChanges, appendReflectItems, renderReflectRoute, renderReflectSummaryTable, renderApplySectionResults, createApplyProgressView, type ApplyProgressView } from './reflectPlanView.js';
+import { appendReflectChanges, renderReflectRoute, renderReflectSummaryTable, renderApplySectionResults, createApplyProgressView, type ApplyProgressView } from './reflectPlanView.js';
 import { REFLECT_SECTION_KEYS, reflectSectionLabel } from '../reflect/sections.js';
 import {
   RESTORE_MODE_NOTICE,
@@ -42,7 +42,7 @@ import {
   formatReflectDateTime,
   formatReflectTime
 } from '../reflect/applyProgress.js';
-import type { ReflectTargetPending } from '../reflect/targetPending.js';
+import { reconcileOwnPendingChanges, type ReflectTargetPending } from '../reflect/targetPending.js';
 import { collectRetrySectionKeys, summarizeApplyOutcome } from '../reflect/applyOutcome.js';
 import {
   parseAppReference,
@@ -154,6 +154,8 @@ interface LiteMemoryState {
     sourceBundleToken?: string;
     /** 反映前に自動保存したバックアップと同じ内容（「バックアップから戻す」用）。実行結果JSONには含めない。 */
     backup?: ReflectBackup;
+    /** 最後の書き込み後の反映先プレビューの revision。次の差分確認で、未公開の変更が自分の反映分かを判定する */
+    finalRevision?: string;
     /** Markdown の反映記録用に、実行した計画（実行項目の差分）と反映元・反映先の名前を控える。実行結果JSONには含めない。 */
     planned?: { identities: ReflectIdentities; entries: PreviewEntry[] };
     /** 監査用に保存できる実行時の全セクション結果とログ */
@@ -1682,6 +1684,9 @@ export function mountReflectLitePanel() {
     const identities = await resolveReflectAppsStandalone(options);
     adoptResolvedAppNames(identities, !!options.sourceBundle);
     const result = await previewReflectStandalone(options, (message) => panel.setStatus(message, 'busy'));
+    // 直前にこの画面が同じ反映先へ書き込んだ直後なら、その反映分を「以前からの未公開の変更」として扱わない。
+    const lastRun = memoryState.lastResult;
+    result.targetPending = reconcileOwnPendingChanges(result.targetPending, lastRun?.finalRevision ? { targetAppId: lastRun.appId, targetGuestId: lastRun.guestId || '', finalRevision: lastRun.finalRevision, priorState: lastRun.report.targetPending?.state } : null, { appId: options.targetAppId, guestId: options.targetGuestId || '' });
     memoryState.lastPreview = { signature, scopes: [...scopes], at: Date.now(), result, identities, ...(restoreMode ? { restore: restoreMode.token } : {}), ...(postApplyCheck ? { postApplyCheck: { scopeCount: scopes.length } } : {}) };
     rerenderPreviewCard(); refreshReviewCard(); showWorkflowStage('review');
     return result;
@@ -2382,6 +2387,8 @@ export function mountReflectLitePanel() {
       const targetPendingAtApply = previewResult.targetPending;
       clearConfirmation();
 
+      // 書き込み前に止まった場合は反映先が変わっていないため、直前の結果（バックアップから戻す導線を含む）とログを戻せるよう控える。
+      const previous = { result: memoryState.lastResult, log: logPre.textContent || '', logVisible: logCard.card.style.display !== 'none' };
       logCard.card.style.display = 'block';
       logPre.style.display = 'block';
       logPre.textContent = '';
@@ -2404,6 +2411,15 @@ export function mountReflectLitePanel() {
             logPre.scrollTop = logPre.scrollHeight;
           }
         );
+      } catch (error) {
+        // エンジンは書き込みを始める前の検査でだけ例外を投げる（書き込み中の失敗は結果に記録される）。直前の結果を戻す。
+        memoryState.lastResult = previous.result;
+        logPre.textContent = previous.log;
+        logPre.style.display = previous.log ? 'block' : 'none';
+        logCard.card.style.display = previous.logVisible ? 'block' : 'none';
+        renderLastResult();
+        renderRollout();
+        throw error;
       } finally {
         // 完了（または書き込み前の停止）後は、進捗の一覧を下の結果一覧に置き換える。
         progressCard.card.style.display = 'none';
@@ -2423,6 +2439,7 @@ export function mountReflectLitePanel() {
         failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng').map((s) => s.label),
         sourceBundleToken: sourceMode === 'json' ? sourceBundleToken : '',
         ...(applyOutcome.backup ? { backup: applyOutcome.backup } : {}),
+        ...(applyOutcome.finalRevision ? { finalRevision: applyOutcome.finalRevision } : {}),
         planned: plannedSnapshot,
         report: {
           source: {
@@ -2694,9 +2711,9 @@ function appendTargetPendingNotice(host: HTMLElement, pending: ReflectTargetPend
     title.textContent = '反映先に以前からの未公開の変更があります';
     box.append(title, text);
   } else {
-    box.className = `kus-rl-pending kus-rl-pending--${pending.state === 'clean' ? 'clean' : 'unknown'}`;
+    box.className = `kus-rl-pending kus-rl-pending--${pending.state === 'clean' || pending.state === 'own' ? 'clean' : 'unknown'}`;
     const mark = document.createElement('strong');
-    mark.textContent = pending.state === 'clean' ? '✓ 未公開の変更なし' : 'ⓘ 未公開の変更は未確認';
+    mark.textContent = pending.state === 'clean' ? '✓ 未公開の変更なし' : pending.state === 'own' ? '✓ 未公開の変更はこのツールの反映分だけ' : 'ⓘ 未公開の変更は未確認';
     box.append(mark, text);
   }
   host.appendChild(box);
