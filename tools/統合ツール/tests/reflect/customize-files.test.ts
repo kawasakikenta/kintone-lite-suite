@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildCustomizeSettingsPutPayload } from '../../src/constants';
 import {
-  base64ToBytes, bytesToBase64, comparableCustomizePayload, customizeFileNames, embedCustomizeFileContents, resolveCustomizeFiles
+  base64ToBytes, bytesToBase64, comparableCustomizePayload, customizeFileNames, customizeSlotKey, embedCustomizeFileContents, resolveCustomizeFiles
 } from '../../src/reflect/customizeFiles';
+const js = (key: string) => customizeSlotKey('desktop', 'js', key);
 import { buildReflectSectionPlan } from '../../src/reflect/standalonePlan';
 import { previewReflectStandalone, runApplyPreviewStandalone } from '../../src/tabs/reflect-standalone';
 
@@ -38,7 +39,7 @@ describe('resolveCustomizeFiles', () => {
   it('treats keys already in the target as existing without downloading anything', async () => {
     const { download, calls } = downloader({});
     const resolution = await resolveCustomizeFiles(section([file('same', 'a.js')]), section([file('same', 'a.js')]), { ...opts, download });
-    expect(resolution.files).toEqual({ same: { status: 'existing' } });
+    expect(resolution.files).toEqual({ [js('same')]: { status: 'existing' } });
     expect(calls).toEqual([]);
   });
 
@@ -47,12 +48,15 @@ describe('resolveCustomizeFiles', () => {
     const source = section([file('srcA', 'a.js'), file('srcB', 'b.js'), file('srcC', 'c.js'), file('missing', 'x.js')]);
     const target = section([file('tgtA', 'a.js'), file('tgtB', 'renamed.js'), file('gone', 'g.js')]);
     const resolution = await resolveCustomizeFiles(source, target, { ...opts, download });
-    expect(resolution.files.srcA).toMatchObject({ status: 'reuse', targetFileKey: 'tgtA', byteSize: 14 });
-    expect(resolution.files.srcB).toMatchObject({ status: 'upload', byteSize: 14, contentType: 'text/javascript' });
+    expect(resolution.files[js('srcA')]).toMatchObject({ status: 'reuse', targetFileKey: 'tgtA', byteSize: 14 });
+    expect(resolution.files[js('srcB')]).toMatchObject({ status: 'upload', byteSize: 14, contentType: 'text/javascript' });
     // 内容が同じでも名前が違えば再利用しない。
-    expect(resolution.files.srcC).toMatchObject({ status: 'upload' });
-    expect(resolution.files.srcC).not.toHaveProperty('targetFileKey');
-    expect(resolution.files.missing).toEqual({ status: 'unavailable', reason: 'HTTP 404' });
+    expect(resolution.files[js('srcC')]).toMatchObject({ status: 'upload' });
+    expect(resolution.files[js('srcC')]).not.toHaveProperty('targetFileKey');
+    expect(resolution.files[js('missing')]).toEqual({ status: 'unavailable', reason: 'HTTP 404' });
+    // 取得できなかった反映先ファイルは、再利用候補から外れたことを利用者に示せるよう記録する。
+    expect(resolution.targetUnavailable).toEqual([{ fileKey: 'gone', name: 'g.js', reason: 'HTTP 404' }]);
+    expect(await textOf(resolution.targetBlobs.get('tgtA')!)).toBe('console.log(1)');
     expect(resolution.hashes.srcA).toBe(resolution.hashes.tgtA);
     expect(resolution.hashes.srcC).toBe(resolution.hashes.tgtB);
     expect(resolution.hashes.gone).toBeUndefined();
@@ -63,24 +67,38 @@ describe('resolveCustomizeFiles', () => {
     expect(calls.filter(([, key]) => key.startsWith('tgt')).every(([guest]) => guest === '2')).toBe(true);
   });
 
-  it('downloads a source file shared by desktop and mobile only once', async () => {
+  it('downloads a source file shared by desktop and mobile only once, but judges each slot separately', async () => {
     const { download, calls } = downloader({ shared: 'x', other: 'y' });
     const source = section([file('shared', 'a.js')], { mobile: { js: [file('shared', 'a.js')], css: [] } });
     const resolution = await resolveCustomizeFiles(source, section([file('other', 'o.js')]), { ...opts, download });
     expect(calls.filter(([, key]) => key === 'shared')).toHaveLength(1);
-    expect(resolution.files.shared.status).toBe('upload');
+    expect(resolution.files[js('shared')].status).toBe('upload');
+    expect(resolution.files[customizeSlotKey('mobile', 'js', 'shared')].status).toBe('upload');
+  });
+
+  it('reuses a target file only in the same slot, and never the same target key twice', async () => {
+    const { download } = downloader({ s1: 'same', s2: 'same', tA: 'same' });
+    // 反映先は PC の JS にだけ持つ。反映元が PC・モバイルの両方で使っても、再利用できるのは PC の枠だけ。
+    const source = section([file('s1', 'a.js')], { mobile: { js: [file('s2', 'a.js')], css: [] } });
+    const resolution = await resolveCustomizeFiles(source, section([file('tA', 'a.js')]), { ...opts, download });
+    expect(resolution.files[js('s1')]).toMatchObject({ status: 'reuse', targetFileKey: 'tA' });
+    expect(resolution.files[customizeSlotKey('mobile', 'js', 's2')]).toMatchObject({ status: 'upload' });
+    // 既存の判定も枠ごと。反映先が PC の JS に持つキーを反映元がモバイルで使う場合は既存扱いにしない。
+    const moved = await resolveCustomizeFiles(section([], { mobile: { js: [file('tA', 'a.js')], css: [] } }), section([file('tA', 'a.js')]), { ...opts, download });
+    expect(moved.files[customizeSlotKey('mobile', 'js', 'tA')]).toMatchObject({ status: 'upload' });
   });
 
   it('keeps going when a target file cannot be downloaded: it is only excluded from reuse', async () => {
     const { download } = downloader({ src: 'same', tgt: new Error('HTTP 403') });
     const resolution = await resolveCustomizeFiles(section([file('src', 'a.js')]), section([file('tgt', 'a.js')]), { ...opts, download });
-    expect(resolution.files.src.status).toBe('upload');
+    expect(resolution.files[js('src')].status).toBe('upload');
+    expect(resolution.targetUnavailable).toEqual([{ fileKey: 'tgt', name: 'a.js', reason: 'HTTP 403' }]);
   });
 
   it('guesses the content type from the extension when nothing else is known', async () => {
     const download = vi.fn(async () => new Blob(['a{}']));
     const resolution = await resolveCustomizeFiles(section([], { desktop: { js: [], css: [{ type: 'FILE', file: { fileKey: 'css1', name: 'style.css' } }] } }), section([file('other', 'o.js')]), { ...opts, download });
-    expect(resolution.files.css1).toMatchObject({ status: 'upload', contentType: 'text/css' });
+    expect(resolution.files[customizeSlotKey('desktop', 'css', 'css1')]).toMatchObject({ status: 'upload', contentType: 'text/css' });
   });
 
   it('resolves embedded backup content without downloading the source file', async () => {
@@ -88,17 +106,18 @@ describe('resolveCustomizeFiles', () => {
     const embedded = file('old-key', 'a.js', { _content: { base64: bytesToBase64(new TextEncoder().encode('embedded body')), contentType: 'text/javascript', byteSize: 13 } });
     const resolution = await resolveCustomizeFiles(section([embedded]), section([file('tgt', 'a.js')]), { ...opts, download });
     expect(calls.map(([, key]) => key)).toEqual(['tgt']);
-    expect(resolution.files['old-key']).toMatchObject({ status: 'reuse', targetFileKey: 'tgt' });
+    expect(resolution.files[js('old-key')]).toMatchObject({ status: 'reuse', targetFileKey: 'tgt' });
     const upload = await resolveCustomizeFiles(section([embedded]), section([file('other', 'o.js')]), { ...opts, download: downloader({ other: 'zzz' }).download });
-    expect(upload.files['old-key']).toMatchObject({ status: 'upload', byteSize: 13 });
+    expect(upload.files[js('old-key')]).toMatchObject({ status: 'upload', byteSize: 13 });
     expect(await textOf(upload.blobs.get('old-key')!)).toBe('embedded body');
   });
 
   it('is safe with prototype-like file keys', async () => {
     const download = vi.fn(async () => blobOf('x'));
     const resolution = await resolveCustomizeFiles(section([file('__proto__', 'a.js')]), section([file('other', 'o.js')]), { ...opts, download });
-    expect(Object.keys(resolution.files)).toEqual(['__proto__']);
-    expect(resolution.files['__proto__'].status).toBe('upload');
+    expect(Object.keys(resolution.files)).toEqual([js('__proto__')]);
+    expect(resolution.files[js('__proto__')].status).toBe('upload');
+    expect(resolution.blobs.has('__proto__')).toBe(true);
   });
 });
 
@@ -152,7 +171,8 @@ describe('customizeSettings plan with resolved files', () => {
     const bResult = { sourceFileKey: 'srcB', name: 'b.js', byteSize: 4 };
     expect(operation.uploads).toEqual([{ platform: 'desktop', kind: 'js', index: 1, ...bResult }, { platform: 'mobile', kind: 'js', index: 0, ...bResult }]);
     expect(plan.fileUploads).toEqual(operation.uploads);
-    expect(plan.warnings.join('\n')).toContain('1 件のファイル');
+    // アップロードした fileKey は1回しか使えないため、PC とモバイルで同じファイルでも 2 件と数える。
+    expect(plan.warnings.join('\n')).toContain('2 件のファイル');
     expect(plan.warnings.join('\n')).not.toContain('含みません');
     // 内訳にはファイル名が表示され、反映先キーへ置換した項目は差分に出ない。
     expect(plan.changes.some(change => change.after.includes('b.js'))).toBe(true);
@@ -265,8 +285,9 @@ describe('preview reflection with file upload', () => {
     expect(writes[0][2]).toMatchObject({ app: '2', revision: '30', scope: 'ALL', desktop: { js: [{ type: 'FILE', file: { fileKey: 'new-1' } }, { type: 'FILE', file: { fileKey: 'new-2' } }] } });
     expect(JSON.stringify(writes[0][2])).not.toContain('src1');
     expect(JSON.stringify(writes[0][2])).not.toContain('_content');
-    expect(result.logs).toContain('  OK ファイルアップロード: app.js');
-    expect(result.logs).toContain('  OK ファイルアップロード: style.css');
+    expect(result.logs).toContain('  OK ファイルアップロード: app.js（PC JS）');
+    expect(result.logs).toContain('  OK ファイルアップロード: style.css（PC JS）');
+    expect(result.finalRevision).toBe('31');
   });
 
   it('does not PUT the item when an upload fails, and reports the failure', async () => {
@@ -296,7 +317,7 @@ describe('preview reflection with file upload', () => {
     (fetch as any).mockImplementation(async (url: string, init: any = {}) => {
       if (init.method === 'POST') { order.push('UPLOAD'); return new Response(JSON.stringify({ fileKey: 'new' })); }
       const key = new URL(url, 'https://x.example').searchParams.get('fileKey')!;
-      if (key === 'tgt1' && downloads.filter(item => item.includes('fileKey=tgt1')).length >= 2) return new Response('', { status: 503 });
+      if (key === 'tgt1' && downloads.filter(item => item.includes('fileKey=tgt1')).length >= 1) return new Response('', { status: 503 });
       downloads.push(url);
       return new Response(blobOf(bodies[key] ?? ''));
     });

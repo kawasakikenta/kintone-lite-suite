@@ -12,12 +12,24 @@ export type CustomizeFileState =
   | { status: 'unavailable'; reason: string };
 
 export interface CustomizeFileResolution {
-  /** 反映元 fileKey → 判定 */
+  /** 反映元の配置（customizeSlotKey(platform, kind, fileKey)）→ 判定。同じファイルでも PC/モバイル・JS/CSS の枠ごとに判定する */
   files: Record<string, CustomizeFileState>;
   /** fileKey（反映元・反映先）→ 内容ハッシュ */
   hashes: Record<string, string>;
   /** 反映元 fileKey → 本体（apply 時のアップロード用） */
   blobs: Map<string, Blob>;
+  /** 反映先 fileKey → 本体（バックアップへの埋め込みに再利用する） */
+  targetBlobs: Map<string, Blob>;
+  /** 本体を取得できなかった反映先ファイル（再利用の候補から外れる。利用者に示す） */
+  targetUnavailable: Array<{ fileKey: string; name: string; reason: string }>;
+}
+
+export type CustomizePlatform = 'desktop' | 'mobile';
+export type CustomizeKind = 'js' | 'css';
+
+/** 判定のキー。アップロードした fileKey は1回しか使えないため、同じファイルでも枠ごとに扱う。 */
+export function customizeSlotKey(platform: CustomizePlatform, kind: CustomizeKind, fileKey: string): string {
+  return `${platform}/${kind}/${fileKey}`;
 }
 
 export type CustomizeFileDownloader = (guestId: string, fileKey: string) => Promise<Blob>;
@@ -29,7 +41,7 @@ const isObject = (value: any): value is Record<string, any> => !!value && typeof
 const dict = <T>(): Record<string, T> => Object.create(null);
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-interface FileEntry { item: any; fileKey: string; name: string }
+interface FileEntry { item: any; fileKey: string; name: string; platform: CustomizePlatform; kind: CustomizeKind }
 
 function listFileEntries(section: any): FileEntry[] {
   const entries: FileEntry[] = [];
@@ -38,7 +50,7 @@ function listFileEntries(section: any): FileEntry[] {
     if (!Array.isArray(list)) continue;
     for (const item of list) {
       const fileKey = item?.type === 'FILE' ? item?.file?.fileKey : undefined;
-      if (typeof fileKey === 'string' && fileKey) entries.push({ item, fileKey, name: String(item.file.name || '') });
+      if (typeof fileKey === 'string' && fileKey) entries.push({ item, fileKey, name: String(item.file.name || ''), platform, kind });
     }
   }
   return entries;
@@ -91,10 +103,10 @@ function guessContentType(name: string): string {
   return /\.css$/i.test(name) ? 'text/css' : /\.js$/i.test(name) ? 'text/javascript' : '';
 }
 
-/** 一過性の通信失敗で反映全体が止まらないよう、上限超過以外は1回だけ再試行する。 */
+/** 一過性の通信失敗で反映全体が止まらないよう、上限超過と 4xx（権限・存在しない）以外は1回だけ再試行する。 */
 const defaultDownload: CustomizeFileDownloader = async (guestId, fileKey) => {
   try { return await downloadKintoneFile(guestId, fileKey); } catch (error) {
-    if (/大きすぎ/.test(messageOf(error))) throw error;
+    if (/大きすぎ|HTTP 4\d\d/.test(messageOf(error))) throw error;
     return downloadKintoneFile(guestId, fileKey);
   }
 };
@@ -121,38 +133,50 @@ async function loadBody(entry: FileEntry, guestId: string, download: CustomizeFi
 
 export async function resolveCustomizeFiles(sourceSection: any, targetSection: any, opts: { sourceGuestId: string; targetGuestId: string; download?: CustomizeFileDownloader }): Promise<CustomizeFileResolution> {
   const download = opts.download || defaultDownload;
-  const resolution: CustomizeFileResolution = { files: dict<CustomizeFileState>(), hashes: dict<string>(), blobs: new Map() };
+  const resolution: CustomizeFileResolution = { files: dict<CustomizeFileState>(), hashes: dict<string>(), blobs: new Map(), targetBlobs: new Map(), targetUnavailable: [] };
+  const slotOf = (entry: FileEntry) => customizeSlotKey(entry.platform, entry.kind, entry.fileKey);
   const targetEntries = listFileEntries(targetSection);
-  const targetKeys = new Set(targetEntries.map(entry => entry.fileKey));
-  const pending = new Map<string, FileEntry>();
+  // fileKey は取得した枠（PC/モバイル × JS/CSS）でそのまま使えると分かっているものだけ「既存」とする。
+  const targetSlots = new Set(targetEntries.map(slotOf));
+  const pending: FileEntry[] = [];
   for (const entry of listFileEntries(sourceSection)) {
-    if (targetKeys.has(entry.fileKey)) resolution.files[entry.fileKey] = { status: 'existing' };
-    else if (!pending.has(entry.fileKey)) pending.set(entry.fileKey, entry);
+    if (targetSlots.has(slotOf(entry))) resolution.files[slotOf(entry)] = { status: 'existing' };
+    else if (!pending.some(item => slotOf(item) === slotOf(entry))) pending.push(entry);
   }
-  if (!pending.size) return resolution;
+  if (!pending.length) return resolution;
 
-  const sourceBodies = new Map<string, Body>();
-  await pool([...pending.values()], async entry => {
+  // 本体の取得は fileKey ごとに1回。失敗はその fileKey を使う全ての枠に同じ理由で付ける。
+  const sourceBodies = new Map<string, Body>(), sourceErrors = new Map<string, string>();
+  const sourceByKey = new Map<string, FileEntry>();
+  for (const entry of pending) if (!sourceByKey.has(entry.fileKey)) sourceByKey.set(entry.fileKey, entry);
+  await pool([...sourceByKey.values()], async entry => {
     try { sourceBodies.set(entry.fileKey, await loadBody(entry, opts.sourceGuestId, download, true)); }
-    catch (error) { resolution.files[entry.fileKey] = { status: 'unavailable', reason: messageOf(error) }; }
+    catch (error) { sourceErrors.set(entry.fileKey, messageOf(error)); }
   });
 
-  // 同名・同内容の反映先ファイルを再利用するため、反映先の全ファイル本体を確認する。取得できないものは再利用候補から外すだけ。
+  // 同じ枠に同名・同内容の反映先ファイルがあれば再利用するため、反映先の全ファイル本体を確認する。
+  // 取得できないものは再利用候補から外し、利用者に示せるよう記録する（同じ内容でもアップロードになる）。
   const targetByKey = new Map<string, FileEntry>();
   for (const entry of targetEntries) if (!targetByKey.has(entry.fileKey)) targetByKey.set(entry.fileKey, entry);
   const targetBodies = new Map<string, Body>();
   if (sourceBodies.size) await pool([...targetByKey.values()], async entry => {
-    try { targetBodies.set(entry.fileKey, await loadBody(entry, opts.targetGuestId, download, false)); } catch { /* 再利用候補から外す */ }
+    try { targetBodies.set(entry.fileKey, await loadBody(entry, opts.targetGuestId, download, false)); }
+    catch (error) { resolution.targetUnavailable.push({ fileKey: entry.fileKey, name: entry.name || entry.fileKey, reason: messageOf(error) }); }
   });
-  for (const [key, body] of targetBodies) resolution.hashes[key] = body.hash;
+  for (const [key, body] of targetBodies) { resolution.hashes[key] = body.hash; resolution.targetBlobs.set(key, body.blob); }
 
-  for (const [key, body] of sourceBodies) {
-    const entry = pending.get(key)!;
-    resolution.hashes[key] = body.hash;
-    resolution.blobs.set(key, body.blob);
-    const reused = [...targetBodies].find(([targetKey, targetBody]) => targetBody.hash === body.hash && targetByKey.get(targetKey)!.name === entry.name);
-    resolution.files[key] = reused
-      ? { status: 'reuse', targetFileKey: reused[0], hash: body.hash, byteSize: body.blob.size }
+  // 反映先のキーを2つの枠で使い回さないよう、再利用は枠ごとに1回まで。
+  const reusedTargetSlots = new Set<string>();
+  for (const entry of pending) {
+    const slot = slotOf(entry), body = sourceBodies.get(entry.fileKey);
+    if (!body) { resolution.files[slot] = { status: 'unavailable', reason: sourceErrors.get(entry.fileKey) || '本体を取得できません' }; continue; }
+    resolution.hashes[entry.fileKey] = body.hash;
+    resolution.blobs.set(entry.fileKey, body.blob);
+    const reused = entry.name ? targetEntries.find(candidate => candidate.platform === entry.platform && candidate.kind === entry.kind && candidate.name === entry.name
+      && targetBodies.get(candidate.fileKey)?.hash === body.hash && !reusedTargetSlots.has(slotOf(candidate))) : undefined;
+    if (reused) reusedTargetSlots.add(slotOf(reused));
+    resolution.files[slot] = reused
+      ? { status: 'reuse', targetFileKey: reused.fileKey, hash: body.hash, byteSize: body.blob.size }
       : { status: 'upload', hash: body.hash, byteSize: body.blob.size, contentType: body.blob.type || String(entry.item.file?.contentType || '') || guessContentType(entry.name) };
   }
   return resolution;
@@ -174,8 +198,8 @@ export function comparableCustomizePayload(payload: any, resolution: CustomizeFi
 }
 
 /** バックアップ用に、各 FILE 項目へファイル本体（base64）を埋め込んだ深いコピーを返す。元のオブジェクトは変更しない。 */
-export async function embedCustomizeFileContents(section: any, opts: { guestId: string; download?: CustomizeFileDownloader }): Promise<{ section: any; unavailable: Array<{ fileKey: string; name: string; reason: string }> }> {
-  const download = opts.download || defaultDownload;
+export async function embedCustomizeFileContents(section: any, opts: { guestId: string; download?: CustomizeFileDownloader; /** 取得済みの本体（反映先 fileKey → Blob）。同じファイルを取得し直さない */ cached?: Map<string, Blob> }): Promise<{ section: any; unavailable: Array<{ fileKey: string; name: string; reason: string }> }> {
+  const download: CustomizeFileDownloader = async (guestId, fileKey) => opts.cached?.get(fileKey) || (opts.download || defaultDownload)(guestId, fileKey);
   const copy = deepClone(section);
   const entries = listFileEntries(copy);
   const results = new Map<string, { content: { base64: string; contentType: string; byteSize: number } } | { reason: string }>();

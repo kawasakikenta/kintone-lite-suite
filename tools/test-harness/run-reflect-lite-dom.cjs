@@ -61,6 +61,8 @@ const mockEngine = `
   export async function runApplyPreviewStandalone(opts, status, progress) {
     const mock = window.__reflectMock;
     mock.applies.push(opts);
+    // 実エンジンは書き込み前の検査（照合・バックアップ）でだけ例外を投げる。その経路の再現用。
+    if (mock.applyThrows) { await new Promise(resolve => setTimeout(resolve, 50)); throw new Error(mock.applyThrows); }
     // mock.stepMode のとき、通知の前でテストが advance() するまで止める（進捗表示を 1 手ずつ確認するため）。
     const step = async () => { if (mock.stepMode) await new Promise(resolve => { mock.waiting = resolve; }); };
     const notify = update => { if (opts.onSectionUpdate) opts.onSectionUpdate(update); };
@@ -81,7 +83,7 @@ const mockEngine = `
     progress(['サンプルの反映ログです。実アプリには書き込んでいません。']);
     // 反映前に保存したバックアップと同じ形（反映先の反映前の設定）。
     const backup = mock.noBackup ? undefined : { generatedAt: '2026-01-01T00:00:00.000Z', scopes: opts.scopes.slice(), bundle: { appId: opts.targetAppId, guestId: opts.targetGuestId || '', preview: true, sections: Object.fromEntries(opts.scopes.map(key => [key, { marker: 'before-' + key }])) } };
-    return { sections, logs: [], ...(backup ? { backup } : {}) };
+    return { sections, logs: [], finalRevision: mock.finalRevision || '9', ...(backup ? { backup } : {}) };
   }
 `;
 
@@ -449,7 +451,7 @@ async function main() {
     assert.match(await chipOf('レイアウト設定').getAttribute('title'), /配置を反映元に合わせます.*末尾に保持/);
     assert.match(await chipOf('ビュー設定').getAttribute('title'), /一覧を追加・更新.*「保持」の設定に従います/);
     assert.match(await chipOf('プラグイン(※)').getAttribute('title'), /まだ無いプラグインだけ追加.*設定値はコピーしません/);
-    assert.match(await chipOf('JS/CSS設定').getAttribute('title'), /適用範囲.*ファイル一覧を更新/);
+    assert.match(await chipOf('JS/CSS設定').getAttribute('title'), /適用範囲.*反映元の内容に置き換えます.*反映先だけのファイル・URLは外れます/);
     assert.match(await chipOf('アプリ権限').getAttribute('title'), /反映元の内容で置き換えます/);
     for (const name of ['アプリ権限', 'フィールド権限', 'レコード権限', '通知設定', 'レコード条件通知', 'リマインダー通知', 'プロセス管理']) {
       assert.equal(await chipOf(name).locator('.kus-rl-chip__badge').innerText(), '置換', `${name}に「置換」の目印を付ける`);
@@ -771,6 +773,39 @@ async function main() {
     const resultText = await page.locator('#kus-rl-stage-result').innerText();
     assert.match(resultText, /\d{4}\/\d{1,2}\/\d{1,2} \d{1,2}:\d{2}:\d{2}/, '結果の日時を日本語形式（年/月/日 時:分:秒）で示す');
     assert.doesNotMatch(resultText, /\b(AM|PM)\b/);
+
+    // ---- 直前の反映分は「以前からの未公開の変更」と扱わない ----
+    await reset('mixed', { targetPending: cleanPending, finalRevision: '9' }); await setup(); await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    // 反映後、プレビューの revision は自分の反映で 9 になり本番 8 と異なる。再確認ではこれを自分の反映分と判定する。
+    await page.evaluate(() => { window.__reflectMock.targetPending = { state: 'pending', productionRevision: '8', previewRevision: '9', sectionKeys: ['fieldSettings'], message: '反映先プレビューには未公開の変更があります（フィールド設定）。' }; });
+    await button('反映後の差分を再確認').click(); await idle();
+    assert.equal(await page.locator('#kus-rl-stage-review [data-target-pending]').getAttribute('data-target-pending'), 'own', '自分の反映分だけの未公開の変更は own と判定する');
+    assert.match(await page.locator('#kus-rl-stage-review [data-target-pending="own"]').innerText(), /このツールの反映分だけ/);
+    await run().click();
+    assert.equal(await page.getByRole('textbox', { name: '確認用の反映先アプリID', exact: true }).isVisible(), false, '自分の反映分だけなら反映先IDの再入力を求めない');
+    await button('差分に戻る').click();
+    // 別の反映先（記録の無い反映先）や revision が進んだ場合は従来どおり pending。
+    await page.evaluate(() => { window.__reflectMock.targetPending = { state: 'pending', productionRevision: '8', previewRevision: '10', sectionKeys: ['fieldSettings'], message: '反映先プレビューには未公開の変更があります（フィールド設定）。' }; });
+    await button('差分を再取得').click(); await idle();
+    assert.equal(await page.locator('#kus-rl-stage-review [data-target-pending]').getAttribute('data-target-pending'), 'pending', '自分の反映の後に revision が進んでいれば以前からの変更として扱う');
+    // own のまま反映すると、取り消し案内は「変更を中止」で戻せる旨になる。
+    await page.evaluate(() => { window.__reflectMock.targetPending = { state: 'pending', productionRevision: '8', previewRevision: '9', sectionKeys: ['fieldSettings'], message: '未公開あり' }; });
+    await button('差分を再取得').click(); await idle();
+    await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.equal(await page.locator('#kus-rl-stage-result .kus-rl-undo').getAttribute('data-undo-state'), 'own');
+    assert.match(await page.locator('#kus-rl-stage-result .kus-rl-undo').innerText(), /変更を中止/);
+
+    // ---- 書き込み前の停止では、直前の結果（バックアップから戻す導線）を失わない ----
+    await reset('mixed', { targetPending: cleanPending }); await setup(); await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.equal(await button('バックアップから戻す（差分を確認）').isVisible(), true);
+    await page.evaluate(() => { window.__reflectMock.applyThrows = '確認済みの差分と反映条件が一致しません。差分を取得し直してから再実行してください。'; });
+    await tab('差分を確認').click(); await button('差分を再取得').click(); await idle(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    assert.match(await page.locator('.kus-lp__status').innerText(), /反映条件が一致しません/, '書き込み前の停止は理由を表示する');
+    await tab('反映結果').click();
+    assert.equal(await button('バックアップから戻す（差分を確認）').isVisible(), true, '書き込み前に止まった場合は直前の反映のバックアップから戻す導線を残す');
+    assert.equal(await button('実行結果JSONを保存').isVisible(), true, '直前の結果を残す');
+    assert.equal(await page.locator('#kus-rl-stage-result [data-progress-section]').count(), 0, '進捗の一覧を残さない');
+    await page.evaluate(() => { window.__reflectMock.applyThrows = ''; });
 
     // ---- バックアップから戻す ----
     const restoreButton = () => button('バックアップから戻す（差分を確認）');

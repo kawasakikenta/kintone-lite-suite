@@ -123,7 +123,7 @@ export const REFLECT_SCOPE_HINTS: Record<string, string> = {
   reportSettings: 'グラフを追加・更新します。反映先だけのグラフは「保持」の設定に従います。',
   actionSettings: 'アクションを追加・更新します。反映先だけのアクションは「保持」の設定に従います。',
   pluginSettings: '反映先にまだ無いプラグインだけ追加します。プラグインの設定値はコピーしません。',
-  customizeSettings: '適用範囲と、PC・モバイルのJS/CSSファイル一覧を更新します。',
+  customizeSettings: '適用範囲と、PC・モバイルのJS/CSSファイル一覧を反映元の内容に置き換えます。反映先だけのファイル・URLは外れます。別アプリのファイルは反映先へアップロードして設定します。',
   processSettings: '反映元の内容で置き換えます。状態・アクション・作業者が変わり、運用中の申請に影響することがあります。',
   appAcl: '反映元の内容で置き換えます。反映先だけの権限は削除されます。',
   fieldAcl: '反映元の内容で置き換えます。反映先だけの権限は削除されます。',

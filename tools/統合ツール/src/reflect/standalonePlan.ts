@@ -1,7 +1,7 @@
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone } from '../utils.js';
 import { APP_SETTINGS_LABELS, APP_SETTINGS_REFLECT_KEYS, reflectSectionLabel } from './sections.js';
-import { comparableCustomizePayload, customizeFileNames, type CustomizeFileResolution } from './customizeFiles.js';
+import { comparableCustomizePayload, customizeFileNames, customizeSlotKey, type CustomizeFileResolution } from './customizeFiles.js';
 import { retainedItemNames, summarizeReflectItems, type ReflectItemSummary } from './changeSummary.js';
 import {
   extractActionRequiredFields,
@@ -299,13 +299,19 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
         const currentKeys = new Set(['desktop', 'mobile'].flatMap(platform => ['js', 'css'].flatMap(kind => (target[platform]?.[kind] || []).map(item => item.file?.fileKey).filter(Boolean))));
         for (const platform of ['desktop', 'mobile'] as const) for (const kind of ['js', 'css'] as const) for (const [index, item] of (after[platform][kind] as any[]).entries()) {
           if (item.type !== 'FILE') continue;
-          const fileKey = item.file.fileKey, name = names[fileKey] || 'アップロードファイル', state = resolution?.files[fileKey];
+          const fileKey = item.file.fileKey, name = names[fileKey] || '', state = resolution?.files[customizeSlotKey(platform, kind, fileKey)];
+          const shown = name || 'アップロードファイル';
           if (state?.status === 'reuse') item.file.fileKey = state.targetFileKey;
-          else if (state?.status === 'upload') uploads.push({ platform, kind, index, sourceFileKey: fileKey, name, byteSize: state.byteSize });
-          else if (state?.status === 'unavailable') plan.blockers.push(`${platform}/${kind}: 「${name}」を反映元から取得できません（${state.reason}）。反映元でファイルを確認してください。`);
-          else if (!state && !currentKeys.has(fileKey)) plan.blockers.push(`${platform}/${kind}: 「${name}」は反映先に存在せず、反映元のファイル本体を確認できません。`);
+          else if (state?.status === 'upload') {
+            // kintone はファイル名の拡張子で JS/CSS を判定するため、名前の無いファイルはアップロードしても設定できない。
+            if (!name) plan.blockers.push(`${platform}/${kind}: 反映元のファイル（${fileKey}）にファイル名がありません。反映元のJS/CSS設定を確認してください。`);
+            else uploads.push({ platform, kind, index, sourceFileKey: fileKey, name, byteSize: state.byteSize });
+          } else if (state?.status === 'unavailable') plan.blockers.push(`${platform}/${kind}: 「${shown}」を反映元から取得できません（${state.reason}）。反映元でファイルを確認してください。`);
+          else if (!state && !currentKeys.has(fileKey)) plan.blockers.push(`${platform}/${kind}: 「${shown}」は反映先に存在せず、反映元のファイル本体を確認できません。`);
         }
-        if (uploads.length) plan.warnings.push(`${new Set(uploads.map(upload => upload.sourceFileKey)).size} 件のファイル（合計 ${formatBytes([...new Map(uploads.map(upload => [upload.sourceFileKey, upload.byteSize])).values()].reduce((sum, size) => sum + size, 0))}）を反映先へアップロードしてから設定します。`);
+        // アップロードした fileKey は1回しか使えないため、同じファイルでも枠ごとに1件と数える。
+        if (uploads.length) plan.warnings.push(`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`);
+        if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map(item => `「${item.name}」（${item.reason}）`).join('、')} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
       }
       if (key === 'layoutSettings') {
         if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error('レイアウトの形式が不正です。');

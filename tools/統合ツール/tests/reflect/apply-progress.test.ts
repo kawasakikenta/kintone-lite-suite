@@ -56,7 +56,7 @@ describe('実行中の進捗', () => {
     const midway = applyProgressUpdate(applyProgressUpdate(rows, { sectionKey: 'fieldSettings', status: 'ok' }), { sectionKey: 'layoutSettings', status: 'running' });
     expect(summarizeApplyProgress(midway)).toBe('1 / 3 項目が完了。実行中: レイアウト設定');
     const stopped = applyProgressUpdate(applyProgressUpdate(midway, { sectionKey: 'layoutSettings', status: 'ng' }), { sectionKey: 'viewSettings', status: 'pending' });
-    expect(summarizeApplyProgress(stopped)).toBe('3 / 3 項目が完了（失敗 1）');
+    expect(summarizeApplyProgress(stopped)).toBe('2 / 3 項目が完了（失敗 1）、未実行 1');
   });
 });
 
@@ -71,6 +71,12 @@ describe('取り消しの案内', () => {
     const guidance = describeUndoGuidance({ state: 'pending' });
     expect(guidance.text).toBe('反映前から未公開の変更があったため、『変更を中止』ではそれらも破棄されます。今回の反映だけを戻す場合は『バックアップから戻す』を使ってください。');
     expect(guidance).toMatchObject({ tone: 'warn', openSettings: false });
+  });
+
+  it('未公開の変更が自分の反映分だけだったときも、『変更を中止』で取り消せると案内する', () => {
+    const guidance = describeUndoGuidance({ state: 'own' });
+    expect(guidance.text).toContain('このツールによる反映分だけ');
+    expect(guidance).toMatchObject({ tone: 'ok', openSettings: true });
   });
 
   it('不明・判定なしは、従来の汎用の案内にする', () => {
