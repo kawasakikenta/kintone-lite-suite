@@ -137,6 +137,11 @@ interface LiteMemoryState {
   rolloutLog?: RolloutLogEntry[];
   rolloutKey?: string;
   lastPreview?: PreviewSnapshot | null;
+  /**
+   * 現在の対象と一致しないために隠している直近の反映結果と、その実行ログ。
+   * 入力の一時的な編集（反映先IDを1文字入れて消す、など）で結果を失わないよう、捨てずに退避する。対象が戻れば lastResult へ戻し、新しい反映が完了したら破棄する。
+   */
+  staleResult?: { result: NonNullable<LiteMemoryState['lastResult']>; log: string } | null;
   /** 直近の反映結果（成功 / 失敗の最終サマリ） */
   lastResult?: {
     ok: number;
@@ -181,6 +186,11 @@ interface LiteMemoryState {
 }
 
 const REFLECT_PRESET_LIMIT = 30;
+
+/** 直近の反映結果が現在の対象と一致せず、表示を外しているときの案内。 */
+const STALE_RESULT_NOTICE = '直近の反映結果は現在の対象と異なるため表示していません。対象を戻すと表示されます。';
+/** 復元中は、フィールド設定を足して再取得できない（復元のまま差分が通常の順方向に変わってしまうため）。 */
+const RESTORE_FIELD_SETTINGS_NOTE = 'バックアップから戻している間はフィールド設定を追加できません。この項目を対象から外してください。';
 
 let memoryState: LiteMemoryState = {
   presets: []
@@ -565,6 +575,8 @@ export function mountReflectLitePanel() {
     return;
   }
   ensureReflectLiteStyles();
+  // 「バックアップから戻す」の状態は再起動で引き継がない。復元用に取得した差分は、開き直したときに使えない。
+  if (memoryState.lastPreview?.restore) memoryState.lastPreview = null;
 
   const panel = createLitePanel({
     id: 'kus-reflect-lite',
@@ -575,6 +587,24 @@ export function mountReflectLitePanel() {
     hint: '<strong>差分を確認してから反映</strong> · 反映先はプレビューです。本番への公開は設定画面で行います。',
     wide: true
   });
+  // 復元の終了通知などを、同じ操作の後続のステータス（プリセット適用など）で上書きしないよう、次の1回だけ前置する。
+  let pendingNotice = '';
+  const rawSetStatus = panel.setStatus;
+  panel.setStatus = (msg, tone) => {
+    const notice = pendingNotice;
+    pendingNotice = '';
+    rawSetStatus(notice && msg ? `${notice} ${msg}` : msg, tone);
+  };
+  /** 同じ操作の中だけ有効な通知として控える（無関係な後の操作に前置しないよう、操作が終わったら捨てる）。 */
+  function holdNoticeForNextStatus(notice: string) {
+    pendingNotice = notice;
+    window.setTimeout(() => { if (pendingNotice === notice) pendingNotice = ''; }, 0);
+  }
+  /** liteRun に、前の失敗の詳細ログ（ドック下部）を開始時に消す処理を加えたもの。 */
+  const runLite = <T,>(busyMsg: string, fn: () => Promise<T>, okMsg?: string) => liteRun(panel, busyMsg, async () => {
+    panel.setResult('');
+    return fn();
+  }, okMsg);
   let showWorkflowStage: (stage: 'setup' | 'review' | 'confirm' | 'result') => void = () => {};
   let refreshWorkflow = () => {};
   let busy = false;
@@ -633,9 +663,11 @@ export function mountReflectLitePanel() {
       paint(open ? '· 開いているアプリ' : '確認中…');
       const mine = seq;
       timer = window.setTimeout(async () => {
+        // パネルを閉じた後に待機していた確認は行わない。
+        if (!panel.root.isConnected) return;
         const result = await appLookupCache.get(appId, guest);
         // 入力が変わった後に返ってきた古い応答は捨てる。
-        if (mine !== seq) return;
+        if (mine !== seq || !panel.root.isConnected) return;
         if (result.ok) show(result, open);
         else {
           failed = true;
@@ -662,11 +694,17 @@ export function mountReflectLitePanel() {
     }
     appInput.addEventListener('change', recheck);
     guestInput.addEventListener('change', recheck);
-    return { el, refresh, known: () => known, adopt };
+    /** 待機中の確認を止める（パネルを置き換える・破棄するとき）。 */
+    function stop() {
+      seq += 1;
+      window.clearTimeout(timer);
+    }
+    return { el, refresh, known: () => known, adopt, stop };
   }
   // 名前が分かったらフッターの経路表示も更新する。
   const sourceNote = createAppNote(srcApp, srcGuest, () => sourceMode === 'app', () => refreshWorkflow());
   const targetNote = createAppNote(tgtApp, tgtGuest, () => true, () => refreshWorkflow());
+  panel.root.addEventListener('kus-lite-dispose', () => { sourceNote.stop(); targetNote.stop(); }, { once: true });
   srcApp.setAttribute('aria-label', '反映元アプリID');
   srcGuest.setAttribute('aria-label', '反映元ゲストスペースID');
   tgtApp.setAttribute('aria-label', '反映先アプリID');
@@ -787,7 +825,7 @@ export function mountReflectLitePanel() {
     refreshReviewCard();
   });
 
-  srcJsonFile.addEventListener('change', () => liteRun(panel, '反映元JSONを読み込み中…', async () => {
+  srcJsonFile.addEventListener('change', () => runLite('反映元JSONを読み込み中…', async () => {
     const file = srcJsonFile.files?.[0];
     if (!file) return;
     // 同じファイルを編集して選び直したときも change が発生するよう、選択状態は読み込み後に空へ戻す。
@@ -1229,6 +1267,8 @@ export function mountReflectLitePanel() {
   panel.body.insertBefore(cardPreset.card, panel.status);
 
   function refreshPresetSelect() {
+    // 再構築で選択が先頭へ戻らないよう、現在の選択を控えて戻す。
+    const keep = presetSelect.value;
     presetSelect.innerHTML = '';
     const presets = memoryState.presets || [];
     if (!presets.length) {
@@ -1250,6 +1290,7 @@ export function mountReflectLitePanel() {
       opt.textContent = `${p.name} (src#${p.source.appId} → tgt#${p.target.appId})`;
       presetSelect.appendChild(opt);
     }
+    if (keep && presets.some((p) => p.name === keep)) presetSelect.value = keep;
   }
   function refreshPresetButtons() {
     exportPresetsBtn.disabled = busy || !(memoryState.presets || []).length;
@@ -1309,7 +1350,7 @@ export function mountReflectLitePanel() {
   });
 
   importPresetsBtn.addEventListener('click', () => importPresetsFile.click());
-  importPresetsFile.addEventListener('change', () => liteRun(panel, 'プリセットJSONを読み込み中…', async () => {
+  importPresetsFile.addEventListener('change', () => runLite('プリセットJSONを読み込み中…', async () => {
     const file = importPresetsFile.files?.[0];
     importPresetsFile.value = '';
     if (!file) return;
@@ -1334,6 +1375,8 @@ export function mountReflectLitePanel() {
     const name = presetSelect.value;
     const preset = (memoryState.presets || []).find((p) => p.name === name);
     if (!preset) return;
+    // 読み込み済みの反映元JSONは、プリセットの読み込みで破棄される（復元中のバックアップは利用者が読み込んだJSONではない）。
+    const discardsLoadedJson = !restoreMode && !!sourceBundleFromJson;
     sourceModeSelect.value = 'app';
     sourceModeSelect.dispatchEvent(new Event('change'));
     srcApp.value = preset.source.appId;
@@ -1350,7 +1393,16 @@ export function mountReflectLitePanel() {
     refreshSameConnBanner();
     saveState();
     refreshReviewCard();
-    panel.setStatus(`プリセット「${name}」を読み込みました`, 'ok');
+    // 読み込めなかった内容は、成功の通知に埋もれないよう警告でまとめて伝える。
+    const dropped = (preset.scopes || []).filter((key) => !REFLECT_SECTION_KEYS.includes(key));
+    const notes: string[] = [];
+    if (dropped.length) notes.push(`未対応の項目 ${dropped.length} 件（${dropped.slice(0, 5).join('、')}${dropped.length > 5 ? ' ほか' : ''}）は選択できませんでした。`);
+    if (discardsLoadedJson) notes.push('読み込み済みの反映元JSONは破棄しました。');
+    const presetLookupError = lookupMapError(parseLookupMapText(lookupTa.value));
+    if (presetLookupError) notes.push(`参照先変換を読み取れません。${presetLookupError}`);
+    const presetRollout = currentRollout();
+    if ('error' in presetRollout) notes.push(`続けて反映する反映先を読み取れません。${presetRollout.error}`);
+    panel.setStatus([`プリセット「${name}」を読み込みました。`, ...notes].join(' '), notes.length ? 'warn' : 'ok');
   });
 
   delBtn.addEventListener('click', () => {
@@ -1549,17 +1601,19 @@ export function mountReflectLitePanel() {
   panel.body.insertBefore(previewCard.card, panel.status);
 
   function saveState() {
+    // 「バックアップから戻す」の間は、復元用に自動設定した値ではなく復元前の値を保存する（開き直したとき、復元用の値が残らないように）。
+    const before = restoreMode?.before;
     memoryState = {
       ...memoryState,
-      sourceAppId: srcApp.value.trim(),
-      sourceGuestId: srcGuest.value.trim(),
+      sourceAppId: (before ? before.sourceAppId : srcApp.value).trim(),
+      sourceGuestId: (before ? before.sourceGuestId : srcGuest.value).trim(),
       targetAppId: tgtApp.value.trim(),
       targetGuestId: tgtGuest.value.trim(),
       sourcePreview: (sourceEnvironment.value === 'preview'),
-      selectedScopes: collectSelectedScopes(),
-      lookupMapText: lookupTa.value,
+      selectedScopes: before ? [...before.scopes] : collectSelectedScopes(),
+      lookupMapText: before ? before.lookupText : lookupTa.value,
       rolloutQueueText: rolloutTa.value,
-      preserveTargetOnly: preserve.checkbox.checked
+      preserveTargetOnly: before ? before.preserve : preserve.checkbox.checked
     };
   }
 
@@ -1630,9 +1684,33 @@ export function mountReflectLitePanel() {
     };
   }
 
+  /** 直近に描画した差分。同じ差分の再描画では、開いていた内訳を保つ（新しく取得した差分は閉じた状態から始める）。 */
+  let renderedPreviewResult: PreviewReflectResult | null = null;
+  function captureDisclosure() {
+    const open = new Set<string>();
+    previewBody.querySelectorAll<HTMLDetailsElement>('details[data-reflect-details]').forEach((node) => { if (node.open && node.dataset.reflectDetails) open.add(node.dataset.reflectDetails); });
+    const shown = new Map<string, number>();
+    previewBody.querySelectorAll<HTMLElement>('[data-reflect-items][data-reflect-section]').forEach((node) => {
+      if (node.dataset.reflectSection) shown.set(node.dataset.reflectSection, node.querySelectorAll('.kus-rl-items__list > li').length);
+    });
+    return { open, shown };
+  }
+  function restoreDisclosure(state: ReturnType<typeof captureDisclosure>) {
+    previewBody.querySelectorAll<HTMLElement>('[data-reflect-items][data-reflect-section]').forEach((node) => {
+      const want = state.shown.get(node.dataset.reflectSection || '') || 0;
+      const more = node.querySelector<HTMLButtonElement>('.kus-rl-items__more');
+      // 「残りを表示」で続きを出していた件数まで、同じように出し直す。
+      while (more && !more.hidden && node.querySelectorAll('.kus-rl-items__list > li').length < want) more.click();
+    });
+    previewBody.querySelectorAll<HTMLDetailsElement>('details[data-reflect-details]').forEach((node) => {
+      if (state.open.has(node.dataset.reflectDetails || '')) node.open = true;
+    });
+  }
+
   function rerenderPreviewCard() {
     const previewResult = memoryState.lastPreview?.result || null;
     if (!previewResult) {
+      renderedPreviewResult = null;
       previewCard.card.style.display = 'none';
       [previewKeepShownBtn, previewAddShownBtn, previewRemoveShownBtn, previewRiskyBtn].forEach((btn) => { btn.disabled = true; });
       return;
@@ -1650,6 +1728,7 @@ export function mountReflectLitePanel() {
     previewRemoveShownBtn.disabled = filteredScopeKeys.every((key) => !currentSelected.has(key));
     previewRiskyBtn.disabled = !previewResult.entries.some((entry) => RISKY_SCOPE_KEYS.has(entry.sectionKey));
 
+    const disclosure = renderedPreviewResult === previewResult ? captureDisclosure() : null;
     renderPreviewResult(previewBody, previewResult, {
       selectedScopes,
       plan,
@@ -1664,6 +1743,8 @@ export function mountReflectLitePanel() {
         rerenderPreviewCard();
       }
     });
+    renderedPreviewResult = previewResult;
+    if (disclosure) restoreDisclosure(disclosure);
     previewCard.card.style.display = 'block';
   }
 
@@ -1709,7 +1790,7 @@ export function mountReflectLitePanel() {
   }
 
   function selectionIssues(result: PreviewReflectResult | undefined, scopes: string[]): string[] {
-    return result ? reflectSelectionBlockers(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes) : [];
+    return result ? reflectSelectionBlockers(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes, result.sourceSystemFieldCodes) : [];
   }
 
   function refreshReviewCard() {
@@ -1718,26 +1799,39 @@ export function mountReflectLitePanel() {
     // 反映元・項目・保持・参照先変換が変わったら、展開の記録は引き継がない（反映先の切り替えでは残す）。
     // 復元中は復元のために値を切り替えているだけなので比べない（復元を終えて値が戻れば、記録を引き継ぐ）。
     if (!restoreMode && memoryState.rolloutLog?.length && memoryState.rolloutKey !== rolloutConditionKey()) { memoryState.rolloutLog = []; memoryState.rolloutKey = ''; }
+    // 直近の反映結果は、現在の対象と一致するときだけ表示する。一致しない間は退避して隠し（旧対象の成功を現在の対象へ誤って帰属させない）、
+    // 対象が戻れば復帰させる。入力の一時的な編集や、バックアップから戻す操作の中止で、結果とバックアップ参照を失わないようにする。
     let staleNote = '';
-    const staleResult = memoryState.lastResult;
     const currentSourceBundleToken = sourceMode === 'json' ? sourceBundleToken : '';
-    if (staleResult && (
-      !reflectResultMatchesOptions(staleResult.report, currentOptions(staleResult.report.scopes))
-      || staleResult.sourceBundleToken !== currentSourceBundleToken
-    )) {
+    const resultMatchesInputs = (candidate: NonNullable<LiteMemoryState['lastResult']>) =>
+      reflectResultMatchesOptions(candidate.report, currentOptions(candidate.report.scopes))
+      && (candidate.sourceBundleToken || '') === currentSourceBundleToken;
+    const shownResult = memoryState.lastResult;
+    if (shownResult && !resultMatchesInputs(shownResult)) {
+      memoryState.staleResult = { result: shownResult, log: logPre.textContent || '' };
       memoryState.lastResult = null;
       if (memoryState.lastPreview?.postApplyCheck) {
         memoryState.lastPreview = { ...memoryState.lastPreview, postApplyCheck: undefined };
       }
-      // 結果カードと同じ実行に属するログ・成功ステータスも捨てる。対象を
-      // 変更したあとに旧対象の成功を現在の対象へ誤って帰属させない。
       logCard.card.style.display = 'none';
       logPre.style.display = 'none';
       logPre.textContent = '';
       renderLastResult();
-      staleNote = '対象が変わったため、まだ反映していません。現在の条件で差分を再取得してから反映してください。';
+      staleNote = STALE_RESULT_NOTICE;
+    } else if (!shownResult && !busy && memoryState.staleResult && resultMatchesInputs(memoryState.staleResult.result)) {
+      const { result: restored, log } = memoryState.staleResult;
+      memoryState.lastResult = restored;
+      memoryState.staleResult = null;
+      logPre.textContent = log;
+      logPre.style.display = log ? 'block' : 'none';
+      logCard.card.style.display = log ? 'block' : 'none';
+      renderLastResult();
     }
-    if (restoreEndNote || staleNote) panel.setStatus([restoreEndNote, staleNote].filter(Boolean).join(' '), 'info');
+    if (restoreEndNote || staleNote) {
+      panel.setStatus([restoreEndNote, staleNote].filter(Boolean).join(' '), 'info');
+      // 同じ操作の後続のステータス（プリセット適用など）で通知が消えないよう、次の1回に前置する。
+      if (restoreEndNote) holdNoticeForNextStatus(restoreEndNote);
+    }
     const { scopes, lookupState, preview, fresh } = getPreviewState();
     const invalid = reflectConnectionError(currentOptions());
     const result = preview?.result;
@@ -1772,21 +1866,30 @@ export function mountReflectLitePanel() {
       for (const message of blockers) { const item = document.createElement('li'); item.textContent = message; list.appendChild(item); }
       reviewBody.appendChild(list);
       // フィールド不足は、メッセージの文字列ではなく requiredFields と取得済みフィールドコードから構造的に判定する。
-      const missing = result ? findMissingFieldReferences(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes) : [];
+      const missing = result ? findMissingFieldReferences(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes, result.sourceSystemFieldCodes) : [];
       if (canResolveByIncludingFieldSettings(missing, scopes)) {
         const fix = document.createElement('div'); fix.className = 'kus-rl-fix';
-        const fixBtn = makeButton('フィールド設定も反映対象に含めて再取得', 'sub');
-        fixBtn.dataset.reflectFix = 'include-field-settings';
-        fixBtn.disabled = busy;
-        fixBtn.addEventListener('click', () => { includeFieldSettingsAndRefetch(); });
-        const candidates = missing.filter((item) => item.inSource !== false);
-        const codes = [...new Set(candidates.map((item) => item.code))];
-        const codeList = `${codes.slice(0, 5).join('、')}${codes.length > 5 ? ' ほか' : ''}`;
-        const fixNote = document.createElement('span'); fixNote.className = 'kus-rl-fix__note';
-        fixNote.textContent = candidates.every((item) => item.inSource)
-          ? `反映元にある ${codes.length} 件のフィールド（${codeList}）を、フィールド設定の反映で追加します。差分を取得し直してから確認してください。`
-          : `不足しているフィールド（${codeList}）が反映元にあれば、フィールド設定の反映で追加できます。反映元にも無い場合は、再取得後も停止します。`;
-        fix.append(fixBtn, fixNote); reviewBody.appendChild(fix);
+        if (restoreMode) {
+          // 復元中にフィールド設定を足すと、復元ではなく通常の順方向の差分に変わってしまうため、ボタンは出さない。
+          const restoreNote = document.createElement('span'); restoreNote.className = 'kus-rl-fix__note';
+          restoreNote.dataset.reflectFixNote = 'restore';
+          restoreNote.textContent = RESTORE_FIELD_SETTINGS_NOTE;
+          fix.appendChild(restoreNote);
+        } else {
+          const fixBtn = makeButton('フィールド設定も反映対象に含めて再取得', 'sub');
+          fixBtn.dataset.reflectFix = 'include-field-settings';
+          fixBtn.disabled = busy;
+          fixBtn.addEventListener('click', () => { includeFieldSettingsAndRefetch(); });
+          const candidates = missing.filter((item) => item.inSource !== false);
+          const codes = [...new Set(candidates.map((item) => item.code))];
+          const codeList = `${codes.slice(0, 5).join('、')}${codes.length > 5 ? ' ほか' : ''}`;
+          const fixNote = document.createElement('span'); fixNote.className = 'kus-rl-fix__note';
+          fixNote.textContent = candidates.every((item) => item.inSource)
+            ? `反映元にある ${codes.length} 件のフィールド（${codeList}）を、フィールド設定の反映で追加します。差分を取得し直してから確認してください。`
+            : `不足しているフィールド（${codeList}）が反映元にあれば、フィールド設定の反映で追加できます。反映元にも無い場合は、再取得後も停止します。`;
+          fix.append(fixBtn, fixNote);
+        }
+        reviewBody.appendChild(fix);
       }
     }
     exportPlanBtn.disabled = busy || !fresh;
@@ -1857,7 +1960,7 @@ export function mountReflectLitePanel() {
       panel.setStatus(lookupError, 'warn');
       return;
     }
-    return liteRun(panel, '差分プレビューを取得中…', async () => {
+    return runLite('差分プレビューを取得中…', async () => {
       await runPreview(scopes, lookupMap);
     }, okMessage || `差分プレビュー完了（${scopes.length}セクションを比較）`);
   }
@@ -1865,7 +1968,7 @@ export function mountReflectLitePanel() {
 
   /** フィールド設定を反映対象に加えて、同じ条件で差分を取得し直す（フィールド不足による停止の解消用）。 */
   function includeFieldSettingsAndRefetch() {
-    if (busy) return;
+    if (busy || restoreMode) return;
     const chip = chips.find((c) => c.checkbox.value === 'fieldSettings');
     if (!chip) return;
     chip.checkbox.checked = true;
@@ -2097,7 +2200,7 @@ export function mountReflectLitePanel() {
       return;
     }
     setSelectedScopes(scopes);
-    return liteRun(panel, '反映後の差分を再取得中…', async () => {
+    return runLite('反映後の差分を再取得中…', async () => {
       await runPreview(scopes, lookupMapValue(lookupState), true);
       const summary = postApplySummary();
       if (summary) panel.setStatus(summary.message, summary.tone);
@@ -2355,7 +2458,7 @@ export function mountReflectLitePanel() {
     }
     saveState();
 
-    const outcome = await liteRun(panel, 'プレビュー反映 実行中…', async () => {
+    const outcome = await runLite('プレビュー反映 実行中…', async () => {
       let previewState = getPreviewState(scopes, lookupState);
       let previewResult = previewState.fresh ? previewState.preview?.result || null : null;
       if (!previewResult) {
@@ -2423,6 +2526,8 @@ export function mountReflectLitePanel() {
         logCard.card.style.display = previous.logVisible ? 'block' : 'none';
         renderLastResult();
         renderRollout();
+        // 空の実行ログが並ぶ「反映結果」ではなく、差分を取り直せる確認の画面へ戻す（理由は状態表示に残る）。
+        showWorkflowStage('review');
         throw error;
       } finally {
         // 完了（または書き込み前の停止）後は、進捗の一覧を下の結果一覧に置き換える。
@@ -2460,6 +2565,8 @@ export function mountReflectLitePanel() {
           logs: applyOutcome.logs.slice()
         }
       };
+      // 新しい反映が完了したら、表示を外していた前の結果は戻さない。
+      memoryState.staleResult = null;
       if (applyOutcome.finalRevision) memoryState.lastWrite = { targetAppId: applyOptions.targetAppId, targetGuestId: applyOptions.targetGuestId || '', finalRevision: applyOutcome.finalRevision, priorState: targetPendingAtApply?.state };
       // 複数アプリへの展開の記録。バックアップから戻す操作は展開に含めない。
       if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || '', name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, pending: counts.pending, at: memoryState.lastResult.at });
@@ -2515,9 +2622,23 @@ export function mountReflectLitePanel() {
     button.addEventListener('keydown', (event) => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
+      const count = stageDefs.length;
       const current = stageDefs.findIndex((item) => item.id === def.id);
-      const direction = event.key === 'ArrowRight' ? 1 : -1;
-      const next = stageDefs[event.key === 'Home' ? 0 : event.key === 'End' ? stageDefs.length - 1 : (current + direction + stageDefs.length) % stageDefs.length];
+      const enabledAt = (index: number) => !navButtons[stageDefs[index].id].disabled;
+      // 無効な段階（条件が揃うまでの「最終確認」）は飛ばして、次に操作できる段階へ移る。
+      let nextIndex = -1;
+      if (event.key === 'Home' || event.key === 'End') {
+        const order = stageDefs.map((_, index) => event.key === 'Home' ? index : count - 1 - index);
+        nextIndex = order.find(enabledAt) ?? -1;
+      } else {
+        const direction = event.key === 'ArrowRight' ? 1 : -1;
+        for (let step = 1; step < count; step += 1) {
+          const index = (current + direction * step + count) % count;
+          if (enabledAt(index)) { nextIndex = index; break; }
+        }
+      }
+      if (nextIndex < 0 || nextIndex === current) return;
+      const next = stageDefs[nextIndex];
       if (next.id === 'confirm') openConfirmation(); else showWorkflowStage(next.id);
     });
   }
@@ -2541,7 +2662,8 @@ export function mountReflectLitePanel() {
   [progressCard.card, lastResultCard.card, rolloutCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
   const resultEmpty = document.createElement('div');
   resultEmpty.className = 'kus-rl-preview-empty';
-  resultEmpty.textContent = 'まだ反映していません。対象を選び、差分を確認してから反映してください。';
+  const RESULT_EMPTY_TEXT = 'まだ反映していません。対象を選び、差分を確認してから反映してください。';
+  resultEmpty.textContent = RESULT_EMPTY_TEXT;
   stages.result.appendChild(resultEmpty);
   const dock = document.createElement('div');
   dock.className = 'kus-rl-action-dock';
@@ -2612,6 +2734,8 @@ export function mountReflectLitePanel() {
     setButtonText(nextBtn, fresh ? '確認した差分へ進む' : '差分を確認する'); setButtonText(previewBtn, '差分を再取得');
     previewBtn.classList.toggle('kus-lp__btn--primary', !fresh); previewBtn.classList.toggle('kus-lp__btn--sub', fresh);
     resultEmpty.hidden = !!memoryState.lastResult || logCard.card.style.display !== 'none';
+    // 結果を隠しているだけのときは、「まだ反映していません」とは言わない。
+    resultEmpty.textContent = !memoryState.lastResult && memoryState.staleResult ? STALE_RESULT_NOTICE : RESULT_EMPTY_TEXT;
     const setupBlocker = activeStage === 'setup' ? describeReflectSetupBlocker({
       connectionError: reflectConnectionError(currentOptions()),
       sourceMode,
@@ -2661,10 +2785,15 @@ export function mountReflectLitePanel() {
     stageDefs.forEach((def) => { stages[def.id].inert = value && def.id !== 'result'; });
     if (value) {
       panel.root.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement>('input,button,select,textarea').forEach((control) => {
-        disabledBefore.set(control, control.disabled);
+        // 処理中の二重呼び出しでは、すでに無効化した状態を「元の状態」として上書きしない。
+        if (!disabledBefore.has(control)) disabledBefore.set(control, control.disabled);
         control.disabled = true;
       });
-    } else {
+      setPanelBusy(value);
+      return;
+    }
+    // 再計算が例外を出しても、処理中の表示（経過時間・閉じるボタン）は必ず戻す。
+    try {
       disabledBefore.forEach((disabled, control) => { control.disabled = disabled; });
       disabledBefore.clear();
       refreshSrcJsonNote();
@@ -2672,13 +2801,14 @@ export function mountReflectLitePanel() {
       refreshPresetButtons();
       refreshReviewCard();
       navButtons[activeStage].focus({ preventScroll: true });
+    } finally {
+      setPanelBusy(value);
     }
-    setPanelBusy(value);
   };
-  showWorkflowStage(memoryState.lastResult ? 'result' : (memoryState.lastPreview ? 'review' : 'setup'));
-
   refreshSameConnBanner();
+  // 開き直したときに、入力が直近の結果と一致していれば結果を復帰させてから、最初の画面を決める。
   refreshReviewCard();
+  showWorkflowStage(memoryState.lastResult ? 'result' : (memoryState.lastPreview ? 'review' : 'setup'));
 }
 
 // =============================================================================
@@ -2928,6 +3058,7 @@ function renderPreviewResult(host: HTMLElement, result: PreviewReflectResult, op
     const collapsed = group.tone === 'same' && opts.statusFilter === 'all' && !opts.searchKeyword;
     const wrap = document.createElement(collapsed ? 'details' : 'section');
     wrap.className = 'kus-rl-preview-group';
+    if (collapsed) wrap.dataset.reflectDetails = `group:${group.tone}`;
     const headTag = collapsed ? 'summary' : 'div';
     wrap.innerHTML = `<${headTag} class="kus-rl-preview-group__head"><span>${escapeHtml(group.title)}${collapsed ? ' · 開いて確認' : ''}</span><span>${group.entries.length} 件</span></${headTag}>`;
     const list = document.createElement('div');
