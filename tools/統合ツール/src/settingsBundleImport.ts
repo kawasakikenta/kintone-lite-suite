@@ -65,8 +65,10 @@ export function pickSettingsBundle(raw: any, options: SettingsBundlePickOptions 
     .filter(Boolean);
   if (!candidates.length) throw new Error('設定JSON内にアプリ設定バンドルが見つかりません');
   if (appId) {
-    const matched = candidates.find((entry: any) => String(entry?.bundle?.appId || '') === appId);
-    if (matched) return limitImportedBundleToSections(matched.bundle, options.sections, matched.raw, !!options.preserveMetadata);
+    const matched = candidates.find((entry: any) => String(entry?.bundle?.appId || '') === appId)
+      // アプリIDを持たない単体のJSONは照合できないため、1件だけならそのまま使う。
+      || (candidates.length === 1 && !String((candidates[0] as any)?.bundle?.appId || '') ? candidates[0] : undefined);
+    if (matched) return limitImportedBundleToSections((matched as any).bundle, options.sections, (matched as any).raw, !!options.preserveMetadata);
     throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
   }
   return limitImportedBundleToSections((candidates[0] as any).bundle, options.sections, (candidates[0] as any).raw, !!options.preserveMetadata);

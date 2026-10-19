@@ -2542,6 +2542,7 @@ ${base}`
     if (added.length) parts.push(`追加 ${listText(added)}`);
     if (removed.length) parts.push(`削除 ${listText(removed)}`);
     if (parts.length) lines.push(`${label}: ${parts.join(" / ")}`);
+    if (!parts.length && !changed.length && !same(beforeList, afterList)) lines.push(`${label}: 並び順のみ変更`);
     return [...lines, ...changed];
   }
   function attrLines(before, after, options) {
@@ -2575,6 +2576,7 @@ ${base}`
       }
       const x = fmt(bv, key, options.typeDict), y = fmt(av, key, options.typeDict);
       if (x !== y) lines.push(`${label}: ${x} → ${y}`);
+      else if (!same(bv, av)) lines.push(`${label}: 内容を変更（長いため省略）`);
     }
     return lines;
   }
@@ -3173,13 +3175,18 @@ ${base}`
       const next = { code, ...deepClone(current || {}), ...deepClone(def) };
       if (!current && next.label === void 0) next.label = code;
       if (next.code && next.code !== code) plan.blockers.push(`${code}: フィールドコードの変更を含みます。フィールド追加ツールで確認してください。`);
-      if (next.lookup?.relatedApp?.app && lookupMap[String(next.lookup.relatedApp.app)]) {
-        next.lookup.relatedApp.app = lookupMap[String(next.lookup.relatedApp.app)];
-        delete next.lookup.relatedApp.code;
+      for (const holder of ["lookup", "referenceTable"]) {
+        const mapped = next[holder]?.relatedApp?.app && lookupMap[String(next[holder].relatedApp.app)];
+        if (!mapped) continue;
+        const currentRelated = current?.[holder]?.relatedApp;
+        if (object(currentRelated) && String(currentRelated.app) === String(mapped)) next[holder].relatedApp = deepClone(currentRelated);
+        else {
+          next[holder].relatedApp.app = mapped;
+          delete next[holder].relatedApp.code;
+        }
       }
-      if (next.referenceTable?.relatedApp?.app && lookupMap[String(next.referenceTable.relatedApp.app)]) {
-        next.referenceTable.relatedApp.app = lookupMap[String(next.referenceTable.relatedApp.app)];
-        delete next.referenceTable.relatedApp.code;
+      for (const holder of ["lookup", "referenceTable"]) {
+        if (current && object(current[holder]) && !own2(def, holder)) plan.warnings.push(`${[...path, code].join(" / ")}: 反映先では${holder === "lookup" ? "ルックアップ" : "関連レコード一覧"}の設定がありますが、反映元にはありません。この反映では設定を外さず、反映先の設定を残します。`);
       }
       if (def.type === "SUBTABLE") {
         if (!object(def.fields)) throw new Error(`${code}: テーブル内のフィールド定義がありません。`);
@@ -3254,11 +3261,16 @@ ${base}`
   function reflectInspectionScopes(scopes) {
     return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => ["layoutSettings", "viewSettings", "reportSettings", "actionSettings", "appSettings"].includes(key)) ? ["fieldSettings"] : []])];
   }
-  function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields) {
+  function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields, sourceSystemFields = []) {
     const selected = entries.filter((entry) => scopes.includes(entry.sectionKey));
     const available = /* @__PURE__ */ new Set([...targetFields, ...scopes.includes("fieldSettings") && !selected.find((entry) => entry.sectionKey === "fieldSettings")?.blockers.length ? sourceFields : []]);
+    const system = new Set(sourceSystemFields);
     const issues = selected.flatMap((entry) => entry.blockers.map((message) => `${entry.label}: ${message}`));
-    for (const entry of selected) for (const code of entry.requiredFields || []) if (!available.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
+    for (const entry of selected) for (const code of entry.requiredFields || []) {
+      if (available.has(code)) continue;
+      if (system.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」は反映元のシステムフィールド（レコード番号・ステータス・カテゴリーなど）ですが、反映先に同じコードがありません。反映先でフィールドコードを合わせる、またはプロセス管理・カテゴリーを有効にしてから再取得するか、この項目を除外してください。`);
+      else issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
+    }
     return [...new Set(issues)];
   }
   var settingValue = (value) => typeof value === "number" ? String(value) : Array.isArray(value) ? value.map(settingValue) : object(value) ? Object.fromEntries(Object.entries(value).map(([name, item]) => [name, settingValue(item)])) : value;
@@ -3268,6 +3280,7 @@ ${base}`
       plan.behavior = "動作・表示の設定を更新（アプリ名・説明・アイコンは対象外）";
       const pick = (section) => Object.fromEntries(APP_SETTINGS_REFLECT_KEYS.filter((name) => own2(source, name) && own2(section, name)).map((name) => [name, name === "titleField" && object(section[name]) && section[name].selectionMode === "AUTO" ? { selectionMode: "AUTO" } : settingValue(section[name])]));
       const before = pick(target), after = pick(source);
+      if (!Object.keys(after).length) throw new Error("反映元に比較できる一般設定がありません（古い設定JSONの可能性があります）。");
       if (after.titleField?.selectionMode === "MANUAL") {
         if (typeof after.titleField.code !== "string" || !after.titleField.code) throw new Error("レコードのタイトルに使うフィールドが指定されていません。");
         plan.requiredFields = [after.titleField.code];
@@ -3300,7 +3313,8 @@ ${base}`
     const plan = { sectionKey: key, label: reflectSectionLabel(key), status: "same", message: "", behavior: "全置換", changes: [], changeCount: 0, removalCount: 0, warnings: [], blockers: [], operations: [] };
     const fail = (side, section) => {
       plan.status = side === "src" ? "src-missing" : "tgt-missing";
-      plan.message = `${side === "src" ? "反映元" : "反映先"}を完全に取得できません: ${section?._fetchError || section?._partial?.message || "設定がありません"}`;
+      const partial = section?._partial?.kind === "customizeBody" ? "JS/CSSファイルの本文が一部取得できていない設定JSONです。設定取得をやり直すか、アプリから取得してください" : section?._partial?.message;
+      plan.message = `${side === "src" ? "反映元" : "反映先"}を完全に取得できません: ${section?._fetchError || partial || "設定がありません"}`;
       plan.blockers.push(plan.message);
       return plan;
     };
@@ -3360,12 +3374,16 @@ ${base}`
           }
         }
         for (const name of Object.keys(from)) {
-          if (own2(to, name)) from[name] = { ...to[name], ...from[name] };
+          if (own2(to, name) && (!from[name].type || !to[name].type || from[name].type === to[name].type)) from[name] = { ...to[name], ...from[name] };
           if (key === "actionSettings" && from[name]?.destApp?.app != null) {
             const mappedApp = options.lookupMap?.[String(from[name].destApp.app)];
             if (mappedApp) {
-              from[name].destApp = { ...from[name].destApp, app: mappedApp };
-              delete from[name].destApp.code;
+              const currentDest = to[name]?.destApp;
+              if (object(currentDest) && String(currentDest.app) === String(mappedApp)) from[name].destApp = { ...currentDest };
+              else {
+                from[name].destApp = { ...from[name].destApp, app: mappedApp };
+                delete from[name].destApp.code;
+              }
             }
           }
         }
@@ -3441,6 +3459,9 @@ ${base}`
           if (uploads.length) plan.warnings.push(`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`);
           if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map((item) => `「${item.name}」（${item.reason}）`).join("、")} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
         }
+        if (key === "fieldAcl") plan.requiredFields = [...new Set((after.rights || []).map((right) => String(right?.code || "")).filter((code) => code && !["$id", "$revision"].includes(code)))];
+        if (key === "reminderNotifications") plan.requiredFields = [...new Set((after.notifications || []).map((item) => String(item?.timing?.code || "")).filter((code) => !!code))];
+        if (key === "processSettings" && object(after.states)) plan.requiredFields = [...new Set(Object.values(after.states).flatMap((state3) => (state3?.assignee?.entities || []).filter((item) => item?.entity?.type === "FIELD_ENTITY").map((item) => String(item.entity.code || ""))).filter((code) => !!code))];
         if (key === "layoutSettings") {
           if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error("レイアウトの形式が不正です。");
           after.layout = mergeLayout(source.layout, target.layout, plan);
@@ -3477,6 +3498,11 @@ ${base}`
       plan.message = plan.blockers.join("\n");
     }
     return plan;
+  }
+  function listReflectSystemFieldCodes(bundle) {
+    const props = bundle?.sections?.fieldSettings?.properties;
+    if (!object(props)) return [];
+    return Object.entries(props).filter(([, def]) => SYSTEM_FIELD_TYPES.has(def?.type)).map(([code]) => code);
   }
   function listReflectFieldCodes(bundle, writableOnly = false) {
     const props = bundle?.sections?.fieldSettings?.properties;
@@ -3534,7 +3560,7 @@ ${base}`
     }).filter(Boolean);
     if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
     if (appId) {
-      const matched = candidates.find((entry) => String(entry?.bundle?.appId || "") === appId);
+      const matched = candidates.find((entry) => String(entry?.bundle?.appId || "") === appId) || (candidates.length === 1 && !String(candidates[0]?.bundle?.appId || "") ? candidates[0] : void 0);
       if (matched) return limitImportedBundleToSections(matched.bundle, options.sections, matched.raw, !!options.preserveMetadata);
       throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
     }
@@ -3591,7 +3617,8 @@ ${base}`
         if (!isCompleteReflectSection(before) || !isCompleteReflectSection(after)) return unknown(productionRevision, previewRevision, `${reflectSectionLabel(key)}を取得できません`);
         if (comparable(key, before) !== comparable(key, after)) sectionKeys.push(key);
       }
-      const message = sectionKeys.length ? `反映先プレビューには未公開の変更があります（${sectionKeys.map(reflectSectionLabel).join("、")}）。公開すると今回の反映と一緒に本番へ反映されます。` : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（本番 revision ${productionRevision} / プレビュー revision ${previewRevision}）。`;
+      const customizeNote = opts.scopes.includes("customizeSettings") ? "。JS/CSSのファイルは名前とサイズだけで比べています" : "";
+      const message = sectionKeys.length ? `反映先プレビューには未公開の変更があります（${sectionKeys.map(reflectSectionLabel).join("、")}）。公開すると今回の反映と一緒に本番へ反映されます。` : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（本番 revision ${productionRevision} / プレビュー revision ${previewRevision}${customizeNote}）。`;
       return { state: "pending", productionRevision, previewRevision, sectionKeys, message };
     } catch (error) {
       return unknown(productionRevision, previewRevision, error?.message || String(error));
@@ -3691,6 +3718,9 @@ ${base}`
     const source = opts.sourceBundle ? { appId: opts.sourceAppId, guestId: "", name: jsonAppName ? `設定JSON（${jsonAppName}）` : "設定JSON", code: "" } : await resolve(opts.sourceAppId, opts.sourceGuestId);
     return { source, target };
   }
+  function usesLookupMap(opts, scopes) {
+    return Object.keys(opts.lookupMap || {}).length > 0 && scopes.some((key) => key === "fieldSettings" || key === "actionSettings");
+  }
   function orderedScopes(scopes) {
     if (!scopes?.length) throw new Error("反映する項目を選択してください。");
     if (scopes.some((key) => !REFLECT_SECTION_KEYS.includes(key))) throw new Error("反映に対応していない項目が含まれています。");
@@ -3698,7 +3728,7 @@ ${base}`
   }
   async function getReflectBundles(opts, scopes, setStatus) {
     setStatus(opts.sourceBundle ? "反映元の設定JSONを読み込み中..." : "反映元の設定を取得中...");
-    const source = opts.sourceBundle ? pickSettingsBundle(opts.sourceBundle, { side: "source", appId: String(opts.sourceAppId || "").trim(), rawSettings: true }) : await fetchBundle({
+    const source = opts.sourceBundle ? importedReflectSource(opts) : await fetchBundle({
       rawSettings: true,
       // フィールド設定を選んでいなくても、参照するフィールドの有無と表示名を示せるよう反映先と同じ範囲を取得する。
       appId: opts.sourceAppId,
@@ -3717,6 +3747,12 @@ ${base}`
       onProgress: (p, label) => setStatus(`反映先取得 ${Math.round(p * 100)}% (${label})`)
     });
     return { source, target };
+  }
+  function importedReflectSource(opts) {
+    const bundle = pickSettingsBundle(opts.sourceBundle, { side: "source", appId: String(opts.sourceAppId || "").trim(), rawSettings: true });
+    const customize = bundle.sections?.customizeSettings;
+    if (customize && typeof customize === "object" && customize._partial?.kind === "customizeBody" && !customize._fetchError) delete customize._partial;
+    return bundle;
   }
   async function resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus) {
     if (!scopes.includes("customizeSettings")) return void 0;
@@ -3746,7 +3782,7 @@ ${base}`
         entry.message = error.message;
       }
     }
-    if (Object.keys(opts.lookupMap || {}).length && scopes.some((key) => key === "fieldSettings" || key === "actionSettings")) {
+    if (usesLookupMap(opts, scopes)) {
       const lookup = await preflightLookupMapStandalone(opts.lookupMap, { targetGuestId: opts.targetGuestId });
       if (!lookup.ok) {
         const lookupErr = `ルックアップ変換先を確認できません: ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).join(" / ")}`;
@@ -3766,6 +3802,7 @@ ${base}`
       entries,
       sourceFieldCodes: listReflectFieldCodes(source, true),
       targetFieldCodes: listReflectFieldCodes(target),
+      sourceSystemFieldCodes: listReflectSystemFieldCodes(source),
       baseline,
       targetPending
     };
@@ -3782,11 +3819,11 @@ ${base}`
     const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
     const fieldLabels = reflectFieldLabels(target, source);
     const plans = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels }));
-    const issues = reflectSelectionBlockers(plans, scopes, listReflectFieldCodes(source, true), listReflectFieldCodes(target));
+    const issues = reflectSelectionBlockers(plans, scopes, listReflectFieldCodes(source, true), listReflectFieldCodes(target), listReflectSystemFieldCodes(source));
     if (issues.length) throw new Error(`反映前の検査で停止しました。まだ書き込んでいません。
 ${issues.join("\n")}`);
     if (plans.some((plan) => plan.requiredFields?.length)) revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes, targetDependencies: ["fieldSettings"] }, source, target);
-    if (Object.keys(opts.lookupMap || {}).length) {
+    if (usesLookupMap(opts, scopes)) {
       const lookup = await preflightLookupMapStandalone(opts.lookupMap, { targetGuestId: opts.targetGuestId });
       if (!lookup.ok) throw new Error(`ルックアップ変換先を確認できないため反映を中止しました。
 ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).join("\n")}`);
@@ -3835,6 +3872,16 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       }
       return body;
     };
+    const bodies = /* @__PURE__ */ new Map();
+    if (plans.some((plan) => plan.operations.some((operation) => operation.uploads?.length))) setStatus("JS/CSSファイルを反映先へアップロード中…");
+    for (const plan of plans) for (const operation of plan.operations) {
+      try {
+        bodies.set(operation, await bodyWithUploads(operation));
+      } catch (error) {
+        throw new Error(`${error.message || String(error)}
+まだ何も書き込んでいません。`);
+      }
+    }
     const write = async (operation, body) => {
       try {
         const response = await (operation.method === "POST" ? apiPost : apiPut)(prefix, operation.endpoint, { ...body, app: opts.targetAppId, revision });
@@ -3871,7 +3918,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const written = [];
       try {
         for (const operation of plan.operations) {
-          await write(operation, await bodyWithUploads(operation));
+          await write(operation, bodies.get(operation) || operation.body);
           written.push(operation.label);
           logs.push(`  OK ${operation.label}`);
         }
@@ -5132,8 +5179,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   var STATUS_LABELS = { change: "差分あり", same: "一致", "src-missing": "確認が必要", "tgt-missing": "確認が必要", error: "確認が必要" };
   var OUTCOME_LABELS = { ok: "成功", ng: "失敗", skip: "変更なし", pending: "未実行" };
   var KIND_ORDER2 = ["削除", "変更", "追加", "保持"];
+  var outcomeLabel = (status) => OUTCOME_LABELS[status] || status;
+  var listOf = (value) => Array.isArray(value) ? value : [];
   function escapeReflectMarkdown(value) {
-    return String(value ?? "").replace(/\r?\n/g, " ").replace(/([\\`*_[\]<>|~])/g, "\\$1");
+    return String(value ?? "").replace(/[\r\n]+/g, " ").replace(/([\\`*_[\]<>|~])/g, "\\$1");
   }
   function cell(value) {
     return escapeReflectMarkdown(value) || "－";
@@ -5164,21 +5213,21 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     lines.push(record ? "| 項目 | 結果 | 変更 | 削除 | 反映方法 |" : "| 項目 | 状態 | 変更 | 削除 | 保持 | 反映方法 |");
     lines.push(record ? "| --- | --- | ---: | ---: | --- |" : "| --- | --- | ---: | ---: | ---: | --- |");
     for (const entry of input.entries) {
-      const kept = entry.changes.filter((change) => change.kind === "保持").length;
+      const kept = listOf(entry.changes).filter((change) => change.kind === "保持").length;
       const outcome = outcomeOf(entry.sectionKey);
-      lines.push(record ? `| ${cell(entry.label)} | ${cell(outcome ? OUTCOME_LABELS[outcome.status] : "対象外")} | ${entry.changeCount} | ${entry.removalCount} | ${cell(entry.behavior)} |` : `| ${cell(entry.label)} | ${cell(STATUS_LABELS[entry.status] || entry.status)} | ${entry.changeCount} | ${entry.removalCount} | ${kept} | ${cell(entry.behavior)} |`);
+      lines.push(record ? `| ${cell(entry.label)} | ${cell(outcome ? outcomeLabel(outcome.status) : "対象外")} | ${entry.changeCount} | ${entry.removalCount} | ${cell(entry.behavior)} |` : `| ${cell(entry.label)} | ${cell(STATUS_LABELS[entry.status] || entry.status)} | ${entry.changeCount} | ${entry.removalCount} | ${kept} | ${cell(entry.behavior)} |`);
     }
     lines.push("");
     for (const entry of input.entries) {
       lines.push(`## ${escapeReflectMarkdown(entry.label)}`, "");
       const outcome = outcomeOf(entry.sectionKey);
       if (outcome) {
-        lines.push(`- 結果: ${OUTCOME_LABELS[outcome.status]}`);
+        lines.push(`- 結果: ${outcomeLabel(outcome.status)}`);
         if (outcome.message) lines.push(`- 詳細: ${escapeReflectMarkdown(outcome.message)}`);
       }
       lines.push(`- 状態: ${escapeReflectMarkdown(entry.message || STATUS_LABELS[entry.status] || entry.status)}`);
-      for (const blocker of entry.blockers) lines.push(`- 停止理由: ${escapeReflectMarkdown(blocker)}`);
-      for (const warning of entry.warnings) lines.push(`- 注意: ${escapeReflectMarkdown(warning)}`);
+      for (const blocker of listOf(entry.blockers)) lines.push(`- 停止理由: ${escapeReflectMarkdown(blocker)}`);
+      for (const warning of listOf(entry.warnings)) lines.push(`- 注意: ${escapeReflectMarkdown(warning)}`);
       for (const upload of entry.fileUploads || []) lines.push(`- アップロードするファイル: ${upload.platform === "desktop" ? "PC" : "モバイル"} ${upload.kind.toUpperCase()} / ${escapeReflectMarkdown(upload.name)}`);
       const items = [...entry.items || []].sort((a, b) => KIND_ORDER2.indexOf(a.kind) - KIND_ORDER2.indexOf(b.kind));
       if (items.length) {

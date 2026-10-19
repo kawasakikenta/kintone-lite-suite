@@ -290,13 +290,28 @@ describe('preview reflection with file upload', () => {
     expect(result.finalRevision).toBe('31');
   });
 
-  it('does not PUT the item when an upload fails, and reports the failure', async () => {
+  it('uploads every file before the first write, and stops without writing anything when an upload fails', async () => {
     uploadFails = true;
-    const { result } = await apply();
+    const preview = await previewReflectStandalone(baseOpts, () => {});
+    await expect(runApplyPreviewStandalone({ ...baseOpts, reviewBaseline: preview.baseline, doBackup: true }, () => {}, () => {}))
+      .rejects.toThrow(/「app.js」のアップロードに失敗.*不正[\s\S]*まだ何も書き込んでいません/);
     expect(writes).toEqual([]);
-    expect(result.sections[0].status).toBe('ng');
-    expect(result.sections[0].message).toContain('「app.js」のアップロードに失敗');
-    expect(result.sections[0].message).toContain('不正');
+    // 順序が前の項目（一覧）も、アップロード失敗なら書き込まない。
+    uploadFails = true;
+    const views = { ...baseOpts, scopes: ['viewSettings', 'customizeSettings'] };
+    (kintone as any).api.mockImplementation(async (url: string, method: string, body: any) => {
+      if (method === 'GET') {
+        if (url.endsWith('/app/views.json')) return { views: { 一覧: { type: 'LIST', name: '一覧', index: '0', fields: [], filterCond: '', sort: '' } }, revision: url.includes('/k/guest/5/') ? '30' : '7' };
+        if (url.endsWith('/app/form/fields.json')) return { properties: {}, revision: url.includes('/k/guest/5/') ? '30' : '7' };
+        if (url.endsWith('/app/settings.json')) return { revision: url.includes('/k/guest/5/') && !url.includes('/preview/') ? '30' : '7' };
+        const guest = url.includes('/k/guest/5/') ? 'target' : 'source';
+        return { ...structuredClone(guest === 'target' ? section([file('tgt1', 'old.js')]) : sourceSection()), revision: guest === 'target' ? '30' : '7' };
+      }
+      writes.push([url, method, structuredClone(body)]); return { revision: '31' };
+    });
+    const viewsPreview = await previewReflectStandalone(views, () => {});
+    await expect(runApplyPreviewStandalone({ ...views, reviewBaseline: viewsPreview.baseline, doBackup: true }, () => {}, () => {})).rejects.toThrow(/まだ何も書き込んでいません/);
+    expect(writes).toEqual([]);
   });
 
   it('embeds the target file bodies in the backup and returns the same backup', async () => {

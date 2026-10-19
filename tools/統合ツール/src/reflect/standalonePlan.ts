@@ -76,13 +76,17 @@ function mergeFields(source: Record<string, any>, target: Record<string, any>, l
     const next = { code, ...deepClone(current || {}), ...deepClone(def) };
     if (!current && next.label === undefined) next.label = code;
     if (next.code && next.code !== code) plan.blockers.push(`${code}: フィールドコードの変更を含みます。フィールド追加ツールで確認してください。`);
-    if (next.lookup?.relatedApp?.app && lookupMap[String(next.lookup.relatedApp.app)]) {
-      next.lookup.relatedApp.app = lookupMap[String(next.lookup.relatedApp.app)];
-      delete next.lookup.relatedApp.code;
+    for (const holder of ['lookup', 'referenceTable'] as const) {
+      const mapped = next[holder]?.relatedApp?.app && lookupMap[String(next[holder].relatedApp.app)];
+      if (!mapped) continue;
+      // 変換先が反映先の現在の参照先と同じなら、反映先の relatedApp（code を含む）をそのまま使い、架空の差分を出さない。
+      const currentRelated = current?.[holder]?.relatedApp;
+      if (object(currentRelated) && String(currentRelated.app) === String(mapped)) next[holder].relatedApp = deepClone(currentRelated);
+      else { next[holder].relatedApp.app = mapped; delete next[holder].relatedApp.code; }
     }
-    if (next.referenceTable?.relatedApp?.app && lookupMap[String(next.referenceTable.relatedApp.app)]) {
-      next.referenceTable.relatedApp.app = lookupMap[String(next.referenceTable.relatedApp.app)];
-      delete next.referenceTable.relatedApp.code;
+    // 反映元が API から取得した定義で lookup / referenceTable を持たないのに反映先が持つ場合、この反映では外さない。見えるように示す。
+    for (const holder of ['lookup', 'referenceTable'] as const) {
+      if (current && object(current[holder]) && !own(def, holder)) plan.warnings.push(`${[...path, code].join(' / ')}: 反映先では${holder === 'lookup' ? 'ルックアップ' : '関連レコード一覧'}の設定がありますが、反映元にはありません。この反映では設定を外さず、反映先の設定を残します。`);
     }
     if (def.type === 'SUBTABLE') {
       if (!object(def.fields)) throw new Error(`${code}: テーブル内のフィールド定義がありません。`);
@@ -144,11 +148,21 @@ export function reflectInspectionScopes(scopes: string[]): string[] {
   return [...new Set([...scopes, ...(scopes.some(key => ['layoutSettings', 'viewSettings', 'reportSettings', 'actionSettings', 'appSettings'].includes(key)) ? ['fieldSettings'] : [])])];
 }
 
-export function reflectSelectionBlockers(entries: ReflectSectionPlan[], scopes: string[], sourceFields: string[], targetFields: string[]): string[] {
+/**
+ * 選択した項目を書き込めない理由。参照するフィールドが反映先に無い場合は、
+ * フィールド設定の追加で解決できるか（反映元の通常フィールド）、反映先側の操作が必要か（システムフィールドのコード違いなど）を分けて案内する。
+ * sourceSystemFields はフィールド設定の反映では追加されない反映元のフィールド（レコード番号・ステータスなど）。
+ */
+export function reflectSelectionBlockers(entries: ReflectSectionPlan[], scopes: string[], sourceFields: string[], targetFields: string[], sourceSystemFields: string[] = []): string[] {
   const selected = entries.filter(entry => scopes.includes(entry.sectionKey));
   const available = new Set([...targetFields, ...(scopes.includes('fieldSettings') && !selected.find(entry => entry.sectionKey === 'fieldSettings')?.blockers.length ? sourceFields : [])]);
+  const system = new Set(sourceSystemFields);
   const issues = selected.flatMap(entry => entry.blockers.map(message => `${entry.label}: ${message}`));
-  for (const entry of selected) for (const code of entry.requiredFields || []) if (!available.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
+  for (const entry of selected) for (const code of entry.requiredFields || []) {
+    if (available.has(code)) continue;
+    if (system.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」は反映元のシステムフィールド（レコード番号・ステータス・カテゴリーなど）ですが、反映先に同じコードがありません。反映先でフィールドコードを合わせる、またはプロセス管理・カテゴリーを有効にしてから再取得するか、この項目を除外してください。`);
+    else issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
+  }
   return [...new Set(issues)];
 }
 
@@ -161,6 +175,7 @@ function buildAppSettingsPlan(plan: ReflectSectionPlan, source: any, target: any
     plan.behavior = '動作・表示の設定を更新（アプリ名・説明・アイコンは対象外）';
     const pick = (section: any) => Object.fromEntries(APP_SETTINGS_REFLECT_KEYS.filter(name => own(source, name) && own(section, name)).map(name => [name, name === 'titleField' && object(section[name]) && section[name].selectionMode === 'AUTO' ? { selectionMode: 'AUTO' } : settingValue(section[name])]));
     const before = pick(target), after = pick(source);
+    if (!Object.keys(after).length) throw new Error('反映元に比較できる一般設定がありません（古い設定JSONの可能性があります）。');
     if (after.titleField?.selectionMode === 'MANUAL') {
       if (typeof after.titleField.code !== 'string' || !after.titleField.code) throw new Error('レコードのタイトルに使うフィールドが指定されていません。');
       plan.requiredFields = [after.titleField.code];
@@ -184,7 +199,8 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
   const plan: ReflectSectionPlan = { sectionKey: key, label: reflectSectionLabel(key), status: 'same', message: '', behavior: '全置換', changes: [], changeCount: 0, removalCount: 0, warnings: [], blockers: [], operations: [] };
   const fail = (side: 'src' | 'tgt', section: any) => {
     plan.status = side === 'src' ? 'src-missing' : 'tgt-missing';
-    plan.message = `${side === 'src' ? '反映元' : '反映先'}を完全に取得できません: ${section?._fetchError || section?._partial?.message || '設定がありません'}`;
+    const partial = section?._partial?.kind === 'customizeBody' ? 'JS/CSSファイルの本文が一部取得できていない設定JSONです。設定取得をやり直すか、アプリから取得してください' : section?._partial?.message;
+    plan.message = `${side === 'src' ? '反映元' : '反映先'}を完全に取得できません: ${section?._fetchError || partial || '設定がありません'}`;
     plan.blockers.push(plan.message); return plan;
   };
   if (!isCompleteReflectSection(source)) return fail('src', source);
@@ -232,12 +248,14 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
         }
       }
       for (const name of Object.keys(from)) {
-        if (own(to, name)) from[name] = { ...to[name], ...from[name] };
+        // 種類（一覧の形式など）が違う同名設定は、反映先の古い種類専用の属性を混ぜない。
+        if (own(to, name) && (!from[name].type || !to[name].type || from[name].type === to[name].type)) from[name] = { ...to[name], ...from[name] };
         if (key === 'actionSettings' && from[name]?.destApp?.app != null) {
           const mappedApp = options.lookupMap?.[String(from[name].destApp.app)];
           if (mappedApp) {
-            from[name].destApp = { ...from[name].destApp, app: mappedApp };
-            delete from[name].destApp.code;
+            const currentDest = to[name]?.destApp;
+            if (object(currentDest) && String(currentDest.app) === String(mappedApp)) from[name].destApp = { ...currentDest };
+            else { from[name].destApp = { ...from[name].destApp, app: mappedApp }; delete from[name].destApp.code; }
           }
         }
       }
@@ -313,6 +331,9 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
         if (uploads.length) plan.warnings.push(`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`);
         if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map(item => `「${item.name}」（${item.reason}）`).join('、')} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
       }
+      if (key === 'fieldAcl') plan.requiredFields = [...new Set<string>((after.rights || []).map((right: any) => String(right?.code || '')).filter((code: string) => code && !['$id', '$revision'].includes(code)))];
+      if (key === 'reminderNotifications') plan.requiredFields = [...new Set<string>((after.notifications || []).map((item: any) => String(item?.timing?.code || '')).filter((code: string) => !!code))];
+      if (key === 'processSettings' && object(after.states)) plan.requiredFields = [...new Set<string>(Object.values(after.states).flatMap((state: any) => (state?.assignee?.entities || []).filter((item: any) => item?.entity?.type === 'FIELD_ENTITY').map((item: any) => String(item.entity.code || ''))).filter((code: string) => !!code))];
       if (key === 'layoutSettings') {
         if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error('レイアウトの形式が不正です。');
         after.layout = mergeLayout(source.layout, target.layout, plan);
@@ -334,6 +355,13 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
     plan.message = plan.blockers.length ? plan.blockers.join('\n') : plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : `書き込み不要${plan.changes.some(change => change.kind === '保持') ? '（反映先だけの設定は保持）' : '（一致）'}`;
   } catch (error: any) { plan.status = 'error'; plan.blockers.push(error.message || String(error)); plan.message = plan.blockers.join('\n'); }
   return plan;
+}
+
+/** フィールド設定の反映では追加されないシステムフィールド（レコード番号・ステータスなど）のコード。 */
+export function listReflectSystemFieldCodes(bundle: any): string[] {
+  const props = bundle?.sections?.fieldSettings?.properties;
+  if (!object(props)) return [];
+  return Object.entries(props).filter(([, def]) => SYSTEM_FIELD_TYPES.has(def?.type)).map(([code]) => code);
 }
 
 export function listReflectFieldCodes(bundle: any, writableOnly = false): string[] {

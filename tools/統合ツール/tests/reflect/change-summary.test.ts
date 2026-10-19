@@ -332,3 +332,18 @@ describe('buildReflectSectionPlan items', () => {
     expect(Array.isArray(plan.items)).toBe(true);
   });
 });
+
+describe('long values and reorder-only changes are not dropped', () => {
+  it('reports a change when only the clipped tail of a long value differs', () => {
+    const long = (tail: string) => 'x'.repeat(100) + tail;
+    const items = summarize('viewSettings', { views: { 一覧: { type: 'LIST', index: '0', fields: [], filterCond: long('a') } } }, { views: { 一覧: { type: 'LIST', index: '0', fields: [], filterCond: long('b') } } });
+    expect(items).toHaveLength(1);
+    expect(items[0].details.join()).toContain('内容を変更（長いため省略）');
+  });
+  it('reports a reorder of entities as a change', () => {
+    const entity = (code: string) => ({ entity: { type: 'USER', code } });
+    const items = summarize('actionSettings', { actions: { a: { name: 'a', index: '0', entities: [entity('u1'), entity('u2')] } } }, { actions: { a: { name: 'a', index: '0', entities: [entity('u2'), entity('u1')] } } });
+    expect(items).toHaveLength(1);
+    expect(items[0].details.join()).toContain('並び順のみ変更');
+  });
+});

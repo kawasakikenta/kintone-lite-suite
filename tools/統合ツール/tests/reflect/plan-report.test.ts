@@ -44,7 +44,7 @@ describe('プレビュー反映のMarkdownレポート', () => {
   });
 
   it('利用者が付けた名前の記号を Markdown として解釈させない', () => {
-    expect(escapeReflectMarkdown('a|b *c* [x](y) <script>\n#1')).toBe('a\\|b \\*c\\* \\[x\\](y) \\<script\\> #1');
+    expect(escapeReflectMarkdown('a|b *c* [x](y) <script>\n#1\r2')).toBe('a\\|b \\*c\\* \\[x\\](y) \\<script\\> #1 2');
     const plan = buildReflectSectionPlan('viewSettings', { views: { '|*危険*|': { type: 'LIST', name: '|*危険*|', index: '0', fields: [] } } }, { views: {} });
     const markdown = buildReflectReportMarkdown({ ...base, entries: [plan] });
     expect(markdown).toContain('**追加** \\|\\*危険\\*\\|');
