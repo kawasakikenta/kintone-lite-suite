@@ -31,6 +31,14 @@ describe('buildReflectErrorHint', () => {
     expect(buildReflectErrorHint('Failed to fetch')).toContain('再実行');
   });
 
+  it('ヒントは「反映元／反映先」の用語で案内する（「比較先」を使わない）', () => {
+    for (const message of ['権限がありません (CB_NO02)', '指定したアプリが見つかりません', 'ルックアップの参照先', '指定したフィールドが見つかりません', 'プロセス管理の更新に失敗 (GAIA_RE01)']) {
+      const hint = buildReflectErrorHint(message);
+      expect(hint, message).toContain('反映先');
+      expect(hint, message).not.toMatch(/比較[元先]/);
+    }
+  });
+
   it('未知のエラーは空文字（ヒントなし）', () => {
     expect(buildReflectErrorHint('something unexpected happened')).toBe('');
     expect(buildReflectErrorHint('')).toBe('');

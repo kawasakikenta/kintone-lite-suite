@@ -1,5 +1,8 @@
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone } from '../utils.js';
+import { APP_SETTINGS_LABELS, APP_SETTINGS_REFLECT_KEYS, reflectSectionLabel } from './sections.js';
+import { comparableCustomizePayload, customizeFileNames, customizeSlotKey, type CustomizeFileResolution } from './customizeFiles.js';
+import { retainedItemNames, summarizeReflectItems, type ReflectItemSummary } from './changeSummary.js';
 import {
   extractActionRequiredFields,
   extractReportRequiredFields,
@@ -9,14 +12,18 @@ import {
 } from './standalonePreflight.js';
 
 export interface ReflectChange { kind: '追加' | '変更' | '削除' | '保持'; path: string; before: string; after: string }
-export interface ReflectOperation { method: 'POST' | 'PUT'; endpoint: string; body: Record<string, any>; label: string }
+/** 反映先へアップロードしてから設定する JS/CSS ファイル（index は PUT body の platform/kind 配列内の位置）。 */
+export interface ReflectFileUpload { platform: 'desktop' | 'mobile'; kind: 'js' | 'css'; index: number; sourceFileKey: string; name: string; byteSize: number }
+export interface ReflectOperation { method: 'POST' | 'PUT'; endpoint: string; body: Record<string, any>; label: string; uploads?: ReflectFileUpload[] }
 export interface ReflectSectionPlan {
   sectionKey: string; label: string; status: 'change' | 'same' | 'src-missing' | 'tgt-missing' | 'error'; message: string;
   behavior: string; changes: ReflectChange[]; changeCount: number; removalCount: number; warnings: string[]; blockers: string[];
   operations: ReflectOperation[]; fieldStats?: { add: number; update: number; tgtOnly: number };
-  requiredFields?: string[];
+  requiredFields?: string[]; fileUploads?: ReflectFileUpload[];
+  items?: ReflectItemSummary[];
 }
-export interface ReflectPlanOptions { lookupMap?: Record<string, string>; preserveTargetOnly?: boolean }
+export interface ReflectPlanOptions { lookupMap?: Record<string, string>; preserveTargetOnly?: boolean; customizeFiles?: CustomizeFileResolution; fieldLabels?: Record<string, string> }
+export const formatBytes = (bytes: number) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
 const namedSections: Record<string, string> = { viewSettings: 'views', reportSettings: 'reports', actionSettings: 'actions' };
 const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 const object = (value: any): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -69,13 +76,17 @@ function mergeFields(source: Record<string, any>, target: Record<string, any>, l
     const next = { code, ...deepClone(current || {}), ...deepClone(def) };
     if (!current && next.label === undefined) next.label = code;
     if (next.code && next.code !== code) plan.blockers.push(`${code}: フィールドコードの変更を含みます。フィールド追加ツールで確認してください。`);
-    if (next.lookup?.relatedApp?.app && lookupMap[String(next.lookup.relatedApp.app)]) {
-      next.lookup.relatedApp.app = lookupMap[String(next.lookup.relatedApp.app)];
-      delete next.lookup.relatedApp.code;
+    for (const holder of ['lookup', 'referenceTable'] as const) {
+      const mapped = next[holder]?.relatedApp?.app && lookupMap[String(next[holder].relatedApp.app)];
+      if (!mapped) continue;
+      // 変換先が反映先の現在の参照先と同じなら、反映先の relatedApp（code を含む）をそのまま使い、架空の差分を出さない。
+      const currentRelated = current?.[holder]?.relatedApp;
+      if (object(currentRelated) && String(currentRelated.app) === String(mapped)) next[holder].relatedApp = deepClone(currentRelated);
+      else { next[holder].relatedApp.app = mapped; delete next[holder].relatedApp.code; }
     }
-    if (next.referenceTable?.relatedApp?.app && lookupMap[String(next.referenceTable.relatedApp.app)]) {
-      next.referenceTable.relatedApp.app = lookupMap[String(next.referenceTable.relatedApp.app)];
-      delete next.referenceTable.relatedApp.code;
+    // 反映元が API から取得した定義で lookup / referenceTable を持たないのに反映先が持つ場合、この反映では外さない。見えるように示す。
+    for (const holder of ['lookup', 'referenceTable'] as const) {
+      if (current && object(current[holder]) && !own(def, holder)) plan.warnings.push(`${[...path, code].join(' / ')}: 反映先では${holder === 'lookup' ? 'ルックアップ' : '関連レコード一覧'}の設定がありますが、反映元にはありません。この反映では設定を外さず、反映先の設定を残します。`);
     }
     if (def.type === 'SUBTABLE') {
       if (!object(def.fields)) throw new Error(`${code}: テーブル内のフィールド定義がありません。`);
@@ -134,30 +145,71 @@ function mergeLayout(source: any[], target: any[], plan: ReflectSectionPlan): an
 }
 
 export function reflectInspectionScopes(scopes: string[]): string[] {
-  return [...new Set([...scopes, ...(scopes.some(key => ['layoutSettings', 'viewSettings', 'reportSettings', 'actionSettings'].includes(key)) ? ['fieldSettings'] : [])])];
+  return [...new Set([...scopes, ...(scopes.some(key => ['layoutSettings', 'viewSettings', 'reportSettings', 'actionSettings', 'appSettings'].includes(key)) ? ['fieldSettings'] : [])])];
 }
 
-export function reflectSelectionBlockers(entries: ReflectSectionPlan[], scopes: string[], sourceFields: string[], targetFields: string[]): string[] {
+/**
+ * 選択した項目を書き込めない理由。参照するフィールドが反映先に無い場合は、
+ * フィールド設定の追加で解決できるか（反映元の通常フィールド）、反映先側の操作が必要か（システムフィールドのコード違いなど）を分けて案内する。
+ * sourceSystemFields はフィールド設定の反映では追加されない反映元のフィールド（レコード番号・ステータスなど）。
+ */
+export function reflectSelectionBlockers(entries: ReflectSectionPlan[], scopes: string[], sourceFields: string[], targetFields: string[], sourceSystemFields: string[] = []): string[] {
   const selected = entries.filter(entry => scopes.includes(entry.sectionKey));
   const available = new Set([...targetFields, ...(scopes.includes('fieldSettings') && !selected.find(entry => entry.sectionKey === 'fieldSettings')?.blockers.length ? sourceFields : [])]);
+  const system = new Set(sourceSystemFields);
   const issues = selected.flatMap(entry => entry.blockers.map(message => `${entry.label}: ${message}`));
-  for (const entry of selected) for (const code of entry.requiredFields || []) if (!available.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
+  for (const entry of selected) for (const code of entry.requiredFields || []) {
+    if (available.has(code)) continue;
+    if (system.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」は反映元のシステムフィールド（レコード番号・ステータス・カテゴリーなど）ですが、反映先に同じコードがありません。反映先でフィールドコードを合わせる、またはプロセス管理・カテゴリーを有効にしてから再取得するか、この項目を除外してください。`);
+    else issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
+  }
   return [...new Set(issues)];
+}
+
+const settingValue = (value: any): any => typeof value === 'number' ? String(value) : Array.isArray(value) ? value.map(settingValue) : object(value) ? Object.fromEntries(Object.entries(value).map(([name, item]) => [name, settingValue(item)])) : value;
+
+/** 一般設定。反映元に無いキーは「変更なし」として送らない（古いJSONとの互換）。アプリ名・説明・アイコンは対象外。 */
+function buildAppSettingsPlan(plan: ReflectSectionPlan, source: any, target: any, options: ReflectPlanOptions): ReflectSectionPlan {
+  try {
+    if (own(source, 'titleField') && !object(source.titleField)) throw new Error('レコードのタイトルの設定形式が不正です。');
+    plan.behavior = '動作・表示の設定を更新（アプリ名・説明・アイコンは対象外）';
+    const pick = (section: any) => Object.fromEntries(APP_SETTINGS_REFLECT_KEYS.filter(name => own(source, name) && own(section, name)).map(name => [name, name === 'titleField' && object(section[name]) && section[name].selectionMode === 'AUTO' ? { selectionMode: 'AUTO' } : settingValue(section[name])]));
+    const before = pick(target), after = pick(source);
+    if (!Object.keys(after).length) throw new Error('反映元に比較できる一般設定がありません（古い設定JSONの可能性があります）。');
+    if (after.titleField?.selectionMode === 'MANUAL') {
+      if (typeof after.titleField.code !== 'string' || !after.titleField.code) throw new Error('レコードのタイトルに使うフィールドが指定されていません。');
+      plan.requiredFields = [after.titleField.code];
+    }
+    diffValues(before, after, [], plan.changes);
+    // 一般設定のAPIは設定を削除しない（例: タイトルを自動にするとフィールド指定は不要になるだけ）ため、削除としては数えない。
+    for (const change of plan.changes) if (change.kind === '削除') change.kind = '変更';
+    try { plan.items = summarizeReflectItems('appSettings', before, after, { fieldLabels: options.fieldLabels }); } catch { plan.items = []; }
+    for (const change of plan.changes) { const [head, ...rest] = change.path.split(' / '); change.path = [APP_SETTINGS_LABELS[head] || head, ...rest].join(' / '); }
+    plan.changeCount = plan.changes.filter(change => change.kind !== '保持').length;
+    plan.removalCount = plan.changes.filter(change => change.kind === '削除').length;
+    if (plan.changeCount) plan.operations.push({ method: 'PUT', endpoint: SECTION_DEFS.find(item => item.key === 'appSettings')?.endpoint || '/app/settings.json', body: after, label: plan.label });
+    plan.status = plan.operations.length ? 'change' : 'same';
+    plan.message = plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : '書き込み不要（一致）';
+  } catch (error: any) { plan.status = 'error'; plan.blockers.push(error.message || String(error)); plan.message = plan.blockers.join('\n'); }
+  return plan;
 }
 
 export function buildReflectSectionPlan(key: string, source: any, target: any, options: ReflectPlanOptions = {}): ReflectSectionPlan {
   const def = SECTION_DEFS.find(item => item.key === key);
-  const plan: ReflectSectionPlan = { sectionKey: key, label: def?.label || key, status: 'same', message: '', behavior: '全置換', changes: [], changeCount: 0, removalCount: 0, warnings: [], blockers: [], operations: [] };
+  const plan: ReflectSectionPlan = { sectionKey: key, label: reflectSectionLabel(key), status: 'same', message: '', behavior: '全置換', changes: [], changeCount: 0, removalCount: 0, warnings: [], blockers: [], operations: [] };
   const fail = (side: 'src' | 'tgt', section: any) => {
     plan.status = side === 'src' ? 'src-missing' : 'tgt-missing';
-    plan.message = `${side === 'src' ? '反映元' : '反映先'}を完全に取得できません: ${section?._fetchError || section?._partial?.message || '設定がありません'}`;
+    const partial = section?._partial?.kind === 'customizeBody' ? 'JS/CSSファイルの本文が一部取得できていない設定JSONです。設定取得をやり直すか、アプリから取得してください' : section?._partial?.message;
+    plan.message = `${side === 'src' ? '反映元' : '反映先'}を完全に取得できません: ${section?._fetchError || partial || '設定がありません'}`;
     plan.blockers.push(plan.message); return plan;
   };
   if (!isCompleteReflectSection(source)) return fail('src', source);
   if (!isCompleteReflectSection(target)) return fail('tgt', target);
+  if (key === 'appSettings') return buildAppSettingsPlan(plan, source, target, options);
   if (!def?.put || !def.putBuilder) { plan.status = 'error'; plan.blockers.push('この項目は反映に対応していません。'); return plan; }
   try {
-    let before: any, after: any;
+    let before: any, after: any, comparable: ((value: any) => any) | undefined;
+    const uploads: ReflectFileUpload[] = [];
     if (key === 'fieldSettings') {
       plan.behavior = '追加・更新（反映先だけの項目は保持）';
       const sourceProps = fieldDefinitions(source), targetProps = fieldDefinitions(target);
@@ -196,12 +248,14 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
         }
       }
       for (const name of Object.keys(from)) {
-        if (own(to, name)) from[name] = { ...to[name], ...from[name] };
+        // 種類（一覧の形式など）が違う同名設定は、反映先の古い種類専用の属性を混ぜない。
+        if (own(to, name) && (!from[name].type || !to[name].type || from[name].type === to[name].type)) from[name] = { ...to[name], ...from[name] };
         if (key === 'actionSettings' && from[name]?.destApp?.app != null) {
           const mappedApp = options.lookupMap?.[String(from[name].destApp.app)];
           if (mappedApp) {
-            from[name].destApp = { ...from[name].destApp, app: mappedApp };
-            delete from[name].destApp.code;
+            const currentDest = to[name]?.destApp;
+            if (object(currentDest) && String(currentDest.app) === String(mappedApp)) from[name].destApp = { ...currentDest };
+            else { from[name].destApp = { ...from[name].destApp, app: mappedApp }; delete from[name].destApp.code; }
           }
         }
       }
@@ -255,14 +309,31 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
         if (typeof source.notifyToCommenter === 'boolean') after.notifyToCommenter = source.notifyToCommenter;
       }
       if (key === 'customizeSettings') {
-        plan.warnings.push('JSONバックアップにはJS/CSSのファイル本体を含みません。ファイルの取り外しや差し替えを行う場合は、元のファイルも別途保管してください。');
         if (source.scope !== undefined) after.scope = source.scope;
         if (target.scope !== undefined) before.scope = target.scope;
+        // 別アプリの fileKey は流用できない。解決済みなら再利用・アップロードに置き換え、未解決は停止する。
+        const resolution = options.customizeFiles, names = customizeFileNames(source, target);
+        comparable = value => comparableCustomizePayload(value, resolution, names);
         const currentKeys = new Set(['desktop', 'mobile'].flatMap(platform => ['js', 'css'].flatMap(kind => (target[platform]?.[kind] || []).map(item => item.file?.fileKey).filter(Boolean))));
-        for (const platform of ['desktop', 'mobile']) for (const kind of ['js', 'css']) for (const item of source[platform]?.[kind] || []) {
-          if (item.type === 'FILE' && !currentKeys.has(item.file?.fileKey)) plan.blockers.push(`${platform}/${kind}: 「${item.file?.name || 'アップロードファイル'}」は反映先に存在しません。JS/CSS設定画面でファイルをアップロードしてから比較してください。`);
+        for (const platform of ['desktop', 'mobile'] as const) for (const kind of ['js', 'css'] as const) for (const [index, item] of (after[platform][kind] as any[]).entries()) {
+          if (item.type !== 'FILE') continue;
+          const fileKey = item.file.fileKey, name = names[fileKey] || '', state = resolution?.files[customizeSlotKey(platform, kind, fileKey)];
+          const shown = name || 'アップロードファイル';
+          if (state?.status === 'reuse') item.file.fileKey = state.targetFileKey;
+          else if (state?.status === 'upload') {
+            // kintone はファイル名の拡張子で JS/CSS を判定するため、名前の無いファイルはアップロードしても設定できない。
+            if (!name) plan.blockers.push(`${platform}/${kind}: 反映元のファイル（${fileKey}）にファイル名がありません。反映元のJS/CSS設定を確認してください。`);
+            else uploads.push({ platform, kind, index, sourceFileKey: fileKey, name, byteSize: state.byteSize });
+          } else if (state?.status === 'unavailable') plan.blockers.push(`${platform}/${kind}: 「${shown}」を反映元から取得できません（${state.reason}）。反映元でファイルを確認してください。`);
+          else if (!state && !currentKeys.has(fileKey)) plan.blockers.push(`${platform}/${kind}: 「${shown}」は反映先に存在せず、反映元のファイル本体を確認できません。`);
         }
+        // アップロードした fileKey は1回しか使えないため、同じファイルでも枠ごとに1件と数える。
+        if (uploads.length) plan.warnings.push(`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`);
+        if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map(item => `「${item.name}」（${item.reason}）`).join('、')} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
       }
+      if (key === 'fieldAcl') plan.requiredFields = [...new Set<string>((after.rights || []).map((right: any) => String(right?.code || '')).filter((code: string) => code && !['$id', '$revision'].includes(code)))];
+      if (key === 'reminderNotifications') plan.requiredFields = [...new Set<string>((after.notifications || []).map((item: any) => String(item?.timing?.code || '')).filter((code: string) => !!code))];
+      if (key === 'processSettings' && object(after.states)) plan.requiredFields = [...new Set<string>(Object.values(after.states).flatMap((state: any) => (state?.assignee?.entities || []).filter((item: any) => item?.entity?.type === 'FIELD_ENTITY').map((item: any) => String(item.entity.code || ''))).filter((code: string) => !!code))];
       if (key === 'layoutSettings') {
         if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error('レイアウトの形式が不正です。');
         after.layout = mergeLayout(source.layout, target.layout, plan);
@@ -272,15 +343,25 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
         walk(after.layout); plan.requiredFields = [...new Set(codes)];
       }
     }
-    diffValues(before, after, [], plan.changes);
+    const shownBefore = comparable ? comparable(before) : before, shownAfter = comparable ? comparable(after) : after;
+    diffValues(shownBefore, shownAfter, [], plan.changes);
+    try { plan.items = summarizeReflectItems(key, shownBefore, shownAfter, { fieldLabels: options.fieldLabels, retained: retainedItemNames(key, plan.changes, options.fieldLabels) }); } catch { plan.items = []; }
     plan.changeCount = plan.changes.filter(change => change.kind !== '保持').length;
     plan.removalCount = plan.changes.filter(change => change.kind === '削除').length;
-    if (key !== 'fieldSettings' && key !== 'pluginSettings' && plan.changeCount) plan.operations.push({ method: 'PUT', endpoint: def.endpoint, body: after, label: def.label });
+    if (key !== 'fieldSettings' && key !== 'pluginSettings' && plan.changeCount) plan.operations.push({ method: 'PUT', endpoint: def.endpoint, body: after, label: def.label, ...(uploads.length ? { uploads } : {}) });
+    if (uploads.length && plan.changeCount) plan.fileUploads = uploads;
     if (plan.blockers.length) plan.status = 'error';
     else plan.status = plan.operations.length ? 'change' : 'same';
     plan.message = plan.blockers.length ? plan.blockers.join('\n') : plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : `書き込み不要${plan.changes.some(change => change.kind === '保持') ? '（反映先だけの設定は保持）' : '（一致）'}`;
   } catch (error: any) { plan.status = 'error'; plan.blockers.push(error.message || String(error)); plan.message = plan.blockers.join('\n'); }
   return plan;
+}
+
+/** フィールド設定の反映では追加されないシステムフィールド（レコード番号・ステータスなど）のコード。 */
+export function listReflectSystemFieldCodes(bundle: any): string[] {
+  const props = bundle?.sections?.fieldSettings?.properties;
+  if (!object(props)) return [];
+  return Object.entries(props).filter(([, def]) => SYSTEM_FIELD_TYPES.has(def?.type)).map(([code]) => code);
 }
 
 export function listReflectFieldCodes(bundle: any, writableOnly = false): string[] {

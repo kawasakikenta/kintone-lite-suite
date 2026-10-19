@@ -29,3 +29,12 @@ describe('settings export ZIP is readable by the folder import', () => {
     expect([...zipFiles.keys()].every(name => !/[\\/:*?"<>|]/.test(name))).toBe(true);
   });
 });
+
+describe('reflect source JSON without an app id', () => {
+  it('uses the only bundle even when a stale app id is given', async () => {
+    const { pickSettingsBundle } = await import('../../src/settingsBundleImport');
+    const bundle = pickSettingsBundle({ sections: { fieldSettings: { properties: {} } } }, { side: 'source', appId: '123', rawSettings: true });
+    expect(bundle.sections.fieldSettings).toEqual({ properties: {} });
+    expect(() => pickSettingsBundle({ apps: [{ appId: '1', sections: {} }, { appId: '2', sections: {} }] }, { side: 'source', appId: '123', rawSettings: true })).toThrow('見つかりません');
+  });
+});

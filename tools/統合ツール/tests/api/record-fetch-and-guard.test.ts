@@ -25,6 +25,19 @@ describe('assertAllowsMutatingRestCall', () => {
     expect(() => assertAllowsMutatingRestCall('/k/v1', '/records.json', 'POST')).not.toThrow();
   });
 
+  it('allows only POST /file.json (a temporary upload) on the production prefix', () => {
+    expect(() => assertAllowsMutatingRestCall('/k/v1', '/file.json', 'POST')).not.toThrow();
+    expect(() => assertAllowsMutatingRestCall('/k/guest/3/v1', '/file.json', 'POST')).not.toThrow();
+    expect(() => assertAllowsMutatingRestCall('/k/v1', '/file.json', 'PUT')).toThrow(/本番API/);
+    expect(() => assertAllowsMutatingRestCall('/k/v1', '/file.json', 'DELETE')).toThrow(/本番API/);
+    expect(() => assertAllowsMutatingRestCall('/k/v1', '/app/customize.json', 'POST')).toThrow(/本番API/);
+    expect(() => assertAllowsMutatingRestCall('/k/v1', '/app/deploy.json', 'POST')).toThrow(/デプロイ/);
+    // 正規化で /file.json に見せかけた別のパスは許可しない。
+    for (const path of ['/app/settings.json#/k/v1/file.json', '\\k\\v1\\file.json', '/foo/k/v1/file.json', '/k/v1/file.json', 'file.json']) {
+      expect(() => assertAllowsMutatingRestCall('/k/v1', path, 'POST')).toThrow(/本番API/);
+    }
+  });
+
   it('retries transient 429/503 errors on apiPut and apiPost without retrying 4xx validation errors', async () => {
     const api = vi.fn()
       .mockRejectedValueOnce(new Error('HTTP status 429'))
