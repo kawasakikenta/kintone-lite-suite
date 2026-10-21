@@ -3,7 +3,7 @@
 この資料は、`kintone-lite-suite` の核心設計（アーキテクチャと主要な設計判断）、安全性設計、差分比較ツールの判定条件・閾値・キー候補を、正規ソース `tools/統合ツール/src/` の実装から抜き出してまとめたものです。利用者向けの説明は [差分比較ロジック説明](diff-comparison-logic.md)、技術構成は [技術構成・ライブラリ一覧・設計資料](technology-and-architecture.md) を正本とし、本資料は実装側の判定条件を補います。
 
 - 対象: main（コミット `05e3522` 時点）
-- 更新日: 2026-10-21
+- 更新日: 2026-10-22
 
 ## 1. 概要と読み方
 
@@ -383,7 +383,7 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | 値のサニタイズ | `sanitizeReportRowValue`: セクションルートの `_partial` `_fetchError` `_bodyFetchStats` `_configFetchStats`、JS/CSS 要素の `_bodyText` `_bodyHash` `_bodyUnavailable`、プラグインの `_config` を除去（キー名だけで全階層からは落とさない）。`customizeSettings` / `pluginSettings` の `same` 行は左右とも「（同一の機密値は安全のため省略しました）」に置き換え（`sensitiveValueRedacted`）。変更値は伏せない |
 | ラベル内 HTML | `stringifyRowValueForDiff` が `layoutSettings` 配下と `.label` 文字列の HTML タグを除去。JS/CSS 本文（`file._body`）は文字列のまま行差分をかける |
 | 収録上限 | `DIFF_HTML_MAX_EXPORT_ROWS` = 2,000（表示専用展開後）。優先順は 実差分 → 表示専用行 → 同一行。省略件数を不完全警告に載せる |
-| 内容識別子 | `contentIdentifier` = `SHA256-` ＋ SHA-256 の先頭 16 桁（64 ビット）を大文字で。`docs/diff-comparison-logic.md` は「先頭 128 ビット」と書いているが、実装は `slice(0, 16)`（要確認） |
+| 内容識別子 | `contentIdentifier` = `SHA256-` ＋ SHA-256 の先頭 16 桁（64 ビット）を大文字で。`docs/diff-comparison-logic.md` §13.1 も同じ値（64 ビット）に修正済み |
 | 反映 JSON の可否 | `canBuildReflectJson` = `withCompared` かつ 不完全警告が 0 件（実差分の打ち切り、取得失敗、本文未検証、HTML 収録上限のいずれもなし）かつ プロセス状態改名が 0 件（収録行の改名通知数と、バンドルから直接 `detectProcessStateRenames` した件数の大きい方）。同一証跡だけの省略では無効にしない。生成される JSON は比較元の値を比較先へ送る方向（変更前→変更後で比較したときはロールバック方向） |
 | レビュー状態 JSON | `kind: 'kintone-diff-review-state'`、`version: 1`、上限 2 MiB（ファイルサイズと文字数の両方）、`reportFingerprint`（比較元・比較先の App ID / ゲスト ID / 環境と行内容から生成）が一致しないと読込拒否。行キーは `review-v1-{内容ハッシュ}-{出現順}` で、行の追加削除でずれない |
 | 能動的 HTML | インライン JS を含むが外部通信と kintone API 実行はしない。フィンガープリントは照合用で改ざん防止の署名ではない |
@@ -534,4 +534,4 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | 共通パネル・ワークフロー・アプリ検索 | `src/entries/litePanelTheme.ts`、`liteWorkflow.ts`、`appSearchControl.ts` | `run-lite-shared-dom.cjs`、`run-lite-workflows-dom.cjs` |
 | ビルド・エントリ定義・ストレージ禁止検査 | `build.js`、`src/featureDefs.mjs`、`scripts/check-no-browser-storage.cjs` | CI `verify`（`npm run check` ＋ `git diff --exit-code`） |
 
-本資料でコードとドキュメントの食い違いとして見つけたのは 1 点です。`docs/diff-comparison-logic.md` §13.1 は内容識別子を「SHA-256 の先頭 128 ビット」と説明していますが、`export-safety.ts` の `contentIdentifier` は 16 進 16 桁（64 ビット）を使っています。どちらに揃えるかは要判断です。
+本資料でコードとドキュメントの食い違いとして見つけたのは 1 点です。`docs/diff-comparison-logic.md` §13.1 は内容識別子を「SHA-256 の先頭 128 ビット」と説明していましたが、`export-safety.ts` の `contentIdentifier` は 16 進 16 桁（64 ビット）を使っています。識別子は同一原文の照合用で衝突耐性を要しないため、実装を変えると過去の出力との照合ができなくなることを避け、資料側を 64 ビットに修正しました。
