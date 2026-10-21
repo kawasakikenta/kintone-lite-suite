@@ -196,6 +196,7 @@ git diff --exit-code
 - `tools/統合ツール_機能説明.md`: 利用者向けの機能説明
 - `tools/test-harness/README.md`: ブラウザ・成果物ハーネス
 - `docs/diff-comparison-logic.md`: 差分比較の詳細設計
+- `docs/core-design-and-diff-judgment.md`: 核心設計・安全性設計と、差分比較の実装側の判定条件
 - `docs/preview-reflection.md`: プレビュー反映の安全設計
 - `docs/api-response-improvements.md`: API レスポンスを利用する補助機能
 - `docs/record-quality-and-template.md`: データ品質検査と CSV ひな形
