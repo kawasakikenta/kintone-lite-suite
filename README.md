@@ -65,6 +65,7 @@ npm run test:er-compare
 - [プレビュー反映の使い方と反映範囲](docs/preview-reflection.md) — 4段階の確認、変更の要約、既存設定の保持、一般設定・別アプリのJS/CSS、未公開の変更と取り消し、複数アプリへの順次反映
 - [設計書出力](docs/design-output.md) — 人向けExcel、AI向けMarkdown、取得状態、集計ルール
 - [差分比較ロジック説明](docs/diff-comparison-logic.md) — 比較方向、取得完全性、無視・正規化、配列の対応付け、HTMLの「変更の要点」、Excel / AI向けMarkdown出力の違い
+- [核心設計と差分判定条件](docs/core-design-and-diff-judgment.md) — アーキテクチャと設計判断、API層・共通基盤の判定条件、差分比較の完全性・無視・正規化・配列対応付け・出力・一括比較の判定条件、安全性設計の横断まとめ
 - [統合ツールの開発・ビルド](tools/統合ツール/README.md)
 - [liteツール群の機能説明](tools/統合ツール_機能説明.md)
 
