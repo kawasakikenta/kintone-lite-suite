@@ -27,6 +27,7 @@ import {
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { createAppLookupCache, createAppTableLookup } from './appNameHint.js';
 
 export function mountDesignLitePanel() {
   const panel = createLitePanel({
@@ -37,13 +38,15 @@ export function mountDesignLitePanel() {
     badges: [{ label: 'Lite' }, { label: '5 形式出力' }],
     hint: '対象アプリ表に 1 行入力すれば 1 アプリ出力、複数行で ZIP 一括出力。<strong>アプリごとに別ゲストスペース</strong>も指定できます。'
   });
+  const appLookup = createAppLookupCache();
 
   // ---- 対象アプリ（表形式：単一/複数を分けない） ----
   const cardTarget = makeCard({ title: '対象アプリ', number: 1 });
   const appTable = makeAppTable({
     currentAppId: String(DEFAULT_APP_ID || ''),
     currentGuestId: DEFAULT_GUEST_ID,
-    initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : []
+    initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : [],
+    lookupAppName: createAppTableLookup(appLookup)
   });
   cardTarget.body.appendChild(createAppSearchControl(panel, {
     targets: [
@@ -318,7 +321,7 @@ export function mountDesignLitePanel() {
     const first = appTable.first();
     const isImported = hasImportedBundle(first.appId, first.guestId, 0);
     return [
-      ['対象', connectionSummary(first.appId, first.guestId, isImported ? '読込済みJSON' : prev.checkbox.checked ? 'プレビュー' : '本番')],
+      ['対象', connectionSummary(first.appId, first.guestId, isImported ? '読込済みJSON' : prev.checkbox.checked ? 'プレビュー' : '本番', first.appName)],
       ['取得元', isImported ? '読み込んだ設定JSON' : 'アプリから取得'],
       ['出力形式', format], ['対象範囲', '対象表の1行目のみ']
     ];
@@ -328,7 +331,7 @@ export function mountDesignLitePanel() {
     setup: [cardTarget.card, foldWorkflowSection('保存済みの設定JSONを使う', cardImport.card)],
     actions: [
       { id: 'xlsx', label: 'Excel設計書を保存', description: '1行目のアプリをExcelの設計書にします。', button: bXlsx, validate: firstTargetRequired, summary: () => singleSummary('Excel (.xlsx)') },
-      { id: 'zip', label: '全対象をExcel ZIPで保存', description: '本番の設定または読込済みJSONから全対象を保存します。', button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), '対象アプリ表: '), summary: () => [['対象', appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? '読込済みJSON' : '本番')).join('\n')], ['出力', appTable.count() + ' アプリのExcelをZIPに保存'], ['取得環境', 'ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。']] },
+      { id: 'zip', label: '全対象をExcel ZIPで保存', description: '本番の設定または読込済みJSONから全対象を保存します。', button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), '対象アプリ表: '), summary: () => [['対象', appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? '読込済みJSON' : '本番', r.appName)).join('\n')], ['出力', appTable.count() + ' アプリのExcelをZIPに保存'], ['取得環境', 'ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。']] },
       { id: 'md', label: 'Markdown設計書を保存', description: '1行目のアプリを文章で確認できる形式にします。', button: bMd, validate: firstTargetRequired, summary: () => singleSummary('Markdown') },
       { id: 'ai-md', label: 'AI向けMarkdownを保存', description: '1行目のアプリ設定をAIへ渡しやすい専用Markdownにします。', button: bAiMd, validate: firstTargetRequired, summary: () => singleSummary('AI向けMarkdown（AIへの受け渡し）') },
       { id: 'ai-copy', label: 'AI向けMarkdownをコピー', description: '1行目の設計書をAIへ渡す専用Markdownとしてコピーします。', button: bAiCopy, validate: firstTargetRequired, summary: () => singleSummary('AI向けMarkdown（クリップボード）') },
@@ -338,7 +341,7 @@ export function mountDesignLitePanel() {
         const rows = diffTargetRows();
         if (rows.length < 2) return '対象アプリを2件以上指定してください。';
         return validateDesignExportTargets(rows.map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), '比較対象: ');
-      }, summary: () => diffTargetRows().map((r, i) => [i ? '比較先' : '比較元', connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? '読込済みJSON' : prev.checkbox.checked ? 'プレビュー' : '本番')]) }
+      }, summary: () => diffTargetRows().map((r, i) => [i ? '比較先' : '比較元', connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? '読込済みJSON' : prev.checkbox.checked ? 'プレビュー' : '本番', r.appName)]) }
     ]
   });
 

@@ -1304,15 +1304,21 @@ ${contextLine}`);
   font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close,.kus-lp__toggle{
+.kus-lp__close,.kus-lp__toggle,.kus-lp__maximize{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
   font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
-.kus-lp__toggle{padding:6px 9px;min-width:34px}
-.kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
-.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__toggle,.kus-lp__maximize{padding:6px 9px;min-width:34px}
+.kus-lp__close:hover,.kus-lp__toggle:hover,.kus-lp__maximize:hover{background:rgba(255,255,255,.24)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled,.kus-lp__maximize:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__maximize[aria-pressed="true"]{background:rgba(255,255,255,.3)}
+/* 拡大表示: 画面いっぱいに広げる（長い結果やログを読むとき用）。ドラッグ位置より優先し、折りたたみ中は幅を変えない */
+.kus-lp.kus-lp--max:not(.kus-lp--collapsed){
+  width:calc(100vw - 24px)!important;max-width:none!important;max-height:calc(100dvh - 24px)!important;
+  top:12px!important;left:12px!important;right:auto!important;
+}
 
 /* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
 .kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
@@ -1494,6 +1500,10 @@ ${contextLine}`);
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
 .kus-lp__small{font-size:11px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
+/* 入力中のアプリ名確認（appNameHint.ts）。入力行の直後に置く */
+.kus-lp__app-note{margin:-4px 0 10px;font-size:11.5px;line-height:1.5;color:var(--c-muted);overflow-wrap:anywhere;white-space:pre-wrap}
+.kus-lp__app-note--ok{color:var(--c-ok-fg);font-weight:600}
+.kus-lp__app-note--warn{color:var(--c-err-fg);font-weight:700}
 
 /* ===== Toolbar / Count / Pill ===== */
 .kus-lp__toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px}
@@ -1562,7 +1572,8 @@ ${contextLine}`);
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
+.kus-lp__apptable-name--named::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
+.kus-lp__apptable-name--warn{color:var(--c-err-fg);font-weight:600;white-space:normal}
 .kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
 .kus-lp__apptable-acts-h{width:128px}
 .kus-lp__apptable-acts{white-space:nowrap}
@@ -1652,9 +1663,17 @@ ${contextLine}`);
     toggleBtn.setAttribute("aria-label", "折りたたむ");
     toggleBtn.title = "折りたたむ（ヒーローだけ残して kintone 画面を確認）";
     toggleBtn.textContent = "－";
+    const maxBtn = document.createElement("button");
+    maxBtn.type = "button";
+    maxBtn.className = "kus-lp__maximize";
+    maxBtn.setAttribute("aria-pressed", "false");
+    maxBtn.setAttribute("aria-label", "拡大表示");
+    maxBtn.title = "拡大表示（画面いっぱいに広げる）";
+    maxBtn.textContent = "⤢";
     const heroActions = document.createElement("div");
     heroActions.className = "kus-lp__hero-actions";
     heroActions.appendChild(elapsedEl);
+    heroActions.appendChild(maxBtn);
     heroActions.appendChild(toggleBtn);
     heroActions.appendChild(closeBtn);
     const progress = document.createElement("div");
@@ -1781,6 +1800,15 @@ ${contextLine}`);
       if (!collapsed) clampIntoViewport();
     }
     toggleBtn.addEventListener("click", () => setCollapsed(!root2.classList.contains("kus-lp--collapsed")));
+    function setMaximized(maximized) {
+      root2.classList.toggle("kus-lp--max", maximized);
+      maxBtn.setAttribute("aria-pressed", String(maximized));
+      maxBtn.setAttribute("aria-label", maximized ? "元の大きさに戻す" : "拡大表示");
+      maxBtn.title = maximized ? "元の大きさに戻す" : "拡大表示（画面いっぱいに広げる）";
+      maxBtn.textContent = maximized ? "⤡" : "⤢";
+      if (!maximized) clampIntoViewport();
+    }
+    maxBtn.addEventListener("click", () => setMaximized(!root2.classList.contains("kus-lp--max")));
     let customPlaced = false;
     function clampIntoViewport() {
       if (!customPlaced || !root2.isConnected) return;
@@ -1807,7 +1835,7 @@ ${contextLine}`);
     }
     let drag = null;
     hero.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || root2.classList.contains("kus-lp--max")) return;
       const target = e.target;
       if (!target || target.closest("button,a,input,select,textarea,[contenteditable]")) return;
       const rect = root2.getBoundingClientRect();
@@ -1909,7 +1937,7 @@ ${contextLine}`);
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus: setStatus2, setResult, setResultHtml, setBusy: setBusy2, close, setCollapsed, resetPosition, setPrimaryAction };
+    return { root: root2, body, status, result, setStatus: setStatus2, setResult, setResultHtml, setBusy: setBusy2, close, setCollapsed, resetPosition, setMaximized, setPrimaryAction };
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
@@ -2251,8 +2279,16 @@ ${contextLine}`);
     style.textContent = CSS2;
     document.head.appendChild(style);
   }
-  function connectionSummary(appId, guestId = "", environment = "本番") {
-    return `#${appId || "未入力"}${guestId ? `（ゲスト ${guestId}）` : ""} · ${environment}`;
+  function connectionSummary(appId, guestId = "", environment = "本番", appName = "") {
+    const name = String(appName || "").trim();
+    return `#${appId || "未入力"}${name ? ` ${name}` : ""}${guestId ? `（ゲスト ${guestId}）` : ""} · ${environment}`;
+  }
+  function formatWorkflowDuration(ms) {
+    const total = Math.floor(Math.max(0, Number(ms) || 0) / 1e3);
+    if (total < 1) return "1秒未満";
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return m ? `${m}分${s}秒` : `${s}秒`;
   }
   function installLiteWorkflow(panel, options) {
     ensureStyles();
@@ -2370,8 +2406,23 @@ ${contextLine}`);
     let busy = false;
     let pending = null;
     let reviewedSignature = "";
+    let reviewedInputs = "";
     let lastContext = "";
-    const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll("input,select,textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
+    let startedAt = 0;
+    const inputsSignature = () => JSON.stringify([selected.id, Array.from(setup.querySelectorAll("input,select,textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
+    const signature = () => JSON.stringify([inputsSignature(), selected.summary()]);
+    function renderSummary() {
+      summary.replaceChildren();
+      for (const [label, value] of [["操作", selected.label], ...selected.summary()]) {
+        const row = document.createElement("div");
+        const term = document.createElement("dt");
+        const description = document.createElement("dd");
+        term.textContent = label;
+        description.textContent = value;
+        row.append(term, description);
+        summary.appendChild(row);
+      }
+    }
     function show(index) {
       if (busy) return;
       const problem = index === 1 ? selected.validate() : "";
@@ -2381,17 +2432,9 @@ ${contextLine}`);
       }
       active = index;
       if (index === 1) {
-        summary.replaceChildren();
-        for (const [label, value] of [["操作", selected.label], ...selected.summary()]) {
-          const row = document.createElement("div");
-          const term = document.createElement("dt");
-          const description = document.createElement("dd");
-          term.textContent = label;
-          description.textContent = value;
-          row.append(term, description);
-          summary.appendChild(row);
-        }
+        renderSummary();
         reviewedSignature = signature();
+        reviewedInputs = inputsSignature();
       }
       stages.forEach((stage, i) => {
         stage.hidden = i !== active;
@@ -2429,8 +2472,10 @@ ${contextLine}`);
         refresh();
         return;
       }
+      const elapsed = startedAt ? `
+所要時間: ${formatWorkflowDuration(Date.now() - startedAt)}` : "";
       resultNote.textContent = `${lastContext}
-${status}`;
+${status}${elapsed}`;
       resultNote.dataset.write = String(!!pending.writes);
       const showResults = !options.resultActions || options.resultActions.includes(pending.id);
       options.results?.forEach((element) => {
@@ -2443,6 +2488,7 @@ ${status}`;
     execute.addEventListener("click", () => {
       if (busy || pending || selected.validate() || reviewedSignature !== signature()) return;
       pending = selected;
+      startedAt = Date.now();
       options.beforeRun?.(selected.id);
       panel.setResult("");
       options.results?.forEach((element) => {
@@ -2462,7 +2508,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       nav.inert = value;
       if (value) {
         panel.root.querySelectorAll("input,button,select,textarea").forEach((input) => {
-          if (input.classList.contains("kus-lp__toggle")) return;
+          if (input.classList.contains("kus-lp__toggle") || input.classList.contains("kus-lp__maximize")) return;
           disabled.set(input, input.disabled);
           input.disabled = true;
         });
@@ -2491,6 +2537,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       });
     };
     for (const event of ["input", "change", "click"]) setup.addEventListener(event, scheduleRefresh);
+    panel.root.addEventListener("kus-lite-summary-change", () => {
+      if (busy || active !== 1 || inputsSignature() !== reviewedInputs) return;
+      renderSummary();
+      reviewedSignature = signature();
+      refresh();
+    });
     selected.onSelect?.();
     show(0);
     return { refresh, show };
@@ -7656,6 +7708,222 @@ applySavedViewState();
     return details;
   }
 
+  // src/entries/appNameHint.ts
+  init_constants();
+
+  // src/reflect/appLookup.ts
+  init_api();
+  var REFLECT_APP_LOOKUP_FAILURE = "アプリを確認できません。ID・ゲストスペース・閲覧権限を確認してください。";
+  var POSITIVE_INTEGER = /^[1-9]\d*$/;
+  function isLookupableReflectApp(appId, guestId) {
+    const id = String(appId || "").trim();
+    const guest = String(guestId || "").trim();
+    return POSITIVE_INTEGER.test(id) && (!guest || POSITIVE_INTEGER.test(guest));
+  }
+  async function lookupReflectApp(appId, guestId) {
+    const id = String(appId || "").trim();
+    const guest = String(guestId || "").trim();
+    const failure = { ok: false, message: REFLECT_APP_LOOKUP_FAILURE };
+    if (!isLookupableReflectApp(id, guest)) return failure;
+    try {
+      const response = await apiGet(buildApiPrefix(guest, false), "/app.json", { id }, { retries: 1 });
+      if (String(response?.appId ?? "") !== id) return failure;
+      return { ok: true, appId: id, name: String(response?.name ?? ""), code: String(response?.code ?? "") };
+    } catch {
+      return failure;
+    }
+  }
+  function createReflectAppLookupCache(lookup = lookupReflectApp) {
+    const done = /* @__PURE__ */ new Map();
+    const pending = /* @__PURE__ */ new Map();
+    const keyOf = (appId, guestId) => `${String(guestId || "").trim()}|${String(appId || "").trim()}`;
+    return {
+      peek(appId, guestId) {
+        return done.get(keyOf(appId, guestId));
+      },
+      remember(info, guestId) {
+        done.set(keyOf(info.appId, guestId), { ok: true, appId: String(info.appId).trim(), name: info.name, code: info.code });
+      },
+      get(appId, guestId) {
+        const key = keyOf(appId, guestId);
+        const cached = done.get(key);
+        if (cached) return Promise.resolve(cached);
+        const inFlight = pending.get(key);
+        if (inFlight) return inFlight;
+        const request = lookup(String(appId || "").trim(), String(guestId || "").trim()).catch(() => ({ ok: false, message: REFLECT_APP_LOOKUP_FAILURE })).then((result) => {
+          pending.delete(key);
+          if (!result.ok) return result;
+          const kept = done.get(key);
+          if (kept) return kept;
+          done.set(key, result);
+          return result;
+        });
+        pending.set(key, request);
+        return request;
+      }
+    };
+  }
+  function formatReflectAppName(info) {
+    const name = info.name || `アプリ #${info.appId}`;
+    return info.code ? `${name}（コード: ${info.code}）` : name;
+  }
+
+  // src/entries/appNameHint.ts
+  var APP_NAME_HINT_DELAY_MS = 350;
+  var APP_NAME_HINT_MAX_IDS = 10;
+  var APP_NAME_HINT_FAILURE = REFLECT_APP_LOOKUP_FAILURE;
+  var APP_NAME_HINT_PENDING = "確認中…";
+  var APP_NAME_HINT_CURRENT = "開いているアプリ";
+  function splitAppIdsForHint(value) {
+    return String(value ?? "").split(/[\s,、，]+/).map((v) => v.trim()).filter(Boolean);
+  }
+  var isLookupableApp = isLookupableReflectApp;
+  var formatAppLookupName = formatReflectAppName;
+  function createAppLookupCache() {
+    return createReflectAppLookupCache();
+  }
+  function isCurrentApp(appId, guestId) {
+    return !!DEFAULT_APP_ID && String(appId || "").trim() === DEFAULT_APP_ID && String(guestId || "").trim() === DEFAULT_GUEST_ID;
+  }
+  function createAppNameHint(opts) {
+    const { panel, appInput, guestInput } = opts;
+    const cache = opts.cache || createAppLookupCache();
+    const lookup = opts.lookup;
+    const isActive = opts.isActive || (() => true);
+    const el = document.createElement("div");
+    el.className = "kus-lp__app-note";
+    el.setAttribute("aria-live", "polite");
+    el.hidden = true;
+    let key = "\0";
+    let seq = 0;
+    let timer;
+    let failed = false;
+    const resolved = /* @__PURE__ */ new Map();
+    let currentIds = [];
+    let currentGuest = "";
+    const paint = (text, tone = "") => {
+      el.textContent = text;
+      el.hidden = !text;
+      el.classList.toggle("kus-lp__app-note--ok", tone === "ok");
+      el.classList.toggle("kus-lp__app-note--warn", tone === "warn");
+      opts.onChange?.();
+      el.dispatchEvent(new Event("kus-lite-summary-change", { bubbles: true }));
+    };
+    const ids = () => (opts.multiple ? splitAppIdsForHint(appInput.value) : [appInput.value.trim()]).filter(Boolean);
+    const guest = () => String(guestInput?.value || "").trim();
+    const get = (appId, guestId) => lookup ? lookup(appId, guestId).catch(() => ({ ok: false, message: APP_NAME_HINT_FAILURE })) : cache.get(appId, guestId);
+    const peek = (appId, guestId) => lookup ? void 0 : cache.peek(appId, guestId);
+    function render(results, guestId, omitted) {
+      resolved.clear();
+      let anyFailed = false;
+      let anyPending = false;
+      const parts = [];
+      for (const id of currentIds) {
+        const r = results.get(id);
+        if (!r || r === "pending") {
+          anyPending = true;
+          parts.push(opts.multiple ? `#${id} ${APP_NAME_HINT_PENDING}` : APP_NAME_HINT_PENDING);
+          continue;
+        }
+        if (r.ok) {
+          resolved.set(id, r.name);
+          const current = isCurrentApp(id, guestId) ? ` · ${APP_NAME_HINT_CURRENT}` : "";
+          parts.push(opts.multiple ? `#${id} ${r.name || `アプリ #${id}`}${current}` : `✓ ${formatAppLookupName(r)}${current}`);
+        } else {
+          anyFailed = true;
+          parts.push(opts.multiple ? `#${id} 確認できません` : "message" in r && r.message || APP_NAME_HINT_FAILURE);
+        }
+      }
+      failed = anyFailed;
+      if (!currentIds.length) {
+        paint("");
+        return;
+      }
+      let text = opts.multiple ? `${parts.join(" / ")}` : parts[0];
+      if (opts.multiple && anyFailed) text += `
+${APP_NAME_HINT_FAILURE}`;
+      if (omitted > 0) text += `
+他 ${omitted} 件は確認していません（先頭 ${APP_NAME_HINT_MAX_IDS} 件まで）`;
+      paint(text, anyFailed ? "warn" : anyPending ? "" : "ok");
+    }
+    function refresh() {
+      const guestId = guest();
+      const all = ids();
+      const active = isActive() && all.length > 0 && all.every((id) => isLookupableApp(id, guestId));
+      const nextKey = active ? `${guestId}|${all.join(",")}` : "";
+      if (nextKey === key) return;
+      key = nextKey;
+      seq += 1;
+      window.clearTimeout(timer);
+      resolved.clear();
+      failed = false;
+      if (!active) {
+        currentIds = [];
+        paint("");
+        return;
+      }
+      currentGuest = guestId;
+      const omitted = Math.max(0, all.length - APP_NAME_HINT_MAX_IDS);
+      currentIds = all.slice(0, APP_NAME_HINT_MAX_IDS);
+      const results = /* @__PURE__ */ new Map();
+      const missing = [];
+      for (const id of currentIds) {
+        const cached = peek(id, guestId);
+        if (cached) results.set(id, cached);
+        else {
+          results.set(id, "pending");
+          missing.push(id);
+        }
+      }
+      render(results, guestId, omitted);
+      if (!missing.length) return;
+      const mine = seq;
+      timer = window.setTimeout(async () => {
+        if (!panel.root.isConnected) return;
+        await Promise.all(missing.map(async (id) => {
+          const result = await get(id, guestId);
+          if (mine !== seq || !panel.root.isConnected) return;
+          results.set(id, result);
+          render(results, guestId, omitted);
+        }));
+      }, APP_NAME_HINT_DELAY_MS);
+    }
+    function recheck() {
+      if (!failed) return;
+      key = "\0";
+      refresh();
+    }
+    function stop() {
+      seq += 1;
+      window.clearTimeout(timer);
+    }
+    appInput.addEventListener("input", refresh);
+    appInput.addEventListener("change", () => {
+      refresh();
+      recheck();
+    });
+    if (guestInput) {
+      guestInput.addEventListener("input", refresh);
+      guestInput.addEventListener("change", () => {
+        refresh();
+        recheck();
+      });
+    }
+    panel.root.addEventListener("kus-lite-dispose", stop, { once: true });
+    refresh();
+    return {
+      element: el,
+      name: () => currentIds.length ? resolved.get(currentIds[0]) || "" : "",
+      names: () => new Map(resolved),
+      label: () => currentIds.map((id) => {
+        const name = resolved.get(id);
+        return name ? `#${id} ${name}` : `#${id}`;
+      }).join("、") + (currentGuest ? `（ゲスト ${currentGuest}）` : ""),
+      refresh,
+      stop
+    };
+  }
+
   // src/entries/er-lite-ui.ts
   function mountErLitePanel() {
     const panel = createLitePanel({
@@ -7670,10 +7938,14 @@ applySavedViewState();
     const appInp = makeInput({ placeholder: "アプリID（複数はカンマ区切り）", value: DEFAULT_APP_ID || "", width: "wide" });
     const guestInp = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest" });
     cardMain.body.appendChild(makeRow([appInp, guestInp], { label: "起点ID" }));
+    const appLookup = createAppLookupCache();
+    const hint = createAppNameHint({ panel, appInput: appInp, guestInput: guestInp, multiple: true, cache: appLookup });
+    cardMain.body.appendChild(hint.element);
     cardMain.body.appendChild(createAppSearchControl(panel, {
       guestEl: guestInp,
       targets: [{ apply: (id, _name) => {
         appInp.value = id;
+        hint.refresh();
       } }]
     }));
     const prevCb = makeCheck({ label: "プレビュー環境を参照", checked: false });
@@ -7824,7 +8096,7 @@ applySavedViewState();
     appInp.setAttribute("aria-label", "起点アプリID");
     guestInp.setAttribute("aria-label", "ゲストスペースID");
     const erSummary = () => [
-      ["起点", connectionSummary(appInp.value.trim(), guestInp.value.trim())],
+      ["起点", hint.label() || connectionSummary(appInp.value.trim(), guestInp.value.trim())],
       ["参照環境", prevCb.checkbox.checked ? "プレビュー環境を参照" : "本番環境"],
       ["追加起点", extra.value.trim() || "なし"],
       ["スペース", (() => {

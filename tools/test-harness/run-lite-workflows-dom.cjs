@@ -57,7 +57,7 @@ function fixtures() {
       if (name === 'runLoadFieldsStandalone') return { memo: { type: 'SINGLE_LINE_TEXT', code: 'memo', label: 'メモ' } };
       if (name === 'runFieldApplyStandalone') return ['サンプル: フィールド1件の反映が完了'];
       if (name === 'runApplyJsConfigStandalone') args[2]('<p>サンプル: JS/CSS反映が完了</p>');
-      if (name === 'runSettingsExportStandalone') return { summaryHtml: '<p>対象1アプリの設定取得が完了しました。</p>' };
+      if (name === 'runSettingsExportStandalone') return { summaryHtml: '<p>対象1アプリの設定取得が完了しました。</p>', results: [{ appId: String(args[1]?.apps?.[0]?.appId || '202'), guestId: '', appName: 'サンプルアプリ', okCount: 1, ngCount: 1, omittedBodies: 0, note: '一部セクション取得失敗あり' }] };
       if (name === 'runRenderProcessFlowStandalone') return { states: { new: {}, done: {} }, actions: [{ name: '完了' }] };
       if (name === 'runBulkRenameFieldStandalone') return { properties: { renamed: { type: 'SINGLE_LINE_TEXT' } }, renamePairs: [{ from: 'memo', to: 'renamed' }] };
       if (name === 'runLoadStatusActionsStandalone') return { actions: [{ name: '完了にする', from: '新規', to: '完了' }] };
@@ -70,7 +70,14 @@ function fixtures() {
       return {};
     }
   };
-  window.kintone = { app: { getId: () => 202 }, api: Object.assign(async () => ({}), { url: p => p }) };
+  // /app.json はアプリ名の確認（入力中のヒント・対象表・確認画面の要約）に使う。遅延は確認画面の再描画の検査用。
+  window.kintone = { app: { getId: () => 202 }, api: Object.assign(async (url, method, params) => {
+    if (/\/app\.json$/.test(url)) {
+      if (window.__appLookupDelay) await new Promise(resolve => setTimeout(resolve, window.__appLookupDelay));
+      return { appId: String(params?.id ?? ''), name: 'サンプルアプリ ' + (params?.id ?? ''), code: '' };
+    }
+    return {};
+  }, { url: p => p }) };
 }
 
 async function makeBundle(entry) {
@@ -153,6 +160,17 @@ async function main() {
           await guestId.fill('bad');
           assert.equal(await button('内容を確認する').isDisabled(), true, 'プロセス図: 不正なゲストIDを確認前に止める');
           await guestId.fill('');
+          // アプリ名の確認が確認画面を表示した後に終わっても、入力が変わっていなければ再確認を求めない
+          await page.evaluate(() => { window.__appLookupDelay = 700; });
+          await appId.fill('303');
+          await button('内容を確認する').click();
+          assert.equal(await stage(1).isVisible(), true);
+          assert.match(await page.locator('.kus-wf-summary').innerText(), /#303 · 本番/, 'プロセス図: 確認前はIDだけを示す');
+          await page.waitForFunction(() => /サンプルアプリ 303/.test(document.querySelector('.kus-wf-summary').textContent));
+          assert.equal(await page.locator('.kus-wf-footer-buttons button').last().isEnabled(), true, 'プロセス図: 後から決まったアプリ名で再確認を求めない');
+          await button('対象・条件を変更').click();
+          await page.evaluate(() => { window.__appLookupDelay = 0; });
+          await appId.fill('202');
         }
         if (id === 'csv-export') {
           const appId = page.locator('.kus-lp__apptable input[aria-label="アプリID"]').first();
@@ -213,6 +231,7 @@ async function main() {
         assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), 1, id + ': 二重実行を防ぐ');
         assert.equal(await stage(2).isVisible(), true);
         assert.match(await stage(2).innerText(), /完了/);
+        assert.match(await stage(2).innerText(), /所要時間: /, id + ': 実行結果に所要時間を示す');
         assert.equal(await page.locator('.kus-lp__close').isEnabled(), true);
         await page.screenshot({path:path.join(OUT, `${id}-result.png`)});
         if (id === 'process') {
@@ -246,7 +265,13 @@ async function main() {
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), before+1);
         }
         if (id === 'settings-export') {
-          await button('対象・条件を変更').click(); await button('全解除').click();
+          const retry = button('失敗したアプリだけを対象に残す');
+          assert.equal(await retry.isVisible(), true, '設定取得: 失敗したアプリの再取得導線を結果画面に出す');
+          await retry.click();
+          assert.equal(await stage(0).isVisible(), true, '設定取得: 対象画面へ戻る');
+          assert.match(await page.locator('.kus-lp__status-text').first().innerText(), /失敗した 1 アプリを対象表に残しました/);
+          assert.deepEqual(await page.evaluate(() => Array.from(document.querySelectorAll('.kus-lp__apptable input[aria-label="アプリID"]')).map(input => input.value)), ['202'], '設定取得: 失敗したアプリだけを表に残す');
+          await button('全解除').click();
           assert.equal(await button('内容を確認する').isDisabled(), true, '設定0件では実行しない');
           await button('全選択').click();
         }
@@ -257,7 +282,7 @@ async function main() {
           await page.getByRole('radio', {name:'全対象をExcel ZIPで保存',exact:true}).check();
           await page.getByRole('checkbox', {name:'プレビュー環境から取得（単一出力・2アプリ差分）',exact:true}).check();
           await button('内容を確認する').click();
-          assert.match(await stage(1).innerText(), /#202 · 本番/);
+          assert.match(await stage(1).innerText(), /#202 サンプルアプリ 202 · 本番/, '設計書: 確認画面にアプリ名を示す');
           await button('対象・条件を変更').click();
           await page.getByRole('radio', {name:defaultAction,exact:true}).check();
           await page.getByRole('radio', {name:'AI向けMarkdownを保存',exact:true}).check();

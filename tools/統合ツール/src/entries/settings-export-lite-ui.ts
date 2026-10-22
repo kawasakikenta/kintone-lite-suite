@@ -20,6 +20,7 @@ import {
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { createAppLookupCache, createAppTableLookup } from './appNameHint.js';
 
 export function mountSettingsExportLitePanel() {
   const panel = createLitePanel({
@@ -31,13 +32,15 @@ export function mountSettingsExportLitePanel() {
     hint: '1 行だけ入力すれば 1 アプリ、複数行で一括取得。<strong>アプリごとに別のゲストスペース</strong>を指定できます。',
     wide: true
   });
+  const appLookup = createAppLookupCache();
 
   // ---- 対象アプリ（表形式：アプリID × ゲストスペース） ----
   const cardTarget = makeCard({ title: '対象アプリ', number: 1 });
   const appTable = makeAppTable({
     currentAppId: String(DEFAULT_APP_ID || ''),
     currentGuestId: DEFAULT_GUEST_ID,
-    initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : []
+    initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : [],
+    lookupAppName: createAppTableLookup(appLookup)
   });
 
   // ---- アプリ検索 / スペース取込（検索用ゲストIDで照会し、表に行を追加） ----
@@ -149,6 +152,19 @@ export function mountSettingsExportLitePanel() {
   summary.className = 'kus-lp__panel-html kus-lp__panel-html--empty';
   panel.body.insertBefore(summary, panel.status);
 
+  // 取得に失敗したアプリだけを対象表に残して再実行しやすくする
+  const retryBox = document.createElement('div');
+  const retryBtn = makeButton('失敗したアプリだけを対象に残す', 'sub');
+  retryBtn.hidden = true;
+  retryBox.appendChild(retryBtn);
+  let failedRows: Array<{ appId: string; guestId: string; appName: string }> = [];
+  const showResult = (summaryHtml: string, results: Array<{ appId: string; appName: string; guestId: string; ngCount: number }>) => {
+    summary.innerHTML = summaryHtml;
+    summary.classList.remove('kus-lp__panel-html--empty');
+    failedRows = results.filter(r => r.ngCount > 0).map(r => ({ appId: r.appId, guestId: r.guestId, appName: r.appName }));
+    retryBtn.hidden = !failedRows.length;
+  };
+
   function opts() {
     return {
       apps: appTable.getApps(),
@@ -175,23 +191,21 @@ export function mountSettingsExportLitePanel() {
   }));
 
   btnJson.addEventListener('click', () => liteRun(panel, '設定一括取得（JSON）中…', async () => {
-    const { summaryHtml } = await runSettingsExportStandalone(
+    const { summaryHtml, results } = await runSettingsExportStandalone(
       'json',
       opts(),
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
-    summary.innerHTML = summaryHtml;
-    summary.classList.remove('kus-lp__panel-html--empty');
+    showResult(summaryHtml, results);
   }));
 
   btnZip.addEventListener('click', () => liteRun(panel, '設定一括取得（ZIP）中…', async () => {
-    const { summaryHtml } = await runSettingsExportStandalone(
+    const { summaryHtml, results } = await runSettingsExportStandalone(
       'zip',
       opts(),
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
-    summary.innerHTML = summaryHtml;
-    summary.classList.remove('kus-lp__panel-html--empty');
+    showResult(summaryHtml, results);
   }));
 
   const exportProblem = () => {
@@ -201,17 +215,23 @@ export function mountSettingsExportLitePanel() {
     return chips.some(c => c.checkbox.checked) ? '' : '取得する設定を1つ以上選んでください。';
   };
   const exportSummary = (format: string): Array<[string, string]> => [
-    ['対象アプリ', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId, prev.checkbox.checked ? 'プレビュー' : '本番')).join('\n')],
+    ['対象アプリ', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId, prev.checkbox.checked ? 'プレビュー' : '本番', r.appName)).join('\n')],
     ['取得する設定', chips.filter(c => c.checkbox.checked).map(c => c.label.textContent || '').join('、')],
     ['保存形式', format]
   ];
-  installLiteWorkflow(panel, {
-    setup: [cardTarget.card, cardScope.card], results: [summary],
-    beforeRun: () => { summary.replaceChildren(); summary.classList.add('kus-lp__panel-html--empty'); },
+  const workflow = installLiteWorkflow(panel, {
+    setup: [cardTarget.card, cardScope.card], results: [summary, retryBox],
+    beforeRun: () => { summary.replaceChildren(); summary.classList.add('kus-lp__panel-html--empty'); retryBtn.hidden = true; failedRows = []; },
     actions: [
       { id: 'json', label: '設定をJSONで保存', description: '全対象アプリの設定を1つのJSONにまとめます。', button: btnJson, validate: exportProblem, summary: () => exportSummary('全アプリを1つのJSON') },
       { id: 'zip', label: '設定をZIPで保存', description: 'アプリごとのJSONと取得結果をZIPにまとめます。', button: btnZip, validate: exportProblem, summary: () => exportSummary('1アプリ1JSONとmanifest.jsonをZIPに保存') }
     ]
   });
 
+  retryBtn.addEventListener('click', () => {
+    if (!failedRows.length) return;
+    appTable.setApps(failedRows);
+    panel.setStatus(`失敗した ${failedRows.length} アプリを対象表に残しました。取得セクションを確認して再実行してください`, 'info');
+    workflow.show(0);
+  });
 }

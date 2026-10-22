@@ -40,6 +40,7 @@ async function main() {
       window.kintone = { app: { getId: () => 7 }, api: Object.assign(async (url, method, params) => {
         window.calls.push({ url, method, params });
         if (method !== 'GET' && !url.endsWith('/records/cursor.json')) throw new Error('レコード書き込み禁止');
+        if (url.endsWith('/app.json')) return { appId: String(params.id), name: 'サンプル ' + params.id, code: '' };
         if (url.endsWith('/app/form/fields.json')) {
           if (window.failFields || params.app === '8') throw new Error('サンプル: 設定を取得できません');
           if (window.defer) return new Promise(resolve => { window.resolveApi = resolve; });
@@ -167,7 +168,7 @@ async function main() {
     const quality = page.getByRole('radio', { name: '重複・未入力を検査', exact: true });
     if (await quality.count()) await quality.check();
     assert.equal(await button('内容を確認する').isDisabled(), true, '検査項目が未選択なら確認へ進めない');
-    assert.equal(await page.evaluate(() => window.calls.length), 0, '未選択では設定もレコードも取得しない');
+    assert.equal(await page.evaluate(() => window.calls.filter(call => !call.url.endsWith('/app.json')).length), 0, '未選択では設定もレコードも取得しない');
     await page.evaluate(() => { window.defer = true; });
     await button('検査フィールド読込').click(); await button('検査フィールド読込').click({ force: true });
     await page.evaluate(() => { window.defer = false; window.resolveApi({ properties: window.properties }); });

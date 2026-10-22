@@ -34,6 +34,7 @@ async function main() {
         if (method !== 'GET') throw new Error('書き込みは許可しないテストです');
         if (window.fail) throw new Error('権限不足のサンプル');
         if (window.defer) return new Promise(resolve => { window.resolveApi = resolve; });
+        if (url.endsWith('/app.json')) return { appId: String(params.id), name: 'サンプル ' + params.id, code: '' };
         if (url.endsWith('/app/views.json')) return window.metadata.views;
         if (url.endsWith('/app/status.json')) return window.metadata.process;
         if (url.endsWith('/app/form/fields.json')) return params.app === window.badCsvApp ? { properties: {} } : window.metadata.fields;
@@ -52,7 +53,7 @@ async function main() {
     const idle = () => page.waitForFunction(() => document.querySelector('#kus-record-lite').getAttribute('aria-busy') === 'false');
     await app.fill('7,8'); await guest.fill('9');
     await button('一覧読込').click(); await idle();
-    assert.deepEqual(await page.evaluate(() => window.calls.at(-1)), { url: '/k/guest/9/v1/app/views.json', method: 'GET', params: { app: '7', lang: 'user' } });
+    assert.deepEqual(await page.evaluate(() => window.calls.filter(call => !call.url.endsWith('/app.json')).at(-1)), { url: '/k/guest/9/v1/app/views.json', method: 'GET', params: { app: '7', lang: 'user' } });
     assert.deepEqual(await view.locator('option').evaluateAll(options => options.map(o => o.value)), ['', '300', '301', '302', '310']);
     await view.selectOption('310'); await button('▼ 一覧から').click();
     assert.equal(await query.inputValue(), 'amount > 1000 order by due asc, $id desc');
@@ -90,7 +91,7 @@ async function main() {
     const fileCode = page.getByRole('textbox', { name: '添付フィールドコード', exact: true });
     const tableCode = page.getByRole('textbox', { name: '添付のテーブルコード', exact: true });
     await button('添付フィールド読込').click(); await idle();
-    assert.deepEqual(await page.evaluate(() => window.calls.at(-1)), { url: '/k/guest/9/v1/app/form/fields.json', method: 'GET', params: { app: '9', lang: 'user' } });
+    assert.deepEqual(await page.evaluate(() => window.calls.filter(call => !call.url.endsWith('/app.json')).at(-1)), { url: '/k/guest/9/v1/app/form/fields.json', method: 'GET', params: { app: '9', lang: 'user' } });
     assert.match(await fields.locator('option').last().textContent(), /書類明細［documents］.*証跡ファイル［evidence］/);
     await fields.selectOption('1');
     assert.equal(await fileCode.inputValue(), 'evidence'); assert.equal(await tableCode.inputValue(), 'documents');
@@ -102,7 +103,7 @@ async function main() {
     await fileCode.fill('manual'); assert.equal(await fields.inputValue(), '');
     await guest.fill(''); assert.equal(await fields.locator('option').count(), 1);
     await button('添付フィールド読込').click(); await idle();
-    assert.equal(await page.evaluate(() => window.calls.at(-1).url), '/k/v1/app/form/fields.json');
+    assert.equal(await page.evaluate(() => window.calls.filter(call => !call.url.endsWith('/app.json')).at(-1).url), '/k/v1/app/form/fields.json');
     results.push('添付: 名称/コード表示・テーブル選択・確認画面への反映・手入力・ゲスト切替');
 
     await fields.selectOption('1');

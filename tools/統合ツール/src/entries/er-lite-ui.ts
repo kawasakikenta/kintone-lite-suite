@@ -23,6 +23,7 @@ import {
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { createAppLookupCache, createAppNameHint } from './appNameHint.js';
 
 export function mountErLitePanel() {
   const panel = createLitePanel({
@@ -39,9 +40,13 @@ export function mountErLitePanel() {
   const appInp = makeInput({ placeholder: 'アプリID（複数はカンマ区切り）', value: DEFAULT_APP_ID || '', width: 'wide' });
   const guestInp = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest' });
   cardMain.body.appendChild(makeRow([appInp, guestInp], { label: '起点ID' }));
+  // 入力中のアプリ名確認（複数 ID は先頭から確認する）
+  const appLookup = createAppLookupCache();
+  const hint = createAppNameHint({ panel, appInput: appInp, guestInput: guestInp, multiple: true, cache: appLookup });
+  cardMain.body.appendChild(hint.element);
   cardMain.body.appendChild(createAppSearchControl(panel, {
     guestEl: guestInp,
-    targets: [{ apply: (id, _name) => { appInp.value = id; } }]
+    targets: [{ apply: (id, _name) => { appInp.value = id; hint.refresh(); } }]
   }));
 
   const prevCb = makeCheck({ label: 'プレビュー環境を参照', checked: false });
@@ -200,7 +205,7 @@ export function mountErLitePanel() {
   appInp.setAttribute('aria-label', '起点アプリID');
   guestInp.setAttribute('aria-label', 'ゲストスペースID');
   const erSummary = (): Array<[string, string]> => [
-    ['起点', connectionSummary(appInp.value.trim(), guestInp.value.trim())],
+    ['起点', hint.label() || connectionSummary(appInp.value.trim(), guestInp.value.trim())],
     ['参照環境', prevCb.checkbox.checked ? 'プレビュー環境を参照' : '本番環境'],
     ['追加起点', extra.value.trim() || 'なし'],
     ['スペース', (() => {

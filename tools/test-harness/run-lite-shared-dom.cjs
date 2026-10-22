@@ -13,7 +13,7 @@ const metadata = require(path.join(TOOL, 'tests/fixtures/api-metadata.json'));
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   const build = await esbuild.build({ absWorkingDir: TOOL, bundle: true, write: false,
-    stdin: { contents: `export * from './src/entries/litePanelTheme.ts'; export * from './src/entries/appSearchControl.ts';`, resolveDir: TOOL },
+    stdin: { contents: `export * from './src/entries/litePanelTheme.ts'; export * from './src/entries/appSearchControl.ts'; export * from './src/entries/appNameHint.ts';`, resolveDir: TOOL },
     format: 'iife', globalName: 'Shared', platform: 'browser', target: ['chrome110'], logLevel: 'silent' });
   const browserName = process.argv.includes('--browser') ? process.argv[process.argv.indexOf('--browser') + 1] : 'chrome';
   const browser = await chromium.launch({ headless: true, ...(browserName === 'chromium' ? {} : { channel: browserName }) });
@@ -178,6 +178,124 @@ async function main() {
     assert.match(await page.locator('.kus-lp__result').innerText(), /対象アプリ: 42/);
     assert.equal(await page.locator('#shared-test').getAttribute('aria-busy'), 'false');
     results.push('部分成功の警告保持・エラー詳細・処理中状態の復帰・ステータス読み上げ');
+
+    // ---- 入力中のアプリ名確認: 対象アプリ表の行 ----
+    await page.evaluate(() => {
+      window.lookupLog = [];
+      window.lookupNames = { '|303': '受注管理', '7|404': 'ゲストの案件', '|505': '顧客管理' };
+      window.lookup = async (appId, guestId) => {
+        const key = `${guestId}|${appId}`;
+        window.lookupLog.push(key);
+        await new Promise(resolve => setTimeout(resolve, 40));
+        return window.lookupNames[key]
+          ? { ok: true, appId, name: window.lookupNames[key], code: key === '|505' ? 'customer' : '' }
+          : { ok: false, message: 'アプリを確認できません。ID・ゲストスペース・閲覧権限を確認してください。' };
+      };
+      window.summaryChanges = 0;
+      window.panel.root.addEventListener('kus-lite-summary-change', () => { window.summaryChanges += 1; });
+      window.lookupTable = Shared.makeAppTable({ initial: [{ appId: '303', guestId: '' }], lookupAppName: window.lookup });
+      window.lookupTable.element.id = 'lookup-table';
+      window.panel.body.append(window.lookupTable.element);
+    });
+    const lookupName = n => page.locator('#lookup-table .kus-lp__apptable-name').nth(n);
+    const lookupInput = n => page.locator('#lookup-table input[aria-label="アプリID"]').nth(n);
+    const lookupGuest = n => page.locator('#lookup-table input[aria-label="ゲストID"]').nth(n);
+    await page.waitForFunction(() => window.lookupTable.getApps()[0]?.appName === '受注管理');
+    assert.equal(await lookupName(0).innerText(), '受注管理', '初期行のアプリ名を表示する');
+    assert.deepEqual(await page.evaluate(() => window.lookupLog), ['|303'], '初期行のアプリ名を本番側で確認する');
+    assert.ok(await page.evaluate(() => window.summaryChanges) >= 1, '名前が決まったら要約の更新を通知する');
+    await lookupInput(0).fill('999');
+    await lookupInput(0).dispatchEvent('change');
+    await page.waitForFunction(() => document.querySelector('#lookup-table .kus-lp__apptable-name').dataset.lookup === 'failed');
+    assert.match(await lookupName(0).innerText(), /確認できません/, '確認できない ID を警告する');
+    assert.equal(await page.evaluate(() => window.lookupTable.getApps()[0].appName), undefined, '確認できない ID に名前を付けない');
+    await lookupGuest(0).fill('7');
+    await lookupInput(0).fill('404');
+    await lookupInput(0).dispatchEvent('change');
+    await page.waitForFunction(() => window.lookupTable.getApps()[0]?.appName === 'ゲストの案件');
+    assert.equal(await page.evaluate(() => window.lookupLog.at(-1)), '7|404', 'ゲストスペースの接続先で問い合わせる');
+    await page.evaluate(() => window.lookupTable.putApp('303', '', { appName: '検索で設定した名前' }));
+    await page.evaluate(() => window.lookupTable.addRow('505', ''));
+    await page.waitForFunction(() => window.lookupTable.getApps()[2]?.appName === '顧客管理');
+    assert.equal(await page.evaluate(() => window.lookupLog.filter(entry => entry === '|303').length), 1, '名前付きで追加した行は問い合わせない');
+    assert.equal(await page.evaluate(() => window.lookupTable.getApps().map(row => row.appName).join('/')), 'ゲストの案件/検索で設定した名前/顧客管理');
+    const clearAll = page.locator('#lookup-table').getByRole('button', { name: '全行を消去', exact: true });
+    await page.evaluate(() => { window.confirmCalls = []; window.confirm = message => { window.confirmCalls.push(message); return false; }; });
+    await clearAll.click();
+    assert.equal(await page.evaluate(() => window.lookupTable.count()), 3, '確認で取り消したら消さない');
+    assert.match(await page.evaluate(() => window.confirmCalls[0]), /3 件をすべて消去/);
+    await page.evaluate(() => { window.confirm = () => true; });
+    await clearAll.click();
+    assert.equal(await page.evaluate(() => window.lookupTable.count()), 0, '全行を消去する');
+    assert.equal(await page.locator('#lookup-table tbody tr').count(), 1, '空の 1 行を残す');
+    assert.equal(await clearAll.isDisabled(), true, '空の表では無効');
+    results.push('表のアプリ名確認: 初期行・失敗の警告・ゲスト変更・名前付き追加は問い合わせない・全行を消去');
+
+    // ---- 入力中のアプリ名確認: 単一ID欄・複数ID欄 ----
+    await page.evaluate(() => {
+      window.lookupLog = [];
+      window.hintApp = Shared.makeInput({ ariaLabel: 'ヒント用アプリID' });
+      window.hintGuest = Shared.makeInput({ ariaLabel: 'ヒント用ゲストID' });
+      window.hint = Shared.createAppNameHint({ panel: window.panel, appInput: window.hintApp, guestInput: window.hintGuest, lookup: window.lookup });
+      window.hintMulti = Shared.makeInput({ ariaLabel: 'ヒント用複数ID' });
+      window.hintM = Shared.createAppNameHint({ panel: window.panel, appInput: window.hintMulti, multiple: true, lookup: window.lookup });
+      window.panel.body.append(window.hintApp, window.hintGuest, window.hint.element, window.hintMulti, window.hintM.element);
+    });
+    const hintApp = page.getByRole('textbox', { name: 'ヒント用アプリID', exact: true });
+    const hintGuest = page.getByRole('textbox', { name: 'ヒント用ゲストID', exact: true });
+    const hintMulti = page.getByRole('textbox', { name: 'ヒント用複数ID', exact: true });
+    assert.equal(await page.evaluate(() => window.hint.element.hidden), true, '未入力では何も出さない');
+    assert.equal(await page.evaluate(() => window.hint.element.getAttribute('aria-live')), 'polite');
+    await hintApp.fill('5'); await hintApp.fill('50'); await hintApp.fill('505');
+    await page.waitForFunction(() => /✓/.test(window.hint.element.textContent));
+    assert.equal(await page.evaluate(() => window.hint.element.textContent), '✓ 顧客管理（コード: customer）');
+    assert.deepEqual(await page.evaluate(() => window.lookupLog), ['|505'], '入力途中の値を問い合わせない');
+    assert.equal(await page.evaluate(() => window.hint.name()), '顧客管理');
+    assert.equal(await page.evaluate(() => window.hint.label()), '#505 顧客管理');
+    await hintGuest.fill('7');
+    await page.waitForFunction(() => /確認できません/.test(window.hint.element.textContent));
+    assert.equal(await page.evaluate(() => window.hint.element.classList.contains('kus-lp__app-note--warn')), true, '確認できない接続先を警告色で示す');
+    assert.equal(await page.evaluate(() => window.hint.name()), '', '確認できないときは名前を返さない');
+    assert.equal(await page.evaluate(() => window.hint.label()), '#505（ゲスト 7）');
+    const lookupsBeforeRecheck = await page.evaluate(() => window.lookupLog.length);
+    await hintGuest.dispatchEvent('change');
+    await page.waitForFunction(count => window.lookupLog.length > count, lookupsBeforeRecheck);
+    assert.equal(await page.evaluate(() => window.lookupLog.at(-1)), '7|505', '確定（change）で失敗した確認をやり直す');
+    await hintMulti.fill('303, 999 404');
+    await page.waitForFunction(() => /#404/.test(window.hintM.element.textContent) && !/確認中/.test(window.hintM.element.textContent));
+    assert.match(await page.evaluate(() => window.hintM.element.textContent), /#303 受注管理 \/ #999 確認できません \/ #404 確認できません/, '複数 ID を並べて示す');
+    assert.equal(await page.evaluate(() => window.hintM.label()), '#303 受注管理、#999、#404');
+    assert.equal(await page.evaluate(() => window.hintM.names().size), 1);
+    await hintMulti.fill('303');
+    await page.waitForFunction(() => window.hintM.element.textContent === '#303 受注管理');
+    assert.equal(await page.evaluate(() => window.hintM.element.classList.contains('kus-lp__app-note--ok')), true);
+    await hintMulti.fill('abc');
+    assert.equal(await page.evaluate(() => window.hintM.element.hidden), true, '問い合わせできない形の ID では何も出さない');
+    results.push('アプリ名の確認: 入力途中は問い合わせない・警告色・確定で再確認・複数 ID 欄');
+
+    // ---- 拡大表示 ----
+    const maximize = page.locator('#shared-test').getByRole('button', { name: '拡大表示', exact: true });
+    await maximize.click();
+    const maxRect = await page.locator('#shared-test').boundingBox();
+    const viewport = page.viewportSize();
+    assert.ok(Math.abs(maxRect.width - (viewport.width - 24)) <= 2 && maxRect.x <= 13 && maxRect.y <= 13, '拡大表示で画面いっぱいに広げる ' + JSON.stringify(maxRect));
+    const restore = page.locator('#shared-test').getByRole('button', { name: '元の大きさに戻す', exact: true });
+    assert.equal(await restore.getAttribute('aria-pressed'), 'true');
+    await page.evaluate(() => {
+      const hero = document.querySelector('#shared-test .kus-lp__hero');
+      const rect = hero.getBoundingClientRect();
+      const init = (type, dx, dy) => new PointerEvent(type, { bubbles: true, button: 0, pointerId: 1, clientX: rect.left + 40 + dx, clientY: rect.top + 10 + dy });
+      hero.dispatchEvent(init('pointerdown', 0, 0));
+      hero.dispatchEvent(init('pointermove', 200, 200));
+      hero.dispatchEvent(init('pointerup', 200, 200));
+    });
+    const afterDrag = await page.locator('#shared-test').boundingBox();
+    assert.ok(Math.abs(afterDrag.x - maxRect.x) <= 1 && Math.abs(afterDrag.y - maxRect.y) <= 1, '拡大中はドラッグしても位置が変わらない');
+    await restore.click();
+    const restored = await page.locator('#shared-test').boundingBox();
+    assert.ok(restored.width < maxRect.width - 100, '元の大きさに戻す');
+    assert.equal(await maximize.getAttribute('aria-pressed'), 'false');
+    results.push('拡大表示: 画面いっぱい・ドラッグ固定・元の大きさに戻す');
 
     for (const width of [1440, 768, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });

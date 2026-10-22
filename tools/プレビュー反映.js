@@ -4159,15 +4159,21 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close,.kus-lp__toggle{
+.kus-lp__close,.kus-lp__toggle,.kus-lp__maximize{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
   font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
-.kus-lp__toggle{padding:6px 9px;min-width:34px}
-.kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
-.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__toggle,.kus-lp__maximize{padding:6px 9px;min-width:34px}
+.kus-lp__close:hover,.kus-lp__toggle:hover,.kus-lp__maximize:hover{background:rgba(255,255,255,.24)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled,.kus-lp__maximize:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__maximize[aria-pressed="true"]{background:rgba(255,255,255,.3)}
+/* 拡大表示: 画面いっぱいに広げる（長い結果やログを読むとき用）。ドラッグ位置より優先し、折りたたみ中は幅を変えない */
+.kus-lp.kus-lp--max:not(.kus-lp--collapsed){
+  width:calc(100vw - 24px)!important;max-width:none!important;max-height:calc(100dvh - 24px)!important;
+  top:12px!important;left:12px!important;right:auto!important;
+}
 
 /* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
 .kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
@@ -4349,6 +4355,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
 .kus-lp__small{font-size:11px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
+/* 入力中のアプリ名確認（appNameHint.ts）。入力行の直後に置く */
+.kus-lp__app-note{margin:-4px 0 10px;font-size:11.5px;line-height:1.5;color:var(--c-muted);overflow-wrap:anywhere;white-space:pre-wrap}
+.kus-lp__app-note--ok{color:var(--c-ok-fg);font-weight:600}
+.kus-lp__app-note--warn{color:var(--c-err-fg);font-weight:700}
 
 /* ===== Toolbar / Count / Pill ===== */
 .kus-lp__toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px}
@@ -4417,7 +4427,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
+.kus-lp__apptable-name--named::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
+.kus-lp__apptable-name--warn{color:var(--c-err-fg);font-weight:600;white-space:normal}
 .kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
 .kus-lp__apptable-acts-h{width:128px}
 .kus-lp__apptable-acts{white-space:nowrap}
@@ -4507,9 +4518,17 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     toggleBtn.setAttribute("aria-label", "折りたたむ");
     toggleBtn.title = "折りたたむ（ヒーローだけ残して kintone 画面を確認）";
     toggleBtn.textContent = "－";
+    const maxBtn = document.createElement("button");
+    maxBtn.type = "button";
+    maxBtn.className = "kus-lp__maximize";
+    maxBtn.setAttribute("aria-pressed", "false");
+    maxBtn.setAttribute("aria-label", "拡大表示");
+    maxBtn.title = "拡大表示（画面いっぱいに広げる）";
+    maxBtn.textContent = "⤢";
     const heroActions = document.createElement("div");
     heroActions.className = "kus-lp__hero-actions";
     heroActions.appendChild(elapsedEl);
+    heroActions.appendChild(maxBtn);
     heroActions.appendChild(toggleBtn);
     heroActions.appendChild(closeBtn);
     const progress = document.createElement("div");
@@ -4636,6 +4655,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (!collapsed) clampIntoViewport();
     }
     toggleBtn.addEventListener("click", () => setCollapsed(!root2.classList.contains("kus-lp--collapsed")));
+    function setMaximized(maximized) {
+      root2.classList.toggle("kus-lp--max", maximized);
+      maxBtn.setAttribute("aria-pressed", String(maximized));
+      maxBtn.setAttribute("aria-label", maximized ? "元の大きさに戻す" : "拡大表示");
+      maxBtn.title = maximized ? "元の大きさに戻す" : "拡大表示（画面いっぱいに広げる）";
+      maxBtn.textContent = maximized ? "⤡" : "⤢";
+      if (!maximized) clampIntoViewport();
+    }
+    maxBtn.addEventListener("click", () => setMaximized(!root2.classList.contains("kus-lp--max")));
     let customPlaced = false;
     function clampIntoViewport() {
       if (!customPlaced || !root2.isConnected) return;
@@ -4662,7 +4690,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     }
     let drag = null;
     hero.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || root2.classList.contains("kus-lp--max")) return;
       const target = e.target;
       if (!target || target.closest("button,a,input,select,textarea,[contenteditable]")) return;
       const rect = root2.getBoundingClientRect();
@@ -4764,7 +4792,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
+    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setMaximized, setPrimaryAction };
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");

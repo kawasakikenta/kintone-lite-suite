@@ -624,6 +624,13 @@
       return null;
     }
   }
+  function kusConfirm(message) {
+    try {
+      return getToolWindowSafe().confirm(message);
+    } catch (e) {
+      return window.confirm(message);
+    }
+  }
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
@@ -2782,15 +2789,21 @@ ${body}`;
   font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close,.kus-lp__toggle{
+.kus-lp__close,.kus-lp__toggle,.kus-lp__maximize{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
   font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
-.kus-lp__toggle{padding:6px 9px;min-width:34px}
-.kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
-.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__toggle,.kus-lp__maximize{padding:6px 9px;min-width:34px}
+.kus-lp__close:hover,.kus-lp__toggle:hover,.kus-lp__maximize:hover{background:rgba(255,255,255,.24)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled,.kus-lp__maximize:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__maximize[aria-pressed="true"]{background:rgba(255,255,255,.3)}
+/* 拡大表示: 画面いっぱいに広げる（長い結果やログを読むとき用）。ドラッグ位置より優先し、折りたたみ中は幅を変えない */
+.kus-lp.kus-lp--max:not(.kus-lp--collapsed){
+  width:calc(100vw - 24px)!important;max-width:none!important;max-height:calc(100dvh - 24px)!important;
+  top:12px!important;left:12px!important;right:auto!important;
+}
 
 /* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
 .kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
@@ -2972,6 +2985,10 @@ ${body}`;
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
 .kus-lp__small{font-size:11px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
+/* 入力中のアプリ名確認（appNameHint.ts）。入力行の直後に置く */
+.kus-lp__app-note{margin:-4px 0 10px;font-size:11.5px;line-height:1.5;color:var(--c-muted);overflow-wrap:anywhere;white-space:pre-wrap}
+.kus-lp__app-note--ok{color:var(--c-ok-fg);font-weight:600}
+.kus-lp__app-note--warn{color:var(--c-err-fg);font-weight:700}
 
 /* ===== Toolbar / Count / Pill ===== */
 .kus-lp__toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px}
@@ -3040,7 +3057,8 @@ ${body}`;
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
+.kus-lp__apptable-name--named::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
+.kus-lp__apptable-name--warn{color:var(--c-err-fg);font-weight:600;white-space:normal}
 .kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
 .kus-lp__apptable-acts-h{width:128px}
 .kus-lp__apptable-acts{white-space:nowrap}
@@ -3130,9 +3148,17 @@ ${body}`;
     toggleBtn.setAttribute("aria-label", "折りたたむ");
     toggleBtn.title = "折りたたむ（ヒーローだけ残して kintone 画面を確認）";
     toggleBtn.textContent = "－";
+    const maxBtn = document.createElement("button");
+    maxBtn.type = "button";
+    maxBtn.className = "kus-lp__maximize";
+    maxBtn.setAttribute("aria-pressed", "false");
+    maxBtn.setAttribute("aria-label", "拡大表示");
+    maxBtn.title = "拡大表示（画面いっぱいに広げる）";
+    maxBtn.textContent = "⤢";
     const heroActions = document.createElement("div");
     heroActions.className = "kus-lp__hero-actions";
     heroActions.appendChild(elapsedEl);
+    heroActions.appendChild(maxBtn);
     heroActions.appendChild(toggleBtn);
     heroActions.appendChild(closeBtn);
     const progress = document.createElement("div");
@@ -3259,6 +3285,15 @@ ${body}`;
       if (!collapsed) clampIntoViewport();
     }
     toggleBtn.addEventListener("click", () => setCollapsed(!root2.classList.contains("kus-lp--collapsed")));
+    function setMaximized(maximized) {
+      root2.classList.toggle("kus-lp--max", maximized);
+      maxBtn.setAttribute("aria-pressed", String(maximized));
+      maxBtn.setAttribute("aria-label", maximized ? "元の大きさに戻す" : "拡大表示");
+      maxBtn.title = maximized ? "元の大きさに戻す" : "拡大表示（画面いっぱいに広げる）";
+      maxBtn.textContent = maximized ? "⤡" : "⤢";
+      if (!maximized) clampIntoViewport();
+    }
+    maxBtn.addEventListener("click", () => setMaximized(!root2.classList.contains("kus-lp--max")));
     let customPlaced = false;
     function clampIntoViewport() {
       if (!customPlaced || !root2.isConnected) return;
@@ -3285,7 +3320,7 @@ ${body}`;
     }
     let drag = null;
     hero.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || root2.classList.contains("kus-lp--max")) return;
       const target = e.target;
       if (!target || target.closest("button,a,input,select,textarea,[contenteditable]")) return;
       const rect = root2.getBoundingClientRect();
@@ -3387,7 +3422,7 @@ ${body}`;
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
+    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setMaximized, setPrimaryAction };
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
@@ -3527,6 +3562,9 @@ ${body}`;
     foot.className = "kus-lp__apptable-foot";
     const addBtn = makeButton("＋ 行を追加", "sub");
     foot.appendChild(addBtn);
+    const clearAllBtn = makeButton("全行を消去", "sub");
+    clearAllBtn.title = "表のアプリID・ゲストIDをすべて消して、空の表に戻します";
+    foot.appendChild(clearAllBtn);
     if (opts.currentAppId && /^\d+$/.test(String(opts.currentAppId).trim())) {
       const curBtn = makeButton("現在のアプリ", "sub");
       curBtn.title = "今開いているアプリのIDを空き行に入れます";
@@ -3538,9 +3576,7 @@ ${body}`;
         if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guest)) return;
         const empty = rows.find((r) => !r.app.value.trim());
         if (empty) {
-          empty.app.value = id;
-          empty.guest.value = guest;
-          setAppName(empty, "");
+          setRowValues(empty, id, guest, "");
           empty.app.focus();
         } else {
           insertRow(rows.length, id, guest, true);
@@ -3586,11 +3622,63 @@ ${body}`;
       entry.name.textContent = entry.appName;
       entry.name.title = entry.appName ? `アプリ名: ${entry.appName}` : "";
       entry.name.classList.toggle("kus-lp__apptable-name--empty", !entry.appName);
+      entry.name.classList.toggle("kus-lp__apptable-name--named", !!entry.appName);
+      entry.name.classList.remove("kus-lp__apptable-name--warn");
+      delete entry.name.dataset.lookup;
+    }
+    function setLookupNote(entry, state3) {
+      entry.appName = "";
+      entry.name.textContent = state3 === "pending" ? "確認中…" : "アプリを確認できません（ID・ゲストスペース・閲覧権限を確認）";
+      entry.name.title = "";
+      entry.name.classList.remove("kus-lp__apptable-name--empty", "kus-lp__apptable-name--named");
+      entry.name.classList.toggle("kus-lp__apptable-name--warn", state3 === "failed");
+      entry.name.dataset.lookup = state3;
+    }
+    const LOOKUP_CONCURRENCY = 3;
+    const LOOKUP_DEBOUNCE_MS = 350;
+    const lookupQueue = [];
+    let lookupActive = 0;
+    const lookupable = (value) => /^[1-9]\d*$/.test(value);
+    function scheduleLookup(entry) {
+      if (!opts.lookupAppName || entry.appName) return;
+      const appId = entry.app.value.trim();
+      const guestId = entry.guest.value.trim();
+      if (!lookupable(appId) || guestId && !lookupable(guestId)) {
+        entry.lookupKey = "";
+        if (entry.name.dataset.lookup) setAppName(entry, "");
+        return;
+      }
+      const key = `${guestId}|${appId}`;
+      if (entry.lookupKey === key) return;
+      entry.lookupKey = key;
+      setLookupNote(entry, "pending");
+      lookupQueue.push(entry);
+      pumpLookups();
+    }
+    function pumpLookups() {
+      while (lookupActive < LOOKUP_CONCURRENCY && lookupQueue.length) {
+        const entry = lookupQueue.shift();
+        const key = entry.lookupKey;
+        if (!key || !rows.includes(entry) || entry.name.dataset.lookup !== "pending") continue;
+        const [guestId, appId] = key.split("|");
+        lookupActive += 1;
+        opts.lookupAppName(appId, guestId).then((result) => result, () => ({ ok: false })).then((result) => {
+          if (entry.lookupKey !== key || !rows.includes(entry)) return;
+          if (result.ok) setAppName(entry, result.name || `アプリ #${appId}`);
+          else setLookupNote(entry, "failed");
+          wrap.dispatchEvent(new Event("kus-lite-summary-change", { bubbles: true }));
+        }).finally(() => {
+          lookupActive -= 1;
+          pumpLookups();
+        });
+      }
     }
     function setRowValues(entry, appId, guestId, appName) {
       entry.app.value = appId;
       entry.guest.value = guestId;
       setAppName(entry, appName);
+      entry.lookupKey = "";
+      scheduleLookup(entry);
     }
     function refresh() {
       rows.forEach((r, i) => {
@@ -3600,6 +3688,7 @@ ${body}`;
       });
       const n = getApps().length;
       count.textContent = n ? `${n} アプリ` : "未入力";
+      clearAllBtn.disabled = !n && rows.length <= minRows && rows.every((r) => !r.guest.value.trim());
     }
     function emitChange() {
       refresh();
@@ -3697,15 +3786,13 @@ ${body}`;
       tr.appendChild(tdApp);
       tr.appendChild(tdGuest);
       tr.appendChild(tdAct);
-      const entry = { tr, app, guest, name, appName: "", copyBtn };
+      const entry = { tr, app, guest, name, appName: "", copyBtn, lookupKey: "" };
       setAppName(entry, appName);
       copyBtn.addEventListener("click", () => {
         const idx = rows.indexOf(entry);
         if (idx <= 0) return;
         const prev = rows[idx - 1];
-        app.value = prev.app.value;
-        guest.value = prev.guest.value;
-        setAppName(entry, prev.appName);
+        setRowValues(entry, prev.app.value, prev.guest.value, prev.appName);
         app.focus();
         emitChange();
       });
@@ -3716,13 +3803,38 @@ ${body}`;
         emitChange();
       });
       delBtn.addEventListener("click", () => removeRow(entry));
+      let typingTimer = 0;
+      const scheduleAfterTyping = () => {
+        window.clearTimeout(typingTimer);
+        if (!opts.lookupAppName) return;
+        typingTimer = window.setTimeout(() => {
+          if (rows.includes(entry)) scheduleLookup(entry);
+        }, LOOKUP_DEBOUNCE_MS);
+      };
       app.addEventListener("input", () => {
-        if (entry.appName) setAppName(entry, "");
+        if (entry.appName || entry.name.dataset.lookup) setAppName(entry, "");
+        entry.lookupKey = "";
+        scheduleAfterTyping();
         emitChange();
       });
-      guest.addEventListener("input", emitChange);
+      guest.addEventListener("input", () => {
+        if (opts.lookupAppName && (entry.appName || entry.name.dataset.lookup)) {
+          setAppName(entry, "");
+          entry.lookupKey = "";
+        }
+        scheduleAfterTyping();
+        emitChange();
+      });
       app.addEventListener("change", () => {
+        window.clearTimeout(typingTimer);
         if (distributeAppTokens(entry)) emitChange();
+        if (entry.name.dataset.lookup === "failed") entry.lookupKey = "";
+        scheduleLookup(entry);
+      });
+      guest.addEventListener("change", () => {
+        window.clearTimeout(typingTimer);
+        if (entry.name.dataset.lookup === "failed") entry.lookupKey = "";
+        scheduleLookup(entry);
       });
       app.addEventListener("paste", (ev) => {
         const text = ev.clipboardData?.getData("text") || "";
@@ -3734,18 +3846,29 @@ ${body}`;
         const combined = app.value.slice(0, start) + text + app.value.slice(end);
         app.value = combined;
         if (distributeAppTokens(entry)) emitChange();
+        scheduleLookup(entry);
       });
       const at = Math.min(Math.max(index, 0), rows.length);
       if (at >= rows.length) tbody.appendChild(tr);
       else tbody.insertBefore(tr, rows[at].tr);
       rows.splice(at, 0, entry);
       if (focus) app.focus();
+      scheduleLookup(entry);
       return entry;
     }
     addBtn.addEventListener("click", () => {
       const e = insertRow(rows.length, "", "", true);
       e.app.focus();
       emitChange();
+    });
+    clearAllBtn.addEventListener("click", () => {
+      const n = getApps().length;
+      if (n >= 3 && !kusConfirm(`対象アプリ ${n} 件をすべて消去しますか？`)) return;
+      setApps([]);
+      try {
+        rows[0]?.app.focus();
+      } catch {
+      }
     });
     function putApp(appId = "", guestId = "", o = {}) {
       const id = String(appId || "").trim();
@@ -3914,8 +4037,16 @@ ${body}`;
     details.body.append(...nodes);
     return details.details;
   }
-  function connectionSummary(appId, guestId = "", environment = "本番") {
-    return `#${appId || "未入力"}${guestId ? `（ゲスト ${guestId}）` : ""} · ${environment}`;
+  function connectionSummary(appId, guestId = "", environment = "本番", appName = "") {
+    const name = String(appName || "").trim();
+    return `#${appId || "未入力"}${name ? ` ${name}` : ""}${guestId ? `（ゲスト ${guestId}）` : ""} · ${environment}`;
+  }
+  function formatWorkflowDuration(ms) {
+    const total = Math.floor(Math.max(0, Number(ms) || 0) / 1e3);
+    if (total < 1) return "1秒未満";
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return m ? `${m}分${s}秒` : `${s}秒`;
   }
   function installLiteWorkflow(panel, options) {
     ensureStyles();
@@ -4033,8 +4164,23 @@ ${body}`;
     let busy = false;
     let pending = null;
     let reviewedSignature = "";
+    let reviewedInputs = "";
     let lastContext = "";
-    const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll("input,select,textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
+    let startedAt = 0;
+    const inputsSignature = () => JSON.stringify([selected.id, Array.from(setup.querySelectorAll("input,select,textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
+    const signature = () => JSON.stringify([inputsSignature(), selected.summary()]);
+    function renderSummary() {
+      summary.replaceChildren();
+      for (const [label, value] of [["操作", selected.label], ...selected.summary()]) {
+        const row = document.createElement("div");
+        const term = document.createElement("dt");
+        const description = document.createElement("dd");
+        term.textContent = label;
+        description.textContent = value;
+        row.append(term, description);
+        summary.appendChild(row);
+      }
+    }
     function show(index) {
       if (busy) return;
       const problem = index === 1 ? selected.validate() : "";
@@ -4044,17 +4190,9 @@ ${body}`;
       }
       active = index;
       if (index === 1) {
-        summary.replaceChildren();
-        for (const [label, value] of [["操作", selected.label], ...selected.summary()]) {
-          const row = document.createElement("div");
-          const term = document.createElement("dt");
-          const description = document.createElement("dd");
-          term.textContent = label;
-          description.textContent = value;
-          row.append(term, description);
-          summary.appendChild(row);
-        }
+        renderSummary();
         reviewedSignature = signature();
+        reviewedInputs = inputsSignature();
       }
       stages.forEach((stage, i) => {
         stage.hidden = i !== active;
@@ -4092,8 +4230,10 @@ ${body}`;
         refresh();
         return;
       }
+      const elapsed = startedAt ? `
+所要時間: ${formatWorkflowDuration(Date.now() - startedAt)}` : "";
       resultNote.textContent = `${lastContext}
-${status}`;
+${status}${elapsed}`;
       resultNote.dataset.write = String(!!pending.writes);
       const showResults = !options.resultActions || options.resultActions.includes(pending.id);
       options.results?.forEach((element) => {
@@ -4106,6 +4246,7 @@ ${status}`;
     execute.addEventListener("click", () => {
       if (busy || pending || selected.validate() || reviewedSignature !== signature()) return;
       pending = selected;
+      startedAt = Date.now();
       options.beforeRun?.(selected.id);
       panel.setResult("");
       options.results?.forEach((element) => {
@@ -4125,7 +4266,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       nav.inert = value;
       if (value) {
         panel.root.querySelectorAll("input,button,select,textarea").forEach((input) => {
-          if (input.classList.contains("kus-lp__toggle")) return;
+          if (input.classList.contains("kus-lp__toggle") || input.classList.contains("kus-lp__maximize")) return;
           disabled.set(input, input.disabled);
           input.disabled = true;
         });
@@ -4154,6 +4295,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       });
     };
     for (const event of ["input", "change", "click"]) setup.addEventListener(event, scheduleRefresh);
+    panel.root.addEventListener("kus-lite-summary-change", () => {
+      if (busy || active !== 1 || inputsSignature() !== reviewedInputs) return;
+      renderSummary();
+      reviewedSignature = signature();
+      refresh();
+    });
     selected.onSelect?.();
     show(0);
     return { refresh, show };
@@ -8344,6 +8491,74 @@ ${detail}`);
     return details;
   }
 
+  // src/entries/appNameHint.ts
+  init_constants();
+
+  // src/reflect/appLookup.ts
+  init_api();
+  var REFLECT_APP_LOOKUP_FAILURE = "アプリを確認できません。ID・ゲストスペース・閲覧権限を確認してください。";
+  var POSITIVE_INTEGER = /^[1-9]\d*$/;
+  function isLookupableReflectApp(appId, guestId) {
+    const id = String(appId || "").trim();
+    const guest = String(guestId || "").trim();
+    return POSITIVE_INTEGER.test(id) && (!guest || POSITIVE_INTEGER.test(guest));
+  }
+  async function lookupReflectApp(appId, guestId) {
+    const id = String(appId || "").trim();
+    const guest = String(guestId || "").trim();
+    const failure = { ok: false, message: REFLECT_APP_LOOKUP_FAILURE };
+    if (!isLookupableReflectApp(id, guest)) return failure;
+    try {
+      const response = await apiGet(buildApiPrefix(guest, false), "/app.json", { id }, { retries: 1 });
+      if (String(response?.appId ?? "") !== id) return failure;
+      return { ok: true, appId: id, name: String(response?.name ?? ""), code: String(response?.code ?? "") };
+    } catch {
+      return failure;
+    }
+  }
+  function createReflectAppLookupCache(lookup = lookupReflectApp) {
+    const done = /* @__PURE__ */ new Map();
+    const pending = /* @__PURE__ */ new Map();
+    const keyOf = (appId, guestId) => `${String(guestId || "").trim()}|${String(appId || "").trim()}`;
+    return {
+      peek(appId, guestId) {
+        return done.get(keyOf(appId, guestId));
+      },
+      remember(info, guestId) {
+        done.set(keyOf(info.appId, guestId), { ok: true, appId: String(info.appId).trim(), name: info.name, code: info.code });
+      },
+      get(appId, guestId) {
+        const key = keyOf(appId, guestId);
+        const cached = done.get(key);
+        if (cached) return Promise.resolve(cached);
+        const inFlight = pending.get(key);
+        if (inFlight) return inFlight;
+        const request = lookup(String(appId || "").trim(), String(guestId || "").trim()).catch(() => ({ ok: false, message: REFLECT_APP_LOOKUP_FAILURE })).then((result) => {
+          pending.delete(key);
+          if (!result.ok) return result;
+          const kept = done.get(key);
+          if (kept) return kept;
+          done.set(key, result);
+          return result;
+        });
+        pending.set(key, request);
+        return request;
+      }
+    };
+  }
+
+  // src/entries/appNameHint.ts
+  var APP_NAME_HINT_FAILURE = REFLECT_APP_LOOKUP_FAILURE;
+  function createAppLookupCache() {
+    return createReflectAppLookupCache();
+  }
+  function createAppTableLookup(cache) {
+    return async (appId, guestId) => {
+      const result = await cache.get(appId, guestId);
+      return result.ok ? { ok: true, name: result.name, code: result.code } : { ok: false, message: "message" in result ? result.message : APP_NAME_HINT_FAILURE };
+    };
+  }
+
   // src/entries/design-lite-ui.ts
   function mountDesignLitePanel() {
     const panel = createLitePanel({
@@ -8354,11 +8569,13 @@ ${detail}`);
       badges: [{ label: "Lite" }, { label: "5 形式出力" }],
       hint: "対象アプリ表に 1 行入力すれば 1 アプリ出力、複数行で ZIP 一括出力。<strong>アプリごとに別ゲストスペース</strong>も指定できます。"
     });
+    const appLookup = createAppLookupCache();
     const cardTarget = makeCard({ title: "対象アプリ", number: 1 });
     const appTable = makeAppTable({
       currentAppId: String(DEFAULT_APP_ID || ""),
       currentGuestId: DEFAULT_GUEST_ID,
-      initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : []
+      initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : [],
+      lookupAppName: createAppTableLookup(appLookup)
     });
     cardTarget.body.appendChild(createAppSearchControl(panel, {
       targets: [
@@ -8632,7 +8849,7 @@ ${detail}`);
       const first = appTable.first();
       const isImported = hasImportedBundle(first.appId, first.guestId, 0);
       return [
-        ["対象", connectionSummary(first.appId, first.guestId, isImported ? "読込済みJSON" : prev.checkbox.checked ? "プレビュー" : "本番")],
+        ["対象", connectionSummary(first.appId, first.guestId, isImported ? "読込済みJSON" : prev.checkbox.checked ? "プレビュー" : "本番", first.appName)],
         ["取得元", isImported ? "読み込んだ設定JSON" : "アプリから取得"],
         ["出力形式", format],
         ["対象範囲", "対象表の1行目のみ"]
@@ -8643,7 +8860,7 @@ ${detail}`);
       setup: [cardTarget.card, foldWorkflowSection("保存済みの設定JSONを使う", cardImport.card)],
       actions: [
         { id: "xlsx", label: "Excel設計書を保存", description: "1行目のアプリをExcelの設計書にします。", button: bXlsx, validate: firstTargetRequired, summary: () => singleSummary("Excel (.xlsx)") },
-        { id: "zip", label: "全対象をExcel ZIPで保存", description: "本番の設定または読込済みJSONから全対象を保存します。", button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), "対象アプリ表: "), summary: () => [["対象", appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? "読込済みJSON" : "本番")).join("\n")], ["出力", appTable.count() + " アプリのExcelをZIPに保存"], ["取得環境", "ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。"]] },
+        { id: "zip", label: "全対象をExcel ZIPで保存", description: "本番の設定または読込済みJSONから全対象を保存します。", button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), "対象アプリ表: "), summary: () => [["対象", appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? "読込済みJSON" : "本番", r.appName)).join("\n")], ["出力", appTable.count() + " アプリのExcelをZIPに保存"], ["取得環境", "ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。"]] },
         { id: "md", label: "Markdown設計書を保存", description: "1行目のアプリを文章で確認できる形式にします。", button: bMd, validate: firstTargetRequired, summary: () => singleSummary("Markdown") },
         { id: "ai-md", label: "AI向けMarkdownを保存", description: "1行目のアプリ設定をAIへ渡しやすい専用Markdownにします。", button: bAiMd, validate: firstTargetRequired, summary: () => singleSummary("AI向けMarkdown（AIへの受け渡し）") },
         { id: "ai-copy", label: "AI向けMarkdownをコピー", description: "1行目の設計書をAIへ渡す専用Markdownとしてコピーします。", button: bAiCopy, validate: firstTargetRequired, summary: () => singleSummary("AI向けMarkdown（クリップボード）") },
@@ -8653,7 +8870,7 @@ ${detail}`);
           const rows = diffTargetRows();
           if (rows.length < 2) return "対象アプリを2件以上指定してください。";
           return validateDesignExportTargets(rows.map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), "比較対象: ");
-        }, summary: () => diffTargetRows().map((r, i) => [i ? "比較先" : "比較元", connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? "読込済みJSON" : prev.checkbox.checked ? "プレビュー" : "本番")]) }
+        }, summary: () => diffTargetRows().map((r, i) => [i ? "比較先" : "比較元", connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? "読込済みJSON" : prev.checkbox.checked ? "プレビュー" : "本番", r.appName)]) }
       ]
     });
   }

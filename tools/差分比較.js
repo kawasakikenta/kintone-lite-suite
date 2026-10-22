@@ -12390,15 +12390,21 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close,.kus-lp__toggle{
+.kus-lp__close,.kus-lp__toggle,.kus-lp__maximize{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
   font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
-.kus-lp__toggle{padding:6px 9px;min-width:34px}
-.kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
-.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__toggle,.kus-lp__maximize{padding:6px 9px;min-width:34px}
+.kus-lp__close:hover,.kus-lp__toggle:hover,.kus-lp__maximize:hover{background:rgba(255,255,255,.24)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled,.kus-lp__maximize:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__maximize[aria-pressed="true"]{background:rgba(255,255,255,.3)}
+/* 拡大表示: 画面いっぱいに広げる（長い結果やログを読むとき用）。ドラッグ位置より優先し、折りたたみ中は幅を変えない */
+.kus-lp.kus-lp--max:not(.kus-lp--collapsed){
+  width:calc(100vw - 24px)!important;max-width:none!important;max-height:calc(100dvh - 24px)!important;
+  top:12px!important;left:12px!important;right:auto!important;
+}
 
 /* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
 .kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
@@ -12580,6 +12586,10 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
 .kus-lp__small{font-size:11px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
+/* 入力中のアプリ名確認（appNameHint.ts）。入力行の直後に置く */
+.kus-lp__app-note{margin:-4px 0 10px;font-size:11.5px;line-height:1.5;color:var(--c-muted);overflow-wrap:anywhere;white-space:pre-wrap}
+.kus-lp__app-note--ok{color:var(--c-ok-fg);font-weight:600}
+.kus-lp__app-note--warn{color:var(--c-err-fg);font-weight:700}
 
 /* ===== Toolbar / Count / Pill ===== */
 .kus-lp__toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px}
@@ -12648,7 +12658,8 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
+.kus-lp__apptable-name--named::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
+.kus-lp__apptable-name--warn{color:var(--c-err-fg);font-weight:600;white-space:normal}
 .kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
 .kus-lp__apptable-acts-h{width:128px}
 .kus-lp__apptable-acts{white-space:nowrap}
@@ -12738,9 +12749,17 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     toggleBtn.setAttribute("aria-label", "折りたたむ");
     toggleBtn.title = "折りたたむ（ヒーローだけ残して kintone 画面を確認）";
     toggleBtn.textContent = "－";
+    const maxBtn = document.createElement("button");
+    maxBtn.type = "button";
+    maxBtn.className = "kus-lp__maximize";
+    maxBtn.setAttribute("aria-pressed", "false");
+    maxBtn.setAttribute("aria-label", "拡大表示");
+    maxBtn.title = "拡大表示（画面いっぱいに広げる）";
+    maxBtn.textContent = "⤢";
     const heroActions = document.createElement("div");
     heroActions.className = "kus-lp__hero-actions";
     heroActions.appendChild(elapsedEl);
+    heroActions.appendChild(maxBtn);
     heroActions.appendChild(toggleBtn);
     heroActions.appendChild(closeBtn);
     const progress = document.createElement("div");
@@ -12867,6 +12886,15 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       if (!collapsed) clampIntoViewport();
     }
     toggleBtn.addEventListener("click", () => setCollapsed(!root2.classList.contains("kus-lp--collapsed")));
+    function setMaximized(maximized) {
+      root2.classList.toggle("kus-lp--max", maximized);
+      maxBtn.setAttribute("aria-pressed", String(maximized));
+      maxBtn.setAttribute("aria-label", maximized ? "元の大きさに戻す" : "拡大表示");
+      maxBtn.title = maximized ? "元の大きさに戻す" : "拡大表示（画面いっぱいに広げる）";
+      maxBtn.textContent = maximized ? "⤡" : "⤢";
+      if (!maximized) clampIntoViewport();
+    }
+    maxBtn.addEventListener("click", () => setMaximized(!root2.classList.contains("kus-lp--max")));
     let customPlaced = false;
     function clampIntoViewport() {
       if (!customPlaced || !root2.isConnected) return;
@@ -12893,7 +12921,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     }
     let drag = null;
     hero.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || root2.classList.contains("kus-lp--max")) return;
       const target = e.target;
       if (!target || target.closest("button,a,input,select,textarea,[contenteditable]")) return;
       const rect = root2.getBoundingClientRect();
@@ -12995,7 +13023,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
+    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setMaximized, setPrimaryAction };
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
@@ -20183,6 +20211,70 @@ ${fence}`;
     return details;
   }
 
+  // src/entries/appNameHint.ts
+  init_constants();
+
+  // src/reflect/appLookup.ts
+  init_api();
+  var REFLECT_APP_LOOKUP_FAILURE = "アプリを確認できません。ID・ゲストスペース・閲覧権限を確認してください。";
+  var POSITIVE_INTEGER = /^[1-9]\d*$/;
+  function isLookupableReflectApp(appId, guestId) {
+    const id = String(appId || "").trim();
+    const guest = String(guestId || "").trim();
+    return POSITIVE_INTEGER.test(id) && (!guest || POSITIVE_INTEGER.test(guest));
+  }
+  async function lookupReflectApp(appId, guestId) {
+    const id = String(appId || "").trim();
+    const guest = String(guestId || "").trim();
+    const failure = { ok: false, message: REFLECT_APP_LOOKUP_FAILURE };
+    if (!isLookupableReflectApp(id, guest)) return failure;
+    try {
+      const response = await apiGet(buildApiPrefix(guest, false), "/app.json", { id }, { retries: 1 });
+      if (String(response?.appId ?? "") !== id) return failure;
+      return { ok: true, appId: id, name: String(response?.name ?? ""), code: String(response?.code ?? "") };
+    } catch {
+      return failure;
+    }
+  }
+  function createReflectAppLookupCache(lookup = lookupReflectApp) {
+    const done = /* @__PURE__ */ new Map();
+    const pending = /* @__PURE__ */ new Map();
+    const keyOf = (appId, guestId) => `${String(guestId || "").trim()}|${String(appId || "").trim()}`;
+    return {
+      peek(appId, guestId) {
+        return done.get(keyOf(appId, guestId));
+      },
+      remember(info, guestId) {
+        done.set(keyOf(info.appId, guestId), { ok: true, appId: String(info.appId).trim(), name: info.name, code: info.code });
+      },
+      get(appId, guestId) {
+        const key = keyOf(appId, guestId);
+        const cached = done.get(key);
+        if (cached) return Promise.resolve(cached);
+        const inFlight = pending.get(key);
+        if (inFlight) return inFlight;
+        const request = lookup(String(appId || "").trim(), String(guestId || "").trim()).catch(() => ({ ok: false, message: REFLECT_APP_LOOKUP_FAILURE })).then((result) => {
+          pending.delete(key);
+          if (!result.ok) return result;
+          const kept = done.get(key);
+          if (kept) return kept;
+          done.set(key, result);
+          return result;
+        });
+        pending.set(key, request);
+        return request;
+      }
+    };
+  }
+
+  // src/entries/appNameHint.ts
+  var APP_NAME_HINT_DELAY_MS = 350;
+  var APP_NAME_HINT_FAILURE = REFLECT_APP_LOOKUP_FAILURE;
+  var isLookupableApp = isLookupableReflectApp;
+  function createAppLookupCache() {
+    return createReflectAppLookupCache();
+  }
+
   // src/reflect/appReference.ts
   function parseAppReference(text2) {
     const raw = String(text2 || "").trim();
@@ -20957,7 +21049,9 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-target-field .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-dl-target-name{min-height:1.35em;margin-top:3px;color:#64748b;font-size:11px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-dl-target-name--empty{min-height:0;margin-top:0}
+.kus-dl-target-name--warn{color:#b91c1c;font-weight:600;white-space:normal}
 .kus-dl-target-name:not(.kus-dl-target-name--empty)::before{content:'アプリ名: ';color:#334155;font-weight:600}
+.kus-dl-target-name.kus-dl-target-name--warn::before{content:none}
 .kus-dl-more{display:flex;justify-content:center;padding:8px 0 2px}
 .kus-dl-multi{width:100%;border-collapse:collapse;font:11px/1.45 -apple-system,Segoe UI,sans-serif}
 .kus-dl-table-scroll{box-sizing:border-box;width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;-webkit-overflow-scrolling:touch}
@@ -21809,6 +21903,14 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       entry.name.textContent = entry.appName;
       entry.name.title = entry.appName ? `アプリ名: ${entry.appName}` : "";
       entry.name.classList.toggle("kus-dl-target-name--empty", !entry.appName);
+      entry.name.classList.remove("kus-dl-target-name--warn");
+    };
+    const warnTargetName = (entry) => {
+      entry.appName = "";
+      entry.name.textContent = APP_NAME_HINT_FAILURE;
+      entry.name.title = "";
+      entry.name.classList.remove("kus-dl-target-name--empty");
+      entry.name.classList.add("kus-dl-target-name--warn");
     };
     const srcName = makeTargetName();
     let sourceAppName = "";
@@ -21817,6 +21919,71 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       srcName.textContent = sourceAppName;
       srcName.title = sourceAppName ? `アプリ名: ${sourceAppName}` : "";
       srcName.classList.toggle("kus-dl-target-name--empty", !sourceAppName);
+      srcName.classList.remove("kus-dl-target-name--warn");
+    };
+    const warnSourceName = () => {
+      sourceAppName = "";
+      srcName.textContent = APP_NAME_HINT_FAILURE;
+      srcName.title = "";
+      srcName.classList.remove("kus-dl-target-name--empty");
+      srcName.classList.add("kus-dl-target-name--warn");
+    };
+    const appLookupCache = createAppLookupCache();
+    const attachAppNameCheck = (side) => {
+      let seq = 0;
+      let timer;
+      const ids = () => ({ appId: side.app.value.trim(), guestId: side.guest.value.trim() });
+      const eligible = () => {
+        const { appId, guestId } = ids();
+        return panel.root.isConnected && side.app.isConnected && !side.hasName() && !side.importing() && isLookupableApp(appId, guestId);
+      };
+      const cancel = () => {
+        seq += 1;
+        window.clearTimeout(timer);
+      };
+      const run = (delay) => {
+        cancel();
+        if (!eligible()) return;
+        const { appId, guestId } = ids();
+        const cached = appLookupCache.peek(appId, guestId);
+        if (cached) {
+          side.show(cached.name);
+          return;
+        }
+        const mine = seq;
+        timer = window.setTimeout(async () => {
+          if (mine !== seq || !eligible()) return;
+          const result = await appLookupCache.get(appId, guestId);
+          if (mine !== seq || !eligible()) return;
+          const now = ids();
+          if (now.appId !== appId || now.guestId !== guestId) return;
+          if (result.ok) side.show(result.name);
+          else side.warn();
+        }, delay);
+      };
+      side.app.addEventListener("input", () => {
+        side.clear();
+        run(APP_NAME_HINT_DELAY_MS);
+      });
+      side.guest.addEventListener("input", () => {
+        side.clear();
+        run(APP_NAME_HINT_DELAY_MS);
+      });
+      side.app.addEventListener("change", () => run(0));
+      side.guest.addEventListener("change", () => run(0));
+      panel.root.addEventListener("kus-lite-dispose", cancel, { once: true });
+      return { check: () => run(0) };
+    };
+    const attachTargetNameCheck = (entry) => {
+      entry.checkName = attachAppNameCheck({
+        app: entry.app,
+        guest: entry.guest,
+        hasName: () => !!entry.appName,
+        importing: () => entry === targetRows[0] && !!(importedTargetBundle || jsonImporter.isLoading("target")),
+        show: (name) => setTargetName(entry, name),
+        warn: () => warnTargetName(entry),
+        clear: () => setTargetName(entry, "")
+      }).check;
     };
     const sourceRow = makeRow([makeTargetField(srcApp, srcName), srcGuest, srcPrev.label], { label: "アプリID・環境" });
     const tgtName = makeTargetName();
@@ -21895,6 +22062,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       targetRows.push(entry);
       targetList.appendChild(row);
       attachTargetSplit(entry);
+      attachTargetNameCheck(entry);
+      entry.checkName?.();
       return entry;
     };
     const adoptDiffAppReference = (appInput, guestInput, sideLabel, clearName, text2 = appInput.value) => {
@@ -21981,6 +22150,16 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       invalidateResultAfterAppSelectionChange();
     });
     attachTargetSplit(targetRows[0]);
+    const sourceNameCheck = attachAppNameCheck({
+      app: srcApp,
+      guest: srcGuest,
+      hasName: () => !!sourceAppName,
+      importing: () => !!(importedSourceBundle || jsonImporter.isLoading("source")),
+      show: setSourceName,
+      warn: warnSourceName,
+      clear: () => setSourceName("")
+    });
+    attachTargetNameCheck(targetRows[0]);
     const addTargetBtn = makeButton("比較先行を追加", "sub");
     addTargetBtn.addEventListener("click", () => {
       addTargetRow();
@@ -23391,6 +23570,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       tgtGuest.value = source.guestId;
       tgtPrev.checkbox.checked = source.preview;
       setTargetName(targetRows[0], source.appName);
+      sourceNameCheck.check();
+      targetRows[0]?.checkName?.();
       const invalidated = invalidateResultAfterAppSelectionChange();
       if (!invalidated) panel.setStatus("比較元と比較先を入れ替えました。矢印の向きを確認して比較してください", "info");
     });

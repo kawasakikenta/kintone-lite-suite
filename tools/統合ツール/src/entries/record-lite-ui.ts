@@ -34,6 +34,7 @@ import {
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { createAppLookupCache, createAppNameHint } from './appNameHint.js';
 import type { RecordViewChoice, AttachmentFieldChoice } from '../tabs/record-metadata.js';
 import { formatCsvImportReport } from '../tabs/record-csv-import.js';
 import { describeProcessAction, processActionQuery, type ProcessActionChoice } from '../tabs/record-process-metadata.js';
@@ -65,8 +66,12 @@ export function mountRecordLitePanel() {
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
+  // 入力中のアプリ名確認（対象・コピー元で確認結果を共有する）
+  const appLookupCache = createAppLookupCache();
+  const targetHint = createAppNameHint({ panel, appInput: tgtApp, guestInput: tgtGuest, multiple: true, cache: appLookupCache });
   const cardApp = makeCard({ title: '接続情報', number: 1 });
   cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '対象アプリ' }));
+  cardApp.body.appendChild(targetHint.element);
   cardApp.body.appendChild(makeNote('複数アプリは「463,464,469」のようにカンマ、改行、または空白で区切って指定できます。選択した操作を上から順にすべてのアプリへ実行します。'));
   cardApp.body.appendChild(makeNote('クエリに limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します（10,000 件超も可）。'));
   cardApp.body.appendChild(createAppSearchControl(panel, {
@@ -131,7 +136,7 @@ export function mountRecordLitePanel() {
 
   const recordActions: LiteWorkflowAction[] = [];
   const requiredApps = () => { try { return parseRecordAppIds(tgtApp.value).length ? '' : '対象アプリを指定してください。'; } catch (error: any) { return error.message; } };
-  const targetSummary = (): [string, string] => ['対象アプリ', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())];
+  const targetSummary = (): [string, string] => ['対象アプリ', targetHint.label() || connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())];
   const addAction = (action: LiteWorkflowAction) => {
     action.onSelect = () => {
       tabs.bar.querySelector<HTMLButtonElement>('[data-tab="' + action.id + '"]')?.click();
@@ -424,7 +429,9 @@ export function mountRecordLitePanel() {
         const query = makeInput({ placeholder: '条件 (任意)', width: 'wide' });
         const useView = makeButton('▼ 一覧から', 'sub');
         useView.addEventListener('click', () => applyViewQuery(query));
+        const srcHint = createAppNameHint({ panel, appInput: srcApp, guestInput: srcGuest, cache: appLookupCache });
         root.appendChild(makeRow([srcApp, srcGuest], { label: 'コピー元' }));
+        root.appendChild(srcHint.element);
         root.appendChild(createAppSearchControl(panel, {
           guestEl: srcGuest,
           targets: [{ label: 'コピー元', apply: (id, _name, guestId) => { srcApp.value = id; if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId; notifyInput(srcApp); } }]
@@ -494,8 +501,8 @@ export function mountRecordLitePanel() {
           writes: true,
           validate: () => requiredApps() || (srcApp.value.trim() ? '' : 'コピー元アプリを指定してください。'),
           summary: () => [
-            ['コピー元', connectionSummary(srcApp.value.trim(), srcGuest.value.trim())],
-            ['コピー先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())],
+            ['コピー元', connectionSummary(srcApp.value.trim(), srcGuest.value.trim(), '本番', srcHint.name())],
+            ['コピー先', targetHint.label() || connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())],
             ['コピー元の条件', query.value.trim() || '全件'],
             ['互換性確認', copyPreviewSummary]
           ]
