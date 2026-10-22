@@ -12,7 +12,7 @@
 import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
 import { setComponentUi } from '../ui/components.js';
 import { setRootElement } from '../ui/dialog.js';
-import { copyTextToClipboard } from '../utils.js';
+import { copyTextToClipboard, kusConfirm } from '../utils.js';
 
 export { copyTextToClipboard };
 
@@ -126,15 +126,21 @@ const THEME_CSS = `
   font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close,.kus-lp__toggle{
+.kus-lp__close,.kus-lp__toggle,.kus-lp__maximize{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
   font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
-.kus-lp__toggle{padding:6px 9px;min-width:34px}
-.kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
-.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__toggle,.kus-lp__maximize{padding:6px 9px;min-width:34px}
+.kus-lp__close:hover,.kus-lp__toggle:hover,.kus-lp__maximize:hover{background:rgba(255,255,255,.24)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled,.kus-lp__maximize:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__maximize[aria-pressed="true"]{background:rgba(255,255,255,.3)}
+/* 拡大表示: 画面いっぱいに広げる（長い結果やログを読むとき用）。ドラッグ位置より優先し、折りたたみ中は幅を変えない */
+.kus-lp.kus-lp--max:not(.kus-lp--collapsed){
+  width:calc(100vw - 24px)!important;max-width:none!important;max-height:calc(100dvh - 24px)!important;
+  top:12px!important;left:12px!important;right:auto!important;
+}
 
 /* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
 .kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
@@ -316,6 +322,10 @@ const THEME_CSS = `
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
 .kus-lp__small{font-size:11px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
+/* 入力中のアプリ名確認（appNameHint.ts）。入力行の直後に置く */
+.kus-lp__app-note{margin:-4px 0 10px;font-size:11.5px;line-height:1.5;color:var(--c-muted);overflow-wrap:anywhere;white-space:pre-wrap}
+.kus-lp__app-note--ok{color:var(--c-ok-fg);font-weight:600}
+.kus-lp__app-note--warn{color:var(--c-err-fg);font-weight:700}
 
 /* ===== Toolbar / Count / Pill ===== */
 .kus-lp__toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px}
@@ -384,7 +394,8 @@ const THEME_CSS = `
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
+.kus-lp__apptable-name--named::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
+.kus-lp__apptable-name--warn{color:var(--c-err-fg);font-weight:600;white-space:normal}
 .kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
 .kus-lp__apptable-acts-h{width:128px}
 .kus-lp__apptable-acts{white-space:nowrap}
@@ -447,6 +458,8 @@ export interface LitePanelHandle {
   setCollapsed: (collapsed: boolean) => void;
   /** ドラッグで動かした位置を初期位置（右上）へ戻す。 */
   resetPosition: () => void;
+  /** 画面いっぱいに広げる／元の大きさに戻す（長い結果やログを読むとき用）。 */
+  setMaximized: (maximized: boolean) => void;
   /**
    * パネルの主アクション（実行ボタン）を登録する。
    * 登録すると、入力欄で Enter（テキストエリアは Ctrl/Cmd+Enter）を押したときに
@@ -526,9 +539,18 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   toggleBtn.title = '折りたたむ（ヒーローだけ残して kintone 画面を確認）';
   toggleBtn.textContent = '－';
 
+  const maxBtn = document.createElement('button');
+  maxBtn.type = 'button';
+  maxBtn.className = 'kus-lp__maximize';
+  maxBtn.setAttribute('aria-pressed', 'false');
+  maxBtn.setAttribute('aria-label', '拡大表示');
+  maxBtn.title = '拡大表示（画面いっぱいに広げる）';
+  maxBtn.textContent = '⤢';
+
   const heroActions = document.createElement('div');
   heroActions.className = 'kus-lp__hero-actions';
   heroActions.appendChild(elapsedEl);
+  heroActions.appendChild(maxBtn);
   heroActions.appendChild(toggleBtn);
   heroActions.appendChild(closeBtn);
 
@@ -679,6 +701,17 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   }
   toggleBtn.addEventListener('click', () => setCollapsed(!root.classList.contains('kus-lp--collapsed')));
 
+  // ===== 拡大表示（画面いっぱい） =====
+  function setMaximized(maximized: boolean) {
+    root.classList.toggle('kus-lp--max', maximized);
+    maxBtn.setAttribute('aria-pressed', String(maximized));
+    maxBtn.setAttribute('aria-label', maximized ? '元の大きさに戻す' : '拡大表示');
+    maxBtn.title = maximized ? '元の大きさに戻す' : '拡大表示（画面いっぱいに広げる）';
+    maxBtn.textContent = maximized ? '⤡' : '⤢';
+    if (!maximized) clampIntoViewport();
+  }
+  maxBtn.addEventListener('click', () => setMaximized(!root.classList.contains('kus-lp--max')));
+
   // ===== ヒーローをつかんで移動 =====
   let customPlaced = false;
   function clampIntoViewport() {
@@ -706,7 +739,8 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   }
   let drag: { pointerId: number; x: number; y: number; left: number; top: number; moved: boolean } | null = null;
   hero.addEventListener('pointerdown', (e: PointerEvent) => {
-    if (e.button !== 0) return;
+    // 拡大表示中は位置を固定する（ドラッグしても画面いっぱいのまま）
+    if (e.button !== 0 || root.classList.contains('kus-lp--max')) return;
     const target = e.target as HTMLElement | null;
     if (!target || target.closest('button,a,input,select,textarea,[contenteditable]')) return;
     const rect = root.getBoundingClientRect();
@@ -812,7 +846,7 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     try { first?.focus({ preventScroll: true } as any); } catch { /* noop */ }
   });
 
-  return { root, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
+  return { root, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setMaximized, setPrimaryAction };
 }
 
 // ===== Element factories =====
@@ -1158,6 +1192,8 @@ export function makePickList(opts: PickListOptions): PickListHandle {
 
 export interface AppTableRow { appId: string; guestId: string; appName?: string }
 export interface AppTablePutResult { action: 'added' | 'filled' | 'existing' | 'ignored'; index: number }
+/** `lookupAppName` の結果。失敗は名前を表示せず、行に「確認できません」と示す。 */
+export type AppTableLookupResult = { ok: true; name: string; code?: string } | { ok: false; message?: string };
 
 export interface AppTableOptions {
   /** 初期行。未指定なら空の 1 行を表示する */
@@ -1172,6 +1208,12 @@ export interface AppTableOptions {
   minRows?: number;
   /** 行の追加・削除・編集が起きたら呼ばれる */
   onChange?: (rows: AppTableRow[]) => void;
+  /**
+   * アプリIDを確定（change・貼り付け・候補からの追加）したとき、名前が未設定の行のアプリ名を確認する。
+   * 失敗しても行の入力は妨げない。同時に問い合わせるのは最大 3 件。
+   * 名前が決まると表要素から `kus-lite-summary-change` を発火する（確認画面の要約の更新用）。
+   */
+  lookupAppName?: (appId: string, guestId: string) => Promise<AppTableLookupResult>;
 }
 
 export interface AppTableHandle {
@@ -1201,6 +1243,8 @@ interface AppTableRowEntry {
   name: HTMLElement;
   appName: string;
   copyBtn: HTMLButtonElement;
+  /** 名前確認を依頼した接続先（`ゲストID|アプリID`）。入力が変わると空に戻す */
+  lookupKey: string;
 }
 
 /**
@@ -1233,6 +1277,9 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
   foot.className = 'kus-lp__apptable-foot';
   const addBtn = makeButton('＋ 行を追加', 'sub');
   foot.appendChild(addBtn);
+  const clearAllBtn = makeButton('全行を消去', 'sub');
+  clearAllBtn.title = '表のアプリID・ゲストIDをすべて消して、空の表に戻します';
+  foot.appendChild(clearAllBtn);
   if (opts.currentAppId && /^\d+$/.test(String(opts.currentAppId).trim())) {
     const curBtn = makeButton('現在のアプリ', 'sub');
     curBtn.title = '今開いているアプリのIDを空き行に入れます';
@@ -1244,9 +1291,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
       if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guest)) return;
       const empty = rows.find((r) => !r.app.value.trim());
       if (empty) {
-        empty.app.value = id;
-        empty.guest.value = guest;
-        setAppName(empty, '');
+        setRowValues(empty, id, guest, '');
         empty.app.focus();
       } else {
         insertRow(rows.length, id, guest, true);
@@ -1295,11 +1340,67 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     entry.name.textContent = entry.appName;
     entry.name.title = entry.appName ? `アプリ名: ${entry.appName}` : '';
     entry.name.classList.toggle('kus-lp__apptable-name--empty', !entry.appName);
+    entry.name.classList.toggle('kus-lp__apptable-name--named', !!entry.appName);
+    entry.name.classList.remove('kus-lp__apptable-name--warn');
+    delete entry.name.dataset.lookup;
+  }
+  /** 名前確認の途中経過・失敗を名前欄に示す（appName は空のまま） */
+  function setLookupNote(entry: AppTableRowEntry, state: 'pending' | 'failed') {
+    entry.appName = '';
+    entry.name.textContent = state === 'pending' ? '確認中…' : 'アプリを確認できません（ID・ゲストスペース・閲覧権限を確認）';
+    entry.name.title = '';
+    entry.name.classList.remove('kus-lp__apptable-name--empty', 'kus-lp__apptable-name--named');
+    entry.name.classList.toggle('kus-lp__apptable-name--warn', state === 'failed');
+    entry.name.dataset.lookup = state;
+  }
+  // ---- アプリ名の確認（lookupAppName 指定時）。入力は妨げず、応答順が前後しても最新の入力だけに反映する ----
+  const LOOKUP_CONCURRENCY = 3;
+  const LOOKUP_DEBOUNCE_MS = 350;
+  const lookupQueue: AppTableRowEntry[] = [];
+  let lookupActive = 0;
+  const lookupable = (value: string) => /^[1-9]\d*$/.test(value);
+  function scheduleLookup(entry: AppTableRowEntry) {
+    if (!opts.lookupAppName || entry.appName) return;
+    const appId = entry.app.value.trim();
+    const guestId = entry.guest.value.trim();
+    if (!lookupable(appId) || (guestId && !lookupable(guestId))) {
+      entry.lookupKey = '';
+      if (entry.name.dataset.lookup) setAppName(entry, '');
+      return;
+    }
+    const key = `${guestId}|${appId}`;
+    if (entry.lookupKey === key) return;
+    entry.lookupKey = key;
+    setLookupNote(entry, 'pending');
+    lookupQueue.push(entry);
+    pumpLookups();
+  }
+  function pumpLookups() {
+    while (lookupActive < LOOKUP_CONCURRENCY && lookupQueue.length) {
+      const entry = lookupQueue.shift()!;
+      const key = entry.lookupKey;
+      // 表がまだ画面に置かれる前（初期行）でも確認する。行が削除されていれば何もしない
+      if (!key || !rows.includes(entry) || entry.name.dataset.lookup !== 'pending') continue;
+      const [guestId, appId] = key.split('|');
+      lookupActive += 1;
+      opts.lookupAppName!(appId, guestId)
+        .then((result) => result, (): AppTableLookupResult => ({ ok: false }))
+        .then((result) => {
+          // 入力が変わった・行が消えた後の応答は捨てる
+          if (entry.lookupKey !== key || !rows.includes(entry)) return;
+          if (result.ok) setAppName(entry, result.name || `アプリ #${appId}`);
+          else setLookupNote(entry, 'failed');
+          wrap.dispatchEvent(new Event('kus-lite-summary-change', { bubbles: true }));
+        })
+        .finally(() => { lookupActive -= 1; pumpLookups(); });
+    }
   }
   function setRowValues(entry: AppTableRowEntry, appId: string, guestId: string, appName: string) {
     entry.app.value = appId;
     entry.guest.value = guestId;
     setAppName(entry, appName);
+    entry.lookupKey = '';
+    scheduleLookup(entry);
   }
   function refresh() {
     rows.forEach((r, i) => {
@@ -1309,6 +1410,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     });
     const n = getApps().length;
     count.textContent = n ? `${n} アプリ` : '未入力';
+    clearAllBtn.disabled = !n && rows.length <= minRows && rows.every((r) => !r.guest.value.trim());
   }
   function emitChange() {
     refresh();
@@ -1413,16 +1515,14 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     tr.appendChild(tdGuest);
     tr.appendChild(tdAct);
 
-    const entry: AppTableRowEntry = { tr, app, guest, name, appName: '', copyBtn };
+    const entry: AppTableRowEntry = { tr, app, guest, name, appName: '', copyBtn, lookupKey: '' };
     setAppName(entry, appName);
 
     copyBtn.addEventListener('click', () => {
       const idx = rows.indexOf(entry);
       if (idx <= 0) return;
       const prev = rows[idx - 1];
-      app.value = prev.app.value;
-      guest.value = prev.guest.value;
-      setAppName(entry, prev.appName);
+      setRowValues(entry, prev.app.value, prev.guest.value, prev.appName);
       app.focus();
       emitChange();
     });
@@ -1433,11 +1533,39 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
       emitChange();
     });
     delBtn.addEventListener('click', () => removeRow(entry));
-    app.addEventListener('input', () => { if (entry.appName) setAppName(entry, ''); emitChange(); });
-    guest.addEventListener('input', emitChange);
+    // 入力が止まってから名前を確認する（確定を待たない）。確定（change）では待たずに確認する。
+    let typingTimer = 0;
+    const scheduleAfterTyping = () => {
+      window.clearTimeout(typingTimer);
+      if (!opts.lookupAppName) return;
+      typingTimer = window.setTimeout(() => { if (rows.includes(entry)) scheduleLookup(entry); }, LOOKUP_DEBOUNCE_MS);
+    };
+    app.addEventListener('input', () => {
+      if (entry.appName || entry.name.dataset.lookup) setAppName(entry, '');
+      entry.lookupKey = '';
+      scheduleAfterTyping();
+      emitChange();
+    });
+    guest.addEventListener('input', () => {
+      // 名前確認を使う表では、ゲストスペースが変わると以前の名前は別の接続先のものになるため消して確認し直す
+      if (opts.lookupAppName && (entry.appName || entry.name.dataset.lookup)) { setAppName(entry, ''); entry.lookupKey = ''; }
+      scheduleAfterTyping();
+      emitChange();
+    });
     // カンマ（,／、）・空白・改行区切りで複数アプリIDをまとめて入力したら自動で行へ分割する。
     // 入力途中の誤分割を避けるため、確定（change/blur）時とペースト時にのみ分割する。
-    app.addEventListener('change', () => { if (distributeAppTokens(entry)) emitChange(); });
+    app.addEventListener('change', () => {
+      window.clearTimeout(typingTimer);
+      if (distributeAppTokens(entry)) emitChange();
+      // 確認できなかった行は、確定し直したときにもう一度確認する（権限や通信の回復に備える）
+      if (entry.name.dataset.lookup === 'failed') entry.lookupKey = '';
+      scheduleLookup(entry);
+    });
+    guest.addEventListener('change', () => {
+      window.clearTimeout(typingTimer);
+      if (entry.name.dataset.lookup === 'failed') entry.lookupKey = '';
+      scheduleLookup(entry);
+    });
     app.addEventListener('paste', (ev: ClipboardEvent) => {
       const text = ev.clipboardData?.getData('text') || '';
       const hasUrl = Boolean(extractAppIdFromInput(text.trim())) && !/^\d+$/.test(text.trim());
@@ -1448,6 +1576,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
       const combined = app.value.slice(0, start) + text + app.value.slice(end);
       app.value = combined;
       if (distributeAppTokens(entry)) emitChange();
+      scheduleLookup(entry);
     });
 
     const at = Math.min(Math.max(index, 0), rows.length);
@@ -1456,6 +1585,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     rows.splice(at, 0, entry);
     // 呼び出し側の emitChange() でまとめて更新し、一括入力時の全行走査を避ける。
     if (focus) app.focus();
+    scheduleLookup(entry);
     return entry;
   }
 
@@ -1463,6 +1593,12 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     const e = insertRow(rows.length, '', '', true);
     e.app.focus();
     emitChange();
+  });
+  clearAllBtn.addEventListener('click', () => {
+    const n = getApps().length;
+    if (n >= 3 && !kusConfirm(`対象アプリ ${n} 件をすべて消去しますか？`)) return;
+    setApps([]);
+    try { rows[0]?.app.focus(); } catch { /* noop */ }
   });
 
   function putApp(appId = '', guestId = '', o: { focus?: boolean; appName?: string } = {}): AppTablePutResult {

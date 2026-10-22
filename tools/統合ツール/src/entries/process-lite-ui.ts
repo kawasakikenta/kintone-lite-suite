@@ -16,6 +16,7 @@ import {
   copyTextToClipboard
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { createAppLookupCache, createAppNameHint } from './appNameHint.js';
 import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 
 export function mountProcessLitePanel() {
@@ -34,11 +35,15 @@ export function mountProcessLitePanel() {
   const guestInp = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest' });
   const prevCb = makeCheck({ label: 'プレビュー環境を参照', checked: false });
   cardApp.body.appendChild(makeRow([appInp, guestInp], { label: 'アプリ' }));
+  // 入力中のアプリ名確認（入力イベントを監視するだけで、接続変更の処理には影響しない）
+  const appLookup = createAppLookupCache();
+  const hint = createAppNameHint({ panel, appInput: appInp, guestInput: guestInp, cache: appLookup });
+  cardApp.body.appendChild(hint.element);
   cardApp.body.appendChild(makeRow(prevCb.label));
   let notifyConnectionChange: () => void = () => {};
   cardApp.body.appendChild(createAppSearchControl(panel, {
     guestEl: guestInp,
-    targets: [{ apply: (id, _name, guestId) => { appInp.value = id; guestInp.value = guestId || ''; notifyConnectionChange(); } }]
+    targets: [{ apply: (id, _name, guestId) => { appInp.value = id; guestInp.value = guestId || ''; hint.refresh(); notifyConnectionChange(); } }]
   }));
 
   const runBtn = makeButton('フロー図を描画', 'run', { icon: '◐' });
@@ -242,7 +247,7 @@ export function mountProcessLitePanel() {
         try { validateProcessConnection(appInp.value, guestInp.value); return ''; }
         catch (error: any) { return error?.message || String(error); }
       },
-      summary: () => [['対象', connectionSummary(appInp.value.trim(), guestInp.value.trim(), prevCb.checkbox.checked ? 'プレビュー' : '本番')], ['操作', '状態遷移図を表示。シミュレーションは実データを変更しません。']]
+      summary: () => [['対象', connectionSummary(appInp.value.trim(), guestInp.value.trim(), prevCb.checkbox.checked ? 'プレビュー' : '本番', hint.name())], ['操作', '状態遷移図を表示。シミュレーションは実データを変更しません。']]
     }]
   });
 

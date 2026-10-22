@@ -62,6 +62,8 @@ describe('settings export completion', () => {
     expect(payload.apps[0].sections.appSettings._fetchError).toBe('通信タイムアウト');
     expect(payload.apps[1].sections.appSettings.name).toBe('対象2');
     expect(result.summaryHtml).toContain('アプリ取得失敗');
+    expect(result.results.map(r => [r.appId, r.ngCount > 0])).toEqual([['1', true], ['2', false]]);
+    expect(result.results[0]).toMatchObject({ appId: '1', guestId: '', ngCount: 2 });
     expect(status).toHaveBeenLastCalledWith(expect.stringContaining('1アプリ・2セクションの取得に失敗'), true);
   });
   it('ZIP の manifest.json にアプリごとのファイル名・アプリ名・失敗セクションを記録する', async () => {

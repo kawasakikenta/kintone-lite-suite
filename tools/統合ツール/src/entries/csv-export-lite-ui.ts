@@ -19,6 +19,7 @@ import {
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { createAppLookupCache, createAppTableLookup } from './appNameHint.js';
 
 export function mountCsvExportLitePanel() {
   const panel = createLitePanel({
@@ -30,9 +31,10 @@ export function mountCsvExportLitePanel() {
     hint: '1アプリはCSVで保存します。テーブルがある場合は親レコードとテーブル明細を別CSVにしてZIPにまとめます。複数アプリはアプリ別フォルダを1つのZIPに保存します。',
     wide: true
   });
+  const appLookup = createAppLookupCache();
 
   const cardApps = makeCard({ title: '対象アプリ', number: 1 });
-  const appTable = makeAppTable({ minRows: 1, currentAppId: DEFAULT_APP_ID || '', currentGuestId: DEFAULT_GUEST_ID, initial: DEFAULT_APP_ID ? [{ appId: DEFAULT_APP_ID, guestId: DEFAULT_GUEST_ID }] : [] });
+  const appTable = makeAppTable({ minRows: 1, currentAppId: DEFAULT_APP_ID || '', currentGuestId: DEFAULT_GUEST_ID, initial: DEFAULT_APP_ID ? [{ appId: DEFAULT_APP_ID, guestId: DEFAULT_GUEST_ID }] : [], lookupAppName: createAppTableLookup(appLookup) });
   cardApps.body.appendChild(appTable.element);
   cardApps.body.appendChild(createAppSearchControl(panel, {
     targets: [{ label: '対象アプリへ追加', apply: (id, name, guestId) => {
@@ -227,7 +229,7 @@ export function mountCsvExportLitePanel() {
     actions: [{ id: 'csv', label: 'CSVを出力', description: '1アプリはCSV、テーブルあり・複数アプリは親CSVと明細CSVをZIPで保存します。', button: run,
       validate: validateApps,
       summary: () => [
-        ['対象', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId)).join('\n')],
+        ['対象', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId, undefined, r.appName)).join('\n')],
         ['絞り込み条件', query.value.trim() || '全件'],
         ['保存形式', appTable.count() > 1 ? 'ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）' : 'CSV（テーブルがある場合は親CSV・明細CSVのZIP）'],
         ['ヘッダー / 改行 / 数式保護', `${headerLabelMap[headerModeSelect.value] || 'フィールドコード'} / ${lineEndingSelect.value === 'crlf' ? 'CRLF' : 'LF'} / 数式無害化: ${neutralizeCb.checkbox.checked ? 'あり' : 'なし'}`],

@@ -38,6 +38,7 @@ import {
   type LitePanelHandle
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { APP_NAME_HINT_DELAY_MS, APP_NAME_HINT_FAILURE, createAppLookupCache, isLookupableApp } from './appNameHint.js';
 import { readSettingsBundleFile } from '../settingsBundleImport.js';
 import { needsAppReferenceParse, parseAppReference } from '../reflect/appReference.js';
 import {
@@ -321,7 +322,9 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-target-field .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-dl-target-name{min-height:1.35em;margin-top:3px;color:#64748b;font-size:11px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-dl-target-name--empty{min-height:0;margin-top:0}
+.kus-dl-target-name--warn{color:#b91c1c;font-weight:600;white-space:normal}
 .kus-dl-target-name:not(.kus-dl-target-name--empty)::before{content:'アプリ名: ';color:#334155;font-weight:600}
+.kus-dl-target-name.kus-dl-target-name--warn::before{content:none}
 .kus-dl-more{display:flex;justify-content:center;padding:8px 0 2px}
 .kus-dl-multi{width:100%;border-collapse:collapse;font:11px/1.45 -apple-system,Segoe UI,sans-serif}
 .kus-dl-table-scroll{box-sizing:border-box;width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;-webkit-overflow-scrolling:touch}
@@ -1355,7 +1358,15 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   let completionReady = false;
   let applyComparisonMode: (mode: ComparisonMode) => void = (mode) => { comparisonMode = mode; };
 
-  interface TargetRowEntry { app: HTMLInputElement; guest: HTMLInputElement; row: HTMLElement; name: HTMLElement; appName: string }
+  interface TargetRowEntry {
+    app: HTMLInputElement;
+    guest: HTMLInputElement;
+    row: HTMLElement;
+    name: HTMLElement;
+    appName: string;
+    /** 入力イベントを経ない経路（分割・複製・入れ替え）から、いまの値でアプリ名を確認する */
+    checkName?: () => void;
+  }
   const cardApp = makeCard({ title: '比較するアプリ' });
   cardApp.card.classList.add('kus-dl-target-card');
   const makeTargetName = () => {
@@ -1375,6 +1386,15 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     entry.name.textContent = entry.appName;
     entry.name.title = entry.appName ? `アプリ名: ${entry.appName}` : '';
     entry.name.classList.toggle('kus-dl-target-name--empty', !entry.appName);
+    entry.name.classList.remove('kus-dl-target-name--warn');
+  };
+  // アプリ名を確認できなかったことを名前欄へ警告表示する（名前そのものは空のまま）。
+  const warnTargetName = (entry: TargetRowEntry) => {
+    entry.appName = '';
+    entry.name.textContent = APP_NAME_HINT_FAILURE;
+    entry.name.title = '';
+    entry.name.classList.remove('kus-dl-target-name--empty');
+    entry.name.classList.add('kus-dl-target-name--warn');
   };
   const srcName = makeTargetName();
   let sourceAppName = '';
@@ -1383,6 +1403,74 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     srcName.textContent = sourceAppName;
     srcName.title = sourceAppName ? `アプリ名: ${sourceAppName}` : '';
     srcName.classList.toggle('kus-dl-target-name--empty', !sourceAppName);
+    srcName.classList.remove('kus-dl-target-name--warn');
+  };
+  const warnSourceName = () => {
+    sourceAppName = '';
+    srcName.textContent = APP_NAME_HINT_FAILURE;
+    srcName.title = '';
+    srcName.classList.remove('kus-dl-target-name--empty');
+    srcName.classList.add('kus-dl-target-name--warn');
+  };
+  // ---- 入力中のアプリ名確認（進行はブロックしない。厳密な確認は比較実行時の取得で行う） ----
+  const appLookupCache = createAppLookupCache();
+  interface AppNameCheckSide {
+    app: HTMLInputElement;
+    guest: HTMLInputElement;
+    hasName: () => boolean;
+    /** 設定JSONを読み込み中・読込済みの側は、JSON 由来の名前を使うので問い合わせない。 */
+    importing: () => boolean;
+    show: (name: string) => void;
+    warn: () => void;
+    clear: () => void;
+  }
+  const attachAppNameCheck = (side: AppNameCheckSide) => {
+    let seq = 0;
+    let timer: number | undefined;
+    const ids = () => ({ appId: side.app.value.trim(), guestId: side.guest.value.trim() });
+    // 行削除・パネル破棄後、名前が既に入っている、JSON 読込中、問い合わせできない形の ID では何もしない。
+    const eligible = () => {
+      const { appId, guestId } = ids();
+      return panel.root.isConnected && side.app.isConnected && !side.hasName() && !side.importing() && isLookupableApp(appId, guestId);
+    };
+    const cancel = () => { seq += 1; window.clearTimeout(timer); };
+    const run = (delay: number) => {
+      cancel();
+      if (!eligible()) return;
+      const { appId, guestId } = ids();
+      const cached = appLookupCache.peek(appId, guestId);
+      if (cached) { side.show(cached.name); return; }
+      const mine = seq;
+      timer = window.setTimeout(async () => {
+        if (mine !== seq || !eligible()) return;
+        const result = await appLookupCache.get(appId, guestId);
+        // 入力が変わった・名前が別の経路で入った・行が消えた後に返ってきた古い応答は捨てる。
+        if (mine !== seq || !eligible()) return;
+        const now = ids();
+        if (now.appId !== appId || now.guestId !== guestId) return;
+        if (result.ok) side.show(result.name); else side.warn();
+      }, delay);
+    };
+    // 名前は接続先ごとに異なるため、アプリID・ゲストIDのどちらの入力でも名前（警告を含む）を消して確認し直す。
+    side.app.addEventListener('input', () => { side.clear(); run(APP_NAME_HINT_DELAY_MS); });
+    side.guest.addEventListener('input', () => { side.clear(); run(APP_NAME_HINT_DELAY_MS); });
+    // 確定（change）では待たずに確認する。失敗していた場合の再確認も兼ねる。
+    side.app.addEventListener('change', () => run(0));
+    side.guest.addEventListener('change', () => run(0));
+    panel.root.addEventListener('kus-lite-dispose', cancel, { once: true });
+    // 入力イベントを経ない経路（行の分割・複製・入れ替え）から、いまの値で確認を始める
+    return { check: () => run(0) };
+  };
+  const attachTargetNameCheck = (entry: TargetRowEntry) => {
+    entry.checkName = attachAppNameCheck({
+      app: entry.app,
+      guest: entry.guest,
+      hasName: () => !!entry.appName,
+      importing: () => entry === targetRows[0] && !!(importedTargetBundle || jsonImporter.isLoading('target')),
+      show: (name) => setTargetName(entry, name),
+      warn: () => warnTargetName(entry),
+      clear: () => setTargetName(entry, '')
+    }).check;
   };
   const sourceRow = makeRow([makeTargetField(srcApp, srcName), srcGuest, srcPrev.label], { label: 'アプリID・環境' });
   const tgtName = makeTargetName();
@@ -1457,6 +1545,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     targetRows.push(entry);
     targetList.appendChild(row);
     attachTargetSplit(entry);
+    attachTargetNameCheck(entry);
+    // 分割・複製で ID 付きに作られた行は、名前が無ければその場で確認する
+    entry.checkName?.();
     return entry;
   };
   const adoptDiffAppReference = (
@@ -1535,6 +1626,17 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   srcPrev.checkbox.addEventListener('change', () => { cancelJsonImportForAppChange('source'); invalidateResultAfterAppSelectionChange(); });
   tgtPrev.checkbox.addEventListener('change', () => { cancelJsonImportForAppChange('target'); invalidateResultAfterAppSelectionChange(); });
   attachTargetSplit(targetRows[0]);
+  // 既存の入力処理（名前のクリア・JSON 読込の取消）の後に、名前確認を登録する。
+  const sourceNameCheck = attachAppNameCheck({
+    app: srcApp,
+    guest: srcGuest,
+    hasName: () => !!sourceAppName,
+    importing: () => !!(importedSourceBundle || jsonImporter.isLoading('source')),
+    show: setSourceName,
+    warn: warnSourceName,
+    clear: () => setSourceName('')
+  });
+  attachTargetNameCheck(targetRows[0]);
   const addTargetBtn = makeButton('比較先行を追加', 'sub');
   addTargetBtn.addEventListener('click', () => { addTargetRow(); applyComparisonMode('multi'); panel.setStatus('比較先行を追加しました', 'info'); });
   const copyFirstBtn = makeButton('比較先1を複製', 'sub');
@@ -3081,6 +3183,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     tgtGuest.value = source.guestId;
     tgtPrev.checkbox.checked = source.preview;
     setTargetName(targetRows[0], source.appName);
+    // 入れ替えで名前が無い側は、いまの値で確認し直す
+    sourceNameCheck.check();
+    targetRows[0]?.checkName?.();
     const invalidated = invalidateResultAfterAppSelectionChange();
     if (!invalidated) panel.setStatus('比較元と比較先を入れ替えました。矢印の向きを確認して比較してください', 'info');
   });

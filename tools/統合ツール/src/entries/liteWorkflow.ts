@@ -90,8 +90,18 @@ export function foldWorkflowSection(title: string, ...nodes: HTMLElement[]): HTM
   return details.details;
 }
 
-export function connectionSummary(appId: string, guestId = '', environment = '本番'): string {
-  return `#${appId || '未入力'}${guestId ? `（ゲスト ${guestId}）` : ''} · ${environment}`;
+export function connectionSummary(appId: string, guestId = '', environment = '本番', appName = ''): string {
+  const name = String(appName || '').trim();
+  return `#${appId || '未入力'}${name ? ` ${name}` : ''}${guestId ? `（ゲスト ${guestId}）` : ''} · ${environment}`;
+}
+
+/** 実行にかかった時間を「1分12秒」形式にする。1 秒未満は「1秒未満」。 */
+export function formatWorkflowDuration(ms: number): string {
+  const total = Math.floor(Math.max(0, Number(ms) || 0) / 1000);
+  if (total < 1) return '1秒未満';
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m ? `${m}分${s}秒` : `${s}秒`;
 }
 
 export function validateJsonObject(value: string, label = 'JSON'): string {
@@ -222,25 +232,32 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
   let busy = false;
   let pending: LiteWorkflowAction | null = null;
   let reviewedSignature = '';
+  let reviewedInputs = '';
   let lastContext = '';
-  const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input,select,textarea')).map(input => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map(file => [file.name, file.size, file.lastModified]) : null])]);
+  let startedAt = 0;
+  const inputsSignature = () => JSON.stringify([selected.id, Array.from(setup.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input,select,textarea')).map(input => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map(file => [file.name, file.size, file.lastModified]) : null])]);
+  const signature = () => JSON.stringify([inputsSignature(), selected.summary()]);
+  function renderSummary() {
+    summary.replaceChildren();
+    for (const [label, value] of [['操作', selected.label], ...selected.summary()]) {
+      const row = document.createElement('div');
+      const term = document.createElement('dt');
+      const description = document.createElement('dd');
+      term.textContent = label;
+      description.textContent = value;
+      row.append(term, description);
+      summary.appendChild(row);
+    }
+  }
   function show(index: number) {
     if (busy) return;
     const problem = index === 1 ? selected.validate() : '';
     if (problem) { panel.setStatus(problem, 'warn'); return; }
     active = index;
     if (index === 1) {
-      summary.replaceChildren();
-      for (const [label, value] of [['操作', selected.label], ...selected.summary()]) {
-        const row = document.createElement('div');
-        const term = document.createElement('dt');
-        const description = document.createElement('dd');
-        term.textContent = label;
-        description.textContent = value;
-        row.append(term, description);
-        summary.appendChild(row);
-      }
+      renderSummary();
       reviewedSignature = signature();
+      reviewedInputs = inputsSignature();
     }
     stages.forEach((stage, i) => { stage.hidden = i !== active; tabs[i].setAttribute('aria-selected', String(i === active)); tabs[i].tabIndex = i === active ? 0 : -1; });
     canvas.scrollTop = 0;
@@ -275,7 +292,8 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
       refresh();
       return;
     }
-    resultNote.textContent = `${lastContext}\n${status}`;
+    const elapsed = startedAt ? `\n所要時間: ${formatWorkflowDuration(Date.now() - startedAt)}` : '';
+    resultNote.textContent = `${lastContext}\n${status}${elapsed}`;
     resultNote.dataset.write = String(!!pending.writes);
     const showResults = !options.resultActions || options.resultActions.includes(pending.id);
     options.results?.forEach(element => { element.hidden = !showResults; });
@@ -286,6 +304,7 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
   execute.addEventListener('click', () => {
     if (busy || pending || selected.validate() || reviewedSignature !== signature()) return;
     pending = selected;
+    startedAt = Date.now();
     options.beforeRun?.(selected.id);
     panel.setResult('');
     options.results?.forEach(element => { element.hidden = true; });
@@ -302,7 +321,7 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
     nav.inert = value;
     if (value) {
       // 折りたたみは実行中でも使えるようにし、長い処理中に kintone 画面を確認できるようにする。
-      panel.root.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement>('input,button,select,textarea').forEach(input => { if (input.classList.contains('kus-lp__toggle')) return; disabled.set(input, input.disabled); input.disabled = true; });
+      panel.root.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement>('input,button,select,textarea').forEach(input => { if (input.classList.contains('kus-lp__toggle') || input.classList.contains('kus-lp__maximize')) return; disabled.set(input, input.disabled); input.disabled = true; });
     } else {
       disabled.forEach((wasDisabled, input) => { input.disabled = wasDisabled; });
       disabled.clear();
@@ -320,6 +339,14 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
     queueMicrotask(() => { refreshQueued = false; refresh(); });
   };
   for (const event of ['input', 'change', 'click']) setup.addEventListener(event, scheduleRefresh);
+  // アプリ名の確認など、入力値は変わらずに要約の表示だけが変わる通知。確認画面を表示中なら要約を描き直し、
+  // 利用者の入力が変わっていない限り確認済みのままにする（再確認を求めない）。
+  panel.root.addEventListener('kus-lite-summary-change', () => {
+    if (busy || active !== 1 || inputsSignature() !== reviewedInputs) return;
+    renderSummary();
+    reviewedSignature = signature();
+    refresh();
+  });
   selected.onSelect?.();
   show(0);
   return { refresh, show };

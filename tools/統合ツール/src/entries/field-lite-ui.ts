@@ -32,6 +32,7 @@ import {
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { createAppLookupCache, createAppNameHint } from './appNameHint.js';
 import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 
 export function mountFieldLitePanel() {
@@ -51,13 +52,19 @@ export function mountFieldLitePanel() {
   const tgtGuest = makeInput({ placeholder: 'ゲストID (任意)', width: 'guest' });
 
   const cardApp = makeCard({ title: 'アプリ', number: 1 });
+  // 入力中のアプリ名確認（比較元・比較先でキャッシュを共有する）
+  const appLookup = createAppLookupCache();
+  const srcHint = createAppNameHint({ panel, appInput: srcApp, guestInput: srcGuest, cache: appLookup });
+  const tgtHint = createAppNameHint({ panel, appInput: tgtApp, guestInput: tgtGuest, cache: appLookup });
   cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: '比較元' }));
+  cardApp.body.appendChild(srcHint.element);
   cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '比較先' }));
+  cardApp.body.appendChild(tgtHint.element);
   cardApp.body.appendChild(createAppSearchControl(panel, {
     targets: [
       // 検索した接続先（通常スペースなら空）に合わせる。以前のゲストIDが残ると別の接続先へ書き込もうとするため。
-      { label: '比較元', apply: (id, _name, guestId) => { srcApp.value = id; srcGuest.value = guestId || ''; resetPickList(); } },
-      { label: '比較先', apply: (id, _name, guestId) => { tgtApp.value = id; tgtGuest.value = guestId || ''; } }
+      { label: '比較元', apply: (id, _name, guestId) => { srcApp.value = id; srcGuest.value = guestId || ''; srcHint.refresh(); resetPickList(); } },
+      { label: '比較先', apply: (id, _name, guestId) => { tgtApp.value = id; tgtGuest.value = guestId || ''; tgtHint.refresh(); } }
     ]
   }));
   panel.body.insertBefore(cardApp.card, panel.status);
@@ -378,7 +385,7 @@ export function mountFieldLitePanel() {
       } catch { /* 入力中 */ }
     }
     const rows: Array<[string, string]> = [
-      ['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー')],
+      ['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー', tgtHint.name())],
       ['フィールド', `${codes.length} 件${detailLabel} · ${codes.join('、')}`],
       ['既存フィールド', ow.checkbox.checked ? '上書き更新する' : '既存フィールドはスキップ'],
       ['参照先変換', lookupMap.value.trim() || 'なし']

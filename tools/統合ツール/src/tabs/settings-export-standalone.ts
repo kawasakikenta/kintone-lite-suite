@@ -345,10 +345,10 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     const zipBlob = await zip.generateAsync({ type: 'blob' });
     downloadBlob(buildExportFilename('設定一括取得', 'zip', { appLabel: settingsExportLabel(bundles) }), zipBlob);
     setStatus(`設定一括取得ZIPを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
-    return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
+    return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes), results: rows };
   }
 
   downloadText(buildExportFilename('設定一括取得', 'json', { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), 'application/json');
   setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
-  return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
+  return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes), results: rows };
 }

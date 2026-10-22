@@ -3,6 +3,7 @@
 import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import { buildRecordQualityTab } from './record-quality-ui.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { createAppNameHint } from './appNameHint.js';
 import { connectionSummary, installLiteWorkflow } from './liteWorkflow.js';
 import { createLitePanel, makeButton, makeCard, makeInput, makeNote, makeRow, makeSelect, liteRun } from './litePanelTheme.js';
 import { parseRecordAppIds, runLoadViewsStandalone } from '../tabs/record-standalone.js';
@@ -42,8 +43,11 @@ export function mountRecordQualityLitePanel() {
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  // 入力中のアプリ名確認（複数 ID 可）
+  const hint = createAppNameHint({ panel, appInput: appId, guestInput: guestId, multiple: true });
   const target = makeCard({ title: '対象アプリ', number: 1 });
   target.body.appendChild(makeRow([appId, guestId], { label: '接続先' }));
+  target.body.appendChild(hint.element);
   target.body.appendChild(makeNote('複数アプリはカンマ、改行、または空白で区切ります。検査項目は先頭アプリから読み込みます。'));
   target.body.appendChild(createAppSearchControl(panel, {
     guestEl: guestId,
@@ -122,7 +126,7 @@ export function mountRecordQualityLitePanel() {
         return error?.message || String(error);
       }
     },
-    targetSummary: () => ['対象アプリ', connectionSummary(appId.value.trim(), guestId.value.trim())],
+    targetSummary: () => ['対象アプリ', hint.label() || connectionSummary(appId.value.trim(), guestId.value.trim())],
     applyViewQuery,
     resultHost
   });

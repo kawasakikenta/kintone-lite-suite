@@ -24,6 +24,7 @@ import {
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { createAppLookupCache, createAppNameHint } from './appNameHint.js';
 
 export function mountJsconfigLitePanel() {
   const panel = createLitePanel({
@@ -40,11 +41,15 @@ export function mountJsconfigLitePanel() {
   const srcApp = makeInput({ placeholder: '取得元アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
   const srcGuest = makeInput({ placeholder: 'ゲストID', value: DEFAULT_GUEST_ID, width: 'guest' });
   const srcPrev = makeCheck({ label: 'プレビュー環境から取得' });
+  // 入力中のアプリ名確認（取得元・反映先でキャッシュを共有する）
+  const appLookup = createAppLookupCache();
+  const srcHint = createAppNameHint({ panel, appInput: srcApp, guestInput: srcGuest, cache: appLookup });
   cardFetch.body.appendChild(makeRow([srcApp, srcGuest, srcPrev.label], { label: '取得元' }));
+  cardFetch.body.appendChild(srcHint.element);
   const fetchAppSearch = createAppSearchControl(panel, {
     guestEl: srcGuest,
     targets: [
-      { label: '取得元', apply: (id, _name, guestId) => { srcApp.value = id; if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId; } }
+      { label: '取得元', apply: (id, _name, guestId) => { srcApp.value = id; if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId; srcHint.refresh(); } }
     ]
   });
   cardFetch.body.appendChild(fetchAppSearch);
@@ -118,11 +123,13 @@ export function mountJsconfigLitePanel() {
   const cardApply = makeCard({ title: '比較先プレビューへ反映', number: 3 });
   const tgtApp = makeInput({ placeholder: '反映先アプリID', width: 'id' });
   const tgtGuest = makeInput({ placeholder: 'ゲストID', width: 'guest' });
+  const tgtHint = createAppNameHint({ panel, appInput: tgtApp, guestInput: tgtGuest, cache: appLookup });
   cardApply.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '反映先' }));
+  cardApply.body.appendChild(tgtHint.element);
   cardApply.body.appendChild(createAppSearchControl(panel, {
     guestEl: tgtGuest,
     targets: [
-      { label: '反映先', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; } }
+      { label: '反映先', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; tgtHint.refresh(); } }
     ]
   }));
   cardApply.body.appendChild(makeNote('反映先は常にプレビュー環境。デプロイは管理画面から手動で行ってください。反映先の JS/CSS 一覧は JSON の内容で全置換され、JSON に scope（ALL / ADMIN / NONE）があれば適用範囲も更新します。'));
@@ -282,7 +289,7 @@ export function mountJsconfigLitePanel() {
         description: '対象アプリの設定を読み取り、ファイル一覧とJSONを確認します。',
         button: fetchBtn,
         validate: () => idProblem('取得元', srcApp.value.trim(), srcGuest.value.trim()),
-        summary: () => [['取得元', connectionSummary(srcApp.value.trim(), srcGuest.value.trim(), srcPrev.checkbox.checked ? 'プレビュー' : '本番')]],
+        summary: () => [['取得元', connectionSummary(srcApp.value.trim(), srcGuest.value.trim(), srcPrev.checkbox.checked ? 'プレビュー' : '本番', srcHint.name())]],
         onSelect: () => selectMode('fetch')
       },
       {
@@ -302,7 +309,7 @@ export function mountJsconfigLitePanel() {
         writes: true,
         validate: () => idProblem('反映先', tgtApp.value.trim(), tgtGuest.value.trim()) || applyProblem(),
         summary: () => [
-          ['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー')],
+          ['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー', tgtHint.name())],
           ...jsonSummary(true),
           ['競合検出', baseRevision() ? '取得時の revision ' + baseRevision() + ' 以降に更新されていれば中止します。' : '反映直前に取得した revision を基準にします（反映先のプレビューから取得した JSON ではありません）。'],
           ['反映方法', 'JS/CSS一覧を全置換。FILEは反映先で利用可能なアップロード済みfileKeyが必要です。']
