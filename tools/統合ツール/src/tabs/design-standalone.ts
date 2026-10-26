@@ -9,6 +9,8 @@ import { bundleToMarkdown } from '../diff/export.js';
 import { buildDesignAiMarkdown } from '../design/ai-markdown.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip, type BatchDesignExportInfo, type DesignExporterCompletionSummary } from './design-xlsx.js';
+import { isCancelRequested } from '../runControl.js';
+import { createCancelReport } from './run-cancel-summary.js';
 
 interface DesignSourceInput {
   appId?: string;
@@ -312,13 +314,15 @@ export async function runBatchDesignExportXlsxZipStandalone(
   let info: BatchDesignExportInfo | null = null;
   const done = await runBatchDesignExportXlsxZip({ apps, onFinish: (result) => { info = result; } });
   if (done === false) {
+    // 1件も生成する前に「中止」した場合は、件数つきの中止報告にする（ZIP は保存していない）
+    if (isCancelRequested()) throw createCancelReport(0, apps.length, ['設計書ZIPは保存していません。']);
     setStatus('設計書ZIP出力をキャンセルしました');
     return;
   }
   const result = info as BatchDesignExportInfo | null;
   if (result && (result.failedCount > 0 || result.failedAPIs.length > 0)) {
     // 部分成功・中断・API取得失敗を「完了」だけで隠さない（詳細は ZIP 内の _manifest）
-    const parts = [`成功 ${result.successCount} / 失敗・未処理 ${result.failedCount}（全${result.total}件）${result.cancelled ? '、途中で中断' : ''}`];
+    const parts = [`成功 ${result.successCount} / 失敗・未処理 ${result.failedCount}（全${result.total}件）${result.cancelled ? '、途中で中止' : ''}`];
     if (result.failedApps.length) parts.push(`失敗したアプリ: ${result.failedApps.map((f) => `App ${f.appId}`).join(', ')}`);
     if (result.failedAPIs.length) parts.push(`API取得に失敗した項目 ${result.failedAPIs.length}件`);
     setStatus(`設計書ZIPを保存しました。${parts.join('。')}。詳細は ZIP 内の _manifest.txt を確認してください`, true);

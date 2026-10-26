@@ -9,7 +9,7 @@ describe('downloadKintoneFile', () => {
     vi.stubGlobal('fetch', fetchMock);
     const blob = await downloadKintoneFile('7', 'key/1');
     expect(await blob.text()).toBe('abc');
-    expect(fetchMock).toHaveBeenCalledWith('/k/guest/7/v1/file.json?fileKey=key%2F1', { method: 'GET', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+    expect(fetchMock).toHaveBeenCalledWith('/k/guest/7/v1/file.json?fileKey=key%2F1', { method: 'GET', headers: { 'X-Requested-With': 'XMLHttpRequest' }, signal: expect.any(AbortSignal) });
     await downloadKintoneFile('', 'k');
     expect(fetchMock.mock.calls[1][0]).toBe('/k/v1/file.json?fileKey=k');
   });

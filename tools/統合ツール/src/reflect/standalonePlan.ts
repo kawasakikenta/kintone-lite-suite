@@ -1,5 +1,6 @@
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone } from '../utils.js';
+import { isRunCancelledError } from '../runControl.js';
 import { APP_SETTINGS_LABELS, APP_SETTINGS_REFLECT_KEYS, reflectSectionLabel } from './sections.js';
 import { comparableCustomizePayload, customizeFileNames, customizeSlotKey, type CustomizeFileResolution } from './customizeFiles.js';
 import { retainedItemNames, summarizeReflectItems, type ReflectItemSummary } from './changeSummary.js';
@@ -190,7 +191,7 @@ function buildAppSettingsPlan(plan: ReflectSectionPlan, source: any, target: any
     if (plan.changeCount) plan.operations.push({ method: 'PUT', endpoint: SECTION_DEFS.find(item => item.key === 'appSettings')?.endpoint || '/app/settings.json', body: after, label: plan.label });
     plan.status = plan.operations.length ? 'change' : 'same';
     plan.message = plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : '書き込み不要（一致）';
-  } catch (error: any) { plan.status = 'error'; plan.blockers.push(error.message || String(error)); plan.message = plan.blockers.join('\n'); }
+  } catch (error: any) { if (isRunCancelledError(error)) throw error; plan.status = 'error'; plan.blockers.push(error.message || String(error)); plan.message = plan.blockers.join('\n'); }
   return plan;
 }
 
@@ -353,7 +354,7 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
     if (plan.blockers.length) plan.status = 'error';
     else plan.status = plan.operations.length ? 'change' : 'same';
     plan.message = plan.blockers.length ? plan.blockers.join('\n') : plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : `書き込み不要${plan.changes.some(change => change.kind === '保持') ? '（反映先だけの設定は保持）' : '（一致）'}`;
-  } catch (error: any) { plan.status = 'error'; plan.blockers.push(error.message || String(error)); plan.message = plan.blockers.join('\n'); }
+  } catch (error: any) { if (isRunCancelledError(error)) throw error; plan.status = 'error'; plan.blockers.push(error.message || String(error)); plan.message = plan.blockers.join('\n'); }
   return plan;
 }
 

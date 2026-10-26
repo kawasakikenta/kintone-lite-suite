@@ -4,7 +4,9 @@ import { buildCustomizeSettingsPutPayload } from '../constants.js';
 import { normalize, nowStamp, downloadText, downloadBlob, esc, kusConfirm, buildExportFilename } from '../utils.js';
 import { apiGet, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
+import { RunCancelledError, activeAbortSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
 import { uniqueZipEntryName } from './record-query.js';
+import { createCancelReport, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
 
 export function formatFileSize(bytes: any): string {
   const n = Number(bytes);
@@ -21,15 +23,19 @@ async function downloadFileBlobForJsConfig(prefix: string, fileKey: string): Pro
   const headers = { 'X-Requested-With': 'XMLHttpRequest' };
   let lastReason = '';
   for (let attempt = 0; attempt < 2; attempt++) {
+    // 中止は取得失敗として記録せず、呼び出し側のループを止める。
+    throwIfCancelled();
     try {
-      const resp = await fetch(url, { method: 'GET', headers });
+      const signal = activeAbortSignal();
+      const resp = await fetch(url, { method: 'GET', headers, ...(signal ? { signal } : {}) });
       if (resp.status === 403) return { ok: false, reason: '閲覧権限なし (HTTP 403)' };
       if (resp.ok) return { ok: true, blob: await resp.blob() };
       lastReason = `HTTP ${resp.status}`;
     } catch (e: any) {
+      if (isRunCancelledError(e)) throw e instanceof RunCancelledError ? e : new RunCancelledError();
       lastReason = e?.message || String(e);
     }
-    if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
+    if (attempt === 0) await sleepUnlessCancelled(500);
   }
   return { ok: false, reason: lastReason || '取得失敗' };
 }
@@ -318,6 +324,8 @@ export interface BatchJsConfigDownloadResult {
   failedApps: Array<{ appId: string; name: string; reason: string }>;
   /** 個別ファイルを取得できなかったもの */
   failedFiles: Array<{ appId: string; fileName: string; reason: string }>;
+  /** 利用者が中止した場合のみ。取得しなかった（中断した 1 件を含む）アプリ。失敗には数えない */
+  notExecuted?: Array<{ appId: string; name: string }>;
 }
 
 /**
@@ -366,6 +374,8 @@ export async function runBatchJsConfigDownloadStandalone(
   const failedFiles: BatchJsConfigDownloadResult['failedFiles'] = [];
   const manifestApps: Array<{ appId: string; name: string; folder: string; scope: string; files: Array<{ entry: string; area: string; kind: string; name: string; fileKey: string; size: string }> }> = [];
   let fileCount = 0;
+  /** 中止で止めたアプリの位置。-1 は最後まで実行した。 */
+  let stoppedAt = -1;
 
   for (let i = 0; i < apps.length; i++) {
     const app = apps[i];
@@ -378,6 +388,7 @@ export async function runBatchJsConfigDownloadStandalone(
     try {
       customize = await apiGet(baseListPrefix, '/app/customize.json', { app: app.appId });
     } catch (e: any) {
+      if (isCancelStop(e)) { stoppedAt = i; break; }
       failedApps.push({ appId: app.appId, name: app.name, reason: e?.message || String(e) });
       continue;
     }
@@ -389,28 +400,53 @@ export async function runBatchJsConfigDownloadStandalone(
     if (!fileTargets.length) continue;
 
     const folderName = guestId ? `guest${guestId}_${app.appId}_${safeName}` : `${app.appId}_${safeName}`;
-    const appFolder = zip.folder(folderName);
     const used = new CaseInsensitiveNameSet();
     const manifestFiles: (typeof manifestApps)[number]['files'] = [];
+    const fetched: Array<{ entry: string; blob: Blob }> = [];
+    const appFailures: BatchJsConfigDownloadResult['failedFiles'] = [];
+    let interrupted = false;
 
     for (const file of fileTargets) {
       const fileName = String(file.file.name || `${file.file.fileKey}.bin`);
-      const result = await downloadFileBlobForJsConfig(baseListPrefix, file.file.fileKey);
+      let result: Awaited<ReturnType<typeof downloadFileBlobForJsConfig>>;
+      try {
+        result = await downloadFileBlobForJsConfig(baseListPrefix, file.file.fileKey);
+      } catch (e) {
+        if (!isCancelStop(e)) throw e;
+        interrupted = true;
+        break;
+      }
       if (result.ok === true) {
         // desktop/mobile で同名ファイルがあっても上書きしない
         const entry = uniqueZipEntryName(used, sanitizeFolderName(fileName) || 'file.bin');
-        appFolder.file(entry, result.blob);
+        fetched.push({ entry, blob: result.blob });
         manifestFiles.push({ entry: `${folderName}/${entry}`, area: file.area, kind: file.kind, name: fileName, fileKey: String(file.file.fileKey), size: String(file.file.size ?? '') });
-        fileCount++;
       } else {
-        failedFiles.push({ appId: app.appId, fileName, reason: result.reason });
+        appFailures.push({ appId: app.appId, fileName, reason: result.reason });
       }
     }
+    // 途中で中止したアプリは一部のファイルだけが入った状態になるため、ZIP にも manifest にも入れない。
+    if (interrupted) { stoppedAt = i; break; }
+    const appFolder = zip.folder(folderName);
+    for (const item of fetched) appFolder.file(item.entry, item.blob);
+    fileCount += fetched.length;
+    failedFiles.push(...appFailures);
     manifestApps.push({ appId: String(app.appId), name: String(app.name || ''), folder: folderName, scope: String(customize?.scope || ''), files: manifestFiles });
     await new Promise((r) => setTimeout(r, 80));
   }
 
   const failed = failedApps.length + failedFiles.length;
+  const notExecuted = stoppedAt >= 0 ? apps.slice(stoppedAt).map((a) => ({ appId: a.appId, name: a.name })) : [];
+  const notExecutedLabels = notExecuted.map((a) => `app ${a.appId}${a.name ? ` ${a.name}` : ''}`);
+  if (stoppedAt >= 0 && !fileCount) {
+    // 保存できる JS/CSS が 1 件も無いので ZIP は作らない。失敗の内訳はログへ出す
+    throw createCancelReport(stoppedAt, apps.length, [
+      ...failedApps.map((a) => `app ${a.appId} ${a.name}: customize.json 取得失敗: ${a.reason}`),
+      ...failedFiles.map((f) => `app ${f.appId} ${f.fileName}: ${f.reason}`),
+      `未実行（中止）: ${notExecutedLabels.join(', ')}`,
+      'ZIP は保存していません'
+    ]);
+  }
   if (!fileCount) {
     if (!failed) {
       setStatus(`対象ファイルがありません。（${apps.length}アプリを確認 / FILE 形式の JS/CSS はありませんでした）`);
@@ -424,11 +460,12 @@ export async function runBatchJsConfigDownloadStandalone(
     throw new Error([`ZIP を作成できませんでした。取得できた JS/CSS ファイルがありません（取得失敗: アプリ ${failedApps.length} / ファイル ${failedFiles.length}）`, ...detail].join('\n'));
   }
 
-  if (failed) {
+  if (failed || notExecuted.length) {
     const lines = [
       `取得できなかった項目 ${failed}件`,
       ...failedApps.map((a) => `app ${a.appId}\t${a.name}\tcustomize.json 取得失敗: ${a.reason}`),
-      ...failedFiles.map((f) => `app ${f.appId}\t${f.fileName}\t${f.reason}`)
+      ...failedFiles.map((f) => `app ${f.appId}\t${f.fileName}\t${f.reason}`),
+      ...(notExecuted.length ? [`未実行（中止） ${notExecuted.length}アプリ（利用者の操作で中止）`, ...notExecuted.map((a) => `app ${a.appId}\t${a.name}\t未実行（中止）`)] : [])
     ];
     zip.file('download_errors.txt', lines.join('\n') + '\n');
   }
@@ -442,6 +479,7 @@ export async function runBatchJsConfigDownloadStandalone(
     apps: manifestApps,
     failedApps,
     failedFiles,
+    ...(notExecuted.length ? { cancelled: true, notExecuted } : {}),
     note: 'URL 形式の JS/CSS は含みません。entry は ZIP 内のパス、area は desktop/mobile、kind は js/css です。'
   }, null, 2));
 
@@ -449,6 +487,13 @@ export async function runBatchJsConfigDownloadStandalone(
   const zipBlob = await zip.generateAsync({ type: 'blob' });
   downloadBlob(`customize_scripts_${nowStamp()}.zip`, zipBlob);
 
+  if (notExecuted.length) {
+    setStatus(
+      `${formatCancelledHeadline(stoppedAt, apps.length)}。取得済みの ${fileCount}ファイルだけを保存しました（取得失敗 ${failed}件、未実行（中止） ${notExecuted.length}アプリ、詳細は download_errors.txt）`,
+      true
+    );
+    return { apps: apps.length, files: fileCount, failed, failedApps, failedFiles, notExecuted };
+  }
   setStatus(
     `JS/CSS一括DL完了（${apps.length}アプリ / ${fileCount}ファイル / 取得失敗 ${failed}件${failed ? '、詳細は download_errors.txt' : ''}）`,
     failed > 0

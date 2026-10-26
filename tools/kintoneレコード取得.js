@@ -11,10 +11,13 @@
 // ==========================================================================
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
   var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __esm = (fn, res) => function __init() {
     return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
   };
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
   // src/featureDefs.mjs
   var ICONS, FEATURE_DEFS;
@@ -703,6 +706,9 @@ ${contextLine}`);
       }
     }, 0);
   }
+  function downloadText(filename, text, type) {
+    triggerDownload(filename, new Blob([text], { type: type || "text/plain" }));
+  }
   function downloadBlob(filename, blob) {
     triggerDownload(filename, blob);
   }
@@ -792,6 +798,142 @@ ${contextLine}`);
   var init_kintone_query = __esm({
     "src/kintone-query.ts"() {
       "use strict";
+    }
+  });
+
+  // src/runControl.ts
+  function beginRun() {
+    const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0 };
+    active = token;
+    return token;
+  }
+  function endRun(token) {
+    if (token && active === token) active = null;
+  }
+  function requestCancel(token) {
+    const target = token || active;
+    if (!target || target.cancelled) return false;
+    target.cancelled = true;
+    target.cancelledAt = Date.now();
+    try {
+      target.controller.abort(new RunCancelledError());
+    } catch {
+    }
+    return true;
+  }
+  function isCancelRequested() {
+    return !!active && active.cancelled;
+  }
+  function activeRun() {
+    return active;
+  }
+  function throwIfCancelled() {
+    if (active && active.cancelled) throw new RunCancelledError();
+  }
+  function activeAbortSignal() {
+    return active ? active.controller.signal : void 0;
+  }
+  function isRunCancelledError(error) {
+    let current = error;
+    for (let depth = 0; current && depth < 4; depth++) {
+      if (current instanceof RunCancelledError || current.cancelled === true || current.name === "RunCancelledError") return true;
+      if (current.name === "AbortError" && isCancelRequested()) return true;
+      current = current.original;
+    }
+    return false;
+  }
+  function sleepUnlessCancelled(ms) {
+    const signal = activeAbortSignal();
+    return new Promise((resolve) => {
+      if (signal?.aborted) {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      function onAbort() {
+        clearTimeout(timer);
+        resolve();
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+  function raceWithCancel(promise, opts = {}) {
+    const signal = activeAbortSignal();
+    const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 0;
+    if (!signal && !timeoutMs) return promise;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let timer = 0;
+      const finish = (fn) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        fn();
+      };
+      function onAbort() {
+        finish(() => reject(new RunCancelledError()));
+      }
+      timer = timeoutMs ? setTimeout(() => finish(() => {
+        const error = new Error(opts.timeoutMessage || `応答待ちが ${Math.round(timeoutMs / 1e3)} 秒を超えました（timeout）`);
+        error.code = "TIMEOUT";
+        reject(error);
+      }), timeoutMs) : 0;
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      promise.then((value) => finish(() => resolve(value)), (error) => finish(() => reject(error)));
+    });
+  }
+  function createRequestSignal(timeoutMs) {
+    const controller = new AbortController();
+    const runSignal = activeAbortSignal();
+    let timedOut = false;
+    const onAbort = () => {
+      try {
+        controller.abort(new RunCancelledError());
+      } catch {
+      }
+    };
+    if (runSignal?.aborted) onAbort();
+    else runSignal?.addEventListener("abort", onAbort, { once: true });
+    const timer = Number(timeoutMs) > 0 ? setTimeout(() => {
+      timedOut = true;
+      const error = new Error(`応答待ちが ${Math.round(Number(timeoutMs) / 1e3)} 秒を超えました（timeout）`);
+      error.code = "TIMEOUT";
+      try {
+        controller.abort(error);
+      } catch {
+      }
+    }, Number(timeoutMs)) : 0;
+    return {
+      signal: controller.signal,
+      release: () => {
+        if (timer) clearTimeout(timer);
+        runSignal?.removeEventListener("abort", onAbort);
+      },
+      timedOut: () => timedOut
+    };
+  }
+  var RUN_CANCELLED_MESSAGE, RunCancelledError, nextId, active;
+  var init_runControl = __esm({
+    "src/runControl.ts"() {
+      "use strict";
+      RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
+      RunCancelledError = class extends Error {
+        constructor(message = RUN_CANCELLED_MESSAGE) {
+          super(message);
+          __publicField(this, "cancelled", true);
+          this.name = "RunCancelledError";
+        }
+      };
+      nextId = 1;
+      active = null;
     }
   });
 
@@ -888,19 +1030,24 @@ ${contextLine}`);
     apiGetMetrics.calls += 1;
     touchApiPathMetric(path, "calls");
     for (let i = 0; i < retries; i++) {
+      throwIfCancelled();
       try {
-        const res = await kintone.api(`${prefix}${path}`, "GET", params);
+        const res = await raceWithCancel(
+          Promise.resolve(kintone.api(`${prefix}${path}`, "GET", params)),
+          { timeoutMs: API_GET_TIMEOUT_MS }
+        );
         apiGetMetrics.lastLatencyMs = Date.now() - startAt;
         apiGetMetrics.lastError = "";
         return res;
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         err = e;
         const retriable = isRetriableApiError(e);
         if (i < retries - 1 && retriable) {
           apiGetMetrics.retries += 1;
           touchApiPathMetric(path, "retries");
           const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
-          await new Promise((r) => setTimeout(r, waitMs));
+          await sleepUnlessCancelled(waitMs);
           continue;
         }
         break;
@@ -919,13 +1066,15 @@ ${contextLine}`);
     const maxAttempts = Math.max(1, retries);
     let lastErr;
     for (let i = 0; i < maxAttempts; i++) {
+      throwIfCancelled();
       try {
         return await kintone.api(`${prefix}${path}`, method, body);
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         lastErr = e;
         if (i < maxAttempts - 1 && isRetriableMutation(method, e)) {
           const waitMs = computeRetryDelayMs(i, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS);
-          await new Promise((r) => setTimeout(r, waitMs));
+          await sleepUnlessCancelled(waitMs);
           continue;
         }
         break;
@@ -939,11 +1088,13 @@ ${contextLine}`);
   async function apiPost(prefix, path, body) {
     return executeMutatingApiWithRetry("POST", prefix, path, body);
   }
-  async function apiDelete(prefix, path, body) {
+  async function apiDelete(prefix, path, body, options = {}) {
     assertAllowsMutatingRestCall(prefix, path, "DELETE");
+    if (!options.ignoreCancel) throwIfCancelled();
     try {
       return await kintone.api(`${prefix}${path}`, "DELETE", body);
     } catch (e) {
+      if (isRunCancelledError(e)) throw e;
       throw apiErrorWithContext(e, { method: "DELETE", prefix, path, payload: body });
     }
   }
@@ -983,11 +1134,11 @@ ${contextLine}`);
         if (!batch.length) break;
         all2.push(...batch);
         onProgress(all2.length, "keyset");
-        const nextId = Number(batch[batch.length - 1]?.$id?.value);
-        if (!Number.isFinite(nextId) || nextId <= lastId) {
+        const nextId2 = Number(batch[batch.length - 1]?.$id?.value);
+        if (!Number.isFinite(nextId2) || nextId2 <= lastId) {
           throw new Error("レコードIDの取得順が想定と異なるため中断しました（$id を fields に含めてください）");
         }
-        lastId = nextId;
+        lastId = nextId2;
         if (batch.length < limit) break;
       }
       return { records: all2, mode: "keyset" };
@@ -1019,7 +1170,7 @@ ${contextLine}`);
     } finally {
       if (!finished) {
         try {
-          await apiDelete(prefix, "/records/cursor.json", { id: cursorId });
+          await apiDelete(prefix, "/records/cursor.json", { id: cursorId }, { ignoreCancel: true });
         } catch {
         }
       }
@@ -1043,12 +1194,22 @@ ${contextLine}`);
     }
     return h.toString(16).padStart(8, "0");
   }
+  function wasCancelled(error, signal) {
+    return isRunCancelledError(error) || isRunCancelledError(signal.reason);
+  }
+  function timeoutDetail(signal, timeoutMs) {
+    const reason = signal.reason;
+    const message = reason instanceof Error ? reason.message : "";
+    return message || `応答待ちが ${Math.round(timeoutMs / 1e3)} 秒を超えました（timeout）`;
+  }
   async function fetchTextFileBody(prefix, fileKey) {
     if (!fileKey) return { ok: false, reason: "error", detail: "fileKey がありません" };
     const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
     const headers = { "X-Requested-With": "XMLHttpRequest" };
+    throwIfCancelled();
+    const request = createRequestSignal(FILE_TEXT_FETCH_TIMEOUT_MS);
     try {
-      const resp = await fetch(url, { method: "GET", headers });
+      const resp = await fetch(url, { method: "GET", headers, signal: request.signal });
       if (!resp.ok) {
         return {
           ok: false,
@@ -1078,17 +1239,21 @@ ${contextLine}`);
       }
       return { ok: true, text: await blob.text(), byteSize: blob.size };
     } catch (error) {
+      if (wasCancelled(error, request.signal)) throw new RunCancelledError();
       return {
         ok: false,
         reason: "error",
-        detail: error instanceof Error ? error.message : String(error)
+        detail: request.timedOut() ? timeoutDetail(request.signal, FILE_TEXT_FETCH_TIMEOUT_MS) : error instanceof Error ? error.message : String(error)
       };
+    } finally {
+      request.release();
     }
   }
   async function fetchTextFileBodyWithRetry(prefix, fileKey) {
     let result = await fetchTextFileBody(prefix, fileKey);
     if (result.ok === true) return result;
     if (result.reason === "oversize") return result;
+    throwIfCancelled();
     result = await fetchTextFileBody(prefix, fileKey);
     return result;
   }
@@ -1186,7 +1351,8 @@ ${contextLine}`);
           } else {
             stats.skipped += 1;
           }
-        } catch {
+        } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           stats.failed += 1;
         }
       });
@@ -1220,6 +1386,7 @@ ${contextLine}`);
         const revision = extractSectionRevision(res);
         results[index] = { value: rawSettings ? deepClone(res) : normalizeSettingsSection(res), revision };
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
       completed += 1;
@@ -1247,6 +1414,7 @@ ${contextLine}`);
             setAuxiliaryFetchError(cust, "JS/CSSファイル本文", stats.failed, void 0, stats.failedFiles);
           }
         } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           setAuxiliaryFetchError(cust, "JS/CSSファイル本文", 0, e);
         }
       }
@@ -1260,19 +1428,21 @@ ${contextLine}`);
           const unavailable = stats.failed + stats.skipped;
           if (unavailable > 0) setAuxiliaryFetchError(plug, "プラグイン設定", unavailable);
         } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           setAuxiliaryFetchError(plug, "プラグイン設定", 0, e);
         }
       }
     }
     return bundle;
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
       init_constants();
       init_kintone_query();
       init_utils();
+      init_runControl();
       DEPLOY_PATH_SNIPPET = "app/deploy.json";
       ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
       ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
@@ -1280,6 +1450,8 @@ ${contextLine}`);
       DEFAULT_API_GET_RETRIES = 3;
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
+      API_GET_TIMEOUT_MS = 12e4;
+      FILE_TEXT_FETCH_TIMEOUT_MS = 6e4;
       RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
       RECORD_DATA_MUTATION_PATHS = /* @__PURE__ */ new Set([
         "/record.json",
@@ -1518,6 +1690,7 @@ ${contextLine}`);
 
   // src/entries/litePanelTheme.ts
   init_dialog();
+  init_runControl();
   init_utils();
   var STYLE_ID = "kus-lp-theme-styles";
   var ACCENTS = {
@@ -1612,6 +1785,9 @@ ${contextLine}`);
   content:'';display:inline-block;width:9px;height:9px;border-radius:50%;
   border:2px solid rgba(255,255,255,.85);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
 }
+.kus-lp__elapsed--done{font-weight:500;color:rgba(255,255,255,.8)}
+/* 完了後の「前回 …」表示ではスピナーを出さない */
+.kus-lp__elapsed--done::before{display:none;animation:none}
 /* 実行中の進捗ストリップ（ヒーロー下端） */
 .kus-lp__progress{position:absolute;left:0;right:0;bottom:0;height:3px;overflow:hidden;background:rgba(255,255,255,.22);display:none;z-index:1}
 .kus-lp[aria-busy="true"] .kus-lp__progress{display:block}
@@ -1625,15 +1801,17 @@ ${contextLine}`);
   font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close,.kus-lp__toggle{
+.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
   font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
 .kus-lp__toggle{padding:6px 9px;min-width:34px}
+.kus-lp__cancel{background:rgba(254,202,202,.30);border-color:rgba(254,226,226,.85)}
 .kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
-.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__cancel:hover{background:rgba(254,202,202,.48)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled,.kus-lp__cancel:disabled{opacity:.55;cursor:not-allowed}
 
 /* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
 .kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
@@ -1792,14 +1970,14 @@ ${contextLine}`);
   border:1px solid #1e293b;
 }
 .kus-lp__result--empty{display:none}
-/* ログ右上に貼り付くコピー操作（ログ本文の選択・スクロールを妨げない） */
-.kus-lp__result-copy{
-  float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;
+/* ログ右上に貼り付くコピー／保存操作（ログ本文の選択・スクロールを妨げない） */
+.kus-lp__result-tools{float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;display:flex;gap:4px}
+.kus-lp__result-copy,.kus-lp__result-save{
   padding:3px 8px;font:600 10.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
   color:#cbd5e1;background:rgba(30,41,59,.92);border:1px solid #334155;border-radius:7px;cursor:pointer;white-space:nowrap;
 }
-.kus-lp__result-copy:hover{color:#fff;background:#334155}
-.kus-lp__result-copy[data-copied="true"]{color:#bbf7d0;border-color:#166534}
+.kus-lp__result-copy:hover,.kus-lp__result-save:hover{color:#fff;background:#334155}
+.kus-lp__result-copy[data-copied="true"],.kus-lp__result-save[data-copied="true"]{color:#bbf7d0;border-color:#166534}
 .kus-lp__panel-html{
   margin-top:10px;border:1px solid var(--c-border);border-radius:10px;
   background:var(--c-surface);max-height:240px;overflow:auto;font-size:11.5px;
@@ -1918,6 +2096,12 @@ ${contextLine}`);
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
+    let carriedPosition = null;
+    if (old instanceof HTMLElement && old.dataset.kusPlaced === "1") {
+      const left = parseFloat(old.style.left);
+      const top = parseFloat(old.style.top);
+      if (Number.isFinite(left) && Number.isFinite(top)) carriedPosition = { left, top };
+    }
     if (old) {
       old.dispatchEvent(new Event("kus-lite-dispose"));
       old.remove();
@@ -1964,6 +2148,13 @@ ${contextLine}`);
     elapsedEl.className = "kus-lp__elapsed";
     elapsedEl.setAttribute("aria-hidden", "true");
     elapsedEl.hidden = true;
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "kus-lp__cancel";
+    cancelBtn.textContent = "中止";
+    cancelBtn.setAttribute("aria-label", "処理を中止");
+    cancelBtn.title = "次のリクエストの前で処理を止めます（途中まで実行した内容は取り消しません）";
+    cancelBtn.hidden = true;
     const bodyId = `${opts.id}-body`;
     const toggleBtn = document.createElement("button");
     toggleBtn.type = "button";
@@ -1976,6 +2167,7 @@ ${contextLine}`);
     const heroActions = document.createElement("div");
     heroActions.className = "kus-lp__hero-actions";
     heroActions.appendChild(elapsedEl);
+    heroActions.appendChild(cancelBtn);
     heroActions.appendChild(toggleBtn);
     heroActions.appendChild(closeBtn);
     const progress = document.createElement("div");
@@ -2020,10 +2212,20 @@ ${contextLine}`);
     copyBtn.className = "kus-lp__result-copy";
     copyBtn.textContent = "コピー";
     copyBtn.setAttribute("aria-label", "ログをコピー");
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "kus-lp__result-save";
+    saveBtn.textContent = "保存";
+    saveBtn.setAttribute("aria-label", "ログをファイルに保存");
+    const resultTools = document.createElement("span");
+    resultTools.className = "kus-lp__result-tools";
+    resultTools.appendChild(copyBtn);
+    resultTools.appendChild(saveBtn);
     let copyResetTimer = 0;
+    let saveResetTimer = 0;
     function resultText() {
       const clone = result.cloneNode(true);
-      clone.querySelector(".kus-lp__result-copy")?.remove();
+      clone.querySelector(".kus-lp__result-tools")?.remove();
       return (clone.innerText || clone.textContent || "").replace(/^\s+|\s+$/g, "");
     }
     function flashCopy(label, copied) {
@@ -2035,10 +2237,29 @@ ${contextLine}`);
         delete copyBtn.dataset.copied;
       }, 1600);
     }
+    function flashSave(label, saved) {
+      saveBtn.textContent = label;
+      saveBtn.dataset.copied = String(saved);
+      window.clearTimeout(saveResetTimer);
+      saveResetTimer = window.setTimeout(() => {
+        saveBtn.textContent = "保存";
+        delete saveBtn.dataset.copied;
+      }, 1600);
+    }
     copyBtn.addEventListener("click", () => {
       const text = resultText();
       if (!text) return;
       void copyTextToClipboard(text).then((ok) => flashCopy(ok ? "コピー済み" : "コピー失敗", ok));
+    });
+    saveBtn.addEventListener("click", () => {
+      const text = resultText();
+      if (!text) return;
+      try {
+        downloadText(`${sanitizeFilenamePart(opts.title)}_ログ_${nowStamp()}.txt`, text, "text/plain;charset=utf-8");
+        flashSave("保存済み", true);
+      } catch {
+        flashSave("保存失敗", false);
+      }
     });
     function setResult(text) {
       if (!text) {
@@ -2047,7 +2268,7 @@ ${contextLine}`);
         return;
       }
       result.textContent = text;
-      result.prepend(copyBtn);
+      result.prepend(resultTools);
       result.classList.remove("kus-lp__result--empty");
     }
     function setResultHtml(html) {
@@ -2057,7 +2278,7 @@ ${contextLine}`);
         return;
       }
       result.innerHTML = html;
-      result.prepend(copyBtn);
+      result.prepend(resultTools);
       result.classList.remove("kus-lp__result--empty");
     }
     let busyTimer = 0;
@@ -2071,25 +2292,65 @@ ${contextLine}`);
     function tickElapsed() {
       elapsedEl.textContent = `処理中 ${formatElapsed(Date.now() - busyStartedAt)}`;
     }
-    function stopElapsed() {
+    function startElapsed() {
+      busyStartedAt = Date.now();
+      elapsedEl.classList.remove("kus-lp__elapsed--done");
+      tickElapsed();
+      elapsedEl.hidden = false;
+      busyTimer = window.setInterval(tickElapsed, 1e3);
+    }
+    function stopElapsed(keepLast) {
+      const wasRunning = !!busyTimer;
       if (busyTimer) window.clearInterval(busyTimer);
       busyTimer = 0;
-      elapsedEl.hidden = true;
-      elapsedEl.textContent = "";
+      if (keepLast && wasRunning) {
+        elapsedEl.classList.add("kus-lp__elapsed--done");
+        elapsedEl.textContent = `前回 ${formatElapsed(Date.now() - busyStartedAt)}`;
+        elapsedEl.hidden = false;
+      } else if (!keepLast) {
+        elapsedEl.classList.remove("kus-lp__elapsed--done");
+        elapsedEl.hidden = true;
+        elapsedEl.textContent = "";
+      }
     }
+    let runToken = null;
+    function requestCancel2() {
+      if (!runToken) return false;
+      const accepted = requestCancel(runToken);
+      if (accepted) {
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = "中止中…";
+        handle.setStatus("中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…", "busy");
+      }
+      return accepted;
+    }
+    function isCancelRequested2() {
+      return !!runToken && runToken.cancelled;
+    }
+    cancelBtn.addEventListener("click", () => {
+      requestCancel2();
+    });
     function setBusy(busy) {
       closeBtn.disabled = busy;
       root2.setAttribute("aria-busy", String(busy));
       root2.style.cursor = busy ? "progress" : "";
       if (busy) {
-        if (!busyTimer) {
-          busyStartedAt = Date.now();
-          tickElapsed();
-          elapsedEl.hidden = false;
-          busyTimer = window.setInterval(tickElapsed, 1e3);
+        if (!runToken) {
+          runToken = beginRun();
+          cancelBtn.textContent = "中止";
+          cancelBtn.disabled = false;
+        } else if (!runToken.cancelled) {
+          cancelBtn.disabled = false;
         }
+        cancelBtn.hidden = false;
+        if (!busyTimer) startElapsed();
       } else {
-        stopElapsed();
+        endRun(runToken);
+        runToken = null;
+        cancelBtn.hidden = true;
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = "中止";
+        stopElapsed(true);
       }
       root2.dispatchEvent(new Event("kus-lite-busy-change"));
     }
@@ -2119,9 +2380,11 @@ ${contextLine}`);
       root2.style.top = `${Math.round(nextTop)}px`;
       root2.style.right = "auto";
       customPlaced = true;
+      root2.dataset.kusPlaced = "1";
     }
     function resetPosition() {
       customPlaced = false;
+      delete root2.dataset.kusPlaced;
       root2.style.left = "";
       root2.style.top = "";
       root2.style.right = "";
@@ -2168,11 +2431,15 @@ ${contextLine}`);
     });
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
+    if (carriedPosition) place(carriedPosition.left, carriedPosition.top);
     function dispose() {
       document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
-      stopElapsed();
+      stopElapsed(false);
+      endRun(runToken);
+      runToken = null;
       window.clearTimeout(copyResetTimer);
+      window.clearTimeout(saveResetTimer);
     }
     function close() {
       if (closeBtn.disabled) return;
@@ -2230,7 +2497,8 @@ ${contextLine}`);
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
+    const handle = { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel: requestCancel2, isCancelRequested: isCancelRequested2 };
+    return handle;
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
@@ -2422,6 +2690,7 @@ ${contextLine}`);
   async function liteRun(panel, busyMsg, fn, okMsg) {
     panel.setStatus(busyMsg, "busy");
     panel.setBusy(true);
+    const token = activeRun();
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
@@ -2434,11 +2703,26 @@ ${contextLine}`);
       } else if (tone === "busy") {
         panel.setStatus(currentText || "完了", "ok");
       }
+      if (token?.cancelled && !cancelled && panel.status.dataset.tone !== "err") {
+        let base = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        if (/^中止しています/.test(base)) base = okMsg || "処理が終わりました";
+        panel.setStatus(/中止/.test(base) ? base : `${base}（中止を要求したため、途中で止めた項目があるかもしれません。結果を確認してください）`, "warn");
+      }
       return out;
     } catch (e) {
+      if (isRunCancelledError(e)) {
+        panel.setStatus("中止しました。次のリクエストの前で止めました。途中まで実行した内容は取り消していません。", "warn");
+        return void 0;
+      }
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
+      if (token?.cancelled) {
+        const headline = /^中止しました/.test(first) ? first : `中止しました: ${first}`;
+        panel.setStatus(`${headline}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
       panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
       if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
@@ -2634,7 +2918,7 @@ ${contextLine}`);
     footer.append(footerRow, panel.status);
     const hint = panel.body.querySelector(".kus-lp__hint");
     panel.body.replaceChildren(...hint ? [hint] : [], nav, canvas, footer, hiddenActions);
-    let active = 0;
+    let active2 = 0;
     let busy = false;
     let pending = null;
     let reviewedSignature = "";
@@ -2647,7 +2931,7 @@ ${contextLine}`);
         panel.setStatus(problem, "warn");
         return;
       }
-      active = index;
+      active2 = index;
       if (index === 1) {
         summary.replaceChildren();
         for (const [label, value] of [["操作", selected.label], ...selected.summary()]) {
@@ -2662,9 +2946,9 @@ ${contextLine}`);
         reviewedSignature = signature();
       }
       stages.forEach((stage, i) => {
-        stage.hidden = i !== active;
-        tabs[i].setAttribute("aria-selected", String(i === active));
-        tabs[i].tabIndex = i === active ? 0 : -1;
+        stage.hidden = i !== active2;
+        tabs[i].setAttribute("aria-selected", String(i === active2));
+        tabs[i].tabIndex = i === active2 ? 0 : -1;
       });
       canvas.scrollTop = 0;
       tabs[index].focus({ preventScroll: true });
@@ -2672,16 +2956,16 @@ ${contextLine}`);
     }
     function refresh() {
       const problem = busy ? "" : selected.validate();
-      const fresh = !busy && active === 1 && reviewedSignature === signature();
-      next.hidden = active !== 0;
-      execute.hidden = active !== 1;
-      back.hidden = active === 0;
+      const fresh = !busy && active2 === 1 && reviewedSignature === signature();
+      next.hidden = active2 !== 0;
+      execute.hidden = active2 !== 1;
+      back.hidden = active2 === 0;
       next.disabled = busy || !!problem;
       execute.disabled = busy || !!problem || !fresh;
       execute.textContent = selected.label;
       execute.classList.toggle("kus-lp__btn--danger", !!selected.writes);
       tabs[1].disabled = busy || !!problem;
-      footerCopy.textContent = busy ? "処理中です。完了すると結果を表示します。" : problem || (active === 0 ? `${selected.label} · 対象と条件を確認してください。` : active === 1 ? fresh ? "表示内容を確認し、実行してください。" : "条件が変わりました。対象・条件に戻って確認してください。" : "結果を確認してから、次の操作へ進めます。");
+      footerCopy.textContent = busy ? "処理中です。完了すると結果を表示します。" : problem || (active2 === 0 ? `${selected.label} · 対象と条件を確認してください。` : active2 === 1 ? fresh ? "表示内容を確認し、実行してください。" : "条件が変わりました。対象・条件に戻って確認してください。" : "結果を確認してから、次の操作へ進めます。");
       notice.dataset.write = String(!!selected.writes);
       notice.textContent = selected.description + (selected.writes ? "\n書き込み先と内容を確認してください。続いて、変更内容の最終確認が表示されます。" : "\nアプリ設定やレコードの書き込みは行いません。");
       panel.setPrimaryAction(next);
@@ -2730,7 +3014,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       nav.inert = value;
       if (value) {
         panel.root.querySelectorAll("input,button,select,textarea").forEach((input) => {
-          if (input.classList.contains("kus-lp__toggle")) return;
+          if (input.classList.contains("kus-lp__toggle") || input.classList.contains("kus-lp__cancel")) return;
           disabled.set(input, input.disabled);
           input.disabled = true;
         });
@@ -2831,6 +3115,42 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       throw error;
     });
     return loadPromise;
+  }
+
+  // src/tabs/record-standalone.ts
+  init_runControl();
+
+  // src/tabs/run-cancel-summary.ts
+  init_runControl();
+  var CancelReportError = class extends Error {
+    constructor(done, total, details = []) {
+      super([formatCancelledHeadline(done, total), ...details.filter(Boolean)].join("\n"));
+      __publicField(this, "cancelReport", true);
+      __publicField(this, "done");
+      __publicField(this, "total");
+      this.name = "CancelReportError";
+      this.done = done;
+      this.total = total;
+    }
+  };
+  function formatCancelledHeadline(done, total) {
+    const safeTotal = Math.max(0, Math.floor(total));
+    const safeDone = Math.min(safeTotal, Math.max(0, Math.floor(done)));
+    return `中止しました（${safeDone}/${safeTotal} 件を処理、残り ${safeTotal - safeDone} 件は未実行）`;
+  }
+  function createCancelReport(done, total, details = []) {
+    return new CancelReportError(done, total, details);
+  }
+  function isCancelReportError(error) {
+    return !!error && typeof error === "object" && error.cancelReport === true;
+  }
+  function isCancelStop(error) {
+    return isRunCancelledError(error) || isCancelReportError(error);
+  }
+  function describeInnerCancel(label, error) {
+    if (!isCancelReportError(error)) return [`${label}: 実行中に中止しました（途中まで実行した内容は取り消していません）`];
+    const [first, ...rest] = String(error.message).split("\n");
+    return [`${label}: ${first}`, ...rest.map((line) => `  ${line}`)];
   }
 
   // src/tabs/record-query.ts
@@ -3350,6 +3670,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         if (result && result.warning) warnings.push(`App ${appId}: ${result.warning}`);
         if (result && result.cancelled) cancelled.push(`App ${appId}`);
       } catch (error) {
+        if (isCancelStop(error)) {
+          throw createCancelReport(i, appIds.length, [
+            ...describeInnerCancel(`App ${appId}`, error),
+            ...failures.map((failure) => `失敗 ${failure}`),
+            ...warnings.map((warning) => `警告 ${warning}`),
+            ...cancelled.map((target) => `確認でキャンセルしたため実行していません: ${target}`),
+            `未実行（中止）: ${appIds.slice(i).map((id) => `App ${id}`).join(", ")}`
+          ]);
+        }
         failures.push(`App ${appId}: ${error?.message || String(error)}`);
       }
     }
@@ -3376,8 +3705,10 @@ ${warningSummary}` : ""}`, true);
     const headers = { "X-Requested-With": "XMLHttpRequest" };
     let lastReason = "";
     for (let attempt = 0; attempt < 2; attempt++) {
+      throwIfCancelled();
       try {
-        const resp = await fetch(url, { method: "GET", headers });
+        const signal = activeAbortSignal();
+        const resp = await fetch(url, { method: "GET", headers, ...signal ? { signal } : {} });
         if (resp.status === 403) return { ok: false, reason: "閲覧権限なし (HTTP 403)" };
         if (!resp.ok) {
           lastReason = `HTTP ${resp.status}`;
@@ -3385,9 +3716,10 @@ ${warningSummary}` : ""}`, true);
           return { ok: true, blob: await resp.blob() };
         }
       } catch (e) {
+        if (isRunCancelledError(e)) throw e instanceof RunCancelledError ? e : new RunCancelledError();
         lastReason = e?.message || String(e);
       }
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
+      if (attempt === 0) await sleepUnlessCancelled(500);
     }
     return { ok: false, reason: lastReason || "取得失敗" };
   }
@@ -3534,6 +3866,7 @@ ${warningSummary}` : ""}`, true);
     const successes = [];
     const failures = [];
     const tableWarnings = [];
+    let stoppedAt = -1;
     for (let i = 0; i < apps.length; i++) {
       const app = apps[i];
       let folder = "";
@@ -3555,8 +3888,20 @@ ${warningSummary}` : ""}`, true);
         successes.push(`${folder}/: App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ""} / ${result.recordCount}件 / テーブル ${result.csv.tables.length}件${result.csv.warnings.length ? ` / 未取得 ${result.csv.warnings.length}件（フォルダ内manifest.json参照）` : ""}`);
       } catch (error) {
         if (folder) zip.remove(folder);
+        if (isCancelStop(error)) {
+          stoppedAt = i;
+          break;
+        }
         failures.push(`App ${app.appId}${app.guestId ? ` / Guest ${app.guestId}` : ""}: ${error?.message || String(error)}`);
       }
+    }
+    const notRun = stoppedAt >= 0 ? apps.slice(stoppedAt).map((app) => `App ${app.appId}${app.guestId ? ` / Guest ${app.guestId}` : ""}`) : [];
+    if (stoppedAt >= 0 && !successes.length) {
+      throw createCancelReport(stoppedAt, apps.length, [
+        ...failures.map((failure) => `失敗 ${failure}`),
+        `未実行（中止）: ${notRun.join(", ")}`,
+        "ZIP は保存していません"
+      ]);
     }
     if (failures.length === apps.length) {
       throw new Error(`すべてのアプリで CSV 出力に失敗しました
@@ -3565,7 +3910,8 @@ ${failures.join("\n")}`);
     const manifest = [
       "kintone CSV 一括出力マニフェスト",
       `出力日時: ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`,
-      `対象アプリ数: ${apps.length}（成功 ${successes.length} / 失敗 ${failures.length}）`,
+      `対象アプリ数: ${apps.length}（成功 ${successes.length} / 失敗 ${failures.length}${notRun.length ? ` / 未実行（中止） ${notRun.length}` : ""}）`,
+      ...notRun.length ? ["", "利用者の操作で中止したため、一部のアプリは出力していません。"] : [],
       `総レコード数: ${totalRecords}`,
       `未取得のテーブル: ${warningCount}件`,
       `共通クエリ: ${query || "(なし)"}`,
@@ -3574,16 +3920,22 @@ ${failures.join("\n")}`);
       "明細CSVの $id を同じフォルダの親 records.csv の $id に紐付けてください。",
       "",
       ...successes,
-      ...failures.length ? ["", "失敗:", ...failures] : []
+      ...failures.length ? ["", "失敗:", ...failures] : [],
+      ...notRun.length ? ["", "未実行（中止）:", ...notRun.map((target) => `${target}: 未実行（中止）`)] : []
     ].join("\n");
     zip.file("manifest.txt", manifest);
     setStatus(`ZIP生成中... (${successes.length}アプリ / ${totalRecords}件)`);
     const blob = await zip.generateAsync({ type: "blob" });
     downloadBlob(recordExportFilename(filename, "zip", buildExportFilename("CSV出力", "zip")), blob);
-    const issues = [failures.length ? `失敗 ${failures.length}アプリ` : "", warningCount ? `未取得のテーブル ${warningCount}件` : ""].filter(Boolean);
+    const issues = [
+      notRun.length ? `未実行（中止） ${notRun.length}アプリ` : "",
+      failures.length ? `失敗 ${failures.length}アプリ` : "",
+      warningCount ? `未取得のテーブル ${warningCount}件` : ""
+    ].filter(Boolean);
     const issueNote = issues.length ? `（${issues.join(" / ")}、詳細は manifest.txt）` : "";
-    setStatus(`CSV一括出力完了${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
-    return { issues: [...failures.map((failure) => `失敗 ${failure}`), ...tableWarnings] };
+    const cancelNote = notRun.length ? `${formatCancelledHeadline(stoppedAt, apps.length)}。処理済みの分だけを保存しました。` : "";
+    setStatus(`${cancelNote}CSV一括出力${notRun.length ? "（一部）" : "完了"}${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
+    return { issues: [...notRun.map((target) => `未実行（中止） ${target}`), ...failures.map((failure) => `失敗 ${failure}`), ...tableWarnings] };
   }
   async function readImportFile(file) {
     if (!file) throw new Error("CSVファイルを選択してください");
@@ -3611,6 +3963,13 @@ ${failures.join("\n")}`);
         const { records: _records, recordRows: _recordRows, ...report } = planCsvImport(rows, response?.properties);
         plans.push({ appId, properties: response.properties, report });
       } catch (error) {
+        if (isCancelStop(error)) {
+          throw createCancelReport(plans.length, appIds.length, [
+            ...plans.filter((plan) => plan.error).map((plan) => `事前検査に失敗 App ${plan.appId}: ${plan.error}`),
+            `未実行（中止）: ${appIds.slice(plans.length).map((id) => `App ${id}`).join(", ")}`,
+            "レコードはまだ書き込んでいません"
+          ]);
+        }
         plans.push({ appId, properties: {}, error: error?.message || String(error) || "事前検査に失敗しました" });
       }
     }
@@ -3622,6 +3981,18 @@ ${failures.join("\n")}`);
     const problems = plans.filter((plan) => plan.error || plan.report.issueCount).length;
     setStatus(problems ? `事前検査: ${problems}アプリに問題があります。まだ書き込んでいません。` : `事前検査完了: ${plans.length}アプリ。まだ書き込んでいません。`, problems > 0);
     return result;
+  }
+  async function writeChunksUnlessCancelled(items, label, writeChunk, onProgress, describeItem) {
+    try {
+      return await writeInChunks(items, label, writeChunk, onProgress, void 0, describeItem);
+    } catch (error) {
+      if (!isRunCancelledError(error)) throw error;
+      const done = Math.max(0, Number(error?.partial?.done) || 0);
+      throw createCancelReport(done, items.length, [
+        `${label}: ${done}件を書き込み済み、残り ${items.length - done}件は書き込んでいません`,
+        "書き込み済みのレコードは取り消していません"
+      ]);
+    }
   }
   async function runCsvImportBatchStandalone(opts, setStatus) {
     const { prefix, rows, plans } = await inspectCsvImportBatch(opts, setStatus);
@@ -3641,12 +4012,11 @@ ${problems.map((plan) => `App ${plan.appId}: ${plan.error || formatCsvImportRepo
     await runRecordAppBatchStandalone(plans.map((plan) => plan.appId).join(","), async (appId) => {
       const plan = plans.find((item) => item.appId === appId);
       const { records, recordRows } = planCsvImport(rows, plan.properties);
-      const ok = await writeInChunks(
+      const ok = await writeChunksUnlessCancelled(
         records,
         `App ${appId} の CSV取込`,
         (batch) => apiPost(prefix, "/records.json", { app: appId, records: batch }),
         (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`),
-        void 0,
         (index) => `CSV ${recordRows[index]}行目`
       );
       setStatus(`App ${appId}: インポート完了 ${ok}件`);
@@ -3671,7 +4041,7 @@ ${problems.map((plan) => `App ${plan.appId}: ${plan.error || formatCsvImportRepo
       setStatus("ステータス一括更新をキャンセルしました");
       return { cancelled: true };
     }
-    const ok = await writeInChunks(
+    const ok = await writeChunksUnlessCancelled(
       targets,
       `App ${appId} のステータス更新`,
       async (batch) => {
@@ -3691,7 +4061,6 @@ ${error?.message || String(error)}`
         }
       },
       (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`),
-      void 0,
       (index) => `レコードID ${targets[index]?.id}`
     );
     setStatus(`ステータス一括更新完了 (${ok}件)`);
@@ -3866,6 +4235,13 @@ ${error?.message || String(error)}`
         const report = inspectRecordCopyCompatibility(srcProps, tgtFields?.properties || {});
         results.push({ targetAppId, report });
       } catch (error) {
+        if (isCancelStop(error)) {
+          throw createCancelReport(results.length, targetAppIds.length, [
+            ...results.filter((r) => r.error).map((r) => `確認に失敗 App ${r.targetAppId}: ${r.error}`),
+            `未実行（中止）: ${targetAppIds.slice(results.length).map((id) => `App ${id}`).join(", ")}`,
+            "まだコピーは実行していません"
+          ]);
+        }
         results.push({ targetAppId, error: error?.message || String(error) });
       }
     }
@@ -3907,12 +4283,11 @@ ${droppedNote}` : ""}`);
       setStatus("レコードコピーをキャンセルしました");
       return { cancelled: true };
     }
-    const ok = await writeInChunks(
+    const ok = await writeChunksUnlessCancelled(
       plan.records,
       `App ${sourceAppId} → ${targetAppId} のレコードコピー`,
       (batch) => apiPost(tgtPrefix, "/records.json", { app: targetAppId, records: batch }),
       (done, total) => setStatus(`コピー中... ${done} / ${total}件`),
-      void 0,
       (index) => `コピー元レコードID ${records[index]?.$id?.value ?? index + 1}`
     );
     const fileDropNote = plan.droppedFileFields.length ? ` / 添付除外 ${plan.droppedFileFields.length}フィールド` : "";
@@ -3975,7 +4350,17 @@ ${droppedNote}` : ""}`);
       const used = usedByFolder.get(folderPath) || /* @__PURE__ */ new Set();
       usedByFolder.set(folderPath, used);
       for (const f of files) {
-        const result = await downloadFileBlob(prefix, f.fileKey);
+        let result;
+        try {
+          result = await downloadFileBlob(prefix, f.fileKey);
+        } catch (error) {
+          if (!isCancelStop(error)) throw error;
+          throw createCancelReport(i, groups.length, [
+            `中断したレコード: ${recordId}${rowId ? ` / テーブル行 ${rowId}` : ""}`,
+            `取得済み ${fileCount}ファイル / 取得失敗 ${failures.length}件`,
+            "添付ファイルの ZIP は保存していません"
+          ]);
+        }
         const entry = {
           recordId,
           tableFieldCode,
@@ -4068,7 +4453,15 @@ ${formatFileFailures(failures)}
         const recordId = String(ent.rec?.$id?.value || "unknown");
         let result = blobCache.get(ent.file.fileKey);
         if (!result) {
-          result = await downloadFileBlob(prefix, ent.file.fileKey);
+          try {
+            result = await downloadFileBlob(prefix, ent.file.fileKey);
+          } catch (error) {
+            if (!isCancelStop(error)) throw error;
+            throw createCancelReport(i, collected.length, [
+              `添付ファイルの取得を中止しました（取得済み ${fileCount}ファイル / 取得失敗 ${fileFailures.length}件）`,
+              "バックアップの ZIP は保存していません（途中までのバックアップを完全なものと取り違えないため）"
+            ]);
+          }
           blobCache.set(ent.file.fileKey, result);
         }
         if (result.ok === false) {
@@ -4120,6 +4513,12 @@ ${formatFileFailures(failures)}
             commentCount += comments.length;
           }
         } catch (e) {
+          if (isCancelStop(e)) {
+            throw createCancelReport(i, records.length, [
+              `コメントの取得を中止しました（取得済み ${commentCount}件 / 取得失敗 ${commentFailures.length}レコード）`,
+              "バックアップの ZIP は保存していません（途中までのバックアップを完全なものと取り違えないため）"
+            ]);
+          }
           commentFailures.push({ recordId, reason: e?.message || String(e) });
         }
       }
@@ -4461,6 +4860,7 @@ ${formatFileFailures(failures)}
   // src/tabs/record-quality-standalone.ts
   init_api();
   init_utils();
+  init_runControl();
 
   // src/tabs/record-quality.ts
   var SCALAR = /* @__PURE__ */ new Set(["SINGLE_LINE_TEXT", "MULTI_LINE_TEXT", "LINK", "NUMBER", "DATE", "TIME", "DATETIME", "DROP_DOWN", "RADIO_BUTTON"]);
@@ -4643,7 +5043,8 @@ ${formatFileFailures(failures)}
         const nextProps = (await apiGet(prefix, "/app/form/fields.json", { app: appIds[i], lang: "user" }))?.properties;
         const nextMap = new Map(readQualityFields(nextProps).map((f) => [f.code, f.type]));
         common = common.filter((f) => nextMap.get(f.code) === f.type);
-      } catch {
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
       }
     }
     return common;
@@ -4651,7 +5052,8 @@ ${formatFileFailures(failures)}
   async function runRecordQualityStandalone(options, setStatus) {
     const { appIds, prefix } = connection(options.appIdsText, options.guestId);
     const results = [];
-    for (const appId of appIds) {
+    for (let i = 0; i < appIds.length; i++) {
+      const appId = appIds[i];
       setStatus(`App ${appId}: 検査用の設定を取得中…`);
       try {
         const properties = (await apiGet(prefix, "/app/form/fields.json", { app: appId, lang: "user" }))?.properties;
@@ -4659,6 +5061,11 @@ ${formatFileFailures(failures)}
         const { records } = await fetchRecordsByQuery(prefix, appId, options.query, { fields: ["$id", ...options.codes], onProgress: (count) => setStatus(`App ${appId}: ${count}件を取得済み…`) });
         results.push({ appId, report: inspectRecordQuality(records, fields, options) });
       } catch (error) {
+        if (isRunCancelledError(error)) {
+          for (const pendingId of appIds.slice(i)) results.push({ appId: pendingId, error: "未実行（中止）" });
+          setStatus(`${formatCancelledHeadline(i, appIds.length)}。検査済みの結果だけを表示します`, true);
+          return results;
+        }
         results.push({ appId, error: error.message || String(error) });
       }
     }
@@ -4668,14 +5075,24 @@ ${formatFileFailures(failures)}
     const { appIds, prefix } = connection(options.appIdsText, options.guestId);
     const templates = [];
     const failures = [];
-    for (const appId of appIds) {
+    let stoppedAt = -1;
+    for (let i = 0; i < appIds.length; i++) {
+      const appId = appIds[i];
       setStatus(`App ${appId}: CSVひな形を作成中…`);
       try {
         const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
         templates.push({ appId, template: buildCsvImportTemplate(fields?.properties) });
       } catch (error) {
+        if (isRunCancelledError(error)) {
+          stoppedAt = i;
+          break;
+        }
         failures.push(`App ${appId}: ${error.message || String(error)}`);
       }
+    }
+    const notRun = stoppedAt >= 0 ? appIds.slice(stoppedAt).map((id) => `App ${id}`) : [];
+    if (!templates.length && stoppedAt >= 0) {
+      throw createCancelReport(stoppedAt, appIds.length, [...failures.map((failure) => `失敗 ${failure}`), `未実行（中止）: ${notRun.join(", ")}`, "ZIP は保存していません"]);
     }
     if (!templates.length) throw new Error(`ひな形を作成できませんでした
 ${failures.join("\n")}`);
@@ -4695,8 +5112,14 @@ ${failures.join("\n")}`);
       ].join("\r\n");
       zip.file(folder + "README.txt", head + template.readme + "\r\n");
     }
-    zip.file("manifest.json", JSON.stringify({ createdAt: generatedAt, guestId: options.guestId, templates: templates.map((item) => ({ appId: item.appId, columns: item.template.columnCount })), failures }, null, 2));
+    zip.file("manifest.json", JSON.stringify({ createdAt: generatedAt, guestId: options.guestId, templates: templates.map((item) => ({ appId: item.appId, columns: item.template.columnCount })), failures, ...notRun.length ? { cancelled: true, notExecuted: notRun.map((label) => `${label}: 未実行（中止）`) } : {} }, null, 2));
     downloadBlob(buildExportFilename("CSV取込ひな形", "zip"), await zip.generateAsync({ type: "blob" }));
+    if (notRun.length) {
+      return { warning: `${formatCancelledHeadline(stoppedAt, appIds.length)}
+${templates.length}アプリのひな形だけを保存しました${failures.length ? ` / 失敗 ${failures.length}アプリ` : ""}
+未実行（中止）: ${notRun.join(", ")}${failures.length ? `
+${failures.join("\n")}` : ""}` };
+    }
     if (failures.length) return { warning: `${templates.length}アプリのひな形を保存 / 失敗 ${failures.length}アプリ
 ${failures.join("\n")}` };
     setStatus(`${templates.length}アプリのCSVひな形と入力ガイドを保存しました`);

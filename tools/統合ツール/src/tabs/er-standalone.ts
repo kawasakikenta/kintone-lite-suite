@@ -2,6 +2,7 @@
 
 import { crawl, buildHTML, progressUi, ER_DEFAULTS, formatErLayoutLabel, describeReverseScan } from './er.js';
 import { fetchAppsInSpace } from '../api.js';
+import { isCancelStop } from './run-cancel-summary.js';
 import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 
 /**
@@ -182,7 +183,8 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
     setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
   } catch (e) {
     try { popup.close(); } catch (_) { /* noop */ }
-    progressUi.error(e.message || String(e));
+    // 中止はエラー表示にせず、進捗表示を閉じる（件数つきの説明はパネルのステータスとログに出る）
+    if (isCancelStop(e)) progressUi.dismiss(); else progressUi.error(e.message || String(e));
     throw e;
   }
 }
@@ -213,7 +215,8 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
       ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}`
       : `ER図HTMLを保存しました (${apps.length}アプリ)`, summary.tone);
   } catch (e) {
-    progressUi.error(e.message || String(e));
+    // 中止はエラー表示にせず、進捗表示を閉じる（件数つきの説明はパネルのステータスとログに出る）
+    if (isCancelStop(e)) progressUi.dismiss(); else progressUi.error(e.message || String(e));
     throw e;
   }
 }

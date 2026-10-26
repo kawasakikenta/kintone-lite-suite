@@ -18,6 +18,7 @@ import {
   computeRetryDelayMs,
   resolveHttpStatus
 } from '../api.js';
+import { RUN_CANCELLED_MESSAGE, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
 import { buildPatchPayload } from '../diff/export.js';
 import { isActionableDiffRow } from '../diff/engine.js';
 import {
@@ -107,6 +108,8 @@ async function preflightLookupMap(lookupMap, prefix) {
       await apiGet(prefix, '/app.json', { id: target });
       _lookupPreflightCache.set(cacheKey, { ok: true, at: Date.now() });
     } catch (e) {
+      // 中止は「変換先が見つからない」と判定せず（失敗キャッシュも作らず）そのまま伝える。
+      if (isRunCancelledError(e)) throw e;
       _lookupPreflightCache.set(cacheKey, { ok: false, at: Date.now() });
       missing.push({ from, to: target, reason: `取得失敗: ${e?.message || String(e)}` });
     }
@@ -504,7 +507,16 @@ export interface RequestPlanExecutionResult {
   successCount: number;
   failureCount: number;
   failures: RequestPlanFailure[];
+  /** 利用者の中止で途中停止したとき true（未送信分は failures / failureCount にも含まれる）。 */
+  cancelled?: boolean;
+  /** 中止で送信しなかったリクエスト数（cancelled のときだけ設定）。 */
+  unsentCount?: number;
 }
+
+/** 中止で送信しなかったリクエストの failures に入れる文言。 */
+export const CANCEL_UNSENT_MESSAGE = `${RUN_CANCELLED_MESSAGE}（未送信）`;
+/** 中止でセクションが未実行のまま残ったときの文言。 */
+export const CANCEL_PENDING_MESSAGE = '中止により未実行';
 
 export interface SectionDiffExecutionResult extends RequestPlanExecutionResult {
   deleteSkipCount: number;
@@ -519,6 +531,8 @@ export interface SectionDeleteSkipDetail {
 export interface ApplySectionsLoopResult {
   hadError: boolean;
   deleteSkips: SectionDeleteSkipDetail[];
+  /** 利用者の中止で途中停止したとき true。未実行のセクションは sectionResults に pending で入る。 */
+  cancelled: boolean;
 }
 
 function withDeleteSkipCount(result: RequestPlanExecutionResult, deleteSkipCount = 0): SectionDiffExecutionResult {
@@ -532,10 +546,15 @@ function withDeleteSkipCount(result: RequestPlanExecutionResult, deleteSkipCount
 export function summarizeSectionExecutionProblem(result: SectionDiffExecutionResult | null | undefined): string {
   if (!result) return '';
   const parts: string[] = [];
-  if (result.failureCount > 0) {
-    const first = result.failures[0];
+  const unsent = result.cancelled ? Math.max(0, Math.floor(Number(result.unsentCount) || 0)) : 0;
+  const realFailures = result.failures.slice(0, Math.max(0, result.failures.length - unsent));
+  if (result.failureCount - unsent > 0) {
+    const first = realFailures[0];
     const detail = first ? ` (${first.method} ${first.path}: ${first.message})` : '';
-    parts.push(`APIリクエスト失敗 ${result.failureCount}/${result.requestCount}件${detail}`);
+    parts.push(`APIリクエスト失敗 ${result.failureCount - unsent}/${result.requestCount}件${detail}`);
+  }
+  if (result.cancelled) {
+    parts.push(`${RUN_CANCELLED_MESSAGE}（未送信 ${unsent}/${result.requestCount}件）`);
   }
   if (result.deleteSkipCount > 0) {
     parts.push(`互換モードによる削除未反映 ${result.deleteSkipCount}件`);
@@ -561,12 +580,18 @@ export async function executeRequestPlan(prefix, requests, logs, stopOnError): P
   };
   for (let i = 0; i < list.length; i++) {
     const req = list[i];
+    // 再試行待ちの途中で中止されたとき、直前の失敗内容を未送信の記録に添えるために覚えておく。
+    let lastAttemptError: any = null;
     try {
+      // 中止要求が出ていれば、リクエストを送る前に止める。
+      throwIfCancelled();
       // Permission check is synchronous and not retriable — fail fast.
       assertAllowsMutatingRestCall(prefix, req.path, req.method);
       let _err: any = null;
       let _attempts = 0;
       for (let _r = 0; _r < APPLY_RETRY_MAX_ATTEMPTS; _r++) {
+        // 書き込みは進行中のリクエストを打ち切らない。次の送信（再試行を含む）の前でだけ中止を確認する。
+        throwIfCancelled();
         _attempts = _r + 1;
         try {
           await (kintone as any).api(`${prefix}${req.path}`, req.method, req.body);
@@ -574,14 +599,16 @@ export async function executeRequestPlan(prefix, requests, logs, stopOnError): P
           break;
         }
         catch (re) {
+          if (isRunCancelledError(re)) throw re;
           _err = re;
+          lastAttemptError = re;
           // 4xx は副作用が確定している可能性があるため一律リトライ不可（POST/DELETE）。
           // 5xx / ネットワーク系のみリトライ。PUT は冪等のため 408/429 もリトライ可。
           const canRetry = (_r < APPLY_RETRY_MAX_ATTEMPTS - 1) && isRetriableMutation(req.method, re);
           if (!canRetry) break;
           const waitMs = computeRetryDelayMs(_r, APPLY_RETRY_BASE_DELAY_MS, APPLY_RETRY_MAX_DELAY_MS);
           if (logs) logs.push(`  - retry ${req.method} ${req.path} (attempt ${_r + 2}/${APPLY_RETRY_MAX_ATTEMPTS}, status ${resolveHttpStatus(re) || 'n/a'}, wait ${waitMs}ms)`);
-          await new Promise((r) => setTimeout(r, waitMs));
+          await sleepUnlessCancelled(waitMs);
         }
       }
       if (_err) throw apiErrorWithContext(_err, { method: req.method, prefix, path: req.path, payload: req.body });
@@ -591,6 +618,11 @@ export async function executeRequestPlan(prefix, requests, logs, stopOnError): P
       }
       result.successCount += 1;
     } catch (e) {
+      if (isRunCancelledError(e)) {
+        // 現在のリクエストと残り全部を「未送信」として記録し、ループを止めて結果は通常どおり返す。
+        recordCancelledRequests(result, list, i, lastAttemptError, logs);
+        break;
+      }
       const msg = e.message || String(e);
       result.failureCount += 1;
       result.failures.push({
@@ -604,6 +636,28 @@ export async function executeRequestPlan(prefix, requests, logs, stopOnError): P
     }
   }
   return result;
+}
+
+/** 中止で送信できなかったリクエスト（index 以降すべて）を failures に記録する。 */
+function recordCancelledRequests(result: RequestPlanExecutionResult, list: any[], index: number, lastAttemptError: any, logs?: string[]): void {
+  let unsent = 0;
+  for (let j = index; j < list.length; j++) {
+    const item = list[j];
+    const previous = j === index && lastAttemptError ? String(lastAttemptError?.message || lastAttemptError).split('\n')[0] : '';
+    result.failures.push({
+      index: j,
+      method: String(item?.method || ''),
+      path: String(item?.path || ''),
+      message: previous ? `${RUN_CANCELLED_MESSAGE}（再試行を送信せず停止。直前の失敗: ${previous}）` : CANCEL_UNSENT_MESSAGE
+    });
+    unsent += 1;
+  }
+  result.failureCount += unsent;
+  result.cancelled = true;
+  result.unsentCount = unsent;
+  if (logs) {
+    logs.push(`  - ${RUN_CANCELLED_MESSAGE}: 未送信 ${unsent} 件（${String(list[index]?.method || '')} ${String(list[index]?.path || '')} 以降）。送信済みの ${result.successCount} 件は反映先に残っています`);
+  }
 }
 
 export async function applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError) {
@@ -645,6 +699,7 @@ export interface ApplySectionsLoopOptions {
 
 export async function applySectionsLoop(prefix: string, app: string | number, sourceBundle: any, scopes: string[], logs: string[], lookupMap: any, stopOnError: boolean, { phaseLabel = '反映', onProgress, sectionResults }: ApplySectionsLoopOptions = {}): Promise<ApplySectionsLoopResult> {
   let hadError = false;
+  let cancelled = false;
   const deleteSkips: SectionDeleteSkipDetail[] = [];
   for (let i = 0; i < scopes.length; i++) {
     const secKey = scopes[i];
@@ -689,11 +744,25 @@ export async function applySectionsLoop(prefix: string, app: string | number, so
       if (execution.deleteSkipCount > 0) {
         deleteSkips.push({ sectionKey: secKey, sectionLabel: def.label, count: execution.deleteSkipCount });
       }
+      if (execution.cancelled) {
+        hadError = true;
+        cancelled = true;
+        recordCancelledSection(sectionResults, secKey, def.label, execution, logs);
+        recordCancelledRemaining(sectionResults, scopes, i + 1, logs);
+        break;
+      }
       if (executionProblem) throw new Error(executionProblem);
       logs.push(`OK ${def.label}`);
       recordSectionResult(sectionResults, secKey, def.label, 'ok', '');
     } catch (e) {
       hadError = true;
+      if (isRunCancelledError(e)) {
+        // 取得の途中で中止された（このセクションではまだ何も送っていない）。失敗ではなく未実行として扱う。
+        cancelled = true;
+        recordCancelledSection(sectionResults, secKey, def.label, null, logs);
+        recordCancelledRemaining(sectionResults, scopes, i + 1, logs);
+        break;
+      }
       const msg = e.message || String(e);
       pushReflectErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
       recordSectionResult(sectionResults, secKey, def.label, 'ng', msg);
@@ -709,23 +778,67 @@ export async function applySectionsLoop(prefix: string, app: string | number, so
       }
     }
   }
-  return { hadError, deleteSkips };
+  return { hadError, deleteSkips, cancelled };
 }
 
-function recordSectionResult(results, sectionKey, label, status, message) {
+/**
+ * 中止で止まったセクションを記録する。リクエストを 1 件でも送っていれば反映先に一部が残るため ng（途中で停止）、
+ * 1 件も送っていなければ pending（未実行）にし、どちらも「失敗・未実行だけ再反映」の対象に含める。
+ */
+function recordCancelledSection(results, sectionKey: string, label: string, execution: RequestPlanExecutionResult | null, logs: string[]): void {
+  const unsent = execution ? Math.max(0, Math.floor(Number(execution.unsentCount) || 0)) : 0;
+  const sent = execution ? Math.max(0, execution.requestCount - unsent) : 0;
+  if (sent > 0) {
+    const message = `${RUN_CANCELLED_MESSAGE}（${execution!.requestCount}件中 ${sent}件を送信済み、未送信 ${unsent}件。送信済みの分は反映先に残っています）`;
+    logs.push(`中止: ${label} は途中で停止しました（${sent}/${execution!.requestCount} 件送信済み）`);
+    recordSectionResult(results, sectionKey, label, 'ng', message, { partial: true, cancelled: true });
+    return;
+  }
+  logs.push(`中止: ${label} は未実行です（リクエストを送っていません）`);
+  recordSectionResult(results, sectionKey, label, 'pending', CANCEL_PENDING_MESSAGE, { cancelled: true });
+}
+
+/** 中止で未実行のまま残ったセクション（from 以降）を pending として記録する。 */
+function recordCancelledRemaining(results, keys: string[], from: number, logs: string[]): void {
+  let count = 0;
+  for (let j = from; j < keys.length; j++) {
+    const remainDef = SECTION_DEFS.find((x) => x.key === keys[j]);
+    if (!remainDef || !remainDef.put) continue;
+    recordSectionResult(results, keys[j], remainDef.label, 'pending', CANCEL_PENDING_MESSAGE, { cancelled: true });
+    count += 1;
+  }
+  logs.push(`中止: 残り ${count} セクションは未実行のまま停止しました`);
+}
+
+/** 中止で終わった反映の状況（反映済み / 途中で停止 / 未実行のセクション数）を 1 文にする。 */
+export function describeCancelledApply(label: string, sectionResults: any[] | null | undefined): string {
+  const rows = Array.isArray(sectionResults) ? sectionResults : [];
+  const ok = rows.filter((r) => r?.status === 'ok');
+  const partial = rows.filter((r) => r?.status === 'ng' && r?.partial);
+  const pending = rows.filter((r) => r?.status === 'pending');
+  const names = (items: any[]) => items.map((r) => r.label || r.sectionKey).join('・');
+  const parts = [`反映済み ${ok.length} セクション`];
+  if (partial.length) parts.push(`途中で停止 ${partial.length}（${names(partial)}）`);
+  parts.push(`未実行 ${pending.length}`);
+  return `${label}を中止しました（${parts.join(' / ')}）。反映先プレビューは一部だけ更新されている可能性があります。差分を取得し直して現在の状態を確認してください。`;
+}
+
+function recordSectionResult(results, sectionKey, label, status, message, extra?: Record<string, unknown>) {
   if (!Array.isArray(results)) return;
   const existing = results.find((r) => r && r.sectionKey === sectionKey);
   if (existing) {
     existing.status = status;
     existing.label = label || existing.label;
     if (message) existing.message = message;
+    if (extra) Object.assign(existing, extra);
     return;
   }
   results.push({
     sectionKey,
     label: label || sectionKey,
     status,
-    message: message || ''
+    message: message || '',
+    ...(extra || {})
   });
 }
 
@@ -780,6 +893,8 @@ async function verifyAppliedAgainstBackup({ targetGuestId, targetAppId, scopes, 
         });
       }
     } catch (e) {
+      // 中止は「取得失敗」の検証結果にせず、呼び出し元へ伝えて検証を打ち切る。
+      if (isRunCancelledError(e)) throw e;
       findings.push({
         sectionKey: secKey,
         label: def.label || secKey,
@@ -891,11 +1006,15 @@ async function finalizeApplyResult(opts: {
   phaseLabel?: string;
   finishMetrics?: Array<{ label: string; value: string; tone?: string }>;
   expectedSectionKeys?: Iterable<string> | null;
+  /** 利用者の中止で途中停止した反映。反映後検証は行わず、結果は「中止」として示す。 */
+  cancelled?: boolean;
 }): Promise<void> {
-  const { mode, c, app, scopes, sectionResults, hadError, logs, progress, backupFilename, phaseLabel, finishMetrics, expectedSectionKeys } = opts;
+  const { mode, c, app, scopes, sectionResults, hadError, logs, progress, backupFilename, phaseLabel, finishMetrics, expectedSectionKeys, cancelled } = opts;
   // verifyAppliedAgainstBackup の失敗で commitApplyReport がスキップされないように保護する。
   // 反映自体は完了している可能性があるため、検証失敗はログに残すだけで処理は継続する。
-  try {
+  if (cancelled) {
+    if (Array.isArray(logs)) logs.push('反映後検証: 中止したため行いません。差分を取得し直して現在の状態を確認してください');
+  } else try {
     await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app as any, scopes, logs, expectedSectionKeys });
   } catch (verifyErr: any) {
     if (Array.isArray(logs)) {
@@ -918,12 +1037,14 @@ async function finalizeApplyResult(opts: {
   renderReflectMainPanel();
   if (progress) {
     progress.finish({
-      title: hadError ? `${phaseLabel || '反映'} 完了（一部エラー）` : `${phaseLabel || '反映'} 完了`,
+      title: cancelled ? `${phaseLabel || '反映'} 中止` : hadError ? `${phaseLabel || '反映'} 完了（一部エラー）` : `${phaseLabel || '反映'} 完了`,
       hasError: hadError,
-      metrics: finishMetrics || [
-        { label: '比較先アプリ', value: `#${app}` },
-        { label: '結果', value: hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
-      ],
+      metrics: (cancelled && finishMetrics)
+        ? finishMetrics.map((m) => (m.label === '結果' ? { label: '結果', value: '中止（一部のみ反映の可能性）', tone: 'warn' } : m))
+        : finishMetrics || [
+          { label: '比較先アプリ', value: `#${app}` },
+          { label: '結果', value: cancelled ? '中止（一部のみ反映の可能性）' : hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
+        ],
       hint: backupFilename
         ? `バックアップ保存先: ${backupFilename}\n本番デプロイは kintone 管理画面から手動で実施してください。`
         : '本番デプロイは kintone 管理画面から手動で実施してください。'
@@ -1984,6 +2105,7 @@ export async function runApplyPatchJson() {
   await assertLookupMapPreflight(lookupMap, buildApiPrefix(c.target.guestId, false));
   const logs: string[] = [];
   let hadError = false;
+  let cancelled = false;
 
   logs.push(`比較先アプリ: ${app}`);
   logs.push(`JSONパッチ: ${sectionKeys.map((key) => SECTION_DEFS.find((item) => item.key === key)?.label || key).join(', ')}`);
@@ -2013,12 +2135,25 @@ export async function runApplyPatchJson() {
         ? new Set<string>(sortedRows.map(extractFieldCodeFromRowPath).filter((code: any): code is string => !!code))
         : null;
       const execution = await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError });
+      if (execution.cancelled) {
+        hadError = true;
+        cancelled = true;
+        recordCancelledSection(sectionResults, secKey, def.label, execution, logs);
+        recordCancelledRemaining(sectionResults, sectionKeys, i + 1, logs);
+        break;
+      }
       const executionProblem = summarizeSectionExecutionProblem(execution);
       if (executionProblem) throw new Error(executionProblem);
       logs.push(`OK ${def.label}: patch ${appliedCount}/${sortedRows.length}`);
       recordSectionResult(sectionResults, secKey, def.label, 'ok', `${appliedCount}/${sortedRows.length}`);
     } catch (e) {
       hadError = true;
+      if (isRunCancelledError(e)) {
+        cancelled = true;
+        recordCancelledSection(sectionResults, secKey, def.label, null, logs);
+        recordCancelledRemaining(sectionResults, sectionKeys, i + 1, logs);
+        break;
+      }
       const msg = e.message || String(e);
       pushReflectErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
       recordSectionResult(sectionResults, secKey, def.label, 'ng', msg);
@@ -2043,10 +2178,12 @@ export async function runApplyPatchJson() {
     sectionResults,
     hadError,
     logs,
-    phaseLabel: 'JSONパッチ反映完了',
-    expectedSectionKeys: sectionKeys
+    phaseLabel: cancelled ? 'JSONパッチ反映' : 'JSONパッチ反映完了',
+    expectedSectionKeys: sectionKeys,
+    cancelled
   });
-  setStatus(hadError ? 'JSONパッチ反映完了（一部エラーあり）' : 'JSONパッチ反映完了');
+  if (cancelled) setStatus(describeCancelledApply('JSONパッチ反映', sectionResults), true);
+  else setStatus(hadError ? 'JSONパッチ反映完了（一部エラーあり）' : 'JSONパッチ反映完了');
 }
 
 
@@ -2113,6 +2250,7 @@ export async function runApplyPreviewByNodes() {
   const app = c.target.appId;
   const logs: string[] = [];
   let hadError = false;
+  let cancelled = false;
   let backupFilename = '';
   const progress = startProgress('反映前チェック中...', sectionKeys.length);
   setStatus('反映前チェック中...');
@@ -2181,12 +2319,25 @@ export async function runApplyPreviewByNodes() {
             )
           : null;
         const execution = await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError });
+        if (execution.cancelled) {
+          hadError = true;
+          cancelled = true;
+          recordCancelledSection(sectionResults, secKey, def.label, execution, logs);
+          recordCancelledRemaining(sectionResults, sectionKeys, i + 1, logs);
+          break;
+        }
         const executionProblem = summarizeSectionExecutionProblem(execution);
         if (executionProblem) throw new Error(executionProblem);
         logs.push(`OK ${def.label}: node ${mutation.appliedCount}/${rowsInSection.length}`);
         recordSectionResult(sectionResults, secKey, def.label, 'ok', `${mutation.appliedCount}/${rowsInSection.length}`);
       } catch (e) {
         hadError = true;
+        if (isRunCancelledError(e)) {
+          cancelled = true;
+          recordCancelledSection(sectionResults, secKey, def.label, null, logs);
+          recordCancelledRemaining(sectionResults, sectionKeys, i + 1, logs);
+          break;
+        }
         const msg = e.message || String(e);
         pushReflectErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
         recordSectionResult(sectionResults, secKey, def.label, 'ng', msg);
@@ -2202,8 +2353,9 @@ export async function runApplyPreviewByNodes() {
       }
     }
 
-    progress.setProgress(sectionKeys.length, sectionKeys.length);
-    setStatus(hadError ? 'ノード反映処理完了（一部エラーあり）' : 'ノード反映処理完了');
+    if (!cancelled) progress.setProgress(sectionKeys.length, sectionKeys.length);
+    if (cancelled) setStatus(describeCancelledApply('ノード反映', sectionResults), true);
+    else setStatus(hadError ? 'ノード反映処理完了（一部エラーあり）' : 'ノード反映処理完了');
     await finalizeApplyResult({
       mode: 'nodes',
       c,
@@ -2211,6 +2363,7 @@ export async function runApplyPreviewByNodes() {
       scopes: sectionKeys,
       sectionResults,
       hadError,
+      cancelled,
       logs,
       progress,
       backupFilename,
@@ -2226,7 +2379,7 @@ export async function runApplyPreviewByNodes() {
     progress.cancel();
     commitPartialApplyOnError({ mode: 'nodes', c, app, scopes: sectionKeys, sectionResults, err, logs });
     const host = ui.result || ui.status;
-    if (host) {
+    if (host && !isRunCancelledError(err)) {
       const div = (host.ownerDocument || document).createElement('div');
       div.innerHTML = renderHumanizedError(err, 'ノード反映');
       host.appendChild(div);
@@ -2324,7 +2477,8 @@ export async function runApplyPreview() {
     });
     hadError = sectionLoopResult.hadError;
 
-    setStatus('プレビュー反映処理完了');
+    if (sectionLoopResult.cancelled) setStatus(describeCancelledApply('プレビュー反映', sectionResults), true);
+    else setStatus('プレビュー反映処理完了');
     await finalizeApplyResult({
       mode: 'section',
       c,
@@ -2332,6 +2486,7 @@ export async function runApplyPreview() {
       scopes: effectiveScopes,
       sectionResults,
       hadError,
+      cancelled: sectionLoopResult.cancelled,
       logs,
       progress,
       backupFilename,
@@ -2346,7 +2501,7 @@ export async function runApplyPreview() {
     progress.cancel();
     commitPartialApplyOnError({ mode: 'section', c, app, scopes: effectiveScopes, sectionResults, err, logs });
     const host = ui.result || ui.status;
-    if (host) {
+    if (host && !isRunCancelledError(err)) {
       const div = (host.ownerDocument || document).createElement('div');
       div.innerHTML = renderHumanizedError(err, 'プレビュー反映');
       host.appendChild(div);
@@ -2478,6 +2633,7 @@ export async function runRestoreTargetPreviewBackup() {
     });
     hadError = restoreLoopResult.hadError;
     deleteSkips = restoreLoopResult.deleteSkips;
+    const restoreCancelled = restoreLoopResult.cancelled;
     const deleteSkipText = formatDeleteSkipDetails(deleteSkips);
     if (deleteSkipText) {
       logs.push(`復元未完了: 互換モードで削除を見送りました (${deleteSkipText})`);
@@ -2497,18 +2653,20 @@ export async function runRestoreTargetPreviewBackup() {
     });
     renderReflectAssistPanel();
     renderReflectMainPanel();
-    setStatus(deleteSkipText
-      ? `バックアップ復元は一部未完了です（削除未反映: ${deleteSkipText}）`
-      : (hadError ? 'バックアップ復元で一部エラーが発生しました' : '直前バックアップから復元しました'));
+    setStatus(restoreCancelled
+      ? describeCancelledApply('バックアップ復元', sectionResults)
+      : deleteSkipText
+        ? `バックアップ復元は一部未完了です（削除未反映: ${deleteSkipText}）`
+        : (hadError ? 'バックアップ復元で一部エラーが発生しました' : '直前バックアップから復元しました'), restoreCancelled || undefined);
     progress.finish({
-      title: hadError ? 'バックアップ復元 完了（一部エラー）' : 'バックアップ復元 完了',
+      title: restoreCancelled ? 'バックアップ復元 中止' : hadError ? 'バックアップ復元 完了（一部エラー）' : 'バックアップ復元 完了',
       hasError: hadError,
       metrics: [
         { label: '比較先アプリ', value: `#${app}` },
         { label: '復元元', value: restoreFilename },
         { label: '復元セクション', value: `${scopes.length}件` },
         ...(deleteSkipText ? [{ label: '削除未反映', value: deleteSkipText, tone: 'warn' as const }] : []),
-        { label: '結果', value: hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
+        { label: '結果', value: restoreCancelled ? '中止（一部のみ復元の可能性）' : hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
       ],
       hint: [
         deleteSkipText ? `互換モードで削除されなかった対象: ${deleteSkipText}` : '',
@@ -2518,7 +2676,7 @@ export async function runRestoreTargetPreviewBackup() {
   } catch (err) {
     progress.cancel();
     const host = ui.result || ui.status;
-    if (host) {
+    if (host && !isRunCancelledError(err)) {
       const div = (host.ownerDocument || document).createElement('div');
       div.innerHTML = renderHumanizedError(err, 'バックアップ復元');
       host.appendChild(div);
@@ -2619,7 +2777,9 @@ export async function runRetryFailedSections() {
       sectionResults
     });
     hadError = retryLoopResult.hadError;
-    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: failed, logs });
+    const retryCancelled = retryLoopResult.cancelled;
+    if (retryCancelled) logs.push('反映後検証: 中止したため行いません。差分を取得し直して現在の状態を確認してください');
+    else await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: failed, logs });
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: '失敗セクション再反映完了' });
     commitApplyReport({
@@ -2634,14 +2794,15 @@ export async function runRetryFailedSections() {
     });
     renderReflectAssistPanel();
     renderReflectMainPanel();
-    setStatus(hadError ? '失敗セクション再反映: 一部エラーあり' : '失敗セクション再反映: 完了');
+    if (retryCancelled) setStatus(describeCancelledApply('失敗セクション再反映', sectionResults), true);
+    else setStatus(hadError ? '失敗セクション再反映: 一部エラーあり' : '失敗セクション再反映: 完了');
     progress.finish({
-      title: hadError ? '失敗セクション再反映 完了（一部エラー）' : '失敗セクション再反映 完了',
+      title: retryCancelled ? '失敗セクション再反映 中止' : hadError ? '失敗セクション再反映 完了（一部エラー）' : '失敗セクション再反映 完了',
       hasError: hadError,
       metrics: [
         { label: '比較先アプリ', value: `#${app}` },
         { label: '再反映セクション', value: `${failed.length}件` },
-        { label: '結果', value: hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
+        { label: '結果', value: retryCancelled ? '中止（一部のみ反映の可能性）' : hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
       ],
       hint: backupFilename
         ? `バックアップ保存先: ${backupFilename}`
@@ -2650,7 +2811,7 @@ export async function runRetryFailedSections() {
   } catch (err) {
     progress.cancel();
     const host = ui.result || ui.status;
-    if (host) {
+    if (host && !isRunCancelledError(err)) {
       const div = (host.ownerDocument || document).createElement('div');
       div.innerHTML = renderHumanizedError(err, '失敗セクション再反映');
       host.appendChild(div);

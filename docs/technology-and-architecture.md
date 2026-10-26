@@ -42,7 +42,7 @@ flowchart LR
 | 機能ロジック | `src/tabs/` | 設定比較、設計書、ER図、レコード処理などのユースケース |
 | 差分エンジン | `src/diff/` | 正規化、比較、レビュー、HTML / XLSX 出力 |
 | 反映エンジン | `src/reflect/` | 反映計画、事前検査、適用、結果と履歴の集約 |
-| API・共通処理 | `src/api.ts`, `src/utils.ts`, `src/kintone-query.ts` | REST API、ページング、書込ガード、共通変換・ダウンロード |
+| API・共通処理 | `src/api.ts`, `src/runControl.ts`, `src/utils.ts`, `src/kintone-query.ts` | REST API、ページング、書込ガード、中止と応答待ち上限、共通変換・ダウンロード |
 | 共通 UI | `src/entries/litePanelTheme.ts`, `src/ui/` | パネル、部品、スタイル、ダイアログ |
 | 型定義 | `src/types/`, `src/kintone-enums.ts` | kintone、外部グローバル、UI 参照の型 |
 | ビルド | `build.js`, `src/featureDefs.mjs` | エントリ定義、CSS インライン化、IIFE 生成、棚卸し生成 |
