@@ -29,29 +29,33 @@ const CSS = `
 .kus-wf .kus-lp__note{overflow-wrap:anywhere}
 .kus-wf :is(button,input,select,textarea,summary):focus-visible,.kus-wf-nav button:focus-visible{outline:3px solid #2563eb;outline-offset:3px}
 .kus-wf-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px 22px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
-.kus-wf-nav button{font-family:inherit;font-size:12px;font-weight:600;line-height:1.4;border:1px solid #e2e8f0;padding:10px;border-radius:9px;background:#fff;color:#475569;cursor:pointer}
-.kus-wf-nav button[aria-selected=true],.kus-wf-nav button[aria-current=step]{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+.kus-wf-nav button{font-family:inherit;font-size:13.5px;font-weight:600;line-height:1.4;border:2px solid #e2e8f0;padding:9px 10px;border-radius:9px;background:#fff;color:#475569;cursor:pointer;position:relative}
+/* 段階の状態: 現在（濃い青・太字）、済み（緑・左端に印）、これから（灰色） */
+.kus-wf-nav button[aria-selected=true],.kus-wf-nav button[aria-current=step]{background:#1d4ed8;border-color:#1d4ed8;color:#fff;font-weight:700;box-shadow:0 2px 8px rgba(29,78,216,.28)}
+.kus-wf-nav button[data-state=done]{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+.kus-wf-nav button[data-state=done]::before{content:'';position:absolute;left:0;top:0;bottom:0;width:5px;border-radius:7px 0 0 7px;background:#10b981}
+.kus-wf-nav button[data-state=upcoming]{color:#64748b;background:#f8fafc}
 .kus-wf-nav button:disabled{opacity:.5;cursor:not-allowed}
 .kus-wf-canvas{overflow:auto;min-height:0;min-width:0;flex:1;padding:18px 22px;scroll-padding:16px}
 .kus-wf-stage{min-width:0}
-.kus-wf-heading{margin:0 0 4px;font-size:19px;color:#0f172a}
-.kus-wf-intro{margin:0 0 16px;color:#64748b;font-size:12px}
+.kus-wf-heading{margin:0 0 4px;font-size:20px;color:#0f172a}
+.kus-wf-intro{margin:0 0 16px;color:#64748b;font-size:13px}
 .kus-wf-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin-bottom:16px}
-.kus-wf-action{padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:white;cursor:pointer;display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:12px;min-width:0;align-items:start}
+.kus-wf-action{padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:white;cursor:pointer;display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:13px;min-width:0;align-items:start}
 .kus-wf-action:has(input:checked){border-color:#60a5fa;background:#eff6ff}
 .kus-wf-action strong{display:block;color:#0f172a}
 .kus-wf-action small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
-.kus-wf-action em{display:inline-block;font-size:10px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action em{display:inline-block;font-size:11.5px;font-style:normal;color:#9a3412;margin-top:5px}
 .kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
 .kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
 .kus-wf-summary>div:last-child{border:0}
-.kus-wf-summary dt{color:#64748b;font-size:12px}
-.kus-wf-summary dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#0f172a;font-size:13px}
-.kus-wf-notice{padding:12px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;margin:14px 0;color:#1e40af;font-size:12px;overflow-wrap:anywhere;white-space:pre-wrap}
+.kus-wf-summary dt{color:#64748b;font-size:13px}
+.kus-wf-summary dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#0f172a;font-size:14px}
+.kus-wf-notice{padding:12px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;margin:14px 0;color:#1e40af;font-size:13px;overflow-wrap:anywhere;white-space:pre-wrap}
 .kus-wf-notice[data-write=true]{border-color:#fed7aa;background:#fff7ed;color:#9a3412}
 .kus-wf-footer{padding:12px 22px;background:#fff;border-top:1px solid #e2e8f0;flex-shrink:0}
 .kus-wf-footer-row{display:flex;align-items:center;gap:12px}
-.kus-wf-footer-copy{flex:1;min-width:0;font-size:12px;color:#475569;overflow-wrap:anywhere}
+.kus-wf-footer-copy{flex:1;min-width:0;font-size:13px;color:#475569;overflow-wrap:anywhere}
 .kus-wf-footer-buttons{display:flex;gap:8px;flex-shrink:0}
 .kus-wf-footer-buttons button{min-height:42px;max-width:320px}
 .kus-wf-footer .kus-lp__status{margin-top:8px}
@@ -64,7 +68,7 @@ const CSS = `
  .kus-wf .kus-lp__hero{padding:12px 16px}
  .kus-wf .kus-lp__hint{display:none}
  .kus-wf-nav{padding:8px;gap:4px}
- .kus-wf-nav button{padding:9px 3px;font-size:11px}
+ .kus-wf-nav button{padding:9px 3px;font-size:12.5px}
  .kus-wf-canvas{padding:16px}
  .kus-wf .kus-lp__card{padding:12px}
  .kus-wf-actions{grid-template-columns:1fr}
@@ -242,7 +246,7 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
       }
       reviewedSignature = signature();
     }
-    stages.forEach((stage, i) => { stage.hidden = i !== active; tabs[i].setAttribute('aria-selected', String(i === active)); tabs[i].tabIndex = i === active ? 0 : -1; });
+    stages.forEach((stage, i) => { stage.hidden = i !== active; tabs[i].setAttribute('aria-selected', String(i === active)); tabs[i].tabIndex = i === active ? 0 : -1; tabs[i].dataset.state = i === active ? 'current' : i < active ? 'done' : 'upcoming'; });
     canvas.scrollTop = 0;
     tabs[index].focus({ preventScroll: true });
     refresh();
