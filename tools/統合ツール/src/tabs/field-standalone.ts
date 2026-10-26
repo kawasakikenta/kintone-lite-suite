@@ -3,6 +3,8 @@
 import { SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone, kusConfirm } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision } from '../api.js';
+import { isRunCancelledError } from '../runControl.js';
+import { createCancelReport } from './run-cancel-summary.js';
 
 /** アプリID・ゲストIDは数値のみ。URL パスに組み込まれるため、空でも数値でもない値は呼び出し前に止める。 */
 function assertNumericIds(appId: unknown, guestId: unknown, appLabel: string) {
@@ -372,6 +374,11 @@ export async function runFieldApplyStandalone(opts, setStatus) {
       revision = nextRevision;
       logs.push(`OK フィールド追加 ${addCount}件${revision ? ` (revision ${revision})` : ''}`);
     } catch (e) {
+      if (isRunCancelledError(e)) {
+        // 追加のリクエストは送る前に止まっている。更新も未実行であることを件数つきで伝える。
+        logs.push(`未実行（中止） フィールド追加 ${addCount}件${updateCount ? ` / フィールド更新 ${updateCount}件` : ''}`);
+        throw createCancelReport(0, addCount + updateCount, logs);
+      }
       if (!logs.some((l) => l.startsWith('OK フィールド追加'))) {
         logs.push(`NG フィールド追加 ${addCount}件`);
       }
@@ -390,6 +397,10 @@ export async function runFieldApplyStandalone(opts, setStatus) {
       revision = nextRevision;
       logs.push(`OK フィールド更新 ${updateCount}件${revision ? ` (revision ${revision})` : ''}`);
     } catch (e) {
+      if (isRunCancelledError(e)) {
+        logs.push(`未実行（中止） フィールド更新 ${updateCount}件${addCount ? '（追加 ' + addCount + '件は反映済み）' : ''}`);
+        throw createCancelReport(addCount, addCount + updateCount, logs);
+      }
       if (!logs.some((l) => l.startsWith('OK フィールド更新'))) {
         logs.push(`NG フィールド更新 ${updateCount}件${addCount ? '（追加 ' + addCount + '件は反映済み）' : ''}`);
       }

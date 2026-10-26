@@ -822,6 +822,142 @@ ${contextLine}`);
     }
   });
 
+  // src/runControl.ts
+  function beginRun() {
+    const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0 };
+    active = token;
+    return token;
+  }
+  function endRun(token) {
+    if (token && active === token) active = null;
+  }
+  function requestCancel(token) {
+    const target = token || active;
+    if (!target || target.cancelled) return false;
+    target.cancelled = true;
+    target.cancelledAt = Date.now();
+    try {
+      target.controller.abort(new RunCancelledError());
+    } catch {
+    }
+    return true;
+  }
+  function isCancelRequested() {
+    return !!active && active.cancelled;
+  }
+  function activeRun() {
+    return active;
+  }
+  function throwIfCancelled() {
+    if (active && active.cancelled) throw new RunCancelledError();
+  }
+  function activeAbortSignal() {
+    return active ? active.controller.signal : void 0;
+  }
+  function isRunCancelledError(error) {
+    let current = error;
+    for (let depth = 0; current && depth < 4; depth++) {
+      if (current instanceof RunCancelledError || current.cancelled === true || current.name === "RunCancelledError") return true;
+      if (current.name === "AbortError" && isCancelRequested()) return true;
+      current = current.original;
+    }
+    return false;
+  }
+  function sleepUnlessCancelled(ms) {
+    const signal = activeAbortSignal();
+    return new Promise((resolve) => {
+      if (signal?.aborted) {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      function onAbort() {
+        clearTimeout(timer);
+        resolve();
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+  function raceWithCancel(promise, opts = {}) {
+    const signal = activeAbortSignal();
+    const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 0;
+    if (!signal && !timeoutMs) return promise;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let timer = 0;
+      const finish = (fn) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        fn();
+      };
+      function onAbort() {
+        finish(() => reject(new RunCancelledError()));
+      }
+      timer = timeoutMs ? setTimeout(() => finish(() => {
+        const error = new Error(opts.timeoutMessage || `応答待ちが ${Math.round(timeoutMs / 1e3)} 秒を超えました（timeout）`);
+        error.code = "TIMEOUT";
+        reject(error);
+      }), timeoutMs) : 0;
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      promise.then((value) => finish(() => resolve(value)), (error) => finish(() => reject(error)));
+    });
+  }
+  function createRequestSignal(timeoutMs) {
+    const controller = new AbortController();
+    const runSignal = activeAbortSignal();
+    let timedOut = false;
+    const onAbort = () => {
+      try {
+        controller.abort(new RunCancelledError());
+      } catch {
+      }
+    };
+    if (runSignal?.aborted) onAbort();
+    else runSignal?.addEventListener("abort", onAbort, { once: true });
+    const timer = Number(timeoutMs) > 0 ? setTimeout(() => {
+      timedOut = true;
+      const error = new Error(`応答待ちが ${Math.round(Number(timeoutMs) / 1e3)} 秒を超えました（timeout）`);
+      error.code = "TIMEOUT";
+      try {
+        controller.abort(error);
+      } catch {
+      }
+    }, Number(timeoutMs)) : 0;
+    return {
+      signal: controller.signal,
+      release: () => {
+        if (timer) clearTimeout(timer);
+        runSignal?.removeEventListener("abort", onAbort);
+      },
+      timedOut: () => timedOut
+    };
+  }
+  var RUN_CANCELLED_MESSAGE, RunCancelledError, nextId, active;
+  var init_runControl = __esm({
+    "src/runControl.ts"() {
+      "use strict";
+      RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
+      RunCancelledError = class extends Error {
+        constructor(message = RUN_CANCELLED_MESSAGE) {
+          super(message);
+          __publicField(this, "cancelled", true);
+          this.name = "RunCancelledError";
+        }
+      };
+      nextId = 1;
+      active = null;
+    }
+  });
+
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
@@ -871,19 +1007,24 @@ ${contextLine}`);
     apiGetMetrics.calls += 1;
     touchApiPathMetric(path, "calls");
     for (let i = 0; i < retries; i++) {
+      throwIfCancelled();
       try {
-        const res = await kintone.api(`${prefix}${path}`, "GET", params);
+        const res = await raceWithCancel(
+          Promise.resolve(kintone.api(`${prefix}${path}`, "GET", params)),
+          { timeoutMs: API_GET_TIMEOUT_MS }
+        );
         apiGetMetrics.lastLatencyMs = Date.now() - startAt;
         apiGetMetrics.lastError = "";
         return res;
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         err = e;
         const retriable = isRetriableApiError(e);
         if (i < retries - 1 && retriable) {
           apiGetMetrics.retries += 1;
           touchApiPathMetric(path, "retries");
           const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
-          await new Promise((r) => setTimeout(r, waitMs));
+          await sleepUnlessCancelled(waitMs);
           continue;
         }
         break;
@@ -959,12 +1100,22 @@ ${contextLine}`);
     }
     return h.toString(16).padStart(8, "0");
   }
+  function wasCancelled(error, signal) {
+    return isRunCancelledError(error) || isRunCancelledError(signal.reason);
+  }
+  function timeoutDetail(signal, timeoutMs) {
+    const reason = signal.reason;
+    const message = reason instanceof Error ? reason.message : "";
+    return message || `応答待ちが ${Math.round(timeoutMs / 1e3)} 秒を超えました（timeout）`;
+  }
   async function fetchTextFileBody(prefix, fileKey) {
     if (!fileKey) return { ok: false, reason: "error", detail: "fileKey がありません" };
     const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
     const headers = { "X-Requested-With": "XMLHttpRequest" };
+    throwIfCancelled();
+    const request = createRequestSignal(FILE_TEXT_FETCH_TIMEOUT_MS);
     try {
-      const resp = await fetch(url, { method: "GET", headers });
+      const resp = await fetch(url, { method: "GET", headers, signal: request.signal });
       if (!resp.ok) {
         return {
           ok: false,
@@ -994,17 +1145,21 @@ ${contextLine}`);
       }
       return { ok: true, text: await blob.text(), byteSize: blob.size };
     } catch (error) {
+      if (wasCancelled(error, request.signal)) throw new RunCancelledError();
       return {
         ok: false,
         reason: "error",
-        detail: error instanceof Error ? error.message : String(error)
+        detail: request.timedOut() ? timeoutDetail(request.signal, FILE_TEXT_FETCH_TIMEOUT_MS) : error instanceof Error ? error.message : String(error)
       };
+    } finally {
+      request.release();
     }
   }
   async function fetchTextFileBodyWithRetry(prefix, fileKey) {
     let result = await fetchTextFileBody(prefix, fileKey);
     if (result.ok === true) return result;
     if (result.reason === "oversize") return result;
+    throwIfCancelled();
     result = await fetchTextFileBody(prefix, fileKey);
     return result;
   }
@@ -1102,7 +1257,8 @@ ${contextLine}`);
           } else {
             stats.skipped += 1;
           }
-        } catch {
+        } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           stats.failed += 1;
         }
       });
@@ -1136,6 +1292,7 @@ ${contextLine}`);
         const revision = extractSectionRevision(res);
         results[index] = { value: rawSettings ? deepClone(res) : normalizeSettingsSection(res), revision };
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
       completed += 1;
@@ -1163,6 +1320,7 @@ ${contextLine}`);
             setAuxiliaryFetchError(cust, "JS/CSSファイル本文", stats.failed, void 0, stats.failedFiles);
           }
         } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           setAuxiliaryFetchError(cust, "JS/CSSファイル本文", 0, e);
         }
       }
@@ -1176,6 +1334,7 @@ ${contextLine}`);
           const unavailable = stats.failed + stats.skipped;
           if (unavailable > 0) setAuxiliaryFetchError(plug, "プラグイン設定", unavailable);
         } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           setAuxiliaryFetchError(plug, "プラグイン設定", 0, e);
         }
       }
@@ -1191,16 +1350,19 @@ ${contextLine}`);
     const first = Object.values(revisions).find((value) => value != null && value !== "");
     return first != null ? String(first) : "";
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
       init_constants();
       init_kintone_query();
       init_utils();
+      init_runControl();
       DEFAULT_API_GET_RETRIES = 3;
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
+      API_GET_TIMEOUT_MS = 12e4;
+      FILE_TEXT_FETCH_TIMEOUT_MS = 6e4;
       RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
       apiGetMetrics = {
         calls: 0,
@@ -2712,18 +2874,18 @@ ${contextLine}`);
   }
   function getActiveDiffNormalizationConfig(sectionKey, presetState) {
     const stateMap = presetState || getDiffNormalizationPresetState();
-    const active = [];
+    const active2 = [];
     Object.keys(DIFF_NORMALIZATION_PRESETS).forEach((key) => {
       if (!stateMap[key]) return;
       const preset = DIFF_NORMALIZATION_PRESETS[key];
       if (!preset?.sections?.has(sectionKey)) return;
-      active.push(preset);
+      active2.push(preset);
     });
-    if (!active.length) return null;
+    if (!active2.length) return null;
     const ignoreKeys = /* @__PURE__ */ new Set();
     let unorderedArrays = false;
     let ignoreAppReferencePaths = false;
-    active.forEach((preset) => {
+    active2.forEach((preset) => {
       preset.ignoreKeys?.forEach((key) => ignoreKeys.add(normalizeIgnoreToken(key)));
       if (preset.unorderedArrays) unorderedArrays = true;
       if (preset.ignoreAppReferencePaths) ignoreAppReferencePaths = true;
@@ -12283,6 +12445,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 
   // src/entries/litePanelTheme.ts
   init_dialog();
+  init_runControl();
   init_utils();
   var STYLE_ID = "kus-lp-theme-styles";
   var ACCENTS = {
@@ -12377,6 +12540,9 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   content:'';display:inline-block;width:9px;height:9px;border-radius:50%;
   border:2px solid rgba(255,255,255,.85);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
 }
+.kus-lp__elapsed--done{font-weight:500;color:rgba(255,255,255,.8)}
+/* 完了後の「前回 …」表示ではスピナーを出さない */
+.kus-lp__elapsed--done::before{display:none;animation:none}
 /* 実行中の進捗ストリップ（ヒーロー下端） */
 .kus-lp__progress{position:absolute;left:0;right:0;bottom:0;height:3px;overflow:hidden;background:rgba(255,255,255,.22);display:none;z-index:1}
 .kus-lp[aria-busy="true"] .kus-lp__progress{display:block}
@@ -12390,15 +12556,17 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close,.kus-lp__toggle{
+.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
   font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
 .kus-lp__toggle{padding:6px 9px;min-width:34px}
+.kus-lp__cancel{background:rgba(254,202,202,.30);border-color:rgba(254,226,226,.85)}
 .kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
-.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__cancel:hover{background:rgba(254,202,202,.48)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled,.kus-lp__cancel:disabled{opacity:.55;cursor:not-allowed}
 
 /* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
 .kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
@@ -12557,14 +12725,14 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   border:1px solid #1e293b;
 }
 .kus-lp__result--empty{display:none}
-/* ログ右上に貼り付くコピー操作（ログ本文の選択・スクロールを妨げない） */
-.kus-lp__result-copy{
-  float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;
+/* ログ右上に貼り付くコピー／保存操作（ログ本文の選択・スクロールを妨げない） */
+.kus-lp__result-tools{float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;display:flex;gap:4px}
+.kus-lp__result-copy,.kus-lp__result-save{
   padding:3px 8px;font:600 10.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
   color:#cbd5e1;background:rgba(30,41,59,.92);border:1px solid #334155;border-radius:7px;cursor:pointer;white-space:nowrap;
 }
-.kus-lp__result-copy:hover{color:#fff;background:#334155}
-.kus-lp__result-copy[data-copied="true"]{color:#bbf7d0;border-color:#166534}
+.kus-lp__result-copy:hover,.kus-lp__result-save:hover{color:#fff;background:#334155}
+.kus-lp__result-copy[data-copied="true"],.kus-lp__result-save[data-copied="true"]{color:#bbf7d0;border-color:#166534}
 .kus-lp__panel-html{
   margin-top:10px;border:1px solid var(--c-border);border-radius:10px;
   background:var(--c-surface);max-height:240px;overflow:auto;font-size:11.5px;
@@ -12683,6 +12851,12 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
+    let carriedPosition = null;
+    if (old instanceof HTMLElement && old.dataset.kusPlaced === "1") {
+      const left = parseFloat(old.style.left);
+      const top = parseFloat(old.style.top);
+      if (Number.isFinite(left) && Number.isFinite(top)) carriedPosition = { left, top };
+    }
     if (old) {
       old.dispatchEvent(new Event("kus-lite-dispose"));
       old.remove();
@@ -12729,6 +12903,13 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     elapsedEl.className = "kus-lp__elapsed";
     elapsedEl.setAttribute("aria-hidden", "true");
     elapsedEl.hidden = true;
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "kus-lp__cancel";
+    cancelBtn.textContent = "中止";
+    cancelBtn.setAttribute("aria-label", "処理を中止");
+    cancelBtn.title = "次のリクエストの前で処理を止めます（途中まで実行した内容は取り消しません）";
+    cancelBtn.hidden = true;
     const bodyId = `${opts.id}-body`;
     const toggleBtn = document.createElement("button");
     toggleBtn.type = "button";
@@ -12741,6 +12922,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const heroActions = document.createElement("div");
     heroActions.className = "kus-lp__hero-actions";
     heroActions.appendChild(elapsedEl);
+    heroActions.appendChild(cancelBtn);
     heroActions.appendChild(toggleBtn);
     heroActions.appendChild(closeBtn);
     const progress = document.createElement("div");
@@ -12785,10 +12967,20 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     copyBtn.className = "kus-lp__result-copy";
     copyBtn.textContent = "コピー";
     copyBtn.setAttribute("aria-label", "ログをコピー");
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "kus-lp__result-save";
+    saveBtn.textContent = "保存";
+    saveBtn.setAttribute("aria-label", "ログをファイルに保存");
+    const resultTools = document.createElement("span");
+    resultTools.className = "kus-lp__result-tools";
+    resultTools.appendChild(copyBtn);
+    resultTools.appendChild(saveBtn);
     let copyResetTimer = 0;
+    let saveResetTimer = 0;
     function resultText() {
       const clone = result.cloneNode(true);
-      clone.querySelector(".kus-lp__result-copy")?.remove();
+      clone.querySelector(".kus-lp__result-tools")?.remove();
       return (clone.innerText || clone.textContent || "").replace(/^\s+|\s+$/g, "");
     }
     function flashCopy(label, copied) {
@@ -12800,10 +12992,29 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
         delete copyBtn.dataset.copied;
       }, 1600);
     }
+    function flashSave(label, saved) {
+      saveBtn.textContent = label;
+      saveBtn.dataset.copied = String(saved);
+      window.clearTimeout(saveResetTimer);
+      saveResetTimer = window.setTimeout(() => {
+        saveBtn.textContent = "保存";
+        delete saveBtn.dataset.copied;
+      }, 1600);
+    }
     copyBtn.addEventListener("click", () => {
       const text2 = resultText();
       if (!text2) return;
       void copyTextToClipboard(text2).then((ok) => flashCopy(ok ? "コピー済み" : "コピー失敗", ok));
+    });
+    saveBtn.addEventListener("click", () => {
+      const text2 = resultText();
+      if (!text2) return;
+      try {
+        downloadText(`${sanitizeFilenamePart(opts.title)}_ログ_${nowStamp()}.txt`, text2, "text/plain;charset=utf-8");
+        flashSave("保存済み", true);
+      } catch {
+        flashSave("保存失敗", false);
+      }
     });
     function setResult(text2) {
       if (!text2) {
@@ -12812,7 +13023,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
         return;
       }
       result.textContent = text2;
-      result.prepend(copyBtn);
+      result.prepend(resultTools);
       result.classList.remove("kus-lp__result--empty");
     }
     function setResultHtml(html) {
@@ -12822,7 +13033,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
         return;
       }
       result.innerHTML = html;
-      result.prepend(copyBtn);
+      result.prepend(resultTools);
       result.classList.remove("kus-lp__result--empty");
     }
     let busyTimer = 0;
@@ -12836,25 +13047,65 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     function tickElapsed() {
       elapsedEl.textContent = `処理中 ${formatElapsed(Date.now() - busyStartedAt)}`;
     }
-    function stopElapsed() {
+    function startElapsed() {
+      busyStartedAt = Date.now();
+      elapsedEl.classList.remove("kus-lp__elapsed--done");
+      tickElapsed();
+      elapsedEl.hidden = false;
+      busyTimer = window.setInterval(tickElapsed, 1e3);
+    }
+    function stopElapsed(keepLast) {
+      const wasRunning = !!busyTimer;
       if (busyTimer) window.clearInterval(busyTimer);
       busyTimer = 0;
-      elapsedEl.hidden = true;
-      elapsedEl.textContent = "";
+      if (keepLast && wasRunning) {
+        elapsedEl.classList.add("kus-lp__elapsed--done");
+        elapsedEl.textContent = `前回 ${formatElapsed(Date.now() - busyStartedAt)}`;
+        elapsedEl.hidden = false;
+      } else if (!keepLast) {
+        elapsedEl.classList.remove("kus-lp__elapsed--done");
+        elapsedEl.hidden = true;
+        elapsedEl.textContent = "";
+      }
     }
+    let runToken = null;
+    function requestCancel2() {
+      if (!runToken) return false;
+      const accepted = requestCancel(runToken);
+      if (accepted) {
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = "中止中…";
+        handle.setStatus("中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…", "busy");
+      }
+      return accepted;
+    }
+    function isCancelRequested2() {
+      return !!runToken && runToken.cancelled;
+    }
+    cancelBtn.addEventListener("click", () => {
+      requestCancel2();
+    });
     function setBusy(busy) {
       closeBtn.disabled = busy;
       root2.setAttribute("aria-busy", String(busy));
       root2.style.cursor = busy ? "progress" : "";
       if (busy) {
-        if (!busyTimer) {
-          busyStartedAt = Date.now();
-          tickElapsed();
-          elapsedEl.hidden = false;
-          busyTimer = window.setInterval(tickElapsed, 1e3);
+        if (!runToken) {
+          runToken = beginRun();
+          cancelBtn.textContent = "中止";
+          cancelBtn.disabled = false;
+        } else if (!runToken.cancelled) {
+          cancelBtn.disabled = false;
         }
+        cancelBtn.hidden = false;
+        if (!busyTimer) startElapsed();
       } else {
-        stopElapsed();
+        endRun(runToken);
+        runToken = null;
+        cancelBtn.hidden = true;
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = "中止";
+        stopElapsed(true);
       }
       root2.dispatchEvent(new Event("kus-lite-busy-change"));
     }
@@ -12884,9 +13135,11 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       root2.style.top = `${Math.round(nextTop)}px`;
       root2.style.right = "auto";
       customPlaced = true;
+      root2.dataset.kusPlaced = "1";
     }
     function resetPosition() {
       customPlaced = false;
+      delete root2.dataset.kusPlaced;
       root2.style.left = "";
       root2.style.top = "";
       root2.style.right = "";
@@ -12933,11 +13186,15 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     });
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
+    if (carriedPosition) place(carriedPosition.left, carriedPosition.top);
     function dispose() {
       document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
-      stopElapsed();
+      stopElapsed(false);
+      endRun(runToken);
+      runToken = null;
       window.clearTimeout(copyResetTimer);
+      window.clearTimeout(saveResetTimer);
     }
     function close() {
       if (closeBtn.disabled) return;
@@ -12995,7 +13252,8 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
+    const handle = { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel: requestCancel2, isCancelRequested: isCancelRequested2 };
+    return handle;
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
@@ -13140,6 +13398,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   async function liteRun(panel, busyMsg, fn, okMsg) {
     panel.setStatus(busyMsg, "busy");
     panel.setBusy(true);
+    const token = activeRun();
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
@@ -13152,11 +13411,26 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       } else if (tone === "busy") {
         panel.setStatus(currentText || "完了", "ok");
       }
+      if (token?.cancelled && !cancelled && panel.status.dataset.tone !== "err") {
+        let base = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        if (/^中止しています/.test(base)) base = okMsg || "処理が終わりました";
+        panel.setStatus(/中止/.test(base) ? base : `${base}（中止を要求したため、途中で止めた項目があるかもしれません。結果を確認してください）`, "warn");
+      }
       return out;
     } catch (e) {
+      if (isRunCancelledError(e)) {
+        panel.setStatus("中止しました。次のリクエストの前で止めました。途中まで実行した内容は取り消していません。", "warn");
+        return void 0;
+      }
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
+      if (token?.cancelled) {
+        const headline = /^中止しました/.test(first) ? first : `中止しました: ${first}`;
+        panel.setStatus(`${headline}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
       panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
       if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
@@ -20183,6 +20457,9 @@ ${fence}`;
     return details;
   }
 
+  // src/entries/diff-lite-ui.ts
+  init_runControl();
+
   // src/reflect/appReference.ts
   function parseAppReference(text2) {
     const raw = String(text2 || "").trim();
@@ -20198,6 +20475,7 @@ ${fence}`;
   }
 
   // src/diff/batch-comparison.ts
+  init_runControl();
   var DEFAULT_MAX_DIFF_BATCH_PAIRS = 50;
   function text(value) {
     return String(value ?? "").trim();
@@ -20350,6 +20628,10 @@ ${fence}`;
       const pair = pairs[index];
       const sourceKey = buildDiffBatchEndpointKey(pair.source);
       const targetKey = buildDiffBatchEndpointKey(pair.target);
+      if (isCancelRequested()) {
+        for (let rest = index; rest < pairs.length; rest += 1) results.push({ status: "cancelled", pair: pairs[rest], index: rest, started: false });
+        break;
+      }
       onProgress?.(pair, index, pairs.length);
       try {
         const value = await runPair(pair, {
@@ -20363,6 +20645,13 @@ ${fence}`;
         if (value?.targetBundle != null) bundleCache.set(targetKey, value.targetBundle);
         results.push({ status: "fulfilled", pair, index, value });
       } catch (error) {
+        if (isRunCancelledError(error)) {
+          results.push({ status: "cancelled", pair, index, started: true, error });
+          for (let rest = index + 1; rest < pairs.length; rest += 1) {
+            results.push({ status: "cancelled", pair: pairs[rest], index: rest, started: false });
+          }
+          break;
+        }
         results.push({ status: "rejected", pair, index, error });
       }
     }
@@ -22527,25 +22816,25 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       pairFolderApplied = false;
     };
     const refreshPairFolderControlState = () => {
-      const active = pairFolderModeActive();
+      const active2 = pairFolderModeActive();
       const loading = pairFolderLoadActive();
-      addPairBtn.disabled = active;
-      pairBulkTextarea.disabled = active;
-      pairBulkApply.disabled = active;
+      addPairBtn.disabled = active2;
+      pairBulkTextarea.disabled = active2;
+      pairBulkApply.disabled = active2;
       runBtn.disabled = loading || diffRunActive || profileIoActive || jsonImporter.isLoading();
       runAllBtn.disabled = loading || diffRunActive || profileIoActive || jsonImporter.isLoading();
       runPairsBtn.disabled = loading || diffRunActive || profileIoActive || jsonImporter.isLoading();
       pairRows.forEach((entry) => {
-        entry.duplicate.disabled = active;
-        entry.swap.disabled = active;
-        entry.remove.disabled = active || pairRows.length === 1;
-        entry.duplicate.title = active ? "フォルダ比較中は対応確認表からペアを作り直してください" : "";
-        entry.swap.title = active ? "フォルダ比較中は比較元・比較先フォルダを入れ替えてください" : "";
-        entry.remove.title = active ? "フォルダ比較中は対応確認表で対象チェックを外して再反映してください" : "";
+        entry.duplicate.disabled = active2;
+        entry.swap.disabled = active2;
+        entry.remove.disabled = active2 || pairRows.length === 1;
+        entry.duplicate.title = active2 ? "フォルダ比較中は対応確認表からペアを作り直してください" : "";
+        entry.swap.title = active2 ? "フォルダ比較中は比較元・比較先フォルダを入れ替えてください" : "";
+        entry.remove.title = active2 ? "フォルダ比較中は対応確認表で対象チェックを外して再反映してください" : "";
         [entry.source, entry.target].forEach((endpoint) => {
-          endpoint.app.readOnly = active || !!endpoint.folderBundle;
-          endpoint.guest.readOnly = active || !!endpoint.folderBundle;
-          endpoint.preview.checkbox.disabled = active || !!endpoint.folderBundle;
+          endpoint.app.readOnly = active2 || !!endpoint.folderBundle;
+          endpoint.guest.readOnly = active2 || !!endpoint.folderBundle;
+          endpoint.preview.checkbox.disabled = active2 || !!endpoint.folderBundle;
         });
       });
     };
@@ -24215,9 +24504,17 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         let succeeded = 0;
         let failed = 0;
         let incomplete = 0;
+        let cancelledPairs = 0;
         results.forEach((result) => {
           const sourceEnv = `${result.pair.source.guestId ? `ゲスト ${result.pair.source.guestId}` : "通常スペース"} / ${result.pair.source.preview ? "プレビュー" : "運用"}`;
           const targetEnv = `${result.pair.target.guestId ? `ゲスト ${result.pair.target.guestId}` : "通常スペース"} / ${result.pair.target.preview ? "プレビュー" : "運用"}`;
+          if (result.status === "cancelled") {
+            cancelledPairs += 1;
+            const sourceLabel2 = result.pair.source.appName ? `${result.pair.source.appName}（App ${result.pair.source.appId}）` : `App ${result.pair.source.appId}`;
+            const targetLabel2 = result.pair.target.appName ? `${result.pair.target.appName}（App ${result.pair.target.appId}）` : `App ${result.pair.target.appId}`;
+            resultRows.push(`<tr><td>${result.pair.rowNumber}</td><td>${esc(sourceLabel2)}<br><small>${esc(sourceEnv)}</small></td><td>${esc(targetLabel2)}<br><small>${esc(targetEnv)}</small></td><td class="kus-dl-multi__warn">未実行（中止）<br><small>${result.started ? "取得の途中で中止しました" : "中止により比較していません"}</small></td><td>—</td><td>—</td><td>—</td></tr>`);
+            return;
+          }
           if (result.status === "rejected") {
             failed += 1;
             const errorMessage = result.error?.message || String(result.error);
@@ -24270,6 +24567,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         reviewEmpty.style.display = "none";
         resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="ペア一括比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi kus-dl-multi--pairs"><caption>ペア一括比較の結果（登録順）</caption><thead><tr><th>No.</th><th>比較元<br><small>変更前</small></th><th>比較先<br><small>変更後</small></th><th>状態</th><th>差分内訳</th><th>確認事項<br><small>不完全な理由</small></th><th>保存</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
         const note = [failed ? `失敗 ${failed}件` : "", incomplete ? `要確認 ${incomplete}件` : ""].filter(Boolean).join(" / ");
+        if (cancelledPairs) {
+          panel.setStatus(`中止しました（${succeeded}/${prepared.pairs.length} 件を比較、残り ${cancelledPairs} 件は未実行）${note ? ` / ${note}` : ""}。比較できた分はExcelなどを各行または一括ボタンから保存できます`, "warn");
+          return;
+        }
         panel.setStatus(`ペア一括比較が完了: 成功 ${succeeded}/${prepared.pairs.length}件${note ? ` / ${note}` : ""}。Excelは各行または一括ボタンから保存できます`, failed || incomplete ? "warn" : "ok");
       });
     });
@@ -24324,8 +24625,21 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         let failed = 0;
         let exportFailed = 0;
         let incomplete = 0;
+        let cancelledTargets = 0;
+        const markCancelledTargets = (from, interruptedAt) => {
+          for (let j = from; j < targets.length; j += 1) {
+            const rest = targets[j];
+            const restLabel = rest.appName ? `${rest.appName}（App ${rest.appId}）` : `App ${rest.appId}`;
+            resultRows.push(`<tr><td>${esc(restLabel)}</td><td class="kus-dl-multi__warn">未実行（中止）<br><small>${j === interruptedAt ? "取得の途中で中止しました" : "中止により比較していません"}</small></td><td colspan="6">—</td><td>—</td></tr>`);
+          }
+          cancelledTargets = targets.length - from;
+        };
         for (let i = 0; i < targets.length; i += 1) {
           const t = targets[i];
+          if (isCancelRequested()) {
+            markCancelledTargets(i, -1);
+            break;
+          }
           panel.setStatus(`比較中 (${i + 1}/${targets.length}) App:${t.appId}${t.guestId ? ` / Guest:${t.guestId}` : ""}`, "busy");
           try {
             const out = await runDiffStandalone2({
@@ -24399,6 +24713,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
             }) - 1;
             resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : "通常スペース")} / ${t.preview ? "プレビュー" : "運用"}</small></td><td class="${needsReview || exportNote ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${exportNote ? "出力失敗" : needsReview ? "要確認" : "完了"}${esc(exportNote)}</td><td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ""}${multiNoticeCount ? ` / 注意 ${multiNoticeCount}` : ""}</td><td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${targetLabel}のHTMLを保存`)}">HTML保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${targetLabel}のExcelを保存`)}">Excel保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${targetLabel}のAI向けMarkdownを保存`)}">AI向けMD保存</button></span></td></tr>`);
           } catch (e) {
+            if (isRunCancelledError(e)) {
+              markCancelledTargets(i, i);
+              break;
+            }
             failed += 1;
             const targetLabel = t.appName ? `${t.appName}（App ${t.appId}）` : `App ${t.appId}`;
             resultRows.push(`<tr><td>${esc(targetLabel)}</td><td class="kus-dl-multi__warn">失敗: ${esc(e?.message || String(e))}</td><td colspan="6">—</td><td>—</td></tr>`);
@@ -24407,9 +24725,13 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         cardResult.card.style.display = "";
         reviewEmpty.style.display = "none";
         resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>保存</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
-        const tone = failed || exportFailed || incomplete || autoExportHtml && exported !== targets.length ? "warn" : "ok";
+        const tone = failed || exportFailed || incomplete || cancelledTargets || autoExportHtml && exported !== targets.length ? "warn" : "ok";
         const note = [failed ? `比較失敗 ${failed}件` : "", exportFailed ? `HTML出力失敗 ${exportFailed}件` : "", incomplete ? `要確認 ${incomplete}件` : ""].filter(Boolean).join(" / ");
         const exportSummary = autoExportHtml ? `HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）` : `成功 ${succeeded}/${targets.length}件（HTML自動保存オフ）`;
+        if (cancelledTargets) {
+          panel.setStatus(`中止しました（${succeeded}/${targets.length} 件を比較、残り ${cancelledTargets} 件は未実行）${note ? ` / ${note}` : ""}。${exportSummary}。比較できた分は各行または一括ボタンから保存できます`, "warn");
+          return;
+        }
         panel.setStatus(`全比較先の比較が完了: ${exportSummary}${note ? ` / ${note}` : ""}。HTML/Excel/Markdownは各行または一括ボタンから保存できます`, tone);
       });
     });

@@ -39,6 +39,7 @@ import {
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
 import { readSettingsBundleFile } from '../settingsBundleImport.js';
+import { isCancelRequested, isRunCancelledError } from '../runControl.js';
 import { needsAppReferenceParse, parseAppReference } from '../reflect/appReference.js';
 import {
   DEFAULT_MAX_DIFF_BATCH_PAIRS,
@@ -3957,9 +3958,18 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       let succeeded = 0;
       let failed = 0;
       let incomplete = 0;
+      let cancelledPairs = 0;
       results.forEach((result) => {
         const sourceEnv = `${result.pair.source.guestId ? `ゲスト ${result.pair.source.guestId}` : '通常スペース'} / ${result.pair.source.preview ? 'プレビュー' : '運用'}`;
         const targetEnv = `${result.pair.target.guestId ? `ゲスト ${result.pair.target.guestId}` : '通常スペース'} / ${result.pair.target.preview ? 'プレビュー' : '運用'}`;
+        if (result.status === 'cancelled') {
+          // 利用者の中止。失敗とは数えず、比較していないペアとして残す。
+          cancelledPairs += 1;
+          const sourceLabel = result.pair.source.appName ? `${result.pair.source.appName}（App ${result.pair.source.appId}）` : `App ${result.pair.source.appId}`;
+          const targetLabel = result.pair.target.appName ? `${result.pair.target.appName}（App ${result.pair.target.appId}）` : `App ${result.pair.target.appId}`;
+          resultRows.push(`<tr><td>${result.pair.rowNumber}</td><td>${esc(sourceLabel)}<br><small>${esc(sourceEnv)}</small></td><td>${esc(targetLabel)}<br><small>${esc(targetEnv)}</small></td><td class="kus-dl-multi__warn">未実行（中止）<br><small>${result.started ? '取得の途中で中止しました' : '中止により比較していません'}</small></td><td>—</td><td>—</td><td>—</td></tr>`);
+          return;
+        }
         if (result.status === 'rejected') {
           failed += 1;
           const errorMessage = (result.error as any)?.message || String(result.error);
@@ -4020,6 +4030,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       reviewEmpty.style.display = 'none';
       resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="ペア一括比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi kus-dl-multi--pairs"><caption>ペア一括比較の結果（登録順）</caption><thead><tr><th>No.</th><th>比較元<br><small>変更前</small></th><th>比較先<br><small>変更後</small></th><th>状態</th><th>差分内訳</th><th>確認事項<br><small>不完全な理由</small></th><th>保存</th></tr></thead><tbody>${resultRows.join('')}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
       const note = [failed ? `失敗 ${failed}件` : '', incomplete ? `要確認 ${incomplete}件` : ''].filter(Boolean).join(' / ');
+      if (cancelledPairs) {
+        panel.setStatus(`中止しました（${succeeded}/${prepared.pairs.length} 件を比較、残り ${cancelledPairs} 件は未実行）${note ? ` / ${note}` : ''}。比較できた分はExcelなどを各行または一括ボタンから保存できます`, 'warn');
+        return;
+      }
       panel.setStatus(`ペア一括比較が完了: 成功 ${succeeded}/${prepared.pairs.length}件${note ? ` / ${note}` : ''}。Excelは各行または一括ボタンから保存できます`, failed || incomplete ? 'warn' : 'ok');
     });
   });
@@ -4075,8 +4089,19 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       let failed = 0;
       let exportFailed = 0;
       let incomplete = 0;
+      let cancelledTargets = 0;
+      // 中止された比較先（i 以降すべて）を「未実行（中止）」の行として残す。
+      const markCancelledTargets = (from: number, interruptedAt: number) => {
+        for (let j = from; j < targets.length; j += 1) {
+          const rest = targets[j];
+          const restLabel = rest.appName ? `${rest.appName}（App ${rest.appId}）` : `App ${rest.appId}`;
+          resultRows.push(`<tr><td>${esc(restLabel)}</td><td class="kus-dl-multi__warn">未実行（中止）<br><small>${j === interruptedAt ? '取得の途中で中止しました' : '中止により比較していません'}</small></td><td colspan="6">—</td><td>—</td></tr>`);
+        }
+        cancelledTargets = targets.length - from;
+      };
       for (let i = 0; i < targets.length; i += 1) {
         const t = targets[i];
+        if (isCancelRequested()) { markCancelledTargets(i, -1); break; }
         panel.setStatus(`比較中 (${i + 1}/${targets.length}) App:${t.appId}${t.guestId ? ` / Guest:${t.guestId}` : ''}`, 'busy');
         try {
           const out = await runDiffStandalone({
@@ -4155,6 +4180,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
             `<td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ''}${multiNoticeCount ? ` / 注意 ${multiNoticeCount}` : ''}</td>` +
             `<td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${targetLabel}のHTMLを保存`)}">HTML保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${targetLabel}のExcelを保存`)}">Excel保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${targetLabel}のAI向けMarkdownを保存`)}">AI向けMD保存</button></span></td></tr>`);
         } catch (e: any) {
+          if (isRunCancelledError(e)) {
+            // 利用者の中止。この比較先を失敗とは数えず、以降の比較先は取得しない。
+            markCancelledTargets(i, i);
+            break;
+          }
           failed += 1;
           const targetLabel = t.appName ? `${t.appName}（App ${t.appId}）` : `App ${t.appId}`;
           resultRows.push(`<tr><td>${esc(targetLabel)}</td><td class="kus-dl-multi__warn">失敗: ${esc(e?.message || String(e))}</td><td colspan="6">—</td><td>—</td></tr>`);
@@ -4163,11 +4193,15 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       cardResult.card.style.display = '';
       reviewEmpty.style.display = 'none';
       resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>保存</th></tr></thead><tbody>${resultRows.join('')}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
-      const tone = failed || exportFailed || incomplete || (autoExportHtml && exported !== targets.length) ? 'warn' : 'ok';
+      const tone = failed || exportFailed || incomplete || cancelledTargets || (autoExportHtml && exported !== targets.length) ? 'warn' : 'ok';
       const note = [failed ? `比較失敗 ${failed}件` : '', exportFailed ? `HTML出力失敗 ${exportFailed}件` : '', incomplete ? `要確認 ${incomplete}件` : ''].filter(Boolean).join(' / ');
       const exportSummary = autoExportHtml
         ? `HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）`
         : `成功 ${succeeded}/${targets.length}件（HTML自動保存オフ）`;
+      if (cancelledTargets) {
+        panel.setStatus(`中止しました（${succeeded}/${targets.length} 件を比較、残り ${cancelledTargets} 件は未実行）${note ? ` / ${note}` : ''}。${exportSummary}。比較できた分は各行または一括ボタンから保存できます`, 'warn');
+        return;
+      }
       panel.setStatus(`全比較先の比較が完了: ${exportSummary}${note ? ` / ${note}` : ''}。HTML/Excel/Markdownは各行または一括ボタンから保存できます`, tone);
     });
   });

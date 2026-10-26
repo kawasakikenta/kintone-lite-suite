@@ -3,6 +3,8 @@
 import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel, sanitizeFilenamePart } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle, fetchRecordsByQuery, isRevisionConflictError } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
+import { RunCancelledError, activeAbortSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
+import { createCancelReport, describeInnerCancel, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
 import {
   sanitizeZipSegment,
   uniqueZipName,
@@ -59,6 +61,16 @@ export async function runRecordAppBatchStandalone(
       if (result && result.warning) warnings.push(`App ${appId}: ${result.warning}`);
       if (result && result.cancelled) cancelled.push(`App ${appId}`);
     } catch (error: any) {
+      if (isCancelStop(error)) {
+        // 1 回の中止を残りのアプリ数ぶんの失敗にしない。ここで止め、処理済み・失敗・未実行を分けて伝える。
+        throw createCancelReport(i, appIds.length, [
+          ...describeInnerCancel(`App ${appId}`, error),
+          ...failures.map((failure) => `失敗 ${failure}`),
+          ...warnings.map((warning) => `警告 ${warning}`),
+          ...cancelled.map((target) => `確認でキャンセルしたため実行していません: ${target}`),
+          `未実行（中止）: ${appIds.slice(i).map((id) => `App ${id}`).join(', ')}`
+        ]);
+      }
       failures.push(`App ${appId}: ${error?.message || String(error)}`);
     }
   }
@@ -91,8 +103,11 @@ async function downloadFileBlob(prefix: string, fileKey: string): Promise<FileFe
   const headers = { 'X-Requested-With': 'XMLHttpRequest' };
   let lastReason = '';
   for (let attempt = 0; attempt < 2; attempt++) {
+    // 中止は取得失敗として記録せず、呼び出し側のループを止める。
+    throwIfCancelled();
     try {
-      const resp = await fetch(url, { method: 'GET', headers });
+      const signal = activeAbortSignal();
+      const resp = await fetch(url, { method: 'GET', headers, ...(signal ? { signal } : {}) });
       if (resp.status === 403) return { ok: false, reason: '閲覧権限なし (HTTP 403)' };
       if (!resp.ok) {
         lastReason = `HTTP ${resp.status}`;
@@ -100,9 +115,10 @@ async function downloadFileBlob(prefix: string, fileKey: string): Promise<FileFe
         return { ok: true, blob: await resp.blob() };
       }
     } catch (e: any) {
+      if (isRunCancelledError(e)) throw e instanceof RunCancelledError ? e : new RunCancelledError();
       lastReason = e?.message || String(e);
     }
-    if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
+    if (attempt === 0) await sleepUnlessCancelled(500);
   }
   return { ok: false, reason: lastReason || '取得失敗' };
 }
@@ -309,6 +325,8 @@ export async function runCsvExportBatchStandalone(opts, setStatus): Promise<CsvE
   const successes: string[] = [];
   const failures: string[] = [];
   const tableWarnings: string[] = [];
+  /** 中止で止めたアプリの位置。-1 は最後まで実行した。 */
+  let stoppedAt = -1;
 
   for (let i = 0; i < apps.length; i++) {
     const app = apps[i];
@@ -332,8 +350,19 @@ export async function runCsvExportBatchStandalone(opts, setStatus): Promise<CsvE
       successes.push(`${folder}/: App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ''} / ${result.recordCount}件 / テーブル ${result.csv.tables.length}件${result.csv.warnings.length ? ` / 未取得 ${result.csv.warnings.length}件（フォルダ内manifest.json参照）` : ''}`);
     } catch (error: any) {
       if (folder) zip.remove(folder);
+      if (isCancelStop(error)) { stoppedAt = i; break; }
       failures.push(`App ${app.appId}${app.guestId ? ` / Guest ${app.guestId}` : ''}: ${error?.message || String(error)}`);
     }
+  }
+  const notRun = stoppedAt >= 0
+    ? apps.slice(stoppedAt).map((app) => `App ${app.appId}${app.guestId ? ` / Guest ${app.guestId}` : ''}`)
+    : [];
+  if (stoppedAt >= 0 && !successes.length) {
+    throw createCancelReport(stoppedAt, apps.length, [
+      ...failures.map((failure) => `失敗 ${failure}`),
+      `未実行（中止）: ${notRun.join(', ')}`,
+      'ZIP は保存していません'
+    ]);
   }
   if (failures.length === apps.length) {
     throw new Error(`すべてのアプリで CSV 出力に失敗しました\n${failures.join('\n')}`);
@@ -342,7 +371,8 @@ export async function runCsvExportBatchStandalone(opts, setStatus): Promise<CsvE
   const manifest = [
     'kintone CSV 一括出力マニフェスト',
     `出力日時: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`,
-    `対象アプリ数: ${apps.length}（成功 ${successes.length} / 失敗 ${failures.length}）`,
+    `対象アプリ数: ${apps.length}（成功 ${successes.length} / 失敗 ${failures.length}${notRun.length ? ` / 未実行（中止） ${notRun.length}` : ''}）`,
+    ...(notRun.length ? ['', '利用者の操作で中止したため、一部のアプリは出力していません。'] : []),
     `総レコード数: ${totalRecords}`,
     `未取得のテーブル: ${warningCount}件`,
     `共通クエリ: ${query || '(なし)'}`,
@@ -351,17 +381,23 @@ export async function runCsvExportBatchStandalone(opts, setStatus): Promise<CsvE
     '明細CSVの $id を同じフォルダの親 records.csv の $id に紐付けてください。',
     '',
     ...successes,
-    ...(failures.length ? ['', '失敗:', ...failures] : [])
+    ...(failures.length ? ['', '失敗:', ...failures] : []),
+    ...(notRun.length ? ['', '未実行（中止）:', ...notRun.map((target) => `${target}: 未実行（中止）`)] : [])
   ].join('\n');
   zip.file('manifest.txt', manifest);
 
   setStatus(`ZIP生成中... (${successes.length}アプリ / ${totalRecords}件)`);
   const blob = await zip.generateAsync({ type: 'blob' });
   downloadBlob(recordExportFilename(filename, 'zip', buildExportFilename('CSV出力', 'zip')), blob);
-  const issues = [failures.length ? `失敗 ${failures.length}アプリ` : '', warningCount ? `未取得のテーブル ${warningCount}件` : ''].filter(Boolean);
+  const issues = [
+    notRun.length ? `未実行（中止） ${notRun.length}アプリ` : '',
+    failures.length ? `失敗 ${failures.length}アプリ` : '',
+    warningCount ? `未取得のテーブル ${warningCount}件` : ''
+  ].filter(Boolean);
   const issueNote = issues.length ? `（${issues.join(' / ')}、詳細は manifest.txt）` : '';
-  setStatus(`CSV一括出力完了${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
-  return { issues: [...failures.map((failure) => `失敗 ${failure}`), ...tableWarnings] };
+  const cancelNote = notRun.length ? `${formatCancelledHeadline(stoppedAt, apps.length)}。処理済みの分だけを保存しました。` : '';
+  setStatus(`${cancelNote}CSV一括出力${notRun.length ? '（一部）' : '完了'}${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
+  return { issues: [...notRun.map((target) => `未実行（中止） ${target}`), ...failures.map((failure) => `失敗 ${failure}`), ...tableWarnings] };
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +431,16 @@ async function inspectCsvImportBatch(opts, setStatus) {
       const response = await apiGet(prefix, '/app/form/fields.json', { app: appId });
       const { records: _records, recordRows: _recordRows, ...report } = planCsvImport(rows, response?.properties);
       plans.push({ appId, properties: response.properties, report });
-    } catch (error: any) { plans.push({ appId, properties: {}, error: error?.message || String(error) || '事前検査に失敗しました' }); }
+    } catch (error: any) {
+      if (isCancelStop(error)) {
+        throw createCancelReport(plans.length, appIds.length, [
+          ...plans.filter((plan) => plan.error).map((plan) => `事前検査に失敗 App ${plan.appId}: ${plan.error}`),
+          `未実行（中止）: ${appIds.slice(plans.length).map((id) => `App ${id}`).join(', ')}`,
+          'レコードはまだ書き込んでいません'
+        ]);
+      }
+      plans.push({ appId, properties: {}, error: error?.message || String(error) || '事前検査に失敗しました' });
+    }
   }
   return { prefix, rows, plans };
 }
@@ -407,6 +452,29 @@ export async function runPreviewCsvImportStandalone(opts, setStatus) {
   const problems = plans.filter(plan => plan.error || plan.report.issueCount).length;
   setStatus(problems ? `事前検査: ${problems}アプリに問題があります。まだ書き込んでいません。` : `事前検査完了: ${plans.length}アプリ。まだ書き込んでいません。`, problems > 0);
   return result;
+}
+
+/**
+ * 100 件ずつの書き込み。中止されたときは「失敗」ではなく、何件を書き込み済みで何件を書き込んでいないかを伝える。
+ * 中止は次のチャンクを送る前に止まるため、書き込み済みの件数は確定している。
+ */
+async function writeChunksUnlessCancelled<T>(
+  items: T[],
+  label: string,
+  writeChunk: (chunk: T[], chunkIndex: number) => Promise<void>,
+  onProgress: (done: number, total: number) => void,
+  describeItem?: (index: number) => string
+): Promise<number> {
+  try {
+    return await writeInChunks(items, label, writeChunk, onProgress, undefined, describeItem);
+  } catch (error: any) {
+    if (!isRunCancelledError(error)) throw error;
+    const done = Math.max(0, Number(error?.partial?.done) || 0);
+    throw createCancelReport(done, items.length, [
+      `${label}: ${done}件を書き込み済み、残り ${items.length - done}件は書き込んでいません`,
+      '書き込み済みのレコードは取り消していません'
+    ]);
+  }
 }
 
 export async function runCsvImportBatchStandalone(opts, setStatus) {
@@ -428,10 +496,10 @@ export async function runCsvImportBatchStandalone(opts, setStatus) {
     const plan = plans.find(item => item.appId === appId);
     // Build just one app's payload at a time, keeping multi-app memory bounded.
     const { records, recordRows } = planCsvImport(rows, plan.properties);
-    const ok = await writeInChunks(records, `App ${appId} の CSV取込`,
+    const ok = await writeChunksUnlessCancelled(records, `App ${appId} の CSV取込`,
       batch => apiPost(prefix, '/records.json', { app: appId, records: batch }),
       (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`),
-      undefined, index => `CSV ${recordRows[index]}行目`);
+      index => `CSV ${recordRows[index]}行目`);
     setStatus(`App ${appId}: インポート完了 ${ok}件`);
   }, setStatus);
   setStatus(`CSV取込完了: ${plans.length}アプリ / ${plans.reduce((sum, plan) => sum + plan.report.count, 0)}件`);
@@ -464,7 +532,7 @@ export async function runBatchProcessStandalone(opts, setStatus) {
     return { cancelled: true };
   }
 
-  const ok = await writeInChunks(
+  const ok = await writeChunksUnlessCancelled(
     targets,
     `App ${appId} のステータス更新`,
     async (batch) => {
@@ -483,7 +551,6 @@ export async function runBatchProcessStandalone(opts, setStatus) {
       }
     },
     (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`),
-    undefined,
     index => `レコードID ${targets[index]?.id}`
   );
   setStatus(`ステータス一括更新完了 (${ok}件)`);
@@ -668,6 +735,13 @@ export async function runPreviewRecordCopyStandalone(
       const report = inspectRecordCopyCompatibility(srcProps, tgtFields?.properties || {});
       results.push({ targetAppId, report });
     } catch (error: any) {
+      if (isCancelStop(error)) {
+        throw createCancelReport(results.length, targetAppIds.length, [
+          ...results.filter((r) => r.error).map((r) => `確認に失敗 App ${r.targetAppId}: ${r.error}`),
+          `未実行（中止）: ${targetAppIds.slice(results.length).map((id) => `App ${id}`).join(', ')}`,
+          'まだコピーは実行していません'
+        ]);
+      }
       results.push({ targetAppId, error: error?.message || String(error) });
     }
   }
@@ -717,12 +791,11 @@ export async function runRecordCopyStandalone(opts, setStatus) {
     return { cancelled: true };
   }
 
-  const ok = await writeInChunks(
+  const ok = await writeChunksUnlessCancelled(
     plan.records,
     `App ${sourceAppId} → ${targetAppId} のレコードコピー`,
     (batch) => apiPost(tgtPrefix, '/records.json', { app: targetAppId, records: batch }),
     (done, total) => setStatus(`コピー中... ${done} / ${total}件`),
-    undefined,
     index => `コピー元レコードID ${records[index]?.$id?.value ?? index + 1}`
   );
   const fileDropNote = plan.droppedFileFields.length ? ` / 添付除外 ${plan.droppedFileFields.length}フィールド` : '';
@@ -795,7 +868,17 @@ export async function runAttachmentDownloadStandalone(opts, setStatus) {
     const used = usedByFolder.get(folderPath) || new Set<string>();
     usedByFolder.set(folderPath, used);
     for (const f of files) {
-      const result = await downloadFileBlob(prefix, f.fileKey);
+      let result: FileFetchResult;
+      try {
+        result = await downloadFileBlob(prefix, f.fileKey);
+      } catch (error) {
+        if (!isCancelStop(error)) throw error;
+        throw createCancelReport(i, groups.length, [
+          `中断したレコード: ${recordId}${rowId ? ` / テーブル行 ${rowId}` : ''}`,
+          `取得済み ${fileCount}ファイル / 取得失敗 ${failures.length}件`,
+          '添付ファイルの ZIP は保存していません'
+        ]);
+      }
       const entry = { recordId, tableFieldCode, rowId, fileFieldCode, name: String(f.name || ''),
         size: String(f.size ?? ''), contentType: String(f.contentType || ''), path: '', error: '' };
       if (result.ok === true) {
@@ -894,7 +977,15 @@ export async function runRecordBackupStandalone(opts, setStatus) {
       const recordId = String(ent.rec?.$id?.value || 'unknown');
       let result = blobCache.get(ent.file.fileKey);
       if (!result) {
-        result = await downloadFileBlob(prefix, ent.file.fileKey);
+        try {
+          result = await downloadFileBlob(prefix, ent.file.fileKey);
+        } catch (error) {
+          if (!isCancelStop(error)) throw error;
+          throw createCancelReport(i, collected.length, [
+            `添付ファイルの取得を中止しました（取得済み ${fileCount}ファイル / 取得失敗 ${fileFailures.length}件）`,
+            'バックアップの ZIP は保存していません（途中までのバックアップを完全なものと取り違えないため）'
+          ]);
+        }
         blobCache.set(ent.file.fileKey, result);
       }
       if (result.ok === false) {
@@ -948,6 +1039,12 @@ export async function runRecordBackupStandalone(opts, setStatus) {
           commentCount += comments.length;
         }
       } catch (e: any) {
+        if (isCancelStop(e)) {
+          throw createCancelReport(i, records.length, [
+            `コメントの取得を中止しました（取得済み ${commentCount}件 / 取得失敗 ${commentFailures.length}レコード）`,
+            'バックアップの ZIP は保存していません（途中までのバックアップを完全なものと取り違えないため）'
+          ]);
+        }
         // 1 レコードの失敗で残りを捨てず、失敗したレコードを記録して続行する。
         commentFailures.push({ recordId, reason: e?.message || String(e) });
       }

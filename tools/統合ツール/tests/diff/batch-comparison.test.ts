@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildDiffBatchEndpointKey,
   prepareDiffBatchPairs,
   runSequentialDiffBatch,
   type DiffBatchPair
 } from '../../src/diff/batch-comparison';
+import { RunCancelledError, __resetRunControlForTests, beginRun, requestCancel } from '../../src/runControl';
 
 function endpoint(appId: string, guestId = '', preview = false, appName = '') {
   return { appId, guestId, preview, appName };
@@ -213,5 +214,52 @@ describe('sequential diff batch runner', () => {
 
     expect(results.map((result) => result.status)).toEqual(['rejected', 'fulfilled']);
     expect(importedSources).toEqual([false, false]);
+  });
+
+  describe('when the user cancels', () => {
+    afterEach(() => { __resetRunControlForTests(); });
+
+    it('stops at the cancelled pair, never fetches the rest and reports them as cancelled instead of failed', async () => {
+      const pairs = [pair(1, '101', '201'), pair(2, '102', '202'), pair(3, '103', '203')];
+      const fetched: number[] = [];
+
+      const results = await runSequentialDiffBatch(pairs, async (current) => {
+        fetched.push(current.rowNumber);
+        if (current.rowNumber === 2) throw new RunCancelledError();
+        return { sourceBundle: { appId: current.source.appId }, targetBundle: { appId: current.target.appId } };
+      });
+
+      expect(fetched).toEqual([1, 2]);
+      expect(results.map((result) => result.status)).toEqual(['fulfilled', 'cancelled', 'cancelled']);
+      expect(results.map((result) => result.pair.rowNumber)).toEqual([1, 2, 3]);
+      expect(results.map((result) => (result.status === 'cancelled' ? result.started : null))).toEqual([null, true, false]);
+    });
+
+    it('does not start the next pair when the cancel arrived while the previous one finished', async () => {
+      beginRun();
+      const pairs = [pair(1, '101', '201'), pair(2, '102', '202'), pair(3, '103', '203')];
+      const fetched: number[] = [];
+      const progress: number[] = [];
+
+      const results = await runSequentialDiffBatch(pairs, async (current) => {
+        fetched.push(current.rowNumber);
+        requestCancel();
+        return { sourceBundle: { appId: current.source.appId }, targetBundle: { appId: current.target.appId } };
+      }, (current) => { progress.push(current.rowNumber); });
+
+      expect(fetched).toEqual([1]);
+      expect(progress).toEqual([1]);
+      expect(results.map((result) => result.status)).toEqual(['fulfilled', 'cancelled', 'cancelled']);
+      expect(results.slice(1).every((result) => result.status === 'cancelled' && result.started === false)).toBe(true);
+    });
+
+    it('still records ordinary failures as rejected', async () => {
+      const pairs = [pair(1, '101', '201'), pair(2, '102', '202')];
+      const results = await runSequentialDiffBatch(pairs, async (current) => {
+        if (current.rowNumber === 1) throw new Error('boom');
+        return { sourceBundle: {}, targetBundle: {} };
+      });
+      expect(results.map((result) => result.status)).toEqual(['rejected', 'fulfilled']);
+    });
   });
 });

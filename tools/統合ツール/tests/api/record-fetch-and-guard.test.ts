@@ -43,7 +43,7 @@ describe('assertAllowsMutatingRestCall', () => {
       .mockRejectedValueOnce(new Error('HTTP status 429'))
       .mockResolvedValueOnce({ revision: '10' });
     (globalThis as any).kintone = { api };
-    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: any) => { fn(); return 0 as any; }) as any);
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: any, ms?: number) => { if (Number(ms) >= 60_000) return 0 as any; fn(); return 0 as any; }) as any);
 
     const putRes = await apiPut('/k/v1/preview', '/app/form/fields.json', { app: '7', properties: {} });
     expect(putRes).toEqual({ revision: '10' });
@@ -160,7 +160,7 @@ describe('fetchRecordsByQuery', () => {
       .mockRejectedValueOnce(new Error('HTTP 500 boom'))
       .mockRejectedValueOnce(new Error('HTTP 500 boom'))
       .mockResolvedValueOnce({});
-    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: any) => { fn(); return 0 as any; }) as any);
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: any, ms?: number) => { if (Number(ms) >= 60_000) return 0 as any; fn(); return 0 as any; }) as any);
     await expect(fetchRecordsByQuery('/k/v1', '7', 'order by 金額 desc')).rejects.toThrow(/boom/);
     const del = api.mock.calls.find((c) => c[1] === 'DELETE');
     expect(del).toEqual(['/k/v1/records/cursor.json', 'DELETE', { id: 'cur-2' }]);

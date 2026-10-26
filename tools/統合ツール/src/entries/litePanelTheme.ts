@@ -12,7 +12,8 @@
 import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
 import { setComponentUi } from '../ui/components.js';
 import { setRootElement } from '../ui/dialog.js';
-import { copyTextToClipboard } from '../utils.js';
+import { activeRun, beginRun, endRun, isRunCancelledError, requestCancel as requestRunCancel, type RunToken } from '../runControl.js';
+import { copyTextToClipboard, downloadText, nowStamp, sanitizeFilenamePart } from '../utils.js';
 
 export { copyTextToClipboard };
 
@@ -113,6 +114,9 @@ const THEME_CSS = `
   content:'';display:inline-block;width:9px;height:9px;border-radius:50%;
   border:2px solid rgba(255,255,255,.85);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
 }
+.kus-lp__elapsed--done{font-weight:500;color:rgba(255,255,255,.8)}
+/* 完了後の「前回 …」表示ではスピナーを出さない */
+.kus-lp__elapsed--done::before{display:none;animation:none}
 /* 実行中の進捗ストリップ（ヒーロー下端） */
 .kus-lp__progress{position:absolute;left:0;right:0;bottom:0;height:3px;overflow:hidden;background:rgba(255,255,255,.22);display:none;z-index:1}
 .kus-lp[aria-busy="true"] .kus-lp__progress{display:block}
@@ -126,15 +130,17 @@ const THEME_CSS = `
   font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close,.kus-lp__toggle{
+.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
   font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
 .kus-lp__toggle{padding:6px 9px;min-width:34px}
+.kus-lp__cancel{background:rgba(254,202,202,.30);border-color:rgba(254,226,226,.85)}
 .kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
-.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__cancel:hover{background:rgba(254,202,202,.48)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled,.kus-lp__cancel:disabled{opacity:.55;cursor:not-allowed}
 
 /* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
 .kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
@@ -293,14 +299,14 @@ const THEME_CSS = `
   border:1px solid #1e293b;
 }
 .kus-lp__result--empty{display:none}
-/* ログ右上に貼り付くコピー操作（ログ本文の選択・スクロールを妨げない） */
-.kus-lp__result-copy{
-  float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;
+/* ログ右上に貼り付くコピー／保存操作（ログ本文の選択・スクロールを妨げない） */
+.kus-lp__result-tools{float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;display:flex;gap:4px}
+.kus-lp__result-copy,.kus-lp__result-save{
   padding:3px 8px;font:600 10.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
   color:#cbd5e1;background:rgba(30,41,59,.92);border:1px solid #334155;border-radius:7px;cursor:pointer;white-space:nowrap;
 }
-.kus-lp__result-copy:hover{color:#fff;background:#334155}
-.kus-lp__result-copy[data-copied="true"]{color:#bbf7d0;border-color:#166534}
+.kus-lp__result-copy:hover,.kus-lp__result-save:hover{color:#fff;background:#334155}
+.kus-lp__result-copy[data-copied="true"],.kus-lp__result-save[data-copied="true"]{color:#bbf7d0;border-color:#166534}
 .kus-lp__panel-html{
   margin-top:10px;border:1px solid var(--c-border);border-radius:10px;
   background:var(--c-surface);max-height:240px;overflow:auto;font-size:11.5px;
@@ -453,6 +459,10 @@ export interface LitePanelHandle {
    * このボタンが押される。IME 変換確定の Enter は無視する。
    */
   setPrimaryAction: (btn: HTMLButtonElement) => void;
+  /** 実行中の処理に中止を要求する（ヒーローの「中止」ボタンと同じ）。受け付けたら true。 */
+  requestCancel: () => boolean;
+  /** 実行中の処理に中止が要求済みか。 */
+  isCancelRequested: () => boolean;
 }
 
 // ===== Panel factory =====
@@ -460,6 +470,13 @@ export interface LitePanelHandle {
 export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   ensureThemeStyles();
   const old = document.getElementById(opts.id);
+  // 再実行しても、利用者がドラッグで動かした位置を引き継ぐ（折りたたみ状態は引き継がない）
+  let carriedPosition: { left: number; top: number } | null = null;
+  if (old instanceof HTMLElement && old.dataset.kusPlaced === '1') {
+    const left = parseFloat(old.style.left);
+    const top = parseFloat(old.style.top);
+    if (Number.isFinite(left) && Number.isFinite(top)) carriedPosition = { left, top };
+  }
   if (old) {
     old.dispatchEvent(new Event('kus-lite-dispose'));
     old.remove();
@@ -516,6 +533,15 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   elapsedEl.setAttribute('aria-hidden', 'true');
   elapsedEl.hidden = true;
 
+  // 実行中だけ表示する「中止」ボタン（次のリクエストの前で処理を止める）
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'kus-lp__cancel';
+  cancelBtn.textContent = '中止';
+  cancelBtn.setAttribute('aria-label', '処理を中止');
+  cancelBtn.title = '次のリクエストの前で処理を止めます（途中まで実行した内容は取り消しません）';
+  cancelBtn.hidden = true;
+
   const bodyId = `${opts.id}-body`;
   const toggleBtn = document.createElement('button');
   toggleBtn.type = 'button';
@@ -529,6 +555,7 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   const heroActions = document.createElement('div');
   heroActions.className = 'kus-lp__hero-actions';
   heroActions.appendChild(elapsedEl);
+  heroActions.appendChild(cancelBtn);
   heroActions.appendChild(toggleBtn);
   heroActions.appendChild(closeBtn);
 
@@ -586,16 +613,26 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     (status.querySelector('.kus-lp__status-text') as HTMLElement).textContent = msg || '';
   }
 
-  // ===== 結果ログのコピー =====
+  // ===== 結果ログのコピー／ファイル保存 =====
   const copyBtn = document.createElement('button');
   copyBtn.type = 'button';
   copyBtn.className = 'kus-lp__result-copy';
   copyBtn.textContent = 'コピー';
   copyBtn.setAttribute('aria-label', 'ログをコピー');
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'kus-lp__result-save';
+  saveBtn.textContent = '保存';
+  saveBtn.setAttribute('aria-label', 'ログをファイルに保存');
+  const resultTools = document.createElement('span');
+  resultTools.className = 'kus-lp__result-tools';
+  resultTools.appendChild(copyBtn);
+  resultTools.appendChild(saveBtn);
   let copyResetTimer = 0;
+  let saveResetTimer = 0;
   function resultText(): string {
     const clone = result.cloneNode(true) as HTMLElement;
-    clone.querySelector('.kus-lp__result-copy')?.remove();
+    clone.querySelector('.kus-lp__result-tools')?.remove();
     return (clone.innerText || clone.textContent || '').replace(/^\s+|\s+$/g, '');
   }
   function flashCopy(label: string, copied: boolean) {
@@ -604,10 +641,26 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     window.clearTimeout(copyResetTimer);
     copyResetTimer = window.setTimeout(() => { copyBtn.textContent = 'コピー'; delete copyBtn.dataset.copied; }, 1600);
   }
+  function flashSave(label: string, saved: boolean) {
+    saveBtn.textContent = label;
+    saveBtn.dataset.copied = String(saved);
+    window.clearTimeout(saveResetTimer);
+    saveResetTimer = window.setTimeout(() => { saveBtn.textContent = '保存'; delete saveBtn.dataset.copied; }, 1600);
+  }
   copyBtn.addEventListener('click', () => {
     const text = resultText();
     if (!text) return;
     void copyTextToClipboard(text).then((ok) => flashCopy(ok ? 'コピー済み' : 'コピー失敗', ok));
+  });
+  saveBtn.addEventListener('click', () => {
+    const text = resultText();
+    if (!text) return;
+    try {
+      downloadText(`${sanitizeFilenamePart(opts.title)}_ログ_${nowStamp()}.txt`, text, 'text/plain;charset=utf-8');
+      flashSave('保存済み', true);
+    } catch {
+      flashSave('保存失敗', false);
+    }
   });
 
   function setResult(text: string) {
@@ -617,7 +670,7 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
       return;
     }
     result.textContent = text;
-    result.prepend(copyBtn);
+    result.prepend(resultTools);
     result.classList.remove('kus-lp__result--empty');
   }
 
@@ -628,7 +681,7 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
       return;
     }
     result.innerHTML = html;
-    result.prepend(copyBtn);
+    result.prepend(resultTools);
     result.classList.remove('kus-lp__result--empty');
   }
 
@@ -644,26 +697,67 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   function tickElapsed() {
     elapsedEl.textContent = `処理中 ${formatElapsed(Date.now() - busyStartedAt)}`;
   }
-  function stopElapsed() {
+  function startElapsed() {
+    busyStartedAt = Date.now();
+    elapsedEl.classList.remove('kus-lp__elapsed--done');
+    tickElapsed();
+    elapsedEl.hidden = false;
+    busyTimer = window.setInterval(tickElapsed, 1000);
+  }
+  /** タイマーを止める。keepLast が true なら、かかった時間を「前回 …」として残す。 */
+  function stopElapsed(keepLast: boolean) {
+    const wasRunning = !!busyTimer;
     if (busyTimer) window.clearInterval(busyTimer);
     busyTimer = 0;
-    elapsedEl.hidden = true;
-    elapsedEl.textContent = '';
+    if (keepLast && wasRunning) {
+      elapsedEl.classList.add('kus-lp__elapsed--done');
+      elapsedEl.textContent = `前回 ${formatElapsed(Date.now() - busyStartedAt)}`;
+      elapsedEl.hidden = false;
+    } else if (!keepLast) {
+      elapsedEl.classList.remove('kus-lp__elapsed--done');
+      elapsedEl.hidden = true;
+      elapsedEl.textContent = '';
+    }
   }
+
+  // ===== 中止 =====
+  let runToken: RunToken | null = null;
+  function requestCancel(): boolean {
+    if (!runToken) return false;
+    const accepted = requestRunCancel(runToken);
+    if (accepted) {
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = '中止中…';
+      handle.setStatus('中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…', 'busy');
+    }
+    return accepted;
+  }
+  function isCancelRequested(): boolean {
+    return !!runToken && runToken.cancelled;
+  }
+  cancelBtn.addEventListener('click', () => { requestCancel(); });
 
   function setBusy(busy: boolean) {
     closeBtn.disabled = busy;
     root.setAttribute('aria-busy', String(busy));
     root.style.cursor = busy ? 'progress' : '';
     if (busy) {
-      if (!busyTimer) {
-        busyStartedAt = Date.now();
-        tickElapsed();
-        elapsedEl.hidden = false;
-        busyTimer = window.setInterval(tickElapsed, 1000);
+      if (!runToken) {
+        runToken = beginRun();
+        cancelBtn.textContent = '中止';
+        cancelBtn.disabled = false;
+      } else if (!runToken.cancelled) {
+        cancelBtn.disabled = false;
       }
+      cancelBtn.hidden = false;
+      if (!busyTimer) startElapsed();
     } else {
-      stopElapsed();
+      endRun(runToken);
+      runToken = null;
+      cancelBtn.hidden = true;
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = '中止';
+      stopElapsed(true);
     }
     root.dispatchEvent(new Event('kus-lite-busy-change'));
   }
@@ -697,9 +791,11 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     root.style.top = `${Math.round(nextTop)}px`;
     root.style.right = 'auto';
     customPlaced = true;
+    root.dataset.kusPlaced = '1';
   }
   function resetPosition() {
     customPlaced = false;
+    delete root.dataset.kusPlaced;
     root.style.left = '';
     root.style.top = '';
     root.style.right = '';
@@ -741,12 +837,16 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   });
   const onWindowResize = () => clampIntoViewport();
   window.addEventListener('resize', onWindowResize);
+  if (carriedPosition) place(carriedPosition.left, carriedPosition.top);
 
   function dispose() {
     document.removeEventListener('keydown', onDocKeydown);
     window.removeEventListener('resize', onWindowResize);
-    stopElapsed();
+    stopElapsed(false);
+    endRun(runToken);
+    runToken = null;
     window.clearTimeout(copyResetTimer);
+    window.clearTimeout(saveResetTimer);
   }
 
   function close() {
@@ -812,7 +912,8 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     try { first?.focus({ preventScroll: true } as any); } catch { /* noop */ }
   });
 
-  return { root, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
+  const handle: LitePanelHandle = { root, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel, isCancelRequested };
+  return handle;
 }
 
 // ===== Element factories =====
@@ -1606,6 +1707,7 @@ export async function liteRun<T>(
 ): Promise<T | undefined> {
   panel.setStatus(busyMsg, 'busy');
   panel.setBusy(true);
+  const token = activeRun();
   try {
     const out = await fn();
     const tone = panel.status.dataset.tone;
@@ -1620,11 +1722,31 @@ export async function liteRun<T>(
       // 処理側の最終メッセージ（「…完了」など）がスピナー付きのまま残らないよう成功トーンへ切り替える
       panel.setStatus(currentText || '完了', 'ok');
     }
+    if (token?.cancelled && !cancelled && panel.status.dataset.tone !== 'err') {
+      // 中止を要求したが最後まで終わった場合も、止めた項目があるかもしれないことを知らせる
+      let base = panel.status.querySelector('.kus-lp__status-text')?.textContent || '';
+      if (/^中止しています/.test(base)) base = okMsg || '処理が終わりました';
+      // 処理側がすでに中止の内訳（未実行の件数など）を伝えていれば、同じ注意を重ねない
+      panel.setStatus(/中止/.test(base) ? base : `${base}（中止を要求したため、途中で止めた項目があるかもしれません。結果を確認してください）`, 'warn');
+    }
     return out;
   } catch (e: any) {
+    if (isRunCancelledError(e)) {
+      // 既存のログは消さない。API 層は次のリクエストの前で止めるので、実行済みの書き込みは取り消されていない。
+      panel.setStatus('中止しました。次のリクエストの前で止めました。途中まで実行した内容は取り消していません。', 'warn');
+      return undefined;
+    }
     const message = String(e?.message || e || '不明なエラー');
     const lines = message.split('\n').map((line) => line.trim()).filter(Boolean);
     const [first, ...rest] = lines.length ? lines : [message];
+    if (token?.cancelled) {
+      // 中止後に残りの項目などを報告するエラー。内訳はログへ出す
+      // 1 行目がすでに「中止しました（…）」で始まる件数つきの報告は、そのまま要点として出す
+      const headline = /^中止しました/.test(first) ? first : `中止しました: ${first}`;
+      panel.setStatus(`${headline}${rest.length ? '（詳細は下のログ）' : ''}`, 'warn');
+      if (rest.length) panel.setResult(lines.join('\n'));
+      return undefined;
+    }
     // 1 行目（要点）はステータスへ、部分成功の内訳や API コンテキストは下のログへ出す
     panel.setStatus(`エラー: ${first}${rest.length ? '（詳細は下のログ）' : ''}`, 'err');
     if (rest.length) panel.setResult(lines.join('\n'));

@@ -10,6 +10,7 @@ import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { REFLECT_SECTION_KEYS } from '../reflect/sections.js';
 import { inspectTargetPendingChanges, type ReflectTargetPending } from '../reflect/targetPending.js';
 import { pushReflectErrorLog as pushErrorLog, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
+import { RUN_CANCELLED_MESSAGE, isRunCancelledError } from '../runControl.js';
 
 export interface ReflectOptions {
   sourceAppId: string; sourceGuestId?: string; sourcePreview?: boolean; sourceBundle?: unknown;
@@ -155,7 +156,7 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
   for (const entry of entries.filter(entry => !entry.blockers.length)) {
     try {
       assertReflectBaselineMatches(baseline, { ...opts, scopes: [entry.sectionKey], targetDependencies: entry.requiredFields?.length ? ['fieldSettings'] : [] }, source, target);
-    } catch (error: any) { entry.status = 'error'; entry.blockers.push(error.message); entry.message = error.message; }
+    } catch (error: any) { if (isRunCancelledError(error)) throw error; entry.status = 'error'; entry.blockers.push(error.message); entry.message = error.message; }
   }
   if (usesLookupMap(opts, scopes)) {
     const lookup = await preflightLookupMapStandalone(opts.lookupMap!, { targetGuestId: opts.targetGuestId });
@@ -180,7 +181,7 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
 export async function runApplyPreviewStandalone(
   opts: ReflectOptions & { stopOnError?: boolean; doBackup?: boolean; doDeploy?: boolean; reviewBaseline: ReflectBaseline; onSectionUpdate?: (update: ReflectSectionUpdate) => void },
   setStatus: (message: string, error?: boolean) => void, onProgress: (logs: string[]) => void
-): Promise<{ logs: string[]; sections: ApplySectionOutcome[]; backup?: ReflectBackup; /** 最後の書き込み後の反映先プレビューの revision（書き込みが無ければ確認時のまま） */ finalRevision: string }> {
+): Promise<{ logs: string[]; sections: ApplySectionOutcome[]; backup?: ReflectBackup; /** 最後の書き込み後の反映先プレビューの revision（書き込みが無ければ確認時のまま） */ finalRevision: string; /** 利用者の中止で途中停止した（未実行の項目は pending、途中まで書いた項目は ng で示す） */ cancelled?: boolean }> {
   if (!opts.reviewBaseline) throw new Error('反映前に差分を取得して確認してください。');
   if (opts.doDeploy) throw new Error('この機能はプレビューへの反映専用です。本番公開には対応していません。');
   const invalid = reflectConnectionError(opts);
@@ -237,7 +238,7 @@ export async function runApplyPreviewStandalone(
       if (!blob) throw new Error(`「${upload.name}」のファイル本体がないためアップロードできません。`);
       let fileKey: string;
       try { fileKey = await uploadKintoneFile(opts.targetGuestId || '', blob, upload.name); }
-      catch (error: any) { throw new Error(`「${upload.name}」のアップロードに失敗しました（${error.message || String(error)}）。${operation.label}は書き込んでいません。`); }
+      catch (error: any) { if (isRunCancelledError(error)) throw error; throw new Error(`「${upload.name}」のアップロードに失敗しました（${error.message || String(error)}）。${operation.label}は書き込んでいません。`); }
       logs.push(`  OK ファイルアップロード: ${upload.name}（${upload.platform === 'desktop' ? 'PC' : 'モバイル'} ${upload.kind.toUpperCase()}）`);
       const item = body[upload.platform]?.[upload.kind]?.[upload.index];
       if (item?.file?.fileKey !== upload.sourceFileKey) throw new Error(`「${upload.name}」の反映位置を特定できません。${operation.label}は書き込んでいません。`);
@@ -250,7 +251,7 @@ export async function runApplyPreviewStandalone(
   if (plans.some(plan => plan.operations.some(operation => operation.uploads?.length))) setStatus('JS/CSSファイルを反映先へアップロード中…');
   for (const plan of plans) for (const operation of plan.operations) {
     try { bodies.set(operation, await bodyWithUploads(operation)); }
-    catch (error: any) { throw new Error(`${error.message || String(error)}\nまだ何も書き込んでいません。`); }
+    catch (error: any) { if (isRunCancelledError(error)) throw error; throw new Error(`${error.message || String(error)}\nまだ何も書き込んでいません。`); }
   }
   const write = async (operation: ReflectSectionPlan['operations'][number], body: Record<string, any>) => {
     try {
@@ -265,6 +266,7 @@ export async function runApplyPreviewStandalone(
   };
   logs.push(`反映元: ${opts.sourceBundle ? '設定JSON' : opts.sourceAppId} → 反映先(プレビュー): ${opts.targetAppId}`);
   const sections: ApplySectionOutcome[] = [];
+  let cancelled = false;
   // 画面の進捗表示が失敗しても、書き込みの処理には影響させない。
   const notify = (plan: ReflectSectionPlan, status: ReflectSectionUpdate['status'], message?: string) => {
     try { opts.onSectionUpdate?.({ sectionKey: plan.sectionKey, label: plan.label, status, ...(message ? { message } : {}) }); } catch { /* 表示側の例外は無視する */ }
@@ -283,6 +285,22 @@ export async function runApplyPreviewStandalone(
       for (const operation of plan.operations) { await write(operation, bodies.get(operation) || operation.body); written.push(operation.label); logs.push(`  OK ${operation.label}`); }
       sections.push({ ...outcome, status: 'ok' }); notify(plan, 'ok'); logs.push(`OK ${plan.label}`);
     } catch (error: any) {
+      if (isRunCancelledError(error)) {
+        // 中止。書き込みの途中では打ち切らず、次の書き込みの前で止まっている。書き込み済みの分は反映先に残る。
+        cancelled = true;
+        if (written.length) {
+          const message = `${RUN_CANCELLED_MESSAGE}（この項目では ${written.join('・')} まで書き込み済みで、残りは送信していません。差分を取得し直して現在の状態を確認してください）`;
+          sections.push({ ...outcome, status: 'ng', message }); notify(plan, 'ng', message); logs.push(`中止 ${plan.label}: ${written.join('・')} まで書き込み済み`);
+        } else {
+          sections.push({ ...outcome, status: 'pending', message: '中止のため未実行' }); notify(plan, 'pending', '中止のため未実行'); logs.push(`中止 ${plan.label}: 書き込み前に停止（未実行）`);
+        }
+        for (const rest of plans.slice(index + 1)) {
+          if (!rest.operations.length) { sections.push({ sectionKey: rest.sectionKey, label: rest.label, status: 'skip', message: '変更なし（書き込み不要）' }); notify(rest, 'skip', '変更なし（書き込み不要）'); continue; }
+          sections.push({ sectionKey: rest.sectionKey, label: rest.label, status: 'pending', message: '中止のため未実行' }); notify(rest, 'pending', '中止のため未実行');
+        }
+        logs.push(`${RUN_CANCELLED_MESSAGE}（反映済み ${sections.filter(item => item.status === 'ok').length} 件 / 未実行 ${sections.filter(item => item.status === 'pending').length} 件）`);
+        break;
+      }
       // 項目内の途中で止まった場合、先に完了した書き込みは反映先に残る。失敗の内容と一緒に必ず示す。
       const message = `${error.message || String(error)}${written.length ? `\n（この項目では ${written.join('・')} まで書き込み済みです。差分を取得し直して現在の状態を確認してください）` : ''}`;
       sections.push({ ...outcome, status: 'ng', message }); notify(plan, 'ng', message); pushErrorLog(logs, `NG ${plan.label}: ${message}`, message);
@@ -295,8 +313,10 @@ export async function runApplyPreviewStandalone(
   }
   const count = (status: ApplySectionOutcome['status']) => sections.filter(section => section.status === status).length;
   logs.push(`=== 完了: OK ${count('ok')} / NG ${count('ng')} / 未実行 ${count('pending')} / 変更なし ${count('skip')} ===`);
-  onProgress(logs); setStatus(count('ng') ? '反映完了（一部エラーあり）' : '反映完了');
-  return { logs, sections, backup, finalRevision: revision };
+  onProgress(logs);
+  if (cancelled) setStatus(`反映を中止しました（反映済み ${count('ok')} / 途中で停止 ${count('ng')} / 未実行 ${count('pending')}）。反映先プレビューは一部だけ更新されている可能性があります。`, true);
+  else setStatus(count('ng') ? '反映完了（一部エラーあり）' : '反映完了');
+  return { logs, sections, backup, finalRevision: revision, ...(cancelled ? { cancelled: true } : {}) };
 }
 
 export interface LookupPreflightOptions { targetGuestId?: string }
@@ -309,7 +329,7 @@ export async function preflightLookupMapStandalone(lookupMap: Record<string, str
     try {
       const info = await apiGet(buildApiPrefix(opts.targetGuestId || '', false), '/app.json', { id: to });
       if (String(info?.appId) !== to) throw new Error('応答のアプリIDが一致しません');
-    } catch (error: any) { missing.push({ from, to, reason: `取得失敗: ${error.message || String(error)}` }); }
+    } catch (error: any) { if (isRunCancelledError(error)) throw error; missing.push({ from, to, reason: `取得失敗: ${error.message || String(error)}` }); }
   }
   return { ok: !missing.length, missing };
 }

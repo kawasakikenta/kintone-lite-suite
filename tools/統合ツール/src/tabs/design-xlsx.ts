@@ -4,6 +4,7 @@ import { TOOL_ID, EXTERNAL_LIBRARIES, SECTION_DEFS } from '../constants.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { showToast, stripHtmlToText, extractAppNameFromBundle } from '../utils.js';
+import { isRunCancelledError, RUN_CANCELLED_MESSAGE } from '../runControl.js';
 
 const SHEETLIB_PRIMARY_URL = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js';
 const SHEETLIB_FALLBACK_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
@@ -1002,6 +1003,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       if (sectionKey) liveSections[sectionKey] = value;
       return value;
     } catch (e) {
+      // 利用者の中止は取得失敗として設計書に載せず、呼び出し元へそのまま伝える
+      if (isRunCancelledError(e)) throw e;
       if (sectionKey) liveSections[sectionKey] = { _fetchError: e?.message || String(e) };
       console.warn(`[${name}] Failed:`, e); UI.logError(name, e); return null;
     }
@@ -2962,6 +2965,13 @@ export async function runBatchDesignExportXlsxZip(params: {
       if (failedAPIs && failedAPIs.length) batchUi.addFailedAPIs(`App ${appId}${guestId ? ` (guest:${guestId})` : ''}`, failedAPIs);
       results.push({ appId, appName, filename: uniqueName, ok: true });
     } catch (e: any) {
+      if (isRunCancelledError(e)) {
+        // 中止: このアプリは生成途中、残りは未実行として記録し、次のアプリへ進まない
+        results.push({ appId, appName: '', filename: '', ok: false, error: `${RUN_CANCELLED_MESSAGE}（生成途中）` });
+        for (let j = i + 1; j < appIds.length; j++) results.push({ appId: appIds[j], appName: '', filename: '', ok: false, error: '未実行（中止）' });
+        cancelled = true;
+        break;
+      }
       console.error(`[batch design xlsx] app ${appId} failed:`, e);
       results.push({ appId, appName: '', filename: '', ok: false, error: e?.message || String(e) });
       // バッチ UI を再表示（内部 UI が catch で hide していても良い／無くても良い）

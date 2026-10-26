@@ -4,6 +4,8 @@ import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, safeJsonForScript, downloadText, showToast, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 import { apiGet, buildApiPrefix, fetchAppsInSpace } from '../api.js';
+import { isRunCancelledError } from '../runControl.js';
+import { createCancelReport } from './run-cancel-summary.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { getToolWindow, getToolDocument } from '../ui/dialog.js';
 import { commonParams } from './diff.js';
@@ -246,6 +248,10 @@ const getSchema = async (rawAppId, options, cache) => {
     apiGet(prefix, '/app/actions.json', { app: appId })
   ]);
 
+  // 中止を「このアプリの取得失敗」としてキャッシュしない。探索全体を止めて呼び出し元へ伝える。
+  for (const settled of [fieldsResult, appInfoResult, actionsResult]) {
+    if (settled.status === 'rejected' && isRunCancelledError(settled.reason)) throw settled.reason;
+  }
   const appInfoResponse = appInfoResult.status === 'fulfilled' ? appInfoResult.value : undefined;
   let model;
   if (fieldsResult.status === 'rejected') {
@@ -311,7 +317,13 @@ export const crawl = async (startIds, options) => {
     for (let i = 0; i < allApps.length; i += 1) {
       const appId = Number(allApps[i]?.appId);
       if (!appId) continue;
-      const schema = await getSchema(appId, options, cache);
+      let schema;
+      try {
+        schema = await getSchema(appId, options, cache);
+      } catch (e) {
+        if (!isRunCancelledError(e)) throw e;
+        throw createCancelReport(i, allApps.length, ['逆引き探索用の全アプリ走査を中止しました', 'ER図は生成していません']);
+      }
       const relationIssues = (schema.issues || []).filter((issue) => issue.scope !== 'metadata');
       if (schema.status === 'failed' || schema.ok === false || relationIssues.length) {
         incomplete.push({ appId, status: schema.status, message: (relationIssues[0] || schema.issues?.[0])?.message || '' });
@@ -334,7 +346,17 @@ export const crawl = async (startIds, options) => {
     const depth = current?.depth || 0;
     if (visited.has(id)) continue;
     visited.add(id);
-    const a = await getSchema(id, options, cache);
+    let a;
+    try {
+      a = await getSchema(id, options, cache);
+    } catch (e) {
+      if (!isRunCancelledError(e)) throw e;
+      throw createCancelReport(apps.length, apps.length + 1 + q.length, [
+        `解析を中断したアプリ: ${id}`,
+        '残りは、ここまでの解析で見つかった未解析のアプリ（関連先をすべて辿れていない可能性があります）',
+        'ER図は生成していません'
+      ]);
+    }
     a.depth = depth;
     apps.push(a);
     progressUi.update(Math.min(90, (apps.length / Math.max(1, apps.length + q.length)) * 100 | 0), `解析: ${a.name} / 深さ ${depth}`);

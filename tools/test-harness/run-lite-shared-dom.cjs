@@ -13,7 +13,7 @@ const metadata = require(path.join(TOOL, 'tests/fixtures/api-metadata.json'));
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   const build = await esbuild.build({ absWorkingDir: TOOL, bundle: true, write: false,
-    stdin: { contents: `export * from './src/entries/litePanelTheme.ts'; export * from './src/entries/appSearchControl.ts';`, resolveDir: TOOL },
+    stdin: { contents: `export * from './src/entries/litePanelTheme.ts'; export * from './src/entries/appSearchControl.ts'; export { apiGet } from './src/api.ts'; export { activeRun } from './src/runControl.ts';`, resolveDir: TOOL },
     format: 'iife', globalName: 'Shared', platform: 'browser', target: ['chrome110'], logLevel: 'silent' });
   const browserName = process.argv.includes('--browser') ? process.argv[process.argv.indexOf('--browser') + 1] : 'chrome';
   const browser = await chromium.launch({ headless: true, ...(browserName === 'chromium' ? {} : { channel: browserName }) });
@@ -200,6 +200,120 @@ async function main() {
       return listeners.size;
     });
     assert.equal(listenerCount, 0, '再起動でdocumentのリスナーを残さない');
+    // 中止ボタン・前回の所要時間・ログ保存・再起動時の位置引き継ぎ
+    await page.evaluate(() => {
+      window.cancelPanel = Shared.createLitePanel({ id: 'cancel-test', title: '中止テスト', accent: 'settings' });
+      window.apiCalls.length = 0;
+      window.pendingApi.length = 0;
+    });
+    const cancelButton = page.locator('#cancel-test .kus-lp__cancel');
+    const cancelClose = page.locator('#cancel-test .kus-lp__close');
+    const cancelElapsed = page.locator('#cancel-test .kus-lp__elapsed');
+    const cancelStatus = page.locator('#cancel-test .kus-lp__status');
+    assert.equal(await cancelButton.isHidden(), true, '待機中は中止ボタンを出さない');
+    assert.equal(await cancelButton.getAttribute('aria-label'), '処理を中止');
+    await page.evaluate(() => {
+      // 1 件目の取得のあと、書き込み中を模した待機（中断できない処理）を挟んでから 2 件目を取得する
+      window.cancelRun = Shared.liteRun(window.cancelPanel, '取得中', async () => {
+        await Shared.apiGet('/k/v1', '/app.json', { id: 1 });
+        await new Promise(resolve => { window.releaseGate = resolve; });
+        await Shared.apiGet('/k/v1', '/app/views.json', { app: 1 });
+      });
+    });
+    await cancelButton.waitFor({ state: 'visible' });
+    assert.equal(await cancelButton.innerText(), '中止');
+    assert.equal(await cancelButton.isEnabled(), true);
+    assert.equal(await cancelClose.isDisabled(), true, '実行中は閉じるを無効にする');
+    assert.equal(await page.evaluate(() => Shared.activeRun() !== null && !Shared.activeRun().cancelled), true);
+    assert.equal(await page.evaluate(() => window.apiCalls.length), 1);
+    await page.evaluate(() => window.pendingApi.shift().resolve({ id: 1 }));
+    await page.waitForFunction(() => typeof window.releaseGate === 'function');
+    await cancelButton.click();
+    assert.equal(await cancelButton.innerText(), '中止中…');
+    assert.equal(await cancelButton.isDisabled(), true, '中止の要求は一度だけ');
+    assert.match(await cancelStatus.innerText(), /中止しています/);
+    assert.equal(await page.evaluate(() => window.cancelPanel.isCancelRequested()), true);
+    assert.equal(await page.evaluate(() => window.cancelPanel.requestCancel()), false, '二重の中止要求は受け付けない');
+    await page.evaluate(() => window.releaseGate());
+    await page.waitForFunction(() => document.querySelector('#cancel-test').getAttribute('aria-busy') === 'false');
+    await page.evaluate(() => window.cancelRun);
+    assert.equal(await cancelStatus.getAttribute('data-tone'), 'warn');
+    assert.match(await cancelStatus.innerText(), /中止しました/);
+    assert.equal(await page.evaluate(() => window.apiCalls.length), 1, '中止後は次のリクエストを送らない');
+    // 読み取り中の中止: 応答を待たずに打ち切り、2 件目は送らない
+    await page.evaluate(() => {
+      window.pendingApi.length = 0;
+      window.apiCalls.length = 0;
+      window.cancelRun = Shared.liteRun(window.cancelPanel, '取得中', async () => {
+        await Shared.apiGet('/k/v1', '/app.json', { id: 1 });
+        await Shared.apiGet('/k/v1', '/app/views.json', { app: 1 });
+      });
+    });
+    await cancelButton.waitFor({ state: 'visible' });
+    await cancelButton.click();
+    await page.waitForFunction(() => document.querySelector('#cancel-test').getAttribute('aria-busy') === 'false');
+    await page.evaluate(() => window.cancelRun);
+    assert.equal(await cancelStatus.getAttribute('data-tone'), 'warn');
+    assert.match(await cancelStatus.innerText(), /中止しました/);
+    assert.equal(await page.evaluate(() => window.apiCalls.length), 1, '読み取り中の中止でも次のリクエストを送らない');
+    assert.equal(await cancelClose.isEnabled(), true, '中止後は閉じるを戻す');
+    assert.equal(await cancelButton.isHidden(), true, '中止後は中止ボタンを隠す');
+    assert.equal(await page.evaluate(() => Shared.activeRun()), null);
+    assert.match(await cancelElapsed.textContent(), /^前回 /);
+    assert.equal(await cancelElapsed.evaluate(element => element.classList.contains('kus-lp__elapsed--done') && !element.hidden && element.getAttribute('aria-hidden') === 'true'), true, '完了後も所要時間を残す');
+    assert.equal(await cancelElapsed.evaluate(element => getComputedStyle(element, '::before').display), 'none', '完了後はスピナーを出さない');
+    await page.evaluate(() => {
+      window.pendingApi.length = 0;
+      window.cancelRun = Shared.liteRun(window.cancelPanel, '次の取得中', async () => { await Shared.apiGet('/k/v1', '/app.json', { id: 2 }); });
+    });
+    assert.match(await cancelElapsed.textContent(), /^処理中 /, '次の処理を始めたら処理中の表示へ戻す');
+    assert.equal(await cancelElapsed.evaluate(element => element.classList.contains('kus-lp__elapsed--done')), false);
+    assert.equal(await cancelButton.isVisible(), true);
+    await page.evaluate(() => window.pendingApi.shift().resolve({ id: 2 }));
+    await page.evaluate(() => window.cancelRun);
+    assert.equal(await cancelButton.isHidden(), true);
+    assert.equal(await cancelStatus.getAttribute('data-tone'), 'ok', '中止していない処理は通常どおり完了する');
+    await page.evaluate(() => window.cancelPanel.setResult('abc'));
+    assert.equal(await page.getByRole('button', { name: 'ログをコピー', exact: true }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'ログをファイルに保存', exact: true }).count(), 1);
+    assert.equal(await page.locator('#cancel-test .kus-lp__result > .kus-lp__result-tools > .kus-lp__result-copy').count(), 1);
+    // ダウンロードの実体はアンカー経由。クリックを捕まえてファイル名と本文を確認する（実際の保存は行わない）。
+    await page.evaluate(() => {
+      window.savedLogs = [];
+      document.addEventListener('click', event => {
+        const anchor = event.target instanceof HTMLAnchorElement && event.target.download ? event.target : null;
+        if (!anchor) return;
+        event.preventDefault();
+        fetch(anchor.href).then(response => response.text()).then(text => window.savedLogs.push({ name: anchor.download, text }));
+      }, true);
+    });
+    await page.getByRole('button', { name: 'ログをファイルに保存', exact: true }).click();
+    await page.waitForFunction(() => window.savedLogs.length === 1);
+    const savedLog = await page.evaluate(() => window.savedLogs[0]);
+    assert.match(savedLog.name, /^中止テスト_ログ_\d{8}_\d{6}\.txt$/);
+    assert.equal(savedLog.text, 'abc', 'ログ本文だけを保存する（コピー／保存ボタンの文字を含めない）');
+    assert.equal(await page.getByRole('button', { name: 'ログをファイルに保存', exact: true }).innerText(), '保存済み');
+    results.push('中止: 実行中だけ表示・要求後は次のリクエストを送らない・警告で終了・閉じるの復帰・前回の所要時間を残す・ログのコピー／ファイル保存');
+
+    await page.evaluate(() => window.cancelPanel.setCollapsed(true));
+    const dragHero = page.locator('#cancel-test .kus-lp__title');
+    const heroBox = await dragHero.boundingBox();
+    await page.mouse.move(heroBox.x + 4, heroBox.y + 4);
+    await page.mouse.down();
+    await page.mouse.move(heroBox.x - 200, heroBox.y + 160, { steps: 5 });
+    await page.mouse.up();
+    const placed = await page.evaluate(() => { const style = document.querySelector('#cancel-test').style; return { left: style.left, top: style.top }; });
+    assert.ok(placed.left && placed.top, 'ドラッグで位置を指定する');
+    await page.evaluate(() => { window.cancelPanel = Shared.createLitePanel({ id: 'cancel-test', title: '中止テスト', accent: 'settings' }); });
+    assert.deepEqual(await page.evaluate(() => { const style = document.querySelector('#cancel-test').style; return { left: style.left, top: style.top }; }), placed, '再起動しても動かした位置を保つ');
+    assert.equal(await page.locator('#cancel-test.kus-lp--collapsed').count(), 0, '折りたたみ状態は引き継がない');
+    await page.evaluate(() => window.cancelPanel.resetPosition());
+    await page.evaluate(() => { window.cancelPanel = Shared.createLitePanel({ id: 'cancel-test', title: '中止テスト', accent: 'settings' }); });
+    assert.equal(await page.evaluate(() => document.querySelector('#cancel-test').style.left), '', '位置を戻した後の再起動では引き継がない');
+    await page.evaluate(() => window.cancelPanel.close());
+    assert.equal(await page.locator('#cancel-test').count(), 0);
+    results.push('再起動: ドラッグで動かした位置を引き継ぎ・折りたたみは引き継がない・位置リセット後は右上');
+
     await page.locator('#launcher').focus();
     await page.evaluate(() => {
       window.firstPanel = Shared.createLitePanel({ id: 'escape-first', title: '一つ目', accent: 'settings' });

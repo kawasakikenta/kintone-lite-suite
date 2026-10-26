@@ -1652,7 +1652,7 @@ async function main() {
     await button('差分を確認する').click();
     await page.waitForFunction(() => document.querySelector('#kus-reflect-lite').style.cursor !== 'progress');
     await page.waitForTimeout(200);
-    assert.equal(await page.locator('#kus-reflect-lite .kus-lp__elapsed').isHidden(), true, '後処理が失敗しても経過時間の表示を止める');
+    assert.equal(await page.locator('#kus-reflect-lite .kus-lp__elapsed').evaluate(element => element.classList.contains('kus-lp__elapsed--done') && /^前回 /.test(element.textContent || '')), true, '後処理が失敗しても経過時間のカウントを止め、所要時間を「前回」として残す');
     assert.equal(await page.locator('#kus-reflect-lite .kus-lp__close').isEnabled(), true, '閉じるボタンを戻す');
     const injectedErrors = errors.splice(errorsBefore);
     assert.ok(injectedErrors.length >= 1 && injectedErrors.every(message => /再計算の失敗/.test(message)), '注入した後処理の例外だけが起きる: ' + injectedErrors.join(' / '));

@@ -49,7 +49,8 @@ tools/統合ツール/
 │   ├── register-api.ts        # window.__KUS__ 公開 API
 │   ├── constants.ts           # 定数
 │   ├── state.ts               # グローバル state
-│   ├── api.ts                 # kintone REST API ラッパー（書き込みガード / revision 競合判定 / レコード全件取得）
+│   ├── api.ts                 # kintone REST API ラッパー（書き込みガード / revision 競合判定 / レコード全件取得 / 中止・応答待ち上限）
+│   ├── runControl.ts          # 実行の中止（パネルの「中止」ボタン → API 層が次のリクエスト前で停止、読み取りは打ち切り）
 │   ├── jszipLoader.ts         # lite 版共通の JSZip 動的ローダ
 │   ├── utils.ts               # 汎用ユーティリティ
 │   ├── kintoneGuard.ts        # kintone 画面ガード（全エントリ・boot 共通）
@@ -80,6 +81,7 @@ tools/統合ツール/
 - `kintoneGuard.ts` の `isKintonePage`／`runOnKintonePage` は全 lite エントリ（9 本）と `boot.ts` 共通の kintone 画面ガード。文言・判定を変えると全エントリに波及する。
 - `diff/export.ts` の `bundleToMarkdown` は設計書 lite（`tabs/design-standalone.ts`）から参照される。
 - `tabs/record-query.ts` のクエリ生成は `tabs/record.ts`（旧統合 UI）からも再公開されている。lite 版のレコード取得は `api.ts` の `fetchRecordsByQuery`（order by 無し: `$id` シーク / あり: cursor API）に統一する。
+- `runControl.ts` は全 lite パネル共通の中止基盤。`createLitePanel` の `setBusy(true)` が `beginRun()`、「中止」ボタンが `requestCancel()`、`api.ts` が各リクエスト前に `throwIfCancelled()` を呼ぶ。読み取り（GET / fetch）は `activeAbortSignal()` で進行中でも打ち切るが、書き込みは進行中のリクエストを待ってから止める。複数件を順に処理するループは `isRunCancelledError` で中止を見分け、残りを「未実行（中止）」として報告する（1 件の中止を N 件の失敗にしない）。
 - `api.ts` の `assertAllowsMutatingRestCall` は本番 prefix への書き込みを原則拒否する。例外はレコード API、`/records/cursor.json`（読み取り用ハンドル）、プレビュー反映が別アプリの JS/CSS を渡すための `POST /file.json`（一時ファイルのアップロード。パスの完全一致のみ）。
 - プレビュー反映で反映できる項目と実行順は `reflect/sections.ts` の `REFLECT_SECTION_KEYS` が正規の一覧（一般設定 `appSettings` を含む）。共有の `SECTION_DEFS` の `put` は他ツールにも波及するため、反映項目を増やすときはこちらを変更する。
 - 設定の書き戻し（フィールド追加 / JS/CSS 設定）は GET の `revision` を送り、`decorateRevisionConflict` で競合を利用者へ通知する。
