@@ -68,7 +68,8 @@ describe('CSV import chunking stops between chunks', () => {
     const error: any = await runCsvImportBatchStandalone({ appIdsText: '7', guestId: '', file: csvFile(250) }, vi.fn()).catch(caught => caught);
 
     expect(apiPost).toHaveBeenCalledTimes(2);
-    expect(error.message.split('\n')[0]).toBe('中止しました（0/1 件を処理、残り 1 件は未実行）');
+    // 対象が 1 アプリのときは、書き込み件数つきの内側の報告をそのまま要点にする
+    expect(error.message.split('\n')[0]).toBe('中止しました（100/250 件を処理、残り 150 件は未実行）');
     expect(error.message).toContain('中止しました（100/250 件を処理、残り 150 件は未実行）');
     expect(error.message).toContain('100件を書き込み済み、残り 150件は書き込んでいません');
     expect(error.message).not.toContain('途中で失敗しました');

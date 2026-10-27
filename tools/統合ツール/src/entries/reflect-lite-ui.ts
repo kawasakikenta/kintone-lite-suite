@@ -603,7 +603,10 @@ export function mountReflectLitePanel() {
   // 詳細設定のポップアップを開いている間は、背面のステータスが見えないため、同じ内容をポップアップ内にも表示する。
   const detailStatus = document.createElement('div');
   detailStatus.className = 'kus-lp__note kus-rl-detail-status';
-  detailStatus.setAttribute('aria-hidden', 'true');
+  // 背面のライブ領域はモーダル中に inert になるため、こちらを読み上げ対象にする（常に描画し、文言だけ更新する）
+  detailStatus.setAttribute('role', 'status');
+  detailStatus.setAttribute('aria-live', 'polite');
+  detailStatus.setAttribute('aria-atomic', 'true');
   detailStatus.hidden = true;
   panel.setStatus = (msg, tone) => {
     const notice = pendingNotice;
@@ -2850,8 +2853,8 @@ export function mountReflectLitePanel() {
     stageDefs.forEach((def) => { stages[def.id].inert = value && def.id !== 'result'; });
     if (value) {
       panel.root.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement>('input,button,select,textarea').forEach((control) => {
-        // 処理中でも押せる必要がある「中止」ボタンは無効化しない（復元対象にも入れない）。
-        if (control.classList.contains('kus-lp__cancel')) return;
+        // 処理中でも押せる必要がある「中止」ボタンと、kintone 画面を確認するための折りたたみ「－」は無効化しない（復元対象にも入れない）。
+        if (control.classList.contains('kus-lp__cancel') || control.classList.contains('kus-lp__toggle')) return;
         // 処理中の二重呼び出しでは、すでに無効化した状態を「元の状態」として上書きしない。
         if (!disabledBefore.has(control)) disabledBefore.set(control, control.disabled);
         control.disabled = true;

@@ -902,7 +902,7 @@ ${contextLine}`);
 
   // src/runControl.ts
   function beginRun() {
-    const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0 };
+    const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0, writes: 0 };
     active = token;
     return token;
   }
@@ -935,7 +935,7 @@ ${contextLine}`);
   function isRunCancelledError(error) {
     let current = error;
     for (let depth = 0; current && depth < 4; depth++) {
-      if (current instanceof RunCancelledError || current.cancelled === true || current.name === "RunCancelledError") return true;
+      if (current instanceof RunCancelledError || current.name === "RunCancelledError") return true;
       if (current.name === "AbortError" && isCancelRequested()) return true;
       current = current.original;
     }
@@ -1089,7 +1089,7 @@ ${contextLine}`);
       try {
         const res = await raceWithCancel(
           Promise.resolve(kintone.api(`${prefix}${path}`, "GET", params)),
-          { timeoutMs: API_GET_TIMEOUT_MS }
+          { timeoutMs: options.timeoutMs === 0 ? 0 : Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : API_GET_TIMEOUT_MS }
         );
         apiGetMetrics.lastLatencyMs = Date.now() - startAt;
         apiGetMetrics.lastError = "";
@@ -1310,7 +1310,7 @@ ${contextLine}`);
     if (!section || typeof section !== "object") return;
     const countText = failed > 0 ? `（${failed}件）` : "";
     const detail = error instanceof Error ? error.message : error == null ? "" : String(error);
-    const fileText = files.length ? ` [${files.slice(0, 3).map((item) => item.fileName || item.fileKey || "(名称不明)").join(", ")}${files.length > 3 ? ", …" : ""}]` : "";
+    const fileText = files.length ? ` [${files.slice(0, 3).map((item) => `${item.fileName || item.fileKey || "(名称不明)"}${item.detail ? `: ${item.detail}` : ""}`).join(", ")}${files.length > 3 ? ", …" : ""}]` : "";
     section._fetchError = `${label}の取得に失敗したため、このセクションは比較できません${countText}${fileText}${detail ? `: ${detail}` : ""}`;
   }
   async function fetchPluginConfigs(pluginSection, prefix, appId) {
@@ -2747,7 +2747,12 @@ ${body}`;
       alert(NOT_KINTONE_PAGE_MESSAGE);
       return;
     }
-    run();
+    try {
+      run();
+    } catch (error) {
+      if (error?.panelBusy === true) return;
+      throw error;
+    }
   }
 
   // src/handlers/diffFocus.ts
@@ -2924,6 +2929,8 @@ ${body}`;
 }
 .kus-lp__hero-main{min-width:0;flex:1}
 .kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
+/* 狭い画面では経過時間の文字を隠し（スピナーは残す）ボタンを詰めて、タイトルが 1 文字ずつ折り返すのを防ぐ */
+@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12px}.kus-lp__toggle{min-width:30px}}
 .kus-lp__elapsed{
   font-size:12.5px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
   font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
@@ -3155,7 +3162,7 @@ ${body}`;
 .kus-lp__dialog::backdrop{background:rgba(15,23,42,.45)}
 .kus-lp__dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
 .kus-lp__dialog-title{margin:0;font-size:16px;font-weight:700;color:var(--c-text)}
-.kus-lp__dialog-close{border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
+.kus-lp__dialog-close{flex-shrink:0;white-space:nowrap;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
 .kus-lp__dialog-close:hover{background:var(--c-surface-2)}
 .kus-lp__dialog-body{padding:16px 18px;overflow:auto;min-height:0;flex:1}
 .kus-lp__dialog-body>.kus-lp__card{margin-bottom:12px}
@@ -3265,9 +3272,27 @@ ${body}`;
     root2.style.setProperty("--c-accent-chip", a.chip);
     root2.style.setProperty("--c-accent-ring", a.ring);
   }
+  var LitePanelBusyError = class extends Error {
+    constructor(id) {
+      super(`パネル ${id} は実行中のため再起動しません`);
+      __publicField(this, "panelBusy", true);
+      this.name = "LitePanelBusyError";
+    }
+  };
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
+    if (old instanceof HTMLElement && old.getAttribute("aria-busy") === "true") {
+      old.classList.remove("kus-lp--collapsed");
+      const statusText = old.querySelector(".kus-lp__status-text");
+      const hint = "実行中のため再起動しません。終わるのを待つか、「中止」を押してください。";
+      if (statusText && !statusText.textContent?.includes(hint)) statusText.textContent = `${hint} ${statusText.textContent || ""}`.trim();
+      try {
+        old.querySelector(".kus-lp__cancel")?.focus({ preventScroll: true });
+      } catch {
+      }
+      throw new LitePanelBusyError(opts.id);
+    }
     let carriedPosition = null;
     if (old instanceof HTMLElement && old.dataset.kusPlaced === "1") {
       const left = parseFloat(old.style.left);
@@ -3326,7 +3351,7 @@ ${body}`;
     cancelBtn.className = "kus-lp__cancel";
     cancelBtn.textContent = "中止";
     cancelBtn.setAttribute("aria-label", "処理を中止");
-    cancelBtn.title = "次のリクエストの前で処理を止めます（途中まで実行した内容は取り消しません）";
+    cancelBtn.title = "次のリクエストの前で処理を止めます（送信済みの書き込みは取り消しません）";
     cancelBtn.hidden = true;
     const bodyId = `${opts.id}-body`;
     const toggleBtn = document.createElement("button");
@@ -3512,6 +3537,13 @@ ${body}`;
           runToken = beginRun();
           cancelBtn.textContent = "中止";
           cancelBtn.disabled = false;
+          runToken.controller.signal.addEventListener("abort", () => {
+            if (!cancelBtn.hidden && !cancelBtn.disabled) {
+              cancelBtn.disabled = true;
+              cancelBtn.textContent = "中止中…";
+              handle.setStatus("中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…", "busy");
+            }
+          }, { once: true });
         } else if (!runToken.cancelled) {
           cancelBtn.disabled = false;
         }
@@ -3606,6 +3638,7 @@ ${body}`;
     window.addEventListener("resize", onWindowResize);
     if (carriedPosition) place(carriedPosition.left, carriedPosition.top);
     function dispose() {
+      if (runToken && !runToken.cancelled) requestCancel(runToken);
       document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed(false);
@@ -3810,12 +3843,23 @@ ${body}`;
         btn.title = "説明を表示";
         btn.setAttribute("aria-expanded", "false");
         const popEl = pop;
-        btn.addEventListener("click", () => {
-          const next = popEl.hidden;
+        const setOpen = (next) => {
           popEl.hidden = !next;
           btn.setAttribute("aria-expanded", String(next));
           btn.classList.toggle("kus-lp__help-btn--open", next);
-        });
+        };
+        btn.addEventListener("click", () => setOpen(popEl.hidden));
+        const onEsc = (e) => {
+          if (e.key !== "Escape" || popEl.hidden || e.isComposing) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(false);
+          try {
+            btn.focus({ preventScroll: true });
+          } catch {
+          }
+        };
+        btn.addEventListener("keydown", onEsc);
         const actions = head.querySelector(".kus-lp__card-actions");
         if (actions) actions.insertAdjacentElement("afterbegin", btn);
         else head.appendChild(btn);
@@ -3873,8 +3917,13 @@ ${body}`;
     }
     closeBtn.addEventListener("click", close);
     doneBtn.addEventListener("click", close);
+    let pressedOnBackdrop = false;
+    dialog.addEventListener("pointerdown", (e) => {
+      pressedOnBackdrop = e.target === dialog;
+    });
     dialog.addEventListener("click", (e) => {
-      if (e.target === dialog) close();
+      if (e.target === dialog && pressedOnBackdrop) close();
+      pressedOnBackdrop = false;
     });
     dialog.addEventListener("close", () => {
       if (opener?.isConnected) {
@@ -4222,15 +4271,24 @@ ${body}`;
       return out;
     } catch (e) {
       if (isRunCancelledError(e)) {
-        panel.setStatus("中止しました。次のリクエストの前で止めました。途中まで実行した内容は取り消していません。", "warn");
+        panel.setStatus(token && token.writes > 0 ? "中止しました。次のリクエストの前で止めました。途中まで書き込んだ内容は取り消していません。" : "中止しました。次のリクエストの前で止めました（書き込みは行っていません）。", "warn");
         return void 0;
       }
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
+      if (e?.partialSuccess === true) {
+        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
+      if (token?.cancelled && (e?.cancelReport === true || /^中止しました/.test(first))) {
+        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
       if (token?.cancelled) {
-        const headline = /^中止しました/.test(first) ? first : `中止しました: ${first}`;
-        panel.setStatus(`${headline}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        panel.setStatus(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? "。詳細は下のログ" : ""}）`, "err");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
@@ -4285,6 +4343,11 @@ ${body}`;
 .kus-wf-advanced{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 16px;padding:10px 14px;border:1px dashed #cbd5e1;border-radius:10px;background:#fff}
 .kus-wf-advanced__copy{font-size:13px;color:#475569;min-width:0;flex:1}
 .kus-wf-advanced__btn{flex-shrink:0}
+.kus-wf-dialog-status{flex:1 1 12em;min-width:0;max-height:6em;overflow:auto;align-self:center;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;color:#334155;font-size:13px;line-height:1.5}
+.kus-wf-dialog-status[hidden]{display:none}
+.kus-wf-dialog-status[data-tone=ok]{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+.kus-wf-dialog-status[data-tone=warn]{background:#fffbeb;border-color:#fde68a;color:#92400e}
+.kus-wf-dialog-status[data-tone=err]{background:#fef2f2;border-color:#fecaca;color:#991b1b}
 .kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
 .kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
 .kus-wf-summary>div:last-child{border:0}
@@ -4305,7 +4368,7 @@ ${body}`;
 @media(max-width:720px){
  .kus-wf.kus-lp{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);top:8px;right:8px}
  .kus-wf .kus-lp__hero{padding:12px 16px}
- .kus-wf .kus-lp__hint{display:none}
+ .kus-wf .kus-lp__hint{padding:8px 16px;font-size:12.5px}
  .kus-wf-nav{padding:8px;gap:4px}
  .kus-wf-nav button{padding:9px 3px;font-size:12.5px}
  .kus-wf-canvas{padding:16px}
@@ -4611,8 +4674,26 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       originalBusy(value);
     };
     const originalStatus = panel.setStatus;
+    const dialogStatuses = [advancedDialog, moreDialog].filter(Boolean).map((d) => {
+      const el = document.createElement("div");
+      el.className = "kus-wf-dialog-status";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      el.hidden = true;
+      d.dialog.querySelector(".kus-lp__dialog-foot")?.insertAdjacentElement("afterbegin", el);
+      return { dialog: d.dialog, el };
+    });
     panel.setStatus = (message, tone) => {
       originalStatus(message, tone);
+      for (const { dialog, el } of dialogStatuses) {
+        if (!dialog.open) {
+          el.hidden = true;
+          continue;
+        }
+        el.textContent = message || "";
+        el.dataset.tone = tone || "neutral";
+        el.hidden = !message;
+      }
       refresh();
     };
     let refreshQueued = false;
@@ -5064,6 +5145,7 @@ ${fence}`;
   init_dialog();
   init_utils();
   init_runControl();
+  init_api();
   var SHEETLIB_PRIMARY_URL = "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js";
   var SHEETLIB_FALLBACK_URL = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
   var rememberedSheetSelection = null;
@@ -5185,6 +5267,10 @@ ${fence}`;
     const main = getToolDocument().getElementById(TOOL_ID);
     const raw = main ? Number(window.getComputedStyle(main).zIndex) : NaN;
     const base = Number.isFinite(raw) ? raw : 2147483646;
+    const doc = getToolDocument();
+    const panel = typeof doc?.querySelector === "function" ? doc.querySelector(".kus-lp") : null;
+    const panelZ = panel ? Number(window.getComputedStyle(panel).zIndex) : NaN;
+    if (Number.isFinite(panelZ)) return String(Math.max(1, panelZ - 1));
     return String(Math.min(2147483647, Math.max(2e9, base + 1)));
   }
   async function loadSheetLibOnce() {
@@ -5444,7 +5530,7 @@ ${fence}`;
           doc.body.appendChild(el);
         }
         el.style.zIndex = getExporterOverlayZIndex();
-        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(440px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中断</button></div></div>`;
+        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(440px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
       },
       update(msg, step) {
         if (step != null) currentStep = step;
@@ -5460,6 +5546,9 @@ ${fence}`;
         const cancelBtn = doc.getElementById("kex-cancel-batch");
         if (cancelBtn) cancelBtn.onclick = () => {
           window.__kusBatchCancel = true;
+          requestCancel();
+          cancelBtn.disabled = true;
+          cancelBtn.textContent = "中止中…";
         };
       },
       addFailedAPIs(app, list) {
@@ -5761,6 +5850,10 @@ ${fence}`;
       const main = getToolDocument().getElementById(TOOL_ID);
       const raw = main ? Number(window.getComputedStyle(main).zIndex) : NaN;
       const base = Number.isFinite(raw) ? raw : 2147483646;
+      const doc = getToolDocument();
+      const panel = typeof doc?.querySelector === "function" ? doc.querySelector(".kus-lp") : null;
+      const panelZ = panel ? Number(window.getComputedStyle(panel).zIndex) : NaN;
+      if (Number.isFinite(panelZ)) return String(Math.max(1, panelZ - 1));
       return String(Math.min(2147483647, Math.max(2e9, base + 1)));
     }
     const UI = {
@@ -5781,7 +5874,7 @@ ${fence}`;
           doc.body.appendChild(el);
         }
         el.style.zIndex = getExporterOverlayZIndex2();
-        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(400px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中断</button></div></div>`;
+        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(400px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
       },
       update(msg, step) {
         if (step !== void 0) UI.currentStep = step;
@@ -5797,6 +5890,9 @@ ${fence}`;
         const cancelBtn = doc.getElementById("kex-cancel-batch");
         if (cancelBtn) cancelBtn.onclick = () => {
           window.__kusBatchCancel = true;
+          requestCancel();
+          cancelBtn.disabled = true;
+          cancelBtn.textContent = "中止中…";
         };
       },
       logError(apiName, error) {
@@ -6197,7 +6293,7 @@ ${fence}`;
           return await fn();
         } catch (e) {
           lastErr = e;
-          if (i === max - 1) throw e;
+          if (isRunCancelledError(e) || i === max - 1) throw e;
           await UtilsX.sleep(CONFIG.RETRY_DELAY * (i + 1));
         }
       }
@@ -6251,7 +6347,11 @@ ${fence}`;
       if (!returnWorkbook) window.__kusBatchCancel = false;
       UI.show("ライブラリ読み込み中...", 12);
       const { styled } = await loadSheetLib();
-      const api = kintone.api;
+      const api = (path, method, params2) => {
+        throwIfCancelled();
+        const call = Promise.resolve(kintone.api(path, method, params2));
+        return String(method).toUpperCase() === "GET" ? raceWithCancel(call, { timeoutMs: API_GET_TIMEOUT_MS }) : call;
+      };
       const apiUrl = (path, usePreview = sourcePreview) => {
         const raw = String(path || "");
         const resource = raw.replace(/^\/k\/v1(?:\/preview)?/, "") || "/";
@@ -6331,7 +6431,7 @@ ${fence}`;
         });
       });
       await Promise.all(refPromises);
-      if (!returnWorkbook && window.__kusBatchCancel) {
+      if (!returnWorkbook && (window.__kusBatchCancel || isCancelRequested())) {
         UI.hide();
         return false;
       }
@@ -7916,7 +8016,7 @@ ${fence}`;
       return true;
     } catch (e) {
       UI.hide();
-      console.error("kintone設計書エクスポートエラー:", e);
+      if (!isRunCancelledError(e)) console.error("kintone設計書エクスポートエラー:", e);
       if (!suppressToast) showToast(`❌ エラーが発生しました: ${e.message}`, "error");
       throw e;
     }
@@ -7981,9 +8081,15 @@ ${fence}`;
     const zip = new JSZipCtor();
     const usedFilenames = /* @__PURE__ */ new Set();
     let cancelled = false;
+    let cancelRowsRecorded = false;
     window.__kusBatchCancel = false;
     for (let i = 0; i < appIds.length; i++) {
       cancelled = !!window.__kusBatchCancel;
+      if (!cancelled && isCancelRequested()) {
+        for (let j = i; j < appIds.length; j++) results.push({ appId: appIds[j], appName: "", filename: "", ok: false, error: "未実行（中止）" });
+        cancelled = true;
+        cancelRowsRecorded = true;
+      }
       if (cancelled) break;
       const appId = appIds[i];
       const guestId = targets[i].guestId;
@@ -8033,6 +8139,7 @@ ${fence}`;
           results.push({ appId, appName: "", filename: "", ok: false, error: `${RUN_CANCELLED_MESSAGE}（生成途中）` });
           for (let j = i + 1; j < appIds.length; j++) results.push({ appId: appIds[j], appName: "", filename: "", ok: false, error: "未実行（中止）" });
           cancelled = true;
+          cancelRowsRecorded = true;
           break;
         }
         console.error(`[batch design xlsx] app ${appId} failed:`, e);
@@ -8041,12 +8148,20 @@ ${fence}`;
         batchUi.update(`(${i + 1}/${appIds.length}) アプリ ${appId} の生成に失敗: ${e?.message || e}`, i + 2);
       }
     }
-    if (cancelled) {
+    if (cancelled && !cancelRowsRecorded) {
       results.push({ appId: "-", appName: "", filename: "", ok: false, error: "ユーザーにより中断されました" });
     }
     const successCount = results.filter((r) => r.ok).length;
     if (successCount === 0 && cancelled) {
       batchUi.hide();
+      params.onFinish?.({
+        total: appIds.length,
+        successCount: 0,
+        failedCount: appIds.length,
+        cancelled: true,
+        failedApps: results.filter((r) => !r.ok && r.appId !== "-").map((r) => ({ appId: r.appId, error: r.error || "" })),
+        failedAPIs: batchUi.getFailedAPIs().slice()
+      });
       return false;
     }
     if (successCount === 0) {
@@ -8311,7 +8426,12 @@ ${detail}`);
       const names = [...new Set(failedAPIs.map((f) => f.name))].join(", ");
       message += `。取得に失敗した項目 ${failedAPIs.length}件（${names}）があります。詳細はサマリーシートの「API取得失敗レポート」を確認してください`;
     }
-    if (completionNote || failedAPIs.length) setStatus(message, true);
+    if (failedAPIs.length) {
+      const lines = ["取得に失敗した項目", ...failedAPIs.map((f) => `- ${f.name}: ${f.error}`)];
+      throw Object.assign(new Error(`${message}
+${lines.join("\n")}`), { partialSuccess: true });
+    }
+    if (completionNote) setStatus(message, true);
     else setStatus(message);
   }
   async function runBatchDesignExportXlsxZipStandalone(source, setStatus) {
@@ -8338,13 +8458,26 @@ ${detail}`);
       info = result2;
     } });
     if (done === false) {
-      if (isCancelRequested()) throw createCancelReport(0, apps.length, ["設計書ZIPは保存していません。"]);
+      if (isCancelRequested()) {
+        const failed = (info?.failedApps || []).filter((f) => f.error && !/未実行（中止）|生成途中/.test(f.error));
+        throw createCancelReport(0, apps.length, ["設計書ZIPは保存していません。", ...failed.map((f) => `App ${f.appId}: 中止前に失敗（${f.error}）`)]);
+      }
       setStatus("設計書ZIP出力をキャンセルしました");
       return;
     }
     const result = info;
     if (result && (result.failedCount > 0 || result.failedAPIs.length > 0)) {
-      const parts = [`成功 ${result.successCount} / 失敗・未処理 ${result.failedCount}（全${result.total}件）${result.cancelled ? "、途中で中止" : ""}`];
+      if (result.cancelled) {
+        const notRun = result.failedApps.filter((f) => /未実行（中止）/.test(f.error));
+        const failed = result.failedApps.filter((f) => !/未実行（中止）/.test(f.error));
+        throw createCancelReport(result.successCount, result.total, [
+          `生成できた ${result.successCount} アプリ分の設計書ZIPを保存しました（詳細は ZIP 内の _manifest.txt）。`,
+          ...failed.map((f) => `失敗 App ${f.appId}: ${f.error}`),
+          ...notRun.length ? [`未実行（中止）: ${notRun.map((f) => `App ${f.appId}`).join(", ")}`] : [],
+          ...result.failedAPIs.length ? [`API取得に失敗した項目 ${result.failedAPIs.length}件`] : []
+        ]);
+      }
+      const parts = [`成功 ${result.successCount} / 失敗・未処理 ${result.failedCount}（全${result.total}件）`];
       if (result.failedApps.length) parts.push(`失敗したアプリ: ${result.failedApps.map((f) => `App ${f.appId}`).join(", ")}`);
       if (result.failedAPIs.length) parts.push(`API取得に失敗した項目 ${result.failedAPIs.length}件`);
       setStatus(`設計書ZIPを保存しました。${parts.join("。")}。詳細は ZIP 内の _manifest.txt を確認してください`, true);

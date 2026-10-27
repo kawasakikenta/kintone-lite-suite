@@ -184,6 +184,40 @@ describe('一括取得と中止', () => {
     await assertion;
     expect(calls).toContain('DELETE /k/v1/records/cursor.json');
   });
+
+  it('cursor のページ読み取りは応答待ちの上限で再送しない（再送するとページが抜けるため）', async () => {
+    vi.useFakeTimers();
+    let gets = 0;
+    const api = vi.fn((path: string, method: string) => {
+      if (method === 'POST') return Promise.resolve({ id: 'c1' });
+      if (method === 'DELETE') return Promise.resolve({});
+      gets += 1;
+      // 1 ページ目は上限より長くかかるが、再送されずに 1 回で返る
+      return new Promise(resolve => setTimeout(() => resolve({ records: gets === 1 ? [{ $id: { value: '1' } }] : [], next: gets === 1 }), API_GET_TIMEOUT_MS * 2));
+    });
+    vi.stubGlobal('kintone', { api });
+    beginRun();
+    const pending = fetchRecordsByQuery('/k/v1', 1, 'order by $id desc');
+    await vi.advanceTimersByTimeAsync(API_GET_TIMEOUT_MS * 5);
+    const result = await pending;
+    expect(result.records.map(r => r.$id.value)).toEqual(['1']);
+    expect(gets).toBe(2);
+    expect(api.mock.calls.filter(([, method]) => method === 'GET').length).toBe(2);
+  });
+
+  it('apiGet は timeoutMs: 0 で応答待ちの上限なし、指定値で上限を変えられる', async () => {
+    vi.useFakeTimers();
+    const api = vi.fn(() => new Promise(resolve => setTimeout(() => resolve({ ok: true }), API_GET_TIMEOUT_MS + 1000)));
+    vi.stubGlobal('kintone', { api });
+    beginRun();
+    const pending = apiGet('/k/v1', '/app.json', { id: 1 }, { retries: 1, timeoutMs: 0 });
+    await vi.advanceTimersByTimeAsync(API_GET_TIMEOUT_MS + 1000);
+    await expect(pending).resolves.toEqual({ ok: true });
+    const short = apiGet('/k/v1', '/app.json', { id: 1 }, { retries: 1, timeoutMs: 500 });
+    const assertion = expect(short).rejects.toThrow(/timeout/);
+    await vi.advanceTimersByTimeAsync(600);
+    await assertion;
+  });
 });
 
 describe('ファイル取得と中止', () => {

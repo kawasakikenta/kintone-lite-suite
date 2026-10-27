@@ -1,9 +1,9 @@
 'use strict';
 
 import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel, sanitizeFilenamePart } from '../utils.js';
-import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle, fetchRecordsByQuery, isRevisionConflictError } from '../api.js';
+import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle, fetchRecordsByQuery, isRevisionConflictError } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
-import { RunCancelledError, activeAbortSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
+import { RunCancelledError, createRequestSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
 import { createCancelReport, describeInnerCancel, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
 import {
   sanitizeZipSegment,
@@ -62,7 +62,9 @@ export async function runRecordAppBatchStandalone(
       if (result && result.cancelled) cancelled.push(`App ${appId}`);
     } catch (error: any) {
       if (isCancelStop(error)) {
-        // 1 回の中止を残りのアプリ数ぶんの失敗にしない。ここで止め、処理済み・失敗・未実行を分けて伝える。
+        // 対象が 1 アプリなら、内側の件数つき報告（例: 200/450 件を処理）をそのまま要点にする
+        if (appIds.length === 1 && error?.cancelReport === true) throw error;
+        // 1 回の中止を残りのアプリ数ぶんの失敗にしない。ここで止め、処理済み・失敗・未実行をアプリ単位で伝える。
         throw createCancelReport(i, appIds.length, [
           ...describeInnerCancel(`App ${appId}`, error),
           ...failures.map((failure) => `失敗 ${failure}`),
@@ -78,6 +80,11 @@ export async function runRecordAppBatchStandalone(
   const cancelSummary = cancelled.length ? `確認でキャンセルしたため実行していません（${cancelled.length}アプリ）: ${cancelled.join(', ')}` : '';
   if (failures.length) {
     throw new Error(`${appIds.length}件中${failures.length}件が失敗しました\n${failures.join('\n')}${warningSummary ? `\n${warningSummary}` : ''}${cancelSummary ? `\n${cancelSummary}` : ''}`);
+  }
+  if (cancelled.length === appIds.length) {
+    // 確認ダイアログですべて「いいえ」を選んだ: 何も実行していないので、完了ともエラーとも言わない
+    setStatus(`確認でキャンセルしました（${appIds.length}アプリとも実行していません）`);
+    return;
   }
   if (warningSummary || cancelSummary) {
     setStatus(`${appIds.length}アプリの操作が完了しました${cancelSummary ? `\n${cancelSummary}` : ''}${warningSummary ? `\n${warningSummary}` : ''}`, true);
@@ -102,12 +109,14 @@ async function downloadFileBlob(prefix: string, fileKey: string): Promise<FileFe
   const url = prefix + '/file.json?fileKey=' + encodeURIComponent(fileKey);
   const headers = { 'X-Requested-With': 'XMLHttpRequest' };
   let lastReason = '';
+  let request: ReturnType<typeof createRequestSignal> | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     // 中止は取得失敗として記録せず、呼び出し側のループを止める。
     throwIfCancelled();
     try {
-      const signal = activeAbortSignal();
-      const resp = await fetch(url, { method: 'GET', headers, ...(signal ? { signal } : {}) });
+      // 中止と応答待ちの上限（FILE_DOWNLOAD_TIMEOUT_MS）のどちらでも打ち切る
+      request = createRequestSignal(FILE_DOWNLOAD_TIMEOUT_MS);
+      const resp = await fetch(url, { method: 'GET', headers, signal: request.signal });
       if (resp.status === 403) return { ok: false, reason: '閲覧権限なし (HTTP 403)' };
       if (!resp.ok) {
         lastReason = `HTTP ${resp.status}`;
@@ -115,8 +124,10 @@ async function downloadFileBlob(prefix: string, fileKey: string): Promise<FileFe
         return { ok: true, blob: await resp.blob() };
       }
     } catch (e: any) {
-      if (isRunCancelledError(e)) throw e instanceof RunCancelledError ? e : new RunCancelledError();
-      lastReason = e?.message || String(e);
+      if (isRunCancelledError(e) || isRunCancelledError((request?.signal as any)?.reason)) throw e instanceof RunCancelledError ? e : new RunCancelledError();
+      lastReason = request?.timedOut() ? `応答待ちが ${Math.round(FILE_DOWNLOAD_TIMEOUT_MS / 1000)} 秒を超えました（timeout）` : (e?.message || String(e));
+    } finally {
+      request?.release();
     }
     if (attempt === 0) await sleepUnlessCancelled(500);
   }

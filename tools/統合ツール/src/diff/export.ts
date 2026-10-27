@@ -2872,7 +2872,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return name ? `${name}（アプリ ${id}）` : `アプリ ${id}`;
   };
   const formatEnvironment = (meta: any) => [
-    meta.preview ? 'プレビュー環境' : '運用環境',
+    meta.preview ? 'プレビュー環境' : '本番',
     meta.guestId ? `ゲスト ${meta.guestId}` : '通常スペース'
   ].join(' · ');
   const sourceAppDisplay = formatAppDisplay(reportMeta.source);

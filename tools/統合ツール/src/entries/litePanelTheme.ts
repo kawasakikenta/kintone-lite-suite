@@ -106,6 +106,8 @@ const THEME_CSS = `
 }
 .kus-lp__hero-main{min-width:0;flex:1}
 .kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
+/* 狭い画面では経過時間の文字を隠し（スピナーは残す）ボタンを詰めて、タイトルが 1 文字ずつ折り返すのを防ぐ */
+@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12px}.kus-lp__toggle{min-width:30px}}
 .kus-lp__elapsed{
   font-size:12.5px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
   font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
@@ -337,7 +339,7 @@ const THEME_CSS = `
 .kus-lp__dialog::backdrop{background:rgba(15,23,42,.45)}
 .kus-lp__dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
 .kus-lp__dialog-title{margin:0;font-size:16px;font-weight:700;color:var(--c-text)}
-.kus-lp__dialog-close{border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
+.kus-lp__dialog-close{flex-shrink:0;white-space:nowrap;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
 .kus-lp__dialog-close:hover{background:var(--c-surface-2)}
 .kus-lp__dialog-body{padding:16px 18px;overflow:auto;min-height:0;flex:1}
 .kus-lp__dialog-body>.kus-lp__card{margin-bottom:12px}
@@ -494,11 +496,29 @@ export interface LitePanelHandle {
   isCancelRequested: () => boolean;
 }
 
+/** 実行中のパネルがあるため再起動しなかったことを示す。エントリの kintoneGuard が握りつぶす。 */
+export class LitePanelBusyError extends Error {
+  readonly panelBusy = true;
+  constructor(id: string) {
+    super(`パネル ${id} は実行中のため再起動しません`);
+    this.name = 'LitePanelBusyError';
+  }
+}
+
 // ===== Panel factory =====
 
 export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   ensureThemeStyles();
   const old = document.getElementById(opts.id);
+  // 実行中に同じツールを再起動しても、見えなくなった旧パネルの書き込みが続かないよう、実行中のパネルを維持する
+  if (old instanceof HTMLElement && old.getAttribute('aria-busy') === 'true') {
+    old.classList.remove('kus-lp--collapsed');
+    const statusText = old.querySelector<HTMLElement>('.kus-lp__status-text');
+    const hint = '実行中のため再起動しません。終わるのを待つか、「中止」を押してください。';
+    if (statusText && !statusText.textContent?.includes(hint)) statusText.textContent = `${hint} ${statusText.textContent || ''}`.trim();
+    try { old.querySelector<HTMLElement>('.kus-lp__cancel')?.focus({ preventScroll: true } as any); } catch { /* noop */ }
+    throw new LitePanelBusyError(opts.id);
+  }
   // 再実行しても、利用者がドラッグで動かした位置を引き継ぐ（折りたたみ状態は引き継がない）
   let carriedPosition: { left: number; top: number } | null = null;
   if (old instanceof HTMLElement && old.dataset.kusPlaced === '1') {
@@ -569,7 +589,7 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   cancelBtn.className = 'kus-lp__cancel';
   cancelBtn.textContent = '中止';
   cancelBtn.setAttribute('aria-label', '処理を中止');
-  cancelBtn.title = '次のリクエストの前で処理を止めます（途中まで実行した内容は取り消しません）';
+  cancelBtn.title = '次のリクエストの前で処理を止めます（送信済みの書き込みは取り消しません）';
   cancelBtn.hidden = true;
 
   const bodyId = `${opts.id}-body`;
@@ -776,6 +796,14 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
         runToken = beginRun();
         cancelBtn.textContent = '中止';
         cancelBtn.disabled = false;
+        // 別の場所（進捗オーバーレイなど）から中止された場合も、ボタンとステータスを「中止中」に揃える
+        runToken.controller.signal.addEventListener('abort', () => {
+          if (!cancelBtn.hidden && !cancelBtn.disabled) {
+            cancelBtn.disabled = true;
+            cancelBtn.textContent = '中止中…';
+            handle.setStatus('中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…', 'busy');
+          }
+        }, { once: true });
       } else if (!runToken.cancelled) {
         cancelBtn.disabled = false;
       }
@@ -870,6 +898,8 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   if (carriedPosition) place(carriedPosition.left, carriedPosition.top);
 
   function dispose() {
+    // 実行中に同じツールを再起動したときは、見えなくなった旧パネルの処理を続けさせない
+    if (runToken && !runToken.cancelled) requestRunCancel(runToken);
     document.removeEventListener('keydown', onDocKeydown);
     window.removeEventListener('resize', onWindowResize);
     stopElapsed(false);
@@ -1143,12 +1173,21 @@ export function attachCardHelp(scope: ParentNode): void {
       btn.title = '説明を表示';
       btn.setAttribute('aria-expanded', 'false');
       const popEl = pop;
-      btn.addEventListener('click', () => {
-        const next = popEl.hidden;
+      const setOpen = (next: boolean) => {
         popEl.hidden = !next;
         btn!.setAttribute('aria-expanded', String(next));
         btn!.classList.toggle('kus-lp__help-btn--open', next);
-      });
+      };
+      btn.addEventListener('click', () => setOpen(popEl.hidden));
+      // 吹き出しが開いているときの Esc は吹き出しだけを閉じる（パネルやポップアップは閉じない）
+      const onEsc = (e: KeyboardEvent) => {
+        if (e.key !== 'Escape' || popEl.hidden || e.isComposing) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen(false);
+        try { btn!.focus({ preventScroll: true } as any); } catch { /* noop */ }
+      };
+      btn.addEventListener('keydown', onEsc);
       const actions = head.querySelector('.kus-lp__card-actions');
       if (actions) actions.insertAdjacentElement('afterbegin', btn); else head.appendChild(btn);
     }
@@ -1204,7 +1243,10 @@ export function makeDialog(opts: { title: string; id?: string; wide?: boolean })
   closeBtn.addEventListener('click', close);
   doneBtn.addEventListener('click', close);
   // 背景（::backdrop）のクリックで閉じる
-  dialog.addEventListener('click', (e: MouseEvent) => { if (e.target === dialog) close(); });
+  // 背景（::backdrop）のクリックで閉じる。内側で押し始めて背景で離したドラッグ選択では閉じない
+  let pressedOnBackdrop = false;
+  dialog.addEventListener('pointerdown', (e: PointerEvent) => { pressedOnBackdrop = e.target === dialog; });
+  dialog.addEventListener('click', (e: MouseEvent) => { if (e.target === dialog && pressedOnBackdrop) close(); pressedOnBackdrop = false; });
   dialog.addEventListener('close', () => { if (opener?.isConnected) { try { opener.focus({ preventScroll: true } as any); } catch { /* noop */ } } });
   return { dialog, body, open, close };
 }
@@ -1867,17 +1909,29 @@ export async function liteRun<T>(
   } catch (e: any) {
     if (isRunCancelledError(e)) {
       // 既存のログは消さない。API 層は次のリクエストの前で止めるので、実行済みの書き込みは取り消されていない。
-      panel.setStatus('中止しました。次のリクエストの前で止めました。途中まで実行した内容は取り消していません。', 'warn');
+      panel.setStatus(token && token.writes > 0
+        ? '中止しました。次のリクエストの前で止めました。途中まで書き込んだ内容は取り消していません。'
+        : '中止しました。次のリクエストの前で止めました（書き込みは行っていません）。', 'warn');
       return undefined;
     }
     const message = String(e?.message || e || '不明なエラー');
     const lines = message.split('\n').map((line) => line.trim()).filter(Boolean);
     const [first, ...rest] = lines.length ? lines : [message];
+    if (e?.partialSuccess === true) {
+      // 一部だけ成功した結果（ファイルは保存済みなど）: 要点を警告色で、内訳はログへ
+      panel.setStatus(`${first}${rest.length ? '（詳細は下のログ）' : ''}`, 'warn');
+      if (rest.length) panel.setResult(lines.join('\n'));
+      return undefined;
+    }
+    if (token?.cancelled && (e?.cancelReport === true || /^中止しました/.test(first))) {
+      // 中止後に残りの項目などを報告する件数つきの報告。1 行目を要点に、内訳はログへ出す
+      panel.setStatus(`${first}${rest.length ? '（詳細は下のログ）' : ''}`, 'warn');
+      if (rest.length) panel.setResult(lines.join('\n'));
+      return undefined;
+    }
     if (token?.cancelled) {
-      // 中止後に残りの項目などを報告するエラー。内訳はログへ出す
-      // 1 行目がすでに「中止しました（…）」で始まる件数つきの報告は、そのまま要点として出す
-      const headline = /^中止しました/.test(first) ? first : `中止しました: ${first}`;
-      panel.setStatus(`${headline}${rest.length ? '（詳細は下のログ）' : ''}`, 'warn');
+      // 中止を要求した後に起きた本物の失敗は、中止ではなくエラーとして示す
+      panel.setStatus(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? '。詳細は下のログ' : ''}）`, 'err');
       if (rest.length) panel.setResult(lines.join('\n'));
       return undefined;
     }

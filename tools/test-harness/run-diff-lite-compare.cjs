@@ -869,8 +869,8 @@ async function captureReport(context, variant, reportFile, outDir) {
     assert.equal(desktopHeader.before, true, 'after: topbar に構造化された比較元レーンがありません');
     assert.equal(desktopHeader.after, true, 'after: topbar に構造化された比較先レーンがありません');
     assert.equal(desktopHeader.order, true, 'after: topbar の比較元/比較先の順序が逆です');
-    assert.match(desktopHeader.beforeEnvironment, /運用環境[\s\S]*通常スペース/, 'after: 比較元カードが実際の取得環境を表示していません');
-    assert.match(desktopHeader.afterEnvironment, /運用環境[\s\S]*通常スペース/, 'after: 比較先カードが実際の取得環境を表示していません');
+    assert.match(desktopHeader.beforeEnvironment, /本番[\s\S]*通常スペース/, 'after: 比較元カードが実際の取得環境を表示していません');
+    assert.match(desktopHeader.afterEnvironment, /本番[\s\S]*通常スペース/, 'after: 比較先カードが実際の取得環境を表示していません');
 
     const progressbar = await firstVisibleLocator(page.locator('[role="progressbar"]'));
     assert.ok(progressbar, 'after: レビュー進捗の progressbar が見つかりません');

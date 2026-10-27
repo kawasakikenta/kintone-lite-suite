@@ -782,7 +782,7 @@ ${contextLine}`);
 
   // src/runControl.ts
   function beginRun() {
-    const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0 };
+    const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0, writes: 0 };
     active = token;
     return token;
   }
@@ -806,6 +806,9 @@ ${contextLine}`);
   function activeRun() {
     return active;
   }
+  function noteWrite() {
+    if (active) active.writes += 1;
+  }
   function throwIfCancelled() {
     if (active && active.cancelled) throw new RunCancelledError();
   }
@@ -815,7 +818,7 @@ ${contextLine}`);
   function isRunCancelledError(error) {
     let current = error;
     for (let depth = 0; current && depth < 4; depth++) {
-      if (current instanceof RunCancelledError || current.cancelled === true || current.name === "RunCancelledError") return true;
+      if (current instanceof RunCancelledError || current.name === "RunCancelledError") return true;
       if (current.name === "AbortError" && isCancelRequested()) return true;
       current = current.original;
     }
@@ -983,7 +986,7 @@ ${contextLine}`);
       try {
         const res = await raceWithCancel(
           Promise.resolve(kintone.api(`${prefix}${path}`, "GET", params)),
-          { timeoutMs: API_GET_TIMEOUT_MS }
+          { timeoutMs: options.timeoutMs === 0 ? 0 : Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : API_GET_TIMEOUT_MS }
         );
         apiGetMetrics.lastLatencyMs = Date.now() - startAt;
         apiGetMetrics.lastError = "";
@@ -1017,6 +1020,7 @@ ${contextLine}`);
     for (let i = 0; i < maxAttempts; i++) {
       throwIfCancelled();
       try {
+        noteWrite();
         return await kintone.api(`${prefix}${path}`, method, body);
       } catch (e) {
         if (isRunCancelledError(e)) throw e;
@@ -1038,6 +1042,7 @@ ${contextLine}`);
     assertAllowsMutatingRestCall(prefix, path, "DELETE");
     if (!options.ignoreCancel) throwIfCancelled();
     try {
+      if (!options.ignoreCancel) noteWrite();
       return await kintone.api(`${prefix}${path}`, "DELETE", body);
     } catch (e) {
       if (isRunCancelledError(e)) throw e;
@@ -1091,7 +1096,7 @@ ${contextLine}`);
     let finished = false;
     try {
       while (true) {
-        const resp = await apiGet(prefix, "/records/cursor.json", { id: cursorId });
+        const resp = await apiGet(prefix, "/records/cursor.json", { id: cursorId }, { timeoutMs: 0 });
         if (!Array.isArray(resp?.records)) {
           throw new Error("cursor 取得の応答形式が不正です（records がありません）");
         }
@@ -1276,7 +1281,12 @@ ${contextLine}`);
       alert(NOT_KINTONE_PAGE_MESSAGE);
       return;
     }
-    run();
+    try {
+      run();
+    } catch (error) {
+      if (error?.panelBusy === true) return;
+      throw error;
+    }
   }
 
   // src/handlers/diffFocus.ts
@@ -1453,6 +1463,8 @@ ${contextLine}`);
 }
 .kus-lp__hero-main{min-width:0;flex:1}
 .kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
+/* 狭い画面では経過時間の文字を隠し（スピナーは残す）ボタンを詰めて、タイトルが 1 文字ずつ折り返すのを防ぐ */
+@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12px}.kus-lp__toggle{min-width:30px}}
 .kus-lp__elapsed{
   font-size:12.5px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
   font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
@@ -1684,7 +1696,7 @@ ${contextLine}`);
 .kus-lp__dialog::backdrop{background:rgba(15,23,42,.45)}
 .kus-lp__dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
 .kus-lp__dialog-title{margin:0;font-size:16px;font-weight:700;color:var(--c-text)}
-.kus-lp__dialog-close{border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
+.kus-lp__dialog-close{flex-shrink:0;white-space:nowrap;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
 .kus-lp__dialog-close:hover{background:var(--c-surface-2)}
 .kus-lp__dialog-body{padding:16px 18px;overflow:auto;min-height:0;flex:1}
 .kus-lp__dialog-body>.kus-lp__card{margin-bottom:12px}
@@ -1794,9 +1806,27 @@ ${contextLine}`);
     root2.style.setProperty("--c-accent-chip", a.chip);
     root2.style.setProperty("--c-accent-ring", a.ring);
   }
+  var LitePanelBusyError = class extends Error {
+    constructor(id) {
+      super(`パネル ${id} は実行中のため再起動しません`);
+      __publicField(this, "panelBusy", true);
+      this.name = "LitePanelBusyError";
+    }
+  };
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
+    if (old instanceof HTMLElement && old.getAttribute("aria-busy") === "true") {
+      old.classList.remove("kus-lp--collapsed");
+      const statusText = old.querySelector(".kus-lp__status-text");
+      const hint = "実行中のため再起動しません。終わるのを待つか、「中止」を押してください。";
+      if (statusText && !statusText.textContent?.includes(hint)) statusText.textContent = `${hint} ${statusText.textContent || ""}`.trim();
+      try {
+        old.querySelector(".kus-lp__cancel")?.focus({ preventScroll: true });
+      } catch {
+      }
+      throw new LitePanelBusyError(opts.id);
+    }
     let carriedPosition = null;
     if (old instanceof HTMLElement && old.dataset.kusPlaced === "1") {
       const left = parseFloat(old.style.left);
@@ -1855,7 +1885,7 @@ ${contextLine}`);
     cancelBtn.className = "kus-lp__cancel";
     cancelBtn.textContent = "中止";
     cancelBtn.setAttribute("aria-label", "処理を中止");
-    cancelBtn.title = "次のリクエストの前で処理を止めます（途中まで実行した内容は取り消しません）";
+    cancelBtn.title = "次のリクエストの前で処理を止めます（送信済みの書き込みは取り消しません）";
     cancelBtn.hidden = true;
     const bodyId = `${opts.id}-body`;
     const toggleBtn = document.createElement("button");
@@ -2041,6 +2071,13 @@ ${contextLine}`);
           runToken = beginRun();
           cancelBtn.textContent = "中止";
           cancelBtn.disabled = false;
+          runToken.controller.signal.addEventListener("abort", () => {
+            if (!cancelBtn.hidden && !cancelBtn.disabled) {
+              cancelBtn.disabled = true;
+              cancelBtn.textContent = "中止中…";
+              handle.setStatus("中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…", "busy");
+            }
+          }, { once: true });
         } else if (!runToken.cancelled) {
           cancelBtn.disabled = false;
         }
@@ -2135,6 +2172,7 @@ ${contextLine}`);
     window.addEventListener("resize", onWindowResize);
     if (carriedPosition) place(carriedPosition.left, carriedPosition.top);
     function dispose() {
+      if (runToken && !runToken.cancelled) requestCancel(runToken);
       document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed(false);
@@ -2339,12 +2377,23 @@ ${contextLine}`);
         btn.title = "説明を表示";
         btn.setAttribute("aria-expanded", "false");
         const popEl = pop;
-        btn.addEventListener("click", () => {
-          const next = popEl.hidden;
+        const setOpen = (next) => {
           popEl.hidden = !next;
           btn.setAttribute("aria-expanded", String(next));
           btn.classList.toggle("kus-lp__help-btn--open", next);
-        });
+        };
+        btn.addEventListener("click", () => setOpen(popEl.hidden));
+        const onEsc = (e) => {
+          if (e.key !== "Escape" || popEl.hidden || e.isComposing) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(false);
+          try {
+            btn.focus({ preventScroll: true });
+          } catch {
+          }
+        };
+        btn.addEventListener("keydown", onEsc);
         const actions = head.querySelector(".kus-lp__card-actions");
         if (actions) actions.insertAdjacentElement("afterbegin", btn);
         else head.appendChild(btn);
@@ -2402,8 +2451,13 @@ ${contextLine}`);
     }
     closeBtn.addEventListener("click", close);
     doneBtn.addEventListener("click", close);
+    let pressedOnBackdrop = false;
+    dialog.addEventListener("pointerdown", (e) => {
+      pressedOnBackdrop = e.target === dialog;
+    });
     dialog.addEventListener("click", (e) => {
-      if (e.target === dialog) close();
+      if (e.target === dialog && pressedOnBackdrop) close();
+      pressedOnBackdrop = false;
     });
     dialog.addEventListener("close", () => {
       if (opener?.isConnected) {
@@ -2751,15 +2805,24 @@ ${contextLine}`);
       return out;
     } catch (e) {
       if (isRunCancelledError(e)) {
-        panel.setStatus("中止しました。次のリクエストの前で止めました。途中まで実行した内容は取り消していません。", "warn");
+        panel.setStatus(token && token.writes > 0 ? "中止しました。次のリクエストの前で止めました。途中まで書き込んだ内容は取り消していません。" : "中止しました。次のリクエストの前で止めました（書き込みは行っていません）。", "warn");
         return void 0;
       }
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
+      if (e?.partialSuccess === true) {
+        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
+      if (token?.cancelled && (e?.cancelReport === true || /^中止しました/.test(first))) {
+        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
       if (token?.cancelled) {
-        const headline = /^中止しました/.test(first) ? first : `中止しました: ${first}`;
-        panel.setStatus(`${headline}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        panel.setStatus(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? "。詳細は下のログ" : ""}）`, "err");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
@@ -2814,6 +2877,11 @@ ${contextLine}`);
 .kus-wf-advanced{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 16px;padding:10px 14px;border:1px dashed #cbd5e1;border-radius:10px;background:#fff}
 .kus-wf-advanced__copy{font-size:13px;color:#475569;min-width:0;flex:1}
 .kus-wf-advanced__btn{flex-shrink:0}
+.kus-wf-dialog-status{flex:1 1 12em;min-width:0;max-height:6em;overflow:auto;align-self:center;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;color:#334155;font-size:13px;line-height:1.5}
+.kus-wf-dialog-status[hidden]{display:none}
+.kus-wf-dialog-status[data-tone=ok]{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+.kus-wf-dialog-status[data-tone=warn]{background:#fffbeb;border-color:#fde68a;color:#92400e}
+.kus-wf-dialog-status[data-tone=err]{background:#fef2f2;border-color:#fecaca;color:#991b1b}
 .kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
 .kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
 .kus-wf-summary>div:last-child{border:0}
@@ -2834,7 +2902,7 @@ ${contextLine}`);
 @media(max-width:720px){
  .kus-wf.kus-lp{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);top:8px;right:8px}
  .kus-wf .kus-lp__hero{padding:12px 16px}
- .kus-wf .kus-lp__hint{display:none}
+ .kus-wf .kus-lp__hint{padding:8px 16px;font-size:12.5px}
  .kus-wf-nav{padding:8px;gap:4px}
  .kus-wf-nav button{padding:9px 3px;font-size:12.5px}
  .kus-wf-canvas{padding:16px}
@@ -3145,8 +3213,26 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       originalBusy(value);
     };
     const originalStatus = panel.setStatus;
+    const dialogStatuses = [advancedDialog, moreDialog].filter(Boolean).map((d) => {
+      const el = document.createElement("div");
+      el.className = "kus-wf-dialog-status";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      el.hidden = true;
+      d.dialog.querySelector(".kus-lp__dialog-foot")?.insertAdjacentElement("afterbegin", el);
+      return { dialog: d.dialog, el };
+    });
     panel.setStatus = (message, tone) => {
       originalStatus(message, tone);
+      for (const { dialog, el } of dialogStatuses) {
+        if (!dialog.open) {
+          el.hidden = true;
+          continue;
+        }
+        el.textContent = message || "";
+        el.dataset.tone = tone || "neutral";
+        el.hidden = !message;
+      }
       refresh();
     };
     let refreshQueued = false;

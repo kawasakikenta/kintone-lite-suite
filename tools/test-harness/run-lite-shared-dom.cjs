@@ -347,6 +347,9 @@ async function main() {
     await advancedDialog.getByRole('button', { name: '「出力形式」の説明を表示' }).click();
     assert.equal(await advancedDialog.getByText('形式の説明。').isVisible(), true, '「?」で補足説明を開く');
     await page.keyboard.press('Escape');
+    assert.equal(await advancedDialog.getByText('形式の説明。').isVisible(), false, '「?」が開いているときの Esc は吹き出しだけを閉じる');
+    assert.equal(await advancedDialog.evaluate(dialog => dialog.open), true);
+    await page.keyboard.press('Escape');
     assert.equal(await advancedDialog.evaluate(dialog => dialog.open), false, 'Esc はポップアップだけを閉じる');
     assert.equal(await popupPanel.count(), 1, 'パネルは閉じない');
     await page.getByRole('button', { name: '詳細設定…' }).click();
