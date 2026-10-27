@@ -3,6 +3,7 @@
 import { createLitePanel, makeInput, makeButton, makeCheck, makeRow, makeNote, liteRun } from './litePanelTheme.js';
 import type { LiteWorkflowAction } from './liteWorkflow.js';
 import { runLoadQualityFieldsStandalone, runRecordQualityStandalone, runCsvTemplateStandalone } from '../tabs/record-quality-standalone.js';
+import { toPanelTone } from '../tabs/record-standalone.js';
 import { qualityRecordPath, qualityReportCsv, type QualityAppResult, type QualityField } from '../tabs/record-quality.js';
 import { downloadBlob, buildExportFilename } from '../utils.js';
 import { formatCancelledHeadline } from '../tabs/run-cancel-summary.js';
@@ -116,7 +117,7 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
     resetResults(); const current = version;
     const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked };
     const queryText = query.value.trim();
-    const inspected = await runRecordQualityStandalone({ appIdsText: tgtApp.value, guestId, codes: [...selected], query: queryText, ...options }, message => panel.setStatus(message, 'busy'));
+    const inspected = await runRecordQualityStandalone({ appIdsText: tgtApp.value, guestId, codes: [...selected], query: queryText, ...options }, (message, tone) => panel.setStatus(message, toPanelTone(tone)));
     if (current !== version) { panel.setStatus('対象や条件が変わりました。もう一度検査してください。', 'warn'); return; }
     results = inspected;
     let warning = false;
@@ -201,7 +202,7 @@ export function buildCsvTemplateTab(root: HTMLElement, context: QualityContext):
   root.appendChild(makeNote('取込できないテーブル・添付・計算項目・ルックアップのコピー先フィールドは除外します。設定を取得できなかったアプリは、完了メッセージと manifest.json に記録します。', 'help'));
   const run = makeButton('CSVひな形をZIPで保存', 'primary');
   run.addEventListener('click', () => liteRun(panel, 'CSVひな形を作成中…', async () => {
-    const result = await runCsvTemplateStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() }, message => panel.setStatus(message, 'busy'));
+    const result = await runCsvTemplateStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() }, (message, tone) => panel.setStatus(message, toPanelTone(tone)));
     if (result.warning) panel.setStatus(result.warning, 'warn');
   }));
   root.appendChild(makeRow(run));

@@ -121,7 +121,7 @@ describe('all-app CSV inspection before any writes', () => {
     vi.mocked(apiGet).mockResolvedValueOnce({ properties: props }).mockRejectedValueOnce(new Error('権限なし'));
     const result = await runPreviewCsvImportStandalone({ appIdsText: '7,8', file: file('title\nA') }, status);
     expect(result[0].report.issueCount).toBe(0); expect(result[1].error).toBe('権限なし');
-    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('1アプリに問題'), true);
+    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('1アプリに問題'), 'warn');
   });
   it('inspects all apps before one confirmation, then chunks each app by 100', async () => {
     const csvFile = file('title\n' + Array.from({ length: 201 }, (_, i) => `件名${i}`).join('\n'));
@@ -131,7 +131,7 @@ describe('all-app CSV inspection before any writes', () => {
     expect(apiGet.mock.invocationCallOrder.at(-1)).toBeLessThan(apiPost.mock.invocationCallOrder[0]);
     expect(vi.mocked(apiPost).mock.calls.map(call => call[2].records.length)).toEqual([100, 100, 1, 100, 100, 1]);
     expect(csvFile.text).toHaveBeenCalledTimes(1);
-    expect(status).toHaveBeenLastCalledWith('CSV取込完了: 2アプリ / 402件');
+    expect(status).toHaveBeenLastCalledWith('2アプリで計 402件を取り込みました', 'ok');
   });
   it('rechecks schema and file contents after a preview instead of trusting cached success', async () => {
     const csvFile = file('title,amount\nA,100');
@@ -143,6 +143,8 @@ describe('all-app CSV inspection before any writes', () => {
   it('keeps cancellation distinct from successful import', async () => {
     vi.mocked(kusConfirm).mockReturnValue(false);
     expect(await runCsvImportBatchStandalone({ appId: '7', file: file('title\nA') }, status)).toEqual({ warning: 'CSV取込をキャンセルしました' });
+    // 実行していないので 'info' で終え、ワークフローは確認画面へ戻る
+    expect(status).toHaveBeenLastCalledWith('CSV取込をキャンセルしました', 'info');
     expect(apiPost).not.toHaveBeenCalled();
   });
   it('names the CSV row and field that kintone rejected inside a failed 100-record chunk', async () => {
@@ -163,6 +165,6 @@ describe('all-app CSV inspection before any writes', () => {
     const csv = 'title\n' + Array.from({ length: 201 }, (_, i) => `件名${i}`).join('\n');
     await expect(runCsvImportBatchStandalone({ appId: '7', file: file(csv) }, status)).rejects.toThrow(/確定済み: 100件.*未処理: 101件/s);
     expect(apiPost).toHaveBeenCalledTimes(2);
-    expect(status).not.toHaveBeenCalledWith(expect.stringContaining('CSV取込完了'));
+    expect(status).not.toHaveBeenCalledWith(expect.stringContaining('を取り込みました'), 'ok');
   });
 });

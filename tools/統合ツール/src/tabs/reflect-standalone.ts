@@ -28,7 +28,7 @@ export interface PreviewReflectResult {
   targetPending?: ReflectTargetPending;
 }
 /** 反映の進捗通知。項目ごとに running → ok / ng / skip、中断で残った項目は pending。 */
-export interface ReflectSectionUpdate { sectionKey: string; label: string; status: 'running' | 'ok' | 'ng' | 'skip' | 'pending'; message?: string }
+export interface ReflectSectionUpdate { sectionKey: string; label: string; status: 'running' | 'ok' | 'ng' | 'skip' | 'pending'; message?: string; /** 利用者の「中止」で途中で止まった項目（status は ng） */ stopped?: boolean }
 export interface ReflectAppIdentity { appId: string; name: string; code: string; guestId: string }
 export interface ReflectIdentities { source: ReflectAppIdentity; target: ReflectAppIdentity }
 
@@ -80,16 +80,24 @@ export function reflectConnectionError(opts: Pick<ReflectOptions, 'sourceAppId' 
 export async function resolveReflectAppsStandalone(opts: ReflectOptions): Promise<ReflectIdentities> {
   const invalid = reflectConnectionError(opts);
   if (invalid) throw new Error(invalid);
-  const resolve = async (appId: string, guestId = ''): Promise<ReflectAppIdentity> => {
-    const info = await apiGet(buildApiPrefix(guestId, false), '/app.json', { id: appId });
-    if (String(info?.appId) !== appId || typeof info?.name !== 'string' || !info.name) throw new Error(`App ${appId} の名前とIDを確認できません。入力と閲覧権限を確認してください。`);
+  const resolve = async (role: '反映元' | '反映先', appId: string, guestId = ''): Promise<ReflectAppIdentity> => {
+    let info: any;
+    // どちらのアプリで失敗したかが分かるよう、API のエラーの先頭に「反映元 #N」「反映先 #N」を付ける（2 行目以降の通信情報はそのまま）。
+    try { info = await apiGet(buildApiPrefix(guestId, false), '/app.json', { id: appId }); }
+    catch (error: any) {
+      if (isRunCancelledError(error)) throw error;
+      const prefixed = new Error(`${role} #${appId}: ${error?.message != null ? String(error.message) : String(error)}`) as Error & { original?: unknown; code?: string };
+      prefixed.original = error; if (error?.code) prefixed.code = error.code;
+      throw prefixed;
+    }
+    if (String(info?.appId) !== appId || typeof info?.name !== 'string' || !info.name) throw new Error(`${role} #${appId} の名前とIDを確認できません。入力と閲覧権限を確認してください。`);
     return { appId, guestId, name: info.name, code: String(info.code || '') };
   };
-  const target = await resolve(opts.targetAppId, opts.targetGuestId);
+  const target = await resolve('反映先', opts.targetAppId, opts.targetGuestId);
   const jsonAppName = opts.sourceBundle ? extractAppNameFromBundle(opts.sourceBundle) : '';
   const source = opts.sourceBundle
     ? { appId: opts.sourceAppId, guestId: '', name: jsonAppName ? `設定JSON（${jsonAppName}）` : '設定JSON', code: '' }
-    : await resolve(opts.sourceAppId, opts.sourceGuestId);
+    : await resolve('反映元', opts.sourceAppId, opts.sourceGuestId);
   return { source, target };
 }
 
@@ -104,20 +112,31 @@ function orderedScopes(scopes: string[]): string[] {
   return REFLECT_SECTION_KEYS.filter(key => scopes.includes(key));
 }
 
+/** 取得の失敗に、どのアプリかを示す接頭辞（反映元 #N / 反映先 #N）を付ける。中止はそのまま伝える。 */
+async function withAppPrefix<T>(role: '反映元' | '反映先', appId: string, run: () => Promise<T>): Promise<T> {
+  try { return await run(); }
+  catch (error: any) {
+    if (isRunCancelledError(error)) throw error;
+    const prefixed = new Error(`${role} #${appId}: ${error?.message != null ? String(error.message) : String(error)}`) as Error & { original?: unknown; code?: string };
+    prefixed.original = error; if (error?.code) prefixed.code = error.code;
+    throw prefixed;
+  }
+}
+
 async function getReflectBundles(opts: ReflectOptions, scopes: string[], setStatus: (message: string) => void) {
   setStatus(opts.sourceBundle ? '反映元の設定JSONを読み込み中...' : '反映元の設定を取得中...');
-  const source = opts.sourceBundle ? importedReflectSource(opts) : await fetchBundle({
+  const source = opts.sourceBundle ? importedReflectSource(opts) : await withAppPrefix('反映元', opts.sourceAppId, () => fetchBundle({
     rawSettings: true,
     // フィールド設定を選んでいなくても、参照するフィールドの有無と表示名を示せるよう反映先と同じ範囲を取得する。
     appId: opts.sourceAppId, guestId: opts.sourceGuestId || '', preview: !!opts.sourcePreview, sections: reflectInspectionScopes(scopes),
     onProgress: (p, label) => setStatus(`反映元取得 ${Math.round(p * 100)}% (${label})`)
-  });
+  }));
   setStatus('反映先プレビューの設定を確認中...');
-  const target = await fetchBundle({
+  const target = await withAppPrefix('反映先', opts.targetAppId, () => fetchBundle({
     rawSettings: true,
     appId: opts.targetAppId, guestId: opts.targetGuestId || '', preview: true, sections: reflectInspectionScopes(scopes),
     onProgress: (p, label) => setStatus(`反映先取得 ${Math.round(p * 100)}% (${label})`)
-  });
+  }));
   return { source, target };
 }
 
@@ -268,8 +287,8 @@ export async function runApplyPreviewStandalone(
   const sections: ApplySectionOutcome[] = [];
   let cancelled = false;
   // 画面の進捗表示が失敗しても、書き込みの処理には影響させない。
-  const notify = (plan: ReflectSectionPlan, status: ReflectSectionUpdate['status'], message?: string) => {
-    try { opts.onSectionUpdate?.({ sectionKey: plan.sectionKey, label: plan.label, status, ...(message ? { message } : {}) }); } catch { /* 表示側の例外は無視する */ }
+  const notify = (plan: ReflectSectionPlan, status: ReflectSectionUpdate['status'], message?: string, stopped = false) => {
+    try { opts.onSectionUpdate?.({ sectionKey: plan.sectionKey, label: plan.label, status, ...(message ? { message } : {}), ...(stopped ? { stopped: true } : {}) }); } catch { /* 表示側の例外は無視する */ }
   };
   for (const [index, plan] of plans.entries()) {
     const outcome = { sectionKey: plan.sectionKey, label: plan.label };
@@ -290,7 +309,7 @@ export async function runApplyPreviewStandalone(
         cancelled = true;
         if (written.length) {
           const message = `${RUN_CANCELLED_MESSAGE}（この項目では ${written.join('・')} まで書き込み済みで、残りは送信していません。差分を取得し直して現在の状態を確認してください）`;
-          sections.push({ ...outcome, status: 'ng', message }); notify(plan, 'ng', message); logs.push(`中止 ${plan.label}: ${written.join('・')} まで書き込み済み`);
+          sections.push({ ...outcome, status: 'ng', message, stopped: true }); notify(plan, 'ng', message, true); logs.push(`中止 ${plan.label}: ${written.join('・')} まで書き込み済み（途中で停止）`);
         } else {
           sections.push({ ...outcome, status: 'pending', message: '中止のため未実行' }); notify(plan, 'pending', '中止のため未実行'); logs.push(`中止 ${plan.label}: 書き込み前に停止（未実行）`);
         }
@@ -312,10 +331,11 @@ export async function runApplyPreviewStandalone(
     onProgress(logs);
   }
   const count = (status: ApplySectionOutcome['status']) => sections.filter(section => section.status === status).length;
-  logs.push(`=== 完了: OK ${count('ok')} / NG ${count('ng')} / 未実行 ${count('pending')} / 変更なし ${count('skip')} ===`);
+  const stoppedCount = sections.filter(section => section.status === 'ng' && section.stopped).length, failedCount = count('ng') - stoppedCount;
+  logs.push(`=== 完了: OK ${count('ok')} / NG ${failedCount}${stoppedCount ? ` / 途中で停止 ${stoppedCount}` : ''} / 未実行 ${count('pending')} / 変更なし ${count('skip')} ===`);
   onProgress(logs);
-  if (cancelled) setStatus(`反映を中止しました（反映済み ${count('ok')} / 途中で停止 ${count('ng')} / 未実行 ${count('pending')}）。反映先プレビューは一部だけ更新されている可能性があります。`, true);
-  else setStatus(count('ng') ? '反映完了（一部エラーあり）' : '反映完了');
+  if (cancelled) setStatus(`反映を中止しました（反映済み ${count('ok')} / 途中で停止 ${stoppedCount} / 未実行 ${count('pending')}）。反映先プレビューは一部だけ更新されている可能性があります。`, true);
+  else setStatus(failedCount ? '反映完了（一部エラーあり）' : '反映完了');
   return { logs, sections, backup, finalRevision: revision, ...(cancelled ? { cancelled: true } : {}) };
 }
 

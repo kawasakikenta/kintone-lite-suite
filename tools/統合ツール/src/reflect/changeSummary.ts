@@ -719,6 +719,64 @@ export function summarizeReflectItems(sectionKey: string, before: any, after: an
   return items.map((item, index) => ({ item, index })).sort((x, y) => KIND_ORDER[x.item.kind] - KIND_ORDER[y.item.kind] || x.index - y.index).map(entry => entry.item);
 }
 
+// ---------------------------------------------------------------------------
+// レイアウトの移動と削除の判定（計画の変更一覧用）
+// ---------------------------------------------------------------------------
+
+interface LayoutInventory { codes: Set<string>; plain: Record<string, number> }
+
+function inventoryLayout(nodes: any): LayoutInventory {
+  const inventory: LayoutInventory = { codes: new Set(), plain: Object.create(null) };
+  const visit = (node: any) => {
+    if (!isObj(node)) return;
+    if (typeof node.code === 'string' && node.code) inventory.codes.add(node.code);
+    else if (node.type !== 'ROW') { const type = String(node.type ?? '不明'); inventory.plain[type] = (inventory.plain[type] || 0) + 1; }
+    for (const child of [...list(node.fields), ...list(node.layout)]) visit(child);
+  };
+  for (const node of Array.isArray(nodes) ? nodes : [nodes]) visit(node);
+  return inventory;
+}
+
+/** レイアウトの 1 要素（行・グループ・テーブル）を、利用者が読める短い説明にする。 */
+export function describeLayoutNode(node: any, fieldLabels?: Record<string, string>): string {
+  if (!isObj(node)) return '不明な要素';
+  const names = (nodes: any[]) => {
+    const codes = [...inventoryLayout(nodes).codes];
+    return { count: codes.length, text: codes.slice(0, 4).map(code => fieldName(code, fieldLabels)).join('、') + (codes.length > 4 ? '…' : '') };
+  };
+  if (node.type === 'ROW') {
+    const inside = names(list(node.fields));
+    return inside.count ? `フィールド ${inside.count} 個の行（${inside.text}）` : 'ラベル・スペース・罫線だけの行';
+  }
+  if (node.type === 'GROUP') {
+    const inside = names(list(node.layout));
+    return `グループ「${fieldName(String(node.code ?? ''), fieldLabels, node.label)}」${inside.count ? `（中のフィールド ${inside.count} 個）` : ''}`;
+  }
+  if (node.type === 'SUBTABLE') return `テーブル「${fieldName(String(node.code ?? ''), fieldLabels)}」`;
+  return typeof node.code === 'string' && node.code ? `フィールド「${fieldName(node.code, fieldLabels)}」` : '配置の要素';
+}
+
+/**
+ * 配列の内容比較で「削除」になったレイアウトの要素のうち、フィールドが反映後のレイアウトに残っているもの
+ * （別の行へ移した、並び替えた）は削除として数えず「変更」にする。本当に無くなる要素は、利用者が読める説明を summary に付ける。
+ * path が「配置 / N件目」の削除（レイアウト直下の配列要素の比較結果）だけを対象にする。
+ */
+export function reclassifyLayoutRemovals(changes: Array<{ kind: string; path: string; before: string; after: string; summary?: string }>, beforeLayout: any, afterLayout: any, fieldLabels?: Record<string, string>): void {
+  const kept = inventoryLayout(afterLayout), old = inventoryLayout(beforeLayout);
+  for (const change of changes) {
+    if (change.kind !== '削除' || !/^配置 \/ \d+件目$/.test(change.path)) continue;
+    let node: any;
+    try { node = JSON.parse(change.before); } catch { continue; }
+    if (!isObj(node)) continue;
+    const inside = inventoryLayout(node);
+    const lostCode = [...inside.codes].some(code => !kept.codes.has(code));
+    const lostPlain = Object.keys(inside.plain).some(type => (kept.plain[type] || 0) < (old.plain[type] || 0));
+    const description = describeLayoutNode(node, fieldLabels);
+    if (lostCode || lostPlain) change.summary = description;
+    else { change.kind = '変更'; change.after = '別の位置の行・グループに含まれます（フィールドは残ります）'; change.summary = `${description}を並べ替え・移動`; }
+  }
+}
+
 /** 計画の「保持」変更（path のみ）から、要約の保持項目名を作る。フィールドは表示名を付ける。 */
 export function retainedItemNames(sectionKey: string, changes: Array<{ kind: string; path: string }>, fieldLabels?: Record<string, string>): string[] {
   const names: string[] = [];

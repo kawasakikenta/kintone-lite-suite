@@ -1577,11 +1577,12 @@ ${contextLine}`);
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
-.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
-.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:136px}
+.kus-lp__apptable th.kus-lp__apptable-acts-h,.kus-lp__apptable td.kus-lp__apptable-acts{padding-left:4px;padding-right:4px}
 .kus-lp__apptable-acts{white-space:nowrap}
-.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:12.5px;border-radius:7px}
-.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 6px;font-size:12.5px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:3px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:12.5px;color:var(--c-muted);margin-left:auto;font-weight:600}
 .kus-lp__apptable-hint{font-size:12.5px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
@@ -2314,7 +2315,8 @@ ${contextLine}`);
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
       if (e?.partialSuccess === true) {
-        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
+        panel.setStatus(`${first}${logNote}`, "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
@@ -2816,17 +2818,18 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     });
   }
   async function loadScriptWithFallback(urls) {
-    let lastErr = null;
+    const failures = [];
     for (const url of urls) {
       try {
         await loadScript(url);
         return;
       } catch (e) {
-        lastErr = e;
+        failures.push(e instanceof Error ? e.message : String(e));
       }
     }
-    throw lastErr || new Error("Mermaid.js の読み込みに失敗しました");
+    throw new Error(failures.join("\n") || "Mermaid.js の読み込みに失敗しました");
   }
+  var MERMAID_LOAD_FAILURE_MESSAGE = "図の描画ライブラリ（Mermaid）を読み込めませんでした。ネットワークやブラウザの制限を確認してください。";
   var initializedMermaid = /* @__PURE__ */ new WeakSet();
   async function ensureMermaid() {
     const w = window;
@@ -3171,8 +3174,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         if (!isFresh()) return false;
         renderFailure = `Mermaid.js の${phase}に失敗`;
         targets.viewEl.innerHTML = renderFallbackFlowHtml(states, actions, highlightState, `${renderFailure}したため、簡易表示に切り替えました。`);
-        renderError = e instanceof Error ? e.message : String(e);
-        commitStatus(`${renderFailure}したため、簡易表示に切り替えました。(${renderError})`, true);
+        const detail = e instanceof Error ? e.message : String(e);
+        if (phase === "読み込み") {
+          renderError = MERMAID_LOAD_FAILURE_MESSAGE;
+          if (typeof targets.log === "function") targets.log(`図の描画ライブラリ（Mermaid）の読み込みに失敗しました
+${detail}`);
+          commitStatus(`${MERMAID_LOAD_FAILURE_MESSAGE}簡易表示に切り替えました。`, true);
+        } else {
+          renderError = detail;
+          commitStatus(`${renderFailure}したため、簡易表示に切り替えました。(${renderError})`, true);
+        }
         return false;
       }
     };
@@ -3180,7 +3191,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     await renderMermaid(null);
     if (!isCurrent()) return null;
     if (renderError) {
-      commitStatus(`フロー図生成完了（簡易表示。${renderFailure}しました: ${renderError}）`, true);
+      commitStatus(renderFailure.endsWith("読み込みに失敗") ? `フロー図は簡易表示です。${renderError}` : `フロー図生成完了（簡易表示。${renderFailure}しました: ${renderError}）`, true);
     } else {
       commitStatus(orphanActions ? `フロー図 生成完了（from/to 未設定のアクション ${orphanActions}件は除外）` : "フロー図 生成完了", false, orphanActions > 0 ? "warn" : void 0);
     }
@@ -3533,6 +3544,7 @@ ${text}
     });
     attachCardHelp(cardText.card);
     panel.body.insertBefore(cardText.card, panel.status);
+    const sourceFold = foldWorkflowSection("図のソースを確認する", cardText.card);
     const cardSim = makeCard({ title: "シミュレーション", number: 3 });
     cardSim.card.style.display = "none";
     const curRow = document.createElement("div");
@@ -3563,6 +3575,11 @@ ${text}
     cardSim.body.appendChild(makeNote("アクションを選んで「アクション実行」を押すと、画面上で状態が進み、遷移履歴に記録されます。レコードは変更されません。", "help"));
     attachCardHelp(cardSim.card);
     panel.body.insertBefore(cardSim.card, panel.status);
+    const setDiagramVisible = (visible) => {
+      cardDiag.card.style.display = visible ? "" : "none";
+      sourceFold.style.display = visible ? "" : "none";
+    };
+    setDiagramVisible(false);
     let renderedConnection = "";
     let renderPending = false;
     let connectionVersion = 0;
@@ -3580,6 +3597,7 @@ ${text}
       summaryEl.innerHTML = "";
       viewEl.innerHTML = '<span class="kus-lp__small">対象アプリが変わりました。フロー図を再描画してください。</span>';
       cardSim.card.style.display = "none";
+      setDiagramVisible(false);
       curEl.textContent = "未開始";
       curEl.style.background = "#e2e8f0";
       simSelect.replaceChildren(new Option("--"));
@@ -3616,6 +3634,8 @@ ${text}
             viewEl,
             summaryEl,
             isCurrent,
+            // 読み込み先 URL などの技術的な詳細は、状態表示ではなくログへ出す
+            log: (text) => panel.setResult(text),
             simUi: {
               container: cardSim.card,
               current: curEl,
@@ -3633,6 +3653,7 @@ ${text}
           return;
         }
         renderedConnection = runConnection;
+        setDiagramVisible(viewEl.childNodes.length > 0);
         if (result && panel.status.dataset.tone !== "err" && panel.status.dataset.tone !== "warn") {
           panel.setStatus(`プロセス図を表示しました（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, "ok");
         }
@@ -3646,7 +3667,7 @@ ${text}
     textEl.setAttribute("aria-label", "プロセス図のMermaidソース");
     installLiteWorkflow(panel, {
       setup: [cardApp.card],
-      results: [cardDiag.card, cardSim.card, foldWorkflowSection("図のソースを確認する", cardText.card)],
+      results: [cardDiag.card, cardSim.card, sourceFold],
       beforeRun: () => {
         connectionVersion++;
         renderedConnection = "";
@@ -3654,6 +3675,7 @@ ${text}
         textEl.value = "";
         summaryEl.innerHTML = "";
         viewEl.replaceChildren();
+        setDiagramVisible(false);
         cardSim.card.style.display = "none";
         simSelect.replaceChildren(new Option("--"));
         simSelect.disabled = true;

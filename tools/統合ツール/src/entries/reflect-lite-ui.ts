@@ -41,6 +41,7 @@ import {
   TARGET_PENDING_REASON,
   collectUploadLabels,
   createApplyProgressRows,
+  describeRemovedChange,
   describeRemovedItem,
   describeUndoGuidance,
   formatReflectDateTime,
@@ -122,6 +123,8 @@ interface RolloutLogEntry {
   name: string;
   ok: number;
   ng: number;
+  /** 中止で途中停止した項目数（失敗には数えない） */
+  stopped?: number;
   pending: number;
   at: number;
   /** 利用者の操作で中止した反映先（途中まで書き込んでいる可能性がある） */
@@ -152,9 +155,11 @@ interface LiteMemoryState {
   lastResult?: {
     ok: number;
     ng: number;
+    /** 中止で途中停止したセクション数（失敗には数えない） */
+    stopped: number;
     /** エラー中断により未実行のまま残ったセクション数 */
     pending: number;
-    /** 利用者の「中止」で途中停止した反映（未実行の項目は pending、途中まで書いた項目は ng に入る） */
+    /** 利用者の「中止」で途中停止した反映（未実行の項目は pending、途中まで書いた項目は stopped に入る） */
     cancelled?: boolean;
     at: number;
     appId: string;
@@ -163,6 +168,8 @@ interface LiteMemoryState {
     retryScopes: string[];
     /** 失敗セクションの表示ラベル */
     failedLabels: string[];
+    /** 中止で途中停止したセクションの表示ラベル */
+    stoppedLabels: string[];
     /** JSON 反映元が差し替えられたかを検知する UI 内の一時トークン。 */
     sourceBundleToken?: string;
     /** 反映前に自動保存したバックアップと同じ内容（「バックアップから戻す」用）。実行結果JSONには含めない。 */
@@ -537,6 +544,40 @@ const REFLECT_LITE_CSS = `
   #kus-reflect-lite .kus-rl-dock-row{flex-direction:row;align-items:center;gap:10px}
   #kus-reflect-lite .kus-rl-dock-actions{display:flex;flex-wrap:nowrap;justify-content:flex-end;flex:none}
   #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{white-space:nowrap}
+}
+/* とても低い画面（高さ 560px 以下。横向きのスマートフォン・小さなウィンドウ）では、見出し・案内・ステップ・フッターを 1 行ずつに詰めて、本文（最終確認の書き込み先と変更内容など）に高さを回す。 */
+@media(max-height:560px){
+  #kus-reflect-lite .kus-lp__hero{padding:5px 12px}
+  #kus-reflect-lite .kus-lp__hero-main{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px}
+  #kus-reflect-lite .kus-lp__title{font-size:15px}
+  #kus-reflect-lite .kus-lp__badge-row{margin-top:0}
+  #kus-reflect-lite .kus-lp__badge{padding:1px 8px;font-size:11.5px}
+  #kus-reflect-lite .kus-lp__hint{display:none}
+  #kus-reflect-lite .kus-rl-nav{padding:3px 12px;gap:4px}
+  #kus-reflect-lite .kus-rl-nav__btn{padding:3px 4px;font-size:12px;line-height:1.3;white-space:nowrap}
+  #kus-reflect-lite .kus-rl-nav__num{display:none}
+  #kus-reflect-lite .kus-rl-canvas{padding:8px 12px 6px}
+  #kus-reflect-lite .kus-lp__card{padding:10px 12px}
+  #kus-reflect-lite .kus-rl-confirm-route{gap:4px;margin-bottom:8px}
+  #kus-reflect-lite .kus-rl-confirm-route>div{padding:6px 10px}
+  #kus-reflect-lite .kus-rl-confirm-route span{display:inline;margin:0 8px 0 0;font-size:12px}
+  #kus-reflect-lite .kus-rl-stage-head{margin:0 2px 8px}
+  #kus-reflect-lite .kus-rl-stage-head h2{font-size:15px}
+  #kus-reflect-lite .kus-rl-action-dock{padding:5px 12px 6px}
+  #kus-reflect-lite .kus-rl-dock-row{gap:4px}
+  #kus-reflect-lite .kus-rl-dock-copy{font-size:12px;line-height:1.35}
+  #kus-reflect-lite .kus-rl-dock-copy strong,#kus-reflect-lite .kus-rl-dock-msg{-webkit-line-clamp:1}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{min-height:32px;padding:4px 10px}
+  #kus-reflect-lite .kus-rl-action-dock .kus-lp__status{margin-top:4px;padding:3px 8px;font-size:12px;line-height:1.35}
+  #kus-reflect-lite .kus-rl-action-dock .kus-lp__status-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;overflow:hidden;max-height:none}
+  #kus-reflect-lite .kus-rl-action-dock .kus-lp__status--warn .kus-lp__status-text,#kus-reflect-lite .kus-rl-action-dock .kus-lp__status--err .kus-lp__status-text{-webkit-line-clamp:2}
+}
+/* 低くて幅の狭い画面では、操作ボタンを折り返しながら詰めて並べる（主操作だけが全幅の行を取らない）。 */
+@media(max-height:560px) and (max-width:559px){
+  #kus-reflect-lite .kus-rl-dock-actions{display:flex;flex-wrap:wrap;justify-content:stretch;gap:4px}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{flex:0 1 auto;grid-column:auto;min-width:0;font-size:12.5px;line-height:1.3}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn--primary,#kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn--danger{flex:1 1 140px}
+  #kus-reflect-lite .kus-rl-nav__btn{font-size:11.5px;padding:3px 2px}
 }
 @media(prefers-reduced-motion:reduce){#kus-reflect-lite{animation:none}#kus-reflect-lite *{scroll-behavior:auto!important}}
 `;
@@ -1529,7 +1570,7 @@ export function mountReflectLitePanel() {
       body.textContent = '同じ反映元・項目・設定で差分を取得するだけで、まだ書き込みません。反映先ごとに差分確認と最終確認を行います。';
       rolloutNote.append(head, body);
     }
-    rolloutWarn.hidden = !(last && (last.ng > 0 || last.pending > 0));
+    rolloutWarn.hidden = !(last && (last.ng > 0 || last.stopped > 0 || last.pending > 0));
     rolloutWarn.textContent = last?.cancelled
       ? '直前の反映先は中止したため、一部の項目だけ反映されている可能性があります。結果を確認してから進んでください。'
       : '直前の反映先に失敗・未実行の項目があります。結果を確認してから進んでください。';
@@ -1975,7 +2016,10 @@ export function mountReflectLitePanel() {
       return;
     }
     return runLite('差分を取得中…', async () => {
-      await runPreview(scopes, lookupMap);
+      const result = await runPreview(scopes, lookupMap);
+      // 取得できなかった項目があるときは、成功の緑ではなく警告色で、何件かを示す（状態表示は警告を成功メッセージで上書きしない）。
+      const failed = result.entries.filter((entry) => scopes.includes(entry.sectionKey) && (entry.status === 'src-missing' || entry.status === 'tgt-missing')).length;
+      if (failed) panel.setStatus(`差分を取得しました（${scopes.length} 項目中 ${failed} 項目は設定を取得できませんでした）。取得し直すか、その項目を対象から外してください。まだ書き込んでいません。`, 'warn');
     }, okMessage || `差分を取得しました（${scopes.length} 項目を比較。まだ書き込んでいません）。`);
   }
   previewBtn.addEventListener('click', () => { startPreview(); });
@@ -2062,7 +2106,7 @@ export function mountReflectLitePanel() {
     for (const entry of entries) {
       const removedItems = (entry.items || []).filter(item => item.kind === '削除' || (item.kind === '変更' && item.details.some(detail => detail.includes('削除'))));
       if (removedItems.length || !entry.removalCount) removals.push(...removedItems.map(item => describeRemovedItem(entry.label, item)));
-      else removals.push(...entry.changes.filter(change => change.kind === '削除').map(change => `${entry.label} / ${change.path}：${change.before.slice(0, 180)}${change.before.length > 180 ? '…' : ''}`));
+      else removals.push(...entry.changes.filter(change => change.kind === '削除').map(change => describeRemovedChange(entry.label, change)));
     }
     if (removals.length) {
       const heading = document.createElement('p'); heading.className = 'kus-rl-confirm-heading'; heading.textContent = `削除・置換される設定（${removals.length} 件）`; confirmBody.appendChild(heading);
@@ -2097,6 +2141,8 @@ export function mountReflectLitePanel() {
       confirmBody.appendChild(block);
     }
     showWorkflowStage('confirm'); refreshReviewCard();
+    // 差分取得の完了メッセージ（「まだ書き込んでいません」）をこの段階に持ち越さない。
+    panel.setStatus('反映先と変更内容を確認してください。まだ書き込んでいません。', 'info');
   }
   confirmBtn.addEventListener('click', openConfirmation);
   for (const control of [acknowledged.checkbox, targetCheck]) control.addEventListener('input', () => {
@@ -2392,7 +2438,7 @@ export function mountReflectLitePanel() {
     const payload = {
       schemaVersion: 1,
       executedAt: new Date(last.at).toISOString(),
-      summary: { ok: last.ok, ng: last.ng, pending: last.pending, ...(last.cancelled ? { cancelled: true } : {}) },
+      summary: { ok: last.ok, ng: last.ng, ...(last.stopped ? { stopped: last.stopped } : {}), pending: last.pending, ...(last.cancelled ? { cancelled: true } : {}) },
       ...last.report
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
@@ -2440,13 +2486,14 @@ export function mountReflectLitePanel() {
       return;
     }
     const stamp = formatReflectDateTime(last.at);
-    const hasIssue = last.ng > 0 || last.pending > 0;
+    const hasIssue = last.ng > 0 || last.stopped > 0 || last.pending > 0;
     const tone = hasIssue ? 'color:#9a3412' : 'color:#065f46';
-    const failedSummary = last.failedLabels.length
-      ? `<div>失敗: ${escapeHtml(last.failedLabels.slice(0, 5).join(' / '))}${last.failedLabels.length > 5 ? ` ほか ${last.failedLabels.length - 5} 件` : ''}</div>`
+    const labelSummary = (title: string, labels: string[]) => labels.length
+      ? `<div>${title}: ${escapeHtml(labels.slice(0, 5).join(' / '))}${labels.length > 5 ? ` ほか ${labels.length - 5} 件` : ''}</div>`
       : '';
+    const failedSummary = labelSummary('失敗', last.failedLabels) + labelSummary('途中で停止', last.stoppedLabels);
     lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.cancelled ? '⚠ 中止しました。書き込み済みの分は反映先に残っています' : hasIssue ? '⚠ 一部の項目を反映できませんでした' : `✓ ${last.ok} 項目を反映しました`}</div>`
-      + `<div>反映先 #${escapeHtml(last.appId || '-')} / 成功 ${last.ok} / ${last.cancelled ? '途中で停止' : '失敗'} ${last.ng}${last.pending ? ` / 未実行 ${last.pending}` : ''}</div>`
+      + `<div>反映先 #${escapeHtml(last.appId || '-')} / 成功 ${last.ok} / 失敗 ${last.ng}${last.stopped ? ` / 途中で停止 ${last.stopped}` : ''}${last.pending ? ` / 未実行 ${last.pending}` : ''}</div>`
       + failedSummary
       + `<div>${stamp}</div>`
       + (hasIssue
@@ -2568,12 +2615,14 @@ export function mountReflectLitePanel() {
       memoryState.lastResult = {
         ok: counts.ok,
         ng: counts.ng,
+        stopped: counts.stopped,
         pending: counts.pending,
         at: Date.now(),
         appId: applyOptions.targetAppId,
         guestId: applyOptions.targetGuestId,
         retryScopes: collectRetrySectionKeys(applyOutcome.sections),
-        failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng').map((s) => s.label),
+        failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng' && !s.stopped).map((s) => s.label),
+        stoppedLabels: applyOutcome.sections.filter((s) => s.status === 'ng' && s.stopped).map((s) => s.label),
         sourceBundleToken: sourceMode === 'json' ? sourceBundleToken : '',
         ...(applyOutcome.cancelled ? { cancelled: true } : {}),
         ...(applyOutcome.backup ? { backup: applyOutcome.backup } : {}),
@@ -2598,10 +2647,10 @@ export function mountReflectLitePanel() {
       memoryState.staleResult = null;
       if (applyOutcome.finalRevision) memoryState.lastWrite = { targetAppId: applyOptions.targetAppId, targetGuestId: applyOptions.targetGuestId || '', finalRevision: applyOutcome.finalRevision, priorState: targetPendingAtApply?.state };
       // 複数アプリへの展開の記録。バックアップから戻す操作は展開に含めない。
-      if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || '', name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, pending: counts.pending, at: memoryState.lastResult.at, ...(applyOutcome.cancelled ? { cancelled: true } : {}) });
+      if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || '', name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, ...(counts.stopped ? { stopped: counts.stopped } : {}), pending: counts.pending, at: memoryState.lastResult.at, ...(applyOutcome.cancelled ? { cancelled: true } : {}) });
       renderLastResult();
       showWorkflowStage('result');
-      return { cancelled: false, hadError: counts.ng > 0 || counts.pending > 0, counts, failureNote: describeFirstFailure(applyOutcome.sections), stopped: counts.ng + counts.pending > 0 && !!applyOutcome.cancelled ? { ok: counts.ok, ng: counts.ng, pending: counts.pending } : null };
+      return { cancelled: false, hadError: counts.ng > 0 || counts.stopped > 0 || counts.pending > 0, counts, failureNote: describeFirstFailure(applyOutcome.sections), stopped: counts.ng + counts.stopped + counts.pending > 0 && !!applyOutcome.cancelled ? { ok: counts.ok, ng: counts.ng, stopped: counts.stopped, pending: counts.pending } : null };
     });
 
     if (!outcome) return;
@@ -2611,12 +2660,12 @@ export function mountReflectLitePanel() {
     }
     if (outcome.stopped) {
       // 利用者の「中止」。反映は 1 反映先ずつ行うため、「残り」はこの反映先で未実行の項目と、続けて反映する未着手の反映先を示す。
-      const { ok, ng, pending } = outcome.stopped;
-      const total = ok + ng + pending;
+      const { ok, ng, stopped, pending } = outcome.stopped;
+      const total = ok + ng + stopped + pending;
       const queue = currentRollout();
       const queued = queue.ok ? queue.targets.length : 0;
       panel.setStatus(
-        `中止しました（${ok}/${total} 件を反映${ng ? `、${ng} 件は途中で停止` : ''}、残り ${pending} 件は未実行）。`
+        `中止しました（${ok}/${total} 件を反映${stopped ? `、${stopped} 件は途中で停止` : ''}${ng ? `、${ng} 件は失敗` : ''}、残り ${pending} 件は未実行）。`
         + `書き込み済みの分は反映先プレビューに残っています。${queued ? `続けて反映する ${queued} 件の反映先は未実行です。` : ''}`
         + '差分を取得し直して現在の状態を確認してください。',
         'warn'
@@ -2626,7 +2675,7 @@ export function mountReflectLitePanel() {
     if (!outcome.counts) return;
     if (outcome.hadError) {
       const { ok, ng, pending } = outcome.counts;
-      panel.setStatus(`${ok + ng + pending} 項目中 ${ok} 項目を反映しました。失敗 ${ng} 項目${pending ? `、未実行 ${pending} 項目` : ''}${outcome.failureNote ? `（${outcome.failureNote}）` : ''}。「失敗・未実行だけ選択」で再実行してください。`, 'warn');
+      panel.setStatus(`${ok + ng + outcome.counts.stopped + pending} 項目中 ${ok} 項目を反映しました。失敗 ${ng} 項目${pending ? `、未実行 ${pending} 項目` : ''}${outcome.failureNote ? `（${outcome.failureNote}）` : ''}。「失敗・未実行だけ選択」で再実行してください。`, 'warn');
       return;
     }
     panel.setStatus(`${outcome.counts.ok} 項目を反映先プレビューへ反映しました。本番へ公開するには、「反映先の設定画面を開く」から kintone の設定画面で公開してください。`, 'ok');
@@ -2939,8 +2988,8 @@ function describeConfirmUndo(pending: ReflectTargetPending | undefined): string 
 }
 
 /** 一部失敗のステータスに添える、最初の失敗の項目名と理由（1 行目だけ・長いときは省略）。 */
-function describeFirstFailure(sections: ReadonlyArray<{ status: string; label?: string; sectionKey?: string; message?: string }>): string {
-  const failed = sections.find((section) => section.status === 'ng');
+function describeFirstFailure(sections: ReadonlyArray<{ status: string; label?: string; sectionKey?: string; message?: string; stopped?: boolean }>): string {
+  const failed = sections.find((section) => section.status === 'ng' && !section.stopped);
   if (!failed) return '';
   const label = failed.label && failed.label !== failed.sectionKey ? failed.label : reflectSectionLabel(failed.sectionKey || '');
   const reason = String(failed.message || '').split('\n')[0].trim();
@@ -2976,7 +3025,7 @@ function renderRolloutLog(host: HTMLElement, log: readonly RolloutLogEntry[]) {
   const list = document.createElement('ul');
   list.className = 'kus-rl-rollout-list';
   for (const entry of log) {
-    const tone = entry.ng > 0 ? 'ng' : entry.pending > 0 ? 'pending' : 'ok';
+    const tone = entry.ng > 0 || (entry.stopped || 0) > 0 ? 'ng' : entry.pending > 0 ? 'pending' : 'ok';
     const item = document.createElement('li');
     item.className = `kus-rl-rollout-item kus-rl-rollout-item--${tone}`;
     item.dataset.rolloutEntry = `${entry.guestId ? `${entry.guestId}:` : ''}${entry.appId}`;
@@ -2987,13 +3036,13 @@ function renderRolloutLog(host: HTMLElement, log: readonly RolloutLogEntry[]) {
     const icon = document.createElement('span');
     icon.setAttribute('aria-hidden', 'true');
     icon.textContent = tone === 'ok' ? '✓' : '⚠';
-    state.append(icon, document.createTextNode(entry.cancelled ? '中止' : tone === 'ok' ? '成功' : tone === 'ng' ? '失敗あり' : '未実行あり'));
+    state.append(icon, document.createTextNode(entry.cancelled ? '中止' : tone === 'ok' ? '成功' : entry.ng > 0 ? '失敗あり' : tone === 'ng' ? '途中で停止あり' : '未実行あり'));
     const name = document.createElement('strong');
     name.textContent = `${formatRolloutTarget(entry)}${entry.name ? ` ${entry.name}` : ''}`;
     head.append(state, name);
     const meta = document.createElement('div');
     meta.className = 'kus-rl-quiet';
-    meta.textContent = `成功 ${entry.ok} / 失敗 ${entry.ng} / 未実行 ${entry.pending}${entry.cancelled ? ' · 中止' : ''} · ${formatReflectDateTime(entry.at)}`;
+    meta.textContent = `成功 ${entry.ok} / 失敗 ${entry.ng}${entry.stopped ? ` / 途中で停止 ${entry.stopped}` : ''} / 未実行 ${entry.pending}${entry.cancelled ? ' · 中止' : ''} · ${formatReflectDateTime(entry.at)}`;
     item.append(head, meta);
     list.appendChild(item);
   }

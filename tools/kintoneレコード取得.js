@@ -2100,11 +2100,12 @@ ${contextLine}`);
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
-.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
-.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:136px}
+.kus-lp__apptable th.kus-lp__apptable-acts-h,.kus-lp__apptable td.kus-lp__apptable-acts{padding-left:4px;padding-right:4px}
 .kus-lp__apptable-acts{white-space:nowrap}
-.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:12.5px;border-radius:7px}
-.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 6px;font-size:12.5px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:3px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:12.5px;color:var(--c-muted);margin-left:auto;font-weight:600}
 .kus-lp__apptable-hint{font-size:12.5px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
@@ -2904,7 +2905,8 @@ ${contextLine}`);
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
       if (e?.partialSuccess === true) {
-        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
+        panel.setStatus(`${first}${logNote}`, "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
@@ -3950,12 +3952,28 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (guest && !/^[1-9]\d*$/.test(guest)) throw new Error("ゲストIDは正の数値で入力してください");
     return { appId: ids[0], guestId: guest };
   }
+  function toPanelTone(tone) {
+    if (tone === true) return "err";
+    if (!tone) return "busy";
+    return tone;
+  }
+  function countedSummary(tail, opts = {}) {
+    return (counts, appIds) => {
+      const total = counts["件"] || 0;
+      if (appIds.length === 1) return `${total}件${tail}${opts.withApp ? `（App ${appIds[0]}）` : ""}`;
+      return `${appIds.length}アプリで計 ${total}件${tail}`;
+    };
+  }
   async function runRecordAppBatchStandalone(appIdsValue, operation, setStatus) {
     const appIds = parseRecordAppIds(appIdsValue);
     if (!appIds.length) throw new Error("対象アプリIDを1件以上入力してください");
     const failures = [];
     const warnings = [];
     const cancelled = [];
+    const completed = [];
+    let failedWritten = 0;
+    let failedUnwritten = 0;
+    let writeKnown = false;
     for (let i = 0; i < appIds.length; i++) {
       const appId = appIds[i];
       setStatus(`App ${appId}: 実行中 (${i + 1}/${appIds.length})`);
@@ -3963,6 +3981,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         const result = await operation(appId, i, appIds.length);
         if (result && result.warning) warnings.push(`App ${appId}: ${result.warning}`);
         if (result && result.cancelled) cancelled.push(`App ${appId}`);
+        else completed.push({ appId, summary: result ? result.summary : void 0 });
       } catch (error) {
         if (isCancelStop(error)) {
           if (appIds.length === 1 && error?.cancelReport === true) throw error;
@@ -3975,28 +3994,65 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           ]);
         }
         failures.push(`App ${appId}: ${error?.message || String(error)}`);
+        const partial = error?.partial;
+        if (partial && Number.isFinite(Number(partial.done)) && Number.isFinite(Number(partial.total))) {
+          writeKnown = true;
+          failedWritten += Number(partial.done);
+          failedUnwritten += Math.max(0, Number(partial.total) - Number(partial.done));
+        }
       }
     }
     const warningSummary = warnings.length ? `警告 ${warnings.length}アプリ:
 ${warnings.join("\n")}` : "";
     const cancelSummary = cancelled.length ? `確認でキャンセルしたため実行していません（${cancelled.length}アプリ）: ${cancelled.join(", ")}` : "";
+    const summaries = completed.filter((item) => item.summary);
+    const successWritten = summaries.reduce((sum, item) => sum + (item.summary.written ?? 0), 0);
+    if (summaries.some((item) => item.summary.written !== void 0)) writeKnown = true;
     if (failures.length) {
-      throw new Error(`${appIds.length}件中${failures.length}件が失敗しました
+      const known = [
+        completed.length ? `成功 ${completed.length}アプリ` : "",
+        writeKnown ? `書き込み済み ${successWritten + failedWritten}件` : "",
+        writeKnown && failedUnwritten ? `未処理 ${failedUnwritten}件` : ""
+      ].filter(Boolean);
+      const error = new Error(`${appIds.length}アプリ中${failures.length}アプリで失敗しました${known.length ? `（${known.join("・")}）` : ""}
 ${failures.join("\n")}${warningSummary ? `
 ${warningSummary}` : ""}${cancelSummary ? `
 ${cancelSummary}` : ""}`);
+      if (completed.length) Object.assign(error, { partialSuccess: true });
+      throw error;
     }
     if (cancelled.length === appIds.length) {
-      setStatus(`確認でキャンセルしました（${appIds.length}アプリとも実行していません）`);
-      return;
+      const message2 = "確認でキャンセルしました（実行していません）";
+      setStatus(message2, "info");
+      return { message: message2, tone: "info" };
     }
-    if (warningSummary || cancelSummary) {
-      setStatus(`${appIds.length}アプリの操作が完了しました${cancelSummary ? `
+    let headline;
+    if (summaries.length && summaries.length === completed.length) {
+      const counts = {};
+      for (const { summary } of summaries) for (const [key, value] of Object.entries(summary.counts)) counts[key] = (counts[key] || 0) + value;
+      headline = summaries[0].summary.describe(counts, completed.map((item) => item.appId));
+    } else {
+      headline = `${completed.length}アプリの操作が完了しました`;
+    }
+    const tone = warningSummary || cancelSummary ? "warn" : "ok";
+    const message = `${headline}${cancelSummary ? `
 ${cancelSummary}` : ""}${warningSummary ? `
-${warningSummary}` : ""}`, true);
-      return;
-    }
-    setStatus(`${appIds.length}アプリの操作が完了しました`);
+${warningSummary}` : ""}`;
+    setStatus(message, tone);
+    return { message, tone };
+  }
+  var CANCEL_WRITE_WAIT_MESSAGE = "書き込み中のリクエストの応答を待っています。応答が返ると次のリクエストの前で止めます。応答がない場合は kintone 画面で結果を確認してください。";
+  function watchCancelledWriteWait(notify, opts = {}) {
+    const token = activeRun();
+    if (!token) return () => {
+    };
+    const afterMs = opts.afterMs ?? 1e4;
+    const timer = setInterval(() => {
+      if (!token.cancelled || token.writes < 1 || Date.now() - token.cancelledAt < afterMs) return;
+      clearInterval(timer);
+      notify(CANCEL_WRITE_WAIT_MESSAGE);
+    }, opts.intervalMs ?? 1e3);
+    return () => clearInterval(timer);
   }
   async function downloadFileBlob(prefix, fileKey) {
     if (!fileKey) return { ok: false, reason: "fileKey がありません" };
@@ -4124,7 +4180,7 @@ ${warningSummary}` : ""}`, true);
     if (!result.csv.tables.length) {
       const blob2 = new Blob([result.csv.parentCsv], { type: "text/csv;charset=utf-8;" });
       downloadBlob(recordExportFilename(filename, "csv", buildExportFilename("レコード", "csv", { appLabel })), blob2);
-      setStatus(`CSV出力完了 (${result.recordCount}件)`);
+      setStatus(`CSV出力完了 (${result.recordCount}件)`, "ok");
       return { issues: [] };
     }
     const JSZipCtor = await loadJSZipLite();
@@ -4139,7 +4195,7 @@ ${warningSummary}` : ""}`, true);
     const blob = await zip.generateAsync({ type: "blob" });
     downloadBlob(recordExportFilename(filename, "zip", buildExportFilename("レコード", "zip", { appLabel })), blob);
     const warningNote = result.csv.warnings.length ? `（未取得のテーブル ${result.csv.warnings.length}件、詳細は manifest.json）` : "";
-    setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0);
+    setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0 ? "warn" : "ok");
     return { issues: result.csv.warnings };
   }
   async function runCsvExportBatchStandalone(opts, setStatus) {
@@ -4236,7 +4292,7 @@ ${failures.join("\n")}`);
     ].filter(Boolean);
     const issueNote = issues.length ? `（${issues.join(" / ")}、詳細は manifest.txt）` : "";
     const cancelNote = notRun.length ? `${formatCancelledHeadline(stoppedAt, apps.length)}。処理済みの分だけを保存しました。` : "";
-    setStatus(`${cancelNote}CSV一括出力${notRun.length ? "（一部）" : "完了"}${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
+    setStatus(`${cancelNote}CSV一括出力${notRun.length ? "（一部）" : "完了"}${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0 ? "warn" : "ok");
     return { issues: [...notRun.map((target) => `未実行（中止） ${target}`), ...failures.map((failure) => `失敗 ${failure}`), ...tableWarnings] };
   }
   async function readImportFile(file) {
@@ -4281,7 +4337,7 @@ ${failures.join("\n")}`);
     const { plans } = await inspectCsvImportBatch(opts, setStatus);
     const result = plans.map(({ appId, report, error }) => ({ appId, report, error }));
     const problems = plans.filter((plan) => plan.error || plan.report.issueCount).length;
-    setStatus(problems ? `事前検査: ${problems}アプリに問題があります。まだ書き込んでいません。` : `事前検査完了: ${plans.length}アプリ。まだ書き込んでいません。`, problems > 0);
+    setStatus(problems ? `事前検査: ${problems}アプリに問題があります。まだ書き込んでいません。` : `事前検査完了: ${plans.length}アプリ。まだ書き込んでいません。`, problems > 0 ? "warn" : "ok");
     return result;
   }
   async function writeChunksUnlessCancelled(items, label, writeChunk, onProgress, describeItem) {
@@ -4308,7 +4364,7 @@ ${problems.map((plan) => `App ${plan.appId}: ${plan.error || formatCsvImportRepo
     ].join("\n");
     if (!kusConfirm(confirmText)) {
       const warning = "CSV取込をキャンセルしました";
-      setStatus(warning, true);
+      setStatus(warning, "info");
       return { warning };
     }
     await runRecordAppBatchStandalone(plans.map((plan) => plan.appId).join(","), async (appId) => {
@@ -4321,9 +4377,9 @@ ${problems.map((plan) => `App ${plan.appId}: ${plan.error || formatCsvImportRepo
         (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`),
         (index) => `CSV ${recordRows[index]}行目`
       );
-      setStatus(`App ${appId}: インポート完了 ${ok}件`);
+      setStatus(`App ${appId}: ${ok}件を取り込みました`);
+      return { summary: { counts: { 件: ok }, written: ok, describe: countedSummary("を取り込みました", { withApp: true }) } };
     }, setStatus);
-    setStatus(`CSV取込完了: ${plans.length}アプリ / ${plans.reduce((sum, plan) => sum + plan.report.count, 0)}件`);
   }
   async function runBatchProcessStandalone(opts, setStatus) {
     const { appId: rawAppId, guestId: rawGuestId, query, action: rawAction, assignee: rawAssignee } = opts;
@@ -4340,7 +4396,7 @@ ${problems.map((plan) => `App ${plan.appId}: ${plan.error || formatCsvImportRepo
       "本番レコードのステータスが変わり、自動では元に戻せません。実行しますか？"
     ].join("\n");
     if (!kusConfirm(confirmText)) {
-      setStatus("ステータス一括更新をキャンセルしました");
+      setStatus("ステータス一括更新をキャンセルしました", "info");
       return { cancelled: true };
     }
     const ok = await writeChunksUnlessCancelled(
@@ -4365,7 +4421,9 @@ ${error?.message || String(error)}`
       (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`),
       (index) => `レコードID ${targets[index]?.id}`
     );
-    setStatus(`ステータス一括更新完了 (${ok}件)`);
+    const summary = { counts: { 件: ok }, written: ok, describe: countedSummary("のステータスを更新しました", { withApp: true }) };
+    setStatus(summary.describe(summary.counts, [appId]), "ok");
+    return { summary };
   }
   var COPY_SYSTEM_TYPES = /* @__PURE__ */ new Set([
     "RECORD_NUMBER",
@@ -4548,7 +4606,7 @@ ${error?.message || String(error)}`
       }
     }
     const hasWarn = results.some((r) => r.error || r.report && (!r.report.compatibleFields.length || r.report.droppedMissing.length > 0 || r.report.droppedMismatch.length > 0));
-    setStatus(`フィールド互換性確認完了: ${results.length}アプリ。まだコピーは実行していません。`, hasWarn);
+    setStatus(`フィールド互換性確認完了: ${results.length}アプリ。まだコピーは実行していません。`, hasWarn ? "warn" : "ok");
     return results;
   }
   async function runRecordCopyStandalone(opts, setStatus) {
@@ -4563,7 +4621,7 @@ ${error?.message || String(error)}`
     const records = await fetchAllRecords(srcPrefix, sourceAppId, query || "", setStatus);
     if (!records.length) {
       const warning = "コピー対象のレコードがありません";
-      setStatus(warning, true);
+      setStatus(warning, "warn");
       return { warning };
     }
     const plan = buildCopyRecordPayloads(records, targetProps);
@@ -4582,7 +4640,7 @@ ${droppedNote}` : ""}`);
       "実行しますか？"
     ].filter(Boolean).join("\n");
     if (!kusConfirm(confirmText)) {
-      setStatus("レコードコピーをキャンセルしました");
+      setStatus("レコードコピーをキャンセルしました", "info");
       return { cancelled: true };
     }
     const ok = await writeChunksUnlessCancelled(
@@ -4592,13 +4650,28 @@ ${droppedNote}` : ""}`);
       (done, total) => setStatus(`コピー中... ${done} / ${total}件`),
       (index) => `コピー元レコードID ${records[index]?.$id?.value ?? index + 1}`
     );
-    const fileDropNote = plan.droppedFileFields.length ? ` / 添付除外 ${plan.droppedFileFields.length}フィールド` : "";
-    setStatus(`レコードコピー完了: ${ok}件${fileDropNote}${droppedNote ? `（${droppedNote}）` : ""}`, plan.droppedFields.length > 0 || plan.droppedFileFields.length > 0);
+    const fileDropNote = plan.droppedFileFields.length ? `添付除外 ${plan.droppedFileFields.length}フィールド` : "";
+    const dropWarning = [fileDropNote, droppedNote].filter(Boolean).join(" / ");
+    const summary = {
+      counts: { 件: ok },
+      written: ok,
+      describe: (counts, appIds) => appIds.length === 1 ? `${counts["件"]}件をコピーしました（コピー先 App ${appIds[0]}）` : `${appIds.length}アプリへ計 ${counts["件"]}件をコピーしました`
+    };
+    const drops = plan.droppedFields.length > 0 || plan.droppedFileFields.length > 0;
+    setStatus(`${summary.describe(summary.counts, [targetAppId])}${dropWarning ? `（${dropWarning}）` : ""}`, drops ? "warn" : "ok");
+    return { summary, ...dropWarning ? { warning: dropWarning } : {} };
   }
   function folderLabelFromField(field) {
     const label = (item) => item && typeof item === "object" ? String(item.code || item.name || "") : String(item ?? "");
     const value = field?.value;
     return (Array.isArray(value) ? value.map(label).filter(Boolean).join(",") : label(value)).trim();
+  }
+  function describeAttachmentSummary(counts, appIds) {
+    const files = counts["ファイル"] || 0;
+    const failed = counts["取得失敗"] || 0;
+    const failNote = failed ? `（取得失敗 ${failed}件）` : "";
+    if (!files) return `保存した添付ファイルはありません${failNote}`;
+    return appIds.length === 1 ? `添付ファイル ${files}件を保存しました${failNote}` : `${appIds.length}アプリで計 ${files}件の添付ファイルを保存しました${failNote}`;
   }
   async function runAttachmentDownloadStandalone(opts, setStatus) {
     const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
@@ -4629,8 +4702,8 @@ ${droppedNote}` : ""}`);
     });
     if (!groups.some((group) => group.files.length)) {
       const warning = "ダウンロード対象の添付がありませんでした";
-      setStatus(warning, true);
-      return { warning };
+      setStatus(warning, "warn");
+      return { warning, summary: { counts: { ファイル: 0, 取得失敗: 0 }, describe: describeAttachmentSummary } };
     }
     const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
@@ -4691,8 +4764,8 @@ ${droppedNote}` : ""}`);
         throw new Error(`添付ファイルを1件も取得できませんでした（失敗 ${failures.length}件）
 ${formatFileFailures(failures.slice(0, 5))}${failures.length > 5 ? "\n…" : ""}`);
       }
-      setStatus("ダウンロード対象の添付がありませんでした", true);
-      return { warning: "ダウンロード対象の添付がありませんでした" };
+      setStatus("ダウンロード対象の添付がありませんでした", "warn");
+      return { warning: "ダウンロード対象の添付がありませんでした", summary: { counts: { ファイル: 0, 取得失敗: 0 }, describe: describeAttachmentSummary } };
     }
     if (failures.length) {
       zip.file("download_errors.txt", `取得できなかった添付ファイル ${failures.length}件
@@ -4703,12 +4776,22 @@ ${formatFileFailures(failures)}
     setStatus(`ZIP生成中 (${fileCount}ファイル)`);
     const zipBlob = await zip.generateAsync({ type: "blob" });
     downloadBlob(recordExportFilename(zipName, "zip", buildExportFilename("添付ファイル", "zip", { appLabel: buildAppFilenameLabel(appId, "") })), zipBlob);
+    const summary = { counts: { ファイル: fileCount, 取得失敗: failures.length }, describe: describeAttachmentSummary };
+    const headline = summary.describe(summary.counts, [String(appId)]);
     if (failures.length) {
-      const warning = `添付一括DL完了: ${fileCount}ファイル（取得失敗 ${failures.length}件、詳細は download_errors.txt）`;
-      setStatus(warning, true);
-      return { warning };
+      const detail = `取得失敗 ${failures.length}件の詳細は ZIP 内の download_errors.txt`;
+      setStatus(`${headline}
+${detail}`, "warn");
+      return { warning: detail, summary };
     }
-    setStatus(`添付一括DL完了: ${fileCount}ファイル`);
+    setStatus(headline, "ok");
+    return { summary };
+  }
+  function describeBackupSummary(counts, appIds) {
+    const parts = [`レコード ${counts["レコード"] || 0}件`];
+    if ("添付" in counts) parts.push(`添付 ${counts["添付"]}件`);
+    if ("コメント" in counts) parts.push(`コメント ${counts["コメント"]}件`);
+    return `${appIds.length === 1 ? "" : `${appIds.length}アプリの`}バックアップを保存しました（${parts.join("・")}）`;
   }
   async function runRecordBackupStandalone(opts, setStatus) {
     const { appId, guestId, query, zipName, includeFiles, includeComments, includeAppSettings, appScopes } = opts;
@@ -4879,10 +4962,15 @@ ${formatFileFailures(failures)}
     downloadBlob(recordExportFilename(zipName, "zip", buildExportFilename("レコードバックアップ", "zip", { appLabel: buildAppFilenameLabel(appId, "") })), blob);
     const failureCount = fileFailures.length + commentFailures.length + appNg + csvExport.warnings.length;
     const allSettingsFailed = Boolean(includeAppSettings && appScopes?.length && appOk === 0 && appNg > 0);
-    const failureNote = failureCount ? `（取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg}${allSettingsFailed ? " [全セクション失敗]" : ""} / テーブル ${csvExport.warnings.length} → manifest.json 参照）` : "";
-    const completionMessage = `バックアップ完了: ${records.length}件 / テーブル明細 ${csvExport.tables.length}ファイル / 添付 ${fileCount} / コメント ${commentCount}${failureNote}`;
-    setStatus(completionMessage, failureCount > 0);
-    return { warning: failureCount > 0 ? completionMessage : void 0 };
+    const detail = failureCount ? `取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg}${allSettingsFailed ? " [全セクション失敗]" : ""} / テーブル ${csvExport.warnings.length}（詳細は manifest.json）` : "";
+    const summary = {
+      counts: { レコード: records.length, ...includeFiles ? { 添付: fileCount } : {}, ...includeComments ? { コメント: commentCount } : {} },
+      describe: describeBackupSummary
+    };
+    const headline = summary.describe(summary.counts, [String(appId)]);
+    setStatus(detail ? `${headline}
+${detail}` : headline, failureCount > 0 ? "warn" : "ok");
+    return { summary, ...detail ? { warning: detail } : {} };
   }
   async function runLoadStatusActionsStandalone(opts, setStatus) {
     const { appId, guestId } = validateRecordConnection(opts.appId, opts.guestId);
@@ -4890,7 +4978,7 @@ ${formatFileFailures(failures)}
     setStatus("プロセス管理情報を取得中...");
     const res = await apiGet(prefix, "/app/status.json", { app: appId, lang: "user" });
     if (!res.enable) {
-      setStatus("プロセス管理は無効です", true);
+      setStatus("プロセス管理は無効です", "warn");
       return { enabled: false, states: [], actions: [], statusFieldCode: "" };
     }
     const states = Object.keys(res.states || {}).sort((a, b) => Number(res.states[a].index) - Number(res.states[b].index));
@@ -5365,7 +5453,7 @@ ${formatFileFailures(failures)}
       } catch (error) {
         if (isRunCancelledError(error)) {
           for (const pendingId of appIds.slice(i)) results.push({ appId: pendingId, error: "未実行（中止）" });
-          setStatus(`${formatCancelledHeadline(i, appIds.length)}。検査済みの結果だけを表示します`, true);
+          setStatus(`${formatCancelledHeadline(i, appIds.length)}。検査済みの結果だけを表示します`, "warn");
           return results;
         }
         results.push({ appId, error: error.message || String(error) });
@@ -5562,7 +5650,7 @@ ${failures.join("\n")}` };
       const current = version;
       const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked };
       const queryText = query.value.trim();
-      const inspected = await runRecordQualityStandalone({ appIdsText: tgtApp.value, guestId, codes: [...selected], query: queryText, ...options }, (message) => panel.setStatus(message, "busy"));
+      const inspected = await runRecordQualityStandalone({ appIdsText: tgtApp.value, guestId, codes: [...selected], query: queryText, ...options }, (message, tone) => panel.setStatus(message, toPanelTone(tone)));
       if (current !== version) {
         panel.setStatus("対象や条件が変わりました。もう一度検査してください。", "warn");
         return;
@@ -5660,7 +5748,7 @@ ${failures.join("\n")}` };
     root2.appendChild(makeNote("取込できないテーブル・添付・計算項目・ルックアップのコピー先フィールドは除外します。設定を取得できなかったアプリは、完了メッセージと manifest.json に記録します。", "help"));
     const run = makeButton("CSVひな形をZIPで保存", "primary");
     run.addEventListener("click", () => liteRun(panel, "CSVひな形を作成中…", async () => {
-      const result = await runCsvTemplateStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() }, (message) => panel.setStatus(message, "busy"));
+      const result = await runCsvTemplateStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() }, (message, tone) => panel.setStatus(message, toPanelTone(tone)));
       if (result.warning) panel.setStatus(result.warning, "warn");
     }));
     root2.appendChild(makeRow(run));
@@ -5684,6 +5772,18 @@ ${failures.join("\n")}` };
       badges: [{ label: "本番データを変更", tone: "production" }],
       hint: "<strong>本番のレコードを直接追加・更新します。</strong>元に戻せない操作があるので、実行前にバックアップを取ってください。",
       wide: true
+    });
+    const status = (message, tone) => panel.setStatus(message, toPanelTone(tone));
+    const liteRunWithCancelGuidance = (busyMsg, fn) => liteRun(panel, busyMsg, async () => {
+      const stop = watchCancelledWriteWait((message) => {
+        const current = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        if (/^中止しています/.test(current)) panel.setStatus(message, "busy");
+      });
+      try {
+        return await fn();
+      } finally {
+        stop();
+      }
     });
     const tgtApp = makeInput({ placeholder: "アプリID（カンマ区切りで複数指定）", value: DEFAULT_APP_ID || "", width: "wide", ariaLabel: "対象アプリID" });
     const tgtGuest = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest" });
@@ -5736,7 +5836,7 @@ ${failures.join("\n")}` };
       viewSelect.replaceChildren(new Option("一覧を選択（任意）", ""));
       const views = await runLoadViewsStandalone(
         { appId, guestId: tgtGuest.value.trim() },
-        (m, e) => panel.setStatus(m, e ? "err" : "busy")
+        status
       );
       if (version !== connectionVersion) {
         panel.setStatus("対象アプリが変わりました。一覧を再取得してください。", "warn");
@@ -5840,7 +5940,7 @@ ${failures.join("\n")}` };
                 lineEnding: lineEndingSelect.value === "crlf" ? "\r\n" : "\n",
                 neutralizeFormula: neutralizeCb.checkbox.checked
               },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+              status
             );
           }));
           const headerLabelMap = {
@@ -5900,7 +6000,7 @@ ${failures.join("\n")}` };
             const version = csvVersion;
             const results = await runPreviewCsvImportStandalone(
               { appIdsText: tgtApp.value, guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
-              (message, error) => panel.setStatus(message, error ? "warn" : "busy")
+              status
             );
             if (version !== csvVersion) {
               panel.setStatus("対象やCSVが変わりました。もう一度事前検査してください。", "warn");
@@ -5918,12 +6018,11 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           root2.appendChild(makeNote("列数・必須項目・選択肢・数値形式・CSV内の同一値重複を全対象アプリで確認し、問題があれば最初の書き込み前に止めます。権限や既存データとの重複は、登録時に kintone が判定します。", "help"));
           const run = makeButton("レコードを取込", "primary", { icon: "↑" });
           run.style.width = "100%";
-          run.addEventListener("click", () => liteRun(panel, "CSV取込中…", async () => {
-            const result = await runCsvImportBatchStandalone(
+          run.addEventListener("click", () => liteRunWithCancelGuidance("CSV取込中…", async () => {
+            await runCsvImportBatchStandalone(
               { appIdsText: tgtApp.value, guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+              status
             );
-            if (result?.warning) panel.setStatus(result.warning, "warn");
           }));
           addAction({ id: "csv-import", label: "CSVからレコードを追加", description: "CSVの各行を、対象アプリへ新規レコードとして追加します。", button: run, writes: true, validate: () => requiredApps() || (fileInput.files?.length ? "" : "取り込むCSVを選んでください。"), summary: () => [targetSummary(), ["CSV", fileInput.files?.[0]?.name || "未選択"], ["事前検査", previewSummary], ["処理", "全対象アプリを再検査してから、新規レコードを追加"]] });
           root2.appendChild(makeRow(run));
@@ -6010,7 +6109,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
             const [appId] = parseRecordAppIds(tgtApp.value);
             const info = await runLoadStatusActionsStandalone(
               { appId, guestId: tgtGuest.value.trim() },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+              status
             );
             if (version !== connectionVersion) {
               panel.setStatus("対象アプリが変わりました。アクションを再取得してください。", "warn");
@@ -6035,11 +6134,11 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           const run = makeButton("ステータスを一括更新", "primary");
           run.style.width = "100%";
           run.classList.add("kus-lp__btn--danger");
-          run.addEventListener("click", () => liteRun(panel, "ステータス一括更新中…", async () => {
+          run.addEventListener("click", () => liteRunWithCancelGuidance("ステータス一括更新中…", async () => {
             await runRecordAppBatchStandalone(tgtApp.value, (appId) => runBatchProcessStandalone(
               { appId, guestId: tgtGuest.value.trim(), query: query.value.trim(), action: action.value.trim(), assignee: assignee.value.trim() || null },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+              status
+            ), status);
           }));
           addAction({ id: "status", label: "ステータスを一括更新", description: "条件に合うレコードのステータスを、指定したアクションで更新します。", button: run, writes: true, validate: () => requiredApps() || (action.value.trim() ? "" : "実行するアクションを指定してください。") || (staleActionQuery() ? "前のアクションの対象条件が残っています。条件を入力し直すかクエリを編集してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["アクション", action.value.trim()], ["選択した遷移", selectedAction() ? `${selectedAction().from} → ${selectedAction().to}` : "手入力"], ["次の作業者", assignee.value.trim() || "指定なし"]] });
           root2.appendChild(options.row);
@@ -6089,7 +6188,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
             resetFields();
             const fields = await runLoadAttachmentFieldsStandalone(
               { appId, guestId: tgtGuest.value.trim() },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+              status
             );
             if (version !== connectionVersion) {
               panel.setStatus("対象アプリが変わりました。フィールドを再取得してください。", "warn");
@@ -6129,8 +6228,8 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
                 folderFieldCode: folderCode.value.trim(),
                 zipName: zipNameForApp(zipName.value, appId, parseRecordAppIds(tgtApp.value).length > 1)
               },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+              status
+            ), status);
           }));
           addAction({ id: "attach", label: "添付ファイルを保存", description: "条件に合うレコードの添付ファイルを、ZIPで保存します。", button: run, validate: () => requiredApps() || (fileCode.value.trim() ? "" : "添付ファイルのフィールドコードを指定してください。"), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["添付フィールド", [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(" / ")], ["フォルダ名にするフィールド", folderCode.value.trim() || "指定なし"], ["ZIP名", zipName.value.trim() || "自動命名"]] });
           root2.appendChild(options.row);
@@ -6184,7 +6283,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
                 targetAppsText: tgtApp.value,
                 targetGuestId: tgtGuest.value.trim()
               },
-              (m, e) => panel.setStatus(m, e ? "warn" : "busy")
+              status
             );
             if (version !== copyPreviewVersion) {
               panel.setStatus("コピー元または対象アプリが変わりました。もう一度確認してください。", "warn");
@@ -6202,7 +6301,7 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
           const run = makeButton("レコードを対象アプリへコピー", "primary");
           run.style.width = "100%";
           run.classList.add("kus-lp__btn--danger");
-          run.addEventListener("click", () => liteRun(panel, "レコードコピー中…", async () => {
+          run.addEventListener("click", () => liteRunWithCancelGuidance("レコードコピー中…", async () => {
             await runRecordAppBatchStandalone(tgtApp.value, (targetAppId) => runRecordCopyStandalone(
               {
                 sourceAppId: srcApp.value.trim(),
@@ -6211,8 +6310,8 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
                 targetGuestId: tgtGuest.value.trim(),
                 query: query.value.trim()
               },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+              status
+            ), status);
           }));
           addAction({
             id: "copy",
@@ -6278,8 +6377,8 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
                 includeAppSettings: incSettings.checkbox.checked,
                 appScopes: chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value)
               },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+              status
+            ), status);
           }));
           addAction({ id: "backup", label: "バックアップを保存", description: "レコード・テーブル明細と選択した関連データをZIPで保存します。", button: run, validate: () => requiredApps() || (incSettings.checkbox.checked && !chips.some((c) => c.checkbox.checked) ? "アプリ設定の保存範囲を1つ以上選ぶか、「アプリ設定も保存」を外してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["ZIP名", zipName.value.trim() || "自動命名"], ["保存内容", ["レコード・テーブル明細", incFiles.checkbox.checked ? "添付ファイル" : "", incComments.checkbox.checked ? "コメント" : "", incSettings.checkbox.checked ? `アプリ設定（${chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent).join("、")}）` : ""].filter(Boolean).join("、")]] });
           root2.appendChild(options.row);

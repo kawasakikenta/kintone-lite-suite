@@ -40,7 +40,7 @@ import {
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
 import { readSettingsBundleFile } from '../settingsBundleImport.js';
-import { isCancelRequested, isRunCancelledError } from '../runControl.js';
+import { isCancelRequested, isRunCancelledError, RunCancelledError } from '../runControl.js';
 import { needsAppReferenceParse, parseAppReference } from '../reflect/appReference.js';
 import {
   DEFAULT_MAX_DIFF_BATCH_PAIRS,
@@ -447,7 +447,8 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-app-card .kus-lp__input{flex:1;min-width:100px;width:auto;box-sizing:border-box}
 .kus-dl-app-card .kus-dl-target-field{min-width:140px}
 .kus-dl-swap{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;align-self:center;justify-self:center;width:auto;min-width:104px;padding:8px 12px!important;white-space:nowrap;line-height:1.3}
-.kus-dl-target-list{display:grid;gap:7px;max-height:220px;margin-top:8px;padding-right:2px;overflow-y:auto}
+.kus-dl-target-list{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;max-height:340px;margin-top:8px;padding-right:2px;overflow-y:auto;background:linear-gradient(#eff6ff 30%,rgba(239,246,255,0)) top/100% 24px no-repeat local,linear-gradient(rgba(239,246,255,0),#eff6ff 70%) bottom/100% 24px no-repeat local,radial-gradient(farthest-side at 50% 0,rgba(15,23,42,.28),rgba(15,23,42,0)) top/100% 9px no-repeat scroll,radial-gradient(farthest-side at 50% 100%,rgba(15,23,42,.28),rgba(15,23,42,0)) bottom/100% 9px no-repeat scroll}
+.kus-dl-target-list-hint{margin:6px 0 0;color:#475569;font-size:12.5px;font-weight:700}
 .kus-dl-multi-controls{margin-top:12px!important;padding-top:10px;border-top:1px solid #e2e8f0}
 .kus-dl-common-exclusion{margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;background:#eff6ff;color:#10253f;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-common-exclusion__heading{margin:0;font-size:13px;font-weight:850;letter-spacing:.04em}
@@ -1446,6 +1447,25 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const targetList = document.createElement('div');
   targetList.className = 'kus-dl-target-list';
   const targetRows: TargetRowEntry[] = [{ app: tgtApp, guest: tgtGuest, row: firstTargetRow, name: tgtName, appName: '' }];
+  // 比較先が多くて一覧内でスクロールするときだけ、「N 件中 M 件を表示」と下端の影で続きがあることを示す。
+  const targetListHint = document.createElement('p');
+  targetListHint.className = 'kus-dl-target-list-hint';
+  targetListHint.hidden = true;
+  const updateTargetListHint = () => {
+    const overflow = !targetList.hidden && targetList.clientHeight > 0 && targetList.scrollHeight > targetList.clientHeight + 1;
+    targetListHint.hidden = !overflow;
+    if (!overflow) { targetListHint.textContent = ''; return; }
+    const viewBottom = targetList.getBoundingClientRect().top + targetList.clientHeight;
+    const visibleInList = Array.from(targetList.children)
+      .filter((child) => child.getBoundingClientRect().bottom <= viewBottom + 1).length;
+    // 先頭の比較先は一覧の外に固定表示されている。
+    const shown = Math.min(targetRows.length, 1 + visibleInList);
+    targetListHint.textContent = shown >= targetRows.length
+      ? `比較先 ${targetRows.length} 件をすべて表示中。上にスクロールできます`
+      : `比較先 ${targetRows.length} 件中 ${shown} 件を表示。スクロールできます`;
+  };
+  targetList.addEventListener('scroll', updateTargetListHint, { passive: true });
+  if (typeof ResizeObserver === 'function') new ResizeObserver(updateTargetListHint).observe(targetList);
   const relabelTargetRows = () => targetRows.forEach((r, idx) => {
     const label = r.row?.querySelector?.('.kus-lp__label') as HTMLElement | null;
     if (label) label.textContent = `比較先 ${idx + 1}`;
@@ -1473,6 +1493,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       const idx = targetRows.indexOf(entry);
       if (idx >= 0) targetRows.splice(idx, 1);
       relabelTargetRows();
+      updateTargetListHint();
       invalidateResultAfterAppSelectionChange();
     });
     app.addEventListener('input', () => {
@@ -1483,6 +1504,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     targetRows.push(entry);
     targetList.appendChild(row);
     attachTargetSplit(entry);
+    updateTargetListHint();
     return entry;
   };
   const adoptDiffAppReference = (
@@ -1603,7 +1625,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     ]
   });
   cardApp.body.appendChild(singleAppSearch);
-  targetCard.appendChild(targetList);
+  targetCard.append(targetList, targetListHint);
 
   interface PairEndpointEntry {
     app: HTMLInputElement;
@@ -2242,13 +2264,26 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     const totalJsonBytes = jsonFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
     if (files.length > 2000 || jsonFiles.length > 500) throw new Error('選択したフォルダのファイル数が多すぎます（全体2,000件、JSON 500件まで）');
     if (totalJsonBytes > 128 * 1024 * 1024) throw new Error('選択したフォルダのJSON合計サイズが128MBを超えています');
-    let entries: Array<{ name: string; relativePath: string; text: string }>;
+    const entries: Array<{ name: string; relativePath: string; text: string }> = [];
+    const sideLabel = side === 'source' ? '比較元' : '比較先';
+    let jsonRead = 0;
     try {
-      entries = await Promise.all(files.map(async (file) => ({
-        name: file.name,
-        relativePath: file.webkitRelativePath || file.name,
-        text: /\.json$/i.test(file.name) ? await file.text() : ''
-      })));
+      // 1ファイルずつ読み、ファイルの合間で「中止」を確認する（途中まで読んだ内容は破棄する）。
+      for (const file of files) {
+        if (isCancelRequested()) {
+          const error: any = new Error(`中止しました。${sideLabel}フォルダの読み込みを JSON ${jsonRead}/${jsonFiles.length}件目で止めました。${pairFolderStates[side] ? 'フォルダの選択は前の状態のままです' : 'フォルダは未選択のままです'}`);
+          error.cancelReport = true;
+          throw error;
+        }
+        const isJson = /\.json$/i.test(file.name);
+        entries.push({
+          name: file.name,
+          relativePath: file.webkitRelativePath || file.name,
+          text: isJson ? await file.text() : ''
+        });
+        if (isJson) jsonRead += 1;
+        if (generation !== pairFolderLoadGeneration[side]) return;
+      }
     } catch (error) {
       if (generation !== pairFolderLoadGeneration[side]) return;
       throw error;
@@ -2297,8 +2332,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         try {
           await loadPairFolder(side, ui.input, invalidatedBeforeLoad);
         } catch (error) {
-          pairFolderAlert.textContent = error instanceof Error ? error.message : String(error);
-          pairFolderAlert.hidden = false;
+          // 中止は失敗ではないので、赤い警告枠は出さずステータスだけで伝える。
+          if ((error as any)?.cancelReport !== true) {
+            pairFolderAlert.textContent = error instanceof Error ? error.message : String(error);
+            pairFolderAlert.hidden = false;
+          }
           throw error;
         } finally {
           pairFolderActiveLoads[side] = Math.max(0, pairFolderActiveLoads[side] - 1);
@@ -2759,6 +2797,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     pairModeBtn.classList.toggle('is-active', mode === 'pairs');
     multiControls.hidden = mode !== 'multi';
     targetList.hidden = mode !== 'multi';
+    updateTargetListHint();
     directionGrid.hidden = mode === 'pairs';
     singleAppSearch.hidden = mode === 'pairs';
     pairEditor.hidden = mode !== 'pairs';
@@ -3164,7 +3203,12 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     const label = side === 'source' ? '比較元' : '比較先';
     panel.setStatus(`${label}JSONを読み込み中…`, 'busy');
     try {
-      const bundle = await jsonImporter.load(side, () => readSettingsBundleFile(file, { side, appId }));
+      const bundle = await jsonImporter.load(side, async () => {
+        const read = await readSettingsBundleFile(file, { side, appId });
+        // 読み込み中に「中止」が押されたら、読み込んだ内容を採用しない。
+        if (isCancelRequested()) throw new RunCancelledError();
+        return read;
+      });
       if (!bundle) return;
       if (!app.value.trim() && bundle.appId) app.value = String(bundle.appId);
       if (side === 'source') {
@@ -3182,6 +3226,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       panel.setStatus(`${label}JSONを読み込みました: App ${bundle.appId || '-'}${invalidated ? '。結果を更新するため再比較してください' : ''}`, invalidated ? 'warn' : 'ok');
     } catch (error: any) {
       input.value = '';
+      if (isRunCancelledError(error)) {
+        panel.setStatus(`中止しました。${label}JSONの読み込みを止めました（JSONは選択されていません）`, 'warn');
+        return;
+      }
       panel.setStatus(`エラー: ${error?.message || String(error)}`, 'err');
     }
   }

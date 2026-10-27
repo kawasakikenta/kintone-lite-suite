@@ -12849,11 +12849,12 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
-.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
-.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:136px}
+.kus-lp__apptable th.kus-lp__apptable-acts-h,.kus-lp__apptable td.kus-lp__apptable-acts{padding-left:4px;padding-right:4px}
 .kus-lp__apptable-acts{white-space:nowrap}
-.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:12.5px;border-radius:7px}
-.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 6px;font-size:12.5px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:3px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:12.5px;color:var(--c-muted);margin-left:auto;font-weight:600}
 .kus-lp__apptable-hint{font-size:12.5px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
@@ -13606,7 +13607,8 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
       if (e?.partialSuccess === true) {
-        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
+        panel.setStatus(`${first}${logNote}`, "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
@@ -13767,6 +13769,9 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   var VALID_DENSITIES = new Set(DIFF_COMPARISON_PROFILE_DENSITIES);
   var VALID_LAYOUTS = new Set(DIFF_COMPARISON_PROFILE_LAYOUTS);
   var PROTOTYPE_POLLUTION_KEYS = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+  var DIFF_COMPARISON_PROFILE_NOT_PROFILE_MESSAGE = "比較条件のJSONではありません（設定JSONや差分JSONは「設定JSON読込」で読み込んでください）";
+  var PROFILE_SHAPE_KEYS = ["scopes", "ignoreKeys", "includeSame", "normalizationPresetState", "display"];
+  var FOREIGN_SHAPE_KEYS = ["sections", "apps", "rows", "sourceBundle", "targetBundle"];
   var DEFAULT_DISPLAY = Object.freeze({
     charDiff: true,
     showResultList: true,
@@ -13916,7 +13921,11 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const input = parseInput(raw);
     const kind = ownValue(input, "kind");
     if (kind !== void 0 && kind !== DIFF_COMPARISON_PROFILE_KIND) {
-      throw new DiffComparisonProfileError("比較条件プロファイルの種類が正しくありません");
+      throw new DiffComparisonProfileError(DIFF_COMPARISON_PROFILE_NOT_PROFILE_MESSAGE);
+    }
+    if (kind === void 0) {
+      const looksLikeProfile = PROFILE_SHAPE_KEYS.some((key) => ownValue(input, key) !== void 0) && !FOREIGN_SHAPE_KEYS.some((key) => ownValue(input, key) !== void 0);
+      if (!looksLikeProfile) throw new DiffComparisonProfileError(DIFF_COMPARISON_PROFILE_NOT_PROFILE_MESSAGE);
     }
     const version = ownValue(input, "version");
     if (version !== void 0 && Number(version) !== DIFF_COMPARISON_PROFILE_VERSION) {
@@ -19511,18 +19520,42 @@ ${item.target}` : item.target;
     }
     return source || target || shortBusinessName(safeLabel(item.label, index)) || `比較_${index + 1}`;
   }
+  function sideIdentityToken(context, side) {
+    let bundle;
+    try {
+      bundle = side === "source" ? context.sourceBundle : context.targetBundle;
+    } catch {
+      return "";
+    }
+    if (!bundle || typeof bundle !== "object") return "";
+    try {
+      const appId = bundle.appId == null ? "" : normalizeFilenameText(String(bundle.appId)).replace(/\s+/g, "");
+      if (!appId) return "";
+      const guestId = bundle.guestId == null ? "" : normalizeFilenameText(String(bundle.guestId)).replace(/\s+/g, "");
+      return `${guestId ? `G${guestId}-` : ""}App${appId}${bundle.preview ? "-preview" : ""}`;
+    } catch {
+      return "";
+    }
+  }
+  function workbookIdentitySuffix(item) {
+    const source = sideIdentityToken(item.context, "source");
+    const target = sideIdentityToken(item.context, "target");
+    if (!source && !target) return "";
+    return `_${source || "App不明"}→${target || "App不明"}`;
+  }
   function ensureExtension(value, extension) {
     const withoutExtension = value.toLocaleLowerCase("en-US").endsWith(extension) ? value.slice(0, -extension.length) : value;
     return `${withoutExtension || "出力"}${extension}`;
   }
-  function orderedXlsxEntryName(rawFilename, inputIndex, total) {
+  function orderedXlsxEntryName(rawFilename, inputIndex, total, identitySuffix = "") {
     const prefixWidth = Math.max(3, String(Math.max(1, total)).length);
     const prefix = `${String(inputIndex + 1).padStart(prefixWidth, "0")}_`;
     const normalized = ensureExtension(normalizeFilenameText(rawFilename), XLSX_EXTENSION);
     const stem = normalized.slice(0, -XLSX_EXTENSION.length);
-    const maxStem = MAX_ENTRY_FILENAME_CODE_POINTS - Array.from(prefix).length - XLSX_EXTENSION.length;
+    const suffix = truncateCodePoints(identitySuffix, Math.floor(MAX_ENTRY_FILENAME_CODE_POINTS / 2));
+    const maxStem = MAX_ENTRY_FILENAME_CODE_POINTS - Array.from(prefix).length - Array.from(suffix).length - XLSX_EXTENSION.length;
     const safeStem = truncateCodePoints(stem, Math.max(1, maxStem)).replace(/[. ]+$/g, "") || `比較_${inputIndex + 1}`;
-    return `${prefix}${safeStem}${XLSX_EXTENSION}`;
+    return `${prefix}${safeStem}${suffix}${XLSX_EXTENSION}`;
   }
   function comparisonIncomplete(context) {
     return !!((context.fetchIssues || []).length || (context.partialIssues || []).length || hasIncompleteActualDiffTruncation(context.truncation));
@@ -19771,7 +19804,12 @@ ${item.target}` : item.target;
       try {
         const workbook = buildDiffXlsxExport(item.context);
         const data = new Uint8Array(await workbook.blob.arrayBuffer());
-        const entryName = orderedXlsxEntryName(`${shortWorkbookLabel(item, index)}${XLSX_EXTENSION}`, index, total);
+        const entryName = orderedXlsxEntryName(
+          `${shortWorkbookLabel(item, index)}${XLSX_EXTENSION}`,
+          index,
+          total,
+          workbookIdentitySuffix(item)
+        );
         const candidateEntries = [...zipEntries, { name: entryName, data }];
         const requiredArchiveBytes2 = calculateStoredZipByteLength(candidateEntries);
         if (requiredArchiveBytes2 > maxArchiveBytes) {
@@ -21575,7 +21613,8 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-app-card .kus-lp__input{flex:1;min-width:100px;width:auto;box-sizing:border-box}
 .kus-dl-app-card .kus-dl-target-field{min-width:140px}
 .kus-dl-swap{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;align-self:center;justify-self:center;width:auto;min-width:104px;padding:8px 12px!important;white-space:nowrap;line-height:1.3}
-.kus-dl-target-list{display:grid;gap:7px;max-height:220px;margin-top:8px;padding-right:2px;overflow-y:auto}
+.kus-dl-target-list{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;max-height:340px;margin-top:8px;padding-right:2px;overflow-y:auto;background:linear-gradient(#eff6ff 30%,rgba(239,246,255,0)) top/100% 24px no-repeat local,linear-gradient(rgba(239,246,255,0),#eff6ff 70%) bottom/100% 24px no-repeat local,radial-gradient(farthest-side at 50% 0,rgba(15,23,42,.28),rgba(15,23,42,0)) top/100% 9px no-repeat scroll,radial-gradient(farthest-side at 50% 100%,rgba(15,23,42,.28),rgba(15,23,42,0)) bottom/100% 9px no-repeat scroll}
+.kus-dl-target-list-hint{margin:6px 0 0;color:#475569;font-size:12.5px;font-weight:700}
 .kus-dl-multi-controls{margin-top:12px!important;padding-top:10px;border-top:1px solid #e2e8f0}
 .kus-dl-common-exclusion{margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;background:#eff6ff;color:#10253f;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-common-exclusion__heading{margin:0;font-size:13px;font-weight:850;letter-spacing:.04em}
@@ -22371,6 +22410,23 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const targetList = document.createElement("div");
     targetList.className = "kus-dl-target-list";
     const targetRows = [{ app: tgtApp, guest: tgtGuest, row: firstTargetRow, name: tgtName, appName: "" }];
+    const targetListHint = document.createElement("p");
+    targetListHint.className = "kus-dl-target-list-hint";
+    targetListHint.hidden = true;
+    const updateTargetListHint = () => {
+      const overflow = !targetList.hidden && targetList.clientHeight > 0 && targetList.scrollHeight > targetList.clientHeight + 1;
+      targetListHint.hidden = !overflow;
+      if (!overflow) {
+        targetListHint.textContent = "";
+        return;
+      }
+      const viewBottom = targetList.getBoundingClientRect().top + targetList.clientHeight;
+      const visibleInList = Array.from(targetList.children).filter((child) => child.getBoundingClientRect().bottom <= viewBottom + 1).length;
+      const shown = Math.min(targetRows.length, 1 + visibleInList);
+      targetListHint.textContent = shown >= targetRows.length ? `比較先 ${targetRows.length} 件をすべて表示中。上にスクロールできます` : `比較先 ${targetRows.length} 件中 ${shown} 件を表示。スクロールできます`;
+    };
+    targetList.addEventListener("scroll", updateTargetListHint, { passive: true });
+    if (typeof ResizeObserver === "function") new ResizeObserver(updateTargetListHint).observe(targetList);
     const relabelTargetRows = () => targetRows.forEach((r, idx) => {
       const label = r.row?.querySelector?.(".kus-lp__label");
       if (label) label.textContent = `比較先 ${idx + 1}`;
@@ -22403,6 +22459,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         const idx = targetRows.indexOf(entry);
         if (idx >= 0) targetRows.splice(idx, 1);
         relabelTargetRows();
+        updateTargetListHint();
         invalidateResultAfterAppSelectionChange();
       });
       app.addEventListener("input", () => {
@@ -22413,6 +22470,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       targetRows.push(entry);
       targetList.appendChild(row);
       attachTargetSplit(entry);
+      updateTargetListHint();
       return entry;
     };
     const adoptDiffAppReference = (appInput, guestInput, sideLabel, clearName, text2 = appInput.value) => {
@@ -22542,7 +22600,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       ]
     });
     cardApp.body.appendChild(singleAppSearch);
-    targetCard.appendChild(targetList);
+    targetCard.append(targetList, targetListHint);
     const MAX_PAIR_ROWS = DEFAULT_MAX_DIFF_BATCH_PAIRS;
     const pairEditor = document.createElement("section");
     pairEditor.className = "kus-dl-pair-editor";
@@ -23080,13 +23138,25 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const totalJsonBytes = jsonFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
       if (files.length > 2e3 || jsonFiles.length > 500) throw new Error("選択したフォルダのファイル数が多すぎます（全体2,000件、JSON 500件まで）");
       if (totalJsonBytes > 128 * 1024 * 1024) throw new Error("選択したフォルダのJSON合計サイズが128MBを超えています");
-      let entries;
+      const entries = [];
+      const sideLabel = side === "source" ? "比較元" : "比較先";
+      let jsonRead = 0;
       try {
-        entries = await Promise.all(files.map(async (file) => ({
-          name: file.name,
-          relativePath: file.webkitRelativePath || file.name,
-          text: /\.json$/i.test(file.name) ? await file.text() : ""
-        })));
+        for (const file of files) {
+          if (isCancelRequested()) {
+            const error = new Error(`中止しました。${sideLabel}フォルダの読み込みを JSON ${jsonRead}/${jsonFiles.length}件目で止めました。${pairFolderStates[side] ? "フォルダの選択は前の状態のままです" : "フォルダは未選択のままです"}`);
+            error.cancelReport = true;
+            throw error;
+          }
+          const isJson = /\.json$/i.test(file.name);
+          entries.push({
+            name: file.name,
+            relativePath: file.webkitRelativePath || file.name,
+            text: isJson ? await file.text() : ""
+          });
+          if (isJson) jsonRead += 1;
+          if (generation !== pairFolderLoadGeneration[side]) return;
+        }
       } catch (error) {
         if (generation !== pairFolderLoadGeneration[side]) return;
         throw error;
@@ -23134,8 +23204,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           try {
             await loadPairFolder(side, ui3.input, invalidatedBeforeLoad);
           } catch (error) {
-            pairFolderAlert.textContent = error instanceof Error ? error.message : String(error);
-            pairFolderAlert.hidden = false;
+            if (error?.cancelReport !== true) {
+              pairFolderAlert.textContent = error instanceof Error ? error.message : String(error);
+              pairFolderAlert.hidden = false;
+            }
             throw error;
           } finally {
             pairFolderActiveLoads[side] = Math.max(0, pairFolderActiveLoads[side] - 1);
@@ -23576,6 +23648,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       pairModeBtn.classList.toggle("is-active", mode === "pairs");
       multiControls.hidden = mode !== "multi";
       targetList.hidden = mode !== "multi";
+      updateTargetListHint();
       directionGrid.hidden = mode === "pairs";
       singleAppSearch.hidden = mode === "pairs";
       pairEditor.hidden = mode !== "pairs";
@@ -23966,7 +24039,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const label = side === "source" ? "比較元" : "比較先";
       panel.setStatus(`${label}JSONを読み込み中…`, "busy");
       try {
-        const bundle = await jsonImporter.load(side, () => readSettingsBundleFile(file, { side, appId }));
+        const bundle = await jsonImporter.load(side, async () => {
+          const read = await readSettingsBundleFile(file, { side, appId });
+          if (isCancelRequested()) throw new RunCancelledError();
+          return read;
+        });
         if (!bundle) return;
         if (!app.value.trim() && bundle.appId) app.value = String(bundle.appId);
         if (side === "source") {
@@ -23984,6 +24061,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         panel.setStatus(`${label}JSONを読み込みました: App ${bundle.appId || "-"}${invalidated ? "。結果を更新するため再比較してください" : ""}`, invalidated ? "warn" : "ok");
       } catch (error) {
         input.value = "";
+        if (isRunCancelledError(error)) {
+          panel.setStatus(`中止しました。${label}JSONの読み込みを止めました（JSONは選択されていません）`, "warn");
+          return;
+        }
         panel.setStatus(`エラー: ${error?.message || String(error)}`, "err");
       }
     }

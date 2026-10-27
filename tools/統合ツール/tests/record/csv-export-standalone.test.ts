@@ -175,7 +175,7 @@ describe('standalone record CSV export', () => {
     expect(name).toBe('empty.csv');
     expect(await blob.text()).toBe('title');
     expect(Array.from(new Uint8Array(await blob.arrayBuffer()).slice(0, 3))).toEqual([239, 187, 191]);
-    expect(status).toHaveBeenLastCalledWith('CSV出力完了 (0件)');
+    expect(status).toHaveBeenLastCalledWith('CSV出力完了 (0件)', 'ok');
   });
 
   it('exports related parent and detail CSVs in a ZIP and replaces a supplied CSV extension', async () => {
@@ -279,7 +279,7 @@ describe('batch record CSV export', () => {
     expect(manifest).toContain('成功 1 / 失敗 1');
     expect(manifest).toContain('App 8: 明細取得中に通信が切れました');
     expect(manifest).toContain('総レコード数: 2');
-    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('失敗 1アプリ'), true);
+    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('失敗 1アプリ'), 'warn');
     expect(downloadBlob).toHaveBeenCalledWith('partial.zip', expect.any(Blob));
   });
 
@@ -299,7 +299,7 @@ describe('batch record CSV export', () => {
     expect(textFile(zip, 'manifest.txt')).toContain('App 8: 明細をZIPへ追加できません');
     expect(textFile(zip, 'manifest.txt')).toContain('総レコード数: 2');
     expect(downloadBlob).toHaveBeenCalledOnce();
-    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('失敗 1アプリ'), true);
+    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('失敗 1アプリ'), 'warn');
   });
 
   it('does not download a misleading empty ZIP when every app fails', async () => {
@@ -342,6 +342,8 @@ describe('record backup table CSV integration', () => {
     expect(JSON.stringify(manifest.csvExport)).toContain('tables/details.csv');
     expect(manifest.notes).toContain('添付ファイル未取得');
     expect(downloadBlob).toHaveBeenCalledWith('backup.zip', expect.any(Blob));
+    // 保存しなかった種類（添付・コメント）は件数に含めず、結果の動詞とレコード件数で終える
+    expect(status).toHaveBeenLastCalledWith('バックアップを保存しました（レコード 2件）', 'ok');
   });
 
   it('does not publish a backup with incomplete record retrieval', async () => {
@@ -375,7 +377,7 @@ describe('CSV export completeness warnings', () => {
     expect(csv.warnings).toHaveLength(1);
     expect(csv.warnings[0]).toContain('41');
     expect(csv.warnings[0]).toContain('details');
-    expect(status).toHaveBeenLastCalledWith(expect.stringMatching(/未取得|取得失敗/), true);
+    expect(status).toHaveBeenLastCalledWith(expect.stringMatching(/未取得|取得失敗/), 'warn');
     expect(downloadBlob).toHaveBeenCalledOnce();
   });
 

@@ -1770,11 +1770,12 @@ ${contextLine}`);
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
-.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
-.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:136px}
+.kus-lp__apptable th.kus-lp__apptable-acts-h,.kus-lp__apptable td.kus-lp__apptable-acts{padding-left:4px;padding-right:4px}
 .kus-lp__apptable-acts{white-space:nowrap}
-.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:12.5px;border-radius:7px}
-.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 6px;font-size:12.5px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:3px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:12.5px;color:var(--c-muted);margin-left:auto;font-weight:600}
 .kus-lp__apptable-hint{font-size:12.5px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
@@ -2507,7 +2508,8 @@ ${contextLine}`);
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
       if (e?.partialSuccess === true) {
-        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
+        panel.setStatus(`${first}${logNote}`, "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
@@ -2602,6 +2604,11 @@ ${contextLine}`);
     const guest = String(guestId ?? "").trim();
     if (guest && !/^[1-9]\d*$/.test(guest)) throw new Error("ゲストIDは正の数値で入力してください");
     return { appId: ids[0], guestId: guest };
+  }
+  function toPanelTone(tone) {
+    if (tone === true) return "err";
+    if (!tone) return "busy";
+    return tone;
   }
   async function runLoadViewsStandalone(opts, setStatus) {
     const { appId, guestId } = validateRecordConnection(opts.appId, opts.guestId);
@@ -2760,7 +2767,7 @@ ${contextLine}`);
       } catch (error) {
         if (isRunCancelledError(error)) {
           for (const pendingId of appIds.slice(i)) results.push({ appId: pendingId, error: "未実行（中止）" });
-          setStatus(`${formatCancelledHeadline(i, appIds.length)}。検査済みの結果だけを表示します`, true);
+          setStatus(`${formatCancelledHeadline(i, appIds.length)}。検査済みの結果だけを表示します`, "warn");
           return results;
         }
         results.push({ appId, error: error.message || String(error) });
@@ -2903,7 +2910,7 @@ ${contextLine}`);
       const current = version;
       const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked };
       const queryText = query.value.trim();
-      const inspected = await runRecordQualityStandalone({ appIdsText: tgtApp.value, guestId, codes: [...selected], query: queryText, ...options }, (message) => panel.setStatus(message, "busy"));
+      const inspected = await runRecordQualityStandalone({ appIdsText: tgtApp.value, guestId, codes: [...selected], query: queryText, ...options }, (message, tone) => panel.setStatus(message, toPanelTone(tone)));
       if (current !== version) {
         panel.setStatus("対象や条件が変わりました。もう一度検査してください。", "warn");
         return;
@@ -3718,7 +3725,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       viewSelect.replaceChildren(new Option("一覧を選択（任意）", ""));
       const views = await runLoadViewsStandalone(
         { appId: firstAppId, guestId: guestId.value.trim() },
-        (m, e) => panel.setStatus(m, e ? "err" : "busy")
+        (m, tone) => panel.setStatus(m, toPanelTone(tone))
       );
       if (version !== connectionVersion) {
         panel.setStatus("対象アプリが変わりました。一覧を再取得してください。", "warn");

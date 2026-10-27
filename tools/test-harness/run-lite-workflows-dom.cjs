@@ -254,7 +254,7 @@ async function main() {
           await button('対象・条件を変更').click();
           await page.evaluate(() => { window.__workflowFixture.calls = []; });
         }
-        for (const [width, height] of [[1440,1000],[390,844],[320,640],[720,450]]) {
+        for (const [width, height] of [[1440,1000],[1024,1000],[768,1000],[390,844],[320,640],[720,450]]) {
           await page.setViewportSize({width,height});
           await page.screenshot({path:path.join(OUT, `${id}-setup-${width}.png`)});
           const geometry = await page.evaluate(() => {
@@ -266,6 +266,9 @@ async function main() {
           assert.ok(geometry.overflow <= 1, id + ': 横はみ出し ' + width + ' ' + JSON.stringify(geometry));
           assert.ok(geometry.left >= 0 && geometry.right <= width+1 && geometry.bottom <= height+1);
           assert.ok(geometry.canvasBottom <= geometry.footerTop+1 && geometry.canvasHeight > 50);
+          // 対象アプリ表（設計書・設定取得など）は「×」を含めて横にはみ出さない
+          const tableOverflow = await page.evaluate(() => Array.from(document.querySelectorAll('.kus-lp__apptable-scroll')).filter(el => el.getClientRects().length).map(el => ({scrollWidth:el.scrollWidth,clientWidth:el.clientWidth})));
+          for (const measured of tableOverflow) assert.ok(measured.scrollWidth <= measured.clientWidth, id + ': 対象アプリ表の横はみ出し ' + width + ' ' + JSON.stringify(measured));
         }
         await page.setViewportSize({width:1440,height:1000});
         await button('内容を確認する').click();

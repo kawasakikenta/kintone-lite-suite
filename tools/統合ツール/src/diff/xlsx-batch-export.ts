@@ -287,6 +287,37 @@ function shortWorkbookLabel(item: DiffXlsxBatchExportItem, index: number): strin
   return source || target || shortBusinessName(safeLabel(item.label, index)) || `比較_${index + 1}`;
 }
 
+/**
+ * 比較元→比較先のアプリ識別子（例: `App101→App202`）。同名アプリのペアでも
+ * ZIP 内の個別 Excel がどのアプリ同士の比較か分かるようにする。
+ * ゲストスペースは `G{guestId}-`、プレビュー環境は `-preview` を付ける。
+ * アプリ ID が両側とも取れない場合は空文字（従来どおり名前だけ）を返す。
+ */
+function sideIdentityToken(context: DiffXlsxContext, side: 'source' | 'target'): string {
+  let bundle: DiffXlsxContext['sourceBundle'] | DiffXlsxContext['targetBundle'];
+  try {
+    bundle = side === 'source' ? context.sourceBundle : context.targetBundle;
+  } catch {
+    return '';
+  }
+  if (!bundle || typeof bundle !== 'object') return '';
+  try {
+    const appId = bundle.appId == null ? '' : normalizeFilenameText(String(bundle.appId)).replace(/\s+/g, '');
+    if (!appId) return '';
+    const guestId = bundle.guestId == null ? '' : normalizeFilenameText(String(bundle.guestId)).replace(/\s+/g, '');
+    return `${guestId ? `G${guestId}-` : ''}App${appId}${bundle.preview ? '-preview' : ''}`;
+  } catch {
+    return '';
+  }
+}
+
+function workbookIdentitySuffix(item: DiffXlsxBatchExportItem): string {
+  const source = sideIdentityToken(item.context, 'source');
+  const target = sideIdentityToken(item.context, 'target');
+  if (!source && !target) return '';
+  return `_${source || 'App不明'}→${target || 'App不明'}`;
+}
+
 function ensureExtension(value: string, extension: string): string {
   const withoutExtension = value.toLocaleLowerCase('en-US').endsWith(extension)
     ? value.slice(0, -extension.length)
@@ -294,14 +325,21 @@ function ensureExtension(value: string, extension: string): string {
   return `${withoutExtension || '出力'}${extension}`;
 }
 
-function orderedXlsxEntryName(rawFilename: unknown, inputIndex: number, total: number): string {
+function orderedXlsxEntryName(
+  rawFilename: unknown,
+  inputIndex: number,
+  total: number,
+  identitySuffix: string = ''
+): string {
   const prefixWidth = Math.max(3, String(Math.max(1, total)).length);
   const prefix = `${String(inputIndex + 1).padStart(prefixWidth, '0')}_`;
   const normalized = ensureExtension(normalizeFilenameText(rawFilename), XLSX_EXTENSION);
   const stem = normalized.slice(0, -XLSX_EXTENSION.length);
-  const maxStem = MAX_ENTRY_FILENAME_CODE_POINTS - Array.from(prefix).length - XLSX_EXTENSION.length;
+  // アプリ識別子は切り詰めず、名前部分だけを短くして全体の長さ上限に収める。
+  const suffix = truncateCodePoints(identitySuffix, Math.floor(MAX_ENTRY_FILENAME_CODE_POINTS / 2));
+  const maxStem = MAX_ENTRY_FILENAME_CODE_POINTS - Array.from(prefix).length - Array.from(suffix).length - XLSX_EXTENSION.length;
   const safeStem = truncateCodePoints(stem, Math.max(1, maxStem)).replace(/[. ]+$/g, '') || `比較_${inputIndex + 1}`;
-  return `${prefix}${safeStem}${XLSX_EXTENSION}`;
+  return `${prefix}${safeStem}${suffix}${XLSX_EXTENSION}`;
 }
 
 function comparisonIncomplete(context: DiffXlsxContext): boolean {
@@ -589,7 +627,12 @@ export async function buildDiffXlsxBatchExport(
     try {
       const workbook = buildDiffXlsxExport(item.context);
       const data = new Uint8Array(await workbook.blob.arrayBuffer());
-      const entryName = orderedXlsxEntryName(`${shortWorkbookLabel(item, index)}${XLSX_EXTENSION}`, index, total);
+      const entryName = orderedXlsxEntryName(
+        `${shortWorkbookLabel(item, index)}${XLSX_EXTENSION}`,
+        index,
+        total,
+        workbookIdentitySuffix(item)
+      );
       const candidateEntries = [...zipEntries, { name: entryName, data }];
       const requiredArchiveBytes = calculateStoredZipByteLength(candidateEntries);
       if (requiredArchiveBytes > maxArchiveBytes) {
