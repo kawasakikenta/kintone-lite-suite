@@ -1,6 +1,6 @@
 'use strict';
 
-import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
+import { installLiteWorkflow, connectionSummary } from './liteWorkflow.js';
 
 import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import {
@@ -61,13 +61,13 @@ export function mountDesignLitePanel() {
   cardTarget.body.appendChild(appTable.element);
   const prev = makeCheck({ label: 'プレビュー環境から取得（単一出力・2アプリ差分）' });
   cardTarget.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
-  cardTarget.body.appendChild(makeNote('出力は対象アプリ表の1行目が対象です（ZIP 一括出力だけは全行）。Excel は人が読む用、AI向けMarkdown は AI に渡す用です。'));
-  cardTarget.body.appendChild(makeNote('アプリごとに別のゲストスペースを指定できます。各行の「↑コピー」で上の行を複製できます。'));
+  cardTarget.body.appendChild(makeNote('出力は対象アプリ表の1行目が対象です（ZIP 一括出力だけは全行）。Excel は人が読む用、AI向けMarkdown は AI に渡す用です。', 'help'));
+  cardTarget.body.appendChild(makeNote('アプリごとに別のゲストスペースを指定できます。各行の「↑コピー」で上の行を複製できます。', 'help'));
   panel.body.insertBefore(cardTarget.card, panel.status);
 
   // ---- 設定JSON読込（任意）：設定一括取得の出力（apps 配列）を取り込んで、API取得なしで設計書を作る ----
   const cardImport = makeCard({ title: '設定JSON読込（任意）', soft: true });
-  cardImport.body.appendChild(makeNote('「設定一括取得」で保存した JSON を読み込むと、そのアプリは kintone から取得せず、JSON の内容だけで設計書を作ります。読み込んだアプリは対象アプリ表に追加されます。'));
+  cardImport.body.appendChild(makeNote('「設定一括取得」で保存した JSON を読み込むと、そのアプリは kintone から取得せず、JSON の内容だけで設計書を作ります。読み込んだアプリは対象アプリ表に追加されます。', 'help'));
   const importFile = document.createElement('input');
   importFile.type = 'file';
   importFile.accept = '.json,application/json';
@@ -272,8 +272,7 @@ export function mountDesignLitePanel() {
 
   // ---- 複数アプリ ZIP（表の全行） ----
   const cardBatch = makeCard({ title: '複数アプリ一括 ZIP 出力（Excel）', number: 3, soft: true });
-  cardBatch.body.appendChild(makeNote('シート選択は最初の1アプリで1回だけ表示し、以降の全アプリに同じ選択を適用します。設定JSONを読み込んだアプリは kintone から取得しません。'));
-  const bBatchZip = makeButton('対象アプリの設計書 ZIP を保存', 'primary', { icon: '↓' });
+    const bBatchZip = makeButton('対象アプリの設計書 ZIP を保存', 'primary', { icon: '↓' });
   bBatchZip.style.width = '100%';
   cardBatch.body.appendChild(bBatchZip);
   bBatchZip.addEventListener('click', () => {
@@ -290,8 +289,12 @@ export function mountDesignLitePanel() {
   panel.body.insertBefore(cardBatch.card, panel.status);
 
   // ---- 2アプリ差分 MD（表の 1行目 ⇔ 2行目） ----
+  // ZIP 一括出力と設計差分の補足は、表面に出さず詳細設定のポップアップで読めるようにする
+  const cardOutputInfo = makeCard({ title: 'まとめて出力・設計差分について', soft: true });
+  cardOutputInfo.body.appendChild(makeNote('ZIP 一括出力: シート選択は最初の1アプリで1回だけ表示し、以降の全アプリに同じ選択を適用します。設定JSONを読み込んだアプリは kintone から取得しません。'));
+  cardOutputInfo.body.appendChild(makeNote('設計差分: 対象アプリ表の1行目を比較元、2行目を比較先として、設計書の差分レポートを Markdown で保存します（2行以上の入力が必要です）。簡易な行単位の差分のため、大きな構造変更では前後の文脈が崩れることがあります。'));
+
   const diffDetails = makeDetails('2 アプリ間の設計差分を Markdown で出力');
-  diffDetails.body.appendChild(makeNote('対象アプリ表の1行目を比較元、2行目を比較先として、設計書の差分レポートを Markdown で保存します（2行以上の入力が必要です）。簡易な行単位の差分のため、大きな構造変更では前後の文脈が崩れることがあります。'));
   const bDiff = makeButton('設計書差分 MD を保存', 'primary', { icon: '↓' });
   bDiff.style.width = '100%';
   diffDetails.body.appendChild(bDiff);
@@ -326,12 +329,14 @@ export function mountDesignLitePanel() {
   };
   const firstTargetRequired = () => validateDesignTarget(source(), '対象表の1行目: ');
   installLiteWorkflow(panel, {
-    setup: [cardTarget.card, foldWorkflowSection('保存済みの設定JSONを使う', cardImport.card)],
+    setup: [cardTarget.card],
+    advanced: [cardImport.card, cardOutputInfo.card],
+    advancedCopy: '保存済みの設定JSONを使う、ZIP一括出力や設計差分の補足を読むときはこちら。',
     actions: [
       { id: 'xlsx', label: 'Excel設計書を保存', description: '1行目のアプリの設計書をExcel（.xlsx）で保存します。', button: bXlsx, validate: firstTargetRequired, summary: () => singleSummary('Excel (.xlsx)') },
       { id: 'zip', label: '全対象をExcel ZIPで保存', description: '全対象アプリの設計書をExcelにして、1つのZIPで保存します。', button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), '対象アプリ表: '), summary: () => [['対象', appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? '読込済みJSON' : '本番')).join('\n')], ['出力', appTable.count() + ' アプリのExcelをZIPに保存'], ['取得環境', 'ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。']] },
-      { id: 'md', label: 'Markdown設計書を保存', description: '1行目のアプリの設計書をMarkdownファイルで保存します。', button: bMd, validate: firstTargetRequired, summary: () => singleSummary('Markdown') },
       { id: 'ai-md', label: 'AI向けMarkdownを保存', description: '1行目のアプリの設定を、AIに渡す用のMarkdownファイルで保存します。', button: bAiMd, validate: firstTargetRequired, summary: () => singleSummary('AI向けMarkdown（AIへの受け渡し）') },
+      { id: 'md', label: 'Markdown設計書を保存', description: '1行目のアプリの設計書をMarkdownファイルで保存します。', button: bMd, validate: firstTargetRequired, summary: () => singleSummary('Markdown') },
       { id: 'ai-copy', label: 'AI向けMarkdownをコピー', description: '1行目のアプリの設定を、AIに渡す用のMarkdownとしてコピーします。', button: bAiCopy, validate: firstTargetRequired, summary: () => singleSummary('AI向けMarkdown（クリップボード）') },
       { id: 'json', label: '設計書JSONを保存', description: '1行目のアプリの設定をJSONファイルで保存します。', button: bJson, validate: firstTargetRequired, summary: () => singleSummary('JSON') },
       { id: 'copy', label: 'Markdownをコピー', description: '1行目のアプリの設計書をMarkdownとしてクリップボードにコピーします。', button: bCopy, validate: firstTargetRequired, summary: () => singleSummary('クリップボード') },

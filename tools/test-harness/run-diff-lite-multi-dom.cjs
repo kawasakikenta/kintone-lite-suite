@@ -34,6 +34,23 @@ function hasFlag(name) {
   return process.argv.includes(name);
 }
 
+// 比較セクション・設定JSON読込・高度な比較設定は「詳細設定…」のポップアップに入っている。
+async function openDetailsDialog(page) {
+  const dialog = page.locator('#kus-dl-details-dialog');
+  if (!(await dialog.evaluate((element) => element.open))) {
+    await page.getByRole('button', { name: '詳細設定…' }).click();
+  }
+  await dialog.waitFor({ state: 'visible' });
+  return dialog;
+}
+
+async function closeDetailsDialog(page) {
+  const dialog = page.locator('#kus-dl-details-dialog');
+  if (!(await dialog.evaluate((element) => element.open))) return;
+  await page.getByRole('button', { name: '詳細設定を閉じる' }).click();
+  await dialog.waitFor({ state: 'hidden' });
+}
+
 function extractMarkdownAppIds(markdown) {
   return [...String(markdown || '').matchAll(/^\s*-\s*appId:\s*`\s*([^`\r\n]*?)\s*`/gm)]
     .map((match) => match[1]);
@@ -243,8 +260,17 @@ async function verifyAppReferenceExclusionControl(page) {
     '環境固有IDの除外設定は初期状態でオフである必要があります');
   assert.equal(await page.getByText('よく使う除外', { exact: true }).isVisible(), true,
     '環境固有IDの除外設定が常時見える位置にありません');
+  // 説明は見出しの「?」の吹き出しにあり、開くまでは表面に出さない
+  const help = page.getByRole('button', { name: '「よく使う除外」の説明を表示' });
+  assert.equal(await page.getByText(/切り替えたあとは再比較してください（差分件数・画面の結果・Excelに反映されます）。/).isVisible(), false,
+    '環境固有IDの除外の説明が「?」を開く前から表面に出ています');
+  await help.click();
   assert.equal(await page.getByText(/切り替えたあとは再比較してください（差分件数・画面の結果・Excelに反映されます）。/).isVisible(), true,
     '環境固有IDの除外が比較結果とExcelへ与える影響の説明がありません');
+  const describedBy = await control.getAttribute('aria-describedby');
+  assert.equal(describedBy, 'kus-dl-common-exclusion-description kus-dl-common-exclusion-note',
+    '環境固有IDの除外の説明がチェックボックスへ関連付けられていません');
+  await help.click();
 }
 
 function multiResultRows(page) {
@@ -425,8 +451,9 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
   await page.waitForFunction(() => document.querySelector('#kus-diff-lite').getAttribute('aria-busy') === 'false');
   assert.equal(await page.evaluate(() => window.__jsonSelectionCalls[0].targetAppId), '303', '検索選択先が実比較に使われていません');
 
-  await page.locator('summary').filter({ hasText: '比較範囲と詳細設定' }).click();
+  await openDetailsDialog(page);
   const load = async (side, name, label) => {
+    await openDetailsDialog(page);
     const appId = side === 'source' ? '101' : '303';
     await page.getByLabel(side === 'source' ? '比較元設定JSON' : '比較先設定JSON', { exact: true }).setInputFiles({
       name, mimeType: 'application/json',
@@ -437,6 +464,7 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
   };
   const finish = (name, fail = false) => page.evaluate(({ name, fail }) => window.__finishJsonRead(name, fail), { name, fail });
   const compare = async () => {
+    await closeDetailsDialog(page);
     const count = await page.evaluate(() => window.__jsonSelectionCalls.length);
     await run.click();
     await page.waitForFunction((previous) => window.__jsonSelectionCalls.length === previous + 1, count);
@@ -447,6 +475,7 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
   // Clearing either side cancels both queued reads, including a late failure.
   await load('source', 'clear-source.json', 'cleared source');
   await load('target', 'clear-target.json', 'cleared target');
+  await openDetailsDialog(page);
   await clear.click();
   const clearedStatus = await status.textContent();
   await finish('clear-source.json');
@@ -475,6 +504,7 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
 
   // Editing the selected App ID cancels an outstanding import and detaches loaded JSON.
   await load('source', 'changed-app.json', 'stale app');
+  await closeDetailsDialog(page);
   await sourceApp.fill('404');
   const changedStatus = await status.textContent();
   await finish('changed-app.json');
@@ -483,7 +513,9 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
   assert.equal(await status.textContent(), changedStatus, '古いJSON読込がApp変更後のステータスを上書きしました');
   assert.equal((await compare()).sourceImport, null, 'App変更後も旧JSONで比較しています');
 
+  await openDetailsDialog(page);
   await clear.click();
+  await closeDetailsDialog(page);
   await page.getByRole('button', { name: '1対多比較', exact: true }).click();
   await assignTarget('505');
   assert.equal(await targetApp.inputValue(), '303', '1対多検索が既存の比較先を置き換えました');

@@ -59,12 +59,15 @@ export function mountSettingsExportLitePanel() {
   cardTarget.body.appendChild(appTable.element);
   cardTarget.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
   cardTarget.body.appendChild(foldWorkflowSection('スペースから追加', spaceRow));
-  cardTarget.body.appendChild(makeNote('1行なら1アプリ、複数行で一括取得します。アプリごとに別のゲストスペースを指定でき、各行の「↑コピー」で上の行のアプリIDとゲストスペースIDを複製できます。'));
+  cardTarget.body.appendChild(makeNote('1行なら1アプリ、複数行で一括取得します。アプリごとに別のゲストスペースを指定でき、各行の「↑コピー」で上の行のアプリIDとゲストスペースIDを複製できます。', 'help'));
   panel.body.insertBefore(cardTarget.card, panel.status);
 
   // ---- 取得セクション ----
+  // 表面にはプリセットと選択数だけを出し、セクションごとの個別選択は詳細設定のポップアップに置く
   const cardScope = makeCard({ title: '取得セクション', number: 2 });
   cardScope.actions.style.flexWrap = 'wrap';
+  const cardChips = makeCard({ title: '取得する設定を個別に選ぶ' });
+  cardChips.actions.style.flexWrap = 'wrap';
   const chipBox = document.createElement('div');
   chipBox.className = 'kus-lp__chips';
   chipBox.setAttribute('role', 'group');
@@ -92,12 +95,16 @@ export function mountSettingsExportLitePanel() {
   const allBtn = makeButton('全選択', 'sub');
   const noneBtn = makeButton('全解除', 'sub');
   cardScope.actions.appendChild(countBadge);
-  cardScope.actions.appendChild(allBtn);
-  cardScope.actions.appendChild(noneBtn);
+  cardChips.actions.appendChild(allBtn);
+  cardChips.actions.appendChild(noneBtn);
   allBtn.addEventListener('click', () => applyScopeSelection(() => true));
   noneBtn.addEventListener('click', () => applyScopeSelection(() => false));
 
   const SCOPE_PRESETS: Array<{ label: string; keys: Set<string> }> = [
+    {
+      label: 'すべて',
+      keys: new Set(SETTINGS_EXPORT_SCOPE_DEFS.map((s) => s.key))
+    },
     {
       label: '基本のみ',
       keys: new Set([
@@ -134,7 +141,8 @@ export function mountSettingsExportLitePanel() {
     presetToolbar.appendChild(btn);
   }
   cardScope.body.appendChild(presetToolbar);
-  cardScope.body.appendChild(chipBox);
+  cardScope.body.appendChild(makeNote('プリセットで取得する設定をまとめて選べます。1項目ずつ選ぶときは「詳細設定…」を開いてください。', 'help'));
+  cardChips.body.appendChild(chipBox);
 
   // selectedScopeKeys() は配下の input[type=checkbox]:checked を集計するので
   // chipBox をそのまま scopeRoot として渡す（クローン同期は change 未発火で壊れる）
@@ -206,7 +214,10 @@ export function mountSettingsExportLitePanel() {
     ['保存形式', format]
   ];
   installLiteWorkflow(panel, {
-    setup: [cardTarget.card, cardScope.card], results: [summary],
+    setup: [cardTarget.card, cardScope.card],
+    advanced: [cardChips.card],
+    advancedCopy: '取得する設定を1項目ずつ選ぶ（全選択・全解除）ときはこちら。',
+    results: [summary],
     beforeRun: () => { summary.replaceChildren(); summary.classList.add('kus-lp__panel-html--empty'); },
     actions: [
       { id: 'json', label: '設定をJSONで保存', description: '全対象アプリの設定を、1つのJSONファイルにまとめて保存します。', button: btnJson, validate: exportProblem, summary: () => exportSummary('全アプリを1つのJSON') },

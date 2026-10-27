@@ -12,6 +12,7 @@ import {
   makeCheck,
   makeCard,
   makeNote,
+  attachCardHelp,
   liteRun,
   copyTextToClipboard
 } from './litePanelTheme.js';
@@ -64,7 +65,7 @@ export function mountProcessLitePanel() {
   textEl.readOnly = true;
   textEl.placeholder = 'Mermaid 用ソースがここに表示されます';
   cardText.body.appendChild(textEl);
-  cardText.body.appendChild(makeNote('このソースを Mermaid Live Editor や Markdown の ```mermaid ブロックに貼り付けると、同じ図を共有できます。'));
+  cardText.body.appendChild(makeNote('このソースを Mermaid Live Editor や Markdown の ```mermaid ブロックに貼り付けると、同じ図を共有できます。', 'help'));
   const copySource = makeButton('ソースをコピー', 'sub', { icon: '⎘' });
   const saveSource = makeButton('.mmd で保存', 'sub', { icon: '↓' });
   const saveSvg = makeButton('SVGで保存', 'sub', { icon: '↓' });
@@ -104,6 +105,7 @@ export function mountProcessLitePanel() {
     downloadText(buildExportFilename('プロセス図', 'svg', { appLabel: buildAppFilenameLabel(appId, '') }), xml, 'image/svg+xml;charset=utf-8');
     panel.setStatus('フロー図をSVGとして保存しました', 'ok');
   });
+  attachCardHelp(cardText.card); // 結果画面側のカードなので、「?」への移動はここで行う
   panel.body.insertBefore(cardText.card, panel.status);
 
   // ---- シミュレーション ----
@@ -136,7 +138,8 @@ export function mountProcessLitePanel() {
   const simHistoryEl = makeNote('遷移履歴: まだ開始していません');
   cardSim.body.appendChild(simDetailEl);
   cardSim.body.appendChild(simHistoryEl);
-  cardSim.body.appendChild(makeNote('アクションを選んで「アクション実行」を押すと、画面上で状態が進み、遷移履歴に記録されます。レコードは変更されません。'));
+  cardSim.body.appendChild(makeNote('アクションを選んで「アクション実行」を押すと、画面上で状態が進み、遷移履歴に記録されます。レコードは変更されません。', 'help'));
+  attachCardHelp(cardSim.card);
   panel.body.insertBefore(cardSim.card, panel.status);
 
   let renderedConnection = '';

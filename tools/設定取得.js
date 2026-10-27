@@ -1823,6 +1823,27 @@ ${contextLine}`);
 /* ===== Misc ===== */
 .kus-lp__note{font-size:13px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
 .kus-lp__note--warn{color:var(--c-warn-fg);padding:7px 10px;background:var(--c-warn-bg);border:1px solid var(--c-warn-bd);border-radius:8px;margin:6px 0}
+/* ===== カードの「?」ヘルプ（補足説明の吹き出し） ===== */
+.kus-lp__help-btn{flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);font:700 13px/1 inherit;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.kus-lp__help-btn:hover,.kus-lp__help-btn--open{background:var(--c-accent-chip);border-color:var(--c-accent-via);color:var(--c-accent-from)}
+.kus-lp__help-pop{margin:-4px 0 12px;padding:10px 12px;border:1px solid var(--c-info-bd);background:var(--c-info-bg);border-radius:10px;color:var(--c-text-2);font-size:13px;line-height:1.55;animation:kus-lp-fade-in .12s ease-out}
+.kus-lp__help-pop[hidden]{display:none}
+.kus-lp__help-item{margin:0 0 6px;color:var(--c-text-2);font-size:13px;line-height:1.55}
+.kus-lp__help-item:last-child{margin-bottom:0}
+/* ===== ポップアップ（詳細設定・ほかの操作） ===== */
+.kus-lp__dialog{box-sizing:border-box;width:min(640px,calc(100vw - 32px));max-height:min(88vh,860px);padding:0;border:1px solid var(--c-border);border-radius:16px;background:var(--c-bg);color:var(--c-text);box-shadow:0 28px 60px -12px rgba(15,23,42,.45);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;display:none;flex-direction:column;overflow:hidden}
+.kus-lp__dialog[open]{display:flex}
+.kus-lp__dialog--wide{width:min(880px,calc(100vw - 32px))}
+.kus-lp__dialog::backdrop{background:rgba(15,23,42,.45)}
+.kus-lp__dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog-title{margin:0;font-size:16px;font-weight:700;color:var(--c-text)}
+.kus-lp__dialog-close{border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
+.kus-lp__dialog-close:hover{background:var(--c-surface-2)}
+.kus-lp__dialog-body{padding:16px 18px;overflow:auto;min-height:0;flex:1}
+.kus-lp__dialog-body>.kus-lp__card{margin-bottom:12px}
+.kus-lp__dialog-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog :is(button,input,select,textarea,summary):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
+@media(max-width:720px){.kus-lp__dialog{width:calc(100vw - 16px);max-height:calc(100dvh - 16px)}.kus-lp__dialog-body{padding:12px}}
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
 .kus-lp__small{font-size:12.5px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
@@ -2314,6 +2335,7 @@ ${contextLine}`);
     function onDocKeydown(e) {
       if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
       if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      if (root2.querySelector("dialog[open]")) return;
       e.preventDefault();
       e.stopPropagation();
       close();
@@ -2450,9 +2472,113 @@ ${contextLine}`);
   }
   function makeNote(text, kind = "plain") {
     const n = document.createElement("div");
-    n.className = kind === "warn" ? "kus-lp__note--warn" : "kus-lp__note";
+    n.className = kind === "warn" ? "kus-lp__note--warn" : kind === "help" ? "kus-lp__note kus-lp__note--help" : "kus-lp__note";
     n.textContent = text;
     return n;
+  }
+  function attachCardHelp(scope) {
+    const cards = Array.from(scope.querySelectorAll(".kus-lp__card"));
+    if (scope instanceof HTMLElement && scope.classList.contains("kus-lp__card")) cards.unshift(scope);
+    for (const card of cards) {
+      const notes = Array.from(card.querySelectorAll(".kus-lp__note--help")).filter((note) => note.closest(".kus-lp__card") === card);
+      if (!notes.length) continue;
+      const head = card.querySelector(":scope > .kus-lp__card-head");
+      if (!head) continue;
+      let pop = card.querySelector(":scope > .kus-lp__help-pop");
+      let btn = head.querySelector(".kus-lp__help-btn");
+      if (!pop) {
+        pop = document.createElement("div");
+        pop.className = "kus-lp__help-pop";
+        pop.hidden = true;
+        pop.setAttribute("role", "note");
+        head.insertAdjacentElement("afterend", pop);
+      }
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "kus-lp__help-btn";
+        btn.textContent = "?";
+        const titleEl = head.querySelector(".kus-lp__card-title");
+        const title = titleEl ? Array.from(titleEl.childNodes).filter((node) => !(node instanceof HTMLElement && node.classList.contains("kus-lp__card-num"))).map((node) => node.textContent || "").join("").trim() : "";
+        btn.setAttribute("aria-label", `${title ? `「${title}」の` : ""}説明を表示`);
+        btn.title = "説明を表示";
+        btn.setAttribute("aria-expanded", "false");
+        const popEl = pop;
+        btn.addEventListener("click", () => {
+          const next = popEl.hidden;
+          popEl.hidden = !next;
+          btn.setAttribute("aria-expanded", String(next));
+          btn.classList.toggle("kus-lp__help-btn--open", next);
+        });
+        const actions = head.querySelector(".kus-lp__card-actions");
+        if (actions) actions.insertAdjacentElement("afterbegin", btn);
+        else head.appendChild(btn);
+      }
+      for (const note of notes) {
+        note.classList.remove("kus-lp__note--help");
+        note.classList.add("kus-lp__help-item");
+        pop.appendChild(note);
+      }
+    }
+  }
+  function makeDialog(opts) {
+    const dialog = document.createElement("dialog");
+    dialog.className = `kus-lp__dialog${opts.wide ? " kus-lp__dialog--wide" : ""}`;
+    if (opts.id) dialog.id = opts.id;
+    const titleId = `${opts.id || `kus-dialog-${Math.random().toString(36).slice(2, 8)}`}-title`;
+    dialog.setAttribute("aria-labelledby", titleId);
+    const head = document.createElement("div");
+    head.className = "kus-lp__dialog-head";
+    const title = document.createElement("h2");
+    title.className = "kus-lp__dialog-title";
+    title.id = titleId;
+    title.textContent = opts.title;
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "kus-lp__dialog-close";
+    closeBtn.textContent = "閉じる";
+    closeBtn.setAttribute("aria-label", `${opts.title}を閉じる`);
+    head.append(title, closeBtn);
+    const body = document.createElement("div");
+    body.className = "kus-lp__dialog-body";
+    const foot = document.createElement("div");
+    foot.className = "kus-lp__dialog-foot";
+    const doneBtn = document.createElement("button");
+    doneBtn.type = "button";
+    doneBtn.className = "kus-lp__btn kus-lp__btn--sub";
+    doneBtn.textContent = "閉じる";
+    foot.appendChild(doneBtn);
+    dialog.append(head, body, foot);
+    let opener = null;
+    function close() {
+      if (!dialog.open) return;
+      dialog.close();
+    }
+    function open() {
+      if (dialog.open) return;
+      opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+      const first = body.querySelector("input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled])");
+      try {
+        (first || closeBtn).focus({ preventScroll: true });
+      } catch {
+      }
+    }
+    closeBtn.addEventListener("click", close);
+    doneBtn.addEventListener("click", close);
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog) close();
+    });
+    dialog.addEventListener("close", () => {
+      if (opener?.isConnected) {
+        try {
+          opener.focus({ preventScroll: true });
+        } catch {
+        }
+      }
+    });
+    return { dialog, body, open, close };
   }
   function makeDetails(title, opts = {}) {
     const d = document.createElement("details");
@@ -2845,7 +2971,14 @@ ${contextLine}`);
 .kus-wf-action:has(input:checked){border-color:#60a5fa;background:#eff6ff}
 .kus-wf-action strong{display:block;color:#0f172a}
 .kus-wf-action small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
-.kus-wf-action em{display:inline-block;font-size:11.5px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action em{display:inline-block;font-size:12.5px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action--more{grid-template-columns:1fr;text-align:left;font-family:inherit;color:#1d4ed8;border-style:dashed}
+.kus-wf-action--more[aria-pressed=true]{border-style:solid;border-color:#60a5fa;background:#eff6ff}
+.kus-wf-action--more strong{color:#1d4ed8}
+.kus-wf-action--more[aria-pressed=true] strong{color:#0f172a}
+.kus-wf-advanced{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 16px;padding:10px 14px;border:1px dashed #cbd5e1;border-radius:10px;background:#fff}
+.kus-wf-advanced__copy{font-size:13px;color:#475569;min-width:0;flex:1}
+.kus-wf-advanced__btn{flex-shrink:0}
 .kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
 .kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
 .kus-wf-summary>div:last-child{border:0}
@@ -2945,6 +3078,32 @@ ${contextLine}`);
     let selected = options.actions[0];
     const hiddenActions = document.createElement("div");
     hiddenActions.hidden = true;
+    const primaryCount = Math.max(1, Math.floor(options.primaryActions ?? 3));
+    const hasMore = options.actions.length > primaryCount;
+    const moreDialog = hasMore ? makeDialog({ title: "ほかの操作を選ぶ", id: `${panel.root.id}-more-actions` }) : null;
+    const moreChoices = document.createElement("div");
+    moreChoices.className = "kus-wf-actions";
+    moreChoices.setAttribute("role", "radiogroup");
+    moreChoices.setAttribute("aria-label", "ほかの操作");
+    const moreBtn = document.createElement("button");
+    moreBtn.type = "button";
+    moreBtn.className = "kus-wf-action kus-wf-action--more";
+    moreBtn.setAttribute("aria-haspopup", "dialog");
+    moreBtn.setAttribute("aria-pressed", "false");
+    const moreTitle = document.createElement("strong");
+    const moreCopy = document.createElement("small");
+    const moreWrap = document.createElement("span");
+    moreWrap.append(moreTitle, moreCopy);
+    moreBtn.appendChild(moreWrap);
+    function refreshMore() {
+      if (!hasMore) return;
+      const index = options.actions.indexOf(selected);
+      const outside = index >= primaryCount;
+      moreBtn.setAttribute("aria-pressed", String(outside));
+      moreTitle.textContent = outside ? selected.label : `ほかの操作…（${options.actions.length - primaryCount} 件）`;
+      moreCopy.textContent = outside ? `${selected.description} 変更するには押してください。` : options.actions.slice(primaryCount).map((action) => action.label).join(" / ");
+    }
+    moreBtn.addEventListener("click", () => moreDialog?.open());
     options.actions.forEach((action, index) => {
       const label = document.createElement("label");
       label.className = "kus-wf-action";
@@ -2972,11 +3131,44 @@ ${contextLine}`);
         refresh();
       });
       label.append(radio, copy);
-      choices.appendChild(label);
+      if (hasMore && index >= primaryCount) {
+        moreChoices.appendChild(label);
+        radio.addEventListener("change", () => {
+          refreshMore();
+          moreDialog?.close();
+        });
+      } else {
+        choices.appendChild(label);
+        if (hasMore) radio.addEventListener("change", refreshMore);
+      }
       hiddenActions.appendChild(action.button);
     });
+    if (hasMore && moreDialog) {
+      choices.appendChild(moreBtn);
+      moreDialog.body.appendChild(moreChoices);
+      panel.root.appendChild(moreDialog.dialog);
+      refreshMore();
+    }
     if (options.actions.length > 1) setup.appendChild(choices);
     setup.append(...options.setup);
+    const advancedDialog = options.advanced?.length ? makeDialog({ title: options.advancedLabel || "詳細設定", id: `${panel.root.id}-advanced`, wide: true }) : null;
+    if (advancedDialog && options.advanced) {
+      advancedDialog.body.append(...options.advanced);
+      panel.root.appendChild(advancedDialog.dialog);
+      const row = document.createElement("div");
+      row.className = "kus-wf-advanced";
+      const copy = document.createElement("div");
+      copy.className = "kus-wf-advanced__copy";
+      copy.textContent = options.advancedCopy || "ふだん使わない設定はポップアップにまとめています。";
+      const btn = makeButton(`${options.advancedLabel || "詳細設定"}…`, "sub");
+      btn.classList.add("kus-wf-advanced__btn");
+      btn.setAttribute("aria-haspopup", "dialog");
+      btn.addEventListener("click", () => advancedDialog.open());
+      row.append(copy, btn);
+      setup.appendChild(row);
+    }
+    attachCardHelp(setup);
+    if (advancedDialog) attachCardHelp(advancedDialog.body);
     const summary = document.createElement("dl");
     summary.className = "kus-wf-summary";
     const notice = document.createElement("div");
@@ -3011,7 +3203,7 @@ ${contextLine}`);
     let pending = null;
     let reviewedSignature = "";
     let lastContext = "";
-    const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll("input,select,textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
+    const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(panel.root.querySelectorAll(".kus-wf-stage:first-of-type input,.kus-wf-stage:first-of-type select,.kus-wf-stage:first-of-type textarea,dialog input,dialog select,dialog textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
     function show(index) {
       if (busy) return;
       const problem = index === 1 ? selected.validate() : "";
@@ -3131,7 +3323,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         refresh();
       });
     };
-    for (const event of ["input", "change", "click"]) setup.addEventListener(event, scheduleRefresh);
+    for (const event of ["input", "change", "click"]) {
+      setup.addEventListener(event, scheduleRefresh);
+      panel.root.addEventListener(event, (e) => {
+        if (e.target instanceof Element && e.target.closest("dialog")) scheduleRefresh();
+      });
+    }
     selected.onSelect?.();
     show(0);
     return { refresh, show };
@@ -3765,10 +3962,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     cardTarget.body.appendChild(appTable.element);
     cardTarget.body.appendChild(makeRow([prev.label], { label: "取得環境" }));
     cardTarget.body.appendChild(foldWorkflowSection("スペースから追加", spaceRow));
-    cardTarget.body.appendChild(makeNote("1行なら1アプリ、複数行で一括取得します。アプリごとに別のゲストスペースを指定でき、各行の「↑コピー」で上の行のアプリIDとゲストスペースIDを複製できます。"));
+    cardTarget.body.appendChild(makeNote("1行なら1アプリ、複数行で一括取得します。アプリごとに別のゲストスペースを指定でき、各行の「↑コピー」で上の行のアプリIDとゲストスペースIDを複製できます。", "help"));
     panel.body.insertBefore(cardTarget.card, panel.status);
     const cardScope = makeCard({ title: "取得セクション", number: 2 });
     cardScope.actions.style.flexWrap = "wrap";
+    const cardChips = makeCard({ title: "取得する設定を個別に選ぶ" });
+    cardChips.actions.style.flexWrap = "wrap";
     const chipBox = document.createElement("div");
     chipBox.className = "kus-lp__chips";
     chipBox.setAttribute("role", "group");
@@ -3793,11 +3992,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const allBtn = makeButton("全選択", "sub");
     const noneBtn = makeButton("全解除", "sub");
     cardScope.actions.appendChild(countBadge);
-    cardScope.actions.appendChild(allBtn);
-    cardScope.actions.appendChild(noneBtn);
+    cardChips.actions.appendChild(allBtn);
+    cardChips.actions.appendChild(noneBtn);
     allBtn.addEventListener("click", () => applyScopeSelection(() => true));
     noneBtn.addEventListener("click", () => applyScopeSelection(() => false));
     const SCOPE_PRESETS = [
+      {
+        label: "すべて",
+        keys: new Set(SETTINGS_EXPORT_SCOPE_DEFS.map((s) => s.key))
+      },
       {
         label: "基本のみ",
         keys: /* @__PURE__ */ new Set([
@@ -3834,7 +4037,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       presetToolbar.appendChild(btn);
     }
     cardScope.body.appendChild(presetToolbar);
-    cardScope.body.appendChild(chipBox);
+    cardScope.body.appendChild(makeNote("プリセットで取得する設定をまとめて選べます。1項目ずつ選ぶときは「詳細設定…」を開いてください。", "help"));
+    cardChips.body.appendChild(chipBox);
     const scopeRoot = chipBox;
     panel.body.insertBefore(cardScope.card, panel.status);
     const btnJson = makeButton("JSON で保存", "primary", { icon: "↓" });
@@ -3895,6 +4099,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     ];
     installLiteWorkflow(panel, {
       setup: [cardTarget.card, cardScope.card],
+      advanced: [cardChips.card],
+      advancedCopy: "取得する設定を1項目ずつ選ぶ（全選択・全解除）ときはこちら。",
       results: [summary],
       beforeRun: () => {
         summary.replaceChildren();

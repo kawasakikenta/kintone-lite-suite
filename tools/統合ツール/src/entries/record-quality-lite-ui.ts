@@ -44,7 +44,7 @@ export function mountRecordQualityLitePanel() {
 
   const target = makeCard({ title: '対象アプリ', number: 1 });
   target.body.appendChild(makeRow([appId, guestId], { label: '対象アプリ' }));
-  target.body.appendChild(makeNote('複数アプリはカンマ・改行・空白で区切ります。検査するフィールドは、先頭の対象アプリから読み込みます。'));
+  target.body.appendChild(makeNote('複数アプリはカンマ・改行・空白で区切ります。検査するフィールドは、先頭の対象アプリから読み込みます。', 'help'));
   target.body.appendChild(createAppSearchControl(panel, {
     guestEl: guestId,
     targets: [{ label: '対象アプリ', apply: (id, _name, guest) => {
@@ -106,6 +106,8 @@ export function mountRecordQualityLitePanel() {
 
   const conditions = makeCard({ title: '検査条件', number: 2 });
   panel.body.insertBefore(conditions.card, panel.status);
+  // 空白・大小文字の扱いは「詳細設定…」のポップアップへ（既定は区別する）
+  const compareOptions = makeCard({ title: '比較の扱い', soft: true });
   const resultHost = document.createElement('section');
   resultHost.setAttribute('aria-label', '検査結果');
   panel.body.insertBefore(resultHost, panel.status);
@@ -124,11 +126,14 @@ export function mountRecordQualityLitePanel() {
     },
     targetSummary: () => ['対象アプリ', connectionSummary(appId.value.trim(), guestId.value.trim())],
     applyViewQuery,
-    resultHost
+    resultHost,
+    optionsHost: compareOptions.body
   });
 
   installLiteWorkflow(panel, {
     setup: [target.card, conditions.card],
+    advanced: [compareOptions.card],
+    advancedCopy: '文字列・リンクの前後の空白や英字の大小を無視して比較できます。',
     actions: [qualityAction],
     results: [resultHost],
     resultActions: ['quality']

@@ -53,6 +53,23 @@ function hasFlag(name) {
   return process.argv.includes(name);
 }
 
+// 比較セクション・設定JSON読込・高度な比較設定は「詳細設定…」のポップアップに入っている。
+async function openDetailsDialog(page) {
+  const dialog = page.locator('#kus-dl-details-dialog');
+  if (!(await dialog.evaluate((element) => element.open))) {
+    await page.getByRole('button', { name: '詳細設定…' }).click();
+  }
+  await dialog.waitFor({ state: 'visible' });
+  return dialog;
+}
+
+async function closeDetailsDialog(page) {
+  const dialog = page.locator('#kus-dl-details-dialog');
+  if (!(await dialog.evaluate((element) => element.open))) return;
+  await page.getByRole('button', { name: '詳細設定を閉じる' }).click();
+  await dialog.waitFor({ state: 'hidden' });
+}
+
 function extractMarkdownAppIds(markdown) {
   return [...String(markdown || '').matchAll(/^\s*-\s*appId:\s*`\s*([^`\r\n]*?)\s*`/gm)]
     .map((match) => match[1]);
@@ -421,6 +438,22 @@ async function verifyStaleResultInvalidation(page) {
   assert.equal(await page.getByText(/前回の一括結果と保存機能を無効にしました（比較ペアを変更したため）/).isVisible(), true, 'ペア入力変更後に再比較を求める警告がありません');
 }
 
+async function verifyDetailsPopupInvalidation(page) {
+  // 詳細設定は表面から外れてポップアップにある。ペア比較ではJSON読込を出さず、変更すれば古い結果を無効にする。
+  await page.locator('[data-kus-dl-run-pairs]').click();
+  await pairResultTable(page).waitFor({ state: 'visible', timeout: 15000 });
+  await page.waitForFunction(() => document.querySelector('#kus-diff-lite').getAttribute('aria-busy') === 'false');
+  const dialog = await openDetailsDialog(page);
+  assert.equal(await dialog.getByText('比較セクション', { exact: true }).isVisible(), true, 'ペア比較でも詳細設定に比較セクションがありません');
+  assert.equal(await dialog.getByText('設定JSON読込（任意）', { exact: true }).isVisible(), false, 'ペア比較で設定JSON読込が表示されています');
+  await dialog.locator('.kus-lp__chip input').first().uncheck();
+  await closeDetailsDialog(page);
+  assert.equal(await pairResultTable(page).count(), 0, '詳細設定の変更後も古い結果表が残っています');
+  assert.equal(await page.locator('[data-kus-dl-export="xlsx"]').isDisabled(), true, '詳細設定の変更後も全体Excel出力が有効です');
+  assert.equal(await page.getByText(/前回の結果と保存機能を無効にしました（比較範囲または比較条件を変更したため）/).isVisible(), true,
+    '詳細設定の変更後に再比較を求める警告がありません');
+}
+
 async function verifySuccessfulPairExports(page) {
   const firstRow = pairResultTable(page).locator('tbody tr').first();
   await firstRow.locator('[data-kus-dl-multi-html]').click();
@@ -725,6 +758,7 @@ async function main() {
     mainResult.mobileGeometry = await verifyMobileResultGeometry(page);
     mainResult.exportDownloads = await verifySuccessfulPairExports(page);
     await verifyStaleResultInvalidation(page);
+    await verifyDetailsPopupInvalidation(page);
     assert.deepEqual(pageErrors, [], '入力変更時にブラウザエラーが発生しました');
     await page.close();
 

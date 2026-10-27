@@ -259,9 +259,7 @@ export function renderReflectSummaryTable(host: HTMLElement, entries: readonly R
   title.className = 'kus-rl-summary__title';
   const heading = document.createElement('strong');
   heading.textContent = `取得した全 ${entries.length} 項目`;
-  const note = document.createElement('span');
-  note.textContent = '項目名を押すと、下の詳細へ移動します。';
-  title.append(heading, note);
+  title.append(heading);
   const table = document.createElement('table');
   table.className = 'kus-rl-summary__table';
   table.setAttribute('role', 'table');

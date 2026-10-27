@@ -1994,6 +1994,27 @@ ${contextLine}`);
 /* ===== Misc ===== */
 .kus-lp__note{font-size:13px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
 .kus-lp__note--warn{color:var(--c-warn-fg);padding:7px 10px;background:var(--c-warn-bg);border:1px solid var(--c-warn-bd);border-radius:8px;margin:6px 0}
+/* ===== カードの「?」ヘルプ（補足説明の吹き出し） ===== */
+.kus-lp__help-btn{flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);font:700 13px/1 inherit;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.kus-lp__help-btn:hover,.kus-lp__help-btn--open{background:var(--c-accent-chip);border-color:var(--c-accent-via);color:var(--c-accent-from)}
+.kus-lp__help-pop{margin:-4px 0 12px;padding:10px 12px;border:1px solid var(--c-info-bd);background:var(--c-info-bg);border-radius:10px;color:var(--c-text-2);font-size:13px;line-height:1.55;animation:kus-lp-fade-in .12s ease-out}
+.kus-lp__help-pop[hidden]{display:none}
+.kus-lp__help-item{margin:0 0 6px;color:var(--c-text-2);font-size:13px;line-height:1.55}
+.kus-lp__help-item:last-child{margin-bottom:0}
+/* ===== ポップアップ（詳細設定・ほかの操作） ===== */
+.kus-lp__dialog{box-sizing:border-box;width:min(640px,calc(100vw - 32px));max-height:min(88vh,860px);padding:0;border:1px solid var(--c-border);border-radius:16px;background:var(--c-bg);color:var(--c-text);box-shadow:0 28px 60px -12px rgba(15,23,42,.45);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;display:none;flex-direction:column;overflow:hidden}
+.kus-lp__dialog[open]{display:flex}
+.kus-lp__dialog--wide{width:min(880px,calc(100vw - 32px))}
+.kus-lp__dialog::backdrop{background:rgba(15,23,42,.45)}
+.kus-lp__dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog-title{margin:0;font-size:16px;font-weight:700;color:var(--c-text)}
+.kus-lp__dialog-close{border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
+.kus-lp__dialog-close:hover{background:var(--c-surface-2)}
+.kus-lp__dialog-body{padding:16px 18px;overflow:auto;min-height:0;flex:1}
+.kus-lp__dialog-body>.kus-lp__card{margin-bottom:12px}
+.kus-lp__dialog-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog :is(button,input,select,textarea,summary):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
+@media(max-width:720px){.kus-lp__dialog{width:calc(100vw - 16px);max-height:calc(100dvh - 16px)}.kus-lp__dialog-body{padding:12px}}
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
 .kus-lp__small{font-size:12.5px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
@@ -2485,6 +2506,7 @@ ${contextLine}`);
     function onDocKeydown(e) {
       if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
       if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      if (root2.querySelector("dialog[open]")) return;
       e.preventDefault();
       e.stopPropagation();
       close();
@@ -2621,9 +2643,113 @@ ${contextLine}`);
   }
   function makeNote(text, kind = "plain") {
     const n = document.createElement("div");
-    n.className = kind === "warn" ? "kus-lp__note--warn" : "kus-lp__note";
+    n.className = kind === "warn" ? "kus-lp__note--warn" : kind === "help" ? "kus-lp__note kus-lp__note--help" : "kus-lp__note";
     n.textContent = text;
     return n;
+  }
+  function attachCardHelp(scope) {
+    const cards = Array.from(scope.querySelectorAll(".kus-lp__card"));
+    if (scope instanceof HTMLElement && scope.classList.contains("kus-lp__card")) cards.unshift(scope);
+    for (const card of cards) {
+      const notes = Array.from(card.querySelectorAll(".kus-lp__note--help")).filter((note) => note.closest(".kus-lp__card") === card);
+      if (!notes.length) continue;
+      const head = card.querySelector(":scope > .kus-lp__card-head");
+      if (!head) continue;
+      let pop = card.querySelector(":scope > .kus-lp__help-pop");
+      let btn = head.querySelector(".kus-lp__help-btn");
+      if (!pop) {
+        pop = document.createElement("div");
+        pop.className = "kus-lp__help-pop";
+        pop.hidden = true;
+        pop.setAttribute("role", "note");
+        head.insertAdjacentElement("afterend", pop);
+      }
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "kus-lp__help-btn";
+        btn.textContent = "?";
+        const titleEl = head.querySelector(".kus-lp__card-title");
+        const title = titleEl ? Array.from(titleEl.childNodes).filter((node) => !(node instanceof HTMLElement && node.classList.contains("kus-lp__card-num"))).map((node) => node.textContent || "").join("").trim() : "";
+        btn.setAttribute("aria-label", `${title ? `「${title}」の` : ""}説明を表示`);
+        btn.title = "説明を表示";
+        btn.setAttribute("aria-expanded", "false");
+        const popEl = pop;
+        btn.addEventListener("click", () => {
+          const next = popEl.hidden;
+          popEl.hidden = !next;
+          btn.setAttribute("aria-expanded", String(next));
+          btn.classList.toggle("kus-lp__help-btn--open", next);
+        });
+        const actions = head.querySelector(".kus-lp__card-actions");
+        if (actions) actions.insertAdjacentElement("afterbegin", btn);
+        else head.appendChild(btn);
+      }
+      for (const note of notes) {
+        note.classList.remove("kus-lp__note--help");
+        note.classList.add("kus-lp__help-item");
+        pop.appendChild(note);
+      }
+    }
+  }
+  function makeDialog(opts) {
+    const dialog = document.createElement("dialog");
+    dialog.className = `kus-lp__dialog${opts.wide ? " kus-lp__dialog--wide" : ""}`;
+    if (opts.id) dialog.id = opts.id;
+    const titleId = `${opts.id || `kus-dialog-${Math.random().toString(36).slice(2, 8)}`}-title`;
+    dialog.setAttribute("aria-labelledby", titleId);
+    const head = document.createElement("div");
+    head.className = "kus-lp__dialog-head";
+    const title = document.createElement("h2");
+    title.className = "kus-lp__dialog-title";
+    title.id = titleId;
+    title.textContent = opts.title;
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "kus-lp__dialog-close";
+    closeBtn.textContent = "閉じる";
+    closeBtn.setAttribute("aria-label", `${opts.title}を閉じる`);
+    head.append(title, closeBtn);
+    const body = document.createElement("div");
+    body.className = "kus-lp__dialog-body";
+    const foot = document.createElement("div");
+    foot.className = "kus-lp__dialog-foot";
+    const doneBtn = document.createElement("button");
+    doneBtn.type = "button";
+    doneBtn.className = "kus-lp__btn kus-lp__btn--sub";
+    doneBtn.textContent = "閉じる";
+    foot.appendChild(doneBtn);
+    dialog.append(head, body, foot);
+    let opener = null;
+    function close() {
+      if (!dialog.open) return;
+      dialog.close();
+    }
+    function open() {
+      if (dialog.open) return;
+      opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+      const first = body.querySelector("input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled])");
+      try {
+        (first || closeBtn).focus({ preventScroll: true });
+      } catch {
+      }
+    }
+    closeBtn.addEventListener("click", close);
+    doneBtn.addEventListener("click", close);
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog) close();
+    });
+    dialog.addEventListener("close", () => {
+      if (opener?.isConnected) {
+        try {
+          opener.focus({ preventScroll: true });
+        } catch {
+        }
+      }
+    });
+    return { dialog, body, open, close };
   }
   function makeDetails(title, opts = {}) {
     const d = document.createElement("details");
@@ -2771,7 +2897,14 @@ ${contextLine}`);
 .kus-wf-action:has(input:checked){border-color:#60a5fa;background:#eff6ff}
 .kus-wf-action strong{display:block;color:#0f172a}
 .kus-wf-action small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
-.kus-wf-action em{display:inline-block;font-size:11.5px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action em{display:inline-block;font-size:12.5px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action--more{grid-template-columns:1fr;text-align:left;font-family:inherit;color:#1d4ed8;border-style:dashed}
+.kus-wf-action--more[aria-pressed=true]{border-style:solid;border-color:#60a5fa;background:#eff6ff}
+.kus-wf-action--more strong{color:#1d4ed8}
+.kus-wf-action--more[aria-pressed=true] strong{color:#0f172a}
+.kus-wf-advanced{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 16px;padding:10px 14px;border:1px dashed #cbd5e1;border-radius:10px;background:#fff}
+.kus-wf-advanced__copy{font-size:13px;color:#475569;min-width:0;flex:1}
+.kus-wf-advanced__btn{flex-shrink:0}
 .kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
 .kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
 .kus-wf-summary>div:last-child{border:0}
@@ -2866,6 +2999,32 @@ ${contextLine}`);
     let selected = options.actions[0];
     const hiddenActions = document.createElement("div");
     hiddenActions.hidden = true;
+    const primaryCount = Math.max(1, Math.floor(options.primaryActions ?? 3));
+    const hasMore = options.actions.length > primaryCount;
+    const moreDialog = hasMore ? makeDialog({ title: "ほかの操作を選ぶ", id: `${panel.root.id}-more-actions` }) : null;
+    const moreChoices = document.createElement("div");
+    moreChoices.className = "kus-wf-actions";
+    moreChoices.setAttribute("role", "radiogroup");
+    moreChoices.setAttribute("aria-label", "ほかの操作");
+    const moreBtn = document.createElement("button");
+    moreBtn.type = "button";
+    moreBtn.className = "kus-wf-action kus-wf-action--more";
+    moreBtn.setAttribute("aria-haspopup", "dialog");
+    moreBtn.setAttribute("aria-pressed", "false");
+    const moreTitle = document.createElement("strong");
+    const moreCopy = document.createElement("small");
+    const moreWrap = document.createElement("span");
+    moreWrap.append(moreTitle, moreCopy);
+    moreBtn.appendChild(moreWrap);
+    function refreshMore() {
+      if (!hasMore) return;
+      const index = options.actions.indexOf(selected);
+      const outside = index >= primaryCount;
+      moreBtn.setAttribute("aria-pressed", String(outside));
+      moreTitle.textContent = outside ? selected.label : `ほかの操作…（${options.actions.length - primaryCount} 件）`;
+      moreCopy.textContent = outside ? `${selected.description} 変更するには押してください。` : options.actions.slice(primaryCount).map((action) => action.label).join(" / ");
+    }
+    moreBtn.addEventListener("click", () => moreDialog?.open());
     options.actions.forEach((action, index) => {
       const label = document.createElement("label");
       label.className = "kus-wf-action";
@@ -2893,11 +3052,44 @@ ${contextLine}`);
         refresh();
       });
       label.append(radio, copy);
-      choices.appendChild(label);
+      if (hasMore && index >= primaryCount) {
+        moreChoices.appendChild(label);
+        radio.addEventListener("change", () => {
+          refreshMore();
+          moreDialog?.close();
+        });
+      } else {
+        choices.appendChild(label);
+        if (hasMore) radio.addEventListener("change", refreshMore);
+      }
       hiddenActions.appendChild(action.button);
     });
+    if (hasMore && moreDialog) {
+      choices.appendChild(moreBtn);
+      moreDialog.body.appendChild(moreChoices);
+      panel.root.appendChild(moreDialog.dialog);
+      refreshMore();
+    }
     if (options.actions.length > 1) setup.appendChild(choices);
     setup.append(...options.setup);
+    const advancedDialog = options.advanced?.length ? makeDialog({ title: options.advancedLabel || "詳細設定", id: `${panel.root.id}-advanced`, wide: true }) : null;
+    if (advancedDialog && options.advanced) {
+      advancedDialog.body.append(...options.advanced);
+      panel.root.appendChild(advancedDialog.dialog);
+      const row = document.createElement("div");
+      row.className = "kus-wf-advanced";
+      const copy = document.createElement("div");
+      copy.className = "kus-wf-advanced__copy";
+      copy.textContent = options.advancedCopy || "ふだん使わない設定はポップアップにまとめています。";
+      const btn = makeButton(`${options.advancedLabel || "詳細設定"}…`, "sub");
+      btn.classList.add("kus-wf-advanced__btn");
+      btn.setAttribute("aria-haspopup", "dialog");
+      btn.addEventListener("click", () => advancedDialog.open());
+      row.append(copy, btn);
+      setup.appendChild(row);
+    }
+    attachCardHelp(setup);
+    if (advancedDialog) attachCardHelp(advancedDialog.body);
     const summary = document.createElement("dl");
     summary.className = "kus-wf-summary";
     const notice = document.createElement("div");
@@ -2932,7 +3124,7 @@ ${contextLine}`);
     let pending = null;
     let reviewedSignature = "";
     let lastContext = "";
-    const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll("input,select,textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
+    const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(panel.root.querySelectorAll(".kus-wf-stage:first-of-type input,.kus-wf-stage:first-of-type select,.kus-wf-stage:first-of-type textarea,dialog input,dialog select,dialog textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
     function show(index) {
       if (busy) return;
       const problem = index === 1 ? selected.validate() : "";
@@ -3052,7 +3244,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         refresh();
       });
     };
-    for (const event of ["input", "change", "click"]) setup.addEventListener(event, scheduleRefresh);
+    for (const event of ["input", "change", "click"]) {
+      setup.addEventListener(event, scheduleRefresh);
+      panel.root.addEventListener(event, (e) => {
+        if (e.target instanceof Element && e.target.closest("dialog")) scheduleRefresh();
+      });
+    }
     selected.onSelect?.();
     show(0);
     return { refresh, show };
@@ -5139,7 +5336,7 @@ ${failures.join("\n")}` };
   // src/entries/record-quality-ui.ts
   init_utils();
   function buildRecordQualityTab(root2, context) {
-    const { panel, tgtApp, tgtGuest, resetMetadata, requiredApps, targetSummary, applyViewQuery } = context;
+    const { panel, tgtApp, tgtGuest, resetMetadata, requiredApps, targetSummary, applyViewQuery, optionsHost, optionsRow } = context;
     const query = makeInput({ placeholder: "空欄で全件。検査対象を一覧から絞り込めます", width: "wide", ariaLabel: "データ検査のクエリ" });
     const useView = makeButton("▼ 一覧から", "sub");
     useView.addEventListener("click", () => applyViewQuery(query));
@@ -5164,9 +5361,10 @@ ${failures.join("\n")}` };
     const note = makeNote("先頭の対象アプリからフィールドを読み込み、1〜5項目を選んでください。");
     const trim = makeCheck({ label: "文字列・リンクの前後の空白を無視", checked: false });
     const ignoreCase = makeCheck({ label: "文字列・リンクの英字の大小を無視", checked: false });
-    root2.append(makeRow(load), pickWrap, note, makeRow([trim.label, ignoreCase.label]));
-    root2.appendChild(makeNote("選んだ項目がすべて一致するレコードを、アプリごとに重複として検出します（項目の順序は問いません）。空の項目があるレコードは、未入力として別に集計します。"));
-    root2.appendChild(makeNote("テーブル内・添付・計算・システム項目と、アプリ間の重複は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。"));
+    root2.append(makeRow(load), pickWrap, note);
+    optionsHost.appendChild(makeRow([trim.label, ignoreCase.label]));
+    root2.appendChild(makeNote("選んだ項目がすべて一致するレコードを、アプリごとに重複として検出します（項目の順序は問いません）。空の項目があるレコードは、未入力として別に集計します。", "help"));
+    root2.appendChild(makeNote("テーブル内・添付・計算・システム項目と、アプリ間の重複は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。", "help"));
     let fields = [], selected = /* @__PURE__ */ new Set(), version = 0, fieldsVersion = 0;
     let results = [];
     const output = document.createElement("div");
@@ -5328,6 +5526,7 @@ ${failures.join("\n")}` };
       save.hidden = false;
       panel.setStatus(`${results.length}アプリを検査しました。${warning ? "取得不可・失敗の詳細を確認してください。" : "結果を確認し、必要ならCSVで保存してください。"}`, warning ? "warn" : "ok");
     }));
+    if (optionsRow) root2.appendChild(optionsRow);
     root2.appendChild(makeRow(run));
     context.resultHost.append(output, makeRow(save));
     return {
@@ -5341,9 +5540,9 @@ ${failures.join("\n")}` };
   }
   function buildCsvTemplateTab(root2, context) {
     const { panel, tgtApp, tgtGuest, requiredApps, targetSummary } = context;
-    root2.appendChild(makeNote("このツールのCSV取込で使うひな形を、対象アプリのフィールド設定から作ります。フィールドコードを調べて入力する手間を省けます。"));
-    root2.appendChild(makeNote("ZIP内のアプリ別フォルダに import.csv、必須・選択肢・初期値などをまとめた fields.csv、除外項目の excluded.csv、使い方の README.txt を保存します。ひな形にはデータ行を入れません。"));
-    root2.appendChild(makeNote("取込できないテーブル・添付・計算項目・ルックアップのコピー先フィールドは除外します。設定を取得できなかったアプリは、完了メッセージと manifest.json に記録します。"));
+    root2.appendChild(makeNote("このツールのCSV取込で使うひな形を、対象アプリのフィールド設定から作ります。フィールドコードを調べて入力する手間を省けます。", "help"));
+    root2.appendChild(makeNote("ZIP内のアプリ別フォルダに import.csv、必須・選択肢・初期値などをまとめた fields.csv、除外項目の excluded.csv、使い方の README.txt を保存します。ひな形にはデータ行を入れません。", "help"));
+    root2.appendChild(makeNote("取込できないテーブル・添付・計算項目・ルックアップのコピー先フィールドは除外します。設定を取得できなかったアプリは、完了メッセージと manifest.json に記録します。", "help"));
     const run = makeButton("CSVひな形をZIPで保存", "primary");
     run.addEventListener("click", () => liteRun(panel, "CSVひな形を作成中…", async () => {
       const result = await runCsvTemplateStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() }, (message) => panel.setStatus(message, "busy"));
@@ -5387,8 +5586,8 @@ ${failures.join("\n")}` };
     }
     const cardApp = makeCard({ title: "対象アプリ", number: 1 });
     cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "対象アプリ" }));
-    cardApp.body.appendChild(makeNote("複数アプリは「463,464,469」のようにカンマ・改行・空白で区切ります。選んだ操作を、指定した順にすべてのアプリへ実行します。"));
-    cardApp.body.appendChild(makeNote("10,000 件を超えても全件取得します（並び順を指定した場合は cursor API を使います）。クエリに limit / offset は書けません。"));
+    cardApp.body.appendChild(makeNote("複数アプリは「463,464,469」のようにカンマ・改行・空白で区切ります。選んだ操作を、指定した順にすべてのアプリへ実行します。", "help"));
+    cardApp.body.appendChild(makeNote("10,000 件を超えても全件取得します（並び順を指定した場合は cursor API を使います）。クエリに limit / offset は書けません。", "help"));
     cardApp.body.appendChild(createAppSearchControl(panel, {
       guestEl: tgtGuest,
       targets: [{ label: "対象アプリ", apply: (id, _name, guestId) => {
@@ -5470,11 +5669,27 @@ ${failures.join("\n")}` };
     };
     const qualityResults = document.createElement("div");
     const qualityContext = { panel, tgtApp, tgtGuest, resetMetadata, requiredApps, targetSummary, applyViewQuery, resultHost: qualityResults };
+    const tabCard = (tabRoot, title) => {
+      const card = makeCard({ title, soft: true });
+      tabRoot.appendChild(card.card);
+      return card.body;
+    };
+    const tabOptions = (id, label) => {
+      const popup = makeDialog({ title: `${label}のオプション`, id: `kus-record-lite-options-${id}` });
+      panel.root.appendChild(popup.dialog);
+      for (const type of ["input", "change"]) popup.dialog.addEventListener(type, () => tabHost.dispatchEvent(new Event(type, { bubbles: true })));
+      const button = makeButton("オプション…", "sub");
+      button.setAttribute("aria-haspopup", "dialog");
+      button.addEventListener("click", () => popup.open());
+      return { body: popup.body, row: makeRow(button) };
+    };
     const tabs = makeTabs([
       {
         id: "csv-export",
         label: "CSV出力",
-        build: (root2) => {
+        build: (tabRoot) => {
+          const root2 = tabCard(tabRoot, "CSV出力");
+          const options = tabOptions("csv-export", "CSV出力");
           const query = makeInput({ placeholder: '空欄で全件（例: 更新日時 >= "2026-01-01T00:00:00Z"）', width: "wide" });
           const fname = makeInput({ placeholder: "空欄で自動命名（CSV / テーブルあり・複数アプリはZIP）", width: "wide" });
           const headerModeSelect = makeSelect([
@@ -5492,11 +5707,11 @@ ${failures.join("\n")}` };
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
-          root2.appendChild(makeRow(fname, { label: "ファイル名" }));
-          root2.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: "出力形式" }));
-          root2.appendChild(makeRow(neutralizeCb.label, { label: "Excel保護" }));
-          root2.appendChild(makeNote("出力は閲覧・集計用で、CSV取込用の互換形式ではありません。テーブル明細は親レコードの $id で紐付けできます。"));
-          root2.appendChild(makeNote("添付はファイル名のみ出力します（ファイル本体は、バックアップの「添付ファイルも保存」で取得できます）。Excelで数式として実行されないよう、先頭に ' を付けます（数値は対象外）。"));
+          options.body.appendChild(makeRow(fname, { label: "ファイル名" }));
+          options.body.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: "出力形式" }));
+          options.body.appendChild(makeRow(neutralizeCb.label, { label: "Excel保護" }));
+          root2.appendChild(makeNote("出力は閲覧・集計用で、CSV取込用の互換形式ではありません。テーブル明細は親レコードの $id で紐付けできます。", "help"));
+          root2.appendChild(makeNote("添付はファイル名のみ出力します（ファイル本体は、バックアップの「添付ファイルも保存」で取得できます）。Excelで数式として実行されないよう、先頭に ' を付けます（数値は対象外）。", "help"));
           const run = makeButton("CSVを出力", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "CSV出力中…", async () => {
@@ -5532,13 +5747,15 @@ ${failures.join("\n")}` };
               ["ファイル名", fname.value.trim() || "自動命名"]
             ]
           });
+          root2.appendChild(options.row);
           root2.appendChild(makeRow(run));
         }
       },
       {
         id: "csv-import",
         label: "CSV取込",
-        build: (root2) => {
+        build: (tabRoot) => {
+          const root2 = tabCard(tabRoot, "CSV取込");
           const fileInput = document.createElement("input");
           fileInput.type = "file";
           fileInput.accept = ".csv";
@@ -5546,7 +5763,7 @@ ${failures.join("\n")}` };
           fileInput.setAttribute("aria-label", "取込CSV");
           root2.appendChild(makeRow(fileInput, { label: "CSV" }));
           root2.appendChild(makeNote("本番のアプリへ新規レコードとして追加します（自動では取り消せません）。100 件ずつ追加し、途中で失敗した場合は追加済み件数と未処理件数を表示します。"));
-          root2.appendChild(makeNote("CSVは UTF-8（Excel の BOM 付きも可）で、1行目にフィールドコードを書きます。ファイル・サブテーブル・ステータスは取り込めません。"));
+          root2.appendChild(makeNote("CSVは UTF-8（Excel の BOM 付きも可）で、1行目にフィールドコードを書きます。ファイル・サブテーブル・ステータスは取り込めません。", "help"));
           const preview = makeButton("CSVを事前検査", "sub");
           const previewText = document.createElement("pre");
           previewText.setAttribute("aria-label", "CSV事前検査結果");
@@ -5583,7 +5800,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           }));
           root2.appendChild(makeRow(preview));
           root2.appendChild(previewText);
-          root2.appendChild(makeNote("列数・必須項目・選択肢・数値形式・CSV内の同一値重複を全対象アプリで確認し、問題があれば最初の書き込み前に止めます。権限や既存データとの重複は、登録時に kintone が判定します。"));
+          root2.appendChild(makeNote("列数・必須項目・選択肢・数値形式・CSV内の同一値重複を全対象アプリで確認し、問題があれば最初の書き込み前に止めます。権限や既存データとの重複は、登録時に kintone が判定します。", "help"));
           const run = makeButton("レコードを取込", "primary", { icon: "↑" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "CSV取込中…", async () => {
@@ -5600,17 +5817,22 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
       {
         id: "csv-template",
         label: "CSVひな形",
-        build: (root2) => addAction(buildCsvTemplateTab(root2, qualityContext))
+        build: (tabRoot) => addAction(buildCsvTemplateTab(tabCard(tabRoot, "CSVひな形"), { ...qualityContext, optionsHost: tabRoot }))
       },
       {
         id: "quality",
         label: "データ検査",
-        build: (root2) => addAction(buildRecordQualityTab(root2, qualityContext))
+        build: (tabRoot) => {
+          const options = tabOptions("quality", "データ検査");
+          addAction(buildRecordQualityTab(tabCard(tabRoot, "データ検査"), { ...qualityContext, optionsHost: options.body, optionsRow: options.row }));
+        }
       },
       {
         id: "status",
         label: "ステータス",
-        build: (root2) => {
+        build: (tabRoot) => {
+          const root2 = tabCard(tabRoot, "ステータス更新");
+          const options = tabOptions("status", "ステータス更新");
           const query = makeInput({ placeholder: '条件 (例: status = "新規")', width: "wide" });
           const action = makeInput({ placeholder: "アクション名", width: "medium" });
           const assignee = makeInput({ placeholder: "次の作業者ログイン名（必要な場合）", width: "medium" });
@@ -5692,8 +5914,8 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           }));
           root2.appendChild(actionNote);
           root2.appendChild(makeRow(applyActionQuery));
-          root2.appendChild(makeNote("「選択アクションの対象条件を入力」は、今のクエリを置き換えます。複数アプリへ実行するときは、各アプリで同じフィールドコード・ステータス名が使われていることを確認してください。"));
-          root2.appendChild(makeRow(assignee, { label: "次の作業者" }));
+          root2.appendChild(makeNote("「選択アクションの対象条件を入力」は、今のクエリを置き換えます。複数アプリへ実行するときは、各アプリで同じフィールドコード・ステータス名が使われていることを確認してください。", "help"));
+          options.body.appendChild(makeRow(assignee, { label: "次の作業者" }));
           root2.appendChild(makeNote("元に戻せません。条件に合うレコードのステータスを 100 件ずつ更新します（実行権限と次の作業者の可否は kintone が判定します）。"));
           const run = makeButton("ステータスを一括更新", "primary");
           run.style.width = "100%";
@@ -5705,13 +5927,16 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
             ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
           addAction({ id: "status", label: "ステータスを一括更新", description: "条件に合うレコードのステータスを、指定したアクションで更新します。", button: run, writes: true, validate: () => requiredApps() || (action.value.trim() ? "" : "実行するアクションを指定してください。") || (staleActionQuery() ? "前のアクションの対象条件が残っています。条件を入力し直すかクエリを編集してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["アクション", action.value.trim()], ["選択した遷移", selectedAction() ? `${selectedAction().from} → ${selectedAction().to}` : "手入力"], ["次の作業者", assignee.value.trim() || "指定なし"]] });
+          root2.appendChild(options.row);
           root2.appendChild(makeRow(run));
         }
       },
       {
         id: "attach",
         label: "添付DL",
-        build: (root2) => {
+        build: (tabRoot) => {
+          const root2 = tabCard(tabRoot, "添付ファイル保存");
+          const options = tabOptions("attach", "添付ファイル保存");
           const query = makeInput({ placeholder: "条件 (任意)", width: "wide" });
           const fileCode = makeInput({ placeholder: "例: attached_file", width: "medium" });
           fileCode.setAttribute("aria-label", "添付フィールドコード");
@@ -5771,11 +5996,11 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           root2.appendChild(makeRow([loadFields, fileSelect], { label: "名前から選択" }));
           root2.appendChild(fieldNote);
           root2.appendChild(makeRow(fileCode, { label: "ファイル" }));
-          root2.appendChild(makeRow(tableCode, { label: "テーブル" }));
-          root2.appendChild(makeRow(folderCode, { label: "フォルダ" }));
-          root2.appendChild(makeRow(zipName, { label: "ZIP名" }));
-          root2.appendChild(makeNote("閲覧権限がないなどで取得できなかったファイルは、ZIP 内の download_errors.txt に記録し、完了メッセージに件数を表示します。"));
-          root2.appendChild(makeNote("テーブル内の添付はレコード・テーブル行ごとに保存します。manifest.json で元レコード、行ID、ファイル名、サイズ、保存先を確認できます。"));
+          options.body.appendChild(makeRow(tableCode, { label: "テーブル" }));
+          options.body.appendChild(makeRow(folderCode, { label: "フォルダ" }));
+          options.body.appendChild(makeRow(zipName, { label: "ZIP名" }));
+          root2.appendChild(makeNote("閲覧権限がないなどで取得できなかったファイルは、ZIP 内の download_errors.txt に記録し、完了メッセージに件数を表示します。", "help"));
+          root2.appendChild(makeNote("テーブル内の添付はレコード・テーブル行ごとに保存します。manifest.json で元レコード、行ID、ファイル名、サイズ、保存先を確認できます。", "help"));
           const run = makeButton("添付ファイルをZIPで保存", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "添付ファイル取得中…", async () => {
@@ -5792,14 +6017,16 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
-          addAction({ id: "attach", label: "添付ファイルを保存", description: "条件に合うレコードの添付ファイルを、ZIPで保存します。", button: run, validate: () => requiredApps() || (fileCode.value.trim() ? "" : "添付ファイルのフィールドコードを指定してください。"), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["添付フィールド", [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(" / ")], ["ZIP名", zipName.value.trim() || "自動命名"]] });
+          addAction({ id: "attach", label: "添付ファイルを保存", description: "条件に合うレコードの添付ファイルを、ZIPで保存します。", button: run, validate: () => requiredApps() || (fileCode.value.trim() ? "" : "添付ファイルのフィールドコードを指定してください。"), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["添付フィールド", [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(" / ")], ["フォルダ名にするフィールド", folderCode.value.trim() || "指定なし"], ["ZIP名", zipName.value.trim() || "自動命名"]] });
+          root2.appendChild(options.row);
           root2.appendChild(makeRow(run));
         }
       },
       {
         id: "copy",
         label: "コピー",
-        build: (root2) => {
+        build: (tabRoot) => {
+          const root2 = tabCard(tabRoot, "レコードコピー");
           const srcApp = makeInput({ placeholder: "コピー元アプリID", width: "id" });
           const srcGuest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", ariaLabel: "コピー元のゲストスペースID" });
           const query = makeInput({ placeholder: "条件 (任意)", width: "wide" });
@@ -5856,7 +6083,7 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
           }));
           root2.appendChild(makeRow(previewBtn));
           root2.appendChild(previewText);
-          root2.appendChild(makeNote("コピー元の条件に合うレコードを、本番の対象アプリへ新規レコードとして追加します。ファイル・システム項目・計算項目と、対象アプリに無い（または型が異なる）フィールドは除外し、そのフィールドコードを実行前に表示します。"));
+          root2.appendChild(makeNote("コピー元の条件に合うレコードを、本番の対象アプリへ新規レコードとして追加します。ファイル・システム項目・計算項目と、対象アプリに無い（または型が異なる）フィールドは除外し、そのフィールドコードを実行前に表示します。", "help"));
           const run = makeButton("レコードを対象アプリへコピー", "primary");
           run.style.width = "100%";
           run.classList.add("kus-lp__btn--danger");
@@ -5892,13 +6119,15 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
       {
         id: "backup",
         label: "バックアップ",
-        build: (root2) => {
+        build: (tabRoot) => {
+          const root2 = tabCard(tabRoot, "バックアップ");
+          const options = tabOptions("backup", "バックアップ");
           const query = makeInput({ placeholder: "条件 (任意・全件は空)", width: "wide" });
           const zipName = makeInput({ placeholder: "空欄で自動命名（レコードバックアップ_アプリ_日時.zip）", width: "wide" });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
-          root2.appendChild(makeRow(zipName, { label: "ZIP名" }));
+          options.body.appendChild(makeRow(zipName, { label: "ZIP名" }));
           const incFiles = makeCheck({ label: "添付ファイルも保存", checked: true });
           const incComments = makeCheck({ label: "コメントも保存", checked: true });
           const incSettings = makeCheck({ label: "アプリ設定も保存", checked: false });
@@ -5907,19 +6136,19 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
           optGrid.appendChild(incFiles.label);
           optGrid.appendChild(incComments.label);
           optGrid.appendChild(incSettings.label);
-          root2.appendChild(optGrid);
+          options.body.appendChild(optGrid);
           const scopeBox = document.createElement("div");
           scopeBox.className = "kus-lp__chips";
           scopeBox.style.display = "none";
           const chips = SECTION_DEFS.map((d) => makeChip({ label: d.label, value: d.key, checked: ["fieldSettings", "layoutSettings", "viewSettings", "processSettings"].includes(d.key) }));
           chips.forEach((c) => scopeBox.appendChild(c.label));
-          root2.appendChild(scopeBox);
+          options.body.appendChild(scopeBox);
           incSettings.checkbox.addEventListener("change", () => {
             scopeBox.style.display = incSettings.checkbox.checked ? "flex" : "none";
           });
-          root2.appendChild(makeNote("ZIPには records.csv / records.json と manifest.json を保存します。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。"));
-          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に ' を付けます（数値は対象外）。"));
-          root2.appendChild(makeNote("添付ファイルの本体は「添付ファイルも保存」で取得します。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。"));
+          root2.appendChild(makeNote("ZIPには records.csv / records.json と manifest.json を保存します。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。", "help"));
+          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に ' を付けます（数値は対象外）。", "help"));
+          root2.appendChild(makeNote("添付ファイルの本体は「添付ファイルも保存」で取得します。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。", "help"));
           const run = makeButton("バックアップをZIPで保存", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "レコードバックアップ中…", async () => {
@@ -5937,7 +6166,8 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
-          addAction({ id: "backup", label: "バックアップを保存", description: "レコード・テーブル明細と選択した関連データをZIPで保存します。", button: run, validate: () => requiredApps() || (incSettings.checkbox.checked && !chips.some((c) => c.checkbox.checked) ? "アプリ設定の保存範囲を1つ以上選ぶか、「アプリ設定も保存」を外してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["保存内容", ["レコード・テーブル明細", incFiles.checkbox.checked ? "添付ファイル" : "", incComments.checkbox.checked ? "コメント" : "", incSettings.checkbox.checked ? `アプリ設定（${chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent).join("、")}）` : ""].filter(Boolean).join("、")]] });
+          addAction({ id: "backup", label: "バックアップを保存", description: "レコード・テーブル明細と選択した関連データをZIPで保存します。", button: run, validate: () => requiredApps() || (incSettings.checkbox.checked && !chips.some((c) => c.checkbox.checked) ? "アプリ設定の保存範囲を1つ以上選ぶか、「アプリ設定も保存」を外してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["ZIP名", zipName.value.trim() || "自動命名"], ["保存内容", ["レコード・テーブル明細", incFiles.checkbox.checked ? "添付ファイル" : "", incComments.checkbox.checked ? "コメント" : "", incSettings.checkbox.checked ? `アプリ設定（${chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent).join("、")}）` : ""].filter(Boolean).join("、")]] });
+          root2.appendChild(options.row);
           root2.appendChild(makeRow(run));
         }
       }

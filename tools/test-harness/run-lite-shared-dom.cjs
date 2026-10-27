@@ -13,7 +13,7 @@ const metadata = require(path.join(TOOL, 'tests/fixtures/api-metadata.json'));
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   const build = await esbuild.build({ absWorkingDir: TOOL, bundle: true, write: false,
-    stdin: { contents: `export * from './src/entries/litePanelTheme.ts'; export * from './src/entries/appSearchControl.ts'; export { apiGet } from './src/api.ts'; export { activeRun } from './src/runControl.ts';`, resolveDir: TOOL },
+    stdin: { contents: `export * from './src/entries/litePanelTheme.ts'; export * from './src/entries/appSearchControl.ts'; export { apiGet } from './src/api.ts'; export { activeRun } from './src/runControl.ts'; export { installLiteWorkflow } from './src/entries/liteWorkflow.ts';`, resolveDir: TOOL },
     format: 'iife', globalName: 'Shared', platform: 'browser', target: ['chrome110'], logLevel: 'silent' });
   const browserName = process.argv.includes('--browser') ? process.argv[process.argv.indexOf('--browser') + 1] : 'chrome';
   const browser = await chromium.launch({ headless: true, ...(browserName === 'chromium' ? {} : { channel: browserName }) });
@@ -313,6 +313,67 @@ async function main() {
     await page.evaluate(() => window.cancelPanel.close());
     assert.equal(await page.locator('#cancel-test').count(), 0);
     results.push('再起動: ドラッグで動かした位置を引き継ぎ・折りたたみは引き継がない・位置リセット後は右上');
+
+    // ===== ポップアップ: 詳細設定・ほかの操作・カードの「?」ヘルプ =====
+    await page.evaluate(() => {
+      const panel = Shared.createLitePanel({ id: 'popup-test', title: 'ポップアップ確認', accent: 'settings', badges: [{ label: '読み取り専用', tone: 'read' }] });
+      window.popupPanel = panel;
+      const card = Shared.makeCard({ title: '対象', number: 1 });
+      card.body.appendChild(Shared.makeRow(Shared.makeInput({ placeholder: 'アプリID', value: '12', ariaLabel: 'ポップアップ用アプリID' }), { label: 'アプリ' }));
+      card.body.appendChild(Shared.makeNote('これは補足説明です。', 'help'));
+      card.body.appendChild(Shared.makeNote('これは警告です。', 'warn'));
+      const adv = Shared.makeCard({ title: '出力形式', soft: true });
+      const select = Shared.makeSelect([['a', '形式A'], ['b', '形式B']], 'a');
+      select.setAttribute('aria-label', '形式');
+      adv.body.appendChild(Shared.makeRow(select, { label: '形式' }));
+      adv.body.appendChild(Shared.makeNote('形式の説明。', 'help'));
+      window.popupCalls = 0;
+      const make = id => { const button = Shared.makeButton(id); button.addEventListener('click', () => Shared.liteRun(panel, '処理中', async () => { window.popupCalls += 1; }, '完了')); return button; };
+      Shared.installLiteWorkflow(panel, { setup: [card.card], advanced: [adv.card], advancedCopy: '出力形式はここから。',
+        actions: ['A', 'B', 'C', 'D', 'E'].map(id => ({ id, label: `操作${id}`, description: `${id} の説明。`, button: make(id), validate: () => '', summary: () => [['対象', '#12'], ['形式', select.value]] })) });
+    });
+    const popupPanel = page.locator('#popup-test');
+    assert.equal(await page.getByRole('radio').filter({ visible: true }).count(), 3, '表面に出す操作は3つまで');
+    const moreButton = page.getByRole('button', { name: /ほかの操作…/ });
+    await moreButton.click();
+    assert.equal(await page.locator('#popup-test-more-actions').evaluate(dialog => dialog.open), true, 'ほかの操作のポップアップが開く');
+    await page.getByRole('radio', { name: '操作D' }).check();
+    assert.equal(await page.locator('#popup-test-more-actions').evaluate(dialog => dialog.open), false, '選ぶと閉じる');
+    assert.equal(await page.getByRole('button', { name: /操作D/ }).getAttribute('aria-pressed'), 'true', '選んだ操作を表面に示す');
+    await page.getByRole('button', { name: '詳細設定…' }).click();
+    const advancedDialog = page.locator('#popup-test-advanced');
+    assert.equal(await advancedDialog.evaluate(dialog => dialog.open), true, '詳細設定のポップアップが開く');
+    assert.equal(await advancedDialog.getByText('形式の説明。').isVisible(), false, '補足説明は閉じている');
+    await advancedDialog.getByRole('button', { name: '「出力形式」の説明を表示' }).click();
+    assert.equal(await advancedDialog.getByText('形式の説明。').isVisible(), true, '「?」で補足説明を開く');
+    await page.keyboard.press('Escape');
+    assert.equal(await advancedDialog.evaluate(dialog => dialog.open), false, 'Esc はポップアップだけを閉じる');
+    assert.equal(await popupPanel.count(), 1, 'パネルは閉じない');
+    await page.getByRole('button', { name: '詳細設定…' }).click();
+    await advancedDialog.getByRole('combobox', { name: '形式' }).selectOption('b');
+    await advancedDialog.getByRole('button', { name: '詳細設定を閉じる' }).click();
+    await page.getByRole('button', { name: '内容を確認する' }).click();
+    assert.match(await popupPanel.locator('.kus-wf-summary').innerText(), /形式[\s\S]*b/, 'ポップアップの設定が確認画面に出る');
+    await page.getByRole('button', { name: '操作D' }).click();
+    await page.waitForFunction(() => document.querySelector('#popup-test').getAttribute('aria-busy') !== 'true');
+    assert.equal(await page.evaluate(() => window.popupCalls), 1, 'ほかの操作で選んだ操作を実行する');
+    await page.getByRole('tab', { name: /1 対象と操作/ }).click();
+    assert.equal(await page.getByText('これは補足説明です。').isVisible(), false);
+    assert.equal(await page.getByText('これは警告です。').isVisible(), true, '警告は表面に残す');
+    await page.getByRole('button', { name: '「対象」の説明を表示' }).click();
+    assert.equal(await page.getByText('これは補足説明です。').isVisible(), true);
+    for (const width of [320, 768]) {
+      await page.setViewportSize({ width, height: 700 });
+      await page.getByRole('button', { name: '詳細設定…' }).click();
+      const box = await advancedDialog.boundingBox();
+      assert.ok(box && box.x >= 0 && box.x + box.width <= width + 1, `ポップアップが画面内に収まる (${width})`);
+      await page.screenshot({ path: path.join(OUT, `popup-${width}.png`) });
+      await page.keyboard.press('Escape');
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.evaluate(() => window.popupPanel.close());
+    assert.equal(await popupPanel.count(), 0);
+    results.push('ポップアップ: 詳細設定・ほかの操作・「?」ヘルプ・Esc の扱い・確認画面への反映・320/768px');
 
     await page.locator('#launcher').focus();
     await page.evaluate(() => {
