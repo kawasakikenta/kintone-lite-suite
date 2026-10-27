@@ -137,7 +137,10 @@ export function mountRecordLitePanel() {
     action.onSelect = () => {
       tabs.bar.querySelector<HTMLButtonElement>('[data-tab="' + action.id + '"]')?.click();
       const hint = panel.body.querySelector<HTMLElement>('.kus-lp__hint');
-      if (hint) hint.textContent = action.writes ? '本番のレコードを変更する操作です。実行前に対象アプリと条件を確認してください。' : '読み取り操作です。レコードは変更しません。';
+      // 見出しの「本番データを変更」バッジと食い違わないよう、読み取り操作でもこのツール全体は本番を変更しうることを残す
+      if (hint) hint.textContent = action.writes
+        ? `「${action.label}」は本番のレコードを変更します。元に戻せない操作なので、実行前に対象アプリと条件を確認し、バックアップを取ってください。`
+        : `「${action.label}」はレコードを変更しません。このツールのCSV取込・ステータス更新・コピーは本番のレコードを変更します。`;
     };
     recordActions.push(action);
   };

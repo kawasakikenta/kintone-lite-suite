@@ -186,7 +186,8 @@ export function mountSettingsExportLitePanel() {
     const { summaryHtml } = await runSettingsExportStandalone(
       'json',
       opts(),
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+      // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
+      (m: string, e?: boolean) => panel.setStatus(m, /^中止しました/.test(m) ? 'warn' : e ? 'err' : 'busy')
     );
     summary.innerHTML = summaryHtml;
     summary.classList.remove('kus-lp__panel-html--empty');
@@ -196,7 +197,8 @@ export function mountSettingsExportLitePanel() {
     const { summaryHtml } = await runSettingsExportStandalone(
       'zip',
       opts(),
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+      // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
+      (m: string, e?: boolean) => panel.setStatus(m, /^中止しました/.test(m) ? 'warn' : e ? 'err' : 'busy')
     );
     summary.innerHTML = summaryHtml;
     summary.classList.remove('kus-lp__panel-html--empty');

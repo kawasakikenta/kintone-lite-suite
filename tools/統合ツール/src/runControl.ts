@@ -26,6 +26,8 @@ export interface RunToken {
   readonly controller: AbortController;
   cancelled: boolean;
   cancelledAt: number;
+  /** この処理で送った書き込み（POST / PUT / DELETE）の数。中止時の案内に使う。 */
+  writes: number;
 }
 
 let nextId = 1;
@@ -33,7 +35,7 @@ let active: RunToken | null = null;
 
 /** 処理の開始を登録し、中止の対象になるトークンを返す。直前の処理が残っていれば置き換える。 */
 export function beginRun(): RunToken {
-  const token: RunToken = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0 };
+  const token: RunToken = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0, writes: 0 };
   active = token;
   return token;
 }
@@ -63,6 +65,11 @@ export function activeRun(): RunToken | null {
   return active;
 }
 
+/** 書き込みリクエストを送ったことを記録する。API 層と、kintone.api を直接呼ぶ反映エンジンが使う。 */
+export function noteWrite(): void {
+  if (active) active.writes += 1;
+}
+
 /** 中止が要求されていれば RunCancelledError を投げる。API 層が各リクエストの前に呼ぶ。 */
 export function throwIfCancelled(): void {
   if (active && active.cancelled) throw new RunCancelledError();
@@ -77,7 +84,7 @@ export function activeAbortSignal(): AbortSignal | undefined {
 export function isRunCancelledError(error: unknown): boolean {
   let current: any = error;
   for (let depth = 0; current && depth < 4; depth++) {
-    if (current instanceof RunCancelledError || current.cancelled === true || current.name === 'RunCancelledError') return true;
+    if (current instanceof RunCancelledError || current.name === 'RunCancelledError') return true;
     if (current.name === 'AbortError' && isCancelRequested()) return true;
     current = current.original;
   }

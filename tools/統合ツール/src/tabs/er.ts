@@ -351,7 +351,8 @@ export const crawl = async (startIds, options) => {
       a = await getSchema(id, options, cache);
     } catch (e) {
       if (!isRunCancelledError(e)) throw e;
-      throw createCancelReport(apps.length, apps.length + 1 + q.length, [
+      const remaining = new Set(q.map((item) => item?.id).filter((qid) => qid != null && !visited.has(qid)));
+      throw createCancelReport(apps.length, apps.length + 1 + remaining.size, [
         `解析を中断したアプリ: ${id}`,
         '残りは、ここまでの解析で見つかった未解析のアプリ（関連先をすべて辿れていない可能性があります）',
         'ER図は生成していません'

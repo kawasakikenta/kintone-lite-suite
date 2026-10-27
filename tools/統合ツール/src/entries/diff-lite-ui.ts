@@ -353,7 +353,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 #kus-diff-lite.kus-lp{width:min(1000px,calc(100vw - 24px));max-height:min(96vh,1040px);top:max(8px,2vh);right:max(8px,1vw);border-radius:18px;background:#f4f7fa;box-shadow:0 28px 80px -32px rgba(15,37,63,.52)}
 #kus-diff-lite .kus-lp__hero{position:relative;padding:17px 22px;background:linear-gradient(135deg,#0f2742 0%,#173b63 72%,#24517f 100%)}
 #kus-diff-lite .kus-lp__hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:linear-gradient(90deg,#60a5fa,#22d3ee,#818cf8)}
-#kus-diff-lite .kus-lp__badge-row{display:none}
+#kus-diff-lite .kus-lp__badge-row{margin-top:6px}
 #kus-diff-lite .kus-lp__body{padding:18px 20px 22px}
 #kus-diff-lite [hidden]{display:none!important}
 #kus-diff-lite .kus-lp__hint{margin-bottom:16px;padding:0 2px;border:0;background:transparent;color:#475569}
@@ -526,6 +526,25 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
 .kus-dl-filter-controls .kus-lp__btn{justify-self:end}
 .kus-dl-pre:empty{border-style:dashed;border-color:#cbd5e1;background:#f1f5f9;color:#526071;font-style:italic}
 .kus-dl-pre:empty::after{content:'（空）'}
+/* 「?」ボタンは丸いまま小さく保つ（共通の button 最小高 44px で縦長にならないようにする） */
+#kus-diff-lite .kus-lp__help-btn{width:32px;height:32px;min-width:32px;min-height:32px;padding:0}
+/* カード見出しの操作が収まらない幅では、見出しの下へ折り返す（「全選択」などが文字の途中で折れないようにする） */
+#kus-diff-lite .kus-lp__card-head{flex-wrap:wrap}
+#kus-diff-lite .kus-lp__card-title{min-width:0;flex:1 1 auto}
+#kus-diff-lite .kus-lp__card-actions{flex-wrap:wrap}
+#kus-diff-lite .kus-lp__card-actions .kus-lp__btn{white-space:nowrap}
+/* 詳細設定を開いている間は背後のステータスが隠れるため、その内容をポップアップの下端にも映す */
+.kus-dl-dialog-status{flex:1 1 12em;min-width:0;max-height:7em;overflow:auto;align-self:center;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f1f5f9;color:#1e293b;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.kus-dl-dialog-status[hidden]{display:none}
+.kus-dl-dialog-status[data-dialog-tone="ok"]{background:#f0fdf4;border-color:#86efac;color:#166534}
+.kus-dl-dialog-status[data-dialog-tone="warn"]{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+.kus-dl-dialog-status[data-dialog-tone="err"]{background:#fef2f2;border-color:#fca5a5;color:#991b1b}
+/* 狭い画面では、実行中の「処理中 N秒」「中止」「－」「閉じる」がタイトルを押しつぶさないよう、操作を見出しの下へ回す */
+@media(max-width:560px){
+  #kus-diff-lite .kus-lp__hero{flex-wrap:wrap;row-gap:8px}
+  #kus-diff-lite .kus-lp__hero-main{flex:1 1 100%}
+  #kus-diff-lite .kus-lp__hero-actions{flex:1 1 100%;justify-content:flex-end;flex-wrap:wrap}
+}
 @media(max-width:768px){
   #kus-diff-lite.kus-lp{width:calc(100vw - 12px);max-height:calc(100vh - 12px);top:6px;right:6px;border-radius:10px}
   #kus-diff-lite .kus-lp__hero{padding:13px 14px}
@@ -2528,6 +2547,28 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   // ---- 詳細設定ポップアップ（比較セクション・設定JSON読込・高度な比較設定）。表面には出さない ----
   const detailsDialog = makeDialog({ title: '詳細設定', id: 'kus-dl-details-dialog' });
   panel.root.appendChild(detailsDialog.dialog);
+  // ポップアップが開いている間は背後のステータス（読込エラー・保存結果・結果の無効化など）が隠れるため、
+  // ポップアップが開いてから変わったステータスだけを下端にも映す。
+  const dialogStatus = document.createElement('div');
+  dialogStatus.className = 'kus-dl-dialog-status';
+  dialogStatus.setAttribute('role', 'status');
+  dialogStatus.setAttribute('aria-live', 'polite');
+  dialogStatus.setAttribute('aria-atomic', 'true');
+  dialogStatus.hidden = true;
+  detailsDialog.dialog.querySelector('.kus-lp__dialog-foot')?.prepend(dialogStatus);
+  const clearDialogStatus = () => { dialogStatus.hidden = true; dialogStatus.textContent = ''; delete dialogStatus.dataset.dialogTone; };
+  if (typeof MutationObserver === 'function') {
+    new MutationObserver(() => {
+      if (!detailsDialog.dialog.open) return;
+      const text = (panel.status.querySelector('.kus-lp__status-text')?.textContent || '').trim();
+      const tone = panel.status.dataset.tone || 'neutral';
+      if (!text || tone === 'neutral') { clearDialogStatus(); return; }
+      dialogStatus.textContent = text;
+      dialogStatus.dataset.dialogTone = tone;
+      dialogStatus.hidden = false;
+    }).observe(panel.status, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-tone'] });
+  }
+  detailsDialog.dialog.addEventListener('close', clearDialogStatus);
 
   // ---- セクション ----
   const cardScope = makeCard({ title: '比較セクション' });
@@ -2687,7 +2728,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const detailsBtn = makeButton('詳細設定…', 'ghost');
   detailsBtn.dataset.kusDlDetails = '';
   detailsBtn.setAttribute('aria-haspopup', 'dialog');
-  detailsBtn.addEventListener('click', () => detailsDialog.open());
+  detailsBtn.addEventListener('click', () => { clearDialogStatus(); detailsDialog.open(); });
   const detailsRow = makeRow(detailsBtn);
   detailsRow.classList.add('kus-dl-details-row');
   // 比較セクションは詳細設定の中にあるため、未選択の案内にも場所を添える

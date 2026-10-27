@@ -766,7 +766,7 @@ ${contextLine}`);
 
   // src/runControl.ts
   function beginRun() {
-    const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0 };
+    const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0, writes: 0 };
     active = token;
     return token;
   }
@@ -790,6 +790,9 @@ ${contextLine}`);
   function activeRun() {
     return active;
   }
+  function noteWrite() {
+    if (active) active.writes += 1;
+  }
   function throwIfCancelled() {
     if (active && active.cancelled) throw new RunCancelledError();
   }
@@ -799,7 +802,7 @@ ${contextLine}`);
   function isRunCancelledError(error) {
     let current = error;
     for (let depth = 0; current && depth < 4; depth++) {
-      if (current instanceof RunCancelledError || current.cancelled === true || current.name === "RunCancelledError") return true;
+      if (current instanceof RunCancelledError || current.name === "RunCancelledError") return true;
       if (current.name === "AbortError" && isCancelRequested()) return true;
       current = current.original;
     }
@@ -852,6 +855,36 @@ ${contextLine}`);
       signal?.addEventListener("abort", onAbort, { once: true });
       promise.then((value) => finish(() => resolve(value)), (error) => finish(() => reject(error)));
     });
+  }
+  function createRequestSignal(timeoutMs) {
+    const controller = new AbortController();
+    const runSignal = activeAbortSignal();
+    let timedOut = false;
+    const onAbort = () => {
+      try {
+        controller.abort(new RunCancelledError());
+      } catch {
+      }
+    };
+    if (runSignal?.aborted) onAbort();
+    else runSignal?.addEventListener("abort", onAbort, { once: true });
+    const timer = Number(timeoutMs) > 0 ? setTimeout(() => {
+      timedOut = true;
+      const error = new Error(`応答待ちが ${Math.round(Number(timeoutMs) / 1e3)} 秒を超えました（timeout）`);
+      error.code = "TIMEOUT";
+      try {
+        controller.abort(error);
+      } catch {
+      }
+    }, Number(timeoutMs)) : 0;
+    return {
+      signal: controller.signal,
+      release: () => {
+        if (timer) clearTimeout(timer);
+        runSignal?.removeEventListener("abort", onAbort);
+      },
+      timedOut: () => timedOut
+    };
   }
   var RUN_CANCELLED_MESSAGE, RunCancelledError, nextId, active;
   var init_runControl = __esm({
@@ -967,7 +1000,7 @@ ${contextLine}`);
       try {
         const res = await raceWithCancel(
           Promise.resolve(kintone.api(`${prefix}${path}`, "GET", params)),
-          { timeoutMs: API_GET_TIMEOUT_MS }
+          { timeoutMs: options.timeoutMs === 0 ? 0 : Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : API_GET_TIMEOUT_MS }
         );
         apiGetMetrics.lastLatencyMs = Date.now() - startAt;
         apiGetMetrics.lastError = "";
@@ -1001,6 +1034,7 @@ ${contextLine}`);
     for (let i = 0; i < maxAttempts; i++) {
       throwIfCancelled();
       try {
+        noteWrite();
         return await kintone.api(`${prefix}${path}`, method, body);
       } catch (e) {
         if (isRunCancelledError(e)) throw e;
@@ -1042,7 +1076,7 @@ ${base}`
     if (value == null || value === "") return "";
     return String(value);
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_DOWNLOAD_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1058,6 +1092,7 @@ ${base}`
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
       API_GET_TIMEOUT_MS = 12e4;
+      FILE_DOWNLOAD_TIMEOUT_MS = 12e4;
       RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
       RECORD_DATA_MUTATION_PATHS = /* @__PURE__ */ new Set([
         "/record.json",
@@ -1203,7 +1238,12 @@ ${base}`
       alert(NOT_KINTONE_PAGE_MESSAGE);
       return;
     }
-    run();
+    try {
+      run();
+    } catch (error) {
+      if (error?.panelBusy === true) return;
+      throw error;
+    }
   }
 
   // src/handlers/diffFocus.ts
@@ -1380,6 +1420,8 @@ ${base}`
 }
 .kus-lp__hero-main{min-width:0;flex:1}
 .kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
+/* 狭い画面では経過時間の文字を隠し（スピナーは残す）ボタンを詰めて、タイトルが 1 文字ずつ折り返すのを防ぐ */
+@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12px}.kus-lp__toggle{min-width:30px}}
 .kus-lp__elapsed{
   font-size:12.5px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
   font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
@@ -1611,7 +1653,7 @@ ${base}`
 .kus-lp__dialog::backdrop{background:rgba(15,23,42,.45)}
 .kus-lp__dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
 .kus-lp__dialog-title{margin:0;font-size:16px;font-weight:700;color:var(--c-text)}
-.kus-lp__dialog-close{border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
+.kus-lp__dialog-close{flex-shrink:0;white-space:nowrap;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
 .kus-lp__dialog-close:hover{background:var(--c-surface-2)}
 .kus-lp__dialog-body{padding:16px 18px;overflow:auto;min-height:0;flex:1}
 .kus-lp__dialog-body>.kus-lp__card{margin-bottom:12px}
@@ -1721,9 +1763,27 @@ ${base}`
     root2.style.setProperty("--c-accent-chip", a.chip);
     root2.style.setProperty("--c-accent-ring", a.ring);
   }
+  var LitePanelBusyError = class extends Error {
+    constructor(id) {
+      super(`パネル ${id} は実行中のため再起動しません`);
+      __publicField(this, "panelBusy", true);
+      this.name = "LitePanelBusyError";
+    }
+  };
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
+    if (old instanceof HTMLElement && old.getAttribute("aria-busy") === "true") {
+      old.classList.remove("kus-lp--collapsed");
+      const statusText = old.querySelector(".kus-lp__status-text");
+      const hint = "実行中のため再起動しません。終わるのを待つか、「中止」を押してください。";
+      if (statusText && !statusText.textContent?.includes(hint)) statusText.textContent = `${hint} ${statusText.textContent || ""}`.trim();
+      try {
+        old.querySelector(".kus-lp__cancel")?.focus({ preventScroll: true });
+      } catch {
+      }
+      throw new LitePanelBusyError(opts.id);
+    }
     let carriedPosition = null;
     if (old instanceof HTMLElement && old.dataset.kusPlaced === "1") {
       const left = parseFloat(old.style.left);
@@ -1782,7 +1842,7 @@ ${base}`
     cancelBtn.className = "kus-lp__cancel";
     cancelBtn.textContent = "中止";
     cancelBtn.setAttribute("aria-label", "処理を中止");
-    cancelBtn.title = "次のリクエストの前で処理を止めます（途中まで実行した内容は取り消しません）";
+    cancelBtn.title = "次のリクエストの前で処理を止めます（送信済みの書き込みは取り消しません）";
     cancelBtn.hidden = true;
     const bodyId = `${opts.id}-body`;
     const toggleBtn = document.createElement("button");
@@ -1968,6 +2028,13 @@ ${base}`
           runToken = beginRun();
           cancelBtn.textContent = "中止";
           cancelBtn.disabled = false;
+          runToken.controller.signal.addEventListener("abort", () => {
+            if (!cancelBtn.hidden && !cancelBtn.disabled) {
+              cancelBtn.disabled = true;
+              cancelBtn.textContent = "中止中…";
+              handle.setStatus("中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…", "busy");
+            }
+          }, { once: true });
         } else if (!runToken.cancelled) {
           cancelBtn.disabled = false;
         }
@@ -2062,6 +2129,7 @@ ${base}`
     window.addEventListener("resize", onWindowResize);
     if (carriedPosition) place(carriedPosition.left, carriedPosition.top);
     function dispose() {
+      if (runToken && !runToken.cancelled) requestCancel(runToken);
       document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
       stopElapsed(false);
@@ -2274,12 +2342,23 @@ ${base}`
         btn.title = "説明を表示";
         btn.setAttribute("aria-expanded", "false");
         const popEl = pop;
-        btn.addEventListener("click", () => {
-          const next = popEl.hidden;
+        const setOpen = (next) => {
           popEl.hidden = !next;
           btn.setAttribute("aria-expanded", String(next));
           btn.classList.toggle("kus-lp__help-btn--open", next);
-        });
+        };
+        btn.addEventListener("click", () => setOpen(popEl.hidden));
+        const onEsc = (e) => {
+          if (e.key !== "Escape" || popEl.hidden || e.isComposing) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(false);
+          try {
+            btn.focus({ preventScroll: true });
+          } catch {
+          }
+        };
+        btn.addEventListener("keydown", onEsc);
         const actions = head.querySelector(".kus-lp__card-actions");
         if (actions) actions.insertAdjacentElement("afterbegin", btn);
         else head.appendChild(btn);
@@ -2337,8 +2416,13 @@ ${base}`
     }
     closeBtn.addEventListener("click", close);
     doneBtn.addEventListener("click", close);
+    let pressedOnBackdrop = false;
+    dialog.addEventListener("pointerdown", (e) => {
+      pressedOnBackdrop = e.target === dialog;
+    });
     dialog.addEventListener("click", (e) => {
-      if (e.target === dialog) close();
+      if (e.target === dialog && pressedOnBackdrop) close();
+      pressedOnBackdrop = false;
     });
     dialog.addEventListener("close", () => {
       if (opener?.isConnected) {
@@ -2386,15 +2470,24 @@ ${base}`
       return out;
     } catch (e) {
       if (isRunCancelledError(e)) {
-        panel.setStatus("中止しました。次のリクエストの前で止めました。途中まで実行した内容は取り消していません。", "warn");
+        panel.setStatus(token && token.writes > 0 ? "中止しました。次のリクエストの前で止めました。途中まで書き込んだ内容は取り消していません。" : "中止しました。次のリクエストの前で止めました（書き込みは行っていません）。", "warn");
         return void 0;
       }
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
+      if (e?.partialSuccess === true) {
+        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
+      if (token?.cancelled && (e?.cancelReport === true || /^中止しました/.test(first))) {
+        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
       if (token?.cancelled) {
-        const headline = /^中止しました/.test(first) ? first : `中止しました: ${first}`;
-        panel.setStatus(`${headline}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        panel.setStatus(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? "。詳細は下のログ" : ""}）`, "err");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
@@ -2449,6 +2542,11 @@ ${base}`
 .kus-wf-advanced{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 16px;padding:10px 14px;border:1px dashed #cbd5e1;border-radius:10px;background:#fff}
 .kus-wf-advanced__copy{font-size:13px;color:#475569;min-width:0;flex:1}
 .kus-wf-advanced__btn{flex-shrink:0}
+.kus-wf-dialog-status{flex:1 1 12em;min-width:0;max-height:6em;overflow:auto;align-self:center;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;color:#334155;font-size:13px;line-height:1.5}
+.kus-wf-dialog-status[hidden]{display:none}
+.kus-wf-dialog-status[data-tone=ok]{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+.kus-wf-dialog-status[data-tone=warn]{background:#fffbeb;border-color:#fde68a;color:#92400e}
+.kus-wf-dialog-status[data-tone=err]{background:#fef2f2;border-color:#fecaca;color:#991b1b}
 .kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
 .kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
 .kus-wf-summary>div:last-child{border:0}
@@ -2469,7 +2567,7 @@ ${base}`
 @media(max-width:720px){
  .kus-wf.kus-lp{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);top:8px;right:8px}
  .kus-wf .kus-lp__hero{padding:12px 16px}
- .kus-wf .kus-lp__hint{display:none}
+ .kus-wf .kus-lp__hint{padding:8px 16px;font-size:12.5px}
  .kus-wf-nav{padding:8px;gap:4px}
  .kus-wf-nav button{padding:9px 3px;font-size:12.5px}
  .kus-wf-canvas{padding:16px}
@@ -2783,8 +2881,26 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       originalBusy(value);
     };
     const originalStatus = panel.setStatus;
+    const dialogStatuses = [advancedDialog, moreDialog].filter(Boolean).map((d) => {
+      const el = document.createElement("div");
+      el.className = "kus-wf-dialog-status";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      el.hidden = true;
+      d.dialog.querySelector(".kus-lp__dialog-foot")?.insertAdjacentElement("afterbegin", el);
+      return { dialog: d.dialog, el };
+    });
     panel.setStatus = (message, tone) => {
       originalStatus(message, tone);
+      for (const { dialog, el } of dialogStatuses) {
+        if (!dialog.open) {
+          el.hidden = true;
+          continue;
+        }
+        el.textContent = message || "";
+        el.dataset.tone = tone || "neutral";
+        el.hidden = !message;
+      }
       refresh();
     };
     let refreshQueued = false;
@@ -2936,17 +3052,20 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
     const headers = { "X-Requested-With": "XMLHttpRequest" };
     let lastReason = "";
+    let request = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       throwIfCancelled();
       try {
-        const signal = activeAbortSignal();
-        const resp = await fetch(url, { method: "GET", headers, ...signal ? { signal } : {} });
+        request = createRequestSignal(FILE_DOWNLOAD_TIMEOUT_MS);
+        const resp = await fetch(url, { method: "GET", headers, signal: request.signal });
         if (resp.status === 403) return { ok: false, reason: "閲覧権限なし (HTTP 403)" };
         if (resp.ok) return { ok: true, blob: await resp.blob() };
         lastReason = `HTTP ${resp.status}`;
       } catch (e) {
-        if (isRunCancelledError(e)) throw e instanceof RunCancelledError ? e : new RunCancelledError();
-        lastReason = e?.message || String(e);
+        if (isRunCancelledError(e) || isRunCancelledError(request?.signal?.reason)) throw e instanceof RunCancelledError ? e : new RunCancelledError();
+        lastReason = request?.timedOut() ? `応答待ちが ${Math.round(FILE_DOWNLOAD_TIMEOUT_MS / 1e3)} 秒を超えました（timeout）` : e?.message || String(e);
+      } finally {
+        request?.release();
       }
       if (attempt === 0) await sleepUnlessCancelled(500);
     }
@@ -3188,7 +3307,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       apps = apps.concat(batch);
       if (batch.length < 100) break;
       offset += 100;
-      await new Promise((r) => setTimeout(r, 150));
+      await sleepUnlessCancelled(150);
     }
     if (!apps.length) throw new Error("アプリが見つかりませんでした。");
     const seen = /* @__PURE__ */ new Set();
@@ -3259,7 +3378,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       fileCount += fetched.length;
       failedFiles.push(...appFailures);
       manifestApps.push({ appId: String(app.appId), name: String(app.name || ""), folder: folderName, scope: String(customize?.scope || ""), files: manifestFiles });
-      await new Promise((r) => setTimeout(r, 80));
+      await sleepUnlessCancelled(80);
     }
     const failed = failedApps.length + failedFiles.length;
     const notExecuted = stoppedAt >= 0 ? apps.slice(stoppedAt).map((a) => ({ appId: a.appId, name: a.name })) : [];
@@ -3746,12 +3865,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     batchBtn.addEventListener("click", () => liteRun(panel, "全アプリの JS/CSS をスキャン中…", async () => {
       const res = await runBatchJsConfigDownloadStandalone(
         { guestId: batchGuest.value.trim() },
-        (m, e) => panel.setStatus(m, e ? "err" : "busy")
+        // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
+        (m, e) => panel.setStatus(m, /^中止しました/.test(m) ? "warn" : e ? "err" : "busy")
       );
+      const notExecuted = res.notExecuted || [];
       const lines = [
-        `走査アプリ数: ${res.apps}件 / 取得ファイル数: ${res.files}件 / 取得失敗: ${res.failed}件`,
+        `走査アプリ数: ${res.apps}件 / 取得ファイル数: ${res.files}件 / 取得失敗: ${res.failed}件${notExecuted.length ? ` / 未実行（中止）: ${notExecuted.length}件` : ""}`,
         ...res.failedApps.map((a) => `[アプリ取得失敗] App #${a.appId} (${a.name || "-"}): ${a.reason}`),
-        ...res.failedFiles.map((f) => `[ファイル取得失敗] App #${f.appId} / ${f.fileName}: ${f.reason}`)
+        ...res.failedFiles.map((f) => `[ファイル取得失敗] App #${f.appId} / ${f.fileName}: ${f.reason}`),
+        ...notExecuted.map((a) => `[未実行（中止）] App #${a.appId} (${a.name || "-"})`)
       ];
       panel.setResult(lines.join("\n"));
     }));

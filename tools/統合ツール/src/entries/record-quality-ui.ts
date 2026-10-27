@@ -5,6 +5,7 @@ import type { LiteWorkflowAction } from './liteWorkflow.js';
 import { runLoadQualityFieldsStandalone, runRecordQualityStandalone, runCsvTemplateStandalone } from '../tabs/record-quality-standalone.js';
 import { qualityRecordPath, qualityReportCsv, type QualityAppResult, type QualityField } from '../tabs/record-quality.js';
 import { downloadBlob, buildExportFilename } from '../utils.js';
+import { formatCancelledHeadline } from '../tabs/run-cancel-summary.js';
 
 interface QualityContext {
   panel: ReturnType<typeof createLitePanel>;
@@ -19,6 +20,9 @@ interface QualityContext {
   /** 実行ボタンの直前に置く行（オプションのポップアップを開くボタンなど）。 */
   optionsRow?: HTMLElement;
 }
+
+/** record-quality-standalone.ts が中止で手を付けなかったアプリに付ける理由。 */
+const NOT_RUN_CANCELLED = '未実行（中止）';
 
 export function buildRecordQualityTab(root: HTMLElement, context: QualityContext): LiteWorkflowAction {
   const { panel, tgtApp, tgtGuest, resetMetadata, requiredApps, targetSummary, applyViewQuery, optionsHost, optionsRow } = context;
@@ -116,9 +120,18 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
     if (current !== version) { panel.setStatus('対象や条件が変わりました。もう一度検査してください。', 'warn'); return; }
     results = inspected;
     let warning = false;
+    const failureLog: string[] = [];
     for (const result of results) {
       const report = result.report;
-      if (!report) { warning = true; output.appendChild(makeNote(`App ${result.appId}: 検査に失敗しました（${result.error}）`)); continue; }
+      if (!report) {
+        warning = true;
+        if (result.error === NOT_RUN_CANCELLED) { output.appendChild(makeNote(`App ${result.appId}: ${NOT_RUN_CANCELLED}`)); continue; }
+        // 画面には原因の 1 行目だけを出し、API の呼び出し内容などの詳細は結果ログへ回す
+        const [reason, ...detail] = String(result.error || '不明なエラー').split('\n').map(line => line.trim()).filter(Boolean);
+        output.appendChild(makeNote(`App ${result.appId}: 検査に失敗しました（${reason || '不明なエラー'}）`));
+        failureLog.push(`App ${result.appId}: ${[reason, ...detail].join('\n  ')}`);
+        continue;
+      }
       warning ||= report.unavailableRecords > 0;
       output.appendChild(makeNote(`App ${result.appId}: ${report.total}件を検査 / 重複 ${report.duplicateGroups}組・${report.duplicateRecords}件 / 未入力 ${report.emptyRecords}件 / 取得不可 ${report.unavailableRecords}件`));
       const list = document.createElement('ol');
@@ -152,13 +165,26 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
         output.append(moreNote, makeRow(toggleBtn));
       }
     }
+    if (failureLog.length) panel.setResult(failureLog.join('\n'));
     save.onclick = () => {
       if (!results.length || current !== version) return;
       downloadBlob(buildExportFilename('データ検査結果', 'csv'), new Blob([qualityReportCsv(results, guestId, location.origin, options, queryText)], { type: 'text/csv;charset=utf-8' }));
       panel.setStatus('検査結果をCSVで保存しました。', warning ? 'warn' : 'ok');
     };
     save.hidden = false;
-    panel.setStatus(`${results.length}アプリを検査しました。${warning ? '取得不可・失敗の詳細を確認してください。' : '結果を確認し、必要ならCSVで保存してください。'}`, warning ? 'warn' : 'ok');
+    // 失敗・中止したアプリを「検査しました」と数えない（全件失敗は警告ではなくエラーとして示す）。
+    const cancelledApps = results.filter(result => !result.report && result.error === NOT_RUN_CANCELLED).length;
+    const failedApps = results.filter(result => !result.report && result.error !== NOT_RUN_CANCELLED).length;
+    const inspectedApps = results.length - cancelledApps - failedApps;
+    if (cancelledApps) {
+      panel.setStatus(`${formatCancelledHeadline(results.length - cancelledApps, results.length)}。検査済みの結果だけを表示します${failedApps ? `（失敗 ${failedApps}アプリ）` : ''}。`, 'warn');
+    } else if (!inspectedApps) {
+      panel.setStatus(`検査に失敗しました（${failedApps}アプリ）。原因は下の結果で確認してください。`, 'err');
+    } else if (failedApps) {
+      panel.setStatus(`${results.length}アプリ中 ${inspectedApps}アプリを検査し、${failedApps}アプリは失敗しました。失敗の内容は下の結果で確認してください。`, 'warn');
+    } else {
+      panel.setStatus(`${results.length}アプリを検査しました。${warning ? '取得不可・失敗の詳細を確認してください。' : '結果を確認し、必要ならCSVで保存してください。'}`, warning ? 'warn' : 'ok');
+    }
   }));
   if (optionsRow) root.appendChild(optionsRow);
   root.appendChild(makeRow(run));

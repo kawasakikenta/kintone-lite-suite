@@ -221,12 +221,15 @@ export function mountJsconfigLitePanel() {
   batchBtn.addEventListener('click', () => liteRun(panel, '全アプリの JS/CSS をスキャン中…', async () => {
     const res = await runBatchJsConfigDownloadStandalone(
       { guestId: batchGuest.value.trim() },
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+      // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
+      (m: string, e?: boolean) => panel.setStatus(m, /^中止しました/.test(m) ? 'warn' : e ? 'err' : 'busy')
     );
+    const notExecuted = res.notExecuted || [];
     const lines = [
-      `走査アプリ数: ${res.apps}件 / 取得ファイル数: ${res.files}件 / 取得失敗: ${res.failed}件`,
+      `走査アプリ数: ${res.apps}件 / 取得ファイル数: ${res.files}件 / 取得失敗: ${res.failed}件${notExecuted.length ? ` / 未実行（中止）: ${notExecuted.length}件` : ''}`,
       ...res.failedApps.map((a) => `[アプリ取得失敗] App #${a.appId} (${a.name || '-'}): ${a.reason}`),
-      ...res.failedFiles.map((f) => `[ファイル取得失敗] App #${f.appId} / ${f.fileName}: ${f.reason}`)
+      ...res.failedFiles.map((f) => `[ファイル取得失敗] App #${f.appId} / ${f.fileName}: ${f.reason}`),
+      ...notExecuted.map((a) => `[未実行（中止）] App #${a.appId} (${a.name || '-'})`)
     ];
     panel.setResult(lines.join('\n'));
   }));

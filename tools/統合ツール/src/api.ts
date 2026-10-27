@@ -7,6 +7,7 @@ import {
   RunCancelledError,
   createRequestSignal,
   isRunCancelledError,
+  noteWrite,
   raceWithCancel,
   sleepUnlessCancelled,
   throwIfCancelled
@@ -150,6 +151,8 @@ export interface ApiGetOptions {
   retries?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
+  /** 応答待ちの上限（ms）。0 なら上限なし（cursor の読み取りなど、再送で結果が変わる GET に使う）。既定は API_GET_TIMEOUT_MS。 */
+  timeoutMs?: number;
 }
 
 function normalizeApiGetOptions(optionsOrRetries: ApiGetOptions | number | undefined | null): ApiGetOptions {
@@ -242,7 +245,7 @@ export async function apiGet(prefix: string, path: string, params: Record<string
       // 読み取りは副作用が無いため、応答を待たずに中止・タイムアウトで見捨ててよい。
       const res = await raceWithCancel(
         Promise.resolve((kintone as any).api(`${prefix}${path}`, 'GET', params)),
-        { timeoutMs: API_GET_TIMEOUT_MS }
+        { timeoutMs: options.timeoutMs === 0 ? 0 : (Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : API_GET_TIMEOUT_MS) }
       );
       apiGetMetrics.lastLatencyMs = Date.now() - startAt;
       apiGetMetrics.lastError = '';
@@ -286,6 +289,7 @@ async function executeMutatingApiWithRetry(
     // 中止は次の試行の前でだけ確認する。
     throwIfCancelled();
     try {
+      noteWrite();
       return await (kintone as any).api(`${prefix}${path}`, method, body);
     } catch (e) {
       if (isRunCancelledError(e)) throw e;
@@ -318,6 +322,7 @@ export async function apiDelete(prefix: string, path: string, body: Record<strin
   assertAllowsMutatingRestCall(prefix, path, 'DELETE');
   if (!options.ignoreCancel) throwIfCancelled();
   try {
+    if (!options.ignoreCancel) noteWrite();
     return await (kintone as any).api(`${prefix}${path}`, 'DELETE', body);
   } catch (e) {
     if (isRunCancelledError(e)) throw e;
@@ -437,7 +442,8 @@ export async function fetchRecordsByQuery(
   let finished = false;
   try {
     while (true) {
-      const resp = await apiGet(prefix, '/records/cursor.json', { id: cursorId });
+      // cursor の GET は読むたびに位置が進むため、タイムアウト後の再送でページが抜ける。中止だけを受け付け、応答待ちの上限は設けない。
+      const resp = await apiGet(prefix, '/records/cursor.json', { id: cursorId }, { timeoutMs: 0 });
       if (!Array.isArray(resp?.records)) {
         throw new Error('cursor 取得の応答形式が不正です（records がありません）');
       }
@@ -822,7 +828,7 @@ function setAuxiliaryFetchError(
     ? error.message
     : (error == null ? '' : String(error));
   const fileText = files.length
-    ? ` [${files.slice(0, 3).map((item) => item.fileName || item.fileKey || '(名称不明)').join(', ')}${files.length > 3 ? ', …' : ''}]`
+    ? ` [${files.slice(0, 3).map((item) => `${item.fileName || item.fileKey || '(名称不明)'}${item.detail ? `: ${item.detail}` : ''}`).join(', ')}${files.length > 3 ? ', …' : ''}]`
     : '';
   section._fetchError = `${label}の取得に失敗したため、このセクションは比較できません${countText}${fileText}${detail ? `: ${detail}` : ''}`;
 }

@@ -18,7 +18,7 @@ import {
   computeRetryDelayMs,
   resolveHttpStatus
 } from '../api.js';
-import { RUN_CANCELLED_MESSAGE, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
+import { RUN_CANCELLED_MESSAGE, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled, noteWrite } from '../runControl.js';
 import { buildPatchPayload } from '../diff/export.js';
 import { isActionableDiffRow } from '../diff/engine.js';
 import {
@@ -594,6 +594,7 @@ export async function executeRequestPlan(prefix, requests, logs, stopOnError): P
         throwIfCancelled();
         _attempts = _r + 1;
         try {
+          noteWrite();
           await (kintone as any).api(`${prefix}${req.path}`, req.method, req.body);
           _err = null;
           break;

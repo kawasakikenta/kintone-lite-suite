@@ -85,11 +85,12 @@ describe('設計書の完了メッセージ', () => {
       return true;
     });
     const setStatus = vi.fn();
-    await runDesignExportXlsxStandalone({ appId: '5', guestId: '2', preview: true }, setStatus);
+    // 取得失敗がある部分成功は、要点を警告で出し内訳をログへ残すため partialSuccess 付きの例外で返す
+    const error: any = await runDesignExportXlsxStandalone({ appId: '5', guestId: '2', preview: true }, setStatus).catch(caught => caught);
     expect(xlsxMock.runAdvancedDesignExporter).toHaveBeenCalledWith(expect.objectContaining({ appId: '5', guestId: '2', preview: true }));
-    const [message, isError] = setStatus.mock.calls[setStatus.mock.calls.length - 1];
-    expect(isError).toBe(true);
-    expect(message).toContain('取得に失敗した項目 2件（Views）');
+    expect(error.partialSuccess).toBe(true);
+    expect(error.message).toContain('取得に失敗した項目 2件（Views）');
+    expect(error.message).toContain('- Views:');
   });
 
   it('Excel は失敗がなければ通常の完了メッセージ、キャンセルならその旨', async () => {

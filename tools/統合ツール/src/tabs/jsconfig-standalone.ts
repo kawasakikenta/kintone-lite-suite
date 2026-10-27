@@ -2,9 +2,9 @@
 
 import { buildCustomizeSettingsPutPayload } from '../constants.js';
 import { normalize, nowStamp, downloadText, downloadBlob, esc, kusConfirm, buildExportFilename } from '../utils.js';
-import { apiGet, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision } from '../api.js';
+import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
-import { RunCancelledError, activeAbortSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
+import { RunCancelledError, createRequestSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
 import { uniqueZipEntryName } from './record-query.js';
 import { createCancelReport, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
 
@@ -22,18 +22,22 @@ async function downloadFileBlobForJsConfig(prefix: string, fileKey: string): Pro
   const url = prefix + '/file.json?fileKey=' + encodeURIComponent(fileKey);
   const headers = { 'X-Requested-With': 'XMLHttpRequest' };
   let lastReason = '';
+  let request: ReturnType<typeof createRequestSignal> | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     // 中止は取得失敗として記録せず、呼び出し側のループを止める。
     throwIfCancelled();
     try {
-      const signal = activeAbortSignal();
-      const resp = await fetch(url, { method: 'GET', headers, ...(signal ? { signal } : {}) });
+      // 中止と応答待ちの上限（FILE_DOWNLOAD_TIMEOUT_MS）のどちらでも打ち切る
+      request = createRequestSignal(FILE_DOWNLOAD_TIMEOUT_MS);
+      const resp = await fetch(url, { method: 'GET', headers, signal: request.signal });
       if (resp.status === 403) return { ok: false, reason: '閲覧権限なし (HTTP 403)' };
       if (resp.ok) return { ok: true, blob: await resp.blob() };
       lastReason = `HTTP ${resp.status}`;
     } catch (e: any) {
-      if (isRunCancelledError(e)) throw e instanceof RunCancelledError ? e : new RunCancelledError();
-      lastReason = e?.message || String(e);
+      if (isRunCancelledError(e) || isRunCancelledError((request?.signal as any)?.reason)) throw e instanceof RunCancelledError ? e : new RunCancelledError();
+      lastReason = request?.timedOut() ? `応答待ちが ${Math.round(FILE_DOWNLOAD_TIMEOUT_MS / 1000)} 秒を超えました（timeout）` : (e?.message || String(e));
+    } finally {
+      request?.release();
     }
     if (attempt === 0) await sleepUnlessCancelled(500);
   }
@@ -355,7 +359,7 @@ export async function runBatchJsConfigDownloadStandalone(
     apps = apps.concat(batch);
     if (batch.length < 100) break;
     offset += 100;
-    await new Promise((r) => setTimeout(r, 150));
+    await sleepUnlessCancelled(150);
   }
   if (!apps.length) throw new Error('アプリが見つかりませんでした。');
 
@@ -432,7 +436,7 @@ export async function runBatchJsConfigDownloadStandalone(
     fileCount += fetched.length;
     failedFiles.push(...appFailures);
     manifestApps.push({ appId: String(app.appId), name: String(app.name || ''), folder: folderName, scope: String(customize?.scope || ''), files: manifestFiles });
-    await new Promise((r) => setTimeout(r, 80));
+    await sleepUnlessCancelled(80);
   }
 
   const failed = failedApps.length + failedFiles.length;

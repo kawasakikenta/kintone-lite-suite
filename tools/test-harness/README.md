@@ -12,7 +12,7 @@ npm run setup
 npm run build
 ```
 
-Playwrightハーネスは既定でChromeを使用します。`--browser chromium` を指定する場合は、Playwright Chromiumも導入してください。出力先の `.iter-shots/` と `tools/test-harness/outputs/` はGit管理外です。
+Playwrightハーネスは既定でChromeを使用します。ダウンロード名（日本語）を検証するため、ロケールが C/POSIX の環境では `LANG=C.UTF-8 LC_ALL=C.UTF-8` を付けて実行してください（Chromium が非 ASCII のファイル名を `download` に置き換えるため）。`--browser chromium` を指定する場合は、Playwright Chromiumも導入してください。出力先の `.iter-shots/` と `tools/test-harness/outputs/` はGit管理外です。
 
 ## ハーネス一覧
 

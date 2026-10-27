@@ -53,6 +53,11 @@ const CSS = `
 .kus-wf-advanced{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 16px;padding:10px 14px;border:1px dashed #cbd5e1;border-radius:10px;background:#fff}
 .kus-wf-advanced__copy{font-size:13px;color:#475569;min-width:0;flex:1}
 .kus-wf-advanced__btn{flex-shrink:0}
+.kus-wf-dialog-status{flex:1 1 12em;min-width:0;max-height:6em;overflow:auto;align-self:center;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;color:#334155;font-size:13px;line-height:1.5}
+.kus-wf-dialog-status[hidden]{display:none}
+.kus-wf-dialog-status[data-tone=ok]{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+.kus-wf-dialog-status[data-tone=warn]{background:#fffbeb;border-color:#fde68a;color:#92400e}
+.kus-wf-dialog-status[data-tone=err]{background:#fef2f2;border-color:#fecaca;color:#991b1b}
 .kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
 .kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
 .kus-wf-summary>div:last-child{border:0}
@@ -73,7 +78,7 @@ const CSS = `
 @media(max-width:720px){
  .kus-wf.kus-lp{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);top:8px;right:8px}
  .kus-wf .kus-lp__hero{padding:12px 16px}
- .kus-wf .kus-lp__hint{display:none}
+ .kus-wf .kus-lp__hint{padding:8px 16px;font-size:12.5px}
  .kus-wf-nav{padding:8px;gap:4px}
  .kus-wf-nav button{padding:9px 3px;font-size:12.5px}
  .kus-wf-canvas{padding:16px}
@@ -391,7 +396,26 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
     originalBusy(value);
   };
   const originalStatus = panel.setStatus;
-  panel.setStatus = (message, tone) => { originalStatus(message, tone); refresh(); };
+  // ポップアップを開いている間は背面のステータスが見えないため、ポップアップの下部にも同じ文言を出す
+  const dialogStatuses = [advancedDialog, moreDialog].filter(Boolean).map((d) => {
+    const el = document.createElement('div');
+    el.className = 'kus-wf-dialog-status';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    el.hidden = true;
+    d!.dialog.querySelector('.kus-lp__dialog-foot')?.insertAdjacentElement('afterbegin', el);
+    return { dialog: d!.dialog, el };
+  });
+  panel.setStatus = (message, tone) => {
+    originalStatus(message, tone);
+    for (const { dialog, el } of dialogStatuses) {
+      if (!dialog.open) { el.hidden = true; continue; }
+      el.textContent = message || '';
+      el.dataset.tone = tone || 'neutral';
+      el.hidden = !message;
+    }
+    refresh();
+  };
   let refreshQueued = false;
   const scheduleRefresh = () => {
     if (refreshQueued) return;

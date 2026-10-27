@@ -276,7 +276,12 @@ export async function runDesignExportXlsxStandalone(source, setStatus) {
     const names = [...new Set(failedAPIs.map((f) => f.name))].join(', ');
     message += `。取得に失敗した項目 ${failedAPIs.length}件（${names}）があります。詳細はサマリーシートの「API取得失敗レポート」を確認してください`;
   }
-  if (completionNote || failedAPIs.length) setStatus(message, true);
+  if (failedAPIs.length) {
+    // 失敗の内訳はステータスだけでなく結果ログにも残す（コピー・保存できるように）
+    const lines = ['取得に失敗した項目', ...failedAPIs.map((f) => `- ${f.name}: ${f.error}`)];
+    throw Object.assign(new Error(`${message}\n${lines.join('\n')}`), { partialSuccess: true });
+  }
+  if (completionNote) setStatus(message, true);
   else setStatus(message);
 }
 
@@ -315,14 +320,28 @@ export async function runBatchDesignExportXlsxZipStandalone(
   const done = await runBatchDesignExportXlsxZip({ apps, onFinish: (result) => { info = result; } });
   if (done === false) {
     // 1件も生成する前に「中止」した場合は、件数つきの中止報告にする（ZIP は保存していない）
-    if (isCancelRequested()) throw createCancelReport(0, apps.length, ['設計書ZIPは保存していません。']);
+    if (isCancelRequested()) {
+      const failed = ((info as BatchDesignExportInfo | null)?.failedApps || []).filter((f) => f.error && !/未実行（中止）|生成途中/.test(f.error));
+      throw createCancelReport(0, apps.length, ['設計書ZIPは保存していません。', ...failed.map((f) => `App ${f.appId}: 中止前に失敗（${f.error}）`)]);
+    }
     setStatus('設計書ZIP出力をキャンセルしました');
     return;
   }
   const result = info as BatchDesignExportInfo | null;
   if (result && (result.failedCount > 0 || result.failedAPIs.length > 0)) {
     // 部分成功・中断・API取得失敗を「完了」だけで隠さない（詳細は ZIP 内の _manifest）
-    const parts = [`成功 ${result.successCount} / 失敗・未処理 ${result.failedCount}（全${result.total}件）${result.cancelled ? '、途中で中止' : ''}`];
+    if (result.cancelled) {
+      // 中止: 件数つきの中止報告にし、保存済みの ZIP と失敗・未実行の内訳をログへ
+      const notRun = result.failedApps.filter((f) => /未実行（中止）/.test(f.error));
+      const failed = result.failedApps.filter((f) => !/未実行（中止）/.test(f.error));
+      throw createCancelReport(result.successCount, result.total, [
+        `生成できた ${result.successCount} アプリ分の設計書ZIPを保存しました（詳細は ZIP 内の _manifest.txt）。`,
+        ...failed.map((f) => `失敗 App ${f.appId}: ${f.error}`),
+        ...(notRun.length ? [`未実行（中止）: ${notRun.map((f) => `App ${f.appId}`).join(', ')}`] : []),
+        ...(result.failedAPIs.length ? [`API取得に失敗した項目 ${result.failedAPIs.length}件`] : [])
+      ]);
+    }
+    const parts = [`成功 ${result.successCount} / 失敗・未処理 ${result.failedCount}（全${result.total}件）`];
     if (result.failedApps.length) parts.push(`失敗したアプリ: ${result.failedApps.map((f) => `App ${f.appId}`).join(', ')}`);
     if (result.failedAPIs.length) parts.push(`API取得に失敗した項目 ${result.failedAPIs.length}件`);
     setStatus(`設計書ZIPを保存しました。${parts.join('。')}。詳細は ZIP 内の _manifest.txt を確認してください`, true);
