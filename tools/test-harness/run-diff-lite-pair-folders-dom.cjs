@@ -467,7 +467,7 @@ async function runFolderComparison(page, pageErrors) {
   await page.locator('[data-kus-dl-run-pairs]').click();
   await page.waitForFunction(() => {
     const status = document.querySelector('#kus-diff-lite .kus-lp__status');
-    return (status?.textContent || '').includes('ペア一括比較が完了');
+    return /組中\s*\d+組を比較しました/.test(status?.textContent || '');
   }, null, { timeout: 15000 });
 
   const probe = await page.evaluate(() => JSON.parse(JSON.stringify(window.__folderProbe)));

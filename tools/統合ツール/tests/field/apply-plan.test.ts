@@ -63,7 +63,7 @@ describe('planFieldApply', () => {
     expect(Object.keys(plan.updates)).toEqual(['existing']);
     expect(plan.skippedExisting).toEqual([]);
     const text = buildFieldApplyConfirmText('99', '3', plan);
-    expect(text).toContain('App 99（ゲスト 3）');
+    expect(text).toContain('App 99（ゲストスペース 3）');
     expect(text).toContain('追加 2件 / 更新 1件 / スキップ 1件');
     expect(text).toContain('追加: title、ref');
     expect(text).toContain('更新: existing');
@@ -329,8 +329,8 @@ describe('findFieldApplyProblem', () => {
 
   it('stops non-numeric ids and unusable JSON before the confirmation step', () => {
     expect(findFieldApplyProblem({ ...valid, targetAppId: ' ' })).toMatch(/指定してください/);
-    expect(findFieldApplyProblem({ ...valid, targetAppId: '12a' })).toMatch(/アプリIDは数値/);
-    expect(findFieldApplyProblem({ ...valid, targetGuestId: 'x/1' })).toMatch(/ゲストIDは数値/);
+    expect(findFieldApplyProblem({ ...valid, targetAppId: '12a' })).toMatch(/アプリIDは半角数字/);
+    expect(findFieldApplyProblem({ ...valid, targetGuestId: 'x/1' })).toMatch(/ゲストスペースIDは半角数字/);
     expect(findFieldApplyProblem({ ...valid, fieldJson: '{}' })).toMatch(/反映対象/);
     expect(findFieldApplyProblem({ ...valid, fieldJson: '{"a":{"label":"x"}}' })).toMatch(/type がありません/);
     expect(findFieldApplyProblem({ ...valid, lookupMapJson: '[1]' })).toMatch(/Lookup/);

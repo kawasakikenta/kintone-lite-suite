@@ -27,7 +27,7 @@ export function validateDesignTarget(source: DesignSourceInput | undefined, labe
   if (!appId && !importedBundle) return `${label}アプリIDまたは設定JSONを指定してください`.trim();
   if (appId && !/^\d+$/.test(appId)) return `${label}アプリIDは数値で入力してください: ${appId}`;
   const guestId = String(source?.guestId || '').trim();
-  if (guestId && !/^\d+$/.test(guestId)) return `${label}ゲストIDは数値で入力してください: ${guestId}`;
+  if (guestId && !/^\d+$/.test(guestId)) return `${label}ゲストスペースIDは半角数字で入力してください: ${guestId}`;
   return '';
 }
 

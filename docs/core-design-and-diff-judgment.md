@@ -222,10 +222,10 @@ Lite UI の `summarizeLiteIgnoreRules` が各ルールの表すパスに `/\[\d+
 | キー | ラベル | 対象セクション | 除去キー | 配列順無視 |
 | --- | --- | --- | --- | --- |
 | `actionOrder` | アプリアクションの並び順 | actionSettings | `index` | しない |
-| `viewOrder` | ビュー/グラフ/アクション順序 | viewSettings, reportSettings, actionSettings | `index` `no` `order` | する |
-| `permissionOrder` | 権限/通知/カテゴリ順序 | appAcl, fieldAcl, recordPermissions, notifications, perRecordNotifications, reminderNotifications, categories | `index` `no` `order` | する |
-| `generalArrayOrder` | すべて（プロセス等含む）の配列順序 | appSettings と appInfo を除く 16 セクション | `index` `no` `order` | する |
-| `fieldOrder` | フィールド/レイアウト順序 | fieldSettings, layoutSettings, formSettings | `index` `no` `order` `x` `y` | する |
+| `viewOrder` | 一覧・グラフ・アクションの並び順 | viewSettings, reportSettings, actionSettings | `index` `no` `order` | する |
+| `permissionOrder` | 権限・通知・カテゴリの並び順 | appAcl, fieldAcl, recordPermissions, notifications, perRecordNotifications, reminderNotifications, categories | `index` `no` `order` | する |
+| `generalArrayOrder` | すべての並び順（プロセスなどを含む） | appSettings と appInfo を除く 16 セクション | `index` `no` `order` | する |
+| `fieldOrder` | フィールド・レイアウトの並び順 | fieldSettings, layoutSettings, formSettings | `index` `no` `order` `x` `y` | する |
 | `processOrder` | プロセスの並び順 | processSettings | `index` `no` `order` | する |
 | `appReferences` | 環境固有ID（アプリ・一覧・グラフ・アクション） | appInfo, fieldSettings, formSettings, viewSettings, reportSettings, actionSettings | なし（パス判定 `isAppReferenceIdPath`） | しない |
 | `auditMeta` | 監査/リビジョン情報 | 17 セクション（appInfo 以外） | `id` `revision` `createdAt` `creator` `modifiedAt` `modifier` `updatedAt` `updatedBy`（小文字形も） | しない |

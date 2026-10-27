@@ -1627,9 +1627,13 @@ ${contextLine}`);
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  font-size:12px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
+/* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
+.kus-lp__badge--read{background:#047857;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--preview{background:#c2410c;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--production{background:#b91c1c;border:1px solid rgba(255,255,255,.45)}
 .kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;
@@ -1961,10 +1965,11 @@ ${contextLine}`);
     }
     const badgesEl = document.createElement("div");
     badgesEl.className = "kus-lp__badge-row";
-    const badges = opts.badges || [{ label: "Lite" }];
+    const badges = opts.badges || [];
+    if (!badges.length) badgesEl.hidden = true;
     for (const b of badges) {
       const span = document.createElement("span");
-      span.className = "kus-lp__badge";
+      span.className = `kus-lp__badge${b.tone === "read" || b.tone === "preview" || b.tone === "production" ? ` kus-lp__badge--${b.tone}` : ""}`;
       span.textContent = b.label;
       badgesEl.appendChild(span);
     }
@@ -2809,7 +2814,7 @@ ${contextLine}`);
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
-.kus-wf .kus-lp__badge-row{display:none}
+.kus-wf .kus-lp__badge-row{margin-top:6px}
 .kus-wf .kus-lp__body{padding:0;display:flex;flex-direction:column;overflow:hidden;min-height:0;background:#f5f7fa}
 .kus-wf .kus-lp__hint{margin:0;padding:10px 22px;border-radius:0;flex-shrink:0}
 .kus-wf [hidden]{display:none!important}
@@ -3258,7 +3263,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const out = [];
     const seen = /* @__PURE__ */ new Set();
     for (const tk of tokens) {
-      if (!/^\d+$/.test(tk)) throw new Error(`アプリIDは数値で入力してください: ${tk}`);
+      if (!/^\d+$/.test(tk)) throw new Error(`アプリIDは半角数字で入力してください: ${tk}`);
       if (seen.has(tk)) continue;
       seen.add(tk);
       out.push(tk);
@@ -3287,9 +3292,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   }
   async function runSettingsExportListSpaceAppsStandalone(spaceId, guestId, setStatus) {
     const sid = String(spaceId || "").trim();
-    if (!/^\d+$/.test(sid)) throw new Error("スペースIDを数値で入力してください");
+    if (!/^\d+$/.test(sid)) throw new Error("スペースIDは半角数字で入力してください");
     const guest = String(guestId || "").trim();
-    if (guest && !/^\d+$/.test(guest)) throw new Error(`ゲストIDは数値で入力してください: ${guest}`);
+    if (guest && !/^\d+$/.test(guest)) throw new Error(`ゲストスペースIDは半角数字で入力してください: ${guest}`);
     setStatus(`スペース ${sid} のアプリ一覧を取得中...`);
     const apps = await fetchAppsInSpace(sid, guestId);
     if (!apps.length) {
@@ -3305,9 +3310,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const push = (appId, guestId) => {
       const id = String(appId || "").trim();
       if (!id) return;
-      if (!/^\d+$/.test(id)) throw new Error(`アプリIDは数値で入力してください: ${id}`);
+      if (!/^\d+$/.test(id)) throw new Error(`アプリIDは半角数字で入力してください: ${id}`);
       const g = String(guestId || "").trim();
-      if (g && !/^\d+$/.test(g)) throw new Error(`ゲストIDは数値で入力してください: ${g}`);
+      if (g && !/^\d+$/.test(g)) throw new Error(`ゲストスペースIDは半角数字で入力してください: ${g}`);
       const key = `${id}::${g}`;
       if (seen.has(key)) return;
       seen.add(key);
@@ -3734,8 +3739,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       title: "設定一括取得",
       subtitle: "複数アプリの設定を JSON または ZIP（1アプリ=1JSON）で保存します。",
       accent: "settings",
-      badges: [{ label: "Lite" }, { label: "複数アプリ対応" }],
-      hint: "1 行だけ入力すれば 1 アプリ、複数行で一括取得。<strong>アプリごとに別のゲストスペース</strong>を指定できます。",
+      badges: [{ label: "読み取り専用", tone: "read" }],
+      hint: "アプリの設定を読み取り、JSON または ZIP で保存します。kintone のアプリや設定は変更しません。",
       wide: true
     });
     const cardTarget = makeCard({ title: "対象アプリ", number: 1 });
@@ -3749,7 +3754,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       guestEl: searchGuest,
       targets: [{ apply: (appId, appName, guestId) => {
         const result = appTable.putApp(appId, guestId, { appName, focus: true });
-        return { message: `アプリ #${appId}${appName ? ` (${appName})` : ""} を対象表に設定しました${result.action === "existing" ? "（追加済み）" : ""}` };
+        return { message: `アプリ #${appId}${appName ? ` (${appName})` : ""} を対象アプリ表に設定しました${result.action === "existing" ? "（追加済み）" : ""}` };
       } }]
     });
     const prev = makeCheck({ label: "プレビュー環境から取得" });
@@ -3760,7 +3765,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     cardTarget.body.appendChild(appTable.element);
     cardTarget.body.appendChild(makeRow([prev.label], { label: "取得環境" }));
     cardTarget.body.appendChild(foldWorkflowSection("スペースから追加", spaceRow));
-    cardTarget.body.appendChild(makeNote("各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。"));
+    cardTarget.body.appendChild(makeNote("1行なら1アプリ、複数行で一括取得します。アプリごとに別のゲストスペースを指定でき、各行の「↑コピー」で上の行のアプリIDとゲストスペースIDを複製できます。"));
     panel.body.insertBefore(cardTarget.card, panel.status);
     const cardScope = makeCard({ title: "取得セクション", number: 2 });
     cardScope.actions.style.flexWrap = "wrap";
@@ -3857,7 +3862,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         const result = appTable.putApp(app.appId, guest, { appName: app.name });
         if (result.action === "added" || result.action === "filled") added += 1;
       }
-      panel.setStatus(`スペースのアプリ ${apps.length}件を読み込みました（新規追加 ${added}件）`, "ok");
+      panel.setStatus(`スペース内のアプリ ${apps.length}件を取得しました（対象アプリ表に新規追加 ${added}件）`, "ok");
     }));
     btnJson.addEventListener("click", () => liteRun(panel, "設定一括取得（JSON）中…", async () => {
       const { summaryHtml } = await runSettingsExportStandalone(
@@ -3880,7 +3885,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const exportProblem = () => {
       const rows = appTable.getApps();
       if (!rows.length) return "対象アプリを1件以上指定してください。";
-      if (rows.some((row) => !/^\d+$/.test(row.appId) || row.guestId && !/^\d+$/.test(row.guestId))) return "アプリID・ゲストIDは数値で入力してください。";
+      if (rows.some((row) => !/^\d+$/.test(row.appId) || row.guestId && !/^\d+$/.test(row.guestId))) return "アプリID・ゲストスペースIDは半角数字で入力してください。";
       return chips.some((c) => c.checkbox.checked) ? "" : "取得する設定を1つ以上選んでください。";
     };
     const exportSummary = (format) => [
@@ -3896,8 +3901,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         summary.classList.add("kus-lp__panel-html--empty");
       },
       actions: [
-        { id: "json", label: "設定をJSONで保存", description: "全対象アプリの設定を1つのJSONにまとめます。", button: btnJson, validate: exportProblem, summary: () => exportSummary("全アプリを1つのJSON") },
-        { id: "zip", label: "設定をZIPで保存", description: "アプリごとのJSONと取得結果をZIPにまとめます。", button: btnZip, validate: exportProblem, summary: () => exportSummary("1アプリ1JSONとmanifest.jsonをZIPに保存") }
+        { id: "json", label: "設定をJSONで保存", description: "全対象アプリの設定を、1つのJSONファイルにまとめて保存します。", button: btnJson, validate: exportProblem, summary: () => exportSummary("全アプリを1つのJSON") },
+        { id: "zip", label: "設定をZIPで保存", description: "アプリごとのJSONと、取得結果の一覧（manifest.json）をZIPで保存します。", button: btnZip, validate: exportProblem, summary: () => exportSummary("1アプリ1JSONとmanifest.jsonをZIPに保存") }
       ]
     });
   }

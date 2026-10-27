@@ -141,7 +141,7 @@ async function main() {
   const button = name => page.getByRole('button', { name, exact: true });
   const tab = name => page.getByRole('tab', { name: new RegExp(name) });
   const run = () => button('最終確認に進む');
-  const applyButton = () => page.getByRole('button', { name: /^確認した .* 項目をプレビューへ反映/ });
+  const applyButton = () => page.getByRole('button', { name: /^確認した .* 項目を反映先プレビューへ反映/ });
   async function execute() {
     await run().click();
     assert.equal(await applyButton().isDisabled(), true, '確認前は書き込み不可');
@@ -207,7 +207,7 @@ async function main() {
     assert.match(await page.locator('.kus-rl-dock-copy').innerText(), /項目を 1 つ以上選んでください/, '項目未選択の理由を表示する');
     await setup();
     await page.getByText('詳細設定 · 自動バックアップ / 参照先変換', { exact: true }).click();
-    await page.getByText('Lookup AppID マッピング（任意）', { exact: true }).click();
+    await page.getByText('ルックアップの参照アプリID変換（任意）', { exact: true }).click();
     const lookup = page.getByRole('textbox', { name: 'ルックアップの参照アプリID変換', exact: true });
     await lookup.fill('abc');
     assert.equal(await button('差分を確認する').isDisabled(), true, '参照先変換の誤りでは進めない');
@@ -284,7 +284,7 @@ async function main() {
     assert.equal(await page.evaluate(() => window.__reflectMock.applies[0].targetAppId), '303');
     assert.equal(await page.evaluate(() => window.__reflectMock.applies[0].doDeploy), false);
     assert.equal(await page.evaluate(() => window.__reflectMock.applies[0].reviewBaseline.connection), 'sample-303', '確認した比較結果の基準を反映処理へ渡す');
-    assert.match(await page.locator('#kus-rl-stage-result').innerText(), /全成功/);
+    assert.match(await page.locator('#kus-rl-stage-result').innerText(), /1 項目を反映しました/);
     await assertNoLegacyTerms('反映結果画面');
     const successItems = page.locator('#kus-rl-stage-result .kus-rl-result-item');
     assert.equal(await successItems.count(), 1, '反映結果にセクション別の一覧を出す');
@@ -316,7 +316,7 @@ async function main() {
     await page.getByRole('textbox', { name: '反映先アプリID', exact: true }).fill('404');
     await tab('反映結果').click();
     assert.match(await page.locator('.kus-lp__status').innerText(), /直近の反映結果は現在の対象と異なるため表示していません。対象を戻すと表示されます。/, '対象変更後は直近の結果を表示していないことと戻し方を案内する');
-    assert.doesNotMatch(await page.locator('#kus-rl-stage-result').innerText(), /全成功|サンプルの反映ログ|実行ログ/, '旧対象の成功結果と実行ログを表示しない');
+    assert.doesNotMatch(await page.locator('#kus-rl-stage-result').innerText(), /項目を反映しました|サンプルの反映ログ|実行ログ/, '旧対象の成功結果と実行ログを表示しない');
     assert.notEqual(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'ok', '旧対象の確認成功ステータスを残さない');
     assert.equal(await button('実行結果JSONを保存').isVisible(), false, '別対象の結果を現在の結果として保存させない');
     assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), 1, '対象変更や結果表示では書き込まない');
@@ -326,7 +326,7 @@ async function main() {
     await reset('partial'); await setup();
     await page.getByRole('checkbox', { name: 'プロセス管理', exact: true }).check();
     await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
-    assert.match(await page.locator('#kus-rl-stage-result').innerText(), /一部エラー/);
+    assert.match(await page.locator('#kus-rl-stage-result').innerText(), /一部の項目を反映できませんでした/);
     const partialItems = page.locator('#kus-rl-stage-result .kus-rl-result-item');
     assert.equal(await partialItems.count(), 2, '失敗と未実行をセクション別に示す');
     const failedItem = partialItems.first();
@@ -355,18 +355,18 @@ async function main() {
     await page.getByLabel('反映元の設定JSON', { exact: true }).setInputFiles({ name: 'settings.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ appId: '901', sections: { fieldSettings: { properties: {} } } })) });
     await idle();
     assert.equal(await page.getByLabel('反映元の設定JSON', { exact: true }).evaluate(input => input.files.length), 0, '同じJSONを編集して選び直せるよう選択状態を空に戻す');
-    assert.match(await page.getByText(/反映元JSON読み込み済み/).first().innerText(), /settings\.json/, '読み込んだファイル名を表示する');
+    assert.match(await page.getByText(/設定JSONを読み込み済み/).first().innerText(), /settings\.json/, '読み込んだファイル名を表示する');
     assert.equal(await button('差分を確認する').isEnabled(), true);
     await compare();
     assert.equal(await page.evaluate(() => window.__reflectMock.previews[0].sourceBundle.appId), '901');
     await button('差分ありだけ選択').click(); await execute(); await idle();
-    assert.match(await page.locator('#kus-rl-stage-result').innerText(), /全成功/);
+    assert.match(await page.locator('#kus-rl-stage-result').innerText(), /1 項目を反映しました/);
     await tab('対象を選ぶ').click();
     await page.getByLabel('反映元の設定JSON', { exact: true }).setInputFiles({ name: 'replacement.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ appId: '901', sections: { fieldSettings: { properties: { updated: { type: 'SINGLE_LINE_TEXT', code: 'updated' } } } } })) });
     await idle();
     await tab('反映結果').click();
     assert.equal(await button('実行結果JSONを保存').isVisible(), false, '同じアプリの別JSONに差し替えても古い実行結果を保存させない');
-    assert.doesNotMatch(await page.locator('#kus-rl-stage-result').innerText(), /全成功|サンプルの反映ログ/, '同じアプリのJSON差替えで旧結果とログを消す');
+    assert.doesNotMatch(await page.locator('#kus-rl-stage-result').innerText(), /項目を反映しました|サンプルの反映ログ/, '同じアプリのJSON差替えで旧結果とログを消す');
     assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), 1, 'JSON差替えだけでは書き込まない');
     await tab('対象を選ぶ').click();
     await page.getByLabel('反映元の設定JSON', { exact: true }).setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{bad') });
@@ -488,14 +488,14 @@ async function main() {
     assert.equal(await fieldNotice.isHidden(), true);
     await button('権限のみ').click();
     assert.equal(await fieldNotice.isHidden(), true);
-    await button('ビュー+グラフ').click();
-    assert.equal(await fieldNotice.isVisible(), true, 'プリセット適用にも追従する');
+    await button('ビューとグラフ').click();
+    assert.equal(await fieldNotice.isVisible(), true, '項目のセット選択にも追従する');
     assert.match(await page.locator('.kus-rl-scope-option__help').innerText(), /削除せず残します/);
     await checkbox('反映先だけの一覧・グラフ・アクションを保持する').uncheck();
     assert.match(await page.locator('.kus-rl-scope-option__help').innerText(), /反映先から削除します/, '保持をOFFにすると削除されることを示す');
     await button('権限のみ').click();
-    assert.match(await page.locator('.kus-rl-scope-option__help').innerText(), /今の選択.*では使われません/);
-    await button('ビュー+グラフ').click();
+    assert.match(await page.locator('.kus-rl-scope-option__help').innerText(), /今の選択.*使われません/);
+    await button('ビューとグラフ').click();
     // 項目の選び方の全体を撮るため、縦に長い画面で撮影する。
     for (const [width, height] of [[1440, 1500], [390, 2000], [320, 2000]]) {
       await page.setViewportSize({ width, height });
@@ -514,7 +514,7 @@ async function main() {
     assert.deepEqual(await summaryTable.locator('thead th').allInnerTexts(), ['項目', '状態', '変更', '削除', '保持', '反映方法', '選択']);
     assert.deepEqual(await summaryRows.nth(0).locator('td').allInnerTexts(), ['フィールド設定', '差分あり', '1', '0', '0', '追加・更新', '選択中']);
     assert.deepEqual(await summaryRows.nth(1).locator('td').allInnerTexts(), ['レイアウト設定', '一致', '0', '0', '0', '追加・更新', '選択中']);
-    assert.deepEqual(await summaryRows.nth(2).locator('td').allInnerTexts(), ['ビュー設定', '確認が必要', '－', '－', '－', '－', '選択中']);
+    assert.deepEqual(await summaryRows.nth(2).locator('td').allInnerTexts(), ['ビュー設定', '取得失敗', '－', '－', '－', '－', '選択中']);
     await summaryRows.nth(0).getByRole('button', { name: 'フィールド設定', exact: true }).evaluate(b => b.click());
     await page.waitForFunction(() => {
       const row = document.querySelector('[data-reflect-entry="fieldSettings"]'), canvas = document.querySelector('.kus-rl-canvas');
@@ -592,8 +592,8 @@ async function main() {
     await button('すべての項目').click();
     assert.equal(await checkbox('一般設定').isChecked(), true, 'すべての項目に一般設定を含める');
     assert.equal(await page.evaluate(() => document.querySelectorAll('label.kus-lp__chip input:checked').length === document.querySelectorAll('label.kus-lp__chip input').length), true, 'すべての項目で全チップが選択される');
-    await button('権限を除外').click();
-    assert.equal(await checkbox('一般設定').isChecked(), true, '権限を除外しても一般設定は残る');
+    await button('権限・通知を除外').click();
+    assert.equal(await checkbox('一般設定').isChecked(), true, '権限・通知を除外しても一般設定は残る');
     assert.equal(await checkbox('アプリ権限').isChecked(), false);
     await button('フォームのみ').click();
     assert.equal(await checkbox('一般設定').isChecked(), false, 'フォームのみには含めない');
@@ -674,7 +674,7 @@ async function main() {
     await page.screenshot({ path: path.join(OUT, 'review-target-pending.png') });
     await button('差分ありだけ選択').click(); await run().click();
     assert.equal(await page.getByRole('textbox', { name: '確認用の反映先アプリID', exact: true }).isVisible(), true, '未公開の変更があるときは反映先IDの入力を求める');
-    assert.match(await page.locator('#kus-rl-stage-confirm').innerText(), /反映先プレビューに以前からの未公開の変更があります。反映先IDを入力して確認してください/);
+    assert.match(await page.locator('#kus-rl-stage-confirm').innerText(), /反映先プレビューに以前からの未公開の変更があります。確認のため、反映先アプリIDを入力してください/);
     await page.getByRole('checkbox', { name: '反映内容の確認', exact: true }).check();
     assert.equal(await applyButton().isDisabled(), true, '反映先IDを入力するまで反映できない');
     await page.getByRole('textbox', { name: '確認用の反映先アプリID', exact: true }).fill('202');
@@ -838,7 +838,7 @@ async function main() {
     assert.deepEqual(restorePreview, { scopes: ['fieldSettings'], bundleApp: '202', marker: 'before-fieldSettings', preserve: false, target: '202', source: '202' }, 'バックアップの内容を反映元にして差分を取得する');
     assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), appliesBefore, 'バックアップから戻す操作では書き込まない');
     assert.match(await page.locator('#kus-rl-stage-review [data-restore-notice]').innerText(), /バックアップから戻しています。反映で追加したフィールドは削除されません（保持として表示）/, '差分確認に注意を出す');
-    assert.match(await page.locator('#kus-rl-stage-setup .kus-lp__small', { hasText: '反映元JSON読み込み済み' }).first().evaluate(el => el.textContent), /反映前バックアップ（\d{4}\/\d{1,2}\/\d{1,2} \d{1,2}:\d{2}:\d{2}）/, '手でファイルを選んだときと同じ表示にする');
+    assert.match(await page.locator('#kus-rl-stage-setup .kus-lp__small', { hasText: '設定JSONを読み込み済み' }).first().evaluate(el => el.textContent), /反映前バックアップ（\d{4}\/\d{1,2}\/\d{1,2} \d{1,2}:\d{2}:\d{2}）/, '手でファイルを選んだときと同じ表示にする');
     await page.screenshot({ path: path.join(OUT, 'review-restore-1440.png') });
     await button('差分ありだけ選択').click(); await run().click();
     assert.equal(await page.locator('#kus-rl-stage-confirm [data-restore-notice]').count(), 1, '最終確認にも注意を出す');
@@ -893,10 +893,10 @@ async function main() {
     await reset('mixed', { itemsMode: 'basic', targetPending: pendingPending }); await setup(); await stubClipboard();
     await tab('差分を確認').click();
     assert.equal(await button('計画をMarkdownで保存').isDisabled(), true, '差分が無いときは計画のMarkdown保存を無効にする');
-    assert.equal(await button('Markdownをコピー').isDisabled(), true, '差分が無いときはMarkdownのコピーを無効にする');
+    assert.equal(await button('計画のMarkdownをコピー').isDisabled(), true, '差分が無いときはMarkdownのコピーを無効にする');
     await tab('対象を選ぶ').click(); await compare();
     assert.equal(await button('計画をMarkdownで保存').isEnabled(), true);
-    assert.equal(await button('Markdownをコピー').isEnabled(), true);
+    assert.equal(await button('計画のMarkdownをコピー').isEnabled(), true);
     const planMd = await downloadOf('計画をMarkdownで保存');
     assert.match(planMd.name, /^プレビュー反映計画_.*202.*\.md$/, '計画のMarkdownは反映先の名前とIDを付けて保存する');
     assert.match(planMd.text, /^# プレビュー反映の計画/);
@@ -912,12 +912,12 @@ async function main() {
     assert.ok(planMd.text.includes('営業所メモ\\<b\\>（local）'), '項目名のHTMLらしい記号は退避する');
     assert.doesNotMatch(planMd.text, /SINGLE_LINE_TEXT|\{"|反映先の現在/, '設定値の生JSONを含めない');
     assert.match(await statusText(), /反映計画を プレビュー反映計画_.*\.md に保存しました/, '保存の結果をステータスに示す');
-    await button('Markdownをコピー').click();
+    await button('計画のMarkdownをコピー').click();
     await page.waitForFunction(() => window.__copied.length === 1);
     assert.equal(withoutStamp(await page.evaluate(() => window.__copied[0])), withoutStamp(planMd.text), 'コピーした内容は保存した内容と同じ');
     assert.match(await statusText(), /反映計画のMarkdownをコピーしました/, 'コピーの成功をステータスに示す');
     await stubClipboard(true);
-    await button('Markdownをコピー').click();
+    await button('計画のMarkdownをコピー').click();
     await page.waitForFunction(() => /コピーできませんでした/.test(document.querySelector('.kus-lp__status').textContent));
     assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn', 'コピーの失敗は注意として示す');
     assert.equal(await page.evaluate(() => window.__copied.length), 0);
@@ -943,7 +943,7 @@ async function main() {
     await page.getByRole('textbox', { name: '反映先アプリID', exact: true }).fill('303');
     await tab('差分を確認').click();
     assert.equal(await button('計画をMarkdownで保存').isDisabled(), true, '条件が変わって差分が古いときはMarkdown出力を無効にする');
-    assert.equal(await button('Markdownをコピー').isDisabled(), true);
+    assert.equal(await button('計画のMarkdownをコピー').isDisabled(), true);
 
     // ---- Markdown：反映記録（成功と失敗の結果を含める） ----
     await reset('partial'); await setup(); await stubClipboard();
@@ -959,7 +959,7 @@ async function main() {
     assert.match(recordMd.text, /詳細: フィールド「顧客コード」が見つかりません（GAIA\\_IL26）/, '失敗の詳細を含める');
     assert.doesNotMatch(recordMd.text, /## レイアウト設定|## ビュー設定/, '実行した項目だけを記録する');
     assert.doesNotMatch(recordMd.text, /SINGLE_LINE_TEXT|\{"|反映先の現在/, '記録にも設定値の生JSONを含めない');
-    await button('Markdownをコピー').click();
+    await button('記録のMarkdownをコピー').click();
     await page.waitForFunction(() => window.__copied.length === 1);
     assert.equal(await page.evaluate(() => window.__copied[0]), recordMd.text, 'コピーした記録は保存した記録と同じ');
     assert.match(await statusText(), /反映記録のMarkdownをコピーしました/);
@@ -970,7 +970,7 @@ async function main() {
 
     // ---- 続けて反映する反映先：入力の解析と誤りの表示 ----
     await reset(); await setup(); await openRollout();
-    assert.match(await page.locator('.kus-rl-rollout').innerText(), /同じ反映元・項目・設定で、ほかのアプリにも順番に反映します。反映先ごとに差分確認と最終確認を行います。数字だけのIDは通常スペースのアプリ、ゲストスペースのアプリはURLで指定します。/);
+    assert.match(await page.locator('.kus-rl-rollout').innerText(), /同じ反映元・項目・設定で、ほかのアプリにも順番に反映します（反映先ごとに差分確認と最終確認を行います）。数字だけのIDは通常スペースのアプリを指すため、ゲストスペースのアプリはURLで指定してください。/);
     assert.equal(await rolloutStatus().innerText(), '', '未入力のときは何も出さない');
     await rolloutBox().fill('202\n203, 204、https://example.cybozu.com/k/guest/5/206/\n203');
     assert.equal(await rolloutStatus().innerText(), '3 件: #203、#204、#206（ゲスト 5）', '現在の反映先と重複を除いて件数と一覧を示す');
@@ -1110,7 +1110,7 @@ async function main() {
     const restoreIdCheck = page.getByRole('textbox', { name: '確認用の反映先アプリID', exact: true });
     if (await restoreIdCheck.isVisible()) await restoreIdCheck.fill('202');
     await applyButton().click(); await idle();
-    assert.equal(await page.locator('#kus-rl-stage-result').getByText('全成功').first().isVisible(), true);
+    assert.equal(await page.locator('#kus-rl-stage-result').getByText(/項目を反映しました/).first().isVisible(), true);
     assert.equal(await rolloutCard().isVisible(), false, 'バックアップから戻した直後は「続けて反映」を出さない');
     assert.match((await downloadOf('記録をMarkdownで保存')).text, /- 反映元: 反映前のバックアップ（東京営業所・/, '復元の記録にも「反映前のバックアップ」と示す');
     assert.deepEqual(await rolloutEntries(), ['202'], '復元は展開の記録に加えない（それまでの記録は消さない）');
@@ -1393,12 +1393,12 @@ async function main() {
     await tab('反映結果').click();
     assert.equal(await resultJsonShown(), false, '対象が違う間は結果を表示しない');
     assert.match(await resultStage().innerText(), STALE, '「まだ反映していません」とは言わない');
-    assert.doesNotMatch(await resultStage().innerText(), /まだ反映していません|全成功|サンプルの反映ログ/);
+    assert.doesNotMatch(await resultStage().innerText(), /まだ反映していません|項目を反映しました|サンプルの反映ログ/);
     await tab('対象を選ぶ').click();
     await targetInput().fill('202');
     await tab('反映結果').click();
     assert.equal(await resultJsonShown(), true, '反映先IDを元に戻すと結果が戻る');
-    assert.match(await resultStage().innerText(), /全成功/);
+    assert.match(await resultStage().innerText(), /項目を反映しました/);
     assert.match(await resultStage().innerText(), /サンプルの反映ログ/, '実行ログも戻る');
     assert.equal(await restoreButton().isVisible(), true, 'バックアップから戻す導線も戻る');
     assert.doesNotMatch(await resultStage().innerText(), STALE);
@@ -1547,14 +1547,14 @@ async function main() {
     await idle();
     assert.equal(await dockResult().isVisible(), false, 'プリセットJSONの読み込み開始時にも詳細ログを消す');
 
-    // ---- 復元の終了通知は、同じ操作の後続のステータス（プリセット適用など）で上書きしない ----
+    // ---- 復元の終了通知は、同じ操作の後続のステータス（項目のセット選択など）で上書きしない ----
     await applyThenRestore();
     await tab('対象を選ぶ').click();
     await button('すべての項目').click();
     const noticeStatus = await statusText();
     assert.match(noticeStatus, /バックアップからの復元を終了しました。/, '復元の終了通知を残す');
-    assert.match(noticeStatus, /プリセット適用: すべての項目/, '後続の通知も表示する');
-    assert.ok(noticeStatus.indexOf('バックアップからの復元を終了しました。') < noticeStatus.indexOf('プリセット適用'), '終了通知を先頭に置く');
+    assert.match(noticeStatus, /「すべての項目」を選びました/, '後続の通知も表示する');
+    assert.ok(noticeStatus.indexOf('バックアップからの復元を終了しました。') < noticeStatus.indexOf('「すべての項目」を選びました'), '終了通知を先頭に置く');
     await button('フォームのみ').click();
     assert.doesNotMatch(await statusText(), /バックアップからの復元を終了しました。/, '通知は1回だけ付ける');
 
@@ -1573,7 +1573,7 @@ async function main() {
     await tab('対象を選ぶ').click();
     await page.getByRole('combobox', { name: '反映元の取得方法' }).selectOption('json');
     await page.getByLabel('反映元の設定JSON', { exact: true }).setInputFiles(settingsBundle); await idle();
-    assert.match(await page.locator('.kus-lp__small', { hasText: '反映元JSON読み込み済み' }).first().evaluate(el => el.textContent), /App 901/);
+    assert.match(await page.locator('.kus-lp__small', { hasText: '設定JSONを読み込み済み' }).first().evaluate(el => el.textContent), /アプリ #901/);
     await openAllDetails();
     await presetPick().selectOption('二件目');
     await button('読み込み').click();

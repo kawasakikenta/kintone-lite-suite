@@ -15,8 +15,8 @@ export function mountRecordQualityLitePanel() {
     title: 'データ品質チェック',
     subtitle: 'レコードの重複と未入力を、選んだ項目の組み合わせで検査します。',
     accent: 'record',
-    badges: [{ label: 'Lite' }, { label: '読み取り専用' }],
-    hint: 'データは書き換えません。結果は画面で確認し、CSVで保存できます。',
+    badges: [{ label: '読み取り専用', tone: 'read' }],
+    hint: 'kintone のレコードは書き換えません。検査結果は画面で確認でき、CSVでも保存できます。',
     wide: true
   });
 
@@ -43,8 +43,8 @@ export function mountRecordQualityLitePanel() {
   }
 
   const target = makeCard({ title: '対象アプリ', number: 1 });
-  target.body.appendChild(makeRow([appId, guestId], { label: '接続先' }));
-  target.body.appendChild(makeNote('複数アプリはカンマ、改行、または空白で区切ります。検査項目は先頭アプリから読み込みます。'));
+  target.body.appendChild(makeRow([appId, guestId], { label: '対象アプリ' }));
+  target.body.appendChild(makeNote('複数アプリはカンマ・改行・空白で区切ります。検査するフィールドは、先頭の対象アプリから読み込みます。'));
   target.body.appendChild(createAppSearchControl(panel, {
     guestEl: guestId,
     targets: [{ label: '対象アプリ', apply: (id, _name, guest) => {
@@ -58,7 +58,7 @@ export function mountRecordQualityLitePanel() {
   viewSelect.setAttribute('aria-label', '取得した一覧');
   const loadViewsBtn = makeButton('一覧読込', 'sub');
   target.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: '一覧から条件' }));
-  const viewNote = makeNote('先頭の対象アプリから一覧を取得し、「▼ 一覧から」で絞り込みと並び順をクエリに反映できます。');
+  const viewNote = makeNote('先頭の対象アプリの一覧を読み込むと、「▼ 一覧から」で絞り込みと並び順をクエリに反映できます。');
   target.body.appendChild(viewNote);
   let loadedViews: RecordViewChoice[] = [];
   resetMetadata.push(() => {

@@ -24,8 +24,8 @@ export function mountProcessLitePanel() {
     title: 'プロセス図',
     subtitle: 'プロセス管理を Mermaid フロー図で描画し、シミュレーションで動きを確認します。',
     accent: 'process',
-    badges: [{ label: 'Lite' }, { label: 'シミュレーション可' }],
-    hint: 'プロセスの流れと状態遷移を確認できます。シミュレーションで実際のレコードが更新されることはありません。'
+    badges: [{ label: '読み取り専用', tone: 'read' }],
+    hint: 'プロセス管理の流れと状態遷移を図で確認できます。シミュレーションは画面上だけで動き、レコードや設定は変更しません。'
   });
 
   // ---- 入力 ----
@@ -64,7 +64,7 @@ export function mountProcessLitePanel() {
   textEl.readOnly = true;
   textEl.placeholder = 'Mermaid 用ソースがここに表示されます';
   cardText.body.appendChild(textEl);
-  cardText.body.appendChild(makeNote('ソースは Mermaid Live Editor や Markdown（```mermaid）にそのまま貼り付けて共有できます。'));
+  cardText.body.appendChild(makeNote('このソースを Mermaid Live Editor や Markdown の ```mermaid ブロックに貼り付けると、同じ図を共有できます。'));
   const copySource = makeButton('ソースをコピー', 'sub', { icon: '⎘' });
   const saveSource = makeButton('.mmd で保存', 'sub', { icon: '↓' });
   const saveSvg = makeButton('SVGで保存', 'sub', { icon: '↓' });
@@ -136,7 +136,7 @@ export function mountProcessLitePanel() {
   const simHistoryEl = makeNote('遷移履歴: まだ開始していません');
   cardSim.body.appendChild(simDetailEl);
   cardSim.body.appendChild(simHistoryEl);
-  cardSim.body.appendChild(makeNote('シミュレーションは実データを変更しません。状態遷移の確認用です。'));
+  cardSim.body.appendChild(makeNote('アクションを選んで「アクション実行」を押すと、画面上で状態が進み、遷移履歴に記録されます。レコードは変更されません。'));
   panel.body.insertBefore(cardSim.card, panel.status);
 
   let renderedConnection = '';
@@ -210,7 +210,7 @@ export function mountProcessLitePanel() {
       renderedConnection = runConnection;
       // 描画側が警告（Mermaid 読込失敗 / from-to 未設定のアクション除外）を出している場合は残す
       if (result && panel.status.dataset.tone !== 'err' && panel.status.dataset.tone !== 'warn') {
-        panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, 'ok');
+        panel.setStatus(`プロセス図を表示しました（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, 'ok');
       }
     } finally {
       renderPending = false;
@@ -237,12 +237,12 @@ export function mountProcessLitePanel() {
       simDetailEl.textContent = '';
       simHistoryEl.textContent = '';
     },
-    actions: [{ id: 'render', label: 'プロセス図を表示', description: '状態とアクションの流れを表示し、結果画面でシミュレーションできます。', button: runBtn,
+    actions: [{ id: 'render', label: 'プロセス図を表示', description: '状態とアクションの流れを図で表示します。結果画面でシミュレーションもできます。', button: runBtn,
       validate: () => {
         try { validateProcessConnection(appInp.value, guestInp.value); return ''; }
         catch (error: any) { return error?.message || String(error); }
       },
-      summary: () => [['対象', connectionSummary(appInp.value.trim(), guestInp.value.trim(), prevCb.checkbox.checked ? 'プレビュー' : '本番')], ['操作', '状態遷移図を表示。シミュレーションは実データを変更しません。']]
+      summary: () => [['対象', connectionSummary(appInp.value.trim(), guestInp.value.trim(), prevCb.checkbox.checked ? 'プレビュー' : '本番')], ['操作', '状態遷移図を表示します。レコードや設定は変更しません。']]
     }]
   });
 

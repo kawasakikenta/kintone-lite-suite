@@ -24,7 +24,7 @@ const CASES = [
   ['er', 'mountErLitePanel', 'ER図', 'ER図を開く'],
   ['process', 'mountProcessLitePanel', 'プロセス図', 'プロセス図を表示'],
   ['csv-export', 'mountCsvExportLitePanel', 'CSV出力', 'CSVを出力'],
-  ['field', 'mountFieldLitePanel', 'フィールド追加', '比較先プレビューへ反映'],
+  ['field', 'mountFieldLitePanel', 'フィールド追加', '反映先プレビューへ反映'],
   ['jsconfig', 'mountJsconfigLitePanel', 'JS/CSS設定', 'JS/CSS設定を取得'],
   ['record', 'mountRecordLitePanel', 'レコード管理', 'CSVを出力']
 ];
@@ -183,8 +183,8 @@ async function main() {
         }
         if (id === 'field') {
           assert.equal(await button('内容を確認する').isDisabled(), true);
-          await page.getByRole('textbox', { name: '比較先アプリID', exact: true }).fill('303');
-          await button('比較元から読込').click(); await idle();
+          await page.getByRole('textbox', { name: '反映先アプリID', exact: true }).fill('303');
+          await button('反映元から読込').click(); await idle();
           assert.equal(await stage(0).isVisible(), true, '補助取得で勝手に結果画面へ進まない');
           assert.equal(await button('内容を確認する').isEnabled(), true);
           await page.evaluate(() => { window.__workflowFixture.calls = []; });
@@ -229,7 +229,7 @@ async function main() {
         }
         if (id === 'jsconfig') {
           await button('対象・条件を変更').click();
-          await page.getByRole('radio', {name:'比較先プレビューへ反映',exact:true}).check();
+          await page.getByRole('radio', {name:'反映先プレビューへ反映',exact:true}).check();
           assert.equal(await button('内容を確認する').isDisabled(), true);
           await page.getByRole('textbox', { name: '反映先アプリID', exact: true }).fill('303');
           const jsonInput = page.getByRole('textbox', {name:'カスタマイズJSON',exact:true});
@@ -240,9 +240,9 @@ async function main() {
           }
           await jsonInput.fill(validJson);
           await button('内容を確認する').click();
-          assert.match(await stage(1).innerText(), /全置換/);
+          assert.match(await stage(1).innerText(), /すべて置き換え/);
           const before = await page.evaluate(() => window.__workflowFixture.calls.length);
-          await page.getByRole('button', {name:'比較先プレビューへ反映',exact:true}).click(); await idle();
+          await page.getByRole('button', {name:'反映先プレビューへ反映',exact:true}).click(); await idle();
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), before+1);
         }
         if (id === 'settings-export') {

@@ -8,7 +8,7 @@ module.exports = async function verifyReflectEngine({ page, esbuild, tool, out }
   const button = name => page.getByRole('button', { name, exact: true });
   const tab = name => page.getByRole('tab', { name: new RegExp(name) });
   const final = () => button('最終確認に進む');
-  const run = () => page.getByRole('button', { name: /^確認した .* 項目をプレビューへ反映/ });
+  const run = () => page.getByRole('button', { name: /^確認した .* 項目を反映先プレビューへ反映/ });
   const writes = () => page.evaluate(() => window.__actual.writes);
   const idle = () => page.waitForFunction(() => document.querySelector('#kus-reflect-lite').getAttribute('aria-busy') !== 'true');
   async function reset(mode = '') {
@@ -212,7 +212,7 @@ module.exports = async function verifyReflectEngine({ page, esbuild, tool, out }
   assert.match(await pendingNote.innerText(), /以前からの未公開の変更があります[\s\S]*ビュー設定/, '本番とプレビューのrevisionが違うときは警告する');
   await final().click();
   assert.equal(await page.getByRole('textbox', { name: '確認用の反映先アプリID', exact: true }).isVisible(), true, '最終確認で反映先IDの入力を求める');
-  assert.match(await page.locator('#kus-rl-stage-confirm').innerText(), /反映先プレビューに以前からの未公開の変更があります。反映先IDを入力して確認してください/);
+  assert.match(await page.locator('#kus-rl-stage-confirm').innerText(), /反映先プレビューに以前からの未公開の変更があります。確認のため、反映先アプリIDを入力してください/);
   await button('差分に戻る').click(); await acknowledge(); await run().click(); await idle();
   assert.match(await page.locator('#kus-rl-stage-result .kus-rl-undo').innerText(), /反映前から未公開の変更があったため、『変更を中止』ではそれらも破棄されます。今回の反映だけを戻す場合は『バックアップから戻す』を使ってください/, '未公開の変更があったときは取り消しの案内を切り替える');
   assert.equal(await page.locator('#kus-rl-stage-result .kus-rl-undo').getAttribute('data-undo-state'), 'pending');
@@ -262,10 +262,10 @@ module.exports = async function verifyReflectEngine({ page, esbuild, tool, out }
     preserve: Array.from(document.querySelectorAll('label.kus-lp__check')).find(label => /反映先だけの一覧/.test(label.textContent)).querySelector('input').checked,
     scopes: Array.from(document.querySelectorAll('label.kus-lp__chip input:checked')).map(input => input.value),
     source: document.querySelector('[aria-label="反映元アプリID"]').value, target: document.querySelector('[aria-label="反映先アプリID"]').value,
-    note: Array.from(document.querySelectorAll('.kus-lp__small')).map(node => node.textContent).find(text => /反映元JSON読み込み済み/.test(text))
+    note: Array.from(document.querySelectorAll('.kus-lp__small')).map(node => node.textContent).find(text => /設定JSONを読み込み済み/.test(text))
   }));
   assert.deepEqual({ ...restoreSetup, note: undefined }, { mode: 'json', preserve: false, scopes: ['fieldSettings', 'layoutSettings', 'viewSettings'], source: '202', target: '202', note: undefined }, '反映元を設定JSON（バックアップ）にし、保持はOFF、同じ項目で差分確認に進む');
-  assert.match(restoreSetup.note, /反映前バックアップ（\d{4}\/\d{1,2}\/\d{1,2} \d{1,2}:\d{2}:\d{2}））: App 202/);
+  assert.match(restoreSetup.note, /反映前バックアップ（\d{4}\/\d{1,2}\/\d{1,2} \d{1,2}:\d{2}:\d{2}））: アプリ #202/);
   const restoreReview = await page.locator('#kus-rl-stage-review').innerText();
   assert.match(restoreReview, /バックアップから戻しています。反映で追加したフィールドは削除されません（保持として表示）/);
   // 反映前は未公開の変更が無く、その後にこの画面が書き込んだだけなので、未公開の変更は自分の反映分と判定する。
@@ -290,7 +290,7 @@ module.exports = async function verifyReflectEngine({ page, esbuild, tool, out }
   assert.deepEqual(restoredViews.All.fields, ['name'], '反映前の一覧の内容へ戻す');
   const restoredState = await page.evaluate(() => ({ label: window.__actual.target.fieldSettings.properties.name.label, tag: !!window.__actual.target.fieldSettings.properties.tag, views: Object.keys(window.__actual.target.viewSettings.views).sort() }));
   assert.deepEqual(restoredState, { label: '取引先', tag: true, views: ['All', '営業所専用'] }, '反映前の値へ戻り、追加したフィールドは削除されない');
-  assert.match(await page.locator('#kus-rl-stage-result').innerText(), /全成功/);
+  assert.match(await page.locator('#kus-rl-stage-result').innerText(), /項目を反映しました/);
 
   // ---- JS/CSS：別アプリのファイルを反映先へアップロードする（実エンジン） ----
   await reset('files'); await button('全解除').click(); await page.getByRole('checkbox', { name: 'JS/CSS設定', exact: true }).check(); await compare();

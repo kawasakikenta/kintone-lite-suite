@@ -933,7 +933,7 @@ describe('diff/html export', () => {
     expect(html).toContain('data-applied-ignore');
     expect(html).toContain('比較時の無視キー 2件: revision、modifiedAt');
     expect(html).toContain('data-applied-normalization');
-    expect(html).toContain('比較時の正規化 1件: ビュー/グラフ/アクション順序');
+    expect(html).toContain('比較時の正規化 1件: 一覧・グラフ・アクションの並び順');
   });
 
   it('shows path rules added from result rows as readable text and lets long rules wrap on narrow screens', () => {

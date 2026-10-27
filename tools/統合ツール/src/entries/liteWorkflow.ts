@@ -14,7 +14,7 @@ export interface LiteWorkflowAction {
 const CSS = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
-.kus-wf .kus-lp__badge-row{display:none}
+.kus-wf .kus-lp__badge-row{margin-top:6px}
 .kus-wf .kus-lp__body{padding:0;display:flex;flex-direction:column;overflow:hidden;min-height:0;background:#f5f7fa}
 .kus-wf .kus-lp__hint{margin:0;padding:10px 22px;border-radius:0;flex-shrink:0}
 .kus-wf [hidden]{display:none!important}

@@ -64,7 +64,7 @@ export function validateErOptions(opts: any): string {
   if (unusableAppId) return `アプリIDは1以上${Number.MAX_SAFE_INTEGER}以下の整数で入力してください: ${unusableAppId}`;
 
   const guestId = String(opts?.guestId || '').trim();
-  if (guestId && !/^\d+$/.test(guestId)) return `ゲストIDは数値で入力してください: ${guestId}`;
+  if (guestId && !/^\d+$/.test(guestId)) return `ゲストスペースIDは半角数字で入力してください: ${guestId}`;
   const spaceId = String(opts?.spaceId || '').trim();
   if (spaceId && !/^\d+$/.test(spaceId)) return `スペースIDは数値で入力してください: ${spaceId}`;
 

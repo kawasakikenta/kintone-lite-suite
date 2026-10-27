@@ -1281,9 +1281,13 @@ ${contextLine}`);
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  font-size:12px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
+/* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
+.kus-lp__badge--read{background:#047857;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--preview{background:#c2410c;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--production{background:#b91c1c;border:1px solid rgba(255,255,255,.45)}
 .kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;
@@ -1615,10 +1619,11 @@ ${contextLine}`);
     }
     const badgesEl = document.createElement("div");
     badgesEl.className = "kus-lp__badge-row";
-    const badges = opts.badges || [{ label: "Lite" }];
+    const badges = opts.badges || [];
+    if (!badges.length) badgesEl.hidden = true;
     for (const b of badges) {
       const span = document.createElement("span");
-      span.className = "kus-lp__badge";
+      span.className = `kus-lp__badge${b.tone === "read" || b.tone === "preview" || b.tone === "production" ? ` kus-lp__badge--${b.tone}` : ""}`;
       span.textContent = b.label;
       badgesEl.appendChild(span);
     }
@@ -2151,7 +2156,7 @@ ${contextLine}`);
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
-.kus-wf .kus-lp__badge-row{display:none}
+.kus-wf .kus-lp__badge-row{margin-top:6px}
 .kus-wf .kus-lp__body{padding:0;display:flex;flex-direction:column;overflow:hidden;min-height:0;background:#f5f7fa}
 .kus-wf .kus-lp__hint{margin:0;padding:10px 22px;border-radius:0;flex-shrink:0}
 .kus-wf [hidden]{display:none!important}
@@ -3159,8 +3164,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       title: "プロセス図",
       subtitle: "プロセス管理を Mermaid フロー図で描画し、シミュレーションで動きを確認します。",
       accent: "process",
-      badges: [{ label: "Lite" }, { label: "シミュレーション可" }],
-      hint: "プロセスの流れと状態遷移を確認できます。シミュレーションで実際のレコードが更新されることはありません。"
+      badges: [{ label: "読み取り専用", tone: "read" }],
+      hint: "プロセス管理の流れと状態遷移を図で確認できます。シミュレーションは画面上だけで動き、レコードや設定は変更しません。"
     });
     const cardApp = makeCard({ title: "対象アプリ", number: 1 });
     const appInp = makeInput({ placeholder: "アプリID", value: DEFAULT_APP_ID || "", width: "id" });
@@ -3197,7 +3202,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     textEl.readOnly = true;
     textEl.placeholder = "Mermaid 用ソースがここに表示されます";
     cardText.body.appendChild(textEl);
-    cardText.body.appendChild(makeNote("ソースは Mermaid Live Editor や Markdown（```mermaid）にそのまま貼り付けて共有できます。"));
+    cardText.body.appendChild(makeNote("このソースを Mermaid Live Editor や Markdown の ```mermaid ブロックに貼り付けると、同じ図を共有できます。"));
     const copySource = makeButton("ソースをコピー", "sub", { icon: "⎘" });
     const saveSource = makeButton(".mmd で保存", "sub", { icon: "↓" });
     const saveSvg = makeButton("SVGで保存", "sub", { icon: "↓" });
@@ -3276,7 +3281,7 @@ ${text}
     const simHistoryEl = makeNote("遷移履歴: まだ開始していません");
     cardSim.body.appendChild(simDetailEl);
     cardSim.body.appendChild(simHistoryEl);
-    cardSim.body.appendChild(makeNote("シミュレーションは実データを変更しません。状態遷移の確認用です。"));
+    cardSim.body.appendChild(makeNote("アクションを選んで「アクション実行」を押すと、画面上で状態が進み、遷移履歴に記録されます。レコードは変更されません。"));
     panel.body.insertBefore(cardSim.card, panel.status);
     let renderedConnection = "";
     let renderPending = false;
@@ -3349,7 +3354,7 @@ ${text}
         }
         renderedConnection = runConnection;
         if (result && panel.status.dataset.tone !== "err" && panel.status.dataset.tone !== "warn") {
-          panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, "ok");
+          panel.setStatus(`プロセス図を表示しました（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, "ok");
         }
       } finally {
         renderPending = false;
@@ -3379,7 +3384,7 @@ ${text}
       actions: [{
         id: "render",
         label: "プロセス図を表示",
-        description: "状態とアクションの流れを表示し、結果画面でシミュレーションできます。",
+        description: "状態とアクションの流れを図で表示します。結果画面でシミュレーションもできます。",
         button: runBtn,
         validate: () => {
           try {
@@ -3389,7 +3394,7 @@ ${text}
             return error?.message || String(error);
           }
         },
-        summary: () => [["対象", connectionSummary(appInp.value.trim(), guestInp.value.trim(), prevCb.checkbox.checked ? "プレビュー" : "本番")], ["操作", "状態遷移図を表示。シミュレーションは実データを変更しません。"]]
+        summary: () => [["対象", connectionSummary(appInp.value.trim(), guestInp.value.trim(), prevCb.checkbox.checked ? "プレビュー" : "本番")], ["操作", "状態遷移図を表示します。レコードや設定は変更しません。"]]
       }]
     });
   }

@@ -4393,9 +4393,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  font-size:12px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
+/* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
+.kus-lp__badge--read{background:#047857;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--preview{background:#c2410c;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--production{background:#b91c1c;border:1px solid rgba(255,255,255,.45)}
 .kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;
@@ -4727,10 +4731,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     }
     const badgesEl = document.createElement("div");
     badgesEl.className = "kus-lp__badge-row";
-    const badges = opts.badges || [{ label: "Lite" }];
+    const badges = opts.badges || [];
+    if (!badges.length) badgesEl.hidden = true;
     for (const b of badges) {
       const span = document.createElement("span");
-      span.className = "kus-lp__badge";
+      span.className = `kus-lp__badge${b.tone === "read" || b.tone === "preview" || b.tone === "production" ? ` kus-lp__badge--${b.tone}` : ""}`;
       span.textContent = b.label;
       badgesEl.appendChild(span);
     }
@@ -6065,14 +6070,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   }
   function reflectIdentityLabel(identities, side, sourceEnvironment) {
     const app = identities[side];
-    return `${app.name}${app.appId ? `（ID: ${app.appId}）` : ""} / ${app.guestId ? `ゲスト ${app.guestId}` : "通常スペース"} / ${side === "target" ? "プレビュー" : sourceEnvironment}`;
+    return `${app.name}${app.appId ? `（ID: ${app.appId}）` : ""} / ${app.guestId ? `ゲストスペース ${app.guestId}` : "通常スペース"} / ${side === "target" ? "プレビュー" : sourceEnvironment}`;
   }
   function renderReflectRoute(host, identities, environment, options = {}) {
     const route = document.createElement("div");
     route.className = "kus-rl-confirm-route";
     for (const side of ["source", "target"]) {
       const block = document.createElement("div"), label = document.createElement("span"), name = document.createElement("strong");
-      label.textContent = side === "source" ? "反映元 ↓" : "書き込み先";
+      label.textContent = side === "source" ? "反映元 ↓" : "書き込み先（反映先）";
       name.textContent = side === "source" && options.sourceLabel ? options.sourceLabel : reflectIdentityLabel(identities, side, environment);
       block.append(label, name);
       route.appendChild(block);
@@ -6082,7 +6087,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   var SUMMARY_STATUS = {
     change: { text: "差分あり", pill: "change" },
     same: { text: "一致", pill: "same" },
-    error: { text: "確認が必要", pill: "error" }
+    error: { text: "取得失敗", pill: "error" }
   };
   function renderReflectSummaryTable(host, entries, options) {
     const wrap = document.createElement("section");
@@ -6410,35 +6415,35 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     presets: []
   };
   var SCOPE_QUICK_PRESETS = [
-    { id: "all", label: "すべての項目", hint: "反映可能なセクションを全選択" },
+    { id: "all", label: "すべての項目", hint: "反映できる項目をすべて選びます" },
     {
       id: "formOnly",
       label: "フォームのみ",
-      hint: "フィールド設定＋レイアウト＋ビュー",
+      hint: "フィールド設定・レイアウト設定・ビュー設定を選びます",
       scopes: ["fieldSettings", "layoutSettings", "viewSettings"]
     },
     {
       id: "viewsOnly",
-      label: "ビュー+グラフ",
-      hint: "ビュー設定とグラフ設定のみ",
+      label: "ビューとグラフ",
+      hint: "ビュー設定とグラフ設定だけを選びます",
       scopes: ["viewSettings", "reportSettings"]
     },
     {
       id: "permsOnly",
       label: "権限のみ",
-      hint: "アプリ・フィールド・レコード権限",
+      hint: "アプリ・フィールド・レコードの権限だけを選びます",
       scopes: ["appAcl", "fieldAcl", "recordPermissions"]
     },
     {
       id: "notificationsOnly",
       label: "通知のみ",
-      hint: "一般・条件・リマインダー通知",
+      hint: "一般・条件・リマインダーの通知だけを選びます",
       scopes: ["notifications", "perRecordNotifications", "reminderNotifications"]
     },
     {
       id: "noPerms",
-      label: "権限を除外",
-      hint: "権限系・通知系を除いた全セクション",
+      label: "権限・通知を除外",
+      hint: "権限と通知を除いた、すべての項目を選びます",
       exclude: ["appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications"]
     }
   ];
@@ -6748,8 +6753,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       title: "プレビュー反映",
       subtitle: "反映元アプリの設定を、反映先アプリのプレビューへまとめて反映します。",
       accent: "reflect",
-      badges: [],
-      hint: "<strong>差分を確認してから反映</strong> · 反映先はプレビューです。本番への公開は設定画面で行います。",
+      badges: [{ label: "プレビューへ書き込み", tone: "preview" }],
+      hint: "<strong>反映先のプレビューだけを変更します。</strong>本番への公開は kintone の設定画面で行います。差分を確認してから反映します。",
       wide: true
     });
     let pendingNotice = "";
@@ -6898,10 +6903,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     srcJsonNote.className = "kus-lp__small";
     srcJsonNote.style.display = "none";
     const currentSrcBtn = makeButton("現在のアプリを反映元", "sub");
-    const copyBtn = makeButton("反映元 → 反映先", "sub");
+    const copyBtn = makeButton("反映元のIDを反映先へコピー", "sub");
     const currentBtn = makeButton("現在のアプリを反映先", "sub");
-    const swapBtn = makeButton("入れ替え", "sub");
-    const cardApp = makeCard({ title: "アプリ", number: 1 });
+    const swapBtn = makeButton("反映元と反映先を入れ替え", "sub");
+    const cardApp = makeCard({ title: "反映元と反映先のアプリ", number: 1 });
     cardApp.card.classList.add("kus-rl-card--route");
     const route = document.createElement("div");
     route.className = "kus-rl-route";
@@ -6940,7 +6945,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     routeArrow.textContent = "→";
     const targetEndpoint = document.createElement("section");
     targetEndpoint.className = "kus-rl-endpoint kus-rl-endpoint--target";
-    targetEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">反映先 · プレビューへ反映</div><div class="kus-rl-endpoint__note">本番への公開は設定画面から行います</div>';
+    targetEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">反映先 · 設定を書き込む</div><div class="kus-rl-endpoint__note">書き込むのは反映先のプレビューだけです</div>';
     targetEndpoint.appendChild(labeledInput(tgtApp, "アプリID"));
     targetEndpoint.appendChild(targetNote.el);
     const targetGuestDetails = makeDetails("ゲストスペースを指定", { open: !!tgtGuest.value });
@@ -6962,7 +6967,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       sourceJsonAppSelect.hidden = sourceJsonBundles.length < 2;
       if (sourceBundleFromJson) {
         const appName = extractAppNameFromBundle(sourceBundleFromJson);
-        srcJsonNote.textContent = `反映元JSON読み込み済み${sourceBundleFileName ? `（${sourceBundleFileName}）` : ""}: App ${sourceBundleFromJson?.appId || "-"}${appName ? ` (${appName})` : ""}（反映元はこのJSONから取得し、アプリからの取得は行いません）`;
+        srcJsonNote.textContent = `設定JSONを読み込み済み${sourceBundleFileName ? `（${sourceBundleFileName}）` : ""}: アプリ #${sourceBundleFromJson?.appId || "-"}${appName ? ` (${appName})` : ""}。反映元はこのJSONから取得し、アプリからは取得しません。`;
         srcJsonNote.style.display = "block";
         srcJsonClearBtn.style.display = "";
       } else {
@@ -6980,7 +6985,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshSameConnBanner();
       refreshReviewCard();
     });
-    srcJsonFile.addEventListener("change", () => runLite("反映元JSONを読み込み中…", async () => {
+    srcJsonFile.addEventListener("change", () => runLite("反映元の設定JSONを読み込み中…", async () => {
       const file = srcJsonFile.files?.[0];
       if (!file) return;
       srcJsonFile.value = "";
@@ -7000,7 +7005,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       sourceBundleToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
       sourceBundleFileName = file.name;
       if (sourceBundleFromJson?.appId) srcApp.value = String(sourceBundleFromJson.appId);
-      panel.setStatus(`反映元JSONを読み込みました: App ${sourceBundleFromJson?.appId || "-"}`, "ok");
+      panel.setStatus(`反映元の設定JSONを読み込みました（アプリ #${sourceBundleFromJson?.appId || "-"}）。`, "ok");
       saveState();
       refreshSrcJsonNote();
       refreshSameConnBanner();
@@ -7021,12 +7026,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshSrcJsonNote();
       refreshSameConnBanner();
       refreshReviewCard();
-      panel.setStatus("反映元JSONをクリアしました。設定JSONを選んでください。", "info");
+      panel.setStatus("読み込んだ設定JSONをクリアしました。設定JSONを選び直してください。", "info");
     });
     const sameConnBanner = document.createElement("div");
     sameConnBanner.className = "kus-lp__note--warn";
     sameConnBanner.style.display = "none";
-    sameConnBanner.textContent = "⚠ 反映元と反映先が同一接続です（同じアプリID・ゲストID）。同一アプリのプレビューを上書きする状態です。";
+    sameConnBanner.textContent = "反映元と反映先が同じアプリです。";
     cardApp.body.appendChild(sameConnBanner);
     cardApp.body.appendChild(createAppSearchControl(panel, {
       targets: [
@@ -7056,7 +7061,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (tgtGuest.value) targetGuestDetails.details.open = true;
       const same2 = sourceMode === "app" && !!srcApp.value.trim() && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim();
       sameConnBanner.style.display = same2 ? "block" : "none";
-      sameConnBanner.textContent = sourceEnvironment.value === "preview" ? "同じプレビュー同士は反映できません。反映元の取得環境かアプリIDを変更してください。" : "同じアプリの本番設定でプレビューを更新します。未公開の編集への影響を、次の画面で確認してください。";
+      sameConnBanner.textContent = sourceEnvironment.value === "preview" ? "同じプレビュー同士は反映できません。反映元の取得環境かアプリIDを変更してください。" : "同じアプリの本番の設定でプレビューを更新します。プレビューにある未公開の変更は上書きされる場合があります（次の画面で確認できます）。";
     }
     currentSrcBtn.addEventListener("click", () => {
       srcApp.value = DEFAULT_APP_ID || "";
@@ -7064,7 +7069,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       saveState();
       refreshSameConnBanner();
       refreshReviewCard();
-      panel.setStatus("現在のアプリIDを反映元にセットしました", "info");
+      panel.setStatus("現在のアプリを反映元にセットしました。", "info");
     });
     copyBtn.addEventListener("click", () => {
       tgtApp.value = srcApp.value.trim();
@@ -7072,7 +7077,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       saveState();
       refreshSameConnBanner();
       refreshReviewCard();
-      panel.setStatus("反映元IDを反映先へコピーしました", "info");
+      panel.setStatus("反映元のIDを反映先へコピーしました。", "info");
     });
     currentBtn.addEventListener("click", () => {
       tgtApp.value = DEFAULT_APP_ID || "";
@@ -7080,7 +7085,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       saveState();
       refreshSameConnBanner();
       refreshReviewCard();
-      panel.setStatus("現在のアプリIDを反映先にセットしました", "info");
+      panel.setStatus("現在のアプリを反映先にセットしました。", "info");
     });
     swapBtn.addEventListener("click", () => {
       const sa = srcApp.value;
@@ -7092,7 +7097,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       saveState();
       refreshSameConnBanner();
       refreshReviewCard();
-      panel.setStatus("反映元と反映先を入れ替えました", "info");
+      panel.setStatus("反映元と反映先を入れ替えました。", "info");
     });
     [srcApp, srcGuest, tgtApp, tgtGuest].forEach((el) => {
       el.addEventListener("input", () => {
@@ -7181,7 +7186,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     fieldSettingsNotice.textContent = FIELD_SETTINGS_OMITTED_NOTICE;
     fieldSettingsNotice.hidden = true;
     cardScope.body.appendChild(fieldSettingsNotice);
-    const preserve = makeCheck({ label: "反映先だけの一覧・グラフ・アクションを保持する", checked: memoryState.preserveTargetOnly !== false, help: "標準は保持。OFFにすると反映元にない設定を削除します。フィールドは常に保持します。" });
+    const preserve = makeCheck({ label: "反映先だけの一覧・グラフ・アクションを保持する", checked: memoryState.preserveTargetOnly !== false, help: "標準はON（保持）です。OFFにすると、反映元にない一覧・グラフ・アクションを削除します。" });
     const preserveBox = document.createElement("div");
     preserveBox.className = "kus-rl-scope-option";
     const preserveTitle = document.createElement("div");
@@ -7227,11 +7232,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const keeps = preserve.checkbox.checked;
       const usesNamedSections = ["viewSettings", "reportSettings", "actionSettings"].some((key) => selected.includes(key));
       preserveHelp.classList.toggle("kus-rl-scope-option__help--warn", !keeps);
-      preserveHelp.textContent = (keeps ? "反映先だけの一覧・グラフ・アクションは削除せず残します（標準）。フィールドは常に保持します。" : "反映元にない一覧・グラフ・アクションを反映先から削除します。フィールドは常に保持します。") + (usesNamedSections ? "" : " 今の選択（一覧・グラフ・アクションなし）では使われません。");
+      preserveHelp.textContent = !usesNamedSections ? "今の選択には一覧・グラフ・アクションがないため、この設定は使われません。フィールドは常に保持します。" : keeps ? "反映先だけの一覧・グラフ・アクションは削除せず残します（標準）。フィールドは常に保持します。" : "反映元にない一覧・グラフ・アクションを反映先から削除します。フィールドは常に保持します。";
     }
     function refreshScopeCount() {
       const sel = collectSelectedScopes().length;
-      scopeCountLabel.textContent = `選択中: ${sel} / ${chips.length} セクション`;
+      scopeCountLabel.textContent = `選択中: ${sel} / ${chips.length} 項目`;
       refreshScopeNotices();
     }
     function setSelectedScopes(scopeKeys) {
@@ -7257,7 +7262,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       btn.title = preset.hint;
       btn.addEventListener("click", () => {
         applyScopePreset(preset);
-        panel.setStatus(`プリセット適用: ${preset.label}（${collectSelectedScopes().length}件）`, "info");
+        panel.setStatus(`「${preset.label}」を選びました（${collectSelectedScopes().length} 項目）。`, "info");
       });
       presetRow.appendChild(btn);
     }
@@ -7303,22 +7308,22 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshReviewCard();
     }
     panel.body.insertBefore(cardScope.card, panel.status);
-    const cardOpt = makeCard({ title: "実行オプション", number: 3, soft: true });
+    const cardOpt = makeCard({ title: "反映時の動作", number: 3, soft: true });
     const sourceEnvironment = document.createElement("select");
     sourceEnvironment.className = "kus-lp__select";
     sourceEnvironment.setAttribute("aria-label", "反映元の取得環境");
-    sourceEnvironment.innerHTML = '<option value="production">本番設定（運用中）を取得</option><option value="preview">プレビュー設定（未公開）を取得</option>';
+    sourceEnvironment.innerHTML = '<option value="production">本番の設定を取得</option><option value="preview">プレビューの設定（未公開）を取得</option>';
     sourceEnvironment.value = memoryState.sourcePreview ? "preview" : "production";
     sourceAppFields.insertBefore(sourceEnvironment, sourceGuestDetails.details);
     const safetyNote = document.createElement("p");
     safetyNote.className = "kus-rl-quiet";
-    safetyNote.textContent = "反映前のバックアップを自動保存します。変更のない項目は送信せず、書き込みエラーが起きたら中断します。";
+    safetyNote.textContent = "反映前の設定を自動でバックアップします。変更のない項目は書き込まず、エラーが起きたら以降の項目を実行せず中断します。";
     cardOpt.body.appendChild(safetyNote);
-    const lookupDetails = makeDetails("Lookup AppID マッピング（任意）");
+    const lookupDetails = makeDetails("ルックアップの参照アプリID変換（任意）");
     const lookupTa = makeTextarea({
       rows: 3,
       code: true,
-      placeholder: "旧AppID → 新AppID（1行に1組）\n例: 101 → 202",
+      placeholder: "旧アプリID → 新アプリID（1行に1組）\n例: 101 → 202",
       value: memoryState.lookupMapText || ""
     });
     lookupTa.setAttribute("aria-label", "ルックアップの参照アプリID変換");
@@ -7330,7 +7335,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const lookupHint = document.createElement("div");
     lookupHint.className = "kus-lp__small";
     lookupHint.style.marginTop = "6px";
-    lookupHint.textContent = 'フィールドの参照アプリ（ルックアップ）を別 AppID に置換します。1行に「旧ID → 新ID」（→ / = / : / カンマ区切り）か、{"旧AppID":"新AppID"} のJSONで入力します。差分プレビューにも反映し、実行前に変換先 AppID の存在を確認します。';
+    lookupHint.textContent = 'ルックアップの参照先アプリIDを置き換えて反映します（差分にも反映し、実行前に変換先アプリの存在を確認します）。1行に「旧ID → 新ID」（→ / = / : / カンマ区切り）か、{"旧アプリID":"新アプリID"} のJSONで入力します。';
     lookupDetails.body.appendChild(lookupHint);
     cardOpt.body.appendChild(lookupDetails.details);
     function refreshLookupStatus() {
@@ -7354,7 +7359,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshReviewCard();
     });
     panel.body.insertBefore(cardOpt.card, panel.status);
-    const cardPreset = makeCard({ title: "プリセット（接続+スコープ）", soft: true });
+    const cardPreset = makeCard({ title: "プリセット（接続先と反映項目）", soft: true });
     cardPreset.card.classList.add("kus-rl-card--preset");
     const presetSelect = document.createElement("select");
     presetSelect.className = "kus-lp__select";
@@ -7383,7 +7388,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     cardPreset.body.appendChild(makeRow([exportPresetsBtn, importPresetsBtn, importPresetsFile]));
     const presetHint = document.createElement("div");
     presetHint.className = "kus-lp__small";
-    presetHint.textContent = "プリセットはこのタブを閉じるまで保持されます（ブラウザに永続保存はしません）。次回も使う場合は「JSONで書き出し」で保存し、「JSONを読み込み」で復元してください。";
+    presetHint.textContent = "プリセットはこのタブを閉じると消えます。次回も使う場合は「JSONで書き出し」で保存し、「JSONを読み込み」で復元してください。";
     cardPreset.body.appendChild(presetHint);
     panel.body.insertBefore(cardPreset.card, panel.status);
     function refreshPresetSelect() {
@@ -7406,7 +7411,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       for (const p of presets) {
         const opt = document.createElement("option");
         opt.value = p.name;
-        opt.textContent = `${p.name} (src#${p.source.appId} → tgt#${p.target.appId})`;
+        opt.textContent = `${p.name}（反映元 #${p.source.appId} → 反映先 #${p.target.appId}）`;
         presetSelect.appendChild(opt);
       }
       if (keep && presets.some((p) => p.name === keep)) presetSelect.value = keep;
@@ -7422,7 +7427,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     saveBtn.addEventListener("click", () => {
       const trimmed = presetName.value.trim();
       if (!trimmed) {
-        panel.setStatus("プリセット名を入力してください", "warn");
+        panel.setStatus("プリセット名を入力してください。", "warn");
         presetName.focus();
         return;
       }
@@ -7458,12 +7463,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     exportPresetsBtn.addEventListener("click", () => {
       const payload = buildReflectPresetsExport(memoryState.presets);
       if (!payload.count) {
-        panel.setStatus("書き出せるプリセットがありません", "warn");
+        panel.setStatus("書き出せるプリセットがありません。", "warn");
         return;
       }
       const filename = buildExportFilename("プレビュー反映プリセット", "json");
       downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
-      panel.setStatus(`プリセット ${payload.count} 件を ${filename} に書き出しました`, "ok");
+      panel.setStatus(`プリセット ${payload.count} 件を ${filename} に書き出しました。`, "ok");
     });
     importPresetsBtn.addEventListener("click", () => importPresetsFile.click());
     importPresetsFile.addEventListener("change", () => runLite("プリセットJSONを読み込み中…", async () => {
@@ -7524,13 +7529,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       memoryState.presets = (memoryState.presets || []).filter((p) => p.name !== name);
       refreshPresetSelect();
       refreshPresetButtons();
-      panel.setStatus(`プリセット「${name}」を削除しました`, "info");
+      panel.setStatus(`プリセット「${name}」を削除しました。`, "info");
     });
     const rolloutDetails = makeDetails("続けて反映する反映先（複数アプリへ展開）", { open: !!(memoryState.rolloutQueueText || "").trim() });
     rolloutDetails.details.classList.add("kus-rl-advanced", "kus-rl-rollout");
     const rolloutHelp = document.createElement("p");
     rolloutHelp.className = "kus-rl-quiet";
-    rolloutHelp.textContent = "同じ反映元・項目・設定で、ほかのアプリにも順番に反映します。反映先ごとに差分確認と最終確認を行います。数字だけのIDは通常スペースのアプリ、ゲストスペースのアプリはURLで指定します。";
+    rolloutHelp.textContent = "同じ反映元・項目・設定で、ほかのアプリにも順番に反映します（反映先ごとに差分確認と最終確認を行います）。数字だけのIDは通常スペースのアプリを指すため、ゲストスペースのアプリはURLで指定してください。";
     const rolloutTa = makeTextarea({ rows: 4, code: true, placeholder: "1行に1件（改行・カンマ区切りも可）\n例: 203\nhttps://example.cybozu.com/k/guest/5/204/", value: memoryState.rolloutQueueText || "" });
     rolloutTa.classList.add("kus-rl-rollout__input");
     rolloutTa.setAttribute("aria-label", "続けて反映する反映先");
@@ -7621,11 +7626,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         const head = document.createElement("strong");
         head.textContent = `次の反映先: ${formatRolloutTarget(next)}（${rest ? `残り ${rest} 件` : "最後の反映先"}）`;
         const body = document.createElement("span");
-        body.textContent = "同じ反映元・項目・設定で差分を取得します。反映先ごとに差分確認と最終確認を行うため、ここでは書き込みません。";
+        body.textContent = "同じ反映元・項目・設定で差分を取得するだけで、まだ書き込みません。反映先ごとに差分確認と最終確認を行います。";
         rolloutNote.append(head, body);
       }
       rolloutWarn.hidden = !(last && (last.ng > 0 || last.pending > 0));
-      rolloutWarn.textContent = last?.cancelled ? "直前の反映先は利用者の操作で中止したため、未実行の項目があり、一部だけ反映されている可能性があります。結果を確認してから進んでください。" : "直前の反映先に失敗・未実行の項目があります。結果を確認してから進んでください。";
+      rolloutWarn.textContent = last?.cancelled ? "直前の反映先は中止したため、一部の項目だけ反映されている可能性があります。結果を確認してから進んでください。" : "直前の反映先に失敗・未実行の項目があります。結果を確認してから進んでください。";
       rolloutError.hidden = queue.ok;
       rolloutError.textContent = "error" in queue ? `続けて反映する反映先を読み取れません。${queue.error}` : "";
       rolloutNextRow.hidden = !next && queue.ok;
@@ -7659,7 +7664,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshReviewCard();
       return startPreview(`次の反映先 ${formatRolloutTarget(next)} の差分を取得しました。内容を確認してから反映してください（まだ書き込んでいません）。`);
     }
-    const previewBtn = makeButton("差分プレビューを更新", "primary");
+    const previewBtn = makeButton("差分を再取得", "primary");
     const changedOnlyBtn = makeButton("差分ありだけ選択", "sub");
     const reviewCard = makeCard({ title: "反映予定を確認", soft: true });
     reviewCard.actions.style.flexWrap = "wrap";
@@ -7669,11 +7674,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     reviewBody.className = "kus-rl-review";
     reviewCard.body.appendChild(reviewBody);
     panel.body.insertBefore(reviewCard.card, panel.status);
-    const previewCard = makeCard({ title: "差分プレビュー結果" });
+    const previewCard = makeCard({ title: "項目ごとの差分" });
     previewCard.card.style.display = "none";
     const previewTools = document.createElement("div");
     previewTools.className = "kus-rl-preview-tools";
-    const previewSearch = makeInput({ placeholder: "セクション名や詳細で検索", width: "wide" });
+    const previewSearch = makeInput({ placeholder: "項目名や内容で検索", width: "wide" });
     previewSearch.setAttribute("aria-label", "差分を検索");
     previewSearch.type = "search";
     const previewFilter = document.createElement("select");
@@ -7924,7 +7929,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const token = confirmationToken();
       if (confirmedToken && confirmedToken !== token) clearConfirmation();
       runBtn.disabled = busy || !confirmationReady();
-      setButtonText(runBtn, `確認した ${plan.effectiveScopes.length} 項目をプレビューへ反映`);
+      setButtonText(runBtn, `確認した ${plan.effectiveScopes.length} 項目を反映先プレビューへ反映`);
       let message = invalid || lookupMapError(lookupState) || (!scopes.length ? "反映する項目を選んでください。" : "変更前と変更後を確認し、最終確認に進んでください。");
       if (!preview) message = "対象を指定して差分を取得してください。";
       else if (!fresh) message = "条件が変わりました。差分を再取得してください。";
@@ -7942,7 +7947,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       reviewBody.appendChild(info);
       const summary = document.createElement("p");
       summary.className = "kus-rl-quiet";
-      summary.textContent = fresh ? `反映予定 ${plan.effectiveScopes.length} 項目 / 変更なし ${plan.sameScopes.length} 項目 / 確認が必要 ${plan.errorScopes.length} 項目 · ${formatPreviewStamp(preview.at)}` : "この段階では書き込みを行いません。";
+      summary.textContent = fresh ? `反映予定 ${plan.effectiveScopes.length} 項目 / 変更なし ${plan.sameScopes.length} 項目 / 取得失敗 ${plan.errorScopes.length} 項目 · ${formatPreviewStamp(preview.at)}` : "この段階では書き込みません。";
       reviewBody.appendChild(summary);
       if (blockers.length) {
         const list2 = document.createElement("ul");
@@ -7994,42 +7999,42 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     previewKeepShownBtn.addEventListener("click", () => {
       const previewResult = memoryState.lastPreview?.result || null;
       if (!previewResult) {
-        panel.setStatus("先に差分プレビューを取得してください", "warn");
+        panel.setStatus("先に差分を取得してください。", "warn");
         return;
       }
       const scopeKeys = uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value));
       setSelectedScopes(scopeKeys);
-      panel.setStatus(`表示中の ${scopeKeys.length} セクションだけを選択しました`, scopeKeys.length ? "ok" : "info");
+      panel.setStatus(`表示中の ${scopeKeys.length} 項目だけを選択しました。`, scopeKeys.length ? "ok" : "info");
     });
     previewAddShownBtn.addEventListener("click", () => {
       const previewResult = memoryState.lastPreview?.result || null;
       if (!previewResult) {
-        panel.setStatus("先に差分プレビューを取得してください", "warn");
+        panel.setStatus("先に差分を取得してください。", "warn");
         return;
       }
       const scopeKeys = uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value));
       setSelectedScopes([.../* @__PURE__ */ new Set([...collectSelectedScopes(), ...scopeKeys])]);
-      panel.setStatus(`表示中の ${scopeKeys.length} セクションを追加しました`, scopeKeys.length ? "ok" : "info");
+      panel.setStatus(`表示中の ${scopeKeys.length} 項目を選択に追加しました。`, scopeKeys.length ? "ok" : "info");
     });
     previewRemoveShownBtn.addEventListener("click", () => {
       const previewResult = memoryState.lastPreview?.result || null;
       if (!previewResult) {
-        panel.setStatus("先に差分プレビューを取得してください", "warn");
+        panel.setStatus("先に差分を取得してください。", "warn");
         return;
       }
       const scopeKeys = new Set(uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value)));
       setSelectedScopes(collectSelectedScopes().filter((key) => !scopeKeys.has(key)));
-      panel.setStatus(`表示中の ${scopeKeys.size} セクションを選択から外しました`, scopeKeys.size ? "ok" : "info");
+      panel.setStatus(`表示中の ${scopeKeys.size} 項目を選択から外しました。`, scopeKeys.size ? "ok" : "info");
     });
     previewRiskyBtn.addEventListener("click", () => {
       const previewResult = memoryState.lastPreview?.result || null;
       if (!previewResult) {
-        panel.setStatus("先に差分プレビューを取得してください", "warn");
+        panel.setStatus("先に差分を取得してください。", "warn");
         return;
       }
       const riskyScopes = uniqueSectionKeys(previewResult.entries.filter((entry) => RISKY_SCOPE_KEYS.has(entry.sectionKey)));
       setSelectedScopes(riskyScopes);
-      panel.setStatus(`高リスク ${riskyScopes.length} セクションだけを選択しました`, riskyScopes.length ? "warn" : "info");
+      panel.setStatus(`高リスクの ${riskyScopes.length} 項目だけを選択しました。`, riskyScopes.length ? "warn" : "info");
     });
     function startPreview(okMessage) {
       if (busy || previewBtn.disabled) return;
@@ -8037,16 +8042,16 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const lookupError = lookupMapError(lookupState);
       const lookupMap = lookupMapValue(lookupState);
       if (!scopes.length) {
-        panel.setStatus("対象セクションを選択してください", "warn");
+        panel.setStatus("反映する項目を選んでください。", "warn");
         return;
       }
       if (lookupError) {
         panel.setStatus(lookupError, "warn");
         return;
       }
-      return runLite("差分プレビューを取得中…", async () => {
+      return runLite("差分を取得中…", async () => {
         await runPreview(scopes, lookupMap);
-      }, okMessage || `差分プレビュー完了（${scopes.length}セクションを比較）`);
+      }, okMessage || `差分を取得しました（${scopes.length} 項目を比較。まだ書き込んでいません）。`);
     }
     previewBtn.addEventListener("click", () => {
       startPreview();
@@ -8064,15 +8069,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     changedOnlyBtn.addEventListener("click", () => {
       const { preview, fresh } = getPreviewState();
       if (!fresh || !preview?.result) {
-        panel.setStatus("先に最新の差分プレビューを取得してください", "warn");
+        panel.setStatus("先に最新の差分を取得してください。", "warn");
         return;
       }
       const changedScopes = preview.result.entries.filter((entry) => entry.status === "change").map((entry) => entry.sectionKey);
       setSelectedScopes(changedScopes);
-      panel.setStatus(`差分あり ${changedScopes.length} セクションだけを選択しました`, changedScopes.length ? "ok" : "info");
+      panel.setStatus(`差分あり ${changedScopes.length} 項目だけを選択しました。`, changedScopes.length ? "ok" : "info");
     });
     const confirmBtn = makeButton("最終確認に進む", "primary");
-    const confirmCard = makeCard({ title: "この内容をプレビューへ反映します" });
+    const confirmCard = makeCard({ title: "この内容を反映先のプレビューへ反映します" });
     const confirmBody = document.createElement("div");
     confirmCard.body.appendChild(confirmBody);
     const acknowledged = makeCheck({ label: "反映先と変更・削除の内容を確認しました", checked: false });
@@ -8082,7 +8087,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     targetCheck.setAttribute("data-lp-no-submit", "");
     targetCheck.inputMode = "numeric";
     targetCheck.autocomplete = "off";
-    const targetCheckRow = makeRow([targetCheck], { label: "反映先IDの再確認" });
+    const targetCheckRow = makeRow([targetCheck], { label: "反映先アプリIDの再確認" });
     const confirmStatus = document.createElement("p");
     confirmStatus.className = "kus-rl-quiet";
     confirmStatus.setAttribute("aria-live", "polite");
@@ -8096,7 +8101,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       confirmedToken = "";
       acknowledged.checkbox.checked = false;
       targetCheck.value = "";
-      confirmStatus.textContent = "反映先と変更内容を確認してチェックを入れてください。";
+      confirmStatus.textContent = "書き込み先と変更内容を確認して、チェックを入れてください。";
     }
     function highImpactReasons() {
       const { preview, scopes } = getPreviewState();
@@ -8106,7 +8111,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (removals) reasons.push(`削除・置換される設定が ${removals} 件あります`);
       if (entries.some((entry) => RISKY_SCOPE_KEYS.has(entry.sectionKey))) reasons.push("権限・通知・プロセス管理の変更を含みます");
       if (preview?.result.targetPending?.state === "pending") reasons.push(TARGET_PENDING_REASON);
-      if (!sourceBundleFromJson && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim()) reasons.push("同じアプリの本番設定でプレビューを更新します");
+      if (!sourceBundleFromJson && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim()) reasons.push("同じアプリの本番の設定でプレビューを更新します");
       return reasons;
     }
     function confirmationReady() {
@@ -8121,36 +8126,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (!confirmedToken || !state3.preview) return;
       confirmBody.innerHTML = "";
       renderReflectRoute(confirmBody, state3.preview.identities, sourceMode === "json" ? "設定JSON" : sourceEnvironment.value === "preview" ? "プレビュー" : "本番", restoreRouteOptions(state3.preview.identities));
-      const entries = state3.preview.result.entries.filter((entry) => state3.scopes.includes(entry.sectionKey) && entry.status === "change");
-      const summary = document.createElement("p");
-      summary.textContent = `反映する項目（${entries.length}）：${entries.map((entry) => entry.label).join("、")}`;
-      confirmBody.appendChild(summary);
       if (restoreMode) appendRestoreNotice(confirmBody);
-      appendTargetPendingNotice(confirmBody, state3.preview.result.targetPending);
-      const reasons = highImpactReasons();
-      targetCheckRow.hidden = !reasons.length;
-      if (reasons.length) {
-        const note = document.createElement("p");
-        note.className = "kus-rl-next kus-rl-next--warn";
-        note.textContent = reasons.join("。") + "。反映先IDを入力して確認してください。";
-        confirmBody.appendChild(note);
-      }
-      const uploadLabels = collectUploadLabels(entries);
-      if (uploadLabels.length) {
-        const box = document.createElement("div");
-        box.className = "kus-rl-uploads";
-        box.dataset.reflectUploads = "true";
-        const title = document.createElement("strong");
-        title.textContent = `反映先へアップロードするファイル（${uploadLabels.length} 件）`;
-        const list2 = document.createElement("ul");
-        for (const label of uploadLabels) {
-          const item = document.createElement("li");
-          item.textContent = label;
-          list2.appendChild(item);
-        }
-        box.append(title, list2);
-        confirmBody.appendChild(box);
-      }
+      const entries = state3.preview.result.entries.filter((entry) => state3.scopes.includes(entry.sectionKey) && entry.status === "change");
+      const changeTotal = entries.reduce((sum, entry) => sum + entry.changeCount, 0);
+      const removalTotal = entries.reduce((sum, entry) => sum + entry.removalCount, 0);
+      const summary = document.createElement("p");
+      summary.dataset.confirmSummary = "changes";
+      summary.textContent = `${entries.length} 項目を変更します：${entries.map((entry) => entry.label).join("、")}（設定の変更 ${changeTotal} 件${removalTotal ? `、うち削除・置換 ${removalTotal} 件` : ""}）`;
+      confirmBody.appendChild(summary);
       const removals = [];
       for (const entry of entries) {
         const removedItems = (entry.items || []).filter((item) => item.kind === "削除" || item.kind === "変更" && item.details.some((detail) => detail.includes("削除")));
@@ -8176,11 +8159,47 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
           list2.appendChild(item);
         }
         confirmBody.appendChild(list2);
+      } else {
+        const none = document.createElement("p");
+        none.className = "kus-rl-quiet";
+        none.dataset.reflectRemovals = removalTotal ? "unlisted" : "none";
+        none.textContent = removalTotal ? `削除・置換される設定が ${removalTotal} 件あります。下の各項目の設定値の内訳で確認してください。` : "この反映で削除・置換される設定はありません。";
+        confirmBody.appendChild(none);
       }
+      const undo = document.createElement("p");
+      undo.className = "kus-rl-quiet";
+      undo.dataset.confirmUndo = state3.preview.result.targetPending?.state || "unknown";
+      undo.textContent = describeConfirmUndo(state3.preview.result.targetPending);
+      confirmBody.appendChild(undo);
       const policy = document.createElement("p");
       policy.className = "kus-rl-quiet";
-      policy.textContent = "反映前の設定JSONを自動保存します。実行直前に設定を再取得し、確認後の変更があれば中止します。途中エラーでは中断します。複数項目の一括取消はできません。本番公開はアプリ設定画面で行います。";
+      policy.textContent = "実行直前に設定を再取得し、確認後に別の変更があれば中止します。途中でエラーが起きたら、以降の項目を実行せず中断します。";
       confirmBody.appendChild(policy);
+      appendTargetPendingNotice(confirmBody, state3.preview.result.targetPending);
+      const reasons = highImpactReasons();
+      targetCheckRow.hidden = !reasons.length;
+      if (reasons.length) {
+        const note = document.createElement("p");
+        note.className = "kus-rl-next kus-rl-next--warn";
+        note.textContent = reasons.join("。") + "。確認のため、反映先アプリIDを入力してください。";
+        confirmBody.appendChild(note);
+      }
+      const uploadLabels = collectUploadLabels(entries);
+      if (uploadLabels.length) {
+        const box = document.createElement("div");
+        box.className = "kus-rl-uploads";
+        box.dataset.reflectUploads = "true";
+        const title = document.createElement("strong");
+        title.textContent = `反映先へアップロードするファイル（${uploadLabels.length} 件）`;
+        const list2 = document.createElement("ul");
+        for (const label of uploadLabels) {
+          const item = document.createElement("li");
+          item.textContent = label;
+          list2.appendChild(item);
+        }
+        box.append(title, list2);
+        confirmBody.appendChild(box);
+      }
       for (const entry of entries) {
         const block = document.createElement("section");
         block.className = "kus-rl-confirm-entry";
@@ -8197,7 +8216,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     confirmBtn.addEventListener("click", openConfirmation);
     for (const control of [acknowledged.checkbox, targetCheck]) control.addEventListener("input", () => {
       runBtn.disabled = busy || !confirmationReady();
-      confirmStatus.textContent = confirmationReady() ? "確認が完了しました。下の反映ボタンから実行できます。" : "確認チェックと、表示されている場合は反映先IDの入力が必要です。";
+      confirmStatus.textContent = confirmationReady() ? "確認できました。下の反映ボタンで実行してください。" : "確認のチェックと、入力欄が表示されている場合は反映先アプリIDの入力が必要です。";
     });
     const exportPlanBtn = makeButton("反映計画JSONを保存", "sub");
     reviewCard.actions.appendChild(exportPlanBtn);
@@ -8223,8 +8242,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       setTimeout(() => URL.revokeObjectURL(url), 5e3);
     });
     const exportPlanMdBtn = makeButton("計画をMarkdownで保存", "sub");
-    exportPlanMdBtn.title = "選択中の項目の計画（経路・変更の要約・未公開の変更）をMarkdownで保存します";
-    const copyPlanMdBtn = makeButton("Markdownをコピー", "sub");
+    exportPlanMdBtn.title = "選択中の項目の計画（反映元と反映先・変更の要約・未公開の変更）をMarkdownで保存します";
+    const copyPlanMdBtn = makeButton("計画のMarkdownをコピー", "sub");
     copyPlanMdBtn.title = "選択中の項目の計画をMarkdownとしてクリップボードへコピーします";
     reviewCard.actions.append(exportPlanMdBtn, copyPlanMdBtn);
     function buildPlanMarkdown() {
@@ -8264,7 +8283,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     copyPlanMdBtn.addEventListener("click", () => {
       void copyMarkdown(buildPlanMarkdown()?.text, "反映計画");
     });
-    const runBtn = makeButton("プレビュー反映を実行", "run");
+    const runBtn = makeButton("反映先プレビューへ反映", "run");
     runBtn.classList.add("kus-lp__btn--danger");
     runBtn.classList.remove("kus-lp__btn--run");
     runBtn.style.cssText = "";
@@ -8302,7 +8321,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const retryFailedBtn = makeButton("失敗・未実行だけ選択", "sub");
     retryFailedBtn.title = "失敗または中断で未実行のセクションだけを反映対象に選び直します";
     const openTargetBtn = makeButton("反映先の設定画面を開く", "sub");
-    openTargetBtn.title = "反映先アプリの設定画面を新しいタブで開きます（運用環境への反映はそこから実行できます）";
+    openTargetBtn.title = "反映先アプリの設定画面を新しいタブで開きます（本番への公開はそこから行えます）";
     const restoreBtn = makeButton("バックアップから戻す（差分を確認）", "sub");
     restoreBtn.title = "反映前に自動保存したバックアップを反映元にして、反映先との差分を確認します（この操作では書き込みません）";
     restoreBtn.dataset.reflectRestore = "backup";
@@ -8316,7 +8335,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     lastResultActions.appendChild(exportResultBtn);
     const exportResultMdBtn = makeButton("記録をMarkdownで保存", "sub");
     exportResultMdBtn.title = "実行した項目の計画と結果（成功・失敗）をMarkdownの反映記録として保存します";
-    const copyResultMdBtn = makeButton("Markdownをコピー", "sub");
+    const copyResultMdBtn = makeButton("記録のMarkdownをコピー", "sub");
     copyResultMdBtn.title = "反映記録をMarkdownとしてクリップボードへコピーします";
     lastResultActions.append(exportResultMdBtn, copyResultMdBtn);
     lastResultActions.appendChild(openTargetBtn);
@@ -8467,7 +8486,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (!retryScopes.length) return;
       setSelectedScopes(retryScopes);
       showWorkflowStage("setup");
-      panel.setStatus(`失敗・未実行の ${retryScopes.length} セクションを選択しました。差分プレビューで確認してから再実行してください。`, "info");
+      panel.setStatus(`失敗・未実行の ${retryScopes.length} 項目を選択しました。差分を取得して確認してから再実行してください。`, "info");
       scrollWithinCanvas(cardScope.card);
     });
     openTargetBtn.addEventListener("click", () => {
@@ -8476,7 +8495,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const base = last.guestId ? `/k/guest/${encodeURIComponent(last.guestId)}` : "/k";
       const url = `${window.location.origin}${base}/admin/app/flow?app=${encodeURIComponent(last.appId)}`;
       window.open(url, "_blank", "noopener");
-      panel.setStatus(`反映先アプリ #${last.appId} の設定画面を開きました`, "info");
+      panel.setStatus(`反映先アプリ #${last.appId} の設定画面を開きました。`, "info");
     });
     exportResultBtn.addEventListener("click", () => {
       const last = memoryState.lastResult;
@@ -8537,7 +8556,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const hasIssue = last.ng > 0 || last.pending > 0;
       const tone = hasIssue ? "color:#9a3412" : "color:#065f46";
       const failedSummary = last.failedLabels.length ? `<div>失敗: ${escapeHtml(last.failedLabels.slice(0, 5).join(" / "))}${last.failedLabels.length > 5 ? ` ほか ${last.failedLabels.length - 5} 件` : ""}</div>` : "";
-      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.cancelled ? "⚠ 中止しました（一部だけ反映されている可能性があります）" : hasIssue ? "⚠ 一部エラー" : "✓ 全成功"}</div><div>反映先 #${escapeHtml(last.appId || "-")} / 成功 ${last.ok} / ${last.cancelled ? "途中で停止" : "失敗"} ${last.ng}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? `<div style="margin-top:4px">${last.cancelled ? "差分を取得し直して現在の状態を確認してから、" : ""}「失敗・未実行だけ選択」で対象を絞って再実行できます。</div>` : '<div style="margin-top:4px">反映先はプレビューです。運用環境への反映（デプロイ）は反映先の設定画面から実行してください。</div>');
+      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.cancelled ? "⚠ 中止しました。書き込み済みの分は反映先に残っています" : hasIssue ? "⚠ 一部の項目を反映できませんでした" : `✓ ${last.ok} 項目を反映しました`}</div><div>反映先 #${escapeHtml(last.appId || "-")} / 成功 ${last.ok} / ${last.cancelled ? "途中で停止" : "失敗"} ${last.ng}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? `<div style="margin-top:4px">${last.cancelled ? "差分を取得し直して現在の状態を確認してから、" : ""}「失敗・未実行だけ選択」で対象を絞って再実行してください。</div>` : '<div style="margin-top:4px">変わったのは反映先のプレビューだけです。本番へ公開するには、反映先の設定画面で公開してください。</div>');
       renderApplySectionResults(lastResultSections, last.report.sections);
       const guidance = describeUndoGuidance(last.report.targetPending);
       undoNote.textContent = guidance.text;
@@ -8561,7 +8580,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const lookupError = lookupMapError(lookupState);
       const lookupMap = lookupMapValue(lookupState);
       if (!scopes.length) {
-        panel.setStatus("反映するセクションを選択してください", "warn");
+        panel.setStatus("反映する項目を選んでください。", "warn");
         return;
       }
       if (lookupError) {
@@ -8569,7 +8588,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         return;
       }
       saveState();
-      const outcome = await runLite("プレビュー反映 実行中…", async () => {
+      const outcome = await runLite("反映先プレビューへ書き込み中…", async () => {
         let previewState = getPreviewState(scopes, lookupState);
         let previewResult = previewState.fresh ? previewState.preview?.result || null : null;
         if (!previewResult) {
@@ -8579,9 +8598,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         const plan = getExecutionPlan(scopes, previewResult);
         if (!plan.effectiveScopes.length) {
           if (!previewResult.changedSections) {
-            throw new Error("差分プレビューでは変更対象がありません。反映は実行しません。");
+            throw new Error("変更が必要な項目がないため、反映は実行しません。");
           }
-          throw new Error(`現在の実行オプションでは実行対象が 0 件です。${buildSkipSummary(plan)}`);
+          throw new Error(`実行する項目がありません（${buildSkipSummary(plan)}）。`);
         }
         if (selectionIssues(previewResult, scopes).length) throw new Error("確認できない項目が含まれています。差分確認へ戻ってください。");
         const plannedSnapshot = { identities: reportIdentities(previewState.preview.identities), entries: previewResult.entries.filter((entry) => plan.effectiveScopes.includes(entry.sectionKey)) };
@@ -8673,11 +8692,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || "", name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, pending: counts.pending, at: memoryState.lastResult.at, ...applyOutcome.cancelled ? { cancelled: true } : {} });
         renderLastResult();
         showWorkflowStage("result");
-        return { cancelled: false, hadError: counts.ng > 0 || counts.pending > 0, stopped: counts.ng + counts.pending > 0 && !!applyOutcome.cancelled ? { ok: counts.ok, ng: counts.ng, pending: counts.pending } : null };
+        return { cancelled: false, hadError: counts.ng > 0 || counts.pending > 0, counts, failureNote: describeFirstFailure(applyOutcome.sections), stopped: counts.ng + counts.pending > 0 && !!applyOutcome.cancelled ? { ok: counts.ok, ng: counts.ng, pending: counts.pending } : null };
       });
       if (!outcome) return;
       if (outcome.cancelled) {
-        panel.setStatus("反映実行をキャンセルしました", "info");
+        panel.setStatus("反映を実行しませんでした（書き込みはありません）。差分を取得し直してください。", "info");
         return;
       }
       if (outcome.stopped) {
@@ -8686,26 +8705,28 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         const queue = currentRollout();
         const queued = queue.ok ? queue.targets.length : 0;
         panel.setStatus(
-          `中止しました（${ok}/${total} 件を反映${ng ? `、${ng} 件は途中で停止` : ""}、残り ${pending} 件は未実行）。反映先プレビューは一部だけ更新されている可能性があります。${queued ? `続けて反映する ${queued} 件の反映先は未実行です。` : ""}差分を取得し直して現在の状態を確認してください。`,
+          `中止しました（${ok}/${total} 件を反映${ng ? `、${ng} 件は途中で停止` : ""}、残り ${pending} 件は未実行）。書き込み済みの分は反映先プレビューに残っています。${queued ? `続けて反映する ${queued} 件の反映先は未実行です。` : ""}差分を取得し直して現在の状態を確認してください。`,
           "warn"
         );
         return;
       }
+      if (!outcome.counts) return;
       if (outcome.hadError) {
-        panel.setStatus("プレビュー反映が一部失敗しました。「直近の実行結果」から失敗・未実行だけ選択して再実行できます。", "warn");
+        const { ok, ng, pending } = outcome.counts;
+        panel.setStatus(`${ok + ng + pending} 項目中 ${ok} 項目を反映しました。失敗 ${ng} 項目${pending ? `、未実行 ${pending} 項目` : ""}${outcome.failureNote ? `（${outcome.failureNote}）` : ""}。「失敗・未実行だけ選択」で再実行してください。`, "warn");
         return;
       }
-      panel.setStatus("プレビュー反映が完了しました。運用環境への反映は「反映先の設定画面を開く」からデプロイしてください。", "ok");
+      panel.setStatus(`${outcome.counts.ok} 項目を反映先プレビューへ反映しました。本番へ公開するには、「反映先の設定画面を開く」から kintone の設定画面で公開してください。`, "ok");
     });
     const nav = document.createElement("nav");
     nav.className = "kus-rl-nav";
     nav.setAttribute("aria-label", "プレビュー反映の手順");
     nav.setAttribute("role", "tablist");
     const stageDefs = [
-      { id: "setup", number: "1", label: "対象を選ぶ", copy: "アプリと反映項目" },
-      { id: "review", number: "2", label: "差分を確認", copy: "変更前・変更後" },
-      { id: "confirm", number: "3", label: "最終確認", copy: "反映先と変更を確定" },
-      { id: "result", number: "4", label: "反映結果", copy: "結果と次の操作" }
+      { id: "setup", number: "1", label: "対象を選ぶ", copy: "反映元・反映先・項目を選ぶ" },
+      { id: "review", number: "2", label: "差分を確認", copy: "変更前後を見て項目を絞る" },
+      { id: "confirm", number: "3", label: "最終確認", copy: "書き込み先と件数を確かめる" },
+      { id: "result", number: "4", label: "反映結果", copy: "結果を見て次の操作を選ぶ" }
     ];
     const stages = {};
     const navButtons = {};
@@ -8753,15 +8774,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         else showWorkflowStage(next.id);
       });
     }
-    stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>どの設定を、どこへ反映しますか？</h2><p>反映元と反映先を指定し、反映したい項目を選びます。</p></header>';
-    stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>差分と実行予定を確認</h2><p>実際に変更されるセクションと注意点を確認します。</p></header>';
-    stages.confirm.innerHTML = '<header class="kus-rl-stage-head"><h2>書き込み先と内容の最終確認</h2><p>この画面で確認した条件だけを実行します。</p></header>';
+    stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>どの設定を、どこへ反映しますか？</h2><p>反映元（読み取り）と反映先（書き込み・プレビュー）のアプリを指定し、反映する項目を選びます。</p></header>';
+    stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>変更前後を確認して、反映する項目を決める</h2><p>差分のある項目と注意点を確認します。この画面では書き込みません。</p></header>';
+    stages.confirm.innerHTML = '<header class="kus-rl-stage-head"><h2>書き込み先と内容の最終確認</h2><p>書き込み先・変更件数・削除・取り消し方を確認してから反映します。</p></header>';
     stages.confirm.appendChild(confirmCard.card);
-    stages.result.innerHTML = '<header class="kus-rl-stage-head"><h2>実行結果と次の操作</h2><p>成功・失敗と、再実行が必要なセクションを確認します。</p></header>';
+    stages.result.innerHTML = '<header class="kus-rl-stage-head"><h2>実行結果と次の操作</h2><p>成功・失敗と、再実行が必要な項目を確認します。</p></header>';
     const setupGrid = document.createElement("div");
     setupGrid.className = "kus-rl-setup-grid";
     [cardApp.card, cardScope.card].forEach((node) => setupGrid.appendChild(node));
-    const advanced = makeDetails("詳細設定 · バックアップ・エラー時の動作・参照先変換");
+    const advanced = makeDetails("詳細設定 · 自動バックアップ / 参照先変換");
     advanced.details.classList.add("kus-rl-advanced");
     advanced.body.appendChild(cardOpt.card);
     const presetDetails = makeDetails("よく使う設定を保存・読み込み");
@@ -8829,7 +8850,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       }
       const head = name ? `${role}: ${name}（#${id}）` : `${role}: ${id ? `#${id}` : "未入力"}`;
       const tail = [
-        guest ? `ゲスト ${guest}` : "",
+        guest ? `ゲストスペース ${guest}` : "",
         side === "target" ? "プレビュー" : sourceMode === "json" ? "設定JSON" : sourceEnvironment.value === "preview" ? "プレビュー設定" : ""
       ].filter(Boolean);
       return tail.length ? `${head} / ${tail.join(" / ")}` : head;
@@ -8846,7 +8867,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       nextBtn.disabled = previewBtn.disabled || busy;
       navButtons.confirm.disabled = confirmBtn.disabled;
       setButtonText(backBtn, activeStage === "confirm" ? "差分に戻る" : "対象を変更");
-      setButtonText(nextBtn, fresh ? "確認した差分へ進む" : "差分を確認する");
+      setButtonText(nextBtn, fresh ? "取得済みの差分へ進む" : "差分を確認する");
       setButtonText(previewBtn, "差分を再取得");
       previewBtn.classList.toggle("kus-lp__btn--primary", !fresh);
       previewBtn.classList.toggle("kus-lp__btn--sub", fresh);
@@ -8861,12 +8882,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       }) : "";
       let message = setupBlocker ? `次に進むには：${setupBlocker}` : `${scopes.length} 項目を比較します。書き込みは行いません。`;
       const postApply = activeStage === "review" ? postApplySummary() : null;
-      if (activeStage === "review") message = !fresh ? "差分の取得が必要です。" : postApply ? postApply.message : confirmBtn.disabled ? "確認が必要な項目、または変更の有無を確認してください。" : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
-      if (activeStage === "confirm") message = fresh && confirmedToken ? "反映前バックアップを自動保存 / エラー時は中断 / 本番公開は行いません" : "条件が変わりました。差分の取得と最終確認をやり直してください。";
+      if (activeStage === "review") message = !fresh ? "差分を取得してください。" : postApply ? postApply.message : confirmBtn.disabled ? "反映できる項目がないか、確認できない項目が選択されています。内容を確認してください。" : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
+      if (activeStage === "confirm") message = fresh && confirmedToken ? "反映前に自動でバックアップします。エラー時は中断し、本番へは公開しません。" : "条件が変わりました。差分の取得と最終確認をやり直してください。";
       if (activeStage === "result") message = "結果を確認してください。再実行には差分の再取得が必要です。";
       const sourceLabel = dockEndpointLabel("source", fresh ? preview?.identities : null);
       const targetLabel = dockEndpointLabel("target", fresh ? preview?.identities : null);
-      dockCopy.innerHTML = activeStage === "confirm" && fresh && preview?.identities ? `<strong>書き込み先 #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong><span class="kus-rl-dock-msg">${escapeHtml(confirmedToken ? "内容を確認してから反映してください。" : "条件が変わりました。差分を再取得してください。")}</span>` : `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong><span class="kus-rl-dock-msg${setupBlocker ? " kus-rl-dock-reason" : ""}">${escapeHtml(message)}</span>`;
+      dockCopy.innerHTML = activeStage === "confirm" && fresh && preview?.identities ? `<strong>書き込み先（反映先） #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong><span class="kus-rl-dock-msg">${escapeHtml(confirmedToken ? "内容を確認してから反映してください。" : "条件が変わりました。差分を再取得してください。")}</span>` : `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong><span class="kus-rl-dock-msg${setupBlocker ? " kus-rl-dock-reason" : ""}">${escapeHtml(message)}</span>`;
       panel.result.hidden = activeStage === "confirm";
       const advancedSummary = advanced.details.querySelector("summary");
       if (advancedSummary) advancedSummary.textContent = "詳細設定 · 自動バックアップ / 参照先変換";
@@ -8956,6 +8977,22 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       box.append(mark, text);
     }
     host.appendChild(box);
+  }
+  function describeConfirmUndo(pending) {
+    if (pending?.state === "clean" || pending?.state === "own") {
+      return "取り消し方：反映後に、kintone のアプリ設定画面で「変更を中止」を押すと取り消せます。反映前の設定は自動でバックアップされ、「バックアップから戻す」でも戻せます。";
+    }
+    if (pending?.state === "pending") {
+      return "取り消し方：反映先に未公開の変更があるため、「変更を中止」を押すとそれらも破棄されます。今回の反映だけを戻すには、反映後に「バックアップから戻す」を使ってください。";
+    }
+    return "取り消し方：反映前の設定は自動でバックアップされ、反映後に「バックアップから戻す」で戻せます。未公開の変更を確認できなかったため、「変更を中止」では他の未公開の変更も破棄される場合があります。";
+  }
+  function describeFirstFailure(sections) {
+    const failed = sections.find((section) => section.status === "ng");
+    if (!failed) return "";
+    const label = failed.label && failed.label !== failed.sectionKey ? failed.label : reflectSectionLabel(failed.sectionKey || "");
+    const reason = String(failed.message || "").split("\n")[0].trim();
+    return reason ? `${label}: ${reason.length > 80 ? `${reason.slice(0, 80)}…` : reason}` : label;
   }
   function formatPreviewStamp(at) {
     const diffSec = Math.max(0, Math.floor((Date.now() - at) / 1e3));
@@ -9075,7 +9112,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const skippedErrorSet = new Set(plan?.skippedErrorScopes || []);
     const summary = document.createElement("div");
     summary.className = "kus-rl-preview-summary";
-    summary.innerHTML = `<span class="kus-rl-pill kus-rl-pill--change">差分 ${result.changedSections}</span><span class="kus-rl-pill kus-rl-pill--same">一致 ${result.sameSections}</span>` + (result.errorSections > 0 ? `<span class="kus-rl-pill kus-rl-pill--error">取得失敗 ${result.errorSections}</span>` : "") + `<span class="kus-rl-pill">${result.totalSections} セクション</span>` + (opts.searchKeyword ? `<span class="kus-rl-pill kus-rl-pill--stale">検索一致 ${filteredEntries.length}</span>` : "");
+    summary.innerHTML = `<span class="kus-rl-pill kus-rl-pill--change">差分 ${result.changedSections}</span><span class="kus-rl-pill kus-rl-pill--same">一致 ${result.sameSections}</span>` + (result.errorSections > 0 ? `<span class="kus-rl-pill kus-rl-pill--error">取得失敗 ${result.errorSections}</span>` : "") + `<span class="kus-rl-pill">${result.totalSections} 項目</span>` + (opts.searchKeyword ? `<span class="kus-rl-pill kus-rl-pill--stale">検索一致 ${filteredEntries.length}</span>` : "");
     host.appendChild(summary);
     if (result.entries.length) {
       renderReflectSummaryTable(host, result.entries, {
@@ -9086,14 +9123,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     if (!result.entries.length) {
       const empty = document.createElement("div");
       empty.className = "kus-rl-preview-empty";
-      empty.textContent = "対象セクションがありません";
+      empty.textContent = "対象の項目がありません。";
       host.appendChild(empty);
       return;
     }
     if (!filteredEntries.length) {
       const empty = document.createElement("div");
       empty.className = "kus-rl-preview-empty";
-      empty.textContent = `検索条件に一致するセクションがありません${opts.searchKeyword ? `: ${opts.searchKeyword}` : ""}`;
+      empty.textContent = `検索条件に一致する項目がありません${opts.searchKeyword ? `: ${opts.searchKeyword}` : ""}`;
       host.appendChild(empty);
       return;
     }

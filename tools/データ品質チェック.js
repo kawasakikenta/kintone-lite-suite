@@ -1469,9 +1469,13 @@ ${contextLine}`);
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  font-size:12px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
+/* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
+.kus-lp__badge--read{background:#047857;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--preview{background:#c2410c;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--production{background:#b91c1c;border:1px solid rgba(255,255,255,.45)}
 .kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;
@@ -1803,10 +1807,11 @@ ${contextLine}`);
     }
     const badgesEl = document.createElement("div");
     badgesEl.className = "kus-lp__badge-row";
-    const badges = opts.badges || [{ label: "Lite" }];
+    const badges = opts.badges || [];
+    if (!badges.length) badgesEl.hidden = true;
     for (const b of badges) {
       const span = document.createElement("span");
-      span.className = "kus-lp__badge";
+      span.className = `kus-lp__badge${b.tone === "read" || b.tone === "preview" || b.tone === "production" ? ` kus-lp__badge--${b.tone}` : ""}`;
       span.textContent = b.label;
       badgesEl.appendChild(span);
     }
@@ -2604,8 +2609,8 @@ ${contextLine}`);
     const trim = makeCheck({ label: "文字列・リンクの前後の空白を無視", checked: false });
     const ignoreCase = makeCheck({ label: "文字列・リンクの英字の大小を無視", checked: false });
     root2.append(makeRow(load), pickWrap, note, makeRow([trim.label, ignoreCase.label]));
-    root2.appendChild(makeNote("選んだ項目すべてが一致するレコードを、アプリごとに重複として検出します。空の項目があるレコードは未入力として別集計します。複数選択は順序を無視して比較します。"));
-    root2.appendChild(makeNote("テーブル内・添付・計算・システム項目は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。アプリ間の重複は検査しません。"));
+    root2.appendChild(makeNote("選んだ項目がすべて一致するレコードを、アプリごとに重複として検出します（項目の順序は問いません）。空の項目があるレコードは、未入力として別に集計します。"));
+    root2.appendChild(makeNote("テーブル内・添付・計算・システム項目と、アプリ間の重複は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。"));
     let fields = [], selected = /* @__PURE__ */ new Set(), version = 0, fieldsVersion = 0;
     let results = [];
     const output = document.createElement("div");
@@ -2687,7 +2692,7 @@ ${contextLine}`);
       refreshNote();
       const loaded = await runLoadQualityFieldsStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() });
       if (current !== fieldsVersion) {
-        panel.setStatus("対象が変わりました。再取得してください。", "warn");
+        panel.setStatus("対象アプリが変わりました。検査フィールドを再取得してください。", "warn");
         return;
       }
       fields = loaded;
@@ -2718,7 +2723,7 @@ ${contextLine}`);
         const report = result.report;
         if (!report) {
           warning = true;
-          output.appendChild(makeNote(`App ${result.appId}: 検査失敗 / ${result.error}`));
+          output.appendChild(makeNote(`App ${result.appId}: 検査に失敗しました（${result.error}）`));
           continue;
         }
         warning || (warning = report.unavailableRecords > 0);
@@ -2762,17 +2767,17 @@ ${contextLine}`);
       save.onclick = () => {
         if (!results.length || current !== version) return;
         downloadBlob(buildExportFilename("データ検査結果", "csv"), new Blob([qualityReportCsv(results, guestId, location.origin, options, queryText)], { type: "text/csv;charset=utf-8" }));
-        panel.setStatus("検査結果を保存しました。", warning ? "warn" : "ok");
+        panel.setStatus("検査結果をCSVで保存しました。", warning ? "warn" : "ok");
       };
       save.hidden = false;
-      panel.setStatus(`${results.length}アプリの検査が完了しました。${warning ? "取得不可・失敗の詳細を確認してください。" : "結果を確認し、必要に応じてCSVを保存できます。"}`, warning ? "warn" : "ok");
+      panel.setStatus(`${results.length}アプリを検査しました。${warning ? "取得不可・失敗の詳細を確認してください。" : "結果を確認し、必要ならCSVで保存してください。"}`, warning ? "warn" : "ok");
     }));
     root2.appendChild(makeRow(run));
     context.resultHost.append(output, makeRow(save));
     return {
       id: "quality",
       label: "重複・未入力を検査",
-      description: "複数項目の重複・未入力を調べ、該当レコードを確認します。",
+      description: "選んだ項目の重複と未入力を検査し、該当レコードを一覧で表示します。",
       button: run,
       validate,
       summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["検査項目", [...selected].join("、")], ["比較", `前後空白 ${trim.checkbox.checked ? "無視" : "区別"} / 大小文字 ${ignoreCase.checkbox.checked ? "無視" : "区別"}`]]
@@ -3023,7 +3028,7 @@ ${contextLine}`);
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
-.kus-wf .kus-lp__badge-row{display:none}
+.kus-wf .kus-lp__badge-row{margin-top:6px}
 .kus-wf .kus-lp__body{padding:0;display:flex;flex-direction:column;overflow:hidden;min-height:0;background:#f5f7fa}
 .kus-wf .kus-lp__hint{margin:0;padding:10px 22px;border-radius:0;flex-shrink:0}
 .kus-wf [hidden]{display:none!important}
@@ -3348,8 +3353,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       title: "データ品質チェック",
       subtitle: "レコードの重複と未入力を、選んだ項目の組み合わせで検査します。",
       accent: "record",
-      badges: [{ label: "Lite" }, { label: "読み取り専用" }],
-      hint: "データは書き換えません。結果は画面で確認し、CSVで保存できます。",
+      badges: [{ label: "読み取り専用", tone: "read" }],
+      hint: "kintone のレコードは書き換えません。検査結果は画面で確認でき、CSVでも保存できます。",
       wide: true
     });
     const appId = makeInput({
@@ -3374,8 +3379,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
     const target = makeCard({ title: "対象アプリ", number: 1 });
-    target.body.appendChild(makeRow([appId, guestId], { label: "接続先" }));
-    target.body.appendChild(makeNote("複数アプリはカンマ、改行、または空白で区切ります。検査項目は先頭アプリから読み込みます。"));
+    target.body.appendChild(makeRow([appId, guestId], { label: "対象アプリ" }));
+    target.body.appendChild(makeNote("複数アプリはカンマ・改行・空白で区切ります。検査するフィールドは、先頭の対象アプリから読み込みます。"));
     target.body.appendChild(createAppSearchControl(panel, {
       guestEl: guestId,
       targets: [{ label: "対象アプリ", apply: (id, _name, guest) => {
@@ -3388,7 +3393,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     viewSelect.setAttribute("aria-label", "取得した一覧");
     const loadViewsBtn = makeButton("一覧読込", "sub");
     target.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: "一覧から条件" }));
-    const viewNote = makeNote("先頭の対象アプリから一覧を取得し、「▼ 一覧から」で絞り込みと並び順をクエリに反映できます。");
+    const viewNote = makeNote("先頭の対象アプリの一覧を読み込むと、「▼ 一覧から」で絞り込みと並び順をクエリに反映できます。");
     target.body.appendChild(viewNote);
     let loadedViews = [];
     resetMetadata.push(() => {

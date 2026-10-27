@@ -27,8 +27,8 @@ export function mountSettingsExportLitePanel() {
     title: '設定一括取得',
     subtitle: '複数アプリの設定を JSON または ZIP（1アプリ=1JSON）で保存します。',
     accent: 'settings',
-    badges: [{ label: 'Lite' }, { label: '複数アプリ対応' }],
-    hint: '1 行だけ入力すれば 1 アプリ、複数行で一括取得。<strong>アプリごとに別のゲストスペース</strong>を指定できます。',
+    badges: [{ label: '読み取り専用', tone: 'read' }],
+    hint: 'アプリの設定を読み取り、JSON または ZIP で保存します。kintone のアプリや設定は変更しません。',
     wide: true
   });
 
@@ -46,7 +46,7 @@ export function mountSettingsExportLitePanel() {
     guestEl: searchGuest,
     targets: [{ apply: (appId, appName, guestId) => {
       const result = appTable.putApp(appId, guestId, { appName, focus: true });
-      return { message: `アプリ #${appId}${appName ? ` (${appName})` : ''} を対象表に設定しました${result.action === 'existing' ? '（追加済み）' : ''}` };
+      return { message: `アプリ #${appId}${appName ? ` (${appName})` : ''} を対象アプリ表に設定しました${result.action === 'existing' ? '（追加済み）' : ''}` };
     } }]
   });
 
@@ -59,7 +59,7 @@ export function mountSettingsExportLitePanel() {
   cardTarget.body.appendChild(appTable.element);
   cardTarget.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
   cardTarget.body.appendChild(foldWorkflowSection('スペースから追加', spaceRow));
-  cardTarget.body.appendChild(makeNote('各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。'));
+  cardTarget.body.appendChild(makeNote('1行なら1アプリ、複数行で一括取得します。アプリごとに別のゲストスペースを指定でき、各行の「↑コピー」で上の行のアプリIDとゲストスペースIDを複製できます。'));
   panel.body.insertBefore(cardTarget.card, panel.status);
 
   // ---- 取得セクション ----
@@ -171,7 +171,7 @@ export function mountSettingsExportLitePanel() {
       const result = appTable.putApp(app.appId, guest, { appName: app.name });
       if (result.action === 'added' || result.action === 'filled') added += 1;
     }
-    panel.setStatus(`スペースのアプリ ${apps.length}件を読み込みました（新規追加 ${added}件）`, 'ok');
+    panel.setStatus(`スペース内のアプリ ${apps.length}件を取得しました（対象アプリ表に新規追加 ${added}件）`, 'ok');
   }));
 
   btnJson.addEventListener('click', () => liteRun(panel, '設定一括取得（JSON）中…', async () => {
@@ -197,7 +197,7 @@ export function mountSettingsExportLitePanel() {
   const exportProblem = () => {
     const rows = appTable.getApps();
     if (!rows.length) return '対象アプリを1件以上指定してください。';
-    if (rows.some(row => !/^\d+$/.test(row.appId) || (row.guestId && !/^\d+$/.test(row.guestId)))) return 'アプリID・ゲストIDは数値で入力してください。';
+    if (rows.some(row => !/^\d+$/.test(row.appId) || (row.guestId && !/^\d+$/.test(row.guestId)))) return 'アプリID・ゲストスペースIDは半角数字で入力してください。';
     return chips.some(c => c.checkbox.checked) ? '' : '取得する設定を1つ以上選んでください。';
   };
   const exportSummary = (format: string): Array<[string, string]> => [
@@ -209,8 +209,8 @@ export function mountSettingsExportLitePanel() {
     setup: [cardTarget.card, cardScope.card], results: [summary],
     beforeRun: () => { summary.replaceChildren(); summary.classList.add('kus-lp__panel-html--empty'); },
     actions: [
-      { id: 'json', label: '設定をJSONで保存', description: '全対象アプリの設定を1つのJSONにまとめます。', button: btnJson, validate: exportProblem, summary: () => exportSummary('全アプリを1つのJSON') },
-      { id: 'zip', label: '設定をZIPで保存', description: 'アプリごとのJSONと取得結果をZIPにまとめます。', button: btnZip, validate: exportProblem, summary: () => exportSummary('1アプリ1JSONとmanifest.jsonをZIPに保存') }
+      { id: 'json', label: '設定をJSONで保存', description: '全対象アプリの設定を、1つのJSONファイルにまとめて保存します。', button: btnJson, validate: exportProblem, summary: () => exportSummary('全アプリを1つのJSON') },
+      { id: 'zip', label: '設定をZIPで保存', description: 'アプリごとのJSONと、取得結果の一覧（manifest.json）をZIPで保存します。', button: btnZip, validate: exportProblem, summary: () => exportSummary('1アプリ1JSONとmanifest.jsonをZIPに保存') }
     ]
   });
 

@@ -70,7 +70,7 @@ describe('JS/CSS batch download manifest', () => {
   });
 
   it('rejects a non-numeric guest id before listing apps', async () => {
-    await expect(runBatchJsConfigDownloadStandalone({ guestId: '1/x' }, vi.fn())).rejects.toThrow(/ゲストID.*数値/);
+    await expect(runBatchJsConfigDownloadStandalone({ guestId: '1/x' }, vi.fn())).rejects.toThrow(/ゲストスペースIDは半角数字/);
     expect(apiGet).not.toHaveBeenCalled();
   });
 

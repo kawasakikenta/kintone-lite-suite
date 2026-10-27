@@ -220,7 +220,7 @@ export function appendReflectChanges(host: HTMLElement, plan: ReflectSectionPlan
 
 export function reflectIdentityLabel(identities: ReflectIdentities, side: 'source' | 'target', sourceEnvironment: string): string {
   const app = identities[side];
-  return `${app.name}${app.appId ? `（ID: ${app.appId}）` : ''} / ${app.guestId ? `ゲスト ${app.guestId}` : '通常スペース'} / ${side === 'target' ? 'プレビュー' : sourceEnvironment}`;
+  return `${app.name}${app.appId ? `（ID: ${app.appId}）` : ''} / ${app.guestId ? `ゲストスペース ${app.guestId}` : '通常スペース'} / ${side === 'target' ? 'プレビュー' : sourceEnvironment}`;
 }
 
 /** sourceLabel を渡すと、反映元の表示を差し替える（バックアップから戻すときに「反映前のバックアップ（…）」と示すため）。 */
@@ -228,7 +228,7 @@ export function renderReflectRoute(host: HTMLElement, identities: ReflectIdentit
   const route = document.createElement('div'); route.className = 'kus-rl-confirm-route';
   for (const side of ['source', 'target'] as const) {
     const block = document.createElement('div'), label = document.createElement('span'), name = document.createElement('strong');
-    label.textContent = side === 'source' ? '反映元 ↓' : '書き込み先';
+    label.textContent = side === 'source' ? '反映元 ↓' : '書き込み先（反映先）';
     name.textContent = side === 'source' && options.sourceLabel ? options.sourceLabel : reflectIdentityLabel(identities, side, environment); block.append(label, name); route.appendChild(block);
   }
   host.appendChild(route);
@@ -247,7 +247,7 @@ export interface ReflectSummaryTableOptions {
 const SUMMARY_STATUS: Record<'change' | 'same' | 'error', { text: string; pill: string }> = {
   change: { text: '差分あり', pill: 'change' },
   same: { text: '一致', pill: 'same' },
-  error: { text: '確認が必要', pill: 'error' }
+  error: { text: '取得失敗', pill: 'error' }
 };
 
 /** 項目名｜状態｜変更｜削除｜保持｜反映方法｜選択中 の一覧。狭い画面では CSS で縦積みにする。 */

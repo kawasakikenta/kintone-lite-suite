@@ -243,7 +243,7 @@ async function verifyAppReferenceExclusionControl(page) {
     '環境固有IDの除外設定は初期状態でオフである必要があります');
   assert.equal(await page.getByText('よく使う除外', { exact: true }).isVisible(), true,
     '環境固有IDの除外設定が常時見える位置にありません');
-  assert.equal(await page.getByText(/オン／オフを変更した後は再比較してください。差分件数・画面結果・Excelに反映されます。/).isVisible(), true,
+  assert.equal(await page.getByText(/切り替えたあとは再比較してください（差分件数・画面の結果・Excelに反映されます）。/).isVisible(), true,
     '環境固有IDの除外が比較結果とExcelへ与える影響の説明がありません');
 }
 
@@ -348,7 +348,7 @@ function verifyResult(result, pageErrors) {
     '二重クリック時に比較ボタンが有効へ戻っています');
   assert.equal(result.rows.length, 3, '複数比較の結果行数が不正です');
   assert.match(result.rows[1].join(' '), /App 303.*失敗.*synthetic target failure/, '中間失敗が結果表へ表示されていません');
-  assert.match(result.rows[2].join(' '), /App 404.*完了/, '中間失敗後の比較先が処理されていません');
+  assert.match(result.rows[2].join(' '), /App 404.*(差分あり|一致)/, '中間失敗後の比較先が処理されていません');
   assert.equal(result.excelButtonCount, 2, '成功した比較先ごとのExcel保存ボタン数が不正です');
   assert.equal(result.excelButtonsEnabled, true, '複数比較のExcel保存ボタンが無効です');
   assert.equal(result.markdownButtonCount, 2, '成功した比較先ごとのMarkdown保存ボタン数が不正です');
@@ -356,7 +356,7 @@ function verifyResult(result, pageErrors) {
   assert.equal(result.batchButtonCount, 1, '成功した比較結果の一括Excel保存ボタンがありません');
   assert.match(result.batchButtonText, /Excelをまとめて保存（2件・ZIP）/, '一括Excel保存ボタンの成功件数が不正です');
   assert.equal(result.batchButtonOutsideScroll, true, '一括Excel保存ボタンが結果表の横スクロール内にあります');
-  assert.match(result.statusText, /全比較先の比較が完了/, '複数比較が完了状態になっていません');
+  assert.match(result.statusText, /件中\s*\d+件を比較しました/, '複数比較が完了状態になっていません');
   assert.match(result.statusText, /失敗\s*1件/, '完了ステータスに失敗件数がありません');
   assert.equal(result.statusTone, 'warn', '一部失敗時のステータスが警告になっていません');
   assert.equal(result.downloads, 2, '成功した比較先のHTML出力回数が不正です');
@@ -522,12 +522,12 @@ async function main() {
     await dispatchDoubleRun(page);
     await page.waitForFunction(() => {
       return [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
-        .some((element) => (element.textContent || '').includes('全比較先の比較が完了'));
+        .some((element) => /件中\s*\d+件を比較しました/.test(element.textContent || ''));
     }, null, { timeout: 15000 });
     result = await inspectResult(page);
     verifyResult(result, pageErrors);
     const showDetails = page.locator('#kus-diff-lite label')
-      .filter({ hasText: /画面に(?:比較結果一覧|差分明細)を表示/ })
+      .filter({ hasText: /(?:画面に(?:比較結果一覧|差分明細)|差分の明細を画面に)を?表示/ })
       .locator('input[type="checkbox"]');
     await showDetails.evaluate((checkbox) => {
       checkbox.checked = false;
@@ -623,7 +623,7 @@ async function main() {
       'アプリID除外条件の変更後もMarkdown出力が有効です');
     assert.equal(await page.locator('[data-kus-dl-completion="xlsx"]').isVisible(), false,
       'アプリID除外条件の変更後も完了時のExcel保存導線が表示されています');
-    assert.equal(await page.getByText(/前回の結果と保存機能を無効にしました。新しい条件で再比較してください/).isVisible(), true,
+    assert.equal(await page.getByText(/前回の結果と保存機能を無効にしました（環境固有IDの除外条件を変更したため）。新しい条件で再比較してください/).isVisible(), true,
       'アプリID除外条件の変更後に再比較を求める警告がありません');
     const runAll = page.getByRole('button', { name: /全比較先を順に比較|複数の比較を実行/ });
     await runAll.click();
@@ -637,7 +637,7 @@ async function main() {
     assert.equal(result.markdownButtonsImmediatelyAfterRerun, 0, '複数比較の再実行開始時に古いMarkdown保存ボタンが残っています');
     await page.waitForFunction(() => {
       const complete = [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
-        .some((element) => (element.textContent || '').includes('全比較先の比較が完了'));
+        .some((element) => /件中\s*\d+件を比較しました/.test(element.textContent || ''));
       return complete && window.__multiProbe.calls.length === 6;
     }, null, { timeout: 15000 });
     result.downloadsAfterRerun = await page.evaluate(() => Number(window.__downloadCount || 0));

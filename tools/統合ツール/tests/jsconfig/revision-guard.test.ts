@@ -40,8 +40,8 @@ describe('JS/CSS apply revision guard', () => {
     vi.mocked(kusConfirm).mockReturnValue(true);
     await runApplyJsConfigStandalone({ targetAppId: '5', targetGuestId: '2', jsonText: json }, vi.fn(), vi.fn());
     const text = vi.mocked(kusConfirm).mock.calls[0][0];
-    expect(text).toContain('App 5（ゲスト 2）');
-    expect(text).toContain('比較先の現在設定: Desktop JS 2 / CSS 0、Mobile JS 0 / CSS 1');
+    expect(text).toContain('App 5（ゲストスペース 2）');
+    expect(text).toContain('反映先の現在の設定: Desktop JS 2 / CSS 0、Mobile JS 0 / CSS 1');
     expect(text).toContain('外れる現在の設定: 2件');
     expect(apiPut).toHaveBeenCalledWith('/k/guest/2/v1/preview', '/app/customize.json', expect.objectContaining({ app: '5', revision: '7' }));
   });
@@ -63,7 +63,7 @@ describe('JS/CSS apply revision guard', () => {
   it('rejects a non-numeric app or guest id before any request is built', async () => {
     const jsonText = JSON.stringify({ desktop: { js: [], css: [] } });
     await expect(runApplyJsConfigStandalone({ targetAppId: '１２', jsonText, skipConfirm: true }, vi.fn(), vi.fn())).rejects.toThrow(/反映先アプリID.*数値/);
-    await expect(runApplyJsConfigStandalone({ targetAppId: '5', targetGuestId: '1/../2', jsonText, skipConfirm: true }, vi.fn(), vi.fn())).rejects.toThrow(/ゲストID.*数値/);
+    await expect(runApplyJsConfigStandalone({ targetAppId: '5', targetGuestId: '1/../2', jsonText, skipConfirm: true }, vi.fn(), vi.fn())).rejects.toThrow(/ゲストスペースIDは半角数字/);
     expect(apiGet).not.toHaveBeenCalled();
     expect(apiPut).not.toHaveBeenCalled();
   });
