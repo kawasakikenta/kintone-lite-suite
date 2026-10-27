@@ -179,12 +179,28 @@ async function main() {
     assert.equal(await page.locator('#shared-test').getAttribute('aria-busy'), 'false');
     results.push('部分成功の警告保持・エラー詳細・処理中状態の復帰・ステータス読み上げ');
 
-    for (const width of [1440, 768, 390, 320]) {
+    // 対象アプリ表は「×」などの操作列を含めて横にはみ出さない（行が複数あっても同じ）
+    await page.evaluate(() => window.table.setApps([{ appId: '303', guestId: '7' }, { appId: '1234567890', guestId: '12345' }]));
+    for (const width of [1440, 1024, 768, 430, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
       await page.screenshot({ path: path.join(OUT, `shared-${width}.png`) });
       const rect = await page.locator('#shared-test').boundingBox();
       assert.ok(rect.x >= -1 && rect.x + rect.width <= width + 1, '共通パネルが画面幅に収まる');
+      const overflow = await page.evaluate(() => {
+        const scroll = window.table.element.querySelector('.kus-lp__apptable-scroll');
+        const table = scroll.querySelector('table');
+        const del = Array.from(scroll.querySelectorAll('tbody tr:first-child button')).find(button => button.textContent === '×');
+        const box = del.getBoundingClientRect();
+        const area = scroll.getBoundingClientRect();
+        const input = scroll.querySelector('tbody tr:first-child input').getBoundingClientRect();
+        return { inputWidth: input.width, scrollWidth: scroll.scrollWidth, clientWidth: scroll.clientWidth, tableScrollWidth: table.scrollWidth, tableClientWidth: table.clientWidth, delRight: box.right, areaRight: area.right };
+      });
+      assert.ok(overflow.scrollWidth <= overflow.clientWidth, `対象アプリ表が横にはみ出さない (${width}px): ${JSON.stringify(overflow)}`);
+      assert.ok(overflow.tableScrollWidth <= overflow.tableClientWidth, `対象アプリ表の内側もはみ出さない (${width}px): ${JSON.stringify(overflow)}`);
+      assert.ok(overflow.inputWidth >= 60, `アプリID入力欄が使える幅を保つ (${width}px): ${JSON.stringify(overflow)}`);
+      assert.ok(overflow.delRight <= overflow.areaRight + 0.5, `「×」が表の外にはみ出さない (${width}px): ${JSON.stringify(overflow)}`);
     }
+    await page.evaluate(() => window.table.setApps([{ appId: '303', guestId: '7' }]));
     await page.evaluate(() => { window.panel.setBusy(true); window.panel.close(); });
     assert.equal(await page.locator('#shared-test').count(), 1);
     await page.evaluate(() => { window.panel.setBusy(false); window.search.querySelector('input').focus(); window.panel.close(); });

@@ -1775,11 +1775,12 @@ ${contextLine}`);
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
-.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
-.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:136px}
+.kus-lp__apptable th.kus-lp__apptable-acts-h,.kus-lp__apptable td.kus-lp__apptable-acts{padding-left:4px;padding-right:4px}
 .kus-lp__apptable-acts{white-space:nowrap}
-.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:12.5px;border-radius:7px}
-.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 6px;font-size:12.5px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:3px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:12.5px;color:var(--c-muted);margin-left:auto;font-weight:600}
 .kus-lp__apptable-hint{font-size:12.5px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
@@ -2812,7 +2813,8 @@ ${contextLine}`);
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
       if (e?.partialSuccess === true) {
-        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
+        panel.setStatus(`${first}${logNote}`, "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
@@ -3556,6 +3558,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (guest && !/^[1-9]\d*$/.test(guest)) throw new Error("ゲストIDは正の数値で入力してください");
     return { appId: ids[0], guestId: guest };
   }
+  function toPanelTone(tone) {
+    if (tone === true) return "err";
+    if (!tone) return "busy";
+    return tone;
+  }
   function describeFetchMode(mode) {
     return mode === "cursor" ? " / cursor API" : "";
   }
@@ -3629,7 +3636,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (!result.csv.tables.length) {
       const blob2 = new Blob([result.csv.parentCsv], { type: "text/csv;charset=utf-8;" });
       downloadBlob(recordExportFilename(filename, "csv", buildExportFilename("レコード", "csv", { appLabel })), blob2);
-      setStatus(`CSV出力完了 (${result.recordCount}件)`);
+      setStatus(`CSV出力完了 (${result.recordCount}件)`, "ok");
       return { issues: [] };
     }
     const JSZipCtor = await loadJSZipLite();
@@ -3644,7 +3651,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const blob = await zip.generateAsync({ type: "blob" });
     downloadBlob(recordExportFilename(filename, "zip", buildExportFilename("レコード", "zip", { appLabel })), blob);
     const warningNote = result.csv.warnings.length ? `（未取得のテーブル ${result.csv.warnings.length}件、詳細は manifest.json）` : "";
-    setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0);
+    setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0 ? "warn" : "ok");
     return { issues: result.csv.warnings };
   }
   async function runCsvExportBatchStandalone(opts, setStatus) {
@@ -3741,7 +3748,7 @@ ${failures.join("\n")}`);
     ].filter(Boolean);
     const issueNote = issues.length ? `（${issues.join(" / ")}、詳細は manifest.txt）` : "";
     const cancelNote = notRun.length ? `${formatCancelledHeadline(stoppedAt, apps.length)}。処理済みの分だけを保存しました。` : "";
-    setStatus(`${cancelNote}CSV一括出力${notRun.length ? "（一部）" : "完了"}${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
+    setStatus(`${cancelNote}CSV一括出力${notRun.length ? "（一部）" : "完了"}${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0 ? "warn" : "ok");
     return { issues: [...notRun.map((target) => `未実行（中止） ${target}`), ...failures.map((failure) => `失敗 ${failure}`), ...tableWarnings] };
   }
   async function runLoadViewsStandalone(opts, setStatus) {
@@ -4106,7 +4113,7 @@ ${failures.join("\n")}`);
       try {
         views = await runLoadViewsStandalone(
           source,
-          (m, e) => panel.setStatus(m, e ? "err" : "busy")
+          (m, tone) => panel.setStatus(m, toPanelTone(tone))
         );
       } catch (error) {
         viewNote.textContent = "一覧を取得できませんでした。取得元を確認して、もう一度お試しください。";
@@ -4160,7 +4167,7 @@ ${failures.join("\n")}`);
           lineEnding: lineEndingSelect.value === "crlf" ? "\r\n" : "\n",
           neutralizeFormula: neutralizeCb.checkbox.checked
         },
-        (m, e) => panel.setStatus(m, e ? "err" : "busy")
+        (m, tone) => panel.setStatus(m, toPanelTone(tone))
       );
       if (outcome?.issues?.length) panel.setResult(outcome.issues.join("\n"));
     }));

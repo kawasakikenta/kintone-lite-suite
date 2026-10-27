@@ -18,7 +18,10 @@ import {
   runLoadAttachmentFieldsStandalone,
   parseRecordAppIds,
   runRecordAppBatchStandalone,
-  zipNameForApp
+  zipNameForApp,
+  toPanelTone,
+  watchCancelledWriteWait,
+  type RecordStatusCallback
 } from '../tabs/record-standalone.js';
 import {
   createLitePanel,
@@ -49,6 +52,17 @@ export function mountRecordLitePanel() {
     badges: [{ label: '本番データを変更', tone: 'production' }],
     hint: '<strong>本番のレコードを直接追加・更新します。</strong>元に戻せない操作があるので、実行前にバックアップを取ってください。',
     wide: true
+  });
+
+  // 処理側が渡す色（busy / ok / warn / err / info）をそのままステータス欄へ渡す。一部成功は warn、確認でのキャンセルは info。
+  const status: RecordStatusCallback = (message, tone) => panel.setStatus(message, toPanelTone(tone));
+  // 書き込みは中止を押しても進行中のリクエストを打ち切らない。応答が長く返らないときは、待っていることを知らせる。
+  const liteRunWithCancelGuidance = <T,>(busyMsg: string, fn: () => Promise<T>) => liteRun(panel, busyMsg, async () => {
+    const stop = watchCancelledWriteWait((message) => {
+      const current = panel.status.querySelector('.kus-lp__status-text')?.textContent || '';
+      if (/^中止しています/.test(current)) panel.setStatus(message, 'busy');
+    });
+    try { return await fn(); } finally { stop(); }
   });
 
   // ---- 対象アプリ（共通） ----
@@ -103,7 +117,7 @@ export function mountRecordLitePanel() {
     viewSelect.replaceChildren(new Option('一覧を選択（任意）', ''));
     const views = await runLoadViewsStandalone(
       { appId, guestId: tgtGuest.value.trim() },
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+      status
     );
     if (version !== connectionVersion) { panel.setStatus('対象アプリが変わりました。一覧を再取得してください。', 'warn'); return; }
     loadedViews = views;
@@ -203,7 +217,7 @@ export function mountRecordLitePanel() {
               lineEnding: lineEndingSelect.value === 'crlf' ? '\r\n' : '\n',
               neutralizeFormula: neutralizeCb.checkbox.checked
             },
-            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+            status
           );
         }));
         const headerLabelMap: Record<string, string> = {
@@ -255,7 +269,7 @@ export function mountRecordLitePanel() {
         preview.addEventListener('click', () => liteRun(panel, 'CSVを事前検査中…', async () => {
           const version = csvVersion;
           const results = await runPreviewCsvImportStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
-            (message: string, error?: boolean) => panel.setStatus(message, error ? 'warn' : 'busy'));
+            status);
           if (version !== csvVersion) { panel.setStatus('対象やCSVが変わりました。もう一度事前検査してください。', 'warn'); return; }
           const problemApps = results.filter(result => result.error || result.report?.issueCount).length;
           previewSummary = `${results.length}アプリを検査 / 問題あり ${problemApps}アプリ`;
@@ -268,12 +282,12 @@ export function mountRecordLitePanel() {
         root.appendChild(makeNote('列数・必須項目・選択肢・数値形式・CSV内の同一値重複を全対象アプリで確認し、問題があれば最初の書き込み前に止めます。権限や既存データとの重複は、登録時に kintone が判定します。', 'help'));
         const run = makeButton('レコードを取込', 'primary', { icon: '↑' });
         run.style.width = '100%';
-        run.addEventListener('click', () => liteRun(panel, 'CSV取込中…', async () => {
-          const result = await runCsvImportBatchStandalone(
+        run.addEventListener('click', () => liteRunWithCancelGuidance('CSV取込中…', async () => {
+          // 確認でキャンセルしたときも、処理側が 'info' のステータスを出している（実行していないので確認画面へ戻る）
+          await runCsvImportBatchStandalone(
             { appIdsText: tgtApp.value, guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
-            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+            status
           );
-          if (result?.warning) panel.setStatus(result.warning, 'warn');
         }));
         addAction({ id: 'csv-import', label: 'CSVからレコードを追加', description: 'CSVの各行を、対象アプリへ新規レコードとして追加します。', button: run, writes: true, validate: () => requiredApps() || (fileInput.files?.length ? '' : '取り込むCSVを選んでください。'), summary: () => [targetSummary(), ['CSV', fileInput.files?.[0]?.name || '未選択'], ['事前検査', previewSummary], ['処理', '全対象アプリを再検査してから、新規レコードを追加']] });
         root.appendChild(makeRow(run));
@@ -343,7 +357,7 @@ export function mountRecordLitePanel() {
           const [appId] = parseRecordAppIds(tgtApp.value);
           const info = await runLoadStatusActionsStandalone(
             { appId, guestId: tgtGuest.value.trim() },
-            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+            status
           );
           if (version !== connectionVersion) { panel.setStatus('対象アプリが変わりました。アクションを再取得してください。', 'warn'); return; }
           loadedActions = info.actions;
@@ -365,11 +379,11 @@ export function mountRecordLitePanel() {
         const run = makeButton('ステータスを一括更新', 'primary');
         run.style.width = '100%';
         run.classList.add('kus-lp__btn--danger');
-        run.addEventListener('click', () => liteRun(panel, 'ステータス一括更新中…', async () => {
+        run.addEventListener('click', () => liteRunWithCancelGuidance('ステータス一括更新中…', async () => {
           await runRecordAppBatchStandalone(tgtApp.value, (appId) => runBatchProcessStandalone(
             { appId, guestId: tgtGuest.value.trim(), query: query.value.trim(), action: action.value.trim(), assignee: assignee.value.trim() || null },
-            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
-          ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
+            status
+          ), status);
         }));
         addAction({ id: 'status', label: 'ステータスを一括更新', description: '条件に合うレコードのステータスを、指定したアクションで更新します。', button: run, writes: true, validate: () => requiredApps() || (action.value.trim() ? '' : '実行するアクションを指定してください。') || (staleActionQuery() ? '前のアクションの対象条件が残っています。条件を入力し直すかクエリを編集してください。' : ''), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['アクション', action.value.trim()], ['選択した遷移', selectedAction() ? `${selectedAction().from} → ${selectedAction().to}` : '手入力'], ['次の作業者', assignee.value.trim() || '指定なし']] });
         root.appendChild(options.row);
@@ -410,7 +424,7 @@ export function mountRecordLitePanel() {
           const [appId] = parseRecordAppIds(tgtApp.value);
           resetFields();
           const fields = await runLoadAttachmentFieldsStandalone({ appId, guestId: tgtGuest.value.trim() },
-            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
+            status);
           if (version !== connectionVersion) { panel.setStatus('対象アプリが変わりました。フィールドを再取得してください。', 'warn'); return; }
           loadedFields = fields;
           fields.forEach((field, index) => fileSelect.appendChild(new Option(
@@ -444,8 +458,8 @@ export function mountRecordLitePanel() {
               folderFieldCode: folderCode.value.trim(),
               zipName: zipNameForApp(zipName.value, appId, parseRecordAppIds(tgtApp.value).length > 1)
             },
-            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
-          ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
+            status
+          ), status);
         }));
         addAction({ id: 'attach', label: '添付ファイルを保存', description: '条件に合うレコードの添付ファイルを、ZIPで保存します。', button: run, validate: () => requiredApps() || (fileCode.value.trim() ? '' : '添付ファイルのフィールドコードを指定してください。'), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['添付フィールド', [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(' / ')], ['フォルダ名にするフィールド', folderCode.value.trim() || '指定なし'], ['ZIP名', zipName.value.trim() || '自動命名']] });
         root.appendChild(options.row);
@@ -493,7 +507,7 @@ export function mountRecordLitePanel() {
               targetAppsText: tgtApp.value,
               targetGuestId: tgtGuest.value.trim()
             },
-            (m: string, e?: boolean) => panel.setStatus(m, e ? 'warn' : 'busy')
+            status
           );
           if (version !== copyPreviewVersion) {
             panel.setStatus('コピー元または対象アプリが変わりました。もう一度確認してください。', 'warn');
@@ -510,7 +524,7 @@ export function mountRecordLitePanel() {
         const run = makeButton('レコードを対象アプリへコピー', 'primary');
         run.style.width = '100%';
         run.classList.add('kus-lp__btn--danger');
-        run.addEventListener('click', () => liteRun(panel, 'レコードコピー中…', async () => {
+        run.addEventListener('click', () => liteRunWithCancelGuidance('レコードコピー中…', async () => {
           await runRecordAppBatchStandalone(tgtApp.value, (targetAppId) => runRecordCopyStandalone(
             {
               sourceAppId: srcApp.value.trim(),
@@ -519,8 +533,8 @@ export function mountRecordLitePanel() {
               targetGuestId: tgtGuest.value.trim(),
               query: query.value.trim()
             },
-            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
-          ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
+            status
+          ), status);
         }));
         addAction({
           id: 'copy',
@@ -587,8 +601,8 @@ export function mountRecordLitePanel() {
               includeAppSettings: incSettings.checkbox.checked,
               appScopes: chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value)
             },
-            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
-          ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
+            status
+          ), status);
         }));
         addAction({ id: 'backup', label: 'バックアップを保存', description: 'レコード・テーブル明細と選択した関連データをZIPで保存します。', button: run, validate: () => requiredApps() || (incSettings.checkbox.checked && !chips.some((c) => c.checkbox.checked) ? 'アプリ設定の保存範囲を1つ以上選ぶか、「アプリ設定も保存」を外してください。' : ''), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['ZIP名', zipName.value.trim() || '自動命名'], ['保存内容', ['レコード・テーブル明細', incFiles.checkbox.checked ? '添付ファイル' : '', incComments.checkbox.checked ? 'コメント' : '', incSettings.checkbox.checked ? `アプリ設定（${chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent).join('、')}）` : ''].filter(Boolean).join('、')]] });
         root.appendChild(options.row);

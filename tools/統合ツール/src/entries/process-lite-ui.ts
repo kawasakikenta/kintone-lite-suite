@@ -107,6 +107,7 @@ export function mountProcessLitePanel() {
   });
   attachCardHelp(cardText.card); // 結果画面側のカードなので、「?」への移動はここで行う
   panel.body.insertBefore(cardText.card, panel.status);
+  const sourceFold = foldWorkflowSection('図のソースを確認する', cardText.card);
 
   // ---- シミュレーション ----
   const cardSim = makeCard({ title: 'シミュレーション', number: 3 });
@@ -142,6 +143,12 @@ export function mountProcessLitePanel() {
   attachCardHelp(cardSim.card);
   panel.body.insertBefore(cardSim.card, panel.status);
 
+  // 図を出せなかった実行（中止・取得失敗など）では、空の「プロセス図」「ソース」カードを結果画面に残さない
+  const setDiagramVisible = (visible: boolean) => {
+    cardDiag.card.style.display = visible ? '' : 'none';
+    sourceFold.style.display = visible ? '' : 'none';
+  };
+  setDiagramVisible(false);
   let renderedConnection = '';
   let renderPending = false;
   let connectionVersion = 0;
@@ -159,6 +166,7 @@ export function mountProcessLitePanel() {
     summaryEl.innerHTML = '';
     viewEl.innerHTML = '<span class="kus-lp__small">対象アプリが変わりました。フロー図を再描画してください。</span>';
     cardSim.card.style.display = 'none';
+    setDiagramVisible(false);
     curEl.textContent = '未開始';
     curEl.style.background = '#e2e8f0';
     simSelect.replaceChildren(new Option('--'));
@@ -194,6 +202,8 @@ export function mountProcessLitePanel() {
           viewEl,
           summaryEl,
           isCurrent,
+          // 読み込み先 URL などの技術的な詳細は、状態表示ではなくログへ出す
+          log: (text: string) => panel.setResult(text),
           simUi: {
             container: cardSim.card,
             current: curEl,
@@ -211,6 +221,8 @@ export function mountProcessLitePanel() {
         return;
       }
       renderedConnection = runConnection;
+      // 図（またはプロセス管理が無効という案内）を出せた実行だけ、結果画面にカードを見せる
+      setDiagramVisible(viewEl.childNodes.length > 0);
       // 描画側が警告（Mermaid 読込失敗 / from-to 未設定のアクション除外）を出している場合は残す
       if (result && panel.status.dataset.tone !== 'err' && panel.status.dataset.tone !== 'warn') {
         panel.setStatus(`プロセス図を表示しました（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, 'ok');
@@ -225,7 +237,7 @@ export function mountProcessLitePanel() {
   simSelect.setAttribute('aria-label', 'シミュレーションのアクション');
   textEl.setAttribute('aria-label', 'プロセス図のMermaidソース');
   installLiteWorkflow(panel, {
-    setup: [cardApp.card], results: [cardDiag.card, cardSim.card, foldWorkflowSection('図のソースを確認する', cardText.card)],
+    setup: [cardApp.card], results: [cardDiag.card, cardSim.card, sourceFold],
     beforeRun: () => {
       connectionVersion++;
       renderedConnection = '';
@@ -233,6 +245,7 @@ export function mountProcessLitePanel() {
       textEl.value = '';
       summaryEl.innerHTML = '';
       viewEl.replaceChildren();
+      setDiagramVisible(false);
       cardSim.card.style.display = 'none';
       simSelect.replaceChildren(new Option('--'));
       simSelect.disabled = true;

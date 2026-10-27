@@ -7,7 +7,7 @@
 
 import type { ReflectSectionPlan } from './standalonePlan.js';
 import type { ReflectTargetPending } from './targetPending.js';
-import type { ApplySectionOutcome } from './applyOutcome.js';
+import { describeReflectFailure, type ApplySectionOutcome } from './applyOutcome.js';
 
 export interface ReflectReportApp { appId: string; name: string; code?: string; guestId: string }
 
@@ -28,8 +28,9 @@ export interface ReflectReportInput {
 const ENVIRONMENT_LABELS: Record<ReflectReportInput['sourceEnvironment'], string> = { production: '本番設定', preview: 'プレビュー設定', json: '設定JSON' };
 const STATUS_LABELS: Record<string, string> = { change: '差分あり', same: '一致', 'src-missing': '確認が必要', 'tgt-missing': '確認が必要', error: '確認が必要' };
 const OUTCOME_LABELS: Record<ApplySectionOutcome['status'], string> = { ok: '成功', ng: '失敗', skip: '変更なし', pending: '未実行' };
+const STOPPED_LABEL = '途中で停止';
 const KIND_ORDER = ['削除', '変更', '追加', '保持'] as const;
-const outcomeLabel = (status: string) => OUTCOME_LABELS[status as ApplySectionOutcome['status']] || status;
+const outcomeLabel = (outcome: { status: string; stopped?: boolean }) => outcome.status === 'ng' && outcome.stopped ? STOPPED_LABEL : OUTCOME_LABELS[outcome.status as ApplySectionOutcome['status']] || outcome.status;
 const listOf = <T,>(value: T[] | undefined): T[] => Array.isArray(value) ? value : [];
 
 /** 本文中で強調・リンク・表・HTMLとして解釈される記号を退避する（行頭には置かないため見出し等は対象外。改行は空白にまとめる）。 */
@@ -73,7 +74,7 @@ export function buildReflectReportMarkdown(input: ReflectReportInput): string {
     const kept = listOf(entry.changes).filter(change => change.kind === '保持').length;
     const outcome = outcomeOf(entry.sectionKey);
     lines.push(record
-      ? `| ${cell(entry.label)} | ${cell(outcome ? outcomeLabel(outcome.status) : '対象外')} | ${entry.changeCount} | ${entry.removalCount} | ${cell(entry.behavior)} |`
+      ? `| ${cell(entry.label)} | ${cell(outcome ? outcomeLabel(outcome) : '対象外')} | ${entry.changeCount} | ${entry.removalCount} | ${cell(entry.behavior)} |`
       : `| ${cell(entry.label)} | ${cell(STATUS_LABELS[entry.status] || entry.status)} | ${entry.changeCount} | ${entry.removalCount} | ${kept} | ${cell(entry.behavior)} |`);
   }
   lines.push('');
@@ -82,8 +83,8 @@ export function buildReflectReportMarkdown(input: ReflectReportInput): string {
     lines.push(`## ${escapeReflectMarkdown(entry.label)}`, '');
     const outcome = outcomeOf(entry.sectionKey);
     if (outcome) {
-      lines.push(`- 結果: ${outcomeLabel(outcome.status)}`);
-      if (outcome.message) lines.push(`- 詳細: ${escapeReflectMarkdown(outcome.message)}`);
+      lines.push(`- 結果: ${outcomeLabel(outcome)}`);
+      if (outcome.message) lines.push(`- 詳細: ${escapeReflectMarkdown(describeReflectFailure(outcome.message))}`);
     }
     lines.push(`- 状態: ${escapeReflectMarkdown(entry.message || STATUS_LABELS[entry.status] || entry.status)}`);
     for (const blocker of listOf(entry.blockers)) lines.push(`- 停止理由: ${escapeReflectMarkdown(blocker)}`);

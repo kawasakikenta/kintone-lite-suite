@@ -31,11 +31,17 @@ async function main() {
       window.metadata = data; window.calls = []; window.defer = false; window.fail = false;
       window.kintone = { app: { getId: () => 7 }, api: Object.assign(async (url, method, params) => {
         window.calls.push({ url, method, params });
-        if (method !== 'GET') throw new Error('書き込みは許可しないテストです');
+        if (method !== 'GET') {
+          // 結果メッセージの確認用: writeMode が立っているときだけ、App 8 への書き込みを失敗させて他は成功させる
+          if (!window.writeMode) throw new Error('書き込みは許可しないテストです');
+          if (window.writeMode === 'partial' && params.app === '8') throw new Error('権限がありません');
+          return {};
+        }
         if (window.fail) throw new Error('権限不足のサンプル');
         if (window.defer) return new Promise(resolve => { window.resolveApi = resolve; });
         if (url.endsWith('/app/views.json')) return window.metadata.views;
         if (url.endsWith('/app/status.json')) return window.metadata.process;
+        if (url.endsWith('/records.json')) return { records: [{ $id: { type: '__ID__', value: '1' }, $revision: { type: '__REVISION__', value: '1' } }] };
         if (url.endsWith('/app/form/fields.json')) return params.app === window.badCsvApp ? { properties: {} } : window.metadata.fields;
         throw new Error('想定外のAPI: ' + url);
       }, { url: value => value }) };
@@ -211,7 +217,8 @@ async function main() {
     const csvInput = page.getByLabel('取込CSV', { exact: true });
     const csvResult = page.getByLabel('CSV事前検査結果', { exact: true });
     let dialogs = 0;
-    page.on('dialog', async dialog => { dialogs++; await dialog.dismiss(); });
+    let acceptDialogs = false;
+    page.on('dialog', async dialog => { dialogs++; await (acceptDialogs ? dialog.accept() : dialog.dismiss()); });
     const upload = csv => csvInput.setInputFiles({ name: 'data.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
     await upload('title,amount,priority\n件名A,abc,中');
     await button('CSVを事前検査').click(); await idle();
@@ -242,7 +249,9 @@ async function main() {
     await button('CSVからレコードを追加').click(); await idle();
     assert.equal(dialogs, 1, '複数アプリの実行確認は1回');
     assert.match(await page.locator('.kus-lp__status').innerText(), /キャンセルしました/);
-    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn');
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'info', 'CSV取込を確認でキャンセルしたら、実行していないので警告ではなく案内の色にする');
+    assert.equal(await page.locator('.kus-wf-stage').nth(2).isVisible(), false, 'CSV取込を確認でキャンセルしたら結果画面へ進まず確認画面に戻る');
+    assert.equal(await page.locator('.kus-wf-stage').nth(1).isVisible(), true);
     await button('対象・条件を変更').click();
     await page.evaluate(() => { window.defer = true; window.resolveApi = null; });
     await button('CSVを事前検査').click();
@@ -254,6 +263,46 @@ async function main() {
     });
     await idle();
     assert.equal(await csvResult.isVisible(), false, '対象変更後の古い検査応答は表示しない');
+    // ステータス更新: 複数アプリの確認ですべて「いいえ」を選んだら、確認画面に戻る（結果画面に進まない）
+    if (await button('対象・条件を変更').isVisible()) await button('対象・条件を変更').click();
+    await pickAction('ステータスを一括更新');
+    await page.getByPlaceholder('アクション名', { exact: true }).fill('承認する');
+    const csvApps = await app.inputValue();
+    await app.fill('7,8');
+    dialogs = 0;
+    await button('内容を確認する').click();
+    await button('ステータスを一括更新').click(); await idle();
+    assert.equal(dialogs, 2, 'アプリごとの実行確認が2回出る');
+    assert.equal((await page.locator('.kus-lp__status-text').innerText()).trim(), '確認でキャンセルしました（実行していません）');
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'info');
+    assert.equal(await page.locator('.kus-wf-stage').nth(2).isVisible(), false, 'すべて「いいえ」なら結果画面へ進まず確認画面に戻る');
+    assert.equal(await page.locator('.kus-wf-stage').nth(1).isVisible(), true);
+    assert.equal(await page.evaluate(() => window.calls.filter(call => call.method !== 'GET').length), 0, '書き込みは行わない');
+    await button('対象・条件を変更').click();
+    // 結果メッセージ: 件数を出し、一部のアプリだけ失敗したときはエラーではなく警告の色にする
+    const statusText = async () => (await page.locator('.kus-lp__status-text').innerText()).trim();
+    acceptDialogs = true;
+    await page.evaluate(() => { window.writeMode = 'partial'; });
+    await button('内容を確認する').click();
+    await button('ステータスを一括更新').click(); await idle();
+    assert.match(await statusText(), /^2アプリ中1アプリで失敗しました（成功 1アプリ・書き込み済み 1件・未処理 1件）/);
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn', '一部のアプリが成功したら警告の色');
+    assert.equal(await page.locator('.kus-wf-stage').nth(2).isVisible(), true);
+    await button('対象・条件を変更').click();
+    await page.evaluate(() => { window.writeMode = 'ok'; });
+    await button('内容を確認する').click();
+    await button('ステータスを一括更新').click(); await idle();
+    assert.equal(await statusText(), '2アプリで計 2件のステータスを更新しました');
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'ok');
+    await page.evaluate(() => { window.writeMode = ''; });
+    // この確認のために許可した書き込みはここまで。以降は読み取りだけであることを最後に確認する。
+    assert.equal(await page.evaluate(() => window.calls.filter(call => call.method !== 'GET').every(call => call.url.endsWith('/records/status.json'))), true);
+    await page.evaluate(() => { window.calls = window.calls.filter(call => call.method === 'GET'); });
+    acceptDialogs = false;
+    await button('対象・条件を変更').click();
+    await app.fill(csvApps);
+    results.push('ステータス更新: すべて「いいえ」なら確認画面に戻る・一部のアプリ失敗は警告色で成功数/書込済み件数を示す・成功時は合算件数を示す');
+    await pickAction('CSVからレコードを追加');
     results.push('CSV: 全アプリ事前検査・行/フィールド別エラー・差異のあるスキーマ・先頭行プレビュー・安全な文字表示・書込前停止・再検査・キャンセル・320〜1440px');
 
     // The standalone CSV panel has its own view lookup state. Verify that it

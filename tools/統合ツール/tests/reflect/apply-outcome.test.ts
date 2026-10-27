@@ -97,10 +97,20 @@ describe('summarizeApplyOutcome', () => {
       { sectionKey: 'd', label: 'D', status: 'pending' },
       { sectionKey: 'e', label: 'E', status: 'skip' }
     ];
-    expect(summarizeApplyOutcome(sections)).toEqual({ ok: 2, ng: 1, pending: 1, skip: 1 });
+    expect(summarizeApplyOutcome(sections)).toEqual({ ok: 2, ng: 1, stopped: 0, pending: 1, skip: 1 });
+  });
+
+  it('中止で途中停止した項目は失敗に数えず、再実行の対象には含める', () => {
+    const sections: ApplySectionOutcome[] = [
+      { sectionKey: 'a', label: 'A', status: 'ok' },
+      { sectionKey: 'b', label: 'B', status: 'ng', stopped: true },
+      { sectionKey: 'c', label: 'C', status: 'pending' }
+    ];
+    expect(summarizeApplyOutcome(sections)).toEqual({ ok: 1, ng: 0, stopped: 1, pending: 1, skip: 0 });
+    expect(collectRetrySectionKeys(sections)).toEqual(['b', 'c']);
   });
 
   it('空配列はすべて 0', () => {
-    expect(summarizeApplyOutcome([])).toEqual({ ok: 0, ng: 0, pending: 0, skip: 0 });
+    expect(summarizeApplyOutcome([])).toEqual({ ok: 0, ng: 0, stopped: 0, pending: 0, skip: 0 });
   });
 });

@@ -5,7 +5,7 @@ import { buildRecordQualityTab } from './record-quality-ui.js';
 import { createAppSearchControl } from './appSearchControl.js';
 import { connectionSummary, installLiteWorkflow } from './liteWorkflow.js';
 import { createLitePanel, makeButton, makeCard, makeInput, makeNote, makeRow, makeSelect, liteRun } from './litePanelTheme.js';
-import { parseRecordAppIds, runLoadViewsStandalone } from '../tabs/record-standalone.js';
+import { parseRecordAppIds, runLoadViewsStandalone, toPanelTone } from '../tabs/record-standalone.js';
 import type { RecordViewChoice } from '../tabs/record-metadata.js';
 
 /** Read-only, focused entry point for the data-quality checks in Record Manager. */
@@ -79,7 +79,7 @@ export function mountRecordQualityLitePanel() {
     viewSelect.replaceChildren(new Option('一覧を選択（任意）', ''));
     const views = await runLoadViewsStandalone(
       { appId: firstAppId, guestId: guestId.value.trim() },
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+      (m, tone) => panel.setStatus(m, toPanelTone(tone))
     );
     if (version !== connectionVersion) { panel.setStatus('対象アプリが変わりました。一覧を再取得してください。', 'warn'); return; }
     loadedViews = views;

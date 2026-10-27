@@ -1714,11 +1714,12 @@ ${contextLine}`);
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
-.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
-.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:136px}
+.kus-lp__apptable th.kus-lp__apptable-acts-h,.kus-lp__apptable td.kus-lp__apptable-acts{padding-left:4px;padding-right:4px}
 .kus-lp__apptable-acts{white-space:nowrap}
-.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:12.5px;border-radius:7px}
-.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 6px;font-size:12.5px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:3px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:12.5px;color:var(--c-muted);margin-left:auto;font-weight:600}
 .kus-lp__apptable-hint{font-size:12.5px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
@@ -2571,7 +2572,8 @@ ${contextLine}`);
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
       if (e?.partialSuccess === true) {
-        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
+        panel.setStatus(`${first}${logNote}`, "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
@@ -3800,6 +3802,19 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       await sleep(options.sleepMs || ER_DEFAULTS.sleepMs);
     }
     return apps;
+  };
+  var assertErAnalysed = (apps, options = {}) => {
+    const isFailed = (app) => app?.status === "failed" || app?.ok === false;
+    if (apps.some((app) => !isFailed(app))) return;
+    const startIds = Array.isArray(options?.startAppIds) ? options.startAppIds.map(String) : [];
+    const byId = new Map(apps.map((app) => [String(app?.id), app]));
+    const targets = (startIds.length ? startIds : apps.map((app) => String(app?.id))).map((id) => {
+      const app = byId.get(id);
+      const name = app?.name && app.name !== `アプリ ${id}` ? `（${app.name}）` : "";
+      const reason = app?.issues?.[0]?.message || app?.issues?.[0]?.code || "原因不明";
+      return `起点アプリ ${id}${name}を取得できませんでした: ${reason}`;
+    });
+    throw new Error(`ER図を作成できませんでした。${targets.join(" / ")}。アプリIDと閲覧権限を確認してください`);
   };
   var buildHTML = (apps, options = {}) => {
     const safeApps = Array.isArray(apps) ? apps : [];
@@ -7899,13 +7914,15 @@ applySavedViewState();
     if (!options.startAppIds.length) throw new Error("対象アプリが見つかりませんでした");
     return options;
   }
+  var isFailedErApp = (app) => app?.status === "failed" || app?.ok === false;
   function summarizeCrawl(apps, options) {
     const partialCount = apps.filter((app) => app?.status === "partial").length;
-    const failedCount = apps.filter((app) => app?.status === "failed" || app?.ok === false).length;
+    const failedCount = apps.filter(isFailedErApp).length;
+    const analyzedCount = apps.length - failedCount;
     const reverseNote = describeReverseScan(options);
     const appNote = partialCount || failedCount ? `（一部取得 ${partialCount} / 取得失敗 ${failedCount}）` : "";
-    const tone = failedCount ? true : partialCount || reverseNote ? "warn" : false;
-    return { partialCount, failedCount, note: `${appNote}${reverseNote ? `。${reverseNote}` : ""}`, tone };
+    const tone = !analyzedCount && failedCount ? true : failedCount || partialCount || reverseNote ? "warn" : false;
+    return { partialCount, failedCount, analyzedCount, note: `${appNote}${reverseNote ? `。${reverseNote}` : ""}`, tone };
   }
   async function runGenerateERDiagramStandalone(opts, setStatus2) {
     const validationError = validateErOptions(opts);
@@ -7932,6 +7949,7 @@ applySavedViewState();
     progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
     try {
       const apps = await crawl(options.startAppIds, options);
+      assertErAnalysed(apps, options);
       progressUi.update(94, "HTML生成中...");
       const html = buildHTML(apps, options);
       const blob = new Blob([html], { type: "text/html" });
@@ -7960,6 +7978,7 @@ applySavedViewState();
     progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
     try {
       const apps = await crawl(options.startAppIds, options);
+      assertErAnalysed(apps, options);
       progressUi.update(94, "HTML保存データ生成中...");
       const html = buildHTML(apps, options);
       const baseName = options.startAppIds[0] || appId || `space${spaceId}`;

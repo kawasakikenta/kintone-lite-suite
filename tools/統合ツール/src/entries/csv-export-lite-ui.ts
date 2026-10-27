@@ -3,7 +3,7 @@
 import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
 
 import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
-import { runCsvExportBatchStandalone, runLoadViewsStandalone, validateRecordConnection } from '../tabs/record-standalone.js';
+import { runCsvExportBatchStandalone, runLoadViewsStandalone, toPanelTone, validateRecordConnection } from '../tabs/record-standalone.js';
 import { buildCursorRecordsQuery } from '../tabs/record-query.js';
 import type { RecordViewChoice } from '../tabs/record-metadata.js';
 import {
@@ -139,7 +139,7 @@ export function mountCsvExportLitePanel() {
     try {
       views = await runLoadViewsStandalone(
         source,
-        (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+        (m, tone) => panel.setStatus(m, toPanelTone(tone))
       );
     } catch (error) {
       viewNote.textContent = '一覧を取得できませんでした。取得元を確認して、もう一度お試しください。';
@@ -195,7 +195,7 @@ export function mountCsvExportLitePanel() {
         lineEnding: lineEndingSelect.value === 'crlf' ? '\r\n' : '\n',
         neutralizeFormula: neutralizeCb.checkbox.checked
       },
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+      (m, tone) => panel.setStatus(m, toPanelTone(tone))
     );
     // 一部のアプリの失敗や未取得のテーブルは、ステータスの件数だけでなく内訳も画面に残す。
     if (outcome?.issues?.length) panel.setResult(outcome.issues.join('\n'));

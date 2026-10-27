@@ -5,11 +5,11 @@ import { downloadBlob, buildExportFilename } from '../utils.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { isRunCancelledError } from '../runControl.js';
 import { createCancelReport, formatCancelledHeadline } from './run-cancel-summary.js';
-import { parseRecordAppIds } from './record-standalone.js';
+import { parseRecordAppIds, type RecordStatusCallback } from './record-standalone.js';
 import { readQualityFields, selectQualityFields, inspectRecordQuality, type QualityAppResult, type QualityOptions } from './record-quality.js';
 import { buildCsvImportTemplate } from './record-template.js';
 
-type Status = (message: string, error?: boolean) => void;
+type Status = RecordStatusCallback;
 function connection(appIdsText: string, guestId: string) {
   // Leading zeros are accepted by the shared parser but break record links and make "7" and "07" separate targets.
   const appIds = [...new Set(parseRecordAppIds(appIdsText).map(id => id.replace(/^0+/, '')))];
@@ -52,7 +52,7 @@ export async function runRecordQualityStandalone(options: QualityOptions & { app
       if (isRunCancelledError(error)) {
         // 検査は読み取りだけなので、検査し終えた分は返す。中断した App と残りは成功扱いにせず「未実行（中止）」と示す。
         for (const pendingId of appIds.slice(i)) results.push({ appId: pendingId, error: '未実行（中止）' });
-        setStatus(`${formatCancelledHeadline(i, appIds.length)}。検査済みの結果だけを表示します`, true);
+        setStatus(`${formatCancelledHeadline(i, appIds.length)}。検査済みの結果だけを表示します`, 'warn');
         return results;
       }
       results.push({ appId, error: error.message || String(error) });

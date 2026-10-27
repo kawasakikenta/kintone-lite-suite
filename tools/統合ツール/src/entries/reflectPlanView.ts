@@ -1,5 +1,5 @@
 import { reflectSectionLabel } from '../reflect/sections.js';
-import { buildReflectErrorHint } from '../reflect/applyOutcome.js';
+import { buildReflectErrorHint, describeReflectFailure } from '../reflect/applyOutcome.js';
 import { describeApplySectionStatus, normalizeApplySections } from '../reflect/liteSetup.js';
 import { REFLECT_ITEM_KIND_ORDER, applyProgressUpdate, countReflectItemKinds, describeApplyProgressStatus, formatUploadList, orderReflectItems, summarizeApplyProgress, type ApplyProgressRow, type ApplyProgressStatus } from '../reflect/applyProgress.js';
 import type { ReflectItemSummary } from '../reflect/changeSummary.js';
@@ -336,7 +336,7 @@ export function renderApplySectionResults(host: HTMLElement, rawSections: unknow
   const list = document.createElement('ul');
   list.className = 'kus-rl-result-list';
   for (const section of sections) {
-    const display = describeApplySectionStatus(section.status);
+    const display = describeApplySectionStatus(section.status, section.stopped);
     const item = document.createElement('li');
     item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
     const head = document.createElement('div');
@@ -354,10 +354,10 @@ export function renderApplySectionResults(host: HTMLElement, rawSections: unknow
     if (section.message) {
       const message = document.createElement('div');
       message.className = 'kus-rl-result-item__message';
-      message.textContent = section.message;
+      message.textContent = describeReflectFailure(section.message);
       item.appendChild(message);
     }
-    const hint = section.status === 'ng' ? buildReflectErrorHint(section.message || '') : '';
+    const hint = section.status === 'ng' && !section.stopped ? buildReflectErrorHint(section.message || '') : '';
     if (hint) {
       const hintNode = document.createElement('div');
       hintNode.className = 'kus-rl-result-item__hint';
@@ -375,7 +375,7 @@ export function renderApplySectionResults(host: HTMLElement, rawSections: unknow
 
 export interface ApplyProgressView {
   /** 反映エンジンの通知を反映して表示を更新する。 */
-  update(update: { sectionKey: string; status: ApplyProgressStatus; message?: string }): void;
+  update(update: { sectionKey: string; status: ApplyProgressStatus; message?: string; stopped?: boolean }): void;
   rows(): ApplyProgressRow[];
 }
 
@@ -415,13 +415,14 @@ export function createApplyProgressView(host: HTMLElement, initial: readonly App
   const paint = (row: ApplyProgressRow) => {
     const node = nodes.get(row.sectionKey);
     if (!node) return;
-    const display = describeApplyProgressStatus(row.status);
+    const display = describeApplyProgressStatus(row.status, row.stopped);
     node.item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
     node.state.className = `kus-rl-result-state kus-rl-result-state--${display.tone}`;
     node.icon.textContent = display.icon;
     node.text.data = display.text;
-    node.message.textContent = row.message || '';
-    node.message.hidden = !row.message;
+    const shownMessage = describeReflectFailure(row.message);
+    node.message.textContent = shownMessage;
+    node.message.hidden = !shownMessage;
   };
   const paintSummary = () => { summary.textContent = summarizeApplyProgress(rows); };
   rows.forEach(paint);

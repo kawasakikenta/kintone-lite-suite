@@ -2182,11 +2182,16 @@ ${base}`
   function isCompleteReflectSection(section) {
     return !!section && typeof section === "object" && !Array.isArray(section) && !section._fetchError && !section._partial;
   }
+  var withoutTopLevelRevision = (section) => {
+    if (!section || typeof section !== "object" || Array.isArray(section) || !Object.prototype.hasOwnProperty.call(section, "revision")) return section;
+    const { revision: _revision, ...rest } = section;
+    return rest;
+  };
   function captureSections(bundle, scopes) {
     return Object.fromEntries(scopes.map((key) => {
       const section = bundle?.sections?.[key];
       return [key, {
-        content: stableReflectStringify(section) ?? "",
+        content: stableReflectStringify(withoutTopLevelRevision(section)) ?? "",
         revision: String(bundle?.meta?.sectionRevisions?.[key] ?? section?.revision ?? ""),
         complete: isCompleteReflectSection(section)
       }];
@@ -2215,6 +2220,8 @@ ${base}`
       const revisions = /* @__PURE__ */ new Set();
       const requireRevision = side === "target" || !opts.sourceBundle;
       const checkedScopes = side === "source" ? opts.scopes : [.../* @__PURE__ */ new Set([...opts.scopes, ...opts.targetDependencies || []])];
+      const changedLabels = [];
+      let revisionChange = null;
       for (const key of checkedScopes) {
         const before = baseline[side]?.[key];
         const after = current[side][key];
@@ -2225,10 +2232,16 @@ ${base}`
         if (requireRevision && (!/^\d+$/.test(before.revision) || !/^\d+$/.test(after.revision))) {
           throw new Error(`${label}の${sectionLabel}のrevisionを確認できないため反映を中止しました。差分を取得し直してください。`);
         }
-        if (before.content !== after.content || before.revision !== after.revision) {
-          throw new Error(`差分確認後に${label}の${sectionLabel}が変更されたため反映を中止しました。差分を取得し直して、変更内容を再確認してください。`);
-        }
+        if (before.content !== after.content) changedLabels.push(sectionLabel);
+        else if (before.revision !== after.revision && !revisionChange) revisionChange = { from: before.revision, to: after.revision };
         if (requireRevision) revisions.add(after.revision);
+      }
+      if (changedLabels.length) {
+        throw new Error(`差分確認後に${label}の${changedLabels.join("、")}が変更されたため反映を中止しました。差分を取得し直して、変更内容を再確認してください。`);
+      }
+      if (revisionChange) {
+        const { from, to } = revisionChange;
+        throw new Error(`${side === "source" ? "反映元" : "反映先"}アプリの設定が確認後に更新されました（revision ${from || "不明"} → ${to || "不明"}）。選択した項目の内容は同じでしたが、安全のため反映を中止しました。差分を取得し直してください。`);
       }
       if (requireRevision && revisions.size !== 1) {
         throw new Error(`${label}の取得中に設定が更新された可能性があるため反映を中止しました。差分を取得し直してください。`);
@@ -3296,6 +3309,60 @@ ${base}`
     }
     return items.map((item, index) => ({ item, index })).sort((x, y) => KIND_ORDER[x.item.kind] - KIND_ORDER[y.item.kind] || x.index - y.index).map((entry) => entry.item);
   }
+  function inventoryLayout(nodes) {
+    const inventory = { codes: /* @__PURE__ */ new Set(), plain: /* @__PURE__ */ Object.create(null) };
+    const visit = (node) => {
+      if (!isObj(node)) return;
+      if (typeof node.code === "string" && node.code) inventory.codes.add(node.code);
+      else if (node.type !== "ROW") {
+        const type = String(node.type ?? "不明");
+        inventory.plain[type] = (inventory.plain[type] || 0) + 1;
+      }
+      for (const child of [...list(node.fields), ...list(node.layout)]) visit(child);
+    };
+    for (const node of Array.isArray(nodes) ? nodes : [nodes]) visit(node);
+    return inventory;
+  }
+  function describeLayoutNode(node, fieldLabels) {
+    if (!isObj(node)) return "不明な要素";
+    const names = (nodes) => {
+      const codes = [...inventoryLayout(nodes).codes];
+      return { count: codes.length, text: codes.slice(0, 4).map((code) => fieldName(code, fieldLabels)).join("、") + (codes.length > 4 ? "…" : "") };
+    };
+    if (node.type === "ROW") {
+      const inside = names(list(node.fields));
+      return inside.count ? `フィールド ${inside.count} 個の行（${inside.text}）` : "ラベル・スペース・罫線だけの行";
+    }
+    if (node.type === "GROUP") {
+      const inside = names(list(node.layout));
+      return `グループ「${fieldName(String(node.code ?? ""), fieldLabels, node.label)}」${inside.count ? `（中のフィールド ${inside.count} 個）` : ""}`;
+    }
+    if (node.type === "SUBTABLE") return `テーブル「${fieldName(String(node.code ?? ""), fieldLabels)}」`;
+    return typeof node.code === "string" && node.code ? `フィールド「${fieldName(node.code, fieldLabels)}」` : "配置の要素";
+  }
+  function reclassifyLayoutRemovals(changes, beforeLayout, afterLayout, fieldLabels) {
+    const kept = inventoryLayout(afterLayout), old = inventoryLayout(beforeLayout);
+    for (const change of changes) {
+      if (change.kind !== "削除" || !/^配置 \/ \d+件目$/.test(change.path)) continue;
+      let node;
+      try {
+        node = JSON.parse(change.before);
+      } catch {
+        continue;
+      }
+      if (!isObj(node)) continue;
+      const inside = inventoryLayout(node);
+      const lostCode = [...inside.codes].some((code) => !kept.codes.has(code));
+      const lostPlain = Object.keys(inside.plain).some((type) => (kept.plain[type] || 0) < (old.plain[type] || 0));
+      const description = describeLayoutNode(node, fieldLabels);
+      if (lostCode || lostPlain) change.summary = description;
+      else {
+        change.kind = "変更";
+        change.after = "別の位置の行・グループに含まれます（フィールドは残ります）";
+        change.summary = `${description}を並べ替え・移動`;
+      }
+    }
+  }
   function retainedItemNames(sectionKey, changes, fieldLabels) {
     const names = [];
     for (const change of changes) {
@@ -3688,6 +3755,7 @@ ${base}`
       }
       const shownBefore = comparable2 ? comparable2(before) : before, shownAfter = comparable2 ? comparable2(after) : after;
       diffValues(shownBefore, shownAfter, [], plan.changes);
+      if (key === "layoutSettings") reclassifyLayoutRemovals(plan.changes, shownBefore?.layout, shownAfter?.layout, options.fieldLabels);
       try {
         plan.items = summarizeReflectItems(key, shownBefore, shownAfter, { fieldLabels: options.fieldLabels, retained: retainedItemNames(key, plan.changes, options.fieldLabels) });
       } catch {
@@ -3795,7 +3863,7 @@ ${base}`
     if (lastRun.targetAppId !== target.appId || (lastRun.targetGuestId || "") !== (target.guestId || "")) return pending;
     if (!/^\d+$/.test(lastRun.finalRevision) || lastRun.finalRevision !== pending.previewRevision) return pending;
     if (lastRun.priorState !== "clean" && lastRun.priorState !== "own") return pending;
-    return { ...pending, state: "own", message: `反映先プレビューの未公開の変更は、このツールの直前の反映によるものだけです（本番 revision ${pending.productionRevision} / プレビュー revision ${pending.previewRevision}）。アプリの設定画面の「変更を中止」で取り消せます。` };
+    return { ...pending, state: "own", message: `反映先プレビューの未公開の変更は、このツールの直前の反映によるものだけです（設定の更新番号 revision は 本番 ${pending.productionRevision} / プレビュー ${pending.previewRevision}）。アプリの設定画面の「変更を中止」で取り消せます。` };
   }
   var comparableResources = (list2) => Array.isArray(list2) ? list2.map((item) => item?.type === "FILE" ? { type: "FILE", name: item.file?.name ?? "", size: String(item.file?.size ?? "") } : item) : list2;
   var comparable = (key, section) => {
@@ -3828,7 +3896,7 @@ ${base}`
         if (comparable(key, before) !== comparable(key, after)) sectionKeys.push(key);
       }
       const customizeNote = opts.scopes.includes("customizeSettings") ? "。JS/CSSのファイルは名前とサイズだけで比べています" : "";
-      const message = sectionKeys.length ? `反映先プレビューには未公開の変更があります（${sectionKeys.map(reflectSectionLabel).join("、")}）。公開すると今回の反映と一緒に本番へ反映されます。` : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（本番 revision ${productionRevision} / プレビュー revision ${previewRevision}${customizeNote}）。`;
+      const message = sectionKeys.length ? `反映先プレビューには未公開の変更があります（${sectionKeys.map(reflectSectionLabel).join("、")}）。公開すると今回の反映と一緒に本番へ反映されます。` : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（設定の更新番号 revision が 本番 ${productionRevision} とプレビュー ${previewRevision} で異なります${customizeNote}）。`;
       return { state: "pending", productionRevision, previewRevision, sectionKeys, message };
     } catch (error) {
       if (isRunCancelledError(error)) throw error;
@@ -3879,14 +3947,18 @@ ${base}`
     if (logs.slice(-3).includes(hintLine)) return;
     logs.push(hintLine);
   }
+  function describeReflectFailure(message) {
+    const lines = String(message || "").split("\n").filter((line) => !/^\s*\[API\]\s/.test(line));
+    return lines.join("\n").trim().replace("（revision 競合）", "（ほかの更新と重なったため。revision 競合）");
+  }
   function collectRetrySectionKeys(sections) {
     return (sections || []).filter((s) => s.status === "ng" || s.status === "pending").map((s) => s.sectionKey);
   }
   function summarizeApplyOutcome(sections) {
-    const out = { ok: 0, ng: 0, pending: 0, skip: 0 };
+    const out = { ok: 0, ng: 0, stopped: 0, pending: 0, skip: 0 };
     for (const s of sections || []) {
       if (s.status === "ok") out.ok += 1;
-      else if (s.status === "ng") out.ng += 1;
+      else if (s.status === "ng") out[s.stopped ? "stopped" : "ng"] += 1;
       else if (s.status === "pending") out.pending += 1;
       else out.skip += 1;
     }
@@ -3920,14 +3992,23 @@ ${base}`
   async function resolveReflectAppsStandalone(opts) {
     const invalid = reflectConnectionError(opts);
     if (invalid) throw new Error(invalid);
-    const resolve = async (appId, guestId = "") => {
-      const info = await apiGet(buildApiPrefix(guestId, false), "/app.json", { id: appId });
-      if (String(info?.appId) !== appId || typeof info?.name !== "string" || !info.name) throw new Error(`App ${appId} の名前とIDを確認できません。入力と閲覧権限を確認してください。`);
+    const resolve = async (role, appId, guestId = "") => {
+      let info;
+      try {
+        info = await apiGet(buildApiPrefix(guestId, false), "/app.json", { id: appId });
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        const prefixed = new Error(`${role} #${appId}: ${error?.message != null ? String(error.message) : String(error)}`);
+        prefixed.original = error;
+        if (error?.code) prefixed.code = error.code;
+        throw prefixed;
+      }
+      if (String(info?.appId) !== appId || typeof info?.name !== "string" || !info.name) throw new Error(`${role} #${appId} の名前とIDを確認できません。入力と閲覧権限を確認してください。`);
       return { appId, guestId, name: info.name, code: String(info.code || "") };
     };
-    const target = await resolve(opts.targetAppId, opts.targetGuestId);
+    const target = await resolve("反映先", opts.targetAppId, opts.targetGuestId);
     const jsonAppName = opts.sourceBundle ? extractAppNameFromBundle(opts.sourceBundle) : "";
-    const source = opts.sourceBundle ? { appId: opts.sourceAppId, guestId: "", name: jsonAppName ? `設定JSON（${jsonAppName}）` : "設定JSON", code: "" } : await resolve(opts.sourceAppId, opts.sourceGuestId);
+    const source = opts.sourceBundle ? { appId: opts.sourceAppId, guestId: "", name: jsonAppName ? `設定JSON（${jsonAppName}）` : "設定JSON", code: "" } : await resolve("反映元", opts.sourceAppId, opts.sourceGuestId);
     return { source, target };
   }
   function usesLookupMap(opts, scopes) {
@@ -3938,9 +4019,20 @@ ${base}`
     if (scopes.some((key) => !REFLECT_SECTION_KEYS.includes(key))) throw new Error("反映に対応していない項目が含まれています。");
     return REFLECT_SECTION_KEYS.filter((key) => scopes.includes(key));
   }
+  async function withAppPrefix(role, appId, run) {
+    try {
+      return await run();
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      const prefixed = new Error(`${role} #${appId}: ${error?.message != null ? String(error.message) : String(error)}`);
+      prefixed.original = error;
+      if (error?.code) prefixed.code = error.code;
+      throw prefixed;
+    }
+  }
   async function getReflectBundles(opts, scopes, setStatus) {
     setStatus(opts.sourceBundle ? "反映元の設定JSONを読み込み中..." : "反映元の設定を取得中...");
-    const source = opts.sourceBundle ? importedReflectSource(opts) : await fetchBundle({
+    const source = opts.sourceBundle ? importedReflectSource(opts) : await withAppPrefix("反映元", opts.sourceAppId, () => fetchBundle({
       rawSettings: true,
       // フィールド設定を選んでいなくても、参照するフィールドの有無と表示名を示せるよう反映先と同じ範囲を取得する。
       appId: opts.sourceAppId,
@@ -3948,16 +4040,16 @@ ${base}`
       preview: !!opts.sourcePreview,
       sections: reflectInspectionScopes(scopes),
       onProgress: (p, label) => setStatus(`反映元取得 ${Math.round(p * 100)}% (${label})`)
-    });
+    }));
     setStatus("反映先プレビューの設定を確認中...");
-    const target = await fetchBundle({
+    const target = await withAppPrefix("反映先", opts.targetAppId, () => fetchBundle({
       rawSettings: true,
       appId: opts.targetAppId,
       guestId: opts.targetGuestId || "",
       preview: true,
       sections: reflectInspectionScopes(scopes),
       onProgress: (p, label) => setStatus(`反映先取得 ${Math.round(p * 100)}% (${label})`)
-    });
+    }));
     return { source, target };
   }
   function importedReflectSource(opts) {
@@ -4114,9 +4206,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     logs.push(`反映元: ${opts.sourceBundle ? "設定JSON" : opts.sourceAppId} → 反映先(プレビュー): ${opts.targetAppId}`);
     const sections = [];
     let cancelled = false;
-    const notify = (plan, status, message) => {
+    const notify = (plan, status, message, stopped = false) => {
       try {
-        opts.onSectionUpdate?.({ sectionKey: plan.sectionKey, label: plan.label, status, ...message ? { message } : {} });
+        opts.onSectionUpdate?.({ sectionKey: plan.sectionKey, label: plan.label, status, ...message ? { message } : {}, ...stopped ? { stopped: true } : {} });
       } catch {
       }
     };
@@ -4146,9 +4238,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
           cancelled = true;
           if (written.length) {
             const message2 = `${RUN_CANCELLED_MESSAGE}（この項目では ${written.join("・")} まで書き込み済みで、残りは送信していません。差分を取得し直して現在の状態を確認してください）`;
-            sections.push({ ...outcome, status: "ng", message: message2 });
-            notify(plan, "ng", message2);
-            logs.push(`中止 ${plan.label}: ${written.join("・")} まで書き込み済み`);
+            sections.push({ ...outcome, status: "ng", message: message2, stopped: true });
+            notify(plan, "ng", message2, true);
+            logs.push(`中止 ${plan.label}: ${written.join("・")} まで書き込み済み（途中で停止）`);
           } else {
             sections.push({ ...outcome, status: "pending", message: "中止のため未実行" });
             notify(plan, "pending", "中止のため未実行");
@@ -4183,10 +4275,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       onProgress(logs);
     }
     const count = (status) => sections.filter((section) => section.status === status).length;
-    logs.push(`=== 完了: OK ${count("ok")} / NG ${count("ng")} / 未実行 ${count("pending")} / 変更なし ${count("skip")} ===`);
+    const stoppedCount = sections.filter((section) => section.status === "ng" && section.stopped).length, failedCount = count("ng") - stoppedCount;
+    logs.push(`=== 完了: OK ${count("ok")} / NG ${failedCount}${stoppedCount ? ` / 途中で停止 ${stoppedCount}` : ""} / 未実行 ${count("pending")} / 変更なし ${count("skip")} ===`);
     onProgress(logs);
-    if (cancelled) setStatus(`反映を中止しました（反映済み ${count("ok")} / 途中で停止 ${count("ng")} / 未実行 ${count("pending")}）。反映先プレビューは一部だけ更新されている可能性があります。`, true);
-    else setStatus(count("ng") ? "反映完了（一部エラーあり）" : "反映完了");
+    if (cancelled) setStatus(`反映を中止しました（反映済み ${count("ok")} / 途中で停止 ${stoppedCount} / 未実行 ${count("pending")}）。反映先プレビューは一部だけ更新されている可能性があります。`, true);
+    else setStatus(failedCount ? "反映完了（一部エラーあり）" : "反映完了");
     return { logs, sections, backup, finalRevision: revision, ...cancelled ? { cancelled: true } : {} };
   }
   async function preflightLookupMapStandalone(lookupMap, opts = {}) {
@@ -4693,11 +4786,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
 .kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
-.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
-.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:136px}
+.kus-lp__apptable th.kus-lp__apptable-acts-h,.kus-lp__apptable td.kus-lp__apptable-acts{padding-left:4px;padding-right:4px}
 .kus-lp__apptable-acts{white-space:nowrap}
-.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:12.5px;border-radius:7px}
-.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 6px;font-size:12.5px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:3px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:12.5px;color:var(--c-muted);margin-left:auto;font-weight:600}
 .kus-lp__apptable-hint{font-size:12.5px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
@@ -5450,7 +5544,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
       if (e?.partialSuccess === true) {
-        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
+        panel.setStatus(`${first}${logNote}`, "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
@@ -5719,8 +5814,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   var ENVIRONMENT_LABELS = { production: "本番設定", preview: "プレビュー設定", json: "設定JSON" };
   var STATUS_LABELS = { change: "差分あり", same: "一致", "src-missing": "確認が必要", "tgt-missing": "確認が必要", error: "確認が必要" };
   var OUTCOME_LABELS = { ok: "成功", ng: "失敗", skip: "変更なし", pending: "未実行" };
+  var STOPPED_LABEL = "途中で停止";
   var KIND_ORDER2 = ["削除", "変更", "追加", "保持"];
-  var outcomeLabel = (status) => OUTCOME_LABELS[status] || status;
+  var outcomeLabel = (outcome) => outcome.status === "ng" && outcome.stopped ? STOPPED_LABEL : OUTCOME_LABELS[outcome.status] || outcome.status;
   var listOf = (value) => Array.isArray(value) ? value : [];
   function escapeReflectMarkdown(value) {
     return String(value ?? "").replace(/[\r\n]+/g, " ").replace(/([\\`*_[\]<>|~])/g, "\\$1");
@@ -5756,15 +5852,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     for (const entry of input.entries) {
       const kept = listOf(entry.changes).filter((change) => change.kind === "保持").length;
       const outcome = outcomeOf(entry.sectionKey);
-      lines.push(record ? `| ${cell(entry.label)} | ${cell(outcome ? outcomeLabel(outcome.status) : "対象外")} | ${entry.changeCount} | ${entry.removalCount} | ${cell(entry.behavior)} |` : `| ${cell(entry.label)} | ${cell(STATUS_LABELS[entry.status] || entry.status)} | ${entry.changeCount} | ${entry.removalCount} | ${kept} | ${cell(entry.behavior)} |`);
+      lines.push(record ? `| ${cell(entry.label)} | ${cell(outcome ? outcomeLabel(outcome) : "対象外")} | ${entry.changeCount} | ${entry.removalCount} | ${cell(entry.behavior)} |` : `| ${cell(entry.label)} | ${cell(STATUS_LABELS[entry.status] || entry.status)} | ${entry.changeCount} | ${entry.removalCount} | ${kept} | ${cell(entry.behavior)} |`);
     }
     lines.push("");
     for (const entry of input.entries) {
       lines.push(`## ${escapeReflectMarkdown(entry.label)}`, "");
       const outcome = outcomeOf(entry.sectionKey);
       if (outcome) {
-        lines.push(`- 結果: ${outcomeLabel(outcome.status)}`);
-        if (outcome.message) lines.push(`- 詳細: ${escapeReflectMarkdown(outcome.message)}`);
+        lines.push(`- 結果: ${outcomeLabel(outcome)}`);
+        if (outcome.message) lines.push(`- 詳細: ${escapeReflectMarkdown(describeReflectFailure(outcome.message))}`);
       }
       lines.push(`- 状態: ${escapeReflectMarkdown(entry.message || STATUS_LABELS[entry.status] || entry.status)}`);
       for (const blocker of listOf(entry.blockers)) lines.push(`- 停止理由: ${escapeReflectMarkdown(blocker)}`);
@@ -5947,7 +6043,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   function canResolveByIncludingFieldSettings(missing, scopes) {
     return !scopes.includes("fieldSettings") && missing.some((item) => item.inSource !== false);
   }
-  function describeApplySectionStatus(status) {
+  function describeApplySectionStatus(status, stopped = false) {
+    if (status === "ng" && stopped) return { icon: "■", text: "途中で停止", tone: "ng" };
     if (status === "ok") return { icon: "✓", text: "成功", tone: "ok" };
     if (status === "ng") return { icon: "✕", text: "失敗", tone: "ng" };
     if (status === "skip") return { icon: "－", text: "変更なし", tone: "skip" };
@@ -5963,14 +6060,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const label = typeof raw.label === "string" ? raw.label : "";
       if (!sectionKey && !label) continue;
       const status = raw.status === "ok" || raw.status === "ng" || raw.status === "skip" || raw.status === "pending" ? raw.status : "pending";
-      out.push({ sectionKey, label, status, ...typeof raw.message === "string" && raw.message ? { message: raw.message } : {} });
+      out.push({ sectionKey, label, status, ...typeof raw.message === "string" && raw.message ? { message: raw.message } : {}, ...status === "ng" && raw.stopped === true ? { stopped: true } : {} });
     }
     return out;
   }
   var REFLECT_UNDO_GUIDANCE = "取り消す場合: 反映前に反映先プレビューへ未公開の変更が無ければ、アプリの設定画面の『変更を中止』で今回の反映を含む未公開の変更をすべて破棄できます。または自動保存したバックアップJSONを『設定JSONから取得』で反映元に読み込み、差分を確認して戻せます（追加したフィールドは削除されません）。";
 
   // src/reflect/applyProgress.ts
-  function describeApplyProgressStatus(status) {
+  function describeApplyProgressStatus(status, stopped = false) {
+    if (status === "ng" && stopped) return { icon: "■", text: "途中で停止", tone: "ng" };
     if (status === "running") return { icon: "…", text: "実行中…", tone: "running" };
     if (status === "ok") return { icon: "✓", text: "成功", tone: "ok" };
     if (status === "ng") return { icon: "✕", text: "失敗", tone: "ng" };
@@ -5986,15 +6084,16 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return [...new Set(sectionKeys)].sort((a, b) => order(a) - order(b)).map((sectionKey) => ({ sectionKey, label: labelOf(sectionKey), status: "waiting" }));
   }
   function applyProgressUpdate(rows, update) {
-    return rows.map((row) => row.sectionKey === update.sectionKey ? { sectionKey: row.sectionKey, label: row.label, status: update.status, ...update.message ? { message: update.message } : {} } : row);
+    return rows.map((row) => row.sectionKey === update.sectionKey ? { sectionKey: row.sectionKey, label: row.label, status: update.status, ...update.message ? { message: update.message } : {}, ...update.status === "ng" && update.stopped ? { stopped: true } : {} } : row);
   }
   function summarizeApplyProgress(rows) {
     if (!rows.length) return "";
     const settled = rows.filter((row) => ["ok", "ng", "skip"].includes(row.status)).length;
-    const failed = rows.filter((row) => row.status === "ng").length;
+    const failed = rows.filter((row) => row.status === "ng" && !row.stopped).length;
+    const stopped = rows.filter((row) => row.status === "ng" && row.stopped).length;
     const skipped = rows.filter((row) => row.status === "pending").length;
     const running = rows.find((row) => row.status === "running");
-    return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ""}${skipped ? `、未実行 ${skipped}` : ""}${running ? `。実行中: ${running.label}` : ""}`;
+    return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ""}${stopped ? `（途中で停止 ${stopped}）` : ""}${skipped ? `、未実行 ${skipped}` : ""}${running ? `。実行中: ${running.label}` : ""}`;
   }
   function describeUndoGuidance(targetPending) {
     if (targetPending?.state === "clean") {
@@ -6037,6 +6136,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   function describeRemovedItem(sectionLabel, item) {
     const details = (item.details || []).filter(Boolean);
     return `${sectionLabel} / ${item.name}${details.length ? `：${details.join("、")}` : ""}`;
+  }
+  function describeRemovedChange(sectionLabel, change) {
+    if (change.summary) return `${sectionLabel} / ${change.path.replace(/ \/ \d+件目$/, "")}：${change.summary}`;
+    return `${sectionLabel} / ${change.path}：${change.before.slice(0, 180)}${change.before.length > 180 ? "…" : ""}`;
   }
   function formatReflectDateTime(at) {
     return new Date(at).toLocaleString("ja-JP");
@@ -6356,7 +6459,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const list2 = document.createElement("ul");
     list2.className = "kus-rl-result-list";
     for (const section of sections) {
-      const display = describeApplySectionStatus(section.status);
+      const display = describeApplySectionStatus(section.status, section.stopped);
       const item = document.createElement("li");
       item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
       const head = document.createElement("div");
@@ -6374,10 +6477,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (section.message) {
         const message = document.createElement("div");
         message.className = "kus-rl-result-item__message";
-        message.textContent = section.message;
+        message.textContent = describeReflectFailure(section.message);
         item.appendChild(message);
       }
-      const hint = section.status === "ng" ? buildReflectErrorHint(section.message || "") : "";
+      const hint = section.status === "ng" && !section.stopped ? buildReflectErrorHint(section.message || "") : "";
       if (hint) {
         const hintNode = document.createElement("div");
         hintNode.className = "kus-rl-result-item__hint";
@@ -6420,13 +6523,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const paint = (row) => {
       const node = nodes.get(row.sectionKey);
       if (!node) return;
-      const display = describeApplyProgressStatus(row.status);
+      const display = describeApplyProgressStatus(row.status, row.stopped);
       node.item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
       node.state.className = `kus-rl-result-state kus-rl-result-state--${display.tone}`;
       node.icon.textContent = display.icon;
       node.text.data = display.text;
-      node.message.textContent = row.message || "";
-      node.message.hidden = !row.message;
+      const shownMessage = describeReflectFailure(row.message);
+      node.message.textContent = shownMessage;
+      node.message.hidden = !shownMessage;
     };
     const paintSummary = () => {
       summary.textContent = summarizeApplyProgress(rows);
@@ -6917,6 +7021,40 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   #kus-reflect-lite .kus-rl-dock-row{flex-direction:row;align-items:center;gap:10px}
   #kus-reflect-lite .kus-rl-dock-actions{display:flex;flex-wrap:nowrap;justify-content:flex-end;flex:none}
   #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{white-space:nowrap}
+}
+/* とても低い画面（高さ 560px 以下。横向きのスマートフォン・小さなウィンドウ）では、見出し・案内・ステップ・フッターを 1 行ずつに詰めて、本文（最終確認の書き込み先と変更内容など）に高さを回す。 */
+@media(max-height:560px){
+  #kus-reflect-lite .kus-lp__hero{padding:5px 12px}
+  #kus-reflect-lite .kus-lp__hero-main{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px}
+  #kus-reflect-lite .kus-lp__title{font-size:15px}
+  #kus-reflect-lite .kus-lp__badge-row{margin-top:0}
+  #kus-reflect-lite .kus-lp__badge{padding:1px 8px;font-size:11.5px}
+  #kus-reflect-lite .kus-lp__hint{display:none}
+  #kus-reflect-lite .kus-rl-nav{padding:3px 12px;gap:4px}
+  #kus-reflect-lite .kus-rl-nav__btn{padding:3px 4px;font-size:12px;line-height:1.3;white-space:nowrap}
+  #kus-reflect-lite .kus-rl-nav__num{display:none}
+  #kus-reflect-lite .kus-rl-canvas{padding:8px 12px 6px}
+  #kus-reflect-lite .kus-lp__card{padding:10px 12px}
+  #kus-reflect-lite .kus-rl-confirm-route{gap:4px;margin-bottom:8px}
+  #kus-reflect-lite .kus-rl-confirm-route>div{padding:6px 10px}
+  #kus-reflect-lite .kus-rl-confirm-route span{display:inline;margin:0 8px 0 0;font-size:12px}
+  #kus-reflect-lite .kus-rl-stage-head{margin:0 2px 8px}
+  #kus-reflect-lite .kus-rl-stage-head h2{font-size:15px}
+  #kus-reflect-lite .kus-rl-action-dock{padding:5px 12px 6px}
+  #kus-reflect-lite .kus-rl-dock-row{gap:4px}
+  #kus-reflect-lite .kus-rl-dock-copy{font-size:12px;line-height:1.35}
+  #kus-reflect-lite .kus-rl-dock-copy strong,#kus-reflect-lite .kus-rl-dock-msg{-webkit-line-clamp:1}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{min-height:32px;padding:4px 10px}
+  #kus-reflect-lite .kus-rl-action-dock .kus-lp__status{margin-top:4px;padding:3px 8px;font-size:12px;line-height:1.35}
+  #kus-reflect-lite .kus-rl-action-dock .kus-lp__status-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;overflow:hidden;max-height:none}
+  #kus-reflect-lite .kus-rl-action-dock .kus-lp__status--warn .kus-lp__status-text,#kus-reflect-lite .kus-rl-action-dock .kus-lp__status--err .kus-lp__status-text{-webkit-line-clamp:2}
+}
+/* 低くて幅の狭い画面では、操作ボタンを折り返しながら詰めて並べる（主操作だけが全幅の行を取らない）。 */
+@media(max-height:560px) and (max-width:559px){
+  #kus-reflect-lite .kus-rl-dock-actions{display:flex;flex-wrap:wrap;justify-content:stretch;gap:4px}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{flex:0 1 auto;grid-column:auto;min-width:0;font-size:12.5px;line-height:1.3}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn--primary,#kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn--danger{flex:1 1 140px}
+  #kus-reflect-lite .kus-rl-nav__btn{font-size:11.5px;padding:3px 2px}
 }
 @media(prefers-reduced-motion:reduce){#kus-reflect-lite{animation:none}#kus-reflect-lite *{scroll-behavior:auto!important}}
 `;
@@ -7812,7 +7950,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         body.textContent = "同じ反映元・項目・設定で差分を取得するだけで、まだ書き込みません。反映先ごとに差分確認と最終確認を行います。";
         rolloutNote.append(head, body);
       }
-      rolloutWarn.hidden = !(last && (last.ng > 0 || last.pending > 0));
+      rolloutWarn.hidden = !(last && (last.ng > 0 || last.stopped > 0 || last.pending > 0));
       rolloutWarn.textContent = last?.cancelled ? "直前の反映先は中止したため、一部の項目だけ反映されている可能性があります。結果を確認してから進んでください。" : "直前の反映先に失敗・未実行の項目があります。結果を確認してから進んでください。";
       rolloutError.hidden = queue.ok;
       rolloutError.textContent = "error" in queue ? `続けて反映する反映先を読み取れません。${queue.error}` : "";
@@ -8234,7 +8372,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         return;
       }
       return runLite("差分を取得中…", async () => {
-        await runPreview(scopes, lookupMap);
+        const result = await runPreview(scopes, lookupMap);
+        const failed = result.entries.filter((entry) => scopes.includes(entry.sectionKey) && (entry.status === "src-missing" || entry.status === "tgt-missing")).length;
+        if (failed) panel.setStatus(`差分を取得しました（${scopes.length} 項目中 ${failed} 項目は設定を取得できませんでした）。取得し直すか、その項目を対象から外してください。まだ書き込んでいません。`, "warn");
       }, okMessage || `差分を取得しました（${scopes.length} 項目を比較。まだ書き込んでいません）。`);
     }
     previewBtn.addEventListener("click", () => {
@@ -8322,7 +8462,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       for (const entry of entries) {
         const removedItems = (entry.items || []).filter((item) => item.kind === "削除" || item.kind === "変更" && item.details.some((detail2) => detail2.includes("削除")));
         if (removedItems.length || !entry.removalCount) removals.push(...removedItems.map((item) => describeRemovedItem(entry.label, item)));
-        else removals.push(...entry.changes.filter((change) => change.kind === "削除").map((change) => `${entry.label} / ${change.path}：${change.before.slice(0, 180)}${change.before.length > 180 ? "…" : ""}`));
+        else removals.push(...entry.changes.filter((change) => change.kind === "削除").map((change) => describeRemovedChange(entry.label, change)));
       }
       if (removals.length) {
         const heading = document.createElement("p");
@@ -8396,6 +8536,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       }
       showWorkflowStage("confirm");
       refreshReviewCard();
+      panel.setStatus("反映先と変更内容を確認してください。まだ書き込んでいません。", "info");
     }
     confirmBtn.addEventListener("click", openConfirmation);
     for (const control of [acknowledged.checkbox, targetCheck]) control.addEventListener("input", () => {
@@ -8687,7 +8828,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const payload = {
         schemaVersion: 1,
         executedAt: new Date(last.at).toISOString(),
-        summary: { ok: last.ok, ng: last.ng, pending: last.pending, ...last.cancelled ? { cancelled: true } : {} },
+        summary: { ok: last.ok, ng: last.ng, ...last.stopped ? { stopped: last.stopped } : {}, pending: last.pending, ...last.cancelled ? { cancelled: true } : {} },
         ...last.report
       };
       const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
@@ -8737,10 +8878,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         return;
       }
       const stamp = formatReflectDateTime(last.at);
-      const hasIssue = last.ng > 0 || last.pending > 0;
+      const hasIssue = last.ng > 0 || last.stopped > 0 || last.pending > 0;
       const tone = hasIssue ? "color:#9a3412" : "color:#065f46";
-      const failedSummary = last.failedLabels.length ? `<div>失敗: ${escapeHtml(last.failedLabels.slice(0, 5).join(" / "))}${last.failedLabels.length > 5 ? ` ほか ${last.failedLabels.length - 5} 件` : ""}</div>` : "";
-      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.cancelled ? "⚠ 中止しました。書き込み済みの分は反映先に残っています" : hasIssue ? "⚠ 一部の項目を反映できませんでした" : `✓ ${last.ok} 項目を反映しました`}</div><div>反映先 #${escapeHtml(last.appId || "-")} / 成功 ${last.ok} / ${last.cancelled ? "途中で停止" : "失敗"} ${last.ng}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? `<div style="margin-top:4px">${last.cancelled ? "差分を取得し直して現在の状態を確認してから、" : ""}「失敗・未実行だけ選択」で対象を絞って再実行してください。</div>` : '<div style="margin-top:4px">変わったのは反映先のプレビューだけです。本番へ公開するには、反映先の設定画面で公開してください。</div>');
+      const labelSummary = (title, labels2) => labels2.length ? `<div>${title}: ${escapeHtml(labels2.slice(0, 5).join(" / "))}${labels2.length > 5 ? ` ほか ${labels2.length - 5} 件` : ""}</div>` : "";
+      const failedSummary = labelSummary("失敗", last.failedLabels) + labelSummary("途中で停止", last.stoppedLabels);
+      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.cancelled ? "⚠ 中止しました。書き込み済みの分は反映先に残っています" : hasIssue ? "⚠ 一部の項目を反映できませんでした" : `✓ ${last.ok} 項目を反映しました`}</div><div>反映先 #${escapeHtml(last.appId || "-")} / 成功 ${last.ok} / 失敗 ${last.ng}${last.stopped ? ` / 途中で停止 ${last.stopped}` : ""}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? `<div style="margin-top:4px">${last.cancelled ? "差分を取得し直して現在の状態を確認してから、" : ""}「失敗・未実行だけ選択」で対象を絞って再実行してください。</div>` : '<div style="margin-top:4px">変わったのは反映先のプレビューだけです。本番へ公開するには、反映先の設定画面で公開してください。</div>');
       renderApplySectionResults(lastResultSections, last.report.sections);
       const guidance = describeUndoGuidance(last.report.targetPending);
       undoNote.textContent = guidance.text;
@@ -8845,12 +8987,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         memoryState.lastResult = {
           ok: counts.ok,
           ng: counts.ng,
+          stopped: counts.stopped,
           pending: counts.pending,
           at: Date.now(),
           appId: applyOptions.targetAppId,
           guestId: applyOptions.targetGuestId,
           retryScopes: collectRetrySectionKeys(applyOutcome.sections),
-          failedLabels: applyOutcome.sections.filter((s) => s.status === "ng").map((s) => s.label),
+          failedLabels: applyOutcome.sections.filter((s) => s.status === "ng" && !s.stopped).map((s) => s.label),
+          stoppedLabels: applyOutcome.sections.filter((s) => s.status === "ng" && s.stopped).map((s) => s.label),
           sourceBundleToken: sourceMode === "json" ? sourceBundleToken : "",
           ...applyOutcome.cancelled ? { cancelled: true } : {},
           ...applyOutcome.backup ? { backup: applyOutcome.backup } : {},
@@ -8873,10 +9017,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         };
         memoryState.staleResult = null;
         if (applyOutcome.finalRevision) memoryState.lastWrite = { targetAppId: applyOptions.targetAppId, targetGuestId: applyOptions.targetGuestId || "", finalRevision: applyOutcome.finalRevision, priorState: targetPendingAtApply?.state };
-        if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || "", name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, pending: counts.pending, at: memoryState.lastResult.at, ...applyOutcome.cancelled ? { cancelled: true } : {} });
+        if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || "", name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, ...counts.stopped ? { stopped: counts.stopped } : {}, pending: counts.pending, at: memoryState.lastResult.at, ...applyOutcome.cancelled ? { cancelled: true } : {} });
         renderLastResult();
         showWorkflowStage("result");
-        return { cancelled: false, hadError: counts.ng > 0 || counts.pending > 0, counts, failureNote: describeFirstFailure(applyOutcome.sections), stopped: counts.ng + counts.pending > 0 && !!applyOutcome.cancelled ? { ok: counts.ok, ng: counts.ng, pending: counts.pending } : null };
+        return { cancelled: false, hadError: counts.ng > 0 || counts.stopped > 0 || counts.pending > 0, counts, failureNote: describeFirstFailure(applyOutcome.sections), stopped: counts.ng + counts.stopped + counts.pending > 0 && !!applyOutcome.cancelled ? { ok: counts.ok, ng: counts.ng, stopped: counts.stopped, pending: counts.pending } : null };
       });
       if (!outcome) return;
       if (outcome.cancelled) {
@@ -8884,12 +9028,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         return;
       }
       if (outcome.stopped) {
-        const { ok, ng, pending } = outcome.stopped;
-        const total = ok + ng + pending;
+        const { ok, ng, stopped, pending } = outcome.stopped;
+        const total = ok + ng + stopped + pending;
         const queue = currentRollout();
         const queued = queue.ok ? queue.targets.length : 0;
         panel.setStatus(
-          `中止しました（${ok}/${total} 件を反映${ng ? `、${ng} 件は途中で停止` : ""}、残り ${pending} 件は未実行）。書き込み済みの分は反映先プレビューに残っています。${queued ? `続けて反映する ${queued} 件の反映先は未実行です。` : ""}差分を取得し直して現在の状態を確認してください。`,
+          `中止しました（${ok}/${total} 件を反映${stopped ? `、${stopped} 件は途中で停止` : ""}${ng ? `、${ng} 件は失敗` : ""}、残り ${pending} 件は未実行）。書き込み済みの分は反映先プレビューに残っています。${queued ? `続けて反映する ${queued} 件の反映先は未実行です。` : ""}差分を取得し直して現在の状態を確認してください。`,
           "warn"
         );
         return;
@@ -8897,7 +9041,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (!outcome.counts) return;
       if (outcome.hadError) {
         const { ok, ng, pending } = outcome.counts;
-        panel.setStatus(`${ok + ng + pending} 項目中 ${ok} 項目を反映しました。失敗 ${ng} 項目${pending ? `、未実行 ${pending} 項目` : ""}${outcome.failureNote ? `（${outcome.failureNote}）` : ""}。「失敗・未実行だけ選択」で再実行してください。`, "warn");
+        panel.setStatus(`${ok + ng + outcome.counts.stopped + pending} 項目中 ${ok} 項目を反映しました。失敗 ${ng} 項目${pending ? `、未実行 ${pending} 項目` : ""}${outcome.failureNote ? `（${outcome.failureNote}）` : ""}。「失敗・未実行だけ選択」で再実行してください。`, "warn");
         return;
       }
       panel.setStatus(`${outcome.counts.ok} 項目を反映先プレビューへ反映しました。本番へ公開するには、「反映先の設定画面を開く」から kintone の設定画面で公開してください。`, "ok");
@@ -9199,7 +9343,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return "取り消し方：反映前の設定は自動でバックアップされ、反映後に「バックアップから戻す」で戻せます。未公開の変更を確認できなかったため、「変更を中止」では他の未公開の変更も破棄される場合があります。";
   }
   function describeFirstFailure(sections) {
-    const failed = sections.find((section) => section.status === "ng");
+    const failed = sections.find((section) => section.status === "ng" && !section.stopped);
     if (!failed) return "";
     const label = failed.label && failed.label !== failed.sectionKey ? failed.label : reflectSectionLabel(failed.sectionKey || "");
     const reason = String(failed.message || "").split("\n")[0].trim();
@@ -9227,7 +9371,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const list2 = document.createElement("ul");
     list2.className = "kus-rl-rollout-list";
     for (const entry of log) {
-      const tone = entry.ng > 0 ? "ng" : entry.pending > 0 ? "pending" : "ok";
+      const tone = entry.ng > 0 || (entry.stopped || 0) > 0 ? "ng" : entry.pending > 0 ? "pending" : "ok";
       const item = document.createElement("li");
       item.className = `kus-rl-rollout-item kus-rl-rollout-item--${tone}`;
       item.dataset.rolloutEntry = `${entry.guestId ? `${entry.guestId}:` : ""}${entry.appId}`;
@@ -9238,13 +9382,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const icon = document.createElement("span");
       icon.setAttribute("aria-hidden", "true");
       icon.textContent = tone === "ok" ? "✓" : "⚠";
-      state3.append(icon, document.createTextNode(entry.cancelled ? "中止" : tone === "ok" ? "成功" : tone === "ng" ? "失敗あり" : "未実行あり"));
+      state3.append(icon, document.createTextNode(entry.cancelled ? "中止" : tone === "ok" ? "成功" : entry.ng > 0 ? "失敗あり" : tone === "ng" ? "途中で停止あり" : "未実行あり"));
       const name = document.createElement("strong");
       name.textContent = `${formatRolloutTarget(entry)}${entry.name ? ` ${entry.name}` : ""}`;
       head.append(state3, name);
       const meta = document.createElement("div");
       meta.className = "kus-rl-quiet";
-      meta.textContent = `成功 ${entry.ok} / 失敗 ${entry.ng} / 未実行 ${entry.pending}${entry.cancelled ? " · 中止" : ""} · ${formatReflectDateTime(entry.at)}`;
+      meta.textContent = `成功 ${entry.ok} / 失敗 ${entry.ng}${entry.stopped ? ` / 途中で停止 ${entry.stopped}` : ""} / 未実行 ${entry.pending}${entry.cancelled ? " · 中止" : ""} · ${formatReflectDateTime(entry.at)}`;
       item.append(head, meta);
       list2.appendChild(item);
     }

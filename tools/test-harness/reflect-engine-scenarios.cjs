@@ -154,7 +154,10 @@ module.exports = async function verifyReflectEngine({ page, esbuild, tool, out }
     await run().click(); await idle();
     assert.equal((await writes()).length, 0, side + ' revision changed: no writes');
     assert.equal(await page.evaluate(() => window.__actual.blobs.length), 0, 'no misleading backup after stale comparison');
-    assert.match(await page.locator('.kus-lp__status').innerText(), /変更されたため反映を中止/);
+    // revision はアプリ単位のため、選択した項目の内容が同じなら項目名は挙げず、アプリの設定が更新されたことだけを示す。
+    const staleMessage = await page.locator('.kus-lp__status').innerText();
+    assert.match(staleMessage, new RegExp((side === 'source' ? '反映元' : '反映先') + 'アプリの設定が確認後に更新されました（revision \\d+ → \\d+）'));
+    assert.doesNotMatch(staleMessage, /フィールド設定|一覧|レイアウト/, '内容が同じ項目の名前を挙げない');
   }
   await reset(); await button('全解除').click(); await page.getByRole('checkbox', { name: 'ビュー設定', exact: true }).check(); await compare();
   assert.equal(await final().isDisabled(), true); assert.match(await page.locator('#kus-rl-stage-review').innerText(), /tag.*反映先にありません/);

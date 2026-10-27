@@ -660,6 +660,30 @@ async function verifyReloadRaceStop(page) {
   return { compareCountBefore, finalSummary: await summary.textContent() };
 }
 
+// フォルダ読込中の「中止」は、ファイルの合間で止まり、読み込んだ内容を採用しない。
+async function verifyFolderReadCancel(context, browserBundle) {
+  const { page, pageErrors } = await createMountedPage(context, browserBundle);
+  try {
+    await dispatchFolderFiles(page, 'source', SOURCE_FILES, { delayMs: 300 });
+    await page.waitForFunction(() => (document.querySelector('[data-kus-dl-pair-folder-summary="source"]')?.textContent || '').includes('読み込み中'));
+    const cancel = page.locator('#kus-diff-lite .kus-lp__cancel');
+    await cancel.waitFor({ state: 'visible' });
+    await cancel.click();
+    await page.waitForFunction(() => /^中止しました/.test(document.querySelector('#kus-diff-lite .kus-lp__status-text')?.textContent || ''), null, { timeout: 10000 });
+    await page.waitForFunction(() => !(document.querySelector('[data-kus-dl-pair-folder-summary="source"]')?.textContent || '').includes('読み込み中'));
+    const status = (await page.locator('#kus-diff-lite .kus-lp__status-text').textContent()) || '';
+    assert.match(status, /比較元フォルダの読み込みを JSON \d+\/\d+件目で止めました/, 'フォルダ読込を中止した旨と位置が表示されていません');
+    assert.equal(((await page.locator('[data-kus-dl-pair-folder-summary="source"]').textContent()) || '').trim(), '未選択', '中止したフォルダが選択済みとして残っています');
+    assert.equal(await page.locator('.kus-dl-pair-folder__error[role="alert"]').isVisible(), false, '中止がエラー枠として表示されています');
+    assert.equal(await cancel.isHidden(), true, 'フォルダ読込の中止後も中止ボタンが残っています');
+    assert.equal(await page.locator('[data-kus-dl-pair-folder-input="source"]').evaluate((input) => input.files.length), 0, '中止後にフォルダ入力が残っています');
+    assert.deepEqual(pageErrors, [], 'フォルダ読込の中止中にブラウザエラーが発生しました');
+    return { status };
+  } finally {
+    await page.close();
+  }
+}
+
 async function verifyInvalidReselectStop(context, browserBundle) {
   const { page, pageErrors } = await createMountedPage(context, browserBundle);
   try {
@@ -759,6 +783,7 @@ async function main() {
 
     const invalidReselect = await verifyInvalidReselectStop(context, browserBundle);
     const stopped = await verifyIncompleteAndClearedFolderStop(context, browserBundle);
+    const folderReadCancel = await verifyFolderReadCancel(context, browserBundle);
     await context.close();
     report = {
       generatedAt: new Date().toISOString(),
@@ -770,14 +795,15 @@ async function main() {
       mobileGeometry,
       reloadRace,
       invalidReselect,
-      stopped
+      stopped,
+      folderReadCancel
     };
   } finally {
     await browser.close();
   }
 
   fs.writeFileSync(path.join(outDir, 'pair-folders-dom-result.json'), JSON.stringify(report, null, 2), 'utf8');
-  console.log('[pair-folders-dom] PASS: directory inputs / deterministic mapping / explicit review / folder-only bundles / asymmetric environments / chained endpoints / export contents / mobile / overlapping reload / invalid reselect / incomplete-stop');
+  console.log('[pair-folders-dom] PASS: directory inputs / deterministic mapping / explicit review / folder-only bundles / asymmetric environments / chained endpoints / export contents / mobile / overlapping reload / invalid reselect / incomplete-stop / folder read cancel');
   console.log(`[pair-folders-dom] output: ${outDir}`);
 }
 

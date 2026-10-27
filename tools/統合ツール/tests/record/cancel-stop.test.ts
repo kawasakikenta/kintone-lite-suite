@@ -103,7 +103,7 @@ describe('record quality stops at the first cancel', () => {
     expect(results[0].report?.total).toBe(0);
     expect(results.slice(1).map(result => result.error)).toEqual(['未実行（中止）', '未実行（中止）']);
     expect(results.slice(1).every(result => !result.report)).toBe(true);
-    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('中止しました（1/3 件を処理、残り 2 件は未実行）'), true);
+    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('中止しました（1/3 件を処理、残り 2 件は未実行）'), 'warn');
   });
 
   it('saves only the templates built before the cancel and lists the rest', async () => {

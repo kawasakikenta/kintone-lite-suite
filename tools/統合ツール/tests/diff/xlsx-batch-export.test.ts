@@ -164,8 +164,8 @@ describe('diff/xlsx-batch-export', () => {
     expect(result.failures).toEqual([]);
     expect(result.entries).toHaveLength(2);
     expect(result.entries).toEqual([
-      '001_保有物件.xlsx',
-      '002_固都税管理_vs_固都税 路線価管理.xlsx'
+      '001_保有物件_App101→App202.xlsx',
+      '002_固都税管理_vs_固都税 路線価管理_App101→App202.xlsx'
     ]);
     expect(new Set(result.entries.map((name) => name.toLocaleLowerCase('en-US'))).size).toBe(2);
     expect(result.entries.some((name) => /manifest/i.test(name))).toBe(false);
@@ -185,9 +185,9 @@ describe('diff/xlsx-batch-export', () => {
       A1: 'kintone 設定差分 一括比較結果',
       A3: 'No.', B3: '比較元', C3: '比較先', D3: '結果', E3: '取得状態',
       F3: '未取得・打切りの範囲', G3: '合計', K3: '並び順変更', L3: 'アプリ名',
-      D4: '差分なし', E4: '全範囲を取得', F4: '', G4: '0', L4: '一致', M4: '001_保有物件.xlsx',
+      D4: '差分なし', E4: '全範囲を取得', F4: '', G4: '0', L4: '一致', M4: '001_保有物件_App101→App202.xlsx',
       D5: '差分あり', E5: '一部未取得', G5: '4', H5: '1', I5: '1', J5: '1', K5: '1',
-      L5: '名称が異なります', M5: '002_固都税管理_vs_固都税 路線価管理.xlsx'
+      L5: '名称が異なります', M5: '002_固都税管理_vs_固都税 路線価管理_App101→App202.xlsx'
     });
     // 未取得があっても、確認できた範囲の差分件数は一括表で判断できる。
     expect(summaryCells.A2).toContain('差分あり 1件');
@@ -373,6 +373,41 @@ describe('diff/xlsx-batch-export', () => {
     expect(result.entries[0]).not.toBe(result.entries[1]);
   });
 
+  it('keeps pair identity in entry names when both apps share a name', async () => {
+    const same = (sourceId: string, targetId: string, extra: Partial<DiffXlsxContext['sourceBundle']> = {}) => context('顧客管理', '顧客管理', {
+      sourceBundle: { appId: sourceId, meta: { appName: '顧客管理' }, sections: { appSettings: { name: '顧客管理' } }, ...extra },
+      targetBundle: { appId: targetId, meta: { appName: '顧客管理' }, sections: { appSettings: { name: '顧客管理' } } }
+    });
+    const result = await buildDiffXlsxBatchExport([
+      item('a', same('101', '202')),
+      item('b', same('101', '203')),
+      item('c', same('101', '202', { guestId: '7', preview: true }))
+    ]);
+
+    expect(result.entries).toEqual([
+      '001_顧客管理_App101→App202.xlsx',
+      '002_顧客管理_App101→App203.xlsx',
+      '003_顧客管理_G7-App101-preview→App202.xlsx'
+    ]);
+    for (const name of result.entries) expect(name).not.toMatch(/[\\/:*?"<>|]/);
+    expect(new Set(result.entries).size).toBe(3);
+  });
+
+  it('omits the identity suffix when no app id is available and never truncates it', async () => {
+    const noId = context('名前のみ', '名前のみ', {
+      sourceBundle: { meta: { appName: '名前のみ' }, sections: { appSettings: { name: '名前のみ' } } },
+      targetBundle: { meta: { appName: '名前のみ' }, sections: { appSettings: { name: '名前のみ' } } }
+    });
+    const longName = 'あ'.repeat(200);
+    const result = await buildDiffXlsxBatchExport([
+      item('no id', noId),
+      item('long', context(longName, longName))
+    ]);
+    expect(result.entries[0]).toBe('001_名前のみ.xlsx');
+    expect(result.entries[1]).toMatch(/_App101→App202\.xlsx$/);
+    expect(Array.from(result.entries[1]).length).toBeLessThanOrEqual(96);
+  });
+
   it('expands summary data rows using half-width/full-width wrapping and caps extreme text', async () => {
     const halfWidthName = 'ｱ'.repeat(27);
     const fullWidthName = 'ア'.repeat(27);
@@ -404,7 +439,8 @@ describe('diff/xlsx-batch-export', () => {
     // XML-forbidden characters expand to visible tokens before wrap measurement.
     expect(heights['7']).toBeGreaterThanOrEqual(49);
     expect(heights['8']).toBeGreaterThanOrEqual(49);
-    expect(heights['9']).toBe(49);
+    // アプリ ID 付きの個別 Excel 名が1行増えて折り返される。
+    expect(heights['9']).toBe(66);
     expect(heights['10']).toBe(220);
     // 失敗行は比較ラベルと原因を複数行で残すため、識別情報に合わせて展開する。
     expect(heights['11']).toBeGreaterThan(32);

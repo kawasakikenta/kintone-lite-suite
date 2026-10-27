@@ -78,7 +78,7 @@ describe('反映先プレビューの未公開の変更の確認', () => {
     mockKintone({ revision: '18', sections: { fieldSettings: { properties: { name: field('name') } } } });
     const result = await inspectTargetPendingChanges({ targetAppId: '2', scopes: ['fieldSettings'] }, previewBundle({ fieldSettings: { properties: { name: field('name') }, revision: '20' } }));
     expect(result.state).toBe('pending'); expect(result.sectionKeys).toEqual([]);
-    expect(result.message).toBe('選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（本番 revision 18 / プレビュー revision 20）。');
+    expect(result.message).toBe('選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（設定の更新番号 revision が 本番 18 とプレビュー 20 で異なります）。');
   });
   it('ゲストスペースでは guest prefix の本番 API を読む', async () => {
     const api = mockKintone({ revision: '18', sections: { fieldSettings: { properties: {} } } });

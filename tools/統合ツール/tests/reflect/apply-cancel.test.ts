@@ -178,4 +178,53 @@ describe('lite preview reflection on cancel', () => {
     expect(updates).toContainEqual(['reportSettings', 'pending']);
     expect(result.logs.some((line) => line.includes('利用者の操作で中止しました（反映済み 1 件 / 未実行 2 件）'))).toBe(true);
   });
+  it('marks a section stopped partway by cancel as 途中で停止 (stopped), not as a failure', async () => {
+    const targetSections: Record<string, any> = {
+      fieldSettings: { properties: { existing: { type: 'NUMBER', code: 'existing' } } },
+      viewSettings: { views: {} }
+    };
+    const endpoints: Record<string, string> = { '/app/form/fields.json': 'fieldSettings', '/app/views.json': 'viewSettings' };
+    let revision = 10;
+    const api = vi.fn(async (url: string, method: string) => {
+      const key = Object.entries(endpoints).find(([endpoint]) => url.endsWith(endpoint))?.[1];
+      if (!key) throw new Error(`Unexpected endpoint: ${url}`);
+      if (method === 'GET') return { ...JSON.parse(JSON.stringify(targetSections[key])), revision: String(revision) };
+      revision += 1;
+      // フィールド追加（1 件目の書き込み）が返った直後に「中止」を押した状況。同じ項目の更新はまだ送っていない。
+      requestCancel();
+      return { revision: String(revision) };
+    });
+    vi.stubGlobal('kintone', { api });
+    const opts = {
+      sourceAppId: '1',
+      sourceBundle: {
+        appId: '1',
+        sections: {
+          fieldSettings: { properties: {
+            added: { type: 'SINGLE_LINE_TEXT', code: 'added', label: '追加' },
+            existing: { type: 'NUMBER', code: 'existing', label: '更新後' }
+          } },
+          viewSettings: { views: { List: { type: 'LIST', fields: [], index: 0 } } }
+        }
+      },
+      targetAppId: '2',
+      scopes: ['fieldSettings', 'viewSettings']
+    };
+    const preview = await previewReflectStandalone(opts, () => {});
+    beginRun();
+    const updates: Array<{ sectionKey: string; status: string; stopped?: boolean }> = [];
+    const result = await runApplyPreviewStandalone(
+      { ...opts, reviewBaseline: preview.baseline, onSectionUpdate: (update) => updates.push(update) },
+      () => {},
+      () => {}
+    );
+    expect(result.cancelled).toBe(true);
+    expect(result.sections.map((section) => [section.sectionKey, section.status, section.stopped === true])).toEqual([
+      ['fieldSettings', 'ng', true],
+      ['viewSettings', 'pending', false]
+    ]);
+    expect(result.sections[0].message).toContain('フィールド追加 まで書き込み済み');
+    expect(updates.find((update) => update.sectionKey === 'fieldSettings' && update.status === 'ng')?.stopped).toBe(true);
+    expect(result.logs.join('\n')).toMatch(/NG 0 \/ 途中で停止 1/);
+  });
 });

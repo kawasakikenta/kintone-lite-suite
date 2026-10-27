@@ -994,7 +994,16 @@ export async function runAdvancedDesignExporter(params: any = {}) {
   // bundle 設定JSONに元々含まれないため、bundle モードでは常に null（=取得不可扱い）とし、
   // 意図せず別環境へライブAPIを叩かないようにする。
   const bundleGapsLogged = new Set<string>();
-  async function fetchJob<T = any>(name: string, promiseFn: () => Promise<T>, sectionKey?: string): Promise<T | null> {
+  // 利用者に見せる取得失敗の項目名。内部名（Views / Fields 等）は出さず、セクションがあれば SECTION_DEFS の表示名を使う
+  const FETCH_JOB_LABELS: Record<string, string> = {
+    RecordCount: 'レコード件数',
+    AdminNotes: '管理者メモ',
+    Webhooks: 'Webhook'
+  };
+  const fetchJobLabel = (name: string, sectionKey?: string): string =>
+    (sectionKey && SECTION_DEFS.find((def) => def.key === sectionKey)?.label) || FETCH_JOB_LABELS[name] || name;
+  async function fetchJob<T = any>(rawName: string, promiseFn: () => Promise<T>, sectionKey?: string): Promise<T | null> {
+    const name = fetchJobLabel(rawName, sectionKey);
     if (bundle) {
       if (!sectionKey) return null;
       const sections = bundle.sections || {};
@@ -1521,9 +1530,9 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     };
 
     const auxiliaryStatusRows = [
-      auxiliaryStatus('recordCount', recordCount, 'RecordCount'),
-      auxiliaryStatus('webhook', webhooksResp, 'Webhooks'),
-      auxiliaryStatus('adminNotes', adminNotes, 'AdminNotes')
+      auxiliaryStatus('recordCount', recordCount, fetchJobLabel('RecordCount')),
+      auxiliaryStatus('webhook', webhooksResp, fetchJobLabel('Webhooks')),
+      auxiliaryStatus('adminNotes', adminNotes, fetchJobLabel('AdminNotes'))
     ];
     const auxiliaryComplete = auxiliaryStatusRows.every((row) => row.status === 'available' || row.status === 'empty');
     const acquisitionOverview = `基本設定${SECTION_DEFS.length}種：${designSnapshot.complete ? '完了' : '未完了'}／補足情報3種：${auxiliaryComplete ? '完了' : '未取得あり'}`;

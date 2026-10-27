@@ -37,7 +37,7 @@ const mockEngine = `
     await new Promise(resolve => setTimeout(resolve, 160));
     if (mock.mode === 'preview-failure') throw new Error(mock.previewError || 'サンプル取得エラー');
     const entries = opts.scopes.map((sectionKey, i) => {
-      const status = mock.mode === 'same' ? 'same' : sectionKey === 'layoutSettings' ? 'same' : sectionKey === 'viewSettings' ? 'error' : 'change';
+      const status = mock.mode === 'same' ? 'same' : sectionKey === 'layoutSettings' ? 'same' : sectionKey === 'viewSettings' ? (mock.fetchFailure ? 'tgt-missing' : 'error') : 'change';
       const items = status === 'change' ? sampleItems(sectionKey, mock.itemsMode) : undefined;
       const rawRemoval = status === 'change' && sectionKey === 'fieldSettings' && (mock.itemsMode === 'basic' || mock.itemsMode === 'raw-removal');
       const uploads = status === 'change' && sectionKey === 'customizeSettings' && mock.uploads ? [
@@ -46,7 +46,7 @@ const mockEngine = `
         { platform: 'desktop', kind: 'css', index: 0, sourceFileKey: 'key-app-css', name: 'app.css', byteSize: 2048 }
       ] : undefined;
       return { sectionKey, label: NAMES[sectionKey] || sectionKey, status,
-        behavior: '追加・更新', blockers: status === 'error' ? ['反映先の取得失敗'] : [], warnings: uploads ? ['2 件のファイル（合計 14 KB）を反映先へアップロードしてから設定します。'] : [], operations: [], requiredFields: [],
+        behavior: '追加・更新', blockers: status === 'error' || status === 'tgt-missing' ? ['反映先の取得失敗'] : [], warnings: uploads ? ['2 件のファイル（合計 14 KB）を反映先へアップロードしてから設定します。'] : [], operations: [], requiredFields: [],
         changes: status === 'change' ? [{ kind: '変更', path: 'フィールド / 顧客名 / 必須', before: 'false', after: 'true' }].concat(rawRemoval ? [{ kind: '削除', path: 'フィールド / 旧項目', before: '{"type":"SINGLE_LINE_TEXT","code":"old","label":"旧項目"}', after: '（なし）' }] : []) : [],
         changeCount: status === 'change' ? 1 + (rawRemoval ? 1 : 0) : 0, removalCount: rawRemoval ? 1 : 0,
         message: status === 'change' ? '入力欄のラベルと必須設定が変更されています。' : status === 'same' ? '設定は一致しています。' : '反映先の取得に失敗しました。アクセス権を確認してください。',
@@ -55,7 +55,7 @@ const mockEngine = `
         ...(items ? { items } : {}), ...(uploads ? { fileUploads: uploads } : {}) };
     });
     return { sourceFieldCodes: mock.sourceFieldCodes || [], targetFieldCodes: mock.targetFieldCodes || [], sourceSystemFieldCodes: mock.sourceSystemFieldCodes || [], baseline: { connection: 'sample-' + opts.targetAppId, source: {}, target: {} }, entries, totalSections: entries.length, changedSections: entries.filter(e => e.status === 'change').length,
-      sameSections: entries.filter(e => e.status === 'same').length, errorSections: entries.filter(e => e.status === 'error').length,
+      sameSections: entries.filter(e => e.status === 'same').length, errorSections: entries.filter(e => !['change', 'same'].includes(e.status)).length,
       ...(mock.targetPending ? { targetPending: mock.targetPending } : {}) };
   }
   export async function preflightLookupMapStandalone() { return { ok: true, missing: [] }; }
@@ -70,13 +70,19 @@ const mockEngine = `
     await new Promise(resolve => setTimeout(resolve, 100));
     const longToken = 'X'.repeat(260);
     const sections = [];
-    let stopped = false;
+    let stopped = false, cancelled = false;
     for (const [i, sectionKey] of opts.scopes.entries()) {
       const label = NAMES[sectionKey] || sectionKey;
       if (stopped) { await step(); notify({ sectionKey, label, status: 'pending', message: '中断のため未実行' }); sections.push({ sectionKey, label: sectionKey, status: 'pending' }); continue; }
       await step(); notify({ sectionKey, label, status: 'running' });
       await step();
-      if (mock.mode === 'partial' && i === 0) {
+      if (mock.mode === 'cancelled' && i === 0) {
+        const message = '中止しました（この項目では フィールド追加 まで書き込み済みで、残りは送信していません。差分を取得し直して現在の状態を確認してください）';
+        notify({ sectionKey, label, status: 'ng', message, stopped: true }); sections.push({ sectionKey, label: sectionKey, status: 'ng', message, stopped: true }); stopped = true; cancelled = true;
+      } else if (mock.mode === 'api-failure' && i === 0) {
+        const message = '指定したアプリが見つかりません（GAIA_AP01）\\n[API] PUT /k/v1/preview/app/views.json app=202 payload={"app":"202"}';
+        notify({ sectionKey, label, status: 'ng', message }); sections.push({ sectionKey, label: sectionKey, status: 'ng', message }); stopped = true;
+      } else if (mock.mode === 'partial' && i === 0) {
         const message = 'フィールド「顧客コード」が見つかりません（GAIA_IL26）\\n再実行前に確認してください。\\n' + longToken;
         notify({ sectionKey, label, status: 'ng', message }); sections.push({ sectionKey, label: sectionKey, status: 'ng', message }); stopped = true;
       } else { notify({ sectionKey, label, status: 'ok' }); sections.push({ sectionKey, label: sectionKey, status: 'ok' }); }
@@ -84,7 +90,7 @@ const mockEngine = `
     progress(['サンプルの反映ログです。実アプリには書き込んでいません。']);
     // 反映前に保存したバックアップと同じ形（反映先の反映前の設定）。
     const backup = mock.noBackup ? undefined : { generatedAt: '2026-01-01T00:00:00.000Z', scopes: opts.scopes.slice(), bundle: { appId: opts.targetAppId, guestId: opts.targetGuestId || '', preview: true, sections: Object.fromEntries(opts.scopes.map(key => [key, { marker: 'before-' + key }])) } };
-    return { sections, logs: [], finalRevision: mock.finalRevision || '9', ...(backup ? { backup } : {}) };
+    return { sections, logs: [], finalRevision: mock.finalRevision || '9', ...(cancelled ? { cancelled: true } : {}), ...(backup ? { backup } : {}) };
   }
 `;
 
@@ -1763,6 +1769,61 @@ async function main() {
     assert.deepEqual([scrolled.rootScroll, scrolled.bodyScroll, scrolled.heroTop <= 2, scrolled.dockBottom <= 2], [0, 0, true, true], '「失敗・未実行だけ選択」でもパネル外枠は動かない');
     assert.ok(scrolled.heroHeight > 20, '見出しが画面内に残る');
     await page.screenshot({ path: path.join(OUT, 'result-retry-320.png') });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+
+    // ---- 失敗の表示：利用者向けの文を先に示し、内部の通信情報（[API] …）は結果カードに出さない ----
+    await reset('api-failure'); await setup();
+    await page.getByRole('checkbox', { name: 'プロセス管理', exact: true }).check();
+    await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    const apiFailedItem = page.locator('#kus-rl-stage-result .kus-rl-result-item').first();
+    assert.match(await apiFailedItem.locator('.kus-rl-result-item__message').innerText(), /^指定したアプリが見つかりません（GAIA_AP01）$/, '失敗の理由は利用者向けの 1 行目を示す');
+    assert.doesNotMatch(await page.locator('#kus-rl-stage-result').innerText(), /\[API\]|payload=|\/k\/v1\//, '内部の通信情報を結果カードに出さない');
+
+    // ---- 中止後の表示：途中で止まった項目は「失敗」ではなく「途中で停止」、残りは「未実行」で統一する ----
+    await reset('cancelled'); await setup();
+    await page.getByRole('checkbox', { name: 'プロセス管理', exact: true }).check();
+    await compare(); await button('差分ありだけ選択').click(); await execute(); await idle();
+    const cancelledResult = page.locator('#kus-rl-stage-result');
+    const cancelledItems = cancelledResult.locator('.kus-rl-result-item');
+    assert.equal(await cancelledItems.count(), 2);
+    assert.match(await cancelledItems.nth(0).locator('.kus-rl-result-state').innerText(), /途中で停止/, '一覧でも「途中で停止」と示す');
+    assert.doesNotMatch(await cancelledItems.nth(0).locator('.kus-rl-result-state').innerText(), /失敗/);
+    assert.match(await cancelledItems.nth(1).locator('.kus-rl-result-state').innerText(), /未実行/);
+    assert.equal(await cancelledItems.nth(0).locator('.kus-rl-result-item__hint').count(), 0, '途中で停止した項目に失敗のヒントを付けない');
+    const cancelledText = await cancelledResult.innerText();
+    assert.match(cancelledText, /成功 0 \/ 失敗 0 \/ 途中で停止 1 \/ 未実行 1/, '見出しの件数は失敗に数えない');
+    assert.match(cancelledText, /途中で停止: \S+/, '概要の行も「途中で停止」と示す');
+    assert.doesNotMatch(cancelledText, /失敗: /, '中止で止まった項目を「失敗:」に並べない');
+    assert.match(await page.locator('.kus-lp__status').innerText(), /1 件は途中で停止/);
+
+    // ---- 取得に失敗した項目があるとき、差分取得の完了は警告色で件数を示す。最終確認へ進むと段階に合った案内にする ----
+    await reset('mixed', { fetchFailure: true }); await setup();
+    await page.getByRole('checkbox', { name: 'ビュー設定', exact: true }).check();
+    await compare();
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn', '取得失敗があるときは成功の緑にしない');
+    assert.match(await page.locator('.kus-lp__status').innerText(), /1 項目は設定を取得できませんでした/);
+    await button('差分ありだけ選択').click(); await run().click();
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'info', '最終確認では中立の案内にする');
+    assert.doesNotMatch(await page.locator('.kus-lp__status').innerText(), /差分を取得しました/, '差分取得の完了メッセージを最終確認に持ち越さない');
+
+    // ---- 低い画面の最終確認：見出し・案内・ステップ・フッターを詰めて、書き込み先と変更内容に高さを回す ----
+    await reset('mixed', { itemsMode: 'basic', targetPending: cleanPending }); await setup(); await compare(); await button('差分ありだけ選択').click(); await run().click();
+    for (const [width, height, minimum] of [[1024, 400, 190], [320, 420, 160], [390, 480, 210], [1440, 500, 280]]) {
+      await page.setViewportSize({ width, height });
+      await tab('最終確認').click();
+      const geometry = await page.evaluate(() => {
+        const canvas = document.querySelector('.kus-rl-canvas'), box = canvas.getBoundingClientRect();
+        const target = document.querySelector('#kus-rl-stage-confirm .kus-rl-confirm-route > div:last-child').getBoundingClientRect();
+        const dock = document.querySelector('.kus-rl-action-dock').getBoundingClientRect(), root = document.querySelector('#kus-reflect-lite').getBoundingClientRect();
+        canvas.scrollTop = 0;
+        return { canvasHeight: Math.round(canvas.clientHeight), dockHeight: Math.round(dock.height), rootHeight: Math.round(root.height), overflow: canvas.scrollWidth - canvas.clientWidth,
+          targetTop: Math.round(target.top - box.top), targetBottom: Math.round(target.bottom - box.top), hintVisible: !!document.querySelector('.kus-lp__hint')?.offsetParent };
+      });
+      assert.ok(geometry.canvasHeight >= minimum && geometry.dockHeight <= geometry.rootHeight * 0.4 && geometry.overflow <= 1 && !geometry.hintVisible, `${width}×${height}（最終確認）で本文の領域が足りない: ${JSON.stringify(geometry)}`);
+      if (width >= 1024) assert.ok(geometry.targetBottom <= geometry.canvasHeight, `${width}×${height}で書き込み先がスクロールしないと見えない: ${JSON.stringify(geometry)}`);
+      else assert.ok(geometry.targetTop < geometry.canvasHeight, `${width}×${height}で書き込み先が見えない: ${JSON.stringify(geometry)}`);
+      await page.screenshot({ path: path.join(OUT, `lowheight-confirm-${width}x${height}.png`) });
+    }
     await page.setViewportSize({ width: 1440, height: 1000 });
 
     // ---- 低い画面でも本文の領域を十分に残す（固定フッターが本文を圧迫しない） ----

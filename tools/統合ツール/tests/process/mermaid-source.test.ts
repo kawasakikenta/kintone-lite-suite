@@ -249,6 +249,32 @@ describe('runRenderProcessFlowStandalone simulation notices', () => {
   });
 });
 
+describe('runRenderProcessFlowStandalone Mermaid load failure', () => {
+  it('shows an actionable message without the CDN URL and keeps the URL in the log only', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ enable: true, states: { A: {} }, actions: [] });
+    vi.stubGlobal('document', {
+      querySelector: () => null,
+      createElement: () => ({ dataset: {} }),
+      head: { appendChild: (script: any) => queueMicrotask(() => script.onerror?.()) },
+      addEventListener() {},
+      removeEventListener() {}
+    });
+    try {
+      const targets: any = { ...simTargets(), log: vi.fn() };
+      const notices: string[] = [];
+      await withMermaid(null, () => runRenderProcessFlowStandalone({ appId: '7' }, m => notices.push(m), targets));
+      expect(notices.length).toBeGreaterThan(0);
+      for (const notice of notices) expect(notice).not.toMatch(/https?:\/\//);
+      expect(notices.at(-1)).toContain('図の描画ライブラリ（Mermaid）を読み込めませんでした。ネットワークやブラウザの制限を確認してください。');
+      expect(targets.viewEl.innerHTML).not.toMatch(/https?:\/\//);
+      expect(targets.log).toHaveBeenCalledTimes(1);
+      expect(targets.log.mock.calls[0][0]).toMatch(/https:\/\/cdn\.jsdelivr\.net\/npm\/mermaid[\s\S]*unpkg\.com[\s\S]*cdnjs/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe('runRenderProcessFlowStandalone freshness', () => {
   it('does not commit a deferred simulation render after the connection changes', async () => {
     const previousWindow = (globalThis as any).window;

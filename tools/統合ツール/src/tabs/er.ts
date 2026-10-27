@@ -380,6 +380,24 @@ export const crawl = async (startIds, options) => {
   return apps;
 };
 
+/**
+ * 解析できたアプリが 1 つもない場合に、起点アプリと理由を示して失敗にする。
+ * ほぼ空の HTML を「保存しました」と報告しないための確認で、一部でも解析できていれば何もしない。
+ */
+export const assertErAnalysed = (apps: any[], options: any = {}): void => {
+  const isFailed = (app: any): boolean => app?.status === 'failed' || app?.ok === false;
+  if (apps.some((app) => !isFailed(app))) return;
+  const startIds: string[] = Array.isArray(options?.startAppIds) ? options.startAppIds.map(String) : [];
+  const byId = new Map(apps.map((app) => [String(app?.id), app]));
+  const targets = (startIds.length ? startIds : apps.map((app) => String(app?.id))).map((id) => {
+    const app: any = byId.get(id);
+    const name = app?.name && app.name !== `アプリ ${id}` ? `（${app.name}）` : '';
+    const reason = app?.issues?.[0]?.message || app?.issues?.[0]?.code || '原因不明';
+    return `起点アプリ ${id}${name}を取得できませんでした: ${reason}`;
+  });
+  throw new Error(`ER図を作成できませんでした。${targets.join(' / ')}。アプリIDと閲覧権限を確認してください`);
+};
+
 export const buildHTML = (apps, options: any = {}) => {
   const safeApps = Array.isArray(apps) ? apps : [];
   // allFields が正規データ。旧互換用 fields を同時に埋め込むと大規模図でHTMLがほぼ倍になるため省く。
@@ -4438,6 +4456,7 @@ export async function runGenerateERDiagram() {
 
   try {
     const apps = await crawl(options.startAppIds, options);
+    assertErAnalysed(apps, options);
     progressUi.update(94, 'HTML生成中...');
     const html = buildHTML(apps, options);
     const blob = new Blob([html], { type: 'text/html' });
@@ -4479,6 +4498,7 @@ export async function runExportERDiagramHtml() {
 
   try {
     const apps = await crawl(options.startAppIds, options);
+    assertErAnalysed(apps, options);
     progressUi.update(94, 'HTML保存データ生成中...');
     const html = buildHTML(apps, options);
     const suffix = `${options.source?.guestId ? `guest${options.source.guestId}_` : ''}${options.source?.preview ? 'プレビュー' : '本番'}`;
