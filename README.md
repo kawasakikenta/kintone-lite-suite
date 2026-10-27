@@ -68,6 +68,7 @@ npm run test:er-compare
 - [核心設計と差分判定条件](docs/core-design-and-diff-judgment.md) — アーキテクチャと設計判断、API層・共通基盤の判定条件、差分比較の完全性・無視・正規化・配列対応付け・出力・一括比較の判定条件、安全性設計の横断まとめ
 - [統合ツールの開発・ビルド](tools/統合ツール/README.md)
 - [liteツール群の機能説明](tools/統合ツール_機能説明.md)
+- [文言ガイド](docs/ui-writing-guide.md) — 用語の統一、影響範囲バッジ、注記・ステータスの書き方
 
 ## 安全上の注意
 

@@ -114,7 +114,7 @@ export function renderCustomizeResultHtml(data) {
 /** アプリID・ゲストIDは API の URL / クエリに入るため、数字だけを受け付ける。 */
 export function assertNumericAppAndGuestId(appId: string, guestId: string, appLabel = 'アプリID'): void {
   if (!/^\d+$/.test(appId)) throw new Error(`${appLabel}は数値（半角数字）で入力してください`);
-  if (guestId && !/^\d+$/.test(guestId)) throw new Error('ゲストIDは数値（半角数字）で入力してください');
+  if (guestId && !/^\d+$/.test(guestId)) throw new Error('ゲストスペースIDは半角数字で入力してください');
 }
 
 export async function runFetchJsConfigStandalone(p, setStatus, ui) {
@@ -149,7 +149,7 @@ const CUSTOMIZE_SCOPES = new Set(['ALL', 'ADMIN', 'NONE']);
 export interface JsConfigApplyPlan {
   /** app/customize PUT に送る desktop/mobile（GET 専用の name/size 等は除去済み） */
   payload: Record<string, unknown>;
-  /** 入力に有効な scope があればそのまま送る（無ければ比較先の現状維持） */
+  /** 入力に有効な scope があればそのまま送る（無ければ反映先の現状維持） */
   scope: string | null;
   counts: { desktopJs: number; desktopCss: number; mobileJs: number; mobileCss: number; file: number; url: number };
   /** type/url/fileKey 不備で送信対象から外れた件数 */
@@ -241,11 +241,11 @@ export function buildJsConfigApplyConfirmText(targetAppId: string, targetGuestId
   const nextTotal = c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss;
   const nowTotal = current ? current.desktopJs + current.desktopCss + current.mobileJs + current.mobileCss : 0;
   return [
-    `比較先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ''} のプレビュー環境へ JS/CSS 設定を反映します。`,
+    `反映先 App ${targetAppId}${targetGuestId ? `（ゲストスペース ${targetGuestId}）` : ''} のプレビューへ JS/CSS 設定を反映します。`,
     `Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}（URL ${c.url}件 / FILE ${c.file}件）${plan.scope ? ` / 適用範囲 ${plan.scope}` : ''}`,
-    current ? `比較先の現在設定: Desktop JS ${current.desktopJs} / CSS ${current.desktopCss}、Mobile JS ${current.mobileJs} / CSS ${current.mobileCss}` : '',
-    nextTotal === 0 ? '⚠ 有効な JS/CSS 設定が 0 件のため、比較先の JS/CSS 設定はすべてクリア（0件に初期化）されます。' : '',
-    '比較先の JS/CSS 一覧はこの内容で全置換され、比較先のみにあるファイルは外れます。',
+    current ? `反映先の現在の設定: Desktop JS ${current.desktopJs} / CSS ${current.desktopCss}、Mobile JS ${current.mobileJs} / CSS ${current.mobileCss}` : '',
+    nextTotal === 0 ? '⚠ 有効な JS/CSS 設定が 0 件のため、反映先の JS/CSS 設定はすべて外れます（0 件になります）。' : '',
+    '反映先の JS/CSS 一覧はこの内容にすべて置き換わり、反映先だけにあるファイルは外れます。',
     current ? `この反映で外れる現在の設定: ${current.removed}件${current.removed && nowTotal && !nextTotal ? '（すべて外れます）' : ''}` : '',
     plan.dropped ? `type/url/fileKey が不足している ${plan.dropped}件は送信しません。` : '',
     c.file
@@ -275,7 +275,7 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
   const current = await apiGet(prefix, '/app/customize.json', { app: targetAppId });
   const revision = pickRevision(current);
   if (!/^\d+$/.test(revision)) {
-    throw new Error('比較先 JS/CSS 設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください');
+    throw new Error('反映先の JS/CSS 設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください');
   }
 
   const currentSummary = summarizeJsConfigCurrent(current, plan);
@@ -339,7 +339,7 @@ export async function runBatchJsConfigDownloadStandalone(
   setStatus: (msg: string, err?: boolean) => void
 ): Promise<BatchJsConfigDownloadResult> {
   const guestId = String(p.guestId || '').trim();
-  if (guestId && !/^\d+$/.test(guestId)) throw new Error('ゲストIDは数値（半角数字）で入力してください');
+  if (guestId && !/^\d+$/.test(guestId)) throw new Error('ゲストスペースIDは半角数字で入力してください');
   const baseListPrefix = buildApiPrefix(guestId, false);
 
   setStatus('対象スペースの全アプリを取得中...');

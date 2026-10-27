@@ -38,10 +38,10 @@ export function mountFieldLitePanel() {
   const panel = createLitePanel({
     id: 'kus-field-lite',
     title: 'フィールド追加',
-    subtitle: 'フィールド定義 JSON を比較先プレビューへ追加・更新します。',
+    subtitle: 'フィールド定義 JSON を、反映先のプレビューへ追加・更新します。',
     accent: 'field',
-    badges: [{ label: 'Lite' }, { label: 'プレビュー反映' }],
-    hint: 'フィールド定義を比較先のプレビューへ追加・更新します。本番への公開は設定画面で行います。'
+    badges: [{ label: 'プレビューへ書き込み', tone: 'preview' }],
+    hint: '反映先のプレビューだけを変更します。本番への公開は kintone の設定画面で行います。'
   });
 
   // ---- アプリ ----
@@ -51,13 +51,13 @@ export function mountFieldLitePanel() {
   const tgtGuest = makeInput({ placeholder: 'ゲストID (任意)', width: 'guest' });
 
   const cardApp = makeCard({ title: 'アプリ', number: 1 });
-  cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: '比較元' }));
-  cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '比較先' }));
+  cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: '反映元' }));
+  cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '反映先' }));
   cardApp.body.appendChild(createAppSearchControl(panel, {
     targets: [
       // 検索した接続先（通常スペースなら空）に合わせる。以前のゲストIDが残ると別の接続先へ書き込もうとするため。
-      { label: '比較元', apply: (id, _name, guestId) => { srcApp.value = id; srcGuest.value = guestId || ''; resetPickList(); } },
-      { label: '比較先', apply: (id, _name, guestId) => { tgtApp.value = id; tgtGuest.value = guestId || ''; } }
+      { label: '反映元', apply: (id, _name, guestId) => { srcApp.value = id; srcGuest.value = guestId || ''; resetPickList(); } },
+      { label: '反映先', apply: (id, _name, guestId) => { tgtApp.value = id; tgtGuest.value = guestId || ''; } }
     ]
   }));
   panel.body.insertBefore(cardApp.card, panel.status);
@@ -65,8 +65,8 @@ export function mountFieldLitePanel() {
   // ---- フィールド定義JSON ----
   const fieldJson = makeTextarea({ rows: 8, code: true, placeholder: 'フィールド定義 JSON（{ "properties": { ... } } 形式）' });
 
-  const bLoadSrc = makeButton('比較元から読込', 'sub');
-  const bLoadTgt = makeButton('比較先から読込', 'sub');
+  const bLoadSrc = makeButton('反映元から読込', 'sub');
+  const bLoadTgt = makeButton('反映先から読込', 'sub');
   const bValidate = makeButton('検証', 'sub');
   const bFormat = makeButton('整形', 'sub');
   const bImport = makeButton('ファイル読込', 'sub');
@@ -140,34 +140,34 @@ export function mountFieldLitePanel() {
   cardJson.body.appendChild(fieldJson);
   panel.body.insertBefore(cardJson.card, panel.status);
 
-  bLoadSrc.addEventListener('click', () => liteRun(panel, '比較元フィールド取得中…', async () => {
+  bLoadSrc.addEventListener('click', () => liteRun(panel, '反映元のフィールドを取得中…', async () => {
     const props = await runLoadFieldsStandalone(
       { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: true },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
     fieldJson.value = JSON.stringify({ properties: props }, null, 2);
     fieldJson.dispatchEvent(new Event('input', { bubbles: true }));
-  }, '比較元のフィールド定義を読み込みました'));
+  }, '反映元のフィールド定義を JSON に読み込みました'));
 
-  bLoadTgt.addEventListener('click', () => liteRun(panel, '比較先フィールド取得中…', async () => {
+  bLoadTgt.addEventListener('click', () => liteRun(panel, '反映先のフィールドを取得中…', async () => {
     const props = await runLoadFieldsStandalone(
       { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), preview: true },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
     fieldJson.value = JSON.stringify({ properties: props }, null, 2);
     fieldJson.dispatchEvent(new Event('input', { bubbles: true }));
-  }, '比較先のフィールド定義を読み込みました'));
+  }, '反映先のフィールド定義を JSON に読み込みました'));
 
-  // ---- 比較元からフィールドを選んでマージ ----
-  const pickDetails = makeDetails('比較元からフィールドを選んでマージ', { open: false });
-  const bLoadPickList = makeButton('比較元フィールド一覧を取得', 'sub');
+  // ---- 反映元からフィールドを選んでマージ ----
+  const pickDetails = makeDetails('反映元からフィールドを選んでマージ', { open: false });
+  const bLoadPickList = makeButton('反映元フィールド一覧を取得', 'sub');
   pickDetails.body.appendChild(makeRow(bLoadPickList));
   const bInsertPicked = makeButton('選択したフィールドを JSON に挿入（マージ）', 'primary');
   const bClosePick = makeButton('候補を閉じる', 'ghost');
   const pickList = makePickList({
-    ariaLabel: 'マージする比較元フィールド',
+    ariaLabel: 'マージする反映元フィールド',
     filterPlaceholder: 'コード・ラベル・タイプで絞り込み',
-    emptyText: '比較元にフィールドがありません。',
+    emptyText: '反映元にフィールドがありません。',
     footer: (selected, total) => `${total}件中 ${selected}件を選択。挿入すると同じコードの既存定義は候補の内容で置き換えます。`
   });
   pickDetails.body.appendChild(pickList.element);
@@ -177,7 +177,7 @@ export function mountFieldLitePanel() {
   pickDetails.body.appendChild(pickActions);
 
   let pickedPropsCache: Record<string, any> = {};
-  // 比較元を変えたあとに前の比較元の候補を挿入しないよう、候補は比較元の入力が変わったら閉じる
+  // 反映元を変えたあとに前の反映元の候補を挿入しないよう、候補は反映元の入力が変わったら閉じる
   function resetPickList() {
     pickedPropsCache = {};
     pickList.clear();
@@ -186,7 +186,7 @@ export function mountFieldLitePanel() {
   srcApp.addEventListener('input', resetPickList);
   srcGuest.addEventListener('input', resetPickList);
 
-  bLoadPickList.addEventListener('click', () => liteRun(panel, '比較元フィールド一覧を取得中…', async () => {
+  bLoadPickList.addEventListener('click', () => liteRun(panel, '反映元のフィールド一覧を取得中…', async () => {
     const props = await runLoadFieldsStandalone(
       { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: true },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
@@ -243,11 +243,11 @@ export function mountFieldLitePanel() {
 
   // ---- オプション ----
   const optCard = makeCard({ title: '反映オプション', number: 3, soft: true });
-  const lookupMap = makeTextarea({ rows: 2, code: true, placeholder: 'Lookup AppID 変換 JSON（任意）: {"旧":"新", ...}' });
-  optCard.body.appendChild(makeRow(lookupMap, { label: 'Lookup', block: true }));
-  const ow = makeCheck({ label: '既存フィールドを上書き更新', help: '同一フィールドコードがある場合に PUT で更新します' });
+  const lookupMap = makeTextarea({ rows: 2, code: true, placeholder: 'ルックアップ参照先のアプリID変換 JSON（任意）: {"旧":"新", ...}' });
+  optCard.body.appendChild(makeRow(lookupMap, { label: 'ルックアップ', block: true }));
+  const ow = makeCheck({ label: '既存フィールドを上書き更新', help: '反映先に同じフィールドコードがあれば、定義を更新します（オフの場合はスキップ）' });
   optCard.body.appendChild(makeRow(ow.label));
-  optCard.body.appendChild(makeNote('反映前に追加・更新・スキップ件数を確認します。比較先の取得後に別の更新が入っていた場合（revision 競合）は上書きせず中止するので、読み込み直してから再実行してください。'));
+  optCard.body.appendChild(makeNote('反映前に、追加・更新・スキップの件数を最終確認します。取得後に反映先へ別の更新が入っていた場合（revision 競合）は上書きせず中止するので、読み込み直してから再実行してください。'));
   panel.body.insertBefore(optCard.card, panel.status);
 
   bValidate.addEventListener('click', () => {
@@ -278,10 +278,10 @@ export function mountFieldLitePanel() {
     }
   });
 
-  const bApply = makeButton('比較先プレビューへ反映', 'run', { icon: '⤴' });
+  const bApply = makeButton('反映先プレビューへ反映', 'run', { icon: '⤴' });
   panel.body.insertBefore(bApply, panel.status);
 
-  bApply.addEventListener('click', () => liteRun(panel, '反映中…', async () => {
+  bApply.addEventListener('click', () => liteRun(panel, '反映先プレビューへ反映中…', async () => {
     const logs = await runFieldApplyStandalone(
       {
         targetAppId: tgtApp.value.trim(),
@@ -298,23 +298,23 @@ export function mountFieldLitePanel() {
   }));
 
   // ---- バルクリネーム ----
-  const renameDetails = makeDetails('プレフィックス一括リネーム（比較先プレビュー）');
+  const renameDetails = makeDetails('プレフィックス一括リネーム（反映先プレビュー）');
   const renamePrefix = makeInput({ placeholder: '例: dev_', width: 'medium' });
   const removeMode = makeCheck({ label: '付与ではなく除去する' });
   const renameModeSelect = makeSelect(
     [
-      ['put-rename', 'コード変更用（既存キー維持・PUT更新）'],
-      ['new-keys', '新規追加用（キー名も変更）']
+      ['put-rename', 'コード変更用（既存フィールドのコードを変更）'],
+      ['new-keys', '新規追加用（別コードのフィールドとして追加）']
     ],
     'put-rename'
   );
   renameModeSelect.setAttribute('aria-label', 'リネーム出力形式');
-  const bRename = makeButton('リネーム結果を JSON に流し込む', 'sub');
+  const bRename = makeButton('リネーム結果を JSON にセット', 'sub');
   renameDetails.body.appendChild(makeRow(renamePrefix, { label: '文字列' }));
   renameDetails.body.appendChild(makeRow(removeMode.label));
   renameDetails.body.appendChild(makeRow(renameModeSelect, { label: '出力形式' }));
   renameDetails.body.appendChild(makeRow(bRename));
-  const renameNote = makeNote('比較先のフィールドコードを書き換えた JSON を生成して上のテキストエリアにセットします（反映は別途実行）。既存フィールドのコード変更は「コード変更用」＋「既存フィールドを上書き更新」で PUT 更新します（「コード変更用」では上書き更新を自動でオンにします）。');
+  const renameNote = makeNote('反映先のフィールドコードを書き換えた JSON を、上のテキストエリアにセットします（反映は別途実行します）。既存フィールドのコードを変えるには「コード変更用」を選びます（「既存フィールドを上書き更新」は自動でオンになります）。');
   renameDetails.body.appendChild(renameNote);
   panel.body.insertBefore(renameDetails.details, panel.status);
 
@@ -338,10 +338,10 @@ export function mountFieldLitePanel() {
     fieldJson.dispatchEvent(new Event('input', { bubbles: true }));
     const list = out.renamePairs.slice(0, 50).map((p) => `${p.from}  →  ${p.to}`).join('\n');
     panel.setResult(list + (out.renamePairs.length > 50 ? `\n... 他 ${out.renamePairs.length - 50} 件` : ''));
-  }, '対象を JSON にセットしました。コードを変更するには「既存フィールドを上書き更新」をオンにして「反映」を実行してください'));
+  }, 'リネーム結果を JSON にセットしました。コードを変更するには「既存フィールドを上書き更新」をオンにして「反映先プレビューへ反映」を実行してください'));
 
-  srcApp.setAttribute('aria-label', '比較元アプリID'); srcGuest.setAttribute('aria-label', '比較元ゲストスペースID');
-  tgtApp.setAttribute('aria-label', '比較先アプリID'); tgtGuest.setAttribute('aria-label', '比較先ゲストスペースID');
+  srcApp.setAttribute('aria-label', '反映元アプリID'); srcGuest.setAttribute('aria-label', '反映元ゲストスペースID');
+  tgtApp.setAttribute('aria-label', '反映先アプリID'); tgtGuest.setAttribute('aria-label', '反映先ゲストスペースID');
   fieldJson.setAttribute('aria-label', '反映するフィールド定義JSON');
   lookupMap.setAttribute('aria-label', '参照アプリID変換JSON');
   cardJson.body.appendChild(foldWorkflowSection('JSONファイル・整形・クリア', bImport, bExport, bFormat, bClear));
@@ -350,8 +350,8 @@ export function mountFieldLitePanel() {
     if (problem) return problem;
     const sApp = srcApp.value.trim();
     const sGuest = srcGuest.value.trim();
-    if (sApp && !/^\d+$/.test(sApp)) return '比較元アプリIDは数値で入力してください。';
-    if (sGuest && !/^\d+$/.test(sGuest)) return '比較元ゲストIDは数値で入力してください。';
+    if (sApp && !/^\d+$/.test(sApp)) return '反映元アプリIDは数値で入力してください。';
+    if (sGuest && !/^\d+$/.test(sGuest)) return '反映元ゲストスペースIDは数値で入力してください。';
     return '';
   };
   const fieldSummary = (): Array<[string, string]> => {
@@ -386,12 +386,12 @@ export function mountFieldLitePanel() {
     if (checkNotes.length) {
       rows.push(['事前検証', checkNotes.join('\n')]);
     }
-    rows.push(['本番公開', 'この操作では公開しません']);
+    rows.push(['本番公開', 'しません（公開は kintone の設定画面で行います）']);
     return rows;
   };
   installLiteWorkflow(panel, {
     setup: [cardApp.card, cardJson.card, pickDetails.details, foldWorkflowSection('反映オプション・参照先変換', optCard.card), renameDetails.details],
-    actions: [{ id: 'apply', label: '比較先プレビューへ反映', description: '追加・更新・スキップ件数を最終確認してからフィールドを反映します。', button: bApply, writes: true, validate: fieldProblem, summary: fieldSummary }]
+    actions: [{ id: 'apply', label: '反映先プレビューへ反映', description: '反映先プレビューへフィールドを追加・更新します（実行前に件数を最終確認します）。', button: bApply, writes: true, validate: fieldProblem, summary: fieldSummary }]
   });
 
 }

@@ -341,7 +341,7 @@ async function fillComparisonForm(page) {
       }
     });
     const showResult = advanced.locator('label')
-      .filter({ hasText: /画面に(?:比較結果一覧|差分明細)を表示/ })
+      .filter({ hasText: /(?:画面に(?:比較結果一覧|差分明細)|差分の明細を画面に)を?表示/ })
       .locator('input[type="checkbox"]')
       .first();
     if ((await showResult.count()) && !(await showResult.isChecked())) {
@@ -1375,7 +1375,7 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     const collapsedHeight = (await longValueWrapper.boundingBox())?.height || 0;
     await longValueToggle.click();
     assert.equal(await longValueToggle.getAttribute('aria-expanded'), 'true', 'after: 長い値の展開状態が支援技術へ伝わりません');
-    assert.match(await longValueToggle.textContent(), /プレビューに戻す/, 'after: 展開後の戻す操作が表示されません');
+    assert.match(await longValueToggle.textContent(), /省略表示に戻す/, 'after: 展開後の戻す操作が表示されません');
     const expandedHeight = (await longValueWrapper.boundingBox())?.height || 0;
     assert.ok(expandedHeight > collapsedHeight, 'after: 全文展開後も値領域の高さが増えていません');
     await page.locator('#kus-diff-lite').screenshot({

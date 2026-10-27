@@ -26,8 +26,8 @@ export function mountCsvExportLitePanel() {
     title: 'CSV出力',
     subtitle: 'レコードとテーブル明細を CSV / ZIP で保存します。複数アプリもまとめて出力できます。',
     accent: 'record',
-    badges: [{ label: 'Lite' }, { label: '複数アプリ対応' }, { label: '読み取り専用' }],
-    hint: '1アプリはCSVで保存します。テーブルがある場合は親レコードとテーブル明細を別CSVにしてZIPにまとめます。複数アプリはアプリ別フォルダを1つのZIPに保存します。',
+    badges: [{ label: '読み取り専用', tone: 'read' }],
+    hint: 'アプリのレコードは変更せず、取得した内容をブラウザからファイルとして保存します。',
     wide: true
   });
 
@@ -40,7 +40,7 @@ export function mountCsvExportLitePanel() {
       syncViewAppFromTable();
       const note = result.action === 'existing' ? '（追加済み）' : result.action === 'filled' ? '（空行へ設定）' : '';
       return {
-        message: `アプリ #${id}${name ? ` (${name})` : ''} を対象表に設定しました${note}`,
+        message: `アプリ #${id}${name ? ` (${name})` : ''} を対象アプリに設定しました${note}`,
         tone: result.action === 'existing' ? 'info' : 'ok',
         pickedLabel: result.action === 'existing' ? '追加済み' : '設定済み'
       };
@@ -67,7 +67,7 @@ export function mountCsvExportLitePanel() {
     ['crlf', 'CRLF（Windows標準）']
   ]);
   lineEndingSelect.setAttribute('aria-label', '改行コード');
-  const neutralizeCb = makeCheck({ label: '先頭の = + - @ を数式無害化する（Excel向け・既定）', checked: true });
+  const neutralizeCb = makeCheck({ label: '= + - @ で始まる文字列の先頭に \' を付ける（Excel向け・既定）', checked: true });
 
   cardCond.body.appendChild(makeRow([query, useView], { label: '共通クエリ' }));
   cardCond.body.appendChild(makeRow([viewApp, viewGuest, loadViews], { label: '一覧取得元' }));
@@ -77,9 +77,11 @@ export function mountCsvExportLitePanel() {
   cardCond.body.appendChild(makeRow(filename, { label: 'ファイル名' }));
   cardCond.body.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: '出力形式' }));
   cardCond.body.appendChild(makeRow(neutralizeCb.label, { label: 'Excel保護' }));
-  cardCond.body.appendChild(makeNote('クエリは全対象アプリへ共通適用します。テーブル明細は1行ずつ別CSVに出力し、親レコードの $id で明細を紐付けできます。'));
-  cardCond.body.appendChild(makeNote('出力は閲覧・集計用です。CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に \' を付けます（数値は対象外）。添付はファイル名のみを出力します。ファイル本体も必要な場合は、レコード管理のバックアップで「添付ファイルも保存」を選んでください。'));
-  cardCond.body.appendChild(makeNote('limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します。複数アプリで一部が失敗しても成功分は ZIP に保存し、失敗一覧を manifest.txt に記録します。'));
+  cardCond.body.appendChild(makeNote('クエリは全対象アプリに共通で適用します。テーブル明細は別CSVに1行ずつ出力し、親レコードの $id で紐付けできます。'));
+  cardCond.body.appendChild(makeNote('出力は閲覧・集計用で、CSV取込用の互換形式ではありません。添付はファイル名のみ出力します（ファイル本体は、レコード管理のバックアップで「添付ファイルも保存」を選んで取得できます）。'));
+  cardCond.body.appendChild(makeNote('Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に \' を付けます（数値は対象外）。'));
+  cardCond.body.appendChild(makeNote('10,000 件を超えても全件取得します（並び順を指定した場合は cursor API を使います）。クエリに limit / offset は書けません。'));
+  cardCond.body.appendChild(makeNote('複数アプリのうち一部が失敗しても、成功分は ZIP に保存し、失敗の一覧を manifest.txt に記録します。'));
   panel.body.insertBefore(cardCond.card, panel.status);
 
   let loadedViews: RecordViewChoice[] = [];
@@ -155,7 +157,7 @@ export function mountCsvExportLitePanel() {
       opt.textContent = `${v.name}（${typeLabel}） ${v.query ? `(${v.query.slice(0, 80)})` : '(全件)'}`;
       viewSelect.appendChild(opt);
     }
-    viewNote.textContent = `${source.appId} から ${views.length}件の一覧を取得しました。全件の一覧を選ぶと既存のクエリを消去します。`;
+    viewNote.textContent = `App ${source.appId} から ${views.length}件の一覧を取得しました。全件の一覧を選ぶと、入力済みのクエリを消去します。`;
   }, '一覧を読み込みました'));
 
   useView.addEventListener('click', () => {
@@ -198,7 +200,7 @@ export function mountCsvExportLitePanel() {
   cardRun.body.appendChild(makeRow(run));
   panel.body.insertBefore(cardRun.card, panel.status);
 
-  panel.setStatus('対象アプリを入力して CSV 出力できます', 'ok');
+  panel.setStatus('対象アプリを指定すると、CSVを出力できます。', 'ok');
 
   query.setAttribute('aria-label', '全対象アプリの絞り込み条件');
   filename.setAttribute('aria-label', '出力ファイル名');
@@ -224,13 +226,13 @@ export function mountCsvExportLitePanel() {
   };
   installLiteWorkflow(panel, {
     setup: [cardApps.card, cardCond.card],
-    actions: [{ id: 'csv', label: 'CSVを出力', description: '1アプリはCSV、テーブルあり・複数アプリは親CSVと明細CSVをZIPで保存します。', button: run,
+    actions: [{ id: 'csv', label: 'CSVを出力', description: '1アプリはCSV、テーブルありは親・明細CSVのZIP、複数アプリはアプリ別フォルダ入りのZIPで保存します。', button: run,
       validate: validateApps,
       summary: () => [
         ['対象', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId)).join('\n')],
         ['絞り込み条件', query.value.trim() || '全件'],
         ['保存形式', appTable.count() > 1 ? 'ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）' : 'CSV（テーブルがある場合は親CSV・明細CSVのZIP）'],
-        ['ヘッダー / 改行 / 数式保護', `${headerLabelMap[headerModeSelect.value] || 'フィールドコード'} / ${lineEndingSelect.value === 'crlf' ? 'CRLF' : 'LF'} / 数式無害化: ${neutralizeCb.checkbox.checked ? 'あり' : 'なし'}`],
+        ['ヘッダー / 改行 / Excel保護', `${headerLabelMap[headerModeSelect.value] || 'フィールドコード'} / ${lineEndingSelect.value === 'crlf' ? 'CRLF' : 'LF'} / 先頭の \' 付加: ${neutralizeCb.checkbox.checked ? 'あり' : 'なし'}`],
         ['ファイル名', filename.value.trim() || '自動命名']
       ]
     }]

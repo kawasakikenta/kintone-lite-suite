@@ -1021,7 +1021,7 @@ function rowColumnsHtml(
     const preHtml = `<span class="kus-dl-value__label">${visibleLabel}</span><pre id="${esc(id)}" class="kus-dl-pre ${className}" aria-label="${esc(label)}" data-side-label="${esc(label)}">${rawHtml ? value : esc(value)}</pre>`;
     if (!isLong) return `<div class="kus-dl-value">${preHtml}</div>`;
     const stateClass = expanded ? 'is-expanded' : 'is-collapsed';
-    const actionLabel = expanded ? 'プレビューに戻す' : '全文を展開';
+    const actionLabel = expanded ? '省略表示に戻す' : '全文を展開';
     return `<div class="kus-dl-value ${stateClass}" data-kus-dl-value-key="${esc(valueKey)}">${preHtml}` +
       `<div class="kus-dl-value__footer"><span>${lineCount}行 · ${measuredValue.length}文字</span>` +
       `<button type="button" class="kus-dl-value__toggle" data-kus-dl-value-toggle="${esc(valueKey)}" aria-expanded="${expanded ? 'true' : 'false'}" aria-controls="${esc(id)}">${actionLabel}</button></div></div>`;
@@ -1056,7 +1056,7 @@ function displayBundleSide(bundle: any, fallbackRole: string): { name: string; e
   const appName = extractAppNameFromBundle(bundle);
   const name = appName && appId ? `${appName}（App ${appId}）` : (appName || (appId ? `App ${appId}` : fallbackRole));
   const guest = String(bundle?.guestId || '').trim();
-  const environment = `${bundle?.preview ? 'プレビュー' : '運用'}${guest ? ` / ゲスト ${guest}` : ' / 通常スペース'}`;
+  const environment = `${bundle?.preview ? 'プレビュー' : '本番'}${guest ? ` / ゲスト ${guest}` : ' / 通常スペース'}`;
   return { name, environment };
 }
 
@@ -1147,7 +1147,7 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
       return `${section}（${side}）${files.length ? `: ${files.join('、')}` : ''}`;
     });
     const remainder = partialIssues.length > details.length ? ` / ほか ${partialIssues.length - details.length} 件` : '';
-    alerts.push(`本文サイズまたは形式の制約により ${partialIssues.length} 件を fileKey で比較しました。本文内容は未検証です。${details.join(' / ')}${remainder}`);
+    alerts.push(`本文サイズまたは形式の制約により、${partialIssues.length} 件は本文を比較できず fileKey だけで比較しました（本文内容は未検証です）。${details.join(' / ')}${remainder}`);
   }
 
   const matchingNoticesData = cache.matchingNotices;
@@ -1186,7 +1186,7 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
     `<div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div>` +
     `<span class="kus-dl-overview__arrow" aria-label="から">→</span>` +
     `<div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div>` +
-    `<div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? '確認が必要' : '比較完了'}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` +
+    `<div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? '確認が必要' : '取得に問題なし'}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` +
     alertsHtml +
     `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` +
       metric('added', '比較先のみ', '追加として検出', counts.added) + metric('removed', '比較元のみ', '削除として検出', counts.removed) +
@@ -1331,10 +1331,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const panel: LitePanelHandle = createLitePanel({
     id: 'kus-diff-lite',
     title: '差分比較',
-    subtitle: 'アプリ設定を1件ずつ、1対多、または複数の1対1ペアで比較し、HTML・Excel・AI向け Markdown で確認',
+    subtitle: '2つのアプリ設定の違いを、1対1・1対多・ペア一括で比較します',
     accent: 'diff',
-    badges: [{ label: 'Lite' }, { label: '出力対応' }],
-    hint: 'HTMLは人が確認するレビュー用、Excelは一覧・共有用、AI向け Markdown は差分の事実をAIへ渡す用途です。1対1比較と1対多比較は完了時にレビュー用HTMLを自動保存します。',
+    badges: [{ label: '読み取り専用', tone: 'read' }],
+    hint: 'アプリの設定を比べて、違いを一覧にします。複数の比較先や複数のペアもまとめて比較でき、kintone には何も書き込みません。',
     wide: true
   });
   panel.status.setAttribute('role', 'status');
@@ -1543,7 +1543,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const multiAutoHtml = makeCheck({
     label: '1対多比較完了時にHTMLを自動保存',
     checked: true,
-    help: 'オフにすると自動ダウンロードせず、結果表の各行から必要な分だけHTML/Excel/Markdownを保存できます'
+    help: 'オフにすると自動では保存しません。結果表の各行から、必要な分だけ HTML・Excel・Markdown を保存できます'
   });
   const multiControls = makeRow([addTargetBtn, copyFirstBtn, multiAutoHtml.label], { label: '比較先を増やす' });
   multiControls.classList.add('kus-dl-multi-controls');
@@ -1558,7 +1558,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         srcGuest.value = guestId;
         const invalidated = invalidateResultAfterAppSelectionChange();
         return { message: invalidated
-          ? '比較元を変更したため、前回の結果を無効にしました。再比較してください'
+          ? '前回の結果を無効にしました（比較元を変更したため）。再比較してください'
           : `App ${id} を比較元へ設定しました`, tone: invalidated ? 'warn' as const : 'ok' as const };
       } },
       { label: '比較先', apply: (id, name, guestId) => {
@@ -1572,7 +1572,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         empty.guest.value = guestId;
         const invalidated = invalidateResultAfterAppSelectionChange();
         return { message: invalidated
-          ? '比較先を変更したため、前回の結果を無効にしました。再比較してください'
+          ? '前回の結果を無効にしました（比較先を変更したため）。再比較してください'
           : `App ${id} を比較先へ設定しました`, tone: invalidated ? 'warn' as const : 'ok' as const };
       } }
     ]
@@ -1609,7 +1609,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   pairEditor.setAttribute('aria-labelledby', 'kus-dl-pair-editor-title');
   const pairIntro = document.createElement('div');
   pairIntro.className = 'kus-dl-pair-editor__intro';
-  pairIntro.innerHTML = '<div><strong id="kus-dl-pair-editor-title">複数の1対1ペアを登録</strong><span>各行の比較元と比較先を1組として、登録順に比較します。同じ接続先は比較元・比較先で各1回だけ登録できます。共通の比較元から複数先を比べる場合は「1対多比較」を使います。</span></div>';
+  pairIntro.innerHTML = '<div><strong id="kus-dl-pair-editor-title">複数の1対1ペアを登録</strong><span>各行を1組として、登録順に比較します。同じアプリ・環境は比較元・比較先で1回ずつまで登録できます（共通の比較元と複数の比較先を比べるときは「1対多比較」を使います）。</span></div>';
   const pairCount = document.createElement('span');
   pairCount.className = 'kus-dl-pair-count';
   pairCount.setAttribute('aria-live', 'polite');
@@ -1641,13 +1641,13 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     const appField = makeTargetField(app, name);
     const appFieldLabel = document.createElement('span');
     appFieldLabel.className = 'kus-dl-pair-field-label';
-    appFieldLabel.textContent = 'App ID';
+    appFieldLabel.textContent = 'アプリID';
     appField.prepend(appFieldLabel);
     const guestField = document.createElement('div');
     guestField.className = 'kus-dl-pair-guest-field';
     const guestFieldLabel = document.createElement('span');
     guestFieldLabel.className = 'kus-dl-pair-field-label';
-    guestFieldLabel.textContent = 'Guest ID（任意）';
+    guestFieldLabel.textContent = 'ゲストスペースID（任意）';
     guestField.append(guestFieldLabel, guest);
     fields.append(appField, guestField, preview.label);
     endpointSide.append(role, fields, folderFile);
@@ -1959,7 +1959,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   pairFolder.setAttribute('aria-labelledby', 'kus-dl-pair-folder-title');
   const pairFolderHead = document.createElement('div');
   pairFolderHead.className = 'kus-dl-pair-folder__head';
-  pairFolderHead.innerHTML = '<strong id="kus-dl-pair-folder-title">設定フォルダからペアを作成</strong><span>設定一括取得ZIPを展開したフォルダなどを、変更前・変更後の両側で選びます。対応を確認して反映すると、現在のペア表を確認済みの組み合わせで置き換えます。比較にはJSONだけを使い、kintone APIへ接続しません。</span>';
+  pairFolderHead.innerHTML = '<strong id="kus-dl-pair-folder-title">設定フォルダからペアを作成</strong><span>設定一括取得ZIPを展開したフォルダなどを、変更前・変更後の両側で選びます。対応を確認して反映すると現在のペア表を置き換え、比較には設定JSONだけを使います（kintone からは取得しません）。</span>';
   const pairFolderGrid = document.createElement('div');
   pairFolderGrid.className = 'kus-dl-pair-folder__grid';
 
@@ -2037,7 +2037,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   const folderBundleLabel = (item: DiffBatchFolderImportedBundle) => {
     const name = item.appName || `App ${item.appId}`;
-    const env = `${item.guestId ? `Guest ${item.guestId}` : '通常'} / ${item.preview ? 'プレビュー' : '運用'}`;
+    const env = `${item.guestId ? `ゲスト ${item.guestId}` : '通常スペース'} / ${item.preview ? 'プレビュー' : '本番'}`;
     return `${name}（App ${item.appId} / ${env}）`;
   };
 
@@ -2125,7 +2125,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
               : '確認済み';
       const warning = row.included && (!row.targetKey || duplicateTarget || (requiresConfirmation && !row.confirmed));
       return `<tr><td data-label="比較対象"><input type="checkbox" data-kus-dl-folder-include="${index}" aria-label="${esc(`${sourceLabel}を比較対象にする`)}"${row.included ? ' checked' : ''}></td>` +
-        `<td data-label="比較元（変更前）"><span class="kus-dl-pair-folder__app">${esc(row.source.appName || `App ${row.source.appId}`)}</span><span class="kus-dl-pair-folder__meta">App ${esc(row.source.appId)} / ${esc(row.source.guestId ? `Guest ${row.source.guestId}` : '通常')} / ${row.source.preview ? 'プレビュー' : '運用'}<br>${esc(row.source.relativePath)}</span></td>` +
+        `<td data-label="比較元（変更前）"><span class="kus-dl-pair-folder__app">${esc(row.source.appName || `App ${row.source.appId}`)}</span><span class="kus-dl-pair-folder__meta">App ${esc(row.source.appId)} / ${esc(row.source.guestId ? `ゲスト ${row.source.guestId}` : '通常スペース')} / ${row.source.preview ? 'プレビュー' : '本番'}<br>${esc(row.source.relativePath)}</span></td>` +
         `<td data-label="対応根拠"><span class="kus-dl-pair-folder__badge kus-dl-pair-folder__badge--${esc(row.matchKind)}">${esc(folderMatchLabel(row.matchKind))}</span></td>` +
         `<td data-label="比較先（変更後）"><select data-kus-dl-folder-target="${index}" aria-label="${esc(`${sourceLabel}の比較先`)}"${row.included ? '' : ' disabled'}>${options}</select></td>` +
         `<td data-label="確認状態" class="${warning ? 'kus-dl-multi__warn' : ''}">${state}</td></tr>`;
@@ -2426,11 +2426,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   pairBulk.innerHTML = '<summary>表から複数ペアをまとめて入力</summary>';
   const pairBulkBody = document.createElement('div');
   pairBulkBody.className = 'kus-dl-pair-bulk__body';
-  const pairBulkTextarea = makeTextarea({ rows: 5, code: true, placeholder: '比較元App ID\t比較先App ID\nまたは\n比較元App ID\t比較元Guest ID\t比較先App ID\t比較先Guest ID' });
+  const pairBulkTextarea = makeTextarea({ rows: 5, code: true, placeholder: '比較元App ID\t比較先App ID\nまたは\n比較元App ID\t比較元ゲストスペースID\t比較先App ID\t比較先ゲストスペースID' });
   pairBulkTextarea.setAttribute('aria-label', '一括登録する比較ペア');
   const pairBulkApply = makeButton('入力したペアを追加', 'sub');
   pairBulkBody.append(
-    makeNote('Excelなどの2列（比較元App ID・比較先App ID）、または4列（比較元App ID・比較元Guest ID・比較先App ID・比較先Guest ID）を貼り付けます。'),
+    makeNote('Excelなどからコピーして貼り付けます。2列（比較元App ID・比較先App ID）または4列（比較元App ID・比較元ゲストスペースID・比較先App ID・比較先ゲストスペースID）に対応します。'),
     pairBulkTextarea,
     pairBulkApply
   );
@@ -2496,7 +2496,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         clearPairRowValidation(entry);
         const invalidated = invalidateResultAfterPairConditionChange();
         return { message: invalidated
-          ? '比較ペアを変更したため、前回の一括結果を無効にしました。再比較してください'
+          ? '前回の一括結果を無効にしました（比較ペアを変更したため）。再比較してください'
           : `App ${id} をペア ${pairRows.indexOf(entry) + 1} の比較元へ設定しました`, tone: invalidated ? 'warn' as const : 'ok' as const };
       } },
       { label: '空いている比較先', apply: (id, name, guestId) => {
@@ -2510,18 +2510,18 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         clearPairRowValidation(entry);
         const invalidated = invalidateResultAfterPairConditionChange();
         return { message: invalidated
-          ? '比較ペアを変更したため、前回の一括結果を無効にしました。再比較してください'
+          ? '前回の一括結果を無効にしました（比較ペアを変更したため）。再比較してください'
           : `App ${id} をペア ${pairRows.indexOf(entry) + 1} の比較先へ設定しました`, tone: invalidated ? 'warn' as const : 'ok' as const };
       } }
     ]
   });
-  pairEditor.append(pairIntro, pairFolder, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote('手入力のペアはkintone APIから取得します。フォルダ取込では両側の設定JSONだけを使い、不足分をAPIで補いません。単一比較用の設定JSONを読み込んだまま切り替えた場合は「設定JSON読込を解除」を押してください。'));
+  pairEditor.append(pairIntro, pairFolder, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote('手入力したペアは kintone から設定を取得し、フォルダから作成したペアは設定JSONだけを使います。1対1比較用の設定JSONを読み込んだままのときは、「設定JSON読込を解除」を押してください。'));
   cardApp.body.appendChild(pairEditor);
   panel.body.insertBefore(cardApp.card, panel.status);
 
   // ---- セクション ----
   const cardScope = makeCard({ title: '比較セクション' });
-  cardScope.body.appendChild(makeNote(`kintone のアプリ設定 API に対応する ${SCOPE_OPTS.length} セクションをすべて初期選択します。意図的に除外する場合だけ選択を外してください。`));
+  cardScope.body.appendChild(makeNote(`${SCOPE_OPTS.length} セクションすべてを比較対象にしています。比較しないセクションだけ選択を外してください。`));
   const chipBox = document.createElement('div');
   chipBox.className = 'kus-lp__chips';
   const chips = SCOPE_OPTS.map(([key, label, def]) => makeChip({ label, value: key, checked: def }));
@@ -2563,7 +2563,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const appReferenceExclusionNote = document.createElement('p');
   appReferenceExclusionNote.id = 'kus-dl-common-exclusion-note';
   appReferenceExclusionNote.className = 'kus-dl-common-exclusion__note';
-  appReferenceExclusionNote.textContent = '初期状態はオフです。オン／オフを変更した後は再比較してください。差分件数・画面結果・Excelに反映されます。';
+  appReferenceExclusionNote.textContent = '初期状態はオフです。切り替えたあとは再比較してください（差分件数・画面の結果・Excelに反映されます）。';
   nAppRefs.checkbox.setAttribute('aria-describedby', `${appReferenceExclusionDescription.id} ${appReferenceExclusionNote.id}`);
   appReferenceExclusion.append(
     appReferenceExclusionHeading,
@@ -2574,7 +2574,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   // ---- 設定JSON読込 ----
   const cardImport = makeCard({ title: '設定JSON読込（任意）', soft: true });
-  cardImport.body.appendChild(makeNote('設定出力で保存した単体JSON、設定一括取得JSON（apps 配列）、差分バンドルJSONを指定できます。指定した側はAPI取得せずJSONを使用します。比較先JSONは単一比較専用です。'));
+  cardImport.body.appendChild(makeNote('指定した側は kintone から取得せず、JSONの内容で比較します（設定出力の単体JSON・設定一括取得JSON・差分バンドルJSONに対応）。比較先JSONは1対1比較専用です。'));
   const srcFile = document.createElement('input');
   srcFile.type = 'file';
   srcFile.accept = '.json,application/json';
@@ -2596,26 +2596,26 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const ignTa = makeTextarea({ rows: 2, code: true, placeholder: 'キー / 完全パス / * ワイルドカード（改行・カンマ区切り）' });
   ignTa.setAttribute('aria-label', '比較から除外する無視キーまたは設定パス');
   advDetails.body.appendChild(makeRow(ignTa, { label: '無視キー', block: true }));
-  advDetails.body.appendChild(makeNote('キー名だけの指定、fieldSettings.properties.code.label のようなパス、* を使ったパターンに対応します。結果行の「次回から除外」は、記号や大小文字を含めてもその1パスだけに一致する path: 形式で追加します。'));
-  advDetails.body.appendChild(makeNote('⚠ 完全パスとワイルドカードは別アプリにもそのまま適用され、該当差分は結果から除外されます。プロファイル読込後と再比較前に内容を確認してください。'));
+  advDetails.body.appendChild(makeNote('キー名、fieldSettings.properties.code.label のような完全パス、* を使ったパターンを指定できます。結果行の「次回から除外」を押すと、その1項目だけを path: 形式で追加します。'));
+  advDetails.body.appendChild(makeNote('⚠ 完全パスとワイルドカードは別のアプリにも同じように適用され、一致した差分は結果から除外されます。比較条件を読み込んだあとと再比較の前に、内容を確認してください。'));
 
-  const includeSame = makeCheck({ label: '同一行も差分行に含める' });
-  const showResultList = makeCheck({ label: '画面に差分明細を表示（200件ずつ）', checked: true, help: '大量差分でも固まりにくいよう、明細は200件ずつ段階表示します' });
+  const includeSame = makeCheck({ label: '同一の項目も一覧に含める' });
+  const showResultList = makeCheck({ label: '差分の明細を画面に表示（200件ずつ）', checked: true, help: '差分が多くても重くならないよう、200件ずつ表示します' });
   const nAction = makeCheck({
     label: 'アプリアクションの並び順を無視',
     checked: false,
-    help: 'アクションの設定内容は比較し、表示順の違いだけを差分から除外します'
+    help: 'アクションの設定内容は比較し、並び順の違いだけを差分から除外します'
   });
-  const nView = makeCheck({ label: 'ビュー/グラフ/アクション順序を無視', checked: false });
-  const nPerm = makeCheck({ label: '権限/通知/カテゴリ順序を無視', checked: false });
-  const nAll = makeCheck({ label: 'すべての配列順序を無視', checked: false });
-  const nField = makeCheck({ label: 'フィールド/レイアウト順序を無視', checked: false });
+  const nView = makeCheck({ label: '一覧・グラフ・アクションの並び順を無視', checked: false });
+  const nPerm = makeCheck({ label: '権限・通知・カテゴリの並び順を無視', checked: false });
+  const nAll = makeCheck({ label: 'すべての並び順を無視', checked: false });
+  const nField = makeCheck({ label: 'フィールド・レイアウトの並び順を無視', checked: false });
   const nProcess = makeCheck({ label: 'プロセスの並び順を無視', checked: false });
-  const nAudit = makeCheck({ label: '監査/リビジョン情報を無視', checked: false });
-  const nText = makeCheck({ label: 'ラベル/説明文/ヘルプを無視', checked: false });
-  const nAppearance = makeCheck({ label: '見た目/幅/座標を無視', checked: false });
-  const nFileKeys = makeCheck({ label: '添付/JS/CSS fileKeyを無視', checked: false });
-  const nEnabled = makeCheck({ label: '有効/無効フラグを無視', checked: false });
+  const nAudit = makeCheck({ label: '監査・リビジョン情報を無視', checked: false });
+  const nText = makeCheck({ label: 'ラベル・説明文・ヘルプを無視', checked: false });
+  const nAppearance = makeCheck({ label: '見た目・幅・座標を無視', checked: false });
+  const nFileKeys = makeCheck({ label: '添付・JS/CSSの fileKey を無視', checked: false });
+  const nEnabled = makeCheck({ label: '有効・無効の設定を無視', checked: false });
   const normalizationControls: Record<string, HTMLInputElement> = {
     actionOrder: nAction.checkbox,
     viewOrder: nView.checkbox,
@@ -2661,7 +2661,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   profileFile.dataset.kusDlProfileFile = 'load';
   advDetails.body.appendChild(makeRow(profileName, { label: '比較条件名' }));
   advDetails.body.appendChild(makeRow([profileSaveBtn, profileLoadBtn]));
-  advDetails.body.appendChild(makeNote('比較セクション・無視ルール・正規化・表示設定だけをJSONで保存します。アプリID、設定値、認証情報は含みません。'));
+  advDetails.body.appendChild(makeNote('JSONに保存されるのは、比較セクション・無視ルール・各種の「無視」設定・表示設定だけです。アプリIDや設定値、認証情報は含まれません。'));
   advDetails.body.appendChild(profileFile);
   panel.body.insertBefore(advDetails.details, panel.status);
 
@@ -2803,8 +2803,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   // ---- 出力（再出力用。初回は比較実行時に自動保存される） ----
   const cardOut = makeCard({ title: '出力', soft: true });
-  cardOut.body.appendChild(makeNote('HTML は人が確認するレビュー用で、比較実行時に自動保存されます。Excel は一覧・共有用で、全件または画面で絞り込んだ範囲を保存できます。Excel には差分値と取得不完全時のエラー等の原文を収録し、長い原文は可視シートへ分割して全文を保持します。AI向け Markdown は比較方向・条件・完全性・変更前後の値と型を含み、AIへ差分の事実を渡すために使います。'));
-  cardOut.body.appendChild(makeNote('変更箇所のみの HTML にも比較元・比較先の値が含まれます。比較設定を含む社内用 HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。'));
+  cardOut.body.appendChild(makeNote('HTML は人が確認するレビュー用で、1対1・1対多の比較が終わると自動保存されます。Excel は一覧・共有用で、全件または画面で絞り込んだ範囲を保存できます（長い原文も省略せず収録します）。'));
+  cardOut.body.appendChild(makeNote('AI向け Markdown は、比較方向・条件・取得の完全性・変更前後の値と型を含み、差分の事実をAIへ渡す用途で使います。'));
+  cardOut.body.appendChild(makeNote('「レビュー用（変更箇所のみ）」の HTML にも比較元・比較先の値は含まれます。「社内用」の HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。'));
   const htmlContentMode = makeSelect([
     ['diffOnly', 'レビュー用（変更箇所のみ）'],
     ['withCompared', '社内用（比較設定を含む・取扱注意）']
@@ -2820,7 +2821,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const maskSensitiveCb = makeCheck({
     label: '共有用マスキング（機密キー・本文を秘匿）',
     checked: false,
-    help: 'Excel出力時にトークン・パスワード等の機密キーやJS/CSS本文・プラグイン設定値をSHA-256識別子でマスクします'
+    help: 'Excel に出力するとき、トークン・パスワードなどの機密キー、JS/CSS本文、プラグイン設定値を伏せ字（SHA-256の識別子）にします'
   });
   cardOut.body.appendChild(makeRow(maskSensitiveCb.label, { label: '機密保護' }));
   const expRange = makeSelect([
@@ -2886,9 +2887,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     section.innerHTML = `<header class="kus-dl-step__header"><span class="kus-dl-step__number" aria-hidden="true">${number}</span><div><h2 id="${headingId}">${title}</h2><p>${description}</p></div></header>`;
     return section;
   };
-  const targetStep = makeWorkflowStep('target', '1', '比較対象を決める', '比較元から比較先へ、どの設定が変わったかを確認します。');
-  const reviewStep = makeWorkflowStep('review', '2', '結果を確認する', '取得の完全性を確認してから、差分を順にレビューします。');
-  const exportStep = makeWorkflowStep('export', '3', '結果を出力する', '人向けの HTML・Excel、AI向け Markdown を保存できます。');
+  const targetStep = makeWorkflowStep('target', '1', '比較するアプリを選ぶ', '比較元（変更前）と比較先（変更後）を指定して、比較を実行します。');
+  const reviewStep = makeWorkflowStep('review', '2', '差分を確認する', '取得に失敗した設定がないか確かめてから、差分を順に見ていきます。');
+  const exportStep = makeWorkflowStep('export', '3', '結果を保存する', '確認用の HTML・Excel と、AI向け Markdown を保存できます。');
 
   const configDetails = document.createElement('details');
   configDetails.className = 'kus-dl-disclosure';
@@ -2919,7 +2920,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const reviewEmpty = document.createElement('p');
   reviewEmpty.className = 'kus-dl-step__empty';
   reviewEmpty.dataset.kusDlResultEmpty = '';
-  reviewEmpty.textContent = '比較を実行すると、ここに完全性と差分の一覧が表示されます。';
+  reviewEmpty.textContent = '比較を実行すると、ここに取得結果の確認と差分の一覧が表示されます。';
 
   targetStep.append(cardApp.card, appReferenceExclusion, configDetails, runRow, completionRow, panel.status);
   reviewStep.append(reviewEmpty, filterDetails, cardResult.card);
@@ -2927,7 +2928,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   workflow.append(targetStep, reviewStep, exportStep);
   [targetStep, reviewStep, exportStep].forEach(step => { step.style.scrollMarginTop = '80px'; });
   installWorkflowNavigation(panel, [
-    { label: '比較対象', element: targetStep },
+    { label: 'アプリを選ぶ', element: targetStep },
     { label: '差分を確認', element: reviewStep },
     { label: '結果を保存', element: exportStep, open: () => { outputDetails.open = true; } }
   ]);
@@ -3025,30 +3026,30 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     cardResult.card.style.display = 'none';
     cardFilter.card.style.display = 'none';
     filterDetails.style.display = 'none';
-    reviewEmpty.textContent = '比較条件が変更されました。再比較すると新しい条件の結果を表示します。';
+    reviewEmpty.textContent = '比較条件が変わりました。再比較すると、新しい条件の結果が表示されます。';
     reviewEmpty.style.display = '';
     panel.setStatus(statusMessage, 'warn');
     return true;
   }
 
   function invalidateResultAfterAppReferenceConditionChange() {
-    invalidateComparisonResult('環境固有IDの除外条件を変更したため、前回の結果と保存機能を無効にしました。新しい条件で再比較してください');
+    invalidateComparisonResult('前回の結果と保存機能を無効にしました（環境固有IDの除外条件を変更したため）。新しい条件で再比較してください');
   }
 
   function invalidateResultAfterPairConditionChange(): boolean {
-    return invalidateComparisonResult('比較ペアを変更したため、前回の一括結果と保存機能を無効にしました。新しいペアで再比較してください');
+    return invalidateComparisonResult('前回の一括結果と保存機能を無効にしました（比較ペアを変更したため）。新しいペアで再比較してください');
   }
 
   function invalidateResultAfterComparisonModeChange(): boolean {
-    return invalidateComparisonResult('比較方法を変更したため、前回の結果と保存機能を無効にしました。選択した方法で再比較してください');
+    return invalidateComparisonResult('前回の結果と保存機能を無効にしました（比較方法を変更したため）。選択した方法で再比較してください');
   }
 
   function invalidateResultAfterGeneralConditionChange(): boolean {
-    return invalidateComparisonResult('比較範囲または比較条件を変更したため、前回の結果と保存機能を無効にしました。新しい条件で再比較してください');
+    return invalidateComparisonResult('前回の結果と保存機能を無効にしました（比較範囲または比較条件を変更したため）。新しい条件で再比較してください');
   }
 
   function invalidateResultAfterAppSelectionChange(): boolean {
-    return invalidateComparisonResult('比較するアプリまたは環境を変更したため、前回の結果と保存機能を無効にしました。新しい対象で再比較してください');
+    return invalidateComparisonResult('前回の結果と保存機能を無効にしました（比較するアプリまたは環境を変更したため）。新しい対象で再比較してください');
   }
 
   nAppRefs.checkbox.addEventListener('change', invalidateResultAfterAppReferenceConditionChange);
@@ -3501,7 +3502,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       wrapper.classList.toggle('is-expanded', expanded);
       wrapper.classList.toggle('is-collapsed', !expanded);
       valueToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      valueToggle.textContent = expanded ? 'プレビューに戻す' : '全文を展開';
+      valueToggle.textContent = expanded ? '省略表示に戻す' : '全文を展開';
       if (expanded) expandedValueKeys.add(valueKey);
       else expandedValueKeys.delete(valueKey);
       return;
@@ -3960,8 +3961,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       let incomplete = 0;
       let cancelledPairs = 0;
       results.forEach((result) => {
-        const sourceEnv = `${result.pair.source.guestId ? `ゲスト ${result.pair.source.guestId}` : '通常スペース'} / ${result.pair.source.preview ? 'プレビュー' : '運用'}`;
-        const targetEnv = `${result.pair.target.guestId ? `ゲスト ${result.pair.target.guestId}` : '通常スペース'} / ${result.pair.target.preview ? 'プレビュー' : '運用'}`;
+        const sourceEnv = `${result.pair.source.guestId ? `ゲスト ${result.pair.source.guestId}` : '通常スペース'} / ${result.pair.source.preview ? 'プレビュー' : '本番'}`;
+        const targetEnv = `${result.pair.target.guestId ? `ゲスト ${result.pair.target.guestId}` : '通常スペース'} / ${result.pair.target.preview ? 'プレビュー' : '本番'}`;
         if (result.status === 'cancelled') {
           // 利用者の中止。失敗とは数えず、比較していないペアとして残す。
           cancelledPairs += 1;
@@ -4017,7 +4018,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
             matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
           }
         }) - 1;
-        const stateLabel = needsReview ? '要確認' : (counts.actual ? '完了' : '一致');
+        const stateLabel = needsReview ? '要確認' : (counts.actual ? '差分あり' : '一致');
         const pairActionLabel = `ペア ${result.pair.rowNumber}・${sourceLabel}から${targetLabel}`;
         resultRows.push(`<tr><td>${result.pair.rowNumber}</td><td>${esc(sourceLabel)}<br><small>${esc(sourceEnv)}</small></td><td>${esc(targetLabel)}<br><small>${esc(targetEnv)}</small></td>` +
           `<td class="${needsReview ? 'kus-dl-multi__warn' : 'kus-dl-multi__ok'}">${stateLabel}</td>` +
@@ -4034,7 +4035,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         panel.setStatus(`中止しました（${succeeded}/${prepared.pairs.length} 件を比較、残り ${cancelledPairs} 件は未実行）${note ? ` / ${note}` : ''}。比較できた分はExcelなどを各行または一括ボタンから保存できます`, 'warn');
         return;
       }
-      panel.setStatus(`ペア一括比較が完了: 成功 ${succeeded}/${prepared.pairs.length}件${note ? ` / ${note}` : ''}。Excelは各行または一括ボタンから保存できます`, failed || incomplete ? 'warn' : 'ok');
+      panel.setStatus(`${prepared.pairs.length}組中 ${succeeded}組を比較しました${note ? `（${note}）` : ''}。HTML・Excel・Markdown は各行または一括ボタンから保存できます`, failed || incomplete ? 'warn' : 'ok');
     });
   });
 
@@ -4175,8 +4176,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
               matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
             }
           }) - 1;
-          resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : '通常スペース')} / ${t.preview ? 'プレビュー' : '運用'}</small></td>` +
-            `<td class="${needsReview || exportNote ? 'kus-dl-multi__warn' : 'kus-dl-multi__ok'}">${exportNote ? '出力失敗' : (needsReview ? '要確認' : '完了')}${esc(exportNote)}</td>` +
+          resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : '通常スペース')} / ${t.preview ? 'プレビュー' : '本番'}</small></td>` +
+            `<td class="${needsReview || exportNote ? 'kus-dl-multi__warn' : 'kus-dl-multi__ok'}">${exportNote ? '出力失敗' : (needsReview ? '要確認' : (counts.actual ? '差分あり' : '一致'))}${esc(exportNote)}</td>` +
             `<td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ''}${multiNoticeCount ? ` / 注意 ${multiNoticeCount}` : ''}</td>` +
             `<td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${targetLabel}のHTMLを保存`)}">HTML保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${targetLabel}のExcelを保存`)}">Excel保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${targetLabel}のAI向けMarkdownを保存`)}">AI向けMD保存</button></span></td></tr>`);
         } catch (e: any) {
@@ -4196,13 +4197,13 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       const tone = failed || exportFailed || incomplete || cancelledTargets || (autoExportHtml && exported !== targets.length) ? 'warn' : 'ok';
       const note = [failed ? `比較失敗 ${failed}件` : '', exportFailed ? `HTML出力失敗 ${exportFailed}件` : '', incomplete ? `要確認 ${incomplete}件` : ''].filter(Boolean).join(' / ');
       const exportSummary = autoExportHtml
-        ? `HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）`
-        : `成功 ${succeeded}/${targets.length}件（HTML自動保存オフ）`;
+        ? `HTMLの保存を ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）`
+        : 'HTMLの自動保存はオフです';
       if (cancelledTargets) {
         panel.setStatus(`中止しました（${succeeded}/${targets.length} 件を比較、残り ${cancelledTargets} 件は未実行）${note ? ` / ${note}` : ''}。${exportSummary}。比較できた分は各行または一括ボタンから保存できます`, 'warn');
         return;
       }
-      panel.setStatus(`全比較先の比較が完了: ${exportSummary}${note ? ` / ${note}` : ''}。HTML/Excel/Markdownは各行または一括ボタンから保存できます`, tone);
+      panel.setStatus(`${targets.length}件中 ${succeeded}件を比較しました${note ? `（${note}）` : ''}。${exportSummary}。HTML・Excel・Markdown は各行または一括ボタンから保存できます`, tone);
     });
   });
 
@@ -4272,7 +4273,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
       };
       announceResultOverview = true;
-      summaryText = out.summary?.text || '完了';
+      summaryText = out.summary?.text || '比較しました';
       refreshFilterSectionOptions();
       rerender();
       setCompletionActionsVisible(true);

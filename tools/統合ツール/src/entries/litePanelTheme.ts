@@ -127,9 +127,13 @@ const THEME_CSS = `
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  font-size:12px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
+/* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
+.kus-lp__badge--read{background:#047857;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--preview{background:#c2410c;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--production{background:#b91c1c;border:1px solid rgba(255,255,255,.45)}
 .kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;
@@ -434,7 +438,11 @@ export interface LitePanelOptions {
   title: string;
   subtitle?: string;
   accent: AccentKey;
-  badges?: Array<{ label: string; tone?: 'primary' | 'neutral' }>;
+  /**
+   * 見出しのバッジ。影響範囲を示す tone（read: 読み取り専用 / preview: プレビューへ書き込み / production: 本番データを変更）を
+   * 1 つだけ付ける（docs/ui-writing-guide.md）。省略時はバッジを表示しない。
+   */
+  badges?: Array<{ label: string; tone?: 'primary' | 'neutral' | 'read' | 'preview' | 'production' }>;
   hint?: string;
   wide?: boolean;
 }
@@ -513,10 +521,11 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
 
   const badgesEl = document.createElement('div');
   badgesEl.className = 'kus-lp__badge-row';
-  const badges = opts.badges || [{ label: 'Lite' }];
+  const badges = opts.badges || [];
+  if (!badges.length) badgesEl.hidden = true;
   for (const b of badges) {
     const span = document.createElement('span');
-    span.className = 'kus-lp__badge';
+    span.className = `kus-lp__badge${b.tone === 'read' || b.tone === 'preview' || b.tone === 'production' ? ` kus-lp__badge--${b.tone}` : ''}`;
     span.textContent = b.label;
     badgesEl.appendChild(span);
   }

@@ -1418,9 +1418,13 @@ ${contextLine}`);
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  font-size:12px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
+/* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
+.kus-lp__badge--read{background:#047857;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--preview{background:#c2410c;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--production{background:#b91c1c;border:1px solid rgba(255,255,255,.45)}
 .kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;
@@ -1752,10 +1756,11 @@ ${contextLine}`);
     }
     const badgesEl = document.createElement("div");
     badgesEl.className = "kus-lp__badge-row";
-    const badges = opts.badges || [{ label: "Lite" }];
+    const badges = opts.badges || [];
+    if (!badges.length) badgesEl.hidden = true;
     for (const b of badges) {
       const span = document.createElement("span");
-      span.className = "kus-lp__badge";
+      span.className = `kus-lp__badge${b.tone === "read" || b.tone === "preview" || b.tone === "production" ? ` kus-lp__badge--${b.tone}` : ""}`;
       span.textContent = b.label;
       badgesEl.appendChild(span);
     }
@@ -2408,7 +2413,7 @@ ${contextLine}`);
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
-.kus-wf .kus-lp__badge-row{display:none}
+.kus-wf .kus-lp__badge-row{margin-top:6px}
 .kus-wf .kus-lp__body{padding:0;display:flex;flex-direction:column;overflow:hidden;min-height:0;background:#f5f7fa}
 .kus-wf .kus-lp__hint{margin:0;padding:10px 22px;border-radius:0;flex-shrink:0}
 .kus-wf [hidden]{display:none!important}
@@ -7573,7 +7578,7 @@ applySavedViewState();
     const unusableAppId = [...primaryIds, ...extraIds].find((v) => !isUsableErAppId(v));
     if (unusableAppId) return `アプリIDは1以上${Number.MAX_SAFE_INTEGER}以下の整数で入力してください: ${unusableAppId}`;
     const guestId = String(opts?.guestId || "").trim();
-    if (guestId && !/^\d+$/.test(guestId)) return `ゲストIDは数値で入力してください: ${guestId}`;
+    if (guestId && !/^\d+$/.test(guestId)) return `ゲストスペースIDは半角数字で入力してください: ${guestId}`;
     const spaceId = String(opts?.spaceId || "").trim();
     if (spaceId && !/^\d+$/.test(spaceId)) return `スペースIDは数値で入力してください: ${spaceId}`;
     const depthText = String(opts?.maxDepth ?? "").trim();
@@ -7945,8 +7950,8 @@ applySavedViewState();
       title: "ER 図",
       subtitle: "起点アプリからルックアップ／関連レコードを辿り ER 図を生成します。",
       accent: "er",
-      badges: [{ label: "Lite" }, { label: "可視化" }],
-      hint: "関連アプリのつながりを確認します。画面で開くか、共有用HTMLとして保存できます。"
+      badges: [{ label: "読み取り専用", tone: "read" }],
+      hint: "つながりのあるアプリを、画面で開くか共有用の HTML として保存できます。kintone のアプリや設定は変更しません。"
     });
     const cardMain = makeCard({ title: "起点アプリ", number: 1 });
     const appInp = makeInput({ placeholder: "アプリID（複数はカンマ区切り）", value: DEFAULT_APP_ID || "", width: "wide" });
@@ -7960,8 +7965,8 @@ applySavedViewState();
     }));
     const prevCb = makeCheck({ label: "プレビュー環境を参照", checked: false });
     cardMain.body.appendChild(makeRow(prevCb.label));
-    const bOpen = makeButton("ER 図を開く", "primary", { icon: "◉" });
-    const bSave = makeButton("HTML 保存", "ghost", { icon: "↓" });
+    const bOpen = makeButton("ER図を開く", "primary", { icon: "◉" });
+    const bSave = makeButton("ER図をHTMLで保存", "ghost", { icon: "↓" });
     const btnRow = makeRow([bOpen, bSave]);
     btnRow.style.marginTop = "6px";
     cardMain.body.appendChild(btnRow);
@@ -7970,14 +7975,15 @@ applySavedViewState();
     const presetRow = document.createElement("div");
     presetRow.className = "kus-lp__btn-row";
     const ER_PRESETS = {
-      current: { label: "現在のみ", layout: "dagre", density: "standard", depth: "1", subtable: true, reverse: false },
-      neighborhood: { label: "周辺 (深さ2)", layout: "dagre", density: "standard", depth: "2", subtable: true, reverse: false },
-      reverse: { label: "逆引きあり", layout: "dagre", density: "standard", depth: "2", subtable: true, reverse: true },
-      full: { label: "すべて辿る", layout: "cose", density: "standard", depth: "0", subtable: true, reverse: true },
-      space: { label: "スペース全体", layout: "dagre", density: "standard", depth: "2", subtable: true, reverse: false, focusSpace: true }
+      current: { label: "現在のみ", desc: "起点アプリだけを表示します", layout: "dagre", density: "standard", depth: "1", subtable: true, reverse: false },
+      neighborhood: { label: "周辺 (深さ2)", desc: "起点から2段先までのアプリを表示します", layout: "dagre", density: "standard", depth: "2", subtable: true, reverse: false },
+      reverse: { label: "逆引きあり", desc: "起点を参照しているアプリも含めて、2段先まで表示します", layout: "dagre", density: "standard", depth: "2", subtable: true, reverse: true },
+      full: { label: "すべて辿る", desc: "つながるアプリを最後まで表示します（アプリが多いと時間がかかります）", layout: "cose", density: "standard", depth: "0", subtable: true, reverse: true },
+      space: { label: "スペース全体", desc: "スペース内のアプリを起点に2段先まで表示します（スペースIDの入力が必要です）", layout: "dagre", density: "standard", depth: "2", subtable: true, reverse: false, focusSpace: true }
     };
     for (const [key, p] of Object.entries(ER_PRESETS)) {
       const btn = makeButton(p.label, "sub");
+      btn.title = p.desc;
       btn.addEventListener("click", () => {
         layoutSel.value = p.layout;
         densitySel.value = p.density;
@@ -7992,12 +7998,12 @@ applySavedViewState();
           } catch {
           }
         }
-        panel.setStatus(`ER プリセット「${p.label}」を適用しました`, "info");
+        panel.setStatus(`ER プリセット「${p.label}」を適用しました（${p.desc}）`, "info");
       });
       presetRow.appendChild(btn);
     }
     presetCard.body.appendChild(presetRow);
-    presetCard.body.appendChild(makeNote("クリックで「探索深さ／密度／レイアウト／逆引き」を一括設定します。あとから詳細オプションで微調整できます。"));
+    presetCard.body.appendChild(makeNote("押すと、探索の深さ・密度・レイアウト・逆引きをまとめて設定します。内容は詳細オプションで変更できます。"));
     panel.body.insertBefore(presetCard.card, panel.status);
     const details = makeDetails("詳細オプション");
     const extra = makeInput({ placeholder: "カンマ区切り (例: 100, 120)", width: "wide" });
@@ -8061,7 +8067,7 @@ applySavedViewState();
     details.body.appendChild(makeRow(densitySel, { label: "表示密度" }));
     details.body.appendChild(makeRow(depthInp, { label: "探索深さ" }));
     details.body.appendChild(makeRow([subtableCb.label, reverseCb.label]));
-    details.body.appendChild(makeNote("起点ID / 追加起点はいずれもカンマ区切りで複数指定できます。追加起点は最初の起点と統合して同一グラフに描画されます。スペースIDを入れて「スペース内アプリを読込」を押すと、任意のアプリだけを選んで起点にできます（重複するアプリは自動で1回だけ取得されます）。"));
+    details.body.appendChild(makeNote("起点IDはカンマ区切りで複数指定でき、追加起点も同じ図にまとめて描画します。スペースIDを入れて「スペース内アプリを読込」を押すと、起点にするアプリを選べます。"));
     function parseAppIds(value) {
       return String(value || "").split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean);
     }
@@ -8123,8 +8129,8 @@ applySavedViewState();
     installLiteWorkflow(panel, {
       setup: [cardMain.card, presetCard.card, details.details],
       actions: [
-        { id: "open", label: "ER図を開く", description: "関連アプリを取得し、別の画面で関係図を開きます。", button: bOpen, validate: erProblem, summary: erSummary },
-        { id: "save", label: "ER図をHTMLで保存", description: "選んだ条件で生成した関係図をファイルに保存します。", button: bSave, validate: erProblem, summary: erSummary }
+        { id: "open", label: "ER図を開く", description: "関連アプリの設定を読み取り、アプリ同士のつながりを別画面の図で表示します。", button: bOpen, validate: erProblem, summary: erSummary },
+        { id: "save", label: "ER図をHTMLで保存", description: "選んだ条件のER図を、共有できるHTMLファイルとして保存します。", button: bSave, validate: erProblem, summary: erSummary }
       ]
     });
   }

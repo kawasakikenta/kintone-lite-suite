@@ -19,7 +19,7 @@ describe('settings export completion', () => {
     { apps: [{ appId: '1', guestId: 'invalid' }] },
     { appIdsText: '1,invalid' }
   ])('rejects invalid targets before fetching or downloading', async opts => {
-    await expect(runSettingsExportStandalone('json', opts, vi.fn())).rejects.toThrow(/数値/);
+    await expect(runSettingsExportStandalone('json', opts, vi.fn())).rejects.toThrow(/半角数字/);
     expect(fetchBundle).not.toHaveBeenCalled();
     expect(downloadText).not.toHaveBeenCalled();
   });

@@ -47,7 +47,7 @@ function parseAppIdList(text) {
   const out = [];
   const seen = new Set();
   for (const tk of tokens) {
-    if (!/^\d+$/.test(tk)) throw new Error(`アプリIDは数値で入力してください: ${tk}`);
+    if (!/^\d+$/.test(tk)) throw new Error(`アプリIDは半角数字で入力してください: ${tk}`);
     if (seen.has(tk)) continue;
     seen.add(tk);
     out.push(tk);
@@ -150,9 +150,9 @@ export async function runSettingsExportListSpaceAppsStandalone(
   setStatus: (msg: string, isError?: boolean) => void
 ): Promise<Array<{ appId: string; name: string }>> {
   const sid = String(spaceId || '').trim();
-  if (!/^\d+$/.test(sid)) throw new Error('スペースIDを数値で入力してください');
+  if (!/^\d+$/.test(sid)) throw new Error('スペースIDは半角数字で入力してください');
   const guest = String(guestId || '').trim();
-  if (guest && !/^\d+$/.test(guest)) throw new Error(`ゲストIDは数値で入力してください: ${guest}`);
+  if (guest && !/^\d+$/.test(guest)) throw new Error(`ゲストスペースIDは半角数字で入力してください: ${guest}`);
   setStatus(`スペース ${sid} のアプリ一覧を取得中...`);
   const apps = await fetchAppsInSpace(sid, guestId);
   if (!apps.length) {
@@ -174,9 +174,9 @@ function resolveExportTargets(opts: any): Array<{ appId: string; guestId: string
   const push = (appId: string, guestId: string) => {
     const id = String(appId || '').trim();
     if (!id) return;
-    if (!/^\d+$/.test(id)) throw new Error(`アプリIDは数値で入力してください: ${id}`);
+    if (!/^\d+$/.test(id)) throw new Error(`アプリIDは半角数字で入力してください: ${id}`);
     const g = String(guestId || '').trim();
-    if (g && !/^\d+$/.test(g)) throw new Error(`ゲストIDは数値で入力してください: ${g}`);
+    if (g && !/^\d+$/.test(g)) throw new Error(`ゲストスペースIDは半角数字で入力してください: ${g}`);
     const key = `${id}::${g}`;
     if (seen.has(key)) return;
     seen.add(key);

@@ -102,7 +102,7 @@ async function main() {
     await run('重複・未入力を検査');
     assert.equal(await output.isVisible(), true, '検査結果を結果ステップに表示する');
     assert.match(await output.innerText(), /10001件を検査 \/ 重複 1組・61件 \/ 未入力 2件 \/ 取得不可 1件/);
-    assert.match(await output.innerText(), /App 8: 検査失敗/);
+    assert.match(await output.innerText(), /App 8: 検査に失敗しました/);
     assert.equal(await output.locator('li').count(), 50);
     assert.equal(await output.locator('img').count(), 0);
     assert.equal(await output.getByRole('link').first().getAttribute('href'), '/k/guest/9/7/show#record=61');
@@ -182,7 +182,7 @@ async function main() {
     await page.evaluate(() => { window.holdRecords = false; window.releaseRecords(); });
     await panelIdle();
     assert.equal(await callCount('/records.json'), 21, '検査の二重クリックで取得を重複実行しない');
-    assert.match(await status.innerText(), /1アプリの検査が完了しました/);
+    assert.match(await status.innerText(), /1アプリを検査しました/);
     assert.equal(await output.locator('li').count() > 0, true);
     await button('対象・条件を変更').click();
     await page.getByLabel('データ検査のクエリ', { exact: true }).fill('amount > 0');

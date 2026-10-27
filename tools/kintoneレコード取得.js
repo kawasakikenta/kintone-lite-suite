@@ -1798,9 +1798,13 @@ ${contextLine}`);
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  font-size:12px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
+/* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
+.kus-lp__badge--read{background:#047857;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--preview{background:#c2410c;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--production{background:#b91c1c;border:1px solid rgba(255,255,255,.45)}
 .kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
   color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;
@@ -2132,10 +2136,11 @@ ${contextLine}`);
     }
     const badgesEl = document.createElement("div");
     badgesEl.className = "kus-lp__badge-row";
-    const badges = opts.badges || [{ label: "Lite" }];
+    const badges = opts.badges || [];
+    if (!badges.length) badgesEl.hidden = true;
     for (const b of badges) {
       const span = document.createElement("span");
-      span.className = "kus-lp__badge";
+      span.className = `kus-lp__badge${b.tone === "read" || b.tone === "preview" || b.tone === "production" ? ` kus-lp__badge--${b.tone}` : ""}`;
       span.textContent = b.label;
       badgesEl.appendChild(span);
     }
@@ -2735,7 +2740,7 @@ ${contextLine}`);
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
-.kus-wf .kus-lp__badge-row{display:none}
+.kus-wf .kus-lp__badge-row{margin-top:6px}
 .kus-wf .kus-lp__body{padding:0;display:flex;flex-direction:column;overflow:hidden;min-height:0;background:#f5f7fa}
 .kus-wf .kus-lp__hint{margin:0;padding:10px 22px;border-radius:0;flex-shrink:0}
 .kus-wf [hidden]{display:none!important}
@@ -5160,8 +5165,8 @@ ${failures.join("\n")}` };
     const trim = makeCheck({ label: "文字列・リンクの前後の空白を無視", checked: false });
     const ignoreCase = makeCheck({ label: "文字列・リンクの英字の大小を無視", checked: false });
     root2.append(makeRow(load), pickWrap, note, makeRow([trim.label, ignoreCase.label]));
-    root2.appendChild(makeNote("選んだ項目すべてが一致するレコードを、アプリごとに重複として検出します。空の項目があるレコードは未入力として別集計します。複数選択は順序を無視して比較します。"));
-    root2.appendChild(makeNote("テーブル内・添付・計算・システム項目は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。アプリ間の重複は検査しません。"));
+    root2.appendChild(makeNote("選んだ項目がすべて一致するレコードを、アプリごとに重複として検出します（項目の順序は問いません）。空の項目があるレコードは、未入力として別に集計します。"));
+    root2.appendChild(makeNote("テーブル内・添付・計算・システム項目と、アプリ間の重複は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。"));
     let fields = [], selected = /* @__PURE__ */ new Set(), version = 0, fieldsVersion = 0;
     let results = [];
     const output = document.createElement("div");
@@ -5243,7 +5248,7 @@ ${failures.join("\n")}` };
       refreshNote();
       const loaded = await runLoadQualityFieldsStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() });
       if (current !== fieldsVersion) {
-        panel.setStatus("対象が変わりました。再取得してください。", "warn");
+        panel.setStatus("対象アプリが変わりました。検査フィールドを再取得してください。", "warn");
         return;
       }
       fields = loaded;
@@ -5274,7 +5279,7 @@ ${failures.join("\n")}` };
         const report = result.report;
         if (!report) {
           warning = true;
-          output.appendChild(makeNote(`App ${result.appId}: 検査失敗 / ${result.error}`));
+          output.appendChild(makeNote(`App ${result.appId}: 検査に失敗しました（${result.error}）`));
           continue;
         }
         warning || (warning = report.unavailableRecords > 0);
@@ -5318,17 +5323,17 @@ ${failures.join("\n")}` };
       save.onclick = () => {
         if (!results.length || current !== version) return;
         downloadBlob(buildExportFilename("データ検査結果", "csv"), new Blob([qualityReportCsv(results, guestId, location.origin, options, queryText)], { type: "text/csv;charset=utf-8" }));
-        panel.setStatus("検査結果を保存しました。", warning ? "warn" : "ok");
+        panel.setStatus("検査結果をCSVで保存しました。", warning ? "warn" : "ok");
       };
       save.hidden = false;
-      panel.setStatus(`${results.length}アプリの検査が完了しました。${warning ? "取得不可・失敗の詳細を確認してください。" : "結果を確認し、必要に応じてCSVを保存できます。"}`, warning ? "warn" : "ok");
+      panel.setStatus(`${results.length}アプリを検査しました。${warning ? "取得不可・失敗の詳細を確認してください。" : "結果を確認し、必要ならCSVで保存してください。"}`, warning ? "warn" : "ok");
     }));
     root2.appendChild(makeRow(run));
     context.resultHost.append(output, makeRow(save));
     return {
       id: "quality",
       label: "重複・未入力を検査",
-      description: "複数項目の重複・未入力を調べ、該当レコードを確認します。",
+      description: "選んだ項目の重複と未入力を検査し、該当レコードを一覧で表示します。",
       button: run,
       validate,
       summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["検査項目", [...selected].join("、")], ["比較", `前後空白 ${trim.checkbox.checked ? "無視" : "区別"} / 大小文字 ${ignoreCase.checkbox.checked ? "無視" : "区別"}`]]
@@ -5336,9 +5341,9 @@ ${failures.join("\n")}` };
   }
   function buildCsvTemplateTab(root2, context) {
     const { panel, tgtApp, tgtGuest, requiredApps, targetSummary } = context;
-    root2.appendChild(makeNote("対象アプリの設定から、このツールのCSV取込に使えるひな形を作成します。フィールドコードを調べて入力する手間を省けます。"));
+    root2.appendChild(makeNote("このツールのCSV取込で使うひな形を、対象アプリのフィールド設定から作ります。フィールドコードを調べて入力する手間を省けます。"));
     root2.appendChild(makeNote("ZIP内のアプリ別フォルダに import.csv、必須・選択肢・初期値などをまとめた fields.csv、除外項目の excluded.csv、使い方の README.txt を保存します。ひな形にはデータ行を入れません。"));
-    root2.appendChild(makeNote("取込に非対応のテーブル・添付・計算項目・ルックアップのコピー先は除外します。設定を取得できなかったアプリは完了メッセージと manifest.json に記録します。"));
+    root2.appendChild(makeNote("取込できないテーブル・添付・計算項目・ルックアップのコピー先フィールドは除外します。設定を取得できなかったアプリは、完了メッセージと manifest.json に記録します。"));
     const run = makeButton("CSVひな形をZIPで保存", "primary");
     run.addEventListener("click", () => liteRun(panel, "CSVひな形を作成中…", async () => {
       const result = await runCsvTemplateStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() }, (message) => panel.setStatus(message, "busy"));
@@ -5348,7 +5353,7 @@ ${failures.join("\n")}` };
     return {
       id: "csv-template",
       label: "CSV取込ひな形を作成",
-      description: "アプリのフィールドから取込CSVと入力ガイドを作ります。",
+      description: "アプリのフィールド設定から、取込用CSVのひな形と入力ガイドをZIPで保存します。",
       button: run,
       validate: requiredApps,
       summary: () => [targetSummary(), ["保存内容", "CSVひな形・入力ガイド・除外項目・使い方（ZIP）"], ["データ行", "なし（2行目から入力してください）"]]
@@ -5360,10 +5365,10 @@ ${failures.join("\n")}` };
     const panel = createLitePanel({
       id: "kus-record-lite",
       title: "レコード管理",
-      subtitle: "CSV / データ検査 / バッチ更新 / 添付DL / コピー / バックアップ",
+      subtitle: "CSV出力・取込 / データ検査 / ステータス更新 / 添付ファイル保存 / コピー / バックアップ",
       accent: "record",
-      badges: [{ label: "Lite" }, { label: "本番データ操作あり" }],
-      hint: "<strong>本番データに直接書き込み・更新・コピーします。</strong>バックアップ取得を強く推奨します。",
+      badges: [{ label: "本番データを変更", tone: "production" }],
+      hint: "<strong>本番のレコードを直接追加・更新します。</strong>元に戻せない操作があるので、実行前にバックアップを取ってください。",
       wide: true
     });
     const tgtApp = makeInput({ placeholder: "アプリID（カンマ区切りで複数指定）", value: DEFAULT_APP_ID || "", width: "wide", ariaLabel: "対象アプリID" });
@@ -5380,10 +5385,10 @@ ${failures.join("\n")}` };
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
-    const cardApp = makeCard({ title: "接続情報", number: 1 });
+    const cardApp = makeCard({ title: "対象アプリ", number: 1 });
     cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "対象アプリ" }));
-    cardApp.body.appendChild(makeNote("複数アプリは「463,464,469」のようにカンマ、改行、または空白で区切って指定できます。選択した操作を上から順にすべてのアプリへ実行します。"));
-    cardApp.body.appendChild(makeNote("クエリに limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します（10,000 件超も可）。"));
+    cardApp.body.appendChild(makeNote("複数アプリは「463,464,469」のようにカンマ・改行・空白で区切ります。選んだ操作を、指定した順にすべてのアプリへ実行します。"));
+    cardApp.body.appendChild(makeNote("10,000 件を超えても全件取得します（並び順を指定した場合は cursor API を使います）。クエリに limit / offset は書けません。"));
     cardApp.body.appendChild(createAppSearchControl(panel, {
       guestEl: tgtGuest,
       targets: [{ label: "対象アプリ", apply: (id, _name, guestId) => {
@@ -5397,7 +5402,7 @@ ${failures.join("\n")}` };
     viewSelect.setAttribute("aria-label", "取得した一覧");
     const loadViewsBtn = makeButton("一覧読込", "sub");
     cardApp.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: "一覧から条件" }));
-    const viewNote = makeNote("先頭の対象アプリから一覧を取得し、各操作の「一覧から」で絞り込みと並び順をクエリに反映します。カレンダーの日付範囲やカスタマイズ画面の独自処理は含みません。");
+    const viewNote = makeNote("先頭の対象アプリの一覧を読み込むと、各操作の「▼ 一覧から」で絞り込みと並び順をクエリに反映できます。カレンダーの日付範囲とカスタマイズ画面の独自処理は含みません。");
     cardApp.body.appendChild(viewNote);
     let loadedViews = [];
     resetMetadata.push(() => {
@@ -5437,7 +5442,7 @@ ${failures.join("\n")}` };
     function applyViewQuery(target) {
       const view = loadedViews.find((item) => item.id === viewSelect.value);
       if (!view) {
-        panel.setStatus("接続情報で一覧を読み込み、適用する一覧を選んでください。", "warn");
+        panel.setStatus("対象アプリの一覧を読み込み、適用する一覧を選んでください。", "warn");
         return;
       }
       target.value = view.query;
@@ -5459,7 +5464,7 @@ ${failures.join("\n")}` };
       action.onSelect = () => {
         tabs.bar.querySelector('[data-tab="' + action.id + '"]')?.click();
         const hint = panel.body.querySelector(".kus-lp__hint");
-        if (hint) hint.textContent = action.writes ? "本番データを変更する操作です。実行前に対象と条件を確認してください。" : "読み取り操作です。アプリのレコードは変更しません。";
+        if (hint) hint.textContent = action.writes ? "本番のレコードを変更する操作です。実行前に対象アプリと条件を確認してください。" : "読み取り操作です。レコードは変更しません。";
       };
       recordActions.push(action);
     };
@@ -5483,15 +5488,15 @@ ${failures.join("\n")}` };
             ["crlf", "CRLF（Windows標準）"]
           ]);
           lineEndingSelect.setAttribute("aria-label", "改行コード");
-          const neutralizeCb = makeCheck({ label: "先頭の = + - @ を数式無害化する（Excel向け・既定）", checked: true });
+          const neutralizeCb = makeCheck({ label: "= + - @ で始まる文字列の先頭に ' を付ける（Excel向け・既定）", checked: true });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
           root2.appendChild(makeRow(fname, { label: "ファイル名" }));
           root2.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: "出力形式" }));
           root2.appendChild(makeRow(neutralizeCb.label, { label: "Excel保護" }));
-          root2.appendChild(makeNote("1アプリはCSVで保存します。テーブルがある場合は親レコードとテーブル明細を別CSVにしてZIPにまとめます。複数アプリはアプリ別フォルダを1つのZIPに保存します。"));
-          root2.appendChild(makeNote("テーブル明細は親レコードの $id で紐付けできます。出力は閲覧・集計用で、CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に ' を付けます（数値は対象外）。添付はファイル名のみです。ファイル本体はバックアップの「添付ファイルも保存」で取得できます。"));
+          root2.appendChild(makeNote("出力は閲覧・集計用で、CSV取込用の互換形式ではありません。テーブル明細は親レコードの $id で紐付けできます。"));
+          root2.appendChild(makeNote("添付はファイル名のみ出力します（ファイル本体は、バックアップの「添付ファイルも保存」で取得できます）。Excelで数式として実行されないよう、先頭に ' を付けます（数値は対象外）。"));
           const run = makeButton("CSVを出力", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "CSV出力中…", async () => {
@@ -5516,14 +5521,14 @@ ${failures.join("\n")}` };
           addAction({
             id: "csv-export",
             label: "CSVを出力",
-            description: "条件に合うレコードとテーブル明細をCSV / ZIPで保存します。",
+            description: "1アプリはCSV、テーブルありは親・明細CSVのZIP、複数アプリはアプリ別フォルダ入りのZIPで保存します。",
             button: run,
             validate: requiredApps,
             summary: () => [
               targetSummary(),
               ["条件", query.value.trim() || "全件"],
               ["保存形式", !requiredApps() && parseRecordAppIds(tgtApp.value).length > 1 ? "ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）" : "CSV（テーブルがある場合は親CSV・明細CSVのZIP）"],
-              ["ヘッダー / 改行 / 数式保護", `${headerLabelMap[headerModeSelect.value] || "フィールドコード"} / ${lineEndingSelect.value === "crlf" ? "CRLF" : "LF"} / 数式無害化: ${neutralizeCb.checkbox.checked ? "あり" : "なし"}`],
+              ["ヘッダー / 改行 / Excel保護", `${headerLabelMap[headerModeSelect.value] || "フィールドコード"} / ${lineEndingSelect.value === "crlf" ? "CRLF" : "LF"} / 先頭の ' 付加: ${neutralizeCb.checkbox.checked ? "あり" : "なし"}`],
               ["ファイル名", fname.value.trim() || "自動命名"]
             ]
           });
@@ -5540,7 +5545,8 @@ ${failures.join("\n")}` };
           fileInput.className = "kus-lp__file";
           fileInput.setAttribute("aria-label", "取込CSV");
           root2.appendChild(makeRow(fileInput, { label: "CSV" }));
-          root2.appendChild(makeNote("UTF-8 / Excel BOM 対応。ヘッダ行はフィールドコード。ファイル・サブテーブル・ステータスは取込対象外です。100 件単位で追加し、途中で失敗した場合は確定済み件数と未処理件数を表示します。"));
+          root2.appendChild(makeNote("本番のアプリへ新規レコードとして追加します（自動では取り消せません）。100 件ずつ追加し、途中で失敗した場合は追加済み件数と未処理件数を表示します。"));
+          root2.appendChild(makeNote("CSVは UTF-8（Excel の BOM 付きも可）で、1行目にフィールドコードを書きます。ファイル・サブテーブル・ステータスは取り込めません。"));
           const preview = makeButton("CSVを事前検査", "sub");
           const previewText = document.createElement("pre");
           previewText.setAttribute("aria-label", "CSV事前検査結果");
@@ -5577,7 +5583,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           }));
           root2.appendChild(makeRow(preview));
           root2.appendChild(previewText);
-          root2.appendChild(makeNote("全対象アプリで列数・必須項目・選択肢・数値形式・CSV内の同一値重複を確認します。問題があれば最初の書き込み前に止めます。権限や既存データとの重複などは登録時に確認されます。"));
+          root2.appendChild(makeNote("列数・必須項目・選択肢・数値形式・CSV内の同一値重複を全対象アプリで確認し、問題があれば最初の書き込み前に止めます。権限や既存データとの重複は、登録時に kintone が判定します。"));
           const run = makeButton("レコードを取込", "primary", { icon: "↑" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "CSV取込中…", async () => {
@@ -5587,7 +5593,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
             );
             if (result?.warning) panel.setStatus(result.warning, "warn");
           }));
-          addAction({ id: "csv-import", label: "CSVからレコードを追加", description: "CSVのレコードを対象アプリに新規追加します。", button: run, writes: true, validate: () => requiredApps() || (fileInput.files?.length ? "" : "取り込むCSVを選んでください。"), summary: () => [targetSummary(), ["CSV", fileInput.files?.[0]?.name || "未選択"], ["事前検査", previewSummary], ["処理", "全対象を再検査してから各アプリへ新規レコードを追加"]] });
+          addAction({ id: "csv-import", label: "CSVからレコードを追加", description: "CSVの各行を、対象アプリへ新規レコードとして追加します。", button: run, writes: true, validate: () => requiredApps() || (fileInput.files?.length ? "" : "取り込むCSVを選んでください。"), summary: () => [targetSummary(), ["CSV", fileInput.files?.[0]?.name || "未選択"], ["事前検査", previewSummary], ["処理", "全対象アプリを再検査してから、新規レコードを追加"]] });
           root2.appendChild(makeRow(run));
         }
       },
@@ -5612,7 +5618,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           actionSelect.setAttribute("aria-label", "取得したプロセスアクション");
           const loadActions = makeButton("アクション読込", "sub");
           const applyActionQuery = makeButton("選択アクションの対象条件を入力", "sub");
-          const actionNote = makeNote("先頭アプリからアクションを取得し、遷移元・実行条件・次の作業者設定を確認できます。");
+          const actionNote = makeNote("先頭の対象アプリからアクションを読み込み、遷移元・実行条件・次の作業者設定を確認できます。");
           actionNote.style.whiteSpace = "pre-wrap";
           let loadedActions = [];
           let statusFieldCode = "";
@@ -5686,9 +5692,9 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           }));
           root2.appendChild(actionNote);
           root2.appendChild(makeRow(applyActionQuery));
-          root2.appendChild(makeNote("「対象条件を入力」は現在のクエリを置き換えます。複数アプリでは同じフィールドコード・状態名を使うことを確認してください。実行権限や作業者候補はkintone側で判定されます。"));
+          root2.appendChild(makeNote("「選択アクションの対象条件を入力」は、今のクエリを置き換えます。複数アプリへ実行するときは、各アプリで同じフィールドコード・ステータス名が使われていることを確認してください。"));
           root2.appendChild(makeRow(assignee, { label: "次の作業者" }));
-          root2.appendChild(makeNote("対象 100 件単位でステータス更新します。元に戻せません。"));
+          root2.appendChild(makeNote("元に戻せません。条件に合うレコードのステータスを 100 件ずつ更新します（実行権限と次の作業者の可否は kintone が判定します）。"));
           const run = makeButton("ステータスを一括更新", "primary");
           run.style.width = "100%";
           run.classList.add("kus-lp__btn--danger");
@@ -5698,7 +5704,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
-          addAction({ id: "status", label: "ステータスを一括更新", description: "指定条件に合うレコードの状態を更新します。", button: run, writes: true, validate: () => requiredApps() || (action.value.trim() ? "" : "実行するアクションを指定してください。") || (staleActionQuery() ? "前のアクションの対象条件が残っています。条件を入力し直すかクエリを編集してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["アクション", action.value.trim()], ["選択した遷移", selectedAction() ? `${selectedAction().from} → ${selectedAction().to}` : "手入力"], ["次の作業者", assignee.value.trim() || "指定なし"]] });
+          addAction({ id: "status", label: "ステータスを一括更新", description: "条件に合うレコードのステータスを、指定したアクションで更新します。", button: run, writes: true, validate: () => requiredApps() || (action.value.trim() ? "" : "実行するアクションを指定してください。") || (staleActionQuery() ? "前のアクションの対象条件が残っています。条件を入力し直すかクエリを編集してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["アクション", action.value.trim()], ["選択した遷移", selectedAction() ? `${selectedAction().from} → ${selectedAction().to}` : "手入力"], ["次の作業者", assignee.value.trim() || "指定なし"]] });
           root2.appendChild(makeRow(run));
         }
       },
@@ -5713,7 +5719,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           const fileSelect = makeSelect([["", "添付フィールドを選択"]]);
           fileSelect.setAttribute("aria-label", "取得した添付フィールド");
           const loadFields = makeButton("添付フィールド読込", "sub");
-          const fieldNote = makeNote("先頭アプリのフィールド名から選べます。複数アプリへ実行するときは、各アプリで同じフィールドコードが使われていることを確認してください。");
+          const fieldNote = makeNote("先頭の対象アプリのフィールド名から選べます。複数アプリへ実行するときは、各アプリで同じフィールドコードが使われていることを確認してください。");
           let loadedFields = [];
           const resetFields = () => {
             loadedFields = [];
@@ -5768,7 +5774,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           root2.appendChild(makeRow(tableCode, { label: "テーブル" }));
           root2.appendChild(makeRow(folderCode, { label: "フォルダ" }));
           root2.appendChild(makeRow(zipName, { label: "ZIP名" }));
-          root2.appendChild(makeNote("取得できなかったファイル（閲覧権限なし等）は ZIP 内の download_errors.txt に記録し、完了メッセージに件数を表示します。"));
+          root2.appendChild(makeNote("閲覧権限がないなどで取得できなかったファイルは、ZIP 内の download_errors.txt に記録し、完了メッセージに件数を表示します。"));
           root2.appendChild(makeNote("テーブル内の添付はレコード・テーブル行ごとに保存します。manifest.json で元レコード、行ID、ファイル名、サイズ、保存先を確認できます。"));
           const run = makeButton("添付ファイルをZIPで保存", "primary", { icon: "↓" });
           run.style.width = "100%";
@@ -5786,7 +5792,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
-          addAction({ id: "attach", label: "添付ファイルを保存", description: "添付ファイルを取得しZIPにまとめます。", button: run, validate: () => requiredApps() || (fileCode.value.trim() ? "" : "添付ファイルのフィールドコードを指定してください。"), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["添付フィールド", [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(" / ")], ["ZIP名", zipName.value.trim() || "自動命名"]] });
+          addAction({ id: "attach", label: "添付ファイルを保存", description: "条件に合うレコードの添付ファイルを、ZIPで保存します。", button: run, validate: () => requiredApps() || (fileCode.value.trim() ? "" : "添付ファイルのフィールドコードを指定してください。"), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["添付フィールド", [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(" / ")], ["ZIP名", zipName.value.trim() || "自動命名"]] });
           root2.appendChild(makeRow(run));
         }
       },
@@ -5795,7 +5801,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
         label: "コピー",
         build: (root2) => {
           const srcApp = makeInput({ placeholder: "コピー元アプリID", width: "id" });
-          const srcGuest = makeInput({ placeholder: "ゲスト (任意)", width: "guest" });
+          const srcGuest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", ariaLabel: "コピー元のゲストスペースID" });
           const query = makeInput({ placeholder: "条件 (任意)", width: "wide" });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
@@ -5839,19 +5845,19 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
               (m, e) => panel.setStatus(m, e ? "warn" : "busy")
             );
             if (version !== copyPreviewVersion) {
-              panel.setStatus("コピー元またはコピー先が変わりました。再確認してください。", "warn");
+              panel.setStatus("コピー元または対象アプリが変わりました。もう一度確認してください。", "warn");
               return;
             }
             const warnApps = results.filter((r) => r.error || r.report && (!r.report.compatibleFields.length || r.report.droppedMissing.length > 0 || r.report.droppedMismatch.length > 0)).length;
             copyPreviewSummary = `${results.length}アプリ確認済${warnApps ? `（除外・注意あり ${warnApps}アプリ）` : "（全フィールド互換）"}`;
-            previewText.textContent = results.map((r) => `コピー先 App ${r.targetAppId}
+            previewText.textContent = results.map((r) => `対象アプリ App ${r.targetAppId}
 ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n");
             previewText.hidden = false;
           }));
           root2.appendChild(makeRow(previewBtn));
           root2.appendChild(previewText);
-          root2.appendChild(makeNote("コピー元の絞り込んだレコードを、対象アプリへ新規レコードとして追加します。ファイル・システム項目・計算項目と、対象アプリに無い（または型が異なる）フィールドは除外し、除外したフィールドコードを実行前に表示します。"));
-          const run = makeButton("レコードをコピー実行", "primary");
+          root2.appendChild(makeNote("コピー元の条件に合うレコードを、本番の対象アプリへ新規レコードとして追加します。ファイル・システム項目・計算項目と、対象アプリに無い（または型が異なる）フィールドは除外し、そのフィールドコードを実行前に表示します。"));
+          const run = makeButton("レコードを対象アプリへコピー", "primary");
           run.style.width = "100%";
           run.classList.add("kus-lp__btn--danger");
           run.addEventListener("click", () => liteRun(panel, "レコードコピー中…", async () => {
@@ -5869,13 +5875,13 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
           addAction({
             id: "copy",
             label: "レコードをコピー",
-            description: "コピー元のレコードを対象アプリへ新規追加します。",
+            description: "コピー元の条件に合うレコードを、対象アプリへ新規追加します。",
             button: run,
             writes: true,
             validate: () => requiredApps() || (srcApp.value.trim() ? "" : "コピー元アプリを指定してください。"),
             summary: () => [
               ["コピー元", connectionSummary(srcApp.value.trim(), srcGuest.value.trim())],
-              ["コピー先", connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())],
+              targetSummary(),
               ["コピー元の条件", query.value.trim() || "全件"],
               ["互換性確認", copyPreviewSummary]
             ]
@@ -5911,9 +5917,10 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
           incSettings.checkbox.addEventListener("change", () => {
             scopeBox.style.display = incSettings.checkbox.checked ? "flex" : "none";
           });
-          root2.appendChild(makeNote("ZIPには親レコードの records.csv / records.json と manifest.json を含みます。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。添付のファイル本体は「添付ファイルも保存」で取得します。"));
-          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に ' を付けます（数値は対象外）。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。"));
-          const run = makeButton("バックアップ ZIP を保存", "primary", { icon: "↓" });
+          root2.appendChild(makeNote("ZIPには records.csv / records.json と manifest.json を保存します。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。"));
+          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に ' を付けます（数値は対象外）。"));
+          root2.appendChild(makeNote("添付ファイルの本体は「添付ファイルも保存」で取得します。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。"));
+          const run = makeButton("バックアップをZIPで保存", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "レコードバックアップ中…", async () => {
             await runRecordAppBatchStandalone(tgtApp.value, (appId) => runRecordBackupStandalone(
