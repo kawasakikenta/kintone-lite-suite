@@ -327,7 +327,10 @@ module.exports = async function verifyReflectEngine({ page, esbuild, tool, out }
   await reset('wrong-identity'); await compare(); assert.match(await page.locator('.kus-lp__status').innerText(), /名前とIDを確認できません/); assert.equal((await writes()).length, 0);
 
   await reset('destructive'); await button('全解除').click(); await page.getByRole('checkbox', { name: 'ビュー設定', exact: true }).check();
+  // 保持の設定は「詳細設定…」のポップアップの中にある。開いて切り替え、閉じてから差分を取得する。
+  await page.getByRole('button', { name: '詳細設定…', exact: true }).click();
   await page.getByRole('checkbox', { name: '反映先だけの一覧・グラフ・アクションを保持する', exact: true }).uncheck();
+  await page.getByRole('button', { name: '詳細設定を閉じる', exact: true }).click();
   await compare(); await acknowledge();
   assert.match(await page.locator('#kus-rl-stage-confirm').innerText(), /削除・置換される設定が 1 件/);
   await run().click(); await idle(); assert.deepEqual(Object.keys((await writes())[0].body.views), ['All']);

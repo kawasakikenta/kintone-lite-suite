@@ -32,7 +32,8 @@ import {
   makeTextarea,
   makeSelect,
   makeCard,
-  makeDetails,
+  makeDialog,
+  attachCardHelp,
   makeNote,
   liteRun,
   type LitePanelHandle
@@ -376,6 +377,8 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-step__empty{margin:0;padding:18px;border:1px dashed #cbd5e1;border-radius:9px;background:#f8fafc;color:#64748b;text-align:center;font-size:13px}
 .kus-dl-step>.kus-lp__card,.kus-dl-disclosure__body>.kus-lp__card{margin:0;border:0;box-shadow:none;background:transparent;padding:0}
 .kus-dl-target-card>.kus-lp__card-head,.kus-dl-filter-disclosure .kus-lp__card-head,.kus-dl-output-disclosure .kus-lp__card-head,.kus-dl-step[data-kus-dl-step="review"]>.kus-lp__card>.kus-lp__card-head{display:none}
+.kus-dl-output-disclosure .kus-lp__card-head:has(.kus-lp__help-btn){display:flex;justify-content:flex-end;margin:0 0 8px;padding:0;border:0}
+.kus-dl-output-disclosure .kus-lp__card-title{display:none}
 .kus-dl-mode{display:inline-flex;gap:4px;margin:0 0 12px;padding:3px;border:1px solid #cbd5e1;border-radius:10px;background:#f1f5f9}
 .kus-dl-mode .kus-lp__btn{min-width:118px;border-color:transparent;background:transparent;box-shadow:none;color:#475569}
 .kus-dl-mode .kus-lp__btn.is-active{background:#fff;border-color:#cbd5e1;color:#10253f;box-shadow:0 1px 2px rgba(15,23,42,.08)}
@@ -447,10 +450,13 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-target-list{display:grid;gap:7px;max-height:220px;margin-top:8px;padding-right:2px;overflow-y:auto}
 .kus-dl-multi-controls{margin-top:12px!important;padding-top:10px;border-top:1px solid #e2e8f0}
 .kus-dl-common-exclusion{margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;background:#eff6ff;color:#10253f;font-family:-apple-system,Segoe UI,sans-serif}
-.kus-dl-common-exclusion__heading{margin:0 0 3px;font-size:13px;font-weight:850;letter-spacing:.04em}
-.kus-dl-common-exclusion__description{margin:0 0 4px;color:#334155;font-size:13px;line-height:1.55}
+.kus-dl-common-exclusion__heading{margin:0;font-size:13px;font-weight:850;letter-spacing:.04em}
+.kus-dl-common-exclusion>.kus-lp__card{margin:0;padding:0;border:0;background:transparent}
+.kus-dl-common-exclusion .kus-lp__card-head{margin:0 0 3px;padding:0;border:0}
+.kus-dl-common-exclusion .kus-lp__help-pop{margin:4px 0 6px}
 .kus-dl-common-exclusion .kus-lp__check{min-height:40px!important;color:#10253f;font-size:14px;font-weight:750}
-.kus-dl-common-exclusion__note{margin:3px 0 0;color:#475569;font-size:12.5px;line-height:1.55}
+.kus-dl-details-row{margin:12px 0 0!important;justify-content:flex-end}
+.kus-dl-details-row .kus-lp__btn{min-height:40px}
 .kus-dl-run-row{margin:13px 0 0!important}
 .kus-dl-run-row .kus-lp__btn{width:100%}
 .kus-dl-step>.kus-lp__status{margin:10px 0 0;min-height:44px;box-sizing:border-box}
@@ -2519,9 +2525,13 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   cardApp.body.appendChild(pairEditor);
   panel.body.insertBefore(cardApp.card, panel.status);
 
+  // ---- 詳細設定ポップアップ（比較セクション・設定JSON読込・高度な比較設定）。表面には出さない ----
+  const detailsDialog = makeDialog({ title: '詳細設定', id: 'kus-dl-details-dialog' });
+  panel.root.appendChild(detailsDialog.dialog);
+
   // ---- セクション ----
   const cardScope = makeCard({ title: '比較セクション' });
-  cardScope.body.appendChild(makeNote(`${SCOPE_OPTS.length} セクションすべてを比較対象にしています。比較しないセクションだけ選択を外してください。`));
+  cardScope.body.appendChild(makeNote(`${SCOPE_OPTS.length} セクションすべてを比較対象にしています。比較しないセクションだけ選択を外してください。`, 'help'));
   const chipBox = document.createElement('div');
   chipBox.className = 'kus-lp__chips';
   const chips = SCOPE_OPTS.map(([key, label, def]) => makeChip({ label, value: key, checked: def }));
@@ -2539,7 +2549,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     chips.forEach((c) => { c.checkbox.checked = false; });
     invalidateResultAfterGeneralConditionChange();
   });
-  panel.body.insertBefore(cardScope.card, panel.status);
+  detailsDialog.body.appendChild(cardScope.card);
 
   // 環境ごとに変わる内部IDは、詳細設定を開かなくても選べるようにする。
   // 比較結果そのものを変える条件なので既定はオフとし、再比較が必要なことも常時表示する。
@@ -2556,25 +2566,23 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   appReferenceExclusionHeading.id = 'kus-dl-common-exclusion-heading';
   appReferenceExclusionHeading.className = 'kus-dl-common-exclusion__heading';
   appReferenceExclusionHeading.textContent = 'よく使う除外';
-  const appReferenceExclusionDescription = document.createElement('p');
+  // 説明は見出しの「?」の吹き出しへ移す（チェックボックスからは aria-describedby で引き続き参照される）。
+  const appReferenceExclusionDescription = makeNote('比較対象・参照先のアプリIDと、一覧・グラフ・アクション自身の内部IDだけを除外します。フィールドコード、一覧条件、アクションの対応付け、プラグインIDは比較します。', 'help');
   appReferenceExclusionDescription.id = 'kus-dl-common-exclusion-description';
-  appReferenceExclusionDescription.className = 'kus-dl-common-exclusion__description';
-  appReferenceExclusionDescription.textContent = '比較対象・参照先のアプリIDと、一覧・グラフ・アクション自身の内部IDだけを除外します。フィールドコード、一覧条件、アクションの対応付け、プラグインIDは比較します。';
-  const appReferenceExclusionNote = document.createElement('p');
+  const appReferenceExclusionNote = makeNote('初期状態はオフです。切り替えたあとは再比較してください（差分件数・画面の結果・Excelに反映されます）。', 'help');
   appReferenceExclusionNote.id = 'kus-dl-common-exclusion-note';
-  appReferenceExclusionNote.className = 'kus-dl-common-exclusion__note';
-  appReferenceExclusionNote.textContent = '初期状態はオフです。切り替えたあとは再比較してください（差分件数・画面の結果・Excelに反映されます）。';
   nAppRefs.checkbox.setAttribute('aria-describedby', `${appReferenceExclusionDescription.id} ${appReferenceExclusionNote.id}`);
-  appReferenceExclusion.append(
-    appReferenceExclusionHeading,
-    appReferenceExclusionDescription,
-    nAppRefs.label,
-    appReferenceExclusionNote
-  );
+  const cardExclusion = makeCard();
+  const exclusionTitle = document.createElement('div');
+  exclusionTitle.className = 'kus-lp__card-title';
+  exclusionTitle.appendChild(appReferenceExclusionHeading);
+  cardExclusion.card.querySelector(':scope > .kus-lp__card-head')?.prepend(exclusionTitle);
+  cardExclusion.body.append(nAppRefs.label, appReferenceExclusionDescription, appReferenceExclusionNote);
+  appReferenceExclusion.appendChild(cardExclusion.card);
 
   // ---- 設定JSON読込 ----
   const cardImport = makeCard({ title: '設定JSON読込（任意）', soft: true });
-  cardImport.body.appendChild(makeNote('指定した側は kintone から取得せず、JSONの内容で比較します（設定出力の単体JSON・設定一括取得JSON・差分バンドルJSONに対応）。比較先JSONは1対1比較専用です。'));
+  cardImport.body.appendChild(makeNote('指定した側は kintone から取得せず、JSONの内容で比較します（設定出力の単体JSON・設定一括取得JSON・差分バンドルJSONに対応）。比較先JSONは1対1比較専用です。', 'help'));
   const srcFile = document.createElement('input');
   srcFile.type = 'file';
   srcFile.accept = '.json,application/json';
@@ -2589,15 +2597,16 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   cardImport.body.appendChild(makeRow(srcFile, { label: '比較元JSON' }));
   cardImport.body.appendChild(makeRow(tgtFile, { label: '比較先JSON' }));
   cardImport.body.appendChild(makeRow(clearImportBtn));
-  panel.body.insertBefore(cardImport.card, panel.status);
+  detailsDialog.body.appendChild(cardImport.card);
 
   // ---- 詳細オプション ----
-  const advDetails = makeDetails('高度な比較設定');
+  const cardAdv = makeCard({ title: '高度な比較設定' });
   const ignTa = makeTextarea({ rows: 2, code: true, placeholder: 'キー / 完全パス / * ワイルドカード（改行・カンマ区切り）' });
   ignTa.setAttribute('aria-label', '比較から除外する無視キーまたは設定パス');
-  advDetails.body.appendChild(makeRow(ignTa, { label: '無視キー', block: true }));
-  advDetails.body.appendChild(makeNote('キー名、fieldSettings.properties.code.label のような完全パス、* を使ったパターンを指定できます。結果行の「次回から除外」を押すと、その1項目だけを path: 形式で追加します。'));
-  advDetails.body.appendChild(makeNote('⚠ 完全パスとワイルドカードは別のアプリにも同じように適用され、一致した差分は結果から除外されます。比較条件を読み込んだあとと再比較の前に、内容を確認してください。'));
+  cardAdv.body.appendChild(makeRow(ignTa, { label: '無視キー', block: true }));
+  cardAdv.body.appendChild(makeNote('キー名、fieldSettings.properties.code.label のような完全パス、* を使ったパターンを指定できます。結果行の「次回から除外」を押すと、その1項目だけを path: 形式で追加します。', 'help'));
+  // 比較結果を静かに変える注意なので、「?」には畳まず見える位置に残す。
+  cardAdv.body.appendChild(makeNote('⚠ 完全パスとワイルドカードは別のアプリにも同じように適用され、一致した差分は結果から除外されます。比較条件を読み込んだあとと再比較の前に、内容を確認してください。', 'warn'));
 
   const includeSame = makeCheck({ label: '同一の項目も一覧に含める' });
   const showResultList = makeCheck({ label: '差分の明細を画面に表示（200件ずつ）', checked: true, help: '差分が多くても重くならないよう、200件ずつ表示します' });
@@ -2647,7 +2656,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     nFileKeys.label,
     nEnabled.label
   ].forEach((el) => normGrid.appendChild(el));
-  advDetails.body.appendChild(normGrid);
+  cardAdv.body.appendChild(normGrid);
 
   const profileName = makeInput({ placeholder: '例: 権限を除く標準比較', width: 'medium', noSubmit: true, ariaLabel: '比較条件プロファイル名' });
   const profileSaveBtn = makeButton('比較条件を保存', 'sub', { icon: '↓' });
@@ -2659,11 +2668,12 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   profileFile.accept = '.json,application/json';
   profileFile.hidden = true;
   profileFile.dataset.kusDlProfileFile = 'load';
-  advDetails.body.appendChild(makeRow(profileName, { label: '比較条件名' }));
-  advDetails.body.appendChild(makeRow([profileSaveBtn, profileLoadBtn]));
-  advDetails.body.appendChild(makeNote('JSONに保存されるのは、比較セクション・無視ルール・各種の「無視」設定・表示設定だけです。アプリIDや設定値、認証情報は含まれません。'));
-  advDetails.body.appendChild(profileFile);
-  panel.body.insertBefore(advDetails.details, panel.status);
+  const cardProfile = makeCard({ title: '比較条件の保存・読込' });
+  cardProfile.body.appendChild(makeRow(profileName, { label: '比較条件名' }));
+  cardProfile.body.appendChild(makeRow([profileSaveBtn, profileLoadBtn]));
+  cardProfile.body.appendChild(makeNote('JSONに保存されるのは、比較セクション・無視ルール・各種の「無視」設定・表示設定だけです。アプリIDや設定値、認証情報は含まれません。', 'help'));
+  cardProfile.body.appendChild(profileFile);
+  detailsDialog.body.append(cardAdv.card, cardProfile.card);
 
   // ---- 実行 ----
   const runBtn = makeButton('差分比較を実行', 'run', { icon: '→' });
@@ -2673,6 +2683,15 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const runRow = makeRow([runBtn, runAllBtn, runPairsBtn]);
   runRow.classList.add('kus-dl-run-row');
   panel.body.insertBefore(runRow, panel.status);
+  // 表面に出さない比較条件（セクション・設定JSON・無視ルールなど）は、実行ボタンの直前のボタンからポップアップで開く。
+  const detailsBtn = makeButton('詳細設定…', 'ghost');
+  detailsBtn.dataset.kusDlDetails = '';
+  detailsBtn.setAttribute('aria-haspopup', 'dialog');
+  detailsBtn.addEventListener('click', () => detailsDialog.open());
+  const detailsRow = makeRow(detailsBtn);
+  detailsRow.classList.add('kus-dl-details-row');
+  // 比較セクションは詳細設定の中にあるため、未選択の案内にも場所を添える
+  const withDetailsHint = (message: string) => (message.startsWith('比較セクション') ? `${message}（「詳細設定…」で選べます）` : message);
   const completionReviewBtn = makeButton('結果を確認', 'sub', { icon: '↓' });
   const completionXlsxBtn = makeButton('Excelを保存（全件）', 'primary', { icon: '↓' });
   completionReviewBtn.dataset.kusDlCompletion = 'review';
@@ -2803,9 +2822,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   // ---- 出力（再出力用。初回は比較実行時に自動保存される） ----
   const cardOut = makeCard({ title: '出力', soft: true });
-  cardOut.body.appendChild(makeNote('HTML は人が確認するレビュー用で、1対1・1対多の比較が終わると自動保存されます。Excel は一覧・共有用で、全件または画面で絞り込んだ範囲を保存できます（長い原文も省略せず収録します）。'));
-  cardOut.body.appendChild(makeNote('AI向け Markdown は、比較方向・条件・取得の完全性・変更前後の値と型を含み、差分の事実をAIへ渡す用途で使います。'));
-  cardOut.body.appendChild(makeNote('「レビュー用（変更箇所のみ）」の HTML にも比較元・比較先の値は含まれます。「社内用」の HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。'));
+  cardOut.body.appendChild(makeNote('HTML は人が確認するレビュー用で、1対1・1対多の比較が終わると自動保存されます。Excel は一覧・共有用で、全件または画面で絞り込んだ範囲を保存できます（長い原文も省略せず収録します）。', 'help'));
+  cardOut.body.appendChild(makeNote('AI向け Markdown は、比較方向・条件・取得の完全性・変更前後の値と型を含み、差分の事実をAIへ渡す用途で使います。', 'help'));
+  cardOut.body.appendChild(makeNote('「レビュー用（変更箇所のみ）」の HTML にも比較元・比較先の値は含まれます。「社内用」の HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。', 'help'));
   const htmlContentMode = makeSelect([
     ['diffOnly', 'レビュー用（変更箇所のみ）'],
     ['withCompared', '社内用（比較設定を含む・取扱注意）']
@@ -2891,14 +2910,6 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const reviewStep = makeWorkflowStep('review', '2', '差分を確認する', '取得に失敗した設定がないか確かめてから、差分を順に見ていきます。');
   const exportStep = makeWorkflowStep('export', '3', '結果を保存する', '確認用の HTML・Excel と、AI向け Markdown を保存できます。');
 
-  const configDetails = document.createElement('details');
-  configDetails.className = 'kus-dl-disclosure';
-  configDetails.innerHTML = '<summary><span>比較範囲と詳細設定</span><small>セクション、JSON読込、無視ルール、比較条件</small></summary>';
-  const configBody = document.createElement('div');
-  configBody.className = 'kus-dl-disclosure__body';
-  configBody.append(cardScope.card, cardImport.card, advDetails.details);
-  configDetails.appendChild(configBody);
-
   const filterDetails = document.createElement('details');
   filterDetails.className = 'kus-dl-disclosure kus-dl-filter-disclosure';
   filterDetails.open = true;
@@ -2922,7 +2933,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   reviewEmpty.dataset.kusDlResultEmpty = '';
   reviewEmpty.textContent = '比較を実行すると、ここに取得結果の確認と差分の一覧が表示されます。';
 
-  targetStep.append(cardApp.card, appReferenceExclusion, configDetails, runRow, completionRow, panel.status);
+  targetStep.append(cardApp.card, appReferenceExclusion, detailsRow, runRow, completionRow, panel.status);
   reviewStep.append(reviewEmpty, filterDetails, cardResult.card);
   exportStep.appendChild(outputDetails);
   workflow.append(targetStep, reviewStep, exportStep);
@@ -2946,6 +2957,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     button.replaceChildren(number, label);
   });
   panel.body.insertBefore(workflow, panel.result);
+  // 補足説明（help の注記）を各カードの「?」ボタンの吹き出しへ移す。詳細設定のポップアップ内も同様。
+  attachCardHelp(panel.body);
+  attachCardHelp(detailsDialog.body);
 
   const setExportControlsEnabled = (enabled: boolean) => {
     expRange.disabled = !enabled;
@@ -3540,9 +3554,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       if (!existing.some((token) => decodeExactIgnorePathRule(token) === path || token === path)) {
         ignTa.value = `${ignTa.value.trim()}${ignTa.value.trim() ? '\n' : ''}${exactRule}`;
       }
-      configDetails.open = true;
-      advDetails.details.open = true;
-      panel.setStatus('この項目だけを無視ルールへ追加しました。現在の結果は変えず、次回比較から適用します', 'warn');
+      panel.setStatus('この項目だけを無視ルールへ追加しました。現在の結果は変えず、次回比較から適用します（「詳細設定…」の無視キーで確認できます）', 'warn');
       return;
     }
     const multiXlsxAllButton = target?.closest<HTMLButtonElement>('[data-kus-dl-multi-xlsx-all]');
@@ -3762,7 +3774,12 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   let runControlSnapshot: Array<[HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, boolean]> = [];
   function lockComparisonControls() {
-    runControlSnapshot = [...panel.body.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('button, input, textarea, select')]
+    // 詳細設定のポップアップ内の入力も、実行中は変更できないようにそろえる（「?」の説明は実行中も開ける）
+    const controlSelector = 'button, input, textarea, select';
+    runControlSnapshot = [
+      ...panel.body.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(controlSelector),
+      ...detailsDialog.body.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(controlSelector)
+    ].filter((control) => !control.classList.contains('kus-lp__help-btn'))
       .map((control) => [control, control.disabled]);
     runControlSnapshot.forEach(([control]) => { control.disabled = true; });
   }
@@ -3886,7 +3903,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     }
     const base = readForm();
     if (!base.scopes.length) {
-      panel.setStatus('比較セクションを 1 つ以上選択してください', 'warn');
+      panel.setStatus(withDetailsHint('比較セクションを 1 つ以上選択してください'), 'warn');
       return;
     }
     const positionalRuleCount = summarizeLiteIgnoreRules(base.ignoreKeys).positionalRules;
@@ -4051,7 +4068,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     }
     const base = readForm();
     if (!base.scopes.length) {
-      panel.setStatus('比較セクションを 1 つ以上選択してください', 'warn');
+      panel.setStatus(withDetailsHint('比較セクションを 1 つ以上選択してください'), 'warn');
       return;
     }
     const commonValidation = validateLiteDiffStart({
@@ -4063,7 +4080,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       targets
     });
     if (commonValidation) {
-      panel.setStatus(commonValidation, 'warn');
+      panel.setStatus(withDetailsHint(commonValidation), 'warn');
       return;
     }
     cache = null;
@@ -4222,7 +4239,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       hasImportedTarget: !!importedTargetBundle
     });
     if (validation) {
-      panel.setStatus(validation, 'warn');
+      panel.setStatus(withDetailsHint(validation), 'warn');
       return;
     }
     cache = null;

@@ -26,7 +26,6 @@ import {
   makeCheck,
   makeTextarea,
   makeCard,
-  makeDetails,
   makeNote,
   makePickList,
   liteRun
@@ -159,7 +158,7 @@ export function mountFieldLitePanel() {
   }, '反映先のフィールド定義を JSON に読み込みました'));
 
   // ---- 反映元からフィールドを選んでマージ ----
-  const pickDetails = makeDetails('反映元からフィールドを選んでマージ', { open: false });
+  const pickDetails = makeCard({ title: '反映元からフィールドを選んでマージ' });
   const bLoadPickList = makeButton('反映元フィールド一覧を取得', 'sub');
   pickDetails.body.appendChild(makeRow(bLoadPickList));
   const bInsertPicked = makeButton('選択したフィールドを JSON に挿入（マージ）', 'primary');
@@ -239,15 +238,15 @@ export function mountFieldLitePanel() {
     panel.setStatus(`${added}件のフィールドを JSON にマージしました`, 'ok');
   });
 
-  panel.body.insertBefore(pickDetails.details, panel.status);
+  panel.body.insertBefore(pickDetails.card, panel.status);
 
   // ---- オプション ----
-  const optCard = makeCard({ title: '反映オプション', number: 3, soft: true });
+  const optCard = makeCard({ title: '反映オプション・参照先変換' });
   const lookupMap = makeTextarea({ rows: 2, code: true, placeholder: 'ルックアップ参照先のアプリID変換 JSON（任意）: {"旧":"新", ...}' });
   optCard.body.appendChild(makeRow(lookupMap, { label: 'ルックアップ', block: true }));
   const ow = makeCheck({ label: '既存フィールドを上書き更新', help: '反映先に同じフィールドコードがあれば、定義を更新します（オフの場合はスキップ）' });
   optCard.body.appendChild(makeRow(ow.label));
-  optCard.body.appendChild(makeNote('反映前に、追加・更新・スキップの件数を最終確認します。取得後に反映先へ別の更新が入っていた場合（revision 競合）は上書きせず中止するので、読み込み直してから再実行してください。'));
+  optCard.body.appendChild(makeNote('反映前に、追加・更新・スキップの件数を最終確認します。取得後に反映先へ別の更新が入っていた場合（revision 競合）は上書きせず中止するので、読み込み直してから再実行してください。', 'help'));
   panel.body.insertBefore(optCard.card, panel.status);
 
   bValidate.addEventListener('click', () => {
@@ -298,7 +297,7 @@ export function mountFieldLitePanel() {
   }));
 
   // ---- バルクリネーム ----
-  const renameDetails = makeDetails('プレフィックス一括リネーム（反映先プレビュー）');
+  const renameDetails = makeCard({ title: 'プレフィックス一括リネーム（反映先プレビュー）' });
   const renamePrefix = makeInput({ placeholder: '例: dev_', width: 'medium' });
   const removeMode = makeCheck({ label: '付与ではなく除去する' });
   const renameModeSelect = makeSelect(
@@ -314,9 +313,9 @@ export function mountFieldLitePanel() {
   renameDetails.body.appendChild(makeRow(removeMode.label));
   renameDetails.body.appendChild(makeRow(renameModeSelect, { label: '出力形式' }));
   renameDetails.body.appendChild(makeRow(bRename));
-  const renameNote = makeNote('反映先のフィールドコードを書き換えた JSON を、上のテキストエリアにセットします（反映は別途実行します）。既存フィールドのコードを変えるには「コード変更用」を選びます（「既存フィールドを上書き更新」は自動でオンになります）。');
+  const renameNote = makeNote('反映先のフィールドコードを書き換えた JSON を、「フィールド定義 JSON」の入力欄にセットします（反映は別途実行します）。既存フィールドのコードを変えるには「コード変更用」を選びます（「既存フィールドを上書き更新」は自動でオンになります）。', 'help');
   renameDetails.body.appendChild(renameNote);
-  panel.body.insertBefore(renameDetails.details, panel.status);
+  panel.body.insertBefore(renameDetails.card, panel.status);
 
   bRename.addEventListener('click', () => liteRun(panel, 'リネーム生成中…', async () => {
     const renameMode = (renameModeSelect.value as BulkRenameMode) || 'put-rename';
@@ -390,7 +389,9 @@ export function mountFieldLitePanel() {
     return rows;
   };
   installLiteWorkflow(panel, {
-    setup: [cardApp.card, cardJson.card, pickDetails.details, foldWorkflowSection('反映オプション・参照先変換', optCard.card), renameDetails.details],
+    setup: [cardApp.card, cardJson.card],
+    advanced: [pickDetails.card, optCard.card, renameDetails.card],
+    advancedCopy: 'フィールドのマージ、上書き更新・参照先変換、一括リネームを使うときはこちら。',
     actions: [{ id: 'apply', label: '反映先プレビューへ反映', description: '反映先プレビューへフィールドを追加・更新します（実行前に件数を最終確認します）。', button: bApply, writes: true, validate: fieldProblem, summary: fieldSummary }]
   });
 

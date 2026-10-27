@@ -14,10 +14,14 @@ interface QualityContext {
   targetSummary: () => [string, string];
   applyViewQuery: (target: HTMLInputElement) => void;
   resultHost: HTMLElement;
+  /** 比較オプション（空白・大小文字の無視）を置く場所。詳細設定やオプションのポップアップ内を渡す。 */
+  optionsHost: HTMLElement;
+  /** 実行ボタンの直前に置く行（オプションのポップアップを開くボタンなど）。 */
+  optionsRow?: HTMLElement;
 }
 
 export function buildRecordQualityTab(root: HTMLElement, context: QualityContext): LiteWorkflowAction {
-  const { panel, tgtApp, tgtGuest, resetMetadata, requiredApps, targetSummary, applyViewQuery } = context;
+  const { panel, tgtApp, tgtGuest, resetMetadata, requiredApps, targetSummary, applyViewQuery, optionsHost, optionsRow } = context;
   const query = makeInput({ placeholder: '空欄で全件。検査対象を一覧から絞り込めます', width: 'wide', ariaLabel: 'データ検査のクエリ' });
   const useView = makeButton('▼ 一覧から', 'sub');
   useView.addEventListener('click', () => applyViewQuery(query));
@@ -41,9 +45,10 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
   const note = makeNote('先頭の対象アプリからフィールドを読み込み、1〜5項目を選んでください。');
   const trim = makeCheck({ label: '文字列・リンクの前後の空白を無視', checked: false });
   const ignoreCase = makeCheck({ label: '文字列・リンクの英字の大小を無視', checked: false });
-  root.append(makeRow(load), pickWrap, note, makeRow([trim.label, ignoreCase.label]));
-  root.appendChild(makeNote('選んだ項目がすべて一致するレコードを、アプリごとに重複として検出します（項目の順序は問いません）。空の項目があるレコードは、未入力として別に集計します。'));
-  root.appendChild(makeNote('テーブル内・添付・計算・システム項目と、アプリ間の重複は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。'));
+  root.append(makeRow(load), pickWrap, note);
+  optionsHost.appendChild(makeRow([trim.label, ignoreCase.label]));
+  root.appendChild(makeNote('選んだ項目がすべて一致するレコードを、アプリごとに重複として検出します（項目の順序は問いません）。空の項目があるレコードは、未入力として別に集計します。', 'help'));
+  root.appendChild(makeNote('テーブル内・添付・計算・システム項目と、アプリ間の重複は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。', 'help'));
   let fields: QualityField[] = [], selected = new Set<string>(), version = 0, fieldsVersion = 0;
   let results: QualityAppResult[] = [];
   const output = document.createElement('div'); output.setAttribute('aria-label', 'データ検査結果');
@@ -155,6 +160,7 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
     save.hidden = false;
     panel.setStatus(`${results.length}アプリを検査しました。${warning ? '取得不可・失敗の詳細を確認してください。' : '結果を確認し、必要ならCSVで保存してください。'}`, warning ? 'warn' : 'ok');
   }));
+  if (optionsRow) root.appendChild(optionsRow);
   root.appendChild(makeRow(run));
   context.resultHost.append(output, makeRow(save));
   return { id: 'quality', label: '重複・未入力を検査', description: '選んだ項目の重複と未入力を検査し、該当レコードを一覧で表示します。', button: run,
@@ -164,9 +170,9 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
 
 export function buildCsvTemplateTab(root: HTMLElement, context: QualityContext): LiteWorkflowAction {
   const { panel, tgtApp, tgtGuest, requiredApps, targetSummary } = context;
-  root.appendChild(makeNote('このツールのCSV取込で使うひな形を、対象アプリのフィールド設定から作ります。フィールドコードを調べて入力する手間を省けます。'));
-  root.appendChild(makeNote('ZIP内のアプリ別フォルダに import.csv、必須・選択肢・初期値などをまとめた fields.csv、除外項目の excluded.csv、使い方の README.txt を保存します。ひな形にはデータ行を入れません。'));
-  root.appendChild(makeNote('取込できないテーブル・添付・計算項目・ルックアップのコピー先フィールドは除外します。設定を取得できなかったアプリは、完了メッセージと manifest.json に記録します。'));
+  root.appendChild(makeNote('このツールのCSV取込で使うひな形を、対象アプリのフィールド設定から作ります。フィールドコードを調べて入力する手間を省けます。', 'help'));
+  root.appendChild(makeNote('ZIP内のアプリ別フォルダに import.csv、必須・選択肢・初期値などをまとめた fields.csv、除外項目の excluded.csv、使い方の README.txt を保存します。ひな形にはデータ行を入れません。', 'help'));
+  root.appendChild(makeNote('取込できないテーブル・添付・計算項目・ルックアップのコピー先フィールドは除外します。設定を取得できなかったアプリは、完了メッセージと manifest.json に記録します。', 'help'));
   const run = makeButton('CSVひな形をZIPで保存', 'primary');
   run.addEventListener('click', () => liteRun(panel, 'CSVひな形を作成中…', async () => {
     const result = await runCsvTemplateStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() }, message => panel.setStatus(message, 'busy'));

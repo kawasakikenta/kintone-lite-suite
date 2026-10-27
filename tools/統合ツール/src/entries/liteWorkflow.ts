@@ -1,4 +1,4 @@
-import { makeButton, makeDetails, type LitePanelHandle } from './litePanelTheme.js';
+import { attachCardHelp, makeButton, makeDetails, makeDialog, type LitePanelHandle } from './litePanelTheme.js';
 
 export interface LiteWorkflowAction {
   id: string;
@@ -45,7 +45,14 @@ const CSS = `
 .kus-wf-action:has(input:checked){border-color:#60a5fa;background:#eff6ff}
 .kus-wf-action strong{display:block;color:#0f172a}
 .kus-wf-action small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
-.kus-wf-action em{display:inline-block;font-size:11.5px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action em{display:inline-block;font-size:12.5px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action--more{grid-template-columns:1fr;text-align:left;font-family:inherit;color:#1d4ed8;border-style:dashed}
+.kus-wf-action--more[aria-pressed=true]{border-style:solid;border-color:#60a5fa;background:#eff6ff}
+.kus-wf-action--more strong{color:#1d4ed8}
+.kus-wf-action--more[aria-pressed=true] strong{color:#0f172a}
+.kus-wf-advanced{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 16px;padding:10px 14px;border:1px dashed #cbd5e1;border-radius:10px;background:#fff}
+.kus-wf-advanced__copy{font-size:13px;color:#475569;min-width:0;flex:1}
+.kus-wf-advanced__btn{flex-shrink:0}
 .kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
 .kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
 .kus-wf-summary>div:last-child{border:0}
@@ -108,6 +115,14 @@ export function validateJsonObject(value: string, label = 'JSON'): string {
 /** 既存の処理・確認ダイアログを保ったまま、入力と実行を段階に分ける。 */
 export function installLiteWorkflow(panel: LitePanelHandle, options: {
   setup: HTMLElement[];
+  /** 表面に出さない補助カード。「詳細設定…」のポップアップにまとめる。 */
+  advanced?: HTMLElement[];
+  /** 詳細設定ポップアップの見出し（既定: 詳細設定）。 */
+  advancedLabel?: string;
+  /** 詳細設定ボタンの横に出す 1 行の説明。 */
+  advancedCopy?: string;
+  /** 表面に出す操作の数（既定 3）。残りは「ほかの操作…」のポップアップで選ぶ。 */
+  primaryActions?: number;
   results?: HTMLElement[];
   resultActions?: string[];
   beforeRun?: (actionId: string) => void;
@@ -163,6 +178,33 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
   let selected = options.actions[0];
   const hiddenActions = document.createElement('div');
   hiddenActions.hidden = true;
+  const primaryCount = Math.max(1, Math.floor(options.primaryActions ?? 3));
+  const hasMore = options.actions.length > primaryCount;
+  // 表面に出さない操作は「ほかの操作」のポップアップで選ぶ（同じ name のラジオなので選択状態は 1 つに保たれる）
+  const moreDialog = hasMore ? makeDialog({ title: 'ほかの操作を選ぶ', id: `${panel.root.id}-more-actions` }) : null;
+  const moreChoices = document.createElement('div');
+  moreChoices.className = 'kus-wf-actions';
+  moreChoices.setAttribute('role', 'radiogroup');
+  moreChoices.setAttribute('aria-label', 'ほかの操作');
+  const moreBtn = document.createElement('button');
+  moreBtn.type = 'button';
+  moreBtn.className = 'kus-wf-action kus-wf-action--more';
+  moreBtn.setAttribute('aria-haspopup', 'dialog');
+  moreBtn.setAttribute('aria-pressed', 'false');
+  const moreTitle = document.createElement('strong');
+  const moreCopy = document.createElement('small');
+  const moreWrap = document.createElement('span');
+  moreWrap.append(moreTitle, moreCopy);
+  moreBtn.appendChild(moreWrap);
+  function refreshMore() {
+    if (!hasMore) return;
+    const index = options.actions.indexOf(selected);
+    const outside = index >= primaryCount;
+    moreBtn.setAttribute('aria-pressed', String(outside));
+    moreTitle.textContent = outside ? selected.label : `ほかの操作…（${options.actions.length - primaryCount} 件）`;
+    moreCopy.textContent = outside ? `${selected.description} 変更するには押してください。` : options.actions.slice(primaryCount).map((action) => action.label).join(' / ');
+  }
+  moreBtn.addEventListener('click', () => moreDialog?.open());
   options.actions.forEach((action, index) => {
     const label = document.createElement('label');
     label.className = 'kus-wf-action';
@@ -190,11 +232,44 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
       refresh();
     });
     label.append(radio, copy);
-    choices.appendChild(label);
+    if (hasMore && index >= primaryCount) {
+      moreChoices.appendChild(label);
+      // ポップアップで選んだら閉じて表面へ戻る
+      radio.addEventListener('change', () => { refreshMore(); moreDialog?.close(); });
+    } else {
+      choices.appendChild(label);
+      if (hasMore) radio.addEventListener('change', refreshMore);
+    }
     hiddenActions.appendChild(action.button);
   });
+  if (hasMore && moreDialog) {
+    choices.appendChild(moreBtn);
+    moreDialog.body.appendChild(moreChoices);
+    panel.root.appendChild(moreDialog.dialog);
+    refreshMore();
+  }
   if (options.actions.length > 1) setup.appendChild(choices);
   setup.append(...options.setup);
+  // 補助カードは表面に出さず、「詳細設定…」のポップアップにまとめる
+  const advancedDialog = options.advanced?.length ? makeDialog({ title: options.advancedLabel || '詳細設定', id: `${panel.root.id}-advanced`, wide: true }) : null;
+  if (advancedDialog && options.advanced) {
+    advancedDialog.body.append(...options.advanced);
+    panel.root.appendChild(advancedDialog.dialog);
+    const row = document.createElement('div');
+    row.className = 'kus-wf-advanced';
+    const copy = document.createElement('div');
+    copy.className = 'kus-wf-advanced__copy';
+    copy.textContent = options.advancedCopy || 'ふだん使わない設定はポップアップにまとめています。';
+    const btn = makeButton(`${options.advancedLabel || '詳細設定'}…`, 'sub');
+    btn.classList.add('kus-wf-advanced__btn');
+    btn.setAttribute('aria-haspopup', 'dialog');
+    btn.addEventListener('click', () => advancedDialog.open());
+    row.append(copy, btn);
+    setup.appendChild(row);
+  }
+  // 補足説明（kind='help' の注記）はカードの「?」から読む
+  attachCardHelp(setup);
+  if (advancedDialog) attachCardHelp(advancedDialog.body);
   const summary = document.createElement('dl');
   summary.className = 'kus-wf-summary';
   const notice = document.createElement('div');
@@ -227,7 +302,7 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
   let pending: LiteWorkflowAction | null = null;
   let reviewedSignature = '';
   let lastContext = '';
-  const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input,select,textarea')).map(input => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map(file => [file.name, file.size, file.lastModified]) : null])]);
+  const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(panel.root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('.kus-wf-stage:first-of-type input,.kus-wf-stage:first-of-type select,.kus-wf-stage:first-of-type textarea,dialog input,dialog select,dialog textarea')).map(input => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map(file => [file.name, file.size, file.lastModified]) : null])]);
   function show(index: number) {
     if (busy) return;
     const problem = index === 1 ? selected.validate() : '';
@@ -323,7 +398,11 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
     refreshQueued = true;
     queueMicrotask(() => { refreshQueued = false; refresh(); });
   };
-  for (const event of ['input', 'change', 'click']) setup.addEventListener(event, scheduleRefresh);
+  for (const event of ['input', 'change', 'click']) {
+    setup.addEventListener(event, scheduleRefresh);
+    // 詳細設定・ほかの操作に加え、各ツールが panel.root に置いた独自のポップアップ内の変更も確認ボタンの可否に反映する
+    panel.root.addEventListener(event, (e) => { if (e.target instanceof Element && e.target.closest('dialog')) scheduleRefresh(); });
+  }
   selected.onSelect?.();
   show(0);
   return { refresh, show };

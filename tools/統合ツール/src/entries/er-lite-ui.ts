@@ -17,7 +17,6 @@ import {
   makeCheck,
   makeSelect,
   makeCard,
-  makeDetails,
   makeNote,
   makePickList,
   liteRun
@@ -75,20 +74,21 @@ export function mountErLitePanel() {
       depthInp.value = p.depth;
       subtableCb.checkbox.checked = p.subtable;
       reverseCb.checkbox.checked = p.reverse;
-      details.details.open = true;
       if (p.focusSpace) {
-        try { spaceInp.focus(); spaceInp.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* noop */ }
+        // スペースIDは詳細設定のポップアップにあるので、開いてから入力欄へ移る
+        panel.root.querySelector<HTMLButtonElement>('.kus-wf-advanced__btn')?.click();
+        try { spaceInp.focus(); } catch { /* noop */ }
       }
       panel.setStatus(`ER プリセット「${p.label}」を適用しました（${p.desc}）`, 'info');
     });
     presetRow.appendChild(btn);
   }
   presetCard.body.appendChild(presetRow);
-  presetCard.body.appendChild(makeNote('押すと、探索の深さ・密度・レイアウト・逆引きをまとめて設定します。内容は詳細オプションで変更できます。'));
+  presetCard.body.appendChild(makeNote('押すと、探索の深さ・密度・レイアウト・逆引きをまとめて設定します。内容は「詳細設定…」の詳細オプションで変更できます。', 'help'));
   panel.body.insertBefore(presetCard.card, panel.status);
 
   // ---- 詳細 ----
-  const details = makeDetails('詳細オプション');
+  const details = makeCard({ title: '詳細オプション' });
   const extra = makeInput({ placeholder: 'カンマ区切り (例: 100, 120)', width: 'wide' });
   const spaceInp = makeInput({ placeholder: 'スペースID', width: 'narrow' });
   const layoutSel = makeSelect([
@@ -156,12 +156,12 @@ export function mountErLitePanel() {
   details.body.appendChild(makeRow(densitySel, { label: '表示密度' }));
   details.body.appendChild(makeRow(depthInp, { label: '探索深さ' }));
   details.body.appendChild(makeRow([subtableCb.label, reverseCb.label]));
-  details.body.appendChild(makeNote('起点IDはカンマ区切りで複数指定でき、追加起点も同じ図にまとめて描画します。スペースIDを入れて「スペース内アプリを読込」を押すと、起点にするアプリを選べます。'));
+  details.body.appendChild(makeNote('起点IDはカンマ区切りで複数指定でき、追加起点も同じ図にまとめて描画します。スペースIDを入れて「スペース内アプリを読込」を押すと、起点にするアプリを選べます。', 'help'));
 
   function parseAppIds(value: string): string[] {
     return String(value || '').split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean);
   }
-  panel.body.insertBefore(details.details, panel.status);
+  panel.body.insertBefore(details.card, panel.status);
 
   function source() {
     // ピッカーで読み込み済みの一覧・選択状態を引き渡す（生成時の再取得を防ぐ）
@@ -216,7 +216,9 @@ export function mountErLitePanel() {
   ];
   const erProblem = () => validateErOptions(source());
   installLiteWorkflow(panel, {
-    setup: [cardMain.card, presetCard.card, details.details],
+    setup: [cardMain.card, presetCard.card],
+    advanced: [details.card],
+    advancedCopy: '追加起点・スペースID・レイアウト・表示密度・探索の深さ・サブテーブル・逆引きを変えるときはこちら。',
     actions: [
       { id: 'open', label: 'ER図を開く', description: '関連アプリの設定を読み取り、アプリ同士のつながりを別画面の図で表示します。', button: bOpen, validate: erProblem, summary: erSummary },
       { id: 'save', label: 'ER図をHTMLで保存', description: '選んだ条件のER図を、共有できるHTMLファイルとして保存します。', button: bSave, validate: erProblem, summary: erSummary }

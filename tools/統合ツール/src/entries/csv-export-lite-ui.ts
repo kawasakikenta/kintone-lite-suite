@@ -74,15 +74,18 @@ export function mountCsvExportLitePanel() {
   cardCond.body.appendChild(makeRow(viewSelect, { label: '一覧' }));
   const viewNote = makeNote('一覧を読み込むと、絞り込みと並び順を共通クエリへ反映できます。');
   cardCond.body.appendChild(viewNote);
-  cardCond.body.appendChild(makeRow(filename, { label: 'ファイル名' }));
-  cardCond.body.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: '出力形式' }));
-  cardCond.body.appendChild(makeRow(neutralizeCb.label, { label: 'Excel保護' }));
-  cardCond.body.appendChild(makeNote('クエリは全対象アプリに共通で適用します。テーブル明細は別CSVに1行ずつ出力し、親レコードの $id で紐付けできます。'));
-  cardCond.body.appendChild(makeNote('出力は閲覧・集計用で、CSV取込用の互換形式ではありません。添付はファイル名のみ出力します（ファイル本体は、レコード管理のバックアップで「添付ファイルも保存」を選んで取得できます）。'));
-  cardCond.body.appendChild(makeNote('Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に \' を付けます（数値は対象外）。'));
-  cardCond.body.appendChild(makeNote('10,000 件を超えても全件取得します（並び順を指定した場合は cursor API を使います）。クエリに limit / offset は書けません。'));
-  cardCond.body.appendChild(makeNote('複数アプリのうち一部が失敗しても、成功分は ZIP に保存し、失敗の一覧を manifest.txt に記録します。'));
+  cardCond.body.appendChild(makeNote('クエリは全対象アプリに共通で適用します。テーブル明細は別CSVに1行ずつ出力し、親レコードの $id で紐付けできます。', 'help'));
+  cardCond.body.appendChild(makeNote('出力は閲覧・集計用で、CSV取込用の互換形式ではありません。添付はファイル名のみ出力します（ファイル本体は、レコード管理のバックアップで「添付ファイルも保存」を選んで取得できます）。', 'help'));
+  cardCond.body.appendChild(makeNote('10,000 件を超えても全件取得します（並び順を指定した場合は cursor API を使います）。クエリに limit / offset は書けません。', 'help'));
+  cardCond.body.appendChild(makeNote('複数アプリのうち一部が失敗しても、成功分は ZIP に保存し、失敗の一覧を manifest.txt に記録します。', 'help'));
   panel.body.insertBefore(cardCond.card, panel.status);
+
+  // ファイル名・出力形式・Excel保護は「詳細設定…」のポップアップへ（既定値のままでも出力できる）
+  const cardFormat = makeCard({ title: '出力形式', soft: true });
+  cardFormat.body.appendChild(makeRow(filename, { label: 'ファイル名' }));
+  cardFormat.body.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: '出力形式' }));
+  cardFormat.body.appendChild(makeRow(neutralizeCb.label, { label: 'Excel保護' }));
+  cardFormat.body.appendChild(makeNote('Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に \' を付けます（数値は対象外）。', 'help'));
 
   let loadedViews: RecordViewChoice[] = [];
   let viewContext = '';
@@ -226,6 +229,8 @@ export function mountCsvExportLitePanel() {
   };
   installLiteWorkflow(panel, {
     setup: [cardApps.card, cardCond.card],
+    advanced: [cardFormat.card],
+    advancedCopy: 'ファイル名・ヘッダー / 改行コード・Excel保護を変更できます。',
     actions: [{ id: 'csv', label: 'CSVを出力', description: '1アプリはCSV、テーブルありは親・明細CSVのZIP、複数アプリはアプリ別フォルダ入りのZIPで保存します。', button: run,
       validate: validateApps,
       summary: () => [

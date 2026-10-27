@@ -22,6 +22,9 @@ import {
   makeCard,
   makeTextarea,
   makeDetails,
+  makeDialog,
+  makeNote,
+  attachCardHelp,
   liteRun,
   copyTextToClipboard
 } from './litePanelTheme.js';
@@ -296,9 +299,11 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-scope-group legend{font-size:12.5px;font-weight:700;color:#475569;padding:0 4px}
 #kus-reflect-lite .kus-rl-scope-group .kus-lp__chips{display:flex;flex-direction:column;align-items:stretch}
 #kus-reflect-lite .kus-rl-scope-group .kus-lp__chip{border-radius:6px;white-space:normal;min-height:32px}
-#kus-reflect-lite .kus-rl-advanced{border:1px solid #e2e8f0;border-radius:12px;background:#fff;padding:2px 14px}
-#kus-reflect-lite .kus-rl-advanced>.kus-lp__details-body{padding:10px 0}
-#kus-reflect-lite .kus-rl-advanced .kus-lp__card{box-shadow:none}
+#kus-reflect-lite .kus-rl-detail-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+#kus-reflect-lite .kus-rl-detail-summary{flex:1 1 220px;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.5;color:#475569}
+#kus-reflect-lite .kus-rl-detail-summary--warn{color:#9a3412;font-weight:700}
+#kus-reflect-lite .kus-rl-detail-status[hidden]{display:none}
+#kus-reflect-lite .kus-lp__dialog .kus-lp__card--soft{box-shadow:none}
 #kus-reflect-lite [hidden]{display:none!important}
 #kus-reflect-lite :is(button,input,select,summary):focus-visible{outline:3px solid #2563eb;outline-offset:3px}
 #kus-reflect-lite .kus-rl-route-arrow{display:flex;align-items:center;justify-content:center;color:#dc2626;font-size:22px;font-weight:800}
@@ -393,7 +398,7 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-scope-option .kus-lp__check{margin:0}
 #kus-reflect-lite .kus-rl-scope-option__help{margin:4px 0 0 22px;font-size:13px;line-height:1.5;color:#475569}
 #kus-reflect-lite .kus-rl-scope-option__help--warn{color:#9a3412;font-weight:700}
-#kus-reflect-lite .kus-rl-scope-help{margin:0;display:grid;gap:8px;font-size:13px;line-height:1.55}
+#kus-reflect-lite .kus-rl-scope-help{margin:6px 0 0;display:grid;gap:8px;font-size:13px;line-height:1.55}
 #kus-reflect-lite .kus-rl-scope-help dt{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-weight:700;color:#0f172a}
 #kus-reflect-lite .kus-rl-scope-help dd{margin:2px 0 0;color:#475569}
 #kus-reflect-lite .kus-rl-fix{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
@@ -595,10 +600,19 @@ export function mountReflectLitePanel() {
   // 復元の終了通知などを、同じ操作の後続のステータス（プリセット適用など）で上書きしないよう、次の1回だけ前置する。
   let pendingNotice = '';
   const rawSetStatus = panel.setStatus;
+  // 詳細設定のポップアップを開いている間は、背面のステータスが見えないため、同じ内容をポップアップ内にも表示する。
+  const detailStatus = document.createElement('div');
+  detailStatus.className = 'kus-lp__note kus-rl-detail-status';
+  detailStatus.setAttribute('aria-hidden', 'true');
+  detailStatus.hidden = true;
   panel.setStatus = (msg, tone) => {
     const notice = pendingNotice;
     pendingNotice = '';
-    rawSetStatus(notice && msg ? `${notice} ${msg}` : msg, tone);
+    const text = notice && msg ? `${notice} ${msg}` : msg;
+    rawSetStatus(text, tone);
+    detailStatus.textContent = text || '';
+    detailStatus.className = `${tone === 'warn' || tone === 'err' ? 'kus-lp__note--warn' : 'kus-lp__note'} kus-rl-detail-status`;
+    detailStatus.hidden = !text;
   };
   /** 同じ操作の中だけ有効な通知として控える（無関係な後の操作に前置しないよう、操作が終わったら捨てる）。 */
   function holdNoticeForNextStatus(notice: string) {
@@ -994,7 +1008,8 @@ export function mountReflectLitePanel() {
   }
 
   // ---- セクション選択 ----
-  const cardScope = makeCard({ title: '反映する項目', number: 2, subtitle: '目的に近いセットを選び、必要な項目を調整できます。' });
+  const cardScope = makeCard({ title: '反映する項目', number: 2 });
+  cardScope.body.appendChild(makeNote('目的に近いセットを選び、必要な項目を調整できます。', 'help'));
   // 反映できる項目と表示名は反映エンジンの定義（一般設定を含む）から作る。
   const putSections = REFLECT_SECTION_KEYS.map((key) => ({ key, label: reflectSectionLabel(key) }));
   const initialSelected = new Set(
@@ -1064,7 +1079,6 @@ export function mountReflectLitePanel() {
   preserveHelp.className = 'kus-rl-scope-option__help';
   preserveHelp.setAttribute('aria-live', 'polite');
   preserveBox.append(preserveTitle, preserve.label, preserveHelp);
-  cardScope.body.appendChild(preserveBox);
 
   const scopeCountLabel = document.createElement('div');
   scopeCountLabel.className = 'kus-lp__small';
@@ -1072,7 +1086,10 @@ export function mountReflectLitePanel() {
   cardScope.body.appendChild(scopeCountLabel);
 
   // 項目ごとの反映方法（タッチ操作では title が見えないため、一覧でも読めるようにする）
-  const scopeHelp = makeDetails('各項目の反映方法');
+  const scopeHelpNote = document.createElement('div');
+  scopeHelpNote.className = 'kus-lp__note kus-lp__note--help';
+  const scopeHelpTitle = document.createElement('strong');
+  scopeHelpTitle.textContent = '各項目の反映方法';
   const scopeHelpList = document.createElement('dl');
   scopeHelpList.className = 'kus-rl-scope-help';
   putSections.forEach((d) => {
@@ -1092,8 +1109,8 @@ export function mountReflectLitePanel() {
     item.append(term, desc);
     scopeHelpList.appendChild(item);
   });
-  scopeHelp.body.appendChild(scopeHelpList);
-  cardScope.body.appendChild(scopeHelp.details);
+  scopeHelpNote.append(scopeHelpTitle, scopeHelpList);
+  cardScope.body.appendChild(scopeHelpNote);
 
   function collectSelectedScopes() {
     return chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value);
@@ -1182,19 +1199,18 @@ export function mountReflectLitePanel() {
   panel.body.insertBefore(cardScope.card, panel.status);
 
   // ---- オプション ----
-  const cardOpt = makeCard({ title: '反映時の動作', number: 3, soft: true });
+  const cardOpt = makeCard({ title: '反映時の動作', soft: true });
   const sourceEnvironment = document.createElement('select');
   sourceEnvironment.className = 'kus-lp__select';
   sourceEnvironment.setAttribute('aria-label', '反映元の取得環境');
   sourceEnvironment.innerHTML = '<option value="production">本番の設定を取得</option><option value="preview">プレビューの設定（未公開）を取得</option>';
   sourceEnvironment.value = memoryState.sourcePreview ? 'preview' : 'production';
   sourceAppFields.insertBefore(sourceEnvironment, sourceGuestDetails.details);
-  const safetyNote = document.createElement('p'); safetyNote.className = 'kus-rl-quiet';
-  safetyNote.textContent = '反映前の設定を自動でバックアップします。変更のない項目は書き込まず、エラーが起きたら以降の項目を実行せず中断します。';
-  cardOpt.body.appendChild(safetyNote);
+  cardOpt.body.appendChild(makeNote('反映前の設定を自動でバックアップします。変更のない項目は書き込まず、エラーが起きたら以降の項目を実行せず中断します。', 'help'));
+  cardOpt.body.appendChild(preserveBox);
 
   // Lookup mapping
-  const lookupDetails = makeDetails('ルックアップの参照アプリID変換（任意）');
+  const cardLookup = makeCard({ title: 'ルックアップの参照アプリID変換（任意）', soft: true });
   const lookupTa = makeTextarea({
     rows: 3,
     code: true,
@@ -1202,23 +1218,17 @@ export function mountReflectLitePanel() {
     value: memoryState.lookupMapText || ''
   });
   lookupTa.setAttribute('aria-label', 'ルックアップの参照アプリID変換');
-  lookupDetails.body.appendChild(lookupTa);
+  cardLookup.body.appendChild(lookupTa);
   const lookupStatus = document.createElement('div');
   lookupStatus.className = 'kus-rl-lookup-status';
   lookupStatus.setAttribute('aria-live', 'polite');
-  lookupDetails.body.appendChild(lookupStatus);
-  const lookupHint = document.createElement('div');
-  lookupHint.className = 'kus-lp__small';
-  lookupHint.style.marginTop = '6px';
-  lookupHint.textContent = 'ルックアップの参照先アプリIDを置き換えて反映します（差分にも反映し、実行前に変換先アプリの存在を確認します）。1行に「旧ID → 新ID」（→ / = / : / カンマ区切り）か、{"旧アプリID":"新アプリID"} のJSONで入力します。';
-  lookupDetails.body.appendChild(lookupHint);
-  cardOpt.body.appendChild(lookupDetails.details);
+  cardLookup.body.appendChild(lookupStatus);
+  cardLookup.body.appendChild(makeNote('ルックアップの参照先アプリIDを置き換えて反映します（差分にも反映し、実行前に変換先アプリの存在を確認します）。1行に「旧ID → 新ID」（→ / = / : / カンマ区切り）か、{"旧アプリID":"新アプリID"} のJSONで入力します。', 'help'));
 
   function refreshLookupStatus() {
     const parsed = parseLookupMapText(lookupTa.value);
     lookupStatus.classList.toggle('kus-rl-lookup-status--err', !parsed.ok);
     lookupStatus.textContent = 'error' in parsed ? parsed.error : parsed.count ? `参照先変換 ${parsed.count} 件を適用します。` : '';
-    if (!parsed.ok) lookupDetails.details.open = true;
   }
   refreshLookupStatus();
 
@@ -1236,7 +1246,6 @@ export function mountReflectLitePanel() {
     refreshReviewCard();
   });
 
-  panel.body.insertBefore(cardOpt.card, panel.status);
 
   // ---- プリセット（接続情報＋スコープを保存・読み込み） ----
   const cardPreset = makeCard({ title: 'プリセット（接続先と反映項目）', soft: true });
@@ -1266,11 +1275,7 @@ export function mountReflectLitePanel() {
   cardPreset.body.appendChild(presetNameRow);
   cardPreset.body.appendChild(makeRow([presetSelect, loadBtn, delBtn], { label: '保存済み' }));
   cardPreset.body.appendChild(makeRow([exportPresetsBtn, importPresetsBtn, importPresetsFile]));
-  const presetHint = document.createElement('div');
-  presetHint.className = 'kus-lp__small';
-  presetHint.textContent = 'プリセットはこのタブを閉じると消えます。次回も使う場合は「JSONで書き出し」で保存し、「JSONを読み込み」で復元してください。';
-  cardPreset.body.appendChild(presetHint);
-  panel.body.insertBefore(cardPreset.card, panel.status);
+  cardPreset.body.appendChild(makeNote('プリセットはこのタブを閉じると消えます。次回も使う場合は「JSONで書き出し」で保存し、「JSONを読み込み」で復元してください。', 'help'));
 
   function refreshPresetSelect() {
     // 再構築で選択が先頭へ戻らないよう、現在の選択を控えて戻す。
@@ -1394,7 +1399,6 @@ export function mountReflectLitePanel() {
     lookupTa.value = preset.lookupMap || '';
     refreshLookupStatus();
     rolloutTa.value = preset.rolloutQueue || '';
-    if (rolloutTa.value.trim()) rolloutDetails.details.open = true;
     setSelectedScopes(preset.scopes || []);
     refreshSameConnBanner();
     saveState();
@@ -1422,11 +1426,9 @@ export function mountReflectLitePanel() {
   });
 
   // ---- 続けて反映する反映先（同じ反映元・項目・設定で、ほかのアプリにも順番に反映する） ----
-  const rolloutDetails = makeDetails('続けて反映する反映先（複数アプリへ展開）', { open: !!(memoryState.rolloutQueueText || '').trim() });
-  rolloutDetails.details.classList.add('kus-rl-advanced', 'kus-rl-rollout');
-  const rolloutHelp = document.createElement('p');
-  rolloutHelp.className = 'kus-rl-quiet';
-  rolloutHelp.textContent = '同じ反映元・項目・設定で、ほかのアプリにも順番に反映します（反映先ごとに差分確認と最終確認を行います）。数字だけのIDは通常スペースのアプリを指すため、ゲストスペースのアプリはURLで指定してください。';
+  const rolloutSetupCard = makeCard({ title: '続けて反映する反映先（複数アプリへ展開）', soft: true });
+  rolloutSetupCard.card.classList.add('kus-rl-rollout');
+  const rolloutHelp = makeNote('同じ反映元・項目・設定で、ほかのアプリにも順番に反映します（反映先ごとに差分確認と最終確認を行います）。数字だけのIDは通常スペースのアプリを指すため、ゲストスペースのアプリはURLで指定してください。', 'help');
   const rolloutTa = makeTextarea({ rows: 4, code: true, placeholder: '1行に1件（改行・カンマ区切りも可）\n例: 203\nhttps://example.cybozu.com/k/guest/5/204/', value: memoryState.rolloutQueueText || '' });
   rolloutTa.classList.add('kus-rl-rollout__input');
   rolloutTa.setAttribute('aria-label', '続けて反映する反映先');
@@ -1438,7 +1440,7 @@ export function mountReflectLitePanel() {
   rolloutLookupSetupNote.className = 'kus-rl-next kus-rl-next--warn';
   rolloutLookupSetupNote.dataset.rolloutLookupNote = 'setup';
   rolloutLookupSetupNote.hidden = true;
-  rolloutDetails.body.append(rolloutHelp, rolloutTa, rolloutStatus, rolloutLookupSetupNote);
+  rolloutSetupCard.body.append(rolloutHelp, rolloutTa, rolloutStatus, rolloutLookupSetupNote);
   rolloutTa.addEventListener('input', () => {
     saveState();
     refreshReviewCard();
@@ -1496,7 +1498,7 @@ export function mountReflectLitePanel() {
     const queue = currentRollout();
     rolloutStatus.classList.toggle('kus-rl-rollout__status--err', !queue.ok);
     if (!text) rolloutStatus.textContent = '';
-    else if ('error' in queue) { rolloutStatus.textContent = queue.error; rolloutDetails.details.open = true; }
+    else if ('error' in queue) rolloutStatus.textContent = queue.error;
     else if (!queue.targets.length) rolloutStatus.textContent = '続けて反映する反映先はありません（現在の反映先は除いています）。';
     else {
       const shown = queue.targets.slice(0, 10).map(formatRolloutTarget).join('、');
@@ -1579,6 +1581,7 @@ export function mountReflectLitePanel() {
 
   const previewCard = makeCard({ title: '項目ごとの差分' });
   previewCard.card.style.display = 'none';
+  previewCard.body.appendChild(makeNote('項目名を押すと、下の詳細へ移動します。', 'help'));
   const previewTools = document.createElement('div');
   previewTools.className = 'kus-rl-preview-tools';
   const previewSearch = makeInput({ placeholder: '項目名や内容で検索', width: 'wide' });
@@ -2689,13 +2692,35 @@ export function mountReflectLitePanel() {
   const setupGrid = document.createElement('div');
   setupGrid.className = 'kus-rl-setup-grid';
   [cardApp.card, cardScope.card].forEach((node) => setupGrid.appendChild(node));
-  const advanced = makeDetails('詳細設定 · 自動バックアップ / 参照先変換');
-  advanced.details.classList.add('kus-rl-advanced');
-  advanced.body.appendChild(cardOpt.card);
-  const presetDetails = makeDetails('よく使う設定を保存・読み込み');
-  presetDetails.details.classList.add('kus-rl-advanced');
-  presetDetails.body.appendChild(cardPreset.card);
-  setupGrid.append(rolloutDetails.details, advanced.details, presetDetails.details);
+  // 第1段階は「アプリ」と「反映する項目」だけを表に出す。動作・参照先変換・プリセット・続けて反映は「詳細設定」のポップアップへ置く。
+  const detail = makeDialog({ title: '詳細設定', id: 'kus-rl-detail' });
+  detail.body.append(detailStatus, cardOpt.card, cardLookup.card, cardPreset.card, rolloutSetupCard.card);
+  detail.dialog.addEventListener('close', () => { detailStatus.hidden = true; detailStatus.textContent = ''; });
+  panel.root.appendChild(detail.dialog);
+  const detailBtn = makeButton('詳細設定…', 'sub');
+  detailBtn.setAttribute('aria-haspopup', 'dialog');
+  detailBtn.addEventListener('click', () => detail.open());
+  const detailSummary = document.createElement('span');
+  detailSummary.className = 'kus-rl-detail-summary';
+  const detailRow = document.createElement('div');
+  detailRow.className = 'kus-rl-detail-row';
+  detailRow.append(detailBtn, detailSummary);
+  setupGrid.appendChild(detailRow);
+  /** ポップアップの中の設定のうち、反映結果に影響するものを表に一行で示す（隠れた設定で意図しない削除をしないため）。 */
+  function refreshDetailSummary() {
+    const parts = [preserve.checkbox.checked ? '反映先だけの一覧・グラフ・アクションは保持' : '反映先だけの一覧・グラフ・アクションを削除'];
+    let warn = !preserve.checkbox.checked;
+    const lookup = parseLookupMapText(lookupTa.value);
+    if (!lookup.ok) { parts.push('参照先変換に誤りがあります'); warn = true; }
+    else if (lookup.count) parts.push(`参照先変換 ${lookup.count} 件`);
+    if (rolloutTa.value.trim()) {
+      const queue = currentRollout();
+      if (!queue.ok) { parts.push('続けて反映する反映先に誤りがあります'); warn = true; }
+      else if (queue.targets.length) parts.push(`続けて反映 ${queue.targets.length} 件`);
+    }
+    detailSummary.textContent = `詳細設定: ${parts.join(' / ')}`;
+    detailSummary.classList.toggle('kus-rl-detail-summary--warn', warn);
+  }
   stages.setup.appendChild(setupGrid);
   [reviewCard.card, previewCard.card].forEach((node) => stages.review.appendChild(node));
   [progressCard.card, lastResultCard.card, rolloutCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
@@ -2735,6 +2760,8 @@ export function mountReflectLitePanel() {
   workspace.appendChild(canvas);
   hint?.insertAdjacentElement('afterend', workspace);
   panel.body.appendChild(dock);
+  // 静的な補足説明は、各カードの「?」ボタンで開く吹き出しへ移す（動的な状態表示と警告は表に残す）。
+  [stages.setup, stages.review, stages.confirm, stages.result, detail.body].forEach((scope) => attachCardHelp(scope));
   let activeStage: 'setup' | 'review' | 'confirm' | 'result' = 'setup';
   const noInputSubmit = document.createElement('button'); noInputSubmit.disabled = true;
   /** フッターの経路表示。差分取得済みなら確認済みの名前、未取得なら入力中に確認できた名前を使う。 */
@@ -2794,8 +2821,7 @@ export function mountReflectLitePanel() {
       ? `<strong>書き込み先（反映先） #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong><span class="kus-rl-dock-msg">${escapeHtml(confirmedToken ? '内容を確認してから反映してください。' : '条件が変わりました。差分を再取得してください。')}</span>`
       : `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong><span class="kus-rl-dock-msg${setupBlocker ? ' kus-rl-dock-reason' : ''}">${escapeHtml(message)}</span>`;
     panel.result.hidden = activeStage === 'confirm';
-    const advancedSummary = advanced.details.querySelector('summary');
-    if (advancedSummary) advancedSummary.textContent = '詳細設定 · 自動バックアップ / 参照先変換';
+    refreshDetailSummary();
     // Text-entry Enter must never start a settings write.
     panel.setPrimaryAction(activeStage === 'setup' ? nextBtn : activeStage === 'review' ? (fresh ? confirmBtn : previewBtn) : noInputSubmit);
   };

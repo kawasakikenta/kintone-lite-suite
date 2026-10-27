@@ -99,12 +99,10 @@ export function mountJsconfigLitePanel() {
     loadedText = '';
     panel.setStatus('JSON をクリアしました', 'info');
   });
-  cardJson.actions.style.flexWrap = 'wrap';
-  cardJson.actions.appendChild(formatBtn);
-  cardJson.actions.appendChild(loadFileBtn);
-  cardJson.actions.appendChild(loadTargetBtn);
-  cardJson.actions.appendChild(clearBtn);
-  cardJson.actions.appendChild(exportBtn);
+  // 読込・整形・クリアは折りたたみにまとめる。JSON保存は操作の選択肢（exportBtn は実行用に使う）。
+  const jsonTools = makeDetails('JSONの読込・整形・保存');
+  jsonTools.body.appendChild(makeRow([loadFileBtn, loadTargetBtn, formatBtn, clearBtn]));
+  cardJson.body.appendChild(jsonTools.details);
   panel.body.insertBefore(cardJson.card, panel.status);
 
   // プレビュー（取得済みファイルの一覧）
@@ -125,9 +123,9 @@ export function mountJsconfigLitePanel() {
       { label: '反映先', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; } }
     ]
   }));
-  cardApply.body.appendChild(makeNote('反映先の JS / CSS 一覧は、JSON の内容にすべて置き換わります。JSON に適用範囲（scope: ALL / ADMIN / NONE）が含まれていれば、適用範囲も更新します。'));
-  cardApply.body.appendChild(makeNote('FILE タイプは、別アプリから取得した fileKey をそのまま使うと kintone に拒否されます。反映先で有効なアップロード済みの fileKey に差し替えてください。'));
-  cardApply.body.appendChild(makeNote('反映前に件数を最終確認します。取得後に反映先へ別の更新が入っていた場合（revision 競合）は、上書きせず中止します。'));
+  cardApply.body.appendChild(makeNote('反映先の JS / CSS 一覧は、JSON の内容にすべて置き換わります。JSON に適用範囲（scope: ALL / ADMIN / NONE）が含まれていれば、適用範囲も更新します。', 'help'));
+  cardApply.body.appendChild(makeNote('FILE タイプは、別アプリから取得した fileKey をそのまま使うと kintone に拒否されます。反映先で有効なアップロード済みの fileKey に差し替えてください。', 'help'));
+  cardApply.body.appendChild(makeNote('反映前に件数を最終確認します。取得後に反映先へ別の更新が入っていた場合（revision 競合）は、上書きせず中止します。', 'help'));
   const applyBtn = makeButton('反映先プレビューへ反映', 'run', { icon: '⤴' });
   cardApply.body.appendChild(applyBtn);
   panel.body.insertBefore(cardApply.card, panel.status);
@@ -211,14 +209,14 @@ export function mountJsconfigLitePanel() {
   }));
 
   // 全アプリ JS/CSS ファイル 一括ダウンロード
-  const batchDetails = makeDetails('全アプリの JS/CSS ファイルを一括ダウンロード');
-  batchDetails.body.appendChild(makeNote('アクセスできるアプリを順に調べ、アップロード済み（FILE タイプ）の JS / CSS ファイルを1つの ZIP にまとめます。URL で指定した JS / CSS はファイルがないため含まれません。'));
+  const batchDetails = makeCard({ title: '全アプリの JS/CSS ファイルを一括ダウンロード' });
+  batchDetails.body.appendChild(makeNote('アクセスできるアプリを順に調べ、アップロード済み（FILE タイプ）の JS / CSS ファイルを1つの ZIP にまとめます。URL で指定した JS / CSS はファイルがないため含まれません。', 'help'));
   const batchGuest = makeInput({ placeholder: 'ゲストID（任意 / 未指定で全体）', width: 'wide' });
   batchDetails.body.appendChild(makeRow(batchGuest, { label: 'ゲストスペース' }));
   const batchBtn = makeButton('JS/CSS を ZIP で一括取得', 'primary', { icon: '↓' });
   batchBtn.style.width = '100%';
   batchDetails.body.appendChild(batchBtn);
-  panel.body.insertBefore(batchDetails.details, panel.status);
+  panel.body.insertBefore(batchDetails.card, panel.status);
 
   batchBtn.addEventListener('click', () => liteRun(panel, '全アプリの JS/CSS をスキャン中…', async () => {
     const res = await runBatchJsConfigDownloadStandalone(
@@ -241,8 +239,7 @@ export function mountJsconfigLitePanel() {
     cardFetch.card.hidden = mode === 'batch' || mode === 'apply';
     cardJson.card.hidden = mode === 'batch';
     cardApply.card.hidden = mode !== 'apply';
-    batchDetails.details.hidden = mode !== 'batch';
-    batchDetails.details.open = true;
+    batchDetails.card.hidden = mode !== 'batch';
   };
   const idProblem = (who: string, app: string, guest: string): string => {
     if (!app) return who + 'アプリIDを指定してください。';
@@ -274,7 +271,7 @@ export function mountJsconfigLitePanel() {
     return [['JSONの取得元', originSummary()], ...rows];
   };
   installLiteWorkflow(panel, {
-    setup: [cardFetch.card, cardJson.card, cardApply.card, batchDetails.details], results: [cardPreview.card], resultActions: ['fetch'],
+    setup: [cardFetch.card, cardJson.card, cardApply.card, batchDetails.card], results: [cardPreview.card], resultActions: ['fetch'],
     beforeRun: actionId => { if (actionId === 'fetch') { previewBox.replaceChildren(); previewBox.classList.add('kus-lp__panel-html--empty'); } },
     actions: [
       {

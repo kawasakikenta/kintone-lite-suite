@@ -12749,6 +12749,27 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 /* ===== Misc ===== */
 .kus-lp__note{font-size:13px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
 .kus-lp__note--warn{color:var(--c-warn-fg);padding:7px 10px;background:var(--c-warn-bg);border:1px solid var(--c-warn-bd);border-radius:8px;margin:6px 0}
+/* ===== カードの「?」ヘルプ（補足説明の吹き出し） ===== */
+.kus-lp__help-btn{flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);font:700 13px/1 inherit;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.kus-lp__help-btn:hover,.kus-lp__help-btn--open{background:var(--c-accent-chip);border-color:var(--c-accent-via);color:var(--c-accent-from)}
+.kus-lp__help-pop{margin:-4px 0 12px;padding:10px 12px;border:1px solid var(--c-info-bd);background:var(--c-info-bg);border-radius:10px;color:var(--c-text-2);font-size:13px;line-height:1.55;animation:kus-lp-fade-in .12s ease-out}
+.kus-lp__help-pop[hidden]{display:none}
+.kus-lp__help-item{margin:0 0 6px;color:var(--c-text-2);font-size:13px;line-height:1.55}
+.kus-lp__help-item:last-child{margin-bottom:0}
+/* ===== ポップアップ（詳細設定・ほかの操作） ===== */
+.kus-lp__dialog{box-sizing:border-box;width:min(640px,calc(100vw - 32px));max-height:min(88vh,860px);padding:0;border:1px solid var(--c-border);border-radius:16px;background:var(--c-bg);color:var(--c-text);box-shadow:0 28px 60px -12px rgba(15,23,42,.45);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;display:none;flex-direction:column;overflow:hidden}
+.kus-lp__dialog[open]{display:flex}
+.kus-lp__dialog--wide{width:min(880px,calc(100vw - 32px))}
+.kus-lp__dialog::backdrop{background:rgba(15,23,42,.45)}
+.kus-lp__dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog-title{margin:0;font-size:16px;font-weight:700;color:var(--c-text)}
+.kus-lp__dialog-close{border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
+.kus-lp__dialog-close:hover{background:var(--c-surface-2)}
+.kus-lp__dialog-body{padding:16px 18px;overflow:auto;min-height:0;flex:1}
+.kus-lp__dialog-body>.kus-lp__card{margin-bottom:12px}
+.kus-lp__dialog-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog :is(button,input,select,textarea,summary):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
+@media(max-width:720px){.kus-lp__dialog{width:calc(100vw - 16px);max-height:calc(100dvh - 16px)}.kus-lp__dialog-body{padding:12px}}
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
 .kus-lp__small{font-size:12.5px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
@@ -13240,6 +13261,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     function onDocKeydown(e) {
       if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
       if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      if (root2.querySelector("dialog[open]")) return;
       e.preventDefault();
       e.stopPropagation();
       close();
@@ -13384,9 +13406,113 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   }
   function makeNote(text2, kind = "plain") {
     const n = document.createElement("div");
-    n.className = kind === "warn" ? "kus-lp__note--warn" : "kus-lp__note";
+    n.className = kind === "warn" ? "kus-lp__note--warn" : kind === "help" ? "kus-lp__note kus-lp__note--help" : "kus-lp__note";
     n.textContent = text2;
     return n;
+  }
+  function attachCardHelp(scope) {
+    const cards = Array.from(scope.querySelectorAll(".kus-lp__card"));
+    if (scope instanceof HTMLElement && scope.classList.contains("kus-lp__card")) cards.unshift(scope);
+    for (const card of cards) {
+      const notes = Array.from(card.querySelectorAll(".kus-lp__note--help")).filter((note) => note.closest(".kus-lp__card") === card);
+      if (!notes.length) continue;
+      const head = card.querySelector(":scope > .kus-lp__card-head");
+      if (!head) continue;
+      let pop = card.querySelector(":scope > .kus-lp__help-pop");
+      let btn = head.querySelector(".kus-lp__help-btn");
+      if (!pop) {
+        pop = document.createElement("div");
+        pop.className = "kus-lp__help-pop";
+        pop.hidden = true;
+        pop.setAttribute("role", "note");
+        head.insertAdjacentElement("afterend", pop);
+      }
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "kus-lp__help-btn";
+        btn.textContent = "?";
+        const titleEl = head.querySelector(".kus-lp__card-title");
+        const title = titleEl ? Array.from(titleEl.childNodes).filter((node) => !(node instanceof HTMLElement && node.classList.contains("kus-lp__card-num"))).map((node) => node.textContent || "").join("").trim() : "";
+        btn.setAttribute("aria-label", `${title ? `「${title}」の` : ""}説明を表示`);
+        btn.title = "説明を表示";
+        btn.setAttribute("aria-expanded", "false");
+        const popEl = pop;
+        btn.addEventListener("click", () => {
+          const next = popEl.hidden;
+          popEl.hidden = !next;
+          btn.setAttribute("aria-expanded", String(next));
+          btn.classList.toggle("kus-lp__help-btn--open", next);
+        });
+        const actions = head.querySelector(".kus-lp__card-actions");
+        if (actions) actions.insertAdjacentElement("afterbegin", btn);
+        else head.appendChild(btn);
+      }
+      for (const note of notes) {
+        note.classList.remove("kus-lp__note--help");
+        note.classList.add("kus-lp__help-item");
+        pop.appendChild(note);
+      }
+    }
+  }
+  function makeDialog(opts) {
+    const dialog = document.createElement("dialog");
+    dialog.className = `kus-lp__dialog${opts.wide ? " kus-lp__dialog--wide" : ""}`;
+    if (opts.id) dialog.id = opts.id;
+    const titleId = `${opts.id || `kus-dialog-${Math.random().toString(36).slice(2, 8)}`}-title`;
+    dialog.setAttribute("aria-labelledby", titleId);
+    const head = document.createElement("div");
+    head.className = "kus-lp__dialog-head";
+    const title = document.createElement("h2");
+    title.className = "kus-lp__dialog-title";
+    title.id = titleId;
+    title.textContent = opts.title;
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "kus-lp__dialog-close";
+    closeBtn.textContent = "閉じる";
+    closeBtn.setAttribute("aria-label", `${opts.title}を閉じる`);
+    head.append(title, closeBtn);
+    const body = document.createElement("div");
+    body.className = "kus-lp__dialog-body";
+    const foot = document.createElement("div");
+    foot.className = "kus-lp__dialog-foot";
+    const doneBtn = document.createElement("button");
+    doneBtn.type = "button";
+    doneBtn.className = "kus-lp__btn kus-lp__btn--sub";
+    doneBtn.textContent = "閉じる";
+    foot.appendChild(doneBtn);
+    dialog.append(head, body, foot);
+    let opener = null;
+    function close() {
+      if (!dialog.open) return;
+      dialog.close();
+    }
+    function open() {
+      if (dialog.open) return;
+      opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+      const first = body.querySelector("input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled])");
+      try {
+        (first || closeBtn).focus({ preventScroll: true });
+      } catch {
+      }
+    }
+    closeBtn.addEventListener("click", close);
+    doneBtn.addEventListener("click", close);
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog) close();
+    });
+    dialog.addEventListener("close", () => {
+      if (opener?.isConnected) {
+        try {
+          opener.focus({ preventScroll: true });
+        } catch {
+        }
+      }
+    });
+    return { dialog, body, open, close };
   }
   function makeDetails(title, opts = {}) {
     const d = document.createElement("details");
@@ -13479,7 +13605,14 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 .kus-wf-action:has(input:checked){border-color:#60a5fa;background:#eff6ff}
 .kus-wf-action strong{display:block;color:#0f172a}
 .kus-wf-action small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
-.kus-wf-action em{display:inline-block;font-size:11.5px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action em{display:inline-block;font-size:12.5px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action--more{grid-template-columns:1fr;text-align:left;font-family:inherit;color:#1d4ed8;border-style:dashed}
+.kus-wf-action--more[aria-pressed=true]{border-style:solid;border-color:#60a5fa;background:#eff6ff}
+.kus-wf-action--more strong{color:#1d4ed8}
+.kus-wf-action--more[aria-pressed=true] strong{color:#0f172a}
+.kus-wf-advanced{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 16px;padding:10px 14px;border:1px dashed #cbd5e1;border-radius:10px;background:#fff}
+.kus-wf-advanced__copy{font-size:13px;color:#475569;min-width:0;flex:1}
+.kus-wf-advanced__btn{flex-shrink:0}
 .kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
 .kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
 .kus-wf-summary>div:last-child{border:0}
@@ -21309,6 +21442,8 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-step__empty{margin:0;padding:18px;border:1px dashed #cbd5e1;border-radius:9px;background:#f8fafc;color:#64748b;text-align:center;font-size:13px}
 .kus-dl-step>.kus-lp__card,.kus-dl-disclosure__body>.kus-lp__card{margin:0;border:0;box-shadow:none;background:transparent;padding:0}
 .kus-dl-target-card>.kus-lp__card-head,.kus-dl-filter-disclosure .kus-lp__card-head,.kus-dl-output-disclosure .kus-lp__card-head,.kus-dl-step[data-kus-dl-step="review"]>.kus-lp__card>.kus-lp__card-head{display:none}
+.kus-dl-output-disclosure .kus-lp__card-head:has(.kus-lp__help-btn){display:flex;justify-content:flex-end;margin:0 0 8px;padding:0;border:0}
+.kus-dl-output-disclosure .kus-lp__card-title{display:none}
 .kus-dl-mode{display:inline-flex;gap:4px;margin:0 0 12px;padding:3px;border:1px solid #cbd5e1;border-radius:10px;background:#f1f5f9}
 .kus-dl-mode .kus-lp__btn{min-width:118px;border-color:transparent;background:transparent;box-shadow:none;color:#475569}
 .kus-dl-mode .kus-lp__btn.is-active{background:#fff;border-color:#cbd5e1;color:#10253f;box-shadow:0 1px 2px rgba(15,23,42,.08)}
@@ -21380,10 +21515,13 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-target-list{display:grid;gap:7px;max-height:220px;margin-top:8px;padding-right:2px;overflow-y:auto}
 .kus-dl-multi-controls{margin-top:12px!important;padding-top:10px;border-top:1px solid #e2e8f0}
 .kus-dl-common-exclusion{margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;background:#eff6ff;color:#10253f;font-family:-apple-system,Segoe UI,sans-serif}
-.kus-dl-common-exclusion__heading{margin:0 0 3px;font-size:13px;font-weight:850;letter-spacing:.04em}
-.kus-dl-common-exclusion__description{margin:0 0 4px;color:#334155;font-size:13px;line-height:1.55}
+.kus-dl-common-exclusion__heading{margin:0;font-size:13px;font-weight:850;letter-spacing:.04em}
+.kus-dl-common-exclusion>.kus-lp__card{margin:0;padding:0;border:0;background:transparent}
+.kus-dl-common-exclusion .kus-lp__card-head{margin:0 0 3px;padding:0;border:0}
+.kus-dl-common-exclusion .kus-lp__help-pop{margin:4px 0 6px}
 .kus-dl-common-exclusion .kus-lp__check{min-height:40px!important;color:#10253f;font-size:14px;font-weight:750}
-.kus-dl-common-exclusion__note{margin:3px 0 0;color:#475569;font-size:12.5px;line-height:1.55}
+.kus-dl-details-row{margin:12px 0 0!important;justify-content:flex-end}
+.kus-dl-details-row .kus-lp__btn{min-height:40px}
 .kus-dl-run-row{margin:13px 0 0!important}
 .kus-dl-run-row .kus-lp__btn{width:100%}
 .kus-dl-step>.kus-lp__status{margin:10px 0 0;min-height:44px;box-sizing:border-box}
@@ -23148,8 +23286,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     pairEditor.append(pairIntro, pairFolder, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote("手入力したペアは kintone から設定を取得し、フォルダから作成したペアは設定JSONだけを使います。1対1比較用の設定JSONを読み込んだままのときは、「設定JSON読込を解除」を押してください。"));
     cardApp.body.appendChild(pairEditor);
     panel.body.insertBefore(cardApp.card, panel.status);
+    const detailsDialog = makeDialog({ title: "詳細設定", id: "kus-dl-details-dialog" });
+    panel.root.appendChild(detailsDialog.dialog);
     const cardScope = makeCard({ title: "比較セクション" });
-    cardScope.body.appendChild(makeNote(`${SCOPE_OPTS.length} セクションすべてを比較対象にしています。比較しないセクションだけ選択を外してください。`));
+    cardScope.body.appendChild(makeNote(`${SCOPE_OPTS.length} セクションすべてを比較対象にしています。比較しないセクションだけ選択を外してください。`, "help"));
     const chipBox = document.createElement("div");
     chipBox.className = "kus-lp__chips";
     const chips = SCOPE_OPTS.map(([key, label, def]) => makeChip({ label, value: key, checked: def }));
@@ -23171,7 +23311,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       });
       invalidateResultAfterGeneralConditionChange();
     });
-    panel.body.insertBefore(cardScope.card, panel.status);
+    detailsDialog.body.appendChild(cardScope.card);
     const nAppRefs = makeCheck({
       label: "環境固有ID（アプリ・一覧・グラフ・アクション）を比較から除外",
       checked: false,
@@ -23185,23 +23325,20 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     appReferenceExclusionHeading.id = "kus-dl-common-exclusion-heading";
     appReferenceExclusionHeading.className = "kus-dl-common-exclusion__heading";
     appReferenceExclusionHeading.textContent = "よく使う除外";
-    const appReferenceExclusionDescription = document.createElement("p");
+    const appReferenceExclusionDescription = makeNote("比較対象・参照先のアプリIDと、一覧・グラフ・アクション自身の内部IDだけを除外します。フィールドコード、一覧条件、アクションの対応付け、プラグインIDは比較します。", "help");
     appReferenceExclusionDescription.id = "kus-dl-common-exclusion-description";
-    appReferenceExclusionDescription.className = "kus-dl-common-exclusion__description";
-    appReferenceExclusionDescription.textContent = "比較対象・参照先のアプリIDと、一覧・グラフ・アクション自身の内部IDだけを除外します。フィールドコード、一覧条件、アクションの対応付け、プラグインIDは比較します。";
-    const appReferenceExclusionNote = document.createElement("p");
+    const appReferenceExclusionNote = makeNote("初期状態はオフです。切り替えたあとは再比較してください（差分件数・画面の結果・Excelに反映されます）。", "help");
     appReferenceExclusionNote.id = "kus-dl-common-exclusion-note";
-    appReferenceExclusionNote.className = "kus-dl-common-exclusion__note";
-    appReferenceExclusionNote.textContent = "初期状態はオフです。切り替えたあとは再比較してください（差分件数・画面の結果・Excelに反映されます）。";
     nAppRefs.checkbox.setAttribute("aria-describedby", `${appReferenceExclusionDescription.id} ${appReferenceExclusionNote.id}`);
-    appReferenceExclusion.append(
-      appReferenceExclusionHeading,
-      appReferenceExclusionDescription,
-      nAppRefs.label,
-      appReferenceExclusionNote
-    );
+    const cardExclusion = makeCard();
+    const exclusionTitle = document.createElement("div");
+    exclusionTitle.className = "kus-lp__card-title";
+    exclusionTitle.appendChild(appReferenceExclusionHeading);
+    cardExclusion.card.querySelector(":scope > .kus-lp__card-head")?.prepend(exclusionTitle);
+    cardExclusion.body.append(nAppRefs.label, appReferenceExclusionDescription, appReferenceExclusionNote);
+    appReferenceExclusion.appendChild(cardExclusion.card);
     const cardImport = makeCard({ title: "設定JSON読込（任意）", soft: true });
-    cardImport.body.appendChild(makeNote("指定した側は kintone から取得せず、JSONの内容で比較します（設定出力の単体JSON・設定一括取得JSON・差分バンドルJSONに対応）。比較先JSONは1対1比較専用です。"));
+    cardImport.body.appendChild(makeNote("指定した側は kintone から取得せず、JSONの内容で比較します（設定出力の単体JSON・設定一括取得JSON・差分バンドルJSONに対応）。比較先JSONは1対1比較専用です。", "help"));
     const srcFile = document.createElement("input");
     srcFile.type = "file";
     srcFile.accept = ".json,application/json";
@@ -23216,13 +23353,13 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     cardImport.body.appendChild(makeRow(srcFile, { label: "比較元JSON" }));
     cardImport.body.appendChild(makeRow(tgtFile, { label: "比較先JSON" }));
     cardImport.body.appendChild(makeRow(clearImportBtn));
-    panel.body.insertBefore(cardImport.card, panel.status);
-    const advDetails = makeDetails("高度な比較設定");
+    detailsDialog.body.appendChild(cardImport.card);
+    const cardAdv = makeCard({ title: "高度な比較設定" });
     const ignTa = makeTextarea({ rows: 2, code: true, placeholder: "キー / 完全パス / * ワイルドカード（改行・カンマ区切り）" });
     ignTa.setAttribute("aria-label", "比較から除外する無視キーまたは設定パス");
-    advDetails.body.appendChild(makeRow(ignTa, { label: "無視キー", block: true }));
-    advDetails.body.appendChild(makeNote("キー名、fieldSettings.properties.code.label のような完全パス、* を使ったパターンを指定できます。結果行の「次回から除外」を押すと、その1項目だけを path: 形式で追加します。"));
-    advDetails.body.appendChild(makeNote("⚠ 完全パスとワイルドカードは別のアプリにも同じように適用され、一致した差分は結果から除外されます。比較条件を読み込んだあとと再比較の前に、内容を確認してください。"));
+    cardAdv.body.appendChild(makeRow(ignTa, { label: "無視キー", block: true }));
+    cardAdv.body.appendChild(makeNote("キー名、fieldSettings.properties.code.label のような完全パス、* を使ったパターンを指定できます。結果行の「次回から除外」を押すと、その1項目だけを path: 形式で追加します。", "help"));
+    cardAdv.body.appendChild(makeNote("⚠ 完全パスとワイルドカードは別のアプリにも同じように適用され、一致した差分は結果から除外されます。比較条件を読み込んだあとと再比較の前に、内容を確認してください。", "warn"));
     const includeSame = makeCheck({ label: "同一の項目も一覧に含める" });
     const showResultList = makeCheck({ label: "差分の明細を画面に表示（200件ずつ）", checked: true, help: "差分が多くても重くならないよう、200件ずつ表示します" });
     const nAction = makeCheck({
@@ -23271,7 +23408,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       nFileKeys.label,
       nEnabled.label
     ].forEach((el) => normGrid.appendChild(el));
-    advDetails.body.appendChild(normGrid);
+    cardAdv.body.appendChild(normGrid);
     const profileName = makeInput({ placeholder: "例: 権限を除く標準比較", width: "medium", noSubmit: true, ariaLabel: "比較条件プロファイル名" });
     const profileSaveBtn = makeButton("比較条件を保存", "sub", { icon: "↓" });
     const profileLoadBtn = makeButton("比較条件を読込", "sub", { icon: "↑" });
@@ -23282,11 +23419,12 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     profileFile.accept = ".json,application/json";
     profileFile.hidden = true;
     profileFile.dataset.kusDlProfileFile = "load";
-    advDetails.body.appendChild(makeRow(profileName, { label: "比較条件名" }));
-    advDetails.body.appendChild(makeRow([profileSaveBtn, profileLoadBtn]));
-    advDetails.body.appendChild(makeNote("JSONに保存されるのは、比較セクション・無視ルール・各種の「無視」設定・表示設定だけです。アプリIDや設定値、認証情報は含まれません。"));
-    advDetails.body.appendChild(profileFile);
-    panel.body.insertBefore(advDetails.details, panel.status);
+    const cardProfile = makeCard({ title: "比較条件の保存・読込" });
+    cardProfile.body.appendChild(makeRow(profileName, { label: "比較条件名" }));
+    cardProfile.body.appendChild(makeRow([profileSaveBtn, profileLoadBtn]));
+    cardProfile.body.appendChild(makeNote("JSONに保存されるのは、比較セクション・無視ルール・各種の「無視」設定・表示設定だけです。アプリIDや設定値、認証情報は含まれません。", "help"));
+    cardProfile.body.appendChild(profileFile);
+    detailsDialog.body.append(cardAdv.card, cardProfile.card);
     const runBtn = makeButton("差分比較を実行", "run", { icon: "→" });
     const runAllBtn = makeButton("複数の比較を実行", "run", { icon: "→" });
     const runPairsBtn = makeButton("登録したペアを一括比較", "run", { icon: "→" });
@@ -23294,6 +23432,13 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const runRow = makeRow([runBtn, runAllBtn, runPairsBtn]);
     runRow.classList.add("kus-dl-run-row");
     panel.body.insertBefore(runRow, panel.status);
+    const detailsBtn = makeButton("詳細設定…", "ghost");
+    detailsBtn.dataset.kusDlDetails = "";
+    detailsBtn.setAttribute("aria-haspopup", "dialog");
+    detailsBtn.addEventListener("click", () => detailsDialog.open());
+    const detailsRow = makeRow(detailsBtn);
+    detailsRow.classList.add("kus-dl-details-row");
+    const withDetailsHint = (message) => message.startsWith("比較セクション") ? `${message}（「詳細設定…」で選べます）` : message;
     const completionReviewBtn = makeButton("結果を確認", "sub", { icon: "↓" });
     const completionXlsxBtn = makeButton("Excelを保存（全件）", "primary", { icon: "↓" });
     completionReviewBtn.dataset.kusDlCompletion = "review";
@@ -23426,9 +23571,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     cardResult.body.appendChild(resultBox);
     panel.body.insertBefore(cardResult.card, panel.status);
     const cardOut = makeCard({ title: "出力", soft: true });
-    cardOut.body.appendChild(makeNote("HTML は人が確認するレビュー用で、1対1・1対多の比較が終わると自動保存されます。Excel は一覧・共有用で、全件または画面で絞り込んだ範囲を保存できます（長い原文も省略せず収録します）。"));
-    cardOut.body.appendChild(makeNote("AI向け Markdown は、比較方向・条件・取得の完全性・変更前後の値と型を含み、差分の事実をAIへ渡す用途で使います。"));
-    cardOut.body.appendChild(makeNote("「レビュー用（変更箇所のみ）」の HTML にも比較元・比較先の値は含まれます。「社内用」の HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。"));
+    cardOut.body.appendChild(makeNote("HTML は人が確認するレビュー用で、1対1・1対多の比較が終わると自動保存されます。Excel は一覧・共有用で、全件または画面で絞り込んだ範囲を保存できます（長い原文も省略せず収録します）。", "help"));
+    cardOut.body.appendChild(makeNote("AI向け Markdown は、比較方向・条件・取得の完全性・変更前後の値と型を含み、差分の事実をAIへ渡す用途で使います。", "help"));
+    cardOut.body.appendChild(makeNote("「レビュー用（変更箇所のみ）」の HTML にも比較元・比較先の値は含まれます。「社内用」の HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。", "help"));
     const htmlContentMode = makeSelect([
       ["diffOnly", "レビュー用（変更箇所のみ）"],
       ["withCompared", "社内用（比較設定を含む・取扱注意）"]
@@ -23508,13 +23653,6 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const targetStep = makeWorkflowStep("target", "1", "比較するアプリを選ぶ", "比較元（変更前）と比較先（変更後）を指定して、比較を実行します。");
     const reviewStep = makeWorkflowStep("review", "2", "差分を確認する", "取得に失敗した設定がないか確かめてから、差分を順に見ていきます。");
     const exportStep = makeWorkflowStep("export", "3", "結果を保存する", "確認用の HTML・Excel と、AI向け Markdown を保存できます。");
-    const configDetails = document.createElement("details");
-    configDetails.className = "kus-dl-disclosure";
-    configDetails.innerHTML = "<summary><span>比較範囲と詳細設定</span><small>セクション、JSON読込、無視ルール、比較条件</small></summary>";
-    const configBody = document.createElement("div");
-    configBody.className = "kus-dl-disclosure__body";
-    configBody.append(cardScope.card, cardImport.card, advDetails.details);
-    configDetails.appendChild(configBody);
     const filterDetails = document.createElement("details");
     filterDetails.className = "kus-dl-disclosure kus-dl-filter-disclosure";
     filterDetails.open = true;
@@ -23535,7 +23673,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     reviewEmpty.className = "kus-dl-step__empty";
     reviewEmpty.dataset.kusDlResultEmpty = "";
     reviewEmpty.textContent = "比較を実行すると、ここに取得結果の確認と差分の一覧が表示されます。";
-    targetStep.append(cardApp.card, appReferenceExclusion, configDetails, runRow, completionRow, panel.status);
+    targetStep.append(cardApp.card, appReferenceExclusion, detailsRow, runRow, completionRow, panel.status);
     reviewStep.append(reviewEmpty, filterDetails, cardResult.card);
     exportStep.appendChild(outputDetails);
     workflow.append(targetStep, reviewStep, exportStep);
@@ -23563,6 +23701,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       button.replaceChildren(number, label);
     });
     panel.body.insertBefore(workflow, panel.result);
+    attachCardHelp(panel.body);
+    attachCardHelp(detailsDialog.body);
     const setExportControlsEnabled = (enabled) => {
       expRange.disabled = !enabled;
       bXlsx.disabled = !enabled;
@@ -24108,9 +24248,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         if (!existing.some((token) => decodeExactIgnorePathRule(token) === path || token === path)) {
           ignTa.value = `${ignTa.value.trim()}${ignTa.value.trim() ? "\n" : ""}${exactRule}`;
         }
-        configDetails.open = true;
-        advDetails.details.open = true;
-        panel.setStatus("この項目だけを無視ルールへ追加しました。現在の結果は変えず、次回比較から適用します", "warn");
+        panel.setStatus("この項目だけを無視ルールへ追加しました。現在の結果は変えず、次回比較から適用します（「詳細設定…」の無視キーで確認できます）", "warn");
         return;
       }
       const multiXlsxAllButton = target?.closest("[data-kus-dl-multi-xlsx-all]");
@@ -24328,7 +24466,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     }
     let runControlSnapshot = [];
     function lockComparisonControls() {
-      runControlSnapshot = [...panel.body.querySelectorAll("button, input, textarea, select")].map((control) => [control, control.disabled]);
+      const controlSelector = "button, input, textarea, select";
+      runControlSnapshot = [
+        ...panel.body.querySelectorAll(controlSelector),
+        ...detailsDialog.body.querySelectorAll(controlSelector)
+      ].filter((control) => !control.classList.contains("kus-lp__help-btn")).map((control) => [control, control.disabled]);
       runControlSnapshot.forEach(([control]) => {
         control.disabled = true;
       });
@@ -24445,7 +24587,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       }
       const base = readForm();
       if (!base.scopes.length) {
-        panel.setStatus("比較セクションを 1 つ以上選択してください", "warn");
+        panel.setStatus(withDetailsHint("比較セクションを 1 つ以上選択してください"), "warn");
         return;
       }
       const positionalRuleCount = summarizeLiteIgnoreRules(base.ignoreKeys).positionalRules;
@@ -24596,7 +24738,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       }
       const base = readForm();
       if (!base.scopes.length) {
-        panel.setStatus("比較セクションを 1 つ以上選択してください", "warn");
+        panel.setStatus(withDetailsHint("比較セクションを 1 つ以上選択してください"), "warn");
         return;
       }
       const commonValidation = validateLiteDiffStart({
@@ -24608,7 +24750,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         targets
       });
       if (commonValidation) {
-        panel.setStatus(commonValidation, "warn");
+        panel.setStatus(withDetailsHint(commonValidation), "warn");
         return;
       }
       cache = null;
@@ -24760,7 +24902,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         hasImportedTarget: !!importedTargetBundle
       });
       if (validation) {
-        panel.setStatus(validation, "warn");
+        panel.setStatus(withDetailsHint(validation), "warn");
         return;
       }
       cache = null;

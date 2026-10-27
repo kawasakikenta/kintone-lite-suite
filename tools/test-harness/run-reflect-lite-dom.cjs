@@ -138,9 +138,41 @@ async function main() {
     await page.addScriptTag({ content: script });
     await page.evaluate(() => ReflectHarness.mountReflectLitePanel());
   }
-  const button = name => page.getByRole('button', { name, exact: true });
+  // 「詳細設定…」のポップアップの中の操作は、操作の直前に開き、直後に閉じる（呼び出し側は開閉を意識しない）。
+  // 値の読み取りは、閉じたままでも読める CSS の指定で行う。
+  const DETAIL_ACTIONS = new Set(['fill', 'check', 'uncheck', 'press', 'click', 'selectOption', 'setInputFiles', 'isDisabled', 'isEnabled']);
+  function inDetail(locator) {
+    return new Proxy(locator, { get(target, prop) {
+      const value = target[prop];
+      if (typeof value !== 'function') return value;
+      if (!DETAIL_ACTIONS.has(prop)) return value.bind(target);
+      return async (...args) => { await openDetail(); try { return await value.apply(target, args); } finally { await closeDetail(); } };
+    } });
+  }
+  const DETAIL_BUTTONS = new Set(['現在の設定を保存', '読み込み', 'JSONで書き出し', 'JSONを読み込み']);
+  const button = name => DETAIL_BUTTONS.has(name) ? inDetail(page.getByRole('button', { name, exact: true })) : page.getByRole('button', { name, exact: true });
+  const presetNameBox = () => inDetail(page.locator('input[aria-label="プリセット名"]'));
+  const presetSelectBox = () => inDetail(page.locator('select[aria-label="保存済みプリセット"]'));
+  const presetFileBox = () => inDetail(page.locator('input[aria-label="プリセットJSON"]'));
+  const preserveBox = () => inDetail(page.locator('label.kus-lp__check', { hasText: '反映先だけの一覧・グラフ・アクションを保持する' }).locator('input'));
+  const lookupBox = () => inDetail(page.locator('textarea[aria-label="ルックアップの参照アプリID変換"]'));
+  const rolloutBox = () => inDetail(page.locator('textarea[aria-label="続けて反映する反映先"]'));
   const tab = name => page.getByRole('tab', { name: new RegExp(name) });
   const run = () => button('最終確認に進む');
+  // 「詳細設定…」のポップアップ（反映時の動作・参照先変換・プリセット・続けて反映）。操作の前に開き、続きの操作の前に閉じる。
+  const detailDialog = () => page.locator('#kus-rl-detail');
+  async function openDetail() {
+    if (await detailDialog().evaluate(el => el.open)) return;
+    // 「詳細設定…」は第1画面にある。ほかの画面にいる間の読み書きは、画面を切り替えずに同じポップアップを開く。
+    if (await button('詳細設定…').isVisible()) await button('詳細設定…').click(); else await detailDialog().evaluate(el => el.showModal());
+  }
+  async function closeDetail() { if (await detailDialog().evaluate(el => el.open)) await button('詳細設定を閉じる').click(); }
+  // カードの「?」ボタンで補足説明を開く（開いていれば何もしない）。吹き出しの要素を返す。
+  async function openHelp(cardTitle) {
+    const help = page.getByRole('button', { name: `「${cardTitle}」の説明を表示`, exact: true });
+    if ((await help.getAttribute('aria-expanded')) !== 'true') await help.click();
+    return help.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " kus-lp__card ")][1]').locator('.kus-lp__help-pop');
+  }
   const applyButton = () => page.getByRole('button', { name: /^確認した .* 項目を反映先プレビューへ反映/ });
   async function execute() {
     await run().click();
@@ -206,20 +238,33 @@ async function main() {
     await button('全解除').click();
     assert.match(await page.locator('.kus-rl-dock-copy').innerText(), /項目を 1 つ以上選んでください/, '項目未選択の理由を表示する');
     await setup();
-    await page.getByText('詳細設定 · 自動バックアップ / 参照先変換', { exact: true }).click();
-    await page.getByText('ルックアップの参照アプリID変換（任意）', { exact: true }).click();
-    const lookup = page.getByRole('textbox', { name: 'ルックアップの参照アプリID変換', exact: true });
+    assert.equal(await page.getByText('ルックアップの参照アプリID変換（任意）', { exact: true }).isVisible(), false, '参照先変換は第1画面に出さず、詳細設定のポップアップへ置く');
+    assert.equal(await presetNameBox().isVisible(), false, 'プリセットは第1画面に出さない');
+    assert.equal(await preserveBox().isVisible(), false, '保持の設定は第1画面に出さない');
+    assert.match(await page.locator('.kus-rl-detail-summary').innerText(), /反映先だけの一覧・グラフ・アクションは保持/, '詳細設定の要点は第1画面にも一行で示す');
+    await button('詳細設定…').click();
+    assert.equal(await detailDialog().evaluate(el => el.matches(':modal')), true, '詳細設定はモーダルで開く');
+    assert.deepEqual(await detailDialog().locator('.kus-lp__card-title').allInnerTexts(), ['反映時の動作', 'ルックアップの参照アプリID変換（任意）', 'プリセット（接続先と反映項目）', '続けて反映する反映先（複数アプリへ展開）'], '詳細設定に置く設定');
+    await page.keyboard.press('Escape');
+    assert.equal(await detailDialog().evaluate(el => el.open), false, 'Escapeで詳細設定だけを閉じる');
+    assert.equal(await page.locator('#kus-reflect-lite').count(), 1, 'Escapeでパネル自体は閉じない');
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), '詳細設定…', '閉じたら「詳細設定…」へフォーカスを戻す');
+    await button('詳細設定…').click();
+    await detailDialog().locator('.kus-lp__dialog-title').click();
+    assert.equal(await detailDialog().evaluate(el => el.open), true, 'ポップアップの内側を押しても閉じない');
+    await page.mouse.click(5, 5);
+    assert.equal(await detailDialog().evaluate(el => el.open), false, '背景を押すと閉じる');
+    const lookup = lookupBox();
     await lookup.fill('abc');
     assert.equal(await button('差分を確認する').isDisabled(), true, '参照先変換の誤りでは進めない');
     assert.match(await page.locator('.kus-rl-dock-copy').innerText(), /参照先変換/, '参照先変換の誤りを理由として表示する');
     await lookup.fill('10 → 20');
     assert.match(await page.locator('.kus-rl-lookup-status').innerText(), /参照先変換 1 件/, '行形式の参照先変換を件数で示す');
     assert.equal(await button('差分を確認する').isEnabled(), true);
-    await page.getByText('よく使う設定を保存・読み込み', { exact: true }).click();
     assert.equal(await button('現在の設定を保存').isDisabled(), true, '名前なしでは保存できない');
-    await page.getByRole('textbox', { name: 'プリセット名', exact: true }).fill('営業所展開');
+    await presetNameBox().fill('営業所展開');
     await button('現在の設定を保存').click();
-    const presetSelect = page.getByRole('combobox', { name: '保存済みプリセット', exact: true });
+    const presetSelect = presetSelectBox();
     assert.equal(await presetSelect.inputValue(), '営業所展開');
     const presetDownloadPromise = page.waitForEvent('download');
     await button('JSONで書き出し').click();
@@ -230,16 +275,19 @@ async function main() {
     assert.equal(exportedPresets.presets[0].name, '営業所展開');
     assert.equal(exportedPresets.presets[0].lookupMap, '10 → 20');
     assert.equal(exportedPresets.presets[0].preserveTargetOnly, true);
-    await page.getByLabel('プリセットJSON', { exact: true }).setInputFiles({ name: 'presets.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ kind: 'reflect-presets', presets: [{ name: '検証環境', source: { appId: '101' }, target: { appId: '404' }, scopes: ['fieldSettings', 'viewSettings'], lookupMap: '', preserveTargetOnly: false }] })) });
+    await presetFileBox().setInputFiles({ name: 'presets.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ kind: 'reflect-presets', presets: [{ name: '検証環境', source: { appId: '101' }, target: { appId: '404' }, scopes: ['fieldSettings', 'viewSettings'], lookupMap: '', preserveTargetOnly: false }] })) });
     await idle();
     await presetSelect.selectOption('検証環境');
     await button('読み込み').click();
     assert.equal(await page.getByRole('textbox', { name: '反映先アプリID', exact: true }).inputValue(), '404', 'JSONから読み込んだプリセットを適用する');
-    assert.equal(await page.getByRole('checkbox', { name: '反映先だけの一覧・グラフ・アクションを保持する', exact: true }).isChecked(), false, 'プリセットの保持設定を適用する');
+    assert.equal(await preserveBox().isChecked(), false, 'プリセットの保持設定を適用する');
     await presetSelect.selectOption('営業所展開');
     await button('読み込み').click();
     assert.equal(await page.getByRole('textbox', { name: '反映先アプリID', exact: true }).inputValue(), '202', '保存したプリセットで条件を戻せる');
     assert.equal(await lookup.inputValue(), '10 → 20');
+    assert.match(await page.locator('.kus-rl-detail-summary').innerText(), /参照先変換 1 件/, '参照先変換の件数を第1画面にも示す');
+    await openDetail(); await button('詳細設定を閉じる').click();
+    assert.equal(await detailDialog().evaluate(el => el.open), false, '閉じるでポップアップが閉じる');
     await button('差分を確認する').evaluate(b => { b.click(); b.click(); });
     assert.equal(await page.getByRole('textbox', { name: '反映元アプリID', exact: true }).isDisabled(), true);
     await idle();
@@ -462,13 +510,12 @@ async function main() {
     }
     assert.match(await checkbox('プロセス管理').evaluate(el => document.getElementById(el.getAttribute('aria-describedby')).textContent), /置換型の項目。.*運用中の申請/, '説明を支援技術へも伝える');
     assert.equal(await page.locator('.kus-rl-scope-help dt', { hasText: 'プロセス管理' }).locator('.kus-rl-chip__badge').count(), 1, '各項目の反映方法の一覧にも置換を示す');
-    await page.getByText('各項目の反映方法', { exact: true }).click();
+    assert.equal(await page.locator('.kus-rl-scope-help').isVisible(), false, '各項目の反映方法は「?」を押すまで出さない');
+    const scopeHelpPop = await openHelp('反映する項目');
+    assert.match(await scopeHelpPop.innerText(), /目的に近いセットを選び、必要な項目を調整できます。/, '項目の選び方の説明も「?」に入れる');
     assert.match(await page.locator('.kus-rl-scope-help').innerText(), /プラグイン\(※\)[\s\S]*設定値はコピーしません/);
-    assert.equal(await page.evaluate(() => {
-      const groups = document.querySelector('.kus-rl-scope-groups'), option = document.querySelector('.kus-rl-scope-option');
-      return !!(groups.compareDocumentPosition(option) & Node.DOCUMENT_POSITION_FOLLOWING);
-    }), true, '「保持」の設定は項目グループの下に置く');
-    assert.equal(await page.locator('.kus-rl-scope-option').getByRole('checkbox', { name: '反映先だけの一覧・グラフ・アクションを保持する', exact: true }).count(), 1);
+    assert.equal(await page.locator('.kus-rl-scope-option').evaluate(el => ({ inDetail: !!el.closest('#kus-rl-detail'), card: el.closest('.kus-lp__card').querySelector('.kus-lp__card-title').textContent.trim() })).then(JSON.stringify), JSON.stringify({ inDetail: true, card: '反映時の動作' }), '「保持」の設定は詳細設定の「反映時の動作」に置く');
+    assert.equal(await page.locator('.kus-rl-scope-option input[aria-label], .kus-rl-scope-option label.kus-lp__check').filter({ hasText: '反映先だけの一覧・グラフ・アクションを保持する' }).count(), 1);
     const fieldNotice = page.locator('.kus-rl-scope-notice');
     const noticeText = 'フィールド設定を含めない場合、反映先に無いフィールドを参照していると差分確認で停止します。';
     assert.equal(await fieldNotice.isHidden(), true, '既定（フィールド設定を含む）では注意を出さない');
@@ -490,11 +537,17 @@ async function main() {
     assert.equal(await fieldNotice.isHidden(), true);
     await button('ビューとグラフ').click();
     assert.equal(await fieldNotice.isVisible(), true, '項目のセット選択にも追従する');
+    await openDetail();
     assert.match(await page.locator('.kus-rl-scope-option__help').innerText(), /削除せず残します/);
     await checkbox('反映先だけの一覧・グラフ・アクションを保持する').uncheck();
     assert.match(await page.locator('.kus-rl-scope-option__help').innerText(), /反映先から削除します/, '保持をOFFにすると削除されることを示す');
+    assert.match(await page.locator('.kus-rl-detail-summary').innerText(), /反映先だけの一覧・グラフ・アクションを削除/, '保持をOFFにしたことは第1画面にも示す');
+    assert.equal(await page.locator('.kus-rl-detail-summary--warn').count(), 1, '削除する設定は警告色で示す');
+    await closeDetail();
     await button('権限のみ').click();
+    await openDetail();
     assert.match(await page.locator('.kus-rl-scope-option__help').innerText(), /今の選択.*使われません/);
+    await closeDetail();
     await button('ビューとグラフ').click();
     // 項目の選び方の全体を撮るため、縦に長い画面で撮影する。
     for (const [width, height] of [[1440, 1500], [390, 2000], [320, 2000]]) {
@@ -876,15 +929,11 @@ async function main() {
     }, fail);
     const withoutStamp = text => text.replace(/^- 作成日時: .*$/m, '');
     const statusText = () => page.locator('.kus-lp__status').innerText();
-    const rolloutBox = () => page.getByRole('textbox', { name: '続けて反映する反映先', exact: true });
     const rolloutStatus = () => page.locator('.kus-rl-rollout__status');
     const rolloutCard = () => page.locator('.kus-rl-rollout-card');
     const nextRolloutButton = () => page.locator('[data-rollout-next]');
     const rolloutEntries = () => page.locator('[data-rollout-entry]').evaluateAll(nodes => nodes.map(node => node.dataset.rolloutEntry));
-    async function openRollout() {
-      if (!(await rolloutBox().isVisible())) await page.getByText('続けて反映する反映先（複数アプリへ展開）', { exact: true }).click();
-      return rolloutBox();
-    }
+    async function openRollout() { return rolloutBox(); }
     const targetValue = () => page.locator('input[aria-label="反映先アプリID"]').inputValue();
     const appliesCount = () => page.evaluate(() => window.__reflectMock.applies.length);
     const previewsCount = () => page.evaluate(() => window.__reflectMock.previews.length);
@@ -970,7 +1019,9 @@ async function main() {
 
     // ---- 続けて反映する反映先：入力の解析と誤りの表示 ----
     await reset(); await setup(); await openRollout();
-    assert.match(await page.locator('.kus-rl-rollout').innerText(), /同じ反映元・項目・設定で、ほかのアプリにも順番に反映します（反映先ごとに差分確認と最終確認を行います）。数字だけのIDは通常スペースのアプリを指すため、ゲストスペースのアプリはURLで指定してください。/);
+    await openDetail();
+    assert.equal(await page.locator('.kus-rl-rollout .kus-lp__help-pop').isVisible(), false, '続けて反映の説明は「?」を押すまで出さない');
+    assert.match(await (await openHelp('続けて反映する反映先（複数アプリへ展開）')).innerText(), /同じ反映元・項目・設定で、ほかのアプリにも順番に反映します（反映先ごとに差分確認と最終確認を行います）。数字だけのIDは通常スペースのアプリを指すため、ゲストスペースのアプリはURLで指定してください。/);
     assert.equal(await rolloutStatus().innerText(), '', '未入力のときは何も出さない');
     await rolloutBox().fill('202\n203, 204、https://example.cybozu.com/k/guest/5/206/\n203');
     assert.equal(await rolloutStatus().innerText(), '3 件: #203、#204、#206（ゲスト 5）', '現在の反映先と重複を除いて件数と一覧を示す');
@@ -1080,7 +1131,7 @@ async function main() {
     assert.equal(await rolloutCard().isVisible(), true);
     assert.deepEqual(await rolloutEntries(), ['202', '203', '204', '5:206'], '反映項目の選び直しでは展開の記録を消さない');
     await tab('対象を選ぶ').click();
-    await page.getByRole('checkbox', { name: '反映先だけの一覧・グラフ・アクションを保持する', exact: true }).uncheck();
+    await preserveBox().uncheck();
     await tab('反映結果').click();
     assert.deepEqual(await rolloutEntries(), [], '保持設定が変わったら展開の記録をリセットする');
     assert.equal(await appliesCount(), 4);
@@ -1118,8 +1169,7 @@ async function main() {
     // ---- 続けて反映：プリセットでの保存・読み込み・JSON書き出し ----
     await reset(); await setup(); await openRollout();
     await rolloutBox().fill('203\n/k/guest/5/204/');
-    await page.getByText('よく使う設定を保存・読み込み', { exact: true }).click();
-    await page.getByRole('textbox', { name: 'プリセット名', exact: true }).fill('営業所へ展開');
+    await presetNameBox().fill('営業所へ展開');
     await button('現在の設定を保存').click();
     await rolloutBox().fill('');
     assert.equal(await rolloutStatus().innerText(), '');
@@ -1128,12 +1178,12 @@ async function main() {
     assert.equal(await rolloutStatus().innerText(), '2 件: #203、#204（ゲスト 5）');
     const rolloutPresetDownload = await downloadOf('JSONで書き出し');
     assert.equal(JSON.parse(rolloutPresetDownload.text).presets[0].rolloutQueue, '203\n/k/guest/5/204/', 'プリセットのJSONに反映先の一覧を含める');
-    await page.getByLabel('プリセットJSON', { exact: true }).setInputFiles({ name: 'presets.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ kind: 'reflect-presets', presets: [{ name: '旧形式', source: { appId: '101' }, target: { appId: '202' }, scopes: ['fieldSettings'] }, { name: '展開付き', source: { appId: '101' }, target: { appId: '202' }, scopes: ['fieldSettings'], rolloutQueue: '404\n505' }] })) });
+    await presetFileBox().setInputFiles({ name: 'presets.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ kind: 'reflect-presets', presets: [{ name: '旧形式', source: { appId: '101' }, target: { appId: '202' }, scopes: ['fieldSettings'] }, { name: '展開付き', source: { appId: '101' }, target: { appId: '202' }, scopes: ['fieldSettings'], rolloutQueue: '404\n505' }] })) });
     await idle();
-    await page.getByRole('combobox', { name: '保存済みプリセット', exact: true }).selectOption('展開付き');
+    await presetSelectBox().selectOption('展開付き');
     await button('読み込み').click();
     assert.equal(await rolloutBox().inputValue(), '404\n505', 'JSONから読み込んだプリセットの反映先の一覧を適用する');
-    await page.getByRole('combobox', { name: '保存済みプリセット', exact: true }).selectOption('旧形式');
+    await presetSelectBox().selectOption('旧形式');
     await button('読み込み').click();
     assert.equal(await rolloutBox().inputValue(), '', '反映先の一覧が無い古いプリセットでは空にする');
 
@@ -1141,8 +1191,6 @@ async function main() {
     // 第4段階: バックアップから戻す（復元の終了と入力の復元）・続けて反映の安全性・アプリ名確認の更新
     // =========================================================================
     // 画面が切り替わっていても読めるよう、役割ではなく要素で指す。
-    const preserveBox = () => page.locator('label.kus-lp__check', { hasText: '反映先だけの一覧・グラフ・アクションを保持する' }).locator('input');
-    const lookupBox = () => page.locator('textarea[aria-label="ルックアップの参照アプリID変換"]');
     const openAllDetails = () => page.evaluate(() => document.querySelectorAll('#kus-reflect-lite details').forEach(item => { item.open = true; }));
     const sourceModeValue = () => page.locator('select[aria-label="反映元の取得方法"]').inputValue();
     const sourceIdValue = () => page.locator('input[aria-label="反映元アプリID"]').inputValue();
@@ -1329,6 +1377,7 @@ async function main() {
     const lookupSetupNote = page.locator('[data-rollout-lookup-note="setup"]');
     assert.equal(await lookupSetupNote.isHidden(), true, '参照先変換が無いときは注意を出さない');
     await openAllDetails(); await lookupBox().fill('10 → 20\n11 → 21');
+    await openDetail();
     assert.equal(await lookupSetupNote.isVisible(), true);
     assert.equal(await lookupSetupNote.innerText(), '参照先変換（2 件）を、すべての反映先に同じように使います。反映先ごとに変換先が違う場合は、反映先を切り替えた後に参照先変換を直してください。', '入力欄の説明に注意を出す');
     await rolloutBox().fill('303\n404');
@@ -1543,7 +1592,7 @@ async function main() {
     await tab('差分を確認').click(); await button('差分を再取得').click(); await idle();
     assert.equal(await dockResult().isVisible(), true);
     // プリセットJSONの読み込みでも消す。
-    await page.getByLabel('プリセットJSON', { exact: true }).setInputFiles({ name: 'p.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ kind: 'reflect-presets', presets: [{ name: 'A', source: { appId: '101' }, target: { appId: '202' }, scopes: ['fieldSettings'] }] })) });
+    await presetFileBox().setInputFiles({ name: 'p.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ kind: 'reflect-presets', presets: [{ name: 'A', source: { appId: '101' }, target: { appId: '202' }, scopes: ['fieldSettings'] }] })) });
     await idle();
     assert.equal(await dockResult().isVisible(), false, 'プリセットJSONの読み込み開始時にも詳細ログを消す');
 
@@ -1559,10 +1608,10 @@ async function main() {
     assert.doesNotMatch(await statusText(), /バックアップからの復元を終了しました。/, '通知は1回だけ付ける');
 
     // ---- プリセットの選択は、処理後の再構築で先頭へ戻らない。読み込み時の通知 ----
-    const presetPick = () => page.locator('select[aria-label="保存済みプリセット"]');
+    const presetPick = () => presetSelectBox();
     await reset(); await setup(); await openAllDetails();
     const settingsBundle = { name: 'settings.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ appId: '901', sections: { fieldSettings: { properties: {} } } })) };
-    await page.getByLabel('プリセットJSON', { exact: true }).setInputFiles({ name: 'presets.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ kind: 'reflect-presets', presets: [
+    await presetFileBox().setInputFiles({ name: 'presets.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ kind: 'reflect-presets', presets: [
       { name: '一件目', source: { appId: '101' }, target: { appId: '202' }, scopes: ['fieldSettings'] },
       { name: '二件目', source: { appId: '101' }, target: { appId: '303' }, scopes: ['fieldSettings', 'legacyScope', 'futureScope'], lookupMap: 'abc', rolloutQueue: 'not an app' }
     ] })) });
@@ -1671,17 +1720,24 @@ async function main() {
     // ---- 続けて反映：入力欄の見た目（5つの幅） ----
     await reset(); await setup(); await openRollout();
     await rolloutBox().fill('203\n204\nhttps://example.cybozu.com/k/guest/5/206/');
-    for (const [width, height] of [[1440, 1000], [1024, 768], [720, 450], [390, 844], [320, 640]]) {
+    // 入力欄は「詳細設定」のポップアップの中にある。どの幅・高さでもポップアップが画面に収まり、中で縦にスクロールできること。
+    await openDetail();
+    for (const [width, height] of [[1440, 1000], [1024, 768], [720, 450], [390, 844], [320, 640], [320, 320]]) {
       await page.setViewportSize({ width, height });
-      await page.locator('.kus-rl-rollout').evaluate(el => { const canvas = el.closest('.kus-rl-canvas'); canvas.scrollTop = canvas.scrollTop + el.getBoundingClientRect().top - canvas.getBoundingClientRect().top - 8; });
-      await page.screenshot({ path: path.join(OUT, `rollout-input-${width}.png`) });
+      await page.locator('.kus-rl-rollout').evaluate(el => el.scrollIntoView({ block: 'nearest' }));
+      await page.screenshot({ path: path.join(OUT, `rollout-input-${width}x${height}.png`) });
       const geometry = await page.evaluate(() => {
-        const canvas = document.querySelector('.kus-rl-canvas'), box = document.querySelector('.kus-rl-rollout').getBoundingClientRect(), ta = document.querySelector('.kus-rl-rollout__input').getBoundingClientRect();
-        return { overflow: canvas.scrollWidth - canvas.clientWidth, outside: ta.right > box.right + 1 || ta.left < box.left - 1, taWidth: ta.width };
+        const dialog = document.querySelector('#kus-rl-detail'), body = dialog.querySelector('.kus-lp__dialog-body'), head = dialog.querySelector('.kus-lp__dialog-head'), foot = dialog.querySelector('.kus-lp__dialog-foot');
+        const box = document.querySelector('.kus-rl-rollout').getBoundingClientRect(), ta = document.querySelector('.kus-rl-rollout__input').getBoundingClientRect(), d = dialog.getBoundingClientRect(), b = body.getBoundingClientRect();
+        const cards = Array.from(dialog.querySelectorAll('.kus-lp__dialog-body > .kus-lp__card')).map(card => card.getBoundingClientRect());
+        return { overflow: body.scrollWidth - body.clientWidth, outside: ta.right > box.right + 1 || ta.left < box.left - 1, taWidth: ta.width,
+          dialogFits: d.left >= -1 && d.top >= -1 && d.right <= innerWidth + 1 && d.bottom <= innerHeight + 1, cardsFit: cards.every(c => c.left >= b.left - 1 && c.right <= b.right + 1),
+          headVisible: head.getBoundingClientRect().height > 20, footVisible: foot.getBoundingClientRect().bottom <= innerHeight + 1, bodyHeight: Math.round(b.height), cards: cards.length };
       });
-      assert.ok(geometry.overflow <= 1 && !geometry.outside && geometry.taWidth > 150, `${width}pxで反映先の入力欄が崩れる: ${JSON.stringify(geometry)}`);
+      assert.ok(geometry.overflow <= 1 && !geometry.outside && geometry.taWidth > 150 && geometry.dialogFits && geometry.cardsFit && geometry.headVisible && geometry.footVisible && geometry.cards === 4 && geometry.bodyHeight >= 60, `${width}x${height}pxで詳細設定のポップアップが崩れる: ${JSON.stringify(geometry)}`);
     }
     await page.setViewportSize({ width: 1440, height: 1000 });
+    await closeDetail();
 
     // ---- スクロールはパネル内の本文領域だけに限定する（パネル外枠が動いて見出しが消えない） ----
     const panelGeometry = () => page.evaluate(() => {
