@@ -15,7 +15,7 @@ afterEach(() => {
 describe('ER図 Lite input validation', () => {
   it('reports the field that contains a malformed target before crawling', () => {
     expect(validateErOptions({ appId: '1,abc' })).toMatch(/アプリIDは数値.*abc/);
-    expect(validateErOptions({ appId: '1', guestId: 'guest' })).toMatch(/ゲストIDは数値/);
+    expect(validateErOptions({ appId: '1', guestId: 'guest' })).toMatch(/ゲストスペースIDは半角数字/);
     expect(validateErOptions({ spaceId: 'space' })).toMatch(/スペースIDは数値/);
     expect(validateErOptions({ appId: '1', maxDepth: '1.5' })).toMatch(/探索深さは0以上の整数/);
   });

@@ -1,5 +1,5 @@
 import { reflectSectionLabel } from '../reflect/sections.js';
-import { buildReflectErrorHint } from '../reflect/applyOutcome.js';
+import { buildReflectErrorHint, describeReflectFailure } from '../reflect/applyOutcome.js';
 import { describeApplySectionStatus, normalizeApplySections } from '../reflect/liteSetup.js';
 import { REFLECT_ITEM_KIND_ORDER, applyProgressUpdate, countReflectItemKinds, describeApplyProgressStatus, formatUploadList, orderReflectItems, summarizeApplyProgress, type ApplyProgressRow, type ApplyProgressStatus } from '../reflect/applyProgress.js';
 import type { ReflectItemSummary } from '../reflect/changeSummary.js';
@@ -220,7 +220,7 @@ export function appendReflectChanges(host: HTMLElement, plan: ReflectSectionPlan
 
 export function reflectIdentityLabel(identities: ReflectIdentities, side: 'source' | 'target', sourceEnvironment: string): string {
   const app = identities[side];
-  return `${app.name}${app.appId ? `（ID: ${app.appId}）` : ''} / ${app.guestId ? `ゲスト ${app.guestId}` : '通常スペース'} / ${side === 'target' ? 'プレビュー' : sourceEnvironment}`;
+  return `${app.name}${app.appId ? `（ID: ${app.appId}）` : ''} / ${app.guestId ? `ゲストスペース ${app.guestId}` : '通常スペース'} / ${side === 'target' ? 'プレビュー' : sourceEnvironment}`;
 }
 
 /** sourceLabel を渡すと、反映元の表示を差し替える（バックアップから戻すときに「反映前のバックアップ（…）」と示すため）。 */
@@ -228,7 +228,7 @@ export function renderReflectRoute(host: HTMLElement, identities: ReflectIdentit
   const route = document.createElement('div'); route.className = 'kus-rl-confirm-route';
   for (const side of ['source', 'target'] as const) {
     const block = document.createElement('div'), label = document.createElement('span'), name = document.createElement('strong');
-    label.textContent = side === 'source' ? '反映元 ↓' : '書き込み先';
+    label.textContent = side === 'source' ? '反映元 ↓' : '書き込み先（反映先）';
     name.textContent = side === 'source' && options.sourceLabel ? options.sourceLabel : reflectIdentityLabel(identities, side, environment); block.append(label, name); route.appendChild(block);
   }
   host.appendChild(route);
@@ -247,7 +247,7 @@ export interface ReflectSummaryTableOptions {
 const SUMMARY_STATUS: Record<'change' | 'same' | 'error', { text: string; pill: string }> = {
   change: { text: '差分あり', pill: 'change' },
   same: { text: '一致', pill: 'same' },
-  error: { text: '確認が必要', pill: 'error' }
+  error: { text: '取得失敗', pill: 'error' }
 };
 
 /** 項目名｜状態｜変更｜削除｜保持｜反映方法｜選択中 の一覧。狭い画面では CSS で縦積みにする。 */
@@ -259,9 +259,7 @@ export function renderReflectSummaryTable(host: HTMLElement, entries: readonly R
   title.className = 'kus-rl-summary__title';
   const heading = document.createElement('strong');
   heading.textContent = `取得した全 ${entries.length} 項目`;
-  const note = document.createElement('span');
-  note.textContent = '項目名を押すと、下の詳細へ移動します。';
-  title.append(heading, note);
+  title.append(heading);
   const table = document.createElement('table');
   table.className = 'kus-rl-summary__table';
   table.setAttribute('role', 'table');
@@ -338,7 +336,7 @@ export function renderApplySectionResults(host: HTMLElement, rawSections: unknow
   const list = document.createElement('ul');
   list.className = 'kus-rl-result-list';
   for (const section of sections) {
-    const display = describeApplySectionStatus(section.status);
+    const display = describeApplySectionStatus(section.status, section.stopped);
     const item = document.createElement('li');
     item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
     const head = document.createElement('div');
@@ -356,10 +354,10 @@ export function renderApplySectionResults(host: HTMLElement, rawSections: unknow
     if (section.message) {
       const message = document.createElement('div');
       message.className = 'kus-rl-result-item__message';
-      message.textContent = section.message;
+      message.textContent = describeReflectFailure(section.message);
       item.appendChild(message);
     }
-    const hint = section.status === 'ng' ? buildReflectErrorHint(section.message || '') : '';
+    const hint = section.status === 'ng' && !section.stopped ? buildReflectErrorHint(section.message || '') : '';
     if (hint) {
       const hintNode = document.createElement('div');
       hintNode.className = 'kus-rl-result-item__hint';
@@ -377,7 +375,7 @@ export function renderApplySectionResults(host: HTMLElement, rawSections: unknow
 
 export interface ApplyProgressView {
   /** 反映エンジンの通知を反映して表示を更新する。 */
-  update(update: { sectionKey: string; status: ApplyProgressStatus; message?: string }): void;
+  update(update: { sectionKey: string; status: ApplyProgressStatus; message?: string; stopped?: boolean }): void;
   rows(): ApplyProgressRow[];
 }
 
@@ -417,13 +415,14 @@ export function createApplyProgressView(host: HTMLElement, initial: readonly App
   const paint = (row: ApplyProgressRow) => {
     const node = nodes.get(row.sectionKey);
     if (!node) return;
-    const display = describeApplyProgressStatus(row.status);
+    const display = describeApplyProgressStatus(row.status, row.stopped);
     node.item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
     node.state.className = `kus-rl-result-state kus-rl-result-state--${display.tone}`;
     node.icon.textContent = display.icon;
     node.text.data = display.text;
-    node.message.textContent = row.message || '';
-    node.message.hidden = !row.message;
+    const shownMessage = describeReflectFailure(row.message);
+    node.message.textContent = shownMessage;
+    node.message.hidden = !shownMessage;
   };
   const paintSummary = () => { summary.textContent = summarizeApplyProgress(rows); };
   rows.forEach(paint);

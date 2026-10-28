@@ -74,7 +74,7 @@ describe('lite design export', () => {
   });
   it('rejects malformed app and guest IDs before any export work', async () => {
     expect(validateDesignTarget({ appId: 'abc' })).toMatch(/アプリIDは数値/);
-    expect(validateDesignTarget({ appId: '1', guestId: 'x' })).toMatch(/ゲストIDは数値/);
+    expect(validateDesignTarget({ appId: '1', guestId: 'x' })).toMatch(/ゲストスペースIDは半角数字/);
     await expect(runDesignExportStandalone('json', { appId: 'abc' }, vi.fn())).rejects.toThrow(/アプリIDは数値/);
     await expect(runBatchDesignExportXlsxZipStandalone({ apps: [{ appId: '1' }, { appId: 'bad' }] }, vi.fn())).rejects.toThrow(/2行目.*アプリIDは数値/);
   });
@@ -90,7 +90,7 @@ describe('lite design export', () => {
   });
   it('does not silently drop malformed batch targets', () => {
     expect(validateDesignExportTargets([{ appId: '1' }, { appId: 'bad' }])).toMatch(/2行目.*アプリIDは数値/);
-    expect(validateDesignExportTargets([{ appId: '1', guestId: 'bad' }])).toMatch(/ゲストIDは数値/);
+    expect(validateDesignExportTargets([{ appId: '1', guestId: 'bad' }])).toMatch(/ゲストスペースIDは半角数字/);
   });
 
   it('uses the selected imported bundle for AI save and copy, with identical content', async () => {

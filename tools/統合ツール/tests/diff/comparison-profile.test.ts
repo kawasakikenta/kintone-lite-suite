@@ -147,9 +147,35 @@ describe('diff/comparison-profile', () => {
   it('rejects malformed, mismatched, or unsupported profile envelopes in Japanese', () => {
     expect(() => parseDiffComparisonProfile('{')).toThrow('JSON形式が正しくありません');
     expect(() => parseDiffComparisonProfile({ kind: 'another-kind', name: 'x', scopes: ['fieldSettings'] }))
-      .toThrow('種類が正しくありません');
+      .toThrow('比較条件のJSONではありません');
     expect(() => parseDiffComparisonProfile({ version: 2, name: 'x', scopes: ['fieldSettings'] }))
       .toThrow('対応していない');
+  });
+
+  it('reports a non-profile JSON as such instead of a missing profile name', () => {
+    const notProfile = '比較条件のJSONではありません';
+    // 設定バンドル（種類なし）
+    expect(() => parseDiffComparisonProfile({ appId: '1', meta: { appName: 'A' }, sections: { fields: {} } }))
+      .toThrow(notProfile);
+    // 一括取得JSON
+    expect(() => parseDiffComparisonProfile('{"apps":[{"appId":"1"}]}')).toThrow(notProfile);
+    // 差分JSON / 別種のJSON
+    expect(() => parseDiffComparisonProfile({ kind: 'kintone-diff-review-state', rows: [] })).toThrow(notProfile);
+    expect(() => parseDiffComparisonProfile({ rows: [], sourceBundle: {}, targetBundle: {} })).toThrow(notProfile);
+    expect(() => parseDiffComparisonProfile({ foo: 'bar' })).toThrow(notProfile);
+    expect(() => parseDiffComparisonProfile({})).toThrow(notProfile);
+    // 比較条件のキーがあっても設定・差分JSONのキーが混ざる種類なしJSONは比較条件として扱わない
+    expect(() => parseDiffComparisonProfile({ scopes: ['fieldSettings'], sections: {} })).toThrow(notProfile);
+    // 案内は設定JSON読込への誘導を含む
+    expect(() => parseDiffComparisonProfile({ foo: 'bar' })).toThrow('設定JSON読込');
+    expect(() => parseDiffComparisonProfile({ foo: 'bar' })).not.toThrow('名前を入力');
+  });
+
+  it('reports the missing name only when the JSON has the profile shape', () => {
+    expect(() => parseDiffComparisonProfile({ kind: DIFF_COMPARISON_PROFILE_KIND, version: 1, scopes: ['fieldSettings'] }))
+      .toThrow('プロファイル名を入力してください');
+    expect(() => parseDiffComparisonProfile({ scopes: ['fieldSettings'], includeSame: true }))
+      .toThrow('プロファイル名を入力してください');
   });
 
   it('requires a name and at least one known SECTION_DEFS scope', () => {

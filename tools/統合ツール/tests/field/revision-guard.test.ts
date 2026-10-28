@@ -128,11 +128,11 @@ describe('field apply revision guard', () => {
 
   it('rejects non-numeric app and guest ids before any request', async () => {
     const fieldJson = JSON.stringify({ properties: { a: { type: 'NUMBER' } } });
-    await expect(runFieldApplyStandalone({ targetAppId: '5x', fieldJson, skipConfirm: true }, vi.fn())).rejects.toThrow(/アプリIDは数値/);
-    await expect(runFieldApplyStandalone({ targetAppId: '5', targetGuestId: '../1', fieldJson, skipConfirm: true }, vi.fn())).rejects.toThrow(/ゲストIDは数値/);
-    await expect(runLoadFieldsStandalone({ appId: '5x', preview: true }, vi.fn())).rejects.toThrow(/アプリIDは数値/);
-    await expect(runLoadFieldsStandalone({ appId: '5', guestId: 'a', preview: true }, vi.fn())).rejects.toThrow(/ゲストIDは数値/);
-    await expect(runBulkRenameFieldStandalone({ targetAppId: '5x', prefix: 'dev_' }, vi.fn())).rejects.toThrow(/アプリIDは数値/);
+    await expect(runFieldApplyStandalone({ targetAppId: '5x', fieldJson, skipConfirm: true }, vi.fn())).rejects.toThrow(/アプリIDは半角数字/);
+    await expect(runFieldApplyStandalone({ targetAppId: '5', targetGuestId: '../1', fieldJson, skipConfirm: true }, vi.fn())).rejects.toThrow(/ゲストスペースIDは半角数字/);
+    await expect(runLoadFieldsStandalone({ appId: '5x', preview: true }, vi.fn())).rejects.toThrow(/アプリIDは半角数字/);
+    await expect(runLoadFieldsStandalone({ appId: '5', guestId: 'a', preview: true }, vi.fn())).rejects.toThrow(/ゲストスペースIDは半角数字/);
+    await expect(runBulkRenameFieldStandalone({ targetAppId: '5x', prefix: 'dev_' }, vi.fn())).rejects.toThrow(/アプリIDは半角数字/);
     expect(apiGet).not.toHaveBeenCalled();
     expect(apiPost).not.toHaveBeenCalled();
   });
@@ -189,7 +189,7 @@ describe('field apply revision guard', () => {
       targetAppId: 'abc',
       fieldJson: JSON.stringify({ properties: { title: { type: 'SINGLE_LINE_TEXT' } } }),
       skipConfirm: true
-    }, vi.fn())).rejects.toThrow(/数値で入力してください/);
+    }, vi.fn())).rejects.toThrow(/半角数字で入力してください/);
     expect(apiGet).not.toHaveBeenCalled();
   });
 });

@@ -34,6 +34,23 @@ function hasFlag(name) {
   return process.argv.includes(name);
 }
 
+// 比較セクション・設定JSON読込・高度な比較設定は「詳細設定…」のポップアップに入っている。
+async function openDetailsDialog(page) {
+  const dialog = page.locator('#kus-dl-details-dialog');
+  if (!(await dialog.evaluate((element) => element.open))) {
+    await page.getByRole('button', { name: '詳細設定…' }).click();
+  }
+  await dialog.waitFor({ state: 'visible' });
+  return dialog;
+}
+
+async function closeDetailsDialog(page) {
+  const dialog = page.locator('#kus-dl-details-dialog');
+  if (!(await dialog.evaluate((element) => element.open))) return;
+  await page.getByRole('button', { name: '詳細設定を閉じる' }).click();
+  await dialog.waitFor({ state: 'hidden' });
+}
+
 function extractMarkdownAppIds(markdown) {
   return [...String(markdown || '').matchAll(/^\s*-\s*appId:\s*`\s*([^`\r\n]*?)\s*`/gm)]
     .map((match) => match[1]);
@@ -243,8 +260,17 @@ async function verifyAppReferenceExclusionControl(page) {
     '環境固有IDの除外設定は初期状態でオフである必要があります');
   assert.equal(await page.getByText('よく使う除外', { exact: true }).isVisible(), true,
     '環境固有IDの除外設定が常時見える位置にありません');
-  assert.equal(await page.getByText(/オン／オフを変更した後は再比較してください。差分件数・画面結果・Excelに反映されます。/).isVisible(), true,
+  // 説明は見出しの「?」の吹き出しにあり、開くまでは表面に出さない
+  const help = page.getByRole('button', { name: '「よく使う除外」の説明を表示' });
+  assert.equal(await page.getByText(/切り替えたあとは再比較してください（差分件数・画面の結果・Excelに反映されます）。/).isVisible(), false,
+    '環境固有IDの除外の説明が「?」を開く前から表面に出ています');
+  await help.click();
+  assert.equal(await page.getByText(/切り替えたあとは再比較してください（差分件数・画面の結果・Excelに反映されます）。/).isVisible(), true,
     '環境固有IDの除外が比較結果とExcelへ与える影響の説明がありません');
+  const describedBy = await control.getAttribute('aria-describedby');
+  assert.equal(describedBy, 'kus-dl-common-exclusion-description kus-dl-common-exclusion-note',
+    '環境固有IDの除外の説明がチェックボックスへ関連付けられていません');
+  await help.click();
 }
 
 function multiResultRows(page) {
@@ -348,7 +374,7 @@ function verifyResult(result, pageErrors) {
     '二重クリック時に比較ボタンが有効へ戻っています');
   assert.equal(result.rows.length, 3, '複数比較の結果行数が不正です');
   assert.match(result.rows[1].join(' '), /App 303.*失敗.*synthetic target failure/, '中間失敗が結果表へ表示されていません');
-  assert.match(result.rows[2].join(' '), /App 404.*完了/, '中間失敗後の比較先が処理されていません');
+  assert.match(result.rows[2].join(' '), /App 404.*(差分あり|一致)/, '中間失敗後の比較先が処理されていません');
   assert.equal(result.excelButtonCount, 2, '成功した比較先ごとのExcel保存ボタン数が不正です');
   assert.equal(result.excelButtonsEnabled, true, '複数比較のExcel保存ボタンが無効です');
   assert.equal(result.markdownButtonCount, 2, '成功した比較先ごとのMarkdown保存ボタン数が不正です');
@@ -356,7 +382,7 @@ function verifyResult(result, pageErrors) {
   assert.equal(result.batchButtonCount, 1, '成功した比較結果の一括Excel保存ボタンがありません');
   assert.match(result.batchButtonText, /Excelをまとめて保存（2件・ZIP）/, '一括Excel保存ボタンの成功件数が不正です');
   assert.equal(result.batchButtonOutsideScroll, true, '一括Excel保存ボタンが結果表の横スクロール内にあります');
-  assert.match(result.statusText, /全比較先の比較が完了/, '複数比較が完了状態になっていません');
+  assert.match(result.statusText, /件中\s*\d+件を比較しました/, '複数比較が完了状態になっていません');
   assert.match(result.statusText, /失敗\s*1件/, '完了ステータスに失敗件数がありません');
   assert.equal(result.statusTone, 'warn', '一部失敗時のステータスが警告になっていません');
   assert.equal(result.downloads, 2, '成功した比較先のHTML出力回数が不正です');
@@ -425,8 +451,9 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
   await page.waitForFunction(() => document.querySelector('#kus-diff-lite').getAttribute('aria-busy') === 'false');
   assert.equal(await page.evaluate(() => window.__jsonSelectionCalls[0].targetAppId), '303', '検索選択先が実比較に使われていません');
 
-  await page.locator('summary').filter({ hasText: '比較範囲と詳細設定' }).click();
+  await openDetailsDialog(page);
   const load = async (side, name, label) => {
+    await openDetailsDialog(page);
     const appId = side === 'source' ? '101' : '303';
     await page.getByLabel(side === 'source' ? '比較元設定JSON' : '比較先設定JSON', { exact: true }).setInputFiles({
       name, mimeType: 'application/json',
@@ -437,6 +464,7 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
   };
   const finish = (name, fail = false) => page.evaluate(({ name, fail }) => window.__finishJsonRead(name, fail), { name, fail });
   const compare = async () => {
+    await closeDetailsDialog(page);
     const count = await page.evaluate(() => window.__jsonSelectionCalls.length);
     await run.click();
     await page.waitForFunction((previous) => window.__jsonSelectionCalls.length === previous + 1, count);
@@ -447,6 +475,7 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
   // Clearing either side cancels both queued reads, including a late failure.
   await load('source', 'clear-source.json', 'cleared source');
   await load('target', 'clear-target.json', 'cleared target');
+  await openDetailsDialog(page);
   await clear.click();
   const clearedStatus = await status.textContent();
   await finish('clear-source.json');
@@ -466,6 +495,15 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
   }
   assert.deepEqual(await compare(), { targetAppId: '303', sourceImport: 'latest', targetImport: 'latest' }, '再選択した最新JSONが両側へ反映されていません');
 
+  // 読み込み中に「中止」を押すと、読み込んだ内容は採用されず、中止したことが表示される。
+  await load('source', 'cancelled-read.json', 'cancelled');
+  await closeDetailsDialog(page);
+  await page.getByRole('button', { name: '処理を中止' }).click();
+  await finish('cancelled-read.json');
+  assert.match(await status.textContent(), /^中止しました.*比較元JSON/, 'JSON読込を中止した旨が表示されていません');
+  assert.equal(await page.locator('#kus-diff-lite .kus-lp__cancel').isHidden(), true, 'JSON読込の中止後も中止ボタンが残っています');
+  assert.equal((await compare()).sourceImport, null, '中止したJSON読込の内容が比較に使われました');
+
   // A failed replacement cannot silently keep the previously selected snapshot.
   await load('source', 'failed-replacement.json', 'unread');
   await finish('failed-replacement.json', true);
@@ -475,6 +513,7 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
 
   // Editing the selected App ID cancels an outstanding import and detaches loaded JSON.
   await load('source', 'changed-app.json', 'stale app');
+  await closeDetailsDialog(page);
   await sourceApp.fill('404');
   const changedStatus = await status.textContent();
   await finish('changed-app.json');
@@ -483,7 +522,9 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
   assert.equal(await status.textContent(), changedStatus, '古いJSON読込がApp変更後のステータスを上書きしました');
   assert.equal((await compare()).sourceImport, null, 'App変更後も旧JSONで比較しています');
 
+  await openDetailsDialog(page);
   await clear.click();
+  await closeDetailsDialog(page);
   await page.getByRole('button', { name: '1対多比較', exact: true }).click();
   await assignTarget('505');
   assert.equal(await targetApp.inputValue(), '303', '1対多検索が既存の比較先を置き換えました');
@@ -492,6 +533,53 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
   assert.deepEqual(pageErrors, [], 'JSON・検索の回帰検証でブラウザエラーが発生しました');
   const result = { assertions: 'passed', comparisons: await page.evaluate(() => window.__jsonSelectionCalls) };
   await page.close();
+  return result;
+}
+
+// 1対多で比較先が多いとき、320px幅でも一覧内スクロールの手がかりが出て、横にはみ出さない。
+async function verifyTargetListScrollHint(browser, browserBundle, outDir) {
+  const context = await browser.newContext({ viewport: { width: 320, height: 900 } });
+  const page = await context.newPage();
+  const pageErrors = collectPageErrors(page);
+  await page.setContent('<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body></body></html>');
+  await installBrowserFixtures(page);
+  await page.addScriptTag({ content: browserBundle });
+  await mountWithControlledDiff(page);
+  await page.waitForSelector('#kus-diff-lite');
+  await page.getByRole('button', { name: '1対多比較', exact: true }).click();
+  const hint = page.locator('.kus-dl-target-list-hint');
+  assert.equal(await hint.isHidden(), true, '比較先が少ないのにスクロール案内が出ています');
+  await page.getByLabel('比較先1アプリID', { exact: true }).fill('202,303,404,505,606,707');
+  await page.getByLabel('比較先1アプリID', { exact: true })
+    .evaluate((element) => element.dispatchEvent(new Event('change', { bubbles: true })));
+  await page.waitForFunction(() => document.querySelectorAll('[aria-label^="比較先"][aria-label$="アプリID"]').length === 6);
+  await hint.waitFor({ state: 'visible' });
+  const match = (await hint.textContent()).match(/^比較先 6 件中 (\d+) 件を表示。スクロールできます$/);
+  assert.ok(match, `スクロール案内の文言が不正です: ${await hint.textContent()}`);
+  assert.ok(Number(match[1]) >= 3, `初期表示で比較先が3件以上見えていません（${match[1]}件）`);
+  const metrics = await page.evaluate(() => {
+    const list = document.querySelector('.kus-dl-target-list');
+    return {
+      scrollable: list.scrollHeight > list.clientHeight,
+      listOverflowX: list.scrollWidth > list.clientWidth + 1,
+      pageOverflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
+      panelOverflowX: document.querySelector('#kus-diff-lite').scrollWidth > document.querySelector('#kus-diff-lite').clientWidth + 1
+    };
+  });
+  assert.equal(metrics.scrollable, true, '比較先一覧がスクロール可能になっていません');
+  assert.equal(metrics.listOverflowX, false, '比較先一覧が横にはみ出しています');
+  assert.equal(metrics.pageOverflowX, false, '320px幅でページが横にはみ出しています');
+  assert.equal(metrics.panelOverflowX, false, '320px幅でパネルが横にはみ出しています');
+  await hint.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(outDir, 'multi-dom-target-list-320.png'), animations: 'disabled' });
+  await page.locator('.kus-dl-target-list').evaluate((list) => { list.scrollTop = list.scrollHeight; });
+  await page.waitForFunction(() => /すべて表示中/.test(document.querySelector('.kus-dl-target-list-hint')?.textContent || ''));
+  // 比較先を減らして収まれば案内は消える。
+  for (let i = 0; i < 4; i += 1) await page.getByRole('button', { name: '削除', exact: true }).last().click();
+  await hint.waitFor({ state: 'hidden' });
+  assert.deepEqual(pageErrors, [], '比較先一覧のスクロール案内の検証でブラウザエラーが発生しました');
+  const result = { visibleOfSix: Number(match[1]), ...metrics };
+  await context.close();
   return result;
 }
 
@@ -522,12 +610,12 @@ async function main() {
     await dispatchDoubleRun(page);
     await page.waitForFunction(() => {
       return [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
-        .some((element) => (element.textContent || '').includes('全比較先の比較が完了'));
+        .some((element) => /件中\s*\d+件を比較しました/.test(element.textContent || ''));
     }, null, { timeout: 15000 });
     result = await inspectResult(page);
     verifyResult(result, pageErrors);
     const showDetails = page.locator('#kus-diff-lite label')
-      .filter({ hasText: /画面に(?:比較結果一覧|差分明細)を表示/ })
+      .filter({ hasText: /(?:画面に(?:比較結果一覧|差分明細)|差分の明細を画面に)を?表示/ })
       .locator('input[type="checkbox"]');
     await showDetails.evaluate((checkbox) => {
       checkbox.checked = false;
@@ -602,6 +690,8 @@ async function main() {
       '一括ExcelのZIPが想定外の圧縮方式です');
     assert.equal(result.bulkZip.entries.every((entry) => entry.prefix.join(',') === '80,75,3,4'), true,
       '一括ExcelのZIP内に正しいXLSXではないエントリがあります');
+    assert.deepEqual(individualEntries.map((entry) => entry.name.replace(/^\d+_.*?_(App\d+→App\d+)\.xlsx$/, '$1')), ['App101→App202', 'App101→App404'],
+      '一括ExcelのZIP内の個別ファイル名に比較元・比較先のアプリIDがありません');
     assert.equal(individualEntries.some((entry) => /303/.test(entry.name)), false,
       '比較失敗した App 303 のExcelが一括ZIPへ混入しました');
 
@@ -623,7 +713,7 @@ async function main() {
       'アプリID除外条件の変更後もMarkdown出力が有効です');
     assert.equal(await page.locator('[data-kus-dl-completion="xlsx"]').isVisible(), false,
       'アプリID除外条件の変更後も完了時のExcel保存導線が表示されています');
-    assert.equal(await page.getByText(/前回の結果と保存機能を無効にしました。新しい条件で再比較してください/).isVisible(), true,
+    assert.equal(await page.getByText(/前回の結果と保存機能を無効にしました（環境固有IDの除外条件を変更したため）。新しい条件で再比較してください/).isVisible(), true,
       'アプリID除外条件の変更後に再比較を求める警告がありません');
     const runAll = page.getByRole('button', { name: /全比較先を順に比較|複数の比較を実行/ });
     await runAll.click();
@@ -637,7 +727,7 @@ async function main() {
     assert.equal(result.markdownButtonsImmediatelyAfterRerun, 0, '複数比較の再実行開始時に古いMarkdown保存ボタンが残っています');
     await page.waitForFunction(() => {
       const complete = [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
-        .some((element) => (element.textContent || '').includes('全比較先の比較が完了'));
+        .some((element) => /件中\s*\d+件を比較しました/.test(element.textContent || ''));
       return complete && window.__multiProbe.calls.length === 6;
     }, null, { timeout: 15000 });
     result.downloadsAfterRerun = await page.evaluate(() => Number(window.__downloadCount || 0));
@@ -660,6 +750,7 @@ async function main() {
       animations: 'disabled'
     });
     result.jsonAndSearchSelection = await verifyJsonAndSearchSelection(context, browserBundle);
+    result.targetListScrollHint = await verifyTargetListScrollHint(browser, browserBundle, outDir);
     await context.close();
   } finally {
     await browser.close();

@@ -40,7 +40,7 @@ describe('record status updates preserve the reviewed revisions', () => {
       id: Number(record.$id.value), revision: String(record.$revision.value), action: '承認する', assignee: 'reviewer'
     })));
     expect(writes().every((call) => call[0] === '/k/guest/3/v1/records/status.json')).toBe(true);
-    expect(status).toHaveBeenLastCalledWith('ステータス一括更新完了 (201件)');
+    expect(status).toHaveBeenLastCalledWith('201件のステータスを更新しました（App 7）', 'ok');
   });
 
   it('also retains revisions for ordered queries fetched through the cursor API', async () => {
@@ -100,7 +100,7 @@ describe('record status updates preserve the reviewed revisions', () => {
     expect(error.original.code).toBe('GAIA_CO02');
     expect(writes()).toHaveLength(2);
     expect(writes()[1][2].records[0]).toEqual({ id: 101, revision: '102', action: '承認する', assignee: 'reviewer' });
-    expect(status).not.toHaveBeenCalledWith(expect.stringContaining('ステータス一括更新完了'));
+    expect(status).not.toHaveBeenCalledWith(expect.stringContaining('のステータスを更新しました'), 'ok');
   });
 
   it('lists the rejected record IDs from the kintone error details', async () => {
@@ -130,7 +130,7 @@ describe('record status updates preserve the reviewed revisions', () => {
     const result = await runBatchProcessStandalone(options, status);
 
     expect(writes()).toHaveLength(0);
-    expect(status).toHaveBeenLastCalledWith('ステータス一括更新をキャンセルしました');
+    expect(status).toHaveBeenLastCalledWith('ステータス一括更新をキャンセルしました', 'info');
     expect(result).toEqual({ cancelled: true });
   });
 });

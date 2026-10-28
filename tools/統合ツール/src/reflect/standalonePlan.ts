@@ -1,8 +1,9 @@
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone } from '../utils.js';
+import { isRunCancelledError } from '../runControl.js';
 import { APP_SETTINGS_LABELS, APP_SETTINGS_REFLECT_KEYS, reflectSectionLabel } from './sections.js';
 import { comparableCustomizePayload, customizeFileNames, customizeSlotKey, type CustomizeFileResolution } from './customizeFiles.js';
-import { retainedItemNames, summarizeReflectItems, type ReflectItemSummary } from './changeSummary.js';
+import { reclassifyLayoutRemovals, retainedItemNames, summarizeReflectItems, type ReflectItemSummary } from './changeSummary.js';
 import {
   extractActionRequiredFields,
   extractReportRequiredFields,
@@ -11,7 +12,8 @@ import {
   stableReflectStringify
 } from './standalonePreflight.js';
 
-export interface ReflectChange { kind: '追加' | '変更' | '削除' | '保持'; path: string; before: string; after: string }
+/** summary は利用者向けの短い説明（設定値の生 JSON を出さずに済ませるため。最終確認の削除一覧で使う）。 */
+export interface ReflectChange { kind: '追加' | '変更' | '削除' | '保持'; path: string; before: string; after: string; summary?: string }
 /** 反映先へアップロードしてから設定する JS/CSS ファイル（index は PUT body の platform/kind 配列内の位置）。 */
 export interface ReflectFileUpload { platform: 'desktop' | 'mobile'; kind: 'js' | 'css'; index: number; sourceFileKey: string; name: string; byteSize: number }
 export interface ReflectOperation { method: 'POST' | 'PUT'; endpoint: string; body: Record<string, any>; label: string; uploads?: ReflectFileUpload[] }
@@ -190,7 +192,7 @@ function buildAppSettingsPlan(plan: ReflectSectionPlan, source: any, target: any
     if (plan.changeCount) plan.operations.push({ method: 'PUT', endpoint: SECTION_DEFS.find(item => item.key === 'appSettings')?.endpoint || '/app/settings.json', body: after, label: plan.label });
     plan.status = plan.operations.length ? 'change' : 'same';
     plan.message = plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : '書き込み不要（一致）';
-  } catch (error: any) { plan.status = 'error'; plan.blockers.push(error.message || String(error)); plan.message = plan.blockers.join('\n'); }
+  } catch (error: any) { if (isRunCancelledError(error)) throw error; plan.status = 'error'; plan.blockers.push(error.message || String(error)); plan.message = plan.blockers.join('\n'); }
   return plan;
 }
 
@@ -345,6 +347,8 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
     }
     const shownBefore = comparable ? comparable(before) : before, shownAfter = comparable ? comparable(after) : after;
     diffValues(shownBefore, shownAfter, [], plan.changes);
+    // 行の組み替えは、行の内容が変わるため配列比較では削除と追加になる。フィールドが残るなら削除として数えない。
+    if (key === 'layoutSettings') reclassifyLayoutRemovals(plan.changes, shownBefore?.layout, shownAfter?.layout, options.fieldLabels);
     try { plan.items = summarizeReflectItems(key, shownBefore, shownAfter, { fieldLabels: options.fieldLabels, retained: retainedItemNames(key, plan.changes, options.fieldLabels) }); } catch { plan.items = []; }
     plan.changeCount = plan.changes.filter(change => change.kind !== '保持').length;
     plan.removalCount = plan.changes.filter(change => change.kind === '削除').length;
@@ -353,7 +357,7 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
     if (plan.blockers.length) plan.status = 'error';
     else plan.status = plan.operations.length ? 'change' : 'same';
     plan.message = plan.blockers.length ? plan.blockers.join('\n') : plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : `書き込み不要${plan.changes.some(change => change.kind === '保持') ? '（反映先だけの設定は保持）' : '（一致）'}`;
-  } catch (error: any) { plan.status = 'error'; plan.blockers.push(error.message || String(error)); plan.message = plan.blockers.join('\n'); }
+  } catch (error: any) { if (isRunCancelledError(error)) throw error; plan.status = 'error'; plan.blockers.push(error.message || String(error)); plan.message = plan.blockers.join('\n'); }
   return plan;
 }
 

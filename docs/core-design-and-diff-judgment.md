@@ -69,6 +69,7 @@ flowchart TB
 | API プレフィックス | `buildApiPrefix(guestId, preview)`。guestId あり → `/k/guest/{id}/v1`、なし → `/k/v1`。preview なら末尾に `/preview` |
 | 読み取り再試行 | `apiGet` は最大 3 回。対象は HTTP 408 / 409 / 425 / 429 / 500 / 502 / 503 / 504、`error.code` に NETWORK / TIMEOUT / ECONNRESET、または message に network / timeout を含むもの。待機は `min(3000ms, 500ms × 2^attempt)` ＋ 0〜200ms のジッター |
 | 書き込み再試行 | PUT / POST は最大 3 回。5xx とネットワーク系のみ再試行。4xx は副作用が確定している可能性があるため不可（冪等な PUT の 408 / 429 だけ例外）。DELETE は再試行しない |
+| 中止と応答待ち上限 | `runControl.ts`: パネルの「中止」が `requestCancel()` を呼ぶと、`apiGet` / `apiPut` / `apiPost` / `apiDelete` は次の試行の前に `RunCancelledError` を投げ、再試行の待機も打ち切る。GET は `raceWithCancel` で進行中でも中止・120 秒の応答待ち上限（`code: 'TIMEOUT'` として再試行対象）で打ち切る。書き込みは進行中のリクエストを打ち切らない（サーバー側で確定したか分からなくなるため）。`fetch` を使う JS/CSS 本文（60 秒）・ファイル本体（120 秒）・アップロードは AbortSignal で中止する。`fetchBundle` と補助取得は中止を `_fetchError` に畳まず呼び出し元へ伝える |
 | 本番書込ガード | `assertAllowsMutatingRestCall`: (1) `app/deploy.json` を含むパスは無条件に拒否（デプロイは管理画面で手動） (2) `/records/cursor.json` の POST / DELETE とレコード 4 パス（`/record.json` `/records.json` `/record/status.json` `/records/status.json`）は本番 prefix でのみ許可し、preview prefix なら拒否 (3) `/file.json` への POST（呼び出し元が渡すパスとの完全一致、本番 prefix のみ）はファイルアップロード用に許可し、PUT / DELETE は拒否 (4) それ以外の POST / PUT / DELETE / PATCH は prefix が `/v1/preview` を含むときだけ許可。API テスター用 `assertAllowsMutatingApiUrl` はレコード書込自体を拒否 |
 | revision 競合 | `isRevisionConflictError`: エラーコード `GAIA_CO02`、または message が表の下の正規表現 (A) に一致。`decorateRevisionConflict` が「取得後に別の更新が入ったため中止」という利用者向け文を付けて再送出 |
 | 設定バンドル取得 `fetchBundle` | `SECTION_DEFS`（18 セクション）を並列 3 で取得し、応答順ではなく入力順で格納。失敗したセクションは `{ _fetchError: message }` に置き換えて続行。`appInfo`（`/app.json`）は `previewEndpoint: false` のため常に運用 prefix。各応答の `revision` は `meta.sectionRevisions` へ |
@@ -221,10 +222,10 @@ Lite UI の `summarizeLiteIgnoreRules` が各ルールの表すパスに `/\[\d+
 | キー | ラベル | 対象セクション | 除去キー | 配列順無視 |
 | --- | --- | --- | --- | --- |
 | `actionOrder` | アプリアクションの並び順 | actionSettings | `index` | しない |
-| `viewOrder` | ビュー/グラフ/アクション順序 | viewSettings, reportSettings, actionSettings | `index` `no` `order` | する |
-| `permissionOrder` | 権限/通知/カテゴリ順序 | appAcl, fieldAcl, recordPermissions, notifications, perRecordNotifications, reminderNotifications, categories | `index` `no` `order` | する |
-| `generalArrayOrder` | すべて（プロセス等含む）の配列順序 | appSettings と appInfo を除く 16 セクション | `index` `no` `order` | する |
-| `fieldOrder` | フィールド/レイアウト順序 | fieldSettings, layoutSettings, formSettings | `index` `no` `order` `x` `y` | する |
+| `viewOrder` | 一覧・グラフ・アクションの並び順 | viewSettings, reportSettings, actionSettings | `index` `no` `order` | する |
+| `permissionOrder` | 権限・通知・カテゴリの並び順 | appAcl, fieldAcl, recordPermissions, notifications, perRecordNotifications, reminderNotifications, categories | `index` `no` `order` | する |
+| `generalArrayOrder` | すべての並び順（プロセスなどを含む） | appSettings と appInfo を除く 16 セクション | `index` `no` `order` | する |
+| `fieldOrder` | フィールド・レイアウトの並び順 | fieldSettings, layoutSettings, formSettings | `index` `no` `order` `x` `y` | する |
 | `processOrder` | プロセスの並び順 | processSettings | `index` `no` `order` | する |
 | `appReferences` | 環境固有ID（アプリ・一覧・グラフ・アクション） | appInfo, fieldSettings, formSettings, viewSettings, reportSettings, actionSettings | なし（パス判定 `isAppReferenceIdPath`） | しない |
 | `auditMeta` | 監査/リビジョン情報 | 17 セクション（appInfo 以外） | `id` `revision` `createdAt` `creator` `modifiedAt` `modifier` `updatedAt` `updatedBy`（小文字形も） | しない |

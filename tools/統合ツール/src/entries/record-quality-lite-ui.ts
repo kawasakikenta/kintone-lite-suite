@@ -5,7 +5,7 @@ import { buildRecordQualityTab } from './record-quality-ui.js';
 import { createAppSearchControl } from './appSearchControl.js';
 import { connectionSummary, installLiteWorkflow } from './liteWorkflow.js';
 import { createLitePanel, makeButton, makeCard, makeInput, makeNote, makeRow, makeSelect, liteRun } from './litePanelTheme.js';
-import { parseRecordAppIds, runLoadViewsStandalone } from '../tabs/record-standalone.js';
+import { parseRecordAppIds, runLoadViewsStandalone, toPanelTone } from '../tabs/record-standalone.js';
 import type { RecordViewChoice } from '../tabs/record-metadata.js';
 
 /** Read-only, focused entry point for the data-quality checks in Record Manager. */
@@ -15,8 +15,8 @@ export function mountRecordQualityLitePanel() {
     title: 'データ品質チェック',
     subtitle: 'レコードの重複と未入力を、選んだ項目の組み合わせで検査します。',
     accent: 'record',
-    badges: [{ label: 'Lite' }, { label: '読み取り専用' }],
-    hint: 'データは書き換えません。結果は画面で確認し、CSVで保存できます。',
+    badges: [{ label: '読み取り専用', tone: 'read' }],
+    hint: 'kintone のレコードは書き換えません。検査結果は画面で確認でき、CSVでも保存できます。',
     wide: true
   });
 
@@ -43,8 +43,8 @@ export function mountRecordQualityLitePanel() {
   }
 
   const target = makeCard({ title: '対象アプリ', number: 1 });
-  target.body.appendChild(makeRow([appId, guestId], { label: '接続先' }));
-  target.body.appendChild(makeNote('複数アプリはカンマ、改行、または空白で区切ります。検査項目は先頭アプリから読み込みます。'));
+  target.body.appendChild(makeRow([appId, guestId], { label: '対象アプリ' }));
+  target.body.appendChild(makeNote('複数アプリはカンマ・改行・空白で区切ります。検査するフィールドは、先頭の対象アプリから読み込みます。', 'help'));
   target.body.appendChild(createAppSearchControl(panel, {
     guestEl: guestId,
     targets: [{ label: '対象アプリ', apply: (id, _name, guest) => {
@@ -58,7 +58,7 @@ export function mountRecordQualityLitePanel() {
   viewSelect.setAttribute('aria-label', '取得した一覧');
   const loadViewsBtn = makeButton('一覧読込', 'sub');
   target.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: '一覧から条件' }));
-  const viewNote = makeNote('先頭の対象アプリから一覧を取得し、「▼ 一覧から」で絞り込みと並び順をクエリに反映できます。');
+  const viewNote = makeNote('先頭の対象アプリの一覧を読み込むと、「▼ 一覧から」で絞り込みと並び順をクエリに反映できます。');
   target.body.appendChild(viewNote);
   let loadedViews: RecordViewChoice[] = [];
   resetMetadata.push(() => {
@@ -79,7 +79,7 @@ export function mountRecordQualityLitePanel() {
     viewSelect.replaceChildren(new Option('一覧を選択（任意）', ''));
     const views = await runLoadViewsStandalone(
       { appId: firstAppId, guestId: guestId.value.trim() },
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+      (m, tone) => panel.setStatus(m, toPanelTone(tone))
     );
     if (version !== connectionVersion) { panel.setStatus('対象アプリが変わりました。一覧を再取得してください。', 'warn'); return; }
     loadedViews = views;
@@ -106,6 +106,8 @@ export function mountRecordQualityLitePanel() {
 
   const conditions = makeCard({ title: '検査条件', number: 2 });
   panel.body.insertBefore(conditions.card, panel.status);
+  // 空白・大小文字の扱いは「詳細設定…」のポップアップへ（既定は区別する）
+  const compareOptions = makeCard({ title: '比較の扱い', soft: true });
   const resultHost = document.createElement('section');
   resultHost.setAttribute('aria-label', '検査結果');
   panel.body.insertBefore(resultHost, panel.status);
@@ -124,11 +126,14 @@ export function mountRecordQualityLitePanel() {
     },
     targetSummary: () => ['対象アプリ', connectionSummary(appId.value.trim(), guestId.value.trim())],
     applyViewQuery,
-    resultHost
+    resultHost,
+    optionsHost: compareOptions.body
   });
 
   installLiteWorkflow(panel, {
     setup: [target.card, conditions.card],
+    advanced: [compareOptions.card],
+    advancedCopy: '文字列・リンクの前後の空白や英字の大小を無視して比較できます。',
     actions: [qualityAction],
     results: [resultHost],
     resultActions: ['quality']

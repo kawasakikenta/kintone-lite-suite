@@ -31,11 +31,17 @@ async function main() {
       window.metadata = data; window.calls = []; window.defer = false; window.fail = false;
       window.kintone = { app: { getId: () => 7 }, api: Object.assign(async (url, method, params) => {
         window.calls.push({ url, method, params });
-        if (method !== 'GET') throw new Error('書き込みは許可しないテストです');
+        if (method !== 'GET') {
+          // 結果メッセージの確認用: writeMode が立っているときだけ、App 8 への書き込みを失敗させて他は成功させる
+          if (!window.writeMode) throw new Error('書き込みは許可しないテストです');
+          if (window.writeMode === 'partial' && params.app === '8') throw new Error('権限がありません');
+          return {};
+        }
         if (window.fail) throw new Error('権限不足のサンプル');
         if (window.defer) return new Promise(resolve => { window.resolveApi = resolve; });
         if (url.endsWith('/app/views.json')) return window.metadata.views;
         if (url.endsWith('/app/status.json')) return window.metadata.process;
+        if (url.endsWith('/records.json')) return { records: [{ $id: { type: '__ID__', value: '1' }, $revision: { type: '__REVISION__', value: '1' } }] };
         if (url.endsWith('/app/form/fields.json')) return params.app === window.badCsvApp ? { properties: {} } : window.metadata.fields;
         throw new Error('想定外のAPI: ' + url);
       }, { url: value => value }) };
@@ -50,7 +56,31 @@ async function main() {
     const active = page.locator('.kus-lp__tab-panel:not([hidden])');
     const query = active.locator('input').first();
     const idle = () => page.waitForFunction(() => document.querySelector('#kus-record-lite').getAttribute('aria-busy') === 'false');
+    // 3 件を超える操作は「ほかの操作…」のポップアップにある。開いて選ぶと、ポップアップは自動で閉じる。
+    const pickAction = async label => {
+      const radio = page.getByRole('radio', { name: label, exact: true });
+      if (!await radio.isVisible()) await page.locator('.kus-wf-action--more').click();
+      await radio.check();
+    };
+    // 操作ごとのオプションは「オプション…」のポップアップにある。開いて操作し、「閉じる」で戻る。
+    const withOptions = async (tab, fn) => {
+      await active.getByRole('button', { name: 'オプション…', exact: true }).click();
+      const dialog = page.locator('#kus-record-lite-options-' + tab);
+      assert.equal(await dialog.isVisible(), true);
+      await fn(dialog);
+      await dialog.getByRole('button', { name: '閉じる', exact: true }).click();
+      assert.equal(await dialog.isVisible(), false);
+    };
+    // 補足説明はカードの「?」を押すと開く。
+    const helpText = async title => {
+      const helpButton = page.getByRole('button', { name: `「${title}」の説明を表示`, exact: true });
+      await helpButton.click();
+      const text = await page.locator('.kus-lp__help-pop:visible').innerText();
+      await helpButton.click();
+      return text;
+    };
     await app.fill('7,8'); await guest.fill('9');
+    assert.match(await helpText('対象アプリ'), /カンマ・改行・空白で区切ります.*10,000 件を超えても全件取得します/s);
     await button('一覧読込').click(); await idle();
     assert.deepEqual(await page.evaluate(() => window.calls.at(-1)), { url: '/k/guest/9/v1/app/views.json', method: 'GET', params: { app: '7', lang: 'user' } });
     assert.deepEqual(await view.locator('option').evaluateAll(options => options.map(o => o.value)), ['', '300', '301', '302', '310']);
@@ -85,20 +115,24 @@ async function main() {
     await page.evaluate(() => { window.fail = false; });
     results.push('一覧: 対象変更時の無効化・遅れて届く応答の破棄・取得失敗からの復帰');
 
-    await page.getByRole('radio', { name: '添付ファイルを保存', exact: true }).check();
+    await pickAction('添付ファイルを保存');
     const fields = page.getByRole('combobox', { name: '取得した添付フィールド', exact: true });
     const fileCode = page.getByRole('textbox', { name: '添付フィールドコード', exact: true });
     const tableCode = page.getByRole('textbox', { name: '添付のテーブルコード', exact: true });
+    assert.equal(await tableCode.isVisible(), false, 'テーブル・フォルダ・ZIP名は表面に出さない');
+    assert.match(await helpText('添付ファイル保存'), /download_errors\.txt.*manifest\.json/s);
     await button('添付フィールド読込').click(); await idle();
     assert.deepEqual(await page.evaluate(() => window.calls.at(-1)), { url: '/k/guest/9/v1/app/form/fields.json', method: 'GET', params: { app: '9', lang: 'user' } });
     assert.match(await fields.locator('option').last().textContent(), /書類明細［documents］.*証跡ファイル［evidence］/);
     await fields.selectOption('1');
-    assert.equal(await fileCode.inputValue(), 'evidence'); assert.equal(await tableCode.inputValue(), 'documents');
+    assert.equal(await fileCode.inputValue(), 'evidence');
+    await withOptions('attach', async dialog => assert.equal(await dialog.getByRole('textbox', { name: '添付のテーブルコード', exact: true }).inputValue(), 'documents'));
     assert.equal(await button('内容を確認する').isEnabled(), true);
     await button('内容を確認する').click();
     assert.match(await page.locator('.kus-wf-stage').nth(1).innerText(), /documents \/ evidence/);
     await button('対象・条件を変更').click();
-    await fields.selectOption('0'); assert.equal(await tableCode.inputValue(), '');
+    await fields.selectOption('0');
+    await withOptions('attach', async dialog => assert.equal(await dialog.getByRole('textbox', { name: '添付のテーブルコード', exact: true }).inputValue(), ''));
     await fileCode.fill('manual'); assert.equal(await fields.inputValue(), '');
     await guest.fill(''); assert.equal(await fields.locator('option').count(), 1);
     await button('添付フィールド読込').click(); await idle();
@@ -115,7 +149,7 @@ async function main() {
     }
 
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.getByRole('radio', { name: 'ステータスを一括更新', exact: true }).check();
+    await pickAction('ステータスを一括更新');
     const actions = page.getByRole('combobox', { name: '取得したプロセスアクション', exact: true });
     await button('アクション読込').click(); await idle();
     assert.equal(await actions.locator('option').count(), 6, '遷移元が違う同名アクションも候補に残す');
@@ -137,28 +171,54 @@ async function main() {
     await actions.scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(OUT, 'process-action-1440.png') });
     await guest.fill('3'); assert.equal(await actions.locator('option').count(), 1);
+    await withOptions('status', async dialog => {
+      await dialog.getByPlaceholder('次の作業者ログイン名（必要な場合）', { exact: true }).fill('reviewer');
+    });
+    await actions.selectOption('');
+    await active.getByPlaceholder('アクション名', { exact: true }).fill('進める');
+    await button('内容を確認する').click();
+    assert.match(await page.locator('.kus-wf-stage').nth(1).innerText(), /次の作業者\s*reviewer/, 'ポップアップ内の次の作業者を確認画面に反映する');
+    await button('対象・条件を変更').click();
     results.push('プロセス: 同名アクションの遷移元区別・APIで指定できない重複の表示・実行条件・作業者と組織・対象クエリ');
 
-    await page.getByRole('radio', { name: 'バックアップを保存', exact: true }).check();
+    await pickAction('バックアップを保存');
     const settingsToggle = page.getByRole('checkbox', { name: 'アプリ設定も保存', exact: true });
-    const scopes = active.locator('.kus-lp__chips input[type=checkbox]');
-    await settingsToggle.check();
-    for (let i = 0; i < await scopes.count(); i++) await scopes.nth(i).uncheck();
+    assert.equal(await settingsToggle.isVisible(), false, 'バックアップのオプションは表面に出さない');
+    await app.fill('7');
+    await withOptions('backup', async dialog => {
+      const scopes = dialog.locator('.kus-lp__chips input[type=checkbox]');
+      await settingsToggle.check();
+      for (let i = 0; i < await scopes.count(); i++) await scopes.nth(i).uncheck();
+      await scopes.first().check();
+      await scopes.first().uncheck();
+    });
     assert.equal(await button('内容を確認する').isDisabled(), true, '設定の保存範囲が空のまま設定なしで成功させない');
-    await scopes.first().check();
+    await withOptions('backup', async dialog => { await dialog.locator('.kus-lp__chips input[type=checkbox]').first().check(); });
     assert.equal(await button('内容を確認する').isEnabled(), true);
     await button('内容を確認する').click();
     assert.match(await page.locator('.kus-wf-stage').nth(1).innerText(), /アプリ設定（/);
     await button('対象・条件を変更').click();
-    await settingsToggle.uncheck();
+    await withOptions('backup', async () => { await settingsToggle.uncheck(); });
     results.push('バックアップ: アプリ設定の保存範囲が空なら確認へ進めない・確認画面に範囲を表示');
 
-    await page.getByRole('radio', { name: 'CSVからレコードを追加', exact: true }).check();
+    await pickAction('CSVを出力');
+    const csvFileName = page.getByPlaceholder('空欄で自動命名（CSV / テーブルあり・複数アプリはZIP）', { exact: true });
+    assert.equal(await csvFileName.isVisible(), false, 'CSV出力のオプションは表面に出さない');
+    await withOptions('csv-export', async dialog => {
+      await dialog.getByPlaceholder('空欄で自動命名（CSV / テーブルあり・複数アプリはZIP）', { exact: true }).fill('月次');
+    });
+    await button('内容を確認する').click();
+    assert.match(await page.locator('.kus-wf-stage').nth(1).innerText(), /ファイル名\s*月次/);
+    await button('対象・条件を変更').click();
+    results.push('オプション: 操作ごとのポップアップで設定でき、変更が確認画面に反映される');
+
+    await pickAction('CSVからレコードを追加');
     await app.fill('7,8');
     const csvInput = page.getByLabel('取込CSV', { exact: true });
     const csvResult = page.getByLabel('CSV事前検査結果', { exact: true });
     let dialogs = 0;
-    page.on('dialog', async dialog => { dialogs++; await dialog.dismiss(); });
+    let acceptDialogs = false;
+    page.on('dialog', async dialog => { dialogs++; await (acceptDialogs ? dialog.accept() : dialog.dismiss()); });
     const upload = csv => csvInput.setInputFiles({ name: 'data.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
     await upload('title,amount,priority\n件名A,abc,中');
     await button('CSVを事前検査').click(); await idle();
@@ -189,7 +249,9 @@ async function main() {
     await button('CSVからレコードを追加').click(); await idle();
     assert.equal(dialogs, 1, '複数アプリの実行確認は1回');
     assert.match(await page.locator('.kus-lp__status').innerText(), /キャンセルしました/);
-    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn');
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'info', 'CSV取込を確認でキャンセルしたら、実行していないので警告ではなく案内の色にする');
+    assert.equal(await page.locator('.kus-wf-stage').nth(2).isVisible(), false, 'CSV取込を確認でキャンセルしたら結果画面へ進まず確認画面に戻る');
+    assert.equal(await page.locator('.kus-wf-stage').nth(1).isVisible(), true);
     await button('対象・条件を変更').click();
     await page.evaluate(() => { window.defer = true; window.resolveApi = null; });
     await button('CSVを事前検査').click();
@@ -201,6 +263,46 @@ async function main() {
     });
     await idle();
     assert.equal(await csvResult.isVisible(), false, '対象変更後の古い検査応答は表示しない');
+    // ステータス更新: 複数アプリの確認ですべて「いいえ」を選んだら、確認画面に戻る（結果画面に進まない）
+    if (await button('対象・条件を変更').isVisible()) await button('対象・条件を変更').click();
+    await pickAction('ステータスを一括更新');
+    await page.getByPlaceholder('アクション名', { exact: true }).fill('承認する');
+    const csvApps = await app.inputValue();
+    await app.fill('7,8');
+    dialogs = 0;
+    await button('内容を確認する').click();
+    await button('ステータスを一括更新').click(); await idle();
+    assert.equal(dialogs, 2, 'アプリごとの実行確認が2回出る');
+    assert.equal((await page.locator('.kus-lp__status-text').innerText()).trim(), '確認でキャンセルしました（実行していません）');
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'info');
+    assert.equal(await page.locator('.kus-wf-stage').nth(2).isVisible(), false, 'すべて「いいえ」なら結果画面へ進まず確認画面に戻る');
+    assert.equal(await page.locator('.kus-wf-stage').nth(1).isVisible(), true);
+    assert.equal(await page.evaluate(() => window.calls.filter(call => call.method !== 'GET').length), 0, '書き込みは行わない');
+    await button('対象・条件を変更').click();
+    // 結果メッセージ: 件数を出し、一部のアプリだけ失敗したときはエラーではなく警告の色にする
+    const statusText = async () => (await page.locator('.kus-lp__status-text').innerText()).trim();
+    acceptDialogs = true;
+    await page.evaluate(() => { window.writeMode = 'partial'; });
+    await button('内容を確認する').click();
+    await button('ステータスを一括更新').click(); await idle();
+    assert.match(await statusText(), /^2アプリ中1アプリで失敗しました（成功 1アプリ・書き込み済み 1件・未処理 1件）/);
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn', '一部のアプリが成功したら警告の色');
+    assert.equal(await page.locator('.kus-wf-stage').nth(2).isVisible(), true);
+    await button('対象・条件を変更').click();
+    await page.evaluate(() => { window.writeMode = 'ok'; });
+    await button('内容を確認する').click();
+    await button('ステータスを一括更新').click(); await idle();
+    assert.equal(await statusText(), '2アプリで計 2件のステータスを更新しました');
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'ok');
+    await page.evaluate(() => { window.writeMode = ''; });
+    // この確認のために許可した書き込みはここまで。以降は読み取りだけであることを最後に確認する。
+    assert.equal(await page.evaluate(() => window.calls.filter(call => call.method !== 'GET').every(call => call.url.endsWith('/records/status.json'))), true);
+    await page.evaluate(() => { window.calls = window.calls.filter(call => call.method === 'GET'); });
+    acceptDialogs = false;
+    await button('対象・条件を変更').click();
+    await app.fill(csvApps);
+    results.push('ステータス更新: すべて「いいえ」なら確認画面に戻る・一部のアプリ失敗は警告色で成功数/書込済み件数を示す・成功時は合算件数を示す');
+    await pickAction('CSVからレコードを追加');
     results.push('CSV: 全アプリ事前検査・行/フィールド別エラー・差異のあるスキーマ・先頭行プレビュー・安全な文字表示・書込前停止・再検査・キャンセル・320〜1440px');
 
     // The standalone CSV panel has its own view lookup state. Verify that it
@@ -216,6 +318,19 @@ async function main() {
     const csvLoadViews = csvPanel.getByRole('button', { name: '一覧読込', exact: true });
     const csvUseView = csvPanel.getByRole('button', { name: '▼ 条件へ反映', exact: true });
     const csvIdle = () => page.waitForFunction(() => document.querySelector('#kus-csv-export-lite').getAttribute('aria-busy') === 'false');
+    // 出力形式（ファイル名・ヘッダー・改行・Excel保護）は「詳細設定…」のポップアップにある。
+    const csvFilename = csvPanel.getByRole('textbox', { name: '出力ファイル名', exact: true });
+    assert.equal(await csvFilename.isVisible(), false, '出力形式は表面に出さない');
+    await csvPanel.getByRole('button', { name: '詳細設定…', exact: true }).click();
+    await csvFilename.fill('売上');
+    await csvPanel.getByRole('combobox', { name: '改行コード', exact: true }).selectOption('crlf');
+    await csvPanel.getByRole('button', { name: '詳細設定を閉じる', exact: true }).click();
+    await csvPanel.getByRole('button', { name: '「出力条件」の説明を表示', exact: true }).click();
+    assert.match(await csvPanel.locator('.kus-lp__help-pop:visible').innerText(), /10,000 件を超えても全件取得します.*manifest\.txt/s);
+    await csvPanel.getByRole('button', { name: '「出力条件」の説明を表示', exact: true }).click();
+    await csvPanel.getByRole('button', { name: '内容を確認する', exact: true }).click();
+    assert.match(await csvPanel.locator('.kus-wf-stage').nth(1).innerText(), /CRLF[\s\S]*売上/, '詳細設定の変更を確認画面に反映する');
+    await csvPanel.getByRole('button', { name: '対象・条件を変更', exact: true }).click();
     await csvPanel.locator('details').filter({ hasText: '一覧の条件を利用する' }).locator('summary').click({ force: true });
     await csvSourceApp.scrollIntoViewIfNeeded();
     await csvSourceApp.fill('7', { force: true }); await csvSourceGuest.fill('9', { force: true });

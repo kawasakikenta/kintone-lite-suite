@@ -22,10 +22,14 @@ import {
   makeCard,
   makeTextarea,
   makeDetails,
+  makeDialog,
+  makeNote,
+  attachCardHelp,
   liteRun,
   copyTextToClipboard
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { RUN_CANCELLED_MESSAGE } from '../runControl.js';
 import { pickAllSettingsBundles } from '../settingsBundleImport.js';
 import { reflectSelectionBlockers } from '../reflect/standalonePlan.js';
 import { buildReflectReportMarkdown } from '../reflect/planReport.js';
@@ -37,6 +41,7 @@ import {
   TARGET_PENDING_REASON,
   collectUploadLabels,
   createApplyProgressRows,
+  describeRemovedChange,
   describeRemovedItem,
   describeUndoGuidance,
   formatReflectDateTime,
@@ -118,8 +123,12 @@ interface RolloutLogEntry {
   name: string;
   ok: number;
   ng: number;
+  /** 中止で途中停止した項目数（失敗には数えない） */
+  stopped?: number;
   pending: number;
   at: number;
+  /** 利用者の操作で中止した反映先（途中まで書き込んでいる可能性がある） */
+  cancelled?: boolean;
 }
 
 interface LiteMemoryState {
@@ -146,8 +155,12 @@ interface LiteMemoryState {
   lastResult?: {
     ok: number;
     ng: number;
+    /** 中止で途中停止したセクション数（失敗には数えない） */
+    stopped: number;
     /** エラー中断により未実行のまま残ったセクション数 */
     pending: number;
+    /** 利用者の「中止」で途中停止した反映（未実行の項目は pending、途中まで書いた項目は stopped に入る） */
+    cancelled?: boolean;
     at: number;
     appId: string;
     guestId: string;
@@ -155,6 +168,8 @@ interface LiteMemoryState {
     retryScopes: string[];
     /** 失敗セクションの表示ラベル */
     failedLabels: string[];
+    /** 中止で途中停止したセクションの表示ラベル */
+    stoppedLabels: string[];
     /** JSON 反映元が差し替えられたかを検知する UI 内の一時トークン。 */
     sourceBundleToken?: string;
     /** 反映前に自動保存したバックアップと同じ内容（「バックアップから戻す」用）。実行結果JSONには含めない。 */
@@ -211,35 +226,35 @@ interface ScopeQuickPreset {
 }
 
 const SCOPE_QUICK_PRESETS: ScopeQuickPreset[] = [
-  { id: 'all', label: 'すべての項目', hint: '反映可能なセクションを全選択' },
+  { id: 'all', label: 'すべての項目', hint: '反映できる項目をすべて選びます' },
   {
     id: 'formOnly',
     label: 'フォームのみ',
-    hint: 'フィールド設定＋レイアウト＋ビュー',
+    hint: 'フィールド設定・レイアウト設定・ビュー設定を選びます',
     scopes: ['fieldSettings', 'layoutSettings', 'viewSettings']
   },
   {
     id: 'viewsOnly',
-    label: 'ビュー+グラフ',
-    hint: 'ビュー設定とグラフ設定のみ',
+    label: 'ビューとグラフ',
+    hint: 'ビュー設定とグラフ設定だけを選びます',
     scopes: ['viewSettings', 'reportSettings']
   },
   {
     id: 'permsOnly',
     label: '権限のみ',
-    hint: 'アプリ・フィールド・レコード権限',
+    hint: 'アプリ・フィールド・レコードの権限だけを選びます',
     scopes: ['appAcl', 'fieldAcl', 'recordPermissions']
   },
   {
     id: 'notificationsOnly',
     label: '通知のみ',
-    hint: '一般・条件・リマインダー通知',
+    hint: '一般・条件・リマインダーの通知だけを選びます',
     scopes: ['notifications', 'perRecordNotifications', 'reminderNotifications']
   },
   {
     id: 'noPerms',
-    label: '権限を除外',
-    hint: '権限系・通知系を除いた全セクション',
+    label: '権限・通知を除外',
+    hint: '権限と通知を除いた、すべての項目を選びます',
     exclude: ['appAcl', 'fieldAcl', 'recordPermissions', 'notifications', 'perRecordNotifications', 'reminderNotifications']
   }
 ];
@@ -258,15 +273,15 @@ const REFLECT_LITE_STYLE_ID = 'kus-reflect-lite-styles';
 const REFLECT_LITE_CSS = `
 #kus-reflect-lite.kus-lp--wide{width:min(960px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px;border-color:#cbd5e1}
 #kus-reflect-lite .kus-lp__hero{padding:16px 24px;background:#172033}
-#kus-reflect-lite .kus-lp__title{font-size:20px;letter-spacing:-.01em;word-break:keep-all}
+#kus-reflect-lite .kus-lp__title{font-size:22px;letter-spacing:-.01em;word-break:keep-all}
 #kus-reflect-lite .kus-lp__card pre:empty{display:none!important}
-#kus-reflect-lite .kus-lp__subtitle{font-size:12.5px;max-width:560px}
+#kus-reflect-lite .kus-lp__subtitle{font-size:14px;max-width:560px}
 #kus-reflect-lite .kus-lp__body{padding:0;background:#f4f6f8;display:flex;flex-direction:column;overflow:hidden}
 #kus-reflect-lite .kus-lp__hint{margin:0;padding:11px 24px;border:0;border-bottom:1px solid #e2e8f0;border-radius:0;background:#fff7ed;color:#9a3412}
 #kus-reflect-lite .kus-lp__hint strong{color:#7c2d12}
 #kus-reflect-lite .kus-lp__card{border-radius:16px;padding:16px 18px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
 #kus-reflect-lite .kus-lp__card-head{border:0;margin:0 0 12px;padding:0}
-#kus-reflect-lite .kus-lp__card-title{font-size:12px;text-transform:none;letter-spacing:.01em;color:#172033}
+#kus-reflect-lite .kus-lp__card-title{font-size:13px;text-transform:none;letter-spacing:.01em;color:#172033}
 #kus-reflect-lite .kus-lp__card-num{background:#172033;color:#fff}
 #kus-reflect-lite .kus-rl-workspace{display:flex;flex-direction:column;min-height:0;flex:1}
 #kus-reflect-lite .kus-rl-canvas{min-width:0;min-height:0;overflow:auto;padding:20px 24px;scroll-padding:16px}
@@ -276,24 +291,26 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-route{display:grid;grid-template-columns:minmax(0,1fr) 48px minmax(0,1fr);align-items:stretch;gap:10px}
 #kus-reflect-lite .kus-rl-endpoint{padding:13px;border:1px solid #e2e8f0;border-radius:13px;background:#f8fafc}
 #kus-reflect-lite .kus-rl-endpoint--target{background:#fff7ed;border-color:#fed7aa}
-#kus-reflect-lite .kus-rl-endpoint__eyebrow{margin-bottom:8px;font-size:10.5px;font-weight:800;letter-spacing:.08em;color:#64748b;text-transform:uppercase}
+#kus-reflect-lite .kus-rl-endpoint__eyebrow{margin-bottom:8px;font-size:12px;font-weight:800;letter-spacing:.08em;color:#64748b;text-transform:uppercase}
 #kus-reflect-lite .kus-rl-endpoint--target .kus-rl-endpoint__eyebrow{color:#c2410c}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.8fr);gap:7px;margin:0}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__input{width:100%;min-width:0;box-sizing:border-box}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__select{width:100%;margin-bottom:8px}
-#kus-reflect-lite .kus-rl-endpoint__note{font-size:11px;color:#9a3412;min-height:33px;margin-bottom:8px}
-#kus-reflect-lite .kus-rl-field{display:flex;flex-direction:column;gap:4px;font-size:11px;font-weight:600;margin:8px 0}
+#kus-reflect-lite .kus-rl-endpoint__note{font-size:12.5px;color:#9a3412;min-height:33px;margin-bottom:8px}
+#kus-reflect-lite .kus-rl-field{display:flex;flex-direction:column;gap:4px;font-size:12.5px;font-weight:600;margin:8px 0}
 #kus-reflect-lite .kus-rl-field .kus-lp__input{min-height:40px;font-size:14px}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__file{width:100%;min-width:0;box-sizing:border-box;margin:12px 0}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__check{margin:10px 0}
 #kus-reflect-lite .kus-rl-scope-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}
 #kus-reflect-lite .kus-rl-scope-group{min-width:0;margin:0;padding:10px;border:1px solid #e2e8f0;border-radius:10px}
-#kus-reflect-lite .kus-rl-scope-group legend{font-size:11px;font-weight:700;color:#475569;padding:0 4px}
+#kus-reflect-lite .kus-rl-scope-group legend{font-size:12.5px;font-weight:700;color:#475569;padding:0 4px}
 #kus-reflect-lite .kus-rl-scope-group .kus-lp__chips{display:flex;flex-direction:column;align-items:stretch}
 #kus-reflect-lite .kus-rl-scope-group .kus-lp__chip{border-radius:6px;white-space:normal;min-height:32px}
-#kus-reflect-lite .kus-rl-advanced{border:1px solid #e2e8f0;border-radius:12px;background:#fff;padding:2px 14px}
-#kus-reflect-lite .kus-rl-advanced>.kus-lp__details-body{padding:10px 0}
-#kus-reflect-lite .kus-rl-advanced .kus-lp__card{box-shadow:none}
+#kus-reflect-lite .kus-rl-detail-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+#kus-reflect-lite .kus-rl-detail-summary{flex:1 1 220px;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.5;color:#475569}
+#kus-reflect-lite .kus-rl-detail-summary--warn{color:#9a3412;font-weight:700}
+#kus-reflect-lite .kus-rl-detail-status[hidden]{display:none}
+#kus-reflect-lite .kus-lp__dialog .kus-lp__card--soft{box-shadow:none}
 #kus-reflect-lite [hidden]{display:none!important}
 #kus-reflect-lite :is(button,input,select,summary):focus-visible{outline:3px solid #2563eb;outline-offset:3px}
 #kus-reflect-lite .kus-rl-route-arrow{display:flex;align-items:center;justify-content:center;color:#dc2626;font-size:22px;font-weight:800}
@@ -301,24 +318,24 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-review{display:flex;flex-direction:column;gap:10px}
 #kus-reflect-lite .kus-rl-review-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 #kus-reflect-lite .kus-rl-stat{padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff}
-#kus-reflect-lite .kus-rl-stat__label{font-size:10.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
-#kus-reflect-lite .kus-rl-stat__value{font-size:13px;font-weight:700;color:#0f172a;word-break:break-word}
-#kus-reflect-lite .kus-rl-stat__meta{margin-top:4px;font-size:11px;line-height:1.5;color:#64748b}
+#kus-reflect-lite .kus-rl-stat__label{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+#kus-reflect-lite .kus-rl-stat__value{font-size:14px;font-weight:700;color:#0f172a;word-break:break-word}
+#kus-reflect-lite .kus-rl-stat__meta{margin-top:4px;font-size:12.5px;line-height:1.5;color:#64748b}
 #kus-reflect-lite .kus-rl-pills{display:flex;flex-wrap:wrap;gap:6px}
-#kus-reflect-lite .kus-rl-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid #e2e8f0;background:#fff;color:#334155}
+#kus-reflect-lite .kus-rl-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;font-size:12.5px;font-weight:700;border:1px solid #e2e8f0;background:#fff;color:#334155}
 #kus-reflect-lite .kus-rl-pill--change{background:#fff7ed;border-color:#fdba74;color:#9a3412}
 #kus-reflect-lite .kus-rl-pill--same{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
 #kus-reflect-lite .kus-rl-pill--error{background:#fef2f2;border-color:#fca5a5;color:#991b1b}
 #kus-reflect-lite .kus-rl-pill--stale{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
-#kus-reflect-lite .kus-rl-next{padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.6;border:1px solid #e2e8f0;background:#fff;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-next{padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.6;border:1px solid #e2e8f0;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-next strong{display:block;margin-bottom:2px}
 #kus-reflect-lite .kus-rl-next--ok{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
 #kus-reflect-lite .kus-rl-next--info{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}
 #kus-reflect-lite .kus-rl-next--warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
-#kus-reflect-lite .kus-rl-issues{margin:0;padding-left:18px;font-size:12px;line-height:1.6;color:#92400e;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-issues{margin:0;padding-left:18px;font-size:13px;line-height:1.6;color:#92400e;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-issues li+li{margin-top:3px}
-#kus-reflect-lite .kus-rl-quiet{font-size:11.5px;color:#64748b}
-#kus-reflect-lite .kus-rl-lookup-status{margin-top:6px;font-size:11.5px;color:#475569}
+#kus-reflect-lite .kus-rl-quiet{font-size:13px;color:#64748b}
+#kus-reflect-lite .kus-rl-lookup-status{margin-top:6px;font-size:13px;color:#475569}
 #kus-reflect-lite .kus-rl-lookup-status--err{color:#b91c1c;font-weight:700}
 #kus-reflect-lite .kus-rl-preset-name{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;margin-bottom:8px}
 #kus-reflect-lite .kus-rl-preset-name .kus-lp__input{width:100%;min-width:0;box-sizing:border-box}
@@ -326,36 +343,36 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-preview-summary{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 #kus-reflect-lite .kus-rl-preview-tools{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
 #kus-reflect-lite .kus-rl-preview-tools__actions{display:flex;flex-wrap:wrap;gap:6px}
-#kus-reflect-lite .kus-rl-preview-empty{padding:14px 12px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;font-size:12px;color:#64748b}
+#kus-reflect-lite .kus-rl-preview-empty{padding:14px 12px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;font-size:13px;color:#64748b}
 #kus-reflect-lite .kus-rl-preview-group{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#fff;margin-bottom:10px}
-#kus-reflect-lite .kus-rl-preview-group__head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11.5px;font-weight:700;color:#334155}
+#kus-reflect-lite .kus-rl-preview-group__head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:13px;font-weight:700;color:#334155}
 #kus-reflect-lite .kus-rl-preview-list{display:flex;flex-direction:column;gap:8px;padding:10px}
 #kus-reflect-lite .kus-rl-preview-row{border:1px solid #e2e8f0;border-radius:10px;padding:10px;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-preview-row--change{border-color:#fdba74;background:#fffaf0}
 #kus-reflect-lite .kus-rl-preview-row--same{border-color:#bbf7d0;background:#f0fdf4}
 #kus-reflect-lite .kus-rl-preview-row--error{border-color:#fca5a5;background:#fff5f5}
 #kus-reflect-lite .kus-rl-preview-row__head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px}
-#kus-reflect-lite .kus-rl-preview-row__title{font-size:12px;font-weight:700;color:#0f172a}
-#kus-reflect-lite .kus-rl-preview-row__detail{font-size:11.5px;line-height:1.6;color:#475569}
+#kus-reflect-lite .kus-rl-preview-row__title{font-size:13px;font-weight:700;color:#0f172a}
+#kus-reflect-lite .kus-rl-preview-row__detail{font-size:13px;line-height:1.6;color:#475569}
 #kus-reflect-lite .kus-rl-preview-row__meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 #kus-reflect-lite .kus-rl-preview-row__actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 #kus-reflect-lite .kus-rl-preview-row__state{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-#kus-reflect-lite .kus-rl-preview-mini{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:#fff;border:1px solid #e2e8f0;font-size:10.5px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-preview-mini{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:#fff;border:1px solid #e2e8f0;font-size:12px;font-weight:700;color:#475569}
 #kus-reflect-lite .kus-rl-nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 24px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
-#kus-reflect-lite .kus-rl-nav__btn{appearance:none;width:100%;border:1px solid transparent;border-radius:10px;background:transparent;color:#64748b;padding:10px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:9px;text-align:left}
+#kus-reflect-lite .kus-rl-nav__btn{appearance:none;width:100%;border:1px solid transparent;border-radius:10px;background:transparent;color:#64748b;padding:10px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:9px;text-align:left}
 #kus-reflect-lite .kus-rl-nav__btn:hover{background:#f1f5f9;color:#172033}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"]{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
-#kus-reflect-lite .kus-rl-nav__num{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#e2e8f0;color:#475569;font-size:10px}
+#kus-reflect-lite .kus-rl-nav__num{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#e2e8f0;color:#475569;font-size:11.5px}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"] .kus-rl-nav__num{background:#fee2e2;color:#b91c1c}
-#kus-reflect-lite .kus-rl-nav__copy{display:block;font-size:9.5px;font-weight:500;color:#94a3b8;margin-top:2px}
+#kus-reflect-lite .kus-rl-nav__copy{display:block;font-size:11px;font-weight:500;color:#94a3b8;margin-top:2px}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"] .kus-rl-nav__copy{color:#64748b}
 #kus-reflect-lite .kus-rl-stage[hidden]{display:none}
 #kus-reflect-lite .kus-rl-stage-head{margin:0 2px 16px}
-#kus-reflect-lite .kus-rl-stage-head h2{margin:0;font-size:19px;letter-spacing:-.02em;color:#0f172a}
-#kus-reflect-lite .kus-rl-stage-head p{margin:4px 0 0;font-size:12px;color:#64748b}
+#kus-reflect-lite .kus-rl-stage-head h2{margin:0;font-size:20px;letter-spacing:-.02em;color:#0f172a}
+#kus-reflect-lite .kus-rl-stage-head p{margin:4px 0 0;font-size:13px;color:#64748b}
 #kus-reflect-lite .kus-rl-action-dock{flex-shrink:0;padding:12px 24px;background:#fff;border-top:1px solid #e2e8f0}
 #kus-reflect-lite .kus-rl-dock-row{display:flex;align-items:center;gap:10px}
-#kus-reflect-lite .kus-rl-dock-copy{flex:1;min-width:0;font-size:12px;color:#475569;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-dock-copy{flex:1;min-width:0;font-size:13px;color:#475569;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-dock-copy strong{display:block;color:#0f172a}
 #kus-reflect-lite .kus-rl-dock-msg{display:block}
 #kus-reflect-lite .kus-rl-dock-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
@@ -367,37 +384,37 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-confirm-route{display:grid;gap:8px;margin-bottom:12px}
 #kus-reflect-lite .kus-rl-confirm-route>div{padding:12px;border-radius:10px;border:1px solid #cbd5e1;background:#f8fafc;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-confirm-route>div:last-child{border:2px solid #ea580c;background:#fff7ed}
-#kus-reflect-lite .kus-rl-confirm-route span{display:block;font-size:11px;color:#64748b;margin-bottom:4px}
-#kus-reflect-lite .kus-rl-changes{margin-top:10px;font-size:12px;min-width:0}
+#kus-reflect-lite .kus-rl-confirm-route span{display:block;font-size:12.5px;color:#64748b;margin-bottom:4px}
+#kus-reflect-lite .kus-rl-changes{margin-top:10px;font-size:13px;min-width:0}
 #kus-reflect-lite .kus-rl-changes summary{cursor:pointer;padding:8px 0;font-weight:700}
 #kus-reflect-lite .kus-rl-change{border-top:1px solid #cbd5e1;padding:10px 0;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-change[data-kind="削除"]>strong{color:#b91c1c}
 #kus-reflect-lite .kus-rl-change__values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}
 #kus-reflect-lite .kus-rl-change__values>div{min-width:0;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:8px}
-#kus-reflect-lite .kus-rl-change__values span{font-size:10px;color:#64748b}
-#kus-reflect-lite .kus-rl-change__values pre{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.6 ui-monospace,monospace}
+#kus-reflect-lite .kus-rl-change__values span{font-size:11.5px;color:#64748b}
+#kus-reflect-lite .kus-rl-change__values pre{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.6 ui-monospace,monospace}
 #kus-reflect-lite .kus-rl-nav__btn:disabled{opacity:.45;cursor:not-allowed}
-#kus-reflect-lite .kus-rl-app-note{margin:-2px 0 8px;min-height:18px;font-size:11.5px;line-height:1.5;color:#64748b;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-app-note{margin:-2px 0 8px;min-height:18px;font-size:13px;line-height:1.5;color:#64748b;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-app-note--ok{color:#065f46;font-weight:600}
 #kus-reflect-lite .kus-rl-app-note--warn{color:#b91c1c;font-weight:700}
 #kus-reflect-lite .kus-rl-scope-group .kus-lp__chip{display:flex;align-items:center;gap:6px}
-#kus-reflect-lite .kus-rl-chip__badge{margin-left:auto;flex:none;padding:0 6px;border:1px solid #fb923c;border-radius:4px;background:#fff7ed;color:#9a3412;font-size:10px;font-weight:800;line-height:16px;letter-spacing:.04em}
+#kus-reflect-lite .kus-rl-chip__badge{margin-left:auto;flex:none;padding:0 6px;border:1px solid #fb923c;border-radius:4px;background:#fff7ed;color:#9a3412;font-size:11.5px;font-weight:800;line-height:16px;letter-spacing:.04em}
 #kus-reflect-lite .kus-rl-scope-notice{margin:10px 0 0}
 #kus-reflect-lite .kus-rl-scope-option{margin-top:12px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc}
-#kus-reflect-lite .kus-rl-scope-option__title{margin-bottom:6px;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-scope-option__title{margin-bottom:6px;font-size:12.5px;font-weight:700;color:#475569}
 #kus-reflect-lite .kus-rl-scope-option .kus-lp__check{margin:0}
-#kus-reflect-lite .kus-rl-scope-option__help{margin:4px 0 0 22px;font-size:11.5px;line-height:1.5;color:#475569}
+#kus-reflect-lite .kus-rl-scope-option__help{margin:4px 0 0 22px;font-size:13px;line-height:1.5;color:#475569}
 #kus-reflect-lite .kus-rl-scope-option__help--warn{color:#9a3412;font-weight:700}
-#kus-reflect-lite .kus-rl-scope-help{margin:0;display:grid;gap:8px;font-size:11.5px;line-height:1.55}
+#kus-reflect-lite .kus-rl-scope-help{margin:6px 0 0;display:grid;gap:8px;font-size:13px;line-height:1.55}
 #kus-reflect-lite .kus-rl-scope-help dt{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-weight:700;color:#0f172a}
 #kus-reflect-lite .kus-rl-scope-help dd{margin:2px 0 0;color:#475569}
 #kus-reflect-lite .kus-rl-fix{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
-#kus-reflect-lite .kus-rl-fix__note{font-size:11.5px;color:#475569}
+#kus-reflect-lite .kus-rl-fix__note{font-size:13px;color:#475569}
 #kus-reflect-lite .kus-rl-summary{margin:0 0 12px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#fff}
-#kus-reflect-lite .kus-rl-summary__title{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:9px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11.5px;color:#475569}
+#kus-reflect-lite .kus-rl-summary__title{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:9px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:13px;color:#475569}
 #kus-reflect-lite .kus-rl-summary__title strong{color:#0f172a}
-#kus-reflect-lite .kus-rl-summary__table{width:100%;border-collapse:collapse;font-size:12px}
-#kus-reflect-lite .kus-rl-summary__table th{padding:7px 10px;text-align:left;font-size:11px;font-weight:700;color:#475569;background:#fff;border-bottom:1px solid #e2e8f0;white-space:nowrap}
+#kus-reflect-lite .kus-rl-summary__table{width:100%;border-collapse:collapse;font-size:13px}
+#kus-reflect-lite .kus-rl-summary__table th{padding:7px 10px;text-align:left;font-size:12.5px;font-weight:700;color:#475569;background:#fff;border-bottom:1px solid #e2e8f0;white-space:nowrap}
 #kus-reflect-lite .kus-rl-summary__table td{padding:8px 10px;border-top:1px solid #f1f5f9;vertical-align:middle;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-summary__table tbody tr{cursor:pointer}
 #kus-reflect-lite .kus-rl-summary__table tbody tr:hover{background:#f8fafc}
@@ -405,59 +422,59 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-summary__link{appearance:none;border:0;background:none;padding:2px 0;font:inherit;font-weight:700;color:#1d4ed8;text-align:left;text-decoration:underline;cursor:pointer}
 #kus-reflect-lite .kus-rl-preview-row{scroll-margin-top:8px}
 #kus-reflect-lite .kus-rl-preview-row--focus{box-shadow:0 0 0 3px #93c5fd}
-#kus-reflect-lite .kus-rl-result-heading{margin-top:10px;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-result-heading{margin-top:10px;font-size:12.5px;font-weight:700;color:#475569}
 #kus-reflect-lite .kus-rl-result-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
 #kus-reflect-lite .kus-rl-result-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-result-item--ok{border-color:#a7f3d0}
 #kus-reflect-lite .kus-rl-result-item--ng{border-color:#fca5a5;background:#fff5f5}
 #kus-reflect-lite .kus-rl-result-item--pending{border-color:#fde68a;background:#fffbeb}
-#kus-reflect-lite .kus-rl-result-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px}
-#kus-reflect-lite .kus-rl-result-state{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-result-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px}
+#kus-reflect-lite .kus-rl-result-state{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;font-size:12.5px;font-weight:700;color:#475569}
 #kus-reflect-lite .kus-rl-result-state--ok{border-color:#a7f3d0;background:#ecfdf5;color:#065f46}
 #kus-reflect-lite .kus-rl-result-state--ng{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
 #kus-reflect-lite .kus-rl-result-state--pending{border-color:#fde68a;background:#fffbeb;color:#92400e}
-#kus-reflect-lite .kus-rl-result-item__message{margin-top:6px;font-size:11.5px;line-height:1.6;color:#334155;white-space:pre-wrap;overflow-wrap:anywhere}
-#kus-reflect-lite .kus-rl-result-item__hint{margin-top:4px;font-size:11.5px;line-height:1.5;font-weight:600;color:#9a3412}
+#kus-reflect-lite .kus-rl-result-item__message{margin-top:6px;font-size:13px;line-height:1.6;color:#334155;white-space:pre-wrap;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-result-item__hint{margin-top:4px;font-size:13px;line-height:1.5;font-weight:600;color:#9a3412}
 #kus-reflect-lite .kus-rl-undo{margin:10px 0 0}
 #kus-reflect-lite .kus-rl-items{margin:8px 0 6px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff}
-#kus-reflect-lite .kus-rl-items__title{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin-bottom:8px;font-size:11.5px;color:#475569}
-#kus-reflect-lite .kus-rl-items__title strong{font-size:12px;color:#0f172a}
+#kus-reflect-lite .kus-rl-items__title{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin-bottom:8px;font-size:13px;color:#475569}
+#kus-reflect-lite .kus-rl-items__title strong{font-size:13px;color:#0f172a}
 #kus-reflect-lite .kus-rl-items__list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
-#kus-reflect-lite .kus-rl-item{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;row-gap:2px;align-items:baseline;font-size:12px;line-height:1.55;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-item{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;row-gap:2px;align-items:baseline;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-item__name{min-width:0;font-weight:700;color:#0f172a}
-#kus-reflect-lite .kus-rl-item__details{grid-column:2;margin:0;padding-left:16px;font-size:11.5px;color:#475569}
+#kus-reflect-lite .kus-rl-item__details{grid-column:2;margin:0;padding-left:16px;font-size:13px;color:#475569}
 #kus-reflect-lite .kus-rl-item--keep .kus-rl-item__name{font-weight:600;color:#475569}
-#kus-reflect-lite .kus-rl-kind{display:inline-block;min-width:36px;padding:0 6px;border:1px solid #cbd5e1;border-radius:4px;background:#f1f5f9;color:#475569;font-size:10.5px;font-weight:800;line-height:18px;letter-spacing:.04em;text-align:center}
+#kus-reflect-lite .kus-rl-kind{display:inline-block;min-width:36px;padding:0 6px;border:1px solid #cbd5e1;border-radius:4px;background:#f1f5f9;color:#475569;font-size:12px;font-weight:800;line-height:18px;letter-spacing:.04em;text-align:center}
 #kus-reflect-lite .kus-rl-kind--delete{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
 #kus-reflect-lite .kus-rl-kind--change{border-color:#fdba74;background:#fff7ed;color:#9a3412}
 #kus-reflect-lite .kus-rl-kind--add{border-color:#86efac;background:#f0fdf4;color:#166534}
 #kus-reflect-lite .kus-rl-items--quiet{padding:0 12px;border-style:dashed;background:#f8fafc}
-#kus-reflect-lite .kus-rl-items--quiet>summary{cursor:pointer;padding:8px 0;font-size:11.5px;font-weight:700;color:#64748b}
+#kus-reflect-lite .kus-rl-items--quiet>summary{cursor:pointer;padding:8px 0;font-size:13px;font-weight:700;color:#64748b}
 #kus-reflect-lite .kus-rl-items--quiet[open]>summary{margin-bottom:6px}
 #kus-reflect-lite .kus-rl-items--quiet .kus-rl-items__list{padding-bottom:10px}
 #kus-reflect-lite .kus-rl-items__more{margin-top:8px}
-#kus-reflect-lite .kus-rl-uploads{margin:8px 0 6px;padding:9px 12px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;font-size:11.5px;line-height:1.55;color:#1e3a8a;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-uploads{margin:8px 0 6px;padding:9px 12px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;font-size:13px;line-height:1.55;color:#1e3a8a;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-uploads ul{margin:4px 0 0;padding-left:18px}
-#kus-reflect-lite .kus-rl-pending{display:flex;flex-wrap:wrap;gap:2px 8px;margin:0;padding:8px 12px;border-radius:10px;font-size:11.5px;line-height:1.55;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-pending{display:flex;flex-wrap:wrap;gap:2px 8px;margin:0;padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-pending--clean{border:1px solid #bbf7d0;background:#f0fdf4;color:#065f46}
 #kus-reflect-lite .kus-rl-pending--unknown{border:1px dashed #cbd5e1;background:#f8fafc;color:#475569}
 #kus-reflect-lite .kus-rl-restore-notice{margin:0}
-#kus-reflect-lite .kus-rl-progress__summary{margin:0 0 6px;font-size:12px;font-weight:700;color:#334155}
+#kus-reflect-lite .kus-rl-progress__summary{margin:0 0 6px;font-size:13px;font-weight:700;color:#334155}
 #kus-reflect-lite .kus-rl-result-item--running{border-color:#93c5fd;background:#eff6ff}
 #kus-reflect-lite .kus-rl-result-state--running{border-color:#93c5fd;background:#dbeafe;color:#1e40af}
 #kus-reflect-lite .kus-rl-confirm-entry{margin-top:12px;padding-top:10px;border-top:1px solid #cbd5e1}
-#kus-reflect-lite .kus-rl-confirm-entry h3{margin:0 0 6px;font-size:13px;color:#0f172a}
-#kus-reflect-lite .kus-rl-confirm-heading{margin:10px 0 4px;font-size:12px;font-weight:700;color:#991b1b}
+#kus-reflect-lite .kus-rl-confirm-entry h3{margin:0 0 6px;font-size:14px;color:#0f172a}
+#kus-reflect-lite .kus-rl-confirm-heading{margin:10px 0 4px;font-size:13px;font-weight:700;color:#991b1b}
 #kus-reflect-lite .kus-rl-rollout__input{width:100%;min-width:0;box-sizing:border-box;min-height:84px}
-#kus-reflect-lite .kus-rl-rollout__status{margin-top:6px;font-size:11.5px;line-height:1.5;color:#475569;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-rollout__status{margin-top:6px;font-size:13px;line-height:1.5;color:#475569;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-rollout__status--err{color:#b91c1c;font-weight:700}
 #kus-reflect-lite .kus-rl-rollout-card .kus-rl-next{margin-bottom:8px}
-#kus-reflect-lite .kus-rl-rollout-heading{margin-top:12px;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-rollout-heading{margin-top:12px;font-size:12.5px;font-weight:700;color:#475569}
 #kus-reflect-lite .kus-rl-rollout-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
 #kus-reflect-lite .kus-rl-rollout-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-rollout-item--ng{border-color:#fca5a5;background:#fff5f5}
 #kus-reflect-lite .kus-rl-rollout-item--pending{border-color:#fde68a;background:#fffbeb}
-#kus-reflect-lite .kus-rl-rollout-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px}
+#kus-reflect-lite .kus-rl-rollout-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px}
 #kus-reflect-lite .kus-rl-rollout-card .kus-rl-next[hidden]{display:none}
 @media(max-width:760px){
   #kus-reflect-lite .kus-rl-summary__table,#kus-reflect-lite .kus-rl-summary__table tbody{display:block}
@@ -469,7 +486,7 @@ const REFLECT_LITE_CSS = `
   #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__status{grid-column:5/7;justify-self:end}
   #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__num{grid-column:span 2;text-align:left}
   #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__how,#kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__sel{grid-column:1/-1}
-  #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__num::before,#kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__how::before{content:attr(data-label) " ";font-size:10.5px;font-weight:700;color:#64748b}
+  #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__num::before,#kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__how::before{content:attr(data-label) " ";font-size:12px;font-weight:700;color:#64748b}
 }
 @media(max-width:720px){
   #kus-reflect-lite .kus-rl-change__values{grid-template-columns:1fr}
@@ -480,7 +497,7 @@ const REFLECT_LITE_CSS = `
   #kus-reflect-lite .kus-lp__hint,#kus-reflect-lite .kus-lp__badge-row{display:none}
   #kus-reflect-lite .kus-rl-nav{padding:8px;gap:4px}
   #kus-reflect-lite .kus-rl-nav::before,#kus-reflect-lite .kus-rl-nav__copy{display:none}
-  #kus-reflect-lite .kus-rl-nav__btn{display:flex;justify-content:center;text-align:center;padding:8px 4px;font-size:11px}
+  #kus-reflect-lite .kus-rl-nav__btn{display:flex;justify-content:center;text-align:center;padding:8px 4px;font-size:12.5px}
   #kus-reflect-lite .kus-rl-nav__btn+.kus-rl-nav__btn{margin:0}
   #kus-reflect-lite .kus-rl-canvas{padding:18px 16px 8px}
   #kus-reflect-lite .kus-rl-setup-grid{grid-template-columns:1fr}
@@ -503,18 +520,18 @@ const REFLECT_LITE_CSS = `
 /* 低い画面（スマートフォンの横向き・小さなノート PC など）では、固定フッターと見出しを詰めて本文の領域を確保する。 */
 @media(max-height:720px){
   #kus-reflect-lite .kus-lp__hero{padding:8px 16px}
-  #kus-reflect-lite .kus-lp__title{font-size:16px}
+  #kus-reflect-lite .kus-lp__title{font-size:17px}
   #kus-reflect-lite .kus-lp__subtitle{display:none}
   #kus-reflect-lite .kus-rl-nav{padding:6px 12px}
   #kus-reflect-lite .kus-rl-nav__btn{padding:6px 4px}
   #kus-reflect-lite .kus-rl-nav__copy{display:none}
   #kus-reflect-lite .kus-rl-canvas{padding:12px 16px 8px}
   #kus-reflect-lite .kus-rl-stage-head{margin-bottom:10px}
-  #kus-reflect-lite .kus-rl-stage-head h2{font-size:16px}
+  #kus-reflect-lite .kus-rl-stage-head h2{font-size:17px}
   #kus-reflect-lite .kus-rl-stage-head p{display:none}
   #kus-reflect-lite .kus-rl-action-dock{padding:8px 16px 10px}
   #kus-reflect-lite .kus-rl-dock-row{gap:6px}
-  #kus-reflect-lite .kus-rl-dock-copy{font-size:11px;line-height:1.4}
+  #kus-reflect-lite .kus-rl-dock-copy{font-size:12.5px;line-height:1.4}
   #kus-reflect-lite .kus-rl-dock-copy strong,#kus-reflect-lite .kus-rl-dock-msg{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
   #kus-reflect-lite .kus-rl-dock-actions{gap:4px 6px}
   #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{min-height:36px;padding:6px 10px}
@@ -527,6 +544,40 @@ const REFLECT_LITE_CSS = `
   #kus-reflect-lite .kus-rl-dock-row{flex-direction:row;align-items:center;gap:10px}
   #kus-reflect-lite .kus-rl-dock-actions{display:flex;flex-wrap:nowrap;justify-content:flex-end;flex:none}
   #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{white-space:nowrap}
+}
+/* とても低い画面（高さ 560px 以下。横向きのスマートフォン・小さなウィンドウ）では、見出し・案内・ステップ・フッターを 1 行ずつに詰めて、本文（最終確認の書き込み先と変更内容など）に高さを回す。 */
+@media(max-height:560px){
+  #kus-reflect-lite .kus-lp__hero{padding:5px 12px}
+  #kus-reflect-lite .kus-lp__hero-main{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px}
+  #kus-reflect-lite .kus-lp__title{font-size:15px}
+  #kus-reflect-lite .kus-lp__badge-row{margin-top:0}
+  #kus-reflect-lite .kus-lp__badge{padding:1px 8px;font-size:11.5px}
+  #kus-reflect-lite .kus-lp__hint{display:none}
+  #kus-reflect-lite .kus-rl-nav{padding:3px 12px;gap:4px}
+  #kus-reflect-lite .kus-rl-nav__btn{padding:3px 4px;font-size:12px;line-height:1.3;white-space:nowrap}
+  #kus-reflect-lite .kus-rl-nav__num{display:none}
+  #kus-reflect-lite .kus-rl-canvas{padding:8px 12px 6px}
+  #kus-reflect-lite .kus-lp__card{padding:10px 12px}
+  #kus-reflect-lite .kus-rl-confirm-route{gap:4px;margin-bottom:8px}
+  #kus-reflect-lite .kus-rl-confirm-route>div{padding:6px 10px}
+  #kus-reflect-lite .kus-rl-confirm-route span{display:inline;margin:0 8px 0 0;font-size:12px}
+  #kus-reflect-lite .kus-rl-stage-head{margin:0 2px 8px}
+  #kus-reflect-lite .kus-rl-stage-head h2{font-size:15px}
+  #kus-reflect-lite .kus-rl-action-dock{padding:5px 12px 6px}
+  #kus-reflect-lite .kus-rl-dock-row{gap:4px}
+  #kus-reflect-lite .kus-rl-dock-copy{font-size:12px;line-height:1.35}
+  #kus-reflect-lite .kus-rl-dock-copy strong,#kus-reflect-lite .kus-rl-dock-msg{-webkit-line-clamp:1}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{min-height:32px;padding:4px 10px}
+  #kus-reflect-lite .kus-rl-action-dock .kus-lp__status{margin-top:4px;padding:3px 8px;font-size:12px;line-height:1.35}
+  #kus-reflect-lite .kus-rl-action-dock .kus-lp__status-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;overflow:hidden;max-height:none}
+  #kus-reflect-lite .kus-rl-action-dock .kus-lp__status--warn .kus-lp__status-text,#kus-reflect-lite .kus-rl-action-dock .kus-lp__status--err .kus-lp__status-text{-webkit-line-clamp:2}
+}
+/* 低くて幅の狭い画面では、操作ボタンを折り返しながら詰めて並べる（主操作だけが全幅の行を取らない）。 */
+@media(max-height:560px) and (max-width:559px){
+  #kus-reflect-lite .kus-rl-dock-actions{display:flex;flex-wrap:wrap;justify-content:stretch;gap:4px}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{flex:0 1 auto;grid-column:auto;min-width:0;font-size:12.5px;line-height:1.3}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn--primary,#kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn--danger{flex:1 1 140px}
+  #kus-reflect-lite .kus-rl-nav__btn{font-size:11.5px;padding:3px 2px}
 }
 @media(prefers-reduced-motion:reduce){#kus-reflect-lite{animation:none}#kus-reflect-lite *{scroll-behavior:auto!important}}
 `;
@@ -583,17 +634,29 @@ export function mountReflectLitePanel() {
     title: 'プレビュー反映',
     subtitle: '反映元アプリの設定を、反映先アプリのプレビューへまとめて反映します。',
     accent: 'reflect',
-    badges: [],
-    hint: '<strong>差分を確認してから反映</strong> · 反映先はプレビューです。本番への公開は設定画面で行います。',
+    badges: [{ label: 'プレビューへ書き込み', tone: 'preview' }],
+    hint: '<strong>反映先のプレビューだけを変更します。</strong>本番への公開は kintone の設定画面で行います。差分を確認してから反映します。',
     wide: true
   });
   // 復元の終了通知などを、同じ操作の後続のステータス（プリセット適用など）で上書きしないよう、次の1回だけ前置する。
   let pendingNotice = '';
   const rawSetStatus = panel.setStatus;
+  // 詳細設定のポップアップを開いている間は、背面のステータスが見えないため、同じ内容をポップアップ内にも表示する。
+  const detailStatus = document.createElement('div');
+  detailStatus.className = 'kus-lp__note kus-rl-detail-status';
+  // 背面のライブ領域はモーダル中に inert になるため、こちらを読み上げ対象にする（常に描画し、文言だけ更新する）
+  detailStatus.setAttribute('role', 'status');
+  detailStatus.setAttribute('aria-live', 'polite');
+  detailStatus.setAttribute('aria-atomic', 'true');
+  detailStatus.hidden = true;
   panel.setStatus = (msg, tone) => {
     const notice = pendingNotice;
     pendingNotice = '';
-    rawSetStatus(notice && msg ? `${notice} ${msg}` : msg, tone);
+    const text = notice && msg ? `${notice} ${msg}` : msg;
+    rawSetStatus(text, tone);
+    detailStatus.textContent = text || '';
+    detailStatus.className = `${tone === 'warn' || tone === 'err' ? 'kus-lp__note--warn' : 'kus-lp__note'} kus-rl-detail-status`;
+    detailStatus.hidden = !text;
   };
   /** 同じ操作の中だけ有効な通知として控える（無関係な後の操作に前置しないよう、操作が終わったら捨てる）。 */
   function holdNoticeForNextStatus(notice: string) {
@@ -739,11 +802,11 @@ export function mountReflectLitePanel() {
   srcJsonNote.style.display = 'none';
 
   const currentSrcBtn = makeButton('現在のアプリを反映元', 'sub');
-  const copyBtn = makeButton('反映元 → 反映先', 'sub');
+  const copyBtn = makeButton('反映元のIDを反映先へコピー', 'sub');
   const currentBtn = makeButton('現在のアプリを反映先', 'sub');
-  const swapBtn = makeButton('入れ替え', 'sub');
+  const swapBtn = makeButton('反映元と反映先を入れ替え', 'sub');
 
-  const cardApp = makeCard({ title: 'アプリ', number: 1 });
+  const cardApp = makeCard({ title: '反映元と反映先のアプリ', number: 1 });
   cardApp.card.classList.add('kus-rl-card--route');
   const route = document.createElement('div');
   route.className = 'kus-rl-route';
@@ -782,7 +845,7 @@ export function mountReflectLitePanel() {
   routeArrow.textContent = '→';
   const targetEndpoint = document.createElement('section');
   targetEndpoint.className = 'kus-rl-endpoint kus-rl-endpoint--target';
-  targetEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">反映先 · プレビューへ反映</div><div class="kus-rl-endpoint__note">本番への公開は設定画面から行います</div>';
+  targetEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">反映先 · 設定を書き込む</div><div class="kus-rl-endpoint__note">書き込むのは反映先のプレビューだけです</div>';
   targetEndpoint.appendChild(labeledInput(tgtApp, 'アプリID'));
   targetEndpoint.appendChild(targetNote.el);
   const targetGuestDetails = makeDetails('ゲストスペースを指定', { open: !!tgtGuest.value });
@@ -805,7 +868,7 @@ export function mountReflectLitePanel() {
     sourceJsonAppSelect.hidden = sourceJsonBundles.length < 2;
     if (sourceBundleFromJson) {
       const appName = extractAppNameFromBundle(sourceBundleFromJson);
-      srcJsonNote.textContent = `反映元JSON読み込み済み${sourceBundleFileName ? `（${sourceBundleFileName}）` : ''}: App ${sourceBundleFromJson?.appId || '-'}${appName ? ` (${appName})` : ''}（反映元はこのJSONから取得し、アプリからの取得は行いません）`;
+      srcJsonNote.textContent = `設定JSONを読み込み済み${sourceBundleFileName ? `（${sourceBundleFileName}）` : ''}: アプリ #${sourceBundleFromJson?.appId || '-'}${appName ? ` (${appName})` : ''}。反映元はこのJSONから取得し、アプリからは取得しません。`;
       srcJsonNote.style.display = 'block';
       srcJsonClearBtn.style.display = '';
     } else {
@@ -825,7 +888,7 @@ export function mountReflectLitePanel() {
     refreshReviewCard();
   });
 
-  srcJsonFile.addEventListener('change', () => runLite('反映元JSONを読み込み中…', async () => {
+  srcJsonFile.addEventListener('change', () => runLite('反映元の設定JSONを読み込み中…', async () => {
     const file = srcJsonFile.files?.[0];
     if (!file) return;
     // 同じファイルを編集して選び直したときも change が発生するよう、選択状態は読み込み後に空へ戻す。
@@ -846,7 +909,7 @@ export function mountReflectLitePanel() {
     sourceBundleToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
     sourceBundleFileName = file.name;
     if (sourceBundleFromJson?.appId) srcApp.value = String(sourceBundleFromJson.appId);
-    panel.setStatus(`反映元JSONを読み込みました: App ${sourceBundleFromJson?.appId || '-'}`, 'ok');
+    panel.setStatus(`反映元の設定JSONを読み込みました（アプリ #${sourceBundleFromJson?.appId || '-'}）。`, 'ok');
     saveState();
     refreshSrcJsonNote();
     refreshSameConnBanner();
@@ -869,13 +932,13 @@ export function mountReflectLitePanel() {
     refreshSrcJsonNote();
     refreshSameConnBanner();
     refreshReviewCard();
-    panel.setStatus('反映元JSONをクリアしました。設定JSONを選んでください。', 'info');
+    panel.setStatus('読み込んだ設定JSONをクリアしました。設定JSONを選び直してください。', 'info');
   });
 
   const sameConnBanner = document.createElement('div');
   sameConnBanner.className = 'kus-lp__note--warn';
   sameConnBanner.style.display = 'none';
-  sameConnBanner.textContent = '⚠ 反映元と反映先が同一接続です（同じアプリID・ゲストID）。同一アプリのプレビューを上書きする状態です。';
+  sameConnBanner.textContent = '反映元と反映先が同じアプリです。';
   cardApp.body.appendChild(sameConnBanner);
 
   cardApp.body.appendChild(createAppSearchControl(panel, {
@@ -909,7 +972,7 @@ export function mountReflectLitePanel() {
     sameConnBanner.style.display = same ? 'block' : 'none';
     sameConnBanner.textContent = sourceEnvironment.value === 'preview'
       ? '同じプレビュー同士は反映できません。反映元の取得環境かアプリIDを変更してください。'
-      : '同じアプリの本番設定でプレビューを更新します。未公開の編集への影響を、次の画面で確認してください。';
+      : '同じアプリの本番の設定でプレビューを更新します。プレビューにある未公開の変更は上書きされる場合があります（次の画面で確認できます）。';
   }
 
   currentSrcBtn.addEventListener('click', () => {
@@ -918,7 +981,7 @@ export function mountReflectLitePanel() {
     saveState();
     refreshSameConnBanner();
     refreshReviewCard();
-    panel.setStatus('現在のアプリIDを反映元にセットしました', 'info');
+    panel.setStatus('現在のアプリを反映元にセットしました。', 'info');
   });
   copyBtn.addEventListener('click', () => {
     tgtApp.value = srcApp.value.trim();
@@ -926,7 +989,7 @@ export function mountReflectLitePanel() {
     saveState();
     refreshSameConnBanner();
     refreshReviewCard();
-    panel.setStatus('反映元IDを反映先へコピーしました', 'info');
+    panel.setStatus('反映元のIDを反映先へコピーしました。', 'info');
   });
   currentBtn.addEventListener('click', () => {
     tgtApp.value = DEFAULT_APP_ID || '';
@@ -934,7 +997,7 @@ export function mountReflectLitePanel() {
     saveState();
     refreshSameConnBanner();
     refreshReviewCard();
-    panel.setStatus('現在のアプリIDを反映先にセットしました', 'info');
+    panel.setStatus('現在のアプリを反映先にセットしました。', 'info');
   });
   swapBtn.addEventListener('click', () => {
     const sa = srcApp.value;
@@ -946,7 +1009,7 @@ export function mountReflectLitePanel() {
     saveState();
     refreshSameConnBanner();
     refreshReviewCard();
-    panel.setStatus('反映元と反映先を入れ替えました', 'info');
+    panel.setStatus('反映元と反映先を入れ替えました。', 'info');
   });
 
   [srcApp, srcGuest, tgtApp, tgtGuest].forEach((el) => {
@@ -989,7 +1052,8 @@ export function mountReflectLitePanel() {
   }
 
   // ---- セクション選択 ----
-  const cardScope = makeCard({ title: '反映する項目', number: 2, subtitle: '目的に近いセットを選び、必要な項目を調整できます。' });
+  const cardScope = makeCard({ title: '反映する項目', number: 2 });
+  cardScope.body.appendChild(makeNote('目的に近いセットを選び、必要な項目を調整できます。', 'help'));
   // 反映できる項目と表示名は反映エンジンの定義（一般設定を含む）から作る。
   const putSections = REFLECT_SECTION_KEYS.map((key) => ({ key, label: reflectSectionLabel(key) }));
   const initialSelected = new Set(
@@ -1049,7 +1113,7 @@ export function mountReflectLitePanel() {
   cardScope.body.appendChild(fieldSettingsNotice);
 
   // 一覧・グラフ・アクションに関係する設定（項目の選択より後に置く）
-  const preserve = makeCheck({ label: '反映先だけの一覧・グラフ・アクションを保持する', checked: memoryState.preserveTargetOnly !== false, help: '標準は保持。OFFにすると反映元にない設定を削除します。フィールドは常に保持します。' });
+  const preserve = makeCheck({ label: '反映先だけの一覧・グラフ・アクションを保持する', checked: memoryState.preserveTargetOnly !== false, help: '標準はON（保持）です。OFFにすると、反映元にない一覧・グラフ・アクションを削除します。' });
   const preserveBox = document.createElement('div');
   preserveBox.className = 'kus-rl-scope-option';
   const preserveTitle = document.createElement('div');
@@ -1059,7 +1123,6 @@ export function mountReflectLitePanel() {
   preserveHelp.className = 'kus-rl-scope-option__help';
   preserveHelp.setAttribute('aria-live', 'polite');
   preserveBox.append(preserveTitle, preserve.label, preserveHelp);
-  cardScope.body.appendChild(preserveBox);
 
   const scopeCountLabel = document.createElement('div');
   scopeCountLabel.className = 'kus-lp__small';
@@ -1067,7 +1130,10 @@ export function mountReflectLitePanel() {
   cardScope.body.appendChild(scopeCountLabel);
 
   // 項目ごとの反映方法（タッチ操作では title が見えないため、一覧でも読めるようにする）
-  const scopeHelp = makeDetails('各項目の反映方法');
+  const scopeHelpNote = document.createElement('div');
+  scopeHelpNote.className = 'kus-lp__note kus-lp__note--help';
+  const scopeHelpTitle = document.createElement('strong');
+  scopeHelpTitle.textContent = '各項目の反映方法';
   const scopeHelpList = document.createElement('dl');
   scopeHelpList.className = 'kus-rl-scope-help';
   putSections.forEach((d) => {
@@ -1087,8 +1153,8 @@ export function mountReflectLitePanel() {
     item.append(term, desc);
     scopeHelpList.appendChild(item);
   });
-  scopeHelp.body.appendChild(scopeHelpList);
-  cardScope.body.appendChild(scopeHelp.details);
+  scopeHelpNote.append(scopeHelpTitle, scopeHelpList);
+  cardScope.body.appendChild(scopeHelpNote);
 
   function collectSelectedScopes() {
     return chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value);
@@ -1100,15 +1166,16 @@ export function mountReflectLitePanel() {
     const keeps = preserve.checkbox.checked;
     const usesNamedSections = ['viewSettings', 'reportSettings', 'actionSettings'].some((key) => selected.includes(key));
     preserveHelp.classList.toggle('kus-rl-scope-option__help--warn', !keeps);
-    preserveHelp.textContent = (keeps
-      ? '反映先だけの一覧・グラフ・アクションは削除せず残します（標準）。フィールドは常に保持します。'
-      : '反映元にない一覧・グラフ・アクションを反映先から削除します。フィールドは常に保持します。')
-      + (usesNamedSections ? '' : ' 今の選択（一覧・グラフ・アクションなし）では使われません。');
+    preserveHelp.textContent = !usesNamedSections
+      ? '今の選択には一覧・グラフ・アクションがないため、この設定は使われません。フィールドは常に保持します。'
+      : keeps
+        ? '反映先だけの一覧・グラフ・アクションは削除せず残します（標準）。フィールドは常に保持します。'
+        : '反映元にない一覧・グラフ・アクションを反映先から削除します。フィールドは常に保持します。';
   }
 
   function refreshScopeCount() {
     const sel = collectSelectedScopes().length;
-    scopeCountLabel.textContent = `選択中: ${sel} / ${chips.length} セクション`;
+    scopeCountLabel.textContent = `選択中: ${sel} / ${chips.length} 項目`;
     refreshScopeNotices();
   }
 
@@ -1135,7 +1202,7 @@ export function mountReflectLitePanel() {
     btn.title = preset.hint;
     btn.addEventListener('click', () => {
       applyScopePreset(preset);
-      panel.setStatus(`プリセット適用: ${preset.label}（${collectSelectedScopes().length}件）`, 'info');
+      panel.setStatus(`「${preset.label}」を選びました（${collectSelectedScopes().length} 項目）。`, 'info');
     });
     presetRow.appendChild(btn);
   }
@@ -1176,43 +1243,36 @@ export function mountReflectLitePanel() {
   panel.body.insertBefore(cardScope.card, panel.status);
 
   // ---- オプション ----
-  const cardOpt = makeCard({ title: '実行オプション', number: 3, soft: true });
+  const cardOpt = makeCard({ title: '反映時の動作', soft: true });
   const sourceEnvironment = document.createElement('select');
   sourceEnvironment.className = 'kus-lp__select';
   sourceEnvironment.setAttribute('aria-label', '反映元の取得環境');
-  sourceEnvironment.innerHTML = '<option value="production">本番設定（運用中）を取得</option><option value="preview">プレビュー設定（未公開）を取得</option>';
+  sourceEnvironment.innerHTML = '<option value="production">本番の設定を取得</option><option value="preview">プレビューの設定（未公開）を取得</option>';
   sourceEnvironment.value = memoryState.sourcePreview ? 'preview' : 'production';
   sourceAppFields.insertBefore(sourceEnvironment, sourceGuestDetails.details);
-  const safetyNote = document.createElement('p'); safetyNote.className = 'kus-rl-quiet';
-  safetyNote.textContent = '反映前のバックアップを自動保存します。変更のない項目は送信せず、書き込みエラーが起きたら中断します。';
-  cardOpt.body.appendChild(safetyNote);
+  cardOpt.body.appendChild(makeNote('反映前の設定を自動でバックアップします。変更のない項目は書き込まず、エラーが起きたら以降の項目を実行せず中断します。', 'help'));
+  cardOpt.body.appendChild(preserveBox);
 
   // Lookup mapping
-  const lookupDetails = makeDetails('Lookup AppID マッピング（任意）');
+  const cardLookup = makeCard({ title: 'ルックアップの参照アプリID変換（任意）', soft: true });
   const lookupTa = makeTextarea({
     rows: 3,
     code: true,
-    placeholder: '旧AppID → 新AppID（1行に1組）\n例: 101 → 202',
+    placeholder: '旧アプリID → 新アプリID（1行に1組）\n例: 101 → 202',
     value: memoryState.lookupMapText || ''
   });
   lookupTa.setAttribute('aria-label', 'ルックアップの参照アプリID変換');
-  lookupDetails.body.appendChild(lookupTa);
+  cardLookup.body.appendChild(lookupTa);
   const lookupStatus = document.createElement('div');
   lookupStatus.className = 'kus-rl-lookup-status';
   lookupStatus.setAttribute('aria-live', 'polite');
-  lookupDetails.body.appendChild(lookupStatus);
-  const lookupHint = document.createElement('div');
-  lookupHint.className = 'kus-lp__small';
-  lookupHint.style.marginTop = '6px';
-  lookupHint.textContent = 'フィールドの参照アプリ（ルックアップ）を別 AppID に置換します。1行に「旧ID → 新ID」（→ / = / : / カンマ区切り）か、{"旧AppID":"新AppID"} のJSONで入力します。差分プレビューにも反映し、実行前に変換先 AppID の存在を確認します。';
-  lookupDetails.body.appendChild(lookupHint);
-  cardOpt.body.appendChild(lookupDetails.details);
+  cardLookup.body.appendChild(lookupStatus);
+  cardLookup.body.appendChild(makeNote('ルックアップの参照先アプリIDを置き換えて反映します（差分にも反映し、実行前に変換先アプリの存在を確認します）。1行に「旧ID → 新ID」（→ / = / : / カンマ区切り）か、{"旧アプリID":"新アプリID"} のJSONで入力します。', 'help'));
 
   function refreshLookupStatus() {
     const parsed = parseLookupMapText(lookupTa.value);
     lookupStatus.classList.toggle('kus-rl-lookup-status--err', !parsed.ok);
     lookupStatus.textContent = 'error' in parsed ? parsed.error : parsed.count ? `参照先変換 ${parsed.count} 件を適用します。` : '';
-    if (!parsed.ok) lookupDetails.details.open = true;
   }
   refreshLookupStatus();
 
@@ -1230,10 +1290,9 @@ export function mountReflectLitePanel() {
     refreshReviewCard();
   });
 
-  panel.body.insertBefore(cardOpt.card, panel.status);
 
   // ---- プリセット（接続情報＋スコープを保存・読み込み） ----
-  const cardPreset = makeCard({ title: 'プリセット（接続+スコープ）', soft: true });
+  const cardPreset = makeCard({ title: 'プリセット（接続先と反映項目）', soft: true });
   cardPreset.card.classList.add('kus-rl-card--preset');
   const presetSelect = document.createElement('select');
   presetSelect.className = 'kus-lp__select';
@@ -1260,11 +1319,7 @@ export function mountReflectLitePanel() {
   cardPreset.body.appendChild(presetNameRow);
   cardPreset.body.appendChild(makeRow([presetSelect, loadBtn, delBtn], { label: '保存済み' }));
   cardPreset.body.appendChild(makeRow([exportPresetsBtn, importPresetsBtn, importPresetsFile]));
-  const presetHint = document.createElement('div');
-  presetHint.className = 'kus-lp__small';
-  presetHint.textContent = 'プリセットはこのタブを閉じるまで保持されます（ブラウザに永続保存はしません）。次回も使う場合は「JSONで書き出し」で保存し、「JSONを読み込み」で復元してください。';
-  cardPreset.body.appendChild(presetHint);
-  panel.body.insertBefore(cardPreset.card, panel.status);
+  cardPreset.body.appendChild(makeNote('プリセットはこのタブを閉じると消えます。次回も使う場合は「JSONで書き出し」で保存し、「JSONを読み込み」で復元してください。', 'help'));
 
   function refreshPresetSelect() {
     // 再構築で選択が先頭へ戻らないよう、現在の選択を控えて戻す。
@@ -1287,7 +1342,7 @@ export function mountReflectLitePanel() {
     for (const p of presets) {
       const opt = document.createElement('option');
       opt.value = p.name;
-      opt.textContent = `${p.name} (src#${p.source.appId} → tgt#${p.target.appId})`;
+      opt.textContent = `${p.name}（反映元 #${p.source.appId} → 反映先 #${p.target.appId}）`;
       presetSelect.appendChild(opt);
     }
     if (keep && presets.some((p) => p.name === keep)) presetSelect.value = keep;
@@ -1304,7 +1359,7 @@ export function mountReflectLitePanel() {
   saveBtn.addEventListener('click', () => {
     const trimmed = presetName.value.trim();
     if (!trimmed) {
-      panel.setStatus('プリセット名を入力してください', 'warn');
+      panel.setStatus('プリセット名を入力してください。', 'warn');
       presetName.focus();
       return;
     }
@@ -1341,12 +1396,12 @@ export function mountReflectLitePanel() {
   exportPresetsBtn.addEventListener('click', () => {
     const payload = buildReflectPresetsExport(memoryState.presets);
     if (!payload.count) {
-      panel.setStatus('書き出せるプリセットがありません', 'warn');
+      panel.setStatus('書き出せるプリセットがありません。', 'warn');
       return;
     }
     const filename = buildExportFilename('プレビュー反映プリセット', 'json');
     downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
-    panel.setStatus(`プリセット ${payload.count} 件を ${filename} に書き出しました`, 'ok');
+    panel.setStatus(`プリセット ${payload.count} 件を ${filename} に書き出しました。`, 'ok');
   });
 
   importPresetsBtn.addEventListener('click', () => importPresetsFile.click());
@@ -1388,7 +1443,6 @@ export function mountReflectLitePanel() {
     lookupTa.value = preset.lookupMap || '';
     refreshLookupStatus();
     rolloutTa.value = preset.rolloutQueue || '';
-    if (rolloutTa.value.trim()) rolloutDetails.details.open = true;
     setSelectedScopes(preset.scopes || []);
     refreshSameConnBanner();
     saveState();
@@ -1412,15 +1466,13 @@ export function mountReflectLitePanel() {
     memoryState.presets = (memoryState.presets || []).filter((p) => p.name !== name);
     refreshPresetSelect();
     refreshPresetButtons();
-    panel.setStatus(`プリセット「${name}」を削除しました`, 'info');
+    panel.setStatus(`プリセット「${name}」を削除しました。`, 'info');
   });
 
   // ---- 続けて反映する反映先（同じ反映元・項目・設定で、ほかのアプリにも順番に反映する） ----
-  const rolloutDetails = makeDetails('続けて反映する反映先（複数アプリへ展開）', { open: !!(memoryState.rolloutQueueText || '').trim() });
-  rolloutDetails.details.classList.add('kus-rl-advanced', 'kus-rl-rollout');
-  const rolloutHelp = document.createElement('p');
-  rolloutHelp.className = 'kus-rl-quiet';
-  rolloutHelp.textContent = '同じ反映元・項目・設定で、ほかのアプリにも順番に反映します。反映先ごとに差分確認と最終確認を行います。数字だけのIDは通常スペースのアプリ、ゲストスペースのアプリはURLで指定します。';
+  const rolloutSetupCard = makeCard({ title: '続けて反映する反映先（複数アプリへ展開）', soft: true });
+  rolloutSetupCard.card.classList.add('kus-rl-rollout');
+  const rolloutHelp = makeNote('同じ反映元・項目・設定で、ほかのアプリにも順番に反映します（反映先ごとに差分確認と最終確認を行います）。数字だけのIDは通常スペースのアプリを指すため、ゲストスペースのアプリはURLで指定してください。', 'help');
   const rolloutTa = makeTextarea({ rows: 4, code: true, placeholder: '1行に1件（改行・カンマ区切りも可）\n例: 203\nhttps://example.cybozu.com/k/guest/5/204/', value: memoryState.rolloutQueueText || '' });
   rolloutTa.classList.add('kus-rl-rollout__input');
   rolloutTa.setAttribute('aria-label', '続けて反映する反映先');
@@ -1432,7 +1484,7 @@ export function mountReflectLitePanel() {
   rolloutLookupSetupNote.className = 'kus-rl-next kus-rl-next--warn';
   rolloutLookupSetupNote.dataset.rolloutLookupNote = 'setup';
   rolloutLookupSetupNote.hidden = true;
-  rolloutDetails.body.append(rolloutHelp, rolloutTa, rolloutStatus, rolloutLookupSetupNote);
+  rolloutSetupCard.body.append(rolloutHelp, rolloutTa, rolloutStatus, rolloutLookupSetupNote);
   rolloutTa.addEventListener('input', () => {
     saveState();
     refreshReviewCard();
@@ -1490,7 +1542,7 @@ export function mountReflectLitePanel() {
     const queue = currentRollout();
     rolloutStatus.classList.toggle('kus-rl-rollout__status--err', !queue.ok);
     if (!text) rolloutStatus.textContent = '';
-    else if ('error' in queue) { rolloutStatus.textContent = queue.error; rolloutDetails.details.open = true; }
+    else if ('error' in queue) rolloutStatus.textContent = queue.error;
     else if (!queue.targets.length) rolloutStatus.textContent = '続けて反映する反映先はありません（現在の反映先は除いています）。';
     else {
       const shown = queue.targets.slice(0, 10).map(formatRolloutTarget).join('、');
@@ -1515,11 +1567,13 @@ export function mountReflectLitePanel() {
       const head = document.createElement('strong');
       head.textContent = `次の反映先: ${formatRolloutTarget(next)}（${rest ? `残り ${rest} 件` : '最後の反映先'}）`;
       const body = document.createElement('span');
-      body.textContent = '同じ反映元・項目・設定で差分を取得します。反映先ごとに差分確認と最終確認を行うため、ここでは書き込みません。';
+      body.textContent = '同じ反映元・項目・設定で差分を取得するだけで、まだ書き込みません。反映先ごとに差分確認と最終確認を行います。';
       rolloutNote.append(head, body);
     }
-    rolloutWarn.hidden = !(last && (last.ng > 0 || last.pending > 0));
-    rolloutWarn.textContent = '直前の反映先に失敗・未実行の項目があります。結果を確認してから進んでください。';
+    rolloutWarn.hidden = !(last && (last.ng > 0 || last.stopped > 0 || last.pending > 0));
+    rolloutWarn.textContent = last?.cancelled
+      ? '直前の反映先は中止したため、一部の項目だけ反映されている可能性があります。結果を確認してから進んでください。'
+      : '直前の反映先に失敗・未実行の項目があります。結果を確認してから進んでください。';
     rolloutError.hidden = queue.ok;
     rolloutError.textContent = 'error' in queue ? `続けて反映する反映先を読み取れません。${queue.error}` : '';
     rolloutNextRow.hidden = !next && queue.ok;
@@ -1557,7 +1611,7 @@ export function mountReflectLitePanel() {
   }
 
   // ---- 実行前サマリ / 差分プレビュー ----
-  const previewBtn = makeButton('差分プレビューを更新', 'primary');
+  const previewBtn = makeButton('差分を再取得', 'primary');
   const changedOnlyBtn = makeButton('差分ありだけ選択', 'sub');
 
   const reviewCard = makeCard({ title: '反映予定を確認', soft: true });
@@ -1569,11 +1623,12 @@ export function mountReflectLitePanel() {
   reviewCard.body.appendChild(reviewBody);
   panel.body.insertBefore(reviewCard.card, panel.status);
 
-  const previewCard = makeCard({ title: '差分プレビュー結果' });
+  const previewCard = makeCard({ title: '項目ごとの差分' });
   previewCard.card.style.display = 'none';
+  previewCard.body.appendChild(makeNote('項目名を押すと、下の詳細へ移動します。', 'help'));
   const previewTools = document.createElement('div');
   previewTools.className = 'kus-rl-preview-tools';
-  const previewSearch = makeInput({ placeholder: 'セクション名や詳細で検索', width: 'wide' });
+  const previewSearch = makeInput({ placeholder: '項目名や内容で検索', width: 'wide' });
   previewSearch.setAttribute('aria-label', '差分を検索');
   previewSearch.type = 'search';
   const previewFilter = document.createElement('select');
@@ -1844,7 +1899,7 @@ export function mountReflectLitePanel() {
     const token = confirmationToken();
     if (confirmedToken && confirmedToken !== token) clearConfirmation();
     runBtn.disabled = busy || !confirmationReady();
-    setButtonText(runBtn, `確認した ${plan.effectiveScopes.length} 項目をプレビューへ反映`);
+    setButtonText(runBtn, `確認した ${plan.effectiveScopes.length} 項目を反映先プレビューへ反映`);
     let message = invalid || lookupMapError(lookupState) || (!scopes.length ? '反映する項目を選んでください。' : '変更前と変更後を確認し、最終確認に進んでください。');
     if (!preview) message = '対象を指定して差分を取得してください。';
     else if (!fresh) message = '条件が変わりました。差分を再取得してください。';
@@ -1859,7 +1914,7 @@ export function mountReflectLitePanel() {
     const info = document.createElement('div'); info.className = 'kus-rl-next ' + (blockers.length ? 'kus-rl-next--warn' : postApply ? `kus-rl-next--${postApply.tone}` : 'kus-rl-next--info');
     info.textContent = message; reviewBody.appendChild(info);
     const summary = document.createElement('p'); summary.className = 'kus-rl-quiet';
-    summary.textContent = fresh ? `反映予定 ${plan.effectiveScopes.length} 項目 / 変更なし ${plan.sameScopes.length} 項目 / 確認が必要 ${plan.errorScopes.length} 項目 · ${formatPreviewStamp(preview!.at)}` : 'この段階では書き込みを行いません。';
+    summary.textContent = fresh ? `反映予定 ${plan.effectiveScopes.length} 項目 / 変更なし ${plan.sameScopes.length} 項目 / 取得失敗 ${plan.errorScopes.length} 項目 · ${formatPreviewStamp(preview!.at)}` : 'この段階では書き込みません。';
     reviewBody.appendChild(summary);
     if (blockers.length) {
       const list = document.createElement('ul'); list.className = 'kus-rl-issues';
@@ -1906,45 +1961,45 @@ export function mountReflectLitePanel() {
   previewKeepShownBtn.addEventListener('click', () => {
     const previewResult = memoryState.lastPreview?.result || null;
     if (!previewResult) {
-      panel.setStatus('先に差分プレビューを取得してください', 'warn');
+      panel.setStatus('先に差分を取得してください。', 'warn');
       return;
     }
     const scopeKeys = uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value));
     setSelectedScopes(scopeKeys);
-    panel.setStatus(`表示中の ${scopeKeys.length} セクションだけを選択しました`, scopeKeys.length ? 'ok' : 'info');
+    panel.setStatus(`表示中の ${scopeKeys.length} 項目だけを選択しました。`, scopeKeys.length ? 'ok' : 'info');
   });
 
   previewAddShownBtn.addEventListener('click', () => {
     const previewResult = memoryState.lastPreview?.result || null;
     if (!previewResult) {
-      panel.setStatus('先に差分プレビューを取得してください', 'warn');
+      panel.setStatus('先に差分を取得してください。', 'warn');
       return;
     }
     const scopeKeys = uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value));
     setSelectedScopes([...new Set([...collectSelectedScopes(), ...scopeKeys])]);
-    panel.setStatus(`表示中の ${scopeKeys.length} セクションを追加しました`, scopeKeys.length ? 'ok' : 'info');
+    panel.setStatus(`表示中の ${scopeKeys.length} 項目を選択に追加しました。`, scopeKeys.length ? 'ok' : 'info');
   });
 
   previewRemoveShownBtn.addEventListener('click', () => {
     const previewResult = memoryState.lastPreview?.result || null;
     if (!previewResult) {
-      panel.setStatus('先に差分プレビューを取得してください', 'warn');
+      panel.setStatus('先に差分を取得してください。', 'warn');
       return;
     }
     const scopeKeys = new Set(uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value)));
     setSelectedScopes(collectSelectedScopes().filter((key) => !scopeKeys.has(key)));
-    panel.setStatus(`表示中の ${scopeKeys.size} セクションを選択から外しました`, scopeKeys.size ? 'ok' : 'info');
+    panel.setStatus(`表示中の ${scopeKeys.size} 項目を選択から外しました。`, scopeKeys.size ? 'ok' : 'info');
   });
 
   previewRiskyBtn.addEventListener('click', () => {
     const previewResult = memoryState.lastPreview?.result || null;
     if (!previewResult) {
-      panel.setStatus('先に差分プレビューを取得してください', 'warn');
+      panel.setStatus('先に差分を取得してください。', 'warn');
       return;
     }
     const riskyScopes = uniqueSectionKeys(previewResult.entries.filter((entry) => RISKY_SCOPE_KEYS.has(entry.sectionKey)));
     setSelectedScopes(riskyScopes);
-    panel.setStatus(`高リスク ${riskyScopes.length} セクションだけを選択しました`, riskyScopes.length ? 'warn' : 'info');
+    panel.setStatus(`高リスクの ${riskyScopes.length} 項目だけを選択しました。`, riskyScopes.length ? 'warn' : 'info');
   });
 
   function startPreview(okMessage?: string) {
@@ -1953,16 +2008,19 @@ export function mountReflectLitePanel() {
     const lookupError = lookupMapError(lookupState);
     const lookupMap = lookupMapValue(lookupState);
     if (!scopes.length) {
-      panel.setStatus('対象セクションを選択してください', 'warn');
+      panel.setStatus('反映する項目を選んでください。', 'warn');
       return;
     }
     if (lookupError) {
       panel.setStatus(lookupError, 'warn');
       return;
     }
-    return runLite('差分プレビューを取得中…', async () => {
-      await runPreview(scopes, lookupMap);
-    }, okMessage || `差分プレビュー完了（${scopes.length}セクションを比較）`);
+    return runLite('差分を取得中…', async () => {
+      const result = await runPreview(scopes, lookupMap);
+      // 取得できなかった項目があるときは、成功の緑ではなく警告色で、何件かを示す（状態表示は警告を成功メッセージで上書きしない）。
+      const failed = result.entries.filter((entry) => scopes.includes(entry.sectionKey) && (entry.status === 'src-missing' || entry.status === 'tgt-missing')).length;
+      if (failed) panel.setStatus(`差分を取得しました（${scopes.length} 項目中 ${failed} 項目は設定を取得できませんでした）。取得し直すか、その項目を対象から外してください。まだ書き込んでいません。`, 'warn');
+    }, okMessage || `差分を取得しました（${scopes.length} 項目を比較。まだ書き込んでいません）。`);
   }
   previewBtn.addEventListener('click', () => { startPreview(); });
 
@@ -1981,26 +2039,26 @@ export function mountReflectLitePanel() {
   changedOnlyBtn.addEventListener('click', () => {
     const { preview, fresh } = getPreviewState();
     if (!fresh || !preview?.result) {
-      panel.setStatus('先に最新の差分プレビューを取得してください', 'warn');
+      panel.setStatus('先に最新の差分を取得してください。', 'warn');
       return;
     }
     const changedScopes = preview.result.entries
       .filter((entry) => entry.status === 'change')
       .map((entry) => entry.sectionKey);
     setSelectedScopes(changedScopes);
-    panel.setStatus(`差分あり ${changedScopes.length} セクションだけを選択しました`, changedScopes.length ? 'ok' : 'info');
+    panel.setStatus(`差分あり ${changedScopes.length} 項目だけを選択しました。`, changedScopes.length ? 'ok' : 'info');
   });
 
   // ---- 最終確認：確認済みの条件だけを実行可能にする ----
   const confirmBtn = makeButton('最終確認に進む', 'primary');
-  const confirmCard = makeCard({ title: 'この内容をプレビューへ反映します' });
+  const confirmCard = makeCard({ title: 'この内容を反映先のプレビューへ反映します' });
   const confirmBody = document.createElement('div'); confirmCard.body.appendChild(confirmBody);
   const acknowledged = makeCheck({ label: '反映先と変更・削除の内容を確認しました', checked: false });
   acknowledged.checkbox.setAttribute('aria-label', '反映内容の確認');
   const targetCheck = makeInput({ placeholder: '反映先アプリIDを入力', width: 'wide' });
   targetCheck.setAttribute('aria-label', '確認用の反映先アプリID'); targetCheck.setAttribute('data-lp-no-submit', '');
   targetCheck.inputMode = 'numeric'; targetCheck.autocomplete = 'off';
-  const targetCheckRow = makeRow([targetCheck], { label: '反映先IDの再確認' });
+  const targetCheckRow = makeRow([targetCheck], { label: '反映先アプリIDの再確認' });
   const confirmStatus = document.createElement('p'); confirmStatus.className = 'kus-rl-quiet'; confirmStatus.setAttribute('aria-live', 'polite');
   confirmCard.body.append(acknowledged.label, targetCheckRow, confirmStatus);
   let confirmedToken = '';
@@ -2010,7 +2068,7 @@ export function mountReflectLitePanel() {
   }
   function clearConfirmation() {
     confirmedToken = ''; acknowledged.checkbox.checked = false; targetCheck.value = '';
-    confirmStatus.textContent = '反映先と変更内容を確認してチェックを入れてください。';
+    confirmStatus.textContent = '書き込み先と変更内容を確認して、チェックを入れてください。';
   }
   function highImpactReasons() {
     const { preview, scopes } = getPreviewState();
@@ -2020,7 +2078,7 @@ export function mountReflectLitePanel() {
     if (removals) reasons.push(`削除・置換される設定が ${removals} 件あります`);
     if (entries.some(entry => RISKY_SCOPE_KEYS.has(entry.sectionKey))) reasons.push('権限・通知・プロセス管理の変更を含みます');
     if (preview?.result.targetPending?.state === 'pending') reasons.push(TARGET_PENDING_REASON);
-    if (!sourceBundleFromJson && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim()) reasons.push('同じアプリの本番設定でプレビューを更新します');
+    if (!sourceBundleFromJson && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim()) reasons.push('同じアプリの本番の設定でプレビューを更新します');
     return reasons;
   }
   function confirmationReady() {
@@ -2034,27 +2092,21 @@ export function mountReflectLitePanel() {
     clearConfirmation(); confirmedToken = confirmationToken();
     const state = getPreviewState(); if (!confirmedToken || !state.preview) return;
     confirmBody.innerHTML = '';
+    // 最終確認は「書き込み先（反映先）→ 何が変わるか（件数）→ 削除があるか → 取り消し方」の順に示す。
     renderReflectRoute(confirmBody, state.preview.identities, sourceMode === 'json' ? '設定JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー' : '本番', restoreRouteOptions(state.preview.identities));
-    const entries = state.preview.result.entries.filter(entry => state.scopes.includes(entry.sectionKey) && entry.status === 'change');
-    const summary = document.createElement('p'); summary.textContent = `反映する項目（${entries.length}）：${entries.map(entry => entry.label).join('、')}`; confirmBody.appendChild(summary);
     if (restoreMode) appendRestoreNotice(confirmBody);
-    appendTargetPendingNotice(confirmBody, state.preview.result.targetPending);
-    const reasons = highImpactReasons(); targetCheckRow.hidden = !reasons.length;
-    if (reasons.length) { const note = document.createElement('p'); note.className = 'kus-rl-next kus-rl-next--warn'; note.textContent = reasons.join('。') + '。反映先IDを入力して確認してください。'; confirmBody.appendChild(note); }
-    const uploadLabels = collectUploadLabels(entries);
-    if (uploadLabels.length) {
-      const box = document.createElement('div'); box.className = 'kus-rl-uploads'; box.dataset.reflectUploads = 'true';
-      const title = document.createElement('strong'); title.textContent = `反映先へアップロードするファイル（${uploadLabels.length} 件）`;
-      const list = document.createElement('ul'); for (const label of uploadLabels) { const item = document.createElement('li'); item.textContent = label; list.appendChild(item); }
-      box.append(title, list); confirmBody.appendChild(box);
-    }
+    const entries = state.preview.result.entries.filter(entry => state.scopes.includes(entry.sectionKey) && entry.status === 'change');
+    const changeTotal = entries.reduce((sum, entry) => sum + entry.changeCount, 0);
+    const removalTotal = entries.reduce((sum, entry) => sum + entry.removalCount, 0);
+    const summary = document.createElement('p'); summary.dataset.confirmSummary = 'changes';
+    summary.textContent = `${entries.length} 項目を変更します：${entries.map(entry => entry.label).join('、')}（設定の変更 ${changeTotal} 件${removalTotal ? `、うち削除・置換 ${removalTotal} 件` : ''}）`; confirmBody.appendChild(summary);
     // 削除される設定は、利用者が読める要約（項目名＋内容）で示す。削除と、一覧の表示フィールドの削除のように「変更」の中で削除する内容を拾う。
     // 要約が無い、または削除を含む内容を要約から拾えない項目は、従来の表示（設定値の抜粋）で補う（削除を見落とさないため）。
     const removals: string[] = [];
     for (const entry of entries) {
       const removedItems = (entry.items || []).filter(item => item.kind === '削除' || (item.kind === '変更' && item.details.some(detail => detail.includes('削除'))));
       if (removedItems.length || !entry.removalCount) removals.push(...removedItems.map(item => describeRemovedItem(entry.label, item)));
-      else removals.push(...entry.changes.filter(change => change.kind === '削除').map(change => `${entry.label} / ${change.path}：${change.before.slice(0, 180)}${change.before.length > 180 ? '…' : ''}`));
+      else removals.push(...entry.changes.filter(change => change.kind === '削除').map(change => describeRemovedChange(entry.label, change)));
     }
     if (removals.length) {
       const heading = document.createElement('p'); heading.className = 'kus-rl-confirm-heading'; heading.textContent = `削除・置換される設定（${removals.length} 件）`; confirmBody.appendChild(heading);
@@ -2062,9 +2114,25 @@ export function mountReflectLitePanel() {
       for (const text of removals.slice(0, 30)) { const item = document.createElement('li'); item.textContent = text; list.appendChild(item); }
       if (removals.length > 30) { const item = document.createElement('li'); item.textContent = `ほか ${removals.length - 30} 件。下の各項目の変更の要約・設定値の内訳、または反映計画JSONで全件を確認してください。`; list.appendChild(item); }
       confirmBody.appendChild(list);
+    } else {
+      const none = document.createElement('p'); none.className = 'kus-rl-quiet'; none.dataset.reflectRemovals = removalTotal ? 'unlisted' : 'none';
+      none.textContent = removalTotal ? `削除・置換される設定が ${removalTotal} 件あります。下の各項目の設定値の内訳で確認してください。` : 'この反映で削除・置換される設定はありません。';
+      confirmBody.appendChild(none);
     }
+    const undo = document.createElement('p'); undo.className = 'kus-rl-quiet'; undo.dataset.confirmUndo = state.preview.result.targetPending?.state || 'unknown';
+    undo.textContent = describeConfirmUndo(state.preview.result.targetPending); confirmBody.appendChild(undo);
     const policy = document.createElement('p'); policy.className = 'kus-rl-quiet';
-    policy.textContent = '反映前の設定JSONを自動保存します。実行直前に設定を再取得し、確認後の変更があれば中止します。途中エラーでは中断します。複数項目の一括取消はできません。本番公開はアプリ設定画面で行います。'; confirmBody.appendChild(policy);
+    policy.textContent = '実行直前に設定を再取得し、確認後に別の変更があれば中止します。途中でエラーが起きたら、以降の項目を実行せず中断します。'; confirmBody.appendChild(policy);
+    appendTargetPendingNotice(confirmBody, state.preview.result.targetPending);
+    const reasons = highImpactReasons(); targetCheckRow.hidden = !reasons.length;
+    if (reasons.length) { const note = document.createElement('p'); note.className = 'kus-rl-next kus-rl-next--warn'; note.textContent = reasons.join('。') + '。確認のため、反映先アプリIDを入力してください。'; confirmBody.appendChild(note); }
+    const uploadLabels = collectUploadLabels(entries);
+    if (uploadLabels.length) {
+      const box = document.createElement('div'); box.className = 'kus-rl-uploads'; box.dataset.reflectUploads = 'true';
+      const title = document.createElement('strong'); title.textContent = `反映先へアップロードするファイル（${uploadLabels.length} 件）`;
+      const list = document.createElement('ul'); for (const label of uploadLabels) { const item = document.createElement('li'); item.textContent = label; list.appendChild(item); }
+      box.append(title, list); confirmBody.appendChild(box);
+    }
     // 反映する項目ごとに、変更の要約（削除・変更・追加・保持）と設定値の内訳を示す。
     for (const entry of entries) {
       const block = document.createElement('section'); block.className = 'kus-rl-confirm-entry'; block.dataset.reflectConfirmEntry = entry.sectionKey;
@@ -2073,11 +2141,13 @@ export function mountReflectLitePanel() {
       confirmBody.appendChild(block);
     }
     showWorkflowStage('confirm'); refreshReviewCard();
+    // 差分取得の完了メッセージ（「まだ書き込んでいません」）をこの段階に持ち越さない。
+    panel.setStatus('反映先と変更内容を確認してください。まだ書き込んでいません。', 'info');
   }
   confirmBtn.addEventListener('click', openConfirmation);
   for (const control of [acknowledged.checkbox, targetCheck]) control.addEventListener('input', () => {
     runBtn.disabled = busy || !confirmationReady();
-    confirmStatus.textContent = confirmationReady() ? '確認が完了しました。下の反映ボタンから実行できます。' : '確認チェックと、表示されている場合は反映先IDの入力が必要です。';
+    confirmStatus.textContent = confirmationReady() ? '確認できました。下の反映ボタンで実行してください。' : '確認のチェックと、入力欄が表示されている場合は反映先アプリIDの入力が必要です。';
   });
   const exportPlanBtn = makeButton('反映計画JSONを保存', 'sub'); reviewCard.actions.appendChild(exportPlanBtn);
   exportPlanBtn.addEventListener('click', () => {
@@ -2090,8 +2160,8 @@ export function mountReflectLitePanel() {
   });
   // 承認依頼や作業記録に貼れるよう、変更の要約を中心にした Markdown でも出力する（設定値の生JSONは含めない）。
   const exportPlanMdBtn = makeButton('計画をMarkdownで保存', 'sub');
-  exportPlanMdBtn.title = '選択中の項目の計画（経路・変更の要約・未公開の変更）をMarkdownで保存します';
-  const copyPlanMdBtn = makeButton('Markdownをコピー', 'sub');
+  exportPlanMdBtn.title = '選択中の項目の計画（反映元と反映先・変更の要約・未公開の変更）をMarkdownで保存します';
+  const copyPlanMdBtn = makeButton('計画のMarkdownをコピー', 'sub');
   copyPlanMdBtn.title = '選択中の項目の計画をMarkdownとしてクリップボードへコピーします';
   reviewCard.actions.append(exportPlanMdBtn, copyPlanMdBtn);
   function buildPlanMarkdown() {
@@ -2125,7 +2195,7 @@ export function mountReflectLitePanel() {
   copyPlanMdBtn.addEventListener('click', () => { void copyMarkdown(buildPlanMarkdown()?.text, '反映計画'); });
 
   // ---- 実行 ----
-  const runBtn = makeButton('プレビュー反映を実行', 'run');
+  const runBtn = makeButton('反映先プレビューへ反映', 'run');
   runBtn.classList.add('kus-lp__btn--danger');
   runBtn.classList.remove('kus-lp__btn--run');
   runBtn.style.cssText = '';
@@ -2138,7 +2208,7 @@ export function mountReflectLitePanel() {
   // 反映ログ表示
   const logCard = makeCard({ title: '実行ログ', soft: true });
   const logPre = document.createElement('pre');
-  logPre.style.cssText = 'margin:0;padding:8px 10px;font:11.5px/1.5 ui-monospace,monospace;background:#0f172a;color:#e2e8f0;border-radius:8px;max-height:240px;overflow:auto;white-space:pre-wrap;display:none';
+  logPre.style.cssText = 'margin:0;padding:8px 10px;font:12.5px/1.6 ui-monospace,monospace;background:#0f172a;color:#e2e8f0;border-radius:8px;max-height:240px;overflow:auto;white-space:pre-wrap;display:none';
   logCard.body.appendChild(logPre);
   logCard.card.style.display = 'none';
   panel.body.insertBefore(logCard.card, panel.status);
@@ -2170,7 +2240,7 @@ export function mountReflectLitePanel() {
   const retryFailedBtn = makeButton('失敗・未実行だけ選択', 'sub');
   retryFailedBtn.title = '失敗または中断で未実行のセクションだけを反映対象に選び直します';
   const openTargetBtn = makeButton('反映先の設定画面を開く', 'sub');
-  openTargetBtn.title = '反映先アプリの設定画面を新しいタブで開きます（運用環境への反映はそこから実行できます）';
+  openTargetBtn.title = '反映先アプリの設定画面を新しいタブで開きます（本番への公開はそこから行えます）';
   const restoreBtn = makeButton('バックアップから戻す（差分を確認）', 'sub');
   restoreBtn.title = '反映前に自動保存したバックアップを反映元にして、反映先との差分を確認します（この操作では書き込みません）';
   restoreBtn.dataset.reflectRestore = 'backup';
@@ -2184,7 +2254,7 @@ export function mountReflectLitePanel() {
   lastResultActions.appendChild(exportResultBtn);
   const exportResultMdBtn = makeButton('記録をMarkdownで保存', 'sub');
   exportResultMdBtn.title = '実行した項目の計画と結果（成功・失敗）をMarkdownの反映記録として保存します';
-  const copyResultMdBtn = makeButton('Markdownをコピー', 'sub');
+  const copyResultMdBtn = makeButton('記録のMarkdownをコピー', 'sub');
   copyResultMdBtn.title = '反映記録をMarkdownとしてクリップボードへコピーします';
   lastResultActions.append(exportResultMdBtn, copyResultMdBtn);
   lastResultActions.appendChild(openTargetBtn);
@@ -2349,7 +2419,7 @@ export function mountReflectLitePanel() {
     if (!retryScopes.length) return;
     setSelectedScopes(retryScopes);
     showWorkflowStage('setup');
-    panel.setStatus(`失敗・未実行の ${retryScopes.length} セクションを選択しました。差分プレビューで確認してから再実行してください。`, 'info');
+    panel.setStatus(`失敗・未実行の ${retryScopes.length} 項目を選択しました。差分を取得して確認してから再実行してください。`, 'info');
     scrollWithinCanvas(cardScope.card);
   });
 
@@ -2359,7 +2429,7 @@ export function mountReflectLitePanel() {
     const base = last.guestId ? `/k/guest/${encodeURIComponent(last.guestId)}` : '/k';
     const url = `${window.location.origin}${base}/admin/app/flow?app=${encodeURIComponent(last.appId)}`;
     window.open(url, '_blank', 'noopener');
-    panel.setStatus(`反映先アプリ #${last.appId} の設定画面を開きました`, 'info');
+    panel.setStatus(`反映先アプリ #${last.appId} の設定画面を開きました。`, 'info');
   });
 
   exportResultBtn.addEventListener('click', () => {
@@ -2368,7 +2438,7 @@ export function mountReflectLitePanel() {
     const payload = {
       schemaVersion: 1,
       executedAt: new Date(last.at).toISOString(),
-      summary: { ok: last.ok, ng: last.ng, pending: last.pending },
+      summary: { ok: last.ok, ng: last.ng, ...(last.stopped ? { stopped: last.stopped } : {}), pending: last.pending, ...(last.cancelled ? { cancelled: true } : {}) },
       ...last.report
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
@@ -2383,7 +2453,7 @@ export function mountReflectLitePanel() {
     const last = memoryState.lastResult;
     if (!last?.planned) return null;
     const { identities, entries } = last.planned;
-    const text = buildReflectReportMarkdown({
+    const built = buildReflectReportMarkdown({
       generatedAt: new Date().toISOString(),
       source: identities.source,
       target: identities.target,
@@ -2394,6 +2464,10 @@ export function mountReflectLitePanel() {
       targetPending: last.report.targetPending,
       outcome: { executedAt: new Date(last.at).toISOString(), sections: normalizeApplySections(last.report.sections) }
     });
+    // 中止した反映は、記録の冒頭に分かるように残す（未実行の項目は「未実行」、途中で止まった項目は「失敗」の詳細に出る）。
+    const text = last.cancelled
+      ? built.replace('\n- 反映元:', `\n- 実行状況: ${RUN_CANCELLED_MESSAGE}（途中で止まった項目は書き込み済みの分が反映先に残っています）\n- 反映元:`)
+      : built;
     return { text, appLabel: buildAppFilenameLabel(last.appId, identities.target.name) };
   }
   exportResultMdBtn.addEventListener('click', () => {
@@ -2412,18 +2486,19 @@ export function mountReflectLitePanel() {
       return;
     }
     const stamp = formatReflectDateTime(last.at);
-    const hasIssue = last.ng > 0 || last.pending > 0;
+    const hasIssue = last.ng > 0 || last.stopped > 0 || last.pending > 0;
     const tone = hasIssue ? 'color:#9a3412' : 'color:#065f46';
-    const failedSummary = last.failedLabels.length
-      ? `<div>失敗: ${escapeHtml(last.failedLabels.slice(0, 5).join(' / '))}${last.failedLabels.length > 5 ? ` ほか ${last.failedLabels.length - 5} 件` : ''}</div>`
+    const labelSummary = (title: string, labels: string[]) => labels.length
+      ? `<div>${title}: ${escapeHtml(labels.slice(0, 5).join(' / '))}${labels.length > 5 ? ` ほか ${labels.length - 5} 件` : ''}</div>`
       : '';
-    lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${hasIssue ? '⚠ 一部エラー' : '✓ 全成功'}</div>`
-      + `<div>反映先 #${escapeHtml(last.appId || '-')} / 成功 ${last.ok} / 失敗 ${last.ng}${last.pending ? ` / 未実行 ${last.pending}` : ''}</div>`
+    const failedSummary = labelSummary('失敗', last.failedLabels) + labelSummary('途中で停止', last.stoppedLabels);
+    lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.cancelled ? '⚠ 中止しました。書き込み済みの分は反映先に残っています' : hasIssue ? '⚠ 一部の項目を反映できませんでした' : `✓ ${last.ok} 項目を反映しました`}</div>`
+      + `<div>反映先 #${escapeHtml(last.appId || '-')} / 成功 ${last.ok} / 失敗 ${last.ng}${last.stopped ? ` / 途中で停止 ${last.stopped}` : ''}${last.pending ? ` / 未実行 ${last.pending}` : ''}</div>`
       + failedSummary
       + `<div>${stamp}</div>`
       + (hasIssue
-        ? '<div style="margin-top:4px">「失敗・未実行だけ選択」で対象を絞って再実行できます。</div>'
-        : '<div style="margin-top:4px">反映先はプレビューです。運用環境への反映（デプロイ）は反映先の設定画面から実行してください。</div>');
+        ? `<div style="margin-top:4px">${last.cancelled ? '差分を取得し直して現在の状態を確認してから、' : ''}「失敗・未実行だけ選択」で対象を絞って再実行してください。</div>`
+        : '<div style="margin-top:4px">変わったのは反映先のプレビューだけです。本番へ公開するには、反映先の設定画面で公開してください。</div>');
     renderApplySectionResults(lastResultSections, last.report.sections);
     // 反映前に反映先プレビューへ未公開の変更があったかで、取り消しの案内を出し分ける。
     const guidance = describeUndoGuidance(last.report.targetPending);
@@ -2449,7 +2524,7 @@ export function mountReflectLitePanel() {
     const lookupError = lookupMapError(lookupState);
     const lookupMap = lookupMapValue(lookupState);
     if (!scopes.length) {
-      panel.setStatus('反映するセクションを選択してください', 'warn');
+      panel.setStatus('反映する項目を選んでください。', 'warn');
       return;
     }
     if (lookupError) {
@@ -2458,7 +2533,7 @@ export function mountReflectLitePanel() {
     }
     saveState();
 
-    const outcome = await runLite('プレビュー反映 実行中…', async () => {
+    const outcome = await runLite('反映先プレビューへ書き込み中…', async () => {
       let previewState = getPreviewState(scopes, lookupState);
       let previewResult = previewState.fresh ? previewState.preview?.result || null : null;
       if (!previewResult) {
@@ -2469,9 +2544,9 @@ export function mountReflectLitePanel() {
 
       if (!plan.effectiveScopes.length) {
         if (!previewResult.changedSections) {
-          throw new Error('差分プレビューでは変更対象がありません。反映は実行しません。');
+          throw new Error('変更が必要な項目がないため、反映は実行しません。');
         }
-        throw new Error(`現在の実行オプションでは実行対象が 0 件です。${buildSkipSummary(plan)}`);
+        throw new Error(`実行する項目がありません（${buildSkipSummary(plan)}）。`);
       }
 
       if (selectionIssues(previewResult, scopes).length) throw new Error('確認できない項目が含まれています。差分確認へ戻ってください。');
@@ -2540,13 +2615,16 @@ export function mountReflectLitePanel() {
       memoryState.lastResult = {
         ok: counts.ok,
         ng: counts.ng,
+        stopped: counts.stopped,
         pending: counts.pending,
         at: Date.now(),
         appId: applyOptions.targetAppId,
         guestId: applyOptions.targetGuestId,
         retryScopes: collectRetrySectionKeys(applyOutcome.sections),
-        failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng').map((s) => s.label),
+        failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng' && !s.stopped).map((s) => s.label),
+        stoppedLabels: applyOutcome.sections.filter((s) => s.status === 'ng' && s.stopped).map((s) => s.label),
         sourceBundleToken: sourceMode === 'json' ? sourceBundleToken : '',
+        ...(applyOutcome.cancelled ? { cancelled: true } : {}),
         ...(applyOutcome.backup ? { backup: applyOutcome.backup } : {}),
         ...(applyOutcome.finalRevision ? { finalRevision: applyOutcome.finalRevision } : {}),
         planned: plannedSnapshot,
@@ -2569,22 +2647,38 @@ export function mountReflectLitePanel() {
       memoryState.staleResult = null;
       if (applyOutcome.finalRevision) memoryState.lastWrite = { targetAppId: applyOptions.targetAppId, targetGuestId: applyOptions.targetGuestId || '', finalRevision: applyOutcome.finalRevision, priorState: targetPendingAtApply?.state };
       // 複数アプリへの展開の記録。バックアップから戻す操作は展開に含めない。
-      if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || '', name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, pending: counts.pending, at: memoryState.lastResult.at });
+      if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || '', name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, ...(counts.stopped ? { stopped: counts.stopped } : {}), pending: counts.pending, at: memoryState.lastResult.at, ...(applyOutcome.cancelled ? { cancelled: true } : {}) });
       renderLastResult();
       showWorkflowStage('result');
-      return { cancelled: false, hadError: counts.ng > 0 || counts.pending > 0 };
+      return { cancelled: false, hadError: counts.ng > 0 || counts.stopped > 0 || counts.pending > 0, counts, failureNote: describeFirstFailure(applyOutcome.sections), stopped: counts.ng + counts.stopped + counts.pending > 0 && !!applyOutcome.cancelled ? { ok: counts.ok, ng: counts.ng, stopped: counts.stopped, pending: counts.pending } : null };
     });
 
     if (!outcome) return;
     if (outcome.cancelled) {
-      panel.setStatus('反映実行をキャンセルしました', 'info');
+      panel.setStatus('反映を実行しませんでした（書き込みはありません）。差分を取得し直してください。', 'info');
       return;
     }
+    if (outcome.stopped) {
+      // 利用者の「中止」。反映は 1 反映先ずつ行うため、「残り」はこの反映先で未実行の項目と、続けて反映する未着手の反映先を示す。
+      const { ok, ng, stopped, pending } = outcome.stopped;
+      const total = ok + ng + stopped + pending;
+      const queue = currentRollout();
+      const queued = queue.ok ? queue.targets.length : 0;
+      panel.setStatus(
+        `中止しました（${ok}/${total} 件を反映${stopped ? `、${stopped} 件は途中で停止` : ''}${ng ? `、${ng} 件は失敗` : ''}、残り ${pending} 件は未実行）。`
+        + `書き込み済みの分は反映先プレビューに残っています。${queued ? `続けて反映する ${queued} 件の反映先は未実行です。` : ''}`
+        + '差分を取得し直して現在の状態を確認してください。',
+        'warn'
+      );
+      return;
+    }
+    if (!outcome.counts) return;
     if (outcome.hadError) {
-      panel.setStatus('プレビュー反映が一部失敗しました。「直近の実行結果」から失敗・未実行だけ選択して再実行できます。', 'warn');
+      const { ok, ng, pending } = outcome.counts;
+      panel.setStatus(`${ok + ng + outcome.counts.stopped + pending} 項目中 ${ok} 項目を反映しました。失敗 ${ng} 項目${pending ? `、未実行 ${pending} 項目` : ''}${outcome.failureNote ? `（${outcome.failureNote}）` : ''}。「失敗・未実行だけ選択」で再実行してください。`, 'warn');
       return;
     }
-    panel.setStatus('プレビュー反映が完了しました。運用環境への反映は「反映先の設定画面を開く」からデプロイしてください。', 'ok');
+    panel.setStatus(`${outcome.counts.ok} 項目を反映先プレビューへ反映しました。本番へ公開するには、「反映先の設定画面を開く」から kintone の設定画面で公開してください。`, 'ok');
   });
 
   // ---- 4ステップ・ワークフロー ----
@@ -2594,10 +2688,10 @@ export function mountReflectLitePanel() {
   nav.setAttribute('aria-label', 'プレビュー反映の手順');
   nav.setAttribute('role', 'tablist');
   const stageDefs = [
-    { id: 'setup' as const, number: '1', label: '対象を選ぶ', copy: 'アプリと反映項目' },
-    { id: 'review' as const, number: '2', label: '差分を確認', copy: '変更前・変更後' },
-    { id: 'confirm' as const, number: '3', label: '最終確認', copy: '反映先と変更を確定' },
-    { id: 'result' as const, number: '4', label: '反映結果', copy: '結果と次の操作' }
+    { id: 'setup' as const, number: '1', label: '対象を選ぶ', copy: '反映元・反映先・項目を選ぶ' },
+    { id: 'review' as const, number: '2', label: '差分を確認', copy: '変更前後を見て項目を絞る' },
+    { id: 'confirm' as const, number: '3', label: '最終確認', copy: '書き込み先と件数を確かめる' },
+    { id: 'result' as const, number: '4', label: '反映結果', copy: '結果を見て次の操作を選ぶ' }
   ];
   const stages = {} as Record<'setup' | 'review' | 'confirm' | 'result', HTMLElement>;
   const navButtons = {} as Record<'setup' | 'review' | 'confirm' | 'result', HTMLButtonElement>;
@@ -2642,21 +2736,43 @@ export function mountReflectLitePanel() {
       if (next.id === 'confirm') openConfirmation(); else showWorkflowStage(next.id);
     });
   }
-  stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>どの設定を、どこへ反映しますか？</h2><p>反映元と反映先を指定し、反映したい項目を選びます。</p></header>';
-  stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>差分と実行予定を確認</h2><p>実際に変更されるセクションと注意点を確認します。</p></header>';
-  stages.confirm.innerHTML = '<header class="kus-rl-stage-head"><h2>書き込み先と内容の最終確認</h2><p>この画面で確認した条件だけを実行します。</p></header>';
+  stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>どの設定を、どこへ反映しますか？</h2><p>反映元（読み取り）と反映先（書き込み・プレビュー）のアプリを指定し、反映する項目を選びます。</p></header>';
+  stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>変更前後を確認して、反映する項目を決める</h2><p>差分のある項目と注意点を確認します。この画面では書き込みません。</p></header>';
+  stages.confirm.innerHTML = '<header class="kus-rl-stage-head"><h2>書き込み先と内容の最終確認</h2><p>書き込み先・変更件数・削除・取り消し方を確認してから反映します。</p></header>';
   stages.confirm.appendChild(confirmCard.card);
-  stages.result.innerHTML = '<header class="kus-rl-stage-head"><h2>実行結果と次の操作</h2><p>成功・失敗と、再実行が必要なセクションを確認します。</p></header>';
+  stages.result.innerHTML = '<header class="kus-rl-stage-head"><h2>実行結果と次の操作</h2><p>成功・失敗と、再実行が必要な項目を確認します。</p></header>';
   const setupGrid = document.createElement('div');
   setupGrid.className = 'kus-rl-setup-grid';
   [cardApp.card, cardScope.card].forEach((node) => setupGrid.appendChild(node));
-  const advanced = makeDetails('詳細設定 · バックアップ・エラー時の動作・参照先変換');
-  advanced.details.classList.add('kus-rl-advanced');
-  advanced.body.appendChild(cardOpt.card);
-  const presetDetails = makeDetails('よく使う設定を保存・読み込み');
-  presetDetails.details.classList.add('kus-rl-advanced');
-  presetDetails.body.appendChild(cardPreset.card);
-  setupGrid.append(rolloutDetails.details, advanced.details, presetDetails.details);
+  // 第1段階は「アプリ」と「反映する項目」だけを表に出す。動作・参照先変換・プリセット・続けて反映は「詳細設定」のポップアップへ置く。
+  const detail = makeDialog({ title: '詳細設定', id: 'kus-rl-detail' });
+  detail.body.append(detailStatus, cardOpt.card, cardLookup.card, cardPreset.card, rolloutSetupCard.card);
+  detail.dialog.addEventListener('close', () => { detailStatus.hidden = true; detailStatus.textContent = ''; });
+  panel.root.appendChild(detail.dialog);
+  const detailBtn = makeButton('詳細設定…', 'sub');
+  detailBtn.setAttribute('aria-haspopup', 'dialog');
+  detailBtn.addEventListener('click', () => detail.open());
+  const detailSummary = document.createElement('span');
+  detailSummary.className = 'kus-rl-detail-summary';
+  const detailRow = document.createElement('div');
+  detailRow.className = 'kus-rl-detail-row';
+  detailRow.append(detailBtn, detailSummary);
+  setupGrid.appendChild(detailRow);
+  /** ポップアップの中の設定のうち、反映結果に影響するものを表に一行で示す（隠れた設定で意図しない削除をしないため）。 */
+  function refreshDetailSummary() {
+    const parts = [preserve.checkbox.checked ? '反映先だけの一覧・グラフ・アクションは保持' : '反映先だけの一覧・グラフ・アクションを削除'];
+    let warn = !preserve.checkbox.checked;
+    const lookup = parseLookupMapText(lookupTa.value);
+    if (!lookup.ok) { parts.push('参照先変換に誤りがあります'); warn = true; }
+    else if (lookup.count) parts.push(`参照先変換 ${lookup.count} 件`);
+    if (rolloutTa.value.trim()) {
+      const queue = currentRollout();
+      if (!queue.ok) { parts.push('続けて反映する反映先に誤りがあります'); warn = true; }
+      else if (queue.targets.length) parts.push(`続けて反映 ${queue.targets.length} 件`);
+    }
+    detailSummary.textContent = `詳細設定: ${parts.join(' / ')}`;
+    detailSummary.classList.toggle('kus-rl-detail-summary--warn', warn);
+  }
   stages.setup.appendChild(setupGrid);
   [reviewCard.card, previewCard.card].forEach((node) => stages.review.appendChild(node));
   [progressCard.card, lastResultCard.card, rolloutCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
@@ -2696,6 +2812,8 @@ export function mountReflectLitePanel() {
   workspace.appendChild(canvas);
   hint?.insertAdjacentElement('afterend', workspace);
   panel.body.appendChild(dock);
+  // 静的な補足説明は、各カードの「?」ボタンで開く吹き出しへ移す（動的な状態表示と警告は表に残す）。
+  [stages.setup, stages.review, stages.confirm, stages.result, detail.body].forEach((scope) => attachCardHelp(scope));
   let activeStage: 'setup' | 'review' | 'confirm' | 'result' = 'setup';
   const noInputSubmit = document.createElement('button'); noInputSubmit.disabled = true;
   /** フッターの経路表示。差分取得済みなら確認済みの名前、未取得なら入力中に確認できた名前を使う。 */
@@ -2719,7 +2837,7 @@ export function mountReflectLitePanel() {
     }
     const head = name ? `${role}: ${name}（#${id}）` : `${role}: ${id ? `#${id}` : '未入力'}`;
     const tail = [
-      guest ? `ゲスト ${guest}` : '',
+      guest ? `ゲストスペース ${guest}` : '',
       side === 'target' ? 'プレビュー' : sourceMode === 'json' ? '設定JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー設定' : ''
     ].filter(Boolean);
     return tail.length ? `${head} / ${tail.join(' / ')}` : head;
@@ -2731,7 +2849,7 @@ export function mountReflectLitePanel() {
     previewBtn.hidden = activeStage !== 'review'; confirmBtn.hidden = activeStage !== 'review'; runBtn.hidden = activeStage !== 'confirm';
     backBtn.disabled = busy; nextBtn.disabled = previewBtn.disabled || busy; navButtons.confirm.disabled = confirmBtn.disabled;
     setButtonText(backBtn, activeStage === 'confirm' ? '差分に戻る' : '対象を変更');
-    setButtonText(nextBtn, fresh ? '確認した差分へ進む' : '差分を確認する'); setButtonText(previewBtn, '差分を再取得');
+    setButtonText(nextBtn, fresh ? '取得済みの差分へ進む' : '差分を確認する'); setButtonText(previewBtn, '差分を再取得');
     previewBtn.classList.toggle('kus-lp__btn--primary', !fresh); previewBtn.classList.toggle('kus-lp__btn--sub', fresh);
     resultEmpty.hidden = !!memoryState.lastResult || logCard.card.style.display !== 'none';
     // 結果を隠しているだけのときは、「まだ反映していません」とは言わない。
@@ -2745,18 +2863,17 @@ export function mountReflectLitePanel() {
     }) : '';
     let message = setupBlocker ? `次に進むには：${setupBlocker}` : `${scopes.length} 項目を比較します。書き込みは行いません。`;
     const postApply = activeStage === 'review' ? postApplySummary() : null;
-    if (activeStage === 'review') message = !fresh ? '差分の取得が必要です。' : postApply ? postApply.message : confirmBtn.disabled ? '確認が必要な項目、または変更の有無を確認してください。' : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
-    if (activeStage === 'confirm') message = fresh && confirmedToken ? '反映前バックアップを自動保存 / エラー時は中断 / 本番公開は行いません' : '条件が変わりました。差分の取得と最終確認をやり直してください。';
+    if (activeStage === 'review') message = !fresh ? '差分を取得してください。' : postApply ? postApply.message : confirmBtn.disabled ? '反映できる項目がないか、確認できない項目が選択されています。内容を確認してください。' : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
+    if (activeStage === 'confirm') message = fresh && confirmedToken ? '反映前に自動でバックアップします。エラー時は中断し、本番へは公開しません。' : '条件が変わりました。差分の取得と最終確認をやり直してください。';
     if (activeStage === 'result') message = '結果を確認してください。再実行には差分の再取得が必要です。';
     const sourceLabel = dockEndpointLabel('source', fresh ? preview?.identities : null);
     const targetLabel = dockEndpointLabel('target', fresh ? preview?.identities : null);
     // The complete route stays in the confirmation card. Keep the fixed footer short on small screens.
     dockCopy.innerHTML = activeStage === 'confirm' && fresh && preview?.identities
-      ? `<strong>書き込み先 #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong><span class="kus-rl-dock-msg">${escapeHtml(confirmedToken ? '内容を確認してから反映してください。' : '条件が変わりました。差分を再取得してください。')}</span>`
+      ? `<strong>書き込み先（反映先） #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong><span class="kus-rl-dock-msg">${escapeHtml(confirmedToken ? '内容を確認してから反映してください。' : '条件が変わりました。差分を再取得してください。')}</span>`
       : `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong><span class="kus-rl-dock-msg${setupBlocker ? ' kus-rl-dock-reason' : ''}">${escapeHtml(message)}</span>`;
     panel.result.hidden = activeStage === 'confirm';
-    const advancedSummary = advanced.details.querySelector('summary');
-    if (advancedSummary) advancedSummary.textContent = '詳細設定 · 自動バックアップ / 参照先変換';
+    refreshDetailSummary();
     // Text-entry Enter must never start a settings write.
     panel.setPrimaryAction(activeStage === 'setup' ? nextBtn : activeStage === 'review' ? (fresh ? confirmBtn : previewBtn) : noInputSubmit);
   };
@@ -2785,6 +2902,8 @@ export function mountReflectLitePanel() {
     stageDefs.forEach((def) => { stages[def.id].inert = value && def.id !== 'result'; });
     if (value) {
       panel.root.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement>('input,button,select,textarea').forEach((control) => {
+        // 処理中でも押せる必要がある「中止」ボタンと、kintone 画面を確認するための折りたたみ「－」は無効化しない（復元対象にも入れない）。
+        if (control.classList.contains('kus-lp__cancel') || control.classList.contains('kus-lp__toggle')) return;
         // 処理中の二重呼び出しでは、すでに無効化した状態を「元の状態」として上書きしない。
         if (!disabledBefore.has(control)) disabledBefore.set(control, control.disabled);
         control.disabled = true;
@@ -2854,6 +2973,29 @@ function appendTargetPendingNotice(host: HTMLElement, pending: ReflectTargetPend
   host.appendChild(box);
 }
 
+/**
+ * 最終確認の「取り消し方」。反映前の未公開の変更の有無で、「変更を中止」を使ってよいかが変わる。
+ * 反映後の案内（describeUndoGuidance）と同じ内容を、反映前の言い回しで示す。
+ */
+function describeConfirmUndo(pending: ReflectTargetPending | undefined): string {
+  if (pending?.state === 'clean' || pending?.state === 'own') {
+    return '取り消し方：反映後に、kintone のアプリ設定画面で「変更を中止」を押すと取り消せます。反映前の設定は自動でバックアップされ、「バックアップから戻す」でも戻せます。';
+  }
+  if (pending?.state === 'pending') {
+    return '取り消し方：反映先に未公開の変更があるため、「変更を中止」を押すとそれらも破棄されます。今回の反映だけを戻すには、反映後に「バックアップから戻す」を使ってください。';
+  }
+  return '取り消し方：反映前の設定は自動でバックアップされ、反映後に「バックアップから戻す」で戻せます。未公開の変更を確認できなかったため、「変更を中止」では他の未公開の変更も破棄される場合があります。';
+}
+
+/** 一部失敗のステータスに添える、最初の失敗の項目名と理由（1 行目だけ・長いときは省略）。 */
+function describeFirstFailure(sections: ReadonlyArray<{ status: string; label?: string; sectionKey?: string; message?: string; stopped?: boolean }>): string {
+  const failed = sections.find((section) => section.status === 'ng' && !section.stopped);
+  if (!failed) return '';
+  const label = failed.label && failed.label !== failed.sectionKey ? failed.label : reflectSectionLabel(failed.sectionKey || '');
+  const reason = String(failed.message || '').split('\n')[0].trim();
+  return reason ? `${label}: ${reason.length > 80 ? `${reason.slice(0, 80)}…` : reason}` : label;
+}
+
 function getSectionLabel(key: string): string {
   return reflectSectionLabel(key);
 }
@@ -2883,7 +3025,7 @@ function renderRolloutLog(host: HTMLElement, log: readonly RolloutLogEntry[]) {
   const list = document.createElement('ul');
   list.className = 'kus-rl-rollout-list';
   for (const entry of log) {
-    const tone = entry.ng > 0 ? 'ng' : entry.pending > 0 ? 'pending' : 'ok';
+    const tone = entry.ng > 0 || (entry.stopped || 0) > 0 ? 'ng' : entry.pending > 0 ? 'pending' : 'ok';
     const item = document.createElement('li');
     item.className = `kus-rl-rollout-item kus-rl-rollout-item--${tone}`;
     item.dataset.rolloutEntry = `${entry.guestId ? `${entry.guestId}:` : ''}${entry.appId}`;
@@ -2894,13 +3036,13 @@ function renderRolloutLog(host: HTMLElement, log: readonly RolloutLogEntry[]) {
     const icon = document.createElement('span');
     icon.setAttribute('aria-hidden', 'true');
     icon.textContent = tone === 'ok' ? '✓' : '⚠';
-    state.append(icon, document.createTextNode(tone === 'ok' ? '成功' : tone === 'ng' ? '失敗あり' : '未実行あり'));
+    state.append(icon, document.createTextNode(entry.cancelled ? '中止' : tone === 'ok' ? '成功' : entry.ng > 0 ? '失敗あり' : tone === 'ng' ? '途中で停止あり' : '未実行あり'));
     const name = document.createElement('strong');
     name.textContent = `${formatRolloutTarget(entry)}${entry.name ? ` ${entry.name}` : ''}`;
     head.append(state, name);
     const meta = document.createElement('div');
     meta.className = 'kus-rl-quiet';
-    meta.textContent = `成功 ${entry.ok} / 失敗 ${entry.ng} / 未実行 ${entry.pending} · ${formatReflectDateTime(entry.at)}`;
+    meta.textContent = `成功 ${entry.ok} / 失敗 ${entry.ng}${entry.stopped ? ` / 途中で停止 ${entry.stopped}` : ''} / 未実行 ${entry.pending}${entry.cancelled ? ' · 中止' : ''} · ${formatReflectDateTime(entry.at)}`;
     item.append(head, meta);
     list.appendChild(item);
   }
@@ -3016,7 +3158,7 @@ function renderPreviewResult(host: HTMLElement, result: PreviewReflectResult, op
     + `<span class="kus-rl-pill kus-rl-pill--change">差分 ${result.changedSections}</span>`
     + `<span class="kus-rl-pill kus-rl-pill--same">一致 ${result.sameSections}</span>`
     + (result.errorSections > 0 ? `<span class="kus-rl-pill kus-rl-pill--error">取得失敗 ${result.errorSections}</span>` : '')
-    + `<span class="kus-rl-pill">${result.totalSections} セクション</span>`
+    + `<span class="kus-rl-pill">${result.totalSections} 項目</span>`
     + (opts.searchKeyword ? `<span class="kus-rl-pill kus-rl-pill--stale">検索一致 ${filteredEntries.length}</span>` : '');
   host.appendChild(summary);
 
@@ -3030,14 +3172,14 @@ function renderPreviewResult(host: HTMLElement, result: PreviewReflectResult, op
   if (!result.entries.length) {
     const empty = document.createElement('div');
     empty.className = 'kus-rl-preview-empty';
-    empty.textContent = '対象セクションがありません';
+    empty.textContent = '対象の項目がありません。';
     host.appendChild(empty);
     return;
   }
   if (!filteredEntries.length) {
     const empty = document.createElement('div');
     empty.className = 'kus-rl-preview-empty';
-    empty.textContent = `検索条件に一致するセクションがありません${opts.searchKeyword ? `: ${opts.searchKeyword}` : ''}`;
+    empty.textContent = `検索条件に一致する項目がありません${opts.searchKeyword ? `: ${opts.searchKeyword}` : ''}`;
     host.appendChild(empty);
     return;
   }

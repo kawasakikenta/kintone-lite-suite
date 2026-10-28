@@ -12,6 +12,8 @@ export interface ApplySectionOutcome {
   label: string;
   status: ApplySectionStatus;
   message?: string;
+  /** 利用者の「中止」で途中で止まった項目（status は ng のまま。失敗ではなく「途中で停止」と表示し、失敗に数えない）。 */
+  stopped?: boolean;
 }
 
 interface ErrorHintRule {
@@ -73,6 +75,16 @@ export function pushReflectErrorLog(logs: string[], line: string, errorMessage: 
 }
 
 /**
+ * 項目の失敗メッセージを、画面に出す形にする。
+ * 内部の通信情報（`[API] PUT …` の行）は実行ログにだけ残し、利用者向けの文を先に示す。
+ * 専門用語の「revision 競合」は、かみ砕いた説明を先に添える。
+ */
+export function describeReflectFailure(message: string | undefined): string {
+  const lines = String(message || '').split('\n').filter((line) => !/^\s*\[API\]\s/.test(line));
+  return lines.join('\n').trim().replace('（revision 競合）', '（ほかの更新と重なったため。revision 競合）');
+}
+
+/**
  * 再実行が必要なセクション（失敗 + 中断で未実行）のキーを実行順のまま返す。
  */
 export function collectRetrySectionKeys(sections: ApplySectionOutcome[]): string[] {
@@ -86,14 +98,17 @@ export function collectRetrySectionKeys(sections: ApplySectionOutcome[]): string
  */
 export function summarizeApplyOutcome(sections: ApplySectionOutcome[]): {
   ok: number;
+  /** 失敗した項目（中止で途中停止した項目は含めない） */
   ng: number;
+  /** 中止で途中停止した項目 */
+  stopped: number;
   pending: number;
   skip: number;
 } {
-  const out = { ok: 0, ng: 0, pending: 0, skip: 0 };
+  const out = { ok: 0, ng: 0, stopped: 0, pending: 0, skip: 0 };
   for (const s of sections || []) {
     if (s.status === 'ok') out.ok += 1;
-    else if (s.status === 'ng') out.ng += 1;
+    else if (s.status === 'ng') out[s.stopped ? 'stopped' : 'ng'] += 1;
     else if (s.status === 'pending') out.pending += 1;
     else out.skip += 1;
   }

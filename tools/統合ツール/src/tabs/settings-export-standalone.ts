@@ -5,6 +5,8 @@ import { esc, downloadText, downloadBlob, selectedScopeKeys, buildExportFilename
 import { fetchBundle, buildApiPrefix, apiGet, fetchAppsInSpace } from '../api.js';
 import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
 import { loadJSZipLite } from '../jszipLoader.js';
+import { RUN_CANCELLED_MESSAGE, isRunCancelledError } from '../runControl.js';
+import { createCancelReport, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
 
 /** apps.json の 1 回あたり取得上限。検索結果がこの件数に達したら絞り込みを促す。 */
 const APP_SEARCH_LIMIT = 100;
@@ -45,7 +47,7 @@ function parseAppIdList(text) {
   const out = [];
   const seen = new Set();
   for (const tk of tokens) {
-    if (!/^\d+$/.test(tk)) throw new Error(`アプリIDは数値で入力してください: ${tk}`);
+    if (!/^\d+$/.test(tk)) throw new Error(`アプリIDは半角数字で入力してください: ${tk}`);
     if (seen.has(tk)) continue;
     seen.add(tk);
     out.push(tk);
@@ -148,9 +150,9 @@ export async function runSettingsExportListSpaceAppsStandalone(
   setStatus: (msg: string, isError?: boolean) => void
 ): Promise<Array<{ appId: string; name: string }>> {
   const sid = String(spaceId || '').trim();
-  if (!/^\d+$/.test(sid)) throw new Error('スペースIDを数値で入力してください');
+  if (!/^\d+$/.test(sid)) throw new Error('スペースIDは半角数字で入力してください');
   const guest = String(guestId || '').trim();
-  if (guest && !/^\d+$/.test(guest)) throw new Error(`ゲストIDは数値で入力してください: ${guest}`);
+  if (guest && !/^\d+$/.test(guest)) throw new Error(`ゲストスペースIDは半角数字で入力してください: ${guest}`);
   setStatus(`スペース ${sid} のアプリ一覧を取得中...`);
   const apps = await fetchAppsInSpace(sid, guestId);
   if (!apps.length) {
@@ -172,9 +174,9 @@ function resolveExportTargets(opts: any): Array<{ appId: string; guestId: string
   const push = (appId: string, guestId: string) => {
     const id = String(appId || '').trim();
     if (!id) return;
-    if (!/^\d+$/.test(id)) throw new Error(`アプリIDは数値で入力してください: ${id}`);
+    if (!/^\d+$/.test(id)) throw new Error(`アプリIDは半角数字で入力してください: ${id}`);
     const g = String(guestId || '').trim();
-    if (g && !/^\d+$/.test(g)) throw new Error(`ゲストIDは数値で入力してください: ${g}`);
+    if (g && !/^\d+$/.test(g)) throw new Error(`ゲストスペースIDは半角数字で入力してください: ${g}`);
     const key = `${id}::${g}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -213,6 +215,13 @@ function makeFailedBundle(
   };
 }
 
+/** セクションの取得エラーが、利用者の中止によるものか（fetchBundle が中止をセクション単位のエラーとして返す場合）。 */
+function isCancelledSectionError(value: unknown): boolean {
+  if (!value) return false;
+  if (typeof value === 'string') return value.includes(RUN_CANCELLED_MESSAGE);
+  return isRunCancelledError(value) || String((value as any).message || '').includes(RUN_CANCELLED_MESSAGE);
+}
+
 export async function runSettingsExportStandalone(mode: string, opts: any, setStatus: (msg: string, isError?: boolean) => void) {
   if (!['json', 'zip'].includes(mode)) throw new Error('保存形式は json または zip を指定してください');
   const targets = resolveExportTargets(opts);
@@ -228,6 +237,8 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
 
   const bundles = [];
   const rows = [];
+  /** 中止で止めたアプリの位置。-1 は最後まで実行した。 */
+  let stoppedAt = -1;
   for (let i = 0; i < targets.length; i++) {
     const { appId, guestId } = targets[i];
     const guestNote = guestId ? ` (guest:${guestId})` : '';
@@ -243,10 +254,14 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
           setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
       });
     } catch (error) {
+      // 中止を「このアプリの取得失敗」にして残りのアプリを取り続けない。
+      if (isCancelStop(error)) { stoppedAt = i; break; }
       bundle = makeFailedBundle(appId, guestId, preview, scopes, error);
       const message = error instanceof Error ? error.message : String(error || '設定取得に失敗しました');
       setStatus(`アプリ ${appId}${guestNote} の設定取得に失敗しました。選択したセクションを取得失敗として出力します: ${message}`, true);
     }
+    // 取得途中で中止された bundle は、取得失敗のセクションが混じった完全でない結果なので保存しない。
+    if (scopes.some((key) => isCancelledSectionError(bundle?.sections?.[key]?._fetchError))) { stoppedAt = i; break; }
     // ゲストスペース情報を bundle にも残しておく（ファイル名・突合用）
     if (guestId && !(bundle as any).guestId) (bundle as any).guestId = guestId;
     bundles.push(bundle);
@@ -278,6 +293,15 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     });
   }
 
+  const notRun = stoppedAt >= 0 ? targets.slice(stoppedAt) : [];
+  const notRunLabels = notRun.map((t) => `アプリ ${t.appId}${t.guestId ? ` (guest:${t.guestId})` : ''}`);
+  if (stoppedAt >= 0 && !bundles.length) {
+    throw createCancelReport(0, targets.length, [`未実行（中止）: ${notRunLabels.join(', ')}`, '何も保存していません']);
+  }
+  for (const t of notRun) {
+    rows.push({ appId: t.appId, appName: '', guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, note: '未実行（中止）' });
+  }
+  const cancelNote = notRun.length ? `${formatCancelledHeadline(stoppedAt, targets.length)}。取得済みの ${bundles.length}アプリだけを保存しました。` : '';
   const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
   const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);
   const failedAppCount = rows.filter((row) => row.ngCount > 0).length;
@@ -290,6 +314,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     scopeLabels,
     appCount: bundles.length,
     failedAppCount,
+    ...(notRun.length ? { cancelled: true, notExecuted: notRun } : {}),
     apps: bundles
   };
 
@@ -297,7 +322,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
   const failureNote = failedSections ? `。${failedAppCount}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : '';
   const omittedBodies = rows.reduce((sum, row) => sum + row.omittedBodies, 0);
   const omittedNote = omittedBodies ? `。JS/CSSファイル ${omittedBodies}件は本文を取得できず fileKey のみ記録しています（結果表を確認してください）` : '';
-  const hasWarning = failedSections > 0 || omittedBodies > 0;
+  const hasWarning = failedSections > 0 || omittedBodies > 0 || notRun.length > 0;
 
   if (mode === 'zip') {
     const zip = new JSZipCtor();
@@ -333,6 +358,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
           scopeLabels,
           appCount: bundles.length,
           failedAppCount: entries.filter((entry) => entry.sections.ng > 0).length,
+          ...(notRun.length ? { cancelled: true, notExecuted: notRun } : {}),
           apps: entries
         },
         null,
@@ -344,11 +370,11 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     }
     const zipBlob = await zip.generateAsync({ type: 'blob' });
     downloadBlob(buildExportFilename('設定一括取得', 'zip', { appLabel: settingsExportLabel(bundles) }), zipBlob);
-    setStatus(`設定一括取得ZIPを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
+    setStatus(`${cancelNote}設定一括取得ZIPを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
     return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
   }
 
   downloadText(buildExportFilename('設定一括取得', 'json', { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), 'application/json');
-  setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
+  setStatus(`${cancelNote}設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
   return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
 }

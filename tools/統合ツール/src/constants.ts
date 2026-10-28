@@ -479,25 +479,25 @@ export const DIFF_NORMALIZATION_PRESETS: Record<string, DiffNormalizationPreset>
     unorderedArrays: false
   },
   viewOrder: {
-    label: 'ビュー/グラフ/アクション順序',
+    label: '一覧・グラフ・アクションの並び順',
     sections: new Set(['viewSettings', 'reportSettings', 'actionSettings']),
     ignoreKeys: new Set(['index', 'no', 'order']),
     unorderedArrays: true
   },
   permissionOrder: {
-    label: '権限/通知/カテゴリ順序',
+    label: '権限・通知・カテゴリの並び順',
     sections: new Set(['appAcl', 'fieldAcl', 'recordPermissions', 'notifications', 'perRecordNotifications', 'reminderNotifications', 'categories']),
     ignoreKeys: new Set(['index', 'no', 'order']),
     unorderedArrays: true
   },
   generalArrayOrder: {
-    label: 'すべて（プロセス等含む）の配列順序',
+    label: 'すべての並び順（プロセスなどを含む）',
     sections: new Set(['fieldSettings', 'processSettings', 'layoutSettings', 'actionSettings', 'appAcl', 'fieldAcl', 'recordPermissions', 'viewSettings', 'reportSettings', 'customizeSettings', 'notifications', 'perRecordNotifications', 'reminderNotifications', 'categories', 'pluginSettings', 'formSettings']),
     ignoreKeys: new Set(['index', 'no', 'order']),
     unorderedArrays: true
   },
   fieldOrder: {
-    label: 'フィールド/レイアウト順序',
+    label: 'フィールド・レイアウトの並び順',
     sections: new Set(['fieldSettings', 'layoutSettings', 'formSettings']),
     ignoreKeys: new Set(['index', 'no', 'order', 'x', 'y']),
     unorderedArrays: true

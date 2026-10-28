@@ -53,6 +53,23 @@ function hasFlag(name) {
   return process.argv.includes(name);
 }
 
+// 比較セクション・設定JSON読込・高度な比較設定は「詳細設定…」のポップアップに入っている。
+async function openDetailsDialog(page) {
+  const dialog = page.locator('#kus-dl-details-dialog');
+  if (!(await dialog.evaluate((element) => element.open))) {
+    await page.getByRole('button', { name: '詳細設定…' }).click();
+  }
+  await dialog.waitFor({ state: 'visible' });
+  return dialog;
+}
+
+async function closeDetailsDialog(page) {
+  const dialog = page.locator('#kus-dl-details-dialog');
+  if (!(await dialog.evaluate((element) => element.open))) return;
+  await page.getByRole('button', { name: '詳細設定を閉じる' }).click();
+  await dialog.waitFor({ state: 'hidden' });
+}
+
 function extractMarkdownAppIds(markdown) {
   return [...String(markdown || '').matchAll(/^\s*-\s*appId:\s*`\s*([^`\r\n]*?)\s*`/gm)]
     .map((match) => match[1]);
@@ -387,12 +404,12 @@ function verifyMainResult(result, pageErrors) {
   assert.equal(result.probe.disabledAfterFirstDispatch, true, '実行開始時にペア一括ボタンが無効化されませんでした');
   assert.equal(result.probe.disabledAfterSecondDispatch, true, '二重クリック時にペア一括ボタンが有効へ戻りました');
   assert.equal(result.rows.length, 3, 'ペア結果表の行数が不正です');
-  assert.match(result.rows[0].cells[1], /App 101.*ゲスト 11.*運用/, '1件目の比較元表示が不正です');
+  assert.match(result.rows[0].cells[1], /App 101.*ゲスト 11.*本番/, '1件目の比較元表示が不正です');
   assert.match(result.rows[0].cells[2], /App 202.*ゲスト 22.*プレビュー/, '1件目の比較先表示が不正です');
   assert.match(result.rows[1].cells[1], /App 202.*ゲスト 22.*プレビュー/, '2件目の比較元表示が登録順ではありません');
-  assert.match(result.rows[1].cells[2], /App 303.*ゲスト 33.*運用/, '2件目の比較先表示が登録順ではありません');
+  assert.match(result.rows[1].cells[2], /App 303.*ゲスト 33.*本番/, '2件目の比較先表示が登録順ではありません');
   assert.match(result.rows[1].cells[3], /失敗.*synthetic pair failure/, '中間失敗が結果表へ表示されていません');
-  assert.match(result.rows[2].cells[1], /App 202.*ゲスト 99.*運用/, '中間失敗後の比較元が表示されていません');
+  assert.match(result.rows[2].cells[1], /App 202.*ゲスト 99.*本番/, '中間失敗後の比較元が表示されていません');
   assert.match(result.rows[2].cells[2], /App 404.*ゲスト 44.*プレビュー/, '中間失敗後の比較先が表示されていません');
   assert.deepEqual(result.rows.map((row) => row.htmlButtons), [1, 0, 1], '成功行以外にHTML保存ボタンが表示されています');
   assert.deepEqual(result.rows.map((row) => row.xlsxButtons), [1, 0, 1], '成功行以外にExcel保存ボタンが表示されています');
@@ -400,7 +417,7 @@ function verifyMainResult(result, pageErrors) {
   assert.equal(result.batchButtonCount, 1, '成功ペアの一括Excel保存ボタンがありません');
   assert.match(result.batchButtonText, /Excelをまとめて保存（2件・ZIP）/, '一括Excel保存ボタンの成功件数が不正です');
   assert.equal(result.batchButtonOutsideScroll, true, '一括Excel保存ボタンが結果表の横スクロール内にあります');
-  assert.match(result.statusText, /ペア一括比較が完了.*成功 2\/3件.*失敗 1件/, '一部失敗を含む完了ステータスが不正です');
+  assert.match(result.statusText, /3組中 2組を比較しました.*失敗 1件/, '一部失敗を含む完了ステータスが不正です');
   assert.equal(result.statusTone, 'warn', '一部失敗時のステータスが警告になっていません');
   assert.equal(result.downloads, 0, 'ペア完了時に意図しない自動ダウンロードが発生しました');
   assert.equal(result.runPairsDisabled, false, '完了後もペア一括ボタンが無効です');
@@ -418,7 +435,24 @@ async function verifyStaleResultInvalidation(page) {
   assert.equal(await page.locator('[data-kus-dl-export="xlsx"]').isDisabled(), true, 'ペア入力変更後も全体Excel出力が有効です');
   assert.equal(await page.locator('[data-kus-dl-export="md"]').isDisabled(), true, 'ペア入力変更後も全体Markdown出力が有効です');
   assert.equal(await page.locator('[data-kus-dl-completion="xlsx"]').isVisible(), false, 'ペア入力変更後も完了時のExcel保存導線が表示されています');
-  assert.equal(await page.getByText(/比較ペアを変更したため、前回の一括結果と保存機能を無効にしました/).isVisible(), true, 'ペア入力変更後に再比較を求める警告がありません');
+  assert.equal(await page.getByText(/前回の一括結果と保存機能を無効にしました（比較ペアを変更したため）/).isVisible(), true, 'ペア入力変更後に再比較を求める警告がありません');
+}
+
+async function verifyDetailsPopupInvalidation(page) {
+  // 詳細設定は表面から外れてポップアップにある。ペア比較ではJSON読込を出さず、変更すれば古い結果を無効にする。
+  await page.locator('[data-kus-dl-run-pairs]').click();
+  await pairResultTable(page).waitFor({ state: 'visible', timeout: 15000 });
+  await page.waitForFunction(() => document.querySelector('#kus-diff-lite').getAttribute('aria-busy') === 'false');
+  const dialog = await openDetailsDialog(page);
+  assert.equal(await dialog.getByText('比較セクション', { exact: true }).isVisible(), true, 'ペア比較でも詳細設定に比較セクションがありません');
+  assert.equal(await dialog.getByText('設定JSON読込（任意）', { exact: true }).isVisible(), false, 'ペア比較で設定JSON読込が表示されています');
+  await dialog.locator('.kus-lp__chip input').first().uncheck();
+  await closeDetailsDialog(page);
+  assert.equal(await pairResultTable(page).count(), 0, '詳細設定の変更後も古い結果表が残っています');
+  assert.equal(await page.locator('[data-kus-dl-export="xlsx"]').isDisabled(), true, '詳細設定の変更後も全体Excel出力が有効です');
+  // ポップアップ内にも同じ文言を複製表示するため、パネル本体のステータス欄に絞って確認する
+  assert.equal(await page.locator('#kus-diff-lite .kus-lp__status-text').getByText(/前回の結果と保存機能を無効にしました（比較範囲または比較条件を変更したため）/).isVisible(), true,
+    '詳細設定の変更後に再比較を求める警告がありません');
 }
 
 async function verifySuccessfulPairExports(page) {
@@ -714,7 +748,7 @@ async function main() {
     await dispatchDoubleRun(page);
     await page.waitForFunction(() => {
       const status = document.querySelector('#kus-diff-lite .kus-lp__status');
-      return (status?.textContent || '').includes('ペア一括比較が完了');
+      return /組中\s*\d+組を比較しました/.test(status?.textContent || '');
     }, null, { timeout: 15000 });
     mainResult = await inspectMainResult(page);
     verifyMainResult(mainResult, pageErrors);
@@ -725,6 +759,7 @@ async function main() {
     mainResult.mobileGeometry = await verifyMobileResultGeometry(page);
     mainResult.exportDownloads = await verifySuccessfulPairExports(page);
     await verifyStaleResultInvalidation(page);
+    await verifyDetailsPopupInvalidation(page);
     assert.deepEqual(pageErrors, [], '入力変更時にブラウザエラーが発生しました');
     await page.close();
 

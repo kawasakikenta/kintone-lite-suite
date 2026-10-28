@@ -11,10 +11,13 @@
 // ==========================================================================
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
   var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __esm = (fn, res) => function __init() {
     return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
   };
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
   // src/featureDefs.mjs
   var ICONS, FEATURE_DEFS;
@@ -652,6 +655,145 @@ ${contextLine}`);
     }
   });
 
+  // src/runControl.ts
+  function beginRun() {
+    const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0, writes: 0 };
+    active = token;
+    return token;
+  }
+  function endRun(token) {
+    if (token && active === token) active = null;
+  }
+  function requestCancel(token) {
+    const target = token || active;
+    if (!target || target.cancelled) return false;
+    target.cancelled = true;
+    target.cancelledAt = Date.now();
+    try {
+      target.controller.abort(new RunCancelledError());
+    } catch {
+    }
+    return true;
+  }
+  function isCancelRequested() {
+    return !!active && active.cancelled;
+  }
+  function activeRun() {
+    return active;
+  }
+  function noteWrite() {
+    if (active) active.writes += 1;
+  }
+  function throwIfCancelled() {
+    if (active && active.cancelled) throw new RunCancelledError();
+  }
+  function activeAbortSignal() {
+    return active ? active.controller.signal : void 0;
+  }
+  function isRunCancelledError(error) {
+    let current = error;
+    for (let depth = 0; current && depth < 4; depth++) {
+      if (current instanceof RunCancelledError || current.name === "RunCancelledError") return true;
+      if (current.name === "AbortError" && isCancelRequested()) return true;
+      current = current.original;
+    }
+    return false;
+  }
+  function sleepUnlessCancelled(ms) {
+    const signal = activeAbortSignal();
+    return new Promise((resolve) => {
+      if (signal?.aborted) {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      function onAbort() {
+        clearTimeout(timer);
+        resolve();
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+  function raceWithCancel(promise, opts = {}) {
+    const signal = activeAbortSignal();
+    const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 0;
+    if (!signal && !timeoutMs) return promise;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let timer = 0;
+      const finish = (fn) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        fn();
+      };
+      function onAbort() {
+        finish(() => reject(new RunCancelledError()));
+      }
+      timer = timeoutMs ? setTimeout(() => finish(() => {
+        const error = new Error(opts.timeoutMessage || `応答待ちが ${Math.round(timeoutMs / 1e3)} 秒を超えました（timeout）`);
+        error.code = "TIMEOUT";
+        reject(error);
+      }), timeoutMs) : 0;
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      promise.then((value) => finish(() => resolve(value)), (error) => finish(() => reject(error)));
+    });
+  }
+  function createRequestSignal(timeoutMs) {
+    const controller = new AbortController();
+    const runSignal = activeAbortSignal();
+    let timedOut = false;
+    const onAbort = () => {
+      try {
+        controller.abort(new RunCancelledError());
+      } catch {
+      }
+    };
+    if (runSignal?.aborted) onAbort();
+    else runSignal?.addEventListener("abort", onAbort, { once: true });
+    const timer = Number(timeoutMs) > 0 ? setTimeout(() => {
+      timedOut = true;
+      const error = new Error(`応答待ちが ${Math.round(Number(timeoutMs) / 1e3)} 秒を超えました（timeout）`);
+      error.code = "TIMEOUT";
+      try {
+        controller.abort(error);
+      } catch {
+      }
+    }, Number(timeoutMs)) : 0;
+    return {
+      signal: controller.signal,
+      release: () => {
+        if (timer) clearTimeout(timer);
+        runSignal?.removeEventListener("abort", onAbort);
+      },
+      timedOut: () => timedOut
+    };
+  }
+  var RUN_CANCELLED_MESSAGE, RunCancelledError, nextId, active;
+  var init_runControl = __esm({
+    "src/runControl.ts"() {
+      "use strict";
+      RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
+      RunCancelledError = class extends Error {
+        constructor(message = RUN_CANCELLED_MESSAGE) {
+          super(message);
+          __publicField(this, "cancelled", true);
+          this.name = "RunCancelledError";
+        }
+      };
+      nextId = 1;
+      active = null;
+    }
+  });
+
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
@@ -745,19 +887,24 @@ ${contextLine}`);
     apiGetMetrics.calls += 1;
     touchApiPathMetric(path, "calls");
     for (let i = 0; i < retries; i++) {
+      throwIfCancelled();
       try {
-        const res = await kintone.api(`${prefix}${path}`, "GET", params);
+        const res = await raceWithCancel(
+          Promise.resolve(kintone.api(`${prefix}${path}`, "GET", params)),
+          { timeoutMs: options.timeoutMs === 0 ? 0 : Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : API_GET_TIMEOUT_MS }
+        );
         apiGetMetrics.lastLatencyMs = Date.now() - startAt;
         apiGetMetrics.lastError = "";
         return res;
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         err = e;
         const retriable = isRetriableApiError(e);
         if (i < retries - 1 && retriable) {
           apiGetMetrics.retries += 1;
           touchApiPathMetric(path, "retries");
           const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
-          await new Promise((r) => setTimeout(r, waitMs));
+          await sleepUnlessCancelled(waitMs);
           continue;
         }
         break;
@@ -776,13 +923,16 @@ ${contextLine}`);
     const maxAttempts = Math.max(1, retries);
     let lastErr;
     for (let i = 0; i < maxAttempts; i++) {
+      throwIfCancelled();
       try {
+        noteWrite();
         return await kintone.api(`${prefix}${path}`, method, body);
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         lastErr = e;
         if (i < maxAttempts - 1 && isRetriableMutation(method, e)) {
           const waitMs = computeRetryDelayMs(i, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS);
-          await new Promise((r) => setTimeout(r, waitMs));
+          await sleepUnlessCancelled(waitMs);
           continue;
         }
         break;
@@ -882,12 +1032,22 @@ ${base}`
     }
     return h.toString(16).padStart(8, "0");
   }
+  function wasCancelled(error, signal) {
+    return isRunCancelledError(error) || isRunCancelledError(signal.reason);
+  }
+  function timeoutDetail(signal, timeoutMs) {
+    const reason = signal.reason;
+    const message = reason instanceof Error ? reason.message : "";
+    return message || `応答待ちが ${Math.round(timeoutMs / 1e3)} 秒を超えました（timeout）`;
+  }
   async function fetchTextFileBody(prefix, fileKey) {
     if (!fileKey) return { ok: false, reason: "error", detail: "fileKey がありません" };
     const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
     const headers = { "X-Requested-With": "XMLHttpRequest" };
+    throwIfCancelled();
+    const request = createRequestSignal(FILE_TEXT_FETCH_TIMEOUT_MS);
     try {
-      const resp = await fetch(url, { method: "GET", headers });
+      const resp = await fetch(url, { method: "GET", headers, signal: request.signal });
       if (!resp.ok) {
         return {
           ok: false,
@@ -917,11 +1077,14 @@ ${base}`
       }
       return { ok: true, text: await blob.text(), byteSize: blob.size };
     } catch (error) {
+      if (wasCancelled(error, request.signal)) throw new RunCancelledError();
       return {
         ok: false,
         reason: "error",
-        detail: error instanceof Error ? error.message : String(error)
+        detail: request.timedOut() ? timeoutDetail(request.signal, FILE_TEXT_FETCH_TIMEOUT_MS) : error instanceof Error ? error.message : String(error)
       };
+    } finally {
+      request.release();
     }
   }
   async function downloadKintoneFile(guestId, fileKey, opts = {}) {
@@ -929,18 +1092,34 @@ ${base}`
     const maxBytes = Number.isFinite(opts.maxBytes) && Number(opts.maxBytes) > 0 ? Number(opts.maxBytes) : FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
     const limitText = `${Math.round(maxBytes / (1024 * 1024))}MB`;
     const url = `${buildApiPrefix(guestId, false)}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
-    let resp;
+    throwIfCancelled();
+    const request = createRequestSignal(FILE_DOWNLOAD_TIMEOUT_MS);
+    const toFetchError = (error) => {
+      if (wasCancelled(error, request.signal)) return new RunCancelledError();
+      if (request.timedOut()) return new Error(`ファイルを取得できません（応答待ちが ${Math.round(FILE_DOWNLOAD_TIMEOUT_MS / 1e3)} 秒を超えました）`);
+      return new Error(`ファイルを取得できません（${error instanceof Error ? error.message : String(error)}）`);
+    };
     try {
-      resp = await fetch(url, { method: "GET", headers: { "X-Requested-With": "XMLHttpRequest" } });
-    } catch (error) {
-      throw new Error(`ファイルを取得できません（${error instanceof Error ? error.message : String(error)}）`);
+      let resp;
+      try {
+        resp = await fetch(url, { method: "GET", headers: { "X-Requested-With": "XMLHttpRequest" }, signal: request.signal });
+      } catch (error) {
+        throw toFetchError(error);
+      }
+      if (!resp.ok) throw new Error(`ファイルを取得できません（HTTP ${resp.status || "error"}）`);
+      const contentLength = Number(resp.headers?.get?.("content-length") || "");
+      if (Number.isFinite(contentLength) && contentLength > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
+      let blob;
+      try {
+        blob = await resp.blob();
+      } catch (error) {
+        throw toFetchError(error);
+      }
+      if (blob.size > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
+      return blob;
+    } finally {
+      request.release();
     }
-    if (!resp.ok) throw new Error(`ファイルを取得できません（HTTP ${resp.status || "error"}）`);
-    const contentLength = Number(resp.headers?.get?.("content-length") || "");
-    if (Number.isFinite(contentLength) && contentLength > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
-    const blob = await resp.blob();
-    if (blob.size > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
-    return blob;
   }
   async function uploadKintoneFile(guestId, blob, fileName) {
     const prefix = buildApiPrefix(guestId, false);
@@ -950,30 +1129,39 @@ ${base}`
     const form = new FormData();
     form.append("__REQUEST_TOKEN__", String(token));
     form.append("file", blob, fileName);
-    let resp;
+    throwIfCancelled();
+    const request = createRequestSignal(0);
     try {
-      resp = await fetch(`${prefix}${FILE_UPLOAD_PATH}`, { method: "POST", headers: { "X-Requested-With": "XMLHttpRequest" }, body: form });
-    } catch (error) {
-      throw new Error(`ファイルをアップロードできません（${error instanceof Error ? error.message : String(error)}）`);
+      let resp;
+      try {
+        resp = await fetch(`${prefix}${FILE_UPLOAD_PATH}`, { method: "POST", headers: { "X-Requested-With": "XMLHttpRequest" }, body: form, signal: request.signal });
+      } catch (error) {
+        if (wasCancelled(error, request.signal)) throw new RunCancelledError();
+        throw new Error(`ファイルをアップロードできません（${error instanceof Error ? error.message : String(error)}）`);
+      }
+      let data = null;
+      try {
+        data = await resp.json();
+      } catch (error) {
+        if (wasCancelled(error, request.signal)) throw new RunCancelledError();
+        data = null;
+      }
+      if (!resp.ok) {
+        const detail = [data?.code, data?.message].filter(Boolean).join(" ");
+        throw new Error(`ファイルをアップロードできません（HTTP ${resp.status || "error"}${detail ? `: ${detail}` : ""}）`);
+      }
+      const fileKey = data?.fileKey;
+      if (typeof fileKey !== "string" || !fileKey) throw new Error("アップロード応答にfileKeyがありません。");
+      return fileKey;
+    } finally {
+      request.release();
     }
-    let data = null;
-    try {
-      data = await resp.json();
-    } catch {
-      data = null;
-    }
-    if (!resp.ok) {
-      const detail = [data?.code, data?.message].filter(Boolean).join(" ");
-      throw new Error(`ファイルをアップロードできません（HTTP ${resp.status || "error"}${detail ? `: ${detail}` : ""}）`);
-    }
-    const fileKey = data?.fileKey;
-    if (typeof fileKey !== "string" || !fileKey) throw new Error("アップロード応答にfileKeyがありません。");
-    return fileKey;
   }
   async function fetchTextFileBodyWithRetry(prefix, fileKey) {
     let result = await fetchTextFileBody(prefix, fileKey);
     if (result.ok === true) return result;
     if (result.reason === "oversize") return result;
+    throwIfCancelled();
     result = await fetchTextFileBody(prefix, fileKey);
     return result;
   }
@@ -1046,7 +1234,7 @@ ${base}`
     if (!section || typeof section !== "object") return;
     const countText = failed > 0 ? `（${failed}件）` : "";
     const detail = error instanceof Error ? error.message : error == null ? "" : String(error);
-    const fileText = files.length ? ` [${files.slice(0, 3).map((item) => item.fileName || item.fileKey || "(名称不明)").join(", ")}${files.length > 3 ? ", …" : ""}]` : "";
+    const fileText = files.length ? ` [${files.slice(0, 3).map((item) => `${item.fileName || item.fileKey || "(名称不明)"}${item.detail ? `: ${item.detail}` : ""}`).join(", ")}${files.length > 3 ? ", …" : ""}]` : "";
     section._fetchError = `${label}の取得に失敗したため、このセクションは比較できません${countText}${fileText}${detail ? `: ${detail}` : ""}`;
   }
   async function fetchPluginConfigs(pluginSection, prefix, appId) {
@@ -1071,7 +1259,8 @@ ${base}`
           } else {
             stats.skipped += 1;
           }
-        } catch {
+        } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           stats.failed += 1;
         }
       });
@@ -1105,6 +1294,7 @@ ${base}`
         const revision = extractSectionRevision(res);
         results[index] = { value: rawSettings ? deepClone(res) : normalizeSettingsSection(res), revision };
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
       completed += 1;
@@ -1132,6 +1322,7 @@ ${base}`
             setAuxiliaryFetchError(cust, "JS/CSSファイル本文", stats.failed, void 0, stats.failedFiles);
           }
         } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           setAuxiliaryFetchError(cust, "JS/CSSファイル本文", 0, e);
         }
       }
@@ -1145,19 +1336,21 @@ ${base}`
           const unavailable = stats.failed + stats.skipped;
           if (unavailable > 0) setAuxiliaryFetchError(plug, "プラグイン設定", unavailable);
         } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           setAuxiliaryFetchError(plug, "プラグイン設定", 0, e);
         }
       }
     }
     return bundle;
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, FILE_DOWNLOAD_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
       init_constants();
       init_kintone_query();
       init_utils();
+      init_runControl();
       DEPLOY_PATH_SNIPPET = "app/deploy.json";
       ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
       ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
@@ -1165,6 +1358,9 @@ ${base}`
       DEFAULT_API_GET_RETRIES = 3;
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
+      API_GET_TIMEOUT_MS = 12e4;
+      FILE_TEXT_FETCH_TIMEOUT_MS = 6e4;
+      FILE_DOWNLOAD_TIMEOUT_MS = 12e4;
       RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
       RECORD_DATA_MUTATION_PATHS = /* @__PURE__ */ new Set([
         "/record.json",
@@ -1927,7 +2123,12 @@ ${base}`
       alert(NOT_KINTONE_PAGE_MESSAGE);
       return;
     }
-    run();
+    try {
+      run();
+    } catch (error) {
+      if (error?.panelBusy === true) return;
+      throw error;
+    }
   }
 
   // src/entries/reflect-lite-ui.ts
@@ -1981,11 +2182,16 @@ ${base}`
   function isCompleteReflectSection(section) {
     return !!section && typeof section === "object" && !Array.isArray(section) && !section._fetchError && !section._partial;
   }
+  var withoutTopLevelRevision = (section) => {
+    if (!section || typeof section !== "object" || Array.isArray(section) || !Object.prototype.hasOwnProperty.call(section, "revision")) return section;
+    const { revision: _revision, ...rest } = section;
+    return rest;
+  };
   function captureSections(bundle, scopes) {
     return Object.fromEntries(scopes.map((key) => {
       const section = bundle?.sections?.[key];
       return [key, {
-        content: stableReflectStringify(section) ?? "",
+        content: stableReflectStringify(withoutTopLevelRevision(section)) ?? "",
         revision: String(bundle?.meta?.sectionRevisions?.[key] ?? section?.revision ?? ""),
         complete: isCompleteReflectSection(section)
       }];
@@ -2014,6 +2220,8 @@ ${base}`
       const revisions = /* @__PURE__ */ new Set();
       const requireRevision = side === "target" || !opts.sourceBundle;
       const checkedScopes = side === "source" ? opts.scopes : [.../* @__PURE__ */ new Set([...opts.scopes, ...opts.targetDependencies || []])];
+      const changedLabels = [];
+      let revisionChange = null;
       for (const key of checkedScopes) {
         const before = baseline[side]?.[key];
         const after = current[side][key];
@@ -2024,10 +2232,16 @@ ${base}`
         if (requireRevision && (!/^\d+$/.test(before.revision) || !/^\d+$/.test(after.revision))) {
           throw new Error(`${label}の${sectionLabel}のrevisionを確認できないため反映を中止しました。差分を取得し直してください。`);
         }
-        if (before.content !== after.content || before.revision !== after.revision) {
-          throw new Error(`差分確認後に${label}の${sectionLabel}が変更されたため反映を中止しました。差分を取得し直して、変更内容を再確認してください。`);
-        }
+        if (before.content !== after.content) changedLabels.push(sectionLabel);
+        else if (before.revision !== after.revision && !revisionChange) revisionChange = { from: before.revision, to: after.revision };
         if (requireRevision) revisions.add(after.revision);
+      }
+      if (changedLabels.length) {
+        throw new Error(`差分確認後に${label}の${changedLabels.join("、")}が変更されたため反映を中止しました。差分を取得し直して、変更内容を再確認してください。`);
+      }
+      if (revisionChange) {
+        const { from, to } = revisionChange;
+        throw new Error(`${side === "source" ? "反映元" : "反映先"}アプリの設定が確認後に更新されました（revision ${from || "不明"} → ${to || "不明"}）。選択した項目の内容は同じでしたが、安全のため反映を中止しました。差分を取得し直してください。`);
       }
       if (requireRevision && revisions.size !== 1) {
         throw new Error(`${label}の取得中に設定が更新された可能性があるため反映を中止しました。差分を取得し直してください。`);
@@ -2091,6 +2305,7 @@ ${base}`
 
   // src/reflect/customizeFiles.ts
   init_api();
+  init_runControl();
   init_utils();
   function customizeSlotKey(platform, kind, fileKey) {
     return `${platform}/${kind}/${fileKey}`;
@@ -2159,6 +2374,7 @@ ${base}`
     try {
       return await downloadKintoneFile(guestId, fileKey);
     } catch (error) {
+      if (isRunCancelledError(error)) throw error;
       if (/大きすぎ|HTTP 4\d\d/.test(messageOf(error))) throw error;
       return downloadKintoneFile(guestId, fileKey);
     }
@@ -2202,6 +2418,7 @@ ${base}`
       try {
         sourceBodies.set(entry.fileKey, await loadBody(entry, opts.sourceGuestId, download, true));
       } catch (error) {
+        if (isRunCancelledError(error)) throw error;
         sourceErrors.set(entry.fileKey, messageOf(error));
       }
     });
@@ -2212,6 +2429,7 @@ ${base}`
       try {
         targetBodies.set(entry.fileKey, await loadBody(entry, opts.targetGuestId, download, false));
       } catch (error) {
+        if (isRunCancelledError(error)) throw error;
         resolution.targetUnavailable.push({ fileKey: entry.fileKey, name: entry.name || entry.fileKey, reason: messageOf(error) });
       }
     });
@@ -2259,6 +2477,7 @@ ${base}`
         const blob = await download(opts.guestId, entry.fileKey);
         results.set(entry.fileKey, { content: { base64: bytesToBase64(await blobBytes(blob)), contentType: blob.type || String(entry.item.file?.contentType || "") || guessContentType(entry.name), byteSize: blob.size } });
       } catch (error) {
+        if (isRunCancelledError(error)) throw error;
         results.set(entry.fileKey, { reason: messageOf(error) });
       }
     });
@@ -3090,6 +3309,60 @@ ${base}`
     }
     return items.map((item, index) => ({ item, index })).sort((x, y) => KIND_ORDER[x.item.kind] - KIND_ORDER[y.item.kind] || x.index - y.index).map((entry) => entry.item);
   }
+  function inventoryLayout(nodes) {
+    const inventory = { codes: /* @__PURE__ */ new Set(), plain: /* @__PURE__ */ Object.create(null) };
+    const visit = (node) => {
+      if (!isObj(node)) return;
+      if (typeof node.code === "string" && node.code) inventory.codes.add(node.code);
+      else if (node.type !== "ROW") {
+        const type = String(node.type ?? "不明");
+        inventory.plain[type] = (inventory.plain[type] || 0) + 1;
+      }
+      for (const child of [...list(node.fields), ...list(node.layout)]) visit(child);
+    };
+    for (const node of Array.isArray(nodes) ? nodes : [nodes]) visit(node);
+    return inventory;
+  }
+  function describeLayoutNode(node, fieldLabels) {
+    if (!isObj(node)) return "不明な要素";
+    const names = (nodes) => {
+      const codes = [...inventoryLayout(nodes).codes];
+      return { count: codes.length, text: codes.slice(0, 4).map((code) => fieldName(code, fieldLabels)).join("、") + (codes.length > 4 ? "…" : "") };
+    };
+    if (node.type === "ROW") {
+      const inside = names(list(node.fields));
+      return inside.count ? `フィールド ${inside.count} 個の行（${inside.text}）` : "ラベル・スペース・罫線だけの行";
+    }
+    if (node.type === "GROUP") {
+      const inside = names(list(node.layout));
+      return `グループ「${fieldName(String(node.code ?? ""), fieldLabels, node.label)}」${inside.count ? `（中のフィールド ${inside.count} 個）` : ""}`;
+    }
+    if (node.type === "SUBTABLE") return `テーブル「${fieldName(String(node.code ?? ""), fieldLabels)}」`;
+    return typeof node.code === "string" && node.code ? `フィールド「${fieldName(node.code, fieldLabels)}」` : "配置の要素";
+  }
+  function reclassifyLayoutRemovals(changes, beforeLayout, afterLayout, fieldLabels) {
+    const kept = inventoryLayout(afterLayout), old = inventoryLayout(beforeLayout);
+    for (const change of changes) {
+      if (change.kind !== "削除" || !/^配置 \/ \d+件目$/.test(change.path)) continue;
+      let node;
+      try {
+        node = JSON.parse(change.before);
+      } catch {
+        continue;
+      }
+      if (!isObj(node)) continue;
+      const inside = inventoryLayout(node);
+      const lostCode = [...inside.codes].some((code) => !kept.codes.has(code));
+      const lostPlain = Object.keys(inside.plain).some((type) => (kept.plain[type] || 0) < (old.plain[type] || 0));
+      const description = describeLayoutNode(node, fieldLabels);
+      if (lostCode || lostPlain) change.summary = description;
+      else {
+        change.kind = "変更";
+        change.after = "別の位置の行・グループに含まれます（フィールドは残ります）";
+        change.summary = `${description}を並べ替え・移動`;
+      }
+    }
+  }
   function retainedItemNames(sectionKey, changes, fieldLabels) {
     const names = [];
     for (const change of changes) {
@@ -3121,6 +3394,7 @@ ${base}`
   // src/reflect/standalonePlan.ts
   init_constants();
   init_utils();
+  init_runControl();
   var formatBytes = (bytes) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
   var namedSections = { viewSettings: "views", reportSettings: "reports", actionSettings: "actions" };
   var own2 = (object2, key) => Object.prototype.hasOwnProperty.call(object2, key);
@@ -3302,6 +3576,7 @@ ${base}`
       plan.status = plan.operations.length ? "change" : "same";
       plan.message = plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : "書き込み不要（一致）";
     } catch (error) {
+      if (isRunCancelledError(error)) throw error;
       plan.status = "error";
       plan.blockers.push(error.message || String(error));
       plan.message = plan.blockers.join("\n");
@@ -3480,6 +3755,7 @@ ${base}`
       }
       const shownBefore = comparable2 ? comparable2(before) : before, shownAfter = comparable2 ? comparable2(after) : after;
       diffValues(shownBefore, shownAfter, [], plan.changes);
+      if (key === "layoutSettings") reclassifyLayoutRemovals(plan.changes, shownBefore?.layout, shownAfter?.layout, options.fieldLabels);
       try {
         plan.items = summarizeReflectItems(key, shownBefore, shownAfter, { fieldLabels: options.fieldLabels, retained: retainedItemNames(key, plan.changes, options.fieldLabels) });
       } catch {
@@ -3493,6 +3769,7 @@ ${base}`
       else plan.status = plan.operations.length ? "change" : "same";
       plan.message = plan.blockers.length ? plan.blockers.join("\n") : plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : `書き込み不要${plan.changes.some((change) => change.kind === "保持") ? "（反映先だけの設定は保持）" : "（一致）"}`;
     } catch (error) {
+      if (isRunCancelledError(error)) throw error;
       plan.status = "error";
       plan.blockers.push(error.message || String(error));
       plan.message = plan.blockers.join("\n");
@@ -3580,12 +3857,13 @@ ${base}`
 
   // src/reflect/targetPending.ts
   init_api();
+  init_runControl();
   function reconcileOwnPendingChanges(pending, lastRun, target) {
     if (!pending || pending.state !== "pending" || !lastRun) return pending;
     if (lastRun.targetAppId !== target.appId || (lastRun.targetGuestId || "") !== (target.guestId || "")) return pending;
     if (!/^\d+$/.test(lastRun.finalRevision) || lastRun.finalRevision !== pending.previewRevision) return pending;
     if (lastRun.priorState !== "clean" && lastRun.priorState !== "own") return pending;
-    return { ...pending, state: "own", message: `反映先プレビューの未公開の変更は、このツールの直前の反映によるものだけです（本番 revision ${pending.productionRevision} / プレビュー revision ${pending.previewRevision}）。アプリの設定画面の「変更を中止」で取り消せます。` };
+    return { ...pending, state: "own", message: `反映先プレビューの未公開の変更は、このツールの直前の反映によるものだけです（設定の更新番号 revision は 本番 ${pending.productionRevision} / プレビュー ${pending.previewRevision}）。アプリの設定画面の「変更を中止」で取り消せます。` };
   }
   var comparableResources = (list2) => Array.isArray(list2) ? list2.map((item) => item?.type === "FILE" ? { type: "FILE", name: item.file?.name ?? "", size: String(item.file?.size ?? "") } : item) : list2;
   var comparable = (key, section) => {
@@ -3618,9 +3896,10 @@ ${base}`
         if (comparable(key, before) !== comparable(key, after)) sectionKeys.push(key);
       }
       const customizeNote = opts.scopes.includes("customizeSettings") ? "。JS/CSSのファイルは名前とサイズだけで比べています" : "";
-      const message = sectionKeys.length ? `反映先プレビューには未公開の変更があります（${sectionKeys.map(reflectSectionLabel).join("、")}）。公開すると今回の反映と一緒に本番へ反映されます。` : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（本番 revision ${productionRevision} / プレビュー revision ${previewRevision}${customizeNote}）。`;
+      const message = sectionKeys.length ? `反映先プレビューには未公開の変更があります（${sectionKeys.map(reflectSectionLabel).join("、")}）。公開すると今回の反映と一緒に本番へ反映されます。` : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（設定の更新番号 revision が 本番 ${productionRevision} とプレビュー ${previewRevision} で異なります${customizeNote}）。`;
       return { state: "pending", productionRevision, previewRevision, sectionKeys, message };
     } catch (error) {
+      if (isRunCancelledError(error)) throw error;
       return unknown(productionRevision, previewRevision, error?.message || String(error));
     }
   }
@@ -3668,14 +3947,18 @@ ${base}`
     if (logs.slice(-3).includes(hintLine)) return;
     logs.push(hintLine);
   }
+  function describeReflectFailure(message) {
+    const lines = String(message || "").split("\n").filter((line) => !/^\s*\[API\]\s/.test(line));
+    return lines.join("\n").trim().replace("（revision 競合）", "（ほかの更新と重なったため。revision 競合）");
+  }
   function collectRetrySectionKeys(sections) {
     return (sections || []).filter((s) => s.status === "ng" || s.status === "pending").map((s) => s.sectionKey);
   }
   function summarizeApplyOutcome(sections) {
-    const out = { ok: 0, ng: 0, pending: 0, skip: 0 };
+    const out = { ok: 0, ng: 0, stopped: 0, pending: 0, skip: 0 };
     for (const s of sections || []) {
       if (s.status === "ok") out.ok += 1;
-      else if (s.status === "ng") out.ng += 1;
+      else if (s.status === "ng") out[s.stopped ? "stopped" : "ng"] += 1;
       else if (s.status === "pending") out.pending += 1;
       else out.skip += 1;
     }
@@ -3683,6 +3966,7 @@ ${base}`
   }
 
   // src/tabs/reflect-standalone.ts
+  init_runControl();
   function reflectResultMatchesOptions(report, options) {
     if (!report?.source || !report.target) return false;
     const sourceBundleAppId = String(options.sourceBundle?.appId || "");
@@ -3708,14 +3992,23 @@ ${base}`
   async function resolveReflectAppsStandalone(opts) {
     const invalid = reflectConnectionError(opts);
     if (invalid) throw new Error(invalid);
-    const resolve = async (appId, guestId = "") => {
-      const info = await apiGet(buildApiPrefix(guestId, false), "/app.json", { id: appId });
-      if (String(info?.appId) !== appId || typeof info?.name !== "string" || !info.name) throw new Error(`App ${appId} の名前とIDを確認できません。入力と閲覧権限を確認してください。`);
+    const resolve = async (role, appId, guestId = "") => {
+      let info;
+      try {
+        info = await apiGet(buildApiPrefix(guestId, false), "/app.json", { id: appId });
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        const prefixed = new Error(`${role} #${appId}: ${error?.message != null ? String(error.message) : String(error)}`);
+        prefixed.original = error;
+        if (error?.code) prefixed.code = error.code;
+        throw prefixed;
+      }
+      if (String(info?.appId) !== appId || typeof info?.name !== "string" || !info.name) throw new Error(`${role} #${appId} の名前とIDを確認できません。入力と閲覧権限を確認してください。`);
       return { appId, guestId, name: info.name, code: String(info.code || "") };
     };
-    const target = await resolve(opts.targetAppId, opts.targetGuestId);
+    const target = await resolve("反映先", opts.targetAppId, opts.targetGuestId);
     const jsonAppName = opts.sourceBundle ? extractAppNameFromBundle(opts.sourceBundle) : "";
-    const source = opts.sourceBundle ? { appId: opts.sourceAppId, guestId: "", name: jsonAppName ? `設定JSON（${jsonAppName}）` : "設定JSON", code: "" } : await resolve(opts.sourceAppId, opts.sourceGuestId);
+    const source = opts.sourceBundle ? { appId: opts.sourceAppId, guestId: "", name: jsonAppName ? `設定JSON（${jsonAppName}）` : "設定JSON", code: "" } : await resolve("反映元", opts.sourceAppId, opts.sourceGuestId);
     return { source, target };
   }
   function usesLookupMap(opts, scopes) {
@@ -3726,9 +4019,20 @@ ${base}`
     if (scopes.some((key) => !REFLECT_SECTION_KEYS.includes(key))) throw new Error("反映に対応していない項目が含まれています。");
     return REFLECT_SECTION_KEYS.filter((key) => scopes.includes(key));
   }
+  async function withAppPrefix(role, appId, run) {
+    try {
+      return await run();
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      const prefixed = new Error(`${role} #${appId}: ${error?.message != null ? String(error.message) : String(error)}`);
+      prefixed.original = error;
+      if (error?.code) prefixed.code = error.code;
+      throw prefixed;
+    }
+  }
   async function getReflectBundles(opts, scopes, setStatus) {
     setStatus(opts.sourceBundle ? "反映元の設定JSONを読み込み中..." : "反映元の設定を取得中...");
-    const source = opts.sourceBundle ? importedReflectSource(opts) : await fetchBundle({
+    const source = opts.sourceBundle ? importedReflectSource(opts) : await withAppPrefix("反映元", opts.sourceAppId, () => fetchBundle({
       rawSettings: true,
       // フィールド設定を選んでいなくても、参照するフィールドの有無と表示名を示せるよう反映先と同じ範囲を取得する。
       appId: opts.sourceAppId,
@@ -3736,16 +4040,16 @@ ${base}`
       preview: !!opts.sourcePreview,
       sections: reflectInspectionScopes(scopes),
       onProgress: (p, label) => setStatus(`反映元取得 ${Math.round(p * 100)}% (${label})`)
-    });
+    }));
     setStatus("反映先プレビューの設定を確認中...");
-    const target = await fetchBundle({
+    const target = await withAppPrefix("反映先", opts.targetAppId, () => fetchBundle({
       rawSettings: true,
       appId: opts.targetAppId,
       guestId: opts.targetGuestId || "",
       preview: true,
       sections: reflectInspectionScopes(scopes),
       onProgress: (p, label) => setStatus(`反映先取得 ${Math.round(p * 100)}% (${label})`)
-    });
+    }));
     return { source, target };
   }
   function importedReflectSource(opts) {
@@ -3777,6 +4081,7 @@ ${base}`
       try {
         assertReflectBaselineMatches(baseline, { ...opts, scopes: [entry.sectionKey], targetDependencies: entry.requiredFields?.length ? ["fieldSettings"] : [] }, source, target);
       } catch (error) {
+        if (isRunCancelledError(error)) throw error;
         entry.status = "error";
         entry.blockers.push(error.message);
         entry.message = error.message;
@@ -3863,6 +4168,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         try {
           fileKey = await uploadKintoneFile(opts.targetGuestId || "", blob, upload.name);
         } catch (error) {
+          if (isRunCancelledError(error)) throw error;
           throw new Error(`「${upload.name}」のアップロードに失敗しました（${error.message || String(error)}）。${operation.label}は書き込んでいません。`);
         }
         logs.push(`  OK ファイルアップロード: ${upload.name}（${upload.platform === "desktop" ? "PC" : "モバイル"} ${upload.kind.toUpperCase()}）`);
@@ -3878,6 +4184,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       try {
         bodies.set(operation, await bodyWithUploads(operation));
       } catch (error) {
+        if (isRunCancelledError(error)) throw error;
         throw new Error(`${error.message || String(error)}
 まだ何も書き込んでいません。`);
       }
@@ -3898,9 +4205,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     };
     logs.push(`反映元: ${opts.sourceBundle ? "設定JSON" : opts.sourceAppId} → 反映先(プレビュー): ${opts.targetAppId}`);
     const sections = [];
-    const notify = (plan, status, message) => {
+    let cancelled = false;
+    const notify = (plan, status, message, stopped = false) => {
       try {
-        opts.onSectionUpdate?.({ sectionKey: plan.sectionKey, label: plan.label, status, ...message ? { message } : {} });
+        opts.onSectionUpdate?.({ sectionKey: plan.sectionKey, label: plan.label, status, ...message ? { message } : {}, ...stopped ? { stopped: true } : {} });
       } catch {
       }
     };
@@ -3926,6 +4234,30 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         notify(plan, "ok");
         logs.push(`OK ${plan.label}`);
       } catch (error) {
+        if (isRunCancelledError(error)) {
+          cancelled = true;
+          if (written.length) {
+            const message2 = `${RUN_CANCELLED_MESSAGE}（この項目では ${written.join("・")} まで書き込み済みで、残りは送信していません。差分を取得し直して現在の状態を確認してください）`;
+            sections.push({ ...outcome, status: "ng", message: message2, stopped: true });
+            notify(plan, "ng", message2, true);
+            logs.push(`中止 ${plan.label}: ${written.join("・")} まで書き込み済み（途中で停止）`);
+          } else {
+            sections.push({ ...outcome, status: "pending", message: "中止のため未実行" });
+            notify(plan, "pending", "中止のため未実行");
+            logs.push(`中止 ${plan.label}: 書き込み前に停止（未実行）`);
+          }
+          for (const rest of plans.slice(index + 1)) {
+            if (!rest.operations.length) {
+              sections.push({ sectionKey: rest.sectionKey, label: rest.label, status: "skip", message: "変更なし（書き込み不要）" });
+              notify(rest, "skip", "変更なし（書き込み不要）");
+              continue;
+            }
+            sections.push({ sectionKey: rest.sectionKey, label: rest.label, status: "pending", message: "中止のため未実行" });
+            notify(rest, "pending", "中止のため未実行");
+          }
+          logs.push(`${RUN_CANCELLED_MESSAGE}（反映済み ${sections.filter((item) => item.status === "ok").length} 件 / 未実行 ${sections.filter((item) => item.status === "pending").length} 件）`);
+          break;
+        }
         const message = `${error.message || String(error)}${written.length ? `
 （この項目では ${written.join("・")} まで書き込み済みです。差分を取得し直して現在の状態を確認してください）` : ""}`;
         sections.push({ ...outcome, status: "ng", message });
@@ -3943,10 +4275,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       onProgress(logs);
     }
     const count = (status) => sections.filter((section) => section.status === status).length;
-    logs.push(`=== 完了: OK ${count("ok")} / NG ${count("ng")} / 未実行 ${count("pending")} / 変更なし ${count("skip")} ===`);
+    const stoppedCount = sections.filter((section) => section.status === "ng" && section.stopped).length, failedCount = count("ng") - stoppedCount;
+    logs.push(`=== 完了: OK ${count("ok")} / NG ${failedCount}${stoppedCount ? ` / 途中で停止 ${stoppedCount}` : ""} / 未実行 ${count("pending")} / 変更なし ${count("skip")} ===`);
     onProgress(logs);
-    setStatus(count("ng") ? "反映完了（一部エラーあり）" : "反映完了");
-    return { logs, sections, backup, finalRevision: revision };
+    if (cancelled) setStatus(`反映を中止しました（反映済み ${count("ok")} / 途中で停止 ${stoppedCount} / 未実行 ${count("pending")}）。反映先プレビューは一部だけ更新されている可能性があります。`, true);
+    else setStatus(failedCount ? "反映完了（一部エラーあり）" : "反映完了");
+    return { logs, sections, backup, finalRevision: revision, ...cancelled ? { cancelled: true } : {} };
   }
   async function preflightLookupMapStandalone(lookupMap, opts = {}) {
     const missing = [];
@@ -3959,6 +4293,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         const info = await apiGet(buildApiPrefix(opts.targetGuestId || "", false), "/app.json", { id: to });
         if (String(info?.appId) !== to) throw new Error("応答のアプリIDが一致しません");
       } catch (error) {
+        if (isRunCancelledError(error)) throw error;
         missing.push({ from, to, reason: `取得失敗: ${error.message || String(error)}` });
       }
     }
@@ -4052,6 +4387,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 
   // src/entries/litePanelTheme.ts
   init_dialog();
+  init_runControl();
   init_utils();
   var STYLE_ID = "kus-lp-theme-styles";
   var ACCENTS = {
@@ -4078,7 +4414,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   --c-border-strong:#cbd5e1;
   --c-text:#0f172a;
   --c-text-2:#334155;
-  --c-muted:#64748b;
+  --c-muted:#475569;
   --c-link:#2563eb;
   --c-ok-bg:#ecfdf5;
   --c-ok-fg:#065f46;
@@ -4103,7 +4439,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   top:max(16px,2vh);
   right:max(16px,2vw);
   box-sizing:border-box;
-  width:min(520px,calc(100vw - max(32px,4vw)));
+  width:min(560px,calc(100vw - max(32px,4vw)));
   max-height:min(92vh,920px);
   overflow:hidden;
   display:flex;
@@ -4112,7 +4448,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   border:1px solid var(--c-border);
   border-radius:18px;
   box-shadow:0 4px 6px -1px rgba(15,23,42,.08),0 28px 60px -12px rgba(15,23,42,.30);
-  font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
   color:var(--c-text);
   animation:kus-lp-fade-in .18s ease-out;
 }
@@ -4138,36 +4474,47 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 }
 .kus-lp__hero-main{min-width:0;flex:1}
 .kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
+/* 狭い画面では経過時間の文字を隠し（スピナーは残す）ボタンを詰めて、タイトルが 1 文字ずつ折り返すのを防ぐ */
+@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12px}.kus-lp__toggle{min-width:30px}}
 .kus-lp__elapsed{
-  font-size:11px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
+  font-size:12.5px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
   font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
 }
 .kus-lp__elapsed::before{
   content:'';display:inline-block;width:9px;height:9px;border-radius:50%;
   border:2px solid rgba(255,255,255,.85);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
 }
+.kus-lp__elapsed--done{font-weight:500;color:rgba(255,255,255,.8)}
+/* 完了後の「前回 …」表示ではスピナーを出さない */
+.kus-lp__elapsed--done::before{display:none;animation:none}
 /* 実行中の進捗ストリップ（ヒーロー下端） */
 .kus-lp__progress{position:absolute;left:0;right:0;bottom:0;height:3px;overflow:hidden;background:rgba(255,255,255,.22);display:none;z-index:1}
 .kus-lp[aria-busy="true"] .kus-lp__progress{display:block}
 .kus-lp__progress::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:#fff;opacity:.95;animation:kus-lp-indeterminate 1.4s ease-in-out infinite}
-.kus-lp__title{margin:0;font-size:17px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
+.kus-lp__title{margin:0;font-size:18px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
 .kus-lp__title-icon{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;background:rgba(255,255,255,.22);border-radius:7px}
-.kus-lp__subtitle{margin:4px 0 0;font-size:12px;color:rgba(255,255,255,.85);line-height:1.45}
+.kus-lp__subtitle{margin:4px 0 0;font-size:13px;color:rgba(255,255,255,.85);line-height:1.45}
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  font-size:12px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close,.kus-lp__toggle{
+/* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
+.kus-lp__badge--read{background:#047857;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--preview{background:#c2410c;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--production{background:#b91c1c;border:1px solid rgba(255,255,255,.45)}
+.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
-  color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
+  color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;
   font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
 .kus-lp__toggle{padding:6px 9px;min-width:34px}
+.kus-lp__cancel{background:rgba(254,202,202,.30);border-color:rgba(254,226,226,.85)}
 .kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
-.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__cancel:hover{background:rgba(254,202,202,.48)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled,.kus-lp__cancel:disabled{opacity:.55;cursor:not-allowed}
 
 /* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
 .kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
@@ -4183,7 +4530,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-lp__body::-webkit-scrollbar-thumb:hover{background:#94a3b8;background-clip:padding-box;border:2px solid transparent}
 
 .kus-lp__hint{
-  font-size:12px;color:var(--c-muted);line-height:1.55;margin:0 0 14px;
+  font-size:13px;color:var(--c-muted);line-height:1.55;margin:0 0 14px;
   padding:10px 12px;background:var(--c-surface);border-radius:10px;border:1px solid var(--c-border);
 }
 .kus-lp__hint strong{color:var(--c-text-2)}
@@ -4195,7 +4542,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 }
 .kus-lp__tab{
   position:relative;background:transparent;border:none;cursor:pointer;
-  padding:8px 12px 9px;font-size:12px;font-weight:600;color:var(--c-muted);
+  padding:8px 12px 9px;font-size:13px;font-weight:600;color:var(--c-muted);
   border-radius:8px 8px 0 0;
 }
 .kus-lp__tab:hover{color:var(--c-text-2);background:var(--c-surface)}
@@ -4216,10 +4563,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 }
 .kus-lp__card--soft{background:var(--c-surface)}
 .kus-lp__card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-2px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--c-border)}
-.kus-lp__card-title{font-size:11.5px;font-weight:700;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.06em;margin:0;display:flex;align-items:center;gap:6px}
+.kus-lp__card-title{font-size:13px;font-weight:700;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.06em;margin:0;display:flex;align-items:center;gap:6px}
 .kus-lp__card-num{
   display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
-  background:var(--c-accent-chip);color:var(--c-accent-via);font-size:11px;font-weight:700;border-radius:999px;
+  background:var(--c-accent-chip);color:var(--c-accent-via);font-size:12.5px;font-weight:700;border-radius:999px;
 }
 .kus-lp__card-actions{display:flex;gap:6px}
 
@@ -4228,13 +4575,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-lp__row:last-child{margin-bottom:0}
 .kus-lp__row--block{display:block}
 .kus-lp__row--block > .kus-lp__label{display:block;margin-bottom:5px}
-.kus-lp__label{font-size:12px;font-weight:600;color:var(--c-text-2);min-width:5em}
+.kus-lp__label{font-size:13px;font-weight:600;color:var(--c-text-2);min-width:5em}
 
 /* ===== Inputs ===== */
 .kus-lp__input,.kus-lp__textarea,.kus-lp__select{
   appearance:none;
   border:1px solid var(--c-border);
-  border-radius:8px;padding:7px 10px;font-size:12.5px;
+  border-radius:8px;padding:7px 10px;font-size:14px;
   background:var(--c-bg);color:var(--c-text);
   outline:none;transition:border-color .15s,box-shadow .15s;
   font-family:inherit;
@@ -4249,18 +4596,18 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-lp__input--wide{flex:1;min-width:160px}
 .kus-lp__input--full{width:100%;box-sizing:border-box}
 .kus-lp__textarea{width:100%;box-sizing:border-box;min-height:60px;resize:vertical}
-.kus-lp__textarea--code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;background:var(--c-surface)}
-.kus-lp__file{font-size:12px;padding:5px 0}
+.kus-lp__textarea--code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;background:var(--c-surface)}
+.kus-lp__file{font-size:13px;padding:5px 0}
 
 /* ===== Checkbox / chip ===== */
-.kus-lp__check{font-size:12px;color:var(--c-text-2);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.kus-lp__check{font-size:13px;color:var(--c-text-2);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
 .kus-lp__check input{width:14px;height:14px;accent-color:var(--c-accent-via);margin:0}
 .kus-lp__check-grid{display:flex;flex-wrap:wrap;gap:8px 12px;margin-bottom:10px}
 
 .kus-lp__chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .kus-lp__chip{
   display:inline-flex;align-items:center;gap:6px;
-  font-size:11.5px;color:var(--c-text-2);
+  font-size:13px;color:var(--c-text-2);
   background:var(--c-bg);border:1px solid var(--c-border-strong);
   border-radius:999px;padding:4px 10px 4px 7px;cursor:pointer;user-select:none;
   transition:background .12s,border-color .12s;
@@ -4272,7 +4619,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 /* ===== Buttons ===== */
 .kus-lp__btn{
   appearance:none;border:1px solid transparent;border-radius:10px;
-  font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+  font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;
   padding:8px 14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
   transition:filter .12s,transform .04s,background .12s,border-color .12s;
 }
@@ -4282,13 +4629,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-lp__btn--primary{background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 4px var(--c-accent-ring)}
 .kus-lp__btn--primary:hover:not(:disabled){filter:brightness(1.06)}
 
-.kus-lp__btn--run{width:100%;padding:11px 16px;font-size:13px;font-weight:700;background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 6px var(--c-accent-ring)}
+.kus-lp__btn--run{width:100%;padding:11px 16px;font-size:14px;font-weight:700;background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 6px var(--c-accent-ring)}
 .kus-lp__btn--run:hover:not(:disabled){filter:brightness(1.07)}
 
 .kus-lp__btn--ghost{background:var(--c-surface);color:var(--c-text-2);border-color:var(--c-border-strong)}
 .kus-lp__btn--ghost:hover:not(:disabled){background:#fff;border-color:#94a3b8}
 
-.kus-lp__btn--sub{background:linear-gradient(180deg,#fff,var(--c-surface-2));color:var(--c-text-2);border-color:var(--c-border-strong);font-size:11.5px;padding:7px 10px}
+.kus-lp__btn--sub{background:linear-gradient(180deg,#fff,var(--c-surface-2));color:var(--c-text-2);border-color:var(--c-border-strong);font-size:13px;padding:7px 10px}
 .kus-lp__btn--sub:hover:not(:disabled){background:#fff;border-color:#94a3b8}
 
 .kus-lp__btn--danger{background:linear-gradient(180deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 2px 4px rgba(220,38,38,.25)}
@@ -4301,7 +4648,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 
 /* ===== Status ===== */
 .kus-lp__status{
-  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5;
+  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.5;
   border:1px solid var(--c-border);background:var(--c-surface-2);color:var(--c-text-2);
   min-height:2.6em;display:flex;align-items:flex-start;gap:8px;
 }
@@ -4321,44 +4668,65 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 /* ===== Result / Log ===== */
 .kus-lp__result{
   margin-top:10px;padding:11px 13px;background:#0f172a;color:#e2e8f0;border-radius:10px;
-  font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;
   border:1px solid #1e293b;
 }
 .kus-lp__result--empty{display:none}
-/* ログ右上に貼り付くコピー操作（ログ本文の選択・スクロールを妨げない） */
-.kus-lp__result-copy{
-  float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;
-  padding:3px 8px;font:600 10.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+/* ログ右上に貼り付くコピー／保存操作（ログ本文の選択・スクロールを妨げない） */
+.kus-lp__result-tools{float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;display:flex;gap:4px}
+.kus-lp__result-copy,.kus-lp__result-save{
+  padding:3px 8px;font:600 12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
   color:#cbd5e1;background:rgba(30,41,59,.92);border:1px solid #334155;border-radius:7px;cursor:pointer;white-space:nowrap;
 }
-.kus-lp__result-copy:hover{color:#fff;background:#334155}
-.kus-lp__result-copy[data-copied="true"]{color:#bbf7d0;border-color:#166534}
+.kus-lp__result-copy:hover,.kus-lp__result-save:hover{color:#fff;background:#334155}
+.kus-lp__result-copy[data-copied="true"],.kus-lp__result-save[data-copied="true"]{color:#bbf7d0;border-color:#166534}
 .kus-lp__panel-html{
   margin-top:10px;border:1px solid var(--c-border);border-radius:10px;
-  background:var(--c-surface);max-height:240px;overflow:auto;font-size:11.5px;
+  background:var(--c-surface);max-height:240px;overflow:auto;font-size:13px;
 }
 .kus-lp__panel-html--empty{display:none}
 .kus-lp__panel-html table{border-collapse:collapse;width:100%}
 .kus-lp__panel-html th,.kus-lp__panel-html td{padding:6px 8px;border-bottom:1px solid var(--c-border);text-align:left}
-.kus-lp__panel-html th{background:var(--c-surface-2);font-weight:600;font-size:11px;color:var(--c-text-2)}
+.kus-lp__panel-html th{background:var(--c-surface-2);font-weight:600;font-size:12.5px;color:var(--c-text-2)}
 
 /* ===== Misc ===== */
-.kus-lp__note{font-size:11.5px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
+.kus-lp__note{font-size:13px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
 .kus-lp__note--warn{color:var(--c-warn-fg);padding:7px 10px;background:var(--c-warn-bg);border:1px solid var(--c-warn-bd);border-radius:8px;margin:6px 0}
+/* ===== カードの「?」ヘルプ（補足説明の吹き出し） ===== */
+.kus-lp__help-btn{flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);font:700 13px/1 inherit;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.kus-lp__help-btn:hover,.kus-lp__help-btn--open{background:var(--c-accent-chip);border-color:var(--c-accent-via);color:var(--c-accent-from)}
+.kus-lp__help-pop{margin:-4px 0 12px;padding:10px 12px;border:1px solid var(--c-info-bd);background:var(--c-info-bg);border-radius:10px;color:var(--c-text-2);font-size:13px;line-height:1.55;animation:kus-lp-fade-in .12s ease-out}
+.kus-lp__help-pop[hidden]{display:none}
+.kus-lp__help-item{margin:0 0 6px;color:var(--c-text-2);font-size:13px;line-height:1.55}
+.kus-lp__help-item:last-child{margin-bottom:0}
+/* ===== ポップアップ（詳細設定・ほかの操作） ===== */
+.kus-lp__dialog{box-sizing:border-box;width:min(640px,calc(100vw - 32px));max-height:min(88vh,860px);padding:0;border:1px solid var(--c-border);border-radius:16px;background:var(--c-bg);color:var(--c-text);box-shadow:0 28px 60px -12px rgba(15,23,42,.45);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;display:none;flex-direction:column;overflow:hidden}
+.kus-lp__dialog[open]{display:flex}
+.kus-lp__dialog--wide{width:min(880px,calc(100vw - 32px))}
+.kus-lp__dialog::backdrop{background:rgba(15,23,42,.45)}
+.kus-lp__dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog-title{margin:0;font-size:16px;font-weight:700;color:var(--c-text)}
+.kus-lp__dialog-close{flex-shrink:0;white-space:nowrap;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
+.kus-lp__dialog-close:hover{background:var(--c-surface-2)}
+.kus-lp__dialog-body{padding:16px 18px;overflow:auto;min-height:0;flex:1}
+.kus-lp__dialog-body>.kus-lp__card{margin-bottom:12px}
+.kus-lp__dialog-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog :is(button,input,select,textarea,summary):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
+@media(max-width:720px){.kus-lp__dialog{width:calc(100vw - 16px);max-height:calc(100dvh - 16px)}.kus-lp__dialog-body{padding:12px}}
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
-.kus-lp__small{font-size:11px;color:var(--c-muted)}
+.kus-lp__small{font-size:12.5px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
 
 /* ===== Toolbar / Count / Pill ===== */
 .kus-lp__toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px}
 .kus-lp__toolbar-spacer{flex:1;min-width:8px}
 .kus-lp__count{
-  display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:4px;font-size:12.5px;font-weight:700;white-space:nowrap;
   color:var(--c-accent-from);background:var(--c-accent-chip);padding:2px 9px;border-radius:999px;font-variant-numeric:tabular-nums;
 }
 .kus-lp__pill{
-  display:inline-flex;align-items:center;gap:6px;padding:4px 11px;font-size:11.5px;font-weight:600;border-radius:999px;
+  display:inline-flex;align-items:center;gap:6px;padding:4px 11px;font-size:13px;font-weight:600;border-radius:999px;
   background:var(--c-surface-2);color:var(--c-text);border:1px solid var(--c-border);line-height:1.4;max-width:100%;
 }
 .kus-lp__pill--ok{background:var(--c-ok-bg);color:var(--c-ok-fg);border-color:var(--c-ok-bd)}
@@ -4370,20 +4738,20 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:7px 8px;
   background:var(--c-surface);border-bottom:1px solid var(--c-border);
 }
-.kus-lp__picklist-head .kus-lp__input{flex:1;min-width:120px;padding:5px 8px;font-size:12px}
-.kus-lp__picklist-head .kus-lp__btn{padding:4px 8px;font-size:11px;border-radius:7px}
+.kus-lp__picklist-head .kus-lp__input{flex:1;min-width:120px;padding:5px 8px;font-size:13px}
+.kus-lp__picklist-head .kus-lp__btn{padding:4px 8px;font-size:12.5px;border-radius:7px}
 .kus-lp__picklist-body{max-height:220px;overflow:auto;padding:4px}
 .kus-lp__picklist-item{
-  display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;font-size:12px;color:var(--c-text);
+  display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;font-size:13px;color:var(--c-text);
   cursor:pointer;user-select:none;min-width:0;
 }
 .kus-lp__picklist-item:hover{background:var(--c-surface)}
 .kus-lp__picklist-item:has(input:checked){background:var(--c-accent-chip)}
 .kus-lp__picklist-item input{accent-color:var(--c-accent-via);width:14px;height:14px;margin:0;flex-shrink:0}
 .kus-lp__picklist-main{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kus-lp__picklist-sub{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--c-muted);font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.kus-lp__picklist-empty{padding:10px 8px;color:var(--c-muted);font-size:11.5px}
-.kus-lp__picklist-foot{padding:6px 8px;border-top:1px solid var(--c-border);background:var(--c-surface);font-size:11px;color:var(--c-muted);line-height:1.5;overflow-wrap:anywhere}
+.kus-lp__picklist-sub{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--c-muted);font-size:12.5px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.kus-lp__picklist-empty{padding:10px 8px;color:var(--c-muted);font-size:13px}
+.kus-lp__picklist-foot{padding:6px 8px;border-top:1px solid var(--c-border);background:var(--c-surface);font-size:12.5px;color:var(--c-muted);line-height:1.5;overflow-wrap:anywhere}
 
 /* セクション折りたたみ (details) */
 .kus-lp__details{
@@ -4392,7 +4760,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 }
 .kus-lp__details > summary{
   list-style:none;cursor:pointer;padding:10px 14px;
-  font-size:12.5px;font-weight:600;color:var(--c-text-2);
+  font-size:14px;font-weight:600;color:var(--c-text-2);
   display:flex;align-items:center;gap:8px;
 }
 .kus-lp__details > summary::-webkit-details-marker{display:none}
@@ -4411,21 +4779,22 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
 .kus-lp__apptable-scroll{max-height:220px;overflow:auto}
 .kus-lp__apptable table{width:100%;border-collapse:collapse;table-layout:fixed}
-.kus-lp__apptable th{background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__apptable th{background:var(--c-surface-2);font-size:12.5px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
 .kus-lp__apptable-scroll th{position:sticky;top:0;z-index:1}
 .kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
-.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
-.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
-.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:136px}
+.kus-lp__apptable th.kus-lp__apptable-acts-h,.kus-lp__apptable td.kus-lp__apptable-acts{padding-left:4px;padding-right:4px}
 .kus-lp__apptable-acts{white-space:nowrap}
-.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:11px;border-radius:7px}
-.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 6px;font-size:12.5px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:3px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
-.kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
-.kus-lp__apptable-hint{font-size:11px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__apptable-count{font-size:12.5px;color:var(--c-muted);margin-left:auto;font-weight:600}
+.kus-lp__apptable-hint{font-size:12.5px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
 @media(max-width:420px){
   .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
   .kus-lp__apptable thead{display:none}
@@ -4449,9 +4818,33 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     root2.style.setProperty("--c-accent-chip", a.chip);
     root2.style.setProperty("--c-accent-ring", a.ring);
   }
+  var LitePanelBusyError = class extends Error {
+    constructor(id) {
+      super(`パネル ${id} は実行中のため再起動しません`);
+      __publicField(this, "panelBusy", true);
+      this.name = "LitePanelBusyError";
+    }
+  };
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
+    if (old instanceof HTMLElement && old.getAttribute("aria-busy") === "true") {
+      old.classList.remove("kus-lp--collapsed");
+      const statusText = old.querySelector(".kus-lp__status-text");
+      const hint = "実行中のため再起動しません。終わるのを待つか、「中止」を押してください。";
+      if (statusText && !statusText.textContent?.includes(hint)) statusText.textContent = `${hint} ${statusText.textContent || ""}`.trim();
+      try {
+        old.querySelector(".kus-lp__cancel")?.focus({ preventScroll: true });
+      } catch {
+      }
+      throw new LitePanelBusyError(opts.id);
+    }
+    let carriedPosition = null;
+    if (old instanceof HTMLElement && old.dataset.kusPlaced === "1") {
+      const left = parseFloat(old.style.left);
+      const top = parseFloat(old.style.top);
+      if (Number.isFinite(left) && Number.isFinite(top)) carriedPosition = { left, top };
+    }
     if (old) {
       old.dispatchEvent(new Event("kus-lite-dispose"));
       old.remove();
@@ -4482,10 +4875,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     }
     const badgesEl = document.createElement("div");
     badgesEl.className = "kus-lp__badge-row";
-    const badges = opts.badges || [{ label: "Lite" }];
+    const badges = opts.badges || [];
+    if (!badges.length) badgesEl.hidden = true;
     for (const b of badges) {
       const span = document.createElement("span");
-      span.className = "kus-lp__badge";
+      span.className = `kus-lp__badge${b.tone === "read" || b.tone === "preview" || b.tone === "production" ? ` kus-lp__badge--${b.tone}` : ""}`;
       span.textContent = b.label;
       badgesEl.appendChild(span);
     }
@@ -4498,6 +4892,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     elapsedEl.className = "kus-lp__elapsed";
     elapsedEl.setAttribute("aria-hidden", "true");
     elapsedEl.hidden = true;
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "kus-lp__cancel";
+    cancelBtn.textContent = "中止";
+    cancelBtn.setAttribute("aria-label", "処理を中止");
+    cancelBtn.title = "次のリクエストの前で処理を止めます（送信済みの書き込みは取り消しません）";
+    cancelBtn.hidden = true;
     const bodyId = `${opts.id}-body`;
     const toggleBtn = document.createElement("button");
     toggleBtn.type = "button";
@@ -4510,6 +4911,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const heroActions = document.createElement("div");
     heroActions.className = "kus-lp__hero-actions";
     heroActions.appendChild(elapsedEl);
+    heroActions.appendChild(cancelBtn);
     heroActions.appendChild(toggleBtn);
     heroActions.appendChild(closeBtn);
     const progress = document.createElement("div");
@@ -4554,10 +4956,20 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     copyBtn.className = "kus-lp__result-copy";
     copyBtn.textContent = "コピー";
     copyBtn.setAttribute("aria-label", "ログをコピー");
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "kus-lp__result-save";
+    saveBtn.textContent = "保存";
+    saveBtn.setAttribute("aria-label", "ログをファイルに保存");
+    const resultTools = document.createElement("span");
+    resultTools.className = "kus-lp__result-tools";
+    resultTools.appendChild(copyBtn);
+    resultTools.appendChild(saveBtn);
     let copyResetTimer = 0;
+    let saveResetTimer = 0;
     function resultText() {
       const clone = result.cloneNode(true);
-      clone.querySelector(".kus-lp__result-copy")?.remove();
+      clone.querySelector(".kus-lp__result-tools")?.remove();
       return (clone.innerText || clone.textContent || "").replace(/^\s+|\s+$/g, "");
     }
     function flashCopy(label, copied) {
@@ -4569,10 +4981,29 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         delete copyBtn.dataset.copied;
       }, 1600);
     }
+    function flashSave(label, saved) {
+      saveBtn.textContent = label;
+      saveBtn.dataset.copied = String(saved);
+      window.clearTimeout(saveResetTimer);
+      saveResetTimer = window.setTimeout(() => {
+        saveBtn.textContent = "保存";
+        delete saveBtn.dataset.copied;
+      }, 1600);
+    }
     copyBtn.addEventListener("click", () => {
       const text = resultText();
       if (!text) return;
       void copyTextToClipboard(text).then((ok) => flashCopy(ok ? "コピー済み" : "コピー失敗", ok));
+    });
+    saveBtn.addEventListener("click", () => {
+      const text = resultText();
+      if (!text) return;
+      try {
+        downloadText(`${sanitizeFilenamePart(opts.title)}_ログ_${nowStamp()}.txt`, text, "text/plain;charset=utf-8");
+        flashSave("保存済み", true);
+      } catch {
+        flashSave("保存失敗", false);
+      }
     });
     function setResult(text) {
       if (!text) {
@@ -4581,7 +5012,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         return;
       }
       result.textContent = text;
-      result.prepend(copyBtn);
+      result.prepend(resultTools);
       result.classList.remove("kus-lp__result--empty");
     }
     function setResultHtml(html) {
@@ -4591,7 +5022,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         return;
       }
       result.innerHTML = html;
-      result.prepend(copyBtn);
+      result.prepend(resultTools);
       result.classList.remove("kus-lp__result--empty");
     }
     let busyTimer = 0;
@@ -4605,25 +5036,72 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     function tickElapsed() {
       elapsedEl.textContent = `処理中 ${formatElapsed(Date.now() - busyStartedAt)}`;
     }
-    function stopElapsed() {
+    function startElapsed() {
+      busyStartedAt = Date.now();
+      elapsedEl.classList.remove("kus-lp__elapsed--done");
+      tickElapsed();
+      elapsedEl.hidden = false;
+      busyTimer = window.setInterval(tickElapsed, 1e3);
+    }
+    function stopElapsed(keepLast) {
+      const wasRunning = !!busyTimer;
       if (busyTimer) window.clearInterval(busyTimer);
       busyTimer = 0;
-      elapsedEl.hidden = true;
-      elapsedEl.textContent = "";
+      if (keepLast && wasRunning) {
+        elapsedEl.classList.add("kus-lp__elapsed--done");
+        elapsedEl.textContent = `前回 ${formatElapsed(Date.now() - busyStartedAt)}`;
+        elapsedEl.hidden = false;
+      } else if (!keepLast) {
+        elapsedEl.classList.remove("kus-lp__elapsed--done");
+        elapsedEl.hidden = true;
+        elapsedEl.textContent = "";
+      }
     }
+    let runToken = null;
+    function requestCancel2() {
+      if (!runToken) return false;
+      const accepted = requestCancel(runToken);
+      if (accepted) {
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = "中止中…";
+        handle.setStatus("中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…", "busy");
+      }
+      return accepted;
+    }
+    function isCancelRequested2() {
+      return !!runToken && runToken.cancelled;
+    }
+    cancelBtn.addEventListener("click", () => {
+      requestCancel2();
+    });
     function setBusy(busy) {
       closeBtn.disabled = busy;
       root2.setAttribute("aria-busy", String(busy));
       root2.style.cursor = busy ? "progress" : "";
       if (busy) {
-        if (!busyTimer) {
-          busyStartedAt = Date.now();
-          tickElapsed();
-          elapsedEl.hidden = false;
-          busyTimer = window.setInterval(tickElapsed, 1e3);
+        if (!runToken) {
+          runToken = beginRun();
+          cancelBtn.textContent = "中止";
+          cancelBtn.disabled = false;
+          runToken.controller.signal.addEventListener("abort", () => {
+            if (!cancelBtn.hidden && !cancelBtn.disabled) {
+              cancelBtn.disabled = true;
+              cancelBtn.textContent = "中止中…";
+              handle.setStatus("中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…", "busy");
+            }
+          }, { once: true });
+        } else if (!runToken.cancelled) {
+          cancelBtn.disabled = false;
         }
+        cancelBtn.hidden = false;
+        if (!busyTimer) startElapsed();
       } else {
-        stopElapsed();
+        endRun(runToken);
+        runToken = null;
+        cancelBtn.hidden = true;
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = "中止";
+        stopElapsed(true);
       }
       root2.dispatchEvent(new Event("kus-lite-busy-change"));
     }
@@ -4653,9 +5131,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       root2.style.top = `${Math.round(nextTop)}px`;
       root2.style.right = "auto";
       customPlaced = true;
+      root2.dataset.kusPlaced = "1";
     }
     function resetPosition() {
       customPlaced = false;
+      delete root2.dataset.kusPlaced;
       root2.style.left = "";
       root2.style.top = "";
       root2.style.right = "";
@@ -4702,11 +5182,16 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     });
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
+    if (carriedPosition) place(carriedPosition.left, carriedPosition.top);
     function dispose() {
+      if (runToken && !runToken.cancelled) requestCancel(runToken);
       document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
-      stopElapsed();
+      stopElapsed(false);
+      endRun(runToken);
+      runToken = null;
       window.clearTimeout(copyResetTimer);
+      window.clearTimeout(saveResetTimer);
     }
     function close() {
       if (closeBtn.disabled) return;
@@ -4747,6 +5232,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     function onDocKeydown(e) {
       if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
       if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      if (root2.querySelector("dialog[open]")) return;
       e.preventDefault();
       e.stopPropagation();
       close();
@@ -4764,7 +5250,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
+    const handle = { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel: requestCancel2, isCancelRequested: isCancelRequested2 };
+    return handle;
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
@@ -4890,9 +5377,129 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   }
   function makeNote(text, kind = "plain") {
     const n = document.createElement("div");
-    n.className = kind === "warn" ? "kus-lp__note--warn" : "kus-lp__note";
+    n.className = kind === "warn" ? "kus-lp__note--warn" : kind === "help" ? "kus-lp__note kus-lp__note--help" : "kus-lp__note";
     n.textContent = text;
     return n;
+  }
+  function attachCardHelp(scope) {
+    const cards = Array.from(scope.querySelectorAll(".kus-lp__card"));
+    if (scope instanceof HTMLElement && scope.classList.contains("kus-lp__card")) cards.unshift(scope);
+    for (const card of cards) {
+      const notes = Array.from(card.querySelectorAll(".kus-lp__note--help")).filter((note) => note.closest(".kus-lp__card") === card);
+      if (!notes.length) continue;
+      const head = card.querySelector(":scope > .kus-lp__card-head");
+      if (!head) continue;
+      let pop = card.querySelector(":scope > .kus-lp__help-pop");
+      let btn = head.querySelector(".kus-lp__help-btn");
+      if (!pop) {
+        pop = document.createElement("div");
+        pop.className = "kus-lp__help-pop";
+        pop.hidden = true;
+        pop.setAttribute("role", "note");
+        head.insertAdjacentElement("afterend", pop);
+      }
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "kus-lp__help-btn";
+        btn.textContent = "?";
+        const titleEl = head.querySelector(".kus-lp__card-title");
+        const title = titleEl ? Array.from(titleEl.childNodes).filter((node) => !(node instanceof HTMLElement && node.classList.contains("kus-lp__card-num"))).map((node) => node.textContent || "").join("").trim() : "";
+        btn.setAttribute("aria-label", `${title ? `「${title}」の` : ""}説明を表示`);
+        btn.title = "説明を表示";
+        btn.setAttribute("aria-expanded", "false");
+        const popEl = pop;
+        const setOpen = (next) => {
+          popEl.hidden = !next;
+          btn.setAttribute("aria-expanded", String(next));
+          btn.classList.toggle("kus-lp__help-btn--open", next);
+        };
+        btn.addEventListener("click", () => setOpen(popEl.hidden));
+        const onEsc = (e) => {
+          if (e.key !== "Escape" || popEl.hidden || e.isComposing) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(false);
+          try {
+            btn.focus({ preventScroll: true });
+          } catch {
+          }
+        };
+        btn.addEventListener("keydown", onEsc);
+        const actions = head.querySelector(".kus-lp__card-actions");
+        if (actions) actions.insertAdjacentElement("afterbegin", btn);
+        else head.appendChild(btn);
+      }
+      for (const note of notes) {
+        note.classList.remove("kus-lp__note--help");
+        note.classList.add("kus-lp__help-item");
+        pop.appendChild(note);
+      }
+    }
+  }
+  function makeDialog(opts) {
+    const dialog = document.createElement("dialog");
+    dialog.className = `kus-lp__dialog${opts.wide ? " kus-lp__dialog--wide" : ""}`;
+    if (opts.id) dialog.id = opts.id;
+    const titleId = `${opts.id || `kus-dialog-${Math.random().toString(36).slice(2, 8)}`}-title`;
+    dialog.setAttribute("aria-labelledby", titleId);
+    const head = document.createElement("div");
+    head.className = "kus-lp__dialog-head";
+    const title = document.createElement("h2");
+    title.className = "kus-lp__dialog-title";
+    title.id = titleId;
+    title.textContent = opts.title;
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "kus-lp__dialog-close";
+    closeBtn.textContent = "閉じる";
+    closeBtn.setAttribute("aria-label", `${opts.title}を閉じる`);
+    head.append(title, closeBtn);
+    const body = document.createElement("div");
+    body.className = "kus-lp__dialog-body";
+    const foot = document.createElement("div");
+    foot.className = "kus-lp__dialog-foot";
+    const doneBtn = document.createElement("button");
+    doneBtn.type = "button";
+    doneBtn.className = "kus-lp__btn kus-lp__btn--sub";
+    doneBtn.textContent = "閉じる";
+    foot.appendChild(doneBtn);
+    dialog.append(head, body, foot);
+    let opener = null;
+    function close() {
+      if (!dialog.open) return;
+      dialog.close();
+    }
+    function open() {
+      if (dialog.open) return;
+      opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+      const first = body.querySelector("input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled])");
+      try {
+        (first || closeBtn).focus({ preventScroll: true });
+      } catch {
+      }
+    }
+    closeBtn.addEventListener("click", close);
+    doneBtn.addEventListener("click", close);
+    let pressedOnBackdrop = false;
+    dialog.addEventListener("pointerdown", (e) => {
+      pressedOnBackdrop = e.target === dialog;
+    });
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog && pressedOnBackdrop) close();
+      pressedOnBackdrop = false;
+    });
+    dialog.addEventListener("close", () => {
+      if (opener?.isConnected) {
+        try {
+          opener.focus({ preventScroll: true });
+        } catch {
+        }
+      }
+    });
+    return { dialog, body, open, close };
   }
   function makeDetails(title, opts = {}) {
     const d = document.createElement("details");
@@ -4909,6 +5516,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   async function liteRun(panel, busyMsg, fn, okMsg) {
     panel.setStatus(busyMsg, "busy");
     panel.setBusy(true);
+    const token = activeRun();
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
@@ -4921,11 +5529,36 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       } else if (tone === "busy") {
         panel.setStatus(currentText || "完了", "ok");
       }
+      if (token?.cancelled && !cancelled && panel.status.dataset.tone !== "err") {
+        let base = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        if (/^中止しています/.test(base)) base = okMsg || "処理が終わりました";
+        panel.setStatus(/中止/.test(base) ? base : `${base}（中止を要求したため、途中で止めた項目があるかもしれません。結果を確認してください）`, "warn");
+      }
       return out;
     } catch (e) {
+      if (isRunCancelledError(e)) {
+        panel.setStatus(token && token.writes > 0 ? "中止しました。次のリクエストの前で止めました。途中まで書き込んだ内容は取り消していません。" : "中止しました。次のリクエストの前で止めました（書き込みは行っていません）。", "warn");
+        return void 0;
+      }
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
+      if (e?.partialSuccess === true) {
+        const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
+        panel.setStatus(`${first}${logNote}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
+      if (token?.cancelled && (e?.cancelReport === true || /^中止しました/.test(first))) {
+        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
+      if (token?.cancelled) {
+        panel.setStatus(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? "。詳細は下のログ" : ""}）`, "err");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
       panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
       if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
@@ -4941,16 +5574,16 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   var RESULT_CSS = `
 .kus-as__result{margin-top:6px;border:1px solid var(--c-border);border-radius:8px;overflow:hidden;max-height:240px;overflow-y:auto}
 .kus-as__result--empty{display:none}
-.kus-as__head{padding:6px 10px;background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);position:sticky;top:0}
-.kus-as__table{border-collapse:collapse;width:100%;font-size:11.5px}
+.kus-as__head{padding:6px 10px;background:var(--c-surface-2);font-size:12.5px;font-weight:600;color:var(--c-text-2);position:sticky;top:0}
+.kus-as__table{border-collapse:collapse;width:100%;font-size:13px}
 .kus-as__table th,.kus-as__table td{padding:5px 8px;border-bottom:1px solid var(--c-border);text-align:left;vertical-align:top}
-.kus-as__table th{background:var(--c-surface);font-weight:600;color:var(--c-text-2);font-size:11px}
+.kus-as__table th{background:var(--c-surface);font-weight:600;color:var(--c-text-2);font-size:12.5px}
 .kus-as__table tr:last-child td{border-bottom:none}
 .kus-as__id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--c-text-2);white-space:nowrap}
 .kus-as__name{color:var(--c-text);word-break:break-all}
-.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:10.5px;line-height:1.5}
+.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:12px;line-height:1.5}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
-.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:10.5px}
+.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
   function ensureStyles() {
@@ -5174,12 +5807,16 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return details;
   }
 
+  // src/entries/reflect-lite-ui.ts
+  init_runControl();
+
   // src/reflect/planReport.ts
   var ENVIRONMENT_LABELS = { production: "本番設定", preview: "プレビュー設定", json: "設定JSON" };
   var STATUS_LABELS = { change: "差分あり", same: "一致", "src-missing": "確認が必要", "tgt-missing": "確認が必要", error: "確認が必要" };
   var OUTCOME_LABELS = { ok: "成功", ng: "失敗", skip: "変更なし", pending: "未実行" };
+  var STOPPED_LABEL = "途中で停止";
   var KIND_ORDER2 = ["削除", "変更", "追加", "保持"];
-  var outcomeLabel = (status) => OUTCOME_LABELS[status] || status;
+  var outcomeLabel = (outcome) => outcome.status === "ng" && outcome.stopped ? STOPPED_LABEL : OUTCOME_LABELS[outcome.status] || outcome.status;
   var listOf = (value) => Array.isArray(value) ? value : [];
   function escapeReflectMarkdown(value) {
     return String(value ?? "").replace(/[\r\n]+/g, " ").replace(/([\\`*_[\]<>|~])/g, "\\$1");
@@ -5215,15 +5852,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     for (const entry of input.entries) {
       const kept = listOf(entry.changes).filter((change) => change.kind === "保持").length;
       const outcome = outcomeOf(entry.sectionKey);
-      lines.push(record ? `| ${cell(entry.label)} | ${cell(outcome ? outcomeLabel(outcome.status) : "対象外")} | ${entry.changeCount} | ${entry.removalCount} | ${cell(entry.behavior)} |` : `| ${cell(entry.label)} | ${cell(STATUS_LABELS[entry.status] || entry.status)} | ${entry.changeCount} | ${entry.removalCount} | ${kept} | ${cell(entry.behavior)} |`);
+      lines.push(record ? `| ${cell(entry.label)} | ${cell(outcome ? outcomeLabel(outcome) : "対象外")} | ${entry.changeCount} | ${entry.removalCount} | ${cell(entry.behavior)} |` : `| ${cell(entry.label)} | ${cell(STATUS_LABELS[entry.status] || entry.status)} | ${entry.changeCount} | ${entry.removalCount} | ${kept} | ${cell(entry.behavior)} |`);
     }
     lines.push("");
     for (const entry of input.entries) {
       lines.push(`## ${escapeReflectMarkdown(entry.label)}`, "");
       const outcome = outcomeOf(entry.sectionKey);
       if (outcome) {
-        lines.push(`- 結果: ${outcomeLabel(outcome.status)}`);
-        if (outcome.message) lines.push(`- 詳細: ${escapeReflectMarkdown(outcome.message)}`);
+        lines.push(`- 結果: ${outcomeLabel(outcome)}`);
+        if (outcome.message) lines.push(`- 詳細: ${escapeReflectMarkdown(describeReflectFailure(outcome.message))}`);
       }
       lines.push(`- 状態: ${escapeReflectMarkdown(entry.message || STATUS_LABELS[entry.status] || entry.status)}`);
       for (const blocker of listOf(entry.blockers)) lines.push(`- 停止理由: ${escapeReflectMarkdown(blocker)}`);
@@ -5406,7 +6043,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   function canResolveByIncludingFieldSettings(missing, scopes) {
     return !scopes.includes("fieldSettings") && missing.some((item) => item.inSource !== false);
   }
-  function describeApplySectionStatus(status) {
+  function describeApplySectionStatus(status, stopped = false) {
+    if (status === "ng" && stopped) return { icon: "■", text: "途中で停止", tone: "ng" };
     if (status === "ok") return { icon: "✓", text: "成功", tone: "ok" };
     if (status === "ng") return { icon: "✕", text: "失敗", tone: "ng" };
     if (status === "skip") return { icon: "－", text: "変更なし", tone: "skip" };
@@ -5422,14 +6060,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const label = typeof raw.label === "string" ? raw.label : "";
       if (!sectionKey && !label) continue;
       const status = raw.status === "ok" || raw.status === "ng" || raw.status === "skip" || raw.status === "pending" ? raw.status : "pending";
-      out.push({ sectionKey, label, status, ...typeof raw.message === "string" && raw.message ? { message: raw.message } : {} });
+      out.push({ sectionKey, label, status, ...typeof raw.message === "string" && raw.message ? { message: raw.message } : {}, ...status === "ng" && raw.stopped === true ? { stopped: true } : {} });
     }
     return out;
   }
   var REFLECT_UNDO_GUIDANCE = "取り消す場合: 反映前に反映先プレビューへ未公開の変更が無ければ、アプリの設定画面の『変更を中止』で今回の反映を含む未公開の変更をすべて破棄できます。または自動保存したバックアップJSONを『設定JSONから取得』で反映元に読み込み、差分を確認して戻せます（追加したフィールドは削除されません）。";
 
   // src/reflect/applyProgress.ts
-  function describeApplyProgressStatus(status) {
+  function describeApplyProgressStatus(status, stopped = false) {
+    if (status === "ng" && stopped) return { icon: "■", text: "途中で停止", tone: "ng" };
     if (status === "running") return { icon: "…", text: "実行中…", tone: "running" };
     if (status === "ok") return { icon: "✓", text: "成功", tone: "ok" };
     if (status === "ng") return { icon: "✕", text: "失敗", tone: "ng" };
@@ -5445,15 +6084,16 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return [...new Set(sectionKeys)].sort((a, b) => order(a) - order(b)).map((sectionKey) => ({ sectionKey, label: labelOf(sectionKey), status: "waiting" }));
   }
   function applyProgressUpdate(rows, update) {
-    return rows.map((row) => row.sectionKey === update.sectionKey ? { sectionKey: row.sectionKey, label: row.label, status: update.status, ...update.message ? { message: update.message } : {} } : row);
+    return rows.map((row) => row.sectionKey === update.sectionKey ? { sectionKey: row.sectionKey, label: row.label, status: update.status, ...update.message ? { message: update.message } : {}, ...update.status === "ng" && update.stopped ? { stopped: true } : {} } : row);
   }
   function summarizeApplyProgress(rows) {
     if (!rows.length) return "";
     const settled = rows.filter((row) => ["ok", "ng", "skip"].includes(row.status)).length;
-    const failed = rows.filter((row) => row.status === "ng").length;
+    const failed = rows.filter((row) => row.status === "ng" && !row.stopped).length;
+    const stopped = rows.filter((row) => row.status === "ng" && row.stopped).length;
     const skipped = rows.filter((row) => row.status === "pending").length;
     const running = rows.find((row) => row.status === "running");
-    return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ""}${skipped ? `、未実行 ${skipped}` : ""}${running ? `。実行中: ${running.label}` : ""}`;
+    return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ""}${stopped ? `（途中で停止 ${stopped}）` : ""}${skipped ? `、未実行 ${skipped}` : ""}${running ? `。実行中: ${running.label}` : ""}`;
   }
   function describeUndoGuidance(targetPending) {
     if (targetPending?.state === "clean") {
@@ -5496,6 +6136,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   function describeRemovedItem(sectionLabel, item) {
     const details = (item.details || []).filter(Boolean);
     return `${sectionLabel} / ${item.name}${details.length ? `：${details.join("、")}` : ""}`;
+  }
+  function describeRemovedChange(sectionLabel, change) {
+    if (change.summary) return `${sectionLabel} / ${change.path.replace(/ \/ \d+件目$/, "")}：${change.summary}`;
+    return `${sectionLabel} / ${change.path}：${change.before.slice(0, 180)}${change.before.length > 180 ? "…" : ""}`;
   }
   function formatReflectDateTime(at) {
     return new Date(at).toLocaleString("ja-JP");
@@ -5717,14 +6361,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   }
   function reflectIdentityLabel(identities, side, sourceEnvironment) {
     const app = identities[side];
-    return `${app.name}${app.appId ? `（ID: ${app.appId}）` : ""} / ${app.guestId ? `ゲスト ${app.guestId}` : "通常スペース"} / ${side === "target" ? "プレビュー" : sourceEnvironment}`;
+    return `${app.name}${app.appId ? `（ID: ${app.appId}）` : ""} / ${app.guestId ? `ゲストスペース ${app.guestId}` : "通常スペース"} / ${side === "target" ? "プレビュー" : sourceEnvironment}`;
   }
   function renderReflectRoute(host, identities, environment, options = {}) {
     const route = document.createElement("div");
     route.className = "kus-rl-confirm-route";
     for (const side of ["source", "target"]) {
       const block = document.createElement("div"), label = document.createElement("span"), name = document.createElement("strong");
-      label.textContent = side === "source" ? "反映元 ↓" : "書き込み先";
+      label.textContent = side === "source" ? "反映元 ↓" : "書き込み先（反映先）";
       name.textContent = side === "source" && options.sourceLabel ? options.sourceLabel : reflectIdentityLabel(identities, side, environment);
       block.append(label, name);
       route.appendChild(block);
@@ -5734,7 +6378,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   var SUMMARY_STATUS = {
     change: { text: "差分あり", pill: "change" },
     same: { text: "一致", pill: "same" },
-    error: { text: "確認が必要", pill: "error" }
+    error: { text: "取得失敗", pill: "error" }
   };
   function renderReflectSummaryTable(host, entries, options) {
     const wrap = document.createElement("section");
@@ -5744,9 +6388,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     title.className = "kus-rl-summary__title";
     const heading = document.createElement("strong");
     heading.textContent = `取得した全 ${entries.length} 項目`;
-    const note = document.createElement("span");
-    note.textContent = "項目名を押すと、下の詳細へ移動します。";
-    title.append(heading, note);
+    title.append(heading);
     const table = document.createElement("table");
     table.className = "kus-rl-summary__table";
     table.setAttribute("role", "table");
@@ -5817,7 +6459,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const list2 = document.createElement("ul");
     list2.className = "kus-rl-result-list";
     for (const section of sections) {
-      const display = describeApplySectionStatus(section.status);
+      const display = describeApplySectionStatus(section.status, section.stopped);
       const item = document.createElement("li");
       item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
       const head = document.createElement("div");
@@ -5835,10 +6477,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (section.message) {
         const message = document.createElement("div");
         message.className = "kus-rl-result-item__message";
-        message.textContent = section.message;
+        message.textContent = describeReflectFailure(section.message);
         item.appendChild(message);
       }
-      const hint = section.status === "ng" ? buildReflectErrorHint(section.message || "") : "";
+      const hint = section.status === "ng" && !section.stopped ? buildReflectErrorHint(section.message || "") : "";
       if (hint) {
         const hintNode = document.createElement("div");
         hintNode.className = "kus-rl-result-item__hint";
@@ -5881,13 +6523,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const paint = (row) => {
       const node = nodes.get(row.sectionKey);
       if (!node) return;
-      const display = describeApplyProgressStatus(row.status);
+      const display = describeApplyProgressStatus(row.status, row.stopped);
       node.item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
       node.state.className = `kus-rl-result-state kus-rl-result-state--${display.tone}`;
       node.icon.textContent = display.icon;
       node.text.data = display.text;
-      node.message.textContent = row.message || "";
-      node.message.hidden = !row.message;
+      const shownMessage = describeReflectFailure(row.message);
+      node.message.textContent = shownMessage;
+      node.message.hidden = !shownMessage;
     };
     const paintSummary = () => {
       summary.textContent = summarizeApplyProgress(rows);
@@ -6062,35 +6705,35 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     presets: []
   };
   var SCOPE_QUICK_PRESETS = [
-    { id: "all", label: "すべての項目", hint: "反映可能なセクションを全選択" },
+    { id: "all", label: "すべての項目", hint: "反映できる項目をすべて選びます" },
     {
       id: "formOnly",
       label: "フォームのみ",
-      hint: "フィールド設定＋レイアウト＋ビュー",
+      hint: "フィールド設定・レイアウト設定・ビュー設定を選びます",
       scopes: ["fieldSettings", "layoutSettings", "viewSettings"]
     },
     {
       id: "viewsOnly",
-      label: "ビュー+グラフ",
-      hint: "ビュー設定とグラフ設定のみ",
+      label: "ビューとグラフ",
+      hint: "ビュー設定とグラフ設定だけを選びます",
       scopes: ["viewSettings", "reportSettings"]
     },
     {
       id: "permsOnly",
       label: "権限のみ",
-      hint: "アプリ・フィールド・レコード権限",
+      hint: "アプリ・フィールド・レコードの権限だけを選びます",
       scopes: ["appAcl", "fieldAcl", "recordPermissions"]
     },
     {
       id: "notificationsOnly",
       label: "通知のみ",
-      hint: "一般・条件・リマインダー通知",
+      hint: "一般・条件・リマインダーの通知だけを選びます",
       scopes: ["notifications", "perRecordNotifications", "reminderNotifications"]
     },
     {
       id: "noPerms",
-      label: "権限を除外",
-      hint: "権限系・通知系を除いた全セクション",
+      label: "権限・通知を除外",
+      hint: "権限と通知を除いた、すべての項目を選びます",
       exclude: ["appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications"]
     }
   ];
@@ -6107,15 +6750,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   var REFLECT_LITE_CSS = `
 #kus-reflect-lite.kus-lp--wide{width:min(960px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px;border-color:#cbd5e1}
 #kus-reflect-lite .kus-lp__hero{padding:16px 24px;background:#172033}
-#kus-reflect-lite .kus-lp__title{font-size:20px;letter-spacing:-.01em;word-break:keep-all}
+#kus-reflect-lite .kus-lp__title{font-size:22px;letter-spacing:-.01em;word-break:keep-all}
 #kus-reflect-lite .kus-lp__card pre:empty{display:none!important}
-#kus-reflect-lite .kus-lp__subtitle{font-size:12.5px;max-width:560px}
+#kus-reflect-lite .kus-lp__subtitle{font-size:14px;max-width:560px}
 #kus-reflect-lite .kus-lp__body{padding:0;background:#f4f6f8;display:flex;flex-direction:column;overflow:hidden}
 #kus-reflect-lite .kus-lp__hint{margin:0;padding:11px 24px;border:0;border-bottom:1px solid #e2e8f0;border-radius:0;background:#fff7ed;color:#9a3412}
 #kus-reflect-lite .kus-lp__hint strong{color:#7c2d12}
 #kus-reflect-lite .kus-lp__card{border-radius:16px;padding:16px 18px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
 #kus-reflect-lite .kus-lp__card-head{border:0;margin:0 0 12px;padding:0}
-#kus-reflect-lite .kus-lp__card-title{font-size:12px;text-transform:none;letter-spacing:.01em;color:#172033}
+#kus-reflect-lite .kus-lp__card-title{font-size:13px;text-transform:none;letter-spacing:.01em;color:#172033}
 #kus-reflect-lite .kus-lp__card-num{background:#172033;color:#fff}
 #kus-reflect-lite .kus-rl-workspace{display:flex;flex-direction:column;min-height:0;flex:1}
 #kus-reflect-lite .kus-rl-canvas{min-width:0;min-height:0;overflow:auto;padding:20px 24px;scroll-padding:16px}
@@ -6125,24 +6768,26 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 #kus-reflect-lite .kus-rl-route{display:grid;grid-template-columns:minmax(0,1fr) 48px minmax(0,1fr);align-items:stretch;gap:10px}
 #kus-reflect-lite .kus-rl-endpoint{padding:13px;border:1px solid #e2e8f0;border-radius:13px;background:#f8fafc}
 #kus-reflect-lite .kus-rl-endpoint--target{background:#fff7ed;border-color:#fed7aa}
-#kus-reflect-lite .kus-rl-endpoint__eyebrow{margin-bottom:8px;font-size:10.5px;font-weight:800;letter-spacing:.08em;color:#64748b;text-transform:uppercase}
+#kus-reflect-lite .kus-rl-endpoint__eyebrow{margin-bottom:8px;font-size:12px;font-weight:800;letter-spacing:.08em;color:#64748b;text-transform:uppercase}
 #kus-reflect-lite .kus-rl-endpoint--target .kus-rl-endpoint__eyebrow{color:#c2410c}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.8fr);gap:7px;margin:0}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__input{width:100%;min-width:0;box-sizing:border-box}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__select{width:100%;margin-bottom:8px}
-#kus-reflect-lite .kus-rl-endpoint__note{font-size:11px;color:#9a3412;min-height:33px;margin-bottom:8px}
-#kus-reflect-lite .kus-rl-field{display:flex;flex-direction:column;gap:4px;font-size:11px;font-weight:600;margin:8px 0}
+#kus-reflect-lite .kus-rl-endpoint__note{font-size:12.5px;color:#9a3412;min-height:33px;margin-bottom:8px}
+#kus-reflect-lite .kus-rl-field{display:flex;flex-direction:column;gap:4px;font-size:12.5px;font-weight:600;margin:8px 0}
 #kus-reflect-lite .kus-rl-field .kus-lp__input{min-height:40px;font-size:14px}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__file{width:100%;min-width:0;box-sizing:border-box;margin:12px 0}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__check{margin:10px 0}
 #kus-reflect-lite .kus-rl-scope-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}
 #kus-reflect-lite .kus-rl-scope-group{min-width:0;margin:0;padding:10px;border:1px solid #e2e8f0;border-radius:10px}
-#kus-reflect-lite .kus-rl-scope-group legend{font-size:11px;font-weight:700;color:#475569;padding:0 4px}
+#kus-reflect-lite .kus-rl-scope-group legend{font-size:12.5px;font-weight:700;color:#475569;padding:0 4px}
 #kus-reflect-lite .kus-rl-scope-group .kus-lp__chips{display:flex;flex-direction:column;align-items:stretch}
 #kus-reflect-lite .kus-rl-scope-group .kus-lp__chip{border-radius:6px;white-space:normal;min-height:32px}
-#kus-reflect-lite .kus-rl-advanced{border:1px solid #e2e8f0;border-radius:12px;background:#fff;padding:2px 14px}
-#kus-reflect-lite .kus-rl-advanced>.kus-lp__details-body{padding:10px 0}
-#kus-reflect-lite .kus-rl-advanced .kus-lp__card{box-shadow:none}
+#kus-reflect-lite .kus-rl-detail-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+#kus-reflect-lite .kus-rl-detail-summary{flex:1 1 220px;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.5;color:#475569}
+#kus-reflect-lite .kus-rl-detail-summary--warn{color:#9a3412;font-weight:700}
+#kus-reflect-lite .kus-rl-detail-status[hidden]{display:none}
+#kus-reflect-lite .kus-lp__dialog .kus-lp__card--soft{box-shadow:none}
 #kus-reflect-lite [hidden]{display:none!important}
 #kus-reflect-lite :is(button,input,select,summary):focus-visible{outline:3px solid #2563eb;outline-offset:3px}
 #kus-reflect-lite .kus-rl-route-arrow{display:flex;align-items:center;justify-content:center;color:#dc2626;font-size:22px;font-weight:800}
@@ -6150,24 +6795,24 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 #kus-reflect-lite .kus-rl-review{display:flex;flex-direction:column;gap:10px}
 #kus-reflect-lite .kus-rl-review-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 #kus-reflect-lite .kus-rl-stat{padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff}
-#kus-reflect-lite .kus-rl-stat__label{font-size:10.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
-#kus-reflect-lite .kus-rl-stat__value{font-size:13px;font-weight:700;color:#0f172a;word-break:break-word}
-#kus-reflect-lite .kus-rl-stat__meta{margin-top:4px;font-size:11px;line-height:1.5;color:#64748b}
+#kus-reflect-lite .kus-rl-stat__label{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+#kus-reflect-lite .kus-rl-stat__value{font-size:14px;font-weight:700;color:#0f172a;word-break:break-word}
+#kus-reflect-lite .kus-rl-stat__meta{margin-top:4px;font-size:12.5px;line-height:1.5;color:#64748b}
 #kus-reflect-lite .kus-rl-pills{display:flex;flex-wrap:wrap;gap:6px}
-#kus-reflect-lite .kus-rl-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid #e2e8f0;background:#fff;color:#334155}
+#kus-reflect-lite .kus-rl-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;font-size:12.5px;font-weight:700;border:1px solid #e2e8f0;background:#fff;color:#334155}
 #kus-reflect-lite .kus-rl-pill--change{background:#fff7ed;border-color:#fdba74;color:#9a3412}
 #kus-reflect-lite .kus-rl-pill--same{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
 #kus-reflect-lite .kus-rl-pill--error{background:#fef2f2;border-color:#fca5a5;color:#991b1b}
 #kus-reflect-lite .kus-rl-pill--stale{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
-#kus-reflect-lite .kus-rl-next{padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.6;border:1px solid #e2e8f0;background:#fff;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-next{padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.6;border:1px solid #e2e8f0;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-next strong{display:block;margin-bottom:2px}
 #kus-reflect-lite .kus-rl-next--ok{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
 #kus-reflect-lite .kus-rl-next--info{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}
 #kus-reflect-lite .kus-rl-next--warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
-#kus-reflect-lite .kus-rl-issues{margin:0;padding-left:18px;font-size:12px;line-height:1.6;color:#92400e;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-issues{margin:0;padding-left:18px;font-size:13px;line-height:1.6;color:#92400e;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-issues li+li{margin-top:3px}
-#kus-reflect-lite .kus-rl-quiet{font-size:11.5px;color:#64748b}
-#kus-reflect-lite .kus-rl-lookup-status{margin-top:6px;font-size:11.5px;color:#475569}
+#kus-reflect-lite .kus-rl-quiet{font-size:13px;color:#64748b}
+#kus-reflect-lite .kus-rl-lookup-status{margin-top:6px;font-size:13px;color:#475569}
 #kus-reflect-lite .kus-rl-lookup-status--err{color:#b91c1c;font-weight:700}
 #kus-reflect-lite .kus-rl-preset-name{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;margin-bottom:8px}
 #kus-reflect-lite .kus-rl-preset-name .kus-lp__input{width:100%;min-width:0;box-sizing:border-box}
@@ -6175,36 +6820,36 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 #kus-reflect-lite .kus-rl-preview-summary{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 #kus-reflect-lite .kus-rl-preview-tools{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
 #kus-reflect-lite .kus-rl-preview-tools__actions{display:flex;flex-wrap:wrap;gap:6px}
-#kus-reflect-lite .kus-rl-preview-empty{padding:14px 12px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;font-size:12px;color:#64748b}
+#kus-reflect-lite .kus-rl-preview-empty{padding:14px 12px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;font-size:13px;color:#64748b}
 #kus-reflect-lite .kus-rl-preview-group{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#fff;margin-bottom:10px}
-#kus-reflect-lite .kus-rl-preview-group__head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11.5px;font-weight:700;color:#334155}
+#kus-reflect-lite .kus-rl-preview-group__head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:13px;font-weight:700;color:#334155}
 #kus-reflect-lite .kus-rl-preview-list{display:flex;flex-direction:column;gap:8px;padding:10px}
 #kus-reflect-lite .kus-rl-preview-row{border:1px solid #e2e8f0;border-radius:10px;padding:10px;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-preview-row--change{border-color:#fdba74;background:#fffaf0}
 #kus-reflect-lite .kus-rl-preview-row--same{border-color:#bbf7d0;background:#f0fdf4}
 #kus-reflect-lite .kus-rl-preview-row--error{border-color:#fca5a5;background:#fff5f5}
 #kus-reflect-lite .kus-rl-preview-row__head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px}
-#kus-reflect-lite .kus-rl-preview-row__title{font-size:12px;font-weight:700;color:#0f172a}
-#kus-reflect-lite .kus-rl-preview-row__detail{font-size:11.5px;line-height:1.6;color:#475569}
+#kus-reflect-lite .kus-rl-preview-row__title{font-size:13px;font-weight:700;color:#0f172a}
+#kus-reflect-lite .kus-rl-preview-row__detail{font-size:13px;line-height:1.6;color:#475569}
 #kus-reflect-lite .kus-rl-preview-row__meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 #kus-reflect-lite .kus-rl-preview-row__actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 #kus-reflect-lite .kus-rl-preview-row__state{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-#kus-reflect-lite .kus-rl-preview-mini{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:#fff;border:1px solid #e2e8f0;font-size:10.5px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-preview-mini{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:#fff;border:1px solid #e2e8f0;font-size:12px;font-weight:700;color:#475569}
 #kus-reflect-lite .kus-rl-nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 24px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
-#kus-reflect-lite .kus-rl-nav__btn{appearance:none;width:100%;border:1px solid transparent;border-radius:10px;background:transparent;color:#64748b;padding:10px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:9px;text-align:left}
+#kus-reflect-lite .kus-rl-nav__btn{appearance:none;width:100%;border:1px solid transparent;border-radius:10px;background:transparent;color:#64748b;padding:10px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:9px;text-align:left}
 #kus-reflect-lite .kus-rl-nav__btn:hover{background:#f1f5f9;color:#172033}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"]{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
-#kus-reflect-lite .kus-rl-nav__num{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#e2e8f0;color:#475569;font-size:10px}
+#kus-reflect-lite .kus-rl-nav__num{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#e2e8f0;color:#475569;font-size:11.5px}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"] .kus-rl-nav__num{background:#fee2e2;color:#b91c1c}
-#kus-reflect-lite .kus-rl-nav__copy{display:block;font-size:9.5px;font-weight:500;color:#94a3b8;margin-top:2px}
+#kus-reflect-lite .kus-rl-nav__copy{display:block;font-size:11px;font-weight:500;color:#94a3b8;margin-top:2px}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"] .kus-rl-nav__copy{color:#64748b}
 #kus-reflect-lite .kus-rl-stage[hidden]{display:none}
 #kus-reflect-lite .kus-rl-stage-head{margin:0 2px 16px}
-#kus-reflect-lite .kus-rl-stage-head h2{margin:0;font-size:19px;letter-spacing:-.02em;color:#0f172a}
-#kus-reflect-lite .kus-rl-stage-head p{margin:4px 0 0;font-size:12px;color:#64748b}
+#kus-reflect-lite .kus-rl-stage-head h2{margin:0;font-size:20px;letter-spacing:-.02em;color:#0f172a}
+#kus-reflect-lite .kus-rl-stage-head p{margin:4px 0 0;font-size:13px;color:#64748b}
 #kus-reflect-lite .kus-rl-action-dock{flex-shrink:0;padding:12px 24px;background:#fff;border-top:1px solid #e2e8f0}
 #kus-reflect-lite .kus-rl-dock-row{display:flex;align-items:center;gap:10px}
-#kus-reflect-lite .kus-rl-dock-copy{flex:1;min-width:0;font-size:12px;color:#475569;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-dock-copy{flex:1;min-width:0;font-size:13px;color:#475569;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-dock-copy strong{display:block;color:#0f172a}
 #kus-reflect-lite .kus-rl-dock-msg{display:block}
 #kus-reflect-lite .kus-rl-dock-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
@@ -6216,37 +6861,37 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 #kus-reflect-lite .kus-rl-confirm-route{display:grid;gap:8px;margin-bottom:12px}
 #kus-reflect-lite .kus-rl-confirm-route>div{padding:12px;border-radius:10px;border:1px solid #cbd5e1;background:#f8fafc;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-confirm-route>div:last-child{border:2px solid #ea580c;background:#fff7ed}
-#kus-reflect-lite .kus-rl-confirm-route span{display:block;font-size:11px;color:#64748b;margin-bottom:4px}
-#kus-reflect-lite .kus-rl-changes{margin-top:10px;font-size:12px;min-width:0}
+#kus-reflect-lite .kus-rl-confirm-route span{display:block;font-size:12.5px;color:#64748b;margin-bottom:4px}
+#kus-reflect-lite .kus-rl-changes{margin-top:10px;font-size:13px;min-width:0}
 #kus-reflect-lite .kus-rl-changes summary{cursor:pointer;padding:8px 0;font-weight:700}
 #kus-reflect-lite .kus-rl-change{border-top:1px solid #cbd5e1;padding:10px 0;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-change[data-kind="削除"]>strong{color:#b91c1c}
 #kus-reflect-lite .kus-rl-change__values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}
 #kus-reflect-lite .kus-rl-change__values>div{min-width:0;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:8px}
-#kus-reflect-lite .kus-rl-change__values span{font-size:10px;color:#64748b}
-#kus-reflect-lite .kus-rl-change__values pre{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.6 ui-monospace,monospace}
+#kus-reflect-lite .kus-rl-change__values span{font-size:11.5px;color:#64748b}
+#kus-reflect-lite .kus-rl-change__values pre{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.6 ui-monospace,monospace}
 #kus-reflect-lite .kus-rl-nav__btn:disabled{opacity:.45;cursor:not-allowed}
-#kus-reflect-lite .kus-rl-app-note{margin:-2px 0 8px;min-height:18px;font-size:11.5px;line-height:1.5;color:#64748b;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-app-note{margin:-2px 0 8px;min-height:18px;font-size:13px;line-height:1.5;color:#64748b;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-app-note--ok{color:#065f46;font-weight:600}
 #kus-reflect-lite .kus-rl-app-note--warn{color:#b91c1c;font-weight:700}
 #kus-reflect-lite .kus-rl-scope-group .kus-lp__chip{display:flex;align-items:center;gap:6px}
-#kus-reflect-lite .kus-rl-chip__badge{margin-left:auto;flex:none;padding:0 6px;border:1px solid #fb923c;border-radius:4px;background:#fff7ed;color:#9a3412;font-size:10px;font-weight:800;line-height:16px;letter-spacing:.04em}
+#kus-reflect-lite .kus-rl-chip__badge{margin-left:auto;flex:none;padding:0 6px;border:1px solid #fb923c;border-radius:4px;background:#fff7ed;color:#9a3412;font-size:11.5px;font-weight:800;line-height:16px;letter-spacing:.04em}
 #kus-reflect-lite .kus-rl-scope-notice{margin:10px 0 0}
 #kus-reflect-lite .kus-rl-scope-option{margin-top:12px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc}
-#kus-reflect-lite .kus-rl-scope-option__title{margin-bottom:6px;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-scope-option__title{margin-bottom:6px;font-size:12.5px;font-weight:700;color:#475569}
 #kus-reflect-lite .kus-rl-scope-option .kus-lp__check{margin:0}
-#kus-reflect-lite .kus-rl-scope-option__help{margin:4px 0 0 22px;font-size:11.5px;line-height:1.5;color:#475569}
+#kus-reflect-lite .kus-rl-scope-option__help{margin:4px 0 0 22px;font-size:13px;line-height:1.5;color:#475569}
 #kus-reflect-lite .kus-rl-scope-option__help--warn{color:#9a3412;font-weight:700}
-#kus-reflect-lite .kus-rl-scope-help{margin:0;display:grid;gap:8px;font-size:11.5px;line-height:1.55}
+#kus-reflect-lite .kus-rl-scope-help{margin:6px 0 0;display:grid;gap:8px;font-size:13px;line-height:1.55}
 #kus-reflect-lite .kus-rl-scope-help dt{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-weight:700;color:#0f172a}
 #kus-reflect-lite .kus-rl-scope-help dd{margin:2px 0 0;color:#475569}
 #kus-reflect-lite .kus-rl-fix{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
-#kus-reflect-lite .kus-rl-fix__note{font-size:11.5px;color:#475569}
+#kus-reflect-lite .kus-rl-fix__note{font-size:13px;color:#475569}
 #kus-reflect-lite .kus-rl-summary{margin:0 0 12px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#fff}
-#kus-reflect-lite .kus-rl-summary__title{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:9px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11.5px;color:#475569}
+#kus-reflect-lite .kus-rl-summary__title{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:9px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:13px;color:#475569}
 #kus-reflect-lite .kus-rl-summary__title strong{color:#0f172a}
-#kus-reflect-lite .kus-rl-summary__table{width:100%;border-collapse:collapse;font-size:12px}
-#kus-reflect-lite .kus-rl-summary__table th{padding:7px 10px;text-align:left;font-size:11px;font-weight:700;color:#475569;background:#fff;border-bottom:1px solid #e2e8f0;white-space:nowrap}
+#kus-reflect-lite .kus-rl-summary__table{width:100%;border-collapse:collapse;font-size:13px}
+#kus-reflect-lite .kus-rl-summary__table th{padding:7px 10px;text-align:left;font-size:12.5px;font-weight:700;color:#475569;background:#fff;border-bottom:1px solid #e2e8f0;white-space:nowrap}
 #kus-reflect-lite .kus-rl-summary__table td{padding:8px 10px;border-top:1px solid #f1f5f9;vertical-align:middle;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-summary__table tbody tr{cursor:pointer}
 #kus-reflect-lite .kus-rl-summary__table tbody tr:hover{background:#f8fafc}
@@ -6254,59 +6899,59 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 #kus-reflect-lite .kus-rl-summary__link{appearance:none;border:0;background:none;padding:2px 0;font:inherit;font-weight:700;color:#1d4ed8;text-align:left;text-decoration:underline;cursor:pointer}
 #kus-reflect-lite .kus-rl-preview-row{scroll-margin-top:8px}
 #kus-reflect-lite .kus-rl-preview-row--focus{box-shadow:0 0 0 3px #93c5fd}
-#kus-reflect-lite .kus-rl-result-heading{margin-top:10px;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-result-heading{margin-top:10px;font-size:12.5px;font-weight:700;color:#475569}
 #kus-reflect-lite .kus-rl-result-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
 #kus-reflect-lite .kus-rl-result-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-result-item--ok{border-color:#a7f3d0}
 #kus-reflect-lite .kus-rl-result-item--ng{border-color:#fca5a5;background:#fff5f5}
 #kus-reflect-lite .kus-rl-result-item--pending{border-color:#fde68a;background:#fffbeb}
-#kus-reflect-lite .kus-rl-result-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px}
-#kus-reflect-lite .kus-rl-result-state{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-result-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px}
+#kus-reflect-lite .kus-rl-result-state{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;font-size:12.5px;font-weight:700;color:#475569}
 #kus-reflect-lite .kus-rl-result-state--ok{border-color:#a7f3d0;background:#ecfdf5;color:#065f46}
 #kus-reflect-lite .kus-rl-result-state--ng{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
 #kus-reflect-lite .kus-rl-result-state--pending{border-color:#fde68a;background:#fffbeb;color:#92400e}
-#kus-reflect-lite .kus-rl-result-item__message{margin-top:6px;font-size:11.5px;line-height:1.6;color:#334155;white-space:pre-wrap;overflow-wrap:anywhere}
-#kus-reflect-lite .kus-rl-result-item__hint{margin-top:4px;font-size:11.5px;line-height:1.5;font-weight:600;color:#9a3412}
+#kus-reflect-lite .kus-rl-result-item__message{margin-top:6px;font-size:13px;line-height:1.6;color:#334155;white-space:pre-wrap;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-result-item__hint{margin-top:4px;font-size:13px;line-height:1.5;font-weight:600;color:#9a3412}
 #kus-reflect-lite .kus-rl-undo{margin:10px 0 0}
 #kus-reflect-lite .kus-rl-items{margin:8px 0 6px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff}
-#kus-reflect-lite .kus-rl-items__title{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin-bottom:8px;font-size:11.5px;color:#475569}
-#kus-reflect-lite .kus-rl-items__title strong{font-size:12px;color:#0f172a}
+#kus-reflect-lite .kus-rl-items__title{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin-bottom:8px;font-size:13px;color:#475569}
+#kus-reflect-lite .kus-rl-items__title strong{font-size:13px;color:#0f172a}
 #kus-reflect-lite .kus-rl-items__list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
-#kus-reflect-lite .kus-rl-item{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;row-gap:2px;align-items:baseline;font-size:12px;line-height:1.55;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-item{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;row-gap:2px;align-items:baseline;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-item__name{min-width:0;font-weight:700;color:#0f172a}
-#kus-reflect-lite .kus-rl-item__details{grid-column:2;margin:0;padding-left:16px;font-size:11.5px;color:#475569}
+#kus-reflect-lite .kus-rl-item__details{grid-column:2;margin:0;padding-left:16px;font-size:13px;color:#475569}
 #kus-reflect-lite .kus-rl-item--keep .kus-rl-item__name{font-weight:600;color:#475569}
-#kus-reflect-lite .kus-rl-kind{display:inline-block;min-width:36px;padding:0 6px;border:1px solid #cbd5e1;border-radius:4px;background:#f1f5f9;color:#475569;font-size:10.5px;font-weight:800;line-height:18px;letter-spacing:.04em;text-align:center}
+#kus-reflect-lite .kus-rl-kind{display:inline-block;min-width:36px;padding:0 6px;border:1px solid #cbd5e1;border-radius:4px;background:#f1f5f9;color:#475569;font-size:12px;font-weight:800;line-height:18px;letter-spacing:.04em;text-align:center}
 #kus-reflect-lite .kus-rl-kind--delete{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
 #kus-reflect-lite .kus-rl-kind--change{border-color:#fdba74;background:#fff7ed;color:#9a3412}
 #kus-reflect-lite .kus-rl-kind--add{border-color:#86efac;background:#f0fdf4;color:#166534}
 #kus-reflect-lite .kus-rl-items--quiet{padding:0 12px;border-style:dashed;background:#f8fafc}
-#kus-reflect-lite .kus-rl-items--quiet>summary{cursor:pointer;padding:8px 0;font-size:11.5px;font-weight:700;color:#64748b}
+#kus-reflect-lite .kus-rl-items--quiet>summary{cursor:pointer;padding:8px 0;font-size:13px;font-weight:700;color:#64748b}
 #kus-reflect-lite .kus-rl-items--quiet[open]>summary{margin-bottom:6px}
 #kus-reflect-lite .kus-rl-items--quiet .kus-rl-items__list{padding-bottom:10px}
 #kus-reflect-lite .kus-rl-items__more{margin-top:8px}
-#kus-reflect-lite .kus-rl-uploads{margin:8px 0 6px;padding:9px 12px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;font-size:11.5px;line-height:1.55;color:#1e3a8a;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-uploads{margin:8px 0 6px;padding:9px 12px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;font-size:13px;line-height:1.55;color:#1e3a8a;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-uploads ul{margin:4px 0 0;padding-left:18px}
-#kus-reflect-lite .kus-rl-pending{display:flex;flex-wrap:wrap;gap:2px 8px;margin:0;padding:8px 12px;border-radius:10px;font-size:11.5px;line-height:1.55;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-pending{display:flex;flex-wrap:wrap;gap:2px 8px;margin:0;padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-pending--clean{border:1px solid #bbf7d0;background:#f0fdf4;color:#065f46}
 #kus-reflect-lite .kus-rl-pending--unknown{border:1px dashed #cbd5e1;background:#f8fafc;color:#475569}
 #kus-reflect-lite .kus-rl-restore-notice{margin:0}
-#kus-reflect-lite .kus-rl-progress__summary{margin:0 0 6px;font-size:12px;font-weight:700;color:#334155}
+#kus-reflect-lite .kus-rl-progress__summary{margin:0 0 6px;font-size:13px;font-weight:700;color:#334155}
 #kus-reflect-lite .kus-rl-result-item--running{border-color:#93c5fd;background:#eff6ff}
 #kus-reflect-lite .kus-rl-result-state--running{border-color:#93c5fd;background:#dbeafe;color:#1e40af}
 #kus-reflect-lite .kus-rl-confirm-entry{margin-top:12px;padding-top:10px;border-top:1px solid #cbd5e1}
-#kus-reflect-lite .kus-rl-confirm-entry h3{margin:0 0 6px;font-size:13px;color:#0f172a}
-#kus-reflect-lite .kus-rl-confirm-heading{margin:10px 0 4px;font-size:12px;font-weight:700;color:#991b1b}
+#kus-reflect-lite .kus-rl-confirm-entry h3{margin:0 0 6px;font-size:14px;color:#0f172a}
+#kus-reflect-lite .kus-rl-confirm-heading{margin:10px 0 4px;font-size:13px;font-weight:700;color:#991b1b}
 #kus-reflect-lite .kus-rl-rollout__input{width:100%;min-width:0;box-sizing:border-box;min-height:84px}
-#kus-reflect-lite .kus-rl-rollout__status{margin-top:6px;font-size:11.5px;line-height:1.5;color:#475569;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-rollout__status{margin-top:6px;font-size:13px;line-height:1.5;color:#475569;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-rollout__status--err{color:#b91c1c;font-weight:700}
 #kus-reflect-lite .kus-rl-rollout-card .kus-rl-next{margin-bottom:8px}
-#kus-reflect-lite .kus-rl-rollout-heading{margin-top:12px;font-size:11px;font-weight:700;color:#475569}
+#kus-reflect-lite .kus-rl-rollout-heading{margin-top:12px;font-size:12.5px;font-weight:700;color:#475569}
 #kus-reflect-lite .kus-rl-rollout-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
 #kus-reflect-lite .kus-rl-rollout-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-rollout-item--ng{border-color:#fca5a5;background:#fff5f5}
 #kus-reflect-lite .kus-rl-rollout-item--pending{border-color:#fde68a;background:#fffbeb}
-#kus-reflect-lite .kus-rl-rollout-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px}
+#kus-reflect-lite .kus-rl-rollout-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px}
 #kus-reflect-lite .kus-rl-rollout-card .kus-rl-next[hidden]{display:none}
 @media(max-width:760px){
   #kus-reflect-lite .kus-rl-summary__table,#kus-reflect-lite .kus-rl-summary__table tbody{display:block}
@@ -6318,7 +6963,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__status{grid-column:5/7;justify-self:end}
   #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__num{grid-column:span 2;text-align:left}
   #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__how,#kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__sel{grid-column:1/-1}
-  #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__num::before,#kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__how::before{content:attr(data-label) " ";font-size:10.5px;font-weight:700;color:#64748b}
+  #kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__num::before,#kus-reflect-lite .kus-rl-summary__table td.kus-rl-summary__how::before{content:attr(data-label) " ";font-size:12px;font-weight:700;color:#64748b}
 }
 @media(max-width:720px){
   #kus-reflect-lite .kus-rl-change__values{grid-template-columns:1fr}
@@ -6329,7 +6974,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   #kus-reflect-lite .kus-lp__hint,#kus-reflect-lite .kus-lp__badge-row{display:none}
   #kus-reflect-lite .kus-rl-nav{padding:8px;gap:4px}
   #kus-reflect-lite .kus-rl-nav::before,#kus-reflect-lite .kus-rl-nav__copy{display:none}
-  #kus-reflect-lite .kus-rl-nav__btn{display:flex;justify-content:center;text-align:center;padding:8px 4px;font-size:11px}
+  #kus-reflect-lite .kus-rl-nav__btn{display:flex;justify-content:center;text-align:center;padding:8px 4px;font-size:12.5px}
   #kus-reflect-lite .kus-rl-nav__btn+.kus-rl-nav__btn{margin:0}
   #kus-reflect-lite .kus-rl-canvas{padding:18px 16px 8px}
   #kus-reflect-lite .kus-rl-setup-grid{grid-template-columns:1fr}
@@ -6352,18 +6997,18 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 /* 低い画面（スマートフォンの横向き・小さなノート PC など）では、固定フッターと見出しを詰めて本文の領域を確保する。 */
 @media(max-height:720px){
   #kus-reflect-lite .kus-lp__hero{padding:8px 16px}
-  #kus-reflect-lite .kus-lp__title{font-size:16px}
+  #kus-reflect-lite .kus-lp__title{font-size:17px}
   #kus-reflect-lite .kus-lp__subtitle{display:none}
   #kus-reflect-lite .kus-rl-nav{padding:6px 12px}
   #kus-reflect-lite .kus-rl-nav__btn{padding:6px 4px}
   #kus-reflect-lite .kus-rl-nav__copy{display:none}
   #kus-reflect-lite .kus-rl-canvas{padding:12px 16px 8px}
   #kus-reflect-lite .kus-rl-stage-head{margin-bottom:10px}
-  #kus-reflect-lite .kus-rl-stage-head h2{font-size:16px}
+  #kus-reflect-lite .kus-rl-stage-head h2{font-size:17px}
   #kus-reflect-lite .kus-rl-stage-head p{display:none}
   #kus-reflect-lite .kus-rl-action-dock{padding:8px 16px 10px}
   #kus-reflect-lite .kus-rl-dock-row{gap:6px}
-  #kus-reflect-lite .kus-rl-dock-copy{font-size:11px;line-height:1.4}
+  #kus-reflect-lite .kus-rl-dock-copy{font-size:12.5px;line-height:1.4}
   #kus-reflect-lite .kus-rl-dock-copy strong,#kus-reflect-lite .kus-rl-dock-msg{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
   #kus-reflect-lite .kus-rl-dock-actions{gap:4px 6px}
   #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{min-height:36px;padding:6px 10px}
@@ -6376,6 +7021,40 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   #kus-reflect-lite .kus-rl-dock-row{flex-direction:row;align-items:center;gap:10px}
   #kus-reflect-lite .kus-rl-dock-actions{display:flex;flex-wrap:nowrap;justify-content:flex-end;flex:none}
   #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{white-space:nowrap}
+}
+/* とても低い画面（高さ 560px 以下。横向きのスマートフォン・小さなウィンドウ）では、見出し・案内・ステップ・フッターを 1 行ずつに詰めて、本文（最終確認の書き込み先と変更内容など）に高さを回す。 */
+@media(max-height:560px){
+  #kus-reflect-lite .kus-lp__hero{padding:5px 12px}
+  #kus-reflect-lite .kus-lp__hero-main{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px}
+  #kus-reflect-lite .kus-lp__title{font-size:15px}
+  #kus-reflect-lite .kus-lp__badge-row{margin-top:0}
+  #kus-reflect-lite .kus-lp__badge{padding:1px 8px;font-size:11.5px}
+  #kus-reflect-lite .kus-lp__hint{display:none}
+  #kus-reflect-lite .kus-rl-nav{padding:3px 12px;gap:4px}
+  #kus-reflect-lite .kus-rl-nav__btn{padding:3px 4px;font-size:12px;line-height:1.3;white-space:nowrap}
+  #kus-reflect-lite .kus-rl-nav__num{display:none}
+  #kus-reflect-lite .kus-rl-canvas{padding:8px 12px 6px}
+  #kus-reflect-lite .kus-lp__card{padding:10px 12px}
+  #kus-reflect-lite .kus-rl-confirm-route{gap:4px;margin-bottom:8px}
+  #kus-reflect-lite .kus-rl-confirm-route>div{padding:6px 10px}
+  #kus-reflect-lite .kus-rl-confirm-route span{display:inline;margin:0 8px 0 0;font-size:12px}
+  #kus-reflect-lite .kus-rl-stage-head{margin:0 2px 8px}
+  #kus-reflect-lite .kus-rl-stage-head h2{font-size:15px}
+  #kus-reflect-lite .kus-rl-action-dock{padding:5px 12px 6px}
+  #kus-reflect-lite .kus-rl-dock-row{gap:4px}
+  #kus-reflect-lite .kus-rl-dock-copy{font-size:12px;line-height:1.35}
+  #kus-reflect-lite .kus-rl-dock-copy strong,#kus-reflect-lite .kus-rl-dock-msg{-webkit-line-clamp:1}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{min-height:32px;padding:4px 10px}
+  #kus-reflect-lite .kus-rl-action-dock .kus-lp__status{margin-top:4px;padding:3px 8px;font-size:12px;line-height:1.35}
+  #kus-reflect-lite .kus-rl-action-dock .kus-lp__status-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;overflow:hidden;max-height:none}
+  #kus-reflect-lite .kus-rl-action-dock .kus-lp__status--warn .kus-lp__status-text,#kus-reflect-lite .kus-rl-action-dock .kus-lp__status--err .kus-lp__status-text{-webkit-line-clamp:2}
+}
+/* 低くて幅の狭い画面では、操作ボタンを折り返しながら詰めて並べる（主操作だけが全幅の行を取らない）。 */
+@media(max-height:560px) and (max-width:559px){
+  #kus-reflect-lite .kus-rl-dock-actions{display:flex;flex-wrap:wrap;justify-content:stretch;gap:4px}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn{flex:0 1 auto;grid-column:auto;min-width:0;font-size:12.5px;line-height:1.3}
+  #kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn--primary,#kus-reflect-lite .kus-rl-dock-actions .kus-lp__btn--danger{flex:1 1 140px}
+  #kus-reflect-lite .kus-rl-nav__btn{font-size:11.5px;padding:3px 2px}
 }
 @media(prefers-reduced-motion:reduce){#kus-reflect-lite{animation:none}#kus-reflect-lite *{scroll-behavior:auto!important}}
 `;
@@ -6400,16 +7079,26 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       title: "プレビュー反映",
       subtitle: "反映元アプリの設定を、反映先アプリのプレビューへまとめて反映します。",
       accent: "reflect",
-      badges: [],
-      hint: "<strong>差分を確認してから反映</strong> · 反映先はプレビューです。本番への公開は設定画面で行います。",
+      badges: [{ label: "プレビューへ書き込み", tone: "preview" }],
+      hint: "<strong>反映先のプレビューだけを変更します。</strong>本番への公開は kintone の設定画面で行います。差分を確認してから反映します。",
       wide: true
     });
     let pendingNotice = "";
     const rawSetStatus = panel.setStatus;
+    const detailStatus = document.createElement("div");
+    detailStatus.className = "kus-lp__note kus-rl-detail-status";
+    detailStatus.setAttribute("role", "status");
+    detailStatus.setAttribute("aria-live", "polite");
+    detailStatus.setAttribute("aria-atomic", "true");
+    detailStatus.hidden = true;
     panel.setStatus = (msg, tone) => {
       const notice = pendingNotice;
       pendingNotice = "";
-      rawSetStatus(notice && msg ? `${notice} ${msg}` : msg, tone);
+      const text = notice && msg ? `${notice} ${msg}` : msg;
+      rawSetStatus(text, tone);
+      detailStatus.textContent = text || "";
+      detailStatus.className = `${tone === "warn" || tone === "err" ? "kus-lp__note--warn" : "kus-lp__note"} kus-rl-detail-status`;
+      detailStatus.hidden = !text;
     };
     function holdNoticeForNextStatus(notice) {
       pendingNotice = notice;
@@ -6459,15 +7148,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       function refresh() {
         const appId = appInput.value.trim();
         const guest = guestInput.value.trim();
-        const active = isActive() && isLookupableReflectApp(appId, guest);
-        const nextKey = active ? `${guest}|${appId}` : "";
+        const active2 = isActive() && isLookupableReflectApp(appId, guest);
+        const nextKey = active2 ? `${guest}|${appId}` : "";
         if (nextKey === key) return;
         key = nextKey;
         seq += 1;
         known = null;
         failed = false;
         window.clearTimeout(timer);
-        if (!active) {
+        if (!active2) {
           paint("");
           return;
         }
@@ -6550,10 +7239,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     srcJsonNote.className = "kus-lp__small";
     srcJsonNote.style.display = "none";
     const currentSrcBtn = makeButton("現在のアプリを反映元", "sub");
-    const copyBtn = makeButton("反映元 → 反映先", "sub");
+    const copyBtn = makeButton("反映元のIDを反映先へコピー", "sub");
     const currentBtn = makeButton("現在のアプリを反映先", "sub");
-    const swapBtn = makeButton("入れ替え", "sub");
-    const cardApp = makeCard({ title: "アプリ", number: 1 });
+    const swapBtn = makeButton("反映元と反映先を入れ替え", "sub");
+    const cardApp = makeCard({ title: "反映元と反映先のアプリ", number: 1 });
     cardApp.card.classList.add("kus-rl-card--route");
     const route = document.createElement("div");
     route.className = "kus-rl-route";
@@ -6592,7 +7281,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     routeArrow.textContent = "→";
     const targetEndpoint = document.createElement("section");
     targetEndpoint.className = "kus-rl-endpoint kus-rl-endpoint--target";
-    targetEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">反映先 · プレビューへ反映</div><div class="kus-rl-endpoint__note">本番への公開は設定画面から行います</div>';
+    targetEndpoint.innerHTML = '<div class="kus-rl-endpoint__eyebrow">反映先 · 設定を書き込む</div><div class="kus-rl-endpoint__note">書き込むのは反映先のプレビューだけです</div>';
     targetEndpoint.appendChild(labeledInput(tgtApp, "アプリID"));
     targetEndpoint.appendChild(targetNote.el);
     const targetGuestDetails = makeDetails("ゲストスペースを指定", { open: !!tgtGuest.value });
@@ -6614,7 +7303,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       sourceJsonAppSelect.hidden = sourceJsonBundles.length < 2;
       if (sourceBundleFromJson) {
         const appName = extractAppNameFromBundle(sourceBundleFromJson);
-        srcJsonNote.textContent = `反映元JSON読み込み済み${sourceBundleFileName ? `（${sourceBundleFileName}）` : ""}: App ${sourceBundleFromJson?.appId || "-"}${appName ? ` (${appName})` : ""}（反映元はこのJSONから取得し、アプリからの取得は行いません）`;
+        srcJsonNote.textContent = `設定JSONを読み込み済み${sourceBundleFileName ? `（${sourceBundleFileName}）` : ""}: アプリ #${sourceBundleFromJson?.appId || "-"}${appName ? ` (${appName})` : ""}。反映元はこのJSONから取得し、アプリからは取得しません。`;
         srcJsonNote.style.display = "block";
         srcJsonClearBtn.style.display = "";
       } else {
@@ -6632,7 +7321,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshSameConnBanner();
       refreshReviewCard();
     });
-    srcJsonFile.addEventListener("change", () => runLite("反映元JSONを読み込み中…", async () => {
+    srcJsonFile.addEventListener("change", () => runLite("反映元の設定JSONを読み込み中…", async () => {
       const file = srcJsonFile.files?.[0];
       if (!file) return;
       srcJsonFile.value = "";
@@ -6652,7 +7341,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       sourceBundleToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
       sourceBundleFileName = file.name;
       if (sourceBundleFromJson?.appId) srcApp.value = String(sourceBundleFromJson.appId);
-      panel.setStatus(`反映元JSONを読み込みました: App ${sourceBundleFromJson?.appId || "-"}`, "ok");
+      panel.setStatus(`反映元の設定JSONを読み込みました（アプリ #${sourceBundleFromJson?.appId || "-"}）。`, "ok");
       saveState();
       refreshSrcJsonNote();
       refreshSameConnBanner();
@@ -6673,12 +7362,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshSrcJsonNote();
       refreshSameConnBanner();
       refreshReviewCard();
-      panel.setStatus("反映元JSONをクリアしました。設定JSONを選んでください。", "info");
+      panel.setStatus("読み込んだ設定JSONをクリアしました。設定JSONを選び直してください。", "info");
     });
     const sameConnBanner = document.createElement("div");
     sameConnBanner.className = "kus-lp__note--warn";
     sameConnBanner.style.display = "none";
-    sameConnBanner.textContent = "⚠ 反映元と反映先が同一接続です（同じアプリID・ゲストID）。同一アプリのプレビューを上書きする状態です。";
+    sameConnBanner.textContent = "反映元と反映先が同じアプリです。";
     cardApp.body.appendChild(sameConnBanner);
     cardApp.body.appendChild(createAppSearchControl(panel, {
       targets: [
@@ -6708,7 +7397,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (tgtGuest.value) targetGuestDetails.details.open = true;
       const same2 = sourceMode === "app" && !!srcApp.value.trim() && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim();
       sameConnBanner.style.display = same2 ? "block" : "none";
-      sameConnBanner.textContent = sourceEnvironment.value === "preview" ? "同じプレビュー同士は反映できません。反映元の取得環境かアプリIDを変更してください。" : "同じアプリの本番設定でプレビューを更新します。未公開の編集への影響を、次の画面で確認してください。";
+      sameConnBanner.textContent = sourceEnvironment.value === "preview" ? "同じプレビュー同士は反映できません。反映元の取得環境かアプリIDを変更してください。" : "同じアプリの本番の設定でプレビューを更新します。プレビューにある未公開の変更は上書きされる場合があります（次の画面で確認できます）。";
     }
     currentSrcBtn.addEventListener("click", () => {
       srcApp.value = DEFAULT_APP_ID || "";
@@ -6716,7 +7405,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       saveState();
       refreshSameConnBanner();
       refreshReviewCard();
-      panel.setStatus("現在のアプリIDを反映元にセットしました", "info");
+      panel.setStatus("現在のアプリを反映元にセットしました。", "info");
     });
     copyBtn.addEventListener("click", () => {
       tgtApp.value = srcApp.value.trim();
@@ -6724,7 +7413,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       saveState();
       refreshSameConnBanner();
       refreshReviewCard();
-      panel.setStatus("反映元IDを反映先へコピーしました", "info");
+      panel.setStatus("反映元のIDを反映先へコピーしました。", "info");
     });
     currentBtn.addEventListener("click", () => {
       tgtApp.value = DEFAULT_APP_ID || "";
@@ -6732,7 +7421,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       saveState();
       refreshSameConnBanner();
       refreshReviewCard();
-      panel.setStatus("現在のアプリIDを反映先にセットしました", "info");
+      panel.setStatus("現在のアプリを反映先にセットしました。", "info");
     });
     swapBtn.addEventListener("click", () => {
       const sa = srcApp.value;
@@ -6744,7 +7433,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       saveState();
       refreshSameConnBanner();
       refreshReviewCard();
-      panel.setStatus("反映元と反映先を入れ替えました", "info");
+      panel.setStatus("反映元と反映先を入れ替えました。", "info");
     });
     [srcApp, srcGuest, tgtApp, tgtGuest].forEach((el) => {
       el.addEventListener("input", () => {
@@ -6783,7 +7472,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         adoptAppReference(appInput, guestInput, guestDetails, sideLabel);
       });
     }
-    const cardScope = makeCard({ title: "反映する項目", number: 2, subtitle: "目的に近いセットを選び、必要な項目を調整できます。" });
+    const cardScope = makeCard({ title: "反映する項目", number: 2 });
+    cardScope.body.appendChild(makeNote("目的に近いセットを選び、必要な項目を調整できます。", "help"));
     const putSections = REFLECT_SECTION_KEYS.map((key) => ({ key, label: reflectSectionLabel(key) }));
     const initialSelected = new Set(
       Array.isArray(memoryState.selectedScopes) ? memoryState.selectedScopes : ["fieldSettings", "layoutSettings", "viewSettings"]
@@ -6833,7 +7523,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     fieldSettingsNotice.textContent = FIELD_SETTINGS_OMITTED_NOTICE;
     fieldSettingsNotice.hidden = true;
     cardScope.body.appendChild(fieldSettingsNotice);
-    const preserve = makeCheck({ label: "反映先だけの一覧・グラフ・アクションを保持する", checked: memoryState.preserveTargetOnly !== false, help: "標準は保持。OFFにすると反映元にない設定を削除します。フィールドは常に保持します。" });
+    const preserve = makeCheck({ label: "反映先だけの一覧・グラフ・アクションを保持する", checked: memoryState.preserveTargetOnly !== false, help: "標準はON（保持）です。OFFにすると、反映元にない一覧・グラフ・アクションを削除します。" });
     const preserveBox = document.createElement("div");
     preserveBox.className = "kus-rl-scope-option";
     const preserveTitle = document.createElement("div");
@@ -6843,12 +7533,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     preserveHelp.className = "kus-rl-scope-option__help";
     preserveHelp.setAttribute("aria-live", "polite");
     preserveBox.append(preserveTitle, preserve.label, preserveHelp);
-    cardScope.body.appendChild(preserveBox);
     const scopeCountLabel = document.createElement("div");
     scopeCountLabel.className = "kus-lp__small";
     scopeCountLabel.style.marginTop = "8px";
     cardScope.body.appendChild(scopeCountLabel);
-    const scopeHelp = makeDetails("各項目の反映方法");
+    const scopeHelpNote = document.createElement("div");
+    scopeHelpNote.className = "kus-lp__note kus-lp__note--help";
+    const scopeHelpTitle = document.createElement("strong");
+    scopeHelpTitle.textContent = "各項目の反映方法";
     const scopeHelpList = document.createElement("dl");
     scopeHelpList.className = "kus-rl-scope-help";
     putSections.forEach((d) => {
@@ -6868,8 +7560,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       item.append(term, desc);
       scopeHelpList.appendChild(item);
     });
-    scopeHelp.body.appendChild(scopeHelpList);
-    cardScope.body.appendChild(scopeHelp.details);
+    scopeHelpNote.append(scopeHelpTitle, scopeHelpList);
+    cardScope.body.appendChild(scopeHelpNote);
     function collectSelectedScopes() {
       return chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value);
     }
@@ -6879,11 +7571,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const keeps = preserve.checkbox.checked;
       const usesNamedSections = ["viewSettings", "reportSettings", "actionSettings"].some((key) => selected.includes(key));
       preserveHelp.classList.toggle("kus-rl-scope-option__help--warn", !keeps);
-      preserveHelp.textContent = (keeps ? "反映先だけの一覧・グラフ・アクションは削除せず残します（標準）。フィールドは常に保持します。" : "反映元にない一覧・グラフ・アクションを反映先から削除します。フィールドは常に保持します。") + (usesNamedSections ? "" : " 今の選択（一覧・グラフ・アクションなし）では使われません。");
+      preserveHelp.textContent = !usesNamedSections ? "今の選択には一覧・グラフ・アクションがないため、この設定は使われません。フィールドは常に保持します。" : keeps ? "反映先だけの一覧・グラフ・アクションは削除せず残します（標準）。フィールドは常に保持します。" : "反映元にない一覧・グラフ・アクションを反映先から削除します。フィールドは常に保持します。";
     }
     function refreshScopeCount() {
       const sel = collectSelectedScopes().length;
-      scopeCountLabel.textContent = `選択中: ${sel} / ${chips.length} セクション`;
+      scopeCountLabel.textContent = `選択中: ${sel} / ${chips.length} 項目`;
       refreshScopeNotices();
     }
     function setSelectedScopes(scopeKeys) {
@@ -6909,7 +7601,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       btn.title = preset.hint;
       btn.addEventListener("click", () => {
         applyScopePreset(preset);
-        panel.setStatus(`プリセット適用: ${preset.label}（${collectSelectedScopes().length}件）`, "info");
+        panel.setStatus(`「${preset.label}」を選びました（${collectSelectedScopes().length} 項目）。`, "info");
       });
       presetRow.appendChild(btn);
     }
@@ -6955,41 +7647,33 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshReviewCard();
     }
     panel.body.insertBefore(cardScope.card, panel.status);
-    const cardOpt = makeCard({ title: "実行オプション", number: 3, soft: true });
+    const cardOpt = makeCard({ title: "反映時の動作", soft: true });
     const sourceEnvironment = document.createElement("select");
     sourceEnvironment.className = "kus-lp__select";
     sourceEnvironment.setAttribute("aria-label", "反映元の取得環境");
-    sourceEnvironment.innerHTML = '<option value="production">本番設定（運用中）を取得</option><option value="preview">プレビュー設定（未公開）を取得</option>';
+    sourceEnvironment.innerHTML = '<option value="production">本番の設定を取得</option><option value="preview">プレビューの設定（未公開）を取得</option>';
     sourceEnvironment.value = memoryState.sourcePreview ? "preview" : "production";
     sourceAppFields.insertBefore(sourceEnvironment, sourceGuestDetails.details);
-    const safetyNote = document.createElement("p");
-    safetyNote.className = "kus-rl-quiet";
-    safetyNote.textContent = "反映前のバックアップを自動保存します。変更のない項目は送信せず、書き込みエラーが起きたら中断します。";
-    cardOpt.body.appendChild(safetyNote);
-    const lookupDetails = makeDetails("Lookup AppID マッピング（任意）");
+    cardOpt.body.appendChild(makeNote("反映前の設定を自動でバックアップします。変更のない項目は書き込まず、エラーが起きたら以降の項目を実行せず中断します。", "help"));
+    cardOpt.body.appendChild(preserveBox);
+    const cardLookup = makeCard({ title: "ルックアップの参照アプリID変換（任意）", soft: true });
     const lookupTa = makeTextarea({
       rows: 3,
       code: true,
-      placeholder: "旧AppID → 新AppID（1行に1組）\n例: 101 → 202",
+      placeholder: "旧アプリID → 新アプリID（1行に1組）\n例: 101 → 202",
       value: memoryState.lookupMapText || ""
     });
     lookupTa.setAttribute("aria-label", "ルックアップの参照アプリID変換");
-    lookupDetails.body.appendChild(lookupTa);
+    cardLookup.body.appendChild(lookupTa);
     const lookupStatus = document.createElement("div");
     lookupStatus.className = "kus-rl-lookup-status";
     lookupStatus.setAttribute("aria-live", "polite");
-    lookupDetails.body.appendChild(lookupStatus);
-    const lookupHint = document.createElement("div");
-    lookupHint.className = "kus-lp__small";
-    lookupHint.style.marginTop = "6px";
-    lookupHint.textContent = 'フィールドの参照アプリ（ルックアップ）を別 AppID に置換します。1行に「旧ID → 新ID」（→ / = / : / カンマ区切り）か、{"旧AppID":"新AppID"} のJSONで入力します。差分プレビューにも反映し、実行前に変換先 AppID の存在を確認します。';
-    lookupDetails.body.appendChild(lookupHint);
-    cardOpt.body.appendChild(lookupDetails.details);
+    cardLookup.body.appendChild(lookupStatus);
+    cardLookup.body.appendChild(makeNote('ルックアップの参照先アプリIDを置き換えて反映します（差分にも反映し、実行前に変換先アプリの存在を確認します）。1行に「旧ID → 新ID」（→ / = / : / カンマ区切り）か、{"旧アプリID":"新アプリID"} のJSONで入力します。', "help"));
     function refreshLookupStatus() {
       const parsed = parseLookupMapText(lookupTa.value);
       lookupStatus.classList.toggle("kus-rl-lookup-status--err", !parsed.ok);
       lookupStatus.textContent = "error" in parsed ? parsed.error : parsed.count ? `参照先変換 ${parsed.count} 件を適用します。` : "";
-      if (!parsed.ok) lookupDetails.details.open = true;
     }
     refreshLookupStatus();
     [sourceEnvironment, preserve.checkbox].forEach((cb) => {
@@ -7005,8 +7689,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshLookupStatus();
       refreshReviewCard();
     });
-    panel.body.insertBefore(cardOpt.card, panel.status);
-    const cardPreset = makeCard({ title: "プリセット（接続+スコープ）", soft: true });
+    const cardPreset = makeCard({ title: "プリセット（接続先と反映項目）", soft: true });
     cardPreset.card.classList.add("kus-rl-card--preset");
     const presetSelect = document.createElement("select");
     presetSelect.className = "kus-lp__select";
@@ -7033,11 +7716,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     cardPreset.body.appendChild(presetNameRow);
     cardPreset.body.appendChild(makeRow([presetSelect, loadBtn, delBtn], { label: "保存済み" }));
     cardPreset.body.appendChild(makeRow([exportPresetsBtn, importPresetsBtn, importPresetsFile]));
-    const presetHint = document.createElement("div");
-    presetHint.className = "kus-lp__small";
-    presetHint.textContent = "プリセットはこのタブを閉じるまで保持されます（ブラウザに永続保存はしません）。次回も使う場合は「JSONで書き出し」で保存し、「JSONを読み込み」で復元してください。";
-    cardPreset.body.appendChild(presetHint);
-    panel.body.insertBefore(cardPreset.card, panel.status);
+    cardPreset.body.appendChild(makeNote("プリセットはこのタブを閉じると消えます。次回も使う場合は「JSONで書き出し」で保存し、「JSONを読み込み」で復元してください。", "help"));
     function refreshPresetSelect() {
       const keep = presetSelect.value;
       presetSelect.innerHTML = "";
@@ -7058,7 +7737,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       for (const p of presets) {
         const opt = document.createElement("option");
         opt.value = p.name;
-        opt.textContent = `${p.name} (src#${p.source.appId} → tgt#${p.target.appId})`;
+        opt.textContent = `${p.name}（反映元 #${p.source.appId} → 反映先 #${p.target.appId}）`;
         presetSelect.appendChild(opt);
       }
       if (keep && presets.some((p) => p.name === keep)) presetSelect.value = keep;
@@ -7074,7 +7753,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     saveBtn.addEventListener("click", () => {
       const trimmed = presetName.value.trim();
       if (!trimmed) {
-        panel.setStatus("プリセット名を入力してください", "warn");
+        panel.setStatus("プリセット名を入力してください。", "warn");
         presetName.focus();
         return;
       }
@@ -7110,12 +7789,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     exportPresetsBtn.addEventListener("click", () => {
       const payload = buildReflectPresetsExport(memoryState.presets);
       if (!payload.count) {
-        panel.setStatus("書き出せるプリセットがありません", "warn");
+        panel.setStatus("書き出せるプリセットがありません。", "warn");
         return;
       }
       const filename = buildExportFilename("プレビュー反映プリセット", "json");
       downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
-      panel.setStatus(`プリセット ${payload.count} 件を ${filename} に書き出しました`, "ok");
+      panel.setStatus(`プリセット ${payload.count} 件を ${filename} に書き出しました。`, "ok");
     });
     importPresetsBtn.addEventListener("click", () => importPresetsFile.click());
     importPresetsFile.addEventListener("change", () => runLite("プリセットJSONを読み込み中…", async () => {
@@ -7154,7 +7833,6 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       lookupTa.value = preset.lookupMap || "";
       refreshLookupStatus();
       rolloutTa.value = preset.rolloutQueue || "";
-      if (rolloutTa.value.trim()) rolloutDetails.details.open = true;
       setSelectedScopes(preset.scopes || []);
       refreshSameConnBanner();
       saveState();
@@ -7176,13 +7854,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       memoryState.presets = (memoryState.presets || []).filter((p) => p.name !== name);
       refreshPresetSelect();
       refreshPresetButtons();
-      panel.setStatus(`プリセット「${name}」を削除しました`, "info");
+      panel.setStatus(`プリセット「${name}」を削除しました。`, "info");
     });
-    const rolloutDetails = makeDetails("続けて反映する反映先（複数アプリへ展開）", { open: !!(memoryState.rolloutQueueText || "").trim() });
-    rolloutDetails.details.classList.add("kus-rl-advanced", "kus-rl-rollout");
-    const rolloutHelp = document.createElement("p");
-    rolloutHelp.className = "kus-rl-quiet";
-    rolloutHelp.textContent = "同じ反映元・項目・設定で、ほかのアプリにも順番に反映します。反映先ごとに差分確認と最終確認を行います。数字だけのIDは通常スペースのアプリ、ゲストスペースのアプリはURLで指定します。";
+    const rolloutSetupCard = makeCard({ title: "続けて反映する反映先（複数アプリへ展開）", soft: true });
+    rolloutSetupCard.card.classList.add("kus-rl-rollout");
+    const rolloutHelp = makeNote("同じ反映元・項目・設定で、ほかのアプリにも順番に反映します（反映先ごとに差分確認と最終確認を行います）。数字だけのIDは通常スペースのアプリを指すため、ゲストスペースのアプリはURLで指定してください。", "help");
     const rolloutTa = makeTextarea({ rows: 4, code: true, placeholder: "1行に1件（改行・カンマ区切りも可）\n例: 203\nhttps://example.cybozu.com/k/guest/5/204/", value: memoryState.rolloutQueueText || "" });
     rolloutTa.classList.add("kus-rl-rollout__input");
     rolloutTa.setAttribute("aria-label", "続けて反映する反映先");
@@ -7193,7 +7869,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     rolloutLookupSetupNote.className = "kus-rl-next kus-rl-next--warn";
     rolloutLookupSetupNote.dataset.rolloutLookupNote = "setup";
     rolloutLookupSetupNote.hidden = true;
-    rolloutDetails.body.append(rolloutHelp, rolloutTa, rolloutStatus, rolloutLookupSetupNote);
+    rolloutSetupCard.body.append(rolloutHelp, rolloutTa, rolloutStatus, rolloutLookupSetupNote);
     rolloutTa.addEventListener("input", () => {
       saveState();
       refreshReviewCard();
@@ -7246,10 +7922,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const queue = currentRollout();
       rolloutStatus.classList.toggle("kus-rl-rollout__status--err", !queue.ok);
       if (!text) rolloutStatus.textContent = "";
-      else if ("error" in queue) {
-        rolloutStatus.textContent = queue.error;
-        rolloutDetails.details.open = true;
-      } else if (!queue.targets.length) rolloutStatus.textContent = "続けて反映する反映先はありません（現在の反映先は除いています）。";
+      else if ("error" in queue) rolloutStatus.textContent = queue.error;
+      else if (!queue.targets.length) rolloutStatus.textContent = "続けて反映する反映先はありません（現在の反映先は除いています）。";
       else {
         const shown = queue.targets.slice(0, 10).map(formatRolloutTarget).join("、");
         rolloutStatus.textContent = `${queue.targets.length} 件: ${shown}${queue.targets.length > 10 ? ` ほか ${queue.targets.length - 10} 件` : ""}`;
@@ -7273,11 +7947,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         const head = document.createElement("strong");
         head.textContent = `次の反映先: ${formatRolloutTarget(next)}（${rest ? `残り ${rest} 件` : "最後の反映先"}）`;
         const body = document.createElement("span");
-        body.textContent = "同じ反映元・項目・設定で差分を取得します。反映先ごとに差分確認と最終確認を行うため、ここでは書き込みません。";
+        body.textContent = "同じ反映元・項目・設定で差分を取得するだけで、まだ書き込みません。反映先ごとに差分確認と最終確認を行います。";
         rolloutNote.append(head, body);
       }
-      rolloutWarn.hidden = !(last && (last.ng > 0 || last.pending > 0));
-      rolloutWarn.textContent = "直前の反映先に失敗・未実行の項目があります。結果を確認してから進んでください。";
+      rolloutWarn.hidden = !(last && (last.ng > 0 || last.stopped > 0 || last.pending > 0));
+      rolloutWarn.textContent = last?.cancelled ? "直前の反映先は中止したため、一部の項目だけ反映されている可能性があります。結果を確認してから進んでください。" : "直前の反映先に失敗・未実行の項目があります。結果を確認してから進んでください。";
       rolloutError.hidden = queue.ok;
       rolloutError.textContent = "error" in queue ? `続けて反映する反映先を読み取れません。${queue.error}` : "";
       rolloutNextRow.hidden = !next && queue.ok;
@@ -7311,7 +7985,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshReviewCard();
       return startPreview(`次の反映先 ${formatRolloutTarget(next)} の差分を取得しました。内容を確認してから反映してください（まだ書き込んでいません）。`);
     }
-    const previewBtn = makeButton("差分プレビューを更新", "primary");
+    const previewBtn = makeButton("差分を再取得", "primary");
     const changedOnlyBtn = makeButton("差分ありだけ選択", "sub");
     const reviewCard = makeCard({ title: "反映予定を確認", soft: true });
     reviewCard.actions.style.flexWrap = "wrap";
@@ -7321,11 +7995,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     reviewBody.className = "kus-rl-review";
     reviewCard.body.appendChild(reviewBody);
     panel.body.insertBefore(reviewCard.card, panel.status);
-    const previewCard = makeCard({ title: "差分プレビュー結果" });
+    const previewCard = makeCard({ title: "項目ごとの差分" });
     previewCard.card.style.display = "none";
+    previewCard.body.appendChild(makeNote("項目名を押すと、下の詳細へ移動します。", "help"));
     const previewTools = document.createElement("div");
     previewTools.className = "kus-rl-preview-tools";
-    const previewSearch = makeInput({ placeholder: "セクション名や詳細で検索", width: "wide" });
+    const previewSearch = makeInput({ placeholder: "項目名や内容で検索", width: "wide" });
     previewSearch.setAttribute("aria-label", "差分を検索");
     previewSearch.type = "search";
     const previewFilter = document.createElement("select");
@@ -7576,7 +8251,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const token = confirmationToken();
       if (confirmedToken && confirmedToken !== token) clearConfirmation();
       runBtn.disabled = busy || !confirmationReady();
-      setButtonText(runBtn, `確認した ${plan.effectiveScopes.length} 項目をプレビューへ反映`);
+      setButtonText(runBtn, `確認した ${plan.effectiveScopes.length} 項目を反映先プレビューへ反映`);
       let message = invalid || lookupMapError(lookupState) || (!scopes.length ? "反映する項目を選んでください。" : "変更前と変更後を確認し、最終確認に進んでください。");
       if (!preview) message = "対象を指定して差分を取得してください。";
       else if (!fresh) message = "条件が変わりました。差分を再取得してください。";
@@ -7594,7 +8269,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       reviewBody.appendChild(info);
       const summary = document.createElement("p");
       summary.className = "kus-rl-quiet";
-      summary.textContent = fresh ? `反映予定 ${plan.effectiveScopes.length} 項目 / 変更なし ${plan.sameScopes.length} 項目 / 確認が必要 ${plan.errorScopes.length} 項目 · ${formatPreviewStamp(preview.at)}` : "この段階では書き込みを行いません。";
+      summary.textContent = fresh ? `反映予定 ${plan.effectiveScopes.length} 項目 / 変更なし ${plan.sameScopes.length} 項目 / 取得失敗 ${plan.errorScopes.length} 項目 · ${formatPreviewStamp(preview.at)}` : "この段階では書き込みません。";
       reviewBody.appendChild(summary);
       if (blockers.length) {
         const list2 = document.createElement("ul");
@@ -7646,42 +8321,42 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     previewKeepShownBtn.addEventListener("click", () => {
       const previewResult = memoryState.lastPreview?.result || null;
       if (!previewResult) {
-        panel.setStatus("先に差分プレビューを取得してください", "warn");
+        panel.setStatus("先に差分を取得してください。", "warn");
         return;
       }
       const scopeKeys = uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value));
       setSelectedScopes(scopeKeys);
-      panel.setStatus(`表示中の ${scopeKeys.length} セクションだけを選択しました`, scopeKeys.length ? "ok" : "info");
+      panel.setStatus(`表示中の ${scopeKeys.length} 項目だけを選択しました。`, scopeKeys.length ? "ok" : "info");
     });
     previewAddShownBtn.addEventListener("click", () => {
       const previewResult = memoryState.lastPreview?.result || null;
       if (!previewResult) {
-        panel.setStatus("先に差分プレビューを取得してください", "warn");
+        panel.setStatus("先に差分を取得してください。", "warn");
         return;
       }
       const scopeKeys = uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value));
       setSelectedScopes([.../* @__PURE__ */ new Set([...collectSelectedScopes(), ...scopeKeys])]);
-      panel.setStatus(`表示中の ${scopeKeys.length} セクションを追加しました`, scopeKeys.length ? "ok" : "info");
+      panel.setStatus(`表示中の ${scopeKeys.length} 項目を選択に追加しました。`, scopeKeys.length ? "ok" : "info");
     });
     previewRemoveShownBtn.addEventListener("click", () => {
       const previewResult = memoryState.lastPreview?.result || null;
       if (!previewResult) {
-        panel.setStatus("先に差分プレビューを取得してください", "warn");
+        panel.setStatus("先に差分を取得してください。", "warn");
         return;
       }
       const scopeKeys = new Set(uniqueSectionKeys(filterPreviewEntries(previewResult.entries, previewSearch.value.trim().toLowerCase(), previewFilter.value)));
       setSelectedScopes(collectSelectedScopes().filter((key) => !scopeKeys.has(key)));
-      panel.setStatus(`表示中の ${scopeKeys.size} セクションを選択から外しました`, scopeKeys.size ? "ok" : "info");
+      panel.setStatus(`表示中の ${scopeKeys.size} 項目を選択から外しました。`, scopeKeys.size ? "ok" : "info");
     });
     previewRiskyBtn.addEventListener("click", () => {
       const previewResult = memoryState.lastPreview?.result || null;
       if (!previewResult) {
-        panel.setStatus("先に差分プレビューを取得してください", "warn");
+        panel.setStatus("先に差分を取得してください。", "warn");
         return;
       }
       const riskyScopes = uniqueSectionKeys(previewResult.entries.filter((entry) => RISKY_SCOPE_KEYS.has(entry.sectionKey)));
       setSelectedScopes(riskyScopes);
-      panel.setStatus(`高リスク ${riskyScopes.length} セクションだけを選択しました`, riskyScopes.length ? "warn" : "info");
+      panel.setStatus(`高リスクの ${riskyScopes.length} 項目だけを選択しました。`, riskyScopes.length ? "warn" : "info");
     });
     function startPreview(okMessage) {
       if (busy || previewBtn.disabled) return;
@@ -7689,16 +8364,18 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const lookupError = lookupMapError(lookupState);
       const lookupMap = lookupMapValue(lookupState);
       if (!scopes.length) {
-        panel.setStatus("対象セクションを選択してください", "warn");
+        panel.setStatus("反映する項目を選んでください。", "warn");
         return;
       }
       if (lookupError) {
         panel.setStatus(lookupError, "warn");
         return;
       }
-      return runLite("差分プレビューを取得中…", async () => {
-        await runPreview(scopes, lookupMap);
-      }, okMessage || `差分プレビュー完了（${scopes.length}セクションを比較）`);
+      return runLite("差分を取得中…", async () => {
+        const result = await runPreview(scopes, lookupMap);
+        const failed = result.entries.filter((entry) => scopes.includes(entry.sectionKey) && (entry.status === "src-missing" || entry.status === "tgt-missing")).length;
+        if (failed) panel.setStatus(`差分を取得しました（${scopes.length} 項目中 ${failed} 項目は設定を取得できませんでした）。取得し直すか、その項目を対象から外してください。まだ書き込んでいません。`, "warn");
+      }, okMessage || `差分を取得しました（${scopes.length} 項目を比較。まだ書き込んでいません）。`);
     }
     previewBtn.addEventListener("click", () => {
       startPreview();
@@ -7716,15 +8393,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     changedOnlyBtn.addEventListener("click", () => {
       const { preview, fresh } = getPreviewState();
       if (!fresh || !preview?.result) {
-        panel.setStatus("先に最新の差分プレビューを取得してください", "warn");
+        panel.setStatus("先に最新の差分を取得してください。", "warn");
         return;
       }
       const changedScopes = preview.result.entries.filter((entry) => entry.status === "change").map((entry) => entry.sectionKey);
       setSelectedScopes(changedScopes);
-      panel.setStatus(`差分あり ${changedScopes.length} セクションだけを選択しました`, changedScopes.length ? "ok" : "info");
+      panel.setStatus(`差分あり ${changedScopes.length} 項目だけを選択しました。`, changedScopes.length ? "ok" : "info");
     });
     const confirmBtn = makeButton("最終確認に進む", "primary");
-    const confirmCard = makeCard({ title: "この内容をプレビューへ反映します" });
+    const confirmCard = makeCard({ title: "この内容を反映先のプレビューへ反映します" });
     const confirmBody = document.createElement("div");
     confirmCard.body.appendChild(confirmBody);
     const acknowledged = makeCheck({ label: "反映先と変更・削除の内容を確認しました", checked: false });
@@ -7734,7 +8411,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     targetCheck.setAttribute("data-lp-no-submit", "");
     targetCheck.inputMode = "numeric";
     targetCheck.autocomplete = "off";
-    const targetCheckRow = makeRow([targetCheck], { label: "反映先IDの再確認" });
+    const targetCheckRow = makeRow([targetCheck], { label: "反映先アプリIDの再確認" });
     const confirmStatus = document.createElement("p");
     confirmStatus.className = "kus-rl-quiet";
     confirmStatus.setAttribute("aria-live", "polite");
@@ -7748,7 +8425,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       confirmedToken = "";
       acknowledged.checkbox.checked = false;
       targetCheck.value = "";
-      confirmStatus.textContent = "反映先と変更内容を確認してチェックを入れてください。";
+      confirmStatus.textContent = "書き込み先と変更内容を確認して、チェックを入れてください。";
     }
     function highImpactReasons() {
       const { preview, scopes } = getPreviewState();
@@ -7758,7 +8435,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (removals) reasons.push(`削除・置換される設定が ${removals} 件あります`);
       if (entries.some((entry) => RISKY_SCOPE_KEYS.has(entry.sectionKey))) reasons.push("権限・通知・プロセス管理の変更を含みます");
       if (preview?.result.targetPending?.state === "pending") reasons.push(TARGET_PENDING_REASON);
-      if (!sourceBundleFromJson && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim()) reasons.push("同じアプリの本番設定でプレビューを更新します");
+      if (!sourceBundleFromJson && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim()) reasons.push("同じアプリの本番の設定でプレビューを更新します");
       return reasons;
     }
     function confirmationReady() {
@@ -7773,41 +8450,19 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (!confirmedToken || !state3.preview) return;
       confirmBody.innerHTML = "";
       renderReflectRoute(confirmBody, state3.preview.identities, sourceMode === "json" ? "設定JSON" : sourceEnvironment.value === "preview" ? "プレビュー" : "本番", restoreRouteOptions(state3.preview.identities));
-      const entries = state3.preview.result.entries.filter((entry) => state3.scopes.includes(entry.sectionKey) && entry.status === "change");
-      const summary = document.createElement("p");
-      summary.textContent = `反映する項目（${entries.length}）：${entries.map((entry) => entry.label).join("、")}`;
-      confirmBody.appendChild(summary);
       if (restoreMode) appendRestoreNotice(confirmBody);
-      appendTargetPendingNotice(confirmBody, state3.preview.result.targetPending);
-      const reasons = highImpactReasons();
-      targetCheckRow.hidden = !reasons.length;
-      if (reasons.length) {
-        const note = document.createElement("p");
-        note.className = "kus-rl-next kus-rl-next--warn";
-        note.textContent = reasons.join("。") + "。反映先IDを入力して確認してください。";
-        confirmBody.appendChild(note);
-      }
-      const uploadLabels = collectUploadLabels(entries);
-      if (uploadLabels.length) {
-        const box = document.createElement("div");
-        box.className = "kus-rl-uploads";
-        box.dataset.reflectUploads = "true";
-        const title = document.createElement("strong");
-        title.textContent = `反映先へアップロードするファイル（${uploadLabels.length} 件）`;
-        const list2 = document.createElement("ul");
-        for (const label of uploadLabels) {
-          const item = document.createElement("li");
-          item.textContent = label;
-          list2.appendChild(item);
-        }
-        box.append(title, list2);
-        confirmBody.appendChild(box);
-      }
+      const entries = state3.preview.result.entries.filter((entry) => state3.scopes.includes(entry.sectionKey) && entry.status === "change");
+      const changeTotal = entries.reduce((sum, entry) => sum + entry.changeCount, 0);
+      const removalTotal = entries.reduce((sum, entry) => sum + entry.removalCount, 0);
+      const summary = document.createElement("p");
+      summary.dataset.confirmSummary = "changes";
+      summary.textContent = `${entries.length} 項目を変更します：${entries.map((entry) => entry.label).join("、")}（設定の変更 ${changeTotal} 件${removalTotal ? `、うち削除・置換 ${removalTotal} 件` : ""}）`;
+      confirmBody.appendChild(summary);
       const removals = [];
       for (const entry of entries) {
-        const removedItems = (entry.items || []).filter((item) => item.kind === "削除" || item.kind === "変更" && item.details.some((detail) => detail.includes("削除")));
+        const removedItems = (entry.items || []).filter((item) => item.kind === "削除" || item.kind === "変更" && item.details.some((detail2) => detail2.includes("削除")));
         if (removedItems.length || !entry.removalCount) removals.push(...removedItems.map((item) => describeRemovedItem(entry.label, item)));
-        else removals.push(...entry.changes.filter((change) => change.kind === "削除").map((change) => `${entry.label} / ${change.path}：${change.before.slice(0, 180)}${change.before.length > 180 ? "…" : ""}`));
+        else removals.push(...entry.changes.filter((change) => change.kind === "削除").map((change) => describeRemovedChange(entry.label, change)));
       }
       if (removals.length) {
         const heading = document.createElement("p");
@@ -7828,11 +8483,47 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
           list2.appendChild(item);
         }
         confirmBody.appendChild(list2);
+      } else {
+        const none = document.createElement("p");
+        none.className = "kus-rl-quiet";
+        none.dataset.reflectRemovals = removalTotal ? "unlisted" : "none";
+        none.textContent = removalTotal ? `削除・置換される設定が ${removalTotal} 件あります。下の各項目の設定値の内訳で確認してください。` : "この反映で削除・置換される設定はありません。";
+        confirmBody.appendChild(none);
       }
+      const undo = document.createElement("p");
+      undo.className = "kus-rl-quiet";
+      undo.dataset.confirmUndo = state3.preview.result.targetPending?.state || "unknown";
+      undo.textContent = describeConfirmUndo(state3.preview.result.targetPending);
+      confirmBody.appendChild(undo);
       const policy = document.createElement("p");
       policy.className = "kus-rl-quiet";
-      policy.textContent = "反映前の設定JSONを自動保存します。実行直前に設定を再取得し、確認後の変更があれば中止します。途中エラーでは中断します。複数項目の一括取消はできません。本番公開はアプリ設定画面で行います。";
+      policy.textContent = "実行直前に設定を再取得し、確認後に別の変更があれば中止します。途中でエラーが起きたら、以降の項目を実行せず中断します。";
       confirmBody.appendChild(policy);
+      appendTargetPendingNotice(confirmBody, state3.preview.result.targetPending);
+      const reasons = highImpactReasons();
+      targetCheckRow.hidden = !reasons.length;
+      if (reasons.length) {
+        const note = document.createElement("p");
+        note.className = "kus-rl-next kus-rl-next--warn";
+        note.textContent = reasons.join("。") + "。確認のため、反映先アプリIDを入力してください。";
+        confirmBody.appendChild(note);
+      }
+      const uploadLabels = collectUploadLabels(entries);
+      if (uploadLabels.length) {
+        const box = document.createElement("div");
+        box.className = "kus-rl-uploads";
+        box.dataset.reflectUploads = "true";
+        const title = document.createElement("strong");
+        title.textContent = `反映先へアップロードするファイル（${uploadLabels.length} 件）`;
+        const list2 = document.createElement("ul");
+        for (const label of uploadLabels) {
+          const item = document.createElement("li");
+          item.textContent = label;
+          list2.appendChild(item);
+        }
+        box.append(title, list2);
+        confirmBody.appendChild(box);
+      }
       for (const entry of entries) {
         const block = document.createElement("section");
         block.className = "kus-rl-confirm-entry";
@@ -7845,11 +8536,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       }
       showWorkflowStage("confirm");
       refreshReviewCard();
+      panel.setStatus("反映先と変更内容を確認してください。まだ書き込んでいません。", "info");
     }
     confirmBtn.addEventListener("click", openConfirmation);
     for (const control of [acknowledged.checkbox, targetCheck]) control.addEventListener("input", () => {
       runBtn.disabled = busy || !confirmationReady();
-      confirmStatus.textContent = confirmationReady() ? "確認が完了しました。下の反映ボタンから実行できます。" : "確認チェックと、表示されている場合は反映先IDの入力が必要です。";
+      confirmStatus.textContent = confirmationReady() ? "確認できました。下の反映ボタンで実行してください。" : "確認のチェックと、入力欄が表示されている場合は反映先アプリIDの入力が必要です。";
     });
     const exportPlanBtn = makeButton("反映計画JSONを保存", "sub");
     reviewCard.actions.appendChild(exportPlanBtn);
@@ -7875,8 +8567,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       setTimeout(() => URL.revokeObjectURL(url), 5e3);
     });
     const exportPlanMdBtn = makeButton("計画をMarkdownで保存", "sub");
-    exportPlanMdBtn.title = "選択中の項目の計画（経路・変更の要約・未公開の変更）をMarkdownで保存します";
-    const copyPlanMdBtn = makeButton("Markdownをコピー", "sub");
+    exportPlanMdBtn.title = "選択中の項目の計画（反映元と反映先・変更の要約・未公開の変更）をMarkdownで保存します";
+    const copyPlanMdBtn = makeButton("計画のMarkdownをコピー", "sub");
     copyPlanMdBtn.title = "選択中の項目の計画をMarkdownとしてクリップボードへコピーします";
     reviewCard.actions.append(exportPlanMdBtn, copyPlanMdBtn);
     function buildPlanMarkdown() {
@@ -7916,7 +8608,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     copyPlanMdBtn.addEventListener("click", () => {
       void copyMarkdown(buildPlanMarkdown()?.text, "反映計画");
     });
-    const runBtn = makeButton("プレビュー反映を実行", "run");
+    const runBtn = makeButton("反映先プレビューへ反映", "run");
     runBtn.classList.add("kus-lp__btn--danger");
     runBtn.classList.remove("kus-lp__btn--run");
     runBtn.style.cssText = "";
@@ -7927,7 +8619,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     panel.body.insertBefore(runBtn, panel.status);
     const logCard = makeCard({ title: "実行ログ", soft: true });
     const logPre = document.createElement("pre");
-    logPre.style.cssText = "margin:0;padding:8px 10px;font:11.5px/1.5 ui-monospace,monospace;background:#0f172a;color:#e2e8f0;border-radius:8px;max-height:240px;overflow:auto;white-space:pre-wrap;display:none";
+    logPre.style.cssText = "margin:0;padding:8px 10px;font:12.5px/1.6 ui-monospace,monospace;background:#0f172a;color:#e2e8f0;border-radius:8px;max-height:240px;overflow:auto;white-space:pre-wrap;display:none";
     logCard.body.appendChild(logPre);
     logCard.card.style.display = "none";
     panel.body.insertBefore(logCard.card, panel.status);
@@ -7954,7 +8646,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const retryFailedBtn = makeButton("失敗・未実行だけ選択", "sub");
     retryFailedBtn.title = "失敗または中断で未実行のセクションだけを反映対象に選び直します";
     const openTargetBtn = makeButton("反映先の設定画面を開く", "sub");
-    openTargetBtn.title = "反映先アプリの設定画面を新しいタブで開きます（運用環境への反映はそこから実行できます）";
+    openTargetBtn.title = "反映先アプリの設定画面を新しいタブで開きます（本番への公開はそこから行えます）";
     const restoreBtn = makeButton("バックアップから戻す（差分を確認）", "sub");
     restoreBtn.title = "反映前に自動保存したバックアップを反映元にして、反映先との差分を確認します（この操作では書き込みません）";
     restoreBtn.dataset.reflectRestore = "backup";
@@ -7968,7 +8660,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     lastResultActions.appendChild(exportResultBtn);
     const exportResultMdBtn = makeButton("記録をMarkdownで保存", "sub");
     exportResultMdBtn.title = "実行した項目の計画と結果（成功・失敗）をMarkdownの反映記録として保存します";
-    const copyResultMdBtn = makeButton("Markdownをコピー", "sub");
+    const copyResultMdBtn = makeButton("記録のMarkdownをコピー", "sub");
     copyResultMdBtn.title = "反映記録をMarkdownとしてクリップボードへコピーします";
     lastResultActions.append(exportResultMdBtn, copyResultMdBtn);
     lastResultActions.appendChild(openTargetBtn);
@@ -8119,7 +8811,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (!retryScopes.length) return;
       setSelectedScopes(retryScopes);
       showWorkflowStage("setup");
-      panel.setStatus(`失敗・未実行の ${retryScopes.length} セクションを選択しました。差分プレビューで確認してから再実行してください。`, "info");
+      panel.setStatus(`失敗・未実行の ${retryScopes.length} 項目を選択しました。差分を取得して確認してから再実行してください。`, "info");
       scrollWithinCanvas(cardScope.card);
     });
     openTargetBtn.addEventListener("click", () => {
@@ -8128,7 +8820,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const base = last.guestId ? `/k/guest/${encodeURIComponent(last.guestId)}` : "/k";
       const url = `${window.location.origin}${base}/admin/app/flow?app=${encodeURIComponent(last.appId)}`;
       window.open(url, "_blank", "noopener");
-      panel.setStatus(`反映先アプリ #${last.appId} の設定画面を開きました`, "info");
+      panel.setStatus(`反映先アプリ #${last.appId} の設定画面を開きました。`, "info");
     });
     exportResultBtn.addEventListener("click", () => {
       const last = memoryState.lastResult;
@@ -8136,7 +8828,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const payload = {
         schemaVersion: 1,
         executedAt: new Date(last.at).toISOString(),
-        summary: { ok: last.ok, ng: last.ng, pending: last.pending },
+        summary: { ok: last.ok, ng: last.ng, ...last.stopped ? { stopped: last.stopped } : {}, pending: last.pending, ...last.cancelled ? { cancelled: true } : {} },
         ...last.report
       };
       const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
@@ -8150,7 +8842,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const last = memoryState.lastResult;
       if (!last?.planned) return null;
       const { identities, entries } = last.planned;
-      const text = buildReflectReportMarkdown({
+      const built = buildReflectReportMarkdown({
         generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
         source: identities.source,
         target: identities.target,
@@ -8161,6 +8853,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         targetPending: last.report.targetPending,
         outcome: { executedAt: new Date(last.at).toISOString(), sections: normalizeApplySections(last.report.sections) }
       });
+      const text = last.cancelled ? built.replace("\n- 反映元:", `
+- 実行状況: ${RUN_CANCELLED_MESSAGE}（途中で止まった項目は書き込み済みの分が反映先に残っています）
+- 反映元:`) : built;
       return { text, appLabel: buildAppFilenameLabel(last.appId, identities.target.name) };
     }
     exportResultMdBtn.addEventListener("click", () => {
@@ -8183,10 +8878,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         return;
       }
       const stamp = formatReflectDateTime(last.at);
-      const hasIssue = last.ng > 0 || last.pending > 0;
+      const hasIssue = last.ng > 0 || last.stopped > 0 || last.pending > 0;
       const tone = hasIssue ? "color:#9a3412" : "color:#065f46";
-      const failedSummary = last.failedLabels.length ? `<div>失敗: ${escapeHtml(last.failedLabels.slice(0, 5).join(" / "))}${last.failedLabels.length > 5 ? ` ほか ${last.failedLabels.length - 5} 件` : ""}</div>` : "";
-      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${hasIssue ? "⚠ 一部エラー" : "✓ 全成功"}</div><div>反映先 #${escapeHtml(last.appId || "-")} / 成功 ${last.ok} / 失敗 ${last.ng}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? '<div style="margin-top:4px">「失敗・未実行だけ選択」で対象を絞って再実行できます。</div>' : '<div style="margin-top:4px">反映先はプレビューです。運用環境への反映（デプロイ）は反映先の設定画面から実行してください。</div>');
+      const labelSummary = (title, labels2) => labels2.length ? `<div>${title}: ${escapeHtml(labels2.slice(0, 5).join(" / "))}${labels2.length > 5 ? ` ほか ${labels2.length - 5} 件` : ""}</div>` : "";
+      const failedSummary = labelSummary("失敗", last.failedLabels) + labelSummary("途中で停止", last.stoppedLabels);
+      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.cancelled ? "⚠ 中止しました。書き込み済みの分は反映先に残っています" : hasIssue ? "⚠ 一部の項目を反映できませんでした" : `✓ ${last.ok} 項目を反映しました`}</div><div>反映先 #${escapeHtml(last.appId || "-")} / 成功 ${last.ok} / 失敗 ${last.ng}${last.stopped ? ` / 途中で停止 ${last.stopped}` : ""}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? `<div style="margin-top:4px">${last.cancelled ? "差分を取得し直して現在の状態を確認してから、" : ""}「失敗・未実行だけ選択」で対象を絞って再実行してください。</div>` : '<div style="margin-top:4px">変わったのは反映先のプレビューだけです。本番へ公開するには、反映先の設定画面で公開してください。</div>');
       renderApplySectionResults(lastResultSections, last.report.sections);
       const guidance = describeUndoGuidance(last.report.targetPending);
       undoNote.textContent = guidance.text;
@@ -8210,7 +8906,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const lookupError = lookupMapError(lookupState);
       const lookupMap = lookupMapValue(lookupState);
       if (!scopes.length) {
-        panel.setStatus("反映するセクションを選択してください", "warn");
+        panel.setStatus("反映する項目を選んでください。", "warn");
         return;
       }
       if (lookupError) {
@@ -8218,7 +8914,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         return;
       }
       saveState();
-      const outcome = await runLite("プレビュー反映 実行中…", async () => {
+      const outcome = await runLite("反映先プレビューへ書き込み中…", async () => {
         let previewState = getPreviewState(scopes, lookupState);
         let previewResult = previewState.fresh ? previewState.preview?.result || null : null;
         if (!previewResult) {
@@ -8228,9 +8924,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         const plan = getExecutionPlan(scopes, previewResult);
         if (!plan.effectiveScopes.length) {
           if (!previewResult.changedSections) {
-            throw new Error("差分プレビューでは変更対象がありません。反映は実行しません。");
+            throw new Error("変更が必要な項目がないため、反映は実行しません。");
           }
-          throw new Error(`現在の実行オプションでは実行対象が 0 件です。${buildSkipSummary(plan)}`);
+          throw new Error(`実行する項目がありません（${buildSkipSummary(plan)}）。`);
         }
         if (selectionIssues(previewResult, scopes).length) throw new Error("確認できない項目が含まれています。差分確認へ戻ってください。");
         const plannedSnapshot = { identities: reportIdentities(previewState.preview.identities), entries: previewResult.entries.filter((entry) => plan.effectiveScopes.includes(entry.sectionKey)) };
@@ -8291,13 +8987,16 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         memoryState.lastResult = {
           ok: counts.ok,
           ng: counts.ng,
+          stopped: counts.stopped,
           pending: counts.pending,
           at: Date.now(),
           appId: applyOptions.targetAppId,
           guestId: applyOptions.targetGuestId,
           retryScopes: collectRetrySectionKeys(applyOutcome.sections),
-          failedLabels: applyOutcome.sections.filter((s) => s.status === "ng").map((s) => s.label),
+          failedLabels: applyOutcome.sections.filter((s) => s.status === "ng" && !s.stopped).map((s) => s.label),
+          stoppedLabels: applyOutcome.sections.filter((s) => s.status === "ng" && s.stopped).map((s) => s.label),
           sourceBundleToken: sourceMode === "json" ? sourceBundleToken : "",
+          ...applyOutcome.cancelled ? { cancelled: true } : {},
           ...applyOutcome.backup ? { backup: applyOutcome.backup } : {},
           ...applyOutcome.finalRevision ? { finalRevision: applyOutcome.finalRevision } : {},
           planned: plannedSnapshot,
@@ -8318,31 +9017,44 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         };
         memoryState.staleResult = null;
         if (applyOutcome.finalRevision) memoryState.lastWrite = { targetAppId: applyOptions.targetAppId, targetGuestId: applyOptions.targetGuestId || "", finalRevision: applyOutcome.finalRevision, priorState: targetPendingAtApply?.state };
-        if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || "", name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, pending: counts.pending, at: memoryState.lastResult.at });
+        if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || "", name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, ...counts.stopped ? { stopped: counts.stopped } : {}, pending: counts.pending, at: memoryState.lastResult.at, ...applyOutcome.cancelled ? { cancelled: true } : {} });
         renderLastResult();
         showWorkflowStage("result");
-        return { cancelled: false, hadError: counts.ng > 0 || counts.pending > 0 };
+        return { cancelled: false, hadError: counts.ng > 0 || counts.stopped > 0 || counts.pending > 0, counts, failureNote: describeFirstFailure(applyOutcome.sections), stopped: counts.ng + counts.stopped + counts.pending > 0 && !!applyOutcome.cancelled ? { ok: counts.ok, ng: counts.ng, stopped: counts.stopped, pending: counts.pending } : null };
       });
       if (!outcome) return;
       if (outcome.cancelled) {
-        panel.setStatus("反映実行をキャンセルしました", "info");
+        panel.setStatus("反映を実行しませんでした（書き込みはありません）。差分を取得し直してください。", "info");
         return;
       }
+      if (outcome.stopped) {
+        const { ok, ng, stopped, pending } = outcome.stopped;
+        const total = ok + ng + stopped + pending;
+        const queue = currentRollout();
+        const queued = queue.ok ? queue.targets.length : 0;
+        panel.setStatus(
+          `中止しました（${ok}/${total} 件を反映${stopped ? `、${stopped} 件は途中で停止` : ""}${ng ? `、${ng} 件は失敗` : ""}、残り ${pending} 件は未実行）。書き込み済みの分は反映先プレビューに残っています。${queued ? `続けて反映する ${queued} 件の反映先は未実行です。` : ""}差分を取得し直して現在の状態を確認してください。`,
+          "warn"
+        );
+        return;
+      }
+      if (!outcome.counts) return;
       if (outcome.hadError) {
-        panel.setStatus("プレビュー反映が一部失敗しました。「直近の実行結果」から失敗・未実行だけ選択して再実行できます。", "warn");
+        const { ok, ng, pending } = outcome.counts;
+        panel.setStatus(`${ok + ng + outcome.counts.stopped + pending} 項目中 ${ok} 項目を反映しました。失敗 ${ng} 項目${pending ? `、未実行 ${pending} 項目` : ""}${outcome.failureNote ? `（${outcome.failureNote}）` : ""}。「失敗・未実行だけ選択」で再実行してください。`, "warn");
         return;
       }
-      panel.setStatus("プレビュー反映が完了しました。運用環境への反映は「反映先の設定画面を開く」からデプロイしてください。", "ok");
+      panel.setStatus(`${outcome.counts.ok} 項目を反映先プレビューへ反映しました。本番へ公開するには、「反映先の設定画面を開く」から kintone の設定画面で公開してください。`, "ok");
     });
     const nav = document.createElement("nav");
     nav.className = "kus-rl-nav";
     nav.setAttribute("aria-label", "プレビュー反映の手順");
     nav.setAttribute("role", "tablist");
     const stageDefs = [
-      { id: "setup", number: "1", label: "対象を選ぶ", copy: "アプリと反映項目" },
-      { id: "review", number: "2", label: "差分を確認", copy: "変更前・変更後" },
-      { id: "confirm", number: "3", label: "最終確認", copy: "反映先と変更を確定" },
-      { id: "result", number: "4", label: "反映結果", copy: "結果と次の操作" }
+      { id: "setup", number: "1", label: "対象を選ぶ", copy: "反映元・反映先・項目を選ぶ" },
+      { id: "review", number: "2", label: "差分を確認", copy: "変更前後を見て項目を絞る" },
+      { id: "confirm", number: "3", label: "最終確認", copy: "書き込み先と件数を確かめる" },
+      { id: "result", number: "4", label: "反映結果", copy: "結果を見て次の操作を選ぶ" }
     ];
     const stages = {};
     const navButtons = {};
@@ -8390,21 +9102,48 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         else showWorkflowStage(next.id);
       });
     }
-    stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>どの設定を、どこへ反映しますか？</h2><p>反映元と反映先を指定し、反映したい項目を選びます。</p></header>';
-    stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>差分と実行予定を確認</h2><p>実際に変更されるセクションと注意点を確認します。</p></header>';
-    stages.confirm.innerHTML = '<header class="kus-rl-stage-head"><h2>書き込み先と内容の最終確認</h2><p>この画面で確認した条件だけを実行します。</p></header>';
+    stages.setup.innerHTML = '<header class="kus-rl-stage-head"><h2>どの設定を、どこへ反映しますか？</h2><p>反映元（読み取り）と反映先（書き込み・プレビュー）のアプリを指定し、反映する項目を選びます。</p></header>';
+    stages.review.innerHTML = '<header class="kus-rl-stage-head"><h2>変更前後を確認して、反映する項目を決める</h2><p>差分のある項目と注意点を確認します。この画面では書き込みません。</p></header>';
+    stages.confirm.innerHTML = '<header class="kus-rl-stage-head"><h2>書き込み先と内容の最終確認</h2><p>書き込み先・変更件数・削除・取り消し方を確認してから反映します。</p></header>';
     stages.confirm.appendChild(confirmCard.card);
-    stages.result.innerHTML = '<header class="kus-rl-stage-head"><h2>実行結果と次の操作</h2><p>成功・失敗と、再実行が必要なセクションを確認します。</p></header>';
+    stages.result.innerHTML = '<header class="kus-rl-stage-head"><h2>実行結果と次の操作</h2><p>成功・失敗と、再実行が必要な項目を確認します。</p></header>';
     const setupGrid = document.createElement("div");
     setupGrid.className = "kus-rl-setup-grid";
     [cardApp.card, cardScope.card].forEach((node) => setupGrid.appendChild(node));
-    const advanced = makeDetails("詳細設定 · バックアップ・エラー時の動作・参照先変換");
-    advanced.details.classList.add("kus-rl-advanced");
-    advanced.body.appendChild(cardOpt.card);
-    const presetDetails = makeDetails("よく使う設定を保存・読み込み");
-    presetDetails.details.classList.add("kus-rl-advanced");
-    presetDetails.body.appendChild(cardPreset.card);
-    setupGrid.append(rolloutDetails.details, advanced.details, presetDetails.details);
+    const detail = makeDialog({ title: "詳細設定", id: "kus-rl-detail" });
+    detail.body.append(detailStatus, cardOpt.card, cardLookup.card, cardPreset.card, rolloutSetupCard.card);
+    detail.dialog.addEventListener("close", () => {
+      detailStatus.hidden = true;
+      detailStatus.textContent = "";
+    });
+    panel.root.appendChild(detail.dialog);
+    const detailBtn = makeButton("詳細設定…", "sub");
+    detailBtn.setAttribute("aria-haspopup", "dialog");
+    detailBtn.addEventListener("click", () => detail.open());
+    const detailSummary = document.createElement("span");
+    detailSummary.className = "kus-rl-detail-summary";
+    const detailRow = document.createElement("div");
+    detailRow.className = "kus-rl-detail-row";
+    detailRow.append(detailBtn, detailSummary);
+    setupGrid.appendChild(detailRow);
+    function refreshDetailSummary() {
+      const parts = [preserve.checkbox.checked ? "反映先だけの一覧・グラフ・アクションは保持" : "反映先だけの一覧・グラフ・アクションを削除"];
+      let warn = !preserve.checkbox.checked;
+      const lookup = parseLookupMapText(lookupTa.value);
+      if (!lookup.ok) {
+        parts.push("参照先変換に誤りがあります");
+        warn = true;
+      } else if (lookup.count) parts.push(`参照先変換 ${lookup.count} 件`);
+      if (rolloutTa.value.trim()) {
+        const queue = currentRollout();
+        if (!queue.ok) {
+          parts.push("続けて反映する反映先に誤りがあります");
+          warn = true;
+        } else if (queue.targets.length) parts.push(`続けて反映 ${queue.targets.length} 件`);
+      }
+      detailSummary.textContent = `詳細設定: ${parts.join(" / ")}`;
+      detailSummary.classList.toggle("kus-rl-detail-summary--warn", warn);
+    }
     stages.setup.appendChild(setupGrid);
     [reviewCard.card, previewCard.card].forEach((node) => stages.review.appendChild(node));
     [progressCard.card, lastResultCard.card, rolloutCard.card, logCard.card].forEach((node) => stages.result.appendChild(node));
@@ -8444,6 +9183,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     workspace.appendChild(canvas);
     hint?.insertAdjacentElement("afterend", workspace);
     panel.body.appendChild(dock);
+    [stages.setup, stages.review, stages.confirm, stages.result, detail.body].forEach((scope) => attachCardHelp(scope));
     let activeStage = "setup";
     const noInputSubmit = document.createElement("button");
     noInputSubmit.disabled = true;
@@ -8466,7 +9206,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       }
       const head = name ? `${role}: ${name}（#${id}）` : `${role}: ${id ? `#${id}` : "未入力"}`;
       const tail = [
-        guest ? `ゲスト ${guest}` : "",
+        guest ? `ゲストスペース ${guest}` : "",
         side === "target" ? "プレビュー" : sourceMode === "json" ? "設定JSON" : sourceEnvironment.value === "preview" ? "プレビュー設定" : ""
       ].filter(Boolean);
       return tail.length ? `${head} / ${tail.join(" / ")}` : head;
@@ -8483,7 +9223,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       nextBtn.disabled = previewBtn.disabled || busy;
       navButtons.confirm.disabled = confirmBtn.disabled;
       setButtonText(backBtn, activeStage === "confirm" ? "差分に戻る" : "対象を変更");
-      setButtonText(nextBtn, fresh ? "確認した差分へ進む" : "差分を確認する");
+      setButtonText(nextBtn, fresh ? "取得済みの差分へ進む" : "差分を確認する");
       setButtonText(previewBtn, "差分を再取得");
       previewBtn.classList.toggle("kus-lp__btn--primary", !fresh);
       previewBtn.classList.toggle("kus-lp__btn--sub", fresh);
@@ -8498,28 +9238,27 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       }) : "";
       let message = setupBlocker ? `次に進むには：${setupBlocker}` : `${scopes.length} 項目を比較します。書き込みは行いません。`;
       const postApply = activeStage === "review" ? postApplySummary() : null;
-      if (activeStage === "review") message = !fresh ? "差分の取得が必要です。" : postApply ? postApply.message : confirmBtn.disabled ? "確認が必要な項目、または変更の有無を確認してください。" : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
-      if (activeStage === "confirm") message = fresh && confirmedToken ? "反映前バックアップを自動保存 / エラー時は中断 / 本番公開は行いません" : "条件が変わりました。差分の取得と最終確認をやり直してください。";
+      if (activeStage === "review") message = !fresh ? "差分を取得してください。" : postApply ? postApply.message : confirmBtn.disabled ? "反映できる項目がないか、確認できない項目が選択されています。内容を確認してください。" : `${plan?.effectiveScopes.length} 項目の内容を確認し、最終確認へ進んでください。`;
+      if (activeStage === "confirm") message = fresh && confirmedToken ? "反映前に自動でバックアップします。エラー時は中断し、本番へは公開しません。" : "条件が変わりました。差分の取得と最終確認をやり直してください。";
       if (activeStage === "result") message = "結果を確認してください。再実行には差分の再取得が必要です。";
       const sourceLabel = dockEndpointLabel("source", fresh ? preview?.identities : null);
       const targetLabel = dockEndpointLabel("target", fresh ? preview?.identities : null);
-      dockCopy.innerHTML = activeStage === "confirm" && fresh && preview?.identities ? `<strong>書き込み先 #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong><span class="kus-rl-dock-msg">${escapeHtml(confirmedToken ? "内容を確認してから反映してください。" : "条件が変わりました。差分を再取得してください。")}</span>` : `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong><span class="kus-rl-dock-msg${setupBlocker ? " kus-rl-dock-reason" : ""}">${escapeHtml(message)}</span>`;
+      dockCopy.innerHTML = activeStage === "confirm" && fresh && preview?.identities ? `<strong>書き込み先（反映先） #${escapeHtml(preview.identities.target.appId)} · プレビュー</strong><span class="kus-rl-dock-msg">${escapeHtml(confirmedToken ? "内容を確認してから反映してください。" : "条件が変わりました。差分を再取得してください。")}</span>` : `<strong>${escapeHtml(sourceLabel)} → ${escapeHtml(targetLabel)}</strong><span class="kus-rl-dock-msg${setupBlocker ? " kus-rl-dock-reason" : ""}">${escapeHtml(message)}</span>`;
       panel.result.hidden = activeStage === "confirm";
-      const advancedSummary = advanced.details.querySelector("summary");
-      if (advancedSummary) advancedSummary.textContent = "詳細設定 · 自動バックアップ / 参照先変換";
+      refreshDetailSummary();
       panel.setPrimaryAction(activeStage === "setup" ? nextBtn : activeStage === "review" ? fresh ? confirmBtn : previewBtn : noInputSubmit);
     };
-    showWorkflowStage = (active) => {
-      if (active === "confirm" && !confirmedToken) return;
-      if (activeStage === "confirm" && active !== "confirm") clearConfirmation();
-      activeStage = active;
+    showWorkflowStage = (active2) => {
+      if (active2 === "confirm" && !confirmedToken) return;
+      if (activeStage === "confirm" && active2 !== "confirm") clearConfirmation();
+      activeStage = active2;
       stageDefs.forEach((def) => {
-        const selected = def.id === active;
+        const selected = def.id === active2;
         stages[def.id].hidden = !selected;
         navButtons[def.id].setAttribute("aria-selected", String(selected));
         navButtons[def.id].tabIndex = selected ? 0 : -1;
       });
-      navButtons[active].focus({ preventScroll: true });
+      navButtons[active2].focus({ preventScroll: true });
       canvas.scrollTo({ top: 0 });
       refreshWorkflow();
     };
@@ -8534,6 +9273,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       });
       if (value) {
         panel.root.querySelectorAll("input,button,select,textarea").forEach((control) => {
+          if (control.classList.contains("kus-lp__cancel") || control.classList.contains("kus-lp__toggle")) return;
           if (!disabledBefore.has(control)) disabledBefore.set(control, control.disabled);
           control.disabled = true;
         });
@@ -8593,6 +9333,22 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     }
     host.appendChild(box);
   }
+  function describeConfirmUndo(pending) {
+    if (pending?.state === "clean" || pending?.state === "own") {
+      return "取り消し方：反映後に、kintone のアプリ設定画面で「変更を中止」を押すと取り消せます。反映前の設定は自動でバックアップされ、「バックアップから戻す」でも戻せます。";
+    }
+    if (pending?.state === "pending") {
+      return "取り消し方：反映先に未公開の変更があるため、「変更を中止」を押すとそれらも破棄されます。今回の反映だけを戻すには、反映後に「バックアップから戻す」を使ってください。";
+    }
+    return "取り消し方：反映前の設定は自動でバックアップされ、反映後に「バックアップから戻す」で戻せます。未公開の変更を確認できなかったため、「変更を中止」では他の未公開の変更も破棄される場合があります。";
+  }
+  function describeFirstFailure(sections) {
+    const failed = sections.find((section) => section.status === "ng" && !section.stopped);
+    if (!failed) return "";
+    const label = failed.label && failed.label !== failed.sectionKey ? failed.label : reflectSectionLabel(failed.sectionKey || "");
+    const reason = String(failed.message || "").split("\n")[0].trim();
+    return reason ? `${label}: ${reason.length > 80 ? `${reason.slice(0, 80)}…` : reason}` : label;
+  }
   function formatPreviewStamp(at) {
     const diffSec = Math.max(0, Math.floor((Date.now() - at) / 1e3));
     if (diffSec < 60) return `たった今 (${formatReflectTime(at)})`;
@@ -8615,7 +9371,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const list2 = document.createElement("ul");
     list2.className = "kus-rl-rollout-list";
     for (const entry of log) {
-      const tone = entry.ng > 0 ? "ng" : entry.pending > 0 ? "pending" : "ok";
+      const tone = entry.ng > 0 || (entry.stopped || 0) > 0 ? "ng" : entry.pending > 0 ? "pending" : "ok";
       const item = document.createElement("li");
       item.className = `kus-rl-rollout-item kus-rl-rollout-item--${tone}`;
       item.dataset.rolloutEntry = `${entry.guestId ? `${entry.guestId}:` : ""}${entry.appId}`;
@@ -8626,13 +9382,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const icon = document.createElement("span");
       icon.setAttribute("aria-hidden", "true");
       icon.textContent = tone === "ok" ? "✓" : "⚠";
-      state3.append(icon, document.createTextNode(tone === "ok" ? "成功" : tone === "ng" ? "失敗あり" : "未実行あり"));
+      state3.append(icon, document.createTextNode(entry.cancelled ? "中止" : tone === "ok" ? "成功" : entry.ng > 0 ? "失敗あり" : tone === "ng" ? "途中で停止あり" : "未実行あり"));
       const name = document.createElement("strong");
       name.textContent = `${formatRolloutTarget(entry)}${entry.name ? ` ${entry.name}` : ""}`;
       head.append(state3, name);
       const meta = document.createElement("div");
       meta.className = "kus-rl-quiet";
-      meta.textContent = `成功 ${entry.ok} / 失敗 ${entry.ng} / 未実行 ${entry.pending} · ${formatReflectDateTime(entry.at)}`;
+      meta.textContent = `成功 ${entry.ok} / 失敗 ${entry.ng}${entry.stopped ? ` / 途中で停止 ${entry.stopped}` : ""} / 未実行 ${entry.pending}${entry.cancelled ? " · 中止" : ""} · ${formatReflectDateTime(entry.at)}`;
       item.append(head, meta);
       list2.appendChild(item);
     }
@@ -8711,7 +9467,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const skippedErrorSet = new Set(plan?.skippedErrorScopes || []);
     const summary = document.createElement("div");
     summary.className = "kus-rl-preview-summary";
-    summary.innerHTML = `<span class="kus-rl-pill kus-rl-pill--change">差分 ${result.changedSections}</span><span class="kus-rl-pill kus-rl-pill--same">一致 ${result.sameSections}</span>` + (result.errorSections > 0 ? `<span class="kus-rl-pill kus-rl-pill--error">取得失敗 ${result.errorSections}</span>` : "") + `<span class="kus-rl-pill">${result.totalSections} セクション</span>` + (opts.searchKeyword ? `<span class="kus-rl-pill kus-rl-pill--stale">検索一致 ${filteredEntries.length}</span>` : "");
+    summary.innerHTML = `<span class="kus-rl-pill kus-rl-pill--change">差分 ${result.changedSections}</span><span class="kus-rl-pill kus-rl-pill--same">一致 ${result.sameSections}</span>` + (result.errorSections > 0 ? `<span class="kus-rl-pill kus-rl-pill--error">取得失敗 ${result.errorSections}</span>` : "") + `<span class="kus-rl-pill">${result.totalSections} 項目</span>` + (opts.searchKeyword ? `<span class="kus-rl-pill kus-rl-pill--stale">検索一致 ${filteredEntries.length}</span>` : "");
     host.appendChild(summary);
     if (result.entries.length) {
       renderReflectSummaryTable(host, result.entries, {
@@ -8722,14 +9478,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     if (!result.entries.length) {
       const empty = document.createElement("div");
       empty.className = "kus-rl-preview-empty";
-      empty.textContent = "対象セクションがありません";
+      empty.textContent = "対象の項目がありません。";
       host.appendChild(empty);
       return;
     }
     if (!filteredEntries.length) {
       const empty = document.createElement("div");
       empty.className = "kus-rl-preview-empty";
-      empty.textContent = `検索条件に一致するセクションがありません${opts.searchKeyword ? `: ${opts.searchKeyword}` : ""}`;
+      empty.textContent = `検索条件に一致する項目がありません${opts.searchKeyword ? `: ${opts.searchKeyword}` : ""}`;
       host.appendChild(empty);
       return;
     }

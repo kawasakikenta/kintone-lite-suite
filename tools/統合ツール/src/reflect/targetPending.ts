@@ -1,5 +1,6 @@
 import { apiGet, buildApiPrefix, fetchBundle } from '../api.js';
 import { reflectSectionLabel } from './sections.js';
+import { isRunCancelledError } from '../runControl.js';
 import { isCompleteReflectSection, stableReflectStringify } from './standalonePreflight.js';
 
 /**
@@ -20,7 +21,7 @@ export function reconcileOwnPendingChanges(pending: ReflectTargetPending | undef
   if (lastRun.targetAppId !== target.appId || (lastRun.targetGuestId || '') !== (target.guestId || '')) return pending;
   if (!/^\d+$/.test(lastRun.finalRevision) || lastRun.finalRevision !== pending.previewRevision) return pending;
   if (lastRun.priorState !== 'clean' && lastRun.priorState !== 'own') return pending;
-  return { ...pending, state: 'own', message: `反映先プレビューの未公開の変更は、このツールの直前の反映によるものだけです（本番 revision ${pending.productionRevision} / プレビュー revision ${pending.previewRevision}）。アプリの設定画面の「変更を中止」で取り消せます。` };
+  return { ...pending, state: 'own', message: `反映先プレビューの未公開の変更は、このツールの直前の反映によるものだけです（設定の更新番号 revision は 本番 ${pending.productionRevision} / プレビュー ${pending.previewRevision}）。アプリの設定画面の「変更を中止」で取り消せます。` };
 }
 
 /** JS/CSS の fileKey は環境ごとに異なりうるため、ファイル名とサイズで比べる。 */
@@ -64,7 +65,7 @@ export async function inspectTargetPendingChanges(opts: { targetAppId: string; t
     const customizeNote = opts.scopes.includes('customizeSettings') ? '。JS/CSSのファイルは名前とサイズだけで比べています' : '';
     const message = sectionKeys.length
       ? `反映先プレビューには未公開の変更があります（${sectionKeys.map(reflectSectionLabel).join('、')}）。公開すると今回の反映と一緒に本番へ反映されます。`
-      : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（本番 revision ${productionRevision} / プレビュー revision ${previewRevision}${customizeNote}）。`;
+      : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（設定の更新番号 revision が 本番 ${productionRevision} とプレビュー ${previewRevision} で異なります${customizeNote}）。`;
     return { state: 'pending', productionRevision, previewRevision, sectionKeys, message };
-  } catch (error: any) { return unknown(productionRevision, previewRevision, error?.message || String(error)); }
+  } catch (error: any) { if (isRunCancelledError(error)) throw error; return unknown(productionRevision, previewRevision, error?.message || String(error)); }
 }

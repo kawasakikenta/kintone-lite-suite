@@ -3,6 +3,15 @@
 import { SECTION_DEFS } from './constants.js';
 import { hasKintoneOrderByClause, hasKintonePagingClause } from './kintone-query.js';
 import { normalizeSettingsSection, deepClone, apiErrorWithContext } from './utils.js';
+import {
+  RunCancelledError,
+  createRequestSignal,
+  isRunCancelledError,
+  noteWrite,
+  raceWithCancel,
+  sleepUnlessCancelled,
+  throwIfCancelled
+} from './runControl.js';
 
 export function buildApiPrefix(guestId: string | number | null | undefined, preview: boolean): string {
   const g = String(guestId || '').trim();
@@ -23,6 +32,12 @@ const ERR_NO_API_TESTER_RECORD_WRITE =
 const DEFAULT_API_GET_RETRIES = 3;
 const DEFAULT_RETRY_BASE_DELAY_MS = 500;
 const DEFAULT_RETRY_MAX_DELAY_MS = 3000;
+/** 読み取り（GET）1 回あたりの応答待ち上限。超えたら TIMEOUT として再試行の対象にする。 */
+export const API_GET_TIMEOUT_MS = 120_000;
+/** テキストファイル本文取得（fetch）の応答待ち上限。 */
+export const FILE_TEXT_FETCH_TIMEOUT_MS = 60_000;
+/** ファイルダウンロード（fetch）の応答待ち上限。 */
+export const FILE_DOWNLOAD_TIMEOUT_MS = 120_000;
 const RETRIABLE_STATUS_CODES: ReadonlySet<number> = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 const RECORD_DATA_MUTATION_PATHS: ReadonlySet<string> = new Set([
   '/record.json',
@@ -136,6 +151,8 @@ export interface ApiGetOptions {
   retries?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
+  /** 応答待ちの上限（ms）。0 なら上限なし（cursor の読み取りなど、再送で結果が変わる GET に使う）。既定は API_GET_TIMEOUT_MS。 */
+  timeoutMs?: number;
 }
 
 function normalizeApiGetOptions(optionsOrRetries: ApiGetOptions | number | undefined | null): ApiGetOptions {
@@ -222,19 +239,27 @@ export async function apiGet(prefix: string, path: string, params: Record<string
   apiGetMetrics.calls += 1;
   touchApiPathMetric(path, 'calls');
   for (let i = 0; i < retries; i++) {
+    // 中止要求が出ていれば、リクエストを送る前に止める（apiErrorWithContext で包まない）。
+    throwIfCancelled();
     try {
-      const res = await (kintone as any).api(`${prefix}${path}`, 'GET', params);
+      // 読み取りは副作用が無いため、応答を待たずに中止・タイムアウトで見捨ててよい。
+      const res = await raceWithCancel(
+        Promise.resolve((kintone as any).api(`${prefix}${path}`, 'GET', params)),
+        { timeoutMs: options.timeoutMs === 0 ? 0 : (Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : API_GET_TIMEOUT_MS) }
+      );
       apiGetMetrics.lastLatencyMs = Date.now() - startAt;
       apiGetMetrics.lastError = '';
       return res;
     } catch (e) {
+      // 中止は再試行も失敗集計もせず、そのまま呼び出し元へ返す。
+      if (isRunCancelledError(e)) throw e;
       err = e;
       const retriable = isRetriableApiError(e);
       if (i < retries - 1 && retriable) {
         apiGetMetrics.retries += 1;
         touchApiPathMetric(path, 'retries');
         const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
-        await new Promise<void>((r) => setTimeout(r, waitMs));
+        await sleepUnlessCancelled(waitMs);
         continue;
       }
       break;
@@ -260,13 +285,18 @@ async function executeMutatingApiWithRetry(
   const maxAttempts = Math.max(1, retries);
   let lastErr: any;
   for (let i = 0; i < maxAttempts; i++) {
+    // 書き込みは進行中のリクエストを打ち切らない（サーバー側で確定したか分からなくなるため）。
+    // 中止は次の試行の前でだけ確認する。
+    throwIfCancelled();
     try {
+      noteWrite();
       return await (kintone as any).api(`${prefix}${path}`, method, body);
     } catch (e) {
+      if (isRunCancelledError(e)) throw e;
       lastErr = e;
       if (i < maxAttempts - 1 && isRetriableMutation(method, e)) {
         const waitMs = computeRetryDelayMs(i, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS);
-        await new Promise<void>((r) => setTimeout(r, waitMs));
+        await sleepUnlessCancelled(waitMs);
         continue;
       }
       break;
@@ -283,11 +313,19 @@ export async function apiPost(prefix: string, path: string, body: Record<string,
   return executeMutatingApiWithRetry('POST', prefix, path, body);
 }
 
-export async function apiDelete(prefix: string, path: string, body: Record<string, unknown>): Promise<any> {
+export interface ApiDeleteOptions {
+  /** cursor の後片付けなど、中止後も実行したい削除で true にする（中止の確認を省く）。 */
+  ignoreCancel?: boolean;
+}
+
+export async function apiDelete(prefix: string, path: string, body: Record<string, unknown>, options: ApiDeleteOptions = {}): Promise<any> {
   assertAllowsMutatingRestCall(prefix, path, 'DELETE');
+  if (!options.ignoreCancel) throwIfCancelled();
   try {
+    if (!options.ignoreCancel) noteWrite();
     return await (kintone as any).api(`${prefix}${path}`, 'DELETE', body);
   } catch (e) {
+    if (isRunCancelledError(e)) throw e;
     throw apiErrorWithContext(e, { method: 'DELETE', prefix, path, payload: body });
   }
 }
@@ -404,7 +442,8 @@ export async function fetchRecordsByQuery(
   let finished = false;
   try {
     while (true) {
-      const resp = await apiGet(prefix, '/records/cursor.json', { id: cursorId });
+      // cursor の GET は読むたびに位置が進むため、タイムアウト後の再送でページが抜ける。中止だけを受け付け、応答待ちの上限は設けない。
+      const resp = await apiGet(prefix, '/records/cursor.json', { id: cursorId }, { timeoutMs: 0 });
       if (!Array.isArray(resp?.records)) {
         throw new Error('cursor 取得の応答形式が不正です（records がありません）');
       }
@@ -419,7 +458,8 @@ export async function fetchRecordsByQuery(
   } finally {
     // 読み切ると kintone 側で自動削除されるが、途中失敗時は残るので明示的に片付ける。
     if (!finished) {
-      try { await apiDelete(prefix, '/records/cursor.json', { id: cursorId }); } catch { /* noop */ }
+      // 中止後でも cursor は片付ける（apiDelete の中止確認を省く）。
+      try { await apiDelete(prefix, '/records/cursor.json', { id: cursorId }, { ignoreCancel: true }); } catch { /* noop */ }
     }
   }
   return { records: all, mode: 'cursor' };
@@ -531,12 +571,26 @@ export type TextFileBodyFetchResult =
   | { ok: true; text: string; byteSize: number }
   | { ok: false; reason: 'oversize' | 'http' | 'error'; detail: string; byteSize?: number; status?: number };
 
+/** fetch の失敗が利用者の中止によるものか（signal の reason が RunCancelledError の場合も含む）。 */
+function wasCancelled(error: unknown, signal: AbortSignal): boolean {
+  return isRunCancelledError(error) || isRunCancelledError((signal as any).reason);
+}
+
+/** タイムアウトで打ち切られたときの説明文。signal の reason にあるメッセージを使う。 */
+function timeoutDetail(signal: AbortSignal, timeoutMs: number): string {
+  const reason: any = (signal as any).reason;
+  const message = reason instanceof Error ? reason.message : '';
+  return message || `応答待ちが ${Math.round(timeoutMs / 1000)} 秒を超えました（timeout）`;
+}
+
 export async function fetchTextFileBody(prefix: string, fileKey: string): Promise<TextFileBodyFetchResult> {
   if (!fileKey) return { ok: false, reason: 'error', detail: 'fileKey がありません' };
   const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
   const headers = { 'X-Requested-With': 'XMLHttpRequest' } as Record<string, string>;
+  throwIfCancelled();
+  const request = createRequestSignal(FILE_TEXT_FETCH_TIMEOUT_MS);
   try {
-    const resp = await fetch(url, { method: 'GET', headers });
+    const resp = await fetch(url, { method: 'GET', headers, signal: request.signal });
     if (!resp.ok) {
       return {
         ok: false,
@@ -566,11 +620,15 @@ export async function fetchTextFileBody(prefix: string, fileKey: string): Promis
     }
     return { ok: true, text: await blob.text(), byteSize: blob.size };
   } catch (error) {
+    // 利用者の中止は「取得失敗」として握りつぶさず、呼び出し元まで伝える。
+    if (wasCancelled(error, request.signal)) throw new RunCancelledError();
     return {
       ok: false,
       reason: 'error',
-      detail: error instanceof Error ? error.message : String(error)
+      detail: request.timedOut() ? timeoutDetail(request.signal, FILE_TEXT_FETCH_TIMEOUT_MS) : (error instanceof Error ? error.message : String(error))
     };
+  } finally {
+    request.release();
   }
 }
 
@@ -585,18 +643,35 @@ export async function downloadKintoneFile(guestId: string, fileKey: string, opts
   const maxBytes = Number.isFinite(opts.maxBytes) && Number(opts.maxBytes) > 0 ? Number(opts.maxBytes) : FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
   const limitText = `${Math.round(maxBytes / (1024 * 1024))}MB`;
   const url = `${buildApiPrefix(guestId, false)}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
-  let resp: Response;
+  throwIfCancelled();
+  const request = createRequestSignal(FILE_DOWNLOAD_TIMEOUT_MS);
+  // 取得失敗を中止・タイムアウト・その他に振り分ける（resp.blob() の読み取り中の中断も同じ扱い）。
+  const toFetchError = (error: unknown): Error => {
+    if (wasCancelled(error, request.signal)) return new RunCancelledError();
+    if (request.timedOut()) return new Error(`ファイルを取得できません（応答待ちが ${Math.round(FILE_DOWNLOAD_TIMEOUT_MS / 1000)} 秒を超えました）`);
+    return new Error(`ファイルを取得できません（${error instanceof Error ? error.message : String(error)}）`);
+  };
   try {
-    resp = await fetch(url, { method: 'GET', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-  } catch (error) {
-    throw new Error(`ファイルを取得できません（${error instanceof Error ? error.message : String(error)}）`);
+    let resp: Response;
+    try {
+      resp = await fetch(url, { method: 'GET', headers: { 'X-Requested-With': 'XMLHttpRequest' }, signal: request.signal });
+    } catch (error) {
+      throw toFetchError(error);
+    }
+    if (!resp.ok) throw new Error(`ファイルを取得できません（HTTP ${resp.status || 'error'}）`);
+    const contentLength = Number(resp.headers?.get?.('content-length') || '');
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
+    let blob: Blob;
+    try {
+      blob = await resp.blob();
+    } catch (error) {
+      throw toFetchError(error);
+    }
+    if (blob.size > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
+    return blob;
+  } finally {
+    request.release();
   }
-  if (!resp.ok) throw new Error(`ファイルを取得できません（HTTP ${resp.status || 'error'}）`);
-  const contentLength = Number(resp.headers?.get?.('content-length') || '');
-  if (Number.isFinite(contentLength) && contentLength > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
-  const blob = await resp.blob();
-  if (blob.size > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
-  return blob;
 }
 
 /**
@@ -610,28 +685,40 @@ export async function uploadKintoneFile(guestId: string, blob: Blob, fileName: s
   const form = new FormData();
   form.append('__REQUEST_TOKEN__', String(token));
   form.append('file', blob, fileName);
-  let resp: Response;
+  throwIfCancelled();
+  // タイムアウトは設けず、中止にだけ反応する（アップロードは未使用の一時ファイルを作るだけで副作用が小さい）。
+  const request = createRequestSignal(0);
   try {
-    resp = await fetch(`${prefix}${FILE_UPLOAD_PATH}`, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: form });
-  } catch (error) {
-    throw new Error(`ファイルをアップロードできません（${error instanceof Error ? error.message : String(error)}）`);
+    let resp: Response;
+    try {
+      resp = await fetch(`${prefix}${FILE_UPLOAD_PATH}`, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: form, signal: request.signal });
+    } catch (error) {
+      if (wasCancelled(error, request.signal)) throw new RunCancelledError();
+      throw new Error(`ファイルをアップロードできません（${error instanceof Error ? error.message : String(error)}）`);
+    }
+    let data: any = null;
+    try { data = await resp.json(); } catch (error) {
+      if (wasCancelled(error, request.signal)) throw new RunCancelledError();
+      data = null;
+    }
+    if (!resp.ok) {
+      const detail = [data?.code, data?.message].filter(Boolean).join(' ');
+      throw new Error(`ファイルをアップロードできません（HTTP ${resp.status || 'error'}${detail ? `: ${detail}` : ''}）`);
+    }
+    const fileKey = data?.fileKey;
+    if (typeof fileKey !== 'string' || !fileKey) throw new Error('アップロード応答にfileKeyがありません。');
+    return fileKey;
+  } finally {
+    request.release();
   }
-  let data: any = null;
-  try { data = await resp.json(); } catch { data = null; }
-  if (!resp.ok) {
-    const detail = [data?.code, data?.message].filter(Boolean).join(' ');
-    throw new Error(`ファイルをアップロードできません（HTTP ${resp.status || 'error'}${detail ? `: ${detail}` : ''}）`);
-  }
-  const fileKey = data?.fileKey;
-  if (typeof fileKey !== 'string' || !fileKey) throw new Error('アップロード応答にfileKeyがありません。');
-  return fileKey;
 }
 
 async function fetchTextFileBodyWithRetry(prefix: string, fileKey: string): Promise<TextFileBodyFetchResult> {
   let result = await fetchTextFileBody(prefix, fileKey);
   if (result.ok === true) return result;
   if (result.reason === 'oversize') return result;
-  // 補助取得は読み取り専用なので、一過性のHTTP/通信失敗だけを1回再試行する。
+  // 補助取得は読み取り専用なので、一過性のHTTP/通信失敗だけを1回再試行する（中止後は再試行しない）。
+  throwIfCancelled();
   result = await fetchTextFileBody(prefix, fileKey);
   return result;
 }
@@ -741,7 +828,7 @@ function setAuxiliaryFetchError(
     ? error.message
     : (error == null ? '' : String(error));
   const fileText = files.length
-    ? ` [${files.slice(0, 3).map((item) => item.fileName || item.fileKey || '(名称不明)').join(', ')}${files.length > 3 ? ', …' : ''}]`
+    ? ` [${files.slice(0, 3).map((item) => `${item.fileName || item.fileKey || '(名称不明)'}${item.detail ? `: ${item.detail}` : ''}`).join(', ')}${files.length > 3 ? ', …' : ''}]`
     : '';
   section._fetchError = `${label}の取得に失敗したため、このセクションは比較できません${countText}${fileText}${detail ? `: ${detail}` : ''}`;
 }
@@ -770,7 +857,8 @@ export async function fetchPluginConfigs(
         } else {
           stats.skipped += 1;
         }
-      } catch {
+      } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         stats.failed += 1;
       }
     });
@@ -810,6 +898,8 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
       const revision = extractSectionRevision(res);
       results[index] = { value: rawSettings ? deepClone(res) : normalizeSettingsSection(res), revision };
     } catch (e: any) {
+      // 中止は「取得失敗」のセクションとして保存せず、そのまま伝える。
+      if (isRunCancelledError(e)) throw e;
       results[index] = { value: { _fetchError: e?.message || String(e) }, revision: '' };
     }
     completed += 1;
@@ -843,6 +933,7 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
           setAuxiliaryFetchError(cust, 'JS/CSSファイル本文', stats.failed, undefined, stats.failedFiles);
         }
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         setAuxiliaryFetchError(cust, 'JS/CSSファイル本文', 0, e);
       }
     }
@@ -859,6 +950,7 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
         const unavailable = stats.failed + stats.skipped;
         if (unavailable > 0) setAuxiliaryFetchError(plug, 'プラグイン設定', unavailable);
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         setAuxiliaryFetchError(plug, 'プラグイン設定', 0, e);
       }
     }

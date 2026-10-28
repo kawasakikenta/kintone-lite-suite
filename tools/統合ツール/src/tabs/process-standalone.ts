@@ -58,17 +58,21 @@ function loadScript(url: string): Promise<void> {
 }
 
 async function loadScriptWithFallback(urls: string[]): Promise<void> {
-  let lastErr: any = null;
+  // すべての読み込み先の失敗理由をログに残せるよう、最後の 1 件だけでなく全件をまとめる
+  const failures: string[] = [];
   for (const url of urls) {
     try {
       await loadScript(url);
       return;
     } catch (e) {
-      lastErr = e;
+      failures.push(e instanceof Error ? e.message : String(e));
     }
   }
-  throw lastErr || new Error('Mermaid.js の読み込みに失敗しました');
+  throw new Error(failures.join('\n') || 'Mermaid.js の読み込みに失敗しました');
 }
+
+/** 図の描画ライブラリを読み込めなかったときに利用者へ見せる文言（読み込み先の URL などは出さずログへ回す）。 */
+export const MERMAID_LOAD_FAILURE_MESSAGE = '図の描画ライブラリ（Mermaid）を読み込めませんでした。ネットワークやブラウザの制限を確認してください。';
 
 const initializedMermaid = new WeakSet<object>();
 
@@ -461,7 +465,8 @@ export function bindStandaloneProcessSimulation(
 /**
  * @param {{ appId: string, guestId?: string, preview?: boolean }} source
  * @param {(msg: string, err?: boolean, tone?: 'ok' | 'warn') => void} setStatus err を指定しない通知は処理中表示になるため、完了後の通知は tone を渡す
- * @param {{ textEl: HTMLTextAreaElement, viewEl: HTMLElement, summaryEl?: HTMLElement, simUi?: StandaloneProcessSimUi, isCurrent?: () => boolean }} targets
+ * @param {{ textEl: HTMLTextAreaElement, viewEl: HTMLElement, summaryEl?: HTMLElement, simUi?: StandaloneProcessSimUi, isCurrent?: () => boolean, log?: (text: string) => void }} targets
+ *   log は URL などの技術的な詳細を、状態表示ではなくログへ残すための任意の出力先
  */
 export async function runRenderProcessFlowStandalone(source, setStatus, targets) {
   const isCurrent = typeof targets?.isCurrent === 'function' ? targets.isCurrent : () => true;
@@ -521,8 +526,16 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
       if (!isFresh()) return false;
       renderFailure = `Mermaid.js の${phase}に失敗`;
       targets.viewEl.innerHTML = renderFallbackFlowHtml(states, actions, highlightState, `${renderFailure}したため、簡易表示に切り替えました。`);
-      renderError = e instanceof Error ? e.message : String(e);
-      commitStatus(`${renderFailure}したため、簡易表示に切り替えました。(${renderError})`, true);
+      const detail = e instanceof Error ? e.message : String(e);
+      if (phase === '読み込み') {
+        // 読み込み先 URL を含む詳細はログだけに残し、状態表示は対処の分かる文言にする
+        renderError = MERMAID_LOAD_FAILURE_MESSAGE;
+        if (typeof targets.log === 'function') targets.log(`図の描画ライブラリ（Mermaid）の読み込みに失敗しました\n${detail}`);
+        commitStatus(`${MERMAID_LOAD_FAILURE_MESSAGE}簡易表示に切り替えました。`, true);
+      } else {
+        renderError = detail;
+        commitStatus(`${renderFailure}したため、簡易表示に切り替えました。(${renderError})`, true);
+      }
       return false;
     }
   };
@@ -531,7 +544,9 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
   await renderMermaid(null);
   if (!isCurrent()) return null;
   if (renderError) {
-    commitStatus(`フロー図生成完了（簡易表示。${renderFailure}しました: ${renderError}）`, true);
+    commitStatus(renderFailure.endsWith('読み込みに失敗')
+      ? `フロー図は簡易表示です。${renderError}`
+      : `フロー図生成完了（簡易表示。${renderFailure}しました: ${renderError}）`, true);
   } else {
     commitStatus(orphanActions ? `フロー図 生成完了（from/to 未設定のアクション ${orphanActions}件は除外）` : 'フロー図 生成完了', false, orphanActions > 0 ? 'warn' : undefined);
   }

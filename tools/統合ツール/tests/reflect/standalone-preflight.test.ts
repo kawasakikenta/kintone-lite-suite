@@ -100,11 +100,11 @@ describe('standalone reflection review and backup preflight', () => {
   });
 
   it.each([
-    ['source', 'content', '反映元'],
-    ['source', 'revision', '反映元'],
-    ['target', 'content', '反映先プレビュー'],
-    ['target', 'revision', '反映先プレビュー']
-  ])('rejects an external %s %s change before backup or writes', async (side, change, label) => {
+    ['source', 'content', '差分確認後に反映元のビュー設定が変更されたため'],
+    ['source', 'revision', '反映元アプリの設定が確認後に更新されました（revision 10 → 99）'],
+    ['target', 'content', '差分確認後に反映先プレビューのビュー設定が変更されたため'],
+    ['target', 'revision', '反映先アプリの設定が確認後に更新されました（revision 20 → 99）']
+  ])('rejects an external %s %s change before backup or writes', async (side, change, expected) => {
     const opts = defaultOptions();
     const reviewed = await previewReflectStandalone(opts, () => {});
     const bundle = side === 'source' ? source : target;
@@ -112,7 +112,22 @@ describe('standalone reflection review and backup preflight', () => {
     else bundle.meta.sectionRevisions.viewSettings = '99';
 
     await expect(apply({ ...opts, doBackup: true, reviewBaseline: reviewed.baseline }))
-      .rejects.toThrow(`差分確認後に${label}`);
+      .rejects.toThrow(expected);
+    expectNoSavedBackupOrWrites();
+  });
+
+  it('names no section when only the app-wide revision changed, and names only the sections whose content changed', async () => {
+    const opts = { ...defaultOptions(), scopes: ['viewSettings', 'layoutSettings'] };
+    const reviewed = await previewReflectStandalone(opts, () => {});
+    target.meta.sectionRevisions.viewSettings = target.meta.sectionRevisions.layoutSettings = '99';
+    const revisionOnly = await apply({ ...opts, doBackup: true, reviewBaseline: reviewed.baseline }).catch((error: Error) => error.message);
+    expect(revisionOnly).toMatch(/^反映先アプリの設定が確認後に更新されました（revision 20 → 99）/);
+    expect(revisionOnly).not.toMatch(/ビュー設定|レイアウト設定/);
+    // revision も内容も変わったときは、内容が変わった項目だけを挙げる。
+    target.sections.viewSettings.views.Review.name = '別の利用者による編集';
+    const withContent = await apply({ ...opts, doBackup: true, reviewBaseline: reviewed.baseline }).catch((error: Error) => error.message);
+    expect(withContent).toContain('差分確認後に反映先プレビューのビュー設定が変更されたため');
+    expect(withContent).not.toContain('レイアウト設定');
     expectNoSavedBackupOrWrites();
   });
 
@@ -293,5 +308,18 @@ describe('standalone reflection review and backup preflight', () => {
     });
     expect(identities.source.name).toBe('設定JSON（顧客台帳）');
     expect(identities.target.name).toBe('受注管理（検証）');
+  });
+
+  it('prefixes the failing app (反映元 / 反映先 #N) on app lookup and fetch errors', async () => {
+    const notFound = () => Object.assign(new Error('アプリが見つかりません'), { code: 'GAIA_AP01' });
+    writes.mockRejectedValueOnce(notFound());
+    await expect(resolveReflectAppsStandalone(defaultOptions())).rejects.toThrow(/^反映先 #2: アプリが見つかりません/);
+    writes.mockResolvedValueOnce({ appId: '2', name: '受注管理', code: '' }).mockRejectedValueOnce(notFound());
+    await expect(resolveReflectAppsStandalone(defaultOptions())).rejects.toThrow(/^反映元 #1: アプリが見つかりません/);
+    // 設定の取得（fetchBundle）が失敗した場合も、どちらのアプリかを先頭に示す。
+    vi.mocked(fetchBundle).mockImplementation(async (opts) => { if (opts.appId === '1') throw notFound(); return structuredClone(target) as any; });
+    await expect(previewReflectStandalone(defaultOptions(), () => {})).rejects.toThrow(/^反映元 #1: アプリが見つかりません/);
+    vi.mocked(fetchBundle).mockImplementation(async (opts) => { if (opts.appId === '2') throw notFound(); return structuredClone(source) as any; });
+    await expect(previewReflectStandalone(defaultOptions(), () => {})).rejects.toThrow(/^反映先 #2: アプリが見つかりません/);
   });
 });

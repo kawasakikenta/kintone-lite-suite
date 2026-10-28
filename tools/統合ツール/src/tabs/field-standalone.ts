@@ -3,11 +3,13 @@
 import { SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone, kusConfirm } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision } from '../api.js';
+import { isRunCancelledError } from '../runControl.js';
+import { createCancelReport } from './run-cancel-summary.js';
 
 /** アプリID・ゲストIDは数値のみ。URL パスに組み込まれるため、空でも数値でもない値は呼び出し前に止める。 */
 function assertNumericIds(appId: unknown, guestId: unknown, appLabel: string) {
-  if (!/^\d+$/.test(String(appId ?? '').trim())) throw new Error(`${appLabel}アプリIDは数値で入力してください`);
-  if (String(guestId ?? '').trim() && !/^\d+$/.test(String(guestId).trim())) throw new Error(`${appLabel}ゲストIDは数値で入力してください`);
+  if (!/^\d+$/.test(String(appId ?? '').trim())) throw new Error(`${appLabel}アプリIDは半角数字で入力してください`);
+  if (String(guestId ?? '').trim() && !/^\d+$/.test(String(guestId).trim())) throw new Error(`${appLabel}ゲストスペースIDは半角数字で入力してください`);
 }
 
 const hasOwn = (obj: unknown, key: string) => Object.prototype.hasOwnProperty.call(obj ?? {}, key);
@@ -69,7 +71,7 @@ function validateNumericId(value: unknown, label: string, required = false): str
     return '';
   }
   if (!/^\d+$/.test(trimmed)) {
-    throw new Error(`${label}は数値で入力してください: ${trimmed}`);
+    throw new Error(`${label}は半角数字で入力してください: ${trimmed}`);
   }
   return trimmed;
 }
@@ -139,9 +141,9 @@ function withPartialNotice(error: any, notice: string): any {
  */
 export function findFieldApplyProblem(input: { targetAppId: string; targetGuestId: string; fieldJson: string; lookupMapJson: string }): string {
   const appId = String(input.targetAppId ?? '').trim();
-  if (!appId) return '比較先アプリIDを指定してください。';
+  if (!appId) return '反映先アプリIDを指定してください。';
   try {
-    assertNumericIds(appId, input.targetGuestId, '比較先');
+    assertNumericIds(appId, input.targetGuestId, '反映先');
     parseFieldJsonInput(input.fieldJson);
     parseLookupMapInput(input.lookupMapJson);
   } catch (e: any) {
@@ -299,13 +301,13 @@ export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: s
   const updateCount = Object.keys(plan.updates).length;
   const skipCount = plan.skippedSystem.length + plan.skippedExisting.length;
   return [
-    `比較先 App ${targetAppId}${targetGuestId ? `（ゲスト ${targetGuestId}）` : ''} のプレビュー環境へフィールドを反映します。`,
+    `反映先 App ${targetAppId}${targetGuestId ? `（ゲストスペース ${targetGuestId}）` : ''} のプレビューへフィールドを反映します。`,
     `追加 ${addCount}件 / 更新 ${updateCount}件 / スキップ ${skipCount}件${plan.lookupConverted.length ? ` / 参照先AppID変換 ${plan.lookupConverted.length}件` : ''}`,
     addCount ? `追加: ${listCodes(plan.adds)}` : '',
     updateCount ? `更新: ${listCodes(plan.updates)}` : '',
     '削除 0件（このツールはフィールドを削除しません）',
-    updateCount ? '更新対象は既存の定義を比較元の内容で置き換えます。' : '',
-    '本番には反映されません（管理画面から手動デプロイ）。実行しますか？'
+    updateCount ? '更新対象は、反映先の既存の定義を反映元の内容で置き換えます。' : '',
+    '本番は変わりません（公開は kintone の設定画面で行います）。実行しますか？'
   ].filter(Boolean).join('\n');
 }
 
@@ -321,19 +323,19 @@ function attachLogsToError(err: unknown, logs: string[]): Error {
 }
 
 /**
- * フィールド定義 JSON を比較先プレビューへ追加・更新する。
+ * フィールド定義 JSON を反映先プレビューへ追加・更新する。
  * - GET で得た revision を POST/PUT に添え、競合時は上書きせず利用者へ通知する
  * - 反映前に対象アプリと件数を最終確認する（opts.skipConfirm で省略可）
  */
 export async function runFieldApplyStandalone(opts, setStatus) {
   const { targetAppId, targetGuestId, fieldJson, lookupMapJson, overwrite } = opts;
-  const tgtApp = validateNumericId(targetAppId, '比較先アプリID', true);
-  const tgtGuest = validateNumericId(targetGuestId, '比較先ゲストID', false);
+  const tgtApp = validateNumericId(targetAppId, '反映先アプリID', true);
+  const tgtGuest = validateNumericId(targetGuestId, '反映先ゲストスペースID', false);
   const incoming = parseFieldJsonInput(fieldJson);
   const lookupMap = parseLookupMapInput(lookupMapJson);
 
   const prefix = buildApiPrefix(tgtGuest, true);
-  setStatus('比較先フィールド取得中...');
+  setStatus('反映先のフィールド設定を取得中...');
   const current = await apiGet(prefix, '/app/form/fields.json', { app: tgtApp });
   const plan = planFieldApply(incoming, current.properties || ({} as any), lookupMap, !!overwrite);
   const logs = [...plan.logs];
@@ -351,7 +353,7 @@ export async function runFieldApplyStandalone(opts, setStatus) {
   }
   let revision = pickRevision(current);
   if (!/^\d+$/.test(revision)) {
-    throw new Error('比較先フィールド設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください');
+    throw new Error('反映先のフィールド設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください');
   }
   if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(tgtApp, tgtGuest, plan))) {
     setStatus('フィールド反映をキャンセルしました');
@@ -372,6 +374,11 @@ export async function runFieldApplyStandalone(opts, setStatus) {
       revision = nextRevision;
       logs.push(`OK フィールド追加 ${addCount}件${revision ? ` (revision ${revision})` : ''}`);
     } catch (e) {
+      if (isRunCancelledError(e)) {
+        // 追加のリクエストは送る前に止まっている。更新も未実行であることを件数つきで伝える。
+        logs.push(`未実行（中止） フィールド追加 ${addCount}件${updateCount ? ` / フィールド更新 ${updateCount}件` : ''}`);
+        throw createCancelReport(0, addCount + updateCount, logs);
+      }
       if (!logs.some((l) => l.startsWith('OK フィールド追加'))) {
         logs.push(`NG フィールド追加 ${addCount}件`);
       }
@@ -390,6 +397,10 @@ export async function runFieldApplyStandalone(opts, setStatus) {
       revision = nextRevision;
       logs.push(`OK フィールド更新 ${updateCount}件${revision ? ` (revision ${revision})` : ''}`);
     } catch (e) {
+      if (isRunCancelledError(e)) {
+        logs.push(`未実行（中止） フィールド更新 ${updateCount}件${addCount ? '（追加 ' + addCount + '件は反映済み）' : ''}`);
+        throw createCancelReport(addCount, addCount + updateCount, logs);
+      }
       if (!logs.some((l) => l.startsWith('OK フィールド更新'))) {
         logs.push(`NG フィールド更新 ${updateCount}件${addCount ? '（追加 ' + addCount + '件は反映済み）' : ''}`);
       }
@@ -408,7 +419,7 @@ export async function runFieldApplyStandalone(opts, setStatus) {
 export async function runLoadFieldsStandalone(opts, setStatus) {
   const { appId, guestId, preview } = opts;
   const id = validateNumericId(appId, 'アプリID', true);
-  const guest = validateNumericId(guestId, 'ゲストID', false);
+  const guest = validateNumericId(guestId, 'ゲストスペースID', false);
   const prefix = buildApiPrefix(guest, !!preview);
   setStatus('フィールド取得中...');
   const res = await apiGet(prefix, '/app/form/fields.json', { app: id });
@@ -508,17 +519,17 @@ export function planBulkRename(
 }
 
 /**
- * 比較先プレビューのフィールドコードに対し、プレフィックスを一括付与/除去した
+ * 反映先プレビューのフィールドコードに対し、プレフィックスを一括付与/除去した
  * 新しい properties JSON を返す（書き換え結果はテキストエリアに反映する想定。
  * 反映自体は別途 runFieldApplyStandalone で実行）。
  */
 export async function runBulkRenameFieldStandalone(opts, setStatus) {
   const { targetAppId, targetGuestId, prefix, removeMode, renameMode } = opts;
-  const tgtApp = validateNumericId(targetAppId, '比較先アプリID', true);
-  const tgtGuest = validateNumericId(targetGuestId, '比較先ゲストID', false);
+  const tgtApp = validateNumericId(targetAppId, '反映先アプリID', true);
+  const tgtGuest = validateNumericId(targetGuestId, '反映先ゲストスペースID', false);
   if (!prefix || !String(prefix).trim()) throw new Error('プレフィックス文字列を入力してください');
   const apiPrefix = buildApiPrefix(tgtGuest, true);
-  setStatus('比較先フィールドを取得中...');
+  setStatus('反映先のフィールド設定を取得中...');
   const fieldsResp = await apiGet(apiPrefix, '/app/form/fields.json', { app: tgtApp });
   const result = planBulkRename(fieldsResp.properties || ({} as any), String(prefix), !!removeMode, { renameMode });
   if (result.collisions.length) {

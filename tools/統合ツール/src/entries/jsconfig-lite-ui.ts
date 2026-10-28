@@ -29,10 +29,10 @@ export function mountJsconfigLitePanel() {
   const panel = createLitePanel({
     id: 'kus-jsconfig-lite',
     title: 'JS / CSS 設定',
-    subtitle: 'カスタマイズの取得・編集・JSON 保存・比較先プレビューへの反映',
+    subtitle: 'アプリの JS / CSS 設定を取得し、JSON として編集・保存して、反映先のプレビューへ反映します。',
     accent: 'jsconfig',
-    badges: [{ label: 'Lite' }, { label: '取得 + 反映' }],
-    hint: 'プレビュー環境への反映後、本番デプロイは kintone 管理画面から手動で行ってください。'
+    badges: [{ label: 'プレビューへ書き込み', tone: 'preview' }],
+    hint: '反映先のプレビューだけを変更します。本番への公開は kintone の設定画面で行います。'
   });
 
   // 取得
@@ -59,7 +59,7 @@ export function mountJsconfigLitePanel() {
   const exportBtn = makeButton('JSON ファイル保存', 'sub');
   const formatBtn = makeButton('整形', 'sub');
   const loadFileBtn = makeButton('ファイル読込', 'sub');
-  const loadTargetBtn = makeButton('比較先から読込', 'sub');
+  const loadTargetBtn = makeButton('反映先から読込', 'sub');
   const clearBtn = makeButton('クリア', 'sub');
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
@@ -99,12 +99,10 @@ export function mountJsconfigLitePanel() {
     loadedText = '';
     panel.setStatus('JSON をクリアしました', 'info');
   });
-  cardJson.actions.style.flexWrap = 'wrap';
-  cardJson.actions.appendChild(formatBtn);
-  cardJson.actions.appendChild(loadFileBtn);
-  cardJson.actions.appendChild(loadTargetBtn);
-  cardJson.actions.appendChild(clearBtn);
-  cardJson.actions.appendChild(exportBtn);
+  // 読込・整形・クリアは折りたたみにまとめる。JSON保存は操作の選択肢（exportBtn は実行用に使う）。
+  const jsonTools = makeDetails('JSONの読込・整形・保存');
+  jsonTools.body.appendChild(makeRow([loadFileBtn, loadTargetBtn, formatBtn, clearBtn]));
+  cardJson.body.appendChild(jsonTools.details);
   panel.body.insertBefore(cardJson.card, panel.status);
 
   // プレビュー（取得済みファイルの一覧）
@@ -115,7 +113,7 @@ export function mountJsconfigLitePanel() {
   panel.body.insertBefore(cardPreview.card, panel.status);
 
   // 反映
-  const cardApply = makeCard({ title: '比較先プレビューへ反映', number: 3 });
+  const cardApply = makeCard({ title: '反映先プレビューへ反映', number: 3 });
   const tgtApp = makeInput({ placeholder: '反映先アプリID', width: 'id' });
   const tgtGuest = makeInput({ placeholder: 'ゲストID', width: 'guest' });
   cardApply.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '反映先' }));
@@ -125,9 +123,10 @@ export function mountJsconfigLitePanel() {
       { label: '反映先', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; } }
     ]
   }));
-  cardApply.body.appendChild(makeNote('反映先は常にプレビュー環境。デプロイは管理画面から手動で行ってください。反映先の JS/CSS 一覧は JSON の内容で全置換され、JSON に scope（ALL / ADMIN / NONE）があれば適用範囲も更新します。'));
-  cardApply.body.appendChild(makeNote('FILE タイプは反映先で有効なアップロード済み fileKey が必要です。取得結果の fileKey（ダウンロード用）を別アプリへそのまま流用すると kintone に拒否されます。反映前に件数を確認し、取得後に別の更新が入っていた場合は上書きせず中止します。'));
-  const applyBtn = makeButton('比較先プレビューへ反映', 'run', { icon: '⤴' });
+  cardApply.body.appendChild(makeNote('反映先の JS / CSS 一覧は、JSON の内容にすべて置き換わります。JSON に適用範囲（scope: ALL / ADMIN / NONE）が含まれていれば、適用範囲も更新します。', 'help'));
+  cardApply.body.appendChild(makeNote('FILE タイプは、別アプリから取得した fileKey をそのまま使うと kintone に拒否されます。反映先で有効なアップロード済みの fileKey に差し替えてください。', 'help'));
+  cardApply.body.appendChild(makeNote('反映前に件数を最終確認します。取得後に反映先へ別の更新が入っていた場合（revision 競合）は、上書きせず中止します。', 'help'));
+  const applyBtn = makeButton('反映先プレビューへ反映', 'run', { icon: '⤴' });
   cardApply.body.appendChild(applyBtn);
   panel.body.insertBefore(cardApply.card, panel.status);
 
@@ -170,7 +169,7 @@ export function mountJsconfigLitePanel() {
   });
 
   loadTargetBtn.addEventListener('click', () => {
-    if (jsonTa.value.trim() && jsonEdited() && !kusConfirm('カスタマイズ JSON に取得結果以外の内容（手入力・編集）があります。比較先の設定で上書きしますか？')) {
+    if (jsonTa.value.trim() && jsonEdited() && !kusConfirm('カスタマイズ JSON に取得結果以外の内容（手入力・編集）があります。反映先の設定で上書きしますか？')) {
       panel.setStatus('読込をキャンセルしました（JSON は変更していません）', 'warn');
       return;
     }
@@ -178,8 +177,8 @@ export function mountJsconfigLitePanel() {
     const guestId = tgtGuest.value.trim();
     const origin = { appId, guestId, preview: true, revision: '', text: connectionSummary(appId, guestId, 'プレビュー') };
     fetchedRevision = '';
-    return liteRun(panel, '比較先のJS/CSS設定を取得中…', async () => {
-      if (!appId) throw new Error('比較先（反映先）アプリIDを入力してください');
+    return liteRun(panel, '反映先のJS/CSS設定を取得中…', async () => {
+      if (!appId) throw new Error('反映先アプリIDを入力してください');
       await runFetchJsConfigStandalone(
         { sourceAppId: appId, sourceGuestId: guestId, preview: true },
         (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
@@ -198,7 +197,7 @@ export function mountJsconfigLitePanel() {
   const baseRevision = (): string =>
     jsonOrigin && jsonOrigin.preview && jsonOrigin.revision && jsonOrigin.appId === tgtApp.value.trim() && jsonOrigin.guestId === tgtGuest.value.trim() ? jsonOrigin.revision : '';
 
-  applyBtn.addEventListener('click', () => liteRun(panel, 'JS/CSS 設定を比較先へ反映中…', async () => {
+  applyBtn.addEventListener('click', () => liteRun(panel, '反映先のプレビューへ反映中…', async () => {
     const base = baseRevision();
     const applied = await runApplyJsConfigStandalone(
       { targetAppId: tgtApp.value.trim(), targetGuestId: tgtGuest.value.trim(), jsonText: jsonTa.value, deployAfter: false, baseRevision: base },
@@ -210,24 +209,27 @@ export function mountJsconfigLitePanel() {
   }));
 
   // 全アプリ JS/CSS ファイル 一括ダウンロード
-  const batchDetails = makeDetails('全アプリの JS/CSS ファイルを一括ダウンロード');
-  batchDetails.body.appendChild(makeNote('スペース内のアプリを走査し、customize.json の FILE タイプの JS/CSS を 1 つの ZIP にまとめます。URL タイプは除外されます（取得不能のため）。'));
+  const batchDetails = makeCard({ title: '全アプリの JS/CSS ファイルを一括ダウンロード' });
+  batchDetails.body.appendChild(makeNote('アクセスできるアプリを順に調べ、アップロード済み（FILE タイプ）の JS / CSS ファイルを1つの ZIP にまとめます。URL で指定した JS / CSS はファイルがないため含まれません。', 'help'));
   const batchGuest = makeInput({ placeholder: 'ゲストID（任意 / 未指定で全体）', width: 'wide' });
-  batchDetails.body.appendChild(makeRow(batchGuest, { label: 'ゲスト' }));
+  batchDetails.body.appendChild(makeRow(batchGuest, { label: 'ゲストスペース' }));
   const batchBtn = makeButton('JS/CSS を ZIP で一括取得', 'primary', { icon: '↓' });
   batchBtn.style.width = '100%';
   batchDetails.body.appendChild(batchBtn);
-  panel.body.insertBefore(batchDetails.details, panel.status);
+  panel.body.insertBefore(batchDetails.card, panel.status);
 
   batchBtn.addEventListener('click', () => liteRun(panel, '全アプリの JS/CSS をスキャン中…', async () => {
     const res = await runBatchJsConfigDownloadStandalone(
       { guestId: batchGuest.value.trim() },
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+      // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
+      (m: string, e?: boolean) => panel.setStatus(m, /^中止しました/.test(m) ? 'warn' : e ? 'err' : 'busy')
     );
+    const notExecuted = res.notExecuted || [];
     const lines = [
-      `走査アプリ数: ${res.apps}件 / 取得ファイル数: ${res.files}件 / 取得失敗: ${res.failed}件`,
-      ...res.failedApps.map((a) => `[アプリ失敗] App #${a.appId} (${a.name || '-'}): ${a.reason}`),
-      ...res.failedFiles.map((f) => `[ファイル失敗] App #${f.appId} / ${f.fileName}: ${f.reason}`)
+      `走査アプリ数: ${res.apps}件 / 取得ファイル数: ${res.files}件 / 取得失敗: ${res.failed}件${notExecuted.length ? ` / 未実行（中止）: ${notExecuted.length}件` : ''}`,
+      ...res.failedApps.map((a) => `[アプリ取得失敗] App #${a.appId} (${a.name || '-'}): ${a.reason}`),
+      ...res.failedFiles.map((f) => `[ファイル取得失敗] App #${f.appId} / ${f.fileName}: ${f.reason}`),
+      ...notExecuted.map((a) => `[未実行（中止）] App #${a.appId} (${a.name || '-'})`)
     ];
     panel.setResult(lines.join('\n'));
   }));
@@ -240,8 +242,7 @@ export function mountJsconfigLitePanel() {
     cardFetch.card.hidden = mode === 'batch' || mode === 'apply';
     cardJson.card.hidden = mode === 'batch';
     cardApply.card.hidden = mode !== 'apply';
-    batchDetails.details.hidden = mode !== 'batch';
-    batchDetails.details.open = true;
+    batchDetails.card.hidden = mode !== 'batch';
   };
   const idProblem = (who: string, app: string, guest: string): string => {
     if (!app) return who + 'アプリIDを指定してください。';
@@ -263,7 +264,7 @@ export function mountJsconfigLitePanel() {
     const rows: Array<[string, string]> = plan
       ? [['PC用', 'JS ' + plan.counts.desktopJs + ' / CSS ' + plan.counts.desktopCss], ['モバイル用', 'JS ' + plan.counts.mobileJs + ' / CSS ' + plan.counts.mobileCss], ['適用範囲', plan.scope || '指定なし（反映先の現状維持）']]
       : [['PC用', 'JS ' + (data.desktop?.js?.length || 0) + ' / CSS ' + (data.desktop?.css?.length || 0)], ['モバイル用', 'JS ' + (data.mobile?.js?.length || 0) + ' / CSS ' + (data.mobile?.css?.length || 0)], ['適用範囲', data.scope || '指定なし']];
-    if (plan?.dropped) rows.push(['送信しない項目', plan.dropped + '件（type/url/fileKey 不足）']);
+    if (plan?.dropped) rows.push(['反映しない項目', plan.dropped + '件（種別・URL・fileKey のいずれかが不足）']);
     if (plan) {
       const c = plan.counts;
       if (c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss === 0) {
@@ -273,13 +274,13 @@ export function mountJsconfigLitePanel() {
     return [['JSONの取得元', originSummary()], ...rows];
   };
   installLiteWorkflow(panel, {
-    setup: [cardFetch.card, cardJson.card, cardApply.card, batchDetails.details], results: [cardPreview.card], resultActions: ['fetch'],
+    setup: [cardFetch.card, cardJson.card, cardApply.card, batchDetails.card], results: [cardPreview.card], resultActions: ['fetch'],
     beforeRun: actionId => { if (actionId === 'fetch') { previewBox.replaceChildren(); previewBox.classList.add('kus-lp__panel-html--empty'); } },
     actions: [
       {
         id: 'fetch',
         label: 'JS/CSS設定を取得',
-        description: '対象アプリの設定を読み取り、ファイル一覧とJSONを確認します。',
+        description: '取得元アプリの JS / CSS 設定を読み取り、ファイル一覧と JSON を表示します。',
         button: fetchBtn,
         validate: () => idProblem('取得元', srcApp.value.trim(), srcGuest.value.trim()),
         summary: () => [['取得元', connectionSummary(srcApp.value.trim(), srcGuest.value.trim(), srcPrev.checkbox.checked ? 'プレビュー' : '本番')]],
@@ -288,7 +289,7 @@ export function mountJsconfigLitePanel() {
       {
         id: 'save',
         label: 'カスタマイズJSONを保存',
-        description: '取得・編集したJSONをファイルに保存します。',
+        description: 'カスタマイズ JSON を .json ファイルとして保存します。',
         button: exportBtn,
         validate: () => validateJsonObject(jsonTa.value),
         summary: jsonSummary,
@@ -296,23 +297,23 @@ export function mountJsconfigLitePanel() {
       },
       {
         id: 'apply',
-        label: '比較先プレビューへ反映',
-        description: '比較先のJS/CSS一覧をJSONの内容で置き換えます。',
+        label: '反映先プレビューへ反映',
+        description: '反映先プレビューの JS / CSS 一覧を、JSON の内容にすべて置き換えます。',
         button: applyBtn,
         writes: true,
         validate: () => idProblem('反映先', tgtApp.value.trim(), tgtGuest.value.trim()) || applyProblem(),
         summary: () => [
           ['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー')],
           ...jsonSummary(true),
-          ['競合検出', baseRevision() ? '取得時の revision ' + baseRevision() + ' 以降に更新されていれば中止します。' : '反映直前に取得した revision を基準にします（反映先のプレビューから取得した JSON ではありません）。'],
-          ['反映方法', 'JS/CSS一覧を全置換。FILEは反映先で利用可能なアップロード済みfileKeyが必要です。']
+          ['競合検出', baseRevision() ? '反映先が取得後（revision ' + baseRevision() + '）に更新されていれば、上書きせず中止します。' : '反映直前の状態を基準にします（この JSON は反映先のプレビューから取得したものではないため、取得後の更新は検出できません）。'],
+          ['反映方法', 'JS / CSS 一覧をすべて置き換えます。FILE タイプは、反映先で有効な fileKey（アップロード済みファイルの識別子）が必要です。']
         ],
         onSelect: () => selectMode('apply')
       },
       {
         id: 'batch',
         label: '全アプリのJS/CSSをZIP保存',
-        description: '対象範囲のアプリを走査してFILE形式の実ファイルをまとめます。',
+        description: '対象範囲のアプリの JS / CSS ファイル（FILE タイプ）を、ZIP にまとめて保存します。',
         button: batchBtn,
         validate: () => {
           const guest = batchGuest.value.trim();

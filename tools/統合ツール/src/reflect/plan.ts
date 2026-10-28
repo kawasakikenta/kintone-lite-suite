@@ -19,6 +19,7 @@ import { getToolDocument } from '../ui/dialog.js';
 import { bumpSessionMetric } from '../ui/psychology.js';
 import { isReflectNodeModeEffective } from './nodeModeUi.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, extractSectionRevision } from '../api.js';
+import { isRunCancelledError } from '../runControl.js';
 import {
   filterWritableFieldProps,
   convertLookupAppIds,
@@ -1072,6 +1073,8 @@ export async function runPreviewApplyPlanNodes() {
       try {
         currentRes = await apiGet(prefix, def.endpoint, { app });
       } catch (be) {
+        // 中止はベースライン取得失敗として記録せず、プラン計算ごと止める。
+        if (isRunCancelledError(be)) throw be;
         const message = be?.message || String(be);
         baselineErrors.push({ sectionKey: secKey, label: def.label, message });
         lines.push(`PLAN NG ${def.label}: ベースライン取得失敗 ${message}`);
@@ -1130,6 +1133,7 @@ export async function runPreviewApplyPlanNodes() {
       lines.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
       appendRequestPlanLogs(lines, plan);
     } catch (e) {
+      if (isRunCancelledError(e)) throw e;
       lines.push(`PLAN NG ${def?.label || secKey}: ${e.message || String(e)}`);
     }
   }
@@ -1189,6 +1193,7 @@ export async function runPreviewApplyPlan() {
       targetSectionBaselines[secKey] = makeSectionPlanBaseline(res);
       return res;
     } catch (be) {
+      if (isRunCancelledError(be)) throw be;
       const message = be?.message || String(be);
       baselineErrors.push({ sectionKey: secKey, label, message });
       logs.push(`PLAN NG ${label}: ベースライン取得失敗 ${message}`);

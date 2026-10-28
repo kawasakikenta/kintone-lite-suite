@@ -23,5 +23,11 @@ export function runOnKintonePage(run: () => void): void {
     alert(NOT_KINTONE_PAGE_MESSAGE);
     return;
   }
-  run();
+  try {
+    run();
+  } catch (error: any) {
+    // 実行中のパネルを維持したときは再起動しない（createLitePanel が案内を表示済み）
+    if (error?.panelBusy === true) return;
+    throw error;
+  }
 }

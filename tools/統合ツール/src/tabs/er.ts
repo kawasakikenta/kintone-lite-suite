@@ -4,6 +4,8 @@ import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, safeJsonForScript, downloadText, showToast, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 import { apiGet, buildApiPrefix, fetchAppsInSpace } from '../api.js';
+import { isRunCancelledError } from '../runControl.js';
+import { createCancelReport } from './run-cancel-summary.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { getToolWindow, getToolDocument } from '../ui/dialog.js';
 import { commonParams } from './diff.js';
@@ -246,6 +248,10 @@ const getSchema = async (rawAppId, options, cache) => {
     apiGet(prefix, '/app/actions.json', { app: appId })
   ]);
 
+  // 中止を「このアプリの取得失敗」としてキャッシュしない。探索全体を止めて呼び出し元へ伝える。
+  for (const settled of [fieldsResult, appInfoResult, actionsResult]) {
+    if (settled.status === 'rejected' && isRunCancelledError(settled.reason)) throw settled.reason;
+  }
   const appInfoResponse = appInfoResult.status === 'fulfilled' ? appInfoResult.value : undefined;
   let model;
   if (fieldsResult.status === 'rejected') {
@@ -311,7 +317,13 @@ export const crawl = async (startIds, options) => {
     for (let i = 0; i < allApps.length; i += 1) {
       const appId = Number(allApps[i]?.appId);
       if (!appId) continue;
-      const schema = await getSchema(appId, options, cache);
+      let schema;
+      try {
+        schema = await getSchema(appId, options, cache);
+      } catch (e) {
+        if (!isRunCancelledError(e)) throw e;
+        throw createCancelReport(i, allApps.length, ['逆引き探索用の全アプリ走査を中止しました', 'ER図は生成していません']);
+      }
       const relationIssues = (schema.issues || []).filter((issue) => issue.scope !== 'metadata');
       if (schema.status === 'failed' || schema.ok === false || relationIssues.length) {
         incomplete.push({ appId, status: schema.status, message: (relationIssues[0] || schema.issues?.[0])?.message || '' });
@@ -334,7 +346,18 @@ export const crawl = async (startIds, options) => {
     const depth = current?.depth || 0;
     if (visited.has(id)) continue;
     visited.add(id);
-    const a = await getSchema(id, options, cache);
+    let a;
+    try {
+      a = await getSchema(id, options, cache);
+    } catch (e) {
+      if (!isRunCancelledError(e)) throw e;
+      const remaining = new Set(q.map((item) => item?.id).filter((qid) => qid != null && !visited.has(qid)));
+      throw createCancelReport(apps.length, apps.length + 1 + remaining.size, [
+        `解析を中断したアプリ: ${id}`,
+        '残りは、ここまでの解析で見つかった未解析のアプリ（関連先をすべて辿れていない可能性があります）',
+        'ER図は生成していません'
+      ]);
+    }
     a.depth = depth;
     apps.push(a);
     progressUi.update(Math.min(90, (apps.length / Math.max(1, apps.length + q.length)) * 100 | 0), `解析: ${a.name} / 深さ ${depth}`);
@@ -355,6 +378,24 @@ export const crawl = async (startIds, options) => {
     await sleep(options.sleepMs || ER_DEFAULTS.sleepMs);
   }
   return apps;
+};
+
+/**
+ * 解析できたアプリが 1 つもない場合に、起点アプリと理由を示して失敗にする。
+ * ほぼ空の HTML を「保存しました」と報告しないための確認で、一部でも解析できていれば何もしない。
+ */
+export const assertErAnalysed = (apps: any[], options: any = {}): void => {
+  const isFailed = (app: any): boolean => app?.status === 'failed' || app?.ok === false;
+  if (apps.some((app) => !isFailed(app))) return;
+  const startIds: string[] = Array.isArray(options?.startAppIds) ? options.startAppIds.map(String) : [];
+  const byId = new Map(apps.map((app) => [String(app?.id), app]));
+  const targets = (startIds.length ? startIds : apps.map((app) => String(app?.id))).map((id) => {
+    const app: any = byId.get(id);
+    const name = app?.name && app.name !== `アプリ ${id}` ? `（${app.name}）` : '';
+    const reason = app?.issues?.[0]?.message || app?.issues?.[0]?.code || '原因不明';
+    return `起点アプリ ${id}${name}を取得できませんでした: ${reason}`;
+  });
+  throw new Error(`ER図を作成できませんでした。${targets.join(' / ')}。アプリIDと閲覧権限を確認してください`);
 };
 
 export const buildHTML = (apps, options: any = {}) => {
@@ -4415,6 +4456,7 @@ export async function runGenerateERDiagram() {
 
   try {
     const apps = await crawl(options.startAppIds, options);
+    assertErAnalysed(apps, options);
     progressUi.update(94, 'HTML生成中...');
     const html = buildHTML(apps, options);
     const blob = new Blob([html], { type: 'text/html' });
@@ -4456,6 +4498,7 @@ export async function runExportERDiagramHtml() {
 
   try {
     const apps = await crawl(options.startAppIds, options);
+    assertErAnalysed(apps, options);
     progressUi.update(94, 'HTML保存データ生成中...');
     const html = buildHTML(apps, options);
     const suffix = `${options.source?.guestId ? `guest${options.source.guestId}_` : ''}${options.source?.preview ? 'プレビュー' : '本番'}`;
