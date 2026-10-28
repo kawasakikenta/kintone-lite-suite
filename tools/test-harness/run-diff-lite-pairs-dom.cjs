@@ -450,7 +450,8 @@ async function verifyDetailsPopupInvalidation(page) {
   await closeDetailsDialog(page);
   assert.equal(await pairResultTable(page).count(), 0, '詳細設定の変更後も古い結果表が残っています');
   assert.equal(await page.locator('[data-kus-dl-export="xlsx"]').isDisabled(), true, '詳細設定の変更後も全体Excel出力が有効です');
-  assert.equal(await page.getByText(/前回の結果と保存機能を無効にしました（比較範囲または比較条件を変更したため）/).isVisible(), true,
+  // ポップアップ内にも同じ文言を複製表示するため、パネル本体のステータス欄に絞って確認する
+  assert.equal(await page.locator('#kus-diff-lite .kus-lp__status-text').getByText(/前回の結果と保存機能を無効にしました（比較範囲または比較条件を変更したため）/).isVisible(), true,
     '詳細設定の変更後に再比較を求める警告がありません');
 }
 
