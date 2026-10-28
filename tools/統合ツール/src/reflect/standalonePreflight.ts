@@ -37,11 +37,18 @@ export function isCompleteReflectSection(section: any): boolean {
     && !section._fetchError && !section._partial;
 }
 
+/** 内容の比較からは、アプリ単位で変わる revision を除く（revision は別に比べ、内容の変更と区別して示す）。 */
+const withoutTopLevelRevision = (section: any) => {
+  if (!section || typeof section !== 'object' || Array.isArray(section) || !Object.prototype.hasOwnProperty.call(section, 'revision')) return section;
+  const { revision: _revision, ...rest } = section;
+  return rest;
+};
+
 function captureSections(bundle: any, scopes: string[]): Record<string, SectionBaseline> {
   return Object.fromEntries(scopes.map((key) => {
     const section = bundle?.sections?.[key];
     return [key, {
-      content: stableReflectStringify(section) ?? '',
+      content: stableReflectStringify(withoutTopLevelRevision(section)) ?? '',
       revision: String(bundle?.meta?.sectionRevisions?.[key] ?? section?.revision ?? ''),
       complete: isCompleteReflectSection(section)
     }];
@@ -77,6 +84,9 @@ export function assertReflectBaselineMatches(
     const revisions = new Set<string>();
     const requireRevision = side === 'target' || !opts.sourceBundle;
     const checkedScopes: string[] = side === 'source' ? opts.scopes : [...new Set<string>([...opts.scopes, ...(opts.targetDependencies || [])])];
+    // revision はアプリ単位のため、別の設定が更新されただけでも全項目で変わる。内容が実際に変わった項目だけを名前で示す。
+    const changedLabels: string[] = [];
+    let revisionChange: { from: string; to: string } | null = null;
     for (const key of checkedScopes) {
       const before = baseline[side]?.[key];
       const after = current[side][key];
@@ -87,10 +97,16 @@ export function assertReflectBaselineMatches(
       if (requireRevision && (!/^\d+$/.test(before.revision) || !/^\d+$/.test(after.revision))) {
         throw new Error(`${label}の${sectionLabel}のrevisionを確認できないため反映を中止しました。差分を取得し直してください。`);
       }
-      if (before.content !== after.content || before.revision !== after.revision) {
-        throw new Error(`差分確認後に${label}の${sectionLabel}が変更されたため反映を中止しました。差分を取得し直して、変更内容を再確認してください。`);
-      }
+      if (before.content !== after.content) changedLabels.push(sectionLabel);
+      else if (before.revision !== after.revision && !revisionChange) revisionChange = { from: before.revision, to: after.revision };
       if (requireRevision) revisions.add(after.revision);
+    }
+    if (changedLabels.length) {
+      throw new Error(`差分確認後に${label}の${changedLabels.join('、')}が変更されたため反映を中止しました。差分を取得し直して、変更内容を再確認してください。`);
+    }
+    if (revisionChange) {
+      const { from, to } = revisionChange as { from: string; to: string };
+      throw new Error(`${side === 'source' ? '反映元' : '反映先'}アプリの設定が確認後に更新されました（revision ${from || '不明'} → ${to || '不明'}）。選択した項目の内容は同じでしたが、安全のため反映を中止しました。差分を取得し直してください。`);
     }
     // アプリ設定のrevisionはセクション共通。取得途中の更新で時点が混ざった結果も拒否する。
     if (requireRevision && revisions.size !== 1) {

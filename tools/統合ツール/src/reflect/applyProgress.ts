@@ -14,12 +14,13 @@ import { formatBytes, type ReflectFileUpload } from './standalonePlan.js';
 
 export type ApplyProgressStatus = 'waiting' | 'running' | 'ok' | 'ng' | 'skip' | 'pending';
 
-export interface ApplyProgressRow { sectionKey: string; label: string; status: ApplyProgressStatus; message?: string }
+export interface ApplyProgressRow { sectionKey: string; label: string; status: ApplyProgressStatus; message?: string; /** 利用者の「中止」で途中で止まった項目（status は ng） */ stopped?: boolean }
 
-export interface ApplyProgressDisplay { icon: string; text: '待機中' | '実行中…' | '成功' | '失敗' | '変更なし' | '未実行'; tone: ApplyProgressStatus }
+export interface ApplyProgressDisplay { icon: string; text: '待機中' | '実行中…' | '成功' | '失敗' | '途中で停止' | '変更なし' | '未実行'; tone: ApplyProgressStatus }
 
 /** 状態は色だけに頼らず、記号と文字でも示す。 */
-export function describeApplyProgressStatus(status: ApplyProgressStatus): ApplyProgressDisplay {
+export function describeApplyProgressStatus(status: ApplyProgressStatus, stopped = false): ApplyProgressDisplay {
+  if (status === 'ng' && stopped) return { icon: '■', text: '途中で停止', tone: 'ng' };
   if (status === 'running') return { icon: '…', text: '実行中…', tone: 'running' };
   if (status === 'ok') return { icon: '✓', text: '成功', tone: 'ok' };
   if (status === 'ng') return { icon: '✕', text: '失敗', tone: 'ng' };
@@ -40,9 +41,9 @@ export function createApplyProgressRows(sectionKeys: readonly string[], labelOf:
 }
 
 /** 通知を反映した新しい一覧を返す。一覧に無い項目の通知は末尾に足さず無視する。 */
-export function applyProgressUpdate(rows: readonly ApplyProgressRow[], update: { sectionKey: string; status: ApplyProgressStatus; message?: string }): ApplyProgressRow[] {
+export function applyProgressUpdate(rows: readonly ApplyProgressRow[], update: { sectionKey: string; status: ApplyProgressStatus; message?: string; stopped?: boolean }): ApplyProgressRow[] {
   return rows.map((row) => row.sectionKey === update.sectionKey
-    ? { sectionKey: row.sectionKey, label: row.label, status: update.status, ...(update.message ? { message: update.message } : {}) }
+    ? { sectionKey: row.sectionKey, label: row.label, status: update.status, ...(update.message ? { message: update.message } : {}), ...(update.status === 'ng' && update.stopped ? { stopped: true } : {}) }
     : row);
 }
 
@@ -51,10 +52,11 @@ export function summarizeApplyProgress(rows: readonly ApplyProgressRow[]): strin
   if (!rows.length) return '';
   // 中断で実行されなかった項目は「完了」に数えない。
   const settled = rows.filter((row) => ['ok', 'ng', 'skip'].includes(row.status)).length;
-  const failed = rows.filter((row) => row.status === 'ng').length;
+  const failed = rows.filter((row) => row.status === 'ng' && !row.stopped).length;
+  const stopped = rows.filter((row) => row.status === 'ng' && row.stopped).length;
   const skipped = rows.filter((row) => row.status === 'pending').length;
   const running = rows.find((row) => row.status === 'running');
-  return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ''}${skipped ? `、未実行 ${skipped}` : ''}${running ? `。実行中: ${running.label}` : ''}`;
+  return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ''}${stopped ? `（途中で停止 ${stopped}）` : ''}${skipped ? `、未実行 ${skipped}` : ''}${running ? `。実行中: ${running.label}` : ''}`;
 }
 
 // =============================================================================
@@ -130,6 +132,15 @@ export function countReflectItemKinds(items: readonly ReflectItemSummary[] | und
 export function describeRemovedItem(sectionLabel: string, item: ReflectItemSummary): string {
   const details = (item.details || []).filter(Boolean);
   return `${sectionLabel} / ${item.name}${details.length ? `：${details.join('、')}` : ''}`;
+}
+
+/**
+ * 要約から削除を拾えなかったときの、計画の変更（削除）1 件の説明。
+ * 利用者向けの summary があればそれを使い、無ければ設定値を短く切って示す。
+ */
+export function describeRemovedChange(sectionLabel: string, change: { path: string; before: string; summary?: string }): string {
+  if (change.summary) return `${sectionLabel} / ${change.path.replace(/ \/ \d+件目$/, '')}：${change.summary}`;
+  return `${sectionLabel} / ${change.path}：${change.before.slice(0, 180)}${change.before.length > 180 ? '…' : ''}`;
 }
 
 // =============================================================================

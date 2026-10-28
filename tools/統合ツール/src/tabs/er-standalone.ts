@@ -1,7 +1,8 @@
 'use strict';
 
-import { crawl, buildHTML, progressUi, ER_DEFAULTS, formatErLayoutLabel, describeReverseScan } from './er.js';
+import { crawl, buildHTML, assertErAnalysed, progressUi, ER_DEFAULTS, formatErLayoutLabel, describeReverseScan } from './er.js';
 import { fetchAppsInSpace } from '../api.js';
+import { isCancelStop } from './run-cancel-summary.js';
 import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 
 /**
@@ -63,7 +64,7 @@ export function validateErOptions(opts: any): string {
   if (unusableAppId) return `アプリIDは1以上${Number.MAX_SAFE_INTEGER}以下の整数で入力してください: ${unusableAppId}`;
 
   const guestId = String(opts?.guestId || '').trim();
-  if (guestId && !/^\d+$/.test(guestId)) return `ゲストIDは数値で入力してください: ${guestId}`;
+  if (guestId && !/^\d+$/.test(guestId)) return `ゲストスペースIDは半角数字で入力してください: ${guestId}`;
   const spaceId = String(opts?.spaceId || '').trim();
   if (spaceId && !/^\d+$/.test(spaceId)) return `スペースIDは数値で入力してください: ${spaceId}`;
 
@@ -122,13 +123,18 @@ async function resolveErOptions(opts: any, setStatus: (msg: string, err?: ErStat
 /** 状態表示の種類。true は取得失敗あり、'warn' は部分成功（図は生成済み）。 */
 export type ErStatusTone = boolean | 'warn';
 
+const isFailedErApp = (app: any): boolean => app?.status === 'failed' || app?.ok === false;
+
 export function summarizeCrawl(apps: any[], options?: any) {
   const partialCount = apps.filter((app: any) => app?.status === 'partial').length;
-  const failedCount = apps.filter((app: any) => app?.status === 'failed' || app?.ok === false).length;
+  const failedCount = apps.filter(isFailedErApp).length;
+  // 1 アプリも解析できていなければ図として成立しない（呼び出し側が保存・表示せず失敗にする）
+  const analyzedCount = apps.length - failedCount;
   const reverseNote = describeReverseScan(options);
   const appNote = partialCount || failedCount ? `（一部取得 ${partialCount} / 取得失敗 ${failedCount}）` : '';
-  const tone: ErStatusTone = failedCount ? true : (partialCount || reverseNote ? 'warn' : false);
-  return { partialCount, failedCount, note: `${appNote}${reverseNote ? `。${reverseNote}` : ''}`, tone };
+  // 一部のアプリだけ失敗した場合は、図は出せているので警告として知らせる
+  const tone: ErStatusTone = !analyzedCount && failedCount ? true : (failedCount || partialCount || reverseNote ? 'warn' : false);
+  return { partialCount, failedCount, analyzedCount, note: `${appNote}${reverseNote ? `。${reverseNote}` : ''}`, tone };
 }
 
 /**
@@ -169,6 +175,7 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
 
   try {
     const apps = await crawl(options.startAppIds, options);
+    assertErAnalysed(apps, options);
     progressUi.update(94, 'HTML生成中...');
     const html = buildHTML(apps, options);
     const blob = new Blob([html], { type: 'text/html' });
@@ -182,7 +189,8 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
     setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
   } catch (e) {
     try { popup.close(); } catch (_) { /* noop */ }
-    progressUi.error(e.message || String(e));
+    // 中止はエラー表示にせず、進捗表示を閉じる（件数つきの説明はパネルのステータスとログに出る）
+    if (isCancelStop(e)) progressUi.dismiss(); else progressUi.error(e.message || String(e));
     throw e;
   }
 }
@@ -198,6 +206,7 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
 
   try {
     const apps = await crawl(options.startAppIds, options);
+    assertErAnalysed(apps, options);
     progressUi.update(94, 'HTML保存データ生成中...');
     const html = buildHTML(apps, options);
     const baseName = options.startAppIds[0] || appId || `space${spaceId}`;
@@ -213,7 +222,8 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
       ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}`
       : `ER図HTMLを保存しました (${apps.length}アプリ)`, summary.tone);
   } catch (e) {
-    progressUi.error(e.message || String(e));
+    // 中止はエラー表示にせず、進捗表示を閉じる（件数つきの説明はパネルのステータスとログに出る）
+    if (isCancelStop(e)) progressUi.dismiss(); else progressUi.error(e.message || String(e));
     throw e;
   }
 }

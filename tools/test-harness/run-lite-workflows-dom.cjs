@@ -24,7 +24,7 @@ const CASES = [
   ['er', 'mountErLitePanel', 'ER図', 'ER図を開く'],
   ['process', 'mountProcessLitePanel', 'プロセス図', 'プロセス図を表示'],
   ['csv-export', 'mountCsvExportLitePanel', 'CSV出力', 'CSVを出力'],
-  ['field', 'mountFieldLitePanel', 'フィールド追加', '比較先プレビューへ反映'],
+  ['field', 'mountFieldLitePanel', 'フィールド追加', '反映先プレビューへ反映'],
   ['jsconfig', 'mountJsconfigLitePanel', 'JS/CSS設定', 'JS/CSS設定を取得'],
   ['record', 'mountRecordLitePanel', 'レコード管理', 'CSVを出力']
 ];
@@ -115,6 +115,15 @@ async function main() {
       const button = name => page.getByRole('button', { name, exact: true });
       const stage = n => page.locator('.kus-wf-stage').nth(n);
       const idle = () => page.waitForFunction(() => document.querySelector('.kus-wf')?.getAttribute('aria-busy') !== 'true');
+      // 詳細設定・ほかの操作はポップアップ内にあるので、開いて操作し、閉じて戻る
+      const openAdvanced = async () => { await button('詳細設定…').click(); assert.equal(await page.locator('dialog[open]').count(), 1, id + ': 詳細設定のポップアップを開く'); };
+      const closeAdvanced = async () => { await page.getByRole('button', { name: '詳細設定を閉じる', exact: true }).click(); assert.equal(await page.locator('dialog[open]').count(), 0, id + ': 詳細設定のポップアップを閉じる'); };
+      const chooseAction = async name => {
+        const radio = page.getByRole('radio', { name, exact: true });
+        if (!(await radio.isVisible())) await page.locator('.kus-wf-action--more').click();
+        await radio.check();
+        assert.equal(await page.locator('dialog[open]').count(), 0, id + ': 操作を選ぶとポップアップが閉じる');
+      };
       try {
         await page.setContent(demo);
         assert.equal(await stage(0).isVisible(), true, id + ': 初期状態');
@@ -128,21 +137,55 @@ async function main() {
           await guestId.fill('bad');
           assert.equal(await button('内容を確認する').isDisabled(), true, '設計書: 不正なゲストIDを確認前に止める');
           await guestId.fill('');
+          // 表面の操作は 3 つまで。残りは「ほかの操作…」のポップアップで選ぶ
+          assert.equal(await stage(0).locator('input[type=radio]:visible').count(), 3, '設計書: 表面の操作は3つまで');
+          const more = page.locator('.kus-wf-action--more');
+          assert.match(await more.innerText(), /ほかの操作…（5 件）/);
+          await more.click();
+          assert.equal(await page.locator('#kus-design-lite-more-actions').isVisible(), true, '設計書: ほかの操作を開く');
+          assert.equal(await page.locator('#kus-design-lite-more-actions input[type=radio]:visible').count(), 5);
+          await page.getByRole('radio', { name: 'AI向けMarkdownをコピー', exact: true }).check();
+          assert.equal(await page.locator('#kus-design-lite-more-actions').isVisible(), false, '設計書: 選ぶと閉じる');
+          assert.equal(await more.getAttribute('aria-pressed'), 'true');
+          assert.match(await more.innerText(), /AI向けMarkdownをコピー/);
+          await page.getByRole('radio', { name: 'Excel設計書を保存', exact: true }).check();
+          assert.equal(await more.getAttribute('aria-pressed'), 'false');
+          // 設定JSON読込は詳細設定のポップアップ内
+          assert.equal(await page.getByText('設定JSON: 未読込').isVisible(), false, '設計書: 設定JSON読込は表面に出さない');
+          await openAdvanced();
+          assert.equal(await page.getByText('設定JSON: 未読込').isVisible(), true);
+          await closeAdvanced();
         }
         if (id === 'er') {
           const appId = page.getByRole('textbox', { name: '起点アプリID', exact: true });
           const guestId = page.getByRole('textbox', { name: 'ゲストスペースID', exact: true });
           const depth = page.getByPlaceholder('0=無制限', { exact: true });
-          await page.locator('details').filter({ hasText: '詳細オプション' }).locator('summary').click();
+          assert.equal(await depth.isVisible(), false, 'ER図: 詳細オプションは表面に出さない');
           await appId.fill('bad');
           assert.equal(await button('内容を確認する').isDisabled(), true, 'ER図: 不正なアプリIDを確認前に止める');
           await appId.fill('202');
           await guestId.fill('bad');
           assert.equal(await button('内容を確認する').isDisabled(), true, 'ER図: 不正なゲストIDを確認前に止める');
           await guestId.fill('');
+          await openAdvanced();
           await depth.fill('1.5');
           assert.equal(await button('内容を確認する').isDisabled(), true, 'ER図: 探索深さの小数を確認前に止める');
           await depth.fill('0');
+          await page.getByPlaceholder('カンマ区切り (例: 100, 120)', { exact: true }).fill('303, 404');
+          await closeAdvanced();
+          // ポップアップ内の入力は確認画面にも反映される
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /追加起点[\s\S]*303, 404/, 'ER図: 詳細設定の入力を確認画面に反映する');
+          await button('対象・条件を変更').click();
+          // 狭い画面でもポップアップが画面内に収まる
+          for (const [width, height] of [[390, 844], [320, 640]]) {
+            await page.setViewportSize({ width, height });
+            await openAdvanced();
+            const box = await page.locator('dialog[open]').evaluate(el => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; });
+            assert.ok(box.left >= 0 && box.right <= width + 1 && box.top >= 0 && box.bottom <= height + 1, 'ER図: ポップアップが画面内 ' + width + ' ' + JSON.stringify(box));
+            await closeAdvanced();
+          }
+          await page.setViewportSize({ width: 1440, height: 1000 });
         }
         if (id === 'process') {
           const appId = page.getByRole('textbox', { name: '対象アプリID', exact: true });
@@ -180,16 +223,38 @@ async function main() {
           await button('▼ 条件へ反映').click();
           assert.equal(await page.getByRole('textbox', { name: '全対象アプリの絞り込み条件', exact: true }).inputValue(), 'status = "新規" order by 更新日時 desc', 'CSV出力: 一覧の絞り込みと並び順を保持する');
           await page.evaluate(() => { window.__workflowFixture.calls = []; });
+          // 出力形式は「詳細設定…」のポップアップにある
+          const csvFilename = page.getByRole('textbox', { name: '出力ファイル名', exact: true });
+          assert.equal(await csvFilename.isVisible(), false, 'CSV出力: 出力形式は表面に出さない');
+          await openAdvanced();
+          await csvFilename.fill('売上');
+          await closeAdvanced();
+          await page.getByRole('button', { name: '「出力条件」の説明を表示', exact: true }).click();
+          assert.match(await page.locator('.kus-lp__help-pop:visible').innerText(), /10,000 件を超えても全件取得します/, 'CSV出力: 補足説明を「?」から読む');
+          await page.getByRole('button', { name: '「出力条件」の説明を表示', exact: true }).click();
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /ファイル名\s*売上/, 'CSV出力: 詳細設定の入力を確認画面に反映する');
+          await button('対象・条件を変更').click();
         }
         if (id === 'field') {
           assert.equal(await button('内容を確認する').isDisabled(), true);
-          await page.getByRole('textbox', { name: '比較先アプリID', exact: true }).fill('303');
-          await button('比較元から読込').click(); await idle();
+          await page.getByRole('textbox', { name: '反映先アプリID', exact: true }).fill('303');
+          await button('反映元から読込').click(); await idle();
           assert.equal(await stage(0).isVisible(), true, '補助取得で勝手に結果画面へ進まない');
           assert.equal(await button('内容を確認する').isEnabled(), true);
+          // マージ・反映オプション・リネームは詳細設定のポップアップ内。入力は確認画面に反映される
+          const overwrite = page.getByRole('checkbox', { name: '既存フィールドを上書き更新', exact: true });
+          assert.equal(await overwrite.isVisible(), false, 'フィールド追加: 反映オプションは表面に出さない');
+          await openAdvanced();
+          assert.match(await page.locator('dialog[open]').innerText(), /反映元からフィールドを選んでマージ[\s\S]*反映オプション・参照先変換[\s\S]*プレフィックス一括リネーム/);
+          await overwrite.check();
+          await closeAdvanced();
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /上書き更新する/, 'フィールド追加: 詳細設定の入力を確認画面に反映する');
+          await button('対象・条件を変更').click();
           await page.evaluate(() => { window.__workflowFixture.calls = []; });
         }
-        for (const [width, height] of [[1440,1000],[390,844],[320,640],[720,450]]) {
+        for (const [width, height] of [[1440,1000],[1024,1000],[768,1000],[390,844],[320,640],[720,450]]) {
           await page.setViewportSize({width,height});
           await page.screenshot({path:path.join(OUT, `${id}-setup-${width}.png`)});
           const geometry = await page.evaluate(() => {
@@ -201,6 +266,9 @@ async function main() {
           assert.ok(geometry.overflow <= 1, id + ': 横はみ出し ' + width + ' ' + JSON.stringify(geometry));
           assert.ok(geometry.left >= 0 && geometry.right <= width+1 && geometry.bottom <= height+1);
           assert.ok(geometry.canvasBottom <= geometry.footerTop+1 && geometry.canvasHeight > 50);
+          // 対象アプリ表（設計書・設定取得など）は「×」を含めて横にはみ出さない
+          const tableOverflow = await page.evaluate(() => Array.from(document.querySelectorAll('.kus-lp__apptable-scroll')).filter(el => el.getClientRects().length).map(el => ({scrollWidth:el.scrollWidth,clientWidth:el.clientWidth})));
+          for (const measured of tableOverflow) assert.ok(measured.scrollWidth <= measured.clientWidth, id + ': 対象アプリ表の横はみ出し ' + width + ' ' + JSON.stringify(measured));
         }
         await page.setViewportSize({width:1440,height:1000});
         await button('内容を確認する').click();
@@ -229,7 +297,7 @@ async function main() {
         }
         if (id === 'jsconfig') {
           await button('対象・条件を変更').click();
-          await page.getByRole('radio', {name:'比較先プレビューへ反映',exact:true}).check();
+          await page.getByRole('radio', {name:'反映先プレビューへ反映',exact:true}).check();
           assert.equal(await button('内容を確認する').isDisabled(), true);
           await page.getByRole('textbox', { name: '反映先アプリID', exact: true }).fill('303');
           const jsonInput = page.getByRole('textbox', {name:'カスタマイズJSON',exact:true});
@@ -240,40 +308,45 @@ async function main() {
           }
           await jsonInput.fill(validJson);
           await button('内容を確認する').click();
-          assert.match(await stage(1).innerText(), /全置換/);
+          assert.match(await stage(1).innerText(), /すべて置き換え/);
           const before = await page.evaluate(() => window.__workflowFixture.calls.length);
-          await page.getByRole('button', {name:'比較先プレビューへ反映',exact:true}).click(); await idle();
+          await page.getByRole('button', {name:'反映先プレビューへ反映',exact:true}).click(); await idle();
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), before+1);
         }
         if (id === 'settings-export') {
-          await button('対象・条件を変更').click(); await button('全解除').click();
+          await button('対象・条件を変更').click();
+          assert.equal(await page.getByRole('button', { name: '全解除', exact: true }).isVisible(), false, '設定一括取得: 個別選択は表面に出さない');
+          await openAdvanced(); await button('全解除').click(); await closeAdvanced();
           assert.equal(await button('内容を確認する').isDisabled(), true, '設定0件では実行しない');
-          await button('全選択').click();
+          assert.match(await stage(0).innerText(), /選択 0 \/ \d+/, '設定一括取得: 選択数を表面に出す');
+          await button('基本のみ').click();
+          assert.equal(await button('内容を確認する').isEnabled(), true, '設定一括取得: プリセットで再選択できる');
+          await openAdvanced(); await button('全選択').click(); await closeAdvanced();
         }
         if (id === 'design') {
           await button('対象・条件を変更').click();
-          await page.getByRole('radio', {name:'2アプリの設計差分を保存',exact:true}).check();
+          await chooseAction('2アプリの設計差分を保存');
           assert.equal(await button('内容を確認する').isDisabled(), true);
-          await page.getByRole('radio', {name:'全対象をExcel ZIPで保存',exact:true}).check();
+          await chooseAction('全対象をExcel ZIPで保存');
           await page.getByRole('checkbox', {name:'プレビュー環境から取得（単一出力・2アプリ差分）',exact:true}).check();
           await button('内容を確認する').click();
           assert.match(await stage(1).innerText(), /#202 · 本番/);
           await button('対象・条件を変更').click();
-          await page.getByRole('radio', {name:defaultAction,exact:true}).check();
-          await page.getByRole('radio', {name:'AI向けMarkdownを保存',exact:true}).check();
+          await chooseAction(defaultAction);
+          await chooseAction('AI向けMarkdownを保存');
           await button('内容を確認する').click();
           const aiCallsBefore = await page.evaluate(() => window.__workflowFixture.calls.length);
           await button('AI向けMarkdownを保存').click(); await idle();
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), aiCallsBefore + 1, '設計書: AI向けMarkdown保存を実行する');
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.at(-1).input), 'ai-md', '設計書: AI向けMarkdown形式を渡す');
           await button('対象・条件を変更').click();
-          await page.getByRole('radio', {name:'AI向けMarkdownをコピー',exact:true}).check();
+          await chooseAction('AI向けMarkdownをコピー');
           await button('内容を確認する').click();
           const aiCopyCallsBefore = await page.evaluate(() => window.__workflowFixture.calls.length);
           await button('AI向けMarkdownをコピー').click(); await idle();
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), aiCopyCallsBefore + 1, '設計書: AI向けMarkdownコピーを実行する');
           await button('対象・条件を変更').click();
-          await page.getByRole('radio', {name:defaultAction,exact:true}).check();
+          await chooseAction(defaultAction);
         }
         if (id === 'record') {
           await button('対象・条件を変更').click();
@@ -292,10 +365,22 @@ async function main() {
           await page.getByRole('textbox', { name: '対象アプリID', exact: true }).fill('303');
           assert.equal(await viewSelect.inputValue(), '', 'レコード管理: 取得元変更時に古い一覧選択を消す');
           await page.getByRole('textbox', { name: '対象アプリID', exact: true }).fill('202');
+          // 補足説明は「?」、操作ごとのオプションは「オプション…」のポップアップにある
+          await page.getByRole('button', { name: '「対象アプリ」の説明を表示', exact: true }).click();
+          assert.match(await page.locator('.kus-lp__help-pop:visible').innerText(), /カンマ・改行・空白で区切ります/, 'レコード管理: 補足説明を「?」から読む');
+          await page.getByRole('button', { name: '「対象アプリ」の説明を表示', exact: true }).click();
+          const csvFilename = page.getByPlaceholder('空欄で自動命名（CSV / テーブルあり・複数アプリはZIP）', { exact: true });
+          assert.equal(await csvFilename.isVisible(), false, 'レコード管理: CSV出力のオプションは表面に出さない');
+          await page.locator('.kus-lp__tab-panel:not([hidden])').getByRole('button', { name: 'オプション…', exact: true }).click();
+          await csvFilename.fill('月次');
+          await page.locator('#kus-record-lite-options-csv-export').getByRole('button', { name: '閉じる', exact: true }).click();
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /ファイル名\s*月次/, 'レコード管理: オプションの入力を確認画面に反映する');
+          await button('対象・条件を変更').click();
           await button('内容を確認する').click();
           for (const action of ['CSVからレコードを追加','ステータスを一括更新','添付ファイルを保存','レコードをコピー','バックアップを保存']) {
             await button('対象・条件を変更').click();
-            await page.getByRole('radio', {name:action,exact:true}).check();
+            await chooseAction(action);
             const fields = page.locator('.kus-lp__tab-panel:not([hidden])');
             if (action.includes('CSVから')) await fields.locator('input[type=file]').setInputFiles({name:'sample.csv',mimeType:'text/csv',buffer:Buffer.from('memo\nhello')});
             if (action.includes('ステータス')) await fields.getByPlaceholder('アクション名',{exact:true}).fill('完了にする');

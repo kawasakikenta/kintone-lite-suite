@@ -100,13 +100,15 @@ describe('attachment downloads based on FILE and SUBTABLE responses', () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response('hello')).mockResolvedValueOnce(new Response('', { status: 403 }));
     await runRecordAppBatchStandalone('7', appId => runAttachmentDownloadStandalone({ ...options, appId }, status), status);
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('警告 1アプリ'), true);
+    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('警告 1アプリ'), 'warn');
+    // 件数と取得失敗の件数を先頭の行に出し、色は一部成功の警告にする
+    expect(String(status.mock.calls.at(-1)?.[0]).split('\n')[0]).toBe('添付ファイル 1件を保存しました（取得失敗 1件）');
     expect(zip.files.get('download_errors.txt')).toContain('403');
     expect(JSON.parse(zip.files.get('manifest.json') as string).files[1]).toMatchObject({ recordId: '42', path: '', error: '閲覧権限なし (HTTP 403)' });
   });
   it('returns a warning without loading ZIP libraries when attachments are empty', async () => {
     vi.mocked(fetchRecordsByQuery).mockResolvedValue({ records: [{ $id: { value: '41' }, documents: { type: 'SUBTABLE', value: [] } }], mode: 'cursor' });
-    expect(await runAttachmentDownloadStandalone({ ...options, fileFieldCode: 'evidence', tableFieldCode: 'documents' }, status)).toEqual({ warning: 'ダウンロード対象の添付がありませんでした' });
+    expect(await runAttachmentDownloadStandalone({ ...options, fileFieldCode: 'evidence', tableFieldCode: 'documents' }, status)).toMatchObject({ warning: 'ダウンロード対象の添付がありませんでした' });
     expect(loadJSZipLite).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
   });

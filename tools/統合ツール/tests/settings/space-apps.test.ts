@@ -11,7 +11,7 @@ describe('settings export space app listing', () => {
     { space: '5', guest: 'abc' },
     { space: '5', guest: '1/2' }
   ])('rejects non-numeric space/guest IDs before calling the API', async ({ space, guest }) => {
-    await expect(runSettingsExportListSpaceAppsStandalone(space, guest, vi.fn())).rejects.toThrow(/数値/);
+    await expect(runSettingsExportListSpaceAppsStandalone(space, guest, vi.fn())).rejects.toThrow(/半角数字/);
     expect(fetchAppsInSpace).not.toHaveBeenCalled();
   });
   it('lists apps for a numeric guest space and reports an empty space as an error status', async () => {

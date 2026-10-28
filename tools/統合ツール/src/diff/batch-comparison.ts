@@ -1,5 +1,7 @@
 'use strict';
 
+import { isCancelRequested, isRunCancelledError } from '../runControl.js';
+
 export const DEFAULT_MAX_DIFF_BATCH_PAIRS = 50;
 
 export interface DiffBatchEndpointInput {
@@ -80,7 +82,17 @@ export interface DiffBatchRunFailure {
   error: unknown;
 }
 
-export type DiffBatchRunResult<TResult> = DiffBatchRunSuccess<TResult> | DiffBatchRunFailure;
+/** 利用者の中止で比較しなかった（または取得の途中で止めた）ペア。中止後の残りのペアはすべてこれになる。 */
+export interface DiffBatchRunCancelled {
+  status: 'cancelled';
+  pair: DiffBatchPair;
+  index: number;
+  /** 比較を始めてから取得の途中で止めたペアなら true。始める前に止めたペアは false。 */
+  started: boolean;
+  error?: unknown;
+}
+
+export type DiffBatchRunResult<TResult> = DiffBatchRunSuccess<TResult> | DiffBatchRunFailure | DiffBatchRunCancelled;
 
 function text(value: unknown): string {
   return String(value ?? '').trim();
@@ -276,6 +288,11 @@ export async function runSequentialDiffBatch<TResult extends { sourceBundle?: un
     const pair = pairs[index];
     const sourceKey = buildDiffBatchEndpointKey(pair.source);
     const targetKey = buildDiffBatchEndpointKey(pair.target);
+    // 前のペアの途中で中止要求が出ていたら、このペアの取得は始めない。
+    if (isCancelRequested()) {
+      for (let rest = index; rest < pairs.length; rest += 1) results.push({ status: 'cancelled', pair: pairs[rest], index: rest, started: false });
+      break;
+    }
     onProgress?.(pair, index, pairs.length);
     try {
       const value = await runPair(pair, {
@@ -289,6 +306,14 @@ export async function runSequentialDiffBatch<TResult extends { sourceBundle?: un
       if (value?.targetBundle != null) bundleCache.set(targetKey, value.targetBundle);
       results.push({ status: 'fulfilled', pair, index, value });
     } catch (error) {
+      if (isRunCancelledError(error)) {
+        // 利用者の中止。このペアと残りのペアは取得せず、「失敗」ではなく「中止」として返す。
+        results.push({ status: 'cancelled', pair, index, started: true, error });
+        for (let rest = index + 1; rest < pairs.length; rest += 1) {
+          results.push({ status: 'cancelled', pair: pairs[rest], index: rest, started: false });
+        }
+        break;
+      }
       results.push({ status: 'rejected', pair, index, error });
     }
   }

@@ -64,6 +64,15 @@ const VALID_DENSITIES = new Set<string>(DIFF_COMPARISON_PROFILE_DENSITIES);
 const VALID_LAYOUTS = new Set<string>(DIFF_COMPARISON_PROFILE_LAYOUTS);
 const PROTOTYPE_POLLUTION_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
+/** 比較条件のJSONではないと判断したときの案内。名前の未入力など別の原因に見えないよう最初に判定する。 */
+export const DIFF_COMPARISON_PROFILE_NOT_PROFILE_MESSAGE =
+  '比較条件のJSONではありません（設定JSONや差分JSONは「設定JSON読込」で読み込んでください）';
+
+/** kind のない旧形式を比較条件として受け付けるために必要な、比較条件固有のキー。 */
+const PROFILE_SHAPE_KEYS = ['scopes', 'ignoreKeys', 'includeSame', 'normalizationPresetState', 'display'] as const;
+/** 設定バンドル・一括取得JSON・差分JSONに現れるキー。これがあれば比較条件ではない。 */
+const FOREIGN_SHAPE_KEYS = ['sections', 'apps', 'rows', 'sourceBundle', 'targetBundle'] as const;
+
 const DEFAULT_DISPLAY: Readonly<DiffComparisonProfileDisplay> = Object.freeze({
   charDiff: true,
   showResultList: true,
@@ -249,7 +258,13 @@ export function parseDiffComparisonProfile(raw: unknown): DiffComparisonProfile 
   const input = parseInput(raw);
   const kind = ownValue(input, 'kind');
   if (kind !== undefined && kind !== DIFF_COMPARISON_PROFILE_KIND) {
-    throw new DiffComparisonProfileError('比較条件プロファイルの種類が正しくありません');
+    throw new DiffComparisonProfileError(DIFF_COMPARISON_PROFILE_NOT_PROFILE_MESSAGE);
+  }
+  if (kind === undefined) {
+    // 旧形式（kind なし）は、比較条件固有のキーがあり、設定・差分JSONのキーがないものだけ受け付ける。
+    const looksLikeProfile = PROFILE_SHAPE_KEYS.some((key) => ownValue(input, key) !== undefined)
+      && !FOREIGN_SHAPE_KEYS.some((key) => ownValue(input, key) !== undefined);
+    if (!looksLikeProfile) throw new DiffComparisonProfileError(DIFF_COMPARISON_PROFILE_NOT_PROFILE_MESSAGE);
   }
   const version = ownValue(input, 'version');
   if (version !== undefined && Number(version) !== DIFF_COMPARISON_PROFILE_VERSION) {

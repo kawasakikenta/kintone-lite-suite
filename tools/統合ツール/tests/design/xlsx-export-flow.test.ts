@@ -118,9 +118,26 @@ describe('runAdvancedDesignExporter の取得失敗の扱い', () => {
     await vi.runAllTimersAsync();
     const result: any = await promise;
     vi.useRealTimers();
-    expect(result.failedAPIs).toEqual([{ name: 'Views', error: '403 権限なし' }]);
+    expect(result.failedAPIs).toEqual([{ name: 'ビュー設定', error: '403 権限なし' }]);
     const summary: any[][] = result.wb.Sheets['サマリー'].__aoa;
-    expect(summary.some((row) => row[0] === 'Views' && row[1] === '403 権限なし')).toBe(true);
+    expect(summary.some((row) => row[0] === 'ビュー設定' && row[1] === '403 権限なし')).toBe(true);
+  });
+
+  it('取得失敗の項目名は内部名（Fields / RecordCount など）でなく日本語の表示名で報告する', async () => {
+    installEnvironment(baseResponses({
+      '/app/form/fields.json': new Error('403'),
+      '/records.json': new Error('500'),
+      '/app/webhook.json': new Error('403'),
+      '/app/adminNotes.json': new Error('403')
+    }));
+    vi.useFakeTimers();
+    const promise = runAdvancedDesignExporter({ appId: '5', preselectedSheets: ALL_SHEETS, returnWorkbook: true, suppressToast: true });
+    await vi.runAllTimersAsync();
+    const result: any = await promise;
+    vi.useRealTimers();
+    const names = result.failedAPIs.map((f: any) => f.name);
+    expect(names).toEqual(expect.arrayContaining(['フィールド設定', 'レコード件数', 'Webhook', '管理者メモ']));
+    expect(names.some((name: string) => /^[A-Za-z]+$/.test(name) && name !== 'Webhook')).toBe(false);
   });
 
   it('設定JSONに無いセクションは空の設計書にせず取得失敗として報告する', async () => {
@@ -136,10 +153,10 @@ describe('runAdvancedDesignExporter の取得失敗の扱い', () => {
     const result: any = await runAdvancedDesignExporter({ appId: '5', bundle, preselectedSheets: ALL_SHEETS, returnWorkbook: true, suppressToast: true });
     expect(calls).toEqual([]);
     const names = result.failedAPIs.map((f: any) => f.name);
-    expect(names).toContain('Layout（設定JSON）');
-    expect(names).toContain('Views（設定JSON）');
-    expect(result.failedAPIs.find((f: any) => f.name === 'Layout（設定JSON）').error).toBe('403');
-    expect(result.failedAPIs.find((f: any) => f.name === 'Views（設定JSON）').error).toMatch(/含まれていません/);
+    expect(names).toContain('レイアウト設定（設定JSON）');
+    expect(names).toContain('ビュー設定（設定JSON）');
+    expect(result.failedAPIs.find((f: any) => f.name === 'レイアウト設定（設定JSON）').error).toBe('403');
+    expect(result.failedAPIs.find((f: any) => f.name === 'ビュー設定（設定JSON）').error).toMatch(/含まれていません/);
     // フィールド・レイアウトの2回目取得などで同じセクションを重複して報告しない
     expect(new Set(names).size).toBe(names.length);
   });
@@ -161,7 +178,7 @@ describe('runAdvancedDesignExporter の取得失敗の扱い', () => {
     const result: any = await runAdvancedDesignExporter({ appId: '5', bundle, preselectedSheets: new Set(['customize']), returnWorkbook: true, suppressToast: true });
     const rows: any[][] = result.wb.Sheets['JS_CSSカスタマイズ'].__aoa;
     expect(rows.some((row) => row.includes('https://example.com/a.js'))).toBe(true);
-    expect(result.failedAPIs.some((f: any) => f.name === 'Customize（設定JSON）' && /本文/.test(f.error))).toBe(true);
+    expect(result.failedAPIs.some((f: any) => f.name === 'JS/CSS設定（設定JSON）' && /本文/.test(f.error))).toBe(true);
   });
 
   it('Webhook を取得できなかった場合は0件ではなく(取得不可)と書く', async () => {

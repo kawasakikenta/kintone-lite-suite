@@ -76,9 +76,9 @@ describe('buildJsConfigApplyPlan', () => {
     expect(buildJsConfigApplyConfirmText('5', '', withFile)).toContain('fileKey');
     const urlOnly = buildJsConfigApplyPlan({ desktop: { js: [{ type: 'URL', url: 'https://x' }] } });
     expect(buildJsConfigApplyConfirmText('5', '2', urlOnly)).not.toContain('fileKey');
-    expect(buildJsConfigApplyConfirmText('5', '2', urlOnly)).toContain('App 5（ゲスト 2）');
+    expect(buildJsConfigApplyConfirmText('5', '2', urlOnly)).toContain('App 5（ゲストスペース 2）');
     const emptyPlan = buildJsConfigApplyPlan({ desktop: { js: [], css: [] }, mobile: { js: [], css: [] } });
-    expect(buildJsConfigApplyConfirmText('5', '', emptyPlan)).toContain('0件に初期化');
+    expect(buildJsConfigApplyConfirmText('5', '', emptyPlan)).toContain('0 件になります');
   });
 });
 

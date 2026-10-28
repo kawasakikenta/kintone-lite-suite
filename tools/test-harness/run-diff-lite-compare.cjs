@@ -60,6 +60,23 @@ function hasFlag(name) {
   return process.argv.includes(name);
 }
 
+// 比較セクション・設定JSON読込・高度な比較設定は「詳細設定…」のポップアップに入っている。
+async function openDetailsDialog(page) {
+  const dialog = page.locator('#kus-dl-details-dialog');
+  if (!(await dialog.evaluate((element) => element.open))) {
+    await page.getByRole('button', { name: '詳細設定…' }).click();
+  }
+  await dialog.waitFor({ state: 'visible' });
+  return dialog;
+}
+
+async function closeDetailsDialog(page) {
+  const dialog = page.locator('#kus-dl-details-dialog');
+  if (!(await dialog.evaluate((element) => element.open))) return;
+  await page.getByRole('button', { name: '詳細設定を閉じる' }).click();
+  await dialog.waitFor({ state: 'hidden' });
+}
+
 function extractMarkdownAppIds(markdown) {
   return [...String(markdown || '').matchAll(/^\s*-\s*appId:\s*`\s*([^`\r\n]*?)\s*`/gm)]
     .map((match) => match[1]);
@@ -329,6 +346,18 @@ async function fillComparisonForm(page) {
     }
   }
 
+  // 現行版は「詳細設定…」のポップアップ、基準版（HEAD）は折りたたみ details に入っている。
+  const detailsButton = page.getByRole('button', { name: '詳細設定…' });
+  if (await detailsButton.count()) {
+    const dialog = await openDetailsDialog(page);
+    const showResult = dialog.locator('label')
+      .filter({ hasText: /(?:画面に(?:比較結果一覧|差分明細)|差分の明細を画面に)を?表示/ })
+      .locator('input[type="checkbox"]')
+      .first();
+    assert.equal(await showResult.count(), 1, '詳細設定に差分の明細表示の設定がありません');
+    if (!(await showResult.isChecked())) await showResult.check();
+    await closeDetailsDialog(page);
+  }
   const advanced = await firstContractLocator([
     root.locator('details').filter({ hasText: /詳細オプション|高度な比較設定/ })
   ], { visible: false });
@@ -341,7 +370,7 @@ async function fillComparisonForm(page) {
       }
     });
     const showResult = advanced.locator('label')
-      .filter({ hasText: /画面に(?:比較結果一覧|差分明細)を表示/ })
+      .filter({ hasText: /(?:画面に(?:比較結果一覧|差分明細)|差分の明細を画面に)を?表示/ })
       .locator('input[type="checkbox"]')
       .first();
     if ((await showResult.count()) && !(await showResult.isChecked())) {
@@ -421,6 +450,8 @@ async function inspectPanelLayout(page) {
     const sticky = root.querySelector('.kus-dl-sticky');
     const anchored = [...root.querySelectorAll('*')].filter((element) => {
       if (!visible(element)) return false;
+      // 開いている詳細設定のポップアップは最前面のモーダルで、追従UIと重なる対象ではない
+      if (element.closest('dialog')) return false;
       const position = getComputedStyle(element).position;
       return position === 'fixed' || position === 'sticky';
     });
@@ -497,6 +528,51 @@ function assertPanelLayout(state, label) {
   }
 }
 
+// 詳細設定のポップアップを開いた状態でも、画面内に収まり、横にはみ出さず、他のレイアウト検査を壊さないことを確かめる。
+async function captureDetailsDialogLayout(page, label, screenshotFile) {
+  const dialog = await openDetailsDialog(page);
+  await page.waitForTimeout(100);
+  const dialogState = await dialog.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const body = element.querySelector('.kus-lp__dialog-body');
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const overflowing = [...element.querySelectorAll('*')].filter((child) => {
+      const childRect = child.getBoundingClientRect();
+      if (childRect.width === 0 || childRect.height === 0) return false;
+      if (child.closest('.kus-lp__chips') && child.classList.contains('kus-lp__chip')) return false;
+      return childRect.right > rect.right + 2 || childRect.left < rect.left - 2;
+    }).slice(0, 5).map((child) => `${child.tagName}.${String(child.className).slice(0, 40)}`);
+    const closeButtons = [...element.querySelectorAll('button')].filter((button) => /^閉じる$/.test((button.textContent || '').trim()));
+    return {
+      viewport,
+      rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height },
+      withinViewport: rect.left >= -2 && rect.right <= viewport.width + 2 && rect.top >= -2 && rect.bottom <= viewport.height + 2,
+      dialogHorizontalOverflow: element.scrollWidth > element.clientWidth + 2,
+      bodyHorizontalOverflow: !!body && body.scrollWidth > body.clientWidth + 2,
+      overflowing,
+      closeButtonsVisible: closeButtons.length === 2 && closeButtons.every((button) => {
+        const buttonRect = button.getBoundingClientRect();
+        return buttonRect.width > 0 && buttonRect.height > 0 && buttonRect.bottom <= viewport.height + 2 && buttonRect.right <= viewport.width + 2;
+      }),
+      focusInside: element.contains(document.activeElement),
+      cards: [...element.querySelectorAll('.kus-lp__card-title')].map((title) => (title.textContent || '').trim())
+    };
+  });
+  assert.equal(dialogState.withinViewport, true, `${label}: 詳細設定のポップアップが画面内に収まりません`);
+  assert.equal(dialogState.dialogHorizontalOverflow, false, `${label}: 詳細設定のポップアップに横スクロールがあります`);
+  assert.equal(dialogState.bodyHorizontalOverflow, false, `${label}: 詳細設定の本文に横スクロールがあります`);
+  assert.deepEqual(dialogState.overflowing, [], `${label}: 詳細設定の要素がポップアップ外へはみ出しています`);
+  assert.equal(dialogState.closeButtonsVisible, true, `${label}: 詳細設定の閉じるボタンが画面内に見えません`);
+  assert.equal(dialogState.focusInside, true, `${label}: 詳細設定を開いてもフォーカスがポップアップ内へ移りません`);
+  assert.deepEqual(dialogState.cards, ['比較セクション', '設定JSON読込（任意）', '高度な比較設定', '比較条件の保存・読込'],
+    `${label}: 詳細設定の内容が想定と異なります`);
+  const openLayout = await inspectPanelLayout(page);
+  assertPanelLayout(openLayout, `${label}（詳細設定を開いた状態）`);
+  if (screenshotFile) await page.screenshot({ path: screenshotFile, fullPage: false, animations: 'disabled' });
+  await closeDetailsDialog(page);
+  return dialogState;
+}
+
 async function captureResponsivePanelMatrix(page, outDir) {
   const levels = [];
   for (const viewport of RESPONSIVE_VIEWPORTS) {
@@ -546,7 +622,8 @@ async function captureResponsivePanelMatrix(page, outDir) {
     assertPanelLayout(state, `after: ${viewport.width}px`);
     const screenshot = path.join(outDir, `after-panel-width-${viewport.width}.png`);
     await page.screenshot({ path: screenshot, fullPage: false, animations: 'disabled' });
-    levels.push({ ...state, screenshot: path.basename(screenshot) });
+    const detailsDialog = await captureDetailsDialogLayout(page, `after: ${viewport.width}px`, path.join(outDir, `after-details-dialog-${viewport.width}.png`));
+    levels.push({ ...state, screenshot: path.basename(screenshot), detailsDialog });
   }
   await page.setViewportSize({ width: 1365, height: 900 });
   return levels;
@@ -589,6 +666,7 @@ async function runPanelScenario(context, label, bundleSource, fixture, screensho
   const panel = await inspectPanel(page);
   const layout = await inspectPanelLayout(page);
   await page.screenshot({ path: screenshotFile, fullPage: false, animations: 'disabled' });
+  const detailsDialog = await captureDetailsDialogLayout(page, `after: ${label}`, null);
   let markdown = null;
   if (label === 'partial') {
     const outputDisclosure = page.locator('#kus-diff-lite [data-kus-dl-step="export"] details').first();
@@ -611,7 +689,7 @@ async function runPanelScenario(context, label, bundleSource, fixture, screensho
     markdown = { suggestedFilename: markdownDownload.suggestedFilename(), bytes: Buffer.byteLength(markdownText), file: path.basename(markdownFile) };
   }
   await page.close();
-  return { panel, layout, errors, markdown };
+  return { panel, layout, detailsDialog, errors, markdown };
 }
 
 async function captureObjectiveStateScenarios(browser, bundleSource, fixture, outDir) {
@@ -791,8 +869,8 @@ async function captureReport(context, variant, reportFile, outDir) {
     assert.equal(desktopHeader.before, true, 'after: topbar に構造化された比較元レーンがありません');
     assert.equal(desktopHeader.after, true, 'after: topbar に構造化された比較先レーンがありません');
     assert.equal(desktopHeader.order, true, 'after: topbar の比較元/比較先の順序が逆です');
-    assert.match(desktopHeader.beforeEnvironment, /運用環境[\s\S]*通常スペース/, 'after: 比較元カードが実際の取得環境を表示していません');
-    assert.match(desktopHeader.afterEnvironment, /運用環境[\s\S]*通常スペース/, 'after: 比較先カードが実際の取得環境を表示していません');
+    assert.match(desktopHeader.beforeEnvironment, /本番[\s\S]*通常スペース/, 'after: 比較元カードが実際の取得環境を表示していません');
+    assert.match(desktopHeader.afterEnvironment, /本番[\s\S]*通常スペース/, 'after: 比較先カードが実際の取得環境を表示していません');
 
     const progressbar = await firstVisibleLocator(page.locator('[role="progressbar"]'));
     assert.ok(progressbar, 'after: レビュー進捗の progressbar が見つかりません');
@@ -1375,7 +1453,7 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     const collapsedHeight = (await longValueWrapper.boundingBox())?.height || 0;
     await longValueToggle.click();
     assert.equal(await longValueToggle.getAttribute('aria-expanded'), 'true', 'after: 長い値の展開状態が支援技術へ伝わりません');
-    assert.match(await longValueToggle.textContent(), /プレビューに戻す/, 'after: 展開後の戻す操作が表示されません');
+    assert.match(await longValueToggle.textContent(), /省略表示に戻す/, 'after: 展開後の戻す操作が表示されません');
     const expandedHeight = (await longValueWrapper.boundingBox())?.height || 0;
     assert.ok(expandedHeight > collapsedHeight, 'after: 全文展開後も値領域の高さが増えていません');
     await page.locator('#kus-diff-lite').screenshot({
@@ -1424,11 +1502,13 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     await layout.selectOption('stacked');
     assert.equal(await layout.inputValue(), 'stacked', 'after: 上下比較レイアウトの選択が反映されません');
 
+    await openDetailsDialog(page);
     const profileName = page.locator('#kus-diff-lite input[aria-label="比較条件プロファイル名"]');
     await profileName.fill('レビュー用');
     const profileDownloadPromise = page.waitForEvent('download', { timeout: 10000 });
     await page.locator('#kus-diff-lite [data-kus-dl-profile="save"]').click();
     const profileDownload = await profileDownloadPromise;
+    await closeDetailsDialog(page);
     const profileFile = path.join(outDir, 'after-comparison-profile.json');
     await profileDownload.saveAs(profileFile);
     const profilePayload = JSON.parse(fs.readFileSync(profileFile, 'utf8'));
@@ -1444,6 +1524,17 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     if ((await outputDisclosure.count()) && !(await outputDisclosure.getAttribute('open'))) {
       await outputDisclosure.locator('summary').click();
     }
+    // 出力の補足説明は見出しの「?」の吹き出しにあり、開くまでは表面に出さない
+    const outputHelp = page.getByRole('button', { name: '「出力」の説明を表示' });
+    const outputNotes = [/AI向け Markdown は、比較方向・条件・取得の完全性/, /「社内用」の HTML はフィールド詳細や反映 JSON も収録するため/, /HTML は人が確認するレビュー用で/];
+    for (const note of outputNotes) {
+      assert.equal(await page.getByText(note).isVisible(), false, `after: 出力の補足説明が「?」を開く前から表面に出ています: ${note}`);
+    }
+    await outputHelp.click();
+    for (const note of outputNotes) {
+      assert.equal(await page.getByText(note).isVisible(), true, `after: 出力の補足説明が「?」から読めません: ${note}`);
+    }
+    await outputHelp.click();
     const xlsxButton = page.locator('#kus-diff-lite [data-kus-dl-export="xlsx"]');
     assert.equal(await xlsxButton.count(), 1, 'after: Excel保存ボタンが見つかりません');
     assert.equal(await xlsxButton.isEnabled(), true, 'after: 比較完了後もExcel保存ボタンが無効です');

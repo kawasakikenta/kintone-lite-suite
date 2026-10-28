@@ -493,25 +493,25 @@
           unorderedArrays: false
         },
         viewOrder: {
-          label: "ビュー/グラフ/アクション順序",
+          label: "一覧・グラフ・アクションの並び順",
           sections: /* @__PURE__ */ new Set(["viewSettings", "reportSettings", "actionSettings"]),
           ignoreKeys: /* @__PURE__ */ new Set(["index", "no", "order"]),
           unorderedArrays: true
         },
         permissionOrder: {
-          label: "権限/通知/カテゴリ順序",
+          label: "権限・通知・カテゴリの並び順",
           sections: /* @__PURE__ */ new Set(["appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications", "categories"]),
           ignoreKeys: /* @__PURE__ */ new Set(["index", "no", "order"]),
           unorderedArrays: true
         },
         generalArrayOrder: {
-          label: "すべて（プロセス等含む）の配列順序",
+          label: "すべての並び順（プロセスなどを含む）",
           sections: /* @__PURE__ */ new Set(["fieldSettings", "processSettings", "layoutSettings", "actionSettings", "appAcl", "fieldAcl", "recordPermissions", "viewSettings", "reportSettings", "customizeSettings", "notifications", "perRecordNotifications", "reminderNotifications", "categories", "pluginSettings", "formSettings"]),
           ignoreKeys: /* @__PURE__ */ new Set(["index", "no", "order"]),
           unorderedArrays: true
         },
         fieldOrder: {
-          label: "フィールド/レイアウト順序",
+          label: "フィールド・レイアウトの並び順",
           sections: /* @__PURE__ */ new Set(["fieldSettings", "layoutSettings", "formSettings"]),
           ignoreKeys: /* @__PURE__ */ new Set(["index", "no", "order", "x", "y"]),
           unorderedArrays: true
@@ -822,6 +822,142 @@ ${contextLine}`);
     }
   });
 
+  // src/runControl.ts
+  function beginRun() {
+    const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0, writes: 0 };
+    active = token;
+    return token;
+  }
+  function endRun(token) {
+    if (token && active === token) active = null;
+  }
+  function requestCancel(token) {
+    const target = token || active;
+    if (!target || target.cancelled) return false;
+    target.cancelled = true;
+    target.cancelledAt = Date.now();
+    try {
+      target.controller.abort(new RunCancelledError());
+    } catch {
+    }
+    return true;
+  }
+  function isCancelRequested() {
+    return !!active && active.cancelled;
+  }
+  function activeRun() {
+    return active;
+  }
+  function throwIfCancelled() {
+    if (active && active.cancelled) throw new RunCancelledError();
+  }
+  function activeAbortSignal() {
+    return active ? active.controller.signal : void 0;
+  }
+  function isRunCancelledError(error) {
+    let current = error;
+    for (let depth = 0; current && depth < 4; depth++) {
+      if (current instanceof RunCancelledError || current.name === "RunCancelledError") return true;
+      if (current.name === "AbortError" && isCancelRequested()) return true;
+      current = current.original;
+    }
+    return false;
+  }
+  function sleepUnlessCancelled(ms) {
+    const signal = activeAbortSignal();
+    return new Promise((resolve) => {
+      if (signal?.aborted) {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      function onAbort() {
+        clearTimeout(timer);
+        resolve();
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+  function raceWithCancel(promise, opts = {}) {
+    const signal = activeAbortSignal();
+    const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 0;
+    if (!signal && !timeoutMs) return promise;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let timer = 0;
+      const finish = (fn) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        fn();
+      };
+      function onAbort() {
+        finish(() => reject(new RunCancelledError()));
+      }
+      timer = timeoutMs ? setTimeout(() => finish(() => {
+        const error = new Error(opts.timeoutMessage || `応答待ちが ${Math.round(timeoutMs / 1e3)} 秒を超えました（timeout）`);
+        error.code = "TIMEOUT";
+        reject(error);
+      }), timeoutMs) : 0;
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      promise.then((value) => finish(() => resolve(value)), (error) => finish(() => reject(error)));
+    });
+  }
+  function createRequestSignal(timeoutMs) {
+    const controller = new AbortController();
+    const runSignal = activeAbortSignal();
+    let timedOut = false;
+    const onAbort = () => {
+      try {
+        controller.abort(new RunCancelledError());
+      } catch {
+      }
+    };
+    if (runSignal?.aborted) onAbort();
+    else runSignal?.addEventListener("abort", onAbort, { once: true });
+    const timer = Number(timeoutMs) > 0 ? setTimeout(() => {
+      timedOut = true;
+      const error = new Error(`応答待ちが ${Math.round(Number(timeoutMs) / 1e3)} 秒を超えました（timeout）`);
+      error.code = "TIMEOUT";
+      try {
+        controller.abort(error);
+      } catch {
+      }
+    }, Number(timeoutMs)) : 0;
+    return {
+      signal: controller.signal,
+      release: () => {
+        if (timer) clearTimeout(timer);
+        runSignal?.removeEventListener("abort", onAbort);
+      },
+      timedOut: () => timedOut
+    };
+  }
+  var RUN_CANCELLED_MESSAGE, RunCancelledError, nextId, active;
+  var init_runControl = __esm({
+    "src/runControl.ts"() {
+      "use strict";
+      RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
+      RunCancelledError = class extends Error {
+        constructor(message = RUN_CANCELLED_MESSAGE) {
+          super(message);
+          __publicField(this, "cancelled", true);
+          this.name = "RunCancelledError";
+        }
+      };
+      nextId = 1;
+      active = null;
+    }
+  });
+
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
@@ -871,19 +1007,24 @@ ${contextLine}`);
     apiGetMetrics.calls += 1;
     touchApiPathMetric(path, "calls");
     for (let i = 0; i < retries; i++) {
+      throwIfCancelled();
       try {
-        const res = await kintone.api(`${prefix}${path}`, "GET", params);
+        const res = await raceWithCancel(
+          Promise.resolve(kintone.api(`${prefix}${path}`, "GET", params)),
+          { timeoutMs: options.timeoutMs === 0 ? 0 : Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : API_GET_TIMEOUT_MS }
+        );
         apiGetMetrics.lastLatencyMs = Date.now() - startAt;
         apiGetMetrics.lastError = "";
         return res;
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         err = e;
         const retriable = isRetriableApiError(e);
         if (i < retries - 1 && retriable) {
           apiGetMetrics.retries += 1;
           touchApiPathMetric(path, "retries");
           const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
-          await new Promise((r) => setTimeout(r, waitMs));
+          await sleepUnlessCancelled(waitMs);
           continue;
         }
         break;
@@ -959,12 +1100,22 @@ ${contextLine}`);
     }
     return h.toString(16).padStart(8, "0");
   }
+  function wasCancelled(error, signal) {
+    return isRunCancelledError(error) || isRunCancelledError(signal.reason);
+  }
+  function timeoutDetail(signal, timeoutMs) {
+    const reason = signal.reason;
+    const message = reason instanceof Error ? reason.message : "";
+    return message || `応答待ちが ${Math.round(timeoutMs / 1e3)} 秒を超えました（timeout）`;
+  }
   async function fetchTextFileBody(prefix, fileKey) {
     if (!fileKey) return { ok: false, reason: "error", detail: "fileKey がありません" };
     const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
     const headers = { "X-Requested-With": "XMLHttpRequest" };
+    throwIfCancelled();
+    const request = createRequestSignal(FILE_TEXT_FETCH_TIMEOUT_MS);
     try {
-      const resp = await fetch(url, { method: "GET", headers });
+      const resp = await fetch(url, { method: "GET", headers, signal: request.signal });
       if (!resp.ok) {
         return {
           ok: false,
@@ -994,17 +1145,21 @@ ${contextLine}`);
       }
       return { ok: true, text: await blob.text(), byteSize: blob.size };
     } catch (error) {
+      if (wasCancelled(error, request.signal)) throw new RunCancelledError();
       return {
         ok: false,
         reason: "error",
-        detail: error instanceof Error ? error.message : String(error)
+        detail: request.timedOut() ? timeoutDetail(request.signal, FILE_TEXT_FETCH_TIMEOUT_MS) : error instanceof Error ? error.message : String(error)
       };
+    } finally {
+      request.release();
     }
   }
   async function fetchTextFileBodyWithRetry(prefix, fileKey) {
     let result = await fetchTextFileBody(prefix, fileKey);
     if (result.ok === true) return result;
     if (result.reason === "oversize") return result;
+    throwIfCancelled();
     result = await fetchTextFileBody(prefix, fileKey);
     return result;
   }
@@ -1077,7 +1232,7 @@ ${contextLine}`);
     if (!section || typeof section !== "object") return;
     const countText = failed > 0 ? `（${failed}件）` : "";
     const detail = error instanceof Error ? error.message : error == null ? "" : String(error);
-    const fileText = files.length ? ` [${files.slice(0, 3).map((item) => item.fileName || item.fileKey || "(名称不明)").join(", ")}${files.length > 3 ? ", …" : ""}]` : "";
+    const fileText = files.length ? ` [${files.slice(0, 3).map((item) => `${item.fileName || item.fileKey || "(名称不明)"}${item.detail ? `: ${item.detail}` : ""}`).join(", ")}${files.length > 3 ? ", …" : ""}]` : "";
     section._fetchError = `${label}の取得に失敗したため、このセクションは比較できません${countText}${fileText}${detail ? `: ${detail}` : ""}`;
   }
   async function fetchPluginConfigs(pluginSection, prefix, appId) {
@@ -1102,7 +1257,8 @@ ${contextLine}`);
           } else {
             stats.skipped += 1;
           }
-        } catch {
+        } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           stats.failed += 1;
         }
       });
@@ -1136,6 +1292,7 @@ ${contextLine}`);
         const revision = extractSectionRevision(res);
         results[index] = { value: rawSettings ? deepClone(res) : normalizeSettingsSection(res), revision };
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
       completed += 1;
@@ -1163,6 +1320,7 @@ ${contextLine}`);
             setAuxiliaryFetchError(cust, "JS/CSSファイル本文", stats.failed, void 0, stats.failedFiles);
           }
         } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           setAuxiliaryFetchError(cust, "JS/CSSファイル本文", 0, e);
         }
       }
@@ -1176,6 +1334,7 @@ ${contextLine}`);
           const unavailable = stats.failed + stats.skipped;
           if (unavailable > 0) setAuxiliaryFetchError(plug, "プラグイン設定", unavailable);
         } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           setAuxiliaryFetchError(plug, "プラグイン設定", 0, e);
         }
       }
@@ -1191,16 +1350,19 @@ ${contextLine}`);
     const first = Object.values(revisions).find((value) => value != null && value !== "");
     return first != null ? String(first) : "";
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
       init_constants();
       init_kintone_query();
       init_utils();
+      init_runControl();
       DEFAULT_API_GET_RETRIES = 3;
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
+      API_GET_TIMEOUT_MS = 12e4;
+      FILE_TEXT_FETCH_TIMEOUT_MS = 6e4;
       RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
       apiGetMetrics = {
         calls: 0,
@@ -2712,18 +2874,18 @@ ${contextLine}`);
   }
   function getActiveDiffNormalizationConfig(sectionKey, presetState) {
     const stateMap = presetState || getDiffNormalizationPresetState();
-    const active = [];
+    const active2 = [];
     Object.keys(DIFF_NORMALIZATION_PRESETS).forEach((key) => {
       if (!stateMap[key]) return;
       const preset = DIFF_NORMALIZATION_PRESETS[key];
       if (!preset?.sections?.has(sectionKey)) return;
-      active.push(preset);
+      active2.push(preset);
     });
-    if (!active.length) return null;
+    if (!active2.length) return null;
     const ignoreKeys = /* @__PURE__ */ new Set();
     let unorderedArrays = false;
     let ignoreAppReferencePaths = false;
-    active.forEach((preset) => {
+    active2.forEach((preset) => {
       preset.ignoreKeys?.forEach((key) => ignoreKeys.add(normalizeIgnoreToken(key)));
       if (preset.unorderedArrays) unorderedArrays = true;
       if (preset.ignoreAppReferencePaths) ignoreAppReferencePaths = true;
@@ -6125,7 +6287,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       return name ? `${name}（アプリ ${id}）` : `アプリ ${id}`;
     };
     const formatEnvironment = (meta) => [
-      meta.preview ? "プレビュー環境" : "運用環境",
+      meta.preview ? "プレビュー環境" : "本番",
       meta.guestId ? `ゲスト ${meta.guestId}` : "通常スペース"
     ].join(" · ");
     const sourceAppDisplay = formatAppDisplay(reportMeta.source);
@@ -11960,7 +12122,12 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       alert(NOT_KINTONE_PAGE_MESSAGE);
       return;
     }
-    run();
+    try {
+      run();
+    } catch (error) {
+      if (error?.panelBusy === true) return;
+      throw error;
+    }
   }
 
   // src/tabs/diff-standalone.ts
@@ -12283,6 +12450,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 
   // src/entries/litePanelTheme.ts
   init_dialog();
+  init_runControl();
   init_utils();
   var STYLE_ID = "kus-lp-theme-styles";
   var ACCENTS = {
@@ -12309,7 +12477,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   --c-border-strong:#cbd5e1;
   --c-text:#0f172a;
   --c-text-2:#334155;
-  --c-muted:#64748b;
+  --c-muted:#475569;
   --c-link:#2563eb;
   --c-ok-bg:#ecfdf5;
   --c-ok-fg:#065f46;
@@ -12334,7 +12502,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   top:max(16px,2vh);
   right:max(16px,2vw);
   box-sizing:border-box;
-  width:min(520px,calc(100vw - max(32px,4vw)));
+  width:min(560px,calc(100vw - max(32px,4vw)));
   max-height:min(92vh,920px);
   overflow:hidden;
   display:flex;
@@ -12343,7 +12511,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   border:1px solid var(--c-border);
   border-radius:18px;
   box-shadow:0 4px 6px -1px rgba(15,23,42,.08),0 28px 60px -12px rgba(15,23,42,.30);
-  font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
   color:var(--c-text);
   animation:kus-lp-fade-in .18s ease-out;
 }
@@ -12369,36 +12537,47 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 }
 .kus-lp__hero-main{min-width:0;flex:1}
 .kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
+/* 狭い画面では経過時間の文字を隠し（スピナーは残す）ボタンを詰めて、タイトルが 1 文字ずつ折り返すのを防ぐ */
+@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12px}.kus-lp__toggle{min-width:30px}}
 .kus-lp__elapsed{
-  font-size:11px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
+  font-size:12.5px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
   font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
 }
 .kus-lp__elapsed::before{
   content:'';display:inline-block;width:9px;height:9px;border-radius:50%;
   border:2px solid rgba(255,255,255,.85);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
 }
+.kus-lp__elapsed--done{font-weight:500;color:rgba(255,255,255,.8)}
+/* 完了後の「前回 …」表示ではスピナーを出さない */
+.kus-lp__elapsed--done::before{display:none;animation:none}
 /* 実行中の進捗ストリップ（ヒーロー下端） */
 .kus-lp__progress{position:absolute;left:0;right:0;bottom:0;height:3px;overflow:hidden;background:rgba(255,255,255,.22);display:none;z-index:1}
 .kus-lp[aria-busy="true"] .kus-lp__progress{display:block}
 .kus-lp__progress::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:#fff;opacity:.95;animation:kus-lp-indeterminate 1.4s ease-in-out infinite}
-.kus-lp__title{margin:0;font-size:17px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
+.kus-lp__title{margin:0;font-size:18px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
 .kus-lp__title-icon{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;background:rgba(255,255,255,.22);border-radius:7px}
-.kus-lp__subtitle{margin:4px 0 0;font-size:12px;color:rgba(255,255,255,.85);line-height:1.45}
+.kus-lp__subtitle{margin:4px 0 0;font-size:13px;color:rgba(255,255,255,.85);line-height:1.45}
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  font-size:12px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close,.kus-lp__toggle{
+/* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
+.kus-lp__badge--read{background:#047857;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--preview{background:#c2410c;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--production{background:#b91c1c;border:1px solid rgba(255,255,255,.45)}
+.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
-  color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
+  color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;
   font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
 .kus-lp__toggle{padding:6px 9px;min-width:34px}
+.kus-lp__cancel{background:rgba(254,202,202,.30);border-color:rgba(254,226,226,.85)}
 .kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
-.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__cancel:hover{background:rgba(254,202,202,.48)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled,.kus-lp__cancel:disabled{opacity:.55;cursor:not-allowed}
 
 /* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
 .kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
@@ -12414,7 +12593,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 .kus-lp__body::-webkit-scrollbar-thumb:hover{background:#94a3b8;background-clip:padding-box;border:2px solid transparent}
 
 .kus-lp__hint{
-  font-size:12px;color:var(--c-muted);line-height:1.55;margin:0 0 14px;
+  font-size:13px;color:var(--c-muted);line-height:1.55;margin:0 0 14px;
   padding:10px 12px;background:var(--c-surface);border-radius:10px;border:1px solid var(--c-border);
 }
 .kus-lp__hint strong{color:var(--c-text-2)}
@@ -12426,7 +12605,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 }
 .kus-lp__tab{
   position:relative;background:transparent;border:none;cursor:pointer;
-  padding:8px 12px 9px;font-size:12px;font-weight:600;color:var(--c-muted);
+  padding:8px 12px 9px;font-size:13px;font-weight:600;color:var(--c-muted);
   border-radius:8px 8px 0 0;
 }
 .kus-lp__tab:hover{color:var(--c-text-2);background:var(--c-surface)}
@@ -12447,10 +12626,10 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 }
 .kus-lp__card--soft{background:var(--c-surface)}
 .kus-lp__card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-2px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--c-border)}
-.kus-lp__card-title{font-size:11.5px;font-weight:700;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.06em;margin:0;display:flex;align-items:center;gap:6px}
+.kus-lp__card-title{font-size:13px;font-weight:700;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.06em;margin:0;display:flex;align-items:center;gap:6px}
 .kus-lp__card-num{
   display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
-  background:var(--c-accent-chip);color:var(--c-accent-via);font-size:11px;font-weight:700;border-radius:999px;
+  background:var(--c-accent-chip);color:var(--c-accent-via);font-size:12.5px;font-weight:700;border-radius:999px;
 }
 .kus-lp__card-actions{display:flex;gap:6px}
 
@@ -12459,13 +12638,13 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 .kus-lp__row:last-child{margin-bottom:0}
 .kus-lp__row--block{display:block}
 .kus-lp__row--block > .kus-lp__label{display:block;margin-bottom:5px}
-.kus-lp__label{font-size:12px;font-weight:600;color:var(--c-text-2);min-width:5em}
+.kus-lp__label{font-size:13px;font-weight:600;color:var(--c-text-2);min-width:5em}
 
 /* ===== Inputs ===== */
 .kus-lp__input,.kus-lp__textarea,.kus-lp__select{
   appearance:none;
   border:1px solid var(--c-border);
-  border-radius:8px;padding:7px 10px;font-size:12.5px;
+  border-radius:8px;padding:7px 10px;font-size:14px;
   background:var(--c-bg);color:var(--c-text);
   outline:none;transition:border-color .15s,box-shadow .15s;
   font-family:inherit;
@@ -12480,18 +12659,18 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 .kus-lp__input--wide{flex:1;min-width:160px}
 .kus-lp__input--full{width:100%;box-sizing:border-box}
 .kus-lp__textarea{width:100%;box-sizing:border-box;min-height:60px;resize:vertical}
-.kus-lp__textarea--code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;background:var(--c-surface)}
-.kus-lp__file{font-size:12px;padding:5px 0}
+.kus-lp__textarea--code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;background:var(--c-surface)}
+.kus-lp__file{font-size:13px;padding:5px 0}
 
 /* ===== Checkbox / chip ===== */
-.kus-lp__check{font-size:12px;color:var(--c-text-2);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.kus-lp__check{font-size:13px;color:var(--c-text-2);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
 .kus-lp__check input{width:14px;height:14px;accent-color:var(--c-accent-via);margin:0}
 .kus-lp__check-grid{display:flex;flex-wrap:wrap;gap:8px 12px;margin-bottom:10px}
 
 .kus-lp__chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .kus-lp__chip{
   display:inline-flex;align-items:center;gap:6px;
-  font-size:11.5px;color:var(--c-text-2);
+  font-size:13px;color:var(--c-text-2);
   background:var(--c-bg);border:1px solid var(--c-border-strong);
   border-radius:999px;padding:4px 10px 4px 7px;cursor:pointer;user-select:none;
   transition:background .12s,border-color .12s;
@@ -12503,7 +12682,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 /* ===== Buttons ===== */
 .kus-lp__btn{
   appearance:none;border:1px solid transparent;border-radius:10px;
-  font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+  font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;
   padding:8px 14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
   transition:filter .12s,transform .04s,background .12s,border-color .12s;
 }
@@ -12513,13 +12692,13 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 .kus-lp__btn--primary{background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 4px var(--c-accent-ring)}
 .kus-lp__btn--primary:hover:not(:disabled){filter:brightness(1.06)}
 
-.kus-lp__btn--run{width:100%;padding:11px 16px;font-size:13px;font-weight:700;background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 6px var(--c-accent-ring)}
+.kus-lp__btn--run{width:100%;padding:11px 16px;font-size:14px;font-weight:700;background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 6px var(--c-accent-ring)}
 .kus-lp__btn--run:hover:not(:disabled){filter:brightness(1.07)}
 
 .kus-lp__btn--ghost{background:var(--c-surface);color:var(--c-text-2);border-color:var(--c-border-strong)}
 .kus-lp__btn--ghost:hover:not(:disabled){background:#fff;border-color:#94a3b8}
 
-.kus-lp__btn--sub{background:linear-gradient(180deg,#fff,var(--c-surface-2));color:var(--c-text-2);border-color:var(--c-border-strong);font-size:11.5px;padding:7px 10px}
+.kus-lp__btn--sub{background:linear-gradient(180deg,#fff,var(--c-surface-2));color:var(--c-text-2);border-color:var(--c-border-strong);font-size:13px;padding:7px 10px}
 .kus-lp__btn--sub:hover:not(:disabled){background:#fff;border-color:#94a3b8}
 
 .kus-lp__btn--danger{background:linear-gradient(180deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 2px 4px rgba(220,38,38,.25)}
@@ -12532,7 +12711,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 
 /* ===== Status ===== */
 .kus-lp__status{
-  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5;
+  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.5;
   border:1px solid var(--c-border);background:var(--c-surface-2);color:var(--c-text-2);
   min-height:2.6em;display:flex;align-items:flex-start;gap:8px;
 }
@@ -12552,44 +12731,65 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 /* ===== Result / Log ===== */
 .kus-lp__result{
   margin-top:10px;padding:11px 13px;background:#0f172a;color:#e2e8f0;border-radius:10px;
-  font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;
   border:1px solid #1e293b;
 }
 .kus-lp__result--empty{display:none}
-/* ログ右上に貼り付くコピー操作（ログ本文の選択・スクロールを妨げない） */
-.kus-lp__result-copy{
-  float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;
-  padding:3px 8px;font:600 10.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+/* ログ右上に貼り付くコピー／保存操作（ログ本文の選択・スクロールを妨げない） */
+.kus-lp__result-tools{float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;display:flex;gap:4px}
+.kus-lp__result-copy,.kus-lp__result-save{
+  padding:3px 8px;font:600 12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
   color:#cbd5e1;background:rgba(30,41,59,.92);border:1px solid #334155;border-radius:7px;cursor:pointer;white-space:nowrap;
 }
-.kus-lp__result-copy:hover{color:#fff;background:#334155}
-.kus-lp__result-copy[data-copied="true"]{color:#bbf7d0;border-color:#166534}
+.kus-lp__result-copy:hover,.kus-lp__result-save:hover{color:#fff;background:#334155}
+.kus-lp__result-copy[data-copied="true"],.kus-lp__result-save[data-copied="true"]{color:#bbf7d0;border-color:#166534}
 .kus-lp__panel-html{
   margin-top:10px;border:1px solid var(--c-border);border-radius:10px;
-  background:var(--c-surface);max-height:240px;overflow:auto;font-size:11.5px;
+  background:var(--c-surface);max-height:240px;overflow:auto;font-size:13px;
 }
 .kus-lp__panel-html--empty{display:none}
 .kus-lp__panel-html table{border-collapse:collapse;width:100%}
 .kus-lp__panel-html th,.kus-lp__panel-html td{padding:6px 8px;border-bottom:1px solid var(--c-border);text-align:left}
-.kus-lp__panel-html th{background:var(--c-surface-2);font-weight:600;font-size:11px;color:var(--c-text-2)}
+.kus-lp__panel-html th{background:var(--c-surface-2);font-weight:600;font-size:12.5px;color:var(--c-text-2)}
 
 /* ===== Misc ===== */
-.kus-lp__note{font-size:11.5px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
+.kus-lp__note{font-size:13px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
 .kus-lp__note--warn{color:var(--c-warn-fg);padding:7px 10px;background:var(--c-warn-bg);border:1px solid var(--c-warn-bd);border-radius:8px;margin:6px 0}
+/* ===== カードの「?」ヘルプ（補足説明の吹き出し） ===== */
+.kus-lp__help-btn{flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);font:700 13px/1 inherit;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.kus-lp__help-btn:hover,.kus-lp__help-btn--open{background:var(--c-accent-chip);border-color:var(--c-accent-via);color:var(--c-accent-from)}
+.kus-lp__help-pop{margin:-4px 0 12px;padding:10px 12px;border:1px solid var(--c-info-bd);background:var(--c-info-bg);border-radius:10px;color:var(--c-text-2);font-size:13px;line-height:1.55;animation:kus-lp-fade-in .12s ease-out}
+.kus-lp__help-pop[hidden]{display:none}
+.kus-lp__help-item{margin:0 0 6px;color:var(--c-text-2);font-size:13px;line-height:1.55}
+.kus-lp__help-item:last-child{margin-bottom:0}
+/* ===== ポップアップ（詳細設定・ほかの操作） ===== */
+.kus-lp__dialog{box-sizing:border-box;width:min(640px,calc(100vw - 32px));max-height:min(88vh,860px);padding:0;border:1px solid var(--c-border);border-radius:16px;background:var(--c-bg);color:var(--c-text);box-shadow:0 28px 60px -12px rgba(15,23,42,.45);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;display:none;flex-direction:column;overflow:hidden}
+.kus-lp__dialog[open]{display:flex}
+.kus-lp__dialog--wide{width:min(880px,calc(100vw - 32px))}
+.kus-lp__dialog::backdrop{background:rgba(15,23,42,.45)}
+.kus-lp__dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog-title{margin:0;font-size:16px;font-weight:700;color:var(--c-text)}
+.kus-lp__dialog-close{flex-shrink:0;white-space:nowrap;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
+.kus-lp__dialog-close:hover{background:var(--c-surface-2)}
+.kus-lp__dialog-body{padding:16px 18px;overflow:auto;min-height:0;flex:1}
+.kus-lp__dialog-body>.kus-lp__card{margin-bottom:12px}
+.kus-lp__dialog-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog :is(button,input,select,textarea,summary):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
+@media(max-width:720px){.kus-lp__dialog{width:calc(100vw - 16px);max-height:calc(100dvh - 16px)}.kus-lp__dialog-body{padding:12px}}
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
-.kus-lp__small{font-size:11px;color:var(--c-muted)}
+.kus-lp__small{font-size:12.5px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
 
 /* ===== Toolbar / Count / Pill ===== */
 .kus-lp__toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px}
 .kus-lp__toolbar-spacer{flex:1;min-width:8px}
 .kus-lp__count{
-  display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:4px;font-size:12.5px;font-weight:700;white-space:nowrap;
   color:var(--c-accent-from);background:var(--c-accent-chip);padding:2px 9px;border-radius:999px;font-variant-numeric:tabular-nums;
 }
 .kus-lp__pill{
-  display:inline-flex;align-items:center;gap:6px;padding:4px 11px;font-size:11.5px;font-weight:600;border-radius:999px;
+  display:inline-flex;align-items:center;gap:6px;padding:4px 11px;font-size:13px;font-weight:600;border-radius:999px;
   background:var(--c-surface-2);color:var(--c-text);border:1px solid var(--c-border);line-height:1.4;max-width:100%;
 }
 .kus-lp__pill--ok{background:var(--c-ok-bg);color:var(--c-ok-fg);border-color:var(--c-ok-bd)}
@@ -12601,20 +12801,20 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:7px 8px;
   background:var(--c-surface);border-bottom:1px solid var(--c-border);
 }
-.kus-lp__picklist-head .kus-lp__input{flex:1;min-width:120px;padding:5px 8px;font-size:12px}
-.kus-lp__picklist-head .kus-lp__btn{padding:4px 8px;font-size:11px;border-radius:7px}
+.kus-lp__picklist-head .kus-lp__input{flex:1;min-width:120px;padding:5px 8px;font-size:13px}
+.kus-lp__picklist-head .kus-lp__btn{padding:4px 8px;font-size:12.5px;border-radius:7px}
 .kus-lp__picklist-body{max-height:220px;overflow:auto;padding:4px}
 .kus-lp__picklist-item{
-  display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;font-size:12px;color:var(--c-text);
+  display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;font-size:13px;color:var(--c-text);
   cursor:pointer;user-select:none;min-width:0;
 }
 .kus-lp__picklist-item:hover{background:var(--c-surface)}
 .kus-lp__picklist-item:has(input:checked){background:var(--c-accent-chip)}
 .kus-lp__picklist-item input{accent-color:var(--c-accent-via);width:14px;height:14px;margin:0;flex-shrink:0}
 .kus-lp__picklist-main{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kus-lp__picklist-sub{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--c-muted);font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.kus-lp__picklist-empty{padding:10px 8px;color:var(--c-muted);font-size:11.5px}
-.kus-lp__picklist-foot{padding:6px 8px;border-top:1px solid var(--c-border);background:var(--c-surface);font-size:11px;color:var(--c-muted);line-height:1.5;overflow-wrap:anywhere}
+.kus-lp__picklist-sub{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--c-muted);font-size:12.5px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.kus-lp__picklist-empty{padding:10px 8px;color:var(--c-muted);font-size:13px}
+.kus-lp__picklist-foot{padding:6px 8px;border-top:1px solid var(--c-border);background:var(--c-surface);font-size:12.5px;color:var(--c-muted);line-height:1.5;overflow-wrap:anywhere}
 
 /* セクション折りたたみ (details) */
 .kus-lp__details{
@@ -12623,7 +12823,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 }
 .kus-lp__details > summary{
   list-style:none;cursor:pointer;padding:10px 14px;
-  font-size:12.5px;font-weight:600;color:var(--c-text-2);
+  font-size:14px;font-weight:600;color:var(--c-text-2);
   display:flex;align-items:center;gap:8px;
 }
 .kus-lp__details > summary::-webkit-details-marker{display:none}
@@ -12642,21 +12842,22 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 .kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
 .kus-lp__apptable-scroll{max-height:220px;overflow:auto}
 .kus-lp__apptable table{width:100%;border-collapse:collapse;table-layout:fixed}
-.kus-lp__apptable th{background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__apptable th{background:var(--c-surface-2);font-size:12.5px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
 .kus-lp__apptable-scroll th{position:sticky;top:0;z-index:1}
 .kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
-.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
-.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
-.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:136px}
+.kus-lp__apptable th.kus-lp__apptable-acts-h,.kus-lp__apptable td.kus-lp__apptable-acts{padding-left:4px;padding-right:4px}
 .kus-lp__apptable-acts{white-space:nowrap}
-.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:11px;border-radius:7px}
-.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 6px;font-size:12.5px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:3px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
-.kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
-.kus-lp__apptable-hint{font-size:11px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__apptable-count{font-size:12.5px;color:var(--c-muted);margin-left:auto;font-weight:600}
+.kus-lp__apptable-hint{font-size:12.5px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
 @media(max-width:420px){
   .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
   .kus-lp__apptable thead{display:none}
@@ -12680,9 +12881,33 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     root2.style.setProperty("--c-accent-chip", a.chip);
     root2.style.setProperty("--c-accent-ring", a.ring);
   }
+  var LitePanelBusyError = class extends Error {
+    constructor(id) {
+      super(`パネル ${id} は実行中のため再起動しません`);
+      __publicField(this, "panelBusy", true);
+      this.name = "LitePanelBusyError";
+    }
+  };
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
+    if (old instanceof HTMLElement && old.getAttribute("aria-busy") === "true") {
+      old.classList.remove("kus-lp--collapsed");
+      const statusText = old.querySelector(".kus-lp__status-text");
+      const hint = "実行中のため再起動しません。終わるのを待つか、「中止」を押してください。";
+      if (statusText && !statusText.textContent?.includes(hint)) statusText.textContent = `${hint} ${statusText.textContent || ""}`.trim();
+      try {
+        old.querySelector(".kus-lp__cancel")?.focus({ preventScroll: true });
+      } catch {
+      }
+      throw new LitePanelBusyError(opts.id);
+    }
+    let carriedPosition = null;
+    if (old instanceof HTMLElement && old.dataset.kusPlaced === "1") {
+      const left = parseFloat(old.style.left);
+      const top = parseFloat(old.style.top);
+      if (Number.isFinite(left) && Number.isFinite(top)) carriedPosition = { left, top };
+    }
     if (old) {
       old.dispatchEvent(new Event("kus-lite-dispose"));
       old.remove();
@@ -12713,10 +12938,11 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     }
     const badgesEl = document.createElement("div");
     badgesEl.className = "kus-lp__badge-row";
-    const badges = opts.badges || [{ label: "Lite" }];
+    const badges = opts.badges || [];
+    if (!badges.length) badgesEl.hidden = true;
     for (const b of badges) {
       const span = document.createElement("span");
-      span.className = "kus-lp__badge";
+      span.className = `kus-lp__badge${b.tone === "read" || b.tone === "preview" || b.tone === "production" ? ` kus-lp__badge--${b.tone}` : ""}`;
       span.textContent = b.label;
       badgesEl.appendChild(span);
     }
@@ -12729,6 +12955,13 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     elapsedEl.className = "kus-lp__elapsed";
     elapsedEl.setAttribute("aria-hidden", "true");
     elapsedEl.hidden = true;
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "kus-lp__cancel";
+    cancelBtn.textContent = "中止";
+    cancelBtn.setAttribute("aria-label", "処理を中止");
+    cancelBtn.title = "次のリクエストの前で処理を止めます（送信済みの書き込みは取り消しません）";
+    cancelBtn.hidden = true;
     const bodyId = `${opts.id}-body`;
     const toggleBtn = document.createElement("button");
     toggleBtn.type = "button";
@@ -12741,6 +12974,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const heroActions = document.createElement("div");
     heroActions.className = "kus-lp__hero-actions";
     heroActions.appendChild(elapsedEl);
+    heroActions.appendChild(cancelBtn);
     heroActions.appendChild(toggleBtn);
     heroActions.appendChild(closeBtn);
     const progress = document.createElement("div");
@@ -12785,10 +13019,20 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     copyBtn.className = "kus-lp__result-copy";
     copyBtn.textContent = "コピー";
     copyBtn.setAttribute("aria-label", "ログをコピー");
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "kus-lp__result-save";
+    saveBtn.textContent = "保存";
+    saveBtn.setAttribute("aria-label", "ログをファイルに保存");
+    const resultTools = document.createElement("span");
+    resultTools.className = "kus-lp__result-tools";
+    resultTools.appendChild(copyBtn);
+    resultTools.appendChild(saveBtn);
     let copyResetTimer = 0;
+    let saveResetTimer = 0;
     function resultText() {
       const clone = result.cloneNode(true);
-      clone.querySelector(".kus-lp__result-copy")?.remove();
+      clone.querySelector(".kus-lp__result-tools")?.remove();
       return (clone.innerText || clone.textContent || "").replace(/^\s+|\s+$/g, "");
     }
     function flashCopy(label, copied) {
@@ -12800,10 +13044,29 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
         delete copyBtn.dataset.copied;
       }, 1600);
     }
+    function flashSave(label, saved) {
+      saveBtn.textContent = label;
+      saveBtn.dataset.copied = String(saved);
+      window.clearTimeout(saveResetTimer);
+      saveResetTimer = window.setTimeout(() => {
+        saveBtn.textContent = "保存";
+        delete saveBtn.dataset.copied;
+      }, 1600);
+    }
     copyBtn.addEventListener("click", () => {
       const text2 = resultText();
       if (!text2) return;
       void copyTextToClipboard(text2).then((ok) => flashCopy(ok ? "コピー済み" : "コピー失敗", ok));
+    });
+    saveBtn.addEventListener("click", () => {
+      const text2 = resultText();
+      if (!text2) return;
+      try {
+        downloadText(`${sanitizeFilenamePart(opts.title)}_ログ_${nowStamp()}.txt`, text2, "text/plain;charset=utf-8");
+        flashSave("保存済み", true);
+      } catch {
+        flashSave("保存失敗", false);
+      }
     });
     function setResult(text2) {
       if (!text2) {
@@ -12812,7 +13075,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
         return;
       }
       result.textContent = text2;
-      result.prepend(copyBtn);
+      result.prepend(resultTools);
       result.classList.remove("kus-lp__result--empty");
     }
     function setResultHtml(html) {
@@ -12822,7 +13085,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
         return;
       }
       result.innerHTML = html;
-      result.prepend(copyBtn);
+      result.prepend(resultTools);
       result.classList.remove("kus-lp__result--empty");
     }
     let busyTimer = 0;
@@ -12836,25 +13099,72 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     function tickElapsed() {
       elapsedEl.textContent = `処理中 ${formatElapsed(Date.now() - busyStartedAt)}`;
     }
-    function stopElapsed() {
+    function startElapsed() {
+      busyStartedAt = Date.now();
+      elapsedEl.classList.remove("kus-lp__elapsed--done");
+      tickElapsed();
+      elapsedEl.hidden = false;
+      busyTimer = window.setInterval(tickElapsed, 1e3);
+    }
+    function stopElapsed(keepLast) {
+      const wasRunning = !!busyTimer;
       if (busyTimer) window.clearInterval(busyTimer);
       busyTimer = 0;
-      elapsedEl.hidden = true;
-      elapsedEl.textContent = "";
+      if (keepLast && wasRunning) {
+        elapsedEl.classList.add("kus-lp__elapsed--done");
+        elapsedEl.textContent = `前回 ${formatElapsed(Date.now() - busyStartedAt)}`;
+        elapsedEl.hidden = false;
+      } else if (!keepLast) {
+        elapsedEl.classList.remove("kus-lp__elapsed--done");
+        elapsedEl.hidden = true;
+        elapsedEl.textContent = "";
+      }
     }
+    let runToken = null;
+    function requestCancel2() {
+      if (!runToken) return false;
+      const accepted = requestCancel(runToken);
+      if (accepted) {
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = "中止中…";
+        handle.setStatus("中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…", "busy");
+      }
+      return accepted;
+    }
+    function isCancelRequested2() {
+      return !!runToken && runToken.cancelled;
+    }
+    cancelBtn.addEventListener("click", () => {
+      requestCancel2();
+    });
     function setBusy(busy) {
       closeBtn.disabled = busy;
       root2.setAttribute("aria-busy", String(busy));
       root2.style.cursor = busy ? "progress" : "";
       if (busy) {
-        if (!busyTimer) {
-          busyStartedAt = Date.now();
-          tickElapsed();
-          elapsedEl.hidden = false;
-          busyTimer = window.setInterval(tickElapsed, 1e3);
+        if (!runToken) {
+          runToken = beginRun();
+          cancelBtn.textContent = "中止";
+          cancelBtn.disabled = false;
+          runToken.controller.signal.addEventListener("abort", () => {
+            if (!cancelBtn.hidden && !cancelBtn.disabled) {
+              cancelBtn.disabled = true;
+              cancelBtn.textContent = "中止中…";
+              handle.setStatus("中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…", "busy");
+            }
+          }, { once: true });
+        } else if (!runToken.cancelled) {
+          cancelBtn.disabled = false;
         }
+        cancelBtn.hidden = false;
+        if (!busyTimer) startElapsed();
       } else {
-        stopElapsed();
+        endRun(runToken);
+        runToken = null;
+        cancelBtn.hidden = true;
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = "中止";
+        stopElapsed(true);
       }
       root2.dispatchEvent(new Event("kus-lite-busy-change"));
     }
@@ -12884,9 +13194,11 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       root2.style.top = `${Math.round(nextTop)}px`;
       root2.style.right = "auto";
       customPlaced = true;
+      root2.dataset.kusPlaced = "1";
     }
     function resetPosition() {
       customPlaced = false;
+      delete root2.dataset.kusPlaced;
       root2.style.left = "";
       root2.style.top = "";
       root2.style.right = "";
@@ -12933,11 +13245,16 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     });
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
+    if (carriedPosition) place(carriedPosition.left, carriedPosition.top);
     function dispose() {
+      if (runToken && !runToken.cancelled) requestCancel(runToken);
       document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
-      stopElapsed();
+      stopElapsed(false);
+      endRun(runToken);
+      runToken = null;
       window.clearTimeout(copyResetTimer);
+      window.clearTimeout(saveResetTimer);
     }
     function close() {
       if (closeBtn.disabled) return;
@@ -12978,6 +13295,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     function onDocKeydown(e) {
       if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
       if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      if (root2.querySelector("dialog[open]")) return;
       e.preventDefault();
       e.stopPropagation();
       close();
@@ -12995,7 +13313,8 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
+    const handle = { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel: requestCancel2, isCancelRequested: isCancelRequested2 };
+    return handle;
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
@@ -13121,9 +13440,129 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   }
   function makeNote(text2, kind = "plain") {
     const n = document.createElement("div");
-    n.className = kind === "warn" ? "kus-lp__note--warn" : "kus-lp__note";
+    n.className = kind === "warn" ? "kus-lp__note--warn" : kind === "help" ? "kus-lp__note kus-lp__note--help" : "kus-lp__note";
     n.textContent = text2;
     return n;
+  }
+  function attachCardHelp(scope) {
+    const cards = Array.from(scope.querySelectorAll(".kus-lp__card"));
+    if (scope instanceof HTMLElement && scope.classList.contains("kus-lp__card")) cards.unshift(scope);
+    for (const card of cards) {
+      const notes = Array.from(card.querySelectorAll(".kus-lp__note--help")).filter((note) => note.closest(".kus-lp__card") === card);
+      if (!notes.length) continue;
+      const head = card.querySelector(":scope > .kus-lp__card-head");
+      if (!head) continue;
+      let pop = card.querySelector(":scope > .kus-lp__help-pop");
+      let btn = head.querySelector(".kus-lp__help-btn");
+      if (!pop) {
+        pop = document.createElement("div");
+        pop.className = "kus-lp__help-pop";
+        pop.hidden = true;
+        pop.setAttribute("role", "note");
+        head.insertAdjacentElement("afterend", pop);
+      }
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "kus-lp__help-btn";
+        btn.textContent = "?";
+        const titleEl = head.querySelector(".kus-lp__card-title");
+        const title = titleEl ? Array.from(titleEl.childNodes).filter((node) => !(node instanceof HTMLElement && node.classList.contains("kus-lp__card-num"))).map((node) => node.textContent || "").join("").trim() : "";
+        btn.setAttribute("aria-label", `${title ? `「${title}」の` : ""}説明を表示`);
+        btn.title = "説明を表示";
+        btn.setAttribute("aria-expanded", "false");
+        const popEl = pop;
+        const setOpen = (next) => {
+          popEl.hidden = !next;
+          btn.setAttribute("aria-expanded", String(next));
+          btn.classList.toggle("kus-lp__help-btn--open", next);
+        };
+        btn.addEventListener("click", () => setOpen(popEl.hidden));
+        const onEsc = (e) => {
+          if (e.key !== "Escape" || popEl.hidden || e.isComposing) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(false);
+          try {
+            btn.focus({ preventScroll: true });
+          } catch {
+          }
+        };
+        btn.addEventListener("keydown", onEsc);
+        const actions = head.querySelector(".kus-lp__card-actions");
+        if (actions) actions.insertAdjacentElement("afterbegin", btn);
+        else head.appendChild(btn);
+      }
+      for (const note of notes) {
+        note.classList.remove("kus-lp__note--help");
+        note.classList.add("kus-lp__help-item");
+        pop.appendChild(note);
+      }
+    }
+  }
+  function makeDialog(opts) {
+    const dialog = document.createElement("dialog");
+    dialog.className = `kus-lp__dialog${opts.wide ? " kus-lp__dialog--wide" : ""}`;
+    if (opts.id) dialog.id = opts.id;
+    const titleId = `${opts.id || `kus-dialog-${Math.random().toString(36).slice(2, 8)}`}-title`;
+    dialog.setAttribute("aria-labelledby", titleId);
+    const head = document.createElement("div");
+    head.className = "kus-lp__dialog-head";
+    const title = document.createElement("h2");
+    title.className = "kus-lp__dialog-title";
+    title.id = titleId;
+    title.textContent = opts.title;
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "kus-lp__dialog-close";
+    closeBtn.textContent = "閉じる";
+    closeBtn.setAttribute("aria-label", `${opts.title}を閉じる`);
+    head.append(title, closeBtn);
+    const body = document.createElement("div");
+    body.className = "kus-lp__dialog-body";
+    const foot = document.createElement("div");
+    foot.className = "kus-lp__dialog-foot";
+    const doneBtn = document.createElement("button");
+    doneBtn.type = "button";
+    doneBtn.className = "kus-lp__btn kus-lp__btn--sub";
+    doneBtn.textContent = "閉じる";
+    foot.appendChild(doneBtn);
+    dialog.append(head, body, foot);
+    let opener = null;
+    function close() {
+      if (!dialog.open) return;
+      dialog.close();
+    }
+    function open() {
+      if (dialog.open) return;
+      opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+      const first = body.querySelector("input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled])");
+      try {
+        (first || closeBtn).focus({ preventScroll: true });
+      } catch {
+      }
+    }
+    closeBtn.addEventListener("click", close);
+    doneBtn.addEventListener("click", close);
+    let pressedOnBackdrop = false;
+    dialog.addEventListener("pointerdown", (e) => {
+      pressedOnBackdrop = e.target === dialog;
+    });
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog && pressedOnBackdrop) close();
+      pressedOnBackdrop = false;
+    });
+    dialog.addEventListener("close", () => {
+      if (opener?.isConnected) {
+        try {
+          opener.focus({ preventScroll: true });
+        } catch {
+        }
+      }
+    });
+    return { dialog, body, open, close };
   }
   function makeDetails(title, opts = {}) {
     const d = document.createElement("details");
@@ -13140,6 +13579,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   async function liteRun(panel, busyMsg, fn, okMsg) {
     panel.setStatus(busyMsg, "busy");
     panel.setBusy(true);
+    const token = activeRun();
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
@@ -13152,11 +13592,36 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       } else if (tone === "busy") {
         panel.setStatus(currentText || "完了", "ok");
       }
+      if (token?.cancelled && !cancelled && panel.status.dataset.tone !== "err") {
+        let base = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        if (/^中止しています/.test(base)) base = okMsg || "処理が終わりました";
+        panel.setStatus(/中止/.test(base) ? base : `${base}（中止を要求したため、途中で止めた項目があるかもしれません。結果を確認してください）`, "warn");
+      }
       return out;
     } catch (e) {
+      if (isRunCancelledError(e)) {
+        panel.setStatus(token && token.writes > 0 ? "中止しました。次のリクエストの前で止めました。途中まで書き込んだ内容は取り消していません。" : "中止しました。次のリクエストの前で止めました（書き込みは行っていません）。", "warn");
+        return void 0;
+      }
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
+      if (e?.partialSuccess === true) {
+        const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
+        panel.setStatus(`${first}${logNote}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
+      if (token?.cancelled && (e?.cancelReport === true || /^中止しました/.test(first))) {
+        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
+      if (token?.cancelled) {
+        panel.setStatus(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? "。詳細は下のログ" : ""}）`, "err");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
       panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
       if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
@@ -13169,7 +13634,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
-.kus-wf .kus-lp__badge-row{display:none}
+.kus-wf .kus-lp__badge-row{margin-top:6px}
 .kus-wf .kus-lp__body{padding:0;display:flex;flex-direction:column;overflow:hidden;min-height:0;background:#f5f7fa}
 .kus-wf .kus-lp__hint{margin:0;padding:10px 22px;border-radius:0;flex-shrink:0}
 .kus-wf [hidden]{display:none!important}
@@ -13184,29 +13649,45 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 .kus-wf .kus-lp__note{overflow-wrap:anywhere}
 .kus-wf :is(button,input,select,textarea,summary):focus-visible,.kus-wf-nav button:focus-visible{outline:3px solid #2563eb;outline-offset:3px}
 .kus-wf-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px 22px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
-.kus-wf-nav button{font-family:inherit;font-size:12px;font-weight:600;line-height:1.4;border:1px solid #e2e8f0;padding:10px;border-radius:9px;background:#fff;color:#475569;cursor:pointer}
-.kus-wf-nav button[aria-selected=true],.kus-wf-nav button[aria-current=step]{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+.kus-wf-nav button{font-family:inherit;font-size:13.5px;font-weight:600;line-height:1.4;border:2px solid #e2e8f0;padding:9px 10px;border-radius:9px;background:#fff;color:#475569;cursor:pointer;position:relative}
+/* 段階の状態: 現在（濃い青・太字）、済み（緑・左端に印）、これから（灰色） */
+.kus-wf-nav button[aria-selected=true],.kus-wf-nav button[aria-current=step]{background:#1d4ed8;border-color:#1d4ed8;color:#fff;font-weight:700;box-shadow:0 2px 8px rgba(29,78,216,.28)}
+.kus-wf-nav button[data-state=done]{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+.kus-wf-nav button[data-state=done]::before{content:'';position:absolute;left:0;top:0;bottom:0;width:5px;border-radius:7px 0 0 7px;background:#10b981}
+.kus-wf-nav button[data-state=upcoming]{color:#64748b;background:#f8fafc}
 .kus-wf-nav button:disabled{opacity:.5;cursor:not-allowed}
 .kus-wf-canvas{overflow:auto;min-height:0;min-width:0;flex:1;padding:18px 22px;scroll-padding:16px}
 .kus-wf-stage{min-width:0}
-.kus-wf-heading{margin:0 0 4px;font-size:19px;color:#0f172a}
-.kus-wf-intro{margin:0 0 16px;color:#64748b;font-size:12px}
+.kus-wf-heading{margin:0 0 4px;font-size:20px;color:#0f172a}
+.kus-wf-intro{margin:0 0 16px;color:#64748b;font-size:13px}
 .kus-wf-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin-bottom:16px}
-.kus-wf-action{padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:white;cursor:pointer;display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:12px;min-width:0;align-items:start}
+.kus-wf-action{padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:white;cursor:pointer;display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:13px;min-width:0;align-items:start}
 .kus-wf-action:has(input:checked){border-color:#60a5fa;background:#eff6ff}
 .kus-wf-action strong{display:block;color:#0f172a}
 .kus-wf-action small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
-.kus-wf-action em{display:inline-block;font-size:10px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action em{display:inline-block;font-size:12.5px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action--more{grid-template-columns:1fr;text-align:left;font-family:inherit;color:#1d4ed8;border-style:dashed}
+.kus-wf-action--more[aria-pressed=true]{border-style:solid;border-color:#60a5fa;background:#eff6ff}
+.kus-wf-action--more strong{color:#1d4ed8}
+.kus-wf-action--more[aria-pressed=true] strong{color:#0f172a}
+.kus-wf-advanced{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 16px;padding:10px 14px;border:1px dashed #cbd5e1;border-radius:10px;background:#fff}
+.kus-wf-advanced__copy{font-size:13px;color:#475569;min-width:0;flex:1}
+.kus-wf-advanced__btn{flex-shrink:0}
+.kus-wf-dialog-status{flex:1 1 12em;min-width:0;max-height:6em;overflow:auto;align-self:center;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;color:#334155;font-size:13px;line-height:1.5}
+.kus-wf-dialog-status[hidden]{display:none}
+.kus-wf-dialog-status[data-tone=ok]{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+.kus-wf-dialog-status[data-tone=warn]{background:#fffbeb;border-color:#fde68a;color:#92400e}
+.kus-wf-dialog-status[data-tone=err]{background:#fef2f2;border-color:#fecaca;color:#991b1b}
 .kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
 .kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
 .kus-wf-summary>div:last-child{border:0}
-.kus-wf-summary dt{color:#64748b;font-size:12px}
-.kus-wf-summary dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#0f172a;font-size:13px}
-.kus-wf-notice{padding:12px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;margin:14px 0;color:#1e40af;font-size:12px;overflow-wrap:anywhere;white-space:pre-wrap}
+.kus-wf-summary dt{color:#64748b;font-size:13px}
+.kus-wf-summary dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#0f172a;font-size:14px}
+.kus-wf-notice{padding:12px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;margin:14px 0;color:#1e40af;font-size:13px;overflow-wrap:anywhere;white-space:pre-wrap}
 .kus-wf-notice[data-write=true]{border-color:#fed7aa;background:#fff7ed;color:#9a3412}
 .kus-wf-footer{padding:12px 22px;background:#fff;border-top:1px solid #e2e8f0;flex-shrink:0}
 .kus-wf-footer-row{display:flex;align-items:center;gap:12px}
-.kus-wf-footer-copy{flex:1;min-width:0;font-size:12px;color:#475569;overflow-wrap:anywhere}
+.kus-wf-footer-copy{flex:1;min-width:0;font-size:13px;color:#475569;overflow-wrap:anywhere}
 .kus-wf-footer-buttons{display:flex;gap:8px;flex-shrink:0}
 .kus-wf-footer-buttons button{min-height:42px;max-width:320px}
 .kus-wf-footer .kus-lp__status{margin-top:8px}
@@ -13217,9 +13698,9 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
 @media(max-width:720px){
  .kus-wf.kus-lp{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);top:8px;right:8px}
  .kus-wf .kus-lp__hero{padding:12px 16px}
- .kus-wf .kus-lp__hint{display:none}
+ .kus-wf .kus-lp__hint{padding:8px 16px;font-size:12.5px}
  .kus-wf-nav{padding:8px;gap:4px}
- .kus-wf-nav button{padding:9px 3px;font-size:11px}
+ .kus-wf-nav button{padding:9px 3px;font-size:12.5px}
  .kus-wf-canvas{padding:16px}
  .kus-wf .kus-lp__card{padding:12px}
  .kus-wf-actions{grid-template-columns:1fr}
@@ -13288,6 +13769,9 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   var VALID_DENSITIES = new Set(DIFF_COMPARISON_PROFILE_DENSITIES);
   var VALID_LAYOUTS = new Set(DIFF_COMPARISON_PROFILE_LAYOUTS);
   var PROTOTYPE_POLLUTION_KEYS = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+  var DIFF_COMPARISON_PROFILE_NOT_PROFILE_MESSAGE = "比較条件のJSONではありません（設定JSONや差分JSONは「設定JSON読込」で読み込んでください）";
+  var PROFILE_SHAPE_KEYS = ["scopes", "ignoreKeys", "includeSame", "normalizationPresetState", "display"];
+  var FOREIGN_SHAPE_KEYS = ["sections", "apps", "rows", "sourceBundle", "targetBundle"];
   var DEFAULT_DISPLAY = Object.freeze({
     charDiff: true,
     showResultList: true,
@@ -13437,7 +13921,11 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const input = parseInput(raw);
     const kind = ownValue(input, "kind");
     if (kind !== void 0 && kind !== DIFF_COMPARISON_PROFILE_KIND) {
-      throw new DiffComparisonProfileError("比較条件プロファイルの種類が正しくありません");
+      throw new DiffComparisonProfileError(DIFF_COMPARISON_PROFILE_NOT_PROFILE_MESSAGE);
+    }
+    if (kind === void 0) {
+      const looksLikeProfile = PROFILE_SHAPE_KEYS.some((key) => ownValue(input, key) !== void 0) && !FOREIGN_SHAPE_KEYS.some((key) => ownValue(input, key) !== void 0);
+      if (!looksLikeProfile) throw new DiffComparisonProfileError(DIFF_COMPARISON_PROFILE_NOT_PROFILE_MESSAGE);
     }
     const version = ownValue(input, "version");
     if (version !== void 0 && Number(version) !== DIFF_COMPARISON_PROFILE_VERSION) {
@@ -19032,18 +19520,42 @@ ${item.target}` : item.target;
     }
     return source || target || shortBusinessName(safeLabel(item.label, index)) || `比較_${index + 1}`;
   }
+  function sideIdentityToken(context, side) {
+    let bundle;
+    try {
+      bundle = side === "source" ? context.sourceBundle : context.targetBundle;
+    } catch {
+      return "";
+    }
+    if (!bundle || typeof bundle !== "object") return "";
+    try {
+      const appId = bundle.appId == null ? "" : normalizeFilenameText(String(bundle.appId)).replace(/\s+/g, "");
+      if (!appId) return "";
+      const guestId = bundle.guestId == null ? "" : normalizeFilenameText(String(bundle.guestId)).replace(/\s+/g, "");
+      return `${guestId ? `G${guestId}-` : ""}App${appId}${bundle.preview ? "-preview" : ""}`;
+    } catch {
+      return "";
+    }
+  }
+  function workbookIdentitySuffix(item) {
+    const source = sideIdentityToken(item.context, "source");
+    const target = sideIdentityToken(item.context, "target");
+    if (!source && !target) return "";
+    return `_${source || "App不明"}→${target || "App不明"}`;
+  }
   function ensureExtension(value, extension) {
     const withoutExtension = value.toLocaleLowerCase("en-US").endsWith(extension) ? value.slice(0, -extension.length) : value;
     return `${withoutExtension || "出力"}${extension}`;
   }
-  function orderedXlsxEntryName(rawFilename, inputIndex, total) {
+  function orderedXlsxEntryName(rawFilename, inputIndex, total, identitySuffix = "") {
     const prefixWidth = Math.max(3, String(Math.max(1, total)).length);
     const prefix = `${String(inputIndex + 1).padStart(prefixWidth, "0")}_`;
     const normalized = ensureExtension(normalizeFilenameText(rawFilename), XLSX_EXTENSION);
     const stem = normalized.slice(0, -XLSX_EXTENSION.length);
-    const maxStem = MAX_ENTRY_FILENAME_CODE_POINTS - Array.from(prefix).length - XLSX_EXTENSION.length;
+    const suffix = truncateCodePoints(identitySuffix, Math.floor(MAX_ENTRY_FILENAME_CODE_POINTS / 2));
+    const maxStem = MAX_ENTRY_FILENAME_CODE_POINTS - Array.from(prefix).length - Array.from(suffix).length - XLSX_EXTENSION.length;
     const safeStem = truncateCodePoints(stem, Math.max(1, maxStem)).replace(/[. ]+$/g, "") || `比較_${inputIndex + 1}`;
-    return `${prefix}${safeStem}${XLSX_EXTENSION}`;
+    return `${prefix}${safeStem}${suffix}${XLSX_EXTENSION}`;
   }
   function comparisonIncomplete(context) {
     return !!((context.fetchIssues || []).length || (context.partialIssues || []).length || hasIncompleteActualDiffTruncation(context.truncation));
@@ -19292,7 +19804,12 @@ ${item.target}` : item.target;
       try {
         const workbook = buildDiffXlsxExport(item.context);
         const data = new Uint8Array(await workbook.blob.arrayBuffer());
-        const entryName = orderedXlsxEntryName(`${shortWorkbookLabel(item, index)}${XLSX_EXTENSION}`, index, total);
+        const entryName = orderedXlsxEntryName(
+          `${shortWorkbookLabel(item, index)}${XLSX_EXTENSION}`,
+          index,
+          total,
+          workbookIdentitySuffix(item)
+        );
         const candidateEntries = [...zipEntries, { name: entryName, data }];
         const requiredArchiveBytes2 = calculateStoredZipByteLength(candidateEntries);
         if (requiredArchiveBytes2 > maxArchiveBytes) {
@@ -19950,16 +20467,16 @@ ${fence}`;
   var RESULT_CSS = `
 .kus-as__result{margin-top:6px;border:1px solid var(--c-border);border-radius:8px;overflow:hidden;max-height:240px;overflow-y:auto}
 .kus-as__result--empty{display:none}
-.kus-as__head{padding:6px 10px;background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);position:sticky;top:0}
-.kus-as__table{border-collapse:collapse;width:100%;font-size:11.5px}
+.kus-as__head{padding:6px 10px;background:var(--c-surface-2);font-size:12.5px;font-weight:600;color:var(--c-text-2);position:sticky;top:0}
+.kus-as__table{border-collapse:collapse;width:100%;font-size:13px}
 .kus-as__table th,.kus-as__table td{padding:5px 8px;border-bottom:1px solid var(--c-border);text-align:left;vertical-align:top}
-.kus-as__table th{background:var(--c-surface);font-weight:600;color:var(--c-text-2);font-size:11px}
+.kus-as__table th{background:var(--c-surface);font-weight:600;color:var(--c-text-2);font-size:12.5px}
 .kus-as__table tr:last-child td{border-bottom:none}
 .kus-as__id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--c-text-2);white-space:nowrap}
 .kus-as__name{color:var(--c-text);word-break:break-all}
-.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:10.5px;line-height:1.5}
+.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:12px;line-height:1.5}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
-.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:10.5px}
+.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
   function ensureStyles2() {
@@ -20183,6 +20700,9 @@ ${fence}`;
     return details;
   }
 
+  // src/entries/diff-lite-ui.ts
+  init_runControl();
+
   // src/reflect/appReference.ts
   function parseAppReference(text2) {
     const raw = String(text2 || "").trim();
@@ -20198,6 +20718,7 @@ ${fence}`;
   }
 
   // src/diff/batch-comparison.ts
+  init_runControl();
   var DEFAULT_MAX_DIFF_BATCH_PAIRS = 50;
   function text(value) {
     return String(value ?? "").trim();
@@ -20350,6 +20871,10 @@ ${fence}`;
       const pair = pairs[index];
       const sourceKey = buildDiffBatchEndpointKey(pair.source);
       const targetKey = buildDiffBatchEndpointKey(pair.target);
+      if (isCancelRequested()) {
+        for (let rest = index; rest < pairs.length; rest += 1) results.push({ status: "cancelled", pair: pairs[rest], index: rest, started: false });
+        break;
+      }
       onProgress?.(pair, index, pairs.length);
       try {
         const value = await runPair(pair, {
@@ -20363,6 +20888,13 @@ ${fence}`;
         if (value?.targetBundle != null) bundleCache.set(targetKey, value.targetBundle);
         results.push({ status: "fulfilled", pair, index, value });
       } catch (error) {
+        if (isRunCancelledError(error)) {
+          results.push({ status: "cancelled", pair, index, started: true, error });
+          for (let rest = index + 1; rest < pairs.length; rest += 1) {
+            results.push({ status: "cancelled", pair: pairs[rest], index: rest, started: false });
+          }
+          break;
+        }
         results.push({ status: "rejected", pair, index, error });
       }
     }
@@ -20821,21 +21353,21 @@ ${fence}`;
   var VALUE_PREVIEW_MAX_CHARS = 280;
   var RESULT_CSS_ID2 = "kus-diff-lite-result-styles";
   var RESULT_CSS2 = `
-.kus-dl-result{font:13px/1.58 ui-monospace,Menlo,monospace;color:#10253f}
+.kus-dl-result{font:14px/1.58 ui-monospace,Menlo,monospace;color:#10253f}
 .kus-dl-overview{font-family:-apple-system,"Segoe UI",sans-serif;border:1px solid #d8e0ea;border-radius:16px;background:#fff;margin-bottom:12px;overflow:hidden;box-shadow:0 16px 34px -30px rgba(15,37,63,.48)}
 .kus-dl-overview:focus{outline:3px solid #2563eb;outline-offset:2px}
 .kus-dl-overview__direction{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:10px;padding:10px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0}
 .kus-dl-side{min-width:0}
 .kus-dl-side--target{text-align:right}
-.kus-dl-side__role{display:block;color:#64748b;font-size:11px;font-weight:700;letter-spacing:.04em}
-.kus-dl-side__name{display:block;color:#0f172a;font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.kus-dl-side__env{display:block;color:#64748b;font-size:11px}
+.kus-dl-side__role{display:block;color:#64748b;font-size:12.5px;font-weight:700;letter-spacing:.04em}
+.kus-dl-side__name{display:block;color:#0f172a;font-size:13px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-dl-side__env{display:block;color:#64748b;font-size:12.5px}
 .kus-dl-overview__arrow{color:#2563eb;font-size:18px;font-weight:800}
 .kus-dl-verdict{padding:10px 12px;border-bottom:1px solid #e2e8f0;background:#eff6ff;color:#1e3a8a}
 .kus-dl-verdict--same{background:#f0fdf4;color:#166534}
 .kus-dl-verdict--warn{background:#fff7ed;color:#9a3412}
-.kus-dl-verdict strong{display:block;font-size:13px;margin-bottom:2px}
-.kus-dl-verdict span{font-size:11px;line-height:1.55}
+.kus-dl-verdict strong{display:block;font-size:14px;margin-bottom:2px}
+.kus-dl-verdict span{font-size:12.5px;line-height:1.55}
 .kus-dl-metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;padding:10px 12px}
 .kus-dl-metric{appearance:none;position:relative;overflow:hidden;border:1px solid #d8e0ea;border-radius:12px;background:#fff;color:#334155;padding:10px 8px;text-align:center;font:inherit}
 .kus-dl-metric::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:#94a3b8}
@@ -20845,47 +21377,47 @@ ${fence}`;
 .kus-dl-metric[data-kus-dl-type-filter="moved"]::before{background:#7c3aed}
 button.kus-dl-metric{cursor:pointer}
 button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
-.kus-dl-metric__num{display:block;color:#10253f;font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.15}
-.kus-dl-metric__label{display:block;margin-top:3px;font-size:12px;font-weight:700}
-.kus-dl-metric__hint{display:block;color:#64748b;font-size:11px;font-weight:400}
+.kus-dl-metric__num{display:block;color:#10253f;font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.15}
+.kus-dl-metric__label{display:block;margin-top:3px;font-size:13px;font-weight:700}
+.kus-dl-metric__hint{display:block;color:#64748b;font-size:12.5px;font-weight:400}
 .kus-dl-section-nav{display:flex;flex-wrap:wrap;gap:5px;padding:0 12px 10px}
-.kus-dl-section-nav__label{width:100%;color:#64748b;font-size:11px;font-weight:700}
-.kus-dl-section-jump{border:1px solid #cbd5e1;border-radius:999px;background:#fff;color:#334155;padding:3px 8px;font:600 11px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer}
+.kus-dl-section-nav__label{width:100%;color:#64748b;font-size:12.5px;font-weight:700}
+.kus-dl-section-jump{border:1px solid #cbd5e1;border-radius:999px;background:#fff;color:#334155;padding:3px 8px;font:600 12.5px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer}
 .kus-dl-section-jump:hover{border-color:#60a5fa;background:#eff6ff;color:#1d4ed8}
-.kus-dl-alert{margin:0 12px 10px;padding:8px 10px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font:600 11px/1.55 -apple-system,Segoe UI,sans-serif}
-.kus-dl-legend{margin:14px 12px 0;padding:11px 2px 13px;border-top:1px solid #e2e8f0;color:#475569;font:12px/1.7 -apple-system,Segoe UI,sans-serif}
+.kus-dl-alert{margin:0 12px 10px;padding:8px 10px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font:600 12.5px/1.55 -apple-system,Segoe UI,sans-serif}
+.kus-dl-legend{margin:14px 12px 0;padding:11px 2px 13px;border-top:1px solid #e2e8f0;color:#475569;font:13px/1.7 -apple-system,Segoe UI,sans-serif}
 .kus-dl-legend span{display:block}
-.kus-dl-result__summary{margin:0 2px 7px;font-family:-apple-system,Segoe UI,sans-serif;font-size:11px;color:#64748b;display:flex;flex-wrap:wrap;gap:6px 12px}
+.kus-dl-result__summary{margin:0 2px 7px;font-family:-apple-system,Segoe UI,sans-serif;font-size:12.5px;color:#64748b;display:flex;flex-wrap:wrap;gap:6px 12px}
 .kus-dl-sticky{position:sticky;top:-18px;z-index:4;margin:0 0 12px;padding:0;border:1px solid #cbd5e1;border-radius:0 0 12px 12px;background:#fff;box-shadow:0 8px 16px -12px rgba(15,37,63,.55)}
 .kus-dl-contextbar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;border-bottom:1px solid #e2e8f0;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-contextlane{min-width:0;padding:7px 12px;border-left:4px solid #475569;background:#f8fafc}
 .kus-dl-contextlane--after{border-left-color:#2563eb;background:#eff6ff}
-.kus-dl-contextlane__role{display:block;margin-bottom:1px;color:#64748b;font-size:11px;font-weight:900;letter-spacing:.08em}
+.kus-dl-contextlane__role{display:block;margin-bottom:1px;color:#64748b;font-size:12.5px;font-weight:900;letter-spacing:.08em}
 .kus-dl-contextlane--after .kus-dl-contextlane__role{color:#1d4ed8}
-.kus-dl-contextlane__name{display:block;overflow:hidden;color:#0f172a;font-size:11px;font-weight:800;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}
+.kus-dl-contextlane__name{display:block;overflow:hidden;color:#0f172a;font-size:12.5px;font-weight:800;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}
 .kus-dl-progress{align-self:center;min-width:76px;padding:2px 10px;text-align:center;color:#1e3a8a;font-variant-numeric:tabular-nums}
 .kus-dl-progress__numbers{display:flex;align-items:baseline;justify-content:center;gap:3px;line-height:1}
 .kus-dl-progress__current{color:#1d4ed8;font-size:18px;font-weight:900}
-.kus-dl-progress__total{color:#475569;font-size:11px;font-weight:800}
-.kus-dl-progress__label{display:block;margin-top:3px;color:#64748b;font-size:11px;font-weight:800;letter-spacing:.04em}
-.kus-dl-progress--idle .kus-dl-progress__current{color:#64748b;font-size:16px;font-weight:500}
+.kus-dl-progress__total{color:#475569;font-size:12.5px;font-weight:800}
+.kus-dl-progress__label{display:block;margin-top:3px;color:#64748b;font-size:12.5px;font-weight:800;letter-spacing:.04em}
+.kus-dl-progress--idle .kus-dl-progress__current{color:#64748b;font-size:17px;font-weight:500}
 .kus-dl-result__summary strong{color:#0f172a}
 .kus-dl-section{border:1px solid #d8e0ea;border-radius:14px;margin-bottom:12px;overflow:hidden;background:#fff;box-shadow:0 12px 28px -28px rgba(15,37,63,.55)}
-.kus-dl-section>summary{padding:11px 13px;background:linear-gradient(180deg,#fff,#f4f7fa);font:700 13px/1.45 -apple-system,"Segoe UI",sans-serif;cursor:pointer;list-style:none;display:flex;align-items:center;gap:7px}
+.kus-dl-section>summary{padding:11px 13px;background:linear-gradient(180deg,#fff,#f4f7fa);font:700 14px/1.45 -apple-system,"Segoe UI",sans-serif;cursor:pointer;list-style:none;display:flex;align-items:center;gap:7px}
 .kus-dl-section>summary::-webkit-details-marker{display:none}
 .kus-dl-section>summary::before{content:"▸";display:inline-block;margin-right:6px;color:#64748b;transition:transform .15s}
 .kus-dl-section[open]>summary::before{transform:rotate(90deg)}
 .kus-dl-section__heading{display:flex;align-items:baseline;gap:7px;min-width:100px}
 .kus-dl-section__label{color:#0f172a;font-weight:800}
-.kus-dl-section__count{color:#64748b;font-size:11px;font-weight:500}
+.kus-dl-section__count{color:#64748b;font-size:12.5px;font-weight:500}
 .kus-dl-section__breakdown{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;margin-left:auto}
-.kus-dl-section__stat{padding:1px 6px;border:1px solid #dbe3ee;border-radius:999px;background:#fff;color:#475569;font-size:11px;font-weight:700;white-space:nowrap}
+.kus-dl-section__stat{padding:1px 6px;border:1px solid #dbe3ee;border-radius:999px;background:#fff;color:#475569;font-size:12.5px;font-weight:700;white-space:nowrap}
 .kus-dl-section__stat--added{border-color:#bbf7d0;color:#166534}
 .kus-dl-section__stat--removed{border-color:#fecaca;color:#991b1b}
 .kus-dl-section__stat--changed{border-color:#bfdbfe;color:#1d4ed8}
 .kus-dl-section__stat--moved{border-color:#fde68a;color:#92400e}
 .kus-dl-section__body{display:grid;gap:9px;padding:10px;background:#f4f7fa}
-.kus-dl-row{display:flex;flex-direction:column;gap:10px;border:1px solid #d8e0ea;border-left:4px solid #64748b;border-radius:12px;padding:14px 16px;background:#fff;font-family:-apple-system,"Segoe UI",sans-serif;font-size:13px;box-shadow:0 10px 24px -24px rgba(15,37,63,.58)}
+.kus-dl-row{display:flex;flex-direction:column;gap:10px;border:1px solid #d8e0ea;border-left:4px solid #64748b;border-radius:12px;padding:14px 16px;background:#fff;font-family:-apple-system,"Segoe UI",sans-serif;font-size:14px;box-shadow:0 10px 24px -24px rgba(15,37,63,.58)}
 .kus-dl-row--added{border-left-color:#15803d}
 .kus-dl-row--removed{border-left-color:#b91c1c}
 .kus-dl-row--changed{border-left-color:#b45309}
@@ -20896,70 +21428,70 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-row__identity{min-width:0}
 .kus-dl-row__headline{display:flex;flex-wrap:wrap;align-items:center;gap:5px 6px}
 .kus-dl-row__title{min-width:150px;flex:1;color:#10253f;font-size:15px;font-weight:800;line-height:1.45}
-.kus-dl-row__subtitle{margin:4px 0 0;color:#64748b;font-size:12px;line-height:1.55}
+.kus-dl-row__subtitle{margin:4px 0 0;color:#64748b;font-size:13px;line-height:1.55}
 .kus-dl-row__context{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:0;color:#64748b}
-.kus-dl-row__chip{display:inline-flex;align-items:center;border-radius:999px;background:#e2e8f0;color:#334155;padding:1px 6px;font-size:11px}
+.kus-dl-row__chip{display:inline-flex;align-items:center;border-radius:999px;background:#e2e8f0;color:#334155;padding:1px 6px;font-size:12.5px}
 .kus-dl-row__footer{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:4px 12px;padding-top:4px;border-top:1px solid #e8edf3}
 .kus-dl-row__footer>.kus-dl-flag{align-self:flex-start;margin:12px 0}
-.kus-dl-row__technical{flex:1 1 110px;min-width:0;margin:0;color:#64748b;font:11px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-row__technical{flex:1 1 110px;min-width:0;margin:0;color:#64748b;font:12.5px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-row__technical>summary{display:inline-flex;align-items:center;gap:4px;min-height:44px;box-sizing:border-box;padding:0 8px 0 0;border-radius:4px;cursor:pointer;list-style:none;color:#64748b;font-weight:700}
 .kus-dl-row__technical>summary::-webkit-details-marker{display:none}
-.kus-dl-row__technical>summary::before{content:'›';font-size:12px;transition:transform .12s}
+.kus-dl-row__technical>summary::before{content:'›';font-size:13px;transition:transform .12s}
 .kus-dl-row__technical[open]>summary::before{transform:rotate(90deg)}
-.kus-dl-row__raw{display:block;margin-top:3px;padding:5px 7px;border:1px dashed #cbd5e1;border-radius:5px;background:#f8fafc;color:#475569;font:11px/1.45 ui-monospace,Menlo,monospace;word-break:break-all}
-.kus-dl-row__cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
-.kus-dl-row__mobile-toggle{display:none;width:100%;margin:0;align-items:center;justify-content:center;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#1d4ed8;padding:7px 9px;font:700 12px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer}
+.kus-dl-row__raw{display:block;margin-top:3px;padding:5px 7px;border:1px dashed #cbd5e1;border-radius:5px;background:#f8fafc;color:#475569;font:12.5px/1.45 ui-monospace,Menlo,monospace;word-break:break-all}
+.kus-dl-row__cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+.kus-dl-row__mobile-toggle{display:none;width:100%;margin:0;align-items:center;justify-content:center;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#1d4ed8;padding:7px 9px;font:700 13px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer}
 .kus-dl-value{position:relative;min-width:0}
 .kus-dl-pre{box-sizing:border-box;width:100%;margin:0;padding:8px 10px;background:#f8fafc;color:#1e293b;border-radius:8px;border:1px solid #dbe3ec;white-space:pre-wrap;word-break:break-word;overflow:auto}
 .kus-dl-value.is-collapsed .kus-dl-pre{max-height:126px;overflow:hidden}
-.kus-dl-value__footer{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;padding:3px 2px 0;color:#64748b;font:11px/1.3 -apple-system,Segoe UI,sans-serif}
-.kus-dl-value__toggle{margin-left:auto;padding:2px 6px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#1d4ed8;font:700 11px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer}
+.kus-dl-value__footer{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;padding:3px 2px 0;color:#64748b;font:12.5px/1.3 -apple-system,Segoe UI,sans-serif}
+.kus-dl-value__toggle{margin-left:auto;padding:2px 6px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#1d4ed8;font:700 12.5px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer}
 .kus-dl-value__toggle:hover{border-color:#60a5fa;background:#eff6ff}
 .kus-dl-pre.del{background:#fef2f2;border-color:#fecaca;color:#7f1d1d}
 .kus-dl-pre.add{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}
 .kus-dl-pre.empty{color:#64748b;font-style:italic}
-.kus-dl-badge{display:inline-block;padding:1px 6px;border-radius:4px;font:600 11px/1.4 -apple-system,Segoe UI,sans-serif;letter-spacing:.02em}
+.kus-dl-badge{display:inline-block;padding:1px 6px;border-radius:4px;font:600 12.5px/1.4 -apple-system,Segoe UI,sans-serif;letter-spacing:.02em}
 .kus-dl-badge--added{background:#dcfce7;color:#166534}
 .kus-dl-badge--removed{background:#fee2e2;color:#991b1b}
 .kus-dl-badge--changed{background:#dbeafe;color:#1d4ed8}
 .kus-dl-badge--moved{background:#fef3c7;color:#92400e}
 .kus-dl-badge--same{background:#e2e8f0;color:#475569}
-.kus-dl-empty{padding:14px;text-align:center;color:#64748b;font-size:12px;background:#f8fafc;border-radius:8px}
-.kus-dl-flag{display:inline-block;padding:1px 6px;border-radius:999px;background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font:500 11px/1.4 -apple-system,Segoe UI,sans-serif}
-.kus-dl-row__action{flex:0 0 auto;align-self:flex-start;min-height:44px;margin-left:auto;border:1px solid transparent;border-radius:8px;background:transparent;color:#64748b;padding:0 10px;font:600 12px/1.4 -apple-system,Segoe UI,sans-serif;text-decoration:underline;text-decoration-color:#cbd5e1;text-underline-offset:3px;cursor:pointer;white-space:nowrap}
+.kus-dl-empty{padding:14px;text-align:center;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px}
+.kus-dl-flag{display:inline-block;padding:1px 6px;border-radius:999px;background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font:500 12.5px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-row__action{flex:0 0 auto;align-self:flex-start;min-height:44px;margin-left:auto;border:1px solid transparent;border-radius:8px;background:transparent;color:#64748b;padding:0 10px;font:600 13px/1.4 -apple-system,Segoe UI,sans-serif;text-decoration:underline;text-decoration-color:#cbd5e1;text-underline-offset:3px;cursor:pointer;white-space:nowrap}
 .kus-dl-row__action:hover,.kus-dl-row__action:focus-visible{border-color:#94a3b8;background:#f1f5f9;color:#10253f;text-decoration-color:transparent}
-.kus-dl-reviewbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:0;padding:6px 8px;border-radius:0 0 11px 11px;background:#fff;font:600 11px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-reviewbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:0;padding:6px 8px;border-radius:0 0 11px 11px;background:#fff;font:600 12.5px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-reviewbar__nav,.kus-dl-reviewbar__tools,.kus-dl-reviewbar__filters{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 .kus-dl-reviewbar__filters{min-width:120px;flex:1}
 .kus-dl-filter-empty{padding:2px 5px;color:#64748b;font-weight:600}
-.kus-dl-filterchip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border:1px solid #93c5fd;border-radius:999px;background:#fff;color:#1e3a8a;font:700 11px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer;max-width:180px}
+.kus-dl-filterchip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border:1px solid #93c5fd;border-radius:999px;background:#fff;color:#1e3a8a;font:700 12.5px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer;max-width:180px}
 .kus-dl-filterchip>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kus-dl-filterchip::after{content:'×';color:#64748b;font-size:11px}
+.kus-dl-filterchip::after{content:'×';color:#64748b;font-size:12.5px}
 .kus-dl-filterchip:hover{border-color:#2563eb;background:#dbeafe}
 .kus-dl-filterchip--all{border-style:dashed;color:#475569}
-.kus-dl-navbtn{min-height:44px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#334155;padding:0 12px;font:700 12px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
+.kus-dl-navbtn{min-height:44px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#334155;padding:0 12px;font:700 13px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
 .kus-dl-navbtn:hover:not(:disabled){border-color:#94a3b8;background:#f1f5f9}
 .kus-dl-navbtn[data-kus-dl-nav="next"]{border-color:#1d4ed8;background:#1d4ed8;color:#fff}
 .kus-dl-navbtn[data-kus-dl-nav="next"]:hover:not(:disabled){border-color:#1e40af;background:#1e40af}
 .kus-dl-navbtn:disabled{border-color:#e2e8f0;background:#f1f5f9;color:#94a3b8;cursor:not-allowed}
-.kus-dl-result--compact .kus-dl-row{gap:5px;padding:6px 7px;font-size:10.5px}
+.kus-dl-result--compact .kus-dl-row{gap:5px;padding:6px 7px;font-size:12px}
 .kus-dl-result--compact .kus-dl-row__context{display:none}
-.kus-dl-result--compact .kus-dl-pre{padding:4px 6px;font-size:10px}
+.kus-dl-result--compact .kus-dl-pre{padding:4px 6px;font-size:11.5px}
 .kus-dl-result--compact .kus-dl-value.is-collapsed .kus-dl-pre{max-height:92px}
 .kus-dl-result--compact .kus-dl-section__body{padding:3px}
 .kus-dl-result--comfortable .kus-dl-row{padding:9px 10px}
 .kus-dl-result--comfortable .kus-dl-value.is-collapsed .kus-dl-pre{max-height:164px}
 .kus-dl-result--stacked .kus-dl-row__cols{grid-template-columns:1fr}
-.kus-dl-result--stacked .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 5px;color:#64748b;font:700 11px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.04em}
+.kus-dl-result--stacked .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 5px;color:#64748b;font:700 12.5px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.04em}
 .kus-dl-result mark.diff-char-del{background:#fca5a5;color:#7f1d1d;border-radius:2px;padding:0 1px;text-decoration:line-through;text-decoration-thickness:2px}
 .kus-dl-result mark.diff-char-add{background:#86efac;color:#14532d;border-radius:2px;padding:0 1px;text-decoration:underline;text-decoration-thickness:2px}
 .kus-dl-target-field{display:flex;flex:1 1 180px;min-width:180px;flex-direction:column}
 .kus-dl-target-field .kus-lp__input{width:100%;box-sizing:border-box}
-.kus-dl-target-name{min-height:1.35em;margin-top:3px;color:#64748b;font-size:11px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-dl-target-name{min-height:1.35em;margin-top:3px;color:#64748b;font-size:12.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-dl-target-name--empty{min-height:0;margin-top:0}
 .kus-dl-target-name:not(.kus-dl-target-name--empty)::before{content:'アプリ名: ';color:#334155;font-weight:600}
 .kus-dl-more{display:flex;justify-content:center;padding:8px 0 2px}
-.kus-dl-multi{width:100%;border-collapse:collapse;font:11px/1.45 -apple-system,Segoe UI,sans-serif}
+.kus-dl-multi{width:100%;border-collapse:collapse;font:12.5px/1.45 -apple-system,Segoe UI,sans-serif}
 .kus-dl-table-scroll{box-sizing:border-box;width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;-webkit-overflow-scrolling:touch}
 .kus-dl-table-scroll:focus-visible{outline:3px solid #2563eb;outline-offset:2px}
 .kus-dl-table-scroll>.kus-dl-multi{min-width:720px}
@@ -20967,7 +21499,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-multi caption{text-align:left;color:#475569;font-weight:700;padding:0 0 6px}
 .kus-dl-multi th,.kus-dl-multi td{padding:6px 7px;border-bottom:1px solid #e2e8f0;text-align:right;vertical-align:top}
 .kus-dl-multi th:first-child,.kus-dl-multi td:first-child{text-align:left}
-.kus-dl-multi thead th{position:sticky;top:0;background:#f8fafc;color:#475569;font-size:11px}
+.kus-dl-multi thead th{position:sticky;top:0;background:#f8fafc;color:#475569;font-size:12.5px}
 .kus-dl-multi__warn{color:#9a3412;font-weight:700}
 .kus-dl-multi__ok{color:#166534;font-weight:700}
 .kus-dl-multi--pairs th:nth-child(2),.kus-dl-multi--pairs td:nth-child(2),.kus-dl-multi--pairs th:nth-child(3),.kus-dl-multi--pairs td:nth-child(3),.kus-dl-multi--pairs th:nth-child(5),.kus-dl-multi--pairs td:nth-child(5),.kus-dl-multi--pairs th:nth-child(6),.kus-dl-multi--pairs td:nth-child(6){text-align:left}
@@ -20975,95 +21507,97 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-pair-breakdown strong,.kus-dl-pair-breakdown small{display:block}
 .kus-dl-pair-breakdown small{margin-top:2px;color:#64748b;white-space:nowrap}
 .kus-dl-pair-save{display:flex;gap:4px;justify-content:flex-end}
-.kus-dl-pair-save .kus-lp__btn{min-height:36px!important;padding:5px 7px!important;font-size:10.5px}
+.kus-dl-pair-save .kus-lp__btn{min-height:36px!important;padding:5px 7px!important;font-size:12px}
 .kus-dl-batch-save{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-radius:11px;background:#eff6ff;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-batch-save__text{min-width:0;color:#1e3a8a}
 .kus-dl-batch-save__text strong,.kus-dl-batch-save__text small{display:block}
-.kus-dl-batch-save__text strong{color:#10253f;font-size:13px}
-.kus-dl-batch-save__text small{margin-top:2px;font-size:11px;line-height:1.45}
+.kus-dl-batch-save__text strong{color:#10253f;font-size:14px}
+.kus-dl-batch-save__text small{margin-top:2px;font-size:12.5px;line-height:1.45}
 .kus-dl-batch-save .kus-lp__btn{flex:0 0 auto;min-width:250px}
 
 /* Diff Lite only: human-first review workspace. Shared litePanelTheme is intentionally untouched. */
 #kus-diff-lite.kus-lp{width:min(1000px,calc(100vw - 24px));max-height:min(96vh,1040px);top:max(8px,2vh);right:max(8px,1vw);border-radius:18px;background:#f4f7fa;box-shadow:0 28px 80px -32px rgba(15,37,63,.52)}
 #kus-diff-lite .kus-lp__hero{position:relative;padding:17px 22px;background:linear-gradient(135deg,#0f2742 0%,#173b63 72%,#24517f 100%)}
 #kus-diff-lite .kus-lp__hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:linear-gradient(90deg,#60a5fa,#22d3ee,#818cf8)}
-#kus-diff-lite .kus-lp__badge-row{display:none}
+#kus-diff-lite .kus-lp__badge-row{margin-top:6px}
 #kus-diff-lite .kus-lp__body{padding:18px 20px 22px}
 #kus-diff-lite [hidden]{display:none!important}
 #kus-diff-lite .kus-lp__hint{margin-bottom:16px;padding:0 2px;border:0;background:transparent;color:#475569}
 #kus-diff-lite button,#kus-diff-lite input:not([type="checkbox"]):not([type="file"]),#kus-diff-lite select{min-height:44px}
-#kus-diff-lite input[type="file"]{min-height:44px;padding:4px 0;box-sizing:border-box;color:#475569;font-size:12px}
-#kus-diff-lite input[type="file"]::file-selector-button{min-height:36px;margin-right:12px;padding:0 14px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#334155;font:700 12px/1 -apple-system,Segoe UI,sans-serif;cursor:pointer}
+#kus-diff-lite input[type="file"]{min-height:44px;padding:4px 0;box-sizing:border-box;color:#475569;font-size:13px}
+#kus-diff-lite input[type="file"]::file-selector-button{min-height:36px;margin-right:12px;padding:0 14px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#334155;font:700 13px/1 -apple-system,Segoe UI,sans-serif;cursor:pointer}
 #kus-diff-lite input[type="file"]::file-selector-button:hover{border-color:#94a3b8;background:#f1f5f9}
 #kus-diff-lite .kus-lp__check{min-height:44px}
 #kus-diff-lite .kus-lp__details>summary{min-height:44px;box-sizing:border-box}
 #kus-diff-lite button:focus-visible,#kus-diff-lite input:focus-visible,#kus-diff-lite select:focus-visible,#kus-diff-lite textarea:focus-visible,#kus-diff-lite summary:focus-visible{outline:3px solid #2563eb;outline-offset:2px}
 .kus-dl-workflow{display:grid;gap:16px}
 #kus-diff-lite .kus-wf-jump{gap:8px;margin:0;padding:0;border:0;background:transparent}
-#kus-diff-lite .kus-wf-jump button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 10px;border:1px solid #d8e0ea;border-radius:10px;background:#fff;color:#334155;font-size:12px;font-weight:700}
+#kus-diff-lite .kus-wf-jump button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 10px;border:1px solid #d8e0ea;border-radius:10px;background:#fff;color:#334155;font-size:13px;font-weight:700}
 #kus-diff-lite .kus-wf-jump button:hover{border-color:#93c5fd;background:#eff6ff;color:#1e3a8a}
-.kus-dl-jump__num{display:inline-flex;flex:0 0 22px;width:22px;height:22px;align-items:center;justify-content:center;border-radius:50%;background:#1d4ed8;color:#fff;font-size:11px;font-weight:800;line-height:1}
+.kus-dl-jump__num{display:inline-flex;flex:0 0 22px;width:22px;height:22px;align-items:center;justify-content:center;border-radius:50%;background:#1d4ed8;color:#fff;font-size:12.5px;font-weight:800;line-height:1}
 .kus-dl-step{min-width:0;padding:20px;border:1px solid #d8e0ea;border-radius:16px;background:#fff;box-shadow:0 16px 36px -32px rgba(15,37,63,.62)}
 .kus-dl-step__header{display:flex;align-items:flex-start;gap:11px;margin:0 0 15px;padding:0 0 13px;border-bottom:1px solid #e2e8f0;font-family:-apple-system,Segoe UI,sans-serif}
-.kus-dl-step__number{display:inline-flex;flex:0 0 30px;width:30px;height:30px;align-items:center;justify-content:center;border-radius:10px;background:linear-gradient(145deg,#16395f,#2563eb);color:#fff;font-size:12px;font-weight:800;box-shadow:0 6px 14px -8px rgba(37,99,235,.8)}
-.kus-dl-step__header h2{margin:0;color:#10253f;font-size:16px;line-height:1.35}
-.kus-dl-step__header p{margin:3px 0 0;color:#64748b;font-size:11.5px;line-height:1.5}
-.kus-dl-step__empty{margin:0;padding:18px;border:1px dashed #cbd5e1;border-radius:9px;background:#f8fafc;color:#64748b;text-align:center;font-size:12px}
+.kus-dl-step__number{display:inline-flex;flex:0 0 30px;width:30px;height:30px;align-items:center;justify-content:center;border-radius:10px;background:linear-gradient(145deg,#16395f,#2563eb);color:#fff;font-size:13px;font-weight:800;box-shadow:0 6px 14px -8px rgba(37,99,235,.8)}
+.kus-dl-step__header h2{margin:0;color:#10253f;font-size:17px;line-height:1.35}
+.kus-dl-step__header p{margin:3px 0 0;color:#64748b;font-size:13px;line-height:1.5}
+.kus-dl-step__empty{margin:0;padding:18px;border:1px dashed #cbd5e1;border-radius:9px;background:#f8fafc;color:#64748b;text-align:center;font-size:13px}
 .kus-dl-step>.kus-lp__card,.kus-dl-disclosure__body>.kus-lp__card{margin:0;border:0;box-shadow:none;background:transparent;padding:0}
 .kus-dl-target-card>.kus-lp__card-head,.kus-dl-filter-disclosure .kus-lp__card-head,.kus-dl-output-disclosure .kus-lp__card-head,.kus-dl-step[data-kus-dl-step="review"]>.kus-lp__card>.kus-lp__card-head{display:none}
+.kus-dl-output-disclosure .kus-lp__card-head:has(.kus-lp__help-btn){display:flex;justify-content:flex-end;margin:0 0 8px;padding:0;border:0}
+.kus-dl-output-disclosure .kus-lp__card-title{display:none}
 .kus-dl-mode{display:inline-flex;gap:4px;margin:0 0 12px;padding:3px;border:1px solid #cbd5e1;border-radius:10px;background:#f1f5f9}
 .kus-dl-mode .kus-lp__btn{min-width:118px;border-color:transparent;background:transparent;box-shadow:none;color:#475569}
 .kus-dl-mode .kus-lp__btn.is-active{background:#fff;border-color:#cbd5e1;color:#10253f;box-shadow:0 1px 2px rgba(15,23,42,.08)}
 .kus-dl-pair-editor{display:grid;gap:12px}
 .kus-dl-pair-editor__intro{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:8px;padding:11px 13px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;color:#1e3a8a;font-family:-apple-system,Segoe UI,sans-serif}
-.kus-dl-pair-editor__intro strong{display:block;color:#10253f;font-size:13px}
-.kus-dl-pair-editor__intro span{display:block;margin-top:2px;color:#475569;font-size:11px;line-height:1.5}
-.kus-dl-pair-count{flex:0 0 auto;padding:3px 8px;border:1px solid #bfdbfe;border-radius:999px;background:#fff;color:#1e3a8a;font-size:11px;font-weight:800;font-variant-numeric:tabular-nums}
+.kus-dl-pair-editor__intro strong{display:block;color:#10253f;font-size:14px}
+.kus-dl-pair-editor__intro span{display:block;margin-top:2px;color:#475569;font-size:12.5px;line-height:1.5}
+.kus-dl-pair-count{flex:0 0 auto;padding:3px 8px;border:1px solid #bfdbfe;border-radius:999px;background:#fff;color:#1e3a8a;font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums}
 .kus-dl-pair-list{display:grid;gap:10px}
 .kus-dl-pair-row{position:relative;display:grid;grid-template-columns:34px minmax(0,1fr) 38px minmax(0,1fr) minmax(84px,auto);gap:9px;align-items:stretch;padding:12px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;font-family:-apple-system,Segoe UI,sans-serif;box-shadow:0 12px 28px -28px rgba(15,37,63,.7)}
 .kus-dl-pair-row.is-invalid{border-color:#f59e0b;background:#fffbeb;box-shadow:0 0 0 2px rgba(245,158,11,.12)}
-.kus-dl-pair-row__number{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:9px;background:#e2e8f0;color:#334155;font-size:12px;font-weight:900;font-variant-numeric:tabular-nums}
+.kus-dl-pair-row__number{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:9px;background:#e2e8f0;color:#334155;font-size:13px;font-weight:900;font-variant-numeric:tabular-nums}
 .kus-dl-pair-side{min-width:0;padding:10px;border:1px solid #d8e0ea;border-left:4px solid #475569;border-radius:10px;background:#f8fafc}
 .kus-dl-pair-side--target{border-left-color:#2563eb;background:#eff6ff}
-.kus-dl-pair-side__role{display:block;margin:0 0 7px;color:#475569;font-size:11px;font-weight:850;letter-spacing:.05em}
+.kus-dl-pair-side__role{display:block;margin:0 0 7px;color:#475569;font-size:12.5px;font-weight:850;letter-spacing:.05em}
 .kus-dl-pair-side__fields{display:grid;grid-template-columns:minmax(125px,1fr) minmax(82px,.55fr);gap:7px;align-items:start}
 .kus-dl-pair-side__fields .kus-dl-target-field{min-width:0}
 .kus-dl-pair-side__fields .kus-lp__input{width:100%;box-sizing:border-box}
-.kus-dl-pair-field-label{display:block;margin:0 0 4px;color:#475569;font-size:10.5px;font-weight:750;line-height:1.35}
+.kus-dl-pair-field-label{display:block;margin:0 0 4px;color:#475569;font-size:12px;font-weight:750;line-height:1.35}
 .kus-dl-pair-guest-field{min-width:0}
 .kus-dl-pair-side__preview{grid-column:1/-1;min-height:34px!important}
-.kus-dl-pair-arrow{display:flex;align-items:center;justify-content:center;color:#2563eb;font-size:20px;font-weight:900}
+.kus-dl-pair-arrow{display:flex;align-items:center;justify-content:center;color:#2563eb;font-size:22px;font-weight:900}
 .kus-dl-pair-actions{display:flex;flex-direction:column;gap:5px;justify-content:center}
-.kus-dl-pair-actions .kus-lp__btn{width:100%;min-height:36px!important;padding:6px 8px!important;font-size:11px}
-.kus-dl-pair-row__error{grid-column:2/-1;margin:0;padding:7px 9px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font-size:11px;font-weight:700;line-height:1.5}
-.kus-dl-pair-row__match{grid-column:2/-1;margin:0;padding:6px 9px;border:1px solid #bfdbfe;border-radius:7px;background:#eff6ff;color:#1e3a8a;font-size:11px;font-weight:700;line-height:1.5}
-.kus-dl-pair-side__file{display:block;margin:8px 0 0;padding:6px 8px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#475569;font-size:10.5px;line-height:1.45;overflow-wrap:anywhere}
+.kus-dl-pair-actions .kus-lp__btn{width:100%;min-height:36px!important;padding:6px 8px!important;font-size:12.5px}
+.kus-dl-pair-row__error{grid-column:2/-1;margin:0;padding:7px 9px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font-size:12.5px;font-weight:700;line-height:1.5}
+.kus-dl-pair-row__match{grid-column:2/-1;margin:0;padding:6px 9px;border:1px solid #bfdbfe;border-radius:7px;background:#eff6ff;color:#1e3a8a;font-size:12.5px;font-weight:700;line-height:1.5}
+.kus-dl-pair-side__file{display:block;margin:8px 0 0;padding:6px 8px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#475569;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
 .kus-dl-pair-toolbar{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
 .kus-dl-pair-folder{display:grid;gap:10px;padding:13px;border:1px solid #93c5fd;border-radius:12px;background:#f8fbff;font-family:-apple-system,Segoe UI,sans-serif}
-.kus-dl-pair-folder__head strong{display:block;color:#10253f;font-size:13px}
-.kus-dl-pair-folder__head span{display:block;margin-top:3px;color:#475569;font-size:11px;line-height:1.55}
+.kus-dl-pair-folder__head strong{display:block;color:#10253f;font-size:14px}
+.kus-dl-pair-folder__head span{display:block;margin-top:3px;color:#475569;font-size:12.5px;line-height:1.55}
 .kus-dl-pair-folder__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
 .kus-dl-pair-folder__side{min-width:0;padding:10px;border:1px solid #cbd5e1;border-left:4px solid #475569;border-radius:9px;background:#fff}
 .kus-dl-pair-folder__side--target{border-left-color:#2563eb;background:#eff6ff}
-.kus-dl-pair-folder__side strong{display:block;margin-bottom:7px;color:#334155;font-size:11px}
+.kus-dl-pair-folder__side strong{display:block;margin-bottom:7px;color:#334155;font-size:12.5px}
 .kus-dl-pair-folder__actions{display:flex;flex-wrap:wrap;gap:6px}
-.kus-dl-pair-folder__summary{margin:7px 0 0;color:#64748b;font-size:10.5px;line-height:1.5;overflow-wrap:anywhere}
-.kus-dl-pair-folder__error{margin:0;padding:8px 10px;border:1px solid #fecaca;border-radius:8px;background:#fef2f2;color:#991b1b;font-size:10.5px;font-weight:700;line-height:1.5;overflow-wrap:anywhere}
+.kus-dl-pair-folder__summary{margin:7px 0 0;color:#64748b;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.kus-dl-pair-folder__error{margin:0;padding:8px 10px;border:1px solid #fecaca;border-radius:8px;background:#fef2f2;color:#991b1b;font-size:12px;font-weight:700;line-height:1.5;overflow-wrap:anywhere}
 .kus-dl-pair-folder__mapping{border:1px solid #cbd5e1;border-radius:9px;background:#fff;overflow:hidden}
 .kus-dl-pair-folder__mapping-scroll{max-width:100%;overflow-x:auto}
-.kus-dl-pair-folder__mapping table{width:100%;min-width:700px;border-collapse:collapse;font-size:10.5px}
+.kus-dl-pair-folder__mapping table{width:100%;min-width:700px;border-collapse:collapse;font-size:12px}
 .kus-dl-pair-folder__mapping th,.kus-dl-pair-folder__mapping td{padding:7px 8px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:middle}
 .kus-dl-pair-folder__mapping th{background:#f1f5f9;color:#475569;font-weight:800}
 .kus-dl-pair-folder__mapping select{box-sizing:border-box;width:100%;min-height:38px;border:1px solid #94a3b8;border-radius:7px;background:#fff;color:#0f172a}
 .kus-dl-pair-folder__app{display:block;color:#10253f;font-weight:800}
 .kus-dl-pair-folder__meta{display:block;margin-top:2px;color:#64748b;line-height:1.4;overflow-wrap:anywhere}
-.kus-dl-pair-folder__badge{display:inline-flex;padding:3px 6px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:10px;font-weight:850;white-space:nowrap}
+.kus-dl-pair-folder__badge{display:inline-flex;padding:3px 6px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:11.5px;font-weight:850;white-space:nowrap}
 .kus-dl-pair-folder__badge--app-name{background:#dcfce7;color:#166534}
 .kus-dl-pair-folder__badge--app-id,.kus-dl-pair-folder__badge--position{background:#fef3c7;color:#92400e}
 .kus-dl-pair-folder__badge--manual{background:#dbeafe;color:#1e40af}
 .kus-dl-pair-folder__foot{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:7px;padding:9px 10px;background:#f8fafc}
-.kus-dl-pair-folder__review{min-width:0;color:#475569;font-size:11px;font-weight:700;line-height:1.5}
-.kus-dl-pair-folder__unused{margin:0;padding:8px 10px;border-top:1px solid #e2e8f0;color:#9a3412;font-size:10.5px;line-height:1.5}
+.kus-dl-pair-folder__review{min-width:0;color:#475569;font-size:12.5px;font-weight:700;line-height:1.5}
+.kus-dl-pair-folder__unused{margin:0;padding:8px 10px;border-top:1px solid #e2e8f0;color:#9a3412;font-size:12px;line-height:1.5}
 .kus-dl-pair-editor .kus-dl-pair-bulk{margin:0}
 .kus-dl-pair-bulk__body{display:grid;gap:8px;padding:10px;border-top:1px solid #e2e8f0}
 .kus-dl-pair-bulk__body textarea{box-sizing:border-box;width:100%}
@@ -21071,30 +21605,34 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-direction-grid{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:10px}
 .kus-dl-app-card{min-width:0;padding:16px;border:1px solid #d8e0ea;border-left:4px solid #475569;border-radius:14px;background:#f8fafc}
 .kus-dl-app-card--target{border-color:#d8e0ea;border-left-color:#2563eb;background:#eff6ff}
-.kus-dl-app-card__role{margin:0 0 2px;color:#64748b;font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase}
+.kus-dl-app-card__role{margin:0 0 2px;color:#64748b;font-size:12.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase}
 .kus-dl-app-card h3{margin:0;color:#10253f;font-size:14px}
-.kus-dl-app-card__help{margin:3px 0 13px;color:#64748b;font-size:11px}
+.kus-dl-app-card__help{margin:3px 0 13px;color:#64748b;font-size:12.5px}
 .kus-dl-app-card .kus-lp__row{align-items:flex-start;gap:4px 10px;margin-bottom:0}
-.kus-dl-app-card .kus-lp__label{width:100%;min-width:0;color:#475569;font-size:11px}
+.kus-dl-app-card .kus-lp__label{width:100%;min-width:0;color:#475569;font-size:12.5px}
 .kus-dl-app-card .kus-lp__input{flex:1;min-width:100px;width:auto;box-sizing:border-box}
 .kus-dl-app-card .kus-dl-target-field{min-width:140px}
 .kus-dl-swap{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;align-self:center;justify-self:center;width:auto;min-width:104px;padding:8px 12px!important;white-space:nowrap;line-height:1.3}
-.kus-dl-target-list{display:grid;gap:7px;max-height:220px;margin-top:8px;padding-right:2px;overflow-y:auto}
+.kus-dl-target-list{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;max-height:340px;margin-top:8px;padding-right:2px;overflow-y:auto;background:linear-gradient(#eff6ff 30%,rgba(239,246,255,0)) top/100% 24px no-repeat local,linear-gradient(rgba(239,246,255,0),#eff6ff 70%) bottom/100% 24px no-repeat local,radial-gradient(farthest-side at 50% 0,rgba(15,23,42,.28),rgba(15,23,42,0)) top/100% 9px no-repeat scroll,radial-gradient(farthest-side at 50% 100%,rgba(15,23,42,.28),rgba(15,23,42,0)) bottom/100% 9px no-repeat scroll}
+.kus-dl-target-list-hint{margin:6px 0 0;color:#475569;font-size:12.5px;font-weight:700}
 .kus-dl-multi-controls{margin-top:12px!important;padding-top:10px;border-top:1px solid #e2e8f0}
 .kus-dl-common-exclusion{margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;background:#eff6ff;color:#10253f;font-family:-apple-system,Segoe UI,sans-serif}
-.kus-dl-common-exclusion__heading{margin:0 0 3px;font-size:12px;font-weight:850;letter-spacing:.04em}
-.kus-dl-common-exclusion__description{margin:0 0 4px;color:#334155;font-size:11.5px;line-height:1.55}
-.kus-dl-common-exclusion .kus-lp__check{min-height:40px!important;color:#10253f;font-size:13px;font-weight:750}
-.kus-dl-common-exclusion__note{margin:3px 0 0;color:#475569;font-size:11px;line-height:1.55}
+.kus-dl-common-exclusion__heading{margin:0;font-size:13px;font-weight:850;letter-spacing:.04em}
+.kus-dl-common-exclusion>.kus-lp__card{margin:0;padding:0;border:0;background:transparent}
+.kus-dl-common-exclusion .kus-lp__card-head{margin:0 0 3px;padding:0;border:0}
+.kus-dl-common-exclusion .kus-lp__help-pop{margin:4px 0 6px}
+.kus-dl-common-exclusion .kus-lp__check{min-height:40px!important;color:#10253f;font-size:14px;font-weight:750}
+.kus-dl-details-row{margin:12px 0 0!important;justify-content:flex-end}
+.kus-dl-details-row .kus-lp__btn{min-height:40px}
 .kus-dl-run-row{margin:13px 0 0!important}
 .kus-dl-run-row .kus-lp__btn{width:100%}
 .kus-dl-step>.kus-lp__status{margin:10px 0 0;min-height:44px;box-sizing:border-box}
 .kus-dl-disclosure{margin-top:12px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;overflow:hidden}
 .kus-dl-disclosure>summary{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:44px;box-sizing:border-box;padding:9px 13px;cursor:pointer;list-style:none;color:#10253f;font-weight:750}
 .kus-dl-disclosure>summary::-webkit-details-marker{display:none}
-.kus-dl-disclosure>summary::after{content:'＋';margin-left:auto;color:#64748b;font-size:16px}
+.kus-dl-disclosure>summary::after{content:'＋';margin-left:auto;color:#64748b;font-size:17px}
 .kus-dl-disclosure[open]>summary::after{content:'−'}
-.kus-dl-disclosure>summary small{color:#64748b;font-size:11px;font-weight:500;text-align:right}
+.kus-dl-disclosure>summary small{color:#64748b;font-size:12.5px;font-weight:500;text-align:right}
 .kus-dl-disclosure__body{display:grid;gap:12px;padding:13px;border-top:1px solid #e2e8f0;background:#f8fafc}
 .kus-dl-disclosure__body .kus-lp__details{margin-bottom:0;background:#fff}
 .kus-dl-overview{border-color:#cbd5e1;border-radius:10px;box-shadow:none}
@@ -21103,9 +21641,9 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-verdict{position:relative;padding:12px 14px 12px 18px;border-left:5px solid #2563eb;background:#f8fafc;color:#10253f}
 .kus-dl-verdict--same{border-left-color:#64748b;background:#f8fafc;color:#334155}
 .kus-dl-verdict--warn{border-left-color:#b45309;background:#fffbeb;color:#78350f}
-.kus-dl-verdict__eyebrow{display:block;margin-bottom:2px;color:inherit;font-size:11px!important;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.kus-dl-verdict__eyebrow{display:block;margin-bottom:2px;color:inherit;font-size:12.5px!important;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
 .kus-dl-alert{position:relative;margin:9px 12px 0;padding:9px 10px 9px 32px;border-color:#d6a85c;background:#fffbeb;color:#713f12;font-weight:550}
-.kus-dl-alert::before{content:'!';position:absolute;left:10px;top:9px;display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center;border:1px solid currentColor;border-radius:50%;font-size:9px;font-weight:900}
+.kus-dl-alert::before{content:'!';position:absolute;left:10px;top:9px;display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center;border:1px solid currentColor;border-radius:50%;font-size:11px;font-weight:900}
 .kus-dl-alert[role="note"]{border-color:#cbd5e1;background:#f8fafc;color:#475569}
 .kus-dl-alert[role="note"]::before{content:'i'}
 .kus-dl-metrics{grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:6px;margin:10px 12px;padding:0}
@@ -21130,13 +21668,13 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
 .kus-dl-badge__fact{display:inline-flex;align-items:center;color:#475569;font-weight:650}
 .kus-dl-badge__fact::before{content:'｜';margin-right:4px;color:#94a3b8}
 .kus-dl-flag{border-color:#cbd5e1;background:#f8fafc;color:#475569}
-.kus-dl-value__label{display:block;margin:0 0 4px;color:#475569;font:800 11px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.06em}
+.kus-dl-value__label{display:block;margin:0 0 4px;color:#475569;font:800 12.5px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.06em}
 .kus-dl-presence{grid-column:1/-1;display:grid;grid-template-columns:minmax(150px,.38fr) minmax(0,1fr);gap:10px;align-items:start;padding:10px;border:1px dashed #9fb2c8;border-radius:8px;background:#f8fafc}
 .kus-dl-presence>p{margin:1px 0;color:#334155;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-presence>p strong,.kus-dl-presence>p span{display:block}
-.kus-dl-presence>p strong{color:#10253f;font-size:12px}
-.kus-dl-presence>p span{margin-top:3px;color:#64748b;font-size:11px}
-.kus-dl-row__raw>span{display:block;margin-bottom:2px;color:#64748b;font-family:-apple-system,Segoe UI,sans-serif;font-size:11px;font-weight:700}
+.kus-dl-presence>p strong{color:#10253f;font-size:13px}
+.kus-dl-presence>p span{margin-top:3px;color:#64748b;font-size:12.5px}
+.kus-dl-row__raw>span{display:block;margin-bottom:2px;color:#64748b;font-family:-apple-system,Segoe UI,sans-serif;font-size:12.5px;font-weight:700}
 .kus-dl-conditions strong,.kus-dl-conditions span{display:block}
 .kus-dl-conditions strong{margin-bottom:2px;color:#334155}
 .kus-dl-completion-row{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0 0!important}
@@ -21145,16 +21683,35 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
 .kus-dl-filter-disclosure .kus-lp__card,.kus-dl-output-disclosure .kus-lp__card{padding:0}
 .kus-dl-filter-disclosure .kus-dl-filter-row{display:grid;grid-template-columns:5.5em minmax(0,1fr);align-items:end;gap:6px 14px;margin-bottom:12px}
 .kus-dl-filter-disclosure .kus-dl-filter-row:last-child{margin-bottom:0}
-.kus-dl-filter-row>.kus-lp__label{display:flex;align-items:center;min-width:0;min-height:44px;color:#334155;font-size:12px;font-weight:700}
+.kus-dl-filter-row>.kus-lp__label{display:flex;align-items:center;min-width:0;min-height:44px;color:#334155;font-size:13px;font-weight:700}
 .kus-dl-filter-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;align-items:end;gap:8px 10px;min-width:0}
 .kus-dl-filter-controls--single{grid-template-columns:minmax(0,1fr)}
 .kus-dl-filter-field{display:flex;flex-direction:column;gap:3px;min-width:0}
-.kus-dl-filter-field__cap{color:#64748b;font-size:11px;font-weight:700;line-height:1.3}
+.kus-dl-filter-field__cap{color:#64748b;font-size:12.5px;font-weight:700;line-height:1.3}
 .kus-dl-filter-controls .kus-lp__select,.kus-dl-filter-controls .kus-lp__input{width:100%;min-width:0;box-sizing:border-box}
 .kus-dl-filter-controls .kus-lp__check{white-space:nowrap}
 .kus-dl-filter-controls .kus-lp__btn{justify-self:end}
 .kus-dl-pre:empty{border-style:dashed;border-color:#cbd5e1;background:#f1f5f9;color:#526071;font-style:italic}
 .kus-dl-pre:empty::after{content:'（空）'}
+/* 「?」ボタンは丸いまま小さく保つ（共通の button 最小高 44px で縦長にならないようにする） */
+#kus-diff-lite .kus-lp__help-btn{width:32px;height:32px;min-width:32px;min-height:32px;padding:0}
+/* カード見出しの操作が収まらない幅では、見出しの下へ折り返す（「全選択」などが文字の途中で折れないようにする） */
+#kus-diff-lite .kus-lp__card-head{flex-wrap:wrap}
+#kus-diff-lite .kus-lp__card-title{min-width:0;flex:1 1 auto}
+#kus-diff-lite .kus-lp__card-actions{flex-wrap:wrap}
+#kus-diff-lite .kus-lp__card-actions .kus-lp__btn{white-space:nowrap}
+/* 詳細設定を開いている間は背後のステータスが隠れるため、その内容をポップアップの下端にも映す */
+.kus-dl-dialog-status{flex:1 1 12em;min-width:0;max-height:7em;overflow:auto;align-self:center;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f1f5f9;color:#1e293b;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.kus-dl-dialog-status[hidden]{display:none}
+.kus-dl-dialog-status[data-dialog-tone="ok"]{background:#f0fdf4;border-color:#86efac;color:#166534}
+.kus-dl-dialog-status[data-dialog-tone="warn"]{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+.kus-dl-dialog-status[data-dialog-tone="err"]{background:#fef2f2;border-color:#fca5a5;color:#991b1b}
+/* 狭い画面では、実行中の「処理中 N秒」「中止」「－」「閉じる」がタイトルを押しつぶさないよう、操作を見出しの下へ回す */
+@media(max-width:560px){
+  #kus-diff-lite .kus-lp__hero{flex-wrap:wrap;row-gap:8px}
+  #kus-diff-lite .kus-lp__hero-main{flex:1 1 100%}
+  #kus-diff-lite .kus-lp__hero-actions{flex:1 1 100%;justify-content:flex-end;flex-wrap:wrap}
+}
 @media(max-width:768px){
   #kus-diff-lite.kus-lp{width:calc(100vw - 12px);max-height:calc(100vh - 12px);top:6px;right:6px;border-radius:10px}
   #kus-diff-lite .kus-lp__hero{padding:13px 14px}
@@ -21196,7 +21753,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-pair-folder__mapping tr{display:grid;border:1px solid #cbd5e1;border-radius:9px;background:#fff;overflow:hidden}
   .kus-dl-pair-folder__mapping td{display:grid;grid-template-columns:88px minmax(0,1fr);gap:8px;align-items:center;padding:8px;border-bottom:1px solid #e2e8f0}
   .kus-dl-pair-folder__mapping td:last-child{border-bottom:0}
-  .kus-dl-pair-folder__mapping td::before{content:attr(data-label);color:#64748b;font-size:10px;font-weight:800;line-height:1.35}
+  .kus-dl-pair-folder__mapping td::before{content:attr(data-label);color:#64748b;font-size:11.5px;font-weight:800;line-height:1.35}
   .kus-dl-pair-folder__mapping select{min-width:0}
   .kus-dl-pair-folder__foot{grid-template-columns:1fr}
   .kus-dl-pair-folder__foot .kus-lp__btn{width:100%}
@@ -21212,25 +21769,25 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-row__mobile-toggle{display:inline-flex;min-height:44px}
   .kus-dl-row__title{flex-basis:100%;min-width:0}
   #kus-diff-lite .kus-wf-jump{gap:5px}
-  #kus-diff-lite .kus-wf-jump button{gap:5px;padding:0 4px;font-size:11px}
+  #kus-diff-lite .kus-wf-jump button{gap:5px;padding:0 4px;font-size:12.5px}
   .kus-dl-row__cols{display:none;grid-template-columns:1fr}
   .kus-dl-row__cols.is-expanded{display:grid}
   .kus-dl-contextlane{padding:5px 8px}
   .kus-dl-contextlane--before{grid-column:1;grid-row:1}
   .kus-dl-contextlane--after{grid-column:3;grid-row:1}
-  .kus-dl-contextlane__role{font-size:9px;letter-spacing:.04em}
-  .kus-dl-contextlane__name{font-size:10px}
+  .kus-dl-contextlane__role{font-size:11px;letter-spacing:.04em}
+  .kus-dl-contextlane__name{font-size:11.5px}
   .kus-dl-progress{grid-column:2;grid-row:1;min-width:42px;padding:2px 3px}
   .kus-dl-progress__current{font-size:15px}
-  .kus-dl-progress__total{font-size:9px}
-  .kus-dl-progress__label{margin-top:2px;font-size:9px;letter-spacing:0}
+  .kus-dl-progress__total{font-size:11px}
+  .kus-dl-progress__label{margin-top:2px;font-size:11px;letter-spacing:0}
   .kus-dl-reviewbar{display:grid;grid-template-columns:1fr;padding:4px}
   .kus-dl-reviewbar__nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;gap:5px}
   .kus-dl-reviewbar__nav .kus-dl-navbtn{width:100%;min-width:0}
   .kus-dl-reviewbar__tools,.kus-dl-reviewbar__filters{display:none}
   .kus-dl-section>summary{align-items:flex-start;flex-wrap:wrap}
   .kus-dl-section__breakdown{width:100%;justify-content:flex-start;margin-left:20px}
-  .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 4px;color:#64748b;font:700 11px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.03em}
+  .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 4px;color:#64748b;font:700 12.5px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.03em}
   .kus-dl-value__label+.kus-dl-pre::before{content:none;display:none}
   .kus-dl-table-scroll>.kus-dl-multi{white-space:nowrap}
   .kus-dl-batch-save{align-items:stretch;flex-direction:column}
@@ -21540,7 +22097,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const preHtml = `<span class="kus-dl-value__label">${visibleLabel}</span><pre id="${esc(id)}" class="kus-dl-pre ${className}" aria-label="${esc(label)}" data-side-label="${esc(label)}">${rawHtml ? value : esc(value)}</pre>`;
       if (!isLong) return `<div class="kus-dl-value">${preHtml}</div>`;
       const stateClass = expanded ? "is-expanded" : "is-collapsed";
-      const actionLabel = expanded ? "プレビューに戻す" : "全文を展開";
+      const actionLabel = expanded ? "省略表示に戻す" : "全文を展開";
       return `<div class="kus-dl-value ${stateClass}" data-kus-dl-value-key="${esc(valueKey)}">${preHtml}<div class="kus-dl-value__footer"><span>${lineCount}行 · ${measuredValue.length}文字</span><button type="button" class="kus-dl-value__toggle" data-kus-dl-value-toggle="${esc(valueKey)}" aria-expanded="${expanded ? "true" : "false"}" aria-controls="${esc(id)}">${actionLabel}</button></div></div>`;
     };
     if (row.type === "added") {
@@ -21571,7 +22128,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const appName = extractAppNameFromBundle(bundle);
     const name = appName && appId ? `${appName}（App ${appId}）` : appName || (appId ? `App ${appId}` : fallbackRole);
     const guest = String(bundle?.guestId || "").trim();
-    const environment = `${bundle?.preview ? "プレビュー" : "運用"}${guest ? ` / ゲスト ${guest}` : " / 通常スペース"}`;
+    const environment = `${bundle?.preview ? "プレビュー" : "本番"}${guest ? ` / ゲスト ${guest}` : " / 通常スペース"}`;
     return { name, environment };
   }
   function renderLiteDiffOverviewHtml(cache, options = {}) {
@@ -21640,7 +22197,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         return `${section}（${side}）${files.length ? `: ${files.join("、")}` : ""}`;
       });
       const remainder = partialIssues.length > details.length ? ` / ほか ${partialIssues.length - details.length} 件` : "";
-      alerts.push(`本文サイズまたは形式の制約により ${partialIssues.length} 件を fileKey で比較しました。本文内容は未検証です。${details.join(" / ")}${remainder}`);
+      alerts.push(`本文サイズまたは形式の制約により、${partialIssues.length} 件は本文を比較できず fileKey だけで比較しました（本文内容は未検証です）。${details.join(" / ")}${remainder}`);
     }
     const matchingNoticesData = cache.matchingNotices;
     let matchingNoticesHtml = "";
@@ -21665,7 +22222,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const alertsHtml = alerts.map((message) => `<div class="kus-dl-alert"${alertAttrs}>${esc(message)}</div>`).join("");
     const ignoreCondition = ignoreRuleSummary.total ? `無視ルール ${ignoreRuleSummary.total}件を適用した後の結果です。ルールに一致した設定差分は一覧に含まれません${ignoreRuleSummary.contextualRules ? `（完全パス/パターン ${ignoreRuleSummary.contextualRules}件）` : ""}。` : "無視ルールは適用していません。";
     const normalizationCondition = normalizationLabels.length ? `正規化 ${normalizationLabels.length}件を適用しています（${normalizationLabels.join("、")}）。` : "正規化は適用していません。";
-    return `<section id="kus-dl-overview" class="kus-dl-overview" data-kus-dl-overview tabindex="-1" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "比較完了"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションで絞り込む</span>${sectionButtons}</div>` : "") + matchingNoticesHtml + `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div><div class="kus-dl-legend"><span>「比較先のみ」は追加、「比較元のみ」は削除として検出しています。</span><span>比較方向は上の矢印で確認できます。</span></div></section>`;
+    return `<section id="kus-dl-overview" class="kus-dl-overview" data-kus-dl-overview tabindex="-1" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "取得に問題なし"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションで絞り込む</span>${sectionButtons}</div>` : "") + matchingNoticesHtml + `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div><div class="kus-dl-legend"><span>「比較先のみ」は追加、「比較元のみ」は削除として検出しています。</span><span>比較方向は上の矢印で確認できます。</span></div></section>`;
   }
   function renderRowsHtml(rows, useCharDiff, summary, allFilteredRows = rows, options = {}) {
     if (!rows.length) return `<div class="kus-dl-empty">該当する差分はありません${summary ? ` — ${summary}` : ""}</div>`;
@@ -21767,10 +22324,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const panel = createLitePanel({
       id: "kus-diff-lite",
       title: "差分比較",
-      subtitle: "アプリ設定を1件ずつ、1対多、または複数の1対1ペアで比較し、HTML・Excel・AI向け Markdown で確認",
+      subtitle: "2つのアプリ設定の違いを、1対1・1対多・ペア一括で比較します",
       accent: "diff",
-      badges: [{ label: "Lite" }, { label: "出力対応" }],
-      hint: "HTMLは人が確認するレビュー用、Excelは一覧・共有用、AI向け Markdown は差分の事実をAIへ渡す用途です。1対1比較と1対多比較は完了時にレビュー用HTMLを自動保存します。",
+      badges: [{ label: "読み取り専用", tone: "read" }],
+      hint: "アプリの設定を比べて、違いを一覧にします。複数の比較先や複数のペアもまとめて比較でき、kintone には何も書き込みません。",
       wide: true
     });
     panel.status.setAttribute("role", "status");
@@ -21853,6 +22410,23 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const targetList = document.createElement("div");
     targetList.className = "kus-dl-target-list";
     const targetRows = [{ app: tgtApp, guest: tgtGuest, row: firstTargetRow, name: tgtName, appName: "" }];
+    const targetListHint = document.createElement("p");
+    targetListHint.className = "kus-dl-target-list-hint";
+    targetListHint.hidden = true;
+    const updateTargetListHint = () => {
+      const overflow = !targetList.hidden && targetList.clientHeight > 0 && targetList.scrollHeight > targetList.clientHeight + 1;
+      targetListHint.hidden = !overflow;
+      if (!overflow) {
+        targetListHint.textContent = "";
+        return;
+      }
+      const viewBottom = targetList.getBoundingClientRect().top + targetList.clientHeight;
+      const visibleInList = Array.from(targetList.children).filter((child) => child.getBoundingClientRect().bottom <= viewBottom + 1).length;
+      const shown = Math.min(targetRows.length, 1 + visibleInList);
+      targetListHint.textContent = shown >= targetRows.length ? `比較先 ${targetRows.length} 件をすべて表示中。上にスクロールできます` : `比較先 ${targetRows.length} 件中 ${shown} 件を表示。スクロールできます`;
+    };
+    targetList.addEventListener("scroll", updateTargetListHint, { passive: true });
+    if (typeof ResizeObserver === "function") new ResizeObserver(updateTargetListHint).observe(targetList);
     const relabelTargetRows = () => targetRows.forEach((r, idx) => {
       const label = r.row?.querySelector?.(".kus-lp__label");
       if (label) label.textContent = `比較先 ${idx + 1}`;
@@ -21885,6 +22459,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         const idx = targetRows.indexOf(entry);
         if (idx >= 0) targetRows.splice(idx, 1);
         relabelTargetRows();
+        updateTargetListHint();
         invalidateResultAfterAppSelectionChange();
       });
       app.addEventListener("input", () => {
@@ -21895,6 +22470,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       targetRows.push(entry);
       targetList.appendChild(row);
       attachTargetSplit(entry);
+      updateTargetListHint();
       return entry;
     };
     const adoptDiffAppReference = (appInput, guestInput, sideLabel, clearName, text2 = appInput.value) => {
@@ -21995,7 +22571,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const multiAutoHtml = makeCheck({
       label: "1対多比較完了時にHTMLを自動保存",
       checked: true,
-      help: "オフにすると自動ダウンロードせず、結果表の各行から必要な分だけHTML/Excel/Markdownを保存できます"
+      help: "オフにすると自動では保存しません。結果表の各行から、必要な分だけ HTML・Excel・Markdown を保存できます"
     });
     const multiControls = makeRow([addTargetBtn, copyFirstBtn, multiAutoHtml.label], { label: "比較先を増やす" });
     multiControls.classList.add("kus-dl-multi-controls");
@@ -22009,7 +22585,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           setSourceName(name);
           srcGuest.value = guestId;
           const invalidated = invalidateResultAfterAppSelectionChange();
-          return { message: invalidated ? "比較元を変更したため、前回の結果を無効にしました。再比較してください" : `App ${id} を比較元へ設定しました`, tone: invalidated ? "warn" : "ok" };
+          return { message: invalidated ? "前回の結果を無効にしました（比較元を変更したため）。再比較してください" : `App ${id} を比較元へ設定しました`, tone: invalidated ? "warn" : "ok" };
         } },
         { label: "比較先", apply: (id, name, guestId) => {
           if (diffRunActive) return { message: "比較を実行中です。完了してからアプリを設定してください", tone: "warn" };
@@ -22019,12 +22595,12 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           setTargetName(empty, name);
           empty.guest.value = guestId;
           const invalidated = invalidateResultAfterAppSelectionChange();
-          return { message: invalidated ? "比較先を変更したため、前回の結果を無効にしました。再比較してください" : `App ${id} を比較先へ設定しました`, tone: invalidated ? "warn" : "ok" };
+          return { message: invalidated ? "前回の結果を無効にしました（比較先を変更したため）。再比較してください" : `App ${id} を比較先へ設定しました`, tone: invalidated ? "warn" : "ok" };
         } }
       ]
     });
     cardApp.body.appendChild(singleAppSearch);
-    targetCard.appendChild(targetList);
+    targetCard.append(targetList, targetListHint);
     const MAX_PAIR_ROWS = DEFAULT_MAX_DIFF_BATCH_PAIRS;
     const pairEditor = document.createElement("section");
     pairEditor.className = "kus-dl-pair-editor";
@@ -22032,7 +22608,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     pairEditor.setAttribute("aria-labelledby", "kus-dl-pair-editor-title");
     const pairIntro = document.createElement("div");
     pairIntro.className = "kus-dl-pair-editor__intro";
-    pairIntro.innerHTML = '<div><strong id="kus-dl-pair-editor-title">複数の1対1ペアを登録</strong><span>各行の比較元と比較先を1組として、登録順に比較します。同じ接続先は比較元・比較先で各1回だけ登録できます。共通の比較元から複数先を比べる場合は「1対多比較」を使います。</span></div>';
+    pairIntro.innerHTML = '<div><strong id="kus-dl-pair-editor-title">複数の1対1ペアを登録</strong><span>各行を1組として、登録順に比較します。同じアプリ・環境は比較元・比較先で1回ずつまで登録できます（共通の比較元と複数の比較先を比べるときは「1対多比較」を使います）。</span></div>';
     const pairCount = document.createElement("span");
     pairCount.className = "kus-dl-pair-count";
     pairCount.setAttribute("aria-live", "polite");
@@ -22063,13 +22639,13 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const appField = makeTargetField(app, name);
       const appFieldLabel = document.createElement("span");
       appFieldLabel.className = "kus-dl-pair-field-label";
-      appFieldLabel.textContent = "App ID";
+      appFieldLabel.textContent = "アプリID";
       appField.prepend(appFieldLabel);
       const guestField = document.createElement("div");
       guestField.className = "kus-dl-pair-guest-field";
       const guestFieldLabel = document.createElement("span");
       guestFieldLabel.className = "kus-dl-pair-field-label";
-      guestFieldLabel.textContent = "Guest ID（任意）";
+      guestFieldLabel.textContent = "ゲストスペースID（任意）";
       guestField.append(guestFieldLabel, guest);
       fields.append(appField, guestField, preview.label);
       endpointSide.append(role, fields, folderFile);
@@ -22348,7 +22924,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     pairFolder.setAttribute("aria-labelledby", "kus-dl-pair-folder-title");
     const pairFolderHead = document.createElement("div");
     pairFolderHead.className = "kus-dl-pair-folder__head";
-    pairFolderHead.innerHTML = '<strong id="kus-dl-pair-folder-title">設定フォルダからペアを作成</strong><span>設定一括取得ZIPを展開したフォルダなどを、変更前・変更後の両側で選びます。対応を確認して反映すると、現在のペア表を確認済みの組み合わせで置き換えます。比較にはJSONだけを使い、kintone APIへ接続しません。</span>';
+    pairFolderHead.innerHTML = '<strong id="kus-dl-pair-folder-title">設定フォルダからペアを作成</strong><span>設定一括取得ZIPを展開したフォルダなどを、変更前・変更後の両側で選びます。対応を確認して反映すると現在のペア表を置き換え、比較には設定JSONだけを使います（kintone からは取得しません）。</span>';
     const pairFolderGrid = document.createElement("div");
     pairFolderGrid.className = "kus-dl-pair-folder__grid";
     const makePairFolderSide = (side) => {
@@ -22419,7 +22995,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const pairFolderModeActive = () => !!(pairFolderStates.source || pairFolderStates.target || pairRows.some((entry) => entry.source.folderBundle || entry.target.folderBundle));
     const folderBundleLabel = (item) => {
       const name = item.appName || `App ${item.appId}`;
-      const env = `${item.guestId ? `Guest ${item.guestId}` : "通常"} / ${item.preview ? "プレビュー" : "運用"}`;
+      const env = `${item.guestId ? `ゲスト ${item.guestId}` : "通常スペース"} / ${item.preview ? "プレビュー" : "本番"}`;
       return `${name}（App ${item.appId} / ${env}）`;
     };
     const folderBundleOptionLabel = (item) => `${folderBundleLabel(item)} — ${item.relativePath}`;
@@ -22483,7 +23059,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         const confirmationLabel = selectedTarget ? `${sourceLabel}から${folderBundleLabel(selectedTarget)}への対応を確認` : `${sourceLabel}の対応を確認`;
         const state3 = !row.included ? "対象外" : !row.targetKey ? "比較先未選択" : duplicateTarget ? "比較先が重複" : requiresConfirmation ? `<label><input type="checkbox" data-kus-dl-folder-confirm="${index}" aria-label="${esc(confirmationLabel)}"${row.confirmed ? " checked" : ""}> 対応を確認</label>` : "確認済み";
         const warning = row.included && (!row.targetKey || duplicateTarget || requiresConfirmation && !row.confirmed);
-        return `<tr><td data-label="比較対象"><input type="checkbox" data-kus-dl-folder-include="${index}" aria-label="${esc(`${sourceLabel}を比較対象にする`)}"${row.included ? " checked" : ""}></td><td data-label="比較元（変更前）"><span class="kus-dl-pair-folder__app">${esc(row.source.appName || `App ${row.source.appId}`)}</span><span class="kus-dl-pair-folder__meta">App ${esc(row.source.appId)} / ${esc(row.source.guestId ? `Guest ${row.source.guestId}` : "通常")} / ${row.source.preview ? "プレビュー" : "運用"}<br>${esc(row.source.relativePath)}</span></td><td data-label="対応根拠"><span class="kus-dl-pair-folder__badge kus-dl-pair-folder__badge--${esc(row.matchKind)}">${esc(folderMatchLabel(row.matchKind))}</span></td><td data-label="比較先（変更後）"><select data-kus-dl-folder-target="${index}" aria-label="${esc(`${sourceLabel}の比較先`)}"${row.included ? "" : " disabled"}>${options}</select></td><td data-label="確認状態" class="${warning ? "kus-dl-multi__warn" : ""}">${state3}</td></tr>`;
+        return `<tr><td data-label="比較対象"><input type="checkbox" data-kus-dl-folder-include="${index}" aria-label="${esc(`${sourceLabel}を比較対象にする`)}"${row.included ? " checked" : ""}></td><td data-label="比較元（変更前）"><span class="kus-dl-pair-folder__app">${esc(row.source.appName || `App ${row.source.appId}`)}</span><span class="kus-dl-pair-folder__meta">App ${esc(row.source.appId)} / ${esc(row.source.guestId ? `ゲスト ${row.source.guestId}` : "通常スペース")} / ${row.source.preview ? "プレビュー" : "本番"}<br>${esc(row.source.relativePath)}</span></td><td data-label="対応根拠"><span class="kus-dl-pair-folder__badge kus-dl-pair-folder__badge--${esc(row.matchKind)}">${esc(folderMatchLabel(row.matchKind))}</span></td><td data-label="比較先（変更後）"><select data-kus-dl-folder-target="${index}" aria-label="${esc(`${sourceLabel}の比較先`)}"${row.included ? "" : " disabled"}>${options}</select></td><td data-label="確認状態" class="${warning ? "kus-dl-multi__warn" : ""}">${state3}</td></tr>`;
       }).join("");
       pairFolderMappingTable.innerHTML = `<table><thead><tr><th>対象</th><th>比較元（変更前）</th><th>対応根拠</th><th>比較先（変更後）</th><th>状態</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
       pairFolderUnused.hidden = !unusedTargets.length;
@@ -22527,25 +23103,25 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       pairFolderApplied = false;
     };
     const refreshPairFolderControlState = () => {
-      const active = pairFolderModeActive();
+      const active2 = pairFolderModeActive();
       const loading = pairFolderLoadActive();
-      addPairBtn.disabled = active;
-      pairBulkTextarea.disabled = active;
-      pairBulkApply.disabled = active;
+      addPairBtn.disabled = active2;
+      pairBulkTextarea.disabled = active2;
+      pairBulkApply.disabled = active2;
       runBtn.disabled = loading || diffRunActive || profileIoActive || jsonImporter.isLoading();
       runAllBtn.disabled = loading || diffRunActive || profileIoActive || jsonImporter.isLoading();
       runPairsBtn.disabled = loading || diffRunActive || profileIoActive || jsonImporter.isLoading();
       pairRows.forEach((entry) => {
-        entry.duplicate.disabled = active;
-        entry.swap.disabled = active;
-        entry.remove.disabled = active || pairRows.length === 1;
-        entry.duplicate.title = active ? "フォルダ比較中は対応確認表からペアを作り直してください" : "";
-        entry.swap.title = active ? "フォルダ比較中は比較元・比較先フォルダを入れ替えてください" : "";
-        entry.remove.title = active ? "フォルダ比較中は対応確認表で対象チェックを外して再反映してください" : "";
+        entry.duplicate.disabled = active2;
+        entry.swap.disabled = active2;
+        entry.remove.disabled = active2 || pairRows.length === 1;
+        entry.duplicate.title = active2 ? "フォルダ比較中は対応確認表からペアを作り直してください" : "";
+        entry.swap.title = active2 ? "フォルダ比較中は比較元・比較先フォルダを入れ替えてください" : "";
+        entry.remove.title = active2 ? "フォルダ比較中は対応確認表で対象チェックを外して再反映してください" : "";
         [entry.source, entry.target].forEach((endpoint) => {
-          endpoint.app.readOnly = active || !!endpoint.folderBundle;
-          endpoint.guest.readOnly = active || !!endpoint.folderBundle;
-          endpoint.preview.checkbox.disabled = active || !!endpoint.folderBundle;
+          endpoint.app.readOnly = active2 || !!endpoint.folderBundle;
+          endpoint.guest.readOnly = active2 || !!endpoint.folderBundle;
+          endpoint.preview.checkbox.disabled = active2 || !!endpoint.folderBundle;
         });
       });
     };
@@ -22562,13 +23138,25 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const totalJsonBytes = jsonFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
       if (files.length > 2e3 || jsonFiles.length > 500) throw new Error("選択したフォルダのファイル数が多すぎます（全体2,000件、JSON 500件まで）");
       if (totalJsonBytes > 128 * 1024 * 1024) throw new Error("選択したフォルダのJSON合計サイズが128MBを超えています");
-      let entries;
+      const entries = [];
+      const sideLabel = side === "source" ? "比較元" : "比較先";
+      let jsonRead = 0;
       try {
-        entries = await Promise.all(files.map(async (file) => ({
-          name: file.name,
-          relativePath: file.webkitRelativePath || file.name,
-          text: /\.json$/i.test(file.name) ? await file.text() : ""
-        })));
+        for (const file of files) {
+          if (isCancelRequested()) {
+            const error = new Error(`中止しました。${sideLabel}フォルダの読み込みを JSON ${jsonRead}/${jsonFiles.length}件目で止めました。${pairFolderStates[side] ? "フォルダの選択は前の状態のままです" : "フォルダは未選択のままです"}`);
+            error.cancelReport = true;
+            throw error;
+          }
+          const isJson = /\.json$/i.test(file.name);
+          entries.push({
+            name: file.name,
+            relativePath: file.webkitRelativePath || file.name,
+            text: isJson ? await file.text() : ""
+          });
+          if (isJson) jsonRead += 1;
+          if (generation !== pairFolderLoadGeneration[side]) return;
+        }
       } catch (error) {
         if (generation !== pairFolderLoadGeneration[side]) return;
         throw error;
@@ -22616,8 +23204,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           try {
             await loadPairFolder(side, ui3.input, invalidatedBeforeLoad);
           } catch (error) {
-            pairFolderAlert.textContent = error instanceof Error ? error.message : String(error);
-            pairFolderAlert.hidden = false;
+            if (error?.cancelReport !== true) {
+              pairFolderAlert.textContent = error instanceof Error ? error.message : String(error);
+              pairFolderAlert.hidden = false;
+            }
             throw error;
           } finally {
             pairFolderActiveLoads[side] = Math.max(0, pairFolderActiveLoads[side] - 1);
@@ -22763,11 +23353,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     pairBulk.innerHTML = "<summary>表から複数ペアをまとめて入力</summary>";
     const pairBulkBody = document.createElement("div");
     pairBulkBody.className = "kus-dl-pair-bulk__body";
-    const pairBulkTextarea = makeTextarea({ rows: 5, code: true, placeholder: "比較元App ID	比較先App ID\nまたは\n比較元App ID	比較元Guest ID	比較先App ID	比較先Guest ID" });
+    const pairBulkTextarea = makeTextarea({ rows: 5, code: true, placeholder: "比較元App ID	比較先App ID\nまたは\n比較元App ID	比較元ゲストスペースID	比較先App ID	比較先ゲストスペースID" });
     pairBulkTextarea.setAttribute("aria-label", "一括登録する比較ペア");
     const pairBulkApply = makeButton("入力したペアを追加", "sub");
     pairBulkBody.append(
-      makeNote("Excelなどの2列（比較元App ID・比較先App ID）、または4列（比較元App ID・比較元Guest ID・比較先App ID・比較先Guest ID）を貼り付けます。"),
+      makeNote("Excelなどからコピーして貼り付けます。2列（比較元App ID・比較先App ID）または4列（比較元App ID・比較元ゲストスペースID・比較先App ID・比較先ゲストスペースID）に対応します。"),
       pairBulkTextarea,
       pairBulkApply
     );
@@ -22831,7 +23421,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           setPairEndpointName(entry.source, name);
           clearPairRowValidation(entry);
           const invalidated = invalidateResultAfterPairConditionChange();
-          return { message: invalidated ? "比較ペアを変更したため、前回の一括結果を無効にしました。再比較してください" : `App ${id} をペア ${pairRows.indexOf(entry) + 1} の比較元へ設定しました`, tone: invalidated ? "warn" : "ok" };
+          return { message: invalidated ? "前回の一括結果を無効にしました（比較ペアを変更したため）。再比較してください" : `App ${id} をペア ${pairRows.indexOf(entry) + 1} の比較元へ設定しました`, tone: invalidated ? "warn" : "ok" };
         } },
         { label: "空いている比較先", apply: (id, name, guestId) => {
           if (diffRunActive) return { message: "比較を実行中です。完了してからアプリを設定してください", tone: "warn" };
@@ -22843,15 +23433,44 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           setPairEndpointName(entry.target, name);
           clearPairRowValidation(entry);
           const invalidated = invalidateResultAfterPairConditionChange();
-          return { message: invalidated ? "比較ペアを変更したため、前回の一括結果を無効にしました。再比較してください" : `App ${id} をペア ${pairRows.indexOf(entry) + 1} の比較先へ設定しました`, tone: invalidated ? "warn" : "ok" };
+          return { message: invalidated ? "前回の一括結果を無効にしました（比較ペアを変更したため）。再比較してください" : `App ${id} をペア ${pairRows.indexOf(entry) + 1} の比較先へ設定しました`, tone: invalidated ? "warn" : "ok" };
         } }
       ]
     });
-    pairEditor.append(pairIntro, pairFolder, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote("手入力のペアはkintone APIから取得します。フォルダ取込では両側の設定JSONだけを使い、不足分をAPIで補いません。単一比較用の設定JSONを読み込んだまま切り替えた場合は「設定JSON読込を解除」を押してください。"));
+    pairEditor.append(pairIntro, pairFolder, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote("手入力したペアは kintone から設定を取得し、フォルダから作成したペアは設定JSONだけを使います。1対1比較用の設定JSONを読み込んだままのときは、「設定JSON読込を解除」を押してください。"));
     cardApp.body.appendChild(pairEditor);
     panel.body.insertBefore(cardApp.card, panel.status);
+    const detailsDialog = makeDialog({ title: "詳細設定", id: "kus-dl-details-dialog" });
+    panel.root.appendChild(detailsDialog.dialog);
+    const dialogStatus = document.createElement("div");
+    dialogStatus.className = "kus-dl-dialog-status";
+    dialogStatus.setAttribute("role", "status");
+    dialogStatus.setAttribute("aria-live", "polite");
+    dialogStatus.setAttribute("aria-atomic", "true");
+    dialogStatus.hidden = true;
+    detailsDialog.dialog.querySelector(".kus-lp__dialog-foot")?.prepend(dialogStatus);
+    const clearDialogStatus = () => {
+      dialogStatus.hidden = true;
+      dialogStatus.textContent = "";
+      delete dialogStatus.dataset.dialogTone;
+    };
+    if (typeof MutationObserver === "function") {
+      new MutationObserver(() => {
+        if (!detailsDialog.dialog.open) return;
+        const text2 = (panel.status.querySelector(".kus-lp__status-text")?.textContent || "").trim();
+        const tone = panel.status.dataset.tone || "neutral";
+        if (!text2 || tone === "neutral") {
+          clearDialogStatus();
+          return;
+        }
+        dialogStatus.textContent = text2;
+        dialogStatus.dataset.dialogTone = tone;
+        dialogStatus.hidden = false;
+      }).observe(panel.status, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-tone"] });
+    }
+    detailsDialog.dialog.addEventListener("close", clearDialogStatus);
     const cardScope = makeCard({ title: "比較セクション" });
-    cardScope.body.appendChild(makeNote(`kintone のアプリ設定 API に対応する ${SCOPE_OPTS.length} セクションをすべて初期選択します。意図的に除外する場合だけ選択を外してください。`));
+    cardScope.body.appendChild(makeNote(`${SCOPE_OPTS.length} セクションすべてを比較対象にしています。比較しないセクションだけ選択を外してください。`, "help"));
     const chipBox = document.createElement("div");
     chipBox.className = "kus-lp__chips";
     const chips = SCOPE_OPTS.map(([key, label, def]) => makeChip({ label, value: key, checked: def }));
@@ -22873,7 +23492,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       });
       invalidateResultAfterGeneralConditionChange();
     });
-    panel.body.insertBefore(cardScope.card, panel.status);
+    detailsDialog.body.appendChild(cardScope.card);
     const nAppRefs = makeCheck({
       label: "環境固有ID（アプリ・一覧・グラフ・アクション）を比較から除外",
       checked: false,
@@ -22887,23 +23506,20 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     appReferenceExclusionHeading.id = "kus-dl-common-exclusion-heading";
     appReferenceExclusionHeading.className = "kus-dl-common-exclusion__heading";
     appReferenceExclusionHeading.textContent = "よく使う除外";
-    const appReferenceExclusionDescription = document.createElement("p");
+    const appReferenceExclusionDescription = makeNote("比較対象・参照先のアプリIDと、一覧・グラフ・アクション自身の内部IDだけを除外します。フィールドコード、一覧条件、アクションの対応付け、プラグインIDは比較します。", "help");
     appReferenceExclusionDescription.id = "kus-dl-common-exclusion-description";
-    appReferenceExclusionDescription.className = "kus-dl-common-exclusion__description";
-    appReferenceExclusionDescription.textContent = "比較対象・参照先のアプリIDと、一覧・グラフ・アクション自身の内部IDだけを除外します。フィールドコード、一覧条件、アクションの対応付け、プラグインIDは比較します。";
-    const appReferenceExclusionNote = document.createElement("p");
+    const appReferenceExclusionNote = makeNote("初期状態はオフです。切り替えたあとは再比較してください（差分件数・画面の結果・Excelに反映されます）。", "help");
     appReferenceExclusionNote.id = "kus-dl-common-exclusion-note";
-    appReferenceExclusionNote.className = "kus-dl-common-exclusion__note";
-    appReferenceExclusionNote.textContent = "初期状態はオフです。オン／オフを変更した後は再比較してください。差分件数・画面結果・Excelに反映されます。";
     nAppRefs.checkbox.setAttribute("aria-describedby", `${appReferenceExclusionDescription.id} ${appReferenceExclusionNote.id}`);
-    appReferenceExclusion.append(
-      appReferenceExclusionHeading,
-      appReferenceExclusionDescription,
-      nAppRefs.label,
-      appReferenceExclusionNote
-    );
+    const cardExclusion = makeCard();
+    const exclusionTitle = document.createElement("div");
+    exclusionTitle.className = "kus-lp__card-title";
+    exclusionTitle.appendChild(appReferenceExclusionHeading);
+    cardExclusion.card.querySelector(":scope > .kus-lp__card-head")?.prepend(exclusionTitle);
+    cardExclusion.body.append(nAppRefs.label, appReferenceExclusionDescription, appReferenceExclusionNote);
+    appReferenceExclusion.appendChild(cardExclusion.card);
     const cardImport = makeCard({ title: "設定JSON読込（任意）", soft: true });
-    cardImport.body.appendChild(makeNote("設定出力で保存した単体JSON、設定一括取得JSON（apps 配列）、差分バンドルJSONを指定できます。指定した側はAPI取得せずJSONを使用します。比較先JSONは単一比較専用です。"));
+    cardImport.body.appendChild(makeNote("指定した側は kintone から取得せず、JSONの内容で比較します（設定出力の単体JSON・設定一括取得JSON・差分バンドルJSONに対応）。比較先JSONは1対1比較専用です。", "help"));
     const srcFile = document.createElement("input");
     srcFile.type = "file";
     srcFile.accept = ".json,application/json";
@@ -22918,30 +23534,30 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     cardImport.body.appendChild(makeRow(srcFile, { label: "比較元JSON" }));
     cardImport.body.appendChild(makeRow(tgtFile, { label: "比較先JSON" }));
     cardImport.body.appendChild(makeRow(clearImportBtn));
-    panel.body.insertBefore(cardImport.card, panel.status);
-    const advDetails = makeDetails("高度な比較設定");
+    detailsDialog.body.appendChild(cardImport.card);
+    const cardAdv = makeCard({ title: "高度な比較設定" });
     const ignTa = makeTextarea({ rows: 2, code: true, placeholder: "キー / 完全パス / * ワイルドカード（改行・カンマ区切り）" });
     ignTa.setAttribute("aria-label", "比較から除外する無視キーまたは設定パス");
-    advDetails.body.appendChild(makeRow(ignTa, { label: "無視キー", block: true }));
-    advDetails.body.appendChild(makeNote("キー名だけの指定、fieldSettings.properties.code.label のようなパス、* を使ったパターンに対応します。結果行の「次回から除外」は、記号や大小文字を含めてもその1パスだけに一致する path: 形式で追加します。"));
-    advDetails.body.appendChild(makeNote("⚠ 完全パスとワイルドカードは別アプリにもそのまま適用され、該当差分は結果から除外されます。プロファイル読込後と再比較前に内容を確認してください。"));
-    const includeSame = makeCheck({ label: "同一行も差分行に含める" });
-    const showResultList = makeCheck({ label: "画面に差分明細を表示（200件ずつ）", checked: true, help: "大量差分でも固まりにくいよう、明細は200件ずつ段階表示します" });
+    cardAdv.body.appendChild(makeRow(ignTa, { label: "無視キー", block: true }));
+    cardAdv.body.appendChild(makeNote("キー名、fieldSettings.properties.code.label のような完全パス、* を使ったパターンを指定できます。結果行の「次回から除外」を押すと、その1項目だけを path: 形式で追加します。", "help"));
+    cardAdv.body.appendChild(makeNote("⚠ 完全パスとワイルドカードは別のアプリにも同じように適用され、一致した差分は結果から除外されます。比較条件を読み込んだあとと再比較の前に、内容を確認してください。", "warn"));
+    const includeSame = makeCheck({ label: "同一の項目も一覧に含める" });
+    const showResultList = makeCheck({ label: "差分の明細を画面に表示（200件ずつ）", checked: true, help: "差分が多くても重くならないよう、200件ずつ表示します" });
     const nAction = makeCheck({
       label: "アプリアクションの並び順を無視",
       checked: false,
-      help: "アクションの設定内容は比較し、表示順の違いだけを差分から除外します"
+      help: "アクションの設定内容は比較し、並び順の違いだけを差分から除外します"
     });
-    const nView = makeCheck({ label: "ビュー/グラフ/アクション順序を無視", checked: false });
-    const nPerm = makeCheck({ label: "権限/通知/カテゴリ順序を無視", checked: false });
-    const nAll = makeCheck({ label: "すべての配列順序を無視", checked: false });
-    const nField = makeCheck({ label: "フィールド/レイアウト順序を無視", checked: false });
+    const nView = makeCheck({ label: "一覧・グラフ・アクションの並び順を無視", checked: false });
+    const nPerm = makeCheck({ label: "権限・通知・カテゴリの並び順を無視", checked: false });
+    const nAll = makeCheck({ label: "すべての並び順を無視", checked: false });
+    const nField = makeCheck({ label: "フィールド・レイアウトの並び順を無視", checked: false });
     const nProcess = makeCheck({ label: "プロセスの並び順を無視", checked: false });
-    const nAudit = makeCheck({ label: "監査/リビジョン情報を無視", checked: false });
-    const nText = makeCheck({ label: "ラベル/説明文/ヘルプを無視", checked: false });
-    const nAppearance = makeCheck({ label: "見た目/幅/座標を無視", checked: false });
-    const nFileKeys = makeCheck({ label: "添付/JS/CSS fileKeyを無視", checked: false });
-    const nEnabled = makeCheck({ label: "有効/無効フラグを無視", checked: false });
+    const nAudit = makeCheck({ label: "監査・リビジョン情報を無視", checked: false });
+    const nText = makeCheck({ label: "ラベル・説明文・ヘルプを無視", checked: false });
+    const nAppearance = makeCheck({ label: "見た目・幅・座標を無視", checked: false });
+    const nFileKeys = makeCheck({ label: "添付・JS/CSSの fileKey を無視", checked: false });
+    const nEnabled = makeCheck({ label: "有効・無効の設定を無視", checked: false });
     const normalizationControls = {
       actionOrder: nAction.checkbox,
       viewOrder: nView.checkbox,
@@ -22973,7 +23589,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       nFileKeys.label,
       nEnabled.label
     ].forEach((el) => normGrid.appendChild(el));
-    advDetails.body.appendChild(normGrid);
+    cardAdv.body.appendChild(normGrid);
     const profileName = makeInput({ placeholder: "例: 権限を除く標準比較", width: "medium", noSubmit: true, ariaLabel: "比較条件プロファイル名" });
     const profileSaveBtn = makeButton("比較条件を保存", "sub", { icon: "↓" });
     const profileLoadBtn = makeButton("比較条件を読込", "sub", { icon: "↑" });
@@ -22984,11 +23600,12 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     profileFile.accept = ".json,application/json";
     profileFile.hidden = true;
     profileFile.dataset.kusDlProfileFile = "load";
-    advDetails.body.appendChild(makeRow(profileName, { label: "比較条件名" }));
-    advDetails.body.appendChild(makeRow([profileSaveBtn, profileLoadBtn]));
-    advDetails.body.appendChild(makeNote("比較セクション・無視ルール・正規化・表示設定だけをJSONで保存します。アプリID、設定値、認証情報は含みません。"));
-    advDetails.body.appendChild(profileFile);
-    panel.body.insertBefore(advDetails.details, panel.status);
+    const cardProfile = makeCard({ title: "比較条件の保存・読込" });
+    cardProfile.body.appendChild(makeRow(profileName, { label: "比較条件名" }));
+    cardProfile.body.appendChild(makeRow([profileSaveBtn, profileLoadBtn]));
+    cardProfile.body.appendChild(makeNote("JSONに保存されるのは、比較セクション・無視ルール・各種の「無視」設定・表示設定だけです。アプリIDや設定値、認証情報は含まれません。", "help"));
+    cardProfile.body.appendChild(profileFile);
+    detailsDialog.body.append(cardAdv.card, cardProfile.card);
     const runBtn = makeButton("差分比較を実行", "run", { icon: "→" });
     const runAllBtn = makeButton("複数の比較を実行", "run", { icon: "→" });
     const runPairsBtn = makeButton("登録したペアを一括比較", "run", { icon: "→" });
@@ -22996,6 +23613,16 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const runRow = makeRow([runBtn, runAllBtn, runPairsBtn]);
     runRow.classList.add("kus-dl-run-row");
     panel.body.insertBefore(runRow, panel.status);
+    const detailsBtn = makeButton("詳細設定…", "ghost");
+    detailsBtn.dataset.kusDlDetails = "";
+    detailsBtn.setAttribute("aria-haspopup", "dialog");
+    detailsBtn.addEventListener("click", () => {
+      clearDialogStatus();
+      detailsDialog.open();
+    });
+    const detailsRow = makeRow(detailsBtn);
+    detailsRow.classList.add("kus-dl-details-row");
+    const withDetailsHint = (message) => message.startsWith("比較セクション") ? `${message}（「詳細設定…」で選べます）` : message;
     const completionReviewBtn = makeButton("結果を確認", "sub", { icon: "↓" });
     const completionXlsxBtn = makeButton("Excelを保存（全件）", "primary", { icon: "↓" });
     completionReviewBtn.dataset.kusDlCompletion = "review";
@@ -23021,6 +23648,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       pairModeBtn.classList.toggle("is-active", mode === "pairs");
       multiControls.hidden = mode !== "multi";
       targetList.hidden = mode !== "multi";
+      updateTargetListHint();
       directionGrid.hidden = mode === "pairs";
       singleAppSearch.hidden = mode === "pairs";
       pairEditor.hidden = mode !== "pairs";
@@ -23128,8 +23756,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     cardResult.body.appendChild(resultBox);
     panel.body.insertBefore(cardResult.card, panel.status);
     const cardOut = makeCard({ title: "出力", soft: true });
-    cardOut.body.appendChild(makeNote("HTML は人が確認するレビュー用で、比較実行時に自動保存されます。Excel は一覧・共有用で、全件または画面で絞り込んだ範囲を保存できます。Excel には差分値と取得不完全時のエラー等の原文を収録し、長い原文は可視シートへ分割して全文を保持します。AI向け Markdown は比較方向・条件・完全性・変更前後の値と型を含み、AIへ差分の事実を渡すために使います。"));
-    cardOut.body.appendChild(makeNote("変更箇所のみの HTML にも比較元・比較先の値が含まれます。比較設定を含む社内用 HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。"));
+    cardOut.body.appendChild(makeNote("HTML は人が確認するレビュー用で、1対1・1対多の比較が終わると自動保存されます。Excel は一覧・共有用で、全件または画面で絞り込んだ範囲を保存できます（長い原文も省略せず収録します）。", "help"));
+    cardOut.body.appendChild(makeNote("AI向け Markdown は、比較方向・条件・取得の完全性・変更前後の値と型を含み、差分の事実をAIへ渡す用途で使います。", "help"));
+    cardOut.body.appendChild(makeNote("「レビュー用（変更箇所のみ）」の HTML にも比較元・比較先の値は含まれます。「社内用」の HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。", "help"));
     const htmlContentMode = makeSelect([
       ["diffOnly", "レビュー用（変更箇所のみ）"],
       ["withCompared", "社内用（比較設定を含む・取扱注意）"]
@@ -23145,7 +23774,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const maskSensitiveCb = makeCheck({
       label: "共有用マスキング（機密キー・本文を秘匿）",
       checked: false,
-      help: "Excel出力時にトークン・パスワード等の機密キーやJS/CSS本文・プラグイン設定値をSHA-256識別子でマスクします"
+      help: "Excel に出力するとき、トークン・パスワードなどの機密キー、JS/CSS本文、プラグイン設定値を伏せ字（SHA-256の識別子）にします"
     });
     cardOut.body.appendChild(makeRow(maskSensitiveCb.label, { label: "機密保護" }));
     const expRange = makeSelect([
@@ -23206,16 +23835,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       section.innerHTML = `<header class="kus-dl-step__header"><span class="kus-dl-step__number" aria-hidden="true">${number}</span><div><h2 id="${headingId}">${title}</h2><p>${description}</p></div></header>`;
       return section;
     };
-    const targetStep = makeWorkflowStep("target", "1", "比較対象を決める", "比較元から比較先へ、どの設定が変わったかを確認します。");
-    const reviewStep = makeWorkflowStep("review", "2", "結果を確認する", "取得の完全性を確認してから、差分を順にレビューします。");
-    const exportStep = makeWorkflowStep("export", "3", "結果を出力する", "人向けの HTML・Excel、AI向け Markdown を保存できます。");
-    const configDetails = document.createElement("details");
-    configDetails.className = "kus-dl-disclosure";
-    configDetails.innerHTML = "<summary><span>比較範囲と詳細設定</span><small>セクション、JSON読込、無視ルール、比較条件</small></summary>";
-    const configBody = document.createElement("div");
-    configBody.className = "kus-dl-disclosure__body";
-    configBody.append(cardScope.card, cardImport.card, advDetails.details);
-    configDetails.appendChild(configBody);
+    const targetStep = makeWorkflowStep("target", "1", "比較するアプリを選ぶ", "比較元（変更前）と比較先（変更後）を指定して、比較を実行します。");
+    const reviewStep = makeWorkflowStep("review", "2", "差分を確認する", "取得に失敗した設定がないか確かめてから、差分を順に見ていきます。");
+    const exportStep = makeWorkflowStep("export", "3", "結果を保存する", "確認用の HTML・Excel と、AI向け Markdown を保存できます。");
     const filterDetails = document.createElement("details");
     filterDetails.className = "kus-dl-disclosure kus-dl-filter-disclosure";
     filterDetails.open = true;
@@ -23235,8 +23857,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const reviewEmpty = document.createElement("p");
     reviewEmpty.className = "kus-dl-step__empty";
     reviewEmpty.dataset.kusDlResultEmpty = "";
-    reviewEmpty.textContent = "比較を実行すると、ここに完全性と差分の一覧が表示されます。";
-    targetStep.append(cardApp.card, appReferenceExclusion, configDetails, runRow, completionRow, panel.status);
+    reviewEmpty.textContent = "比較を実行すると、ここに取得結果の確認と差分の一覧が表示されます。";
+    targetStep.append(cardApp.card, appReferenceExclusion, detailsRow, runRow, completionRow, panel.status);
     reviewStep.append(reviewEmpty, filterDetails, cardResult.card);
     exportStep.appendChild(outputDetails);
     workflow.append(targetStep, reviewStep, exportStep);
@@ -23244,7 +23866,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       step.style.scrollMarginTop = "80px";
     });
     installWorkflowNavigation(panel, [
-      { label: "比較対象", element: targetStep },
+      { label: "アプリを選ぶ", element: targetStep },
       { label: "差分を確認", element: reviewStep },
       { label: "結果を保存", element: exportStep, open: () => {
         outputDetails.open = true;
@@ -23264,6 +23886,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       button.replaceChildren(number, label);
     });
     panel.body.insertBefore(workflow, panel.result);
+    attachCardHelp(panel.body);
+    attachCardHelp(detailsDialog.body);
     const setExportControlsEnabled = (enabled) => {
       expRange.disabled = !enabled;
       bXlsx.disabled = !enabled;
@@ -23341,25 +23965,25 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       cardResult.card.style.display = "none";
       cardFilter.card.style.display = "none";
       filterDetails.style.display = "none";
-      reviewEmpty.textContent = "比較条件が変更されました。再比較すると新しい条件の結果を表示します。";
+      reviewEmpty.textContent = "比較条件が変わりました。再比較すると、新しい条件の結果が表示されます。";
       reviewEmpty.style.display = "";
       panel.setStatus(statusMessage, "warn");
       return true;
     }
     function invalidateResultAfterAppReferenceConditionChange() {
-      invalidateComparisonResult("環境固有IDの除外条件を変更したため、前回の結果と保存機能を無効にしました。新しい条件で再比較してください");
+      invalidateComparisonResult("前回の結果と保存機能を無効にしました（環境固有IDの除外条件を変更したため）。新しい条件で再比較してください");
     }
     function invalidateResultAfterPairConditionChange() {
-      return invalidateComparisonResult("比較ペアを変更したため、前回の一括結果と保存機能を無効にしました。新しいペアで再比較してください");
+      return invalidateComparisonResult("前回の一括結果と保存機能を無効にしました（比較ペアを変更したため）。新しいペアで再比較してください");
     }
     function invalidateResultAfterComparisonModeChange() {
-      return invalidateComparisonResult("比較方法を変更したため、前回の結果と保存機能を無効にしました。選択した方法で再比較してください");
+      return invalidateComparisonResult("前回の結果と保存機能を無効にしました（比較方法を変更したため）。選択した方法で再比較してください");
     }
     function invalidateResultAfterGeneralConditionChange() {
-      return invalidateComparisonResult("比較範囲または比較条件を変更したため、前回の結果と保存機能を無効にしました。新しい条件で再比較してください");
+      return invalidateComparisonResult("前回の結果と保存機能を無効にしました（比較範囲または比較条件を変更したため）。新しい条件で再比較してください");
     }
     function invalidateResultAfterAppSelectionChange() {
-      return invalidateComparisonResult("比較するアプリまたは環境を変更したため、前回の結果と保存機能を無効にしました。新しい対象で再比較してください");
+      return invalidateComparisonResult("前回の結果と保存機能を無効にしました（比較するアプリまたは環境を変更したため）。新しい対象で再比較してください");
     }
     nAppRefs.checkbox.addEventListener("change", invalidateResultAfterAppReferenceConditionChange);
     chipBox.addEventListener("change", invalidateResultAfterGeneralConditionChange);
@@ -23415,7 +24039,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const label = side === "source" ? "比較元" : "比較先";
       panel.setStatus(`${label}JSONを読み込み中…`, "busy");
       try {
-        const bundle = await jsonImporter.load(side, () => readSettingsBundleFile(file, { side, appId }));
+        const bundle = await jsonImporter.load(side, async () => {
+          const read = await readSettingsBundleFile(file, { side, appId });
+          if (isCancelRequested()) throw new RunCancelledError();
+          return read;
+        });
         if (!bundle) return;
         if (!app.value.trim() && bundle.appId) app.value = String(bundle.appId);
         if (side === "source") {
@@ -23433,6 +24061,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         panel.setStatus(`${label}JSONを読み込みました: App ${bundle.appId || "-"}${invalidated ? "。結果を更新するため再比較してください" : ""}`, invalidated ? "warn" : "ok");
       } catch (error) {
         input.value = "";
+        if (isRunCancelledError(error)) {
+          panel.setStatus(`中止しました。${label}JSONの読み込みを止めました（JSONは選択されていません）`, "warn");
+          return;
+        }
         panel.setStatus(`エラー: ${error?.message || String(error)}`, "err");
       }
     }
@@ -23771,7 +24403,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         wrapper.classList.toggle("is-expanded", expanded);
         wrapper.classList.toggle("is-collapsed", !expanded);
         valueToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-        valueToggle.textContent = expanded ? "プレビューに戻す" : "全文を展開";
+        valueToggle.textContent = expanded ? "省略表示に戻す" : "全文を展開";
         if (expanded) expandedValueKeys.add(valueKey);
         else expandedValueKeys.delete(valueKey);
         return;
@@ -23809,9 +24441,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         if (!existing.some((token) => decodeExactIgnorePathRule(token) === path || token === path)) {
           ignTa.value = `${ignTa.value.trim()}${ignTa.value.trim() ? "\n" : ""}${exactRule}`;
         }
-        configDetails.open = true;
-        advDetails.details.open = true;
-        panel.setStatus("この項目だけを無視ルールへ追加しました。現在の結果は変えず、次回比較から適用します", "warn");
+        panel.setStatus("この項目だけを無視ルールへ追加しました。現在の結果は変えず、次回比較から適用します（「詳細設定…」の無視キーで確認できます）", "warn");
         return;
       }
       const multiXlsxAllButton = target?.closest("[data-kus-dl-multi-xlsx-all]");
@@ -24029,7 +24659,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     }
     let runControlSnapshot = [];
     function lockComparisonControls() {
-      runControlSnapshot = [...panel.body.querySelectorAll("button, input, textarea, select")].map((control) => [control, control.disabled]);
+      const controlSelector = "button, input, textarea, select";
+      runControlSnapshot = [
+        ...panel.body.querySelectorAll(controlSelector),
+        ...detailsDialog.body.querySelectorAll(controlSelector)
+      ].filter((control) => !control.classList.contains("kus-lp__help-btn")).map((control) => [control, control.disabled]);
       runControlSnapshot.forEach(([control]) => {
         control.disabled = true;
       });
@@ -24146,7 +24780,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       }
       const base = readForm();
       if (!base.scopes.length) {
-        panel.setStatus("比較セクションを 1 つ以上選択してください", "warn");
+        panel.setStatus(withDetailsHint("比較セクションを 1 つ以上選択してください"), "warn");
         return;
       }
       const positionalRuleCount = summarizeLiteIgnoreRules(base.ignoreKeys).positionalRules;
@@ -24215,9 +24849,17 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         let succeeded = 0;
         let failed = 0;
         let incomplete = 0;
+        let cancelledPairs = 0;
         results.forEach((result) => {
-          const sourceEnv = `${result.pair.source.guestId ? `ゲスト ${result.pair.source.guestId}` : "通常スペース"} / ${result.pair.source.preview ? "プレビュー" : "運用"}`;
-          const targetEnv = `${result.pair.target.guestId ? `ゲスト ${result.pair.target.guestId}` : "通常スペース"} / ${result.pair.target.preview ? "プレビュー" : "運用"}`;
+          const sourceEnv = `${result.pair.source.guestId ? `ゲスト ${result.pair.source.guestId}` : "通常スペース"} / ${result.pair.source.preview ? "プレビュー" : "本番"}`;
+          const targetEnv = `${result.pair.target.guestId ? `ゲスト ${result.pair.target.guestId}` : "通常スペース"} / ${result.pair.target.preview ? "プレビュー" : "本番"}`;
+          if (result.status === "cancelled") {
+            cancelledPairs += 1;
+            const sourceLabel2 = result.pair.source.appName ? `${result.pair.source.appName}（App ${result.pair.source.appId}）` : `App ${result.pair.source.appId}`;
+            const targetLabel2 = result.pair.target.appName ? `${result.pair.target.appName}（App ${result.pair.target.appId}）` : `App ${result.pair.target.appId}`;
+            resultRows.push(`<tr><td>${result.pair.rowNumber}</td><td>${esc(sourceLabel2)}<br><small>${esc(sourceEnv)}</small></td><td>${esc(targetLabel2)}<br><small>${esc(targetEnv)}</small></td><td class="kus-dl-multi__warn">未実行（中止）<br><small>${result.started ? "取得の途中で中止しました" : "中止により比較していません"}</small></td><td>—</td><td>—</td><td>—</td></tr>`);
+            return;
+          }
           if (result.status === "rejected") {
             failed += 1;
             const errorMessage = result.error?.message || String(result.error);
@@ -24262,7 +24904,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
               matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
             }
           }) - 1;
-          const stateLabel = needsReview ? "要確認" : counts.actual ? "完了" : "一致";
+          const stateLabel = needsReview ? "要確認" : counts.actual ? "差分あり" : "一致";
           const pairActionLabel = `ペア ${result.pair.rowNumber}・${sourceLabel}から${targetLabel}`;
           resultRows.push(`<tr><td>${result.pair.rowNumber}</td><td>${esc(sourceLabel)}<br><small>${esc(sourceEnv)}</small></td><td>${esc(targetLabel)}<br><small>${esc(targetEnv)}</small></td><td class="${needsReview ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${stateLabel}</td><td><span class="kus-dl-pair-breakdown"><strong>差分 ${counts.actual}</strong><small>追加 ${counts.added} / 削除 ${counts.removed} / 内容変更 ${changed} / 移動 ${counts.moved}</small></span></td><td>${incompleteReasons.length ? incompleteReasons.map((reason) => esc(reason)).join("<br>") : "なし"}</td><td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のHTMLを保存`)}">HTML</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のExcelを保存`)}">Excel</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${pairActionLabel}のAI向けMarkdownを保存`)}">AI向けMD</button></span></td></tr>`);
         });
@@ -24270,7 +24912,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         reviewEmpty.style.display = "none";
         resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="ペア一括比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi kus-dl-multi--pairs"><caption>ペア一括比較の結果（登録順）</caption><thead><tr><th>No.</th><th>比較元<br><small>変更前</small></th><th>比較先<br><small>変更後</small></th><th>状態</th><th>差分内訳</th><th>確認事項<br><small>不完全な理由</small></th><th>保存</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
         const note = [failed ? `失敗 ${failed}件` : "", incomplete ? `要確認 ${incomplete}件` : ""].filter(Boolean).join(" / ");
-        panel.setStatus(`ペア一括比較が完了: 成功 ${succeeded}/${prepared.pairs.length}件${note ? ` / ${note}` : ""}。Excelは各行または一括ボタンから保存できます`, failed || incomplete ? "warn" : "ok");
+        if (cancelledPairs) {
+          panel.setStatus(`中止しました（${succeeded}/${prepared.pairs.length} 件を比較、残り ${cancelledPairs} 件は未実行）${note ? ` / ${note}` : ""}。比較できた分はExcelなどを各行または一括ボタンから保存できます`, "warn");
+          return;
+        }
+        panel.setStatus(`${prepared.pairs.length}組中 ${succeeded}組を比較しました${note ? `（${note}）` : ""}。HTML・Excel・Markdown は各行または一括ボタンから保存できます`, failed || incomplete ? "warn" : "ok");
       });
     });
     runAllBtn.addEventListener("click", () => {
@@ -24285,7 +24931,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       }
       const base = readForm();
       if (!base.scopes.length) {
-        panel.setStatus("比較セクションを 1 つ以上選択してください", "warn");
+        panel.setStatus(withDetailsHint("比較セクションを 1 つ以上選択してください"), "warn");
         return;
       }
       const commonValidation = validateLiteDiffStart({
@@ -24297,7 +24943,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         targets
       });
       if (commonValidation) {
-        panel.setStatus(commonValidation, "warn");
+        panel.setStatus(withDetailsHint(commonValidation), "warn");
         return;
       }
       cache = null;
@@ -24324,8 +24970,21 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         let failed = 0;
         let exportFailed = 0;
         let incomplete = 0;
+        let cancelledTargets = 0;
+        const markCancelledTargets = (from, interruptedAt) => {
+          for (let j = from; j < targets.length; j += 1) {
+            const rest = targets[j];
+            const restLabel = rest.appName ? `${rest.appName}（App ${rest.appId}）` : `App ${rest.appId}`;
+            resultRows.push(`<tr><td>${esc(restLabel)}</td><td class="kus-dl-multi__warn">未実行（中止）<br><small>${j === interruptedAt ? "取得の途中で中止しました" : "中止により比較していません"}</small></td><td colspan="6">—</td><td>—</td></tr>`);
+          }
+          cancelledTargets = targets.length - from;
+        };
         for (let i = 0; i < targets.length; i += 1) {
           const t = targets[i];
+          if (isCancelRequested()) {
+            markCancelledTargets(i, -1);
+            break;
+          }
           panel.setStatus(`比較中 (${i + 1}/${targets.length}) App:${t.appId}${t.guestId ? ` / Guest:${t.guestId}` : ""}`, "busy");
           try {
             const out = await runDiffStandalone2({
@@ -24397,8 +25056,12 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
                 matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
               }
             }) - 1;
-            resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : "通常スペース")} / ${t.preview ? "プレビュー" : "運用"}</small></td><td class="${needsReview || exportNote ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${exportNote ? "出力失敗" : needsReview ? "要確認" : "完了"}${esc(exportNote)}</td><td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ""}${multiNoticeCount ? ` / 注意 ${multiNoticeCount}` : ""}</td><td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${targetLabel}のHTMLを保存`)}">HTML保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${targetLabel}のExcelを保存`)}">Excel保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${targetLabel}のAI向けMarkdownを保存`)}">AI向けMD保存</button></span></td></tr>`);
+            resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : "通常スペース")} / ${t.preview ? "プレビュー" : "本番"}</small></td><td class="${needsReview || exportNote ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${exportNote ? "出力失敗" : needsReview ? "要確認" : counts.actual ? "差分あり" : "一致"}${esc(exportNote)}</td><td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ""}${multiNoticeCount ? ` / 注意 ${multiNoticeCount}` : ""}</td><td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${targetLabel}のHTMLを保存`)}">HTML保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${targetLabel}のExcelを保存`)}">Excel保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${targetLabel}のAI向けMarkdownを保存`)}">AI向けMD保存</button></span></td></tr>`);
           } catch (e) {
+            if (isRunCancelledError(e)) {
+              markCancelledTargets(i, i);
+              break;
+            }
             failed += 1;
             const targetLabel = t.appName ? `${t.appName}（App ${t.appId}）` : `App ${t.appId}`;
             resultRows.push(`<tr><td>${esc(targetLabel)}</td><td class="kus-dl-multi__warn">失敗: ${esc(e?.message || String(e))}</td><td colspan="6">—</td><td>—</td></tr>`);
@@ -24407,10 +25070,14 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         cardResult.card.style.display = "";
         reviewEmpty.style.display = "none";
         resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>保存</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
-        const tone = failed || exportFailed || incomplete || autoExportHtml && exported !== targets.length ? "warn" : "ok";
+        const tone = failed || exportFailed || incomplete || cancelledTargets || autoExportHtml && exported !== targets.length ? "warn" : "ok";
         const note = [failed ? `比較失敗 ${failed}件` : "", exportFailed ? `HTML出力失敗 ${exportFailed}件` : "", incomplete ? `要確認 ${incomplete}件` : ""].filter(Boolean).join(" / ");
-        const exportSummary = autoExportHtml ? `HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）` : `成功 ${succeeded}/${targets.length}件（HTML自動保存オフ）`;
-        panel.setStatus(`全比較先の比較が完了: ${exportSummary}${note ? ` / ${note}` : ""}。HTML/Excel/Markdownは各行または一括ボタンから保存できます`, tone);
+        const exportSummary = autoExportHtml ? `HTMLの保存を ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）` : "HTMLの自動保存はオフです";
+        if (cancelledTargets) {
+          panel.setStatus(`中止しました（${succeeded}/${targets.length} 件を比較、残り ${cancelledTargets} 件は未実行）${note ? ` / ${note}` : ""}。${exportSummary}。比較できた分は各行または一括ボタンから保存できます`, "warn");
+          return;
+        }
+        panel.setStatus(`${targets.length}件中 ${succeeded}件を比較しました${note ? `（${note}）` : ""}。${exportSummary}。HTML・Excel・Markdown は各行または一括ボタンから保存できます`, tone);
       });
     });
     runBtn.addEventListener("click", () => {
@@ -24428,7 +25095,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         hasImportedTarget: !!importedTargetBundle
       });
       if (validation) {
-        panel.setStatus(validation, "warn");
+        panel.setStatus(withDetailsHint(validation), "warn");
         return;
       }
       cache = null;
@@ -24478,7 +25145,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
         };
         announceResultOverview = true;
-        summaryText = out.summary?.text || "完了";
+        summaryText = out.summary?.text || "比較しました";
         refreshFilterSectionOptions();
         rerender();
         setCompletionActionsVisible(true);

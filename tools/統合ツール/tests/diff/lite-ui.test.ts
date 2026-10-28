@@ -394,7 +394,7 @@ describe('diff lite result presentation', () => {
     expect(applied).toContain('無視ルールは適用していません');
     expect(applied).toContain('正規化 3件を適用しています');
     expect(applied).toContain('アプリアクションの並び順');
-    expect(applied).toContain('ビュー/グラフ/アクション順序');
+    expect(applied).toContain('一覧・グラフ・アクションの並び順');
     expect(applied).toContain('見た目/幅/座標');
     expect(applied).not.toContain('unknownPreset');
     expect(none).toContain('無視ルールは適用していません');
@@ -483,7 +483,7 @@ describe('diff lite result presentation', () => {
     expect(expanded).toContain(`data-kus-dl-value-key="${rowKey}:before"`);
     expect(expanded).toContain('class="kus-dl-value is-expanded"');
     expect(expanded).toContain('aria-expanded="true"');
-    expect(expanded).toContain('プレビューに戻す');
+    expect(expanded).toContain('省略表示に戻す');
   });
 
   it('does not add an expansion control to short values', () => {

@@ -83,7 +83,13 @@ async function main() {
     const output = page.getByLabel('データ検査結果', { exact: true });
     const idle = () => page.waitForFunction(() => document.querySelector('#kus-record-lite').getAttribute('aria-busy') === 'false');
     const run = async label => { await button('内容を確認する').click(); await button(label).click(); await idle(); };
-    await page.getByRole('radio', { name: '重複・未入力を検査', exact: true }).check();
+    // 3 件を超える操作は「ほかの操作…」のポップアップにある。開いて選ぶと、ポップアップは自動で閉じる。
+    const pickAction = async label => {
+      const radio = page.getByRole('radio', { name: label, exact: true });
+      if (!await radio.isVisible()) await page.locator('.kus-wf-action--more').click();
+      await radio.check();
+    };
+    await pickAction('重複・未入力を検査');
     await app.fill('7,8'); await guest.fill('9');
     assert.equal(await button('内容を確認する').isDisabled(), true);
     await button('検査フィールド読込').click(); await idle();
@@ -99,10 +105,27 @@ async function main() {
     for (const index of [2, 3, 4]) await fields.getByRole('checkbox').nth(index).uncheck();
     results.push('フィールド名検索・複数選択保持・5項目上限・未選択の実行防止');
 
+    // 空白・大小文字の扱いは「オプション…」のポップアップにあり、変更は確認画面に反映される。
+    const trimOption = page.getByRole('checkbox', { name: '文字列・リンクの前後の空白を無視', exact: true });
+    assert.equal(await trimOption.isVisible(), false, 'オプションは表面に出さない');
+    await page.locator('.kus-lp__tab-panel:not([hidden])').getByRole('button', { name: 'オプション…', exact: true }).click();
+    await trimOption.check();
+    await page.locator('#kus-record-lite-options-quality').getByRole('button', { name: '閉じる', exact: true }).click();
+    await button('内容を確認する').click();
+    assert.match(await page.locator('.kus-wf-stage').nth(1).innerText(), /前後空白 無視/);
+    await button('対象・条件を変更').click();
+    await page.getByRole('button', { name: '「データ検査」の説明を表示', exact: true }).click();
+    assert.match(await page.locator('.kus-lp__help-pop:visible').innerText(), /アプリ間の重複は対象外です/);
+    await page.getByRole('button', { name: '「データ検査」の説明を表示', exact: true }).click();
+    await page.locator('.kus-lp__tab-panel:not([hidden])').getByRole('button', { name: 'オプション…', exact: true }).click();
+    await trimOption.uncheck();
+    await page.locator('#kus-record-lite-options-quality').getByRole('button', { name: '閉じる', exact: true }).click();
+    results.push('比較オプションのポップアップ・確認画面への反映・補足説明の「?」');
+
     await run('重複・未入力を検査');
     assert.equal(await output.isVisible(), true, '検査結果を結果ステップに表示する');
     assert.match(await output.innerText(), /10001件を検査 \/ 重複 1組・61件 \/ 未入力 2件 \/ 取得不可 1件/);
-    assert.match(await output.innerText(), /App 8: 検査失敗/);
+    assert.match(await output.innerText(), /App 8: 検査に失敗しました/);
     assert.equal(await output.locator('li').count(), 50);
     assert.equal(await output.locator('img').count(), 0);
     assert.equal(await output.getByRole('link').first().getAttribute('href'), '/k/guest/9/7/show#record=61');
@@ -145,7 +168,7 @@ async function main() {
     results.push('対象変更後に遅れて届く応答を破棄・読込失敗時に古い候補を残さない');
 
     await app.fill('7,8');
-    await page.getByRole('radio', { name: 'CSV取込ひな形を作成', exact: true }).check();
+    await pickAction('CSV取込ひな形を作成');
     await run('CSV取込ひな形を作成');
     assert.equal(await output.isVisible(), false, '別操作の結果に古い検査を表示しない');
     const zip = await page.evaluate(() => window.zipFiles);
@@ -166,6 +189,10 @@ async function main() {
     const callCount = suffix => page.evaluate(suffix => window.calls.filter(call => call.url.endsWith(suffix)).length, suffix);
     const quality = page.getByRole('radio', { name: '重複・未入力を検査', exact: true });
     if (await quality.count()) await quality.check();
+    assert.equal(await page.getByRole('checkbox', { name: '文字列・リンクの英字の大小を無視', exact: true }).isVisible(), false, '比較オプションは表面に出さない');
+    await button('詳細設定…').click();
+    await page.getByRole('checkbox', { name: '文字列・リンクの英字の大小を無視', exact: true }).check();
+    await page.getByRole('button', { name: '詳細設定を閉じる', exact: true }).click();
     assert.equal(await button('内容を確認する').isDisabled(), true, '検査項目が未選択なら確認へ進めない');
     assert.equal(await page.evaluate(() => window.calls.length), 0, '未選択では設定もレコードも取得しない');
     await page.evaluate(() => { window.defer = true; });
@@ -177,12 +204,13 @@ async function main() {
     await page.evaluate(() => { window.calls.length = 0; });
     await page.evaluate(() => { window.holdRecords = true; });
     await button('内容を確認する').click();
+    assert.match(await page.locator('.kus-wf-stage').nth(1).innerText(), /大小文字 無視/, '詳細設定の変更を確認画面に反映する');
     await button('重複・未入力を検査').click(); await button('重複・未入力を検査').click({ force: true });
     await page.waitForFunction(() => window.releaseRecords);
     await page.evaluate(() => { window.holdRecords = false; window.releaseRecords(); });
     await panelIdle();
     assert.equal(await callCount('/records.json'), 21, '検査の二重クリックで取得を重複実行しない');
-    assert.match(await status.innerText(), /1アプリの検査が完了しました/);
+    assert.match(await status.innerText(), /1アプリを検査しました/);
     assert.equal(await output.locator('li').count() > 0, true);
     await button('対象・条件を変更').click();
     await page.getByLabel('データ検査のクエリ', { exact: true }).fill('amount > 0');

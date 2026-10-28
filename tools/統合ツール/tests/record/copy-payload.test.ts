@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { buildCopyRecordPayloads, parseCsvText, runRecordCopyStandalone, validateCsvImportHeader } from '../../src/tabs/record-standalone';
+import { buildCopyRecordPayloads, parseCsvText, runRecordAppBatchStandalone, runRecordCopyStandalone, validateCsvImportHeader } from '../../src/tabs/record-standalone';
 
 // レコードコピーの payload は本番アプリへ POST される。システム項目・ファイルの除外と
 // サブテーブル行に id を含めないことは kintone REST の制約なので回帰を固定する。
@@ -164,13 +164,25 @@ describe('runRecordCopyStandalone', () => {
     api.mockReset();
     api.mockResolvedValueOnce({ properties: { title: { type: 'SINGLE_LINE_TEXT', code: 'title' } } }).mockResolvedValueOnce({ records: [] });
     await expect(runRecordCopyStandalone(options, status)).resolves.toEqual({ warning: 'コピー対象のレコードがありません' });
-    expect(status).toHaveBeenLastCalledWith('コピー対象のレコードがありません', true);
+    expect(status).toHaveBeenLastCalledWith('コピー対象のレコードがありません', 'warn');
   });
 
   it('posts matching fields after confirmation', async () => {
     api.mockResolvedValueOnce({ properties: { title: { type: 'SINGLE_LINE_TEXT', code: 'title' } } }).mockResolvedValueOnce({ records: source }).mockResolvedValue({});
     await runRecordCopyStandalone(options, status);
     expect(posts().map((call) => call[2])).toEqual([{ app: '2', records: [{ title: { value: 'a' } }] }]);
+    expect(status).toHaveBeenLastCalledWith('1件をコピーしました（コピー先 App 2）', 'ok');
+  });
+
+  it('returns the copied count to the app batch and keeps the dropped-field note as a warning', async () => {
+    api.mockResolvedValueOnce({ properties: { title: { type: 'SINGLE_LINE_TEXT', code: 'title' } } })
+      .mockResolvedValueOnce({ records: [{ $id: { type: '__ID__', value: '1' }, title: { type: 'SINGLE_LINE_TEXT', value: 'a' }, memo: { type: 'SINGLE_LINE_TEXT', value: 'b' } }] })
+      .mockResolvedValue({});
+    await runRecordAppBatchStandalone('2', (targetAppId) => runRecordCopyStandalone({ ...options, targetAppId }, status), status);
+    const [message, tone] = status.mock.calls.at(-1) as [string, string];
+    expect(message.split('\n')[0]).toBe('1件をコピーしました（コピー先 App 2）');
+    expect(message).toContain('コピー先に無い/型が違うため除外: memo');
+    expect(tone).toBe('warn');
   });
 });
 

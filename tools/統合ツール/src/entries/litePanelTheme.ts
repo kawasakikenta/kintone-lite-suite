@@ -12,7 +12,8 @@
 import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
 import { setComponentUi } from '../ui/components.js';
 import { setRootElement } from '../ui/dialog.js';
-import { copyTextToClipboard } from '../utils.js';
+import { activeRun, beginRun, endRun, isRunCancelledError, requestCancel as requestRunCancel, type RunToken } from '../runControl.js';
+import { copyTextToClipboard, downloadText, nowStamp, sanitizeFilenamePart } from '../utils.js';
 
 export { copyTextToClipboard };
 
@@ -45,7 +46,7 @@ const THEME_CSS = `
   --c-border-strong:#cbd5e1;
   --c-text:#0f172a;
   --c-text-2:#334155;
-  --c-muted:#64748b;
+  --c-muted:#475569;
   --c-link:#2563eb;
   --c-ok-bg:#ecfdf5;
   --c-ok-fg:#065f46;
@@ -70,7 +71,7 @@ const THEME_CSS = `
   top:max(16px,2vh);
   right:max(16px,2vw);
   box-sizing:border-box;
-  width:min(520px,calc(100vw - max(32px,4vw)));
+  width:min(560px,calc(100vw - max(32px,4vw)));
   max-height:min(92vh,920px);
   overflow:hidden;
   display:flex;
@@ -79,7 +80,7 @@ const THEME_CSS = `
   border:1px solid var(--c-border);
   border-radius:18px;
   box-shadow:0 4px 6px -1px rgba(15,23,42,.08),0 28px 60px -12px rgba(15,23,42,.30);
-  font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
   color:var(--c-text);
   animation:kus-lp-fade-in .18s ease-out;
 }
@@ -105,36 +106,47 @@ const THEME_CSS = `
 }
 .kus-lp__hero-main{min-width:0;flex:1}
 .kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
+/* 狭い画面では経過時間の文字を隠し（スピナーは残す）ボタンを詰めて、タイトルが 1 文字ずつ折り返すのを防ぐ */
+@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12px}.kus-lp__toggle{min-width:30px}}
 .kus-lp__elapsed{
-  font-size:11px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
+  font-size:12.5px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
   font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
 }
 .kus-lp__elapsed::before{
   content:'';display:inline-block;width:9px;height:9px;border-radius:50%;
   border:2px solid rgba(255,255,255,.85);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
 }
+.kus-lp__elapsed--done{font-weight:500;color:rgba(255,255,255,.8)}
+/* 完了後の「前回 …」表示ではスピナーを出さない */
+.kus-lp__elapsed--done::before{display:none;animation:none}
 /* 実行中の進捗ストリップ（ヒーロー下端） */
 .kus-lp__progress{position:absolute;left:0;right:0;bottom:0;height:3px;overflow:hidden;background:rgba(255,255,255,.22);display:none;z-index:1}
 .kus-lp[aria-busy="true"] .kus-lp__progress{display:block}
 .kus-lp__progress::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:#fff;opacity:.95;animation:kus-lp-indeterminate 1.4s ease-in-out infinite}
-.kus-lp__title{margin:0;font-size:17px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
+.kus-lp__title{margin:0;font-size:18px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
 .kus-lp__title-icon{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;background:rgba(255,255,255,.22);border-radius:7px}
-.kus-lp__subtitle{margin:4px 0 0;font-size:12px;color:rgba(255,255,255,.85);line-height:1.45}
+.kus-lp__subtitle{margin:4px 0 0;font-size:13px;color:rgba(255,255,255,.85);line-height:1.45}
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  font-size:12px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close,.kus-lp__toggle{
+/* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
+.kus-lp__badge--read{background:#047857;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--preview{background:#c2410c;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--production{background:#b91c1c;border:1px solid rgba(255,255,255,.45)}
+.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
-  color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
+  color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;
   font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
 .kus-lp__toggle{padding:6px 9px;min-width:34px}
+.kus-lp__cancel{background:rgba(254,202,202,.30);border-color:rgba(254,226,226,.85)}
 .kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
-.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__cancel:hover{background:rgba(254,202,202,.48)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled,.kus-lp__cancel:disabled{opacity:.55;cursor:not-allowed}
 
 /* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
 .kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
@@ -150,7 +162,7 @@ const THEME_CSS = `
 .kus-lp__body::-webkit-scrollbar-thumb:hover{background:#94a3b8;background-clip:padding-box;border:2px solid transparent}
 
 .kus-lp__hint{
-  font-size:12px;color:var(--c-muted);line-height:1.55;margin:0 0 14px;
+  font-size:13px;color:var(--c-muted);line-height:1.55;margin:0 0 14px;
   padding:10px 12px;background:var(--c-surface);border-radius:10px;border:1px solid var(--c-border);
 }
 .kus-lp__hint strong{color:var(--c-text-2)}
@@ -162,7 +174,7 @@ const THEME_CSS = `
 }
 .kus-lp__tab{
   position:relative;background:transparent;border:none;cursor:pointer;
-  padding:8px 12px 9px;font-size:12px;font-weight:600;color:var(--c-muted);
+  padding:8px 12px 9px;font-size:13px;font-weight:600;color:var(--c-muted);
   border-radius:8px 8px 0 0;
 }
 .kus-lp__tab:hover{color:var(--c-text-2);background:var(--c-surface)}
@@ -183,10 +195,10 @@ const THEME_CSS = `
 }
 .kus-lp__card--soft{background:var(--c-surface)}
 .kus-lp__card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-2px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--c-border)}
-.kus-lp__card-title{font-size:11.5px;font-weight:700;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.06em;margin:0;display:flex;align-items:center;gap:6px}
+.kus-lp__card-title{font-size:13px;font-weight:700;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.06em;margin:0;display:flex;align-items:center;gap:6px}
 .kus-lp__card-num{
   display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
-  background:var(--c-accent-chip);color:var(--c-accent-via);font-size:11px;font-weight:700;border-radius:999px;
+  background:var(--c-accent-chip);color:var(--c-accent-via);font-size:12.5px;font-weight:700;border-radius:999px;
 }
 .kus-lp__card-actions{display:flex;gap:6px}
 
@@ -195,13 +207,13 @@ const THEME_CSS = `
 .kus-lp__row:last-child{margin-bottom:0}
 .kus-lp__row--block{display:block}
 .kus-lp__row--block > .kus-lp__label{display:block;margin-bottom:5px}
-.kus-lp__label{font-size:12px;font-weight:600;color:var(--c-text-2);min-width:5em}
+.kus-lp__label{font-size:13px;font-weight:600;color:var(--c-text-2);min-width:5em}
 
 /* ===== Inputs ===== */
 .kus-lp__input,.kus-lp__textarea,.kus-lp__select{
   appearance:none;
   border:1px solid var(--c-border);
-  border-radius:8px;padding:7px 10px;font-size:12.5px;
+  border-radius:8px;padding:7px 10px;font-size:14px;
   background:var(--c-bg);color:var(--c-text);
   outline:none;transition:border-color .15s,box-shadow .15s;
   font-family:inherit;
@@ -216,18 +228,18 @@ const THEME_CSS = `
 .kus-lp__input--wide{flex:1;min-width:160px}
 .kus-lp__input--full{width:100%;box-sizing:border-box}
 .kus-lp__textarea{width:100%;box-sizing:border-box;min-height:60px;resize:vertical}
-.kus-lp__textarea--code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;background:var(--c-surface)}
-.kus-lp__file{font-size:12px;padding:5px 0}
+.kus-lp__textarea--code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;background:var(--c-surface)}
+.kus-lp__file{font-size:13px;padding:5px 0}
 
 /* ===== Checkbox / chip ===== */
-.kus-lp__check{font-size:12px;color:var(--c-text-2);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.kus-lp__check{font-size:13px;color:var(--c-text-2);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
 .kus-lp__check input{width:14px;height:14px;accent-color:var(--c-accent-via);margin:0}
 .kus-lp__check-grid{display:flex;flex-wrap:wrap;gap:8px 12px;margin-bottom:10px}
 
 .kus-lp__chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .kus-lp__chip{
   display:inline-flex;align-items:center;gap:6px;
-  font-size:11.5px;color:var(--c-text-2);
+  font-size:13px;color:var(--c-text-2);
   background:var(--c-bg);border:1px solid var(--c-border-strong);
   border-radius:999px;padding:4px 10px 4px 7px;cursor:pointer;user-select:none;
   transition:background .12s,border-color .12s;
@@ -239,7 +251,7 @@ const THEME_CSS = `
 /* ===== Buttons ===== */
 .kus-lp__btn{
   appearance:none;border:1px solid transparent;border-radius:10px;
-  font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+  font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;
   padding:8px 14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
   transition:filter .12s,transform .04s,background .12s,border-color .12s;
 }
@@ -249,13 +261,13 @@ const THEME_CSS = `
 .kus-lp__btn--primary{background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 4px var(--c-accent-ring)}
 .kus-lp__btn--primary:hover:not(:disabled){filter:brightness(1.06)}
 
-.kus-lp__btn--run{width:100%;padding:11px 16px;font-size:13px;font-weight:700;background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 6px var(--c-accent-ring)}
+.kus-lp__btn--run{width:100%;padding:11px 16px;font-size:14px;font-weight:700;background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 6px var(--c-accent-ring)}
 .kus-lp__btn--run:hover:not(:disabled){filter:brightness(1.07)}
 
 .kus-lp__btn--ghost{background:var(--c-surface);color:var(--c-text-2);border-color:var(--c-border-strong)}
 .kus-lp__btn--ghost:hover:not(:disabled){background:#fff;border-color:#94a3b8}
 
-.kus-lp__btn--sub{background:linear-gradient(180deg,#fff,var(--c-surface-2));color:var(--c-text-2);border-color:var(--c-border-strong);font-size:11.5px;padding:7px 10px}
+.kus-lp__btn--sub{background:linear-gradient(180deg,#fff,var(--c-surface-2));color:var(--c-text-2);border-color:var(--c-border-strong);font-size:13px;padding:7px 10px}
 .kus-lp__btn--sub:hover:not(:disabled){background:#fff;border-color:#94a3b8}
 
 .kus-lp__btn--danger{background:linear-gradient(180deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 2px 4px rgba(220,38,38,.25)}
@@ -268,7 +280,7 @@ const THEME_CSS = `
 
 /* ===== Status ===== */
 .kus-lp__status{
-  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5;
+  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.5;
   border:1px solid var(--c-border);background:var(--c-surface-2);color:var(--c-text-2);
   min-height:2.6em;display:flex;align-items:flex-start;gap:8px;
 }
@@ -288,44 +300,65 @@ const THEME_CSS = `
 /* ===== Result / Log ===== */
 .kus-lp__result{
   margin-top:10px;padding:11px 13px;background:#0f172a;color:#e2e8f0;border-radius:10px;
-  font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;
   border:1px solid #1e293b;
 }
 .kus-lp__result--empty{display:none}
-/* ログ右上に貼り付くコピー操作（ログ本文の選択・スクロールを妨げない） */
-.kus-lp__result-copy{
-  float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;
-  padding:3px 8px;font:600 10.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+/* ログ右上に貼り付くコピー／保存操作（ログ本文の選択・スクロールを妨げない） */
+.kus-lp__result-tools{float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;display:flex;gap:4px}
+.kus-lp__result-copy,.kus-lp__result-save{
+  padding:3px 8px;font:600 12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
   color:#cbd5e1;background:rgba(30,41,59,.92);border:1px solid #334155;border-radius:7px;cursor:pointer;white-space:nowrap;
 }
-.kus-lp__result-copy:hover{color:#fff;background:#334155}
-.kus-lp__result-copy[data-copied="true"]{color:#bbf7d0;border-color:#166534}
+.kus-lp__result-copy:hover,.kus-lp__result-save:hover{color:#fff;background:#334155}
+.kus-lp__result-copy[data-copied="true"],.kus-lp__result-save[data-copied="true"]{color:#bbf7d0;border-color:#166534}
 .kus-lp__panel-html{
   margin-top:10px;border:1px solid var(--c-border);border-radius:10px;
-  background:var(--c-surface);max-height:240px;overflow:auto;font-size:11.5px;
+  background:var(--c-surface);max-height:240px;overflow:auto;font-size:13px;
 }
 .kus-lp__panel-html--empty{display:none}
 .kus-lp__panel-html table{border-collapse:collapse;width:100%}
 .kus-lp__panel-html th,.kus-lp__panel-html td{padding:6px 8px;border-bottom:1px solid var(--c-border);text-align:left}
-.kus-lp__panel-html th{background:var(--c-surface-2);font-weight:600;font-size:11px;color:var(--c-text-2)}
+.kus-lp__panel-html th{background:var(--c-surface-2);font-weight:600;font-size:12.5px;color:var(--c-text-2)}
 
 /* ===== Misc ===== */
-.kus-lp__note{font-size:11.5px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
+.kus-lp__note{font-size:13px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
 .kus-lp__note--warn{color:var(--c-warn-fg);padding:7px 10px;background:var(--c-warn-bg);border:1px solid var(--c-warn-bd);border-radius:8px;margin:6px 0}
+/* ===== カードの「?」ヘルプ（補足説明の吹き出し） ===== */
+.kus-lp__help-btn{flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);font:700 13px/1 inherit;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.kus-lp__help-btn:hover,.kus-lp__help-btn--open{background:var(--c-accent-chip);border-color:var(--c-accent-via);color:var(--c-accent-from)}
+.kus-lp__help-pop{margin:-4px 0 12px;padding:10px 12px;border:1px solid var(--c-info-bd);background:var(--c-info-bg);border-radius:10px;color:var(--c-text-2);font-size:13px;line-height:1.55;animation:kus-lp-fade-in .12s ease-out}
+.kus-lp__help-pop[hidden]{display:none}
+.kus-lp__help-item{margin:0 0 6px;color:var(--c-text-2);font-size:13px;line-height:1.55}
+.kus-lp__help-item:last-child{margin-bottom:0}
+/* ===== ポップアップ（詳細設定・ほかの操作） ===== */
+.kus-lp__dialog{box-sizing:border-box;width:min(640px,calc(100vw - 32px));max-height:min(88vh,860px);padding:0;border:1px solid var(--c-border);border-radius:16px;background:var(--c-bg);color:var(--c-text);box-shadow:0 28px 60px -12px rgba(15,23,42,.45);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;display:none;flex-direction:column;overflow:hidden}
+.kus-lp__dialog[open]{display:flex}
+.kus-lp__dialog--wide{width:min(880px,calc(100vw - 32px))}
+.kus-lp__dialog::backdrop{background:rgba(15,23,42,.45)}
+.kus-lp__dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog-title{margin:0;font-size:16px;font-weight:700;color:var(--c-text)}
+.kus-lp__dialog-close{flex-shrink:0;white-space:nowrap;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
+.kus-lp__dialog-close:hover{background:var(--c-surface-2)}
+.kus-lp__dialog-body{padding:16px 18px;overflow:auto;min-height:0;flex:1}
+.kus-lp__dialog-body>.kus-lp__card{margin-bottom:12px}
+.kus-lp__dialog-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog :is(button,input,select,textarea,summary):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
+@media(max-width:720px){.kus-lp__dialog{width:calc(100vw - 16px);max-height:calc(100dvh - 16px)}.kus-lp__dialog-body{padding:12px}}
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
-.kus-lp__small{font-size:11px;color:var(--c-muted)}
+.kus-lp__small{font-size:12.5px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
 
 /* ===== Toolbar / Count / Pill ===== */
 .kus-lp__toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px}
 .kus-lp__toolbar-spacer{flex:1;min-width:8px}
 .kus-lp__count{
-  display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:4px;font-size:12.5px;font-weight:700;white-space:nowrap;
   color:var(--c-accent-from);background:var(--c-accent-chip);padding:2px 9px;border-radius:999px;font-variant-numeric:tabular-nums;
 }
 .kus-lp__pill{
-  display:inline-flex;align-items:center;gap:6px;padding:4px 11px;font-size:11.5px;font-weight:600;border-radius:999px;
+  display:inline-flex;align-items:center;gap:6px;padding:4px 11px;font-size:13px;font-weight:600;border-radius:999px;
   background:var(--c-surface-2);color:var(--c-text);border:1px solid var(--c-border);line-height:1.4;max-width:100%;
 }
 .kus-lp__pill--ok{background:var(--c-ok-bg);color:var(--c-ok-fg);border-color:var(--c-ok-bd)}
@@ -337,20 +370,20 @@ const THEME_CSS = `
   display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:7px 8px;
   background:var(--c-surface);border-bottom:1px solid var(--c-border);
 }
-.kus-lp__picklist-head .kus-lp__input{flex:1;min-width:120px;padding:5px 8px;font-size:12px}
-.kus-lp__picklist-head .kus-lp__btn{padding:4px 8px;font-size:11px;border-radius:7px}
+.kus-lp__picklist-head .kus-lp__input{flex:1;min-width:120px;padding:5px 8px;font-size:13px}
+.kus-lp__picklist-head .kus-lp__btn{padding:4px 8px;font-size:12.5px;border-radius:7px}
 .kus-lp__picklist-body{max-height:220px;overflow:auto;padding:4px}
 .kus-lp__picklist-item{
-  display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;font-size:12px;color:var(--c-text);
+  display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;font-size:13px;color:var(--c-text);
   cursor:pointer;user-select:none;min-width:0;
 }
 .kus-lp__picklist-item:hover{background:var(--c-surface)}
 .kus-lp__picklist-item:has(input:checked){background:var(--c-accent-chip)}
 .kus-lp__picklist-item input{accent-color:var(--c-accent-via);width:14px;height:14px;margin:0;flex-shrink:0}
 .kus-lp__picklist-main{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kus-lp__picklist-sub{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--c-muted);font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.kus-lp__picklist-empty{padding:10px 8px;color:var(--c-muted);font-size:11.5px}
-.kus-lp__picklist-foot{padding:6px 8px;border-top:1px solid var(--c-border);background:var(--c-surface);font-size:11px;color:var(--c-muted);line-height:1.5;overflow-wrap:anywhere}
+.kus-lp__picklist-sub{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--c-muted);font-size:12.5px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.kus-lp__picklist-empty{padding:10px 8px;color:var(--c-muted);font-size:13px}
+.kus-lp__picklist-foot{padding:6px 8px;border-top:1px solid var(--c-border);background:var(--c-surface);font-size:12.5px;color:var(--c-muted);line-height:1.5;overflow-wrap:anywhere}
 
 /* セクション折りたたみ (details) */
 .kus-lp__details{
@@ -359,7 +392,7 @@ const THEME_CSS = `
 }
 .kus-lp__details > summary{
   list-style:none;cursor:pointer;padding:10px 14px;
-  font-size:12.5px;font-weight:600;color:var(--c-text-2);
+  font-size:14px;font-weight:600;color:var(--c-text-2);
   display:flex;align-items:center;gap:8px;
 }
 .kus-lp__details > summary::-webkit-details-marker{display:none}
@@ -378,21 +411,22 @@ const THEME_CSS = `
 .kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
 .kus-lp__apptable-scroll{max-height:220px;overflow:auto}
 .kus-lp__apptable table{width:100%;border-collapse:collapse;table-layout:fixed}
-.kus-lp__apptable th{background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__apptable th{background:var(--c-surface-2);font-size:12.5px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
 .kus-lp__apptable-scroll th{position:sticky;top:0;z-index:1}
 .kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
-.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
-.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
-.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:136px}
+.kus-lp__apptable th.kus-lp__apptable-acts-h,.kus-lp__apptable td.kus-lp__apptable-acts{padding-left:4px;padding-right:4px}
 .kus-lp__apptable-acts{white-space:nowrap}
-.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:11px;border-radius:7px}
-.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 6px;font-size:12.5px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:3px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
-.kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
-.kus-lp__apptable-hint{font-size:11px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__apptable-count{font-size:12.5px;color:var(--c-muted);margin-left:auto;font-weight:600}
+.kus-lp__apptable-hint{font-size:12.5px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
 @media(max-width:420px){
   .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
   .kus-lp__apptable thead{display:none}
@@ -428,7 +462,11 @@ export interface LitePanelOptions {
   title: string;
   subtitle?: string;
   accent: AccentKey;
-  badges?: Array<{ label: string; tone?: 'primary' | 'neutral' }>;
+  /**
+   * 見出しのバッジ。影響範囲を示す tone（read: 読み取り専用 / preview: プレビューへ書き込み / production: 本番データを変更）を
+   * 1 つだけ付ける（docs/ui-writing-guide.md）。省略時はバッジを表示しない。
+   */
+  badges?: Array<{ label: string; tone?: 'primary' | 'neutral' | 'read' | 'preview' | 'production' }>;
   hint?: string;
   wide?: boolean;
 }
@@ -453,6 +491,19 @@ export interface LitePanelHandle {
    * このボタンが押される。IME 変換確定の Enter は無視する。
    */
   setPrimaryAction: (btn: HTMLButtonElement) => void;
+  /** 実行中の処理に中止を要求する（ヒーローの「中止」ボタンと同じ）。受け付けたら true。 */
+  requestCancel: () => boolean;
+  /** 実行中の処理に中止が要求済みか。 */
+  isCancelRequested: () => boolean;
+}
+
+/** 実行中のパネルがあるため再起動しなかったことを示す。エントリの kintoneGuard が握りつぶす。 */
+export class LitePanelBusyError extends Error {
+  readonly panelBusy = true;
+  constructor(id: string) {
+    super(`パネル ${id} は実行中のため再起動しません`);
+    this.name = 'LitePanelBusyError';
+  }
 }
 
 // ===== Panel factory =====
@@ -460,6 +511,22 @@ export interface LitePanelHandle {
 export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   ensureThemeStyles();
   const old = document.getElementById(opts.id);
+  // 実行中に同じツールを再起動しても、見えなくなった旧パネルの書き込みが続かないよう、実行中のパネルを維持する
+  if (old instanceof HTMLElement && old.getAttribute('aria-busy') === 'true') {
+    old.classList.remove('kus-lp--collapsed');
+    const statusText = old.querySelector<HTMLElement>('.kus-lp__status-text');
+    const hint = '実行中のため再起動しません。終わるのを待つか、「中止」を押してください。';
+    if (statusText && !statusText.textContent?.includes(hint)) statusText.textContent = `${hint} ${statusText.textContent || ''}`.trim();
+    try { old.querySelector<HTMLElement>('.kus-lp__cancel')?.focus({ preventScroll: true } as any); } catch { /* noop */ }
+    throw new LitePanelBusyError(opts.id);
+  }
+  // 再実行しても、利用者がドラッグで動かした位置を引き継ぐ（折りたたみ状態は引き継がない）
+  let carriedPosition: { left: number; top: number } | null = null;
+  if (old instanceof HTMLElement && old.dataset.kusPlaced === '1') {
+    const left = parseFloat(old.style.left);
+    const top = parseFloat(old.style.top);
+    if (Number.isFinite(left) && Number.isFinite(top)) carriedPosition = { left, top };
+  }
   if (old) {
     old.dispatchEvent(new Event('kus-lite-dispose'));
     old.remove();
@@ -496,10 +563,11 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
 
   const badgesEl = document.createElement('div');
   badgesEl.className = 'kus-lp__badge-row';
-  const badges = opts.badges || [{ label: 'Lite' }];
+  const badges = opts.badges || [];
+  if (!badges.length) badgesEl.hidden = true;
   for (const b of badges) {
     const span = document.createElement('span');
-    span.className = 'kus-lp__badge';
+    span.className = `kus-lp__badge${b.tone === 'read' || b.tone === 'preview' || b.tone === 'production' ? ` kus-lp__badge--${b.tone}` : ''}`;
     span.textContent = b.label;
     badgesEl.appendChild(span);
   }
@@ -516,6 +584,15 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   elapsedEl.setAttribute('aria-hidden', 'true');
   elapsedEl.hidden = true;
 
+  // 実行中だけ表示する「中止」ボタン（次のリクエストの前で処理を止める）
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'kus-lp__cancel';
+  cancelBtn.textContent = '中止';
+  cancelBtn.setAttribute('aria-label', '処理を中止');
+  cancelBtn.title = '次のリクエストの前で処理を止めます（送信済みの書き込みは取り消しません）';
+  cancelBtn.hidden = true;
+
   const bodyId = `${opts.id}-body`;
   const toggleBtn = document.createElement('button');
   toggleBtn.type = 'button';
@@ -529,6 +606,7 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   const heroActions = document.createElement('div');
   heroActions.className = 'kus-lp__hero-actions';
   heroActions.appendChild(elapsedEl);
+  heroActions.appendChild(cancelBtn);
   heroActions.appendChild(toggleBtn);
   heroActions.appendChild(closeBtn);
 
@@ -586,16 +664,26 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     (status.querySelector('.kus-lp__status-text') as HTMLElement).textContent = msg || '';
   }
 
-  // ===== 結果ログのコピー =====
+  // ===== 結果ログのコピー／ファイル保存 =====
   const copyBtn = document.createElement('button');
   copyBtn.type = 'button';
   copyBtn.className = 'kus-lp__result-copy';
   copyBtn.textContent = 'コピー';
   copyBtn.setAttribute('aria-label', 'ログをコピー');
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'kus-lp__result-save';
+  saveBtn.textContent = '保存';
+  saveBtn.setAttribute('aria-label', 'ログをファイルに保存');
+  const resultTools = document.createElement('span');
+  resultTools.className = 'kus-lp__result-tools';
+  resultTools.appendChild(copyBtn);
+  resultTools.appendChild(saveBtn);
   let copyResetTimer = 0;
+  let saveResetTimer = 0;
   function resultText(): string {
     const clone = result.cloneNode(true) as HTMLElement;
-    clone.querySelector('.kus-lp__result-copy')?.remove();
+    clone.querySelector('.kus-lp__result-tools')?.remove();
     return (clone.innerText || clone.textContent || '').replace(/^\s+|\s+$/g, '');
   }
   function flashCopy(label: string, copied: boolean) {
@@ -604,10 +692,26 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     window.clearTimeout(copyResetTimer);
     copyResetTimer = window.setTimeout(() => { copyBtn.textContent = 'コピー'; delete copyBtn.dataset.copied; }, 1600);
   }
+  function flashSave(label: string, saved: boolean) {
+    saveBtn.textContent = label;
+    saveBtn.dataset.copied = String(saved);
+    window.clearTimeout(saveResetTimer);
+    saveResetTimer = window.setTimeout(() => { saveBtn.textContent = '保存'; delete saveBtn.dataset.copied; }, 1600);
+  }
   copyBtn.addEventListener('click', () => {
     const text = resultText();
     if (!text) return;
     void copyTextToClipboard(text).then((ok) => flashCopy(ok ? 'コピー済み' : 'コピー失敗', ok));
+  });
+  saveBtn.addEventListener('click', () => {
+    const text = resultText();
+    if (!text) return;
+    try {
+      downloadText(`${sanitizeFilenamePart(opts.title)}_ログ_${nowStamp()}.txt`, text, 'text/plain;charset=utf-8');
+      flashSave('保存済み', true);
+    } catch {
+      flashSave('保存失敗', false);
+    }
   });
 
   function setResult(text: string) {
@@ -617,7 +721,7 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
       return;
     }
     result.textContent = text;
-    result.prepend(copyBtn);
+    result.prepend(resultTools);
     result.classList.remove('kus-lp__result--empty');
   }
 
@@ -628,7 +732,7 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
       return;
     }
     result.innerHTML = html;
-    result.prepend(copyBtn);
+    result.prepend(resultTools);
     result.classList.remove('kus-lp__result--empty');
   }
 
@@ -644,26 +748,75 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   function tickElapsed() {
     elapsedEl.textContent = `処理中 ${formatElapsed(Date.now() - busyStartedAt)}`;
   }
-  function stopElapsed() {
+  function startElapsed() {
+    busyStartedAt = Date.now();
+    elapsedEl.classList.remove('kus-lp__elapsed--done');
+    tickElapsed();
+    elapsedEl.hidden = false;
+    busyTimer = window.setInterval(tickElapsed, 1000);
+  }
+  /** タイマーを止める。keepLast が true なら、かかった時間を「前回 …」として残す。 */
+  function stopElapsed(keepLast: boolean) {
+    const wasRunning = !!busyTimer;
     if (busyTimer) window.clearInterval(busyTimer);
     busyTimer = 0;
-    elapsedEl.hidden = true;
-    elapsedEl.textContent = '';
+    if (keepLast && wasRunning) {
+      elapsedEl.classList.add('kus-lp__elapsed--done');
+      elapsedEl.textContent = `前回 ${formatElapsed(Date.now() - busyStartedAt)}`;
+      elapsedEl.hidden = false;
+    } else if (!keepLast) {
+      elapsedEl.classList.remove('kus-lp__elapsed--done');
+      elapsedEl.hidden = true;
+      elapsedEl.textContent = '';
+    }
   }
+
+  // ===== 中止 =====
+  let runToken: RunToken | null = null;
+  function requestCancel(): boolean {
+    if (!runToken) return false;
+    const accepted = requestRunCancel(runToken);
+    if (accepted) {
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = '中止中…';
+      handle.setStatus('中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…', 'busy');
+    }
+    return accepted;
+  }
+  function isCancelRequested(): boolean {
+    return !!runToken && runToken.cancelled;
+  }
+  cancelBtn.addEventListener('click', () => { requestCancel(); });
 
   function setBusy(busy: boolean) {
     closeBtn.disabled = busy;
     root.setAttribute('aria-busy', String(busy));
     root.style.cursor = busy ? 'progress' : '';
     if (busy) {
-      if (!busyTimer) {
-        busyStartedAt = Date.now();
-        tickElapsed();
-        elapsedEl.hidden = false;
-        busyTimer = window.setInterval(tickElapsed, 1000);
+      if (!runToken) {
+        runToken = beginRun();
+        cancelBtn.textContent = '中止';
+        cancelBtn.disabled = false;
+        // 別の場所（進捗オーバーレイなど）から中止された場合も、ボタンとステータスを「中止中」に揃える
+        runToken.controller.signal.addEventListener('abort', () => {
+          if (!cancelBtn.hidden && !cancelBtn.disabled) {
+            cancelBtn.disabled = true;
+            cancelBtn.textContent = '中止中…';
+            handle.setStatus('中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…', 'busy');
+          }
+        }, { once: true });
+      } else if (!runToken.cancelled) {
+        cancelBtn.disabled = false;
       }
+      cancelBtn.hidden = false;
+      if (!busyTimer) startElapsed();
     } else {
-      stopElapsed();
+      endRun(runToken);
+      runToken = null;
+      cancelBtn.hidden = true;
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = '中止';
+      stopElapsed(true);
     }
     root.dispatchEvent(new Event('kus-lite-busy-change'));
   }
@@ -697,9 +850,11 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     root.style.top = `${Math.round(nextTop)}px`;
     root.style.right = 'auto';
     customPlaced = true;
+    root.dataset.kusPlaced = '1';
   }
   function resetPosition() {
     customPlaced = false;
+    delete root.dataset.kusPlaced;
     root.style.left = '';
     root.style.top = '';
     root.style.right = '';
@@ -741,12 +896,18 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   });
   const onWindowResize = () => clampIntoViewport();
   window.addEventListener('resize', onWindowResize);
+  if (carriedPosition) place(carriedPosition.left, carriedPosition.top);
 
   function dispose() {
+    // 実行中に同じツールを再起動したときは、見えなくなった旧パネルの処理を続けさせない
+    if (runToken && !runToken.cancelled) requestRunCancel(runToken);
     document.removeEventListener('keydown', onDocKeydown);
     window.removeEventListener('resize', onWindowResize);
-    stopElapsed();
+    stopElapsed(false);
+    endRun(runToken);
+    runToken = null;
     window.clearTimeout(copyResetTimer);
+    window.clearTimeout(saveResetTimer);
   }
 
   function close() {
@@ -792,6 +953,8 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   function onDocKeydown(e: KeyboardEvent) {
     if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
     if (closeBtn.disabled || !root.isConnected || !(e.target instanceof Node) || !root.contains(e.target)) return;
+    // 詳細設定などのポップアップが開いていれば、Esc はそのポップアップだけを閉じる（native dialog が処理）
+    if (root.querySelector('dialog[open]')) return;
     e.preventDefault();
     e.stopPropagation();
     close();
@@ -812,7 +975,8 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     try { first?.focus({ preventScroll: true } as any); } catch { /* noop */ }
   });
 
-  return { root, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
+  const handle: LitePanelHandle = { root, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel, isCancelRequested };
+  return handle;
 }
 
 // ===== Element factories =====
@@ -967,11 +1131,125 @@ export function makeCard(opts: CardOptions = {}): { card: HTMLElement; body: HTM
   return { card, body, actions };
 }
 
-export function makeNote(text: string, kind: 'plain' | 'warn' = 'plain'): HTMLElement {
+/**
+ * 注記。kind='help' は補足説明で、attachCardHelp() を通すとカードの「?」ボタンの吹き出しへ移り、表面には出ない。
+ * attachCardHelp() を通さない場合は通常の注記として表示される（説明が消えないようにする）。
+ */
+export function makeNote(text: string, kind: 'plain' | 'warn' | 'help' = 'plain'): HTMLElement {
   const n = document.createElement('div');
-  n.className = kind === 'warn' ? 'kus-lp__note--warn' : 'kus-lp__note';
+  n.className = kind === 'warn' ? 'kus-lp__note--warn' : kind === 'help' ? 'kus-lp__note kus-lp__note--help' : 'kus-lp__note';
   n.textContent = text;
   return n;
+}
+
+/**
+ * scope 内の各カードについて、kind='help' の注記を見出しの「?」ボタンで開く吹き出しへ移す。
+ * 複雑な補足を表面から外し、必要なときだけ読めるようにする。何度呼んでも二重には処理しない。
+ */
+export function attachCardHelp(scope: ParentNode): void {
+  const cards = Array.from(scope.querySelectorAll<HTMLElement>('.kus-lp__card'));
+  if (scope instanceof HTMLElement && scope.classList.contains('kus-lp__card')) cards.unshift(scope);
+  for (const card of cards) {
+    const notes = Array.from(card.querySelectorAll<HTMLElement>('.kus-lp__note--help')).filter((note) => note.closest('.kus-lp__card') === card);
+    if (!notes.length) continue;
+    const head = card.querySelector<HTMLElement>(':scope > .kus-lp__card-head');
+    if (!head) continue;
+    let pop = card.querySelector<HTMLElement>(':scope > .kus-lp__help-pop');
+    let btn = head.querySelector<HTMLButtonElement>('.kus-lp__help-btn');
+    if (!pop) {
+      pop = document.createElement('div');
+      pop.className = 'kus-lp__help-pop';
+      pop.hidden = true;
+      pop.setAttribute('role', 'note');
+      head.insertAdjacentElement('afterend', pop);
+    }
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'kus-lp__help-btn';
+      btn.textContent = '?';
+      const titleEl = head.querySelector('.kus-lp__card-title');
+      const title = titleEl ? Array.from(titleEl.childNodes).filter((node) => !(node instanceof HTMLElement && node.classList.contains('kus-lp__card-num'))).map((node) => node.textContent || '').join('').trim() : '';
+      btn.setAttribute('aria-label', `${title ? `「${title}」の` : ''}説明を表示`);
+      btn.title = '説明を表示';
+      btn.setAttribute('aria-expanded', 'false');
+      const popEl = pop;
+      const setOpen = (next: boolean) => {
+        popEl.hidden = !next;
+        btn!.setAttribute('aria-expanded', String(next));
+        btn!.classList.toggle('kus-lp__help-btn--open', next);
+      };
+      btn.addEventListener('click', () => setOpen(popEl.hidden));
+      // 吹き出しが開いているときの Esc は吹き出しだけを閉じる（パネルやポップアップは閉じない）
+      const onEsc = (e: KeyboardEvent) => {
+        if (e.key !== 'Escape' || popEl.hidden || e.isComposing) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen(false);
+        try { btn!.focus({ preventScroll: true } as any); } catch { /* noop */ }
+      };
+      btn.addEventListener('keydown', onEsc);
+      const actions = head.querySelector('.kus-lp__card-actions');
+      if (actions) actions.insertAdjacentElement('afterbegin', btn); else head.appendChild(btn);
+    }
+    for (const note of notes) {
+      note.classList.remove('kus-lp__note--help');
+      note.classList.add('kus-lp__help-item');
+      pop.appendChild(note);
+    }
+  }
+}
+
+/** ポップアップ（モーダル）。詳細設定やほかの操作など、表面に出さない内容を入れる。 */
+export function makeDialog(opts: { title: string; id?: string; wide?: boolean }): { dialog: HTMLDialogElement; body: HTMLElement; open: () => void; close: () => void } {
+  const dialog = document.createElement('dialog');
+  dialog.className = `kus-lp__dialog${opts.wide ? ' kus-lp__dialog--wide' : ''}`;
+  if (opts.id) dialog.id = opts.id;
+  const titleId = `${opts.id || `kus-dialog-${Math.random().toString(36).slice(2, 8)}`}-title`;
+  dialog.setAttribute('aria-labelledby', titleId);
+  const head = document.createElement('div');
+  head.className = 'kus-lp__dialog-head';
+  const title = document.createElement('h2');
+  title.className = 'kus-lp__dialog-title';
+  title.id = titleId;
+  title.textContent = opts.title;
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'kus-lp__dialog-close';
+  closeBtn.textContent = '閉じる';
+  closeBtn.setAttribute('aria-label', `${opts.title}を閉じる`);
+  head.append(title, closeBtn);
+  const body = document.createElement('div');
+  body.className = 'kus-lp__dialog-body';
+  const foot = document.createElement('div');
+  foot.className = 'kus-lp__dialog-foot';
+  const doneBtn = document.createElement('button');
+  doneBtn.type = 'button';
+  doneBtn.className = 'kus-lp__btn kus-lp__btn--sub';
+  doneBtn.textContent = '閉じる';
+  foot.appendChild(doneBtn);
+  dialog.append(head, body, foot);
+  let opener: HTMLElement | null = null;
+  function close() {
+    if (!dialog.open) return;
+    dialog.close();
+  }
+  function open() {
+    if (dialog.open) return;
+    opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (typeof (dialog as any).showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+    const first = body.querySelector<HTMLElement>('input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled])');
+    try { (first || closeBtn).focus({ preventScroll: true } as any); } catch { /* noop */ }
+  }
+  closeBtn.addEventListener('click', close);
+  doneBtn.addEventListener('click', close);
+  // 背景（::backdrop）のクリックで閉じる
+  // 背景（::backdrop）のクリックで閉じる。内側で押し始めて背景で離したドラッグ選択では閉じない
+  let pressedOnBackdrop = false;
+  dialog.addEventListener('pointerdown', (e: PointerEvent) => { pressedOnBackdrop = e.target === dialog; });
+  dialog.addEventListener('click', (e: MouseEvent) => { if (e.target === dialog && pressedOnBackdrop) close(); pressedOnBackdrop = false; });
+  dialog.addEventListener('close', () => { if (opener?.isConnected) { try { opener.focus({ preventScroll: true } as any); } catch { /* noop */ } } });
+  return { dialog, body, open, close };
 }
 
 export function makeDetails(title: string, opts: { open?: boolean } = {}): { details: HTMLDetailsElement; body: HTMLElement } {
@@ -1606,6 +1884,7 @@ export async function liteRun<T>(
 ): Promise<T | undefined> {
   panel.setStatus(busyMsg, 'busy');
   panel.setBusy(true);
+  const token = activeRun();
   try {
     const out = await fn();
     const tone = panel.status.dataset.tone;
@@ -1620,11 +1899,45 @@ export async function liteRun<T>(
       // 処理側の最終メッセージ（「…完了」など）がスピナー付きのまま残らないよう成功トーンへ切り替える
       panel.setStatus(currentText || '完了', 'ok');
     }
+    if (token?.cancelled && !cancelled && panel.status.dataset.tone !== 'err') {
+      // 中止を要求したが最後まで終わった場合も、止めた項目があるかもしれないことを知らせる
+      let base = panel.status.querySelector('.kus-lp__status-text')?.textContent || '';
+      if (/^中止しています/.test(base)) base = okMsg || '処理が終わりました';
+      // 処理側がすでに中止の内訳（未実行の件数など）を伝えていれば、同じ注意を重ねない
+      panel.setStatus(/中止/.test(base) ? base : `${base}（中止を要求したため、途中で止めた項目があるかもしれません。結果を確認してください）`, 'warn');
+    }
     return out;
   } catch (e: any) {
+    if (isRunCancelledError(e)) {
+      // 既存のログは消さない。API 層は次のリクエストの前で止めるので、実行済みの書き込みは取り消されていない。
+      panel.setStatus(token && token.writes > 0
+        ? '中止しました。次のリクエストの前で止めました。途中まで書き込んだ内容は取り消していません。'
+        : '中止しました。次のリクエストの前で止めました（書き込みは行っていません）。', 'warn');
+      return undefined;
+    }
     const message = String(e?.message || e || '不明なエラー');
     const lines = message.split('\n').map((line) => line.trim()).filter(Boolean);
     const [first, ...rest] = lines.length ? lines : [message];
+    if (e?.partialSuccess === true) {
+      // 一部だけ成功した結果（ファイルは保存済みなど）: 要点を警告色で、内訳はログへ
+      // 要点が括弧で終わるときは括弧を重ねない
+      const logNote = rest.length ? (/[）)]$/.test(first) ? '。詳細は下のログを確認してください' : '（詳細は下のログ）') : '';
+      panel.setStatus(`${first}${logNote}`, 'warn');
+      if (rest.length) panel.setResult(lines.join('\n'));
+      return undefined;
+    }
+    if (token?.cancelled && (e?.cancelReport === true || /^中止しました/.test(first))) {
+      // 中止後に残りの項目などを報告する件数つきの報告。1 行目を要点に、内訳はログへ出す
+      panel.setStatus(`${first}${rest.length ? '（詳細は下のログ）' : ''}`, 'warn');
+      if (rest.length) panel.setResult(lines.join('\n'));
+      return undefined;
+    }
+    if (token?.cancelled) {
+      // 中止を要求した後に起きた本物の失敗は、中止ではなくエラーとして示す
+      panel.setStatus(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? '。詳細は下のログ' : ''}）`, 'err');
+      if (rest.length) panel.setResult(lines.join('\n'));
+      return undefined;
+    }
     // 1 行目（要点）はステータスへ、部分成功の内訳や API コンテキストは下のログへ出す
     panel.setStatus(`エラー: ${first}${rest.length ? '（詳細は下のログ）' : ''}`, 'err');
     if (rest.length) panel.setResult(lines.join('\n'));

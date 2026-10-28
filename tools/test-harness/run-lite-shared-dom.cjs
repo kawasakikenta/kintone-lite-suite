@@ -13,7 +13,7 @@ const metadata = require(path.join(TOOL, 'tests/fixtures/api-metadata.json'));
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   const build = await esbuild.build({ absWorkingDir: TOOL, bundle: true, write: false,
-    stdin: { contents: `export * from './src/entries/litePanelTheme.ts'; export * from './src/entries/appSearchControl.ts';`, resolveDir: TOOL },
+    stdin: { contents: `export * from './src/entries/litePanelTheme.ts'; export * from './src/entries/appSearchControl.ts'; export { apiGet } from './src/api.ts'; export { activeRun } from './src/runControl.ts'; export { installLiteWorkflow } from './src/entries/liteWorkflow.ts';`, resolveDir: TOOL },
     format: 'iife', globalName: 'Shared', platform: 'browser', target: ['chrome110'], logLevel: 'silent' });
   const browserName = process.argv.includes('--browser') ? process.argv[process.argv.indexOf('--browser') + 1] : 'chrome';
   const browser = await chromium.launch({ headless: true, ...(browserName === 'chromium' ? {} : { channel: browserName }) });
@@ -179,12 +179,28 @@ async function main() {
     assert.equal(await page.locator('#shared-test').getAttribute('aria-busy'), 'false');
     results.push('部分成功の警告保持・エラー詳細・処理中状態の復帰・ステータス読み上げ');
 
-    for (const width of [1440, 768, 390, 320]) {
+    // 対象アプリ表は「×」などの操作列を含めて横にはみ出さない（行が複数あっても同じ）
+    await page.evaluate(() => window.table.setApps([{ appId: '303', guestId: '7' }, { appId: '1234567890', guestId: '12345' }]));
+    for (const width of [1440, 1024, 768, 430, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
       await page.screenshot({ path: path.join(OUT, `shared-${width}.png`) });
       const rect = await page.locator('#shared-test').boundingBox();
       assert.ok(rect.x >= -1 && rect.x + rect.width <= width + 1, '共通パネルが画面幅に収まる');
+      const overflow = await page.evaluate(() => {
+        const scroll = window.table.element.querySelector('.kus-lp__apptable-scroll');
+        const table = scroll.querySelector('table');
+        const del = Array.from(scroll.querySelectorAll('tbody tr:first-child button')).find(button => button.textContent === '×');
+        const box = del.getBoundingClientRect();
+        const area = scroll.getBoundingClientRect();
+        const input = scroll.querySelector('tbody tr:first-child input').getBoundingClientRect();
+        return { inputWidth: input.width, scrollWidth: scroll.scrollWidth, clientWidth: scroll.clientWidth, tableScrollWidth: table.scrollWidth, tableClientWidth: table.clientWidth, delRight: box.right, areaRight: area.right };
+      });
+      assert.ok(overflow.scrollWidth <= overflow.clientWidth, `対象アプリ表が横にはみ出さない (${width}px): ${JSON.stringify(overflow)}`);
+      assert.ok(overflow.tableScrollWidth <= overflow.tableClientWidth, `対象アプリ表の内側もはみ出さない (${width}px): ${JSON.stringify(overflow)}`);
+      assert.ok(overflow.inputWidth >= 60, `アプリID入力欄が使える幅を保つ (${width}px): ${JSON.stringify(overflow)}`);
+      assert.ok(overflow.delRight <= overflow.areaRight + 0.5, `「×」が表の外にはみ出さない (${width}px): ${JSON.stringify(overflow)}`);
     }
+    await page.evaluate(() => window.table.setApps([{ appId: '303', guestId: '7' }]));
     await page.evaluate(() => { window.panel.setBusy(true); window.panel.close(); });
     assert.equal(await page.locator('#shared-test').count(), 1);
     await page.evaluate(() => { window.panel.setBusy(false); window.search.querySelector('input').focus(); window.panel.close(); });
@@ -200,6 +216,184 @@ async function main() {
       return listeners.size;
     });
     assert.equal(listenerCount, 0, '再起動でdocumentのリスナーを残さない');
+    // 中止ボタン・前回の所要時間・ログ保存・再起動時の位置引き継ぎ
+    await page.evaluate(() => {
+      window.cancelPanel = Shared.createLitePanel({ id: 'cancel-test', title: '中止テスト', accent: 'settings' });
+      window.apiCalls.length = 0;
+      window.pendingApi.length = 0;
+    });
+    const cancelButton = page.locator('#cancel-test .kus-lp__cancel');
+    const cancelClose = page.locator('#cancel-test .kus-lp__close');
+    const cancelElapsed = page.locator('#cancel-test .kus-lp__elapsed');
+    const cancelStatus = page.locator('#cancel-test .kus-lp__status');
+    assert.equal(await cancelButton.isHidden(), true, '待機中は中止ボタンを出さない');
+    assert.equal(await cancelButton.getAttribute('aria-label'), '処理を中止');
+    await page.evaluate(() => {
+      // 1 件目の取得のあと、書き込み中を模した待機（中断できない処理）を挟んでから 2 件目を取得する
+      window.cancelRun = Shared.liteRun(window.cancelPanel, '取得中', async () => {
+        await Shared.apiGet('/k/v1', '/app.json', { id: 1 });
+        await new Promise(resolve => { window.releaseGate = resolve; });
+        await Shared.apiGet('/k/v1', '/app/views.json', { app: 1 });
+      });
+    });
+    await cancelButton.waitFor({ state: 'visible' });
+    assert.equal(await cancelButton.innerText(), '中止');
+    assert.equal(await cancelButton.isEnabled(), true);
+    assert.equal(await cancelClose.isDisabled(), true, '実行中は閉じるを無効にする');
+    assert.equal(await page.evaluate(() => Shared.activeRun() !== null && !Shared.activeRun().cancelled), true);
+    assert.equal(await page.evaluate(() => window.apiCalls.length), 1);
+    await page.evaluate(() => window.pendingApi.shift().resolve({ id: 1 }));
+    await page.waitForFunction(() => typeof window.releaseGate === 'function');
+    await cancelButton.click();
+    assert.equal(await cancelButton.innerText(), '中止中…');
+    assert.equal(await cancelButton.isDisabled(), true, '中止の要求は一度だけ');
+    assert.match(await cancelStatus.innerText(), /中止しています/);
+    assert.equal(await page.evaluate(() => window.cancelPanel.isCancelRequested()), true);
+    assert.equal(await page.evaluate(() => window.cancelPanel.requestCancel()), false, '二重の中止要求は受け付けない');
+    await page.evaluate(() => window.releaseGate());
+    await page.waitForFunction(() => document.querySelector('#cancel-test').getAttribute('aria-busy') === 'false');
+    await page.evaluate(() => window.cancelRun);
+    assert.equal(await cancelStatus.getAttribute('data-tone'), 'warn');
+    assert.match(await cancelStatus.innerText(), /中止しました/);
+    assert.equal(await page.evaluate(() => window.apiCalls.length), 1, '中止後は次のリクエストを送らない');
+    // 読み取り中の中止: 応答を待たずに打ち切り、2 件目は送らない
+    await page.evaluate(() => {
+      window.pendingApi.length = 0;
+      window.apiCalls.length = 0;
+      window.cancelRun = Shared.liteRun(window.cancelPanel, '取得中', async () => {
+        await Shared.apiGet('/k/v1', '/app.json', { id: 1 });
+        await Shared.apiGet('/k/v1', '/app/views.json', { app: 1 });
+      });
+    });
+    await cancelButton.waitFor({ state: 'visible' });
+    await cancelButton.click();
+    await page.waitForFunction(() => document.querySelector('#cancel-test').getAttribute('aria-busy') === 'false');
+    await page.evaluate(() => window.cancelRun);
+    assert.equal(await cancelStatus.getAttribute('data-tone'), 'warn');
+    assert.match(await cancelStatus.innerText(), /中止しました/);
+    assert.equal(await page.evaluate(() => window.apiCalls.length), 1, '読み取り中の中止でも次のリクエストを送らない');
+    assert.equal(await cancelClose.isEnabled(), true, '中止後は閉じるを戻す');
+    assert.equal(await cancelButton.isHidden(), true, '中止後は中止ボタンを隠す');
+    assert.equal(await page.evaluate(() => Shared.activeRun()), null);
+    assert.match(await cancelElapsed.textContent(), /^前回 /);
+    assert.equal(await cancelElapsed.evaluate(element => element.classList.contains('kus-lp__elapsed--done') && !element.hidden && element.getAttribute('aria-hidden') === 'true'), true, '完了後も所要時間を残す');
+    assert.equal(await cancelElapsed.evaluate(element => getComputedStyle(element, '::before').display), 'none', '完了後はスピナーを出さない');
+    await page.evaluate(() => {
+      window.pendingApi.length = 0;
+      window.cancelRun = Shared.liteRun(window.cancelPanel, '次の取得中', async () => { await Shared.apiGet('/k/v1', '/app.json', { id: 2 }); });
+    });
+    assert.match(await cancelElapsed.textContent(), /^処理中 /, '次の処理を始めたら処理中の表示へ戻す');
+    assert.equal(await cancelElapsed.evaluate(element => element.classList.contains('kus-lp__elapsed--done')), false);
+    assert.equal(await cancelButton.isVisible(), true);
+    await page.evaluate(() => window.pendingApi.shift().resolve({ id: 2 }));
+    await page.evaluate(() => window.cancelRun);
+    assert.equal(await cancelButton.isHidden(), true);
+    assert.equal(await cancelStatus.getAttribute('data-tone'), 'ok', '中止していない処理は通常どおり完了する');
+    await page.evaluate(() => window.cancelPanel.setResult('abc'));
+    assert.equal(await page.getByRole('button', { name: 'ログをコピー', exact: true }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'ログをファイルに保存', exact: true }).count(), 1);
+    assert.equal(await page.locator('#cancel-test .kus-lp__result > .kus-lp__result-tools > .kus-lp__result-copy').count(), 1);
+    // ダウンロードの実体はアンカー経由。クリックを捕まえてファイル名と本文を確認する（実際の保存は行わない）。
+    await page.evaluate(() => {
+      window.savedLogs = [];
+      document.addEventListener('click', event => {
+        const anchor = event.target instanceof HTMLAnchorElement && event.target.download ? event.target : null;
+        if (!anchor) return;
+        event.preventDefault();
+        fetch(anchor.href).then(response => response.text()).then(text => window.savedLogs.push({ name: anchor.download, text }));
+      }, true);
+    });
+    await page.getByRole('button', { name: 'ログをファイルに保存', exact: true }).click();
+    await page.waitForFunction(() => window.savedLogs.length === 1);
+    const savedLog = await page.evaluate(() => window.savedLogs[0]);
+    assert.match(savedLog.name, /^中止テスト_ログ_\d{8}_\d{6}\.txt$/);
+    assert.equal(savedLog.text, 'abc', 'ログ本文だけを保存する（コピー／保存ボタンの文字を含めない）');
+    assert.equal(await page.getByRole('button', { name: 'ログをファイルに保存', exact: true }).innerText(), '保存済み');
+    results.push('中止: 実行中だけ表示・要求後は次のリクエストを送らない・警告で終了・閉じるの復帰・前回の所要時間を残す・ログのコピー／ファイル保存');
+
+    await page.evaluate(() => window.cancelPanel.setCollapsed(true));
+    const dragHero = page.locator('#cancel-test .kus-lp__title');
+    const heroBox = await dragHero.boundingBox();
+    await page.mouse.move(heroBox.x + 4, heroBox.y + 4);
+    await page.mouse.down();
+    await page.mouse.move(heroBox.x - 200, heroBox.y + 160, { steps: 5 });
+    await page.mouse.up();
+    const placed = await page.evaluate(() => { const style = document.querySelector('#cancel-test').style; return { left: style.left, top: style.top }; });
+    assert.ok(placed.left && placed.top, 'ドラッグで位置を指定する');
+    await page.evaluate(() => { window.cancelPanel = Shared.createLitePanel({ id: 'cancel-test', title: '中止テスト', accent: 'settings' }); });
+    assert.deepEqual(await page.evaluate(() => { const style = document.querySelector('#cancel-test').style; return { left: style.left, top: style.top }; }), placed, '再起動しても動かした位置を保つ');
+    assert.equal(await page.locator('#cancel-test.kus-lp--collapsed').count(), 0, '折りたたみ状態は引き継がない');
+    await page.evaluate(() => window.cancelPanel.resetPosition());
+    await page.evaluate(() => { window.cancelPanel = Shared.createLitePanel({ id: 'cancel-test', title: '中止テスト', accent: 'settings' }); });
+    assert.equal(await page.evaluate(() => document.querySelector('#cancel-test').style.left), '', '位置を戻した後の再起動では引き継がない');
+    await page.evaluate(() => window.cancelPanel.close());
+    assert.equal(await page.locator('#cancel-test').count(), 0);
+    results.push('再起動: ドラッグで動かした位置を引き継ぎ・折りたたみは引き継がない・位置リセット後は右上');
+
+    // ===== ポップアップ: 詳細設定・ほかの操作・カードの「?」ヘルプ =====
+    await page.evaluate(() => {
+      const panel = Shared.createLitePanel({ id: 'popup-test', title: 'ポップアップ確認', accent: 'settings', badges: [{ label: '読み取り専用', tone: 'read' }] });
+      window.popupPanel = panel;
+      const card = Shared.makeCard({ title: '対象', number: 1 });
+      card.body.appendChild(Shared.makeRow(Shared.makeInput({ placeholder: 'アプリID', value: '12', ariaLabel: 'ポップアップ用アプリID' }), { label: 'アプリ' }));
+      card.body.appendChild(Shared.makeNote('これは補足説明です。', 'help'));
+      card.body.appendChild(Shared.makeNote('これは警告です。', 'warn'));
+      const adv = Shared.makeCard({ title: '出力形式', soft: true });
+      const select = Shared.makeSelect([['a', '形式A'], ['b', '形式B']], 'a');
+      select.setAttribute('aria-label', '形式');
+      adv.body.appendChild(Shared.makeRow(select, { label: '形式' }));
+      adv.body.appendChild(Shared.makeNote('形式の説明。', 'help'));
+      window.popupCalls = 0;
+      const make = id => { const button = Shared.makeButton(id); button.addEventListener('click', () => Shared.liteRun(panel, '処理中', async () => { window.popupCalls += 1; }, '完了')); return button; };
+      Shared.installLiteWorkflow(panel, { setup: [card.card], advanced: [adv.card], advancedCopy: '出力形式はここから。',
+        actions: ['A', 'B', 'C', 'D', 'E'].map(id => ({ id, label: `操作${id}`, description: `${id} の説明。`, button: make(id), validate: () => '', summary: () => [['対象', '#12'], ['形式', select.value]] })) });
+    });
+    const popupPanel = page.locator('#popup-test');
+    assert.equal(await page.getByRole('radio').filter({ visible: true }).count(), 3, '表面に出す操作は3つまで');
+    const moreButton = page.getByRole('button', { name: /ほかの操作…/ });
+    await moreButton.click();
+    assert.equal(await page.locator('#popup-test-more-actions').evaluate(dialog => dialog.open), true, 'ほかの操作のポップアップが開く');
+    await page.getByRole('radio', { name: '操作D' }).check();
+    assert.equal(await page.locator('#popup-test-more-actions').evaluate(dialog => dialog.open), false, '選ぶと閉じる');
+    assert.equal(await page.getByRole('button', { name: /操作D/ }).getAttribute('aria-pressed'), 'true', '選んだ操作を表面に示す');
+    await page.getByRole('button', { name: '詳細設定…' }).click();
+    const advancedDialog = page.locator('#popup-test-advanced');
+    assert.equal(await advancedDialog.evaluate(dialog => dialog.open), true, '詳細設定のポップアップが開く');
+    assert.equal(await advancedDialog.getByText('形式の説明。').isVisible(), false, '補足説明は閉じている');
+    await advancedDialog.getByRole('button', { name: '「出力形式」の説明を表示' }).click();
+    assert.equal(await advancedDialog.getByText('形式の説明。').isVisible(), true, '「?」で補足説明を開く');
+    await page.keyboard.press('Escape');
+    assert.equal(await advancedDialog.getByText('形式の説明。').isVisible(), false, '「?」が開いているときの Esc は吹き出しだけを閉じる');
+    assert.equal(await advancedDialog.evaluate(dialog => dialog.open), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await advancedDialog.evaluate(dialog => dialog.open), false, 'Esc はポップアップだけを閉じる');
+    assert.equal(await popupPanel.count(), 1, 'パネルは閉じない');
+    await page.getByRole('button', { name: '詳細設定…' }).click();
+    await advancedDialog.getByRole('combobox', { name: '形式' }).selectOption('b');
+    await advancedDialog.getByRole('button', { name: '詳細設定を閉じる' }).click();
+    await page.getByRole('button', { name: '内容を確認する' }).click();
+    assert.match(await popupPanel.locator('.kus-wf-summary').innerText(), /形式[\s\S]*b/, 'ポップアップの設定が確認画面に出る');
+    await page.getByRole('button', { name: '操作D' }).click();
+    await page.waitForFunction(() => document.querySelector('#popup-test').getAttribute('aria-busy') !== 'true');
+    assert.equal(await page.evaluate(() => window.popupCalls), 1, 'ほかの操作で選んだ操作を実行する');
+    await page.getByRole('tab', { name: /1 対象と操作/ }).click();
+    assert.equal(await page.getByText('これは補足説明です。').isVisible(), false);
+    assert.equal(await page.getByText('これは警告です。').isVisible(), true, '警告は表面に残す');
+    await page.getByRole('button', { name: '「対象」の説明を表示' }).click();
+    assert.equal(await page.getByText('これは補足説明です。').isVisible(), true);
+    for (const width of [320, 768]) {
+      await page.setViewportSize({ width, height: 700 });
+      await page.getByRole('button', { name: '詳細設定…' }).click();
+      const box = await advancedDialog.boundingBox();
+      assert.ok(box && box.x >= 0 && box.x + box.width <= width + 1, `ポップアップが画面内に収まる (${width})`);
+      await page.screenshot({ path: path.join(OUT, `popup-${width}.png`) });
+      await page.keyboard.press('Escape');
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.evaluate(() => window.popupPanel.close());
+    assert.equal(await popupPanel.count(), 0);
+    results.push('ポップアップ: 詳細設定・ほかの操作・「?」ヘルプ・Esc の扱い・確認画面への反映・320/768px');
+
     await page.locator('#launcher').focus();
     await page.evaluate(() => {
       window.firstPanel = Shared.createLitePanel({ id: 'escape-first', title: '一つ目', accent: 'settings' });

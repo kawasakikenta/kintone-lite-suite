@@ -11,10 +11,13 @@
 // ==========================================================================
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
   var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __esm = (fn, res) => function __init() {
     return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
   };
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
   // src/featureDefs.mjs
   var ICONS, FEATURE_DEFS;
@@ -703,6 +706,9 @@ ${contextLine}`);
       }
     }, 0);
   }
+  function downloadText(filename, text, type) {
+    triggerDownload(filename, new Blob([text], { type: type || "text/plain" }));
+  }
   function downloadBlob(filename, blob) {
     triggerDownload(filename, blob);
   }
@@ -792,6 +798,145 @@ ${contextLine}`);
   var init_kintone_query = __esm({
     "src/kintone-query.ts"() {
       "use strict";
+    }
+  });
+
+  // src/runControl.ts
+  function beginRun() {
+    const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0, writes: 0 };
+    active = token;
+    return token;
+  }
+  function endRun(token) {
+    if (token && active === token) active = null;
+  }
+  function requestCancel(token) {
+    const target = token || active;
+    if (!target || target.cancelled) return false;
+    target.cancelled = true;
+    target.cancelledAt = Date.now();
+    try {
+      target.controller.abort(new RunCancelledError());
+    } catch {
+    }
+    return true;
+  }
+  function isCancelRequested() {
+    return !!active && active.cancelled;
+  }
+  function activeRun() {
+    return active;
+  }
+  function noteWrite() {
+    if (active) active.writes += 1;
+  }
+  function throwIfCancelled() {
+    if (active && active.cancelled) throw new RunCancelledError();
+  }
+  function activeAbortSignal() {
+    return active ? active.controller.signal : void 0;
+  }
+  function isRunCancelledError(error) {
+    let current = error;
+    for (let depth = 0; current && depth < 4; depth++) {
+      if (current instanceof RunCancelledError || current.name === "RunCancelledError") return true;
+      if (current.name === "AbortError" && isCancelRequested()) return true;
+      current = current.original;
+    }
+    return false;
+  }
+  function sleepUnlessCancelled(ms) {
+    const signal = activeAbortSignal();
+    return new Promise((resolve) => {
+      if (signal?.aborted) {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      function onAbort() {
+        clearTimeout(timer);
+        resolve();
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+  function raceWithCancel(promise, opts = {}) {
+    const signal = activeAbortSignal();
+    const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 0;
+    if (!signal && !timeoutMs) return promise;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let timer = 0;
+      const finish = (fn) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        fn();
+      };
+      function onAbort() {
+        finish(() => reject(new RunCancelledError()));
+      }
+      timer = timeoutMs ? setTimeout(() => finish(() => {
+        const error = new Error(opts.timeoutMessage || `応答待ちが ${Math.round(timeoutMs / 1e3)} 秒を超えました（timeout）`);
+        error.code = "TIMEOUT";
+        reject(error);
+      }), timeoutMs) : 0;
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      promise.then((value) => finish(() => resolve(value)), (error) => finish(() => reject(error)));
+    });
+  }
+  function createRequestSignal(timeoutMs) {
+    const controller = new AbortController();
+    const runSignal = activeAbortSignal();
+    let timedOut = false;
+    const onAbort = () => {
+      try {
+        controller.abort(new RunCancelledError());
+      } catch {
+      }
+    };
+    if (runSignal?.aborted) onAbort();
+    else runSignal?.addEventListener("abort", onAbort, { once: true });
+    const timer = Number(timeoutMs) > 0 ? setTimeout(() => {
+      timedOut = true;
+      const error = new Error(`応答待ちが ${Math.round(Number(timeoutMs) / 1e3)} 秒を超えました（timeout）`);
+      error.code = "TIMEOUT";
+      try {
+        controller.abort(error);
+      } catch {
+      }
+    }, Number(timeoutMs)) : 0;
+    return {
+      signal: controller.signal,
+      release: () => {
+        if (timer) clearTimeout(timer);
+        runSignal?.removeEventListener("abort", onAbort);
+      },
+      timedOut: () => timedOut
+    };
+  }
+  var RUN_CANCELLED_MESSAGE, RunCancelledError, nextId, active;
+  var init_runControl = __esm({
+    "src/runControl.ts"() {
+      "use strict";
+      RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
+      RunCancelledError = class extends Error {
+        constructor(message = RUN_CANCELLED_MESSAGE) {
+          super(message);
+          __publicField(this, "cancelled", true);
+          this.name = "RunCancelledError";
+        }
+      };
+      nextId = 1;
+      active = null;
     }
   });
 
@@ -888,19 +1033,24 @@ ${contextLine}`);
     apiGetMetrics.calls += 1;
     touchApiPathMetric(path, "calls");
     for (let i = 0; i < retries; i++) {
+      throwIfCancelled();
       try {
-        const res = await kintone.api(`${prefix}${path}`, "GET", params);
+        const res = await raceWithCancel(
+          Promise.resolve(kintone.api(`${prefix}${path}`, "GET", params)),
+          { timeoutMs: options.timeoutMs === 0 ? 0 : Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : API_GET_TIMEOUT_MS }
+        );
         apiGetMetrics.lastLatencyMs = Date.now() - startAt;
         apiGetMetrics.lastError = "";
         return res;
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         err = e;
         const retriable = isRetriableApiError(e);
         if (i < retries - 1 && retriable) {
           apiGetMetrics.retries += 1;
           touchApiPathMetric(path, "retries");
           const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
-          await new Promise((r) => setTimeout(r, waitMs));
+          await sleepUnlessCancelled(waitMs);
           continue;
         }
         break;
@@ -919,13 +1069,16 @@ ${contextLine}`);
     const maxAttempts = Math.max(1, retries);
     let lastErr;
     for (let i = 0; i < maxAttempts; i++) {
+      throwIfCancelled();
       try {
+        noteWrite();
         return await kintone.api(`${prefix}${path}`, method, body);
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         lastErr = e;
         if (i < maxAttempts - 1 && isRetriableMutation(method, e)) {
           const waitMs = computeRetryDelayMs(i, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS);
-          await new Promise((r) => setTimeout(r, waitMs));
+          await sleepUnlessCancelled(waitMs);
           continue;
         }
         break;
@@ -939,11 +1092,14 @@ ${contextLine}`);
   async function apiPost(prefix, path, body) {
     return executeMutatingApiWithRetry("POST", prefix, path, body);
   }
-  async function apiDelete(prefix, path, body) {
+  async function apiDelete(prefix, path, body, options = {}) {
     assertAllowsMutatingRestCall(prefix, path, "DELETE");
+    if (!options.ignoreCancel) throwIfCancelled();
     try {
+      if (!options.ignoreCancel) noteWrite();
       return await kintone.api(`${prefix}${path}`, "DELETE", body);
     } catch (e) {
+      if (isRunCancelledError(e)) throw e;
       throw apiErrorWithContext(e, { method: "DELETE", prefix, path, payload: body });
     }
   }
@@ -983,11 +1139,11 @@ ${contextLine}`);
         if (!batch.length) break;
         all2.push(...batch);
         onProgress(all2.length, "keyset");
-        const nextId = Number(batch[batch.length - 1]?.$id?.value);
-        if (!Number.isFinite(nextId) || nextId <= lastId) {
+        const nextId2 = Number(batch[batch.length - 1]?.$id?.value);
+        if (!Number.isFinite(nextId2) || nextId2 <= lastId) {
           throw new Error("レコードIDの取得順が想定と異なるため中断しました（$id を fields に含めてください）");
         }
-        lastId = nextId;
+        lastId = nextId2;
         if (batch.length < limit) break;
       }
       return { records: all2, mode: "keyset" };
@@ -1001,7 +1157,7 @@ ${contextLine}`);
     let finished = false;
     try {
       while (true) {
-        const resp = await apiGet(prefix, "/records/cursor.json", { id: cursorId });
+        const resp = await apiGet(prefix, "/records/cursor.json", { id: cursorId }, { timeoutMs: 0 });
         if (!Array.isArray(resp?.records)) {
           throw new Error("cursor 取得の応答形式が不正です（records がありません）");
         }
@@ -1019,7 +1175,7 @@ ${contextLine}`);
     } finally {
       if (!finished) {
         try {
-          await apiDelete(prefix, "/records/cursor.json", { id: cursorId });
+          await apiDelete(prefix, "/records/cursor.json", { id: cursorId }, { ignoreCancel: true });
         } catch {
         }
       }
@@ -1043,12 +1199,22 @@ ${contextLine}`);
     }
     return h.toString(16).padStart(8, "0");
   }
+  function wasCancelled(error, signal) {
+    return isRunCancelledError(error) || isRunCancelledError(signal.reason);
+  }
+  function timeoutDetail(signal, timeoutMs) {
+    const reason = signal.reason;
+    const message = reason instanceof Error ? reason.message : "";
+    return message || `応答待ちが ${Math.round(timeoutMs / 1e3)} 秒を超えました（timeout）`;
+  }
   async function fetchTextFileBody(prefix, fileKey) {
     if (!fileKey) return { ok: false, reason: "error", detail: "fileKey がありません" };
     const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
     const headers = { "X-Requested-With": "XMLHttpRequest" };
+    throwIfCancelled();
+    const request = createRequestSignal(FILE_TEXT_FETCH_TIMEOUT_MS);
     try {
-      const resp = await fetch(url, { method: "GET", headers });
+      const resp = await fetch(url, { method: "GET", headers, signal: request.signal });
       if (!resp.ok) {
         return {
           ok: false,
@@ -1078,17 +1244,21 @@ ${contextLine}`);
       }
       return { ok: true, text: await blob.text(), byteSize: blob.size };
     } catch (error) {
+      if (wasCancelled(error, request.signal)) throw new RunCancelledError();
       return {
         ok: false,
         reason: "error",
-        detail: error instanceof Error ? error.message : String(error)
+        detail: request.timedOut() ? timeoutDetail(request.signal, FILE_TEXT_FETCH_TIMEOUT_MS) : error instanceof Error ? error.message : String(error)
       };
+    } finally {
+      request.release();
     }
   }
   async function fetchTextFileBodyWithRetry(prefix, fileKey) {
     let result = await fetchTextFileBody(prefix, fileKey);
     if (result.ok === true) return result;
     if (result.reason === "oversize") return result;
+    throwIfCancelled();
     result = await fetchTextFileBody(prefix, fileKey);
     return result;
   }
@@ -1161,7 +1331,7 @@ ${contextLine}`);
     if (!section || typeof section !== "object") return;
     const countText = failed > 0 ? `（${failed}件）` : "";
     const detail = error instanceof Error ? error.message : error == null ? "" : String(error);
-    const fileText = files.length ? ` [${files.slice(0, 3).map((item) => item.fileName || item.fileKey || "(名称不明)").join(", ")}${files.length > 3 ? ", …" : ""}]` : "";
+    const fileText = files.length ? ` [${files.slice(0, 3).map((item) => `${item.fileName || item.fileKey || "(名称不明)"}${item.detail ? `: ${item.detail}` : ""}`).join(", ")}${files.length > 3 ? ", …" : ""}]` : "";
     section._fetchError = `${label}の取得に失敗したため、このセクションは比較できません${countText}${fileText}${detail ? `: ${detail}` : ""}`;
   }
   async function fetchPluginConfigs(pluginSection, prefix, appId) {
@@ -1186,7 +1356,8 @@ ${contextLine}`);
           } else {
             stats.skipped += 1;
           }
-        } catch {
+        } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           stats.failed += 1;
         }
       });
@@ -1220,6 +1391,7 @@ ${contextLine}`);
         const revision = extractSectionRevision(res);
         results[index] = { value: rawSettings ? deepClone(res) : normalizeSettingsSection(res), revision };
       } catch (e) {
+        if (isRunCancelledError(e)) throw e;
         results[index] = { value: { _fetchError: e?.message || String(e) }, revision: "" };
       }
       completed += 1;
@@ -1247,6 +1419,7 @@ ${contextLine}`);
             setAuxiliaryFetchError(cust, "JS/CSSファイル本文", stats.failed, void 0, stats.failedFiles);
           }
         } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           setAuxiliaryFetchError(cust, "JS/CSSファイル本文", 0, e);
         }
       }
@@ -1260,19 +1433,21 @@ ${contextLine}`);
           const unavailable = stats.failed + stats.skipped;
           if (unavailable > 0) setAuxiliaryFetchError(plug, "プラグイン設定", unavailable);
         } catch (e) {
+          if (isRunCancelledError(e)) throw e;
           setAuxiliaryFetchError(plug, "プラグイン設定", 0, e);
         }
       }
     }
     return bundle;
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, FILE_DOWNLOAD_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
       init_constants();
       init_kintone_query();
       init_utils();
+      init_runControl();
       DEPLOY_PATH_SNIPPET = "app/deploy.json";
       ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
       ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
@@ -1280,6 +1455,9 @@ ${contextLine}`);
       DEFAULT_API_GET_RETRIES = 3;
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
+      API_GET_TIMEOUT_MS = 12e4;
+      FILE_TEXT_FETCH_TIMEOUT_MS = 6e4;
+      FILE_DOWNLOAD_TIMEOUT_MS = 12e4;
       RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
       RECORD_DATA_MUTATION_PATHS = /* @__PURE__ */ new Set([
         "/record.json",
@@ -1428,7 +1606,12 @@ ${contextLine}`);
       alert(NOT_KINTONE_PAGE_MESSAGE);
       return;
     }
-    run();
+    try {
+      run();
+    } catch (error) {
+      if (error?.panelBusy === true) return;
+      throw error;
+    }
   }
 
   // src/handlers/diffFocus.ts
@@ -1518,6 +1701,7 @@ ${contextLine}`);
 
   // src/entries/litePanelTheme.ts
   init_dialog();
+  init_runControl();
   init_utils();
   var STYLE_ID = "kus-lp-theme-styles";
   var ACCENTS = {
@@ -1544,7 +1728,7 @@ ${contextLine}`);
   --c-border-strong:#cbd5e1;
   --c-text:#0f172a;
   --c-text-2:#334155;
-  --c-muted:#64748b;
+  --c-muted:#475569;
   --c-link:#2563eb;
   --c-ok-bg:#ecfdf5;
   --c-ok-fg:#065f46;
@@ -1569,7 +1753,7 @@ ${contextLine}`);
   top:max(16px,2vh);
   right:max(16px,2vw);
   box-sizing:border-box;
-  width:min(520px,calc(100vw - max(32px,4vw)));
+  width:min(560px,calc(100vw - max(32px,4vw)));
   max-height:min(92vh,920px);
   overflow:hidden;
   display:flex;
@@ -1578,7 +1762,7 @@ ${contextLine}`);
   border:1px solid var(--c-border);
   border-radius:18px;
   box-shadow:0 4px 6px -1px rgba(15,23,42,.08),0 28px 60px -12px rgba(15,23,42,.30);
-  font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
   color:var(--c-text);
   animation:kus-lp-fade-in .18s ease-out;
 }
@@ -1604,36 +1788,47 @@ ${contextLine}`);
 }
 .kus-lp__hero-main{min-width:0;flex:1}
 .kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
+/* 狭い画面では経過時間の文字を隠し（スピナーは残す）ボタンを詰めて、タイトルが 1 文字ずつ折り返すのを防ぐ */
+@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12px}.kus-lp__toggle{min-width:30px}}
 .kus-lp__elapsed{
-  font-size:11px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
+  font-size:12.5px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
   font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
 }
 .kus-lp__elapsed::before{
   content:'';display:inline-block;width:9px;height:9px;border-radius:50%;
   border:2px solid rgba(255,255,255,.85);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
 }
+.kus-lp__elapsed--done{font-weight:500;color:rgba(255,255,255,.8)}
+/* 完了後の「前回 …」表示ではスピナーを出さない */
+.kus-lp__elapsed--done::before{display:none;animation:none}
 /* 実行中の進捗ストリップ（ヒーロー下端） */
 .kus-lp__progress{position:absolute;left:0;right:0;bottom:0;height:3px;overflow:hidden;background:rgba(255,255,255,.22);display:none;z-index:1}
 .kus-lp[aria-busy="true"] .kus-lp__progress{display:block}
 .kus-lp__progress::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:#fff;opacity:.95;animation:kus-lp-indeterminate 1.4s ease-in-out infinite}
-.kus-lp__title{margin:0;font-size:17px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
+.kus-lp__title{margin:0;font-size:18px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
 .kus-lp__title-icon{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;background:rgba(255,255,255,.22);border-radius:7px}
-.kus-lp__subtitle{margin:4px 0 0;font-size:12px;color:rgba(255,255,255,.85);line-height:1.45}
+.kus-lp__subtitle{margin:4px 0 0;font-size:13px;color:rgba(255,255,255,.85);line-height:1.45}
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  font-size:12px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
-.kus-lp__close,.kus-lp__toggle{
+/* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
+.kus-lp__badge--read{background:#047857;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--preview{background:#c2410c;border:1px solid rgba(255,255,255,.35)}
+.kus-lp__badge--production{background:#b91c1c;border:1px solid rgba(255,255,255,.45)}
+.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{
   flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
-  color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
+  color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;
   font-family:inherit;line-height:1.3;
   transition:background .12s ease;
 }
 .kus-lp__toggle{padding:6px 9px;min-width:34px}
+.kus-lp__cancel{background:rgba(254,202,202,.30);border-color:rgba(254,226,226,.85)}
 .kus-lp__close:hover,.kus-lp__toggle:hover{background:rgba(255,255,255,.24)}
-.kus-lp__close:disabled,.kus-lp__toggle:disabled{opacity:.55;cursor:not-allowed}
+.kus-lp__cancel:hover{background:rgba(254,202,202,.48)}
+.kus-lp__close:disabled,.kus-lp__toggle:disabled,.kus-lp__cancel:disabled{opacity:.55;cursor:not-allowed}
 
 /* キーボード操作の現在位置をすべての lite パネルで見えるようにする */
 .kus-lp :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
@@ -1649,7 +1844,7 @@ ${contextLine}`);
 .kus-lp__body::-webkit-scrollbar-thumb:hover{background:#94a3b8;background-clip:padding-box;border:2px solid transparent}
 
 .kus-lp__hint{
-  font-size:12px;color:var(--c-muted);line-height:1.55;margin:0 0 14px;
+  font-size:13px;color:var(--c-muted);line-height:1.55;margin:0 0 14px;
   padding:10px 12px;background:var(--c-surface);border-radius:10px;border:1px solid var(--c-border);
 }
 .kus-lp__hint strong{color:var(--c-text-2)}
@@ -1661,7 +1856,7 @@ ${contextLine}`);
 }
 .kus-lp__tab{
   position:relative;background:transparent;border:none;cursor:pointer;
-  padding:8px 12px 9px;font-size:12px;font-weight:600;color:var(--c-muted);
+  padding:8px 12px 9px;font-size:13px;font-weight:600;color:var(--c-muted);
   border-radius:8px 8px 0 0;
 }
 .kus-lp__tab:hover{color:var(--c-text-2);background:var(--c-surface)}
@@ -1682,10 +1877,10 @@ ${contextLine}`);
 }
 .kus-lp__card--soft{background:var(--c-surface)}
 .kus-lp__card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-2px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--c-border)}
-.kus-lp__card-title{font-size:11.5px;font-weight:700;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.06em;margin:0;display:flex;align-items:center;gap:6px}
+.kus-lp__card-title{font-size:13px;font-weight:700;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.06em;margin:0;display:flex;align-items:center;gap:6px}
 .kus-lp__card-num{
   display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
-  background:var(--c-accent-chip);color:var(--c-accent-via);font-size:11px;font-weight:700;border-radius:999px;
+  background:var(--c-accent-chip);color:var(--c-accent-via);font-size:12.5px;font-weight:700;border-radius:999px;
 }
 .kus-lp__card-actions{display:flex;gap:6px}
 
@@ -1694,13 +1889,13 @@ ${contextLine}`);
 .kus-lp__row:last-child{margin-bottom:0}
 .kus-lp__row--block{display:block}
 .kus-lp__row--block > .kus-lp__label{display:block;margin-bottom:5px}
-.kus-lp__label{font-size:12px;font-weight:600;color:var(--c-text-2);min-width:5em}
+.kus-lp__label{font-size:13px;font-weight:600;color:var(--c-text-2);min-width:5em}
 
 /* ===== Inputs ===== */
 .kus-lp__input,.kus-lp__textarea,.kus-lp__select{
   appearance:none;
   border:1px solid var(--c-border);
-  border-radius:8px;padding:7px 10px;font-size:12.5px;
+  border-radius:8px;padding:7px 10px;font-size:14px;
   background:var(--c-bg);color:var(--c-text);
   outline:none;transition:border-color .15s,box-shadow .15s;
   font-family:inherit;
@@ -1715,18 +1910,18 @@ ${contextLine}`);
 .kus-lp__input--wide{flex:1;min-width:160px}
 .kus-lp__input--full{width:100%;box-sizing:border-box}
 .kus-lp__textarea{width:100%;box-sizing:border-box;min-height:60px;resize:vertical}
-.kus-lp__textarea--code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;background:var(--c-surface)}
-.kus-lp__file{font-size:12px;padding:5px 0}
+.kus-lp__textarea--code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;background:var(--c-surface)}
+.kus-lp__file{font-size:13px;padding:5px 0}
 
 /* ===== Checkbox / chip ===== */
-.kus-lp__check{font-size:12px;color:var(--c-text-2);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.kus-lp__check{font-size:13px;color:var(--c-text-2);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
 .kus-lp__check input{width:14px;height:14px;accent-color:var(--c-accent-via);margin:0}
 .kus-lp__check-grid{display:flex;flex-wrap:wrap;gap:8px 12px;margin-bottom:10px}
 
 .kus-lp__chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .kus-lp__chip{
   display:inline-flex;align-items:center;gap:6px;
-  font-size:11.5px;color:var(--c-text-2);
+  font-size:13px;color:var(--c-text-2);
   background:var(--c-bg);border:1px solid var(--c-border-strong);
   border-radius:999px;padding:4px 10px 4px 7px;cursor:pointer;user-select:none;
   transition:background .12s,border-color .12s;
@@ -1738,7 +1933,7 @@ ${contextLine}`);
 /* ===== Buttons ===== */
 .kus-lp__btn{
   appearance:none;border:1px solid transparent;border-radius:10px;
-  font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+  font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;
   padding:8px 14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
   transition:filter .12s,transform .04s,background .12s,border-color .12s;
 }
@@ -1748,13 +1943,13 @@ ${contextLine}`);
 .kus-lp__btn--primary{background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 4px var(--c-accent-ring)}
 .kus-lp__btn--primary:hover:not(:disabled){filter:brightness(1.06)}
 
-.kus-lp__btn--run{width:100%;padding:11px 16px;font-size:13px;font-weight:700;background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 6px var(--c-accent-ring)}
+.kus-lp__btn--run{width:100%;padding:11px 16px;font-size:14px;font-weight:700;background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 6px var(--c-accent-ring)}
 .kus-lp__btn--run:hover:not(:disabled){filter:brightness(1.07)}
 
 .kus-lp__btn--ghost{background:var(--c-surface);color:var(--c-text-2);border-color:var(--c-border-strong)}
 .kus-lp__btn--ghost:hover:not(:disabled){background:#fff;border-color:#94a3b8}
 
-.kus-lp__btn--sub{background:linear-gradient(180deg,#fff,var(--c-surface-2));color:var(--c-text-2);border-color:var(--c-border-strong);font-size:11.5px;padding:7px 10px}
+.kus-lp__btn--sub{background:linear-gradient(180deg,#fff,var(--c-surface-2));color:var(--c-text-2);border-color:var(--c-border-strong);font-size:13px;padding:7px 10px}
 .kus-lp__btn--sub:hover:not(:disabled){background:#fff;border-color:#94a3b8}
 
 .kus-lp__btn--danger{background:linear-gradient(180deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 2px 4px rgba(220,38,38,.25)}
@@ -1767,7 +1962,7 @@ ${contextLine}`);
 
 /* ===== Status ===== */
 .kus-lp__status{
-  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5;
+  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.5;
   border:1px solid var(--c-border);background:var(--c-surface-2);color:var(--c-text-2);
   min-height:2.6em;display:flex;align-items:flex-start;gap:8px;
 }
@@ -1787,44 +1982,65 @@ ${contextLine}`);
 /* ===== Result / Log ===== */
 .kus-lp__result{
   margin-top:10px;padding:11px 13px;background:#0f172a;color:#e2e8f0;border-radius:10px;
-  font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;
   border:1px solid #1e293b;
 }
 .kus-lp__result--empty{display:none}
-/* ログ右上に貼り付くコピー操作（ログ本文の選択・スクロールを妨げない） */
-.kus-lp__result-copy{
-  float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;
-  padding:3px 8px;font:600 10.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+/* ログ右上に貼り付くコピー／保存操作（ログ本文の選択・スクロールを妨げない） */
+.kus-lp__result-tools{float:right;position:sticky;top:0;margin:-4px -6px 4px 8px;display:flex;gap:4px}
+.kus-lp__result-copy,.kus-lp__result-save{
+  padding:3px 8px;font:600 12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
   color:#cbd5e1;background:rgba(30,41,59,.92);border:1px solid #334155;border-radius:7px;cursor:pointer;white-space:nowrap;
 }
-.kus-lp__result-copy:hover{color:#fff;background:#334155}
-.kus-lp__result-copy[data-copied="true"]{color:#bbf7d0;border-color:#166534}
+.kus-lp__result-copy:hover,.kus-lp__result-save:hover{color:#fff;background:#334155}
+.kus-lp__result-copy[data-copied="true"],.kus-lp__result-save[data-copied="true"]{color:#bbf7d0;border-color:#166534}
 .kus-lp__panel-html{
   margin-top:10px;border:1px solid var(--c-border);border-radius:10px;
-  background:var(--c-surface);max-height:240px;overflow:auto;font-size:11.5px;
+  background:var(--c-surface);max-height:240px;overflow:auto;font-size:13px;
 }
 .kus-lp__panel-html--empty{display:none}
 .kus-lp__panel-html table{border-collapse:collapse;width:100%}
 .kus-lp__panel-html th,.kus-lp__panel-html td{padding:6px 8px;border-bottom:1px solid var(--c-border);text-align:left}
-.kus-lp__panel-html th{background:var(--c-surface-2);font-weight:600;font-size:11px;color:var(--c-text-2)}
+.kus-lp__panel-html th{background:var(--c-surface-2);font-weight:600;font-size:12.5px;color:var(--c-text-2)}
 
 /* ===== Misc ===== */
-.kus-lp__note{font-size:11.5px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
+.kus-lp__note{font-size:13px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
 .kus-lp__note--warn{color:var(--c-warn-fg);padding:7px 10px;background:var(--c-warn-bg);border:1px solid var(--c-warn-bd);border-radius:8px;margin:6px 0}
+/* ===== カードの「?」ヘルプ（補足説明の吹き出し） ===== */
+.kus-lp__help-btn{flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);font:700 13px/1 inherit;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.kus-lp__help-btn:hover,.kus-lp__help-btn--open{background:var(--c-accent-chip);border-color:var(--c-accent-via);color:var(--c-accent-from)}
+.kus-lp__help-pop{margin:-4px 0 12px;padding:10px 12px;border:1px solid var(--c-info-bd);background:var(--c-info-bg);border-radius:10px;color:var(--c-text-2);font-size:13px;line-height:1.55;animation:kus-lp-fade-in .12s ease-out}
+.kus-lp__help-pop[hidden]{display:none}
+.kus-lp__help-item{margin:0 0 6px;color:var(--c-text-2);font-size:13px;line-height:1.55}
+.kus-lp__help-item:last-child{margin-bottom:0}
+/* ===== ポップアップ（詳細設定・ほかの操作） ===== */
+.kus-lp__dialog{box-sizing:border-box;width:min(640px,calc(100vw - 32px));max-height:min(88vh,860px);padding:0;border:1px solid var(--c-border);border-radius:16px;background:var(--c-bg);color:var(--c-text);box-shadow:0 28px 60px -12px rgba(15,23,42,.45);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;display:none;flex-direction:column;overflow:hidden}
+.kus-lp__dialog[open]{display:flex}
+.kus-lp__dialog--wide{width:min(880px,calc(100vw - 32px))}
+.kus-lp__dialog::backdrop{background:rgba(15,23,42,.45)}
+.kus-lp__dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog-title{margin:0;font-size:16px;font-weight:700;color:var(--c-text)}
+.kus-lp__dialog-close{flex-shrink:0;white-space:nowrap;border:1px solid var(--c-border-strong);background:#fff;color:var(--c-text-2);border-radius:9px;padding:6px 12px;font:600 13px/1.3 inherit;font-family:inherit;cursor:pointer}
+.kus-lp__dialog-close:hover{background:var(--c-surface-2)}
+.kus-lp__dialog-body{padding:16px 18px;overflow:auto;min-height:0;flex:1}
+.kus-lp__dialog-body>.kus-lp__card{margin-bottom:12px}
+.kus-lp__dialog-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__dialog :is(button,input,select,textarea,summary):focus-visible{outline:3px solid var(--c-accent-via);outline-offset:2px}
+@media(max-width:720px){.kus-lp__dialog{width:calc(100vw - 16px);max-height:calc(100dvh - 16px)}.kus-lp__dialog-body{padding:12px}}
 .kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
-.kus-lp__small{font-size:11px;color:var(--c-muted)}
+.kus-lp__small{font-size:12.5px;color:var(--c-muted)}
 .kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
 
 /* ===== Toolbar / Count / Pill ===== */
 .kus-lp__toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px}
 .kus-lp__toolbar-spacer{flex:1;min-width:8px}
 .kus-lp__count{
-  display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:4px;font-size:12.5px;font-weight:700;white-space:nowrap;
   color:var(--c-accent-from);background:var(--c-accent-chip);padding:2px 9px;border-radius:999px;font-variant-numeric:tabular-nums;
 }
 .kus-lp__pill{
-  display:inline-flex;align-items:center;gap:6px;padding:4px 11px;font-size:11.5px;font-weight:600;border-radius:999px;
+  display:inline-flex;align-items:center;gap:6px;padding:4px 11px;font-size:13px;font-weight:600;border-radius:999px;
   background:var(--c-surface-2);color:var(--c-text);border:1px solid var(--c-border);line-height:1.4;max-width:100%;
 }
 .kus-lp__pill--ok{background:var(--c-ok-bg);color:var(--c-ok-fg);border-color:var(--c-ok-bd)}
@@ -1836,20 +2052,20 @@ ${contextLine}`);
   display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:7px 8px;
   background:var(--c-surface);border-bottom:1px solid var(--c-border);
 }
-.kus-lp__picklist-head .kus-lp__input{flex:1;min-width:120px;padding:5px 8px;font-size:12px}
-.kus-lp__picklist-head .kus-lp__btn{padding:4px 8px;font-size:11px;border-radius:7px}
+.kus-lp__picklist-head .kus-lp__input{flex:1;min-width:120px;padding:5px 8px;font-size:13px}
+.kus-lp__picklist-head .kus-lp__btn{padding:4px 8px;font-size:12.5px;border-radius:7px}
 .kus-lp__picklist-body{max-height:220px;overflow:auto;padding:4px}
 .kus-lp__picklist-item{
-  display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;font-size:12px;color:var(--c-text);
+  display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;font-size:13px;color:var(--c-text);
   cursor:pointer;user-select:none;min-width:0;
 }
 .kus-lp__picklist-item:hover{background:var(--c-surface)}
 .kus-lp__picklist-item:has(input:checked){background:var(--c-accent-chip)}
 .kus-lp__picklist-item input{accent-color:var(--c-accent-via);width:14px;height:14px;margin:0;flex-shrink:0}
 .kus-lp__picklist-main{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kus-lp__picklist-sub{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--c-muted);font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.kus-lp__picklist-empty{padding:10px 8px;color:var(--c-muted);font-size:11.5px}
-.kus-lp__picklist-foot{padding:6px 8px;border-top:1px solid var(--c-border);background:var(--c-surface);font-size:11px;color:var(--c-muted);line-height:1.5;overflow-wrap:anywhere}
+.kus-lp__picklist-sub{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--c-muted);font-size:12.5px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.kus-lp__picklist-empty{padding:10px 8px;color:var(--c-muted);font-size:13px}
+.kus-lp__picklist-foot{padding:6px 8px;border-top:1px solid var(--c-border);background:var(--c-surface);font-size:12.5px;color:var(--c-muted);line-height:1.5;overflow-wrap:anywhere}
 
 /* セクション折りたたみ (details) */
 .kus-lp__details{
@@ -1858,7 +2074,7 @@ ${contextLine}`);
 }
 .kus-lp__details > summary{
   list-style:none;cursor:pointer;padding:10px 14px;
-  font-size:12.5px;font-weight:600;color:var(--c-text-2);
+  font-size:14px;font-weight:600;color:var(--c-text-2);
   display:flex;align-items:center;gap:8px;
 }
 .kus-lp__details > summary::-webkit-details-marker{display:none}
@@ -1877,21 +2093,22 @@ ${contextLine}`);
 .kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
 .kus-lp__apptable-scroll{max-height:220px;overflow:auto}
 .kus-lp__apptable table{width:100%;border-collapse:collapse;table-layout:fixed}
-.kus-lp__apptable th{background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__apptable th{background:var(--c-surface-2);font-size:12.5px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
 .kus-lp__apptable-scroll th{position:sticky;top:0;z-index:1}
 .kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
-.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
-.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
-.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:136px}
+.kus-lp__apptable th.kus-lp__apptable-acts-h,.kus-lp__apptable td.kus-lp__apptable-acts{padding-left:4px;padding-right:4px}
 .kus-lp__apptable-acts{white-space:nowrap}
-.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:11px;border-radius:7px}
-.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 6px;font-size:12.5px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:3px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
-.kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
-.kus-lp__apptable-hint{font-size:11px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
+.kus-lp__apptable-count{font-size:12.5px;color:var(--c-muted);margin-left:auto;font-weight:600}
+.kus-lp__apptable-hint{font-size:12.5px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
 @media(max-width:420px){
   .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
   .kus-lp__apptable thead{display:none}
@@ -1915,9 +2132,33 @@ ${contextLine}`);
     root2.style.setProperty("--c-accent-chip", a.chip);
     root2.style.setProperty("--c-accent-ring", a.ring);
   }
+  var LitePanelBusyError = class extends Error {
+    constructor(id) {
+      super(`パネル ${id} は実行中のため再起動しません`);
+      __publicField(this, "panelBusy", true);
+      this.name = "LitePanelBusyError";
+    }
+  };
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
+    if (old instanceof HTMLElement && old.getAttribute("aria-busy") === "true") {
+      old.classList.remove("kus-lp--collapsed");
+      const statusText = old.querySelector(".kus-lp__status-text");
+      const hint = "実行中のため再起動しません。終わるのを待つか、「中止」を押してください。";
+      if (statusText && !statusText.textContent?.includes(hint)) statusText.textContent = `${hint} ${statusText.textContent || ""}`.trim();
+      try {
+        old.querySelector(".kus-lp__cancel")?.focus({ preventScroll: true });
+      } catch {
+      }
+      throw new LitePanelBusyError(opts.id);
+    }
+    let carriedPosition = null;
+    if (old instanceof HTMLElement && old.dataset.kusPlaced === "1") {
+      const left = parseFloat(old.style.left);
+      const top = parseFloat(old.style.top);
+      if (Number.isFinite(left) && Number.isFinite(top)) carriedPosition = { left, top };
+    }
     if (old) {
       old.dispatchEvent(new Event("kus-lite-dispose"));
       old.remove();
@@ -1948,10 +2189,11 @@ ${contextLine}`);
     }
     const badgesEl = document.createElement("div");
     badgesEl.className = "kus-lp__badge-row";
-    const badges = opts.badges || [{ label: "Lite" }];
+    const badges = opts.badges || [];
+    if (!badges.length) badgesEl.hidden = true;
     for (const b of badges) {
       const span = document.createElement("span");
-      span.className = "kus-lp__badge";
+      span.className = `kus-lp__badge${b.tone === "read" || b.tone === "preview" || b.tone === "production" ? ` kus-lp__badge--${b.tone}` : ""}`;
       span.textContent = b.label;
       badgesEl.appendChild(span);
     }
@@ -1964,6 +2206,13 @@ ${contextLine}`);
     elapsedEl.className = "kus-lp__elapsed";
     elapsedEl.setAttribute("aria-hidden", "true");
     elapsedEl.hidden = true;
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "kus-lp__cancel";
+    cancelBtn.textContent = "中止";
+    cancelBtn.setAttribute("aria-label", "処理を中止");
+    cancelBtn.title = "次のリクエストの前で処理を止めます（送信済みの書き込みは取り消しません）";
+    cancelBtn.hidden = true;
     const bodyId = `${opts.id}-body`;
     const toggleBtn = document.createElement("button");
     toggleBtn.type = "button";
@@ -1976,6 +2225,7 @@ ${contextLine}`);
     const heroActions = document.createElement("div");
     heroActions.className = "kus-lp__hero-actions";
     heroActions.appendChild(elapsedEl);
+    heroActions.appendChild(cancelBtn);
     heroActions.appendChild(toggleBtn);
     heroActions.appendChild(closeBtn);
     const progress = document.createElement("div");
@@ -2020,10 +2270,20 @@ ${contextLine}`);
     copyBtn.className = "kus-lp__result-copy";
     copyBtn.textContent = "コピー";
     copyBtn.setAttribute("aria-label", "ログをコピー");
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "kus-lp__result-save";
+    saveBtn.textContent = "保存";
+    saveBtn.setAttribute("aria-label", "ログをファイルに保存");
+    const resultTools = document.createElement("span");
+    resultTools.className = "kus-lp__result-tools";
+    resultTools.appendChild(copyBtn);
+    resultTools.appendChild(saveBtn);
     let copyResetTimer = 0;
+    let saveResetTimer = 0;
     function resultText() {
       const clone = result.cloneNode(true);
-      clone.querySelector(".kus-lp__result-copy")?.remove();
+      clone.querySelector(".kus-lp__result-tools")?.remove();
       return (clone.innerText || clone.textContent || "").replace(/^\s+|\s+$/g, "");
     }
     function flashCopy(label, copied) {
@@ -2035,10 +2295,29 @@ ${contextLine}`);
         delete copyBtn.dataset.copied;
       }, 1600);
     }
+    function flashSave(label, saved) {
+      saveBtn.textContent = label;
+      saveBtn.dataset.copied = String(saved);
+      window.clearTimeout(saveResetTimer);
+      saveResetTimer = window.setTimeout(() => {
+        saveBtn.textContent = "保存";
+        delete saveBtn.dataset.copied;
+      }, 1600);
+    }
     copyBtn.addEventListener("click", () => {
       const text = resultText();
       if (!text) return;
       void copyTextToClipboard(text).then((ok) => flashCopy(ok ? "コピー済み" : "コピー失敗", ok));
+    });
+    saveBtn.addEventListener("click", () => {
+      const text = resultText();
+      if (!text) return;
+      try {
+        downloadText(`${sanitizeFilenamePart(opts.title)}_ログ_${nowStamp()}.txt`, text, "text/plain;charset=utf-8");
+        flashSave("保存済み", true);
+      } catch {
+        flashSave("保存失敗", false);
+      }
     });
     function setResult(text) {
       if (!text) {
@@ -2047,7 +2326,7 @@ ${contextLine}`);
         return;
       }
       result.textContent = text;
-      result.prepend(copyBtn);
+      result.prepend(resultTools);
       result.classList.remove("kus-lp__result--empty");
     }
     function setResultHtml(html) {
@@ -2057,7 +2336,7 @@ ${contextLine}`);
         return;
       }
       result.innerHTML = html;
-      result.prepend(copyBtn);
+      result.prepend(resultTools);
       result.classList.remove("kus-lp__result--empty");
     }
     let busyTimer = 0;
@@ -2071,25 +2350,72 @@ ${contextLine}`);
     function tickElapsed() {
       elapsedEl.textContent = `処理中 ${formatElapsed(Date.now() - busyStartedAt)}`;
     }
-    function stopElapsed() {
+    function startElapsed() {
+      busyStartedAt = Date.now();
+      elapsedEl.classList.remove("kus-lp__elapsed--done");
+      tickElapsed();
+      elapsedEl.hidden = false;
+      busyTimer = window.setInterval(tickElapsed, 1e3);
+    }
+    function stopElapsed(keepLast) {
+      const wasRunning = !!busyTimer;
       if (busyTimer) window.clearInterval(busyTimer);
       busyTimer = 0;
-      elapsedEl.hidden = true;
-      elapsedEl.textContent = "";
+      if (keepLast && wasRunning) {
+        elapsedEl.classList.add("kus-lp__elapsed--done");
+        elapsedEl.textContent = `前回 ${formatElapsed(Date.now() - busyStartedAt)}`;
+        elapsedEl.hidden = false;
+      } else if (!keepLast) {
+        elapsedEl.classList.remove("kus-lp__elapsed--done");
+        elapsedEl.hidden = true;
+        elapsedEl.textContent = "";
+      }
     }
+    let runToken = null;
+    function requestCancel2() {
+      if (!runToken) return false;
+      const accepted = requestCancel(runToken);
+      if (accepted) {
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = "中止中…";
+        handle.setStatus("中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…", "busy");
+      }
+      return accepted;
+    }
+    function isCancelRequested2() {
+      return !!runToken && runToken.cancelled;
+    }
+    cancelBtn.addEventListener("click", () => {
+      requestCancel2();
+    });
     function setBusy(busy) {
       closeBtn.disabled = busy;
       root2.setAttribute("aria-busy", String(busy));
       root2.style.cursor = busy ? "progress" : "";
       if (busy) {
-        if (!busyTimer) {
-          busyStartedAt = Date.now();
-          tickElapsed();
-          elapsedEl.hidden = false;
-          busyTimer = window.setInterval(tickElapsed, 1e3);
+        if (!runToken) {
+          runToken = beginRun();
+          cancelBtn.textContent = "中止";
+          cancelBtn.disabled = false;
+          runToken.controller.signal.addEventListener("abort", () => {
+            if (!cancelBtn.hidden && !cancelBtn.disabled) {
+              cancelBtn.disabled = true;
+              cancelBtn.textContent = "中止中…";
+              handle.setStatus("中止しています。実行中のリクエストが終わり次第、次のリクエストの前で止めます…", "busy");
+            }
+          }, { once: true });
+        } else if (!runToken.cancelled) {
+          cancelBtn.disabled = false;
         }
+        cancelBtn.hidden = false;
+        if (!busyTimer) startElapsed();
       } else {
-        stopElapsed();
+        endRun(runToken);
+        runToken = null;
+        cancelBtn.hidden = true;
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = "中止";
+        stopElapsed(true);
       }
       root2.dispatchEvent(new Event("kus-lite-busy-change"));
     }
@@ -2119,9 +2445,11 @@ ${contextLine}`);
       root2.style.top = `${Math.round(nextTop)}px`;
       root2.style.right = "auto";
       customPlaced = true;
+      root2.dataset.kusPlaced = "1";
     }
     function resetPosition() {
       customPlaced = false;
+      delete root2.dataset.kusPlaced;
       root2.style.left = "";
       root2.style.top = "";
       root2.style.right = "";
@@ -2168,11 +2496,16 @@ ${contextLine}`);
     });
     const onWindowResize = () => clampIntoViewport();
     window.addEventListener("resize", onWindowResize);
+    if (carriedPosition) place(carriedPosition.left, carriedPosition.top);
     function dispose() {
+      if (runToken && !runToken.cancelled) requestCancel(runToken);
       document.removeEventListener("keydown", onDocKeydown);
       window.removeEventListener("resize", onWindowResize);
-      stopElapsed();
+      stopElapsed(false);
+      endRun(runToken);
+      runToken = null;
       window.clearTimeout(copyResetTimer);
+      window.clearTimeout(saveResetTimer);
     }
     function close() {
       if (closeBtn.disabled) return;
@@ -2213,6 +2546,7 @@ ${contextLine}`);
     function onDocKeydown(e) {
       if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
       if (closeBtn.disabled || !root2.isConnected || !(e.target instanceof Node) || !root2.contains(e.target)) return;
+      if (root2.querySelector("dialog[open]")) return;
       e.preventDefault();
       e.stopPropagation();
       close();
@@ -2230,7 +2564,8 @@ ${contextLine}`);
       } catch {
       }
     });
-    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction };
+    const handle = { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel: requestCancel2, isCancelRequested: isCancelRequested2 };
+    return handle;
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
@@ -2348,9 +2683,129 @@ ${contextLine}`);
   }
   function makeNote(text, kind = "plain") {
     const n = document.createElement("div");
-    n.className = kind === "warn" ? "kus-lp__note--warn" : "kus-lp__note";
+    n.className = kind === "warn" ? "kus-lp__note--warn" : kind === "help" ? "kus-lp__note kus-lp__note--help" : "kus-lp__note";
     n.textContent = text;
     return n;
+  }
+  function attachCardHelp(scope) {
+    const cards = Array.from(scope.querySelectorAll(".kus-lp__card"));
+    if (scope instanceof HTMLElement && scope.classList.contains("kus-lp__card")) cards.unshift(scope);
+    for (const card of cards) {
+      const notes = Array.from(card.querySelectorAll(".kus-lp__note--help")).filter((note) => note.closest(".kus-lp__card") === card);
+      if (!notes.length) continue;
+      const head = card.querySelector(":scope > .kus-lp__card-head");
+      if (!head) continue;
+      let pop = card.querySelector(":scope > .kus-lp__help-pop");
+      let btn = head.querySelector(".kus-lp__help-btn");
+      if (!pop) {
+        pop = document.createElement("div");
+        pop.className = "kus-lp__help-pop";
+        pop.hidden = true;
+        pop.setAttribute("role", "note");
+        head.insertAdjacentElement("afterend", pop);
+      }
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "kus-lp__help-btn";
+        btn.textContent = "?";
+        const titleEl = head.querySelector(".kus-lp__card-title");
+        const title = titleEl ? Array.from(titleEl.childNodes).filter((node) => !(node instanceof HTMLElement && node.classList.contains("kus-lp__card-num"))).map((node) => node.textContent || "").join("").trim() : "";
+        btn.setAttribute("aria-label", `${title ? `「${title}」の` : ""}説明を表示`);
+        btn.title = "説明を表示";
+        btn.setAttribute("aria-expanded", "false");
+        const popEl = pop;
+        const setOpen = (next) => {
+          popEl.hidden = !next;
+          btn.setAttribute("aria-expanded", String(next));
+          btn.classList.toggle("kus-lp__help-btn--open", next);
+        };
+        btn.addEventListener("click", () => setOpen(popEl.hidden));
+        const onEsc = (e) => {
+          if (e.key !== "Escape" || popEl.hidden || e.isComposing) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(false);
+          try {
+            btn.focus({ preventScroll: true });
+          } catch {
+          }
+        };
+        btn.addEventListener("keydown", onEsc);
+        const actions = head.querySelector(".kus-lp__card-actions");
+        if (actions) actions.insertAdjacentElement("afterbegin", btn);
+        else head.appendChild(btn);
+      }
+      for (const note of notes) {
+        note.classList.remove("kus-lp__note--help");
+        note.classList.add("kus-lp__help-item");
+        pop.appendChild(note);
+      }
+    }
+  }
+  function makeDialog(opts) {
+    const dialog = document.createElement("dialog");
+    dialog.className = `kus-lp__dialog${opts.wide ? " kus-lp__dialog--wide" : ""}`;
+    if (opts.id) dialog.id = opts.id;
+    const titleId = `${opts.id || `kus-dialog-${Math.random().toString(36).slice(2, 8)}`}-title`;
+    dialog.setAttribute("aria-labelledby", titleId);
+    const head = document.createElement("div");
+    head.className = "kus-lp__dialog-head";
+    const title = document.createElement("h2");
+    title.className = "kus-lp__dialog-title";
+    title.id = titleId;
+    title.textContent = opts.title;
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "kus-lp__dialog-close";
+    closeBtn.textContent = "閉じる";
+    closeBtn.setAttribute("aria-label", `${opts.title}を閉じる`);
+    head.append(title, closeBtn);
+    const body = document.createElement("div");
+    body.className = "kus-lp__dialog-body";
+    const foot = document.createElement("div");
+    foot.className = "kus-lp__dialog-foot";
+    const doneBtn = document.createElement("button");
+    doneBtn.type = "button";
+    doneBtn.className = "kus-lp__btn kus-lp__btn--sub";
+    doneBtn.textContent = "閉じる";
+    foot.appendChild(doneBtn);
+    dialog.append(head, body, foot);
+    let opener = null;
+    function close() {
+      if (!dialog.open) return;
+      dialog.close();
+    }
+    function open() {
+      if (dialog.open) return;
+      opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+      const first = body.querySelector("input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled])");
+      try {
+        (first || closeBtn).focus({ preventScroll: true });
+      } catch {
+      }
+    }
+    closeBtn.addEventListener("click", close);
+    doneBtn.addEventListener("click", close);
+    let pressedOnBackdrop = false;
+    dialog.addEventListener("pointerdown", (e) => {
+      pressedOnBackdrop = e.target === dialog;
+    });
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog && pressedOnBackdrop) close();
+      pressedOnBackdrop = false;
+    });
+    dialog.addEventListener("close", () => {
+      if (opener?.isConnected) {
+        try {
+          opener.focus({ preventScroll: true });
+        } catch {
+        }
+      }
+    });
+    return { dialog, body, open, close };
   }
   function makeDetails(title, opts = {}) {
     const d = document.createElement("details");
@@ -2422,6 +2877,7 @@ ${contextLine}`);
   async function liteRun(panel, busyMsg, fn, okMsg) {
     panel.setStatus(busyMsg, "busy");
     panel.setBusy(true);
+    const token = activeRun();
     try {
       const out = await fn();
       const tone = panel.status.dataset.tone;
@@ -2434,11 +2890,36 @@ ${contextLine}`);
       } else if (tone === "busy") {
         panel.setStatus(currentText || "完了", "ok");
       }
+      if (token?.cancelled && !cancelled && panel.status.dataset.tone !== "err") {
+        let base = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        if (/^中止しています/.test(base)) base = okMsg || "処理が終わりました";
+        panel.setStatus(/中止/.test(base) ? base : `${base}（中止を要求したため、途中で止めた項目があるかもしれません。結果を確認してください）`, "warn");
+      }
       return out;
     } catch (e) {
+      if (isRunCancelledError(e)) {
+        panel.setStatus(token && token.writes > 0 ? "中止しました。次のリクエストの前で止めました。途中まで書き込んだ内容は取り消していません。" : "中止しました。次のリクエストの前で止めました（書き込みは行っていません）。", "warn");
+        return void 0;
+      }
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
+      if (e?.partialSuccess === true) {
+        const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
+        panel.setStatus(`${first}${logNote}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
+      if (token?.cancelled && (e?.cancelReport === true || /^中止しました/.test(first))) {
+        panel.setStatus(`${first}${rest.length ? "（詳細は下のログ）" : ""}`, "warn");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
+      if (token?.cancelled) {
+        panel.setStatus(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? "。詳細は下のログ" : ""}）`, "err");
+        if (rest.length) panel.setResult(lines.join("\n"));
+        return void 0;
+      }
       panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
       if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
@@ -2451,7 +2932,7 @@ ${contextLine}`);
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
-.kus-wf .kus-lp__badge-row{display:none}
+.kus-wf .kus-lp__badge-row{margin-top:6px}
 .kus-wf .kus-lp__body{padding:0;display:flex;flex-direction:column;overflow:hidden;min-height:0;background:#f5f7fa}
 .kus-wf .kus-lp__hint{margin:0;padding:10px 22px;border-radius:0;flex-shrink:0}
 .kus-wf [hidden]{display:none!important}
@@ -2466,29 +2947,45 @@ ${contextLine}`);
 .kus-wf .kus-lp__note{overflow-wrap:anywhere}
 .kus-wf :is(button,input,select,textarea,summary):focus-visible,.kus-wf-nav button:focus-visible{outline:3px solid #2563eb;outline-offset:3px}
 .kus-wf-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px 22px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
-.kus-wf-nav button{font-family:inherit;font-size:12px;font-weight:600;line-height:1.4;border:1px solid #e2e8f0;padding:10px;border-radius:9px;background:#fff;color:#475569;cursor:pointer}
-.kus-wf-nav button[aria-selected=true],.kus-wf-nav button[aria-current=step]{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+.kus-wf-nav button{font-family:inherit;font-size:13.5px;font-weight:600;line-height:1.4;border:2px solid #e2e8f0;padding:9px 10px;border-radius:9px;background:#fff;color:#475569;cursor:pointer;position:relative}
+/* 段階の状態: 現在（濃い青・太字）、済み（緑・左端に印）、これから（灰色） */
+.kus-wf-nav button[aria-selected=true],.kus-wf-nav button[aria-current=step]{background:#1d4ed8;border-color:#1d4ed8;color:#fff;font-weight:700;box-shadow:0 2px 8px rgba(29,78,216,.28)}
+.kus-wf-nav button[data-state=done]{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+.kus-wf-nav button[data-state=done]::before{content:'';position:absolute;left:0;top:0;bottom:0;width:5px;border-radius:7px 0 0 7px;background:#10b981}
+.kus-wf-nav button[data-state=upcoming]{color:#64748b;background:#f8fafc}
 .kus-wf-nav button:disabled{opacity:.5;cursor:not-allowed}
 .kus-wf-canvas{overflow:auto;min-height:0;min-width:0;flex:1;padding:18px 22px;scroll-padding:16px}
 .kus-wf-stage{min-width:0}
-.kus-wf-heading{margin:0 0 4px;font-size:19px;color:#0f172a}
-.kus-wf-intro{margin:0 0 16px;color:#64748b;font-size:12px}
+.kus-wf-heading{margin:0 0 4px;font-size:20px;color:#0f172a}
+.kus-wf-intro{margin:0 0 16px;color:#64748b;font-size:13px}
 .kus-wf-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin-bottom:16px}
-.kus-wf-action{padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:white;cursor:pointer;display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:12px;min-width:0;align-items:start}
+.kus-wf-action{padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:white;cursor:pointer;display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:13px;min-width:0;align-items:start}
 .kus-wf-action:has(input:checked){border-color:#60a5fa;background:#eff6ff}
 .kus-wf-action strong{display:block;color:#0f172a}
 .kus-wf-action small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
-.kus-wf-action em{display:inline-block;font-size:10px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action em{display:inline-block;font-size:12.5px;font-style:normal;color:#9a3412;margin-top:5px}
+.kus-wf-action--more{grid-template-columns:1fr;text-align:left;font-family:inherit;color:#1d4ed8;border-style:dashed}
+.kus-wf-action--more[aria-pressed=true]{border-style:solid;border-color:#60a5fa;background:#eff6ff}
+.kus-wf-action--more strong{color:#1d4ed8}
+.kus-wf-action--more[aria-pressed=true] strong{color:#0f172a}
+.kus-wf-advanced{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 16px;padding:10px 14px;border:1px dashed #cbd5e1;border-radius:10px;background:#fff}
+.kus-wf-advanced__copy{font-size:13px;color:#475569;min-width:0;flex:1}
+.kus-wf-advanced__btn{flex-shrink:0}
+.kus-wf-dialog-status{flex:1 1 12em;min-width:0;max-height:6em;overflow:auto;align-self:center;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;color:#334155;font-size:13px;line-height:1.5}
+.kus-wf-dialog-status[hidden]{display:none}
+.kus-wf-dialog-status[data-tone=ok]{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+.kus-wf-dialog-status[data-tone=warn]{background:#fffbeb;border-color:#fde68a;color:#92400e}
+.kus-wf-dialog-status[data-tone=err]{background:#fef2f2;border-color:#fecaca;color:#991b1b}
 .kus-wf-summary{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:4px 16px}
 .kus-wf-summary>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:16px;padding:12px 0;border-bottom:1px solid #eef2f6}
 .kus-wf-summary>div:last-child{border:0}
-.kus-wf-summary dt{color:#64748b;font-size:12px}
-.kus-wf-summary dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#0f172a;font-size:13px}
-.kus-wf-notice{padding:12px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;margin:14px 0;color:#1e40af;font-size:12px;overflow-wrap:anywhere;white-space:pre-wrap}
+.kus-wf-summary dt{color:#64748b;font-size:13px}
+.kus-wf-summary dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#0f172a;font-size:14px}
+.kus-wf-notice{padding:12px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;margin:14px 0;color:#1e40af;font-size:13px;overflow-wrap:anywhere;white-space:pre-wrap}
 .kus-wf-notice[data-write=true]{border-color:#fed7aa;background:#fff7ed;color:#9a3412}
 .kus-wf-footer{padding:12px 22px;background:#fff;border-top:1px solid #e2e8f0;flex-shrink:0}
 .kus-wf-footer-row{display:flex;align-items:center;gap:12px}
-.kus-wf-footer-copy{flex:1;min-width:0;font-size:12px;color:#475569;overflow-wrap:anywhere}
+.kus-wf-footer-copy{flex:1;min-width:0;font-size:13px;color:#475569;overflow-wrap:anywhere}
 .kus-wf-footer-buttons{display:flex;gap:8px;flex-shrink:0}
 .kus-wf-footer-buttons button{min-height:42px;max-width:320px}
 .kus-wf-footer .kus-lp__status{margin-top:8px}
@@ -2499,9 +2996,9 @@ ${contextLine}`);
 @media(max-width:720px){
  .kus-wf.kus-lp{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);top:8px;right:8px}
  .kus-wf .kus-lp__hero{padding:12px 16px}
- .kus-wf .kus-lp__hint{display:none}
+ .kus-wf .kus-lp__hint{padding:8px 16px;font-size:12.5px}
  .kus-wf-nav{padding:8px;gap:4px}
- .kus-wf-nav button{padding:9px 3px;font-size:11px}
+ .kus-wf-nav button{padding:9px 3px;font-size:12.5px}
  .kus-wf-canvas{padding:16px}
  .kus-wf .kus-lp__card{padding:12px}
  .kus-wf-actions{grid-template-columns:1fr}
@@ -2573,6 +3070,32 @@ ${contextLine}`);
     let selected = options.actions[0];
     const hiddenActions = document.createElement("div");
     hiddenActions.hidden = true;
+    const primaryCount = Math.max(1, Math.floor(options.primaryActions ?? 3));
+    const hasMore = options.actions.length > primaryCount;
+    const moreDialog = hasMore ? makeDialog({ title: "ほかの操作を選ぶ", id: `${panel.root.id}-more-actions` }) : null;
+    const moreChoices = document.createElement("div");
+    moreChoices.className = "kus-wf-actions";
+    moreChoices.setAttribute("role", "radiogroup");
+    moreChoices.setAttribute("aria-label", "ほかの操作");
+    const moreBtn = document.createElement("button");
+    moreBtn.type = "button";
+    moreBtn.className = "kus-wf-action kus-wf-action--more";
+    moreBtn.setAttribute("aria-haspopup", "dialog");
+    moreBtn.setAttribute("aria-pressed", "false");
+    const moreTitle = document.createElement("strong");
+    const moreCopy = document.createElement("small");
+    const moreWrap = document.createElement("span");
+    moreWrap.append(moreTitle, moreCopy);
+    moreBtn.appendChild(moreWrap);
+    function refreshMore() {
+      if (!hasMore) return;
+      const index = options.actions.indexOf(selected);
+      const outside = index >= primaryCount;
+      moreBtn.setAttribute("aria-pressed", String(outside));
+      moreTitle.textContent = outside ? selected.label : `ほかの操作…（${options.actions.length - primaryCount} 件）`;
+      moreCopy.textContent = outside ? `${selected.description} 変更するには押してください。` : options.actions.slice(primaryCount).map((action) => action.label).join(" / ");
+    }
+    moreBtn.addEventListener("click", () => moreDialog?.open());
     options.actions.forEach((action, index) => {
       const label = document.createElement("label");
       label.className = "kus-wf-action";
@@ -2600,11 +3123,44 @@ ${contextLine}`);
         refresh();
       });
       label.append(radio, copy);
-      choices.appendChild(label);
+      if (hasMore && index >= primaryCount) {
+        moreChoices.appendChild(label);
+        radio.addEventListener("change", () => {
+          refreshMore();
+          moreDialog?.close();
+        });
+      } else {
+        choices.appendChild(label);
+        if (hasMore) radio.addEventListener("change", refreshMore);
+      }
       hiddenActions.appendChild(action.button);
     });
+    if (hasMore && moreDialog) {
+      choices.appendChild(moreBtn);
+      moreDialog.body.appendChild(moreChoices);
+      panel.root.appendChild(moreDialog.dialog);
+      refreshMore();
+    }
     if (options.actions.length > 1) setup.appendChild(choices);
     setup.append(...options.setup);
+    const advancedDialog = options.advanced?.length ? makeDialog({ title: options.advancedLabel || "詳細設定", id: `${panel.root.id}-advanced`, wide: true }) : null;
+    if (advancedDialog && options.advanced) {
+      advancedDialog.body.append(...options.advanced);
+      panel.root.appendChild(advancedDialog.dialog);
+      const row = document.createElement("div");
+      row.className = "kus-wf-advanced";
+      const copy = document.createElement("div");
+      copy.className = "kus-wf-advanced__copy";
+      copy.textContent = options.advancedCopy || "ふだん使わない設定はポップアップにまとめています。";
+      const btn = makeButton(`${options.advancedLabel || "詳細設定"}…`, "sub");
+      btn.classList.add("kus-wf-advanced__btn");
+      btn.setAttribute("aria-haspopup", "dialog");
+      btn.addEventListener("click", () => advancedDialog.open());
+      row.append(copy, btn);
+      setup.appendChild(row);
+    }
+    attachCardHelp(setup);
+    if (advancedDialog) attachCardHelp(advancedDialog.body);
     const summary = document.createElement("dl");
     summary.className = "kus-wf-summary";
     const notice = document.createElement("div");
@@ -2634,12 +3190,12 @@ ${contextLine}`);
     footer.append(footerRow, panel.status);
     const hint = panel.body.querySelector(".kus-lp__hint");
     panel.body.replaceChildren(...hint ? [hint] : [], nav, canvas, footer, hiddenActions);
-    let active = 0;
+    let active2 = 0;
     let busy = false;
     let pending = null;
     let reviewedSignature = "";
     let lastContext = "";
-    const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(setup.querySelectorAll("input,select,textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
+    const signature = () => JSON.stringify([selected.id, selected.summary(), Array.from(panel.root.querySelectorAll(".kus-wf-stage:first-of-type input,.kus-wf-stage:first-of-type select,.kus-wf-stage:first-of-type textarea,dialog input,dialog select,dialog textarea")).map((input) => [input.value, input instanceof HTMLInputElement ? input.checked : null, input instanceof HTMLInputElement && input.files ? Array.from(input.files).map((file) => [file.name, file.size, file.lastModified]) : null])]);
     function show(index) {
       if (busy) return;
       const problem = index === 1 ? selected.validate() : "";
@@ -2647,7 +3203,7 @@ ${contextLine}`);
         panel.setStatus(problem, "warn");
         return;
       }
-      active = index;
+      active2 = index;
       if (index === 1) {
         summary.replaceChildren();
         for (const [label, value] of [["操作", selected.label], ...selected.summary()]) {
@@ -2662,9 +3218,10 @@ ${contextLine}`);
         reviewedSignature = signature();
       }
       stages.forEach((stage, i) => {
-        stage.hidden = i !== active;
-        tabs[i].setAttribute("aria-selected", String(i === active));
-        tabs[i].tabIndex = i === active ? 0 : -1;
+        stage.hidden = i !== active2;
+        tabs[i].setAttribute("aria-selected", String(i === active2));
+        tabs[i].tabIndex = i === active2 ? 0 : -1;
+        tabs[i].dataset.state = i === active2 ? "current" : i < active2 ? "done" : "upcoming";
       });
       canvas.scrollTop = 0;
       tabs[index].focus({ preventScroll: true });
@@ -2672,16 +3229,16 @@ ${contextLine}`);
     }
     function refresh() {
       const problem = busy ? "" : selected.validate();
-      const fresh = !busy && active === 1 && reviewedSignature === signature();
-      next.hidden = active !== 0;
-      execute.hidden = active !== 1;
-      back.hidden = active === 0;
+      const fresh = !busy && active2 === 1 && reviewedSignature === signature();
+      next.hidden = active2 !== 0;
+      execute.hidden = active2 !== 1;
+      back.hidden = active2 === 0;
       next.disabled = busy || !!problem;
       execute.disabled = busy || !!problem || !fresh;
       execute.textContent = selected.label;
       execute.classList.toggle("kus-lp__btn--danger", !!selected.writes);
       tabs[1].disabled = busy || !!problem;
-      footerCopy.textContent = busy ? "処理中です。完了すると結果を表示します。" : problem || (active === 0 ? `${selected.label} · 対象と条件を確認してください。` : active === 1 ? fresh ? "表示内容を確認し、実行してください。" : "条件が変わりました。対象・条件に戻って確認してください。" : "結果を確認してから、次の操作へ進めます。");
+      footerCopy.textContent = busy ? "処理中です。完了すると結果を表示します。" : problem || (active2 === 0 ? `${selected.label} · 対象と条件を確認してください。` : active2 === 1 ? fresh ? "表示内容を確認し、実行してください。" : "条件が変わりました。対象・条件に戻って確認してください。" : "結果を確認してから、次の操作へ進めます。");
       notice.dataset.write = String(!!selected.writes);
       notice.textContent = selected.description + (selected.writes ? "\n書き込み先と内容を確認してください。続いて、変更内容の最終確認が表示されます。" : "\nアプリ設定やレコードの書き込みは行いません。");
       panel.setPrimaryAction(next);
@@ -2730,7 +3287,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       nav.inert = value;
       if (value) {
         panel.root.querySelectorAll("input,button,select,textarea").forEach((input) => {
-          if (input.classList.contains("kus-lp__toggle")) return;
+          if (input.classList.contains("kus-lp__toggle") || input.classList.contains("kus-lp__cancel")) return;
           disabled.set(input, input.disabled);
           input.disabled = true;
         });
@@ -2745,8 +3302,26 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       originalBusy(value);
     };
     const originalStatus = panel.setStatus;
+    const dialogStatuses = [advancedDialog, moreDialog].filter(Boolean).map((d) => {
+      const el = document.createElement("div");
+      el.className = "kus-wf-dialog-status";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      el.hidden = true;
+      d.dialog.querySelector(".kus-lp__dialog-foot")?.insertAdjacentElement("afterbegin", el);
+      return { dialog: d.dialog, el };
+    });
     panel.setStatus = (message, tone) => {
       originalStatus(message, tone);
+      for (const { dialog, el } of dialogStatuses) {
+        if (!dialog.open) {
+          el.hidden = true;
+          continue;
+        }
+        el.textContent = message || "";
+        el.dataset.tone = tone || "neutral";
+        el.hidden = !message;
+      }
       refresh();
     };
     let refreshQueued = false;
@@ -2758,7 +3333,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         refresh();
       });
     };
-    for (const event of ["input", "change", "click"]) setup.addEventListener(event, scheduleRefresh);
+    for (const event of ["input", "change", "click"]) {
+      setup.addEventListener(event, scheduleRefresh);
+      panel.root.addEventListener(event, (e) => {
+        if (e.target instanceof Element && e.target.closest("dialog")) scheduleRefresh();
+      });
+    }
     selected.onSelect?.();
     show(0);
     return { refresh, show };
@@ -2831,6 +3411,42 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       throw error;
     });
     return loadPromise;
+  }
+
+  // src/tabs/record-standalone.ts
+  init_runControl();
+
+  // src/tabs/run-cancel-summary.ts
+  init_runControl();
+  var CancelReportError = class extends Error {
+    constructor(done, total, details = []) {
+      super([formatCancelledHeadline(done, total), ...details.filter(Boolean)].join("\n"));
+      __publicField(this, "cancelReport", true);
+      __publicField(this, "done");
+      __publicField(this, "total");
+      this.name = "CancelReportError";
+      this.done = done;
+      this.total = total;
+    }
+  };
+  function formatCancelledHeadline(done, total) {
+    const safeTotal = Math.max(0, Math.floor(total));
+    const safeDone = Math.min(safeTotal, Math.max(0, Math.floor(done)));
+    return `中止しました（${safeDone}/${safeTotal} 件を処理、残り ${safeTotal - safeDone} 件は未実行）`;
+  }
+  function createCancelReport(done, total, details = []) {
+    return new CancelReportError(done, total, details);
+  }
+  function isCancelReportError(error) {
+    return !!error && typeof error === "object" && error.cancelReport === true;
+  }
+  function isCancelStop(error) {
+    return isRunCancelledError(error) || isCancelReportError(error);
+  }
+  function describeInnerCancel(label, error) {
+    if (!isCancelReportError(error)) return [`${label}: 実行中に中止しました（途中まで実行した内容は取り消していません）`];
+    const [first, ...rest] = String(error.message).split("\n");
+    return [`${label}: ${first}`, ...rest.map((line) => `  ${line}`)];
   }
 
   // src/tabs/record-query.ts
@@ -3336,12 +3952,28 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (guest && !/^[1-9]\d*$/.test(guest)) throw new Error("ゲストIDは正の数値で入力してください");
     return { appId: ids[0], guestId: guest };
   }
+  function toPanelTone(tone) {
+    if (tone === true) return "err";
+    if (!tone) return "busy";
+    return tone;
+  }
+  function countedSummary(tail, opts = {}) {
+    return (counts, appIds) => {
+      const total = counts["件"] || 0;
+      if (appIds.length === 1) return `${total}件${tail}${opts.withApp ? `（App ${appIds[0]}）` : ""}`;
+      return `${appIds.length}アプリで計 ${total}件${tail}`;
+    };
+  }
   async function runRecordAppBatchStandalone(appIdsValue, operation, setStatus) {
     const appIds = parseRecordAppIds(appIdsValue);
     if (!appIds.length) throw new Error("対象アプリIDを1件以上入力してください");
     const failures = [];
     const warnings = [];
     const cancelled = [];
+    const completed = [];
+    let failedWritten = 0;
+    let failedUnwritten = 0;
+    let writeKnown = false;
     for (let i = 0; i < appIds.length; i++) {
       const appId = appIds[i];
       setStatus(`App ${appId}: 実行中 (${i + 1}/${appIds.length})`);
@@ -3349,35 +3981,90 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         const result = await operation(appId, i, appIds.length);
         if (result && result.warning) warnings.push(`App ${appId}: ${result.warning}`);
         if (result && result.cancelled) cancelled.push(`App ${appId}`);
+        else completed.push({ appId, summary: result ? result.summary : void 0 });
       } catch (error) {
+        if (isCancelStop(error)) {
+          if (appIds.length === 1 && error?.cancelReport === true) throw error;
+          throw createCancelReport(i, appIds.length, [
+            ...describeInnerCancel(`App ${appId}`, error),
+            ...failures.map((failure) => `失敗 ${failure}`),
+            ...warnings.map((warning) => `警告 ${warning}`),
+            ...cancelled.map((target) => `確認でキャンセルしたため実行していません: ${target}`),
+            `未実行（中止）: ${appIds.slice(i).map((id) => `App ${id}`).join(", ")}`
+          ]);
+        }
         failures.push(`App ${appId}: ${error?.message || String(error)}`);
+        const partial = error?.partial;
+        if (partial && Number.isFinite(Number(partial.done)) && Number.isFinite(Number(partial.total))) {
+          writeKnown = true;
+          failedWritten += Number(partial.done);
+          failedUnwritten += Math.max(0, Number(partial.total) - Number(partial.done));
+        }
       }
     }
     const warningSummary = warnings.length ? `警告 ${warnings.length}アプリ:
 ${warnings.join("\n")}` : "";
     const cancelSummary = cancelled.length ? `確認でキャンセルしたため実行していません（${cancelled.length}アプリ）: ${cancelled.join(", ")}` : "";
+    const summaries = completed.filter((item) => item.summary);
+    const successWritten = summaries.reduce((sum, item) => sum + (item.summary.written ?? 0), 0);
+    if (summaries.some((item) => item.summary.written !== void 0)) writeKnown = true;
     if (failures.length) {
-      throw new Error(`${appIds.length}件中${failures.length}件が失敗しました
+      const known = [
+        completed.length ? `成功 ${completed.length}アプリ` : "",
+        writeKnown ? `書き込み済み ${successWritten + failedWritten}件` : "",
+        writeKnown && failedUnwritten ? `未処理 ${failedUnwritten}件` : ""
+      ].filter(Boolean);
+      const error = new Error(`${appIds.length}アプリ中${failures.length}アプリで失敗しました${known.length ? `（${known.join("・")}）` : ""}
 ${failures.join("\n")}${warningSummary ? `
 ${warningSummary}` : ""}${cancelSummary ? `
 ${cancelSummary}` : ""}`);
+      if (completed.length) Object.assign(error, { partialSuccess: true });
+      throw error;
     }
-    if (warningSummary || cancelSummary) {
-      setStatus(`${appIds.length}アプリの操作が完了しました${cancelSummary ? `
+    if (cancelled.length === appIds.length) {
+      const message2 = "確認でキャンセルしました（実行していません）";
+      setStatus(message2, "info");
+      return { message: message2, tone: "info" };
+    }
+    let headline;
+    if (summaries.length && summaries.length === completed.length) {
+      const counts = {};
+      for (const { summary } of summaries) for (const [key, value] of Object.entries(summary.counts)) counts[key] = (counts[key] || 0) + value;
+      headline = summaries[0].summary.describe(counts, completed.map((item) => item.appId));
+    } else {
+      headline = `${completed.length}アプリの操作が完了しました`;
+    }
+    const tone = warningSummary || cancelSummary ? "warn" : "ok";
+    const message = `${headline}${cancelSummary ? `
 ${cancelSummary}` : ""}${warningSummary ? `
-${warningSummary}` : ""}`, true);
-      return;
-    }
-    setStatus(`${appIds.length}アプリの操作が完了しました`);
+${warningSummary}` : ""}`;
+    setStatus(message, tone);
+    return { message, tone };
+  }
+  var CANCEL_WRITE_WAIT_MESSAGE = "書き込み中のリクエストの応答を待っています。応答が返ると次のリクエストの前で止めます。応答がない場合は kintone 画面で結果を確認してください。";
+  function watchCancelledWriteWait(notify, opts = {}) {
+    const token = activeRun();
+    if (!token) return () => {
+    };
+    const afterMs = opts.afterMs ?? 1e4;
+    const timer = setInterval(() => {
+      if (!token.cancelled || token.writes < 1 || Date.now() - token.cancelledAt < afterMs) return;
+      clearInterval(timer);
+      notify(CANCEL_WRITE_WAIT_MESSAGE);
+    }, opts.intervalMs ?? 1e3);
+    return () => clearInterval(timer);
   }
   async function downloadFileBlob(prefix, fileKey) {
     if (!fileKey) return { ok: false, reason: "fileKey がありません" };
     const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
     const headers = { "X-Requested-With": "XMLHttpRequest" };
     let lastReason = "";
+    let request = null;
     for (let attempt = 0; attempt < 2; attempt++) {
+      throwIfCancelled();
       try {
-        const resp = await fetch(url, { method: "GET", headers });
+        request = createRequestSignal(FILE_DOWNLOAD_TIMEOUT_MS);
+        const resp = await fetch(url, { method: "GET", headers, signal: request.signal });
         if (resp.status === 403) return { ok: false, reason: "閲覧権限なし (HTTP 403)" };
         if (!resp.ok) {
           lastReason = `HTTP ${resp.status}`;
@@ -3385,9 +4072,12 @@ ${warningSummary}` : ""}`, true);
           return { ok: true, blob: await resp.blob() };
         }
       } catch (e) {
-        lastReason = e?.message || String(e);
+        if (isRunCancelledError(e) || isRunCancelledError(request?.signal?.reason)) throw e instanceof RunCancelledError ? e : new RunCancelledError();
+        lastReason = request?.timedOut() ? `応答待ちが ${Math.round(FILE_DOWNLOAD_TIMEOUT_MS / 1e3)} 秒を超えました（timeout）` : e?.message || String(e);
+      } finally {
+        request?.release();
       }
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
+      if (attempt === 0) await sleepUnlessCancelled(500);
     }
     return { ok: false, reason: lastReason || "取得失敗" };
   }
@@ -3490,7 +4180,7 @@ ${warningSummary}` : ""}`, true);
     if (!result.csv.tables.length) {
       const blob2 = new Blob([result.csv.parentCsv], { type: "text/csv;charset=utf-8;" });
       downloadBlob(recordExportFilename(filename, "csv", buildExportFilename("レコード", "csv", { appLabel })), blob2);
-      setStatus(`CSV出力完了 (${result.recordCount}件)`);
+      setStatus(`CSV出力完了 (${result.recordCount}件)`, "ok");
       return { issues: [] };
     }
     const JSZipCtor = await loadJSZipLite();
@@ -3505,7 +4195,7 @@ ${warningSummary}` : ""}`, true);
     const blob = await zip.generateAsync({ type: "blob" });
     downloadBlob(recordExportFilename(filename, "zip", buildExportFilename("レコード", "zip", { appLabel })), blob);
     const warningNote = result.csv.warnings.length ? `（未取得のテーブル ${result.csv.warnings.length}件、詳細は manifest.json）` : "";
-    setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0);
+    setStatus(`CSV出力完了: ${result.recordCount}件 / テーブル明細 ${result.csv.tables.length}ファイルをZIPに保存${warningNote}`, result.csv.warnings.length > 0 ? "warn" : "ok");
     return { issues: result.csv.warnings };
   }
   async function runCsvExportBatchStandalone(opts, setStatus) {
@@ -3534,6 +4224,7 @@ ${warningSummary}` : ""}`, true);
     const successes = [];
     const failures = [];
     const tableWarnings = [];
+    let stoppedAt = -1;
     for (let i = 0; i < apps.length; i++) {
       const app = apps[i];
       let folder = "";
@@ -3555,8 +4246,20 @@ ${warningSummary}` : ""}`, true);
         successes.push(`${folder}/: App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ""} / ${result.recordCount}件 / テーブル ${result.csv.tables.length}件${result.csv.warnings.length ? ` / 未取得 ${result.csv.warnings.length}件（フォルダ内manifest.json参照）` : ""}`);
       } catch (error) {
         if (folder) zip.remove(folder);
+        if (isCancelStop(error)) {
+          stoppedAt = i;
+          break;
+        }
         failures.push(`App ${app.appId}${app.guestId ? ` / Guest ${app.guestId}` : ""}: ${error?.message || String(error)}`);
       }
+    }
+    const notRun = stoppedAt >= 0 ? apps.slice(stoppedAt).map((app) => `App ${app.appId}${app.guestId ? ` / Guest ${app.guestId}` : ""}`) : [];
+    if (stoppedAt >= 0 && !successes.length) {
+      throw createCancelReport(stoppedAt, apps.length, [
+        ...failures.map((failure) => `失敗 ${failure}`),
+        `未実行（中止）: ${notRun.join(", ")}`,
+        "ZIP は保存していません"
+      ]);
     }
     if (failures.length === apps.length) {
       throw new Error(`すべてのアプリで CSV 出力に失敗しました
@@ -3565,7 +4268,8 @@ ${failures.join("\n")}`);
     const manifest = [
       "kintone CSV 一括出力マニフェスト",
       `出力日時: ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`,
-      `対象アプリ数: ${apps.length}（成功 ${successes.length} / 失敗 ${failures.length}）`,
+      `対象アプリ数: ${apps.length}（成功 ${successes.length} / 失敗 ${failures.length}${notRun.length ? ` / 未実行（中止） ${notRun.length}` : ""}）`,
+      ...notRun.length ? ["", "利用者の操作で中止したため、一部のアプリは出力していません。"] : [],
       `総レコード数: ${totalRecords}`,
       `未取得のテーブル: ${warningCount}件`,
       `共通クエリ: ${query || "(なし)"}`,
@@ -3574,16 +4278,22 @@ ${failures.join("\n")}`);
       "明細CSVの $id を同じフォルダの親 records.csv の $id に紐付けてください。",
       "",
       ...successes,
-      ...failures.length ? ["", "失敗:", ...failures] : []
+      ...failures.length ? ["", "失敗:", ...failures] : [],
+      ...notRun.length ? ["", "未実行（中止）:", ...notRun.map((target) => `${target}: 未実行（中止）`)] : []
     ].join("\n");
     zip.file("manifest.txt", manifest);
     setStatus(`ZIP生成中... (${successes.length}アプリ / ${totalRecords}件)`);
     const blob = await zip.generateAsync({ type: "blob" });
     downloadBlob(recordExportFilename(filename, "zip", buildExportFilename("CSV出力", "zip")), blob);
-    const issues = [failures.length ? `失敗 ${failures.length}アプリ` : "", warningCount ? `未取得のテーブル ${warningCount}件` : ""].filter(Boolean);
+    const issues = [
+      notRun.length ? `未実行（中止） ${notRun.length}アプリ` : "",
+      failures.length ? `失敗 ${failures.length}アプリ` : "",
+      warningCount ? `未取得のテーブル ${warningCount}件` : ""
+    ].filter(Boolean);
     const issueNote = issues.length ? `（${issues.join(" / ")}、詳細は manifest.txt）` : "";
-    setStatus(`CSV一括出力完了${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0);
-    return { issues: [...failures.map((failure) => `失敗 ${failure}`), ...tableWarnings] };
+    const cancelNote = notRun.length ? `${formatCancelledHeadline(stoppedAt, apps.length)}。処理済みの分だけを保存しました。` : "";
+    setStatus(`${cancelNote}CSV一括出力${notRun.length ? "（一部）" : "完了"}${issueNote}: ${successes.length}アプリ / ${totalRecords}件`, issues.length > 0 ? "warn" : "ok");
+    return { issues: [...notRun.map((target) => `未実行（中止） ${target}`), ...failures.map((failure) => `失敗 ${failure}`), ...tableWarnings] };
   }
   async function readImportFile(file) {
     if (!file) throw new Error("CSVファイルを選択してください");
@@ -3611,6 +4321,13 @@ ${failures.join("\n")}`);
         const { records: _records, recordRows: _recordRows, ...report } = planCsvImport(rows, response?.properties);
         plans.push({ appId, properties: response.properties, report });
       } catch (error) {
+        if (isCancelStop(error)) {
+          throw createCancelReport(plans.length, appIds.length, [
+            ...plans.filter((plan) => plan.error).map((plan) => `事前検査に失敗 App ${plan.appId}: ${plan.error}`),
+            `未実行（中止）: ${appIds.slice(plans.length).map((id) => `App ${id}`).join(", ")}`,
+            "レコードはまだ書き込んでいません"
+          ]);
+        }
         plans.push({ appId, properties: {}, error: error?.message || String(error) || "事前検査に失敗しました" });
       }
     }
@@ -3620,8 +4337,20 @@ ${failures.join("\n")}`);
     const { plans } = await inspectCsvImportBatch(opts, setStatus);
     const result = plans.map(({ appId, report, error }) => ({ appId, report, error }));
     const problems = plans.filter((plan) => plan.error || plan.report.issueCount).length;
-    setStatus(problems ? `事前検査: ${problems}アプリに問題があります。まだ書き込んでいません。` : `事前検査完了: ${plans.length}アプリ。まだ書き込んでいません。`, problems > 0);
+    setStatus(problems ? `事前検査: ${problems}アプリに問題があります。まだ書き込んでいません。` : `事前検査完了: ${plans.length}アプリ。まだ書き込んでいません。`, problems > 0 ? "warn" : "ok");
     return result;
+  }
+  async function writeChunksUnlessCancelled(items, label, writeChunk, onProgress, describeItem) {
+    try {
+      return await writeInChunks(items, label, writeChunk, onProgress, void 0, describeItem);
+    } catch (error) {
+      if (!isRunCancelledError(error)) throw error;
+      const done = Math.max(0, Number(error?.partial?.done) || 0);
+      throw createCancelReport(done, items.length, [
+        `${label}: ${done}件を書き込み済み、残り ${items.length - done}件は書き込んでいません`,
+        "書き込み済みのレコードは取り消していません"
+      ]);
+    }
   }
   async function runCsvImportBatchStandalone(opts, setStatus) {
     const { prefix, rows, plans } = await inspectCsvImportBatch(opts, setStatus);
@@ -3635,23 +4364,22 @@ ${problems.map((plan) => `App ${plan.appId}: ${plan.error || formatCsvImportRepo
     ].join("\n");
     if (!kusConfirm(confirmText)) {
       const warning = "CSV取込をキャンセルしました";
-      setStatus(warning, true);
+      setStatus(warning, "info");
       return { warning };
     }
     await runRecordAppBatchStandalone(plans.map((plan) => plan.appId).join(","), async (appId) => {
       const plan = plans.find((item) => item.appId === appId);
       const { records, recordRows } = planCsvImport(rows, plan.properties);
-      const ok = await writeInChunks(
+      const ok = await writeChunksUnlessCancelled(
         records,
         `App ${appId} の CSV取込`,
         (batch) => apiPost(prefix, "/records.json", { app: appId, records: batch }),
         (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`),
-        void 0,
         (index) => `CSV ${recordRows[index]}行目`
       );
-      setStatus(`App ${appId}: インポート完了 ${ok}件`);
+      setStatus(`App ${appId}: ${ok}件を取り込みました`);
+      return { summary: { counts: { 件: ok }, written: ok, describe: countedSummary("を取り込みました", { withApp: true }) } };
     }, setStatus);
-    setStatus(`CSV取込完了: ${plans.length}アプリ / ${plans.reduce((sum, plan) => sum + plan.report.count, 0)}件`);
   }
   async function runBatchProcessStandalone(opts, setStatus) {
     const { appId: rawAppId, guestId: rawGuestId, query, action: rawAction, assignee: rawAssignee } = opts;
@@ -3668,10 +4396,10 @@ ${problems.map((plan) => `App ${plan.appId}: ${plan.error || formatCsvImportRepo
       "本番レコードのステータスが変わり、自動では元に戻せません。実行しますか？"
     ].join("\n");
     if (!kusConfirm(confirmText)) {
-      setStatus("ステータス一括更新をキャンセルしました");
+      setStatus("ステータス一括更新をキャンセルしました", "info");
       return { cancelled: true };
     }
-    const ok = await writeInChunks(
+    const ok = await writeChunksUnlessCancelled(
       targets,
       `App ${appId} のステータス更新`,
       async (batch) => {
@@ -3691,10 +4419,11 @@ ${error?.message || String(error)}`
         }
       },
       (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`),
-      void 0,
       (index) => `レコードID ${targets[index]?.id}`
     );
-    setStatus(`ステータス一括更新完了 (${ok}件)`);
+    const summary = { counts: { 件: ok }, written: ok, describe: countedSummary("のステータスを更新しました", { withApp: true }) };
+    setStatus(summary.describe(summary.counts, [appId]), "ok");
+    return { summary };
   }
   var COPY_SYSTEM_TYPES = /* @__PURE__ */ new Set([
     "RECORD_NUMBER",
@@ -3866,11 +4595,18 @@ ${error?.message || String(error)}`
         const report = inspectRecordCopyCompatibility(srcProps, tgtFields?.properties || {});
         results.push({ targetAppId, report });
       } catch (error) {
+        if (isCancelStop(error)) {
+          throw createCancelReport(results.length, targetAppIds.length, [
+            ...results.filter((r) => r.error).map((r) => `確認に失敗 App ${r.targetAppId}: ${r.error}`),
+            `未実行（中止）: ${targetAppIds.slice(results.length).map((id) => `App ${id}`).join(", ")}`,
+            "まだコピーは実行していません"
+          ]);
+        }
         results.push({ targetAppId, error: error?.message || String(error) });
       }
     }
     const hasWarn = results.some((r) => r.error || r.report && (!r.report.compatibleFields.length || r.report.droppedMissing.length > 0 || r.report.droppedMismatch.length > 0));
-    setStatus(`フィールド互換性確認完了: ${results.length}アプリ。まだコピーは実行していません。`, hasWarn);
+    setStatus(`フィールド互換性確認完了: ${results.length}アプリ。まだコピーは実行していません。`, hasWarn ? "warn" : "ok");
     return results;
   }
   async function runRecordCopyStandalone(opts, setStatus) {
@@ -3885,7 +4621,7 @@ ${error?.message || String(error)}`
     const records = await fetchAllRecords(srcPrefix, sourceAppId, query || "", setStatus);
     if (!records.length) {
       const warning = "コピー対象のレコードがありません";
-      setStatus(warning, true);
+      setStatus(warning, "warn");
       return { warning };
     }
     const plan = buildCopyRecordPayloads(records, targetProps);
@@ -3904,24 +4640,38 @@ ${droppedNote}` : ""}`);
       "実行しますか？"
     ].filter(Boolean).join("\n");
     if (!kusConfirm(confirmText)) {
-      setStatus("レコードコピーをキャンセルしました");
+      setStatus("レコードコピーをキャンセルしました", "info");
       return { cancelled: true };
     }
-    const ok = await writeInChunks(
+    const ok = await writeChunksUnlessCancelled(
       plan.records,
       `App ${sourceAppId} → ${targetAppId} のレコードコピー`,
       (batch) => apiPost(tgtPrefix, "/records.json", { app: targetAppId, records: batch }),
       (done, total) => setStatus(`コピー中... ${done} / ${total}件`),
-      void 0,
       (index) => `コピー元レコードID ${records[index]?.$id?.value ?? index + 1}`
     );
-    const fileDropNote = plan.droppedFileFields.length ? ` / 添付除外 ${plan.droppedFileFields.length}フィールド` : "";
-    setStatus(`レコードコピー完了: ${ok}件${fileDropNote}${droppedNote ? `（${droppedNote}）` : ""}`, plan.droppedFields.length > 0 || plan.droppedFileFields.length > 0);
+    const fileDropNote = plan.droppedFileFields.length ? `添付除外 ${plan.droppedFileFields.length}フィールド` : "";
+    const dropWarning = [fileDropNote, droppedNote].filter(Boolean).join(" / ");
+    const summary = {
+      counts: { 件: ok },
+      written: ok,
+      describe: (counts, appIds) => appIds.length === 1 ? `${counts["件"]}件をコピーしました（コピー先 App ${appIds[0]}）` : `${appIds.length}アプリへ計 ${counts["件"]}件をコピーしました`
+    };
+    const drops = plan.droppedFields.length > 0 || plan.droppedFileFields.length > 0;
+    setStatus(`${summary.describe(summary.counts, [targetAppId])}${dropWarning ? `（${dropWarning}）` : ""}`, drops ? "warn" : "ok");
+    return { summary, ...dropWarning ? { warning: dropWarning } : {} };
   }
   function folderLabelFromField(field) {
     const label = (item) => item && typeof item === "object" ? String(item.code || item.name || "") : String(item ?? "");
     const value = field?.value;
     return (Array.isArray(value) ? value.map(label).filter(Boolean).join(",") : label(value)).trim();
+  }
+  function describeAttachmentSummary(counts, appIds) {
+    const files = counts["ファイル"] || 0;
+    const failed = counts["取得失敗"] || 0;
+    const failNote = failed ? `（取得失敗 ${failed}件）` : "";
+    if (!files) return `保存した添付ファイルはありません${failNote}`;
+    return appIds.length === 1 ? `添付ファイル ${files}件を保存しました${failNote}` : `${appIds.length}アプリで計 ${files}件の添付ファイルを保存しました${failNote}`;
   }
   async function runAttachmentDownloadStandalone(opts, setStatus) {
     const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
@@ -3952,8 +4702,8 @@ ${droppedNote}` : ""}`);
     });
     if (!groups.some((group) => group.files.length)) {
       const warning = "ダウンロード対象の添付がありませんでした";
-      setStatus(warning, true);
-      return { warning };
+      setStatus(warning, "warn");
+      return { warning, summary: { counts: { ファイル: 0, 取得失敗: 0 }, describe: describeAttachmentSummary } };
     }
     const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
@@ -3975,7 +4725,17 @@ ${droppedNote}` : ""}`);
       const used = usedByFolder.get(folderPath) || /* @__PURE__ */ new Set();
       usedByFolder.set(folderPath, used);
       for (const f of files) {
-        const result = await downloadFileBlob(prefix, f.fileKey);
+        let result;
+        try {
+          result = await downloadFileBlob(prefix, f.fileKey);
+        } catch (error) {
+          if (!isCancelStop(error)) throw error;
+          throw createCancelReport(i, groups.length, [
+            `中断したレコード: ${recordId}${rowId ? ` / テーブル行 ${rowId}` : ""}`,
+            `取得済み ${fileCount}ファイル / 取得失敗 ${failures.length}件`,
+            "添付ファイルの ZIP は保存していません"
+          ]);
+        }
         const entry = {
           recordId,
           tableFieldCode,
@@ -4004,8 +4764,8 @@ ${droppedNote}` : ""}`);
         throw new Error(`添付ファイルを1件も取得できませんでした（失敗 ${failures.length}件）
 ${formatFileFailures(failures.slice(0, 5))}${failures.length > 5 ? "\n…" : ""}`);
       }
-      setStatus("ダウンロード対象の添付がありませんでした", true);
-      return { warning: "ダウンロード対象の添付がありませんでした" };
+      setStatus("ダウンロード対象の添付がありませんでした", "warn");
+      return { warning: "ダウンロード対象の添付がありませんでした", summary: { counts: { ファイル: 0, 取得失敗: 0 }, describe: describeAttachmentSummary } };
     }
     if (failures.length) {
       zip.file("download_errors.txt", `取得できなかった添付ファイル ${failures.length}件
@@ -4016,12 +4776,22 @@ ${formatFileFailures(failures)}
     setStatus(`ZIP生成中 (${fileCount}ファイル)`);
     const zipBlob = await zip.generateAsync({ type: "blob" });
     downloadBlob(recordExportFilename(zipName, "zip", buildExportFilename("添付ファイル", "zip", { appLabel: buildAppFilenameLabel(appId, "") })), zipBlob);
+    const summary = { counts: { ファイル: fileCount, 取得失敗: failures.length }, describe: describeAttachmentSummary };
+    const headline = summary.describe(summary.counts, [String(appId)]);
     if (failures.length) {
-      const warning = `添付一括DL完了: ${fileCount}ファイル（取得失敗 ${failures.length}件、詳細は download_errors.txt）`;
-      setStatus(warning, true);
-      return { warning };
+      const detail = `取得失敗 ${failures.length}件の詳細は ZIP 内の download_errors.txt`;
+      setStatus(`${headline}
+${detail}`, "warn");
+      return { warning: detail, summary };
     }
-    setStatus(`添付一括DL完了: ${fileCount}ファイル`);
+    setStatus(headline, "ok");
+    return { summary };
+  }
+  function describeBackupSummary(counts, appIds) {
+    const parts = [`レコード ${counts["レコード"] || 0}件`];
+    if ("添付" in counts) parts.push(`添付 ${counts["添付"]}件`);
+    if ("コメント" in counts) parts.push(`コメント ${counts["コメント"]}件`);
+    return `${appIds.length === 1 ? "" : `${appIds.length}アプリの`}バックアップを保存しました（${parts.join("・")}）`;
   }
   async function runRecordBackupStandalone(opts, setStatus) {
     const { appId, guestId, query, zipName, includeFiles, includeComments, includeAppSettings, appScopes } = opts;
@@ -4068,7 +4838,15 @@ ${formatFileFailures(failures)}
         const recordId = String(ent.rec?.$id?.value || "unknown");
         let result = blobCache.get(ent.file.fileKey);
         if (!result) {
-          result = await downloadFileBlob(prefix, ent.file.fileKey);
+          try {
+            result = await downloadFileBlob(prefix, ent.file.fileKey);
+          } catch (error) {
+            if (!isCancelStop(error)) throw error;
+            throw createCancelReport(i, collected.length, [
+              `添付ファイルの取得を中止しました（取得済み ${fileCount}ファイル / 取得失敗 ${fileFailures.length}件）`,
+              "バックアップの ZIP は保存していません（途中までのバックアップを完全なものと取り違えないため）"
+            ]);
+          }
           blobCache.set(ent.file.fileKey, result);
         }
         if (result.ok === false) {
@@ -4120,6 +4898,12 @@ ${formatFileFailures(failures)}
             commentCount += comments.length;
           }
         } catch (e) {
+          if (isCancelStop(e)) {
+            throw createCancelReport(i, records.length, [
+              `コメントの取得を中止しました（取得済み ${commentCount}件 / 取得失敗 ${commentFailures.length}レコード）`,
+              "バックアップの ZIP は保存していません（途中までのバックアップを完全なものと取り違えないため）"
+            ]);
+          }
           commentFailures.push({ recordId, reason: e?.message || String(e) });
         }
       }
@@ -4178,10 +4962,15 @@ ${formatFileFailures(failures)}
     downloadBlob(recordExportFilename(zipName, "zip", buildExportFilename("レコードバックアップ", "zip", { appLabel: buildAppFilenameLabel(appId, "") })), blob);
     const failureCount = fileFailures.length + commentFailures.length + appNg + csvExport.warnings.length;
     const allSettingsFailed = Boolean(includeAppSettings && appScopes?.length && appOk === 0 && appNg > 0);
-    const failureNote = failureCount ? `（取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg}${allSettingsFailed ? " [全セクション失敗]" : ""} / テーブル ${csvExport.warnings.length} → manifest.json 参照）` : "";
-    const completionMessage = `バックアップ完了: ${records.length}件 / テーブル明細 ${csvExport.tables.length}ファイル / 添付 ${fileCount} / コメント ${commentCount}${failureNote}`;
-    setStatus(completionMessage, failureCount > 0);
-    return { warning: failureCount > 0 ? completionMessage : void 0 };
+    const detail = failureCount ? `取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg}${allSettingsFailed ? " [全セクション失敗]" : ""} / テーブル ${csvExport.warnings.length}（詳細は manifest.json）` : "";
+    const summary = {
+      counts: { レコード: records.length, ...includeFiles ? { 添付: fileCount } : {}, ...includeComments ? { コメント: commentCount } : {} },
+      describe: describeBackupSummary
+    };
+    const headline = summary.describe(summary.counts, [String(appId)]);
+    setStatus(detail ? `${headline}
+${detail}` : headline, failureCount > 0 ? "warn" : "ok");
+    return { summary, ...detail ? { warning: detail } : {} };
   }
   async function runLoadStatusActionsStandalone(opts, setStatus) {
     const { appId, guestId } = validateRecordConnection(opts.appId, opts.guestId);
@@ -4189,7 +4978,7 @@ ${formatFileFailures(failures)}
     setStatus("プロセス管理情報を取得中...");
     const res = await apiGet(prefix, "/app/status.json", { app: appId, lang: "user" });
     if (!res.enable) {
-      setStatus("プロセス管理は無効です", true);
+      setStatus("プロセス管理は無効です", "warn");
       return { enabled: false, states: [], actions: [], statusFieldCode: "" };
     }
     const states = Object.keys(res.states || {}).sort((a, b) => Number(res.states[a].index) - Number(res.states[b].index));
@@ -4225,16 +5014,16 @@ ${formatFileFailures(failures)}
   var RESULT_CSS = `
 .kus-as__result{margin-top:6px;border:1px solid var(--c-border);border-radius:8px;overflow:hidden;max-height:240px;overflow-y:auto}
 .kus-as__result--empty{display:none}
-.kus-as__head{padding:6px 10px;background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);position:sticky;top:0}
-.kus-as__table{border-collapse:collapse;width:100%;font-size:11.5px}
+.kus-as__head{padding:6px 10px;background:var(--c-surface-2);font-size:12.5px;font-weight:600;color:var(--c-text-2);position:sticky;top:0}
+.kus-as__table{border-collapse:collapse;width:100%;font-size:13px}
 .kus-as__table th,.kus-as__table td{padding:5px 8px;border-bottom:1px solid var(--c-border);text-align:left;vertical-align:top}
-.kus-as__table th{background:var(--c-surface);font-weight:600;color:var(--c-text-2);font-size:11px}
+.kus-as__table th{background:var(--c-surface);font-weight:600;color:var(--c-text-2);font-size:12.5px}
 .kus-as__table tr:last-child td{border-bottom:none}
 .kus-as__id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--c-text-2);white-space:nowrap}
 .kus-as__name{color:var(--c-text);word-break:break-all}
-.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:10.5px;line-height:1.5}
+.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:12px;line-height:1.5}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
-.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:10.5px}
+.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
   function ensureStyles2() {
@@ -4461,6 +5250,7 @@ ${formatFileFailures(failures)}
   // src/tabs/record-quality-standalone.ts
   init_api();
   init_utils();
+  init_runControl();
 
   // src/tabs/record-quality.ts
   var SCALAR = /* @__PURE__ */ new Set(["SINGLE_LINE_TEXT", "MULTI_LINE_TEXT", "LINK", "NUMBER", "DATE", "TIME", "DATETIME", "DROP_DOWN", "RADIO_BUTTON"]);
@@ -4643,7 +5433,8 @@ ${formatFileFailures(failures)}
         const nextProps = (await apiGet(prefix, "/app/form/fields.json", { app: appIds[i], lang: "user" }))?.properties;
         const nextMap = new Map(readQualityFields(nextProps).map((f) => [f.code, f.type]));
         common = common.filter((f) => nextMap.get(f.code) === f.type);
-      } catch {
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
       }
     }
     return common;
@@ -4651,7 +5442,8 @@ ${formatFileFailures(failures)}
   async function runRecordQualityStandalone(options, setStatus) {
     const { appIds, prefix } = connection(options.appIdsText, options.guestId);
     const results = [];
-    for (const appId of appIds) {
+    for (let i = 0; i < appIds.length; i++) {
+      const appId = appIds[i];
       setStatus(`App ${appId}: 検査用の設定を取得中…`);
       try {
         const properties = (await apiGet(prefix, "/app/form/fields.json", { app: appId, lang: "user" }))?.properties;
@@ -4659,6 +5451,11 @@ ${formatFileFailures(failures)}
         const { records } = await fetchRecordsByQuery(prefix, appId, options.query, { fields: ["$id", ...options.codes], onProgress: (count) => setStatus(`App ${appId}: ${count}件を取得済み…`) });
         results.push({ appId, report: inspectRecordQuality(records, fields, options) });
       } catch (error) {
+        if (isRunCancelledError(error)) {
+          for (const pendingId of appIds.slice(i)) results.push({ appId: pendingId, error: "未実行（中止）" });
+          setStatus(`${formatCancelledHeadline(i, appIds.length)}。検査済みの結果だけを表示します`, "warn");
+          return results;
+        }
         results.push({ appId, error: error.message || String(error) });
       }
     }
@@ -4668,14 +5465,24 @@ ${formatFileFailures(failures)}
     const { appIds, prefix } = connection(options.appIdsText, options.guestId);
     const templates = [];
     const failures = [];
-    for (const appId of appIds) {
+    let stoppedAt = -1;
+    for (let i = 0; i < appIds.length; i++) {
+      const appId = appIds[i];
       setStatus(`App ${appId}: CSVひな形を作成中…`);
       try {
         const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
         templates.push({ appId, template: buildCsvImportTemplate(fields?.properties) });
       } catch (error) {
+        if (isRunCancelledError(error)) {
+          stoppedAt = i;
+          break;
+        }
         failures.push(`App ${appId}: ${error.message || String(error)}`);
       }
+    }
+    const notRun = stoppedAt >= 0 ? appIds.slice(stoppedAt).map((id) => `App ${id}`) : [];
+    if (!templates.length && stoppedAt >= 0) {
+      throw createCancelReport(stoppedAt, appIds.length, [...failures.map((failure) => `失敗 ${failure}`), `未実行（中止）: ${notRun.join(", ")}`, "ZIP は保存していません"]);
     }
     if (!templates.length) throw new Error(`ひな形を作成できませんでした
 ${failures.join("\n")}`);
@@ -4695,8 +5502,14 @@ ${failures.join("\n")}`);
       ].join("\r\n");
       zip.file(folder + "README.txt", head + template.readme + "\r\n");
     }
-    zip.file("manifest.json", JSON.stringify({ createdAt: generatedAt, guestId: options.guestId, templates: templates.map((item) => ({ appId: item.appId, columns: item.template.columnCount })), failures }, null, 2));
+    zip.file("manifest.json", JSON.stringify({ createdAt: generatedAt, guestId: options.guestId, templates: templates.map((item) => ({ appId: item.appId, columns: item.template.columnCount })), failures, ...notRun.length ? { cancelled: true, notExecuted: notRun.map((label) => `${label}: 未実行（中止）`) } : {} }, null, 2));
     downloadBlob(buildExportFilename("CSV取込ひな形", "zip"), await zip.generateAsync({ type: "blob" }));
+    if (notRun.length) {
+      return { warning: `${formatCancelledHeadline(stoppedAt, appIds.length)}
+${templates.length}アプリのひな形だけを保存しました${failures.length ? ` / 失敗 ${failures.length}アプリ` : ""}
+未実行（中止）: ${notRun.join(", ")}${failures.length ? `
+${failures.join("\n")}` : ""}` };
+    }
     if (failures.length) return { warning: `${templates.length}アプリのひな形を保存 / 失敗 ${failures.length}アプリ
 ${failures.join("\n")}` };
     setStatus(`${templates.length}アプリのCSVひな形と入力ガイドを保存しました`);
@@ -4705,8 +5518,9 @@ ${failures.join("\n")}` };
 
   // src/entries/record-quality-ui.ts
   init_utils();
+  var NOT_RUN_CANCELLED = "未実行（中止）";
   function buildRecordQualityTab(root2, context) {
-    const { panel, tgtApp, tgtGuest, resetMetadata, requiredApps, targetSummary, applyViewQuery } = context;
+    const { panel, tgtApp, tgtGuest, resetMetadata, requiredApps, targetSummary, applyViewQuery, optionsHost, optionsRow } = context;
     const query = makeInput({ placeholder: "空欄で全件。検査対象を一覧から絞り込めます", width: "wide", ariaLabel: "データ検査のクエリ" });
     const useView = makeButton("▼ 一覧から", "sub");
     useView.addEventListener("click", () => applyViewQuery(query));
@@ -4731,9 +5545,10 @@ ${failures.join("\n")}` };
     const note = makeNote("先頭の対象アプリからフィールドを読み込み、1〜5項目を選んでください。");
     const trim = makeCheck({ label: "文字列・リンクの前後の空白を無視", checked: false });
     const ignoreCase = makeCheck({ label: "文字列・リンクの英字の大小を無視", checked: false });
-    root2.append(makeRow(load), pickWrap, note, makeRow([trim.label, ignoreCase.label]));
-    root2.appendChild(makeNote("選んだ項目すべてが一致するレコードを、アプリごとに重複として検出します。空の項目があるレコードは未入力として別集計します。複数選択は順序を無視して比較します。"));
-    root2.appendChild(makeNote("テーブル内・添付・計算・システム項目は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。アプリ間の重複は検査しません。"));
+    root2.append(makeRow(load), pickWrap, note);
+    optionsHost.appendChild(makeRow([trim.label, ignoreCase.label]));
+    root2.appendChild(makeNote("選んだ項目がすべて一致するレコードを、アプリごとに重複として検出します（項目の順序は問いません）。空の項目があるレコードは、未入力として別に集計します。", "help"));
+    root2.appendChild(makeNote("テーブル内・添付・計算・システム項目と、アプリ間の重複は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。", "help"));
     let fields = [], selected = /* @__PURE__ */ new Set(), version = 0, fieldsVersion = 0;
     let results = [];
     const output = document.createElement("div");
@@ -4815,7 +5630,7 @@ ${failures.join("\n")}` };
       refreshNote();
       const loaded = await runLoadQualityFieldsStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() });
       if (current !== fieldsVersion) {
-        panel.setStatus("対象が変わりました。再取得してください。", "warn");
+        panel.setStatus("対象アプリが変わりました。検査フィールドを再取得してください。", "warn");
         return;
       }
       fields = loaded;
@@ -4835,18 +5650,25 @@ ${failures.join("\n")}` };
       const current = version;
       const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked };
       const queryText = query.value.trim();
-      const inspected = await runRecordQualityStandalone({ appIdsText: tgtApp.value, guestId, codes: [...selected], query: queryText, ...options }, (message) => panel.setStatus(message, "busy"));
+      const inspected = await runRecordQualityStandalone({ appIdsText: tgtApp.value, guestId, codes: [...selected], query: queryText, ...options }, (message, tone) => panel.setStatus(message, toPanelTone(tone)));
       if (current !== version) {
         panel.setStatus("対象や条件が変わりました。もう一度検査してください。", "warn");
         return;
       }
       results = inspected;
       let warning = false;
+      const failureLog = [];
       for (const result of results) {
         const report = result.report;
         if (!report) {
           warning = true;
-          output.appendChild(makeNote(`App ${result.appId}: 検査失敗 / ${result.error}`));
+          if (result.error === NOT_RUN_CANCELLED) {
+            output.appendChild(makeNote(`App ${result.appId}: ${NOT_RUN_CANCELLED}`));
+            continue;
+          }
+          const [reason, ...detail] = String(result.error || "不明なエラー").split("\n").map((line) => line.trim()).filter(Boolean);
+          output.appendChild(makeNote(`App ${result.appId}: 検査に失敗しました（${reason || "不明なエラー"}）`));
+          failureLog.push(`App ${result.appId}: ${[reason, ...detail].join("\n  ")}`);
           continue;
         }
         warning || (warning = report.unavailableRecords > 0);
@@ -4887,20 +5709,33 @@ ${failures.join("\n")}` };
           output.append(moreNote, makeRow(toggleBtn));
         }
       }
+      if (failureLog.length) panel.setResult(failureLog.join("\n"));
       save.onclick = () => {
         if (!results.length || current !== version) return;
         downloadBlob(buildExportFilename("データ検査結果", "csv"), new Blob([qualityReportCsv(results, guestId, location.origin, options, queryText)], { type: "text/csv;charset=utf-8" }));
-        panel.setStatus("検査結果を保存しました。", warning ? "warn" : "ok");
+        panel.setStatus("検査結果をCSVで保存しました。", warning ? "warn" : "ok");
       };
       save.hidden = false;
-      panel.setStatus(`${results.length}アプリの検査が完了しました。${warning ? "取得不可・失敗の詳細を確認してください。" : "結果を確認し、必要に応じてCSVを保存できます。"}`, warning ? "warn" : "ok");
+      const cancelledApps = results.filter((result) => !result.report && result.error === NOT_RUN_CANCELLED).length;
+      const failedApps = results.filter((result) => !result.report && result.error !== NOT_RUN_CANCELLED).length;
+      const inspectedApps = results.length - cancelledApps - failedApps;
+      if (cancelledApps) {
+        panel.setStatus(`${formatCancelledHeadline(results.length - cancelledApps, results.length)}。検査済みの結果だけを表示します${failedApps ? `（失敗 ${failedApps}アプリ）` : ""}。`, "warn");
+      } else if (!inspectedApps) {
+        panel.setStatus(`検査に失敗しました（${failedApps}アプリ）。原因は下の結果で確認してください。`, "err");
+      } else if (failedApps) {
+        panel.setStatus(`${results.length}アプリ中 ${inspectedApps}アプリを検査し、${failedApps}アプリは失敗しました。失敗の内容は下の結果で確認してください。`, "warn");
+      } else {
+        panel.setStatus(`${results.length}アプリを検査しました。${warning ? "取得不可・失敗の詳細を確認してください。" : "結果を確認し、必要ならCSVで保存してください。"}`, warning ? "warn" : "ok");
+      }
     }));
+    if (optionsRow) root2.appendChild(optionsRow);
     root2.appendChild(makeRow(run));
     context.resultHost.append(output, makeRow(save));
     return {
       id: "quality",
       label: "重複・未入力を検査",
-      description: "複数項目の重複・未入力を調べ、該当レコードを確認します。",
+      description: "選んだ項目の重複と未入力を検査し、該当レコードを一覧で表示します。",
       button: run,
       validate,
       summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["検査項目", [...selected].join("、")], ["比較", `前後空白 ${trim.checkbox.checked ? "無視" : "区別"} / 大小文字 ${ignoreCase.checkbox.checked ? "無視" : "区別"}`]]
@@ -4908,19 +5743,19 @@ ${failures.join("\n")}` };
   }
   function buildCsvTemplateTab(root2, context) {
     const { panel, tgtApp, tgtGuest, requiredApps, targetSummary } = context;
-    root2.appendChild(makeNote("対象アプリの設定から、このツールのCSV取込に使えるひな形を作成します。フィールドコードを調べて入力する手間を省けます。"));
-    root2.appendChild(makeNote("ZIP内のアプリ別フォルダに import.csv、必須・選択肢・初期値などをまとめた fields.csv、除外項目の excluded.csv、使い方の README.txt を保存します。ひな形にはデータ行を入れません。"));
-    root2.appendChild(makeNote("取込に非対応のテーブル・添付・計算項目・ルックアップのコピー先は除外します。設定を取得できなかったアプリは完了メッセージと manifest.json に記録します。"));
+    root2.appendChild(makeNote("このツールのCSV取込で使うひな形を、対象アプリのフィールド設定から作ります。フィールドコードを調べて入力する手間を省けます。", "help"));
+    root2.appendChild(makeNote("ZIP内のアプリ別フォルダに import.csv、必須・選択肢・初期値などをまとめた fields.csv、除外項目の excluded.csv、使い方の README.txt を保存します。ひな形にはデータ行を入れません。", "help"));
+    root2.appendChild(makeNote("取込できないテーブル・添付・計算項目・ルックアップのコピー先フィールドは除外します。設定を取得できなかったアプリは、完了メッセージと manifest.json に記録します。", "help"));
     const run = makeButton("CSVひな形をZIPで保存", "primary");
     run.addEventListener("click", () => liteRun(panel, "CSVひな形を作成中…", async () => {
-      const result = await runCsvTemplateStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() }, (message) => panel.setStatus(message, "busy"));
+      const result = await runCsvTemplateStandalone({ appIdsText: tgtApp.value, guestId: tgtGuest.value.trim() }, (message, tone) => panel.setStatus(message, toPanelTone(tone)));
       if (result.warning) panel.setStatus(result.warning, "warn");
     }));
     root2.appendChild(makeRow(run));
     return {
       id: "csv-template",
       label: "CSV取込ひな形を作成",
-      description: "アプリのフィールドから取込CSVと入力ガイドを作ります。",
+      description: "アプリのフィールド設定から、取込用CSVのひな形と入力ガイドをZIPで保存します。",
       button: run,
       validate: requiredApps,
       summary: () => [targetSummary(), ["保存内容", "CSVひな形・入力ガイド・除外項目・使い方（ZIP）"], ["データ行", "なし（2行目から入力してください）"]]
@@ -4932,11 +5767,23 @@ ${failures.join("\n")}` };
     const panel = createLitePanel({
       id: "kus-record-lite",
       title: "レコード管理",
-      subtitle: "CSV / データ検査 / バッチ更新 / 添付DL / コピー / バックアップ",
+      subtitle: "CSV出力・取込 / データ検査 / ステータス更新 / 添付ファイル保存 / コピー / バックアップ",
       accent: "record",
-      badges: [{ label: "Lite" }, { label: "本番データ操作あり" }],
-      hint: "<strong>本番データに直接書き込み・更新・コピーします。</strong>バックアップ取得を強く推奨します。",
+      badges: [{ label: "本番データを変更", tone: "production" }],
+      hint: "<strong>本番のレコードを直接追加・更新します。</strong>元に戻せない操作があるので、実行前にバックアップを取ってください。",
       wide: true
+    });
+    const status = (message, tone) => panel.setStatus(message, toPanelTone(tone));
+    const liteRunWithCancelGuidance = (busyMsg, fn) => liteRun(panel, busyMsg, async () => {
+      const stop = watchCancelledWriteWait((message) => {
+        const current = panel.status.querySelector(".kus-lp__status-text")?.textContent || "";
+        if (/^中止しています/.test(current)) panel.setStatus(message, "busy");
+      });
+      try {
+        return await fn();
+      } finally {
+        stop();
+      }
     });
     const tgtApp = makeInput({ placeholder: "アプリID（カンマ区切りで複数指定）", value: DEFAULT_APP_ID || "", width: "wide", ariaLabel: "対象アプリID" });
     const tgtGuest = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest" });
@@ -4952,10 +5799,10 @@ ${failures.join("\n")}` };
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
-    const cardApp = makeCard({ title: "接続情報", number: 1 });
+    const cardApp = makeCard({ title: "対象アプリ", number: 1 });
     cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "対象アプリ" }));
-    cardApp.body.appendChild(makeNote("複数アプリは「463,464,469」のようにカンマ、改行、または空白で区切って指定できます。選択した操作を上から順にすべてのアプリへ実行します。"));
-    cardApp.body.appendChild(makeNote("クエリに limit / offset は指定できません。order by を付けた場合は cursor API、無い場合はレコード ID 順で全件取得します（10,000 件超も可）。"));
+    cardApp.body.appendChild(makeNote("複数アプリは「463,464,469」のようにカンマ・改行・空白で区切ります。選んだ操作を、指定した順にすべてのアプリへ実行します。", "help"));
+    cardApp.body.appendChild(makeNote("10,000 件を超えても全件取得します（並び順を指定した場合は cursor API を使います）。クエリに limit / offset は書けません。", "help"));
     cardApp.body.appendChild(createAppSearchControl(panel, {
       guestEl: tgtGuest,
       targets: [{ label: "対象アプリ", apply: (id, _name, guestId) => {
@@ -4969,7 +5816,7 @@ ${failures.join("\n")}` };
     viewSelect.setAttribute("aria-label", "取得した一覧");
     const loadViewsBtn = makeButton("一覧読込", "sub");
     cardApp.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: "一覧から条件" }));
-    const viewNote = makeNote("先頭の対象アプリから一覧を取得し、各操作の「一覧から」で絞り込みと並び順をクエリに反映します。カレンダーの日付範囲やカスタマイズ画面の独自処理は含みません。");
+    const viewNote = makeNote("先頭の対象アプリの一覧を読み込むと、各操作の「▼ 一覧から」で絞り込みと並び順をクエリに反映できます。カレンダーの日付範囲とカスタマイズ画面の独自処理は含みません。");
     cardApp.body.appendChild(viewNote);
     let loadedViews = [];
     resetMetadata.push(() => {
@@ -4989,7 +5836,7 @@ ${failures.join("\n")}` };
       viewSelect.replaceChildren(new Option("一覧を選択（任意）", ""));
       const views = await runLoadViewsStandalone(
         { appId, guestId: tgtGuest.value.trim() },
-        (m, e) => panel.setStatus(m, e ? "err" : "busy")
+        status
       );
       if (version !== connectionVersion) {
         panel.setStatus("対象アプリが変わりました。一覧を再取得してください。", "warn");
@@ -5009,7 +5856,7 @@ ${failures.join("\n")}` };
     function applyViewQuery(target) {
       const view = loadedViews.find((item) => item.id === viewSelect.value);
       if (!view) {
-        panel.setStatus("接続情報で一覧を読み込み、適用する一覧を選んでください。", "warn");
+        panel.setStatus("対象アプリの一覧を読み込み、適用する一覧を選んでください。", "warn");
         return;
       }
       target.value = view.query;
@@ -5031,17 +5878,33 @@ ${failures.join("\n")}` };
       action.onSelect = () => {
         tabs.bar.querySelector('[data-tab="' + action.id + '"]')?.click();
         const hint = panel.body.querySelector(".kus-lp__hint");
-        if (hint) hint.textContent = action.writes ? "本番データを変更する操作です。実行前に対象と条件を確認してください。" : "読み取り操作です。アプリのレコードは変更しません。";
+        if (hint) hint.textContent = action.writes ? `「${action.label}」は本番のレコードを変更します。元に戻せない操作なので、実行前に対象アプリと条件を確認し、バックアップを取ってください。` : `「${action.label}」はレコードを変更しません。このツールのCSV取込・ステータス更新・コピーは本番のレコードを変更します。`;
       };
       recordActions.push(action);
     };
     const qualityResults = document.createElement("div");
     const qualityContext = { panel, tgtApp, tgtGuest, resetMetadata, requiredApps, targetSummary, applyViewQuery, resultHost: qualityResults };
+    const tabCard = (tabRoot, title) => {
+      const card = makeCard({ title, soft: true });
+      tabRoot.appendChild(card.card);
+      return card.body;
+    };
+    const tabOptions = (id, label) => {
+      const popup = makeDialog({ title: `${label}のオプション`, id: `kus-record-lite-options-${id}` });
+      panel.root.appendChild(popup.dialog);
+      for (const type of ["input", "change"]) popup.dialog.addEventListener(type, () => tabHost.dispatchEvent(new Event(type, { bubbles: true })));
+      const button = makeButton("オプション…", "sub");
+      button.setAttribute("aria-haspopup", "dialog");
+      button.addEventListener("click", () => popup.open());
+      return { body: popup.body, row: makeRow(button) };
+    };
     const tabs = makeTabs([
       {
         id: "csv-export",
         label: "CSV出力",
-        build: (root2) => {
+        build: (tabRoot) => {
+          const root2 = tabCard(tabRoot, "CSV出力");
+          const options = tabOptions("csv-export", "CSV出力");
           const query = makeInput({ placeholder: '空欄で全件（例: 更新日時 >= "2026-01-01T00:00:00Z"）', width: "wide" });
           const fname = makeInput({ placeholder: "空欄で自動命名（CSV / テーブルあり・複数アプリはZIP）", width: "wide" });
           const headerModeSelect = makeSelect([
@@ -5055,15 +5918,15 @@ ${failures.join("\n")}` };
             ["crlf", "CRLF（Windows標準）"]
           ]);
           lineEndingSelect.setAttribute("aria-label", "改行コード");
-          const neutralizeCb = makeCheck({ label: "先頭の = + - @ を数式無害化する（Excel向け・既定）", checked: true });
+          const neutralizeCb = makeCheck({ label: "= + - @ で始まる文字列の先頭に ' を付ける（Excel向け・既定）", checked: true });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
-          root2.appendChild(makeRow(fname, { label: "ファイル名" }));
-          root2.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: "出力形式" }));
-          root2.appendChild(makeRow(neutralizeCb.label, { label: "Excel保護" }));
-          root2.appendChild(makeNote("1アプリはCSVで保存します。テーブルがある場合は親レコードとテーブル明細を別CSVにしてZIPにまとめます。複数アプリはアプリ別フォルダを1つのZIPに保存します。"));
-          root2.appendChild(makeNote("テーブル明細は親レコードの $id で紐付けできます。出力は閲覧・集計用で、CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に ' を付けます（数値は対象外）。添付はファイル名のみです。ファイル本体はバックアップの「添付ファイルも保存」で取得できます。"));
+          options.body.appendChild(makeRow(fname, { label: "ファイル名" }));
+          options.body.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: "出力形式" }));
+          options.body.appendChild(makeRow(neutralizeCb.label, { label: "Excel保護" }));
+          root2.appendChild(makeNote("出力は閲覧・集計用で、CSV取込用の互換形式ではありません。テーブル明細は親レコードの $id で紐付けできます。", "help"));
+          root2.appendChild(makeNote("添付はファイル名のみ出力します（ファイル本体は、バックアップの「添付ファイルも保存」で取得できます）。Excelで数式として実行されないよう、先頭に ' を付けます（数値は対象外）。", "help"));
           const run = makeButton("CSVを出力", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "CSV出力中…", async () => {
@@ -5077,7 +5940,7 @@ ${failures.join("\n")}` };
                 lineEnding: lineEndingSelect.value === "crlf" ? "\r\n" : "\n",
                 neutralizeFormula: neutralizeCb.checkbox.checked
               },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+              status
             );
           }));
           const headerLabelMap = {
@@ -5088,31 +5951,34 @@ ${failures.join("\n")}` };
           addAction({
             id: "csv-export",
             label: "CSVを出力",
-            description: "条件に合うレコードとテーブル明細をCSV / ZIPで保存します。",
+            description: "1アプリはCSV、テーブルありは親・明細CSVのZIP、複数アプリはアプリ別フォルダ入りのZIPで保存します。",
             button: run,
             validate: requiredApps,
             summary: () => [
               targetSummary(),
               ["条件", query.value.trim() || "全件"],
               ["保存形式", !requiredApps() && parseRecordAppIds(tgtApp.value).length > 1 ? "ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）" : "CSV（テーブルがある場合は親CSV・明細CSVのZIP）"],
-              ["ヘッダー / 改行 / 数式保護", `${headerLabelMap[headerModeSelect.value] || "フィールドコード"} / ${lineEndingSelect.value === "crlf" ? "CRLF" : "LF"} / 数式無害化: ${neutralizeCb.checkbox.checked ? "あり" : "なし"}`],
+              ["ヘッダー / 改行 / Excel保護", `${headerLabelMap[headerModeSelect.value] || "フィールドコード"} / ${lineEndingSelect.value === "crlf" ? "CRLF" : "LF"} / 先頭の ' 付加: ${neutralizeCb.checkbox.checked ? "あり" : "なし"}`],
               ["ファイル名", fname.value.trim() || "自動命名"]
             ]
           });
+          root2.appendChild(options.row);
           root2.appendChild(makeRow(run));
         }
       },
       {
         id: "csv-import",
         label: "CSV取込",
-        build: (root2) => {
+        build: (tabRoot) => {
+          const root2 = tabCard(tabRoot, "CSV取込");
           const fileInput = document.createElement("input");
           fileInput.type = "file";
           fileInput.accept = ".csv";
           fileInput.className = "kus-lp__file";
           fileInput.setAttribute("aria-label", "取込CSV");
           root2.appendChild(makeRow(fileInput, { label: "CSV" }));
-          root2.appendChild(makeNote("UTF-8 / Excel BOM 対応。ヘッダ行はフィールドコード。ファイル・サブテーブル・ステータスは取込対象外です。100 件単位で追加し、途中で失敗した場合は確定済み件数と未処理件数を表示します。"));
+          root2.appendChild(makeNote("本番のアプリへ新規レコードとして追加します（自動では取り消せません）。100 件ずつ追加し、途中で失敗した場合は追加済み件数と未処理件数を表示します。"));
+          root2.appendChild(makeNote("CSVは UTF-8（Excel の BOM 付きも可）で、1行目にフィールドコードを書きます。ファイル・サブテーブル・ステータスは取り込めません。", "help"));
           const preview = makeButton("CSVを事前検査", "sub");
           const previewText = document.createElement("pre");
           previewText.setAttribute("aria-label", "CSV事前検査結果");
@@ -5134,7 +6000,7 @@ ${failures.join("\n")}` };
             const version = csvVersion;
             const results = await runPreviewCsvImportStandalone(
               { appIdsText: tgtApp.value, guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
-              (message, error) => panel.setStatus(message, error ? "warn" : "busy")
+              status
             );
             if (version !== csvVersion) {
               panel.setStatus("対象やCSVが変わりました。もう一度事前検査してください。", "warn");
@@ -5149,34 +6015,38 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           }));
           root2.appendChild(makeRow(preview));
           root2.appendChild(previewText);
-          root2.appendChild(makeNote("全対象アプリで列数・必須項目・選択肢・数値形式・CSV内の同一値重複を確認します。問題があれば最初の書き込み前に止めます。権限や既存データとの重複などは登録時に確認されます。"));
+          root2.appendChild(makeNote("列数・必須項目・選択肢・数値形式・CSV内の同一値重複を全対象アプリで確認し、問題があれば最初の書き込み前に止めます。権限や既存データとの重複は、登録時に kintone が判定します。", "help"));
           const run = makeButton("レコードを取込", "primary", { icon: "↑" });
           run.style.width = "100%";
-          run.addEventListener("click", () => liteRun(panel, "CSV取込中…", async () => {
-            const result = await runCsvImportBatchStandalone(
+          run.addEventListener("click", () => liteRunWithCancelGuidance("CSV取込中…", async () => {
+            await runCsvImportBatchStandalone(
               { appIdsText: tgtApp.value, guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+              status
             );
-            if (result?.warning) panel.setStatus(result.warning, "warn");
           }));
-          addAction({ id: "csv-import", label: "CSVからレコードを追加", description: "CSVのレコードを対象アプリに新規追加します。", button: run, writes: true, validate: () => requiredApps() || (fileInput.files?.length ? "" : "取り込むCSVを選んでください。"), summary: () => [targetSummary(), ["CSV", fileInput.files?.[0]?.name || "未選択"], ["事前検査", previewSummary], ["処理", "全対象を再検査してから各アプリへ新規レコードを追加"]] });
+          addAction({ id: "csv-import", label: "CSVからレコードを追加", description: "CSVの各行を、対象アプリへ新規レコードとして追加します。", button: run, writes: true, validate: () => requiredApps() || (fileInput.files?.length ? "" : "取り込むCSVを選んでください。"), summary: () => [targetSummary(), ["CSV", fileInput.files?.[0]?.name || "未選択"], ["事前検査", previewSummary], ["処理", "全対象アプリを再検査してから、新規レコードを追加"]] });
           root2.appendChild(makeRow(run));
         }
       },
       {
         id: "csv-template",
         label: "CSVひな形",
-        build: (root2) => addAction(buildCsvTemplateTab(root2, qualityContext))
+        build: (tabRoot) => addAction(buildCsvTemplateTab(tabCard(tabRoot, "CSVひな形"), { ...qualityContext, optionsHost: tabRoot }))
       },
       {
         id: "quality",
         label: "データ検査",
-        build: (root2) => addAction(buildRecordQualityTab(root2, qualityContext))
+        build: (tabRoot) => {
+          const options = tabOptions("quality", "データ検査");
+          addAction(buildRecordQualityTab(tabCard(tabRoot, "データ検査"), { ...qualityContext, optionsHost: options.body, optionsRow: options.row }));
+        }
       },
       {
         id: "status",
         label: "ステータス",
-        build: (root2) => {
+        build: (tabRoot) => {
+          const root2 = tabCard(tabRoot, "ステータス更新");
+          const options = tabOptions("status", "ステータス更新");
           const query = makeInput({ placeholder: '条件 (例: status = "新規")', width: "wide" });
           const action = makeInput({ placeholder: "アクション名", width: "medium" });
           const assignee = makeInput({ placeholder: "次の作業者ログイン名（必要な場合）", width: "medium" });
@@ -5184,7 +6054,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           actionSelect.setAttribute("aria-label", "取得したプロセスアクション");
           const loadActions = makeButton("アクション読込", "sub");
           const applyActionQuery = makeButton("選択アクションの対象条件を入力", "sub");
-          const actionNote = makeNote("先頭アプリからアクションを取得し、遷移元・実行条件・次の作業者設定を確認できます。");
+          const actionNote = makeNote("先頭の対象アプリからアクションを読み込み、遷移元・実行条件・次の作業者設定を確認できます。");
           actionNote.style.whiteSpace = "pre-wrap";
           let loadedActions = [];
           let statusFieldCode = "";
@@ -5239,7 +6109,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
             const [appId] = parseRecordAppIds(tgtApp.value);
             const info = await runLoadStatusActionsStandalone(
               { appId, guestId: tgtGuest.value.trim() },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+              status
             );
             if (version !== connectionVersion) {
               panel.setStatus("対象アプリが変わりました。アクションを再取得してください。", "warn");
@@ -5258,26 +6128,29 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           }));
           root2.appendChild(actionNote);
           root2.appendChild(makeRow(applyActionQuery));
-          root2.appendChild(makeNote("「対象条件を入力」は現在のクエリを置き換えます。複数アプリでは同じフィールドコード・状態名を使うことを確認してください。実行権限や作業者候補はkintone側で判定されます。"));
-          root2.appendChild(makeRow(assignee, { label: "次の作業者" }));
-          root2.appendChild(makeNote("対象 100 件単位でステータス更新します。元に戻せません。"));
+          root2.appendChild(makeNote("「選択アクションの対象条件を入力」は、今のクエリを置き換えます。複数アプリへ実行するときは、各アプリで同じフィールドコード・ステータス名が使われていることを確認してください。", "help"));
+          options.body.appendChild(makeRow(assignee, { label: "次の作業者" }));
+          root2.appendChild(makeNote("元に戻せません。条件に合うレコードのステータスを 100 件ずつ更新します（実行権限と次の作業者の可否は kintone が判定します）。"));
           const run = makeButton("ステータスを一括更新", "primary");
           run.style.width = "100%";
           run.classList.add("kus-lp__btn--danger");
-          run.addEventListener("click", () => liteRun(panel, "ステータス一括更新中…", async () => {
+          run.addEventListener("click", () => liteRunWithCancelGuidance("ステータス一括更新中…", async () => {
             await runRecordAppBatchStandalone(tgtApp.value, (appId) => runBatchProcessStandalone(
               { appId, guestId: tgtGuest.value.trim(), query: query.value.trim(), action: action.value.trim(), assignee: assignee.value.trim() || null },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+              status
+            ), status);
           }));
-          addAction({ id: "status", label: "ステータスを一括更新", description: "指定条件に合うレコードの状態を更新します。", button: run, writes: true, validate: () => requiredApps() || (action.value.trim() ? "" : "実行するアクションを指定してください。") || (staleActionQuery() ? "前のアクションの対象条件が残っています。条件を入力し直すかクエリを編集してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["アクション", action.value.trim()], ["選択した遷移", selectedAction() ? `${selectedAction().from} → ${selectedAction().to}` : "手入力"], ["次の作業者", assignee.value.trim() || "指定なし"]] });
+          addAction({ id: "status", label: "ステータスを一括更新", description: "条件に合うレコードのステータスを、指定したアクションで更新します。", button: run, writes: true, validate: () => requiredApps() || (action.value.trim() ? "" : "実行するアクションを指定してください。") || (staleActionQuery() ? "前のアクションの対象条件が残っています。条件を入力し直すかクエリを編集してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["アクション", action.value.trim()], ["選択した遷移", selectedAction() ? `${selectedAction().from} → ${selectedAction().to}` : "手入力"], ["次の作業者", assignee.value.trim() || "指定なし"]] });
+          root2.appendChild(options.row);
           root2.appendChild(makeRow(run));
         }
       },
       {
         id: "attach",
         label: "添付DL",
-        build: (root2) => {
+        build: (tabRoot) => {
+          const root2 = tabCard(tabRoot, "添付ファイル保存");
+          const options = tabOptions("attach", "添付ファイル保存");
           const query = makeInput({ placeholder: "条件 (任意)", width: "wide" });
           const fileCode = makeInput({ placeholder: "例: attached_file", width: "medium" });
           fileCode.setAttribute("aria-label", "添付フィールドコード");
@@ -5285,7 +6158,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           const fileSelect = makeSelect([["", "添付フィールドを選択"]]);
           fileSelect.setAttribute("aria-label", "取得した添付フィールド");
           const loadFields = makeButton("添付フィールド読込", "sub");
-          const fieldNote = makeNote("先頭アプリのフィールド名から選べます。複数アプリへ実行するときは、各アプリで同じフィールドコードが使われていることを確認してください。");
+          const fieldNote = makeNote("先頭の対象アプリのフィールド名から選べます。複数アプリへ実行するときは、各アプリで同じフィールドコードが使われていることを確認してください。");
           let loadedFields = [];
           const resetFields = () => {
             loadedFields = [];
@@ -5315,7 +6188,7 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
             resetFields();
             const fields = await runLoadAttachmentFieldsStandalone(
               { appId, guestId: tgtGuest.value.trim() },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+              status
             );
             if (version !== connectionVersion) {
               panel.setStatus("対象アプリが変わりました。フィールドを再取得してください。", "warn");
@@ -5337,11 +6210,11 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
           root2.appendChild(makeRow([loadFields, fileSelect], { label: "名前から選択" }));
           root2.appendChild(fieldNote);
           root2.appendChild(makeRow(fileCode, { label: "ファイル" }));
-          root2.appendChild(makeRow(tableCode, { label: "テーブル" }));
-          root2.appendChild(makeRow(folderCode, { label: "フォルダ" }));
-          root2.appendChild(makeRow(zipName, { label: "ZIP名" }));
-          root2.appendChild(makeNote("取得できなかったファイル（閲覧権限なし等）は ZIP 内の download_errors.txt に記録し、完了メッセージに件数を表示します。"));
-          root2.appendChild(makeNote("テーブル内の添付はレコード・テーブル行ごとに保存します。manifest.json で元レコード、行ID、ファイル名、サイズ、保存先を確認できます。"));
+          options.body.appendChild(makeRow(tableCode, { label: "テーブル" }));
+          options.body.appendChild(makeRow(folderCode, { label: "フォルダ" }));
+          options.body.appendChild(makeRow(zipName, { label: "ZIP名" }));
+          root2.appendChild(makeNote("閲覧権限がないなどで取得できなかったファイルは、ZIP 内の download_errors.txt に記録し、完了メッセージに件数を表示します。", "help"));
+          root2.appendChild(makeNote("テーブル内の添付はレコード・テーブル行ごとに保存します。manifest.json で元レコード、行ID、ファイル名、サイズ、保存先を確認できます。", "help"));
           const run = makeButton("添付ファイルをZIPで保存", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "添付ファイル取得中…", async () => {
@@ -5355,19 +6228,21 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
                 folderFieldCode: folderCode.value.trim(),
                 zipName: zipNameForApp(zipName.value, appId, parseRecordAppIds(tgtApp.value).length > 1)
               },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+              status
+            ), status);
           }));
-          addAction({ id: "attach", label: "添付ファイルを保存", description: "添付ファイルを取得しZIPにまとめます。", button: run, validate: () => requiredApps() || (fileCode.value.trim() ? "" : "添付ファイルのフィールドコードを指定してください。"), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["添付フィールド", [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(" / ")], ["ZIP名", zipName.value.trim() || "自動命名"]] });
+          addAction({ id: "attach", label: "添付ファイルを保存", description: "条件に合うレコードの添付ファイルを、ZIPで保存します。", button: run, validate: () => requiredApps() || (fileCode.value.trim() ? "" : "添付ファイルのフィールドコードを指定してください。"), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["添付フィールド", [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(" / ")], ["フォルダ名にするフィールド", folderCode.value.trim() || "指定なし"], ["ZIP名", zipName.value.trim() || "自動命名"]] });
+          root2.appendChild(options.row);
           root2.appendChild(makeRow(run));
         }
       },
       {
         id: "copy",
         label: "コピー",
-        build: (root2) => {
+        build: (tabRoot) => {
+          const root2 = tabCard(tabRoot, "レコードコピー");
           const srcApp = makeInput({ placeholder: "コピー元アプリID", width: "id" });
-          const srcGuest = makeInput({ placeholder: "ゲスト (任意)", width: "guest" });
+          const srcGuest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", ariaLabel: "コピー元のゲストスペースID" });
           const query = makeInput({ placeholder: "条件 (任意)", width: "wide" });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
@@ -5408,25 +6283,25 @@ ${result.error || formatCsvImportReport(result.report)}${result.report ? "\n先�
                 targetAppsText: tgtApp.value,
                 targetGuestId: tgtGuest.value.trim()
               },
-              (m, e) => panel.setStatus(m, e ? "warn" : "busy")
+              status
             );
             if (version !== copyPreviewVersion) {
-              panel.setStatus("コピー元またはコピー先が変わりました。再確認してください。", "warn");
+              panel.setStatus("コピー元または対象アプリが変わりました。もう一度確認してください。", "warn");
               return;
             }
             const warnApps = results.filter((r) => r.error || r.report && (!r.report.compatibleFields.length || r.report.droppedMissing.length > 0 || r.report.droppedMismatch.length > 0)).length;
             copyPreviewSummary = `${results.length}アプリ確認済${warnApps ? `（除外・注意あり ${warnApps}アプリ）` : "（全フィールド互換）"}`;
-            previewText.textContent = results.map((r) => `コピー先 App ${r.targetAppId}
+            previewText.textContent = results.map((r) => `対象アプリ App ${r.targetAppId}
 ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n");
             previewText.hidden = false;
           }));
           root2.appendChild(makeRow(previewBtn));
           root2.appendChild(previewText);
-          root2.appendChild(makeNote("コピー元の絞り込んだレコードを、対象アプリへ新規レコードとして追加します。ファイル・システム項目・計算項目と、対象アプリに無い（または型が異なる）フィールドは除外し、除外したフィールドコードを実行前に表示します。"));
-          const run = makeButton("レコードをコピー実行", "primary");
+          root2.appendChild(makeNote("コピー元の条件に合うレコードを、本番の対象アプリへ新規レコードとして追加します。ファイル・システム項目・計算項目と、対象アプリに無い（または型が異なる）フィールドは除外し、そのフィールドコードを実行前に表示します。", "help"));
+          const run = makeButton("レコードを対象アプリへコピー", "primary");
           run.style.width = "100%";
           run.classList.add("kus-lp__btn--danger");
-          run.addEventListener("click", () => liteRun(panel, "レコードコピー中…", async () => {
+          run.addEventListener("click", () => liteRunWithCancelGuidance("レコードコピー中…", async () => {
             await runRecordAppBatchStandalone(tgtApp.value, (targetAppId) => runRecordCopyStandalone(
               {
                 sourceAppId: srcApp.value.trim(),
@@ -5435,19 +6310,19 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
                 targetGuestId: tgtGuest.value.trim(),
                 query: query.value.trim()
               },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+              status
+            ), status);
           }));
           addAction({
             id: "copy",
             label: "レコードをコピー",
-            description: "コピー元のレコードを対象アプリへ新規追加します。",
+            description: "コピー元の条件に合うレコードを、対象アプリへ新規追加します。",
             button: run,
             writes: true,
             validate: () => requiredApps() || (srcApp.value.trim() ? "" : "コピー元アプリを指定してください。"),
             summary: () => [
               ["コピー元", connectionSummary(srcApp.value.trim(), srcGuest.value.trim())],
-              ["コピー先", connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())],
+              targetSummary(),
               ["コピー元の条件", query.value.trim() || "全件"],
               ["互換性確認", copyPreviewSummary]
             ]
@@ -5458,13 +6333,15 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
       {
         id: "backup",
         label: "バックアップ",
-        build: (root2) => {
+        build: (tabRoot) => {
+          const root2 = tabCard(tabRoot, "バックアップ");
+          const options = tabOptions("backup", "バックアップ");
           const query = makeInput({ placeholder: "条件 (任意・全件は空)", width: "wide" });
           const zipName = makeInput({ placeholder: "空欄で自動命名（レコードバックアップ_アプリ_日時.zip）", width: "wide" });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
-          root2.appendChild(makeRow(zipName, { label: "ZIP名" }));
+          options.body.appendChild(makeRow(zipName, { label: "ZIP名" }));
           const incFiles = makeCheck({ label: "添付ファイルも保存", checked: true });
           const incComments = makeCheck({ label: "コメントも保存", checked: true });
           const incSettings = makeCheck({ label: "アプリ設定も保存", checked: false });
@@ -5473,19 +6350,20 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
           optGrid.appendChild(incFiles.label);
           optGrid.appendChild(incComments.label);
           optGrid.appendChild(incSettings.label);
-          root2.appendChild(optGrid);
+          options.body.appendChild(optGrid);
           const scopeBox = document.createElement("div");
           scopeBox.className = "kus-lp__chips";
           scopeBox.style.display = "none";
           const chips = SECTION_DEFS.map((d) => makeChip({ label: d.label, value: d.key, checked: ["fieldSettings", "layoutSettings", "viewSettings", "processSettings"].includes(d.key) }));
           chips.forEach((c) => scopeBox.appendChild(c.label));
-          root2.appendChild(scopeBox);
+          options.body.appendChild(scopeBox);
           incSettings.checkbox.addEventListener("change", () => {
             scopeBox.style.display = incSettings.checkbox.checked ? "flex" : "none";
           });
-          root2.appendChild(makeNote("ZIPには親レコードの records.csv / records.json と manifest.json を含みます。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。添付のファイル本体は「添付ファイルも保存」で取得します。"));
-          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。= + - @ で始まる文字列は、Excelで数式として実行されないよう先頭に ' を付けます（数値は対象外）。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。"));
-          const run = makeButton("バックアップ ZIP を保存", "primary", { icon: "↓" });
+          root2.appendChild(makeNote("ZIPには records.csv / records.json と manifest.json を保存します。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。", "help"));
+          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に ' を付けます（数値は対象外）。", "help"));
+          root2.appendChild(makeNote("添付ファイルの本体は「添付ファイルも保存」で取得します。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。", "help"));
+          const run = makeButton("バックアップをZIPで保存", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "レコードバックアップ中…", async () => {
             await runRecordAppBatchStandalone(tgtApp.value, (appId) => runRecordBackupStandalone(
@@ -5499,10 +6377,11 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
                 includeAppSettings: incSettings.checkbox.checked,
                 appScopes: chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value)
               },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+              status
+            ), status);
           }));
-          addAction({ id: "backup", label: "バックアップを保存", description: "レコード・テーブル明細と選択した関連データをZIPで保存します。", button: run, validate: () => requiredApps() || (incSettings.checkbox.checked && !chips.some((c) => c.checkbox.checked) ? "アプリ設定の保存範囲を1つ以上選ぶか、「アプリ設定も保存」を外してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["保存内容", ["レコード・テーブル明細", incFiles.checkbox.checked ? "添付ファイル" : "", incComments.checkbox.checked ? "コメント" : "", incSettings.checkbox.checked ? `アプリ設定（${chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent).join("、")}）` : ""].filter(Boolean).join("、")]] });
+          addAction({ id: "backup", label: "バックアップを保存", description: "レコード・テーブル明細と選択した関連データをZIPで保存します。", button: run, validate: () => requiredApps() || (incSettings.checkbox.checked && !chips.some((c) => c.checkbox.checked) ? "アプリ設定の保存範囲を1つ以上選ぶか、「アプリ設定も保存」を外してください。" : ""), summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["ZIP名", zipName.value.trim() || "自動命名"], ["保存内容", ["レコード・テーブル明細", incFiles.checkbox.checked ? "添付ファイル" : "", incComments.checkbox.checked ? "コメント" : "", incSettings.checkbox.checked ? `アプリ設定（${chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent).join("、")}）` : ""].filter(Boolean).join("、")]] });
+          root2.appendChild(options.row);
           root2.appendChild(makeRow(run));
         }
       }

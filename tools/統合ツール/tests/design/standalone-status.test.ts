@@ -81,15 +81,16 @@ describe('設計書の完了メッセージ', () => {
 
   it('Excel は選択した取得環境を渡し、API 取得失敗があれば完了メッセージに残す', async () => {
     xlsxMock.runAdvancedDesignExporter.mockImplementation(async (params: any) => {
-      params.onFinish({ failedAPIs: [{ name: 'Views', error: '403' }, { name: 'Views', error: '403' }] });
+      params.onFinish({ failedAPIs: [{ name: 'ビュー設定', error: '403' }, { name: 'ビュー設定', error: '403' }] });
       return true;
     });
     const setStatus = vi.fn();
-    await runDesignExportXlsxStandalone({ appId: '5', guestId: '2', preview: true }, setStatus);
+    // 取得失敗がある部分成功は、要点を警告で出し内訳をログへ残すため partialSuccess 付きの例外で返す
+    const error: any = await runDesignExportXlsxStandalone({ appId: '5', guestId: '2', preview: true }, setStatus).catch(caught => caught);
     expect(xlsxMock.runAdvancedDesignExporter).toHaveBeenCalledWith(expect.objectContaining({ appId: '5', guestId: '2', preview: true }));
-    const [message, isError] = setStatus.mock.calls[setStatus.mock.calls.length - 1];
-    expect(isError).toBe(true);
-    expect(message).toContain('取得に失敗した項目 2件（Views）');
+    expect(error.partialSuccess).toBe(true);
+    expect(error.message).toContain('取得に失敗した項目 2件（ビュー設定）');
+    expect(error.message).toContain('- ビュー設定:');
   });
 
   it('Excel は失敗がなければ通常の完了メッセージ、キャンセルならその旨', async () => {
@@ -108,7 +109,7 @@ describe('設計書の完了メッセージ', () => {
       params.onFinish({
         total: 3, successCount: 1, failedCount: 2, cancelled: false,
         failedApps: [{ appId: '2', error: 'x' }, { appId: '3', error: 'y' }],
-        failedAPIs: [{ app: 'App 1', name: 'Views', error: '403' }]
+        failedAPIs: [{ app: 'App 1', name: 'ビュー設定', error: '403' }]
       });
       return true;
     });

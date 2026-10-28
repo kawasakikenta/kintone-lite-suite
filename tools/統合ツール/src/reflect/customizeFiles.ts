@@ -1,4 +1,5 @@
 import { downloadKintoneFile } from '../api.js';
+import { isRunCancelledError } from '../runControl.js';
 import { deepClone } from '../utils.js';
 
 /**
@@ -106,6 +107,7 @@ function guessContentType(name: string): string {
 /** 一過性の通信失敗で反映全体が止まらないよう、上限超過と 4xx（権限・存在しない）以外は1回だけ再試行する。 */
 const defaultDownload: CustomizeFileDownloader = async (guestId, fileKey) => {
   try { return await downloadKintoneFile(guestId, fileKey); } catch (error) {
+    if (isRunCancelledError(error)) throw error;
     if (/大きすぎ|HTTP 4\d\d/.test(messageOf(error))) throw error;
     return downloadKintoneFile(guestId, fileKey);
   }
@@ -151,7 +153,7 @@ export async function resolveCustomizeFiles(sourceSection: any, targetSection: a
   for (const entry of pending) if (!sourceByKey.has(entry.fileKey)) sourceByKey.set(entry.fileKey, entry);
   await pool([...sourceByKey.values()], async entry => {
     try { sourceBodies.set(entry.fileKey, await loadBody(entry, opts.sourceGuestId, download, true)); }
-    catch (error) { sourceErrors.set(entry.fileKey, messageOf(error)); }
+    catch (error) { if (isRunCancelledError(error)) throw error; sourceErrors.set(entry.fileKey, messageOf(error)); }
   });
 
   // 同じ枠に同名・同内容の反映先ファイルがあれば再利用するため、反映先の全ファイル本体を確認する。
@@ -161,7 +163,7 @@ export async function resolveCustomizeFiles(sourceSection: any, targetSection: a
   const targetBodies = new Map<string, Body>();
   if (sourceBodies.size) await pool([...targetByKey.values()], async entry => {
     try { targetBodies.set(entry.fileKey, await loadBody(entry, opts.targetGuestId, download, false)); }
-    catch (error) { resolution.targetUnavailable.push({ fileKey: entry.fileKey, name: entry.name || entry.fileKey, reason: messageOf(error) }); }
+    catch (error) { if (isRunCancelledError(error)) throw error; resolution.targetUnavailable.push({ fileKey: entry.fileKey, name: entry.name || entry.fileKey, reason: messageOf(error) }); }
   });
   for (const [key, body] of targetBodies) { resolution.hashes[key] = body.hash; resolution.targetBlobs.set(key, body.blob); }
 
@@ -209,7 +211,7 @@ export async function embedCustomizeFileContents(section: any, opts: { guestId: 
     try {
       const blob = await download(opts.guestId, entry.fileKey);
       results.set(entry.fileKey, { content: { base64: bytesToBase64(await blobBytes(blob)), contentType: blob.type || String(entry.item.file?.contentType || '') || guessContentType(entry.name), byteSize: blob.size } });
-    } catch (error) { results.set(entry.fileKey, { reason: messageOf(error) }); }
+    } catch (error) { if (isRunCancelledError(error)) throw error; results.set(entry.fileKey, { reason: messageOf(error) }); }
   });
   const unavailable: Array<{ fileKey: string; name: string; reason: string }> = [], reported = new Set<string>();
   for (const entry of entries) {

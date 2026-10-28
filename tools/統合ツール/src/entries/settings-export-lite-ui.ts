@@ -27,8 +27,8 @@ export function mountSettingsExportLitePanel() {
     title: '設定一括取得',
     subtitle: '複数アプリの設定を JSON または ZIP（1アプリ=1JSON）で保存します。',
     accent: 'settings',
-    badges: [{ label: 'Lite' }, { label: '複数アプリ対応' }],
-    hint: '1 行だけ入力すれば 1 アプリ、複数行で一括取得。<strong>アプリごとに別のゲストスペース</strong>を指定できます。',
+    badges: [{ label: '読み取り専用', tone: 'read' }],
+    hint: 'アプリの設定を読み取り、JSON または ZIP で保存します。kintone のアプリや設定は変更しません。',
     wide: true
   });
 
@@ -46,7 +46,7 @@ export function mountSettingsExportLitePanel() {
     guestEl: searchGuest,
     targets: [{ apply: (appId, appName, guestId) => {
       const result = appTable.putApp(appId, guestId, { appName, focus: true });
-      return { message: `アプリ #${appId}${appName ? ` (${appName})` : ''} を対象表に設定しました${result.action === 'existing' ? '（追加済み）' : ''}` };
+      return { message: `アプリ #${appId}${appName ? ` (${appName})` : ''} を対象アプリ表に設定しました${result.action === 'existing' ? '（追加済み）' : ''}` };
     } }]
   });
 
@@ -59,12 +59,15 @@ export function mountSettingsExportLitePanel() {
   cardTarget.body.appendChild(appTable.element);
   cardTarget.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
   cardTarget.body.appendChild(foldWorkflowSection('スペースから追加', spaceRow));
-  cardTarget.body.appendChild(makeNote('各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。'));
+  cardTarget.body.appendChild(makeNote('1行なら1アプリ、複数行で一括取得します。アプリごとに別のゲストスペースを指定でき、各行の「↑コピー」で上の行のアプリIDとゲストスペースIDを複製できます。', 'help'));
   panel.body.insertBefore(cardTarget.card, panel.status);
 
   // ---- 取得セクション ----
+  // 表面にはプリセットと選択数だけを出し、セクションごとの個別選択は詳細設定のポップアップに置く
   const cardScope = makeCard({ title: '取得セクション', number: 2 });
   cardScope.actions.style.flexWrap = 'wrap';
+  const cardChips = makeCard({ title: '取得する設定を個別に選ぶ' });
+  cardChips.actions.style.flexWrap = 'wrap';
   const chipBox = document.createElement('div');
   chipBox.className = 'kus-lp__chips';
   chipBox.setAttribute('role', 'group');
@@ -92,12 +95,16 @@ export function mountSettingsExportLitePanel() {
   const allBtn = makeButton('全選択', 'sub');
   const noneBtn = makeButton('全解除', 'sub');
   cardScope.actions.appendChild(countBadge);
-  cardScope.actions.appendChild(allBtn);
-  cardScope.actions.appendChild(noneBtn);
+  cardChips.actions.appendChild(allBtn);
+  cardChips.actions.appendChild(noneBtn);
   allBtn.addEventListener('click', () => applyScopeSelection(() => true));
   noneBtn.addEventListener('click', () => applyScopeSelection(() => false));
 
   const SCOPE_PRESETS: Array<{ label: string; keys: Set<string> }> = [
+    {
+      label: 'すべて',
+      keys: new Set(SETTINGS_EXPORT_SCOPE_DEFS.map((s) => s.key))
+    },
     {
       label: '基本のみ',
       keys: new Set([
@@ -134,7 +141,8 @@ export function mountSettingsExportLitePanel() {
     presetToolbar.appendChild(btn);
   }
   cardScope.body.appendChild(presetToolbar);
-  cardScope.body.appendChild(chipBox);
+  cardScope.body.appendChild(makeNote('プリセットで取得する設定をまとめて選べます。1項目ずつ選ぶときは「詳細設定…」を開いてください。', 'help'));
+  cardChips.body.appendChild(chipBox);
 
   // selectedScopeKeys() は配下の input[type=checkbox]:checked を集計するので
   // chipBox をそのまま scopeRoot として渡す（クローン同期は change 未発火で壊れる）
@@ -171,14 +179,15 @@ export function mountSettingsExportLitePanel() {
       const result = appTable.putApp(app.appId, guest, { appName: app.name });
       if (result.action === 'added' || result.action === 'filled') added += 1;
     }
-    panel.setStatus(`スペースのアプリ ${apps.length}件を読み込みました（新規追加 ${added}件）`, 'ok');
+    panel.setStatus(`スペース内のアプリ ${apps.length}件を取得しました（対象アプリ表に新規追加 ${added}件）`, 'ok');
   }));
 
   btnJson.addEventListener('click', () => liteRun(panel, '設定一括取得（JSON）中…', async () => {
     const { summaryHtml } = await runSettingsExportStandalone(
       'json',
       opts(),
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+      // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
+      (m: string, e?: boolean) => panel.setStatus(m, /^中止しました/.test(m) ? 'warn' : e ? 'err' : 'busy')
     );
     summary.innerHTML = summaryHtml;
     summary.classList.remove('kus-lp__panel-html--empty');
@@ -188,7 +197,8 @@ export function mountSettingsExportLitePanel() {
     const { summaryHtml } = await runSettingsExportStandalone(
       'zip',
       opts(),
-      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+      // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
+      (m: string, e?: boolean) => panel.setStatus(m, /^中止しました/.test(m) ? 'warn' : e ? 'err' : 'busy')
     );
     summary.innerHTML = summaryHtml;
     summary.classList.remove('kus-lp__panel-html--empty');
@@ -197,7 +207,7 @@ export function mountSettingsExportLitePanel() {
   const exportProblem = () => {
     const rows = appTable.getApps();
     if (!rows.length) return '対象アプリを1件以上指定してください。';
-    if (rows.some(row => !/^\d+$/.test(row.appId) || (row.guestId && !/^\d+$/.test(row.guestId)))) return 'アプリID・ゲストIDは数値で入力してください。';
+    if (rows.some(row => !/^\d+$/.test(row.appId) || (row.guestId && !/^\d+$/.test(row.guestId)))) return 'アプリID・ゲストスペースIDは半角数字で入力してください。';
     return chips.some(c => c.checkbox.checked) ? '' : '取得する設定を1つ以上選んでください。';
   };
   const exportSummary = (format: string): Array<[string, string]> => [
@@ -206,11 +216,14 @@ export function mountSettingsExportLitePanel() {
     ['保存形式', format]
   ];
   installLiteWorkflow(panel, {
-    setup: [cardTarget.card, cardScope.card], results: [summary],
+    setup: [cardTarget.card, cardScope.card],
+    advanced: [cardChips.card],
+    advancedCopy: '取得する設定を1項目ずつ選ぶ（全選択・全解除）ときはこちら。',
+    results: [summary],
     beforeRun: () => { summary.replaceChildren(); summary.classList.add('kus-lp__panel-html--empty'); },
     actions: [
-      { id: 'json', label: '設定をJSONで保存', description: '全対象アプリの設定を1つのJSONにまとめます。', button: btnJson, validate: exportProblem, summary: () => exportSummary('全アプリを1つのJSON') },
-      { id: 'zip', label: '設定をZIPで保存', description: 'アプリごとのJSONと取得結果をZIPにまとめます。', button: btnZip, validate: exportProblem, summary: () => exportSummary('1アプリ1JSONとmanifest.jsonをZIPに保存') }
+      { id: 'json', label: '設定をJSONで保存', description: '全対象アプリの設定を、1つのJSONファイルにまとめて保存します。', button: btnJson, validate: exportProblem, summary: () => exportSummary('全アプリを1つのJSON') },
+      { id: 'zip', label: '設定をZIPで保存', description: 'アプリごとのJSONと、取得結果の一覧（manifest.json）をZIPで保存します。', button: btnZip, validate: exportProblem, summary: () => exportSummary('1アプリ1JSONとmanifest.jsonをZIPに保存') }
     ]
   });
 
