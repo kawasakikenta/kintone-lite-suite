@@ -10,9 +10,10 @@
  * - アプリ名／アプリID／URL のいずれでも検索できる（ID/URL は直接候補化）
  * - 検索結果からワンクリックで対象の入力欄へ ID を流し込む
  * - 1 入力欄なら単一ボタン、複数入力欄（比較元/比較先など）なら割り当て先を選択
+ * - 「環境内の全アプリ」で接続先の全アプリを候補にし、複数件を受け付ける割り当て先（applyAll）へまとめて流し込む
  */
 
-import { apiGet, buildApiPrefix } from '../api.js';
+import { apiGet, buildApiPrefix, fetchAllApps } from '../api.js';
 import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
 import { esc } from '../utils.js';
 import {
@@ -41,6 +42,9 @@ const RESULT_CSS = `
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
+.kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}
+.kus-as__bulk .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
 
 function ensureStyles() {
@@ -59,11 +63,24 @@ export interface AppSearchApplyResult {
   pickedLabel?: string;
 }
 
+/** 「すべて設定」で渡す候補 1 件。 */
+export interface AppSearchPick {
+  appId: string;
+  appName: string;
+}
+
 export interface AppSearchTarget {
   /** 割り当て先の表示名（例: 比較元 / 比較先）。1 件のみのときは省略可。 */
   label?: string;
   /** 候補が選択されたときに ID（と名称・検索に使ったゲストID）を流し込む処理 */
   apply: (appId: string, appName: string, guestId: string) => void | AppSearchApplyResult;
+  /**
+   * 複数のアプリを受け付ける割り当て先だけが指定する。表示中の候補すべて（ID の昇順）を
+   * 一度に流し込む。指定した割り当て先には、候補一覧の上に「すべて設定」のボタンを出す。
+   */
+  applyAll?: (apps: AppSearchPick[], guestId: string) => void | AppSearchApplyResult;
+  /** 「すべて設定」ボタンの文言。省略時は「候補 N 件をすべて追加」（割り当て先が複数なら「…すべて{label}へ」）。 */
+  applyAllLabel?: (count: number) => string;
 }
 
 export interface AppSearchOptions {
@@ -115,12 +132,17 @@ export function createAppSearchControl(panel: LitePanelHandle, opts: AppSearchOp
   const guest = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest', noSubmit: true });
   if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
   const searchBtn = makeButton('検索', 'sub', { icon: '🔍' });
+  const allBtn = makeButton('環境内の全アプリ', 'sub');
+  allBtn.title = '接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）';
   const searchMode = makeSelect([['name', '名前 / ID / URL'], ['code', 'アプリコード（完全一致）']]);
   searchMode.setAttribute('aria-label', '検索方法');
   const space = makeInput({ placeholder: 'スペースID（任意）', width: 'guest', noSubmit: true, ariaLabel: '検索対象スペースID' });
   body.appendChild(makeRow([searchMode, space], { label: '検索方法' }));
   body.appendChild(makeRow([keyword, guest, searchBtn], { label: '検索語' }));
+  body.appendChild(makeRow([allBtn], { label: '全アプリ' }));
   body.appendChild(makeNote('閲覧できるアプリを名前（部分一致）またはコード（大文字・小文字を区別する完全一致）で検索します。スペースIDで検索範囲を絞れます。ID / URL の直接指定ではスペースIDの絞り込みは使いません。'));
+  const allTargets = opts.targets.filter((t) => typeof t.applyAll === 'function');
+  body.appendChild(makeNote(`「環境内の全アプリ」は、閲覧できるアプリをすべて候補に表示します${allTargets.length ? '（候補の上の「すべて…」でまとめて設定できます）' : ''}。ゲストスペースのアプリは含まれないため、ゲストスペースIDを入れてゲストスペースごとに取得してください。`));
 
   const resultBox = document.createElement('div');
   resultBox.className = 'kus-as__result kus-as__result--empty';
@@ -133,11 +155,14 @@ export function createAppSearchControl(panel: LitePanelHandle, opts: AppSearchOp
   let candidates: AppCandidate[] = [];
   let nextOffset = 0;
   let resultGuest = '';
+  /** 表示中の候補が「環境内の全アプリ」の取得結果か（見出しの文言に使う） */
+  let resultIsAll = false;
 
   function invalidate() {
     generation += 1;
     candidates = [];
     nextOffset = 0;
+    resultIsAll = false;
     resultBox.replaceChildren();
     resultBox.className = 'kus-as__result kus-as__result--empty';
     moreBtn.hidden = true;
@@ -152,6 +177,7 @@ export function createAppSearchControl(panel: LitePanelHandle, opts: AppSearchOp
   function syncBusyControls() {
     const busy = panel.root.getAttribute('aria-busy') === 'true';
     searchBtn.disabled = running || busy;
+    allBtn.disabled = running || busy;
     moreBtn.disabled = running || busy;
   }
   panel.root.addEventListener('kus-lite-busy-change', () => {
@@ -177,8 +203,14 @@ export function createAppSearchControl(panel: LitePanelHandle, opts: AppSearchOp
         <td><div class="kus-as__assign">${buttons}</div></td>
       </tr>`;
     }).join('');
+    const bulkHtml = allTargets.length ? `<div class="kus-as__bulk">${allTargets.map((t) => {
+      const ti = opts.targets.indexOf(t);
+      const label = t.applyAllLabel ? t.applyAllLabel(apps.length)
+        : single || !t.label ? `候補 ${apps.length} 件をすべて追加` : `候補 ${apps.length} 件をすべて${t.label}へ`;
+      return `<button type="button" class="kus-lp__btn kus-lp__btn--sub" data-as-all="${ti}">${esc(label)}</button>`;
+    }).join('')}</div>` : '';
     resultBox.className = 'kus-as__result';
-    resultBox.innerHTML = `<div class="kus-as__head">${apps.length}件の候補</div>
+    resultBox.innerHTML = `<div class="kus-as__head">${resultIsAll ? `環境内のアプリ ${apps.length}件${resultGuest ? `（ゲストスペース ${esc(resultGuest)}）` : ''}` : `${apps.length}件の候補`}</div>${bulkHtml}
       <table class="kus-as__table">
         <thead><tr><th style="width:74px">アプリID</th><th>アプリ名</th><th style="width:1%"></th></tr></thead>
         <tbody>${rowsHtml}</tbody>
@@ -205,6 +237,25 @@ export function createAppSearchControl(panel: LitePanelHandle, opts: AppSearchOp
           outcome.message || `App ${app.appId}${app.name ? ` (${app.name})` : ''} を設定しました${where}`,
           outcome.tone || 'ok'
         );
+      });
+    });
+    resultBox.querySelectorAll<HTMLButtonElement>('button[data-as-all]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const target = opts.targets[Number(btn.dataset.asAll)];
+        if (!target?.applyAll || !apps.length) return;
+        if (running || panel.root.getAttribute('aria-busy') === 'true') return;
+        const searchGuest = resultGuest;
+        const outcome: AppSearchApplyResult = target.applyAll(apps.map((app) => ({ appId: app.appId, appName: app.name })), searchGuest) || {};
+        if (opts.guestEl && opts.guestEl.value.trim() !== searchGuest) {
+          opts.guestEl.value = searchGuest;
+          opts.guestEl.dispatchEvent(new Event('input', { bubbles: true }));
+          opts.guestEl.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : '';
+        btn.classList.add('kus-as__picked');
+        btn.setAttribute('aria-pressed', 'true');
+        btn.textContent = outcome.pickedLabel || `${apps.length} 件を設定済み`;
+        panel.setStatus(outcome.message || `候補 ${apps.length} 件を設定しました${where}`, outcome.tone || 'ok');
       });
     });
   }
@@ -237,8 +288,7 @@ export function createAppSearchControl(panel: LitePanelHandle, opts: AppSearchOp
       && panel.root.getAttribute('aria-busy') !== 'true';
     const prefix = buildApiPrefix(guestId, false);
     running = true;
-    searchBtn.disabled = true;
-    moreBtn.disabled = true;
+    syncBusyControls();
     resultBox.setAttribute('aria-busy', 'true');
     try {
       if (directAppId) {
@@ -285,7 +335,52 @@ export function createAppSearchControl(panel: LitePanelHandle, opts: AppSearchOp
     }
   }
 
+  async function runAll(): Promise<void> {
+    if (running || panel.root.getAttribute('aria-busy') === 'true') return;
+    invalidate();
+    const guestId = guest.value.trim();
+    if (guestId && !/^\d+$/.test(guestId)) {
+      panel.setStatus('ゲストIDは数値で入力してください', 'warn');
+      return;
+    }
+    const requestGeneration = generation;
+    const isCurrent = () => requestGeneration === generation && panel.root.isConnected
+      && panel.root.getAttribute('aria-busy') !== 'true';
+    running = true;
+    syncBusyControls();
+    resultBox.setAttribute('aria-busy', 'true');
+    try {
+      panel.setStatus('環境内の全アプリを取得中…', 'busy');
+      const apps = await fetchAllApps(guestId, (fetched) => {
+        if (isCurrent()) panel.setStatus(`環境内の全アプリを取得中…（${fetched}件）`, 'busy');
+      });
+      if (!isCurrent()) return;
+      candidates = apps.map((app) => appCandidate(app, String(app.appId)));
+      resultGuest = guestId;
+      resultIsAll = true;
+      renderResults(candidates);
+      const where = guestId ? `ゲストスペース ${guestId}` : '通常スペース・スペース外';
+      panel.setStatus(
+        candidates.length
+          ? `環境内のアプリ ${candidates.length}件を表示しました（${where}のアプリ）${allTargets.length ? '。「すべて…」でまとめて設定できます' : ''}`
+          : `閲覧できるアプリがありません（${where}）`,
+        candidates.length ? 'ok' : 'info'
+      );
+    } catch (e: any) {
+      if (!isCurrent()) return;
+      panel.setStatus(`全アプリの取得エラー: ${e?.message || String(e)}`, 'err');
+    } finally {
+      running = false;
+      syncBusyControls();
+      resultBox.setAttribute('aria-busy', 'false');
+      if (!isCurrent() && panel.root.isConnected && panel.root.getAttribute('aria-busy') !== 'true' && panel.status.dataset.tone === 'busy') {
+        panel.setStatus('取得条件が変わりました。もう一度取得してください', 'info');
+      }
+    }
+  }
+
   searchBtn.addEventListener('click', () => { void runSearch(); });
+  allBtn.addEventListener('click', () => { void runAll(); });
   moreBtn.addEventListener('click', () => { void runSearch(true); });
   const onEnterKey = (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !e.isComposing && (e as any).keyCode !== 229) {
