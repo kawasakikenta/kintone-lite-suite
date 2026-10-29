@@ -110,6 +110,19 @@ export function connectionSummary(appId: string, guestId = '', environment = '�
   return `#${appId || '未入力'}${guestId ? `（ゲスト ${guestId}）` : ''} · ${environment}`;
 }
 
+/** 確認画面の 1 項目に載せる件数の既定値。全アプリを対象にしても確認画面が長くなりすぎないようにする。 */
+export const SUMMARY_LIST_LIMIT = 20;
+
+/**
+ * 対象の一覧を確認画面用の 1 つの文字列にする。limit 件を超える分は「…ほか N 件（合計 M 件）」にまとめる
+ * （件数は隠さず示す）。
+ */
+export function summarizeList(lines: string[], limit = SUMMARY_LIST_LIMIT): string {
+  const items = lines.filter(Boolean);
+  if (items.length <= limit) return items.join('\n');
+  return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join('\n');
+}
+
 export function validateJsonObject(value: string, label = 'JSON'): string {
   try {
     const parsed = JSON.parse(value);

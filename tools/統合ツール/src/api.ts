@@ -993,6 +993,36 @@ export async function fetchAppsInSpace(
   return apps;
 }
 
+/** `/apps.json` 1 回あたりの取得上限（kintone の仕様上の最大値）。 */
+export const APPS_PAGE_LIMIT = 100;
+
+/**
+ * 接続先（通常スペース側、またはゲストスペース 1 つ）で閲覧できる全アプリを取得する（ページング対応）。
+ * 戻り値は `/apps.json` の apps 要素そのもので、アプリIDの重複を除き、ID の昇順に並べる。
+ * ゲストスペースのアプリは通常の `/k/v1/apps.json` に含まれないため、guestId を指定して別に取得する。
+ */
+export async function fetchAllApps(
+  guestId?: string | number | null,
+  onProgress?: (fetched: number) => void
+): Promise<any[]> {
+  const prefix = buildApiPrefix(guestId, false);
+  const byId = new Map<string, any>();
+  for (let offset = 0; ; offset += APPS_PAGE_LIMIT) {
+    const resp = await apiGet(prefix, '/apps.json', { limit: APPS_PAGE_LIMIT, offset });
+    if (!Array.isArray(resp?.apps)) throw new Error('アプリ一覧の応答が不正です。もう一度取得してください');
+    for (const app of resp.apps) {
+      const appId = String(app?.appId || '').trim();
+      if (/^\d+$/.test(appId) && !byId.has(appId)) byId.set(appId, app);
+    }
+    onProgress?.(byId.size);
+    if (resp.apps.length < APPS_PAGE_LIMIT) break;
+  }
+  // 64bit のアプリIDも丸めずに並べる
+  return [...byId.entries()]
+    .sort(([a], [b]) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0))
+    .map(([, app]) => app);
+}
+
 export function resolveBundleRevision(bundle: any): string {
   const revisions = bundle?.meta?.sectionRevisions || {};
   for (const key of ['appSettings', 'fieldSettings', 'layoutSettings', 'viewSettings', 'processSettings']) {
