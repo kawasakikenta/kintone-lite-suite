@@ -38,6 +38,7 @@ import {
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { joinAppIds, perAppConfirmLimitProblem, recordTargetSummary } from './recordTargetApps.js';
 import type { RecordViewChoice, AttachmentFieldChoice } from '../tabs/record-metadata.js';
 import { formatCsvImportReport } from '../tabs/record-csv-import.js';
 import { describeProcessAction, processActionQuery, type ProcessActionChoice } from '../tabs/record-process-metadata.js';
@@ -86,7 +87,24 @@ export function mountRecordLitePanel() {
   cardApp.body.appendChild(makeNote('10,000 件を超えても全件取得します（並び順を指定した場合は cursor API を使います）。クエリに limit / offset は書けません。', 'help'));
   cardApp.body.appendChild(createAppSearchControl(panel, {
     guestEl: tgtGuest,
-    targets: [{ label: '対象アプリ', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; notifyInput(tgtApp); } }]
+    targets: [{
+      label: '対象アプリ',
+      apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; notifyInput(tgtApp); },
+      // 候補すべてを対象アプリ欄へ入れる（置き換え）。ID は 1 つのゲストスペース内のものなので、ゲストIDも候補に合わせる
+      applyAll: (apps, guestId) => {
+        tgtApp.value = joinAppIds(apps);
+        const guestChanged = tgtGuest.value.trim() !== guestId;
+        if (guestChanged) tgtGuest.value = guestId;
+        notifyInput(tgtApp);
+        if (guestChanged) notifyInput(tgtGuest);
+        return {
+          message: `${apps.length}件のアプリを対象アプリに設定しました（それまでの入力は置き換えました）。書き込みを伴う操作は、確認画面の対象アプリ数を確認してから実行してください`,
+          tone: 'ok',
+          pickedLabel: `${apps.length}件を設定済み`
+        };
+      },
+      applyAllLabel: (count) => `候補 ${count} 件をすべて対象アプリにする`
+    }]
   }));
   panel.body.insertBefore(cardApp.card, panel.status);
 
@@ -146,7 +164,14 @@ export function mountRecordLitePanel() {
 
   const recordActions: LiteWorkflowAction[] = [];
   const requiredApps = () => { try { return parseRecordAppIds(tgtApp.value).length ? '' : '対象アプリを指定してください。'; } catch (error: any) { return error.message; } };
-  const targetSummary = (): [string, string] => ['対象アプリ', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim())];
+  const targetSummary = (): [string, string] => recordTargetSummary(tgtApp.value, tgtGuest.value);
+  // アプリごとに確認や保存が起きる操作は、複数アプリのとき確認画面でそれを伝える
+  const perAppNote = (label: string, text: (count: number) => string): Array<[string, string]> => {
+    try {
+      const count = parseRecordAppIds(tgtApp.value).length;
+      return count > 1 ? [[label, text(count)]] : [];
+    } catch { return []; }
+  };
   const addAction = (action: LiteWorkflowAction) => {
     action.onSelect = () => {
       tabs.bar.querySelector<HTMLButtonElement>('[data-tab="' + action.id + '"]')?.click();
@@ -385,7 +410,7 @@ export function mountRecordLitePanel() {
             status
           ), status);
         }));
-        addAction({ id: 'status', label: 'ステータスを一括更新', description: '条件に合うレコードのステータスを、指定したアクションで更新します。', button: run, writes: true, validate: () => requiredApps() || (action.value.trim() ? '' : '実行するアクションを指定してください。') || (staleActionQuery() ? '前のアクションの対象条件が残っています。条件を入力し直すかクエリを編集してください。' : ''), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['アクション', action.value.trim()], ['選択した遷移', selectedAction() ? `${selectedAction().from} → ${selectedAction().to}` : '手入力'], ['次の作業者', assignee.value.trim() || '指定なし']] });
+        addAction({ id: 'status', label: 'ステータスを一括更新', description: '条件に合うレコードのステータスを、指定したアクションで更新します。', button: run, writes: true, validate: () => requiredApps() || perAppConfirmLimitProblem(tgtApp.value, 'ステータス更新') || (action.value.trim() ? '' : '実行するアクションを指定してください。') || (staleActionQuery() ? '前のアクションの対象条件が残っています。条件を入力し直すかクエリを編集してください。' : ''), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['アクション', action.value.trim()], ['選択した遷移', selectedAction() ? `${selectedAction().from} → ${selectedAction().to}` : '手入力'], ['次の作業者', assignee.value.trim() || '指定なし'], ...perAppNote('アプリごとの確認', (count) => `${count}アプリそれぞれで、更新件数を示す確認ダイアログが表示されます。「キャンセル」を選んだアプリだけ更新を見送り、残りのアプリは続行します。`)] });
         root.appendChild(options.row);
         root.appendChild(makeRow(run));
       }
@@ -461,7 +486,7 @@ export function mountRecordLitePanel() {
             status
           ), status);
         }));
-        addAction({ id: 'attach', label: '添付ファイルを保存', description: '条件に合うレコードの添付ファイルを、ZIPで保存します。', button: run, validate: () => requiredApps() || (fileCode.value.trim() ? '' : '添付ファイルのフィールドコードを指定してください。'), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['添付フィールド', [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(' / ')], ['フォルダ名にするフィールド', folderCode.value.trim() || '指定なし'], ['ZIP名', zipName.value.trim() || '自動命名']] });
+        addAction({ id: 'attach', label: '添付ファイルを保存', description: '条件に合うレコードの添付ファイルを、ZIPで保存します。', button: run, validate: () => requiredApps() || (fileCode.value.trim() ? '' : '添付ファイルのフィールドコードを指定してください。'), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['添付フィールド', [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(' / ')], ['フォルダ名にするフィールド', folderCode.value.trim() || '指定なし'], ['ZIP名', zipName.value.trim() || '自動命名'], ...perAppNote('保存', (count) => `${count}アプリ分のZIPを、アプリごとに別々のファイルとして保存します。`)] });
         root.appendChild(options.row);
         root.appendChild(makeRow(run));
       }
@@ -542,12 +567,13 @@ export function mountRecordLitePanel() {
           description: 'コピー元の条件に合うレコードを、対象アプリへ新規追加します。',
           button: run,
           writes: true,
-          validate: () => requiredApps() || (srcApp.value.trim() ? '' : 'コピー元アプリを指定してください。'),
+          validate: () => requiredApps() || perAppConfirmLimitProblem(tgtApp.value, 'レコードコピー') || (srcApp.value.trim() ? '' : 'コピー元アプリを指定してください。'),
           summary: () => [
             ['コピー元', connectionSummary(srcApp.value.trim(), srcGuest.value.trim())],
             targetSummary(),
             ['コピー元の条件', query.value.trim() || '全件'],
-            ['互換性確認', copyPreviewSummary]
+            ['互換性確認', copyPreviewSummary],
+            ...perAppNote('アプリごとの確認', (count) => `${count}アプリそれぞれで、コピー件数を示す確認ダイアログが表示されます。「キャンセル」を選んだアプリだけコピーを見送り、残りのアプリは続行します。`)
           ]
         });
         root.appendChild(makeRow(run));
@@ -604,7 +630,7 @@ export function mountRecordLitePanel() {
             status
           ), status);
         }));
-        addAction({ id: 'backup', label: 'バックアップを保存', description: 'レコード・テーブル明細と選択した関連データをZIPで保存します。', button: run, validate: () => requiredApps() || (incSettings.checkbox.checked && !chips.some((c) => c.checkbox.checked) ? 'アプリ設定の保存範囲を1つ以上選ぶか、「アプリ設定も保存」を外してください。' : ''), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['ZIP名', zipName.value.trim() || '自動命名'], ['保存内容', ['レコード・テーブル明細', incFiles.checkbox.checked ? '添付ファイル' : '', incComments.checkbox.checked ? 'コメント' : '', incSettings.checkbox.checked ? `アプリ設定（${chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent).join('、')}）` : ''].filter(Boolean).join('、')]] });
+        addAction({ id: 'backup', label: 'バックアップを保存', description: 'レコード・テーブル明細と選択した関連データをZIPで保存します。', button: run, validate: () => requiredApps() || (incSettings.checkbox.checked && !chips.some((c) => c.checkbox.checked) ? 'アプリ設定の保存範囲を1つ以上選ぶか、「アプリ設定も保存」を外してください。' : ''), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['ZIP名', zipName.value.trim() || '自動命名'], ['保存内容', ['レコード・テーブル明細', incFiles.checkbox.checked ? '添付ファイル' : '', incComments.checkbox.checked ? 'コメント' : '', incSettings.checkbox.checked ? `アプリ設定（${chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent).join('、')}）` : ''].filter(Boolean).join('、')], ...perAppNote('保存', (count) => `${count}アプリ分のZIPを、アプリごとに別々のファイルとして保存します。`)] });
         root.appendChild(options.row);
         root.appendChild(makeRow(run));
       }

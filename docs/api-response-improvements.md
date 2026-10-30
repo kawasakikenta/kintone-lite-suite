@@ -10,6 +10,8 @@
 
 候補には `code`、`spaceId`、`modifiedAt`、`modifier` を表示し、同名アプリを見分けやすくしています。`spaceId: null` は「スペース外」と表示します。更新者情報が空でも候補は表示できます。更新日時はブラウザのタイムゾーンで表示します。アプリIDは文字列として保持し、64bit整数の精度を落とさずに並べます。
 
+「環境内の全アプリ」を押すと、検索語とスペースIDを使わずに、閲覧できるアプリを100件ずつ最後のページまで取得して候補に表示します（取得中は件数を表示し、重複は除きます）。`/k/v1/apps.json` はゲストスペースのアプリを返さないため、ゲストスペースのアプリはゲストスペースIDを入れてゲストスペースごとに取得します。複数のアプリを受け付ける入力欄（対象アプリ表、比較先、続けて反映する反映先など）では、候補の上の「候補 N 件をすべて追加」（割り当て先が複数あるときは「…すべて比較先へ」など）で、表示中の候補をまとめて設定できます。名前・コードで検索した候補にも使えます。同じアプリIDとゲストスペースIDの組み合わせは重複して追加しません。
+
 - [複数のアプリの情報を取得する](https://cybozu.dev/ja/kintone/docs/rest-api/apps/get-apps/) — `name` / `codes` / `spaceIds` の検索条件と候補のレスポンス項目。
 - [アプリの情報を取得する](https://cybozu.dev/ja/kintone/docs/rest-api/apps/get-app/) — ID / URLで直接指定した候補の情報。
 
@@ -87,6 +89,6 @@
 
 `npm run test:all` で型検査・単体テスト・ビルド・全ブラウザハーネスを実行できます。今回のAPI契約データは `tools/統合ツール/tests/fixtures/api-metadata.json`、単体テストは `tests/record/api-metadata.test.ts` にあります。
 
-共通検索の新しい条件と候補表示は `npm run test:lite-shared`、一覧・添付選択の実際の画面操作は `npm run test:record-metadata` で検証します。後者は実装をそのまま読み込み、API通信だけを合成レスポンスに置き換えます。実kintoneの認証・権限や、実サーバーからのファイル取得はこのテストに含みません。
+共通検索の新しい条件と候補表示、「環境内の全アプリ」の全ページ取得と「すべて追加」は `npm run test:lite-shared`、一覧・添付選択の実際の画面操作は `npm run test:record-metadata` で検証します。後者は実装をそのまま読み込み、API通信だけを合成レスポンスに置き換えます。実kintoneの認証・権限や、実サーバーからのファイル取得はこのテストに含みません。
 
 CSVの事前検査とプロセス選択も `test:record-metadata` に含みます。単体テストは `tests/record/csv-preflight.test.ts` と `tests/record/process-metadata.test.ts` にあり、100件を超えた行の不備、複数アプリの構成差、書き込み前停止、キャンセル、実行時の再検査、確定済み件数の保持などを検証します。

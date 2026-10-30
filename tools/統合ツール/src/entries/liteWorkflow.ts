@@ -110,6 +110,9 @@ export function connectionSummary(appId: string, guestId = '', environment = '�
   return `#${appId || '未入力'}${guestId ? `（ゲスト ${guestId}）` : ''} · ${environment}`;
 }
 
+// 確認画面の対象一覧の省略（先頭 20 件＋件数）。tabs/ の実行処理の確認ダイアログでも使うため utils に置く。
+export { SUMMARY_LIST_LIMIT, summarizeList } from '../utils.js';
+
 export function validateJsonObject(value: string, label = 'JSON'): string {
   try {
     const parsed = JSON.parse(value);

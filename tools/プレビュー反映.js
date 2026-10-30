@@ -1343,7 +1343,22 @@ ${base}`
     }
     return bundle;
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, FILE_DOWNLOAD_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
+  async function fetchAllApps(guestId, onProgress) {
+    const prefix = buildApiPrefix(guestId, false);
+    const byId = /* @__PURE__ */ new Map();
+    for (let offset = 0; ; offset += APPS_PAGE_LIMIT) {
+      const resp = await apiGet(prefix, "/apps.json", { limit: APPS_PAGE_LIMIT, offset });
+      if (!Array.isArray(resp?.apps)) throw new Error("アプリ一覧の応答が不正です。もう一度取得してください");
+      for (const app of resp.apps) {
+        const appId = String(app?.appId || "").trim();
+        if (/^\d+$/.test(appId) && !byId.has(appId)) byId.set(appId, app);
+      }
+      onProgress?.(byId.size);
+      if (resp.apps.length < APPS_PAGE_LIMIT) break;
+    }
+    return [...byId.entries()].sort(([a], [b]) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0).map(([, app]) => app);
+  }
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, FILE_DOWNLOAD_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY, APPS_PAGE_LIMIT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1384,6 +1399,7 @@ ${base}`
       TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
       FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
       BUNDLE_FETCH_CONCURRENCY = 3;
+      APPS_PAGE_LIMIT = 100;
     }
   });
 
@@ -5585,6 +5601,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
+.kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}
+.kus-as__bulk .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
   function ensureStyles() {
     if (document.getElementById(RESULT_CSS_ID)) return;
@@ -5622,12 +5641,17 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
+    const allBtn = makeButton("環境内の全アプリ", "sub");
+    allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
     const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
+    body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
     body.appendChild(makeNote("閲覧できるアプリを名前（部分一致）またはコード（大文字・小文字を区別する完全一致）で検索します。スペースIDで検索範囲を絞れます。ID / URL の直接指定ではスペースIDの絞り込みは使いません。"));
+    const allTargets = opts.targets.filter((t) => typeof t.applyAll === "function");
+    body.appendChild(makeNote(`「環境内の全アプリ」は、閲覧できるアプリをすべて候補に表示します${allTargets.length ? "（候補の上の「すべて…」でまとめて設定できます）" : ""}。ゲストスペースのアプリは含まれないため、ゲストスペースIDを入れてゲストスペースごとに取得してください。`));
     const resultBox = document.createElement("div");
     resultBox.className = "kus-as__result kus-as__result--empty";
     body.appendChild(resultBox);
@@ -5639,10 +5663,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     let candidates = [];
     let nextOffset = 0;
     let resultGuest = "";
+    let resultIsAll = false;
     function invalidate() {
       generation += 1;
       candidates = [];
       nextOffset = 0;
+      resultIsAll = false;
       resultBox.replaceChildren();
       resultBox.className = "kus-as__result kus-as__result--empty";
       moreBtn.hidden = true;
@@ -5657,6 +5683,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     function syncBusyControls() {
       const busy = panel.root.getAttribute("aria-busy") === "true";
       searchBtn.disabled = running || busy;
+      allBtn.disabled = running || busy;
       moreBtn.disabled = running || busy;
     }
     panel.root.addEventListener("kus-lite-busy-change", () => {
@@ -5681,8 +5708,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         <td><div class="kus-as__assign">${buttons}</div></td>
       </tr>`;
       }).join("");
+      const bulkHtml = allTargets.length ? `<div class="kus-as__bulk">${allTargets.map((t) => {
+        const ti = opts.targets.indexOf(t);
+        const label = t.applyAllLabel ? t.applyAllLabel(apps.length) : single || !t.label ? `候補 ${apps.length} 件をすべて追加` : `候補 ${apps.length} 件をすべて${t.label}へ`;
+        return `<button type="button" class="kus-lp__btn kus-lp__btn--sub" data-as-all="${ti}">${esc(label)}</button>`;
+      }).join("")}</div>` : "";
       resultBox.className = "kus-as__result";
-      resultBox.innerHTML = `<div class="kus-as__head">${apps.length}件の候補</div>
+      resultBox.innerHTML = `<div class="kus-as__head">${resultIsAll ? `環境内のアプリ ${apps.length}件${resultGuest ? `（ゲストスペース ${esc(resultGuest)}）` : ""}` : `${apps.length}件の候補`}</div>${bulkHtml}
       <table class="kus-as__table">
         <thead><tr><th style="width:74px">アプリID</th><th>アプリ名</th><th style="width:1%"></th></tr></thead>
         <tbody>${rowsHtml}</tbody>
@@ -5708,6 +5740,25 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
             outcome.message || `App ${app.appId}${app.name ? ` (${app.name})` : ""} を設定しました${where}`,
             outcome.tone || "ok"
           );
+        });
+      });
+      resultBox.querySelectorAll("button[data-as-all]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const target = opts.targets[Number(btn.dataset.asAll)];
+          if (!target?.applyAll || !apps.length) return;
+          if (running || panel.root.getAttribute("aria-busy") === "true") return;
+          const searchGuest = resultGuest;
+          const outcome = target.applyAll(apps.map((app) => ({ appId: app.appId, appName: app.name })), searchGuest) || {};
+          if (opts.guestEl && opts.guestEl.value.trim() !== searchGuest) {
+            opts.guestEl.value = searchGuest;
+            opts.guestEl.dispatchEvent(new Event("input", { bubbles: true }));
+            opts.guestEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : "";
+          btn.classList.add("kus-as__picked");
+          btn.setAttribute("aria-pressed", "true");
+          btn.textContent = outcome.pickedLabel || `${apps.length} 件を設定済み`;
+          panel.setStatus(outcome.message || `候補 ${apps.length} 件を設定しました${where}`, outcome.tone || "ok");
         });
       });
     }
@@ -5738,8 +5789,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
       const prefix = buildApiPrefix(guestId, false);
       running = true;
-      searchBtn.disabled = true;
-      moreBtn.disabled = true;
+      syncBusyControls();
       resultBox.setAttribute("aria-busy", "true");
       try {
         if (directAppId) {
@@ -5789,8 +5839,51 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         }
       }
     }
+    async function runAll() {
+      if (running || panel.root.getAttribute("aria-busy") === "true") return;
+      invalidate();
+      const guestId = guest.value.trim();
+      if (guestId && !/^\d+$/.test(guestId)) {
+        panel.setStatus("ゲストIDは数値で入力してください", "warn");
+        return;
+      }
+      const requestGeneration = generation;
+      const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
+      running = true;
+      syncBusyControls();
+      resultBox.setAttribute("aria-busy", "true");
+      try {
+        panel.setStatus("環境内の全アプリを取得中…", "busy");
+        const apps = await fetchAllApps(guestId, (fetched) => {
+          if (isCurrent()) panel.setStatus(`環境内の全アプリを取得中…（${fetched}件）`, "busy");
+        });
+        if (!isCurrent()) return;
+        candidates = apps.map((app) => appCandidate(app, String(app.appId)));
+        resultGuest = guestId;
+        resultIsAll = true;
+        renderResults(candidates);
+        const where = guestId ? `ゲストスペース ${guestId}` : "通常スペース・スペース外";
+        panel.setStatus(
+          candidates.length ? `環境内のアプリ ${candidates.length}件を表示しました（${where}のアプリ）${allTargets.length ? "。「すべて…」でまとめて設定できます" : ""}` : `閲覧できるアプリがありません（${where}）`,
+          candidates.length ? "ok" : "info"
+        );
+      } catch (e) {
+        if (!isCurrent()) return;
+        panel.setStatus(`全アプリの取得エラー: ${e?.message || String(e)}`, "err");
+      } finally {
+        running = false;
+        syncBusyControls();
+        resultBox.setAttribute("aria-busy", "false");
+        if (!isCurrent() && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true" && panel.status.dataset.tone === "busy") {
+          panel.setStatus("取得条件が変わりました。もう一度取得してください", "info");
+        }
+      }
+    }
     searchBtn.addEventListener("click", () => {
       void runSearch();
+    });
+    allBtn.addEventListener("click", () => {
+      void runAll();
     });
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
@@ -5899,8 +5992,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   }
 
   // src/reflect/rolloutQueue.ts
-  var ROLLOUT_QUEUE_LIMIT = 50;
+  var ROLLOUT_QUEUE_LIMIT = 1e3;
   var keyOf = (ref) => `${ref.guestId || ""}:${ref.appId}`;
+  function rolloutLimitMessage(count) {
+    return `続けて反映する反映先は ${ROLLOUT_QUEUE_LIMIT} 件までです（${count} 件）。${ROLLOUT_QUEUE_LIMIT} 件を超える場合は、いくつかに分けて実行してください。`;
+  }
   function parseRolloutQueue(text, excluded = []) {
     const tokens = String(text || "").split(/[\s,、，]+/).map((token) => token.trim()).filter(Boolean);
     const seen = new Set(excluded.map(keyOf));
@@ -5912,23 +6008,58 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       seen.add(keyOf(ref));
       targets.push(ref);
     }
-    if (targets.length > ROLLOUT_QUEUE_LIMIT) return { ok: false, error: `続けて反映する反映先は ${ROLLOUT_QUEUE_LIMIT} 件までです（${targets.length} 件）。` };
+    if (targets.length > ROLLOUT_QUEUE_LIMIT) return { ok: false, error: rolloutLimitMessage(targets.length) };
     return { ok: true, targets };
   }
   function formatRolloutTarget(target) {
     return `#${target.appId}${target.guestId ? `（ゲスト ${target.guestId}）` : ""}`;
   }
-  var ROLLOUT_LOG_LIMIT = 100;
+  var ROLLOUT_LOG_LIMIT = ROLLOUT_QUEUE_LIMIT + 1;
   function upsertRolloutLog(log, entry, limit = ROLLOUT_LOG_LIMIT) {
     const index = log.findIndex((item) => keyOf(item) === keyOf(entry));
     const next = index >= 0 ? log.map((item, i) => i === index ? entry : item) : [...log, entry];
     return next.slice(-limit);
+  }
+  function countRolloutLogDropped(log, entry, limit = ROLLOUT_LOG_LIMIT) {
+    const exists = log.some((item) => keyOf(item) === keyOf(entry));
+    return Math.max(0, log.length + (exists ? 0 : 1) - limit);
   }
   function describeRolloutLookupNotice(lookupCount) {
     return lookupCount > 0 ? `参照先変換（${lookupCount} 件）を、すべての反映先に同じように使います。反映先ごとに変換先が違う場合は、反映先を切り替えた後に参照先変換を直してください。` : "";
   }
   function serializeRolloutQueue(targets) {
     return targets.map((target) => target.guestId ? `/k/guest/${target.guestId}/${target.appId}/` : target.appId).join("\n");
+  }
+  function mergeRolloutTargets(currentText, picks, excluded = []) {
+    const existing = parseRolloutQueue(currentText);
+    if ("error" in existing) return { ok: false, error: `入力済みの反映先を読み取れないため追加できません。${existing.error}` };
+    const seen = new Set(existing.targets.map(keyOf));
+    const blocked = new Set(excluded.map(keyOf));
+    const targets = [...existing.targets];
+    let added = 0;
+    let duplicates = 0;
+    let excludedCount = 0;
+    const handled = /* @__PURE__ */ new Set();
+    for (const pick of picks) {
+      const key = keyOf(pick);
+      if (handled.has(key)) continue;
+      handled.add(key);
+      if (blocked.has(key)) {
+        excludedCount++;
+        continue;
+      }
+      if (seen.has(key)) {
+        duplicates++;
+        continue;
+      }
+      seen.add(key);
+      targets.push({ appId: pick.appId, guestId: pick.guestId || "" });
+      added++;
+    }
+    if (targets.length > ROLLOUT_QUEUE_LIMIT) {
+      return { ok: false, error: `${rolloutLimitMessage(targets.length)}入力欄は変更していません。` };
+    }
+    return { ok: true, text: serializeRolloutQueue(targets), added, duplicates, excluded: excludedCount, total: targets.length };
   }
 
   // src/reflect/liteSetup.ts
@@ -6947,7 +7078,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 #kus-reflect-lite .kus-rl-rollout__status--err{color:#b91c1c;font-weight:700}
 #kus-reflect-lite .kus-rl-rollout-card .kus-rl-next{margin-bottom:8px}
 #kus-reflect-lite .kus-rl-rollout-heading{margin-top:12px;font-size:12.5px;font-weight:700;color:#475569}
-#kus-reflect-lite .kus-rl-rollout-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+#kus-reflect-lite .kus-rl-rollout-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:min(420px,50vh);overflow-y:auto}
 #kus-reflect-lite .kus-rl-rollout-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-rollout-item--ng{border-color:#fca5a5;background:#fff5f5}
 #kus-reflect-lite .kus-rl-rollout-item--pending{border-color:#fde68a;background:#fffbeb}
@@ -7386,7 +7517,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
           saveState();
           refreshSameConnBanner();
           refreshReviewCard();
-        } }
+        } },
+        {
+          label: "続けて反映",
+          apply: (id, _name, guestId) => addRolloutTargets([{ appId: id, guestId: guestId || "" }]),
+          applyAll: (apps, guestId) => addRolloutTargets(apps.map((app) => ({ appId: app.appId, guestId }))),
+          applyAllLabel: (count) => `候補 ${count} 件を続けて反映する反映先に追加`
+        }
       ]
     }));
     panel.body.insertBefore(cardApp.card, panel.status);
@@ -7859,6 +7996,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const rolloutSetupCard = makeCard({ title: "続けて反映する反映先（複数アプリへ展開）", soft: true });
     rolloutSetupCard.card.classList.add("kus-rl-rollout");
     const rolloutHelp = makeNote("同じ反映元・項目・設定で、ほかのアプリにも順番に反映します（反映先ごとに差分確認と最終確認を行います）。数字だけのIDは通常スペースのアプリを指すため、ゲストスペースのアプリはURLで指定してください。", "help");
+    const rolloutAllHelp = makeNote(`最大 ${ROLLOUT_QUEUE_LIMIT} 件まで指定できます。アプリ検索の「環境内の全アプリ」から、全アプリをまとめて追加できます（反映元のアプリは加えません）。`, "help");
     const rolloutTa = makeTextarea({ rows: 4, code: true, placeholder: "1行に1件（改行・カンマ区切りも可）\n例: 203\nhttps://example.cybozu.com/k/guest/5/204/", value: memoryState.rolloutQueueText || "" });
     rolloutTa.classList.add("kus-rl-rollout__input");
     rolloutTa.setAttribute("aria-label", "続けて反映する反映先");
@@ -7869,7 +8007,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     rolloutLookupSetupNote.className = "kus-rl-next kus-rl-next--warn";
     rolloutLookupSetupNote.dataset.rolloutLookupNote = "setup";
     rolloutLookupSetupNote.hidden = true;
-    rolloutSetupCard.body.append(rolloutHelp, rolloutTa, rolloutStatus, rolloutLookupSetupNote);
+    rolloutSetupCard.body.append(rolloutHelp, rolloutAllHelp, rolloutTa, rolloutStatus, rolloutLookupSetupNote);
     rolloutTa.addEventListener("input", () => {
       saveState();
       refreshReviewCard();
@@ -7887,9 +8025,29 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         lookup: lookup.ok ? Object.entries(lookup.value).sort() : lookupTa.value.trim()
       });
     }
+    function addRolloutTargets(picks) {
+      const sourceApp = sourceMode === "app" ? srcApp.value.trim() : "";
+      const excluded = sourceApp ? [{ appId: sourceApp, guestId: srcGuest.value.trim() }] : [];
+      const merged = mergeRolloutTargets(rolloutTa.value, picks, excluded);
+      if ("error" in merged) return { message: merged.error, tone: "warn", pickedLabel: "追加できません" };
+      rolloutTa.value = merged.text;
+      saveState();
+      refreshReviewCard();
+      const queue = currentRollout();
+      const skipped = [merged.duplicates ? `入力済みの ${merged.duplicates} 件は重複のため` : "", merged.excluded ? `反映元の ${merged.excluded} 件は` : ""].filter(Boolean);
+      const skippedNote = skipped.length ? `${skipped.join("、")}加えていません。` : "";
+      const total = queue.ok ? `現在の反映先を除いて合計 ${queue.targets.length} 件です。` : "";
+      if (!merged.added) return { message: `追加できる反映先がありませんでした。${skippedNote}${total}`, tone: "warn", pickedLabel: "追加済み" };
+      return {
+        message: `続けて反映する反映先に ${merged.added} 件を追加しました。${skippedNote}${total}反映先ごとに差分確認と最終確認を行います（まだ書き込んでいません）。`,
+        tone: "ok",
+        pickedLabel: "追加済み"
+      };
+    }
     function recordRolloutResult(entry) {
       const key = rolloutConditionKey();
       const log = memoryState.rolloutKey === key ? memoryState.rolloutLog || [] : [];
+      memoryState.rolloutLogDropped = (memoryState.rolloutKey === key ? memoryState.rolloutLogDropped || 0 : 0) + countRolloutLogDropped(log, entry);
       memoryState.rolloutKey = key;
       memoryState.rolloutLog = upsertRolloutLog(log, entry);
     }
@@ -7936,7 +8094,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const next = queue.ok ? queue.targets[0] : void 0;
       const show = !!last && !restoreMode && (!queue.ok || !!next || log.length >= 2);
       rolloutCard.card.style.display = show ? "block" : "none";
-      renderRolloutLog(rolloutLogBox, log);
+      renderRolloutLog(rolloutLogBox, log, memoryState.rolloutLogDropped || 0);
       if (!show) return;
       rolloutNote.hidden = !next;
       rolloutLookupNote.hidden = !next || !lookupNotice;
@@ -8209,6 +8367,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const restoreEndNote = restoreMode && !restoreStillApplies(restoreMode) ? endRestoreMode() : "";
       if (!restoreMode && memoryState.rolloutLog?.length && memoryState.rolloutKey !== rolloutConditionKey()) {
         memoryState.rolloutLog = [];
+        memoryState.rolloutLogDropped = 0;
         memoryState.rolloutKey = "";
       }
       let staleNote = "";
@@ -9362,7 +9521,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     if (plan.skippedErrorScopes.length > 0) parts.push(`失敗除外 ${plan.skippedErrorScopes.length}件`);
     return parts.length ? parts.join(" / ") : "除外なし";
   }
-  function renderRolloutLog(host, log) {
+  function renderRolloutLog(host, log, dropped = 0) {
     host.replaceChildren();
     if (!log.length) return;
     const heading = document.createElement("div");
@@ -9392,7 +9551,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       item.append(head, meta);
       list2.appendChild(item);
     }
-    host.append(heading, list2);
+    host.append(heading);
+    if (dropped > 0) {
+      const droppedNote = document.createElement("div");
+      droppedNote.className = "kus-rl-quiet";
+      droppedNote.dataset.rolloutLogDropped = String(dropped);
+      droppedNote.textContent = `記録の上限を超えたため、古い反映先 ${dropped} 件の記録は省略しています。`;
+      host.append(droppedNote);
+    }
+    host.append(list2);
   }
   function setButtonText(button, text) {
     const spans = button.querySelectorAll("span");

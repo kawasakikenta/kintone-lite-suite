@@ -1,7 +1,11 @@
 'use strict';
 
-import { esc } from '../utils.js';
+import { esc, sanitizeFilenamePart, buildExportFilename, downloadBlob } from '../utils.js';
 import { buildApiPrefix, apiGet } from '../api.js';
+import { loadJSZipLite } from '../jszipLoader.js';
+import { isCancelRequested } from '../runControl.js';
+import { createCancelReport, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
+import { uniqueZipEntryName } from './record-query.js';
 
 let mermaidLoadPromise = null;
 const MERMAID_CDN_URLS = [
@@ -492,12 +496,7 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
     return null;
   }
 
-  const states = res.states && typeof res.states === 'object' && !Array.isArray(res.states) ? res.states : ({} as any);
-  const rawActions = Array.isArray(res.actions) ? res.actions : [];
-  const actions = rawActions.filter((a: any) => a && a.from != null && a.to != null
-    && String(a.from).trim() && String(a.to).trim());
-  const orphanActions = rawActions.length - actions.length;
-  const summary = summarizeProcessStructure(states, actions, orphanActions);
+  const { states, actions, orphanActionCount: orphanActions, summary } = normalizeProcessStatus(res);
   if (targets.summaryEl) {
     targets.summaryEl.innerHTML = renderProcessStructureSummaryHtml(summary);
   }
@@ -560,4 +559,372 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
   }
 
   return { states, actions, summary };
+}
+
+// ---------------------------------------------------------------------------
+// 複数アプリのプロセス図をまとめて出力（読み取り専用 / ZIP）
+// ---------------------------------------------------------------------------
+
+export interface ProcessBatchTarget {
+  appId: string;
+  guestId: string;
+  /** 対象表に候補から入った名前。無いときは /app.json で補う（取得できなければ空）。 */
+  appName?: string;
+}
+
+export type ProcessBatchOutcome = 'enabled' | 'disabled' | 'failed' | 'not-run';
+
+export interface ProcessBatchRow {
+  appId: string;
+  guestId: string;
+  appName: string;
+  outcome: ProcessBatchOutcome;
+  stateCount: number;
+  actionCount: number;
+  /** 構造上の注意（summarizeProcessStructure の warnings） */
+  warnings: string[];
+  /** 取得失敗の理由（outcome が failed のとき）。アプリ名を取得できなかった旨もここに添える */
+  reason: string;
+  /** ZIP 内の図ファイル（outcome が enabled のとき） */
+  file: string;
+}
+
+export interface ProcessBatchResult {
+  rows: ProcessBatchRow[];
+  counts: { enabled: number; disabled: number; failed: number; notRun: number };
+  /** 中止で止めたとき、最初に未実行になった位置（最後まで実行したら -1） */
+  stoppedAt: number;
+  zipName: string;
+  zipEntries: string[];
+}
+
+export const PROCESS_BATCH_DIAGRAM_DIR = 'diagrams';
+export const PROCESS_BATCH_OVERVIEW_FILE = 'overview.md';
+export const PROCESS_BATCH_MANIFEST_FILE = 'manifest.json';
+
+/** 大文字小文字だけが異なる名前も重複として扱う（Windows / macOS で展開時に上書きされるため）。 */
+class CaseInsensitiveNameSet extends Set<string> {
+  has(value: string) { return super.has(value.toLowerCase()); }
+  add(value: string) { return super.add(value.toLowerCase()); }
+}
+
+/** 図ファイル名の重複判定に使う集合（大文字小文字を区別しない）。 */
+export function createProcessBatchNameSet(): Set<string> {
+  return new CaseInsensitiveNameSet();
+}
+
+const PROCESS_BATCH_NAME_MAX = 60;
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+/** ファイル名に使うアプリ名。禁則文字・制御文字・表示偽装用の文字を除き、長い名前は切り詰める。 */
+function safeFileNamePart(name: unknown): string {
+  const cleaned = Array.from(sanitizeFilenamePart(name, '')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '')
+    .trim())
+    .slice(0, PROCESS_BATCH_NAME_MAX)
+    .join('')
+    .replace(/[. ]+$/, '');
+  return WINDOWS_RESERVED_NAME.test(cleaned) ? `_${cleaned}` : cleaned;
+}
+
+/**
+ * ZIP 内の図ファイル名。アプリIDを必ず含め（別のゲストスペースの同じIDと区別するため
+ * ゲストスペースIDも前に付ける）、大文字小文字だけが違う名前も別名にする。
+ */
+export function buildProcessBatchDiagramFileName(target: { appId: string; guestId?: string; appName?: string }, used: Set<string>): string {
+  const guest = String(target.guestId || '').trim();
+  const name = safeFileNamePart(target.appName);
+  const base = `${guest ? `guest${guest}_` : ''}${String(target.appId).trim()}${name ? `_${name}` : ''}.mmd`;
+  return `${PROCESS_BATCH_DIAGRAM_DIR}/${uniqueZipEntryName(used, base)}`;
+}
+
+/** 入力行を検証する。問題が無ければ空文字、あれば最初の問題を行番号つきで返す（確認画面の事前検証用）。 */
+export function validateProcessBatchTargets(targets: Array<{ appId: unknown; guestId?: unknown }>): string {
+  if (!targets.length) return 'まとめて出力する対象アプリを1件以上指定してください。';
+  for (let i = 0; i < targets.length; i++) {
+    try {
+      validateProcessConnection(targets[i].appId, targets[i].guestId ?? '');
+    } catch (error: any) {
+      return `${i + 1}行目: ${error?.message || String(error)}`;
+    }
+  }
+  return '';
+}
+
+/** 同じアプリID・ゲストスペースIDの重複を除き、IDを正規化する。 */
+export function normalizeProcessBatchTargets(targets: ProcessBatchTarget[]): ProcessBatchTarget[] {
+  const seen = new Set<string>();
+  const out: ProcessBatchTarget[] = [];
+  for (const target of targets) {
+    const c = validateProcessConnection(target.appId, target.guestId);
+    const key = `${c.guestId}::${c.appId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ appId: c.appId, guestId: c.guestId, appName: String(target.appName || '').trim() });
+  }
+  return out;
+}
+
+/** kintone が返す status.json から、描画・集計に使う形を取り出す（単体の描画と共通）。 */
+export function normalizeProcessStatus(res: any): { states: any; actions: any[]; orphanActionCount: number; summary: ProcessStructureSummary } {
+  const states = res?.states && typeof res.states === 'object' && !Array.isArray(res.states) ? res.states : ({} as any);
+  const rawActions = Array.isArray(res?.actions) ? res.actions : [];
+  const actions = rawActions.filter((a: any) => a && a.from != null && a.to != null
+    && String(a.from).trim() && String(a.to).trim());
+  const orphanActionCount = rawActions.length - actions.length;
+  return { states, actions, orphanActionCount, summary: summarizeProcessStructure(states, actions, orphanActionCount) };
+}
+
+function oneLine(value: unknown): string {
+  return String(value ?? '').replace(/[\r\n\u2028\u2029]+/g, ' ').trim();
+}
+
+function processBatchLabel(row: { appId: string; guestId?: string; appName?: string }): string {
+  return `アプリ ${row.appId}${row.appName ? ` ${oneLine(row.appName)}` : ''}${row.guestId ? ` (guest:${row.guestId})` : ''}`;
+}
+
+const OUTCOME_LABEL: Record<ProcessBatchOutcome, string> = {
+  enabled: '有効',
+  disabled: '無効',
+  failed: '取得失敗',
+  'not-run': '未実行（中止）'
+};
+
+/** .mmd の先頭に付けるコメント。単体の「.mmd で保存」と同じ書式にそろえる。 */
+export function buildProcessBatchMmd(row: { appId: string; guestId?: string; appName?: string }, source: string, preview: boolean, generatedAt: Date = new Date()): string {
+  const header = [
+    `%% kintone プロセス図 / アプリ ${row.appId}${row.appName ? ` ${oneLine(row.appName)}` : ''}${row.guestId ? ` / ゲストスペース ${row.guestId}` : ''} / ${preview ? 'プレビュー' : '本番'} / 生成 ${generatedAt.toLocaleString('ja-JP', { hour12: false })}`,
+    '%% Mermaid Live Editor（https://mermaid.live）や Markdown の ```mermaid ブロックに貼り付けると図として表示できます。'
+  ].join('\n');
+  return `${header}\n${source.replace(/\r\n/g, '\n').replace(/\n+$/, '')}\n`;
+}
+
+/** Markdown の表のセルに入れる文字列。区切り・改行・HTML として解釈される文字を無害にする。 */
+function mdCell(value: unknown): string {
+  return oneLine(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\|/g, '\\|');
+}
+
+/** ソースの中に含まれる連続したバッククォートより長い囲みを選ぶ（図のソースが囲みを閉じてしまわないように）。 */
+function mdFence(text: string): string {
+  const longest = Math.max(2, ...(text.match(/`+/g) || []).map((m) => m.length));
+  return '`'.repeat(longest + 1);
+}
+
+export interface ProcessBatchMeta {
+  generatedAt: string;
+  preview: boolean;
+  /** 中止で止めたとき true */
+  cancelled: boolean;
+  total: number;
+}
+
+export function countProcessBatchRows(rows: ProcessBatchRow[]) {
+  return {
+    enabled: rows.filter((r) => r.outcome === 'enabled').length,
+    disabled: rows.filter((r) => r.outcome === 'disabled').length,
+    failed: rows.filter((r) => r.outcome === 'failed').length,
+    notRun: rows.filter((r) => r.outcome === 'not-run').length
+  };
+}
+
+/**
+ * 一覧（表）と、有効なアプリごとの Mermaid ブロックを 1 つにまとめた Markdown。
+ * sources は図ファイル（ZIP 内パス）→ Mermaid ソース。
+ */
+export function buildProcessBatchOverviewMarkdown(rows: ProcessBatchRow[], sources: Record<string, string>, meta: ProcessBatchMeta): string {
+  const counts = countProcessBatchRows(rows);
+  const lines: string[] = [
+    '# プロセス図 一括出力',
+    '',
+    `- 生成日時: ${meta.generatedAt}`,
+    `- 参照環境: ${meta.preview ? 'プレビュー' : '本番'}`,
+    `- 対象アプリ: ${meta.total}件（プロセス管理あり ${counts.enabled} / 無効 ${counts.disabled} / 取得失敗 ${counts.failed} / 未実行（中止） ${counts.notRun}）`
+  ];
+  if (meta.cancelled) lines.push('- 注意: 利用者の操作で中止したため、未実行のアプリは含まれていません。');
+  if (counts.failed) lines.push('- 注意: 取得に失敗したアプリがあります。下の表の「失敗理由」を確認して、再実行してください。');
+  lines.push('', '## 一覧', '',
+    '| アプリID | アプリ名 | ゲストスペース | プロセス管理 | 状態 | アクション | 構造上の注意 | 失敗理由 | 図ファイル |',
+    '| --- | --- | --- | --- | ---: | ---: | --- | --- | --- |');
+  for (const row of rows) {
+    const enabled = row.outcome === 'enabled';
+    lines.push(`| ${mdCell(row.appId)} | ${mdCell(row.appName)} | ${mdCell(row.guestId)} | ${OUTCOME_LABEL[row.outcome]} | ${enabled ? row.stateCount : ''} | ${enabled ? row.actionCount : ''} | ${mdCell(row.warnings.join(' / '))} | ${mdCell(row.reason)} | ${enabled ? mdCell(row.file) : ''} |`);
+  }
+  const drawn = rows.filter((r) => r.outcome === 'enabled' && sources[r.file] != null);
+  lines.push('', '## 図', '');
+  if (!drawn.length) lines.push('プロセス管理が有効なアプリはありませんでした。', '');
+  for (const row of drawn) {
+    const source = sources[row.file].replace(/\r\n/g, '\n').replace(/\n+$/, '');
+    const fence = mdFence(source);
+    lines.push(`### ${mdCell(`アプリ ${row.appId}${row.appName ? ` ${row.appName}` : ''}${row.guestId ? `（ゲストスペース ${row.guestId}）` : ''}`)}`, '',
+      `状態 ${row.stateCount} / アクション ${row.actionCount} · ファイル: ${mdCell(row.file)}`, '');
+    if (row.warnings.length) lines.push(`注意: ${mdCell(row.warnings.join(' / '))}`, '');
+    lines.push(`${fence}mermaid`, source, fence, '');
+  }
+  return `${lines.join('\n').replace(/\n+$/, '')}\n`;
+}
+
+/** manifest.json の中身（設定一括取得・JS/CSS一括DL の manifest と同じく generatedAt / 件数 / apps / 中止時の notExecuted を持つ）。 */
+export function buildProcessBatchManifest(rows: ProcessBatchRow[], meta: ProcessBatchMeta & { guestIds: string[] }) {
+  const counts = countProcessBatchRows(rows);
+  const notRun = rows.filter((r) => r.outcome === 'not-run');
+  return {
+    tool: 'process-diagram-batch',
+    generatedAt: meta.generatedAt,
+    environment: meta.preview ? 'preview' : 'production',
+    preview: meta.preview,
+    guestIds: meta.guestIds,
+    targetCount: meta.total,
+    appCount: rows.length - notRun.length,
+    enabledAppCount: counts.enabled,
+    disabledAppCount: counts.disabled,
+    failedAppCount: counts.failed,
+    overview: PROCESS_BATCH_OVERVIEW_FILE,
+    ...(notRun.length ? { cancelled: true, notExecuted: notRun.map((r) => ({ appId: r.appId, guestId: r.guestId, appName: r.appName })) } : {}),
+    apps: rows.filter((r) => r.outcome !== 'not-run').map((r) => ({
+      appId: r.appId,
+      appName: r.appName,
+      guestId: r.guestId,
+      processManagement: r.outcome === 'failed' ? 'unknown' : r.outcome === 'enabled' ? 'enabled' : 'disabled',
+      status: r.outcome === 'failed' ? 'failed' : 'ok',
+      ...(r.outcome === 'enabled' ? { file: r.file, stateCount: r.stateCount, actionCount: r.actionCount, warnings: r.warnings } : {}),
+      ...(r.reason ? { error: r.reason } : {})
+    }))
+  };
+}
+
+/** パネルのログに出す、アプリごとの結果（取得失敗・無効・未実行を隠さない）。 */
+export function formatProcessBatchResultLines(rows: ProcessBatchRow[]): string[] {
+  return rows.map((row) => {
+    const head = `${OUTCOME_LABEL[row.outcome]}\t${processBatchLabel(row)}`;
+    if (row.outcome === 'enabled') {
+      return `${head}\t状態 ${row.stateCount} / アクション ${row.actionCount}${row.warnings.length ? `\t注意: ${row.warnings.join(' / ')}` : ''}\t${row.file}${row.reason ? `\t${row.reason}` : ''}`;
+    }
+    if (row.outcome === 'disabled') return `${head}\tプロセス管理は無効です${row.reason ? `\t${row.reason}` : ''}`;
+    if (row.outcome === 'failed') return `${head}\t${row.reason}`;
+    return `${head}\t中止したため取得していません`;
+  });
+}
+
+function firstLine(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error ?? '不明なエラー');
+  return oneLine(text.split('\n')[0]) || '不明なエラー';
+}
+
+/**
+ * 複数アプリのプロセス管理を取得し、アプリごとの .mmd と一覧（overview.md）・manifest.json を 1 つの ZIP にして保存する。
+ * kintone には何も書き込まない。
+ * - プロセス管理が無効なアプリは失敗ではなく「無効」として一覧に残す。取得に失敗したアプリは理由つきで記録して続行する。
+ * - 中止したら、取得済みの分だけを ZIP に保存し、残りは「未実行（中止）」にする（設定一括取得・JS/CSS一括DL と同じ）。
+ *   保存できる結果が 1 件も無いときは何も保存しない。
+ * - アプリ名は対象表の名前を使い、無いものは /app.json（本番）で補う。取得できなくても処理は続け、一覧にその旨を残す。
+ */
+export async function runProcessBatchZipStandalone(
+  opts: { apps: ProcessBatchTarget[]; preview?: boolean },
+  setStatus: (msg: string, isError?: boolean) => void
+): Promise<ProcessBatchResult> {
+  const targets = normalizeProcessBatchTargets(Array.isArray(opts?.apps) ? opts.apps : []);
+  if (!targets.length) throw new Error('まとめて出力する対象アプリを1件以上指定してください');
+  const preview = !!opts.preview;
+
+  // 時間のかかる取得を始める前に JSZip を読み込み、読み込めない環境（CSP・ネットワーク制限）では取得結果を無駄にしない。
+  const JSZipCtor = await loadJSZipLite();
+
+  const total = targets.length;
+  const rows: ProcessBatchRow[] = [];
+  const sources: Record<string, string> = {};
+  const mmdFiles: Array<{ file: string; text: string }> = [];
+  const used = createProcessBatchNameSet();
+  const generatedAtDate = new Date();
+  let failedSoFar = 0;
+  /** 中止で止めたアプリの位置。-1 は最後まで実行した。 */
+  let stoppedAt = -1;
+
+  for (let i = 0; i < total; i++) {
+    const target = targets[i];
+    if (isCancelRequested()) { stoppedAt = i; break; }
+    const guestNote = target.guestId ? ` (guest:${target.guestId})` : '';
+    setStatus(`[${i + 1}/${total}] アプリ ${target.appId}${guestNote} のプロセス管理を取得中...${failedSoFar ? `（取得失敗 ${failedSoFar}件）` : ''}`);
+    let appName = String(target.appName || '').trim();
+    let nameNote = '';
+    const row: ProcessBatchRow = {
+      appId: target.appId, guestId: target.guestId, appName, outcome: 'failed',
+      stateCount: 0, actionCount: 0, warnings: [], reason: '', file: ''
+    };
+    try {
+      if (!appName) {
+        try {
+          const info = await apiGet(buildApiPrefix(target.guestId, false), '/app.json', { id: target.appId }, { retries: 1 });
+          appName = oneLine(info?.name);
+        } catch (error) {
+          if (isCancelStop(error)) throw error;
+          nameNote = `アプリ名を取得できませんでした（${firstLine(error)}）`;
+        }
+        row.appName = appName;
+      }
+      const res = await fetchProcessStatusSettings({ appId: target.appId, guestId: target.guestId, preview });
+      // 空・非オブジェクトの応答を「プロセス管理は無効」と取り違えない
+      if (!res || typeof res !== 'object') throw new Error('プロセス管理の設定を取得できませんでした（想定外の応答形式です）');
+      if (!res.enable) {
+        row.outcome = 'disabled';
+      } else {
+        const { states, actions, summary } = normalizeProcessStatus(res);
+        const source = buildProcessMermaidSource(states, actions, null);
+        row.outcome = 'enabled';
+        row.stateCount = summary.stateCount;
+        row.actionCount = summary.actionCount;
+        row.warnings = summary.warnings;
+        row.file = buildProcessBatchDiagramFileName(row, used);
+        sources[row.file] = source;
+        mmdFiles.push({ file: row.file, text: buildProcessBatchMmd(row, source, preview, generatedAtDate) });
+      }
+      row.reason = nameNote;
+    } catch (error) {
+      // 中止を「このアプリの取得失敗」にして残りのアプリを取り続けない。途中で止めたアプリは未実行として扱う。
+      if (isCancelStop(error)) { stoppedAt = i; break; }
+      row.outcome = 'failed';
+      row.reason = [firstLine(error), nameNote].filter(Boolean).join(' / ');
+      failedSoFar += 1;
+    }
+    rows.push(row);
+  }
+
+  const notRunTargets = stoppedAt >= 0 ? targets.slice(stoppedAt) : [];
+  const processedRows = [...rows];
+  for (const t of notRunTargets) {
+    rows.push({ appId: t.appId, guestId: t.guestId, appName: String(t.appName || ''), outcome: 'not-run', stateCount: 0, actionCount: 0, warnings: [], reason: '', file: '' });
+  }
+  const counts = countProcessBatchRows(rows);
+  const failureLines = rows.filter((r) => r.outcome === 'failed').map((r) => `${processBatchLabel(r)}: 取得失敗: ${r.reason}`);
+  const notRunLine = notRunTargets.length ? `未実行（中止）: ${notRunTargets.map((t) => processBatchLabel(t)).join(', ')}` : '';
+
+  // 保存できる結果（有効 / 無効）が 1 件も無いときは ZIP を作らない。理由はログへ出す。
+  if (!counts.enabled && !counts.disabled) {
+    if (stoppedAt >= 0) {
+      throw createCancelReport(stoppedAt, total, [...failureLines, notRunLine, 'ZIP は保存していません']);
+    }
+    throw new Error([`ZIP を作成できませんでした。プロセス管理を取得できたアプリがありません（取得失敗 ${counts.failed}件）`, ...failureLines].join('\n'));
+  }
+
+  setStatus('ZIPファイル作成中...');
+  const meta: ProcessBatchMeta = { generatedAt: generatedAtDate.toISOString(), preview, cancelled: stoppedAt >= 0, total };
+  const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
+  const zip = new JSZipCtor();
+  zip.file(PROCESS_BATCH_MANIFEST_FILE, JSON.stringify(buildProcessBatchManifest(rows, { ...meta, guestIds }), null, 2));
+  zip.file(PROCESS_BATCH_OVERVIEW_FILE, buildProcessBatchOverviewMarkdown(rows, sources, meta));
+  for (const { file, text } of mmdFiles) zip.file(file, text);
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  const zipName = buildExportFilename('プロセス図一括', 'zip', {
+    appLabel: `${processedRows.length}アプリ`,
+    suffix: preview ? 'プレビュー' : ''
+  });
+  downloadBlob(zipName, zipBlob);
+
+  const detail = `プロセス管理あり ${counts.enabled}件 / 無効 ${counts.disabled}件${counts.failed ? ` / 取得失敗 ${counts.failed}件` : ''}`;
+  const failureHint = counts.failed ? `。取得失敗は ${PROCESS_BATCH_OVERVIEW_FILE} と下のログで確認してください` : '';
+  if (stoppedAt >= 0) {
+    setStatus(`${formatCancelledHeadline(stoppedAt, total)}。取得済みの ${processedRows.length}アプリだけを保存しました（${detail} / 未実行（中止） ${counts.notRun}件）${failureHint}`, true);
+  } else {
+    setStatus(`プロセス図 ${counts.enabled}件を含むZIPを保存しました（${total}アプリ: ${detail}）${failureHint}`, counts.failed > 0);
+  }
+  return { rows, counts, stoppedAt, zipName, zipEntries: [PROCESS_BATCH_MANIFEST_FILE, PROCESS_BATCH_OVERVIEW_FILE, ...mmdFiles.map((f) => f.file)] };
 }

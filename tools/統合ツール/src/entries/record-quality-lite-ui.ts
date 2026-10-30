@@ -3,7 +3,8 @@
 import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import { buildRecordQualityTab } from './record-quality-ui.js';
 import { createAppSearchControl } from './appSearchControl.js';
-import { connectionSummary, installLiteWorkflow } from './liteWorkflow.js';
+import { installLiteWorkflow } from './liteWorkflow.js';
+import { joinAppIds, recordTargetSummary } from './recordTargetApps.js';
 import { createLitePanel, makeButton, makeCard, makeInput, makeNote, makeRow, makeSelect, liteRun } from './litePanelTheme.js';
 import { parseRecordAppIds, runLoadViewsStandalone, toPanelTone } from '../tabs/record-standalone.js';
 import type { RecordViewChoice } from '../tabs/record-metadata.js';
@@ -51,7 +52,22 @@ export function mountRecordQualityLitePanel() {
       appId.value = id;
       if (guest && !guestId.value.trim()) guestId.value = guest;
       notifyInput(appId);
-    } }]
+    },
+    // 候補すべてを対象アプリ欄へ入れる（置き換え）。ID は 1 つのゲストスペース内のものなので、ゲストIDも候補に合わせる
+    applyAll: (apps, guest) => {
+      appId.value = joinAppIds(apps);
+      const guestChanged = guestId.value.trim() !== guest;
+      if (guestChanged) guestId.value = guest;
+      notifyInput(appId);
+      if (guestChanged) notifyInput(guestId);
+      return {
+        message: `${apps.length}件のアプリを対象アプリに設定しました（それまでの入力は置き換えました）。検査項目は先頭のアプリから選ぶため、その項目が無いアプリは検査に失敗として表示されます`,
+        tone: 'ok',
+        pickedLabel: `${apps.length}件を設定済み`
+      };
+    },
+    applyAllLabel: (count) => `候補 ${count} 件をすべて対象アプリにする`
+    }]
   }));
 
   const viewSelect = makeSelect([['', '一覧を選択（任意）']]);
@@ -124,7 +140,7 @@ export function mountRecordQualityLitePanel() {
         return error?.message || String(error);
       }
     },
-    targetSummary: () => ['対象アプリ', connectionSummary(appId.value.trim(), guestId.value.trim())],
+    targetSummary: () => recordTargetSummary(appId.value, guestId.value),
     applyViewQuery,
     resultHost,
     optionsHost: compareOptions.body

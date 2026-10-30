@@ -1,10 +1,12 @@
 'use strict';
 
-import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
+import { installLiteWorkflow, foldWorkflowSection, connectionSummary, summarizeList } from './liteWorkflow.js';
 
 import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import {
   runFieldApplyStandalone,
+  runFieldApplyMultiStandalone,
+  findFieldMultiApplyProblem,
   runLoadFieldsStandalone,
   runBulkRenameFieldStandalone,
   findFieldApplyProblem,
@@ -28,6 +30,7 @@ import {
   makeCard,
   makeNote,
   makePickList,
+  makeAppTable,
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
@@ -49,6 +52,15 @@ export function mountFieldLitePanel() {
   const tgtApp = makeInput({ placeholder: 'アプリID', width: 'id' });
   const tgtGuest = makeInput({ placeholder: 'ゲストID (任意)', width: 'guest' });
 
+  // まとめて反映する反映先（アプリごとにゲストスペースを変えられる表）。単一の反映先とは別に指定する。
+  const multiCount = document.createElement('span');
+  multiCount.className = 'kus-lp__count';
+  // makeAppTable は初期化中にも onChange を呼ぶため、件数は引数の行から数える（multiTable はまだ参照できない）。
+  const showMultiCount = (count: number) => { multiCount.textContent = `${count} 件`; };
+  const multiTable = makeAppTable({ minRows: 1, onChange: (rows) => showMultiCount(rows.length) });
+  function refreshMultiCount() { showMultiCount(multiTable.count()); }
+  refreshMultiCount();
+
   const cardApp = makeCard({ title: 'アプリ', number: 1 });
   cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: '反映元' }));
   cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '反映先' }));
@@ -56,10 +68,45 @@ export function mountFieldLitePanel() {
     targets: [
       // 検索した接続先（通常スペースなら空）に合わせる。以前のゲストIDが残ると別の接続先へ書き込もうとするため。
       { label: '反映元', apply: (id, _name, guestId) => { srcApp.value = id; srcGuest.value = guestId || ''; resetPickList(); } },
-      { label: '反映先', apply: (id, _name, guestId) => { tgtApp.value = id; tgtGuest.value = guestId || ''; } }
+      { label: '反映先', apply: (id, _name, guestId) => { tgtApp.value = id; tgtGuest.value = guestId || ''; } },
+      {
+        label: 'まとめて反映先',
+        apply: (id, name, guestId) => {
+          const result = multiTable.putApp(id, guestId || '', { appName: name });
+          refreshMultiCount();
+          return {
+            message: `App ${id}${name ? `「${name}」` : ''} をまとめて反映先の表に${result.action === 'existing' ? '追加済みです' : '追加しました'}（現在 ${multiTable.count()} 件）`,
+            pickedLabel: result.action === 'existing' ? '追加済み' : 'まとめて反映先に追加済み'
+          };
+        },
+        applyAll: (apps, guestId) => {
+          const result = multiTable.putApps(apps.map((app) => ({ appId: app.appId, guestId, appName: app.appName })));
+          refreshMultiCount();
+          const parts = [`新規 ${result.added + result.filled} 件`];
+          if (result.existing) parts.push(`追加済み ${result.existing} 件`);
+          if (result.ignored) parts.push(`ID なしで無視 ${result.ignored} 件`);
+          return {
+            message: `候補 ${apps.length} 件をまとめて反映先の表に追加しました（${parts.join(' / ')}。表は合計 ${multiTable.count()} 件）。操作で「複数の反映先プレビューへ反映」を選んで内容を確認してください`,
+            tone: result.ignored ? 'warn' : 'ok',
+            pickedLabel: `${apps.length} 件を追加済み`
+          };
+        },
+        applyAllLabel: (count) => `候補 ${count} 件をすべてまとめて反映先に追加`
+      }
     ]
   }));
   panel.body.insertBefore(cardApp.card, panel.status);
+
+  const cardMulti = makeCard({ title: 'まとめて反映する反映先' });
+  cardMulti.actions.appendChild(multiCount);
+  const bMultiClear = makeButton('表をクリア', 'ghost');
+  bMultiClear.addEventListener('click', () => { multiTable.clear(); refreshMultiCount(); panel.setStatus('まとめて反映する反映先の表をクリアしました', 'info'); });
+  cardMulti.actions.appendChild(bMultiClear);
+  cardMulti.body.appendChild(multiTable.element);
+  cardMulti.body.appendChild(makeNote('「複数の反映先プレビューへ反映」を選んだときだけ使います。「アプリを検索」の「環境内の全アプリ」から「候補 N 件をすべてまとめて反映先に追加」を押すと、環境内のアプリをまとめて入れられます。', 'help'));
+  // 単一の反映先で使うときは邪魔にならないよう、複数の反映先の操作を選んだときだけ表示する
+  cardMulti.card.hidden = true;
+  panel.body.insertBefore(cardMulti.card, panel.status);
 
   // ---- フィールド定義JSON ----
   const fieldJson = makeTextarea({ rows: 8, code: true, placeholder: 'フィールド定義 JSON（{ "properties": { ... } } 形式）' });
@@ -126,7 +173,7 @@ export function mountFieldLitePanel() {
     panel.setStatus('フィールド JSON を保存しました', 'ok');
   });
 
-  const cardJson = makeCard({ title: 'フィールド定義 JSON', number: 2 });
+  const cardJson = makeCard({ title: 'フィールド定義 JSON', number: 3 });
   cardJson.actions.style.flexWrap = 'wrap';
   cardJson.actions.appendChild(bLoadSrc);
   cardJson.actions.appendChild(bLoadTgt);
@@ -296,6 +343,24 @@ export function mountFieldLitePanel() {
     panel.setResult(logs.join('\n'));
   }));
 
+  const bApplyMulti = makeButton('複数の反映先プレビューへ反映', 'run', { icon: '⤴' });
+  panel.body.insertBefore(bApplyMulti, panel.status);
+
+  bApplyMulti.addEventListener('click', () => liteRun(panel, '複数の反映先プレビューへ反映中…', async () => {
+    const report = await runFieldApplyMultiStandalone(
+      {
+        targets: multiTable.getApps(),
+        fieldJson: fieldJson.value,
+        lookupMapJson: lookupMap.value,
+        overwrite: ow.checkbox.checked
+      },
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+    );
+    // 失敗・競合・未実行も含めて、対象ごとの結果をすべて表示する
+    panel.setResult(report.lines.join('\n'));
+    panel.setStatus(report.headline, report.tone);
+  }));
+
   // ---- バルクリネーム ----
   const renameDetails = makeCard({ title: 'プレフィックス一括リネーム（反映先プレビュー）' });
   const renamePrefix = makeInput({ placeholder: '例: dev_', width: 'medium' });
@@ -353,7 +418,16 @@ export function mountFieldLitePanel() {
     if (sGuest && !/^\d+$/.test(sGuest)) return '反映元ゲストスペースIDは数値で入力してください。';
     return '';
   };
-  const fieldSummary = (): Array<[string, string]> => {
+  const multiProblem = () => {
+    const problem = findFieldMultiApplyProblem({ targets: multiTable.getApps(), fieldJson: fieldJson.value, lookupMapJson: lookupMap.value });
+    if (problem) return problem;
+    const sApp = srcApp.value.trim();
+    const sGuest = srcGuest.value.trim();
+    if (sApp && !/^\d+$/.test(sApp)) return '反映元アプリIDは数値で入力してください。';
+    if (sGuest && !/^\d+$/.test(sGuest)) return '反映元ゲストスペースIDは数値で入力してください。';
+    return '';
+  };
+  const fieldSummary = (multi = false): Array<[string, string]> => {
     let codes: string[] = [];
     let detailLabel = '';
     let checkNotes: string[] = [];
@@ -376,8 +450,15 @@ export function mountFieldLitePanel() {
         codes = Object.keys(data.properties || data);
       } catch { /* 入力中 */ }
     }
+    const multiTargets = multiTable.getApps();
+    const targetRow: [string, string] = multi
+      ? [
+        '反映先',
+        `${multiTargets.length} 件のアプリ · プレビュー\n${summarizeList(multiTargets.map((t) => `${connectionSummary(t.appId, t.guestId, 'プレビュー')}${t.appName ? ` ${t.appName}` : ''}`))}`
+      ]
+      : ['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー')];
     const rows: Array<[string, string]> = [
-      ['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー')],
+      targetRow,
       ['フィールド', `${codes.length} 件${detailLabel} · ${codes.join('、')}`],
       ['既存フィールド', ow.checkbox.checked ? '上書き更新する' : '既存フィールドはスキップ'],
       ['参照先変換', lookupMap.value.trim() || 'なし']
@@ -385,14 +466,20 @@ export function mountFieldLitePanel() {
     if (checkNotes.length) {
       rows.push(['事前検証', checkNotes.join('\n')]);
     }
+    if (multi) {
+      rows.push(['実行の流れ', '全反映先の現在の設定を確認し、追加・更新・スキップの合計と事前確認に失敗したアプリを示す最終確認を 1 回だけ行います。そのあと 1 件ずつ反映し、競合・失敗があっても残りは続けます（「中止」で残りは未実行になります）。']);
+    }
     rows.push(['本番公開', 'しません（公開は kintone の設定画面で行います）']);
     return rows;
   };
   installLiteWorkflow(panel, {
-    setup: [cardApp.card, cardJson.card],
+    setup: [cardApp.card, cardMulti.card, cardJson.card],
     advanced: [pickDetails.card, optCard.card, renameDetails.card],
     advancedCopy: 'フィールドのマージ、上書き更新・参照先変換、一括リネームを使うときはこちら。',
-    actions: [{ id: 'apply', label: '反映先プレビューへ反映', description: '反映先プレビューへフィールドを追加・更新します（実行前に件数を最終確認します）。', button: bApply, writes: true, validate: fieldProblem, summary: fieldSummary }]
+    actions: [
+      { id: 'apply', label: '反映先プレビューへ反映', description: '反映先プレビューへフィールドを追加・更新します（実行前に件数を最終確認します）。', button: bApply, writes: true, validate: fieldProblem, summary: () => fieldSummary(false), onSelect: () => { cardMulti.card.hidden = true; } },
+      { id: 'apply-multi', label: '複数の反映先プレビューへ反映', description: '同じフィールド定義を、表に入れた複数のアプリ（環境内の全アプリも可）のプレビューへ順に反映します。', button: bApplyMulti, writes: true, validate: multiProblem, summary: () => fieldSummary(true), onSelect: () => { cardMulti.card.hidden = false; } }
+    ]
   });
 
 }

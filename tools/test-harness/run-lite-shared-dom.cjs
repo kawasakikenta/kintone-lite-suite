@@ -134,6 +134,80 @@ async function main() {
     assert.match(await rows.innerText(), /ID指定（名称未取得）.*コード未取得.*所属スペース未取得/s);
     results.push('検索: コード完全一致・スペース絞り込み・所属/更新情報・64bit ID・安全な文字表示・入力制限');
 
+    // 環境内の全アプリ: 全ページを取得し、複数件を受け付ける割り当て先へまとめて設定する
+    await page.evaluate(() => {
+      window.bulkPicks = [];
+      window.search2 = Shared.createAppSearchControl(window.panel, { open: true, title: '全アプリ検索テスト', targets: [
+        { label: '比較元', apply: () => {} },
+        { label: '比較先', apply: () => {}, applyAll: (apps, guestId) => {
+          window.bulkPicks.push({ count: apps.length, first: apps[0], guestId });
+          const r = window.table.putApps(apps.map(app => ({ appId: app.appId, guestId, appName: app.appName })));
+          return { message: `追加 ${r.added + r.filled}件 / 追加済み ${r.existing}件` };
+        } }
+      ] });
+      window.panel.body.prepend(window.search2);
+    });
+    const search2 = page.locator('details', { has: page.getByText('全アプリ検索テスト', { exact: true }) });
+    const allButton = search2.getByRole('button', { name: '環境内の全アプリ', exact: true });
+    const rows2 = search2.locator('.kus-as__table tbody tr');
+    await search2.getByPlaceholder('ゲストID（任意）', { exact: true }).fill('x');
+    let before = await page.evaluate(() => window.apiCalls.length);
+    await allButton.click();
+    assert.equal(await page.evaluate(() => window.apiCalls.length), before, '不正なゲストIDでは全アプリを取得しない');
+    await search2.getByPlaceholder('ゲストID（任意）', { exact: true }).fill('5');
+    await search2.getByPlaceholder('アプリ名 / アプリID / URL', { exact: true }).fill('検索語は使わない');
+    before = await page.evaluate(() => window.apiCalls.length);
+    await allButton.evaluate(button => { button.click(); button.click(); });
+    assert.equal(await page.evaluate(() => window.apiCalls.length), before + 1, '連打で全アプリ取得を重複しない');
+    assert.equal(await allButton.isDisabled(), true, '取得中は全アプリボタンを押せない');
+    assert.deepEqual(await page.evaluate(() => window.apiCalls.at(-1)), { url: '/k/guest/5/v1/apps.json', method: 'GET', params: { limit: 100, offset: 0 } });
+    await page.evaluate(() => window.pendingApi.shift().resolve({ apps: Array.from({ length: 100 }, (_, i) => ({ appId: String(i + 1), name: `全体 ${i + 1}` })) }));
+    await page.waitForFunction(n => window.apiCalls.length === n, before + 2);
+    assert.deepEqual(await page.evaluate(() => window.apiCalls.at(-1).params), { limit: 100, offset: 100 }, '100件ちょうどなら次のページも取得する');
+    assert.match(await page.locator('.kus-lp__status').innerText(), /全アプリを取得中…（100件）/);
+    await page.evaluate(() => window.pendingApi.shift().resolve({ apps: [{ appId: '100', name: '重複' }, { appId: '101', name: '全体 101' }] }));
+    await page.waitForFunction(() => window.search2.querySelector('.kus-as__result')?.getAttribute('aria-busy') === 'false');
+    assert.equal(await rows2.count(), 101, '全ページの候補を重複なく表示する');
+    assert.match(await search2.locator('.kus-as__head').innerText(), /環境内のアプリ 101件（ゲストスペース 5）/);
+    assert.match(await page.locator('.kus-lp__status').innerText(), /環境内のアプリ 101件を表示しました（ゲストスペース 5のアプリ）/);
+    assert.equal(await search2.locator('.kus-as__bulk button').count(), 1, '複数件を受け付ける割り当て先だけに「すべて」を出す');
+    const bulkButton = search2.getByRole('button', { name: '候補 101 件をすべて比較先へ', exact: true });
+    await bulkButton.click();
+    assert.deepEqual(await page.evaluate(() => window.bulkPicks.at(-1)), { count: 101, first: { appId: '1', appName: '全体 1' }, guestId: '5' });
+    assert.equal(await page.evaluate(() => window.table.count()), 102, '既存の1行に101件を追加する');
+    assert.match(await page.locator('.kus-lp__status').innerText(), /追加 101件 \/ 追加済み 0件/);
+    assert.equal(await bulkButton.count(), 0);
+    assert.equal(await search2.getByRole('button', { name: '101 件を設定済み', exact: true }).getAttribute('aria-pressed'), 'true');
+    await search2.locator('.kus-as__bulk button').click();
+    assert.equal(await page.evaluate(() => window.table.count()), 102, 'もう一度押しても同じアプリを重複して追加しない');
+    assert.match(await page.locator('.kus-lp__status').innerText(), /追加 0件 \/ 追加済み 101件/);
+    await search2.getByPlaceholder('ゲストID（任意）', { exact: true }).fill('');
+    assert.equal(await rows2.count(), 0, '接続先を変えたら全アプリの候補を消す');
+    await allButton.click();
+    await page.evaluate(() => window.panel.setBusy(true));
+    await page.evaluate(() => window.pendingApi.shift().resolve({ apps: [{ appId: '7', name: '本処理中の応答' }] }));
+    await page.waitForFunction(() => window.search2.querySelector('.kus-as__result')?.getAttribute('aria-busy') === 'false');
+    assert.equal(await rows2.count(), 0, '本処理の開始後に届いた全アプリの応答は表示しない');
+    assert.equal(await allButton.isDisabled(), true);
+    await page.evaluate(() => window.panel.setBusy(false));
+    await allButton.click();
+    await page.evaluate(() => window.pendingApi.shift().reject(new Error('権限がありません')));
+    await page.waitForFunction(() => window.search2.querySelector('.kus-as__result')?.getAttribute('aria-busy') === 'false');
+    assert.match(await page.locator('.kus-lp__status').innerText(), /全アプリの取得エラー/);
+    assert.equal(await allButton.isEnabled(), true, '取得失敗後に再試行できる');
+    const bulkTable = await page.evaluate(() => {
+      window.table.setApps([{ appId: '', guestId: '9' }, { appId: '5', guestId: '' }]);
+      const start = performance.now();
+      const r = window.table.putApps([{ appId: '5', guestId: '' }, { appId: '6', guestId: '' }, { appId: '', guestId: '' }, ...Array.from({ length: 2000 }, (_, i) => ({ appId: String(1000 + i), guestId: '' }))]);
+      const rows = window.table.getAllRows();
+      return { r, first: rows[0], count: window.table.count(), durationMs: performance.now() - start };
+    });
+    assert.deepEqual(bulkTable.r, { added: 2000, filled: 1, existing: 1, ignored: 1 });
+    assert.deepEqual(bulkTable.first, { appId: '6', guestId: '' }, '空き行を先に使い、残っていた別のゲストIDを流用しない');
+    assert.equal(bulkTable.count, 2002);
+    await page.evaluate(() => { window.search2.remove(); window.table.setApps([{ appId: '202', guestId: '7' }]); });
+    results.push({ name: '環境内の全アプリ: 全ページ取得・二重実行防止・不正ゲストID・古い応答の破棄・失敗後の再試行・すべて設定・重複防止・2000件の一括追加', putAppsMs: Math.round(bulkTable.durationMs) });
+
     const tabs = page.getByRole('tab');
     assert.equal(await tabs.nth(0).getAttribute('aria-selected'), 'true');
     await tabs.nth(0).focus();

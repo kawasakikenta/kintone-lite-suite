@@ -13,9 +13,9 @@ const MODULES = {
   design: ['runDesignCopyAiMdStandalone', 'runDesignCopyMdStandalone', 'runDesignDiffMdStandalone', 'runDesignExportStandalone', 'runDesignExportXlsxStandalone', 'runBatchDesignExportXlsxZipStandalone'],
   'settings-export': ['runSettingsExportSearchStandalone', 'runSettingsExportStandalone', 'runSettingsExportListSpaceAppsStandalone'],
   er: ['runGenerateERDiagramStandalone', 'runExportERDiagramHtmlStandalone'],
-  process: ['runRenderProcessFlowStandalone'],
-  field: ['runFieldApplyStandalone', 'runLoadFieldsStandalone', 'runBulkRenameFieldStandalone'],
-  jsconfig: ['runApplyJsConfigStandalone', 'runFetchJsConfigStandalone', 'runBatchJsConfigDownloadStandalone'],
+  process: ['runRenderProcessFlowStandalone', 'runProcessBatchZipStandalone'],
+  field: ['runFieldApplyStandalone', 'runLoadFieldsStandalone', 'runBulkRenameFieldStandalone', 'runFieldApplyMultiStandalone'],
+  jsconfig: ['runApplyJsConfigStandalone', 'runFetchJsConfigStandalone', 'runBatchJsConfigDownloadStandalone', 'runApplyJsConfigMultiStandalone'],
   record: ['runCsvExportBatchStandalone', 'runCsvImportStandalone', 'runCsvImportBatchStandalone', 'runPreviewCsvImportStandalone', 'runBatchProcessStandalone', 'runRecordCopyStandalone', 'runAttachmentDownloadStandalone', 'runRecordBackupStandalone', 'runLoadStatusActionsStandalone', 'runLoadViewsStandalone', 'runLoadAttachmentFieldsStandalone']
 };
 const CASES = [
@@ -56,6 +56,16 @@ function fixtures() {
       status?.('サンプル処理が完了しました。実アプリへの書き込みはありません。', false);
       if (name === 'runLoadFieldsStandalone') return { memo: { type: 'SINGLE_LINE_TEXT', code: 'memo', label: 'メモ' } };
       if (name === 'runFieldApplyStandalone') return ['サンプル: フィールド1件の反映が完了'];
+      if (name === 'runFieldApplyMultiStandalone') return { headline: `サンプル: ${args[0].targets.length} 件の反映先への反映が完了`, tone: 'ok', lines: args[0].targets.map(t => `成功\tApp ${t.appId}`), results: [] };
+      if (name === 'runApplyJsConfigMultiStandalone') {
+        args[2]('<p>サンプル: 複数の反映先へのJS/CSS反映が完了</p>');
+        const total = args[0].targets.length;
+        return { declined: false, cancelled: false, results: [], counts: { total, success: total, failed: 0, conflict: 0, notExecuted: 0 }, headline: `サンプル: ${total} 件の反映先への反映が完了`, tone: 'ok' };
+      }
+      if (name === 'runProcessBatchZipStandalone') return {
+        rows: args[0].apps.map(app => ({ appId: app.appId, guestId: app.guestId || '', appName: app.appName || '', outcome: 'enabled', stateCount: 2, actionCount: 1, warnings: [], reason: '', file: `diagrams/${app.appId}.mmd` })),
+        counts: { enabled: args[0].apps.length, disabled: 0, failed: 0, notRun: 0 }, stoppedAt: -1, zipName: 'sample.zip', zipEntries: []
+      };
       if (name === 'runApplyJsConfigStandalone') args[2]('<p>サンプル: JS/CSS反映が完了</p>');
       if (name === 'runSettingsExportStandalone') return { summaryHtml: '<p>対象1アプリの設定取得が完了しました。</p>' };
       if (name === 'runRenderProcessFlowStandalone') return { states: { new: {}, done: {} }, actions: [{ name: '完了' }] };
@@ -294,6 +304,45 @@ async function main() {
           assert.equal(await page.locator('select[aria-label="シミュレーションのアクション"]').evaluate(el => el.disabled), true, 'プロセス図: アプリ変更時に古いシミュレーションを無効化する');
           assert.match(await page.locator('.kus-lp__card').filter({ hasText: 'プロセス図' }).first().innerText(), /再描画してください/);
           await appId.fill('202');
+          // 複数アプリ（環境内の全アプリも可）のプロセス図を ZIP で保存する
+          await chooseAction('複数アプリのプロセス図をZIPで保存');
+          const batchApp = page.locator('.kus-lp__apptable input[aria-label="アプリID"]:visible').first();
+          await batchApp.fill('bad');
+          assert.equal(await button('内容を確認する').isDisabled(), true, 'プロセス図: 一括出力の不正なアプリIDを確認前に止める');
+          await batchApp.fill('202, 303');
+          await batchApp.dispatchEvent('change');
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /#202[\s\S]*#303/, 'プロセス図: 一括出力の対象を確認画面に示す');
+          const batchBefore = await page.evaluate(() => window.__workflowFixture.calls.length);
+          await button('複数アプリのプロセス図をZIPで保存').click(); await idle();
+          const batchCall = await page.evaluate(() => window.__workflowFixture.calls.at(-1));
+          assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), batchBefore + 1);
+          assert.equal(batchCall.name, 'runProcessBatchZipStandalone');
+          assert.deepEqual(batchCall.input.apps.map(app => app.appId), ['202', '303'], 'プロセス図: 表の全行を一括出力へ渡す');
+          assert.match(await stage(2).innerText(), /結果 2件: プロセス管理あり 2/);
+          await button('対象・条件を変更').click();
+          await chooseAction(defaultAction);
+        }
+        if (id === 'field') {
+          // 同じフィールド定義を複数の反映先プレビューへ反映する
+          await button('対象・条件を変更').click();
+          await chooseAction('複数の反映先プレビューへ反映');
+          assert.equal(await page.locator('.kus-lp__card').filter({ hasText: 'まとめて反映する反映先' }).first().isVisible(), true, 'フィールド追加: 複数反映を選ぶと反映先の表を出す');
+          const multiApp = page.locator('.kus-lp__apptable input[aria-label="アプリID"]:visible').first();
+          assert.equal(await button('内容を確認する').isDisabled(), true, 'フィールド追加: 反映先の表が空なら確認へ進めない');
+          await multiApp.fill('401, 402');
+          await multiApp.dispatchEvent('change');
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /2 件のアプリ · プレビュー[\s\S]*#401[\s\S]*#402/, 'フィールド追加: 反映先の件数と一覧を確認画面に示す');
+          const multiBefore = await page.evaluate(() => window.__workflowFixture.calls.length);
+          await button('複数の反映先プレビューへ反映').evaluate(b => { b.click(); b.click(); }); await idle();
+          assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), multiBefore + 1, 'フィールド追加: 複数反映を二重実行しない');
+          const multiCall = await page.evaluate(() => window.__workflowFixture.calls.at(-1));
+          assert.equal(multiCall.name, 'runFieldApplyMultiStandalone');
+          assert.deepEqual(multiCall.input.targets.map(t => t.appId), ['401', '402']);
+          assert.match(await stage(2).innerText(), /2 件の反映先への反映が完了/);
+          await button('対象・条件を変更').click();
+          await chooseAction(defaultAction);
         }
         if (id === 'jsconfig') {
           await button('対象・条件を変更').click();
@@ -312,6 +361,24 @@ async function main() {
           const before = await page.evaluate(() => window.__workflowFixture.calls.length);
           await page.getByRole('button', {name:'反映先プレビューへ反映',exact:true}).click(); await idle();
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), before+1);
+          // 同じ JSON を複数の反映先プレビューへ反映する（FILE 形式を含む JSON は止める）
+          await button('対象・条件を変更').click();
+          await chooseAction('複数の反映先プレビューへ反映');
+          const multiApp = page.locator('.kus-lp__apptable input[aria-label="アプリID"]:visible').first();
+          await multiApp.fill('401, 402');
+          await multiApp.dispatchEvent('change');
+          await jsonInput.fill(JSON.stringify({ desktop: { js: [{ type: 'FILE', file: { fileKey: 'k1', name: 'a.js' } }], css: [] }, mobile: { js: [], css: [] } }));
+          assert.equal(await button('内容を確認する').isDisabled(), true, 'JS/CSS: 複数の反映先へは FILE 形式を含む JSON を反映しない');
+          await jsonInput.fill(validJson);
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /#401[\s\S]*#402/, 'JS/CSS: 反映先の一覧を確認画面に示す');
+          const multiBefore = await page.evaluate(() => window.__workflowFixture.calls.length);
+          await page.getByRole('button', {name:'複数の反映先プレビューへ反映',exact:true}).click(); await idle();
+          const multiCall = await page.evaluate(() => window.__workflowFixture.calls.at(-1));
+          assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), multiBefore + 1);
+          assert.equal(multiCall.name, 'runApplyJsConfigMultiStandalone');
+          assert.deepEqual(multiCall.input.targets.map(t => t.appId), ['401', '402']);
+          assert.match(await stage(2).innerText(), /2 件の反映先への反映が完了/);
         }
         if (id === 'settings-export') {
           await button('対象・条件を変更').click();

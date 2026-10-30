@@ -604,6 +604,11 @@
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
+  function summarizeList(lines, limit = SUMMARY_LIST_LIMIT) {
+    const items = lines.filter(Boolean);
+    if (items.length <= limit) return items.join("\n");
+    return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join("\n");
+  }
   function compactForLog(value, max = 220) {
     try {
       const raw = typeof value === "string" ? value : JSON.stringify(value);
@@ -712,10 +717,12 @@ ${contextLine}`);
     }
     return legacyCopy(text);
   }
+  var SUMMARY_LIST_LIMIT;
   var init_utils = __esm({
     "src/utils.ts"() {
       "use strict";
       init_constants();
+      SUMMARY_LIST_LIMIT = 20;
     }
   });
 
@@ -1113,7 +1120,22 @@ ${contextLine}`);
     }
     return { records: all, mode: "cursor" };
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
+  async function fetchAllApps(guestId, onProgress) {
+    const prefix = buildApiPrefix(guestId, false);
+    const byId = /* @__PURE__ */ new Map();
+    for (let offset = 0; ; offset += APPS_PAGE_LIMIT) {
+      const resp = await apiGet(prefix, "/apps.json", { limit: APPS_PAGE_LIMIT, offset });
+      if (!Array.isArray(resp?.apps)) throw new Error("アプリ一覧の応答が不正です。もう一度取得してください");
+      for (const app of resp.apps) {
+        const appId = String(app?.appId || "").trim();
+        if (/^\d+$/.test(appId) && !byId.has(appId)) byId.set(appId, app);
+      }
+      onProgress?.(byId.size);
+      if (resp.apps.length < APPS_PAGE_LIMIT) break;
+    }
+    return [...byId.entries()].sort(([a], [b]) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0).map(([, app]) => app);
+  }
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, APPS_PAGE_LIMIT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1148,6 +1170,7 @@ ${contextLine}`);
       };
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
       FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
+      APPS_PAGE_LIMIT = 100;
     }
   });
 
@@ -3020,6 +3043,9 @@ ${contextLine}`);
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
+.kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}
+.kus-as__bulk .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
   function ensureStyles() {
     if (document.getElementById(RESULT_CSS_ID)) return;
@@ -3057,12 +3083,17 @@ ${contextLine}`);
     const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
+    const allBtn = makeButton("環境内の全アプリ", "sub");
+    allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
     const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
+    body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
     body.appendChild(makeNote("閲覧できるアプリを名前（部分一致）またはコード（大文字・小文字を区別する完全一致）で検索します。スペースIDで検索範囲を絞れます。ID / URL の直接指定ではスペースIDの絞り込みは使いません。"));
+    const allTargets = opts.targets.filter((t) => typeof t.applyAll === "function");
+    body.appendChild(makeNote(`「環境内の全アプリ」は、閲覧できるアプリをすべて候補に表示します${allTargets.length ? "（候補の上の「すべて…」でまとめて設定できます）" : ""}。ゲストスペースのアプリは含まれないため、ゲストスペースIDを入れてゲストスペースごとに取得してください。`));
     const resultBox = document.createElement("div");
     resultBox.className = "kus-as__result kus-as__result--empty";
     body.appendChild(resultBox);
@@ -3074,10 +3105,12 @@ ${contextLine}`);
     let candidates = [];
     let nextOffset = 0;
     let resultGuest = "";
+    let resultIsAll = false;
     function invalidate() {
       generation += 1;
       candidates = [];
       nextOffset = 0;
+      resultIsAll = false;
       resultBox.replaceChildren();
       resultBox.className = "kus-as__result kus-as__result--empty";
       moreBtn.hidden = true;
@@ -3092,6 +3125,7 @@ ${contextLine}`);
     function syncBusyControls() {
       const busy = panel.root.getAttribute("aria-busy") === "true";
       searchBtn.disabled = running || busy;
+      allBtn.disabled = running || busy;
       moreBtn.disabled = running || busy;
     }
     panel.root.addEventListener("kus-lite-busy-change", () => {
@@ -3116,8 +3150,13 @@ ${contextLine}`);
         <td><div class="kus-as__assign">${buttons}</div></td>
       </tr>`;
       }).join("");
+      const bulkHtml = allTargets.length ? `<div class="kus-as__bulk">${allTargets.map((t) => {
+        const ti = opts.targets.indexOf(t);
+        const label = t.applyAllLabel ? t.applyAllLabel(apps.length) : single || !t.label ? `候補 ${apps.length} 件をすべて追加` : `候補 ${apps.length} 件をすべて${t.label}へ`;
+        return `<button type="button" class="kus-lp__btn kus-lp__btn--sub" data-as-all="${ti}">${esc(label)}</button>`;
+      }).join("")}</div>` : "";
       resultBox.className = "kus-as__result";
-      resultBox.innerHTML = `<div class="kus-as__head">${apps.length}件の候補</div>
+      resultBox.innerHTML = `<div class="kus-as__head">${resultIsAll ? `環境内のアプリ ${apps.length}件${resultGuest ? `（ゲストスペース ${esc(resultGuest)}）` : ""}` : `${apps.length}件の候補`}</div>${bulkHtml}
       <table class="kus-as__table">
         <thead><tr><th style="width:74px">アプリID</th><th>アプリ名</th><th style="width:1%"></th></tr></thead>
         <tbody>${rowsHtml}</tbody>
@@ -3143,6 +3182,25 @@ ${contextLine}`);
             outcome.message || `App ${app.appId}${app.name ? ` (${app.name})` : ""} を設定しました${where}`,
             outcome.tone || "ok"
           );
+        });
+      });
+      resultBox.querySelectorAll("button[data-as-all]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const target = opts.targets[Number(btn.dataset.asAll)];
+          if (!target?.applyAll || !apps.length) return;
+          if (running || panel.root.getAttribute("aria-busy") === "true") return;
+          const searchGuest = resultGuest;
+          const outcome = target.applyAll(apps.map((app) => ({ appId: app.appId, appName: app.name })), searchGuest) || {};
+          if (opts.guestEl && opts.guestEl.value.trim() !== searchGuest) {
+            opts.guestEl.value = searchGuest;
+            opts.guestEl.dispatchEvent(new Event("input", { bubbles: true }));
+            opts.guestEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : "";
+          btn.classList.add("kus-as__picked");
+          btn.setAttribute("aria-pressed", "true");
+          btn.textContent = outcome.pickedLabel || `${apps.length} 件を設定済み`;
+          panel.setStatus(outcome.message || `候補 ${apps.length} 件を設定しました${where}`, outcome.tone || "ok");
         });
       });
     }
@@ -3173,8 +3231,7 @@ ${contextLine}`);
       const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
       const prefix = buildApiPrefix(guestId, false);
       running = true;
-      searchBtn.disabled = true;
-      moreBtn.disabled = true;
+      syncBusyControls();
       resultBox.setAttribute("aria-busy", "true");
       try {
         if (directAppId) {
@@ -3224,8 +3281,51 @@ ${contextLine}`);
         }
       }
     }
+    async function runAll() {
+      if (running || panel.root.getAttribute("aria-busy") === "true") return;
+      invalidate();
+      const guestId = guest.value.trim();
+      if (guestId && !/^\d+$/.test(guestId)) {
+        panel.setStatus("ゲストIDは数値で入力してください", "warn");
+        return;
+      }
+      const requestGeneration = generation;
+      const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
+      running = true;
+      syncBusyControls();
+      resultBox.setAttribute("aria-busy", "true");
+      try {
+        panel.setStatus("環境内の全アプリを取得中…", "busy");
+        const apps = await fetchAllApps(guestId, (fetched) => {
+          if (isCurrent()) panel.setStatus(`環境内の全アプリを取得中…（${fetched}件）`, "busy");
+        });
+        if (!isCurrent()) return;
+        candidates = apps.map((app) => appCandidate(app, String(app.appId)));
+        resultGuest = guestId;
+        resultIsAll = true;
+        renderResults(candidates);
+        const where = guestId ? `ゲストスペース ${guestId}` : "通常スペース・スペース外";
+        panel.setStatus(
+          candidates.length ? `環境内のアプリ ${candidates.length}件を表示しました（${where}のアプリ）${allTargets.length ? "。「すべて…」でまとめて設定できます" : ""}` : `閲覧できるアプリがありません（${where}）`,
+          candidates.length ? "ok" : "info"
+        );
+      } catch (e) {
+        if (!isCurrent()) return;
+        panel.setStatus(`全アプリの取得エラー: ${e?.message || String(e)}`, "err");
+      } finally {
+        running = false;
+        syncBusyControls();
+        resultBox.setAttribute("aria-busy", "false");
+        if (!isCurrent() && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true" && panel.status.dataset.tone === "busy") {
+          panel.setStatus("取得条件が変わりました。もう一度取得してください", "info");
+        }
+      }
+    }
     searchBtn.addEventListener("click", () => {
       void runSearch();
+    });
+    allBtn.addEventListener("click", () => {
+      void runAll();
     });
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
@@ -3243,6 +3343,7 @@ ${contextLine}`);
   }
 
   // src/entries/liteWorkflow.ts
+  init_utils();
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
@@ -3658,6 +3759,24 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return { refresh, show };
   }
 
+  // src/entries/recordTargetApps.ts
+  function joinAppIds(apps) {
+    return [...new Set(apps.map((app) => String(app.appId || "").trim()).filter(Boolean))].join(", ");
+  }
+  function recordTargetSummary(appIdsText, guestId, environment = "本番") {
+    const text = String(appIdsText || "").trim();
+    const guest = String(guestId || "").trim();
+    try {
+      const ids = parseRecordAppIds(text);
+      if (ids.length > 1) {
+        return ["対象アプリ", `${ids.length}アプリ
+${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
+      }
+    } catch {
+    }
+    return ["対象アプリ", connectionSummary(text, guest, environment)];
+  }
+
   // src/entries/record-quality-lite-ui.ts
   function mountRecordQualityLitePanel() {
     const panel = createLitePanel({
@@ -3695,11 +3814,28 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     target.body.appendChild(makeNote("複数アプリはカンマ・改行・空白で区切ります。検査するフィールドは、先頭の対象アプリから読み込みます。", "help"));
     target.body.appendChild(createAppSearchControl(panel, {
       guestEl: guestId,
-      targets: [{ label: "対象アプリ", apply: (id, _name, guest) => {
-        appId.value = id;
-        if (guest && !guestId.value.trim()) guestId.value = guest;
-        notifyInput(appId);
-      } }]
+      targets: [{
+        label: "対象アプリ",
+        apply: (id, _name, guest) => {
+          appId.value = id;
+          if (guest && !guestId.value.trim()) guestId.value = guest;
+          notifyInput(appId);
+        },
+        // 候補すべてを対象アプリ欄へ入れる（置き換え）。ID は 1 つのゲストスペース内のものなので、ゲストIDも候補に合わせる
+        applyAll: (apps, guest) => {
+          appId.value = joinAppIds(apps);
+          const guestChanged = guestId.value.trim() !== guest;
+          if (guestChanged) guestId.value = guest;
+          notifyInput(appId);
+          if (guestChanged) notifyInput(guestId);
+          return {
+            message: `${apps.length}件のアプリを対象アプリに設定しました（それまでの入力は置き換えました）。検査項目は先頭のアプリから選ぶため、その項目が無いアプリは検査に失敗として表示されます`,
+            tone: "ok",
+            pickedLabel: `${apps.length}件を設定済み`
+          };
+        },
+        applyAllLabel: (count) => `候補 ${count} 件をすべて対象アプリにする`
+      }]
     }));
     const viewSelect = makeSelect([["", "一覧を選択（任意）"]]);
     viewSelect.setAttribute("aria-label", "取得した一覧");
@@ -3771,7 +3907,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           return error?.message || String(error);
         }
       },
-      targetSummary: () => ["対象アプリ", connectionSummary(appId.value.trim(), guestId.value.trim())],
+      targetSummary: () => recordTargetSummary(appId.value, guestId.value),
       applyViewQuery,
       resultHost,
       optionsHost: compareOptions.body

@@ -1,6 +1,6 @@
 'use strict';
 
-import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
+import { installLiteWorkflow, foldWorkflowSection, connectionSummary, summarizeList } from './liteWorkflow.js';
 
 import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import { runCsvExportBatchStandalone, runLoadViewsStandalone, toPanelTone, validateRecordConnection } from '../tabs/record-standalone.js';
@@ -43,6 +43,15 @@ export function mountCsvExportLitePanel() {
         message: `アプリ #${id}${name ? ` (${name})` : ''} を対象アプリに設定しました${note}`,
         tone: result.action === 'existing' ? 'info' : 'ok',
         pickedLabel: result.action === 'existing' ? '追加済み' : '設定済み'
+      };
+    }, applyAll: (apps, guestId) => {
+      const result = appTable.putApps(apps.map((a) => ({ appId: a.appId, guestId, appName: a.appName })));
+      syncViewAppFromTable();
+      const fresh = result.added + result.filled;
+      return {
+        message: `${apps.length}件のアプリを対象アプリに設定しました（新規追加 ${fresh}件 / 追加済み ${result.existing}件）。複数アプリはアプリ別フォルダ入りのZIPで保存します`,
+        tone: fresh ? 'ok' : 'info',
+        pickedLabel: fresh ? `${fresh}件を追加済み` : '追加済み'
       };
     } }]
   }));
@@ -234,11 +243,12 @@ export function mountCsvExportLitePanel() {
     actions: [{ id: 'csv', label: 'CSVを出力', description: '1アプリはCSV、テーブルありは親・明細CSVのZIP、複数アプリはアプリ別フォルダ入りのZIPで保存します。', button: run,
       validate: validateApps,
       summary: () => [
-        ['対象', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId)).join('\n')],
+        ['対象', summarizeList(appTable.getApps().map(r => connectionSummary(r.appId, r.guestId)))],
         ['絞り込み条件', query.value.trim() || '全件'],
         ['保存形式', appTable.count() > 1 ? 'ZIP（アプリ別フォルダに親CSV・テーブル明細CSV）' : 'CSV（テーブルがある場合は親CSV・明細CSVのZIP）'],
         ['ヘッダー / 改行 / Excel保護', `${headerLabelMap[headerModeSelect.value] || 'フィールドコード'} / ${lineEndingSelect.value === 'crlf' ? 'CRLF' : 'LF'} / 先頭の \' 付加: ${neutralizeCb.checkbox.checked ? 'あり' : 'なし'}`],
-        ['ファイル名', filename.value.trim() || '自動命名']
+        ['ファイル名', filename.value.trim() || '自動命名'],
+        ...(appTable.count() >= 20 ? [['件数が多い場合', `${appTable.count()}アプリの条件に合う全レコードを順に取得するため、時間とメモリを使います。途中で「中止」できます。`] as [string, string]] : [])
       ]
     }]
   });
