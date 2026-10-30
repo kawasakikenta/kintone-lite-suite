@@ -39,6 +39,13 @@ import {
   type LitePanelHandle
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import {
+  describeMultiTargetFill,
+  multiRetainNote,
+  multiTargetScaleNote,
+  planMultiAutoHtml,
+  planMultiTargetFill
+} from '../diff/multi-targets.js';
 import { readSettingsBundleFile } from '../settingsBundleImport.js';
 import { isCancelRequested, isRunCancelledError, RunCancelledError } from '../runControl.js';
 import { needsAppReferenceParse, parseAppReference } from '../reflect/appReference.js';
@@ -1472,7 +1479,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     r.app.setAttribute('aria-label', `比較先${idx + 1}アプリID`);
     r.guest.setAttribute('aria-label', `比較先${idx + 1}ゲストスペースID`);
   });
-  const addTargetRow = (appId = '', guestId = '', appName = '') => {
+  // container / refresh を指定すると、まとめて追加するとき行ごとの再描画（一覧の位置計算）を省ける。
+  const addTargetRow = (appId = '', guestId = '', appName = '', container: ParentNode = targetList, refresh = true) => {
     const rowNumber = targetRows.length + 1;
     const app = makeInput({ placeholder: 'アプリID（カンマ区切り可）', width: 'medium', ariaLabel: `比較先${rowNumber}アプリID` });
     const guest = makeInput({ placeholder: 'ゲストID', width: 'guest', ariaLabel: `比較先${rowNumber}ゲストスペースID` });
@@ -1502,9 +1510,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     });
     guest.addEventListener('input', invalidateResultAfterAppSelectionChange);
     targetRows.push(entry);
-    targetList.appendChild(row);
+    container.appendChild(row);
     attachTargetSplit(entry);
-    updateTargetListHint();
+    if (refresh) updateTargetListHint();
     return entry;
   };
   const adoptDiffAppReference = (
@@ -1621,7 +1629,53 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         return { message: invalidated
           ? '前回の結果を無効にしました（比較先を変更したため）。再比較してください'
           : `App ${id} を比較先へ設定しました`, tone: invalidated ? 'warn' as const : 'ok' as const };
-      } }
+      },
+      applyAll: (apps, guestId) => {
+        if (diffRunActive) return { message: '比較を実行中です。完了してからアプリを設定してください', tone: 'warn' as const };
+        const plan = planMultiTargetFill({
+          candidates: apps,
+          guestId,
+          existing: targetRows.map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim() })),
+          source: { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: srcPrev.checkbox.checked },
+          targetPreview: tgtPrev.checkbox.checked
+        });
+        if (!plan.add.length) {
+          return { message: describeMultiTargetFill(plan, targetRows.filter((r) => r.app.value.trim()).length, guestId), tone: 'warn' as const };
+        }
+        const hadResult = !!cache || multiXlsxExports.length > 0 || resultBox.childElementCount > 0;
+        // 1対多へ切り替える（結果があれば、この切り替えで無効になる）。行ごとの再描画や無効化はここでまとめて 1 回にする。
+        applyComparisonMode('multi');
+        const queue = plan.add.slice();
+        // 空の行から順に使い、足りない分だけ行を増やす。
+        for (const entry of targetRows) {
+          if (entry.app.value.trim()) continue;
+          const item = queue.shift();
+          if (!item) break;
+          if (entry === targetRows[0]) cancelJsonImportForAppChange('target', item.appId, guestId);
+          entry.app.value = item.appId;
+          setTargetName(entry, item.appName);
+          entry.guest.value = guestId;
+        }
+        const fragment = document.createDocumentFragment();
+        queue.forEach((item) => addTargetRow(item.appId, guestId, item.appName, fragment, false));
+        targetList.appendChild(fragment);
+        updateTargetListHint();
+        const invalidated = invalidateResultAfterAppSelectionChange() || hadResult;
+        const total = targetRows.filter((r) => r.app.value.trim()).length;
+        const scale = multiTargetScaleNote(total);
+        const message = [
+          describeMultiTargetFill(plan, total, guestId),
+          invalidated ? '前回の結果は無効にしました。再比較してください' : '',
+          scale
+        ].filter(Boolean).join('。');
+        return {
+          message,
+          tone: invalidated || plan.skippedSelf || plan.invalid || scale ? 'warn' as const : 'ok' as const,
+          pickedLabel: `${plan.add.length} 件を追加済み`
+        };
+      },
+      applyAllLabel: (count) => `候補 ${count} 件をすべて比較先に追加（1対多）`
+    }
     ]
   });
   cardApp.body.appendChild(singleAppSearch);
@@ -4190,7 +4244,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     runDiffTask('全比較先を比較中…', async () => {
       const resultRows: string[] = [];
       let sharedSourceBundle = importedSourceBundle;
-      const autoExportHtml = multiAutoHtml.checkbox.checked;
+      // 比較元を再利用した比較では、比較元の内容はどの比較先でも同じになる。結果の保持では 1 つを共有し、
+      // 比較先が多いとき（環境内の全アプリなど）に比較元の複製が件数分たまらないようにする。
+      let retainedSourceBundle: any = null;
+      const autoHtmlPlan = planMultiAutoHtml(targets.length, multiAutoHtml.checkbox.checked);
+      const autoExportHtml = autoHtmlPlan.enabled;
       let exported = 0;
       let succeeded = 0;
       let failed = 0;
@@ -4211,6 +4269,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         if (isCancelRequested()) { markCancelledTargets(i, -1); break; }
         panel.setStatus(`比較中 (${i + 1}/${targets.length}) App:${t.appId}${t.guestId ? ` / Guest:${t.guestId}` : ''}`, 'busy');
         try {
+          const reusedSource = !!sharedSourceBundle;
           const out = await runDiffStandalone({
             source: base.source,
             target: t,
@@ -4233,6 +4292,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           if (!sharedSourceBundle) sharedSourceBundle = out.sourceBundle;
           attachKnownAppName(out.sourceBundle, base.source.appName);
           attachKnownAppName(out.targetBundle, t.appName);
+          const sourceForResult = reusedSource ? (retainedSourceBundle ??= out.sourceBundle) : out.sourceBundle;
           succeeded += 1;
           const counts = summarizeLiteDiffRows(out.rows || []);
           const contentChanged = contentChangedCount(counts);
@@ -4272,7 +4332,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
               rows: out.rows || [],
               fetchIssues: out.fetchIssues || [],
               partialIssues: out.partialIssues || [],
-              sourceBundle: out.sourceBundle,
+              sourceBundle: sourceForResult,
               targetBundle: out.targetBundle,
               scopes: base.scopes,
               ignoreKeys: base.ignoreKeys,
@@ -4300,16 +4360,17 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       cardResult.card.style.display = '';
       reviewEmpty.style.display = 'none';
       resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>保存</th></tr></thead><tbody>${resultRows.join('')}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
-      const tone = failed || exportFailed || incomplete || cancelledTargets || (autoExportHtml && exported !== targets.length) ? 'warn' : 'ok';
+      const tone = failed || exportFailed || incomplete || cancelledTargets || autoHtmlPlan.suppressedByCount || (autoExportHtml && exported !== targets.length) ? 'warn' : 'ok';
       const note = [failed ? `比較失敗 ${failed}件` : '', exportFailed ? `HTML出力失敗 ${exportFailed}件` : '', incomplete ? `要確認 ${incomplete}件` : ''].filter(Boolean).join(' / ');
       const exportSummary = autoExportHtml
         ? `HTMLの保存を ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）`
-        : 'HTMLの自動保存はオフです';
+        : (autoHtmlPlan.suppressedByCount ? autoHtmlPlan.note : 'HTMLの自動保存はオフです');
+      const retainNote = multiRetainNote(succeeded);
       if (cancelledTargets) {
-        panel.setStatus(`中止しました（${succeeded}/${targets.length} 件を比較、残り ${cancelledTargets} 件は未実行）${note ? ` / ${note}` : ''}。${exportSummary}。比較できた分は各行または一括ボタンから保存できます`, 'warn');
+        panel.setStatus(`中止しました（${succeeded}/${targets.length} 件を比較、残り ${cancelledTargets} 件は未実行）${note ? ` / ${note}` : ''}。${exportSummary}。比較できた分は各行または一括ボタンから保存できます${retainNote ? `。${retainNote}` : ''}`, 'warn');
         return;
       }
-      panel.setStatus(`${targets.length}件中 ${succeeded}件を比較しました${note ? `（${note}）` : ''}。${exportSummary}。HTML・Excel・Markdown は各行または一括ボタンから保存できます`, tone);
+      panel.setStatus(`${targets.length}件中 ${succeeded}件を比較しました${note ? `（${note}）` : ''}。${exportSummary}。HTML・Excel・Markdown は各行または一括ボタンから保存できます${retainNote ? `。${retainNote}` : ''}`, tone);
     });
   });
 

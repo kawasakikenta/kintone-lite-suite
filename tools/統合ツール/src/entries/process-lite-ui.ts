@@ -1,15 +1,22 @@
 'use strict';
 
-import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
+import { installLiteWorkflow, foldWorkflowSection, connectionSummary, summarizeList } from './liteWorkflow.js';
 
 import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
-import { runRenderProcessFlowStandalone, validateProcessConnection } from '../tabs/process-standalone.js';
+import {
+  runRenderProcessFlowStandalone,
+  validateProcessConnection,
+  runProcessBatchZipStandalone,
+  validateProcessBatchTargets,
+  formatProcessBatchResultLines
+} from '../tabs/process-standalone.js';
 import {
   createLitePanel,
   makeRow,
   makeInput,
   makeButton,
   makeCheck,
+  makeAppTable,
   makeCard,
   makeNote,
   attachCardHelp,
@@ -34,15 +41,54 @@ export function mountProcessLitePanel() {
   const appInp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
   const guestInp = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest' });
   const prevCb = makeCheck({ label: 'プレビュー環境を参照', checked: false });
-  cardApp.body.appendChild(makeRow([appInp, guestInp], { label: 'アプリ' }));
+  const singleAppRow = makeRow([appInp, guestInp], { label: 'アプリ' });
+  cardApp.body.appendChild(singleAppRow);
+
+  // まとめて出力する対象（複数アプリ / 環境内の全アプリ）。ZIP 出力を選んだときだけ表示する
+  const batchBox = document.createElement('div');
+  batchBox.hidden = true;
+  const batchLabel = document.createElement('div');
+  batchLabel.className = 'kus-lp__label';
+  batchLabel.textContent = 'まとめて出力する対象';
+  const appTable = makeAppTable({
+    currentAppId: String(DEFAULT_APP_ID || ''),
+    currentGuestId: DEFAULT_GUEST_ID,
+    initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : []
+  });
+  // 単体の対象アプリ欄のゲストスペースIDとは連動させない（検索結果の流し込み先は対象表だけ）
+  const batchSearch = createAppSearchControl(panel, {
+    title: 'アプリを検索して対象表に追加（名前・コード・ID）',
+    targets: [{
+      apply: (appId, appName, guestId) => {
+        const result = appTable.putApp(appId, guestId, { appName, focus: true });
+        return { message: `アプリ #${appId}${appName ? ` (${appName})` : ''} を対象表に${result.action === 'existing' ? '追加済みです' : '追加しました'}` };
+      },
+      applyAll: (apps, guestId) => {
+        const result = appTable.putApps(apps.map((app) => ({ appId: app.appId, guestId, appName: app.appName })));
+        const parts = [`新規 ${result.added + result.filled}件`, result.existing ? `追加済み ${result.existing}件` : ''].filter(Boolean);
+        return { message: `候補 ${apps.length}件を対象表に追加しました（${parts.join(' / ')}）`, pickedLabel: '追加済み' };
+      }
+    }]
+  });
+  batchBox.append(batchLabel, appTable.element, batchSearch,
+    makeNote('「環境内の全アプリ」で、閲覧できるアプリをまとめて対象表に追加できます。ゲストスペースのアプリは含まれないため、ゲストスペースIDごとに追加してください。「プレビュー環境を参照」はここにも適用されます。', 'help'));
+  cardApp.body.appendChild(batchBox);
+
   cardApp.body.appendChild(makeRow(prevCb.label));
   let notifyConnectionChange: () => void = () => {};
-  cardApp.body.appendChild(createAppSearchControl(panel, {
+  const singleSearch = createAppSearchControl(panel, {
     guestEl: guestInp,
     targets: [{ apply: (id, _name, guestId) => { appInp.value = id; guestInp.value = guestId || ''; notifyConnectionChange(); } }]
-  }));
+  });
+  cardApp.body.appendChild(singleSearch);
+  const singleEls: HTMLElement[] = [singleAppRow, singleSearch];
+  const showBatchTarget = (batch: boolean) => {
+    for (const el of singleEls) el.hidden = batch;
+    batchBox.hidden = !batch;
+  };
 
   const runBtn = makeButton('フロー図を描画', 'run', { icon: '◐' });
+  const batchBtn = makeButton('複数アプリのプロセス図をZIPで保存', 'run', { icon: '↓' });
   cardApp.body.appendChild(runBtn);
   panel.body.insertBefore(cardApp.card, panel.status);
 
@@ -236,9 +282,26 @@ export function mountProcessLitePanel() {
   guestInp.setAttribute('aria-label', 'ゲストスペースID');
   simSelect.setAttribute('aria-label', 'シミュレーションのアクション');
   textEl.setAttribute('aria-label', 'プロセス図のMermaidソース');
+  batchBtn.addEventListener('click', () => liteRun(panel, 'プロセス図を一括取得中…', async () => {
+    const result = await runProcessBatchZipStandalone(
+      { apps: appTable.getApps(), preview: prevCb.checkbox.checked },
+      // 一部失敗・中止の最終報告（isError）は警告色にする。途中経過は処理中表示
+      (m: string, e?: boolean) => panel.setStatus(m, e || /^中止しました/.test(m) ? 'warn' : 'busy')
+    );
+    const { enabled, disabled, failed, notRun } = result.counts;
+    panel.setResult([
+      `結果 ${result.rows.length}件: プロセス管理あり ${enabled} / 無効 ${disabled} / 取得失敗 ${failed} / 未実行（中止） ${notRun}`,
+      ...formatProcessBatchResultLines(result.rows)
+    ].join('\n'));
+  }));
+
+  const batchAppLabel = (r: { appId: string; guestId: string; appName?: string }) =>
+    `#${r.appId}${r.appName ? ` ${r.appName}` : ''}${r.guestId ? `（ゲスト ${r.guestId}）` : ''}`;
+
   installLiteWorkflow(panel, {
-    setup: [cardApp.card], results: [cardDiag.card, cardSim.card, sourceFold],
-    beforeRun: () => {
+    setup: [cardApp.card], results: [cardDiag.card, cardSim.card, sourceFold], resultActions: ['render'],
+    beforeRun: (actionId) => {
+      if (actionId !== 'render') return;
       connectionVersion++;
       renderedConnection = '';
       clearSimulationHandlers();
@@ -254,11 +317,28 @@ export function mountProcessLitePanel() {
       simHistoryEl.textContent = '';
     },
     actions: [{ id: 'render', label: 'プロセス図を表示', description: '状態とアクションの流れを図で表示します。結果画面でシミュレーションもできます。', button: runBtn,
+      onSelect: () => showBatchTarget(false),
       validate: () => {
         try { validateProcessConnection(appInp.value, guestInp.value); return ''; }
         catch (error: any) { return error?.message || String(error); }
       },
       summary: () => [['対象', connectionSummary(appInp.value.trim(), guestInp.value.trim(), prevCb.checkbox.checked ? 'プレビュー' : '本番')], ['操作', '状態遷移図を表示します。レコードや設定は変更しません。']]
+    }, {
+      id: 'batch-zip', label: '複数アプリのプロセス図をZIPで保存',
+      description: '対象表のアプリ（環境内の全アプリも追加できます）のプロセス図を、アプリごとの .mmd と一覧（overview.md）にまとめて ZIP で保存します。SVG は含みません。',
+      button: batchBtn,
+      onSelect: () => showBatchTarget(true),
+      validate: () => validateProcessBatchTargets(appTable.getApps()),
+      summary: () => {
+        const apps = appTable.getApps();
+        return [
+          ['参照環境', prevCb.checkbox.checked ? 'プレビュー' : '本番'],
+          ['対象アプリ', `${apps.length}件\n${summarizeList(apps.map(batchAppLabel))}`],
+          ['出力', 'アプリごとの .mmd・一覧（overview.md）・manifest.json を ZIP で保存します。'],
+          ['操作', 'アプリごとにプロセス管理の設定を読み取ります。レコードや設定は変更しません。取得に失敗したアプリは一覧とログに残します。'],
+          ['中止したとき', '取得済みのアプリだけを保存し、残りは未実行として記録します。']
+        ];
+      }
     }]
   });
 

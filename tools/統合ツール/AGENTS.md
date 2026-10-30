@@ -82,6 +82,9 @@ tools/統合ツール/
 - `diff/export.ts` の `bundleToMarkdown` は設計書 lite（`tabs/design-standalone.ts`）から参照される。
 - `tabs/record-query.ts` のクエリ生成は `tabs/record.ts`（旧統合 UI）からも再公開されている。lite 版のレコード取得は `api.ts` の `fetchRecordsByQuery`（order by 無し: `$id` シーク / あり: cursor API）に統一する。
 - 利用者向けの文言（タイトル・ヒント・注記・操作の説明・ステータス）は `docs/ui-writing-guide.md` に従う。見出しのバッジは影響範囲（`tone: 'read' | 'preview' | 'production'`）を 1 つだけ付ける。
+- 環境内の全アプリの一覧は `api.ts` の `fetchAllApps(guestId?)`（`/apps.json` を 100 件ずつ最後まで取得。ゲストスペースは別に取得）。`entries/appSearchControl.ts` の「環境内の全アプリ」が使い、割り当て先に `applyAll` を持たせると「候補 N 件をすべて追加」ボタンが出る。複数アプリを受け付ける入力欄だけに `applyAll` を付ける（比較元・反映元など単一の入力には付けない）。アプリ表への一括投入は `makeAppTable().putApps()`（変更通知 1 回）を使う。
+- 確認画面・確認ダイアログで対象アプリを列挙するときは `utils.ts` の `summarizeList`（先頭 20 件＋「…ほか N 件（合計 M 件）」。`liteWorkflow.ts` からも再公開）を使い、全アプリ指定で数千行にしない。カンマ区切りの対象アプリ欄（レコード管理・データ品質チェック・ER図）は `entries/recordTargetApps.ts` を使う。アプリごとにネイティブの確認を出す本番書き込み（ステータス更新・コピー）は `PER_APP_CONFIRM_APP_LIMIT`（50）で件数を制限している。
+- 複数の反映先へ書き込む処理（フィールド追加 `runFieldApplyMultiStandalone`、JS/CSS `runApplyJsConfigMultiStandalone`）は、全対象の事前確認 → 最終確認 1 回 → 事前確認の revision を送って 1 件ずつ反映（競合は上書きしない、失敗後も続行、中止後は「未実行（中止）」）の順に揃える。
 - `runControl.ts` は全 lite パネル共通の中止基盤。`createLitePanel` の `setBusy(true)` が `beginRun()`、「中止」ボタンが `requestCancel()`、`api.ts` が各リクエスト前に `throwIfCancelled()` を呼ぶ。読み取り（GET / fetch）は `activeAbortSignal()` で進行中でも打ち切るが、書き込みは進行中のリクエストを待ってから止める。複数件を順に処理するループは `isRunCancelledError` で中止を見分け、残りを「未実行（中止）」として報告する（1 件の中止を N 件の失敗にしない）。
 - `api.ts` の `assertAllowsMutatingRestCall` は本番 prefix への書き込みを原則拒否する。例外はレコード API、`/records/cursor.json`（読み取り用ハンドル）、プレビュー反映が別アプリの JS/CSS を渡すための `POST /file.json`（一時ファイルのアップロード。パスの完全一致のみ）。
 - プレビュー反映で反映できる項目と実行順は `reflect/sections.ts` の `REFLECT_SECTION_KEYS` が正規の一覧（一般設定 `appSettings` を含む）。共有の `SECTION_DEFS` の `put` は他ツールにも波及するため、反映項目を増やすときはこちらを変更する。

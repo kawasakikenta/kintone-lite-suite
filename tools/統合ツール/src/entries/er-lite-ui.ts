@@ -1,6 +1,6 @@
 'use strict';
 
-import { installLiteWorkflow, connectionSummary } from './liteWorkflow.js';
+import { installLiteWorkflow } from './liteWorkflow.js';
 
 import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import {
@@ -22,6 +22,7 @@ import {
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { joinAppIds, recordTargetSummary } from './recordTargetApps.js';
 
 export function mountErLitePanel() {
   const panel = createLitePanel({
@@ -40,7 +41,23 @@ export function mountErLitePanel() {
   cardMain.body.appendChild(makeRow([appInp, guestInp], { label: '起点ID' }));
   cardMain.body.appendChild(createAppSearchControl(panel, {
     guestEl: guestInp,
-    targets: [{ apply: (id, _name) => { appInp.value = id; } }]
+    targets: [{
+      apply: (id, _name) => { appInp.value = id; },
+      // 候補すべてを起点ID欄へ入れる（置き換え）。ID は 1 つのゲストスペース内のものなので、ゲストIDも候補に合わせる
+      applyAll: (apps, guestId) => {
+        appInp.value = joinAppIds(apps);
+        if (guestInp.value.trim() !== guestId) {
+          guestInp.value = guestId;
+          guestInp.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        return {
+          message: `${apps.length}件のアプリを起点に設定しました（それまでの入力は置き換えました）。起点ごとに設定を読み取るため、件数が多いと時間がかかり、図も大きくなります`,
+          tone: 'ok',
+          pickedLabel: `${apps.length}件を設定済み`
+        };
+      },
+      applyAllLabel: (count) => `候補 ${count} 件をすべて起点にする`
+    }]
   }));
 
   const prevCb = makeCheck({ label: 'プレビュー環境を参照', checked: false });
@@ -201,7 +218,8 @@ export function mountErLitePanel() {
   appInp.setAttribute('aria-label', '起点アプリID');
   guestInp.setAttribute('aria-label', 'ゲストスペースID');
   const erSummary = (): Array<[string, string]> => [
-    ['起点', connectionSummary(appInp.value.trim(), guestInp.value.trim())],
+    // 起点が複数のときは件数と先頭 20 件までを示す（全アプリを起点にしても確認画面が数千行にならない）
+    ['起点', recordTargetSummary(appInp.value, guestInp.value)[1]],
     ['参照環境', prevCb.checkbox.checked ? 'プレビュー環境を参照' : '本番環境'],
     ['追加起点', extra.value.trim() || 'なし'],
     ['スペース', (() => {
@@ -212,7 +230,8 @@ export function mountErLitePanel() {
     })()],
     ['探索の深さ', !depthInp.value.trim() || Number(depthInp.value) === 0 ? '無制限（関連アプリを最後まで探索します）' : depthInp.value.trim()],
     ['表示', (layoutSel.selectedOptions[0]?.textContent || '') + ' / ' + (densitySel.selectedOptions[0]?.textContent || '')],
-    ['逆引き', reverseCb.checkbox.checked ? '逆引きあり（テナント内のアプリを走査するため時間がかかる場合があります）' : 'なし']
+    ['逆引き', reverseCb.checkbox.checked ? '逆引きあり（テナント内のアプリを走査するため時間がかかる場合があります）' : 'なし'],
+    ...(parseAppIds(appInp.value).length >= 50 ? [['起点が多い場合', `${parseAppIds(appInp.value).length}アプリを起点に、設定を順に読み取ります。時間がかかり、図やHTMLも大きくなります。途中で「中止」できます。`] as [string, string]] : [])
   ];
   const erProblem = () => validateErOptions(source());
   installLiteWorkflow(panel, {

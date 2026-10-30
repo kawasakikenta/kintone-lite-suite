@@ -160,7 +160,7 @@ export function formatErLayoutLabel(layoutName) {
 }
 
 // 起点アプリIDが数百件になると UI が崩れるため、先頭数件 + 件数に要約する
-function summarizeErStartIds(ids, maxShown = 5): string {
+export function summarizeErStartIds(ids, maxShown = 5): string {
   const list = (Array.isArray(ids) ? ids : []).map((v) => String(v)).filter(Boolean);
   if (!list.length) return '-';
   if (list.length <= maxShown) return list.join(', ');
