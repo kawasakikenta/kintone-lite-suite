@@ -604,6 +604,11 @@
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
+  function summarizeList(lines, limit = SUMMARY_LIST_LIMIT) {
+    const items = lines.filter(Boolean);
+    if (items.length <= limit) return items.join("\n");
+    return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join("\n");
+  }
   function compactForLog(value, max = 220) {
     try {
       const raw = typeof value === "string" ? value : JSON.stringify(value);
@@ -688,6 +693,9 @@ ${contextLine}`);
   function downloadText(filename, text, type) {
     triggerDownload(filename, new Blob([text], { type: type || "text/plain" }));
   }
+  function downloadBlob(filename, blob) {
+    triggerDownload(filename, blob);
+  }
   function legacyCopy(text) {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -717,10 +725,12 @@ ${contextLine}`);
     }
     return legacyCopy(text);
   }
+  var SUMMARY_LIST_LIMIT;
   var init_utils = __esm({
     "src/utils.ts"() {
       "use strict";
       init_constants();
+      SUMMARY_LIST_LIMIT = 20;
     }
   });
 
@@ -935,7 +945,22 @@ ${contextLine}`);
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
+  async function fetchAllApps(guestId, onProgress) {
+    const prefix = buildApiPrefix(guestId, false);
+    const byId = /* @__PURE__ */ new Map();
+    for (let offset = 0; ; offset += APPS_PAGE_LIMIT) {
+      const resp = await apiGet(prefix, "/apps.json", { limit: APPS_PAGE_LIMIT, offset });
+      if (!Array.isArray(resp?.apps)) throw new Error("アプリ一覧の応答が不正です。もう一度取得してください");
+      for (const app of resp.apps) {
+        const appId = String(app?.appId || "").trim();
+        if (/^\d+$/.test(appId) && !byId.has(appId)) byId.set(appId, app);
+      }
+      onProgress?.(byId.size);
+      if (resp.apps.length < APPS_PAGE_LIMIT) break;
+    }
+    return [...byId.entries()].sort(([a], [b]) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0).map(([, app]) => app);
+  }
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, APPS_PAGE_LIMIT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -958,6 +983,7 @@ ${contextLine}`);
       };
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
       FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
+      APPS_PAGE_LIMIT = 100;
     }
   });
 
@@ -2284,6 +2310,346 @@ ${contextLine}`);
     d.appendChild(b);
     return { details: d, body: b };
   }
+  function makeAppTable(opts = {}) {
+    const minRows = Math.max(1, opts.minRows ?? 1);
+    const wrap = document.createElement("div");
+    wrap.className = "kus-lp__apptable";
+    const tableScroll = document.createElement("div");
+    tableScroll.className = "kus-lp__apptable-scroll";
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    thead.innerHTML = '<tr><th class="kus-lp__apptable-no" scope="col">#</th><th scope="col">アプリID</th><th scope="col">ゲストID</th><th class="kus-lp__apptable-acts-h" scope="col">操作</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    table.appendChild(tbody);
+    tableScroll.appendChild(table);
+    wrap.appendChild(tableScroll);
+    const foot = document.createElement("div");
+    foot.className = "kus-lp__apptable-foot";
+    const addBtn = makeButton("＋ 行を追加", "sub");
+    foot.appendChild(addBtn);
+    if (opts.currentAppId && /^\d+$/.test(String(opts.currentAppId).trim())) {
+      const curBtn = makeButton("現在のアプリ", "sub");
+      curBtn.title = "今開いているアプリのIDを空き行に入れます";
+      curBtn.addEventListener("click", () => {
+        const id = String(opts.currentAppId).trim();
+        const guest = String(
+          opts.currentGuestId ?? (typeof location !== "undefined" ? extractGuestIdFromInput(location.pathname || "") : "")
+        ).trim();
+        if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guest)) return;
+        const empty = rows.find((r) => !r.app.value.trim());
+        if (empty) {
+          empty.app.value = id;
+          empty.guest.value = guest;
+          setAppName(empty, "");
+          empty.app.focus();
+        } else {
+          insertRow(rows.length, id, guest, true);
+        }
+        emitChange();
+      });
+      foot.appendChild(curBtn);
+    }
+    const count = document.createElement("span");
+    count.className = "kus-lp__apptable-count";
+    foot.appendChild(count);
+    wrap.appendChild(foot);
+    const hint = document.createElement("div");
+    hint.className = "kus-lp__apptable-hint";
+    hint.textContent = "アプリIDは「100, 120, 130」のようにカンマ区切りでまとめて入力・貼り付けすると自動で行に分割されます。アプリURLの貼り付けにも対応しています。";
+    wrap.appendChild(hint);
+    const rows = [];
+    function getApps() {
+      const seen = /* @__PURE__ */ new Set();
+      const out = [];
+      for (const r of rows) {
+        const appId = r.app.value.trim();
+        if (!appId) continue;
+        const guestId = r.guest.value.trim();
+        const key = `${appId}::${guestId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const row = { appId, guestId };
+        if (r.appName) row.appName = r.appName;
+        out.push(row);
+      }
+      return out;
+    }
+    function getAllRows() {
+      return rows.map((r) => {
+        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        if (r.appName) row.appName = r.appName;
+        return row;
+      });
+    }
+    function setAppName(entry, appName) {
+      entry.appName = String(appName || "").trim();
+      entry.name.textContent = entry.appName;
+      entry.name.title = entry.appName ? `アプリ名: ${entry.appName}` : "";
+      entry.name.classList.toggle("kus-lp__apptable-name--empty", !entry.appName);
+    }
+    function setRowValues(entry, appId, guestId, appName) {
+      entry.app.value = appId;
+      entry.guest.value = guestId;
+      setAppName(entry, appName);
+    }
+    function refresh() {
+      rows.forEach((r, i) => {
+        const no = r.tr.querySelector(".kus-lp__apptable-no");
+        if (no) no.textContent = String(i + 1);
+        r.copyBtn.disabled = i === 0;
+      });
+      const n = getApps().length;
+      count.textContent = n ? `${n} アプリ` : "未入力";
+    }
+    function emitChange() {
+      refresh();
+      opts.onChange?.(getApps());
+    }
+    function parseAppToken(token, fallbackGuest) {
+      const trimmed = token.trim();
+      if (!trimmed || /^\d+$/.test(trimmed)) return { appId: trimmed, guestId: fallbackGuest };
+      const extractedApp = extractAppIdFromInput(trimmed);
+      if (!extractedApp) return { appId: trimmed, guestId: fallbackGuest };
+      const extractedGuest = extractGuestIdFromInput(trimmed);
+      const guestId = extractedGuest || (/\/k\/\d+(?:[/?#]|$)/i.test(trimmed) ? "" : fallbackGuest);
+      return { appId: extractedApp, guestId };
+    }
+    function distributeAppTokens(entry) {
+      const raw = entry.app.value;
+      const guestVal = entry.guest.value.trim();
+      if (!/[,、\s]/.test(raw)) {
+        const parsed = parseAppToken(raw, guestVal);
+        if (parsed.appId !== raw || parsed.guestId !== guestVal) {
+          entry.app.value = parsed.appId;
+          entry.guest.value = parsed.guestId;
+          setAppName(entry, "");
+          return true;
+        }
+        return false;
+      }
+      const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+      if (tokens.length <= 1) {
+        const parsed = parseAppToken(tokens[0] || "", guestVal);
+        if (entry.app.value !== parsed.appId || entry.guest.value.trim() !== parsed.guestId) {
+          entry.app.value = parsed.appId;
+          entry.guest.value = parsed.guestId;
+          setAppName(entry, "");
+          return true;
+        }
+        return false;
+      }
+      const first = parseAppToken(tokens[0], guestVal);
+      entry.app.value = first.appId;
+      entry.guest.value = first.guestId;
+      setAppName(entry, "");
+      const start = rows.indexOf(entry);
+      let last = entry;
+      for (let k = 1; k < tokens.length; k += 1) {
+        const next = parseAppToken(tokens[k], guestVal);
+        last = insertRow(start + k, next.appId, next.guestId, false);
+      }
+      try {
+        last.app.focus();
+      } catch {
+      }
+      return true;
+    }
+    function removeRow(entry) {
+      if (rows.length <= minRows) {
+        entry.app.value = "";
+        entry.guest.value = "";
+        setAppName(entry, "");
+        emitChange();
+        return;
+      }
+      const idx = rows.indexOf(entry);
+      if (idx >= 0) rows.splice(idx, 1);
+      entry.tr.remove();
+      emitChange();
+    }
+    function insertRow(index, appId = "", guestId = "", focus = false, appName = "") {
+      const tr = document.createElement("tr");
+      const tdNo = document.createElement("td");
+      tdNo.className = "kus-lp__apptable-no";
+      const tdApp = document.createElement("td");
+      const tdGuest = document.createElement("td");
+      const tdAct = document.createElement("td");
+      tdAct.className = "kus-lp__apptable-acts";
+      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID（カンマ区切りで複数可）", ariaLabel: "アプリID" });
+      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストID" });
+      app.value = appId;
+      guest.value = guestId;
+      const name = document.createElement("div");
+      name.className = "kus-lp__apptable-name";
+      const copyBtn = makeButton("↑コピー", "sub");
+      copyBtn.title = "上の行のアプリID・ゲストIDをこの行へコピー";
+      const dupBtn = makeButton("複製", "sub");
+      dupBtn.title = "この行を下に複製";
+      const delBtn = makeButton("×", "ghost");
+      delBtn.title = "この行を削除";
+      tdApp.appendChild(app);
+      tdApp.appendChild(name);
+      tdGuest.appendChild(guest);
+      tdAct.appendChild(copyBtn);
+      tdAct.appendChild(dupBtn);
+      tdAct.appendChild(delBtn);
+      tr.appendChild(tdNo);
+      tr.appendChild(tdApp);
+      tr.appendChild(tdGuest);
+      tr.appendChild(tdAct);
+      const entry = { tr, app, guest, name, appName: "", copyBtn };
+      setAppName(entry, appName);
+      copyBtn.addEventListener("click", () => {
+        const idx = rows.indexOf(entry);
+        if (idx <= 0) return;
+        const prev = rows[idx - 1];
+        app.value = prev.app.value;
+        guest.value = prev.guest.value;
+        setAppName(entry, prev.appName);
+        app.focus();
+        emitChange();
+      });
+      dupBtn.addEventListener("click", () => {
+        const idx = rows.indexOf(entry);
+        const ne = insertRow(idx + 1, app.value.trim(), guest.value.trim(), true, entry.appName);
+        ne.app.focus();
+        emitChange();
+      });
+      delBtn.addEventListener("click", () => removeRow(entry));
+      app.addEventListener("input", () => {
+        if (entry.appName) setAppName(entry, "");
+        emitChange();
+      });
+      guest.addEventListener("input", emitChange);
+      app.addEventListener("change", () => {
+        if (distributeAppTokens(entry)) emitChange();
+      });
+      app.addEventListener("paste", (ev) => {
+        const text = ev.clipboardData?.getData("text") || "";
+        const hasUrl = Boolean(extractAppIdFromInput(text.trim())) && !/^\d+$/.test(text.trim());
+        if (!/[,、\s]/.test(text) && !hasUrl) return;
+        ev.preventDefault();
+        const start = app.selectionStart ?? app.value.length;
+        const end = app.selectionEnd ?? start;
+        const combined = app.value.slice(0, start) + text + app.value.slice(end);
+        app.value = combined;
+        if (distributeAppTokens(entry)) emitChange();
+      });
+      const at = Math.min(Math.max(index, 0), rows.length);
+      if (at >= rows.length) tbody.appendChild(tr);
+      else tbody.insertBefore(tr, rows[at].tr);
+      rows.splice(at, 0, entry);
+      if (focus) app.focus();
+      return entry;
+    }
+    addBtn.addEventListener("click", () => {
+      const e = insertRow(rows.length, "", "", true);
+      e.app.focus();
+      emitChange();
+    });
+    function putApp(appId = "", guestId = "", o = {}) {
+      const id = String(appId || "").trim();
+      if (!id) return { action: "ignored", index: -1 };
+      const guest = String(guestId || "").trim();
+      const appName = String(o.appName || "").trim();
+      const empty = rows.find((r) => !r.app.value.trim());
+      const targetGuest = guest;
+      const existing = rows.find((r) => r.app.value.trim() === id && r.guest.value.trim() === targetGuest);
+      if (existing) {
+        if (appName && existing.appName !== appName) {
+          setAppName(existing, appName);
+          emitChange();
+        }
+        if (o.focus) existing.app.focus();
+        return { action: "existing", index: rows.indexOf(existing) };
+      }
+      if (empty) {
+        setRowValues(empty, id, targetGuest, appName);
+        if (o.focus) empty.app.focus();
+        emitChange();
+        return { action: "filled", index: rows.indexOf(empty) };
+      }
+      const entry = insertRow(rows.length, id, guest, !!o.focus, appName);
+      emitChange();
+      return { action: "added", index: rows.indexOf(entry) };
+    }
+    function putApps(list) {
+      const result = { added: 0, filled: 0, existing: 0, ignored: 0 };
+      const keyOf = (appId, guestId) => `${appId}::${guestId}`;
+      const existingByKey = /* @__PURE__ */ new Map();
+      for (const r of rows) {
+        const id = r.app.value.trim();
+        const key = keyOf(id, r.guest.value.trim());
+        if (id && !existingByKey.has(key)) existingByKey.set(key, r);
+      }
+      const empties = rows.filter((r) => !r.app.value.trim());
+      let changed = false;
+      for (const item of Array.isArray(list) ? list : []) {
+        const id = String(item?.appId || "").trim();
+        if (!id) {
+          result.ignored += 1;
+          continue;
+        }
+        const guest = String(item?.guestId || "").trim();
+        const appName = String(item?.appName || "").trim();
+        const existing = existingByKey.get(keyOf(id, guest));
+        if (existing) {
+          if (appName && existing.appName !== appName) {
+            setAppName(existing, appName);
+            changed = true;
+          }
+          result.existing += 1;
+          continue;
+        }
+        const empty = empties.shift();
+        const entry = empty || insertRow(rows.length, id, guest, false, appName);
+        if (empty) setRowValues(empty, id, guest, appName);
+        existingByKey.set(keyOf(id, guest), entry);
+        if (empty) result.filled += 1;
+        else result.added += 1;
+        changed = true;
+      }
+      if (changed) emitChange();
+      return result;
+    }
+    function setApps(list) {
+      rows.splice(0).forEach((r) => r.tr.remove());
+      tbody.innerHTML = "";
+      const src = Array.isArray(list) && list.length ? list : [{ appId: "", guestId: "" }];
+      src.forEach((r) => insertRow(
+        rows.length,
+        String(r.appId || "").trim(),
+        String(r.guestId || "").trim(),
+        false,
+        String(r.appName || "").trim()
+      ));
+      while (rows.length < minRows) insertRow(rows.length, "", "");
+      emitChange();
+    }
+    setApps(opts.initial || []);
+    return {
+      element: wrap,
+      getApps,
+      getAllRows,
+      first: () => {
+        const r = rows[0];
+        if (!r) return { appId: "", guestId: "" };
+        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        if (r.appName) row.appName = r.appName;
+        return row;
+      },
+      addRow: (appId = "", guestId = "", o = {}) => {
+        insertRow(rows.length, appId, guestId, !!o.focus, String(o.appName || "").trim());
+        emitChange();
+      },
+      putApp,
+      putApps,
+      setApps,
+      clear: () => setApps([]),
+      count: () => getApps().length
+    };
+  }
   async function liteRun(panel, busyMsg, fn, okMsg) {
     panel.setStatus(busyMsg, "busy");
     panel.setBusy(true);
@@ -2339,6 +2705,7 @@ ${contextLine}`);
   }
 
   // src/entries/liteWorkflow.ts
+  init_utils();
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
@@ -2765,6 +3132,115 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   // src/tabs/process-standalone.ts
   init_utils();
   init_api();
+
+  // src/jszipLoader.ts
+  init_constants();
+  var loadPromise = null;
+  var failedScripts = /* @__PURE__ */ new WeakSet();
+  var JSZIP_LOAD_TIMEOUT_MS = 3e4;
+  function loadJSZipLite() {
+    const w = window;
+    if (w.JSZip) return Promise.resolve(w.JSZip);
+    if (loadPromise) return loadPromise;
+    const src = EXTERNAL_LIBRARIES.jszip.cdnUrl || "";
+    loadPromise = new Promise((resolve, reject) => {
+      const existing = Array.from(document.querySelectorAll(`script[src="${src}"]`)).find((script2) => !failedScripts.has(script2));
+      const script = existing || document.createElement("script");
+      let settled = false;
+      let timer;
+      const cleanup = () => {
+        if (timer !== void 0) clearTimeout(timer);
+        script.removeEventListener("load", settle);
+        script.removeEventListener("error", onError);
+      };
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        failedScripts.add(script);
+        if (!existing) script.remove();
+        reject(error);
+      };
+      const settle = () => {
+        if (settled) return;
+        const ctor = w.JSZip;
+        if (!ctor) {
+          fail(new Error("JSZipのロード後もグローバル変数が見つかりません"));
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(ctor);
+      };
+      const onError = () => fail(new Error(`JSZipの読み込みに失敗しました（${src}）。CSP やネットワーク制限を確認してください`));
+      script.addEventListener("load", settle, { once: true });
+      script.addEventListener("error", onError, { once: true });
+      timer = setTimeout(() => {
+        if (w.JSZip) settle();
+        else fail(new Error("JSZipの読み込みが30秒以内に完了しませんでした。CSP やネットワーク制限を確認して再試行してください"));
+      }, JSZIP_LOAD_TIMEOUT_MS);
+      if (!existing) {
+        try {
+          script.src = src;
+          script.async = true;
+          document.head.appendChild(script);
+        } catch (error) {
+          fail(error instanceof Error ? error : new Error(String(error)));
+        }
+      }
+    }).catch((error) => {
+      loadPromise = null;
+      throw error;
+    });
+    return loadPromise;
+  }
+
+  // src/tabs/process-standalone.ts
+  init_runControl();
+
+  // src/tabs/run-cancel-summary.ts
+  init_runControl();
+  var CancelReportError = class extends Error {
+    constructor(done, total, details = []) {
+      super([formatCancelledHeadline(done, total), ...details.filter(Boolean)].join("\n"));
+      __publicField(this, "cancelReport", true);
+      __publicField(this, "done");
+      __publicField(this, "total");
+      this.name = "CancelReportError";
+      this.done = done;
+      this.total = total;
+    }
+  };
+  function formatCancelledHeadline(done, total) {
+    const safeTotal = Math.max(0, Math.floor(total));
+    const safeDone = Math.min(safeTotal, Math.max(0, Math.floor(done)));
+    return `中止しました（${safeDone}/${safeTotal} 件を処理、残り ${safeTotal - safeDone} 件は未実行）`;
+  }
+  function createCancelReport(done, total, details = []) {
+    return new CancelReportError(done, total, details);
+  }
+  function isCancelReportError(error) {
+    return !!error && typeof error === "object" && error.cancelReport === true;
+  }
+  function isCancelStop(error) {
+    return isRunCancelledError(error) || isCancelReportError(error);
+  }
+
+  // src/tabs/record-query.ts
+  init_kintone_query();
+  function uniqueZipEntryName(used, base) {
+    let cand = base;
+    let n = 2;
+    while (used.has(cand)) {
+      const dot = base.lastIndexOf(".");
+      cand = dot > 0 ? `${base.slice(0, dot)}_${n}${base.slice(dot)}` : `${base}_${n}`;
+      n++;
+    }
+    used.add(cand);
+    return cand;
+  }
+
+  // src/tabs/process-standalone.ts
   var mermaidLoadPromise = null;
   var MERMAID_CDN_URLS = [
     "https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js",
@@ -3144,11 +3620,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       commitStatus("プロセス管理は無効です");
       return null;
     }
-    const states = res.states && typeof res.states === "object" && !Array.isArray(res.states) ? res.states : {};
-    const rawActions = Array.isArray(res.actions) ? res.actions : [];
-    const actions = rawActions.filter((a) => a && a.from != null && a.to != null && String(a.from).trim() && String(a.to).trim());
-    const orphanActions = rawActions.length - actions.length;
-    const summary = summarizeProcessStructure(states, actions, orphanActions);
+    const { states, actions, orphanActionCount: orphanActions, summary } = normalizeProcessStatus(res);
     if (targets.summaryEl) {
       targets.summaryEl.innerHTML = renderProcessStructureSummaryHtml(summary);
     }
@@ -3204,6 +3676,288 @@ ${detail}`);
     }
     return { states, actions, summary };
   }
+  var PROCESS_BATCH_DIAGRAM_DIR = "diagrams";
+  var PROCESS_BATCH_OVERVIEW_FILE = "overview.md";
+  var PROCESS_BATCH_MANIFEST_FILE = "manifest.json";
+  var CaseInsensitiveNameSet = class extends Set {
+    has(value) {
+      return super.has(value.toLowerCase());
+    }
+    add(value) {
+      return super.add(value.toLowerCase());
+    }
+  };
+  function createProcessBatchNameSet() {
+    return new CaseInsensitiveNameSet();
+  }
+  var PROCESS_BATCH_NAME_MAX = 60;
+  var WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+  function safeFileNamePart(name) {
+    const cleaned = Array.from(sanitizeFilenamePart(name, "").replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "").trim()).slice(0, PROCESS_BATCH_NAME_MAX).join("").replace(/[. ]+$/, "");
+    return WINDOWS_RESERVED_NAME.test(cleaned) ? `_${cleaned}` : cleaned;
+  }
+  function buildProcessBatchDiagramFileName(target, used) {
+    const guest = String(target.guestId || "").trim();
+    const name = safeFileNamePart(target.appName);
+    const base = `${guest ? `guest${guest}_` : ""}${String(target.appId).trim()}${name ? `_${name}` : ""}.mmd`;
+    return `${PROCESS_BATCH_DIAGRAM_DIR}/${uniqueZipEntryName(used, base)}`;
+  }
+  function validateProcessBatchTargets(targets) {
+    if (!targets.length) return "まとめて出力する対象アプリを1件以上指定してください。";
+    for (let i = 0; i < targets.length; i++) {
+      try {
+        validateProcessConnection(targets[i].appId, targets[i].guestId ?? "");
+      } catch (error) {
+        return `${i + 1}行目: ${error?.message || String(error)}`;
+      }
+    }
+    return "";
+  }
+  function normalizeProcessBatchTargets(targets) {
+    const seen = /* @__PURE__ */ new Set();
+    const out = [];
+    for (const target of targets) {
+      const c = validateProcessConnection(target.appId, target.guestId);
+      const key = `${c.guestId}::${c.appId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ appId: c.appId, guestId: c.guestId, appName: String(target.appName || "").trim() });
+    }
+    return out;
+  }
+  function normalizeProcessStatus(res) {
+    const states = res?.states && typeof res.states === "object" && !Array.isArray(res.states) ? res.states : {};
+    const rawActions = Array.isArray(res?.actions) ? res.actions : [];
+    const actions = rawActions.filter((a) => a && a.from != null && a.to != null && String(a.from).trim() && String(a.to).trim());
+    const orphanActionCount = rawActions.length - actions.length;
+    return { states, actions, orphanActionCount, summary: summarizeProcessStructure(states, actions, orphanActionCount) };
+  }
+  function oneLine(value) {
+    return String(value ?? "").replace(/[\r\n\u2028\u2029]+/g, " ").trim();
+  }
+  function processBatchLabel(row) {
+    return `アプリ ${row.appId}${row.appName ? ` ${oneLine(row.appName)}` : ""}${row.guestId ? ` (guest:${row.guestId})` : ""}`;
+  }
+  var OUTCOME_LABEL = {
+    enabled: "有効",
+    disabled: "無効",
+    failed: "取得失敗",
+    "not-run": "未実行（中止）"
+  };
+  function buildProcessBatchMmd(row, source, preview, generatedAt = /* @__PURE__ */ new Date()) {
+    const header = [
+      `%% kintone プロセス図 / アプリ ${row.appId}${row.appName ? ` ${oneLine(row.appName)}` : ""}${row.guestId ? ` / ゲストスペース ${row.guestId}` : ""} / ${preview ? "プレビュー" : "本番"} / 生成 ${generatedAt.toLocaleString("ja-JP", { hour12: false })}`,
+      "%% Mermaid Live Editor（https://mermaid.live）や Markdown の ```mermaid ブロックに貼り付けると図として表示できます。"
+    ].join("\n");
+    return `${header}
+${source.replace(/\r\n/g, "\n").replace(/\n+$/, "")}
+`;
+  }
+  function mdCell(value) {
+    return oneLine(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\|/g, "\\|");
+  }
+  function mdFence(text) {
+    const longest = Math.max(2, ...(text.match(/`+/g) || []).map((m) => m.length));
+    return "`".repeat(longest + 1);
+  }
+  function countProcessBatchRows(rows) {
+    return {
+      enabled: rows.filter((r) => r.outcome === "enabled").length,
+      disabled: rows.filter((r) => r.outcome === "disabled").length,
+      failed: rows.filter((r) => r.outcome === "failed").length,
+      notRun: rows.filter((r) => r.outcome === "not-run").length
+    };
+  }
+  function buildProcessBatchOverviewMarkdown(rows, sources, meta) {
+    const counts = countProcessBatchRows(rows);
+    const lines = [
+      "# プロセス図 一括出力",
+      "",
+      `- 生成日時: ${meta.generatedAt}`,
+      `- 参照環境: ${meta.preview ? "プレビュー" : "本番"}`,
+      `- 対象アプリ: ${meta.total}件（プロセス管理あり ${counts.enabled} / 無効 ${counts.disabled} / 取得失敗 ${counts.failed} / 未実行（中止） ${counts.notRun}）`
+    ];
+    if (meta.cancelled) lines.push("- 注意: 利用者の操作で中止したため、未実行のアプリは含まれていません。");
+    if (counts.failed) lines.push("- 注意: 取得に失敗したアプリがあります。下の表の「失敗理由」を確認して、再実行してください。");
+    lines.push(
+      "",
+      "## 一覧",
+      "",
+      "| アプリID | アプリ名 | ゲストスペース | プロセス管理 | 状態 | アクション | 構造上の注意 | 失敗理由 | 図ファイル |",
+      "| --- | --- | --- | --- | ---: | ---: | --- | --- | --- |"
+    );
+    for (const row of rows) {
+      const enabled = row.outcome === "enabled";
+      lines.push(`| ${mdCell(row.appId)} | ${mdCell(row.appName)} | ${mdCell(row.guestId)} | ${OUTCOME_LABEL[row.outcome]} | ${enabled ? row.stateCount : ""} | ${enabled ? row.actionCount : ""} | ${mdCell(row.warnings.join(" / "))} | ${mdCell(row.reason)} | ${enabled ? mdCell(row.file) : ""} |`);
+    }
+    const drawn = rows.filter((r) => r.outcome === "enabled" && sources[r.file] != null);
+    lines.push("", "## 図", "");
+    if (!drawn.length) lines.push("プロセス管理が有効なアプリはありませんでした。", "");
+    for (const row of drawn) {
+      const source = sources[row.file].replace(/\r\n/g, "\n").replace(/\n+$/, "");
+      const fence = mdFence(source);
+      lines.push(
+        `### ${mdCell(`アプリ ${row.appId}${row.appName ? ` ${row.appName}` : ""}${row.guestId ? `（ゲストスペース ${row.guestId}）` : ""}`)}`,
+        "",
+        `状態 ${row.stateCount} / アクション ${row.actionCount} · ファイル: ${mdCell(row.file)}`,
+        ""
+      );
+      if (row.warnings.length) lines.push(`注意: ${mdCell(row.warnings.join(" / "))}`, "");
+      lines.push(`${fence}mermaid`, source, fence, "");
+    }
+    return `${lines.join("\n").replace(/\n+$/, "")}
+`;
+  }
+  function buildProcessBatchManifest(rows, meta) {
+    const counts = countProcessBatchRows(rows);
+    const notRun = rows.filter((r) => r.outcome === "not-run");
+    return {
+      tool: "process-diagram-batch",
+      generatedAt: meta.generatedAt,
+      environment: meta.preview ? "preview" : "production",
+      preview: meta.preview,
+      guestIds: meta.guestIds,
+      targetCount: meta.total,
+      appCount: rows.length - notRun.length,
+      enabledAppCount: counts.enabled,
+      disabledAppCount: counts.disabled,
+      failedAppCount: counts.failed,
+      overview: PROCESS_BATCH_OVERVIEW_FILE,
+      ...notRun.length ? { cancelled: true, notExecuted: notRun.map((r) => ({ appId: r.appId, guestId: r.guestId, appName: r.appName })) } : {},
+      apps: rows.filter((r) => r.outcome !== "not-run").map((r) => ({
+        appId: r.appId,
+        appName: r.appName,
+        guestId: r.guestId,
+        processManagement: r.outcome === "failed" ? "unknown" : r.outcome === "enabled" ? "enabled" : "disabled",
+        status: r.outcome === "failed" ? "failed" : "ok",
+        ...r.outcome === "enabled" ? { file: r.file, stateCount: r.stateCount, actionCount: r.actionCount, warnings: r.warnings } : {},
+        ...r.reason ? { error: r.reason } : {}
+      }))
+    };
+  }
+  function formatProcessBatchResultLines(rows) {
+    return rows.map((row) => {
+      const head = `${OUTCOME_LABEL[row.outcome]}	${processBatchLabel(row)}`;
+      if (row.outcome === "enabled") {
+        return `${head}	状態 ${row.stateCount} / アクション ${row.actionCount}${row.warnings.length ? `	注意: ${row.warnings.join(" / ")}` : ""}	${row.file}${row.reason ? `	${row.reason}` : ""}`;
+      }
+      if (row.outcome === "disabled") return `${head}	プロセス管理は無効です${row.reason ? `	${row.reason}` : ""}`;
+      if (row.outcome === "failed") return `${head}	${row.reason}`;
+      return `${head}	中止したため取得していません`;
+    });
+  }
+  function firstLine(error) {
+    const text = error instanceof Error ? error.message : String(error ?? "不明なエラー");
+    return oneLine(text.split("\n")[0]) || "不明なエラー";
+  }
+  async function runProcessBatchZipStandalone(opts, setStatus) {
+    const targets = normalizeProcessBatchTargets(Array.isArray(opts?.apps) ? opts.apps : []);
+    if (!targets.length) throw new Error("まとめて出力する対象アプリを1件以上指定してください");
+    const preview = !!opts.preview;
+    const JSZipCtor = await loadJSZipLite();
+    const total = targets.length;
+    const rows = [];
+    const sources = {};
+    const mmdFiles = [];
+    const used = createProcessBatchNameSet();
+    const generatedAtDate = /* @__PURE__ */ new Date();
+    let failedSoFar = 0;
+    let stoppedAt = -1;
+    for (let i = 0; i < total; i++) {
+      const target = targets[i];
+      if (isCancelRequested()) {
+        stoppedAt = i;
+        break;
+      }
+      const guestNote = target.guestId ? ` (guest:${target.guestId})` : "";
+      setStatus(`[${i + 1}/${total}] アプリ ${target.appId}${guestNote} のプロセス管理を取得中...${failedSoFar ? `（取得失敗 ${failedSoFar}件）` : ""}`);
+      let appName = String(target.appName || "").trim();
+      let nameNote = "";
+      const row = {
+        appId: target.appId,
+        guestId: target.guestId,
+        appName,
+        outcome: "failed",
+        stateCount: 0,
+        actionCount: 0,
+        warnings: [],
+        reason: "",
+        file: ""
+      };
+      try {
+        if (!appName) {
+          try {
+            const info = await apiGet(buildApiPrefix(target.guestId, false), "/app.json", { id: target.appId }, { retries: 1 });
+            appName = oneLine(info?.name);
+          } catch (error) {
+            if (isCancelStop(error)) throw error;
+            nameNote = `アプリ名を取得できませんでした（${firstLine(error)}）`;
+          }
+          row.appName = appName;
+        }
+        const res = await fetchProcessStatusSettings({ appId: target.appId, guestId: target.guestId, preview });
+        if (!res || typeof res !== "object") throw new Error("プロセス管理の設定を取得できませんでした（想定外の応答形式です）");
+        if (!res.enable) {
+          row.outcome = "disabled";
+        } else {
+          const { states, actions, summary } = normalizeProcessStatus(res);
+          const source = buildProcessMermaidSource(states, actions, null);
+          row.outcome = "enabled";
+          row.stateCount = summary.stateCount;
+          row.actionCount = summary.actionCount;
+          row.warnings = summary.warnings;
+          row.file = buildProcessBatchDiagramFileName(row, used);
+          sources[row.file] = source;
+          mmdFiles.push({ file: row.file, text: buildProcessBatchMmd(row, source, preview, generatedAtDate) });
+        }
+        row.reason = nameNote;
+      } catch (error) {
+        if (isCancelStop(error)) {
+          stoppedAt = i;
+          break;
+        }
+        row.outcome = "failed";
+        row.reason = [firstLine(error), nameNote].filter(Boolean).join(" / ");
+        failedSoFar += 1;
+      }
+      rows.push(row);
+    }
+    const notRunTargets = stoppedAt >= 0 ? targets.slice(stoppedAt) : [];
+    const processedRows = [...rows];
+    for (const t of notRunTargets) {
+      rows.push({ appId: t.appId, guestId: t.guestId, appName: String(t.appName || ""), outcome: "not-run", stateCount: 0, actionCount: 0, warnings: [], reason: "", file: "" });
+    }
+    const counts = countProcessBatchRows(rows);
+    const failureLines = rows.filter((r) => r.outcome === "failed").map((r) => `${processBatchLabel(r)}: 取得失敗: ${r.reason}`);
+    const notRunLine = notRunTargets.length ? `未実行（中止）: ${notRunTargets.map((t) => processBatchLabel(t)).join(", ")}` : "";
+    if (!counts.enabled && !counts.disabled) {
+      if (stoppedAt >= 0) {
+        throw createCancelReport(stoppedAt, total, [...failureLines, notRunLine, "ZIP は保存していません"]);
+      }
+      throw new Error([`ZIP を作成できませんでした。プロセス管理を取得できたアプリがありません（取得失敗 ${counts.failed}件）`, ...failureLines].join("\n"));
+    }
+    setStatus("ZIPファイル作成中...");
+    const meta = { generatedAt: generatedAtDate.toISOString(), preview, cancelled: stoppedAt >= 0, total };
+    const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
+    const zip = new JSZipCtor();
+    zip.file(PROCESS_BATCH_MANIFEST_FILE, JSON.stringify(buildProcessBatchManifest(rows, { ...meta, guestIds }), null, 2));
+    zip.file(PROCESS_BATCH_OVERVIEW_FILE, buildProcessBatchOverviewMarkdown(rows, sources, meta));
+    for (const { file, text } of mmdFiles) zip.file(file, text);
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+    const zipName = buildExportFilename("プロセス図一括", "zip", {
+      appLabel: `${processedRows.length}アプリ`,
+      suffix: preview ? "プレビュー" : ""
+    });
+    downloadBlob(zipName, zipBlob);
+    const detail = `プロセス管理あり ${counts.enabled}件 / 無効 ${counts.disabled}件${counts.failed ? ` / 取得失敗 ${counts.failed}件` : ""}`;
+    const failureHint = counts.failed ? `。取得失敗は ${PROCESS_BATCH_OVERVIEW_FILE} と下のログで確認してください` : "";
+    if (stoppedAt >= 0) {
+      setStatus(`${formatCancelledHeadline(stoppedAt, total)}。取得済みの ${processedRows.length}アプリだけを保存しました（${detail} / 未実行（中止） ${counts.notRun}件）${failureHint}`, true);
+    } else {
+      setStatus(`プロセス図 ${counts.enabled}件を含むZIPを保存しました（${total}アプリ: ${detail}）${failureHint}`, counts.failed > 0);
+    }
+    return { rows, counts, stoppedAt, zipName, zipEntries: [PROCESS_BATCH_MANIFEST_FILE, PROCESS_BATCH_OVERVIEW_FILE, ...mmdFiles.map((f) => f.file)] };
+  }
 
   // src/entries/appSearchControl.ts
   init_api();
@@ -3223,6 +3977,9 @@ ${detail}`);
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
+.kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}
+.kus-as__bulk .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
   function ensureStyles2() {
     if (document.getElementById(RESULT_CSS_ID)) return;
@@ -3260,12 +4017,17 @@ ${detail}`);
     const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
+    const allBtn = makeButton("環境内の全アプリ", "sub");
+    allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
     const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
+    body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
     body.appendChild(makeNote("閲覧できるアプリを名前（部分一致）またはコード（大文字・小文字を区別する完全一致）で検索します。スペースIDで検索範囲を絞れます。ID / URL の直接指定ではスペースIDの絞り込みは使いません。"));
+    const allTargets = opts.targets.filter((t) => typeof t.applyAll === "function");
+    body.appendChild(makeNote(`「環境内の全アプリ」は、閲覧できるアプリをすべて候補に表示します${allTargets.length ? "（候補の上の「すべて…」でまとめて設定できます）" : ""}。ゲストスペースのアプリは含まれないため、ゲストスペースIDを入れてゲストスペースごとに取得してください。`));
     const resultBox = document.createElement("div");
     resultBox.className = "kus-as__result kus-as__result--empty";
     body.appendChild(resultBox);
@@ -3277,10 +4039,12 @@ ${detail}`);
     let candidates = [];
     let nextOffset = 0;
     let resultGuest = "";
+    let resultIsAll = false;
     function invalidate() {
       generation += 1;
       candidates = [];
       nextOffset = 0;
+      resultIsAll = false;
       resultBox.replaceChildren();
       resultBox.className = "kus-as__result kus-as__result--empty";
       moreBtn.hidden = true;
@@ -3295,6 +4059,7 @@ ${detail}`);
     function syncBusyControls() {
       const busy = panel.root.getAttribute("aria-busy") === "true";
       searchBtn.disabled = running || busy;
+      allBtn.disabled = running || busy;
       moreBtn.disabled = running || busy;
     }
     panel.root.addEventListener("kus-lite-busy-change", () => {
@@ -3319,8 +4084,13 @@ ${detail}`);
         <td><div class="kus-as__assign">${buttons}</div></td>
       </tr>`;
       }).join("");
+      const bulkHtml = allTargets.length ? `<div class="kus-as__bulk">${allTargets.map((t) => {
+        const ti = opts.targets.indexOf(t);
+        const label = t.applyAllLabel ? t.applyAllLabel(apps.length) : single || !t.label ? `候補 ${apps.length} 件をすべて追加` : `候補 ${apps.length} 件をすべて${t.label}へ`;
+        return `<button type="button" class="kus-lp__btn kus-lp__btn--sub" data-as-all="${ti}">${esc(label)}</button>`;
+      }).join("")}</div>` : "";
       resultBox.className = "kus-as__result";
-      resultBox.innerHTML = `<div class="kus-as__head">${apps.length}件の候補</div>
+      resultBox.innerHTML = `<div class="kus-as__head">${resultIsAll ? `環境内のアプリ ${apps.length}件${resultGuest ? `（ゲストスペース ${esc(resultGuest)}）` : ""}` : `${apps.length}件の候補`}</div>${bulkHtml}
       <table class="kus-as__table">
         <thead><tr><th style="width:74px">アプリID</th><th>アプリ名</th><th style="width:1%"></th></tr></thead>
         <tbody>${rowsHtml}</tbody>
@@ -3346,6 +4116,25 @@ ${detail}`);
             outcome.message || `App ${app.appId}${app.name ? ` (${app.name})` : ""} を設定しました${where}`,
             outcome.tone || "ok"
           );
+        });
+      });
+      resultBox.querySelectorAll("button[data-as-all]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const target = opts.targets[Number(btn.dataset.asAll)];
+          if (!target?.applyAll || !apps.length) return;
+          if (running || panel.root.getAttribute("aria-busy") === "true") return;
+          const searchGuest = resultGuest;
+          const outcome = target.applyAll(apps.map((app) => ({ appId: app.appId, appName: app.name })), searchGuest) || {};
+          if (opts.guestEl && opts.guestEl.value.trim() !== searchGuest) {
+            opts.guestEl.value = searchGuest;
+            opts.guestEl.dispatchEvent(new Event("input", { bubbles: true }));
+            opts.guestEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : "";
+          btn.classList.add("kus-as__picked");
+          btn.setAttribute("aria-pressed", "true");
+          btn.textContent = outcome.pickedLabel || `${apps.length} 件を設定済み`;
+          panel.setStatus(outcome.message || `候補 ${apps.length} 件を設定しました${where}`, outcome.tone || "ok");
         });
       });
     }
@@ -3376,8 +4165,7 @@ ${detail}`);
       const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
       const prefix = buildApiPrefix(guestId, false);
       running = true;
-      searchBtn.disabled = true;
-      moreBtn.disabled = true;
+      syncBusyControls();
       resultBox.setAttribute("aria-busy", "true");
       try {
         if (directAppId) {
@@ -3427,8 +4215,51 @@ ${detail}`);
         }
       }
     }
+    async function runAll() {
+      if (running || panel.root.getAttribute("aria-busy") === "true") return;
+      invalidate();
+      const guestId = guest.value.trim();
+      if (guestId && !/^\d+$/.test(guestId)) {
+        panel.setStatus("ゲストIDは数値で入力してください", "warn");
+        return;
+      }
+      const requestGeneration = generation;
+      const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
+      running = true;
+      syncBusyControls();
+      resultBox.setAttribute("aria-busy", "true");
+      try {
+        panel.setStatus("環境内の全アプリを取得中…", "busy");
+        const apps = await fetchAllApps(guestId, (fetched) => {
+          if (isCurrent()) panel.setStatus(`環境内の全アプリを取得中…（${fetched}件）`, "busy");
+        });
+        if (!isCurrent()) return;
+        candidates = apps.map((app) => appCandidate(app, String(app.appId)));
+        resultGuest = guestId;
+        resultIsAll = true;
+        renderResults(candidates);
+        const where = guestId ? `ゲストスペース ${guestId}` : "通常スペース・スペース外";
+        panel.setStatus(
+          candidates.length ? `環境内のアプリ ${candidates.length}件を表示しました（${where}のアプリ）${allTargets.length ? "。「すべて…」でまとめて設定できます" : ""}` : `閲覧できるアプリがありません（${where}）`,
+          candidates.length ? "ok" : "info"
+        );
+      } catch (e) {
+        if (!isCurrent()) return;
+        panel.setStatus(`全アプリの取得エラー: ${e?.message || String(e)}`, "err");
+      } finally {
+        running = false;
+        syncBusyControls();
+        resultBox.setAttribute("aria-busy", "false");
+        if (!isCurrent() && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true" && panel.status.dataset.tone === "busy") {
+          panel.setStatus("取得条件が変わりました。もう一度取得してください", "info");
+        }
+      }
+    }
     searchBtn.addEventListener("click", () => {
       void runSearch();
+    });
+    allBtn.addEventListener("click", () => {
+      void runAll();
     });
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
@@ -3460,19 +4291,58 @@ ${detail}`);
     const appInp = makeInput({ placeholder: "アプリID", value: DEFAULT_APP_ID || "", width: "id" });
     const guestInp = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest" });
     const prevCb = makeCheck({ label: "プレビュー環境を参照", checked: false });
-    cardApp.body.appendChild(makeRow([appInp, guestInp], { label: "アプリ" }));
+    const singleAppRow = makeRow([appInp, guestInp], { label: "アプリ" });
+    cardApp.body.appendChild(singleAppRow);
+    const batchBox = document.createElement("div");
+    batchBox.hidden = true;
+    const batchLabel = document.createElement("div");
+    batchLabel.className = "kus-lp__label";
+    batchLabel.textContent = "まとめて出力する対象";
+    const appTable = makeAppTable({
+      currentAppId: String(DEFAULT_APP_ID || ""),
+      currentGuestId: DEFAULT_GUEST_ID,
+      initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: DEFAULT_GUEST_ID }] : []
+    });
+    const batchSearch = createAppSearchControl(panel, {
+      title: "アプリを検索して対象表に追加（名前・コード・ID）",
+      targets: [{
+        apply: (appId, appName, guestId) => {
+          const result = appTable.putApp(appId, guestId, { appName, focus: true });
+          return { message: `アプリ #${appId}${appName ? ` (${appName})` : ""} を対象表に${result.action === "existing" ? "追加済みです" : "追加しました"}` };
+        },
+        applyAll: (apps, guestId) => {
+          const result = appTable.putApps(apps.map((app) => ({ appId: app.appId, guestId, appName: app.appName })));
+          const parts = [`新規 ${result.added + result.filled}件`, result.existing ? `追加済み ${result.existing}件` : ""].filter(Boolean);
+          return { message: `候補 ${apps.length}件を対象表に追加しました（${parts.join(" / ")}）`, pickedLabel: "追加済み" };
+        }
+      }]
+    });
+    batchBox.append(
+      batchLabel,
+      appTable.element,
+      batchSearch,
+      makeNote("「環境内の全アプリ」で、閲覧できるアプリをまとめて対象表に追加できます。ゲストスペースのアプリは含まれないため、ゲストスペースIDごとに追加してください。「プレビュー環境を参照」はここにも適用されます。", "help")
+    );
+    cardApp.body.appendChild(batchBox);
     cardApp.body.appendChild(makeRow(prevCb.label));
     let notifyConnectionChange = () => {
     };
-    cardApp.body.appendChild(createAppSearchControl(panel, {
+    const singleSearch = createAppSearchControl(panel, {
       guestEl: guestInp,
       targets: [{ apply: (id, _name, guestId) => {
         appInp.value = id;
         guestInp.value = guestId || "";
         notifyConnectionChange();
       } }]
-    }));
+    });
+    cardApp.body.appendChild(singleSearch);
+    const singleEls = [singleAppRow, singleSearch];
+    const showBatchTarget = (batch) => {
+      for (const el of singleEls) el.hidden = batch;
+      batchBox.hidden = !batch;
+    };
     const runBtn = makeButton("フロー図を描画", "run", { icon: "◐" });
+    const batchBtn = makeButton("複数アプリのプロセス図をZIPで保存", "run", { icon: "↓" });
     cardApp.body.appendChild(runBtn);
     panel.body.insertBefore(cardApp.card, panel.status);
     const cardDiag = makeCard({ title: "プロセス図", number: 2, soft: true });
@@ -3665,10 +4535,25 @@ ${text}
     guestInp.setAttribute("aria-label", "ゲストスペースID");
     simSelect.setAttribute("aria-label", "シミュレーションのアクション");
     textEl.setAttribute("aria-label", "プロセス図のMermaidソース");
+    batchBtn.addEventListener("click", () => liteRun(panel, "プロセス図を一括取得中…", async () => {
+      const result = await runProcessBatchZipStandalone(
+        { apps: appTable.getApps(), preview: prevCb.checkbox.checked },
+        // 一部失敗・中止の最終報告（isError）は警告色にする。途中経過は処理中表示
+        (m, e) => panel.setStatus(m, e || /^中止しました/.test(m) ? "warn" : "busy")
+      );
+      const { enabled, disabled, failed, notRun } = result.counts;
+      panel.setResult([
+        `結果 ${result.rows.length}件: プロセス管理あり ${enabled} / 無効 ${disabled} / 取得失敗 ${failed} / 未実行（中止） ${notRun}`,
+        ...formatProcessBatchResultLines(result.rows)
+      ].join("\n"));
+    }));
+    const batchAppLabel = (r) => `#${r.appId}${r.appName ? ` ${r.appName}` : ""}${r.guestId ? `（ゲスト ${r.guestId}）` : ""}`;
     installLiteWorkflow(panel, {
       setup: [cardApp.card],
       results: [cardDiag.card, cardSim.card, sourceFold],
-      beforeRun: () => {
+      resultActions: ["render"],
+      beforeRun: (actionId) => {
+        if (actionId !== "render") return;
         connectionVersion++;
         renderedConnection = "";
         clearSimulationHandlers();
@@ -3688,6 +4573,7 @@ ${text}
         label: "プロセス図を表示",
         description: "状態とアクションの流れを図で表示します。結果画面でシミュレーションもできます。",
         button: runBtn,
+        onSelect: () => showBatchTarget(false),
         validate: () => {
           try {
             validateProcessConnection(appInp.value, guestInp.value);
@@ -3697,6 +4583,24 @@ ${text}
           }
         },
         summary: () => [["対象", connectionSummary(appInp.value.trim(), guestInp.value.trim(), prevCb.checkbox.checked ? "プレビュー" : "本番")], ["操作", "状態遷移図を表示します。レコードや設定は変更しません。"]]
+      }, {
+        id: "batch-zip",
+        label: "複数アプリのプロセス図をZIPで保存",
+        description: "対象表のアプリ（環境内の全アプリも追加できます）のプロセス図を、アプリごとの .mmd と一覧（overview.md）にまとめて ZIP で保存します。SVG は含みません。",
+        button: batchBtn,
+        onSelect: () => showBatchTarget(true),
+        validate: () => validateProcessBatchTargets(appTable.getApps()),
+        summary: () => {
+          const apps = appTable.getApps();
+          return [
+            ["参照環境", prevCb.checkbox.checked ? "プレビュー" : "本番"],
+            ["対象アプリ", `${apps.length}件
+${summarizeList(apps.map(batchAppLabel))}`],
+            ["出力", "アプリごとの .mmd・一覧（overview.md）・manifest.json を ZIP で保存します。"],
+            ["操作", "アプリごとにプロセス管理の設定を読み取ります。レコードや設定は変更しません。取得に失敗したアプリは一覧とログに残します。"],
+            ["中止したとき", "取得済みのアプリだけを保存し、残りは未実行として記録します。"]
+          ];
+        }
       }]
     });
   }

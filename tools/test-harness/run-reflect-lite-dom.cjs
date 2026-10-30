@@ -1047,8 +1047,8 @@ async function main() {
     await tab('反映結果').click();
     assert.equal(await rolloutCard().isVisible(), false, 'まだ反映していないときは「続けて反映」を出さない');
     await tab('対象を選ぶ').click();
-    await rolloutBox().fill(Array.from({ length: 51 }, (_, i) => String(1000 + i)).join('\n'));
-    assert.match(await rolloutStatus().innerText(), /50 件までです（51 件）/, '多すぎる指定を示す');
+    await rolloutBox().fill(Array.from({ length: 1001 }, (_, i) => String(1000 + i)).join('\n'));
+    assert.match(await rolloutStatus().innerText(), /1000 件までです（1001 件）/, '多すぎる指定を示す');
     await rolloutBox().fill('202');
     assert.match(await rolloutStatus().innerText(), /反映先はありません（現在の反映先は除いています）/, '現在の反映先だけのときは次が無いことを示す');
 

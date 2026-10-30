@@ -1436,6 +1436,7 @@ export function makePickList(opts: PickListOptions): PickListHandle {
 
 export interface AppTableRow { appId: string; guestId: string; appName?: string }
 export interface AppTablePutResult { action: 'added' | 'filled' | 'existing' | 'ignored'; index: number }
+export interface AppTableBulkPutResult { added: number; filled: number; existing: number; ignored: number }
 
 export interface AppTableOptions {
   /** 初期行。未指定なら空の 1 行を表示する */
@@ -1464,6 +1465,8 @@ export interface AppTableHandle {
   addRow(appId?: string, guestId?: string, opts?: { focus?: boolean; appName?: string }): void;
   /** 空行を優先してセットし、同じ appId+guestId が既にあれば行を増やさない */
   putApp(appId?: string, guestId?: string, opts?: { focus?: boolean; appName?: string }): AppTablePutResult;
+  /** putApp と同じ規則で複数件をまとめて入れる（変更通知は最後に 1 回だけ） */
+  putApps(list: AppTableRow[]): AppTableBulkPutResult;
   /** 既存行をすべて置き換える（rows が空なら空 1 行） */
   setApps(rows: AppTableRow[]): void;
   /** 全行を空にする（最小行数は残す） */
@@ -1771,6 +1774,40 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     return { action: 'added', index: rows.indexOf(entry) };
   }
 
+  function putApps(list: AppTableRow[]): AppTableBulkPutResult {
+    const result: AppTableBulkPutResult = { added: 0, filled: 0, existing: 0, ignored: 0 };
+    // 数千件でも行ごとに全行を走査しないよう、既存行と空き行を先に索引化する。
+    const keyOf = (appId: string, guestId: string) => `${appId}::${guestId}`;
+    const existingByKey = new Map<string, AppTableRowEntry>();
+    for (const r of rows) {
+      const id = r.app.value.trim();
+      const key = keyOf(id, r.guest.value.trim());
+      if (id && !existingByKey.has(key)) existingByKey.set(key, r);
+    }
+    const empties = rows.filter((r) => !r.app.value.trim());
+    let changed = false;
+    for (const item of Array.isArray(list) ? list : []) {
+      const id = String(item?.appId || '').trim();
+      if (!id) { result.ignored += 1; continue; }
+      const guest = String(item?.guestId || '').trim();
+      const appName = String(item?.appName || '').trim();
+      const existing = existingByKey.get(keyOf(id, guest));
+      if (existing) {
+        if (appName && existing.appName !== appName) { setAppName(existing, appName); changed = true; }
+        result.existing += 1;
+        continue;
+      }
+      const empty = empties.shift();
+      const entry = empty || insertRow(rows.length, id, guest, false, appName);
+      if (empty) setRowValues(empty, id, guest, appName);
+      existingByKey.set(keyOf(id, guest), entry);
+      if (empty) result.filled += 1; else result.added += 1;
+      changed = true;
+    }
+    if (changed) emitChange();
+    return result;
+  }
+
   function setApps(list: AppTableRow[]) {
     rows.splice(0).forEach((r) => r.tr.remove());
     tbody.innerHTML = '';
@@ -1802,6 +1839,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     },
     addRow: (appId = '', guestId = '', o = {}) => { insertRow(rows.length, appId, guestId, !!o.focus, String(o.appName || '').trim()); emitChange(); },
     putApp,
+    putApps,
     setApps,
     clear: () => setApps([]),
     count: () => getApps().length

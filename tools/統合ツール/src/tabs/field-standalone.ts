@@ -1,10 +1,10 @@
 'use strict';
 
 import { SYSTEM_FIELD_TYPES } from '../constants.js';
-import { deepClone, kusConfirm } from '../utils.js';
-import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision } from '../api.js';
-import { isRunCancelledError } from '../runControl.js';
-import { createCancelReport } from './run-cancel-summary.js';
+import { deepClone, kusConfirm, summarizeList } from '../utils.js';
+import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, isRevisionConflictError, pickRevision } from '../api.js';
+import { isCancelRequested, isRunCancelledError } from '../runControl.js';
+import { createCancelReport, isCancelReportError, isCancelStop } from './run-cancel-summary.js';
 
 /** アプリID・ゲストIDは数値のみ。URL パスに組み込まれるため、空でも数値でもない値は呼び出し前に止める。 */
 function assertNumericIds(appId: unknown, guestId: unknown, appLabel: string) {
@@ -322,45 +322,58 @@ function attachLogsToError(err: unknown, logs: string[]): Error {
   return wrapped;
 }
 
-/**
- * フィールド定義 JSON を反映先プレビューへ追加・更新する。
- * - GET で得た revision を POST/PUT に添え、競合時は上書きせず利用者へ通知する
- * - 反映前に対象アプリと件数を最終確認する（opts.skipConfirm で省略可）
- */
-export async function runFieldApplyStandalone(opts, setStatus) {
-  const { targetAppId, targetGuestId, fieldJson, lookupMapJson, overwrite } = opts;
-  const tgtApp = validateNumericId(targetAppId, '反映先アプリID', true);
-  const tgtGuest = validateNumericId(targetGuestId, '反映先ゲストスペースID', false);
-  const incoming = parseFieldJsonInput(fieldJson);
-  const lookupMap = parseLookupMapInput(lookupMapJson);
+interface FieldTargetInspection {
+  prefix: string;
+  current: any;
+  plan: FieldApplyPlan;
+  addCount: number;
+  updateCount: number;
+  skipCount: number;
+  /** 反映後にフィールドコードが重複する組み合わせ（空なら問題なし） */
+  conflicts: string[];
+  /** GET で得た revision（無ければ空文字） */
+  revision: string;
+}
 
+/** 反映先プレビューのフィールド設定と revision を取得し、反映計画を作る（書き込みはしない）。 */
+async function inspectFieldTarget(
+  tgtApp: string,
+  tgtGuest: string,
+  incoming: Record<string, any>,
+  lookupMap: Record<string, string>,
+  overwrite: boolean
+): Promise<FieldTargetInspection> {
   const prefix = buildApiPrefix(tgtGuest, true);
-  setStatus('反映先のフィールド設定を取得中...');
   const current = await apiGet(prefix, '/app/form/fields.json', { app: tgtApp });
-  const plan = planFieldApply(incoming, current.properties || ({} as any), lookupMap, !!overwrite);
-  const logs = [...plan.logs];
+  const plan = planFieldApply(incoming, current.properties || ({} as any), lookupMap, overwrite);
+  return {
+    prefix,
+    current,
+    plan,
+    addCount: Object.keys(plan.adds).length,
+    updateCount: Object.keys(plan.updates).length,
+    skipCount: plan.skippedSystem.length + plan.skippedExisting.length,
+    conflicts: findFieldCodeConflicts(plan, current.properties || ({} as any)),
+    revision: pickRevision(current)
+  };
+}
+
+const FIELD_CODE_CONFLICT_MESSAGE = (conflicts: string[]) =>
+  `反映後のフィールドコードが既存のフィールドと重複するため、何も反映せずに中止しました: ${conflicts.join('、')}`;
+const FIELD_REVISION_MISSING_MESSAGE = '反映先のフィールド設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください';
+
+/**
+ * 計画の追加（POST）→更新（PUT）を、事前に取得した revision を添えて順に送る。
+ * 競合・中止・失敗は logs に記録したうえで例外にして呼び出し元へ返す（部分成功を隠さない）。
+ */
+async function writeFieldPlan(
+  ctx: { prefix: string; tgtApp: string; plan: FieldApplyPlan; revision: string; logs: string[] },
+  setStatus: (message: string, isError?: boolean) => void
+): Promise<void> {
+  const { prefix, tgtApp, plan, logs } = ctx;
+  let revision = ctx.revision;
   const addCount = Object.keys(plan.adds).length;
   const updateCount = Object.keys(plan.updates).length;
-
-  if (!addCount && !updateCount) {
-    setStatus(`追加・更新対象がありません（スキップ ${plan.skippedSystem.length + plan.skippedExisting.length}件）`, true);
-    logs.push('反映対象なし');
-    return logs;
-  }
-  const conflicts = findFieldCodeConflicts(plan, current.properties || ({} as any));
-  if (conflicts.length) {
-    throw new Error(`反映後のフィールドコードが既存のフィールドと重複するため、何も反映せずに中止しました: ${conflicts.join('、')}`);
-  }
-  let revision = pickRevision(current);
-  if (!/^\d+$/.test(revision)) {
-    throw new Error('反映先のフィールド設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください');
-  }
-  if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(tgtApp, tgtGuest, plan))) {
-    setStatus('フィールド反映をキャンセルしました');
-    logs.push('キャンセル');
-    return logs;
-  }
-
   const withRevision = (body: Record<string, unknown>) => (revision ? { ...body, revision } : body);
   if (addCount) {
     setStatus(`フィールド追加中... (${addCount}件)`);
@@ -411,9 +424,327 @@ export async function runFieldApplyStandalone(opts, setStatus) {
       throw logs.some((l) => l.startsWith('OK ')) ? attachLogsToError(failure, logs) : failure;
     }
   }
+}
 
-  setStatus(`フィールド反映完了: 追加 ${addCount} / 更新 ${updateCount} / スキップ ${plan.skippedSystem.length + plan.skippedExisting.length}`);
+/**
+ * フィールド定義 JSON を反映先プレビューへ追加・更新する。
+ * - GET で得た revision を POST/PUT に添え、競合時は上書きせず利用者へ通知する
+ * - 反映前に対象アプリと件数を最終確認する（opts.skipConfirm で省略可）
+ */
+export async function runFieldApplyStandalone(opts, setStatus) {
+  const { targetAppId, targetGuestId, fieldJson, lookupMapJson, overwrite } = opts;
+  const tgtApp = validateNumericId(targetAppId, '反映先アプリID', true);
+  const tgtGuest = validateNumericId(targetGuestId, '反映先ゲストスペースID', false);
+  const incoming = parseFieldJsonInput(fieldJson);
+  const lookupMap = parseLookupMapInput(lookupMapJson);
+
+  setStatus('反映先のフィールド設定を取得中...');
+  const { prefix, plan, addCount, updateCount, skipCount, conflicts, revision } = await inspectFieldTarget(tgtApp, tgtGuest, incoming, lookupMap, !!overwrite);
+  const logs = [...plan.logs];
+
+  if (!addCount && !updateCount) {
+    setStatus(`追加・更新対象がありません（スキップ ${skipCount}件）`, true);
+    logs.push('反映対象なし');
+    return logs;
+  }
+  if (conflicts.length) throw new Error(FIELD_CODE_CONFLICT_MESSAGE(conflicts));
+  if (!/^\d+$/.test(revision)) throw new Error(FIELD_REVISION_MISSING_MESSAGE);
+  if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(tgtApp, tgtGuest, plan))) {
+    setStatus('フィールド反映をキャンセルしました');
+    logs.push('キャンセル');
+    return logs;
+  }
+
+  await writeFieldPlan({ prefix, tgtApp, plan, revision, logs }, setStatus);
+
+  setStatus(`フィールド反映完了: 追加 ${addCount} / 更新 ${updateCount} / スキップ ${skipCount}`);
   return logs;
+}
+
+// ---------------------------------------------------------------------------
+// 複数の反映先（環境内の全アプリを含む）へまとめて反映
+// ---------------------------------------------------------------------------
+
+/** まとめて反映する反映先 1 件（アプリごとにゲストスペースを変えられる）。 */
+export interface FieldMultiTarget {
+  appId: string;
+  guestId?: string;
+  appName?: string;
+}
+
+export type FieldMultiStatus = 'success' | 'unchanged' | 'failed' | 'conflict' | 'not-run';
+
+export const FIELD_MULTI_STATUS_LABEL: Record<FieldMultiStatus, string> = {
+  success: '成功',
+  unchanged: 'スキップ（変更なし）',
+  failed: '失敗',
+  conflict: '競合',
+  'not-run': '未実行（中止）'
+};
+
+export interface FieldMultiTargetResult {
+  appId: string;
+  guestId: string;
+  appName: string;
+  status: FieldMultiStatus;
+  /** 事前確認の計画件数（失敗した事前確認では 0） */
+  add: number;
+  update: number;
+  skip: number;
+  /** 事前確認で止まったか、反映中に止まったか */
+  phase: 'precheck' | 'apply';
+  /** 利用者向けの説明（失敗理由・競合・中止時に反映済みだった内容など） */
+  message: string;
+}
+
+export interface FieldMultiApplyReport {
+  results: FieldMultiTargetResult[];
+  counts: Record<FieldMultiStatus, number>;
+  totals: { add: number; update: number; skip: number };
+  /** 最終確認で「いいえ」を選んだ（何も書き込んでいない） */
+  declined: boolean;
+  /** 反映中に中止された */
+  cancelled: boolean;
+  /** ステータス欄に出す 1 行 */
+  headline: string;
+  tone: 'ok' | 'warn' | 'err' | 'info';
+  /** 結果欄に出す、対象ごとの行 */
+  lines: string[];
+}
+
+interface NormalizedFieldMultiTarget { appId: string; guestId: string; appName: string }
+
+function fieldMultiLabel(t: { appId: string; guestId: string; appName: string }): string {
+  return `App ${t.appId}${t.appName ? `「${t.appName}」` : ''}${t.guestId ? `（ゲストスペース ${t.guestId}）` : ''}`;
+}
+
+/** 数値でない ID は例外で止める。同じアプリ・ゲストスペースの重複は 1 件にまとめる。 */
+function normalizeFieldMultiTargets(targets: unknown): NormalizedFieldMultiTarget[] {
+  const list = Array.isArray(targets) ? targets : [];
+  const seen = new Set<string>();
+  const out: NormalizedFieldMultiTarget[] = [];
+  list.forEach((raw: any, index) => {
+    const appId = String(raw?.appId ?? '').trim();
+    const guestId = String(raw?.guestId ?? '').trim();
+    if (!appId && !guestId) return;
+    const label = `まとめて反映する反映先の${index + 1}件目の`;
+    const app = validateNumericId(appId, `${label}アプリID`, true);
+    const guest = validateNumericId(guestId, `${label}ゲストスペースID`, false);
+    const key = `${app}::${guest}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ appId: app, guestId: guest, appName: String(raw?.appName ?? '').trim() });
+  });
+  if (!out.length) throw new Error('まとめて反映する反映先を 1 件以上指定してください');
+  return out;
+}
+
+/**
+ * まとめて反映する前の入力検査。実行時に失敗する入力を確認画面へ進む前に利用者へ示す純粋関数。
+ * 問題が無ければ空文字を返す。
+ */
+export function findFieldMultiApplyProblem(input: { targets: FieldMultiTarget[]; fieldJson: string; lookupMapJson: string }): string {
+  try {
+    normalizeFieldMultiTargets(input.targets);
+    parseFieldJsonInput(input.fieldJson);
+    parseLookupMapInput(input.lookupMapJson);
+  } catch (e: any) {
+    return String(e?.message || e);
+  }
+  return '';
+}
+
+function singleLineMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String((error as any)?.message ?? error ?? 'エラーが発生しました');
+  // 内部ログの「NG …」行は説明の重複になるので除き、反映済みの内訳（OK …）は残す
+  return message.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('NG ')).join(' / ');
+}
+
+function countByStatus(results: FieldMultiTargetResult[]): Record<FieldMultiStatus, number> {
+  const counts: Record<FieldMultiStatus, number> = { success: 0, unchanged: 0, failed: 0, conflict: 0, 'not-run': 0 };
+  for (const r of results) counts[r.status] += 1;
+  return counts;
+}
+
+function describePlanCounts(r: { add: number; update: number; skip: number }): string {
+  return `追加 ${r.add} / 更新 ${r.update} / スキップ ${r.skip}`;
+}
+
+/** 事前確認の結果から、最終確認ダイアログに出す文面を作る。事前確認に失敗したアプリを先頭に示す。 */
+export function buildFieldMultiConfirmText(prechecks: FieldMultiTargetResult[]): string {
+  const ready = prechecks.filter((r) => r.status === 'success');
+  const failed = prechecks.filter((r) => r.status === 'failed' || r.status === 'conflict');
+  const unchanged = prechecks.filter((r) => r.status === 'unchanged');
+  const sum = (key: 'add' | 'update' | 'skip') => ready.reduce((n, r) => n + r[key], 0);
+  const lines = [
+    ...failed.map((r) => `× ${fieldMultiLabel(r)}: 事前確認に失敗（${r.message}）`),
+    ...ready.map((r) => `○ ${fieldMultiLabel(r)}: ${describePlanCounts(r)}`),
+    ...unchanged.map((r) => `－ ${fieldMultiLabel(r)}: 変更なし（スキップ ${r.skip}）`)
+  ];
+  return [
+    `${prechecks.length} 件の反映先のプレビューへフィールドを反映します。`,
+    `反映する ${ready.length}件 / 変更なし ${unchanged.length}件 / 事前確認に失敗 ${failed.length}件（失敗したアプリには反映しません）`,
+    `合計: 追加 ${sum('add')}件 / 更新 ${sum('update')}件 / スキップ ${sum('skip')}件`,
+    '削除 0件（このツールはフィールドを削除しません）',
+    '',
+    summarizeList(lines),
+    '',
+    '中止すると、まだ反映していないアプリは「未実行」になります（反映済みの分は取り消しません）。',
+    '本番は変わりません（公開は kintone の設定画面で行います）。実行しますか？'
+  ].join('\n');
+}
+
+function finishFieldMultiReport(results: FieldMultiTargetResult[], flags: { declined: boolean; cancelled: boolean }): FieldMultiApplyReport {
+  const counts = countByStatus(results);
+  const totals = results.filter((r) => r.status === 'success').reduce(
+    (acc, r) => ({ add: acc.add + r.add, update: acc.update + r.update, skip: acc.skip + r.skip }),
+    { add: 0, update: 0, skip: 0 }
+  );
+  const lines = results.map((r) => {
+    const detail = r.status === 'success' ? describePlanCounts(r) : r.status === 'unchanged' ? `スキップ ${r.skip}` : '';
+    return `[${FIELD_MULTI_STATUS_LABEL[r.status]}] ${fieldMultiLabel(r)}${detail ? `: ${detail}` : ''}${r.message ? `${detail ? ' / ' : ': '}${r.message}` : ''}`;
+  });
+  const problems = results.filter((r) => r.status === 'failed' || r.status === 'conflict');
+  const parts: string[] = [];
+  if (counts.unchanged) parts.push(`変更なし ${counts.unchanged} 件`);
+  if (counts.conflict) parts.push(`競合 ${counts.conflict} 件`);
+  if (counts.failed) parts.push(`失敗 ${counts.failed} 件`);
+  if (counts['not-run']) parts.push(`未実行（中止） ${counts['not-run']} 件`);
+  const firstProblem = problems[0] ? `（${fieldMultiLabel(problems[0])}: ${problems[0].message}${problems.length > 1 ? ` ほか${problems.length - 1}件` : ''}）` : '';
+  const total = results.length;
+  let headline: string;
+  let tone: FieldMultiApplyReport['tone'];
+  if (flags.declined) {
+    headline = `フィールド反映をキャンセルしました（何も書き込んでいません。${total} 件の反映先のうち ${counts.failed + counts.conflict} 件は事前確認に失敗）`;
+    tone = 'info';
+  } else if (flags.cancelled) {
+    const done = counts.success + counts.unchanged + counts.failed + counts.conflict;
+    headline = `中止しました（${done}/${total} 件を処理、残り ${counts['not-run']} 件は未実行）。成功 ${counts.success} 件${parts.filter((p) => !p.startsWith('未実行')).length ? `、${parts.filter((p) => !p.startsWith('未実行')).join('、')}` : ''}。反映済みの分は取り消していません${firstProblem}`;
+    tone = 'warn';
+  } else if (!counts.success && !problems.length && !counts['not-run']) {
+    headline = `反映する変更がありませんでした（${total} 件すべて変更なし）`;
+    tone = 'info';
+  } else if (!counts.success && problems.length) {
+    headline = `${total} 件のうち反映できたアプリはありません。${parts.join('、')}${firstProblem}`;
+    tone = 'err';
+  } else {
+    headline = `${total} 件中 ${counts.success} 件を反映しました（追加 ${totals.add} / 更新 ${totals.update}）${parts.length ? `。${parts.join('、')}` : ''}${firstProblem}`;
+    tone = problems.length || counts['not-run'] ? 'warn' : 'ok';
+  }
+  return { results, counts, totals, declined: flags.declined, cancelled: flags.cancelled, headline, tone, lines };
+}
+
+/**
+ * 同じフィールド定義 JSON を、複数の反映先プレビューへ順に反映する。
+ * 1. 全対象の現在の設定と revision を取得して反映計画を作る（失敗した対象は失敗として残す）
+ * 2. 最終確認は 1 回だけ（対象数・合計・事前確認の失敗・アプリごとの内訳）
+ * 3. 事前確認の revision を添えて 1 件ずつ反映する。競合・失敗した対象があっても次へ進む
+ * 4. 中止すると以降の対象は「未実行（中止）」にして止める。本番へは公開しない
+ */
+export async function runFieldApplyMultiStandalone(
+  opts: {
+    targets: FieldMultiTarget[];
+    fieldJson: string;
+    lookupMapJson: string;
+    overwrite?: boolean;
+    skipConfirm?: boolean;
+  },
+  setStatus: (message: string, isError?: boolean) => void
+): Promise<FieldMultiApplyReport> {
+  const targets = normalizeFieldMultiTargets(opts.targets);
+  const incoming = parseFieldJsonInput(opts.fieldJson);
+  const lookupMap = parseLookupMapInput(opts.lookupMapJson);
+  const overwrite = !!opts.overwrite;
+  const total = targets.length;
+
+  type Ready = { target: NormalizedFieldMultiTarget; inspection: FieldTargetInspection; entry: FieldMultiTargetResult };
+  const results: FieldMultiTargetResult[] = [];
+  const ready: Ready[] = [];
+  const baseResult = (t: NormalizedFieldMultiTarget) => ({ appId: t.appId, guestId: t.guestId, appName: t.appName });
+
+  // ---- 1. 事前確認（書き込みなし）。中止はここで止める（まだ何も書いていない） ----
+  for (let i = 0; i < targets.length; i++) {
+    const target = targets[i];
+    setStatus(`反映先の現在の設定を確認中... (${i + 1}/${total}) ${fieldMultiLabel(target)}`);
+    try {
+      const inspection = await inspectFieldTarget(target.appId, target.guestId, incoming, lookupMap, overwrite);
+      const counts = { add: inspection.addCount, update: inspection.updateCount, skip: inspection.skipCount };
+      if (!inspection.addCount && !inspection.updateCount) {
+        results.push({ ...baseResult(target), ...counts, status: 'unchanged', phase: 'precheck', message: '' });
+      } else if (inspection.conflicts.length) {
+        results.push({ ...baseResult(target), add: 0, update: 0, skip: inspection.skipCount, status: 'failed', phase: 'precheck', message: FIELD_CODE_CONFLICT_MESSAGE(inspection.conflicts) });
+      } else if (!/^\d+$/.test(inspection.revision)) {
+        results.push({ ...baseResult(target), add: 0, update: 0, skip: inspection.skipCount, status: 'failed', phase: 'precheck', message: FIELD_REVISION_MISSING_MESSAGE });
+      } else {
+        const entry: FieldMultiTargetResult = { ...baseResult(target), ...counts, status: 'success', phase: 'precheck', message: '' };
+        results.push(entry);
+        // 書き込みに使うのは計画と revision だけ。全アプリを対象にしても各アプリのフィールド設定全体を持ち続けない。
+        ready.push({ target, inspection: { ...inspection, current: null }, entry });
+      }
+    } catch (e) {
+      if (isRunCancelledError(e)) throw e;
+      results.push({ ...baseResult(target), add: 0, update: 0, skip: 0, status: 'failed', phase: 'precheck', message: singleLineMessage(e) });
+    }
+  }
+
+  const prechecks = results.map((r) => ({ ...r }));
+  if (!ready.length) {
+    const report = finishFieldMultiReport(results, { declined: false, cancelled: false });
+    setStatus(report.headline, report.tone === 'err');
+    return report;
+  }
+
+  // ---- 2. 最終確認（1 回だけ）。「いいえ」なら何も書き込まない ----
+  if (!opts.skipConfirm && !kusConfirm(buildFieldMultiConfirmText(prechecks))) {
+    const declined = results.map((r) => (r.status === 'success'
+      ? { ...r, status: 'not-run' as const, message: '最終確認でキャンセルしたため反映していません' }
+      : r));
+    const report = finishFieldMultiReport(declined, { declined: true, cancelled: false });
+    setStatus(report.headline);
+    return report;
+  }
+
+  // ---- 3. 1 件ずつ反映（プレビューのみ）。事前確認の revision を添えて競合を検出する ----
+  let cancelled = false;
+  let doneCount = 0;
+  const markNotRun = (entry: FieldMultiTargetResult, message: string) => {
+    entry.status = 'not-run';
+    entry.message = message;
+  };
+  for (const { target, inspection, entry } of ready) {
+    if (cancelled || isCancelRequested()) {
+      cancelled = true;
+      markNotRun(entry, '中止したため反映していません');
+      continue;
+    }
+    setStatus(`フィールドを反映中... (${doneCount + 1}/${ready.length}) ${fieldMultiLabel(target)}`);
+    const logs: string[] = [];
+    try {
+      await writeFieldPlan({ prefix: inspection.prefix, tgtApp: target.appId, plan: inspection.plan, revision: inspection.revision, logs }, () => undefined);
+      entry.status = 'success';
+    } catch (e: any) {
+      if (isCancelStop(e)) {
+        cancelled = true;
+        const applied = isCancelReportError(e) ? e.done : 0;
+        markNotRun(entry, applied
+          ? `追加 ${applied}件は反映済みですが、残りは中止したため反映していません`
+          : '中止したため反映していません');
+      } else if (e?.revisionConflict || isRevisionConflictError(e)) {
+        entry.status = 'conflict';
+        entry.message = `取得後に別の更新が入ったため上書きせず中止しました（revision 競合）${logs.some((l) => l.startsWith('OK ')) ? `。${logs.filter((l) => l.startsWith('OK ')).join('、')}` : ''}`;
+      } else {
+        entry.status = 'failed';
+        entry.phase = 'apply';
+        entry.message = singleLineMessage(e);
+      }
+      entry.phase = 'apply';
+    }
+    doneCount++;
+  }
+
+  const report = finishFieldMultiReport(results, { declined: false, cancelled });
+  setStatus(report.headline, report.tone === 'err');
+  return report;
 }
 
 export async function runLoadFieldsStandalone(opts, setStatus) {

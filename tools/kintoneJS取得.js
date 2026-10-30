@@ -612,6 +612,11 @@
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
+  function summarizeList(lines, limit = SUMMARY_LIST_LIMIT) {
+    const items = lines.filter(Boolean);
+    if (items.length <= limit) return items.join("\n");
+    return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join("\n");
+  }
   function normalize(v) {
     if (Array.isArray(v)) return v.map(normalize);
     if (v && typeof v === "object") {
@@ -732,10 +737,12 @@ ${contextLine}`);
     }
     return legacyCopy(text);
   }
+  var SUMMARY_LIST_LIMIT;
   var init_utils = __esm({
     "src/utils.ts"() {
       "use strict";
       init_constants();
+      SUMMARY_LIST_LIMIT = 20;
     }
   });
 
@@ -1076,7 +1083,22 @@ ${base}`
     if (value == null || value === "") return "";
     return String(value);
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_DOWNLOAD_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
+  async function fetchAllApps(guestId, onProgress) {
+    const prefix = buildApiPrefix(guestId, false);
+    const byId = /* @__PURE__ */ new Map();
+    for (let offset = 0; ; offset += APPS_PAGE_LIMIT) {
+      const resp = await apiGet(prefix, "/apps.json", { limit: APPS_PAGE_LIMIT, offset });
+      if (!Array.isArray(resp?.apps)) throw new Error("アプリ一覧の応答が不正です。もう一度取得してください");
+      for (const app of resp.apps) {
+        const appId = String(app?.appId || "").trim();
+        if (/^\d+$/.test(appId) && !byId.has(appId)) byId.set(appId, app);
+      }
+      onProgress?.(byId.size);
+      if (resp.apps.length < APPS_PAGE_LIMIT) break;
+    }
+    return [...byId.entries()].sort(([a], [b]) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0).map(([, app]) => app);
+  }
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_DOWNLOAD_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, APPS_PAGE_LIMIT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1113,6 +1135,7 @@ ${base}`
       REVISION_CONFLICT_CODES = /* @__PURE__ */ new Set(["GAIA_CO02"]);
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
       FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
+      APPS_PAGE_LIMIT = 100;
     }
   });
 
@@ -2447,6 +2470,346 @@ ${base}`
     d.appendChild(b);
     return { details: d, body: b };
   }
+  function makeAppTable(opts = {}) {
+    const minRows = Math.max(1, opts.minRows ?? 1);
+    const wrap = document.createElement("div");
+    wrap.className = "kus-lp__apptable";
+    const tableScroll = document.createElement("div");
+    tableScroll.className = "kus-lp__apptable-scroll";
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    thead.innerHTML = '<tr><th class="kus-lp__apptable-no" scope="col">#</th><th scope="col">アプリID</th><th scope="col">ゲストID</th><th class="kus-lp__apptable-acts-h" scope="col">操作</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    table.appendChild(tbody);
+    tableScroll.appendChild(table);
+    wrap.appendChild(tableScroll);
+    const foot = document.createElement("div");
+    foot.className = "kus-lp__apptable-foot";
+    const addBtn = makeButton("＋ 行を追加", "sub");
+    foot.appendChild(addBtn);
+    if (opts.currentAppId && /^\d+$/.test(String(opts.currentAppId).trim())) {
+      const curBtn = makeButton("現在のアプリ", "sub");
+      curBtn.title = "今開いているアプリのIDを空き行に入れます";
+      curBtn.addEventListener("click", () => {
+        const id = String(opts.currentAppId).trim();
+        const guest = String(
+          opts.currentGuestId ?? (typeof location !== "undefined" ? extractGuestIdFromInput(location.pathname || "") : "")
+        ).trim();
+        if (rows.some((r) => r.app.value.trim() === id && r.guest.value.trim() === guest)) return;
+        const empty = rows.find((r) => !r.app.value.trim());
+        if (empty) {
+          empty.app.value = id;
+          empty.guest.value = guest;
+          setAppName(empty, "");
+          empty.app.focus();
+        } else {
+          insertRow(rows.length, id, guest, true);
+        }
+        emitChange();
+      });
+      foot.appendChild(curBtn);
+    }
+    const count = document.createElement("span");
+    count.className = "kus-lp__apptable-count";
+    foot.appendChild(count);
+    wrap.appendChild(foot);
+    const hint = document.createElement("div");
+    hint.className = "kus-lp__apptable-hint";
+    hint.textContent = "アプリIDは「100, 120, 130」のようにカンマ区切りでまとめて入力・貼り付けすると自動で行に分割されます。アプリURLの貼り付けにも対応しています。";
+    wrap.appendChild(hint);
+    const rows = [];
+    function getApps() {
+      const seen = /* @__PURE__ */ new Set();
+      const out = [];
+      for (const r of rows) {
+        const appId = r.app.value.trim();
+        if (!appId) continue;
+        const guestId = r.guest.value.trim();
+        const key = `${appId}::${guestId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const row = { appId, guestId };
+        if (r.appName) row.appName = r.appName;
+        out.push(row);
+      }
+      return out;
+    }
+    function getAllRows() {
+      return rows.map((r) => {
+        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        if (r.appName) row.appName = r.appName;
+        return row;
+      });
+    }
+    function setAppName(entry, appName) {
+      entry.appName = String(appName || "").trim();
+      entry.name.textContent = entry.appName;
+      entry.name.title = entry.appName ? `アプリ名: ${entry.appName}` : "";
+      entry.name.classList.toggle("kus-lp__apptable-name--empty", !entry.appName);
+    }
+    function setRowValues(entry, appId, guestId, appName) {
+      entry.app.value = appId;
+      entry.guest.value = guestId;
+      setAppName(entry, appName);
+    }
+    function refresh() {
+      rows.forEach((r, i) => {
+        const no = r.tr.querySelector(".kus-lp__apptable-no");
+        if (no) no.textContent = String(i + 1);
+        r.copyBtn.disabled = i === 0;
+      });
+      const n = getApps().length;
+      count.textContent = n ? `${n} アプリ` : "未入力";
+    }
+    function emitChange() {
+      refresh();
+      opts.onChange?.(getApps());
+    }
+    function parseAppToken(token, fallbackGuest) {
+      const trimmed = token.trim();
+      if (!trimmed || /^\d+$/.test(trimmed)) return { appId: trimmed, guestId: fallbackGuest };
+      const extractedApp = extractAppIdFromInput(trimmed);
+      if (!extractedApp) return { appId: trimmed, guestId: fallbackGuest };
+      const extractedGuest = extractGuestIdFromInput(trimmed);
+      const guestId = extractedGuest || (/\/k\/\d+(?:[/?#]|$)/i.test(trimmed) ? "" : fallbackGuest);
+      return { appId: extractedApp, guestId };
+    }
+    function distributeAppTokens(entry) {
+      const raw = entry.app.value;
+      const guestVal = entry.guest.value.trim();
+      if (!/[,、\s]/.test(raw)) {
+        const parsed = parseAppToken(raw, guestVal);
+        if (parsed.appId !== raw || parsed.guestId !== guestVal) {
+          entry.app.value = parsed.appId;
+          entry.guest.value = parsed.guestId;
+          setAppName(entry, "");
+          return true;
+        }
+        return false;
+      }
+      const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+      if (tokens.length <= 1) {
+        const parsed = parseAppToken(tokens[0] || "", guestVal);
+        if (entry.app.value !== parsed.appId || entry.guest.value.trim() !== parsed.guestId) {
+          entry.app.value = parsed.appId;
+          entry.guest.value = parsed.guestId;
+          setAppName(entry, "");
+          return true;
+        }
+        return false;
+      }
+      const first = parseAppToken(tokens[0], guestVal);
+      entry.app.value = first.appId;
+      entry.guest.value = first.guestId;
+      setAppName(entry, "");
+      const start = rows.indexOf(entry);
+      let last = entry;
+      for (let k = 1; k < tokens.length; k += 1) {
+        const next = parseAppToken(tokens[k], guestVal);
+        last = insertRow(start + k, next.appId, next.guestId, false);
+      }
+      try {
+        last.app.focus();
+      } catch {
+      }
+      return true;
+    }
+    function removeRow(entry) {
+      if (rows.length <= minRows) {
+        entry.app.value = "";
+        entry.guest.value = "";
+        setAppName(entry, "");
+        emitChange();
+        return;
+      }
+      const idx = rows.indexOf(entry);
+      if (idx >= 0) rows.splice(idx, 1);
+      entry.tr.remove();
+      emitChange();
+    }
+    function insertRow(index, appId = "", guestId = "", focus = false, appName = "") {
+      const tr = document.createElement("tr");
+      const tdNo = document.createElement("td");
+      tdNo.className = "kus-lp__apptable-no";
+      const tdApp = document.createElement("td");
+      const tdGuest = document.createElement("td");
+      const tdAct = document.createElement("td");
+      tdAct.className = "kus-lp__apptable-acts";
+      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID（カンマ区切りで複数可）", ariaLabel: "アプリID" });
+      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストID" });
+      app.value = appId;
+      guest.value = guestId;
+      const name = document.createElement("div");
+      name.className = "kus-lp__apptable-name";
+      const copyBtn = makeButton("↑コピー", "sub");
+      copyBtn.title = "上の行のアプリID・ゲストIDをこの行へコピー";
+      const dupBtn = makeButton("複製", "sub");
+      dupBtn.title = "この行を下に複製";
+      const delBtn = makeButton("×", "ghost");
+      delBtn.title = "この行を削除";
+      tdApp.appendChild(app);
+      tdApp.appendChild(name);
+      tdGuest.appendChild(guest);
+      tdAct.appendChild(copyBtn);
+      tdAct.appendChild(dupBtn);
+      tdAct.appendChild(delBtn);
+      tr.appendChild(tdNo);
+      tr.appendChild(tdApp);
+      tr.appendChild(tdGuest);
+      tr.appendChild(tdAct);
+      const entry = { tr, app, guest, name, appName: "", copyBtn };
+      setAppName(entry, appName);
+      copyBtn.addEventListener("click", () => {
+        const idx = rows.indexOf(entry);
+        if (idx <= 0) return;
+        const prev = rows[idx - 1];
+        app.value = prev.app.value;
+        guest.value = prev.guest.value;
+        setAppName(entry, prev.appName);
+        app.focus();
+        emitChange();
+      });
+      dupBtn.addEventListener("click", () => {
+        const idx = rows.indexOf(entry);
+        const ne = insertRow(idx + 1, app.value.trim(), guest.value.trim(), true, entry.appName);
+        ne.app.focus();
+        emitChange();
+      });
+      delBtn.addEventListener("click", () => removeRow(entry));
+      app.addEventListener("input", () => {
+        if (entry.appName) setAppName(entry, "");
+        emitChange();
+      });
+      guest.addEventListener("input", emitChange);
+      app.addEventListener("change", () => {
+        if (distributeAppTokens(entry)) emitChange();
+      });
+      app.addEventListener("paste", (ev) => {
+        const text = ev.clipboardData?.getData("text") || "";
+        const hasUrl = Boolean(extractAppIdFromInput(text.trim())) && !/^\d+$/.test(text.trim());
+        if (!/[,、\s]/.test(text) && !hasUrl) return;
+        ev.preventDefault();
+        const start = app.selectionStart ?? app.value.length;
+        const end = app.selectionEnd ?? start;
+        const combined = app.value.slice(0, start) + text + app.value.slice(end);
+        app.value = combined;
+        if (distributeAppTokens(entry)) emitChange();
+      });
+      const at = Math.min(Math.max(index, 0), rows.length);
+      if (at >= rows.length) tbody.appendChild(tr);
+      else tbody.insertBefore(tr, rows[at].tr);
+      rows.splice(at, 0, entry);
+      if (focus) app.focus();
+      return entry;
+    }
+    addBtn.addEventListener("click", () => {
+      const e = insertRow(rows.length, "", "", true);
+      e.app.focus();
+      emitChange();
+    });
+    function putApp(appId = "", guestId = "", o = {}) {
+      const id = String(appId || "").trim();
+      if (!id) return { action: "ignored", index: -1 };
+      const guest = String(guestId || "").trim();
+      const appName = String(o.appName || "").trim();
+      const empty = rows.find((r) => !r.app.value.trim());
+      const targetGuest = guest;
+      const existing = rows.find((r) => r.app.value.trim() === id && r.guest.value.trim() === targetGuest);
+      if (existing) {
+        if (appName && existing.appName !== appName) {
+          setAppName(existing, appName);
+          emitChange();
+        }
+        if (o.focus) existing.app.focus();
+        return { action: "existing", index: rows.indexOf(existing) };
+      }
+      if (empty) {
+        setRowValues(empty, id, targetGuest, appName);
+        if (o.focus) empty.app.focus();
+        emitChange();
+        return { action: "filled", index: rows.indexOf(empty) };
+      }
+      const entry = insertRow(rows.length, id, guest, !!o.focus, appName);
+      emitChange();
+      return { action: "added", index: rows.indexOf(entry) };
+    }
+    function putApps(list) {
+      const result = { added: 0, filled: 0, existing: 0, ignored: 0 };
+      const keyOf = (appId, guestId) => `${appId}::${guestId}`;
+      const existingByKey = /* @__PURE__ */ new Map();
+      for (const r of rows) {
+        const id = r.app.value.trim();
+        const key = keyOf(id, r.guest.value.trim());
+        if (id && !existingByKey.has(key)) existingByKey.set(key, r);
+      }
+      const empties = rows.filter((r) => !r.app.value.trim());
+      let changed = false;
+      for (const item of Array.isArray(list) ? list : []) {
+        const id = String(item?.appId || "").trim();
+        if (!id) {
+          result.ignored += 1;
+          continue;
+        }
+        const guest = String(item?.guestId || "").trim();
+        const appName = String(item?.appName || "").trim();
+        const existing = existingByKey.get(keyOf(id, guest));
+        if (existing) {
+          if (appName && existing.appName !== appName) {
+            setAppName(existing, appName);
+            changed = true;
+          }
+          result.existing += 1;
+          continue;
+        }
+        const empty = empties.shift();
+        const entry = empty || insertRow(rows.length, id, guest, false, appName);
+        if (empty) setRowValues(empty, id, guest, appName);
+        existingByKey.set(keyOf(id, guest), entry);
+        if (empty) result.filled += 1;
+        else result.added += 1;
+        changed = true;
+      }
+      if (changed) emitChange();
+      return result;
+    }
+    function setApps(list) {
+      rows.splice(0).forEach((r) => r.tr.remove());
+      tbody.innerHTML = "";
+      const src = Array.isArray(list) && list.length ? list : [{ appId: "", guestId: "" }];
+      src.forEach((r) => insertRow(
+        rows.length,
+        String(r.appId || "").trim(),
+        String(r.guestId || "").trim(),
+        false,
+        String(r.appName || "").trim()
+      ));
+      while (rows.length < minRows) insertRow(rows.length, "", "");
+      emitChange();
+    }
+    setApps(opts.initial || []);
+    return {
+      element: wrap,
+      getApps,
+      getAllRows,
+      first: () => {
+        const r = rows[0];
+        if (!r) return { appId: "", guestId: "" };
+        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        if (r.appName) row.appName = r.appName;
+        return row;
+      },
+      addRow: (appId = "", guestId = "", o = {}) => {
+        insertRow(rows.length, appId, guestId, !!o.focus, String(o.appName || "").trim());
+        emitChange();
+      },
+      putApp,
+      putApps,
+      setApps,
+      clear: () => setApps([]),
+      count: () => getApps().length
+    };
+  }
   async function liteRun(panel, busyMsg, fn, okMsg) {
     panel.setStatus(busyMsg, "busy");
     panel.setBusy(true);
@@ -2502,6 +2865,7 @@ ${base}`
   }
 
   // src/entries/liteWorkflow.ts
+  init_utils();
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
@@ -3239,12 +3603,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       "本番には反映されません（管理画面から手動デプロイ）。実行しますか？"
     ].filter(Boolean).join("\n");
   }
-  async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
-    const targetAppId = String(p.targetAppId || "").trim();
-    if (!targetAppId) throw new Error("反映先アプリIDを入力してください");
-    const guestId = String(p.targetGuestId || "").trim();
-    assertNumericAppAndGuestId(targetAppId, guestId, "反映先アプリID");
-    const text = String(p.jsonText || "").trim();
+  function parseJsConfigApplyText(jsonText) {
+    const text = String(jsonText || "").trim();
     if (!text) throw new Error("JS/CSS設定JSONを入力してください");
     let parsed;
     try {
@@ -3252,7 +3612,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     } catch (e) {
       throw new Error(`JS/CSS設定JSONを解析できません（「整形」ボタンで位置を確認してください）: ${e?.message || String(e)}`);
     }
-    const plan = buildJsConfigApplyPlan(parsed);
+    return buildJsConfigApplyPlan(parsed);
+  }
+  async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
+    const targetAppId = String(p.targetAppId || "").trim();
+    if (!targetAppId) throw new Error("反映先アプリIDを入力してください");
+    const guestId = String(p.targetGuestId || "").trim();
+    assertNumericAppAndGuestId(targetAppId, guestId, "反映先アプリID");
+    const plan = parseJsConfigApplyText(p.jsonText);
     const prefix = buildApiPrefix(guestId, true);
     setStatus("反映先の現在設定を確認中...");
     const current = await apiGet(prefix, "/app/customize.json", { app: targetAppId });
@@ -3291,6 +3658,155 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     setLogHtml(`<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`);
     setStatus("JS/CSS設定反映完了");
     return { revision: pickRevision(res) };
+  }
+  var JS_CONFIG_MULTI_STATUS_LABEL = {
+    success: "成功",
+    failed: "失敗",
+    conflict: "競合",
+    notExecuted: "未実行（中止）"
+  };
+  function jsConfigMultiTargetProblem(plan) {
+    if (!plan.counts.file) return "";
+    return `JSON にアップロード済みファイル（FILE タイプ）の JS / CSS が ${plan.counts.file}件含まれているため、複数の反映先へはまとめて反映できません。FILE タイプの fileKey は取得元のアプリでしか使えず、別のアプリへ反映すると kintone に拒否されます。URL で指定した JS / CSS だけの JSON にするか、ファイルは「プレビュー反映」の別アプリの JS/CSS 転送で反映してください。`;
+  }
+  function multiTargetLabel(t) {
+    return `App ${t.appId}${t.appName ? `（${t.appName}）` : ""}${t.guestId ? ` / ゲストスペース ${t.guestId}` : ""}`;
+  }
+  function firstLine(message) {
+    return String(message?.message ?? message ?? "不明なエラー").split("\n").map((l) => l.trim()).find(Boolean) || "不明なエラー";
+  }
+  function renderJsConfigMultiResultHtml(res) {
+    const color = { success: "#15803d", failed: "#b91c1c", conflict: "#b45309", notExecuted: "#64748b" };
+    const rows = res.results.map((r) => {
+      const detail = r.status === "success" ? `revision ${r.revision || "-"} / 外れた現在の設定 ${r.removed ?? 0}件` : (r.precheck && r.status === "failed" ? "事前確認で失敗（書き込みなし）: " : "") + (r.message || "");
+      return `<tr><td style="padding:4px 6px;white-space:nowrap">${esc(multiTargetLabel(r))}</td><td style="padding:4px 6px;white-space:nowrap;font-weight:700;color:${color[r.status]}">${esc(JS_CONFIG_MULTI_STATUS_LABEL[r.status])}</td><td style="padding:4px 6px;word-break:break-all">${esc(detail)}</td></tr>`;
+    }).join("");
+    return `<div style="padding:8px 10px;font-size:12px;font-weight:700">${esc(res.headline)}</div><table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 6px">反映先</th><th style="text-align:left;padding:4px 6px">結果</th><th style="text-align:left;padding:4px 6px">内容</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  async function runApplyJsConfigMultiStandalone(p, setStatus, setLogHtml) {
+    const seen = /* @__PURE__ */ new Set();
+    const targets = [];
+    for (const raw of p.targets || []) {
+      const appId = String(raw?.appId || "").trim();
+      const guestId = String(raw?.guestId || "").trim();
+      if (!appId && !guestId) continue;
+      assertNumericAppAndGuestId(appId, guestId, `反映先アプリID（${appId || "未入力"}）`);
+      const key = `${appId}::${guestId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      targets.push({ appId, guestId, appName: String(raw?.appName || "") });
+    }
+    if (!targets.length) throw new Error("まとめて反映する反映先を1件以上指定してください");
+    const plan = parseJsConfigApplyText(p.jsonText);
+    const problem = jsConfigMultiTargetProblem(plan);
+    if (problem) throw new Error(problem);
+    const total = targets.length;
+    const results = [];
+    const prechecked = [];
+    for (let i = 0; i < total; i++) {
+      const target = targets[i];
+      setStatus(`[${i + 1}/${total}] 反映先の現在設定を確認中: ${multiTargetLabel(target)}`);
+      try {
+        const current = await apiGet(buildApiPrefix(target.guestId, true), "/app/customize.json", { app: target.appId });
+        const revision = pickRevision(current);
+        if (!/^\d+$/.test(revision)) throw new Error("JS/CSS 設定の revision を確認できません");
+        const summary = summarizeJsConfigCurrent(current, plan);
+        prechecked.push({ target, revision, removed: summary.removed, nowTotal: summary.desktopJs + summary.desktopCss + summary.mobileJs + summary.mobileCss });
+      } catch (e) {
+        if (isCancelStop(e)) throw e;
+        results.push({ ...target, status: "failed", precheck: true, message: firstLine(e) });
+      }
+    }
+    const precheckFailures = results.filter((r) => r.precheck);
+    const position = new Map(targets.map((t, i) => [`${t.appId}::${t.guestId}`, i]));
+    const order = (r) => position.get(`${r.appId}::${r.guestId}`) ?? -1;
+    const finish = (declined, cancelled2) => {
+      const counts = {
+        total,
+        success: results.filter((r) => r.status === "success").length,
+        failed: results.filter((r) => r.status === "failed").length,
+        conflict: results.filter((r) => r.status === "conflict").length,
+        notExecuted: results.filter((r) => r.status === "notExecuted").length
+      };
+      const detail = `失敗 ${counts.failed}件 / 競合 ${counts.conflict}件${counts.notExecuted ? ` / 未実行（中止） ${counts.notExecuted}件` : ""}`;
+      let headline = "";
+      let tone = "ok";
+      if (declined) {
+        tone = "info";
+      } else if (cancelled2) {
+        const done = total - counts.notExecuted;
+        headline = `${formatCancelledHeadline(done, total)}。` + (counts.success ? `反映済みの ${counts.success}件は取り消していません（${detail}）` : `何も反映していません（${detail}）`);
+        tone = "warn";
+      } else if (counts.success === total) {
+        headline = `${total}件の反映先プレビューへ JS/CSS 設定を反映しました（本番には反映していません）`;
+      } else if (counts.success > 0) {
+        headline = `${total}件中 ${counts.success}件を反映しました。${detail}（詳細は下のログ）`;
+        tone = "warn";
+      } else {
+        headline = `反映できた反映先がありません。${detail}（詳細は下のログ）`;
+        tone = "err";
+      }
+      results.sort((x, y) => order(x) - order(y));
+      return { declined, cancelled: cancelled2, results, counts, headline, tone };
+    };
+    if (!prechecked.length) {
+      const res2 = finish(false, false);
+      setLogHtml(renderJsConfigMultiResultHtml(res2));
+      return res2;
+    }
+    if (!p.skipConfirm) {
+      const c = plan.counts;
+      const removedTotal = prechecked.reduce((sum, t) => sum + t.removed, 0);
+      const none = c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss === 0;
+      const text = [
+        `${prechecked.length}件の反映先プレビューへ、同じ JS/CSS 設定を反映します。`,
+        `反映する内容: Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}（URL ${c.url}件）${plan.scope ? ` / 適用範囲 ${plan.scope}` : " / 適用範囲は各反映先の現状維持"}`,
+        none ? "⚠ 有効な JS/CSS 設定が 0 件のため、各反映先の JS/CSS 設定はすべて外れます（0 件になります）。" : null,
+        "各反映先の JS/CSS 一覧はこの内容にすべて置き換わり、反映先だけにあるファイルは外れます。",
+        `この反映で外れる現在の設定: 合計 ${removedTotal}件`,
+        plan.dropped ? `type/url/fileKey が不足している ${plan.dropped}件は送信しません。` : null,
+        "",
+        `反映先（${prechecked.length}件）:`,
+        summarizeList(prechecked.map((t) => `・${multiTargetLabel(t.target)}（現在 ${t.nowTotal}件 → 外れる ${t.removed}件）`)),
+        precheckFailures.length ? "" : null,
+        precheckFailures.length ? `現在の設定を確認できなかった ${precheckFailures.length}件は反映しません:` : null,
+        precheckFailures.length ? summarizeList(precheckFailures.map((r) => `・${multiTargetLabel(r)}: ${r.message}`)) : null,
+        "",
+        "本番には反映されません（管理画面から手動デプロイ）。1件ずつ順に反映し、途中の失敗・競合では残りを続けます。実行しますか？"
+      ].filter((line) => line !== null).join("\n");
+      if (!kusConfirm(text)) {
+        setStatus("JS/CSS設定の複数反映をキャンセルしました（何も書き込んでいません）");
+        return { declined: true, cancelled: false, results: [], counts: { total, success: 0, failed: 0, conflict: 0, notExecuted: 0 }, headline: "", tone: "info" };
+      }
+    }
+    let cancelled = false;
+    for (let i = 0; i < prechecked.length; i++) {
+      const { target, revision, removed } = prechecked[i];
+      if (cancelled) {
+        results.push({ ...target, status: "notExecuted" });
+        continue;
+      }
+      setStatus(`[${i + 1}/${prechecked.length}] 反映中: ${multiTargetLabel(target)}`);
+      const body = { app: target.appId, ...plan.payload, revision };
+      if (plan.scope) body.scope = plan.scope;
+      try {
+        throwIfCancelled();
+        const res2 = await apiPut(buildApiPrefix(target.guestId, true), "/app/customize.json", body);
+        results.push({ ...target, status: "success", revision: pickRevision(res2), removed });
+      } catch (e) {
+        if (isCancelStop(e)) {
+          cancelled = true;
+          results.push({ ...target, status: "notExecuted" });
+          continue;
+        }
+        const decorated = decorateRevisionConflict(e, "JS/CSS設定の反映");
+        results.push({ ...target, status: decorated?.revisionConflict ? "conflict" : "failed", message: firstLine(decorated) });
+      }
+    }
+    const res = finish(false, cancelled);
+    setLogHtml(renderJsConfigMultiResultHtml(res));
+    setStatus(res.headline, res.tone === "err" || res.tone === "warn");
+    return res;
   }
   async function runBatchJsConfigDownloadStandalone(p, setStatus) {
     const guestId = String(p.guestId || "").trim();
@@ -3459,6 +3975,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
+.kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}
+.kus-as__bulk .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
   function ensureStyles2() {
     if (document.getElementById(RESULT_CSS_ID)) return;
@@ -3496,12 +4015,17 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
+    const allBtn = makeButton("環境内の全アプリ", "sub");
+    allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
     const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
+    body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
     body.appendChild(makeNote("閲覧できるアプリを名前（部分一致）またはコード（大文字・小文字を区別する完全一致）で検索します。スペースIDで検索範囲を絞れます。ID / URL の直接指定ではスペースIDの絞り込みは使いません。"));
+    const allTargets = opts.targets.filter((t) => typeof t.applyAll === "function");
+    body.appendChild(makeNote(`「環境内の全アプリ」は、閲覧できるアプリをすべて候補に表示します${allTargets.length ? "（候補の上の「すべて…」でまとめて設定できます）" : ""}。ゲストスペースのアプリは含まれないため、ゲストスペースIDを入れてゲストスペースごとに取得してください。`));
     const resultBox = document.createElement("div");
     resultBox.className = "kus-as__result kus-as__result--empty";
     body.appendChild(resultBox);
@@ -3513,10 +4037,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     let candidates = [];
     let nextOffset = 0;
     let resultGuest = "";
+    let resultIsAll = false;
     function invalidate() {
       generation += 1;
       candidates = [];
       nextOffset = 0;
+      resultIsAll = false;
       resultBox.replaceChildren();
       resultBox.className = "kus-as__result kus-as__result--empty";
       moreBtn.hidden = true;
@@ -3531,6 +4057,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     function syncBusyControls() {
       const busy = panel.root.getAttribute("aria-busy") === "true";
       searchBtn.disabled = running || busy;
+      allBtn.disabled = running || busy;
       moreBtn.disabled = running || busy;
     }
     panel.root.addEventListener("kus-lite-busy-change", () => {
@@ -3555,8 +4082,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         <td><div class="kus-as__assign">${buttons}</div></td>
       </tr>`;
       }).join("");
+      const bulkHtml = allTargets.length ? `<div class="kus-as__bulk">${allTargets.map((t) => {
+        const ti = opts.targets.indexOf(t);
+        const label = t.applyAllLabel ? t.applyAllLabel(apps.length) : single || !t.label ? `候補 ${apps.length} 件をすべて追加` : `候補 ${apps.length} 件をすべて${t.label}へ`;
+        return `<button type="button" class="kus-lp__btn kus-lp__btn--sub" data-as-all="${ti}">${esc(label)}</button>`;
+      }).join("")}</div>` : "";
       resultBox.className = "kus-as__result";
-      resultBox.innerHTML = `<div class="kus-as__head">${apps.length}件の候補</div>
+      resultBox.innerHTML = `<div class="kus-as__head">${resultIsAll ? `環境内のアプリ ${apps.length}件${resultGuest ? `（ゲストスペース ${esc(resultGuest)}）` : ""}` : `${apps.length}件の候補`}</div>${bulkHtml}
       <table class="kus-as__table">
         <thead><tr><th style="width:74px">アプリID</th><th>アプリ名</th><th style="width:1%"></th></tr></thead>
         <tbody>${rowsHtml}</tbody>
@@ -3582,6 +4114,25 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
             outcome.message || `App ${app.appId}${app.name ? ` (${app.name})` : ""} を設定しました${where}`,
             outcome.tone || "ok"
           );
+        });
+      });
+      resultBox.querySelectorAll("button[data-as-all]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const target = opts.targets[Number(btn.dataset.asAll)];
+          if (!target?.applyAll || !apps.length) return;
+          if (running || panel.root.getAttribute("aria-busy") === "true") return;
+          const searchGuest = resultGuest;
+          const outcome = target.applyAll(apps.map((app) => ({ appId: app.appId, appName: app.name })), searchGuest) || {};
+          if (opts.guestEl && opts.guestEl.value.trim() !== searchGuest) {
+            opts.guestEl.value = searchGuest;
+            opts.guestEl.dispatchEvent(new Event("input", { bubbles: true }));
+            opts.guestEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : "";
+          btn.classList.add("kus-as__picked");
+          btn.setAttribute("aria-pressed", "true");
+          btn.textContent = outcome.pickedLabel || `${apps.length} 件を設定済み`;
+          panel.setStatus(outcome.message || `候補 ${apps.length} 件を設定しました${where}`, outcome.tone || "ok");
         });
       });
     }
@@ -3612,8 +4163,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
       const prefix = buildApiPrefix(guestId, false);
       running = true;
-      searchBtn.disabled = true;
-      moreBtn.disabled = true;
+      syncBusyControls();
       resultBox.setAttribute("aria-busy", "true");
       try {
         if (directAppId) {
@@ -3663,8 +4213,51 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         }
       }
     }
+    async function runAll() {
+      if (running || panel.root.getAttribute("aria-busy") === "true") return;
+      invalidate();
+      const guestId = guest.value.trim();
+      if (guestId && !/^\d+$/.test(guestId)) {
+        panel.setStatus("ゲストIDは数値で入力してください", "warn");
+        return;
+      }
+      const requestGeneration = generation;
+      const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
+      running = true;
+      syncBusyControls();
+      resultBox.setAttribute("aria-busy", "true");
+      try {
+        panel.setStatus("環境内の全アプリを取得中…", "busy");
+        const apps = await fetchAllApps(guestId, (fetched) => {
+          if (isCurrent()) panel.setStatus(`環境内の全アプリを取得中…（${fetched}件）`, "busy");
+        });
+        if (!isCurrent()) return;
+        candidates = apps.map((app) => appCandidate(app, String(app.appId)));
+        resultGuest = guestId;
+        resultIsAll = true;
+        renderResults(candidates);
+        const where = guestId ? `ゲストスペース ${guestId}` : "通常スペース・スペース外";
+        panel.setStatus(
+          candidates.length ? `環境内のアプリ ${candidates.length}件を表示しました（${where}のアプリ）${allTargets.length ? "。「すべて…」でまとめて設定できます" : ""}` : `閲覧できるアプリがありません（${where}）`,
+          candidates.length ? "ok" : "info"
+        );
+      } catch (e) {
+        if (!isCurrent()) return;
+        panel.setStatus(`全アプリの取得エラー: ${e?.message || String(e)}`, "err");
+      } finally {
+        running = false;
+        syncBusyControls();
+        resultBox.setAttribute("aria-busy", "false");
+        if (!isCurrent() && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true" && panel.status.dataset.tone === "busy") {
+          panel.setStatus("取得条件が変わりました。もう一度取得してください", "info");
+        }
+      }
+    }
     searchBtn.addEventListener("click", () => {
       void runSearch();
+    });
+    allBtn.addEventListener("click", () => {
+      void runAll();
     });
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
@@ -3781,6 +4374,41 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const applyBtn = makeButton("反映先プレビューへ反映", "run", { icon: "⤴" });
     cardApply.body.appendChild(applyBtn);
     panel.body.insertBefore(cardApply.card, panel.status);
+    const cardMulti = makeCard({ title: "複数の反映先プレビューへ反映", number: 3 });
+    const multiTable = makeAppTable({ minRows: 1 });
+    const multiTargetName = "まとめて反映先";
+    cardMulti.body.appendChild(createAppSearchControl(panel, {
+      targets: [{
+        label: multiTargetName,
+        apply: (id, name, guestId) => {
+          const result = multiTable.putApp(id, guestId, { appName: name });
+          return { message: `アプリ #${id}${name ? ` (${name})` : ""} を「${multiTargetName}」に${result.action === "existing" ? "設定済みです（追加していません）" : "追加しました"}` };
+        },
+        applyAll: (apps, guestId) => {
+          const result = multiTable.putApps(apps.map((app) => ({ appId: app.appId, guestId, appName: app.appName })));
+          const set = result.added + result.filled;
+          return {
+            message: `候補 ${apps.length} 件のうち ${set} 件を「${multiTargetName}」に追加しました${result.existing ? `（設定済み ${result.existing} 件は追加していません）` : ""}。反映前に対象を最終確認します。`,
+            tone: "ok",
+            pickedLabel: `${apps.length} 件を追加済み`
+          };
+        },
+        applyAllLabel: (count) => `候補 ${count} 件をすべて${multiTargetName}に追加`
+      }]
+    }));
+    cardMulti.body.appendChild(multiTable.element);
+    const multiClearBtn = makeButton("反映先をすべてクリア", "sub");
+    multiClearBtn.addEventListener("click", () => {
+      multiTable.clear();
+      panel.setStatus("まとめて反映先の一覧をクリアしました", "info");
+    });
+    cardMulti.body.appendChild(makeRow(multiClearBtn));
+    cardMulti.body.appendChild(makeNote("各反映先の JS / CSS 一覧は、JSON の内容にすべて置き換わります。1件ずつ順に反映し、失敗や競合があっても残りを続けて、最後に反映先ごとの結果を示します。", "help"));
+    cardMulti.body.appendChild(makeNote("FILE タイプ（アップロード済みファイル）を含む JSON は、別のアプリでは使えない fileKey を持つため、複数の反映先へはまとめて反映できません。URL タイプだけの JSON にするか、ファイルは「プレビュー反映」の別アプリの JS/CSS 転送を使ってください。", "help"));
+    cardMulti.body.appendChild(makeNote("反映前に、各反映先の現在の設定を確認して件数を最終確認します。確認後に反映先へ別の更新が入っていた場合（revision 競合）は、その反映先だけ上書きせず競合として報告します。", "help"));
+    const applyMultiBtn = makeButton("複数の反映先プレビューへ反映", "run", { icon: "⤴" });
+    cardMulti.body.appendChild(applyMultiBtn);
+    panel.body.insertBefore(cardMulti.card, panel.status);
     let loadedText = "";
     let fetchedRevision = "";
     let jsonOrigin = null;
@@ -3856,6 +4484,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       );
       if (base && jsonOrigin && applied) jsonOrigin = { ...jsonOrigin, revision: applied.revision };
     }));
+    applyMultiBtn.addEventListener("click", () => liteRun(panel, "複数の反映先のプレビューへ反映中…", async () => {
+      const res = await runApplyJsConfigMultiStandalone(
+        { targets: multiTable.getApps(), jsonText: jsonTa.value },
+        (m, e) => panel.setStatus(m, e ? "err" : "busy"),
+        (html) => {
+          panel.setResultHtml(html);
+        }
+      );
+      if (!res.declined) panel.setStatus(res.headline, res.tone);
+    }));
     const batchDetails = makeCard({ title: "全アプリの JS/CSS ファイルを一括ダウンロード" });
     batchDetails.body.appendChild(makeNote("アクセスできるアプリを順に調べ、アップロード済み（FILE タイプ）の JS / CSS ファイルを1つの ZIP にまとめます。URL で指定した JS / CSS はファイルがないため含まれません。", "help"));
     const batchGuest = makeInput({ placeholder: "ゲストID（任意 / 未指定で全体）", width: "wide" });
@@ -3886,9 +4524,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     jsonTa.setAttribute("aria-label", "カスタマイズJSON");
     batchGuest.setAttribute("aria-label", "一括取得のゲストスペースID");
     const selectMode = (mode) => {
-      cardFetch.card.hidden = mode === "batch" || mode === "apply";
+      cardFetch.card.hidden = mode === "batch" || mode === "apply" || mode === "apply-multi";
       cardJson.card.hidden = mode === "batch";
       cardApply.card.hidden = mode !== "apply";
+      cardMulti.card.hidden = mode !== "apply-multi";
       batchDetails.card.hidden = mode !== "batch";
     };
     const idProblem = (who, app, guest) => {
@@ -3902,6 +4541,25 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       try {
         buildJsConfigApplyPlan(JSON.parse(jsonTa.value));
         return "";
+      } catch (e) {
+        return e.message;
+      }
+    };
+    const multiProblem = () => {
+      const rows = multiTable.getAllRows();
+      for (const [index, row] of rows.entries()) {
+        if (!row.appId && row.guestId) return `反映先の${index + 1}行目: アプリIDを指定してください（ゲストスペースIDだけ入力されています）。`;
+      }
+      const targets = multiTable.getApps();
+      if (!targets.length) return "まとめて反映する反映先を1件以上指定してください。";
+      for (const row of targets) {
+        const problem2 = idProblem("反映先", row.appId, row.guestId);
+        if (problem2) return `アプリID ${row.appId || "未入力"}: ${problem2}`;
+      }
+      const problem = applyProblem();
+      if (problem) return problem;
+      try {
+        return jsConfigMultiTargetProblem(buildJsConfigApplyPlan(JSON.parse(jsonTa.value)));
       } catch (e) {
         return e.message;
       }
@@ -3930,7 +4588,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       return [["JSONの取得元", originSummary()], ...rows];
     };
     installLiteWorkflow(panel, {
-      setup: [cardFetch.card, cardJson.card, cardApply.card, batchDetails.card],
+      setup: [cardFetch.card, cardJson.card, cardApply.card, cardMulti.card, batchDetails.card],
+      primaryActions: 4,
       results: [cardPreview.card],
       resultActions: ["fetch"],
       beforeRun: (actionId) => {
@@ -3972,6 +4631,25 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
             ["反映方法", "JS / CSS 一覧をすべて置き換えます。FILE タイプは、反映先で有効な fileKey（アップロード済みファイルの識別子）が必要です。"]
           ],
           onSelect: () => selectMode("apply")
+        },
+        {
+          id: "apply-multi",
+          label: "複数の反映先プレビューへ反映",
+          description: "同じ JSON の内容で、複数の反映先プレビューの JS / CSS 一覧をすべて置き換えます（環境内の全アプリも選べます）。",
+          button: applyMultiBtn,
+          writes: true,
+          validate: multiProblem,
+          summary: () => {
+            const targets = multiTable.getApps();
+            return [
+              ["反映先", `${targets.length}件のプレビュー
+` + summarizeList(targets.map((t) => "・" + connectionSummary(t.appId, t.guestId, "プレビュー") + (t.appName ? ` ${t.appName}` : "")))],
+              ...jsonSummary(true),
+              ["競合検出", "反映の直前に各反映先の現在の設定（revision）を確認し、その revision を付けて反映します。確認後に別の更新が入った反映先は、上書きせず「競合」として報告し、残りは続けます。この JSON を取得した後の更新は検出できません。"],
+              ["反映方法", "JS / CSS 一覧をすべて置き換えます。1件ずつ順に反映し、失敗しても残りを続けます。「中止」を押すと、残りは「未実行（中止）」になります。FILE タイプを含む JSON は反映できません。"]
+            ];
+          },
+          onSelect: () => selectMode("apply-multi")
         },
         {
           id: "batch",

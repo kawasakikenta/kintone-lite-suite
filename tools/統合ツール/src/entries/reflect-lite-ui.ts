@@ -28,12 +28,12 @@ import {
   liteRun,
   copyTextToClipboard
 } from './litePanelTheme.js';
-import { createAppSearchControl } from './appSearchControl.js';
+import { createAppSearchControl, type AppSearchApplyResult } from './appSearchControl.js';
 import { RUN_CANCELLED_MESSAGE } from '../runControl.js';
 import { pickAllSettingsBundles } from '../settingsBundleImport.js';
 import { reflectSelectionBlockers } from '../reflect/standalonePlan.js';
 import { buildReflectReportMarkdown } from '../reflect/planReport.js';
-import { describeRolloutLookupNotice, formatRolloutTarget, parseRolloutQueue, serializeRolloutQueue, upsertRolloutLog } from '../reflect/rolloutQueue.js';
+import { countRolloutLogDropped, describeRolloutLookupNotice, formatRolloutTarget, mergeRolloutTargets, parseRolloutQueue, serializeRolloutQueue, upsertRolloutLog, ROLLOUT_QUEUE_LIMIT } from '../reflect/rolloutQueue.js';
 import { appendReflectChanges, renderReflectRoute, renderReflectSummaryTable, renderApplySectionResults, createApplyProgressView, type ApplyProgressView } from './reflectPlanView.js';
 import { REFLECT_SECTION_KEYS, reflectSectionLabel } from '../reflect/sections.js';
 import {
@@ -144,6 +144,8 @@ interface LiteMemoryState {
   rolloutQueueText?: string;
   /** 展開の記録と、その記録を作った条件（反映元・項目・保持・参照先変換）。条件が変わったら捨てる。 */
   rolloutLog?: RolloutLogEntry[];
+  /** 記録の上限を超えて省略した古い行の数（記録が欠けていることを表示するため） */
+  rolloutLogDropped?: number;
   rolloutKey?: string;
   lastPreview?: PreviewSnapshot | null;
   /**
@@ -470,7 +472,7 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-rollout__status--err{color:#b91c1c;font-weight:700}
 #kus-reflect-lite .kus-rl-rollout-card .kus-rl-next{margin-bottom:8px}
 #kus-reflect-lite .kus-rl-rollout-heading{margin-top:12px;font-size:12.5px;font-weight:700;color:#475569}
-#kus-reflect-lite .kus-rl-rollout-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+#kus-reflect-lite .kus-rl-rollout-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:min(420px,50vh);overflow-y:auto}
 #kus-reflect-lite .kus-rl-rollout-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
 #kus-reflect-lite .kus-rl-rollout-item--ng{border-color:#fca5a5;background:#fff5f5}
 #kus-reflect-lite .kus-rl-rollout-item--pending{border-color:#fde68a;background:#fffbeb}
@@ -954,7 +956,13 @@ export function mountReflectLitePanel() {
         tgtApp.value = id;
         tgtGuest.value = guestId || '';
         saveState(); refreshSameConnBanner(); refreshReviewCard();
-      } }
+      } },
+      {
+        label: '続けて反映',
+        apply: (id, _name, guestId) => addRolloutTargets([{ appId: id, guestId: guestId || '' }]),
+        applyAll: (apps, guestId) => addRolloutTargets(apps.map((app) => ({ appId: app.appId, guestId }))),
+        applyAllLabel: (count) => `候補 ${count} 件を続けて反映する反映先に追加`
+      }
     ]
   }));
 
@@ -1473,6 +1481,7 @@ export function mountReflectLitePanel() {
   const rolloutSetupCard = makeCard({ title: '続けて反映する反映先（複数アプリへ展開）', soft: true });
   rolloutSetupCard.card.classList.add('kus-rl-rollout');
   const rolloutHelp = makeNote('同じ反映元・項目・設定で、ほかのアプリにも順番に反映します（反映先ごとに差分確認と最終確認を行います）。数字だけのIDは通常スペースのアプリを指すため、ゲストスペースのアプリはURLで指定してください。', 'help');
+  const rolloutAllHelp = makeNote(`最大 ${ROLLOUT_QUEUE_LIMIT} 件まで指定できます。アプリ検索の「環境内の全アプリ」から、全アプリをまとめて追加できます（反映元のアプリは加えません）。`, 'help');
   const rolloutTa = makeTextarea({ rows: 4, code: true, placeholder: '1行に1件（改行・カンマ区切りも可）\n例: 203\nhttps://example.cybozu.com/k/guest/5/204/', value: memoryState.rolloutQueueText || '' });
   rolloutTa.classList.add('kus-rl-rollout__input');
   rolloutTa.setAttribute('aria-label', '続けて反映する反映先');
@@ -1484,7 +1493,7 @@ export function mountReflectLitePanel() {
   rolloutLookupSetupNote.className = 'kus-rl-next kus-rl-next--warn';
   rolloutLookupSetupNote.dataset.rolloutLookupNote = 'setup';
   rolloutLookupSetupNote.hidden = true;
-  rolloutSetupCard.body.append(rolloutHelp, rolloutTa, rolloutStatus, rolloutLookupSetupNote);
+  rolloutSetupCard.body.append(rolloutHelp, rolloutAllHelp, rolloutTa, rolloutStatus, rolloutLookupSetupNote);
   rolloutTa.addEventListener('input', () => {
     saveState();
     refreshReviewCard();
@@ -1504,9 +1513,34 @@ export function mountReflectLitePanel() {
       lookup: lookup.ok ? Object.entries(lookup.value).sort() : lookupTa.value.trim()
     });
   }
+  /**
+   * アプリ検索で選んだアプリを「続けて反映する反映先」へ重複なく加える。反映元のアプリは加えない
+   * （同じ環境では自分自身への反映になるため）。現在の反映先は入力欄に残し、実行時に除く。
+   */
+  function addRolloutTargets(picks: Array<{ appId: string; guestId: string }>): AppSearchApplyResult {
+    const sourceApp = sourceMode === 'app' ? srcApp.value.trim() : '';
+    const excluded = sourceApp ? [{ appId: sourceApp, guestId: srcGuest.value.trim() }] : [];
+    const merged = mergeRolloutTargets(rolloutTa.value, picks, excluded);
+    if ('error' in merged) return { message: merged.error, tone: 'warn', pickedLabel: '追加できません' };
+    rolloutTa.value = merged.text;
+    saveState();
+    refreshReviewCard();
+    const queue = currentRollout();
+    const skipped = [merged.duplicates ? `入力済みの ${merged.duplicates} 件は重複のため` : '', merged.excluded ? `反映元の ${merged.excluded} 件は` : ''].filter(Boolean);
+    const skippedNote = skipped.length ? `${skipped.join('、')}加えていません。` : '';
+    const total = queue.ok ? `現在の反映先を除いて合計 ${queue.targets.length} 件です。` : '';
+    if (!merged.added) return { message: `追加できる反映先がありませんでした。${skippedNote}${total}`, tone: 'warn', pickedLabel: '追加済み' };
+    return {
+      message: `続けて反映する反映先に ${merged.added} 件を追加しました。${skippedNote}${total}反映先ごとに差分確認と最終確認を行います（まだ書き込んでいません）。`,
+      tone: 'ok',
+      pickedLabel: '追加済み'
+    };
+  }
   function recordRolloutResult(entry: RolloutLogEntry) {
     const key = rolloutConditionKey();
     const log = memoryState.rolloutKey === key ? memoryState.rolloutLog || [] : [];
+    // 上限を超えて古い行を捨てるときは、その件数を残して記録の欠けを表示する。
+    memoryState.rolloutLogDropped = (memoryState.rolloutKey === key ? memoryState.rolloutLogDropped || 0 : 0) + countRolloutLogDropped(log, entry);
     memoryState.rolloutKey = key;
     // 同じ反映先へ再実行したときは、記録が重複しないよう最新の結果で置き換える（順序は最初に反映した位置のまま）。
     memoryState.rolloutLog = upsertRolloutLog(log, entry);
@@ -1556,7 +1590,7 @@ export function mountReflectLitePanel() {
     const next = queue.ok ? queue.targets[0] : undefined;
     const show = !!last && !restoreMode && (!queue.ok || !!next || log.length >= 2);
     rolloutCard.card.style.display = show ? 'block' : 'none';
-    renderRolloutLog(rolloutLogBox, log);
+    renderRolloutLog(rolloutLogBox, log, memoryState.rolloutLogDropped || 0);
     if (!show) return;
     rolloutNote.hidden = !next;
     rolloutLookupNote.hidden = !next || !lookupNotice;
@@ -1853,7 +1887,7 @@ export function mountReflectLitePanel() {
     const restoreEndNote = restoreMode && !restoreStillApplies(restoreMode) ? endRestoreMode() : '';
     // 反映元・項目・保持・参照先変換が変わったら、展開の記録は引き継がない（反映先の切り替えでは残す）。
     // 復元中は復元のために値を切り替えているだけなので比べない（復元を終えて値が戻れば、記録を引き継ぐ）。
-    if (!restoreMode && memoryState.rolloutLog?.length && memoryState.rolloutKey !== rolloutConditionKey()) { memoryState.rolloutLog = []; memoryState.rolloutKey = ''; }
+    if (!restoreMode && memoryState.rolloutLog?.length && memoryState.rolloutKey !== rolloutConditionKey()) { memoryState.rolloutLog = []; memoryState.rolloutLogDropped = 0; memoryState.rolloutKey = ''; }
     // 直近の反映結果は、現在の対象と一致するときだけ表示する。一致しない間は退避して隠し（旧対象の成功を現在の対象へ誤って帰属させない）、
     // 対象が戻れば復帰させる。入力の一時的な編集や、バックアップから戻す操作の中止で、結果とバックアップ参照を失わないようにする。
     let staleNote = '';
@@ -3016,7 +3050,7 @@ function buildSkipSummary(plan: ExecutionPlan): string {
 }
 
 /** 展開の記録（これまでの反映先）。失敗・未実行があるものは文字でも目印を付ける。textContent で描画する。 */
-function renderRolloutLog(host: HTMLElement, log: readonly RolloutLogEntry[]) {
+function renderRolloutLog(host: HTMLElement, log: readonly RolloutLogEntry[], dropped = 0) {
   host.replaceChildren();
   if (!log.length) return;
   const heading = document.createElement('div');
@@ -3046,7 +3080,15 @@ function renderRolloutLog(host: HTMLElement, log: readonly RolloutLogEntry[]) {
     item.append(head, meta);
     list.appendChild(item);
   }
-  host.append(heading, list);
+  host.append(heading);
+  if (dropped > 0) {
+    const droppedNote = document.createElement('div');
+    droppedNote.className = 'kus-rl-quiet';
+    droppedNote.dataset.rolloutLogDropped = String(dropped);
+    droppedNote.textContent = `記録の上限を超えたため、古い反映先 ${dropped} 件の記録は省略しています。`;
+    host.append(droppedNote);
+  }
+  host.append(list);
 }
 
 function setButtonText(button: HTMLButtonElement, text: string) {

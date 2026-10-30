@@ -530,6 +530,28 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
   assert.equal(await targetApp.inputValue(), '303', '1対多検索が既存の比較先を置き換えました');
   assert.equal(await page.getByLabel('比較先2アプリID', { exact: true }).inputValue(), '505', '1対多検索の比較先行追加が失われました');
   assert.equal(await page.getByLabel('比較先2アプリID', { exact: true }).isVisible(), true, '1対多検索先が非表示です');
+
+  // 環境内の全アプリ: 候補をまとめて比較先へ追加する。設定済み（303・505）と比較元（404）は追加しない。
+  await page.evaluate(() => {
+    const original = window.kintone.api;
+    window.kintone.api = Object.assign(async (url, method, params) => {
+      if (/\/apps\.json$/.test(String(url))) {
+        return { apps: [404, 303, 505, 606, 707].map((id) => ({ appId: String(id), name: `App ${id}` })) };
+      }
+      return original(url, method, params);
+    }, { url: original.url });
+  });
+  await search.getByRole('button', { name: '環境内の全アプリ', exact: true }).click();
+  const addAll = search.getByRole('button', { name: /をすべて比較先に追加/ });
+  await addAll.waitFor();
+  await addAll.click();
+  assert.equal(await page.getByLabel('比較先3アプリID', { exact: true }).inputValue(), '606', '全アプリの一括追加で比較先3が追加されていません');
+  assert.equal(await page.getByLabel('比較先4アプリID', { exact: true }).inputValue(), '707', '全アプリの一括追加で比較先4が追加されていません');
+  assert.equal(await page.getByLabel('比較先5アプリID', { exact: true }).count(), 0, '設定済み・比較元のアプリが重複追加されました');
+  const addAllStatus = await status.textContent();
+  assert.match(addAllStatus, /2 件を追加/, '一括追加の追加件数が表示されていません');
+  assert.match(addAllStatus, /設定済みのため 2 件/, '一括追加の設定済み件数が表示されていません');
+  assert.match(addAllStatus, /比較元と同じ接続先のため 1 件/, '一括追加で比較元を除いた件数が表示されていません');
   assert.deepEqual(pageErrors, [], 'JSON・検索の回帰検証でブラウザエラーが発生しました');
   const result = { assertions: 'passed', comparisons: await page.evaluate(() => window.__jsonSelectionCalls) };
   await page.close();
