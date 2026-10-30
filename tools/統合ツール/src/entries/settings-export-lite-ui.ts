@@ -1,6 +1,6 @@
 'use strict';
 
-import { installLiteWorkflow, foldWorkflowSection, connectionSummary } from './liteWorkflow.js';
+import { installLiteWorkflow, foldWorkflowSection, connectionSummary, summarizeList } from './liteWorkflow.js';
 
 import { SETTINGS_EXPORT_SCOPE_DEFS, DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import {
@@ -47,6 +47,14 @@ export function mountSettingsExportLitePanel() {
     targets: [{ apply: (appId, appName, guestId) => {
       const result = appTable.putApp(appId, guestId, { appName, focus: true });
       return { message: `アプリ #${appId}${appName ? ` (${appName})` : ''} を対象アプリ表に設定しました${result.action === 'existing' ? '（追加済み）' : ''}` };
+    }, applyAll: (apps, guestId) => {
+      const result = appTable.putApps(apps.map((a) => ({ appId: a.appId, guestId, appName: a.appName })));
+      const fresh = result.added + result.filled;
+      return {
+        message: `${apps.length}件のアプリを対象アプリ表に設定しました（新規追加 ${fresh}件 / 追加済み ${result.existing}件）。設定は1アプリずつ順に取得するため、件数が多いと時間がかかります`,
+        tone: fresh ? 'ok' : 'info',
+        pickedLabel: fresh ? `${fresh}件を追加済み` : '追加済み'
+      };
     } }]
   });
 
@@ -174,12 +182,9 @@ export function mountSettingsExportLitePanel() {
     );
     // 対象アプリが無い警告は取得処理側のステータスを残し、成功メッセージで上書きしない。
     if (!apps.length) return;
-    let added = 0;
-    for (const app of apps) {
-      const result = appTable.putApp(app.appId, guest, { appName: app.name });
-      if (result.action === 'added' || result.action === 'filled') added += 1;
-    }
-    panel.setStatus(`スペース内のアプリ ${apps.length}件を取得しました（対象アプリ表に新規追加 ${added}件）`, 'ok');
+    const result = appTable.putApps(apps.map((app) => ({ appId: app.appId, guestId: guest, appName: app.name })));
+    const added = result.added + result.filled;
+    panel.setStatus(`スペース内のアプリ ${apps.length}件を取得しました（対象アプリ表に新規追加 ${added}件 / 追加済み ${result.existing}件）`, 'ok');
   }));
 
   btnJson.addEventListener('click', () => liteRun(panel, '設定一括取得（JSON）中…', async () => {
@@ -211,7 +216,7 @@ export function mountSettingsExportLitePanel() {
     return chips.some(c => c.checkbox.checked) ? '' : '取得する設定を1つ以上選んでください。';
   };
   const exportSummary = (format: string): Array<[string, string]> => [
-    ['対象アプリ', appTable.getApps().map(r => connectionSummary(r.appId, r.guestId, prev.checkbox.checked ? 'プレビュー' : '本番')).join('\n')],
+    ['対象アプリ', summarizeList(appTable.getApps().map(r => connectionSummary(r.appId, r.guestId, prev.checkbox.checked ? 'プレビュー' : '本番')))],
     ['取得する設定', chips.filter(c => c.checkbox.checked).map(c => c.label.textContent || '').join('、')],
     ['保存形式', format]
   ];

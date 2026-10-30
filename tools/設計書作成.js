@@ -654,6 +654,11 @@
     text = text.replace(/<\s*br\s*\/?\s*>/gi, "\n").replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, "\n").replace(/<\s*\/?\s*[a-z][^>]*>/gi, "");
     return decodeHtmlEntities(text).replace(/\n{3,}/g, "\n\n").trim();
   }
+  function summarizeList(lines, limit = SUMMARY_LIST_LIMIT) {
+    const items = lines.filter(Boolean);
+    if (items.length <= limit) return items.join("\n");
+    return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join("\n");
+  }
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
@@ -859,7 +864,7 @@ ${contextLine}`);
     }
     return legacyCopy(text);
   }
-  var HTML_ENTITY_NAMES;
+  var HTML_ENTITY_NAMES, SUMMARY_LIST_LIMIT;
   var init_utils = __esm({
     "src/utils.ts"() {
       "use strict";
@@ -872,6 +877,7 @@ ${contextLine}`);
         apos: "'",
         nbsp: " "
       };
+      SUMMARY_LIST_LIMIT = 20;
     }
   });
 
@@ -1419,7 +1425,22 @@ ${contextLine}`);
     }
     return bundle;
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
+  async function fetchAllApps(guestId, onProgress) {
+    const prefix = buildApiPrefix(guestId, false);
+    const byId = /* @__PURE__ */ new Map();
+    for (let offset = 0; ; offset += APPS_PAGE_LIMIT) {
+      const resp = await apiGet(prefix, "/apps.json", { limit: APPS_PAGE_LIMIT, offset });
+      if (!Array.isArray(resp?.apps)) throw new Error("アプリ一覧の応答が不正です。もう一度取得してください");
+      for (const app of resp.apps) {
+        const appId = String(app?.appId || "").trim();
+        if (/^\d+$/.test(appId) && !byId.has(appId)) byId.set(appId, app);
+      }
+      onProgress?.(byId.size);
+      if (resp.apps.length < APPS_PAGE_LIMIT) break;
+    }
+    return [...byId.entries()].sort(([a], [b]) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0).map(([, app]) => app);
+  }
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY, APPS_PAGE_LIMIT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1446,6 +1467,7 @@ ${contextLine}`);
       TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
       FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
       BUNDLE_FETCH_CONCURRENCY = 3;
+      APPS_PAGE_LIMIT = 100;
     }
   });
 
@@ -4212,6 +4234,45 @@ ${body}`;
       emitChange();
       return { action: "added", index: rows.indexOf(entry) };
     }
+    function putApps(list) {
+      const result = { added: 0, filled: 0, existing: 0, ignored: 0 };
+      const keyOf = (appId, guestId) => `${appId}::${guestId}`;
+      const existingByKey = /* @__PURE__ */ new Map();
+      for (const r of rows) {
+        const id = r.app.value.trim();
+        const key = keyOf(id, r.guest.value.trim());
+        if (id && !existingByKey.has(key)) existingByKey.set(key, r);
+      }
+      const empties = rows.filter((r) => !r.app.value.trim());
+      let changed = false;
+      for (const item of Array.isArray(list) ? list : []) {
+        const id = String(item?.appId || "").trim();
+        if (!id) {
+          result.ignored += 1;
+          continue;
+        }
+        const guest = String(item?.guestId || "").trim();
+        const appName = String(item?.appName || "").trim();
+        const existing = existingByKey.get(keyOf(id, guest));
+        if (existing) {
+          if (appName && existing.appName !== appName) {
+            setAppName(existing, appName);
+            changed = true;
+          }
+          result.existing += 1;
+          continue;
+        }
+        const empty = empties.shift();
+        const entry = empty || insertRow(rows.length, id, guest, false, appName);
+        if (empty) setRowValues(empty, id, guest, appName);
+        existingByKey.set(keyOf(id, guest), entry);
+        if (empty) result.filled += 1;
+        else result.added += 1;
+        changed = true;
+      }
+      if (changed) emitChange();
+      return result;
+    }
     function setApps(list) {
       rows.splice(0).forEach((r) => r.tr.remove());
       tbody.innerHTML = "";
@@ -4243,6 +4304,7 @@ ${body}`;
         emitChange();
       },
       putApp,
+      putApps,
       setApps,
       clear: () => setApps([]),
       count: () => getApps().length
@@ -4303,6 +4365,7 @@ ${body}`;
   }
 
   // src/entries/liteWorkflow.ts
+  init_utils();
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
@@ -8774,6 +8837,9 @@ ${lines.join("\n")}`), { partialSuccess: true });
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
+.kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}
+.kus-as__bulk .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
   function ensureStyles2() {
     if (document.getElementById(RESULT_CSS_ID)) return;
@@ -8811,12 +8877,17 @@ ${lines.join("\n")}`), { partialSuccess: true });
     const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
+    const allBtn = makeButton("環境内の全アプリ", "sub");
+    allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
     const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
+    body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
     body.appendChild(makeNote("閲覧できるアプリを名前（部分一致）またはコード（大文字・小文字を区別する完全一致）で検索します。スペースIDで検索範囲を絞れます。ID / URL の直接指定ではスペースIDの絞り込みは使いません。"));
+    const allTargets = opts.targets.filter((t) => typeof t.applyAll === "function");
+    body.appendChild(makeNote(`「環境内の全アプリ」は、閲覧できるアプリをすべて候補に表示します${allTargets.length ? "（候補の上の「すべて…」でまとめて設定できます）" : ""}。ゲストスペースのアプリは含まれないため、ゲストスペースIDを入れてゲストスペースごとに取得してください。`));
     const resultBox = document.createElement("div");
     resultBox.className = "kus-as__result kus-as__result--empty";
     body.appendChild(resultBox);
@@ -8828,10 +8899,12 @@ ${lines.join("\n")}`), { partialSuccess: true });
     let candidates = [];
     let nextOffset = 0;
     let resultGuest = "";
+    let resultIsAll = false;
     function invalidate() {
       generation += 1;
       candidates = [];
       nextOffset = 0;
+      resultIsAll = false;
       resultBox.replaceChildren();
       resultBox.className = "kus-as__result kus-as__result--empty";
       moreBtn.hidden = true;
@@ -8846,6 +8919,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
     function syncBusyControls() {
       const busy = panel.root.getAttribute("aria-busy") === "true";
       searchBtn.disabled = running || busy;
+      allBtn.disabled = running || busy;
       moreBtn.disabled = running || busy;
     }
     panel.root.addEventListener("kus-lite-busy-change", () => {
@@ -8870,8 +8944,13 @@ ${lines.join("\n")}`), { partialSuccess: true });
         <td><div class="kus-as__assign">${buttons}</div></td>
       </tr>`;
       }).join("");
+      const bulkHtml = allTargets.length ? `<div class="kus-as__bulk">${allTargets.map((t) => {
+        const ti = opts.targets.indexOf(t);
+        const label = t.applyAllLabel ? t.applyAllLabel(apps.length) : single || !t.label ? `候補 ${apps.length} 件をすべて追加` : `候補 ${apps.length} 件をすべて${t.label}へ`;
+        return `<button type="button" class="kus-lp__btn kus-lp__btn--sub" data-as-all="${ti}">${esc(label)}</button>`;
+      }).join("")}</div>` : "";
       resultBox.className = "kus-as__result";
-      resultBox.innerHTML = `<div class="kus-as__head">${apps.length}件の候補</div>
+      resultBox.innerHTML = `<div class="kus-as__head">${resultIsAll ? `環境内のアプリ ${apps.length}件${resultGuest ? `（ゲストスペース ${esc(resultGuest)}）` : ""}` : `${apps.length}件の候補`}</div>${bulkHtml}
       <table class="kus-as__table">
         <thead><tr><th style="width:74px">アプリID</th><th>アプリ名</th><th style="width:1%"></th></tr></thead>
         <tbody>${rowsHtml}</tbody>
@@ -8897,6 +8976,25 @@ ${lines.join("\n")}`), { partialSuccess: true });
             outcome.message || `App ${app.appId}${app.name ? ` (${app.name})` : ""} を設定しました${where}`,
             outcome.tone || "ok"
           );
+        });
+      });
+      resultBox.querySelectorAll("button[data-as-all]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const target = opts.targets[Number(btn.dataset.asAll)];
+          if (!target?.applyAll || !apps.length) return;
+          if (running || panel.root.getAttribute("aria-busy") === "true") return;
+          const searchGuest = resultGuest;
+          const outcome = target.applyAll(apps.map((app) => ({ appId: app.appId, appName: app.name })), searchGuest) || {};
+          if (opts.guestEl && opts.guestEl.value.trim() !== searchGuest) {
+            opts.guestEl.value = searchGuest;
+            opts.guestEl.dispatchEvent(new Event("input", { bubbles: true }));
+            opts.guestEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : "";
+          btn.classList.add("kus-as__picked");
+          btn.setAttribute("aria-pressed", "true");
+          btn.textContent = outcome.pickedLabel || `${apps.length} 件を設定済み`;
+          panel.setStatus(outcome.message || `候補 ${apps.length} 件を設定しました${where}`, outcome.tone || "ok");
         });
       });
     }
@@ -8927,8 +9025,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
       const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
       const prefix = buildApiPrefix(guestId, false);
       running = true;
-      searchBtn.disabled = true;
-      moreBtn.disabled = true;
+      syncBusyControls();
       resultBox.setAttribute("aria-busy", "true");
       try {
         if (directAppId) {
@@ -8978,8 +9075,51 @@ ${lines.join("\n")}`), { partialSuccess: true });
         }
       }
     }
+    async function runAll() {
+      if (running || panel.root.getAttribute("aria-busy") === "true") return;
+      invalidate();
+      const guestId = guest.value.trim();
+      if (guestId && !/^\d+$/.test(guestId)) {
+        panel.setStatus("ゲストIDは数値で入力してください", "warn");
+        return;
+      }
+      const requestGeneration = generation;
+      const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
+      running = true;
+      syncBusyControls();
+      resultBox.setAttribute("aria-busy", "true");
+      try {
+        panel.setStatus("環境内の全アプリを取得中…", "busy");
+        const apps = await fetchAllApps(guestId, (fetched) => {
+          if (isCurrent()) panel.setStatus(`環境内の全アプリを取得中…（${fetched}件）`, "busy");
+        });
+        if (!isCurrent()) return;
+        candidates = apps.map((app) => appCandidate(app, String(app.appId)));
+        resultGuest = guestId;
+        resultIsAll = true;
+        renderResults(candidates);
+        const where = guestId ? `ゲストスペース ${guestId}` : "通常スペース・スペース外";
+        panel.setStatus(
+          candidates.length ? `環境内のアプリ ${candidates.length}件を表示しました（${where}のアプリ）${allTargets.length ? "。「すべて…」でまとめて設定できます" : ""}` : `閲覧できるアプリがありません（${where}）`,
+          candidates.length ? "ok" : "info"
+        );
+      } catch (e) {
+        if (!isCurrent()) return;
+        panel.setStatus(`全アプリの取得エラー: ${e?.message || String(e)}`, "err");
+      } finally {
+        running = false;
+        syncBusyControls();
+        resultBox.setAttribute("aria-busy", "false");
+        if (!isCurrent() && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true" && panel.status.dataset.tone === "busy") {
+          panel.setStatus("取得条件が変わりました。もう一度取得してください", "info");
+        }
+      }
+    }
     searchBtn.addEventListener("click", () => {
       void runSearch();
+    });
+    allBtn.addEventListener("click", () => {
+      void runAll();
     });
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
@@ -9021,6 +9161,14 @@ ${lines.join("\n")}`), { partialSuccess: true });
             message: `アプリ #${id}${name ? ` (${name})` : ""} を対象アプリ表に設定しました${note}`,
             tone: result.action === "existing" ? "info" : "ok",
             pickedLabel: result.action === "existing" ? "追加済み" : "設定済み"
+          };
+        }, applyAll: (apps, guestId) => {
+          const result = appTable.putApps(apps.map((a) => ({ appId: a.appId, guestId, appName: a.appName })));
+          const fresh = result.added + result.filled;
+          return {
+            message: `${apps.length}件のアプリを対象アプリ表に設定しました（新規追加 ${fresh}件 / 追加済み ${result.existing}件）。単一出力は1行目、ZIP一括出力は全行が対象です`,
+            tone: fresh ? "ok" : "info",
+            pickedLabel: fresh ? `${fresh}件を追加済み` : "追加済み"
           };
         } }
       ]
@@ -9299,7 +9447,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
       advancedCopy: "保存済みの設定JSONを使う、ZIP一括出力や設計差分の補足を読むときはこちら。",
       actions: [
         { id: "xlsx", label: "Excel設計書を保存", description: "1行目のアプリの設計書をExcel（.xlsx）で保存します。", button: bXlsx, validate: firstTargetRequired, summary: () => singleSummary("Excel (.xlsx)") },
-        { id: "zip", label: "全対象をExcel ZIPで保存", description: "全対象アプリの設計書をExcelにして、1つのZIPで保存します。", button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), "対象アプリ表: "), summary: () => [["対象", appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? "読込済みJSON" : "本番")).join("\n")], ["出力", appTable.count() + " アプリのExcelをZIPに保存"], ["取得環境", "ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。"]] },
+        { id: "zip", label: "全対象をExcel ZIPで保存", description: "全対象アプリの設計書をExcelにして、1つのZIPで保存します。", button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), "対象アプリ表: "), summary: () => [["対象", summarizeList(appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? "読込済みJSON" : "本番")))], ["出力", appTable.count() + " アプリのExcelをZIPに保存"], ["取得環境", "ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。"], ...appTable.count() >= 50 ? [["件数が多い場合", "アプリごとに順に取得するため、時間とメモリを使います。途中で「中止」でき、その場合ZIPは保存しません。"]] : []] },
         { id: "ai-md", label: "AI向けMarkdownを保存", description: "1行目のアプリの設定を、AIに渡す用のMarkdownファイルで保存します。", button: bAiMd, validate: firstTargetRequired, summary: () => singleSummary("AI向けMarkdown（AIへの受け渡し）") },
         { id: "md", label: "Markdown設計書を保存", description: "1行目のアプリの設計書をMarkdownファイルで保存します。", button: bMd, validate: firstTargetRequired, summary: () => singleSummary("Markdown") },
         { id: "ai-copy", label: "AI向けMarkdownをコピー", description: "1行目のアプリの設定を、AIに渡す用のMarkdownとしてコピーします。", button: bAiCopy, validate: firstTargetRequired, summary: () => singleSummary("AI向けMarkdown（クリップボード）") },

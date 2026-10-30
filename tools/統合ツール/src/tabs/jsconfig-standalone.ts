@@ -1,7 +1,7 @@
 'use strict';
 
 import { buildCustomizeSettingsPutPayload } from '../constants.js';
-import { normalize, nowStamp, downloadText, downloadBlob, esc, kusConfirm, buildExportFilename } from '../utils.js';
+import { normalize, nowStamp, downloadText, downloadBlob, esc, kusConfirm, buildExportFilename, summarizeList } from '../utils.js';
 import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { RunCancelledError, createRequestSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
@@ -259,12 +259,9 @@ export function buildJsConfigApplyConfirmText(targetAppId: string, targetGuestId
   ].filter(Boolean).join('\n');
 }
 
-export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
-  const targetAppId = String(p.targetAppId || '').trim();
-  if (!targetAppId) throw new Error('反映先アプリIDを入力してください');
-  const guestId = String(p.targetGuestId || '').trim();
-  assertNumericAppAndGuestId(targetAppId, guestId, '反映先アプリID');
-  const text = String(p.jsonText || '').trim();
+/** テキストエリアの文字列を解析して反映計画を作る（単一・複数の反映先で共通。API には触れない）。 */
+export function parseJsConfigApplyText(jsonText: unknown): JsConfigApplyPlan {
+  const text = String(jsonText || '').trim();
   if (!text) throw new Error('JS/CSS設定JSONを入力してください');
   let parsed: any;
   try {
@@ -272,7 +269,15 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
   } catch (e: any) {
     throw new Error(`JS/CSS設定JSONを解析できません（「整形」ボタンで位置を確認してください）: ${e?.message || String(e)}`);
   }
-  const plan = buildJsConfigApplyPlan(parsed);
+  return buildJsConfigApplyPlan(parsed);
+}
+
+export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
+  const targetAppId = String(p.targetAppId || '').trim();
+  if (!targetAppId) throw new Error('反映先アプリIDを入力してください');
+  const guestId = String(p.targetGuestId || '').trim();
+  assertNumericAppAndGuestId(targetAppId, guestId, '反映先アプリID');
+  const plan = parseJsConfigApplyText(p.jsonText);
   const prefix = buildApiPrefix(guestId, true);
 
   setStatus('反映先の現在設定を確認中...');
@@ -318,6 +323,233 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
   setLogHtml(`<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`);
   setStatus('JS/CSS設定反映完了');
   return { revision: pickRevision(res) };
+}
+
+// ===== 複数の反映先プレビューへまとめて反映 =====
+
+export interface JsConfigMultiTarget { appId: string; guestId?: string; appName?: string }
+
+export type JsConfigMultiStatus = 'success' | 'failed' | 'conflict' | 'notExecuted';
+
+export interface JsConfigMultiTargetResult {
+  appId: string;
+  guestId: string;
+  appName: string;
+  status: JsConfigMultiStatus;
+  /** 事前確認（現在の設定の取得）で止まった場合 true。この反映先には何も書き込んでいない */
+  precheck?: boolean;
+  /** 反映後の revision（成功時） */
+  revision?: string;
+  /** 失敗・競合の理由 */
+  message?: string;
+  /** この反映で外れた現在の設定の件数（成功時） */
+  removed?: number;
+}
+
+export interface JsConfigMultiApplyResult {
+  /** 最終確認で「いいえ」を選んだ。何も書き込んでいない */
+  declined: boolean;
+  /** 中止された（残りは notExecuted） */
+  cancelled: boolean;
+  results: JsConfigMultiTargetResult[];
+  counts: { total: number; success: number; failed: number; conflict: number; notExecuted: number };
+  /** 完了時のステータス行と色。declined の場合は空 */
+  headline: string;
+  tone: 'ok' | 'warn' | 'err' | 'info';
+}
+
+export const JS_CONFIG_MULTI_STATUS_LABEL: Record<JsConfigMultiStatus, string> = {
+  success: '成功',
+  failed: '失敗',
+  conflict: '競合',
+  notExecuted: '未実行（中止）'
+};
+
+/**
+ * 複数の反映先へ同じ JSON を反映できない理由。FILE タイプの fileKey は取得元アプリの中でしか使えず、
+ * 別アプリへ流用すると kintone に拒否される。空文字なら反映できる。
+ */
+export function jsConfigMultiTargetProblem(plan: JsConfigApplyPlan): string {
+  if (!plan.counts.file) return '';
+  return `JSON にアップロード済みファイル（FILE タイプ）の JS / CSS が ${plan.counts.file}件含まれているため、複数の反映先へはまとめて反映できません。` +
+    'FILE タイプの fileKey は取得元のアプリでしか使えず、別のアプリへ反映すると kintone に拒否されます。' +
+    'URL で指定した JS / CSS だけの JSON にするか、ファイルは「プレビュー反映」の別アプリの JS/CSS 転送で反映してください。';
+}
+
+function multiTargetLabel(t: { appId: string; guestId: string; appName?: string }): string {
+  return `App ${t.appId}${t.appName ? `（${t.appName}）` : ''}${t.guestId ? ` / ゲストスペース ${t.guestId}` : ''}`;
+}
+
+function firstLine(message: unknown): string {
+  return String((message as any)?.message ?? message ?? '不明なエラー').split('\n').map((l) => l.trim()).find(Boolean) || '不明なエラー';
+}
+
+export function renderJsConfigMultiResultHtml(res: JsConfigMultiApplyResult): string {
+  const color: Record<JsConfigMultiStatus, string> = { success: '#15803d', failed: '#b91c1c', conflict: '#b45309', notExecuted: '#64748b' };
+  const rows = res.results.map((r) => {
+    const detail = r.status === 'success'
+      ? `revision ${r.revision || '-'} / 外れた現在の設定 ${r.removed ?? 0}件`
+      : (r.precheck && r.status === 'failed' ? '事前確認で失敗（書き込みなし）: ' : '') + (r.message || '');
+    return `<tr><td style="padding:4px 6px;white-space:nowrap">${esc(multiTargetLabel(r))}</td>`
+      + `<td style="padding:4px 6px;white-space:nowrap;font-weight:700;color:${color[r.status]}">${esc(JS_CONFIG_MULTI_STATUS_LABEL[r.status])}</td>`
+      + `<td style="padding:4px 6px;word-break:break-all">${esc(detail)}</td></tr>`;
+  }).join('');
+  return `<div style="padding:8px 10px;font-size:12px;font-weight:700">${esc(res.headline)}</div>`
+    + `<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 6px">反映先</th><th style="text-align:left;padding:4px 6px">結果</th><th style="text-align:left;padding:4px 6px">内容</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+/**
+ * 同じ JS/CSS 設定を、複数の反映先アプリのプレビューへ順に反映する（本番には反映しない）。
+ *
+ * 1. すべての反映先の現在の設定と revision を取得する（失敗した反映先は理由を残し、反映しない）。
+ * 2. 件数・置き換わる内容・事前確認の失敗をまとめて 1 回だけ確認する。「いいえ」なら何も書き込まない。
+ * 3. 事前確認で得た revision を送って 1 件ずつ反映する。競合・失敗は記録して次へ進み、中止されたら残りを「未実行（中止）」にする。
+ *
+ * @param p { targets: [{ appId, guestId?, appName? }], jsonText, skipConfirm? }
+ */
+export async function runApplyJsConfigMultiStandalone(
+  p: { targets: JsConfigMultiTarget[]; jsonText: string; skipConfirm?: boolean },
+  setStatus: (msg: string, err?: boolean) => void,
+  setLogHtml: (html: string) => void
+): Promise<JsConfigMultiApplyResult> {
+  // 入力の検証（API を呼ぶ前に、すべての行を調べる）
+  const seen = new Set<string>();
+  const targets: Array<{ appId: string; guestId: string; appName: string }> = [];
+  for (const raw of p.targets || []) {
+    const appId = String(raw?.appId || '').trim();
+    const guestId = String(raw?.guestId || '').trim();
+    if (!appId && !guestId) continue;
+    assertNumericAppAndGuestId(appId, guestId, `反映先アプリID（${appId || '未入力'}）`);
+    const key = `${appId}::${guestId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ appId, guestId, appName: String(raw?.appName || '') });
+  }
+  if (!targets.length) throw new Error('まとめて反映する反映先を1件以上指定してください');
+  const plan = parseJsConfigApplyText(p.jsonText);
+  const problem = jsConfigMultiTargetProblem(plan);
+  if (problem) throw new Error(problem);
+
+  const total = targets.length;
+  const results: JsConfigMultiTargetResult[] = [];
+  const prechecked: Array<{ target: (typeof targets)[number]; revision: string; removed: number; nowTotal: number }> = [];
+
+  // 1. 事前確認: 現在の設定と revision（書き込みは行わない。中止はそのまま呼び出し元へ）
+  for (let i = 0; i < total; i++) {
+    const target = targets[i];
+    setStatus(`[${i + 1}/${total}] 反映先の現在設定を確認中: ${multiTargetLabel(target)}`);
+    try {
+      const current = await apiGet(buildApiPrefix(target.guestId, true), '/app/customize.json', { app: target.appId });
+      const revision = pickRevision(current);
+      if (!/^\d+$/.test(revision)) throw new Error('JS/CSS 設定の revision を確認できません');
+      const summary = summarizeJsConfigCurrent(current, plan);
+      prechecked.push({ target, revision, removed: summary.removed, nowTotal: summary.desktopJs + summary.desktopCss + summary.mobileJs + summary.mobileCss });
+    } catch (e: any) {
+      if (isCancelStop(e)) throw e;
+      results.push({ ...target, status: 'failed', precheck: true, message: firstLine(e) });
+    }
+  }
+  const precheckFailures = results.filter((r) => r.precheck);
+
+  // 結果は入力順に並べる（全アプリを対象にしても並べ替えで全件を走査し直さない）
+  const position = new Map(targets.map((t, i) => [`${t.appId}::${t.guestId}`, i]));
+  const order = (r: { appId: string; guestId: string }) => position.get(`${r.appId}::${r.guestId}`) ?? -1;
+  const finish = (declined: boolean, cancelled: boolean): JsConfigMultiApplyResult => {
+    const counts = {
+      total,
+      success: results.filter((r) => r.status === 'success').length,
+      failed: results.filter((r) => r.status === 'failed').length,
+      conflict: results.filter((r) => r.status === 'conflict').length,
+      notExecuted: results.filter((r) => r.status === 'notExecuted').length
+    };
+    const detail = `失敗 ${counts.failed}件 / 競合 ${counts.conflict}件${counts.notExecuted ? ` / 未実行（中止） ${counts.notExecuted}件` : ''}`;
+    let headline = '';
+    let tone: JsConfigMultiApplyResult['tone'] = 'ok';
+    if (declined) {
+      tone = 'info';
+    } else if (cancelled) {
+      const done = total - counts.notExecuted;
+      headline = `${formatCancelledHeadline(done, total)}。` + (counts.success
+        ? `反映済みの ${counts.success}件は取り消していません（${detail}）`
+        : `何も反映していません（${detail}）`);
+      tone = 'warn';
+    } else if (counts.success === total) {
+      headline = `${total}件の反映先プレビューへ JS/CSS 設定を反映しました（本番には反映していません）`;
+    } else if (counts.success > 0) {
+      headline = `${total}件中 ${counts.success}件を反映しました。${detail}（詳細は下のログ）`;
+      tone = 'warn';
+    } else {
+      headline = `反映できた反映先がありません。${detail}（詳細は下のログ）`;
+      tone = 'err';
+    }
+    results.sort((x, y) => order(x) - order(y));
+    return { declined, cancelled, results, counts, headline, tone };
+  };
+
+  if (!prechecked.length) {
+    // 反映できる反映先が 1 件もない: 確認も書き込みもせず、失敗の内訳を示す
+    const res = finish(false, false);
+    setLogHtml(renderJsConfigMultiResultHtml(res));
+    return res;
+  }
+
+  // 2. 最終確認（1 回だけ）
+  if (!p.skipConfirm) {
+    const c = plan.counts;
+    const removedTotal = prechecked.reduce((sum, t) => sum + t.removed, 0);
+    const none = c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss === 0;
+    const text = [
+      `${prechecked.length}件の反映先プレビューへ、同じ JS/CSS 設定を反映します。`,
+      `反映する内容: Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}（URL ${c.url}件）${plan.scope ? ` / 適用範囲 ${plan.scope}` : ' / 適用範囲は各反映先の現状維持'}`,
+      none ? '⚠ 有効な JS/CSS 設定が 0 件のため、各反映先の JS/CSS 設定はすべて外れます（0 件になります）。' : null,
+      '各反映先の JS/CSS 一覧はこの内容にすべて置き換わり、反映先だけにあるファイルは外れます。',
+      `この反映で外れる現在の設定: 合計 ${removedTotal}件`,
+      plan.dropped ? `type/url/fileKey が不足している ${plan.dropped}件は送信しません。` : null,
+      '',
+      `反映先（${prechecked.length}件）:`,
+      summarizeList(prechecked.map((t) => `・${multiTargetLabel(t.target)}（現在 ${t.nowTotal}件 → 外れる ${t.removed}件）`)),
+      precheckFailures.length ? '' : null,
+      precheckFailures.length ? `現在の設定を確認できなかった ${precheckFailures.length}件は反映しません:` : null,
+      precheckFailures.length ? summarizeList(precheckFailures.map((r) => `・${multiTargetLabel(r)}: ${r.message}`)) : null,
+      '',
+      '本番には反映されません（管理画面から手動デプロイ）。1件ずつ順に反映し、途中の失敗・競合では残りを続けます。実行しますか？'
+    ].filter((line): line is string => line !== null).join('\n');
+    if (!kusConfirm(text)) {
+      setStatus('JS/CSS設定の複数反映をキャンセルしました（何も書き込んでいません）');
+      return { declined: true, cancelled: false, results: [], counts: { total, success: 0, failed: 0, conflict: 0, notExecuted: 0 }, headline: '', tone: 'info' };
+    }
+  }
+
+  // 3. 1 件ずつ反映（プレビューのみ。事前確認の revision を送り、外部の更新を上書きしない）
+  let cancelled = false;
+  for (let i = 0; i < prechecked.length; i++) {
+    const { target, revision, removed } = prechecked[i];
+    if (cancelled) {
+      results.push({ ...target, status: 'notExecuted' });
+      continue;
+    }
+    setStatus(`[${i + 1}/${prechecked.length}] 反映中: ${multiTargetLabel(target)}`);
+    const body: Record<string, unknown> = { app: target.appId, ...plan.payload, revision };
+    if (plan.scope) body.scope = plan.scope;
+    try {
+      throwIfCancelled();
+      const res = await apiPut(buildApiPrefix(target.guestId, true), '/app/customize.json', body);
+      results.push({ ...target, status: 'success', revision: pickRevision(res), removed });
+    } catch (e: any) {
+      if (isCancelStop(e)) {
+        cancelled = true;
+        results.push({ ...target, status: 'notExecuted' });
+        continue;
+      }
+      const decorated = decorateRevisionConflict(e, 'JS/CSS設定の反映');
+      results.push({ ...target, status: decorated?.revisionConflict ? 'conflict' : 'failed', message: firstLine(decorated) });
+    }
+  }
+
+  const res = finish(false, cancelled);
+  setLogHtml(renderJsConfigMultiResultHtml(res));
+  setStatus(res.headline, res.tone === 'err' || res.tone === 'warn');
+  return res;
 }
 
 export interface BatchJsConfigDownloadResult {

@@ -1,6 +1,6 @@
 'use strict';
 
-import { crawl, buildHTML, assertErAnalysed, progressUi, ER_DEFAULTS, formatErLayoutLabel, describeReverseScan } from './er.js';
+import { crawl, buildHTML, assertErAnalysed, progressUi, ER_DEFAULTS, formatErLayoutLabel, describeReverseScan, summarizeErStartIds } from './er.js';
 import { fetchAppsInSpace } from '../api.js';
 import { isCancelStop } from './run-cancel-summary.js';
 import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
@@ -169,9 +169,10 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
     throw e;
   }
 
-  setStatus(`ER図を生成中... 起点 ${options.startAppIds.join(',')}`);
+  // 全アプリを起点にしたときに状態表示へ数千の ID が並ばないよう、先頭の数件と件数で示す
+  setStatus(`ER図を生成中... 起点 ${summarizeErStartIds(options.startAppIds)}`);
   progressUi.init();
-  progressUi.update(4, `開始: 起点 ${options.startAppIds.join(',')}`);
+  progressUi.update(4, `開始: 起点 ${summarizeErStartIds(options.startAppIds)}`);
 
   try {
     const apps = await crawl(options.startAppIds, options);
@@ -200,9 +201,9 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
   const spaceId = String(opts.spaceId || '').trim();
   const options = await resolveErOptions(opts, setStatus);
 
-  setStatus(`ER図HTMLを生成中... 起点 ${options.startAppIds.join(',')}`);
+  setStatus(`ER図HTMLを生成中... 起点 ${summarizeErStartIds(options.startAppIds)}`);
   progressUi.init();
-  progressUi.update(4, `開始: 起点 ${options.startAppIds.join(',')}`);
+  progressUi.update(4, `開始: 起点 ${summarizeErStartIds(options.startAppIds)}`);
 
   try {
     const apps = await crawl(options.startAppIds, options);

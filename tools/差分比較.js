@@ -1341,6 +1341,21 @@ ${contextLine}`);
     }
     return bundle;
   }
+  async function fetchAllApps(guestId, onProgress) {
+    const prefix = buildApiPrefix(guestId, false);
+    const byId = /* @__PURE__ */ new Map();
+    for (let offset = 0; ; offset += APPS_PAGE_LIMIT) {
+      const resp = await apiGet(prefix, "/apps.json", { limit: APPS_PAGE_LIMIT, offset });
+      if (!Array.isArray(resp?.apps)) throw new Error("アプリ一覧の応答が不正です。もう一度取得してください");
+      for (const app of resp.apps) {
+        const appId = String(app?.appId || "").trim();
+        if (/^\d+$/.test(appId) && !byId.has(appId)) byId.set(appId, app);
+      }
+      onProgress?.(byId.size);
+      if (resp.apps.length < APPS_PAGE_LIMIT) break;
+    }
+    return [...byId.entries()].sort(([a], [b]) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0).map(([, app]) => app);
+  }
   function resolveBundleRevision(bundle) {
     const revisions = bundle?.meta?.sectionRevisions || {};
     for (const key of ["appSettings", "fieldSettings", "layoutSettings", "viewSettings", "processSettings"]) {
@@ -1350,7 +1365,7 @@ ${contextLine}`);
     const first = Object.values(revisions).find((value) => value != null && value !== "");
     return first != null ? String(first) : "";
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY, APPS_PAGE_LIMIT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1377,6 +1392,7 @@ ${contextLine}`);
       TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
       FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
       BUNDLE_FETCH_CONCURRENCY = 3;
+      APPS_PAGE_LIMIT = 100;
     }
   });
 
@@ -13631,6 +13647,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   }
 
   // src/entries/liteWorkflow.ts
+  init_utils();
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
@@ -20478,6 +20495,9 @@ ${fence}`;
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
+.kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
+.kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}
+.kus-as__bulk .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
   function ensureStyles2() {
     if (document.getElementById(RESULT_CSS_ID)) return;
@@ -20515,12 +20535,17 @@ ${fence}`;
     const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
+    const allBtn = makeButton("環境内の全アプリ", "sub");
+    allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
     const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
+    body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
     body.appendChild(makeNote("閲覧できるアプリを名前（部分一致）またはコード（大文字・小文字を区別する完全一致）で検索します。スペースIDで検索範囲を絞れます。ID / URL の直接指定ではスペースIDの絞り込みは使いません。"));
+    const allTargets = opts.targets.filter((t) => typeof t.applyAll === "function");
+    body.appendChild(makeNote(`「環境内の全アプリ」は、閲覧できるアプリをすべて候補に表示します${allTargets.length ? "（候補の上の「すべて…」でまとめて設定できます）" : ""}。ゲストスペースのアプリは含まれないため、ゲストスペースIDを入れてゲストスペースごとに取得してください。`));
     const resultBox = document.createElement("div");
     resultBox.className = "kus-as__result kus-as__result--empty";
     body.appendChild(resultBox);
@@ -20532,10 +20557,12 @@ ${fence}`;
     let candidates = [];
     let nextOffset = 0;
     let resultGuest = "";
+    let resultIsAll = false;
     function invalidate() {
       generation += 1;
       candidates = [];
       nextOffset = 0;
+      resultIsAll = false;
       resultBox.replaceChildren();
       resultBox.className = "kus-as__result kus-as__result--empty";
       moreBtn.hidden = true;
@@ -20550,6 +20577,7 @@ ${fence}`;
     function syncBusyControls() {
       const busy = panel.root.getAttribute("aria-busy") === "true";
       searchBtn.disabled = running || busy;
+      allBtn.disabled = running || busy;
       moreBtn.disabled = running || busy;
     }
     panel.root.addEventListener("kus-lite-busy-change", () => {
@@ -20574,8 +20602,13 @@ ${fence}`;
         <td><div class="kus-as__assign">${buttons}</div></td>
       </tr>`;
       }).join("");
+      const bulkHtml = allTargets.length ? `<div class="kus-as__bulk">${allTargets.map((t) => {
+        const ti = opts.targets.indexOf(t);
+        const label = t.applyAllLabel ? t.applyAllLabel(apps.length) : single || !t.label ? `候補 ${apps.length} 件をすべて追加` : `候補 ${apps.length} 件をすべて${t.label}へ`;
+        return `<button type="button" class="kus-lp__btn kus-lp__btn--sub" data-as-all="${ti}">${esc(label)}</button>`;
+      }).join("")}</div>` : "";
       resultBox.className = "kus-as__result";
-      resultBox.innerHTML = `<div class="kus-as__head">${apps.length}件の候補</div>
+      resultBox.innerHTML = `<div class="kus-as__head">${resultIsAll ? `環境内のアプリ ${apps.length}件${resultGuest ? `（ゲストスペース ${esc(resultGuest)}）` : ""}` : `${apps.length}件の候補`}</div>${bulkHtml}
       <table class="kus-as__table">
         <thead><tr><th style="width:74px">アプリID</th><th>アプリ名</th><th style="width:1%"></th></tr></thead>
         <tbody>${rowsHtml}</tbody>
@@ -20601,6 +20634,25 @@ ${fence}`;
             outcome.message || `App ${app.appId}${app.name ? ` (${app.name})` : ""} を設定しました${where}`,
             outcome.tone || "ok"
           );
+        });
+      });
+      resultBox.querySelectorAll("button[data-as-all]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const target = opts.targets[Number(btn.dataset.asAll)];
+          if (!target?.applyAll || !apps.length) return;
+          if (running || panel.root.getAttribute("aria-busy") === "true") return;
+          const searchGuest = resultGuest;
+          const outcome = target.applyAll(apps.map((app) => ({ appId: app.appId, appName: app.name })), searchGuest) || {};
+          if (opts.guestEl && opts.guestEl.value.trim() !== searchGuest) {
+            opts.guestEl.value = searchGuest;
+            opts.guestEl.dispatchEvent(new Event("input", { bubbles: true }));
+            opts.guestEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : "";
+          btn.classList.add("kus-as__picked");
+          btn.setAttribute("aria-pressed", "true");
+          btn.textContent = outcome.pickedLabel || `${apps.length} 件を設定済み`;
+          panel.setStatus(outcome.message || `候補 ${apps.length} 件を設定しました${where}`, outcome.tone || "ok");
         });
       });
     }
@@ -20631,8 +20683,7 @@ ${fence}`;
       const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
       const prefix = buildApiPrefix(guestId, false);
       running = true;
-      searchBtn.disabled = true;
-      moreBtn.disabled = true;
+      syncBusyControls();
       resultBox.setAttribute("aria-busy", "true");
       try {
         if (directAppId) {
@@ -20682,8 +20733,51 @@ ${fence}`;
         }
       }
     }
+    async function runAll() {
+      if (running || panel.root.getAttribute("aria-busy") === "true") return;
+      invalidate();
+      const guestId = guest.value.trim();
+      if (guestId && !/^\d+$/.test(guestId)) {
+        panel.setStatus("ゲストIDは数値で入力してください", "warn");
+        return;
+      }
+      const requestGeneration = generation;
+      const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
+      running = true;
+      syncBusyControls();
+      resultBox.setAttribute("aria-busy", "true");
+      try {
+        panel.setStatus("環境内の全アプリを取得中…", "busy");
+        const apps = await fetchAllApps(guestId, (fetched) => {
+          if (isCurrent()) panel.setStatus(`環境内の全アプリを取得中…（${fetched}件）`, "busy");
+        });
+        if (!isCurrent()) return;
+        candidates = apps.map((app) => appCandidate(app, String(app.appId)));
+        resultGuest = guestId;
+        resultIsAll = true;
+        renderResults(candidates);
+        const where = guestId ? `ゲストスペース ${guestId}` : "通常スペース・スペース外";
+        panel.setStatus(
+          candidates.length ? `環境内のアプリ ${candidates.length}件を表示しました（${where}のアプリ）${allTargets.length ? "。「すべて…」でまとめて設定できます" : ""}` : `閲覧できるアプリがありません（${where}）`,
+          candidates.length ? "ok" : "info"
+        );
+      } catch (e) {
+        if (!isCurrent()) return;
+        panel.setStatus(`全アプリの取得エラー: ${e?.message || String(e)}`, "err");
+      } finally {
+        running = false;
+        syncBusyControls();
+        resultBox.setAttribute("aria-busy", "false");
+        if (!isCurrent() && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true" && panel.status.dataset.tone === "busy") {
+          panel.setStatus("取得条件が変わりました。もう一度取得してください", "info");
+        }
+      }
+    }
     searchBtn.addEventListener("click", () => {
       void runSearch();
+    });
+    allBtn.addEventListener("click", () => {
+      void runAll();
     });
     moreBtn.addEventListener("click", () => {
       void runSearch(true);
@@ -20698,6 +20792,74 @@ ${fence}`;
     guest.addEventListener("keydown", onEnterKey);
     space.addEventListener("keydown", onEnterKey);
     return details;
+  }
+
+  // src/diff/multi-targets.ts
+  var MULTI_AUTO_HTML_MAX_TARGETS = 10;
+  var MULTI_LARGE_TARGET_THRESHOLD = 100;
+  var POSITIVE_INT = /^[1-9]\d*$/;
+  function planMultiTargetFill(options) {
+    const guestId = String(options.guestId || "").trim();
+    const seen = /* @__PURE__ */ new Set();
+    options.existing.forEach((entry) => {
+      const appId = String(entry.appId || "").trim();
+      if (appId) seen.add(`${appId}::${String(entry.guestId || "").trim()}`);
+    });
+    const source = options.source;
+    const sourceAppId = String(source?.appId || "").trim();
+    const selfIsSameEndpoint = !!source && !!sourceAppId && String(source.guestId || "").trim() === guestId && !!source.preview === !!options.targetPreview;
+    const plan = { add: [], alreadyPresent: 0, skippedSelf: 0, invalid: 0 };
+    options.candidates.forEach((candidate) => {
+      const appId = String(candidate.appId || "").trim();
+      if (!POSITIVE_INT.test(appId)) {
+        plan.invalid += 1;
+        return;
+      }
+      if (selfIsSameEndpoint && appId === sourceAppId) {
+        plan.skippedSelf += 1;
+        return;
+      }
+      const key = `${appId}::${guestId}`;
+      if (seen.has(key)) {
+        plan.alreadyPresent += 1;
+        return;
+      }
+      seen.add(key);
+      plan.add.push({ appId, appName: String(candidate.appName || "").trim() });
+    });
+    return plan;
+  }
+  function describeMultiTargetFill(plan, totalTargets, guestId = "") {
+    const where = guestId ? `（ゲストスペース ${guestId}）` : "";
+    if (!plan.add.length && !plan.alreadyPresent && !plan.skippedSelf && !plan.invalid) {
+      return `比較先に設定できるアプリがありません${where}`;
+    }
+    const parts = [
+      `比較先へ ${plan.add.length} 件を追加しました${where}`,
+      plan.alreadyPresent ? `設定済みのため ${plan.alreadyPresent} 件は追加していません` : "",
+      plan.skippedSelf ? `比較元と同じ接続先のため ${plan.skippedSelf} 件を除きました` : "",
+      plan.invalid ? `アプリIDを読み取れない ${plan.invalid} 件を除きました` : ""
+    ].filter(Boolean);
+    return `${parts.join("。")}。比較先は合計 ${totalTargets} 件です`;
+  }
+  function multiTargetScaleNote(targetCount) {
+    if (targetCount <= MULTI_LARGE_TARGET_THRESHOLD) return "";
+    return `比較先が ${targetCount} 件あります。1 件ずつ順に取得するため時間がかかり、結果はこのページのメモリに保持します。「中止」で止められます`;
+  }
+  function multiRetainNote(resultCount) {
+    if (resultCount <= MULTI_LARGE_TARGET_THRESHOLD) return "";
+    return `${resultCount}件分の比較結果をメモリに保持しています。保存が済んだらページを再読み込みすると解放できます`;
+  }
+  function planMultiAutoHtml(targetCount, checked) {
+    if (!checked) return { enabled: false, suppressedByCount: false, note: "" };
+    if (targetCount > MULTI_AUTO_HTML_MAX_TARGETS) {
+      return {
+        enabled: false,
+        suppressedByCount: true,
+        note: `比較先が ${targetCount} 件（自動保存は ${MULTI_AUTO_HTML_MAX_TARGETS} 件まで）のため、HTMLは自動保存しませんでした。結果表の各行、またはExcelの一括保存から必要な分を保存してください`
+      };
+    }
+    return { enabled: true, suppressedByCount: false, note: "" };
   }
 
   // src/entries/diff-lite-ui.ts
@@ -22433,7 +22595,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       r.app.setAttribute("aria-label", `比較先${idx + 1}アプリID`);
       r.guest.setAttribute("aria-label", `比較先${idx + 1}ゲストスペースID`);
     });
-    const addTargetRow = (appId = "", guestId = "", appName = "") => {
+    const addTargetRow = (appId = "", guestId = "", appName = "", container = targetList, refresh = true) => {
       const rowNumber = targetRows.length + 1;
       const app = makeInput({ placeholder: "アプリID（カンマ区切り可）", width: "medium", ariaLabel: `比較先${rowNumber}アプリID` });
       const guest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: `比較先${rowNumber}ゲストスペースID` });
@@ -22468,9 +22630,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       });
       guest.addEventListener("input", invalidateResultAfterAppSelectionChange);
       targetRows.push(entry);
-      targetList.appendChild(row);
+      container.appendChild(row);
       attachTargetSplit(entry);
-      updateTargetListHint();
+      if (refresh) updateTargetListHint();
       return entry;
     };
     const adoptDiffAppReference = (appInput, guestInput, sideLabel, clearName, text2 = appInput.value) => {
@@ -22587,16 +22749,62 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           const invalidated = invalidateResultAfterAppSelectionChange();
           return { message: invalidated ? "前回の結果を無効にしました（比較元を変更したため）。再比較してください" : `App ${id} を比較元へ設定しました`, tone: invalidated ? "warn" : "ok" };
         } },
-        { label: "比較先", apply: (id, name, guestId) => {
-          if (diffRunActive) return { message: "比較を実行中です。完了してからアプリを設定してください", tone: "warn" };
-          const empty = comparisonMode === "single" ? targetRows[0] : targetRows.find((r) => !r.app.value.trim()) || addTargetRow();
-          if (empty === targetRows[0]) cancelJsonImportForAppChange("target", id, guestId);
-          empty.app.value = id;
-          setTargetName(empty, name);
-          empty.guest.value = guestId;
-          const invalidated = invalidateResultAfterAppSelectionChange();
-          return { message: invalidated ? "前回の結果を無効にしました（比較先を変更したため）。再比較してください" : `App ${id} を比較先へ設定しました`, tone: invalidated ? "warn" : "ok" };
-        } }
+        {
+          label: "比較先",
+          apply: (id, name, guestId) => {
+            if (diffRunActive) return { message: "比較を実行中です。完了してからアプリを設定してください", tone: "warn" };
+            const empty = comparisonMode === "single" ? targetRows[0] : targetRows.find((r) => !r.app.value.trim()) || addTargetRow();
+            if (empty === targetRows[0]) cancelJsonImportForAppChange("target", id, guestId);
+            empty.app.value = id;
+            setTargetName(empty, name);
+            empty.guest.value = guestId;
+            const invalidated = invalidateResultAfterAppSelectionChange();
+            return { message: invalidated ? "前回の結果を無効にしました（比較先を変更したため）。再比較してください" : `App ${id} を比較先へ設定しました`, tone: invalidated ? "warn" : "ok" };
+          },
+          applyAll: (apps, guestId) => {
+            if (diffRunActive) return { message: "比較を実行中です。完了してからアプリを設定してください", tone: "warn" };
+            const plan = planMultiTargetFill({
+              candidates: apps,
+              guestId,
+              existing: targetRows.map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim() })),
+              source: { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: srcPrev.checkbox.checked },
+              targetPreview: tgtPrev.checkbox.checked
+            });
+            if (!plan.add.length) {
+              return { message: describeMultiTargetFill(plan, targetRows.filter((r) => r.app.value.trim()).length, guestId), tone: "warn" };
+            }
+            const hadResult = !!cache || multiXlsxExports.length > 0 || resultBox.childElementCount > 0;
+            applyComparisonMode("multi");
+            const queue = plan.add.slice();
+            for (const entry of targetRows) {
+              if (entry.app.value.trim()) continue;
+              const item = queue.shift();
+              if (!item) break;
+              if (entry === targetRows[0]) cancelJsonImportForAppChange("target", item.appId, guestId);
+              entry.app.value = item.appId;
+              setTargetName(entry, item.appName);
+              entry.guest.value = guestId;
+            }
+            const fragment = document.createDocumentFragment();
+            queue.forEach((item) => addTargetRow(item.appId, guestId, item.appName, fragment, false));
+            targetList.appendChild(fragment);
+            updateTargetListHint();
+            const invalidated = invalidateResultAfterAppSelectionChange() || hadResult;
+            const total = targetRows.filter((r) => r.app.value.trim()).length;
+            const scale = multiTargetScaleNote(total);
+            const message = [
+              describeMultiTargetFill(plan, total, guestId),
+              invalidated ? "前回の結果は無効にしました。再比較してください" : "",
+              scale
+            ].filter(Boolean).join("。");
+            return {
+              message,
+              tone: invalidated || plan.skippedSelf || plan.invalid || scale ? "warn" : "ok",
+              pickedLabel: `${plan.add.length} 件を追加済み`
+            };
+          },
+          applyAllLabel: (count) => `候補 ${count} 件をすべて比較先に追加（1対多）`
+        }
       ]
     });
     cardApp.body.appendChild(singleAppSearch);
@@ -24964,7 +25172,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       runDiffTask("全比較先を比較中…", async () => {
         const resultRows = [];
         let sharedSourceBundle = importedSourceBundle;
-        const autoExportHtml = multiAutoHtml.checkbox.checked;
+        let retainedSourceBundle = null;
+        const autoHtmlPlan = planMultiAutoHtml(targets.length, multiAutoHtml.checkbox.checked);
+        const autoExportHtml = autoHtmlPlan.enabled;
         let exported = 0;
         let succeeded = 0;
         let failed = 0;
@@ -24987,6 +25197,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           }
           panel.setStatus(`比較中 (${i + 1}/${targets.length}) App:${t.appId}${t.guestId ? ` / Guest:${t.guestId}` : ""}`, "busy");
           try {
+            const reusedSource = !!sharedSourceBundle;
             const out = await runDiffStandalone2({
               source: base.source,
               target: t,
@@ -25008,6 +25219,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
             if (!sharedSourceBundle) sharedSourceBundle = out.sourceBundle;
             attachKnownAppName(out.sourceBundle, base.source.appName);
             attachKnownAppName(out.targetBundle, t.appName);
+            const sourceForResult = reusedSource ? retainedSourceBundle ?? (retainedSourceBundle = out.sourceBundle) : out.sourceBundle;
             succeeded += 1;
             const counts = summarizeLiteDiffRows(out.rows || []);
             const contentChanged = contentChangedCount(counts);
@@ -25046,7 +25258,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
                 rows: out.rows || [],
                 fetchIssues: out.fetchIssues || [],
                 partialIssues: out.partialIssues || [],
-                sourceBundle: out.sourceBundle,
+                sourceBundle: sourceForResult,
                 targetBundle: out.targetBundle,
                 scopes: base.scopes,
                 ignoreKeys: base.ignoreKeys,
@@ -25070,14 +25282,15 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         cardResult.card.style.display = "";
         reviewEmpty.style.display = "none";
         resultBox.innerHTML = `<div class="kus-dl-result"><div class="kus-dl-table-scroll" role="region" aria-label="1対多比較結果。横にスクロールできます" tabindex="0"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>取得状態<br><small>件数より先に確認</small></th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>内容変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>保存</th></tr></thead><tbody>${resultRows.join("")}</tbody></table></div>${multiXlsxBatchSaveMarkup(multiXlsxExports.length)}</div>`;
-        const tone = failed || exportFailed || incomplete || cancelledTargets || autoExportHtml && exported !== targets.length ? "warn" : "ok";
+        const tone = failed || exportFailed || incomplete || cancelledTargets || autoHtmlPlan.suppressedByCount || autoExportHtml && exported !== targets.length ? "warn" : "ok";
         const note = [failed ? `比較失敗 ${failed}件` : "", exportFailed ? `HTML出力失敗 ${exportFailed}件` : "", incomplete ? `要確認 ${incomplete}件` : ""].filter(Boolean).join(" / ");
-        const exportSummary = autoExportHtml ? `HTMLの保存を ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）` : "HTMLの自動保存はオフです";
+        const exportSummary = autoExportHtml ? `HTMLの保存を ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）` : autoHtmlPlan.suppressedByCount ? autoHtmlPlan.note : "HTMLの自動保存はオフです";
+        const retainNote = multiRetainNote(succeeded);
         if (cancelledTargets) {
-          panel.setStatus(`中止しました（${succeeded}/${targets.length} 件を比較、残り ${cancelledTargets} 件は未実行）${note ? ` / ${note}` : ""}。${exportSummary}。比較できた分は各行または一括ボタンから保存できます`, "warn");
+          panel.setStatus(`中止しました（${succeeded}/${targets.length} 件を比較、残り ${cancelledTargets} 件は未実行）${note ? ` / ${note}` : ""}。${exportSummary}。比較できた分は各行または一括ボタンから保存できます${retainNote ? `。${retainNote}` : ""}`, "warn");
           return;
         }
-        panel.setStatus(`${targets.length}件中 ${succeeded}件を比較しました${note ? `（${note}）` : ""}。${exportSummary}。HTML・Excel・Markdown は各行または一括ボタンから保存できます`, tone);
+        panel.setStatus(`${targets.length}件中 ${succeeded}件を比較しました${note ? `（${note}）` : ""}。${exportSummary}。HTML・Excel・Markdown は各行または一括ボタンから保存できます${retainNote ? `。${retainNote}` : ""}`, tone);
       });
     });
     runBtn.addEventListener("click", () => {

@@ -1,11 +1,13 @@
 'use strict';
 
-import { installLiteWorkflow, connectionSummary, validateJsonObject } from './liteWorkflow.js';
+import { installLiteWorkflow, connectionSummary, summarizeList, validateJsonObject } from './liteWorkflow.js';
 
 import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import { kusConfirm } from '../utils.js';
 import {
   buildJsConfigApplyPlan,
+  jsConfigMultiTargetProblem,
+  runApplyJsConfigMultiStandalone,
   runApplyJsConfigStandalone,
   runExportJsConfigStandalone,
   runFetchJsConfigStandalone,
@@ -19,6 +21,7 @@ import {
   makeCheck,
   makeTextarea,
   makeCard,
+  makeAppTable,
   makeDetails,
   makeNote,
   liteRun
@@ -130,6 +133,40 @@ export function mountJsconfigLitePanel() {
   cardApply.body.appendChild(applyBtn);
   panel.body.insertBefore(cardApply.card, panel.status);
 
+  // まとめて反映（複数の反映先 / 環境内の全アプリ）
+  const cardMulti = makeCard({ title: '複数の反映先プレビューへ反映', number: 3 });
+  const multiTable = makeAppTable({ minRows: 1 });
+  const multiTargetName = 'まとめて反映先';
+  cardMulti.body.appendChild(createAppSearchControl(panel, {
+    targets: [{
+      label: multiTargetName,
+      apply: (id, name, guestId) => {
+        const result = multiTable.putApp(id, guestId, { appName: name });
+        return { message: `アプリ #${id}${name ? ` (${name})` : ''} を「${multiTargetName}」に${result.action === 'existing' ? '設定済みです（追加していません）' : '追加しました'}` };
+      },
+      applyAll: (apps, guestId) => {
+        const result = multiTable.putApps(apps.map((app) => ({ appId: app.appId, guestId, appName: app.appName })));
+        const set = result.added + result.filled;
+        return {
+          message: `候補 ${apps.length} 件のうち ${set} 件を「${multiTargetName}」に追加しました${result.existing ? `（設定済み ${result.existing} 件は追加していません）` : ''}。反映前に対象を最終確認します。`,
+          tone: 'ok',
+          pickedLabel: `${apps.length} 件を追加済み`
+        };
+      },
+      applyAllLabel: (count) => `候補 ${count} 件をすべて${multiTargetName}に追加`
+    }]
+  }));
+  cardMulti.body.appendChild(multiTable.element);
+  const multiClearBtn = makeButton('反映先をすべてクリア', 'sub');
+  multiClearBtn.addEventListener('click', () => { multiTable.clear(); panel.setStatus('まとめて反映先の一覧をクリアしました', 'info'); });
+  cardMulti.body.appendChild(makeRow(multiClearBtn));
+  cardMulti.body.appendChild(makeNote('各反映先の JS / CSS 一覧は、JSON の内容にすべて置き換わります。1件ずつ順に反映し、失敗や競合があっても残りを続けて、最後に反映先ごとの結果を示します。', 'help'));
+  cardMulti.body.appendChild(makeNote('FILE タイプ（アップロード済みファイル）を含む JSON は、別のアプリでは使えない fileKey を持つため、複数の反映先へはまとめて反映できません。URL タイプだけの JSON にするか、ファイルは「プレビュー反映」の別アプリの JS/CSS 転送を使ってください。', 'help'));
+  cardMulti.body.appendChild(makeNote('反映前に、各反映先の現在の設定を確認して件数を最終確認します。確認後に反映先へ別の更新が入っていた場合（revision 競合）は、その反映先だけ上書きせず競合として報告します。', 'help'));
+  const applyMultiBtn = makeButton('複数の反映先プレビューへ反映', 'run', { icon: '⤴' });
+  cardMulti.body.appendChild(applyMultiBtn);
+  panel.body.insertBefore(cardMulti.card, panel.status);
+
   // JSON の出所。取得元の入力欄は後から変えられるため、取得時点の対象を保持して保存名・反映確認に使う。
   let loadedText = '';
   let fetchedRevision = '';
@@ -208,6 +245,16 @@ export function mountJsconfigLitePanel() {
     if (base && jsonOrigin && applied) jsonOrigin = { ...jsonOrigin, revision: applied.revision };
   }));
 
+  applyMultiBtn.addEventListener('click', () => liteRun(panel, '複数の反映先のプレビューへ反映中…', async () => {
+    const res = await runApplyJsConfigMultiStandalone(
+      { targets: multiTable.getApps(), jsonText: jsonTa.value },
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
+      (html: string) => { panel.setResultHtml(html); }
+    );
+    // 最終確認で見送った場合は、処理側がキャンセルを伝えている。それ以外は件数つきの結果を、部分成功なら警告色で示す。
+    if (!res.declined) panel.setStatus(res.headline, res.tone);
+  }));
+
   // 全アプリ JS/CSS ファイル 一括ダウンロード
   const batchDetails = makeCard({ title: '全アプリの JS/CSS ファイルを一括ダウンロード' });
   batchDetails.body.appendChild(makeNote('アクセスできるアプリを順に調べ、アップロード済み（FILE タイプ）の JS / CSS ファイルを1つの ZIP にまとめます。URL で指定した JS / CSS はファイルがないため含まれません。', 'help'));
@@ -239,9 +286,10 @@ export function mountJsconfigLitePanel() {
   jsonTa.setAttribute('aria-label', 'カスタマイズJSON');
   batchGuest.setAttribute('aria-label', '一括取得のゲストスペースID');
   const selectMode = (mode: string) => {
-    cardFetch.card.hidden = mode === 'batch' || mode === 'apply';
+    cardFetch.card.hidden = mode === 'batch' || mode === 'apply' || mode === 'apply-multi';
     cardJson.card.hidden = mode === 'batch';
     cardApply.card.hidden = mode !== 'apply';
+    cardMulti.card.hidden = mode !== 'apply-multi';
     batchDetails.card.hidden = mode !== 'batch';
   };
   const idProblem = (who: string, app: string, guest: string): string => {
@@ -254,6 +302,22 @@ export function mountJsconfigLitePanel() {
     const problem = validateJsonObject(jsonTa.value);
     if (problem) return problem;
     try { buildJsConfigApplyPlan(JSON.parse(jsonTa.value)); return ''; } catch (e: any) { return e.message; }
+  };
+  // まとめて反映: 入力行の不備（アプリIDなしでゲストIDだけ、数字以外）→ JSON → FILE タイプの有無の順に止める。
+  const multiProblem = (): string => {
+    const rows = multiTable.getAllRows();
+    for (const [index, row] of rows.entries()) {
+      if (!row.appId && row.guestId) return `反映先の${index + 1}行目: アプリIDを指定してください（ゲストスペースIDだけ入力されています）。`;
+    }
+    const targets = multiTable.getApps();
+    if (!targets.length) return 'まとめて反映する反映先を1件以上指定してください。';
+    for (const row of targets) {
+      const problem = idProblem('反映先', row.appId, row.guestId);
+      if (problem) return `アプリID ${row.appId || '未入力'}: ${problem}`;
+    }
+    const problem = applyProblem();
+    if (problem) return problem;
+    try { return jsConfigMultiTargetProblem(buildJsConfigApplyPlan(JSON.parse(jsonTa.value))); } catch (e: any) { return e.message; }
   };
   const jsonSummary = (forApply = false): Array<[string, string]> => {
     let data: any = {};
@@ -274,7 +338,7 @@ export function mountJsconfigLitePanel() {
     return [['JSONの取得元', originSummary()], ...rows];
   };
   installLiteWorkflow(panel, {
-    setup: [cardFetch.card, cardJson.card, cardApply.card, batchDetails.card], results: [cardPreview.card], resultActions: ['fetch'],
+    setup: [cardFetch.card, cardJson.card, cardApply.card, cardMulti.card, batchDetails.card], primaryActions: 4, results: [cardPreview.card], resultActions: ['fetch'],
     beforeRun: actionId => { if (actionId === 'fetch') { previewBox.replaceChildren(); previewBox.classList.add('kus-lp__panel-html--empty'); } },
     actions: [
       {
@@ -309,6 +373,24 @@ export function mountJsconfigLitePanel() {
           ['反映方法', 'JS / CSS 一覧をすべて置き換えます。FILE タイプは、反映先で有効な fileKey（アップロード済みファイルの識別子）が必要です。']
         ],
         onSelect: () => selectMode('apply')
+      },
+      {
+        id: 'apply-multi',
+        label: '複数の反映先プレビューへ反映',
+        description: '同じ JSON の内容で、複数の反映先プレビューの JS / CSS 一覧をすべて置き換えます（環境内の全アプリも選べます）。',
+        button: applyMultiBtn,
+        writes: true,
+        validate: multiProblem,
+        summary: () => {
+          const targets = multiTable.getApps();
+          return [
+            ['反映先', `${targets.length}件のプレビュー\n` + summarizeList(targets.map((t) => '・' + connectionSummary(t.appId, t.guestId, 'プレビュー') + (t.appName ? ` ${t.appName}` : '')))],
+            ...jsonSummary(true),
+            ['競合検出', '反映の直前に各反映先の現在の設定（revision）を確認し、その revision を付けて反映します。確認後に別の更新が入った反映先は、上書きせず「競合」として報告し、残りは続けます。この JSON を取得した後の更新は検出できません。'],
+            ['反映方法', 'JS / CSS 一覧をすべて置き換えます。1件ずつ順に反映し、失敗しても残りを続けます。「中止」を押すと、残りは「未実行（中止）」になります。FILE タイプを含む JSON は反映できません。']
+          ];
+        },
+        onSelect: () => selectMode('apply-multi')
       },
       {
         id: 'batch',

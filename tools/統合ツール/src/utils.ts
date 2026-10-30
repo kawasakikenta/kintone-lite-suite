@@ -102,6 +102,19 @@ export function safeJsonForScript(v: unknown): string {
     .replace(/\u2029/g, '\\u2029');
 }
 
+/** 確認画面・確認ダイアログの一覧に載せる件数の既定値。全アプリを対象にしても一覧が長くなりすぎないようにする。 */
+export const SUMMARY_LIST_LIMIT = 20;
+
+/**
+ * 対象の一覧を 1 つの文字列にする。limit 件を超える分は「…ほか N 件（合計 M 件）」にまとめる
+ * （件数は隠さず示す）。
+ */
+export function summarizeList(lines: string[], limit = SUMMARY_LIST_LIMIT): string {
+  const items = lines.filter(Boolean);
+  if (items.length <= limit) return items.join('\n');
+  return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join('\n');
+}
+
 export function deepClone<T>(v: T): T {
   return v == null ? v : JSON.parse(JSON.stringify(v));
 }

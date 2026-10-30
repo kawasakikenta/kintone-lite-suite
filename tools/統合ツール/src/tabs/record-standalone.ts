@@ -586,10 +586,17 @@ export async function runCsvImportBatchStandalone(opts, setStatus) {
   // Recheck all apps before the first write. Never reuse a stale UI preview.
   const { prefix, rows, plans } = await inspectCsvImportBatch(opts, setStatus);
   const problems = plans.filter(plan => plan.error || plan.report.issueCount);
-  if (problems.length) throw new Error(`CSVの事前検査で問題を検出しました。全対象アプリへの書き込みを中止しました。\n${problems.map(plan => `App ${plan.appId}: ${plan.error || formatCsvImportReport(plan.report)}`).join('\n\n')}`);
+  // 全アプリを対象にしても 1 つのメッセージが数千行にならないよう、表示は先頭 20 アプリまでにして残りは件数で示す。
+  const LISTED_APP_LIMIT = 20;
+  const omitted = (total: number) => total > LISTED_APP_LIMIT ? [`…ほか ${total - LISTED_APP_LIMIT} アプリ（合計 ${total} アプリ）`] : [];
+  if (problems.length) {
+    const problemBlocks = problems.slice(0, LISTED_APP_LIMIT).map(plan => `App ${plan.appId}: ${plan.error || formatCsvImportReport(plan.report)}`);
+    throw new Error(`CSVの事前検査で問題を検出しました。全対象アプリへの書き込みを中止しました。\n${[...problemBlocks, ...omitted(problems.length).map(line => `${line}の詳細は「CSVを事前検査」で確認できます`)].join('\n\n')}`);
+  }
   const confirmText = [
     `CSVから ${plans.length}アプリの本番レコードへ追加します${opts.guestId ? `（ゲスト ${opts.guestId}）` : ''}。`,
-    ...plans.map(plan => `App ${plan.appId}: ${plan.report.count}件 / ${plan.report.columns.length}フィールド`),
+    ...plans.slice(0, LISTED_APP_LIMIT).map(plan => `App ${plan.appId}: ${plan.report.count}件 / ${plan.report.columns.length}フィールド`),
+    ...omitted(plans.length),
     '追加したレコードは自動では取り消せません。実行しますか？'
   ].join('\n');
   if (!kusConfirm(confirmText)) {
