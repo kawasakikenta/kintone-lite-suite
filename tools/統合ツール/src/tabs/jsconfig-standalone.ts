@@ -62,7 +62,7 @@ export function sanitizeFolderName(name: string): string {
 }
 
 /** 大文字小文字だけが異なる名前も重複として扱う（Windows / macOS で展開時に上書きされるため）。 */
-class CaseInsensitiveNameSet extends Set<string> {
+export class CaseInsensitiveNameSet extends Set<string> {
   has(value: string) { return super.has(value.toLowerCase()); }
   add(value: string) { return super.add(value.toLowerCase()); }
 }
