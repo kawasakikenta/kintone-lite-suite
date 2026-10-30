@@ -2386,7 +2386,7 @@ ${base}`
   function guessContentType(name) {
     return /\.css$/i.test(name) ? "text/css" : /\.js$/i.test(name) ? "text/javascript" : "";
   }
-  var defaultDownload = async (guestId, fileKey) => {
+  var downloadCustomizeFile = async (guestId, fileKey) => {
     try {
       return await downloadKintoneFile(guestId, fileKey);
     } catch (error) {
@@ -2416,7 +2416,7 @@ ${base}`
     return { blob, hash: await hashBytes(await blobBytes(blob)) };
   }
   async function resolveCustomizeFiles(sourceSection, targetSection, opts) {
-    const download = opts.download || defaultDownload;
+    const download = opts.download || downloadCustomizeFile;
     const resolution = { files: dict(), hashes: dict(), blobs: /* @__PURE__ */ new Map(), targetBlobs: /* @__PURE__ */ new Map(), targetUnavailable: [] };
     const slotOf = (entry) => customizeSlotKey(entry.platform, entry.kind, entry.fileKey);
     const targetEntries = listFileEntries(targetSection);
@@ -2482,7 +2482,7 @@ ${base}`
     return result;
   }
   async function embedCustomizeFileContents(section, opts) {
-    const download = async (guestId, fileKey) => opts.cached?.get(fileKey) || (opts.download || defaultDownload)(guestId, fileKey);
+    const download = async (guestId, fileKey) => opts.cached?.get(fileKey) || (opts.download || downloadCustomizeFile)(guestId, fileKey);
     const copy = deepClone(section);
     const entries = listFileEntries(copy);
     const results = /* @__PURE__ */ new Map();

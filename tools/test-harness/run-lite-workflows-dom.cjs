@@ -34,7 +34,8 @@ function fixtures() {
   window.__workflowFixture = {
     calls: [], fail: false,
     async invoke(name, args) {
-      this.calls.push({ name, input: args[0] });
+      // 設定一括取得は第 2 引数の保存オプション（JS/CSSファイルの有無・フォルダ分け）も残す
+      this.calls.push({ name, input: args[0], ...(name === 'runSettingsExportStandalone' ? { options: { includeCustomizeFiles: args[1]?.includeCustomizeFiles, customizeFileLayout: args[1]?.customizeFileLayout, customizeFileOrderPrefix: args[1]?.customizeFileOrderPrefix } } : {}) });
       const status = args.find(arg => typeof arg === 'function');
       status?.('サンプルデータを処理中…');
       await new Promise(resolve => setTimeout(resolve, 130));
@@ -388,6 +389,30 @@ async function main() {
           assert.match(await stage(0).innerText(), /選択 0 \/ \d+/, '設定一括取得: 選択数を表面に出す');
           await button('基本のみ').click();
           assert.equal(await button('内容を確認する').isEnabled(), true, '設定一括取得: プリセットで再選択できる');
+          await openAdvanced(); await button('全選択').click(); await closeAdvanced();
+          // JS/CSSファイルも ZIP に入れる操作は、JS/CSS設定を取得しないと進めない。フォルダ分けと読み込み順は詳細設定で選ぶ
+          await button('基本のみ').click();
+          await chooseAction('設定とJS/CSSファイルをZIPで保存');
+          assert.equal(await button('内容を確認する').isDisabled(), true, '設定一括取得: JS/CSS設定を選ばずにファイルを保存しない');
+          await button('カスタマイズのみ').click();
+          const fileLayout = page.getByRole('combobox', { name: 'JS/CSSファイルのフォルダ分け', exact: true });
+          const fileOrder = page.getByRole('combobox', { name: 'JS/CSSファイルの読み込み順', exact: true });
+          assert.equal(await fileLayout.isVisible(), false, '設定一括取得: フォルダ分けは表面に出さない');
+          await openAdvanced();
+          assert.equal(await fileOrder.inputValue(), 'none', '設定一括取得: 読み込み順は既定で付けない');
+          await fileLayout.selectOption('app'); await fileOrder.selectOption('prefix');
+          await closeAdvanced();
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /JS\/CSSファイルのフォルダ分け\s*フォルダを分けない[\s\S]*JS\/CSSファイルの読み込み順\s*ファイル名の先頭に付ける/, '設定一括取得: フォルダ分けと読み込み順を確認画面に示す');
+          const filesBefore = await page.evaluate(() => window.__workflowFixture.calls.length);
+          await button('設定とJS/CSSファイルをZIPで保存').click(); await idle();
+          const filesCall = await page.evaluate(() => window.__workflowFixture.calls.at(-1));
+          assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), filesBefore + 1);
+          assert.equal(filesCall.name, 'runSettingsExportStandalone');
+          assert.equal(filesCall.input, 'zip');
+          assert.deepEqual(filesCall.options, { includeCustomizeFiles: true, customizeFileLayout: 'app', customizeFileOrderPrefix: true }, '設定一括取得: JS/CSSファイル・フォルダ分け・読み込み順を渡す');
+          await button('対象・条件を変更').click();
+          await chooseAction(defaultAction);
           await openAdvanced(); await button('全選択').click(); await closeAdvanced();
         }
         if (id === 'design') {
