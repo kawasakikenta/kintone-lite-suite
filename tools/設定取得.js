@@ -3693,10 +3693,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   }
   var CUSTOMIZE_FILE_LAYOUTS = [
     ["slot", "PC/モバイル・JS/CSS別のフォルダ"],
-    ["app", "フォルダを分けない"],
-    ["ordered", "フォルダを分けず読み込み順を付ける"]
+    ["app", "フォルダを分けない"]
   ];
-  async function fetchAppCustomizeFiles(section, guestId, folder, layout, onProgress) {
+  async function fetchAppCustomizeFiles(section, guestId, folder, layout, orderPrefix, onProgress) {
     const result = { folder, files: [], blobs: [], saved: 0, failed: 0 };
     const items = [];
     for (const platform of ["desktop", "mobile"]) {
@@ -3737,10 +3736,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const baseName = sanitizeFolderName(name) || `file${order}.${kind}`;
       const dir = layout === "slot" ? `${folder}/${platform}/${kind}` : folder;
       if (!usedByFolder.has(dir)) usedByFolder.set(dir, new CaseInsensitiveNameSet());
-      const entry = uniqueZipEntryName(
-        usedByFolder.get(dir),
-        layout === "ordered" ? `${platform}_${kind}_${String(order).padStart(2, "0")}_${baseName}` : baseName
-      );
+      const prefix = !orderPrefix ? "" : `${layout === "slot" ? "" : `${platform}_${kind}_`}${String(order).padStart(2, "0")}_`;
+      const entry = uniqueZipEntryName(usedByFolder.get(dir), `${prefix}${baseName}`);
       record.path = `${dir}/${entry}`;
       result.blobs.push({ path: record.path, blob });
       result.saved += 1;
@@ -3849,6 +3846,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (includeCustomizeFiles && !scopes.includes("customizeSettings")) throw new Error("JS/CSSファイルを保存するときは、取得する設定に「JS/CSS設定」を含めてください");
     const fileLayout = opts.customizeFileLayout || "slot";
     if (!CUSTOMIZE_FILE_LAYOUTS.some(([value]) => value === fileLayout)) throw new Error(`JS/CSSファイルのフォルダ分けの指定が正しくありません: ${fileLayout}`);
+    const fileOrderPrefix = !!opts.customizeFileOrderPrefix;
     const preview = !!opts.preview;
     const JSZipCtor = mode === "zip" ? await loadJSZipLite() : null;
     const bundles = [];
@@ -3889,6 +3887,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
             guestId,
             `${zipEntryBaseName(bundle, guestId, preview)}_JS_CSS`,
             fileLayout,
+            fileOrderPrefix,
             (done, total) => setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} JS/CSSファイル ${done}/${total}`)
           );
         } catch (error) {
@@ -4006,9 +4005,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
             ...includeCustomizeFiles ? {
               customizeFiles: {
                 layout: fileLayout,
+                orderPrefix: fileOrderPrefix,
                 saved: savedFiles,
                 failed: failedFiles,
-                note: "JS/CSS設定のファイル本体を、アプリごとの customizeFiles.folder 配下に保存しています（layout: slot = desktop|mobile/js|css のフォルダ別、app = フォルダ分けなし、ordered = フォルダ分けなしでファイル名の先頭に枠と読み込み順）。path は ZIP 内の場所、order は同じ枠での読み込み順（URL 指定を含む）です。URL 指定の JS/CSS は含みません。"
+                note: "JS/CSS設定のファイル本体を、アプリごとの customizeFiles.folder 配下に保存しています（layout: slot = desktop|mobile/js|css のフォルダ別、app = フォルダ分けなし。orderPrefix が true ならファイル名の先頭に読み込み順（app では枠も）を付けています）。path は ZIP 内の場所、order は同じ枠での読み込み順（URL 指定を含む）です。URL 指定の JS/CSS は含みません。"
               }
             } : {},
             ...notRun.length ? { cancelled: true, notExecuted: notRun } : {},
@@ -4470,11 +4470,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     cardChips.body.appendChild(chipBox);
     const scopeRoot = chipBox;
     panel.body.insertBefore(cardScope.card, panel.status);
-    const cardFiles = makeCard({ title: "JS/CSSファイルのフォルダ分け" });
+    const cardFiles = makeCard({ title: "JS/CSSファイルの保存形式" });
     const fileLayout = makeSelect(CUSTOMIZE_FILE_LAYOUTS, "slot");
     fileLayout.setAttribute("aria-label", "JS/CSSファイルのフォルダ分け");
+    const fileOrder = makeSelect([["none", "付けない"], ["prefix", "ファイル名の先頭に付ける"]], "none");
+    fileOrder.setAttribute("aria-label", "JS/CSSファイルの読み込み順");
     cardFiles.body.appendChild(makeRow([fileLayout], { label: "フォルダ分け" }));
-    cardFiles.body.appendChild(makeNote("「設定とJS/CSSファイルをZIPで保存」で、アプリごとのフォルダの中の分け方を選びます（順に desktop/js/main.js、main.js、desktop_js_01_main.js）。URLで指定したJS/CSSは保存しません。", "help"));
+    cardFiles.body.appendChild(makeRow([fileOrder], { label: "読み込み順" }));
+    cardFiles.body.appendChild(makeNote("「設定とJS/CSSファイルをZIPで保存」で、アプリごとのフォルダの中の分け方とファイル名を選びます（例: desktop/js/main.js。読み込み順を付けると desktop/js/01_main.js、フォルダを分けないと desktop_js_01_main.js）。URLで指定したJS/CSSは保存しません。", "help"));
     const btnJson = makeButton("JSON で保存", "primary", { icon: "↓" });
     const btnZip = makeButton("ZIP で保存", "primary", { icon: "↓" });
     const btnZipFiles = makeButton("JS/CSSファイルも ZIP で保存", "primary", { icon: "↓" });
@@ -4503,7 +4506,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const runExport = (mode, includeCustomizeFiles) => async () => {
       const { summaryHtml } = await runSettingsExportStandalone(
         mode,
-        { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value },
+        { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value, customizeFileOrderPrefix: fileOrder.value === "prefix" },
         // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
         (m, e) => panel.setStatus(m, /^中止しました/.test(m) ? "warn" : e ? "err" : "busy")
       );
@@ -4528,7 +4531,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     installLiteWorkflow(panel, {
       setup: [cardTarget.card, cardScope.card],
       advanced: [cardChips.card, cardFiles.card],
-      advancedCopy: "取得する設定を1項目ずつ選ぶとき、JS/CSSファイルのフォルダ分けを変えるときはこちら。",
+      advancedCopy: "取得する設定を1項目ずつ選ぶとき、JS/CSSファイルの保存形式を変えるときはこちら。",
       results: [summary],
       beforeRun: () => {
         summary.replaceChildren();
@@ -4537,7 +4540,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       actions: [
         { id: "json", label: "設定をJSONで保存", description: "全対象アプリの設定を、1つのJSONファイルにまとめて保存します。", button: btnJson, validate: exportProblem, summary: () => exportSummary("全アプリを1つのJSON") },
         { id: "zip", label: "設定をZIPで保存", description: "アプリごとのJSONと、取得結果の一覧（manifest.json）をZIPで保存します。", button: btnZip, validate: exportProblem, summary: () => exportSummary("1アプリ1JSONとmanifest.jsonをZIPに保存") },
-        { id: "zip-files", label: "設定とJS/CSSファイルをZIPで保存", description: "設定のZIPに、JS/CSSファイルの本体をアプリごとのフォルダに入れて保存します。フォルダ分けは「詳細設定…」で選べます。", button: btnZipFiles, validate: filesExportProblem, summary: () => [...exportSummary("1アプリ1JSON・JS/CSSファイル・manifest.jsonをZIPに保存"), ["JS/CSSファイルのフォルダ分け", fileLayout.selectedOptions[0]?.textContent || ""]] }
+        { id: "zip-files", label: "設定とJS/CSSファイルをZIPで保存", description: "設定のZIPに、JS/CSSファイルの本体をアプリごとのフォルダに入れて保存します。フォルダ分けと読み込み順は「詳細設定…」で選べます。", button: btnZipFiles, validate: filesExportProblem, summary: () => [...exportSummary("1アプリ1JSON・JS/CSSファイル・manifest.jsonをZIPに保存"), ["JS/CSSファイルのフォルダ分け", fileLayout.selectedOptions[0]?.textContent || ""], ["JS/CSSファイルの読み込み順", fileOrder.selectedOptions[0]?.textContent || ""]] }
       ]
     });
   }

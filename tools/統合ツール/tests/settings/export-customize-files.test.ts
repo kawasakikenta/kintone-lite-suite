@@ -53,7 +53,8 @@ describe('settings export with JS/CSS files', () => {
     expect(downloadCustomizeFile).toHaveBeenCalledTimes(3);
     expect(zipFiles.has('顧客管理(app1)_本番.json')).toBe(true);
     const app = manifest().apps[0];
-    expect(manifest().customizeFiles).toMatchObject({ layout: 'slot', saved: 4, failed: 0 });
+    // 既定は読み込み順を付けない
+    expect(manifest().customizeFiles).toMatchObject({ layout: 'slot', orderPrefix: false, saved: 4, failed: 0 });
     expect(app.customizeFiles.folder).toBe('顧客管理(app1)_本番_JS_CSS');
     // URL 指定は保存しないが、読み込み順には数える
     expect(app.customizeFiles.files[0]).toMatchObject({ platform: 'desktop', kind: 'js', order: 2, name: 'main.js', fileKey: 'k-main', path: '顧客管理(app1)_本番_JS_CSS/desktop/js/main.js' });
@@ -75,9 +76,22 @@ describe('settings export with JS/CSS files', () => {
     expect(manifest().customizeFiles.layout).toBe('app');
   });
 
-  it('prefixes the slot and load order when the ordered layout is chosen', async () => {
+  it('prefixes the load order inside the PC/mobile and JS/CSS folders when requested', async () => {
     vi.mocked(fetchBundle).mockResolvedValue(bundle('1') as any);
-    await runSettingsExportStandalone('zip', { apps: [{ appId: '1' }], includeCustomizeFiles: true, customizeFileLayout: 'ordered' }, vi.fn());
+    await runSettingsExportStandalone('zip', { apps: [{ appId: '1' }], includeCustomizeFiles: true, customizeFileOrderPrefix: true }, vi.fn());
+
+    expect(zipPaths()).toEqual([
+      '顧客管理(app1)_本番_JS_CSS/desktop/css/01_style.css',
+      '顧客管理(app1)_本番_JS_CSS/desktop/js/02_main.js',
+      '顧客管理(app1)_本番_JS_CSS/desktop/js/03_Main.js',
+      '顧客管理(app1)_本番_JS_CSS/mobile/js/01_main.js'
+    ]);
+    expect(manifest().customizeFiles).toMatchObject({ layout: 'slot', orderPrefix: true });
+  });
+
+  it('prefixes the slot and load order when the files are not split into folders', async () => {
+    vi.mocked(fetchBundle).mockResolvedValue(bundle('1') as any);
+    await runSettingsExportStandalone('zip', { apps: [{ appId: '1' }], includeCustomizeFiles: true, customizeFileLayout: 'app', customizeFileOrderPrefix: true }, vi.fn());
 
     expect(zipPaths()).toEqual([
       '顧客管理(app1)_本番_JS_CSS/desktop_css_01_style.css',
@@ -138,7 +152,7 @@ describe('settings export with JS/CSS files', () => {
     scopes.keys = ['appSettings'];
     await expect(runSettingsExportStandalone('zip', { apps: [{ appId: '1' }], includeCustomizeFiles: true }, vi.fn())).rejects.toThrow('「JS/CSS設定」を含めてください');
     scopes.keys = ['customizeSettings'];
-    await expect(runSettingsExportStandalone('zip', { apps: [{ appId: '1' }], includeCustomizeFiles: true, customizeFileLayout: 'nested' }, vi.fn())).rejects.toThrow('フォルダ分けの指定が正しくありません');
+    await expect(runSettingsExportStandalone('zip', { apps: [{ appId: '1' }], includeCustomizeFiles: true, customizeFileLayout: 'ordered' }, vi.fn())).rejects.toThrow('フォルダ分けの指定が正しくありません');
     expect(fetchBundle).not.toHaveBeenCalled();
     expect(downloadText).not.toHaveBeenCalled();
   });

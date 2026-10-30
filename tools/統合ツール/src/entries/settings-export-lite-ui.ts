@@ -160,11 +160,14 @@ export function mountSettingsExportLitePanel() {
   panel.body.insertBefore(cardScope.card, panel.status);
 
   // ---- JS/CSSファイルのフォルダ分け（「設定とJS/CSSファイルをZIPで保存」のときだけ使う） ----
-  const cardFiles = makeCard({ title: 'JS/CSSファイルのフォルダ分け' });
+  const cardFiles = makeCard({ title: 'JS/CSSファイルの保存形式' });
   const fileLayout = makeSelect(CUSTOMIZE_FILE_LAYOUTS, 'slot');
   fileLayout.setAttribute('aria-label', 'JS/CSSファイルのフォルダ分け');
+  const fileOrder = makeSelect([['none', '付けない'], ['prefix', 'ファイル名の先頭に付ける']], 'none');
+  fileOrder.setAttribute('aria-label', 'JS/CSSファイルの読み込み順');
   cardFiles.body.appendChild(makeRow([fileLayout], { label: 'フォルダ分け' }));
-  cardFiles.body.appendChild(makeNote('「設定とJS/CSSファイルをZIPで保存」で、アプリごとのフォルダの中の分け方を選びます（順に desktop/js/main.js、main.js、desktop_js_01_main.js）。URLで指定したJS/CSSは保存しません。', 'help'));
+  cardFiles.body.appendChild(makeRow([fileOrder], { label: '読み込み順' }));
+  cardFiles.body.appendChild(makeNote('「設定とJS/CSSファイルをZIPで保存」で、アプリごとのフォルダの中の分け方とファイル名を選びます（例: desktop/js/main.js。読み込み順を付けると desktop/js/01_main.js、フォルダを分けないと desktop_js_01_main.js）。URLで指定したJS/CSSは保存しません。', 'help'));
 
   const btnJson = makeButton('JSON で保存', 'primary', { icon: '↓' });
   const btnZip = makeButton('ZIP で保存', 'primary', { icon: '↓' });
@@ -200,7 +203,7 @@ export function mountSettingsExportLitePanel() {
   const runExport = (mode: 'json' | 'zip', includeCustomizeFiles: boolean) => async () => {
     const { summaryHtml } = await runSettingsExportStandalone(
       mode,
-      { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value },
+      { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value, customizeFileOrderPrefix: fileOrder.value === 'prefix' },
       // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
       (m: string, e?: boolean) => panel.setStatus(m, /^中止しました/.test(m) ? 'warn' : e ? 'err' : 'busy')
     );
@@ -227,13 +230,13 @@ export function mountSettingsExportLitePanel() {
   installLiteWorkflow(panel, {
     setup: [cardTarget.card, cardScope.card],
     advanced: [cardChips.card, cardFiles.card],
-    advancedCopy: '取得する設定を1項目ずつ選ぶとき、JS/CSSファイルのフォルダ分けを変えるときはこちら。',
+    advancedCopy: '取得する設定を1項目ずつ選ぶとき、JS/CSSファイルの保存形式を変えるときはこちら。',
     results: [summary],
     beforeRun: () => { summary.replaceChildren(); summary.classList.add('kus-lp__panel-html--empty'); },
     actions: [
       { id: 'json', label: '設定をJSONで保存', description: '全対象アプリの設定を、1つのJSONファイルにまとめて保存します。', button: btnJson, validate: exportProblem, summary: () => exportSummary('全アプリを1つのJSON') },
       { id: 'zip', label: '設定をZIPで保存', description: 'アプリごとのJSONと、取得結果の一覧（manifest.json）をZIPで保存します。', button: btnZip, validate: exportProblem, summary: () => exportSummary('1アプリ1JSONとmanifest.jsonをZIPに保存') },
-      { id: 'zip-files', label: '設定とJS/CSSファイルをZIPで保存', description: '設定のZIPに、JS/CSSファイルの本体をアプリごとのフォルダに入れて保存します。フォルダ分けは「詳細設定…」で選べます。', button: btnZipFiles, validate: filesExportProblem, summary: () => [...exportSummary('1アプリ1JSON・JS/CSSファイル・manifest.jsonをZIPに保存'), ['JS/CSSファイルのフォルダ分け', fileLayout.selectedOptions[0]?.textContent || '']] }
+      { id: 'zip-files', label: '設定とJS/CSSファイルをZIPで保存', description: '設定のZIPに、JS/CSSファイルの本体をアプリごとのフォルダに入れて保存します。フォルダ分けと読み込み順は「詳細設定…」で選べます。', button: btnZipFiles, validate: filesExportProblem, summary: () => [...exportSummary('1アプリ1JSON・JS/CSSファイル・manifest.jsonをZIPに保存'), ['JS/CSSファイルのフォルダ分け', fileLayout.selectedOptions[0]?.textContent || ''], ['JS/CSSファイルの読み込み順', fileOrder.selectedOptions[0]?.textContent || '']] }
     ]
   });
 

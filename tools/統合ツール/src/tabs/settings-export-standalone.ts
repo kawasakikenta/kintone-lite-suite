@@ -52,14 +52,13 @@ function zipEntryBaseName(bundle: any, guestId: string, preview: boolean): strin
  * ZIP 内の JS/CSS ファイルのフォルダ分け。
  * - slot: PC/モバイル × JS/CSS ごとのフォルダ（desktop/js/main.js）
  * - app: アプリのフォルダに直接置く（main.js）
- * - ordered: アプリのフォルダに直接置き、先頭に枠と読み込み順を付ける（desktop_js_01_main.js）
+ * 読み込み順を付ける場合は、slot は 01_main.js、app は枠も付けて desktop_js_01_main.js にする。
  */
-export type CustomizeFileLayout = 'slot' | 'app' | 'ordered';
+export type CustomizeFileLayout = 'slot' | 'app';
 
 export const CUSTOMIZE_FILE_LAYOUTS: Array<[CustomizeFileLayout, string]> = [
   ['slot', 'PC/モバイル・JS/CSS別のフォルダ'],
-  ['app', 'フォルダを分けない'],
-  ['ordered', 'フォルダを分けず読み込み順を付ける']
+  ['app', 'フォルダを分けない']
 ];
 
 export interface SettingsExportCustomizeFile {
@@ -84,7 +83,7 @@ interface AppCustomizeFiles {
 }
 
 /**
- * JS/CSS 設定のファイル本体を取得し、フォルダ分け（layout）に従って ZIP 内のパスを割り当てる。
+ * JS/CSS 設定のファイル本体を取得し、フォルダ分け（layout）と読み込み順の有無に従って ZIP 内のパスを割り当てる。
  * 取得できなかったファイルは理由を残して続け、中止だけは呼び出し元へ伝える。
  */
 async function fetchAppCustomizeFiles(
@@ -92,6 +91,7 @@ async function fetchAppCustomizeFiles(
   guestId: string,
   folder: string,
   layout: CustomizeFileLayout,
+  orderPrefix: boolean,
   onProgress: (done: number, total: number) => void
 ): Promise<AppCustomizeFiles> {
   const result: AppCustomizeFiles = { folder, files: [], blobs: [], saved: 0, failed: 0 };
@@ -130,10 +130,9 @@ async function fetchAppCustomizeFiles(
     const dir = layout === 'slot' ? `${folder}/${platform}/${kind}` : folder;
     if (!usedByFolder.has(dir)) usedByFolder.set(dir, new CaseInsensitiveNameSet());
     // 同じフォルダの同名ファイルは上書きせず、_2 などを付けて残す。
-    const entry = uniqueZipEntryName(
-      usedByFolder.get(dir)!,
-      layout === 'ordered' ? `${platform}_${kind}_${String(order).padStart(2, '0')}_${baseName}` : baseName
-    );
+    // フォルダを分けない場合は、どの枠の何番目かが分かるよう枠も付ける。
+    const prefix = !orderPrefix ? '' : `${layout === 'slot' ? '' : `${platform}_${kind}_`}${String(order).padStart(2, '0')}_`;
+    const entry = uniqueZipEntryName(usedByFolder.get(dir)!, `${prefix}${baseName}`);
     record.path = `${dir}/${entry}`;
     result.blobs.push({ path: record.path, blob });
     result.saved += 1;
@@ -344,6 +343,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
   if (includeCustomizeFiles && !scopes.includes('customizeSettings')) throw new Error('JS/CSSファイルを保存するときは、取得する設定に「JS/CSS設定」を含めてください');
   const fileLayout: CustomizeFileLayout = opts.customizeFileLayout || 'slot';
   if (!CUSTOMIZE_FILE_LAYOUTS.some(([value]) => value === fileLayout)) throw new Error(`JS/CSSファイルのフォルダ分けの指定が正しくありません: ${fileLayout}`);
+  const fileOrderPrefix = !!opts.customizeFileOrderPrefix;
 
   const preview = !!opts.preview;
 
@@ -388,6 +388,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
           guestId,
           `${zipEntryBaseName(bundle, guestId, preview)}_JS_CSS`,
           fileLayout,
+          fileOrderPrefix,
           (done, total) => setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} JS/CSSファイル ${done}/${total}`)
         );
       } catch (error) {
@@ -506,9 +507,10 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
           ...(includeCustomizeFiles ? {
             customizeFiles: {
               layout: fileLayout,
+              orderPrefix: fileOrderPrefix,
               saved: savedFiles,
               failed: failedFiles,
-              note: 'JS/CSS設定のファイル本体を、アプリごとの customizeFiles.folder 配下に保存しています（layout: slot = desktop|mobile/js|css のフォルダ別、app = フォルダ分けなし、ordered = フォルダ分けなしでファイル名の先頭に枠と読み込み順）。path は ZIP 内の場所、order は同じ枠での読み込み順（URL 指定を含む）です。URL 指定の JS/CSS は含みません。'
+              note: 'JS/CSS設定のファイル本体を、アプリごとの customizeFiles.folder 配下に保存しています（layout: slot = desktop|mobile/js|css のフォルダ別、app = フォルダ分けなし。orderPrefix が true ならファイル名の先頭に読み込み順（app では枠も）を付けています）。path は ZIP 内の場所、order は同じ枠での読み込み順（URL 指定を含む）です。URL 指定の JS/CSS は含みません。'
             }
           } : {}),
           ...(notRun.length ? { cancelled: true, notExecuted: notRun } : {}),
