@@ -960,7 +960,7 @@ export function mountReflectLitePanel() {
       {
         label: '続けて反映',
         apply: (id, _name, guestId) => addRolloutTargets([{ appId: id, guestId: guestId || '' }]),
-        applyAll: (apps, guestId) => addRolloutTargets(apps.map((app) => ({ appId: app.appId, guestId }))),
+        applyAll: (apps) => addRolloutTargets(apps.map((app) => ({ appId: app.appId, guestId: app.guestId }))),
         applyAllLabel: (count) => `候補 ${count} 件を続けて反映する反映先に追加`
       }
     ]

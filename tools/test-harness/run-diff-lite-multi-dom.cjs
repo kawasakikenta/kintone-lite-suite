@@ -532,24 +532,33 @@ async function verifyJsonAndSearchSelection(context, browserBundle) {
   assert.equal(await page.getByLabel('比較先2アプリID', { exact: true }).isVisible(), true, '1対多検索先が非表示です');
 
   // 環境内の全アプリ: 候補をまとめて比較先へ追加する。設定済み（303・505）と比較元（404）は追加しない。
+  // ゲストスペース 9 のアプリ 808 も探して加え、比較先の行にゲストスペースIDを入れる。
   await page.evaluate(() => {
     const original = window.kintone.api;
     window.kintone.api = Object.assign(async (url, method, params) => {
-      if (/\/apps\.json$/.test(String(url))) {
-        return { apps: [404, 303, 505, 606, 707].map((id) => ({ appId: String(id), name: `App ${id}` })) };
+      if (String(url) === '/k/v1/apps.json') {
+        return { apps: [404, 303, 505, 606, 707].map((id) => ({ appId: String(id), name: `App ${id}`, spaceId: null })) };
       }
+      if (String(url) === '/k/guest/9/v1/space.json') return { id: '9', name: '取引先', isGuest: true };
+      if (/^\/k\/guest\/\d+\/v1\/space\.json$/.test(String(url))) throw Object.assign(new Error('スペースが見つかりません'), { code: 'GAIA_SP01' });
+      if (String(url) === '/k/guest/9/v1/apps.json') return { apps: [{ appId: '808', name: 'App 808', spaceId: '9' }] };
       return original(url, method, params);
     }, { url: original.url });
   });
   await search.getByRole('button', { name: '環境内の全アプリ', exact: true }).click();
   const addAll = search.getByRole('button', { name: /をすべて比較先に追加/ });
   await addAll.waitFor();
+  assert.match(await search.locator('.kus-as__head').innerText(), /環境内のアプリ 6件（うちゲストスペース 1か所の 1件）/, '全アプリの見出しにゲストスペースの件数がありません');
+  assert.match(await search.locator('.kus-as__table tbody tr', { hasText: 'App 808' }).innerText(), /ゲストスペース「取引先」（ID 9）/, 'ゲストスペースのアプリに印がありません');
   await addAll.click();
   assert.equal(await page.getByLabel('比較先3アプリID', { exact: true }).inputValue(), '606', '全アプリの一括追加で比較先3が追加されていません');
   assert.equal(await page.getByLabel('比較先4アプリID', { exact: true }).inputValue(), '707', '全アプリの一括追加で比較先4が追加されていません');
-  assert.equal(await page.getByLabel('比較先5アプリID', { exact: true }).count(), 0, '設定済み・比較元のアプリが重複追加されました');
+  assert.equal(await page.getByLabel('比較先4ゲストスペースID', { exact: true }).inputValue(), '', '通常スペースのアプリにゲストスペースIDが入りました');
+  assert.equal(await page.getByLabel('比較先5アプリID', { exact: true }).inputValue(), '808', 'ゲストスペースのアプリが比較先に追加されていません');
+  assert.equal(await page.getByLabel('比較先5ゲストスペースID', { exact: true }).inputValue(), '9', 'ゲストスペースのアプリにゲストスペースIDが入っていません');
+  assert.equal(await page.getByLabel('比較先6アプリID', { exact: true }).count(), 0, '設定済み・比較元のアプリが重複追加されました');
   const addAllStatus = await status.textContent();
-  assert.match(addAllStatus, /2 件を追加/, '一括追加の追加件数が表示されていません');
+  assert.match(addAllStatus, /3 件を追加しました（うちゲストスペースのアプリ 1 件）/, '一括追加の追加件数が表示されていません');
   assert.match(addAllStatus, /設定済みのため 2 件/, '一括追加の設定済み件数が表示されていません');
   assert.match(addAllStatus, /比較元と同じ接続先のため 1 件/, '一括追加で比較元を除いた件数が表示されていません');
   assert.deepEqual(pageErrors, [], 'JSON・検索の回帰検証でブラウザエラーが発生しました');

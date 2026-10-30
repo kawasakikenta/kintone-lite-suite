@@ -63,15 +63,15 @@ export function mountProcessLitePanel() {
         const result = appTable.putApp(appId, guestId, { appName, focus: true });
         return { message: `アプリ #${appId}${appName ? ` (${appName})` : ''} を対象表に${result.action === 'existing' ? '追加済みです' : '追加しました'}` };
       },
-      applyAll: (apps, guestId) => {
-        const result = appTable.putApps(apps.map((app) => ({ appId: app.appId, guestId, appName: app.appName })));
+      applyAll: (apps) => {
+        const result = appTable.putApps(apps.map((app) => ({ appId: app.appId, guestId: app.guestId, appName: app.appName })));
         const parts = [`新規 ${result.added + result.filled}件`, result.existing ? `追加済み ${result.existing}件` : ''].filter(Boolean);
         return { message: `候補 ${apps.length}件を対象表に追加しました（${parts.join(' / ')}）`, pickedLabel: '追加済み' };
       }
     }]
   });
   batchBox.append(batchLabel, appTable.element, batchSearch,
-    makeNote('「環境内の全アプリ」で、閲覧できるアプリをまとめて対象表に追加できます。ゲストスペースのアプリは含まれないため、ゲストスペースIDごとに追加してください。「プレビュー環境を参照」はここにも適用されます。', 'help'));
+    makeNote('「環境内の全アプリ」で、閲覧できるアプリをまとめて対象表に追加できます（「ゲストスペースも探す」を付けると、ゲストスペースのアプリも行ごとのゲストスペースIDつきで入ります）。「プレビュー環境を参照」はここにも適用されます。', 'help'));
   cardApp.body.appendChild(batchBox);
 
   cardApp.body.appendChild(makeRow(prevCb.label));

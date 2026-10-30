@@ -44,8 +44,8 @@ export function mountCsvExportLitePanel() {
         tone: result.action === 'existing' ? 'info' : 'ok',
         pickedLabel: result.action === 'existing' ? '追加済み' : '設定済み'
       };
-    }, applyAll: (apps, guestId) => {
-      const result = appTable.putApps(apps.map((a) => ({ appId: a.appId, guestId, appName: a.appName })));
+    }, applyAll: (apps) => {
+      const result = appTable.putApps(apps.map((a) => ({ appId: a.appId, guestId: a.guestId, appName: a.appName })));
       syncViewAppFromTable();
       const fresh = result.added + result.filled;
       return {

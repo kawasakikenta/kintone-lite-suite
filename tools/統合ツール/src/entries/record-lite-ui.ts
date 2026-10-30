@@ -90,8 +90,10 @@ export function mountRecordLitePanel() {
     targets: [{
       label: '対象アプリ',
       apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; notifyInput(tgtApp); },
-      // 候補すべてを対象アプリ欄へ入れる（置き換え）。ID は 1 つのゲストスペース内のものなので、ゲストIDも候補に合わせる
-      applyAll: (apps, guestId) => {
+      // 候補すべてを対象アプリ欄へ入れる（置き換え）。ゲストIDは 1 つしか持てないため、1 か所の候補に限り、ゲストIDも候補に合わせる
+      singleGuest: true,
+      applyAll: (apps) => {
+        const guestId = apps[0]?.guestId || '';
         tgtApp.value = joinAppIds(apps);
         const guestChanged = tgtGuest.value.trim() !== guestId;
         if (guestChanged) tgtGuest.value = guestId;

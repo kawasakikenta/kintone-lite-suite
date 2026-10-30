@@ -53,8 +53,10 @@ export function mountRecordQualityLitePanel() {
       if (guest && !guestId.value.trim()) guestId.value = guest;
       notifyInput(appId);
     },
-    // 候補すべてを対象アプリ欄へ入れる（置き換え）。ID は 1 つのゲストスペース内のものなので、ゲストIDも候補に合わせる
-    applyAll: (apps, guest) => {
+    // 候補すべてを対象アプリ欄へ入れる（置き換え）。ゲストIDは 1 つしか持てないため、1 か所の候補に限り、ゲストIDも候補に合わせる
+    singleGuest: true,
+    applyAll: (apps) => {
+      const guest = apps[0]?.guestId || '';
       appId.value = joinAppIds(apps);
       const guestChanged = guestId.value.trim() !== guest;
       if (guestChanged) guestId.value = guest;

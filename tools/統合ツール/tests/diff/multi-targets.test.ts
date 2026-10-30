@@ -63,8 +63,28 @@ describe('planMultiTargetFill', () => {
       existing: [],
       targetPreview: false
     });
-    expect(plan.add).toEqual([{ appId: '12', appName: '名前' }]);
+    expect(plan.add).toEqual([{ appId: '12', appName: '名前', guestId: '' }]);
     expect(plan.invalid).toBe(2);
+  });
+
+  it('keeps each candidate guest space id (environment-wide list with guest spaces)', () => {
+    const plan = planMultiTargetFill({
+      candidates: [
+        { appId: '1', appName: '通常', guestId: '' },
+        { appId: '2', appName: 'ゲスト', guestId: '5' },
+        { appId: '3', guestId: '8' },
+        { appId: '4' }
+      ],
+      guestId: '9',
+      existing: [{ appId: '3', guestId: '8' }],
+      source: { appId: '2', guestId: '5', preview: false },
+      targetPreview: false
+    });
+    expect(plan.add).toEqual([
+      { appId: '1', appName: '通常', guestId: '' },
+      { appId: '4', appName: '', guestId: '9' }
+    ]);
+    expect(plan).toMatchObject({ alreadyPresent: 1, skippedSelf: 1 });
   });
 
   it('handles thousands of candidates in linear time', () => {
@@ -86,6 +106,17 @@ describe('describeMultiTargetFill', () => {
     expect(message).toContain('比較元と同じ接続先のため 1 件を除きました');
     expect(message).toContain('アプリIDを読み取れない 2 件を除きました');
     expect(message).toContain('合計 9 件');
+  });
+
+  it('describes the guest space of the added apps from the plan itself', () => {
+    const base = { alreadyPresent: 0, skippedSelf: 0, invalid: 0 };
+    expect(describeMultiTargetFill({ ...base, add: [{ appId: '1', appName: '', guestId: '5' }] }, 1)).toContain('比較先へ 1 件を追加しました（ゲストスペース 5）');
+    expect(describeMultiTargetFill({ ...base, add: [{ appId: '1', appName: '', guestId: '' }] }, 1)).toContain('比較先へ 1 件を追加しました。');
+    expect(describeMultiTargetFill({ ...base, add: [
+      { appId: '1', appName: '', guestId: '' },
+      { appId: '2', appName: '', guestId: '5' },
+      { appId: '3', appName: '', guestId: '8' }
+    ] }, 3)).toContain('比較先へ 3 件を追加しました（うちゲストスペースのアプリ 2 件）');
   });
 
   it('says nothing could be set when there are no candidates', () => {

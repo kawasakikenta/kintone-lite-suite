@@ -49,8 +49,8 @@ export function mountSettingsExportLitePanel() {
     targets: [{ apply: (appId, appName, guestId) => {
       const result = appTable.putApp(appId, guestId, { appName, focus: true });
       return { message: `アプリ #${appId}${appName ? ` (${appName})` : ''} を対象アプリ表に設定しました${result.action === 'existing' ? '（追加済み）' : ''}` };
-    }, applyAll: (apps, guestId) => {
-      const result = appTable.putApps(apps.map((a) => ({ appId: a.appId, guestId, appName: a.appName })));
+    }, applyAll: (apps) => {
+      const result = appTable.putApps(apps.map((a) => ({ appId: a.appId, guestId: a.guestId, appName: a.appName })));
       const fresh = result.added + result.filled;
       return {
         message: `${apps.length}件のアプリを対象アプリ表に設定しました（新規追加 ${fresh}件 / 追加済み ${result.existing}件）。設定は1アプリずつ順に取得するため、件数が多いと時間がかかります`,

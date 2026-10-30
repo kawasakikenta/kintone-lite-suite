@@ -427,7 +427,7 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 - 全比較先の App ID とゲスト ID は `^[1-9]\d*$`。違反すれば行番号付きで実行を止める
 - `App ID::ゲスト ID` が同じ比較先が 2 行あれば「比較先 N 行目は M 行目と同じ接続先」で止める。直前の結果は消さない
 - 比較先の設定 JSON は単一比較専用。成功した比較先ごとに HTML を自動保存（比較先が `MULTI_AUTO_HTML_MAX_TARGETS` = 10 件を超えると自動保存せず理由を表示）
-- 「環境内の全アプリ」の候補は `planMultiTargetFill`（`diff/multi-targets.ts`）で選別する。既存行と同じ `App ID::ゲスト ID`、候補内の重複、正の整数でない ID、比較元と同じ App ID・ゲスト ID・環境の候補は追加しない
+- 「環境内の全アプリ」の候補は `planMultiTargetFill`（`diff/multi-targets.ts`）で選別する。候補はそれぞれゲストスペースIDを持つ（ゲストスペースも探した場合は混在する）。既存行と同じ `App ID::ゲスト ID`、候補内の重複、正の整数でない ID、比較元と同じ App ID・ゲスト ID・環境の候補は追加しない
 
 ### 10.2 ペア一括比較（`prepareDiffBatchPairs`）
 

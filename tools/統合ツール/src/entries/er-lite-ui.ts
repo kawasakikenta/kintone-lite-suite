@@ -43,8 +43,10 @@ export function mountErLitePanel() {
     guestEl: guestInp,
     targets: [{
       apply: (id, _name) => { appInp.value = id; },
-      // 候補すべてを起点ID欄へ入れる（置き換え）。ID は 1 つのゲストスペース内のものなので、ゲストIDも候補に合わせる
-      applyAll: (apps, guestId) => {
+      // 候補すべてを起点ID欄へ入れる（置き換え）。ゲストIDは 1 つしか持てないため、1 か所の候補に限り、ゲストIDも候補に合わせる
+      singleGuest: true,
+      applyAll: (apps) => {
+        const guestId = apps[0]?.guestId || '';
         appInp.value = joinAppIds(apps);
         if (guestInp.value.trim() !== guestId) {
           guestInp.value = guestId;

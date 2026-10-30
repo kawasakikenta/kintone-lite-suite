@@ -79,8 +79,8 @@ export function mountFieldLitePanel() {
             pickedLabel: result.action === 'existing' ? '追加済み' : 'まとめて反映先に追加済み'
           };
         },
-        applyAll: (apps, guestId) => {
-          const result = multiTable.putApps(apps.map((app) => ({ appId: app.appId, guestId, appName: app.appName })));
+        applyAll: (apps) => {
+          const result = multiTable.putApps(apps.map((app) => ({ appId: app.appId, guestId: app.guestId, appName: app.appName })));
           refreshMultiCount();
           const parts = [`新規 ${result.added + result.filled} 件`];
           if (result.existing) parts.push(`追加済み ${result.existing} 件`);

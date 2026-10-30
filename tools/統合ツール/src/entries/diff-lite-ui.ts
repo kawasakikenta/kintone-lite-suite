@@ -1630,17 +1630,16 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           ? '前回の結果を無効にしました（比較先を変更したため）。再比較してください'
           : `App ${id} を比較先へ設定しました`, tone: invalidated ? 'warn' as const : 'ok' as const };
       },
-      applyAll: (apps, guestId) => {
+      applyAll: (apps) => {
         if (diffRunActive) return { message: '比較を実行中です。完了してからアプリを設定してください', tone: 'warn' as const };
         const plan = planMultiTargetFill({
           candidates: apps,
-          guestId,
           existing: targetRows.map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim() })),
           source: { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: srcPrev.checkbox.checked },
           targetPreview: tgtPrev.checkbox.checked
         });
         if (!plan.add.length) {
-          return { message: describeMultiTargetFill(plan, targetRows.filter((r) => r.app.value.trim()).length, guestId), tone: 'warn' as const };
+          return { message: describeMultiTargetFill(plan, targetRows.filter((r) => r.app.value.trim()).length), tone: 'warn' as const };
         }
         const hadResult = !!cache || multiXlsxExports.length > 0 || resultBox.childElementCount > 0;
         // 1対多へ切り替える（結果があれば、この切り替えで無効になる）。行ごとの再描画や無効化はここでまとめて 1 回にする。
@@ -1651,20 +1650,20 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           if (entry.app.value.trim()) continue;
           const item = queue.shift();
           if (!item) break;
-          if (entry === targetRows[0]) cancelJsonImportForAppChange('target', item.appId, guestId);
+          if (entry === targetRows[0]) cancelJsonImportForAppChange('target', item.appId, item.guestId || '');
           entry.app.value = item.appId;
           setTargetName(entry, item.appName);
-          entry.guest.value = guestId;
+          entry.guest.value = item.guestId || '';
         }
         const fragment = document.createDocumentFragment();
-        queue.forEach((item) => addTargetRow(item.appId, guestId, item.appName, fragment, false));
+        queue.forEach((item) => addTargetRow(item.appId, item.guestId || '', item.appName, fragment, false));
         targetList.appendChild(fragment);
         updateTargetListHint();
         const invalidated = invalidateResultAfterAppSelectionChange() || hadResult;
         const total = targetRows.filter((r) => r.app.value.trim()).length;
         const scale = multiTargetScaleNote(total);
         const message = [
-          describeMultiTargetFill(plan, total, guestId),
+          describeMultiTargetFill(plan, total),
           invalidated ? '前回の結果は無効にしました。再比較してください' : '',
           scale
         ].filter(Boolean).join('。');
