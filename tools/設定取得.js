@@ -1077,6 +1077,40 @@ ${contextLine}`);
       request.release();
     }
   }
+  async function downloadKintoneFile(guestId, fileKey, opts = {}) {
+    if (!fileKey) throw new Error("fileKey がありません。");
+    const maxBytes = Number.isFinite(opts.maxBytes) && Number(opts.maxBytes) > 0 ? Number(opts.maxBytes) : FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
+    const limitText = `${Math.round(maxBytes / (1024 * 1024))}MB`;
+    const url = `${buildApiPrefix(guestId, false)}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
+    throwIfCancelled();
+    const request = createRequestSignal(FILE_DOWNLOAD_TIMEOUT_MS);
+    const toFetchError = (error) => {
+      if (wasCancelled(error, request.signal)) return new RunCancelledError();
+      if (request.timedOut()) return new Error(`ファイルを取得できません（応答待ちが ${Math.round(FILE_DOWNLOAD_TIMEOUT_MS / 1e3)} 秒を超えました）`);
+      return new Error(`ファイルを取得できません（${error instanceof Error ? error.message : String(error)}）`);
+    };
+    try {
+      let resp;
+      try {
+        resp = await fetch(url, { method: "GET", headers: { "X-Requested-With": "XMLHttpRequest" }, signal: request.signal });
+      } catch (error) {
+        throw toFetchError(error);
+      }
+      if (!resp.ok) throw new Error(`ファイルを取得できません（HTTP ${resp.status || "error"}）`);
+      const contentLength = Number(resp.headers?.get?.("content-length") || "");
+      if (Number.isFinite(contentLength) && contentLength > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
+      let blob;
+      try {
+        blob = await resp.blob();
+      } catch (error) {
+        throw toFetchError(error);
+      }
+      if (blob.size > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
+      return blob;
+    } finally {
+      request.release();
+    }
+  }
   async function fetchTextFileBodyWithRetry(prefix, fileKey) {
     let result = await fetchTextFileBody(prefix, fileKey);
     if (result.ok === true) return result;
@@ -1299,7 +1333,7 @@ ${contextLine}`);
     }
     return [...byId.entries()].sort(([a], [b]) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0).map(([, app]) => app);
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY, APPS_PAGE_LIMIT;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, FILE_DOWNLOAD_TIMEOUT_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY, APPS_PAGE_LIMIT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1312,6 +1346,7 @@ ${contextLine}`);
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
       API_GET_TIMEOUT_MS = 12e4;
       FILE_TEXT_FETCH_TIMEOUT_MS = 6e4;
+      FILE_DOWNLOAD_TIMEOUT_MS = 12e4;
       RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
       apiGetMetrics = {
         calls: 0,
@@ -3554,6 +3589,21 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   // src/tabs/settings-export-standalone.ts
   init_runControl();
 
+  // src/reflect/customizeFiles.ts
+  init_api();
+  init_runControl();
+  init_utils();
+  var messageOf = (error) => error instanceof Error ? error.message : String(error);
+  var downloadCustomizeFile = async (guestId, fileKey) => {
+    try {
+      return await downloadKintoneFile(guestId, fileKey);
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      if (/大きすぎ|HTTP 4\d\d/.test(messageOf(error))) throw error;
+      return downloadKintoneFile(guestId, fileKey);
+    }
+  };
+
   // src/tabs/run-cancel-summary.ts
   init_runControl();
   var CancelReportError = class extends Error {
@@ -3582,6 +3632,41 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return isRunCancelledError(error) || isCancelReportError(error);
   }
 
+  // src/tabs/jsconfig-standalone.ts
+  init_constants();
+  init_utils();
+  init_api();
+  init_runControl();
+
+  // src/tabs/record-query.ts
+  init_kintone_query();
+  function uniqueZipEntryName(used, base) {
+    let cand = base;
+    let n = 2;
+    while (used.has(cand)) {
+      const dot = base.lastIndexOf(".");
+      cand = dot > 0 ? `${base.slice(0, dot)}_${n}${base.slice(dot)}` : `${base}_${n}`;
+      n++;
+    }
+    used.add(cand);
+    return cand;
+  }
+
+  // src/tabs/jsconfig-standalone.ts
+  var WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+  function sanitizeFolderName(name) {
+    const safe = String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "").trim().replace(/[. ]+$/, "");
+    return WINDOWS_RESERVED_NAME.test(safe) ? "_" + safe : safe;
+  }
+  var CaseInsensitiveNameSet = class extends Set {
+    has(value) {
+      return super.has(value.toLowerCase());
+    }
+    add(value) {
+      return super.add(value.toLowerCase());
+    }
+  };
+
   // src/tabs/settings-export-standalone.ts
   function settingsExportLabel(bundles) {
     if (bundles.length === 1) return buildAppFilenameLabel(bundles[0].appId, bundleAppName(bundles[0]));
@@ -3601,6 +3686,73 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   function omittedCustomizeBodyCount(bundle) {
     const files = bundle?.sections?.customizeSettings?._partial?.files;
     return Array.isArray(files) ? files.length : 0;
+  }
+  function zipEntryBaseName(bundle, guestId, preview) {
+    const suffix = `${guestId ? `_ゲスト${guestId}` : ""}${preview ? "_プレビュー" : "_本番"}`;
+    return `${buildAppFilenameLabel(bundle.appId, bundleAppName(bundle))}${suffix}`;
+  }
+  var CUSTOMIZE_FILE_LAYOUTS = [
+    ["slot", "PC/モバイル・JS/CSS別のフォルダ"],
+    ["app", "フォルダを分けない"],
+    ["ordered", "フォルダを分けず読み込み順を付ける"]
+  ];
+  async function fetchAppCustomizeFiles(section, guestId, folder, layout, onProgress) {
+    const result = { folder, files: [], blobs: [], saved: 0, failed: 0 };
+    const items = [];
+    for (const platform of ["desktop", "mobile"]) {
+      for (const kind of ["js", "css"]) {
+        const list = section?.[platform]?.[kind];
+        if (!Array.isArray(list)) continue;
+        list.forEach((item, index) => {
+          if (item?.type === "FILE") items.push({ item, platform, kind, order: index + 1 });
+        });
+      }
+    }
+    const cache = /* @__PURE__ */ new Map();
+    const usedByFolder = /* @__PURE__ */ new Map();
+    for (let i = 0; i < items.length; i++) {
+      const { item, platform, kind, order } = items[i];
+      onProgress(i, items.length);
+      const fileKey = String(item?.file?.fileKey || "");
+      const name = String(item?.file?.name || "");
+      const record = { path: "", platform, kind, order, name, fileKey, size: String(item?.file?.size ?? "") };
+      result.files.push(record);
+      if (!fileKey) {
+        record.error = "ファイルの識別子（fileKey）がありません";
+        result.failed += 1;
+        continue;
+      }
+      let blob = cache.get(fileKey);
+      if (!blob) {
+        try {
+          blob = await downloadCustomizeFile(guestId, fileKey);
+        } catch (error) {
+          if (isRunCancelledError(error)) throw error;
+          record.error = firstErrorLine(error);
+          result.failed += 1;
+          continue;
+        }
+        cache.set(fileKey, blob);
+      }
+      const baseName = sanitizeFolderName(name) || `file${order}.${kind}`;
+      const dir = layout === "slot" ? `${folder}/${platform}/${kind}` : folder;
+      if (!usedByFolder.has(dir)) usedByFolder.set(dir, new CaseInsensitiveNameSet());
+      const entry = uniqueZipEntryName(
+        usedByFolder.get(dir),
+        layout === "ordered" ? `${platform}_${kind}_${String(order).padStart(2, "0")}_${baseName}` : baseName
+      );
+      record.path = `${dir}/${entry}`;
+      result.blobs.push({ path: record.path, blob });
+      result.saved += 1;
+    }
+    onProgress(items.length, items.length);
+    return result;
+  }
+  function customizeFilesNote(files) {
+    if (!files || !files.files.length) return "";
+    if (!files.failed) return `JS/CSSファイル ${files.saved}件を保存`;
+    const first = files.files.find((file) => file.error);
+    return `JS/CSSファイル ${files.files.length}件中 ${files.saved}件を保存。失敗 ${files.failed}件（${first.name || "(名称不明)"}: ${first.error}）`;
   }
   function parseAppIdList(text) {
     const tokens = String(text || "").split(/[\s,、]+/).map((s) => s.trim()).filter(Boolean);
@@ -3692,10 +3844,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (!targets.length) throw new Error("対象アプリIDを1件以上入力してください");
     const scopes = selectedScopeKeys(opts.scopeRoot);
     if (!scopes.length) throw new Error("取得対象セクションを選択してください");
+    const includeCustomizeFiles = !!opts.includeCustomizeFiles;
+    if (includeCustomizeFiles && mode !== "zip") throw new Error("JS/CSSファイルはZIPにだけ保存できます");
+    if (includeCustomizeFiles && !scopes.includes("customizeSettings")) throw new Error("JS/CSSファイルを保存するときは、取得する設定に「JS/CSS設定」を含めてください");
+    const fileLayout = opts.customizeFileLayout || "slot";
+    if (!CUSTOMIZE_FILE_LAYOUTS.some(([value]) => value === fileLayout)) throw new Error(`JS/CSSファイルのフォルダ分けの指定が正しくありません: ${fileLayout}`);
     const preview = !!opts.preview;
     const JSZipCtor = mode === "zip" ? await loadJSZipLite() : null;
     const bundles = [];
     const rows = [];
+    const customizeFilesByApp = [];
     let stoppedAt = -1;
     for (let i = 0; i < targets.length; i++) {
       const { appId, guestId } = targets[i];
@@ -3723,8 +3881,27 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         stoppedAt = i;
         break;
       }
+      let customizeFiles = null;
+      if (includeCustomizeFiles) {
+        try {
+          customizeFiles = await fetchAppCustomizeFiles(
+            bundle.sections?.customizeSettings,
+            guestId,
+            `${zipEntryBaseName(bundle, guestId, preview)}_JS_CSS`,
+            fileLayout,
+            (done, total) => setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} JS/CSSファイル ${done}/${total}`)
+          );
+        } catch (error) {
+          if (isCancelStop(error)) {
+            stoppedAt = i;
+            break;
+          }
+          throw error;
+        }
+      }
       if (guestId && !bundle.guestId) bundle.guestId = guestId;
       bundles.push(bundle);
+      customizeFilesByApp.push(customizeFiles);
       let okCount = 0;
       let ngCount = 0;
       const failedKeys = [];
@@ -3743,6 +3920,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         noteParts.push(`一部セクション取得失敗あり: ${failedKeys.map(sectionLabel).join("、")}`);
       }
       if (omittedBodies2) noteParts.push(`JS/CSS本文を省略したファイル ${omittedBodies2}件`);
+      const filesNote = customizeFilesNote(customizeFiles);
+      if (filesNote) noteParts.push(filesNote);
       rows.push({
         appId,
         appName: extractAppNameFromBundle(bundle) || "",
@@ -3750,6 +3929,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         okCount,
         ngCount,
         omittedBodies: omittedBodies2,
+        savedFiles: customizeFiles?.saved || 0,
+        failedFiles: customizeFiles?.failed || 0,
         note: noteParts.join(" / ") || "OK"
       });
     }
@@ -3759,7 +3940,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       throw createCancelReport(0, targets.length, [`未実行（中止）: ${notRunLabels.join(", ")}`, "何も保存していません"]);
     }
     for (const t of notRun) {
-      rows.push({ appId: t.appId, appName: "", guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, note: "未実行（中止）" });
+      rows.push({ appId: t.appId, appName: "", guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, savedFiles: 0, failedFiles: 0, note: "未実行（中止）" });
     }
     const cancelNote = notRun.length ? `${formatCancelledHeadline(stoppedAt, targets.length)}。取得済みの ${bundles.length}アプリだけを保存しました。` : "";
     const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
@@ -3781,14 +3962,17 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const failureNote = failedSections ? `。${failedAppCount}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : "";
     const omittedBodies = rows.reduce((sum, row) => sum + row.omittedBodies, 0);
     const omittedNote = omittedBodies ? `。JS/CSSファイル ${omittedBodies}件は本文を取得できず fileKey のみ記録しています（結果表を確認してください）` : "";
-    const hasWarning = failedSections > 0 || omittedBodies > 0 || notRun.length > 0;
+    const savedFiles = rows.reduce((sum, row) => sum + row.savedFiles, 0);
+    const failedFiles = rows.reduce((sum, row) => sum + row.failedFiles, 0);
+    const filesFailureNote = failedFiles ? `。JS/CSSファイル ${failedFiles}件は取得できませんでした（理由は結果表と manifest.json に記録しています）` : "";
+    const hasWarning = failedSections > 0 || omittedBodies > 0 || failedFiles > 0 || notRun.length > 0;
     if (mode === "zip") {
       const zip = new JSZipCtor();
       const entries = bundles.map((bundle, i) => {
         const guestId = targets[i].guestId;
-        const suffix = `${guestId ? `_ゲスト${guestId}` : ""}${preview ? "_プレビュー" : "_本番"}`;
-        const file = `${buildAppFilenameLabel(bundle.appId, bundleAppName(bundle))}${suffix}.json`;
+        const file = `${zipEntryBaseName(bundle, guestId, preview)}.json`;
         const failedSections2 = scopes.filter((key) => bundle.sections?.[key]?._fetchError);
+        const customizeFiles = customizeFilesByApp[i];
         return {
           appId: String(bundle.appId),
           appName: bundleAppName(bundle),
@@ -3800,7 +3984,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
             key,
             label: SECTION_DEFS.find((s) => s.key === key)?.label || key,
             error: String(bundle.sections[key]._fetchError?.message || bundle.sections[key]._fetchError || "")
-          }))
+          })),
+          ...customizeFiles ? {
+            customizeFiles: { folder: customizeFiles.folder, saved: customizeFiles.saved, failed: customizeFiles.failed, files: customizeFiles.files }
+          } : {}
         };
       });
       zip.file(
@@ -3816,6 +4003,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
             scopeLabels,
             appCount: bundles.length,
             failedAppCount: entries.filter((entry) => entry.sections.ng > 0).length,
+            ...includeCustomizeFiles ? {
+              customizeFiles: {
+                layout: fileLayout,
+                saved: savedFiles,
+                failed: failedFiles,
+                note: "JS/CSS設定のファイル本体を、アプリごとの customizeFiles.folder 配下に保存しています（layout: slot = desktop|mobile/js|css のフォルダ別、app = フォルダ分けなし、ordered = フォルダ分けなしでファイル名の先頭に枠と読み込み順）。path は ZIP 内の場所、order は同じ枠での読み込み順（URL 指定を含む）です。URL 指定の JS/CSS は含みません。"
+              }
+            } : {},
             ...notRun.length ? { cancelled: true, notExecuted: notRun } : {},
             apps: entries
           },
@@ -3825,10 +4020,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       );
       for (let i = 0; i < bundles.length; i++) {
         zip.file(entries[i].file, JSON.stringify(bundles[i], null, 2));
+        for (const item of customizeFilesByApp[i]?.blobs || []) zip.file(item.path, item.blob);
       }
       const zipBlob = await zip.generateAsync({ type: "blob" });
       downloadBlob(buildExportFilename("設定一括取得", "zip", { appLabel: settingsExportLabel(bundles) }), zipBlob);
-      setStatus(`${cancelNote}設定一括取得ZIPを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
+      const countText = includeCustomizeFiles ? `${bundles.length}アプリ・JS/CSSファイル ${savedFiles}件` : `${bundles.length}アプリ`;
+      setStatus(`${cancelNote}設定一括取得ZIPを保存しました（${countText}）${failureNote}${omittedNote}${filesFailureNote}`, hasWarning);
       return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
     }
     downloadText(buildExportFilename("設定一括取得", "json", { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), "application/json");
@@ -4273,8 +4470,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     cardChips.body.appendChild(chipBox);
     const scopeRoot = chipBox;
     panel.body.insertBefore(cardScope.card, panel.status);
+    const cardFiles = makeCard({ title: "JS/CSSファイルのフォルダ分け" });
+    const fileLayout = makeSelect(CUSTOMIZE_FILE_LAYOUTS, "slot");
+    fileLayout.setAttribute("aria-label", "JS/CSSファイルのフォルダ分け");
+    cardFiles.body.appendChild(makeRow([fileLayout], { label: "フォルダ分け" }));
+    cardFiles.body.appendChild(makeNote("「設定とJS/CSSファイルをZIPで保存」で、アプリごとのフォルダの中の分け方を選びます（順に desktop/js/main.js、main.js、desktop_js_01_main.js）。URLで指定したJS/CSSは保存しません。", "help"));
     const btnJson = makeButton("JSON で保存", "primary", { icon: "↓" });
     const btnZip = makeButton("ZIP で保存", "primary", { icon: "↓" });
+    const btnZipFiles = makeButton("JS/CSSファイルも ZIP で保存", "primary", { icon: "↓" });
     const summary = document.createElement("div");
     summary.className = "kus-lp__panel-html kus-lp__panel-html--empty";
     panel.body.insertBefore(summary, panel.status);
@@ -4297,32 +4500,26 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const added = result.added + result.filled;
       panel.setStatus(`スペース内のアプリ ${apps.length}件を取得しました（対象アプリ表に新規追加 ${added}件 / 追加済み ${result.existing}件）`, "ok");
     }));
-    btnJson.addEventListener("click", () => liteRun(panel, "設定一括取得（JSON）中…", async () => {
+    const runExport = (mode, includeCustomizeFiles) => async () => {
       const { summaryHtml } = await runSettingsExportStandalone(
-        "json",
-        opts(),
+        mode,
+        { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value },
         // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
         (m, e) => panel.setStatus(m, /^中止しました/.test(m) ? "warn" : e ? "err" : "busy")
       );
       summary.innerHTML = summaryHtml;
       summary.classList.remove("kus-lp__panel-html--empty");
-    }));
-    btnZip.addEventListener("click", () => liteRun(panel, "設定一括取得（ZIP）中…", async () => {
-      const { summaryHtml } = await runSettingsExportStandalone(
-        "zip",
-        opts(),
-        // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
-        (m, e) => panel.setStatus(m, /^中止しました/.test(m) ? "warn" : e ? "err" : "busy")
-      );
-      summary.innerHTML = summaryHtml;
-      summary.classList.remove("kus-lp__panel-html--empty");
-    }));
+    };
+    btnJson.addEventListener("click", () => liteRun(panel, "設定一括取得（JSON）中…", runExport("json", false)));
+    btnZip.addEventListener("click", () => liteRun(panel, "設定一括取得（ZIP）中…", runExport("zip", false)));
+    btnZipFiles.addEventListener("click", () => liteRun(panel, "設定一括取得（ZIP・JS/CSSファイル）中…", runExport("zip", true)));
     const exportProblem = () => {
       const rows = appTable.getApps();
       if (!rows.length) return "対象アプリを1件以上指定してください。";
       if (rows.some((row) => !/^\d+$/.test(row.appId) || row.guestId && !/^\d+$/.test(row.guestId))) return "アプリID・ゲストスペースIDは半角数字で入力してください。";
       return chips.some((c) => c.checkbox.checked) ? "" : "取得する設定を1つ以上選んでください。";
     };
+    const filesExportProblem = () => exportProblem() || (chips.some((c) => c.checkbox.checked && c.checkbox.value === "customizeSettings") ? "" : "JS/CSSファイルも保存するときは、取得する設定に「JS/CSS設定」を含めてください。");
     const exportSummary = (format) => [
       ["対象アプリ", summarizeList(appTable.getApps().map((r) => connectionSummary(r.appId, r.guestId, prev.checkbox.checked ? "プレビュー" : "本番")))],
       ["取得する設定", chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent || "").join("、")],
@@ -4330,8 +4527,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     ];
     installLiteWorkflow(panel, {
       setup: [cardTarget.card, cardScope.card],
-      advanced: [cardChips.card],
-      advancedCopy: "取得する設定を1項目ずつ選ぶ（全選択・全解除）ときはこちら。",
+      advanced: [cardChips.card, cardFiles.card],
+      advancedCopy: "取得する設定を1項目ずつ選ぶとき、JS/CSSファイルのフォルダ分けを変えるときはこちら。",
       results: [summary],
       beforeRun: () => {
         summary.replaceChildren();
@@ -4339,7 +4536,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       },
       actions: [
         { id: "json", label: "設定をJSONで保存", description: "全対象アプリの設定を、1つのJSONファイルにまとめて保存します。", button: btnJson, validate: exportProblem, summary: () => exportSummary("全アプリを1つのJSON") },
-        { id: "zip", label: "設定をZIPで保存", description: "アプリごとのJSONと、取得結果の一覧（manifest.json）をZIPで保存します。", button: btnZip, validate: exportProblem, summary: () => exportSummary("1アプリ1JSONとmanifest.jsonをZIPに保存") }
+        { id: "zip", label: "設定をZIPで保存", description: "アプリごとのJSONと、取得結果の一覧（manifest.json）をZIPで保存します。", button: btnZip, validate: exportProblem, summary: () => exportSummary("1アプリ1JSONとmanifest.jsonをZIPに保存") },
+        { id: "zip-files", label: "設定とJS/CSSファイルをZIPで保存", description: "設定のZIPに、JS/CSSファイルの本体をアプリごとのフォルダに入れて保存します。フォルダ分けは「詳細設定…」で選べます。", button: btnZipFiles, validate: filesExportProblem, summary: () => [...exportSummary("1アプリ1JSON・JS/CSSファイル・manifest.jsonをZIPに保存"), ["JS/CSSファイルのフォルダ分け", fileLayout.selectedOptions[0]?.textContent || ""]] }
       ]
     });
   }

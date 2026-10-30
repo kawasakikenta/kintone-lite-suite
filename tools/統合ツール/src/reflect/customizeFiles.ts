@@ -105,7 +105,7 @@ function guessContentType(name: string): string {
 }
 
 /** 一過性の通信失敗で反映全体が止まらないよう、上限超過と 4xx（権限・存在しない）以外は1回だけ再試行する。 */
-const defaultDownload: CustomizeFileDownloader = async (guestId, fileKey) => {
+export const downloadCustomizeFile: CustomizeFileDownloader = async (guestId, fileKey) => {
   try { return await downloadKintoneFile(guestId, fileKey); } catch (error) {
     if (isRunCancelledError(error)) throw error;
     if (/大きすぎ|HTTP 4\d\d/.test(messageOf(error))) throw error;
@@ -134,7 +134,7 @@ async function loadBody(entry: FileEntry, guestId: string, download: CustomizeFi
 }
 
 export async function resolveCustomizeFiles(sourceSection: any, targetSection: any, opts: { sourceGuestId: string; targetGuestId: string; download?: CustomizeFileDownloader }): Promise<CustomizeFileResolution> {
-  const download = opts.download || defaultDownload;
+  const download = opts.download || downloadCustomizeFile;
   const resolution: CustomizeFileResolution = { files: dict<CustomizeFileState>(), hashes: dict<string>(), blobs: new Map(), targetBlobs: new Map(), targetUnavailable: [] };
   const slotOf = (entry: FileEntry) => customizeSlotKey(entry.platform, entry.kind, entry.fileKey);
   const targetEntries = listFileEntries(targetSection);
@@ -201,7 +201,7 @@ export function comparableCustomizePayload(payload: any, resolution: CustomizeFi
 
 /** バックアップ用に、各 FILE 項目へファイル本体（base64）を埋め込んだ深いコピーを返す。元のオブジェクトは変更しない。 */
 export async function embedCustomizeFileContents(section: any, opts: { guestId: string; download?: CustomizeFileDownloader; /** 取得済みの本体（反映先 fileKey → Blob）。同じファイルを取得し直さない */ cached?: Map<string, Blob> }): Promise<{ section: any; unavailable: Array<{ fileKey: string; name: string; reason: string }> }> {
-  const download: CustomizeFileDownloader = async (guestId, fileKey) => opts.cached?.get(fileKey) || (opts.download || defaultDownload)(guestId, fileKey);
+  const download: CustomizeFileDownloader = async (guestId, fileKey) => opts.cached?.get(fileKey) || (opts.download || downloadCustomizeFile)(guestId, fileKey);
   const copy = deepClone(section);
   const entries = listFileEntries(copy);
   const results = new Map<string, { content: { base64: string; contentType: string; byteSize: number } } | { reason: string }>();
