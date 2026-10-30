@@ -144,8 +144,8 @@ export function mountJsconfigLitePanel() {
         const result = multiTable.putApp(id, guestId, { appName: name });
         return { message: `アプリ #${id}${name ? ` (${name})` : ''} を「${multiTargetName}」に${result.action === 'existing' ? '設定済みです（追加していません）' : '追加しました'}` };
       },
-      applyAll: (apps, guestId) => {
-        const result = multiTable.putApps(apps.map((app) => ({ appId: app.appId, guestId, appName: app.appName })));
+      applyAll: (apps) => {
+        const result = multiTable.putApps(apps.map((app) => ({ appId: app.appId, guestId: app.guestId, appName: app.appName })));
         const set = result.added + result.filled;
         return {
           message: `候補 ${apps.length} 件のうち ${set} 件を「${multiTargetName}」に追加しました${result.existing ? `（設定済み ${result.existing} 件は追加していません）` : ''}。反映前に対象を最終確認します。`,

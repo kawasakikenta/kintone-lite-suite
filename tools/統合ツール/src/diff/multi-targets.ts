@@ -12,6 +12,8 @@ export const MULTI_LARGE_TARGET_THRESHOLD = 100;
 export interface MultiTargetCandidate {
   appId: string;
   appName?: string;
+  /** 候補のゲストスペースID。省略時は planMultiTargetFill の guestId を使う */
+  guestId?: string;
 }
 
 export interface MultiTargetKey {
@@ -27,7 +29,7 @@ export interface MultiTargetSource {
 
 export interface MultiTargetFillPlan {
   /** 新たに比較先へ入れるアプリ（入力順・重複なし） */
-  add: Array<{ appId: string; appName: string }>;
+  add: Array<{ appId: string; appName: string; guestId?: string }>;
   /** 同じアプリID・ゲストスペースIDの行が既にあった、または候補内で重複していた件数 */
   alreadyPresent: number;
   /** 比較元と同じ接続先のため外した件数（0 か 1） */
@@ -46,12 +48,13 @@ const POSITIVE_INT = /^[1-9]\d*$/;
  */
 export function planMultiTargetFill(options: {
   candidates: MultiTargetCandidate[];
-  guestId: string;
+  /** guestId を持たない候補に使うゲストスペースID */
+  guestId?: string;
   existing: MultiTargetKey[];
   source?: MultiTargetSource | null;
   targetPreview: boolean;
 }): MultiTargetFillPlan {
-  const guestId = String(options.guestId || '').trim();
+  const defaultGuestId = String(options.guestId || '').trim();
   const seen = new Set<string>();
   options.existing.forEach((entry) => {
     const appId = String(entry.appId || '').trim();
@@ -59,25 +62,34 @@ export function planMultiTargetFill(options: {
   });
   const source = options.source;
   const sourceAppId = String(source?.appId || '').trim();
-  const selfIsSameEndpoint = !!source && !!sourceAppId
-    && String(source.guestId || '').trim() === guestId
-    && !!source.preview === !!options.targetPreview;
+  const sourceGuestId = String(source?.guestId || '').trim();
+  const sourceSameEnvironment = !!source && !!sourceAppId && !!source.preview === !!options.targetPreview;
   const plan: MultiTargetFillPlan = { add: [], alreadyPresent: 0, skippedSelf: 0, invalid: 0 };
   options.candidates.forEach((candidate) => {
     const appId = String(candidate.appId || '').trim();
+    const guestId = candidate.guestId === undefined ? defaultGuestId : String(candidate.guestId || '').trim();
     if (!POSITIVE_INT.test(appId)) { plan.invalid += 1; return; }
-    if (selfIsSameEndpoint && appId === sourceAppId) { plan.skippedSelf += 1; return; }
+    if (sourceSameEnvironment && appId === sourceAppId && guestId === sourceGuestId) { plan.skippedSelf += 1; return; }
     const key = `${appId}::${guestId}`;
     if (seen.has(key)) { plan.alreadyPresent += 1; return; }
     seen.add(key);
-    plan.add.push({ appId, appName: String(candidate.appName || '').trim() });
+    plan.add.push({ appId, appName: String(candidate.appName || '').trim(), guestId });
   });
   return plan;
 }
 
-/** 一括設定の結果メッセージ。追加・既存・除外の件数を隠さず示す。 */
+/**
+ * 一括設定の結果メッセージ。追加・既存・除外の件数を隠さず示す。
+ * 追加したアプリのゲストスペースが 1 か所ならそのIDを、混ざっていればゲストスペースのアプリの件数を添える
+ * （guestId は、追加したアプリがゲストスペースIDを持たないときに使う）。
+ */
 export function describeMultiTargetFill(plan: MultiTargetFillPlan, totalTargets: number, guestId = ''): string {
-  const where = guestId ? `（ゲストスペース ${guestId}）` : '';
+  const guestOf = (item: { guestId?: string }) => item.guestId ?? guestId;
+  const guests = new Set(plan.add.map(guestOf));
+  const only = guests.size <= 1 ? (guests.size ? [...guests][0] : guestId) : '';
+  const where = guests.size > 1
+    ? `（うちゲストスペースのアプリ ${plan.add.filter((item) => guestOf(item)).length} 件）`
+    : only ? `（ゲストスペース ${only}）` : '';
   if (!plan.add.length && !plan.alreadyPresent && !plan.skippedSelf && !plan.invalid) {
     return `比較先に設定できるアプリがありません${where}`;
   }

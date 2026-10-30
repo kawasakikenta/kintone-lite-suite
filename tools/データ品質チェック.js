@@ -1120,11 +1120,13 @@ ${contextLine}`);
     }
     return { records: all, mode: "cursor" };
   }
-  async function fetchAllApps(guestId, onProgress) {
+  async function fetchAllApps(guestId, onProgress, options = {}) {
     const prefix = buildApiPrefix(guestId, false);
     const byId = /* @__PURE__ */ new Map();
     for (let offset = 0; ; offset += APPS_PAGE_LIMIT) {
-      const resp = await apiGet(prefix, "/apps.json", { limit: APPS_PAGE_LIMIT, offset });
+      const params = { limit: APPS_PAGE_LIMIT, offset };
+      if (options.spaceId) params.spaceIds = [options.spaceId];
+      const resp = await apiGet(prefix, "/apps.json", params);
       if (!Array.isArray(resp?.apps)) throw new Error("アプリ一覧の応答が不正です。もう一度取得してください");
       for (const app of resp.apps) {
         const appId = String(app?.appId || "").trim();
@@ -1133,9 +1135,122 @@ ${contextLine}`);
       onProgress?.(byId.size);
       if (resp.apps.length < APPS_PAGE_LIMIT) break;
     }
-    return [...byId.entries()].sort(([a], [b]) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0).map(([, app]) => app);
+    return [...byId.entries()].sort(([a], [b]) => compareAppIds(a, b)).map(([, app]) => app);
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, APPS_PAGE_LIMIT;
+  function compareAppIds(a, b) {
+    return BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0;
+  }
+  function positiveSpaceId(value) {
+    const text = String(value ?? "").trim();
+    if (!/^[1-9]\d*$/.test(text)) return 0;
+    const id = Number(text);
+    return Number.isSafeInteger(id) ? id : 0;
+  }
+  async function probeGuestSpace(id) {
+    try {
+      const res = await apiGet(buildApiPrefix(id, false), "/space.json", { id }, { retries: 2 });
+      if (res?.isGuest === true && String(res?.id ?? id) === String(id)) return { kind: "guest", name: String(res?.name || "") };
+      return { kind: "none" };
+    } catch (e) {
+      if (isRunCancelledError(e)) throw e;
+      return e?.code && !isRetriableApiError(e) ? { kind: "none" } : { kind: "unknown" };
+    }
+  }
+  async function findGuestSpaces(options = {}) {
+    const tail = Math.max(1, Math.floor(Number(options.tail ?? GUEST_SPACE_PROBE_TAIL)) || GUEST_SPACE_PROBE_TAIL);
+    const limit = Math.max(1, Math.floor(Number(options.limit ?? GUEST_SPACE_PROBE_LIMIT)) || GUEST_SPACE_PROBE_LIMIT);
+    const known = /* @__PURE__ */ new Set();
+    for (const value of options.knownSpaceIds || []) {
+      const id2 = positiveSpaceId(value);
+      if (id2) known.add(id2);
+    }
+    const extras = /* @__PURE__ */ new Set();
+    for (const value of options.extraGuestIds || []) {
+      const id2 = positiveSpaceId(value);
+      if (id2) {
+        extras.add(id2);
+        known.delete(id2);
+      }
+    }
+    let anchor = Math.max(0, ...known, ...extras);
+    const found = /* @__PURE__ */ new Map();
+    const unconfirmed = [];
+    let checked = 0;
+    let id = 0;
+    let limited = false;
+    const stopIfRequested = () => {
+      if (options.shouldStop?.()) throw new RunCancelledError();
+    };
+    const record = (target, probe) => {
+      checked += 1;
+      if (probe.kind === "guest") {
+        found.set(target, probe.name);
+        anchor = Math.max(anchor, target);
+      } else if (probe.kind === "unknown") {
+        unconfirmed.push(target);
+      }
+    };
+    while (id < anchor + tail) {
+      stopIfRequested();
+      if (checked >= limit) {
+        limited = true;
+        break;
+      }
+      const batch = [];
+      while (batch.length < GUEST_SPACE_PROBE_CONCURRENCY && id < anchor + tail && checked + batch.length < limit) {
+        id += 1;
+        if (!known.has(id)) batch.push(id);
+      }
+      const probes = await Promise.all(batch.map(probeGuestSpace));
+      batch.forEach((target, i) => record(target, probes[i]));
+      options.onProgress?.(id, found.size);
+    }
+    for (const extra of [...extras].sort((a, b) => a - b)) {
+      if (extra <= id) continue;
+      stopIfRequested();
+      record(extra, await probeGuestSpace(extra));
+      options.onProgress?.(id, found.size);
+    }
+    return {
+      spaces: [...found.entries()].sort(([a], [b]) => a - b).map(([guestId, name]) => ({ guestId: String(guestId), name })),
+      checkedUpTo: id,
+      checked,
+      unconfirmed: unconfirmed.sort((a, b) => a - b).map(String),
+      limited
+    };
+  }
+  async function fetchAllAppsIncludingGuestSpaces(options = {}) {
+    const regular = await fetchAllApps("", (fetched) => options.onProgress?.({ phase: "apps", fetched }));
+    const search = await findGuestSpaces({
+      knownSpaceIds: regular.map((app) => app?.spaceId),
+      extraGuestIds: options.extraGuestIds,
+      onProgress: (checkedUpTo, found) => options.onProgress?.({ phase: "guest-spaces", checkedUpTo, found }),
+      shouldStop: options.shouldStop
+    });
+    const byId = /* @__PURE__ */ new Map();
+    for (const app of regular) byId.set(String(app.appId).trim(), { app, guestId: "" });
+    const guestSpaces = [];
+    for (const [index, space] of search.spaces.entries()) {
+      if (options.shouldStop?.()) throw new RunCancelledError();
+      try {
+        const apps2 = await fetchAllApps(space.guestId, (fetched) => options.onProgress?.({
+          phase: "guest-apps",
+          index: index + 1,
+          total: search.spaces.length,
+          guestId: space.guestId,
+          fetched
+        }), { spaceId: space.guestId });
+        for (const app of apps2) byId.set(String(app.appId).trim(), { app, guestId: space.guestId });
+        guestSpaces.push({ ...space, appCount: apps2.length });
+      } catch (e) {
+        if (isRunCancelledError(e)) throw e;
+        guestSpaces.push({ ...space, appCount: 0, error: String(e?.message || e).split("\n")[0] });
+      }
+    }
+    const apps = [...byId.entries()].sort(([a], [b]) => compareAppIds(a, b)).map(([, entry]) => entry);
+    return { apps, guestSpaces, search };
+  }
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, APPS_PAGE_LIMIT, GUEST_SPACE_PROBE_TAIL, GUEST_SPACE_PROBE_LIMIT, GUEST_SPACE_PROBE_CONCURRENCY;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1171,6 +1286,9 @@ ${contextLine}`);
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
       FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
       APPS_PAGE_LIMIT = 100;
+      GUEST_SPACE_PROBE_TAIL = 50;
+      GUEST_SPACE_PROBE_LIMIT = 2e3;
+      GUEST_SPACE_PROBE_CONCURRENCY = 4;
     }
   });
 
@@ -3027,6 +3145,53 @@ ${contextLine}`);
 
   // src/entries/appSearchControl.ts
   init_api();
+
+  // src/entries/environmentApps.ts
+  init_api();
+  function listIds(ids, limit = 5) {
+    const head = ids.slice(0, limit).join("・");
+    return ids.length > limit ? `${head} ほか ${ids.length - limit} 件` : head;
+  }
+  function describeEnvironmentAppsProgress(progress) {
+    if (progress.phase === "apps") return `環境内の全アプリを取得中…（${progress.fetched}件）`;
+    if (progress.phase === "guest-spaces") {
+      return `ゲストスペースを探しています…（スペースID ${progress.checkedUpTo} まで確認、${progress.found}か所が見つかりました）`;
+    }
+    return `ゲストスペースのアプリを取得中…（${progress.index}/${progress.total}か所目: ゲストスペース ${progress.guestId}、${progress.fetched}件）`;
+  }
+  function summarizeEnvironmentApps(result, opts = {}) {
+    const total = result.apps.length;
+    const guestApps = result.apps.filter((entry) => entry.guestId).length;
+    const spaces = result.guestSpaces.length;
+    const { search } = result;
+    const problems = [];
+    const failed = result.guestSpaces.filter((space) => space.error);
+    if (failed.length) {
+      const others = failed.length > 1 ? ` ほか ${failed.length - 1}か所` : "";
+      problems.push(`ゲストスペースのアプリ一覧の取得に失敗 ${failed.length}か所（ゲストスペース ${failed[0].guestId}: ${failed[0].error}${others}）`);
+    }
+    if (search.unconfirmed.length) {
+      problems.push(`確かめられなかったスペースID ${search.unconfirmed.length}件（${listIds(search.unconfirmed)}。通信エラーなど）`);
+    }
+    if (search.limited) {
+      problems.push(`確かめる件数の上限（${GUEST_SPACE_PROBE_LIMIT}件）に達したため、スペースID ${search.checkedUpTo} より後は確かめていません`);
+    }
+    const typed = String(opts.typedGuestId || "").trim();
+    if (typed && !result.guestSpaces.some((space) => space.guestId === typed) && !search.unconfirmed.includes(typed)) {
+      problems.push(`ゲストスペース ${typed} は見つかりませんでした（閲覧できないか、ゲストスペースではありません）`);
+    }
+    const lead = total ? `環境内のアプリ ${total}件を表示しました（通常スペース・スペース外 ${total - guestApps}件、ゲストスペース ${spaces}か所 ${guestApps}件）` : "閲覧できるアプリがありません（通常スペース・スペース外とゲストスペース）";
+    const next = !problems.length && total && opts.canApplyAll ? "「すべて…」でまとめて設定できます" : "";
+    const scope = spaces ? `ゲストスペースは、スペースID 1〜${search.checkedUpTo} を順に確かめて ${spaces}か所見つかりました（閲覧できるものだけ）。ほかのゲストスペースは、ゲストIDを入れて取得すると加わります。` : `スペースID 1〜${search.checkedUpTo} を順に確かめましたが、閲覧できるゲストスペースは見つかりませんでした。ゲストIDを入れて取得すると、そのゲストスペースを確かめます。`;
+    return {
+      message: [lead, ...problems, next].filter(Boolean).join("。"),
+      tone: problems.length ? "warn" : total ? "ok" : "info",
+      headSuffix: spaces ? `（うちゲストスペース ${spaces}か所の ${guestApps}件）` : "",
+      scope
+    };
+  }
+
+  // src/entries/appSearchControl.ts
   init_utils();
   var RESULT_CSS_ID = "kus-app-search-styles";
   var RESULT_CSS = `
@@ -3046,6 +3211,11 @@ ${contextLine}`);
 .kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
 .kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}
 .kus-as__bulk .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
+.kus-as__bulk-note{flex-basis:100%;color:var(--c-text-2);font-size:12px;line-height:1.5}
+.kus-as__scope{padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface);color:var(--c-text-2);font-size:12px;line-height:1.5}
+.kus-as__filter{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface);font-size:12.5px;color:var(--c-text-2)}
+.kus-as__filter select{max-width:100%;min-width:0}
+.kus-as__guest{color:var(--c-info-fg,var(--c-text));font-weight:600}
 `;
   function ensureStyles() {
     if (document.getElementById(RESULT_CSS_ID)) return;
@@ -3054,21 +3224,27 @@ ${contextLine}`);
     st.textContent = RESULT_CSS;
     document.head.appendChild(st);
   }
-  function appCandidate(info, appId) {
+  function appCandidate(info, appId, guestId) {
     return {
       appId,
       name: String(info?.name || ""),
+      guestId,
       code: info?.code == null ? void 0 : String(info.code),
       spaceId: info?.spaceId === null ? null : info?.spaceId === void 0 ? void 0 : String(info.spaceId),
       modifiedAt: String(info?.modifiedAt || ""),
       modifierName: String(info?.modifier?.name || info?.modifier?.code || "")
     };
   }
+  function locationLabel(guestId, guestNames) {
+    if (!guestId) return "通常スペース・スペース外";
+    const name = guestNames.get(guestId);
+    return name ? `ゲストスペース「${name}」（ID ${guestId}）` : `ゲストスペース ${guestId}`;
+  }
   function candidateDetails(app) {
     const parts = [
       app.code === void 0 ? "コード未取得" : app.code ? `コード: ${app.code}` : "コード未設定",
-      app.spaceId === null ? "スペース外" : app.spaceId ? `スペース: ${app.spaceId}` : "所属スペース未取得"
-    ];
+      app.guestId ? "" : app.spaceId === null ? "スペース外" : app.spaceId ? `スペース: ${app.spaceId}` : "所属スペース未取得"
+    ].filter(Boolean);
     if (app.modifiedAt) {
       const date = new Date(app.modifiedAt);
       const time = Number.isNaN(date.getTime()) ? app.modifiedAt : date.toLocaleString("ja-JP");
@@ -3085,15 +3261,20 @@ ${contextLine}`);
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
     const allBtn = makeButton("環境内の全アプリ", "sub");
     allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
+    const guestScan = makeCheck({
+      label: "ゲストスペースも探す",
+      checked: true,
+      help: `スペースIDを順に確かめて、閲覧できるゲストスペースのアプリも候補に加えます（見つかった最後のスペースIDの ${GUEST_SPACE_PROBE_TAIL} 件先まで）。スペースが多い環境では時間がかかります`
+    });
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
     const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
-    body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
+    body.appendChild(makeRow([allBtn, guestScan.label], { label: "全アプリ" }));
     body.appendChild(makeNote("閲覧できるアプリを名前（部分一致）またはコード（大文字・小文字を区別する完全一致）で検索します。スペースIDで検索範囲を絞れます。ID / URL の直接指定ではスペースIDの絞り込みは使いません。"));
     const allTargets = opts.targets.filter((t) => typeof t.applyAll === "function");
-    body.appendChild(makeNote(`「環境内の全アプリ」は、閲覧できるアプリをすべて候補に表示します${allTargets.length ? "（候補の上の「すべて…」でまとめて設定できます）" : ""}。ゲストスペースのアプリは含まれないため、ゲストスペースIDを入れてゲストスペースごとに取得してください。`));
+    body.appendChild(makeNote(`「環境内の全アプリ」は、閲覧できるアプリをすべて候補に表示します${allTargets.length ? "（候補の上の「すべて…」でまとめて設定できます）" : ""}。「ゲストスペースも探す」を付けると、ゲストスペースを探してそのアプリも加え、行ごとにゲストスペースかどうかを示します（外すと、ゲストIDを入れたときはそのゲストスペースだけを取得します）。`));
     const resultBox = document.createElement("div");
     resultBox.className = "kus-as__result kus-as__result--empty";
     body.appendChild(resultBox);
@@ -3104,13 +3285,20 @@ ${contextLine}`);
     let running = false;
     let candidates = [];
     let nextOffset = 0;
-    let resultGuest = "";
     let resultIsAll = false;
+    let allHeadSuffix = "";
+    let allScope = "";
+    let guestNames = /* @__PURE__ */ new Map();
+    let locationFilter = "*";
     function invalidate() {
       generation += 1;
       candidates = [];
       nextOffset = 0;
       resultIsAll = false;
+      allHeadSuffix = "";
+      allScope = "";
+      guestNames = /* @__PURE__ */ new Map();
+      locationFilter = "*";
       resultBox.replaceChildren();
       resultBox.className = "kus-as__result kus-as__result--empty";
       moreBtn.hidden = true;
@@ -3118,6 +3306,7 @@ ${contextLine}`);
     keyword.addEventListener("input", invalidate);
     guest.addEventListener("input", invalidate);
     space.addEventListener("input", invalidate);
+    guestScan.checkbox.addEventListener("change", invalidate);
     searchMode.addEventListener("change", () => {
       keyword.placeholder = searchMode.value === "code" ? "アプリコード（完全一致）" : "アプリ名 / アプリID / URL";
       invalidate();
@@ -3132,48 +3321,69 @@ ${contextLine}`);
       if (running && panel.root.getAttribute("aria-busy") === "true") invalidate();
       syncBusyControls();
     });
-    function renderResults(apps) {
-      if (!apps.length) {
+    function syncGuestEl(guestId) {
+      if (!opts.guestEl || opts.guestEl.value.trim() === guestId) return;
+      opts.guestEl.value = guestId;
+      opts.guestEl.dispatchEvent(new Event("input", { bubbles: true }));
+      opts.guestEl.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    function renderResults() {
+      if (!candidates.length) {
         resultBox.className = "kus-as__result";
         resultBox.innerHTML = '<div class="kus-as__head">検索結果なし</div>';
         return;
       }
+      const counts = /* @__PURE__ */ new Map();
+      candidates.forEach((app) => counts.set(app.guestId, (counts.get(app.guestId) || 0) + 1));
+      const locations = [...counts.keys()].sort((a, b) => (a ? Number(a) : 0) - (b ? Number(b) : 0));
+      const filterable = resultIsAll && locations.length > 1;
+      if (!filterable || locationFilter !== "*" && !counts.has(locationFilter)) locationFilter = "*";
+      const apps = locationFilter === "*" ? candidates : candidates.filter((app) => app.guestId === locationFilter);
+      const mixed = locationFilter === "*" && locations.length > 1;
       const single = opts.targets.length <= 1;
       const rowsHtml = apps.map((app, idx) => {
         const buttons = opts.targets.map((t, ti) => {
           const label = single ? "選択" : `${t.label || "設定"}へ`;
           return `<button type="button" class="kus-lp__btn kus-lp__btn--sub" data-as-pick="${idx}" data-as-target="${ti}">${esc(label)}</button>`;
         }).join("");
+        const where = app.guestId ? `<span class="kus-as__guest">${esc(locationLabel(app.guestId, guestNames))}</span> · ` : "";
         return `<tr>
         <td class="kus-as__id">${esc(app.appId)}</td>
-        <td class="kus-as__name"><div>${esc(app.name)}</div><div class="kus-as__meta">${esc(candidateDetails(app))}</div></td>
+        <td class="kus-as__name"><div>${esc(app.name)}</div><div class="kus-as__meta">${where}${esc(candidateDetails(app))}</div></td>
         <td><div class="kus-as__assign">${buttons}</div></td>
       </tr>`;
       }).join("");
+      const filterHtml = filterable ? `<label class="kus-as__filter">表示する場所<select class="kus-lp__select" data-as-filter aria-label="表示する場所">
+        <option value="*"${locationFilter === "*" ? " selected" : ""}>すべて（${candidates.length}件）</option>
+        ${locations.map((loc) => `<option value="${esc(loc)}"${loc === locationFilter ? " selected" : ""}>${esc(locationLabel(loc, guestNames))}（${counts.get(loc)}件）</option>`).join("")}
+      </select></label>` : "";
+      const blocked = mixed ? allTargets.filter((t) => t.singleGuest) : [];
+      const blockedNote = blocked.length ? `<div class="kus-as__bulk-note">通常スペースとゲストスペースなど、場所の違うアプリが混ざっているため${blocked.some((t) => t.label) ? `「${blocked.map((t) => t.label || "設定").join("」「")}」へは` : ""}まとめて設定できません（ゲストスペースIDは 1 つしか入れられません）。「表示する場所」で 1 か所に絞ってください。</div>` : "";
       const bulkHtml = allTargets.length ? `<div class="kus-as__bulk">${allTargets.map((t) => {
         const ti = opts.targets.indexOf(t);
         const label = t.applyAllLabel ? t.applyAllLabel(apps.length) : single || !t.label ? `候補 ${apps.length} 件をすべて追加` : `候補 ${apps.length} 件をすべて${t.label}へ`;
-        return `<button type="button" class="kus-lp__btn kus-lp__btn--sub" data-as-all="${ti}">${esc(label)}</button>`;
-      }).join("")}</div>` : "";
+        return `<button type="button" class="kus-lp__btn kus-lp__btn--sub" data-as-all="${ti}"${blocked.includes(t) ? " disabled" : ""}>${esc(label)}</button>`;
+      }).join("")}${blockedNote}</div>` : "";
+      const head = resultIsAll ? `環境内のアプリ ${candidates.length}件${allHeadSuffix}` : `${candidates.length}件の候補`;
       resultBox.className = "kus-as__result";
-      resultBox.innerHTML = `<div class="kus-as__head">${resultIsAll ? `環境内のアプリ ${apps.length}件${resultGuest ? `（ゲストスペース ${esc(resultGuest)}）` : ""}` : `${apps.length}件の候補`}</div>${bulkHtml}
+      resultBox.innerHTML = `<div class="kus-as__head">${esc(head)}</div>${allScope ? `<div class="kus-as__scope">${esc(allScope)}</div>` : ""}${filterHtml}${bulkHtml}
       <table class="kus-as__table">
         <thead><tr><th style="width:74px">アプリID</th><th>アプリ名</th><th style="width:1%"></th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>`;
+      resultBox.querySelector("select[data-as-filter]")?.addEventListener("change", (event) => {
+        locationFilter = event.target.value;
+        renderResults();
+        resultBox.querySelector("select[data-as-filter]")?.focus();
+      });
       resultBox.querySelectorAll("button[data-as-pick]").forEach((btn) => {
         btn.addEventListener("click", () => {
           const app = apps[Number(btn.dataset.asPick)];
           const target = opts.targets[Number(btn.dataset.asTarget)];
           if (!app || !target) return;
           if (running || panel.root.getAttribute("aria-busy") === "true") return;
-          const searchGuest = resultGuest;
-          const outcome = target.apply(app.appId, app.name, searchGuest) || {};
-          if (opts.guestEl && opts.guestEl.value.trim() !== searchGuest) {
-            opts.guestEl.value = searchGuest;
-            opts.guestEl.dispatchEvent(new Event("input", { bubbles: true }));
-            opts.guestEl.dispatchEvent(new Event("change", { bubbles: true }));
-          }
+          const outcome = target.apply(app.appId, app.name, app.guestId) || {};
+          syncGuestEl(app.guestId);
           const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : "";
           btn.classList.add("kus-as__picked");
           btn.setAttribute("aria-pressed", "true");
@@ -3187,15 +3397,11 @@ ${contextLine}`);
       resultBox.querySelectorAll("button[data-as-all]").forEach((btn) => {
         btn.addEventListener("click", () => {
           const target = opts.targets[Number(btn.dataset.asAll)];
-          if (!target?.applyAll || !apps.length) return;
+          if (!target?.applyAll || !apps.length || btn.disabled) return;
           if (running || panel.root.getAttribute("aria-busy") === "true") return;
-          const searchGuest = resultGuest;
-          const outcome = target.applyAll(apps.map((app) => ({ appId: app.appId, appName: app.name })), searchGuest) || {};
-          if (opts.guestEl && opts.guestEl.value.trim() !== searchGuest) {
-            opts.guestEl.value = searchGuest;
-            opts.guestEl.dispatchEvent(new Event("input", { bubbles: true }));
-            opts.guestEl.dispatchEvent(new Event("change", { bubbles: true }));
-          }
+          const picks = apps.map((app) => ({ appId: app.appId, appName: app.name, guestId: app.guestId }));
+          const outcome = target.applyAll(picks) || {};
+          if (!mixed) syncGuestEl(picks[0].guestId);
           const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : "";
           btn.classList.add("kus-as__picked");
           btn.setAttribute("aria-pressed", "true");
@@ -3236,15 +3442,15 @@ ${contextLine}`);
       try {
         if (directAppId) {
           panel.setStatus("アプリIDを確認中…", "busy");
-          let candidate = { appId: directAppId, name: "ID指定（名称未取得）" };
+          let candidate = { appId: directAppId, name: "ID指定（名称未取得）", guestId };
           try {
             const info = await apiGet(prefix, "/app.json", { id: directAppId });
-            candidate = appCandidate(info, directAppId);
+            candidate = appCandidate(info, directAppId, guestId);
           } catch {
           }
           if (!isCurrent()) return;
-          resultGuest = guestId;
-          renderResults([candidate]);
+          candidates = [candidate];
+          renderResults();
           panel.setStatus(`アプリID ${directAppId}${guestId ? ` / ゲスト ${guestId}` : ""} を候補に表示しました`, "ok");
           return;
         }
@@ -3261,12 +3467,11 @@ ${contextLine}`);
         const byId = new Map(candidates.map((app) => [app.appId, app]));
         for (const app of res.apps) {
           const appId = String(app?.appId || "").trim();
-          if (/^\d+$/.test(appId)) byId.set(appId, appCandidate(app, appId));
+          if (/^\d+$/.test(appId)) byId.set(appId, appCandidate(app, appId, guestId));
         }
         candidates = [...byId.values()].sort((a, b) => BigInt(a.appId) < BigInt(b.appId) ? -1 : BigInt(a.appId) > BigInt(b.appId) ? 1 : 0);
         nextOffset = Number(params.offset) + 100;
-        resultGuest = guestId;
-        renderResults(candidates);
+        renderResults();
         moreBtn.hidden = res.apps.length < 100;
         panel.setStatus(`アプリ検索完了: ${candidates.length}件${moreBtn.hidden ? "" : "。続きは「さらに100件を取得」で表示できます"}`, candidates.length ? "ok" : "info");
       } catch (e) {
@@ -3281,6 +3486,16 @@ ${contextLine}`);
         }
       }
     }
+    function showEnvironmentApps(result, typedGuestId) {
+      guestNames = new Map(result.guestSpaces.map((space2) => [space2.guestId, space2.name]));
+      candidates = result.apps.map((entry) => appCandidate(entry.app, String(entry.app.appId).trim(), entry.guestId));
+      resultIsAll = true;
+      const summary = summarizeEnvironmentApps(result, { typedGuestId, canApplyAll: allTargets.length > 0 });
+      allHeadSuffix = summary.headSuffix;
+      allScope = summary.scope;
+      renderResults();
+      panel.setStatus(summary.message, summary.tone);
+    }
     async function runAll() {
       if (running || panel.root.getAttribute("aria-busy") === "true") return;
       invalidate();
@@ -3289,6 +3504,7 @@ ${contextLine}`);
         panel.setStatus("ゲストIDは数値で入力してください", "warn");
         return;
       }
+      const scanGuests = guestScan.checkbox.checked;
       const requestGeneration = generation;
       const isCurrent = () => requestGeneration === generation && panel.root.isConnected && panel.root.getAttribute("aria-busy") !== "true";
       running = true;
@@ -3296,14 +3512,27 @@ ${contextLine}`);
       resultBox.setAttribute("aria-busy", "true");
       try {
         panel.setStatus("環境内の全アプリを取得中…", "busy");
+        if (scanGuests) {
+          const result = await fetchAllAppsIncludingGuestSpaces({
+            extraGuestIds: guestId ? [guestId] : [],
+            onProgress: (progress) => {
+              if (isCurrent()) panel.setStatus(describeEnvironmentAppsProgress(progress), "busy");
+            },
+            // 取得条件が変わったら、残りのスペースIDを確かめずに止める
+            shouldStop: () => !isCurrent()
+          });
+          if (!isCurrent()) return;
+          showEnvironmentApps(result, guestId);
+          return;
+        }
         const apps = await fetchAllApps(guestId, (fetched) => {
           if (isCurrent()) panel.setStatus(`環境内の全アプリを取得中…（${fetched}件）`, "busy");
         });
         if (!isCurrent()) return;
-        candidates = apps.map((app) => appCandidate(app, String(app.appId)));
-        resultGuest = guestId;
+        candidates = apps.map((app) => appCandidate(app, String(app.appId), guestId));
         resultIsAll = true;
-        renderResults(candidates);
+        allHeadSuffix = guestId ? `（ゲストスペース ${guestId}）` : "";
+        renderResults();
         const where = guestId ? `ゲストスペース ${guestId}` : "通常スペース・スペース外";
         panel.setStatus(
           candidates.length ? `環境内のアプリ ${candidates.length}件を表示しました（${where}のアプリ）${allTargets.length ? "。「すべて…」でまとめて設定できます" : ""}` : `閲覧できるアプリがありません（${where}）`,
@@ -3821,8 +4050,10 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
           if (guest && !guestId.value.trim()) guestId.value = guest;
           notifyInput(appId);
         },
-        // 候補すべてを対象アプリ欄へ入れる（置き換え）。ID は 1 つのゲストスペース内のものなので、ゲストIDも候補に合わせる
-        applyAll: (apps, guest) => {
+        // 候補すべてを対象アプリ欄へ入れる（置き換え）。ゲストIDは 1 つしか持てないため、1 か所の候補に限り、ゲストIDも候補に合わせる
+        singleGuest: true,
+        applyAll: (apps) => {
+          const guest = apps[0]?.guestId || "";
           appId.value = joinAppIds(apps);
           const guestChanged = guestId.value.trim() !== guest;
           if (guestChanged) guestId.value = guest;

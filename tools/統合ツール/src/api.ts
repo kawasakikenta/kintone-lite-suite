@@ -1000,15 +1000,19 @@ export const APPS_PAGE_LIMIT = 100;
  * 接続先（通常スペース側、またはゲストスペース 1 つ）で閲覧できる全アプリを取得する（ページング対応）。
  * 戻り値は `/apps.json` の apps 要素そのもので、アプリIDの重複を除き、ID の昇順に並べる。
  * ゲストスペースのアプリは通常の `/k/v1/apps.json` に含まれないため、guestId を指定して別に取得する。
+ * spaceId を指定すると、そのスペースのアプリだけに絞る。
  */
 export async function fetchAllApps(
   guestId?: string | number | null,
-  onProgress?: (fetched: number) => void
+  onProgress?: (fetched: number) => void,
+  options: { spaceId?: string } = {}
 ): Promise<any[]> {
   const prefix = buildApiPrefix(guestId, false);
   const byId = new Map<string, any>();
   for (let offset = 0; ; offset += APPS_PAGE_LIMIT) {
-    const resp = await apiGet(prefix, '/apps.json', { limit: APPS_PAGE_LIMIT, offset });
+    const params: Record<string, unknown> = { limit: APPS_PAGE_LIMIT, offset };
+    if (options.spaceId) params.spaceIds = [options.spaceId];
+    const resp = await apiGet(prefix, '/apps.json', params);
     if (!Array.isArray(resp?.apps)) throw new Error('アプリ一覧の応答が不正です。もう一度取得してください');
     for (const app of resp.apps) {
       const appId = String(app?.appId || '').trim();
@@ -1019,8 +1023,202 @@ export async function fetchAllApps(
   }
   // 64bit のアプリIDも丸めずに並べる
   return [...byId.entries()]
-    .sort(([a], [b]) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0))
+    .sort(([a], [b]) => compareAppIds(a, b))
     .map(([, app]) => app);
+}
+
+function compareAppIds(a: string, b: string): number {
+  return BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0;
+}
+
+/** ゲストスペースを探すとき、存在が分かっている最大のスペースIDより先に確かめ続けるスペースIDの数。 */
+export const GUEST_SPACE_PROBE_TAIL = 50;
+/** ゲストスペースを探すときに確かめるスペースIDの件数の上限。超えたら打ち切り、利用者へ示す。 */
+export const GUEST_SPACE_PROBE_LIMIT = 2000;
+/** ゲストスペースの確認を同時に送る数。 */
+const GUEST_SPACE_PROBE_CONCURRENCY = 4;
+
+export interface GuestSpaceInfo {
+  guestId: string;
+  name: string;
+}
+
+export interface GuestSpaceSearchResult {
+  /** 見つかったゲストスペース（閲覧できるもの）。スペースIDの昇順 */
+  spaces: GuestSpaceInfo[];
+  /** 順に確かめたスペースIDの最大値 */
+  checkedUpTo: number;
+  /** 確かめたスペースIDの件数（通常スペースと分かっている ID は数えない） */
+  checked: number;
+  /** 通信エラーなどで確かめられなかったスペースID（昇順） */
+  unconfirmed: string[];
+  /** 確かめる件数の上限に達して打ち切ったか */
+  limited: boolean;
+}
+
+export interface GuestSpaceSearchOptions {
+  /** 通常スペースと分かっているスペースID（`/k/v1/apps.json` の spaceId）。確かめずに飛ばす */
+  knownSpaceIds?: Iterable<unknown>;
+  /** 利用者が指定したゲストスペースID。確かめる範囲の外でも必ず確かめる */
+  extraGuestIds?: Iterable<unknown>;
+  onProgress?: (checkedUpTo: number, found: number) => void;
+  /** true を返したら、次の確認を送らずに RunCancelledError で止める（呼び出し元の条件が変わったときなど） */
+  shouldStop?: () => boolean;
+  tail?: number;
+  limit?: number;
+}
+
+function positiveSpaceId(value: unknown): number {
+  const text = String(value ?? '').trim();
+  if (!/^[1-9]\d*$/.test(text)) return 0;
+  const id = Number(text);
+  return Number.isSafeInteger(id) ? id : 0;
+}
+
+type GuestSpaceProbe = { kind: 'guest'; name: string } | { kind: 'none' } | { kind: 'unknown' };
+
+async function probeGuestSpace(id: number): Promise<GuestSpaceProbe> {
+  try {
+    const res = await apiGet(buildApiPrefix(id, false), '/space.json', { id }, { retries: 2 });
+    // ゲストスペース用の URL で通常スペースの情報が返る場合に備え、isGuest と ID も確かめる
+    if (res?.isGuest === true && String(res?.id ?? id) === String(id)) return { kind: 'guest', name: String(res?.name || '') };
+    return { kind: 'none' };
+  } catch (e) {
+    if (isRunCancelledError(e)) throw e;
+    // kintone のエラーコードがある応答（無い・権限がない・ゲストスペースではない）は「ゲストスペースではない」。
+    // コードの無い失敗や再試行しても続いた通信エラー・応答待ちの上限は、確かめられなかったものとして残す。
+    return (e as any)?.code && !isRetriableApiError(e) ? { kind: 'none' } : { kind: 'unknown' };
+  }
+}
+
+/**
+ * 閲覧できるゲストスペースを探す。ゲストスペースの一覧を返す API は無いため、スペースIDを 1 から順に
+ * ゲストスペース用の URL（`/k/guest/{id}/v1/space.json`）で確かめる。通常スペースと分かっている ID は飛ばし、
+ * 存在が分かっている最大のスペースID（通常スペース・見つかったゲストスペース・指定されたゲストスペースID）より
+ * tail 件先まで確かめて止める。確かめる件数が limit に達したら打ち切り、limited で示す。
+ */
+export async function findGuestSpaces(options: GuestSpaceSearchOptions = {}): Promise<GuestSpaceSearchResult> {
+  const tail = Math.max(1, Math.floor(Number(options.tail ?? GUEST_SPACE_PROBE_TAIL)) || GUEST_SPACE_PROBE_TAIL);
+  const limit = Math.max(1, Math.floor(Number(options.limit ?? GUEST_SPACE_PROBE_LIMIT)) || GUEST_SPACE_PROBE_LIMIT);
+  const known = new Set<number>();
+  for (const value of options.knownSpaceIds || []) {
+    const id = positiveSpaceId(value);
+    if (id) known.add(id);
+  }
+  const extras = new Set<number>();
+  for (const value of options.extraGuestIds || []) {
+    const id = positiveSpaceId(value);
+    if (id) { extras.add(id); known.delete(id); }
+  }
+  let anchor = Math.max(0, ...known, ...extras);
+  const found = new Map<number, string>();
+  const unconfirmed: number[] = [];
+  let checked = 0;
+  let id = 0;
+  let limited = false;
+  const stopIfRequested = () => {
+    if (options.shouldStop?.()) throw new RunCancelledError();
+  };
+  const record = (target: number, probe: GuestSpaceProbe) => {
+    checked += 1;
+    if (probe.kind === 'guest') {
+      found.set(target, probe.name);
+      anchor = Math.max(anchor, target);
+    } else if (probe.kind === 'unknown') {
+      unconfirmed.push(target);
+    }
+  };
+  while (id < anchor + tail) {
+    stopIfRequested();
+    if (checked >= limit) { limited = true; break; }
+    const batch: number[] = [];
+    while (batch.length < GUEST_SPACE_PROBE_CONCURRENCY && id < anchor + tail && checked + batch.length < limit) {
+      id += 1;
+      if (!known.has(id)) batch.push(id);
+    }
+    const probes = await Promise.all(batch.map(probeGuestSpace));
+    batch.forEach((target, i) => record(target, probes[i]));
+    options.onProgress?.(id, found.size);
+  }
+  // 打ち切った場合も、利用者が指定したゲストスペースIDは確かめる
+  for (const extra of [...extras].sort((a, b) => a - b)) {
+    if (extra <= id) continue;
+    stopIfRequested();
+    record(extra, await probeGuestSpace(extra));
+    options.onProgress?.(id, found.size);
+  }
+  return {
+    spaces: [...found.entries()].sort(([a], [b]) => a - b).map(([guestId, name]) => ({ guestId: String(guestId), name })),
+    checkedUpTo: id,
+    checked,
+    unconfirmed: unconfirmed.sort((a, b) => a - b).map(String),
+    limited
+  };
+}
+
+export interface EnvironmentAppEntry {
+  /** `/apps.json` の apps 要素 */
+  app: any;
+  /** ゲストスペースのアプリならそのゲストスペースID。通常スペース・スペース外のアプリは空文字 */
+  guestId: string;
+}
+
+export interface GuestSpaceAppsSummary extends GuestSpaceInfo {
+  appCount: number;
+  /** アプリ一覧を取得できなかったときの理由 */
+  error?: string;
+}
+
+export interface EnvironmentAppsResult {
+  /** アプリIDの昇順 */
+  apps: EnvironmentAppEntry[];
+  guestSpaces: GuestSpaceAppsSummary[];
+  search: GuestSpaceSearchResult;
+}
+
+export type EnvironmentAppsProgress =
+  | { phase: 'apps'; fetched: number }
+  | { phase: 'guest-spaces'; checkedUpTo: number; found: number }
+  | { phase: 'guest-apps'; index: number; total: number; guestId: string; fetched: number };
+
+/**
+ * 環境内で閲覧できる全アプリを、ゲストスペースのアプリも含めて取得する。
+ * 通常の一覧を取得した後、findGuestSpaces で見つけたゲストスペースごとにアプリ一覧を取得し、
+ * アプリごとにゲストスペースIDを付けて返す。ゲストスペースのアプリ一覧の取得に失敗しても残りを続け、
+ * 失敗は guestSpaces[].error に残す（中止だけは呼び出し元へそのまま返す）。
+ */
+export async function fetchAllAppsIncludingGuestSpaces(options: {
+  extraGuestIds?: Iterable<unknown>;
+  onProgress?: (progress: EnvironmentAppsProgress) => void;
+  /** true を返したら、次のリクエストを送らずに RunCancelledError で止める */
+  shouldStop?: () => boolean;
+} = {}): Promise<EnvironmentAppsResult> {
+  const regular = await fetchAllApps('', (fetched) => options.onProgress?.({ phase: 'apps', fetched }));
+  const search = await findGuestSpaces({
+    knownSpaceIds: regular.map((app) => app?.spaceId),
+    extraGuestIds: options.extraGuestIds,
+    onProgress: (checkedUpTo, found) => options.onProgress?.({ phase: 'guest-spaces', checkedUpTo, found }),
+    shouldStop: options.shouldStop
+  });
+  const byId = new Map<string, EnvironmentAppEntry>();
+  for (const app of regular) byId.set(String(app.appId).trim(), { app, guestId: '' });
+  const guestSpaces: GuestSpaceAppsSummary[] = [];
+  for (const [index, space] of search.spaces.entries()) {
+    if (options.shouldStop?.()) throw new RunCancelledError();
+    try {
+      const apps = await fetchAllApps(space.guestId, (fetched) => options.onProgress?.({
+        phase: 'guest-apps', index: index + 1, total: search.spaces.length, guestId: space.guestId, fetched
+      }), { spaceId: space.guestId });
+      // 同じアプリIDが通常の一覧にもあれば、ゲストスペース用の URL でしか操作できないためゲストスペース側を採る
+      for (const app of apps) byId.set(String(app.appId).trim(), { app, guestId: space.guestId });
+      guestSpaces.push({ ...space, appCount: apps.length });
+    } catch (e) {
+      if (isRunCancelledError(e)) throw e;
+      guestSpaces.push({ ...space, appCount: 0, error: String((e as any)?.message || e).split('\n')[0] });
+    }
+  }
+  const apps = [...byId.entries()].sort(([a], [b]) => compareAppIds(a, b)).map(([, entry]) => entry);
+  return { apps, guestSpaces, search };
 }
 
 export function resolveBundleRevision(bundle: any): string {

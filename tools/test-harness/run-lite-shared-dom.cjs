@@ -139,9 +139,9 @@ async function main() {
       window.bulkPicks = [];
       window.search2 = Shared.createAppSearchControl(window.panel, { open: true, title: '全アプリ検索テスト', targets: [
         { label: '比較元', apply: () => {} },
-        { label: '比較先', apply: () => {}, applyAll: (apps, guestId) => {
-          window.bulkPicks.push({ count: apps.length, first: apps[0], guestId });
-          const r = window.table.putApps(apps.map(app => ({ appId: app.appId, guestId, appName: app.appName })));
+        { label: '比較先', apply: () => {}, applyAll: (apps) => {
+          window.bulkPicks.push({ count: apps.length, first: apps[0] });
+          const r = window.table.putApps(apps.map(app => ({ appId: app.appId, guestId: app.guestId, appName: app.appName })));
           return { message: `追加 ${r.added + r.filled}件 / 追加済み ${r.existing}件` };
         } }
       ] });
@@ -150,6 +150,8 @@ async function main() {
     const search2 = page.locator('details', { has: page.getByText('全アプリ検索テスト', { exact: true }) });
     const allButton = search2.getByRole('button', { name: '環境内の全アプリ', exact: true });
     const rows2 = search2.locator('.kus-as__table tbody tr');
+    // 「ゲストスペースも探す」を外すと、ゲストIDを入れたときはそのゲストスペースだけを取得する（従来の動き）
+    await search2.getByRole('checkbox', { name: 'ゲストスペースも探す' }).uncheck();
     await search2.getByPlaceholder('ゲストID（任意）', { exact: true }).fill('x');
     let before = await page.evaluate(() => window.apiCalls.length);
     await allButton.click();
@@ -173,7 +175,7 @@ async function main() {
     assert.equal(await search2.locator('.kus-as__bulk button').count(), 1, '複数件を受け付ける割り当て先だけに「すべて」を出す');
     const bulkButton = search2.getByRole('button', { name: '候補 101 件をすべて比較先へ', exact: true });
     await bulkButton.click();
-    assert.deepEqual(await page.evaluate(() => window.bulkPicks.at(-1)), { count: 101, first: { appId: '1', appName: '全体 1' }, guestId: '5' });
+    assert.deepEqual(await page.evaluate(() => window.bulkPicks.at(-1)), { count: 101, first: { appId: '1', appName: '全体 1', guestId: '5' } });
     assert.equal(await page.evaluate(() => window.table.count()), 102, '既存の1行に101件を追加する');
     assert.match(await page.locator('.kus-lp__status').innerText(), /追加 101件 \/ 追加済み 0件/);
     assert.equal(await bulkButton.count(), 0);
@@ -207,6 +209,87 @@ async function main() {
     assert.equal(bulkTable.count, 2002);
     await page.evaluate(() => { window.search2.remove(); window.table.setApps([{ appId: '202', guestId: '7' }]); });
     results.push({ name: '環境内の全アプリ: 全ページ取得・二重実行防止・不正ゲストID・古い応答の破棄・失敗後の再試行・すべて設定・重複防止・2000件の一括追加', putAppsMs: Math.round(bulkTable.durationMs) });
+
+    // ゲストスペースも探す（既定）: 通常の一覧に無いスペースIDを確かめ、ゲストスペースのアプリも候補に加える
+    await page.evaluate(() => {
+      window.scanPicks = [];
+      window.scanSingle = [];
+      window.savedScanState = { api: window.kintone.api, guest: window.guestTarget.value };
+      window.guestTarget.value = '';
+      window.kintone.api = (url, method, params) => {
+        window.apiCalls.push({ url, method, params });
+        if (url === '/k/v1/apps.json') return Promise.resolve({ apps: [{ appId: '11', name: '通常アプリ', spaceId: '1' }, { appId: '12', name: 'スペース外アプリ', spaceId: null }] });
+        const found = url.match(/^\/k\/guest\/(\d+)\/v1\/space\.json$/);
+        if (found) {
+          if (found[1] === '2') return Promise.resolve({ id: '2', name: '取引先<b>A</b>', isGuest: true });
+          if (found[1] === '4') return Promise.resolve({ id: '4', name: '', isGuest: true });
+          if (found[1] === '3') return Promise.reject(new Error('応答が途切れました'));
+          return Promise.reject(Object.assign(new Error('スペースが見つかりません'), { code: 'GAIA_SP01' }));
+        }
+        if (url === '/k/guest/2/v1/apps.json') return Promise.resolve({ apps: [{ appId: '22', name: 'ゲストA-2', spaceId: '2' }, { appId: '21', name: 'ゲストA-1', spaceId: '2' }] });
+        if (url === '/k/guest/4/v1/apps.json') return Promise.resolve({ apps: [{ appId: '41', name: 'ゲストB-1', spaceId: '4' }] });
+        return Promise.reject(new Error(`unexpected ${url}`));
+      };
+      window.search3 = Shared.createAppSearchControl(window.panel, { open: true, title: 'ゲストスペース探索テスト', guestEl: window.guestTarget, targets: [
+        { label: '表', apply: (...args) => { window.scanSingle.push(args); }, applyAll: (apps) => { window.scanPicks.push(apps); return { message: `表へ ${apps.length}件` }; } },
+        { label: '欄', singleGuest: true, apply: () => {}, applyAll: (apps) => { window.scanPicks.push(apps); return { message: `欄へ ${apps.length}件` }; } }
+      ] });
+      window.panel.body.prepend(window.search3);
+    });
+    const search3 = page.locator('details', { has: page.getByText('ゲストスペース探索テスト', { exact: true }) });
+    const rows3 = search3.locator('.kus-as__table tbody tr');
+    assert.equal(await search3.getByRole('checkbox', { name: 'ゲストスペースも探す' }).isChecked(), true, '既定でゲストスペースも探す');
+    before = await page.evaluate(() => window.apiCalls.length);
+    await search3.getByRole('button', { name: '環境内の全アプリ', exact: true }).click();
+    await page.waitForFunction(() => window.search3.querySelector('.kus-as__result')?.getAttribute('aria-busy') === 'false');
+    const scanCalls = await page.evaluate(n => window.apiCalls.slice(n).map(call => call.url), before);
+    const probed = scanCalls.map(url => url.match(/^\/k\/guest\/(\d+)\/v1\/space\.json$/)?.[1]).filter(Boolean).map(Number);
+    assert.equal(probed.includes(1), false, '通常スペースと分かっているスペースIDは確かめない');
+    assert.equal(Math.max(...probed), 54, '見つかった最後のゲストスペースの50件先まで確かめる');
+    assert.deepEqual(scanCalls.filter(url => url.endsWith('/apps.json')), ['/k/v1/apps.json', '/k/guest/2/v1/apps.json', '/k/guest/4/v1/apps.json']);
+    assert.equal(await rows3.count(), 5);
+    assert.deepEqual(await rows3.locator('td.kus-as__id').allInnerTexts(), ['11', '12', '21', '22', '41'], 'ゲストスペースのアプリもID順に並べる');
+    assert.match(await search3.locator('.kus-as__head').innerText(), /環境内のアプリ 5件（うちゲストスペース 2か所の 3件）/);
+    assert.match(await search3.locator('.kus-as__scope').innerText(), /スペースID 1〜54 を順に確かめて 2か所見つかりました/);
+    assert.match(await rows3.nth(0).innerText(), /スペース: 1/);
+    assert.doesNotMatch(await rows3.nth(0).innerText(), /ゲストスペース/, '通常スペースのアプリをゲストスペースと示さない');
+    assert.match(await rows3.nth(2).innerText(), /ゲストスペース「取引先<b>A<\/b>」（ID 2）/);
+    assert.match(await rows3.nth(4).innerText(), /ゲストスペース 4 ·/);
+    assert.equal(await search3.locator('.kus-as__table b').count(), 0, 'ゲストスペース名をHTMLとして実行しない');
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn', '確かめられなかったスペースIDがあれば警告にする');
+    assert.match(await page.locator('.kus-lp__status').innerText(), /環境内のアプリ 5件を表示しました（通常スペース・スペース外 2件、ゲストスペース 2か所 3件）。確かめられなかったスペースID 1件（3。通信エラーなど）/);
+    const tableAll = search3.getByRole('button', { name: '候補 5 件をすべて表へ', exact: true });
+    const fieldAll = search3.getByRole('button', { name: '候補 5 件をすべて欄へ', exact: true });
+    assert.equal(await tableAll.isEnabled(), true);
+    assert.equal(await fieldAll.isDisabled(), true, 'ゲストスペースIDを1つしか持てない欄へは、場所の混ざった候補をまとめて入れない');
+    assert.match(await search3.locator('.kus-as__bulk-note').innerText(), /「欄」へはまとめて設定できません/);
+    await tableAll.click();
+    assert.deepEqual(await page.evaluate(() => window.scanPicks.at(-1).map(app => `${app.appId}:${app.guestId}`)), ['11:', '12:', '21:2', '22:2', '41:4'], '候補ごとのゲストスペースIDを渡す');
+    assert.equal(await page.evaluate(() => window.guestTarget.value), '', '場所の混ざった一括設定ではゲストID欄を変えない');
+    const filter = search3.getByRole('combobox', { name: '表示する場所', exact: true });
+    assert.deepEqual(await filter.locator('option').allInnerTexts(), ['すべて（5件）', '通常スペース・スペース外（2件）', 'ゲストスペース「取引先<b>A</b>」（ID 2）（2件）', 'ゲストスペース 4（1件）']);
+    await filter.selectOption('2');
+    assert.equal(await rows3.count(), 2, '表示する場所で候補を絞る');
+    assert.equal(await filter.evaluate(element => document.activeElement === element), true, '絞り込み後も選択欄にフォーカスを残す');
+    const fieldGuest = search3.getByRole('button', { name: '候補 2 件をすべて欄へ', exact: true });
+    assert.equal(await fieldGuest.isEnabled(), true, '1か所に絞ればゲストスペースIDを1つしか持てない欄へも入れられる');
+    assert.equal(await search3.locator('.kus-as__bulk-note').count(), 0);
+    await fieldGuest.click();
+    assert.deepEqual(await page.evaluate(() => window.scanPicks.at(-1).map(app => `${app.appId}:${app.guestId}`)), ['21:2', '22:2']);
+    assert.equal(await page.evaluate(() => window.guestTarget.value), '2', '1か所の一括設定ではゲストID欄をその場所に合わせる');
+    await rows3.nth(0).getByRole('button', { name: '表へ', exact: true }).click();
+    assert.deepEqual(await page.evaluate(() => window.scanSingle.at(-1)), ['21', 'ゲストA-1', '2'], '1件の選択でもその候補のゲストスペースIDを渡す');
+    await filter.selectOption('');
+    assert.deepEqual(await rows3.locator('td.kus-as__id').allInnerTexts(), ['11', '12']);
+    await rows3.nth(1).getByRole('button', { name: '表へ', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.guestTarget.value), '', '通常スペースの候補を選ぶとゲストID欄を空に戻す');
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${width}px で横にはみ出さない`);
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.evaluate(() => { window.search3.remove(); window.kintone.api = window.savedScanState.api; window.guestTarget.value = window.savedScanState.guest; });
+    results.push('環境内の全アプリ（ゲストスペースも探す）: 既知の通常スペースを飛ばす確認・ゲストスペースの印と名前の安全な表示・確認できなかったIDの警告・場所の絞り込み・1か所しか持てない欄の保護・候補ごとのゲストスペースID');
 
     const tabs = page.getByRole('tab');
     assert.equal(await tabs.nth(0).getAttribute('aria-selected'), 'true');
