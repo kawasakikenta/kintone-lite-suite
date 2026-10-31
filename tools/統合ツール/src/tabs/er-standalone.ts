@@ -1,6 +1,6 @@
 'use strict';
 
-import { crawl, buildHTML, assertErAnalysed, progressUi, ER_DEFAULTS, formatErLayoutLabel, describeReverseScan, summarizeErStartIds } from './er.js';
+import { crawl, buildHTML, assertErAnalysed, progressUi, ER_DEFAULTS, describeReverseScan, summarizeErStartIds } from './er.js';
 import { fetchAppsInSpace } from '../api.js';
 import { isCancelStop } from './run-cancel-summary.js';
 import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';

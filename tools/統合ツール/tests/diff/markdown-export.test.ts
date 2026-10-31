@@ -47,6 +47,11 @@ function typedJsonBlocks(markdown: string): any[] {
 }
 
 describe('diff/markdown export', () => {
+  it('shows Markdown syntax in the batch index as literal text', async () => {
+    const result = await buildDiffMarkdownBatchExport([{ label: '**重要** a|b [l](u) <b> C:\\tmp', context: baseContext() }], { generatedAt: '2026-09-26T02:05:06.000Z' });
+    expect(result.indexMarkdown).toContain('\\*\\*重要\\*\\* a\\|b \\[l\\](u) \\<b\\> C:\\\\tmp');
+  });
+
   it('records direction, endpoint identity, conditions, and a stable format schema', () => {
     const { filename, markdown } = buildDiffMarkdownExport(baseContext({
       rows: [{

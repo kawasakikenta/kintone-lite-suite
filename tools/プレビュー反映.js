@@ -3,7 +3,7 @@
 // ==========================================================================
 // このファイルは tools/統合ツール/ の npm run build (esbuild) で生成されます。
 // ソース: tools/統合ツール/src/entries/reflect-lite-entry.js
-//         tools/統合ツール/src/tabs/reflect.js  ← 機能の正規実装
+//         tools/統合ツール/src/tabs/reflect-standalone.js  ← 機能の正規実装
 //
 // ■ 修正する場合は tools/統合ツール/src/ 配下のソースを編集し、
 //   cd tools/統合ツール && npm run build で再生成してください。
@@ -12,232 +12,262 @@
 "use strict";
 (() => {
   var __defProp = Object.defineProperty;
-  var __getOwnPropNames = Object.getOwnPropertyNames;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-  var __esm = (fn, res) => function __init() {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-  };
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
-  // src/featureDefs.mjs
-  var ICONS, FEATURE_DEFS;
-  var init_featureDefs = __esm({
-    "src/featureDefs.mjs"() {
-      "use strict";
-      ICONS = Object.freeze({
-        diff: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
-        reflect: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
-        field: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
-        jsconfig: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
-        er: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="6" cy="6" rx="3" ry="2"/><ellipse cx="18" cy="6" rx="3" ry="2"/><ellipse cx="12" cy="18" rx="3" ry="2"/><path d="M8.5 7.5l2 7"/><path d="M15.5 7.5l-2 7"/><path d="M9 6h6"/></svg>',
-        processFlow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="8.5" y="15" width="7" height="5" rx="1"/><path d="M10 6.5h4"/><path d="M17.5 9v2.5h-11V9"/><path d="M12 11.5V15"/></svg>',
-        design: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
-        settingsExport: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
-        recordMgr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v8c0 1.7 3.6 3 8 3s8-1.3 8-3v-8"/></svg>',
-        apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>',
-        analyze: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>'
-      });
-      FEATURE_DEFS = [
-        {
-          key: "diff",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.diff,
-          label: "差分比較",
-          desc: "2アプリの設定差分を確認します。",
-          tabs: ["diff"],
-          tab: "diff",
-          diffSubTab: "conditions",
-          focusSelector: "#u_headerDiffSuite",
-          priority: "high",
-          riskLevel: "safe",
-          recommendedFor: ["最初に確認", "変更前チェック"],
-          usageOrder: 1,
-          onboardingOrder: 1,
-          badge: { tone: "recommended", label: "初回推奨", icon: "1" }
-        },
-        {
-          key: "reflect",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.reflect,
-          label: "プレビュー反映",
-          desc: "差分を見ながら比較先プレビューへ反映します。",
-          tabs: ["reflect"],
-          tab: "reflect",
-          subTab: "settings",
-          focusSelector: "#u_reflectAssist",
-          priority: "high",
-          riskLevel: "warning",
-          recommendedFor: ["差分確認後", "本番反映前の検証"],
-          usageOrder: 2,
-          onboardingOrder: 2,
-          badge: { tone: "caution", label: "要確認", icon: "2" }
-        },
-        {
-          key: "field",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.field,
-          label: "フィールド追加",
-          desc: "フィールド定義の追加・編集とコード変換用JSONの作成を行います。",
-          tabs: ["field"],
-          tab: "field",
-          subTab: "json",
-          focusSelector: "#u_fieldJson",
-          priority: "medium",
-          riskLevel: "warning",
-          recommendedFor: ["項目追加", "定義の一括修正"],
-          usageOrder: 4,
-          onboardingOrder: 4,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "jsconfig",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.jsconfig,
-          label: "JS/CSS設定",
-          desc: "単一アプリの customize.json 編集と JS/CSS 実ファイル取得を行います。",
-          tabs: ["jsconfig"],
-          tab: "jsconfig",
-          subTab: "editor",
-          focusSelector: "#u_jsconfigJson",
-          priority: "medium",
-          riskLevel: "warning",
-          recommendedFor: ["カスタマイズ配布", "環境同期"],
-          usageOrder: 5,
-          onboardingOrder: 5,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "design",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.design,
-          label: "設計書",
-          desc: "設計書や差分レポートを出力します。",
-          tabs: ["design"],
-          tab: "design",
-          focusSelector: '[data-act="exportDesignMd"]',
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["変更記録", "レビュー資料作成"],
-          usageOrder: 3,
-          onboardingOrder: 3,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "settingsExport",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.settingsExport,
-          label: "設定一括取得",
-          desc: "複数アプリの設定JSONをまとめて保存します（データ・添付は除く）。",
-          tabs: ["settingsExport"],
-          tab: "settingsExport",
-          subTab: "export",
-          focusSelector: "#u_settingsExportAppIds",
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["バックアップ", "棚卸し"],
-          usageOrder: 6,
-          onboardingOrder: 6,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "er",
-          group: "vis",
-          groupLabel: "可視化・分析",
-          icon: ICONS.er,
-          label: "ER図",
-          desc: "関連アプリの構造を ER 図で確認します。",
-          tabs: ["er"],
-          tab: "er",
-          subTab: "diagram",
-          focusSelector: "#u_erLayout",
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["現状把握", "依存関係確認"],
-          usageOrder: 7,
-          onboardingOrder: 7,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "processFlow",
-          group: "vis",
-          groupLabel: "可視化・分析",
-          icon: ICONS.processFlow,
-          label: "プロセス図",
-          desc: "プロセス管理をフロー図で確認します。",
-          tabs: ["processFlow"],
-          tab: "processFlow",
-          focusSelector: '[data-act="renderProcessFlow"]',
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["状態遷移確認", "運用レビュー"],
-          usageOrder: 8,
-          onboardingOrder: 8,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "recordMgr",
-          group: "data",
-          groupLabel: "データ・保守",
-          icon: ICONS.recordMgr,
-          label: "レコード管理",
-          desc: "レコードデータのCSV・添付・コメント・状態更新を扱います。",
-          tabs: ["recordMgr"],
-          tab: "recordMgr",
-          subTab: "status",
-          focusSelector: '[data-act="runBatchProcess"]',
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["保守作業", "テストデータ操作"],
-          usageOrder: 9,
-          onboardingOrder: 9,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "apiTester",
-          group: "data",
-          groupLabel: "API・検証",
-          icon: ICONS.apiTester,
-          label: "APIテスター",
-          desc: "REST APIを直接試します。",
-          tabs: ["apiTester"],
-          tab: "apiTester",
-          focusSelector: "#u_apiTesterMethod",
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["調査", "レスポンス確認"],
-          usageOrder: 10,
-          onboardingOrder: 10,
-          badge: { tone: "caution", label: "上級者向け", icon: "!" }
-        },
-        {
-          key: "analyze",
-          group: "vis",
-          groupLabel: "可視化・分析",
-          icon: ICONS.analyze,
-          label: "分析",
-          desc: "影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。",
-          tabs: ["analyze"],
-          tab: "analyze",
-          subTab: "dashboard",
-          focusSelector: '[data-act="runAnalyzeDashboard"]',
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["影響調査", "依存確認", "セキュリティ監査"],
-          usageOrder: 7.5,
-          onboardingOrder: 7.5,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        }
-      ];
+  // src/kintoneGuard.ts
+  var NOT_KINTONE_PAGE_MESSAGE = "kintone画面で実行してください";
+  function isKintonePage() {
+    return Boolean(window.kintone?.api && window.kintone?.app);
+  }
+  function runOnKintonePage(run) {
+    if (!isKintonePage()) {
+      alert(NOT_KINTONE_PAGE_MESSAGE);
+      return;
     }
+    try {
+      run();
+    } catch (error) {
+      if (error?.panelBusy === true) return;
+      throw error;
+    }
+  }
+
+  // src/featureDefs.mjs
+  var ICONS = Object.freeze({
+    diff: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
+    reflect: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+    field: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+    jsconfig: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+    er: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="6" cy="6" rx="3" ry="2"/><ellipse cx="18" cy="6" rx="3" ry="2"/><ellipse cx="12" cy="18" rx="3" ry="2"/><path d="M8.5 7.5l2 7"/><path d="M15.5 7.5l-2 7"/><path d="M9 6h6"/></svg>',
+    processFlow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="8.5" y="15" width="7" height="5" rx="1"/><path d="M10 6.5h4"/><path d="M17.5 9v2.5h-11V9"/><path d="M12 11.5V15"/></svg>',
+    design: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
+    settingsExport: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
+    recordMgr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v8c0 1.7 3.6 3 8 3s8-1.3 8-3v-8"/></svg>',
+    apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>',
+    analyze: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>'
   });
+  var FEATURE_DEFS = [
+    {
+      key: "diff",
+      group: "change",
+      groupLabel: "変更・反映",
+      icon: ICONS.diff,
+      label: "差分比較",
+      desc: "2アプリの設定差分を確認します。",
+      tabs: ["diff"],
+      tab: "diff",
+      diffSubTab: "conditions",
+      focusSelector: "#u_headerDiffSuite",
+      priority: "high",
+      riskLevel: "safe",
+      recommendedFor: ["最初に確認", "変更前チェック"],
+      usageOrder: 1,
+      onboardingOrder: 1,
+      badge: { tone: "recommended", label: "初回推奨", icon: "1" }
+    },
+    {
+      key: "reflect",
+      group: "change",
+      groupLabel: "変更・反映",
+      icon: ICONS.reflect,
+      label: "プレビュー反映",
+      desc: "差分を見ながら比較先プレビューへ反映します。",
+      tabs: ["reflect"],
+      tab: "reflect",
+      subTab: "settings",
+      focusSelector: "#u_reflectAssist",
+      priority: "high",
+      riskLevel: "warning",
+      recommendedFor: ["差分確認後", "本番反映前の検証"],
+      usageOrder: 2,
+      onboardingOrder: 2,
+      badge: { tone: "caution", label: "要確認", icon: "2" }
+    },
+    {
+      key: "field",
+      group: "change",
+      groupLabel: "変更・反映",
+      icon: ICONS.field,
+      label: "フィールド追加",
+      desc: "フィールド定義の追加・編集とコード変換用JSONの作成を行います。",
+      tabs: ["field"],
+      tab: "field",
+      subTab: "json",
+      focusSelector: "#u_fieldJson",
+      priority: "medium",
+      riskLevel: "warning",
+      recommendedFor: ["項目追加", "定義の一括修正"],
+      usageOrder: 4,
+      onboardingOrder: 4,
+      badge: { tone: "caution", label: "要注意", icon: "!" }
+    },
+    {
+      key: "jsconfig",
+      group: "change",
+      groupLabel: "変更・反映",
+      icon: ICONS.jsconfig,
+      label: "JS/CSS設定",
+      desc: "単一アプリの customize.json 編集と JS/CSS 実ファイル取得を行います。",
+      tabs: ["jsconfig"],
+      tab: "jsconfig",
+      subTab: "editor",
+      focusSelector: "#u_jsconfigJson",
+      priority: "medium",
+      riskLevel: "warning",
+      recommendedFor: ["カスタマイズ配布", "環境同期"],
+      usageOrder: 5,
+      onboardingOrder: 5,
+      badge: { tone: "caution", label: "要注意", icon: "!" }
+    },
+    {
+      key: "design",
+      group: "vis",
+      groupLabel: "可視化・出力",
+      icon: ICONS.design,
+      label: "設計書",
+      desc: "設計書や差分レポートを出力します。",
+      tabs: ["design"],
+      tab: "design",
+      focusSelector: '[data-act="exportDesignMd"]',
+      priority: "medium",
+      riskLevel: "safe",
+      recommendedFor: ["変更記録", "レビュー資料作成"],
+      usageOrder: 3,
+      onboardingOrder: 3,
+      badge: { tone: "safe", label: "安全", icon: "OK" }
+    },
+    {
+      key: "settingsExport",
+      group: "vis",
+      groupLabel: "可視化・出力",
+      icon: ICONS.settingsExport,
+      label: "設定一括取得",
+      desc: "複数アプリの設定JSONをまとめて保存します（データ・添付は除く）。",
+      tabs: ["settingsExport"],
+      tab: "settingsExport",
+      subTab: "export",
+      focusSelector: "#u_settingsExportAppIds",
+      priority: "medium",
+      riskLevel: "safe",
+      recommendedFor: ["バックアップ", "棚卸し"],
+      usageOrder: 6,
+      onboardingOrder: 6,
+      badge: { tone: "safe", label: "安全", icon: "OK" }
+    },
+    {
+      key: "er",
+      group: "vis",
+      groupLabel: "可視化・分析",
+      icon: ICONS.er,
+      label: "ER図",
+      desc: "関連アプリの構造を ER 図で確認します。",
+      tabs: ["er"],
+      tab: "er",
+      subTab: "diagram",
+      focusSelector: "#u_erLayout",
+      priority: "medium",
+      riskLevel: "safe",
+      recommendedFor: ["現状把握", "依存関係確認"],
+      usageOrder: 7,
+      onboardingOrder: 7,
+      badge: { tone: "safe", label: "安全", icon: "OK" }
+    },
+    {
+      key: "processFlow",
+      group: "vis",
+      groupLabel: "可視化・分析",
+      icon: ICONS.processFlow,
+      label: "プロセス図",
+      desc: "プロセス管理をフロー図で確認します。",
+      tabs: ["processFlow"],
+      tab: "processFlow",
+      focusSelector: '[data-act="renderProcessFlow"]',
+      priority: "medium",
+      riskLevel: "safe",
+      recommendedFor: ["状態遷移確認", "運用レビュー"],
+      usageOrder: 8,
+      onboardingOrder: 8,
+      badge: { tone: "safe", label: "安全", icon: "OK" }
+    },
+    {
+      key: "recordMgr",
+      group: "data",
+      groupLabel: "データ・保守",
+      icon: ICONS.recordMgr,
+      label: "レコード管理",
+      desc: "レコードデータのCSV・添付・コメント・状態更新を扱います。",
+      tabs: ["recordMgr"],
+      tab: "recordMgr",
+      subTab: "status",
+      focusSelector: '[data-act="runBatchProcess"]',
+      priority: "low",
+      riskLevel: "warning",
+      recommendedFor: ["保守作業", "テストデータ操作"],
+      usageOrder: 9,
+      onboardingOrder: 9,
+      badge: { tone: "caution", label: "要注意", icon: "!" }
+    },
+    {
+      key: "apiTester",
+      group: "data",
+      groupLabel: "API・検証",
+      icon: ICONS.apiTester,
+      label: "APIテスター",
+      desc: "REST APIを直接試します。",
+      tabs: ["apiTester"],
+      tab: "apiTester",
+      focusSelector: "#u_apiTesterMethod",
+      priority: "low",
+      riskLevel: "warning",
+      recommendedFor: ["調査", "レスポンス確認"],
+      usageOrder: 10,
+      onboardingOrder: 10,
+      badge: { tone: "caution", label: "上級者向け", icon: "!" }
+    },
+    {
+      key: "analyze",
+      group: "vis",
+      groupLabel: "可視化・分析",
+      icon: ICONS.analyze,
+      label: "分析",
+      desc: "影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。",
+      tabs: ["analyze"],
+      tab: "analyze",
+      subTab: "dashboard",
+      focusSelector: '[data-act="runAnalyzeDashboard"]',
+      priority: "medium",
+      riskLevel: "safe",
+      recommendedFor: ["影響調査", "依存確認", "セキュリティ監査"],
+      usageOrder: 7.5,
+      onboardingOrder: 7.5,
+      badge: { tone: "safe", label: "安全", icon: "OK" }
+    }
+  ];
 
   // src/constants.ts
+  var TOOL_ID = "kintone-unified-suite-v2";
+  var EXTERNAL_LIBRARIES = Object.freeze({
+    jszip: Object.freeze({
+      version: "3.10.1",
+      cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
+    }),
+    cytoscape: Object.freeze({
+      version: "3.28.1",
+      cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js",
+      altVersion: "3.26.0",
+      altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"
+    }),
+    dagre: Object.freeze({
+      version: "0.8.5",
+      cdnUrl: "https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"
+    }),
+    cytoscapeDagre: Object.freeze({
+      version: "2.5.0",
+      cdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
+      altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"
+    })
+  });
   function resolveDefaultAppId() {
     try {
       if (typeof kintone !== "undefined" && kintone?.app?.getId) {
@@ -247,6 +277,7 @@
     }
     return "";
   }
+  var DEFAULT_APP_ID = resolveDefaultAppId();
   function guestIdFromKintonePath(pathname) {
     const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ""));
     return match ? match[1] : "";
@@ -258,6 +289,8 @@
       return "";
     }
   }
+  var DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
+  var DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
   function sanitizeCustomizeResourceList(value) {
     if (!Array.isArray(value)) return [];
     const resources = [];
@@ -289,192 +322,142 @@
       mobile: buildPlatform("mobile")
     };
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
-  var init_constants = __esm({
-    "src/constants.ts"() {
-      "use strict";
-      init_featureDefs();
-      TOOL_ID = "kintone-unified-suite-v2";
-      EXTERNAL_LIBRARIES = Object.freeze({
-        jszip: Object.freeze({
-          version: "3.10.1",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
-        }),
-        cytoscape: Object.freeze({
-          version: "3.28.1",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js",
-          altVersion: "3.26.0",
-          altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"
-        }),
-        dagre: Object.freeze({
-          version: "0.8.5",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"
-        }),
-        cytoscapeDagre: Object.freeze({
-          version: "2.5.0",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
-          altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"
-        }),
-        googleFontsDmSansMono: Object.freeze({
-          cdnUrl: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap"
-        }),
-        jsoneditor: Object.freeze({
-          version: "9.10.3",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.js",
-          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.css"
-        }),
-        toastify: Object.freeze({
-          version: "1.12.0",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/toastify-js",
-          cssUrl: "https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
-        }),
-        driver: Object.freeze({
-          version: "1.3.1",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js",
-          cssUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css"
-        })
-      });
-      DEFAULT_APP_ID = resolveDefaultAppId();
-      DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
-      DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
-      SECTION_DEFS = [
-        { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
-        { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
-        { key: "fieldSettings", label: "フィールド設定", endpoint: "/app/form/fields.json", put: true, putBuilder: (d) => ({ properties: d.properties || d }) },
-        { key: "layoutSettings", label: "レイアウト設定", endpoint: "/app/form/layout.json", put: true, putBuilder: (d) => ({ layout: d.layout || d }) },
-        { key: "formSettings", label: "フォーム設定", endpoint: "/form.json", put: false },
-        { key: "viewSettings", label: "ビュー設定", endpoint: "/app/views.json", put: true, putBuilder: (d) => ({ views: d.views || d }) },
-        { key: "reportSettings", label: "グラフ設定", endpoint: "/app/reports.json", put: true, putBuilder: (d) => ({ reports: d.reports || d }) },
-        { key: "processSettings", label: "プロセス管理", endpoint: "/app/status.json", put: true, putBuilder: (d) => ({ enable: !!d.enable, states: d.states || {}, actions: d.actions || [] }) },
-        { key: "pluginSettings", label: "プラグイン(※)", endpoint: "/app/plugins.json", put: true, putBuilder: (d) => ({ pluginIds: (d.plugins || []).map((p) => p.id) }) },
-        { key: "customizeSettings", label: "JS/CSS設定", endpoint: "/app/customize.json", put: true, putBuilder: buildCustomizeSettingsPutPayload },
-        { key: "actionSettings", label: "アクション設定", endpoint: "/app/actions.json", put: true, putBuilder: (d) => ({ actions: d.actions || d }) },
-        { key: "appAcl", label: "アプリ権限", endpoint: "/app/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-        { key: "fieldAcl", label: "フィールド権限", endpoint: "/field/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-        { key: "recordPermissions", label: "レコード権限", endpoint: "/record/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-        { key: "notifications", label: "通知設定", endpoint: "/app/notifications/general.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "perRecordNotifications", label: "レコード条件通知", endpoint: "/app/notifications/perRecord.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        // PUT /app/notifications/reminder.json は notifications に加え timezone を必須的に要求するためソース側の値を引き継ぐ。
-        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => {
-          const body = { notifications: d?.notifications || (Array.isArray(d) ? d : []) };
-          if (d && typeof d === "object" && typeof d.timezone === "string" && d.timezone) {
-            body.timezone = d.timezone;
-          }
-          return body;
-        } },
-        { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
-      ];
-      META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
-      SYSTEM_FIELD_TYPES = /* @__PURE__ */ new Set([
-        "STATUS",
-        "STATUS_ASSIGNEE",
-        "CREATED_TIME",
-        "UPDATED_TIME",
-        "CREATOR",
-        "MODIFIER",
-        "RECORD_NUMBER",
-        "CATEGORY"
-      ]);
-      DEFAULT_SUBTAB_STATE = Object.freeze({
-        diff: "conditions",
-        reflect: "settings",
-        field: "json",
-        jsconfig: "editor",
-        recordMgr: "status",
-        er: "diagram",
-        settingsExport: "export",
-        analyze: "dashboard"
-      });
-      TOUR_STEP_CONNECTION = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: "#u_sourceApp",
-        title: "比較元 / 比較先を決める",
-        body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。プレビュー/本番の切替もここで行います。"
-      };
-      TOUR_STEP_SCOPE = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: '[data-act="openDiffScopePicker"]',
-        title: "比較対象セクションを選ぶ",
-        body: "「比較対象を選ぶ」から、差分比較で確認したい設定だけを選びます。まずはフィールド・レイアウト・ビュー・プロセス管理あたりが見やすいです。"
-      };
-      TOUR_STEP_NOISE = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: "#u_ignoreKeyInput",
-        title: "ノイズ差分を減らす",
-        body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
-      };
-      TOUR_STEP_RUN_DIFF = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: "#u_runDiffPrimary",
-        title: "差分比較を実行する",
-        body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
-      };
-      TOUR_STEP_REVIEW = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 差分結果の整理",
-        selector: "#u_diffSearch",
-        title: "結果を絞り込んで確認する",
-        body: "差分比較後は「差分結果の整理・出力」から、セクション・種別・検索で絞り込めます。ここで反映対象を見極めます。"
-      };
-      TOUR_STEP_CATEGORY_VIEW = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 差分結果の整理",
-        selector: '[data-act="setDiffViewMode"][data-mode="category"]',
-        title: "セクション別ビューで読み取る",
-        body: "権限・プロセス・通知などフィールド以外の差分は「🗂 セクション別」表示が見やすいです。カテゴリ別タブ + マトリクスや遷移図で差分が直感的に把握できます（V キーで切替）。"
-      };
-      TOUR_STEP_PLAN = {
-        tab: "reflect",
-        path: "プレビュー反映",
-        selector: "#u_footerPlan",
-        title: "反映プランを先に確認する",
-        body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。"
-      };
-      TOUR_STEP_APPLY = {
-        tab: "reflect",
-        path: "プレビュー反映",
-        selector: "#u_footerApply",
-        title: "比較先プレビューへ反映する",
-        body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番デプロイは kintone 管理画面から手動で実施します。"
-      };
-      TOUR_STEP_RECORD = {
-        tab: "design",
-        subTab: "export",
-        path: "設計書 > 設計書出力",
-        selector: '[data-act="exportDesignMd"]',
-        title: "最後に記録を残す",
-        body: "作業後は設計書や差分レポートを出力して、変更内容を記録します。複数アプリをまとめて保存したい場合は「設定一括取得」も使えます。"
-      };
-      GUIDED_TOUR_COURSES = Object.freeze({
-        full: {
-          label: "初回（全工程）",
-          description: "接続から記録出力までを順番に案内します（推奨）",
-          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD]
-        },
-        diff: {
-          label: "差分のみ確認",
-          description: "差分比較とレビューに絞った短縮コース",
-          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW]
-        },
-        apply: {
-          label: "反映まで実施",
-          description: "差分確認からプレビュー反映までをガイド",
-          steps: [TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY]
-        }
-      });
-      GUIDED_TOUR_STEPS = Object.freeze(GUIDED_TOUR_COURSES.full.steps);
+  var SECTION_DEFS = [
+    { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
+    { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
+    { key: "fieldSettings", label: "フィールド設定", endpoint: "/app/form/fields.json", put: true, putBuilder: (d) => ({ properties: d.properties || d }) },
+    { key: "layoutSettings", label: "レイアウト設定", endpoint: "/app/form/layout.json", put: true, putBuilder: (d) => ({ layout: d.layout || d }) },
+    { key: "formSettings", label: "フォーム設定", endpoint: "/form.json", put: false },
+    { key: "viewSettings", label: "ビュー設定", endpoint: "/app/views.json", put: true, putBuilder: (d) => ({ views: d.views || d }) },
+    { key: "reportSettings", label: "グラフ設定", endpoint: "/app/reports.json", put: true, putBuilder: (d) => ({ reports: d.reports || d }) },
+    { key: "processSettings", label: "プロセス管理", endpoint: "/app/status.json", put: true, putBuilder: (d) => ({ enable: !!d.enable, states: d.states || {}, actions: d.actions || [] }) },
+    { key: "pluginSettings", label: "プラグイン(※)", endpoint: "/app/plugins.json", put: true, putBuilder: (d) => ({ pluginIds: (d.plugins || []).map((p) => p.id) }) },
+    { key: "customizeSettings", label: "JS/CSS設定", endpoint: "/app/customize.json", put: true, putBuilder: buildCustomizeSettingsPutPayload },
+    { key: "actionSettings", label: "アクション設定", endpoint: "/app/actions.json", put: true, putBuilder: (d) => ({ actions: d.actions || d }) },
+    { key: "appAcl", label: "アプリ権限", endpoint: "/app/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
+    { key: "fieldAcl", label: "フィールド権限", endpoint: "/field/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
+    { key: "recordPermissions", label: "レコード権限", endpoint: "/record/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
+    { key: "notifications", label: "通知設定", endpoint: "/app/notifications/general.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
+    { key: "perRecordNotifications", label: "レコード条件通知", endpoint: "/app/notifications/perRecord.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
+    // PUT /app/notifications/reminder.json は notifications に加え timezone を必須的に要求するためソース側の値を引き継ぐ。
+    { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => {
+      const body = { notifications: d?.notifications || (Array.isArray(d) ? d : []) };
+      if (d && typeof d === "object" && typeof d.timezone === "string" && d.timezone) {
+        body.timezone = d.timezone;
+      }
+      return body;
+    } },
+    { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
+  ];
+  var META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
+  var SYSTEM_FIELD_TYPES = /* @__PURE__ */ new Set([
+    "STATUS",
+    "STATUS_ASSIGNEE",
+    "CREATED_TIME",
+    "UPDATED_TIME",
+    "CREATOR",
+    "MODIFIER",
+    "RECORD_NUMBER",
+    "CATEGORY"
+  ]);
+  var DEFAULT_SUBTAB_STATE = Object.freeze({
+    diff: "conditions",
+    reflect: "settings",
+    field: "json",
+    jsconfig: "editor",
+    recordMgr: "status",
+    er: "diagram",
+    settingsExport: "export",
+    analyze: "dashboard"
+  });
+  var TOUR_STEP_CONNECTION = {
+    tab: "diff",
+    diffSubTab: "conditions",
+    path: "ヘッダー > 比較条件",
+    selector: "#u_sourceApp",
+    title: "比較元 / 比較先を決める",
+    body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。プレビュー/本番の切替もここで行います。"
+  };
+  var TOUR_STEP_SCOPE = {
+    tab: "diff",
+    diffSubTab: "conditions",
+    path: "ヘッダー > 比較条件",
+    selector: '[data-act="openDiffScopePicker"]',
+    title: "比較対象セクションを選ぶ",
+    body: "「比較対象を選ぶ」から、差分比較で確認したい設定だけを選びます。まずはフィールド・レイアウト・ビュー・プロセス管理あたりが見やすいです。"
+  };
+  var TOUR_STEP_NOISE = {
+    tab: "diff",
+    diffSubTab: "conditions",
+    path: "ヘッダー > 比較条件",
+    selector: "#u_ignoreKeyInput",
+    title: "ノイズ差分を減らす",
+    body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
+  };
+  var TOUR_STEP_RUN_DIFF = {
+    tab: "diff",
+    diffSubTab: "conditions",
+    path: "ヘッダー > 比較条件",
+    selector: "#u_runDiffPrimary",
+    title: "差分比較を実行する",
+    body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
+  };
+  var TOUR_STEP_REVIEW = {
+    tab: "diff",
+    diffSubTab: "conditions",
+    path: "ヘッダー > 差分結果の整理",
+    selector: "#u_diffSearch",
+    title: "結果を絞り込んで確認する",
+    body: "差分比較後は「差分結果の整理・出力」から、セクション・種別・検索で絞り込めます。ここで反映対象を見極めます。"
+  };
+  var TOUR_STEP_CATEGORY_VIEW = {
+    tab: "diff",
+    diffSubTab: "conditions",
+    path: "ヘッダー > 差分結果の整理",
+    selector: '[data-act="setDiffViewMode"][data-mode="category"]',
+    title: "セクション別ビューで読み取る",
+    body: "権限・プロセス・通知などフィールド以外の差分は「🗂 セクション別」表示が見やすいです。カテゴリ別タブ + マトリクスや遷移図で差分が直感的に把握できます（V キーで切替）。"
+  };
+  var TOUR_STEP_PLAN = {
+    tab: "reflect",
+    path: "プレビュー反映",
+    selector: "#u_footerPlan",
+    title: "反映プランを先に確認する",
+    body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。"
+  };
+  var TOUR_STEP_APPLY = {
+    tab: "reflect",
+    path: "プレビュー反映",
+    selector: "#u_footerApply",
+    title: "比較先プレビューへ反映する",
+    body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番デプロイは kintone 管理画面から手動で実施します。"
+  };
+  var TOUR_STEP_RECORD = {
+    tab: "design",
+    subTab: "export",
+    path: "設計書 > 設計書出力",
+    selector: '[data-act="exportDesignMd"]',
+    title: "最後に記録を残す",
+    body: "作業後は設計書や差分レポートを出力して、変更内容を記録します。複数アプリをまとめて保存したい場合は「設定一括取得」も使えます。"
+  };
+  var GUIDED_TOUR_COURSES = Object.freeze({
+    full: {
+      label: "初回（全工程）",
+      description: "接続から記録出力までを順番に案内します（推奨）",
+      steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD]
+    },
+    diff: {
+      label: "差分のみ確認",
+      description: "差分比較とレビューに絞った短縮コース",
+      steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW]
+    },
+    apply: {
+      label: "反映まで実施",
+      description: "差分確認からプレビュー反映までをガイド",
+      steps: [TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY]
     }
   });
+  var GUIDED_TOUR_STEPS = Object.freeze(GUIDED_TOUR_COURSES.full.steps);
 
   // src/utils.ts
   function getToolWindowSafe() {
@@ -518,6 +501,14 @@
       return raw.length > max ? `${raw.slice(0, max)}...` : raw;
     }
   }
+  var MAX_API_FIELD_ERRORS = 5;
+  function formatApiFieldErrors(errors) {
+    if (!errors || typeof errors !== "object") return [];
+    const lines = Object.entries(errors).flatMap(([key, value]) => (Array.isArray(value?.messages) ? value.messages : []).map((message) => `${key}: ${String(message)}`));
+    const shown = lines.slice(0, MAX_API_FIELD_ERRORS);
+    if (lines.length > shown.length) shown.push(`ほか ${lines.length - shown.length} 件`);
+    return shown;
+  }
   function apiErrorWithContext(err, meta) {
     if (err && err.__apiDiag) return err;
     const method = meta?.method || "GET";
@@ -529,8 +520,7 @@
     const endpoint = `${prefix}${path}`;
     const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ""}${bodySummary ? ` payload=${bodySummary}` : ""}`;
     const baseMessage = err?.message || String(err);
-    const wrapped = new Error(`${baseMessage}
-${contextLine}`);
+    const wrapped = new Error([baseMessage, ...formatApiFieldErrors(err?.errors), contextLine].join("\n"));
     wrapped.__apiDiag = true;
     wrapped.original = err;
     if (err?.code) wrapped.code = err.code;
@@ -641,21 +631,18 @@ ${contextLine}`);
     }
     return legacyCopy(text);
   }
-  var init_utils = __esm({
-    "src/utils.ts"() {
-      "use strict";
-      init_constants();
-    }
-  });
-
-  // src/kintone-query.ts
-  var init_kintone_query = __esm({
-    "src/kintone-query.ts"() {
-      "use strict";
-    }
-  });
 
   // src/runControl.ts
+  var RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
+  var RunCancelledError = class extends Error {
+    constructor(message = RUN_CANCELLED_MESSAGE) {
+      super(message);
+      __publicField(this, "cancelled", true);
+      this.name = "RunCancelledError";
+    }
+  };
+  var nextId = 1;
+  var active = null;
   function beginRun() {
     const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0, writes: 0 };
     active = token;
@@ -777,22 +764,6 @@ ${contextLine}`);
       timedOut: () => timedOut
     };
   }
-  var RUN_CANCELLED_MESSAGE, RunCancelledError, nextId, active;
-  var init_runControl = __esm({
-    "src/runControl.ts"() {
-      "use strict";
-      RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
-      RunCancelledError = class extends Error {
-        constructor(message = RUN_CANCELLED_MESSAGE) {
-          super(message);
-          __publicField(this, "cancelled", true);
-          this.name = "RunCancelledError";
-        }
-      };
-      nextId = 1;
-      active = null;
-    }
-  });
 
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
@@ -800,6 +771,33 @@ ${contextLine}`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
   }
+  var DEPLOY_PATH_SNIPPET = "app/deploy.json";
+  var ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
+  var ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
+  var ERR_NO_RECORD_PREVIEW_API = "レコードAPIにはプレビュー用の追加・更新・削除エンドポイントがありません。レコード操作は本番REST APIを明示的な確認付きで実行します。";
+  var DEFAULT_API_GET_RETRIES = 3;
+  var DEFAULT_RETRY_BASE_DELAY_MS = 500;
+  var DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
+  var API_GET_TIMEOUT_MS = 12e4;
+  var FILE_TEXT_FETCH_TIMEOUT_MS = 6e4;
+  var FILE_DOWNLOAD_TIMEOUT_MS = 12e4;
+  var RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+  var RECORD_DATA_MUTATION_PATHS = /* @__PURE__ */ new Set([
+    "/record.json",
+    "/records.json",
+    "/record/status.json",
+    "/records/status.json"
+  ]);
+  var RECORD_CURSOR_PATH = "/records/cursor.json";
+  var FILE_UPLOAD_PATH = "/file.json";
+  var apiGetMetrics = {
+    calls: 0,
+    retries: 0,
+    failures: 0,
+    lastLatencyMs: 0,
+    lastError: "",
+    byPath: {}
+  };
   function isPreviewRestPrefix(prefix) {
     return String(prefix || "").includes("/v1/preview");
   }
@@ -946,6 +944,7 @@ ${contextLine}`);
   async function apiPost(prefix, path, body) {
     return executeMutatingApiWithRetry("POST", prefix, path, body);
   }
+  var REVISION_CONFLICT_CODES = /* @__PURE__ */ new Set(["GAIA_CO02"]);
   function isRevisionConflictError(error) {
     if (!error) return false;
     const codes = [error?.code, error?.original?.code, error?.original?.error?.code].map((c) => String(c || "").toUpperCase()).filter(Boolean);
@@ -1024,6 +1023,9 @@ ${base}`
     }
     return picked;
   }
+  var CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
+  var CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
+  var TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
   function fnv1aHashString(text) {
     let h = 2166136261;
     for (let i = 0; i < text.length; i++) {
@@ -1087,6 +1089,7 @@ ${base}`
       request.release();
     }
   }
+  var FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
   async function downloadKintoneFile(guestId, fileKey, opts = {}) {
     if (!fileKey) throw new Error("fileKey がありません。");
     const maxBytes = Number.isFinite(opts.maxBytes) && Number(opts.maxBytes) > 0 ? Number(opts.maxBytes) : FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
@@ -1268,6 +1271,7 @@ ${base}`
     await runTaskFactoriesWithConcurrency(tasks, CUSTOMIZE_BODY_FETCH_CONCURRENCY);
     return stats;
   }
+  var BUNDLE_FETCH_CONCURRENCY = 3;
   async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
@@ -1343,6 +1347,7 @@ ${base}`
     }
     return bundle;
   }
+  var APPS_PAGE_LIMIT = 100;
   async function fetchAllApps(guestId, onProgress) {
     const prefix = buildApiPrefix(guestId, false);
     const byId = /* @__PURE__ */ new Map();
@@ -1358,804 +1363,8 @@ ${base}`
     }
     return [...byId.entries()].sort(([a], [b]) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0).map(([, app]) => app);
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, FILE_DOWNLOAD_TIMEOUT_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, RECORD_CURSOR_PATH, FILE_UPLOAD_PATH, apiGetMetrics, REVISION_CONFLICT_CODES, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY, APPS_PAGE_LIMIT;
-  var init_api = __esm({
-    "src/api.ts"() {
-      "use strict";
-      init_constants();
-      init_kintone_query();
-      init_utils();
-      init_runControl();
-      DEPLOY_PATH_SNIPPET = "app/deploy.json";
-      ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
-      ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
-      ERR_NO_RECORD_PREVIEW_API = "レコードAPIにはプレビュー用の追加・更新・削除エンドポイントがありません。レコード操作は本番REST APIを明示的な確認付きで実行します。";
-      DEFAULT_API_GET_RETRIES = 3;
-      DEFAULT_RETRY_BASE_DELAY_MS = 500;
-      DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
-      API_GET_TIMEOUT_MS = 12e4;
-      FILE_TEXT_FETCH_TIMEOUT_MS = 6e4;
-      FILE_DOWNLOAD_TIMEOUT_MS = 12e4;
-      RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
-      RECORD_DATA_MUTATION_PATHS = /* @__PURE__ */ new Set([
-        "/record.json",
-        "/records.json",
-        "/record/status.json",
-        "/records/status.json"
-      ]);
-      RECORD_CURSOR_PATH = "/records/cursor.json";
-      FILE_UPLOAD_PATH = "/file.json";
-      apiGetMetrics = {
-        calls: 0,
-        retries: 0,
-        failures: 0,
-        lastLatencyMs: 0,
-        lastError: "",
-        byPath: {}
-      };
-      REVISION_CONFLICT_CODES = /* @__PURE__ */ new Set(["GAIA_CO02"]);
-      CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
-      CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
-      TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
-      FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
-      BUNDLE_FETCH_CONCURRENCY = 3;
-      APPS_PAGE_LIMIT = 100;
-    }
-  });
-
-  // src/kintone-enums.ts
-  function lookupEnum(map, value) {
-    if (value == null || value === "") return "";
-    const key = String(value).trim().toUpperCase();
-    return map[key] || String(value);
-  }
-  function describeReminderOffset(kind, value) {
-    const raw = String(value ?? "").trim();
-    if (!/^[+-]?\d+$/.test(raw)) return null;
-    const n = Number(raw);
-    const unit = kind === "days" ? "日" : "時間";
-    if (n === 0) return kind === "days" ? "当日" : "同時刻";
-    return n < 0 ? `${-n}${unit}前` : `${n}${unit}後`;
-  }
-  function describePeriodicReport(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const report = value;
-    if (typeof report.active !== "boolean" && !report.period) return null;
-    const period = report.period && typeof report.period === "object" ? report.period : {};
-    const schedule = [
-      lookupEnum(PERIODIC_REPORT_EVERY_JP, period.every),
-      period.month != null && period.month !== "" ? `${period.month}月` : "",
-      period.dayOfMonth != null && period.dayOfMonth !== "" ? `${period.dayOfMonth}日` : "",
-      lookupEnum(DAY_OF_WEEK_JP, period.dayOfWeek),
-      period.time != null && period.time !== "" ? String(period.time) : ""
-    ].filter(Boolean).join(" ");
-    const state3 = report.active === false ? "無効" : "有効";
-    return schedule ? `${state3}（${schedule}）` : state3;
-  }
-  var FIELD_TYPE_JP, ENTITY_TYPE_JP, VIEW_TYPE_JP, VIEW_BUILTIN_TYPE_JP, VIEW_DEVICE_JP, CHART_TYPE_JP, CHART_MODE_JP, AGGREGATION_TYPE_JP, GROUP_PER_JP, REPORT_SORT_BY_JP, REPORT_SORT_ORDER_JP, PERIODIC_REPORT_EVERY_JP, DAY_OF_WEEK_JP, PROCESS_ASSIGNEE_TYPE_JP, RESOURCE_TYPE_JP, CUSTOMIZE_SCOPE_JP, ICON_TYPE_JP, APP_THEME_JP, TITLE_SELECTION_JP, ROUNDING_MODE_JP, NUMBER_FORMAT_JP, ALIGN_JP, UNIT_POSITION_JP, LINK_PROTOCOL_JP;
-  var init_kintone_enums = __esm({
-    "src/kintone-enums.ts"() {
-      "use strict";
-      FIELD_TYPE_JP = {
-        SINGLE_LINE_TEXT: "文字列(1行)",
-        MULTI_LINE_TEXT: "文字列(複数行)",
-        RICH_TEXT: "リッチエディター",
-        NUMBER: "数値",
-        CALC: "計算",
-        CHECK_BOX: "チェックボックス",
-        RADIO_BUTTON: "ラジオボタン",
-        DROP_DOWN: "ドロップダウン",
-        MULTI_SELECT: "複数選択",
-        DATE: "日付",
-        TIME: "時刻",
-        DATETIME: "日時",
-        LINK: "リンク",
-        FILE: "添付ファイル",
-        USER_SELECT: "ユーザー選択",
-        ORGANIZATION_SELECT: "組織選択",
-        GROUP_SELECT: "グループ選択",
-        CATEGORY: "カテゴリー",
-        STATUS: "ステータス",
-        STATUS_ASSIGNEE: "作業者",
-        SUBTABLE: "テーブル",
-        REFERENCE_TABLE: "関連レコード一覧",
-        RECORD_NUMBER: "レコード番号",
-        CREATOR: "作成者",
-        CREATED_TIME: "作成日時",
-        MODIFIER: "更新者",
-        UPDATED_TIME: "更新日時",
-        SPACER: "スペース",
-        HR: "罫線",
-        LABEL: "ラベル",
-        GROUP: "グループ",
-        LOOKUP: "ルックアップ"
-      };
-      ENTITY_TYPE_JP = {
-        USER: "ユーザー",
-        GROUP: "グループ",
-        ORGANIZATION: "組織",
-        FIELD_ENTITY: "フィールド値",
-        CREATOR: "作成者",
-        MODIFIER: "更新者",
-        LOGIN_USER: "ログインユーザー",
-        ALL: "全員",
-        CUSTOM_FIELD: "カスタムフィールド"
-      };
-      VIEW_TYPE_JP = {
-        LIST: "表形式",
-        CALENDAR: "カレンダー形式",
-        CUSTOM: "カスタマイズ"
-      };
-      VIEW_BUILTIN_TYPE_JP = {
-        ASSIGNEE: "作業者ビュー",
-        UNDONE: "未完了レコード",
-        ACTIVE_BY_USER: "自分が処理すべきレコード",
-        RECORDS_OF_USER: "自分が関わるレコード"
-      };
-      VIEW_DEVICE_JP = {
-        ANY: "PC・モバイル両方",
-        DESKTOP: "PC版のみ"
-      };
-      CHART_TYPE_JP = {
-        BAR: "横棒グラフ",
-        COLUMN: "縦棒グラフ",
-        LINE: "折れ線グラフ",
-        PIE: "円グラフ",
-        PIVOT_TABLE: "クロス集計表",
-        TABLE: "表",
-        AREA: "面グラフ",
-        SPLINE: "曲線グラフ",
-        SPLINE_AREA: "曲線面グラフ",
-        SCATTER: "散布図"
-      };
-      CHART_MODE_JP = {
-        NORMAL: "通常",
-        STACKED: "積み上げ",
-        PERCENTAGE: "100%積み上げ"
-      };
-      AGGREGATION_TYPE_JP = {
-        COUNT: "レコード数",
-        SUM: "合計",
-        AVG: "平均",
-        MAX: "最大値",
-        MIN: "最小値"
-      };
-      GROUP_PER_JP = {
-        YEAR: "年",
-        QUARTER: "四半期",
-        MONTH: "月",
-        WEEK: "週",
-        DAY: "日",
-        HOUR: "時",
-        MINUTE: "分"
-      };
-      REPORT_SORT_BY_JP = {
-        TOTAL: "集計値",
-        GROUP1: "分類1",
-        GROUP2: "分類2",
-        GROUP3: "分類3"
-      };
-      REPORT_SORT_ORDER_JP = {
-        ASC: "小さい順",
-        DESC: "大きい順"
-      };
-      PERIODIC_REPORT_EVERY_JP = {
-        YEAR: "毎年",
-        QUARTER: "四半期ごと",
-        MONTH: "毎月",
-        WEEK: "毎週",
-        DAY: "毎日",
-        HOUR: "毎時"
-      };
-      DAY_OF_WEEK_JP = {
-        SUNDAY: "日曜日",
-        MONDAY: "月曜日",
-        TUESDAY: "火曜日",
-        WEDNESDAY: "水曜日",
-        THURSDAY: "木曜日",
-        FRIDAY: "金曜日",
-        SATURDAY: "土曜日"
-      };
-      PROCESS_ASSIGNEE_TYPE_JP = {
-        ONE: "候補から作業者を1人選ぶ",
-        ANY: "候補のうち誰か1人が作業する",
-        ANYONE: "候補のうち誰か1人が作業する",
-        ALL: "候補の全員が作業する"
-      };
-      RESOURCE_TYPE_JP = {
-        URL: "URL指定",
-        FILE: "ファイル指定"
-      };
-      CUSTOMIZE_SCOPE_JP = {
-        ALL: "全ユーザー",
-        ADMIN: "管理者のみ",
-        NONE: "無効"
-      };
-      ICON_TYPE_JP = {
-        PRESET: "プリセット",
-        FILE: "アップロードファイル"
-      };
-      APP_THEME_JP = {
-        WHITE: "ホワイト",
-        RED: "レッド",
-        BLUE: "ブルー",
-        GREEN: "グリーン",
-        YELLOW: "イエロー",
-        BLACK: "ブラック",
-        CLIPBOARD: "クリップボード",
-        BINDER: "バインダー",
-        PENCIL: "ペンシル",
-        CLIPS: "クリップ"
-      };
-      TITLE_SELECTION_JP = {
-        AUTO: "自動選択",
-        MANUAL: "手動指定"
-      };
-      ROUNDING_MODE_JP = {
-        HALF_EVEN: "四捨五入（偶数丸め）",
-        UP: "切り上げ",
-        DOWN: "切り捨て"
-      };
-      NUMBER_FORMAT_JP = {
-        NUMBER: "数値",
-        NUMBER_DIGIT: "数値（桁区切り）",
-        PERCENT: "パーセント",
-        CURRENCY: "通貨",
-        DATE: "日付",
-        TIME: "時刻",
-        DATETIME: "日時",
-        HOUR_MINUTE: "時:分",
-        HOUR_MINUTE_SECOND: "時:分:秒"
-      };
-      ALIGN_JP = {
-        HORIZONTAL: "横並び",
-        VERTICAL: "縦並び"
-      };
-      UNIT_POSITION_JP = {
-        BEFORE: "前につける",
-        AFTER: "後につける"
-      };
-      LINK_PROTOCOL_JP = {
-        WEB: "Webサイトのアドレス",
-        CALL: "電話番号",
-        MAIL: "メールアドレス"
-      };
-    }
-  });
-
-  // src/diff/label-dict.ts
-  function labelOfProp(key) {
-    if (!key) return "";
-    return PROP_LABELS[key]?.label || String(key);
-  }
-  function labelOfBool(value, propKey) {
-    if (propKey && PERMISSION_KEYS.has(propKey)) {
-      return value ? "許可" : "不許可";
-    }
-    if (propKey === "enable" || propKey === "enabled" || propKey === "active") {
-      return value ? "有効" : "無効";
-    }
-    if (propKey === "pager") {
-      return value ? "表示する" : "表示しない";
-    }
-    if (propKey === "notifyToCommenter" || propKey === "notifyToMentioned" || propKey === "notifyOnUpdate") {
-      return value ? "通知する" : "通知しない";
-    }
-    return value ? "はい" : "いいえ";
-  }
-  var VALUE_LABELS, PROP_LABELS, PERMISSION_KEYS;
-  var init_label_dict = __esm({
-    "src/diff/label-dict.ts"() {
-      "use strict";
-      init_kintone_enums();
-      VALUE_LABELS = {
-        // entity.type
-        "entity.type": {
-          USER: "👤 ユーザー",
-          GROUP: "👥 グループ",
-          ORGANIZATION: "🏢 部署",
-          DEPARTMENT: "🏢 部署",
-          DEPT: "🏢 部署",
-          CREATOR: "✏️ 作成者",
-          MODIFIER: "✏️ 更新者",
-          FUNCTION: "⚙ 関数",
-          LOGIN_USER: "👤 ログインユーザー",
-          ALL: "🌐 全員",
-          FIELD_ENTITY: "🔗 フィールド",
-          EVERYONE: "🌐 全員",
-          CUSTOM_FIELD: "🔗 ユーザー選択フィールド"
-        },
-        // field acl level
-        accessibility: {
-          NONE: "不可",
-          READ: "閲覧のみ",
-          WRITE: "閲覧・編集可",
-          READ_WRITE: "閲覧・編集可"
-        },
-        // 一覧の表示形式（kintone の一覧設定画面の選択肢名）
-        "view.type": {
-          LIST: "表形式",
-          CALENDAR: "カレンダー形式",
-          CUSTOM: "カスタマイズ"
-        },
-        // グラフ種別（kintone のグラフ設定画面の名称）
-        "chart.type": {
-          BAR: "横棒グラフ",
-          COLUMN: "縦棒グラフ",
-          PIE: "円グラフ",
-          LINE: "折れ線グラフ",
-          PIVOT_TABLE: "クロス集計表",
-          TABLE: "表",
-          AREA: "面グラフ",
-          AREA_STACKED: "積み上げ面グラフ",
-          SPLINE: "曲線グラフ",
-          SPLINE_AREA: "曲線面グラフ",
-          BUBBLE: "バブル",
-          BAR_STACKED: "積み上げ横棒",
-          FUNNEL: "ファネル"
-        },
-        // ページ送り
-        paginationStyle: {
-          NORMAL: "通常",
-          NUMBER: "ページ番号",
-          INFINITE: "無限スクロール"
-        },
-        // 通知トリガ
-        recordTrigger: {
-          APP: "アプリ全体",
-          RECORD: "レコード単位"
-        },
-        // アプリアクションのフィールド関連付けのコピー元／コピー先の種類
-        // （actionSettings 文脈で参照。表記は xlsx 出力の customerTypeLabel と揃える）
-        srcType: {
-          FIELD: "フィールド",
-          RECORD_URL: "レコードのURL"
-        },
-        destType: {
-          FIELD: "フィールド",
-          RECORD_URL: "レコードのURL"
-        },
-        // ここから下はセクション文脈込みで参照するスコープ（path-decoder が
-        // sectionKey を見て選択する）。kintone-enums の共通辞書を単一ソースとする。
-        "assignee.type": PROCESS_ASSIGNEE_TYPE_JP,
-        "icon.type": ICON_TYPE_JP,
-        "aggregation.type": AGGREGATION_TYPE_JP,
-        "resource.type": RESOURCE_TYPE_JP,
-        builtinType: VIEW_BUILTIN_TYPE_JP,
-        device: VIEW_DEVICE_JP,
-        chartMode: CHART_MODE_JP,
-        scope: CUSTOMIZE_SCOPE_JP,
-        theme: APP_THEME_JP,
-        selectionMode: TITLE_SELECTION_JP,
-        roundingMode: ROUNDING_MODE_JP,
-        per: GROUP_PER_JP,
-        by: REPORT_SORT_BY_JP,
-        order: REPORT_SORT_ORDER_JP,
-        every: PERIODIC_REPORT_EVERY_JP,
-        dayOfWeek: DAY_OF_WEEK_JP
-      };
-      PROP_LABELS = {
-        // appAcl 操作権限（kintone のアクセス権設定画面の列名）
-        appEditable: { label: "アプリ管理", icon: "⚙" },
-        recordViewable: { label: "レコード閲覧", icon: "👁" },
-        recordAddable: { label: "レコード追加", icon: "➕" },
-        recordEditable: { label: "レコード編集", icon: "✏️" },
-        recordDeletable: { label: "レコード削除", icon: "🗑" },
-        recordImportable: { label: "ファイル読み込み", icon: "📥" },
-        recordExportable: { label: "ファイル書き出し", icon: "📤" },
-        // recordPermissions の権限
-        viewable: { label: "閲覧", icon: "👁" },
-        editable: { label: "編集", icon: "✏️" },
-        deletable: { label: "削除", icon: "🗑" },
-        // 共通
-        filterCond: { label: "絞込条件", icon: "🔍" },
-        includeSubs: { label: "配下を含む" },
-        entities: { label: "エンティティ" },
-        entity: { label: "対象" },
-        rights: { label: "権限エントリー" },
-        accessibility: { label: "アクセス権" },
-        // viewSettings（kintone の一覧設定画面の項目名）
-        fields: { label: "表示するフィールド", icon: "📋" },
-        sort: { label: "ソート", icon: "↕" },
-        index: { label: "表示順", icon: "🔢" },
-        paginationStyle: { label: "ページ送り", icon: "📄" },
-        defaultView: { label: "既定ビュー" },
-        view: { label: "ビュー" },
-        views: { label: "ビュー一覧" },
-        builtinType: { label: "標準一覧の種類" },
-        device: { label: "表示するデバイス" },
-        pager: { label: "ページ送りの表示" },
-        date: { label: "日付の基準フィールド" },
-        // reportSettings（kintone のグラフ設定画面の項目名）
-        groups: { label: "分類", icon: "📊" },
-        aggregations: { label: "集計", icon: "🧮" },
-        chartType: { label: "グラフ種別" },
-        chartMode: { label: "モード" },
-        reports: { label: "グラフ一覧" },
-        periodicReports: { label: "定期レポート" },
-        periodicReport: { label: "定期レポート" },
-        period: { label: "実行スケジュール" },
-        every: { label: "間隔" },
-        dayOfWeek: { label: "曜日" },
-        dayOfMonth: { label: "日" },
-        per: { label: "分類の時間単位" },
-        by: { label: "ソートの基準" },
-        order: { label: "ソートの順序" },
-        active: { label: "有効状態" },
-        // notifications（kintone の通知設定画面の項目名）
-        recordAdded: { label: "レコードの追加" },
-        recordEdited: { label: "レコードの編集" },
-        commentAdded: { label: "コメントの書き込み" },
-        statusChanged: { label: "ステータスの更新" },
-        fileImported: { label: "ファイルの読み込み" },
-        recipients: { label: "通知先" },
-        targets: { label: "通知先" },
-        notifications: { label: "通知ルール" },
-        timing: { label: "通知するタイミング" },
-        daysLater: { label: "通知する日" },
-        hoursLater: { label: "通知する時間" },
-        time: { label: "時刻" },
-        notifyToCommenter: { label: "コメントを書き込んだユーザーへの通知" },
-        notifyToMentioned: { label: "コメントの宛先ユーザーへの通知" },
-        notifyOnUpdate: { label: "更新時に通知" },
-        timezone: { label: "タイムゾーン" },
-        perRecordNotifications: { label: "レコード条件通知" },
-        reminderNotifications: { label: "リマインダー通知" },
-        title: { label: "タイトル" },
-        body: { label: "本文" },
-        // processSettings（kintone のプロセス管理設定画面の項目名）
-        enable: { label: "プロセス管理の有効化" },
-        states: { label: "ステータス" },
-        actions: { label: "アクション" },
-        from: { label: "実行前のステータス" },
-        to: { label: "実行後のステータス" },
-        assignee: { label: "作業者" },
-        type: { label: "種別" },
-        settings: { label: "設定" },
-        // actionSettings（kintone API の mappings[] キーは srcField/srcType/destField。
-        // sourceField は旧形式データの別名。xlsx 出力の「コピー元/コピー先」表記に揃える）
-        app: { label: "対象アプリ" },
-        mappings: { label: "フィールド対応" },
-        srcField: { label: "コピー元フィールド" },
-        sourceField: { label: "コピー元フィールド" },
-        srcType: { label: "コピー元の種類" },
-        destField: { label: "コピー先フィールド" },
-        destType: { label: "コピー先の種類" },
-        destApp: { label: "先アプリ" },
-        // customizeSettings
-        desktop: { label: "デスクトップ" },
-        mobile: { label: "モバイル" },
-        js: { label: "JS" },
-        css: { label: "CSS" },
-        file: { label: "ファイル" },
-        scope: { label: "適用範囲" },
-        url: { label: "URL" },
-        // pluginSettings
-        plugins: { label: "プラグイン一覧" },
-        version: { label: "バージョン" },
-        id: { label: "ID" },
-        enabled: { label: "有効状態" },
-        // appSettings / appInfo（kintone のアプリ設定画面の項目名）
-        name: { label: "名前" },
-        description: { label: "説明" },
-        theme: { label: "デザインテーマ" },
-        titleField: { label: "レコードのタイトル" },
-        selectionMode: { label: "選択方法" },
-        icon: { label: "アイコン" },
-        enableThumbnails: { label: "サムネイルの表示" },
-        enableBulkDeletion: { label: "レコードの一括削除" },
-        enableComments: { label: "レコードのコメント機能" },
-        enableDuplicateRecord: { label: "レコードの再利用" },
-        enableInlineRecordEditing: { label: "一覧でのレコードのインライン編集" },
-        numberPrecision: { label: "数値や計算の精度" },
-        digits: { label: "全体の桁数" },
-        decimalPlaces: { label: "小数部の桁数" },
-        roundingMode: { label: "数値の丸めかた" },
-        firstMonthOfFiscalYear: { label: "第1四半期の開始月" },
-        appId: { label: "アプリID" },
-        spaceId: { label: "スペースID" },
-        threadId: { label: "スレッドID" },
-        code: { label: "コード" },
-        label: { label: "ラベル" },
-        // categories
-        categories: { label: "カテゴリ" },
-        // layoutSettings
-        layout: { label: "レイアウト" },
-        row: { label: "行" },
-        width: { label: "横幅" },
-        height: { label: "高さ" },
-        innerHeight: { label: "入力欄の高さ" },
-        // fieldSettings: 関連レコード一覧（referenceTable）/ ルックアップ（lookup）
-        // kintone のフィールド設定画面の項目名に合わせる。
-        referenceTable: { label: "関連レコード一覧設定" },
-        lookup: { label: "ルックアップ設定" },
-        condition: { label: "表示するレコードの条件" },
-        displayFields: { label: "表示するフィールド" },
-        relatedApp: { label: "参照するアプリ" },
-        relatedField: { label: "参照するアプリのフィールド" },
-        relatedKeyField: { label: "コピー元のフィールド" },
-        fieldMappings: { label: "ほかのフィールドのコピー" },
-        lookupPickerFields: { label: "コピー元のレコード選択時に表示するフィールド" },
-        size: { label: "一度に表示する最大レコード数" }
-      };
-      PERMISSION_KEYS = /* @__PURE__ */ new Set([
-        "appEditable",
-        "recordViewable",
-        "recordAddable",
-        "recordEditable",
-        "recordDeletable",
-        "recordImportable",
-        "recordExportable",
-        "viewable",
-        "editable",
-        "deletable",
-        "includeSubs"
-      ]);
-    }
-  });
-
-  // src/state.ts
-  function loadReflectApplyHistory() {
-    return [];
-  }
-  function loadWorkHistory() {
-    return [];
-  }
-  function loadConnectionPresets() {
-    return [];
-  }
-  var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY;
-  var init_state = __esm({
-    "src/state.ts"() {
-      "use strict";
-      init_constants();
-      state = {
-        activeTab: "reflect",
-        activeFeatureKey: "",
-        activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
-        launcherSortMode: "onboarding",
-        lastSourceBundle: null,
-        lastTargetBundle: null,
-        lastDiffRows: [],
-        lastFetchIssues: [],
-        lastPartialIssues: [],
-        lastDiffTruncation: null,
-        lastDiffAt: null,
-        lastDiffSignature: "",
-        lastDiffSnapshotContext: null,
-        lastApplyPlan: null,
-        lastApplyCompletedAt: null,
-        lastApplyCompletedMode: "",
-        lastApplyCompletedHadError: false,
-        lastApplyCompletedAppId: "",
-        lastApplyReport: null,
-        reflectApplyHistory: [],
-        reflectApplyHistoryOpen: false,
-        workHistory: [],
-        workHistoryOpen: true,
-        connectionPresets: [],
-        reflectPlanPreviewKeyword: "",
-        reflectPlanPreviewChangedOnly: false,
-        reflectApplyChecklist: { diff: false, plan: false, preview: false, target: false },
-        reflectPreviewOpened: false,
-        reflectPreviewOpenedFor: "",
-        lastPreviewBackupPayload: null,
-        lastPreviewBackupFilename: "",
-        diffViewTheme: "light",
-        diffViewMode: "table",
-        diffCategoryView: "",
-        diffCollapsedSections: /* @__PURE__ */ new Set(),
-        diffSectionVisibleCounts: {},
-        diffSelectedIds: /* @__PURE__ */ new Set(),
-        diffFavoritePaths: /* @__PURE__ */ new Set(),
-        diffFavoritesOnly: false,
-        diffViewedKeys: /* @__PURE__ */ new Set(),
-        diffReviewMeta: {},
-        diffHideViewed: false,
-        diffFocusedRowId: "",
-        diffExcludeSections: null,
-        diffSelectionAnchorId: "",
-        diffIncludeSame: true,
-        diffFilterSection: "",
-        diffFilterType: "",
-        diffFilterSeverity: "",
-        diffFilterTableOnly: false,
-        diffFilterTableKeyword: "",
-        diffSearchFieldName: false,
-        diffExportMode: "all",
-        diffExportContent: "diffOnly",
-        diffIgnoreSuggestions: [],
-        reflectRows: [],
-        reflectSelectedIds: /* @__PURE__ */ new Set(),
-        reflectNodeModes: {},
-        reflectUndoStack: [],
-        reflectRedoStack: [],
-        reflectPropertyFilters: /* @__PURE__ */ new Set(),
-        reflectPropertyPanelOpen: false,
-        reflectActiveSidebarSection: null,
-        reflectActiveNodeId: "",
-        reflectDetailTab: "diff",
-        importedSourceBundle: null,
-        importedTargetBundle: null,
-        importedSourceName: "",
-        importedTargetName: "",
-        lastSettingsExportBundles: [],
-        patchJsonPanelOpen: false,
-        importedPatchPayload: null,
-        reflectPreviewProdDiff: null,
-        guidedTourActive: false,
-        guidedTourIndex: 0,
-        running: false,
-        runningStartedAt: null,
-        runningTaskLabel: "",
-        runningWatchdogId: null,
-        lastResultByTab: {}
-      };
-      REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
-      WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
-      CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
-      state.reflectApplyHistory = loadReflectApplyHistory();
-      state.workHistory = loadWorkHistory();
-      state.connectionPresets = loadConnectionPresets();
-    }
-  });
-
-  // src/ui/dialog.ts
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
-    }
-  });
-
-  // src/diff/engine.ts
-  var ENTITY_PATH_SEGMENT, ENTITY_IDENTIFIER_PATH_PATTERNS;
-  var init_engine = __esm({
-    "src/diff/engine.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_utils();
-      ENTITY_PATH_SEGMENT = String.raw`(?:\.[^.[\]]+|\["(?:[^"\\]|\\.)*"\])`;
-      ENTITY_IDENTIFIER_PATH_PATTERNS = [
-        new RegExp(`^(?:fieldsettings\\.properties|viewsettings\\.views|reportsettings\\.reports|processsettings\\.states|categories\\.categories|actionsettings\\.actions)${ENTITY_PATH_SEGMENT}$`),
-        new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}\\.fields${ENTITY_PATH_SEGMENT}$`),
-        // 選択肢のキーもラベルを識別子とする名前付きマップ。
-        new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}(?:\\.fields${ENTITY_PATH_SEGMENT})?\\.options${ENTITY_PATH_SEGMENT}$`)
-      ];
-    }
-  });
-
-  // src/diff/enrich.ts
-  var init_enrich = __esm({
-    "src/diff/enrich.ts"() {
-      "use strict";
-      init_constants();
-      init_utils();
-      init_label_dict();
-    }
-  });
-
-  // src/diff/path-decoder.ts
-  var init_path_decoder = __esm({
-    "src/diff/path-decoder.ts"() {
-      "use strict";
-      init_label_dict();
-      init_kintone_enums();
-    }
-  });
-
-  // src/diff/category-view.ts
-  var DIFF_CATEGORIES, SECTION_TO_CATEGORY;
-  var init_category_view = __esm({
-    "src/diff/category-view.ts"() {
-      "use strict";
-      init_utils();
-      init_state();
-      init_label_dict();
-      init_path_decoder();
-      DIFF_CATEGORIES = [
-        { key: "fields", label: "フィールド", hint: "フィールド定義の追加・変更", sections: ["fieldSettings"], icon: "🔤" },
-        { key: "layout", label: "レイアウト", hint: "フォーム配置の差分", sections: ["layoutSettings"], icon: "🧩" },
-        { key: "views", label: "ビュー・グラフ", hint: "一覧表示とレポート", sections: ["viewSettings", "reportSettings"], icon: "📊" },
-        { key: "process", label: "プロセス・アクション", hint: "ステータス遷移とアクション", sections: ["processSettings", "actionSettings"], icon: "🔁" },
-        { key: "notify", label: "通知", hint: "通知ルールとリマインダー", sections: ["notifications", "perRecordNotifications", "reminderNotifications"], icon: "🔔" },
-        { key: "acl", label: "権限", hint: "アプリ・フィールド・レコード権限", sections: ["appAcl", "fieldAcl", "recordPermissions"], icon: "🔐" },
-        { key: "customize", label: "JS/CSS・プラグイン", hint: "カスタマイズと配布資産", sections: ["customizeSettings", "pluginSettings"], icon: "🧪" },
-        { key: "app", label: "アプリ設定", hint: "基本情報・フォーム・カテゴリ", sections: ["appSettings", "appInfo", "formSettings", "categories"], icon: "⚙" }
-      ];
-      SECTION_TO_CATEGORY = (() => {
-        const m = {};
-        for (const cat of DIFF_CATEGORIES) for (const sec of cat.sections) m[sec] = cat.key;
-        return m;
-      })();
-    }
-  });
-
-  // src/diff/export-safety.ts
-  var init_export_safety = __esm({
-    "src/diff/export-safety.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/design/snapshot.ts
-  var init_snapshot = __esm({
-    "src/design/snapshot.ts"() {
-      "use strict";
-      init_constants();
-    }
-  });
-
-  // src/diff/export.ts
-  var DIFF_HTML_REVIEW_STATE_MAX_BYTES;
-  var init_export = __esm({
-    "src/diff/export.ts"() {
-      init_constants();
-      init_utils();
-      init_state();
-      init_engine();
-      init_enrich();
-      init_filter();
-      init_api();
-      init_dialog();
-      init_category_view();
-      init_path_decoder();
-      init_export_safety();
-      init_snapshot();
-      DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
-    }
-  });
-
-  // src/diff/filter.ts
-  var SECTION_LABEL_BY_KEY;
-  var init_filter = __esm({
-    "src/diff/filter.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_engine();
-      init_api();
-      init_export();
-      SECTION_LABEL_BY_KEY = new Map(
-        SECTION_DEFS.map((s) => [s.key, s.label])
-      );
-    }
-  });
-
-  // src/kintoneGuard.ts
-  var NOT_KINTONE_PAGE_MESSAGE = "kintone画面で実行してください";
-  function isKintonePage() {
-    return Boolean(window.kintone?.api && window.kintone?.app);
-  }
-  function runOnKintonePage(run) {
-    if (!isKintonePage()) {
-      alert(NOT_KINTONE_PAGE_MESSAGE);
-      return;
-    }
-    try {
-      run();
-    } catch (error) {
-      if (error?.panelBusy === true) return;
-      throw error;
-    }
-  }
-
-  // src/entries/reflect-lite-ui.ts
-  init_constants();
-
-  // src/tabs/reflect-standalone.ts
-  init_utils();
-  init_api();
 
   // src/reflect/sections.ts
-  init_constants();
   var REFLECT_SECTION_KEYS = (() => {
     const keys = SECTION_DEFS.filter((def) => def.put).map((def) => def.key).filter((key) => key !== "appSettings");
     const anchor = Math.max(keys.indexOf("layoutSettings"), keys.indexOf("fieldSettings"));
@@ -2320,9 +1529,6 @@ ${base}`
   }
 
   // src/reflect/customizeFiles.ts
-  init_api();
-  init_runControl();
-  init_utils();
   function customizeSlotKey(platform, kind, fileKey) {
     return `${platform}/${kind}/${fileKey}`;
   }
@@ -2512,9 +1718,485 @@ ${base}`
     return { section: copy, unavailable };
   }
 
+  // src/kintone-enums.ts
+  var FIELD_TYPE_JP = {
+    SINGLE_LINE_TEXT: "文字列(1行)",
+    MULTI_LINE_TEXT: "文字列(複数行)",
+    RICH_TEXT: "リッチエディター",
+    NUMBER: "数値",
+    CALC: "計算",
+    CHECK_BOX: "チェックボックス",
+    RADIO_BUTTON: "ラジオボタン",
+    DROP_DOWN: "ドロップダウン",
+    MULTI_SELECT: "複数選択",
+    DATE: "日付",
+    TIME: "時刻",
+    DATETIME: "日時",
+    LINK: "リンク",
+    FILE: "添付ファイル",
+    USER_SELECT: "ユーザー選択",
+    ORGANIZATION_SELECT: "組織選択",
+    GROUP_SELECT: "グループ選択",
+    CATEGORY: "カテゴリー",
+    STATUS: "ステータス",
+    STATUS_ASSIGNEE: "作業者",
+    SUBTABLE: "テーブル",
+    REFERENCE_TABLE: "関連レコード一覧",
+    RECORD_NUMBER: "レコード番号",
+    CREATOR: "作成者",
+    CREATED_TIME: "作成日時",
+    MODIFIER: "更新者",
+    UPDATED_TIME: "更新日時",
+    SPACER: "スペース",
+    HR: "罫線",
+    LABEL: "ラベル",
+    GROUP: "グループ",
+    LOOKUP: "ルックアップ"
+  };
+  var ENTITY_TYPE_JP = {
+    USER: "ユーザー",
+    GROUP: "グループ",
+    ORGANIZATION: "組織",
+    FIELD_ENTITY: "フィールド値",
+    CREATOR: "作成者",
+    MODIFIER: "更新者",
+    LOGIN_USER: "ログインユーザー",
+    ALL: "全員",
+    CUSTOM_FIELD: "カスタムフィールド"
+  };
+  var VIEW_TYPE_JP = {
+    LIST: "表形式",
+    CALENDAR: "カレンダー形式",
+    CUSTOM: "カスタマイズ"
+  };
+  var VIEW_BUILTIN_TYPE_JP = {
+    ASSIGNEE: "作業者ビュー",
+    UNDONE: "未完了レコード",
+    ACTIVE_BY_USER: "自分が処理すべきレコード",
+    RECORDS_OF_USER: "自分が関わるレコード"
+  };
+  var VIEW_DEVICE_JP = {
+    ANY: "PC・モバイル両方",
+    DESKTOP: "PC版のみ"
+  };
+  var CHART_TYPE_JP = {
+    BAR: "横棒グラフ",
+    COLUMN: "縦棒グラフ",
+    LINE: "折れ線グラフ",
+    PIE: "円グラフ",
+    PIVOT_TABLE: "クロス集計表",
+    TABLE: "表",
+    AREA: "面グラフ",
+    SPLINE: "曲線グラフ",
+    SPLINE_AREA: "曲線面グラフ",
+    SCATTER: "散布図"
+  };
+  var CHART_MODE_JP = {
+    NORMAL: "通常",
+    STACKED: "積み上げ",
+    PERCENTAGE: "100%積み上げ"
+  };
+  var AGGREGATION_TYPE_JP = {
+    COUNT: "レコード数",
+    SUM: "合計",
+    AVG: "平均",
+    MAX: "最大値",
+    MIN: "最小値"
+  };
+  var GROUP_PER_JP = {
+    YEAR: "年",
+    QUARTER: "四半期",
+    MONTH: "月",
+    WEEK: "週",
+    DAY: "日",
+    HOUR: "時",
+    MINUTE: "分"
+  };
+  var REPORT_SORT_BY_JP = {
+    TOTAL: "集計値",
+    GROUP1: "分類1",
+    GROUP2: "分類2",
+    GROUP3: "分類3"
+  };
+  var REPORT_SORT_ORDER_JP = {
+    ASC: "小さい順",
+    DESC: "大きい順"
+  };
+  var PERIODIC_REPORT_EVERY_JP = {
+    YEAR: "毎年",
+    QUARTER: "四半期ごと",
+    MONTH: "毎月",
+    WEEK: "毎週",
+    DAY: "毎日",
+    HOUR: "毎時"
+  };
+  var DAY_OF_WEEK_JP = {
+    SUNDAY: "日曜日",
+    MONDAY: "月曜日",
+    TUESDAY: "火曜日",
+    WEDNESDAY: "水曜日",
+    THURSDAY: "木曜日",
+    FRIDAY: "金曜日",
+    SATURDAY: "土曜日"
+  };
+  var PROCESS_ASSIGNEE_TYPE_JP = {
+    ONE: "候補から作業者を1人選ぶ",
+    ANY: "候補のうち誰か1人が作業する",
+    ANYONE: "候補のうち誰か1人が作業する",
+    ALL: "候補の全員が作業する"
+  };
+  var RESOURCE_TYPE_JP = {
+    URL: "URL指定",
+    FILE: "ファイル指定"
+  };
+  var CUSTOMIZE_SCOPE_JP = {
+    ALL: "全ユーザー",
+    ADMIN: "管理者のみ",
+    NONE: "無効"
+  };
+  var ICON_TYPE_JP = {
+    PRESET: "プリセット",
+    FILE: "アップロードファイル"
+  };
+  var APP_THEME_JP = {
+    WHITE: "ホワイト",
+    RED: "レッド",
+    BLUE: "ブルー",
+    GREEN: "グリーン",
+    YELLOW: "イエロー",
+    BLACK: "ブラック",
+    CLIPBOARD: "クリップボード",
+    BINDER: "バインダー",
+    PENCIL: "ペンシル",
+    CLIPS: "クリップ"
+  };
+  var TITLE_SELECTION_JP = {
+    AUTO: "自動選択",
+    MANUAL: "手動指定"
+  };
+  var ROUNDING_MODE_JP = {
+    HALF_EVEN: "四捨五入（偶数丸め）",
+    UP: "切り上げ",
+    DOWN: "切り捨て"
+  };
+  var NUMBER_FORMAT_JP = {
+    NUMBER: "数値",
+    NUMBER_DIGIT: "数値（桁区切り）",
+    PERCENT: "パーセント",
+    CURRENCY: "通貨",
+    DATE: "日付",
+    TIME: "時刻",
+    DATETIME: "日時",
+    HOUR_MINUTE: "時:分",
+    HOUR_MINUTE_SECOND: "時:分:秒"
+  };
+  var ALIGN_JP = {
+    HORIZONTAL: "横並び",
+    VERTICAL: "縦並び"
+  };
+  var UNIT_POSITION_JP = {
+    BEFORE: "前につける",
+    AFTER: "後につける"
+  };
+  var LINK_PROTOCOL_JP = {
+    WEB: "Webサイトのアドレス",
+    CALL: "電話番号",
+    MAIL: "メールアドレス"
+  };
+  function lookupEnum(map, value) {
+    if (value == null || value === "") return "";
+    const key = String(value).trim().toUpperCase();
+    return map[key] || String(value);
+  }
+  function describeReminderOffset(kind, value) {
+    const raw = String(value ?? "").trim();
+    if (!/^[+-]?\d+$/.test(raw)) return null;
+    const n = Number(raw);
+    const unit = kind === "days" ? "日" : "時間";
+    if (n === 0) return kind === "days" ? "当日" : "同時刻";
+    return n < 0 ? `${-n}${unit}前` : `${n}${unit}後`;
+  }
+  function describePeriodicReport(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const report = value;
+    if (typeof report.active !== "boolean" && !report.period) return null;
+    const period = report.period && typeof report.period === "object" ? report.period : {};
+    const schedule = [
+      lookupEnum(PERIODIC_REPORT_EVERY_JP, period.every),
+      period.month != null && period.month !== "" ? `${period.month}月` : "",
+      period.dayOfMonth != null && period.dayOfMonth !== "" ? `${period.dayOfMonth}日` : "",
+      lookupEnum(DAY_OF_WEEK_JP, period.dayOfWeek),
+      period.time != null && period.time !== "" ? String(period.time) : ""
+    ].filter(Boolean).join(" ");
+    const state3 = report.active === false ? "無効" : "有効";
+    return schedule ? `${state3}（${schedule}）` : state3;
+  }
+
+  // src/diff/label-dict.ts
+  var VALUE_LABELS = {
+    // entity.type
+    "entity.type": {
+      USER: "👤 ユーザー",
+      GROUP: "👥 グループ",
+      ORGANIZATION: "🏢 部署",
+      DEPARTMENT: "🏢 部署",
+      DEPT: "🏢 部署",
+      CREATOR: "✏️ 作成者",
+      MODIFIER: "✏️ 更新者",
+      FUNCTION: "⚙ 関数",
+      LOGIN_USER: "👤 ログインユーザー",
+      ALL: "🌐 全員",
+      FIELD_ENTITY: "🔗 フィールド",
+      EVERYONE: "🌐 全員",
+      CUSTOM_FIELD: "🔗 ユーザー選択フィールド"
+    },
+    // field acl level
+    accessibility: {
+      NONE: "不可",
+      READ: "閲覧のみ",
+      WRITE: "閲覧・編集可",
+      READ_WRITE: "閲覧・編集可"
+    },
+    // 一覧の表示形式（kintone の一覧設定画面の選択肢名）
+    "view.type": {
+      LIST: "表形式",
+      CALENDAR: "カレンダー形式",
+      CUSTOM: "カスタマイズ"
+    },
+    // グラフ種別（kintone のグラフ設定画面の名称）
+    "chart.type": {
+      BAR: "横棒グラフ",
+      COLUMN: "縦棒グラフ",
+      PIE: "円グラフ",
+      LINE: "折れ線グラフ",
+      PIVOT_TABLE: "クロス集計表",
+      TABLE: "表",
+      AREA: "面グラフ",
+      AREA_STACKED: "積み上げ面グラフ",
+      SPLINE: "曲線グラフ",
+      SPLINE_AREA: "曲線面グラフ",
+      BUBBLE: "バブル",
+      BAR_STACKED: "積み上げ横棒",
+      FUNNEL: "ファネル"
+    },
+    // ページ送り
+    paginationStyle: {
+      NORMAL: "通常",
+      NUMBER: "ページ番号",
+      INFINITE: "無限スクロール"
+    },
+    // 通知トリガ
+    recordTrigger: {
+      APP: "アプリ全体",
+      RECORD: "レコード単位"
+    },
+    // アプリアクションのフィールド関連付けのコピー元／コピー先の種類
+    // （actionSettings 文脈で参照。表記は xlsx 出力の customerTypeLabel と揃える）
+    srcType: {
+      FIELD: "フィールド",
+      RECORD_URL: "レコードのURL"
+    },
+    destType: {
+      FIELD: "フィールド",
+      RECORD_URL: "レコードのURL"
+    },
+    // ここから下はセクション文脈込みで参照するスコープ（path-decoder が
+    // sectionKey を見て選択する）。kintone-enums の共通辞書を単一ソースとする。
+    "assignee.type": PROCESS_ASSIGNEE_TYPE_JP,
+    "icon.type": ICON_TYPE_JP,
+    "aggregation.type": AGGREGATION_TYPE_JP,
+    "resource.type": RESOURCE_TYPE_JP,
+    builtinType: VIEW_BUILTIN_TYPE_JP,
+    device: VIEW_DEVICE_JP,
+    chartMode: CHART_MODE_JP,
+    scope: CUSTOMIZE_SCOPE_JP,
+    theme: APP_THEME_JP,
+    selectionMode: TITLE_SELECTION_JP,
+    roundingMode: ROUNDING_MODE_JP,
+    per: GROUP_PER_JP,
+    by: REPORT_SORT_BY_JP,
+    order: REPORT_SORT_ORDER_JP,
+    every: PERIODIC_REPORT_EVERY_JP,
+    dayOfWeek: DAY_OF_WEEK_JP
+  };
+  var PROP_LABELS = {
+    // appAcl 操作権限（kintone のアクセス権設定画面の列名）
+    appEditable: { label: "アプリ管理", icon: "⚙" },
+    recordViewable: { label: "レコード閲覧", icon: "👁" },
+    recordAddable: { label: "レコード追加", icon: "➕" },
+    recordEditable: { label: "レコード編集", icon: "✏️" },
+    recordDeletable: { label: "レコード削除", icon: "🗑" },
+    recordImportable: { label: "ファイル読み込み", icon: "📥" },
+    recordExportable: { label: "ファイル書き出し", icon: "📤" },
+    // recordPermissions の権限
+    viewable: { label: "閲覧", icon: "👁" },
+    editable: { label: "編集", icon: "✏️" },
+    deletable: { label: "削除", icon: "🗑" },
+    // 共通
+    filterCond: { label: "絞込条件", icon: "🔍" },
+    includeSubs: { label: "配下を含む" },
+    entities: { label: "エンティティ" },
+    entity: { label: "対象" },
+    rights: { label: "権限エントリー" },
+    accessibility: { label: "アクセス権" },
+    // viewSettings（kintone の一覧設定画面の項目名）
+    fields: { label: "表示するフィールド", icon: "📋" },
+    sort: { label: "ソート", icon: "↕" },
+    index: { label: "表示順", icon: "🔢" },
+    paginationStyle: { label: "ページ送り", icon: "📄" },
+    defaultView: { label: "既定ビュー" },
+    view: { label: "ビュー" },
+    views: { label: "ビュー一覧" },
+    builtinType: { label: "標準一覧の種類" },
+    device: { label: "表示するデバイス" },
+    pager: { label: "ページ送りの表示" },
+    date: { label: "日付の基準フィールド" },
+    // reportSettings（kintone のグラフ設定画面の項目名）
+    groups: { label: "分類", icon: "📊" },
+    aggregations: { label: "集計", icon: "🧮" },
+    chartType: { label: "グラフ種別" },
+    chartMode: { label: "モード" },
+    reports: { label: "グラフ一覧" },
+    periodicReports: { label: "定期レポート" },
+    periodicReport: { label: "定期レポート" },
+    period: { label: "実行スケジュール" },
+    every: { label: "間隔" },
+    dayOfWeek: { label: "曜日" },
+    dayOfMonth: { label: "日" },
+    per: { label: "分類の時間単位" },
+    by: { label: "ソートの基準" },
+    order: { label: "ソートの順序" },
+    active: { label: "有効状態" },
+    // notifications（kintone の通知設定画面の項目名）
+    recordAdded: { label: "レコードの追加" },
+    recordEdited: { label: "レコードの編集" },
+    commentAdded: { label: "コメントの書き込み" },
+    statusChanged: { label: "ステータスの更新" },
+    fileImported: { label: "ファイルの読み込み" },
+    recipients: { label: "通知先" },
+    targets: { label: "通知先" },
+    notifications: { label: "通知ルール" },
+    timing: { label: "通知するタイミング" },
+    daysLater: { label: "通知する日" },
+    hoursLater: { label: "通知する時間" },
+    time: { label: "時刻" },
+    notifyToCommenter: { label: "コメントを書き込んだユーザーへの通知" },
+    notifyToMentioned: { label: "コメントの宛先ユーザーへの通知" },
+    notifyOnUpdate: { label: "更新時に通知" },
+    timezone: { label: "タイムゾーン" },
+    perRecordNotifications: { label: "レコード条件通知" },
+    reminderNotifications: { label: "リマインダー通知" },
+    title: { label: "タイトル" },
+    body: { label: "本文" },
+    // processSettings（kintone のプロセス管理設定画面の項目名）
+    enable: { label: "プロセス管理の有効化" },
+    states: { label: "ステータス" },
+    actions: { label: "アクション" },
+    from: { label: "実行前のステータス" },
+    to: { label: "実行後のステータス" },
+    assignee: { label: "作業者" },
+    type: { label: "種別" },
+    settings: { label: "設定" },
+    // actionSettings（kintone API の mappings[] キーは srcField/srcType/destField。
+    // sourceField は旧形式データの別名。xlsx 出力の「コピー元/コピー先」表記に揃える）
+    app: { label: "対象アプリ" },
+    mappings: { label: "フィールド対応" },
+    srcField: { label: "コピー元フィールド" },
+    sourceField: { label: "コピー元フィールド" },
+    srcType: { label: "コピー元の種類" },
+    destField: { label: "コピー先フィールド" },
+    destType: { label: "コピー先の種類" },
+    destApp: { label: "先アプリ" },
+    // customizeSettings
+    desktop: { label: "デスクトップ" },
+    mobile: { label: "モバイル" },
+    js: { label: "JS" },
+    css: { label: "CSS" },
+    file: { label: "ファイル" },
+    scope: { label: "適用範囲" },
+    url: { label: "URL" },
+    // pluginSettings
+    plugins: { label: "プラグイン一覧" },
+    version: { label: "バージョン" },
+    id: { label: "ID" },
+    enabled: { label: "有効状態" },
+    // appSettings / appInfo（kintone のアプリ設定画面の項目名）
+    name: { label: "名前" },
+    description: { label: "説明" },
+    theme: { label: "デザインテーマ" },
+    titleField: { label: "レコードのタイトル" },
+    selectionMode: { label: "選択方法" },
+    icon: { label: "アイコン" },
+    enableThumbnails: { label: "サムネイルの表示" },
+    enableBulkDeletion: { label: "レコードの一括削除" },
+    enableComments: { label: "レコードのコメント機能" },
+    enableDuplicateRecord: { label: "レコードの再利用" },
+    enableInlineRecordEditing: { label: "一覧でのレコードのインライン編集" },
+    numberPrecision: { label: "数値や計算の精度" },
+    digits: { label: "全体の桁数" },
+    decimalPlaces: { label: "小数部の桁数" },
+    roundingMode: { label: "数値の丸めかた" },
+    firstMonthOfFiscalYear: { label: "第1四半期の開始月" },
+    appId: { label: "アプリID" },
+    spaceId: { label: "スペースID" },
+    threadId: { label: "スレッドID" },
+    code: { label: "コード" },
+    label: { label: "ラベル" },
+    // categories
+    categories: { label: "カテゴリ" },
+    // layoutSettings
+    layout: { label: "レイアウト" },
+    row: { label: "行" },
+    width: { label: "横幅" },
+    height: { label: "高さ" },
+    innerHeight: { label: "入力欄の高さ" },
+    // fieldSettings: 関連レコード一覧（referenceTable）/ ルックアップ（lookup）
+    // kintone のフィールド設定画面の項目名に合わせる。
+    referenceTable: { label: "関連レコード一覧設定" },
+    lookup: { label: "ルックアップ設定" },
+    condition: { label: "表示するレコードの条件" },
+    displayFields: { label: "表示するフィールド" },
+    relatedApp: { label: "参照するアプリ" },
+    relatedField: { label: "参照するアプリのフィールド" },
+    relatedKeyField: { label: "コピー元のフィールド" },
+    fieldMappings: { label: "ほかのフィールドのコピー" },
+    lookupPickerFields: { label: "コピー元のレコード選択時に表示するフィールド" },
+    size: { label: "一度に表示する最大レコード数" }
+  };
+  function labelOfProp(key) {
+    if (!key) return "";
+    return PROP_LABELS[key]?.label || String(key);
+  }
+  var PERMISSION_KEYS = /* @__PURE__ */ new Set([
+    "appEditable",
+    "recordViewable",
+    "recordAddable",
+    "recordEditable",
+    "recordDeletable",
+    "recordImportable",
+    "recordExportable",
+    "viewable",
+    "editable",
+    "deletable",
+    "includeSubs"
+  ]);
+  function labelOfBool(value, propKey) {
+    if (propKey && PERMISSION_KEYS.has(propKey)) {
+      return value ? "許可" : "不許可";
+    }
+    if (propKey === "enable" || propKey === "enabled" || propKey === "active") {
+      return value ? "有効" : "無効";
+    }
+    if (propKey === "pager") {
+      return value ? "表示する" : "表示しない";
+    }
+    if (propKey === "notifyToCommenter" || propKey === "notifyToMentioned" || propKey === "notifyOnUpdate") {
+      return value ? "通知する" : "通知しない";
+    }
+    return value ? "はい" : "いいえ";
+  }
+
   // src/reflect/changeSummary.ts
-  init_kintone_enums();
-  init_label_dict();
   var MAX_VALUE = 80;
   var MAX_DETAILS = 8;
   var own = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
@@ -3408,9 +3090,6 @@ ${base}`
   }
 
   // src/reflect/standalonePlan.ts
-  init_constants();
-  init_utils();
-  init_runControl();
   var formatBytes = (bytes) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
   var namedSections = { viewSettings: "views", reportSettings: "reports", actionSettings: "actions" };
   var own2 = (object2, key) => Object.prototype.hasOwnProperty.call(object2, key);
@@ -3548,8 +3227,9 @@ ${base}`
     appendMissing(target, result);
     return result;
   }
+  var FIELD_DEPENDENT_SECTIONS = ["layoutSettings", "viewSettings", "reportSettings", "actionSettings", "appSettings", "fieldAcl", "reminderNotifications", "processSettings"];
   function reflectInspectionScopes(scopes) {
-    return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => ["layoutSettings", "viewSettings", "reportSettings", "actionSettings", "appSettings"].includes(key)) ? ["fieldSettings"] : []])];
+    return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => FIELD_DEPENDENT_SECTIONS.includes(key)) ? ["fieldSettings"] : []])];
   }
   function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields, sourceSystemFields = []) {
     const selected = entries.filter((entry) => scopes.includes(entry.sectionKey));
@@ -3709,7 +3389,7 @@ ${base}`
         for (const section of [source, target]) {
           const arrayKey = ["appAcl", "fieldAcl", "recordPermissions"].includes(key) ? "rights" : ["notifications", "perRecordNotifications", "reminderNotifications"].includes(key) ? "notifications" : "";
           if (arrayKey && !Array.isArray(section[arrayKey])) throw new Error(`${arrayKey} の設定がありません。空の設定で上書きしないため、反映を停止します。`);
-          if (key === "reminderNotifications" && (typeof section.timezone !== "string" || !section.timezone)) throw new Error("リマインダー通知のタイムゾーンを取得できません。");
+          if (key === "reminderNotifications" && section === source && section.notifications.length && (typeof section.timezone !== "string" || !section.timezone)) throw new Error("リマインダー通知のタイムゾーンを取得できません。");
           if (key === "categories" && (typeof section.enabled !== "boolean" || !object(section.categories))) throw new Error("カテゴリーの enabled / categories を取得できません。");
           if (key === "processSettings" && (typeof section.enable !== "boolean" || section.enable && (!object(section.states) || !Array.isArray(section.actions)))) throw new Error("プロセス管理の enable / states / actions を取得できません。");
           if (key === "customizeSettings") {
@@ -3725,6 +3405,12 @@ ${base}`
         if (key === "categories") {
           before.enabled = target.enabled;
           after.enabled = source.enabled;
+        }
+        if (key === "reminderNotifications" && !after.timezone) after.timezone = before.timezone;
+        if (key === "processSettings") {
+          const firstState = (states) => object(states) ? String(Object.values(states).sort((a, b) => Number(a?.index) - Number(b?.index))[0]?.name || "") : "";
+          const sourceFirst = firstState(source.states), targetFirst = firstState(target.states);
+          if (sourceFirst && targetFirst && sourceFirst !== targetFirst) plan.warnings.push(`先頭のステータスが異なります（反映先「${targetFirst}」→ 反映元「${sourceFirst}」）。kintone は先頭のステータスの入れ替えを拒否することがあります。拒否された場合は、反映先の管理画面で先頭のステータスを合わせてから再実行してください。`);
         }
         if (key === "notifications") {
           if (typeof target.notifyToCommenter === "boolean") before.notifyToCommenter = after.notifyToCommenter = target.notifyToCommenter;
@@ -3751,7 +3437,7 @@ ${base}`
           if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map((item) => `「${item.name}」（${item.reason}）`).join("、")} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
         }
         if (key === "fieldAcl") plan.requiredFields = [...new Set((after.rights || []).map((right) => String(right?.code || "")).filter((code) => code && !["$id", "$revision"].includes(code)))];
-        if (key === "reminderNotifications") plan.requiredFields = [...new Set((after.notifications || []).map((item) => String(item?.timing?.code || "")).filter((code) => !!code))];
+        if (key === "reminderNotifications") plan.requiredFields = [...new Set((after.notifications || []).flatMap((item) => [item?.timing?.code, ...(item?.targets || []).filter((target2) => target2?.entity?.type === "FIELD_ENTITY").map((target2) => target2.entity.code)]).map((code) => String(code || "")).filter((code) => !!code))];
         if (key === "processSettings" && object(after.states)) plan.requiredFields = [...new Set(Object.values(after.states).flatMap((state3) => (state3?.assignee?.entities || []).filter((item) => item?.entity?.type === "FIELD_ENTITY").map((item) => String(item.entity.code || ""))).filter((code) => !!code))];
         if (key === "layoutSettings") {
           if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error("レイアウトの形式が不正です。");
@@ -3804,7 +3490,6 @@ ${base}`
   }
 
   // src/settingsBundleImport.ts
-  init_api();
   function preserveImportedMetadata(bundle, raw, preserve) {
     if (!preserve || !bundle || !raw || typeof raw !== "object") return bundle;
     bundle.fetchedAt = Object.prototype.hasOwnProperty.call(raw, "fetchedAt") ? raw.fetchedAt : null;
@@ -3872,8 +3557,6 @@ ${base}`
   }
 
   // src/reflect/targetPending.ts
-  init_api();
-  init_runControl();
   function reconcileOwnPendingChanges(pending, lastRun, target) {
     if (!pending || pending.state !== "pending" || !lastRun) return pending;
     if (lastRun.targetAppId !== target.appId || (lastRun.targetGuestId || "") !== (target.guestId || "")) return pending;
@@ -3982,7 +3665,6 @@ ${base}`
   }
 
   // src/tabs/reflect-standalone.ts
-  init_runControl();
   function reflectResultMatchesOptions(report, options) {
     if (!report?.source || !report.target) return false;
     const sourceBundleAppId = String(options.sourceBundle?.appId || "");
@@ -4316,9 +3998,111 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return { ok: !missing.length, missing };
   }
 
+  // src/state.ts
+  var state = {
+    activeTab: "reflect",
+    activeFeatureKey: "",
+    activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
+    launcherSortMode: "onboarding",
+    lastSourceBundle: null,
+    lastTargetBundle: null,
+    lastDiffRows: [],
+    lastFetchIssues: [],
+    lastPartialIssues: [],
+    lastDiffTruncation: null,
+    lastDiffAt: null,
+    lastDiffSignature: "",
+    lastApplyPlan: null,
+    lastApplyCompletedAt: null,
+    lastApplyCompletedMode: "",
+    lastApplyCompletedHadError: false,
+    lastApplyCompletedAppId: "",
+    lastApplyReport: null,
+    reflectApplyHistory: [],
+    reflectApplyHistoryOpen: false,
+    workHistory: [],
+    workHistoryOpen: true,
+    connectionPresets: [],
+    reflectPlanPreviewKeyword: "",
+    reflectPlanPreviewChangedOnly: false,
+    reflectApplyChecklist: { diff: false, plan: false, preview: false, target: false },
+    reflectPreviewOpened: false,
+    reflectPreviewOpenedFor: "",
+    lastPreviewBackupPayload: null,
+    lastPreviewBackupFilename: "",
+    diffViewTheme: "light",
+    diffViewMode: "table",
+    diffCategoryView: "",
+    diffCollapsedSections: /* @__PURE__ */ new Set(),
+    diffSectionVisibleCounts: {},
+    diffSelectedIds: /* @__PURE__ */ new Set(),
+    diffFavoritePaths: /* @__PURE__ */ new Set(),
+    diffFavoritesOnly: false,
+    diffViewedKeys: /* @__PURE__ */ new Set(),
+    diffReviewMeta: {},
+    diffHideViewed: false,
+    diffFocusedRowId: "",
+    diffExcludeSections: null,
+    diffSelectionAnchorId: "",
+    diffIncludeSame: true,
+    diffFilterSection: "",
+    diffFilterType: "",
+    diffFilterSeverity: "",
+    diffFilterTableOnly: false,
+    diffFilterTableKeyword: "",
+    diffSearchFieldName: false,
+    diffExportMode: "all",
+    diffExportContent: "diffOnly",
+    diffIgnoreSuggestions: [],
+    reflectRows: [],
+    reflectSelectedIds: /* @__PURE__ */ new Set(),
+    reflectNodeModes: {},
+    reflectUndoStack: [],
+    reflectRedoStack: [],
+    reflectPropertyFilters: /* @__PURE__ */ new Set(),
+    reflectPropertyPanelOpen: false,
+    reflectActiveSidebarSection: null,
+    reflectActiveNodeId: "",
+    reflectDetailTab: "diff",
+    importedSourceBundle: null,
+    importedTargetBundle: null,
+    importedSourceName: "",
+    importedTargetName: "",
+    lastSettingsExportBundles: [],
+    patchJsonPanelOpen: false,
+    importedPatchPayload: null,
+    reflectPreviewProdDiff: null,
+    guidedTourActive: false,
+    guidedTourIndex: 0,
+    running: false,
+    runningStartedAt: null,
+    runningTaskLabel: "",
+    runningWatchdogId: null,
+    lastResultByTab: {}
+  };
+  var REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
+  var WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
+  var CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
+  function loadReflectApplyHistory() {
+    return [];
+  }
+  function loadWorkHistory() {
+    return [];
+  }
+  function loadConnectionPresets() {
+    return [];
+  }
+  state.reflectApplyHistory = loadReflectApplyHistory();
+  state.workHistory = loadWorkHistory();
+  state.connectionPresets = loadConnectionPresets();
+
+  // src/ui/dialog.ts
+  var root = null;
+  function setRootElement(el) {
+    root = el;
+  }
+
   // src/handlers/diffFocus.ts
-  init_state();
-  init_dialog();
   function extractAppIdFromInput(value) {
     const raw = String(value || "").trim();
     if (!raw) return "";
@@ -4348,38 +4132,39 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return guestPathMatch ? guestPathMatch[1] : "";
   }
 
-  // src/ui/components.ts
-  init_constants();
-  init_state();
-  init_utils();
-  init_filter();
+  // src/diff/engine.ts
+  var ENTITY_PATH_SEGMENT = String.raw`(?:\.[^.[\]]+|\["(?:[^"\\]|\\.)*"\])`;
+  var ENTITY_IDENTIFIER_PATH_PATTERNS = [
+    new RegExp(`^(?:fieldsettings\\.properties|viewsettings\\.views|reportsettings\\.reports|processsettings\\.states|categories\\.categories|actionsettings\\.actions)${ENTITY_PATH_SEGMENT}$`),
+    new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}\\.fields${ENTITY_PATH_SEGMENT}$`),
+    // 選択肢のキーもラベルを識別子とする名前付きマップ。
+    new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}(?:\\.fields${ENTITY_PATH_SEGMENT})?\\.options${ENTITY_PATH_SEGMENT}$`)
+  ];
 
-  // src/diff/ignore-presets.ts
-  init_state();
+  // src/diff/category-view.ts
+  var DIFF_CATEGORIES = [
+    { key: "fields", label: "フィールド", hint: "フィールド定義の追加・変更", sections: ["fieldSettings"], icon: "🔤" },
+    { key: "layout", label: "レイアウト", hint: "フォーム配置の差分", sections: ["layoutSettings"], icon: "🧩" },
+    { key: "views", label: "ビュー・グラフ", hint: "一覧表示とレポート", sections: ["viewSettings", "reportSettings"], icon: "📊" },
+    { key: "process", label: "プロセス・アクション", hint: "ステータス遷移とアクション", sections: ["processSettings", "actionSettings"], icon: "🔁" },
+    { key: "notify", label: "通知", hint: "通知ルールとリマインダー", sections: ["notifications", "perRecordNotifications", "reminderNotifications"], icon: "🔔" },
+    { key: "acl", label: "権限", hint: "アプリ・フィールド・レコード権限", sections: ["appAcl", "fieldAcl", "recordPermissions"], icon: "🔐" },
+    { key: "customize", label: "JS/CSS・プラグイン", hint: "カスタマイズと配布資産", sections: ["customizeSettings", "pluginSettings"], icon: "🧪" },
+    { key: "app", label: "アプリ設定", hint: "基本情報・フォーム・カテゴリ", sections: ["appSettings", "appInfo", "formSettings", "categories"], icon: "⚙" }
+  ];
+  var SECTION_TO_CATEGORY = (() => {
+    const m = {};
+    for (const cat of DIFF_CATEGORIES) for (const sec of cat.sections) m[sec] = cat.key;
+    return m;
+  })();
 
-  // src/ui/components.ts
-  init_engine();
-  init_enrich();
+  // src/diff/export.ts
+  var DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
 
-  // src/reflect/nodeModeUi.ts
-  init_state();
-
-  // src/reflect/applyHistorySummary.ts
-  var APPLY_HISTORY_MODE_LABELS = Object.freeze({
-    section: "まとめ反映",
-    nodes: "差分選択",
-    patch: "JSONパッチ",
-    retry: "再反映",
-    restore: "復元"
-  });
-
-  // src/ui/components.ts
-  init_constants();
-  init_dialog();
-
-  // src/oss_integrations.ts
-  init_utils();
-  init_dialog();
+  // src/diff/filter.ts
+  var SECTION_LABEL_BY_KEY = new Map(
+    SECTION_DEFS.map((s) => [s.key, s.label])
+  );
 
   // src/ui/components.ts
   var ui2 = {};
@@ -4402,9 +4187,6 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   });
 
   // src/entries/litePanelTheme.ts
-  init_dialog();
-  init_runControl();
-  init_utils();
   var STYLE_ID = "kus-lp-theme-styles";
   var ACCENTS = {
     diff: { from: "#1d4ed8", via: "#2563eb", to: "#0ea5e9", chip: "#dbeafe", ring: "rgba(37,99,235,.16)" },
@@ -5584,8 +5366,6 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   }
 
   // src/entries/appSearchControl.ts
-  init_api();
-  init_utils();
   var RESULT_CSS_ID = "kus-app-search-styles";
   var RESULT_CSS = `
 .kus-as__result{margin-top:6px;border:1px solid var(--c-border);border-radius:8px;overflow:hidden;max-height:240px;overflow-y:auto}
@@ -5899,9 +5679,6 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     space.addEventListener("keydown", onEnterKey);
     return details;
   }
-
-  // src/entries/reflect-lite-ui.ts
-  init_runControl();
 
   // src/reflect/planReport.ts
   var ENVIRONMENT_LABELS = { production: "本番設定", preview: "プレビュー設定", json: "設定JSON" };
@@ -6690,7 +6467,6 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   }
 
   // src/reflect/appLookup.ts
-  init_api();
   var REFLECT_APP_LOOKUP_FAILURE = "アプリを確認できません。ID・ゲストスペース・閲覧権限を確認してください。";
   var POSITIVE_INTEGER = /^[1-9]\d*$/;
   function isLookupableReflectApp(appId, guestId) {
@@ -6837,7 +6613,6 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   }
 
   // src/entries/reflect-lite-ui.ts
-  init_utils();
   var REFLECT_PRESET_LIMIT = 30;
   var STALE_RESULT_NOTICE = "直近の反映結果は現在の対象と異なるため表示していません。対象を戻すと表示されます。";
   var RESTORE_FIELD_SETTINGS_NOTE = "バックアップから戻している間はフィールド設定を追加できません。この項目を対象から外してください。";

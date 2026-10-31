@@ -592,15 +592,21 @@ export async function runBatchDesignExportMdZipStandalone(
             preserveMetadata: true
           });
         } else {
-          const liveBundle = await resolveDesignBundle(
+          // AI向けは正規化しない原文を使うため、通常版とは別に取得する（取得結果を共有すると単独出力と内容が変わる）。
+          mdBundle = await resolveDesignBundle(
             { appId: target.appId, guestId: target.guestId, preview },
             'source',
             setStatus,
             labelPrefix,
             false
           );
-          mdBundle = liveBundle;
-          aiBundle = liveBundle;
+          aiBundle = await resolveDesignBundle(
+            { appId: target.appId, guestId: target.guestId, preview },
+            'source',
+            setStatus,
+            labelPrefix,
+            true
+          );
         }
       }
 

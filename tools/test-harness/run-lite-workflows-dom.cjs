@@ -10,7 +10,7 @@ const OUT = path.join(ROOT, '.iter-shots/lite-workflows');
 const esbuild = require(path.join(TOOL, 'node_modules/esbuild'));
 
 const MODULES = {
-  design: ['runDesignCopyAiMdStandalone', 'runDesignCopyMdStandalone', 'runDesignDiffMdStandalone', 'runDesignExportStandalone', 'runDesignExportXlsxStandalone', 'runBatchDesignExportXlsxZipStandalone'],
+  design: ['runDesignCopyAiMdStandalone', 'runDesignCopyMdStandalone', 'runDesignDiffMdStandalone', 'runDesignExportStandalone', 'runDesignExportXlsxStandalone', 'runBatchDesignExportXlsxZipStandalone', 'runBatchDesignExportMdZipStandalone'],
   'settings-export': ['runSettingsExportSearchStandalone', 'runSettingsExportStandalone', 'runSettingsExportListSpaceAppsStandalone'],
   er: ['runGenerateERDiagramStandalone', 'runExportERDiagramHtmlStandalone'],
   process: ['runRenderProcessFlowStandalone', 'runProcessBatchZipStandalone'],
@@ -151,10 +151,10 @@ async function main() {
           // 表面の操作は 3 つまで。残りは「ほかの操作…」のポップアップで選ぶ
           assert.equal(await stage(0).locator('input[type=radio]:visible').count(), 3, '設計書: 表面の操作は3つまで');
           const more = page.locator('.kus-wf-action--more');
-          assert.match(await more.innerText(), /ほかの操作…（5 件）/);
+          assert.match(await more.innerText(), /ほかの操作…（8 件）/);
           await more.click();
           assert.equal(await page.locator('#kus-design-lite-more-actions').isVisible(), true, '設計書: ほかの操作を開く');
-          assert.equal(await page.locator('#kus-design-lite-more-actions input[type=radio]:visible').count(), 5);
+          assert.equal(await page.locator('#kus-design-lite-more-actions input[type=radio]:visible').count(), 8);
           await page.getByRole('radio', { name: 'AI向けMarkdownをコピー', exact: true }).check();
           assert.equal(await page.locator('#kus-design-lite-more-actions').isVisible(), false, '設計書: 選ぶと閉じる');
           assert.equal(await more.getAttribute('aria-pressed'), 'true');
@@ -420,7 +420,7 @@ async function main() {
           await chooseAction('2アプリの設計差分を保存');
           assert.equal(await button('内容を確認する').isDisabled(), true);
           await chooseAction('全対象をExcel ZIPで保存');
-          await page.getByRole('checkbox', {name:'プレビュー環境から取得（単一出力・2アプリ差分）',exact:true}).check();
+          await page.getByRole('checkbox', {name:'プレビュー環境から取得（単一出力・2アプリ差分・Markdown ZIP）',exact:true}).check();
           await button('内容を確認する').click();
           assert.match(await stage(1).innerText(), /#202 · 本番/);
           await button('対象・条件を変更').click();
@@ -437,6 +437,18 @@ async function main() {
           const aiCopyCallsBefore = await page.evaluate(() => window.__workflowFixture.calls.length);
           await button('AI向けMarkdownをコピー').click(); await idle();
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), aiCopyCallsBefore + 1, '設計書: AI向けMarkdownコピーを実行する');
+          for (const [label, format] of [['全対象をMarkdown ZIPで保存', 'md'], ['全対象をAI向けMarkdown ZIPで保存', 'ai-md'], ['全対象をMarkdownとAI向けのZIPで保存', 'both']]) {
+            await button('対象・条件を変更').click();
+            await chooseAction(label);
+            await button('内容を確認する').click();
+            assert.match(await stage(1).innerText(), /#202 · プレビュー/, `設計書: ${label} の確認画面にプレビュー取得を示す`);
+            if (format === 'both') assert.match(await stage(1).innerText(), /取得が2回/, '設計書: 両形式では取得回数を示す');
+            await button(label).click(); await idle();
+            const call = await page.evaluate(() => window.__workflowFixture.calls.at(-1));
+            assert.equal(call.name, 'runBatchDesignExportMdZipStandalone', `設計書: ${label} を実行する`);
+            assert.equal(call.input.format, format, `設計書: ${label} の形式を渡す`);
+            assert.equal(call.input.preview, true, `設計書: ${label} にプレビュー取得を渡す`);
+          }
           await button('対象・条件を変更').click();
           await chooseAction(defaultAction);
         }

@@ -80,8 +80,13 @@ export function detectRowSeverity(row) {
   // 実質同値（"100"⇄100 等の表記ゆれ / 空文字⇄null 等の空値ゆれ）は low
   if (row?.notationOnly || row?.emptyOnly) return 'low';
 
-  // 装飾・順序・寸法・説明だけの変更は low（HIGH_IMPACT セクションでも降格）
+  // 装飾・順序・寸法・説明だけの変更は low（HIGH_IMPACT セクションでも降格）。
+  // 追加・削除は値がオブジェクトの行を除く。「description」というコードのフィールドを丸ごと追加した行などを降格しないため。
   if (LOW_PRIORITY_LEAF_KEYS.has(leaf) && row?.type === 'changed') return 'low';
+  if (LOW_PRIORITY_LEAF_KEYS.has(leaf) && (row?.type === 'added' || row?.type === 'removed')) {
+    const value = row.type === 'added' ? row.right : row.left;
+    if (value === null || typeof value !== 'object') return 'low';
+  }
 
   // ACL の許可フラグ：true→false は権限弱化（high）、false→true は権限拡大（medium）
   if ((sec === 'appAcl' || sec === 'recordPermissions') && ACL_GRANT_FLAG_KEYS.has(leaf) && row?.type === 'changed') {
@@ -1406,13 +1411,14 @@ export function preprocessCustomizePairForDiff(src, tgt) {
       const tArr = tClone?.[platform]?.[kind];
       const sList: any[] = Array.isArray(sArr) ? sArr : [];
       const tList: any[] = Array.isArray(tArr) ? tArr : [];
-      const tByName = new Map<string, any>();
-      tList.forEach((it) => { if (it && typeof it === 'object' && it.name) tByName.set(String(it.name), it); });
-      const sByName = new Map<string, any>();
-      sList.forEach((it) => { if (it && typeof it === 'object' && it.name) sByName.set(String(it.name), it); });
-      const hasBodyOf = (byName: Map<string, any>, it) => byName.get(String(it?.name || ''))?._bodyText != null;
-      const sPlans = sList.map((it) => [it, hasBodyOf(tByName, it)] as const);
-      const tPlans = tList.map((it) => [it, hasBodyOf(sByName, it)] as const);
+      // 同名のファイルが複数あるときは、どれか1つに本文があれば本文比較にする。
+      const namesWithBody = (list: any[]) => new Set(list
+        .filter((it) => it && typeof it === 'object' && it.name && it._bodyText != null)
+        .map((it) => String(it.name)));
+      const tBodyNames = namesWithBody(tList);
+      const sBodyNames = namesWithBody(sList);
+      const sPlans = sList.map((it) => [it, tBodyNames.has(String(it?.name || ''))] as const);
+      const tPlans = tList.map((it) => [it, sBodyNames.has(String(it?.name || ''))] as const);
       sPlans.forEach(([it, counterpartHasBody]) => swapBodyOrCleanup(it, counterpartHasBody));
       tPlans.forEach(([it, counterpartHasBody]) => swapBodyOrCleanup(it, counterpartHasBody));
     }

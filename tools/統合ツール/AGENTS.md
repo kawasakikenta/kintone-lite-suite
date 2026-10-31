@@ -9,25 +9,25 @@
 
 | 生成ファイル (tools/) | ソースエントリ (src/entries/) | 機能の正規実装 (src/tabs/) |
 |---|---|---|
-| `差分比較.js` | `diff-lite-entry.ts` | `tabs/diff.ts`, `tabs/diff-standalone.ts` |
-| `設計書作成.js` | `design-lite-entry.ts` | `tabs/design.ts`, `tabs/design-standalone.ts`, `tabs/design-xlsx.ts` |
-| `kintoneJS取得.js` | `jsconfig-lite-entry.ts` | `tabs/jsconfig.ts`, `tabs/jsconfig-standalone.ts` |
-| `設定取得.js` | `settings-export-lite-entry.ts` | `tabs/settings-export.ts`, `tabs/settings-export-standalone.ts` |
+| `差分比較.js` | `diff-lite-entry.ts` | `tabs/diff-standalone.ts` |
+| `設計書作成.js` | `design-lite-entry.ts` | `tabs/design-standalone.ts`, `tabs/design-xlsx.ts` |
+| `kintoneJS取得.js` | `jsconfig-lite-entry.ts` | `tabs/jsconfig-standalone.ts` |
+| `設定取得.js` | `settings-export-lite-entry.ts` | `tabs/settings-export-standalone.ts` |
 | `ER図.js` | `er-lite-entry.ts` | `tabs/er.ts`, `tabs/er-standalone.ts` |
-| `プロセス実行.js` | `process-lite-entry.ts` | `tabs/process.ts`, `tabs/process-standalone.ts` |
-| `プレビュー反映.js` | `reflect-lite-entry.ts` | `tabs/reflect.ts`, `tabs/reflect-standalone.ts` |
-| `フィールド追加.js` | `field-lite-entry.ts` | `tabs/field.ts`, `tabs/field-standalone.ts` |
-| `kintoneレコード取得.js` | `record-lite-entry.ts` | `tabs/record.ts`, `tabs/record-standalone.ts` |
+| `プロセス実行.js` | `process-lite-entry.ts` | `tabs/process-standalone.ts` |
+| `プレビュー反映.js` | `reflect-lite-entry.ts` | `tabs/reflect-standalone.ts` |
+| `フィールド追加.js` | `field-lite-entry.ts` | `tabs/field-standalone.ts` |
+| `kintoneレコード取得.js` | `record-lite-entry.ts` | `tabs/record-standalone.ts` |
 | `CSV出力.js` | `csv-export-lite-entry.ts` | `tabs/record-standalone.ts` |
 | `単機能スクリプト棚卸し.md` | — | — |
 
 ### バンドル種別
 
-全単機能スクリプトは **軽量 lite バンドル** です。`boot.ts`（廃止済み統合版のフル UI）を含まず、
+全単機能スクリプトは **軽量 lite バンドル** です。
 `*-standalone.ts` + `*-lite-ui.ts` + `litePanelTheme.ts`（共通パネル UI）で自己完結する軽量パネルを提供します。
 各 lite エントリ（`*-lite-entry.ts`）は `kintoneGuard.ts` の `runOnKintonePage()` で kintone 画面判定してから起動します。
 
-統合版（`統合ツール.js`）は廃止済みです。ビルドでは生成せず、既存ファイルがあれば削除します。lite 版を正規の公開エントリポイントとします。
+統合版（`統合ツール.js`）は廃止済みです。ビルドでは生成せず、既存ファイルがあれば削除します。旧統合版のソース（`boot.ts`・`handlers.ts`・`tabs/record.ts`・`reflect/apply.ts` など）も削除済みです。lite 版を正規の公開エントリポイントとします。
 
 ## 修正ワークフロー
 
@@ -43,10 +43,7 @@
 tools/統合ツール/
 ├── build.js                   # ビルドスクリプト（esbuild）
 ├── src/
-│   ├── index.ts               # 廃止済み統合版の旧エントリ（ビルド対象外）
-│   ├── boot.ts                # 廃止済み統合版の旧起動処理（ビルド対象外）
 │   ├── featureDefs.mjs        # エントリ一覧（STANDALONE_LAUNCH_ENTRIES）
-│   ├── register-api.ts        # window.__KUS__ 公開 API
 │   ├── constants.ts           # 定数
 │   ├── state.ts               # グローバル state
 │   ├── api.ts                 # kintone REST API ラッパー（書き込みガード / revision 競合判定 / レコード全件取得 / 中止・応答待ち上限）
@@ -54,20 +51,19 @@ tools/統合ツール/
 │   ├── jszipLoader.ts         # lite 版共通の JSZip 動的ローダ
 │   ├── utils.ts               # 汎用ユーティリティ
 │   ├── kintoneGuard.ts        # kintone 画面ガード（全エントリ・boot 共通）
-│   ├── handlers.ts            # イベント委譲
 │   ├── entries/               # esbuild エントリポイント
 │   │   ├── *-lite-entry.ts    # 軽量単機能エントリ（kintoneGuard で起動）
 │   │   ├── *-lite-ui.ts       # 軽量単機能の UI パネル
 │   │   ├── litePanelTheme.ts  # lite 版共通パネル UI（createLitePanel/makeRow 等）
 │   │   └── appSearchControl.ts # アプリ名検索コントロール（lite 共通）
 │   ├── tabs/                  # 各タブの正規実装
-│   │   ├── *.ts               # 共通・旧統合 UI 用タブロジック
+│   │   ├── *.ts               # 共通タブロジック
 │   │   ├── record-query.ts    # レコード取得クエリ / CSV / ZIP 命名 / 分割書き込みの純粋ヘルパー
 │   │   └── *-standalone.ts    # lite 版用に統合 UI 依存を外した関数群
 │   ├── diff/                  # 差分エンジン
 │   ├── reflect/               # プレビュー反映エンジン
-│   ├── handlers/              # handlers.ts から分割したイベント系モジュール
-│   └── ui/                    # UI 層（テンプレート・styles/*.css・コンポーネント）
+│   ├── handlers/              # 差分行のフォーカス移動
+│   └── ui/                    # UI 層（ダイアログ・共通コンポーネント）
 └── tools/                     # ← 親ディレクトリ（生成物の出力先）
     ├── 差分比較.js             # lite 生成物
     └── ...                    # 他の生成物
@@ -75,12 +71,12 @@ tools/統合ツール/
 
 ## 共有モジュールの注意点
 
-- `tabs/design-xlsx.ts` は `tabs/design.ts` と `tabs/design-standalone.ts`（lite 版）の**両方**からインポートされる。変更時は両方に影響する。
+- `tabs/design-xlsx.ts` は `tabs/design-standalone.ts`（lite 版）からインポートされる。
 - `tabs/er.ts` の `crawl`/`buildHTML` は `tabs/er-standalone.ts`（lite 版）から使用される。
 - `entries/litePanelTheme.ts` の `createLitePanel`／`makeRow` 等は全 lite 系パネルの共通 UI 基盤。変更時は軽量バンドル全体に影響する。
-- `kintoneGuard.ts` の `isKintonePage`／`runOnKintonePage` は全 lite エントリ（9 本）と `boot.ts` 共通の kintone 画面ガード。文言・判定を変えると全エントリに波及する。
+- `kintoneGuard.ts` の `isKintonePage`／`runOnKintonePage` は全 lite エントリ共通の kintone 画面ガード。文言・判定を変えると全エントリに波及する。
 - `diff/export.ts` の `bundleToMarkdown` は設計書 lite（`tabs/design-standalone.ts`）から参照される。
-- `tabs/record-query.ts` のクエリ生成は `tabs/record.ts`（旧統合 UI）からも再公開されている。lite 版のレコード取得は `api.ts` の `fetchRecordsByQuery`（order by 無し: `$id` シーク / あり: cursor API）に統一する。
+- レコード取得は `api.ts` の `fetchRecordsByQuery`（order by 無し: `$id` シーク / あり: cursor API）に統一する。
 - 利用者向けの文言（タイトル・ヒント・注記・操作の説明・ステータス）は `docs/ui-writing-guide.md` に従う。見出しのバッジは影響範囲（`tone: 'read' | 'preview' | 'production'`）を 1 つだけ付ける。
 - 環境内の全アプリの一覧は `api.ts` の `fetchAllApps(guestId?)`（`/apps.json` を 100 件ずつ最後まで取得。ゲストスペースは別に取得）。`entries/appSearchControl.ts` の「環境内の全アプリ」が使い、割り当て先に `applyAll` を持たせると「候補 N 件をすべて追加」ボタンが出る。複数アプリを受け付ける入力欄だけに `applyAll` を付ける（比較元・反映元など単一の入力には付けない）。アプリ表への一括投入は `makeAppTable().putApps()`（変更通知 1 回）を使う。
 - 確認画面・確認ダイアログで対象アプリを列挙するときは `utils.ts` の `summarizeList`（先頭 20 件＋「…ほか N 件（合計 M 件）」。`liteWorkflow.ts` からも再公開）を使い、全アプリ指定で数千行にしない。カンマ区切りの対象アプリ欄（レコード管理・データ品質チェック・ER図）は `entries/recordTargetApps.ts` を使う。アプリごとにネイティブの確認を出す本番書き込み（ステータス更新・コピー）は `PER_APP_CONFIRM_APP_LIMIT`（50）で件数を制限している。

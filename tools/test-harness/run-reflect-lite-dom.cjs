@@ -540,7 +540,7 @@ async function main() {
     await button('フォームのみ').click();
     assert.equal(await fieldNotice.isHidden(), true);
     await button('権限のみ').click();
-    assert.equal(await fieldNotice.isHidden(), true);
+    assert.equal(await fieldNotice.isVisible(), true, 'フィールド権限を含むセットでは注意する');
     await button('ビューとグラフ').click();
     assert.equal(await fieldNotice.isVisible(), true, '項目のセット選択にも追従する');
     await openDetail();

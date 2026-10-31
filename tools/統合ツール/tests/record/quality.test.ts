@@ -16,6 +16,12 @@ describe('record quality checks', () => {
     expect(() => selectQualityFields(props, ['file'])).toThrow(/使えない/);
     expect(() => selectQualityFields(props, ['title', 'amount', 'tags', 'users', 'file', 'table'])).toThrow(/1〜5/);
   });
+  it('reports an empty field and an unreadable field as separate findings for one record', () => {
+    const broken = { ...record(1, ''), amount: cell('SINGLE_LINE_TEXT', '1') };
+    const result = inspect([broken], ['title', 'amount']);
+    expect(result).toMatchObject({ emptyRecords: 1, unavailableRecords: 1, duplicateRecords: 0 });
+    expect(result.findings.map(item => [item.kind, item.fields])).toEqual([['未入力', ['title']], ['取得不可', ['amount']]]);
+  });
   it('finds composite duplicates without merging values containing delimiters', () => {
     const result = inspect([record(1, 'A', '1'), record(2, 'A', '2'), record(3, 'A', '1')], ['title', 'amount']);
     expect(result).toMatchObject({ total: 3, duplicateGroups: 1, duplicateRecords: 2 });
