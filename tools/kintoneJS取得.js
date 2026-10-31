@@ -3808,6 +3808,73 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     setStatus(res.headline, res.tone === "err" || res.tone === "warn");
     return res;
   }
+  function buildJsConfigBatchIndexMarkdown(manifest) {
+    const apps = Array.isArray(manifest?.apps) ? manifest.apps : [];
+    const exportedAt = manifest?.exportedAt || manifest?.generatedAt || "-";
+    const cell = (v) => String(v ?? "-").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+    const lines = [
+      "# JS/CSS設定 一括取得 INDEX",
+      "",
+      `- 出力日時: ${exportedAt}`,
+      `- ゲストスペースID: ${manifest?.guestId || "通常（指定なし）"}`,
+      `- 対象アプリ数: ${manifest?.appCount ?? apps.length}件`,
+      `- 保存ファイル数: ${manifest?.fileCount ?? 0}件`,
+      "",
+      "## アプリ別サマリ",
+      "",
+      "| アプリID | アプリ名 | 適用範囲 (scope) | revision | フォルダ | 保存ファイル数 | 外部URL数 | 失敗数 |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- |"
+    ];
+    for (const app of apps) {
+      const fileLen = Array.isArray(app.files) ? app.files.length : 0;
+      const urlLen = Array.isArray(app.urlEntries) ? app.urlEntries.length : 0;
+      const failLen = Array.isArray(app.failures) ? app.failures.length : 0;
+      lines.push(
+        `| ${cell(app.appId)} | ${cell(app.name || "-")} | ${cell(app.scope || "-")} | ${cell(app.revision || "-")} | ${cell(app.folder || "-")} | ${fileLen} | ${urlLen} | ${failLen} |`
+      );
+    }
+    lines.push(
+      "",
+      "## ファイル・外部URL一覧（アプリ別・スコープ別）",
+      "",
+      "| アプリID | アプリ名 | 適用範囲 | 枠 (desktop/mobile) | 種別 (js/css) | 読込順 (order) | 区分 | 保存先パス / 外部URL |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- |"
+    );
+    let itemRows = 0;
+    for (const app of apps) {
+      for (const f of app.files || []) {
+        itemRows += 1;
+        lines.push(
+          `| ${cell(app.appId)} | ${cell(app.name || "-")} | ${cell(app.scope || "-")} | ${cell(f.area)} | ${cell(f.kind)} | ${Number(f.order ?? 0)} | FILE | ${cell(f.entry)} |`
+        );
+      }
+      for (const u of app.urlEntries || []) {
+        itemRows += 1;
+        lines.push(
+          `| ${cell(app.appId)} | ${cell(app.name || "-")} | ${cell(app.scope || "-")} | ${cell(u.scope)} | ${cell(u.type)} | ${Number(u.order ?? 0)} | URL | ${cell(u.url)} |`
+        );
+      }
+    }
+    if (!itemRows) {
+      lines.push("| - | - | - | - | - | - | - | 対象なし |");
+    }
+    const failures = Array.isArray(manifest?.failures) ? manifest.failures : [];
+    if (failures.length > 0) {
+      lines.push(
+        "",
+        "## 取得失敗一覧",
+        "",
+        "| 区分 | アプリID | 対象 | 理由 |",
+        "| --- | --- | --- | --- |"
+      );
+      for (const fail of failures) {
+        lines.push(
+          `| ${cell(fail.type)} | ${cell(fail.appId)} | ${cell(fail.fileName || fail.name || "-")} | ${cell(fail.reason)} |`
+        );
+      }
+    }
+    return lines.join("\n") + "\n";
+  }
   async function runBatchJsConfigDownloadStandalone(p, setStatus) {
     const guestId = String(p.guestId || "").trim();
     if (guestId && !/^\d+$/.test(guestId)) throw new Error("ゲストスペースIDは半角数字で入力してください");
@@ -3859,10 +3926,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         continue;
       }
       const files = ["desktop", "mobile"].flatMap(
-        (area) => ["js", "css"].flatMap((kind) => (customize?.[area]?.[kind] || []).map((f) => ({ ...f, area, kind })))
+        (area) => ["js", "css"].flatMap((kind) => (customize?.[area]?.[kind] || []).map((f, order) => ({ ...f, area, kind, order })))
       );
       const fileTargets = files.filter((f) => f?.type === "FILE" && f?.file?.fileKey);
-      if (!fileTargets.length) continue;
+      const urlEntries = files.filter((f) => f?.type === "URL" && f?.url).map((f) => ({ type: f.kind, scope: f.area, url: String(f.url), order: Number(f.order ?? 0) }));
+      if (!fileTargets.length && !urlEntries.length) continue;
       const folderName = guestId ? `guest${guestId}_${app.appId}_${safeName}` : `${app.appId}_${safeName}`;
       const used = new CaseInsensitiveNameSet();
       const manifestFiles = [];
@@ -3882,7 +3950,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         if (result.ok === true) {
           const entry = uniqueZipEntryName(used, sanitizeFolderName(fileName) || "file.bin");
           fetched.push({ entry, blob: result.blob });
-          manifestFiles.push({ entry: `${folderName}/${entry}`, area: file.area, kind: file.kind, name: fileName, fileKey: String(file.file.fileKey), size: String(file.file.size ?? "") });
+          manifestFiles.push({ entry: `${folderName}/${entry}`, area: file.area, kind: file.kind, order: Number(file.order ?? 0), name: fileName, fileKey: String(file.file.fileKey), size: String(file.file.size ?? "") });
         } else {
           appFailures.push({ appId: app.appId, fileName, reason: result.reason });
         }
@@ -3891,11 +3959,22 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         stoppedAt = i;
         break;
       }
-      const appFolder = zip.folder(folderName);
-      for (const item of fetched) appFolder.file(item.entry, item.blob);
+      if (fetched.length) {
+        const appFolder = zip.folder(folderName);
+        for (const item of fetched) appFolder.file(item.entry, item.blob);
+      }
       fileCount += fetched.length;
       failedFiles.push(...appFailures);
-      manifestApps.push({ appId: String(app.appId), name: String(app.name || ""), folder: folderName, scope: String(customize?.scope || ""), files: manifestFiles });
+      manifestApps.push({
+        appId: String(app.appId),
+        name: String(app.name || ""),
+        folder: fileTargets.length ? folderName : "",
+        scope: String(customize?.scope || ""),
+        revision: String(pickRevision(customize) || ""),
+        files: manifestFiles,
+        urlEntries,
+        failures: appFailures
+      });
       await sleepUnlessCancelled(80);
     }
     const failed = failedApps.length + failedFiles.length;
@@ -3929,17 +4008,27 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       ];
       zip.file("download_errors.txt", lines.join("\n") + "\n");
     }
-    zip.file("manifest.json", JSON.stringify({
-      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const allFailures = [
+      ...failedApps.map((a) => ({ type: "app", appId: a.appId, name: a.name, reason: a.reason })),
+      ...failedFiles.map((f) => ({ type: "file", appId: f.appId, fileName: f.fileName, reason: f.reason }))
+    ];
+    const manifestPayload = {
+      formatVersion: 1,
+      generatedAt: nowIso,
+      exportedAt: nowIso,
       guestId: guestId || "",
       appCount: apps.length,
       fileCount,
       apps: manifestApps,
       failedApps,
       failedFiles,
+      failures: allFailures,
       ...notExecuted.length ? { cancelled: true, notExecuted } : {},
-      note: "URL 形式の JS/CSS は含みません。entry は ZIP 内のパス、area は desktop/mobile、kind は js/css です。"
-    }, null, 2));
+      note: "URL 形式の JS/CSS 本文は ZIP に含みませんが、manifest.json と INDEX.md に一覧します。entry は ZIP 内のパス、area は desktop/mobile、kind は js/css です。"
+    };
+    zip.file("manifest.json", JSON.stringify(manifestPayload, null, 2));
+    zip.file("INDEX.md", buildJsConfigBatchIndexMarkdown(manifestPayload));
     setStatus("ZIPファイル作成中...");
     const zipBlob = await zip.generateAsync({ type: "blob" });
     downloadBlob(`customize_scripts_${nowStamp()}.zip`, zipBlob);

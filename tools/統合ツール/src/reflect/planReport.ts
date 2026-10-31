@@ -22,7 +22,10 @@ export interface ReflectReportInput {
   entries: ReflectSectionPlan[];
   targetPending?: ReflectTargetPending;
   /** 反映後の記録にする場合の実行結果 */
+  /** 反映後の記録にする場合の実行結果 */
   outcome?: { executedAt: string; sections: ApplySectionOutcome[] };
+  /** 複数アプリへの順次反映（ロールアウト）結果 */
+  rolloutResults?: Array<{ appId: string; guestId?: string; appName?: string; outcome: string; detail?: string }>;
 }
 
 const ENVIRONMENT_LABELS: Record<ReflectReportInput['sourceEnvironment'], string> = { production: '本番設定', preview: 'プレビュー設定', json: '設定JSON' };
@@ -99,6 +102,15 @@ export function buildReflectReportMarkdown(input: ReflectReportInput): string {
       }
     } else if (entry.status === 'change') {
       lines.push('', `変更 ${entry.changeCount} 件（要約を作成できませんでした。詳細は反映計画JSONで確認してください）`);
+    }
+    lines.push('');
+  }
+  if (Array.isArray(input.rolloutResults) && input.rolloutResults.length > 0) {
+    lines.push('## 複数アプリへの順次反映（ロールアウト）結果', '');
+    lines.push('| 反映先アプリID | 反映先アプリ名 | ゲストスペース | 結果 | 詳細 |');
+    lines.push('| --- | --- | --- | --- | --- |');
+    for (const r of input.rolloutResults) {
+      lines.push(`| ${cell(r.appId)} | ${cell(r.appName || '－')} | ${cell(r.guestId || '通常スペース')} | ${cell(r.outcome)} | ${cell(r.detail || '－')} |`);
     }
     lines.push('');
   }

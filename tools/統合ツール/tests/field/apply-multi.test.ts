@@ -3,6 +3,7 @@ import { apiGet, apiPost, apiPut } from '../../src/api';
 import { beginRun, endRun, requestCancel, RunCancelledError, type RunToken } from '../../src/runControl';
 import { kusConfirm } from '../../src/utils';
 import {
+  buildFieldApplyReportMarkdown,
   buildFieldMultiConfirmText,
   findFieldMultiApplyProblem,
   runFieldApplyMultiStandalone
@@ -221,5 +222,34 @@ describe('field apply to many targets: input checks', () => {
     expect(text).toContain('30 件の反映先');
     expect(text).toContain('…ほか 10 件（合計 30 件）');
     expect(text.indexOf('× App 30')).toBeLessThan(text.indexOf('○ App 1:'));
+  });
+
+  it('formats single and multi-app field apply results as Markdown via buildFieldApplyReportMarkdown', async () => {
+    const report = await run();
+    const multiMd = buildFieldApplyReportMarkdown(report);
+    expect(multiMd).toContain('# フィールド追加・更新 実行レポート');
+    expect(multiMd).toContain('## 反映先アプリ別結果');
+    expect(multiMd).toContain('| 13 | 三つ目 | 通常 | 成功 | 1 | 0 | 0 |');
+
+    const singleMd = buildFieldApplyReportMarkdown({
+      generatedAt: '2026-10-31T00:00:00.000Z',
+      targetAppId: '11',
+      targetGuestId: '3',
+      targetAppName: '営業管理',
+      overwrite: true,
+      lookupMap: { '1': '2' },
+      plan: {
+        adds: { codeA: { type: 'SINGLE_LINE_TEXT' } },
+        updates: { codeB: { type: 'NUMBER' } },
+        skippedExisting: [],
+        skippedSystem: ['$id'],
+        lookupConverted: ['codeA'],
+        logs: ['ADD codeA (参照先AppID変換)', 'UPDATE codeB']
+      }
+    });
+    expect(singleMd).toContain('App 11（営業管理） / ゲストスペース 3');
+    expect(singleMd).toContain('Lookup AppID変換: 1 → 2');
+    expect(singleMd).toContain('| 追加 (ADD) | 1 | codeA |');
+    expect(singleMd).toContain('| 更新 (UPDATE) | 1 | codeB |');
   });
 });

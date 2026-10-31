@@ -7,7 +7,9 @@ import {
   describeStateAssignee,
   describeSimActionCondition,
   runRenderProcessFlowStandalone,
-  validateProcessConnection
+  validateProcessConnection,
+  buildProcessSpecMarkdown,
+  formatProcessSimulationHistory
 } from '../../src/tabs/process-standalone';
 
 vi.mock('../../src/api', async original => ({
@@ -327,5 +329,129 @@ describe('runRenderProcessFlowStandalone freshness', () => {
       if (previousWindow === undefined) delete (globalThis as any).window;
       else (globalThis as any).window = previousWindow;
     }
+  });
+});
+
+describe('buildProcessSpecMarkdown & formatProcessSimulationHistory & offline statusData rendering', () => {
+  const sampleStates = {
+    '未処理': {
+      index: '0',
+      assignee: {
+        type: 'ONE',
+        entities: [{ entity: { type: 'CREATOR', code: '' }, includeSubs: false }]
+      }
+    },
+    '上長承認待ち': {
+      index: '1',
+      assignee: {
+        type: 'ALL',
+        entities: [{ entity: { type: 'ORGANIZATION', code: 'sales_dept' }, includeSubs: true }]
+      }
+    },
+    '完了': {
+      index: '2',
+      assignee: {
+        type: 'ONE',
+        entities: []
+      }
+    }
+  };
+
+  const sampleActions = [
+    { name: '申請する', from: '未処理', to: '上長承認待ち', filterCond: '金額 >= 10000', type: 'PRIMARY' },
+    { name: '承認する', from: '上長承認待ち', to: '完了', filterCond: '', type: 'PRIMARY' },
+    { name: '強制却下', from: '上長承認待ち', to: '未処理', filterCond: '緊急フラグ in ("要")', type: 'SECONDARY' }
+  ];
+
+  it('builds a comprehensive Process Management Spec Markdown with status table, action table, and mermaid flowchart', () => {
+    const md = buildProcessSpecMarkdown({
+      appId: '42',
+      guestId: '5',
+      appName: '稟議ワークフロー',
+      preview: true,
+      generatedAt: '2026-10-31T00:00:00.000Z',
+      states: sampleStates,
+      actions: sampleActions
+    });
+
+    expect(md).toContain('# プロセス管理仕様書 - 稟議ワークフロー');
+    expect(md).toContain('- アプリID: 42');
+    expect(md).toContain('- ゲストスペースID: 5');
+    expect(md).toContain('- 参照環境: プレビュー');
+    expect(md).toContain('## 構造診断サマリ');
+    expect(md).toContain('- 状態数: 3');
+    expect(md).toContain('- アクション数: 3');
+    expect(md).toContain('- 始点ステータス: 未処理');
+    expect(md).toContain('- 終端ステータス: 完了');
+    expect(md).toContain('- 分岐ステータス: 上長承認待ち');
+    expect(md).toContain('## ステータス定義一覧');
+    expect(md).toContain('| 0 | 未処理 | 1人 (ONE) | 作成者 (CREATOR) |');
+    expect(md).toContain('| 1 | 上長承認待ち | 全員 (ALL) | 組織 (sales_dept)（下位組織含む） |');
+    expect(md).toContain('## アクション遷移定義一覧');
+    expect(md).toContain('| 申請する | 通常 (PRIMARY) | 未処理 | 上長承認待ち | 金額 &gt;= 10000 |');
+    expect(md).toContain('| 強制却下 | 作業者以外も実行可 (SECONDARY) | 上長承認待ち | 未処理 | 緊急フラグ in ("要") |');
+    expect(md).toContain('```mermaid\nstateDiagram-v2');
+  });
+
+  it('formats simulation transition history for test evidence / review records', () => {
+    const initialFormatted = formatProcessSimulationHistory([], '未処理', sampleStates);
+    expect(initialFormatted).toContain('## プロセス遷移シミュレーション履歴');
+    expect(initialFormatted).toContain('- 現在ステータス: 未処理（作業者(1人): 作成者）');
+    expect(initialFormatted).toContain('- 実行ステップ数: 0手');
+    expect(initialFormatted).toContain('- 遷移経路: 未処理（遷移履歴なし）');
+
+    const stepFormatted = formatProcessSimulationHistory(
+      [
+        { from: '未処理', action: '申請する', to: '上長承認待ち', condition: '実行条件: 金額 >= 10000' },
+        { from: '上長承認待ち', action: '承認する', to: '完了', condition: '実行条件: 条件なし' }
+      ],
+      '完了',
+      sampleStates
+    );
+    expect(stepFormatted).toContain('- 開始ステータス: 未処理');
+    expect(stepFormatted).toContain('- 現在ステータス: 完了（作業者設定: なし）');
+    expect(stepFormatted).toContain('- 実行ステップ数: 2手');
+    expect(stepFormatted).toContain('- 遷移経路: 未処理 [申請する] → 上長承認待ち [承認する] → 完了');
+    expect(stepFormatted).toContain('| 1 | 未処理 | 申請する | 上長承認待ち | 作業者(全員): sales_dept（下位組織含む） / 実行条件: 金額 &gt;= 10000 |');
+  });
+
+  it('renders and simulates offline via source.statusData or source.importedBundle without calling apiGet, and enables copyHistoryBtn', async () => {
+    const copyHistoryBtn: any = { disabled: true };
+    const targets: any = {
+      ...simTargets(),
+      simUi: {
+        ...simTargets().simUi,
+        copyHistoryBtn
+      }
+    };
+    const render = vi.fn(async () => ({ svg: '<svg/>' }));
+    await withMermaid({ render }, async () => {
+      const res = await runRenderProcessFlowStandalone(
+        {
+          importedBundle: {
+            appId: '77',
+            sections: {
+              processManagement: {
+                enable: true,
+                states: sampleStates,
+                actions: sampleActions
+              }
+            }
+          }
+        },
+        () => {},
+        targets
+      );
+      expect(apiGet).not.toHaveBeenCalled();
+      expect(res?.summary.stateCount).toBe(3);
+      expect(copyHistoryBtn.disabled).toBe(true);
+
+      await targets.simUi.startBtn.onclick();
+      expect(copyHistoryBtn.disabled).toBe(false);
+      targets.simUi.select.value = '0';
+      await targets.simUi.execBtn.onclick();
+      const historyMd = copyHistoryBtn.__getSimHistoryText();
+      expect(historyMd).toContain('未処理 [申請する] → 上長承認待ち');
+    });
   });
 });

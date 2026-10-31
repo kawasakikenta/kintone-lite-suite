@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { contentIdentifier, isSensitiveDiffPath, maskSensitiveDiffRows, maskSensitiveDiffValue, sha256Hex } from '../../src/diff/export-safety.js';
+import {
+  contentIdentifier,
+  isSensitiveSameDiffRow,
+  redactSensitiveSameDiffRows,
+  SENSITIVE_SAME_VALUE_REDACTION,
+  sha256Hex
+} from '../../src/diff/export-safety.js';
 
 describe('export content identifiers', () => {
   it('matches standard SHA-256 vectors for ASCII and UTF-8 text', () => {
@@ -16,27 +22,28 @@ describe('export content identifiers', () => {
     expect(identifier).not.toContain('secret');
   });
 
-  it('detects sensitive paths and masks sensitive strings and nested object keys with SHA-256 identifiers', () => {
-    expect(isSensitiveDiffPath('customizeSettings.desktop.js[0]._body', 'customizeSettings')).toBe(true);
-    expect(isSensitiveDiffPath('pluginSettings.plugins[0]._config', 'pluginSettings')).toBe(true);
-    expect(isSensitiveDiffPath('pluginSettings.plugins[0].apiToken', 'pluginSettings')).toBe(true);
-    expect(isSensitiveDiffPath('fieldSettings.properties.name.label', 'fieldSettings')).toBe(false);
+  it('omits unchanged plugin and customize values without redacting changed rows', () => {
+    const sameRow = {
+      sectionKey: 'pluginSettings',
+      path: 'pluginSettings.plugins[0]',
+      type: 'same',
+      left: { id: 'p1', apiKey: 'same-plugin-token' },
+      right: { id: 'p1', apiKey: 'same-plugin-token' }
+    };
+    const changedRow = {
+      sectionKey: 'pluginSettings',
+      path: 'pluginSettings.plugins[1]',
+      type: 'changed',
+      left: { id: 'p2', apiKey: 'raw-key-before' },
+      right: { id: 'p2', apiKey: 'raw-key-after' }
+    };
+    const rows = redactSensitiveSameDiffRows([sameRow, changedRow]);
 
-    const maskedBody = maskSensitiveDiffValue('console.log("secret-js");', 'customizeSettings.desktop.js[0]._body', 'customizeSettings');
-    expect(maskedBody).toMatch(/^\[マスク済み: SHA256-[0-9A-F]{16}\]$/);
-    expect(maskedBody).not.toContain('secret-js');
-
-    const rows = maskSensitiveDiffRows([
-      {
-        sectionKey: 'pluginSettings',
-        path: 'pluginSettings.plugins[0]',
-        left: { id: 'p1', apiKey: 'raw-key-before' },
-        right: { id: 'p1', apiKey: 'raw-key-after' }
-      }
-    ]);
-    expect(rows[0].left.id).toBe('p1');
-    expect(rows[0].left.apiKey).toMatch(/^\[マスク済み: SHA256-[0-9A-F]{16}\]$/);
-    expect(rows[0].right.apiKey).toMatch(/^\[マスク済み: SHA256-[0-9A-F]{16}\]$/);
-    expect(rows[0].left.apiKey).not.toBe(rows[0].right.apiKey);
+    expect(isSensitiveSameDiffRow(sameRow)).toBe(true);
+    expect(rows[0].left).toBe(SENSITIVE_SAME_VALUE_REDACTION);
+    expect(rows[0].right).toBe(SENSITIVE_SAME_VALUE_REDACTION);
+    expect(rows[0].sensitiveValueRedacted).toBe(true);
+    expect(rows[1].left).toBe(changedRow.left);
+    expect(rows[1].right).toBe(changedRow.right);
   });
 });

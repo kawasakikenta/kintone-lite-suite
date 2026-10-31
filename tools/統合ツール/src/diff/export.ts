@@ -2525,7 +2525,7 @@ function diffHtmlReviewRowMaterial(row: any): Record<string, any> {
   };
 }
 
-function prepareDiffHtmlReviewRows(rows: any[]): { rows: any[]; reviewKeys: string[] } {
+export function prepareDiffHtmlReviewRows(rows: any[]): { rows: any[]; reviewKeys: string[] } {
   const occurrenceByHash = new Map<string, number>();
   const reviewKeys: string[] = [];
   const keyedRows = (rows || []).map((row) => {
@@ -2554,7 +2554,7 @@ function stripDiffHtmlSubjectiveRowMetadata(row: any): any {
   };
 }
 
-function buildDiffHtmlReviewFingerprint(context: Record<string, any>, reviewKeys: string[]): string {
+export function buildDiffHtmlReviewFingerprint(context: Record<string, any>, reviewKeys: string[]): string {
   const material = stableStringify({
     version: DIFF_HTML_REVIEW_STATE_VERSION,
     source: context.source,
@@ -2568,6 +2568,73 @@ function buildDiffHtmlReviewFingerprint(context: Record<string, any>, reviewKeys
     reviewKeys: [...reviewKeys].sort()
   });
   return `report-v${DIFF_HTML_REVIEW_STATE_VERSION}-${hashDiffHtmlReviewText(material)}`;
+}
+
+export function computeDiffHtmlReviewIdentity(
+  sourceBundle: any,
+  targetBundle: any,
+  rows: any[],
+  scopes: any[] = [],
+  options: any = {}
+): { reportFingerprint: string; rowReviewKeys: string[]; reviewKeys: string[] } {
+  const exportContentMode = options.exportContentMode === 'diffOnly' ? 'diffOnly' : 'withCompared';
+  const includesComparedContent = shouldIncludeComparedContent(exportContentMode);
+  const inputRows = Array.isArray(rows) ? rows : [];
+  const sanitizedInputRows = inputRows.map((row) => row && typeof row === 'object'
+    ? {
+        ...row,
+        left: sanitizeReportRowValue(row, row.left),
+        right: sanitizeReportRowValue(row, row.right),
+        ...(isSensitiveSameDiffRow(row) ? { sensitiveValueRedacted: true } : {})
+      }
+    : row);
+  const preparedInputRows = prepareDiffHtmlReviewRows(sanitizedInputRows);
+  const rowReviewKeys = preparedInputRows.rows.map((row) => String(row?._reviewKey || ''));
+
+  const baseRows = sanitizedInputRows.filter((row) => includesComparedContent || row?.type !== 'same');
+  const rawDisplayRows = expandSubtableRowsForDisplay(expandEntityRowsForDisplay(baseRows));
+  const displayRows = rawDisplayRows;
+  const exportSelection = selectDiffHtmlRowsForExport(displayRows);
+  const preparedReviewRows = prepareDiffHtmlReviewRows(exportSelection.rows);
+  const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
+  const partialIssues = Array.isArray(options.partialIssues) ? options.partialIssues : [];
+  const engineTruncation = options.truncation || null;
+  const actualDiffTruncation = hasIncompleteActualDiffTruncation(engineTruncation) ? engineTruncation : null;
+  const incompleteComparison = Boolean(
+    actualDiffTruncation
+    || fetchIssues.length > 0
+    || partialIssues.length > 0
+    || exportSelection.summary.truncated
+  );
+  const sourceExportMeta = getBundleExportMeta(sourceBundle);
+  const targetExportMeta = getBundleExportMeta(targetBundle);
+  const reportRowSelection = {
+    ...exportSelection.summary,
+    baseRows: baseRows.length
+  };
+  const reportFingerprint = buildDiffHtmlReviewFingerprint({
+    source: {
+      appId: sourceExportMeta.appId,
+      guestId: sourceExportMeta.guestId,
+      preview: sourceExportMeta.preview
+    },
+    target: {
+      appId: targetExportMeta.appId,
+      guestId: targetExportMeta.guestId,
+      preview: targetExportMeta.preview
+    },
+    scopes: scopes || [],
+    exportMode: options.exportMode || 'all',
+    exportContentMode,
+    incompleteComparison,
+    truncated: exportSelection.summary.truncated,
+    rowSelection: reportRowSelection
+  }, preparedReviewRows.reviewKeys);
+  return {
+    reportFingerprint,
+    rowReviewKeys,
+    reviewKeys: preparedReviewRows.reviewKeys
+  };
 }
 
 export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKeys, options: any = {}) {

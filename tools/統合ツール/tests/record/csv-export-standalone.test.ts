@@ -277,6 +277,20 @@ describe('batch record CSV export', () => {
     expect([...zip.files.keys()].some(name => name.startsWith('app_8/'))).toBe(false);
     const manifest = textFile(zip, 'manifest.txt');
     expect(manifest).toContain('成功 1 / 失敗 1');
+    expect(manifest).toContain('app_7: 2件 / status=ok');
+    expect(manifest).toContain('サブテーブルCSV分割 2件');
+    expect(manifest).toContain('app_8: 0件 / status=failed');
+    const batchManifestJson = JSON.parse(textFile(zip, 'manifest.json'));
+    expect(batchManifestJson).toMatchObject({
+      appCount: 2,
+      succeededCount: 1,
+      failedCount: 1,
+      totalRecords: 2
+    });
+    expect(batchManifestJson.apps).toEqual([
+      expect.objectContaining({ appId: '7', folder: 'app_7', status: 'ok', recordCount: 2, tableCsvCount: 2 }),
+      expect.objectContaining({ appId: '8', folder: 'app_8', status: 'failed', recordCount: 0, error: '明細取得中に通信が切れました' })
+    ]);
     expect(manifest).toContain('App 8: 明細取得中に通信が切れました');
     expect(manifest).toContain('総レコード数: 2');
     expect(status).toHaveBeenLastCalledWith(expect.stringContaining('失敗 1アプリ'), 'warn');

@@ -1,3 +1,6 @@
+import { analyzeErDependencies, type ErDependencyAnalysis } from './er-analysis.js';
+export { analyzeErDependencies, type ErDependencyAnalysis };
+
 export type ErModelStatus = 'complete' | 'partial' | 'failed';
 
 export type ErFieldDensity = 'none' | 'compact' | 'standard' | 'full';
@@ -530,3 +533,517 @@ export function selectErFieldsForDensity(
 
 export const buildErAppModelFromResponses = buildErAppModel;
 export const createFailedErAppModel = buildFailedErAppModel;
+
+/**
+ * 設定取得JSON（SettingsBundle 形式: appId, appName, guestId, sections.formFields / fieldSettings,
+ * sections.appSettings / appInfo, sections.actionSettings 等）から API 通信なしで ER 図の AppData モデルを構築する。
+ */
+export function buildErAppModelFromBundle(bundle: any): ErAppModel {
+  if (!isRecord(bundle)) {
+    throw new TypeError('Invalid settings bundle');
+  }
+  const sections = isRecord(bundle.sections) ? bundle.sections : {};
+  const rawAppInfo = isRecord(sections.appInfo)
+    ? sections.appInfo
+    : (isRecord(bundle.appInfo) ? bundle.appInfo : (isRecord(bundle.appInfoResponse) ? bundle.appInfoResponse : null));
+  const rawAppSettings = isRecord(sections.appSettings)
+    ? sections.appSettings
+    : (isRecord(bundle.appSettings) ? bundle.appSettings : null);
+  const rawAppId = bundle.appId
+    ?? bundle.id
+    ?? rawAppInfo?.appId
+    ?? rawAppInfo?.id
+    ?? rawAppSettings?.appId;
+  const appId = normalizeAppId(rawAppId);
+  const sourceGuestId = bundle.guestId ?? bundle.sourceGuestId ?? '';
+
+  const resolvedName = (typeof bundle.appName === 'string' && bundle.appName.trim())
+    || (typeof bundle.name === 'string' && bundle.name.trim())
+    || (typeof rawAppInfo?.name === 'string' && rawAppInfo.name.trim())
+    || (typeof rawAppSettings?.name === 'string' && rawAppSettings.name.trim())
+    || '';
+
+  const appInfoError = bundle.appInfoError ?? rawAppInfo?._fetchError ?? rawAppSettings?._fetchError;
+  const appInfoResponse = (rawAppInfo || rawAppSettings || resolvedName)
+    ? {
+        ...(rawAppSettings || {}),
+        ...(rawAppInfo || {}),
+        ...(resolvedName ? { name: resolvedName } : {})
+      }
+    : undefined;
+
+  let rawFields: any = sections.formFields
+    ?? sections.fieldSettings
+    ?? sections.fields
+    ?? bundle.formFields
+    ?? bundle.fieldSettings
+    ?? bundle.fieldsResponse
+    ?? (isRecord(bundle.properties) ? bundle : undefined);
+
+  if (
+    isRecord(rawFields)
+    && !isRecord(rawFields.properties)
+    && rawFields._fetchError === undefined
+    && Object.values(rawFields).some((v) => isRecord(v) && typeof v.type === 'string')
+  ) {
+    rawFields = { properties: rawFields };
+  }
+
+  let rawActions: any = sections.actionSettings
+    ?? sections.actions
+    ?? bundle.actionSettings
+    ?? bundle.actionsResponse
+    ?? bundle.actions;
+  const actionsError = bundle.actionsError ?? (isRecord(rawActions) ? rawActions._fetchError : undefined);
+  if (rawActions === undefined && actionsError === undefined) {
+    rawActions = { actions: {} };
+  } else if (isRecord(rawActions) && !isRecord(rawActions.actions) && rawActions._fetchError === undefined) {
+    rawActions = { actions: rawActions };
+  }
+
+  try {
+    return buildErAppModel({
+      appId,
+      fieldsResponse: rawFields,
+      appInfoResponse,
+      actionsResponse: rawActions,
+      appInfoError,
+      actionsError,
+      sourceGuestId
+    });
+  } catch (err) {
+    if (err instanceof ErFieldsUnavailableError) {
+      return buildFailedErAppModel(appId, err, { appInfoResponse, sourceGuestId });
+    }
+    throw err;
+  }
+}
+
+function sanitizeErIdentifier(value: unknown): string {
+  return String(value == null ? '' : value)
+    .replace(/[^a-zA-Z0-9_\u3000-\u9FFF\uF900-\uFAFF]/g, '_')
+    .replace(/^_+|_+$/g, '') || 'unnamed';
+}
+
+function erEntityAlias(app: any): string {
+  return `app_${String(app?.id ?? 'unknown').replace(/[^0-9A-Za-z_]/g, '_')}`;
+}
+
+function erOneLineLabel(value: unknown): string {
+  return String(value == null ? '' : value).replace(/[\r\n]+/g, ' ').replace(/"/g, "'").trim();
+}
+
+function erExportStatusLabel(app: any): string {
+  if (app?.status === 'partial') return '一部取得';
+  if (app?.status === 'failed' || app?.ok === false) return '取得失敗';
+  return '取得完了';
+}
+
+function erExportIssueText(app: any): string {
+  return (Array.isArray(app?.issues) ? app.issues : [])
+    .map((issue: any) => erOneLineLabel(issue?.message || issue?.code || '取得上の注意'))
+    .filter(Boolean)
+    .join(' / ');
+}
+
+function erExportRelationLabel(rel: any): string {
+  const base = erOneLineLabel(rel?.fromDisplay || rel?.fromLabel || rel?.from || rel?.kind || '');
+  if (rel?.kind === 'REF' && (rel?.sourceJoinField || rel?.from || rel?.toField)) {
+    return `${base} [結合: ${erOneLineLabel(rel.sourceJoinField || rel.from || '?')} → ${erOneLineLabel(rel.toField || '?')}]`;
+  }
+  return base;
+}
+
+function erCanonicalFields(app: any): ErField[] {
+  if (Array.isArray(app?.allFields)) return app.allFields;
+  if (Array.isArray(app?.fields)) return app.fields;
+  return [];
+}
+
+function erFieldDisplayName(field: any): string {
+  if (!field) return '';
+  if (field.inSubtable && field.tableLabel) {
+    return `${field.tableLabel} > ${field.label || field.code || ''}`;
+  }
+  return String(field.label || field.code || field.path || '');
+}
+
+/**
+ * アプリ配列から erDiagram 形式の Mermaid ソースを生成する純粋関数。
+ * ルックアップ・関連レコード・アプリアクションのリレーションとフィールド定義を出力する。
+ */
+export function buildErMermaidSource(apps: any[], options?: { showAllFields?: boolean }): string {
+  const safeApps = (Array.isArray(apps) ? apps : []).filter((a) => a && a.id != null);
+  const appMap = new Map<string, any>();
+  for (const app of safeApps) {
+    appMap.set(String(app.id), app);
+  }
+  const showAll = options?.showAllFields;
+  let m = 'erDiagram\n';
+
+  for (const a of safeApps) {
+    const n = erEntityAlias(a);
+    const status = erExportStatusLabel(a);
+    const issueText = erExportIssueText(a);
+    const appName = erOneLineLabel(a.name || `アプリ ${a.id}`);
+    m += `  %% ${n}: ${appName} (App ${a.id})\n`;
+    m += `  %% 取得状態: ${status}${issueText ? ` / ${issueText}` : ''}\n`;
+
+    const allFields = erCanonicalFields(a);
+    const subtableFieldCount = allFields.filter((f) => f?.inSubtable).length;
+    if (subtableFieldCount && showAll !== true) {
+      m += `  %% サブテーブル内 ${subtableFieldCount}項目は親エンティティへ平坦化せず省略（ERモデルJSONに所属表を収録）\n`;
+    }
+
+    const visibleName = `${status === '取得完了' ? '' : `[${status}] `}${appName} (App ${a.id})`;
+    m += `  ${n}["${visibleName}"] {\n`;
+
+    const linkedCodes = new Set<string>();
+    for (const rel of Array.isArray(a.relations) ? a.relations : []) {
+      if (rel?.kind !== 'LOOKUP' && rel?.kind !== 'REF') continue;
+      for (const k of [rel.fromPath, rel.from, rel.controlFieldPath, rel.controlField, rel.sourceJoinField]) {
+        if (k) linkedCodes.add(String(k));
+      }
+    }
+
+    for (const f of allFields) {
+      if (!f || f.type === 'SUBTABLE') continue;
+      if (showAll === false) {
+        if (f.inSubtable) continue;
+        const isKeyOrRel = f.isPK || f.isLookup || f.isRef || f.unique || linkedCodes.has(String(f.path || '')) || linkedCodes.has(String(f.code || ''));
+        if (!isKeyOrRel) continue;
+      } else if (showAll !== true && f.inSubtable) {
+        continue;
+      }
+      let com = '';
+      if (f.isPK) com = ' PK';
+      else if (f.isLookup) com = ' FK';
+      const fType = String(f.type || 'STRING').replace(/[^a-zA-Z0-9_]/g, '') || 'STRING';
+      const fCode = sanitizeErIdentifier(f.inSubtable && f.path ? f.path : f.code);
+      m += `    ${fType} ${fCode}${com}\n`;
+    }
+    m += '  }\n';
+  }
+
+  const mermaidExternalIds = new Set<string>();
+  for (const a of safeApps) {
+    for (const r of Array.isArray(a.relations) ? a.relations : []) {
+      if (!r || r.toApp == null || String(r.toApp) === '') continue;
+      const toKey = String(r.toApp);
+      if (appMap.has(toKey) || mermaidExternalIds.has(toKey)) continue;
+      mermaidExternalIds.add(toKey);
+      const alias = erEntityAlias({ id: r.toApp });
+      m += `  %% ${alias}: 未取得の参照先 (App ${erOneLineLabel(r.toApp)})\n`;
+      m += `  ${alias}["未取得の参照先 (App ${erOneLineLabel(r.toApp)})"] {\n    string __unresolved\n  }\n`;
+    }
+  }
+
+  for (const a of safeApps) {
+    for (const r of Array.isArray(a.relations) ? a.relations : []) {
+      if (!r || r.toApp == null || String(r.toApp) === '') continue;
+      const t = appMap.get(String(r.toApp)) || { id: r.toApp };
+      const label = erExportRelationLabel(r);
+      if (r.kind === 'ACTION') {
+        m += `  %% ACTION ${erEntityAlias(a)} -> ${erEntityAlias(t)}: ${label}\n`;
+      } else {
+        const relArrow = r.kind === 'LOOKUP' ? ' }o--o| ' : ' }o--o{ ';
+        m += `  ${erEntityAlias(a)}${relArrow}${erEntityAlias(t)} : "${label}"\n`;
+      }
+    }
+  }
+
+  return m;
+}
+
+function countErConnectedComponents(apps: any[]): number {
+  const validApps = (Array.isArray(apps) ? apps : []).filter((a) => a && a.id != null && String(a.id).trim() !== '');
+  if (!validApps.length) return 0;
+  const undirected = new Map<string, Set<string>>();
+  for (const a of validApps) {
+    undirected.set(String(a.id), new Set());
+  }
+  for (const a of validApps) {
+    const fromId = String(a.id);
+    for (const r of Array.isArray(a.relations) ? a.relations : []) {
+      const toId = String(r?.toApp ?? '');
+      if (!toId || !undirected.has(toId) || fromId === toId) continue;
+      undirected.get(fromId)?.add(toId);
+      undirected.get(toId)?.add(fromId);
+    }
+  }
+  const visited = new Set<string>();
+  let count = 0;
+  for (const startId of undirected.keys()) {
+    if (visited.has(startId)) continue;
+    count += 1;
+    const queue = [startId];
+    visited.add(startId);
+    while (queue.length) {
+      const cur = queue.shift()!;
+      for (const next of undirected.get(cur) || []) {
+        if (!visited.has(next)) {
+          visited.add(next);
+          queue.push(next);
+        }
+      }
+    }
+  }
+  return count;
+}
+
+function erMdEsc(s: unknown): string {
+  return String(s == null ? '' : s).replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ').trim();
+}
+
+function erRelationKeyConditionDetail(r: any): string {
+  if (!r) return '';
+  if (r.kind === 'LOOKUP') {
+    const from = r.fromPath || r.from || '';
+    const to = r.toField || '';
+    return to ? `${from || '?'} -> ${to}` : String(from);
+  }
+  if (r.kind === 'REF') {
+    const joinFrom = r.sourceJoinField || r.from || '?';
+    const joinTo = r.toField || '?';
+    return `${joinFrom} = ${joinTo}`;
+  }
+  if (r.kind === 'ACTION') {
+    const label = r.fromLabel || r.fromDisplay || r.from || 'アクション';
+    return r.toField ? `${label} -> ${r.toField}` : String(label);
+  }
+  return String(r.toField || r.from || '');
+}
+
+/**
+ * アプリ一覧・リレーション一覧・各アプリのフィールド定義に加え、
+ * analyzeErDependencies（循環参照/SCC、ハブアプリ、孤立アプリ、連結成分数など）の
+ * グラフ分析サマリを含む「ER図仕様書 (Markdown)」を生成する純粋関数。
+ */
+export function buildErMarkdownSpec(
+  apps: any[],
+  analysis?: Partial<ErDependencyAnalysis> & Record<string, any>,
+  options?: { generatedAt?: string }
+): string {
+  const safeApps = (Array.isArray(apps) ? apps : []).filter((a) => a && a.id != null);
+  const appMap = new Map<string, any>();
+  for (const app of safeApps) {
+    appMap.set(String(app.id), app);
+  }
+  const computedAnalysis = analyzeErDependencies(safeApps);
+  const dep: ErDependencyAnalysis & Record<string, any> = analysis && typeof analysis === 'object'
+    ? {
+        ...computedAnalysis,
+        ...analysis,
+        counts: { ...computedAnalysis.counts, ...(analysis.counts || {}) }
+      }
+    : computedAnalysis;
+
+  const connectedComponentCount = typeof dep.connectedComponentCount === 'number'
+    ? dep.connectedComponentCount
+    : (typeof dep.connectedComponents === 'number' ? dep.connectedComponents : countErConnectedComponents(safeApps));
+  const generatedAt = options?.generatedAt || new Date().toLocaleString('ja-JP');
+  const totalRelations = safeApps.reduce((sum, a) => sum + (Array.isArray(a.relations) ? a.relations.length : 0), 0);
+  const cycles = Array.isArray(dep.cycles) ? dep.cycles : [];
+  const hubs = Array.isArray(dep.hubs) ? dep.hubs : [];
+  const isolatedAppIds = Array.isArray(dep.isolatedAppIds) ? dep.isolatedAppIds : [];
+  const selfReferences = Array.isArray(dep.selfReferences) ? dep.selfReferences : [];
+  const unresolvedTargets = Array.isArray(dep.unresolvedTargets) ? dep.unresolvedTargets : [];
+  const threshold = dep.highConnectionThreshold ?? 3;
+
+  const lines: string[] = [];
+  lines.push('# kintone ER図 仕様書');
+  lines.push('');
+  lines.push(`- 生成日時: ${generatedAt}`);
+  lines.push(`- アプリ数: ${safeApps.length}`);
+  lines.push(`- 総リレーション: ${totalRelations}`);
+  lines.push(`- 取得完了: ${dep.counts.retrievalComplete}`);
+  lines.push(`- 一部取得: ${dep.counts.retrievalPartial}`);
+  lines.push(`- 取得失敗: ${dep.counts.retrievalFailed}`);
+  lines.push('');
+
+  lines.push('## グラフ分析サマリ');
+  lines.push('');
+  lines.push(`- 連結成分数: ${connectedComponentCount}`);
+  lines.push(`- 複数アプリの循環参照 (SCC): ${cycles.length}件`);
+  lines.push(`- 自己参照: ${selfReferences.length}件`);
+  lines.push(`- ハブアプリ（接続数 ${threshold}件以上）: ${hubs.length}件`);
+  lines.push(`- 孤立アプリ（関連なし）: ${isolatedAppIds.length}件`);
+  lines.push(`- 未取得の参照先: ${unresolvedTargets.length}件`);
+  lines.push('');
+
+  lines.push('### 循環参照（強連結成分 / SCC）');
+  if (cycles.length) {
+    cycles.forEach((cycle, i) => {
+      const names = Array.isArray(cycle.appNames) && cycle.appNames.length
+        ? cycle.appNames.map(erMdEsc).join(' → ')
+        : (cycle.appIds || []).map((id: string) => erMdEsc(appMap.get(String(id))?.name || `アプリ ${id}`)).join(' → ');
+      const ids = (cycle.appIds || []).map((id: string) => `App ${erMdEsc(id)}`).join(', ');
+      lines.push(`- 候補 ${i + 1}: ${names}${ids ? ` (${ids})` : ''}`);
+    });
+  } else {
+    lines.push('- なし');
+  }
+  lines.push('');
+
+  lines.push(`### ハブアプリ（接続数 ${threshold}件以上）`);
+  if (hubs.length) {
+    hubs.forEach((hub) => {
+      lines.push(`- ${erMdEsc(hub.name)} (App ${erMdEsc(hub.appId)}): 入 ${hub.incoming} / 出 ${hub.outgoing} / 合計 ${hub.total}`);
+    });
+  } else {
+    lines.push('- なし');
+  }
+  lines.push('');
+
+  lines.push('### 孤立アプリ');
+  if (isolatedAppIds.length) {
+    isolatedAppIds.forEach((id) => {
+      const app = appMap.get(String(id));
+      const name = app?.name || `アプリ ${id}`;
+      lines.push(`- ${erMdEsc(name)} (App ${erMdEsc(id)})`);
+    });
+  } else {
+    lines.push('- なし');
+  }
+  lines.push('');
+
+  if (selfReferences.length) {
+    lines.push('### 自己参照');
+    selfReferences.forEach((sr) => {
+      lines.push(`- ${erMdEsc(sr.appName)} (App ${erMdEsc(sr.appId)}): ${erMdEsc(sr.kind)}${sr.field ? ` (${erMdEsc(sr.field)})` : ''}`);
+    });
+    lines.push('');
+  }
+
+  if (unresolvedTargets.length) {
+    lines.push('### 未取得の参照先');
+    unresolvedTargets.forEach((ut) => {
+      lines.push(`- ${erMdEsc(ut.fromAppName)} (App ${erMdEsc(ut.fromAppId)}) → App ${erMdEsc(ut.toAppId || '不明')}: ${erMdEsc(ut.kind)}${ut.field ? ` (${erMdEsc(ut.field)})` : ''}`);
+    });
+    lines.push('');
+  }
+
+  lines.push('## アプリ一覧');
+  lines.push('');
+  lines.push('| アプリID | アプリ名 | 項目数 | 関連数 | 深さ | 状態 |');
+  lines.push('|---:|---|---:|---:|---:|---|');
+  safeApps.forEach((a) => {
+    const fieldList = erCanonicalFields(a).filter((f) => f && f.type !== 'SUBTABLE');
+    const relList = Array.isArray(a.relations) ? a.relations : [];
+    lines.push(`| ${erMdEsc(a.id)} | ${erMdEsc(a.name || `アプリ ${a.id}`)} | ${fieldList.length} | ${relList.length} | ${a.depth || 0} | ${erExportStatusLabel(a)} |`);
+  });
+  lines.push('');
+
+  lines.push('## リレーション一覧');
+  lines.push('');
+  if (totalRelations > 0) {
+    lines.push('| 参照元アプリID | 参照元アプリ名 | フィールドコード | フィールド名 | リレーション種別 | 参照先アプリID | 参照先アプリ名 | キー・条件詳細 |');
+    lines.push('|---:|---|---|---|---|---:|---|---|');
+    safeApps.forEach((a) => {
+      for (const r of Array.isArray(a.relations) ? a.relations : []) {
+        if (!r) continue;
+        const t = appMap.get(String(r.toApp));
+        const fieldCode = r.kind === 'REF' ? (r.controlField || r.sourceJoinField || r.from || '') : (r.from || r.controlField || '');
+        const fieldName = r.controlFieldLabel || r.fromDisplay || r.fromLabel || r.from || r.kind || '';
+        const targetName = t ? (t.name || `アプリ ${t.id}`) : `未取得 (App ${r.toApp ?? '?'})`;
+        lines.push(`| ${erMdEsc(a.id)} | ${erMdEsc(a.name || `アプリ ${a.id}`)} | ${erMdEsc(fieldCode)} | ${erMdEsc(fieldName)} | ${erMdEsc(r.kind || '')} | ${erMdEsc(r.toApp ?? '')} | ${erMdEsc(targetName)} | ${erMdEsc(erRelationKeyConditionDetail(r))} |`);
+      }
+    });
+  } else {
+    lines.push('リレーションはありません。');
+  }
+  lines.push('');
+
+  safeApps.forEach((a) => {
+    lines.push(`## ${erMdEsc(a.name || `アプリ ${a.id}`)} (App ${a.id})`);
+    lines.push('');
+    lines.push(`- 取得状態: ${erExportStatusLabel(a)}`);
+    const issueText = erExportIssueText(a);
+    if (issueText) lines.push(`- 取得上の注意: ${erMdEsc(issueText)}`);
+    lines.push('');
+
+    const vf = erCanonicalFields(a).filter((f) => f && f.type !== 'SUBTABLE');
+    if (vf.length) {
+      lines.push('### フィールド');
+      lines.push('');
+      lines.push('| コード | 名称 | 種類 | 必須 | 主キー | Lookup | 関連 | サブテーブル |');
+      lines.push('|---|---|---|:---:|:---:|:---:|:---:|:---:|');
+      vf.forEach((f) => {
+        lines.push(`| ${erMdEsc(f.code || '')} | ${erMdEsc(erFieldDisplayName(f))} | ${erMdEsc(f.type || '')} | ${f.required ? '✓' : ''} | ${f.isPK ? '✓' : ''} | ${f.isLookup ? '✓' : ''} | ${f.isRef ? '✓' : ''} | ${f.inSubtable ? '✓' : ''} |`);
+      });
+      lines.push('');
+    }
+
+    const rels = Array.isArray(a.relations) ? a.relations : [];
+    if (rels.length) {
+      lines.push('### リレーション');
+      lines.push('');
+      lines.push('| 種類 | 関連名 | 表示部品 | 結合元フィールド | 宛先アプリ | 宛先フィールド |');
+      lines.push('|---|---|---|---|---|---|');
+      rels.forEach((r: any) => {
+        const t = appMap.get(String(r.toApp));
+        const targetLabel = t ? `${t.name || `アプリ ${t.id}`} (App ${r.toApp})` : `未取得 (App ${r.toApp})`;
+        lines.push(`| ${erMdEsc(r.kind || '')} | ${erMdEsc(r.fromDisplay || r.fromLabel || r.from || r.kind || '')} | ${erMdEsc(r.controlFieldLabel || r.controlField || '')} | ${erMdEsc(r.kind === 'ACTION' ? '' : (r.sourceJoinField || r.from || ''))} | ${erMdEsc(targetLabel)} | ${erMdEsc(r.toField || '')} |`);
+      });
+      lines.push('');
+    }
+  });
+
+  return lines.join('\n');
+}
+
+function erCsvCell(value: unknown): string {
+  const raw = String(value == null ? '' : value);
+  const safe = /^[\t\r\n ]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+function erCsvLine(row: unknown[]): string {
+  return row.map(erCsvCell).join(',');
+}
+
+/**
+ * BOM (\uFEFF) 付きCSVでリレーション一覧
+ * （参照元アプリID, 参照元アプリ名, フィールドコード, フィールド名, リレーション種別, 参照先アプリID, 参照先アプリ名, キー・条件詳細）
+ * を出力する純粋関数（CSV数式インジェクション対策込み）。
+ */
+export function buildErRelationsCsv(apps: any[]): string {
+  const safeApps = (Array.isArray(apps) ? apps : []).filter((a) => a && a.id != null);
+  const appMap = new Map<string, any>();
+  for (const app of safeApps) {
+    appMap.set(String(app.id), app);
+  }
+  const rows: unknown[][] = [[
+    '参照元アプリID',
+    '参照元アプリ名',
+    'フィールドコード',
+    'フィールド名',
+    'リレーション種別',
+    '参照先アプリID',
+    '参照先アプリ名',
+    'キー・条件詳細'
+  ]];
+  for (const a of safeApps) {
+    const fromAppName = a.name || `アプリ ${a.id}`;
+    for (const r of Array.isArray(a.relations) ? a.relations : []) {
+      if (!r) continue;
+      const t = appMap.get(String(r.toApp));
+      const fieldCode = r.kind === 'REF'
+        ? (r.controlField || r.sourceJoinField || r.from || '')
+        : (r.from || r.controlField || '');
+      const fieldName = r.controlFieldLabel || r.fromDisplay || r.fromLabel || r.from || r.kind || '';
+      const targetName = t ? (t.name || `アプリ ${t.id}`) : '未取得の参照先';
+      rows.push([
+        a.id,
+        fromAppName,
+        fieldCode,
+        fieldName,
+        r.kind || '',
+        r.toApp ?? '',
+        targetName,
+        erRelationKeyConditionDetail(r)
+      ]);
+    }
+  }
+  return `\uFEFF${rows.map(erCsvLine).join('\n')}`;
+}

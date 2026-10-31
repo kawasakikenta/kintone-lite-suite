@@ -37,10 +37,39 @@ export interface DesignSnapshotCounts {
   system: number | null;
 }
 
+export interface DesignSnapshotView {
+  path: string;
+  key: string;
+  name: string;
+  type: string;
+  builtinType: string;
+  index: number | null;
+  filterCond: string;
+  sort: string;
+  fields: string[];
+}
+
+export interface DesignSnapshotPermissions {
+  appAclCount: number | null;
+  recordPermissionCount: number | null;
+  fieldAclCount: number | null;
+  totalRuleCount: number | null;
+}
+
+export interface DesignSnapshotNotifications {
+  generalCount: number | null;
+  perRecordCount: number | null;
+  reminderCount: number | null;
+  totalCount: number | null;
+}
+
 export interface DesignSnapshot {
   sections: DesignSnapshotSection[];
   fields: DesignSnapshotField[];
   counts: DesignSnapshotCounts;
+  views: DesignSnapshotView[];
+  permissions: DesignSnapshotPermissions;
+  notifications: DesignSnapshotNotifications;
   complete: boolean;
 }
 
@@ -151,6 +180,10 @@ function collectionInfo(key: string, section: any): CollectionInfo {
     case 'viewSettings': return knownCollection(section, 'views', 'object');
     case 'reportSettings': return knownCollection(section, 'reports', 'object');
     case 'processSettings': {
+      // kintone REST API はプロセス管理無効時に { enable: false, states: null, actions: null } を返す
+      if (section.enable === false && section.states === null && (!hasOwn(section, 'actions') || section.actions === null)) {
+        return { count: 0, detail: 'states は空です; actions=0', malformed: false };
+      }
       const states = knownCollection(section, 'states', 'object');
       if (hasOwn(section, 'actions')) {
         const actions = Array.isArray(section.actions)
@@ -398,6 +431,75 @@ function sectionKeys(bundle: any): string[] {
   return [...known, ...unknown];
 }
 
+function buildViewsSnapshot(bundle: any, viewSection: DesignSnapshotSection | undefined): DesignSnapshotView[] {
+  if (!viewSection || (viewSection.status !== 'available' && viewSection.status !== 'empty')) return [];
+  const views = bundle?.sections?.viewSettings?.views;
+  if (!isPlainObject(views)) return [];
+  const items: DesignSnapshotView[] = [];
+  for (const key of Object.keys(views)) {
+    const view = views[key];
+    if (!isObject(view)) continue;
+    const rawIndex = view.index;
+    const numIndex = rawIndex != null && String(rawIndex).trim() !== '' && Number.isFinite(Number(rawIndex))
+      ? Number(rawIndex)
+      : null;
+    items.push({
+      path: `/sections/viewSettings/views/${escapeJsonPointerToken(key)}`,
+      key,
+      name: String(view.name ?? key),
+      type: String(view.type ?? 'UNKNOWN'),
+      builtinType: view.builtinType != null ? String(view.builtinType) : '',
+      index: numIndex,
+      filterCond: view.filterCond != null ? String(view.filterCond) : '',
+      sort: view.sort != null ? String(view.sort) : '',
+      fields: Array.isArray(view.fields) ? view.fields.map((item: any) => String(item ?? '')).filter(Boolean) : []
+    });
+  }
+  return items.sort((a, b) => {
+    const idxA = a.index ?? Number.MAX_SAFE_INTEGER;
+    const idxB = b.index ?? Number.MAX_SAFE_INTEGER;
+    if (idxA !== idxB) return idxA - idxB;
+    return a.name.localeCompare(b.name) || a.key.localeCompare(b.key);
+  });
+}
+
+function resolveSectionCount(row: DesignSnapshotSection | undefined): number | null {
+  if (!row || (row.status !== 'available' && row.status !== 'empty')) return null;
+  return typeof row.count === 'number' ? row.count : null;
+}
+
+function buildPermissionsSnapshot(sectionRows: DesignSnapshotSection[]): DesignSnapshotPermissions {
+  const byKey = new Map(sectionRows.map((row) => [row.key, row]));
+  const appAclCount = resolveSectionCount(byKey.get('appAcl'));
+  const recordPermissionCount = resolveSectionCount(byKey.get('recordPermissions'));
+  const fieldAclCount = resolveSectionCount(byKey.get('fieldAcl'));
+  const totalRuleCount = appAclCount != null && recordPermissionCount != null && fieldAclCount != null
+    ? appAclCount + recordPermissionCount + fieldAclCount
+    : null;
+  return {
+    appAclCount,
+    recordPermissionCount,
+    fieldAclCount,
+    totalRuleCount
+  };
+}
+
+function buildNotificationsSnapshot(sectionRows: DesignSnapshotSection[]): DesignSnapshotNotifications {
+  const byKey = new Map(sectionRows.map((row) => [row.key, row]));
+  const generalCount = resolveSectionCount(byKey.get('notifications'));
+  const perRecordCount = resolveSectionCount(byKey.get('perRecordNotifications'));
+  const reminderCount = resolveSectionCount(byKey.get('reminderNotifications'));
+  const totalCount = generalCount != null && perRecordCount != null && reminderCount != null
+    ? generalCount + perRecordCount + reminderCount
+    : null;
+  return {
+    generalCount,
+    perRecordCount,
+    reminderCount,
+    totalCount
+  };
+}
+
 /**
  * 設計書出力とExcelが共有する、取得状態を失わない純粋な索引を作る。
  * bundleは読み取り専用で扱い、未取得を空コレクションへ変換しない。
@@ -415,11 +517,14 @@ export function buildDesignSnapshot(bundle: any): DesignSnapshot {
     counts.tables = null;
     counts.system = null;
   }
+  const viewSection = sectionRows.find((row) => row.key === 'viewSettings');
   return {
     sections: sectionRows,
     fields,
     counts,
+    views: buildViewsSnapshot(bundle, viewSection),
+    permissions: buildPermissionsSnapshot(sectionRows),
+    notifications: buildNotificationsSnapshot(sectionRows),
     complete: sectionRows.every((row) => row.status === 'available' || row.status === 'empty')
   };
 }
-

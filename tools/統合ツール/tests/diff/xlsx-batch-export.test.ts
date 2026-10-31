@@ -486,4 +486,24 @@ describe('diff/xlsx-batch-export', () => {
     expect(result.entries).toHaveLength(1);
     expect(result.blob.type).toBe('application/zip');
   });
+
+  it('includes App ID, guest space ID, and preview status alongside app name in successful summary rows', async () => {
+    const result = await buildDiffXlsxBatchExport([
+      item('pair 1', context('顧客管理', '顧客管理', {
+        sourceBundle: { appId: '101', meta: { appName: '顧客管理' }, sections: { appSettings: { name: '顧客管理' } } },
+        targetBundle: { appId: '202', guestId: '7', preview: true, meta: { appName: '顧客管理' }, sections: { appSettings: { name: '顧客管理' } } }
+      })),
+      item('pair 2', context('顧客管理', '顧客管理', {
+        sourceBundle: { appId: '101', meta: { appName: '顧客管理' }, sections: { appSettings: { name: '顧客管理' } } },
+        targetBundle: { appId: '303', meta: { appName: '顧客管理' }, sections: { appSettings: { name: '顧客管理' } } }
+      }))
+    ]);
+    const summaryWorkbook = parseStoredEntries(await blobToBuffer(result.blob))[0].data;
+    const cells = firstWorksheetCells(summaryWorkbook);
+
+    expect(cells.B4).toBe('顧客管理 (App ID: 101)');
+    expect(cells.C4).toBe('顧客管理 (App ID: 202 / ゲスト 7 / プレビュー)');
+    expect(cells.B5).toBe('顧客管理 (App ID: 101)');
+    expect(cells.C5).toBe('顧客管理 (App ID: 303)');
+  });
 });

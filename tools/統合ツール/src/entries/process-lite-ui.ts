@@ -8,7 +8,9 @@ import {
   validateProcessConnection,
   runProcessBatchZipStandalone,
   validateProcessBatchTargets,
-  formatProcessBatchResultLines
+  formatProcessBatchResultLines,
+  buildProcessSpecMarkdown,
+  formatProcessSimulationHistory
 } from '../tabs/process-standalone.js';
 import {
   createLitePanel,
@@ -115,9 +117,15 @@ export function mountProcessLitePanel() {
   const copySource = makeButton('ソースをコピー', 'sub', { icon: '⎘' });
   const saveSource = makeButton('.mmd で保存', 'sub', { icon: '↓' });
   const saveSvg = makeButton('SVGで保存', 'sub', { icon: '↓' });
+  const copySpecMd = makeButton('仕様書MDをコピー', 'sub', { icon: '⎘' });
+  const saveSpecMd = makeButton('仕様書.mdで保存', 'sub', { icon: '↓' });
+  cardText.actions.style.flexWrap = 'wrap';
+  if (cardText.actions.parentElement) cardText.actions.parentElement.style.flexWrap = 'wrap';
   cardText.actions.appendChild(copySource);
   cardText.actions.appendChild(saveSource);
   cardText.actions.appendChild(saveSvg);
+  cardText.actions.appendChild(copySpecMd);
+  cardText.actions.appendChild(saveSpecMd);
   copySource.addEventListener('click', async () => {
     const text = textEl.value.trim();
     if (!text) { panel.setStatus('コピーするソースがありません。先にフロー図を描画してください', 'warn'); return; }
@@ -151,6 +159,35 @@ export function mountProcessLitePanel() {
     downloadText(buildExportFilename('プロセス図', 'svg', { appLabel: buildAppFilenameLabel(appId, '') }), xml, 'image/svg+xml;charset=utf-8');
     panel.setStatus('フロー図をSVGとして保存しました', 'ok');
   });
+  let renderedFlowData: { states: any; actions: any[]; orphanActionCount?: number; summary?: any } | null = null;
+  const buildCurrentSpecMd = (): string => {
+    if (!renderedFlowData || !textEl.value.trim()) return '';
+    return buildProcessSpecMarkdown({
+      appId: appInp.value.trim(),
+      guestId: guestInp.value.trim(),
+      preview: prevCb.checkbox.checked,
+      states: renderedFlowData.states,
+      actions: renderedFlowData.actions,
+      orphanActionCount: renderedFlowData.orphanActionCount,
+      summary: renderedFlowData.summary
+    });
+  };
+  copySpecMd.addEventListener('click', async () => {
+    const specMd = buildCurrentSpecMd();
+    if (!specMd) { panel.setStatus('コピーする仕様書がありません。先にフロー図を描画してください', 'warn'); return; }
+    if (await copyTextToClipboard(specMd)) {
+      panel.setStatus('プロセス管理仕様書 (Markdown) をクリップボードにコピーしました', 'ok');
+    } else {
+      panel.setStatus('クリップボードにコピーできませんでした', 'warn');
+    }
+  });
+  saveSpecMd.addEventListener('click', () => {
+    const specMd = buildCurrentSpecMd();
+    if (!specMd) { panel.setStatus('保存する仕様書がありません。先にフロー図を描画してください', 'warn'); return; }
+    const appId = appInp.value.trim();
+    downloadText(buildExportFilename('プロセス管理仕様書', 'md', { appLabel: buildAppFilenameLabel(appId, '') }), specMd, 'text/markdown;charset=utf-8');
+    panel.setStatus('プロセス管理仕様書 (.md) を保存しました', 'ok');
+  });
   attachCardHelp(cardText.card); // 結果画面側のカードなので、「?」への移動はここで行う
   panel.body.insertBefore(cardText.card, panel.status);
   const sourceFold = foldWorkflowSection('図のソースを確認する', cardText.card);
@@ -180,7 +217,23 @@ export function mountProcessLitePanel() {
   const simUndoBtn = makeButton('1手戻す', 'sub', { icon: '↶' });
   simUndoBtn.disabled = true;
   const simExecBtn = makeButton('アクション実行', 'primary', { icon: '▶' });
-  cardSim.body.appendChild(makeRow([simStartBtn, simUndoBtn, simExecBtn]));
+  const simCopyHistoryBtn = makeButton('履歴をコピー', 'sub', { icon: '⎘' });
+  simCopyHistoryBtn.disabled = true;
+  simCopyHistoryBtn.addEventListener('click', async () => {
+    const getter = (simCopyHistoryBtn as any).__getSimHistoryText;
+    const curState = curEl.textContent && curEl.textContent !== '未開始' ? curEl.textContent : null;
+    const text = typeof getter === 'function' ? getter() : (curState ? formatProcessSimulationHistory([], curState, renderedFlowData?.states) : '');
+    if (!text) {
+      panel.setStatus('コピーするシミュレーション履歴がありません。先に「最初から開始」を押してください', 'warn');
+      return;
+    }
+    if (await copyTextToClipboard(text)) {
+      panel.setStatus('シミュレーション遷移履歴をクリップボードにコピーしました', 'ok');
+    } else {
+      panel.setStatus('クリップボードにコピーできませんでした', 'warn');
+    }
+  });
+  cardSim.body.appendChild(makeRow([simStartBtn, simUndoBtn, simExecBtn, simCopyHistoryBtn]));
   const simDetailEl = makeNote('「最初から開始」を押すと、各状態の作業者設定と選択アクションの実行条件を表示します。');
   const simHistoryEl = makeNote('遷移履歴: まだ開始していません');
   cardSim.body.appendChild(simDetailEl);
@@ -204,6 +257,7 @@ export function mountProcessLitePanel() {
     simUndoBtn.onclick = null;
     simExecBtn.onclick = null;
     simSelect.onchange = null;
+    (simCopyHistoryBtn as any).__getSimHistoryText = null;
   };
   const clearRenderedFlow = () => {
     renderedConnection = '';
@@ -218,6 +272,8 @@ export function mountProcessLitePanel() {
     simSelect.replaceChildren(new Option('--'));
     simSelect.disabled = true;
     simUndoBtn.disabled = true;
+    simCopyHistoryBtn.disabled = true;
+    renderedFlowData = null;
     simDetailEl.textContent = '';
     simHistoryEl.textContent = '';
   };
@@ -258,7 +314,8 @@ export function mountProcessLitePanel() {
             undoBtn: simUndoBtn,
             execBtn: simExecBtn,
             detailEl: simDetailEl,
-            historyEl: simHistoryEl
+            historyEl: simHistoryEl,
+            copyHistoryBtn: simCopyHistoryBtn
           }
         }
       );
@@ -267,6 +324,7 @@ export function mountProcessLitePanel() {
         return;
       }
       renderedConnection = runConnection;
+      renderedFlowData = result || null;
       // 図（またはプロセス管理が無効という案内）を出せた実行だけ、結果画面にカードを見せる
       setDiagramVisible(viewEl.childNodes.length > 0);
       // 描画側が警告（Mermaid 読込失敗 / from-to 未設定のアクション除外）を出している場合は残す
@@ -313,6 +371,8 @@ export function mountProcessLitePanel() {
       simSelect.replaceChildren(new Option('--'));
       simSelect.disabled = true;
       simUndoBtn.disabled = true;
+      simCopyHistoryBtn.disabled = true;
+      renderedFlowData = null;
       simDetailEl.textContent = '';
       simHistoryEl.textContent = '';
     },

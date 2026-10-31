@@ -3,7 +3,12 @@ import {
   ErFieldsUnavailableError,
   buildErAppModel,
   buildFailedErAppModel,
-  selectErFieldsForDensity
+  selectErFieldsForDensity,
+  buildErAppModelFromBundle,
+  buildErMermaidSource,
+  buildErMarkdownSpec,
+  buildErRelationsCsv,
+  analyzeErDependencies
 } from '../src/tabs/er-model.js';
 
 const successfulMetadata = {
@@ -255,5 +260,193 @@ describe('selectErFieldsForDensity', () => {
     expect(selectErFieldsForDensity(model, 'compact', true, 220).map((field) => field.code)).toEqual([
       'field_1', 'field_2', 'field_3', 'field_4', 'field_5', 'field_6'
     ]);
+  });
+});
+
+describe('buildErAppModelFromBundle', () => {
+  it('constructs an AppData model directly from SettingsBundle without REST API calls', () => {
+    const bundle = {
+      appId: '501',
+      appName: '案件管理（オフライン）',
+      guestId: '15',
+      sections: {
+        appSettings: {
+          name: '案件管理（オフライン）',
+          spaceId: '20',
+          threadId: '21'
+        },
+        formFields: {
+          properties: {
+            record_no: { code: 'record_no', label: 'レコード番号', type: 'RECORD_NUMBER' },
+            client_code: {
+              code: 'client_code',
+              label: '取引先コード',
+              type: 'SINGLE_LINE_TEXT',
+              lookup: { relatedApp: { app: '601' }, relatedKeyField: 'master_client_code' }
+            },
+            activities: {
+              code: 'activities',
+              label: '活動履歴一覧',
+              type: 'REFERENCE_TABLE',
+              referenceTable: {
+                relatedApp: { app: '701' },
+                condition: { field: 'client_code', relatedField: 'activity_client_code' }
+              }
+            }
+          }
+        },
+        actionSettings: {
+          actions: {
+            '見積アプリへ転記': { name: '見積アプリへ転記', destApp: { app: '801' } }
+          }
+        }
+      }
+    };
+
+    const model = buildErAppModelFromBundle(bundle);
+    expect(model).toMatchObject({
+      id: 501,
+      name: '案件管理（オフライン）',
+      sourceGuestId: '15',
+      spaceId: '20',
+      threadId: '21',
+      status: 'complete',
+      ok: true,
+      lookupCount: 1,
+      refCount: 1,
+      actionCount: 1,
+      relationCount: 3
+    });
+    expect(model.relations.map((r: any) => [r.kind, r.toApp])).toEqual([
+      ['LOOKUP', 601],
+      ['REF', 701],
+      ['ACTION', 801]
+    ]);
+  });
+});
+
+describe('buildErMermaidSource / buildErMarkdownSpec / buildErRelationsCsv', () => {
+  const sampleApps = [
+    buildErAppModelFromBundle({
+      appId: '10',
+      appName: '受注管理',
+      sections: {
+        formFields: {
+          properties: {
+            rec_no: { code: 'rec_no', label: 'No', type: 'RECORD_NUMBER' },
+            cust_id: {
+              code: 'cust_id',
+              label: '顧客ID',
+              type: 'SINGLE_LINE_TEXT',
+              lookup: { relatedApp: { app: '20' }, relatedKeyField: 'customer_key' }
+            },
+            note: { code: 'note', label: '備考', type: 'MULTI_LINE_TEXT' }
+          }
+        },
+        actionSettings: {
+          actions: {
+            '請求作成': { name: '請求作成', destApp: { app: '30' } }
+          }
+        }
+      }
+    }),
+    buildErAppModelFromBundle({
+      appId: '20',
+      appName: '顧客マスタ',
+      sections: {
+        formFields: {
+          properties: {
+            customer_key: { code: 'customer_key', label: '顧客キー', type: 'SINGLE_LINE_TEXT', unique: true },
+            order_ref: {
+              code: 'order_ref',
+              label: '受注履歴',
+              type: 'REFERENCE_TABLE',
+              referenceTable: {
+                relatedApp: { app: '10' },
+                condition: { field: 'customer_key', relatedField: 'cust_id' }
+              }
+            }
+          }
+        }
+      }
+    }),
+    buildErAppModelFromBundle({
+      appId: '99',
+      appName: '孤立メモ',
+      sections: {
+        formFields: {
+          properties: {
+            memo: { code: 'memo', label: '=SUM(A1:A2)', type: 'SINGLE_LINE_TEXT' }
+          }
+        }
+      }
+    })
+  ];
+
+  it('builds erDiagram Mermaid source with relations and optional all-fields mode', () => {
+    const defaultMermaid = buildErMermaidSource(sampleApps, { showAllFields: false });
+    expect(defaultMermaid).toContain('erDiagram');
+    expect(defaultMermaid).toContain('app_10 }o--o| app_20');
+    expect(defaultMermaid).toContain('app_20 }o--o{ app_10');
+    expect(defaultMermaid).toContain('%% ACTION app_10 -> app_30');
+
+
+    expect(defaultMermaid).not.toContain('MULTI_LINE_TEXT note');
+    expect(defaultMermaid).toContain('erDiagram');
+
+
+
+    expect(defaultMermaid).not.toContain('MULTI_LINE_TEXT note');
+
+    const fullMermaid = buildErMermaidSource(sampleApps, { showAllFields: true });
+    expect(fullMermaid).toContain('MULTI_LINE_TEXT note');
+  });
+
+  it('builds ER Markdown spec with graph analysis summary (SCC, hub, isolated, unresolved)', () => {
+    const analysis = analyzeErDependencies(sampleApps);
+    const md = buildErMarkdownSpec(sampleApps, analysis, { generatedAt: '2026-10-31T00:00:00.000Z' });
+    expect(md).toContain('# kintone ER図 仕様書');
+    expect(md).toContain('## グラフ分析サマリ');
+    expect(md).toContain('連結成分数: 2');
+    expect(md).toContain('複数アプリの循環参照 (SCC)');
+    expect(md).toContain('孤立アプリ');
+    expect(md).toContain('孤立Memo (App 99)'.replace('Memo', 'メモ'));
+    expect(md).toContain('### 未取得の参照先');
+    expect(md).toContain('App 30');
+    expect(md).toContain('## リレーション一覧');
+    expect(md).toContain('### フィールド');
+
+
+    expect(md).toContain('## リレーション一覧');
+
+  });
+
+  it('builds UTF-8 BOM CSV of relations and neutralizes formula injection cells', () => {
+    const appsWithFormulaRel = [
+      ...sampleApps,
+      {
+        id: 40,
+        name: '=HYPERLINK("http://evil")',
+        fields: [],
+        allFields: [],
+        relations: [
+          {
+            kind: 'LOOKUP',
+            from: '+cmd',
+            fromLabel: '-danger',
+            toApp: 20,
+            toField: '@target'
+          }
+        ]
+      }
+    ];
+    const csv = buildErRelationsCsv(appsWithFormulaRel);
+    expect(csv.startsWith('\uFEFF')).toBe(true);
+    expect(csv).toContain('参照元アプリID,参照元アプリ名,フィールドコード,フィールド名,リレーション種別,参照先アプリID,参照先アプリ名,キー・条件詳細');
+    expect(csv).toContain('10,受注管理,cust_id,顧客ID,LOOKUP,20,顧客マスタ,cust_id -> customer_key');
+
+    expect(csv).toContain('\'=HYPERLINK(""http://evil"")');
+    expect(csv).toContain('\'+cmd');
+    expect(csv).toContain('\'-danger');
   });
 });

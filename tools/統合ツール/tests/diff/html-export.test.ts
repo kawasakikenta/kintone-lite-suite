@@ -5,6 +5,7 @@ import {
   buildDiffHtmlHumanOverview,
   buildDiffWarningInfo,
   buildPatchPayload,
+  computeDiffHtmlReviewIdentity,
   getDiffExportContentLabel,
   selectDiffHtmlRowsForExport
 } from '../../src/diff/export';
@@ -1680,6 +1681,77 @@ describe('diff/html export', () => {
     expect(extractInlineScript(html)).toContain('"reflectJsonAvailable":false');
     expect(html).toContain('id="reflectJsonBtn" disabled aria-disabled="true"');
     expect(html).toContain('id="srcJsonBtn">比較元JSON</button>');
+  });
+
+  it('keeps original nested values in HTML rows and compared bundles', () => {
+    const sourceBundle = {
+      appId: '1', guestId: '', preview: false,
+      sections: {
+        appSettings: { webhookToken: 'RAW_BUNDLE_SECRET_SOURCE' },
+        pluginSettings: { plugins: { p1: { config: { apiKey: 'PLUGIN_RAW_SOURCE' } } } },
+        customizeSettings: { desktop: { js: [{ type: 'FILE', file: { name: 'a.js', _body: 'const s = "JS_RAW_SOURCE";' } }] } }
+      },
+      meta: {}
+    };
+    const targetBundle = {
+      appId: '2', guestId: '', preview: false,
+      sections: {
+        appSettings: { webhookToken: 'RAW_BUNDLE_SECRET_TARGET' },
+        pluginSettings: { plugins: { p1: { config: { apiKey: 'PLUGIN_RAW_TARGET' } } } },
+        customizeSettings: { desktop: { js: [{ type: 'FILE', file: { name: 'a.js', _body: 'const s = "JS_RAW_TARGET";' } }] } }
+      },
+      meta: {}
+    };
+    const rows = [
+      {
+        _id: 'sec-1', sectionKey: 'appSettings', section: 'アプリ設定', type: 'changed',
+        path: 'appSettings.webhookToken', left: 'ROW_TOKEN_SECRET_BEFORE', right: 'ROW_TOKEN_SECRET_AFTER'
+      },
+      {
+        _id: 'sec-2', sectionKey: 'pluginSettings', section: 'プラグイン', type: 'added',
+        path: 'pluginSettings.plugins.p1.config', left: undefined, right: { config: { apiKey: 'ROW_PLUGIN_SECRET' } }
+      },
+      {
+        _id: 'sec-3', sectionKey: 'customizeSettings', section: 'カスタマイズ', type: 'changed',
+        path: 'customizeSettings.desktop.js[0].file._body',
+        left: 'const k = "ROW_JS_BODY_BEFORE";',
+        right: 'const k = "ROW_JS_BODY_AFTER";'
+      }
+    ];
+
+    const html = buildDiffHtml(sourceBundle, targetBundle, rows, ['appSettings', 'pluginSettings', 'customizeSettings'], '', {
+      exportContentMode: 'withCompared',
+      fetchIssues: [],
+      partialIssues: [],
+      truncation: null
+    });
+    const script = extractInlineScript(html);
+    const reportMeta = extractInlineJsonConst(html, 'REPORT_META');
+    const expectedIdentity = computeDiffHtmlReviewIdentity(
+      sourceBundle,
+      targetBundle,
+      rows,
+      ['appSettings', 'pluginSettings', 'customizeSettings'],
+      {
+        exportContentMode: 'withCompared',
+        exportMode: 'all',
+        fetchIssues: [],
+        partialIssues: [],
+        truncation: null
+      }
+    );
+
+    expect(reportMeta.exportContentMode).toBe('withCompared');
+    expect(reportMeta.reviewState.fingerprint).toBe(expectedIdentity.reportFingerprint);
+    for (const value of [
+      'RAW_BUNDLE_SECRET_SOURCE', 'RAW_BUNDLE_SECRET_TARGET',
+      'PLUGIN_RAW_SOURCE', 'PLUGIN_RAW_TARGET',
+      'JS_RAW_SOURCE', 'JS_RAW_TARGET',
+      'ROW_TOKEN_SECRET_BEFORE', 'ROW_TOKEN_SECRET_AFTER',
+      'ROW_PLUGIN_SECRET', 'ROW_JS_BODY_BEFORE', 'ROW_JS_BODY_AFTER'
+    ]) {
+      expect(script).toContain(value);
+    }
   });
 });
 
