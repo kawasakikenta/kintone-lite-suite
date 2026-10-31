@@ -1,8 +1,7 @@
 'use strict';
 
-import { DIALOG_STATE_KEY, DEFAULT_SUBTAB_STATE, TOOL_ID } from './constants.js';
+import { DEFAULT_SUBTAB_STATE, TOOL_ID } from './constants.js';
 import type { KusUiRegistry } from './types/uiRefs.js';
-import type { DiffSnapshotComparisonContext } from './diff/snapshot.js';
 
 export interface ConnectionPreset {
   id: string;
@@ -36,7 +35,6 @@ export interface AppState {
   lastDiffTruncation: any;
   lastDiffAt: string | number | null;
   lastDiffSignature: string;
-  lastDiffSnapshotContext: DiffSnapshotComparisonContext | null;
   lastApplyPlan: any;
   lastApplyCompletedAt: string | number | null;
   lastApplyCompletedMode: string;
@@ -131,7 +129,6 @@ export const state: AppState = {
   lastDiffTruncation: null,
   lastDiffAt: null,
   lastDiffSignature: '',
-  lastDiffSnapshotContext: null,
   lastApplyPlan: null,
   lastApplyCompletedAt: null,
   lastApplyCompletedMode: '',
@@ -210,147 +207,19 @@ export function saveDialogState(dialogState: Record<string, any> | null | undefi
 }
 
 const REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
-const REFLECT_APPLY_HISTORY_LIMIT = 30;
 const WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
-const WORK_HISTORY_LIMIT = 20;
 const CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
-const CONNECTION_PRESETS_LIMIT = 30;
-
-function reportStorageFailure(operation: 'load' | 'save' | 'remove', key: string, error: any): void {
-  try {
-    console.warn(`[${TOOL_ID}] storage ${operation} failed: ${key}`, error);
-  } catch { /* noop */ }
-  try {
-    const detail = {
-      operation,
-      key,
-      message: error?.message || String(error)
-    };
-    window.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
-    document.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
-    const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed
-      ? window.__KUS_TOOL_WINDOW__.document
-      : null;
-    if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
-  } catch { /* noop */ }
-}
 
 export function loadReflectApplyHistory(): any[] {
   return [];
-}
-
-export function persistReflectApplyHistory(entries: any[] | null | undefined): void {
-  state.reflectApplyHistory = Array.isArray(entries) ? entries.slice(0, REFLECT_APPLY_HISTORY_LIMIT) : [];
-}
-
-export function pushReflectApplyHistoryEntry(entry: any): void {
-  if (!entry || typeof entry !== 'object') return;
-  const list = Array.isArray(state.reflectApplyHistory) ? [...state.reflectApplyHistory] : [];
-  list.unshift(entry);
-  const trimmed = list.slice(0, REFLECT_APPLY_HISTORY_LIMIT);
-  state.reflectApplyHistory = trimmed;
-  persistReflectApplyHistory(trimmed);
-}
-
-export function clearReflectApplyHistory(): void {
-  state.reflectApplyHistory = [];
-  persistReflectApplyHistory([]);
-}
-
-export function snapshotReflectApplyHistoryExport(): {
-  exportedAt: string;
-  count: number;
-  entries: any[];
-} {
-  const entries = Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : [];
-  return {
-    exportedAt: new Date().toISOString(),
-    count: entries.length,
-    entries: entries.map((e) => ({ ...e }))
-  };
 }
 
 export function loadWorkHistory(): any[] {
   return [];
 }
 
-export function persistWorkHistory(entries: any[] | null | undefined): void {
-  state.workHistory = Array.isArray(entries) ? entries.slice(0, WORK_HISTORY_LIMIT) : [];
-}
-
-export function pushWorkHistoryEntry(entry: any): void {
-  if (!entry || typeof entry !== 'object') return;
-  const list = Array.isArray(state.workHistory) ? [...state.workHistory] : [];
-  list.unshift(entry);
-  const trimmed = list.slice(0, WORK_HISTORY_LIMIT);
-  state.workHistory = trimmed;
-  persistWorkHistory(trimmed);
-}
-
-export function deleteWorkHistoryEntry(id: string): void {
-  const next = (Array.isArray(state.workHistory) ? state.workHistory : []).filter((entry: any) => entry?.id !== id);
-  state.workHistory = next;
-  persistWorkHistory(next);
-}
-
-export function clearWorkHistory(): void {
-  state.workHistory = [];
-  persistWorkHistory([]);
-}
-
-function normalizeConnectionPreset(entry: Partial<ConnectionPreset> | null | undefined): ConnectionPreset | null {
-  if (!entry || typeof entry !== 'object') return null;
-  const sourceAppId = String(entry.sourceAppId || '').trim();
-  const targetAppId = String(entry.targetAppId || '').trim();
-  if (!sourceAppId && !targetAppId) return null;
-  const id = String(entry.id || '').trim() || `conn-${Date.now()}`;
-  const name = String(entry.name || '').trim() || `${sourceAppId || '-'} -> ${targetAppId || '-'}`;
-  return {
-    id,
-    name,
-    sourceAppId,
-    sourceGuestId: String(entry.sourceGuestId || '').trim(),
-    sourcePreview: !!entry.sourcePreview,
-    targetAppId,
-    targetGuestId: String(entry.targetGuestId || '').trim(),
-    targetPreview: entry.targetPreview == null ? true : !!entry.targetPreview,
-    savedAt: Number(entry.savedAt || Date.now()) || Date.now()
-  };
-}
-
 export function loadConnectionPresets(): ConnectionPreset[] {
   return [];
-}
-
-export function persistConnectionPresets(entries: Array<Partial<ConnectionPreset>> | null | undefined): void {
-  state.connectionPresets = Array.isArray(entries)
-    ? entries.map(normalizeConnectionPreset).filter((x): x is ConnectionPreset => x !== null).slice(0, CONNECTION_PRESETS_LIMIT)
-    : [];
-}
-
-export function upsertConnectionPreset(entry: Partial<ConnectionPreset>): ConnectionPreset | null {
-  const normalized = normalizeConnectionPreset({ ...entry, savedAt: Date.now() });
-  if (!normalized) return null;
-  const current = Array.isArray(state.connectionPresets) ? state.connectionPresets : [];
-  const existingIndex = current.findIndex((item) => item.id === normalized.id || item.name === normalized.name);
-  const next = [
-    normalized,
-    ...current.filter((_item, idx) => idx !== existingIndex)
-  ].slice(0, CONNECTION_PRESETS_LIMIT);
-  state.connectionPresets = next;
-  persistConnectionPresets(next);
-  return normalized;
-}
-
-export function deleteConnectionPreset(id: string): boolean {
-  const presetId = String(id || '').trim();
-  if (!presetId) return false;
-  const next = (Array.isArray(state.connectionPresets) ? state.connectionPresets : [])
-    .filter((entry) => entry?.id !== presetId);
-  const changed = next.length !== (state.connectionPresets || []).length;
-  state.connectionPresets = next;
-  persistConnectionPresets(next);
-  return changed;
 }
 
 state.reflectApplyHistory = loadReflectApplyHistory();

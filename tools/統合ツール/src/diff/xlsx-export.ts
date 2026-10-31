@@ -3806,21 +3806,6 @@ function customerRawValue(row: DiffXlsxRow, side: 'source' | 'target'): Customer
 }
 
 const CUSTOMER_MAIN_VALUE_COLUMN_WIDTH = 32;
-const CUSTOMER_MAIN_VALUE_MAX_LINES = 3;
-function compactCustomerMainValue(value: string): string {
-  const normalized = value.replace(/\r\n?/g, '\n');
-  if (estimatedWrappedLines(normalized, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH) <= CUSTOMER_MAIN_VALUE_MAX_LINES) {
-    return normalized;
-  }
-
-  let output = '';
-  for (const char of graphemeClusters(normalized)) {
-    const candidate = `${output}${char}…`;
-    if (estimatedWrappedLines(candidate, CUSTOMER_MAIN_VALUE_COLUMN_WIDTH) > CUSTOMER_MAIN_VALUE_MAX_LINES) break;
-    output += char;
-  }
-  return `${output.replace(/\s+$/g, '')}…`;
-}
 
 function customerFieldCodeLabel(codeValue: unknown, bundle?: DiffXlsxBundle): string {
   const code = String(codeValue ?? '').trim();

@@ -95,15 +95,11 @@ flowchart LR
 | Cytoscape.js | 3.28.1 | 出力した ER 図 HTML のグラフ描画 | cdnjs。代替は jsDelivr の 3.26.0 |
 | Dagre | 0.8.5 | ER 図の階層レイアウト | jsDelivr |
 | cytoscape-dagre | 2.5.0 | Cytoscape.js で Dagre を利用 | jsDelivr の minified / non-minified 候補 |
-| Google Fonts | バージョン指定なし | ER 図 HTML の DM Sans / DM Mono | Google Fonts。取得不可でもシステムフォントで表示可能 |
-| JSONEditor | 9.10.3 | 旧統合 UI の JSON 編集補助 | cdnjs。現行 lite の中心経路では textarea ベースの UI も使用 |
-| Toastify JS | 1.12.0 | 旧統合 UI の通知 | jsDelivr |
-| Driver.js | 1.3.1 | 旧統合 UI のガイドツアー | jsDelivr |
-| Mermaid | 10.6.1 | 旧統合 UI のプロセス図描画 | jsDelivr → unpkg → cdnjs の順で試行。失敗時は簡易 HTML 表示 |
+| Mermaid | 10.6.1 | プロセス図の描画 | jsDelivr → unpkg → cdnjs の順で試行。失敗時は簡易 HTML 表示 |
 | xlsx-js-style | 1.2.0 | 設計書 XLSX のスタイル付き生成 | jsDelivr。失敗時は SheetJS 0.18.5 を試行 |
 | SheetJS (`xlsx`) | 0.18.5 | 設計書 XLSX のフォールバック生成 | jsDelivr。差分比較 XLSX は外部ライブラリを使わず自前生成 |
 
-URL の正本は原則 `src/constants.ts` です。ただし Mermaid の候補 URL は `src/tabs/process.ts`、設計書 XLSX の候補 URL は `src/tabs/design-xlsx.ts` にあります。
+URL の正本は原則 `src/constants.ts` です。ただし Mermaid の候補 URL は `src/tabs/process-standalone.ts`、設計書 XLSX の候補 URL は `src/tabs/design-xlsx.ts` にあります。
 
 ### 4.3 プラットフォーム API とブラウザ標準機能
 

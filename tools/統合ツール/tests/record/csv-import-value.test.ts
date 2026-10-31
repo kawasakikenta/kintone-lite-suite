@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitCsvListValue, coerceCsvImportValue } from '../../src/tabs/record';
+import { splitCsvListValue, coerceCsvImportValue } from '../../src/tabs/record-csv-import';
 
 // CSVインポートの複数値フィールド（チェックボックス・複数選択・ユーザー選択等）は
 // splitCsvListValue で値を分解する。かつて入力値を捨てて常に空配列を返す退行があり、

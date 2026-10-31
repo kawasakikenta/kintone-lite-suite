@@ -4,7 +4,7 @@ import {
   hasPagingClause,
   buildPagedRecordsQuery,
   buildKeysetRecordsQuery
-} from '../../src/tabs/record';
+} from '../../src/tabs/record-query';
 
 // レコード一括取得（バックアップ / CSV / アプリ間コピー）はこれらのクエリ生成で
 // ページングする。limit/offset の取り違えや order by 欠落は取りこぼし・重複の原因に

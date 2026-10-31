@@ -531,9 +531,6 @@ export function selectErFieldsForDensity(
   return selected.slice(0, limit);
 }
 
-export const buildErAppModelFromResponses = buildErAppModel;
-export const createFailedErAppModel = buildFailedErAppModel;
-
 /**
  * 設定取得JSON（SettingsBundle 形式: appId, appName, guestId, sections.formFields / fieldSettings,
  * sections.appSettings / appInfo, sections.actionSettings 等）から API 通信なしで ER 図の AppData モデルを構築する。

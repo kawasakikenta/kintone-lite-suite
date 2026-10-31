@@ -80,34 +80,18 @@ lite版は「対象選択 → 差分確認 → 最終確認 → 結果」の4段
 
 これらのCSVは閲覧・集計用で、kintoneのCSV取込や本ツールのCSV取込へそのまま戻せる互換形式ではありません。本ツールのCSV取込はサブテーブルに対応していません。添付フィールドはCSVへファイル名だけを出力します。ファイル本体も必要な場合はバックアップの「添付ファイルも保存」を選んでください。このオプションはテーブル内の添付にも対応しています。単独の「添付DL」もテーブル内のフィールドを名前から選択できます。取込用の列が必要な場合は「CSV取込ひな形を作成」を使ってください。
 
-## UI方針（タイポグラフィ）
-
-CSS は `src/ui/styles/` 配下に分割管理しています（`tokens.css` / `components.css` / `diff.css` / `reflect.css` / `tabs.css` / `a11y-responsive.css`）。
-
-### ルール
-- 文字サイズトークンを採用し、`--font-xs: 12px`, `--font-sm: 13px`, `--font-md: 14px` を基準にする。
-- 主要導線（ランチャー/タブ）では **最小文字サイズを 12px** とし、9〜11pxは使わない。
-- 補足文（`.hs`, `.feature-card-desc`）は本文より 1 段階小さいサイズ（`--font-xs`）に統一する。
-- 補足文の行間は `--line-relaxed`（1.65）以上を維持する。
-- 長文案内は 1文を短くし、手順は箇条書きで提示する。
-
-
 ## プロジェクト構成
 
 ```
 tools/統合ツール/
 ├── src/
-│   ├── index.ts              # 廃止済み統合版の旧エントリ（ビルド対象外）
-│   ├── boot.ts               # 廃止済み統合版の旧起動処理（ビルド対象外）
 │   ├── featureDefs.mjs       # 機能カード定義と単機能エントリ一覧（STANDALONE_LAUNCH_ENTRIES）
-│   ├── register-api.ts       # window.__KUS__ 公開 API
 │   ├── constants.ts          # 定数定義（TOOL_ID, SECTION_DEFS, META_KEYS 等）
 │   ├── state.ts              # グローバルstate, セッション内メモリ, ui参照
 │   ├── api.ts                # kintone API ラッパー（GET/PUT/POST, fetchBundle）
 │   ├── utils.ts              # 汎用ユーティリティ（escape, clone, normalize, download等）
 │   ├── kintoneGuard.ts       # kintone 画面判定ガード（全エントリ共通）
-│   ├── handlers.ts           # イベント委譲ディスパッチ（data-act, キーボードショートカット）
-│   ├── handlers/             # handlers.ts から分割したモジュール（作業履歴・接続プリセット等）
+│   ├── handlers/             # 差分行のフォーカス移動
 │   │
 │   ├── diff/                 # 差分エンジン
 │   │   ├── engine.ts         # コア差分アルゴリズム（deepDiff, LCS, objectKey/複合キー比較）
@@ -121,9 +105,10 @@ tools/統合ツール/
 │   │   └── xlsx-*.ts         # Excel 出力
 │   │
 │   ├── reflect/              # プレビュー反映
-│   │   ├── plan.ts           # 反映プラン構築, 確認UI, セクション別差分計画
-│   │   ├── apply.ts          # 反映実行, バックアップ, デプロイ
-│   │   └── helpers.ts        # 反映共通ヘルパー（進捗表示, スコープ解決等）
+│   │   ├── standalonePlan.ts      # 反映計画の構築（変更・保持・削除の判定）
+│   │   ├── standalonePreflight.ts # 反映前の確認と基準の照合
+│   │   ├── customizeFiles.ts      # JS/CSS ファイルの比較と転送
+│   │   └── applyOutcome.ts        # 反映結果の集計
 │   │
 │   ├── entries/              # esbuild エントリポイント（単機能 lite 版）
 │   │   ├── *-lite-entry.ts   # 各単機能スクリプトのエントリ
@@ -131,24 +116,20 @@ tools/統合ツール/
 │   │   └── litePanelTheme.ts # lite 版共通パネル UI
 │   │
 │   ├── ui/                   # UI層
-│   │   ├── styles/           # 分割CSS（tokens/components/diff/reflect/tabs/a11y-responsive）
-│   │   ├── template.ts       # メインHTML構築（buildRoot）
 │   │   ├── dialog.ts         # ダイアログ制御（ドラッグ, リサイズ, 位置記憶）
-│   │   ├── components.ts     # 共通UIコンポーネント（ステータス, チップ, サイドバー等）
-│   │   └── tour.ts           # ガイドツアー機能
+│   │   └── components.ts     # 共通UIコンポーネント（ステータス, チップ, サイドバー等）
 │   │
 │   └── tabs/                 # タブ別ロジック（*-standalone.ts は lite 版用）
-│       ├── diff.ts           # 差分比較タブ
-│       ├── reflect.ts        # プレビュー反映タブ
-│       ├── field.ts          # フィールド追加タブ
-│       ├── jsconfig.ts       # JS/CSS設定タブ
-│       ├── design.ts         # 設計書タブ
-│       ├── er.ts             # ER図タブ
-│       ├── process.ts        # プロセス図タブ
-│       ├── settings-export.ts# 設定一括取得タブ
-│       ├── record.ts         # レコード管理タブ
-│       ├── analyze.ts        # 分析タブ
-│       └── api-tester.ts     # APIテスタータブ
+│       ├── diff-standalone.ts             # 差分比較
+│       ├── reflect-standalone.ts          # プレビュー反映
+│       ├── field-standalone.ts            # フィールド追加
+│       ├── jsconfig-standalone.ts         # JS/CSS設定
+│       ├── design-standalone.ts           # 設計書
+│       ├── er-standalone.ts               # ER図（描画本体は er.ts）
+│       ├── process-standalone.ts          # プロセス図
+│       ├── settings-export-standalone.ts  # 設定一括取得
+│       ├── record-standalone.ts           # レコード管理・CSV出力
+│       └── record-quality-standalone.ts   # データ品質チェック
 │
 ├── tests/                    # vitest ユニットテスト（diff/design/record/reflect）
 ├── scripts/                  # 検査スクリプト（check-no-browser-storage）
@@ -183,7 +164,6 @@ tools/統合ツール/
 | 設計書 | 設定情報を設計資料として保存 | JSON/Markdown/Excel 出力、差分レポート |
 | ER図 | データ構造・参照関係の可視化 | ルックアップ/関連レコード追跡、依存関係マップ、構造分析 |
 | プロセス図 | 業務フローの可視化 | Mermaid フロー図生成、状態遷移シミュレーション |
-| 分析 | フィールド・通知・権限・レイアウトの横断確認 | 影響分析ダッシュボード、依存グラフ、通知/権限一覧、レイアウト比較 |
 
 ### 3) 設定運用・移送
 
@@ -198,7 +178,6 @@ tools/統合ツール/
 | タブ | 主な用途 | 代表機能 |
 |------|----------|----------|
 | レコード管理 | 実データのメンテナンス | 重複・未入力検査、CSV取込ひな形、ステータス更新、添付DL、CSV、バックアップ、アプリ間コピー |
-| APIテスター | APIレベルでの挙動確認 | GET/POST/PUT/DELETE の直接実行 |
 
 > SQL ライクなデータ参照は本ツールから除外し、別リポジトリ `kintone-data-utilities` の `kintoneSQL.js` へ分離しました。
 
@@ -218,10 +197,10 @@ tools/統合ツール/
 
 | フェーズ | 主に使うタブ |
 |----------|---------------|
-| 変更前の影響把握 | 差分比較 / 分析 / ER図 / プロセス図 |
+| 変更前の影響把握 | 差分比較 / ER図 / プロセス図 |
 | 変更適用 | プレビュー反映 / フィールド追加 / JS/CSS設定 |
-| 記録・監査対応 | 設計書 / 設定一括取得 / 分析 |
-| データ調整・原因調査 | レコード管理 / APIテスター（SQLは standalone/kintoneSQL.js） |
+| 記録・監査対応 | 設計書 / 設定一括取得 |
+| データ調整・原因調査 | レコード管理（SQLは standalone/kintoneSQL.js） |
 
 ## 典型的な利用フロー
 
@@ -234,21 +213,21 @@ tools/統合ツール/
 
 ## 正規実装と単機能スクリプト
 
-lite 版を正規とする運用では、機能ロジックは `src/tabs/*.ts` を正規実装とし、`tools/*.js` は単機能用の出力として管理します。単機能スクリプトは `src/entries/*-lite-entry.ts` を esbuild した自己完結バンドルで、`統合ツール.js` を別途読み込む必要はありません。
+lite 版を正規とする運用では、機能ロジックは `src/tabs/*-standalone.ts` と共通モジュールを正規実装とし、`tools/*.js` は単機能用の出力として管理します。単機能スクリプトは `src/entries/*-lite-entry.ts` を esbuild した自己完結バンドルで、`統合ツール.js` を別途読み込む必要はありません。
 
 差分専用ブックマーク `差分比較.js` には差分 API も同梱されます。
 
 | 機能名 | 正規モジュール | 単機能スクリプト |
 |---|---|---|
-| 差分比較 | `src/tabs/diff.ts` | `../差分比較.js`（lite バンドル） |
-| プレビュー反映 | `src/tabs/reflect.ts` | `../プレビュー反映.js`（lite バンドル） |
-| フィールド追加 | `src/tabs/field.ts` | `../フィールド追加.js`（lite バンドル） |
-| JS/CSS設定 | `src/tabs/jsconfig.ts` | `../kintoneJS取得.js`（lite バンドル） |
-| 設定一括取得 | `src/tabs/settings-export.ts` | `../設定取得.js`（lite バンドル） |
-| 設計書 | `src/tabs/design.ts` | `../設計書作成.js`（同上） |
-| ER図 | `src/tabs/er.ts` | `../ER図.js`（同上） |
-| プロセス図 | `src/tabs/process.ts` | `../プロセス実行.js`（同上） |
-| レコード管理 | `src/tabs/record.ts` | `../kintoneレコード取得.js`（同上） |
+| 差分比較 | `src/tabs/diff-standalone.ts` | `../差分比較.js`（lite バンドル） |
+| プレビュー反映 | `src/tabs/reflect-standalone.ts` | `../プレビュー反映.js`（lite バンドル） |
+| フィールド追加 | `src/tabs/field-standalone.ts` | `../フィールド追加.js`（lite バンドル） |
+| JS/CSS設定 | `src/tabs/jsconfig-standalone.ts` | `../kintoneJS取得.js`（lite バンドル） |
+| 設定一括取得 | `src/tabs/settings-export-standalone.ts` | `../設定取得.js`（lite バンドル） |
+| 設計書 | `src/tabs/design-standalone.ts` | `../設計書作成.js`（同上） |
+| ER図 | `src/tabs/er-standalone.ts` | `../ER図.js`（同上） |
+| プロセス図 | `src/tabs/process-standalone.ts` | `../プロセス実行.js`（同上） |
+| レコード管理 | `src/tabs/record-standalone.ts` | `../kintoneレコード取得.js`（同上） |
 
 `SQL実行` は統合ツールから除外し、別リポジトリ `kintone-data-utilities` で独立運用します。
 

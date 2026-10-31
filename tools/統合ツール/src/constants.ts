@@ -32,24 +32,6 @@ export const EXTERNAL_LIBRARIES: Readonly<Record<string, Readonly<ExternalLibrar
     version: '2.5.0',
     cdnUrl: 'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js',
     altCdnUrl: 'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js'
-  }),
-  googleFontsDmSansMono: Object.freeze({
-    cdnUrl: 'https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap'
-  }),
-  jsoneditor: Object.freeze({
-    version: '9.10.3',
-    cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.js',
-    cssUrl: 'https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.css'
-  }),
-  toastify: Object.freeze({
-    version: '1.12.0',
-    cdnUrl: 'https://cdn.jsdelivr.net/npm/toastify-js',
-    cssUrl: 'https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css'
-  }),
-  driver: Object.freeze({
-    version: '1.3.1',
-    cdnUrl: 'https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js',
-    cssUrl: 'https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css'
   })
 });
 
@@ -83,13 +65,9 @@ export const DEFAULT_GUEST_ID: string = DEFAULT_APP_ID ? resolveDefaultGuestId()
 export const DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
 
 export const DIALOG_MARGIN = 16;
-export const DIALOG_MIN_WIDTH = 560;
-export const DIALOG_MIN_HEIGHT = 360;
 export const DIALOG_DEFAULT_WIDTH = 980;
 // ノートPC（1366x768 / 1440x900）でも縦に余裕を残すため、ビューポートに合わせる
 export const DIALOG_DEFAULT_HEIGHT = 720;
-export const DIALOG_LARGE_WIDTH = 1240;
-export const DIALOG_LARGE_HEIGHT = 940;
 
 export interface SectionDef {
   key: string;
@@ -172,29 +150,6 @@ export const SECTION_DEFS: readonly SectionDef[] = [
 
 export const SETTINGS_EXPORT_SCOPE_DEFS = SECTION_DEFS;
 
-/**
- * 各セクションを「比較先プレビューに反映」したときに何が起きるかを 1 行で説明。
- * プラン確認画面のカードヘッダーに表示し、初見ユーザーがマージ/上書き/削除挙動を
- * 事前に把握できるようにする目的。網羅されないキーは未表示のまま。
- */
-export const SECTION_APPLY_HINTS: Record<string, string> = {
-  fieldSettings: '比較元のフィールド定義を追加・更新します（比較先のみに存在するフィールドはノードモード以外では削除されません）。',
-  layoutSettings: 'フォームのレイアウトを比較元の配置で全置換します。フィールド反映後に実行する必要があります。',
-  viewSettings: '比較元のビューを追加・更新します（互換モードでは削除しません）。',
-  reportSettings: '比較元のグラフを追加・更新します。比較先のみに存在するグラフは削除されます。',
-  processSettings: 'プロセス管理（状態・アクション）を比較元の内容で全置換します。実行中の運用に影響するため要注意。',
-  pluginSettings: 'プラグインの「有効化」のみ同期します。各プラグインの設定 (plugin/config) は別途反映が必要です。',
-  customizeSettings: 'JS/CSSのファイル一覧（desktop / mobile）を比較元の内容で全置換します。比較先のみに存在するファイルは外れます。',
-  actionSettings: '比較元のアクション設定を追加・更新します（互換モードでは削除しません）。',
-  appAcl: 'アプリ権限を比較元の rights で全置換します。比較先のみに存在する権限エントリは消えるため注意。',
-  fieldAcl: 'フィールド権限を比較元の rights で全置換します。比較先のみに存在するフィールド権限は消えます。',
-  recordPermissions: 'レコード権限（条件＋エンティティ）を比較元で全置換します。比較先で追加した行は消えます。',
-  notifications: '通知（一般）の rules を比較元で全置換します。比較先のみに存在する通知は消えます。',
-  perRecordNotifications: 'レコード条件通知を比較元で全置換します。比較先のみに存在するルールは消えます。',
-  reminderNotifications: 'リマインダー通知を比較元で全置換します。timezone も比較元の値で上書きされます。',
-  categories: 'カテゴリ定義を比較元で全置換します。比較先のみに存在するカテゴリは消えます。'
-};
-
 export { FEATURE_DEFS } from './featureDefs.mjs';
 
 export interface TabConnectionNeed {
@@ -217,7 +172,6 @@ export const TAB_CONNECTION_NEEDS: Record<string, TabConnectionNeed> = {
   settingsExport: { appInputs: false, target: false, connectionActions: false },
   analyze:        { appInputs: true,  target: true,  connectionActions: false }
 };
-
 
 export const META_KEYS: ReadonlySet<string> = new Set(['revision', 'creator', 'createdAt', 'modifier', 'modifiedAt']);
 
@@ -348,8 +302,6 @@ export const GUIDED_TOUR_COURSES: Readonly<Record<string, Readonly<TourCourse>>>
   }
 });
 
-export const GUIDED_TOUR_DEFAULT_COURSE = 'full';
-
 // 旧コードとの互換用（フルコース＝旧 GUIDED_TOUR_STEPS）
 export const GUIDED_TOUR_STEPS: readonly TourStep[] = Object.freeze(GUIDED_TOUR_COURSES.full.steps);
 
@@ -361,7 +313,6 @@ export const HIGH_IMPACT_SECTIONS: ReadonlySet<string> = new Set([
   'fieldAcl',
   'recordPermissions'
 ]);
-
 
 export const DIFF_IMPACT_REF_LIMIT = 6;
 
@@ -387,80 +338,6 @@ export const FIELD_REF_TOKEN_KEYS: ReadonlySet<string> = new Set([
   'formula',
   'sort'
 ]);
-
-export interface ReflectQuickPreset {
-  id: string;
-  label: string;
-  hint: string;
-  mode: 'src' | 'tgt';
-  sections?: string[];
-  excludeSections?: string[];
-  severities?: string[];
-  types?: string[];
-  excludeSystemFields?: boolean;
-  keepSelection?: boolean;
-}
-
-/**
- * 差分選択ノードのクイックプリセット（反映タブの「差分から調整」モード用）
- */
-export const REFLECT_QUICK_PRESETS: readonly ReflectQuickPreset[] = [
-  {
-    id: 'all',
-    label: 'すべての候補',
-    hint: '全ノードを選択し、反映元は比較元に揃えます',
-    mode: 'src'
-  },
-  {
-    id: 'fieldsOnly',
-    label: 'フィールドのみ',
-    hint: 'フィールド設定の差分だけ選択します',
-    sections: ['fieldSettings'],
-    excludeSystemFields: true,
-    mode: 'src'
-  },
-  {
-    id: 'viewsAndReports',
-    label: 'ビュー+グラフ',
-    hint: 'ビュー設定・グラフ設定だけ選択',
-    sections: ['viewSettings', 'reportSettings'],
-    mode: 'src'
-  },
-  {
-    id: 'highOnly',
-    label: '高重要度のみ',
-    hint: '重要度「高」の差分だけを選択',
-    severities: ['high'],
-    mode: 'src'
-  },
-  {
-    id: 'addedOnly',
-    label: '追加のみ',
-    hint: '追加差分だけ選択（既存設定は残す）',
-    types: ['added'],
-    mode: 'src'
-  },
-  {
-    id: 'excludeAcl',
-    label: '権限を除外',
-    hint: 'アプリ/フィールド/レコード権限を除外して選択',
-    excludeSections: ['appAcl', 'fieldAcl', 'recordPermissions'],
-    mode: 'src'
-  },
-  {
-    id: 'keepTarget',
-    label: '比較先を維持',
-    hint: '選択はそのまま、反映元を全て「比較先」に変更',
-    keepSelection: true,
-    mode: 'tgt'
-  }
-];
-
-export const IGNORE_PRESET_KEYS: Record<string, readonly string[]> = {
-  fieldOrder: ['index', 'no', 'order'],
-  meta: ['revision', 'createdAt', 'creator', 'modifiedAt', 'modifier', 'updatedAt', 'updatedBy'],
-  labelName: ['name', 'label']
-};
 
 export interface DiffNormalizationPreset {
   label: string;

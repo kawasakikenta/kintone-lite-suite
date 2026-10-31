@@ -57,6 +57,21 @@ describe('diff/engine', () => {
     });
   });
 
+  describe('detectRowSeverity (decorative attributes)', () => {
+    const base = { sectionKey: 'fieldSettings', path: 'fieldSettings.properties.name.description' };
+    it('lowers added and removed decorative attributes as well as changed ones', () => {
+      expect(detectRowSeverity({ ...base, type: 'changed', left: 'a', right: 'b' })).toBe('low');
+      expect(detectRowSeverity({ ...base, type: 'added', right: 'b' })).toBe('low');
+      expect(detectRowSeverity({ ...base, type: 'removed', left: 'a' })).toBe('low');
+    });
+    it('keeps a whole field whose code matches a decorative attribute high', () => {
+      const row = { sectionKey: 'fieldSettings', path: 'fieldSettings.properties.description' };
+      const field = { type: 'SINGLE_LINE_TEXT', code: 'description', label: '説明' };
+      expect(detectRowSeverity({ ...row, type: 'added', right: field })).toBe('high');
+      expect(detectRowSeverity({ ...row, type: 'removed', left: field })).toBe('high');
+    });
+  });
+
   describe('parseIgnoreRules & isIgnoredKey', () => {
     it('does not hide identifiers unless the user or a normalization preset asks for it', () => {
       const rules = parseIgnoreRules('');

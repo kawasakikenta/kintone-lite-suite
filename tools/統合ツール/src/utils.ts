@@ -1,6 +1,6 @@
 'use strict';
 
-import { META_KEYS, EXTERNAL_LIBRARIES, TOOL_ID } from './constants.js';
+import { META_KEYS, TOOL_ID } from './constants.js';
 
 /** ツールの UI が載っているウィンドウ（ポップアウト先があればそちら、無ければ現在の window） */
 export function getToolWindowSafe(): Window {
@@ -22,22 +22,10 @@ function getToolRootSafe(): HTMLElement | null {
   } catch (e) { return null; }
 }
 
-/** alert をツールウィンドウ（ポップアウト）で実行する */
-export function kusAlert(message: string): void {
-  try { return getToolWindowSafe().alert(message); }
-  catch (e) { return window.alert(message); }
-}
-
 /** confirm をツールウィンドウ（ポップアウト）で実行する */
 export function kusConfirm(message: string): boolean {
   try { return getToolWindowSafe().confirm(message); }
   catch (e) { return window.confirm(message); }
-}
-
-/** prompt をツールウィンドウ（ポップアウト）で実行する */
-export function kusPrompt(message: string, defaultValue: string = ''): string | null {
-  try { return getToolWindowSafe().prompt(message, defaultValue); }
-  catch (e) { return window.prompt(message, defaultValue); }
 }
 
 export function esc(s: unknown): string {
@@ -166,24 +154,6 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   return stableStringify(a) === stableStringify(b);
 }
 
-/**
- * オブジェクト/配列入力に限定した stableStringify の WeakMap キャッシュ。
- * プラン生成（planFieldSectionDiffRequests など）では同じ before/after 参照に対して
- * stableStringify が複数回呼ばれるため、再計算を抑える。
- *
- * 注意: 入力オブジェクトをミューテートすると古い文字列が返るため、
- * 「処理中に変更されない」スナップショットに対してのみ使うこと。
- */
-const _stableStringifyCache = new WeakMap<object, string>();
-export function stableStringifyMemo(v: unknown): string {
-  if (v === null || typeof v !== 'object') return stableStringify(v);
-  const cached = _stableStringifyCache.get(v as object);
-  if (cached !== undefined) return cached;
-  const out = stableStringify(v);
-  _stableStringifyCache.set(v as object, out);
-  return out;
-}
-
 /** diff/reflect 共通: 行パスからセクション接頭辞を除いた相対パス */
 export function relativePathFromRow(path: string, secKey: string): string | null {
   if (!path) return '';
@@ -230,6 +200,18 @@ export interface ApiDiagError extends Error {
   id?: string;
 }
 
+const MAX_API_FIELD_ERRORS = 5;
+
+/** kintone が項目ごとに返す拒否理由（errors）を、利用者が読める行にする。 */
+function formatApiFieldErrors(errors: unknown): string[] {
+  if (!errors || typeof errors !== 'object') return [];
+  const lines = Object.entries(errors as Record<string, any>).flatMap(([key, value]) =>
+    (Array.isArray(value?.messages) ? value.messages : []).map((message: unknown) => `${key}: ${String(message)}`));
+  const shown = lines.slice(0, MAX_API_FIELD_ERRORS);
+  if (lines.length > shown.length) shown.push(`ほか ${lines.length - shown.length} 件`);
+  return shown;
+}
+
 export function apiErrorWithContext(err: any, meta: ApiErrorMeta): ApiDiagError {
   if (err && err.__apiDiag) return err as ApiDiagError;
   const method = meta?.method || 'GET';
@@ -241,13 +223,39 @@ export function apiErrorWithContext(err: any, meta: ApiErrorMeta): ApiDiagError 
   const endpoint = `${prefix}${path}`;
   const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ''}${bodySummary ? ` payload=${bodySummary}` : ''}`;
   const baseMessage = err?.message || String(err);
-  const wrapped = new Error(`${baseMessage}\n${contextLine}`) as ApiDiagError;
+  const wrapped = new Error([baseMessage, ...formatApiFieldErrors(err?.errors), contextLine].join('\n')) as ApiDiagError;
   wrapped.__apiDiag = true;
   wrapped.original = err;
   if (err?.code) wrapped.code = err.code;
   if (err?.id) wrapped.id = err.id;
   if (err?.stack) wrapped.stack = err.stack;
   return wrapped;
+}
+
+export interface FlatCategory { name: string; path: string; index: string }
+
+/**
+ * カテゴリーの階層を表示順に平坦化する。
+ * kintone の応答は名前をキーにしたオブジェクトで、階層は children に入る。以前の設定JSON向けに配列も受け付ける。
+ */
+export function flattenCategories(categories: unknown): FlatCategory[] {
+  const out: FlatCategory[] = [];
+  const walk = (value: unknown, parent: string) => {
+    const isList = Array.isArray(value);
+    const entries: Array<[string, any]> = isList
+      ? (value as any[]).map((item) => ['', item])
+      : value && typeof value === 'object' ? Object.entries(value as Record<string, any>) : [];
+    if (!isList) entries.sort((a, b) => Number(a[1]?.index ?? 0) - Number(b[1]?.index ?? 0));
+    for (const [key, item] of entries) {
+      const name = typeof item === 'string' ? item : String(item?.name || item?.label || item?.code || key || '').trim();
+      if (!name) continue;
+      const path = parent ? `${parent} > ${name}` : name;
+      out.push({ name, path, index: String(item?.index ?? '') });
+      if (item && typeof item === 'object') walk(item.children, path);
+    }
+  };
+  walk(categories, '');
+  return out;
 }
 
 export function nowStamp(): string {
@@ -323,10 +331,6 @@ export function getPreviewStateLabel(preview: unknown): string {
   return preview ? 'プレビュー' : '本番';
 }
 
-export function getOnOffDisplayLabel(value: unknown): string {
-  return value ? 'ON' : 'OFF';
-}
-
 export function getThemeDisplayLabel(theme: string): string {
   return theme === 'dark' ? 'ダーク' : 'ライト';
 }
@@ -375,43 +379,6 @@ export function renderSectionIconHtml(sectionKey: string, options: { withTooltip
   return `<span class="sec-icon" data-section="${esc(sectionKey || '')}"${tip} aria-hidden="true">${esc(ch)}</span>`;
 }
 
-// === Severity helpers (S1) ===
-export function severityToneOf(severity: string | undefined | null): 'high' | 'medium' | 'low' {
-  const s = String(severity || '').toLowerCase();
-  if (s === 'high') return 'high';
-  if (s === 'medium' || s === 'mid') return 'medium';
-  return 'low';
-}
-
-export function renderSeverityIconHtml(severity: string | undefined | null): string {
-  const tone = severityToneOf(severity);
-  const glyph = tone === 'high' ? '⚠' : tone === 'medium' ? '⚡' : '◦';
-  return `<span class="sev-icon sev-icon--${tone}" aria-label="重要度${tone}">${esc(glyph)}</span>`;
-}
-
-export function severityClass(severity: string | undefined | null): string {
-  return `sev-${severityToneOf(severity)}`;
-}
-
-// === Stage classification (S3) ===
-export function classifyStage(act: string | undefined | null): 'diff' | 'select' | 'plan' | 'apply' | '' {
-  const a = String(act || '');
-  if (!a) return '';
-  if (a.startsWith('runDiff') && a !== 'runDiffAndPlan') return 'diff';
-  if (a === 'loadReflectNodes' || a === 'selectVisibleReflectNodes' || a === 'applyScopeDiffOnly' || a === 'reflectBulkSelect') return 'select';
-  if (a === 'previewApplyPlan' || a === 'runDiffAndPlan' || a === 'exportDryRunPlan') return 'plan';
-  if (a === 'applyPreview') return 'apply';
-  return '';
-}
-
-export function stageIconChar(stage: string): string {
-  if (stage === 'diff') return '🔍';
-  if (stage === 'select') return '✓';
-  if (stage === 'plan') return '📋';
-  if (stage === 'apply') return '🚀';
-  return '▶';
-}
-
 export function getSeverityDisplayLabel(severity: string): string {
   if (severity === 'high') return '高';
   if (severity === 'medium') return '中';
@@ -454,190 +421,6 @@ export function readTextFile(file: Blob): Promise<string> {
     r.onerror = () => reject(r.error || new Error('ファイル読み込みに失敗しました'));
     r.readAsText(file, 'utf-8');
   });
-}
-
-
-
-
-const loadedScripts: WeakMap<Document, Set<string>> = new WeakMap();
-const loadedStyles: WeakMap<Document, Set<string>> = new WeakMap();
-const loadingScripts: WeakMap<Document, Map<string, Promise<void>>> = new WeakMap();
-const loadingStyles: WeakMap<Document, Map<string, Promise<void>>> = new WeakMap();
-
-function normalizeResourceDocument(doc: Document | null | undefined): Document {
-  return doc && typeof doc.createElement === 'function' ? doc : document;
-}
-
-function getWeakSet(map: WeakMap<Document, Set<string>>, doc: Document): Set<string> {
-  let set = map.get(doc);
-  if (!set) {
-    set = new Set();
-    map.set(doc, set);
-  }
-  return set;
-}
-
-function getWeakMap(map: WeakMap<Document, Map<string, Promise<void>>>, doc: Document): Map<string, Promise<void>> {
-  let inner = map.get(doc);
-  if (!inner) {
-    inner = new Map();
-    map.set(doc, inner);
-  }
-  return inner;
-}
-
-function waitForScriptLoad(existingScript: HTMLScriptElement, url: string): Promise<void> {
-  const doc = normalizeResourceDocument(existingScript?.ownerDocument);
-  const docLoadedScripts = getWeakSet(loadedScripts, doc);
-  if (existingScript.dataset.kusLoaded === 'true') {
-    docLoadedScripts.add(url);
-    return Promise.resolve();
-  }
-  const rs = (existingScript as any).readyState;
-  if (rs === 'loaded' || rs === 'complete') {
-    docLoadedScripts.add(url);
-    existingScript.dataset.kusLoaded = 'true';
-    return Promise.resolve();
-  }
-  return new Promise((resolve, reject) => {
-    const onLoad = () => {
-      cleanup();
-      docLoadedScripts.add(url);
-      resolve();
-    };
-    const onError = () => {
-      cleanup();
-      reject(new Error(`Failed to load script: ${url}`));
-    };
-    const cleanup = () => {
-      existingScript.removeEventListener('load', onLoad);
-      existingScript.removeEventListener('error', onError);
-    };
-    existingScript.addEventListener('load', onLoad, { once: true });
-    existingScript.addEventListener('error', onError, { once: true });
-  });
-}
-
-function waitForStyleLoad(existingLink: HTMLLinkElement, url: string): Promise<void> {
-  const doc = normalizeResourceDocument(existingLink?.ownerDocument);
-  const docLoadedStyles = getWeakSet(loadedStyles, doc);
-  if (existingLink.dataset.kusLoaded === 'true') {
-    docLoadedStyles.add(url);
-    return Promise.resolve();
-  }
-  if (existingLink.sheet) {
-    docLoadedStyles.add(url);
-    existingLink.dataset.kusLoaded = 'true';
-    return Promise.resolve();
-  }
-  return new Promise((resolve, reject) => {
-    const onLoad = () => {
-      cleanup();
-      docLoadedStyles.add(url);
-      resolve();
-    };
-    const onError = () => {
-      cleanup();
-      reject(new Error(`Failed to load style: ${url}`));
-    };
-    const cleanup = () => {
-      existingLink.removeEventListener('load', onLoad);
-      existingLink.removeEventListener('error', onError);
-    };
-    existingLink.addEventListener('load', onLoad, { once: true });
-    existingLink.addEventListener('error', onError, { once: true });
-  });
-}
-
-export interface LoadResourceOptions {
-  document?: Document;
-  doc?: Document;
-}
-
-export function loadExternalScript(url: string, options: LoadResourceOptions = {}): Promise<void> {
-  if (!url) return Promise.resolve();
-  const doc = normalizeResourceDocument(options.document || options.doc);
-  const docLoadedScripts = getWeakSet(loadedScripts, doc);
-  const docLoadingScripts = getWeakMap(loadingScripts, doc);
-  if (docLoadedScripts.has(url)) return Promise.resolve();
-  const inflight = docLoadingScripts.get(url);
-  if (inflight) return inflight;
-
-  const existingScript = doc.querySelector<HTMLScriptElement>(`script[src="${url}"]`);
-  if (existingScript) {
-    const promise = waitForScriptLoad(existingScript, url).finally(() => {
-      docLoadingScripts.delete(url);
-    });
-    docLoadingScripts.set(url, promise);
-    return promise;
-  }
-
-  const promise = new Promise<void>((resolve, reject) => {
-    const script = doc.createElement('script');
-    script.src = url;
-    script.onload = () => {
-      docLoadedScripts.add(url);
-      script.dataset.kusLoaded = 'true';
-      resolve();
-    };
-    script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
-    doc.head.appendChild(script);
-  }).finally(() => {
-    docLoadingScripts.delete(url);
-  });
-  docLoadingScripts.set(url, promise);
-  return promise;
-}
-
-export function loadExternalStyle(url: string, options: LoadResourceOptions = {}): Promise<void> {
-  if (!url) return Promise.resolve();
-  const doc = normalizeResourceDocument(options.document || options.doc);
-  const docLoadedStyles = getWeakSet(loadedStyles, doc);
-  const docLoadingStyles = getWeakMap(loadingStyles, doc);
-  if (docLoadedStyles.has(url)) return Promise.resolve();
-  const inflight = docLoadingStyles.get(url);
-  if (inflight) return inflight;
-
-  const existingLink = doc.querySelector<HTMLLinkElement>(`link[href="${url}"]`);
-  if (existingLink) {
-    const promise = waitForStyleLoad(existingLink, url).finally(() => {
-      docLoadingStyles.delete(url);
-    });
-    docLoadingStyles.set(url, promise);
-    return promise;
-  }
-
-  const promise = new Promise<void>((resolve, reject) => {
-    const link = doc.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = url;
-    link.onload = () => {
-      docLoadedStyles.add(url);
-      link.dataset.kusLoaded = 'true';
-      resolve();
-    };
-    link.onerror = () => reject(new Error(`Failed to load style: ${url}`));
-    doc.head.appendChild(link);
-  }).finally(() => {
-    docLoadingStyles.delete(url);
-  });
-  docLoadingStyles.set(url, promise);
-  return promise;
-}
-
-export async function loadExternalLibrary(name: string, options: LoadResourceOptions = {}): Promise<void> {
-  const lib = (EXTERNAL_LIBRARIES as Record<string, any>)[name];
-  if (!lib) throw new Error(`Unknown external library: ${name}`);
-  const doc = normalizeResourceDocument(options.document || options.doc);
-  const stylePromise = lib.cssUrl ? loadExternalStyle(lib.cssUrl, { document: doc }) : Promise.resolve();
-  let scriptPromise: Promise<void> = Promise.resolve();
-  if (lib.cdnUrl) {
-    scriptPromise = loadExternalScript(lib.cdnUrl, { document: doc }).catch((err) => {
-      if (lib.altCdnUrl) return loadExternalScript(lib.altCdnUrl, { document: doc });
-      throw err;
-    });
-  }
-  await Promise.all([stylePromise, scriptPromise]);
 }
 
 /**

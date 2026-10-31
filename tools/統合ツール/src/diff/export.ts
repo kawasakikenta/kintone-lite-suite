@@ -1,21 +1,36 @@
+import { flattenCategories } from '../utils.js';
 import {
-  SECTION_DEFS, TOOL_ID,
-  LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS,
-  DEFAULT_IGNORE_KEYS, DIFF_NORMALIZATION_PRESETS
+  SECTION_DEFS,
+  TOOL_ID,
+  LINE_DIFF_MAX_CELLS,
+  CHAR_DIFF_MAX_CELLS,
+  DIFF_NORMALIZATION_PRESETS
 } from '../constants.js';
 import {
-  esc, deepClone, safeJsonForScript, stableStringify, decodeHtmlEntities, stripHtmlToText,
-  getDiffTypeDisplayLabel, getSeverityDisplayLabel,
-  getIssueSideLabel, getPreviewStateLabel, getThemeDisplayLabel,
-  renderSectionIconHtml, extractAppNameFromBundle
+  esc,
+  deepClone,
+  safeJsonForScript,
+  stableStringify,
+  decodeHtmlEntities,
+  stripHtmlToText,
+  getDiffTypeDisplayLabel,
+  getSeverityDisplayLabel,
+  getIssueSideLabel,
+  getThemeDisplayLabel,
+  renderSectionIconHtml,
+  extractAppNameFromBundle
 } from '../utils.js';
 import { state, ui } from '../state.js';
 import {
-  getActualDiffRows, getActionableDiffRows, countActualDiffRows,
-  hasIncompleteActualDiffTruncation, parseIgnoreRules,
-  summarizeRows, summarizeFetchIssues,
-  normalizeIgnoreToken, getPathLeafKey,
-  getActiveDiffNormalizationLabels, normalizeSectionForCompare,
+  getActualDiffRows,
+  getActionableDiffRows,
+  countActualDiffRows,
+  hasIncompleteActualDiffTruncation,
+  summarizeRows,
+  summarizeFetchIssues,
+  getPathLeafKey,
+  getActiveDiffNormalizationLabels,
+  normalizeSectionForCompare,
   detectProcessStateRenames,
   expandSubtableRowsForDisplay,
   expandEntityRowsForDisplay,
@@ -24,7 +39,7 @@ import {
 } from './engine.js';
 import { summarizeSeverity, extractFieldPathInfo, getFieldRowPayload } from './enrich.js';
 import { buildIgnoreKeySuggestions, getFilteredDiffRowsWithoutSectionFilter, getFavoriteDiffRows } from './filter.js';
-import { resolveBundleRevision, pickBundleSections } from '../api.js';
+import { resolveBundleRevision } from '../api.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { buildCategoryViewHtml } from './category-view.js';
 import { decodeRow, isSemanticSection } from './path-decoder.js';
@@ -948,16 +963,6 @@ export function resolveDiffExportContentMode() {
   return ui.diffExportContent?.value || state.diffExportContent || 'diffOnly';
 }
 
-
-export function buildDiffExportComparedBundles(sourceBundle: any, targetBundle: any, scopes: readonly string[] | null | undefined) {
-  const compareScopes: string[] = [...new Set((scopes || []).filter(Boolean) as string[])];
-  return {
-    scopes: compareScopes,
-    sourceBundle: pickBundleSections(sourceBundle, compareScopes),
-    targetBundle: pickBundleSections(targetBundle, compareScopes)
-  };
-}
-
 function getSectionLabel(sectionKeyOrLabel) {
   const raw = String(sectionKeyOrLabel || '').trim();
   if (!raw) return '-';
@@ -1314,14 +1319,6 @@ const MD_RESOURCE_TYPE_LABELS = {
 const MD_ICON_TYPE_LABELS = {
   PRESET: 'プリセット',
   FILE: 'アップロードファイル'
-};
-
-const MD_LANGUAGE_LABELS = {
-  default: '既定',
-  ja: '日本語',
-  en: '英語',
-  zh: '中国語',
-  user: 'ユーザー設定言語'
 };
 
 const MD_THEME_LABELS = {
@@ -1868,10 +1865,9 @@ function mdRenderCategories(sec) {
   const parts: string[] = [];
   parts.push(`- カテゴリー機能: ${sec?.enabled ? '有効' : '無効'}`);
   parts.push('');
-  const list = sec?.categories || [];
   parts.push(mdTable(
-    ['コード', '名称', '表示順'],
-    list.map((c) => [c.code || '', c.name || '', c.index ?? ''])
+    ['カテゴリー', '表示順'],
+    flattenCategories(sec?.categories).map((c) => [c.path, c.index])
   ));
   return parts.join('\n');
 }
@@ -5751,7 +5747,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     });
   }
 
-
   function renderFieldChangeSummary(entries) {
     if (!entries.length) return '';
     const visible = entries.slice(0, 10);
@@ -8730,27 +8725,6 @@ export function renderDiffSuggestionChips() {
   ).join('');
 }
 
-export function renderDiffFilterOptions() {
-  if (!ui.diffFilterSection) return;
-  const ex = state.diffExcludeSections;
-  let sections = [...new Set([
-    ...(state.lastDiffRows || []).map((r) => r.sectionKey),
-    ...(state.lastFetchIssues || []).map((r) => r.sectionKey),
-    ...(state.lastPartialIssues || []).map((r) => r.sectionKey)
-  ].filter(Boolean))];
-  if (Array.isArray(ex) && ex.length) {
-    sections = sections.filter((k) => !ex.includes(k));
-  }
-  const current = state.diffFilterSection || ui.diffFilterSection.value || '';
-  ui.diffFilterSection.innerHTML = '<option value="">全セクション</option>' +
-    sections.map((secKey) => {
-      const label = SECTION_DEFS.find((d) => d.key === secKey)?.label || secKey;
-      return `<option value="${esc(secKey)}">${esc(label)}</option>`;
-    }).join('');
-  ui.diffFilterSection.value = sections.includes(current) ? current : '';
-  state.diffFilterSection = ui.diffFilterSection.value;
-}
-
 // 出力メニュー内のライブ件数プレビュー。
 // 現在の範囲（全件/選択/表示中/お気に入り）で実際に何件出力されるかを、
 // 保存ボタンを押す前に確認できるようにする。
@@ -9041,43 +9015,6 @@ function buildDiffSectionNavHtml(rows) {
   return `<nav class="diff-sec-nav" aria-label="セクションで絞り込み">${pills.join('')}</nav>`;
 }
 
-function scheduleDiffPopoutSync() {
-  queueMicrotask(() => {
-    import('./popout.js').then((m) => {
-      try { m.syncDiffPopoutMirror(); } catch (e) { /* ignore */ }
-    }).catch(() => {});
-  });
-}
-
-function paintDiffOffViewPlaceholder(rows) {
-  if (!ui.result) return;
-  const list = rows || state.lastDiffRows || [];
-  const n = list.length;
-  const m = (state.lastFetchIssues || []).length;
-  const p = (state.lastPartialIssues || []).length;
-  if (!n && !m && !p) {
-    ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア（ヘッダー差分）</p><p class="main-result-placeholder-body">差分比較後は、比較条件の下にある<strong>差分結果の整理・出力</strong>から一覧・絞り込み・出力を確認できます。</p></div>`;
-    return;
-  }
-  const notes = [m ? `取得失敗 ${m} 件` : '', p ? `本文未検証 ${p} 件` : ''].filter(Boolean).join(' / ');
-  ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">差分 ${n} 行を保持中${notes ? `（${notes}）` : ''}</p><p class="main-result-placeholder-body">一覧・チェック・出力は<strong>差分結果の整理・出力</strong>で行ってください。</p></div>`;
-}
-
-/** 差分以外のタブへ移したときに、差分テーブルが残り続けないようにする */
-export const MAIN_RESULT_IDLE_HTML = `
-<div class="main-result-placeholder">
-  <p class="main-result-placeholder-title">使い方ガイド</p>
-  <ol class="main-result-placeholder-steps">
-    <li><strong>① 接続</strong> 比較元・比較先アプリIDを入力（必要ならゲストID／プレビュー切替）</li>
-    <li><strong>② 比較</strong> 「差分比較」を実行すると差分テーブルがここに出ます</li>
-    <li><strong>③ 確認</strong> 「JSON / 出力 / 詳細」で内容や CSV/Markdown 等にエクスポート</li>
-    <li><strong>④ 反映</strong> 「プレビュー反映」タブで対象を選んで比較先プレビューへ書き込み</li>
-  </ol>
-  <p class="main-result-placeholder-body">
-    キーボードショートカット: <kbd>1</kbd>=差分 <kbd>2</kbd>=反映 <kbd>5</kbd>=ER図 <kbd>?</kbd>=ヘルプ <kbd>Esc</kbd>=ランチャーに戻る
-  </p>
-</div>`;
-
 export function renderResultRows(rows) {
   // テーブル（SUBTABLE）の追加/削除行をテーブル内フィールド単位に、非フィールド
   // セクションの「丸ごと追加/削除」をエンティティ単位に展開して表示する。
@@ -9247,7 +9184,6 @@ export function renderResultRows(rows) {
         ${summaryHtml}
         <div class="diff-empty">差分はありません。</div>
       </div>`;
-    scheduleDiffPopoutSync();
     return;
   }
 
@@ -9260,7 +9196,6 @@ export function renderResultRows(rows) {
         ${issueHtml}
         ${buildCategoryViewHtml(rows)}
       </div>`;
-    scheduleDiffPopoutSync();
     try {
       getToolDocument().dispatchEvent(new CustomEvent('kus:diffRendered', { detail: { count: rows.length, mode: 'category' } }));
     } catch (e) { /* ignore */ }
@@ -9272,7 +9207,6 @@ export function renderResultRows(rows) {
         ${summaryHtml}
         <div class="diff-empty">検索条件に一致する差分はありません。</div>
       </div>`;
-    scheduleDiffPopoutSync();
     return;
   }
 
@@ -9399,7 +9333,6 @@ export function renderResultRows(rows) {
       ${!rows.length ? '<div class="diff-empty">比較差分はありません。取得失敗または本文未検証のみ検出されています。</div>' : ''}
       ${sectionHtml}
     </div>`;
-  scheduleDiffPopoutSync();
   try {
     getToolDocument().dispatchEvent(new CustomEvent('kus:diffRendered', { detail: { count: rows.length } }));
   } catch (e) { /* ignore */ }
