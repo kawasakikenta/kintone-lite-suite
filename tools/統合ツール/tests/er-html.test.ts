@@ -49,6 +49,76 @@ const baseApps = [
 ];
 
 describe('ER diagram HTML', () => {
+  it('uses ASCII Mermaid attribute names and keeps the real code in exports', () => {
+    const script = extractViewerScript(buildHTML(baseApps, { startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard' }));
+    const helper = script.match(/const mermaidAttributeName=[\s\S]*?\r?\n};/);
+    expect(helper).not.toBeNull();
+    const context = createContext({});
+    runInContext(`${helper![0]}; globalThis.result = (() => { const used = new Set(); return [mermaidAttributeName('案件番号', used), mermaidAttributeName('amount', used), mermaidAttributeName('amount', used), mermaidAttributeName('文字列__1行_', used)]; })();`, context);
+    expect(Array.from((context as any).result)).toEqual(['field_1', 'amount', 'amount_2', 'field_4']);
+    expect(script).toContain('const baseCol=oneLineLabel(f.code)||"unnamed";');
+    expect(script).not.toMatch(/const sn=/);
+  });
+
+  it('names every export after the start app, environment and time', () => {
+    const script = extractViewerScript(buildHTML(baseApps, { startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard' }));
+    expect(script).toContain('function exportFilename(base,ext){');
+    expect(script).not.toMatch(/"(?:ER図|ERモデル)[^"]*\.(?:mmd|drawio|sql|puml|json|csv|md)"/);
+    expect(script).not.toContain('kintone_erd');
+  });
+
+  it('renders image exports on a white background with context', () => {
+    const script = extractViewerScript(buildHTML(baseApps, { startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard' }));
+    expect(script).toContain('return cy.png({bg:"#ffffff",full:true,scale:Math.min(2,maxSide/Math.max(box.w,box.h,1))/(window.devicePixelRatio||1)});');
+    expect(script).toContain('const url=URL.createObjectURL(dataUrlToBlob(data));');
+    expect(script).toContain('await waitForCardImages();');
+    expect(script).toContain('buildExportImage(6000).then(data=>{');
+  });
+
+  it('draws app cards as valid SVG even when names contain markup characters', () => {
+    const script = extractViewerScript(buildHTML(baseApps, { startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard' }));
+    const helper = script.match(/function cardXml\(text\)\{[\s\S]*?\r?\n\}/);
+    expect(helper).not.toBeNull();
+    const context = createContext({});
+    runInContext(`${helper![0]}; globalThis.result = cardXml('活動 & "メモ" <重要>\u0007');`, context);
+    expect((context as any).result).toBe('活動 &amp; &quot;メモ&quot; &lt;重要&gt;');
+    expect(script).toContain('"background-image":"data(cardImage)"');
+    expect(script).toContain('"background-image":"data(lowImage)"');
+  });
+
+  it('keeps relation colors while focusing and exports without on-screen emphasis', () => {
+    const script = extractViewerScript(buildHTML(baseApps, { startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard' }));
+    expect(script).toContain('{selector:"edge.focus-edge",style:{"width":2.6,"z-index":998}}');
+    expect(script).toContain('cy.elements().removeClass(EXPORT_CLEARED_CLASSES.join(" "));');
+    expect(script).toContain('emphasis.forEach(([name,elements])=>elements.addClass(name));');
+  });
+
+  it('embeds the Mermaid diagram into the Markdown spec within the size limit', () => {
+    const script = extractViewerScript(buildHTML(baseApps, { startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard' }));
+    expect(script).toContain('const ER_MD_MERMAID_MAX_CHARS=40000;');
+    expect(script).toContain('if(mermaidText.length<=ER_MD_MERMAID_MAX_CHARS) lines.push(fence+"mermaid",mermaidText.trimEnd(),fence);');
+  });
+
+  it('omits the start marker when every app is a start app', () => {
+    const script = extractViewerScript(buildHTML(baseApps, { startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard' }));
+    expect(script).toContain('return ids.includes(String(app.id))&&new Set(ids).size<APPS.length;');
+  });
+
+  it('wraps oversized hierarchy ranks only for the dagre layout', () => {
+    const script = extractViewerScript(buildHTML(baseApps, { startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard' }));
+    expect(script).toContain('function wrapTallRanks(nodes, animate){');
+    expect(script).toContain('if(box.h <= maxHeight * 1.25) return false;');
+    expect(script).toContain('function wrapWideRanks(nodes){');
+    expect(script).toContain('wrapTargets.length > 1 && wrapRanks(wrapTargets, !initial);');
+    expect(script).toContain('name === "dagre" && ER_DAGRE_READY');
+  });
+
+  it('shows the key facts while the summary card is collapsed', () => {
+    const html = buildHTML(baseApps, { startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard' });
+    expect(html).toContain('id="overview-pill"');
+    expect(html).toMatch(/2アプリ · 2関連/);
+  });
+
   it('embeds factual dependency checks and syntactically valid viewer code', () => {
     const html = buildHTML(baseApps, {
       startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard', source: {}
@@ -246,17 +316,18 @@ describe('ER diagram HTML', () => {
     expect(script).toContain('"min-zoomed-font-size":6.5');
     expect(script).toContain('"min-zoomed-font-size":7');
     expect(script).toContain('function setZoomPercent(percent)');
-    expect(script).toContain('function fit(){closeZoomPresets();cy.fit(undefined,60);updateZoomLabel();}');
+    expect(script).toContain('Math.min(MAX_FIT_ZOOM,availW/Math.max(box.w,1),availH/Math.max(box.h,1))');
+    expect(script).toContain('cy.viewport({zoom,pan:');
     expect(script).toContain('cy.on("zoom", updateZoomLabel)');
     expect(script).toContain('function buildSemanticNodeLabel(app)');
-    expect(script).toContain('const low=Number(zoom)<0.7;');
+    expect(script).toContain('const low=Number(zoom)<0.6;');
     expect(script).toContain('node.addClass("semantic-low")');
     expect(script).toContain('node.data("label",semanticZoomLabelBackup.get(node.id()))');
     expect(script).toContain('applySemanticZoom(cy.zoom());');
     expect(script).toContain('selector:"node.semantic-low"');
     expect(script).toContain('"font-size":"18px"');
     expect(script).toContain('selector:"edge.semantic-low"');
-    expect(script).toContain('mode.textContent=cy.zoom()<0.35?"構造":(cy.zoom()<0.7?"概要":"")');
+    expect(script).toContain('mode.textContent=cy.zoom()<0.35?"構造":(cy.zoom()<0.6?"概要":"")');
     expect(script).toContain('"現在の表示倍率 "+percent+"%。倍率プリセットを開く"');
   });
 
@@ -271,7 +342,7 @@ describe('ER diagram HTML', () => {
     expect(html).toContain('aria-controls="sidebar" aria-expanded="false"');
     expect(html).toContain('id="sidebar-fab-btn" onclick="toggleSidebar(undefined,this)"');
     expect(html).toContain('id="sidebar" role="region" aria-label="統計・フィルター" aria-hidden="true" inert');
-    expect(html).toMatch(/@media \(max-width: 900px\)\{[\s\S]*?#mobile-menu-btn\{display:inline-flex;\}[\s\S]*?#topbar > \.tb-group\[data-group="layout"\]/);
+    expect(html).toMatch(/@media \(max-width: 900px\)\{[\s\S]*?#mobile-menu-btn\{display:inline-flex;\}[\s\S]*?#topbar > \.tb-menu\[data-mobile="hide"\]/);
     expect(html).toMatch(/@media \(max-width: 900px\)\{[\s\S]*?\.tb-menu-panel\{position:fixed;/);
     expect(html).toContain('#overview{top:calc(var(--topbar-h,52px) + 42px);}');
     expect(html).toContain('--pathfinder-lift:0px;');

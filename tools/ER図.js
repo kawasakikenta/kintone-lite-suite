@@ -3230,6 +3230,479 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       sourceGuestId: context.sourceGuestId == null ? "" : String(context.sourceGuestId)
     };
   }
+  function buildErAppModelFromBundle(bundle) {
+    if (!isRecord(bundle)) {
+      throw new TypeError("Invalid settings bundle");
+    }
+    const sections = isRecord(bundle.sections) ? bundle.sections : {};
+    const rawAppInfo = isRecord(sections.appInfo) ? sections.appInfo : isRecord(bundle.appInfo) ? bundle.appInfo : isRecord(bundle.appInfoResponse) ? bundle.appInfoResponse : null;
+    const rawAppSettings = isRecord(sections.appSettings) ? sections.appSettings : isRecord(bundle.appSettings) ? bundle.appSettings : null;
+    const rawAppId = bundle.appId ?? bundle.id ?? rawAppInfo?.appId ?? rawAppInfo?.id ?? rawAppSettings?.appId;
+    const appId = normalizeAppId(rawAppId);
+    const sourceGuestId = bundle.guestId ?? bundle.sourceGuestId ?? "";
+    const resolvedName = typeof bundle.appName === "string" && bundle.appName.trim() || typeof bundle.name === "string" && bundle.name.trim() || typeof rawAppInfo?.name === "string" && rawAppInfo.name.trim() || typeof rawAppSettings?.name === "string" && rawAppSettings.name.trim() || "";
+    const appInfoError = bundle.appInfoError ?? rawAppInfo?._fetchError ?? rawAppSettings?._fetchError;
+    const appInfoResponse = rawAppInfo || rawAppSettings || resolvedName ? {
+      ...rawAppSettings || {},
+      ...rawAppInfo || {},
+      ...resolvedName ? { name: resolvedName } : {}
+    } : void 0;
+    let rawFields = sections.formFields ?? sections.fieldSettings ?? sections.fields ?? bundle.formFields ?? bundle.fieldSettings ?? bundle.fieldsResponse ?? (isRecord(bundle.properties) ? bundle : void 0);
+    if (isRecord(rawFields) && !isRecord(rawFields.properties) && rawFields._fetchError === void 0 && Object.values(rawFields).some((v) => isRecord(v) && typeof v.type === "string")) {
+      rawFields = { properties: rawFields };
+    }
+    let rawActions = sections.actionSettings ?? sections.actions ?? bundle.actionSettings ?? bundle.actionsResponse ?? bundle.actions;
+    const actionsError = bundle.actionsError ?? (isRecord(rawActions) ? rawActions._fetchError : void 0);
+    if (rawActions === void 0 && actionsError === void 0) {
+      rawActions = { actions: {} };
+    } else if (isRecord(rawActions) && !isRecord(rawActions.actions) && rawActions._fetchError === void 0) {
+      rawActions = { actions: rawActions };
+    }
+    try {
+      return buildErAppModel({
+        appId,
+        fieldsResponse: rawFields,
+        appInfoResponse,
+        actionsResponse: rawActions,
+        appInfoError,
+        actionsError,
+        sourceGuestId
+      });
+    } catch (err) {
+      if (err instanceof ErFieldsUnavailableError) {
+        return buildFailedErAppModel(appId, err, { appInfoResponse, sourceGuestId });
+      }
+      throw err;
+    }
+  }
+  function erEntityAlias(app) {
+    return `app_${String(app?.id ?? "unknown").replace(/[^0-9A-Za-z_]/g, "_")}`;
+  }
+  function erOneLineLabel(value) {
+    return String(value == null ? "" : value).replace(/[\r\n]+/g, " ").replace(/"/g, "'").trim();
+  }
+  function erMermaidAttributeName(code, used) {
+    const base = /^[A-Za-z_][A-Za-z0-9_]*$/.test(code) ? code : `field_${used.size + 1}`;
+    let name = base;
+    for (let suffix = 2; used.has(name); suffix += 1) name = `${base}_${suffix}`;
+    used.add(name);
+    return name;
+  }
+  function erMermaidLabel(value) {
+    return erOneLineLabel(value).replace(/%%+/g, "%");
+  }
+  function erExportStatusLabel(app) {
+    if (app?.status === "partial") return "一部取得";
+    if (app?.status === "failed" || app?.ok === false) return "取得失敗";
+    return "取得完了";
+  }
+  function erExportIssueText(app) {
+    return (Array.isArray(app?.issues) ? app.issues : []).map((issue) => erOneLineLabel(issue?.message || issue?.code || "取得上の注意")).filter(Boolean).join(" / ");
+  }
+  function erExportRelationLabel(rel) {
+    const base = erOneLineLabel(rel?.fromDisplay || rel?.fromLabel || rel?.from || rel?.kind || "");
+    if (rel?.kind === "REF" && (rel?.sourceJoinField || rel?.from || rel?.toField)) {
+      return `${base} [結合: ${erOneLineLabel(rel.sourceJoinField || rel.from || "?")} → ${erOneLineLabel(rel.toField || "?")}]`;
+    }
+    return base;
+  }
+  function erCanonicalFields(app) {
+    if (Array.isArray(app?.allFields)) return app.allFields;
+    if (Array.isArray(app?.fields)) return app.fields;
+    return [];
+  }
+  function erFieldDisplayName(field) {
+    if (!field) return "";
+    if (field.inSubtable && field.tableLabel) {
+      return `${field.tableLabel} > ${field.label || field.code || ""}`;
+    }
+    return String(field.label || field.code || field.path || "");
+  }
+  var ER_FIELD_TYPE_LABELS = {
+    SINGLE_LINE_TEXT: "文字列(1行)",
+    MULTI_LINE_TEXT: "文字列(複数行)",
+    RICH_TEXT: "リッチエディター",
+    NUMBER: "数値",
+    CALC: "計算",
+    RADIO_BUTTON: "ラジオボタン",
+    CHECK_BOX: "チェックボックス",
+    DROP_DOWN: "ドロップダウン",
+    MULTI_SELECT: "複数選択",
+    DATE: "日付",
+    TIME: "時刻",
+    DATETIME: "日時",
+    USER_SELECT: "ユーザー選択",
+    ORGANIZATION_SELECT: "組織選択",
+    GROUP_SELECT: "グループ選択",
+    LOOKUP: "ルックアップ",
+    SUBTABLE: "テーブル",
+    REFERENCE_TABLE: "関連レコード一覧",
+    RECORD_NUMBER: "レコード番号",
+    CREATOR: "作成者",
+    CREATED_TIME: "作成日時",
+    MODIFIER: "更新者",
+    UPDATED_TIME: "更新日時",
+    STATUS: "ステータス",
+    STATUS_ASSIGNEE: "作業者",
+    CATEGORY: "カテゴリー",
+    FILE: "添付ファイル",
+    LINK: "リンク",
+    LABEL: "ラベル",
+    SPACER: "スペース",
+    HR: "罫線",
+    GROUP: "グループ"
+  };
+  function buildErMermaidSource(apps, options) {
+    const safeApps = (Array.isArray(apps) ? apps : []).filter((a) => a && a.id != null);
+    const appMap = /* @__PURE__ */ new Map();
+    for (const app of safeApps) {
+      appMap.set(String(app.id), app);
+    }
+    const showAll = options?.showAllFields;
+    let m = "erDiagram\n";
+    for (const a of safeApps) {
+      const n = erEntityAlias(a);
+      const status = erExportStatusLabel(a);
+      const issueText = erExportIssueText(a);
+      const appName = erMermaidLabel(a.name || `アプリ ${a.id}`);
+      m += `  %% ${n}: ${appName} (App ${a.id})
+`;
+      m += `  %% 取得状態: ${status}${issueText ? ` / ${issueText}` : ""}
+`;
+      const allFields = erCanonicalFields(a);
+      const subtableFieldCount = allFields.filter((f) => f?.inSubtable).length;
+      if (subtableFieldCount && showAll !== true) {
+        m += `  %% サブテーブル内 ${subtableFieldCount}項目は親エンティティへ平坦化せず省略（ERモデルJSONに所属表を収録）
+`;
+      }
+      const visibleName = `${status === "取得完了" ? "" : `[${status}] `}${appName} (App ${a.id})`;
+      m += `  ${n}["${visibleName}"] {
+`;
+      const linkedCodes = /* @__PURE__ */ new Set();
+      for (const rel of Array.isArray(a.relations) ? a.relations : []) {
+        if (rel?.kind !== "LOOKUP" && rel?.kind !== "REF") continue;
+        for (const k of [rel.fromPath, rel.from, rel.controlFieldPath, rel.controlField, rel.sourceJoinField]) {
+          if (k) linkedCodes.add(String(k));
+        }
+      }
+      const usedAttributes = /* @__PURE__ */ new Set();
+      for (const f of allFields) {
+        if (!f || f.type === "SUBTABLE") continue;
+        if (showAll === false) {
+          if (f.inSubtable) continue;
+          const isKeyOrRel = f.isPK || f.isLookup || f.isRef || f.unique || linkedCodes.has(String(f.path || "")) || linkedCodes.has(String(f.code || ""));
+          if (!isKeyOrRel) continue;
+        } else if (showAll !== true && f.inSubtable) {
+          continue;
+        }
+        let com = "";
+        if (f.isPK) com = " PK";
+        else if (f.isLookup) com = " FK";
+        const fType = String(f.type || "STRING").replace(/[^a-zA-Z0-9_]/g, "") || "STRING";
+        const fCode = String(f.inSubtable && f.path ? f.path : f.code ?? "");
+        const note = erMermaidLabel(f.label && f.label !== f.code ? `${f.label} [${fCode}]` : fCode);
+        m += `    ${fType} ${erMermaidAttributeName(fCode, usedAttributes)}${com} "${note}"
+`;
+      }
+      m += "  }\n";
+    }
+    const mermaidExternalIds = /* @__PURE__ */ new Set();
+    for (const a of safeApps) {
+      for (const r of Array.isArray(a.relations) ? a.relations : []) {
+        if (!r || r.toApp == null || String(r.toApp) === "") continue;
+        const toKey = String(r.toApp);
+        if (appMap.has(toKey) || mermaidExternalIds.has(toKey)) continue;
+        mermaidExternalIds.add(toKey);
+        const alias = erEntityAlias({ id: r.toApp });
+        m += `  %% ${alias}: 未取得の参照先 (App ${erOneLineLabel(r.toApp)})
+`;
+        m += `  ${alias}["未取得の参照先 (App ${erOneLineLabel(r.toApp)})"] {
+    string unresolved "未取得のアプリ"
+  }
+`;
+      }
+    }
+    for (const a of safeApps) {
+      for (const r of Array.isArray(a.relations) ? a.relations : []) {
+        if (!r || r.toApp == null || String(r.toApp) === "") continue;
+        const t = appMap.get(String(r.toApp)) || { id: r.toApp };
+        const label = erMermaidLabel(erExportRelationLabel(r));
+        if (r.kind === "ACTION") {
+          m += `  %% ACTION ${erEntityAlias(a)} -> ${erEntityAlias(t)}: ${label}
+`;
+        } else {
+          const relArrow = r.kind === "LOOKUP" ? " }o--o| " : " }o--o{ ";
+          m += `  ${erEntityAlias(a)}${relArrow}${erEntityAlias(t)} : "${label}"
+`;
+        }
+      }
+    }
+    return m;
+  }
+  function countErConnectedComponents(apps) {
+    const validApps = (Array.isArray(apps) ? apps : []).filter((a) => a && a.id != null && String(a.id).trim() !== "");
+    if (!validApps.length) return 0;
+    const undirected = /* @__PURE__ */ new Map();
+    for (const a of validApps) {
+      undirected.set(String(a.id), /* @__PURE__ */ new Set());
+    }
+    for (const a of validApps) {
+      const fromId = String(a.id);
+      for (const r of Array.isArray(a.relations) ? a.relations : []) {
+        const toId = String(r?.toApp ?? "");
+        if (!toId || !undirected.has(toId) || fromId === toId) continue;
+        undirected.get(fromId)?.add(toId);
+        undirected.get(toId)?.add(fromId);
+      }
+    }
+    const visited = /* @__PURE__ */ new Set();
+    let count = 0;
+    for (const startId of undirected.keys()) {
+      if (visited.has(startId)) continue;
+      count += 1;
+      const queue = [startId];
+      visited.add(startId);
+      while (queue.length) {
+        const cur = queue.shift();
+        for (const next of undirected.get(cur) || []) {
+          if (!visited.has(next)) {
+            visited.add(next);
+            queue.push(next);
+          }
+        }
+      }
+    }
+    return count;
+  }
+  function erMdEsc(s) {
+    return String(s == null ? "" : s).replace(/[\\|<>]/g, "\\$&").replace(/[\r\n]+/g, " ").trim();
+  }
+  function erRelationKeyConditionDetail(r) {
+    if (!r) return "";
+    if (r.kind === "LOOKUP") {
+      const from = r.fromPath || r.from || "";
+      const to = r.toField || "";
+      return to ? `${from || "?"} -> ${to}` : String(from);
+    }
+    if (r.kind === "REF") {
+      const joinFrom = r.sourceJoinField || r.from || "?";
+      const joinTo = r.toField || "?";
+      return `${joinFrom} = ${joinTo}`;
+    }
+    if (r.kind === "ACTION") {
+      const label = r.fromLabel || r.fromDisplay || r.from || "アクション";
+      return r.toField ? `${label} -> ${r.toField}` : String(label);
+    }
+    return String(r.toField || r.from || "");
+  }
+  var ER_MD_MERMAID_MAX_CHARS = 4e4;
+  function erFieldTypeLabel(type) {
+    const key = String(type || "").trim().toUpperCase();
+    return ER_FIELD_TYPE_LABELS[key] || String(type || "");
+  }
+  function buildErMarkdownSpec(apps, analysis, options) {
+    const safeApps = (Array.isArray(apps) ? apps : []).filter((a) => a && a.id != null);
+    const appMap = /* @__PURE__ */ new Map();
+    for (const app of safeApps) {
+      appMap.set(String(app.id), app);
+    }
+    const computedAnalysis = analyzeErDependencies(safeApps);
+    const dep = analysis && typeof analysis === "object" ? {
+      ...computedAnalysis,
+      ...analysis,
+      counts: { ...computedAnalysis.counts, ...analysis.counts || {} }
+    } : computedAnalysis;
+    const connectedComponentCount = typeof dep.connectedComponentCount === "number" ? dep.connectedComponentCount : typeof dep.connectedComponents === "number" ? dep.connectedComponents : countErConnectedComponents(safeApps);
+    const generatedAt = options?.generatedAt || (/* @__PURE__ */ new Date()).toLocaleString("ja-JP");
+    const totalRelations = safeApps.reduce((sum, a) => sum + (Array.isArray(a.relations) ? a.relations.length : 0), 0);
+    const cycles = Array.isArray(dep.cycles) ? dep.cycles : [];
+    const hubs = Array.isArray(dep.hubs) ? dep.hubs : [];
+    const isolatedAppIds = Array.isArray(dep.isolatedAppIds) ? dep.isolatedAppIds : [];
+    const selfReferences = Array.isArray(dep.selfReferences) ? dep.selfReferences : [];
+    const unresolvedTargets = Array.isArray(dep.unresolvedTargets) ? dep.unresolvedTargets : [];
+    const threshold = dep.highConnectionThreshold ?? 3;
+    const lines = [];
+    lines.push("# kintone ER図 仕様書");
+    lines.push("");
+    lines.push(`- 生成日時: ${generatedAt}`);
+    lines.push(`- アプリ数: ${safeApps.length}`);
+    lines.push(`- 総リレーション: ${totalRelations}`);
+    lines.push(`- 取得完了: ${dep.counts.retrievalComplete}`);
+    lines.push(`- 一部取得: ${dep.counts.retrievalPartial}`);
+    lines.push(`- 取得失敗: ${dep.counts.retrievalFailed}`);
+    lines.push("");
+    lines.push("## グラフ分析サマリ");
+    lines.push("");
+    lines.push(`- 連結成分数: ${connectedComponentCount}`);
+    lines.push(`- 複数アプリの循環参照 (SCC): ${cycles.length}件`);
+    lines.push(`- 自己参照: ${selfReferences.length}件`);
+    lines.push(`- ハブアプリ（接続数 ${threshold}件以上）: ${hubs.length}件`);
+    lines.push(`- 孤立アプリ（関連なし）: ${isolatedAppIds.length}件`);
+    lines.push(`- 未取得の参照先: ${unresolvedTargets.length}件`);
+    lines.push("");
+    lines.push("### 循環参照（強連結成分 / SCC）");
+    if (cycles.length) {
+      cycles.forEach((cycle, i) => {
+        const names = Array.isArray(cycle.appNames) && cycle.appNames.length ? cycle.appNames.map(erMdEsc).join(" → ") : (cycle.appIds || []).map((id) => erMdEsc(appMap.get(String(id))?.name || `アプリ ${id}`)).join(" → ");
+        const ids = (cycle.appIds || []).map((id) => `App ${erMdEsc(id)}`).join(", ");
+        lines.push(`- 候補 ${i + 1}: ${names}${ids ? ` (${ids})` : ""}`);
+      });
+    } else {
+      lines.push("- なし");
+    }
+    lines.push("");
+    lines.push(`### ハブアプリ（接続数 ${threshold}件以上）`);
+    if (hubs.length) {
+      hubs.forEach((hub) => {
+        lines.push(`- ${erMdEsc(hub.name)} (App ${erMdEsc(hub.appId)}): 入 ${hub.incoming} / 出 ${hub.outgoing} / 合計 ${hub.total}`);
+      });
+    } else {
+      lines.push("- なし");
+    }
+    lines.push("");
+    lines.push("### 孤立アプリ");
+    if (isolatedAppIds.length) {
+      isolatedAppIds.forEach((id) => {
+        const app = appMap.get(String(id));
+        const name = app?.name || `アプリ ${id}`;
+        lines.push(`- ${erMdEsc(name)} (App ${erMdEsc(id)})`);
+      });
+    } else {
+      lines.push("- なし");
+    }
+    lines.push("");
+    if (selfReferences.length) {
+      lines.push("### 自己参照");
+      selfReferences.forEach((sr) => {
+        lines.push(`- ${erMdEsc(sr.appName)} (App ${erMdEsc(sr.appId)}): ${erMdEsc(sr.kind)}${sr.field ? ` (${erMdEsc(sr.field)})` : ""}`);
+      });
+      lines.push("");
+    }
+    if (unresolvedTargets.length) {
+      lines.push("### 未取得の参照先");
+      unresolvedTargets.forEach((ut) => {
+        lines.push(`- ${erMdEsc(ut.fromAppName)} (App ${erMdEsc(ut.fromAppId)}) → App ${erMdEsc(ut.toAppId || "不明")}: ${erMdEsc(ut.kind)}${ut.field ? ` (${erMdEsc(ut.field)})` : ""}`);
+      });
+      lines.push("");
+    }
+    lines.push("## ER図");
+    lines.push("");
+    const mermaidText = buildErMermaidSource(safeApps);
+    if (mermaidText.length <= ER_MD_MERMAID_MAX_CHARS) {
+      lines.push("```mermaid", mermaidText.trimEnd(), "```");
+    } else {
+      lines.push("図が大きいため省略しました。Mermaid で保存すると全体を確認できます。");
+    }
+    lines.push("");
+    lines.push("## アプリ一覧");
+    lines.push("");
+    lines.push("| アプリID | アプリ名 | 項目数 | 関連数 | 深さ | 状態 |");
+    lines.push("|---:|---|---:|---:|---:|---|");
+    safeApps.forEach((a) => {
+      const fieldList = erCanonicalFields(a).filter((f) => f && f.type !== "SUBTABLE");
+      const relList = Array.isArray(a.relations) ? a.relations : [];
+      lines.push(`| ${erMdEsc(a.id)} | ${erMdEsc(a.name || `アプリ ${a.id}`)} | ${fieldList.length} | ${relList.length} | ${a.depth || 0} | ${erExportStatusLabel(a)} |`);
+    });
+    lines.push("");
+    lines.push("## リレーション一覧");
+    lines.push("");
+    if (totalRelations > 0) {
+      lines.push("| 参照元アプリID | 参照元アプリ名 | フィールドコード | フィールド名 | リレーション種別 | 参照先アプリID | 参照先アプリ名 | キー・条件詳細 |");
+      lines.push("|---:|---|---|---|---|---:|---|---|");
+      safeApps.forEach((a) => {
+        for (const r of Array.isArray(a.relations) ? a.relations : []) {
+          if (!r) continue;
+          const t = appMap.get(String(r.toApp));
+          const fieldCode = r.kind === "REF" ? r.controlField || r.sourceJoinField || r.from || "" : r.from || r.controlField || "";
+          const fieldName = r.controlFieldLabel || r.fromDisplay || r.fromLabel || r.from || r.kind || "";
+          const targetName = t ? t.name || `アプリ ${t.id}` : `未取得 (App ${r.toApp ?? "?"})`;
+          lines.push(`| ${erMdEsc(a.id)} | ${erMdEsc(a.name || `アプリ ${a.id}`)} | ${erMdEsc(fieldCode)} | ${erMdEsc(fieldName)} | ${erMdEsc(r.kind || "")} | ${erMdEsc(r.toApp ?? "")} | ${erMdEsc(targetName)} | ${erMdEsc(erRelationKeyConditionDetail(r))} |`);
+        }
+      });
+    } else {
+      lines.push("リレーションはありません。");
+    }
+    lines.push("");
+    safeApps.forEach((a) => {
+      lines.push(`## ${erMdEsc(a.name || `アプリ ${a.id}`)} (App ${a.id})`);
+      lines.push("");
+      lines.push(`- 取得状態: ${erExportStatusLabel(a)}`);
+      const issueText = erExportIssueText(a);
+      if (issueText) lines.push(`- 取得上の注意: ${erMdEsc(issueText)}`);
+      lines.push("");
+      const vf = erCanonicalFields(a).filter((f) => f && f.type !== "SUBTABLE");
+      if (vf.length) {
+        lines.push("### フィールド");
+        lines.push("");
+        lines.push("| コード | 名称 | 種類 | 必須 | 主キー | Lookup | 関連 | サブテーブル |");
+        lines.push("|---|---|---|:---:|:---:|:---:|:---:|:---:|");
+        vf.forEach((f) => {
+          lines.push(`| ${erMdEsc(f.code || "")} | ${erMdEsc(erFieldDisplayName(f))} | ${erMdEsc(erFieldTypeLabel(f.type))} | ${f.required ? "✓" : ""} | ${f.isPK ? "✓" : ""} | ${f.isLookup ? "✓" : ""} | ${f.isRef ? "✓" : ""} | ${f.inSubtable ? "✓" : ""} |`);
+        });
+        lines.push("");
+      }
+      const rels = Array.isArray(a.relations) ? a.relations : [];
+      if (rels.length) {
+        lines.push("### リレーション");
+        lines.push("");
+        lines.push("| 種類 | 関連名 | 表示部品 | 結合元フィールド | 宛先アプリ | 宛先フィールド |");
+        lines.push("|---|---|---|---|---|---|");
+        rels.forEach((r) => {
+          const t = appMap.get(String(r.toApp));
+          const targetLabel = t ? `${t.name || `アプリ ${t.id}`} (App ${r.toApp})` : `未取得 (App ${r.toApp})`;
+          lines.push(`| ${erMdEsc(r.kind || "")} | ${erMdEsc(r.fromDisplay || r.fromLabel || r.from || r.kind || "")} | ${erMdEsc(r.controlFieldLabel || r.controlField || "")} | ${erMdEsc(r.kind === "ACTION" ? "" : r.sourceJoinField || r.from || "")} | ${erMdEsc(targetLabel)} | ${erMdEsc(r.toField || "")} |`);
+        });
+        lines.push("");
+      }
+    });
+    return lines.join("\n");
+  }
+  function erCsvCell(value) {
+    const raw = String(value == null ? "" : value);
+    const safe = /^[\t\r\n ]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+    return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+  }
+  function erCsvLine(row) {
+    return row.map(erCsvCell).join(",");
+  }
+  function buildErRelationsCsv(apps) {
+    const safeApps = (Array.isArray(apps) ? apps : []).filter((a) => a && a.id != null);
+    const appMap = /* @__PURE__ */ new Map();
+    for (const app of safeApps) {
+      appMap.set(String(app.id), app);
+    }
+    const rows = [[
+      "参照元アプリID",
+      "参照元アプリ名",
+      "フィールドコード",
+      "フィールド名",
+      "リレーション種別",
+      "参照先アプリID",
+      "参照先アプリ名",
+      "キー・条件詳細"
+    ]];
+    for (const a of safeApps) {
+      const fromAppName = a.name || `アプリ ${a.id}`;
+      for (const r of Array.isArray(a.relations) ? a.relations : []) {
+        if (!r) continue;
+        const t = appMap.get(String(r.toApp));
+        const fieldCode = r.kind === "REF" ? r.controlField || r.sourceJoinField || r.from || "" : r.from || r.controlField || "";
+        const fieldName = r.controlFieldLabel || r.fromDisplay || r.fromLabel || r.from || r.kind || "";
+        const targetName = t ? t.name || `アプリ ${t.id}` : "未取得の参照先";
+        rows.push([
+          a.id,
+          fromAppName,
+          fieldCode,
+          fieldName,
+          r.kind || "",
+          r.toApp ?? "",
+          targetName,
+          erRelationKeyConditionDetail(r)
+        ]);
+      }
+    }
+    return `\uFEFF${rows.map(erCsvLine).join("\n")}`;
+  }
 
   // src/tabs/er.ts
   var ER_DEFAULTS = {
@@ -3589,10 +4062,11 @@ ${cytoscapeDagreScript}
 *{margin:0;padding:0;box-sizing:border-box;}
 
 :root{
-  --bg:#08090d;--surface:#11131a;--surface2:#181c27;--border:#262d3d;
-  --text:#d8dee9;--dim:#636e83;--accent:#5eead4;--accent2:#818cf8;
+  --bg:#08090d;--surface:#11131a;--surface2:#181c27;--border:#2f384b;
+  --text:#e2e8f0;--dim:#8f9aae;--accent:#5eead4;--accent2:#818cf8;
   --lookup:#60a5fa;--ref:#34d399;--pk:#fbbf24;--req:#f87171;--action:#f59e0b;
   --radius:10px;
+  --mono:'Cascadia Mono',Consolas,'Yu Gothic UI','Hiragino Sans',monospace;
   --topbar-h:52px;
   --bottom-safe:16px;
   --pathfinder-lift:0px;
@@ -3603,7 +4077,7 @@ ${cytoscapeDagreScript}
 [data-theme="light"]{
   --bg:#f0f2f5;--surface:#ffffff;--surface2:#f7f8fa;--border:#d8dce6;
   --text:#1a1c23;--dim:#6b7280;--accent:#0d9488;--accent2:#6366f1;
-  --lookup:#2563eb;--ref:#059669;--pk:#d97706;--req:#dc2626;--action:#d97706;
+  --lookup:#2563eb;--ref:#047857;--pk:#b45309;--req:#dc2626;--action:#d97706;
   --shadow-sm:0 1px 3px rgba(15,23,42,0.08);
   --shadow-md:0 12px 28px rgba(15,23,42,0.14);
 }
@@ -3623,14 +4097,14 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 #cmd-results{max-height:min(340px,60vh);overflow-y:auto;}
 .cmd-item{width:100%;padding:10px 20px;cursor:pointer;display:flex;align-items:center;gap:10px;font-size:13px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);font:inherit;text-align:left;}
 .cmd-item:hover,.cmd-item.active{background:var(--surface2);}
-.cmd-item .kbd{margin-left:auto;font-size:10px;padding:2px 7px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;font-family:'DM Mono',monospace;color:var(--dim);}
+.cmd-item .kbd{margin-left:auto;font-size:10px;padding:2px 7px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;font-family:var(--mono);color:var(--dim);}
 
 /* ── Top Bar ── */
 #topbar{
   position:fixed;top:0;left:0;right:0;z-index:100;
   display:flex;align-items:center;gap:6px;padding:8px 14px;
   min-height:var(--topbar-h);
-  background:linear-gradient(180deg,var(--bg) 82%,rgba(8,9,13,0.92));
+  background:var(--bg);
   backdrop-filter:blur(12px);
   border-bottom:1px solid var(--border);
   flex-wrap:wrap;overflow:visible;white-space:normal;
@@ -3638,32 +4112,32 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 #topbar::-webkit-scrollbar{display:none;}
 #topbar h1{font-size:14px;font-weight:700;margin-right:6px;white-space:nowrap;
   background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
-.tb{padding:6px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:11px;cursor:pointer;transition:.15s;font-family:inherit;white-space:nowrap;flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;min-height:30px;}
+.tb{padding:6px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:12px;cursor:pointer;transition:.15s;font-family:inherit;white-space:nowrap;flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;min-height:30px;}
 .tb:hover{border-color:var(--accent);color:var(--accent);}
 .tb.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600;}
 .tb-icon{padding:6px 9px;font-size:13px;}
-.tb-group{display:inline-flex;align-items:center;gap:4px;padding:2px 4px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);flex-wrap:nowrap;}
-.tb-group .tb{border:1px solid transparent;background:transparent;padding:4px 8px;}
-.tb-group .tb:hover{background:var(--surface);border-color:var(--border);color:var(--accent);}
-.tb-group .tb.active{background:var(--accent);color:#000;border-color:var(--accent);}
-.tb-group-label{font-size:10px;color:var(--dim);padding:0 4px;font-weight:600;letter-spacing:0.02em;}
-.meta-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface2);font-size:10px;color:var(--dim);max-width:100%;overflow:hidden;}
+.meta-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface2);font-size:11px;color:var(--dim);max-width:100%;overflow:hidden;}
+.meta-pill[hidden]{display:none;}
 .meta-pill b{color:var(--text);font-weight:700;}
 .meta-pill .pill-val{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-#topbar select.tb-select{padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;font-family:inherit;outline:none;flex:0 0 auto;min-height:30px;}
+#topbar select.tb-select{padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:12px;font-family:inherit;outline:none;flex:0 0 auto;min-height:30px;}
 #topbar select.tb-select:focus{border-color:var(--accent);}
-.sep{width:1px;height:20px;background:var(--border);margin:0 4px;}
-#search-box{padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;width:200px;font-family:inherit;outline:none;min-height:30px;}
+#search-box{padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:12px;width:210px;font-family:inherit;outline:none;min-height:30px;}
 #search-box:focus{border-color:var(--accent);}
 #search-box::placeholder{color:var(--dim);}
-#search-meta{min-width:84px;justify-content:center;}
 .spacer{flex:1 1 16px;}
 
 /* ── Dropdown menu ── */
 .tb-menu{position:relative;}
 .tb-menu > .tb-menu-btn::after{content:"▾";margin-left:4px;font-size:9px;opacity:0.7;}
 .tb-menu-panel{display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:200px;max-height:min(70vh,480px);overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-md);padding:6px;z-index:120;}
+.tb-menu-panel--left{left:0;right:auto;}
 .tb-menu.open .tb-menu-panel{display:flex;flex-direction:column;gap:2px;}
+.tb-menu-row{display:flex;gap:6px;padding:4px 2px;}
+.tb-menu-row select{flex:1 1 0;min-width:0;}
+.tb-check::before{content:"";display:inline-block;width:16px;flex:0 0 auto;}
+.tb-menu-panel .tb-check.active{background:transparent;color:var(--text);border-color:transparent;font-weight:600;}
+.tb-check.active::before{content:"✓";color:var(--accent);}
 .tb-menu-panel .tb{background:transparent;border:1px solid transparent;justify-content:flex-start;width:100%;padding:7px 10px;font-size:12px;}
 .tb-menu-panel .tb:hover{background:var(--surface2);border-color:var(--border);}
 .tb-menu-panel hr{border:none;border-top:1px solid var(--border);margin:4px 2px;}
@@ -3673,28 +4147,17 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 
 @media (max-width: 1280px){
   #topbar{padding:6px 10px;row-gap:6px;}
-  #topbar .sep{display:none;}
   #search-box{width:min(220px,100%);flex:1 1 200px;}
-  #search-meta{min-width:0;}
-  .tb-group-label{display:none;}
+  #banner .meta-pill--wide{display:none;}
 }
 @media (max-width: 900px){
   #topbar{padding:6px 8px;gap:4px;}
   #topbar h1{font-size:12px;margin-right:2px;}
   #mobile-menu-btn{display:inline-flex;}
-  #topbar > .meta-group,
-  #topbar > .tb-group[data-group="view"],
-  #topbar > .tb-group[data-group="layout"],
-  #topbar > .tb-group[data-group="focus"],
-  #topbar > .tb-group[data-group="edit"],
   #topbar > #density-select,
-  #topbar > #overview-toggle-btn,
   #topbar > .tb[data-mobile="hide"],
   #topbar > .tb-menu[data-mobile="hide"]{display:none;}
-  #topbar.mobile-open > .meta-group,
-  #topbar.mobile-open > .tb-group,
   #topbar.mobile-open > #density-select,
-  #topbar.mobile-open > #overview-toggle-btn,
   #topbar.mobile-open > .tb[data-mobile="hide"],
   #topbar.mobile-open > .tb-menu[data-mobile="hide"]{display:inline-flex;}
   #topbar.mobile-open{padding-bottom:10px;}
@@ -3740,18 +4203,18 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 #zoom-ctrl > button:first-child{border-radius:var(--radius) var(--radius) 0 0;}
 #zoom-ctrl > button:last-of-type{border-bottom:none;border-radius:0 0 var(--radius) var(--radius);}
 #zoom-ctrl button:hover{background:var(--surface2);color:var(--accent);}
-#zoom-level{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:9px;color:var(--dim);text-align:center;padding:4px 1px;font-family:'DM Mono',monospace;line-height:1.15;}
+#zoom-level{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:9px;color:var(--dim);text-align:center;padding:4px 1px;font-family:var(--mono);line-height:1.15;}
 #zoom-level[aria-expanded="true"]{background:var(--surface2);color:var(--accent);}
-#zoom-mode{font-family:'DM Sans',sans-serif;font-size:8px;font-weight:700;color:var(--action);}
+#zoom-mode{font-family:inherit;font-size:9px;font-weight:700;color:var(--action);}
 #zoom-mode:empty{display:none;}
 #zoom-presets{display:none;position:absolute;right:calc(100% + 8px);bottom:0;width:170px;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-md);}
 #zoom-presets.open{display:grid;}
-#zoom-presets button{min-width:0;height:32px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text);font:600 10px 'DM Mono',monospace;cursor:pointer;}
+#zoom-presets button{min-width:0;height:32px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text);font:600 10px var(--mono);cursor:pointer;}
 #zoom-presets button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#000;}
 
 /* ── Sidebar ── */
 #sidebar{
-  position:fixed;top:48px;left:0;bottom:0;width:280px;z-index:90;
+  position:fixed;top:48px;left:0;bottom:0;width:280px;z-index:97;
   background:var(--surface);border-right:1px solid var(--border);
   transform:translateX(-100%);transition:transform .25s;overflow-y:auto;
   padding:14px;font-size:12px;
@@ -3764,14 +4227,14 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 #sidebar h3{font-size:13px;margin:14px 0 8px;color:var(--accent);font-weight:600;}
 #sidebar h3:first-child{margin-top:0;}
 .stat-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);}
-.stat-val{font-weight:600;font-family:'DM Mono',monospace;color:var(--accent2);}
+.stat-val{font-weight:600;font-family:var(--mono);color:var(--accent2);}
 .app-list-item{display:block;width:100%;padding:6px 8px;cursor:pointer;border:1px solid transparent;border-radius:6px;margin:2px 0;transition:.1s;background:transparent;color:var(--text);text-align:left;font:inherit;}
-.app-list-group{margin:12px 0 4px;padding-bottom:3px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--dim);letter-spacing:0.04em;}
+.app-list-group{margin:12px 0 4px;padding-bottom:3px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--dim);letter-spacing:0.04em;}
 .app-list-group:first-child{margin-top:2px;}
 .app-list-item:hover{background:var(--surface2);}
 .app-list-item.highlighted{background:rgba(94,234,212,0.12);border:1px solid var(--accent);}
 .app-list-item.active-app{background:rgba(129,140,248,0.12);border:1px solid var(--accent2);}
-.filter-chip{display:inline-block;padding:3px 8px;margin:2px;border:1px solid var(--border);border-radius:20px;font-size:10px;cursor:pointer;transition:.1s;}
+.filter-chip{display:inline-block;padding:3px 8px;margin:2px;border:1px solid var(--border);border-radius:20px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:11px;cursor:pointer;transition:.1s;}
 .filter-chip:hover,.filter-chip.active{background:var(--accent);color:#000;border-color:var(--accent);}
 
 /* ── Architecture analysis ── */
@@ -3783,50 +4246,50 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 #analysis-panel.open{display:block;}
 .analysis-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px;}
 .analysis-head h2{font-size:15px;color:var(--accent);}
-.analysis-head p{font-size:10px;line-height:1.5;color:var(--dim);margin-top:3px;}
+.analysis-head p{font-size:11px;line-height:1.5;color:var(--dim);margin-top:3px;}
 .analysis-score{display:grid;grid-template-columns:84px 1fr;gap:12px;align-items:center;padding:12px;border:1px solid var(--border);border-radius:14px;background:var(--surface2);}
-.analysis-score__value{width:72px;height:72px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;border:5px solid var(--accent);background:var(--surface);font-family:'DM Mono',monospace;}
+.analysis-score__value{width:72px;height:72px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;border:5px solid var(--accent);background:var(--surface);font-family:var(--mono);}
 .analysis-score__value strong{font-size:22px;line-height:1;}
 .analysis-score__value span{font-size:9px;color:var(--dim);margin-top:3px;}
 .analysis-score__copy strong{display:block;font-size:13px;margin-bottom:4px;}
 .analysis-score__copy span{font-size:10px;line-height:1.5;color:var(--dim);}
 .analysis-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px;border:1px solid var(--border);border-radius:14px;background:var(--surface2);}
 .analysis-fact{padding:8px;border-radius:10px;background:var(--surface);text-align:center;}
-.analysis-fact strong{display:block;font:700 20px/1.1 'DM Mono',monospace;color:var(--accent);}
-.analysis-fact span{display:block;margin-top:5px;font-size:9px;color:var(--dim);}
+.analysis-fact strong{display:block;font:700 20px/1.1 var(--mono);color:var(--accent);}
+.analysis-fact span{display:block;margin-top:5px;font-size:11px;color:var(--dim);}
 .analysis-section{margin-top:18px;}
-.analysis-section h3{font-size:11px;color:var(--text);margin-bottom:7px;display:flex;justify-content:space-between;gap:8px;}
-.analysis-count{color:var(--dim);font-family:'DM Mono',monospace;}
-.analysis-empty{padding:10px;border:1px dashed var(--border);border-radius:10px;color:var(--dim);font-size:10px;line-height:1.5;}
+.analysis-section h3{font-size:12px;color:var(--text);margin-bottom:7px;display:flex;justify-content:space-between;gap:8px;}
+.analysis-count{color:var(--dim);font-family:var(--mono);}
+.analysis-empty{padding:10px;border:1px dashed var(--border);border-radius:10px;color:var(--dim);font-size:11px;line-height:1.5;}
 .analysis-item{width:100%;text-align:left;padding:9px 10px;margin:4px 0;border:1px solid var(--border);border-radius:10px;background:var(--surface2);color:var(--text);cursor:pointer;font-family:inherit;transition:.12s;}
 .analysis-item:hover{border-color:var(--accent);transform:translateY(-1px);}
-.analysis-item strong{display:block;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.analysis-item span{display:block;font-size:9px;color:var(--dim);margin-top:3px;line-height:1.45;}
+.analysis-item strong{display:block;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.analysis-item span{display:block;font-size:11px;color:var(--dim);margin-top:3px;line-height:1.45;}
 .analysis-item--warn{border-left:3px solid var(--action);}
 .analysis-item--risk{border-left:3px solid var(--req);}
-.analysis-note{margin-top:14px;padding:9px 10px;border-radius:10px;background:rgba(129,140,248,0.1);color:var(--dim);font-size:9px;line-height:1.55;}
+.analysis-note{margin-top:14px;padding:9px 10px;border-radius:10px;background:rgba(129,140,248,0.1);color:var(--dim);font-size:11px;line-height:1.55;}
 
 /* ── Detail Panel ── */
 #detail{
   position:fixed;top:54px;right:0;width:390px;max-height:calc(100vh - 62px);
-  overflow-y:auto;z-index:90;background:var(--surface);border-left:1px solid var(--border);
+  overflow-y:auto;z-index:96;background:var(--surface);border-left:1px solid var(--border);
   padding:20px;display:none;box-shadow:-18px 0 36px rgba(0,0,0,0.18);
 }
 #detail.open{display:block;}
 #detail h2{font-size:15px;margin-bottom:4px;color:var(--accent);}
-#detail .app-meta{font-size:11px;color:var(--dim);margin-bottom:12px;}
+#detail .app-meta{font-size:12px;color:var(--dim);margin-bottom:12px;}
 .detail-chip-row{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px;}
 .close-btn{position:absolute;top:12px;right:14px;background:none;border:none;color:var(--dim);font-size:16px;cursor:pointer;}
 .field-group-title{font-size:11px;font-weight:600;color:var(--dim);margin:12px 0 6px;text-transform:uppercase;letter-spacing:.05em;}
-.field-row{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border-radius:8px;font-size:11px;border-bottom:1px solid var(--border);}
+.field-row{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border-radius:8px;font-size:12px;border-bottom:1px solid var(--border);}
 .field-row:hover{background:var(--surface2);}
-.detail-relation-button{width:100%;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer;}
+.detail-relation-button{width:100%;background:transparent;color:inherit;text-align:left;font-family:inherit;cursor:pointer;border:0;border-bottom:1px solid var(--border);}
 .field-icon{width:18px;text-align:center;flex-shrink:0;}
 .field-main{flex:1;min-width:0;}
-.field-name{display:flex;align-items:center;gap:4px;flex-wrap:wrap;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;}
-.field-sub{margin-top:2px;font-size:10px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'DM Mono',monospace;}
-.field-type{color:var(--dim);font-size:10px;flex-shrink:0;}
-.tag{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:600;margin-left:4px;}
+.field-name{display:flex;align-items:center;gap:4px;flex-wrap:wrap;overflow-wrap:anywhere;font-weight:600;}
+.field-sub{margin-top:2px;font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);}
+.field-type{color:var(--dim);font-size:11px;flex-shrink:0;}
+.tag{display:inline-block;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600;margin-left:4px;}
 .tag-pk{background:rgba(251,191,36,0.15);color:var(--pk);}
 .tag-fk{background:rgba(96,165,250,0.15);color:var(--lookup);}
 .tag-ref{background:rgba(52,211,153,0.15);color:var(--ref);}
@@ -3858,11 +4321,14 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
   position:fixed;bottom:calc(var(--bottom-safe) + var(--pathfinder-lift));right:16px;z-index:100;
   display:flex;gap:14px;padding:8px 14px;
   background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--radius);font-size:10px;box-shadow:var(--shadow-sm);
+  border-radius:var(--radius);font-size:11px;box-shadow:var(--shadow-sm);align-items:center;
 }
 #legend span,#legend button{display:flex;align-items:center;gap:4px;}
 #legend button{appearance:none;background:transparent;color:inherit;font:inherit;line-height:inherit;}
-#legend i{display:inline-block;width:9px;height:9px;border-radius:2px;}
+#legend i{display:inline-block;width:10px;height:10px;border-radius:2px;}
+#legend i.legend-line{width:22px;height:0;border-radius:0;border-top-width:2px;}
+#legend b{padding:1px 4px;border-radius:4px;font-size:10px;line-height:1.3;background:color-mix(in srgb,currentColor 16%,transparent);}
+#legend .legend-sep{width:1px;height:16px;background:var(--border);}
 #legend .legend-toggle{cursor:pointer;padding:2px 6px;border:1px solid transparent;border-radius:8px;transition:.12s;}
 #legend .legend-toggle:hover{background:var(--surface2);border-color:var(--border);}
 #legend .legend-toggle.off{opacity:0.35;text-decoration:line-through;}
@@ -3878,7 +4344,7 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 .help-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px dashed var(--border);gap:10px;}
 .help-row:last-child{border-bottom:none;}
 .help-row span:first-child{font-size:11px;color:var(--text);}
-.help-row kbd{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 7px;font-size:10px;color:var(--accent2);font-family:'DM Mono',monospace;white-space:nowrap;}
+.help-row kbd{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 7px;font-size:10px;color:var(--accent2);font-family:var(--mono);white-space:nowrap;}
 #help-box .close-row{margin-top:16px;display:flex;justify-content:flex-end;}
 #help-box .close-row button{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;font-size:12px;}
 
@@ -3899,7 +4365,7 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 #modal-overlay.open{display:flex;}
 #modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;width:min(600px,calc(100vw - 24px));max-height:80vh;overflow-y:auto;}
 #modal h2{margin-bottom:10px;font-size:15px;}
-#modal pre{background:var(--bg);padding:12px;border-radius:8px;font-size:11px;overflow-x:auto;white-space:pre-wrap;font-family:'DM Mono',monospace;color:var(--dim);max-height:400px;overflow-y:auto;border:1px solid var(--border);}
+#modal pre{background:var(--bg);padding:12px;border-radius:8px;font-size:11px;overflow-x:auto;white-space:pre-wrap;font-family:var(--mono);color:var(--dim);max-height:400px;overflow-y:auto;border:1px solid var(--border);}
 #modal .actions{margin-top:12px;display:flex;gap:8px;}
 #modal .actions button{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;font-size:12px;}
 #modal .actions button.primary{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600;}
@@ -3946,13 +4412,12 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
   border:1px solid var(--border);border-radius:16px;padding:16px 16px 14px;
   box-shadow:0 18px 40px rgba(0,0,0,0.22);backdrop-filter:blur(12px);
 }
-#overview.collapsed .ov-sub,#overview.collapsed .ov-grid,#overview.collapsed .ov-tip-row{display:none;}
-#overview.hidden{display:none;}
+#overview.collapsed,#overview.hidden{display:none;}
 .ov-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;}
 .ov-close{flex:0 0 auto;background:none;border:1px solid transparent;color:var(--dim);font-size:14px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:8px;transition:.12s;}
 .ov-close:hover{background:var(--surface2);border-color:var(--border);color:var(--text);}
 .ov-title{font-size:14px;font-weight:700;color:var(--text);}
-.ov-sub{margin-top:4px;font-size:11px;line-height:1.6;color:var(--dim);}
+.ov-sub{margin-top:4px;font-size:12px;line-height:1.6;color:var(--dim);}
 .ov-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
 .ov-card{padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface2);display:flex;flex-direction:column;gap:4px;min-height:72px;}
 .ov-card--action{cursor:pointer;transition:.15s;text-align:left;color:inherit;font-family:inherit;}
@@ -3960,9 +4425,9 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 .ov-card--risk{border-color:rgba(248,113,113,0.55);}
 .ov-card--warn{border-color:rgba(245,158,11,0.55);}
 .ov-kpi{font-size:18px;font-weight:700;line-height:1;color:var(--text);}
-.ov-label{font-size:10px;color:var(--dim);}
+.ov-label{font-size:11px;color:var(--dim);}
 .ov-tip-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
-.ov-tip-row span{padding:5px 8px;border-radius:999px;background:var(--surface2);border:1px solid var(--border);font-size:10px;color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ov-tip-row span{padding:5px 8px;border-radius:999px;background:var(--surface2);border:1px solid var(--border);font-size:11px;color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* ── Toast ── */
 #toast{position:fixed;bottom:60px;left:50%;transform:translateX(-50%) translateY(20px);z-index:600;padding:8px 20px;background:var(--accent);color:#000;border-radius:8px;font-size:12px;font-weight:600;opacity:0;transition:.3s;pointer-events:none;}
@@ -3975,6 +4440,13 @@ button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-v
 #sidebar{top:var(--topbar-h,52px);}
 #detail,#analysis-panel{top:calc(var(--topbar-h,52px) + 6px);max-height:calc(100vh - var(--topbar-h,52px) - 14px);}
 .field-row:focus-within .row-edit,.field-row:focus-within .row-del{opacity:1;}
+@media (min-width:1280px){
+  body:has(#detail.open) #zoom-ctrl,body:has(#detail.open) #legend{right:406px;}
+  body:has(#analysis-panel.open) #zoom-ctrl,body:has(#analysis-panel.open) #legend{right:376px;}
+}
+@media (max-width:1279px){
+  #detail,#analysis-panel{z-index:108;}
+}
 @media (max-width:640px){
   #detail,#analysis-panel,#sidebar{top:0;max-height:100vh;width:100vw;border-radius:0;z-index:180;}
   #overview{top:calc(var(--topbar-h,52px) + 42px);}
@@ -4015,77 +4487,79 @@ button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-v
   <button class="tb tb-icon" id="mobile-menu-btn" onclick="toggleMobileMenu()" title="メニュー" aria-label="メニュー" aria-expanded="false">☰</button>
   <h1>⬡ kintone ER図</h1>
 
-  <div class="meta-group" style="display:inline-flex;gap:4px;flex-wrap:wrap;">
-    <span class="meta-pill" title="開始: ${esc(startAppFullText)}"><b>開始</b> <span class="pill-val">${esc(startAppText)}</span></span>
-    <span class="meta-pill" id="layout-pill"><b>配置</b> ${esc(formatErLayoutLabel(options.layoutName))}</span>
-    <span class="meta-pill" id="density-pill"><b>密度</b> ${esc(densityLabel)}</span>
-    <span class="meta-pill"><b>深さ</b> ${esc(String(options.maxDepth || 0))}</span>
-    ${spacePill}
+  <input id="search-box" placeholder="アプリ・項目を検索 (Ctrl+F)" oninput="searchGraph(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();focusNextSearchMatch();}">
+  <span class="meta-pill" id="search-meta" hidden><b>検索</b> すべて</span>
+
+  <button class="tb" id="analysis-toggle-btn" data-mobile="hide" onclick="toggleAnalysisPanel()" title="構造チェック: 取得状態・循環候補・接続数を確認">チェック</button>
+
+  <div class="tb-menu" id="view-menu" data-mobile="hide">
+    <button class="tb tb-menu-btn" onclick="toggleMenu('view-menu')" title="パネルと表示">表示</button>
+    <div class="tb-menu-panel tb-menu-panel--left">
+      <button class="tb tb-check" id="sidebar-toggle-btn" onclick="toggleSidebar(undefined,this);closeAllMenus()" title="統計パネル (Ctrl+B)" aria-controls="sidebar" aria-expanded="false">統計パネル</button>
+      <button class="tb tb-check" id="overview-toggle-btn" onclick="toggleOverview();closeAllMenus()" title="取得・関連サマリー">取得・関連サマリー</button>
+      <button class="tb tb-check" onclick="togglePathFinder();closeAllMenus()" title="アプリ間の経路を探す">経路探索</button>
+      <button class="tb tb-check" onclick="toggleMinimap();closeAllMenus()" title="ミニマップ">ミニマップ</button>
+      <button class="tb tb-check" onclick="toggleFullscreen();closeAllMenus()" id="fs-btn" title="フルスクリーン (F11)">フルスクリーン</button>
+    </div>
   </div>
 
-  <div class="sep"></div>
-
-  <div class="tb-group" data-group="view">
-    <span class="tb-group-label">表示</span>
-    <button class="tb" id="sidebar-toggle-btn" onclick="toggleSidebar(undefined,this)" title="統計パネル (Ctrl+B)" aria-controls="sidebar" aria-expanded="false">📊</button>
-    <button class="tb" id="analysis-toggle-btn" onclick="toggleAnalysisPanel()" title="構造チェック: 取得状態・循環候補・接続数を確認">🩺 チェック</button>
-    <button class="tb" id="overview-toggle-btn" onclick="toggleOverview()" title="ガイドパネル">🧭</button>
-    <button class="tb" onclick="togglePathFinder()" title="経路探索">🛣</button>
-    <button class="tb" onclick="toggleMinimap()" title="ミニマップ">🗺</button>
-    <button class="tb" onclick="toggleFullscreen()" id="fs-btn" title="フルスクリーン (F11)">⛶</button>
+  <div class="tb-menu" id="layout-menu" data-mobile="hide">
+    <button class="tb tb-menu-btn" onclick="toggleMenu('layout-menu')" title="アプリの並べ方">配置</button>
+    <div class="tb-menu-panel tb-menu-panel--left">
+      <button class="tb tb-check" data-layout-btn="dagre" onclick="setLayout('dagre');closeAllMenus()" title="関連の向きに沿って並べます">階層（推奨）</button>
+      <button class="tb tb-check" data-layout-btn="cose" onclick="setLayout('cose');closeAllMenus()">自動</button>
+      <button class="tb tb-check" data-layout-btn="breadthfirst" onclick="setLayout('breadthfirst');closeAllMenus()">ツリー</button>
+      <button class="tb tb-check" data-layout-btn="concentric" onclick="setLayout('concentric');closeAllMenus()">同心円</button>
+      <button class="tb tb-check" data-layout-btn="grid" onclick="setLayout('grid');closeAllMenus()">グリッド</button>
+      <button class="tb tb-check" data-layout-btn="circle" onclick="setLayout('circle');closeAllMenus()">円形</button>
+      <hr>
+      <button class="tb tb-check active" id="separate-nolink-btn" onclick="toggleSeparateNoLink()" title="紐づき（関連線）のないアプリを下の別枠にまとめて配置">紐づきなしを分離</button>
+    </div>
   </div>
 
-  <div class="tb-group" data-group="layout">
-    <span class="tb-group-label">配置</span>
-    <button class="tb" data-layout-btn="dagre" onclick="setLayout('dagre')" title="Dagre (推奨)">Dagre</button>
-    <button class="tb" data-layout-btn="cose" onclick="setLayout('cose')" title="自動配置">自動</button>
-    <button class="tb" data-layout-btn="breadthfirst" onclick="setLayout('breadthfirst')" title="ツリー">🌳</button>
-    <button class="tb" data-layout-btn="concentric" onclick="setLayout('concentric')" title="同心円">◎</button>
-    <button class="tb" data-layout-btn="grid" onclick="setLayout('grid')" title="グリッド">⊞</button>
-    <button class="tb" data-layout-btn="circle" onclick="setLayout('circle')" title="円形">◯</button>
-    <button class="tb active" id="separate-nolink-btn" onclick="toggleSeparateNoLink()" title="紐づき（関連線）のないアプリを下の別枠にまとめて配置">🗂 分離</button>
-  </div>
-
-  <select id="density-select" class="tb-select" onchange="setDensity(this.value)" title="表示密度">
-    <option value="none">⬡ 結合のみ</option>
-    <option value="compact">🪶 コンパクト</option>
-    <option value="standard">📄 標準</option>
-    <option value="full">🧾 詳細</option>
+  <select id="density-select" class="tb-select" onchange="setDensity(this.value)" title="カードに出す項目の量">
+    <option value="none">密度: 結合のみ</option>
+    <option value="compact">密度: コンパクト</option>
+    <option value="standard">密度: 標準</option>
+    <option value="full">密度: 詳細</option>
   </select>
 
-  <button class="tb" id="simple-mode-btn" onclick="toggleSimpleMode()" title="項目を隠してアプリ同士の結合関係だけを表示（重複する線もまとめます）">⬡ シンプル</button>
+  <button class="tb" id="simple-mode-btn" data-mobile="hide" onclick="toggleSimpleMode()" title="項目を隠してアプリ同士の結合関係だけを表示（重複する線もまとめます）">シンプル</button>
 
-  <div class="sep"></div>
-
-  <input id="search-box" placeholder="🔎 アプリ・フィールド検索 (Ctrl+F / Enterで移動)" oninput="searchGraph(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();focusNextSearchMatch();}">
-  <span class="meta-pill" id="search-meta"><b>検索</b> すべて</span>
-
-  <div class="tb-group" data-group="focus">
-    <span class="tb-group-label">強調</span>
-    <button class="tb active" id="focus-toggle-btn" onclick="toggleFocusMode()" title="関連強調 (Shift+F)">🎯 ON</button>
-    <select id="focus-depth" class="tb-select" onchange="updateFocusOptions()" title="強調する深さ">
-      <option value="1">深さ1</option>
-      <option value="2">深さ2</option>
-      <option value="3">深さ3</option>
-    </select>
-    <select id="focus-direction" class="tb-select" onchange="updateFocusOptions()" title="強調の方向">
-      <option value="both">双方向</option>
-      <option value="out">出方向</option>
-      <option value="in">入方向</option>
-    </select>
-    <button class="tb" onclick="clearFocus()" title="強調解除">✕</button>
+  <div class="tb-menu" id="line-menu" data-mobile="hide">
+    <button class="tb tb-menu-btn" onclick="toggleMenu('line-menu')" title="表示する関連線">関連線</button>
+    <div class="tb-menu-panel tb-menu-panel--left">
+      <button class="tb tb-check active" id="rel-lookup-btn" onclick="toggleRelationKind('LOOKUP')" title="ルックアップ線">ルックアップ</button>
+      <button class="tb tb-check active" id="rel-ref-btn" onclick="toggleRelationKind('REF')" title="関連レコード線">関連レコード</button>
+      <button class="tb tb-check active" id="rel-action-btn" onclick="toggleRelationKind('ACTION')" title="アクション線">アクション</button>
+      <hr>
+      <button class="tb tb-check active" id="rel-label-btn" onclick="toggleRelationLabels()" title="線ラベル">線のラベル</button>
+    </div>
   </div>
 
-  <div class="tb-group" data-group="edit">
-    <span class="tb-group-label">線</span>
-    <button class="tb active" id="rel-lookup-btn" onclick="toggleRelationKind('LOOKUP')" title="ルックアップ線">🔗</button>
-    <button class="tb active" id="rel-ref-btn" onclick="toggleRelationKind('REF')" title="関連レコード線">📋</button>
-    <button class="tb active" id="rel-action-btn" onclick="toggleRelationKind('ACTION')" title="アクション線">⚡</button>
-    <button class="tb active" id="rel-label-btn" onclick="toggleRelationLabels()" title="線ラベル">🏷</button>
+  <div class="tb-menu" id="focus-menu" data-mobile="hide">
+    <button class="tb tb-menu-btn" onclick="toggleMenu('focus-menu')" title="選択したアプリの周辺を強調">強調</button>
+    <div class="tb-menu-panel tb-menu-panel--left">
+      <button class="tb tb-check active" id="focus-toggle-btn" onclick="toggleFocusMode()" title="関連強調 (Shift+F)">関連強調 ON</button>
+      <div class="tb-menu-row">
+        <select id="focus-depth" class="tb-select" onchange="updateFocusOptions()" title="強調する深さ">
+          <option value="1">深さ1</option>
+          <option value="2">深さ2</option>
+          <option value="3">深さ3</option>
+        </select>
+        <select id="focus-direction" class="tb-select" onchange="updateFocusOptions()" title="強調の方向">
+          <option value="both">双方向</option>
+          <option value="out">出方向</option>
+          <option value="in">入方向</option>
+        </select>
+      </div>
+      <hr>
+      <button class="tb" onclick="clearFocus();closeAllMenus()">強調を解除</button>
+    </div>
   </div>
 
   <div class="tb-menu" id="add-menu" data-mobile="hide">
-    <button class="tb tb-menu-btn" onclick="toggleMenu('add-menu')" title="要素を手動追加">➕ 追加</button>
+    <button class="tb tb-menu-btn" onclick="toggleMenu('add-menu')" title="要素を手動追加">追加</button>
     <div class="tb-menu-panel">
       <button class="tb" onclick="openAddApp();closeAllMenus()">⬡ アプリ(エンティティ)を追加</button>
       <button class="tb" onclick="openAddField();closeAllMenus()">📝 アプリに項目を追加</button>
@@ -4096,7 +4570,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-v
   </div>
 
   <div class="tb-menu" id="edit-menu" data-mobile="hide">
-    <button class="tb tb-menu-btn" onclick="toggleMenu('edit-menu')" title="編集">✏</button>
+    <button class="tb tb-menu-btn" onclick="toggleMenu('edit-menu')" title="編集">編集</button>
     <div class="tb-menu-panel">
       <button class="tb" onclick="undoLast();closeAllMenus()">↩ 元に戻す (Ctrl+Z)</button>
       <hr>
@@ -4124,14 +4598,14 @@ button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-v
 
   <div class="spacer"></div>
 
-  <button class="tb" onclick="fit()" title="全体表示 (Ctrl+0)" aria-label="図全体を表示">📐</button>
+  <button class="tb" onclick="fit()" title="図全体を表示 (Ctrl+0)" aria-label="図全体を表示">全体表示</button>
 
   <div class="tb-menu" id="export-menu">
-    <button class="tb tb-menu-btn" onclick="toggleMenu('export-menu')">💾 出力</button>
+    <button class="tb tb-menu-btn" onclick="toggleMenu('export-menu')">出力</button>
     <div class="tb-menu-panel">
       <button class="tb" onclick="exportEditedHtml();closeAllMenus()">💾 編集済みHTMLを保存</button>
       <hr>
-      <button class="tb" onclick="exportPNG();closeAllMenus()">🖼 PNG 画像</button>
+      <button class="tb" onclick="exportPNG();closeAllMenus()">🖼 PNG 画像（白背景）</button>
       <hr>
       <button class="tb" onclick="showMermaid();closeAllMenus()">🧜 Mermaid</button>
       <button class="tb" onclick="showDrawio();closeAllMenus()">📊 draw.io XML</button>
@@ -4177,10 +4651,14 @@ button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-v
 </div>
 
 <div id="banner">
-  <span class="meta-pill"><b>アプリ数</b> ${apps.length}</span>
-  <span class="meta-pill"><b>ゲスト</b> ${esc(options.source?.guestId ? `ゲスト ${String(options.source.guestId)}` : "通常空間")}</span>
-  <span class="meta-pill"><b>モード</b> ${options.source?.preview ? "プレビュー" : "本番"}</span>
-  <span class="meta-pill"><b>サブテーブル</b> ${options.includeSubtableFields ? "ON" : "OFF"}</span>
+  <button type="button" class="meta-pill meta-pill--btn" id="overview-pill" onclick="toggleOverview()" title="取得・関連サマリーを開く" aria-controls="overview">${safeApps.length}アプリ · ${summary.relations}関連 · 循環${dependencyAnalysis.cycles.length} · 孤立${dependencyAnalysis.isolatedAppIds.length} · 未取得${dependencyAnalysis.unresolvedTargets.length}<span aria-hidden="true"> ▾</span></button>
+  <span class="meta-pill" title="開始: ${esc(startAppFullText)}"><b>開始</b> <span class="pill-val">${esc(startAppText)}</span></span>
+  <span class="meta-pill"><b>環境</b> ${esc(options.source?.guestId ? `ゲスト ${String(options.source.guestId)}` : "通常空間")} / ${options.source?.preview ? "プレビュー" : "本番"}</span>
+  <span class="meta-pill meta-pill--wide" id="layout-pill"><b>配置</b> ${esc(formatErLayoutLabel(options.layoutName))}</span>
+  <span class="meta-pill meta-pill--wide" id="density-pill"><b>密度</b> ${esc(densityLabel)}</span>
+  <span class="meta-pill meta-pill--wide"><b>深さ</b> ${esc(String(options.maxDepth || 0))}</span>
+  <span class="meta-pill meta-pill--wide"><b>サブテーブル</b> ${options.includeSubtableFields ? "ON" : "OFF"}</span>
+  ${spacePill}
   ${reverseScanPill}
 </div>
 
@@ -4190,7 +4668,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-v
       <div class="ov-title">取得・関連サマリー</div>
       <div class="ov-sub">取得できた設定と関連の事実を表示します。良否は判定せず、数値を選ぶと該当箇所を確認できます。</div>
     </div>
-    <button class="ov-close" onclick="hideOverview()" title="ガイドを閉じる（🧭 で再表示）" aria-label="ガイドを閉じる">✕</button>
+    <button class="ov-close" onclick="hideOverview()" title="サマリーを閉じる" aria-label="ガイドを閉じる">✕</button>
   </div>
   <div class="ov-grid">
     <button class="ov-card ov-card--action${dependencyAnalysis.counts.retrievalPartial + dependencyAnalysis.counts.retrievalFailed ? " ov-card--warn" : ""}" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.counts.retrievalPartial + dependencyAnalysis.counts.retrievalFailed}</span><span class="ov-label">取得に注意が必要</span></button>
@@ -4202,7 +4680,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-v
   </div>
   <div class="ov-tip-row">
     <span title="開始: ${esc(startAppFullText)}">開始: ${esc(startAppText || "-")}</span>
-    <span>Lookup: ${summary.lookups}</span>
+    <span>ルックアップ: ${summary.lookups}</span>
     <span>関連レコード: ${summary.refs}</span>
     <span>アクション: ${summary.actions}</span>
     <span>必須項目: ${summary.required}</span>
@@ -4260,17 +4738,18 @@ button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-v
 
 <!-- Legend -->
 <div id="legend">
-  <span><i style="background:var(--pk)"></i>PK</span>
-  <span><i style="background:var(--lookup)"></i>ルックアップ</span>
-  <span><i style="background:var(--ref)"></i>関連</span>
-  <span><i style="background:var(--req)"></i>必須</span>
-  <span><i style="background:#f59e0b"></i>アクション</span>
-  <span><i style="background:transparent;border:2px dashed var(--action)"></i>一部取得</span>
-  <span><i style="background:transparent;border:2px solid var(--req)"></i>取得失敗</span>
-  <span><i style="background:transparent;border:2px dashed var(--dim)"></i>未取得の参照先</span>
-  <button type="button" class="legend-toggle" id="legend-lookup-edge" aria-pressed="true" onclick="toggleRelationKind('LOOKUP')"><i style="border:2px solid var(--lookup)"></i>ルックアップ線</button>
-  <button type="button" class="legend-toggle" id="legend-ref-edge" aria-pressed="true" onclick="toggleRelationKind('REF')"><i style="border:2px dashed var(--ref)"></i>関連線</button>
-  <button type="button" class="legend-toggle" id="legend-action-edge" aria-pressed="true" onclick="toggleRelationKind('ACTION')"><i style="border:2px dotted #f59e0b"></i>アクション線</button>
+  <span title="レコード番号"><b style="color:var(--pk)">PK</b></span>
+  <span title="ルックアップ項目"><b style="color:var(--lookup)">FK</b></span>
+  <span title="関連レコード一覧"><b style="color:var(--ref)">関連</b></span>
+  <span title="値の重複禁止"><b style="color:var(--accent2)">一意</b></span>
+  <span title="必須項目"><b style="color:var(--req)">必須</b></span>
+  <span class="legend-sep" aria-hidden="true"></span>
+  <button type="button" class="legend-toggle" id="legend-lookup-edge" aria-pressed="true" onclick="toggleRelationKind('LOOKUP')"><i class="legend-line" style="border-top-style:solid;border-top-color:var(--lookup)"></i>ルックアップ</button>
+  <button type="button" class="legend-toggle" id="legend-ref-edge" aria-pressed="true" onclick="toggleRelationKind('REF')"><i class="legend-line" style="border-top-style:dashed;border-top-color:var(--ref)"></i>関連レコード</button>
+  <button type="button" class="legend-toggle" id="legend-action-edge" aria-pressed="true" onclick="toggleRelationKind('ACTION')"><i class="legend-line" style="border-top-style:dotted;border-top-color:var(--action)"></i>アクション</button>
+  ${dependencyAnalysis.counts.retrievalPartial ? '<span><i style="background:transparent;border:2px dashed var(--action)"></i>一部取得</span>' : ""}
+  ${dependencyAnalysis.counts.retrievalFailed ? '<span><i style="background:transparent;border:2px solid var(--req)"></i>取得失敗</span>' : ""}
+  ${dependencyAnalysis.unresolvedTargets.length ? '<span><i style="background:transparent;border:2px dashed var(--dim)"></i>未取得の参照先</span>' : ""}
 </div>
 
 <!-- Minimap -->
@@ -4387,12 +4866,12 @@ function readCssVar(name, fallback){
 function currentPalette(){
   return {
     text: readCssVar("--text", isDark ? "#d8dee9" : "#1a1c23"),
-    dim: readCssVar("--dim", isDark ? "#636e83" : "#6b7280"),
+    dim: readCssVar("--dim", isDark ? "#8f9aae" : "#6b7280"),
     accent: readCssVar("--accent", isDark ? "#5eead4" : "#0d9488"),
     accent2: readCssVar("--accent2", isDark ? "#818cf8" : "#6366f1"),
     lookup: readCssVar("--lookup", isDark ? "#60a5fa" : "#2563eb"),
-    ref: readCssVar("--ref", isDark ? "#34d399" : "#059669"),
-    pk: readCssVar("--pk", isDark ? "#fbbf24" : "#d97706"),
+    ref: readCssVar("--ref", isDark ? "#34d399" : "#047857"),
+    pk: readCssVar("--pk", isDark ? "#fbbf24" : "#b45309"),
     req: readCssVar("--req", isDark ? "#f87171" : "#dc2626"),
     action: readCssVar("--action", isDark ? "#f59e0b" : "#d97706"),
     bg: readCssVar("--bg", isDark ? "#08090d" : "#f0f2f5"),
@@ -4416,17 +4895,7 @@ function fieldIconForLabel(f){
   return "·";
 }
 // kintone API のフィールド ENUM を日本語化（ER 図側パネル表示用）
-const FIELD_TYPE_JP_LABEL = {
-  SINGLE_LINE_TEXT:"文字列(1行)", MULTI_LINE_TEXT:"文字列(複数行)", RICH_TEXT:"リッチエディター",
-  NUMBER:"数値", CALC:"計算", RADIO_BUTTON:"ラジオボタン", CHECK_BOX:"チェックボックス",
-  DROP_DOWN:"ドロップダウン", MULTI_SELECT:"複数選択", DATE:"日付", TIME:"時刻", DATETIME:"日時",
-  USER_SELECT:"ユーザー選択", ORGANIZATION_SELECT:"組織選択", GROUP_SELECT:"グループ選択",
-  LOOKUP:"ルックアップ", SUBTABLE:"テーブル", REFERENCE_TABLE:"関連レコード一覧",
-  RECORD_NUMBER:"レコード番号", CREATOR:"作成者", CREATED_TIME:"作成日時",
-  MODIFIER:"更新者", UPDATED_TIME:"更新日時", STATUS:"ステータス", STATUS_ASSIGNEE:"作業者",
-  CATEGORY:"カテゴリー", FILE:"添付ファイル", LINK:"リンク",
-  LABEL:"ラベル", SPACER:"スペース", HR:"罫線", GROUP:"グループ"
-};
+const FIELD_TYPE_JP_LABEL = ${JSON.stringify(ER_FIELD_TYPE_LABELS)};
 function fieldTypeJpLabel(type){
   if(!type) return "-";
   const key = String(type).trim().toUpperCase();
@@ -4501,12 +4970,12 @@ function buildFieldPreviewLine(field){
   }
   return prefix + " " + label + (code && code !== label ? " [" + code + "]" : "");
 }
-function estimateLabelLineUnits(line){
-  let units = 0;
-  for(const ch of String(line || "")) units += ch.codePointAt(0) > 0xFF ? 1 : 0.55;
-  return units;
+// 全アプリが起点のときは目印が全カードに付いて区別の役に立たないため出さない
+function isMarkedStartApp(app){
+  const ids=(ER_OPTIONS.startAppIds||[]).map(String);
+  return ids.includes(String(app.id))&&new Set(ids).size<APPS.length;
 }
-function buildNodeLabel(app){
+function nodeCardContent(app){
   const limits = { none: 0, compact: 6, standard: 10, full: 16 };
   const maxLines = limits[ER_OPTIONS.fieldDensity] !== undefined ? limits[ER_OPTIONS.fieldDensity] : limits.standard;
   const fields = visibleFieldsForNode(app);
@@ -4516,8 +4985,8 @@ function buildNodeLabel(app){
     if(diff !== 0) return diff;
     return String(buildFieldDisplayName(a) || a.code || '').localeCompare(String(buildFieldDisplayName(b) || b.code || ''));
   });
-  const preview = maxLines > 0 ? ordered.slice(0, maxLines).map((f)=>buildFieldPreviewLine(f)) : [];
-  if(maxLines > 0 && ordered.length > maxLines) preview.push("… 他 " + (ordered.length - maxLines) + " 項目");
+  const shown = maxLines > 0 ? ordered.slice(0, maxLines) : [];
+  const moreCount = maxLines > 0 ? Math.max(0, ordered.length - maxLines) : 0;
   const totalFieldCount = typeof app.totalFieldCount === "number" ? app.totalFieldCount : fields.length;
   const fieldCountText = totalFieldCount > fields.length
     ? fields.length + "/" + totalFieldCount + "項目"
@@ -4525,26 +4994,134 @@ function buildNodeLabel(app){
   const metaParts = [app.isCustom ? "手動追加" : "App " + app.id, fieldCountText, app.relations.length + "関連"];
   if((app.depth || 0) > 0) metaParts.push("深さ" + app.depth);
   const meta = metaParts.join(" ・ ");
-  const isStart = (ER_OPTIONS.startAppIds || []).map(String).includes(String(app.id));
+  const isStart = isMarkedStartApp(app);
   const statusPrefix = app.ok === false || app.status === "failed"
     ? "⚠ 取得失敗 "
     : (app.status === "partial" ? "△ 一部取得 " : "");
   const title = statusPrefix + (isStart ? "★ " : "") + app.name;
-  if(!preview.length) return [title, meta].join("\\n");
-  const bodyLines = [title, meta, ...preview];
-  const maxUnits = bodyLines.reduce((max, line)=>Math.max(max, estimateLabelLineUnits(line)), 0);
-  const divider = "─".repeat(Math.min(32, Math.max(10, Math.round(maxUnits * 1.4))));
-  return [title, meta, divider, ...preview].join("\\n");
+  return { title, meta, shown, moreCount };
+}
+function buildNodeLabel(app){
+  const { title, meta, shown, moreCount } = nodeCardContent(app);
+  const preview = shown.map((f)=>buildFieldPreviewLine(f));
+  if(moreCount) preview.push("… 他 " + moreCount + " 項目");
+  return [title, meta, ...preview].join("\\n");
 }
 function buildSemanticNodeLabel(app){
   const fields = allFieldsForApp(app).filter(f=>!isFieldHidden(app, f));
   const totalFieldCount = typeof app.totalFieldCount === "number" ? app.totalFieldCount : fields.length;
-  const isStart = (ER_OPTIONS.startAppIds || []).map(String).includes(String(app.id));
+  const isStart = isMarkedStartApp(app);
   const statusPrefix = app.ok === false || app.status === "failed"
     ? "⚠ 取得失敗 "
     : (app.status === "partial" ? "△ 一部取得 " : "");
   const title = statusPrefix + (isStart ? "★ " : "") + app.name;
   return [title, "App " + app.id + " ・ " + totalFieldCount + "項目 ・ " + app.relations.length + "関連"].join("\\n");
+}
+// ─── アプリカード ───
+// Cytoscape のラベルは1書式しか持てないため、見出しと項目行を書き分けられる SVG 画像として描く。
+// 枠線と地色は Cytoscape 側のままなので、選択・強調などの状態表示はこれまでどおり効く。
+const CARD_FONT="'Yu Gothic UI','Hiragino Sans','Noto Sans JP',Meiryo,sans-serif";
+const cardMeasure=document.createElement("canvas").getContext("2d");
+function cardTextWidth(text,font){
+  cardMeasure.font=font+" "+CARD_FONT;
+  return cardMeasure.measureText(String(text)).width;
+}
+function cardFitText(text,font,maxWidth){
+  const s=String(text||"");
+  if(cardTextWidth(s,font)<=maxWidth) return s;
+  const chars=Array.from(s);
+  let lo=0,hi=chars.length;
+  while(lo<hi){
+    const mid=Math.ceil((lo+hi)/2);
+    if(cardTextWidth(chars.slice(0,mid).join("")+"…",font)<=maxWidth) lo=mid; else hi=mid-1;
+  }
+  return chars.slice(0,lo).join("")+"…";
+}
+function cardXml(text){
+  return String(text).replace(/[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\ufffe\\uffff]/g,"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function cardFieldBadge(field,palette){
+  if(field.isPK) return {text:"PK",color:palette.pk};
+  if(field.isLookup) return {text:"FK",color:palette.lookup};
+  if(field.isRef) return {text:"関連",color:palette.ref};
+  if(field.unique) return {text:"一意",color:palette.accent2};
+  if(field.required) return {text:"必須",color:palette.req};
+  return null;
+}
+function cardFieldNote(field,name){
+  if(ER_OPTIONS.fieldDensity==="compact") return "";
+  const code=String(field.code||"").trim();
+  const parts=code&&code!==name?[code]:[];
+  if(ER_OPTIONS.fieldDensity==="full"&&field.type) parts.push(fieldTypeJpLabel(field.type));
+  return parts.join(" ・ ");
+}
+function cardHeaderTint(app,palette){
+  if(app.ok===false||app.status==="failed") return {color:palette.req,opacity:0.18};
+  if(app.status==="partial") return {color:palette.action,opacity:0.18};
+  if(isMarkedStartApp(app)) return {color:palette.accent2,opacity:0.2};
+  return {color:palette.text,opacity:0.06};
+}
+function buildNodeCard(app,palette,overview){
+  const content=nodeCardContent(app);
+  const [title,meta]=overview?buildSemanticNodeLabel(app).split("\\n"):[content.title,content.meta];
+  const scale=overview?1.5:1;
+  const pad=14*scale,headerH=52*scale;
+  const titleFont="700 "+(14*scale)+"px",metaFont=(11*scale)+"px";
+  const rowFont="12px",noteFont="10.5px",badgeFont="700 9.5px";
+  const badgeW=28,rowH=22,rowGap=10,bodyPad=8;
+  const rows=overview?[]:content.shown.map(field=>{
+    const name=buildFieldDisplayName(field).trim();
+    return {name,note:cardFieldNote(field,name),badge:cardFieldBadge(field,palette)};
+  });
+  const more=overview?0:content.moreCount;
+  const rowLeft=badgeW+8;
+  const natural=pad*2+Math.max(
+    cardTextWidth(title,titleFont),
+    cardTextWidth(meta,metaFont),
+    ...rows.map(r=>rowLeft+cardTextWidth(r.name,rowFont)+(r.note?rowGap+cardTextWidth(r.note,noteFont):0))
+  );
+  const maxW=overview?420:(ER_OPTIONS.fieldDensity==="full"?380:320);
+  const w=Math.ceil(Math.min(maxW,Math.max(overview?260:200,natural)));
+  const rowCount=rows.length+(more?1:0);
+  const h=headerH+(rowCount?bodyPad*2+rowCount*rowH:0);
+  const inner=w-pad*2;
+  const textAttr='font-family="'+cardXml(CARD_FONT)+'"';
+  const tint=cardHeaderTint(app,palette);
+  const parts=[
+    '<rect width="'+w+'" height="'+headerH+'" fill="'+tint.color+'" fill-opacity="'+tint.opacity+'"/>',
+    '<text x="'+pad+'" y="'+(23*scale)+'" font-size="'+(14*scale)+'" font-weight="700" fill="'+palette.text+'">'+cardXml(cardFitText(title,titleFont,inner))+'</text>',
+    '<text x="'+pad+'" y="'+(41*scale)+'" font-size="'+(11*scale)+'" fill="'+palette.dim+'">'+cardXml(cardFitText(meta,metaFont,inner))+'</text>'
+  ];
+  if(rowCount) parts.push('<rect y="'+(headerH-1)+'" width="'+w+'" height="1" fill="'+palette.border+'"/>');
+  rows.forEach((row,index)=>{
+    const top=headerH+bodyPad+index*rowH;
+    const baseline=top+15;
+    if(row.badge){
+      parts.push('<rect x="'+pad+'" y="'+(top+3)+'" width="'+badgeW+'" height="16" rx="4" fill="'+row.badge.color+'" fill-opacity="0.16"/>');
+      parts.push('<text x="'+(pad+badgeW/2)+'" y="'+(top+14.5)+'" font-size="9.5" font-weight="700" text-anchor="middle" fill="'+row.badge.color+'">'+cardXml(row.badge.text)+'</text>');
+    }
+    const area=inner-rowLeft;
+    const noteW=row.note?cardTextWidth(row.note,noteFont):0;
+    const nameMax=row.note&&noteW+rowGap<area*0.4?area-noteW-rowGap:(row.note?area*0.6:area);
+    const name=cardFitText(row.name,rowFont,nameMax);
+    parts.push('<text x="'+(pad+rowLeft)+'" y="'+baseline+'" font-size="12" fill="'+palette.text+'">'+cardXml(name)+'</text>');
+    const noteMax=area-cardTextWidth(name,rowFont)-rowGap;
+    if(row.note&&noteMax>=24){
+      parts.push('<text x="'+(w-pad)+'" y="'+baseline+'" font-size="10.5" text-anchor="end" fill="'+palette.dim+'">'+cardXml(cardFitText(row.note,noteFont,noteMax))+'</text>');
+    }
+  });
+  if(more){
+    const baseline=headerH+bodyPad+rows.length*rowH+15;
+    parts.push('<text x="'+(pad+rowLeft)+'" y="'+baseline+'" font-size="10.5" fill="'+palette.dim+'">他 '+more+' 項目</text>');
+  }
+  const svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+(w*2)+'" height="'+(h*2)+'" viewBox="0 0 '+w+' '+h+'" '+textAttr+'>'+parts.join("")+'</svg>';
+  return {image:"data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg),w,h};
+}
+function nodeCardData(app){
+  const palette=currentPalette();
+  const card=buildNodeCard(app,palette,false);
+  const low=buildNodeCard(app,palette,true);
+  return {cardImage:card.image,cardW:card.w,cardH:card.h,lowImage:low.image,lowW:low.w,lowH:low.h};
 }
 function detailFieldGroups(app){
   const groups={pk:[],lookup:[],ref:[],required:[],subtable:[],normal:[]};
@@ -4586,26 +5163,31 @@ function buildCyStyle(palette){
       "shape":"round-rectangle","label":"data(label)","text-valign":"center","text-halign":"center",
       "text-justification":"left",
       "text-wrap":"wrap","text-max-width":nodeMetrics.maxWidth,"font-size":nodeMetrics.fontSize,"line-height":nodeMetrics.lineHeight,"min-zoomed-font-size":6.5,
-      "font-family":"'DM Sans','Hiragino Sans','Yu Gothic UI',sans-serif","font-weight":600,"color":palette.text,
+      "font-family":CARD_FONT,"font-weight":600,"color":palette.text,
       "text-outline-color":palette.surface,"text-outline-width":"1px",
-      "background-color":palette.surface,"border-width":2,"border-color":palette.border,"padding":nodeMetrics.padding,"width":"label","height":"label"
+      "background-color":palette.surface,"border-width":1.5,"border-color":palette.border,"padding":nodeMetrics.padding,"width":"label","height":"label"
+    }},
+    {selector:"node[cardImage]",style:{
+      "label":"","padding":0,"width":"data(cardW)","height":"data(cardH)",
+      "background-image":"data(cardImage)","background-fit":"contain","background-clip":"node"
     }},
     {selector:"node.no-link",style:{"border-style":"dashed","opacity":0.92}},
     {selector:"node[?isError]",style:{"border-color":palette.req,"background-color":isDark ? "#220b12" : "#fff1f2"}},
     {selector:"node[?isPartial]",style:{"border-color":palette.action,"border-style":"dashed","background-color":isDark ? "#211708" : "#fffbeb"}},
     {selector:"node[?isGhost]",style:{"border-color":palette.dim,"border-style":"dashed","background-color":palette.surface2,"color":palette.dim,"font-style":"italic"}},
     {selector:"node.semantic-low",style:{"font-size":"18px","font-weight":700,"line-height":"1.35","text-max-width":"300px","min-zoomed-font-size":6,"padding":"16px","width":"label","height":"label"}},
+    {selector:"node[cardImage].semantic-low",style:{"label":"","padding":0,"width":"data(lowW)","height":"data(lowH)","background-image":"data(lowImage)"}},
     {selector:"node[?isCustom]",style:{"border-style":"dashed","border-color":palette.accent2}},
-    {selector:"node[?isStart]",style:{"border-color":palette.accent2,"border-width":4,"background-color":isDark ? "#11162d" : "#eef2ff"}},
+    {selector:"node[?isStart]",style:{"border-color":palette.accent2,"border-width":2.5,"background-color":isDark ? "#11162d" : "#eef2ff"}},
     {selector:"node[?inSpace]",style:{"border-color":"#0ea5a4","border-width":4,"border-style":"double","background-color":isDark ? "#06231f" : "#ecfdf5"}},
     {selector:"node[?accent]",style:{"border-color":"data(accent)","border-width":3}},
-    {selector:"node:selected",style:{"border-color":palette.accent,"border-width":4,"overlay-color":"transparent"}},
+    {selector:"node:selected",style:{"border-color":palette.accent,"border-width":3,"overlay-color":"transparent"}},
     {selector:"node.highlighted",style:{"border-color":palette.pk,"border-width":3,"background-color":isDark ? "#1a1805" : "#fffbeb"}},
     {selector:"node.analysis-hit",style:{"border-color":palette.req,"border-width":5,"background-color":isDark ? "#2a0b16" : "#fff1f2","z-index":1000}},
     {selector:"node.analysis-dim",style:{"opacity":0.1}},
     {selector:"node.path-node",style:{"border-color":"#f472b6","border-width":4,"background-color":isDark ? "#1a0a12" : "#fdf2f8"}},
-    {selector:"node.focus-root",style:{"border-color":palette.accent,"border-width":4,"background-color":isDark ? "#042525" : "#ecfeff","z-index":999}},
-    {selector:"node.focus-neighbor",style:{"border-color":"#67e8f9","border-width":3,"background-color":isDark ? "#061d2a" : "#ecfeff"}},
+    {selector:"node.focus-root",style:{"border-color":palette.accent,"border-width":3,"z-index":999}},
+    {selector:"node.focus-neighbor",style:{"border-color":palette.accent,"border-width":1.5}},
     {selector:"node.pinned-node",style:{"border-color":palette.pk,"border-width":4,"background-color":isDark ? "#2a1f05" : "#fff7ed"}},
     {selector:"node.note-node",style:{
       "shape":"round-rectangle","background-color":"data(noteColor)","background-opacity":0.96,
@@ -4620,30 +5202,30 @@ function buildCyStyle(palette){
     {selector:"node.dimmed",style:{"opacity":0.14}},
     {selector:"node.app-manual-hidden",style:{"display":"none"}},
     {selector:"edge",style:{
-      "curve-style":"bezier","arrow-scale":1.15,
-      "label":"data(label)","font-size":"10px","font-weight":600,"min-zoomed-font-size":7,
-      "font-family":"'DM Sans','Hiragino Sans','Yu Gothic UI',sans-serif",
-      "text-background-color":palette.surface,"text-background-opacity":0.92,
+      "curve-style":"bezier","arrow-scale":1,
+      "label":"data(label)","font-size":"11px","font-weight":600,"min-zoomed-font-size":7,
+      "font-family":CARD_FONT,
+      "text-background-color":palette.surface,"text-background-opacity":1,
       "text-background-padding":"4px","text-background-shape":"roundrectangle",
       "text-border-color":palette.border,"text-border-width":1,"text-border-opacity":0.6
     }},
     {selector:'edge[kind="LOOKUP"]',style:{
-      "width":2.5,"line-color":palette.lookup,"target-arrow-color":palette.lookup,"target-arrow-shape":"triangle",
+      "width":1.8,"line-color":palette.lookup,"target-arrow-color":palette.lookup,"target-arrow-shape":"triangle",
       "source-arrow-shape":"circle","source-arrow-color":palette.lookup,"color":palette.lookup
     }},
     {selector:'edge[kind="REF"]',style:{
-      "width":2,"line-color":palette.ref,"line-style":"dashed","target-arrow-color":palette.ref,
+      "width":1.8,"line-color":palette.ref,"line-style":"dashed","target-arrow-color":palette.ref,
       "target-arrow-shape":"triangle","source-arrow-shape":"diamond","source-arrow-color":palette.ref,"color":palette.ref
     }},
     {selector:'edge[kind="ACTION"]',style:{
-      "width":2.2,"line-color":palette.action,"line-style":"dotted","target-arrow-color":palette.action,
+      "width":1.8,"line-color":palette.action,"line-style":"dotted","target-arrow-color":palette.action,
       "target-arrow-shape":"triangle","source-arrow-shape":"none","color":palette.action
     }},
     {selector:"edge[?isUnresolved]",style:{"line-style":"dashed","opacity":0.75}},
     {selector:"edge.label-hidden",style:{"text-opacity":0,"text-background-opacity":0,"text-border-opacity":0}},
     {selector:"edge.edge-hover",style:{"width":4,"z-index":997,"text-opacity":1,"text-background-opacity":0.95,"text-border-opacity":0.9}},
     {selector:"edge.path-edge",style:{"width":4,"line-color":"#f472b6","target-arrow-color":"#f472b6","source-arrow-color":"#f472b6","z-index":999}},
-    {selector:"edge.focus-edge",style:{"width":4,"line-color":palette.accent,"target-arrow-color":palette.accent,"source-arrow-color":palette.accent,"z-index":998}},
+    {selector:"edge.focus-edge",style:{"width":2.6,"z-index":998}},
     {selector:"edge.semantic-low",style:{"text-opacity":0,"text-background-opacity":0,"text-border-opacity":0}},
     {selector:"edge.rel-hidden",style:{"display":"none"}},
     {selector:"edge.rel-manual-hidden",style:{"display":"none"}},
@@ -4761,10 +5343,11 @@ APPS.forEach(app=>{
   const el={data:{
     id:"a"+app.id,
     label:buildNodeLabel(app),
+    ...nodeCardData(app),
     appId:app.id,
     isError:!app.ok,
     isPartial:app.status==="partial",
-    isStart:startAppIdSet.has(String(app.id)),
+    isStart:isMarkedStartApp(app),
     inSpace:isInSpaceApp(app),
     isCustom:!!app.isCustom,
     accent:appAccentColor(app),
@@ -4808,13 +5391,23 @@ const cy=cytoscape({
   boxSelectionEnabled:true,
 });
 
+function refreshNodeCards(){
+  APPS.forEach(app=>{
+    const node=cy.getElementById("a"+app.id);
+    if(node.length) node.data(nodeCardData(app));
+  });
+}
+function refreshNodeDisplay(node,app){
+  node.data({label:buildNodeLabel(app),...nodeCardData(app)});
+}
 function applyCyTheme(){
+  refreshNodeCards();
   cy.style().fromJson(buildCyStyle(currentPalette())).update();
 }
 const semanticZoomLabelBackup=new Map();
 let semanticZoomActive=false;
 function applySemanticZoom(zoom, force){
-  const low=Number(zoom)<0.7;
+  const low=Number(zoom)<0.6;
   if(low===semanticZoomActive&&!force) return;
   semanticZoomActive=low;
   if(low){
@@ -4851,6 +5444,7 @@ function refreshNodeLabels(){
     }else{
       node.data("label",fullLabel);
     }
+    node.data(nodeCardData(app));
   });
 }
 function syncDensityControl(){
@@ -4899,6 +5493,7 @@ function updateSearchMeta(query, matched){
   const pill = document.getElementById("search-meta");
   if(!pill) return;
   const normalized = String(query || "").trim();
+  pill.hidden = !normalized;
   if(!normalized){
     pill.innerHTML = "<b>検索</b> すべて";
     pill.title = "";
@@ -4908,7 +5503,24 @@ function updateSearchMeta(query, matched){
   pill.title = normalized;
 }
 
-function fit(){closeZoomPresets();cy.fit(undefined,60);updateZoomLabel();}
+const MAX_FIT_ZOOM=1.25;
+function fit(){
+  closeZoomPresets();
+  const eles=cy.elements(":visible");
+  // 縮小すると概要表示に変わりノードの大きさも変わるため、切り替わった後の大きさでもう一度合わせる
+  for(let pass=0;eles.length&&pass<2;pass++){
+    // 図の上に重なるツールバー・表示条件の行と、下の凡例を避けて収める
+    const box=eles.boundingBox();
+    const hostTop=cy.container().getBoundingClientRect().top;
+    const chromeBottom=Math.max(...["topbar","banner"].map(id=>document.getElementById(id)?.getBoundingClientRect().bottom||0));
+    const top=Math.max(0,chromeBottom-hostTop)+20;
+    const bottom=72,side=48;
+    const availW=Math.max(cy.width()-side*2,120),availH=Math.max(cy.height()-top-bottom,120);
+    const zoom=Math.max(cy.minZoom(),Math.min(MAX_FIT_ZOOM,availW/Math.max(box.w,1),availH/Math.max(box.h,1)));
+    cy.viewport({zoom,pan:{x:(cy.width()-box.w*zoom)/2-box.x1*zoom,y:top+(availH-box.h*zoom)/2-box.y1*zoom}});
+  }
+  updateZoomLabel();
+}
 
 // ─── 紐づきなしアプリの分離配置 ───
 // レイアウト適用時、関連線を持たないアプリを本体グラフの下の別枠（グリッド）にまとめる
@@ -4943,7 +5555,7 @@ function placeNoLinkGrid(linked, isolated, animate){
   cellW += 46; cellH += 42;
   const cols = Math.max(1, Math.min(isolated.length, Math.max(Math.floor(bb.w / cellW), Math.ceil(Math.sqrt(isolated.length)))));
   const startX = bb.x1 + cellW / 2;
-  const startY = bb.y2 + 170 + cellH / 2;
+  const startY = bb.y2 + 80 + cellH / 2;
   const sorted = isolated.sort((a,b)=>appNameForNode(a).localeCompare(appNameForNode(b), "ja"));
   sorted.forEach((n,i)=>{
     const pos = { x: startX + (i % cols) * cellW, y: startY + Math.floor(i / cols) * cellH };
@@ -4951,12 +5563,90 @@ function placeNoLinkGrid(linked, isolated, animate){
     else n.position(pos);
   });
 }
+// 1つの階層に多数のアプリが並ぶと図が縦に細長くなり全体表示で読めなくなるため、
+// 階層内の順序を保ったまま複数列に折り返して画面の縦横比に近づける
+function wrapTallRanks(nodes, animate){
+  const gapX = 70, gapY = 28;
+  const area = nodes.toArray().reduce((sum,n)=>sum+(n.outerWidth()+gapX)*(n.outerHeight()+gapY),0);
+  const maxHeight = Math.max(900, Math.sqrt(area / (cy.width() / Math.max(cy.height(), 1))));
+  const box = nodes.boundingBox();
+  if(box.h <= maxHeight * 1.25) return false;
+  const midY = (box.y1 + box.y2) / 2;
+  const ranks = new Map();
+  nodes.forEach(n=>{
+    const x = Math.round(n.position("x"));
+    if(!ranks.has(x)) ranks.set(x, []);
+    ranks.get(x).push(n);
+  });
+  let shift = 0;
+  [...ranks.keys()].sort((a,b)=>a-b).forEach(x=>{
+    const rank = ranks.get(x).sort((a,b)=>a.position("y")-b.position("y"));
+    const columns = [[]];
+    let height = 0;
+    rank.forEach(n=>{
+      const h = n.outerHeight() + gapY;
+      if(height + h > maxHeight && columns[columns.length-1].length){ columns.push([]); height = 0; }
+      columns[columns.length-1].push(n);
+      height += h;
+    });
+    const cellW = Math.max(...rank.map(n=>n.outerWidth())) + gapX;
+    columns.forEach((column,index)=>{
+      const columnH = column.reduce((sum,n)=>sum+n.outerHeight()+gapY,0);
+      let y = midY - columnH / 2;
+      column.forEach(n=>{
+        const pos = { x: x + shift + index * cellW, y: y + n.outerHeight() / 2 };
+        y += n.outerHeight() + gapY;
+        if(animate) n.animate({position:pos},{duration:380});
+        else n.position(pos);
+      });
+    });
+    shift += (columns.length - 1) * cellW;
+  });
+  return true;
+}
+// 依存が長く連なると階層数だけ横に伸びるため、階層の順を保ったまま複数段に分けて画面の縦横比に近づける
+function wrapWideRanks(nodes){
+  const box = nodes.boundingBox();
+  const aspect = cy.width() / Math.max(cy.height(), 1);
+  const bands = Math.round(Math.sqrt((box.w / Math.max(box.h, 1)) / aspect));
+  if(bands < 2) return false;
+  const gapY = 160;
+  const members = Array.from({length:bands},()=>[]);
+  nodes.forEach(n=>members[Math.min(bands-1,Math.floor((n.position("x")-box.x1)/(box.w/bands)))].push(n));
+  let top = box.y1;
+  members.filter(band=>band.length).forEach(band=>{
+    const left = Math.min(...band.map(n=>n.boundingBox().x1));
+    const upper = Math.min(...band.map(n=>n.boundingBox().y1));
+    const lower = Math.max(...band.map(n=>n.boundingBox().y2));
+    band.forEach(n=>n.position({x:n.position("x")-left+box.x1,y:n.position("y")-upper+top}));
+    top += lower - upper + gapY;
+  });
+  return true;
+}
+function wrapRanks(nodes, animate){
+  const before = nodes.map(n=>({n,pos:Object.assign({},n.position())}));
+  const tall = wrapTallRanks(nodes, false);
+  const wrapped = wrapWideRanks(nodes) || tall;
+  if(wrapped && animate) before.forEach(({n,pos})=>{
+    const target = Object.assign({},n.position());
+    n.position(pos);
+    n.animate({position:target},{duration:380});
+  });
+  return wrapped;
+}
 function runLayout(name, initial){
+  // 概要表示の小さなカードで配置すると、拡大したときに重なるため詳細表示の大きさで計算する
+  applySemanticZoom(1,true);
   const parts = refreshNoLinkClasses();
   if(!separateNoLink || !parts.isolated.length || !parts.linked.length){
     // メモ(付箋)はレイアウトの対象外にして、手で置いた位置を保つ
     const lay = cy.elements().not(".note-node").layout(buildLayoutOptions(name, initial));
-    if(initial) lay.one("layoutstop",()=>setTimeout(fit,200));
+    const wrapTargets = cy.nodes().not(".note-node").not(".app-manual-hidden");
+    lay.one("layoutstop",()=>{
+      const wrapped = name === "dagre" && ER_DAGRE_READY && wrapTargets.length > 1 && wrapRanks(wrapTargets, !initial);
+      if(initial || wrapped) setTimeout(fit, initial ? 200 : 450);
+      else updateZoomLabel();
+    });
     lay.run();
     return;
   }
@@ -4965,6 +5655,7 @@ function runLayout(name, initial){
   const visibleEdges = parts.linked.edgesWith(parts.linked).filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));
   const lay = parts.linked.union(visibleEdges).layout(opts);
   lay.one("layoutstop",()=>{
+    if(name === "dagre" && ER_DAGRE_READY) wrapRanks(parts.linked, false);
     placeNoLinkGrid(parts.linked, parts.isolated, !initial);
     setTimeout(fit, initial ? 150 : 450);
   });
@@ -5185,7 +5876,7 @@ function syncFocusButton(){
   const btn = document.getElementById("focus-toggle-btn");
   if(!btn) return;
   btn.classList.toggle("active", focusMode);
-  btn.textContent = focusMode ? "🎯 ON" : "🎯 OFF";
+  btn.textContent = focusMode ? "関連強調 ON" : "関連強調 OFF";
 }
 function syncRelationKindButtons(){
   ["LOOKUP","REF","ACTION"].forEach(kind=>{
@@ -5482,7 +6173,7 @@ function addCustomApp(){
   registerManualApp(app);
   const ext=cy.extent();
   const pos=pendingNodePos||{x:(ext.x1+ext.x2)/2+(Math.random()*60-30),y:(ext.y1+ext.y2)/2+(Math.random()*60-30)};
-  const node=cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,accent:"",fieldCount:fields.length,relCount:0,depth:0},position:pos});
+  const node=cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),...nodeCardData(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,accent:"",fieldCount:fields.length,relCount:0,depth:0},position:pos});
   if(semanticZoomActive) applySemanticZoom(cy.zoom(),true);
   commands.push({label:"アプリ: "+app.name+" (手動追加)",icon:"⬡",appId:id,action:()=>focusApp(id)});
   pushUndo("エンティティ追加",()=>{
@@ -5522,7 +6213,7 @@ function addCustomField(){
   });
   const node=cy.getElementById("a"+app.id);
   if(node.length){
-    node.data("label",buildNodeLabel(app));
+    refreshNodeDisplay(node,app);
     node.data("fieldCount",visibleFieldsForNode(app).length);
   }
   refreshSidebar();
@@ -5551,7 +6242,7 @@ function addCustomRelation(){
     const e=cy.getElementById("e_"+from.id+"_"+relIndex);
     if(e.length) cy.remove(e);
     const n=cy.getElementById("a"+from.id);
-    if(n.length){ n.data("relCount",from.relations.length); n.data("label",buildNodeLabel(from)); }
+    if(n.length){ n.data("relCount",from.relations.length); refreshNodeDisplay(n,from); }
     applyRelationFilter();
     refreshSidebar();
     if(String(activeAppId)===String(from.id)) renderAppDetail(from);
@@ -5559,7 +6250,7 @@ function addCustomRelation(){
   const node=cy.getElementById("a"+from.id);
   if(node.length){
     node.data("relCount",from.relations.length);
-    node.data("label",buildNodeLabel(from));
+    refreshNodeDisplay(node,from);
   }
   applyRelationFilter();
   applyRelationLabelVisibility();
@@ -5609,7 +6300,7 @@ function applyAppOverride(app,name,color){
   const node=cy.getElementById("a"+app.id);
   if(node.length){
     node.data("accent",color||"");
-    node.data("label",buildNodeLabel(app));
+    refreshNodeDisplay(node,app);
   }
   commands.forEach(c=>{ if(c.appId!==undefined&&String(c.appId)===String(app.id)) c.label="アプリ: "+name+" (ID:"+app.id+")"; });
   refreshSidebar();
@@ -5856,7 +6547,7 @@ function clearNodeColors(){
 function afterFieldVisibilityChange(app){
   const node = cy.getElementById("a"+app.id);
   if(node.length){
-    node.data("label", buildNodeLabel(app));
+    refreshNodeDisplay(node,app);
     node.data("fieldCount", visibleFieldsForNode(app).length);
   }
   refreshSidebar();
@@ -6038,7 +6729,7 @@ function renderAppDetail(app){
           + '<div class="field-name" title="' + escapeHtml(relationLabel + ' → ' + targetLabel) + '">' + escapeHtml(relationLabel) + ' → ' + escapeHtml(targetLabel) + '</div>'
           + '<div class="field-sub">' + escapeHtml(relationMeta.join(' / ') || '接続先をクリックで移動') + '</div>'
           + '</div>'
-          + '<span class="field-type">' + escapeHtml(group.key === "ACTION" ? "ACTION" : group.key) + '</span>'
+          + '<span class="field-type">' + escapeHtml(({LOOKUP:"ルックアップ",REF:"関連レコード",ACTION:"アクション"})[group.key]||group.key) + '</span>'
           + edgeBtn
           + '</div>';
       });
@@ -6101,7 +6792,7 @@ function renderGhostDetail(node){
   inbound.forEach((item)=>{
     relationHtml+='<button type="button" class="field-row detail-relation-button" data-app="'+escapeHtml(String(item.sourceApp.id))+'" onclick="focusApp(this.dataset.app)">'
       +'<span class="field-icon">↖</span><div class="field-main"><div class="field-name">'+escapeHtml(item.sourceApp.name+' (App '+item.sourceApp.id+')')+'</div>'
-      +'<div class="field-sub">'+escapeHtml(exportRelationLabel(item.rel))+'</div></div><span class="field-type">'+escapeHtml(item.rel.kind||"関連")+'</span></button>';
+      +'<div class="field-sub">'+escapeHtml(exportRelationLabel(item.rel))+'</div></div><span class="field-type">'+escapeHtml(({LOOKUP:"ルックアップ",REF:"関連レコード",ACTION:"アクション"})[item.rel.kind]||"関連")+'</span></button>';
   });
   document.getElementById("detail-relations").innerHTML=relationHtml;
   document.getElementById("detail-fields").innerHTML='<div class="field-group-title">項目</div><div class="field-sub">参照先アプリを取得できていないため、項目情報は表示できません。</div>';
@@ -6303,7 +6994,7 @@ function refreshSidebar(){
     button.type="button";
     button.className="filter-chip"+(activeTypes.has(t)?" active":"");
     button.dataset.type=t;
-    button.textContent=t+" ("+c+")";
+    button.textContent=fieldTypeJpLabel(t)+" ("+c+")";
     button.setAttribute("aria-pressed",activeTypes.has(t)?"true":"false");
     button.addEventListener("click",()=>filterByType(button,t));
     filterHost.appendChild(button);
@@ -6497,7 +7188,7 @@ const commands=[
   {label:"ミニマップ",icon:"🗺",action:toggleMinimap},
   {label:"テーマ切替",icon:"🌓",action:toggleTheme},
   {label:"編集済みHTMLを保存",icon:"💾",action:exportEditedHtml},
-  {label:"PNG エクスポート",icon:"🖼",action:exportPNG},
+  {label:"PNG エクスポート（白背景）",icon:"🖼",action:exportPNG},
   {label:"Mermaid エクスポート",icon:"🧜",action:showMermaid},
   {label:"draw.io エクスポート",icon:"📊",action:showDrawio},
   {label:"SQL DDL エクスポート",icon:"🗄",action:showSQL},
@@ -6597,31 +7288,117 @@ document.addEventListener("keydown",e=>{
 });
 
 // ─── Exports ───
-function exportPNG(){
+const EXPORT_CLEARED_CLASSES=["focus-root","focus-neighbor","focus-edge","focus-dim","dimmed","highlighted","analysis-hit","analysis-dim","path-node","path-edge"];
+// カード画像は非同期に読み込まれるため、一度描いて読み込みを始めさせてから完了を待つ
+function waitForCardImages(){
+  cy.png({full:true,scale:0.05});
+  const sources=cy.nodes("[cardImage]").map(node=>node.data("cardImage"));
+  return Promise.all(sources.map(src=>new Promise(done=>{
+    const img=new Image();
+    img.onload=img.onerror=()=>done();
+    img.src=src;
+  }))).then(()=>new Promise(done=>setTimeout(done,150)));
+}
+// 出力は表示倍率やテーマによらず、ライトテーマの詳細カードで描く
+async function withExportView(render){
+  const wasDark=isDark,wasLow=semanticZoomActive;
+  // 画面上の強調は操作中の目印なので、出力には残さず全体図にする
+  const emphasis=EXPORT_CLEARED_CLASSES.map(name=>[name,cy.elements("."+name)]);
+  cy.elements().removeClass(EXPORT_CLEARED_CLASSES.join(" "));
+  if(wasLow) applySemanticZoom(1,true);
+  if(wasDark){isDark=false;document.documentElement.setAttribute("data-theme","light");applyCyTheme();}
+  try{
+    await waitForCardImages();
+    return render();
+  }finally{
+    if(wasDark){isDark=true;document.documentElement.setAttribute("data-theme","");applyCyTheme();}
+    if(wasLow) applySemanticZoom(cy.zoom(),true);
+    emphasis.forEach(([name,elements])=>elements.addClass(name));
+  }
+}
+function exportImageMeta(){
+  const ids=ER_OPTIONS.startAppIds||[];
+  const shown=ids.slice(0,5).join(", ")+(ids.length>5?" ほか"+(ids.length-5)+"件":"");
+  return [
+    "起点: "+(shown||"-"),
+    (ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+" / "+(ER_OPTIONS.sourcePreview?"プレビュー":"本番"),
+    APPS.length+"アプリ",
+    "出力: "+new Date().toLocaleString("ja-JP")
+  ].join("  |  ");
+}
+async function buildExportImage(maxSide=14000){
+  const diagram=await withExportView(()=>{
+    const box=cy.elements(":visible").boundingBox();
+    // cy.png は画面の倍率も掛けるため、高解像度の画面でもキャンバスの上限を超えないように割り戻す
+    return cy.png({bg:"#ffffff",full:true,scale:Math.min(2,maxSide/Math.max(box.w,box.h,1))/(window.devicePixelRatio||1)});
+  });
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onerror=()=>resolve(diagram);
+    img.onload=()=>{
+      try{
+        // 図が大きいほど見出しも拡大し、縮小して見ても読める大きさを保つ
+        const unit=Math.max(1,img.width/2000);
+        const pad=48,headerH=214;
+        const canvas=document.createElement("canvas");
+        canvas.width=Math.max(img.width+pad*unit*2,1600);
+        canvas.height=img.height+(headerH+pad)*unit;
+        const g=canvas.getContext("2d");
+        const font='"Yu Gothic UI","Hiragino Sans","Noto Sans JP",Meiryo,sans-serif';
+        g.fillStyle="#ffffff";g.fillRect(0,0,canvas.width,canvas.height);
+        g.save();g.scale(unit,unit);
+        g.fillStyle="#111827";g.font="700 40px "+font;g.fillText("kintone ER図",pad,72);
+        g.fillStyle="#4b5563";g.font="26px "+font;g.fillText(exportImageMeta(),pad,116);
+        let x=pad;
+        [["ルックアップ","#2563eb",[]],["関連レコード","#047857",[14,10]],["アクション","#d97706",[4,8]]].forEach(([label,color,dash])=>{
+          g.strokeStyle=color;g.lineWidth=5;g.setLineDash(dash);
+          g.beginPath();g.moveTo(x,150);g.lineTo(x+64,150);g.stroke();
+          g.setLineDash([]);
+          g.fillStyle="#374151";g.font="24px "+font;g.fillText(label,x+76,158);
+          x+=76+g.measureText(label).width+44;
+        });
+        x=pad;
+        [["PK","レコード番号","#b45309"],["FK","ルックアップ項目","#2563eb"],["関連","関連レコード一覧","#047857"],["一意","重複禁止","#6366f1"],["必須","必須項目","#dc2626"]].forEach(([badge,label,color])=>{
+          g.font="700 20px "+font;
+          const badgeW=Math.max(56,g.measureText(badge).width+20);
+          g.fillStyle=color;g.globalAlpha=0.14;g.beginPath();g.roundRect(x,172,badgeW,32,8);g.fill();g.globalAlpha=1;
+          g.textAlign="center";g.fillText(badge,x+badgeW/2,196);g.textAlign="left";
+          g.fillStyle="#374151";g.font="24px "+font;g.fillText(label,x+badgeW+10,197);
+          x+=badgeW+10+g.measureText(label).width+40;
+        });
+        g.restore();
+        g.drawImage(img,Math.round((canvas.width-img.width)/2),Math.round(headerH*unit));
+        resolve(canvas.toDataURL("image/png"));
+      }catch(err){
+        console.error("[ER] 画像の合成に失敗",err);
+        resolve(diagram);
+      }
+    };
+    img.src=diagram;
+  });
+}
+// 大きな図のデータ URL はリンクからダウンロードすると空になるため、Blob にして渡す
+function dataUrlToBlob(data){
+  const [head,body]=data.split(",");
+  const bytes=atob(body);
+  const buffer=new Uint8Array(bytes.length);
+  for(let i=0;i<bytes.length;i++) buffer[i]=bytes.charCodeAt(i);
+  return new Blob([buffer],{type:head.slice(5).split(";")[0]});
+}
+async function exportPNG(){
   try{
     const a=document.createElement("a");
-    a.href=cy.png({bg:isDark?"#08090d":"#f0f2f5",full:true,scale:2});
-    a.download="kintone_erd.png";a.click();toast("PNG ダウンロード");
+    const data=await buildExportImage();
+    if(data.length<100) throw new Error("図が大きすぎて画像を作成できませんでした");
+    const url=URL.createObjectURL(dataUrlToBlob(data));
+    a.href=url;
+    a.download=exportFilename("ER図","png");a.click();toast("PNG ダウンロード（白背景）");
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
   }catch(err){
     console.error("[ER] exportPNG failed", err);
     toast("PNG出力に失敗: "+((err&&err.message)||err));
   }
 }
-function exportSVG(){
-  try{
-    if(typeof cy.svg !== "function"){
-      toast("SVGエクスポートは未対応のためPNGを出力します");
-      exportPNG();
-      return;
-    }
-    const blob=new Blob([cy.svg({full:true,bg:isDark?"#08090d":"#f0f2f5"})],{type:"image/svg+xml"});
-    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="kintone_erd.svg";a.click();toast("SVG ダウンロード");
-  }catch(err){
-    console.error("[ER] exportSVG failed", err);
-    toast("SVG出力に失敗: "+((err&&err.message)||err));
-  }
-}
-
 // ─── 編集済みHTMLの保存 / 復元 ───
 function captureEditState(){
   const customApps=APPS.filter(a=>a.isCustom).map(a=>({
@@ -6713,9 +7490,8 @@ function exportEditedHtml(){
     const html="<!DOCTYPE html>\\n"+clone.outerHTML;
     const blob=new Blob([html],{type:"text/html"});
     const a=document.createElement("a");
-    const stamp=new Date().toISOString().slice(0,16).replace(/[-:]/g,"").replace("T","_");
     a.href=URL.createObjectURL(blob);
-    a.download="ER図_編集済み_"+stamp+".html";
+    a.download=exportFilename("ER図_編集済み","html");
     a.style.display="none";
     document.body.appendChild(a);
     a.click();
@@ -6793,12 +7569,20 @@ function copyModal(){
 }
 function downloadModal(){const b=new Blob([_md.text],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=_md.filename;a.click();toast("ダウンロード: "+_md.filename);}
 
-// safe name helper
-const sn=s=>String(s==null?"":s).replace(/[^a-zA-Z0-9_\\u3000-\\u9FFF\\uF900-\\uFAFF]/g,"_").replace(/^_+|_+$/g,"")||"unnamed";
 const entityAlias=app=>"app_"+String(app&&app.id||"unknown").replace(/[^0-9A-Za-z_]/g,"_");
 const exportFieldsForApp=app=>allFieldsForApp(app);
 const oneLineLabel=value=>String(value==null?"":value).replace(/[\\r\\n]+/g," ").replace(/"/g,"'");
 const sqlIdentifier=value=>String.fromCharCode(96)+String(value==null?"":value).replace(/\`/g,"\`\`")+String.fromCharCode(96);
+const sqlString=value=>"'"+String(value==null?"":value).replace(/\\\\/g,"\\\\\\\\").replace(/'/g,"''")+"'";
+// Mermaid の項目名は ASCII のみ確実に解釈される（v10 系は日本語で構文エラー）。実コードは注釈へ残す。
+const mermaidLabel=value=>oneLineLabel(value).replace(/%%+/g,"%");
+const mermaidAttributeName=(code,used)=>{
+  const base=/^[A-Za-z_][A-Za-z0-9_]*$/.test(code)?code:"field_"+(used.size+1);
+  let name=base;
+  for(let suffix=2;used.has(name);suffix++) name=base+"_"+suffix;
+  used.add(name);
+  return name;
+};
 const exportStatusLabel=app=>app.status==="partial"?"一部取得":((app.status==="failed"||app.ok===false)?"取得失敗":"取得完了");
 const exportIssueText=app=>(app.issues||[]).map(issue=>oneLineLabel(issue.message||issue.code||"取得上の注意")).filter(Boolean).join(" / ");
 const exportRelationLabel=rel=>{
@@ -6821,22 +7605,38 @@ function exportProvenanceEntries(){
     ["手動編集",(hiddenFieldKeys.size||manuallyRemovedEdgeIds.size||manuallyRemovedNodeIds.size||APPS.some(a=>a.isCustom))?"あり":"なし"]
   ];
 }
+function exportFilename(base,ext){
+  const ids=ER_OPTIONS.startAppIds||[];
+  const d=new Date(),p=n=>String(n).padStart(2,"0");
+  const stamp=d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+"_"+p(d.getHours())+p(d.getMinutes());
+  return [
+    base,
+    ids.length?("app"+ids[0]+(ids.length>1?"ほか"+(ids.length-1)+"件":"")):"",
+    ER_OPTIONS.sourceGuestId?("guest"+ER_OPTIONS.sourceGuestId):"",
+    ER_OPTIONS.sourcePreview?"プレビュー":"本番",
+    stamp
+  ].filter(Boolean).join("_")+"."+ext;
+}
 const exportProvenanceLines=prefix=>exportProvenanceEntries().map(([key,value])=>(prefix?prefix+" ":"")+key+": "+oneLineLabel(value));
 
-function showMermaid(){
+const ER_MD_MERMAID_MAX_CHARS=${ER_MD_MERMAID_MAX_CHARS};
+function buildMermaidText(){
   let m=exportProvenanceLines("%%").join("\\n")+"\\nerDiagram\\n";
   APPS.forEach(a=>{
     const n=entityAlias(a);
-    m+="  %% "+n+": "+oneLineLabel(a.name)+" (App "+a.id+")\\n";
+    m+="  %% "+n+": "+mermaidLabel(a.name)+" (App "+a.id+")\\n";
     m+="  %% 取得状態: "+exportStatusLabel(a)+(exportIssueText(a)?" / "+exportIssueText(a):"")+"\\n";
     const subtableFieldCount=exportFieldsForApp(a).filter(f=>f.inSubtable).length;
     if(subtableFieldCount) m+="  %% サブテーブル内 "+subtableFieldCount+"項目は親エンティティへ平坦化せず省略（ERモデルJSONに所属表を収録）\\n";
-    const visibleName=(exportStatusLabel(a)==="取得完了"?"":("["+exportStatusLabel(a)+"] "))+oneLineLabel(a.name)+" (App "+a.id+")";
+    const visibleName=(exportStatusLabel(a)==="取得完了"?"":("["+exportStatusLabel(a)+"] "))+mermaidLabel(a.name)+" (App "+a.id+")";
     m+="  "+n+'["'+visibleName+'"] {\\n';
+    const usedAttributes=new Set();
     exportFieldsForApp(a).forEach(f=>{
       if(f.type==="SUBTABLE"||f.inSubtable) return;
       let com=""; if(f.isPK) com=" PK"; else if(f.isLookup) com=" FK";
-      m+="    "+f.type.replace(/[^a-zA-Z0-9_]/g,"")+" "+sn(f.code)+com+"\\n";
+      const code=String(f.code==null?"":f.code);
+      const note=mermaidLabel(f.label&&f.label!==code?f.label+" ["+code+"]":code);
+      m+="    "+f.type.replace(/[^a-zA-Z0-9_]/g,"")+" "+mermaidAttributeName(code,usedAttributes)+com+' "'+note+'"\\n';
     });
     m+="  }\\n";
   });
@@ -6846,17 +7646,20 @@ function showMermaid(){
     mermaidExternalIds.add(String(r.toApp));
     const alias=entityAlias({id:r.toApp});
     m+="  %% "+alias+": 未取得の参照先 (App "+oneLineLabel(r.toApp)+")\\n";
-    m+="  "+alias+'["未取得の参照先 (App '+oneLineLabel(r.toApp)+')"] {\\n    string __unresolved\\n  }\\n';
+    m+="  "+alias+'["未取得の参照先 (App '+oneLineLabel(r.toApp)+')"] {\\n    string unresolved "未取得のアプリ"\\n  }\\n';
   }));
   APPS.forEach(a=>{
     a.relations.forEach(r=>{
       const t=appMap.get(r.toApp)||{id:r.toApp};
-      const label=exportRelationLabel(r);
+      const label=mermaidLabel(exportRelationLabel(r));
       if(r.kind==="ACTION") m+="  %% ACTION "+entityAlias(a)+" -> "+entityAlias(t)+": "+label+"\\n";
       else m+="  "+entityAlias(a)+(r.kind==="LOOKUP"?" }o--o| ":" }o--o{ ")+entityAlias(t)+' : "'+label+'"\\n';
     });
   });
-  openModal("Mermaid ER図",m,"ER図.mmd");
+  return m;
+}
+function showMermaid(){
+  openModal("Mermaid ER図",buildMermaidText(),exportFilename("ER図","mmd"));
 }
 
 function showDrawio(){
@@ -6887,7 +7690,7 @@ function showDrawio(){
       exportFields.forEach((f,fi)=>{
         let c="#FFF";if(f.isPK)c="#FFD700";else if(f.isLookup)c="#DBEAFE";else if(f.isRef)c="#D1FAE5";else if(f.inSubtable)c="#F3F4F6";else if(f.required)c="#FFE4E6";
         const tablePrefix=f.inSubtable?("["+String(f.tableLabel||f.tableCode||"サブテーブル")+"] "):"";
-        const label=(f.isPK?"🔑 ":f.isLookup?"🔗 ":f.isRef?"📋 ":"")+tablePrefix+(f.label||f.code)+" ["+f.code+"]";
+        const label=(f.isPK?"PK ":f.isLookup?"FK ":f.isRef?"関連 ":"")+tablePrefix+(f.label||f.code)+" ["+f.code+"]";
         const rid=nid+"_R"+fi;
         x+='<mxCell id="'+rid+'" value="" style="shape=tableRow;horizontal=0;startSize=0;swimlaneHead=0;" vertex="1" parent="'+nid+'"><mxGeometry y="'+(34+fi*28)+'" width="'+boxWidth+'" height="28" as="geometry"/></mxCell>';
         x+='<mxCell id="'+nid+"_F"+fi+'" value="'+esc(label)+'" style="shape=partialRectangle;fillColor='+c+';align=left;spacingLeft=6;strokeColor=#d0d0d0;" vertex="1" parent="'+rid+'"><mxGeometry width="'+boxWidth+'" height="28" as="geometry"/></mxCell>';
@@ -6902,11 +7705,11 @@ function showDrawio(){
     x+='<mxCell id="E'+(ec++)+'" value="'+esc(label)+'" style="'+st+'" edge="1" parent="1" source="'+nodeId(a.id)+'" target="'+nodeId(r.toApp)+'"><mxGeometry relative="1" as="geometry"/></mxCell>';
   }));
   x+="</root></mxGraphModel></diagram></mxfile>";
-  openModal("draw.io 用XML",x,"ER図.drawio");
+  openModal("draw.io 用XML",x,exportFilename("ER図","drawio"));
 }
 
 function showSQL(){
-  let sql="-- kintone ER図 → SQL DDL\\n"+exportProvenanceLines("--").join("\\n")+"\\n\\n";
+  let sql="-- kintone ER図 → SQL DDL（MySQL 形式）\\n-- kintone の構造を表す参考資料です。そのままデータ移行に使うものではありません。\\n"+exportProvenanceLines("--").join("\\n")+"\\n\\n";
   const typeMap={SINGLE_LINE_TEXT:"VARCHAR(256)",MULTI_LINE_TEXT:"TEXT",NUMBER:"DECIMAL(18,4)",CALC:"DECIMAL(18,4)",
     RICH_TEXT:"TEXT",CHECK_BOX:"TEXT",RADIO_BUTTON:"VARCHAR(128)",DROP_DOWN:"VARCHAR(128)",MULTI_SELECT:"TEXT",
     DATE:"DATE",TIME:"TIME",DATETIME:"DATETIME",LINK:"VARCHAR(512)",FILE:"TEXT",
@@ -6927,13 +7730,13 @@ function showSQL(){
     exportFieldsForApp(a).forEach(f=>{
       if(f.inSubtable){omittedSubtableFields++;return;}
       if(f.type==="SUBTABLE"||f.type==="REFERENCE_TABLE") return;
-      const baseCol=sn(f.code);
+      const baseCol=oneLineLabel(f.code)||"unnamed";
       let col=baseCol;
       let suffix=2;
       while(usedColumnNames.has(col)) col=baseCol+"_"+(suffix++);
       usedColumnNames.add(col);
-      columnByCode.set(String(f.code||""),col);
       const dt=typeMap[f.type]||"TEXT";
+      columnByCode.set(String(f.code||""),{col,dt:dt.replace(" AUTO_INCREMENT",""),keyed:!!(f.isPK||f.unique)});
       if(dt.startsWith("--")) return;
       let line="  "+sqlIdentifier(col)+" "+dt;
       if(f.isPK) line+=" PRIMARY KEY";
@@ -6941,6 +7744,7 @@ function showSQL(){
         if(f.required) line+=" NOT NULL";
         if(f.unique) line+=" UNIQUE";
       }
+      if(f.label&&f.label!==f.code) line+=" COMMENT "+sqlString(oneLineLabel(f.label));
       cols.push(line);
     });
     sqlTableInfo.set(String(a.id),{table:tbl,columnByCode,emitted:cols.length>0});
@@ -6949,22 +7753,32 @@ function showSQL(){
       sql+="-- SQLへ変換できる取得済みフィールドがないため CREATE TABLE を省略しました。\\n\\n";
       return;
     }
-    sql+="CREATE TABLE "+sqlIdentifier(tbl)+" (\\n"+cols.join(",\\n")+"\\n);\\n\\n";
+    sql+="CREATE TABLE "+sqlIdentifier(tbl)+" (\\n"+cols.join(",\\n")+"\\n) COMMENT="+sqlString(oneLineLabel(a.name))+";\\n\\n";
   });
 
   // Foreign keys
+  let fkSeq=0;
   APPS.forEach(a=>{
     a.relations.filter(r=>r.kind==="LOOKUP"&&appMap.has(r.toApp)).forEach(r=>{
       const t=appMap.get(r.toApp);
       const sourceInfo=sqlTableInfo.get(String(a.id));
       const targetInfo=sqlTableInfo.get(String(t.id));
-      const sourceColumn=sourceInfo&&sourceInfo.columnByCode.get(String(r.from||""));
-      const targetColumn=targetInfo&&targetInfo.columnByCode.get(String(r.toField||""));
-      if(!sourceInfo?.emitted||!targetInfo?.emitted||!sourceColumn||!targetColumn){
-        sql+="-- Lookupの結合フィールドをSQLへ変換できません: "+oneLineLabel(a.name)+" → "+oneLineLabel(t.name)+"\\n";
+      const source=sourceInfo&&sourceInfo.columnByCode.get(String(r.from||""));
+      const target=targetInfo&&targetInfo.columnByCode.get(String(r.toField||""));
+      const label=oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" → "+oneLineLabel(t.name);
+      if(exportFieldsForApp(a).some(f=>f.inSubtable&&String(f.code)===String(r.from))){
+        sql+="-- テーブル内のルックアップは、テーブルを親へ平坦化しないため外部キーにしていません: "+label+"\\n";
         return;
       }
-      sql+="ALTER TABLE "+sqlIdentifier(sourceInfo.table)+" ADD CONSTRAINT "+sqlIdentifier("fk_"+entityAlias(a)+"_"+sourceColumn)+" FOREIGN KEY ("+sqlIdentifier(sourceColumn)+") REFERENCES "+sqlIdentifier(targetInfo.table)+"("+sqlIdentifier(targetColumn)+");\\n";
+      if(!sourceInfo?.emitted||!targetInfo?.emitted||!source||!target){
+        sql+="-- Lookupの結合フィールドをSQLへ変換できません: "+label+"\\n";
+        return;
+      }
+      if(!target.keyed||source.dt!==target.dt){
+        sql+="-- 参照先が重複禁止でない、または型が異なるため外部キーにしていません: "+label+"\\n";
+        return;
+      }
+      sql+="ALTER TABLE "+sqlIdentifier(sourceInfo.table)+" ADD CONSTRAINT "+sqlIdentifier("fk_"+entityAlias(a)+"_"+(++fkSeq))+" FOREIGN KEY ("+sqlIdentifier(source.col)+") REFERENCES "+sqlIdentifier(targetInfo.table)+"("+sqlIdentifier(target.col)+");\\n";
     });
   });
   APPS.forEach(a=>(a.relations||[]).filter(r=>r.kind==="REF").forEach(r=>{
@@ -6976,7 +7790,7 @@ function showSQL(){
   APPS.forEach(a=>(a.relations||[]).filter(r=>!appMap.has(r.toApp)).forEach(r=>{
     sql+="-- 未取得の参照先: "+oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" / App "+oneLineLabel(r.toApp)+"\\n";
   }));
-  openModal("SQL DDL",sql,"ER図.sql");
+  openModal("SQL DDL",sql,exportFilename("ER図","sql"));
 }
 
 function showPlantUML(){
@@ -6993,7 +7807,8 @@ function showPlantUML(){
       let prefix="  ";
       if(f.isPK) prefix="  * ";
       else if(f.isLookup) prefix="  # ";
-      p+=prefix+sn(f.code)+" : "+f.type+(f.required?" <<required>>":"")+"\\n";
+      const code=oneLineLabel(f.code);
+      p+=prefix+code+" : "+(f.label&&f.label!==f.code?oneLineLabel(f.label)+" ":"")+"("+fieldTypeJpLabel(f.type)+")"+(f.required?" <<required>>":"")+"\\n";
       if(f.isPK) p+="  --\\n";
     });
     p+="}\\n\\n";
@@ -7014,7 +7829,7 @@ function showPlantUML(){
     });
   });
   p+="@enduml";
-  openModal("PlantUML",p,"ER図.puml");
+  openModal("PlantUML",p,exportFilename("ER図","puml"));
 }
 
 function recomputeErAnalysis(){
@@ -7084,7 +7899,7 @@ function showJSON(){
       relations:a.relations.map(r=>({label:r.fromDisplay||r.fromLabel||r.from||r.kind,fromField:r.from,sourceJoinField:r.sourceJoinField||r.from||"",controlField:r.controlField||"",controlFieldLabel:r.controlFieldLabel||"",toApp:r.toApp,toField:r.toField,type:r.kind})),
     })),
   };
-  openModal("ERモデル JSON",JSON.stringify(schema,null,2),"ERモデル.json");
+  openModal("ERモデル JSON",JSON.stringify(schema,null,2),exportFilename("ERモデル","json"));
 }
 
 // ─── CSV exports ───
@@ -7102,7 +7917,7 @@ function showCSVApps(){
     const acts=(a.relations||[]).filter(r=>r.kind==="ACTION").length;
     rows.push([a.id,a.name,exportFieldsForApp(a).length,"取得済み全項目",a.relations.length,lookups,refs,acts,a.requiredCount||0,a.depth||0,startAppIdSet.has(String(a.id))?"1":"0",exportStatusLabel(a),exportIssueText(a)]);
   });
-  openModal("CSV (アプリ一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_アプリ一覧.csv");
+  openModal("CSV (アプリ一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),exportFilename("ER図_アプリ一覧","csv"));
 }
 function showCSVFields(){
   const rows=[["アプリID","アプリ名","取得状態","取得上の注意","項目範囲","現在の図に表示","フィールドコード","フィールド名","種類","必須","重複禁止","主キー","ルックアップ","関連","サブテーブル内","テーブルコード","テーブル名","技術パス"]];
@@ -7112,7 +7927,7 @@ function showCSVFields(){
       rows.push([a.id,a.name,exportStatusLabel(a),exportIssueText(a),"取得済み全項目",visibleFieldSet.has(f)?"1":"0",f.code||"",buildFieldDisplayName(f),f.type||"",f.required?"1":"0",f.unique?"1":"0",f.isPK?"1":"0",f.isLookup?"1":"0",f.isRef?"1":"0",f.inSubtable?"1":"0",f.tableCode||"",f.tableLabel||"",f.path||f.code||""]);
     });
   });
-  openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_フィールド一覧.csv");
+  openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),exportFilename("ER図_フィールド一覧","csv"));
 }
 function showCSVRelations(){
   const rows=[["種類","関連名","起点アプリID","起点アプリ名","起点の取得状態","起点の取得上の注意","表示部品","結合元フィールド","宛先アプリID","宛先アプリ名","宛先の取得状態","宛先フィールド"]];
@@ -7122,11 +7937,11 @@ function showCSVRelations(){
       rows.push([r.kind,r.fromDisplay||r.fromLabel||r.from||r.kind,a.id,a.name,exportStatusLabel(a),exportIssueText(a),r.controlFieldLabel||r.controlField||"",r.kind==="ACTION"?"":(r.sourceJoinField||r.from||""),r.toApp,t?t.name:"未取得の参照先",t?exportStatusLabel(t):"未取得",r.toField||""]);
     });
   });
-  openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_リレーション一覧.csv");
+  openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),exportFilename("ER図_リレーション一覧","csv"));
 }
 
 // ─── Markdown spec ───
-function mdEsc(s){return String(s==null?"":s).replace(/\\|/g,"\\\\|").replace(/\\n/g," ");}
+function mdEsc(s){return String(s==null?"":s).replace(/[\\\\|<>]/g,"\\\\$&").replace(/\\n/g," ");}
 function showMarkdown(){
   recomputeErAnalysis();
   const lines=[];
@@ -7187,6 +8002,13 @@ function showMarkdown(){
     ER_ANALYSIS.hubs.forEach(hub=>lines.push("- "+mdEsc(hub.name)+" (App "+hub.appId+"): 入 "+hub.incoming+" / 出 "+hub.outgoing+" / 合計 "+hub.total));
     lines.push("");
   }
+  lines.push("## ER図");
+  lines.push("");
+  const mermaidText=buildMermaidText();
+  const fence="\\u0060\\u0060\\u0060";
+  if(mermaidText.length<=ER_MD_MERMAID_MAX_CHARS) lines.push(fence+"mermaid",mermaidText.trimEnd(),fence);
+  else lines.push("図が大きいため省略しました。Mermaid 出力または PNG 出力を利用してください。");
+  lines.push("");
   lines.push("## アプリ一覧");
   lines.push("");
   lines.push("| アプリID | アプリ名 | 項目数 | 関連数 | 深さ | 状態 |");
@@ -7208,7 +8030,7 @@ function showMarkdown(){
       lines.push("| コード | 名称 | 種類 | 必須 | 主キー | Lookup | 関連 | サブテーブル |");
       lines.push("|---|---|---|:---:|:---:|:---:|:---:|:---:|");
       vf.forEach(f=>{
-        lines.push("| "+mdEsc(f.code||"")+" | "+mdEsc(buildFieldDisplayName(f))+" | "+mdEsc(f.type||"")+" | "+(f.required?"✓":"")+" | "+(f.isPK?"✓":"")+" | "+(f.isLookup?"✓":"")+" | "+(f.isRef?"✓":"")+" | "+(f.inSubtable?"✓":"")+" |");
+        lines.push("| "+mdEsc(f.code||"")+" | "+mdEsc(buildFieldDisplayName(f))+" | "+mdEsc(fieldTypeJpLabel(f.type))+" | "+(f.required?"✓":"")+" | "+(f.isPK?"✓":"")+" | "+(f.isLookup?"✓":"")+" | "+(f.isRef?"✓":"")+" | "+(f.inSubtable?"✓":"")+" |");
       });
       lines.push("");
     }
@@ -7224,7 +8046,7 @@ function showMarkdown(){
       lines.push("");
     }
   });
-  openModal("Markdown 仕様書",lines.join("\\n"),"ER図仕様書.md");
+  openModal("Markdown 仕様書",lines.join("\\n"),exportFilename("ER図仕様書","md"));
 }
 
 // ─── Zoom controls ───
@@ -7255,7 +8077,7 @@ function updateZoomLabel(){
   const mode=document.getElementById("zoom-mode");
   const trigger=document.getElementById("zoom-level");
   if(value) value.textContent=percent+"%";
-  if(mode) mode.textContent=cy.zoom()<0.35?"構造":(cy.zoom()<0.7?"概要":"");
+  if(mode) mode.textContent=cy.zoom()<0.35?"構造":(cy.zoom()<0.6?"概要":"");
   if(trigger){
     trigger.setAttribute("aria-label","現在の表示倍率 "+percent+"%。倍率プリセットを開く");
     trigger.title=cy.zoom()<0.35
@@ -7293,7 +8115,7 @@ function toggleFullscreen(){
 }
 document.addEventListener("fullscreenchange",()=>{
   const btn=document.getElementById("fs-btn");
-  if(btn) btn.textContent = document.fullscreenElement ? "⛔" : "⛶";
+  if(btn) btn.classList.toggle("active", !!document.fullscreenElement);
 });
 
 // ─── Dropdown menus ───
@@ -7432,13 +8254,16 @@ setTimeout(applyStateFromHash, 350);
 
 // ─── Print ───
 function printDiagram(){
-  const data=cy.png({ full:true, scale:2, bg: currentPalette().bg });
   const w=window.open("","_blank");
   if(!w){ toast("別タブを開けませんでした"); return; }
   try{w.opener=null;}catch(_){}
-  w.document.write('<title>kintone ER図 印刷</title><body style="margin:0;padding:0;text-align:center;"><img src="'+data+'" style="max-width:100%;height:auto"/></body>');
+  w.document.write('<title>kintone ER図 印刷</title><style>@page{size:A3 landscape;margin:8mm}img{display:block;margin:auto;max-width:100%;max-height:100vh}</style><body style="margin:0;padding:0;text-align:center;">印刷用の画像を作成中...</body>');
   w.document.close();
-  setTimeout(()=>{ try{ w.focus(); w.print(); }catch(_){} }, 500);
+  // A3 の印刷に足りる解像度に抑え、大きな図でも印刷用タブが画像を読み込めるようにする
+  buildExportImage(6000).then(data=>{
+    w.document.body.innerHTML='<img src="'+data+'" alt="kintone ER図"/>';
+    setTimeout(()=>{ try{ w.focus(); w.print(); }catch(_){} }, 500);
+  });
 }
 
 // ─── Double-click to isolate ───
@@ -7462,7 +8287,7 @@ function ensureTip(){
   if(tipEl) return tipEl;
   tipEl=document.createElement("div");
   tipEl.id="er-tooltip";
-  Object.assign(tipEl.style,{position:"fixed",zIndex:"999",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"8px",padding:"8px 12px",fontSize:"11px",fontFamily:"'DM Mono',monospace",pointerEvents:"none",boxShadow:"0 4px 16px rgba(0,0,0,0.3)",maxWidth:"300px"});
+  Object.assign(tipEl.style,{position:"fixed",zIndex:"999",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"8px",padding:"8px 12px",fontSize:"11px",fontFamily:"var(--mono)",pointerEvents:"none",boxShadow:"0 4px 16px rgba(0,0,0,0.3)",maxWidth:"300px"});
   document.body.appendChild(tipEl);
   return tipEl;
 }
@@ -7706,6 +8531,125 @@ applySavedViewState();
     } catch (e) {
       if (isCancelStop(e)) progressUi.dismiss();
       else progressUi.error(e.message || String(e));
+      throw e;
+    }
+  }
+  function extractImportedBundlesList(raw) {
+    if (!raw) return null;
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === "object") {
+      if (Array.isArray(raw.apps)) return raw.apps;
+      if (Array.isArray(raw.bundles)) return raw.bundles;
+      if (raw.sections || raw.appId != null || raw.id != null) return [raw];
+    }
+    return null;
+  }
+  async function resolveErAppsForExport(opts, setStatus, label) {
+    const bundleList = extractImportedBundlesList(opts?.importedBundles ?? opts?.bundles);
+    if (bundleList && bundleList.length > 0) {
+      setStatus(`設定JSONから${label}を生成中...`);
+      const apps2 = bundleList.map((b) => buildErAppModelFromBundle(b));
+      const options2 = buildErCrawlOptions(opts || {});
+      if (!options2.startAppIds.length) {
+        options2.startAppIds = apps2.map((a) => String(a.id));
+        options2.startAppId = options2.startAppIds[0] || "";
+      }
+      assertErAnalysed(apps2, options2);
+      return { apps: apps2, options: options2, fromBundles: true };
+    }
+    const options = await resolveErOptions(opts, setStatus);
+    setStatus(`${label}を生成中... 起点 ${summarizeErStartIds(options.startAppIds)}`);
+    progressUi.init();
+    progressUi.update(4, `開始: 起点 ${summarizeErStartIds(options.startAppIds)}`);
+    const apps = await crawl(options.startAppIds, options);
+    assertErAnalysed(apps, options);
+    return { apps, options, fromBundles: false };
+  }
+  async function runExportERMarkdownStandalone(opts, setStatus = () => {
+  }) {
+    const appId = String(opts?.appId || "").trim();
+    const spaceId = String(opts?.spaceId || "").trim();
+    let usedProgress = false;
+    try {
+      const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, "ER図仕様書");
+      usedProgress = !fromBundles;
+      if (usedProgress) progressUi.update(94, "Markdown仕様書データ生成中...");
+      const analysis = analyzeErDependencies(apps);
+      const markdown = buildErMarkdownSpec(apps, analysis, { generatedAt: opts?.generatedAt });
+      const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || "er"));
+      const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ""}${opts?.preview ? "プレビュー" : "本番"}`;
+      if (opts?.download !== false) downloadText(
+        buildExportFilename("ER図仕様書", "md", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
+        markdown,
+        "text/markdown;charset=utf-8"
+      );
+      if (usedProgress) progressUi.close();
+      const summary = summarizeCrawl(apps, options);
+      setStatus(summary.note ? `ER図仕様書を保存しました: ${apps.length}アプリ${summary.note}` : `ER図仕様書を保存しました (${apps.length}アプリ)`, summary.tone);
+      return { apps, analysis, markdown };
+    } catch (e) {
+      if (usedProgress) {
+        if (isCancelStop(e)) progressUi.dismiss();
+        else progressUi.error(e?.message || String(e));
+      }
+      throw e;
+    }
+  }
+  async function runExportERMermaidStandalone(opts, setStatus = () => {
+  }) {
+    const appId = String(opts?.appId || "").trim();
+    const spaceId = String(opts?.spaceId || "").trim();
+    let usedProgress = false;
+    try {
+      const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, "ER図Mermaid");
+      usedProgress = !fromBundles;
+      if (usedProgress) progressUi.update(94, "Mermaidデータ生成中...");
+      const mermaid = buildErMermaidSource(apps, { showAllFields: opts?.showAllFields });
+      const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || "er"));
+      const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ""}${opts?.preview ? "プレビュー" : "本番"}`;
+      if (opts?.download !== false) downloadText(
+        buildExportFilename("ER図", "mmd", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
+        mermaid,
+        "text/plain;charset=utf-8"
+      );
+      if (usedProgress) progressUi.close();
+      const summary = summarizeCrawl(apps, options);
+      setStatus(summary.note ? `ER図Mermaidを保存しました: ${apps.length}アプリ${summary.note}` : `ER図Mermaidを保存しました (${apps.length}アプリ)`, summary.tone);
+      return { apps, mermaid };
+    } catch (e) {
+      if (usedProgress) {
+        if (isCancelStop(e)) progressUi.dismiss();
+        else progressUi.error(e?.message || String(e));
+      }
+      throw e;
+    }
+  }
+  async function runExportERRelationsCsvStandalone(opts, setStatus = () => {
+  }) {
+    const appId = String(opts?.appId || "").trim();
+    const spaceId = String(opts?.spaceId || "").trim();
+    let usedProgress = false;
+    try {
+      const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, "ER図リレーション一覧CSV");
+      usedProgress = !fromBundles;
+      if (usedProgress) progressUi.update(94, "CSVデータ生成中...");
+      const csv = buildErRelationsCsv(apps);
+      const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || "er"));
+      const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ""}${opts?.preview ? "プレビュー" : "本番"}`;
+      if (opts?.download !== false) downloadText(
+        buildExportFilename("ER図_リレーション一覧", "csv", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
+        csv,
+        "text/csv;charset=utf-8"
+      );
+      if (usedProgress) progressUi.close();
+      const summary = summarizeCrawl(apps, options);
+      setStatus(summary.note ? `ER図リレーション一覧CSVを保存しました: ${apps.length}アプリ${summary.note}` : `ER図リレーション一覧CSVを保存しました (${apps.length}アプリ)`, summary.tone);
+      return { apps, csv };
+    } catch (e) {
+      if (usedProgress) {
+        if (isCancelStop(e)) progressUi.dismiss();
+        else progressUi.error(e?.message || String(e));
+      }
       throw e;
     }
   }
@@ -8091,7 +9035,10 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     cardMain.body.appendChild(makeRow(prevCb.label));
     const bOpen = makeButton("ER図を開く", "primary", { icon: "◉" });
     const bSave = makeButton("ER図をHTMLで保存", "ghost", { icon: "↓" });
-    const btnRow = makeRow([bOpen, bSave]);
+    const bMarkdown = makeButton("仕様書をMarkdownで保存", "ghost", { icon: "↓" });
+    const bMermaid = makeButton("Mermaidで保存", "ghost", { icon: "↓" });
+    const bRelations = makeButton("関連一覧をCSVで保存", "ghost", { icon: "↓" });
+    const btnRow = makeRow([bOpen, bSave, bMarkdown, bMermaid, bRelations]);
     btnRow.style.marginTop = "6px";
     cardMain.body.appendChild(btnRow);
     panel.body.insertBefore(cardMain.card, panel.status);
@@ -8232,6 +9179,19 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       }
       await runExportERDiagramHtmlStandalone(source(), (m, e) => panel.setStatus(m, e === "warn" ? "warn" : e ? "err" : "busy"));
     }));
+    const bindExport = (button, busy, run) => {
+      button.addEventListener("click", () => liteRun(panel, busy, async () => {
+        const validationError = validateErOptions(source());
+        if (validationError) {
+          panel.setStatus(validationError, "warn");
+          return;
+        }
+        await run(source(), (m, e) => panel.setStatus(m, e === "warn" ? "warn" : e ? "err" : "busy"));
+      }));
+    };
+    bindExport(bMarkdown, "Markdown 生成中…", runExportERMarkdownStandalone);
+    bindExport(bMermaid, "Mermaid 生成中…", runExportERMermaidStandalone);
+    bindExport(bRelations, "CSV 生成中…", runExportERRelationsCsvStandalone);
     appInp.setAttribute("aria-label", "起点アプリID");
     guestInp.setAttribute("aria-label", "ゲストスペースID");
     const erSummary = () => [
@@ -8257,7 +9217,10 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       advancedCopy: "追加起点・スペースID・レイアウト・表示密度・探索の深さ・サブテーブル・逆引きを変えるときはこちら。",
       actions: [
         { id: "open", label: "ER図を開く", description: "関連アプリの設定を読み取り、アプリ同士のつながりを別画面の図で表示します。", button: bOpen, validate: erProblem, summary: erSummary },
-        { id: "save", label: "ER図をHTMLで保存", description: "選んだ条件のER図を、共有できるHTMLファイルとして保存します。", button: bSave, validate: erProblem, summary: erSummary }
+        { id: "save", label: "ER図をHTMLで保存", description: "選んだ条件のER図を、共有できるHTMLファイルとして保存します。", button: bSave, validate: erProblem, summary: erSummary },
+        { id: "markdown", label: "仕様書をMarkdownで保存", description: "アプリ一覧・関連一覧・循環や孤立の確認結果・項目定義をMarkdownファイルで保存します。", button: bMarkdown, validate: erProblem, summary: erSummary },
+        { id: "mermaid", label: "Mermaidで保存", description: "GitHubなどで描画できるMermaid形式のER図を保存します。", button: bMermaid, validate: erProblem, summary: erSummary },
+        { id: "relations", label: "関連一覧をCSVで保存", description: "アプリ同士の関連を1行ずつ並べたCSVファイルを保存します。", button: bRelations, validate: erProblem, summary: erSummary }
       ]
     });
   }
