@@ -146,8 +146,11 @@ function mergeLayout(source: any[], target: any[], plan: ReflectSectionPlan): an
   return result;
 }
 
+/** フィールドを参照する項目。requiredFields を持ち、反映前にフィールド設定との照合が必要になる。 */
+const FIELD_DEPENDENT_SECTIONS = ['layoutSettings', 'viewSettings', 'reportSettings', 'actionSettings', 'appSettings', 'fieldAcl', 'reminderNotifications', 'processSettings'];
+
 export function reflectInspectionScopes(scopes: string[]): string[] {
-  return [...new Set([...scopes, ...(scopes.some(key => ['layoutSettings', 'viewSettings', 'reportSettings', 'actionSettings', 'appSettings'].includes(key)) ? ['fieldSettings'] : [])])];
+  return [...new Set([...scopes, ...(scopes.some(key => FIELD_DEPENDENT_SECTIONS.includes(key)) ? ['fieldSettings'] : [])])];
 }
 
 /**
@@ -292,7 +295,8 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
       for (const section of [source, target]) {
         const arrayKey = ['appAcl', 'fieldAcl', 'recordPermissions'].includes(key) ? 'rights' : ['notifications', 'perRecordNotifications', 'reminderNotifications'].includes(key) ? 'notifications' : '';
         if (arrayKey && !Array.isArray(section[arrayKey])) throw new Error(`${arrayKey} の設定がありません。空の設定で上書きしないため、反映を停止します。`);
-        if (key === 'reminderNotifications' && (typeof section.timezone !== 'string' || !section.timezone)) throw new Error('リマインダー通知のタイムゾーンを取得できません。');
+        // 通知が1件も無いアプリの timezone は null。反映する通知があるときだけ反映元のタイムゾーンを必須にする。
+        if (key === 'reminderNotifications' && section === source && section.notifications.length && (typeof section.timezone !== 'string' || !section.timezone)) throw new Error('リマインダー通知のタイムゾーンを取得できません。');
         if (key === 'categories' && (typeof section.enabled !== 'boolean' || !object(section.categories))) throw new Error('カテゴリーの enabled / categories を取得できません。');
         if (key === 'processSettings' && (typeof section.enable !== 'boolean' || (section.enable && (!object(section.states) || !Array.isArray(section.actions))))) throw new Error('プロセス管理の enable / states / actions を取得できません。');
         if (key === 'customizeSettings') {
@@ -305,6 +309,12 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
       }
       before = def.putBuilder(target); after = def.putBuilder(source);
       if (key === 'categories') { before.enabled = target.enabled; after.enabled = source.enabled; }
+      if (key === 'reminderNotifications' && !after.timezone) after.timezone = before.timezone;
+      if (key === 'processSettings') {
+        const firstState = (states: any) => object(states) ? String((Object.values(states) as any[]).sort((a, b) => Number(a?.index) - Number(b?.index))[0]?.name || '') : '';
+        const sourceFirst = firstState(source.states), targetFirst = firstState(target.states);
+        if (sourceFirst && targetFirst && sourceFirst !== targetFirst) plan.warnings.push(`先頭のステータスが異なります（反映先「${targetFirst}」→ 反映元「${sourceFirst}」）。kintone は先頭のステータスの入れ替えを拒否することがあります。拒否された場合は、反映先の管理画面で先頭のステータスを合わせてから再実行してください。`);
+      }
       if (key === 'notifications') {
         // Older exported JSON may omit this optional property: omission means unchanged.
         if (typeof target.notifyToCommenter === 'boolean') before.notifyToCommenter = after.notifyToCommenter = target.notifyToCommenter;
@@ -334,7 +344,7 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
         if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map(item => `「${item.name}」（${item.reason}）`).join('、')} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
       }
       if (key === 'fieldAcl') plan.requiredFields = [...new Set<string>((after.rights || []).map((right: any) => String(right?.code || '')).filter((code: string) => code && !['$id', '$revision'].includes(code)))];
-      if (key === 'reminderNotifications') plan.requiredFields = [...new Set<string>((after.notifications || []).map((item: any) => String(item?.timing?.code || '')).filter((code: string) => !!code))];
+      if (key === 'reminderNotifications') plan.requiredFields = [...new Set<string>((after.notifications || []).flatMap((item: any) => [item?.timing?.code, ...(item?.targets || []).filter((target: any) => target?.entity?.type === 'FIELD_ENTITY').map((target: any) => target.entity.code)]).map((code: any) => String(code || '')).filter((code: string) => !!code))];
       if (key === 'processSettings' && object(after.states)) plan.requiredFields = [...new Set<string>(Object.values(after.states).flatMap((state: any) => (state?.assignee?.entities || []).filter((item: any) => item?.entity?.type === 'FIELD_ENTITY').map((item: any) => String(item.entity.code || ''))).filter((code: string) => !!code))];
       if (key === 'layoutSettings') {
         if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error('レイアウトの形式が不正です。');

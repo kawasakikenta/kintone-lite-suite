@@ -226,14 +226,14 @@ export const FEATURE_DEFS = [
 export const STANDALONE_LAUNCH_ENTRIES = [
   {
     tab: 'diff',
-    module: 'tabs/diff.js',
+    module: 'tabs/diff-standalone.js',
     file: '差分比較.js',
     label: '差分比較',
     bundleEntry: 'diff-lite-entry.js'
   },
   {
     tab: 'reflect',
-    module: 'tabs/reflect.js',
+    module: 'tabs/reflect-standalone.js',
     file: 'プレビュー反映.js',
     label: 'プレビュー反映',
     subTab: 'settings',
@@ -241,28 +241,28 @@ export const STANDALONE_LAUNCH_ENTRIES = [
   },
   {
     tab: 'field',
-    module: 'tabs/field.js',
+    module: 'tabs/field-standalone.js',
     file: 'フィールド追加.js',
     label: 'フィールド追加',
     bundleEntry: 'field-lite-entry.js'
   },
   {
     tab: 'jsconfig',
-    module: 'tabs/jsconfig.js',
+    module: 'tabs/jsconfig-standalone.js',
     file: 'kintoneJS取得.js',
     label: 'JS/CSS設定',
     bundleEntry: 'jsconfig-lite-entry.js'
   },
   {
     tab: 'settingsExport',
-    module: 'tabs/settings-export.js',
+    module: 'tabs/settings-export-standalone.js',
     file: '設定取得.js',
     label: '設定一括取得',
     bundleEntry: 'settings-export-lite-entry.js'
   },
   {
     tab: 'design',
-    module: 'tabs/design.js',
+    module: 'tabs/design-standalone.js',
     file: '設計書作成.js',
     label: '設計書',
     bundleEntry: 'design-lite-entry.js'
@@ -276,14 +276,14 @@ export const STANDALONE_LAUNCH_ENTRIES = [
   },
   {
     tab: 'processFlow',
-    module: 'tabs/process.js',
+    module: 'tabs/process-standalone.js',
     file: 'プロセス実行.js',
     label: 'プロセス図',
     bundleEntry: 'process-lite-entry.js'
   },
   {
     tab: 'recordMgr',
-    module: 'tabs/record.js',
+    module: 'tabs/record-standalone.js',
     file: 'kintoneレコード取得.js',
     label: 'レコード管理',
     bundleEntry: 'record-lite-entry.js'

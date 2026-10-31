@@ -239,6 +239,22 @@ describe('diff/engine ロジック検証', () => {
     });
   });
 
+  describe('同名の JS/CSS ファイル', () => {
+    const file = (name: string, key: string, body?: string) => ({ type: 'FILE', name, file: { name, fileKey: key }, ...(body === undefined ? {} : { _bodyText: body }) });
+    const bundle = (js: any[]) => ({ desktop: { js, css: [] }, mobile: { js: [], css: [] } });
+    it('比較元の同名ファイルの1つにだけ本文があっても、比較先を本文比較にする', () => {
+      const pair = preprocessCustomizePairForDiff(bundle([file('main.js', 'k1', 'x'), file('main.js', 'k2')]), bundle([file('main.js', 'k3', 'x')]));
+      expect(pair.target.desktop.js[0].file._body).toBe('x');
+      expect(pair.target.desktop.js[0].file.fileKey).toBeUndefined();
+      expect(pair.source.desktop.js[0].file._body).toBe('x');
+    });
+    it('比較先の同名ファイルの1つにだけ本文があっても、比較元を本文比較にする', () => {
+      const pair = preprocessCustomizePairForDiff(bundle([file('main.js', 'k3', 'x')]), bundle([file('main.js', 'k1', 'x'), file('main.js', 'k2')]));
+      expect(pair.source.desktop.js[0].file._body).toBe('x');
+      expect(pair.target.desktop.js[0].file._body).toBe('x');
+    });
+  });
+
   describe('表記ゆれ判定', () => {
     it('倍精度で丸められる長い数値文字列を同値扱いにしない', () => {
       expect(isNotationOnlyChange('12345678901234567890', '12345678901234567891')).toBe(false);

@@ -14,10 +14,9 @@
  * HTML 文字列を返す。
  */
 
-import { esc, renderSectionIconHtml, extractAppNameFromBundle } from '../utils.js';
+import { esc, renderSectionIconHtml, extractAppNameFromBundle, flattenCategories } from '../utils.js';
 import { state } from '../state.js';
 import { labelOfProp, labelOfValue, formatEntityText } from './label-dict.js';
-import { decodeRow, isSemanticSection } from './path-decoder.js';
 
 // ---------------------------------------------------------------------------
 // Category definitions
@@ -47,10 +46,6 @@ const SECTION_TO_CATEGORY: Record<string, string> = (() => {
   for (const cat of DIFF_CATEGORIES) for (const sec of cat.sections) m[sec] = cat.key;
   return m;
 })();
-
-export function getCategoryOfSection(sectionKey: string): string {
-  return SECTION_TO_CATEGORY[sectionKey] || 'app';
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -137,18 +132,6 @@ function prettyJsonStringify(v: any): string {
   if (v == null) return '-';
   if (typeof v === 'string') return v;
   try { return JSON.stringify(v, null, 2); } catch { return String(v); }
-}
-
-function diffWrap(left: any, right: any): { html: string; same: boolean } {
-  const same = !valueChanged(left, right);
-  if (same) {
-    return { same, html: `<div class="diff-cat-same">${esc(safeStringify(left))}</div>` };
-  }
-  return {
-    same,
-    html: `<div class="diff-cat-prev"><span class="diff-cat-prev-tag">旧</span>${esc(safeStringify(left))}</div>
-           <div class="diff-cat-next"><span class="diff-cat-next-tag">新</span>${esc(safeStringify(right))}</div>`
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1254,8 +1237,9 @@ function renderAppSettingsCategory(src: any, tgt: any): string {
   blocks.push(renderKvDiffTable('フォーム設定 (formSettings)', getSection(src, 'formSettings'), getSection(tgt, 'formSettings')));
   const sc = getSection(src, 'categories');
   const tc = getSection(tgt, 'categories');
-  const sCats = Array.isArray(sc?.categories) ? sc.categories : (Array.isArray(sc) ? sc : []);
-  const tCats = Array.isArray(tc?.categories) ? tc.categories : (Array.isArray(tc) ? tc : []);
+  const categoryItems = (section: any) => flattenCategories(Array.isArray(section) ? section : section?.categories).map((c) => ({ code: c.path, name: c.name }));
+  const sCats = categoryItems(sc);
+  const tCats = categoryItems(tc);
   if (sCats.length || tCats.length) blocks.push(renderCategoriesTree(sCats, tCats));
   const html = blocks.filter(Boolean).join('');
   return html || emptyState('アプリ設定の変更はありません');
@@ -1496,43 +1480,6 @@ export function buildCategoryViewHtml(rows: any[]): string {
 // Markdown export of category view (text-friendly summary for copy/share)
 // ---------------------------------------------------------------------------
 
-function categoryToMarkdown(catKey: string, rows: any[], src: any, tgt: any, rowsBySection: Map<string, any[]>): string {
-  const cat = DIFF_CATEGORIES.find((c) => c.key === catKey);
-  if (!cat) return '';
-  const lines: string[] = [`## ${cat.icon} ${cat.label}`];
-  for (const sec of cat.sections) {
-    const secRows = rowsBySection.get(sec) || [];
-    const s = countRowSummary(secRows);
-    if (!secRows.length) continue;
-    const label = SECTION_LABELS[sec] || sec;
-    lines.push(`### ${label}`);
-    lines.push(`差分: +${s.added} / -${s.removed} / ~${s.changed} (高:${s.high} 中:${s.medium} 低:${s.low})`);
-    const sample = secRows.slice(0, 30);
-    for (const r of sample) {
-      const t = r.type === 'added' ? '+ 追加' : r.type === 'removed' ? '- 削除' : '~ 変更';
-      // 非フィールド系は辞書経由のセマンティック整形を優先 (HTML と表記を揃える)
-      const decoded = isSemanticSection(r.sectionKey) ? decodeRow(r) : null;
-      let where = '';
-      let value = '';
-      if (decoded) {
-        const chips = (decoded.whereChips || []).map((c) => (c.icon ? `${c.icon} ${c.label}` : c.label)).join(' / ');
-        where = chips ? ` [${chips}]` : '';
-        const propPart = decoded.propLabel ? `${decoded.propLabel}: ` : '';
-        value = r.type === 'added'   ? `${propPart}${decoded.afterText}`
-              : r.type === 'removed' ? `${propPart}${decoded.beforeText}`
-                                     : `${propPart}${decoded.beforeText} → ${decoded.afterText}`;
-      } else {
-        value = r.type === 'added' ? safeStringify(r.right)
-              : r.type === 'removed' ? safeStringify(r.left)
-                                     : `${safeStringify(r.left)} → ${safeStringify(r.right)}`;
-      }
-      lines.push(`- ${t}${where} ${value.slice(0, 200)}`);
-    }
-    if (secRows.length > sample.length) lines.push(`- … 他 ${secRows.length - sample.length} 件`);
-  }
-  return lines.join('\n');
-}
-
 const SECTION_LABELS: Record<string, string> = {
   appSettings: 'アプリ設定',
   appInfo: 'アプリ情報',
@@ -1553,30 +1500,3 @@ const SECTION_LABELS: Record<string, string> = {
   reminderNotifications: 'リマインダー通知',
   categories: 'カテゴリ設定'
 };
-
-export function buildCategoryViewMarkdown(rows: any[], options: { onlyActive?: boolean } = {}): string {
-  const src = state.lastSourceBundle;
-  const tgt = state.lastTargetBundle;
-  const actualRows = (rows || []).filter((r) => r && r.type !== 'same');
-  const rowsBySection = getRowsBySection(actualRows);
-  const srcLabel = appLabel(src, '比較元');
-  const tgtLabel = appLabel(tgt, '比較先');
-  const lines: string[] = [
-    `# 差分比較レポート（セクション別ビュー）`,
-    ``,
-    `- 比較元: ${srcLabel}`,
-    `- 比較先: ${tgtLabel}`,
-    `- 生成: ${new Date().toISOString()}`,
-    ``
-  ];
-  const cats = options.onlyActive && state.diffCategoryView
-    ? DIFF_CATEGORIES.filter((c) => c.key === state.diffCategoryView)
-    : DIFF_CATEGORIES;
-  for (const cat of cats) {
-    const catRows = cat.sections.flatMap((sec) => rowsBySection.get(sec) || []);
-    if (!catRows.length) continue;
-    lines.push(categoryToMarkdown(cat.key, catRows, src, tgt, rowsBySection));
-    lines.push('');
-  }
-  return lines.join('\n');
-}

@@ -9,6 +9,7 @@ import {
   runDesignDiffMdStandalone,
   runDesignExportStandalone,
   runDesignExportXlsxStandalone,
+  runBatchDesignExportMdZipStandalone,
   runBatchDesignExportXlsxZipStandalone,
   validateDesignTarget,
   validateDesignExportTargets
@@ -67,7 +68,7 @@ export function mountDesignLitePanel() {
     ]
   }));
   cardTarget.body.appendChild(appTable.element);
-  const prev = makeCheck({ label: 'プレビュー環境から取得（単一出力・2アプリ差分）' });
+  const prev = makeCheck({ label: 'プレビュー環境から取得（単一出力・2アプリ差分・Markdown ZIP）' });
   cardTarget.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
   cardTarget.body.appendChild(makeNote('出力は対象アプリ表の1行目が対象です（ZIP 一括出力だけは全行）。Excel は人が読む用、AI向けMarkdown は AI に渡す用です。', 'help'));
   cardTarget.body.appendChild(makeNote('アプリごとに別のゲストスペースを指定できます。各行の「↑コピー」で上の行を複製できます。', 'help'));
@@ -279,7 +280,7 @@ export function mountDesignLitePanel() {
   }); });
 
   // ---- 複数アプリ ZIP（表の全行） ----
-  const cardBatch = makeCard({ title: '複数アプリ一括 ZIP 出力（Excel）', number: 3, soft: true });
+  const cardBatch = makeCard({ title: '複数アプリ一括 ZIP 出力', number: 3, soft: true });
     const bBatchZip = makeButton('対象アプリの設計書 ZIP を保存', 'primary', { icon: '↓' });
   bBatchZip.style.width = '100%';
   cardBatch.body.appendChild(bBatchZip);
@@ -294,6 +295,27 @@ export function mountDesignLitePanel() {
       );
     });
   });
+  const batchTargets = () => appTable.getApps().map((r, i) => ({ appId: r.appId, guestId: r.guestId, bundle: findImportedBundle(r.appId, r.guestId, i) }));
+  const makeMdZipButton = (label: string, format: 'md' | 'ai-md' | 'both') => {
+    const button = makeButton(label, 'ghost', { icon: '↓' });
+    button.style.width = '100%';
+    cardBatch.body.appendChild(button);
+    button.addEventListener('click', () => {
+      const apps = batchTargets();
+      const targetError = validateDesignExportTargets(apps, '対象アプリ表: ');
+      if (targetError) { panel.setStatus(targetError, 'warn'); return; }
+      liteRun(panel, `${label}を生成中…`, async () => {
+        await runBatchDesignExportMdZipStandalone(
+          { apps, format, preview: prev.checkbox.checked },
+          (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+        );
+      });
+    });
+    return button;
+  };
+  const bMdZip = makeMdZipButton('Markdown ZIP', 'md');
+  const bAiMdZip = makeMdZipButton('AI向けMarkdown ZIP', 'ai-md');
+  const bBothZip = makeMdZipButton('Markdown＋AI向けMarkdown ZIP', 'both');
   panel.body.insertBefore(cardBatch.card, panel.status);
 
   // ---- 2アプリ差分 MD（表の 1行目 ⇔ 2行目） ----
@@ -336,6 +358,17 @@ export function mountDesignLitePanel() {
     ];
   };
   const firstTargetRequired = () => validateDesignTarget(source(), '対象表の1行目: ');
+  const batchTargetsRequired = () => validateDesignExportTargets(batchTargets(), '対象アプリ表: ');
+  const mdZipSummary = (format: string, extra: Array<[string, string]> = []): Array<[string, string]> => {
+    const env = prev.checkbox.checked ? 'プレビュー' : '本番';
+    return [
+      ['対象', summarizeList(appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? '読込済みJSON' : env)))],
+      ['出力', `${appTable.count()} アプリの${format}をZIPに保存`],
+      ['取得環境', `${env}から取得します。設定JSONを読み込んだアプリはその内容を使用します。`],
+      ...extra,
+      ...(appTable.count() >= 50 ? [['件数が多い場合', 'アプリごとに順に取得するため、時間とメモリを使います。途中で「中止」すると、生成できた分だけZIPに保存します。'] as [string, string]] : [])
+    ];
+  };
   installLiteWorkflow(panel, {
     setup: [cardTarget.card],
     advanced: [cardImport.card, cardOutputInfo.card],
@@ -352,7 +385,10 @@ export function mountDesignLitePanel() {
         const rows = diffTargetRows();
         if (rows.length < 2) return '対象アプリを2件以上指定してください。';
         return validateDesignExportTargets(rows.map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), '比較対象: ');
-      }, summary: () => diffTargetRows().map((r, i) => [i ? '比較先' : '比較元', connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? '読込済みJSON' : prev.checkbox.checked ? 'プレビュー' : '本番')]) }
+      }, summary: () => diffTargetRows().map((r, i) => [i ? '比較先' : '比較元', connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? '読込済みJSON' : prev.checkbox.checked ? 'プレビュー' : '本番')]) },
+      { id: 'md-zip', label: '全対象をMarkdown ZIPで保存', description: '全対象アプリの設計書をMarkdownにして、1つのZIPで保存します。', button: bMdZip, validate: batchTargetsRequired, summary: () => mdZipSummary('Markdown') },
+      { id: 'ai-md-zip', label: '全対象をAI向けMarkdown ZIPで保存', description: '全対象アプリの設定をAI向けMarkdownにして、1つのZIPで保存します。', button: bAiMdZip, validate: batchTargetsRequired, summary: () => mdZipSummary('AI向けMarkdown') },
+      { id: 'both-zip', label: '全対象をMarkdownとAI向けのZIPで保存', description: '全対象アプリのMarkdownとAI向けMarkdownを、1つのZIPで保存します。', button: bBothZip, validate: batchTargetsRequired, summary: () => mdZipSummary('MarkdownとAI向けMarkdown', [['取得回数', '形式ごとに別に取得するため、kintone から取得するアプリは取得が2回になります。']]) }
     ]
   });
 

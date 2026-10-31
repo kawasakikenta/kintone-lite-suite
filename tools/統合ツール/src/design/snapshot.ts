@@ -230,7 +230,8 @@ function collectionInfo(key: string, section: any): CollectionInfo {
     case 'notifications':
     case 'perRecordNotifications':
     case 'reminderNotifications': return knownCollection(section, 'notifications', 'array');
-    case 'categories': return knownCollection(section, 'categories', 'array');
+    // kintone の応答はオブジェクト（名前がキー）。以前の設定JSONの配列も受け付ける。
+    case 'categories': return knownCollection(section, 'categories', Array.isArray(section.categories) ? 'array' : 'object');
     default: {
       const keys = Object.keys(section).filter((key) => !key.startsWith('_'));
       return {

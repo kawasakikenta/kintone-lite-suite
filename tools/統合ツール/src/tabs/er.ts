@@ -1,14 +1,12 @@
 'use strict';
 
-import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
+import { EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, safeJsonForScript, downloadText, showToast, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
-import { apiGet, buildApiPrefix, fetchAppsInSpace } from '../api.js';
+import { esc, safeJsonForScript } from '../utils.js';
+import { apiGet, buildApiPrefix } from '../api.js';
 import { isRunCancelledError } from '../runControl.js';
 import { createCancelReport } from './run-cancel-summary.js';
-import { setStatus, setBusy } from '../ui/components.js';
-import { getToolWindow, getToolDocument } from '../ui/dialog.js';
-import { commonParams } from './diff.js';
+import { getToolDocument } from '../ui/dialog.js';
 import { analyzeErDependencies } from './er-analysis.js';
 import { buildErAppModel, buildFailedErAppModel } from './er-model.js';
 
@@ -22,129 +20,12 @@ const ER_DEFAULTS = {
   includeReverseLookup: false
 };
 const ER_TRAVERSE_RELATION_KINDS = new Set(['LOOKUP', 'REF', 'ACTION']);
-// 'none' は項目を表示せずアプリの結合関係だけを見るモード
-const ER_FIELD_DENSITIES = ['none', 'compact', 'standard', 'full'];
-
-// スペース内アプリ一覧のキャッシュ。ピッカー表示と生成時の二重取得を防ぐ
-let erSpaceAppsCache: { key: string; apps: Array<{ appId: string; name: string }> } | null = null;
-
-function erSpaceCacheKey(spaceId: string, guestId: string): string {
-  return `${String(spaceId || '')}|${String(guestId || '')}`;
-}
-
-async function fetchAppsInSpaceCached(spaceId: string, guestId: string) {
-  const key = erSpaceCacheKey(spaceId, guestId);
-  if (erSpaceAppsCache && erSpaceAppsCache.key === key) return erSpaceAppsCache.apps;
-  const apps = await fetchAppsInSpace(spaceId, guestId);
-  erSpaceAppsCache = { key, apps };
-  return apps;
-}
-
-/**
- * スペース内アプリピッカーの選択状態を読み取る。
- * - ピッカー未表示・別スペースの内容 → null（従来通りスペース内全アプリを起点）
- * - ピッカー表示中 → チェックされたアプリIDの配列（0件なら空配列）
- */
-function readErSpaceSelectedAppIds(spaceId: string): string[] | null {
-  if (!spaceId) return null;
-  let host: HTMLElement | null;
-  try { host = getToolDocument().getElementById('u_erSpaceAppPicker'); }
-  catch { host = null; }
-  if (!host || host.dataset.spaceId !== spaceId) return null;
-  const boxes = Array.from(host.querySelectorAll<HTMLInputElement>('input[type="checkbox"][data-er-space-app]'));
-  if (!boxes.length) return null;
-  return boxes.filter((b) => b.checked).map((b) => String(b.dataset.erSpaceApp || '')).filter((v) => /^\d+$/.test(v));
-}
-
-/**
- * 「スペース内アプリを読み込む」: スペースのアプリ一覧を取得してチェックボックス一覧を表示する。
- * ここで取得した一覧は生成時にも再利用されるため、APIリクエストは 1 回で済む。
- */
-export async function loadErSpaceApps(): Promise<void> {
-  const doc = getToolDocument();
-  const host = doc.getElementById('u_erSpaceAppPicker');
-  if (!host) return;
-  const spaceId = String(ui.erSpaceId?.value || '').trim();
-  if (!/^\d+$/.test(spaceId)) {
-    host.innerHTML = '<div class="er-space-picker__empty">スペースIDを数値で入力してから読み込んでください。</div>';
-    delete host.dataset.spaceId;
-    renderErPreflight();
-    return;
-  }
-  const guestId = commonParams().source?.guestId || '';
-  setStatus(`スペース ${spaceId} のアプリ一覧を取得中...`);
-  const apps = await fetchAppsInSpaceCached(spaceId, guestId);
-  host.dataset.spaceId = spaceId;
-  if (!apps.length) {
-    host.innerHTML = '<div class="er-space-picker__empty">このスペースにアプリが見つかりませんでした。</div>';
-    renderErPreflight();
-    setStatus(`スペース ${spaceId}: アプリが見つかりませんでした`, true);
-    return;
-  }
-  const items = apps.map((a) => `
-    <label class="er-space-picker__item" title="App ${esc(a.appId)}">
-      <input type="checkbox" data-er-space-app="${esc(a.appId)}" checked>
-      <span class="er-space-picker__name">${esc(a.name || `アプリ ${a.appId}`)}</span>
-      <span class="er-space-picker__id">#${esc(a.appId)}</span>
-    </label>`).join('');
-  host.innerHTML = `
-    <div class="er-space-picker__head">
-      <span class="er-space-picker__lbl">スペース #${esc(spaceId)} のアプリ（${esc(String(apps.length))}件）— 起点にするアプリを選択</span>
-      <span class="er-space-picker__btns">
-        <button type="button" class="btn sub" data-er-space-sel="all">全選択</button>
-        <button type="button" class="btn sub" data-er-space-sel="none">全解除</button>
-      </span>
-    </div>
-    <div class="er-space-picker__list">${items}</div>`;
-  host.querySelectorAll<HTMLButtonElement>('[data-er-space-sel]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const on = btn.dataset.erSpaceSel === 'all';
-      host.querySelectorAll<HTMLInputElement>('input[data-er-space-app]').forEach((b) => { b.checked = on; });
-      renderErPreflight();
-    });
-  });
-  host.querySelectorAll<HTMLInputElement>('input[data-er-space-app]').forEach((b) => {
-    b.addEventListener('change', () => renderErPreflight());
-  });
-  renderErPreflight();
-  setStatus(`スペース ${spaceId} のアプリ ${apps.length}件を読み込みました。起点にするアプリを選択してください`);
-}
 
 function buildScriptTag(src, integrity = '') {
   const safeSrc = esc(src || '');
   const safeIntegrity = esc(integrity || '');
   const integrityAttr = safeIntegrity ? ` integrity="${safeIntegrity}" crossorigin="anonymous"` : '';
   return `<script src="${safeSrc}"${integrityAttr}><\/script>`;
-}
-
-export function readErDiagramOptions() {
-  const startAppId = String(ui.sourceApp?.value || '').trim();
-  const layoutName = String(ui.erLayout?.value || ER_DEFAULTS.layoutName).trim() || ER_DEFAULTS.layoutName;
-  const fieldDensity = String(ui.erFieldDensity?.value || ER_DEFAULTS.fieldDensity).trim() || ER_DEFAULTS.fieldDensity;
-  const maxDepthRaw = String(ui.erMaxDepth?.value || '').trim();
-  const maxDepthNum = Number(maxDepthRaw);
-  const extraAppIds = String(ui.erExtraApps?.value || '')
-    .split(/[\s,，]+/)
-    .map((v) => v.trim())
-    .filter((v) => /^\d+$/.test(v));
-  const startAppIds = [startAppId, ...extraAppIds].filter((v, i, arr) => /^\d+$/.test(v) && arr.indexOf(v) === i);
-  const spaceId = String(ui.erSpaceId?.value || '').trim();
-  const normalizedSpaceId = /^\d+$/.test(spaceId) ? spaceId : '';
-  return {
-    startAppId,
-    startAppIds,
-    spaceId: normalizedSpaceId,
-    // null = ピッカー未使用（スペース内全アプリを起点にする） / 配列 = 選択したアプリのみ起点にする
-    spaceSelectedAppIds: readErSpaceSelectedAppIds(normalizedSpaceId),
-    layoutName,
-    fieldDensity: ER_FIELD_DENSITIES.includes(fieldDensity) ? fieldDensity : ER_DEFAULTS.fieldDensity,
-    maxDepth: Number.isFinite(maxDepthNum) && maxDepthNum >= 0 ? Math.floor(maxDepthNum) : ER_DEFAULTS.maxDepth,
-    includeSubtableFields: !!ui.erIncludeSubtable?.checked,
-    includeReverseLookup: !!ui.erIncludeReverseLookup?.checked,
-    maxFields: ER_DEFAULTS.maxFields,
-    sleepMs: ER_DEFAULTS.sleepMs,
-    source: commonParams().source
-  };
 }
 
 export function formatErLayoutLabel(layoutName) {
@@ -2105,7 +1986,6 @@ function updateFocusOptions(){
   focusDirection = document.getElementById("focus-direction")?.value || "both";
   if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
 }
-
 
 // ─── 元に戻す (Undo) ───
 const undoStack = [];
@@ -4441,110 +4321,6 @@ applySavedViewState();
 </html>`;
 };
 
-
-/**
- * スペースID指定時、スペース内アプリを起点に追加する。
- * - ピッカーで選択済みの場合は選択したアプリだけを起点にする（options.spaceSelectedAppIds）
- * - 未選択（ピッカー未使用）の場合は従来通り全アプリを起点にする
- * スペース内アプリ集合は options.spaceAppIds に格納する（ER 描画でのスペース表現用）。
- * 一覧はピッカー読み込み時のキャッシュを再利用するため、追加のAPIリクエストは発生しない。
- */
-async function resolveErStartAppIds(options: any): Promise<void> {
-  if (!options.spaceId) return;
-  const cacheKey = erSpaceCacheKey(options.spaceId, options.source?.guestId || '');
-  if (!(erSpaceAppsCache && erSpaceAppsCache.key === cacheKey)) {
-    setStatus(`スペース ${options.spaceId} のアプリ一覧を取得中...`);
-    progressUi.update(2, `スペース ${options.spaceId} のアプリ一覧を取得中...`);
-  }
-  const apps = await fetchAppsInSpaceCached(options.spaceId, options.source?.guestId || '');
-  const spaceIds = apps.map((a) => String(a.appId));
-  options.spaceAppIds = spaceIds;
-  const spaceIdSet = new Set(spaceIds);
-  const selected = Array.isArray(options.spaceSelectedAppIds)
-    ? options.spaceSelectedAppIds.map((v: any) => String(v)).filter((v: string) => spaceIdSet.has(v))
-    : null;
-  const additions = selected ?? spaceIds;
-  const merged = [...(Array.isArray(options.startAppIds) ? options.startAppIds : []), ...additions];
-  options.startAppIds = merged.filter((v, i, arr) => /^\d+$/.test(String(v)) && arr.indexOf(v) === i);
-}
-
-export async function runGenerateERDiagram() {
-  const options = readErDiagramOptions();
-  await resolveErStartAppIds(options);
-  if (!options.startAppIds?.length) throw new Error('比較元アプリID（または追加起点ID / スペースID）を入力してください');
-  const popup = getToolWindow().open('', '_blank');
-  if (!popup) throw new Error('別タブを開けませんでした。ポップアップブロックを確認してください');
-  try { popup.opener = null; } catch (_) { /* noop */ }
-  popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
-  setStatus(`ER図の解析を開始します... 起点 ${summarizeErStartIds(options.startAppIds)} / ${formatErLayoutLabel(options.layoutName)} / ${options.fieldDensity}`);
-  progressUi.init();
-  progressUi.update(4, `開始: 起点 ${summarizeErStartIds(options.startAppIds)}`);
-
-  try {
-    const apps = await crawl(options.startAppIds, options);
-    assertErAnalysed(apps, options);
-    progressUi.update(94, 'HTML生成中...');
-    const html = buildHTML(apps, options);
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    popup.location.href = url;
-    progressUi.close();
-    // 起点アプリ群と一致 = 関連が全く伸びなかった = 孤立しているケース
-    const seedCount = options.startAppIds.length;
-    const onlySeeds = apps.length === seedCount;
-    const partialCount = apps.filter((app) => app?.status === 'partial').length;
-    const failedCount = apps.filter((app) => app?.status === 'failed' || app?.ok === false).length;
-    if (partialCount || failedCount) {
-      setStatus(`ER図を生成しました: ${apps.length}アプリ（一部取得 ${partialCount} / 取得失敗 ${failedCount}）。図内の「構造チェック」で未取得範囲を確認してください`, !!failedCount);
-    } else if (onlySeeds && seedCount === 1) {
-      const totalRels = apps[0]?.relations?.length || 0;
-      if (totalRels === 0) {
-        setStatus(`ER図の生成完了: 起点アプリのみ表示（関連 0件）。「逆引き探索」をONにすると、このアプリを参照しているアプリも辿れます`);
-      } else {
-        setStatus(`ER図の生成完了: 起点アプリのみ表示（関連先アプリは取得不可）`);
-      }
-    } else {
-      setStatus(`ER図の生成完了: ${apps.length}アプリを別タブ表示しました`);
-    }
-    setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
-  } catch (e) {
-    try { popup.close(); } catch (e) { /* noop */ }
-    progressUi.error(e.message || String(e));
-    throw e;
-  }
-}
-
-export async function runExportERDiagramHtml() {
-  const options = readErDiagramOptions();
-  await resolveErStartAppIds(options);
-  if (!options.startAppIds?.length) throw new Error('比較元アプリID（または追加起点ID / スペースID）を入力してください');
-  setStatus(`ER図HTMLを生成します... 起点 ${summarizeErStartIds(options.startAppIds)}`);
-  progressUi.init();
-  progressUi.update(4, `開始: 起点 ${summarizeErStartIds(options.startAppIds)}`);
-
-  try {
-    const apps = await crawl(options.startAppIds, options);
-    assertErAnalysed(apps, options);
-    progressUi.update(94, 'HTML保存データ生成中...');
-    const html = buildHTML(apps, options);
-    const suffix = `${options.source?.guestId ? `guest${options.source.guestId}_` : ''}${options.source?.preview ? 'プレビュー' : '本番'}`;
-    downloadText(
-      buildExportFilename('ER図', 'html', { appLabel: buildAppFilenameLabel(options.startAppId, ''), suffix }),
-      html,
-      'text/html'
-    );
-    progressUi.close();
-    const partialCount = apps.filter((app) => app?.status === 'partial').length;
-    const failedCount = apps.filter((app) => app?.status === 'failed' || app?.ok === false).length;
-    setStatus(partialCount || failedCount
-      ? `ER図HTMLを保存しました: ${apps.length}アプリ（一部取得 ${partialCount} / 取得失敗 ${failedCount}）`
-      : `ER図HTMLを保存しました (${apps.length}アプリ)`, !!failedCount);
-  } catch (e) {
-    progressUi.error(e.message || String(e));
-    throw e;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // ER プリセット: 詳細オプションをワンクリックで既定値に揃える
 // ---------------------------------------------------------------------------
@@ -4567,118 +4343,6 @@ const ER_PRESETS: Record<string, ErPreset> = {
   space:        { label: 'スペース全体', layout: 'dagre', density: 'standard', maxDepth: '2', includeSubtable: true, includeReverseLookup: false, focusSpaceInput: true }
 };
 
-export function applyErPreset(presetKey: string): void {
-  const preset = ER_PRESETS[presetKey];
-  if (!preset) {
-    setStatus(`不明なプリセット: ${presetKey}`, true);
-    return;
-  }
-  if (preset.layout != null && ui.erLayout) ui.erLayout.value = preset.layout;
-  if (preset.density != null && ui.erFieldDensity) ui.erFieldDensity.value = preset.density;
-  if (preset.maxDepth != null && ui.erMaxDepth) ui.erMaxDepth.value = preset.maxDepth;
-  if (preset.includeSubtable != null && ui.erIncludeSubtable) ui.erIncludeSubtable.checked = preset.includeSubtable;
-  if (preset.includeReverseLookup != null && ui.erIncludeReverseLookup) ui.erIncludeReverseLookup.checked = preset.includeReverseLookup;
-  if (preset.focusSpaceInput && ui.erSpaceId) {
-    try {
-      ui.erSpaceId.focus();
-      ui.erSpaceId.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    } catch (e) { /* noop */ }
-  }
-  renderErPreflight();
-  renderErRouteMeta();
-  setStatus(`ER プリセット「${preset.label}」を適用しました`);
-}
-
 // ---------------------------------------------------------------------------
 // 事前見積もり: 生成前に「何を取得するか」を要約表示
 // ---------------------------------------------------------------------------
-
-export function renderErPreflight(): void {
-  let host: HTMLElement | null;
-  try { host = getToolDocument().getElementById('u_erPreflight'); }
-  catch { host = null; }
-  if (!host) return;
-  let opts: ReturnType<typeof readErDiagramOptions>;
-  try { opts = readErDiagramOptions(); }
-  catch { host.innerHTML = ''; return; }
-
-  const startCount = opts.startAppIds.length;
-  const hasSpace = !!opts.spaceId;
-  const spaceSelected = Array.isArray(opts.spaceSelectedAppIds) ? opts.spaceSelectedAppIds : null;
-  const reverse = !!opts.includeReverseLookup;
-  const depth = opts.maxDepth === 0 ? '無制限' : `${opts.maxDepth} ホップ`;
-  const densityLabel = ({ none: '結合のみ', compact: '簡易', standard: '標準', full: '詳細' } as Record<string, string>)[opts.fieldDensity] || opts.fieldDensity;
-
-  if (!startCount && (!hasSpace || (spaceSelected && !spaceSelected.length))) {
-    host.innerHTML = `<div class="er-preflight__empty">起点アプリIDがありません — 上の接続設定で比較元を指定するか、追加起点 / スペースIDを入力してください。</div>`;
-    return;
-  }
-
-  const warnings: string[] = [];
-  if (reverse) warnings.push('逆引き探索ON: 全アプリを走査するため時間がかかります（アプリ数 × 数秒）。');
-  if (opts.maxDepth === 0) warnings.push('深さ無制限: アプリ網が大きい場合は実行時間が伸びます。');
-  if (hasSpace) {
-    if (spaceSelected) warnings.push(`スペース ${opts.spaceId} 内の選択した ${spaceSelected.length}アプリを起点に追加します（重複は自動で除外）。`);
-    else warnings.push(`スペース ${opts.spaceId} 内の全アプリを起点に追加します。特定のアプリだけにしたい場合は「スペース内アプリを読み込む」で選択してください。`);
-  }
-  if (startCount > 5 && !hasSpace) warnings.push(`起点が ${startCount}アプリと多めです。広範囲を探索します。`);
-
-  const seedLabel = startCount
-    ? opts.startAppIds.slice(0, 5).join(', ') + (startCount > 5 ? ` 他${startCount - 5}` : '')
-    : '（スペース内アプリ）';
-  const warningsHtml = warnings.length
-    ? `<div class="er-preflight__warnings">${warnings.map((w) => `<div class="er-preflight__warn">⚠ ${esc(w)}</div>`).join('')}</div>`
-    : `<div class="er-preflight__ok">✓ 軽量な探索です。すぐに生成できます。</div>`;
-  host.innerHTML = `
-    <div class="er-preflight__head">
-      <span class="er-preflight__lbl">事前見積もり</span>
-      <span class="er-preflight__hint">生成前に取得範囲を確認できます</span>
-    </div>
-    <div class="er-preflight__grid">
-      <div class="er-preflight__chip"><span class="er-preflight__chip-lbl">起点</span><span class="er-preflight__chip-val">${esc(String(startCount))} アプリ</span></div>
-      <div class="er-preflight__chip"><span class="er-preflight__chip-lbl">探索深さ</span><span class="er-preflight__chip-val">${esc(depth)}</span></div>
-      <div class="er-preflight__chip"><span class="er-preflight__chip-lbl">密度</span><span class="er-preflight__chip-val">${esc(densityLabel)}</span></div>
-      <div class="er-preflight__chip"><span class="er-preflight__chip-lbl">サブテーブル</span><span class="er-preflight__chip-val">${opts.includeSubtableFields ? 'ON' : 'OFF'}</span></div>
-      <div class="er-preflight__chip${reverse ? ' er-preflight__chip--warn' : ''}"><span class="er-preflight__chip-lbl">逆引き</span><span class="er-preflight__chip-val">${reverse ? 'ON (全走査)' : 'OFF'}</span></div>
-      ${hasSpace ? `<div class="er-preflight__chip er-preflight__chip--warn"><span class="er-preflight__chip-lbl">スペース</span><span class="er-preflight__chip-val">#${esc(opts.spaceId)}</span></div>` : ''}
-    </div>
-    <div class="er-preflight__seed" title="${esc(seedLabel)}"><span class="er-preflight__chip-lbl">起点ID</span> <code>${esc(seedLabel)}</code></div>
-    ${warningsHtml}
-  `;
-}
-
-export function renderErRouteMeta(): void {
-  let host: HTMLElement | null;
-  try { host = getToolDocument().getElementById('u_erRouteMeta'); }
-  catch { host = null; }
-  if (!host) return;
-  let opts: ReturnType<typeof readErDiagramOptions>;
-  try { opts = readErDiagramOptions(); }
-  catch { return; }
-  const layoutLabel = formatErLayoutLabel(opts.layoutName);
-  const densityLabel = ({ none: '結合のみ（項目非表示）', compact: '簡易密度', standard: '標準密度', full: '詳細密度' } as Record<string, string>)[opts.fieldDensity] || opts.fieldDensity;
-  const subtableLabel = `サブテーブル${opts.includeSubtableFields ? 'ON' : 'OFF'}`;
-  const depthLabel = opts.maxDepth === 0 ? '深さ無制限' : `深さ${opts.maxDepth}`;
-  const reverseLabel = opts.includeReverseLookup ? '逆引きON' : '';
-  const parts = [layoutLabel, densityLabel, depthLabel, subtableLabel, reverseLabel].filter(Boolean);
-  host.innerHTML = parts.map((p) => `<span>${esc(p)}</span>`).join('');
-}
-
-/**
- * ER タブを開いた・オプションを変更した瞬間に preflight と meta を再描画する。
- * UI 初期化フローから呼び出される（boot 時の登録は handlers/setupEventHandlers 側）。
- */
-export function bindErPreflightListeners(): void {
-  const doc = (() => { try { return getToolDocument(); } catch { return null; } })();
-  if (!doc) return;
-  const ids = ['u_erLayout', 'u_erFieldDensity', 'u_erMaxDepth', 'u_erExtraApps', 'u_erSpaceId', 'u_erIncludeSubtable', 'u_erIncludeReverseLookup', 'u_sourceApp'];
-  ids.forEach((id) => {
-    const el = doc.getElementById(id) as HTMLElement & { _kusErBound?: boolean } | null;
-    if (!el || el._kusErBound) return;
-    el._kusErBound = true;
-    el.addEventListener('input', () => { renderErPreflight(); renderErRouteMeta(); });
-    el.addEventListener('change', () => { renderErPreflight(); renderErRouteMeta(); });
-  });
-  renderErPreflight();
-  renderErRouteMeta();
-}

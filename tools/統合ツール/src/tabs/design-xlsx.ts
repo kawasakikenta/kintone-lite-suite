@@ -3,7 +3,7 @@
 import { TOOL_ID, EXTERNAL_LIBRARIES, SECTION_DEFS } from '../constants.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 import { getToolDocument } from '../ui/dialog.js';
-import { showToast, stripHtmlToText, extractAppNameFromBundle } from '../utils.js';
+import { showToast, stripHtmlToText, extractAppNameFromBundle, flattenCategories } from '../utils.js';
 import { isCancelRequested, isRunCancelledError, raceWithCancel, requestCancel, RUN_CANCELLED_MESSAGE, throwIfCancelled } from '../runControl.js';
 import { API_GET_TIMEOUT_MS } from '../api.js';
 
@@ -1681,26 +1681,14 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       if (appSettings?.threadId) sAoa.push(['スレッドID', appSettings.threadId]);
       sAoa.push([]);
 
-      if (categories && (categories.enabled != null || categories.enable != null || (Array.isArray(categories.categories) && categories.categories.length > 0))) {
+      const flatCategories = flattenCategories(categories?.categories).map((category) => category.path);
+      if (categories && (categories.enabled != null || categories.enable != null || flatCategories.length > 0)) {
         sAoa.push(['カテゴリー']); sectionRows.push(sAoa.length - 1);
         sAoa.push(['項目', '内容']); headerInfoRows.push(sAoa.length - 1);
         const catEnabled = categories.enabled ?? categories.enable;
         if (catEnabled != null) {
           sAoa.push(['カテゴリー機能', catEnabled ? '有効' : '無効']);
         }
-        const flatCategories: string[] = [];
-        const walkCategories = (items: any[], parentPath = '') => {
-          for (const item of items || []) {
-            const label = typeof item === 'string' ? item : String(item?.name || item?.label || item?.code || '').trim();
-            if (!label) continue;
-            const currentPath = parentPath ? `${parentPath} > ${label}` : label;
-            flatCategories.push(currentPath);
-            if (Array.isArray(item?.children) && item.children.length > 0) {
-              walkCategories(item.children, currentPath);
-            }
-          }
-        };
-        walkCategories(Array.isArray(categories.categories) ? categories.categories : []);
         sAoa.push(['カテゴリー数', flatCategories.length]);
         sAoa.push(['カテゴリー一覧', flatCategories.length > 0 ? flatCategories.join(', ') : '(なし)']);
         sAoa.push([]);

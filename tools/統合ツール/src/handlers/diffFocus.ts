@@ -35,28 +35,6 @@ export function focusDiffRow(rowId: string, options: FocusDiffRowOptions = {}): 
   return true;
 }
 
-export function focusNextDiffRow(direction: number): boolean {
-  const res = getToolDocument().getElementById('u_result');
-  if (!res) return false;
-  const trs = [...res.querySelectorAll('[data-diff-row-tr]')];
-  if (!trs.length) return false;
-  const ids = trs.map((el) => el.getAttribute('data-diff-row-tr') || '');
-  const curIdx = state.diffFocusedRowId ? ids.indexOf(state.diffFocusedRowId) : -1;
-  let nextIdx: number;
-  if (curIdx === -1) {
-    nextIdx = direction > 0 ? 0 : ids.length - 1;
-  } else {
-    nextIdx = curIdx + direction;
-    if (nextIdx < 0) nextIdx = 0;
-    if (nextIdx >= ids.length) nextIdx = ids.length - 1;
-  }
-  return focusDiffRow(ids[nextIdx]);
-}
-
-export function parseIdSet(text: string): string[] {
-  return [...new Set(String(text || '').split(/[\s,]+/).map((v) => v.trim()).filter((v) => /^\d+$/.test(v)))];
-}
-
 export function normalizeDiffFavoritePath(path: string): string {
   return String(path || '').trim();
 }

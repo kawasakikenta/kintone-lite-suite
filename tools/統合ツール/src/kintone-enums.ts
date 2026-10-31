@@ -221,16 +221,6 @@ export const ROUNDING_MODE_JP: Record<string, string> = {
   DOWN: '切り捨て'
 };
 
-/** Webhook イベント */
-export const WEBHOOK_EVENT_JP: Record<string, string> = {
-  ADD_RECORD: 'レコード追加',
-  UPDATE_RECORD: 'レコード編集',
-  DELETE_RECORD: 'レコード削除',
-  UPDATE_STATUS: 'ステータス変更',
-  ADD_COMMENT: 'コメント追加',
-  DELETE_COMMENT: 'コメント削除'
-};
-
 /** 数値・計算フィールドの format */
 export const NUMBER_FORMAT_JP: Record<string, string> = {
   NUMBER: '数値',
@@ -243,7 +233,6 @@ export const NUMBER_FORMAT_JP: Record<string, string> = {
   HOUR_MINUTE: '時:分',
   HOUR_MINUTE_SECOND: '時:分:秒'
 };
-
 
 /** 選択肢の並び（CHECK_BOX/RADIO_BUTTON 等） */
 export const ALIGN_JP: Record<string, string> = {
@@ -303,45 +292,4 @@ export function describePeriodicReport(value: unknown): string | null {
   ].filter(Boolean).join(' ');
   const state = report.active === false ? '無効' : '有効';
   return schedule ? `${state}（${schedule}）` : state;
-}
-
-
-/** すべての ENUM 辞書を 1 つにまとめたフラットマップ。テキスト全文置換用。 */
-// @__PURE__ 注釈: 未使用バンドルでは辞書ごと tree-shaking できるようにする
-// （これが無いと IIFE が副作用扱いになり、全 lite bundle に全辞書が混入する）。
-const ALL_ENUM_LABELS: Record<string, string> = /* @__PURE__ */ (() => {
-  const out: Record<string, string> = {};
-  // フィールド型 / エンティティ型は CREATOR / MODIFIER などキーが衝突するので
-  // 「より使われる方」を優先（フィールド型 → エンティティ型の順で上書き）。
-  Object.assign(out, ENTITY_TYPE_JP, FIELD_TYPE_JP);
-  Object.assign(out, VIEW_TYPE_JP, VIEW_BUILTIN_TYPE_JP, PAGINATION_TYPE_JP);
-  Object.assign(out, CHART_TYPE_JP, CHART_MODE_JP, AGGREGATION_TYPE_JP, GROUP_PER_JP);
-  Object.assign(out, PROCESS_ASSIGNEE_TYPE_JP, NOTIFICATION_TIMING_JP);
-  Object.assign(out, RESOURCE_TYPE_JP, CUSTOMIZE_SCOPE_JP, ICON_TYPE_JP);
-  Object.assign(out, WEBHOOK_EVENT_JP, NUMBER_FORMAT_JP);
-  Object.assign(out, ALIGN_JP, UNIT_POSITION_JP, LINK_PROTOCOL_JP);
-  // 文脈でしか意味が決まらない辞書（REPORT_SORT_ORDER_JP の ASC/DESC、
-  // PERIODIC_REPORT_EVERY_JP の MONTH=毎月 と GROUP_PER_JP の MONTH=月 等）は
-  // 全文置換に混ぜると別の場所を壊すため、ここへは加えない。
-  return out;
-})();
-
-/**
- * JSON 化されたテキストに含まれる kintone API ENUM 値を日本語ラベルに置換する。
- *
- * 安全性のため、置換対象は **ダブルクォートで囲まれた完全一致トークン** （例: `"CREATOR"`）に限定。
- *  - URL 文字列内の `/URL/foo` のような偶発的一致を起こさない
- *  - 置換結果の値（例: 「URL指定」）が次の置換で再度マッチして「URL指定指定」になることを防ぐ
- *
- * 長いキーから先に置換することで部分一致衝突を避ける（例: STATUS_ASSIGNEE → STATUS の順）。
- */
-export function localizeKintoneEnumsInText(input: string): string {
-  if (!input) return input;
-  let out = input;
-  const keys = Object.keys(ALL_ENUM_LABELS).sort((a, b) => b.length - a.length);
-  for (const key of keys) {
-    const jp = ALL_ENUM_LABELS[key];
-    out = out.split('"' + key + '"').join('"' + jp + '"');
-  }
-  return out;
 }
