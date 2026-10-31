@@ -2529,7 +2529,7 @@ describe('diff/xlsx-export', () => {
     }), '差分一覧');
 
     expect(list).toContain('レイアウト行 #1 / フィールド #2 「優先度」（priority） / 内側の高さ');
-    expect(list).toContain('レイアウト行「行 #1」 / 入力欄の高さ 変更');
+    expect(list).toContain('レイアウト行「行 #1」 / フィールド「priority」 / 入力欄の高さ 変更');
     expect(list).not.toContain('行 #0');
     expect(list).not.toContain('行 #2');
     expect(list).not.toContain('innerheight');

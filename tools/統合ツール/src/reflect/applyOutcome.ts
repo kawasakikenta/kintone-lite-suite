@@ -5,6 +5,8 @@
 // DOM・API に依存しない純粋関数のみを置く（vitest で直接テストする）。
 // =============================================================================
 
+import { withoutApiContextLines } from '../utils.js';
+
 export type ApplySectionStatus = 'ok' | 'ng' | 'skip' | 'pending';
 
 export interface ApplySectionOutcome {
@@ -80,8 +82,7 @@ export function pushReflectErrorLog(logs: string[], line: string, errorMessage: 
  * 専門用語の「revision 競合」は、かみ砕いた説明を先に添える。
  */
 export function describeReflectFailure(message: string | undefined): string {
-  const lines = String(message || '').split('\n').filter((line) => !/^\s*\[API\]\s/.test(line));
-  return lines.join('\n').trim().replace('（revision 競合）', '（ほかの更新と重なったため。revision 競合）');
+  return withoutApiContextLines(message).replace('（revision 競合）', '（ほかの更新と重なったため。revision 競合）');
 }
 
 /**

@@ -455,8 +455,13 @@ export function decodeRow(row: any): DecodedRow | null {
 }
 
 function buildOneLineSummary(row: any, propLabel: string, beforeText: string, afterText: string): string {
-  const shortLeft = beforeText.length > 30 ? beforeText.slice(0, 30) + '…' : beforeText;
-  const shortRight = afterText.length > 30 ? afterText.slice(0, 30) + '…' : afterText;
+  // 見出しは 1 行で示す。オブジェクトの要約は複数行になる。
+  const shorten = (text: string) => {
+    const line = text.replace(/\s*\n\s*/g, ' / ');
+    return line.length > 30 ? line.slice(0, 30) + '…' : line;
+  };
+  const shortLeft = shorten(beforeText);
+  const shortRight = shorten(afterText);
   if (row.type === 'added')   return propLabel ? `${propLabel}: 追加（${shortRight}）` : `追加（${shortRight}）`;
   if (row.type === 'removed') return propLabel ? `${propLabel}: 削除（${shortLeft}）` : `削除（${shortLeft}）`;
   if (row.type === 'same')    return propLabel ? `${propLabel}: 同一` : '同一';

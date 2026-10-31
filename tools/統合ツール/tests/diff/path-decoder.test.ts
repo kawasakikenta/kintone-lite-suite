@@ -2,6 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { decodeRow, isSemanticSection } from '../../src/diff/path-decoder';
 import { labelOfProp, labelOfValue, labelOfBool, formatEntityText } from '../../src/diff/label-dict';
 
+describe('decodeRow summaries', () => {
+  it('keeps multi-line object summaries on one line', () => {
+    const decoded = decodeRow({ sectionKey: 'actionSettings', type: 'removed', path: 'actionSettings.actions.a', left: { name: 'a', id: '1' } });
+    expect(decoded!.oneLineSummary).not.toContain('\n');
+  });
+});
+
 describe('label-dict', () => {
   it('labelOfProp maps known keys to Japanese', () => {
     expect(labelOfProp('recordEditable')).toBe('レコード編集');

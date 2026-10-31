@@ -186,8 +186,8 @@ describe('design xlsx output', () => {
       incompleteSectionCount: 3,
       fetchErrorSectionCount: 2,
       partialSectionCount: 1,
-      supplementalMissingCount: 3,
-      supplementalIncompleteCount: 3
+      supplementalMissingCount: 2,
+      supplementalIncompleteCount: 2
     });
     expect(result.completionSummary).toEqual(completions[0]);
     expect(result.wb.SheetNames).toContain('取得状況');
@@ -297,7 +297,6 @@ describe('design xlsx output', () => {
       if (path.includes('/customize.json')) return { desktop: { js: [], css: [] }, mobile: { js: [], css: [] } };
       if (path.includes('/acl.json') || path.includes('/field/acl.json') || path.includes('/record/acl.json')) return { rights: [] };
       if (path.includes('/notifications/')) return { notifications: [] };
-      if (path.includes('/webhook.json')) return { webhooks: [] };
       if (path.includes('/adminNotes.json')) return { content: '' };
       if (path.includes('/categories.json')) return { categories: [] };
       if (path.endsWith('/form.json')) return { revision: '1' };
@@ -327,7 +326,6 @@ describe('design xlsx output', () => {
     expect(apiCalls).toContain('/k/guest/77/v1/app.json');
     expect(apiCalls).toContain('/k/guest/77/v1/records.json');
     expect(apiCalls).toContain('/k/guest/77/v1/app/adminNotes.json');
-    expect(apiCalls).toContain('/k/guest/77/v1/app/webhook.json');
     expect(apiCalls).not.toContain('/k/guest/77/v1/preview/app.json');
     expect(apiCalls).not.toContain('/k/guest/77/v1/app/form/fields.json');
     expect(apiCalls).not.toContain('/k/guest/77/v1/app/form/layout.json');
@@ -438,7 +436,6 @@ describe('design xlsx output', () => {
       if (path.includes('/customize.json')) return { desktop: { js: [], css: [] }, mobile: { js: [], css: [] } };
       if (path.includes('/acl.json') || path.includes('/field/acl.json') || path.includes('/record/acl.json')) return { rights: [] };
       if (path.includes('/notifications/')) return { notifications: [] };
-      if (path.includes('/webhook.json')) return { webhooks: [] };
       if (path.includes('/adminNotes.json')) return { content: '' };
       if (path.includes('/categories.json')) return { categories: [] };
       if (path.endsWith('/form.json')) return { revision: '1' };
