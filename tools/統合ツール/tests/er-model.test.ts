@@ -402,6 +402,26 @@ describe('buildErMermaidSource / buildErMarkdownSpec / buildErRelationsCsv', () 
     expect(fullMermaid).toContain('MULTI_LINE_TEXT note');
   });
 
+  it('keeps Mermaid attribute names ASCII and the real field code in the note', () => {
+    const mermaid = buildErMermaidSource([{ id: 7, name: '売上 100%% "確定"', relations: [], fields: [
+      { code: 'レコード番号', label: 'レコード番号', type: 'RECORD_NUMBER', isPK: true },
+      { code: '文字列__1行_', label: '件名', type: 'SINGLE_LINE_TEXT' },
+      { code: 'amount', label: 'amount', type: 'NUMBER' },
+      { code: '金額', label: '金額', type: 'NUMBER' }
+    ] }], {});
+    expect(mermaid).toContain('RECORD_NUMBER field_1 PK "レコード番号"');
+    expect(mermaid).toContain('SINGLE_LINE_TEXT field_2 "件名 [文字列__1行_]"');
+    expect(mermaid).toContain('NUMBER amount "amount"');
+    expect(mermaid).toContain('NUMBER field_4 "金額"');
+    expect(mermaid).toContain('app_7["売上 100% \'確定\' (App 7)"]');
+    expect(mermaid).not.toMatch(/^ {4}\S+ [^\x00-\x7F]/m);
+  });
+
+  it('escapes HTML-like names in the Markdown spec', () => {
+    const md = buildErMarkdownSpec([{ id: 7, name: '活動 <重要> | C:\\tmp', relations: [], fields: [] }], undefined, { generatedAt: 'x' });
+    expect(md).toContain('活動 \\<重要\\> \\| C:\\\\tmp');
+  });
+
   it('builds ER Markdown spec with graph analysis summary (SCC, hub, isolated, unresolved)', () => {
     const analysis = analyzeErDependencies(sampleApps);
     const md = buildErMarkdownSpec(sampleApps, analysis, { generatedAt: '2026-10-31T00:00:00.000Z' });
