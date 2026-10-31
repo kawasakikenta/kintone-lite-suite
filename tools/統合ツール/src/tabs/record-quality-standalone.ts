@@ -63,7 +63,7 @@ export async function runRecordQualityStandalone(options: QualityOptions & { app
 
 export async function runCsvTemplateStandalone(options: { appIdsText: string; guestId: string }, setStatus: Status): Promise<{ warning?: string }> {
   const { appIds, prefix } = connection(options.appIdsText, options.guestId);
-  const templates: Array<{ appId: string; template: ReturnType<typeof buildCsvImportTemplate> }> = [];
+  const templates: Array<{ appId: string; excludedCount: number; template: ReturnType<typeof buildCsvImportTemplate> }> = [];
   const failures: string[] = [];
   /** 中止で止めた位置。-1 は最後まで実行した。 */
   let stoppedAt = -1;
@@ -73,7 +73,9 @@ export async function runCsvTemplateStandalone(options: { appIdsText: string; gu
     try {
       // Match the existing CSV importer, which validates choices in the app's default language.
       const fields = await apiGet(prefix, '/app/form/fields.json', { app: appId });
-      templates.push({ appId, template: buildCsvImportTemplate(fields?.properties) });
+      const Built = buildCsvImportTemplate(fields?.properties);
+      const excludedCount = Math.max(0, Object.keys(fields?.properties || {}).length - Built.columnCount);
+      templates.push({ appId, excludedCount, template: Built });
     } catch (error: any) {
       if (isRunCancelledError(error)) { stoppedAt = i; break; }
       failures.push(`App ${appId}: ${error.message || String(error)}`);
@@ -100,7 +102,8 @@ export async function runCsvTemplateStandalone(options: { appIdsText: string; gu
     ].join('\r\n');
     zip.file(folder + 'README.txt', head + template.readme + '\r\n');
   }
-  zip.file('manifest.json', JSON.stringify({ createdAt: generatedAt, guestId: options.guestId, templates: templates.map(item => ({ appId: item.appId, columns: item.template.columnCount })), failures, ...(notRun.length ? { cancelled: true, notExecuted: notRun.map(label => `${label}: 未実行（中止）`) } : {}) }, null, 2));
+  const appEntries = templates.map(item => ({ appId: item.appId, guestId: options.guestId || '', columns: item.template.columnCount, excludedCount: item.excludedCount }));
+  zip.file('manifest.json', JSON.stringify({ generatedAt, createdAt: generatedAt, guestId: options.guestId, apps: appEntries, templates: appEntries, failures, ...(notRun.length ? { cancelled: true, notExecuted: notRun.map(label => `${label}: 未実行（中止）`) } : {}) }, null, 2));
   downloadBlob(buildExportFilename('CSV取込ひな形', 'zip'), await zip.generateAsync({ type: 'blob' }));
   if (notRun.length) {
     return { warning: `${formatCancelledHeadline(stoppedAt, appIds.length)}\n${templates.length}アプリのひな形だけを保存しました${failures.length ? ` / 失敗 ${failures.length}アプリ` : ''}\n未実行（中止）: ${notRun.join(', ')}${failures.length ? `\n${failures.join('\n')}` : ''}` };

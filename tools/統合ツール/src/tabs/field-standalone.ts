@@ -869,3 +869,118 @@ export async function runBulkRenameFieldStandalone(opts, setStatus) {
   setStatus(`プレフィックス${removeMode ? '除去' : '付与'}完了: ${result.modifiedCount}件`);
   return { properties: result.properties, modifiedCount: result.modifiedCount, renamePairs: result.renamePairs, renameMode: result.renameMode };
 }
+
+export interface FieldApplyMarkdownInput {
+  generatedAt?: string;
+  targetAppId?: string;
+  targetGuestId?: string;
+  targetAppName?: string;
+  overwrite?: boolean;
+  lookupMap?: Record<string, string>;
+  plan?: FieldApplyPlan;
+  logs?: string[];
+  multiReport?: FieldMultiApplyReport;
+  results?: FieldMultiTargetResult[];
+  counts?: Partial<Record<FieldMultiStatus, number>>;
+  totals?: { add: number; update: number; skip: number };
+  headline?: string;
+  declined?: boolean;
+  cancelled?: boolean;
+  lines?: string[];
+}
+
+/**
+ * フィールド追加（単一アプリまたは複数アプリ一括 runFieldApplyMultiStandalone）の計画・結果を
+ * Markdown レポートとして整形する純粋関数。
+ */
+export function buildFieldApplyReportMarkdown(
+  input: FieldApplyMarkdownInput | FieldMultiApplyReport | string[]
+): string {
+  const escMd = (val: unknown) => String(val ?? '-').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  if (Array.isArray(input)) {
+    const lines = [
+      '# フィールド追加・更新 実行レポート',
+      '',
+      '## 実行ログ',
+      '',
+      ...input.map((line) => `- ${line}`)
+    ];
+    return lines.join('\n') + '\n';
+  }
+  const raw = (input || {}) as FieldApplyMarkdownInput;
+  const multi: FieldMultiApplyReport | null = raw.multiReport
+    || (Array.isArray(raw.results) ? (raw as unknown as FieldMultiApplyReport) : null);
+  const lines: string[] = [
+    '# フィールド追加・更新 実行レポート',
+    ''
+  ];
+  if (raw.generatedAt) {
+    lines.push(`- 出力日時: ${raw.generatedAt}`);
+  }
+  if (typeof raw.overwrite === 'boolean') {
+    lines.push(`- 既存フィールド上書き: ${raw.overwrite ? '有効（UPDATE）' : '無効（SKIP）'}`);
+  }
+  const lookupEntries = Object.entries(raw.lookupMap || {});
+  if (lookupEntries.length) {
+    lines.push(`- Lookup AppID変換: ${lookupEntries.map(([from, to]) => `${from} → ${to}`).join('、')}`);
+  }
+
+  if (multi) {
+    const results = Array.isArray(multi.results) ? multi.results : [];
+    const totals = multi.totals || { add: 0, update: 0, skip: 0 };
+    if (multi.headline) {
+      lines.push(`- 概要: ${multi.headline}`);
+    }
+    lines.push(
+      `- 対象アプリ数: ${results.length}件`,
+      `- 反映合計: 追加 ${totals.add}件 / 更新 ${totals.update}件 / スキップ ${totals.skip}件`,
+      '- 書き込み先はプレビューです。本番への公開は各アプリの設定画面で行います。',
+      '',
+      '## 反映先アプリ別結果',
+      '',
+      '| 反映先アプリID | アプリ名 | ゲストスペース | 状態 | 追加 | 更新 | スキップ | フェーズ | 詳細 |',
+      '| --- | --- | --- | --- | ---: | ---: | ---: | --- | --- |'
+    );
+    for (const r of results) {
+      const statusLabel = FIELD_MULTI_STATUS_LABEL[r.status] || r.status;
+      lines.push(
+        `| ${escMd(r.appId)} | ${escMd(r.appName || '-')} | ${escMd(r.guestId || '通常')} | ${escMd(statusLabel)} | ${Number(r.add ?? 0)} | ${Number(r.update ?? 0)} | ${Number(r.skip ?? 0)} | ${escMd(r.phase || '-')} | ${escMd(r.message || 'OK')} |`
+      );
+    }
+    if (Array.isArray(multi.lines) && multi.lines.length) {
+      lines.push('', '## 詳細ログ', '');
+      for (const l of multi.lines) lines.push(`- ${l}`);
+    }
+    return lines.join('\n') + '\n';
+  }
+
+  const targetLabel = raw.targetAppId
+    ? `App ${raw.targetAppId}${raw.targetAppName ? `（${raw.targetAppName}）` : ''}${raw.targetGuestId ? ` / ゲストスペース ${raw.targetGuestId}` : ''}`
+    : '-';
+  lines.push(`- 反映先: ${targetLabel}`);
+  lines.push('- 書き込み先はプレビューです。本番への公開はアプリの設定画面で行います。');
+  if (raw.plan) {
+    const addKeys = Object.keys(raw.plan.adds || {});
+    const updateKeys = Object.keys(raw.plan.updates || {});
+    const skipSystem = raw.plan.skippedSystem || [];
+    const skipExisting = raw.plan.skippedExisting || [];
+    lines.push(
+      `- 件数: 追加 ${addKeys.length}件 / 更新 ${updateKeys.length}件 / スキップ ${skipSystem.length + skipExisting.length}件`,
+      '',
+      '## フィールド内訳',
+      '',
+      '| 区分 | 件数 | フィールドコード |',
+      '| --- | ---: | --- |',
+      `| 追加 (ADD) | ${addKeys.length} | ${escMd(addKeys.join(', ') || 'なし')} |`,
+      `| 更新 (UPDATE) | ${updateKeys.length} | ${escMd(updateKeys.join(', ') || 'なし')} |`,
+      `| スキップ (既存) | ${skipExisting.length} | ${escMd(skipExisting.join(', ') || 'なし')} |`,
+      `| スキップ (システム) | ${skipSystem.length} | ${escMd(skipSystem.join(', ') || 'なし')} |`
+    );
+  }
+  const logLines = raw.logs || raw.plan?.logs || [];
+  if (logLines.length) {
+    lines.push('', '## 実行ログ', '');
+    for (const l of logLines) lines.push(`- ${l}`);
+  }
+  return lines.join('\n') + '\n';
+}

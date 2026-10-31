@@ -552,6 +552,119 @@ export async function runApplyJsConfigMultiStandalone(
   return res;
 }
 
+export interface BatchJsConfigManifestFileEntry {
+  entry: string;
+  area: 'desktop' | 'mobile';
+  kind: 'js' | 'css';
+  order: number;
+  name: string;
+  fileKey: string;
+  size: string;
+}
+
+export interface BatchJsConfigManifestUrlEntry {
+  type: 'js' | 'css';
+  scope: 'desktop' | 'mobile';
+  url: string;
+  order: number;
+}
+
+export interface BatchJsConfigManifestApp {
+  appId: string;
+  name: string;
+  folder: string;
+  scope: string;
+  revision: string;
+  files: BatchJsConfigManifestFileEntry[];
+  urlEntries: BatchJsConfigManifestUrlEntry[];
+  failures: Array<{ appId: string; fileName: string; reason: string }>;
+}
+
+export interface BatchJsConfigManifest {
+  formatVersion: 1;
+  generatedAt: string;
+  exportedAt: string;
+  guestId: string;
+  appCount: number;
+  fileCount: number;
+  apps: BatchJsConfigManifestApp[];
+  failedApps: Array<{ appId: string; name: string; reason: string }>;
+  failedFiles: Array<{ appId: string; fileName: string; reason: string }>;
+  failures: Array<{ type: 'app' | 'file'; appId: string; name?: string; fileName?: string; reason: string }>;
+  cancelled?: boolean;
+  notExecuted?: Array<{ appId: string; name: string }>;
+  note?: string;
+}
+
+/** JS/CSS設定の一括取得 ZIP に同梱する INDEX.md を組み立てる純粋関数。 */
+export function buildJsConfigBatchIndexMarkdown(manifest: Partial<BatchJsConfigManifest>): string {
+  const apps = Array.isArray(manifest?.apps) ? manifest.apps : [];
+  const exportedAt = manifest?.exportedAt || manifest?.generatedAt || '-';
+  const cell = (v: unknown) => String(v ?? '-').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  const lines: string[] = [
+    '# JS/CSS設定 一括取得 INDEX',
+    '',
+    `- 出力日時: ${exportedAt}`,
+    `- ゲストスペースID: ${manifest?.guestId || '通常（指定なし）'}`,
+    `- 対象アプリ数: ${manifest?.appCount ?? apps.length}件`,
+    `- 保存ファイル数: ${manifest?.fileCount ?? 0}件`,
+    '',
+    '## アプリ別サマリ',
+    '',
+    '| アプリID | アプリ名 | 適用範囲 (scope) | revision | フォルダ | 保存ファイル数 | 外部URL数 | 失敗数 |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |'
+  ];
+  for (const app of apps) {
+    const fileLen = Array.isArray(app.files) ? app.files.length : 0;
+    const urlLen = Array.isArray(app.urlEntries) ? app.urlEntries.length : 0;
+    const failLen = Array.isArray(app.failures) ? app.failures.length : 0;
+    lines.push(
+      `| ${cell(app.appId)} | ${cell(app.name || '-')} | ${cell(app.scope || '-')} | ${cell(app.revision || '-')} | ${cell(app.folder || '-')} | ${fileLen} | ${urlLen} | ${failLen} |`
+    );
+  }
+  lines.push(
+    '',
+    '## ファイル・外部URL一覧（アプリ別・スコープ別）',
+    '',
+    '| アプリID | アプリ名 | 適用範囲 | 枠 (desktop/mobile) | 種別 (js/css) | 読込順 (order) | 区分 | 保存先パス / 外部URL |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |'
+  );
+  let itemRows = 0;
+  for (const app of apps) {
+    for (const f of app.files || []) {
+      itemRows += 1;
+      lines.push(
+        `| ${cell(app.appId)} | ${cell(app.name || '-')} | ${cell(app.scope || '-')} | ${cell(f.area)} | ${cell(f.kind)} | ${Number(f.order ?? 0)} | FILE | ${cell(f.entry)} |`
+      );
+    }
+    for (const u of app.urlEntries || []) {
+      itemRows += 1;
+      lines.push(
+        `| ${cell(app.appId)} | ${cell(app.name || '-')} | ${cell(app.scope || '-')} | ${cell(u.scope)} | ${cell(u.type)} | ${Number(u.order ?? 0)} | URL | ${cell(u.url)} |`
+      );
+    }
+  }
+  if (!itemRows) {
+    lines.push('| - | - | - | - | - | - | - | 対象なし |');
+  }
+  const failures = Array.isArray(manifest?.failures) ? manifest.failures : [];
+  if (failures.length > 0) {
+    lines.push(
+      '',
+      '## 取得失敗一覧',
+      '',
+      '| 区分 | アプリID | 対象 | 理由 |',
+      '| --- | --- | --- | --- |'
+    );
+    for (const fail of failures) {
+      lines.push(
+        `| ${cell(fail.type)} | ${cell(fail.appId)} | ${cell(fail.fileName || fail.name || '-')} | ${cell(fail.reason)} |`
+      );
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
 export interface BatchJsConfigDownloadResult {
   apps: number;
   files: number;
@@ -608,7 +721,7 @@ export async function runBatchJsConfigDownloadStandalone(
   const zip = new JSZipCtor();
   const failedApps: BatchJsConfigDownloadResult['failedApps'] = [];
   const failedFiles: BatchJsConfigDownloadResult['failedFiles'] = [];
-  const manifestApps: Array<{ appId: string; name: string; folder: string; scope: string; files: Array<{ entry: string; area: string; kind: string; name: string; fileKey: string; size: string }> }> = [];
+  const manifestApps: BatchJsConfigManifestApp[] = [];
   let fileCount = 0;
   /** 中止で止めたアプリの位置。-1 は最後まで実行した。 */
   let stoppedAt = -1;
@@ -630,10 +743,13 @@ export async function runBatchJsConfigDownloadStandalone(
     }
 
     const files = (['desktop', 'mobile'] as const).flatMap((area) =>
-      (['js', 'css'] as const).flatMap((kind) => ((customize?.[area]?.[kind] || []) as any[]).map((f: any) => ({ ...f, area, kind })))
+      (['js', 'css'] as const).flatMap((kind) => ((customize?.[area]?.[kind] || []) as any[]).map((f: any, order: number) => ({ ...f, area, kind, order })))
     );
     const fileTargets = files.filter((f: any) => f?.type === 'FILE' && f?.file?.fileKey);
-    if (!fileTargets.length) continue;
+    const urlEntries: BatchJsConfigManifestUrlEntry[] = files
+      .filter((f: any) => f?.type === 'URL' && f?.url)
+      .map((f: any) => ({ type: f.kind, scope: f.area, url: String(f.url), order: Number(f.order ?? 0) }));
+    if (!fileTargets.length && !urlEntries.length) continue;
 
     const folderName = guestId ? `guest${guestId}_${app.appId}_${safeName}` : `${app.appId}_${safeName}`;
     const used = new CaseInsensitiveNameSet();
@@ -656,18 +772,29 @@ export async function runBatchJsConfigDownloadStandalone(
         // desktop/mobile で同名ファイルがあっても上書きしない
         const entry = uniqueZipEntryName(used, sanitizeFolderName(fileName) || 'file.bin');
         fetched.push({ entry, blob: result.blob });
-        manifestFiles.push({ entry: `${folderName}/${entry}`, area: file.area, kind: file.kind, name: fileName, fileKey: String(file.file.fileKey), size: String(file.file.size ?? '') });
+        manifestFiles.push({ entry: `${folderName}/${entry}`, area: file.area, kind: file.kind, order: Number(file.order ?? 0), name: fileName, fileKey: String(file.file.fileKey), size: String(file.file.size ?? '') });
       } else {
         appFailures.push({ appId: app.appId, fileName, reason: result.reason });
       }
     }
     // 途中で中止したアプリは一部のファイルだけが入った状態になるため、ZIP にも manifest にも入れない。
     if (interrupted) { stoppedAt = i; break; }
-    const appFolder = zip.folder(folderName);
-    for (const item of fetched) appFolder.file(item.entry, item.blob);
+    if (fetched.length) {
+      const appFolder = zip.folder(folderName);
+      for (const item of fetched) appFolder.file(item.entry, item.blob);
+    }
     fileCount += fetched.length;
     failedFiles.push(...appFailures);
-    manifestApps.push({ appId: String(app.appId), name: String(app.name || ''), folder: folderName, scope: String(customize?.scope || ''), files: manifestFiles });
+    manifestApps.push({
+      appId: String(app.appId),
+      name: String(app.name || ''),
+      folder: fileTargets.length ? folderName : '',
+      scope: String(customize?.scope || ''),
+      revision: String(pickRevision(customize) || ''),
+      files: manifestFiles,
+      urlEntries,
+      failures: appFailures
+    });
     await sleepUnlessCancelled(80);
   }
 
@@ -707,17 +834,29 @@ export async function runBatchJsConfigDownloadStandalone(
   }
 
   // どのアプリのどの読み込み枠（PC/モバイル × JS/CSS）から取ったファイルかを ZIP 内に残す
-  zip.file('manifest.json', JSON.stringify({
-    generatedAt: new Date().toISOString(),
+  const nowIso = new Date().toISOString();
+  const allFailures: BatchJsConfigManifest['failures'] = [
+    ...failedApps.map((a) => ({ type: 'app' as const, appId: a.appId, name: a.name, reason: a.reason })),
+    ...failedFiles.map((f) => ({ type: 'file' as const, appId: f.appId, fileName: f.fileName, reason: f.reason }))
+  ];
+  const manifestPayload: BatchJsConfigManifest = {
+    formatVersion: 1,
+    generatedAt: nowIso,
+    exportedAt: nowIso,
     guestId: guestId || '',
+
+
     appCount: apps.length,
     fileCount,
     apps: manifestApps,
     failedApps,
     failedFiles,
+    failures: allFailures,
     ...(notExecuted.length ? { cancelled: true, notExecuted } : {}),
-    note: 'URL 形式の JS/CSS は含みません。entry は ZIP 内のパス、area は desktop/mobile、kind は js/css です。'
-  }, null, 2));
+    note: 'URL 形式の JS/CSS 本文は ZIP に含みませんが、manifest.json と INDEX.md に一覧します。entry は ZIP 内のパス、area は desktop/mobile、kind は js/css です。'
+  };
+  zip.file('manifest.json', JSON.stringify(manifestPayload, null, 2));
+  zip.file('INDEX.md', buildJsConfigBatchIndexMarkdown(manifestPayload));
 
   setStatus('ZIPファイル作成中...');
   const zipBlob = await zip.generateAsync({ type: 'blob' });

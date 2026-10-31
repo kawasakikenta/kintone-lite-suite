@@ -348,6 +348,32 @@ function comparisonIncomplete(context: DiffXlsxContext): boolean {
     || hasIncompleteActualDiffTruncation(context.truncation));
 }
 
+function successfulAppIdentity(
+  context: DiffXlsxContext,
+  side: 'source' | 'target',
+  rawName: string
+): string {
+  const baseName = rawName || '名称未取得';
+  let bundle: DiffXlsxContext['sourceBundle'] | DiffXlsxContext['targetBundle'];
+  try {
+    bundle = side === 'source' ? context.sourceBundle : context.targetBundle;
+  } catch {
+    bundle = undefined;
+  }
+  if (!bundle || typeof bundle !== 'object') return baseName;
+  try {
+    const details: string[] = [];
+    const appId = bundle.appId == null ? '' : String(bundle.appId).trim();
+    const guestId = bundle.guestId == null ? '' : String(bundle.guestId).trim();
+    if (appId) details.push(`App ID: ${appId}`);
+    if (guestId) details.push(`ゲスト ${guestId}`);
+    if (bundle.preview) details.push('プレビュー');
+    return details.length ? `${baseName} (${details.join(' / ')})` : baseName;
+  } catch {
+    return baseName;
+  }
+}
+
 function successfulSummaryRow(
   item: DiffXlsxBatchExportItem,
   index: number,
@@ -355,8 +381,8 @@ function successfulSummaryRow(
 ): DiffXlsxBatchSummaryRow {
   const rawSourceName = contextAppName(item.context, 'source');
   const rawTargetName = contextAppName(item.context, 'target');
-  const sourceName = rawSourceName || '名称未取得';
-  const targetName = rawTargetName || '名称未取得';
+  const sourceName = successfulAppIdentity(item.context, 'source', rawSourceName);
+  const targetName = successfulAppIdentity(item.context, 'target', rawTargetName);
   const summary = summarizeCustomerDiffContext(item.context);
   const counts: DiffXlsxBatchSummaryCounts = {
     total: summary.total,
@@ -441,7 +467,7 @@ function summaryCoverageDetailStyle(
 const BATCH_SUMMARY_COLUMN_COUNT = 13;
 /** BATCH_SUMMARY_COLUMN_COUNT 列目の列記号。見出しの結合範囲に使う。 */
 const BATCH_SUMMARY_COLUMN_LAST = 'M';
-const BATCH_SUMMARY_COLUMN_WIDTHS = [7, 28, 28, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44];
+const BATCH_SUMMARY_COLUMN_WIDTHS = [7, 32, 32, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44];
 const BATCH_SUMMARY_DATA_ROW_HEIGHT = 32;
 const BATCH_SUMMARY_DATA_ROW_MAX_HEIGHT = 220;
 const BATCH_SUMMARY_DATA_LINE_HEIGHT = 17;

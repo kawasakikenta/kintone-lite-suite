@@ -17,7 +17,7 @@ import {
 import { runExportDiffXlsx, type DiffXlsxContext } from '../diff/xlsx-export.js';
 import { buildDiffXlsxBatchExport } from '../diff/xlsx-batch-export.js';
 import { runExportDiffMarkdown } from '../tabs/diff-markdown-export-standalone.js';
-import type { DiffMarkdownContext } from '../diff/markdown-export.js';
+import { buildDiffMarkdownBatchExport, type DiffMarkdownContext } from '../diff/markdown-export.js';
 import { decodeRow, type DecodedRow } from '../diff/path-decoder.js';
 import { collectFieldDefinitions, extractFieldPathInfo, getFieldRowPayload } from '../diff/enrich.js';
 import { downloadBlob, downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify, stripHtmlToText } from '../utils.js';
@@ -349,12 +349,13 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-pair-breakdown small{margin-top:2px;color:#64748b;white-space:nowrap}
 .kus-dl-pair-save{display:flex;gap:4px;justify-content:flex-end}
 .kus-dl-pair-save .kus-lp__btn{min-height:36px!important;padding:5px 7px!important;font-size:12px}
-.kus-dl-batch-save{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-radius:11px;background:#eff6ff;font-family:-apple-system,Segoe UI,sans-serif}
+.kus-dl-batch-save{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-radius:11px;background:#eff6ff;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-batch-save__text{min-width:0;color:#1e3a8a}
 .kus-dl-batch-save__text strong,.kus-dl-batch-save__text small{display:block}
 .kus-dl-batch-save__text strong{color:#10253f;font-size:14px}
 .kus-dl-batch-save__text small{margin-top:2px;font-size:12.5px;line-height:1.45}
-.kus-dl-batch-save .kus-lp__btn{flex:0 0 auto;min-width:250px}
+.kus-dl-batch-save__actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-width:0;max-width:100%}
+.kus-dl-batch-save .kus-lp__btn{flex:0 1 auto;min-width:220px;max-width:100%;box-sizing:border-box}
 
 /* Diff Lite only: human-first review workspace. Shared litePanelTheme is intentionally untouched. */
 #kus-diff-lite.kus-lp{width:min(1000px,calc(100vw - 24px));max-height:min(96vh,1040px);top:max(8px,2vh);right:max(8px,1vw);border-radius:18px;background:#f4f7fa;box-shadow:0 28px 80px -32px rgba(15,37,63,.52)}
@@ -632,6 +633,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-value__label+.kus-dl-pre::before{content:none;display:none}
   .kus-dl-table-scroll>.kus-dl-multi{white-space:nowrap}
   .kus-dl-batch-save{align-items:stretch;flex-direction:column}
+  .kus-dl-batch-save__actions{flex-direction:column;align-items:stretch;width:100%}
   .kus-dl-batch-save .kus-lp__btn{width:100%;min-width:0}
 }
 @media(max-width:420px){
@@ -741,11 +743,10 @@ export function buildLiteDiffXlsxContext(
   exportMode: string,
   exportLabel: string,
   filterDescription?: string,
-  options?: { audience?: 'customer' | 'internal'; maskSensitive?: boolean }
+  options?: { audience?: 'customer' | 'internal' }
 ): DiffXlsxContext {
   return {
     audience: options?.audience === 'internal' ? 'internal' : 'customer',
-    maskSensitive: Boolean(options?.maskSensitive),
     rows,
     fetchIssues: cache.fetchIssues || [],
     partialIssues: cache.partialIssues || [],
@@ -833,11 +834,15 @@ interface MultiXlsxExportItem {
   cache: DiffCache;
 }
 
-function multiXlsxBatchSaveMarkup(count: number): string {
+export function multiXlsxBatchSaveMarkup(count: number): string {
   if (count <= 0) return '';
-  const label = `Excelをまとめて保存（${count}件・ZIP）`;
-  return `<div class="kus-dl-batch-save"><span class="kus-dl-batch-save__text"><strong>Excelを一括保存</strong><small>成功した比較結果 ${count}件を、1つのZIPにまとめます。</small></span>`
-    + `<button type="button" class="kus-lp__btn kus-lp__btn--primary" data-kus-dl-multi-xlsx-all aria-label="${esc(label)}">${esc(label)}</button></div>`;
+  const xlsxLabel = `Excelをまとめて保存（${count}件・ZIP）`;
+  const mdLabel = `AI向けMDをまとめて保存（${count}件・ZIP）`;
+  return `<div class="kus-dl-batch-save"><span class="kus-dl-batch-save__text"><strong>一括保存（ZIP）</strong><small>成功した比較結果 ${count}件を、1つのZIPにまとめます。</small></span>`
+    + `<div class="kus-dl-batch-save__actions">`
+    + `<button type="button" class="kus-lp__btn kus-lp__btn--primary" data-kus-dl-multi-xlsx-all aria-label="${esc(xlsxLabel)}">${esc(xlsxLabel)}</button>`
+    + `<button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md-all aria-label="${esc(mdLabel)}">${esc(mdLabel)}</button>`
+    + `</div></div>`;
 }
 
 const rowSearchCache = new WeakMap<object, string>();
@@ -2971,21 +2976,14 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   ], 'customer');
   xlsxAudience.setAttribute('aria-label', 'Excelの出力構成');
   cardOut.body.appendChild(makeRow(xlsxAudience, { label: 'Excel構成' }));
-  const maskSensitiveCb = makeCheck({
-    label: '共有用マスキング（機密キー・本文を秘匿）',
-    checked: false,
-    help: 'Excel に出力するとき、トークン・パスワードなどの機密キー、JS/CSS本文、プラグイン設定値を伏せ字（SHA-256の識別子）にします'
-  });
-  cardOut.body.appendChild(makeRow(maskSensitiveCb.label, { label: '機密保護' }));
   const expRange = makeSelect([
     ['all', '全件'],
     ['filtered', '表示中（フィルタ適用後）']
   ], 'all');
   expRange.setAttribute('aria-label', 'ファイルへ出力する差分の範囲');
   cardOut.body.appendChild(makeRow(expRange, { label: '範囲' }));
-  const currentXlsxOptions = (): { audience: 'customer' | 'internal'; maskSensitive: boolean } => ({
-    audience: xlsxAudience.value === 'internal' ? 'internal' : 'customer',
-    maskSensitive: maskSensitiveCb.checkbox.checked
+  const currentXlsxOptions = (): { audience: 'customer' | 'internal' } => ({
+    audience: xlsxAudience.value === 'internal' ? 'internal' : 'customer'
   });
 
   const grid = document.createElement('div');
@@ -3710,7 +3708,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       const exportStartedAt = Date.now();
       const sourceItems = multiXlsxExports;
       const snapshot = sourceItems.slice();
-      const buttons = [...resultBox.querySelectorAll<HTMLButtonElement>('[data-kus-dl-multi-html], [data-kus-dl-multi-md], [data-kus-dl-multi-xlsx], [data-kus-dl-multi-xlsx-all]')];
+      const buttons = [...resultBox.querySelectorAll<HTMLButtonElement>('[data-kus-dl-multi-html], [data-kus-dl-multi-md], [data-kus-dl-multi-xlsx], [data-kus-dl-multi-xlsx-all], [data-kus-dl-multi-md-all]')];
       multiXlsxExportActive = true;
       buttons.forEach((button) => { button.disabled = true; });
       try {
@@ -3754,6 +3752,69 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         );
       } catch (e: any) {
         panel.setStatus(`一括Excel出力エラー: ${e?.message || String(e)}`, 'err');
+      } finally {
+        const cooldown = XLSX_EXPORT_COOLDOWN_MS - (Date.now() - exportStartedAt);
+        if (cooldown > 0) await new Promise<void>((resolve) => window.setTimeout(resolve, cooldown));
+        multiXlsxExportActive = false;
+        buttons.forEach((button) => {
+          if (button.isConnected) button.disabled = false;
+        });
+      }
+      return;
+    }
+    const multiMdAllButton = target?.closest<HTMLButtonElement>('[data-kus-dl-multi-md-all]');
+    if (multiMdAllButton) {
+      if (pairFolderLoadActive()) {
+        panel.setStatus('フォルダの読込が完了してから前回結果を保存してください', 'warn');
+        return;
+      }
+      if (multiMdAllButton.disabled || multiXlsxExportActive || multiXlsxExports.length === 0) return;
+      const exportStartedAt = Date.now();
+      const sourceItems = multiXlsxExports;
+      const snapshot = sourceItems.slice();
+      const buttons = [...resultBox.querySelectorAll<HTMLButtonElement>('[data-kus-dl-multi-html], [data-kus-dl-multi-md], [data-kus-dl-multi-xlsx], [data-kus-dl-multi-xlsx-all], [data-kus-dl-multi-md-all]')];
+      multiXlsxExportActive = true;
+      buttons.forEach((button) => { button.disabled = true; });
+      try {
+        panel.setStatus(`一括AI向けMarkdownを生成中… 0/${snapshot.length}件`, 'busy');
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        const result = await buildDiffMarkdownBatchExport(
+          snapshot.map((item) => ({
+            label: item.label,
+            context: buildLiteDiffMarkdownContext(
+              item.cache,
+              item.cache.rows,
+              'all',
+              '全件',
+              'フィルターなし（比較結果の全件）'
+            )
+          })),
+          {
+            onProgress: (progress) => {
+              if (progress.stage === 'building') {
+                panel.setStatus(`一括AI向けMarkdownを生成中… ${progress.current}/${progress.total}件${progress.label ? ` — ${progress.label}` : ''}`, 'busy');
+              } else {
+                panel.setStatus(`AI向けMarkdown ${progress.total}件をZIPにまとめています…`, 'busy');
+              }
+            }
+          }
+        );
+        if (multiXlsxExports !== sourceItems) {
+          panel.setStatus('比較結果が更新されたため、生成した一括Markdownは保存しませんでした。最新の結果からもう一度保存してください', 'warn');
+          return;
+        }
+        downloadBlob(result.filename, result.blob);
+        const incomplete = snapshot.filter((item) => isIncompleteLiteDiff(item.cache)).length;
+        const notes = [
+          result.failures.length ? `Markdown生成失敗 ${result.failures.length}件` : '',
+          incomplete ? `要確認 ${incomplete}件` : ''
+        ].filter(Boolean).join(' / ');
+        panel.setStatus(
+          `一括AI向けMarkdownのダウンロードを開始しました: ${result.filename}（${result.entries.length}件）${notes ? ` — ${notes}` : ''}`,
+          result.failures.length || incomplete ? 'warn' : 'ok'
+        );
+      } catch (e: any) {
+        panel.setStatus(`一括Markdown出力エラー: ${e?.message || String(e)}`, 'err');
       } finally {
         const cooldown = XLSX_EXPORT_COOLDOWN_MS - (Date.now() - exportStartedAt);
         if (cooldown > 0) await new Promise<void>((resolve) => window.setTimeout(resolve, cooldown));
@@ -3911,6 +3972,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     );
     return {
       ...htmlContext,
+      rawRows: rows,
       filterDescription: exportFilterDescription(isAll)
     };
   }
@@ -4303,21 +4365,28 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           if (needsReview) incomplete += 1;
 
           let exportNote = '';
+          const targetCache: DiffCache = {
+            rows: out.rows || [],
+            fetchIssues: out.fetchIssues || [],
+            partialIssues: out.partialIssues || [],
+            sourceBundle: sourceForResult,
+            targetBundle: out.targetBundle,
+            scopes: base.scopes,
+            ignoreKeys: base.ignoreKeys,
+            normalizationPresetState: base.normalizationPresetState,
+            comparedAt,
+            truncation: out.truncation || null,
+            matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
+          };
           if (autoExportHtml) {
             try {
-              runExportDiffHtmlStandalone({
-                rows: out.rows,
-                fetchIssues: out.fetchIssues || [],
-                partialIssues: out.partialIssues || [],
-                sourceBundle: out.sourceBundle,
-                targetBundle: out.targetBundle,
-                scopes: base.scopes,
-                ignoreKeys: base.ignoreKeys,
-                normalizationPresetState: base.normalizationPresetState,
-                truncation: out.truncation || null,
-                exportContentMode: normalizeLiteHtmlExportContentMode(htmlContentMode.value),
-                exportContentLabel: getLiteHtmlExportContentLabel(htmlContentMode.value)
-              });
+              runExportDiffHtmlStandalone(buildLiteDiffHtmlContext(
+                targetCache,
+                targetCache.rows,
+                'all',
+                '全差分',
+                htmlContentMode.value
+              ));
               exported += 1;
             } catch (e: any) {
               exportNote = ` / HTML出力失敗: ${e?.message || String(e)}`;
@@ -4328,19 +4397,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           const multiNoticeCount = (out.matchingNotices?.items?.length || 0) + (out.matchingNotices?.omitted || 0);
           const multiExportIndex = multiXlsxExports.push({
             label: targetLabel,
-            cache: {
-              rows: out.rows || [],
-              fetchIssues: out.fetchIssues || [],
-              partialIssues: out.partialIssues || [],
-              sourceBundle: sourceForResult,
-              targetBundle: out.targetBundle,
-              scopes: base.scopes,
-              ignoreKeys: base.ignoreKeys,
-              normalizationPresetState: base.normalizationPresetState,
-              comparedAt,
-              truncation: out.truncation || null,
-              matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
-            }
+            cache: targetCache
           }) - 1;
           resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : '通常スペース')} / ${t.preview ? 'プレビュー' : '本番'}</small></td>` +
             `<td class="${needsReview || exportNote ? 'kus-dl-multi__warn' : 'kus-dl-multi__ok'}">${exportNote ? '出力失敗' : (needsReview ? '要確認' : (counts.actual ? '差分あり' : '一致'))}${esc(exportNote)}</td>` +
@@ -4480,13 +4537,13 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       const ctx = exportCtx(forceFullMarkdownExport);
       const result = runExportDiffMarkdown(buildLiteDiffMarkdownContext(
         snapshot,
-        ctx.rows,
+        ctx.rawRows,
         ctx.exportMode,
         ctx.exportLabel,
         ctx.filterDescription
       ));
       const incomplete = isIncompleteLiteDiff(snapshot);
-      panel.setStatus(`AI向け Markdown のダウンロードを開始しました（${ctx.exportLabel} / ${ctx.rows.length}件）: ${result.filename}${incomplete ? ' — 元の比較結果は不完全です' : ''}`, incomplete ? 'warn' : 'ok');
+      panel.setStatus(`AI向け Markdown のダウンロードを開始しました（${ctx.exportLabel} / ${ctx.rawRows.length}件）: ${result.filename}${incomplete ? ' — 元の比較結果は不完全です' : ''}`, incomplete ? 'warn' : 'ok');
     } catch (e: any) {
       panel.setStatus(`Markdown出力エラー: ${e?.message || String(e)}`, 'err');
     } finally {
@@ -4506,7 +4563,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       const snapshot = cache;
       if (!snapshot) throw new Error('先に差分比較を実行してください');
       const ctx = exportCtx(forceFullXlsxExport);
-      if (!ctx.rows.length && snapshot.rows.length) {
+      if (!ctx.rawRows.length && snapshot.rows.length) {
         panel.setStatus('現在のフィルタに該当する行がありません。範囲を「全件」に戻すか、フィルタを見直してください', 'warn');
         return;
       }
@@ -4514,7 +4571,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       const result = runExportDiffXlsx(buildLiteDiffXlsxContext(
         snapshot,
-        ctx.rows,
+        ctx.rawRows,
         ctx.exportMode,
         ctx.exportLabel,
         ctx.filterDescription,

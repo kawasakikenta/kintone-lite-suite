@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchAppsInSpace } from '../src/api';
-import { buildErCrawlOptions, runGenerateERDiagramStandalone, validateErOptions } from '../src/tabs/er-standalone';
+import {
+  buildErCrawlOptions,
+  runGenerateERDiagramStandalone,
+  validateErOptions,
+  runExportERMarkdownStandalone,
+  runExportERMermaidStandalone,
+  runExportERRelationsCsvStandalone
+} from '../src/tabs/er-standalone';
 
 vi.mock('../src/api', async original => ({
   ...await original<typeof import('../src/api')>(),
@@ -75,5 +82,77 @@ describe('ER図 Lite popup', () => {
     vi.stubGlobal('window', { open });
     await expect(runGenerateERDiagramStandalone({ appId: 'abc' }, vi.fn())).rejects.toThrow(/アプリIDは数値/);
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe('ER図 Standalone Direct Export (Markdown / Mermaid / CSV with importedBundles)', () => {
+  const sampleBundles = [
+    {
+      appId: '101',
+      appName: '見積管理',
+      sections: {
+        formFields: {
+          properties: {
+            quote_no: { code: 'quote_no', label: '見積番号', type: 'RECORD_NUMBER' },
+            customer_code: {
+              code: 'customer_code',
+              label: '顧客コード',
+              type: 'SINGLE_LINE_TEXT',
+              lookup: { relatedApp: { app: '202' }, relatedKeyField: 'code' }
+            }
+          }
+        }
+      }
+    },
+    {
+      appId: '202',
+      appName: '顧客マスタ',
+      sections: {
+        formFields: {
+          properties: {
+            code: { code: 'code', label: '顧客コード', type: 'SINGLE_LINE_TEXT', unique: true }
+          }
+        }
+      }
+    }
+  ];
+
+  it('exports Markdown spec directly from importedBundles without opening a popup or calling API', async () => {
+    const setStatus = vi.fn();
+    const res = await runExportERMarkdownStandalone(
+      { importedBundles: sampleBundles, download: false, generatedAt: '2026-10-31T00:00:00.000Z' },
+      setStatus
+    );
+    expect(res.apps).toHaveLength(2);
+    expect(res.markdown).toContain('# kintone ER図 仕様書');
+    expect(res.markdown).toContain('## グラフ分析サマリ');
+    expect(res.markdown).toContain('見積管理');
+    expect(res.markdown).toContain('顧客マスタ');
+    expect(setStatus).toHaveBeenLastCalledWith('ER図仕様書を保存しました (2アプリ)', false);
+  });
+
+  it('exports Mermaid erDiagram source directly from importedBundles', async () => {
+    const setStatus = vi.fn();
+    const res = await runExportERMermaidStandalone(
+      { importedBundles: sampleBundles, download: false },
+      setStatus
+    );
+    expect(res.mermaid).toContain('erDiagram');
+    expect(res.mermaid).toContain('app_101 }o--o| app_202');
+    expect(setStatus).toHaveBeenLastCalledWith('ER図Mermaidを保存しました (2アプリ)', false);
+
+
+  });
+
+  it('exports Relations CSV directly from importedBundles', async () => {
+    const setStatus = vi.fn();
+    const res = await runExportERRelationsCsvStandalone(
+      { importedBundles: sampleBundles, download: false },
+      setStatus
+    );
+    expect(res.csv.startsWith('\uFEFF')).toBe(true);
+    expect(res.csv).toContain('101,見積管理,customer_code,顧客コード,LOOKUP,202,顧客マスタ,customer_code -> code');
+    expect(setStatus).toHaveBeenLastCalledWith('ER図リレーション一覧CSVを保存しました (2アプリ)', false);
+
   });
 });

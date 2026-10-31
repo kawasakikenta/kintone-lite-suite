@@ -8,6 +8,7 @@ import {
 } from '../../src/diff/xlsx-export';
 import { computeDiffRows } from '../../src/diff/engine';
 import { enrichDiffRows } from '../../src/diff/enrich';
+import { computeDiffHtmlReviewIdentity } from '../../src/diff/export';
 
 // 既存の内部監査版の回帰は明示的に internal として維持する。
 const buildDiffXlsxBlob = (ctx: DiffXlsxContext) => buildDiffXlsxBlobWithSafeDefault({ ...ctx, audience: ctx.audience || 'internal' });
@@ -2020,7 +2021,7 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('レビュー入力（黄色）');
     expect(list).toContain('比較元（変更前）');
     expect(list).toContain('比較先（変更後）');
-    expect(list).toContain('<mergeCell ref="A1:L1"/>');
+    expect(list).toContain('<mergeCell ref="A1:M1"/>');
     expect(list).toContain('<mergeCell ref="A2:B2"/>');
     expect(list).toContain('<mergeCell ref="C2:E2"/>');
     expect(list).toContain('<mergeCell ref="I2:L2"/>');
@@ -2076,7 +2077,7 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('（存在しません）');
     // ID～項目を固定し、レビュー状態にはドロップダウンを付ける。
     expect(list).toContain('<pane xSplit="5" ySplit="3" topLeftCell="F4" activePane="bottomRight" state="frozen"/>');
-    expect(list).toContain('<autoFilter ref="A3:L6"/>');
+    expect(list).toContain('<autoFilter ref="A3:M6"/>');
     expect(list).toContain('sqref="I4:I6"');
     expect(list).toContain('&quot;未確認,確認中,確認済み,対象外&quot;');
     expect(list).toContain('sqref="J4:J6"');
@@ -2848,7 +2849,7 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('このシートで分かること：このブックに収録された差分');
     expect(list).toContain('差分はありません');
     expect(list).toContain('<c r="A4" s="25"');
-    expect(list).toContain('<mergeCell ref="A4:L4"/>');
+    expect(list).toContain('<mergeCell ref="A4:M4"/>');
     expect(list).not.toContain('<autoFilter');
     expect(list).not.toContain('xSplit=');
     expect(workbook).toContain('&apos;差分一覧&apos;!$2:$3</definedName>');
@@ -2877,7 +2878,7 @@ describe('diff/xlsx-export', () => {
     expect(summary).not.toContain('差分なし');
     expect(list).toContain('現在の絞り込み条件に該当する変更はありません');
     expect(list).toContain('<c r="A4" s="24"');
-    expect(list).toContain('<mergeCell ref="A4:L4"/>');
+    expect(list).toContain('<mergeCell ref="A4:M4"/>');
     expect(list).not.toContain('<autoFilter');
     expect(list).not.toContain('xSplit=');
   });
@@ -2913,7 +2914,7 @@ describe('diff/xlsx-export', () => {
     expect(issues).toContain('<c r="A5" s="27"');
     expect(list).toContain('比較できなかった範囲があります。概要と「取得・未検証」を確認してください');
     expect(list).toContain('<c r="A4" s="27"');
-    expect(list).toContain('<mergeCell ref="A4:L4"/>');
+    expect(list).toContain('<mergeCell ref="A4:M4"/>');
     expect(list).not.toContain('差分はありません');
     expect(list).not.toContain('<autoFilter');
     expect(list).not.toContain('xSplit=');
@@ -3387,5 +3388,90 @@ describe('customer Excel permission entry evidence', () => {
     const rows = enrichDiffRows(computeDiffRows(sourceBundle, targetBundle, ['recordPermissions'], '').rows, sourceBundle, targetBundle);
     const text = await readAllEntryText(buildDiffXlsxBlobWithSafeDefault({ sourceBundle, targetBundle, rows, scopes: ['recordPermissions'] }));
     for (const value of ['alice', '閲覧: 許可', '編集: 不許可', '削除: 不許可', 'レコードの条件:']) expect(text).toContain(value);
+  });
+
+  it('outputs reportFingerprint in summary and reviewKey in list sheet for internal mode matching HTML review state', () => {
+    const sourceBundle = { appId: '10', guestId: '', preview: false, meta: { appName: '変更前' }, sections: { fieldSettings: { properties: {} } } };
+    const targetBundle = { appId: '20', guestId: '5', preview: true, meta: { appName: '変更後' }, sections: { fieldSettings: { properties: {} } } };
+    const rows = [
+      {
+        _id: 'f-1',
+        sectionKey: 'fieldSettings',
+        section: 'フィールド設定',
+        type: 'changed',
+        path: 'fieldSettings.properties.code_a.label',
+        left: '旧ラベル',
+        right: '新ラベル'
+      },
+      {
+        _id: 'v-1',
+        sectionKey: 'viewSettings',
+        section: 'ビュー設定',
+        type: 'added',
+        path: 'viewSettings.views.一覧A',
+        left: undefined,
+        right: { name: '一覧A', type: 'LIST' }
+      },
+      {
+        _id: 'p-1',
+        sectionKey: 'pluginSettings',
+        section: 'プラグイン設定',
+        type: 'added',
+        path: 'pluginSettings.plugins.p1.config',
+        left: undefined,
+        right: { config: { apiToken: 'NESTED_PLUGIN_TOKEN_RAW' } }
+      }
+    ];
+    const ctx: DiffXlsxContext = {
+      sourceBundle,
+      targetBundle,
+      rows,
+      scopes: ['fieldSettings', 'viewSettings', 'pluginSettings'],
+      ignoreKeys: 'revision',
+      exportMode: 'all',
+      audience: 'internal'
+    };
+
+    const expectedIdentity = computeDiffHtmlReviewIdentity(
+      sourceBundle,
+      targetBundle,
+      rows,
+      ['fieldSettings', 'viewSettings', 'pluginSettings'],
+      { exportMode: 'all', exportContentMode: 'diffOnly' }
+    );
+
+    const internalSheets = buildDiffXlsxSheetsWithSafeDefault(ctx);
+    const summarySheet = internalSheets.find((s) => s.name === '概要')!;
+    const listSheet = internalSheets.find((s) => s.name === '差分一覧')!;
+
+    const fingerprintRow = summarySheet.rows.find((r) => r[0] === 'レポート識別子 (reportFingerprint)');
+    expect(fingerprintRow).toBeDefined();
+    expect(fingerprintRow?.[1]).toBe(expectedIdentity.reportFingerprint);
+    expect(String(fingerprintRow?.[1])).toMatch(/^report-v1-[0-9a-f]{16}$/);
+
+    expect(listSheet.rows[2][12]).toBe('reviewKey');
+    expect(listSheet.rows[3][12]).toBe(expectedIdentity.rowReviewKeys[0]);
+    expect(listSheet.rows[4][12]).toBe(expectedIdentity.rowReviewKeys[1]);
+    expect(listSheet.rows[5][12]).toBe(expectedIdentity.rowReviewKeys[2]);
+    expect(String(listSheet.rows[3][12])).toMatch(/^review-v1-[0-9a-f]{16}-\d+$/);
+    expect(JSON.stringify(internalSheets)).toContain('NESTED_PLUGIN_TOKEN_RAW');
+
+    const changedRows = rows.map((row) => row._id === 'p-1'
+      ? { ...row, right: { config: { apiToken: 'CHANGED_PLUGIN_TOKEN_RAW' } } }
+      : row);
+    const changedIdentity = computeDiffHtmlReviewIdentity(
+      sourceBundle,
+      targetBundle,
+      changedRows,
+      ['fieldSettings', 'viewSettings', 'pluginSettings'],
+      { exportMode: 'all', exportContentMode: 'diffOnly' }
+    );
+    expect(changedIdentity.reportFingerprint).not.toBe(expectedIdentity.reportFingerprint);
+    expect(changedIdentity.rowReviewKeys[2]).not.toBe(expectedIdentity.rowReviewKeys[2]);
+
+    const customerSheets = buildDiffXlsxSheetsWithSafeDefault({ ...ctx, audience: 'customer' });
+    const customerFlat = JSON.stringify(customerSheets.map((s) => s.rows));
+    expect(customerFlat).not.toContain('reportFingerprint');
+    expect(customerFlat).not.toContain('reviewKey');
   });
 });

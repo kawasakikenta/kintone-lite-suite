@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clampCellText, runAdvancedDesignExporter, toManifestTargets } from '../../src/tabs/design-xlsx';
+import { clampCellText, runAdvancedDesignExporter, runBatchDesignExportXlsxZip, toManifestTargets } from '../../src/tabs/design-xlsx';
 
 type Sheet = { __aoa: any[][]; [key: string]: any };
 
@@ -272,5 +272,44 @@ describe('フィールド依存関係シート', () => {
     expect(used).toEqual(['合計金額']);
     const viewRef = rows.find((row) => row[3] === '一覧絞込');
     expect(viewRef?.[4]).toBe('合計金額');
+  });
+});
+
+describe('runBatchDesignExportXlsxZip の preview / preselectedSheets オプション', () => {
+  it('preselectedSheets 指定時はシート選択ダイアログを表示せず、preview: true でプレビュー API から取得する', async () => {
+    const { calls } = installEnvironment(baseResponses());
+    const zipEntries: Record<string, any> = {};
+    (globalThis as any).window.JSZip = class FakeJSZip {
+      file(name: string, content: any) {
+        zipEntries[name] = content;
+      }
+      async generateAsync() {
+        return new Uint8Array([1, 2, 3]);
+      }
+    };
+    vi.stubGlobal('URL', {
+      createObjectURL: () => 'blob:fake',
+      revokeObjectURL: () => {}
+    });
+
+    const onFinish = vi.fn();
+    const ok = await runBatchDesignExportXlsxZip({
+      apps: [{ appId: '5', guestId: '' }],
+      preview: true,
+      preselectedSheets: ['summary', 'fields'],
+      onFinish
+    });
+
+    expect(ok).toBe(true);
+    expect(onFinish).toHaveBeenCalledWith(expect.objectContaining({
+      total: 1,
+      successCount: 1,
+      failedCount: 0,
+      cancelled: false
+    }));
+    expect(calls).toContain('/k/v1/preview/app/form/fields.json');
+    expect(Object.keys(zipEntries)).toContain('_manifest.json');
+    const manifest = JSON.parse(zipEntries['_manifest.json']);
+    expect(manifest.successCount).toBe(1);
   });
 });

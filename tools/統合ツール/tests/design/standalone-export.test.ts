@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SECTION_DEFS } from '../../src/constants';
 import { fetchBundle } from '../../src/api';
-import { copyTextToClipboard, downloadText } from '../../src/utils';
-import { runAdvancedDesignExporter } from '../../src/tabs/design-xlsx';
+import { copyTextToClipboard, downloadBlob, downloadText } from '../../src/utils';
+import { loadJSZipLite } from '../../src/jszipLoader';
+import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip } from '../../src/tabs/design-xlsx';
 import {
   classifyImportedDesignBundles,
+  runBatchDesignExportMdZipStandalone,
   runBatchDesignExportXlsxZipStandalone,
   runDesignCopyAiMdStandalone,
   runDesignExportStandalone,
@@ -12,6 +14,8 @@ import {
   validateDesignExportTargets,
   validateDesignTarget
 } from '../../src/tabs/design-standalone';
+
+const zipFiles: Record<string, string> = {};
 
 vi.mock('../../src/api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../src/api')>(),
@@ -21,7 +25,19 @@ vi.mock('../../src/api', async (importOriginal) => ({
 vi.mock('../../src/utils', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../src/utils')>(),
   copyTextToClipboard: vi.fn(),
+  downloadBlob: vi.fn(),
   downloadText: vi.fn()
+}));
+
+vi.mock('../../src/jszipLoader', () => ({
+  loadJSZipLite: vi.fn(async () => class FakeJSZip {
+    file(name: string, content: string) {
+      zipFiles[name] = content;
+    }
+    async generateAsync() {
+      return new Blob([JSON.stringify(zipFiles)], { type: 'application/zip' });
+    }
+  })
 }));
 
 vi.mock('../../src/tabs/design-xlsx', async (importOriginal) => ({
@@ -63,6 +79,7 @@ const bundle = (appId: string, sections = emptySections()) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  for (const key of Object.keys(zipFiles)) delete zipFiles[key];
   vi.mocked(fetchBundle).mockRejectedValue(new Error('fetch should not run for this test'));
   vi.mocked(copyTextToClipboard).mockResolvedValue(true);
   vi.mocked(runAdvancedDesignExporter).mockResolvedValue(true);
@@ -191,5 +208,78 @@ describe('lite design export', () => {
     expect(finalStatus).toMatch(/取得失敗 1件/);
     expect(finalStatus).toMatch(/部分取得 1件/);
     expect(status.mock.calls.some(([message, error]) => error === true && /状態を付けて載ります/.test(message))).toBe(true);
+  });
+
+  it('forwards preview and preselectedSheets in runBatchDesignExportXlsxZipStandalone', async () => {
+    vi.mocked(runBatchDesignExportXlsxZip).mockResolvedValue(true);
+    const status = vi.fn();
+
+    await runBatchDesignExportXlsxZipStandalone({
+      apps: [{ appId: '10', guestId: '5' }, { appId: '20' }],
+      preview: true,
+      preselectedSheets: ['summary', 'fields']
+    }, status);
+
+    expect(runBatchDesignExportXlsxZip).toHaveBeenCalledTimes(1);
+    const params = vi.mocked(runBatchDesignExportXlsxZip).mock.calls[0][0];
+    expect(params.preview).toBe(true);
+    expect(params.preselectedSheets).toEqual(['summary', 'fields']);
+    expect(params.apps).toEqual([
+      { appId: '10', guestId: '5', bundle: null },
+      { appId: '20', guestId: '', bundle: null }
+    ]);
+  });
+
+  it('exports multiple apps into a Markdown/AI-Markdown ZIP with overview.md and _manifest.json, handling partial failures', async () => {
+    vi.mocked(fetchBundle).mockImplementation(async (params: any) => {
+      if (params.appId === '300') throw new Error('403 Forbidden');
+      return bundle(params.appId, {
+        ...emptySections(),
+        appSettings: { name: `ライブアプリ_${params.appId}` }
+      }) as any;
+    });
+    const status = vi.fn();
+
+    const result = await runBatchDesignExportMdZipStandalone({
+      apps: [
+        { appId: '100', bundle: bundle('100', { ...emptySections(), appSettings: { name: 'インポートアプリ' } }) },
+        { appId: '200', guestId: '8' },
+        { appId: '300' }
+      ],
+      format: 'both',
+      preview: true
+    }, status);
+
+    expect(loadJSZipLite).toHaveBeenCalledTimes(1);
+    expect(downloadBlob).toHaveBeenCalledTimes(1);
+    expect(result.successCount).toBe(2);
+    expect(result.total).toBe(3);
+    expect(result.failedApps).toEqual([{ appId: '300', guestId: '', error: '403 Forbidden' }]);
+
+    expect(zipFiles['overview.md']).toContain('インポートアプリ');
+    expect(zipFiles['overview.md']).toContain('ライブアプリ_200');
+    expect(zipFiles['overview.md']).toContain('403 Forbidden');
+
+    const manifest = JSON.parse(zipFiles['_manifest.json']);
+    expect(manifest.schemaVersion).toBe(1);
+    expect(manifest.format).toBe('both');
+    expect(manifest.preview).toBe(true);
+    expect(manifest.items).toHaveLength(2);
+    expect(manifest.items[0]).toMatchObject({
+      appId: '100',
+      appName: 'インポートアプリ',
+      source: 'settings-json'
+    });
+    expect(manifest.items[0].mdFile).toMatch(/設計書_.*\.md$/);
+    expect(manifest.items[0].aiMdFile).toMatch(/設計書_AI向けMarkdown_.*\.md$/);
+    expect(zipFiles[manifest.items[0].mdFile]).toContain('インポートアプリ');
+    expect(zipFiles[manifest.items[0].aiMdFile]).toContain('schema_version');
+    expect(manifest.failedApps).toEqual([{ appId: '300', guestId: '', error: '403 Forbidden' }]);
+    expect(vi.mocked(fetchBundle)).toHaveBeenCalledWith(expect.objectContaining({
+      appId: '200',
+      guestId: '8',
+      preview: true,
+      rawSettings: false
+    }));
   });
 });
