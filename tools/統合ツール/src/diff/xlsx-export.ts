@@ -16,7 +16,8 @@ import {
   SENSITIVE_DIFF_SECTION_KEYS,
   SENSITIVE_SAME_VALUE_REDACTION
 } from './export-safety.js';
-import { extractFieldPathInfo } from './enrich.js';
+import { extractFieldPathInfo, fieldSettingIdentity } from './enrich.js';
+import { FIELD_SETTING_LABELS } from './label-dict.js';
 import { decodeRow } from './path-decoder.js';
 import { expandSubtableRowsForDisplay, hasIncompleteActualDiffTruncation } from './engine.js';
 import {
@@ -251,52 +252,6 @@ function groupRowsBySection(rows: DiffXlsxRow[]): Map<string, DiffXlsxRow[]> {
   return ordered;
 }
 
-const FIELD_SETTING_LABELS: Record<string, string> = {
-  label: 'フィールド名',
-  name: 'フィールド名',
-  code: 'フィールドコード',
-  type: 'フィールドの種類',
-  noLabel: 'フィールド名を表示しない',
-  required: '必須項目にする',
-  unique: '値の重複を禁止する',
-  defaultValue: '初期値',
-  defaultNowValue: 'レコード登録時の日時を初期値にする',
-  description: '説明',
-  minLength: '文字数（最小）',
-  maxLength: '文字数（最大）',
-  minValue: '数値の制限（最小）',
-  maxValue: '数値の制限（最大）',
-  expression: '計算式',
-  hideExpression: '計算式を表示しない',
-  options: '選択肢',
-  protocol: '入力値の種類',
-  displayScale: '小数点以下の表示桁数',
-  digit: '桁区切りを表示する',
-  unit: '単位記号',
-  unitPosition: '単位記号の表示位置',
-  align: '選択肢の並び',
-  format: '表示形式',
-  entities: '選択候補',
-  fields: 'テーブル内のフィールド',
-  referenceTable: '関連レコード一覧設定',
-  lookup: 'ルックアップ設定',
-  condition: '表示するレコードの条件',
-  displayFields: '表示するフィールド',
-  filterCond: '絞り込み条件',
-  relatedApp: '参照するアプリ',
-  size: '一度に表示する最大レコード数',
-  sort: 'ソート',
-  relatedKeyField: 'コピー元のフィールド',
-  fieldMappings: 'ほかのフィールドのコピー',
-  lookupPickerFields: 'コピー元のレコード選択時に表示するフィールド',
-  field: '自アプリのフィールド',
-  relatedField: '参照するアプリのフィールド',
-  app: '参照するアプリID',
-  thumbnailSize: 'サムネイルの大きさ',
-  openGroup: 'グループの初期表示',
-  index: '並び順'
-};
-
 const FIELD_TYPE_LABELS: Record<string, string> = {
   SINGLE_LINE_TEXT: '文字列（1行）',
   MULTI_LINE_TEXT: '文字列（複数行）',
@@ -408,37 +363,6 @@ function fieldDisplayIdentity(row: DiffXlsxRow, info: any, ctx: DiffXlsxContext)
     fieldCode: `${info.rootCode} > ${info.subFieldCode}`,
     fieldName: `${rootLabel} > ${activeLabel}`,
     fieldType
-  };
-}
-
-function fieldSettingTokenLabel(token: string | number): string {
-  if (typeof token === 'number') return `${token + 1}件目`;
-  return FIELD_SETTING_LABELS[token] || token;
-}
-
-function fieldSettingIdentity(info: any): { settingKey: string; settingLabel: string } {
-  const tokens = Array.isArray(info.tailTokens) ? info.tailTokens : [];
-  if (!tokens.length) return { settingKey: '(field)', settingLabel: 'フィールド全体' };
-  const settingKey = tokens.map((token: string | number) => String(token)).join('.');
-  if (tokens[0] === 'options') {
-    const option = tokens.length > 1 ? String(tokens[1]) : '';
-    const suffix = tokens.length > 2 ? fieldSettingTokenLabel(tokens[2]) : '';
-    return {
-      settingKey,
-      settingLabel: option
-        ? `選択肢「${option}」${suffix ? ` / ${suffix}` : ''}`
-        : '選択肢と並び順'
-    };
-  }
-  if (tokens[0] === 'lookup' || tokens[0] === 'referenceTable') {
-    return {
-      settingKey,
-      settingLabel: tokens.map(fieldSettingTokenLabel).join(' / ')
-    };
-  }
-  return {
-    settingKey,
-    settingLabel: tokens.map(fieldSettingTokenLabel).join(' / ')
   };
 }
 

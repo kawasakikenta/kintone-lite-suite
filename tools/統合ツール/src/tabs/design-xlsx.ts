@@ -42,7 +42,6 @@ const EXPORT_SHEET_DEFS: Array<SheetDef> = [
   { key: 'customize', label: 'JS/CSSカスタマイズ', default: true, cat: 'customize' },
   { key: 'actions', label: 'アクション', default: true, cat: 'customize' },
   { key: 'plugins', label: 'プラグイン', default: true, cat: 'customize' },
-  { key: 'webhook', label: 'Webhook', default: true, cat: 'customize' },
   { key: 'genNotif', label: '通知(一般)', default: true, cat: 'notif' },
   { key: 'recNotif', label: '通知(レコード)', default: true, cat: 'notif' },
   { key: 'remNotif', label: '通知(リマインダー)', default: true, cat: 'notif' },
@@ -150,6 +149,13 @@ function getExporterOverlayZIndex(): string {
   const panelZ = panel ? Number(window.getComputedStyle(panel).zIndex) : NaN;
   if (Number.isFinite(panelZ)) return String(Math.max(1, panelZ - 1));
   return String(Math.min(2147483647, Math.max(2000000000, base + 1)));
+}
+
+/** 操作が必要なダイアログはパネルの裏に隠れると処理が進まないため、進捗表示と違いパネルより上に置く。 */
+export function getExporterDialogZIndex(): string {
+  const panel = getToolDocument().querySelector?.('.kus-lp');
+  const panelZ = panel ? Number(window.getComputedStyle(panel).zIndex) : NaN;
+  return Number.isFinite(panelZ) ? String(panelZ + 1) : getExporterOverlayZIndex();
 }
 
 async function loadSheetLibOnce(): Promise<{ styled: boolean }> {
@@ -261,6 +267,14 @@ function collectAllFieldCodes(fields: Record<string, any>): string[] {
   return [...codes];
 }
 
+/** HTML のエラーページを返す応答は kintone.api の失敗内容が HTML 全文になるため、状態だけを取り出す。 */
+export function readableErrorMessage(error: any): string {
+  const message = String(error?.message || error || '');
+  if (!/^\s*<(?:!doctype|html)/i.test(message)) return message;
+  const status = message.match(/Code:<\/strong>\s*([^<]+)/i)?.[1]?.trim();
+  return `サーバーがエラーページを返しました${status ? `（${status}）` : ''}`;
+}
+
 function escapeHtmlAttr(value: string): string {
   return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -271,7 +285,7 @@ function showSheetSelectionDialog(defs: Array<SheetDef>, title = '📊 エクス
     const overlay = doc.createElement('div');
     Object.assign(overlay.style, {
       position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
-      backgroundColor: 'rgba(0,0,0,0.6)', zIndex: getExporterOverlayZIndex(),
+      backgroundColor: 'rgba(0,0,0,0.6)', zIndex: getExporterDialogZIndex(),
       display: 'flex', justifyContent: 'center', alignItems: 'center',
       fontFamily: '"Meiryo", sans-serif'
     });
@@ -612,11 +626,6 @@ export async function runAdvancedDesignExporter(params: any = {}) {
   const PERIODIC_EVERY_LABEL = { YEAR: '毎年', QUARTER: '四半期ごと', MONTH: '毎月', WEEK: '毎週', DAY: '毎日', HOUR: '毎時' };
   const FIELD_ACCESSIBILITY_LABEL = { WRITE: '閲覧・編集可', READ: '閲覧のみ', NONE: 'アクセス不可' };
   const LINK_PROTOCOL_LABEL = { WEB: 'WEB', CALL: '電話', MAIL: 'メール' };
-  const WEBHOOK_EVENT_LABEL = {
-    ADD_RECORD: 'レコード追加', UPDATE_RECORD: 'レコード編集', DELETE_RECORD: 'レコード削除',
-    UPDATE_STATUS: 'ステータス変更', ADD_COMMENT: 'コメント追加',
-    DELETE_COMMENT: 'コメント削除'
-  };
   const ENUM_LOOKUP = (map: Record<string, string>, value: any) => {
     if (value == null || value === '') return '';
     const key = String(value).trim().toUpperCase();
@@ -684,7 +693,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       if (cancelBtn) (cancelBtn as HTMLButtonElement).onclick = () => { (window as any).__kusBatchCancel = true; requestCancel(); (cancelBtn as HTMLButtonElement).disabled = true; (cancelBtn as HTMLButtonElement).textContent = '中止中…'; };
     },
     logError(apiName, error) {
-      UI.failedAPIs.push({ name: apiName, error: error?.message || String(error) });
+      UI.failedAPIs.push({ name: apiName, error: readableErrorMessage(error) });
       const errEl = getToolDocument().getElementById('kex-errors');
       if (errEl) errEl.textContent = `⚠ ${UI.failedAPIs.length}件のAPI取得に失敗`;
     },
@@ -994,15 +1003,14 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
   // sectionKey を渡すと、bundle（オフライン設定JSON）が指定されている場合はライブAPIを呼ばず
   // bundle.sections[sectionKey] を返す（取得失敗 or セクション欠落なら null）。
-  // sectionKey を渡さない項目（レコード件数・管理者メモ・Webhook・参照アプリ名など）は
+  // sectionKey を渡さない項目（レコード件数・管理者メモ・参照アプリ名など）は
   // bundle 設定JSONに元々含まれないため、bundle モードでは常に null（=取得不可扱い）とし、
   // 意図せず別環境へライブAPIを叩かないようにする。
   const bundleGapsLogged = new Set<string>();
   // 利用者に見せる取得失敗の項目名。内部名（Views / Fields 等）は出さず、セクションがあれば SECTION_DEFS の表示名を使う
   const FETCH_JOB_LABELS: Record<string, string> = {
     RecordCount: 'レコード件数',
-    AdminNotes: '管理者メモ',
-    Webhooks: 'Webhook'
+    AdminNotes: '管理者メモ'
   };
   const fetchJobLabel = (name: string, sectionKey?: string): string =>
     (sectionKey && SECTION_DEFS.find((def) => def.key === sectionKey)?.label) || FETCH_JOB_LABELS[name] || name;
@@ -1029,7 +1037,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     } catch (e) {
       // 利用者の中止は取得失敗として設計書に載せず、呼び出し元へそのまま伝える
       if (isRunCancelledError(e)) throw e;
-      if (sectionKey) liveSections[sectionKey] = { _fetchError: e?.message || String(e) };
+      if (sectionKey) liveSections[sectionKey] = { _fetchError: readableErrorMessage(e) };
       console.warn(`[${name}] Failed:`, e); UI.logError(name, e); return null;
     }
   }
@@ -1108,7 +1116,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     } catch (e) { /* ignore */ }
 
     UI.update(bundle ? '一覧・権限・通知設定を設定JSONから読込中...' : '一覧・権限・通知設定を取得中...');
-    const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif, formSettings, categories] = await Promise.all([
+    const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, genNotif, recNotif, remNotif, formSettings, categories] = await Promise.all([
       fetchJob('Views', () => api(sectionApiUrl('/k/v1/app/views.json', 'viewSettings'), 'GET', { app: APP_ID }), 'viewSettings'),
       fetchJob('Reports', () => api(sectionApiUrl('/k/v1/app/reports.json', 'reportSettings'), 'GET', { app: APP_ID }), 'reportSettings'),
       fetchJob('Status', () => api(sectionApiUrl('/k/v1/app/status.json', 'processSettings'), 'GET', { app: APP_ID }), 'processSettings'),
@@ -1118,9 +1126,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       fetchJob('Customize', () => api(sectionApiUrl('/k/v1/app/customize.json', 'customizeSettings'), 'GET', { app: APP_ID }), 'customizeSettings'),
       fetchJob('Actions', () => api(sectionApiUrl('/k/v1/app/actions.json', 'actionSettings'), 'GET', { app: APP_ID }), 'actionSettings'),
       fetchJob('Plugins', () => api(sectionApiUrl('/k/v1/app/plugins.json', 'pluginSettings'), 'GET', { app: APP_ID }), 'pluginSettings'),
-      // 管理者メモ・Webhookは設定一括取得の対象外のため bundle モードでは常に取得不可
+      // 管理者メモは設定一括取得の対象外のため bundle モードでは常に取得不可
       fetchJob('AdminNotes', () => api(apiUrl('/k/v1/app/adminNotes.json', false), 'GET', { app: APP_ID })),
-      fetchJob('Webhooks', () => api(apiUrl('/k/v1/app/webhook.json', false), 'GET', { app: APP_ID })),
       fetchJob('GenNotif', () => api(sectionApiUrl('/k/v1/app/notifications/general.json', 'notifications'), 'GET', { app: APP_ID }), 'notifications'),
       fetchJob('RecNotif', () => api(sectionApiUrl('/k/v1/app/notifications/perRecord.json', 'perRecordNotifications'), 'GET', { app: APP_ID }), 'perRecordNotifications'),
       fetchJob('RemNotif', () => api(sectionApiUrl('/k/v1/app/notifications/reminder.json', 'reminderNotifications'), 'GET', { app: APP_ID }), 'reminderNotifications'),
@@ -1202,6 +1209,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       if (value == null || typeof value !== 'object') return null;
       if (!Object.prototype.hasOwnProperty.call(value, key)) return null;
       const collection = value[key];
+      // プロセス管理を使っていないアプリは states / actions が null で返る。取得はできているので 0 件。
+      if (collection === null) return 0;
       if (Array.isArray(collection)) return collection.length;
       if (collection && typeof collection === 'object') return Object.keys(collection).length;
       return null;
@@ -1216,7 +1225,6 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     const reportCount = collectionCount(reports, 'reports');
     const processStateCount = collectionCount(status, 'states');
     const pluginCount = collectionCount(pluginsResp, 'plugins');
-    const webhookCount = Array.isArray(webhooksResp?.webhooks) ? webhooksResp.webhooks.length : null;
     const appAclCount = collectionCount(appAcl, 'rights');
     const recordAclCount = collectionCount(recordAcl, 'rights');
     const fieldAclCount = collectionCount(fieldAcl, 'rights');
@@ -1498,27 +1506,23 @@ export async function runAdvancedDesignExporter(params: any = {}) {
           : `設定JSON（${env}）`;
       }
       if (key === 'appInfo') return 'ライブAPI（本番／アプリ情報）';
-      if (['recordCount', 'webhook', 'adminNotes'].includes(key)) return 'ライブAPI（本番）';
+      if (['recordCount', 'adminNotes'].includes(key)) return 'ライブAPI（本番）';
       return `ライブAPI（${env}）`;
     };
     const auxiliaryStatus = (key: string, value: any, apiName: string): any => {
       if (bundle) {
-        return { key, label: key === 'recordCount' ? 'レコード件数' : key === 'webhook' ? 'Webhook' : '管理者メモ', status: 'missing', count: null, detail: '設定JSONの対象外（ライブAPI取得なし）' };
+        return { key, label: key === 'recordCount' ? 'レコード件数' : '管理者メモ', status: 'missing', count: null, detail: '設定JSONの対象外（ライブAPI取得なし）' };
       }
       if (value == null) {
         return {
           key,
-          label: key === 'recordCount' ? 'レコード件数' : key === 'webhook' ? 'Webhook' : '管理者メモ',
+          label: key === 'recordCount' ? 'レコード件数' : '管理者メモ',
           status: hasFailedAPI(apiName) ? 'fetch-error' : 'missing',
           count: null,
           detail: hasFailedAPI(apiName) ? '取得失敗（詳細はAPI取得失敗レポート）' : '応答がありません'
         };
       }
       if (key === 'recordCount') return { key, label: 'レコード件数', status: 'available', count: Number(value), detail: 'records.json の totalCount' };
-      if (key === 'webhook') {
-        const list = Array.isArray(value?.webhooks) ? value.webhooks : null;
-        return { key, label: 'Webhook', status: list && list.length ? 'available' : list ? 'empty' : 'partial', count: list ? list.length : null, detail: list ? `webhooks の要素数=${list.length}` : 'webhooks コレクションを確認できません' };
-      }
       const content = value?.content ?? value?.note;
       return { key, label: '管理者メモ', status: content ? 'available' : content === '' ? 'empty' : 'partial', count: content == null ? null : (content ? 1 : 0), detail: content == null ? 'content/note が応答にありません' : content ? 'メモ本文を取得済み' : 'メモ本文は空です' };
     };
@@ -1535,11 +1539,10 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
     const auxiliaryStatusRows = [
       auxiliaryStatus('recordCount', recordCount, fetchJobLabel('RecordCount')),
-      auxiliaryStatus('webhook', webhooksResp, fetchJobLabel('Webhooks')),
       auxiliaryStatus('adminNotes', adminNotes, fetchJobLabel('AdminNotes'))
     ];
     const auxiliaryComplete = auxiliaryStatusRows.every((row) => row.status === 'available' || row.status === 'empty');
-    const acquisitionOverview = `基本設定${SECTION_DEFS.length}種：${designSnapshot.complete ? '完了' : '未完了'}／補足情報3種：${auxiliaryComplete ? '完了' : '未取得あり'}`;
+    const acquisitionOverview = `基本設定${SECTION_DEFS.length}種：${designSnapshot.complete ? '完了' : '未完了'}／補足情報${auxiliaryStatusRows.length}種：${auxiliaryComplete ? '完了' : '未取得あり'}`;
     const basicSectionRows = designSnapshot.sections.filter((row) => SECTION_DEFS.some((def) => def.key === row.key));
     const incompleteSectionRows = basicSectionRows.filter((row) => !['available', 'empty'].includes(row.status));
     const countSectionStatus = (rows: any[], status: string): number => rows.filter((row) => row.status === status).length;
@@ -1710,8 +1713,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       sAoa.push(['アクション数(プロセス)', displayCount(processActionCount)]);
       sAoa.push(['アクション数(レコード)', displayCount(actionCount)]);
       sAoa.push(['プラグイン数', displayCount(pluginCount)]);
-      // Webhook は設定JSONに含まれず、API取得に失敗した場合もあるため、0件と区別して出す
-      sAoa.push(['Webhook数', webhookCount == null ? '(取得不可)' : displayCount(webhookCount)]);
+      // Webhook を読み取る公開 REST API は無い。0件と誤解されないよう、対象外と明記する
+      sAoa.push(['Webhook', '対象外（REST API で取得できません。アプリの設定画面で確認してください）']);
       sAoa.push(['通知(一般)件数', displayCount(notificationCount(genNotif))]);
       sAoa.push(['通知(レコード)件数', displayCount(notificationCount(recNotif))]);
       sAoa.push(['通知(リマインダー)件数', displayCount(notificationCount(remNotif))]);
@@ -1762,7 +1765,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       sAoa.push(['観点', '確認内容']); headerInfoRows.push(sAoa.length - 1);
       sAoa.push(['参照関係', `ルックアップ ${attrCounts.lookup}件 / 関連レコード ${attrCounts.reference}件 / 計算式 ${attrCounts.calc}件`]);
       sAoa.push(['権限', `アプリ ${appAclCount}件 / レコード ${recordAclCount}件 / フィールド ${fieldAclCount}件`]);
-      sAoa.push(['カスタマイズ', `JS/CSS ${displayCount(customizeCount)}件 / プラグイン ${displayCount(pluginCount)}件 / Webhook ${webhookCount == null ? '(取得不可)' : `${webhookCount}件`}`]);
+      sAoa.push(['カスタマイズ', `JS/CSS ${displayCount(customizeCount)}件 / プラグイン ${displayCount(pluginCount)}件`]);
       sAoa.push(['プロセス', status == null || status.enable == null
         ? `未取得/不明: ステータス ${displayCount(processStateCount)}件 / アクション ${displayCount(processActionCount)}件`
         : status.enable ? `有効: ステータス ${displayCount(processStateCount)}件 / アクション ${displayCount(processActionCount)}件` : '無効']);
@@ -2571,21 +2574,6 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     if (selectedSheets.has('genNotif')) renderNotifSheet('通知(一般)', genNotif, 'general');
     if (selectedSheets.has('recNotif')) renderNotifSheet('通知(レコード)', recNotif, 'perRecord');
     if (selectedSheets.has('remNotif')) renderNotifSheet('通知(リマインダー)', remNotif, 'reminder');
-
-    if (selectedSheets.has('webhook')) {
-      const list = Array.isArray(webhooksResp?.webhooks) ? webhooksResp.webhooks : [];
-      if (list.length) {
-        const headers = ['ID', 'URL', 'イベント', '説明', '有効'];
-        const rows = list.map((w) => [
-          w.id || '',
-          w.url || w.notifyUrl || '',
-          Array.isArray(w.notificationEvents || w.events) ? (w.notificationEvents || w.events).map((ev) => ENUM_LOOKUP(WEBHOOK_EVENT_LABEL, ev) || ev).join(', ') : '',
-          UtilsX.stripHtml(w.description || ''),
-          UtilsX.formatBoolean(w.enabled !== false)
-        ]);
-        appendSheet('Webhook', { ...buildSimpleAOA('Webhook', headers, rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } }, { description: '外部システム連携用 Webhook' });
-      }
-    }
 
     if (selectedSheets.has('adminNotes') && adminNotes) {
       const content = UtilsX.stripHtml(adminNotes.content || adminNotes.note || '');

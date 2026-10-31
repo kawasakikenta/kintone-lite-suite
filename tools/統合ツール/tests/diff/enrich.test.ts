@@ -7,6 +7,90 @@ function makeBundle(sections: Record<string, any>) {
 }
 
 describe('diff/enrich (non-field improvements)', () => {
+  describe('real API shapes seen on the tenant', () => {
+    const fields = {
+      amount: { code: 'amount', label: '金額', type: 'NUMBER' },
+      category: { code: 'category', label: '区分', type: 'DROP_DOWN' },
+      company_name: { code: 'company_name', label: '会社名', type: 'SINGLE_LINE_TEXT' }
+    };
+    const enrichOne = (row: any, layout: any[] = []) => {
+      const bundle = makeBundle({ fieldSettings: { properties: fields }, layoutSettings: { layout } });
+      return enrichDiffRows([{ _id: 'r', ...row }], bundle, bundle)[0];
+    };
+
+    it('names the changed field setting instead of a generic reason', () => {
+      const row = enrichOne({ sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.amount.minValue', left: '0', right: '100' });
+      expect(row.reasonSummary).toBe('数値の制限（最小） 変更');
+    });
+
+    it('names the option on option rows', () => {
+      const row = enrichOne({ sectionKey: 'fieldSettings', type: 'added', path: 'fieldSettings.properties.category.options.VIP', right: { index: '3', label: 'VIP' } });
+      expect(row.reasonSummary).toBe('選択肢「VIP」 追加');
+    });
+
+    it('keeps the generic reason when the setting is unknown', () => {
+      const row = enrichOne({ sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.amount.somethingNew', left: 'a', right: 'b' });
+      expect(row.reasonSummary).toBe('フィールド設定変更');
+    });
+
+    it('identifies the field on formSettings rows, whose properties are an array', () => {
+      const row = enrichOne({
+        sectionKey: 'formSettings', type: 'changed', path: 'formSettings.properties[0].minLength',
+        left: '0', right: null, arrayKey: 'code', arrayKeyValue: 'company_name'
+      });
+      expect(row.entityLabel).toBe('会社名（company_name）');
+      expect(row.entityPropLabel).toBe('文字数（最小）');
+      expect(row.reasonSummary).toBe('フォームのフィールド「会社名（company_name）」 / 文字数（最小） 変更');
+    });
+
+    it('treats a whole formSettings field as the entity itself', () => {
+      const row = enrichOne({
+        sectionKey: 'formSettings', type: 'removed', path: 'formSettings.properties[3]',
+        left: { code: 'memo', label: 'メモ', type: 'MULTI_LINE_TEXT' }, arrayKey: 'code', arrayKeyValue: 'memo'
+      });
+      expect(row.reasonSummary).toBe('フォームのフィールド削除：メモ（memo）');
+    });
+
+    it('names the field on layout rows, including rows without a field payload', () => {
+      const layout = [{ type: 'ROW', fields: [{ type: 'SINGLE_LINE_TEXT', code: 'company_name', size: { width: '300' } }] }];
+      const width = enrichOne({ sectionKey: 'layoutSettings', type: 'changed', path: 'layoutSettings.layout[0].fields[0].size.width', left: '260', right: '300' }, layout);
+      expect(width.entityPropLabel).toBe('フィールド「会社名（company_name）」 / 横幅');
+      const removed = enrichOne({ sectionKey: 'layoutSettings', type: 'removed', path: 'layoutSettings.layout[0].fields[0]', left: layout[0].fields[0] }, layout);
+      expect(removed.reasonSummary).toBe('レイアウト行「行 #1」 / フィールド「会社名（company_name）」 削除');
+    });
+
+    it('finds fields placed inside a group', () => {
+      const layout = [{ type: 'GROUP', code: 'g', layout: [{ type: 'ROW', fields: [{ type: 'NUMBER', code: 'amount', size: { width: '100' } }] }] }];
+      const row = enrichOne({ sectionKey: 'layoutSettings', type: 'changed', path: 'layoutSettings.layout[0].layout[0].fields[0].size.width', left: '90', right: '100' }, layout);
+      expect(row.entityPropLabel).toBe('フィールド「金額（amount）」 / 横幅');
+    });
+
+    it('uses the file name for JS/CSS files instead of a fileKey prefix', () => {
+      const ctx = extractEntityContext({
+        sectionKey: 'customizeSettings', type: 'removed', path: 'customizeSettings.desktop.js[2]',
+        left: { type: 'FILE', name: 'a.js', file: { fileKey: '20260502124602611BD', name: 'a.js' } }
+      });
+      expect(ctx.entityLabel).toBe('デスクトップ/JS: a.js');
+    });
+
+    it('keeps identifying JS/CSS file sub-rows by the matched file name', () => {
+      const ctx = extractEntityContext({
+        sectionKey: 'customizeSettings', type: 'changed', path: 'customizeSettings.desktop.js[2]._body',
+        left: 'a', right: 'b', arrayKey: 'name', arrayKeyValue: 'a.js'
+      });
+      expect(ctx.entityLabel).toBe('デスクトップ/JS: a.js');
+    });
+
+    it('treats name-keyed app actions as entities', () => {
+      const [root, child] = enrichDiffRows([
+        { _id: 'a', sectionKey: 'actionSettings', type: 'removed', path: 'actionSettings.actions.出荷を指示', left: { name: '出荷を指示', id: '1' } },
+        { _id: 'b', sectionKey: 'actionSettings', type: 'changed', path: 'actionSettings.actions.契約を作成.filterCond', left: '', right: 'a = 1' }
+      ], makeBundle({}), makeBundle({}));
+      expect(root.reasonSummary).toBe('アクション削除：出荷を指示');
+      expect(child.reasonSummary).toBe('アクション「契約を作成」 / 実行条件 変更');
+    });
+  });
+
   describe('buildStatusImpactIndex', () => {
     it('indexes transition actions by referenced state names', () => {
       const bundle = makeBundle({

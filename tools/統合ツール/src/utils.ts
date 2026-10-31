@@ -232,6 +232,11 @@ export function apiErrorWithContext(err: any, meta: ApiErrorMeta): ApiDiagError 
   return wrapped;
 }
 
+/** 利用者に見せる文から内部の通信情報（`[API] …` の行）を除く。実行ログには元の文を残す。 */
+export function withoutApiContextLines(message: unknown): string {
+  return String(message ?? '').split('\n').filter((line) => !/^\s*\[API\]\s/.test(line)).join('\n').trim();
+}
+
 export interface FlatCategory { name: string; path: string; index: string }
 
 /**

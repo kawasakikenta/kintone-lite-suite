@@ -10,7 +10,7 @@ import {
   getPreviewStateLabel
 } from '../utils.js';
 import { hasIncompleteActualDiffTruncation } from './engine.js';
-import { extractFieldPathInfo } from './enrich.js';
+import { buildFieldLabelResolver, extractFieldPathInfo, fieldSettingIdentity, type FieldLabelResolver } from './enrich.js';
 import { contentIdentifier, isSensitiveSameDiffRow } from './export-safety.js';
 import { decodeRow } from './path-decoder.js';
 import { labelOfProp } from './label-dict.js';
@@ -387,17 +387,18 @@ function typeLabel(row: DiffMarkdownRow): string {
   return map[String(row.type || '')] || String(row.type || '不明');
 }
 
-function titleForRow(row: DiffMarkdownRow): string {
+function titleForRow(row: DiffMarkdownRow, fieldLabelOf: FieldLabelResolver): string {
   const sectionKey = String(row.sectionKey || '').trim();
   const path = String(row.path || '').trim();
   const field = extractFieldPathInfo(path);
   if (field) {
-    const payload = row.type === 'removed' ? row.left : row.right;
+    // payload がフィールド定義なのは行がフィールド全体のときだけ。選択肢の行の label は選択肢名。
+    const payload = !field.leafKey ? (row.type === 'removed' ? row.left : row.right) : null;
     const fieldName = payload && typeof payload === 'object'
       ? String((payload as Record<string, unknown>).label || (payload as Record<string, unknown>).name || '').trim()
       : '';
-    const name = fieldName || String(row.entityLabel || '').trim() || field.activeCode;
-    const setting = field.leafKey ? labelOfProp(field.leafKey) : 'フィールド定義';
+    const name = fieldLabelOf(field.activeCode, row.type) || fieldName || String(row.entityLabel || '').trim() || field.activeCode;
+    const setting = field.leafKey ? fieldSettingIdentity(field).settingLabel : 'フィールド定義';
     return `${name}${name !== field.activeCode ? `（${field.activeCode}）` : ''} / ${setting}`;
   }
   const explicit = String(row.entityLabel || '').trim();
@@ -407,8 +408,10 @@ function titleForRow(row: DiffMarkdownRow): string {
   const decodedTitle = String(decoded?.oneLineSummary || decoded?.propLabel || '').trim();
   const reason = String(row.reasonSummary || '').trim();
   const label = String(row.label || '').trim();
-  if (explicit && row.entityPropLabel) return `${explicit} / ${row.entityPropLabel}`;
-  if (explicit) return explicit;
+  if (explicit) {
+    const property = row.entityPropLabel || decoded?.propLabel;
+    return property && property !== explicit ? `${explicit} / ${property}` : explicit;
+  }
   if (decodedTitle) return decodedTitle;
   if (reason) return reason;
   if (label && label !== path) return label;
@@ -604,13 +607,13 @@ function conclusion(ctx: DiffMarkdownContext, selected: DiffCounts, all: DiffCou
   return { code: 'differences-present', text: '比較先（AFTER）に対して確認対象の実差分があります。' };
 }
 
-function rowBlock(row: DiffMarkdownRow, index: number, seenIds: Map<string, number>): string[] {
+function rowBlock(row: DiffMarkdownRow, index: number, seenIds: Map<string, number>, fieldLabelOf: FieldLabelResolver): string[] {
   const baseId = stableRowId(row);
   const occurrence = (seenIds.get(baseId) || 0) + 1;
   seenIds.set(baseId, occurrence);
   const stableId = occurrence > 1 ? `${baseId}-${occurrence}` : baseId;
   const sectionKey = String(row.sectionKey || '').trim();
-  const title = titleForRow(row);
+  const title = titleForRow(row, fieldLabelOf);
   const facts = rowFacts(row);
   const lines = [
     `### 差分 ${index}`,
@@ -717,11 +720,12 @@ export function buildDiffMarkdownExport(ctx: DiffMarkdownContext = {}): DiffMark
     lines.push('- この出力範囲に実差分はありません。`same` 行と表示用補助行は件数だけを記録し、明細を重複収録していません。');
   } else {
     const seenIds = new Map<string, number>();
+    const fieldLabelOf = buildFieldLabelResolver(ctx.sourceBundle, ctx.targetBundle);
     let detailIndex = 0;
     rows.forEach((row) => {
       if (!row || row._displayOnly || row.type === 'same') return;
       detailIndex += 1;
-      lines.push('', ...rowBlock(row, detailIndex, seenIds));
+      lines.push('', ...rowBlock(row, detailIndex, seenIds, fieldLabelOf));
     });
   }
   lines.push('', '---', `生成元: kintone-lite-suite ${markdownInline(TOOL_VERSION)}`);

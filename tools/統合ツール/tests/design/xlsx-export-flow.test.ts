@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clampCellText, runAdvancedDesignExporter, runBatchDesignExportXlsxZip, toManifestTargets } from '../../src/tabs/design-xlsx';
+import { clampCellText, getExporterDialogZIndex, readableErrorMessage, runAdvancedDesignExporter, runBatchDesignExportXlsxZip, toManifestTargets } from '../../src/tabs/design-xlsx';
 
 type Sheet = { __aoa: any[][]; [key: string]: any };
 
@@ -68,7 +68,6 @@ function baseResponses(overrides: Record<string, any> = {}): Record<string, any>
     '/app/actions.json': { actions: {} },
     '/app/plugins.json': { plugins: [] },
     '/app/adminNotes.json': { content: '' },
-    '/app/webhook.json': { webhooks: [] },
     '/app/notifications/general.json': { notifications: [] },
     '/app/notifications/perRecord.json': { notifications: [] },
     '/app/notifications/reminder.json': { notifications: [] },
@@ -127,7 +126,6 @@ describe('runAdvancedDesignExporter の取得失敗の扱い', () => {
     installEnvironment(baseResponses({
       '/app/form/fields.json': new Error('403'),
       '/records.json': new Error('500'),
-      '/app/webhook.json': new Error('403'),
       '/app/adminNotes.json': new Error('403')
     }));
     vi.useFakeTimers();
@@ -136,8 +134,8 @@ describe('runAdvancedDesignExporter の取得失敗の扱い', () => {
     const result: any = await promise;
     vi.useRealTimers();
     const names = result.failedAPIs.map((f: any) => f.name);
-    expect(names).toEqual(expect.arrayContaining(['フィールド設定', 'レコード件数', 'Webhook', '管理者メモ']));
-    expect(names.some((name: string) => /^[A-Za-z]+$/.test(name) && name !== 'Webhook')).toBe(false);
+    expect(names).toEqual(expect.arrayContaining(['フィールド設定', 'レコード件数', '管理者メモ']));
+    expect(names.some((name: string) => /^[A-Za-z]+$/.test(name))).toBe(false);
   });
 
   it('設定JSONに無いセクションは空の設計書にせず取得失敗として報告する', async () => {
@@ -181,15 +179,43 @@ describe('runAdvancedDesignExporter の取得失敗の扱い', () => {
     expect(result.failedAPIs.some((f: any) => f.name === 'JS/CSS設定（設定JSON）' && /本文/.test(f.error))).toBe(true);
   });
 
-  it('Webhook を取得できなかった場合は0件ではなく(取得不可)と書く', async () => {
-    installEnvironment(baseResponses({ '/app/webhook.json': new Error('404') }));
+  it('公開 API の無い Webhook は呼び出さず、対象外だと明記して完了扱いにする', async () => {
+    const { calls } = installEnvironment(baseResponses({}));
+    vi.useFakeTimers();
+    const promise = runAdvancedDesignExporter({ appId: '5', preselectedSheets: ALL_SHEETS, returnWorkbook: true, suppressToast: true });
+    await vi.runAllTimersAsync();
+    const result: any = await promise;
+    vi.useRealTimers();
+    expect(JSON.stringify(calls)).not.toContain('webhook');
+    expect(result.failedAPIs).toEqual([]);
+    const summary: any[][] = result.wb.Sheets['サマリー'].__aoa;
+    expect(summary.find((row) => row[0] === 'Webhook')?.[1]).toContain('対象外');
+  });
+
+  it('プロセス管理が無効で states が null でも未取得ではなく 0 件と書く', async () => {
+    installEnvironment(baseResponses({}));
     vi.useFakeTimers();
     const promise = runAdvancedDesignExporter({ appId: '5', preselectedSheets: ALL_SHEETS, returnWorkbook: true, suppressToast: true });
     await vi.runAllTimersAsync();
     const result: any = await promise;
     vi.useRealTimers();
     const summary: any[][] = result.wb.Sheets['サマリー'].__aoa;
-    expect(summary.find((row) => row[0] === 'Webhook数')).toEqual(['Webhook数', '(取得不可)']);
+    expect(summary.find((row) => row[0] === 'ステータス数')?.[1]).toBe('0');
+    expect(summary.find((row) => row[0] === 'アクション数(プロセス)')?.[1]).toBe('0');
+  });
+
+  it('シート選択ダイアログは lite パネルの裏に隠れない', () => {
+    const panel = { style: { zIndex: '999999' } };
+    vi.stubGlobal('document', { getElementById: () => null, querySelector: (selector: string) => (selector === '.kus-lp' ? panel : null) });
+    vi.stubGlobal('window', { getComputedStyle: (element: any) => element.style });
+    expect(Number(getExporterDialogZIndex())).toBeGreaterThan(999999);
+    vi.unstubAllGlobals();
+  });
+
+  it('HTML のエラーページは全文を見せず状態だけを示す', () => {
+    const page = '<!DOCTYPE html><html><body><ul><li><strong>Code:</strong> 404 Not Found</li></ul></body></html>';
+    expect(readableErrorMessage(page)).toBe('サーバーがエラーページを返しました（404 Not Found）');
+    expect(readableErrorMessage(new Error('権限がありません'))).toBe('権限がありません');
   });
 });
 
