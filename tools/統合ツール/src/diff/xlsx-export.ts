@@ -9,11 +9,10 @@ import {
   getIssueSideLabel,
   stableStringify
 } from '../utils.js';
-import { stringifyForDiff, stringifyRowValueForDiff } from './export.js';
+import { computeDiffHtmlReviewIdentity, stringifyForDiff, stringifyRowValueForDiff } from './export.js';
 import {
   isSensitiveSameDiffRow,
   contentIdentifier,
-  maskSensitiveDiffRows,
   SENSITIVE_DIFF_SECTION_KEYS,
   SENSITIVE_SAME_VALUE_REDACTION
 } from './export-safety.js';
@@ -140,8 +139,6 @@ export interface DiffXlsxBundle {
 export interface DiffXlsxContext {
   /** customer は提出用の簡潔な構成。未指定時も customer を採用する。 */
   audience?: 'customer' | 'internal';
-  /** 共有用に機密キーやJS/CSS本文・プラグイン設定値をマスクするか */
-  maskSensitive?: boolean;
   rows: DiffXlsxRow[];
   fetchIssues?: DiffXlsxFetchIssue[];
   partialIssues?: DiffXlsxPartialIssue[];
@@ -1331,7 +1328,8 @@ function buildSummarySheet(
   grouped: Map<string, DiffXlsxRow[]>,
   fieldCount: number,
   settingDiffCount: number,
-  unstructuredFieldDiffCount: number
+  unstructuredFieldDiffCount: number,
+  reportFingerprint: string = ''
 ): XlsxSheet {
   const rows = ctx.rows || [];
   const fetchIssues = ctx.fetchIssues || [];
@@ -1385,7 +1383,8 @@ function buildSummarySheet(
     comparisonEnvironment: 14,
     normalization: 18,
     fieldStatus: 19,
-    usage: 20
+    usage: 20,
+    reportFingerprint: 21
   } as const;
 
   const sheetRows: (string | number | null)[][] = [
@@ -1419,7 +1418,7 @@ function buildSummarySheet(
     ['使い方', fieldCount
       ? '①「変更対象一覧」で対象を絞る　②「フィールド差分要約・詳細」で変更内容を確認　③「差分一覧」で確認状況と対応判断を入力　※パスは技術明細シートにのみ掲載'
       : '①「変更対象一覧」で対象を絞る　②「差分一覧」で変更前後を確認　③黄色い4列に確認状況・対応判断・担当者・コメントを入力　※パスは技術明細シートにのみ掲載', '', rows.length ? '③ レビュー入力へ' : ''],
-    ['', '', '', '']
+    ['レポート識別子 (reportFingerprint)', reportFingerprint, '', '']
   ];
   const guideTitleRow = sheetRows.length;
   sheetRows.push(['シート案内', '', '', '']);
@@ -1549,6 +1548,7 @@ function buildSummarySheet(
   cellStyles[overviewRow.fieldStatus] = ['info', fieldStatusIncomplete ? 'kpiDanger' : 'kpiGood'];
   if (fieldLinkTarget) cellStyles[overviewRow.fieldStatus][3] = 'hyperlink';
   if (rows.length) cellStyles[overviewRow.usage][3] = 'hyperlink';
+  cellStyles[overviewRow.reportFingerprint] = ['info', 'normal'];
   for (const index of warningRows) cellStyles[index][0] = 'warning';
   const merges = [
     'A1:D1', 'A2:D2', `A${overviewRow.guideBand + 1}:D${overviewRow.guideBand + 1}`, `A${overviewRow.comparisonTitle + 1}:D${overviewRow.comparisonTitle + 1}`,
@@ -2187,24 +2187,25 @@ function buildListSheet(
   differenceRefs?: DiffXlsxDifferenceRef[],
   technicalRefs?: DiffXlsxTechnicalRef[],
   fieldModel?: DiffXlsxFieldModel,
-  ctx?: DiffXlsxContext
+  ctx?: DiffXlsxContext,
+  reviewKeysByRow?: string[]
 ): XlsxSheet {
   const hasRows = rows.length > 0;
   const headers = [
     'セクション', '項目／変更内容', '変更種別', '存在状況', '差分ID',
     directionalValueHeader('source', sourceBundle), directionalValueHeader('target', targetBundle), '確認事項',
-    '確認状況', '対応判断', '担当者', 'コメント'
+    '確認状況', '対応判断', '担当者', 'コメント', 'reviewKey'
   ];
   const groupHeader = [
     '差分対象', '', '変更の事実', '', '',
     '比較元（変更前）', '比較先（変更後）', '確認事項',
-    'レビュー入力（黄色）', '', '', ''
+    'レビュー入力（黄色）', '', '', '', 'HTML突合'
   ];
   const guide = sheetGuideBand(
     'このブックに収録された差分を、設定項目ごとの短い変更内容と変更前後の値で確認できます。',
     '黄色の列に確認状況・対応判断・担当者・コメントを入力します。差分IDから技術明細へ移動できます。値先頭の「[一部表示]」は技術明細または元データを確認します。'
   );
-  const out: (string | number | null)[][] = [[guide, '', '', '', '', '', '', '', '', '', '', ''], groupHeader, headers];
+  const out: (string | number | null)[][] = [[guide, '', '', '', '', '', '', '', '', '', '', '', ''], groupHeader, headers];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal', 'normal'];
   const groupCellStyles: Array<XlsxCellStyle | undefined> = [];
   groupCellStyles[0] = 'sectionHeader';
@@ -2213,6 +2214,7 @@ function buildListSheet(
   groupCellStyles[6] = 'targetGroup';
   groupCellStyles[7] = 'info';
   groupCellStyles[8] = 'sectionHeader';
+  groupCellStyles[12] = 'info';
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], groupCellStyles, []];
   cellStyles[2][5] = 'headerDivider';
   const rowHeights: number[] = [44, 24, readableHeaderRowHeight([
@@ -2255,7 +2257,8 @@ function buildListSheet(
       reviewable ? '未確認' : '対象外',
       reviewable ? '未判断' : '対象外',
       '',
-      ''
+      '',
+      reviewKeysByRow?.[rowIndex] || ''
     ]);
     rowStyles.push('normal');
     const styles: Array<XlsxCellStyle | undefined> = [];
@@ -2272,6 +2275,7 @@ function buildListSheet(
       styles[8] = 'info';
       styles[9] = 'info';
     }
+    styles[12] = 'info';
     cellStyles.push(styles);
     rowHeights.push(readableDiffRowHeight([
       { value: sectionLabelOf(row.sectionKey || row.section || ''), width: 18 },
@@ -2297,7 +2301,7 @@ function buildListSheet(
           style: 'zebraCenter'
         }
         : { message: '差分はありません', style: 'statusGood' };
-    out.push([emptyState.message, '', '', '', '', '', '', '', '', '', '', '']);
+    out.push([emptyState.message, '', '', '', '', '', '', '', '', '', '', '', '']);
     rowStyles.push('normal');
     cellStyles.push(Array.from({ length: headers.length }, () => emptyState.style));
     rowHeights.push(Math.max(40, readableDiffRowHeight([{
@@ -2321,7 +2325,7 @@ function buildListSheet(
   return {
     name,
     rows: out,
-    colWidths: [18, 30, 16, 18, 15, 42, 42, 32, 14, 14, 16, 28],
+    colWidths: [18, 30, 16, 18, 15, 42, 42, 32, 14, 14, 16, 28, 36],
     rowStyles,
     cellStyles,
     headerRow: 3,
@@ -2330,8 +2334,8 @@ function buildListSheet(
     freezeColumns: hasRows ? 5 : undefined,
     rowHeights,
     merges: [
-      'A1:L1', 'A2:B2', 'C2:E2', 'I2:L2',
-      ...(hasRows ? [] : ['A4:L4'])
+      'A1:M1', 'A2:B2', 'C2:E2', 'I2:L2',
+      ...(hasRows ? [] : ['A4:M4'])
     ],
     dataValidations,
     internalHyperlinks: rows.flatMap((_row, index) => {
@@ -5816,9 +5820,7 @@ function buildCustomerDiffXlsxSheets(ctx: DiffXlsxContext): XlsxSheet[] {
 export const MAX_SINGLE_DIFF_XLSX_BYTES = 100 * 1024 * 1024;
 
 export function buildDiffXlsxSheets(rawCtx: DiffXlsxContext): XlsxSheet[] {
-  const ctx: DiffXlsxContext = rawCtx.maskSensitive
-    ? { ...rawCtx, rows: maskSensitiveDiffRows(rawCtx.rows) }
-    : rawCtx;
+  const ctx = rawCtx;
   if (ctx.audience !== 'internal') return buildCustomerDiffXlsxSheets(ctx);
   const rows = ctx.rows || [];
   const grouped = groupRowsBySection(rows);
@@ -5836,12 +5838,26 @@ export function buildDiffXlsxSheets(rawCtx: DiffXlsxContext): XlsxSheet[] {
     refs.push(differenceRefs[index]);
     differenceRefsBySection.set(key, refs);
   });
+  const reviewIdentity = computeDiffHtmlReviewIdentity(
+    ctx.sourceBundle,
+    ctx.targetBundle,
+    rows,
+    ctx.scopes || [],
+    {
+      fetchIssues: ctx.fetchIssues,
+      partialIssues: ctx.partialIssues,
+      truncation: ctx.truncation,
+      exportMode: ctx.exportMode || 'all',
+      exportContentMode: ctx.exportContentMode || 'diffOnly'
+    }
+  );
   const sheets: XlsxSheet[] = [buildSummarySheet(
     ctx,
     grouped,
     fieldModel.summaries.length,
     fieldModel.details.length,
-    unstructuredFieldDiffCount
+    unstructuredFieldDiffCount,
+    reviewIdentity.reportFingerprint
   )];
   const issuesSheet = buildIssuesSheet(ctx);
   if (issuesSheet) sheets.push(issuesSheet);
@@ -5862,7 +5878,8 @@ export function buildDiffXlsxSheets(rawCtx: DiffXlsxContext): XlsxSheet[] {
     differenceRefs,
     technicalRefs,
     fieldModel,
-    ctx
+    ctx,
+    reviewIdentity.rowReviewKeys
   ));
   for (const [key, list] of grouped) {
     sheets.push(buildSectionSheet(

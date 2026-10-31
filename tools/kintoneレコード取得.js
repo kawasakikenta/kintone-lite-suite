@@ -4248,33 +4248,69 @@ ${warningSummary}` : ""}`;
     const successes = [];
     const failures = [];
     const tableWarnings = [];
+    const failureManifestLines = [];
+    const batchManifestApps = [];
     let stoppedAt = -1;
     for (let i = 0; i < apps.length; i++) {
       const app = apps[i];
       let folder = "";
       setStatus(`CSV出力中... (${i + 1}/${apps.length})`);
       try {
-        const result = await buildCsvExportForApp(app.appId, app.guestId || "", query, setStatus, exportOptions);
+        const appQuery = String(app.query ?? query ?? "");
+        const appName = String(app.appName ?? app.name ?? "");
+        const result = await buildCsvExportForApp(app.appId, app.guestId || "", appQuery, setStatus, exportOptions);
         const guestSuffix = result.guestId ? `_guest${sanitizeZipSegment(result.guestId)}` : "";
         folder = uniqueZipEntryName(used, `app_${sanitizeZipSegment(result.appId)}${guestSuffix}`);
         addRecordCsvFiles(zip, result.csv, `${folder}/`);
         zip.file(`${folder}/manifest.json`, JSON.stringify({
           generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-          appName: app.appName || "",
-          query,
+          appName,
+          query: appQuery,
           ...csvExportManifest(result.appId, result.guestId, result.recordCount, result.csv)
         }, null, 2));
         totalRecords += result.recordCount;
         warningCount += result.csv.warnings.length;
         tableWarnings.push(...result.csv.warnings.map((warning) => `App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ""}: ${warning}`));
-        successes.push(`${folder}/: App ${result.appId}${result.guestId ? ` / Guest ${result.guestId}` : ""} / ${result.recordCount}件 / テーブル ${result.csv.tables.length}件${result.csv.warnings.length ? ` / 未取得 ${result.csv.warnings.length}件（フォルダ内manifest.json参照）` : ""}`);
+        const statusCode = result.csv.warnings.length ? "partial" : "ok";
+        const appNameNote = appName ? ` (${appName})` : "";
+        successes.push(`${folder}: ${result.recordCount}件 / status=${statusCode} / App ${result.appId}${appNameNote}${result.guestId ? ` / Guest ${result.guestId}` : ""} / query=${appQuery || "(なし)"} / テーブル ${result.csv.tables.length}件（サブテーブルCSV分割 ${result.csv.tables.length}件）${result.csv.warnings.length ? ` / 未取得 ${result.csv.warnings.length}件（フォルダ内manifest.json参照）` : ""}`);
+        batchManifestApps.push({
+          appId: String(result.appId),
+          guestId: String(result.guestId || ""),
+          appName,
+          folder,
+          status: statusCode,
+          recordCount: result.recordCount,
+          query: appQuery,
+          tableCsvCount: result.csv.tables.length,
+          tables: result.csv.tables.map((t) => ({ fieldCode: t.fieldCode, fileName: t.fileName, rowCount: t.rowCount })),
+          warnings: result.csv.warnings
+        });
       } catch (error) {
         if (folder) zip.remove(folder);
         if (isCancelStop(error)) {
           stoppedAt = i;
           break;
         }
-        failures.push(`App ${app.appId}${app.guestId ? ` / Guest ${app.guestId}` : ""}: ${error?.message || String(error)}`);
+        const reason = error?.message || String(error);
+        const appQuery = String(app.query ?? query ?? "");
+        const appName = String(app.appName ?? app.name ?? "");
+        const failFolder = `app_${sanitizeZipSegment(app.appId)}${app.guestId ? `_guest${sanitizeZipSegment(app.guestId)}` : ""}`;
+        failures.push(`App ${app.appId}${app.guestId ? ` / Guest ${app.guestId}` : ""}: ${reason}`);
+        failureManifestLines.push(`${failFolder}: 0件 / status=failed / App ${app.appId}${appName ? ` (${appName})` : ""}${app.guestId ? ` / Guest ${app.guestId}` : ""}: ${reason} / query=${appQuery || "(なし)"} / テーブル 0件`);
+        batchManifestApps.push({
+          appId: String(app.appId),
+          guestId: String(app.guestId || ""),
+          appName,
+          folder: failFolder,
+          status: "failed",
+          recordCount: 0,
+          query: appQuery,
+          tableCsvCount: 0,
+          tables: [],
+          warnings: [],
+          error: reason
+        });
       }
     }
     const notRun = stoppedAt >= 0 ? apps.slice(stoppedAt).map((app) => `App ${app.appId}${app.guestId ? ` / Guest ${app.guestId}` : ""}`) : [];
@@ -4302,10 +4338,41 @@ ${failures.join("\n")}`);
       "明細CSVの $id を同じフォルダの親 records.csv の $id に紐付けてください。",
       "",
       ...successes,
-      ...failures.length ? ["", "失敗:", ...failures] : [],
+      ...failures.length ? ["", "失敗:", ...failureManifestLines] : [],
       ...notRun.length ? ["", "未実行（中止）:", ...notRun.map((target) => `${target}: 未実行（中止）`)] : []
     ].join("\n");
     zip.file("manifest.txt", manifest);
+    if (stoppedAt >= 0) {
+      for (const app of apps.slice(stoppedAt)) {
+        const appQuery = String(app.query ?? query ?? "");
+        const appName = String(app.appName ?? app.name ?? "");
+        const notRunFolder = `app_${sanitizeZipSegment(app.appId)}${app.guestId ? `_guest${sanitizeZipSegment(app.guestId)}` : ""}`;
+        batchManifestApps.push({
+          appId: String(app.appId),
+          guestId: String(app.guestId || ""),
+          appName,
+          folder: notRunFolder,
+          status: "not_executed",
+          recordCount: 0,
+          query: appQuery,
+          tableCsvCount: 0,
+          tables: [],
+          warnings: []
+        });
+      }
+    }
+    zip.file("manifest.json", JSON.stringify({
+      schemaVersion: 1,
+      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      query,
+      appCount: apps.length,
+      succeededCount: successes.length,
+      failedCount: failures.length,
+      notExecutedCount: notRun.length,
+      totalRecords,
+      tableWarningCount: warningCount,
+      apps: batchManifestApps
+    }, null, 2));
     setStatus(`ZIP生成中... (${successes.length}アプリ / ${totalRecords}件)`);
     const blob = await zip.generateAsync({ type: "blob" });
     downloadBlob(recordExportFilename(filename, "zip", buildExportFilename("CSV出力", "zip")), blob);
@@ -4738,6 +4805,8 @@ ${droppedNote}` : ""}`);
     const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
     let fileCount = 0;
+    let totalAttachmentBytes = 0;
+    let resolvedAppName = String(opts.appName || "");
     const failures = [];
     const manifest = [];
     const usedByFolder = /* @__PURE__ */ new Map();
@@ -4802,7 +4871,17 @@ ${formatFileFailures(failures.slice(0, 5))}${failures.length > 5 ? "\n…" : ""}
 ${formatFileFailures(failures)}
 `);
     }
-    zip.file("manifest.json", JSON.stringify({ appId: String(appId), guestId: String(guestId || ""), query: query || "", files: manifest }, null, 2));
+    zip.file("manifest.json", JSON.stringify({
+      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      appId: String(appId),
+      guestId: String(guestId || ""),
+      query: query || "",
+      recordCount: records.length,
+      savedCount: fileCount,
+      failedCount: failures.length,
+      failures,
+      files: manifest
+    }, null, 2));
     setStatus(`ZIP生成中 (${fileCount}ファイル)`);
     const zipBlob = await zip.generateAsync({ type: "blob" });
     downloadBlob(recordExportFilename(zipName, "zip", buildExportFilename("添付ファイル", "zip", { appLabel: buildAppFilenameLabel(appId, "") })), zipBlob);
@@ -4841,6 +4920,8 @@ ${detail}`, "warn");
     notes.push(...csvExport.warnings);
     zip.file("records.json", JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, recordCount: records.length, records }, null, 2));
     let fileCount = 0;
+    let totalAttachmentBytes = 0;
+    let resolvedAppName = String(opts.appName || "");
     const fileFailures = [];
     if (includeFiles) {
       const collected = [];
@@ -4895,6 +4976,8 @@ ${detail}`, "warn");
         const used = usedByDir.get(dir) || /* @__PURE__ */ new Set();
         usedByDir.set(dir, used);
         zip.file(`${dir}/${uniqueZipName(used, ent.file.name || "file.bin", ent.file.fileKey, ent.fileIndex)}`, result.blob);
+        const declaredBytes = Number(ent.file?.size);
+        totalAttachmentBytes += Number.isFinite(declaredBytes) && declaredBytes > 0 ? declaredBytes : Number(result.blob?.size || 0);
         fileCount++;
       }
       if (fileFailures.length) {
@@ -4904,6 +4987,7 @@ ${detail}`, "warn");
       notes.push("添付ファイル未取得");
     }
     let commentCount = 0;
+    let commentRecordCount = 0;
     const commentFailures = [];
     if (includeComments) {
       const out = [];
@@ -4925,6 +5009,7 @@ ${detail}`, "warn");
           }
           if (comments.length) {
             out.push({ recordId, comments });
+            commentRecordCount++;
             commentCount += comments.length;
           }
         } catch (e) {
@@ -4968,6 +5053,9 @@ ${detail}`, "warn");
           notes.push(`アプリ設定取得失敗 ${appNg}セクション: ${appNgSections.join(", ")}`);
         }
       }
+      if (!resolvedAppName) {
+        resolvedAppName = String(settings?.sections?.generalSettings?.name || settings?.sections?.appInfo?.name || "");
+      }
       zip.file(`app_settings/app_${appId}.json`, JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, scopes: appScopes, bundle: settings }, null, 2));
     } else if (!includeAppSettings) {
       notes.push("アプリ設定未取得");
@@ -4980,6 +5068,14 @@ ${detail}`, "warn");
       query: query || "",
       recordCount: records.length,
       csvExport: csvExportManifest(appId, guestId || "", records.length, csvExport),
+      guestId: String(guestId || ""),
+      appName: resolvedAppName,
+      commentRecordCount,
+      attachmentSummary: {
+        savedCount: fileCount,
+        failedCount: fileFailures.length,
+        totalBytes: totalAttachmentBytes
+      },
       fileCount,
       fileFailures,
       commentCount,
@@ -5606,7 +5702,9 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       setStatus(`App ${appId}: CSVひな形を作成中…`);
       try {
         const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
-        templates.push({ appId, template: buildCsvImportTemplate(fields?.properties) });
+        const Built = buildCsvImportTemplate(fields?.properties);
+        const excludedCount = Math.max(0, Object.keys(fields?.properties || {}).length - Built.columnCount);
+        templates.push({ appId, excludedCount, template: Built });
       } catch (error) {
         if (isRunCancelledError(error)) {
           stoppedAt = i;
@@ -5637,7 +5735,8 @@ ${failures.join("\n")}`);
       ].join("\r\n");
       zip.file(folder + "README.txt", head + template.readme + "\r\n");
     }
-    zip.file("manifest.json", JSON.stringify({ createdAt: generatedAt, guestId: options.guestId, templates: templates.map((item) => ({ appId: item.appId, columns: item.template.columnCount })), failures, ...notRun.length ? { cancelled: true, notExecuted: notRun.map((label) => `${label}: 未実行（中止）`) } : {} }, null, 2));
+    const appEntries = templates.map((item) => ({ appId: item.appId, guestId: options.guestId || "", columns: item.template.columnCount, excludedCount: item.excludedCount }));
+    zip.file("manifest.json", JSON.stringify({ generatedAt, createdAt: generatedAt, guestId: options.guestId, apps: appEntries, templates: appEntries, failures, ...notRun.length ? { cancelled: true, notExecuted: notRun.map((label) => `${label}: 未実行（中止）`) } : {} }, null, 2));
     downloadBlob(buildExportFilename("CSV取込ひな形", "zip"), await zip.generateAsync({ type: "blob" }));
     if (notRun.length) {
       return { warning: `${formatCancelledHeadline(stoppedAt, appIds.length)}

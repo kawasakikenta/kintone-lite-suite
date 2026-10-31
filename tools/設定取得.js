@@ -3763,6 +3763,47 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return out;
   }
+  function buildSettingsMarkdownIndex(input) {
+    const apps = Array.isArray(input?.apps) ? input.apps : [];
+    const envLabel = input?.environment === "preview" || input?.preview ? "プレビュー（未反映）" : "本番（運用中）";
+    const scopeText = (input?.scopeLabels?.length ? input.scopeLabels : (input?.scopes || []).map(sectionLabel)).join("、") || "-";
+    const totalOmitted = apps.reduce((sum, a) => sum + Number(a?.omittedCustomizeBodies || 0), 0);
+    const lines = [
+      "# 設定一括取得 INDEX",
+      "",
+      `- 出力日時: ${input?.generatedAt || "-"}`,
+      `- 取得対象環境: ${envLabel}`,
+      `- 対象アプリ数: ${apps.length}件`,
+      `- 対象セクション: ${scopeText}`
+    ];
+    if (totalOmitted > 0) {
+      lines.push(`- JS/CSS本文省略合計: ${totalOmitted}件（サイズ上限・非テキスト等のため本文を省略し fileKey のみ記録）`);
+    }
+    lines.push(
+      "",
+      "| アプリID | アプリ名 | ゲスト | ファイル | 取得OK | 取得NG | JS/CSS本文省略 | 備考 |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- |"
+    );
+    for (const app of apps) {
+      const omitted = Number(app?.omittedCustomizeBodies || 0);
+      const failed = Array.isArray(app?.failedSections) ? app.failedSections : [];
+      const notes = [];
+      if (failed.length) {
+        notes.push(`取得失敗: ${failed.map((f) => f.label || sectionLabel(f.key)).join("、")}`);
+      }
+      if (omitted > 0) {
+        notes.push(`JS/CSS本文省略 ${omitted}件`);
+      }
+      if (app?.customizeFiles) {
+        notes.push(`JS/CSSファイル保存 ${app.customizeFiles.saved}件${app.customizeFiles.failed ? `（失敗 ${app.customizeFiles.failed}件）` : ""}`);
+      }
+      const cell = (v) => String(v || "-").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+      lines.push(
+        `| ${cell(app.appId)} | ${cell(app.appName || "-")} | ${cell(app.guestId ? `guest:${app.guestId}` : "通常")} | ${cell(app.file || "-")} | ${Number(app?.sections?.ok ?? 0)} | ${Number(app?.sections?.ng ?? 0)} | ${omitted > 0 ? `${omitted}件` : "0件"} | ${cell(notes.join(" / ") || "OK")} |`
+      );
+    }
+    return lines.join("\n") + "\n";
+  }
   function renderSettingsExportSummaryHtml(rows, scopes) {
     const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(", ");
     const body = rows.map(
@@ -3945,7 +3986,23 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
     const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);
     const failedAppCount = rows.filter((row) => row.ngCount > 0).length;
+    const appSummaries = bundles.map((bundle, i) => {
+      const failedSectionKeys = scopes.filter((key) => bundle.sections?.[key]?._fetchError);
+      return {
+        appId: String(bundle.appId),
+        appName: bundleAppName(bundle),
+        guestId: targets[i].guestId,
+        sections: { ok: rows[i].okCount, ng: rows[i].ngCount },
+        failedSections: failedSectionKeys.map((key) => ({
+          key,
+          label: SECTION_DEFS.find((s) => s.key === key)?.label || key,
+          error: String(bundle.sections[key]._fetchError?.message || bundle.sections[key]._fetchError || "")
+        })),
+        omittedCustomizeBodies: rows[i].omittedBodies
+      };
+    });
     const payload = {
+      formatVersion: 2,
       generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       guestIds,
       targets,
@@ -3954,6 +4011,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       scopeLabels,
       appCount: bundles.length,
       failedAppCount,
+      omittedCustomizeBodies: rows.reduce((sum, row) => sum + row.omittedBodies, 0),
+      summary: appSummaries,
       ...notRun.length ? { cancelled: true, notExecuted: notRun } : {},
       apps: bundles
     };
@@ -3979,6 +4038,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           file,
           fetchedAt: bundle.fetchedAt || "",
           sections: { ok: rows[i].okCount, ng: rows[i].ngCount },
+          omittedCustomizeBodies: rows[i].omittedBodies,
           failedSections: failedSections2.map((key) => ({
             key,
             label: SECTION_DEFS.find((s) => s.key === key)?.label || key,
@@ -3993,6 +4053,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         "manifest.json",
         JSON.stringify(
           {
+            formatVersion: 2,
             generatedAt: payload.generatedAt,
             environment: preview ? "preview" : "production",
             guestIds,
@@ -4002,6 +4063,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
             scopeLabels,
             appCount: bundles.length,
             failedAppCount: entries.filter((entry) => entry.sections.ng > 0).length,
+            omittedCustomizeBodies: omittedBodies,
             ...includeCustomizeFiles ? {
               customizeFiles: {
                 layout: fileLayout,
@@ -4017,6 +4079,17 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           null,
           2
         )
+      );
+      zip.file(
+        "INDEX.md",
+        buildSettingsMarkdownIndex({
+          generatedAt: payload.generatedAt,
+          environment: preview ? "preview" : "production",
+          preview: payload.preview,
+          scopes: payload.scopes,
+          scopeLabels,
+          apps: entries
+        })
       );
       for (let i = 0; i < bundles.length; i++) {
         zip.file(entries[i].file, JSON.stringify(bundles[i], null, 2));

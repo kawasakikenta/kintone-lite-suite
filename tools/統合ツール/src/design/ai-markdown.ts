@@ -178,6 +178,127 @@ function countValue(value: number | null): string | number {
   return value == null ? 'unknown (null)' : value;
 }
 
+function referenceTarget(value: any): string {
+  if (value == null) return '';
+  if (typeof value !== 'object') return String(value);
+  return String(value.app ?? value.id ?? value.code ?? value.name ?? '');
+}
+
+/**
+ * フィールド定義（トップレベルおよびサブテーブル内フィールド）から、
+ * AI が業務ロジック・入力制約を把握するためのコンパクトな詳細文字列を生成する。
+ */
+export function formatFieldDetail(definition: any): string {
+  if (!isObject(definition)) return '';
+  const parts: string[] = [];
+
+  if (definition.required === true || definition.required === 'true') {
+    parts.push('required=true');
+  }
+  if (definition.unique === true || definition.unique === 'true') {
+    parts.push('unique=true');
+  }
+
+  const expr = typeof definition.expression === 'string' && definition.expression.trim() !== ''
+    ? definition.expression.trim()
+    : typeof definition.formula === 'string' && definition.formula.trim() !== ''
+      ? definition.formula.trim()
+      : '';
+  if (expr) {
+    parts.push(`expression=${expr}`);
+  }
+  if (definition.format != null && String(definition.format).trim() !== '') {
+    parts.push(`format=${String(definition.format).trim()}`);
+  }
+  if (definition.hideExpression === true || definition.hideExpression === 'true') {
+    parts.push('hideExpression=true');
+  }
+
+  if (definition.protocol != null && String(definition.protocol).trim() !== '') {
+    parts.push(`protocol=${String(definition.protocol).trim()}`);
+  }
+
+  const hasUnit = definition.unit != null && String(definition.unit) !== '';
+  const hasUnitPos = definition.unitPosition != null && String(definition.unitPosition).trim() !== '';
+  if (hasUnit) {
+    parts.push(`unit=${definition.unit}`);
+  }
+  if (hasUnitPos) {
+    parts.push(`unitPosition=${String(definition.unitPosition).trim()}`);
+  }
+
+  if (definition.digit === true || definition.digit === 'true') {
+    parts.push('digit=true');
+  }
+  if (definition.displayScale != null && String(definition.displayScale).trim() !== '') {
+    parts.push(`displayScale=${String(definition.displayScale).trim()}`);
+  }
+
+  if (isPlainObject(definition.options)) {
+    const optionLabels = Object.keys(definition.options)
+      .map((key) => {
+        const opt = definition.options[key];
+        return {
+          label: isObject(opt) && opt.label != null ? String(opt.label) : key,
+          index: isObject(opt) && opt.index != null && Number.isFinite(Number(opt.index)) ? Number(opt.index) : 0
+        };
+      })
+      .sort((a, b) => a.index - b.index || a.label.localeCompare(b.label))
+      .map((item) => item.label)
+      .filter(Boolean);
+    if (optionLabels.length) {
+      parts.push(`options=[${optionLabels.join(', ')}]`);
+    }
+  }
+
+  if ((definition.minValue != null && String(definition.minValue) !== '') || (definition.maxValue != null && String(definition.maxValue) !== '')) {
+    parts.push(`range=${definition.minValue ?? ''}..${definition.maxValue ?? ''}`);
+  }
+  if ((definition.minLength != null && String(definition.minLength) !== '') || (definition.maxLength != null && String(definition.maxLength) !== '')) {
+    parts.push(`length=${definition.minLength ?? ''}..${definition.maxLength ?? ''}`);
+  }
+
+  if (definition.defaultNowValue === true || definition.defaultNowValue === 'true') {
+    parts.push('defaultNowValue=true');
+  } else if (
+    definition.defaultValue !== undefined &&
+    definition.defaultValue !== null &&
+    definition.defaultValue !== '' &&
+    !(Array.isArray(definition.defaultValue) && definition.defaultValue.length === 0)
+  ) {
+    const dv = typeof definition.defaultValue === 'object' ? JSON.stringify(definition.defaultValue) : String(definition.defaultValue);
+    parts.push(`defaultValue=${dv}`);
+  }
+
+  if (isObject(definition.lookup)) {
+    const app = referenceTarget(definition.lookup.relatedApp);
+    const key = definition.lookup.relatedKeyField ?? '';
+    parts.push(`lookup(app=${app}${key ? `, key=${key}` : ''})`);
+  }
+  if (isObject(definition.referenceTable)) {
+    const app = referenceTarget(definition.referenceTable.relatedApp);
+    const relKey = definition.referenceTable.condition?.relatedField ?? '';
+    parts.push(`referenceTable(app=${app}${relKey ? `, key=${relKey}` : ''})`);
+  }
+
+  if (String(definition.type || '').toUpperCase() === 'SUBTABLE' && isPlainObject(definition.fields)) {
+    const childKeys = Object.keys(definition.fields);
+    const childSummaries = childKeys.map((childKey) => {
+      const child = definition.fields[childKey];
+      if (!isObject(child)) return childKey;
+      const code = String(child.code ?? childKey);
+      const type = String(child.type ?? 'UNKNOWN');
+      const detail = formatFieldDetail(child);
+      return detail ? `${code}:${type}(${detail})` : `${code}:${type}`;
+    });
+    if (childSummaries.length) {
+      parts.push(`subtableFields=[${childSummaries.join('; ')}]`);
+    }
+  }
+
+  return parts.join('; ');
+}
+
 function fieldRows(snapshot: DesignSnapshot): any[][] {
   return snapshot.fields.map((field) => [
     field.path,
@@ -185,14 +306,9 @@ function fieldRows(snapshot: DesignSnapshot): any[][] {
     field.label,
     field.type,
     field.tableCode ?? '',
-    field.group
+    field.group,
+    formatFieldDetail(field.definition)
   ]);
-}
-
-function referenceTarget(value: any): string {
-  if (value == null) return '';
-  if (typeof value !== 'object') return String(value);
-  return String(value.app ?? value.id ?? value.code ?? value.name ?? '');
 }
 
 interface DesignReference {
@@ -315,6 +431,102 @@ function collectReferences(bundle: any, snapshot: DesignSnapshot): DesignReferen
   ].sort((a, b) => `${a.fromPath}\u0000${a.relation}\u0000${a.id}`.localeCompare(`${b.fromPath}\u0000${b.relation}\u0000${b.id}`));
 }
 
+function viewSummaryRows(snapshot: DesignSnapshot): any[][] {
+  return snapshot.views.map((view) => [
+    view.path,
+    view.name,
+    view.builtinType ? `${view.type} (${view.builtinType})` : view.type,
+    view.filterCond,
+    view.sort,
+    view.fields.join(', ')
+  ]);
+}
+
+function formatAclEntity(item: any): string {
+  if (!isObject(item)) return '';
+  const entity = isObject(item.entity) ? item.entity : item;
+  const type = entity.type != null ? String(entity.type) : '';
+  const code = entity.code != null ? String(entity.code) : '';
+  const base = type && code ? `${type}:${code}` : code || type || 'unknown';
+  return item.includeSubs ? `${base}(includeSubs)` : base;
+}
+
+function summarizeAppAcl(section: any): string {
+  const rights = section?.rights;
+  if (!Array.isArray(rights) || rights.length === 0) return 'ルールなし';
+  return rights.slice(0, 10).map((rule: any) => {
+    if (!isObject(rule)) return '';
+    const target = formatAclEntity(rule);
+    const ops = [
+      rule.appEditable && 'appEditable',
+      rule.recordViewable && 'view',
+      rule.recordAddable && 'add',
+      rule.recordEditable && 'edit',
+      rule.recordDeletable && 'delete',
+      rule.recordImportable && 'import',
+      rule.recordExportable && 'export'
+    ].filter(Boolean).join('/');
+    return `${target}=[${ops || 'none'}]`;
+  }).filter(Boolean).join('; ') + (rights.length > 10 ? ` ...(+${rights.length - 10})` : '');
+}
+
+function summarizeRecordPermissions(section: any): string {
+  const rights = section?.rights;
+  if (!Array.isArray(rights) || rights.length === 0) return 'ルールなし';
+  return rights.slice(0, 10).map((rule: any, idx: number) => {
+    if (!isObject(rule)) return '';
+    const cond = rule.filterCond ? String(rule.filterCond) : '*';
+    const entities = Array.isArray(rule.entities)
+      ? rule.entities.map((ent: any) => {
+        if (!isObject(ent)) return '';
+        const target = formatAclEntity(ent);
+        const ops = [
+          ent.viewable && 'view',
+          ent.editable && 'edit',
+          ent.deletable && 'delete'
+        ].filter(Boolean).join('/');
+        return `${target}:[${ops || 'none'}]`;
+      }).filter(Boolean).join(', ')
+      : '';
+    return `#${idx + 1}(filterCond=${cond}) => ${entities || 'entities=[]'}`;
+  }).filter(Boolean).join('; ') + (rights.length > 10 ? ` ...(+${rights.length - 10})` : '');
+}
+
+function summarizeFieldAcl(section: any): string {
+  const rights = section?.rights;
+  if (!Array.isArray(rights) || rights.length === 0) return 'ルールなし';
+  return rights.slice(0, 15).map((rule: any) => {
+    if (!isObject(rule)) return '';
+    const code = String(rule.code ?? '');
+    const entities = Array.isArray(rule.entities)
+      ? rule.entities.map((ent: any) => {
+        if (!isObject(ent)) return '';
+        return `${formatAclEntity(ent)}:${ent.accessibility ?? ''}`;
+      }).filter(Boolean).join(', ')
+      : '';
+    return `${code}=[${entities}]`;
+  }).filter(Boolean).join('; ') + (rights.length > 15 ? ` ...(+${rights.length - 15})` : '');
+}
+
+function permissionSummaryRows(bundle: any, snapshot: DesignSnapshot): any[][] {
+  const byKey = new Map(snapshot.sections.map((s) => [s.key, s]));
+  const defs: Array<{ key: string; label: string; summarize: (sec: any) => string }> = [
+    { key: 'appAcl', label: 'アプリ権限', summarize: summarizeAppAcl },
+    { key: 'recordPermissions', label: 'レコード権限', summarize: summarizeRecordPermissions },
+    { key: 'fieldAcl', label: 'フィールド権限', summarize: summarizeFieldAcl }
+  ];
+  return defs.map(({ key, label, summarize }) => {
+    const secRow = byKey.get(key);
+    const status = secRow?.status ?? 'missing';
+    const count = secRow?.count == null ? 'unknown (null)' : secRow.count;
+    const raw = bundle?.sections?.[key];
+    const summary = status === 'available' || status === 'empty'
+      ? summarize(raw)
+      : (secRow?.detail ?? '未取得');
+    return [key, label, status, count, summary];
+  });
+}
+
 function rawSection(bundle: any, key: string): any {
   if (!hasOwn(bundle?.sections, key)) return { $kusType: 'missing-section' };
   return bundle.sections[key];
@@ -366,8 +578,8 @@ export function buildDesignAiMarkdown(bundle: any): string {
     ]
   ), '');
 
-  lines.push('## フィールド索引', '', 'definition全体はここに重複出力しません。各行のpathを対応するセクションJSONへのJSON Pointerとして使用してください。', '', markdownTable(
-    ['path', 'code', 'label', 'type', 'tableCode', 'group'],
+  lines.push('## フィールド索引', '', 'definition全体はここに重複出力しません。各行のpathを対応するセクションJSONへのJSON Pointerとして使用してください。detail列には計算式（expression）・リンク種別（protocol）・単位（unit/unitPosition）・制約などの要点を抜粋しています。', '', markdownTable(
+    ['path', 'code', 'label', 'type', 'tableCode', 'group', 'detail'],
     fieldRows(snapshot)
   ) || '（フィールド定義なし）', '');
 
@@ -382,6 +594,25 @@ export function buildDesignAiMarkdown(bundle: any): string {
     lines.push(hasIncomplete ? '（取得できた範囲で明示された参照設定なし。未取得・失敗・部分取得のセクションがあります）' : '（明示された参照設定なし）', '');
   }
 
+  const viewRows = viewSummaryRows(snapshot);
+  const viewSection = snapshot.sections.find((section) => section.key === 'viewSettings');
+  lines.push('## 一覧設定要約', '', '一覧（views）の表示条件・ソート順・表示フィールドの要約です。', '');
+  if (viewRows.length) {
+    lines.push(markdownTable(
+      ['path', 'name', 'type', 'filterCond', 'sort', 'fields'],
+      viewRows
+    ), '');
+  } else if (viewSection && viewSection.status !== 'available' && viewSection.status !== 'empty') {
+    lines.push(`（一覧設定は ${viewSection.status} のため要約できません: ${viewSection.detail}）`, '');
+  } else {
+    lines.push('（一覧設定なし）', '');
+  }
+
+  lines.push('## アクセス権設定要約', '', 'アプリ権限（appAcl）・レコード権限（recordPermissions）・フィールド権限（fieldAcl）のルール件数と概要です。', '', markdownTable(
+    ['sectionKey', 'label', 'status', 'ruleCount', 'summary'],
+    permissionSummaryRows(bundle, snapshot)
+  ), '');
+
   lines.push('## セクションJSON', '', '各セクションの原文JSONはこの章に一度だけ掲載します。`status`がmissingの場合は、実データが空なのではなくbundleに値がありません。', '');
   for (const section of snapshot.sections) {
     lines.push(`### ${markdownLineValue(section.key)} — ${markdownLineValue(sectionLabel(section.key))}`, '', `- status: ${markdownLineValue(section.status)}`, `- count: ${markdownLineValue(section.count == null ? 'unknown (null)' : section.count)}`, `- detail: ${markdownLineValue(section.detail)}`, '');
@@ -394,4 +625,3 @@ export function buildDesignAiMarkdown(bundle: any): string {
   }
   return `${lines.join('\n').replace(/\n+$/, '')}\n`;
 }
-

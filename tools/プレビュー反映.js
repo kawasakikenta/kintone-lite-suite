@@ -5971,6 +5971,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       }
       lines.push("");
     }
+    if (Array.isArray(input.rolloutResults) && input.rolloutResults.length > 0) {
+      lines.push("## 複数アプリへの順次反映（ロールアウト）結果", "");
+      lines.push("| 反映先アプリID | 反映先アプリ名 | ゲストスペース | 結果 | 詳細 |");
+      lines.push("| --- | --- | --- | --- | --- |");
+      for (const r of input.rolloutResults) {
+        lines.push(`| ${cell(r.appId)} | ${cell(r.appName || "－")} | ${cell(r.guestId || "通常スペース")} | ${cell(r.outcome)} | ${cell(r.detail || "－")} |`);
+      }
+      lines.push("");
+    }
     return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
   }
 

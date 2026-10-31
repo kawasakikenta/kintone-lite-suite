@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLiteDiffHtmlContext,
+  buildLiteDiffMarkdownContext,
   buildLiteFieldLabelMap,
   buildLiteDiffFilterDescription,
   buildLiteDiffRowKey,
@@ -9,6 +10,7 @@ import {
   createLiteDiffJsonImporter,
   getLiteHtmlExportContentLabel,
   isIncompleteLiteDiff,
+  multiXlsxBatchSaveMarkup,
   renderLiteDiffOverviewHtml,
   renderRowsHtml,
   rowMatchesFilters,
@@ -174,7 +176,6 @@ describe('diff lite result presentation', () => {
     );
 
     expect(ctx.audience).toBe('customer');
-    expect(ctx.maskSensitive).toBe(false);
     expect(ctx.rows).toEqual(selected);
     expect(ctx.sourceBundle?.appId).toBe('10');
     expect(ctx.targetBundle?.appId).toBe('20');
@@ -188,12 +189,10 @@ describe('diff lite result presentation', () => {
     expect(ctx.filterDescription).toBe('画面の絞り込み: ビュー設定 / 削除');
     expect(ctx.exportContentMode).toBe('diffOnly');
 
-    const internalMasked = buildLiteDiffXlsxContext(full, selected, 'all', '全件', undefined, {
-      audience: 'internal',
-      maskSensitive: true
+    const internal = buildLiteDiffXlsxContext(full, selected, 'all', '全件', undefined, {
+      audience: 'internal'
     });
-    expect(internalMasked.audience).toBe('internal');
-    expect(internalMasked.maskSensitive).toBe(true);
+    expect(internal.audience).toBe('internal');
   });
 
   it('does not substitute a bundle fetch time for an unrecorded comparison time', () => {
@@ -232,6 +231,24 @@ describe('diff lite result presentation', () => {
     expect(detailed.exportContentMode).toBe('withCompared');
     expect(detailed.exportContentLabel).toBe('比較設定込み（取扱注意）');
     expect(getLiteHtmlExportContentLabel('unexpected')).toBe('差分行のみ（全設定は未収録）');
+  });
+
+  it('passes nested comparison values through HTML, Markdown, and Excel contexts unchanged', () => {
+    const row = {
+      sectionKey: 'pluginSettings',
+      path: 'pluginSettings.plugins.p1.config',
+      type: 'added',
+      left: undefined,
+      right: { config: { apiToken: 'NESTED_PLUGIN_TOKEN_RAW' } }
+    };
+    const current = cache([row]);
+    const htmlContext = buildLiteDiffHtmlContext(current, [row], 'all', '全差分', 'withCompared');
+    const markdownContext = buildLiteDiffMarkdownContext(current, [row], 'all', '全件');
+    const xlsxContext = buildLiteDiffXlsxContext(current, [row], 'all', '全件', undefined, { audience: 'internal' });
+
+    expect(htmlContext.rows[0].right.config.apiToken).toBe('NESTED_PLUGIN_TOKEN_RAW');
+    expect(markdownContext.rows?.[0].right.config.apiToken).toBe('NESTED_PLUGIN_TOKEN_RAW');
+    expect(xlsxContext.rows[0].right.config.apiToken).toBe('NESTED_PLUGIN_TOKEN_RAW');
   });
 
   it('keeps fetch failures and truncation in a warning state after export', () => {

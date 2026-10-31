@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDiffMarkdownExport } from '../../src/diff/markdown-export';
+import { buildDiffMarkdownBatchExport, buildDiffMarkdownExport } from '../../src/diff/markdown-export';
 
 function baseContext(overrides: Record<string, unknown> = {}) {
   return {
@@ -230,6 +230,85 @@ describe('diff/markdown export', () => {
     expect(markdown).toContain('... [...長文省略 (2500文字, SHA256-');
     expect(markdown).not.toContain(hugeBefore);
     expect(markdown).not.toContain(hugeAfter);
+  });
+
+  it('keeps original nested token, plugin configuration, and customize body values', () => {
+    const rows = [
+      {
+        sectionKey: 'appSettings',
+        section: 'アプリ設定',
+        type: 'changed',
+        path: 'appSettings.webhook.apiToken',
+        left: 'SECRET_TOKEN_BEFORE',
+        right: 'SECRET_TOKEN_AFTER'
+      },
+      {
+        sectionKey: 'pluginSettings',
+        section: 'プラグイン',
+        type: 'added',
+        path: 'pluginSettings.plugins.one.config',
+        left: undefined,
+        right: { endpoint: 'https://internal.example.com', clientSecret: 'PLUGIN_SECRET_VALUE' }
+      },
+      {
+        sectionKey: 'customizeSettings',
+        section: 'カスタマイズ',
+        type: 'removed',
+        path: 'customizeSettings.desktop.js[0]',
+        left: { type: 'FILE', file: { name: 'app.js', _bodyText: 'const apiKey = "JS_BODY_SECRET";' } },
+        right: undefined
+      }
+    ];
+
+    const { markdown } = buildDiffMarkdownExport(baseContext({ rows }));
+    for (const value of [
+      'SECRET_TOKEN_BEFORE', 'SECRET_TOKEN_AFTER',
+      'PLUGIN_SECRET_VALUE', 'https://internal.example.com',
+      'JS_BODY_SECRET'
+    ]) {
+      expect(markdown).toContain(value);
+    }
+  });
+
+  it('bundles 000_INDEX.md and individual AI markdown files into a ZIP archive in buildDiffMarkdownBatchExport', async () => {
+    const result = await buildDiffMarkdownBatchExport([
+      {
+        label: '受注管理（App 10 → App 20）',
+        context: baseContext({
+          rows: [{
+            sectionKey: 'appSettings',
+            section: 'アプリ設定',
+            type: 'changed',
+            path: 'appSettings.webhook.password',
+            left: 'OLD_PASSWORD_VALUE',
+            right: 'NEW_PASSWORD_VALUE'
+          }]
+        })
+      },
+      {
+        label: '顧客管理（App 30 → App 40）',
+        context: baseContext({
+          sourceBundle: { appId: '30', meta: { appName: '顧客管理' }, sections: {} },
+          targetBundle: { appId: '40', meta: { appName: '顧客管理' }, sections: {} },
+          rows: []
+        })
+      }
+    ], { generatedAt: '2026-09-26T02:05:06.000Z' });
+
+    expect(result.filename).toMatch(/^一括差分AI_\d{8}_\d{6}\.zip$/);
+    expect(result.failures).toEqual([]);
+    expect(result.entries).toHaveLength(3);
+    expect(result.entries[0]).toBe('000_INDEX.md');
+    expect(result.entries[1]).toMatch(/^001_差分_.*_AI\.md$/);
+    expect(result.entries[2]).toMatch(/^002_差分_.*_AI\.md$/);
+
+    const zipBytes = new Uint8Array(await result.blob.arrayBuffer());
+    const zipText = new TextDecoder().decode(zipBytes);
+    expect(zipText).toContain('# kintone 一括差分比較 インデックス（AI向け Markdown）');
+    expect(zipText).toContain('受注管理（App 10 → App 20）');
+    expect(zipText).toContain('顧客管理（App 30 → App 40）');
+    expect(zipText).toContain('OLD_PASSWORD_VALUE');
+    expect(zipText).toContain('NEW_PASSWORD_VALUE');
   });
 });
 

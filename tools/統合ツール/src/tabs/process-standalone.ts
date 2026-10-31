@@ -349,6 +349,7 @@ export interface StandaloneProcessSimUi {
   undoBtn?: HTMLButtonElement | null;
   historyEl?: HTMLElement | null;
   detailEl?: HTMLElement | null;
+  copyHistoryBtn?: HTMLButtonElement | null;
 }
 
 export function bindStandaloneProcessSimulation(
@@ -362,8 +363,8 @@ export function bindStandaloneProcessSimulation(
   }
 ) {
   let current: string | null = null;
-  let history: Array<{ from: string; action: string; to: string }> = [];
-  const { container, current: curEl, select, startBtn, execBtn, undoBtn, historyEl, detailEl } = simUi;
+  let history: Array<{ from: string; action: string; to: string; condition?: string }> = [];
+  const { container, current: curEl, select, startBtn, execBtn, undoBtn, historyEl, detailEl, copyHistoryBtn } = simUi;
   const { isCurrent, commitStatus, renderMermaid } = options;
   container.style.display = 'block';
 
@@ -385,6 +386,10 @@ export function bindStandaloneProcessSimulation(
 
   const updateHistory = () => {
     if (undoBtn) undoBtn.disabled = history.length === 0;
+    if (copyHistoryBtn) {
+      copyHistoryBtn.disabled = !current && history.length === 0;
+      (copyHistoryBtn as any).__getSimHistoryText = () => formatProcessSimulationHistory(history, current, states);
+    }
     if (!historyEl) return;
     if (!history.length) {
       historyEl.textContent = current ? `開始: ${current}（遷移履歴なし）` : '遷移履歴: まだ開始していません';
@@ -449,7 +454,7 @@ export function bindStandaloneProcessSimulation(
     if (!action) return;
     const prev = current || '';
     current = action.to;
-    history.push({ from: prev, action: action.name, to: action.to });
+    history.push({ from: prev, action: action.name, to: action.to, condition: describeSimActionCondition(action) });
     updateSim();
     commitStatus(`アクション「${action.name}」実行 → 「${action.to}」`, false, 'ok');
     await renderMermaid(action.to);
@@ -478,10 +483,17 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
     if (isCurrent()) setStatus(message, error, tone);
   };
   if (!isCurrent()) return null;
-  const connection = validateProcessConnection(source.appId, source.guestId, source.preview);
+  const offlineData = extractOfflineProcessStatusData(source);
+  const connection = offlineData && (source?.appId == null || String(source.appId).trim() === '')
+    ? {
+        appId: String(source?.importedBundle?.appId || ''),
+        guestId: String(source?.guestId || source?.importedBundle?.guestId || ''),
+        preview: !!source?.preview
+      }
+    : validateProcessConnection(source?.appId ?? source?.importedBundle?.appId, source?.guestId ?? source?.importedBundle?.guestId, source?.preview);
   commitStatus('プロセス管理を取得中...');
 
-  const res = await fetchProcessStatusSettings(connection);
+  const res = offlineData !== undefined ? offlineData : await fetchProcessStatusSettings(connection);
   if (!isCurrent()) return null;
   // 空・非オブジェクトの応答を「プロセス管理は無効」と取り違えず、TypeError でもなく原因が分かる形で止める
   if (!res || typeof res !== 'object') throw new Error('プロセス管理の設定を取得できませんでした（想定外の応答形式です）');
@@ -558,7 +570,7 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
     });
   }
 
-  return { states, actions, summary };
+  return { states, actions, orphanActionCount: orphanActions, summary };
 }
 
 // ---------------------------------------------------------------------------
@@ -587,6 +599,9 @@ export interface ProcessBatchRow {
   reason: string;
   /** ZIP 内の図ファイル（outcome が enabled のとき） */
   file: string;
+  /** 状態一覧・アクション遷移一覧の表出力用（任意） */
+  states?: any;
+  actions?: any[];
 }
 
 export interface ProcessBatchResult {
@@ -759,6 +774,7 @@ export function buildProcessBatchOverviewMarkdown(rows: ProcessBatchRow[], sourc
       `状態 ${row.stateCount} / アクション ${row.actionCount} · ファイル: ${mdCell(row.file)}`, '');
     if (row.warnings.length) lines.push(`注意: ${mdCell(row.warnings.join(' / '))}`, '');
     lines.push(`${fence}mermaid`, source, fence, '');
+    appendBatchRowDetailTables(lines, row);
   }
   return `${lines.join('\n').replace(/\n+$/, '')}\n`;
 }
@@ -873,6 +889,8 @@ export async function runProcessBatchZipStandalone(
         row.stateCount = summary.stateCount;
         row.actionCount = summary.actionCount;
         row.warnings = summary.warnings;
+        row.states = states;
+        row.actions = actions;
         row.file = buildProcessBatchDiagramFileName(row, used);
         sources[row.file] = source;
         mmdFiles.push({ file: row.file, text: buildProcessBatchMmd(row, source, preview, generatedAtDate) });
@@ -927,4 +945,289 @@ export async function runProcessBatchZipStandalone(
     setStatus(`プロセス図 ${counts.enabled}件を含むZIPを保存しました（${total}アプリ: ${detail}）${failureHint}`, counts.failed > 0);
   }
   return { rows, counts, stoppedAt, zipName, zipEntries: [PROCESS_BATCH_MANIFEST_FILE, PROCESS_BATCH_OVERVIEW_FILE, ...mmdFiles.map((f) => f.file)] };
+}
+
+// ---------------------------------------------------------------------------
+// 単一アプリの「プロセス管理仕様書 (Markdown)」出力・シミュレーション履歴フォーマット・オフライン設定JSON対応
+// ---------------------------------------------------------------------------
+
+/**
+ * source.statusData または source.importedBundle (SettingsBundle 形式) から
+ * REST API を呼ばずにプロセス管理設定オブジェクトを取り出す。
+ */
+export function extractOfflineProcessStatusData(source: any): any {
+  if (!source || typeof source !== 'object') return undefined;
+  if (source.statusData && typeof source.statusData === 'object') {
+    return source.statusData;
+  }
+  const bundle = source.importedBundle;
+  if (bundle && typeof bundle === 'object') {
+    const sections = bundle.sections && typeof bundle.sections === 'object' ? bundle.sections : bundle;
+    const candidate =
+      sections.processManagement ??
+      sections.processSettings ??
+      sections.status ??
+      bundle.processManagement ??
+      bundle.processSettings ??
+      bundle.status;
+    if (candidate && typeof candidate === 'object') {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function sortStateEntries(states: any): Array<{ name: string; index: number | string; def: any }> {
+  const stateObj = states && typeof states === 'object' && !Array.isArray(states) ? states : {};
+  const names = Object.keys(stateObj);
+  return names
+    .map((name, fallbackIdx) => {
+      const def = stateObj[name] || {};
+      const rawIdx = def.index;
+      const numIdx = rawIdx == null || String(rawIdx).trim() === '' ? NaN : Number(rawIdx);
+      return {
+        name,
+        index: Number.isFinite(numIdx) ? numIdx : fallbackIdx,
+        sortKey: Number.isFinite(numIdx) ? numIdx : Number.MAX_SAFE_INTEGER,
+        fallbackIdx,
+        def
+      };
+    })
+    .sort((a, b) => (a.sortKey !== b.sortKey ? a.sortKey - b.sortKey : a.fallbackIdx - b.fallbackIdx))
+    .map(({ name, index, def }) => ({ name, index, def }));
+}
+
+function formatAssigneeTypeLabel(stateDef: any): string {
+  const assignee = stateDef?.assignee;
+  if (!assignee || typeof assignee !== 'object') return '未設定';
+  const entities = Array.isArray(assignee.entities) ? assignee.entities : [];
+  const t = String(assignee.type || '').toUpperCase();
+  if (!entities.length && !t) return '未設定';
+  if (t === 'ALL') return '全員 (ALL)';
+  if (t === 'ANY') return '誰でも (ANY)';
+  if (t === 'ONE') return '1人 (ONE)';
+  return t || '未設定';
+}
+
+function formatInitialAssigneesList(stateDef: any): string {
+  const assignee = stateDef?.assignee;
+  if (!assignee || typeof assignee !== 'object') return 'なし';
+  const entities = Array.isArray(assignee.entities) ? assignee.entities : [];
+  if (!entities.length) return 'なし';
+  const labels = entities.map((item: any) => {
+    const ent = item?.entity || item;
+    const code = String(ent?.code || '').trim();
+    const type = String(ent?.type || '').trim().toUpperCase();
+    const sub = item?.includeSubs ? '（下位組織含む）' : '';
+    if (type === 'CREATOR') return '作成者 (CREATOR)';
+    if (type === 'FIELD_ENTITY' && code) return `フィールド (${code})${sub}`;
+    if (type === 'USER' && code) return `ユーザー (${code})`;
+    if (type === 'ORGANIZATION' && code) return `組織 (${code})${sub}`;
+    if (type === 'GROUP' && code) return `グループ (${code})`;
+    if (type === 'CUSTOM_FIELD' && code) return `カスタム (${code})`;
+    if (code && type) return `${code} (${type})${sub}`;
+    return `${code || type || '未設定'}${sub}`;
+  });
+  return labels.join(', ');
+}
+
+function formatActionTypeLabel(action: any): string {
+  const t = String(action?.type || 'PRIMARY').trim().toUpperCase();
+  if (t === 'SECONDARY') return '作業者以外も実行可 (SECONDARY)';
+  return '通常 (PRIMARY)';
+}
+
+function appendBatchRowDetailTables(lines: string[], row: ProcessBatchRow): void {
+  const hasStates = row.states && typeof row.states === 'object' && Object.keys(row.states).length > 0;
+  const hasActions = Array.isArray(row.actions) && row.actions.length > 0;
+  if (!hasStates && !hasActions) return;
+  const sortedStates = sortStateEntries(row.states);
+  const validActions = (Array.isArray(row.actions) ? row.actions : []).filter(
+    (a) => a && a.from != null && a.to != null && String(a.from).trim() && String(a.to).trim()
+  );
+  lines.push(
+    '<details>',
+    `<summary>状態・アクション定義一覧（状態 ${sortedStates.length}件 / アクション ${validActions.length}件）</summary>`,
+    '',
+    '#### 状態一覧',
+    '',
+    '| 表示順 | 状態名 | 作業者種別 | 初期作業者一覧 |',
+    '| ---: | --- | --- | --- |'
+  );
+  for (const s of sortedStates) {
+    lines.push(
+      `| ${mdCell(s.index)} | ${mdCell(s.name)} | ${mdCell(formatAssigneeTypeLabel(s.def))} | ${mdCell(formatInitialAssigneesList(s.def))} |`
+    );
+  }
+  lines.push(
+    '',
+    '#### アクション遷移一覧',
+    '',
+    '| アクション名 | 種別 | 遷移元 | 遷移先 | 実行条件式 |',
+    '| --- | --- | --- | --- | --- |'
+  );
+  if (!validActions.length) {
+    lines.push('| - | - | - | - | 遷移なし |');
+  } else {
+    for (const a of validActions) {
+      const cond = String(a.filterCond || '').trim();
+      lines.push(
+        `| ${mdCell(a.name || '')} | ${mdCell(formatActionTypeLabel(a))} | ${mdCell(a.from)} | ${mdCell(a.to)} | ${mdCell(cond || 'なし')} |`
+      );
+    }
+  }
+  lines.push('', '</details>', '');
+}
+
+/**
+ * 単一アプリの「プロセス管理仕様書 (Markdown)」を生成する純粋関数。
+ * アプリ情報、構造診断サマリ、ステータス定義一覧表、アクション遷移定義一覧表、Mermaid フローチャートを出力する。
+ */
+export function buildProcessSpecMarkdown(input: {
+  appId: string;
+  guestId?: string;
+  appName?: string;
+  preview?: boolean;
+  generatedAt?: string;
+  states: any;
+  actions: any[];
+  orphanActionCount?: number;
+  summary?: ProcessStructureSummary;
+}): string {
+  const appId = String(input?.appId ?? '').trim();
+  const guestId = String(input?.guestId ?? '').trim();
+  const appName = oneLine(input?.appName ?? '');
+  const preview = !!input?.preview;
+  const generatedAt = String(input?.generatedAt || new Date().toISOString());
+  const stateObj = input?.states && typeof input.states === 'object' && !Array.isArray(input.states) ? input.states : {};
+  const rawActions = Array.isArray(input?.actions) ? input.actions : [];
+  const validActions = rawActions.filter(
+    (a) => a && a.from != null && a.to != null && String(a.from).trim() && String(a.to).trim()
+  );
+  const orphanCount =
+    typeof input?.orphanActionCount === 'number'
+      ? input.orphanActionCount
+      : rawActions.length - validActions.length;
+  const summary = input?.summary || summarizeProcessStructure(stateObj, validActions, orphanCount);
+  const sortedStates = sortStateEntries(stateObj);
+  const mermaidSource = buildProcessMermaidSource(stateObj, validActions, null).replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  const fence = mdFence(mermaidSource);
+
+  const lines: string[] = [
+    `# プロセス管理仕様書${appName ? ` - ${appName}` : appId ? ` - アプリ ${appId}` : ''}`,
+    '',
+    '## アプリ情報',
+    '',
+    `- アプリID: ${appId || '-'}`,
+    ...(appName ? [`- アプリ名: ${appName}`] : []),
+    `- ゲストスペースID: ${guestId || 'なし'}`,
+    `- 参照環境: ${preview ? 'プレビュー' : '本番'}`,
+    `- 生成日時: ${generatedAt}`,
+    '',
+    '## 構造診断サマリ',
+    '',
+    `- 状態数: ${summary.stateCount}`,
+    `- アクション数: ${summary.actionCount}`,
+    `- 始点ステータス: ${summary.startStates.length ? summary.startStates.join(', ') : 'なし'}`,
+    `- 終端ステータス: ${summary.endStates.length ? summary.endStates.join(', ') : 'なし'}`,
+    `- 分岐ステータス: ${summary.branchingStates.length ? summary.branchingStates.join(', ') : 'なし'}`,
+    `- 構造上の注意・警告: ${summary.warnings.length ? summary.warnings.join(' / ') : 'なし'}`,
+    '',
+    '## ステータス定義一覧',
+    '',
+    '| 表示順 | 状態名 | 作業者種別 | 初期作業者一覧 |',
+    '| ---: | --- | --- | --- |'
+  ];
+
+  if (!sortedStates.length) {
+    lines.push('| - | （状態なし） | - | - |');
+  } else {
+    for (const s of sortedStates) {
+      lines.push(
+        `| ${mdCell(s.index)} | ${mdCell(s.name)} | ${mdCell(formatAssigneeTypeLabel(s.def))} | ${mdCell(formatInitialAssigneesList(s.def))} |`
+      );
+    }
+  }
+
+  lines.push(
+    '',
+    '## アクション遷移定義一覧',
+    '',
+    '| アクション名 | 種別 | 遷移元 | 遷移先 | 実行条件式 (filterCond) |',
+    '| --- | --- | --- | --- | --- |'
+  );
+
+  if (!validActions.length) {
+    lines.push('| （アクションなし） | - | - | - | - |');
+  } else {
+    for (const a of validActions) {
+      const cond = String(a.filterCond || '').trim();
+      lines.push(
+        `| ${mdCell(a.name || '')} | ${mdCell(formatActionTypeLabel(a))} | ${mdCell(a.from)} | ${mdCell(a.to)} | ${mdCell(cond || 'なし')} |`
+      );
+    }
+  }
+
+  lines.push(
+    '',
+    '## プロセスフロー図',
+    '',
+    `${fence}mermaid`,
+    mermaidSource,
+    fence,
+    ''
+  );
+
+  return `${lines.join('\n').replace(/\n+$/, '')}\n`;
+}
+
+/**
+ * シミュレーションで実行した遷移履歴を、テストエビデンス・レビュー記録として貼り付けやすい
+ * Markdown 形式でフォーマットする純粋関数。
+ */
+export function formatProcessSimulationHistory(
+  history: Array<{ from: string; action: string; to: string; condition?: string }>,
+  currentState: string | null,
+  states?: any
+): string {
+  const safeHistory = Array.isArray(history) ? history : [];
+  const stateObj = states && typeof states === 'object' && !Array.isArray(states) ? states : {};
+  const currentAssignee = currentState && stateObj[currentState] ? `（${describeStateAssignee(stateObj[currentState])}）` : '';
+  const startState = safeHistory.length > 0 ? safeHistory[0].from : (currentState || '未開始');
+
+  const lines: string[] = [
+    '## プロセス遷移シミュレーション履歴',
+    '',
+    `- 開始ステータス: ${startState}`,
+    `- 現在ステータス: ${currentState || '未開始'}${currentAssignee}`,
+    `- 実行ステップ数: ${safeHistory.length}手`
+  ];
+
+  if (!safeHistory.length) {
+    lines.push(`- 遷移経路: ${currentState ? `${currentState}（遷移履歴なし）` : 'まだ開始していません'}`);
+    return `${lines.join('\n')}\n`;
+  }
+
+  const chain = [safeHistory[0].from, ...safeHistory.map((h) => `[${h.action}] → ${h.to}`)].join(' ');
+  lines.push(
+    `- 遷移経路: ${chain}`,
+    '',
+    '| 手順 | 遷移元 | 実行アクション | 遷移先 | 備考（作業者設定・実行条件） |',
+    '| ---: | --- | --- | --- | --- |'
+  );
+
+  safeHistory.forEach((step, idx) => {
+    const notes: string[] = [];
+    if (stateObj[step.to]) {
+      notes.push(describeStateAssignee(stateObj[step.to]));
+    }
+    if (step.condition) {
+      notes.push(step.condition);
+    }
+    lines.push(
+      `| ${idx + 1} | ${mdCell(step.from)} | ${mdCell(step.action)} | ${mdCell(step.to)} | ${mdCell(notes.join(' / ') || '-')} |`
+    );
+  });
+
+  return `${lines.join('\n')}\n`;
 }

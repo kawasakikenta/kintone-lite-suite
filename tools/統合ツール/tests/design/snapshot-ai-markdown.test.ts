@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SECTION_DEFS } from '../../src/constants';
-import { buildDesignAiMarkdown } from '../../src/design/ai-markdown';
+import { buildDesignAiMarkdown, formatFieldDetail } from '../../src/design/ai-markdown';
 import { buildDesignSnapshot } from '../../src/design/snapshot';
 
 function makeBundle(sections: Record<string, any>, extra: Record<string, any> = {}) {
@@ -126,6 +126,47 @@ describe('design snapshot shared contract', () => {
     expect(snapshot.fields[0].definition).toMatchObject({ nullable: null, disabled: false, defaultValue: 0, emptyValue: '' });
     expect(bundle.sections.fieldSettings.properties.exact).toBe(definition);
   });
+
+  it('summarizes views, permissions, notifications, and disabled processSettings without false errors', () => {
+    const snapshot = buildDesignSnapshot(makeBundle({
+      viewSettings: {
+        views: {
+          営業一覧: { name: '営業一覧', type: 'LIST', index: '1', filterCond: 'status = "受注"', sort: 'order_date desc', fields: ['order_no', 'customer'] },
+          初期一覧: { name: '初期一覧', type: 'CALENDAR', index: '0', fields: ['order_date'] }
+        }
+      },
+      processSettings: { enable: false, states: null, actions: null },
+      appAcl: { rights: [{ entity: { type: 'CREATOR' }, recordViewable: true }, { entity: { type: 'GROUP', code: 'admin' }, appEditable: true }] },
+      recordPermissions: { rights: [{ filterCond: 'amount > 0', entities: [{ entity: { type: 'USER', code: 'u1' } }] }] },
+      fieldAcl: { rights: [{ code: 'secret', entities: [] }, { code: 'cost', entities: [] }, { code: 'margin', entities: [] }] },
+      notifications: { notifications: [{ entity: { type: 'USER', code: 'u1' } }] },
+      perRecordNotifications: { notifications: [{ filterCond: 'amount > 100', title: '高額' }, { filterCond: 'amount > 1000', title: '超高額' }] },
+      reminderNotifications: { notifications: [] }
+    }));
+
+    expect(section(snapshot, 'processSettings')).toMatchObject({ status: 'empty', count: 0 });
+    expect(snapshot.views.map((v) => v.name)).toEqual(['初期一覧', '営業一覧']);
+    expect(snapshot.views[1]).toMatchObject({
+      name: '営業一覧',
+      type: 'LIST',
+      index: 1,
+      filterCond: 'status = "受注"',
+      sort: 'order_date desc',
+      fields: ['order_no', 'customer']
+    });
+    expect(snapshot.permissions).toEqual({
+      appAclCount: 2,
+      recordPermissionCount: 1,
+      fieldAclCount: 3,
+      totalRuleCount: 6
+    });
+    expect(snapshot.notifications).toEqual({
+      generalCount: 1,
+      perRecordCount: 2,
+      reminderCount: 0,
+      totalCount: 3
+    });
+  });
 });
 
 describe('AI design Markdown', () => {
@@ -227,6 +268,130 @@ describe('AI design Markdown', () => {
     expect(fieldSection).not.toContain('- encoding: kus-typed-tree-v1');
     const block = fencedJsonBlocks(fieldSection).find((body) => body.includes('"$kusType"'));
     expect(JSON.parse(block!).properties.literal.literal).toEqual(literal);
+  });
+
+  it('includes CALC expressions, LINK protocols, units, string auto-calc, and subtable child details in field index, plus views and permissions summaries', () => {
+    expect(formatFieldDetail({
+      type: 'CALC',
+      expression: 'price * qty',
+      format: 'NUMBER_DIGIT',
+      unit: '円',
+      unitPosition: 'AFTER',
+      hideExpression: true
+    })).toContain('expression=price * qty');
+
+    const bundle = makeBundle({
+      appSettings: { name: '見積管理' },
+      fieldSettings: {
+        properties: {
+          auto_title: {
+            code: 'auto_title',
+            label: '件名自動生成',
+            type: 'SINGLE_LINE_TEXT',
+            expression: 'customer_name & "_見積"',
+            hideExpression: true
+          },
+          homepage: {
+            code: 'homepage',
+            label: 'Webサイト',
+            type: 'LINK',
+            protocol: 'WEB',
+            unique: true
+          },
+          unit_price: {
+            code: 'unit_price',
+            label: '単価',
+            type: 'NUMBER',
+            required: true,
+            unit: '¥',
+            unitPosition: 'BEFORE',
+            digit: true
+          },
+          total_amount: {
+            code: 'total_amount',
+            label: '合計金額',
+            type: 'CALC',
+            expression: 'SUM(line_total)',
+            format: 'NUMBER_DIGIT',
+            unit: '円',
+            unitPosition: 'AFTER',
+            displayScale: '0'
+          },
+          items_table: {
+            code: 'items_table',
+            label: '明細テーブル',
+            type: 'SUBTABLE',
+            fields: {
+              line_total: {
+                code: 'line_total',
+                label: '明細小計',
+                type: 'CALC',
+                expression: 'unit_price * qty',
+                unit: '円',
+                unitPosition: 'AFTER'
+              },
+              contact_mail: {
+                code: 'contact_mail',
+                label: '連絡先メール',
+                type: 'LINK',
+                protocol: 'MAIL'
+              }
+            }
+          }
+        }
+      },
+      viewSettings: {
+        views: {
+          高額案件: {
+            name: '高額案件',
+            type: 'LIST',
+            index: '0',
+            filterCond: 'total_amount >= 1000000',
+            sort: 'total_amount desc',
+            fields: ['auto_title', 'total_amount']
+          }
+        }
+      },
+      appAcl: {
+        rights: [
+          { entity: { type: 'GROUP', code: 'sales_mgr' }, recordViewable: true, recordAddable: true, recordEditable: true, recordDeletable: false, appEditable: true }
+        ]
+      },
+      recordPermissions: {
+        rights: [
+          {
+            filterCond: 'total_amount >= 5000000',
+            entities: [{ entity: { type: 'USER', code: 'director' }, viewable: true, editable: true, deletable: false }]
+          }
+        ]
+      },
+      fieldAcl: {
+        rights: [
+          {
+            code: 'unit_price',
+            entities: [{ entity: { type: 'GROUP', code: 'part_time' }, accessibility: 'READ' }]
+          }
+        ]
+      }
+    });
+
+    const markdown = buildDesignAiMarkdown(bundle);
+    expect(markdown).toContain('expression=customer_name & "_見積"');
+    expect(markdown).toContain('protocol=WEB');
+    expect(markdown).toContain('unit=¥; unitPosition=BEFORE');
+    expect(markdown).toContain('expression=SUM(line_total)');
+    expect(markdown).toContain('unit=円; unitPosition=AFTER');
+    expect(markdown).toContain('expression=unit_price * qty');
+    expect(markdown).toContain('protocol=MAIL');
+    expect(markdown).toContain('## 一覧設定要約');
+    expect(markdown).toContain('`高額案件`');
+    expect(markdown).toContain('`total_amount >= 1000000`');
+    expect(markdown).toContain('`total_amount desc`');
+    expect(markdown).toContain('## アクセス権設定要約');
+    expect(markdown).toContain('GROUP:sales_mgr');
+    expect(markdown).toContain('total_amount >= 5000000');
+    expect(markdown).toContain('`unit_price`');
+    expect(fencedJsonBlocks(markdown).length).toBe(1 + Object.keys(bundle.sections).length);
   });
 });
 
