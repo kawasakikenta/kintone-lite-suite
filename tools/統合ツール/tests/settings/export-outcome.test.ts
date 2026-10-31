@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchBundle } from '../../src/api';
 import { downloadText, downloadBlob } from '../../src/utils';
-import { runSettingsExportStandalone } from '../../src/tabs/settings-export-standalone';
+import { buildSettingsMarkdownIndex, runSettingsExportStandalone } from '../../src/tabs/settings-export-standalone';
 
 vi.mock('../../src/api', async importOriginal => ({ ...await importOriginal<typeof import('../../src/api')>(), fetchBundle: vi.fn() }));
 vi.mock('../../src/utils', async importOriginal => ({ ...await importOriginal<typeof import('../../src/utils')>(),
@@ -76,6 +76,46 @@ describe('settings export completion', () => {
     expect(manifest.apps[0]).toMatchObject({ appId: '1', appName: '対象アプリ', guestId: '7', fetchedAt: '2026-09-14T00:00:00.000Z', sections: { ok: 1, ng: 1 } });
     expect(manifest.apps[0].file).toMatch(/_ゲスト7_本番\.json$/);
     expect(manifest.apps[0].failedSections).toEqual([{ key: 'fieldSettings', label: 'フィールド設定', error: '権限不足' }]);
+    expect(manifest.apps[0].omittedCustomizeBodies).toBe(0);
+    expect(manifest.formatVersion).toBe(2);
+    expect(zipFiles.has('INDEX.md')).toBe(true);
     expect(zipFiles.has(manifest.apps[0].file)).toBe(true);
+  });
+  it('omittedCustomizeBodies を ZIP manifest.json / INDEX.md / JSON トップレベルサマリに記録する', async () => {
+    vi.mocked(fetchBundle).mockResolvedValue({
+      appId: '10',
+      guestId: '3',
+      preview: true,
+      fetchedAt: '2026-10-31T00:00:00.000Z',
+      meta: { sectionRevisions: {} },
+      sections: {
+        appSettings: { name: '受注管理' },
+        fieldSettings: { _fetchError: '閲覧権限なし' },
+        customizeSettings: { _partial: { files: [{ fileKey: 'fk1', name: 'huge.js' }, { fileKey: 'fk2', name: 'bundle.js' }] } }
+      }
+    } as any);
+    await runSettingsExportStandalone('zip', { apps: [{ appId: '10', guestId: '3' }], preview: true, scopeRoot: {} }, vi.fn());
+    const manifest = JSON.parse(zipFiles.get('manifest.json')!);
+    expect(manifest.formatVersion).toBe(2);
+    expect(manifest.omittedCustomizeBodies).toBe(2);
+    expect(manifest.apps[0].omittedCustomizeBodies).toBe(2);
+    const indexMd = zipFiles.get('INDEX.md')!;
+    expect(indexMd).toContain('JS/CSS本文省略合計: 2件');
+    expect(indexMd).toContain('JS/CSS本文省略 2件');
+
+    await runSettingsExportStandalone('json', { apps: [{ appId: '10', guestId: '3' }], preview: true, scopeRoot: {} }, vi.fn());
+    const jsonPayload = JSON.parse(vi.mocked(downloadText).mock.calls[0][1]);
+    expect(jsonPayload.formatVersion).toBe(2);
+    expect(jsonPayload.omittedCustomizeBodies).toBe(2);
+    expect(jsonPayload.summary).toEqual([
+      expect.objectContaining({
+        appId: '10',
+        appName: '受注管理',
+        guestId: '3',
+        omittedCustomizeBodies: 2,
+        failedSections: [{ key: 'fieldSettings', label: 'フィールド設定', error: '閲覧権限なし' }]
+      })
+    ]);
+    expect(buildSettingsMarkdownIndex({ generatedAt: '2026-10-31', preview: false, apps: manifest.apps })).toContain('2件');
   });
 });

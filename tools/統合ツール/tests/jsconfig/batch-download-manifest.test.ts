@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiGet } from '../../src/api';
 import { downloadBlob } from '../../src/utils';
 import { loadJSZipLite } from '../../src/jszipLoader';
-import { runBatchJsConfigDownloadStandalone } from '../../src/tabs/jsconfig-standalone';
+import { buildJsConfigBatchIndexMarkdown, runBatchJsConfigDownloadStandalone } from '../../src/tabs/jsconfig-standalone';
 
 vi.mock('../../src/api', async original => ({ ...await original<typeof import('../../src/api')>(), apiGet: vi.fn() }));
 vi.mock('../../src/utils', async original => ({ ...await original<typeof import('../../src/utils')>(), downloadBlob: vi.fn() }));
@@ -39,14 +39,60 @@ describe('JS/CSS batch download manifest', () => {
     const result = await runBatchJsConfigDownloadStandalone({ guestId: '' }, vi.fn());
     expect(result).toMatchObject({ apps: 1, files: 1, failed: 1 });
     const manifest = JSON.parse(zip.files.get('manifest.json') as string);
+    expect(manifest.formatVersion).toBe(1);
+    expect(manifest.exportedAt).toBe(manifest.generatedAt);
     expect(manifest.appCount).toBe(1);
     expect(manifest.fileCount).toBe(1);
-    expect(manifest.apps).toEqual([{ appId: '5', name: '案件/管理', folder: '5_案件_管理', scope: 'ALL',
-      files: [{ entry: '5_案件_管理/app.js', area: 'desktop', kind: 'js', name: 'app.js', fileKey: 'k1', size: '10' }] }]);
+    expect(manifest.apps).toEqual([{
+      appId: '5',
+      name: '案件/管理',
+      folder: '5_案件_管理',
+      scope: 'ALL',
+      revision: '',
+      files: [{ entry: '5_案件_管理/app.js', area: 'desktop', kind: 'js', order: 0, name: 'app.js', fileKey: 'k1', size: '10' }],
+      urlEntries: [{ type: 'js', scope: 'desktop', url: 'https://example.invalid/x.js', order: 1 }],
+      failures: [{ appId: '5', fileName: 'app.js', reason: '閲覧権限なし (HTTP 403)' }]
+    }]);
+    expect(manifest.failures).toEqual([{ type: 'file', appId: '5', fileName: 'app.js', reason: '閲覧権限なし (HTTP 403)' }]);
+    const indexMd = zip.files.get('INDEX.md') as string;
+    expect(indexMd).toContain('# JS/CSS設定 一括取得 INDEX');
+    expect(indexMd).toContain('https://example.invalid/x.js');
+    expect(indexMd).toContain('5_案件_管理/app.js');
+    expect(buildJsConfigBatchIndexMarkdown(manifest)).toBe(indexMd);
+    expect(manifest.fileCount).toBe(1);
+
+
     expect(manifest.failedFiles).toEqual([{ appId: '5', fileName: 'app.js', reason: '閲覧権限なし (HTTP 403)' }]);
     expect(zip.files.has('5_案件_管理/app.js')).toBe(true);
     expect(zip.files.get('download_errors.txt')).toContain('403');
     expect(downloadBlob).toHaveBeenCalledTimes(1);
+  });
+
+  it('includes URL-only apps in the index when another app contributes downloadable files', async () => {
+    vi.mocked(apiGet).mockImplementation(async (_prefix: string, path: string, params?: { app?: string }) => {
+      if (path === '/apps.json') return { apps: [{ appId: '5', name: 'ファイルあり' }, { appId: '6', name: 'URLのみ' }] };
+      if (params?.app === '5') return customize;
+      return {
+        scope: 'ALL',
+        desktop: { js: [{ type: 'URL', url: 'https://example.invalid/only.js' }], css: [] },
+        mobile: { js: [], css: [] }
+      };
+    });
+
+    const result = await runBatchJsConfigDownloadStandalone({}, vi.fn());
+    expect(result).toMatchObject({ apps: 2, files: 1, failed: 1 });
+    const manifest = JSON.parse(zip.files.get('manifest.json') as string);
+    expect(manifest.appCount).toBe(2);
+    expect(manifest.apps).toHaveLength(2);
+    expect(manifest.apps[1]).toMatchObject({
+      appId: '6',
+      name: 'URLのみ',
+      folder: '',
+      files: [],
+      urlEntries: [{ type: 'js', scope: 'desktop', url: 'https://example.invalid/only.js', order: 0 }]
+    });
+    expect(zip.files.get('INDEX.md')).toContain('https://example.invalid/only.js');
+    expect([...zip.files.keys()].some((path) => path.startsWith('6_'))).toBe(false);
   });
 
   it('throws the failure details instead of a bare count when no ZIP can be made', async () => {

@@ -6577,6 +6577,7 @@ function toggleAnalysisPanel(force){
   document.getElementById("analysis-toggle-btn")?.classList.toggle("active",open);
   if(open){closeSidebar();closeDetail();}
 }
+function renderAnalysisSummaryHtml(){renderAnalysisPanel();const h=document.getElementById("analysis-content");return h?h.innerHTML:"";}
 renderAnalysisPanel();
 
 // ─── Sidebar ───
@@ -7493,6 +7494,31 @@ function showMarkdown(){
   lines.push("- 図内で関連のないアプリ: " + ER_ANALYSIS.isolatedAppIds.length);
   lines.push("- 未取得の参照先: " + ER_ANALYSIS.unresolvedTargets.length);
   lines.push("");
+  if(typeof ER_ANALYSIS!=="undefined"&&ER_ANALYSIS){
+    lines.push("## グラフ分析サマリ");
+    lines.push("");
+    lines.push("- 複数アプリの循環参照 (SCC): " + (ER_ANALYSIS.cycles||[]).length + "件");
+    lines.push("- ハブアプリ（接続数 " + (ER_ANALYSIS.highConnectionThreshold||3) + "件以上）: " + (ER_ANALYSIS.hubs||[]).length + "件");
+    lines.push("- 孤立アプリ（関連なし）: " + (ER_ANALYSIS.isolatedAppIds||[]).length + "件");
+    lines.push("- 自己参照: " + (ER_ANALYSIS.selfReferences||[]).length + "件");
+    lines.push("- 未取得の参照先: " + (ER_ANALYSIS.unresolvedTargets||[]).length + "件");
+    lines.push("");
+    if((ER_ANALYSIS.isolatedAppIds||[]).length){
+      lines.push("### 孤立アプリ");
+      ER_ANALYSIS.isolatedAppIds.forEach(id=>{const app=appMap.get(Number(id))||appMap.get(id);lines.push("- "+mdEsc(app?app.name:("アプリ "+id))+" (App "+id+")");});
+      lines.push("");
+    }
+    if((ER_ANALYSIS.selfReferences||[]).length){
+      lines.push("### 自己参照");
+      ER_ANALYSIS.selfReferences.forEach(sr=>lines.push("- "+mdEsc(sr.appName)+" (App "+sr.appId+"): "+mdEsc(sr.kind||"")+(sr.field?" ("+mdEsc(sr.field)+")":"")));
+      lines.push("");
+    }
+    if((ER_ANALYSIS.unresolvedTargets||[]).length){
+      lines.push("### 未取得の参照先");
+      ER_ANALYSIS.unresolvedTargets.forEach(ut=>lines.push("- "+mdEsc(ut.fromAppName)+" (App "+ut.fromAppId+") → App "+mdEsc(ut.toAppId||"不明")+": "+mdEsc(ut.kind||"")+(ut.field?" ("+mdEsc(ut.field)+")":"")));
+      lines.push("");
+    }
+  }
   lines.push("## 構造チェック（事実ベース）");
   lines.push("");
   if(ER_ANALYSIS.cycles.length){
@@ -8015,7 +8041,7 @@ applySavedViewState();
       const html = buildHTML(apps, options);
       const baseName = options.startAppIds[0] || appId || `space${spaceId}`;
       const suffix = `${opts.guestId ? `guest${opts.guestId}_` : ""}${opts.preview ? "プレビュー" : "本番"}`;
-      downloadText(
+      if (opts?.download !== false) downloadText(
         buildExportFilename("ER図", "html", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
         html,
         "text/html"

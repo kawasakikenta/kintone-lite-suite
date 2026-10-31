@@ -1632,6 +1632,9 @@ ${contextLine}`);
       case "reportSettings":
         return knownCollection(section, "reports", "object");
       case "processSettings": {
+        if (section.enable === false && section.states === null && (!hasOwn(section, "actions") || section.actions === null)) {
+          return { count: 0, detail: "states は空です; actions=0", malformed: false };
+        }
         const states = knownCollection(section, "states", "object");
         if (hasOwn(section, "actions")) {
           const actions = Array.isArray(section.actions) ? section.actions.length : isPlainObject(section.actions) ? Object.keys(section.actions).length : null;
@@ -1870,6 +1873,65 @@ ${contextLine}`);
     const unknown = isPlainObject(sections) ? Object.keys(sections).filter((key) => !known.includes(key)) : [];
     return [...known, ...unknown];
   }
+  function buildViewsSnapshot(bundle, viewSection) {
+    if (!viewSection || viewSection.status !== "available" && viewSection.status !== "empty") return [];
+    const views = bundle?.sections?.viewSettings?.views;
+    if (!isPlainObject(views)) return [];
+    const items = [];
+    for (const key of Object.keys(views)) {
+      const view = views[key];
+      if (!isObject(view)) continue;
+      const rawIndex = view.index;
+      const numIndex = rawIndex != null && String(rawIndex).trim() !== "" && Number.isFinite(Number(rawIndex)) ? Number(rawIndex) : null;
+      items.push({
+        path: `/sections/viewSettings/views/${escapeJsonPointerToken(key)}`,
+        key,
+        name: String(view.name ?? key),
+        type: String(view.type ?? "UNKNOWN"),
+        builtinType: view.builtinType != null ? String(view.builtinType) : "",
+        index: numIndex,
+        filterCond: view.filterCond != null ? String(view.filterCond) : "",
+        sort: view.sort != null ? String(view.sort) : "",
+        fields: Array.isArray(view.fields) ? view.fields.map((item) => String(item ?? "")).filter(Boolean) : []
+      });
+    }
+    return items.sort((a, b) => {
+      const idxA = a.index ?? Number.MAX_SAFE_INTEGER;
+      const idxB = b.index ?? Number.MAX_SAFE_INTEGER;
+      if (idxA !== idxB) return idxA - idxB;
+      return a.name.localeCompare(b.name) || a.key.localeCompare(b.key);
+    });
+  }
+  function resolveSectionCount(row) {
+    if (!row || row.status !== "available" && row.status !== "empty") return null;
+    return typeof row.count === "number" ? row.count : null;
+  }
+  function buildPermissionsSnapshot(sectionRows) {
+    const byKey = new Map(sectionRows.map((row) => [row.key, row]));
+    const appAclCount = resolveSectionCount(byKey.get("appAcl"));
+    const recordPermissionCount = resolveSectionCount(byKey.get("recordPermissions"));
+    const fieldAclCount = resolveSectionCount(byKey.get("fieldAcl"));
+    const totalRuleCount = appAclCount != null && recordPermissionCount != null && fieldAclCount != null ? appAclCount + recordPermissionCount + fieldAclCount : null;
+    return {
+      appAclCount,
+      recordPermissionCount,
+      fieldAclCount,
+      totalRuleCount
+    };
+  }
+  function buildNotificationsSnapshot(sectionRows) {
+    const byKey = new Map(sectionRows.map((row) => [row.key, row]));
+    const generalCount = resolveSectionCount(byKey.get("notifications"));
+    const perRecordCount = resolveSectionCount(byKey.get("perRecordNotifications"));
+    const reminderCount = resolveSectionCount(byKey.get("reminderNotifications"));
+    const totalCount = generalCount != null && perRecordCount != null && reminderCount != null ? generalCount + perRecordCount + reminderCount : null;
+    return {
+      generalCount,
+      perRecordCount,
+      reminderCount,
+      totalCount
+    };
+  }
   function buildDesignSnapshot(bundle) {
     const sections = isPlainObject(bundle?.sections) ? bundle.sections : /* @__PURE__ */ Object.create(null);
     const sectionRows = sectionKeys(bundle).map((key) => statusForSection(key, hasOwn(sections, key), sections[key]));
@@ -1883,10 +1945,14 @@ ${contextLine}`);
       counts.tables = null;
       counts.system = null;
     }
+    const viewSection = sectionRows.find((row) => row.key === "viewSettings");
     return {
       sections: sectionRows,
       fields,
       counts,
+      views: buildViewsSnapshot(bundle, viewSection),
+      permissions: buildPermissionsSnapshot(sectionRows),
+      notifications: buildNotificationsSnapshot(sectionRows),
       complete: sectionRows.every((row) => row.status === "available" || row.status === "empty")
     };
   }
@@ -4790,6 +4856,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   init_utils();
   init_api();
 
+  // src/jszipLoader.ts
+  init_constants();
+
   // src/settingsBundleImport.ts
   init_api();
   function preserveImportedMetadata(bundle, raw, preserve) {
@@ -5010,6 +5079,97 @@ ${fence}`;
   function countValue(value) {
     return value == null ? "unknown (null)" : value;
   }
+  function referenceTarget(value) {
+    if (value == null) return "";
+    if (typeof value !== "object") return String(value);
+    return String(value.app ?? value.id ?? value.code ?? value.name ?? "");
+  }
+  function formatFieldDetail(definition) {
+    if (!isObject2(definition)) return "";
+    const parts = [];
+    if (definition.required === true || definition.required === "true") {
+      parts.push("required=true");
+    }
+    if (definition.unique === true || definition.unique === "true") {
+      parts.push("unique=true");
+    }
+    const expr = typeof definition.expression === "string" && definition.expression.trim() !== "" ? definition.expression.trim() : typeof definition.formula === "string" && definition.formula.trim() !== "" ? definition.formula.trim() : "";
+    if (expr) {
+      parts.push(`expression=${expr}`);
+    }
+    if (definition.format != null && String(definition.format).trim() !== "") {
+      parts.push(`format=${String(definition.format).trim()}`);
+    }
+    if (definition.hideExpression === true || definition.hideExpression === "true") {
+      parts.push("hideExpression=true");
+    }
+    if (definition.protocol != null && String(definition.protocol).trim() !== "") {
+      parts.push(`protocol=${String(definition.protocol).trim()}`);
+    }
+    const hasUnit = definition.unit != null && String(definition.unit) !== "";
+    const hasUnitPos = definition.unitPosition != null && String(definition.unitPosition).trim() !== "";
+    if (hasUnit) {
+      parts.push(`unit=${definition.unit}`);
+    }
+    if (hasUnitPos) {
+      parts.push(`unitPosition=${String(definition.unitPosition).trim()}`);
+    }
+    if (definition.digit === true || definition.digit === "true") {
+      parts.push("digit=true");
+    }
+    if (definition.displayScale != null && String(definition.displayScale).trim() !== "") {
+      parts.push(`displayScale=${String(definition.displayScale).trim()}`);
+    }
+    if (isPlainObject2(definition.options)) {
+      const optionLabels = Object.keys(definition.options).map((key) => {
+        const opt = definition.options[key];
+        return {
+          label: isObject2(opt) && opt.label != null ? String(opt.label) : key,
+          index: isObject2(opt) && opt.index != null && Number.isFinite(Number(opt.index)) ? Number(opt.index) : 0
+        };
+      }).sort((a, b) => a.index - b.index || a.label.localeCompare(b.label)).map((item) => item.label).filter(Boolean);
+      if (optionLabels.length) {
+        parts.push(`options=[${optionLabels.join(", ")}]`);
+      }
+    }
+    if (definition.minValue != null && String(definition.minValue) !== "" || definition.maxValue != null && String(definition.maxValue) !== "") {
+      parts.push(`range=${definition.minValue ?? ""}..${definition.maxValue ?? ""}`);
+    }
+    if (definition.minLength != null && String(definition.minLength) !== "" || definition.maxLength != null && String(definition.maxLength) !== "") {
+      parts.push(`length=${definition.minLength ?? ""}..${definition.maxLength ?? ""}`);
+    }
+    if (definition.defaultNowValue === true || definition.defaultNowValue === "true") {
+      parts.push("defaultNowValue=true");
+    } else if (definition.defaultValue !== void 0 && definition.defaultValue !== null && definition.defaultValue !== "" && !(Array.isArray(definition.defaultValue) && definition.defaultValue.length === 0)) {
+      const dv = typeof definition.defaultValue === "object" ? JSON.stringify(definition.defaultValue) : String(definition.defaultValue);
+      parts.push(`defaultValue=${dv}`);
+    }
+    if (isObject2(definition.lookup)) {
+      const app = referenceTarget(definition.lookup.relatedApp);
+      const key = definition.lookup.relatedKeyField ?? "";
+      parts.push(`lookup(app=${app}${key ? `, key=${key}` : ""})`);
+    }
+    if (isObject2(definition.referenceTable)) {
+      const app = referenceTarget(definition.referenceTable.relatedApp);
+      const relKey = definition.referenceTable.condition?.relatedField ?? "";
+      parts.push(`referenceTable(app=${app}${relKey ? `, key=${relKey}` : ""})`);
+    }
+    if (String(definition.type || "").toUpperCase() === "SUBTABLE" && isPlainObject2(definition.fields)) {
+      const childKeys = Object.keys(definition.fields);
+      const childSummaries = childKeys.map((childKey) => {
+        const child = definition.fields[childKey];
+        if (!isObject2(child)) return childKey;
+        const code = String(child.code ?? childKey);
+        const type = String(child.type ?? "UNKNOWN");
+        const detail = formatFieldDetail(child);
+        return detail ? `${code}:${type}(${detail})` : `${code}:${type}`;
+      });
+      if (childSummaries.length) {
+        parts.push(`subtableFields=[${childSummaries.join("; ")}]`);
+      }
+    }
+    return parts.join("; ");
+  }
   function fieldRows(snapshot) {
     return snapshot.fields.map((field) => [
       field.path,
@@ -5017,13 +5177,9 @@ ${fence}`;
       field.label,
       field.type,
       field.tableCode ?? "",
-      field.group
+      field.group,
+      formatFieldDetail(field.definition)
     ]);
-  }
-  function referenceTarget(value) {
-    if (value == null) return "";
-    if (typeof value !== "object") return String(value);
-    return String(value.app ?? value.id ?? value.code ?? value.name ?? "");
   }
   function referenceRow(id, relation, fromPath, fromCode, targetApp, targetKey, detail) {
     return {
@@ -5130,6 +5286,90 @@ ${fence}`;
       ...collectProcessReferences(bundle)
     ].sort((a, b) => `${a.fromPath}\0${a.relation}\0${a.id}`.localeCompare(`${b.fromPath}\0${b.relation}\0${b.id}`));
   }
+  function viewSummaryRows(snapshot) {
+    return snapshot.views.map((view) => [
+      view.path,
+      view.name,
+      view.builtinType ? `${view.type} (${view.builtinType})` : view.type,
+      view.filterCond,
+      view.sort,
+      view.fields.join(", ")
+    ]);
+  }
+  function formatAclEntity(item) {
+    if (!isObject2(item)) return "";
+    const entity = isObject2(item.entity) ? item.entity : item;
+    const type = entity.type != null ? String(entity.type) : "";
+    const code = entity.code != null ? String(entity.code) : "";
+    const base = type && code ? `${type}:${code}` : code || type || "unknown";
+    return item.includeSubs ? `${base}(includeSubs)` : base;
+  }
+  function summarizeAppAcl(section) {
+    const rights = section?.rights;
+    if (!Array.isArray(rights) || rights.length === 0) return "ルールなし";
+    return rights.slice(0, 10).map((rule) => {
+      if (!isObject2(rule)) return "";
+      const target = formatAclEntity(rule);
+      const ops = [
+        rule.appEditable && "appEditable",
+        rule.recordViewable && "view",
+        rule.recordAddable && "add",
+        rule.recordEditable && "edit",
+        rule.recordDeletable && "delete",
+        rule.recordImportable && "import",
+        rule.recordExportable && "export"
+      ].filter(Boolean).join("/");
+      return `${target}=[${ops || "none"}]`;
+    }).filter(Boolean).join("; ") + (rights.length > 10 ? ` ...(+${rights.length - 10})` : "");
+  }
+  function summarizeRecordPermissions(section) {
+    const rights = section?.rights;
+    if (!Array.isArray(rights) || rights.length === 0) return "ルールなし";
+    return rights.slice(0, 10).map((rule, idx) => {
+      if (!isObject2(rule)) return "";
+      const cond = rule.filterCond ? String(rule.filterCond) : "*";
+      const entities = Array.isArray(rule.entities) ? rule.entities.map((ent) => {
+        if (!isObject2(ent)) return "";
+        const target = formatAclEntity(ent);
+        const ops = [
+          ent.viewable && "view",
+          ent.editable && "edit",
+          ent.deletable && "delete"
+        ].filter(Boolean).join("/");
+        return `${target}:[${ops || "none"}]`;
+      }).filter(Boolean).join(", ") : "";
+      return `#${idx + 1}(filterCond=${cond}) => ${entities || "entities=[]"}`;
+    }).filter(Boolean).join("; ") + (rights.length > 10 ? ` ...(+${rights.length - 10})` : "");
+  }
+  function summarizeFieldAcl(section) {
+    const rights = section?.rights;
+    if (!Array.isArray(rights) || rights.length === 0) return "ルールなし";
+    return rights.slice(0, 15).map((rule) => {
+      if (!isObject2(rule)) return "";
+      const code = String(rule.code ?? "");
+      const entities = Array.isArray(rule.entities) ? rule.entities.map((ent) => {
+        if (!isObject2(ent)) return "";
+        return `${formatAclEntity(ent)}:${ent.accessibility ?? ""}`;
+      }).filter(Boolean).join(", ") : "";
+      return `${code}=[${entities}]`;
+    }).filter(Boolean).join("; ") + (rights.length > 15 ? ` ...(+${rights.length - 15})` : "");
+  }
+  function permissionSummaryRows(bundle, snapshot) {
+    const byKey = new Map(snapshot.sections.map((s) => [s.key, s]));
+    const defs = [
+      { key: "appAcl", label: "アプリ権限", summarize: summarizeAppAcl },
+      { key: "recordPermissions", label: "レコード権限", summarize: summarizeRecordPermissions },
+      { key: "fieldAcl", label: "フィールド権限", summarize: summarizeFieldAcl }
+    ];
+    return defs.map(({ key, label, summarize }) => {
+      const secRow = byKey.get(key);
+      const status = secRow?.status ?? "missing";
+      const count = secRow?.count == null ? "unknown (null)" : secRow.count;
+      const raw = bundle?.sections?.[key];
+      const summary = status === "available" || status === "empty" ? summarize(raw) : secRow?.detail ?? "未取得";
+      return [key, label, status, count, summary];
+    });
+  }
   function rawSection(bundle, key) {
     if (!hasOwn2(bundle?.sections, key)) return { $kusType: "missing-section" };
     return bundle.sections[key];
@@ -5173,8 +5413,8 @@ ${fence}`;
         ["system", countValue(snapshot.counts.system)]
       ]
     ), "");
-    lines.push("## フィールド索引", "", "definition全体はここに重複出力しません。各行のpathを対応するセクションJSONへのJSON Pointerとして使用してください。", "", markdownTable(
-      ["path", "code", "label", "type", "tableCode", "group"],
+    lines.push("## フィールド索引", "", "definition全体はここに重複出力しません。各行のpathを対応するセクションJSONへのJSON Pointerとして使用してください。detail列には計算式（expression）・リンク種別（protocol）・単位（unit/unitPosition）・制約などの要点を抜粋しています。", "", markdownTable(
+      ["path", "code", "label", "type", "tableCode", "group", "detail"],
       fieldRows(snapshot)
     ) || "（フィールド定義なし）", "");
     lines.push("## 参照索引", "", "ルックアップ、関連レコード一覧、アプリアクション、プロセス遷移の明示設定だけを収録しています。計算式・正規表現から依存関係を推測していません。", "");
@@ -5187,6 +5427,23 @@ ${fence}`;
       const hasIncomplete = snapshot.sections.some((section) => ["missing", "fetch-error", "partial"].includes(section.status));
       lines.push(hasIncomplete ? "（取得できた範囲で明示された参照設定なし。未取得・失敗・部分取得のセクションがあります）" : "（明示された参照設定なし）", "");
     }
+    const viewRows = viewSummaryRows(snapshot);
+    const viewSection = snapshot.sections.find((section) => section.key === "viewSettings");
+    lines.push("## 一覧設定要約", "", "一覧（views）の表示条件・ソート順・表示フィールドの要約です。", "");
+    if (viewRows.length) {
+      lines.push(markdownTable(
+        ["path", "name", "type", "filterCond", "sort", "fields"],
+        viewRows
+      ), "");
+    } else if (viewSection && viewSection.status !== "available" && viewSection.status !== "empty") {
+      lines.push(`（一覧設定は ${viewSection.status} のため要約できません: ${viewSection.detail}）`, "");
+    } else {
+      lines.push("（一覧設定なし）", "");
+    }
+    lines.push("## アクセス権設定要約", "", "アプリ権限（appAcl）・レコード権限（recordPermissions）・フィールド権限（fieldAcl）のルール件数と概要です。", "", markdownTable(
+      ["sectionKey", "label", "status", "ruleCount", "summary"],
+      permissionSummaryRows(bundle, snapshot)
+    ), "");
     lines.push("## セクションJSON", "", "各セクションの原文JSONはこの章に一度だけ掲載します。`status`がmissingの場合は、実データが空なのではなくbundleに値がありません。", "");
     for (const section of snapshot.sections) {
       lines.push(`### ${markdownLineValue(section.key)} — ${markdownLineValue(sectionLabel(section.key))}`, "", `- status: ${markdownLineValue(section.status)}`, `- count: ${markdownLineValue(section.count == null ? "unknown (null)" : section.count)}`, `- detail: ${markdownLineValue(section.detail)}`, "");
@@ -5646,7 +5903,7 @@ ${fence}`;
     const sourceEnvironmentLabel = bundle && !bundlePreviewKnown ? "不明（設定JSONに記載なし）" : sourcePreview ? "プレビュー" : "本番";
     const sourceGuestLabel = bundle && !bundleGuestKnown ? "不明（設定JSONに記載なし）" : sourceGuestId || "通常空間";
     const appNameLookup = params.appNameLookup || {};
-    const preselectedSheets = params.preselectedSheets instanceof Set ? params.preselectedSheets : null;
+    const preselectedSheets = params.preselectedSheets instanceof Set ? params.preselectedSheets : Array.isArray(params.preselectedSheets) ? new Set(params.preselectedSheets.map((k) => String(k || "").trim()).filter(Boolean)) : null;
     const returnWorkbook = !!params.returnWorkbook;
     const lightweightMode = !!params.lightweightMode;
     const progressLabel = params.progressLabel ? String(params.progressLabel) : "";
@@ -8134,8 +8391,10 @@ ${fence}`;
         }
       }
     }
-    const selectedSheets = await showSheetSelectionDialog(resolveExportSheetDefs(), "📦 一括エクスポート設定");
+    const providedSheets = params.preselectedSheets instanceof Set ? new Set(params.preselectedSheets) : Array.isArray(params.preselectedSheets) ? new Set(params.preselectedSheets.map((k) => String(k || "").trim()).filter(Boolean)) : null;
+    const selectedSheets = providedSheets !== null ? providedSheets.size > 0 ? providedSheets : null : await showSheetSelectionDialog(resolveExportSheetDefs(), "📦 一括エクスポート設定");
     if (!selectedSheets) return false;
+    const batchPreview = params.preview === true;
     const batchFieldTypeExclusion = loadPersistedFieldTypeExclusion() || /* @__PURE__ */ new Set();
     const batchUi = createBatchExporterUI();
     batchUi.show("ライブラリ読み込み中...", appIds.length + 2);
@@ -8173,6 +8432,7 @@ ${fence}`;
           appId,
           guestId,
           bundle,
+          preview: batchPreview,
           appNameLookup,
           preselectedSheets: selectedSheets,
           fieldTypeExclusion: batchFieldTypeExclusion,
@@ -8526,9 +8786,14 @@ ${lines.join("\n")}`), { partialSuccess: true });
     const importedCount = apps.filter((a) => a.bundle).length;
     setStatus(`設計書ZIP出力を開始（${apps.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ""}）...`);
     let info = null;
-    const done = await runBatchDesignExportXlsxZip({ apps, onFinish: (result2) => {
-      info = result2;
-    } });
+    const done = await runBatchDesignExportXlsxZip({
+      apps,
+      ...source.preview !== void 0 ? { preview: !!source.preview } : {},
+      ...source.preselectedSheets !== void 0 ? { preselectedSheets: source.preselectedSheets } : {},
+      onFinish: (result2) => {
+        info = result2;
+      }
+    });
     if (done === false) {
       if (isCancelRequested()) {
         const failed = (info?.failedApps || []).filter((f) => f.error && !/未実行（中止）|生成途中/.test(f.error));

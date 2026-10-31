@@ -2,15 +2,16 @@
 
 import { SECTION_DEFS } from '../constants.js';
 import { state } from '../state.js';
-import { nowStamp, downloadText, buildExportFilename, appLabelFromBundle, copyTextToClipboard, extractAppNameFromBundle } from '../utils.js';
+import { nowStamp, downloadText, downloadBlob, buildExportFilename, appLabelFromBundle, copyTextToClipboard, extractAppNameFromBundle, sanitizeFilenamePart } from '../utils.js';
 import { fetchBundle } from '../api.js';
+import { loadJSZipLite } from '../jszipLoader.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { bundleToMarkdown } from '../diff/export.js';
 import { buildDesignAiMarkdown } from '../design/ai-markdown.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip, type BatchDesignExportInfo, type DesignExporterCompletionSummary } from './design-xlsx.js';
 import { isCancelRequested } from '../runControl.js';
-import { createCancelReport } from './run-cancel-summary.js';
+import { createCancelReport, isCancelStop } from './run-cancel-summary.js';
 
 interface DesignSourceInput {
   appId?: string;
@@ -292,7 +293,13 @@ export async function runDesignExportXlsxStandalone(source, setStatus) {
  * @param setStatus 進捗メッセージ
  */
 export async function runBatchDesignExportXlsxZipStandalone(
-  source: { apps?: Array<{ appId: string; guestId?: string; bundle?: any }>; appIdsText?: string; guestId?: string },
+  source: {
+    apps?: Array<{ appId: string; guestId?: string; bundle?: any }>;
+    appIdsText?: string;
+    guestId?: string;
+    preview?: boolean;
+    preselectedSheets?: Set<string> | string[];
+  },
   setStatus: (msg: string, err?: boolean) => void
 ) {
   let apps: Array<{ appId: string; guestId: string; bundle?: any }>;
@@ -317,7 +324,12 @@ export async function runBatchDesignExportXlsxZipStandalone(
   const importedCount = apps.filter((a) => a.bundle).length;
   setStatus(`設計書ZIP出力を開始（${apps.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ''}）...`);
   let info: BatchDesignExportInfo | null = null;
-  const done = await runBatchDesignExportXlsxZip({ apps, onFinish: (result) => { info = result; } });
+  const done = await runBatchDesignExportXlsxZip({
+    apps,
+    ...(source.preview !== undefined ? { preview: !!source.preview } : {}),
+    ...(source.preselectedSheets !== undefined ? { preselectedSheets: source.preselectedSheets } : {}),
+    onFinish: (result) => { info = result; }
+  });
   if (done === false) {
     // 1件も生成する前に「中止」した場合は、件数つきの中止報告にする（ZIP は保存していない）
     if (isCancelRequested()) {
@@ -348,6 +360,408 @@ export async function runBatchDesignExportXlsxZipStandalone(
     return;
   }
   setStatus(`設計書ZIP出力完了（${apps.length}件）`);
+}
+
+export type BatchDesignMdExportFormat = 'md' | 'ai-md' | 'both';
+
+export interface BatchDesignMdManifestItem {
+  appId: string;
+  guestId: string;
+  appName: string;
+  source: 'settings-json' | 'api';
+  status: 'ok' | 'partial';
+  file: string;
+  files: string[];
+  mdFile?: string;
+  aiMdFile?: string;
+  complete: boolean;
+  missingSections: string[];
+  failedSections: string[];
+  partialSections: string[];
+}
+
+export interface BatchDesignMdFailedApp {
+  appId: string;
+  guestId: string;
+  error: string;
+}
+
+export interface BatchDesignMdZipResult {
+  schemaVersion: 1;
+  generatedAt: string;
+  format: BatchDesignMdExportFormat;
+  preview: boolean;
+  total: number;
+  successCount: number;
+  failedCount: number;
+  cancelled: boolean;
+  zipName: string;
+  items: BatchDesignMdManifestItem[];
+  failedApps: BatchDesignMdFailedApp[];
+}
+
+function uniqueMdZipEntryName(used: Set<string>, baseName: string): string {
+  const cleaned = String(baseName || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, '').trim() || 'design.md';
+  let candidate = cleaned;
+  let n = 2;
+  while (used.has(candidate.toLowerCase())) {
+    const dot = cleaned.lastIndexOf('.');
+    const stem = dot > 0 ? cleaned.slice(0, dot) : cleaned;
+    const ext = dot > 0 ? cleaned.slice(dot) : '';
+    candidate = `${stem}(${n})${ext}`;
+    n += 1;
+  }
+  used.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function escapeOverviewCell(value: unknown): string {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/[\r\n]+/g, ' ')
+    .trim();
+}
+
+function firstErrorLine(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? '不明なエラー');
+  return raw.split(/\r?\n/)[0].trim() || '不明なエラー';
+}
+
+function buildBatchDesignMdOverview(input: {
+  generatedAt: string;
+  format: BatchDesignMdExportFormat;
+  preview: boolean;
+  total: number;
+  cancelled: boolean;
+  items: BatchDesignMdManifestItem[];
+  failedApps: BatchDesignMdFailedApp[];
+}): string {
+  const notRunApps = input.failedApps.filter((f) => /未実行（中止）/.test(f.error));
+  const actualFailedApps = input.failedApps.filter((f) => !/未実行（中止）/.test(f.error));
+  const formatLabel = input.format === 'ai-md'
+    ? 'AI向けMarkdown (ai-md)'
+    : input.format === 'both'
+      ? '設計書Markdown + AI向けMarkdown (both)'
+      : '設計書Markdown (md)';
+  const lines: string[] = [
+    '# kintone 設計書 Markdown 一括出力サマリ',
+    '',
+    `- 生成日時: ${input.generatedAt}`,
+    `- 出力形式: ${formatLabel}`,
+    `- 参照環境: ${input.preview ? 'プレビュー' : '本番'}`,
+    `- 対象アプリ数: ${input.total}件（成功 ${input.items.length} / 失敗 ${actualFailedApps.length}${notRunApps.length ? ` / 未実行（中止） ${notRunApps.length}` : ''}）`
+  ];
+  if (input.cancelled) {
+    lines.push('- 注意: 利用者の操作で中止したため、未実行のアプリは含まれていません。');
+  }
+  if (actualFailedApps.length) {
+    lines.push('- 注意: 取得に失敗したアプリがあります。下の表のエラー内容を確認してください。');
+  }
+  lines.push(
+    '',
+    '## アプリ一覧',
+    '',
+    '| アプリID | アプリ名 | ゲストスペース | 取得元 | 状態 | 出力ファイル | 備考・エラー |',
+    '| --- | --- | --- | --- | --- | --- | --- |'
+  );
+  for (const item of input.items) {
+    const notes: string[] = [];
+    if (item.missingSections.length) notes.push(`未取得: ${item.missingSections.join(', ')}`);
+    if (item.failedSections.length) notes.push(`取得失敗: ${item.failedSections.join(', ')}`);
+    if (item.partialSections.length) notes.push(`部分取得: ${item.partialSections.join(', ')}`);
+    lines.push(
+      `| ${escapeOverviewCell(item.appId)} | ${escapeOverviewCell(item.appName)} | ${escapeOverviewCell(item.guestId || '(通常空間)')} | ${item.source === 'settings-json' ? '設定JSON' : 'API'} | ${item.complete ? '成功' : '一部未取得・失敗あり'} | ${escapeOverviewCell(item.files.join(', '))} | ${escapeOverviewCell(notes.join(' / '))} |`
+    );
+  }
+  for (const failed of input.failedApps) {
+    const isNotRun = /未実行（中止）/.test(failed.error);
+    lines.push(
+      `| ${escapeOverviewCell(failed.appId)} |  | ${escapeOverviewCell(failed.guestId || '(通常空間)')} | - | ${isNotRun ? '未実行（中止）' : '失敗'} |  | ${escapeOverviewCell(failed.error)} |`
+    );
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
+ * 複数アプリの設計書 Markdown / AI向けMarkdown を一括生成し、overview.md と _manifest.json を同梱した ZIP として保存する。
+ */
+export async function runBatchDesignExportMdZipStandalone(
+  source: {
+    apps?: Array<{ appId: string; guestId?: string; bundle?: any }>;
+    appIdsText?: string;
+    guestId?: string;
+    format?: BatchDesignMdExportFormat;
+    preview?: boolean;
+  },
+  setStatus: (msg: string, err?: boolean) => void
+): Promise<BatchDesignMdZipResult> {
+  const format: BatchDesignMdExportFormat = (source?.format ?? 'md') as BatchDesignMdExportFormat;
+  if (format !== 'md' && format !== 'ai-md' && format !== 'both') {
+    throw new Error('一括Markdown出力の形式は md、ai-md または both を指定してください');
+  }
+  const preview = !!source?.preview;
+
+  let rawApps: Array<{ appId: string; guestId: string; bundle: any }>;
+  if (Array.isArray(source?.apps)) {
+    const validationError = validateDesignExportTargets(source.apps);
+    if (validationError) throw new Error(validationError);
+    rawApps = source.apps.map((a) => ({
+      appId: String(a.appId || a.bundle?.appId || '').trim(),
+      guestId: String(a.guestId || '').trim(),
+      bundle: a.bundle || null
+    }));
+  } else {
+    const guestId = String(source?.guestId || '').trim();
+    const appIds = String(source?.appIdsText || '')
+      .split(/[\s,、]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const validationError = validateDesignExportTargets(appIds.map((appId) => ({ appId, guestId })));
+    if (validationError) throw new Error(validationError);
+    rawApps = appIds.map((appId) => ({ appId, guestId, bundle: null }));
+  }
+
+  const seen = new Set<string>();
+  const targets: Array<{ appId: string; guestId: string; bundle: any }> = [];
+  for (const item of rawApps) {
+    const key = `${item.appId}::${item.guestId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push(item);
+  }
+  if (targets.length === 0) throw new Error('アプリIDを1件以上入力してください');
+
+  const appIdCounts = new Map<string, number>();
+  for (const t of targets) {
+    appIdCounts.set(t.appId, (appIdCounts.get(t.appId) || 0) + 1);
+  }
+
+  const importedCount = targets.filter((t) => t.bundle).length;
+  setStatus(`設計書Markdown ZIP出力を開始（${targets.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ''}）...`);
+
+  const JSZipCtor = await loadJSZipLite();
+  const zip = new JSZipCtor();
+  const usedFilenames = new Set<string>(['overview.md', '_manifest.json']);
+  const items: BatchDesignMdManifestItem[] = [];
+  const failedApps: BatchDesignMdFailedApp[] = [];
+  const scopes = SECTION_DEFS.map((s) => s.key);
+  let stoppedAt = -1;
+
+  for (let i = 0; i < targets.length; i += 1) {
+    if (isCancelRequested()) {
+      stoppedAt = i;
+      break;
+    }
+    const target = targets[i];
+    const labelPrefix = `(${i + 1}/${targets.length}) App ${target.appId}${target.guestId ? ` (guest:${target.guestId})` : ''}: `;
+    try {
+      let mdBundle: any = null;
+      let aiBundle: any = null;
+      if (format === 'md') {
+        mdBundle = await resolveDesignBundle(
+          { appId: target.appId, guestId: target.guestId, preview, importedBundle: target.bundle },
+          'source',
+          setStatus,
+          labelPrefix,
+          false
+        );
+      } else if (format === 'ai-md') {
+        aiBundle = await resolveDesignBundle(
+          { appId: target.appId, guestId: target.guestId, preview, importedBundle: target.bundle },
+          'source',
+          setStatus,
+          labelPrefix,
+          true
+        );
+      } else {
+        // format === 'both'
+        if (target.bundle) {
+          mdBundle = await resolveDesignBundle(
+            { appId: target.appId, guestId: target.guestId, preview, importedBundle: target.bundle },
+            'source',
+            setStatus,
+            labelPrefix,
+            false
+          );
+          aiBundle = pickSettingsBundle(target.bundle, {
+            side: 'source',
+            appId: target.appId,
+            rawSettings: true,
+            preserveMetadata: true
+          });
+        } else {
+          const liveBundle = await resolveDesignBundle(
+            { appId: target.appId, guestId: target.guestId, preview },
+            'source',
+            setStatus,
+            labelPrefix,
+            false
+          );
+          mdBundle = liveBundle;
+          aiBundle = liveBundle;
+        }
+      }
+
+      const primaryBundle = aiBundle || mdBundle;
+      const appName = extractAppNameFromBundle(primaryBundle) || '';
+      const appLabel = appLabelFromBundle(primaryBundle) || `app${sanitizeFilenamePart(target.appId)}`;
+      const guestPrefix = target.guestId && (appIdCounts.get(target.appId) || 0) > 1 ? `guest${target.guestId}_` : '';
+      const files: string[] = [];
+      let mdFile: string | undefined;
+      let aiMdFile: string | undefined;
+
+      if (format === 'md' || format === 'both') {
+        mdFile = uniqueMdZipEntryName(usedFilenames, `${guestPrefix}設計書_${appLabel}.md`);
+        zip.file(mdFile, bundleToMarkdown(mdBundle));
+        files.push(mdFile);
+      }
+      if (format === 'ai-md' || format === 'both') {
+        aiMdFile = uniqueMdZipEntryName(usedFilenames, `${guestPrefix}設計書_AI向けMarkdown_${appLabel}.md`);
+        zip.file(aiMdFile, buildDesignAiMarkdown(aiBundle));
+        files.push(aiMdFile);
+      }
+
+      const snapshot = buildDesignSnapshot(primaryBundle);
+      const knownRows = snapshot.sections.filter((row) => scopes.includes(row.key));
+      const missingSections = knownRows.filter((row) => row.status === 'missing').map((row) => row.label || row.key);
+      const failedSections = knownRows.filter((row) => row.status === 'fetch-error').map((row) => row.label || row.key);
+      const partialSections = knownRows.filter((row) => row.status === 'partial').map((row) => row.label || row.key);
+      const complete = missingSections.length === 0 && failedSections.length === 0 && partialSections.length === 0;
+
+      items.push({
+        appId: target.appId,
+        guestId: target.guestId,
+        appName,
+        source: target.bundle ? 'settings-json' : 'api',
+        status: complete ? 'ok' : 'partial',
+        file: files[0] || '',
+        files,
+        ...(mdFile ? { mdFile } : {}),
+        ...(aiMdFile ? { aiMdFile } : {}),
+        complete,
+        missingSections,
+        failedSections,
+        partialSections
+      });
+    } catch (error) {
+      if (isCancelStop(error)) {
+        stoppedAt = i;
+        break;
+      }
+      failedApps.push({
+        appId: target.appId,
+        guestId: target.guestId,
+        error: firstErrorLine(error)
+      });
+    }
+  }
+
+  if (stoppedAt >= 0) {
+    for (let j = stoppedAt; j < targets.length; j += 1) {
+      failedApps.push({
+        appId: targets[j].appId,
+        guestId: targets[j].guestId,
+        error: '未実行（中止）'
+      });
+    }
+  }
+
+  const successCount = items.length;
+  const cancelled = stoppedAt >= 0;
+  if (successCount === 0 && cancelled) {
+    const priorFailures = failedApps.filter((f) => !/未実行（中止）/.test(f.error));
+    throw createCancelReport(0, targets.length, [
+      '設計書Markdown ZIPは保存していません。',
+      ...priorFailures.map((f) => `App ${f.appId}: 中止前に失敗（${f.error}）`)
+    ]);
+  }
+  if (successCount === 0) {
+    const detail = failedApps.map((f) => `- App ${f.appId}: ${f.error}`).join('\n');
+    throw new Error(`設計書Markdown ZIPの生成に失敗しました\n${detail}`);
+  }
+
+  const generatedAt = new Date().toISOString();
+  const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
+  const overviewMd = buildBatchDesignMdOverview({
+    generatedAt,
+    format,
+    preview,
+    total: targets.length,
+    cancelled,
+    items,
+    failedApps
+  });
+  const manifestPayload = {
+    schemaVersion: 1 as const,
+    generatedAt,
+    format,
+    preview,
+    total: targets.length,
+    appCount: targets.length,
+    successCount,
+    failedCount: failedApps.length,
+    cancelled,
+    guestIds,
+    items,
+    failedApps
+  };
+
+  zip.file('overview.md', overviewMd);
+  zip.file('_manifest.json', JSON.stringify(manifestPayload, null, 2));
+
+  setStatus('設計書Markdown ZIPファイルを生成中...');
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const baseLabel = format === 'ai-md'
+    ? '設計書_AI向けMarkdown一括'
+    : format === 'both'
+      ? '設計書_Markdown一括(通常+AI)'
+      : '設計書_Markdown一括';
+  const zipName = buildExportFilename(baseLabel, 'zip', {
+    appLabel: `${successCount}件`,
+    suffix: preview ? 'プレビュー' : ''
+  });
+  downloadBlob(zipName, blob);
+
+  if (cancelled) {
+    const notRun = failedApps.filter((f) => /未実行（中止）/.test(f.error));
+    const failed = failedApps.filter((f) => !/未実行（中止）/.test(f.error));
+    throw createCancelReport(successCount, targets.length, [
+      `生成できた ${successCount} アプリ分の設計書Markdown ZIPを保存しました（詳細は ZIP 内の overview.md / _manifest.json）。`,
+      ...failed.map((f) => `失敗 App ${f.appId}: ${f.error}`),
+      ...(notRun.length ? [`未実行（中止）: ${notRun.map((f) => `App ${f.appId}`).join(', ')}`] : [])
+    ]);
+  }
+
+  const incompleteApps = items.filter((item) => !item.complete);
+  if (failedApps.length > 0 || incompleteApps.length > 0) {
+    const parts: string[] = [];
+    if (failedApps.length > 0) {
+      parts.push(`成功 ${successCount} / 失敗 ${failedApps.length}（全${targets.length}件）`);
+      parts.push(`失敗したアプリ: ${failedApps.map((f) => `App ${f.appId}`).join(', ')}`);
+    }
+    if (incompleteApps.length > 0) {
+      parts.push(`一部セクション未取得・失敗あり ${incompleteApps.length}件`);
+    }
+    setStatus(`設計書Markdown ZIPを保存しました。${parts.join('。')}。詳細は ZIP 内の overview.md / _manifest.json を確認してください`, true);
+  } else {
+    setStatus(`設計書Markdown ZIP出力完了（${successCount}件）`);
+  }
+
+  return {
+    schemaVersion: 1,
+    generatedAt,
+    format,
+    preview,
+    total: targets.length,
+    successCount,
+    failedCount: failedApps.length,
+    cancelled,
+    zipName,
+    items,
+    failedApps
+  };
 }
 
 function diffLinesBlock(oLines: string[], nLines: string[]): string[] {

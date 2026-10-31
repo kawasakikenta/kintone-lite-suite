@@ -50,4 +50,20 @@ describe('プレビュー反映のMarkdownレポート', () => {
     expect(markdown).toContain('**追加** \\|\\*危険\\*\\|');
     expect(markdown).not.toMatch(/\| \|\*危険/);
   });
+
+  it('rolloutResults が指定された場合、末尾に複数アプリへの順次反映（ロールアウト）結果の表を出力し禁止用語を含まない', () => {
+    const markdown = buildReflectReportMarkdown({
+      ...base,
+      entries: [fields],
+      rolloutResults: [
+        { appId: '202', guestId: '7', appName: '東京営業所', outcome: '成功', detail: 'フィールド設定 2件反映' },
+        { appId: '203', guestId: '', appName: '大阪営業所', outcome: '失敗', detail: 'GAIA_CO02 revision競合' }
+      ]
+    });
+    expect(markdown).toContain('## 複数アプリへの順次反映（ロールアウト）結果');
+    expect(markdown).toContain('| 反映先アプリID | 反映先アプリ名 | ゲストスペース | 結果 | 詳細 |');
+    expect(markdown).toContain('| 202 | 東京営業所 | 7 | 成功 | フィールド設定 2件反映 |');
+    expect(markdown).toContain('| 203 | 大阪営業所 | 通常スペース | 失敗 | GAIA\\_CO02 revision競合 |');
+    expect(markdown).not.toMatch(/比較[元先]/);
+  });
 });

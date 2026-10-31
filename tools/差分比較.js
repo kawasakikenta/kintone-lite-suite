@@ -5537,57 +5537,7 @@ ${contextLine}`);
   function isSensitiveSameDiffRow(row) {
     return row?.type === "same" && SENSITIVE_DIFF_SECTION_KEYS.has(sectionKeyOf(row));
   }
-  function isSensitiveDiffPath(path, sectionKey = "") {
-    const normalizedPath = String(path || "").trim();
-    const normalizedSec = String(sectionKey || "").trim() || normalizedPath.split(/[.\[]/, 1)[0] || "";
-    if (SENSITIVE_KEY_PATTERN.test(normalizedPath)) return true;
-    if (normalizedSec === "customizeSettings" && /(?:^|\.)_body(?:\.|$|\[)/.test(normalizedPath)) {
-      return true;
-    }
-    if (normalizedSec === "pluginSettings" && /(?:^|\.)(?:_config|config)(?:\.|$|\[)/.test(normalizedPath)) {
-      return true;
-    }
-    return false;
-  }
-  function maskSensitiveDiffValue(value, path = "", sectionKey = "") {
-    if (value == null) return value;
-    if (typeof value === "string") {
-      if (!value) return value;
-      return isSensitiveDiffPath(path, sectionKey) ? `[マスク済み: ${contentIdentifier(value)}]` : value;
-    }
-    if (typeof value === "number" || typeof value === "boolean") {
-      return isSensitiveDiffPath(path, sectionKey) ? `[マスク済み: ${contentIdentifier(String(value))}]` : value;
-    }
-    if (Array.isArray(value)) {
-      return value.map((item, index) => maskSensitiveDiffValue(item, `${path}[${index}]`, sectionKey));
-    }
-    if (typeof value === "object") {
-      const out = {};
-      for (const [key, child] of Object.entries(value)) {
-        const childPath = path ? `${path}.${key}` : key;
-        out[key] = maskSensitiveDiffValue(child, childPath, sectionKey);
-      }
-      return out;
-    }
-    return value;
-  }
-  function maskSensitiveDiffRows(rows) {
-    const source = Array.isArray(rows) ? rows : [];
-    return source.map((row) => {
-      if (!row || typeof row !== "object") return row;
-      const secKey = sectionKeyOf(row);
-      const rowPath = String(row.path || "");
-      const maskedLeft = row.left !== void 0 ? maskSensitiveDiffValue(row.left, rowPath, secKey) : row.left;
-      const maskedRight = row.right !== void 0 ? maskSensitiveDiffValue(row.right, rowPath, secKey) : row.right;
-      if (maskedLeft === row.left && maskedRight === row.right) return row;
-      return {
-        ...row,
-        left: maskedLeft,
-        right: maskedRight
-      };
-    });
-  }
-  var SENSITIVE_DIFF_SECTION_KEYS, SENSITIVE_SAME_VALUE_REDACTION, SENSITIVE_KEY_PATTERN;
+  var SENSITIVE_DIFF_SECTION_KEYS, SENSITIVE_SAME_VALUE_REDACTION;
   var init_export_safety = __esm({
     "src/diff/export-safety.ts"() {
       "use strict";
@@ -5596,7 +5546,6 @@ ${contextLine}`);
         "pluginSettings"
       ]);
       SENSITIVE_SAME_VALUE_REDACTION = "（同一の機密値は安全のため省略しました）";
-      SENSITIVE_KEY_PATTERN = /(?:secret|token|password|passwd|api[_-]?key|authorization|webhook|client[_-]?secret|private[_-]?key)/i;
     }
   });
 
@@ -6077,6 +6026,60 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       reviewKeys: [...reviewKeys].sort()
     });
     return `report-v${DIFF_HTML_REVIEW_STATE_VERSION}-${hashDiffHtmlReviewText(material)}`;
+  }
+  function computeDiffHtmlReviewIdentity(sourceBundle, targetBundle, rows, scopes = [], options = {}) {
+    const exportContentMode = options.exportContentMode === "diffOnly" ? "diffOnly" : "withCompared";
+    const includesComparedContent = shouldIncludeComparedContent(exportContentMode);
+    const inputRows = Array.isArray(rows) ? rows : [];
+    const sanitizedInputRows = inputRows.map((row) => row && typeof row === "object" ? {
+      ...row,
+      left: sanitizeReportRowValue(row, row.left),
+      right: sanitizeReportRowValue(row, row.right),
+      ...isSensitiveSameDiffRow(row) ? { sensitiveValueRedacted: true } : {}
+    } : row);
+    const preparedInputRows = prepareDiffHtmlReviewRows(sanitizedInputRows);
+    const rowReviewKeys = preparedInputRows.rows.map((row) => String(row?._reviewKey || ""));
+    const baseRows = sanitizedInputRows.filter((row) => includesComparedContent || row?.type !== "same");
+    const rawDisplayRows = expandSubtableRowsForDisplay(expandEntityRowsForDisplay(baseRows));
+    const displayRows = rawDisplayRows;
+    const exportSelection = selectDiffHtmlRowsForExport(displayRows);
+    const preparedReviewRows = prepareDiffHtmlReviewRows(exportSelection.rows);
+    const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
+    const partialIssues = Array.isArray(options.partialIssues) ? options.partialIssues : [];
+    const engineTruncation = options.truncation || null;
+    const actualDiffTruncation = hasIncompleteActualDiffTruncation(engineTruncation) ? engineTruncation : null;
+    const incompleteComparison = Boolean(
+      actualDiffTruncation || fetchIssues.length > 0 || partialIssues.length > 0 || exportSelection.summary.truncated
+    );
+    const sourceExportMeta = getBundleExportMeta(sourceBundle);
+    const targetExportMeta = getBundleExportMeta(targetBundle);
+    const reportRowSelection = {
+      ...exportSelection.summary,
+      baseRows: baseRows.length
+    };
+    const reportFingerprint = buildDiffHtmlReviewFingerprint({
+      source: {
+        appId: sourceExportMeta.appId,
+        guestId: sourceExportMeta.guestId,
+        preview: sourceExportMeta.preview
+      },
+      target: {
+        appId: targetExportMeta.appId,
+        guestId: targetExportMeta.guestId,
+        preview: targetExportMeta.preview
+      },
+      scopes: scopes || [],
+      exportMode: options.exportMode || "all",
+      exportContentMode,
+      incompleteComparison,
+      truncated: exportSelection.summary.truncated,
+      rowSelection: reportRowSelection
+    }, preparedReviewRows.reviewKeys);
+    return {
+      reportFingerprint,
+      rowReviewKeys,
+      reviewKeys: preparedReviewRows.reviewKeys
+    };
   }
   function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKeys, options = {}) {
     const exportContentMode = options.exportContentMode === "diffOnly" ? "diffOnly" : "withCompared";
@@ -15558,7 +15561,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     return `このシートで分かること：${purpose}
 使い方・次に見る場所：${next}`;
   }
-  function buildSummarySheet(ctx, grouped, fieldCount, settingDiffCount, unstructuredFieldDiffCount) {
+  function buildSummarySheet(ctx, grouped, fieldCount, settingDiffCount, unstructuredFieldDiffCount, reportFingerprint = "") {
     const rows = ctx.rows || [];
     const fetchIssues = ctx.fetchIssues || [];
     const partialIssues = ctx.partialIssues || [];
@@ -15597,7 +15600,8 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       comparisonEnvironment: 14,
       normalization: 18,
       fieldStatus: 19,
-      usage: 20
+      usage: 20,
+      reportFingerprint: 21
     };
     const sheetRows = [
       ["kintone 設定差分比較レポート", "", "", ""],
@@ -15624,7 +15628,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       ["正規化設定", normalizationLabel(ctx.normalizationPresetState), "自動判定", "重要度、業務への影響、対応要否は自動判定しません"],
       ["フィールド差分", fieldStatus, "", fieldLinkTarget?.label || ""],
       ["使い方", fieldCount ? "①「変更対象一覧」で対象を絞る　②「フィールド差分要約・詳細」で変更内容を確認　③「差分一覧」で確認状況と対応判断を入力　※パスは技術明細シートにのみ掲載" : "①「変更対象一覧」で対象を絞る　②「差分一覧」で変更前後を確認　③黄色い4列に確認状況・対応判断・担当者・コメントを入力　※パスは技術明細シートにのみ掲載", "", rows.length ? "③ レビュー入力へ" : ""],
-      ["", "", "", ""]
+      ["レポート識別子 (reportFingerprint)", reportFingerprint, "", ""]
     ];
     const guideTitleRow = sheetRows.length;
     sheetRows.push(["シート案内", "", "", ""]);
@@ -15742,6 +15746,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     cellStyles[overviewRow.fieldStatus] = ["info", fieldStatusIncomplete ? "kpiDanger" : "kpiGood"];
     if (fieldLinkTarget) cellStyles[overviewRow.fieldStatus][3] = "hyperlink";
     if (rows.length) cellStyles[overviewRow.usage][3] = "hyperlink";
+    cellStyles[overviewRow.reportFingerprint] = ["info", "normal"];
     for (const index of warningRows) cellStyles[index][0] = "warning";
     const merges = [
       "A1:D1",
@@ -16221,7 +16226,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     return label ? `${direction}の値
 ${label}` : `${direction}の値`;
   }
-  function buildListSheet(rows, name = "差分一覧", sourceBundle, targetBundle, differenceRefs, technicalRefs, fieldModel, ctx) {
+  function buildListSheet(rows, name = "差分一覧", sourceBundle, targetBundle, differenceRefs, technicalRefs, fieldModel, ctx, reviewKeysByRow) {
     const hasRows = rows.length > 0;
     const headers = [
       "セクション",
@@ -16235,7 +16240,8 @@ ${label}` : `${direction}の値`;
       "確認状況",
       "対応判断",
       "担当者",
-      "コメント"
+      "コメント",
+      "reviewKey"
     ];
     const groupHeader = [
       "差分対象",
@@ -16249,13 +16255,14 @@ ${label}` : `${direction}の値`;
       "レビュー入力（黄色）",
       "",
       "",
-      ""
+      "",
+      "HTML突合"
     ];
     const guide = sheetGuideBand(
       "このブックに収録された差分を、設定項目ごとの短い変更内容と変更前後の値で確認できます。",
       "黄色の列に確認状況・対応判断・担当者・コメントを入力します。差分IDから技術明細へ移動できます。値先頭の「[一部表示]」は技術明細または元データを確認します。"
     );
-    const out = [[guide, "", "", "", "", "", "", "", "", "", "", ""], groupHeader, headers];
+    const out = [[guide, "", "", "", "", "", "", "", "", "", "", "", ""], groupHeader, headers];
     const rowStyles = ["normal", "normal", "normal"];
     const groupCellStyles = [];
     groupCellStyles[0] = "sectionHeader";
@@ -16264,6 +16271,7 @@ ${label}` : `${direction}の値`;
     groupCellStyles[6] = "targetGroup";
     groupCellStyles[7] = "info";
     groupCellStyles[8] = "sectionHeader";
+    groupCellStyles[12] = "info";
     const cellStyles = [["info"], groupCellStyles, []];
     cellStyles[2][5] = "headerDivider";
     const rowHeights = [44, 24, readableHeaderRowHeight([
@@ -16295,7 +16303,8 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
         reviewable ? "未確認" : "対象外",
         reviewable ? "未判断" : "対象外",
         "",
-        ""
+        "",
+        reviewKeysByRow?.[rowIndex] || ""
       ]);
       rowStyles.push("normal");
       const styles = [];
@@ -16312,6 +16321,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
         styles[8] = "info";
         styles[9] = "info";
       }
+      styles[12] = "info";
       cellStyles.push(styles);
       rowHeights.push(readableDiffRowHeight([
         { value: sectionLabelOf(row.sectionKey || row.section || ""), width: 18 },
@@ -16331,7 +16341,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
         message: "現在の絞り込み条件に該当する変更はありません",
         style: "zebraCenter"
       } : { message: "差分はありません", style: "statusGood" };
-      out.push([emptyState.message, "", "", "", "", "", "", "", "", "", "", ""]);
+      out.push([emptyState.message, "", "", "", "", "", "", "", "", "", "", "", ""]);
       rowStyles.push("normal");
       cellStyles.push(Array.from({ length: headers.length }, () => emptyState.style));
       rowHeights.push(Math.max(40, readableDiffRowHeight([{
@@ -16353,7 +16363,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     return {
       name,
       rows: out,
-      colWidths: [18, 30, 16, 18, 15, 42, 42, 32, 14, 14, 16, 28],
+      colWidths: [18, 30, 16, 18, 15, 42, 42, 32, 14, 14, 16, 28, 36],
       rowStyles,
       cellStyles,
       headerRow: 3,
@@ -16362,11 +16372,11 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
       freezeColumns: hasRows ? 5 : void 0,
       rowHeights,
       merges: [
-        "A1:L1",
+        "A1:M1",
         "A2:B2",
         "C2:E2",
         "I2:L2",
-        ...hasRows ? [] : ["A4:L4"]
+        ...hasRows ? [] : ["A4:M4"]
       ],
       dataValidations,
       internalHyperlinks: rows.flatMap((_row, index) => {
@@ -19234,7 +19244,7 @@ ${item.target}` : item.target;
   }
   var MAX_SINGLE_DIFF_XLSX_BYTES = 100 * 1024 * 1024;
   function buildDiffXlsxSheets(rawCtx) {
-    const ctx = rawCtx.maskSensitive ? { ...rawCtx, rows: maskSensitiveDiffRows(rawCtx.rows) } : rawCtx;
+    const ctx = rawCtx;
     if (ctx.audience !== "internal") return buildCustomerDiffXlsxSheets(ctx);
     const rows = ctx.rows || [];
     const grouped = groupRowsBySection(rows);
@@ -19250,12 +19260,26 @@ ${item.target}` : item.target;
       refs.push(differenceRefs[index]);
       differenceRefsBySection.set(key, refs);
     });
+    const reviewIdentity = computeDiffHtmlReviewIdentity(
+      ctx.sourceBundle,
+      ctx.targetBundle,
+      rows,
+      ctx.scopes || [],
+      {
+        fetchIssues: ctx.fetchIssues,
+        partialIssues: ctx.partialIssues,
+        truncation: ctx.truncation,
+        exportMode: ctx.exportMode || "all",
+        exportContentMode: ctx.exportContentMode || "diffOnly"
+      }
+    );
     const sheets = [buildSummarySheet(
       ctx,
       grouped,
       fieldModel.summaries.length,
       fieldModel.details.length,
-      unstructuredFieldDiffCount
+      unstructuredFieldDiffCount,
+      reviewIdentity.reportFingerprint
     )];
     const issuesSheet = buildIssuesSheet(ctx);
     if (issuesSheet) sheets.push(issuesSheet);
@@ -19274,7 +19298,8 @@ ${item.target}` : item.target;
       differenceRefs,
       technicalRefs,
       fieldModel,
-      ctx
+      ctx,
+      reviewIdentity.rowReviewKeys
     ));
     for (const [key, list] of grouped) {
       sheets.push(buildSectionSheet(
@@ -19577,11 +19602,32 @@ ${item.target}` : item.target;
   function comparisonIncomplete(context) {
     return !!((context.fetchIssues || []).length || (context.partialIssues || []).length || hasIncompleteActualDiffTruncation(context.truncation));
   }
+  function successfulAppIdentity(context, side, rawName) {
+    const baseName2 = rawName || "名称未取得";
+    let bundle;
+    try {
+      bundle = side === "source" ? context.sourceBundle : context.targetBundle;
+    } catch {
+      bundle = void 0;
+    }
+    if (!bundle || typeof bundle !== "object") return baseName2;
+    try {
+      const details = [];
+      const appId = bundle.appId == null ? "" : String(bundle.appId).trim();
+      const guestId = bundle.guestId == null ? "" : String(bundle.guestId).trim();
+      if (appId) details.push(`App ID: ${appId}`);
+      if (guestId) details.push(`ゲスト ${guestId}`);
+      if (bundle.preview) details.push("プレビュー");
+      return details.length ? `${baseName2} (${details.join(" / ")})` : baseName2;
+    } catch {
+      return baseName2;
+    }
+  }
   function successfulSummaryRow(item, index, filename) {
     const rawSourceName = contextAppName(item.context, "source");
     const rawTargetName = contextAppName(item.context, "target");
-    const sourceName = rawSourceName || "名称未取得";
-    const targetName = rawTargetName || "名称未取得";
+    const sourceName = successfulAppIdentity(item.context, "source", rawSourceName);
+    const targetName = successfulAppIdentity(item.context, "target", rawTargetName);
     const summary = summarizeCustomerDiffContext(item.context);
     const counts = {
       total: summary.total,
@@ -19647,7 +19693,7 @@ ${item.target}` : item.target;
   }
   var BATCH_SUMMARY_COLUMN_COUNT = 13;
   var BATCH_SUMMARY_COLUMN_LAST = "M";
-  var BATCH_SUMMARY_COLUMN_WIDTHS = [7, 28, 28, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44];
+  var BATCH_SUMMARY_COLUMN_WIDTHS = [7, 32, 32, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44];
   var BATCH_SUMMARY_DATA_ROW_HEIGHT = 32;
   var BATCH_SUMMARY_DATA_ROW_MAX_HEIGHT = 220;
   var BATCH_SUMMARY_DATA_LINE_HEIGHT = 17;
@@ -20417,6 +20463,108 @@ ${fence}`;
     });
     return { filename, markdown: `${lines.join("\n").replace(/\n{3,}/g, "\n\n")}
 ` };
+  }
+  function cleanMarkdownEntryToken(value, maxLength = 40) {
+    const cleaned = String(value ?? "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001F\u007F-\u009F]/g, " ").replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^[._]+|[._]+$/g, "");
+    if (!cleaned) return "";
+    const chars = Array.from(cleaned);
+    return chars.length <= maxLength ? cleaned : chars.slice(0, maxLength).join("");
+  }
+  function formatBatchArchiveTimestamp(date) {
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  }
+  function markdownTableCell(value) {
+    return String(value ?? "").replace(/\r\n?/g, " ").replace(/\n/g, " ").replace(/\|/g, "\\|").trim();
+  }
+  function buildDiffMarkdownBatchExport(items, options = {}) {
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error("保存対象の比較結果がありません");
+    }
+    const generatedDate = options.generatedAt instanceof Date ? new Date(options.generatedAt.getTime()) : options.generatedAt !== void 0 ? new Date(options.generatedAt) : /* @__PURE__ */ new Date();
+    const safeDate = Number.isFinite(generatedDate.getTime()) ? generatedDate : /* @__PURE__ */ new Date();
+    const generatedIso = safeDate.toISOString();
+    const seqDigits = Math.max(3, String(items.length).length);
+    const encoder = new TextEncoder();
+    const usedNames = /* @__PURE__ */ new Set(["000_INDEX.md"]);
+    const individualEntries = [];
+    const entryNames = [];
+    const indexRows = [];
+    const failures = [];
+    items.forEach((item, index) => {
+      const seq = String(index + 1).padStart(seqDigits, "0");
+      const ctx = {
+        ...item.context,
+        generatedAt: item.context?.generatedAt || generatedIso
+      };
+      const exported = (() => {
+        try {
+          return buildDiffMarkdownExport(ctx);
+        } catch (e) {
+          failures.push({ index, label: item.label, error: e?.message || String(e) });
+          return null;
+        }
+      })();
+      options.onProgress?.({ stage: "building", current: index + 1, total: items.length, label: item.label });
+      if (!exported) return;
+      const pairStem = cleanMarkdownEntryToken(appPairLabel(ctx.sourceBundle, ctx.targetBundle), 64) || cleanMarkdownEntryToken(item.label, 48) || "差分";
+      let entryName = `${seq}_差分_${pairStem}_AI.md`;
+      let duplicateSeq = 2;
+      while (usedNames.has(entryName)) {
+        entryName = `${seq}_差分_${pairStem}_${duplicateSeq}_AI.md`;
+        duplicateSeq += 1;
+      }
+      usedNames.add(entryName);
+      entryNames.push(entryName);
+      individualEntries.push({
+        name: entryName,
+        data: encoder.encode(exported.markdown)
+      });
+      const rows = Array.isArray(ctx.rows) ? ctx.rows : [];
+      const counts = countRows(rows);
+      const incomplete = incompleteForContext(ctx);
+      const concl = conclusion(ctx, counts, counts, incomplete);
+      const stateLabel = incomplete ? "要確認（一部未取得）" : counts.actual > 0 ? "差分あり" : "差分なし";
+      const breakdown = `追加 ${counts.added} / 削除 ${counts.removed} / 変更 ${counts.changed} / 移動 ${counts.moved}`;
+      indexRows.push(
+        `| ${index + 1} | ${markdownTableCell(item.label || `比較 ${index + 1}`)} | ${markdownTableCell(endpointName(ctx.sourceBundle, "比較元"))} | ${markdownTableCell(endpointName(ctx.targetBundle, "比較先"))} | \`${concl.code}\` | ${stateLabel} | ${counts.actual} | ${breakdown} | \`${entryName}\` |`
+      );
+    });
+    const indexLines = [
+      "# kintone 一括差分比較 インデックス（AI向け Markdown）",
+      "",
+      "> このアーカイブには一括比較（1対多・ペア比較）の各比較結果の AI向け Markdown と、全体の比較結果一覧表が収録されています。",
+      "",
+      "## メタ情報",
+      `- format: ${markdownCode("kintone-diff-markdown-batch-index")}`,
+      `- formatVersion: ${markdownCode(MARKDOWN_FORMAT_VERSION)}`,
+      `- generatedAt: ${markdownInline(generatedIso)}`,
+      `- totalPairs: ${items.length}`,
+      "",
+      "## 比較結果一覧",
+      "",
+      "| No. | 比較ラベル | 比較元（変更前） | 比較先（変更後） | 結論 | 状態 | 実差分数 | 内訳（追加/削除/変更/移動） | 個別ファイル |",
+      "| ---: | --- | --- | --- | --- | --- | ---: | --- | --- |",
+      ...indexRows,
+      "",
+      "---",
+      `生成元: kintone-lite-suite ${markdownInline(TOOL_VERSION)}`,
+      ""
+    ];
+    const indexMarkdown = indexLines.join("\n");
+    const zipEntries = [
+      { name: "000_INDEX.md", data: encoder.encode(indexMarkdown) },
+      ...individualEntries
+    ];
+    const blob = buildStoredZip(zipEntries, { modifiedAt: safeDate });
+    const filename = String(options.archiveFilename || "").trim() || `一括差分AI_${formatBatchArchiveTimestamp(safeDate)}.zip`;
+    return {
+      filename,
+      blob,
+      entries: ["000_INDEX.md", ...entryNames],
+      failures,
+      indexMarkdown
+    };
   }
 
   // src/tabs/diff-markdown-export-standalone.ts
@@ -21670,12 +21818,13 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-pair-breakdown small{margin-top:2px;color:#64748b;white-space:nowrap}
 .kus-dl-pair-save{display:flex;gap:4px;justify-content:flex-end}
 .kus-dl-pair-save .kus-lp__btn{min-height:36px!important;padding:5px 7px!important;font-size:12px}
-.kus-dl-batch-save{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-radius:11px;background:#eff6ff;font-family:-apple-system,Segoe UI,sans-serif}
+.kus-dl-batch-save{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-radius:11px;background:#eff6ff;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-batch-save__text{min-width:0;color:#1e3a8a}
 .kus-dl-batch-save__text strong,.kus-dl-batch-save__text small{display:block}
 .kus-dl-batch-save__text strong{color:#10253f;font-size:14px}
 .kus-dl-batch-save__text small{margin-top:2px;font-size:12.5px;line-height:1.45}
-.kus-dl-batch-save .kus-lp__btn{flex:0 0 auto;min-width:250px}
+.kus-dl-batch-save__actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-width:0;max-width:100%}
+.kus-dl-batch-save .kus-lp__btn{flex:0 1 auto;min-width:220px;max-width:100%;box-sizing:border-box}
 
 /* Diff Lite only: human-first review workspace. Shared litePanelTheme is intentionally untouched. */
 #kus-diff-lite.kus-lp{width:min(1000px,calc(100vw - 24px));max-height:min(96vh,1040px);top:max(8px,2vh);right:max(8px,1vw);border-radius:18px;background:#f4f7fa;box-shadow:0 28px 80px -32px rgba(15,37,63,.52)}
@@ -21953,6 +22102,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-value__label+.kus-dl-pre::before{content:none;display:none}
   .kus-dl-table-scroll>.kus-dl-multi{white-space:nowrap}
   .kus-dl-batch-save{align-items:stretch;flex-direction:column}
+  .kus-dl-batch-save__actions{flex-direction:column;align-items:stretch;width:100%}
   .kus-dl-batch-save .kus-lp__btn{width:100%;min-width:0}
 }
 @media(max-width:420px){
@@ -22007,7 +22157,6 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   function buildLiteDiffXlsxContext(cache, rows, exportMode, exportLabel, filterDescription, options) {
     return {
       audience: options?.audience === "internal" ? "internal" : "customer",
-      maskSensitive: Boolean(options?.maskSensitive),
       rows,
       fetchIssues: cache.fetchIssues || [],
       partialIssues: cache.partialIssues || [],
@@ -22058,8 +22207,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   }
   function multiXlsxBatchSaveMarkup(count) {
     if (count <= 0) return "";
-    const label = `Excelをまとめて保存（${count}件・ZIP）`;
-    return `<div class="kus-dl-batch-save"><span class="kus-dl-batch-save__text"><strong>Excelを一括保存</strong><small>成功した比較結果 ${count}件を、1つのZIPにまとめます。</small></span><button type="button" class="kus-lp__btn kus-lp__btn--primary" data-kus-dl-multi-xlsx-all aria-label="${esc(label)}">${esc(label)}</button></div>`;
+    const xlsxLabel = `Excelをまとめて保存（${count}件・ZIP）`;
+    const mdLabel = `AI向けMDをまとめて保存（${count}件・ZIP）`;
+    return `<div class="kus-dl-batch-save"><span class="kus-dl-batch-save__text"><strong>一括保存（ZIP）</strong><small>成功した比較結果 ${count}件を、1つのZIPにまとめます。</small></span><div class="kus-dl-batch-save__actions"><button type="button" class="kus-lp__btn kus-lp__btn--primary" data-kus-dl-multi-xlsx-all aria-label="${esc(xlsxLabel)}">${esc(xlsxLabel)}</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md-all aria-label="${esc(mdLabel)}">${esc(mdLabel)}</button></div></div>`;
   }
   var rowSearchCache = /* @__PURE__ */ new WeakMap();
   var SEARCH_VALUE_TEXT_LIMIT = 8e3;
@@ -23979,12 +24129,6 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     ], "customer");
     xlsxAudience.setAttribute("aria-label", "Excelの出力構成");
     cardOut.body.appendChild(makeRow(xlsxAudience, { label: "Excel構成" }));
-    const maskSensitiveCb = makeCheck({
-      label: "共有用マスキング（機密キー・本文を秘匿）",
-      checked: false,
-      help: "Excel に出力するとき、トークン・パスワードなどの機密キー、JS/CSS本文、プラグイン設定値を伏せ字（SHA-256の識別子）にします"
-    });
-    cardOut.body.appendChild(makeRow(maskSensitiveCb.label, { label: "機密保護" }));
     const expRange = makeSelect([
       ["all", "全件"],
       ["filtered", "表示中（フィルタ適用後）"]
@@ -23992,8 +24136,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     expRange.setAttribute("aria-label", "ファイルへ出力する差分の範囲");
     cardOut.body.appendChild(makeRow(expRange, { label: "範囲" }));
     const currentXlsxOptions = () => ({
-      audience: xlsxAudience.value === "internal" ? "internal" : "customer",
-      maskSensitive: maskSensitiveCb.checkbox.checked
+      audience: xlsxAudience.value === "internal" ? "internal" : "customer"
     });
     const grid = document.createElement("div");
     grid.className = "kus-lp__btn-grid";
@@ -24662,7 +24805,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         const exportStartedAt = Date.now();
         const sourceItems = multiXlsxExports;
         const snapshot = sourceItems.slice();
-        const buttons = [...resultBox.querySelectorAll("[data-kus-dl-multi-html], [data-kus-dl-multi-md], [data-kus-dl-multi-xlsx], [data-kus-dl-multi-xlsx-all]")];
+        const buttons = [...resultBox.querySelectorAll("[data-kus-dl-multi-html], [data-kus-dl-multi-md], [data-kus-dl-multi-xlsx], [data-kus-dl-multi-xlsx-all], [data-kus-dl-multi-md-all]")];
         multiXlsxExportActive = true;
         buttons.forEach((button) => {
           button.disabled = true;
@@ -24708,6 +24851,71 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           );
         } catch (e) {
           panel.setStatus(`一括Excel出力エラー: ${e?.message || String(e)}`, "err");
+        } finally {
+          const cooldown = XLSX_EXPORT_COOLDOWN_MS - (Date.now() - exportStartedAt);
+          if (cooldown > 0) await new Promise((resolve) => window.setTimeout(resolve, cooldown));
+          multiXlsxExportActive = false;
+          buttons.forEach((button) => {
+            if (button.isConnected) button.disabled = false;
+          });
+        }
+        return;
+      }
+      const multiMdAllButton = target?.closest("[data-kus-dl-multi-md-all]");
+      if (multiMdAllButton) {
+        if (pairFolderLoadActive()) {
+          panel.setStatus("フォルダの読込が完了してから前回結果を保存してください", "warn");
+          return;
+        }
+        if (multiMdAllButton.disabled || multiXlsxExportActive || multiXlsxExports.length === 0) return;
+        const exportStartedAt = Date.now();
+        const sourceItems = multiXlsxExports;
+        const snapshot = sourceItems.slice();
+        const buttons = [...resultBox.querySelectorAll("[data-kus-dl-multi-html], [data-kus-dl-multi-md], [data-kus-dl-multi-xlsx], [data-kus-dl-multi-xlsx-all], [data-kus-dl-multi-md-all]")];
+        multiXlsxExportActive = true;
+        buttons.forEach((button) => {
+          button.disabled = true;
+        });
+        try {
+          panel.setStatus(`一括AI向けMarkdownを生成中… 0/${snapshot.length}件`, "busy");
+          await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+          const result = await buildDiffMarkdownBatchExport(
+            snapshot.map((item) => ({
+              label: item.label,
+              context: buildLiteDiffMarkdownContext(
+                item.cache,
+                item.cache.rows,
+                "all",
+                "全件",
+                "フィルターなし（比較結果の全件）"
+              )
+            })),
+            {
+              onProgress: (progress) => {
+                if (progress.stage === "building") {
+                  panel.setStatus(`一括AI向けMarkdownを生成中… ${progress.current}/${progress.total}件${progress.label ? ` — ${progress.label}` : ""}`, "busy");
+                } else {
+                  panel.setStatus(`AI向けMarkdown ${progress.total}件をZIPにまとめています…`, "busy");
+                }
+              }
+            }
+          );
+          if (multiXlsxExports !== sourceItems) {
+            panel.setStatus("比較結果が更新されたため、生成した一括Markdownは保存しませんでした。最新の結果からもう一度保存してください", "warn");
+            return;
+          }
+          downloadBlob(result.filename, result.blob);
+          const incomplete = snapshot.filter((item) => isIncompleteLiteDiff(item.cache)).length;
+          const notes = [
+            result.failures.length ? `Markdown生成失敗 ${result.failures.length}件` : "",
+            incomplete ? `要確認 ${incomplete}件` : ""
+          ].filter(Boolean).join(" / ");
+          panel.setStatus(
+            `一括AI向けMarkdownのダウンロードを開始しました: ${result.filename}（${result.entries.length}件）${notes ? ` — ${notes}` : ""}`,
+            result.failures.length || incomplete ? "warn" : "ok"
+          );
+        } catch (e) {
+          panel.setStatus(`一括Markdown出力エラー: ${e?.message || String(e)}`, "err");
         } finally {
           const cooldown = XLSX_EXPORT_COOLDOWN_MS - (Date.now() - exportStartedAt);
           if (cooldown > 0) await new Promise((resolve) => window.setTimeout(resolve, cooldown));
@@ -24862,6 +25070,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       );
       return {
         ...htmlContext,
+        rawRows: rows,
         filterDescription: exportFilterDescription(isAll)
       };
     }
@@ -25229,21 +25438,28 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
             const comparedAt = (/* @__PURE__ */ new Date()).toISOString();
             if (needsReview) incomplete += 1;
             let exportNote = "";
+            const targetCache = {
+              rows: out.rows || [],
+              fetchIssues: out.fetchIssues || [],
+              partialIssues: out.partialIssues || [],
+              sourceBundle: sourceForResult,
+              targetBundle: out.targetBundle,
+              scopes: base.scopes,
+              ignoreKeys: base.ignoreKeys,
+              normalizationPresetState: base.normalizationPresetState,
+              comparedAt,
+              truncation: out.truncation || null,
+              matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
+            };
             if (autoExportHtml) {
               try {
-                runExportDiffHtmlStandalone({
-                  rows: out.rows,
-                  fetchIssues: out.fetchIssues || [],
-                  partialIssues: out.partialIssues || [],
-                  sourceBundle: out.sourceBundle,
-                  targetBundle: out.targetBundle,
-                  scopes: base.scopes,
-                  ignoreKeys: base.ignoreKeys,
-                  normalizationPresetState: base.normalizationPresetState,
-                  truncation: out.truncation || null,
-                  exportContentMode: normalizeLiteHtmlExportContentMode(htmlContentMode.value),
-                  exportContentLabel: getLiteHtmlExportContentLabel(htmlContentMode.value)
-                });
+                runExportDiffHtmlStandalone(buildLiteDiffHtmlContext(
+                  targetCache,
+                  targetCache.rows,
+                  "all",
+                  "全差分",
+                  htmlContentMode.value
+                ));
                 exported += 1;
               } catch (e) {
                 exportNote = ` / HTML出力失敗: ${e?.message || String(e)}`;
@@ -25254,19 +25470,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
             const multiNoticeCount = (out.matchingNotices?.items?.length || 0) + (out.matchingNotices?.omitted || 0);
             const multiExportIndex = multiXlsxExports.push({
               label: targetLabel,
-              cache: {
-                rows: out.rows || [],
-                fetchIssues: out.fetchIssues || [],
-                partialIssues: out.partialIssues || [],
-                sourceBundle: sourceForResult,
-                targetBundle: out.targetBundle,
-                scopes: base.scopes,
-                ignoreKeys: base.ignoreKeys,
-                normalizationPresetState: base.normalizationPresetState,
-                comparedAt,
-                truncation: out.truncation || null,
-                matchingNotices: out.matchingNotices || { items: [], omitted: 0 }
-              }
+              cache: targetCache
             }) - 1;
             resultRows.push(`<tr><td>${esc(targetLabel)}<br><small>${esc(t.guestId ? `ゲスト ${t.guestId}` : "通常スペース")} / ${t.preview ? "プレビュー" : "本番"}</small></td><td class="${needsReview || exportNote ? "kus-dl-multi__warn" : "kus-dl-multi__ok"}">${exportNote ? "出力失敗" : needsReview ? "要確認" : counts.actual ? "差分あり" : "一致"}${esc(exportNote)}</td><td>${counts.actual}</td><td>${counts.added}</td><td>${counts.removed}</td><td>${contentChanged}</td><td>${counts.moved}</td><td>${issueCount}${partialIssueCount ? ` / 未検証 ${partialIssueCount}` : ""}${multiNoticeCount ? ` / 注意 ${multiNoticeCount}` : ""}</td><td><span class="kus-dl-pair-save"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-html="${multiExportIndex}" aria-label="${esc(`${targetLabel}のHTMLを保存`)}">HTML保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-xlsx="${multiExportIndex}" aria-label="${esc(`${targetLabel}のExcelを保存`)}">Excel保存</button><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-multi-md="${multiExportIndex}" aria-label="${esc(`${targetLabel}のAI向けMarkdownを保存`)}">AI向けMD保存</button></span></td></tr>`);
           } catch (e) {
@@ -25395,13 +25599,13 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         const ctx = exportCtx(forceFullMarkdownExport);
         const result = runExportDiffMarkdown(buildLiteDiffMarkdownContext(
           snapshot,
-          ctx.rows,
+          ctx.rawRows,
           ctx.exportMode,
           ctx.exportLabel,
           ctx.filterDescription
         ));
         const incomplete = isIncompleteLiteDiff(snapshot);
-        panel.setStatus(`AI向け Markdown のダウンロードを開始しました（${ctx.exportLabel} / ${ctx.rows.length}件）: ${result.filename}${incomplete ? " — 元の比較結果は不完全です" : ""}`, incomplete ? "warn" : "ok");
+        panel.setStatus(`AI向け Markdown のダウンロードを開始しました（${ctx.exportLabel} / ${ctx.rawRows.length}件）: ${result.filename}${incomplete ? " — 元の比較結果は不完全です" : ""}`, incomplete ? "warn" : "ok");
       } catch (e) {
         panel.setStatus(`Markdown出力エラー: ${e?.message || String(e)}`, "err");
       } finally {
@@ -25420,7 +25624,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         const snapshot = cache;
         if (!snapshot) throw new Error("先に差分比較を実行してください");
         const ctx = exportCtx(forceFullXlsxExport);
-        if (!ctx.rows.length && snapshot.rows.length) {
+        if (!ctx.rawRows.length && snapshot.rows.length) {
           panel.setStatus("現在のフィルタに該当する行がありません。範囲を「全件」に戻すか、フィルタを見直してください", "warn");
           return;
         }
@@ -25428,7 +25632,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
         const result = runExportDiffXlsx(buildLiteDiffXlsxContext(
           snapshot,
-          ctx.rows,
+          ctx.rawRows,
           ctx.exportMode,
           ctx.exportLabel,
           ctx.filterDescription,

@@ -71,10 +71,40 @@ describe('attachment folder names from a field', () => {
     const paths = [...FakeZip.instances[0].files.keys()].filter((name) => name !== 'manifest.json');
     expect(paths.every((name) => name.startsWith('tanaka/'))).toBe(true);
     expect(paths).toHaveLength(2);
+    const dlManifest = JSON.parse(String(FakeZip.instances[0].files.get('manifest.json')));
+    expect(dlManifest).toMatchObject({ appId: '7', guestId: '', recordCount: 1, savedCount: 2, failedCount: 0, failures: [] });
+    expect(dlManifest.generatedAt).toBeTruthy();
   });
 });
 
 describe('backup attachment paths', () => {
+  it('counts only records with successfully retrieved comments', async () => {
+    const commentRecords = ['5', '6', '7'].map((id) => ({
+      $id: { type: '__ID__', value: id },
+      title: { type: 'SINGLE_LINE_TEXT', value: `record-${id}` },
+      attach: { type: 'FILE', value: [] }
+    }));
+    vi.mocked(fetchRecordsByQuery).mockResolvedValue({ records: commentRecords, mode: 'keyset' } as any);
+    vi.mocked(apiGet).mockImplementation(async (_prefix: string, path: string, params?: { record?: string }) => {
+      if (path === '/record/comments.json') {
+        if (params?.record === '5') return { comments: [{ id: 'comment-1', text: 'hello' }] };
+        if (params?.record === '6') return { comments: [] };
+        throw new Error('コメント閲覧権限がありません');
+      }
+      return { properties };
+    });
+
+    await runRecordBackupStandalone({ appId: '7', includeFiles: false, includeComments: true, includeAppSettings: false }, status);
+
+    const zip = FakeZip.instances[0];
+    const manifest = JSON.parse(String(zip.files.get('manifest.json')));
+    expect(manifest.commentCount).toBe(1);
+    expect(manifest.commentRecordCount).toBe(1);
+    expect(manifest.commentFailures).toEqual([{ recordId: '7', reason: 'コメント閲覧権限がありません' }]);
+    const comments = JSON.parse(String(zip.files.get('comments.json')));
+    expect(comments.records.map((entry: any) => entry.recordId)).toEqual(['5']);
+  });
+
   it('keeps both files when two attachments in one field share a name and a fileKey prefix', async () => {
     await runRecordBackupStandalone({ appId: '7', includeFiles: true, includeComments: false, includeAppSettings: false }, status);
     const zip = FakeZip.instances[0];
@@ -82,5 +112,9 @@ describe('backup attachment paths', () => {
     expect(attachments).toEqual(['attachments/record_5/attach/202610151200_image.png', 'attachments/record_5/attach/202610151200_image_2.png']);
     const manifest = JSON.parse(String(zip.files.get('manifest.json')));
     expect(manifest.fileCount).toBe(2);
+    expect(manifest.guestId).toBe('');
+    expect(manifest.appName).toBe('');
+    expect(manifest.commentRecordCount).toBe(0);
+    expect(manifest.attachmentSummary).toEqual({ savedCount: 2, failedCount: 0, totalBytes: 2 });
   });
 });

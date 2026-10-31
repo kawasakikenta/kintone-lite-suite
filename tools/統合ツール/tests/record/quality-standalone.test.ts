@@ -97,7 +97,10 @@ describe('quality inspection and CSV templates from API settings', () => {
     const result = await runCsvTemplateStandalone(options, vi.fn());
     expect(result.warning).toContain('失敗 1アプリ');
     expect([...FakeZip.files.keys()]).toEqual(['app_8/import.csv', 'app_8/fields.csv', 'app_8/excluded.csv', 'app_8/README.txt', 'manifest.json']);
-    expect(JSON.parse(FakeZip.files.get('manifest.json')!).failures).toEqual(['App 7: 設定権限なし']);
+    const parsedManifest = JSON.parse(FakeZip.files.get('manifest.json')!);
+    expect(parsedManifest.failures).toEqual(['App 7: 設定権限なし']);
+    expect(parsedManifest.generatedAt).toBe(parsedManifest.createdAt);
+    expect(parsedManifest.apps).toEqual([{ appId: '8', guestId: '9', columns: 2, excludedCount: 0 }]);
     expect(downloadBlob).toHaveBeenCalledTimes(1);
     expect(fetchRecordsByQuery).not.toHaveBeenCalled();
     expect(apiGet).toHaveBeenCalledWith('/k/guest/9/v1', '/app/form/fields.json', { app: '8' });

@@ -471,7 +471,11 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     : sourceGuestId || '通常空間';
   // 参照先アプリ名の解決用（同じ設定一括取得JSONに含まれる他アプリの名前を、API取得なしで引き当てる）
   const appNameLookup: Record<string, string> = params.appNameLookup || {};
-  const preselectedSheets: Set<string> | null = params.preselectedSheets instanceof Set ? params.preselectedSheets : null;
+  const preselectedSheets: Set<string> | null = params.preselectedSheets instanceof Set
+    ? params.preselectedSheets
+    : Array.isArray(params.preselectedSheets)
+      ? new Set(params.preselectedSheets.map((k: any) => String(k || '').trim()).filter(Boolean))
+      : null;
   const returnWorkbook: boolean = !!params.returnWorkbook;
   const lightweightMode: boolean = !!params.lightweightMode;
   const progressLabel: string = params.progressLabel ? String(params.progressLabel) : '';
@@ -2865,6 +2869,10 @@ export async function runBatchDesignExportXlsxZip(params: {
   apps?: Array<{ appId: string | number; guestId?: string; bundle?: any }>;
   appIds?: Array<string | number>;
   guestId?: string;
+  /** プレビュー環境から取得する場合 true（既定 false = 本番） */
+  preview?: boolean;
+  /** 事前選択されたシートキー集合。指定時はシート選択ダイアログを表示しない。 */
+  preselectedSheets?: Set<string> | string[];
   /** appId をキーにした設定バンドルのマップ。指定されたアプリはライブAPIを呼ばずバンドルから生成する。 */
   bundlesByAppId?: Record<string, any>;
   /** ZIP を保存した後に、成功・失敗件数と API 取得失敗を呼び出し元へ渡す（部分成功を利用者へ示すため）。 */
@@ -2905,9 +2913,17 @@ export async function runBatchDesignExportXlsxZip(params: {
     }
   }
 
-  // 1. シート選択を最初に1回だけ取得
-  const selectedSheets = await showSheetSelectionDialog(resolveExportSheetDefs(), "📦 一括エクスポート設定");
+  // 1. シート選択を最初に1回だけ取得（preselectedSheets 指定時はダイアログ表示をスキップ）
+  const providedSheets = params.preselectedSheets instanceof Set
+    ? new Set(params.preselectedSheets)
+    : Array.isArray(params.preselectedSheets)
+      ? new Set(params.preselectedSheets.map((k) => String(k || '').trim()).filter(Boolean))
+      : null;
+  const selectedSheets = providedSheets !== null
+    ? (providedSheets.size > 0 ? providedSheets : null)
+    : await showSheetSelectionDialog(resolveExportSheetDefs(), "📦 一括エクスポート設定");
   if (!selectedSheets) return false;
+  const batchPreview = params.preview === true;
   // 項目定義シートのフィールドタイプ除外設定（ダイアログで記憶された値を全アプリ共通で適用）
   const batchFieldTypeExclusion = loadPersistedFieldTypeExclusion() || new Set<string>();
 
@@ -2954,6 +2970,7 @@ export async function runBatchDesignExportXlsxZip(params: {
         appId,
         guestId,
         bundle,
+        preview: batchPreview,
         appNameLookup,
         preselectedSheets: selectedSheets,
         fieldTypeExclusion: batchFieldTypeExclusion,

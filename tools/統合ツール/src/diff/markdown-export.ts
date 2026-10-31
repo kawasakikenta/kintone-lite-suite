@@ -1,5 +1,6 @@
 'use strict';
 
+import { buildStoredZip, type StoredZipEntry } from '../archive/stored-zip.js';
 import { SECTION_DEFS, TOOL_VERSION } from '../constants.js';
 import {
   appLabelFromBundle,
@@ -127,6 +128,25 @@ export interface DiffMarkdownContext {
 export interface DiffMarkdownExport {
   filename: string;
   markdown: string;
+}
+
+export interface DiffMarkdownBatchExportItem {
+  label: string;
+  context: DiffMarkdownContext;
+}
+
+export interface DiffMarkdownBatchExportOptions {
+  generatedAt?: Date | string | number;
+  archiveFilename?: string;
+  onProgress?: (progress: { stage: 'building' | 'zipping'; current: number; total: number; label?: string }) => void;
+}
+
+export interface DiffMarkdownBatchExportResult {
+  filename: string;
+  blob: Blob;
+  entries: string[];
+  indexMarkdown: string;
+  failures: Array<{ index: number; label: string; error: string }>;
 }
 
 interface DiffCounts {
@@ -710,5 +730,128 @@ export function buildDiffMarkdownExport(ctx: DiffMarkdownContext = {}): DiffMark
     suffix: 'AI'
   });
   return { filename, markdown: `${lines.join('\n').replace(/\n{3,}/g, '\n\n')}\n` };
+}
+
+function cleanMarkdownEntryToken(value: unknown, maxLength = 40): string {
+  const cleaned = String(value ?? '')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[._]+|[._]+$/g, '');
+  if (!cleaned) return '';
+  const chars = Array.from(cleaned);
+  return chars.length <= maxLength ? cleaned : chars.slice(0, maxLength).join('');
+}
+
+function formatBatchArchiveTimestamp(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function markdownTableCell(value: unknown): string {
+  return String(value ?? '')
+    .replace(/\r\n?/g, ' ')
+    .replace(/\n/g, ' ')
+    .replace(/\|/g, '\\|')
+    .trim();
+}
+
+export function buildDiffMarkdownBatchExport(
+  items: readonly DiffMarkdownBatchExportItem[],
+  options: DiffMarkdownBatchExportOptions = {}
+): DiffMarkdownBatchExportResult {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error('保存対象の比較結果がありません');
+  }
+  const generatedDate = options.generatedAt instanceof Date
+    ? new Date(options.generatedAt.getTime())
+    : options.generatedAt !== undefined
+      ? new Date(options.generatedAt)
+      : new Date();
+  const safeDate = Number.isFinite(generatedDate.getTime()) ? generatedDate : new Date();
+  const generatedIso = safeDate.toISOString();
+  const seqDigits = Math.max(3, String(items.length).length);
+  const encoder = new TextEncoder();
+  const usedNames = new Set<string>(['000_INDEX.md']);
+  const individualEntries: StoredZipEntry[] = [];
+  const entryNames: string[] = [];
+  const indexRows: string[] = [];
+  const failures: Array<{ index: number; label: string; error: string }> = [];
+  items.forEach((item, index) => {
+    const seq = String(index + 1).padStart(seqDigits, '0');
+    const ctx: DiffMarkdownContext = {
+      ...item.context,
+      generatedAt: item.context?.generatedAt || generatedIso
+    };
+    const exported = (() => {
+      try { return buildDiffMarkdownExport(ctx); }
+      catch (e: any) { failures.push({ index, label: item.label, error: e?.message || String(e) }); return null; }
+    })();
+    options.onProgress?.({ stage: 'building', current: index + 1, total: items.length, label: item.label });
+    if (!exported) return;
+    const pairStem = cleanMarkdownEntryToken(appPairLabel(ctx.sourceBundle, ctx.targetBundle), 64)
+      || cleanMarkdownEntryToken(item.label, 48)
+      || '差分';
+    let entryName = `${seq}_差分_${pairStem}_AI.md`;
+    let duplicateSeq = 2;
+    while (usedNames.has(entryName)) {
+      entryName = `${seq}_差分_${pairStem}_${duplicateSeq}_AI.md`;
+      duplicateSeq += 1;
+    }
+    usedNames.add(entryName);
+    entryNames.push(entryName);
+    individualEntries.push({
+      name: entryName,
+      data: encoder.encode(exported.markdown)
+    });
+
+    const rows = Array.isArray(ctx.rows) ? ctx.rows : [];
+    const counts = countRows(rows);
+    const incomplete = incompleteForContext(ctx);
+    const concl = conclusion(ctx, counts, counts, incomplete);
+    const stateLabel = incomplete ? '要確認（一部未取得）' : (counts.actual > 0 ? '差分あり' : '差分なし');
+    const breakdown = `追加 ${counts.added} / 削除 ${counts.removed} / 変更 ${counts.changed} / 移動 ${counts.moved}`;
+    indexRows.push(
+      `| ${index + 1} | ${markdownTableCell(item.label || `比較 ${index + 1}`)} | ${markdownTableCell(endpointName(ctx.sourceBundle, '比較元'))} | ${markdownTableCell(endpointName(ctx.targetBundle, '比較先'))} | \`${concl.code}\` | ${stateLabel} | ${counts.actual} | ${breakdown} | \`${entryName}\` |`
+    );
+  });
+
+  const indexLines = [
+    '# kintone 一括差分比較 インデックス（AI向け Markdown）',
+    '',
+    '> このアーカイブには一括比較（1対多・ペア比較）の各比較結果の AI向け Markdown と、全体の比較結果一覧表が収録されています。',
+    '',
+    '## メタ情報',
+    `- format: ${markdownCode('kintone-diff-markdown-batch-index')}`,
+    `- formatVersion: ${markdownCode(MARKDOWN_FORMAT_VERSION)}`,
+    `- generatedAt: ${markdownInline(generatedIso)}`,
+    `- totalPairs: ${items.length}`,
+    '',
+    '## 比較結果一覧',
+    '',
+    '| No. | 比較ラベル | 比較元（変更前） | 比較先（変更後） | 結論 | 状態 | 実差分数 | 内訳（追加/削除/変更/移動） | 個別ファイル |',
+    '| ---: | --- | --- | --- | --- | --- | ---: | --- | --- |',
+    ...indexRows,
+    '',
+    '---',
+    `生成元: kintone-lite-suite ${markdownInline(TOOL_VERSION)}`,
+    ''
+  ];
+  const indexMarkdown = indexLines.join('\n');
+  const zipEntries: StoredZipEntry[] = [
+    { name: '000_INDEX.md', data: encoder.encode(indexMarkdown) },
+    ...individualEntries
+  ];
+  const blob = buildStoredZip(zipEntries, { modifiedAt: safeDate });
+  const filename = String(options.archiveFilename || '').trim()
+    || `一括差分AI_${formatBatchArchiveTimestamp(safeDate)}.zip`;
+  return {
+    filename,
+    blob,
+    entries: ['000_INDEX.md', ...entryNames],
+    failures,
+    indexMarkdown
+  };
 }
 

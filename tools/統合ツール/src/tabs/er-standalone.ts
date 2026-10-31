@@ -4,6 +4,20 @@ import { crawl, buildHTML, assertErAnalysed, progressUi, ER_DEFAULTS, formatErLa
 import { fetchAppsInSpace } from '../api.js';
 import { isCancelStop } from './run-cancel-summary.js';
 import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
+import { analyzeErDependencies } from './er-analysis.js';
+import {
+  buildErMermaidSource,
+  buildErMarkdownSpec,
+  buildErRelationsCsv,
+  buildErAppModelFromBundle
+} from './er-model.js';
+
+export {
+  buildErMermaidSource,
+  buildErMarkdownSpec,
+  buildErRelationsCsv,
+  buildErAppModelFromBundle
+};
 
 /**
  * スペースID指定時、スペース内アプリを起点に追加し、
@@ -212,7 +226,7 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
     const html = buildHTML(apps, options);
     const baseName = options.startAppIds[0] || appId || `space${spaceId}`;
     const suffix = `${opts.guestId ? `guest${opts.guestId}_` : ''}${opts.preview ? 'プレビュー' : '本番'}`;
-    downloadText(
+    if (opts?.download !== false) downloadText(
       buildExportFilename('ER図', 'html', { appLabel: buildAppFilenameLabel(baseName, ''), suffix }),
       html,
       'text/html'
@@ -225,6 +239,145 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
   } catch (e) {
     // 中止はエラー表示にせず、進捗表示を閉じる（件数つきの説明はパネルのステータスとログに出る）
     if (isCancelStop(e)) progressUi.dismiss(); else progressUi.error(e.message || String(e));
+    throw e;
+  }
+}
+
+
+function extractImportedBundlesList(raw: any): any[] | null {
+  if (!raw) return null;
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'object') {
+    if (Array.isArray(raw.apps)) return raw.apps;
+    if (Array.isArray(raw.bundles)) return raw.bundles;
+    if (raw.sections || raw.appId != null || raw.id != null) return [raw];
+  }
+  return null;
+}
+
+async function resolveErAppsForExport(
+  opts: any,
+  setStatus: (msg: string, err?: ErStatusTone) => void,
+  label: string
+): Promise<{ apps: any[]; options: any; fromBundles: boolean }> {
+  const bundleList = extractImportedBundlesList(opts?.importedBundles ?? opts?.bundles);
+  if (bundleList && bundleList.length > 0) {
+    setStatus(`設定JSONから${label}を生成中...`);
+    const apps = bundleList.map((b) => buildErAppModelFromBundle(b));
+    const options: any = buildErCrawlOptions(opts || {});
+    if (!options.startAppIds.length) {
+      options.startAppIds = apps.map((a) => String(a.id));
+      options.startAppId = options.startAppIds[0] || '';
+    }
+    assertErAnalysed(apps, options);
+    return { apps, options, fromBundles: true };
+  }
+
+  const options = await resolveErOptions(opts, setStatus);
+  setStatus(`${label}を生成中... 起点 ${summarizeErStartIds(options.startAppIds)}`);
+  progressUi.init();
+  progressUi.update(4, `開始: 起点 ${summarizeErStartIds(options.startAppIds)}`);
+  const apps = await crawl(options.startAppIds, options);
+  assertErAnalysed(apps, options);
+  return { apps, options, fromBundles: false };
+}
+
+export async function runExportERMarkdownStandalone(
+  opts: any,
+  setStatus: (msg: string, err?: ErStatusTone) => void = () => {}
+) {
+  const appId = String(opts?.appId || '').trim();
+  const spaceId = String(opts?.spaceId || '').trim();
+  let usedProgress = false;
+  try {
+    const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, 'ER図仕様書');
+    usedProgress = !fromBundles;
+    if (usedProgress) progressUi.update(94, 'Markdown仕様書データ生成中...');
+    const analysis = analyzeErDependencies(apps);
+    const markdown = buildErMarkdownSpec(apps, analysis, { generatedAt: opts?.generatedAt });
+    const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || 'er'));
+    const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ''}${opts?.preview ? 'プレビュー' : '本番'}`;
+    if (opts?.download !== false) downloadText(
+      buildExportFilename('ER図仕様書', 'md', { appLabel: buildAppFilenameLabel(baseName, ''), suffix }),
+      markdown,
+      'text/markdown;charset=utf-8'
+    );
+    if (usedProgress) progressUi.close();
+    const summary = summarizeCrawl(apps, options);
+    setStatus(summary.note
+      ? `ER図仕様書を保存しました: ${apps.length}アプリ${summary.note}`
+      : `ER図仕様書を保存しました (${apps.length}アプリ)`, summary.tone);
+    return { apps, analysis, markdown };
+  } catch (e: any) {
+    if (usedProgress) {
+      if (isCancelStop(e)) progressUi.dismiss(); else progressUi.error(e?.message || String(e));
+    }
+    throw e;
+  }
+}
+
+export async function runExportERMermaidStandalone(
+  opts: any,
+  setStatus: (msg: string, err?: ErStatusTone) => void = () => {}
+) {
+  const appId = String(opts?.appId || '').trim();
+  const spaceId = String(opts?.spaceId || '').trim();
+  let usedProgress = false;
+  try {
+    const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, 'ER図Mermaid');
+    usedProgress = !fromBundles;
+    if (usedProgress) progressUi.update(94, 'Mermaidデータ生成中...');
+    const mermaid = buildErMermaidSource(apps, { showAllFields: opts?.showAllFields });
+    const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || 'er'));
+    const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ''}${opts?.preview ? 'プレビュー' : '本番'}`;
+    if (opts?.download !== false) downloadText(
+      buildExportFilename('ER図', 'mmd', { appLabel: buildAppFilenameLabel(baseName, ''), suffix }),
+      mermaid,
+      'text/plain;charset=utf-8'
+    );
+    if (usedProgress) progressUi.close();
+    const summary = summarizeCrawl(apps, options);
+    setStatus(summary.note
+      ? `ER図Mermaidを保存しました: ${apps.length}アプリ${summary.note}`
+      : `ER図Mermaidを保存しました (${apps.length}アプリ)`, summary.tone);
+    return { apps, mermaid };
+  } catch (e: any) {
+    if (usedProgress) {
+      if (isCancelStop(e)) progressUi.dismiss(); else progressUi.error(e?.message || String(e));
+    }
+    throw e;
+  }
+}
+
+export async function runExportERRelationsCsvStandalone(
+  opts: any,
+  setStatus: (msg: string, err?: ErStatusTone) => void = () => {}
+) {
+  const appId = String(opts?.appId || '').trim();
+  const spaceId = String(opts?.spaceId || '').trim();
+  let usedProgress = false;
+  try {
+    const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, 'ER図リレーション一覧CSV');
+    usedProgress = !fromBundles;
+    if (usedProgress) progressUi.update(94, 'CSVデータ生成中...');
+    const csv = buildErRelationsCsv(apps);
+    const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || 'er'));
+    const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ''}${opts?.preview ? 'プレビュー' : '本番'}`;
+    if (opts?.download !== false) downloadText(
+      buildExportFilename('ER図_リレーション一覧', 'csv', { appLabel: buildAppFilenameLabel(baseName, ''), suffix }),
+      csv,
+      'text/csv;charset=utf-8'
+    );
+    if (usedProgress) progressUi.close();
+    const summary = summarizeCrawl(apps, options);
+    setStatus(summary.note
+      ? `ER図リレーション一覧CSVを保存しました: ${apps.length}アプリ${summary.note}`
+      : `ER図リレーション一覧CSVを保存しました (${apps.length}アプリ)`, summary.tone);
+    return { apps, csv };
+  } catch (e: any) {
+    if (usedProgress) {
+      if (isCancelStop(e)) progressUi.dismiss(); else progressUi.error(e?.message || String(e));
+    }
     throw e;
   }
 }
