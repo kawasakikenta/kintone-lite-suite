@@ -46,6 +46,45 @@ function typedJsonBlocks(markdown: string): any[] {
   return blocks;
 }
 
+describe('markdown row titles on real API shapes', () => {
+  const bundle = (appId: string) => ({
+    appId,
+    sections: {
+      fieldSettings: {
+        properties: {
+          amount: { code: 'amount', label: '金額', type: 'NUMBER' },
+          category: { code: 'category', label: '区分', type: 'DROP_DOWN' }
+        }
+      }
+    }
+  });
+  const titleOf = (row: Record<string, unknown>) => {
+    const { markdown } = buildDiffMarkdownExport({
+      rows: [row as never],
+      sourceBundle: bundle('1'),
+      targetBundle: bundle('2')
+    });
+    return markdown.match(/設定項目（日本語）: (.+)/)?.[1];
+  };
+
+  it('resolves the field label from the bundles when the row holds a primitive', () => {
+    expect(titleOf({ sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.amount.minValue', left: '0', right: '100' }))
+      .toBe('金額（amount） / 数値の制限（最小）');
+  });
+
+  it('does not mistake an option label for the field name', () => {
+    expect(titleOf({ sectionKey: 'fieldSettings', type: 'added', path: 'fieldSettings.properties.category.options.VIP', right: { index: '3', label: 'VIP' } }))
+      .toBe('区分（category） / 選択肢「VIP」');
+  });
+
+  it('shows the changed property next to an entity without its own prop label', () => {
+    expect(titleOf({
+      sectionKey: 'notifications', type: 'changed', path: 'notifications.notifications[0].statusChanged',
+      left: true, right: false, entityKind: 'notification', entityLabel: 'user@example.com (USER)'
+    })).toBe('user@example.com (USER) / ステータスの更新');
+  });
+});
+
 describe('diff/markdown export', () => {
   it('shows Markdown syntax in the batch index as literal text', async () => {
     const result = await buildDiffMarkdownBatchExport([{ label: '**重要** a|b [l](u) <b> C:\\tmp', context: baseContext() }], { generatedAt: '2026-09-26T02:05:06.000Z' });

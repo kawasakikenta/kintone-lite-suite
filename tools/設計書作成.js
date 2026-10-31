@@ -5330,7 +5330,6 @@ ${fence}`;
     { key: "customize", label: "JS/CSSカスタマイズ", default: true, cat: "customize" },
     { key: "actions", label: "アクション", default: true, cat: "customize" },
     { key: "plugins", label: "プラグイン", default: true, cat: "customize" },
-    { key: "webhook", label: "Webhook", default: true, cat: "customize" },
     { key: "genNotif", label: "通知(一般)", default: true, cat: "notif" },
     { key: "recNotif", label: "通知(レコード)", default: true, cat: "notif" },
     { key: "remNotif", label: "通知(リマインダー)", default: true, cat: "notif" },
@@ -5440,6 +5439,11 @@ ${fence}`;
     if (Number.isFinite(panelZ)) return String(Math.max(1, panelZ - 1));
     return String(Math.min(2147483647, Math.max(2e9, base + 1)));
   }
+  function getExporterDialogZIndex() {
+    const panel = getToolDocument().querySelector?.(".kus-lp");
+    const panelZ = panel ? Number(window.getComputedStyle(panel).zIndex) : NaN;
+    return Number.isFinite(panelZ) ? String(panelZ + 1) : getExporterOverlayZIndex();
+  }
   async function loadSheetLibOnce() {
     if (typeof window.XLSX !== "undefined") return { styled: true };
     const loadScriptLocal = (src, timeout = 15e3) => new Promise((resolve, reject) => {
@@ -5529,6 +5533,12 @@ ${fence}`;
     }
     return [...codes];
   }
+  function readableErrorMessage(error) {
+    const message = String(error?.message || error || "");
+    if (!/^\s*<(?:!doctype|html)/i.test(message)) return message;
+    const status = message.match(/Code:<\/strong>\s*([^<]+)/i)?.[1]?.trim();
+    return `サーバーがエラーページを返しました${status ? `（${status}）` : ""}`;
+  }
   function escapeHtmlAttr(value) {
     return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
@@ -5543,7 +5553,7 @@ ${fence}`;
         width: "100%",
         height: "100%",
         backgroundColor: "rgba(0,0,0,0.6)",
-        zIndex: getExporterOverlayZIndex(),
+        zIndex: getExporterDialogZIndex(),
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
@@ -5965,14 +5975,6 @@ ${fence}`;
     const PERIODIC_EVERY_LABEL = { YEAR: "毎年", QUARTER: "四半期ごと", MONTH: "毎月", WEEK: "毎週", DAY: "毎日", HOUR: "毎時" };
     const FIELD_ACCESSIBILITY_LABEL = { WRITE: "閲覧・編集可", READ: "閲覧のみ", NONE: "アクセス不可" };
     const LINK_PROTOCOL_LABEL = { WEB: "WEB", CALL: "電話", MAIL: "メール" };
-    const WEBHOOK_EVENT_LABEL = {
-      ADD_RECORD: "レコード追加",
-      UPDATE_RECORD: "レコード編集",
-      DELETE_RECORD: "レコード削除",
-      UPDATE_STATUS: "ステータス変更",
-      ADD_COMMENT: "コメント追加",
-      DELETE_COMMENT: "コメント削除"
-    };
     const ENUM_LOOKUP = (map, value) => {
       if (value == null || value === "") return "";
       const key = String(value).trim().toUpperCase();
@@ -6063,7 +6065,7 @@ ${fence}`;
         };
       },
       logError(apiName, error) {
-        UI.failedAPIs.push({ name: apiName, error: error?.message || String(error) });
+        UI.failedAPIs.push({ name: apiName, error: readableErrorMessage(error) });
         const errEl = getToolDocument().getElementById("kex-errors");
         if (errEl) errEl.textContent = `⚠ ${UI.failedAPIs.length}件のAPI取得に失敗`;
       },
@@ -6470,8 +6472,7 @@ ${fence}`;
     const bundleGapsLogged = /* @__PURE__ */ new Set();
     const FETCH_JOB_LABELS = {
       RecordCount: "レコード件数",
-      AdminNotes: "管理者メモ",
-      Webhooks: "Webhook"
+      AdminNotes: "管理者メモ"
     };
     const fetchJobLabel = (name, sectionKey) => sectionKey && SECTION_DEFS.find((def) => def.key === sectionKey)?.label || FETCH_JOB_LABELS[name] || name;
     async function fetchJob(rawName, promiseFn, sectionKey) {
@@ -6494,7 +6495,7 @@ ${fence}`;
         return value;
       } catch (e) {
         if (isRunCancelledError(e)) throw e;
-        if (sectionKey) liveSections[sectionKey] = { _fetchError: e?.message || String(e) };
+        if (sectionKey) liveSections[sectionKey] = { _fetchError: readableErrorMessage(e) };
         console.warn(`[${name}] Failed:`, e);
         UI.logError(name, e);
         return null;
@@ -6554,7 +6555,7 @@ ${fence}`;
       } catch (e) {
       }
       UI.update(bundle ? "一覧・権限・通知設定を設定JSONから読込中..." : "一覧・権限・通知設定を取得中...");
-      const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif, formSettings, categories] = await Promise.all([
+      const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, genNotif, recNotif, remNotif, formSettings, categories] = await Promise.all([
         fetchJob("Views", () => api(sectionApiUrl("/k/v1/app/views.json", "viewSettings"), "GET", { app: APP_ID }), "viewSettings"),
         fetchJob("Reports", () => api(sectionApiUrl("/k/v1/app/reports.json", "reportSettings"), "GET", { app: APP_ID }), "reportSettings"),
         fetchJob("Status", () => api(sectionApiUrl("/k/v1/app/status.json", "processSettings"), "GET", { app: APP_ID }), "processSettings"),
@@ -6564,9 +6565,8 @@ ${fence}`;
         fetchJob("Customize", () => api(sectionApiUrl("/k/v1/app/customize.json", "customizeSettings"), "GET", { app: APP_ID }), "customizeSettings"),
         fetchJob("Actions", () => api(sectionApiUrl("/k/v1/app/actions.json", "actionSettings"), "GET", { app: APP_ID }), "actionSettings"),
         fetchJob("Plugins", () => api(sectionApiUrl("/k/v1/app/plugins.json", "pluginSettings"), "GET", { app: APP_ID }), "pluginSettings"),
-        // 管理者メモ・Webhookは設定一括取得の対象外のため bundle モードでは常に取得不可
+        // 管理者メモは設定一括取得の対象外のため bundle モードでは常に取得不可
         fetchJob("AdminNotes", () => api(apiUrl("/k/v1/app/adminNotes.json", false), "GET", { app: APP_ID })),
-        fetchJob("Webhooks", () => api(apiUrl("/k/v1/app/webhook.json", false), "GET", { app: APP_ID })),
         fetchJob("GenNotif", () => api(sectionApiUrl("/k/v1/app/notifications/general.json", "notifications"), "GET", { app: APP_ID }), "notifications"),
         fetchJob("RecNotif", () => api(sectionApiUrl("/k/v1/app/notifications/perRecord.json", "perRecordNotifications"), "GET", { app: APP_ID }), "perRecordNotifications"),
         fetchJob("RemNotif", () => api(sectionApiUrl("/k/v1/app/notifications/reminder.json", "reminderNotifications"), "GET", { app: APP_ID }), "reminderNotifications"),
@@ -6644,6 +6644,7 @@ ${fence}`;
         if (value == null || typeof value !== "object") return null;
         if (!Object.prototype.hasOwnProperty.call(value, key)) return null;
         const collection = value[key];
+        if (collection === null) return 0;
         if (Array.isArray(collection)) return collection.length;
         if (collection && typeof collection === "object") return Object.keys(collection).length;
         return null;
@@ -6656,7 +6657,6 @@ ${fence}`;
       const reportCount = collectionCount(reports, "reports");
       const processStateCount = collectionCount(status, "states");
       const pluginCount = collectionCount(pluginsResp, "plugins");
-      const webhookCount = Array.isArray(webhooksResp?.webhooks) ? webhooksResp.webhooks.length : null;
       const appAclCount = collectionCount(appAcl, "rights");
       const recordAclCount = collectionCount(recordAcl, "rights");
       const fieldAclCount = collectionCount(fieldAcl, "rights");
@@ -6922,27 +6922,23 @@ ${fence}`;
           return key === "appInfo" ? `設定JSON（${env}）／アプリ情報は本番API由来` : `設定JSON（${env}）`;
         }
         if (key === "appInfo") return "ライブAPI（本番／アプリ情報）";
-        if (["recordCount", "webhook", "adminNotes"].includes(key)) return "ライブAPI（本番）";
+        if (["recordCount", "adminNotes"].includes(key)) return "ライブAPI（本番）";
         return `ライブAPI（${env}）`;
       };
       const auxiliaryStatus = (key, value, apiName) => {
         if (bundle) {
-          return { key, label: key === "recordCount" ? "レコード件数" : key === "webhook" ? "Webhook" : "管理者メモ", status: "missing", count: null, detail: "設定JSONの対象外（ライブAPI取得なし）" };
+          return { key, label: key === "recordCount" ? "レコード件数" : "管理者メモ", status: "missing", count: null, detail: "設定JSONの対象外（ライブAPI取得なし）" };
         }
         if (value == null) {
           return {
             key,
-            label: key === "recordCount" ? "レコード件数" : key === "webhook" ? "Webhook" : "管理者メモ",
+            label: key === "recordCount" ? "レコード件数" : "管理者メモ",
             status: hasFailedAPI(apiName) ? "fetch-error" : "missing",
             count: null,
             detail: hasFailedAPI(apiName) ? "取得失敗（詳細はAPI取得失敗レポート）" : "応答がありません"
           };
         }
         if (key === "recordCount") return { key, label: "レコード件数", status: "available", count: Number(value), detail: "records.json の totalCount" };
-        if (key === "webhook") {
-          const list = Array.isArray(value?.webhooks) ? value.webhooks : null;
-          return { key, label: "Webhook", status: list && list.length ? "available" : list ? "empty" : "partial", count: list ? list.length : null, detail: list ? `webhooks の要素数=${list.length}` : "webhooks コレクションを確認できません" };
-        }
         const content = value?.content ?? value?.note;
         return { key, label: "管理者メモ", status: content ? "available" : content === "" ? "empty" : "partial", count: content == null ? null : content ? 1 : 0, detail: content == null ? "content/note が応答にありません" : content ? "メモ本文を取得済み" : "メモ本文は空です" };
       };
@@ -6955,11 +6951,10 @@ ${fence}`;
       };
       const auxiliaryStatusRows = [
         auxiliaryStatus("recordCount", recordCount, fetchJobLabel("RecordCount")),
-        auxiliaryStatus("webhook", webhooksResp, fetchJobLabel("Webhooks")),
         auxiliaryStatus("adminNotes", adminNotes, fetchJobLabel("AdminNotes"))
       ];
       const auxiliaryComplete = auxiliaryStatusRows.every((row) => row.status === "available" || row.status === "empty");
-      const acquisitionOverview = `基本設定${SECTION_DEFS.length}種：${designSnapshot.complete ? "完了" : "未完了"}／補足情報3種：${auxiliaryComplete ? "完了" : "未取得あり"}`;
+      const acquisitionOverview = `基本設定${SECTION_DEFS.length}種：${designSnapshot.complete ? "完了" : "未完了"}／補足情報${auxiliaryStatusRows.length}種：${auxiliaryComplete ? "完了" : "未取得あり"}`;
       const basicSectionRows = designSnapshot.sections.filter((row) => SECTION_DEFS.some((def) => def.key === row.key));
       const incompleteSectionRows = basicSectionRows.filter((row) => !["available", "empty"].includes(row.status));
       const countSectionStatus = (rows, status2) => rows.filter((row) => row.status === status2).length;
@@ -7119,7 +7114,7 @@ ${fence}`;
         sAoa.push(["アクション数(プロセス)", displayCount(processActionCount)]);
         sAoa.push(["アクション数(レコード)", displayCount(actionCount)]);
         sAoa.push(["プラグイン数", displayCount(pluginCount)]);
-        sAoa.push(["Webhook数", webhookCount == null ? "(取得不可)" : displayCount(webhookCount)]);
+        sAoa.push(["Webhook", "対象外（REST API で取得できません。アプリの設定画面で確認してください）"]);
         sAoa.push(["通知(一般)件数", displayCount(notificationCount(genNotif))]);
         sAoa.push(["通知(レコード)件数", displayCount(notificationCount(recNotif))]);
         sAoa.push(["通知(リマインダー)件数", displayCount(notificationCount(remNotif))]);
@@ -7171,7 +7166,7 @@ ${fence}`;
         headerInfoRows.push(sAoa.length - 1);
         sAoa.push(["参照関係", `ルックアップ ${attrCounts.lookup}件 / 関連レコード ${attrCounts.reference}件 / 計算式 ${attrCounts.calc}件`]);
         sAoa.push(["権限", `アプリ ${appAclCount}件 / レコード ${recordAclCount}件 / フィールド ${fieldAclCount}件`]);
-        sAoa.push(["カスタマイズ", `JS/CSS ${displayCount(customizeCount)}件 / プラグイン ${displayCount(pluginCount)}件 / Webhook ${webhookCount == null ? "(取得不可)" : `${webhookCount}件`}`]);
+        sAoa.push(["カスタマイズ", `JS/CSS ${displayCount(customizeCount)}件 / プラグイン ${displayCount(pluginCount)}件`]);
         sAoa.push(["プロセス", status == null || status.enable == null ? `未取得/不明: ステータス ${displayCount(processStateCount)}件 / アクション ${displayCount(processActionCount)}件` : status.enable ? `有効: ステータス ${displayCount(processStateCount)}件 / アクション ${displayCount(processActionCount)}件` : "無効"]);
         sAoa.push([]);
         sAoa.push(["出力情報"]);
@@ -7958,20 +7953,6 @@ ${fence}`;
       if (selectedSheets.has("genNotif")) renderNotifSheet("通知(一般)", genNotif, "general");
       if (selectedSheets.has("recNotif")) renderNotifSheet("通知(レコード)", recNotif, "perRecord");
       if (selectedSheets.has("remNotif")) renderNotifSheet("通知(リマインダー)", remNotif, "reminder");
-      if (selectedSheets.has("webhook")) {
-        const list = Array.isArray(webhooksResp?.webhooks) ? webhooksResp.webhooks : [];
-        if (list.length) {
-          const headers = ["ID", "URL", "イベント", "説明", "有効"];
-          const rows = list.map((w) => [
-            w.id || "",
-            w.url || w.notifyUrl || "",
-            Array.isArray(w.notificationEvents || w.events) ? (w.notificationEvents || w.events).map((ev) => ENUM_LOOKUP(WEBHOOK_EVENT_LABEL, ev) || ev).join(", ") : "",
-            UtilsX.stripHtml(w.description || ""),
-            UtilsX.formatBoolean(w.enabled !== false)
-          ]);
-          appendSheet("Webhook", { ...buildSimpleAOA("Webhook", headers, rows), pageSetup: { orientation: "landscape", printTitleRows: 2 } }, { description: "外部システム連携用 Webhook" });
-        }
-      }
       if (selectedSheets.has("adminNotes") && adminNotes) {
         const content = UtilsX.stripHtml(adminNotes.content || adminNotes.note || "");
         if (content) {
