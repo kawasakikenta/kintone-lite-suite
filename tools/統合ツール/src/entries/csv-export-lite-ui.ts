@@ -212,7 +212,7 @@ export function mountCsvExportLitePanel() {
   cardRun.body.appendChild(makeRow(run));
   panel.body.insertBefore(cardRun.card, panel.status);
 
-  panel.setStatus('対象アプリを指定すると、CSVを出力できます。', 'ok');
+  panel.setStatus('準備完了');
 
   query.setAttribute('aria-label', '全対象アプリの絞り込み条件');
   filename.setAttribute('aria-label', '出力ファイル名');

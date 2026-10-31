@@ -20,7 +20,7 @@ import { runExportDiffMarkdown } from '../tabs/diff-markdown-export-standalone.j
 import { buildDiffMarkdownBatchExport, type DiffMarkdownContext } from '../diff/markdown-export.js';
 import { decodeRow, type DecodedRow } from '../diff/path-decoder.js';
 import { collectFieldDefinitions, extractFieldPathInfo, getFieldRowPayload } from '../diff/enrich.js';
-import { downloadBlob, downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify, stripHtmlToText } from '../utils.js';
+import { downloadBlob, downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify, stripHtmlToText, withoutApiContextLines } from '../utils.js';
 import { runExportDiffHtmlStandalone } from '../tabs/diff-export-standalone.js';
 import {
   createLitePanel,
@@ -1170,7 +1170,7 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
     const details = fetchIssues.slice(0, 3).map((item: any) => {
       const section = item?.section || item?.sectionKey || '不明なセクション';
       const side = sideLabel[String(item?.side || '')] || '取得元不明';
-      const message = String(item?.message || item?.sourceError || item?.targetError || '取得できませんでした').replace(/\s+/g, ' ').slice(0, 180);
+      const message = withoutApiContextLines(item?.message || item?.sourceError || item?.targetError || '取得できませんでした').replace(/\s+/g, ' ').slice(0, 180);
       return `${section}（${side}）: ${message}`;
     });
     const remainder = fetchIssues.length > details.length ? ` / ほか ${fetchIssues.length - details.length} 件` : '';

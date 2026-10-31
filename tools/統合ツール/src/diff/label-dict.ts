@@ -277,6 +277,55 @@ export const PROP_LABELS: Record<string, PropMeta> = {
   size:              { label: '一度に表示する最大レコード数' }
 };
 
+// フィールドの設定項目（kintone のフィールド設定画面の項目名）。
+// 画面・Excel・Markdown が同じ名称で示すよう、ここを単一の定義にする。
+export const FIELD_SETTING_LABELS: Record<string, string> = {
+  label: 'フィールド名',
+  name: 'フィールド名',
+  code: 'フィールドコード',
+  type: 'フィールドの種類',
+  noLabel: 'フィールド名を表示しない',
+  required: '必須項目にする',
+  unique: '値の重複を禁止する',
+  defaultValue: '初期値',
+  defaultNowValue: 'レコード登録時の日時を初期値にする',
+  description: '説明',
+  minLength: '文字数（最小）',
+  maxLength: '文字数（最大）',
+  minValue: '数値の制限（最小）',
+  maxValue: '数値の制限（最大）',
+  expression: '計算式',
+  hideExpression: '計算式を表示しない',
+  options: '選択肢',
+  protocol: '入力値の種類',
+  displayScale: '小数点以下の表示桁数',
+  digit: '桁区切りを表示する',
+  unit: '単位記号',
+  unitPosition: '単位記号の表示位置',
+  align: '選択肢の並び',
+  format: '表示形式',
+  entities: '選択候補',
+  fields: 'テーブル内のフィールド',
+  referenceTable: '関連レコード一覧設定',
+  lookup: 'ルックアップ設定',
+  condition: '表示するレコードの条件',
+  displayFields: '表示するフィールド',
+  filterCond: '絞り込み条件',
+  relatedApp: '参照するアプリ',
+  size: '一度に表示する最大レコード数',
+  sort: 'ソート',
+  relatedKeyField: 'コピー元のフィールド',
+  fieldMappings: 'ほかのフィールドのコピー',
+  lookupPickerFields: 'コピー元のレコード選択時に表示するフィールド',
+  field: '自アプリのフィールド',
+  relatedField: '参照するアプリのフィールド',
+  app: '参照するアプリID',
+  thumbnailSize: 'サムネイルの大きさ',
+  openGroup: 'グループの初期表示',
+  enabled: '有効状態',
+  index: '並び順'
+};
+
 // ---------------------------------------------------------------------------
 // セクション辞書
 // ---------------------------------------------------------------------------
@@ -308,7 +357,7 @@ export const SECTION_LABELS: Record<string, PropMeta> = {
 
 export function labelOfProp(key: string | null | undefined): string {
   if (!key) return '';
-  return PROP_LABELS[key]?.label || String(key);
+  return PROP_LABELS[key]?.label || FIELD_SETTING_LABELS[key] || String(key);
 }
 
 export function iconOfProp(key: string | null | undefined): string {

@@ -7,7 +7,7 @@ import {
 } from '../constants.js';
 import { state } from '../state.js';
 import { stableStringify } from '../utils.js';
-import { labelOfProp, stateRenameName } from './label-dict.js';
+import { FIELD_SETTING_LABELS, labelOfProp, stateRenameName } from './label-dict.js';
 
 // utils.js と同一ロジック。IIFE バンドルで utils からの import が欠落した場合でも動作するようローカル定義する。
 function relativePathFromRow(path, secKey) {
@@ -102,6 +102,51 @@ export function extractFieldPathInfo(path) {
       ? `fieldSettings.properties.${rootCode}.fields.${subFieldCode}`
       : `fieldSettings.properties.${rootCode}`
   };
+}
+
+function fieldSettingTokenLabel(token: string | number): string {
+  if (typeof token === 'number') return `${token + 1}件目`;
+  return FIELD_SETTING_LABELS[token] || labelOfProp(token);
+}
+
+/** フィールド配下の path を、設定項目のキーと kintone の項目名にする。 */
+export function fieldSettingIdentity(info: any): { settingKey: string; settingLabel: string } {
+  const tokens = Array.isArray(info.tailTokens) ? info.tailTokens : [];
+  if (!tokens.length) return { settingKey: '(field)', settingLabel: 'フィールド全体' };
+  const settingKey = tokens.map((token: string | number) => String(token)).join('.');
+  if (tokens[0] === 'options') {
+    const option = tokens.length > 1 ? String(tokens[1]) : '';
+    const suffix = tokens.length > 2 ? fieldSettingTokenLabel(tokens[2]) : '';
+    return {
+      settingKey,
+      settingLabel: option
+        ? `選択肢「${option}」${suffix ? ` / ${suffix}` : ''}`
+        : '選択肢と並び順'
+    };
+  }
+  return {
+    settingKey,
+    settingLabel: tokens.map(fieldSettingTokenLabel).join(' / ')
+  };
+}
+
+export type FieldLabelResolver = (code: string, rowType?: string) => string;
+
+/** フィールドコードから表示名を引く。削除行は比較元、それ以外は比較先の名前を優先する。 */
+export function buildFieldLabelResolver(sourceBundle: any, targetBundle: any): FieldLabelResolver {
+  const definitionsOf = (bundle: any) => collectFieldDefinitions(bundle?.sections?.fieldSettings?.properties);
+  const sourceFields = definitionsOf(sourceBundle);
+  const targetFields = definitionsOf(targetBundle);
+  const labelOf = (field: any) => String(field?.label || field?.name || '').trim();
+  return (code, rowType) => {
+    const source = labelOf(sourceFields[code]);
+    const target = labelOf(targetFields[code]);
+    return rowType === 'removed' ? source || target : target || source;
+  };
+}
+
+function fieldCaption(code: string, label: string): string {
+  return label && label !== code ? `${label}（${code}）` : code;
 }
 
 export function getFieldRowPayload(row) {
@@ -870,7 +915,8 @@ const ENTITY_KIND_LABELS: Record<string, string> = {
   category: 'カテゴリ',
   plugin: 'プラグイン',
   jsCss: 'JS/CSS',
-  layoutRow: 'レイアウト行'
+  layoutRow: 'レイアウト行',
+  formField: 'フォームのフィールド'
 };
 
 
@@ -895,7 +941,7 @@ export interface DiffEntityContext {
   propLabel: string;
 }
 
-export function extractEntityContext(row: any): DiffEntityContext {
+export function extractEntityContext(row: any, fieldLabelOf?: FieldLabelResolver): DiffEntityContext {
   const sectionKey = String(row?.sectionKey || '');
   const path = String(row?.path || '');
   const tokens = tokenizePath(path);
@@ -940,6 +986,10 @@ export function extractEntityContext(row: any): DiffEntityContext {
       return empty;
     }
     case 'actionSettings': {
+      // 実際の応答は名前をキーにしたオブジェクト。以前の設定JSON向けに配列も受け付ける。
+      if (tokens[1] === 'actions' && typeof tokens[2] === 'string') {
+        return { entityKind: 'appAction', entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+      }
       if (tokens[1] === 'actions' && typeof tokens[2] === 'number') {
         const name = (row?.arrayKey === 'name' && row?.arrayKeyValue != null)
           ? String(row.arrayKeyValue)
@@ -1043,15 +1093,32 @@ export function extractEntityContext(row: any): DiffEntityContext {
         const kind = String(tokens[2]).toUpperCase();
         const obj = (payload && typeof payload === 'object') ? payload as any : {};
         const fileKey = obj?.file?.fileKey || obj?.fileKey || '';
+        const fileName = obj?.file?.name || obj?.name || (row?.arrayKey === 'name' ? row?.arrayKeyValue : '') || '';
         const url = obj?.url || '';
-        const ref = url
-          ? url
-          : (fileKey ? `ファイル(${String(fileKey).slice(0, 8)}…)` : `#${tokens[3]}`);
+        const ref = url || fileName
+          || (fileKey ? `ファイル(${String(fileKey).slice(0, 8)}…)` : `#${tokens[3]}`);
         return {
           entityKind: 'jsCss',
           entityLabel: `${platform}/${kind}: ${ref}`,
           entityCode: String(fileKey || url || ''),
           propLabel
+        };
+      }
+      return empty;
+    }
+    case 'formSettings': {
+      // 旧 /form.json は properties が配列で、添字だけではどのフィールドか分からない。
+      if (tokens[1] === 'properties' && typeof tokens[2] === 'number') {
+        const isRoot = tokens.length === 3;
+        const obj: any = (payload && typeof payload === 'object') ? payload : {};
+        const code = String((row?.arrayKey === 'code' ? row?.arrayKeyValue : '') || (isRoot ? obj.code : '') || '');
+        if (!code) return empty;
+        const label = fieldLabelOf?.(code, row?.type) || (isRoot ? String(obj.label || '') : '');
+        return {
+          entityKind: 'formField',
+          entityLabel: fieldCaption(code, label),
+          entityCode: '',
+          propLabel: isRoot ? '' : labelOfProp(leaf)
         };
       }
       return empty;
@@ -1104,6 +1171,11 @@ export function buildDiffReasonSummary(row) {
     if (fieldInfo.leafKey === 'expression') return '計算式変更';
     if (fieldInfo.leafKey === 'unique') return '重複禁止設定変更';
     if (String(row.path || '').includes('.lookup.')) return 'ルックアップ設定変更';
+    const isOption = fieldInfo.tailTokens[0] === 'options';
+    if (isOption || FIELD_SETTING_LABELS[fieldInfo.leafKey]) {
+      const action = row.type === 'added' ? '追加' : (row.type === 'removed' ? '削除' : '変更');
+      return `${fieldSettingIdentity(fieldInfo).settingLabel} ${action}`;
+    }
     return `${noun}設定変更`;
   }
 
@@ -1129,6 +1201,7 @@ export function buildDiffReasonSummary(row) {
       if (sectionKey === 'pluginSettings' && tokens[1] === 'plugins') return tokens.length === 3;
       if (sectionKey === 'layoutSettings' && tokens[1] === 'layout') return tokens.length === 3;
       if (sectionKey === 'customizeSettings') return tokens.length === 4;
+      if (sectionKey === 'formSettings') return tokens.length === 3;
       return false;
     })();
 
@@ -1158,19 +1231,43 @@ export function buildDiffReasonSummary(row) {
   return row.type === 'added' ? `${sectionLabel}追加` : (row.type === 'removed' ? `${sectionLabel}削除` : `${sectionLabel}変更`);
 }
 
+/** レイアウトの行が指すフィールドを両側の設定から探す。size.width などは行に field の情報を持たない。 */
+function layoutFieldCaption(row, sourceBundle, targetBundle, fieldLabelOf: FieldLabelResolver): string {
+  const tokens = tokenizePath(String(row.path || ''));
+  const fieldAt = (bundle: any) => {
+    let node = bundle?.sections?.layoutSettings;
+    let field: any = null;
+    for (let index = 1; index < tokens.length && node != null; index += 1) {
+      node = node[tokens[index]];
+      if (typeof tokens[index] === 'number' && tokens[index - 1] === 'fields') field = node;
+    }
+    return field;
+  };
+  const [preferred, fallback] = row.type === 'removed' ? [sourceBundle, targetBundle] : [targetBundle, sourceBundle];
+  const code = String((fieldAt(preferred) || fieldAt(fallback))?.code || '').trim();
+  return code ? `フィールド「${fieldCaption(code, fieldLabelOf(code, row.type))}」` : '';
+}
+
 export function enrichDiffRows(rows, sourceBundle, targetBundle) {
+  const fieldLabelOf = buildFieldLabelResolver(sourceBundle, targetBundle);
   // 先にエンティティ文脈を一度走らせてから rename 検出する
   // （非フィールドの rename 検出は entityKind/entityLabel/entityCode 必須）
   const seeded = (rows || []).map((row) => {
     if (!row || row.sectionKey === 'fieldSettings') return row;
-    const ctx = extractEntityContext(row);
+    const ctx = extractEntityContext(row, fieldLabelOf);
     if (!ctx.entityKind) return row;
+    const layoutField = row.sectionKey === 'layoutSettings'
+      ? layoutFieldCaption(row, sourceBundle, targetBundle, fieldLabelOf)
+      : '';
+    const propLabel = layoutField
+      ? [layoutField, ctx.propLabel === 'フィールド' ? '' : ctx.propLabel].filter(Boolean).join(' / ')
+      : ctx.propLabel;
     return {
       ...row,
       entityKind: ctx.entityKind,
       entityLabel: ctx.entityLabel,
       entityCode: ctx.entityCode,
-      entityPropLabel: ctx.propLabel
+      entityPropLabel: propLabel
     };
   });
   const renameMap = detectFieldRenameCandidates(seeded);

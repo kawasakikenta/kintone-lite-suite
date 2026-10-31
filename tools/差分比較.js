@@ -679,6 +679,9 @@
     if (err?.stack) wrapped.stack = err.stack;
     return wrapped;
   }
+  function withoutApiContextLines(message) {
+    return String(message ?? "").split("\n").filter((line) => !/^\s*\[API\]\s/.test(line)).join("\n").trim();
+  }
   function nowStamp() {
     const d = /* @__PURE__ */ new Date();
     const p = (n) => String(n).padStart(2, "0");
@@ -3779,6 +3782,52 @@
     lookupPickerFields: { label: "コピー元のレコード選択時に表示するフィールド" },
     size: { label: "一度に表示する最大レコード数" }
   };
+  var FIELD_SETTING_LABELS = {
+    label: "フィールド名",
+    name: "フィールド名",
+    code: "フィールドコード",
+    type: "フィールドの種類",
+    noLabel: "フィールド名を表示しない",
+    required: "必須項目にする",
+    unique: "値の重複を禁止する",
+    defaultValue: "初期値",
+    defaultNowValue: "レコード登録時の日時を初期値にする",
+    description: "説明",
+    minLength: "文字数（最小）",
+    maxLength: "文字数（最大）",
+    minValue: "数値の制限（最小）",
+    maxValue: "数値の制限（最大）",
+    expression: "計算式",
+    hideExpression: "計算式を表示しない",
+    options: "選択肢",
+    protocol: "入力値の種類",
+    displayScale: "小数点以下の表示桁数",
+    digit: "桁区切りを表示する",
+    unit: "単位記号",
+    unitPosition: "単位記号の表示位置",
+    align: "選択肢の並び",
+    format: "表示形式",
+    entities: "選択候補",
+    fields: "テーブル内のフィールド",
+    referenceTable: "関連レコード一覧設定",
+    lookup: "ルックアップ設定",
+    condition: "表示するレコードの条件",
+    displayFields: "表示するフィールド",
+    filterCond: "絞り込み条件",
+    relatedApp: "参照するアプリ",
+    size: "一度に表示する最大レコード数",
+    sort: "ソート",
+    relatedKeyField: "コピー元のフィールド",
+    fieldMappings: "ほかのフィールドのコピー",
+    lookupPickerFields: "コピー元のレコード選択時に表示するフィールド",
+    field: "自アプリのフィールド",
+    relatedField: "参照するアプリのフィールド",
+    app: "参照するアプリID",
+    thumbnailSize: "サムネイルの大きさ",
+    openGroup: "グループの初期表示",
+    enabled: "有効状態",
+    index: "並び順"
+  };
   var SECTION_LABELS = {
     appAcl: { label: "アプリ権限", icon: "🔐" },
     fieldAcl: { label: "フィールド権限", icon: "🔐" },
@@ -3801,7 +3850,7 @@
   };
   function labelOfProp(key) {
     if (!key) return "";
-    return PROP_LABELS[key]?.label || String(key);
+    return PROP_LABELS[key]?.label || FIELD_SETTING_LABELS[key] || String(key);
   }
   function iconOfProp(key) {
     if (!key) return "";
@@ -3938,6 +3987,41 @@
       isSubFieldRoot: isSubField && tailTokens.length === 0,
       rootPath: isSubField ? `fieldSettings.properties.${rootCode}.fields.${subFieldCode}` : `fieldSettings.properties.${rootCode}`
     };
+  }
+  function fieldSettingTokenLabel(token) {
+    if (typeof token === "number") return `${token + 1}件目`;
+    return FIELD_SETTING_LABELS[token] || labelOfProp(token);
+  }
+  function fieldSettingIdentity(info) {
+    const tokens = Array.isArray(info.tailTokens) ? info.tailTokens : [];
+    if (!tokens.length) return { settingKey: "(field)", settingLabel: "フィールド全体" };
+    const settingKey = tokens.map((token) => String(token)).join(".");
+    if (tokens[0] === "options") {
+      const option = tokens.length > 1 ? String(tokens[1]) : "";
+      const suffix = tokens.length > 2 ? fieldSettingTokenLabel(tokens[2]) : "";
+      return {
+        settingKey,
+        settingLabel: option ? `選択肢「${option}」${suffix ? ` / ${suffix}` : ""}` : "選択肢と並び順"
+      };
+    }
+    return {
+      settingKey,
+      settingLabel: tokens.map(fieldSettingTokenLabel).join(" / ")
+    };
+  }
+  function buildFieldLabelResolver(sourceBundle, targetBundle) {
+    const definitionsOf = (bundle) => collectFieldDefinitions(bundle?.sections?.fieldSettings?.properties);
+    const sourceFields = definitionsOf(sourceBundle);
+    const targetFields = definitionsOf(targetBundle);
+    const labelOf = (field) => String(field?.label || field?.name || "").trim();
+    return (code, rowType) => {
+      const source = labelOf(sourceFields[code]);
+      const target = labelOf(targetFields[code]);
+      return rowType === "removed" ? source || target : target || source;
+    };
+  }
+  function fieldCaption(code, label) {
+    return label && label !== code ? `${label}（${code}）` : code;
   }
   function getFieldRowPayload(row) {
     if (!row || row.sectionKey !== "fieldSettings") return null;
@@ -4725,7 +4809,8 @@
     category: "カテゴリ",
     plugin: "プラグイン",
     jsCss: "JS/CSS",
-    layoutRow: "レイアウト行"
+    layoutRow: "レイアウト行",
+    formField: "フォームのフィールド"
   };
   function getSectionPropLabel(sectionKey, leaf) {
     const map = SECTION_PROP_LABELS[sectionKey];
@@ -4739,7 +4824,7 @@
     if (!code) return type ? `(${type})` : "";
     return type ? `${code} (${type})` : code;
   }
-  function extractEntityContext(row) {
+  function extractEntityContext(row, fieldLabelOf) {
     const sectionKey = String(row?.sectionKey || "");
     const path = String(row?.path || "");
     const tokens = tokenizePath(path);
@@ -4778,6 +4863,9 @@
         return empty;
       }
       case "actionSettings": {
+        if (tokens[1] === "actions" && typeof tokens[2] === "string") {
+          return { entityKind: "appAction", entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+        }
         if (tokens[1] === "actions" && typeof tokens[2] === "number") {
           const name = row?.arrayKey === "name" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.name || "");
           const label = name || `アクション #${tokens[2] + 1}`;
@@ -4867,13 +4955,30 @@
           const kind = String(tokens[2]).toUpperCase();
           const obj = payload && typeof payload === "object" ? payload : {};
           const fileKey = obj?.file?.fileKey || obj?.fileKey || "";
+          const fileName = obj?.file?.name || obj?.name || (row?.arrayKey === "name" ? row?.arrayKeyValue : "") || "";
           const url = obj?.url || "";
-          const ref = url ? url : fileKey ? `ファイル(${String(fileKey).slice(0, 8)}…)` : `#${tokens[3]}`;
+          const ref = url || fileName || (fileKey ? `ファイル(${String(fileKey).slice(0, 8)}…)` : `#${tokens[3]}`);
           return {
             entityKind: "jsCss",
             entityLabel: `${platform}/${kind}: ${ref}`,
             entityCode: String(fileKey || url || ""),
             propLabel
+          };
+        }
+        return empty;
+      }
+      case "formSettings": {
+        if (tokens[1] === "properties" && typeof tokens[2] === "number") {
+          const isRoot = tokens.length === 3;
+          const obj = payload && typeof payload === "object" ? payload : {};
+          const code = String((row?.arrayKey === "code" ? row?.arrayKeyValue : "") || (isRoot ? obj.code : "") || "");
+          if (!code) return empty;
+          const label = fieldLabelOf?.(code, row?.type) || (isRoot ? String(obj.label || "") : "");
+          return {
+            entityKind: "formField",
+            entityLabel: fieldCaption(code, label),
+            entityCode: "",
+            propLabel: isRoot ? "" : labelOfProp(leaf)
           };
         }
         return empty;
@@ -4921,6 +5026,11 @@
       if (fieldInfo.leafKey === "expression") return "計算式変更";
       if (fieldInfo.leafKey === "unique") return "重複禁止設定変更";
       if (String(row.path || "").includes(".lookup.")) return "ルックアップ設定変更";
+      const isOption = fieldInfo.tailTokens[0] === "options";
+      if (isOption || FIELD_SETTING_LABELS[fieldInfo.leafKey]) {
+        const action = row.type === "added" ? "追加" : row.type === "removed" ? "削除" : "変更";
+        return `${fieldSettingIdentity(fieldInfo).settingLabel} ${action}`;
+      }
       return `${noun}設定変更`;
     }
     const entity = row && (row.entityLabel || row.entityKind) ? { entityKind: String(row.entityKind || ""), entityLabel: String(row.entityLabel || ""), propLabel: String(row.entityPropLabel || "") } : extractEntityContext(row);
@@ -4938,6 +5048,7 @@
       if (sectionKey === "pluginSettings" && tokens[1] === "plugins") return tokens.length === 3;
       if (sectionKey === "layoutSettings" && tokens[1] === "layout") return tokens.length === 3;
       if (sectionKey === "customizeSettings") return tokens.length === 4;
+      if (sectionKey === "formSettings") return tokens.length === 3;
       return false;
     })();
     if (entity.entityKind && isEntityRoot) {
@@ -4963,17 +5074,35 @@
     if (sectionKey === "formSettings") return "フォーム設定変更";
     return row.type === "added" ? `${sectionLabel2}追加` : row.type === "removed" ? `${sectionLabel2}削除` : `${sectionLabel2}変更`;
   }
+  function layoutFieldCaption(row, sourceBundle, targetBundle, fieldLabelOf) {
+    const tokens = tokenizePath(String(row.path || ""));
+    const fieldAt = (bundle) => {
+      let node = bundle?.sections?.layoutSettings;
+      let field = null;
+      for (let index = 1; index < tokens.length && node != null; index += 1) {
+        node = node[tokens[index]];
+        if (typeof tokens[index] === "number" && tokens[index - 1] === "fields") field = node;
+      }
+      return field;
+    };
+    const [preferred, fallback] = row.type === "removed" ? [sourceBundle, targetBundle] : [targetBundle, sourceBundle];
+    const code = String((fieldAt(preferred) || fieldAt(fallback))?.code || "").trim();
+    return code ? `フィールド「${fieldCaption(code, fieldLabelOf(code, row.type))}」` : "";
+  }
   function enrichDiffRows(rows, sourceBundle, targetBundle) {
+    const fieldLabelOf = buildFieldLabelResolver(sourceBundle, targetBundle);
     const seeded = (rows || []).map((row) => {
       if (!row || row.sectionKey === "fieldSettings") return row;
-      const ctx = extractEntityContext(row);
+      const ctx = extractEntityContext(row, fieldLabelOf);
       if (!ctx.entityKind) return row;
+      const layoutField = row.sectionKey === "layoutSettings" ? layoutFieldCaption(row, sourceBundle, targetBundle, fieldLabelOf) : "";
+      const propLabel = layoutField ? [layoutField, ctx.propLabel === "フィールド" ? "" : ctx.propLabel].filter(Boolean).join(" / ") : ctx.propLabel;
       return {
         ...row,
         entityKind: ctx.entityKind,
         entityLabel: ctx.entityLabel,
         entityCode: ctx.entityCode,
-        entityPropLabel: ctx.propLabel
+        entityPropLabel: propLabel
       };
     });
     const renameMap = detectFieldRenameCandidates(seeded);
@@ -5556,8 +5685,12 @@
     };
   }
   function buildOneLineSummary(row, propLabel, beforeText, afterText) {
-    const shortLeft = beforeText.length > 30 ? beforeText.slice(0, 30) + "…" : beforeText;
-    const shortRight = afterText.length > 30 ? afterText.slice(0, 30) + "…" : afterText;
+    const shorten = (text2) => {
+      const line = text2.replace(/\s*\n\s*/g, " / ");
+      return line.length > 30 ? line.slice(0, 30) + "…" : line;
+    };
+    const shortLeft = shorten(beforeText);
+    const shortRight = shorten(afterText);
     if (row.type === "added") return propLabel ? `${propLabel}: 追加（${shortRight}）` : `追加（${shortRight}）`;
     if (row.type === "removed") return propLabel ? `${propLabel}: 削除（${shortLeft}）` : `削除（${shortLeft}）`;
     if (row.type === "same") return propLabel ? `${propLabel}: 同一` : "同一";
@@ -14465,51 +14598,6 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     for (const k of [...known, ...unknown]) ordered.set(k, map.get(k));
     return ordered;
   }
-  var FIELD_SETTING_LABELS = {
-    label: "フィールド名",
-    name: "フィールド名",
-    code: "フィールドコード",
-    type: "フィールドの種類",
-    noLabel: "フィールド名を表示しない",
-    required: "必須項目にする",
-    unique: "値の重複を禁止する",
-    defaultValue: "初期値",
-    defaultNowValue: "レコード登録時の日時を初期値にする",
-    description: "説明",
-    minLength: "文字数（最小）",
-    maxLength: "文字数（最大）",
-    minValue: "数値の制限（最小）",
-    maxValue: "数値の制限（最大）",
-    expression: "計算式",
-    hideExpression: "計算式を表示しない",
-    options: "選択肢",
-    protocol: "入力値の種類",
-    displayScale: "小数点以下の表示桁数",
-    digit: "桁区切りを表示する",
-    unit: "単位記号",
-    unitPosition: "単位記号の表示位置",
-    align: "選択肢の並び",
-    format: "表示形式",
-    entities: "選択候補",
-    fields: "テーブル内のフィールド",
-    referenceTable: "関連レコード一覧設定",
-    lookup: "ルックアップ設定",
-    condition: "表示するレコードの条件",
-    displayFields: "表示するフィールド",
-    filterCond: "絞り込み条件",
-    relatedApp: "参照するアプリ",
-    size: "一度に表示する最大レコード数",
-    sort: "ソート",
-    relatedKeyField: "コピー元のフィールド",
-    fieldMappings: "ほかのフィールドのコピー",
-    lookupPickerFields: "コピー元のレコード選択時に表示するフィールド",
-    field: "自アプリのフィールド",
-    relatedField: "参照するアプリのフィールド",
-    app: "参照するアプリID",
-    thumbnailSize: "サムネイルの大きさ",
-    openGroup: "グループの初期表示",
-    index: "並び順"
-  };
   var FIELD_TYPE_LABELS = {
     SINGLE_LINE_TEXT: "文字列（1行）",
     MULTI_LINE_TEXT: "文字列（複数行）",
@@ -14604,33 +14692,6 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       fieldCode: `${info.rootCode} > ${info.subFieldCode}`,
       fieldName: `${rootLabel} > ${activeLabel}`,
       fieldType
-    };
-  }
-  function fieldSettingTokenLabel(token) {
-    if (typeof token === "number") return `${token + 1}件目`;
-    return FIELD_SETTING_LABELS[token] || token;
-  }
-  function fieldSettingIdentity(info) {
-    const tokens = Array.isArray(info.tailTokens) ? info.tailTokens : [];
-    if (!tokens.length) return { settingKey: "(field)", settingLabel: "フィールド全体" };
-    const settingKey = tokens.map((token) => String(token)).join(".");
-    if (tokens[0] === "options") {
-      const option = tokens.length > 1 ? String(tokens[1]) : "";
-      const suffix = tokens.length > 2 ? fieldSettingTokenLabel(tokens[2]) : "";
-      return {
-        settingKey,
-        settingLabel: option ? `選択肢「${option}」${suffix ? ` / ${suffix}` : ""}` : "選択肢と並び順"
-      };
-    }
-    if (tokens[0] === "lookup" || tokens[0] === "referenceTable") {
-      return {
-        settingKey,
-        settingLabel: tokens.map(fieldSettingTokenLabel).join(" / ")
-      };
-    }
-    return {
-      settingKey,
-      settingLabel: tokens.map(fieldSettingTokenLabel).join(" / ")
     };
   }
   function fieldSummaryText(added, removed, changed, settingLabels) {
@@ -14821,8 +14882,8 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     for (const fieldMatch of path.matchAll(/\.fields\[(\d+)\]/g)) {
       const fieldIndex = Number(fieldMatch[1]);
       entity = entity && typeof entity === "object" && !Array.isArray(entity) ? entity.fields?.[fieldIndex] : null;
-      const fieldCaption = layoutEntityCaption(entity);
-      parts.push(`フィールド #${fieldIndex + 1}${fieldCaption ? ` ${fieldCaption}` : ""}`);
+      const fieldCaption2 = layoutEntityCaption(entity);
+      parts.push(`フィールド #${fieldIndex + 1}${fieldCaption2 ? ` ${fieldCaption2}` : ""}`);
     }
     const leaf = path.match(/(?:^|\.)([^.[\]]+)$/)?.[1] || "";
     const propLabels = {
@@ -19901,15 +19962,15 @@ ${fence}`;
     };
     return map[String(row.type || "")] || String(row.type || "不明");
   }
-  function titleForRow(row) {
+  function titleForRow(row, fieldLabelOf) {
     const sectionKey = String(row.sectionKey || "").trim();
     const path = String(row.path || "").trim();
     const field = extractFieldPathInfo(path);
     if (field) {
-      const payload = row.type === "removed" ? row.left : row.right;
+      const payload = !field.leafKey ? row.type === "removed" ? row.left : row.right : null;
       const fieldName = payload && typeof payload === "object" ? String(payload.label || payload.name || "").trim() : "";
-      const name = fieldName || String(row.entityLabel || "").trim() || field.activeCode;
-      const setting = field.leafKey ? labelOfProp(field.leafKey) : "フィールド定義";
+      const name = fieldLabelOf(field.activeCode, row.type) || fieldName || String(row.entityLabel || "").trim() || field.activeCode;
+      const setting = field.leafKey ? fieldSettingIdentity(field).settingLabel : "フィールド定義";
       return `${name}${name !== field.activeCode ? `（${field.activeCode}）` : ""} / ${setting}`;
     }
     const explicit = String(row.entityLabel || "").trim();
@@ -19923,8 +19984,10 @@ ${fence}`;
     const decodedTitle = String(decoded?.oneLineSummary || decoded?.propLabel || "").trim();
     const reason = String(row.reasonSummary || "").trim();
     const label = String(row.label || "").trim();
-    if (explicit && row.entityPropLabel) return `${explicit} / ${row.entityPropLabel}`;
-    if (explicit) return explicit;
+    if (explicit) {
+      const property = row.entityPropLabel || decoded?.propLabel;
+      return property && property !== explicit ? `${explicit} / ${property}` : explicit;
+    }
     if (decodedTitle) return decodedTitle;
     if (reason) return reason;
     if (label && label !== path) return label;
@@ -20097,13 +20160,13 @@ ${fence}`;
     }
     return { code: "differences-present", text: "比較先（AFTER）に対して確認対象の実差分があります。" };
   }
-  function rowBlock(row, index, seenIds) {
+  function rowBlock(row, index, seenIds, fieldLabelOf) {
     const baseId = stableRowId(row);
     const occurrence = (seenIds.get(baseId) || 0) + 1;
     seenIds.set(baseId, occurrence);
     const stableId = occurrence > 1 ? `${baseId}-${occurrence}` : baseId;
     const sectionKey = String(row.sectionKey || "").trim();
-    const title = titleForRow(row);
+    const title = titleForRow(row, fieldLabelOf);
     const facts = rowFacts(row);
     const lines = [
       `### 差分 ${index}`,
@@ -20201,11 +20264,12 @@ ${fence}`;
       lines.push("- この出力範囲に実差分はありません。`same` 行と表示用補助行は件数だけを記録し、明細を重複収録していません。");
     } else {
       const seenIds = /* @__PURE__ */ new Map();
+      const fieldLabelOf = buildFieldLabelResolver(ctx.sourceBundle, ctx.targetBundle);
       let detailIndex = 0;
       rows.forEach((row) => {
         if (!row || row._displayOnly || row.type === "same") return;
         detailIndex += 1;
-        lines.push("", ...rowBlock(row, detailIndex, seenIds));
+        lines.push("", ...rowBlock(row, detailIndex, seenIds, fieldLabelOf));
       });
     }
     lines.push("", "---", `生成元: kintone-lite-suite ${markdownInline(TOOL_VERSION)}`);
@@ -22231,7 +22295,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const details = fetchIssues.slice(0, 3).map((item) => {
         const section = item?.section || item?.sectionKey || "不明なセクション";
         const side = sideLabel[String(item?.side || "")] || "取得元不明";
-        const message = String(item?.message || item?.sourceError || item?.targetError || "取得できませんでした").replace(/\s+/g, " ").slice(0, 180);
+        const message = withoutApiContextLines(item?.message || item?.sourceError || item?.targetError || "取得できませんでした").replace(/\s+/g, " ").slice(0, 180);
         return `${section}（${side}）: ${message}`;
       });
       const remainder = fetchIssues.length > details.length ? ` / ほか ${fetchIssues.length - details.length} 件` : "";
