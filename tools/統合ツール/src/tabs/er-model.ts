@@ -616,18 +616,25 @@ export function buildErAppModelFromBundle(bundle: any): ErAppModel {
   }
 }
 
-function sanitizeErIdentifier(value: unknown): string {
-  return String(value == null ? '' : value)
-    .replace(/[^a-zA-Z0-9_\u3000-\u9FFF\uF900-\uFAFF]/g, '_')
-    .replace(/^_+|_+$/g, '') || 'unnamed';
-}
-
 function erEntityAlias(app: any): string {
   return `app_${String(app?.id ?? 'unknown').replace(/[^0-9A-Za-z_]/g, '_')}`;
 }
 
 function erOneLineLabel(value: unknown): string {
   return String(value == null ? '' : value).replace(/[\r\n]+/g, ' ').replace(/"/g, "'").trim();
+}
+
+/** Mermaid の項目名は ASCII のみ確実に解釈される（v10 系は日本語で構文エラー）。実コードは注釈へ残す。 */
+function erMermaidAttributeName(code: string, used: Set<string>): string {
+  const base = /^[A-Za-z_][A-Za-z0-9_]*$/.test(code) ? code : `field_${used.size + 1}`;
+  let name = base;
+  for (let suffix = 2; used.has(name); suffix += 1) name = `${base}_${suffix}`;
+  used.add(name);
+  return name;
+}
+
+function erMermaidLabel(value: unknown): string {
+  return erOneLineLabel(value).replace(/%%+/g, '%');
 }
 
 function erExportStatusLabel(app: any): string {
@@ -669,6 +676,19 @@ function erFieldDisplayName(field: any): string {
  * アプリ配列から erDiagram 形式の Mermaid ソースを生成する純粋関数。
  * ルックアップ・関連レコード・アプリアクションのリレーションとフィールド定義を出力する。
  */
+// kintone API のフィールド ENUM の日本語表記（Markdown・PlantUML・画面で共通）
+export const ER_FIELD_TYPE_LABELS: Record<string, string> = {
+  SINGLE_LINE_TEXT: '文字列(1行)', MULTI_LINE_TEXT: '文字列(複数行)', RICH_TEXT: 'リッチエディター',
+  NUMBER: '数値', CALC: '計算', RADIO_BUTTON: 'ラジオボタン', CHECK_BOX: 'チェックボックス',
+  DROP_DOWN: 'ドロップダウン', MULTI_SELECT: '複数選択', DATE: '日付', TIME: '時刻', DATETIME: '日時',
+  USER_SELECT: 'ユーザー選択', ORGANIZATION_SELECT: '組織選択', GROUP_SELECT: 'グループ選択',
+  LOOKUP: 'ルックアップ', SUBTABLE: 'テーブル', REFERENCE_TABLE: '関連レコード一覧',
+  RECORD_NUMBER: 'レコード番号', CREATOR: '作成者', CREATED_TIME: '作成日時',
+  MODIFIER: '更新者', UPDATED_TIME: '更新日時', STATUS: 'ステータス', STATUS_ASSIGNEE: '作業者',
+  CATEGORY: 'カテゴリー', FILE: '添付ファイル', LINK: 'リンク',
+  LABEL: 'ラベル', SPACER: 'スペース', HR: '罫線', GROUP: 'グループ'
+};
+
 export function buildErMermaidSource(apps: any[], options?: { showAllFields?: boolean }): string {
   const safeApps = (Array.isArray(apps) ? apps : []).filter((a) => a && a.id != null);
   const appMap = new Map<string, any>();
@@ -682,7 +702,7 @@ export function buildErMermaidSource(apps: any[], options?: { showAllFields?: bo
     const n = erEntityAlias(a);
     const status = erExportStatusLabel(a);
     const issueText = erExportIssueText(a);
-    const appName = erOneLineLabel(a.name || `アプリ ${a.id}`);
+    const appName = erMermaidLabel(a.name || `アプリ ${a.id}`);
     m += `  %% ${n}: ${appName} (App ${a.id})\n`;
     m += `  %% 取得状態: ${status}${issueText ? ` / ${issueText}` : ''}\n`;
 
@@ -703,6 +723,7 @@ export function buildErMermaidSource(apps: any[], options?: { showAllFields?: bo
       }
     }
 
+    const usedAttributes = new Set<string>();
     for (const f of allFields) {
       if (!f || f.type === 'SUBTABLE') continue;
       if (showAll === false) {
@@ -716,8 +737,9 @@ export function buildErMermaidSource(apps: any[], options?: { showAllFields?: bo
       if (f.isPK) com = ' PK';
       else if (f.isLookup) com = ' FK';
       const fType = String(f.type || 'STRING').replace(/[^a-zA-Z0-9_]/g, '') || 'STRING';
-      const fCode = sanitizeErIdentifier(f.inSubtable && f.path ? f.path : f.code);
-      m += `    ${fType} ${fCode}${com}\n`;
+      const fCode = String(f.inSubtable && f.path ? f.path : (f.code ?? ''));
+      const note = erMermaidLabel(f.label && f.label !== f.code ? `${f.label} [${fCode}]` : fCode);
+      m += `    ${fType} ${erMermaidAttributeName(fCode, usedAttributes)}${com} "${note}"\n`;
     }
     m += '  }\n';
   }
@@ -731,7 +753,7 @@ export function buildErMermaidSource(apps: any[], options?: { showAllFields?: bo
       mermaidExternalIds.add(toKey);
       const alias = erEntityAlias({ id: r.toApp });
       m += `  %% ${alias}: 未取得の参照先 (App ${erOneLineLabel(r.toApp)})\n`;
-      m += `  ${alias}["未取得の参照先 (App ${erOneLineLabel(r.toApp)})"] {\n    string __unresolved\n  }\n`;
+      m += `  ${alias}["未取得の参照先 (App ${erOneLineLabel(r.toApp)})"] {\n    string unresolved \"未取得のアプリ\"\n  }\n`;
     }
   }
 
@@ -739,7 +761,7 @@ export function buildErMermaidSource(apps: any[], options?: { showAllFields?: bo
     for (const r of Array.isArray(a.relations) ? a.relations : []) {
       if (!r || r.toApp == null || String(r.toApp) === '') continue;
       const t = appMap.get(String(r.toApp)) || { id: r.toApp };
-      const label = erExportRelationLabel(r);
+      const label = erMermaidLabel(erExportRelationLabel(r));
       if (r.kind === 'ACTION') {
         m += `  %% ACTION ${erEntityAlias(a)} -> ${erEntityAlias(t)}: ${label}\n`;
       } else {
@@ -789,7 +811,7 @@ function countErConnectedComponents(apps: any[]): number {
 }
 
 function erMdEsc(s: unknown): string {
-  return String(s == null ? '' : s).replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ').trim();
+  return String(s == null ? '' : s).replace(/[\\|<>]/g, '\\$&').replace(/[\r\n]+/g, ' ').trim();
 }
 
 function erRelationKeyConditionDetail(r: any): string {
@@ -816,6 +838,13 @@ function erRelationKeyConditionDetail(r: any): string {
  * analyzeErDependencies（循環参照/SCC、ハブアプリ、孤立アプリ、連結成分数など）の
  * グラフ分析サマリを含む「ER図仕様書 (Markdown)」を生成する純粋関数。
  */
+// GitHub などの既定の Mermaid 描画上限（5万字）に収まる大きさだけ仕様書へ埋め込む
+export const ER_MD_MERMAID_MAX_CHARS = 40000;
+function erFieldTypeLabel(type: unknown): string {
+  const key = String(type || '').trim().toUpperCase();
+  return ER_FIELD_TYPE_LABELS[key] || String(type || '');
+}
+
 export function buildErMarkdownSpec(
   apps: any[],
   analysis?: Partial<ErDependencyAnalysis> & Record<string, any>,
@@ -920,6 +949,16 @@ export function buildErMarkdownSpec(
     lines.push('');
   }
 
+  lines.push('## ER図');
+  lines.push('');
+  const mermaidText = buildErMermaidSource(safeApps);
+  if (mermaidText.length <= ER_MD_MERMAID_MAX_CHARS) {
+    lines.push('```mermaid', mermaidText.trimEnd(), '```');
+  } else {
+    lines.push('図が大きいため省略しました。Mermaid で保存すると全体を確認できます。');
+  }
+  lines.push('');
+
   lines.push('## アプリ一覧');
   lines.push('');
   lines.push('| アプリID | アプリ名 | 項目数 | 関連数 | 深さ | 状態 |');
@@ -966,7 +1005,7 @@ export function buildErMarkdownSpec(
       lines.push('| コード | 名称 | 種類 | 必須 | 主キー | Lookup | 関連 | サブテーブル |');
       lines.push('|---|---|---|:---:|:---:|:---:|:---:|:---:|');
       vf.forEach((f) => {
-        lines.push(`| ${erMdEsc(f.code || '')} | ${erMdEsc(erFieldDisplayName(f))} | ${erMdEsc(f.type || '')} | ${f.required ? '✓' : ''} | ${f.isPK ? '✓' : ''} | ${f.isLookup ? '✓' : ''} | ${f.isRef ? '✓' : ''} | ${f.inSubtable ? '✓' : ''} |`);
+        lines.push(`| ${erMdEsc(f.code || '')} | ${erMdEsc(erFieldDisplayName(f))} | ${erMdEsc(erFieldTypeLabel(f.type))} | ${f.required ? '✓' : ''} | ${f.isPK ? '✓' : ''} | ${f.isLookup ? '✓' : ''} | ${f.isRef ? '✓' : ''} | ${f.inSubtable ? '✓' : ''} |`);
       });
       lines.push('');
     }

@@ -12,7 +12,7 @@ const esbuild = require(path.join(TOOL, 'node_modules/esbuild'));
 const MODULES = {
   design: ['runDesignCopyAiMdStandalone', 'runDesignCopyMdStandalone', 'runDesignDiffMdStandalone', 'runDesignExportStandalone', 'runDesignExportXlsxStandalone', 'runBatchDesignExportXlsxZipStandalone', 'runBatchDesignExportMdZipStandalone'],
   'settings-export': ['runSettingsExportSearchStandalone', 'runSettingsExportStandalone', 'runSettingsExportListSpaceAppsStandalone'],
-  er: ['runGenerateERDiagramStandalone', 'runExportERDiagramHtmlStandalone'],
+  er: ['runGenerateERDiagramStandalone', 'runExportERDiagramHtmlStandalone', 'runExportERMarkdownStandalone', 'runExportERMermaidStandalone', 'runExportERRelationsCsvStandalone'],
   process: ['runRenderProcessFlowStandalone', 'runProcessBatchZipStandalone'],
   field: ['runFieldApplyStandalone', 'runLoadFieldsStandalone', 'runBulkRenameFieldStandalone', 'runFieldApplyMultiStandalone'],
   jsconfig: ['runApplyJsConfigStandalone', 'runFetchJsConfigStandalone', 'runBatchJsConfigDownloadStandalone', 'runApplyJsConfigMultiStandalone'],

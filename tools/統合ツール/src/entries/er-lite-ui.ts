@@ -6,6 +6,9 @@ import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import {
   runGenerateERDiagramStandalone,
   runExportERDiagramHtmlStandalone,
+  runExportERMarkdownStandalone,
+  runExportERMermaidStandalone,
+  runExportERRelationsCsvStandalone,
   validateErOptions
 } from '../tabs/er-standalone.js';
 import { fetchAppsInSpace } from '../api.js';
@@ -65,7 +68,10 @@ export function mountErLitePanel() {
 
   const bOpen = makeButton('ER図を開く', 'primary', { icon: '◉' });
   const bSave = makeButton('ER図をHTMLで保存', 'ghost', { icon: '↓' });
-  const btnRow = makeRow([bOpen, bSave]);
+  const bMarkdown = makeButton('仕様書をMarkdownで保存', 'ghost', { icon: '↓' });
+  const bMermaid = makeButton('Mermaidで保存', 'ghost', { icon: '↓' });
+  const bRelations = makeButton('関連一覧をCSVで保存', 'ghost', { icon: '↓' });
+  const btnRow = makeRow([bOpen, bSave, bMarkdown, bMermaid, bRelations]);
   btnRow.style.marginTop = '6px';
   cardMain.body.appendChild(btnRow);
   panel.body.insertBefore(cardMain.card, panel.status);
@@ -215,6 +221,17 @@ export function mountErLitePanel() {
     await runExportERDiagramHtmlStandalone(source(), (m: string, e?: boolean | 'warn') => panel.setStatus(m, e === 'warn' ? 'warn' : e ? 'err' : 'busy'));
   }));
 
+  const bindExport = (button: HTMLButtonElement, busy: string, run: (opts: any, setStatus: (m: string, e?: boolean | 'warn') => void) => Promise<unknown>) => {
+    button.addEventListener('click', () => liteRun(panel, busy, async () => {
+      const validationError = validateErOptions(source());
+      if (validationError) { panel.setStatus(validationError, 'warn'); return; }
+      await run(source(), (m: string, e?: boolean | 'warn') => panel.setStatus(m, e === 'warn' ? 'warn' : e ? 'err' : 'busy'));
+    }));
+  };
+  bindExport(bMarkdown, 'Markdown 生成中…', runExportERMarkdownStandalone);
+  bindExport(bMermaid, 'Mermaid 生成中…', runExportERMermaidStandalone);
+  bindExport(bRelations, 'CSV 生成中…', runExportERRelationsCsvStandalone);
+
   appInp.setAttribute('aria-label', '起点アプリID');
   guestInp.setAttribute('aria-label', 'ゲストスペースID');
   const erSummary = (): Array<[string, string]> => [
@@ -240,7 +257,10 @@ export function mountErLitePanel() {
     advancedCopy: '追加起点・スペースID・レイアウト・表示密度・探索の深さ・サブテーブル・逆引きを変えるときはこちら。',
     actions: [
       { id: 'open', label: 'ER図を開く', description: '関連アプリの設定を読み取り、アプリ同士のつながりを別画面の図で表示します。', button: bOpen, validate: erProblem, summary: erSummary },
-      { id: 'save', label: 'ER図をHTMLで保存', description: '選んだ条件のER図を、共有できるHTMLファイルとして保存します。', button: bSave, validate: erProblem, summary: erSummary }
+      { id: 'save', label: 'ER図をHTMLで保存', description: '選んだ条件のER図を、共有できるHTMLファイルとして保存します。', button: bSave, validate: erProblem, summary: erSummary },
+      { id: 'markdown', label: '仕様書をMarkdownで保存', description: 'アプリ一覧・関連一覧・循環や孤立の確認結果・項目定義をMarkdownファイルで保存します。', button: bMarkdown, validate: erProblem, summary: erSummary },
+      { id: 'mermaid', label: 'Mermaidで保存', description: 'GitHubなどで描画できるMermaid形式のER図を保存します。', button: bMermaid, validate: erProblem, summary: erSummary },
+      { id: 'relations', label: '関連一覧をCSVで保存', description: 'アプリ同士の関連を1行ずつ並べたCSVファイルを保存します。', button: bRelations, validate: erProblem, summary: erSummary }
     ]
   });
 
