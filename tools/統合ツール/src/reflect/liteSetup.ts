@@ -153,7 +153,7 @@ export function groupReflectScopes(availableKeys: readonly string[]): ReflectSco
 }
 
 /**
- * レイアウト・一覧・グラフ・アクションを選んでいるのにフィールド設定を選んでいないとき true。
+ * フィールドを参照する項目（レイアウト・一覧・グラフ・アクション・権限・通知・プロセス管理など）を選んでいるのにフィールド設定を選んでいないとき true。
  * この場合、反映先に無いフィールドを参照していると差分確認で停止する。
  */
 export function shouldWarnMissingFieldSettings(scopes: readonly string[]): boolean {

@@ -30,6 +30,15 @@ function sectionLabel(key: string): string {
 }
 
 /** 失敗理由の先頭行（API コンテキスト行を除く）を、結果表に収まる長さで返す。 */
+/** 取得結果が無いセクションも失敗として扱う（取得OKに数えない）。 */
+function isFailedSection(section: any): boolean {
+  return !section || !!section._fetchError;
+}
+
+function sectionFetchError(section: any): string {
+  return section ? String(section._fetchError?.message || section._fetchError || '') : '取得結果がありません';
+}
+
 function firstErrorLine(error: unknown): string {
   const text = String((error as any)?.message || error || '');
   const line = text.split('\n').map((s) => s.trim()).find(Boolean) || '理由不明';
@@ -218,7 +227,7 @@ export function buildSettingsMarkdownIndex(input: SettingsMarkdownIndexInput): s
     if (app?.customizeFiles) {
       notes.push(`JS/CSSファイル保存 ${app.customizeFiles.saved}件${app.customizeFiles.failed ? `（失敗 ${app.customizeFiles.failed}件）` : ''}`);
     }
-    const cell = (v: string) => String(v || '-').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+    const cell = (v: string) => String(v || '-').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
     lines.push(
       `| ${cell(app.appId)} | ${cell(app.appName || '-')} | ${cell(app.guestId ? `guest:${app.guestId}` : '通常')} | ${cell(app.file || '-')} | ${Number(app?.sections?.ok ?? 0)} | ${Number(app?.sections?.ng ?? 0)} | ${omitted > 0 ? `${omitted}件` : '0件'} | ${cell(notes.join(' / ') || 'OK')} |`
     );
@@ -467,14 +476,13 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     let ngCount = 0;
     const failedKeys: string[] = [];
     for (const key of scopes) {
-      const sec = bundle.sections[key];
-      if (sec && sec._fetchError) { ngCount += 1; failedKeys.push(key); }
+      if (isFailedSection(bundle.sections[key])) { ngCount += 1; failedKeys.push(key); }
       else okCount += 1;
     }
     const omittedBodies = omittedCustomizeBodyCount(bundle);
     const noteParts: string[] = [];
     if (ngCount === scopes.length) {
-      noteParts.push(`アプリ取得失敗: ${firstErrorLine(bundle.sections[failedKeys[0]]._fetchError)}`);
+      noteParts.push(`アプリ取得失敗: ${firstErrorLine(sectionFetchError(bundle.sections[failedKeys[0]]))}`);
     } else if (ngCount) {
       noteParts.push(`一部セクション取得失敗あり: ${failedKeys.map(sectionLabel).join('、')}`);
     }
@@ -507,7 +515,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
   const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);
   const failedAppCount = rows.filter((row) => row.ngCount > 0).length;
   const appSummaries = bundles.map((bundle, i) => {
-    const failedSectionKeys = scopes.filter((key) => bundle.sections?.[key]?._fetchError);
+    const failedSectionKeys = scopes.filter((key) => isFailedSection(bundle.sections?.[key]));
     return {
       appId: String(bundle.appId),
       appName: bundleAppName(bundle),
@@ -516,7 +524,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
       failedSections: failedSectionKeys.map((key) => ({
         key,
         label: SECTION_DEFS.find((s) => s.key === key)?.label || key,
-        error: String(bundle.sections[key]._fetchError?.message || bundle.sections[key]._fetchError || '')
+        error: sectionFetchError(bundle.sections?.[key])
       })),
       omittedCustomizeBodies: rows[i].omittedBodies
     };
@@ -551,7 +559,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     const entries = bundles.map((bundle, i) => {
       const guestId = targets[i].guestId;
       const file = `${zipEntryBaseName(bundle, guestId, preview)}.json`;
-      const failedSections = scopes.filter((key) => bundle.sections?.[key]?._fetchError);
+      const failedSections = scopes.filter((key) => isFailedSection(bundle.sections?.[key]));
       const customizeFiles = customizeFilesByApp[i];
       return {
         appId: String(bundle.appId),
@@ -564,7 +572,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
         failedSections: failedSections.map((key) => ({
           key,
           label: SECTION_DEFS.find((s) => s.key === key)?.label || key,
-          error: String(bundle.sections[key]._fetchError?.message || bundle.sections[key]._fetchError || '')
+          error: sectionFetchError(bundle.sections?.[key])
         })),
         ...(customizeFiles ? {
           customizeFiles: { folder: customizeFiles.folder, saved: customizeFiles.saved, failed: customizeFiles.failed, files: customizeFiles.files }

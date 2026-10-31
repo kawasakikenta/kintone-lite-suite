@@ -3,7 +3,7 @@
 // ==========================================================================
 // このファイルは tools/統合ツール/ の npm run build (esbuild) で生成されます。
 // ソース: tools/統合ツール/src/entries/design-lite-entry.js
-//         tools/統合ツール/src/tabs/design.js  ← 機能の正規実装
+//         tools/統合ツール/src/tabs/design-standalone.js  ← 機能の正規実装
 //
 // ■ 修正する場合は tools/統合ツール/src/ 配下のソースを編集し、
 //   cd tools/統合ツール && npm run build で再生成してください。
@@ -12,232 +12,263 @@
 "use strict";
 (() => {
   var __defProp = Object.defineProperty;
-  var __getOwnPropNames = Object.getOwnPropertyNames;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-  var __esm = (fn, res) => function __init() {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-  };
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
-  // src/featureDefs.mjs
-  var ICONS, FEATURE_DEFS;
-  var init_featureDefs = __esm({
-    "src/featureDefs.mjs"() {
-      "use strict";
-      ICONS = Object.freeze({
-        diff: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
-        reflect: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
-        field: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
-        jsconfig: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
-        er: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="6" cy="6" rx="3" ry="2"/><ellipse cx="18" cy="6" rx="3" ry="2"/><ellipse cx="12" cy="18" rx="3" ry="2"/><path d="M8.5 7.5l2 7"/><path d="M15.5 7.5l-2 7"/><path d="M9 6h6"/></svg>',
-        processFlow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="8.5" y="15" width="7" height="5" rx="1"/><path d="M10 6.5h4"/><path d="M17.5 9v2.5h-11V9"/><path d="M12 11.5V15"/></svg>',
-        design: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
-        settingsExport: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
-        recordMgr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v8c0 1.7 3.6 3 8 3s8-1.3 8-3v-8"/></svg>',
-        apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>',
-        analyze: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>'
-      });
-      FEATURE_DEFS = [
-        {
-          key: "diff",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.diff,
-          label: "差分比較",
-          desc: "2アプリの設定差分を確認します。",
-          tabs: ["diff"],
-          tab: "diff",
-          diffSubTab: "conditions",
-          focusSelector: "#u_headerDiffSuite",
-          priority: "high",
-          riskLevel: "safe",
-          recommendedFor: ["最初に確認", "変更前チェック"],
-          usageOrder: 1,
-          onboardingOrder: 1,
-          badge: { tone: "recommended", label: "初回推奨", icon: "1" }
-        },
-        {
-          key: "reflect",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.reflect,
-          label: "プレビュー反映",
-          desc: "差分を見ながら比較先プレビューへ反映します。",
-          tabs: ["reflect"],
-          tab: "reflect",
-          subTab: "settings",
-          focusSelector: "#u_reflectAssist",
-          priority: "high",
-          riskLevel: "warning",
-          recommendedFor: ["差分確認後", "本番反映前の検証"],
-          usageOrder: 2,
-          onboardingOrder: 2,
-          badge: { tone: "caution", label: "要確認", icon: "2" }
-        },
-        {
-          key: "field",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.field,
-          label: "フィールド追加",
-          desc: "フィールド定義の追加・編集とコード変換用JSONの作成を行います。",
-          tabs: ["field"],
-          tab: "field",
-          subTab: "json",
-          focusSelector: "#u_fieldJson",
-          priority: "medium",
-          riskLevel: "warning",
-          recommendedFor: ["項目追加", "定義の一括修正"],
-          usageOrder: 4,
-          onboardingOrder: 4,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "jsconfig",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.jsconfig,
-          label: "JS/CSS設定",
-          desc: "単一アプリの customize.json 編集と JS/CSS 実ファイル取得を行います。",
-          tabs: ["jsconfig"],
-          tab: "jsconfig",
-          subTab: "editor",
-          focusSelector: "#u_jsconfigJson",
-          priority: "medium",
-          riskLevel: "warning",
-          recommendedFor: ["カスタマイズ配布", "環境同期"],
-          usageOrder: 5,
-          onboardingOrder: 5,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "design",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.design,
-          label: "設計書",
-          desc: "設計書や差分レポートを出力します。",
-          tabs: ["design"],
-          tab: "design",
-          focusSelector: '[data-act="exportDesignMd"]',
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["変更記録", "レビュー資料作成"],
-          usageOrder: 3,
-          onboardingOrder: 3,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "settingsExport",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.settingsExport,
-          label: "設定一括取得",
-          desc: "複数アプリの設定JSONをまとめて保存します（データ・添付は除く）。",
-          tabs: ["settingsExport"],
-          tab: "settingsExport",
-          subTab: "export",
-          focusSelector: "#u_settingsExportAppIds",
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["バックアップ", "棚卸し"],
-          usageOrder: 6,
-          onboardingOrder: 6,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "er",
-          group: "vis",
-          groupLabel: "可視化・分析",
-          icon: ICONS.er,
-          label: "ER図",
-          desc: "関連アプリの構造を ER 図で確認します。",
-          tabs: ["er"],
-          tab: "er",
-          subTab: "diagram",
-          focusSelector: "#u_erLayout",
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["現状把握", "依存関係確認"],
-          usageOrder: 7,
-          onboardingOrder: 7,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "processFlow",
-          group: "vis",
-          groupLabel: "可視化・分析",
-          icon: ICONS.processFlow,
-          label: "プロセス図",
-          desc: "プロセス管理をフロー図で確認します。",
-          tabs: ["processFlow"],
-          tab: "processFlow",
-          focusSelector: '[data-act="renderProcessFlow"]',
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["状態遷移確認", "運用レビュー"],
-          usageOrder: 8,
-          onboardingOrder: 8,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "recordMgr",
-          group: "data",
-          groupLabel: "データ・保守",
-          icon: ICONS.recordMgr,
-          label: "レコード管理",
-          desc: "レコードデータのCSV・添付・コメント・状態更新を扱います。",
-          tabs: ["recordMgr"],
-          tab: "recordMgr",
-          subTab: "status",
-          focusSelector: '[data-act="runBatchProcess"]',
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["保守作業", "テストデータ操作"],
-          usageOrder: 9,
-          onboardingOrder: 9,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "apiTester",
-          group: "data",
-          groupLabel: "API・検証",
-          icon: ICONS.apiTester,
-          label: "APIテスター",
-          desc: "REST APIを直接試します。",
-          tabs: ["apiTester"],
-          tab: "apiTester",
-          focusSelector: "#u_apiTesterMethod",
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["調査", "レスポンス確認"],
-          usageOrder: 10,
-          onboardingOrder: 10,
-          badge: { tone: "caution", label: "上級者向け", icon: "!" }
-        },
-        {
-          key: "analyze",
-          group: "vis",
-          groupLabel: "可視化・分析",
-          icon: ICONS.analyze,
-          label: "分析",
-          desc: "影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。",
-          tabs: ["analyze"],
-          tab: "analyze",
-          subTab: "dashboard",
-          focusSelector: '[data-act="runAnalyzeDashboard"]',
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["影響調査", "依存確認", "セキュリティ監査"],
-          usageOrder: 7.5,
-          onboardingOrder: 7.5,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        }
-      ];
+  // src/kintoneGuard.ts
+  var NOT_KINTONE_PAGE_MESSAGE = "kintone画面で実行してください";
+  function isKintonePage() {
+    return Boolean(window.kintone?.api && window.kintone?.app);
+  }
+  function runOnKintonePage(run) {
+    if (!isKintonePage()) {
+      alert(NOT_KINTONE_PAGE_MESSAGE);
+      return;
     }
+    try {
+      run();
+    } catch (error) {
+      if (error?.panelBusy === true) return;
+      throw error;
+    }
+  }
+
+  // src/featureDefs.mjs
+  var ICONS = Object.freeze({
+    diff: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
+    reflect: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+    field: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+    jsconfig: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+    er: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="6" cy="6" rx="3" ry="2"/><ellipse cx="18" cy="6" rx="3" ry="2"/><ellipse cx="12" cy="18" rx="3" ry="2"/><path d="M8.5 7.5l2 7"/><path d="M15.5 7.5l-2 7"/><path d="M9 6h6"/></svg>',
+    processFlow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="8.5" y="15" width="7" height="5" rx="1"/><path d="M10 6.5h4"/><path d="M17.5 9v2.5h-11V9"/><path d="M12 11.5V15"/></svg>',
+    design: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
+    settingsExport: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
+    recordMgr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v8c0 1.7 3.6 3 8 3s8-1.3 8-3v-8"/></svg>',
+    apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>',
+    analyze: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>'
   });
+  var FEATURE_DEFS = [
+    {
+      key: "diff",
+      group: "change",
+      groupLabel: "変更・反映",
+      icon: ICONS.diff,
+      label: "差分比較",
+      desc: "2アプリの設定差分を確認します。",
+      tabs: ["diff"],
+      tab: "diff",
+      diffSubTab: "conditions",
+      focusSelector: "#u_headerDiffSuite",
+      priority: "high",
+      riskLevel: "safe",
+      recommendedFor: ["最初に確認", "変更前チェック"],
+      usageOrder: 1,
+      onboardingOrder: 1,
+      badge: { tone: "recommended", label: "初回推奨", icon: "1" }
+    },
+    {
+      key: "reflect",
+      group: "change",
+      groupLabel: "変更・反映",
+      icon: ICONS.reflect,
+      label: "プレビュー反映",
+      desc: "差分を見ながら比較先プレビューへ反映します。",
+      tabs: ["reflect"],
+      tab: "reflect",
+      subTab: "settings",
+      focusSelector: "#u_reflectAssist",
+      priority: "high",
+      riskLevel: "warning",
+      recommendedFor: ["差分確認後", "本番反映前の検証"],
+      usageOrder: 2,
+      onboardingOrder: 2,
+      badge: { tone: "caution", label: "要確認", icon: "2" }
+    },
+    {
+      key: "field",
+      group: "change",
+      groupLabel: "変更・反映",
+      icon: ICONS.field,
+      label: "フィールド追加",
+      desc: "フィールド定義の追加・編集とコード変換用JSONの作成を行います。",
+      tabs: ["field"],
+      tab: "field",
+      subTab: "json",
+      focusSelector: "#u_fieldJson",
+      priority: "medium",
+      riskLevel: "warning",
+      recommendedFor: ["項目追加", "定義の一括修正"],
+      usageOrder: 4,
+      onboardingOrder: 4,
+      badge: { tone: "caution", label: "要注意", icon: "!" }
+    },
+    {
+      key: "jsconfig",
+      group: "change",
+      groupLabel: "変更・反映",
+      icon: ICONS.jsconfig,
+      label: "JS/CSS設定",
+      desc: "単一アプリの customize.json 編集と JS/CSS 実ファイル取得を行います。",
+      tabs: ["jsconfig"],
+      tab: "jsconfig",
+      subTab: "editor",
+      focusSelector: "#u_jsconfigJson",
+      priority: "medium",
+      riskLevel: "warning",
+      recommendedFor: ["カスタマイズ配布", "環境同期"],
+      usageOrder: 5,
+      onboardingOrder: 5,
+      badge: { tone: "caution", label: "要注意", icon: "!" }
+    },
+    {
+      key: "design",
+      group: "vis",
+      groupLabel: "可視化・出力",
+      icon: ICONS.design,
+      label: "設計書",
+      desc: "設計書や差分レポートを出力します。",
+      tabs: ["design"],
+      tab: "design",
+      focusSelector: '[data-act="exportDesignMd"]',
+      priority: "medium",
+      riskLevel: "safe",
+      recommendedFor: ["変更記録", "レビュー資料作成"],
+      usageOrder: 3,
+      onboardingOrder: 3,
+      badge: { tone: "safe", label: "安全", icon: "OK" }
+    },
+    {
+      key: "settingsExport",
+      group: "vis",
+      groupLabel: "可視化・出力",
+      icon: ICONS.settingsExport,
+      label: "設定一括取得",
+      desc: "複数アプリの設定JSONをまとめて保存します（データ・添付は除く）。",
+      tabs: ["settingsExport"],
+      tab: "settingsExport",
+      subTab: "export",
+      focusSelector: "#u_settingsExportAppIds",
+      priority: "medium",
+      riskLevel: "safe",
+      recommendedFor: ["バックアップ", "棚卸し"],
+      usageOrder: 6,
+      onboardingOrder: 6,
+      badge: { tone: "safe", label: "安全", icon: "OK" }
+    },
+    {
+      key: "er",
+      group: "vis",
+      groupLabel: "可視化・分析",
+      icon: ICONS.er,
+      label: "ER図",
+      desc: "関連アプリの構造を ER 図で確認します。",
+      tabs: ["er"],
+      tab: "er",
+      subTab: "diagram",
+      focusSelector: "#u_erLayout",
+      priority: "medium",
+      riskLevel: "safe",
+      recommendedFor: ["現状把握", "依存関係確認"],
+      usageOrder: 7,
+      onboardingOrder: 7,
+      badge: { tone: "safe", label: "安全", icon: "OK" }
+    },
+    {
+      key: "processFlow",
+      group: "vis",
+      groupLabel: "可視化・分析",
+      icon: ICONS.processFlow,
+      label: "プロセス図",
+      desc: "プロセス管理をフロー図で確認します。",
+      tabs: ["processFlow"],
+      tab: "processFlow",
+      focusSelector: '[data-act="renderProcessFlow"]',
+      priority: "medium",
+      riskLevel: "safe",
+      recommendedFor: ["状態遷移確認", "運用レビュー"],
+      usageOrder: 8,
+      onboardingOrder: 8,
+      badge: { tone: "safe", label: "安全", icon: "OK" }
+    },
+    {
+      key: "recordMgr",
+      group: "data",
+      groupLabel: "データ・保守",
+      icon: ICONS.recordMgr,
+      label: "レコード管理",
+      desc: "レコードデータのCSV・添付・コメント・状態更新を扱います。",
+      tabs: ["recordMgr"],
+      tab: "recordMgr",
+      subTab: "status",
+      focusSelector: '[data-act="runBatchProcess"]',
+      priority: "low",
+      riskLevel: "warning",
+      recommendedFor: ["保守作業", "テストデータ操作"],
+      usageOrder: 9,
+      onboardingOrder: 9,
+      badge: { tone: "caution", label: "要注意", icon: "!" }
+    },
+    {
+      key: "apiTester",
+      group: "data",
+      groupLabel: "API・検証",
+      icon: ICONS.apiTester,
+      label: "APIテスター",
+      desc: "REST APIを直接試します。",
+      tabs: ["apiTester"],
+      tab: "apiTester",
+      focusSelector: "#u_apiTesterMethod",
+      priority: "low",
+      riskLevel: "warning",
+      recommendedFor: ["調査", "レスポンス確認"],
+      usageOrder: 10,
+      onboardingOrder: 10,
+      badge: { tone: "caution", label: "上級者向け", icon: "!" }
+    },
+    {
+      key: "analyze",
+      group: "vis",
+      groupLabel: "可視化・分析",
+      icon: ICONS.analyze,
+      label: "分析",
+      desc: "影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。",
+      tabs: ["analyze"],
+      tab: "analyze",
+      subTab: "dashboard",
+      focusSelector: '[data-act="runAnalyzeDashboard"]',
+      priority: "medium",
+      riskLevel: "safe",
+      recommendedFor: ["影響調査", "依存確認", "セキュリティ監査"],
+      usageOrder: 7.5,
+      onboardingOrder: 7.5,
+      badge: { tone: "safe", label: "安全", icon: "OK" }
+    }
+  ];
 
   // src/constants.ts
+  var TOOL_ID = "kintone-unified-suite-v2";
+  var TOOL_VERSION = "2.5.0";
+  var EXTERNAL_LIBRARIES = Object.freeze({
+    jszip: Object.freeze({
+      version: "3.10.1",
+      cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
+    }),
+    cytoscape: Object.freeze({
+      version: "3.28.1",
+      cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js",
+      altVersion: "3.26.0",
+      altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"
+    }),
+    dagre: Object.freeze({
+      version: "0.8.5",
+      cdnUrl: "https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"
+    }),
+    cytoscapeDagre: Object.freeze({
+      version: "2.5.0",
+      cdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
+      altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"
+    })
+  });
   function resolveDefaultAppId() {
     try {
       if (typeof kintone !== "undefined" && kintone?.app?.getId) {
@@ -247,6 +278,7 @@
     }
     return "";
   }
+  var DEFAULT_APP_ID = resolveDefaultAppId();
   function guestIdFromKintonePath(pathname) {
     const match = /^\/k\/guest\/(\d+)\//.exec(String(pathname || ""));
     return match ? match[1] : "";
@@ -258,6 +290,8 @@
       return "";
     }
   }
+  var DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
+  var DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
   function sanitizeCustomizeResourceList(value) {
     if (!Array.isArray(value)) return [];
     const resources = [];
@@ -289,195 +323,228 @@
       mobile: buildPlatform("mobile")
     };
   }
-  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
-  var init_constants = __esm({
-    "src/constants.ts"() {
-      "use strict";
-      init_featureDefs();
-      TOOL_ID = "kintone-unified-suite-v2";
-      TOOL_VERSION = "2.5.0";
-      EXTERNAL_LIBRARIES = Object.freeze({
-        jszip: Object.freeze({
-          version: "3.10.1",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
-        }),
-        cytoscape: Object.freeze({
-          version: "3.28.1",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js",
-          altVersion: "3.26.0",
-          altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"
-        }),
-        dagre: Object.freeze({
-          version: "0.8.5",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"
-        }),
-        cytoscapeDagre: Object.freeze({
-          version: "2.5.0",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
-          altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"
-        }),
-        googleFontsDmSansMono: Object.freeze({
-          cdnUrl: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap"
-        }),
-        jsoneditor: Object.freeze({
-          version: "9.10.3",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.js",
-          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.css"
-        }),
-        toastify: Object.freeze({
-          version: "1.12.0",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/toastify-js",
-          cssUrl: "https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
-        }),
-        driver: Object.freeze({
-          version: "1.3.1",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js",
-          cssUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css"
-        })
-      });
-      DEFAULT_APP_ID = resolveDefaultAppId();
-      DEFAULT_GUEST_ID = DEFAULT_APP_ID ? resolveDefaultGuestId() : "";
-      DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
-      SECTION_DEFS = [
-        { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
-        { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
-        { key: "fieldSettings", label: "フィールド設定", endpoint: "/app/form/fields.json", put: true, putBuilder: (d) => ({ properties: d.properties || d }) },
-        { key: "layoutSettings", label: "レイアウト設定", endpoint: "/app/form/layout.json", put: true, putBuilder: (d) => ({ layout: d.layout || d }) },
-        { key: "formSettings", label: "フォーム設定", endpoint: "/form.json", put: false },
-        { key: "viewSettings", label: "ビュー設定", endpoint: "/app/views.json", put: true, putBuilder: (d) => ({ views: d.views || d }) },
-        { key: "reportSettings", label: "グラフ設定", endpoint: "/app/reports.json", put: true, putBuilder: (d) => ({ reports: d.reports || d }) },
-        { key: "processSettings", label: "プロセス管理", endpoint: "/app/status.json", put: true, putBuilder: (d) => ({ enable: !!d.enable, states: d.states || {}, actions: d.actions || [] }) },
-        { key: "pluginSettings", label: "プラグイン(※)", endpoint: "/app/plugins.json", put: true, putBuilder: (d) => ({ pluginIds: (d.plugins || []).map((p) => p.id) }) },
-        { key: "customizeSettings", label: "JS/CSS設定", endpoint: "/app/customize.json", put: true, putBuilder: buildCustomizeSettingsPutPayload },
-        { key: "actionSettings", label: "アクション設定", endpoint: "/app/actions.json", put: true, putBuilder: (d) => ({ actions: d.actions || d }) },
-        { key: "appAcl", label: "アプリ権限", endpoint: "/app/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-        { key: "fieldAcl", label: "フィールド権限", endpoint: "/field/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-        { key: "recordPermissions", label: "レコード権限", endpoint: "/record/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-        { key: "notifications", label: "通知設定", endpoint: "/app/notifications/general.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "perRecordNotifications", label: "レコード条件通知", endpoint: "/app/notifications/perRecord.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        // PUT /app/notifications/reminder.json は notifications に加え timezone を必須的に要求するためソース側の値を引き継ぐ。
-        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => {
-          const body = { notifications: d?.notifications || (Array.isArray(d) ? d : []) };
-          if (d && typeof d === "object" && typeof d.timezone === "string" && d.timezone) {
-            body.timezone = d.timezone;
-          }
-          return body;
-        } },
-        { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
-      ];
-      META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
-      SYSTEM_FIELD_TYPES = /* @__PURE__ */ new Set([
-        "STATUS",
-        "STATUS_ASSIGNEE",
-        "CREATED_TIME",
-        "UPDATED_TIME",
-        "CREATOR",
-        "MODIFIER",
-        "RECORD_NUMBER",
-        "CATEGORY"
-      ]);
-      DEFAULT_SUBTAB_STATE = Object.freeze({
-        diff: "conditions",
-        reflect: "settings",
-        field: "json",
-        jsconfig: "editor",
-        recordMgr: "status",
-        er: "diagram",
-        settingsExport: "export",
-        analyze: "dashboard"
-      });
-      TOUR_STEP_CONNECTION = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: "#u_sourceApp",
-        title: "比較元 / 比較先を決める",
-        body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。プレビュー/本番の切替もここで行います。"
-      };
-      TOUR_STEP_SCOPE = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: '[data-act="openDiffScopePicker"]',
-        title: "比較対象セクションを選ぶ",
-        body: "「比較対象を選ぶ」から、差分比較で確認したい設定だけを選びます。まずはフィールド・レイアウト・ビュー・プロセス管理あたりが見やすいです。"
-      };
-      TOUR_STEP_NOISE = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: "#u_ignoreKeyInput",
-        title: "ノイズ差分を減らす",
-        body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
-      };
-      TOUR_STEP_RUN_DIFF = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: "#u_runDiffPrimary",
-        title: "差分比較を実行する",
-        body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
-      };
-      TOUR_STEP_REVIEW = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 差分結果の整理",
-        selector: "#u_diffSearch",
-        title: "結果を絞り込んで確認する",
-        body: "差分比較後は「差分結果の整理・出力」から、セクション・種別・検索で絞り込めます。ここで反映対象を見極めます。"
-      };
-      TOUR_STEP_CATEGORY_VIEW = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 差分結果の整理",
-        selector: '[data-act="setDiffViewMode"][data-mode="category"]',
-        title: "セクション別ビューで読み取る",
-        body: "権限・プロセス・通知などフィールド以外の差分は「🗂 セクション別」表示が見やすいです。カテゴリ別タブ + マトリクスや遷移図で差分が直感的に把握できます（V キーで切替）。"
-      };
-      TOUR_STEP_PLAN = {
-        tab: "reflect",
-        path: "プレビュー反映",
-        selector: "#u_footerPlan",
-        title: "反映プランを先に確認する",
-        body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。"
-      };
-      TOUR_STEP_APPLY = {
-        tab: "reflect",
-        path: "プレビュー反映",
-        selector: "#u_footerApply",
-        title: "比較先プレビューへ反映する",
-        body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番デプロイは kintone 管理画面から手動で実施します。"
-      };
-      TOUR_STEP_RECORD = {
-        tab: "design",
-        subTab: "export",
-        path: "設計書 > 設計書出力",
-        selector: '[data-act="exportDesignMd"]',
-        title: "最後に記録を残す",
-        body: "作業後は設計書や差分レポートを出力して、変更内容を記録します。複数アプリをまとめて保存したい場合は「設定一括取得」も使えます。"
-      };
-      GUIDED_TOUR_COURSES = Object.freeze({
-        full: {
-          label: "初回（全工程）",
-          description: "接続から記録出力までを順番に案内します（推奨）",
-          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD]
-        },
-        diff: {
-          label: "差分のみ確認",
-          description: "差分比較とレビューに絞った短縮コース",
-          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW]
-        },
-        apply: {
-          label: "反映まで実施",
-          description: "差分確認からプレビュー反映までをガイド",
-          steps: [TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY]
-        }
-      });
-      GUIDED_TOUR_STEPS = Object.freeze(GUIDED_TOUR_COURSES.full.steps);
+  var SECTION_DEFS = [
+    { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
+    { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
+    { key: "fieldSettings", label: "フィールド設定", endpoint: "/app/form/fields.json", put: true, putBuilder: (d) => ({ properties: d.properties || d }) },
+    { key: "layoutSettings", label: "レイアウト設定", endpoint: "/app/form/layout.json", put: true, putBuilder: (d) => ({ layout: d.layout || d }) },
+    { key: "formSettings", label: "フォーム設定", endpoint: "/form.json", put: false },
+    { key: "viewSettings", label: "ビュー設定", endpoint: "/app/views.json", put: true, putBuilder: (d) => ({ views: d.views || d }) },
+    { key: "reportSettings", label: "グラフ設定", endpoint: "/app/reports.json", put: true, putBuilder: (d) => ({ reports: d.reports || d }) },
+    { key: "processSettings", label: "プロセス管理", endpoint: "/app/status.json", put: true, putBuilder: (d) => ({ enable: !!d.enable, states: d.states || {}, actions: d.actions || [] }) },
+    { key: "pluginSettings", label: "プラグイン(※)", endpoint: "/app/plugins.json", put: true, putBuilder: (d) => ({ pluginIds: (d.plugins || []).map((p) => p.id) }) },
+    { key: "customizeSettings", label: "JS/CSS設定", endpoint: "/app/customize.json", put: true, putBuilder: buildCustomizeSettingsPutPayload },
+    { key: "actionSettings", label: "アクション設定", endpoint: "/app/actions.json", put: true, putBuilder: (d) => ({ actions: d.actions || d }) },
+    { key: "appAcl", label: "アプリ権限", endpoint: "/app/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
+    { key: "fieldAcl", label: "フィールド権限", endpoint: "/field/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
+    { key: "recordPermissions", label: "レコード権限", endpoint: "/record/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
+    { key: "notifications", label: "通知設定", endpoint: "/app/notifications/general.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
+    { key: "perRecordNotifications", label: "レコード条件通知", endpoint: "/app/notifications/perRecord.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
+    // PUT /app/notifications/reminder.json は notifications に加え timezone を必須的に要求するためソース側の値を引き継ぐ。
+    { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => {
+      const body = { notifications: d?.notifications || (Array.isArray(d) ? d : []) };
+      if (d && typeof d === "object" && typeof d.timezone === "string" && d.timezone) {
+        body.timezone = d.timezone;
+      }
+      return body;
+    } },
+    { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
+  ];
+  var META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
+  var SYSTEM_FIELD_TYPES = /* @__PURE__ */ new Set([
+    "STATUS",
+    "STATUS_ASSIGNEE",
+    "CREATED_TIME",
+    "UPDATED_TIME",
+    "CREATOR",
+    "MODIFIER",
+    "RECORD_NUMBER",
+    "CATEGORY"
+  ]);
+  var DEFAULT_SUBTAB_STATE = Object.freeze({
+    diff: "conditions",
+    reflect: "settings",
+    field: "json",
+    jsconfig: "editor",
+    recordMgr: "status",
+    er: "diagram",
+    settingsExport: "export",
+    analyze: "dashboard"
+  });
+  var TOUR_STEP_CONNECTION = {
+    tab: "diff",
+    diffSubTab: "conditions",
+    path: "ヘッダー > 比較条件",
+    selector: "#u_sourceApp",
+    title: "比較元 / 比較先を決める",
+    body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。プレビュー/本番の切替もここで行います。"
+  };
+  var TOUR_STEP_SCOPE = {
+    tab: "diff",
+    diffSubTab: "conditions",
+    path: "ヘッダー > 比較条件",
+    selector: '[data-act="openDiffScopePicker"]',
+    title: "比較対象セクションを選ぶ",
+    body: "「比較対象を選ぶ」から、差分比較で確認したい設定だけを選びます。まずはフィールド・レイアウト・ビュー・プロセス管理あたりが見やすいです。"
+  };
+  var TOUR_STEP_NOISE = {
+    tab: "diff",
+    diffSubTab: "conditions",
+    path: "ヘッダー > 比較条件",
+    selector: "#u_ignoreKeyInput",
+    title: "ノイズ差分を減らす",
+    body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
+  };
+  var TOUR_STEP_RUN_DIFF = {
+    tab: "diff",
+    diffSubTab: "conditions",
+    path: "ヘッダー > 比較条件",
+    selector: "#u_runDiffPrimary",
+    title: "差分比較を実行する",
+    body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
+  };
+  var TOUR_STEP_REVIEW = {
+    tab: "diff",
+    diffSubTab: "conditions",
+    path: "ヘッダー > 差分結果の整理",
+    selector: "#u_diffSearch",
+    title: "結果を絞り込んで確認する",
+    body: "差分比較後は「差分結果の整理・出力」から、セクション・種別・検索で絞り込めます。ここで反映対象を見極めます。"
+  };
+  var TOUR_STEP_CATEGORY_VIEW = {
+    tab: "diff",
+    diffSubTab: "conditions",
+    path: "ヘッダー > 差分結果の整理",
+    selector: '[data-act="setDiffViewMode"][data-mode="category"]',
+    title: "セクション別ビューで読み取る",
+    body: "権限・プロセス・通知などフィールド以外の差分は「🗂 セクション別」表示が見やすいです。カテゴリ別タブ + マトリクスや遷移図で差分が直感的に把握できます（V キーで切替）。"
+  };
+  var TOUR_STEP_PLAN = {
+    tab: "reflect",
+    path: "プレビュー反映",
+    selector: "#u_footerPlan",
+    title: "反映プランを先に確認する",
+    body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。"
+  };
+  var TOUR_STEP_APPLY = {
+    tab: "reflect",
+    path: "プレビュー反映",
+    selector: "#u_footerApply",
+    title: "比較先プレビューへ反映する",
+    body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番デプロイは kintone 管理画面から手動で実施します。"
+  };
+  var TOUR_STEP_RECORD = {
+    tab: "design",
+    subTab: "export",
+    path: "設計書 > 設計書出力",
+    selector: '[data-act="exportDesignMd"]',
+    title: "最後に記録を残す",
+    body: "作業後は設計書や差分レポートを出力して、変更内容を記録します。複数アプリをまとめて保存したい場合は「設定一括取得」も使えます。"
+  };
+  var GUIDED_TOUR_COURSES = Object.freeze({
+    full: {
+      label: "初回（全工程）",
+      description: "接続から記録出力までを順番に案内します（推奨）",
+      steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD]
+    },
+    diff: {
+      label: "差分のみ確認",
+      description: "差分比較とレビューに絞った短縮コース",
+      steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW]
+    },
+    apply: {
+      label: "反映まで実施",
+      description: "差分確認からプレビュー反映までをガイド",
+      steps: [TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY]
     }
   });
+  var GUIDED_TOUR_STEPS = Object.freeze(GUIDED_TOUR_COURSES.full.steps);
 
   // src/state.ts
+  var state = {
+    activeTab: "reflect",
+    activeFeatureKey: "",
+    activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
+    launcherSortMode: "onboarding",
+    lastSourceBundle: null,
+    lastTargetBundle: null,
+    lastDiffRows: [],
+    lastFetchIssues: [],
+    lastPartialIssues: [],
+    lastDiffTruncation: null,
+    lastDiffAt: null,
+    lastDiffSignature: "",
+    lastApplyPlan: null,
+    lastApplyCompletedAt: null,
+    lastApplyCompletedMode: "",
+    lastApplyCompletedHadError: false,
+    lastApplyCompletedAppId: "",
+    lastApplyReport: null,
+    reflectApplyHistory: [],
+    reflectApplyHistoryOpen: false,
+    workHistory: [],
+    workHistoryOpen: true,
+    connectionPresets: [],
+    reflectPlanPreviewKeyword: "",
+    reflectPlanPreviewChangedOnly: false,
+    reflectApplyChecklist: { diff: false, plan: false, preview: false, target: false },
+    reflectPreviewOpened: false,
+    reflectPreviewOpenedFor: "",
+    lastPreviewBackupPayload: null,
+    lastPreviewBackupFilename: "",
+    diffViewTheme: "light",
+    diffViewMode: "table",
+    diffCategoryView: "",
+    diffCollapsedSections: /* @__PURE__ */ new Set(),
+    diffSectionVisibleCounts: {},
+    diffSelectedIds: /* @__PURE__ */ new Set(),
+    diffFavoritePaths: /* @__PURE__ */ new Set(),
+    diffFavoritesOnly: false,
+    diffViewedKeys: /* @__PURE__ */ new Set(),
+    diffReviewMeta: {},
+    diffHideViewed: false,
+    diffFocusedRowId: "",
+    diffExcludeSections: null,
+    diffSelectionAnchorId: "",
+    diffIncludeSame: true,
+    diffFilterSection: "",
+    diffFilterType: "",
+    diffFilterSeverity: "",
+    diffFilterTableOnly: false,
+    diffFilterTableKeyword: "",
+    diffSearchFieldName: false,
+    diffExportMode: "all",
+    diffExportContent: "diffOnly",
+    diffIgnoreSuggestions: [],
+    reflectRows: [],
+    reflectSelectedIds: /* @__PURE__ */ new Set(),
+    reflectNodeModes: {},
+    reflectUndoStack: [],
+    reflectRedoStack: [],
+    reflectPropertyFilters: /* @__PURE__ */ new Set(),
+    reflectPropertyPanelOpen: false,
+    reflectActiveSidebarSection: null,
+    reflectActiveNodeId: "",
+    reflectDetailTab: "diff",
+    importedSourceBundle: null,
+    importedTargetBundle: null,
+    importedSourceName: "",
+    importedTargetName: "",
+    lastSettingsExportBundles: [],
+    patchJsonPanelOpen: false,
+    importedPatchPayload: null,
+    reflectPreviewProdDiff: null,
+    guidedTourActive: false,
+    guidedTourIndex: 0,
+    running: false,
+    runningStartedAt: null,
+    runningTaskLabel: "",
+    runningWatchdogId: null,
+    lastResultByTab: {}
+  };
+  var REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
+  var WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
+  var CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
   function loadReflectApplyHistory() {
     return [];
   }
@@ -487,118 +554,48 @@
   function loadConnectionPresets() {
     return [];
   }
-  var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY;
-  var init_state = __esm({
-    "src/state.ts"() {
-      "use strict";
-      init_constants();
-      state = {
-        activeTab: "reflect",
-        activeFeatureKey: "",
-        activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
-        launcherSortMode: "onboarding",
-        lastSourceBundle: null,
-        lastTargetBundle: null,
-        lastDiffRows: [],
-        lastFetchIssues: [],
-        lastPartialIssues: [],
-        lastDiffTruncation: null,
-        lastDiffAt: null,
-        lastDiffSignature: "",
-        lastDiffSnapshotContext: null,
-        lastApplyPlan: null,
-        lastApplyCompletedAt: null,
-        lastApplyCompletedMode: "",
-        lastApplyCompletedHadError: false,
-        lastApplyCompletedAppId: "",
-        lastApplyReport: null,
-        reflectApplyHistory: [],
-        reflectApplyHistoryOpen: false,
-        workHistory: [],
-        workHistoryOpen: true,
-        connectionPresets: [],
-        reflectPlanPreviewKeyword: "",
-        reflectPlanPreviewChangedOnly: false,
-        reflectApplyChecklist: { diff: false, plan: false, preview: false, target: false },
-        reflectPreviewOpened: false,
-        reflectPreviewOpenedFor: "",
-        lastPreviewBackupPayload: null,
-        lastPreviewBackupFilename: "",
-        diffViewTheme: "light",
-        diffViewMode: "table",
-        diffCategoryView: "",
-        diffCollapsedSections: /* @__PURE__ */ new Set(),
-        diffSectionVisibleCounts: {},
-        diffSelectedIds: /* @__PURE__ */ new Set(),
-        diffFavoritePaths: /* @__PURE__ */ new Set(),
-        diffFavoritesOnly: false,
-        diffViewedKeys: /* @__PURE__ */ new Set(),
-        diffReviewMeta: {},
-        diffHideViewed: false,
-        diffFocusedRowId: "",
-        diffExcludeSections: null,
-        diffSelectionAnchorId: "",
-        diffIncludeSame: true,
-        diffFilterSection: "",
-        diffFilterType: "",
-        diffFilterSeverity: "",
-        diffFilterTableOnly: false,
-        diffFilterTableKeyword: "",
-        diffSearchFieldName: false,
-        diffExportMode: "all",
-        diffExportContent: "diffOnly",
-        diffIgnoreSuggestions: [],
-        reflectRows: [],
-        reflectSelectedIds: /* @__PURE__ */ new Set(),
-        reflectNodeModes: {},
-        reflectUndoStack: [],
-        reflectRedoStack: [],
-        reflectPropertyFilters: /* @__PURE__ */ new Set(),
-        reflectPropertyPanelOpen: false,
-        reflectActiveSidebarSection: null,
-        reflectActiveNodeId: "",
-        reflectDetailTab: "diff",
-        importedSourceBundle: null,
-        importedTargetBundle: null,
-        importedSourceName: "",
-        importedTargetName: "",
-        lastSettingsExportBundles: [],
-        patchJsonPanelOpen: false,
-        importedPatchPayload: null,
-        reflectPreviewProdDiff: null,
-        guidedTourActive: false,
-        guidedTourIndex: 0,
-        running: false,
-        runningStartedAt: null,
-        runningTaskLabel: "",
-        runningWatchdogId: null,
-        lastResultByTab: {}
-      };
-      REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
-      WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
-      CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
-      state.reflectApplyHistory = loadReflectApplyHistory();
-      state.workHistory = loadWorkHistory();
-      state.connectionPresets = loadConnectionPresets();
-    }
-  });
+  state.reflectApplyHistory = loadReflectApplyHistory();
+  state.workHistory = loadWorkHistory();
+  state.connectionPresets = loadConnectionPresets();
 
   // src/ui/dialog.ts
+  var root = null;
   function getToolDocument() {
     return root?.ownerDocument || document;
   }
   function setRootElement(el) {
     root = el;
   }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
+
+  // src/handlers/diffFocus.ts
+  function extractAppIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
     }
-  });
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
+  }
 
   // src/utils.ts
   function getToolWindowSafe() {
@@ -627,6 +624,14 @@
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
+  var HTML_ENTITY_NAMES = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+    nbsp: " "
+  };
   function decodeHtmlEntities(value) {
     let text = String(value ?? "");
     if (!text.includes("&")) return text;
@@ -654,6 +659,7 @@
     text = text.replace(/<\s*br\s*\/?\s*>/gi, "\n").replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, "\n").replace(/<\s*\/?\s*[a-z][^>]*>/gi, "");
     return decodeHtmlEntities(text).replace(/\n{3,}/g, "\n\n").trim();
   }
+  var SUMMARY_LIST_LIMIT = 20;
   function summarizeList(lines, limit = SUMMARY_LIST_LIMIT) {
     const items = lines.filter(Boolean);
     if (items.length <= limit) return items.join("\n");
@@ -682,6 +688,14 @@
       return raw.length > max ? `${raw.slice(0, max)}...` : raw;
     }
   }
+  var MAX_API_FIELD_ERRORS = 5;
+  function formatApiFieldErrors(errors) {
+    if (!errors || typeof errors !== "object") return [];
+    const lines = Object.entries(errors).flatMap(([key, value]) => (Array.isArray(value?.messages) ? value.messages : []).map((message) => `${key}: ${String(message)}`));
+    const shown = lines.slice(0, MAX_API_FIELD_ERRORS);
+    if (lines.length > shown.length) shown.push(`ほか ${lines.length - shown.length} 件`);
+    return shown;
+  }
   function apiErrorWithContext(err, meta) {
     if (err && err.__apiDiag) return err;
     const method = meta?.method || "GET";
@@ -693,14 +707,30 @@
     const endpoint = `${prefix}${path}`;
     const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ""}${bodySummary ? ` payload=${bodySummary}` : ""}`;
     const baseMessage = err?.message || String(err);
-    const wrapped = new Error(`${baseMessage}
-${contextLine}`);
+    const wrapped = new Error([baseMessage, ...formatApiFieldErrors(err?.errors), contextLine].join("\n"));
     wrapped.__apiDiag = true;
     wrapped.original = err;
     if (err?.code) wrapped.code = err.code;
     if (err?.id) wrapped.id = err.id;
     if (err?.stack) wrapped.stack = err.stack;
     return wrapped;
+  }
+  function flattenCategories(categories) {
+    const out = [];
+    const walk = (value, parent) => {
+      const isList = Array.isArray(value);
+      const entries = isList ? value.map((item) => ["", item]) : value && typeof value === "object" ? Object.entries(value) : [];
+      if (!isList) entries.sort((a, b) => Number(a[1]?.index ?? 0) - Number(b[1]?.index ?? 0));
+      for (const [key, item] of entries) {
+        const name = typeof item === "string" ? item : String(item?.name || item?.label || item?.code || key || "").trim();
+        if (!name) continue;
+        const path = parent ? `${parent} > ${name}` : name;
+        out.push({ name, path, index: String(item?.index ?? "") });
+        if (item && typeof item === "object") walk(item.children, path);
+      }
+    };
+    walk(categories, "");
+    return out;
   }
   function nowStamp() {
     const d = /* @__PURE__ */ new Date();
@@ -770,6 +800,9 @@ ${contextLine}`);
   }
   function downloadText(filename, text, type) {
     triggerDownload(filename, new Blob([text], { type: type || "text/plain" }));
+  }
+  function downloadBlob(filename, blob) {
+    triggerDownload(filename, blob);
   }
   async function showToast(message, type = "info") {
     try {
@@ -864,49 +897,27 @@ ${contextLine}`);
     }
     return legacyCopy(text);
   }
-  var HTML_ENTITY_NAMES, SUMMARY_LIST_LIMIT;
-  var init_utils = __esm({
-    "src/utils.ts"() {
-      "use strict";
-      init_constants();
-      HTML_ENTITY_NAMES = {
-        amp: "&",
-        lt: "<",
-        gt: ">",
-        quot: '"',
-        apos: "'",
-        nbsp: " "
-      };
-      SUMMARY_LIST_LIMIT = 20;
-    }
-  });
 
   // src/diff/engine.ts
-  var ENTITY_PATH_SEGMENT, ENTITY_IDENTIFIER_PATH_PATTERNS;
-  var init_engine = __esm({
-    "src/diff/engine.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_utils();
-      ENTITY_PATH_SEGMENT = String.raw`(?:\.[^.[\]]+|\["(?:[^"\\]|\\.)*"\])`;
-      ENTITY_IDENTIFIER_PATH_PATTERNS = [
-        new RegExp(`^(?:fieldsettings\\.properties|viewsettings\\.views|reportsettings\\.reports|processsettings\\.states|categories\\.categories|actionsettings\\.actions)${ENTITY_PATH_SEGMENT}$`),
-        new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}\\.fields${ENTITY_PATH_SEGMENT}$`),
-        // 選択肢のキーもラベルを識別子とする名前付きマップ。
-        new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}(?:\\.fields${ENTITY_PATH_SEGMENT})?\\.options${ENTITY_PATH_SEGMENT}$`)
-      ];
-    }
-  });
-
-  // src/kintone-query.ts
-  var init_kintone_query = __esm({
-    "src/kintone-query.ts"() {
-      "use strict";
-    }
-  });
+  var ENTITY_PATH_SEGMENT = String.raw`(?:\.[^.[\]]+|\["(?:[^"\\]|\\.)*"\])`;
+  var ENTITY_IDENTIFIER_PATH_PATTERNS = [
+    new RegExp(`^(?:fieldsettings\\.properties|viewsettings\\.views|reportsettings\\.reports|processsettings\\.states|categories\\.categories|actionsettings\\.actions)${ENTITY_PATH_SEGMENT}$`),
+    new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}\\.fields${ENTITY_PATH_SEGMENT}$`),
+    // 選択肢のキーもラベルを識別子とする名前付きマップ。
+    new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}(?:\\.fields${ENTITY_PATH_SEGMENT})?\\.options${ENTITY_PATH_SEGMENT}$`)
+  ];
 
   // src/runControl.ts
+  var RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
+  var RunCancelledError = class extends Error {
+    constructor(message = RUN_CANCELLED_MESSAGE) {
+      super(message);
+      __publicField(this, "cancelled", true);
+      this.name = "RunCancelledError";
+    }
+  };
+  var nextId = 1;
+  var active = null;
   function beginRun() {
     const token = { id: nextId++, controller: new AbortController(), cancelled: false, cancelledAt: 0, writes: 0 };
     active = token;
@@ -1025,22 +1036,6 @@ ${contextLine}`);
       timedOut: () => timedOut
     };
   }
-  var RUN_CANCELLED_MESSAGE, RunCancelledError, nextId, active;
-  var init_runControl = __esm({
-    "src/runControl.ts"() {
-      "use strict";
-      RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
-      RunCancelledError = class extends Error {
-        constructor(message = RUN_CANCELLED_MESSAGE) {
-          super(message);
-          __publicField(this, "cancelled", true);
-          this.name = "RunCancelledError";
-        }
-      };
-      nextId = 1;
-      active = null;
-    }
-  });
 
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
@@ -1048,6 +1043,20 @@ ${contextLine}`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
   }
+  var DEFAULT_API_GET_RETRIES = 3;
+  var DEFAULT_RETRY_BASE_DELAY_MS = 500;
+  var DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
+  var API_GET_TIMEOUT_MS = 12e4;
+  var FILE_TEXT_FETCH_TIMEOUT_MS = 6e4;
+  var RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+  var apiGetMetrics = {
+    calls: 0,
+    retries: 0,
+    failures: 0,
+    lastLatencyMs: 0,
+    lastError: "",
+    byPath: {}
+  };
   function normalizeApiGetOptions(optionsOrRetries) {
     if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
     if (!optionsOrRetries || typeof optionsOrRetries !== "object") return {};
@@ -1176,6 +1185,9 @@ ${contextLine}`);
     }
     return picked;
   }
+  var CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
+  var CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
+  var TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
   function fnv1aHashString(text) {
     let h = 2166136261;
     for (let i = 0; i < text.length; i++) {
@@ -1239,6 +1251,7 @@ ${contextLine}`);
       request.release();
     }
   }
+  var FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
   async function fetchTextFileBodyWithRetry(prefix, fileKey) {
     let result = await fetchTextFileBody(prefix, fileKey);
     if (result.ok === true) return result;
@@ -1350,6 +1363,7 @@ ${contextLine}`);
     await runTaskFactoriesWithConcurrency(tasks, CUSTOMIZE_BODY_FETCH_CONCURRENCY);
     return stats;
   }
+  var BUNDLE_FETCH_CONCURRENCY = 3;
   async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
@@ -1425,6 +1439,7 @@ ${contextLine}`);
     }
     return bundle;
   }
+  var APPS_PAGE_LIMIT = 100;
   async function fetchAllApps(guestId, onProgress) {
     const prefix = buildApiPrefix(guestId, false);
     const byId = /* @__PURE__ */ new Map();
@@ -1440,106 +1455,28 @@ ${contextLine}`);
     }
     return [...byId.entries()].sort(([a], [b]) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0).map(([, app]) => app);
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, API_GET_TIMEOUT_MS, FILE_TEXT_FETCH_TIMEOUT_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT, FILE_DOWNLOAD_DEFAULT_MAX_BYTES, BUNDLE_FETCH_CONCURRENCY, APPS_PAGE_LIMIT;
-  var init_api = __esm({
-    "src/api.ts"() {
-      "use strict";
-      init_constants();
-      init_kintone_query();
-      init_utils();
-      init_runControl();
-      DEFAULT_API_GET_RETRIES = 3;
-      DEFAULT_RETRY_BASE_DELAY_MS = 500;
-      DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
-      API_GET_TIMEOUT_MS = 12e4;
-      FILE_TEXT_FETCH_TIMEOUT_MS = 6e4;
-      RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
-      apiGetMetrics = {
-        calls: 0,
-        retries: 0,
-        failures: 0,
-        lastLatencyMs: 0,
-        lastError: "",
-        byPath: {}
-      };
-      CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
-      CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
-      TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
-      FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
-      BUNDLE_FETCH_CONCURRENCY = 3;
-      APPS_PAGE_LIMIT = 100;
-    }
-  });
-
-  // src/kintone-enums.ts
-  var init_kintone_enums = __esm({
-    "src/kintone-enums.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/diff/label-dict.ts
-  var init_label_dict = __esm({
-    "src/diff/label-dict.ts"() {
-      "use strict";
-      init_kintone_enums();
-    }
-  });
-
-  // src/diff/enrich.ts
-  var init_enrich = __esm({
-    "src/diff/enrich.ts"() {
-      "use strict";
-      init_constants();
-      init_utils();
-      init_label_dict();
-    }
-  });
-
-  // src/diff/path-decoder.ts
-  var init_path_decoder = __esm({
-    "src/diff/path-decoder.ts"() {
-      "use strict";
-      init_label_dict();
-      init_kintone_enums();
-    }
-  });
 
   // src/diff/category-view.ts
-  var DIFF_CATEGORIES, SECTION_TO_CATEGORY;
-  var init_category_view = __esm({
-    "src/diff/category-view.ts"() {
-      "use strict";
-      init_utils();
-      init_state();
-      init_label_dict();
-      init_path_decoder();
-      DIFF_CATEGORIES = [
-        { key: "fields", label: "フィールド", hint: "フィールド定義の追加・変更", sections: ["fieldSettings"], icon: "🔤" },
-        { key: "layout", label: "レイアウト", hint: "フォーム配置の差分", sections: ["layoutSettings"], icon: "🧩" },
-        { key: "views", label: "ビュー・グラフ", hint: "一覧表示とレポート", sections: ["viewSettings", "reportSettings"], icon: "📊" },
-        { key: "process", label: "プロセス・アクション", hint: "ステータス遷移とアクション", sections: ["processSettings", "actionSettings"], icon: "🔁" },
-        { key: "notify", label: "通知", hint: "通知ルールとリマインダー", sections: ["notifications", "perRecordNotifications", "reminderNotifications"], icon: "🔔" },
-        { key: "acl", label: "権限", hint: "アプリ・フィールド・レコード権限", sections: ["appAcl", "fieldAcl", "recordPermissions"], icon: "🔐" },
-        { key: "customize", label: "JS/CSS・プラグイン", hint: "カスタマイズと配布資産", sections: ["customizeSettings", "pluginSettings"], icon: "🧪" },
-        { key: "app", label: "アプリ設定", hint: "基本情報・フォーム・カテゴリ", sections: ["appSettings", "appInfo", "formSettings", "categories"], icon: "⚙" }
-      ];
-      SECTION_TO_CATEGORY = (() => {
-        const m = {};
-        for (const cat of DIFF_CATEGORIES) for (const sec of cat.sections) m[sec] = cat.key;
-        return m;
-      })();
-    }
-  });
-
-  // src/diff/export-safety.ts
-  var init_export_safety = __esm({
-    "src/diff/export-safety.ts"() {
-      "use strict";
-    }
-  });
+  var DIFF_CATEGORIES = [
+    { key: "fields", label: "フィールド", hint: "フィールド定義の追加・変更", sections: ["fieldSettings"], icon: "🔤" },
+    { key: "layout", label: "レイアウト", hint: "フォーム配置の差分", sections: ["layoutSettings"], icon: "🧩" },
+    { key: "views", label: "ビュー・グラフ", hint: "一覧表示とレポート", sections: ["viewSettings", "reportSettings"], icon: "📊" },
+    { key: "process", label: "プロセス・アクション", hint: "ステータス遷移とアクション", sections: ["processSettings", "actionSettings"], icon: "🔁" },
+    { key: "notify", label: "通知", hint: "通知ルールとリマインダー", sections: ["notifications", "perRecordNotifications", "reminderNotifications"], icon: "🔔" },
+    { key: "acl", label: "権限", hint: "アプリ・フィールド・レコード権限", sections: ["appAcl", "fieldAcl", "recordPermissions"], icon: "🔐" },
+    { key: "customize", label: "JS/CSS・プラグイン", hint: "カスタマイズと配布資産", sections: ["customizeSettings", "pluginSettings"], icon: "🧪" },
+    { key: "app", label: "アプリ設定", hint: "基本情報・フォーム・カテゴリ", sections: ["appSettings", "appInfo", "formSettings", "categories"], icon: "⚙" }
+  ];
+  var SECTION_TO_CATEGORY = (() => {
+    const m = {};
+    for (const cat of DIFF_CATEGORIES) for (const sec of cat.sections) m[sec] = cat.key;
+    return m;
+  })();
 
   // src/design/snapshot.ts
+  var hasOwn = (value, key) => value != null && Object.prototype.hasOwnProperty.call(value, key);
+  var isObject = (value) => value !== null && typeof value === "object";
+  var isPlainObject = (value) => isObject(value) && !Array.isArray(value);
   function escapeJsonPointerToken(value) {
     return String(value ?? "").replace(/~/g, "~0").replace(/\//g, "~1");
   }
@@ -1685,8 +1622,9 @@ ${contextLine}`);
       case "perRecordNotifications":
       case "reminderNotifications":
         return knownCollection(section, "notifications", "array");
+      // kintone の応答はオブジェクト（名前がキー）。以前の設定JSONの配列も受け付ける。
       case "categories":
-        return knownCollection(section, "categories", "array");
+        return knownCollection(section, "categories", Array.isArray(section.categories) ? "array" : "object");
       default: {
         const keys = Object.keys(section).filter((key2) => !key2.startsWith("_"));
         return {
@@ -1956,18 +1894,124 @@ ${contextLine}`);
       complete: sectionRows.every((row) => row.status === "available" || row.status === "empty")
     };
   }
-  var hasOwn, isObject, isPlainObject;
-  var init_snapshot = __esm({
-    "src/design/snapshot.ts"() {
-      "use strict";
-      init_constants();
-      hasOwn = (value, key) => value != null && Object.prototype.hasOwnProperty.call(value, key);
-      isObject = (value) => value !== null && typeof value === "object";
-      isPlainObject = (value) => isObject(value) && !Array.isArray(value);
-    }
-  });
 
   // src/diff/export.ts
+  var MD_FIELD_TYPE_LABELS = {
+    SINGLE_LINE_TEXT: "文字列（1行）",
+    MULTI_LINE_TEXT: "文字列（複数行）",
+    RICH_TEXT: "リッチテキスト",
+    NUMBER: "数値",
+    CALC: "計算",
+    CHECK_BOX: "チェックボックス",
+    RADIO_BUTTON: "ラジオボタン",
+    DROP_DOWN: "ドロップダウン",
+    MULTI_SELECT: "複数選択",
+    DATE: "日付",
+    TIME: "時刻",
+    DATETIME: "日時",
+    LINK: "リンク",
+    FILE: "添付ファイル",
+    USER_SELECT: "ユーザー選択",
+    ORGANIZATION_SELECT: "組織選択",
+    GROUP_SELECT: "グループ選択",
+    CATEGORY: "カテゴリー",
+    STATUS: "ステータス",
+    STATUS_ASSIGNEE: "作業者",
+    SUBTABLE: "テーブル",
+    REFERENCE_TABLE: "関連レコード一覧",
+    RECORD_NUMBER: "レコード番号",
+    CREATOR: "作成者",
+    CREATED_TIME: "作成日時",
+    MODIFIER: "更新者",
+    UPDATED_TIME: "更新日時",
+    SPACER: "スペース",
+    HR: "罫線",
+    LABEL: "ラベル",
+    GROUP: "グループ",
+    LOOKUP: "ルックアップ"
+  };
+  var MD_VIEW_TYPE_LABELS = {
+    LIST: "一覧",
+    CALENDAR: "カレンダー",
+    CUSTOM: "カスタマイズ"
+  };
+  var MD_REPORT_CHART_LABELS = {
+    BAR: "棒グラフ",
+    COLUMN: "縦棒グラフ",
+    LINE: "折れ線グラフ",
+    PIE: "円グラフ",
+    PIVOT_TABLE: "クロス集計表",
+    TABLE: "表",
+    AREA: "面グラフ",
+    SPLINE: "スプライン",
+    SPLINE_AREA: "スプライン面",
+    SCATTER: "散布図"
+  };
+  var MD_ENTITY_TYPE_LABELS = {
+    USER: "ユーザー",
+    GROUP: "グループ",
+    ORGANIZATION: "組織",
+    FIELD_ENTITY: "フィールド",
+    CREATOR: "レコード作成者",
+    CUSTOM_FIELD: "カスタムフィールド"
+  };
+  var MD_PROCESS_ASSIGNEE_TYPE_LABELS = {
+    ONE: "1人選出（候補から1人）",
+    ANYONE: "候補の誰でも（先着）",
+    ALL: "全員（全員の処理が必要）"
+  };
+  var MD_FIELD_ACCESSIBILITY_LABELS = {
+    WRITE: "閲覧・編集可",
+    READ: "閲覧のみ",
+    NONE: "アクセス不可"
+  };
+  var MD_REPORT_CHART_MODE_LABELS = {
+    NORMAL: "通常",
+    STACKED: "積み上げ",
+    PERCENTAGE: "100%積み上げ"
+  };
+  var MD_AGGREGATION_TYPE_LABELS = {
+    COUNT: "件数",
+    SUM: "合計",
+    AVG: "平均",
+    MAX: "最大値",
+    MIN: "最小値"
+  };
+  var MD_CUSTOMIZE_SCOPE_LABELS = {
+    ALL: "全ユーザー",
+    ADMIN: "管理者のみ",
+    NONE: "無効"
+  };
+  var MD_RESOURCE_TYPE_LABELS = {
+    URL: "URL指定",
+    FILE: "ファイル指定"
+  };
+  var MD_ICON_TYPE_LABELS = {
+    PRESET: "プリセット",
+    FILE: "アップロードファイル"
+  };
+  var MD_THEME_LABELS = {
+    WHITE: "ホワイト",
+    RED: "レッド",
+    BLUE: "ブルー",
+    GREEN: "グリーン",
+    YELLOW: "イエロー",
+    BLACK: "ブラック",
+    CLIPBOARD: "クリップボード",
+    BINDER: "バインダー",
+    PENCIL: "ペンシル",
+    CLIPS: "クリップ"
+  };
+  var MD_VIEW_BUILTIN_LABELS = {
+    ASSIGNEE: "作業者ビュー",
+    UNDONE: "未完了レコード",
+    ACTIVE_BY_USER: "自分が処理すべきレコード",
+    RECORDS_OF_USER: "自分が関わるレコード"
+  };
+  var MD_PAGINATION_LABELS = {
+    ROW: "行ページャ",
+    PAGE: "ページ番号"
+  };
   function mdProcessAssigneeTypeLabel(value) {
     const key = String(value || "").trim();
     if (!key) return "";
@@ -2440,13 +2484,30 @@ ${body}`;
     const parts = [];
     parts.push(`- カテゴリー機能: ${sec?.enabled ? "有効" : "無効"}`);
     parts.push("");
-    const list = sec?.categories || [];
     parts.push(mdTable(
-      ["コード", "名称", "表示順"],
-      list.map((c) => [c.code || "", c.name || "", c.index ?? ""])
+      ["カテゴリー", "表示順"],
+      flattenCategories(sec?.categories).map((c) => [c.path, c.index])
     ));
     return parts.join("\n");
   }
+  var MD_SECTION_RENDERERS = {
+    appSettings: mdRenderAppSettings,
+    fieldSettings: mdRenderFieldSettings,
+    layoutSettings: mdRenderLayoutSettings,
+    viewSettings: mdRenderViewSettings,
+    reportSettings: mdRenderReportSettings,
+    processSettings: mdRenderProcessSettings,
+    pluginSettings: mdRenderPluginSettings,
+    customizeSettings: mdRenderCustomizeSettings,
+    actionSettings: mdRenderActionSettings,
+    appAcl: mdRenderAppAcl,
+    fieldAcl: mdRenderFieldAcl,
+    recordPermissions: mdRenderRecordPermissions,
+    notifications: mdRenderNotifications,
+    perRecordNotifications: mdRenderPerRecordNotifications,
+    reminderNotifications: mdRenderReminderNotifications,
+    categories: mdRenderCategories
+  };
   function mdBundleSummary(bundle) {
     const sections = bundle?.sections || {};
     const rows = [];
@@ -2656,257 +2717,12 @@ ${body}`;
     }
     return lines.join("\n");
   }
-  var MD_FIELD_TYPE_LABELS, MD_VIEW_TYPE_LABELS, MD_REPORT_CHART_LABELS, MD_ENTITY_TYPE_LABELS, MD_PROCESS_ASSIGNEE_TYPE_LABELS, MD_FIELD_ACCESSIBILITY_LABELS, MD_REPORT_CHART_MODE_LABELS, MD_AGGREGATION_TYPE_LABELS, MD_CUSTOMIZE_SCOPE_LABELS, MD_RESOURCE_TYPE_LABELS, MD_ICON_TYPE_LABELS, MD_THEME_LABELS, MD_VIEW_BUILTIN_LABELS, MD_PAGINATION_LABELS, MD_SECTION_RENDERERS, DIFF_HTML_REVIEW_STATE_MAX_BYTES;
-  var init_export = __esm({
-    "src/diff/export.ts"() {
-      init_constants();
-      init_utils();
-      init_state();
-      init_engine();
-      init_enrich();
-      init_filter();
-      init_api();
-      init_dialog();
-      init_category_view();
-      init_path_decoder();
-      init_export_safety();
-      init_snapshot();
-      MD_FIELD_TYPE_LABELS = {
-        SINGLE_LINE_TEXT: "文字列（1行）",
-        MULTI_LINE_TEXT: "文字列（複数行）",
-        RICH_TEXT: "リッチテキスト",
-        NUMBER: "数値",
-        CALC: "計算",
-        CHECK_BOX: "チェックボックス",
-        RADIO_BUTTON: "ラジオボタン",
-        DROP_DOWN: "ドロップダウン",
-        MULTI_SELECT: "複数選択",
-        DATE: "日付",
-        TIME: "時刻",
-        DATETIME: "日時",
-        LINK: "リンク",
-        FILE: "添付ファイル",
-        USER_SELECT: "ユーザー選択",
-        ORGANIZATION_SELECT: "組織選択",
-        GROUP_SELECT: "グループ選択",
-        CATEGORY: "カテゴリー",
-        STATUS: "ステータス",
-        STATUS_ASSIGNEE: "作業者",
-        SUBTABLE: "テーブル",
-        REFERENCE_TABLE: "関連レコード一覧",
-        RECORD_NUMBER: "レコード番号",
-        CREATOR: "作成者",
-        CREATED_TIME: "作成日時",
-        MODIFIER: "更新者",
-        UPDATED_TIME: "更新日時",
-        SPACER: "スペース",
-        HR: "罫線",
-        LABEL: "ラベル",
-        GROUP: "グループ",
-        LOOKUP: "ルックアップ"
-      };
-      MD_VIEW_TYPE_LABELS = {
-        LIST: "一覧",
-        CALENDAR: "カレンダー",
-        CUSTOM: "カスタマイズ"
-      };
-      MD_REPORT_CHART_LABELS = {
-        BAR: "棒グラフ",
-        COLUMN: "縦棒グラフ",
-        LINE: "折れ線グラフ",
-        PIE: "円グラフ",
-        PIVOT_TABLE: "クロス集計表",
-        TABLE: "表",
-        AREA: "面グラフ",
-        SPLINE: "スプライン",
-        SPLINE_AREA: "スプライン面",
-        SCATTER: "散布図"
-      };
-      MD_ENTITY_TYPE_LABELS = {
-        USER: "ユーザー",
-        GROUP: "グループ",
-        ORGANIZATION: "組織",
-        FIELD_ENTITY: "フィールド",
-        CREATOR: "レコード作成者",
-        CUSTOM_FIELD: "カスタムフィールド"
-      };
-      MD_PROCESS_ASSIGNEE_TYPE_LABELS = {
-        ONE: "1人選出（候補から1人）",
-        ANYONE: "候補の誰でも（先着）",
-        ALL: "全員（全員の処理が必要）"
-      };
-      MD_FIELD_ACCESSIBILITY_LABELS = {
-        WRITE: "閲覧・編集可",
-        READ: "閲覧のみ",
-        NONE: "アクセス不可"
-      };
-      MD_REPORT_CHART_MODE_LABELS = {
-        NORMAL: "通常",
-        STACKED: "積み上げ",
-        PERCENTAGE: "100%積み上げ"
-      };
-      MD_AGGREGATION_TYPE_LABELS = {
-        COUNT: "件数",
-        SUM: "合計",
-        AVG: "平均",
-        MAX: "最大値",
-        MIN: "最小値"
-      };
-      MD_CUSTOMIZE_SCOPE_LABELS = {
-        ALL: "全ユーザー",
-        ADMIN: "管理者のみ",
-        NONE: "無効"
-      };
-      MD_RESOURCE_TYPE_LABELS = {
-        URL: "URL指定",
-        FILE: "ファイル指定"
-      };
-      MD_ICON_TYPE_LABELS = {
-        PRESET: "プリセット",
-        FILE: "アップロードファイル"
-      };
-      MD_THEME_LABELS = {
-        WHITE: "ホワイト",
-        RED: "レッド",
-        BLUE: "ブルー",
-        GREEN: "グリーン",
-        YELLOW: "イエロー",
-        BLACK: "ブラック",
-        CLIPBOARD: "クリップボード",
-        BINDER: "バインダー",
-        PENCIL: "ペンシル",
-        CLIPS: "クリップ"
-      };
-      MD_VIEW_BUILTIN_LABELS = {
-        ASSIGNEE: "作業者ビュー",
-        UNDONE: "未完了レコード",
-        ACTIVE_BY_USER: "自分が処理すべきレコード",
-        RECORDS_OF_USER: "自分が関わるレコード"
-      };
-      MD_PAGINATION_LABELS = {
-        ROW: "行ページャ",
-        PAGE: "ページ番号"
-      };
-      MD_SECTION_RENDERERS = {
-        appSettings: mdRenderAppSettings,
-        fieldSettings: mdRenderFieldSettings,
-        layoutSettings: mdRenderLayoutSettings,
-        viewSettings: mdRenderViewSettings,
-        reportSettings: mdRenderReportSettings,
-        processSettings: mdRenderProcessSettings,
-        pluginSettings: mdRenderPluginSettings,
-        customizeSettings: mdRenderCustomizeSettings,
-        actionSettings: mdRenderActionSettings,
-        appAcl: mdRenderAppAcl,
-        fieldAcl: mdRenderFieldAcl,
-        recordPermissions: mdRenderRecordPermissions,
-        notifications: mdRenderNotifications,
-        perRecordNotifications: mdRenderPerRecordNotifications,
-        reminderNotifications: mdRenderReminderNotifications,
-        categories: mdRenderCategories
-      };
-      DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
-    }
-  });
+  var DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
 
   // src/diff/filter.ts
-  var SECTION_LABEL_BY_KEY;
-  var init_filter = __esm({
-    "src/diff/filter.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_engine();
-      init_api();
-      init_export();
-      SECTION_LABEL_BY_KEY = new Map(
-        SECTION_DEFS.map((s) => [s.key, s.label])
-      );
-    }
-  });
-
-  // src/kintoneGuard.ts
-  var NOT_KINTONE_PAGE_MESSAGE = "kintone画面で実行してください";
-  function isKintonePage() {
-    return Boolean(window.kintone?.api && window.kintone?.app);
-  }
-  function runOnKintonePage(run) {
-    if (!isKintonePage()) {
-      alert(NOT_KINTONE_PAGE_MESSAGE);
-      return;
-    }
-    try {
-      run();
-    } catch (error) {
-      if (error?.panelBusy === true) return;
-      throw error;
-    }
-  }
-
-  // src/handlers/diffFocus.ts
-  init_state();
-  init_dialog();
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
-  // src/ui/components.ts
-  init_constants();
-  init_state();
-  init_utils();
-  init_filter();
-
-  // src/diff/ignore-presets.ts
-  init_state();
-
-  // src/ui/components.ts
-  init_engine();
-  init_enrich();
-
-  // src/reflect/nodeModeUi.ts
-  init_state();
-
-  // src/reflect/applyHistorySummary.ts
-  var APPLY_HISTORY_MODE_LABELS = Object.freeze({
-    section: "まとめ反映",
-    nodes: "差分選択",
-    patch: "JSONパッチ",
-    retry: "再反映",
-    restore: "復元"
-  });
-
-  // src/ui/components.ts
-  init_constants();
-  init_dialog();
-
-  // src/oss_integrations.ts
-  init_utils();
-  init_dialog();
+  var SECTION_LABEL_BY_KEY = new Map(
+    SECTION_DEFS.map((s) => [s.key, s.label])
+  );
 
   // src/ui/components.ts
   var ui2 = {};
@@ -2929,9 +2745,6 @@ ${body}`;
   });
 
   // src/entries/litePanelTheme.ts
-  init_dialog();
-  init_runControl();
-  init_utils();
   var STYLE_ID = "kus-lp-theme-styles";
   var ACCENTS = {
     diff: { from: "#1d4ed8", via: "#2563eb", to: "#0ea5e9", chip: "#dbeafe", ring: "rgba(37,99,235,.16)" },
@@ -4431,7 +4244,6 @@ ${body}`;
   }
 
   // src/entries/liteWorkflow.ts
-  init_utils();
   var CSS2 = `
 .kus-wf.kus-lp{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px}
 .kus-wf .kus-lp__hero{background:#172033;padding:16px 22px}
@@ -4847,20 +4659,68 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return { refresh, show };
   }
 
-  // src/entries/design-lite-ui.ts
-  init_constants();
-
-  // src/tabs/design-standalone.ts
-  init_constants();
-  init_state();
-  init_utils();
-  init_api();
-
   // src/jszipLoader.ts
-  init_constants();
+  var loadPromise = null;
+  var failedScripts = /* @__PURE__ */ new WeakSet();
+  var JSZIP_LOAD_TIMEOUT_MS = 3e4;
+  function loadJSZipLite() {
+    const w = window;
+    if (w.JSZip) return Promise.resolve(w.JSZip);
+    if (loadPromise) return loadPromise;
+    const src = EXTERNAL_LIBRARIES.jszip.cdnUrl || "";
+    loadPromise = new Promise((resolve, reject) => {
+      const existing = Array.from(document.querySelectorAll(`script[src="${src}"]`)).find((script2) => !failedScripts.has(script2));
+      const script = existing || document.createElement("script");
+      let settled = false;
+      let timer;
+      const cleanup = () => {
+        if (timer !== void 0) clearTimeout(timer);
+        script.removeEventListener("load", settle);
+        script.removeEventListener("error", onError);
+      };
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        failedScripts.add(script);
+        if (!existing) script.remove();
+        reject(error);
+      };
+      const settle = () => {
+        if (settled) return;
+        const ctor = w.JSZip;
+        if (!ctor) {
+          fail(new Error("JSZipのロード後もグローバル変数が見つかりません"));
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(ctor);
+      };
+      const onError = () => fail(new Error(`JSZipの読み込みに失敗しました（${src}）。CSP やネットワーク制限を確認してください`));
+      script.addEventListener("load", settle, { once: true });
+      script.addEventListener("error", onError, { once: true });
+      timer = setTimeout(() => {
+        if (w.JSZip) settle();
+        else fail(new Error("JSZipの読み込みが30秒以内に完了しませんでした。CSP やネットワーク制限を確認して再試行してください"));
+      }, JSZIP_LOAD_TIMEOUT_MS);
+      if (!existing) {
+        try {
+          script.src = src;
+          script.async = true;
+          document.head.appendChild(script);
+        } catch (error) {
+          fail(error instanceof Error ? error : new Error(String(error)));
+        }
+      }
+    }).catch((error) => {
+      loadPromise = null;
+      throw error;
+    });
+    return loadPromise;
+  }
 
   // src/settingsBundleImport.ts
-  init_api();
   function preserveImportedMetadata(bundle, raw, preserve) {
     if (!preserve || !bundle || !raw || typeof raw !== "object") return bundle;
     bundle.fetchedAt = Object.prototype.hasOwnProperty.call(raw, "fetchedAt") ? raw.fetchedAt : null;
@@ -4927,13 +4787,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return candidates;
   }
 
-  // src/tabs/design-standalone.ts
-  init_export();
-
   // src/design/ai-markdown.ts
-  init_constants();
-  init_utils();
-  init_snapshot();
   var AI_MARKDOWN_SCHEMA_VERSION = "1";
   var hasOwn2 = (value, key) => value != null && Object.prototype.hasOwnProperty.call(value, key);
   var isObject2 = (value) => value !== null && typeof value === "object";
@@ -5458,16 +5312,7 @@ ${fence}`;
 `;
   }
 
-  // src/tabs/design-standalone.ts
-  init_snapshot();
-
   // src/tabs/design-xlsx.ts
-  init_constants();
-  init_snapshot();
-  init_dialog();
-  init_utils();
-  init_runControl();
-  init_api();
   var SHEETLIB_PRIMARY_URL = "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js";
   var SHEETLIB_FALLBACK_URL = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
   var rememberedSheetSelection = null;
@@ -7242,7 +7087,8 @@ ${fence}`;
         if (appSettings?.spaceId) sAoa.push(["スペースID", appSettings.spaceId]);
         if (appSettings?.threadId) sAoa.push(["スレッドID", appSettings.threadId]);
         sAoa.push([]);
-        if (categories && (categories.enabled != null || categories.enable != null || Array.isArray(categories.categories) && categories.categories.length > 0)) {
+        const flatCategories = flattenCategories(categories?.categories).map((category) => category.path);
+        if (categories && (categories.enabled != null || categories.enable != null || flatCategories.length > 0)) {
           sAoa.push(["カテゴリー"]);
           sectionRows.push(sAoa.length - 1);
           sAoa.push(["項目", "内容"]);
@@ -7251,19 +7097,6 @@ ${fence}`;
           if (catEnabled != null) {
             sAoa.push(["カテゴリー機能", catEnabled ? "有効" : "無効"]);
           }
-          const flatCategories = [];
-          const walkCategories = (items, parentPath = "") => {
-            for (const item of items || []) {
-              const label = typeof item === "string" ? item : String(item?.name || item?.label || item?.code || "").trim();
-              if (!label) continue;
-              const currentPath = parentPath ? `${parentPath} > ${label}` : label;
-              flatCategories.push(currentPath);
-              if (Array.isArray(item?.children) && item.children.length > 0) {
-                walkCategories(item.children, currentPath);
-              }
-            }
-          };
-          walkCategories(Array.isArray(categories.categories) ? categories.categories : []);
           sAoa.push(["カテゴリー数", flatCategories.length]);
           sAoa.push(["カテゴリー一覧", flatCategories.length > 0 ? flatCategories.join(", ") : "(なし)"]);
           sAoa.push([]);
@@ -8560,11 +8393,7 @@ ${detail}`);
     return true;
   }
 
-  // src/tabs/design-standalone.ts
-  init_runControl();
-
   // src/tabs/run-cancel-summary.ts
-  init_runControl();
   var CancelReportError = class extends Error {
     constructor(done, total, details = []) {
       super([formatCancelledHeadline(done, total), ...details.filter(Boolean)].join("\n"));
@@ -8583,6 +8412,12 @@ ${detail}`);
   }
   function createCancelReport(done, total, details = []) {
     return new CancelReportError(done, total, details);
+  }
+  function isCancelReportError(error) {
+    return !!error && typeof error === "object" && error.cancelReport === true;
+  }
+  function isCancelStop(error) {
+    return isRunCancelledError(error) || isCancelReportError(error);
   }
 
   // src/tabs/design-standalone.ts
@@ -8821,6 +8656,317 @@ ${lines.join("\n")}`), { partialSuccess: true });
       return;
     }
     setStatus(`設計書ZIP出力完了（${apps.length}件）`);
+  }
+  function uniqueMdZipEntryName(used, baseName) {
+    const cleaned = String(baseName || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim() || "design.md";
+    let candidate = cleaned;
+    let n = 2;
+    while (used.has(candidate.toLowerCase())) {
+      const dot = cleaned.lastIndexOf(".");
+      const stem = dot > 0 ? cleaned.slice(0, dot) : cleaned;
+      const ext = dot > 0 ? cleaned.slice(dot) : "";
+      candidate = `${stem}(${n})${ext}`;
+      n += 1;
+    }
+    used.add(candidate.toLowerCase());
+    return candidate;
+  }
+  function escapeOverviewCell(value) {
+    return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/[\r\n]+/g, " ").trim();
+  }
+  function firstErrorLine(error) {
+    const raw = error instanceof Error ? error.message : String(error ?? "不明なエラー");
+    return raw.split(/\r?\n/)[0].trim() || "不明なエラー";
+  }
+  function buildBatchDesignMdOverview(input) {
+    const notRunApps = input.failedApps.filter((f) => /未実行（中止）/.test(f.error));
+    const actualFailedApps = input.failedApps.filter((f) => !/未実行（中止）/.test(f.error));
+    const formatLabel = input.format === "ai-md" ? "AI向けMarkdown (ai-md)" : input.format === "both" ? "設計書Markdown + AI向けMarkdown (both)" : "設計書Markdown (md)";
+    const lines = [
+      "# kintone 設計書 Markdown 一括出力サマリ",
+      "",
+      `- 生成日時: ${input.generatedAt}`,
+      `- 出力形式: ${formatLabel}`,
+      `- 参照環境: ${input.preview ? "プレビュー" : "本番"}`,
+      `- 対象アプリ数: ${input.total}件（成功 ${input.items.length} / 失敗 ${actualFailedApps.length}${notRunApps.length ? ` / 未実行（中止） ${notRunApps.length}` : ""}）`
+    ];
+    if (input.cancelled) {
+      lines.push("- 注意: 利用者の操作で中止したため、未実行のアプリは含まれていません。");
+    }
+    if (actualFailedApps.length) {
+      lines.push("- 注意: 取得に失敗したアプリがあります。下の表のエラー内容を確認してください。");
+    }
+    lines.push(
+      "",
+      "## アプリ一覧",
+      "",
+      "| アプリID | アプリ名 | ゲストスペース | 取得元 | 状態 | 出力ファイル | 備考・エラー |",
+      "| --- | --- | --- | --- | --- | --- | --- |"
+    );
+    for (const item of input.items) {
+      const notes = [];
+      if (item.missingSections.length) notes.push(`未取得: ${item.missingSections.join(", ")}`);
+      if (item.failedSections.length) notes.push(`取得失敗: ${item.failedSections.join(", ")}`);
+      if (item.partialSections.length) notes.push(`部分取得: ${item.partialSections.join(", ")}`);
+      lines.push(
+        `| ${escapeOverviewCell(item.appId)} | ${escapeOverviewCell(item.appName)} | ${escapeOverviewCell(item.guestId || "(通常空間)")} | ${item.source === "settings-json" ? "設定JSON" : "API"} | ${item.complete ? "成功" : "一部未取得・失敗あり"} | ${escapeOverviewCell(item.files.join(", "))} | ${escapeOverviewCell(notes.join(" / "))} |`
+      );
+    }
+    for (const failed of input.failedApps) {
+      const isNotRun = /未実行（中止）/.test(failed.error);
+      lines.push(
+        `| ${escapeOverviewCell(failed.appId)} |  | ${escapeOverviewCell(failed.guestId || "(通常空間)")} | - | ${isNotRun ? "未実行（中止）" : "失敗"} |  | ${escapeOverviewCell(failed.error)} |`
+      );
+    }
+    lines.push("");
+    return lines.join("\n");
+  }
+  async function runBatchDesignExportMdZipStandalone(source, setStatus) {
+    const format = source?.format ?? "md";
+    if (format !== "md" && format !== "ai-md" && format !== "both") {
+      throw new Error("一括Markdown出力の形式は md、ai-md または both を指定してください");
+    }
+    const preview = !!source?.preview;
+    let rawApps;
+    if (Array.isArray(source?.apps)) {
+      const validationError = validateDesignExportTargets(source.apps);
+      if (validationError) throw new Error(validationError);
+      rawApps = source.apps.map((a) => ({
+        appId: String(a.appId || a.bundle?.appId || "").trim(),
+        guestId: String(a.guestId || "").trim(),
+        bundle: a.bundle || null
+      }));
+    } else {
+      const guestId = String(source?.guestId || "").trim();
+      const appIds = String(source?.appIdsText || "").split(/[\s,、]+/).map((s) => s.trim()).filter(Boolean);
+      const validationError = validateDesignExportTargets(appIds.map((appId) => ({ appId, guestId })));
+      if (validationError) throw new Error(validationError);
+      rawApps = appIds.map((appId) => ({ appId, guestId, bundle: null }));
+    }
+    const seen = /* @__PURE__ */ new Set();
+    const targets = [];
+    for (const item of rawApps) {
+      const key = `${item.appId}::${item.guestId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      targets.push(item);
+    }
+    if (targets.length === 0) throw new Error("アプリIDを1件以上入力してください");
+    const appIdCounts = /* @__PURE__ */ new Map();
+    for (const t of targets) {
+      appIdCounts.set(t.appId, (appIdCounts.get(t.appId) || 0) + 1);
+    }
+    const importedCount = targets.filter((t) => t.bundle).length;
+    setStatus(`設計書Markdown ZIP出力を開始（${targets.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ""}）...`);
+    const JSZipCtor = await loadJSZipLite();
+    const zip = new JSZipCtor();
+    const usedFilenames = /* @__PURE__ */ new Set(["overview.md", "_manifest.json"]);
+    const items = [];
+    const failedApps = [];
+    const scopes = SECTION_DEFS.map((s) => s.key);
+    let stoppedAt = -1;
+    for (let i = 0; i < targets.length; i += 1) {
+      if (isCancelRequested()) {
+        stoppedAt = i;
+        break;
+      }
+      const target = targets[i];
+      const labelPrefix = `(${i + 1}/${targets.length}) App ${target.appId}${target.guestId ? ` (guest:${target.guestId})` : ""}: `;
+      try {
+        let mdBundle = null;
+        let aiBundle = null;
+        if (format === "md") {
+          mdBundle = await resolveDesignBundle(
+            { appId: target.appId, guestId: target.guestId, preview, importedBundle: target.bundle },
+            "source",
+            setStatus,
+            labelPrefix,
+            false
+          );
+        } else if (format === "ai-md") {
+          aiBundle = await resolveDesignBundle(
+            { appId: target.appId, guestId: target.guestId, preview, importedBundle: target.bundle },
+            "source",
+            setStatus,
+            labelPrefix,
+            true
+          );
+        } else {
+          if (target.bundle) {
+            mdBundle = await resolveDesignBundle(
+              { appId: target.appId, guestId: target.guestId, preview, importedBundle: target.bundle },
+              "source",
+              setStatus,
+              labelPrefix,
+              false
+            );
+            aiBundle = pickSettingsBundle(target.bundle, {
+              side: "source",
+              appId: target.appId,
+              rawSettings: true,
+              preserveMetadata: true
+            });
+          } else {
+            mdBundle = await resolveDesignBundle(
+              { appId: target.appId, guestId: target.guestId, preview },
+              "source",
+              setStatus,
+              labelPrefix,
+              false
+            );
+            aiBundle = await resolveDesignBundle(
+              { appId: target.appId, guestId: target.guestId, preview },
+              "source",
+              setStatus,
+              labelPrefix,
+              true
+            );
+          }
+        }
+        const primaryBundle = aiBundle || mdBundle;
+        const appName = extractAppNameFromBundle(primaryBundle) || "";
+        const appLabel = appLabelFromBundle(primaryBundle) || `app${sanitizeFilenamePart(target.appId)}`;
+        const guestPrefix = target.guestId && (appIdCounts.get(target.appId) || 0) > 1 ? `guest${target.guestId}_` : "";
+        const files = [];
+        let mdFile;
+        let aiMdFile;
+        if (format === "md" || format === "both") {
+          mdFile = uniqueMdZipEntryName(usedFilenames, `${guestPrefix}設計書_${appLabel}.md`);
+          zip.file(mdFile, bundleToMarkdown(mdBundle));
+          files.push(mdFile);
+        }
+        if (format === "ai-md" || format === "both") {
+          aiMdFile = uniqueMdZipEntryName(usedFilenames, `${guestPrefix}設計書_AI向けMarkdown_${appLabel}.md`);
+          zip.file(aiMdFile, buildDesignAiMarkdown(aiBundle));
+          files.push(aiMdFile);
+        }
+        const snapshot = buildDesignSnapshot(primaryBundle);
+        const knownRows = snapshot.sections.filter((row) => scopes.includes(row.key));
+        const missingSections = knownRows.filter((row) => row.status === "missing").map((row) => row.label || row.key);
+        const failedSections = knownRows.filter((row) => row.status === "fetch-error").map((row) => row.label || row.key);
+        const partialSections = knownRows.filter((row) => row.status === "partial").map((row) => row.label || row.key);
+        const complete = missingSections.length === 0 && failedSections.length === 0 && partialSections.length === 0;
+        items.push({
+          appId: target.appId,
+          guestId: target.guestId,
+          appName,
+          source: target.bundle ? "settings-json" : "api",
+          status: complete ? "ok" : "partial",
+          file: files[0] || "",
+          files,
+          ...mdFile ? { mdFile } : {},
+          ...aiMdFile ? { aiMdFile } : {},
+          complete,
+          missingSections,
+          failedSections,
+          partialSections
+        });
+      } catch (error) {
+        if (isCancelStop(error)) {
+          stoppedAt = i;
+          break;
+        }
+        failedApps.push({
+          appId: target.appId,
+          guestId: target.guestId,
+          error: firstErrorLine(error)
+        });
+      }
+    }
+    if (stoppedAt >= 0) {
+      for (let j = stoppedAt; j < targets.length; j += 1) {
+        failedApps.push({
+          appId: targets[j].appId,
+          guestId: targets[j].guestId,
+          error: "未実行（中止）"
+        });
+      }
+    }
+    const successCount = items.length;
+    const cancelled = stoppedAt >= 0;
+    if (successCount === 0 && cancelled) {
+      const priorFailures = failedApps.filter((f) => !/未実行（中止）/.test(f.error));
+      throw createCancelReport(0, targets.length, [
+        "設計書Markdown ZIPは保存していません。",
+        ...priorFailures.map((f) => `App ${f.appId}: 中止前に失敗（${f.error}）`)
+      ]);
+    }
+    if (successCount === 0) {
+      const detail = failedApps.map((f) => `- App ${f.appId}: ${f.error}`).join("\n");
+      throw new Error(`設計書Markdown ZIPの生成に失敗しました
+${detail}`);
+    }
+    const generatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
+    const overviewMd = buildBatchDesignMdOverview({
+      generatedAt,
+      format,
+      preview,
+      total: targets.length,
+      cancelled,
+      items,
+      failedApps
+    });
+    const manifestPayload = {
+      schemaVersion: 1,
+      generatedAt,
+      format,
+      preview,
+      total: targets.length,
+      appCount: targets.length,
+      successCount,
+      failedCount: failedApps.length,
+      cancelled,
+      guestIds,
+      items,
+      failedApps
+    };
+    zip.file("overview.md", overviewMd);
+    zip.file("_manifest.json", JSON.stringify(manifestPayload, null, 2));
+    setStatus("設計書Markdown ZIPファイルを生成中...");
+    const blob = await zip.generateAsync({ type: "blob" });
+    const baseLabel = format === "ai-md" ? "設計書_AI向けMarkdown一括" : format === "both" ? "設計書_Markdown一括(通常+AI)" : "設計書_Markdown一括";
+    const zipName = buildExportFilename(baseLabel, "zip", {
+      appLabel: `${successCount}件`,
+      suffix: preview ? "プレビュー" : ""
+    });
+    downloadBlob(zipName, blob);
+    if (cancelled) {
+      const notRun = failedApps.filter((f) => /未実行（中止）/.test(f.error));
+      const failed = failedApps.filter((f) => !/未実行（中止）/.test(f.error));
+      throw createCancelReport(successCount, targets.length, [
+        `生成できた ${successCount} アプリ分の設計書Markdown ZIPを保存しました（詳細は ZIP 内の overview.md / _manifest.json）。`,
+        ...failed.map((f) => `失敗 App ${f.appId}: ${f.error}`),
+        ...notRun.length ? [`未実行（中止）: ${notRun.map((f) => `App ${f.appId}`).join(", ")}`] : []
+      ]);
+    }
+    const incompleteApps = items.filter((item) => !item.complete);
+    if (failedApps.length > 0 || incompleteApps.length > 0) {
+      const parts = [];
+      if (failedApps.length > 0) {
+        parts.push(`成功 ${successCount} / 失敗 ${failedApps.length}（全${targets.length}件）`);
+        parts.push(`失敗したアプリ: ${failedApps.map((f) => `App ${f.appId}`).join(", ")}`);
+      }
+      if (incompleteApps.length > 0) {
+        parts.push(`一部セクション未取得・失敗あり ${incompleteApps.length}件`);
+      }
+      setStatus(`設計書Markdown ZIPを保存しました。${parts.join("。")}。詳細は ZIP 内の overview.md / _manifest.json を確認してください`, true);
+    } else {
+      setStatus(`設計書Markdown ZIP出力完了（${successCount}件）`);
+    }
+    return {
+      schemaVersion: 1,
+      generatedAt,
+      format,
+      preview,
+      total: targets.length,
+      successCount,
+      failedCount: failedApps.length,
+      cancelled,
+      zipName,
+      items,
+      failedApps
+    };
   }
   function diffLinesBlock(oLines, nLines) {
     let start = 0;
@@ -9081,12 +9227,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
     setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）${notes.length ? `。${notes.join("。")}。差分は不完全です` : ""}${completeness ? ` ${completeness}` : ""}`, notes.length > 0 || !!completeness);
   }
 
-  // src/entries/design-lite-ui.ts
-  init_utils();
-
   // src/entries/appSearchControl.ts
-  init_api();
-  init_utils();
   var RESULT_CSS_ID = "kus-app-search-styles";
   var RESULT_CSS = `
 .kus-as__result{margin-top:6px;border:1px solid var(--c-border);border-radius:8px;overflow:hidden;max-height:240px;overflow-y:auto}
@@ -9439,7 +9580,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
       ]
     }));
     cardTarget.body.appendChild(appTable.element);
-    const prev = makeCheck({ label: "プレビュー環境から取得（単一出力・2アプリ差分）" });
+    const prev = makeCheck({ label: "プレビュー環境から取得（単一出力・2アプリ差分・Markdown ZIP）" });
     cardTarget.body.appendChild(makeRow([prev.label], { label: "取得環境" }));
     cardTarget.body.appendChild(makeNote("出力は対象アプリ表の1行目が対象です（ZIP 一括出力だけは全行）。Excel は人が読む用、AI向けMarkdown は AI に渡す用です。", "help"));
     cardTarget.body.appendChild(makeNote("アプリごとに別のゲストスペースを指定できます。各行の「↑コピー」で上の行を複製できます。", "help"));
@@ -9651,7 +9792,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
         await runDesignExportXlsxStandalone({ ...source(), appNameLookup: appNameLookup() }, (m, e) => panel.setStatus(m, e ? "err" : "busy"));
       });
     });
-    const cardBatch = makeCard({ title: "複数アプリ一括 ZIP 出力（Excel）", number: 3, soft: true });
+    const cardBatch = makeCard({ title: "複数アプリ一括 ZIP 出力", number: 3, soft: true });
     const bBatchZip = makeButton("対象アプリの設計書 ZIP を保存", "primary", { icon: "↓" });
     bBatchZip.style.width = "100%";
     cardBatch.body.appendChild(bBatchZip);
@@ -9669,6 +9810,30 @@ ${lines.join("\n")}`), { partialSuccess: true });
         );
       });
     });
+    const batchTargets = () => appTable.getApps().map((r, i) => ({ appId: r.appId, guestId: r.guestId, bundle: findImportedBundle(r.appId, r.guestId, i) }));
+    const makeMdZipButton = (label, format) => {
+      const button = makeButton(label, "ghost", { icon: "↓" });
+      button.style.width = "100%";
+      cardBatch.body.appendChild(button);
+      button.addEventListener("click", () => {
+        const apps = batchTargets();
+        const targetError = validateDesignExportTargets(apps, "対象アプリ表: ");
+        if (targetError) {
+          panel.setStatus(targetError, "warn");
+          return;
+        }
+        liteRun(panel, `${label}を生成中…`, async () => {
+          await runBatchDesignExportMdZipStandalone(
+            { apps, format, preview: prev.checkbox.checked },
+            (m, e) => panel.setStatus(m, e ? "err" : "busy")
+          );
+        });
+      });
+      return button;
+    };
+    const bMdZip = makeMdZipButton("Markdown ZIP", "md");
+    const bAiMdZip = makeMdZipButton("AI向けMarkdown ZIP", "ai-md");
+    const bBothZip = makeMdZipButton("Markdown＋AI向けMarkdown ZIP", "both");
     panel.body.insertBefore(cardBatch.card, panel.status);
     const cardOutputInfo = makeCard({ title: "まとめて出力・設計差分について", soft: true });
     cardOutputInfo.body.appendChild(makeNote("ZIP 一括出力: シート選択は最初の1アプリで1回だけ表示し、以降の全アプリに同じ選択を適用します。設定JSONを読み込んだアプリは kintone から取得しません。"));
@@ -9706,6 +9871,17 @@ ${lines.join("\n")}`), { partialSuccess: true });
       ];
     };
     const firstTargetRequired = () => validateDesignTarget(source(), "対象表の1行目: ");
+    const batchTargetsRequired = () => validateDesignExportTargets(batchTargets(), "対象アプリ表: ");
+    const mdZipSummary = (format, extra = []) => {
+      const env = prev.checkbox.checked ? "プレビュー" : "本番";
+      return [
+        ["対象", summarizeList(appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? "読込済みJSON" : env)))],
+        ["出力", `${appTable.count()} アプリの${format}をZIPに保存`],
+        ["取得環境", `${env}から取得します。設定JSONを読み込んだアプリはその内容を使用します。`],
+        ...extra,
+        ...appTable.count() >= 50 ? [["件数が多い場合", "アプリごとに順に取得するため、時間とメモリを使います。途中で「中止」すると、生成できた分だけZIPに保存します。"]] : []
+      ];
+    };
     installLiteWorkflow(panel, {
       setup: [cardTarget.card],
       advanced: [cardImport.card, cardOutputInfo.card],
@@ -9722,7 +9898,10 @@ ${lines.join("\n")}`), { partialSuccess: true });
           const rows = diffTargetRows();
           if (rows.length < 2) return "対象アプリを2件以上指定してください。";
           return validateDesignExportTargets(rows.map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), "比較対象: ");
-        }, summary: () => diffTargetRows().map((r, i) => [i ? "比較先" : "比較元", connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? "読込済みJSON" : prev.checkbox.checked ? "プレビュー" : "本番")]) }
+        }, summary: () => diffTargetRows().map((r, i) => [i ? "比較先" : "比較元", connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? "読込済みJSON" : prev.checkbox.checked ? "プレビュー" : "本番")]) },
+        { id: "md-zip", label: "全対象をMarkdown ZIPで保存", description: "全対象アプリの設計書をMarkdownにして、1つのZIPで保存します。", button: bMdZip, validate: batchTargetsRequired, summary: () => mdZipSummary("Markdown") },
+        { id: "ai-md-zip", label: "全対象をAI向けMarkdown ZIPで保存", description: "全対象アプリの設定をAI向けMarkdownにして、1つのZIPで保存します。", button: bAiMdZip, validate: batchTargetsRequired, summary: () => mdZipSummary("AI向けMarkdown") },
+        { id: "both-zip", label: "全対象をMarkdownとAI向けのZIPで保存", description: "全対象アプリのMarkdownとAI向けMarkdownを、1つのZIPで保存します。", button: bBothZip, validate: batchTargetsRequired, summary: () => mdZipSummary("MarkdownとAI向けMarkdown", [["取得回数", "形式ごとに別に取得するため、kintone から取得するアプリは取得が2回になります。"]]) }
       ]
     });
   }

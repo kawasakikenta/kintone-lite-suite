@@ -2,8 +2,7 @@
 
 import { DEFAULT_IGNORE_KEYS, SECTION_DEFS } from '../constants.js';
 import { state, ui } from '../state.js';
-import { getActualDiffRows, parseIgnoreRules, normalizeIgnoreToken, getPathLeafKey, isIgnoredPath } from './engine.js';
-import { pickBundleSections } from '../api.js';
+import { getActualDiffRows, parseIgnoreRules, normalizeIgnoreToken, getPathLeafKey } from './engine.js';
 import { diffRowMatchesKeyword, diffRowMatchesFieldNameKeyword, groupDiffRowsBySection } from './export.js';
 import type { DiffRow, DiffFetchIssue, DiffFilterState } from './types.js';
 
@@ -81,7 +80,6 @@ export function getFilteredDiffRowsWithoutSectionFilter(rows?: DiffRow[]): DiffR
   });
 }
 
-
 export function getSelectedDiffRows(rows?: DiffRow[]): DiffRow[] {
   const selected = state.diffSelectedIds || new Set<string>();
   return (rows || state.lastDiffRows || []).filter((row: DiffRow) => selected.has(row._id || ''));
@@ -117,56 +115,6 @@ export function getDiffExportContentLabel(mode: string): string {
 
 export function shouldIncludeComparedContent(mode: string): boolean {
   return mode === 'withCompared';
-}
-
-export interface DiffExportInfo {
-  mode: string;
-  label: string;
-  rows: DiffRow[];
-}
-
-export function resolveDiffExportRows(mode?: string): DiffExportInfo {
-  const exportMode = mode || resolveDiffExportMode();
-  if (exportMode === 'selected') {
-    const rows = getSelectedDiffRows();
-    if (!rows.length) throw new Error('選択差分がありません');
-    return { mode: exportMode, label: '選択差分', rows };
-  }
-  if (exportMode === 'visible') {
-    const rows = getRenderedDiffRows();
-    if (!rows.length) throw new Error('現在表示中の差分がありません');
-    return { mode: exportMode, label: '現在表示中', rows };
-  }
-  if (exportMode === 'favorites') {
-    const rows = getFavoriteDiffRows();
-    if (!rows.length) throw new Error('お気に入り差分がありません');
-    return { mode: exportMode, label: 'お気に入り差分', rows };
-  }
-  return { mode: 'all', label: '全差分', rows: state.lastDiffRows || [] };
-}
-
-export function resolveDiffExportComparedScopes(exportInfo: DiffExportInfo | null | undefined, scopes: readonly string[] | null | undefined): string[] {
-  const fallbackScopes: string[] = [...new Set((scopes || []).filter(Boolean) as string[])];
-  if ((exportInfo?.mode || 'all') === 'all') return fallbackScopes;
-  const rowScopes: string[] = [...new Set((exportInfo?.rows || []).map((row) => row.sectionKey).filter(Boolean) as string[])];
-  if (rowScopes.length) return rowScopes;
-  const issueScopes: string[] = [...new Set((state.lastFetchIssues || []).map((issue: any) => issue.sectionKey).filter(Boolean) as string[])];
-  return issueScopes.length ? issueScopes : fallbackScopes;
-}
-
-export interface DiffExportComparedBundles {
-  scopes: string[];
-  sourceBundle: any;
-  targetBundle: any;
-}
-
-export function buildDiffExportComparedBundles(sourceBundle: any, targetBundle: any, scopes: readonly string[] | null | undefined): DiffExportComparedBundles {
-  const compareScopes: string[] = [...new Set((scopes || []).filter(Boolean) as string[])];
-  return {
-    scopes: compareScopes,
-    sourceBundle: pickBundleSections(sourceBundle, compareScopes),
-    targetBundle: pickBundleSections(targetBundle, compareScopes)
-  };
 }
 
 export interface IgnoreKeySuggestion {
@@ -254,20 +202,4 @@ export function buildIgnoreKeySuggestions(rows: DiffRow[] | undefined, ignoreKey
         samplePath: item.sample?.path || ''
       };
     });
-}
-
-/**
- * 与えた無視キー設定を再適用したときに、現在の差分行のうち除外される件数を見積もる。
- * 既に diff 実行時に除外されている行はカウントされないため、設定を更にきつくしたときの
- * "次回比較で減る件数" の概算に使える。
- */
-export function previewIgnoreKeyImpact(rows: DiffRow[] | undefined, ignoreKeysText: string): { total: number; wouldRemove: number } {
-  const list = getActualDiffRows(rows) as DiffRow[];
-  if (!list.length) return { total: 0, wouldRemove: 0 };
-  const ignoreRules = parseIgnoreRules(ignoreKeysText);
-  let wouldRemove = 0;
-  for (const row of list) {
-    if (isIgnoredPath(ignoreRules, row.path)) wouldRemove += 1;
-  }
-  return { total: list.length, wouldRemove };
 }

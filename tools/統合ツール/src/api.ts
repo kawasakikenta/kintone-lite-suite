@@ -27,8 +27,6 @@ const ERR_NO_DEPLOY_API =
   'デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。';
 const ERR_NO_RECORD_PREVIEW_API =
   'レコードAPIにはプレビュー用の追加・更新・削除エンドポイントがありません。レコード操作は本番REST APIを明示的な確認付きで実行します。';
-const ERR_NO_API_TESTER_RECORD_WRITE =
-  'APIテスターではレコードの追加・更新・削除を実行できません。レコード管理タブの確認付き操作を使用してください。';
 const DEFAULT_API_GET_RETRIES = 3;
 const DEFAULT_RETRY_BASE_DELAY_MS = 500;
 const DEFAULT_RETRY_MAX_DELAY_MS = 3000;
@@ -122,27 +120,6 @@ export function assertAllowsMutatingRestCall(prefix: string, path: string, metho
   // 正規化で別のパスを /file.json に見せかけられないよう、呼び出し元が渡すパスそのものと一致する場合だけ許可する。
   if (path === FILE_UPLOAD_PATH && m === 'POST' && !isPreviewRestPrefix(prefix)) return;
   if (!isPreviewRestPrefix(prefix)) {
-    throw new Error(ERR_NO_PROD_WRITE);
-  }
-}
-
-/**
- * kintone.api の完全パス（例: /k/v1/preview/app.json）用。APIテスター等。
- */
-export function assertAllowsMutatingApiUrl(fullPath: string, method: string): void {
-  const m = String(method || '').toUpperCase();
-  if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return;
-  if (m !== 'POST' && m !== 'PUT' && m !== 'DELETE' && m !== 'PATCH') return;
-
-  const fp = String(fullPath || '').replace(/\\/g, '/');
-  if (fp.includes(DEPLOY_PATH_SNIPPET)) {
-    throw new Error(ERR_NO_DEPLOY_API);
-  }
-  if (isRecordDataMutationPath(fp)) {
-    if (/\/v1\/preview(\/|$)/.test(fp)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
-    throw new Error(ERR_NO_API_TESTER_RECORD_WRITE);
-  }
-  if (!/\/v1\/preview(\/|$)/.test(fp)) {
     throw new Error(ERR_NO_PROD_WRITE);
   }
 }

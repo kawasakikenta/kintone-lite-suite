@@ -10,8 +10,6 @@ import { hasKintoneOrderByClause, hasKintonePagingClause } from '../kintone-quer
 
 /** kintone REST の records.json が 1 リクエストで返せる最大件数 */
 export const RECORDS_FETCH_LIMIT = 500;
-/** offset ページングが kintone 側で拒否される上限（これ以降は cursor API か $id シークが必要） */
-export const RECORDS_OFFSET_LIMIT = 10000;
 /** 一括登録・更新・ステータス変更の 1 リクエストあたり最大件数 */
 export const RECORDS_WRITE_CHUNK = 100;
 

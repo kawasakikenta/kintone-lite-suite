@@ -13,7 +13,7 @@ import { hasIncompleteActualDiffTruncation } from './engine.js';
 import { extractFieldPathInfo } from './enrich.js';
 import { contentIdentifier, isSensitiveSameDiffRow } from './export-safety.js';
 import { decodeRow } from './path-decoder.js';
-import { labelOfProp, labelOfSection } from './label-dict.js';
+import { labelOfProp } from './label-dict.js';
 
 /**
  * Markdown 出力は UI の DiffCache に依存しない。比較結果を保存した後に
@@ -753,7 +753,7 @@ function markdownTableCell(value: unknown): string {
   return String(value ?? '')
     .replace(/\r\n?/g, ' ')
     .replace(/\n/g, ' ')
-    .replace(/\|/g, '\\|')
+    .replace(/[\\|`*_[\]<>~]/g, '\\$&')
     .trim();
 }
 

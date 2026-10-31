@@ -46,6 +46,24 @@ describe('settings export completion', () => {
     await runSettingsExportStandalone('json', { apps: [{ appId: '1' }] }, status);
     expect(status).toHaveBeenLastCalledWith(expect.stringContaining('保存しました'), false);
   });
+  it('does not count a section without a result as fetched', async () => {
+    vi.mocked(fetchBundle).mockResolvedValue({ appId: '1', guestId: '', preview: false, fetchedAt: '', meta: { sectionRevisions: {} },
+      sections: { appSettings: { name: '対象' }, fieldSettings: null } } as any);
+    const status = vi.fn();
+    const result = await runSettingsExportStandalone('json', { apps: [{ appId: '1' }], scopeRoot: {} }, status);
+    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('1アプリ・1セクションの取得に失敗'), true);
+    expect(result.summaryHtml).toContain('一部セクション取得失敗あり: フィールド設定');
+  });
+  it('reports the whole app as failed when no section has a result', async () => {
+    vi.mocked(fetchBundle).mockResolvedValue({ appId: '1', guestId: '', preview: false, fetchedAt: '', meta: { sectionRevisions: {} },
+      sections: { appSettings: null, fieldSettings: null } } as any);
+    const result = await runSettingsExportStandalone('json', { apps: [{ appId: '1' }], scopeRoot: {} }, vi.fn());
+    expect(result.summaryHtml).toContain('アプリ取得失敗: 取得結果がありません');
+  });
+  it('escapes backslashes in the Markdown index so a name cannot break the table', () => {
+    const index = buildSettingsMarkdownIndex({ apps: [{ appId: '1', appName: 'a\\|b', file: 'x.json', sections: { ok: 1, ng: 0 } }] } as any);
+    expect(index).toContain('a\\\\\\|b');
+  });
   it('continues after an app-level fetch failure and records the failed app in JSON', async () => {
     vi.mocked(fetchBundle)
       .mockRejectedValueOnce(new Error('通信タイムアウト'))

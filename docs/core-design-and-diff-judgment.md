@@ -60,7 +60,7 @@ flowchart TB
 
 ## 3. 共通基盤の設計
 
-全ツールが共有するのは `api.ts`（REST ラッパー）、`litePanelTheme.ts` + `liteWorkflow.ts`（パネルと 3 段階ワークフロー）、`kintoneGuard.ts`、`jszipLoader.ts` で、lite パネルの状態はパネル内のクロージャで持ち、旧統合 UI のグローバル `state.ts` を UI 層からは使いません（`engine.ts` などが旧 UI 互換のために import する箇所は残り、UI 層での例外は `design-standalone.ts` のみ）。`差分比較.js` は `register-api.ts` 経由で `window.__KUS__.runDiffStandalone` を公開し、Playwright ハーネスが同じ入口を叩きます。
+全ツールが共有するのは `api.ts`（REST ラッパー）、`litePanelTheme.ts` + `liteWorkflow.ts`（パネルと 3 段階ワークフロー）、`kintoneGuard.ts`、`jszipLoader.ts` で、lite パネルの状態はパネル内のクロージャで持ち、グローバルの `state.ts` を UI 層からは使いません（`engine.ts` などが import する箇所は残り、UI 層での例外は `design-standalone.ts` のみ）。`差分比較.js` は `entries/diff-lite-entry.ts` で `window.__KUS__.runDiffStandalone` を公開し、Playwright ハーネスが同じ入口を叩きます。
 
 ### 3.1 API 層（`api.ts`）の判定条件
 
@@ -70,7 +70,7 @@ flowchart TB
 | 読み取り再試行 | `apiGet` は最大 3 回。対象は HTTP 408 / 409 / 425 / 429 / 500 / 502 / 503 / 504、`error.code` に NETWORK / TIMEOUT / ECONNRESET、または message に network / timeout を含むもの。待機は `min(3000ms, 500ms × 2^attempt)` ＋ 0〜200ms のジッター |
 | 書き込み再試行 | PUT / POST は最大 3 回。5xx とネットワーク系のみ再試行。4xx は副作用が確定している可能性があるため不可（冪等な PUT の 408 / 429 だけ例外）。DELETE は再試行しない |
 | 中止と応答待ち上限 | `runControl.ts`: パネルの「中止」が `requestCancel()` を呼ぶと、`apiGet` / `apiPut` / `apiPost` / `apiDelete` は次の試行の前に `RunCancelledError` を投げ、再試行の待機も打ち切る。GET は `raceWithCancel` で進行中でも中止・120 秒の応答待ち上限（`code: 'TIMEOUT'` として再試行対象）で打ち切る。書き込みは進行中のリクエストを打ち切らない（サーバー側で確定したか分からなくなるため）。`fetch` を使う JS/CSS 本文（60 秒）・ファイル本体（120 秒）・アップロードは AbortSignal で中止する。`fetchBundle` と補助取得は中止を `_fetchError` に畳まず呼び出し元へ伝える |
-| 本番書込ガード | `assertAllowsMutatingRestCall`: (1) `app/deploy.json` を含むパスは無条件に拒否（デプロイは管理画面で手動） (2) `/records/cursor.json` の POST / DELETE とレコード 4 パス（`/record.json` `/records.json` `/record/status.json` `/records/status.json`）は本番 prefix でのみ許可し、preview prefix なら拒否 (3) `/file.json` への POST（呼び出し元が渡すパスとの完全一致、本番 prefix のみ）はファイルアップロード用に許可し、PUT / DELETE は拒否 (4) それ以外の POST / PUT / DELETE / PATCH は prefix が `/v1/preview` を含むときだけ許可。API テスター用 `assertAllowsMutatingApiUrl` はレコード書込自体を拒否 |
+| 本番書込ガード | `assertAllowsMutatingRestCall`: (1) `app/deploy.json` を含むパスは無条件に拒否（デプロイは管理画面で手動） (2) `/records/cursor.json` の POST / DELETE とレコード 4 パス（`/record.json` `/records.json` `/record/status.json` `/records/status.json`）は本番 prefix でのみ許可し、preview prefix なら拒否 (3) `/file.json` への POST（呼び出し元が渡すパスとの完全一致、本番 prefix のみ）はファイルアップロード用に許可し、PUT / DELETE は拒否 (4) それ以外の POST / PUT / DELETE / PATCH は prefix が `/v1/preview` を含むときだけ許可。 |
 | revision 競合 | `isRevisionConflictError`: エラーコード `GAIA_CO02`、または message が表の下の正規表現 (A) に一致。`decorateRevisionConflict` が「取得後に別の更新が入ったため中止」という利用者向け文を付けて再送出 |
 | 設定バンドル取得 `fetchBundle` | `SECTION_DEFS`（18 セクション）を並列 3 で取得し、応答順ではなく入力順で格納。失敗したセクションは `{ _fetchError: message }` に置き換えて続行。`appInfo`（`/app.json`）は `previewEndpoint: false` のため常に運用 prefix。各応答の `revision` は `meta.sectionRevisions` へ |
 | 応答の正規化 | `normalizeSettingsSection`: キーを辞書順に並べ替え、応答ルート直下の `META_KEYS`（revision / creator / createdAt / modifier / modifiedAt）を除去。ネストした同名キーは残す |
@@ -413,7 +413,6 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | ファイル | 検証 |
 | --- | --- |
 | 比較条件プロファイル（`comparison-profile.ts`） | `kind: 'kintone-diff-comparison-profile'`、`version: 1`。JSON 長 ≤ 128,000、名前 ≤ 100 文字、scope ≤ 64 件で `SECTION_DEFS` のキーのみ、無視キー ≤ 20,000 文字 / 256 件 / 1 件 256 文字、正規化は既知プリセット名のみ、`__proto__` / `prototype` / `constructor` は拒否。App ID や設定値は含まない |
-| 比較結果スナップショット（`snapshot.ts`） | `type: 'diff-snapshot'`、`version: 2`。rows / fetchIssues / partialIssues / truncation / 条件を保存。機密セクションの同一行は保存時に伏せる |
 | レビュー状態 | 9.1 のとおり。ブラウザストレージへの自動保存はしない |
 | 外部パッチ JSON | `_nonActionable` の行と仮想パス `processSettings.states.__rename__` を含む行は読込時・実行前・行適用時に拒否（`docs/diff-comparison-logic.md` §13.4） |
 
@@ -478,7 +477,7 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 
 | 層 | ガード | 判定・実装 |
 | --- | --- | --- |
-| 書かない | 本番設定への書き込み禁止 | `assertAllowsMutatingRestCall`: 設定系の変更は `/v1/preview` prefix のみ。`app/deploy.json` は常に拒否（デプロイは管理画面）。レコード API 4 パス、cursor、別アプリの JS/CSS を渡す `POST /file.json`（一時ファイル作成のみ）だけが本番許可。API テスターはレコード書込も拒否 |
+| 書かない | 本番設定への書き込み禁止 | `assertAllowsMutatingRestCall`: 設定系の変更は `/v1/preview` prefix のみ。`app/deploy.json` は常に拒否（デプロイは管理画面）。レコード API 4 パス、cursor、別アプリの JS/CSS を渡す `POST /file.json`（一時ファイル作成のみ）だけが本番許可 |
 | 書かない | kintone 画面外での起動拒否 | `runOnKintonePage`: `window.kintone.api` と `window.kintone.app` がなければアラートのみ |
 | 書かない | URL へ入る ID の形式検査 | App ID・ゲスト ID・スペース ID は `^[1-9]\d*$` または `^\d+$` を取得前に検査（`/k/guest/{id}/v1` へそのまま入るため） |
 | 黙って上書きしない | revision による楽観ロック | 設定 PUT/POST に GET 時の revision を添付。`GAIA_CO02` を `decorateRevisionConflict` が利用者向け文に変換。プレビュー反映は実行直前に全セクションを再取得して内容と revision の完全一致を要求（第 11 章） |
@@ -527,8 +526,8 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | 機密値の伏せ字・マスク・内容識別子 | `src/diff/export-safety.ts` | `tests/diff/export-safety.test.ts` |
 | Excel（顧客用 / 社内用）と自前 XLSX ビルダー・一括 ZIP | `src/diff/xlsx-export.ts`、`xlsx-builder.ts`、`xlsx-batch-export.ts`、`src/archive/stored-zip.ts` | `tests/diff/xlsx-export.test.ts`、`xlsx-builder.test.ts`、`xlsx-batch-export.test.ts`、`tests/archive/stored-zip.test.ts` |
 | AI 向け Markdown | `src/diff/markdown-export.ts` | `tests/diff/markdown-export.test.ts` |
-| 比較条件プロファイル・スナップショット | `src/diff/comparison-profile.ts`、`snapshot.ts` | `tests/diff/comparison-profile.test.ts`、`snapshot.test.ts` |
-| プレビュー反映（計画・事前検査・適用・結果・JS/CSS 転送・未公開の変更・順次反映） | `src/reflect/plan.ts`、`standalonePreflight.ts`、`apply.ts`、`applyOutcome.ts`、`changeSummary.ts`、`customizeFiles.ts`、`targetPending.ts`、`rolloutQueue.ts`、`planReport.ts`、`src/tabs/reflect-standalone.ts` | `tests/reflect/*.test.ts`（26 ファイル）、`run-reflect-lite-dom.cjs` |
+| 比較条件プロファイル | `src/diff/comparison-profile.ts` | `tests/diff/comparison-profile.test.ts` |
+| プレビュー反映（計画・事前検査・適用・結果・JS/CSS 転送・未公開の変更・順次反映） | `src/reflect/standalonePlan.ts`、`standalonePreflight.ts`、`applyOutcome.ts`、`changeSummary.ts`、`customizeFiles.ts`、`targetPending.ts`、`rolloutQueue.ts`、`planReport.ts`、`src/tabs/reflect-standalone.ts` | `tests/reflect/*.test.ts`（22 ファイル）、`run-reflect-lite-dom.cjs` |
 | フィールド追加・JS/CSS 設定（revision ガード） | `src/tabs/field-standalone.ts`、`jsconfig-standalone.ts` | `tests/field/*.test.ts`、`tests/jsconfig/*.test.ts` |
 | 設計書（Excel / Markdown / AI 向け） | `src/tabs/design*.ts`、`src/design/snapshot.ts`、`ai-markdown.ts` | `tests/design/*.test.ts`（11 ファイル） |
 | ER 図・構造分析 | `src/tabs/er.ts`、`er-model.ts`、`er-analysis.ts`、`er-standalone.ts` | `tests/er-*.test.ts`、`run-er-diagram-compare.cjs` |

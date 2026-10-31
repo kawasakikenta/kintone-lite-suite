@@ -281,5 +281,13 @@ describe('lite design export', () => {
       preview: true,
       rawSettings: false
     }));
+    // AI向けは単独出力と同じく、正規化しない原文を別に取得する
+    expect(vi.mocked(fetchBundle)).toHaveBeenCalledWith(expect.objectContaining({
+      appId: '200',
+      guestId: '8',
+      preview: true,
+      rawSettings: true
+    }));
+    expect(zipFiles[manifest.items[1].aiMdFile]).toContain('raw-settings-api');
   });
 });
