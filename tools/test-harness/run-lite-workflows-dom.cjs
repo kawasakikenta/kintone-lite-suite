@@ -90,7 +90,7 @@ async function makeBundle(entry) {
   const result = await esbuild.build({
     absWorkingDir: TOOL, entryPoints: [`src/entries/${entry}-lite-ui.ts`], bundle: true, write: false,
     format: 'iife', globalName: 'ToolHarness', platform: 'browser', target: ['chrome110'], logLevel: 'silent',
-    plugins: [{ name: 'workflow-mocks', setup(build) {
+    plugins: [require(path.join(TOOL, 'rawTextPlugin.js')).rawTextPlugin, { name: 'workflow-mocks', setup(build) {
       build.onResolve({ filter: /tabs\/[\w-]+-standalone\.js$/ }, args => {
         const key = args.path.match(/\/([\w-]+)-standalone\.js$/)[1];
         return MODULES[key] ? { path: key, namespace: 'fixture' } : null;

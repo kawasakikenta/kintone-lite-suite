@@ -75,7 +75,9 @@ tools/統合ツール/
 ## 共有モジュールの注意点
 
 - `tabs/design-xlsx.ts` は `tabs/design-standalone.ts`（lite 版）からインポートされる。
-- `tabs/er.ts` の `crawl`/`buildHTML` は `tabs/er-standalone.ts`（lite 版）から使用される。
+- `tabs/er.ts` の `crawl`/`buildHTML` は `tabs/er-standalone.ts`（lite 版）から使用される。`crawl` は深さごとに同時 `ER_DEFAULTS.concurrency`（4）アプリまで読み取り、結果は見つけた順に取り込む（`runOrdered`。並び・深さ・関連は直列のときと同じ。中止の件数は読み取りを終えたアプリを数える）。
+- ER図 HTML の描画ライブラリ（Cytoscape・Dagre・cytoscape-dagre）は `tabs/er-libraries.ts` が `?raw` で取り込み、`buildHTML` が head へインラインで埋め込む。`build.js` は `rawTextPlugin.js`（`?raw` を文字列として取り込む esbuild プラグイン。`tools/test-harness/run-output-layouts.mjs` も使う）、単体テスト（Vitest）は標準の `?raw` で解決する。版は `package.json` の devDependencies で固定し、`tests/er-html.test.ts` が同梱版との一致を検査する。`EXTERNAL_LIBRARIES`（`constants.ts`）に ER図のライブラリは無い。同梱するのは `ER図.js` だけで、ほかの bundle に入らないことをサイズで確認する。図の本体（`er-main`）は `type="text/plain"` の script で、起動用の script が `window.cytoscape` の有無を見て実行する。
+- ER図の関連（`ErRelation`）は、キーと結合条件に加えて `copyFields`（コピーするフィールドの対応）・`displayFields`・`filterCond` を持つ。説明文は `er-model.ts` の `describeErRelationCopy`・`describeErRelationDisplay`・`describeErRelationFilter` が正で、図の画面（`er.ts` の埋め込みスクリプトの `relCopyText` ほか）は同じ結果にする（`tests/er-relation-details.test.ts` で照合）。
 - `entries/litePanelTheme.ts` の `createLitePanel`／`makeRow` 等は全 lite 系パネルの共通 UI 基盤。変更時は軽量バンドル全体に影響する。
 - `kintoneGuard.ts` の `isKintonePage`／`runOnKintonePage` は全 lite エントリ共通の kintone 画面ガード。文言・判定を変えると全エントリに波及する。
 - `diff/export.ts` の `bundleToMarkdown` は設計書 lite（`tabs/design-standalone.ts`）から参照される。

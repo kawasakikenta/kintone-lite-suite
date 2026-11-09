@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import vm from 'node:vm';
 import esbuild from '../統合ツール/node_modules/esbuild/lib/main.js';
+import { rawTextPlugin } from '../統合ツール/rawTextPlugin.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outDir = resolve(__dirname, 'outputs');
@@ -54,7 +55,7 @@ const result = await esbuild.build({
   write: false,
   charset: 'utf8',
   target: ['es2020'],
-  plugins: [jsToTsResolver, cssPlugin],
+  plugins: [jsToTsResolver, cssPlugin, rawTextPlugin],
   logLevel: 'silent'
 });
 const bundle = result.outputFiles[0].text;

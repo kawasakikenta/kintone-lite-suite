@@ -1,32 +1,27 @@
 // Screenshot + interaction test for the generated ER diagram HTML.
-// Inlines local copies of the CDN libs so it runs offline.
+// 生成 HTML は描画ライブラリ（Cytoscape・Dagre・cytoscape-dagre）を同梱しているため、
+// file:// 以外の通信をすべて遮断した状態で開く（遮断中に通信を試みたら失敗にする）。
 //
 // 前提:
-//   - tools/統合ツール に cytoscape / dagre / cytoscape-dagre をインストール済み
-//     (npm i --no-save cytoscape@3.28.1 dagre@0.8.5 cytoscape-dagre@2.5.0)
 //   - リポジトリ直下で npm ci を実行済み
 // 使い方:
-//   node shot-er.mjs outputs/er-diagram.html outputs/er.png [plain|manual-add]
-import { readFileSync, writeFileSync } from 'node:fs';
+//   node shot-er.mjs outputs/er-diagram.html outputs/er.png [plain|manual-add|save-reload]
+import { mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { chromium } from 'playwright';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const toolsRoot = resolve(__dirname, '../統合ツール');
 
-const input = process.argv[2] || resolve(__dirname, 'outputs/er-diagram.html');
-const output = process.argv[3] || resolve(__dirname, 'outputs/er-diagram.png');
+const input = resolve(process.argv[2] || resolve(__dirname, 'outputs/er-diagram.html'));
+const output = resolve(process.argv[3] || resolve(__dirname, 'outputs/er-diagram.png'));
 const mode = process.argv[4] || 'plain'; // plain | manual-add | save-reload
+mkdirSync(dirname(output), { recursive: true });
 
-let html = readFileSync(input, 'utf8');
-const lib = (p) => readFileSync(resolve(toolsRoot, 'node_modules', p), 'utf8');
-html = html.replace(/<script src="[^"]*cytoscape[^"]*dagre[^"]*"[^>]*><\/script>/i, () => `<script>${lib('cytoscape-dagre/cytoscape-dagre.js')}<\/script>`);
-html = html.replace(/<script src="[^"]*cdnjs[^"]*cytoscape[^"]*"[^>]*><\/script>/i, () => `<script>${lib('cytoscape/dist/cytoscape.min.js')}<\/script>`);
-html = html.replace(/<script src="[^"]*dagre@0\.8\.5[^"]*"[^>]*><\/script>/i, () => `<script>${lib('dagre/dist/dagre.min.js')}<\/script>`);
-html = html.replace(/@import url\([^)]*\);/g, '');
-const tmp = resolve(__dirname, 'outputs/_er-local.html');
-writeFileSync(tmp, html, 'utf8');
+if (/<script\b[^>]*\ssrc\s*=/i.test(readFileSync(input, 'utf8'))) {
+  console.error('このHTMLは外部の script を読み込みます。描画ライブラリを同梱した版のHTMLを指定してください');
+  process.exit(1);
+}
 
 const executablePath = process.env.KUS_PLAYWRIGHT_EXECUTABLE;
 const browserName = process.env.KUS_PLAYWRIGHT_BROWSER || 'chrome';
@@ -36,9 +31,19 @@ const launchOptions = executablePath
     ? { headless: true }
     : { channel: browserName, headless: true });
 const browser = await chromium.launch(launchOptions);
+const blocked = [];
+const blockNetwork = async (target) => {
+  await target.route('**/*', async (route) => {
+    const url = route.request().url();
+    if (/^(?:file|data|blob|about):/i.test(url)) { await route.continue(); return; }
+    blocked.push(url);
+    await route.abort();
+  });
+};
 const page = await browser.newPage({ viewport: { width: 1480, height: 940 } });
+await blockNetwork(page);
 page.on('pageerror', (e) => console.error('[pageerror]', e.message));
-await page.goto('file://' + tmp);
+await page.goto('file://' + input);
 await page.waitForTimeout(2500);
 
 if (mode === 'manual-add' || mode === 'save-reload') {
@@ -102,11 +107,12 @@ if (mode === 'save-reload') {
   const downloadPromise = page.waitForEvent('download');
   await page.evaluate(() => window.exportEditedHtml());
   const download = await downloadPromise;
-  const savedPath = resolve(__dirname, 'outputs/_er-saved.html');
+  const savedPath = output.replace(/\.png$/, '-saved.html');
   await download.saveAs(savedPath);
   console.log('saved edited html:', download.suggestedFilename());
 
   const page2 = await browser.newPage({ viewport: { width: 1480, height: 940 } });
+  await blockNetwork(page2);
   page2.on('pageerror', (e) => console.error('[pageerror2]', e.message));
   await page2.goto('file://' + savedPath);
   await page2.waitForTimeout(2000);
@@ -134,3 +140,7 @@ if (mode === 'save-reload') {
 await page.screenshot({ path: output });
 await browser.close();
 console.log('wrote', output);
+if (blocked.length) {
+  console.error('通信を遮断した状態で外部への通信が試みられました:', [...new Set(blocked)].join(', '));
+  process.exit(1);
+}

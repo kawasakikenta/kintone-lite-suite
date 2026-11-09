@@ -2,6 +2,7 @@ const esbuild = require('esbuild');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { rawTextPlugin } = require('./rawTextPlugin.js');
 
 const watch = process.argv.includes('--watch');
 
@@ -177,7 +178,7 @@ async function buildStandaloneBundles(entries) {
       charset: 'utf8',
       target: ['es2020'],
       minify: false,
-      plugins: [jsToTsResolver, cssPlugin, xlsxStyleBrowserPlugin],
+      plugins: [jsToTsResolver, cssPlugin, rawTextPlugin, xlsxStyleBrowserPlugin],
       banner: { js: buildBanner(item) },
       logLevel: 'info'
     });

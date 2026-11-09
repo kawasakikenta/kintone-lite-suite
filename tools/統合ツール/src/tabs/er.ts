@@ -1,6 +1,5 @@
 'use strict';
 
-import { EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, safeJsonForScript } from '../utils.js';
 import { apiGet, buildApiPrefix } from '../api.js';
@@ -8,11 +7,14 @@ import { isRunCancelledError } from '../runControl.js';
 import { createCancelReport } from './run-cancel-summary.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { analyzeErDependencies } from './er-analysis.js';
+import { buildErLibraryScripts } from './er-libraries.js';
 import { buildErAppModel, buildFailedErAppModel, ER_FIELD_TYPE_LABELS, ER_MD_MERMAID_MAX_CHARS } from './er-model.js';
 
 const ER_DEFAULTS = {
   maxFields: 220,
   sleepMs: 80,
+  // 同時に読み取るアプリ数。1 アプリあたり 3 リクエスト（項目・アプリ情報・アクション）を並べて送るため、同時接続は最大 3 倍になる。
+  concurrency: 4,
   layoutName: 'dagre',
   fieldDensity: 'standard',
   maxDepth: 0,
@@ -20,13 +22,6 @@ const ER_DEFAULTS = {
   includeReverseLookup: false
 };
 const ER_TRAVERSE_RELATION_KINDS = new Set(['LOOKUP', 'REF', 'ACTION']);
-
-function buildScriptTag(src, integrity = '') {
-  const safeSrc = esc(src || '');
-  const safeIntegrity = esc(integrity || '');
-  const integrityAttr = safeIntegrity ? ` integrity="${safeIntegrity}" crossorigin="anonymous"` : '';
-  return `<script src="${safeSrc}"${integrityAttr}><\/script>`;
-}
 
 export function formatErLayoutLabel(layoutName) {
   const map = {
@@ -176,18 +171,83 @@ export function describeReverseScan(options: any): string {
   return `逆引き走査: 全${Number(report.total) || 0}アプリ中 ${incomplete}アプリは取得失敗または一部取得のため、それらを参照する関連が図に含まれない可能性があります`;
 }
 
+/** 同時に読み取るアプリ数。指定（テスト用）が不正なら既定値にする。 */
+function resolveCrawlConcurrency(options: any): number {
+  const value = Math.floor(Number(options?.concurrency));
+  return Number.isFinite(value) && value >= 1 ? Math.min(value, 8) : ER_DEFAULTS.concurrency;
+}
+
+interface OrderedRun {
+  /** 完了した要素（完了順ではなく添字で持つ） */
+  done: boolean[];
+  /** 着手した要素 */
+  started: boolean[];
+  failure: { error: unknown } | null;
+}
+
+/**
+ * items を最大 limit 件ずつ同時に処理し、結果は items の順に commit へ渡す（完了順に依存しない）。
+ * 1 件でも失敗（中止を含む）したら新しい要素には着手せず、処理中の要素の終了を待ってから failure を返す。
+ * 各レーンは 1 件終えるたび pauseMs だけ待つ（直列のときの間隔を、レーンごとに保つ）。
+ */
+async function runOrdered<T, R>(
+  items: readonly T[],
+  limit: number,
+  pauseMs: number,
+  work: (item: T, index: number) => Promise<R>,
+  commit: (item: T, result: R, index: number) => void
+): Promise<OrderedRun> {
+  const done: boolean[] = new Array(items.length).fill(false);
+  const started: boolean[] = new Array(items.length).fill(false);
+  const results: Array<R | undefined> = new Array(items.length);
+  const run: OrderedRun = { done, started, failure: null };
+  let next = 0;
+  let committed = 0;
+  const drain = () => {
+    while (committed < items.length && done[committed]) {
+      const index = committed;
+      committed += 1;
+      const result = results[index] as R;
+      results[index] = undefined;
+      commit(items[index], result, index);
+    }
+  };
+  const lane = async () => {
+    while (!run.failure && next < items.length) {
+      const index = next;
+      next += 1;
+      started[index] = true;
+      try {
+        results[index] = await work(items[index], index);
+        done[index] = true;
+        if (!run.failure) drain();
+      } catch (error) {
+        if (!run.failure) run.failure = { error };
+        return;
+      }
+      if (pauseMs > 0 && next < items.length && !run.failure) await sleep(pauseMs);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane));
+  return run;
+}
+
+const countTrue = (flags: boolean[]): number => flags.reduce((sum, flag) => sum + (flag ? 1 : 0), 0);
+
+const MAX_INTERRUPTED_APPS_SHOWN = 5;
+
+/**
+ * 起点から関連を辿ってアプリの設定を読み取る。
+ * 深さごとに、同時に最大 `concurrency` アプリ（既定 4）を読み取る。結果の並び・深さ・関連は、1 アプリずつ順に読んだときと同じ
+ * （各深さの結果を、見つけた順に取り込んで次の深さを決める）。
+ */
 export const crawl = async (startIds, options) => {
   const cache = new Map();
-  const visited = new Set();
   let reverseLookupIndex = null;
-  const enqueueIfNeeded = (queue, appId, depth) => {
-    if (!Number.isFinite(appId) || appId <= 0) return;
-    if (visited.has(appId) || queue.some((item) => item.id === appId)) return;
-    queue.push({ id: appId, depth });
-  };
+  const concurrency = resolveCrawlConcurrency(options);
+  const sleepMs = options?.sleepMs || ER_DEFAULTS.sleepMs;
   // 数値化した上で Set デデュープ（"010" と "10" のような表記揺れでも二重取得しない）
   const seeds = [...new Set((Array.isArray(startIds) ? startIds : [startIds]).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0))];
-  const q = seeds.map((id) => ({ id, depth: 0 }));
   const apps = [];
   if (options?.includeReverseLookup) {
     progressUi.update(3, '逆引き探索用に全アプリを走査中...');
@@ -195,68 +255,76 @@ export const crawl = async (startIds, options) => {
     reverseLookupIndex = new Map();
     const incomplete: Array<{ appId: number; status: string; message: string }> = [];
     options.reverseScan = { total: allApps.length, incomplete };
-    for (let i = 0; i < allApps.length; i += 1) {
-      const appId = Number(allApps[i]?.appId);
-      if (!appId) continue;
-      let schema;
-      try {
-        schema = await getSchema(appId, options, cache);
-      } catch (e) {
-        if (!isRunCancelledError(e)) throw e;
-        throw createCancelReport(i, allApps.length, ['逆引き探索用の全アプリ走査を中止しました', 'ER図は生成していません']);
-      }
-      const relationIssues = (schema.issues || []).filter((issue) => issue.scope !== 'metadata');
-      if (schema.status === 'failed' || schema.ok === false || relationIssues.length) {
-        incomplete.push({ appId, status: schema.status, message: (relationIssues[0] || schema.issues?.[0])?.message || '' });
-      }
-      for (const rel of schema.relations || []) {
-        if (!ER_TRAVERSE_RELATION_KINDS.has(rel.kind)) continue;
-        const targetId = Number(rel.toApp);
-        if (!targetId) continue;
-        const set = reverseLookupIndex.get(targetId) || new Set();
-        set.add(appId);
-        reverseLookupIndex.set(targetId, set);
-      }
-      if (i % 20 === 0) progressUi.update(3 + Math.min(20, Math.floor((i / Math.max(1, allApps.length)) * 20)), `逆引き探索インデックス作成中... ${i + 1}/${allApps.length}`);
-      if (i % 25 === 0) await sleep(Math.max(10, Math.floor((options.sleepMs || ER_DEFAULTS.sleepMs) / 2)));
+    const scanIds = [...new Set(allApps.map((entry) => Number(entry?.appId)).filter((appId) => appId > 0))];
+    const skipped = allApps.length - scanIds.length;
+    const scan = await runOrdered(scanIds, concurrency, Math.max(10, Math.floor(sleepMs / 4)),
+      (appId) => getSchema(appId, options, cache),
+      (appId, schema, i) => {
+        const relationIssues = (schema.issues || []).filter((issue) => issue.scope !== 'metadata');
+        if (schema.status === 'failed' || schema.ok === false || relationIssues.length) {
+          incomplete.push({ appId, status: schema.status, message: (relationIssues[0] || schema.issues?.[0])?.message || '' });
+        }
+        for (const rel of schema.relations || []) {
+          if (!ER_TRAVERSE_RELATION_KINDS.has(rel.kind)) continue;
+          const targetId = Number(rel.toApp);
+          if (!targetId) continue;
+          const set = reverseLookupIndex.get(targetId) || new Set();
+          set.add(appId);
+          reverseLookupIndex.set(targetId, set);
+        }
+        if (i % 20 === 0) progressUi.update(3 + Math.min(20, Math.floor((i / Math.max(1, scanIds.length)) * 20)), `逆引き探索インデックス作成中... ${i + 1}/${scanIds.length}`);
+      });
+    if (scan.failure) {
+      if (!isRunCancelledError(scan.failure.error)) throw scan.failure.error;
+      throw createCancelReport(skipped + countTrue(scan.done), allApps.length, ['逆引き探索用の全アプリ走査を中止しました', 'ER図は生成していません']);
     }
   }
-  while (q.length) {
-    const current = q.shift();
-    const id = current?.id;
-    const depth = current?.depth || 0;
-    if (visited.has(id)) continue;
-    visited.add(id);
-    let a;
-    try {
-      a = await getSchema(id, options, cache);
-    } catch (e) {
-      if (!isRunCancelledError(e)) throw e;
-      const remaining = new Set(q.map((item) => item?.id).filter((qid) => qid != null && !visited.has(qid)));
-      throw createCancelReport(apps.length, apps.length + 1 + remaining.size, [
-        `解析を中断したアプリ: ${id}`,
+
+  // 幅優先。深さごとに読み取り、深さ内の結果を先頭から順に取り込んで次の深さの並びを決める。
+  const visited = new Set<number>(seeds);
+  let level = seeds.map((id) => ({ id, depth: 0 }));
+  while (level.length) {
+    const next: Array<{ id: number; depth: number }> = [];
+    const nextIds = new Set<number>();
+    const enqueueIfNeeded = (appId: number, depth: number) => {
+      if (!Number.isFinite(appId) || appId <= 0) return;
+      if (visited.has(appId) || nextIds.has(appId)) return;
+      nextIds.add(appId);
+      next.push({ id: appId, depth });
+    };
+    let levelCommitted = 0;
+    const levelRun = await runOrdered(level, concurrency, sleepMs,
+      (item) => getSchema(item.id, options, cache),
+      (item, a, i) => {
+        const { id, depth } = item;
+        a.depth = depth;
+        apps.push(a);
+        levelCommitted += 1;
+        progressUi.update(Math.min(90, (apps.length / Math.max(1, apps.length + (level.length - i - 1) + next.length)) * 100 | 0), `解析: ${a.name} / 深さ ${depth}`);
+        if (options?.maxDepth > 0 && depth >= options.maxDepth) return;
+        for (const r of a.relations) {
+          if (!ER_TRAVERSE_RELATION_KINDS.has(r.kind)) continue;
+          enqueueIfNeeded(Number(r.toApp), depth + 1);
+        }
+        if (reverseLookupIndex && reverseLookupIndex.has(id)) {
+          for (const srcId of Array.from(reverseLookupIndex.get(id))) enqueueIfNeeded(Number(srcId), depth + 1);
+        }
+      });
+    if (levelRun.failure) {
+      if (!isRunCancelledError(levelRun.failure.error)) throw levelRun.failure.error;
+      // 読み取りを終えたアプリ（取り込み前を含む）を処理済み、この深さの未完了と見つけ済みの次の深さを未実行として数える
+      const finishedInLevel = countTrue(levelRun.done);
+      const processed = apps.length - levelCommitted + finishedInLevel;
+      const interrupted = level.filter((_, i) => levelRun.started[i] && !levelRun.done[i]).map((item) => item.id);
+      const shown = interrupted.slice(0, MAX_INTERRUPTED_APPS_SHOWN).join(', ');
+      throw createCancelReport(processed, processed + (level.length - finishedInLevel) + next.length, [
+        `解析を中断したアプリ: ${shown}${interrupted.length > MAX_INTERRUPTED_APPS_SHOWN ? ` ほか ${interrupted.length - MAX_INTERRUPTED_APPS_SHOWN} 件` : ''}`,
         '残りは、ここまでの解析で見つかった未解析のアプリ（関連先をすべて辿れていない可能性があります）',
         'ER図は生成していません'
       ]);
     }
-    a.depth = depth;
-    apps.push(a);
-    progressUi.update(Math.min(90, (apps.length / Math.max(1, apps.length + q.length)) * 100 | 0), `解析: ${a.name} / 深さ ${depth}`);
-    if (options?.maxDepth > 0 && depth >= options.maxDepth) {
-      await sleep(options.sleepMs || ER_DEFAULTS.sleepMs);
-      continue;
-    }
-    for (const r of a.relations) {
-      if (!ER_TRAVERSE_RELATION_KINDS.has(r.kind)) continue;
-      enqueueIfNeeded(q, Number(r.toApp), depth + 1);
-    }
-    if (reverseLookupIndex && reverseLookupIndex.has(id)) {
-      const reverseRefs = Array.from(reverseLookupIndex.get(id));
-      for (const srcId of reverseRefs) {
-        enqueueIfNeeded(q, Number(srcId), depth + 1);
-      }
-    }
-    await sleep(options.sleepMs || ER_DEFAULTS.sleepMs);
+    for (const item of next) visited.add(item.id);
+    level = next;
   }
   return apps;
 };
@@ -329,41 +397,14 @@ export const buildHTML = (apps, options: any = {}) => {
     ? `<span class="meta-pill" title="このスペースに属するアプリは二重枠で表示されます"><b>スペース</b> #${esc(erSpaceId)} (${esc(String(spaceAppCount))}アプリ)</span>`
     : '';
   const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || '-');
-  const cytoscapeScript = buildScriptTag(
-    EXTERNAL_LIBRARIES.cytoscape.cdnUrl,
-    'sha384-J7Q85oZE4GJ/e7+n2aOQsLXfDwwfnA8S2nZAL5BpFsfpCF84zQD7LroZ/dMnLgex'
-  );
-  const dagreScript = buildScriptTag(
-    EXTERNAL_LIBRARIES.dagre.cdnUrl,
-    'sha384-2IH3T69EIKYC4c+RXZifZRvaH5SRUdacJW7j6HtE5rQbvLhKKdawxq6vpIzJ7j9M'
-  );
-  const cytoscapeDagreScript = buildScriptTag(
-    EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl,
-    'sha384-EHCdyFVbhtbpgI+4x7ETlZUvJwOkxJublmhTpH114NSk3fqfiUgcLl6pQm8JQwg9'
-  );
-  // 失敗した script 要素の src を書き換えても再読み込みされないため、代替 CDN は起動スクリプトが新しい要素で読み込む。
-  const scriptFallbacks = safeJsonForScript([
-    {
-      global: 'cytoscape',
-      src: EXTERNAL_LIBRARIES.cytoscape.altCdnUrl,
-      integrity: 'sha384-+4PsOx8pfCvP2QccNj+4PHhCkQFmbi69UlEi43BHbHopL1unxFMpqiPXNscfoiM5'
-    },
-    {
-      global: 'cytoscapeDagre',
-      src: EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl,
-      integrity: 'sha384-u69h9ebXeSjlg6q/rb1zKTRAGu/h8deCl0409xpS/QJctMKnc4M9Fzkm01VOQdeF'
-    }
-  ]);
   const runtimeFallbackRows = safeApps.map((app) => `<tr><td>${esc(String(app?.id || '-'))}</td><td>${esc(String(app?.name || `アプリ ${app?.id || '-'}`))}</td><td>${esc(String(app?.totalFieldCount ?? app?.allFields?.length ?? app?.fields?.length ?? 0))}</td><td>${esc(String(app?.relations?.length || 0))}</td><td>${esc(app?.status === 'partial' ? '一部取得' : (app?.ok === false ? '取得失敗' : '取得完了'))}</td></tr>`).join('');
   return /*html*/`<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
 <title>kintone ER図 v3</title>
-${cytoscapeScript}
-${dagreScript}
-${cytoscapeDagreScript}
+${buildErLibraryScripts()}
 <style>
 
 *{margin:0;padding:0;box-sizing:border-box;}
@@ -432,6 +473,8 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 #search-box{padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:12px;width:210px;font-family:inherit;outline:none;min-height:30px;}
 #search-box:focus{border-color:var(--accent);}
 #search-box::placeholder{color:var(--dim);}
+/* 検索中の件数の表示が加わっても操作バーが 2 行に折り返さないよう、広い画面では検索欄を縮める */
+@media (min-width:901px){#topbar:has(#search-meta:not([hidden])) #search-box{width:110px;}}
 .spacer{flex:1 1 16px;}
 
 /* ── Dropdown menu ── */
@@ -595,6 +638,9 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 .field-main{flex:1;min-width:0;}
 .field-name{display:flex;align-items:center;gap:4px;flex-wrap:wrap;overflow-wrap:anywhere;font-weight:600;}
 .field-sub{margin-top:2px;font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);}
+/* 関連の詳細（コピー・表示・絞り込み）は長くなるため、省略せず折り返して全文を読めるようにする */
+.field-detail{margin-top:3px;font-size:11px;line-height:1.5;color:var(--dim);white-space:normal;overflow-wrap:anywhere;word-break:break-word;}
+.field-detail b{color:var(--text);font-weight:600;}
 .field-type{color:var(--dim);font-size:11px;flex-shrink:0;}
 .tag{display:inline-block;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600;margin-left:4px;}
 .tag-pk{background:rgba(251,191,36,0.15);color:var(--pk);}
@@ -1796,7 +1842,7 @@ function toggleOverview(){
     btn.title = nextCollapsed ? "ガイドを開く" : "ガイドを隠す";
   }
 }
-function updateSearchMeta(query, matched){
+function updateSearchMeta(query, matched, hiddenOnly){
   const pill = document.getElementById("search-meta");
   if(!pill) return;
   const normalized = String(query || "").trim();
@@ -1806,8 +1852,9 @@ function updateSearchMeta(query, matched){
     pill.title = "";
     return;
   }
+  // 操作バーが折り返さないよう、表示は短いまま、図に出ていない項目で一致した件数は吹き出しで示す
   pill.innerHTML = "<b>検索</b> " + matched + "件";
-  pill.title = normalized;
+  pill.title = normalized + (hiddenOnly ? "。うち" + hiddenOnly + "件は、現在の表示密度では図に出ていない項目で一致したアプリです（表示密度を「詳細」にすると項目を確認できます）" : "");
 }
 
 const MAX_FIT_ZOOM=1.25;
@@ -1852,12 +1899,68 @@ function appNameForNode(n){
   const app = appMap.get(n.data("appId"));
   return app ? String(app.name || "") : String(n.data("label") || "");
 }
+// 詳細表示と概要表示（縮小時）のカードは大きさが違う。どちらの表示でも重ならないよう、大きい方の寸法で配置を考える
+function nodeSpan(n){
+  return {
+    w: Math.max(Number(n.data("cardW")) || 0, Number(n.data("lowW")) || 0, n.outerWidth()),
+    h: Math.max(Number(n.data("cardH")) || 0, Number(n.data("lowH")) || 0, n.outerHeight())
+  };
+}
+// レイアウトが重ねて置いたアプリ（フォース・同心円・グリッドなど）を、重なりが無くなるまで少しずつ押し広げる。
+// 重なりのない配置は動かさない。動かしたら true を返す（呼び出し側で全体表示に合わせ直す）
+const OVERLAP_GAP = 28;
+const OVERLAP_MAX_NODES = 800;
+function separateOverlappingNodes(nodes, animate){
+  const items = nodes.toArray().filter(n=>!n.hasClass("note-node")).map(n=>{
+    const pos = n.position();
+    const span = nodeSpan(n);
+    return { n, x: pos.x, y: pos.y, w: span.w + OVERLAP_GAP, h: span.h + OVERLAP_GAP, fixed: n.locked() };
+  });
+  if(items.length < 2 || items.length > OVERLAP_MAX_NODES) return false;
+  const start = items.map(item=>({x:item.x,y:item.y}));
+  for(let round = 0; round < 120; round++){
+    let moved = false;
+    for(let i = 0; i < items.length; i++){
+      for(let j = i + 1; j < items.length; j++){
+        const a = items[i], b = items[j];
+        if(a.fixed && b.fixed) continue;
+        let dx = b.x - a.x, dy = b.y - a.y;
+        if(dx === 0 && dy === 0){ dx = 0.01; b.x += dx; }
+        const overlapX = (a.w + b.w) / 2 - Math.abs(dx);
+        const overlapY = (a.h + b.h) / 2 - Math.abs(dy);
+        if(overlapX <= 0 || overlapY <= 0) continue;
+        // 食い込みが浅い向きへ、お互いに半分ずつ（固定のアプリは動かさない）離す
+        const shareA = a.fixed ? 0 : (b.fixed ? 1 : 0.5);
+        const shareB = 1 - shareA;
+        if(overlapX < overlapY){
+          const step = overlapX + 1, sign = dx >= 0 ? 1 : -1;
+          a.x -= sign * step * shareA; b.x += sign * step * shareB;
+        }else{
+          const step = overlapY + 1, sign = dy >= 0 ? 1 : -1;
+          a.y -= sign * step * shareA; b.y += sign * step * shareB;
+        }
+        moved = true;
+      }
+    }
+    if(!moved) break;
+  }
+  let changed = false;
+  items.forEach((item, i)=>{
+    if(Math.abs(item.x - start[i].x) < 0.5 && Math.abs(item.y - start[i].y) < 0.5) return;
+    changed = true;
+    const pos = { x: item.x, y: item.y };
+    if(animate) item.n.animate({position:pos},{duration:380});
+    else item.n.position(pos);
+  });
+  return changed;
+}
 function placeNoLinkGrid(linked, isolated, animate){
   const bb = linked.boundingBox();
   let cellW = 0, cellH = 0;
   isolated.forEach(n=>{
-    cellW = Math.max(cellW, n.outerWidth());
-    cellH = Math.max(cellH, n.outerHeight());
+    const span = nodeSpan(n);
+    cellW = Math.max(cellW, span.w);
+    cellH = Math.max(cellH, span.h);
   });
   cellW += 46; cellH += 42;
   const cols = Math.max(1, Math.min(isolated.length, Math.max(Math.floor(bb.w / cellW), Math.ceil(Math.sqrt(isolated.length)))));
@@ -1951,7 +2054,8 @@ function runLayout(name, initial){
     const wrapTargets = cy.nodes().not(".note-node").not(".app-manual-hidden");
     lay.one("layoutstop",()=>{
       const wrapped = name === "dagre" && ER_DAGRE_READY && wrapTargets.length > 1 && wrapRanks(wrapTargets, !initial);
-      if(initial || wrapped) setTimeout(fit, initial ? 200 : 450);
+      const separated = separateOverlappingNodes(wrapTargets, !initial);
+      if(initial || wrapped || separated) setTimeout(fit, initial ? 200 : 450);
       else updateZoomLabel();
     });
     lay.run();
@@ -1963,6 +2067,7 @@ function runLayout(name, initial){
   const lay = parts.linked.union(visibleEdges).layout(opts);
   lay.one("layoutstop",()=>{
     if(name === "dagre" && ER_DAGRE_READY) wrapRanks(parts.linked, false);
+    separateOverlappingNodes(parts.linked, false);
     placeNoLinkGrid(parts.linked, parts.isolated, !initial);
     setTimeout(fit, initial ? 150 : 450);
   });
@@ -2925,13 +3030,18 @@ function searchGraph(q){
     return;
   }
   const low=q.toLowerCase();
+  const fieldMatches=f=>buildFieldDisplayName(f).toLowerCase().includes(low)||(f.code||"").toLowerCase().includes(low)||String(f.path||"").toLowerCase().includes(low);
+  // 項目名は、取得済みの全項目を対象にする（表示密度によってカードに出ない項目でも、どのアプリにあるかを探せるように）
+  searchHiddenOnlyIds=new Set();
   const matched=cy.nodes().not(".app-manual-hidden").filter(n=>{
     const app=appMap.get(n.data("appId"));
     if(!app) return false;
     if(app.name.toLowerCase().includes(low) || String(app.id).includes(low)) return true;
-    return visibleFieldsForNode(app).some(f=>buildFieldDisplayName(f).toLowerCase().includes(low)||(f.code||"").toLowerCase().includes(low)||String(f.path||"").toLowerCase().includes(low));
+    if(visibleFieldsForNode(app).some(fieldMatches)) return true;
+    if(allFieldsForApp(app).some(f=>!isFieldHidden(app,f)&&fieldMatches(f))){ searchHiddenOnlyIds.add(n.id()); return true; }
+    return false;
   });
-  updateSearchMeta(q, matched.length);
+  updateSearchMeta(q, matched.length, searchHiddenOnlyIds.size);
   searchMatchNodes=matched.sort((a,b)=>String(appMap.get(a.data("appId"))?.name||"").localeCompare(String(appMap.get(b.data("appId"))?.name||""))).toArray();
   searchMatchIndex=-1;
   if(matched.length){
@@ -2940,13 +3050,13 @@ function searchGraph(q){
     cy.elements().not(matched).not(visibleEdges).not(".note-node").addClass("dimmed");
   }
 }
-let searchMatchNodes=[],searchMatchIndex=-1;
+let searchMatchNodes=[],searchMatchIndex=-1,searchHiddenOnlyIds=new Set();
 function focusNextSearchMatch(){
   if(!searchMatchNodes.length){toast("検索に一致するアプリがありません");return;}
   searchMatchIndex=(searchMatchIndex+1)%searchMatchNodes.length;
   const n=searchMatchNodes[searchMatchIndex];
   cy.animate({center:{eles:n},zoom:Math.max(cy.zoom(),1.1)},{duration:300});
-  toast("一致 "+(searchMatchIndex+1)+"/"+searchMatchNodes.length+": "+(appMap.get(n.data("appId"))?.name||""));
+  toast("一致 "+(searchMatchIndex+1)+"/"+searchMatchNodes.length+": "+(appMap.get(n.data("appId"))?.name||"")+(searchHiddenOnlyIds.has(n.id())?"（一致した項目は現在の表示密度では図に出ていません）":""));
 }
 
 // ─── Click Detail ───
@@ -3001,7 +3111,7 @@ function renderAppDetail(app){
         if(rel.toField) meta.push((rel.kind==="REF"?"結合先: ":"接続先項目: ") + rel.toField);
         relHtml += '<button type="button" class="field-row detail-relation-button" data-app="' + escapeHtml(String(item.sourceApp.id)) + '" onclick="focusApp(this.dataset.app)">'
           + '<span class="field-icon">↙</span>'
-          + '<div class="field-main"><div class="field-name">' + escapeHtml(sourceLabel) + '</div><div class="field-sub">' + escapeHtml(meta.join(" / ")) + '</div></div>'
+          + '<div class="field-main"><div class="field-name">' + escapeHtml(sourceLabel) + '</div><div class="field-sub">' + escapeHtml(meta.join(" / ")) + '</div>' + relationDetailHtml(rel) + '</div>'
           + '<span class="field-type">被参照</span></button>';
       });
   }
@@ -3035,6 +3145,7 @@ function renderAppDetail(app){
           + '<div class="field-main">'
           + '<div class="field-name" title="' + escapeHtml(relationLabel + ' → ' + targetLabel) + '">' + escapeHtml(relationLabel) + ' → ' + escapeHtml(targetLabel) + '</div>'
           + '<div class="field-sub">' + escapeHtml(relationMeta.join(' / ') || '接続先をクリックで移動') + '</div>'
+          + relationDetailHtml(rel)
           + '</div>'
           + '<span class="field-type">' + escapeHtml(({LOOKUP:"ルックアップ",REF:"関連レコード",ACTION:"アクション"})[group.key]||group.key) + '</span>'
           + edgeBtn
@@ -3780,8 +3891,7 @@ function exportEditedHtml(){
     if(oldState && oldState.parentNode) oldState.parentNode.removeChild(oldState);
     const liveRuntime=clone.querySelector("#er-runtime");
     if(liveRuntime && liveRuntime.parentNode) liveRuntime.parentNode.removeChild(liveRuntime);
-    // 代替CDNから後読みしたライブラリは保存しない（開き直すと起動スクリプトが必要なときだけ再読込する）
-    clone.querySelectorAll("script[data-er-fallback-lib]").forEach(el=>el.parentNode&&el.parentNode.removeChild(el));
+    // 描画ライブラリは head のインライン script として複製に含まれるため、保存した HTML も単体で動く。
     const main=clone.querySelector("#er-main");
     if(!main){toast("保存に失敗: 本体スクリプトが見つかりません");return;}
     const stateScript=document.createElement("script");
@@ -4203,7 +4313,7 @@ function showJSON(){
       id:a.id,name:a.name,
       status:a.status|| (a.ok===false?"failed":"complete"),issues:a.issues||[],
       fields:exportFieldsForApp(a).map(f=>({code:f.code,label:f.label,type:f.type,path:f.path||f.code||"",required:f.required||false,unique:f.unique||false,isPrimaryKey:f.isPK||false,isLookup:f.isLookup||false,isRelatedRecord:f.isRef||false,inSubtable:f.inSubtable||false,tableCode:f.tableCode||"",tableLabel:f.tableLabel||""})),
-      relations:a.relations.map(r=>({label:r.fromDisplay||r.fromLabel||r.from||r.kind,fromField:r.from,sourceJoinField:r.sourceJoinField||r.from||"",controlField:r.controlField||"",controlFieldLabel:r.controlFieldLabel||"",toApp:r.toApp,toField:r.toField,type:r.kind})),
+      relations:a.relations.map(r=>({label:r.fromDisplay||r.fromLabel||r.from||r.kind,fromField:r.from,sourceJoinField:r.sourceJoinField||r.from||"",controlField:r.controlField||"",controlFieldLabel:r.controlFieldLabel||"",toApp:r.toApp,toField:r.toField,type:r.kind,copyFields:r.copyFields||[],displayFields:r.displayFields||[],filterCond:r.filterCond||""})),
     })),
   };
   openModal("ERモデル JSON",JSON.stringify(schema,null,2),exportFilename("ERモデル","json"));
@@ -4237,11 +4347,11 @@ function showCSVFields(){
   openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),exportFilename("ER図_フィールド一覧","csv"));
 }
 function showCSVRelations(){
-  const rows=[["種類","関連名","起点アプリID","起点アプリ名","起点の取得状態","起点の取得上の注意","表示部品","結合元フィールド","宛先アプリID","宛先アプリ名","宛先の取得状態","宛先フィールド"]];
+  const rows=[["種類","関連名","起点アプリID","起点アプリ名","起点の取得状態","起点の取得上の注意","表示部品","結合元フィールド","宛先アプリID","宛先アプリ名","宛先の取得状態","宛先フィールド","コピー・表示するフィールド","絞り込み条件"]];
   APPS.forEach(a=>{
     a.relations.forEach(r=>{
       const t=appMap.get(r.toApp);
-      rows.push([r.kind,r.fromDisplay||r.fromLabel||r.from||r.kind,a.id,a.name,exportStatusLabel(a),exportIssueText(a),r.controlFieldLabel||r.controlField||"",r.kind==="ACTION"?"":(r.sourceJoinField||r.from||""),r.toApp,t?t.name:"未取得の参照先",t?exportStatusLabel(t):"未取得",r.toField||""]);
+      rows.push([r.kind,r.fromDisplay||r.fromLabel||r.from||r.kind,a.id,a.name,exportStatusLabel(a),exportIssueText(a),r.controlFieldLabel||r.controlField||"",r.kind==="ACTION"?"":(r.sourceJoinField||r.from||""),r.toApp,t?t.name:"未取得の参照先",t?exportStatusLabel(t):"未取得",r.toField||"",relFieldsText(r),relFilterText(r)]);
     });
   });
   openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),exportFilename("ER図_リレーション一覧","csv"));
@@ -4344,11 +4454,11 @@ function showMarkdown(){
     if(a.relations && a.relations.length){
       lines.push("### リレーション");
       lines.push("");
-      lines.push("| 種類 | 関連名 | 表示部品 | 結合元フィールド | 宛先アプリ | 宛先フィールド |");
-      lines.push("|---|---|---|---|---|---|");
+      lines.push("| 種類 | 関連名 | 表示部品 | 結合元フィールド | 宛先アプリ | 宛先フィールド | コピー・表示するフィールド | 絞り込み条件 |");
+      lines.push("|---|---|---|---|---|---|---|---|");
       a.relations.forEach(r=>{
         const t=appMap.get(r.toApp);
-        lines.push("| "+r.kind+" | "+mdEsc(r.fromDisplay||r.fromLabel||r.from||r.kind)+" | "+mdEsc(r.controlFieldLabel||r.controlField||"")+" | "+mdEsc(r.kind==="ACTION"?"":(r.sourceJoinField||r.from||""))+" | "+mdEsc(t?t.name+" (App "+r.toApp+")":"未取得 (App "+r.toApp+")")+" | "+mdEsc(r.toField||"")+" |");
+        lines.push("| "+r.kind+" | "+mdEsc(r.fromDisplay||r.fromLabel||r.from||r.kind)+" | "+mdEsc(r.controlFieldLabel||r.controlField||"")+" | "+mdEsc(r.kind==="ACTION"?"":(r.sourceJoinField||r.from||""))+" | "+mdEsc(t?t.name+" (App "+r.toApp+")":"未取得 (App "+r.toApp+")")+" | "+mdEsc(r.toField||"")+" | "+mdEsc(relFieldsText(r))+" | "+mdEsc(relFilterText(r))+" |");
       });
       lines.push("");
     }
@@ -4598,6 +4708,25 @@ function ensureTip(){
   document.body.appendChild(tipEl);
   return tipEl;
 }
+// 関連の詳細（コピーするフィールド・表示するフィールド・絞り込み条件）。er-model.ts の describeErRelation* と同じ結果にする。
+function relCopyText(r){
+  const pairs=Array.isArray(r&&r.copyFields)?r.copyFields:[];
+  return pairs.filter(m=>m&&m.from&&m.to).map(m=>r.kind==="ACTION"?m.from+" → 起動先 "+m.to:"参照先 "+m.from+" → "+m.to).join(" / ");
+}
+function relDisplayText(r){
+  return (Array.isArray(r&&r.displayFields)?r.displayFields:[]).filter(Boolean).join(" / ");
+}
+function relFilterText(r){
+  return typeof (r&&r.filterCond)==="string"?r.filterCond.trim():"";
+}
+function relFieldsText(r){
+  return r&&r.kind==="REF"?relDisplayText(r):relCopyText(r);
+}
+// 詳細パネルの関連の行に出す、コピー・表示・絞り込みの説明（折り返して全文を示す）
+function relationDetailHtml(rel){
+  const rows=[["コピー",relCopyText(rel)],["表示",relDisplayText(rel)],["絞り込み",relFilterText(rel)]].filter(row=>row[1]);
+  return rows.map(row=>'<div class="field-detail"><b>'+row[0]+'</b>: '+escapeHtml(row[1])+'</div>').join("");
+}
 function relationKindJp(kind){
   return kind==="LOOKUP"?"ルックアップ":(kind==="REF"?"関連レコード":"アクション");
 }
@@ -4614,6 +4743,19 @@ cy.on("mouseover","node",e=>{
 });
 cy.on("mouseout","node",()=>{if(tipEl) tipEl.style.display="none";});
 // 線にマウスを乗せると強調 + ラベル非表示中でも内容をその場で確認できる
+// 線にマウスを乗せたときの補足（コピーするフィールド・表示するフィールド・絞り込み条件）。長いときは省略する
+function edgeDetailTipHtml(edge){
+  const app=appMap.get(edge.source().data("appId"));
+  const m=String(edge.id()).match(/^e_(.+)_(\\d+)$/);
+  const rel=app&&m&&app.relations?app.relations[Number(m[2])]:null;
+  if(!rel) return "";
+  const short=text=>text.length>140?text.slice(0,139)+"…":text;
+  let html="";
+  if(relCopyText(rel)) html+="<br>コピー: "+escapeHtml(short(relCopyText(rel)));
+  if(relDisplayText(rel)) html+="<br>表示: "+escapeHtml(short(relDisplayText(rel)));
+  if(relFilterText(rel)) html+="<br>絞り込み: "+escapeHtml(short(relFilterText(rel)));
+  return html;
+}
 cy.on("mouseover","edge",e=>{
   const edge=e.target;
   if(edge.hasClass("rel-hidden")||edge.hasClass("rel-manual-hidden")||edge.hasClass("edge-collapsed")) return;
@@ -4623,7 +4765,8 @@ cy.on("mouseover","edge",e=>{
   ensureTip();
   tipEl.innerHTML="<b>"+escapeHtml(edge.data("fromDisplay")||edge.data("fromLabel")||relationKindJp(edge.data("kind")))+"</b><br>"
     +escapeHtml(src?src.name:"?")+" → "+escapeHtml(dst?dst.name:"?")
-    +"<br>種類: "+relationKindJp(edge.data("kind"))+(edge.data("isCustom")?"（手動追加）":"");
+    +"<br>種類: "+relationKindJp(edge.data("kind"))+(edge.data("isCustom")?"（手動追加）":"")
+    +edgeDetailTipHtml(edge);
   tipEl.style.display="block";
 });
 cy.on("mouseout","edge",e=>{
@@ -4638,8 +4781,7 @@ applySavedViewState();
 <script>
 (function(){
   const source=document.getElementById("er-main");
-  const FALLBACKS=${scriptFallbacks};
-  function start(){
+  // 描画ライブラリは head にインラインで同梱している。ブラウザの制限などで初期化できなかったときだけ、取得済みのアプリ一覧を表で示す。
   if(typeof window.cytoscape==="function"){
     const runtime=document.createElement("script");
     runtime.id="er-runtime";
@@ -4647,26 +4789,11 @@ applySavedViewState();
     source.after(runtime);
     return;
   }
-  document.getElementById("topbar")?.setAttribute("hidden","");
-  document.getElementById("overview")?.setAttribute("hidden","");
-  document.getElementById("legend")?.setAttribute("hidden","");
   const host=document.getElementById("cy");
+  // 操作バー・凡例・ズーム操作などが案内の表に重ならないよう、図の領域以外の画面部品をすべて隠す（hidden 属性は CSS の display に負けるため使わない）。
+  Array.prototype.forEach.call(document.body.children,function(el){ if(el!==host&&el.tagName!=="SCRIPT") el.style.display="none"; });
   host.style.cssText="position:fixed;inset:0;overflow:auto;padding:32px;background:#f8fafc;color:#0f172a;font:14px/1.65 sans-serif";
-  host.innerHTML='<main style="max-width:960px;margin:auto"><h1 style="font-size:22px;margin-bottom:8px">ER図ライブラリを読み込めませんでした</h1><p>ネットワークまたはCDNの制限により図を描画できません。接続を確認して再読み込みしてください。取得済みのアプリ一覧は下表で確認できます。</p><table style="width:100%;margin-top:20px;border-collapse:collapse"><thead><tr><th>アプリID</th><th>アプリ名</th><th>項目数</th><th>関連数</th><th>取得状態</th></tr></thead><tbody>'+${safeJsonForScript(runtimeFallbackRows)}+'</tbody></table></main>';
-  }
-  function loadFallback(index){
-    if(index>=FALLBACKS.length){ start(); return; }
-    const spec=FALLBACKS[index];
-    if(typeof window[spec.global]==="function"){ loadFallback(index+1); return; }
-    const script=document.createElement("script");
-    script.setAttribute("data-er-fallback-lib","1");
-    script.integrity=spec.integrity;
-    script.crossOrigin="anonymous";
-    script.onload=script.onerror=function(){ loadFallback(index+1); };
-    script.src=spec.src;
-    document.head.appendChild(script);
-  }
-  loadFallback(0);
+  host.innerHTML='<style>#cy table{width:100%;border-collapse:collapse}#cy th,#cy td{padding:6px 10px;text-align:left;vertical-align:top;border-bottom:1px solid #cbd5e1}#cy th,#cy td:not(:nth-child(2)){white-space:nowrap}#cy td:nth-child(2){overflow-wrap:anywhere}</style><main style="max-width:960px;margin:auto"><h1 style="font-size:22px;margin-bottom:8px">ER図を描画できませんでした</h1><p>描画ライブラリを初期化できませんでした。ブラウザを再読み込みするか、別のブラウザで開いてください。取得済みのアプリ一覧は下表で確認できます。</p><table style="margin-top:20px"><thead><tr><th>アプリID</th><th>アプリ名</th><th>項目数</th><th>関連数</th><th>取得状態</th></tr></thead><tbody>'+${safeJsonForScript(runtimeFallbackRows)}+'</tbody></table></main>';
 })();
 <\/script>
 </body>
