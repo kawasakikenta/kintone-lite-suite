@@ -22,6 +22,7 @@ const STYLE_ID = 'kus-lp-theme-styles';
 const ACCENTS: Record<string, { from: string; via: string; to: string; chip: string; ring: string }> = {
   diff:    { from: '#1d4ed8', via: '#2563eb', to: '#0ea5e9', chip: '#dbeafe', ring: 'rgba(37,99,235,.16)' },
   reflect: { from: '#b91c1c', via: '#dc2626', to: '#f97316', chip: '#fee2e2', ring: 'rgba(220,38,38,.18)' },
+  deploy:  { from: '#4c0519', via: '#881337', to: '#be123c', chip: '#ffe4e6', ring: 'rgba(136,19,55,.22)' },
   field:   { from: '#6d28d9', via: '#7c3aed', to: '#a855f7', chip: '#ede9fe', ring: 'rgba(124,58,237,.18)' },
   jsconfig:{ from: '#0f766e', via: '#0d9488', to: '#22d3ee', chip: '#ccfbf1', ring: 'rgba(13,148,136,.18)' },
   settings:{ from: '#0369a1', via: '#0284c7', to: '#22d3ee', chip: '#e0f2fe', ring: 'rgba(2,132,199,.18)' },
@@ -1502,7 +1503,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
   thead.innerHTML =
     '<tr><th class="kus-lp__apptable-no" scope="col">#</th>' +
     '<th scope="col">アプリID</th>' +
-    '<th scope="col">ゲストID</th>' +
+    '<th scope="col">ゲストスペースID</th>' +
     '<th class="kus-lp__apptable-acts-h" scope="col">操作</th></tr>';
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
@@ -1670,14 +1671,14 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     tdAct.className = 'kus-lp__apptable-acts';
 
     const app = makeInput({ placeholder: opts.appPlaceholder || 'アプリID（カンマ区切りで複数可）', ariaLabel: 'アプリID' });
-    const guest = makeInput({ placeholder: opts.guestPlaceholder || '空欄=通常スペース', ariaLabel: 'ゲストID' });
+    const guest = makeInput({ placeholder: opts.guestPlaceholder || '空欄=通常スペース', ariaLabel: 'ゲストスペースID' });
     app.value = appId;
     guest.value = guestId;
     const name = document.createElement('div');
     name.className = 'kus-lp__apptable-name';
 
     const copyBtn = makeButton('↑コピー', 'sub');
-    copyBtn.title = '上の行のアプリID・ゲストIDをこの行へコピー';
+    copyBtn.title = '上の行のアプリID・ゲストスペースIDをこの行へコピー';
     const dupBtn = makeButton('複製', 'sub');
     dupBtn.title = 'この行を下に複製';
     const delBtn = makeButton('×', 'ghost');

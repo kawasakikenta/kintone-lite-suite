@@ -1,7 +1,7 @@
 'use strict';
 
 import { buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle, deepClone } from '../utils.js';
-import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, fetchBundle, pickRevision, isRevisionConflictError, uploadKintoneFile } from '../api.js';
+import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, fetchAppDeployStatus, fetchBundle, pickRevision, isRevisionConflictError, uploadKintoneFile } from '../api.js';
 import { captureReflectBaseline, assertReflectBaselineMatches, assertCompleteReflectBackup, isCompleteReflectSection, type ReflectBaseline } from '../reflect/standalonePreflight.js';
 import { embedCustomizeFileContents, resolveCustomizeFiles, type CustomizeFileResolution } from '../reflect/customizeFiles.js';
 import { reflectFieldLabels } from '../reflect/changeSummary.js';
@@ -11,6 +11,9 @@ import { REFLECT_SECTION_KEYS } from '../reflect/sections.js';
 import { inspectTargetPendingChanges, type ReflectTargetPending } from '../reflect/targetPending.js';
 import { pushReflectErrorLog as pushErrorLog, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
 import { RUN_CANCELLED_MESSAGE, isRunCancelledError } from '../runControl.js';
+import type { ComposedReflectSelection, ComposedSection, SectionSelectionState } from '../reflect/selectionTypes.js';
+import { buildPlanFromComposedAfter, buildSectionSelectionModel, composeSectionSelection, defaultSelectionState } from '../reflect/selection.js';
+import { SYSTEM_FIELD_TYPES } from '../constants.js';
 
 export interface ReflectOptions {
   sourceAppId: string; sourceGuestId?: string; sourcePreview?: boolean; sourceBundle?: unknown;
@@ -26,7 +29,13 @@ export interface PreviewReflectResult {
   /** 反映元のシステムフィールド（フィールド設定の反映では追加されない）のコード。参照不足の案内に使う */
   sourceSystemFieldCodes: string[];
   targetPending?: ReflectTargetPending;
+  /** フィールドコード → 表示名（反映先と反映元から。差分の選択・修正の表示に使う） */
+  fieldLabels?: Record<string, string>;
+  /** 反映先の反映状況（kintone が前回の反映を処理中か）。checkTargetDeployStatus を指定した抽出だけが返す。取得に失敗しても抽出は止めない */
+  targetDeployStatus?: ReflectTargetDeployStatus;
 }
+/** 反映先のアプリの更新（deploy）の状況。processing のとき、kintone が処理を終えるまで反映先へ書き込めない。 */
+export interface ReflectTargetDeployStatus { state: 'processing' | 'idle' | 'unknown'; message: string }
 /** 反映の進捗通知。項目ごとに running → ok / ng / skip、中断で残った項目は pending。 */
 export interface ReflectSectionUpdate { sectionKey: string; label: string; status: 'running' | 'ok' | 'ng' | 'skip' | 'pending'; message?: string; /** 利用者の「中止」で途中で止まった項目（status は ng） */ stopped?: boolean }
 export interface ReflectAppIdentity { appId: string; name: string; code: string; guestId: string }
@@ -161,7 +170,29 @@ async function resolveReflectCustomizeFiles(opts: ReflectOptions, scopes: string
   return resolveCustomizeFiles(sourceSection, targetSection, { sourceGuestId, targetGuestId: opts.targetGuestId || '' });
 }
 
-export async function previewReflectStandalone(opts: ReflectOptions, setStatus: (message: string) => void): Promise<PreviewReflectResult> {
+/** 反映元・反映先のどちらかに実在するフィールドコード（システムフィールドを含む）。計算式・クエリが参照するフィールドの判定に使う。 */
+function knownFieldCodesOf(source: any, target: any): string[] {
+  return [...new Set([...listReflectFieldCodes(source), ...listReflectFieldCodes(target)])];
+}
+
+/**
+ * 反映先が、kintone で前回の反映（アプリの更新）を処理中か確認する。処理中のアプリは設定を変更できない。
+ * 取得に失敗しても例外にしない（unknown を返す。抽出は止めない）。
+ */
+export async function inspectTargetDeployStatus(opts: { targetAppId: string; targetGuestId?: string }): Promise<ReflectTargetDeployStatus> {
+  try {
+    const rows = await fetchAppDeployStatus(opts.targetGuestId || '', [opts.targetAppId]);
+    const row = rows.find(item => item.app === String(opts.targetAppId));
+    if (!row) return { state: 'unknown', message: '反映先が反映処理中か確認できませんでした（反映状況に反映先がありません）。' };
+    if (row.status === 'PROCESSING') return { state: 'processing', message: '反映先は前回の反映を kintone が処理中です。完了してから抽出し直してください。' };
+    return { state: 'idle', message: '反映先は反映処理中ではありません。' };
+  } catch (error: any) {
+    if (isRunCancelledError(error)) throw error;
+    return { state: 'unknown', message: `反映先が反映処理中か確認できませんでした（${error?.message != null ? String(error.message).split('\n')[0] : String(error)}）。` };
+  }
+}
+
+export async function previewReflectStandalone(opts: ReflectOptions, setStatus: (message: string) => void, options: { /** 反映先の反映状況（処理中か）も確認する。本番へ反映する流れで使う */ checkTargetDeployStatus?: boolean } = {}): Promise<PreviewReflectResult> {
   const invalid = reflectConnectionError(opts);
   if (invalid) throw new Error(invalid);
   const scopes = orderedScopes(opts.scopes);
@@ -169,8 +200,14 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
   setStatus('反映先の未公開の変更を確認中…');
   const targetPending = await inspectTargetPendingChanges({ targetAppId: opts.targetAppId, targetGuestId: opts.targetGuestId, scopes: reflectInspectionScopes(scopes) }, target);
   const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
+  let targetDeployStatus: ReflectTargetDeployStatus | undefined;
+  if (options.checkTargetDeployStatus) {
+    setStatus('反映先の反映状況を確認中…');
+    targetDeployStatus = await inspectTargetDeployStatus(opts);
+  }
   const fieldLabels = reflectFieldLabels(target, source);
-  const entries = scopes.map(key => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels }));
+  const knownFieldCodes = knownFieldCodesOf(source, target);
+  const entries = scopes.map(key => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels, knownFieldCodes }));
   const baseline = captureReflectBaseline({ ...opts, scopes: reflectInspectionScopes(scopes) }, source, target);
   for (const entry of entries.filter(entry => !entry.blockers.length)) {
     try {
@@ -193,12 +230,58 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
     totalSections: entries.length, changedSections: entries.filter(entry => entry.status === 'change').length,
     sameSections: entries.filter(entry => entry.status === 'same').length,
     errorSections: entries.filter(entry => !['change', 'same'].includes(entry.status)).length,
-    entries, sourceFieldCodes: listReflectFieldCodes(source, true), targetFieldCodes: listReflectFieldCodes(target), sourceSystemFieldCodes: listReflectSystemFieldCodes(source), baseline, targetPending
+    entries, sourceFieldCodes: listReflectFieldCodes(source, true), targetFieldCodes: listReflectFieldCodes(target), sourceSystemFieldCodes: listReflectSystemFieldCodes(source), baseline, targetPending, fieldLabels,
+    ...(targetDeployStatus ? { targetDeployStatus } : {})
   };
 }
 
+/** 選択・修正後のフィールド設定（PUT 形）で、実際に追加・存在する通常フィールドのコード（テーブル内を含む）。 */
+function composedFieldCodes(after: any): string[] {
+  const properties = after?.properties;
+  if (!properties || typeof properties !== 'object') return [];
+  return Object.entries<any>(properties).filter(([, definition]) => !SYSTEM_FIELD_TYPES.has(definition?.type)).flatMap(([code, definition]) => [code, ...Object.keys(definition?.type === 'SUBTABLE' && definition.fields && typeof definition.fields === 'object' ? definition.fields : {})]);
+}
+
+/** 既定の計画（反映元に合わせた設定）で追加されるフィールドのコード。選択・修正で外した追加フィールドを参照する項目の案内に使う（書き込めるフィールド設定のときだけ）。 */
+function addableFieldCodes(plans: ReflectSectionPlan[]): string[] {
+  const fieldSettings = plans.find(plan => plan.sectionKey === 'fieldSettings');
+  return fieldSettings && !fieldSettings.blockers.length && fieldSettings.values ? composedFieldCodes(fieldSettings.values.after) : [];
+}
+
+/**
+ * 差分の選択・修正の状態から、項目ごとの送る設定と計画を作り直す（純粋。通信しない）。
+ * states に無い項目は既定の選択（すべて選択・修正なし）とする。
+ * 計画を作れない項目（取得失敗・種類の違いなど、status が change / same 以外）は sections に含めず、その blockers を引き継ぐ。
+ */
+export function composeReflectSelectionStandalone(preview: PreviewReflectResult, states: Record<string, SectionSelectionState>): ComposedReflectSelection {
+  const fieldLabels = preview.fieldLabels || {};
+  const knownFieldCodes = [...new Set([...(preview.sourceFieldCodes || []), ...(preview.sourceSystemFieldCodes || []), ...(preview.targetFieldCodes || [])])];
+  const sections: ComposedSection[] = [];
+  const plans: ReflectSectionPlan[] = [];
+  const issues: string[] = [];
+  for (const entry of preview.entries) {
+    const model = entry.status === 'change' || entry.status === 'same' ? buildSectionSelectionModel(entry, fieldLabels) : null;
+    if (!model) {
+      if (entry.status === 'change' || entry.status === 'same') issues.push(`${entry.label}: 設定値を取得できていないため、選択・修正できません。`);
+      plans.push(entry);
+      continue;
+    }
+    const state = states && Object.prototype.hasOwnProperty.call(states, entry.sectionKey) && states[entry.sectionKey] ? states[entry.sectionKey] : defaultSelectionState(model);
+    const composed = composeSectionSelection(model, state, entry, fieldLabels, knownFieldCodes);
+    sections.push(composed);
+    plans.push(composed.plan);
+    for (const error of composed.errors) issues.push(`${composed.label}: ${error}`);
+  }
+  const scopes = preview.entries.map(entry => entry.sectionKey);
+  // 「反映元のフィールドが追加される」前提は、選択・修正後のフィールド設定で実際に追加・存在するフィールドだけにする。
+  const fieldSettings = sections.find(section => section.sectionKey === 'fieldSettings');
+  const sourceFields = fieldSettings ? composedFieldCodes(fieldSettings.after) : [];
+  issues.push(...reflectSelectionBlockers(plans, scopes, sourceFields, preview.targetFieldCodes, preview.sourceSystemFieldCodes, addableFieldCodes(preview.entries)));
+  return { sections, blockers: [...new Set(issues)] };
+}
+
 export async function runApplyPreviewStandalone(
-  opts: ReflectOptions & { stopOnError?: boolean; doBackup?: boolean; doDeploy?: boolean; reviewBaseline: ReflectBaseline; onSectionUpdate?: (update: ReflectSectionUpdate) => void },
+  opts: ReflectOptions & { stopOnError?: boolean; doBackup?: boolean; doDeploy?: boolean; reviewBaseline: ReflectBaseline; onSectionUpdate?: (update: ReflectSectionUpdate) => void; /** 項目ごとの送る設定（差分の選択・修正の結果）。無い項目は既定の計画どおり */ composed?: Record<string, any> },
   setStatus: (message: string, error?: boolean) => void, onProgress: (logs: string[]) => void
 ): Promise<{ logs: string[]; sections: ApplySectionOutcome[]; backup?: ReflectBackup; /** 最後の書き込み後の反映先プレビューの revision（書き込みが無ければ確認時のまま） */ finalRevision: string; /** 利用者の中止で途中停止した（未実行の項目は pending、途中まで書いた項目は ng で示す） */ cancelled?: boolean }> {
   if (!opts.reviewBaseline) throw new Error('反映前に差分を取得して確認してください。');
@@ -211,8 +294,13 @@ export async function runApplyPreviewStandalone(
   let revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes }, source, target);
   const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
   const fieldLabels = reflectFieldLabels(target, source);
-  const plans = scopes.map(key => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels }));
-  const issues = reflectSelectionBlockers(plans, scopes, listReflectFieldCodes(source, true), listReflectFieldCodes(target), listReflectSystemFieldCodes(source));
+  const knownFieldCodes = knownFieldCodesOf(source, target);
+  const defaultPlans = scopes.map(key => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels, knownFieldCodes }));
+  // 差分の選択・修正がある項目は、確認済みの送る設定から計画を作り直す（再取得した既定の計画を土台に、baseline の照合は済んでいる）。
+  const composed = opts.composed;
+  const plans = composed ? defaultPlans.map(plan => Object.prototype.hasOwnProperty.call(composed, plan.sectionKey) ? buildPlanFromComposedAfter(plan, composed[plan.sectionKey], fieldLabels, knownFieldCodes) : plan) : defaultPlans;
+  const sourceFields = composed && Object.prototype.hasOwnProperty.call(composed, 'fieldSettings') ? composedFieldCodes(composed.fieldSettings) : listReflectFieldCodes(source, true);
+  const issues = reflectSelectionBlockers(plans, scopes, sourceFields, listReflectFieldCodes(target), listReflectSystemFieldCodes(source), addableFieldCodes(defaultPlans));
   if (issues.length) throw new Error(`反映前の検査で停止しました。まだ書き込んでいません。\n${issues.join('\n')}`);
   if (plans.some(plan => plan.requiredFields?.length)) revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes, targetDependencies: ['fieldSettings'] }, source, target);
   // 参照先変換が使われる項目（フィールド・アクション）を書くときだけ変換先を確認する（差分確認と同じ条件）。
@@ -322,7 +410,7 @@ export async function runApplyPreviewStandalone(
       }
       // 項目内の途中で止まった場合、先に完了した書き込みは反映先に残る。失敗の内容と一緒に必ず示す。
       const message = `${error.message || String(error)}${written.length ? `\n（この項目では ${written.join('・')} まで書き込み済みです。差分を取得し直して現在の状態を確認してください）` : ''}`;
-      sections.push({ ...outcome, status: 'ng', message }); notify(plan, 'ng', message); pushErrorLog(logs, `NG ${plan.label}: ${message}`, message);
+      sections.push({ ...outcome, status: 'ng', message, ...(written.length ? { partiallyWritten: true } : {}) }); notify(plan, 'ng', message); pushErrorLog(logs, `NG ${plan.label}: ${message}`, message);
       if (opts.stopOnError !== false || error.stopReflection || isRevisionConflictError(error)) {
         for (const pending of plans.slice(index + 1)) { sections.push({ sectionKey: pending.sectionKey, label: pending.label, status: 'pending', message: '中断のため未実行' }); notify(pending, 'pending', '中断のため未実行'); }
         logs.push(`中断（未実行 ${plans.length - index - 1} 件）`); break;

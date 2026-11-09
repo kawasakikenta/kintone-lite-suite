@@ -141,7 +141,7 @@ async function main() {
         assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), 0);
         if (id === 'design') {
           const appId = page.getByRole('textbox', { name: 'アプリID', exact: true }).first();
-          const guestId = page.getByRole('textbox', { name: 'ゲストID', exact: true }).first();
+          const guestId = page.getByRole('textbox', { name: 'ゲストスペースID', exact: true }).first();
           await appId.fill('bad');
           assert.equal(await button('内容を確認する').isDisabled(), true, '設計書: 不正なアプリIDを確認前に止める');
           await appId.fill('202');
@@ -210,7 +210,7 @@ async function main() {
         }
         if (id === 'csv-export') {
           const appId = page.locator('.kus-lp__apptable input[aria-label="アプリID"]').first();
-          const guestId = page.locator('.kus-lp__apptable input[aria-label="ゲストID"]').first();
+          const guestId = page.locator('.kus-lp__apptable input[aria-label="ゲストスペースID"]').first();
           await appId.fill('bad');
           assert.equal(await button('内容を確認する').isDisabled(), true, 'CSV出力: 不正なアプリIDを確認前に止める');
           await appId.fill('202');
