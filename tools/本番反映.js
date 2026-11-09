@@ -6563,7 +6563,7 @@ ${P} .kus-rl-items__more{margin-top:8px}
       const removedCount = removedSettingCount(app);
       const removedFields = mode === "deploy" ? (app.removedFields || []).length : 0;
       tdDel.className = `kus-dp-c-del kus-dp-del${removedCount || removedFields ? " kus-dp-del--has" : ""}`;
-      tdDel.textContent = app.state === "changes" ? `${removedCount} 件${removedFields ? `（フィールド ${removedFields} 件）` : ""}` : "－";
+      tdDel.textContent = app.state === "changes" ? `${removedCount} 件${removedFields ? ` / フィールド ${removedFields} 件（値も削除）` : ""}` : "－";
       const tdRev = el("td", "kus-dp-c-rev");
       tdRev.dataset.label = "revision";
       tdRev.textContent = app.productionRevision || app.previewRevision ? formatRevisionPair(app) : "－";

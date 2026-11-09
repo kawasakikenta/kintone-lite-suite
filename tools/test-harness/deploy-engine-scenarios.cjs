@@ -275,7 +275,7 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
   }
   assert.equal(await tab('変更を確認').getAttribute('aria-selected'), 'true');
   assert.match(await reviewRow('101').innerText(), /変更あり[\s\S]*フィールド設定[\s\S]*本番 12 → プレビュー 15/);
-  assert.match(await reviewRow('101').innerText(), /3 件（フィールド 2 件）/, '削除の件数（フィールドは別に示す）');
+  assert.match(await reviewRow('101').innerText(), /3 件 \/ フィールド 2 件（値も削除）/, '削除の件数（フィールドは別に示す）');
   await reviewRow('101').getByRole('button', { name: '詳細を表示' }).click();
   {
     const detail = await page.locator('tr.kus-dp-detail-tr').filter({ has: page.locator('[data-deploy-section]') }).first().innerText();
