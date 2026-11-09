@@ -1,5 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runAdvancedDesignExporter } from '../../src/tabs/design-xlsx';
+
+// 同梱の xlsx-js-style の代わりに、各テストが用意した記録用の偽物（globalThis.XLSX）を渡す。
+vi.mock('../../src/tabs/sheetLib', () => ({ loadSheetLib: async () => (globalThis as any).XLSX }));
 
 type FakeSheet = Record<string, any>;
 

@@ -13,7 +13,7 @@
 | 配布形式 | esbuild で生成した ES2020 向け IIFE、機能ごとの単一 `.js` ファイル |
 | 正規ソース | `tools/統合ツール/src/` |
 | 配布物 | `tools/` 直下の 12 本の `.js` |
-| 外部接続 | kintone REST API、および機能実行時に必要となる CDN |
+| 外部接続 | kintone REST API、およびプロセス図（Mermaid）と ER 図の描画ライブラリを読み込む CDN。ZIP 作成と設計書 Excel の書き出しは bundle に含め、通信しない |
 | 対応開発環境 | Node.js 20 以上、npm 10 以上 |
 
 統合版 `tools/統合ツール.js` は廃止済みです。各 lite エントリは、実行場所が kintone ページであることを確認してから、必要な UI と機能だけを起動します。
@@ -70,7 +70,7 @@ flowchart LR
 
 ### 4.1 npm の直接依存
 
-本番 bundle に npm パッケージを直接 import する構成ではありません。次のパッケージは、ビルド、型検査、テスト、または ER 図ハーネスで使用する **開発時依存**です。
+実行時に使うパッケージは `xlsx-js-style` だけで、`設計書作成.js` にだけ同梱します（下表）。そのほかは、ビルド、型検査、テスト、または ER 図ハーネスで使用する **開発時依存**です。
 
 | パッケージ | 宣言バージョン | 配置 | 用途 |
 | --- | --- | --- | --- |
@@ -82,6 +82,7 @@ flowchart LR
 | `cytoscape` | `3.28.1` | 統合ツール | ER 図のブラウザ回帰テストで CDN をローカル実体に差し替えるために使用 |
 | `dagre` | `0.8.5` | 統合ツール | ER 図の階層レイアウトをローカル検証 |
 | `cytoscape-dagre` | `2.5.0` | 統合ツール | Cytoscape と Dagre の連携をローカル検証 |
+| `xlsx-js-style` | `1.2.0` | 統合ツール | 設計書 Excel のスタイル付き生成（SheetJS 0.18.5 + セル書式、Apache-2.0）。`設計書作成.js` にだけ同梱 |
 
 間接依存を含む厳密な解決バージョンと整合性ハッシュは `package-lock.json` および `tools/統合ツール/package-lock.json` を正本とし、この文書へ重複転記しません。
 
@@ -89,17 +90,23 @@ flowchart LR
 
 これらは bundle へ同梱されず、該当機能を使うときにブラウザから読み込みます。そのため、kintone 環境の Content Security Policy、プロキシ、ネットワーク制限の影響を受けます。
 
+kintone の画面へ読み込む外部スクリプトは、管理者のセッションで実行されます（このツール群は設定の書き込みや本番反映もできます）。そのため、**固定版 + `integrity`（SRI）+ `crossorigin="anonymous"` で検証できるものだけ**を読み込みます。内容を検証できない URL は候補に入れません。
+
+**同梱していて通信しないもの**
+
+- ZIP 作成: 自前実装（`src/archive/lite-zip.ts`）。以前の JSZip（cdnjs）は廃止しました。`loadJSZipLite()`（`src/jszipLoader.ts`）が返し、ページに既にある `window.JSZip` は使いません。UTF-8 のファイル名、CRC-32、フォルダ、後勝ちの上書き、`remove`、空の ZIP に対応します。圧縮はブラウザに `CompressionStream('deflate-raw')` があれば DEFLATE（縮まないものは STORE）、無ければ STORE です。classic ZIP の上限（1 エントリ・全体とも 4GB 未満、65,535 件）を超える場合は、壊れた ZIP を作らずエラーにします。
+- 設計書 Excel: xlsx-js-style 1.2.0（`src/tabs/sheetLib.ts`）。`設計書作成.js` にだけ入ります。配布物は UMD のため、`build.js` が `module` などを隠して CDN のブラウザ版と同じ形で取り込みます（文字コード表 `cpexcel` は含めません）。以前のフォールバック（SheetJS 0.18.5）は廃止しました。
+
 | ライブラリ | バージョン | 主な用途 | 読込元・備考 |
 | --- | --- | --- | --- |
-| JSZip | 3.10.1 | 設定、JS/CSS、添付、CSVひな形などの ZIP 作成 | cdnjs。lite 共通ローダーは失敗と30秒タイムアウトを表示 |
 | Cytoscape.js | 3.28.1 | 出力した ER 図 HTML のグラフ描画 | cdnjs。代替は jsDelivr の 3.26.0 |
 | Dagre | 0.8.5 | ER 図の階層レイアウト | jsDelivr |
 | cytoscape-dagre | 2.5.0 | Cytoscape.js で Dagre を利用 | jsDelivr の minified / non-minified 候補 |
-| Mermaid | 10.6.1 | プロセス図の描画 | jsDelivr → unpkg → cdnjs の順で試行。失敗時は簡易 HTML 表示 |
-| xlsx-js-style | 1.2.0 | 設計書 XLSX のスタイル付き生成 | jsDelivr。失敗時は SheetJS 0.18.5 を試行 |
-| SheetJS (`xlsx`) | 0.18.5 | 設計書 XLSX のフォールバック生成 | jsDelivr。差分比較 XLSX は外部ライブラリを使わず自前生成 |
+| Mermaid | 10.6.1 | プロセス図の描画 | jsDelivr → unpkg の順で試行し、どちらも SRI（sha384）で検証。30 秒で次の候補へ。読み込めない・検証に失敗した場合は簡易 HTML 表示（状態と遷移の表）。cdnjs は同じ内容と確かめられないため候補から外した |
 
-URL の正本は原則 `src/constants.ts` です。ただし Mermaid の候補 URL は `src/tabs/process-standalone.ts`、設計書 XLSX の候補 URL は `src/tabs/design-xlsx.ts` にあります。
+URL の正本は原則 `src/constants.ts` です。ただし Mermaid の候補 URL とハッシュは `src/tabs/mermaid-loader.ts` にあります。ハッシュは npm の `mermaid@10.6.1` の `dist/mermaid.min.js` から計算した値で、jsDelivr（`/npm/`）と unpkg は npm の配布物をそのまま配るため同じ値で検証できます。バージョンを上げるときは、新しい配布物から `openssl dgst -sha384 -binary mermaid.min.js | openssl base64 -A` で計算し直します。
+
+`window.mermaid` が既にあるときは再読み込みせずに使います。それは、このツールが検証付きで読み込んだ固定版か、このページで既に実行されている別のスクリプト（kintone のカスタマイズなど）が読み込んだものです。後者はこのツールが新たに外部スクリプトを実行するわけではありませんが、内容は検証できません。どちらでも `securityLevel: 'strict'` で初期化します。
 
 ### 4.3 プラットフォーム API とブラウザ標準機能
 
@@ -152,7 +159,7 @@ URL の正本は原則 `src/constants.ts` です。ただし Mermaid の候補 U
 
 ### 外部依存の縮退動作
 
-CDN 依存が取得できない可能性を前提に、代替 CDN、簡易表示、明示的なエラーのいずれかを用意します。差分比較 XLSX は外部 CDN に依存しない実装です。
+CDN 依存（Mermaid、ER 図の描画ライブラリ）が取得できない可能性を前提に、代替 CDN、簡易表示、明示的なエラーのいずれかを用意します。ZIP 作成、設計書 Excel、差分比較 XLSX は外部 CDN に依存せず、CDN が遮断された環境でも使えます。Mermaid は、読み込めない・SRI の検証に失敗したときに簡易表示へ切り替え、理由を状態表示とログに残します（SRI の不一致はブラウザ上で通信失敗と区別できないため、どちらも同じ扱いです）。
 
 ## 7. ビルドと検証
 
@@ -179,7 +186,7 @@ git diff --exit-code
 
 1. `package.json` または外部ライブラリ URL のバージョンを更新する。
 2. npm 依存なら対応する lockfile を `npm install` で更新する。
-3. CDN 依存なら、グローバル変数名、CSS、代替 URL、CSP の許可先が一致するか確認する。
+3. CDN 依存なら、グローバル変数名、CSS、代替 URL、CSP の許可先が一致するか確認する。固定版の `integrity`（sha384）と `crossorigin="anonymous"` を付け、ハッシュは npm の配布物から計算する（検証できない URL は候補に入れない）。同梱できるものは同梱を優先する。
 4. `npm run check` を実行し、生成物の差分もレビューする。
 5. 関連する Playwright ハーネスで通常経路と CDN 遮断時の挙動を確認する。
 6. この一覧と、必要に応じて `tools/統合ツール/README.md` を更新する。

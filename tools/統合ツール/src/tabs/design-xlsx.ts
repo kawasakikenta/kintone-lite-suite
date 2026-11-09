@@ -1,14 +1,17 @@
 'use strict';
 
-import { TOOL_ID, EXTERNAL_LIBRARIES, SECTION_DEFS } from '../constants.js';
+import { TOOL_ID, SECTION_DEFS } from '../constants.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { showToast, stripHtmlToText, extractAppNameFromBundle, flattenCategories } from '../utils.js';
 import { isCancelRequested, isRunCancelledError, raceWithCancel, requestCancel, RUN_CANCELLED_MESSAGE, throwIfCancelled } from '../runControl.js';
 import { API_GET_TIMEOUT_MS } from '../api.js';
+import { loadJSZipLite } from '../jszipLoader.js';
+import { loadSheetLib as importSheetLib } from './sheetLib.js';
 
-const SHEETLIB_PRIMARY_URL = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js';
-const SHEETLIB_FALLBACK_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+// Excel の書き出しに使う xlsx-js-style（設計書作成.js へ同梱。ページ側の window.XLSX は使わない）。
+// loadSheetLibOnce() が代入する。以前のグローバルの XLSX と同じ名前で扱えるようモジュール内の変数にしている。
+let XLSX: any;
 
 // シート選択の記憶はブラウザストレージを使わず、セッション中のみインメモリで保持する
 // （本ツールの永続化方針: state.ts と同様にメモリ内のみで完結させる）
@@ -159,43 +162,8 @@ export function getExporterDialogZIndex(): string {
 }
 
 async function loadSheetLibOnce(): Promise<{ styled: boolean }> {
-  if (typeof (window as any).XLSX !== 'undefined') return { styled: true };
-  // XLSX は本コードと同じ realm（main window）に読み込む必要があるため
-  // getToolDocument() ではなく main の document を使う（popout 時に XLSX が
-  // popout window 側へ登録され「XLSX is not defined」となるのを防ぐ）。
-  const loadScriptLocal = (src: string, timeout = 15000) =>
-    new Promise<boolean>((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = src;
-      s.async = true;
-      let done = false;
-      const timer = setTimeout(() => {
-        if (!done) { done = true; reject(new Error(`Timeout: ${src}`)); }
-      }, timeout);
-      s.onload = () => { if (!done) { done = true; clearTimeout(timer); resolve(true); } };
-      s.onerror = () => { if (!done) { done = true; clearTimeout(timer); reject(new Error(`Failed: ${src}`)); } };
-      document.head.appendChild(s);
-    });
-  try { await loadScriptLocal(SHEETLIB_PRIMARY_URL); return { styled: true }; }
-  catch { await loadScriptLocal(SHEETLIB_FALLBACK_URL); return { styled: false }; }
-}
-
-async function loadJSZipOnce(): Promise<any> {
-  if (typeof (window as any).JSZip !== 'undefined') return (window as any).JSZip;
-  const url = EXTERNAL_LIBRARIES.jszip?.cdnUrl;
-  if (!url) throw new Error('JSZip の CDN URL が設定されていません');
-  await new Promise<void>((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = url;
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error('JSZip の読み込みに失敗しました'));
-    document.head.appendChild(s);
-  });
-  if (typeof (window as any).JSZip === 'undefined') {
-    throw new Error('JSZip のロード後もグローバル変数が見つかりません');
-  }
-  return (window as any).JSZip;
+  XLSX = await importSheetLib();
+  return { styled: true };
 }
 
 
@@ -502,8 +470,6 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     : null;
 
   const CONFIG = {
-    SHEETLIB_PRIMARY_URL: 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js',
-    SHEETLIB_FALLBACK_URL: 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
     MAX_RETRIES: 3,
     RETRY_DELAY: 1000,
     API_CONCURRENCY: 4,
@@ -2909,7 +2875,7 @@ export async function runBatchDesignExportXlsxZip(params: {
   let JSZipCtor: any;
   try {
     await loadSheetLibOnce();
-    JSZipCtor = await loadJSZipOnce();
+    JSZipCtor = await loadJSZipLite();
   } catch (e: any) {
     batchUi.hide();
     showToast(`❌ ライブラリの読み込みに失敗しました: ${e?.message || e}`, 'error');
@@ -2986,7 +2952,7 @@ export async function runBatchDesignExportXlsxZip(params: {
       }
       usedFilenames.add(uniqueName);
 
-      const buf = (window as any).XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+      const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
       zip.file(uniqueName, buf);
       if (failedAPIs && failedAPIs.length) batchUi.addFailedAPIs(`App ${appId}${guestId ? ` (guest:${guestId})` : ''}`, failedAPIs);
       results.push({ appId, appName, filename: uniqueName, ok: true });

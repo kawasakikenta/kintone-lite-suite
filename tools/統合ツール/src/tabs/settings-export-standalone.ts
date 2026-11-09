@@ -417,8 +417,8 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
 
   const preview = !!opts.preview;
 
-  // ZIP は全アプリの取得後に生成する。JSZip を読み込めない環境（CSP・ネットワーク制限）では、
-  // 時間のかかる取得を始める前に中止して、取得結果を無駄にしない。
+  // ZIP は全アプリの取得後に生成する。ZIP の実装は同梱で通信しないが、取得の前に準備しておき、
+  // 準備に失敗したときに取得結果を無駄にしない。
   const JSZipCtor = mode === 'zip' ? await loadJSZipLite() : null;
 
   const bundles = [];

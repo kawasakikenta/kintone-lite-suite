@@ -42,7 +42,7 @@ flowchart TB
   end
   Bundle --> Entry
   Api --> Kintone["kintone REST API（同一オリジン）<br/>/k/v1、/k/v1/preview、/k/guest/ID/v1、同 /preview"]
-  Api -. 必要時のみ動的読込 .-> CDN["外部 CDN<br/>JSZip・Cytoscape 等、失敗時は縮退"]
+  Api -. 必要時のみ動的読込 .-> CDN["外部 CDN<br/>Mermaid・Cytoscape 等（SRI 検証）、失敗時は縮退"]
   style Diff fill:#dbeafe,stroke:#2563eb,stroke-width:2px
 ```
 
@@ -54,7 +54,7 @@ flowchart TB
 | 生成物と正規ソースの分離 | `tools/*.js` と `単機能スクリプト棚卸し.md` はビルド生成物。`npm run check` 後の `git diff --exit-code` で更新漏れを検出する運用 | `CLAUDE.md`、`build.js` |
 | kintone 画面ガード | 全エントリが `isKintonePage()`（`window.kintone.api` と `window.kintone.app` の存在）を満たすときだけ起動し、それ以外はアラートのみ | `src/kintoneGuard.ts` |
 | ブラウザストレージ禁止 | `localStorage` / `sessionStorage` / `indexedDB` / `document.cookie` を `src/` 全体で禁止し、`check:no-browser-storage` がビルド前に文字列検査で落とす。レビュー状態・比較条件は JSON ファイルで持ち運ぶ | `scripts/check-no-browser-storage.cjs` |
-| 外部依存は実行時動的読込＋縮退 | 本番 bundle に npm パッケージを同梱しない。JSZip・Cytoscape・Dagre 等は CDN から動的読込し、代替 URL・30秒タイムアウト・簡易表示を用意。差分比較の Excel は自前生成で CDN 非依存 | `constants.ts`、`jszipLoader.ts`、`diff/xlsx-builder.ts` |
+| 外部依存は実行時動的読込＋縮退 | ZIP 作成（自前実装）と設計書 Excel（xlsx-js-style を `設計書作成.js` にだけ同梱）は CDN 非依存。Mermaid・Cytoscape・Dagre 等は CDN から動的読込し、代替 URL・タイムアウト・簡易表示を用意（Mermaid は固定版を SRI で検証）。差分比較の Excel も自前生成で CDN 非依存 | `constants.ts`、`jszipLoader.ts`、`archive/lite-zip.ts`、`tabs/sheetLib.ts`、`tabs/mermaid-loader.ts`、`diff/xlsx-builder.ts` |
 | 安全な書き込み | 設定の変更系 REST（POST/PUT/DELETE/PATCH）は `/v1/preview` を含む prefix へのみ許可。例外はレコード API 4パス、`/records/cursor.json`、別アプリの JS/CSS を渡すための `POST /file.json`（一時ファイル作成のみ）。`app/deploy.json` は原則拒否し、本番反映ツールの `requestAppDeploy` だけが preview prefix の `/app/deploy.json` へ POST できる（完全一致・自動再試行なし） | `api.ts` `assertAllowsMutatingRestCall`・`requestAppDeploy` |
 | 共有モジュールの波及 | `litePanelTheme.ts`・`kintoneGuard.ts`・`design-xlsx.ts`・`er.ts`・`diff/export.ts` の `bundleToMarkdown` は複数 bundle から参照され、1箇所の変更が最大 10 本の生成 JS に波及する | `tools/統合ツール/AGENTS.md` |
 
@@ -91,7 +91,7 @@ flowchart TB
 | `createLitePanel` | 同じ id の既存パネルがあれば `kus-lite-dispose` イベントを投げてから除去し、二重マウントを防ぐ。ドラッグ移動、「－」で見出しだけに折りたたみ、Esc は操作中のパネルだけを閉じる。`setPrimaryAction` に登録したボタンは Enter（textarea は Ctrl/Cmd+Enter）で押され、IME 変換確定の Enter は無視 |
 | `liteRun` | 非同期処理の共通ラッパー。busy 中はパネルを無効化。完了時、ステータスが err / warn / info なら成功メッセージで上書きしない（部分成功・比較未完了の警告を残す）。例外は 1 行目をステータス、残り（API コンテキスト・内訳）をログへ |
 | `installLiteWorkflow` | 「1 対象と操作 → 2 内容を確認 → 3 実行結果」の固定 3 段階。各アクションは `validate()`（入力検査文を返す）と `summary()`（確認表）を持ち、`writes: true` の操作は書き込みとして明示 |
-| 外部ライブラリ | `loadJSZipLite`: 既に `window.JSZip` があれば再利用、読込中の script 要素は共有、失敗を観測した要素は再利用しない。30 秒でタイムアウトし CSP / ネットワーク確認を案内 |
+| ZIP 作成 | `loadJSZipLite`: 自前の ZIP 実装（`archive/lite-zip.ts`）を返す。通信せず、ページの `window.JSZip` も使わない。classic ZIP の上限（4GB 未満・65,535 件）を超えたら `ZipLimitError` で止める |
 | ストレージ | ブラウザストレージ非使用（第 2 章）。レビュー状態・比較条件プロファイル・接続プリセットは JSON ファイルとして保存・読込 |
 | コード規約 | 既存テキストの CRLF 維持、生成物は編集しない、取得失敗・処理上限・部分成功は隠さず表示（`CLAUDE.md`） |
 

@@ -273,12 +273,12 @@ describe('runProcessBatchZipStandalone', () => {
     expect(downloadBlob).not.toHaveBeenCalled();
   });
 
-  it('rejects invalid input before any request and loads JSZip first', async () => {
+  it('rejects invalid input before any request and prepares the ZIP first', async () => {
     await expect(runProcessBatchZipStandalone({ apps: [] }, vi.fn())).rejects.toThrow('1件以上');
     await expect(runProcessBatchZipStandalone({ apps: [{ appId: 'abc', guestId: '' }] }, vi.fn())).rejects.toThrow('アプリID');
     expect(apiGet).not.toHaveBeenCalled();
-    vi.mocked(loadJSZipLite).mockRejectedValueOnce(new Error('JSZipの読み込みに失敗しました'));
-    await expect(runProcessBatchZipStandalone({ apps: [{ appId: '1', guestId: '' }] }, vi.fn())).rejects.toThrow('JSZip');
+    vi.mocked(loadJSZipLite).mockRejectedValueOnce(new Error('ZIPの準備に失敗しました'));
+    await expect(runProcessBatchZipStandalone({ apps: [{ appId: '1', guestId: '' }] }, vi.fn())).rejects.toThrow('ZIPの準備');
     expect(apiGet).not.toHaveBeenCalled();
   });
 });
