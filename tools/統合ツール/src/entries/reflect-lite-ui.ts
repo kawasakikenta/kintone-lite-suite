@@ -2532,7 +2532,7 @@ export function mountReflectLitePanel() {
       + `<div>${stamp}</div>`
       + (hasIssue
         ? `<div style="margin-top:4px">${last.cancelled ? '差分を取得し直して現在の状態を確認してから、' : ''}「失敗・未実行だけ選択」で対象を絞って再実行してください。</div>`
-        : '<div style="margin-top:4px">変わったのは反映先のプレビューだけです。本番へ公開するには、反映先の設定画面で公開してください。</div>');
+        : '<div style="margin-top:4px">変わったのは反映先のプレビューだけです。本番へ公開するには、反映先の設定画面で公開するか、「本番反映」ツールを使ってください。</div>');
     renderApplySectionResults(lastResultSections, last.report.sections);
     // 反映前に反映先プレビューへ未公開の変更があったかで、取り消しの案内を出し分ける。
     const guidance = describeUndoGuidance(last.report.targetPending);
@@ -2712,7 +2712,7 @@ export function mountReflectLitePanel() {
       panel.setStatus(`${ok + ng + outcome.counts.stopped + pending} 項目中 ${ok} 項目を反映しました。失敗 ${ng} 項目${pending ? `、未実行 ${pending} 項目` : ''}${outcome.failureNote ? `（${outcome.failureNote}）` : ''}。「失敗・未実行だけ選択」で再実行してください。`, 'warn');
       return;
     }
-    panel.setStatus(`${outcome.counts.ok} 項目を反映先プレビューへ反映しました。本番へ公開するには、「反映先の設定画面を開く」から kintone の設定画面で公開してください。`, 'ok');
+    panel.setStatus(`${outcome.counts.ok} 項目を反映先プレビューへ反映しました。本番へ公開するには、「反映先の設定画面を開く」から kintone の設定画面で公開するか、「本番反映」ツールを使ってください。`, 'ok');
   });
 
   // ---- 4ステップ・ワークフロー ----
