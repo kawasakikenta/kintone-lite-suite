@@ -111,6 +111,12 @@ ${P} .kus-ds-confirm-section summary{cursor:pointer;font-size:12.5px;font-weight
 ${P} .kus-ds-route-line{font-size:14px;font-weight:700;color:#0f172a;overflow-wrap:anywhere}
 ${P} .kus-ds-result-grid{display:flex;flex-direction:column;gap:12px}
 ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-wrap:anywhere}
+${P} .kus-ds-filetools{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:12px;background:#fff}
+${P} .kus-ds-filetools__hint{flex:1 1 220px;min-width:0;font-size:12.5px;color:#64748b;overflow-wrap:anywhere}
+${P} .kus-ds-verify{display:flex;flex-direction:column;gap:8px;min-width:0}
+${P} .kus-ds-verify__list{margin:0;padding-left:18px;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+${P} .kus-ds-verify__value{display:inline;padding:1px 6px;border-radius:5px;background:#f1f5f9;white-space:pre-wrap;overflow-wrap:anywhere}
+${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:600;color:#991b1b;overflow-wrap:anywhere}
 @media(max-width:900px){
   ${P} .kus-ds-scope-groups{grid-template-columns:1fr}
 }
