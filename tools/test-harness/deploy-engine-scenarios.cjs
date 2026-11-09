@@ -173,6 +173,8 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
     await page.evaluate(installSyntheticKintone, config);
     await page.addScriptTag({ content: script });
     await page.evaluate(() => DeployHarness.mountDeployLitePanel());
+    // 既定は「反映元アプリから本番へ」。この検証は従来の流れ（プレビューの変更を公開）を対象にする。
+    await page.getByRole('radio', { name: 'プレビューの変更を公開', exact: true }).check();
   }
 
   // -------------------------------------------------------------------------
