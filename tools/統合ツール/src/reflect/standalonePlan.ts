@@ -23,6 +23,8 @@ export interface ReflectSectionPlan {
   operations: ReflectOperation[]; fieldStats?: { add: number; update: number; tgtOnly: number };
   requiredFields?: string[]; fileUploads?: ReflectFileUpload[];
   items?: ReflectItemSummary[];
+  /** 反映先の現在（before）と既定の反映後（after）。どちらも PUT 形。差分の選択・修正（reflect/selection.ts）に使う */
+  values?: { before: any; after: any };
 }
 export interface ReflectPlanOptions { lookupMap?: Record<string, string>; preserveTargetOnly?: boolean; customizeFiles?: CustomizeFileResolution; fieldLabels?: Record<string, string> }
 export const formatBytes = (bytes: number) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
