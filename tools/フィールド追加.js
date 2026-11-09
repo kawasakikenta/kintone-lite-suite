@@ -883,6 +883,7 @@
   ]);
   var RECORD_CURSOR_PATH = "/records/cursor.json";
   var FILE_UPLOAD_PATH = "/file.json";
+  var APP_DEPLOY_PATH = "/app/deploy.json";
   var apiGetMetrics = {
     calls: 0,
     retries: 0,
@@ -903,12 +904,13 @@
   function isRecordDataMutationPath(path) {
     return RECORD_DATA_MUTATION_PATHS.has(normalizeApiResourcePath(path));
   }
-  function assertAllowsMutatingRestCall(prefix, path, method) {
+  function assertAllowsMutatingRestCall(prefix, path, method, options = {}) {
     const m = String(method || "").toUpperCase();
     if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
     if (m !== "POST" && m !== "PUT" && m !== "DELETE" && m !== "PATCH") return;
     const rel = String(path || "").replace(/\\/g, "/");
     if (rel.includes(DEPLOY_PATH_SNIPPET)) {
+      if (options.allowAppDeploy === true && path === APP_DEPLOY_PATH && m === "POST" && isPreviewRestPrefix(prefix)) return;
       throw new Error(ERR_NO_DEPLOY_API);
     }
     if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === "POST" || m === "DELETE")) {

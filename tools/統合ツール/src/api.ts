@@ -55,6 +55,15 @@ const RECORD_CURSOR_PATH = '/records/cursor.json';
  * 本番 prefix でも POST のみ許可する（PUT/DELETE は従来どおり拒否）。
  */
 const FILE_UPLOAD_PATH = '/file.json';
+/**
+ * 本番反映ツール専用の例外。アプリの更新（POST /preview/app/deploy.json）は、プレビューの未公開の変更を
+ * 本番へ公開する、または破棄する操作のため、requestAppDeploy だけが呼べる。
+ * パスの完全一致・POST・プレビュー prefix のすべてを満たす場合だけ許可し、
+ * apiPost / apiPut など汎用の書き込み経路からは従来どおり拒否する。
+ */
+const APP_DEPLOY_PATH = '/app/deploy.json';
+/** 1 回の依頼・状態確認で扱えるアプリの上限（kintone の仕様）。 */
+export const DEPLOY_APPS_PER_REQUEST = 300;
 
 export interface ApiPathMetric {
   calls: number;
@@ -97,16 +106,23 @@ function isRecordDataMutationPath(path: string | null | undefined): boolean {
   return RECORD_DATA_MUTATION_PATHS.has(normalizeApiResourcePath(path));
 }
 
+export interface MutatingRestCallOptions {
+  /** このモジュールの requestAppDeploy だけが true を渡す（本番反映ツール専用の例外）。 */
+  allowAppDeploy?: boolean;
+}
+
 /**
  * prefix + path への POST/PUT/DELETE を許可するか検査（GET は呼ばない想定）
  */
-export function assertAllowsMutatingRestCall(prefix: string, path: string, method: string): void {
+export function assertAllowsMutatingRestCall(prefix: string, path: string, method: string, options: MutatingRestCallOptions = {}): void {
   const m = String(method || '').toUpperCase();
   if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return;
   if (m !== 'POST' && m !== 'PUT' && m !== 'DELETE' && m !== 'PATCH') return;
 
   const rel = String(path || '').replace(/\\/g, '/');
   if (rel.includes(DEPLOY_PATH_SNIPPET)) {
+    // 呼び出し元が渡すパスそのものが完全一致し、POST でプレビュー prefix のときだけ許可する（本番 prefix・PUT/DELETE・別パスは拒否）。
+    if (options.allowAppDeploy === true && path === APP_DEPLOY_PATH && m === 'POST' && isPreviewRestPrefix(prefix)) return;
     throw new Error(ERR_NO_DEPLOY_API);
   }
   if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === 'POST' || m === 'DELETE')) {
@@ -343,6 +359,90 @@ export function pickRevision(res: any): string {
   const value = res?.revision;
   if (value == null || value === '') return '';
   return String(value);
+}
+
+// ---------------------------------------------------------------------------
+// アプリの更新（本番反映ツール専用）
+// ---------------------------------------------------------------------------
+// POST /preview/app/deploy.json は、プレビューの未公開の変更を本番へ公開する（revert: true なら破棄する）。
+// 処理は非同期で、完了は GET /preview/app/deploy.json で確認する。
+// 汎用の apiPost からは呼べず、このモジュールの requestAppDeploy だけが書き込みガードの例外を使う。
+// ---------------------------------------------------------------------------
+export interface DeployRequestApp {
+  app: string;
+  /** プレビューの設定の revision。最新でなければ kintone が拒否する（revision 競合）。 */
+  revision?: string;
+}
+
+const APP_ID_PATTERN = /^[1-9]\d*$/;
+
+function assertDeployGuestId(guestId: string): void {
+  const g = String(guestId || '').trim();
+  if (g && !APP_ID_PATTERN.test(g)) throw new Error('ゲストスペースIDは正の整数で指定してください。');
+}
+
+/**
+ * アプリの更新（revert が true なら変更の中止）を依頼する。完了は fetchAppDeployStatus で確認する。
+ * 書き込みの再試行はしない。サーバーで確定したか分からない再送で、二重に反映したり誤って報告したりしないため。
+ */
+export async function requestAppDeploy(guestId: string, apps: DeployRequestApp[], revert: boolean): Promise<void> {
+  assertDeployGuestId(guestId);
+  if (!Array.isArray(apps) || !apps.length) throw new Error('反映するアプリが指定されていません。');
+  if (apps.length > DEPLOY_APPS_PER_REQUEST) throw new Error(`一度に依頼できるアプリは ${DEPLOY_APPS_PER_REQUEST} 件までです（${apps.length} 件指定されました）。`);
+  const seen = new Set<string>();
+  const body: Array<{ app: string; revision?: string }> = [];
+  for (const entry of apps) {
+    const app = String(entry?.app ?? '').trim();
+    if (!APP_ID_PATTERN.test(app)) throw new Error(`アプリIDは正の整数で指定してください（${app || '空'}）。`);
+    if (seen.has(app)) throw new Error(`同じアプリが重複して指定されています（App ${app}）。`);
+    seen.add(app);
+    const row: { app: string; revision?: string } = { app };
+    if (entry.revision !== undefined) {
+      const revision = String(entry.revision).trim();
+      if (!/^\d+$/.test(revision)) throw new Error(`App ${app} のrevisionが数字ではありません。`);
+      row.revision = revision;
+    }
+    body.push(row);
+  }
+  const prefix = buildApiPrefix(guestId, true);
+  assertAllowsMutatingRestCall(prefix, APP_DEPLOY_PATH, 'POST', { allowAppDeploy: true });
+  throwIfCancelled();
+  const payload: Record<string, unknown> = revert === true ? { apps: body, revert: true } : { apps: body };
+  try {
+    noteWrite();
+    await (kintone as any).api(`${prefix}${APP_DEPLOY_PATH}`, 'POST', payload);
+  } catch (e) {
+    if (isRunCancelledError(e)) throw e;
+    throw decorateRevisionConflict(
+      // ログ用の要約（apps が配列の先頭要素をアプリIDとして読むため、IDの配列にする）。
+      apiErrorWithContext(e, { method: 'POST', prefix, path: APP_DEPLOY_PATH, payload: { apps: body.map((row) => row.app), revisions: body.map((row) => row.revision ?? ''), ...(revert === true ? { revert: true } : {}) } }),
+      revert === true ? '変更の中止' : '本番への反映'
+    );
+  }
+}
+
+export interface AppDeployStatus {
+  app: string;
+  /** PROCESSING / SUCCESS / FAIL / CANCEL */
+  status: string;
+}
+
+/** アプリの更新の状態を取得する（最大 300 件）。応答の形式が不正なら例外を投げる。 */
+export async function fetchAppDeployStatus(guestId: string, appIds: string[]): Promise<AppDeployStatus[]> {
+  assertDeployGuestId(guestId);
+  if (!Array.isArray(appIds) || !appIds.length) return [];
+  if (appIds.length > DEPLOY_APPS_PER_REQUEST) throw new Error(`一度に確認できるアプリは ${DEPLOY_APPS_PER_REQUEST} 件までです（${appIds.length} 件指定されました）。`);
+  const ids = appIds.map((id) => String(id ?? '').trim());
+  const invalid = ids.find((id) => !APP_ID_PATTERN.test(id));
+  if (invalid !== undefined) throw new Error(`アプリIDは正の整数で指定してください（${invalid || '空'}）。`);
+  const res = await apiGet(buildApiPrefix(guestId, true), APP_DEPLOY_PATH, { apps: ids });
+  if (!res || !Array.isArray(res.apps)) throw new Error('反映状況の応答形式が不正です（apps がありません）。');
+  return res.apps.map((row: any) => {
+    const app = String(row?.app ?? '').trim();
+    const status = typeof row?.status === 'string' ? row.status : '';
+    if (!app || !status) throw new Error('反映状況の応答形式が不正です（app または status がありません）。');
+    return { app, status };
+  });
 }
 
 // ---------------------------------------------------------------------------
