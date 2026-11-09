@@ -84,9 +84,11 @@ export function composeSectionSelection(model: SectionSelectionModel, state: Sec
     if (!model.jsonEditable) { errors.push(`${model.label}は JSON では直せません。入力欄と選択で直してください。`); after = cloneJson(model.before); }
     else if (!isPlainObject(state.json)) { errors.push('JSON はオブジェクトである必要があります（反映後の設定全体を JSON で指定してください）。'); after = cloneJson(model.before); }
     else after = cloneJson(state.json);
-    const applied = model.changes.filter(change => !change.pointer.endsWith(ORDER_SUFFIX) && sameValue(getAt(after, parsePointer(change.pointer)), change.after));
-    selectedCount = applied.length;
-    const diverged = model.changes.filter(change => !change.pointer.endsWith(ORDER_SUFFIX) && !sameValue(getAt(after, parsePointer(change.pointer)), change.after) && !sameValue(getAt(after, parsePointer(change.pointer)), change.before));
+    // JSON の値が反映先の現在の値と違う変更を「選んだ変更」と数える（反映元の値のまま = 反映、それ以外の値に直した = 修正した値）。
+    // 反映元の値のまま（change.after と同じ）の変更だけを数えると、JSON で別の値に直した変更が 0 件になり、その項目が書き込まれなくなる。
+    const changed = model.changes.filter(change => !change.pointer.endsWith(ORDER_SUFFIX) && !sameValue(getAt(after, parsePointer(change.pointer)), change.before));
+    selectedCount = changed.length;
+    const diverged = changed.filter(change => !sameValue(getAt(after, parsePointer(change.pointer)), change.after));
     editedCount = Math.max(1, diverged.length);
   } else {
     after = cloneJson(model.before);
@@ -115,5 +117,7 @@ export function composeSectionSelection(model: SectionSelectionModel, state: Sec
   renumberOrdered(after, { model, selectedPointers: selected.map(change => change.pointer), jsonMode });
   for (const issue of checkComposedAgainstPlan(plan, after, fieldLabels)) if (!errors.includes(issue)) errors.push(issue);
   const composedPlan = buildPlanFromComposedAfter(plan, after, fieldLabels);
+  // JSON で、変更の一覧にない場所を直した（選択の単位に対応しない）ときも、書き込みがあるなら選んだ変更として数える。
+  if (jsonMode && selectedCount === 0 && composedPlan.operations.length) selectedCount = 1;
   return { sectionKey: model.sectionKey, label: model.label, after, plan: composedPlan, selectedCount, totalCount: model.changes.length, editedCount, errors };
 }

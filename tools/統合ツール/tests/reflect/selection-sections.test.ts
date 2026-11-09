@@ -45,6 +45,34 @@ describe('差分の選択: 一覧（ビュー）', () => {
     expect(['A', 'N', 'D'].map(name => onlyAdded.after.views[name].index)).toEqual(['0', '1', '2']);
   });
 
+  it('JSON で、反映元とも反映先とも違う値に直した変更も「選んだ変更」と数える（0 件にすると、その項目が書き込まれない）', () => {
+    const ctx = prepare('viewSettings', source, target);
+    const filter = byPointer(ctx.model, '/views/A/filterCond');
+    // 反映先のままの設定（選んだ変更なし）を土台に、絞り込み条件だけを反映元とも反映先とも違う値に直す
+    const json = copy(ctx.model.before);
+    json.views.A.filterCond = 'JSONで直した条件';
+    const edited = compose(ctx, { json });
+    expect(edited.errors).toEqual([]);
+    expect(edited.selectedCount).toBe(1);
+    expect(edited.editedCount).toBe(1);
+    expect(edited.plan.operations).toHaveLength(1);
+    expect(edited.plan.operations[0].body.views.A.filterCond).toBe('JSONで直した条件');
+    // 反映元の値のままでも選んだ変更 1 件（JSON で直した項目は、修正した値を最低 1 と数える）
+    const asSource = copy(ctx.model.before);
+    asSource.views.A.filterCond = filter.after;
+    expect(compose(ctx, { json: asSource })).toMatchObject({ selectedCount: 1, editedCount: 1 });
+    // JSON が反映先のままなら、選んだ変更は 0 件で書き込みもない
+    const unchanged = compose(ctx, { json: copy(ctx.model.before) });
+    expect(unchanged.selectedCount).toBe(0);
+    expect(unchanged.plan.operations).toEqual([]);
+    // 変更の一覧にない場所を直したときも、書き込みがあれば選んだ変更として数える
+    const other = copy(ctx.model.before);
+    other.views.D.sort = 'JSONで直した並び順';
+    const otherEdit = compose(ctx, { json: other });
+    expect(otherEdit.plan.operations).toHaveLength(1);
+    expect(otherEdit.selectedCount).toBeGreaterThan(0);
+  });
+
   it('既定（全選択）の compose は既定の計画と同じ operations・requiredFields になる', () => {
     const ctx = prepare('viewSettings', source, target);
     const composed = compose(ctx, defaultSelectionState(ctx.model));

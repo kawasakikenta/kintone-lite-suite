@@ -617,6 +617,9 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   }
   function stageBlocker(): string {
     if (!session || !isFresh()) return '';
+    // JSON の入力欄に、適用していない変更があるときは進めない（適用しないまま進むと、直した内容が送られない）。
+    const unapplied = editView.unappliedJson();
+    if (unapplied.length) return `${unapplied.join('、')}のJSONの変更がまだ適用されていません。「JSONを適用」を押すか、「JSONの編集を閉じる」で取り消してください。`;
     if (session.composeError) return `選んだ内容から反映内容を作れません（${firstLines(session.composeError, 1)}）。`;
     return firstBlockerText(selectionBlockers());
   }
@@ -660,7 +663,8 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       if (!session) return;
       setJsonOverride(session, sectionKey, json);
       bump(); recompose(); afterComposed();
-    }
+    },
+    jsonEditsChanged: () => refreshWorkflow()
   });
 
   async function startExtract() {
@@ -1224,7 +1228,8 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
         : (activeStage === 'select' ? editEntryBlocker() : stageProblem) ? `次に進むには：${activeStage === 'select' ? editEntryBlocker() : stageProblem}`
         : activeStage === 'select' ? `${selectedTotal()} 件の変更を選んでいます。内容を修正するか、そのまま進めます。` : `${selectedTotal()} 件の変更を反映します。最終確認へ進んでください。`;
     } else if (activeStage === 'confirm') {
-      message = confirmationReady() ? '内容を確認できました。実行すると反映先が変わります。' : '確認のチェックと入力をすると、実行できます。';
+      message = confirmationReady() ? '内容を確認できました。実行すると反映先が変わります。'
+        : pendingRequired ? '確認のチェック、未公開の変更の了承、入力をすると、実行できます。' : '確認のチェックと入力をすると、実行できます。';
     } else {
       message = busy ? '実行中です。終わるまでお待ちください。「中止」で、次の書き込みの前に止められます。' : memory.lastRun ? '結果を確認してください。' : 'まだ実行していません。';
     }
