@@ -4,6 +4,7 @@
 // 本番反映（lite）の画面と操作契約を、エンジンだけを合成エンジンに差し替えて検証する。
 // 続けて、bundle('real') で tabs/deploy-standalone.ts をそのまま束ねた画面を、合成 kintone API につないで検証する
 // （deploy-engine-scenarios.cjs。run-reflect-lite-dom.cjs の reflect-engine-scenarios.cjs と同じ作り）。
+// 「反映元アプリから本番へ」は deploy-source-engine-scenarios.cjs が、同じ実エンジンの画面を合成 kintone API につないで検証する。
 // 実アプリ・外部 API への通信や書き込みは行わない。結果と画面は .iter-shots/deploy-lite-dom/（Git 管理外）に保存する。
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -844,7 +845,10 @@ async function main() {
     for (const name of await sourceScenarios.run({ page, script: sourceScript, out: OUT })) ok(`source: ${name}`);
 
     // 実エンジン＋合成 kintone API（画面の表示と、合成 kintone が受け取った送信内容の両方を確かめる）
-    for (const name of await require('./deploy-engine-scenarios.cjs')({ page, script: await bundle('real'), out: OUT })) ok(name);
+    const realScript = await bundle('real');
+    for (const name of await require('./deploy-engine-scenarios.cjs')({ page, script: realScript, out: OUT })) ok(name);
+    // 「反映元アプリから本番へ」の画面＋実エンジン＋合成 kintone API（deploy-source-engine-scenarios.cjs）
+    for (const name of await require('./deploy-source-engine-scenarios.cjs')({ page, script: realScript, out: OUT })) ok(name);
 
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ passed: true, sizes, checks }, null, 2));

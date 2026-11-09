@@ -6620,14 +6620,16 @@ ${base}`
   function reflectInspectionScopes(scopes) {
     return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => FIELD_DEPENDENT_SECTIONS.includes(key)) ? ["fieldSettings"] : []])];
   }
-  function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields, sourceSystemFields = []) {
+  function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields, sourceSystemFields = [], addableSourceFields = []) {
     const selected = entries.filter((entry) => scopes.includes(entry.sectionKey));
     const available = /* @__PURE__ */ new Set([...targetFields, ...scopes.includes("fieldSettings") && !selected.find((entry) => entry.sectionKey === "fieldSettings")?.blockers.length ? sourceFields : []]);
     const system = new Set(sourceSystemFields);
+    const addable = new Set(addableSourceFields);
     const issues = selected.flatMap((entry) => entry.blockers.map((message) => `${entry.label}: ${message}`));
     for (const entry of selected) for (const code of entry.requiredFields || []) {
       if (available.has(code)) continue;
       if (system.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」は反映元のシステムフィールド（レコード番号・ステータス・カテゴリーなど）ですが、反映先に同じコードがありません。反映先でフィールドコードを合わせる、またはプロセス管理・カテゴリーを有効にしてから再取得するか、この項目を除外してください。`);
+      else if (scopes.includes("fieldSettings") && addable.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。反映元にあるフィールドなので、フィールド設定で「${code}」の追加も選ぶか、この項目を除外してください。`);
       else issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
     }
     return [...new Set(issues)];
@@ -7756,9 +7758,9 @@ ${base}`
         errors.push("JSON はオブジェクトである必要があります（反映後の設定全体を JSON で指定してください）。");
         after = cloneJson(model.before);
       } else after = cloneJson(state3.json);
-      const applied = model.changes.filter((change) => !change.pointer.endsWith(ORDER_SUFFIX) && sameValue(getAt(after, parsePointer(change.pointer)), change.after));
-      selectedCount2 = applied.length;
-      const diverged = model.changes.filter((change) => !change.pointer.endsWith(ORDER_SUFFIX) && !sameValue(getAt(after, parsePointer(change.pointer)), change.after) && !sameValue(getAt(after, parsePointer(change.pointer)), change.before));
+      const changed = model.changes.filter((change) => !change.pointer.endsWith(ORDER_SUFFIX) && !sameValue(getAt(after, parsePointer(change.pointer)), change.before));
+      selectedCount2 = changed.length;
+      const diverged = changed.filter((change) => !sameValue(getAt(after, parsePointer(change.pointer)), change.after));
       editedCount = Math.max(1, diverged.length);
     } else {
       after = cloneJson(model.before);
@@ -7786,6 +7788,7 @@ ${base}`
     renumberOrdered(after, { model, selectedPointers: selected.map((change) => change.pointer), jsonMode });
     for (const issue of checkComposedAgainstPlan(plan, after, fieldLabels)) if (!errors.includes(issue)) errors.push(issue);
     const composedPlan = buildPlanFromComposedAfter(plan, after, fieldLabels);
+    if (jsonMode && selectedCount2 === 0 && composedPlan.operations.length) selectedCount2 = 1;
     return { sectionKey: model.sectionKey, label: model.label, after, plan: composedPlan, selectedCount: selectedCount2, totalCount: model.changes.length, editedCount, errors };
   }
 
@@ -7932,6 +7935,10 @@ ${base}`
     if (!properties || typeof properties !== "object") return [];
     return Object.entries(properties).filter(([, definition]) => !SYSTEM_FIELD_TYPES.has(definition?.type)).flatMap(([code, definition]) => [code, ...Object.keys(definition?.type === "SUBTABLE" && definition.fields && typeof definition.fields === "object" ? definition.fields : {})]);
   }
+  function addableFieldCodes(plans) {
+    const fieldSettings = plans.find((plan) => plan.sectionKey === "fieldSettings");
+    return fieldSettings && !fieldSettings.blockers.length && fieldSettings.values ? composedFieldCodes(fieldSettings.values.after) : [];
+  }
   function composeReflectSelectionStandalone(preview, states) {
     const fieldLabels = preview.fieldLabels || {};
     const sections = [];
@@ -7953,7 +7960,7 @@ ${base}`
     const scopes = preview.entries.map((entry) => entry.sectionKey);
     const fieldSettings = sections.find((section) => section.sectionKey === "fieldSettings");
     const sourceFields = fieldSettings ? composedFieldCodes(fieldSettings.after) : [];
-    issues.push(...reflectSelectionBlockers(plans, scopes, sourceFields, preview.targetFieldCodes, preview.sourceSystemFieldCodes));
+    issues.push(...reflectSelectionBlockers(plans, scopes, sourceFields, preview.targetFieldCodes, preview.sourceSystemFieldCodes, addableFieldCodes(preview.entries)));
     return { sections, blockers: [...new Set(issues)] };
   }
   async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
@@ -7971,7 +7978,7 @@ ${base}`
     const composed = opts.composed;
     const plans = composed ? defaultPlans.map((plan) => Object.prototype.hasOwnProperty.call(composed, plan.sectionKey) ? buildPlanFromComposedAfter(plan, composed[plan.sectionKey], fieldLabels) : plan) : defaultPlans;
     const sourceFields = composed && Object.prototype.hasOwnProperty.call(composed, "fieldSettings") ? composedFieldCodes(composed.fieldSettings) : listReflectFieldCodes(source, true);
-    const issues = reflectSelectionBlockers(plans, scopes, sourceFields, listReflectFieldCodes(target), listReflectSystemFieldCodes(source));
+    const issues = reflectSelectionBlockers(plans, scopes, sourceFields, listReflectFieldCodes(target), listReflectSystemFieldCodes(source), addableFieldCodes(defaultPlans));
     if (issues.length) throw new Error(`反映前の検査で停止しました。まだ書き込んでいません。
 ${issues.join("\n")}`);
     if (plans.some((plan) => plan.requiredFields?.length)) revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes, targetDependencies: ["fieldSettings"] }, source, target);
@@ -9056,6 +9063,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     if (typeof value === "object") return JSON.stringify(value);
     return String(value);
   }
+  function editableDefaultText(editable) {
+    const { value } = editable;
+    if (typeof value === "boolean") return value ? "はい" : "いいえ";
+    const raw = editableText(value);
+    const option = editable.editor.type === "select" ? (editable.editor.options || []).find(([optionValue]) => optionValue === raw) : void 0;
+    return (option ? option[1] : raw) || "（空）";
+  }
   function coerceEditable(text, like) {
     if (typeof like === "number") {
       const n = Number(text);
@@ -9162,8 +9176,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         paint();
       });
       const meta = el("div", "kus-ds-edit__meta");
-      const fallback = el("span", "kus-ds-edit__default", `既定: ${editableText(editable.value) || "（空）"}`);
-      fallback.title = clipText2(editableText(editable.value), 2e3);
+      const defaultText = editableDefaultText(editable);
+      const fallback = el("span", "kus-ds-edit__default", `既定: ${defaultText}`);
+      fallback.title = clipText2(defaultText, 2e3);
       meta.append(fallback, reset);
       row.append(label, control, meta);
       const rowView = { section: sectionKey, change, editable, row, reset, controls, setControl };
@@ -9275,7 +9290,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const warnings = el("ul", "kus-ds-card__problems kus-ds-card__problems--warn");
       const planHost = el("div", "kus-ds-plan");
       planHost.dataset.editPlan = sectionKey;
-      const view = { sectionKey, card, counts, jsonNote, errors, warnings, planHost, resetAll, jsonArea, jsonText, jsonError, jsonToggle, body, toggle, more, opened: false, groups, shown: 0, rows: /* @__PURE__ */ new Map() };
+      const view = { sectionKey, card, counts, jsonNote, errors, warnings, planHost, resetAll, jsonArea, jsonText, jsonError, jsonToggle, jsonBaseline: "", body, toggle, more, opened: false, groups, shown: 0, rows: /* @__PURE__ */ new Map() };
       cards.set(sectionKey, view);
       if (total) card.append(toggle, body);
       else card.appendChild(el("div", "kus-ds-card__note", "画面で直せる値はありません。必要なときは「JSONで編集」を使います。"));
@@ -9299,9 +9314,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
           const composed = current.composed?.sections.find((section) => section.sectionKey === sectionKey);
           const base = current.states[sectionKey].json !== void 0 ? current.states[sectionKey].json : composed?.after;
           jsonText.value = JSON.stringify(base ?? {}, null, 2);
+          view.jsonBaseline = jsonText.value;
           jsonError.hidden = true;
         }
+        host.jsonEditsChanged();
       };
+      jsonText.addEventListener("input", () => host.jsonEditsChanged());
       jsonToggle?.addEventListener("click", () => openJson(jsonArea.hidden));
       apply.addEventListener("click", () => {
         let parsed;
@@ -9318,6 +9336,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
           return;
         }
         jsonError.hidden = true;
+        view.jsonBaseline = jsonText.value;
         host.applyJson(sectionKey, parsed);
         host.notify(`${model.label}をJSONの内容で修正しました。選択・入力欄より JSON を優先します。`);
       });
@@ -9384,7 +9403,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         blockers.appendChild(box);
       }
     }
-    return { root: root2, render, refresh };
+    function unappliedJson() {
+      const session = host.session();
+      if (!session) return [];
+      return [...cards.values()].filter((view) => !view.jsonArea.hidden && view.jsonText.value !== view.jsonBaseline).map((view) => session.models[view.sectionKey]?.label || view.sectionKey);
+    }
+    return { root: root2, render, refresh, unappliedJson };
   }
 
   // src/entries/deploy-source-select.ts
@@ -10348,6 +10372,8 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
     }
     function stageBlocker() {
       if (!session || !isFresh()) return "";
+      const unapplied = editView.unappliedJson();
+      if (unapplied.length) return `${unapplied.join("、")}のJSONの変更がまだ適用されていません。「JSONを適用」を押すか、「JSONの編集を閉じる」で取り消してください。`;
       if (session.composeError) return `選んだ内容から反映内容を作れません（${firstLines(session.composeError, 1)}）。`;
       return firstBlockerText(selectionBlockers2());
     }
@@ -10404,7 +10430,8 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
         bump();
         recompose();
         afterComposed();
-      }
+      },
+      jsonEditsChanged: () => refreshWorkflow()
     });
     async function startExtract() {
       if (busy) return;
@@ -10951,7 +10978,7 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       } else if (activeStage === "select" || activeStage === "edit") {
         message = !fresh ? "入力が変わりました。「対象を選ぶ」で差分を抽出し直してください。" : (activeStage === "select" ? editEntryBlocker() : stageProblem) ? `次に進むには：${activeStage === "select" ? editEntryBlocker() : stageProblem}` : activeStage === "select" ? `${selectedTotal()} 件の変更を選んでいます。内容を修正するか、そのまま進めます。` : `${selectedTotal()} 件の変更を反映します。最終確認へ進んでください。`;
       } else if (activeStage === "confirm") {
-        message = confirmationReady() ? "内容を確認できました。実行すると反映先が変わります。" : "確認のチェックと入力をすると、実行できます。";
+        message = confirmationReady() ? "内容を確認できました。実行すると反映先が変わります。" : pendingRequired ? "確認のチェック、未公開の変更の了承、入力をすると、実行できます。" : "確認のチェックと入力をすると、実行できます。";
       } else {
         message = busy ? "実行中です。終わるまでお待ちください。「中止」で、次の書き込みの前に止められます。" : memory.lastRun ? "結果を確認してください。" : "まだ実行していません。";
       }

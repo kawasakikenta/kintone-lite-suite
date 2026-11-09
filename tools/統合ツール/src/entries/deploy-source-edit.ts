@@ -29,6 +29,8 @@ export interface EditViewHost {
   /** JSON での修正を設定する（undefined で取り消し） */
   applyJson(sectionKey: string, json: unknown): void;
   notify(message: string): void;
+  /** JSON の入力欄の状態（編集中・適用・取り消し）が変わった。適用していない変更があるかを呼び出し側が確かめ直す */
+  jsonEditsChanged(): void;
 }
 
 export interface EditView {
@@ -37,6 +39,8 @@ export interface EditView {
   render(): void;
   /** 作り直した計画・問題・修正の強調を反映する */
   refresh(): void;
+  /** JSON の入力欄を開いたまま、適用していない変更がある項目の名前。あれば最終確認へ進めない（直した内容が送られないため） */
+  unappliedJson(): string[];
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -46,6 +50,15 @@ export function editableText(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
+}
+
+/** 「既定: …」に示す値。真偽値は「はい / いいえ」、選択肢の入力欄は選択肢の表示名で示す（true / false などの内部の値は出さない）。 */
+export function editableDefaultText(editable: Pick<SelectableEditable, 'value' | 'editor'>): string {
+  const { value } = editable;
+  if (typeof value === 'boolean') return value ? 'はい' : 'いいえ';
+  const raw = editableText(value);
+  const option = editable.editor.type === 'select' ? (editable.editor.options || []).find(([optionValue]) => optionValue === raw) : undefined;
+  return (option ? option[1] : raw) || '（空）';
 }
 
 /** 入力欄の文字列を、既定の値と同じ型に戻す（数値・真偽値の既定は型を保つ）。 */
@@ -70,6 +83,8 @@ interface EditCardView {
   jsonText: HTMLTextAreaElement;
   jsonError: HTMLElement;
   jsonToggle: HTMLButtonElement | null;
+  /** JSON の入力欄を開いた時点・適用した時点の内容（これと違えば、適用していない変更） */
+  jsonBaseline: string;
   body: HTMLElement;
   toggle: HTMLButtonElement;
   more: HTMLButtonElement;
@@ -155,8 +170,9 @@ export function createEditView(host: EditViewHost): EditView {
     reset.setAttribute('aria-label', `${change.groupLabel} / ${editable.label}を既定の値に戻す`);
     reset.addEventListener('click', () => { setControl(editable.value); push(editable.value, false); paint(); });
     const meta = el('div', 'kus-ds-edit__meta');
-    const fallback = el('span', 'kus-ds-edit__default', `既定: ${editableText(editable.value) || '（空）'}`);
-    fallback.title = clipText(editableText(editable.value), 2000);
+    const defaultText = editableDefaultText(editable);
+    const fallback = el('span', 'kus-ds-edit__default', `既定: ${defaultText}`);
+    fallback.title = clipText(defaultText, 2000);
     meta.append(fallback, reset);
     row.append(label, control, meta);
     const rowView: EditRowView = { section: sectionKey, change, editable, row, reset, controls, setControl };
@@ -273,7 +289,7 @@ export function createEditView(host: EditViewHost): EditView {
     const warnings = el('ul', 'kus-ds-card__problems kus-ds-card__problems--warn');
     const planHost = el('div', 'kus-ds-plan');
     planHost.dataset.editPlan = sectionKey;
-    const view: EditCardView = { sectionKey, card, counts, jsonNote, errors, warnings, planHost, resetAll, jsonArea, jsonText, jsonError, jsonToggle, body, toggle, more, opened: false, groups, shown: 0, rows: new Map() };
+    const view: EditCardView = { sectionKey, card, counts, jsonNote, errors, warnings, planHost, resetAll, jsonArea, jsonText, jsonError, jsonToggle, jsonBaseline: '', body, toggle, more, opened: false, groups, shown: 0, rows: new Map() };
     cards.set(sectionKey, view);
 
     if (total) card.append(toggle, body);
@@ -293,9 +309,12 @@ export function createEditView(host: EditViewHost): EditView {
         const composed = current.composed?.sections.find((section) => section.sectionKey === sectionKey);
         const base = current.states[sectionKey].json !== undefined ? current.states[sectionKey].json : composed?.after;
         jsonText.value = JSON.stringify(base ?? {}, null, 2);
+        view.jsonBaseline = jsonText.value;
         jsonError.hidden = true;
       }
+      host.jsonEditsChanged();
     };
+    jsonText.addEventListener('input', () => host.jsonEditsChanged());
     jsonToggle?.addEventListener('click', () => openJson(jsonArea.hidden));
     apply.addEventListener('click', () => {
       let parsed: unknown;
@@ -310,6 +329,7 @@ export function createEditView(host: EditViewHost): EditView {
         return;
       }
       jsonError.hidden = true;
+      view.jsonBaseline = jsonText.value;
       host.applyJson(sectionKey, parsed);
       host.notify(`${model.label}をJSONの内容で修正しました。選択・入力欄より JSON を優先します。`);
     });
@@ -374,5 +394,11 @@ export function createEditView(host: EditViewHost): EditView {
     }
   }
 
-  return { root, render, refresh };
+  function unappliedJson(): string[] {
+    const session = host.session();
+    if (!session) return [];
+    return [...cards.values()].filter(view => !view.jsonArea.hidden && view.jsonText.value !== view.jsonBaseline).map(view => session.models[view.sectionKey]?.label || view.sectionKey);
+  }
+
+  return { root, render, refresh, unappliedJson };
 }

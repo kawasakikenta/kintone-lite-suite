@@ -45,6 +45,12 @@ describe('composeReflectSelectionStandalone', () => {
     const blocked = composeReflectSelectionStandalone(preview, onlyRequired);
     expect(blocked.blockers.some(message => message.startsWith('ビュー設定: 参照するフィールド「added」が反映先にありません'))).toBe(true);
     expect(blocked.blockers.some(message => message.startsWith('レイアウト設定: 参照するフィールド「added」が反映先にありません'))).toBe(true);
+    // フィールド設定は反映対象に含まれている。「含めるか」ではなく、追加の変更も選ぶよう案内する（反映先の一覧・レイアウトとも）
+    expect(blocked.blockers.some(message => message.startsWith('ビュー設定: 参照するフィールド「added」が反映先にありません。反映元にあるフィールドなので、フィールド設定で「added」の追加も選ぶか、この項目を除外してください。'))).toBe(true);
+    expect(blocked.blockers.some(message => message.includes('フィールド設定も反映対象に含めるか'))).toBe(false);
+    // フィールド設定を反映対象に含めていないときは、従来どおり含めるよう案内する
+    const withoutFields = composeReflectSelectionStandalone({ ...preview, entries: preview.entries.filter(entry => entry.sectionKey !== 'fieldSettings') }, {});
+    expect(withoutFields.blockers.some(message => message.startsWith('ビュー設定: 参照するフィールド「added」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。'))).toBe(true);
     // 参照する項目も選ばなければ止まらない
     const releasing = composeReflectSelectionStandalone(preview, {
       ...onlyRequired, viewSettings: { selected: [], overrides: {} }, layoutSettings: { selected: [], overrides: {} }

@@ -639,11 +639,13 @@ module.exports = {
     // boolean
     const requiredRow = editRow('fieldSettings', '/properties/name/required');
     assert.equal(await requiredRow.locator('input[type="checkbox"]').isChecked(), true);
+    assert.equal(await requiredRow.locator('.kus-ds-edit__default').innerText(), '既定: はい', '真偽値の既定は「true / false」ではなく「はい / いいえ」で示す');
     await requiredRow.locator('input[type="checkbox"]').uncheck();
     assert.equal((await lastCompose()).states.fieldSettings.overrides['/properties/name/required'], false);
     assert.equal(await requiredRow.getAttribute('data-changed'), 'true');
     // select
     const rowSelect = editRow('customizeSettings', '/scope');
+    assert.equal(await rowSelect.locator('.kus-ds-edit__default').innerText(), '既定: 管理者のみ', '選択肢の既定は選択肢の表示名で示す');
     await rowSelect.locator('select').selectOption('ALL');
     assert.equal((await lastCompose()).states.customizeSettings.overrides['/scope'], 'ALL');
     // whole の追加は要素の主な値を並べる
@@ -706,6 +708,14 @@ module.exports = {
     assert.equal(await editCard('fieldSettings').locator('[data-json-active]').isHidden(), true);
     assert.equal(await editRow('fieldSettings', '/properties/name/label').locator('input').isDisabled(), false);
     assert.match(await statusText(), /フィールド設定のJSONでの修正を取り消しました。選択と入力欄の内容に戻しました。/);
+    // 適用していない JSON の変更があるうちは進めない（適用しないまま進むと、直した内容が送られない）。編集を閉じると捨てて進める
+    await jsonToggle.click();
+    await editCard('fieldSettings').locator('textarea').fill('{"properties":{"name":{"label":"未適用の変更"}}}');
+    assert.equal(await button('最終確認に進む').isDisabled(), true, '適用していない JSON の変更があると進めない');
+    assert.equal(await tab('最終確認').isDisabled(), true);
+    assert.match(await dockText(), /次に進むには：フィールド設定のJSONの変更がまだ適用されていません。「JSONを適用」を押すか、「JSONの編集を閉じる」で取り消してください。/);
+    await jsonToggle.click();
+    assert.equal(await button('最終確認に進む').isEnabled(), true, '編集を閉じると、適用していない変更は捨てて進める');
     ok('edit json');
 
     // 修正しない場合はそのまま次へ進める

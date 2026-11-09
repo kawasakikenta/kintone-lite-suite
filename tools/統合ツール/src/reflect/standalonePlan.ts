@@ -159,15 +159,19 @@ export function reflectInspectionScopes(scopes: string[]): string[] {
  * 選択した項目を書き込めない理由。参照するフィールドが反映先に無い場合は、
  * フィールド設定の追加で解決できるか（反映元の通常フィールド）、反映先側の操作が必要か（システムフィールドのコード違いなど）を分けて案内する。
  * sourceSystemFields はフィールド設定の反映では追加されない反映元のフィールド（レコード番号・ステータスなど）。
+ * addableSourceFields は、フィールド設定の反映対象（scopes）に含まれ、反映元にあるが、書き込むフィールドに選ばれていない通常フィールド
+ * （差分の選択で追加を選ばなかったもの）。参照されていれば、追加を選ぶよう案内する（フィールド設定は反映対象に含まれているので、含めるよう案内しない）。
  */
-export function reflectSelectionBlockers(entries: ReflectSectionPlan[], scopes: string[], sourceFields: string[], targetFields: string[], sourceSystemFields: string[] = []): string[] {
+export function reflectSelectionBlockers(entries: ReflectSectionPlan[], scopes: string[], sourceFields: string[], targetFields: string[], sourceSystemFields: string[] = [], addableSourceFields: string[] = []): string[] {
   const selected = entries.filter(entry => scopes.includes(entry.sectionKey));
   const available = new Set([...targetFields, ...(scopes.includes('fieldSettings') && !selected.find(entry => entry.sectionKey === 'fieldSettings')?.blockers.length ? sourceFields : [])]);
   const system = new Set(sourceSystemFields);
+  const addable = new Set(addableSourceFields);
   const issues = selected.flatMap(entry => entry.blockers.map(message => `${entry.label}: ${message}`));
   for (const entry of selected) for (const code of entry.requiredFields || []) {
     if (available.has(code)) continue;
     if (system.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」は反映元のシステムフィールド（レコード番号・ステータス・カテゴリーなど）ですが、反映先に同じコードがありません。反映先でフィールドコードを合わせる、またはプロセス管理・カテゴリーを有効にしてから再取得するか、この項目を除外してください。`);
+    else if (scopes.includes('fieldSettings') && addable.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。反映元にあるフィールドなので、フィールド設定で「${code}」の追加も選ぶか、この項目を除外してください。`);
     else issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
   }
   return [...new Set(issues)];

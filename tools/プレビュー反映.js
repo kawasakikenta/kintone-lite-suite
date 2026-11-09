@@ -3299,14 +3299,16 @@ ${base}`
   function reflectInspectionScopes(scopes) {
     return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => FIELD_DEPENDENT_SECTIONS.includes(key)) ? ["fieldSettings"] : []])];
   }
-  function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields, sourceSystemFields = []) {
+  function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields, sourceSystemFields = [], addableSourceFields = []) {
     const selected = entries.filter((entry) => scopes.includes(entry.sectionKey));
     const available = /* @__PURE__ */ new Set([...targetFields, ...scopes.includes("fieldSettings") && !selected.find((entry) => entry.sectionKey === "fieldSettings")?.blockers.length ? sourceFields : []]);
     const system = new Set(sourceSystemFields);
+    const addable = new Set(addableSourceFields);
     const issues = selected.flatMap((entry) => entry.blockers.map((message) => `${entry.label}: ${message}`));
     for (const entry of selected) for (const code of entry.requiredFields || []) {
       if (available.has(code)) continue;
       if (system.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」は反映元のシステムフィールド（レコード番号・ステータス・カテゴリーなど）ですが、反映先に同じコードがありません。反映先でフィールドコードを合わせる、またはプロセス管理・カテゴリーを有効にしてから再取得するか、この項目を除外してください。`);
+      else if (scopes.includes("fieldSettings") && addable.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。反映元にあるフィールドなので、フィールド設定で「${code}」の追加も選ぶか、この項目を除外してください。`);
       else issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
     }
     return [...new Set(issues)];
@@ -4207,6 +4209,10 @@ ${base}`
     if (!properties || typeof properties !== "object") return [];
     return Object.entries(properties).filter(([, definition]) => !SYSTEM_FIELD_TYPES.has(definition?.type)).flatMap(([code, definition]) => [code, ...Object.keys(definition?.type === "SUBTABLE" && definition.fields && typeof definition.fields === "object" ? definition.fields : {})]);
   }
+  function addableFieldCodes(plans) {
+    const fieldSettings = plans.find((plan) => plan.sectionKey === "fieldSettings");
+    return fieldSettings && !fieldSettings.blockers.length && fieldSettings.values ? composedFieldCodes(fieldSettings.values.after) : [];
+  }
   async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
     if (!opts.reviewBaseline) throw new Error("反映前に差分を取得して確認してください。");
     if (opts.doDeploy) throw new Error("この機能はプレビューへの反映専用です。本番公開には対応していません。");
@@ -4222,7 +4228,7 @@ ${base}`
     const composed = opts.composed;
     const plans = composed ? defaultPlans.map((plan) => Object.prototype.hasOwnProperty.call(composed, plan.sectionKey) ? buildPlanFromComposedAfter(plan, composed[plan.sectionKey], fieldLabels) : plan) : defaultPlans;
     const sourceFields = composed && Object.prototype.hasOwnProperty.call(composed, "fieldSettings") ? composedFieldCodes(composed.fieldSettings) : listReflectFieldCodes(source, true);
-    const issues = reflectSelectionBlockers(plans, scopes, sourceFields, listReflectFieldCodes(target), listReflectSystemFieldCodes(source));
+    const issues = reflectSelectionBlockers(plans, scopes, sourceFields, listReflectFieldCodes(target), listReflectSystemFieldCodes(source), addableFieldCodes(defaultPlans));
     if (issues.length) throw new Error(`反映前の検査で停止しました。まだ書き込んでいません。
 ${issues.join("\n")}`);
     if (plans.some((plan) => plan.requiredFields?.length)) revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes, targetDependencies: ["fieldSettings"] }, source, target);
