@@ -153,6 +153,11 @@ export interface DeployBackupInfo {
   environment: 'production' | 'preview';
   /** 本体を保存できなかった JS/CSS ファイル（反映後も設定に残るものだけ。外れるものが保存できなければ反映しない） */
   unavailableFiles: Array<{ appId: string; name: string; reason: string }>;
+  /**
+   * 保存したバックアップ JSON の本体（メモリ上だけ。「バックアップから戻す」でエンジンへ渡す）。
+   * 結果 JSON・記録の Markdown には含めない（JS/CSS の本文を含み得るため）。
+   */
+  content?: DeployBackupFile;
 }
 
 /**

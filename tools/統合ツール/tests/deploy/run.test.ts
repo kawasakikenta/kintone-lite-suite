@@ -364,6 +364,8 @@ describe('runDeployStandalone: バックアップ', () => {
     expect(backup.scopes).toContain('fieldSettings');
     expect(backup.scopes).toContain('appSettings');
     expect(result.backup?.generatedAt).toBe(backup.generatedAt);
+    // 保存した JSON の本体を結果から取れる（「バックアップから戻す」でそのままエンジンへ渡す）
+    expect(result.backup?.content).toEqual(backup);
     // 「設定JSONから取得」と同じ読み込み関数でアプリごとに取り出せる
     const { pickSettingsBundle } = await import('../../src/settingsBundleImport');
     expect(pickSettingsBundle(backup, { appId: '2', rawSettings: true }).appId).toBe('2');

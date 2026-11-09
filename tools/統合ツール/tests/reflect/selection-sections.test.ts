@@ -231,14 +231,39 @@ describe('差分の選択: プロセス・カテゴリー・通知・レイア�
     expect(all.plan.requiredFields).toEqual(['name', 'memo']);
   });
 
-  it('プラグインは JSON で直せず、追加分だけを POST する', () => {
+  it('プラグインは JSON で直せず、反映先に無い ID ごとの追加として選び、追加分だけを POST する', () => {
     const ctx = prepare('pluginSettings', { plugins: [{ id: 'p1' }, { id: 'p2' }] }, { plugins: [{ id: 'p1' }] });
     expect(ctx.model.jsonEditable).toBe(false);
-    expect(ctx.model.changes.map(change => change.pointer)).toEqual(['/plugins']);
+    expect(ctx.model.changes.map(change => change.pointer)).toEqual(['/plugins/p2']);
+    expect(ctx.model.changes[0]).toMatchObject({ id: 'pluginSettings:/plugins/p2', kind: '追加', whole: true, groupLabel: 'プラグイン', labelPath: ['プラグイン', 'p2'], before: undefined, after: 'p2', afterText: 'p2', editables: [] });
     const composed = compose(ctx, defaultSelectionState(ctx.model));
+    expect(composed.after).toEqual({ plugins: ['p1', 'p2'] });
     expect(composed.plan.operations).toEqual([{ method: 'POST', endpoint: '/app/plugins.json', body: { ids: ['p2'] }, label: 'プラグイン追加' }]);
     expect(compose(ctx, { selected: [] }).plan.operations).toEqual([]);
     expect(compose(ctx, { json: { plugins: ['p1'] } }).errors.join('\n')).toContain('JSON では直せません');
+  });
+
+  it('プラグインを 1 つずつ選べる（選んだ ID だけを追加し、反映先のプラグインを外す変更は出さない）', () => {
+    const ctx = prepare('pluginSettings', { plugins: [{ id: 'p1' }, { id: 'a/b' }, { id: 'p3' }] }, { plugins: [{ id: 'local' }, { id: 'p1' }] });
+    expect(ctx.model.changes.map(change => change.pointer)).toEqual(['/plugins/a~1b', '/plugins/p3']);
+    expect(ctx.model.changes.every(change => change.kind === '追加')).toBe(true);
+    const slash = byPointer(ctx.model, '/plugins/a~1b'), third = byPointer(ctx.model, '/plugins/p3');
+    expect(slash.after).toBe('a/b');
+    const onlyThird = compose(ctx, { selected: [third.id] });
+    expect(onlyThird.errors).toEqual([]);
+    expect(onlyThird.after.plugins).toEqual(['local', 'p1', 'p3']);
+    expect(onlyThird.selectedCount).toBe(1);
+    expect(onlyThird.plan.operations).toEqual([{ method: 'POST', endpoint: '/app/plugins.json', body: { ids: ['p3'] }, label: 'プラグイン追加' }]);
+    const both = compose(ctx, { selected: [slash.id, third.id] });
+    expect(both.after.plugins).toEqual(['local', 'p1', 'a/b', 'p3']);
+    expect(both.plan.operations[0].body).toEqual({ ids: ['a/b', 'p3'] });
+    expect(both.after.plugins).toContain('local');
+  });
+
+  it('プラグインに追加が無いときは変更を出さない（反映先だけのプラグインがあっても外す変更にならない）', () => {
+    const ctx = prepare('pluginSettings', { plugins: [{ id: 'p1' }] }, { plugins: [{ id: 'local' }, { id: 'p1' }] });
+    expect(ctx.model.changes).toEqual([]);
+    expect(compose(ctx, defaultSelectionState(ctx.model)).plan.operations).toEqual([]);
   });
 });
 

@@ -114,6 +114,15 @@ describe('buildSourceDeployResultJson', () => {
     expect(JSON.stringify(json)).not.toContain('BUNDLE-BODY');
   });
 
+  it('本番反映のバックアップ JSON の本体（deploy.backup.content）も含めない', () => {
+    const content = { kind: 'kintone-deploy-backup', version: 1, generatedAt: '', mode: 'deploy', environment: 'production', scopes: [], bundles: [{ appId: '20', secret: 'CONTENT-BODY' }] } as any;
+    const withContent = { ...input, result: { ...result, deploy: { ...deploy, backup: { ...deploy.backup!, content } } } };
+    const text = stringifySourceDeployResultJson(withContent);
+    expect(text).not.toContain('CONTENT-BODY');
+    expect(JSON.parse(text).deploy.backup.fileName).toBe('本番反映前バックアップ_1アプリ_20260101_000009.json');
+    expect(buildSourceDeployRecordMarkdown(withContent)).not.toContain('CONTENT-BODY');
+  });
+
   it('本番へ反映しなかったときは deploySkipped を持ち、deploy は持たない', () => {
     const json = buildSourceDeployResultJson({ ...input, result: { goal: 'production', apply: result.apply, deploySkipped: '了承がないため止めました。' } });
     expect(json.deploy).toBeUndefined();
