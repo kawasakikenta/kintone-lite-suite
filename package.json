@@ -28,6 +28,7 @@
     "test:diff-compare": "node tools/test-harness/run-diff-lite-compare.cjs",
     "test:diff-explore": "node tools/test-harness/diff-explore.cjs",
     "test:er-compare": "node tools/test-harness/run-er-diagram-compare.cjs",
+    "test:er-explore": "node tools/test-harness/er-explore.cjs",
     "test:reflect-dom": "node tools/test-harness/run-reflect-lite-dom.cjs",
     "test:deploy-dom": "node tools/test-harness/run-deploy-lite-dom.cjs",
     "test:deploy-explore": "node tools/test-harness/deploy-explore.cjs",
