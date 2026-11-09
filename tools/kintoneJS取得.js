@@ -628,6 +628,9 @@
     if (items.length <= limit) return items.join("\n");
     return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join("\n");
   }
+  function deepClone(v) {
+    return v == null ? v : JSON.parse(JSON.stringify(v));
+  }
   function normalize(v) {
     if (Array.isArray(v)) return v.map(normalize);
     if (v && typeof v === "object") {
@@ -1101,7 +1104,80 @@ ${base}`
     return String(value);
   }
   var CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
+  function wasCancelled(error, signal) {
+    return isRunCancelledError(error) || isRunCancelledError(signal.reason);
+  }
   var FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
+  async function downloadKintoneFile(guestId, fileKey, opts = {}) {
+    if (!fileKey) throw new Error("fileKey がありません。");
+    const maxBytes = Number.isFinite(opts.maxBytes) && Number(opts.maxBytes) > 0 ? Number(opts.maxBytes) : FILE_DOWNLOAD_DEFAULT_MAX_BYTES;
+    const limitText = `${Math.round(maxBytes / (1024 * 1024))}MB`;
+    const url = `${buildApiPrefix(guestId, false)}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
+    throwIfCancelled();
+    const request = createRequestSignal(FILE_DOWNLOAD_TIMEOUT_MS);
+    const toFetchError = (error) => {
+      if (wasCancelled(error, request.signal)) return new RunCancelledError();
+      if (request.timedOut()) return new Error(`ファイルを取得できません（応答待ちが ${Math.round(FILE_DOWNLOAD_TIMEOUT_MS / 1e3)} 秒を超えました）`);
+      return new Error(`ファイルを取得できません（${error instanceof Error ? error.message : String(error)}）`);
+    };
+    try {
+      let resp;
+      try {
+        resp = await fetch(url, { method: "GET", headers: { "X-Requested-With": "XMLHttpRequest" }, signal: request.signal });
+      } catch (error) {
+        throw toFetchError(error);
+      }
+      if (!resp.ok) throw new Error(`ファイルを取得できません（HTTP ${resp.status || "error"}）`);
+      const contentLength = Number(resp.headers?.get?.("content-length") || "");
+      if (Number.isFinite(contentLength) && contentLength > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
+      let blob;
+      try {
+        blob = await resp.blob();
+      } catch (error) {
+        throw toFetchError(error);
+      }
+      if (blob.size > maxBytes) throw new Error(`ファイルが大きすぎます（上限 ${limitText}）`);
+      return blob;
+    } finally {
+      request.release();
+    }
+  }
+  async function uploadKintoneFile(guestId, blob, fileName) {
+    const prefix = buildApiPrefix(guestId, false);
+    assertAllowsMutatingRestCall(prefix, FILE_UPLOAD_PATH, "POST");
+    const token = typeof kintone !== "undefined" ? kintone?.getRequestToken?.() : "";
+    if (!token) throw new Error("リクエストトークンを取得できないため、ファイルをアップロードできません。");
+    const form = new FormData();
+    form.append("__REQUEST_TOKEN__", String(token));
+    form.append("file", blob, fileName);
+    throwIfCancelled();
+    const request = createRequestSignal(0);
+    try {
+      let resp;
+      try {
+        resp = await fetch(`${prefix}${FILE_UPLOAD_PATH}`, { method: "POST", headers: { "X-Requested-With": "XMLHttpRequest" }, body: form, signal: request.signal });
+      } catch (error) {
+        if (wasCancelled(error, request.signal)) throw new RunCancelledError();
+        throw new Error(`ファイルをアップロードできません（${error instanceof Error ? error.message : String(error)}）`);
+      }
+      let data = null;
+      try {
+        data = await resp.json();
+      } catch (error) {
+        if (wasCancelled(error, request.signal)) throw new RunCancelledError();
+        data = null;
+      }
+      if (!resp.ok) {
+        const detail = [data?.code, data?.message].filter(Boolean).join(" ");
+        throw new Error(`ファイルをアップロードできません（HTTP ${resp.status || "error"}${detail ? `: ${detail}` : ""}）`);
+      }
+      const fileKey = data?.fileKey;
+      if (typeof fileKey !== "string" || !fileKey) throw new Error("アップロード応答にfileKeyがありません。");
+      return fileKey;
+    } finally {
+      request.release();
+    }
+  }
   var APPS_PAGE_LIMIT = 100;
   async function fetchAllApps(guestId, onProgress) {
     const prefix = buildApiPrefix(guestId, false);
@@ -3096,6 +3172,143 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return { refresh, show };
   }
 
+  // src/reflect/customizeFiles.ts
+  function customizeSlotKey(platform, kind, fileKey) {
+    return `${platform}/${kind}/${fileKey}`;
+  }
+  var PLATFORMS = ["desktop", "mobile"];
+  var KINDS = ["js", "css"];
+  var DOWNLOAD_CONCURRENCY = 4;
+  var isObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+  var dict = () => /* @__PURE__ */ Object.create(null);
+  var messageOf = (error) => error instanceof Error ? error.message : String(error);
+  function listFileEntries(section) {
+    const entries = [];
+    for (const platform of PLATFORMS) for (const kind of KINDS) {
+      const list = section?.[platform]?.[kind];
+      if (!Array.isArray(list)) continue;
+      for (const item of list) {
+        const fileKey = item?.type === "FILE" ? item?.file?.fileKey : void 0;
+        if (typeof fileKey === "string" && fileKey) entries.push({ item, fileKey, name: String(item.file.name || ""), platform, kind });
+      }
+    }
+    return entries;
+  }
+  function base64ToBytes(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  }
+  async function blobBytes(blob) {
+    return new Uint8Array(await blob.arrayBuffer());
+  }
+  function fallbackHash(bytes) {
+    let a = 2166136261, b = 16777619 ^ 2654435769;
+    for (const byte of bytes) {
+      a = Math.imul(a ^ byte, 16777619) >>> 0;
+      b = Math.imul(b ^ byte, 2246822507) >>> 0;
+      b = (b ^ b >>> 13) >>> 0;
+    }
+    return `fnv1a:${a.toString(16).padStart(8, "0")}${b.toString(16).padStart(8, "0")}${bytes.length.toString(16)}`;
+  }
+  async function hashBytes(bytes) {
+    try {
+      const subtle = globalThis.crypto?.subtle;
+      if (subtle?.digest) {
+        const digest = new Uint8Array(await subtle.digest("SHA-256", bytes));
+        return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      }
+    } catch {
+    }
+    return fallbackHash(bytes);
+  }
+  function guessContentType(name) {
+    return /\.css$/i.test(name) ? "text/css" : /\.js$/i.test(name) ? "text/javascript" : "";
+  }
+  var downloadCustomizeFile = async (guestId, fileKey) => {
+    try {
+      return await downloadKintoneFile(guestId, fileKey);
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      if (/大きすぎ|HTTP 4\d\d/.test(messageOf(error))) throw error;
+      return downloadKintoneFile(guestId, fileKey);
+    }
+  };
+  async function pool(items, worker) {
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(DOWNLOAD_CONCURRENCY, items.length) }, async () => {
+      while (next < items.length) await worker(items[next++]);
+    }));
+  }
+  async function loadBody(entry, guestId, download, allowEmbedded) {
+    const embedded = allowEmbedded ? entry.item.file?._content : void 0;
+    let blob;
+    if (isObject(embedded) && typeof embedded.base64 === "string") {
+      let bytes;
+      try {
+        bytes = base64ToBytes(embedded.base64);
+      } catch {
+        throw new Error("バックアップに保存されたファイル本体を読み取れません");
+      }
+      blob = new Blob([bytes], { type: typeof embedded.contentType === "string" ? embedded.contentType : "" });
+    } else blob = await download(guestId, entry.fileKey);
+    return { blob, hash: await hashBytes(await blobBytes(blob)) };
+  }
+  async function resolveCustomizeFiles(sourceSection, targetSection, opts) {
+    const download = opts.download || downloadCustomizeFile;
+    const resolution = { files: dict(), hashes: dict(), blobs: /* @__PURE__ */ new Map(), targetBlobs: /* @__PURE__ */ new Map(), targetUnavailable: [] };
+    const slotOf = (entry) => customizeSlotKey(entry.platform, entry.kind, entry.fileKey);
+    const targetEntries = listFileEntries(targetSection);
+    const targetSlots = new Set(targetEntries.map(slotOf));
+    const pending = [];
+    for (const entry of listFileEntries(sourceSection)) {
+      if (targetSlots.has(slotOf(entry))) resolution.files[slotOf(entry)] = { status: "existing" };
+      else if (!pending.some((item) => slotOf(item) === slotOf(entry))) pending.push(entry);
+    }
+    if (!pending.length) return resolution;
+    const sourceBodies = /* @__PURE__ */ new Map(), sourceErrors = /* @__PURE__ */ new Map();
+    const sourceByKey = /* @__PURE__ */ new Map();
+    for (const entry of pending) if (!sourceByKey.has(entry.fileKey)) sourceByKey.set(entry.fileKey, entry);
+    await pool([...sourceByKey.values()], async (entry) => {
+      try {
+        sourceBodies.set(entry.fileKey, await loadBody(entry, opts.sourceGuestId, download, true));
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        sourceErrors.set(entry.fileKey, messageOf(error));
+      }
+    });
+    const targetByKey = /* @__PURE__ */ new Map();
+    for (const entry of targetEntries) if (!targetByKey.has(entry.fileKey)) targetByKey.set(entry.fileKey, entry);
+    const targetBodies = /* @__PURE__ */ new Map();
+    if (sourceBodies.size) await pool([...targetByKey.values()], async (entry) => {
+      try {
+        targetBodies.set(entry.fileKey, await loadBody(entry, opts.targetGuestId, download, false));
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        resolution.targetUnavailable.push({ fileKey: entry.fileKey, name: entry.name || entry.fileKey, reason: messageOf(error) });
+      }
+    });
+    for (const [key, body] of targetBodies) {
+      resolution.hashes[key] = body.hash;
+      resolution.targetBlobs.set(key, body.blob);
+    }
+    const reusedTargetSlots = /* @__PURE__ */ new Set();
+    for (const entry of pending) {
+      const slot = slotOf(entry), body = sourceBodies.get(entry.fileKey);
+      if (!body) {
+        resolution.files[slot] = { status: "unavailable", reason: sourceErrors.get(entry.fileKey) || "本体を取得できません" };
+        continue;
+      }
+      resolution.hashes[entry.fileKey] = body.hash;
+      resolution.blobs.set(entry.fileKey, body.blob);
+      const reused = entry.name ? targetEntries.find((candidate) => candidate.platform === entry.platform && candidate.kind === entry.kind && candidate.name === entry.name && targetBodies.get(candidate.fileKey)?.hash === body.hash && !reusedTargetSlots.has(slotOf(candidate))) : void 0;
+      if (reused) reusedTargetSlots.add(slotOf(reused));
+      resolution.files[slot] = reused ? { status: "reuse", targetFileKey: reused.fileKey, hash: body.hash, byteSize: body.blob.size } : { status: "upload", hash: body.hash, byteSize: body.blob.size, contentType: body.blob.type || String(entry.item.file?.contentType || "") || guessContentType(entry.name) };
+    }
+    return resolution;
+  }
+
   // src/archive/crc32.ts
   var crcTable = null;
   function getCrcTable() {
@@ -3628,6 +3841,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       return sum + ["js", "css"].reduce((s, kind) => s + (Array.isArray(parsed?.[platform]?.[kind]) ? parsed[platform][kind].length : 0), 0);
     }, 0);
     const scopeRaw = String(parsed.scope || "").trim().toUpperCase();
+    const files = collectPlanFiles(parsed, payload);
     if (inputTotal > 0 && all.length === 0) {
       throw new Error("JS/CSS設定の全項目で type/url/fileKey が不足しています。現在設定の全削除を防ぐため反映を中止しました");
     }
@@ -3642,8 +3856,39 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         file: all.filter((r) => r.type === "FILE").length,
         url: all.filter((r) => r.type === "URL").length
       },
-      dropped: Math.max(0, inputTotal - all.length)
+      dropped: Math.max(0, inputTotal - all.length),
+      files
     };
+  }
+  function collectPlanFiles(parsed, payload) {
+    const files = [];
+    for (const platform of ["desktop", "mobile"]) {
+      for (const kind of ["js", "css"]) {
+        const input = Array.isArray(parsed?.[platform]?.[kind]) ? parsed[platform][kind] : [];
+        const kept = input.filter((item) => {
+          if (!item || typeof item !== "object") return false;
+          const type = String(item.type || "").toUpperCase();
+          if (type === "FILE") return item?.file?.fileKey != null && String(item.file.fileKey) !== "";
+          return type === "URL" && item.url != null && String(item.url) !== "";
+        });
+        const out = payload?.[platform]?.[kind] || [];
+        out.forEach((resource, index) => {
+          if (resource?.type !== "FILE") return;
+          const file = kept[index]?.file || {};
+          const embedded = file._content;
+          files.push({
+            platform,
+            kind,
+            index,
+            fileKey: resource.file.fileKey,
+            name: typeof file.name === "string" ? file.name : "",
+            contentType: typeof file.contentType === "string" ? file.contentType : "",
+            ...embedded && typeof embedded === "object" && typeof embedded.base64 === "string" ? { embedded: { base64: embedded.base64, contentType: typeof embedded.contentType === "string" ? embedded.contentType : "" } } : {}
+          });
+        });
+      }
+    }
+    return files;
   }
   function summarizeJsConfigCurrent(current, plan) {
     const now = buildCustomizeSettingsPutPayload(current);
@@ -3663,7 +3908,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       removed
     };
   }
-  function buildJsConfigApplyConfirmText(targetAppId, targetGuestId, plan, current) {
+  function buildJsConfigApplyConfirmText(targetAppId, targetGuestId, plan, current, filePlan, source) {
     const c = plan.counts;
     const nextTotal = c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss;
     const nowTotal = current ? current.desktopJs + current.desktopCss + current.mobileJs + current.mobileCss : 0;
@@ -3675,7 +3920,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       "反映先の JS/CSS 一覧はこの内容にすべて置き換わり、反映先だけにあるファイルは外れます。",
       current ? `この反映で外れる現在の設定: ${current.removed}件${current.removed && nowTotal && !nextTotal ? "（すべて外れます）" : ""}` : "",
       plan.dropped ? `type/url/fileKey が不足している ${plan.dropped}件は送信しません。` : "",
-      c.file ? "FILE タイプは反映先で有効なアップロード済み fileKey が必要です。他アプリの取得結果にある fileKey（ダウンロード用）をそのまま流用すると kintone に拒否されます。" : "",
+      ...c.file ? describeJsConfigFilePlan(filePlan, source ?? null) : [],
       "本番には反映されません（管理画面から手動デプロイ）。実行しますか？"
     ].filter(Boolean).join("\n");
   }
@@ -3689,6 +3934,140 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       throw new Error(`JS/CSS設定JSONを解析できません（「整形」ボタンで位置を確認してください）: ${e?.message || String(e)}`);
     }
     return buildJsConfigApplyPlan(parsed);
+  }
+  function collectJsConfigFileKeys(data) {
+    const keys = /* @__PURE__ */ new Set();
+    for (const platform of ["desktop", "mobile"]) {
+      for (const kind of ["js", "css"]) {
+        const list = data?.[platform]?.[kind];
+        if (!Array.isArray(list)) continue;
+        for (const item of list) {
+          const fileKey = String(item?.type || "").toUpperCase() === "FILE" ? item?.file?.fileKey : void 0;
+          if (fileKey != null && String(fileKey) !== "") keys.add(String(fileKey));
+        }
+      }
+    }
+    return [...keys];
+  }
+  var UNKNOWN_ORIGIN_REASON = "__unknown-file-origin__";
+  var NEXT_STEP_FETCH = "取得元アプリで「取得」してから反映してください。";
+  function jsConfigSlotLabel(platform, kind) {
+    return `${platform === "desktop" ? "PC" : "モバイル"} ${kind.toUpperCase()}`;
+  }
+  var sizeText = (bytes) => formatFileSize(bytes) || "0 B";
+  async function planJsConfigFiles(plan, current, opts) {
+    const result = { items: [], blobs: /* @__PURE__ */ new Map(), problems: [], onlyUnknownOrigin: false, targetUnavailable: [] };
+    if (!plan.files.length) return result;
+    const known = new Set(opts.source?.knownFileKeys || []);
+    const targetKeys = /* @__PURE__ */ new Set();
+    for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) {
+      for (const item of Array.isArray(current?.[platform]?.[kind]) ? current[platform][kind] : []) {
+        const fileKey = item?.type === "FILE" ? item?.file?.fileKey : void 0;
+        if (typeof fileKey === "string" && fileKey) targetKeys.add(fileKey);
+      }
+    }
+    const sourceGuestId = opts.source ? opts.source.guestId : opts.targetGuestId;
+    const base = opts.download || downloadCustomizeFile;
+    const download = (guestId, fileKey) => {
+      const fromSource = known.has(fileKey);
+      if (!fromSource && !targetKeys.has(fileKey)) return Promise.reject(new Error(UNKNOWN_ORIGIN_REASON));
+      const guest = fromSource ? guestId : opts.targetGuestId;
+      if (!fromSource || !opts.cache) return base(guest, fileKey);
+      const cacheKey = `${guest}/${fileKey}`;
+      let pending = opts.cache.get(cacheKey);
+      if (!pending) {
+        pending = base(guest, fileKey);
+        opts.cache.set(cacheKey, pending);
+        pending.catch((error) => {
+          if (isRunCancelledError(error)) opts.cache.delete(cacheKey);
+        });
+      }
+      return pending;
+    };
+    const metaOf = new Map(plan.files.map((file) => [`${file.platform}/${file.kind}/${file.index}`, file]));
+    const sourceSection = { desktop: { js: [], css: [] }, mobile: { js: [], css: [] } };
+    for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) {
+      sourceSection[platform][kind] = (plan.payload[platform]?.[kind] || []).map((resource, index) => {
+        const meta = metaOf.get(`${platform}/${kind}/${index}`);
+        if (resource?.type !== "FILE" || !meta) return resource;
+        return { type: "FILE", file: { fileKey: meta.fileKey, name: meta.name, contentType: meta.contentType, ...meta.embedded ? { _content: meta.embedded } : {} } };
+      });
+    }
+    const resolution = await resolveCustomizeFiles(sourceSection, current, { sourceGuestId, targetGuestId: opts.targetGuestId, download });
+    let unknownOrigin = 0, otherProblems = 0;
+    for (const file of plan.files) {
+      const state3 = resolution.files[customizeSlotKey(file.platform, file.kind, file.fileKey)];
+      const where = `「${file.name || file.fileKey}」（${jsConfigSlotLabel(file.platform, file.kind)}）`;
+      const item = { platform: file.platform, kind: file.kind, index: file.index, name: file.name, sourceFileKey: file.fileKey, size: 0 };
+      if (state3?.status === "existing") result.items.push({ ...item, action: "keep", targetFileKey: file.fileKey });
+      else if (state3?.status === "reuse") result.items.push({ ...item, action: "reuse", targetFileKey: state3.targetFileKey, size: state3.byteSize });
+      else if (state3?.status === "upload") {
+        if (!file.name) {
+          otherProblems++;
+          result.problems.push(`${where}: ファイル名がありません。JSON の file.name を確認してください。`);
+          continue;
+        }
+        result.items.push({ ...item, action: "upload", size: state3.byteSize });
+        const blob = resolution.blobs.get(file.fileKey);
+        if (blob) result.blobs.set(file.fileKey, blob);
+      } else if (state3?.status === "unavailable" && state3.reason === UNKNOWN_ORIGIN_REASON) {
+        unknownOrigin++;
+        result.problems.push(`${where}: 取得元のアプリが分かりません。`);
+      } else {
+        otherProblems++;
+        const reason = state3?.status === "unavailable" ? state3.reason : "反映方法を判断できません";
+        result.problems.push(`${where}: ${opts.source ? `取得元（${opts.source.label}）` : "取得元"}からファイルを取得できません（${reason}）。`);
+      }
+    }
+    result.onlyUnknownOrigin = unknownOrigin > 0 && otherProblems === 0;
+    result.targetUnavailable = resolution.targetUnavailable.map((item) => `「${item.name}」（${item.reason}）`);
+    return result;
+  }
+  function formatJsConfigFileProblems(filePlan, targetLabel) {
+    const count = filePlan.problems.length;
+    const to = targetLabel ? `${targetLabel}へ` : "反映先へ";
+    const head = filePlan.onlyUnknownOrigin ? `取得元が分からないファイルが ${count}件あるため、${to}渡せません。${NEXT_STEP_FETCH}` : `ファイル ${count}件を${to}渡せません。${NEXT_STEP_FETCH}`;
+    return [head, ...filePlan.problems.map((line) => `・${line}`), "反映先の設定は書き込んでいません。"].join("\n");
+  }
+  function describeJsConfigFilePlan(filePlan, source) {
+    if (!filePlan || !filePlan.items.length) return [];
+    const by = (action) => filePlan.items.filter((item) => item.action === action);
+    const uploads = by("upload"), reuse = by("reuse"), keep = by("keep");
+    const line = (item) => `  ・${jsConfigSlotLabel(item.platform, item.kind)}: ${item.name || item.sourceFileKey}${item.size ? `（${sizeText(item.size)}）` : ""}`;
+    const lines = [`FILE 形式のファイル ${filePlan.items.length}件の扱い:`];
+    if (uploads.length) lines.push(`・反映先へアップロードする: ${uploads.length}件（合計 ${sizeText(uploads.reduce((sum, item) => sum + item.size, 0))}。${source ? `取得元（${source.label}）` : "取得元"}から取得し、新しいキーで設定します）`, ...uploads.map(line));
+    if (reuse.length) lines.push(`・反映先の同じ枠にある同名・同内容のファイルを使う: ${reuse.length}件`, ...reuse.map(line));
+    if (keep.length) lines.push(`・反映先ですでに使われているファイルをそのまま使う: ${keep.length}件`);
+    if (filePlan.targetUnavailable.length) lines.push(`・反映先の${filePlan.targetUnavailable.join("、")}の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
+    if (uploads.length) lines.push("アップロードは確認後、設定を書き込む直前に行います。アップロードに失敗したときは設定を書き込みません。");
+    return lines;
+  }
+  async function uploadJsConfigFiles(filePlan, targetGuestId, uploaded = /* @__PURE__ */ new Map()) {
+    for (const item of filePlan.items) {
+      if (item.action !== "upload") continue;
+      const blob = filePlan.blobs.get(item.sourceFileKey);
+      const where = `「${item.name}」（${jsConfigSlotLabel(item.platform, item.kind)}）`;
+      if (!blob) throw new Error(`${where}のファイル本体がないためアップロードできません。`);
+      try {
+        uploaded.set(item, await uploadKintoneFile(targetGuestId, blob, item.name));
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        throw new Error(`${where}のアップロードに失敗しました（${firstLine(error)}）。`);
+      }
+    }
+    return uploaded;
+  }
+  var countAction = (filePlan, action) => filePlan.items.filter((item) => item.action === action).length;
+  function jsConfigPayloadWithFiles(payload, filePlan, uploaded) {
+    const body = deepClone(payload);
+    for (const item of filePlan.items) {
+      const entry = body[item.platform]?.[item.kind]?.[item.index];
+      if (entry?.file?.fileKey !== item.sourceFileKey) throw new Error(`「${item.name}」の反映位置を特定できません。`);
+      const fileKey = item.action === "upload" ? uploaded.get(item) : item.action === "reuse" ? item.targetFileKey : item.sourceFileKey;
+      if (!fileKey) throw new Error(`「${item.name}」の反映先のキーを決められません。`);
+      entry.file.fileKey = fileKey;
+    }
+    return body;
   }
   async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
     const targetAppId = String(p.targetAppId || "").trim();
@@ -3710,11 +4089,35 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       stale.code = "GAIA_CO02";
       throw decorateRevisionConflict(stale, "JS/CSS設定の反映");
     }
-    if (!p.skipConfirm && !kusConfirm(buildJsConfigApplyConfirmText(targetAppId, guestId, plan, currentSummary))) {
+    const fileSource = p.fileSource || null;
+    let filePlan;
+    if (plan.files.length) {
+      setStatus("JS/CSSファイルを確認中...");
+      filePlan = await planJsConfigFiles(plan, current, { source: fileSource, targetGuestId: guestId });
+      if (filePlan.problems.length) throw new Error(formatJsConfigFileProblems(filePlan));
+    }
+    if (!p.skipConfirm && !kusConfirm(buildJsConfigApplyConfirmText(targetAppId, guestId, plan, currentSummary, filePlan, fileSource))) {
       setStatus("JS/CSS設定反映をキャンセルしました");
       return;
     }
-    const body = { app: targetAppId, ...plan.payload };
+    let payload = plan.payload;
+    if (filePlan) {
+      const uploaded = /* @__PURE__ */ new Map();
+      const uploadCount = filePlan.items.filter((item) => item.action === "upload").length;
+      if (uploadCount) setStatus(`JS/CSSファイルを反映先へアップロード中...（${uploadCount}件）`);
+      try {
+        await uploadJsConfigFiles(filePlan, guestId, uploaded);
+      } catch (e) {
+        if (isRunCancelledError(e)) {
+          if (uploaded.size) setLogHtml(`<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(`アップロードの途中で中止しました。反映先の設定は書き込んでいません。アップロード済みの ${uploaded.size}件は使われずに残りますが、設定には影響しません。`)}</pre>`);
+          throw e;
+        }
+        throw new Error(`${e?.message || String(e)}反映先の設定は書き込んでいません。${uploaded.size ? `
+アップロード済みの ${uploaded.size}件は使われずに残りますが、設定には影響しません。` : ""}`);
+      }
+      payload = jsConfigPayloadWithFiles(plan.payload, filePlan, uploaded);
+    }
+    const body = { app: targetAppId, ...payload };
     if (plan.scope) body.scope = plan.scope;
     if (revision) body.revision = revision;
     setStatus("JS/CSS設定を反映中...");
@@ -3729,7 +4132,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       `OK JS/CSS設定反映（アプリ: ${targetAppId}${guestId ? ` / ゲスト ${guestId}` : ""}）${pickRevision(res) ? ` revision ${pickRevision(res)}` : ""}`,
       `Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}${plan.scope ? ` / 適用範囲 ${plan.scope}` : ""}`,
       `置き換えにより外れた現在の設定 ${currentSummary.removed}件`,
-      plan.dropped ? `送信対象外 ${plan.dropped}件（type/url/fileKey 不足）` : ""
+      plan.dropped ? `送信対象外 ${plan.dropped}件（type/url/fileKey 不足）` : "",
+      ...filePlan?.items.length ? [`ファイル: アップロード ${countAction(filePlan, "upload")}件 / 再利用 ${countAction(filePlan, "reuse")}件 / そのまま ${countAction(filePlan, "keep")}件`] : []
     ].filter(Boolean);
     setLogHtml(`<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`);
     setStatus("JS/CSS設定反映完了");
@@ -3741,10 +4145,6 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     conflict: "競合",
     notExecuted: "未実行（中止）"
   };
-  function jsConfigMultiTargetProblem(plan) {
-    if (!plan.counts.file) return "";
-    return `JSON にアップロード済みファイル（FILE タイプ）の JS / CSS が ${plan.counts.file}件含まれているため、複数の反映先へはまとめて反映できません。FILE タイプの fileKey は取得元のアプリでしか使えず、別のアプリへ反映すると kintone に拒否されます。URL で指定した JS / CSS だけの JSON にするか、ファイルは「プレビュー反映」の別アプリの JS/CSS 転送で反映してください。`;
-  }
   function multiTargetLabel(t) {
     return `App ${t.appId}${t.appName ? `（${t.appName}）` : ""}${t.guestId ? ` / ゲストスペース ${t.guestId}` : ""}`;
   }
@@ -3754,11 +4154,18 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   function renderJsConfigMultiResultHtml(res) {
     const color = { success: "#15803d", failed: "#b91c1c", conflict: "#b45309", notExecuted: "#64748b" };
     const rows = res.results.map((r) => {
-      const detail = r.status === "success" ? `revision ${r.revision || "-"} / 外れた現在の設定 ${r.removed ?? 0}件` : (r.precheck && r.status === "failed" ? "事前確認で失敗（書き込みなし）: " : "") + (r.message || "");
+      const fileNote = r.files && r.files.uploaded + r.files.reused + r.files.kept > 0 ? ` / ファイル: アップロード ${r.files.uploaded}件・再利用 ${r.files.reused}件・そのまま ${r.files.kept}件` : "";
+      const detail = r.status === "success" ? `revision ${r.revision || "-"} / 外れた現在の設定 ${r.removed ?? 0}件${fileNote}` : (r.precheck && r.status === "failed" ? "事前確認で失敗（書き込みなし）: " : "") + (r.message || "");
       return `<tr><td style="padding:4px 6px;white-space:nowrap">${esc(multiTargetLabel(r))}</td><td style="padding:4px 6px;white-space:nowrap;font-weight:700;color:${color[r.status]}">${esc(JS_CONFIG_MULTI_STATUS_LABEL[r.status])}</td><td style="padding:4px 6px;word-break:break-all">${esc(detail)}</td></tr>`;
     }).join("");
-    return `<div style="padding:8px 10px;font-size:12px;font-weight:700">${esc(res.headline)}</div><table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 6px">反映先</th><th style="text-align:left;padding:4px 6px">結果</th><th style="text-align:left;padding:4px 6px">内容</th></tr></thead><tbody>${rows}</tbody></table>`;
+    return `<div style="padding:8px 10px;font-size:12px;font-weight:700">${esc(res.headline)}</div>` + (res.note ? `<div style="padding:0 10px 8px;font-size:11px;color:#64748b">${esc(res.note)}</div>` : "") + `<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 6px">反映先</th><th style="text-align:left;padding:4px 6px">結果</th><th style="text-align:left;padding:4px 6px">内容</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
+  var FileProblemError = class extends Error {
+    constructor(message, plan) {
+      super(message);
+      this.plan = plan;
+    }
+  };
   async function runApplyJsConfigMultiStandalone(p, setStatus, setLogHtml) {
     const seen = /* @__PURE__ */ new Set();
     const targets = [];
@@ -3774,11 +4181,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     if (!targets.length) throw new Error("まとめて反映する反映先を1件以上指定してください");
     const plan = parseJsConfigApplyText(p.jsonText);
-    const problem = jsConfigMultiTargetProblem(plan);
-    if (problem) throw new Error(problem);
+    const fileSource = p.fileSource || null;
     const total = targets.length;
     const results = [];
     const prechecked = [];
+    const sourceCache = /* @__PURE__ */ new Map();
+    let originBlocked = 0;
+    let originSample;
     for (let i = 0; i < total; i++) {
       const target = targets[i];
       setStatus(`[${i + 1}/${total}] 反映先の現在設定を確認中: ${multiTargetLabel(target)}`);
@@ -3787,15 +4196,28 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         const revision = pickRevision(current);
         if (!/^\d+$/.test(revision)) throw new Error("JS/CSS 設定の revision を確認できません");
         const summary = summarizeJsConfigCurrent(current, plan);
-        prechecked.push({ target, revision, removed: summary.removed, nowTotal: summary.desktopJs + summary.desktopCss + summary.mobileJs + summary.mobileCss });
+        let filePlan;
+        if (plan.files.length) {
+          setStatus(`[${i + 1}/${total}] JS/CSSファイルを確認中: ${multiTargetLabel(target)}`);
+          filePlan = await planJsConfigFiles(plan, current, { source: fileSource, targetGuestId: target.guestId, cache: sourceCache });
+          if (filePlan.problems.length) throw new FileProblemError(formatJsConfigFileProblems(filePlan, multiTargetLabel(target)), filePlan);
+        }
+        prechecked.push({ target, revision, removed: summary.removed, nowTotal: summary.desktopJs + summary.desktopCss + summary.mobileJs + summary.mobileCss, filePlan });
       } catch (e) {
         if (isCancelStop(e)) throw e;
+        if (e instanceof FileProblemError && e.plan.onlyUnknownOrigin) {
+          originBlocked++;
+          originSample = e.plan;
+        }
         results.push({ ...target, status: "failed", precheck: true, message: firstLine(e) });
       }
     }
+    if (originBlocked === total && originSample) throw new Error(`${formatJsConfigFileProblems(originSample)}
+全${total}件の反映先で同じ理由です。`);
     const precheckFailures = results.filter((r) => r.precheck);
     const position = new Map(targets.map((t, i) => [`${t.appId}::${t.guestId}`, i]));
     const order = (r) => position.get(`${r.appId}::${r.guestId}`) ?? -1;
+    let note = "";
     const finish = (declined, cancelled2) => {
       const counts = {
         total,
@@ -3823,7 +4245,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         tone = "err";
       }
       results.sort((x, y) => order(x) - order(y));
-      return { declined, cancelled: cancelled2, results, counts, headline, tone };
+      return { declined, cancelled: cancelled2, results, counts, headline, tone, ...note ? { note } : {} };
     };
     if (!prechecked.length) {
       const res2 = finish(false, false);
@@ -3834,16 +4256,19 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const c = plan.counts;
       const removedTotal = prechecked.reduce((sum, t) => sum + t.removed, 0);
       const none = c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss === 0;
+      const countOf = (t, action) => t.filePlan ? countAction(t.filePlan, action) : 0;
+      const fileLines = plan.files.length ? describeJsConfigMultiFiles(prechecked.map((t) => t.filePlan), fileSource) : [];
       const text = [
         `${prechecked.length}件の反映先プレビューへ、同じ JS/CSS 設定を反映します。`,
-        `反映する内容: Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}（URL ${c.url}件）${plan.scope ? ` / 適用範囲 ${plan.scope}` : " / 適用範囲は各反映先の現状維持"}`,
+        `反映する内容: Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}（URL ${c.url}件 / FILE ${c.file}件）${plan.scope ? ` / 適用範囲 ${plan.scope}` : " / 適用範囲は各反映先の現状維持"}`,
         none ? "⚠ 有効な JS/CSS 設定が 0 件のため、各反映先の JS/CSS 設定はすべて外れます（0 件になります）。" : null,
         "各反映先の JS/CSS 一覧はこの内容にすべて置き換わり、反映先だけにあるファイルは外れます。",
         `この反映で外れる現在の設定: 合計 ${removedTotal}件`,
         plan.dropped ? `type/url/fileKey が不足している ${plan.dropped}件は送信しません。` : null,
+        ...fileLines,
         "",
         `反映先（${prechecked.length}件）:`,
-        summarizeList(prechecked.map((t) => `・${multiTargetLabel(t.target)}（現在 ${t.nowTotal}件 → 外れる ${t.removed}件）`)),
+        summarizeList(prechecked.map((t) => `・${multiTargetLabel(t.target)}（現在 ${t.nowTotal}件 → 外れる ${t.removed}件${plan.files.length ? `、ファイルはアップロード ${countOf(t, "upload")}件・再利用 ${countOf(t, "reuse")}件・そのまま ${countOf(t, "keep")}件` : ""}）`)),
         precheckFailures.length ? "" : null,
         precheckFailures.length ? `現在の設定を確認できなかった ${precheckFailures.length}件は反映しません:` : null,
         precheckFailures.length ? summarizeList(precheckFailures.map((r) => `・${multiTargetLabel(r)}: ${r.message}`)) : null,
@@ -3856,19 +4281,45 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       }
     }
     let cancelled = false;
+    let unusedUploads = 0;
     for (let i = 0; i < prechecked.length; i++) {
-      const { target, revision, removed } = prechecked[i];
+      const { target, revision, removed, filePlan } = prechecked[i];
       if (cancelled) {
         results.push({ ...target, status: "notExecuted" });
         continue;
       }
       setStatus(`[${i + 1}/${prechecked.length}] 反映中: ${multiTargetLabel(target)}`);
-      const body = { app: target.appId, ...plan.payload, revision };
-      if (plan.scope) body.scope = plan.scope;
       try {
         throwIfCancelled();
+        let payload = plan.payload;
+        if (filePlan) {
+          const uploaded = /* @__PURE__ */ new Map();
+          const uploadCount = countAction(filePlan, "upload");
+          if (uploadCount) setStatus(`[${i + 1}/${prechecked.length}] ファイルをアップロード中（${uploadCount}件）: ${multiTargetLabel(target)}`);
+          try {
+            await uploadJsConfigFiles(filePlan, target.guestId, uploaded);
+          } catch (e) {
+            unusedUploads += uploaded.size;
+            if (isCancelStop(e)) {
+              cancelled = true;
+              results.push({ ...target, status: "notExecuted", message: "アップロード中に中止したため、この反映先には書き込んでいません" });
+              continue;
+            }
+            results.push({ ...target, status: "failed", message: `${firstLine(e)} この反映先には書き込んでいません` });
+            continue;
+          }
+          payload = jsConfigPayloadWithFiles(plan.payload, filePlan, uploaded);
+        }
+        const body = { app: target.appId, ...payload, revision };
+        if (plan.scope) body.scope = plan.scope;
         const res2 = await apiPut(buildApiPrefix(target.guestId, true), "/app/customize.json", body);
-        results.push({ ...target, status: "success", revision: pickRevision(res2), removed });
+        results.push({
+          ...target,
+          status: "success",
+          revision: pickRevision(res2),
+          removed,
+          ...filePlan?.items.length ? { files: { uploaded: countAction(filePlan, "upload"), reused: countAction(filePlan, "reuse"), kept: countAction(filePlan, "keep") } } : {}
+        });
       } catch (e) {
         if (isCancelStop(e)) {
           cancelled = true;
@@ -3879,10 +4330,39 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         results.push({ ...target, status: decorated?.revisionConflict ? "conflict" : "failed", message: firstLine(decorated) });
       }
     }
+    if (cancelled && unusedUploads) note = `中止した反映先でアップロード済みの ${unusedUploads}件のファイルは、使われずに残ります（反映先の設定には影響しません）。`;
     const res = finish(false, cancelled);
     setLogHtml(renderJsConfigMultiResultHtml(res));
     setStatus(res.headline, res.tone === "err" || res.tone === "warn");
     return res;
+  }
+  function describeJsConfigMultiFiles(filePlans, source) {
+    const plans = filePlans.filter((item) => !!item);
+    const uploads = /* @__PURE__ */ new Map();
+    let uploadCount = 0, uploadBytes = 0, reuseCount = 0, keepCount = 0;
+    const unavailable = /* @__PURE__ */ new Set();
+    for (const filePlan of plans) {
+      for (const item of filePlan.items) {
+        if (item.action === "upload") {
+          uploadCount++;
+          uploadBytes += item.size;
+          const key = `${item.platform}/${item.kind}/${item.name}/${item.size}`;
+          const entry = uploads.get(key);
+          if (entry) entry.targets++;
+          else uploads.set(key, { item, targets: 1 });
+        } else if (item.action === "reuse") reuseCount++;
+        else keepCount++;
+      }
+      for (const text of filePlan.targetUnavailable) unavailable.add(text);
+    }
+    const lines = ["FILE 形式のファイルは、反映先ごとに次のとおり扱います:"];
+    lines.push(`・反映先へアップロードする: 合計 ${uploadCount}件（${sizeText(uploadBytes)}）${uploadCount ? `。${source ? `取得元（${source.label}）` : "取得元"}から取得し、反映先ごとに新しいキーで設定します` : ""}`);
+    if (uploads.size) lines.push(summarizeList([...uploads.values()].map(({ item, targets }) => `  ・${jsConfigSlotLabel(item.platform, item.kind)}: ${item.name}（${sizeText(item.size)}）→ ${targets}件の反映先`)));
+    lines.push(`・反映先の同じ枠にある同名・同内容のファイルを使う: ${reuseCount}件`);
+    lines.push(`・反映先ですでに使われているファイルをそのまま使う: ${keepCount}件`);
+    if (unavailable.size) lines.push(`・反映先の${[...unavailable].join("、")}の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
+    if (uploadCount) lines.push("アップロードは確認後、反映先ごとの書き込みの直前に行います。アップロードに失敗した反映先には書き込まず、残りを続けます。");
+    return lines;
   }
   function buildJsConfigBatchIndexMarkdown(manifest) {
     const apps = Array.isArray(manifest?.apps) ? manifest.apps : [];
@@ -4532,7 +5012,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       ]
     }));
     cardApply.body.appendChild(makeNote("反映先の JS / CSS 一覧は、JSON の内容にすべて置き換わります。JSON に適用範囲（scope: ALL / ADMIN / NONE）が含まれていれば、適用範囲も更新します。", "help"));
-    cardApply.body.appendChild(makeNote("FILE タイプは、別アプリから取得した fileKey をそのまま使うと kintone に拒否されます。反映先で有効なアップロード済みの fileKey に差し替えてください。", "help"));
+    cardApply.body.appendChild(makeNote("アップロード済みのファイル（FILE タイプ）は、JSON を取得したアプリから本体を取得し、反映先に同じファイルがあればそれを使い、無ければ反映先へアップロードします。取得したアプリを覚えているため、取得してそのまま（または編集して）反映してください。", "help"));
     cardApply.body.appendChild(makeNote("反映前に件数を最終確認します。取得後に反映先へ別の更新が入っていた場合（revision 競合）は、上書きせず中止します。", "help"));
     const applyBtn = makeButton("反映先プレビューへ反映", "run", { icon: "⤴" });
     cardApply.body.appendChild(applyBtn);
@@ -4567,7 +5047,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     });
     cardMulti.body.appendChild(makeRow(multiClearBtn));
     cardMulti.body.appendChild(makeNote("各反映先の JS / CSS 一覧は、JSON の内容にすべて置き換わります。1件ずつ順に反映し、失敗や競合があっても残りを続けて、最後に反映先ごとの結果を示します。", "help"));
-    cardMulti.body.appendChild(makeNote("FILE タイプ（アップロード済みファイル）を含む JSON は、別のアプリでは使えない fileKey を持つため、複数の反映先へはまとめて反映できません。URL タイプだけの JSON にするか、ファイルは「プレビュー反映」の別アプリの JS/CSS 転送を使ってください。", "help"));
+    cardMulti.body.appendChild(makeNote("アップロード済みのファイル（FILE タイプ）は、JSON を取得したアプリから本体を取得し、反映先ごとに、同じファイルがあればそれを使い、無ければ反映先へアップロードします。ファイルのアップロードに失敗した反映先には書き込まず、残りを続けます。", "help"));
     cardMulti.body.appendChild(makeNote("反映前に、各反映先の現在の設定を確認して件数を最終確認します。確認後に反映先へ別の更新が入っていた場合（revision 競合）は、その反映先だけ上書きせず競合として報告します。", "help"));
     const applyMultiBtn = makeButton("複数の反映先プレビューへ反映", "run", { icon: "⤴" });
     cardMulti.body.appendChild(applyMultiBtn);
@@ -4580,6 +5060,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         return JSON.stringify(JSON.parse(jsonTa.value)) !== JSON.stringify(JSON.parse(loadedText));
       } catch {
         return jsonTa.value !== loadedText;
+      }
+    };
+    const fileSource = () => jsonOrigin ? { guestId: jsonOrigin.guestId, label: jsonOrigin.text, knownFileKeys: jsonOrigin.fileKeys } : null;
+    const fetchedFileKeys = () => {
+      try {
+        return collectJsConfigFileKeys(JSON.parse(loadedText));
+      } catch {
+        return [];
       }
     };
     const originSummary = () => !jsonOrigin ? "取得結果ではありません（手入力・貼り付け）" : jsonOrigin.text + (jsonEdited() ? "（取得後に編集あり）" : "");
@@ -4602,7 +5090,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         panel.setStatus("取得をキャンセルしました（JSON は変更していません）", "warn");
         return;
       }
-      const origin = { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: srcPrev.checkbox.checked, revision: "", text: connectionSummary(srcApp.value.trim(), srcGuest.value.trim(), srcPrev.checkbox.checked ? "プレビュー" : "本番") };
+      const origin = { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: srcPrev.checkbox.checked, revision: "", fileKeys: [], text: connectionSummary(srcApp.value.trim(), srcGuest.value.trim(), srcPrev.checkbox.checked ? "プレビュー" : "本番") };
       fetchedRevision = "";
       return liteRun(panel, "JS/CSS設定を取得中…", async () => {
         await runFetchJsConfigStandalone(
@@ -4610,7 +5098,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           (m, e) => panel.setStatus(m, e ? "err" : "busy"),
           uiApi
         );
-        jsonOrigin = { ...origin, revision: fetchedRevision };
+        jsonOrigin = { ...origin, revision: fetchedRevision, fileKeys: fetchedFileKeys() };
       });
     });
     loadTargetBtn.addEventListener("click", () => {
@@ -4620,7 +5108,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       }
       const appId = tgtApp.value.trim();
       const guestId = tgtGuest.value.trim();
-      const origin = { appId, guestId, preview: true, revision: "", text: connectionSummary(appId, guestId, "プレビュー") };
+      const origin = { appId, guestId, preview: true, revision: "", fileKeys: [], text: connectionSummary(appId, guestId, "プレビュー") };
       fetchedRevision = "";
       return liteRun(panel, "反映先のJS/CSS設定を取得中…", async () => {
         if (!appId) throw new Error("反映先アプリIDを入力してください");
@@ -4629,7 +5117,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           (m, e) => panel.setStatus(m, e ? "err" : "busy"),
           uiApi
         );
-        jsonOrigin = { ...origin, revision: fetchedRevision };
+        jsonOrigin = { ...origin, revision: fetchedRevision, fileKeys: fetchedFileKeys() };
       });
     });
     exportBtn.addEventListener("click", () => liteRun(panel, "JSON 保存中…", async () => {
@@ -4639,7 +5127,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     applyBtn.addEventListener("click", () => liteRun(panel, "反映先のプレビューへ反映中…", async () => {
       const base = baseRevision();
       const applied = await runApplyJsConfigStandalone(
-        { targetAppId: tgtApp.value.trim(), targetGuestId: tgtGuest.value.trim(), jsonText: jsonTa.value, deployAfter: false, baseRevision: base },
+        { targetAppId: tgtApp.value.trim(), targetGuestId: tgtGuest.value.trim(), jsonText: jsonTa.value, deployAfter: false, baseRevision: base, fileSource: fileSource() },
         (m, e) => panel.setStatus(m, e ? "err" : "busy"),
         (html) => {
           panel.setResultHtml(html);
@@ -4649,7 +5137,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }));
     applyMultiBtn.addEventListener("click", () => liteRun(panel, "複数の反映先のプレビューへ反映中…", async () => {
       const res = await runApplyJsConfigMultiStandalone(
-        { targets: multiTable.getApps(), jsonText: jsonTa.value },
+        { targets: multiTable.getApps(), jsonText: jsonTa.value, fileSource: fileSource() },
         (m, e) => panel.setStatus(m, e ? "err" : "busy"),
         (html) => {
           panel.setResultHtml(html);
@@ -4716,16 +5204,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const targets = multiTable.getApps();
       if (!targets.length) return "まとめて反映する反映先を1件以上指定してください。";
       for (const row of targets) {
-        const problem2 = idProblem("反映先", row.appId, row.guestId);
-        if (problem2) return `アプリID ${row.appId || "未入力"}: ${problem2}`;
+        const problem = idProblem("反映先", row.appId, row.guestId);
+        if (problem) return `アプリID ${row.appId || "未入力"}: ${problem}`;
       }
-      const problem = applyProblem();
-      if (problem) return problem;
-      try {
-        return jsConfigMultiTargetProblem(buildJsConfigApplyPlan(JSON.parse(jsonTa.value)));
-      } catch (e) {
-        return e.message;
-      }
+      return applyProblem();
     };
     const jsonSummary = (forApply = false) => {
       let data = {};
@@ -4746,6 +5228,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         const c = plan.counts;
         if (c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss === 0) {
           rows.push(["⚠ 注意", "有効なJS/CSSが0件のため、反映先のJS/CSSは0件に初期化されます"]);
+        }
+        if (c.file) {
+          const source = fileSource();
+          const known = new Set(source?.knownFileKeys || []);
+          rows.push(["ファイル（FILE）", `${c.file}件。反映先の同じ枠に同じファイルが無ければ、${source ? `取得元（${source.label}）` : "取得元"}から取得して反映先へアップロードします。アップロードするファイルと使うファイルの内訳は、実行時の最終確認で示します。`]);
+          const unknown = plan.files.filter((file) => !known.has(file.fileKey) && !file.embedded);
+          if (unknown.length) {
+            const names = unknown.slice(0, 3).map((file) => `「${file.name || file.fileKey}」`).join("、") + (unknown.length > 3 ? `ほか${unknown.length - 3}件` : "");
+            rows.push(["⚠ 取得元が分からないファイル", `${unknown.length}件（${names}）。反映先がすでに同じ枠で使っているファイルを除き、反映できません。取得元アプリで「取得」してから反映してください。`]);
+          }
         }
       }
       return [["JSONの取得元", originSummary()], ...rows];
@@ -4791,7 +5283,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
             ["反映先", connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), "プレビュー")],
             ...jsonSummary(true),
             ["競合検出", baseRevision() ? "反映先が取得後（revision " + baseRevision() + "）に更新されていれば、上書きせず中止します。" : "反映直前の状態を基準にします（この JSON は反映先のプレビューから取得したものではないため、取得後の更新は検出できません）。"],
-            ["反映方法", "JS / CSS 一覧をすべて置き換えます。FILE タイプは、反映先で有効な fileKey（アップロード済みファイルの識別子）が必要です。"]
+            ["反映方法", "JS / CSS 一覧をすべて置き換えます。FILE タイプは、反映先に同じファイルがあればそれを使い、無ければ取得元から取得して反映先へアップロードします。"]
           ],
           onSelect: () => selectMode("apply")
         },
@@ -4809,7 +5301,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
 ` + summarizeList(targets.map((t) => "・" + connectionSummary(t.appId, t.guestId, "プレビュー") + (t.appName ? ` ${t.appName}` : "")))],
               ...jsonSummary(true),
               ["競合検出", "反映の直前に各反映先の現在の設定（revision）を確認し、その revision を付けて反映します。確認後に別の更新が入った反映先は、上書きせず「競合」として報告し、残りは続けます。この JSON を取得した後の更新は検出できません。"],
-              ["反映方法", "JS / CSS 一覧をすべて置き換えます。1件ずつ順に反映し、失敗しても残りを続けます。「中止」を押すと、残りは「未実行（中止）」になります。FILE タイプを含む JSON は反映できません。"]
+              ["反映方法", "JS / CSS 一覧をすべて置き換えます。1件ずつ順に反映し、失敗しても残りを続けます。「中止」を押すと、残りは「未実行（中止）」になります。FILE タイプは、反映先ごとに、同じファイルがあればそれを使い、無ければ取得元から取得して反映先へアップロードします。"]
             ];
           },
           onSelect: () => selectMode("apply-multi")

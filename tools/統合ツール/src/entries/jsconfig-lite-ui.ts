@@ -6,7 +6,8 @@ import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import { kusConfirm } from '../utils.js';
 import {
   buildJsConfigApplyPlan,
-  jsConfigMultiTargetProblem,
+  collectJsConfigFileKeys,
+  type JsConfigFileSource,
   runApplyJsConfigMultiStandalone,
   runApplyJsConfigStandalone,
   runExportJsConfigStandalone,
@@ -127,7 +128,7 @@ export function mountJsconfigLitePanel() {
     ]
   }));
   cardApply.body.appendChild(makeNote('反映先の JS / CSS 一覧は、JSON の内容にすべて置き換わります。JSON に適用範囲（scope: ALL / ADMIN / NONE）が含まれていれば、適用範囲も更新します。', 'help'));
-  cardApply.body.appendChild(makeNote('FILE タイプは、別アプリから取得した fileKey をそのまま使うと kintone に拒否されます。反映先で有効なアップロード済みの fileKey に差し替えてください。', 'help'));
+  cardApply.body.appendChild(makeNote('アップロード済みのファイル（FILE タイプ）は、JSON を取得したアプリから本体を取得し、反映先に同じファイルがあればそれを使い、無ければ反映先へアップロードします。取得したアプリを覚えているため、取得してそのまま（または編集して）反映してください。', 'help'));
   cardApply.body.appendChild(makeNote('反映前に件数を最終確認します。取得後に反映先へ別の更新が入っていた場合（revision 競合）は、上書きせず中止します。', 'help'));
   const applyBtn = makeButton('反映先プレビューへ反映', 'run', { icon: '⤴' });
   cardApply.body.appendChild(applyBtn);
@@ -161,7 +162,7 @@ export function mountJsconfigLitePanel() {
   multiClearBtn.addEventListener('click', () => { multiTable.clear(); panel.setStatus('まとめて反映先の一覧をクリアしました', 'info'); });
   cardMulti.body.appendChild(makeRow(multiClearBtn));
   cardMulti.body.appendChild(makeNote('各反映先の JS / CSS 一覧は、JSON の内容にすべて置き換わります。1件ずつ順に反映し、失敗や競合があっても残りを続けて、最後に反映先ごとの結果を示します。', 'help'));
-  cardMulti.body.appendChild(makeNote('FILE タイプ（アップロード済みファイル）を含む JSON は、別のアプリでは使えない fileKey を持つため、複数の反映先へはまとめて反映できません。URL タイプだけの JSON にするか、ファイルは「プレビュー反映」の別アプリの JS/CSS 転送を使ってください。', 'help'));
+  cardMulti.body.appendChild(makeNote('アップロード済みのファイル（FILE タイプ）は、JSON を取得したアプリから本体を取得し、反映先ごとに、同じファイルがあればそれを使い、無ければ反映先へアップロードします。ファイルのアップロードに失敗した反映先には書き込まず、残りを続けます。', 'help'));
   cardMulti.body.appendChild(makeNote('反映前に、各反映先の現在の設定を確認して件数を最終確認します。確認後に反映先へ別の更新が入っていた場合（revision 競合）は、その反映先だけ上書きせず競合として報告します。', 'help'));
   const applyMultiBtn = makeButton('複数の反映先プレビューへ反映', 'run', { icon: '⤴' });
   cardMulti.body.appendChild(applyMultiBtn);
@@ -170,10 +171,15 @@ export function mountJsconfigLitePanel() {
   // JSON の出所。取得元の入力欄は後から変えられるため、取得時点の対象を保持して保存名・反映確認に使う。
   let loadedText = '';
   let fetchedRevision = '';
-  let jsonOrigin: { appId: string; guestId: string; preview: boolean; revision: string; text: string } | null = null;
+  let jsonOrigin: { appId: string; guestId: string; preview: boolean; revision: string; text: string; /** 取得した JSON にあった fileKey（取得元のファイル） */ fileKeys: string[] } | null = null;
   const jsonEdited = () => {
     try { return JSON.stringify(JSON.parse(jsonTa.value)) !== JSON.stringify(JSON.parse(loadedText)); } catch { return jsonTa.value !== loadedText; }
   };
+  // FILE 形式のファイルの本体の取得元。取得した JSON にあった fileKey だけが、取得元のものと分かる。
+  const fileSource = (): JsConfigFileSource | null => jsonOrigin
+    ? { guestId: jsonOrigin.guestId, label: jsonOrigin.text, knownFileKeys: jsonOrigin.fileKeys }
+    : null;
+  const fetchedFileKeys = (): string[] => { try { return collectJsConfigFileKeys(JSON.parse(loadedText)); } catch { return []; } };
   const originSummary = (): string => !jsonOrigin
     ? '取得結果ではありません（手入力・貼り付け）'
     : jsonOrigin.text + (jsonEdited() ? '（取得後に編集あり）' : '');
@@ -193,7 +199,7 @@ export function mountJsconfigLitePanel() {
       panel.setStatus('取得をキャンセルしました（JSON は変更していません）', 'warn');
       return;
     }
-    const origin = { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: srcPrev.checkbox.checked, revision: '', text: connectionSummary(srcApp.value.trim(), srcGuest.value.trim(), srcPrev.checkbox.checked ? 'プレビュー' : '本番') };
+    const origin = { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: srcPrev.checkbox.checked, revision: '', fileKeys: [] as string[], text: connectionSummary(srcApp.value.trim(), srcGuest.value.trim(), srcPrev.checkbox.checked ? 'プレビュー' : '本番') };
     fetchedRevision = '';
     return liteRun(panel, 'JS/CSS設定を取得中…', async () => {
       await runFetchJsConfigStandalone(
@@ -201,7 +207,7 @@ export function mountJsconfigLitePanel() {
         (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
         uiApi
       );
-      jsonOrigin = { ...origin, revision: fetchedRevision };
+      jsonOrigin = { ...origin, revision: fetchedRevision, fileKeys: fetchedFileKeys() };
     });
   });
 
@@ -212,7 +218,7 @@ export function mountJsconfigLitePanel() {
     }
     const appId = tgtApp.value.trim();
     const guestId = tgtGuest.value.trim();
-    const origin = { appId, guestId, preview: true, revision: '', text: connectionSummary(appId, guestId, 'プレビュー') };
+    const origin = { appId, guestId, preview: true, revision: '', fileKeys: [] as string[], text: connectionSummary(appId, guestId, 'プレビュー') };
     fetchedRevision = '';
     return liteRun(panel, '反映先のJS/CSS設定を取得中…', async () => {
       if (!appId) throw new Error('反映先アプリIDを入力してください');
@@ -222,7 +228,7 @@ export function mountJsconfigLitePanel() {
         uiApi
       );
       // 反映先のプレビューから読み込んだ JSON なので、取得時の revision が競合検出の基準になる
-      jsonOrigin = { ...origin, revision: fetchedRevision };
+      jsonOrigin = { ...origin, revision: fetchedRevision, fileKeys: fetchedFileKeys() };
     });
   });
 
@@ -237,7 +243,7 @@ export function mountJsconfigLitePanel() {
   applyBtn.addEventListener('click', () => liteRun(panel, '反映先のプレビューへ反映中…', async () => {
     const base = baseRevision();
     const applied = await runApplyJsConfigStandalone(
-      { targetAppId: tgtApp.value.trim(), targetGuestId: tgtGuest.value.trim(), jsonText: jsonTa.value, deployAfter: false, baseRevision: base },
+      { targetAppId: tgtApp.value.trim(), targetGuestId: tgtGuest.value.trim(), jsonText: jsonTa.value, deployAfter: false, baseRevision: base, fileSource: fileSource() },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
       (html: string) => { panel.setResultHtml(html); }
     );
@@ -247,7 +253,7 @@ export function mountJsconfigLitePanel() {
 
   applyMultiBtn.addEventListener('click', () => liteRun(panel, '複数の反映先のプレビューへ反映中…', async () => {
     const res = await runApplyJsConfigMultiStandalone(
-      { targets: multiTable.getApps(), jsonText: jsonTa.value },
+      { targets: multiTable.getApps(), jsonText: jsonTa.value, fileSource: fileSource() },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
       (html: string) => { panel.setResultHtml(html); }
     );
@@ -315,9 +321,7 @@ export function mountJsconfigLitePanel() {
       const problem = idProblem('反映先', row.appId, row.guestId);
       if (problem) return `アプリID ${row.appId || '未入力'}: ${problem}`;
     }
-    const problem = applyProblem();
-    if (problem) return problem;
-    try { return jsConfigMultiTargetProblem(buildJsConfigApplyPlan(JSON.parse(jsonTa.value))); } catch (e: any) { return e.message; }
+    return applyProblem();
   };
   const jsonSummary = (forApply = false): Array<[string, string]> => {
     let data: any = {};
@@ -333,6 +337,16 @@ export function mountJsconfigLitePanel() {
       const c = plan.counts;
       if (c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss === 0) {
         rows.push(['⚠ 注意', '有効なJS/CSSが0件のため、反映先のJS/CSSは0件に初期化されます']);
+      }
+      if (c.file) {
+        const source = fileSource();
+        const known = new Set(source?.knownFileKeys || []);
+        rows.push(['ファイル（FILE）', `${c.file}件。反映先の同じ枠に同じファイルが無ければ、${source ? `取得元（${source.label}）` : '取得元'}から取得して反映先へアップロードします。アップロードするファイルと使うファイルの内訳は、実行時の最終確認で示します。`]);
+        const unknown = plan.files.filter((file) => !known.has(file.fileKey) && !file.embedded);
+        if (unknown.length) {
+          const names = unknown.slice(0, 3).map((file) => `「${file.name || file.fileKey}」`).join('、') + (unknown.length > 3 ? `ほか${unknown.length - 3}件` : '');
+          rows.push(['⚠ 取得元が分からないファイル', `${unknown.length}件（${names}）。反映先がすでに同じ枠で使っているファイルを除き、反映できません。取得元アプリで「取得」してから反映してください。`]);
+        }
       }
     }
     return [['JSONの取得元', originSummary()], ...rows];
@@ -370,7 +384,7 @@ export function mountJsconfigLitePanel() {
           ['反映先', connectionSummary(tgtApp.value.trim(), tgtGuest.value.trim(), 'プレビュー')],
           ...jsonSummary(true),
           ['競合検出', baseRevision() ? '反映先が取得後（revision ' + baseRevision() + '）に更新されていれば、上書きせず中止します。' : '反映直前の状態を基準にします（この JSON は反映先のプレビューから取得したものではないため、取得後の更新は検出できません）。'],
-          ['反映方法', 'JS / CSS 一覧をすべて置き換えます。FILE タイプは、反映先で有効な fileKey（アップロード済みファイルの識別子）が必要です。']
+          ['反映方法', 'JS / CSS 一覧をすべて置き換えます。FILE タイプは、反映先に同じファイルがあればそれを使い、無ければ取得元から取得して反映先へアップロードします。']
         ],
         onSelect: () => selectMode('apply')
       },
@@ -387,7 +401,7 @@ export function mountJsconfigLitePanel() {
             ['反映先', `${targets.length}件のプレビュー\n` + summarizeList(targets.map((t) => '・' + connectionSummary(t.appId, t.guestId, 'プレビュー') + (t.appName ? ` ${t.appName}` : '')))],
             ...jsonSummary(true),
             ['競合検出', '反映の直前に各反映先の現在の設定（revision）を確認し、その revision を付けて反映します。確認後に別の更新が入った反映先は、上書きせず「競合」として報告し、残りは続けます。この JSON を取得した後の更新は検出できません。'],
-            ['反映方法', 'JS / CSS 一覧をすべて置き換えます。1件ずつ順に反映し、失敗しても残りを続けます。「中止」を押すと、残りは「未実行（中止）」になります。FILE タイプを含む JSON は反映できません。']
+            ['反映方法', 'JS / CSS 一覧をすべて置き換えます。1件ずつ順に反映し、失敗しても残りを続けます。「中止」を押すと、残りは「未実行（中止）」になります。FILE タイプは、反映先ごとに、同じファイルがあればそれを使い、無ければ取得元から取得して反映先へアップロードします。']
           ];
         },
         onSelect: () => selectMode('apply-multi')
