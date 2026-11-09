@@ -4,6 +4,7 @@ import { SECTION_DEFS, META_KEYS, DIFF_NORMALIZATION_PRESETS, DEFAULT_IGNORE_KEY
 import { state, ui } from '../state.js';
 import { deepClone, stableStringify } from '../utils.js';
 import type { DiffRow, DiffFetchIssue } from './types.js';
+import { isPluginConfigOmittedMarker } from '../pluginConfigMarker.js';
 
 const HIGH_IMPACT_SECTIONS = new Set([
   'fieldSettings',
@@ -1474,6 +1475,30 @@ export function preprocessPluginSettingsForDiff(value) {
   return cloned;
 }
 
+/**
+ * 設定一括取得で「プラグインの設定値を含めない」を選んだ設定JSONか（セクションの `_partial` が目印）。
+ */
+function hasPluginConfigOmittedMarker(section): boolean {
+  return isPluginConfigOmittedMarker(section?._partial);
+}
+
+/**
+ * プラグインの設定値を比べない比較用に、目印（`_partial`）と各プラグインの設定値（`config`）を外す。
+ * 片側だけが設定値を持つと、設定値の有無が「設定の追加・削除」に見えるため、両側へ同じように適用する。
+ * 設定値を比べていないことは、一部未検証（collectPartialComparisonIssues）として別に示す。
+ */
+function stripPluginConfigForDiff(value) {
+  if (!value || typeof value !== 'object') return value;
+  const cloned = deepClone(value);
+  delete cloned._partial;
+  if (Array.isArray(cloned.plugins)) {
+    cloned.plugins.forEach((p) => {
+      if (p && typeof p === 'object') delete p.config;
+    });
+  }
+  return cloned;
+}
+
 function getLegacyPluginSettingsFetchError(value): string {
   if (!value || typeof value !== 'object') return '';
   const failed = Number(value.failed);
@@ -1782,6 +1807,11 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
       // プラグイン設定：取得済 _config を比較対象に取り込む
       sourceForSection = preprocessPluginSettingsForDiff(s);
       targetForSection = preprocessPluginSettingsForDiff(t);
+      // 設定値を含めずに保存した設定JSONが片側にあるときは、設定値を比べず、プラグインの一覧だけを比べる。
+      if (hasPluginConfigOmittedMarker(s) || hasPluginConfigOmittedMarker(t)) {
+        sourceForSection = stripPluginConfigForDiff(sourceForSection);
+        targetForSection = stripPluginConfigForDiff(targetForSection);
+      }
     } else if (sec === 'actionSettings') {
       // アプリアクション：フィールドの関連付け（mappings）は並び順に意味がないため、
       // 両側を同じ規則で並べ替えてから比較し、順序だけの違いを差分にしない。

@@ -15,6 +15,7 @@ import { RUN_CANCELLED_MESSAGE, isRunCancelledError } from '../runControl.js';
 import type { ComposedReflectSelection, ComposedSection, SectionSelectionState } from '../reflect/selectionTypes.js';
 import { buildPlanFromComposedAfter, buildSectionSelectionModel, composeSectionSelection, defaultSelectionState } from '../reflect/selection.js';
 import { SYSTEM_FIELD_TYPES } from '../constants.js';
+import { isPluginConfigOmittedMarker } from '../pluginConfigMarker.js';
 
 export interface ReflectOptions {
   sourceAppId: string; sourceGuestId?: string; sourcePreview?: boolean; sourceBundle?: unknown;
@@ -204,6 +205,9 @@ function importedReflectSource(opts: ReflectOptions) {
   const bundle = pickSettingsBundle(opts.sourceBundle, { side: 'source', appId: String(opts.sourceAppId || '').trim(), rawSettings: true });
   const customize = bundle.sections?.customizeSettings;
   if (customize && typeof customize === 'object' && customize._partial?.kind === 'customizeBody' && !customize._fetchError) delete customize._partial;
+  // 設定一括取得で「プラグインの設定値を含めない」を選んだ設定JSON。反映はプラグインの ID だけを使い、固有の設定値はコピーしないため、不完全の印にしない。
+  const plugins = bundle.sections?.pluginSettings;
+  if (plugins && typeof plugins === 'object' && isPluginConfigOmittedMarker(plugins._partial) && !plugins._fetchError) delete plugins._partial;
   return bundle;
 }
 

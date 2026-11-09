@@ -621,6 +621,10 @@ export interface FetchBundleParams {
   guestId?: string | number;
   preview: boolean;
   sections: readonly string[];
+  /** プラグインの設定値（API キーなど機微な値を含み得る）を取得しない。一覧（ID・名前・有効状態）は残る。除いたことの記録は呼び出し側が行う（`pluginConfigMarker.ts`）。 */
+  skipPluginConfig?: boolean;
+  /** JS/CSS ファイルの本文を取得しない（設計書など、本文を使わない出力で通信と失敗の影響を減らす）。 */
+  skipCustomizeBodies?: boolean;
   onProgress?: (ratio: number, label: string) => void;
 }
 
@@ -947,7 +951,7 @@ export async function fetchPluginConfigs(
 /** 読み取りを小さな並列数に抑え、他のツールの API 利用にも余裕を残す。 */
 export const BUNDLE_FETCH_CONCURRENCY = 3;
 
-export async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false }: FetchBundleParams): Promise<Bundle> {
+export async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false, skipPluginConfig = false, skipCustomizeBodies = false }: FetchBundleParams): Promise<Bundle> {
   const app = String(appId || '').trim();
   if (!app) throw new Error('アプリIDが必要です');
 
@@ -992,7 +996,7 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
   // 一部だけ取得できた値を通常差分として扱うと「設定追加/削除」の偽差分になるため、
   // 1 件でも失敗したセクションは既存の _fetchError 契約で比較不能として扱う。
   // 取得件数の内部統計はセクション本体へ混ぜず、設定差分のノイズにしない。
-  if (!rawSettings && sections.includes('customizeSettings')) {
+  if (!rawSettings && !skipCustomizeBodies && sections.includes('customizeSettings')) {
     const cust = bundle.sections.customizeSettings;
     if (cust && !cust._fetchError) {
       try {
@@ -1017,7 +1021,8 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
   }
   if (!rawSettings && sections.includes('pluginSettings')) {
     const plug = bundle.sections.pluginSettings;
-    if (plug && !plug._fetchError) {
+    // 設定値を含めないことを選んだ場合（skipPluginConfig）は、設定値を取得しない。
+    if (plug && !plug._fetchError && !skipPluginConfig) {
       try {
         // プラグイン設定 API は本番/preview の両方を持つため、選択環境と揃える。
         const prefix = buildApiPrefix(guestId, preview);

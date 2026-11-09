@@ -35,7 +35,7 @@ function fixtures() {
     calls: [], fail: false,
     async invoke(name, args) {
       // 設定一括取得は第 2 引数の保存オプション（JS/CSSファイルの有無・フォルダ分け）も残す
-      this.calls.push({ name, input: args[0], ...(name === 'runSettingsExportStandalone' ? { options: { includeCustomizeFiles: args[1]?.includeCustomizeFiles, customizeFileLayout: args[1]?.customizeFileLayout, customizeFileOrderPrefix: args[1]?.customizeFileOrderPrefix } } : {}) });
+      this.calls.push({ name, input: args[0], ...(name === 'runSettingsExportStandalone' ? { options: { includeCustomizeFiles: args[1]?.includeCustomizeFiles, customizeFileLayout: args[1]?.customizeFileLayout, excludePluginConfig: args[1]?.excludePluginConfig, customizeFileOrderPrefix: args[1]?.customizeFileOrderPrefix } } : {}) });
       const status = args.find(arg => typeof arg === 'function');
       status?.('サンプルデータを処理中…');
       await new Promise(resolve => setTimeout(resolve, 130));
@@ -437,7 +437,23 @@ async function main() {
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), filesBefore + 1);
           assert.equal(filesCall.name, 'runSettingsExportStandalone');
           assert.equal(filesCall.input, 'zip');
-          assert.deepEqual(filesCall.options, { includeCustomizeFiles: true, customizeFileLayout: 'app', customizeFileOrderPrefix: true }, '設定一括取得: JS/CSSファイル・フォルダ分け・読み込み順を渡す');
+          assert.deepEqual(filesCall.options, { includeCustomizeFiles: true, customizeFileLayout: 'app', customizeFileOrderPrefix: true, excludePluginConfig: false }, '設定一括取得: JS/CSSファイル・フォルダ分け・読み込み順・プラグイン設定値の扱い（既定は含める）を渡す');
+          // プラグインの設定値を含めない選択は詳細設定にあり、確認画面に示して実行へ渡す
+          await button('対象・条件を変更').click();
+          await chooseAction('設定をJSONで保存');
+          await openAdvanced();
+          await page.getByRole('checkbox', { name: 'プラグインの設定値を含めない', exact: true }).check();
+          await closeAdvanced();
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /プラグインの設定値\s*含めない（プラグインの一覧だけを保存）/, '設定一括取得: プラグインの設定値を含めないことを確認画面に示す');
+          await button('設定をJSONで保存').click(); await idle();
+          assert.equal((await page.evaluate(() => window.__workflowFixture.calls.at(-1))).options.excludePluginConfig, true, '設定一括取得: プラグインの設定値を含めない指定を渡す');
+          await button('対象・条件を変更').click();
+          await openAdvanced();
+          await page.getByRole('checkbox', { name: 'プラグインの設定値を含めない', exact: true }).uncheck();
+          await closeAdvanced();
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /プラグインの設定値\s*含める（API キーなどの機微な値を含む場合があります）/, '設定一括取得: 既定は含めることと、機微な値を含み得ることを示す');
           await button('対象・条件を変更').click();
           await chooseAction(defaultAction);
           await openAdvanced(); await button('全選択').click(); await closeAdvanced();
@@ -447,9 +463,9 @@ async function main() {
           await chooseAction('2アプリの設計差分を保存');
           assert.equal(await button('内容を確認する').isDisabled(), true);
           await chooseAction('全対象をExcel ZIPで保存');
-          await page.getByRole('checkbox', {name:'プレビュー環境から取得（単一出力・2アプリ差分・Markdown ZIP）',exact:true}).check();
+          await page.getByRole('checkbox', {name:'プレビュー環境から取得',exact:true}).check();
           await button('内容を確認する').click();
-          assert.match(await stage(1).innerText(), /#202 · 本番/);
+          assert.match(await stage(1).innerText(), /#202 · プレビュー/, '設計書: Excel ZIP もプレビュー環境から取得する');
           await button('対象・条件を変更').click();
           await chooseAction(defaultAction);
           await chooseAction('AI向けMarkdownを保存');

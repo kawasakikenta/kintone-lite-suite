@@ -2,13 +2,14 @@
 
 import { SECTION_DEFS } from '../constants.js';
 import { state } from '../state.js';
-import { nowStamp, downloadText, downloadBlob, buildExportFilename, appLabelFromBundle, copyTextToClipboard, extractAppNameFromBundle, sanitizeFilenamePart } from '../utils.js';
+import { downloadText, downloadBlob, buildExportFilename, appLabelFromBundle, copyTextToClipboard, extractAppNameFromBundle, sanitizeFilenamePart } from '../utils.js';
 import { fetchBundle } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { bundleToMarkdown } from '../diff/export.js';
 import { buildDesignAiMarkdown } from '../design/ai-markdown.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
+import { stripSensitiveSupplements } from '../design/sanitize.js';
 import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip, type BatchDesignExportInfo, type DesignExporterCompletionSummary } from './design-xlsx.js';
 import { isCancelRequested } from '../runControl.js';
 import { createCancelReport, isCancelStop } from './run-cancel-summary.js';
@@ -90,7 +91,9 @@ async function resolveDesignBundle(
   side: 'source' | 'target',
   setStatus: (msg: string, err?: boolean) => void,
   labelPrefix = '',
-  rawSettings = false
+  rawSettings = false,
+  /** false: JS/CSS 本文とプラグインの設定値を取得しない（Markdown の設計書は使わないため。通信と、取得失敗の影響を減らす）。 */
+  withSupplements = true
 ) {
   const appId = String(source?.appId || '').trim();
   const importedBundle = source?.importedBundle;
@@ -108,6 +111,7 @@ async function resolveDesignBundle(
       guestId: String(source?.guestId || '').trim(),
       preview: !!source?.preview,
       sections: scopes,
+      ...(withSupplements ? {} : { skipPluginConfig: true, skipCustomizeBodies: true }),
       onProgress: (p, l) => setStatus(`${labelPrefix}取得中 ${Math.round(p * 100)}% (${l})`)
     });
   if (!importedBundle && rawSettings && bundle?.meta && typeof bundle.meta === 'object') {
@@ -174,8 +178,13 @@ function designExcelCompletionNote(summary: DesignExporterCompletionSummary | un
   return parts.length ? `（${parts.join(' / ')}。内容を確認してください）` : '（取得状態を確認してください）';
 }
 
+/** 設計書 Markdown。設定JSON由来のプラグイン設定値・JS/CSS本文は、原文 JSON にも含めない（API から直接取得した場合と同じ）。 */
+function designMarkdownOf(bundle: any, options?: Parameters<typeof bundleToMarkdown>[1]): string {
+  return bundleToMarkdown(stripSensitiveSupplements(bundle).bundle, options);
+}
+
 function designBundleExportMarkdown(kind: 'md' | 'ai-md', bundle: any): string {
-  return kind === 'ai-md' ? buildDesignAiMarkdown(bundle) : bundleToMarkdown(bundle);
+  return kind === 'ai-md' ? buildDesignAiMarkdown(bundle) : designMarkdownOf(bundle);
 }
 
 /**
@@ -185,7 +194,7 @@ function designBundleExportMarkdown(kind: 'md' | 'ai-md', bundle: any): string {
  */
 export async function runDesignExportStandalone(kind, source, setStatus) {
   if (kind !== 'md' && kind !== 'json' && kind !== 'ai-md') throw new Error('設計書の出力形式は md、json または ai-md を指定してください');
-  const bundle = await resolveDesignBundle(source, 'source', setStatus, '', kind === 'ai-md');
+  const bundle = await resolveDesignBundle(source, 'source', setStatus, '', kind === 'ai-md', kind === 'json');
   state.lastSourceBundle = bundle;
 
   const appLabel = appLabelFromBundle(bundle);
@@ -206,10 +215,10 @@ export async function runDesignExportStandalone(kind, source, setStatus) {
  * @param {(msg: string, err?: boolean) => void} setStatus
  */
 export async function runDesignCopyMdStandalone(source, setStatus) {
-  const bundle = await resolveDesignBundle(source, 'source', setStatus);
+  const bundle = await resolveDesignBundle(source, 'source', setStatus, '', false, false);
   state.lastSourceBundle = bundle;
 
-  const md = bundleToMarkdown(bundle);
+  const md = designMarkdownOf(bundle);
   if (!(await copyTextToClipboard(md))) {
     throw new Error('クリップボードへのコピーに失敗しました。ブラウザのクリップボード権限を確認するか、Markdown 保存を使ってください');
   }
@@ -565,6 +574,7 @@ export async function runBatchDesignExportMdZipStandalone(
           'source',
           setStatus,
           labelPrefix,
+          false,
           false
         );
       } else if (format === 'ai-md') {
@@ -583,6 +593,7 @@ export async function runBatchDesignExportMdZipStandalone(
             'source',
             setStatus,
             labelPrefix,
+            false,
             false
           );
           aiBundle = pickSettingsBundle(target.bundle, {
@@ -598,6 +609,7 @@ export async function runBatchDesignExportMdZipStandalone(
             'source',
             setStatus,
             labelPrefix,
+            false,
             false
           );
           aiBundle = await resolveDesignBundle(
@@ -620,7 +632,7 @@ export async function runBatchDesignExportMdZipStandalone(
 
       if (format === 'md' || format === 'both') {
         mdFile = uniqueMdZipEntryName(usedFilenames, `${guestPrefix}設計書_${appLabel}.md`);
-        zip.file(mdFile, bundleToMarkdown(mdBundle));
+        zip.file(mdFile, designMarkdownOf(mdBundle));
         files.push(mdFile);
       }
       if (format === 'ai-md' || format === 'both') {
@@ -991,9 +1003,58 @@ function designDiffSideLabel(side: DesignDiffSide): string {
   return `App ${side.appId || '?'}${name}${side.guestId ? `（ゲスト ${side.guestId}）` : ''} · ${side.environment}`;
 }
 
+/** レポートに書く生成日時（ファイル名用の 20261109_220200 ではなく、読める形）。 */
+function readableTimestamp(date: Date): string {
+  const two = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`;
+}
+
+/** 差分レポートに残す、変更行の前後の変更なしの行数。 */
+export const DESIGN_DIFF_CONTEXT_LINES = 3;
+
+/**
+ * diff 行（'+ ' / '- ' / '  ' で始まる）から、変更行とその前後 `context` 行だけを残す。
+ * 設計書全体（業務アプリで数千行）の中に変更が埋もれないよう、離れた変更の前に、その変更が属するセクションと省略した行数を `@@ セクション（省略 N 行）@@` で示す。
+ * 変更が無い、または全体が文脈に収まるときは、入力をそのまま返す。
+ */
+export function compactDesignDiff(diff: string, context = DESIGN_DIFF_CONTEXT_LINES): string {
+  const lines = String(diff ?? '').split('\n');
+  const changedAt: number[] = [];
+  lines.forEach((line, index) => { if (line.startsWith('+ ') || line.startsWith('- ')) changedAt.push(index); });
+  if (!changedAt.length) return String(diff ?? '');
+  const keep = new Array<boolean>(lines.length).fill(false);
+  for (const index of changedAt) {
+    for (let k = Math.max(0, index - context); k <= Math.min(lines.length - 1, index + context); k += 1) keep[k] = true;
+  }
+  if (keep.every(Boolean)) return lines.join('\n');
+  const sectionAt: string[] = [];
+  let current = '';
+  lines.forEach((line, index) => {
+    const body = line.slice(2);
+    if (/^## /.test(body)) current = body.slice(3).trim();
+    sectionAt[index] = current;
+  });
+  const out: string[] = [];
+  let previousKept = -1;
+  const firstChangedFrom = (start: number) => changedAt.find((index) => index >= start) ?? start;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!keep[i]) continue;
+    if (i !== previousKept + 1) {
+      const omitted = i - previousKept - 1;
+      const section = sectionAt[firstChangedFrom(i)] || '（ヘッダー）';
+      out.push(`@@ ${section}（省略 ${omitted} 行）@@`);
+    }
+    out.push(lines[i]);
+    previousKept = i;
+  }
+  if (previousKept < lines.length - 1) out.push(`@@ 以降の ${lines.length - 1 - previousKept} 行は変更なし @@`);
+  return out.join('\n');
+}
+
 /** 設計書差分レポート（Markdown）を組み立てる。見出し・見方・セクション別集計・diff 本体の順。 */
 export function buildDesignDiffReport(input: { diff: string; generatedAt: string; source: DesignDiffSide; target: DesignDiffSide }): string {
   const summary = summarizeDesignDiff(input.diff);
+  const diffBody = compactDesignDiff(input.diff);
   const lines: string[] = [];
   lines.push('# 設計書差分レポート');
   lines.push('');
@@ -1014,6 +1075,7 @@ export function buildDesignDiffReport(input: { diff: string; generatedAt: string
   lines.push('- `+` の行は比較元にあって比較先にない内容、`-` の行は比較先にだけある内容です。比較先を比較元へ揃えるときの変更に相当します。');
   lines.push('- 設計書の表と要約を行単位で比べた簡易差分です。API レスポンスの生データは含めていません。厳密な差分は「差分比較」ツールの HTML / Excel を使ってください。');
   lines.push('- 並び順だけが異なる行も追加・削除として現れます。');
+  if (diffBody !== input.diff) lines.push(`- 変更のない行は、変更の前後 ${DESIGN_DIFF_CONTEXT_LINES} 行を除いて省略しています。\`@@ セクション名（省略 N 行）@@\` の行が区切りです。`);
   lines.push('');
   lines.push('## セクション別の差分');
   lines.push('');
@@ -1029,9 +1091,9 @@ export function buildDesignDiffReport(input: { diff: string; generatedAt: string
   lines.push('');
   // 差分本文に ``` が含まれていても、フェンスが途中で閉じないよう囲みを長くする
   let fence = '```';
-  while (input.diff.includes(fence)) fence += '`';
+  while (diffBody.includes(fence)) fence += '`';
   lines.push(`${fence}diff`);
-  lines.push(input.diff);
+  lines.push(diffBody);
   lines.push(fence);
   lines.push('');
   return lines.join('\n');
@@ -1050,18 +1112,18 @@ export async function runDesignDiffMdStandalone(
   const importedTarget = (opts.target as any)?.importedBundle;
   if ((!srcAppId && !importedSource) || (!tgtAppId && !importedTarget)) throw new Error('比較元と比較先の両方にアプリIDまたは設定JSONを指定してください。');
 
-  const srcBundle = await resolveDesignBundle(opts.source, 'source', setStatus, '比較元: ');
-  const tgtBundle = await resolveDesignBundle(opts.target, 'target', setStatus, '比較先: ');
+  const srcBundle = await resolveDesignBundle(opts.source, 'source', setStatus, '比較元: ', false, false);
+  const tgtBundle = await resolveDesignBundle(opts.target, 'target', setStatus, '比較先: ', false, false);
 
   setStatus('差分レポート生成中...');
   // 生データ JSON は表・要約と重複して差分を読みにくくするため、比較は可読部分だけで行う
   // 取得日時は毎回異なりノイズになるため、比較対象から外す
-  const srcMd = bundleToMarkdown(srcBundle, { rawJson: false, fetchedAt: false });
-  const tgtMd = bundleToMarkdown(tgtBundle, { rawJson: false, fetchedAt: false });
+  const srcMd = designMarkdownOf(srcBundle, { rawJson: false, fetchedAt: false });
+  const tgtMd = designMarkdownOf(tgtBundle, { rawJson: false, fetchedAt: false });
   const diffMd = simpleLineDiffLite(tgtMd, srcMd);
   const finalMd = buildDesignDiffReport({
     diff: diffMd,
-    generatedAt: nowStamp(),
+    generatedAt: readableTimestamp(new Date()),
     source: describeDesignDiffSide(srcBundle, opts.source, importedSource),
     target: describeDesignDiffSide(tgtBundle, opts.target, importedTarget)
   });
