@@ -37,6 +37,7 @@
   var ICONS = Object.freeze({
     diff: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
     reflect: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+    deploy: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9-.8-.8-2.1-.8-2.9-.1z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.9A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22 22 0 0 1-4 2z"/><path d="M9 12H4s.6-3 2-4c1.6-1.1 5 0 5 0"/><path d="M12 15v5s3-.6 4-2c1.1-1.6 0-5 0-5"/></svg>',
     field: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
     jsconfig: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
     er: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="6" cy="6" rx="3" ry="2"/><ellipse cx="18" cy="6" rx="3" ry="2"/><ellipse cx="12" cy="18" rx="3" ry="2"/><path d="M8.5 7.5l2 7"/><path d="M15.5 7.5l-2 7"/><path d="M9 6h6"/></svg>',
@@ -83,6 +84,22 @@
       usageOrder: 2,
       onboardingOrder: 2,
       badge: { tone: "caution", label: "要確認", icon: "2" }
+    },
+    {
+      key: "deploy",
+      group: "change",
+      groupLabel: "変更・反映",
+      icon: ICONS.deploy,
+      label: "本番反映",
+      desc: "プレビューの未公開の変更を確認し、バックアップを取ってから本番へ反映します。",
+      tabs: ["deploy"],
+      tab: "deploy",
+      priority: "medium",
+      riskLevel: "danger",
+      recommendedFor: ["プレビュー反映後の公開", "本番への一括反映"],
+      usageOrder: 2.5,
+      onboardingOrder: 2.5,
+      badge: { tone: "caution", label: "要確認", icon: "!" }
     },
     {
       key: "field",
@@ -4241,6 +4258,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   var ACCENTS = {
     diff: { from: "#1d4ed8", via: "#2563eb", to: "#0ea5e9", chip: "#dbeafe", ring: "rgba(37,99,235,.16)" },
     reflect: { from: "#b91c1c", via: "#dc2626", to: "#f97316", chip: "#fee2e2", ring: "rgba(220,38,38,.18)" },
+    deploy: { from: "#4c0519", via: "#881337", to: "#be123c", chip: "#ffe4e6", ring: "rgba(136,19,55,.22)" },
     field: { from: "#6d28d9", via: "#7c3aed", to: "#a855f7", chip: "#ede9fe", ring: "rgba(124,58,237,.18)" },
     jsconfig: { from: "#0f766e", via: "#0d9488", to: "#22d3ee", chip: "#ccfbf1", ring: "rgba(13,148,136,.18)" },
     settings: { from: "#0369a1", via: "#0284c7", to: "#22d3ee", chip: "#e0f2fe", ring: "rgba(2,132,199,.18)" },
@@ -8875,7 +8893,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const tone = hasIssue ? "color:#9a3412" : "color:#065f46";
       const labelSummary = (title, labels2) => labels2.length ? `<div>${title}: ${escapeHtml(labels2.slice(0, 5).join(" / "))}${labels2.length > 5 ? ` ほか ${labels2.length - 5} 件` : ""}</div>` : "";
       const failedSummary = labelSummary("失敗", last.failedLabels) + labelSummary("途中で停止", last.stoppedLabels);
-      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.cancelled ? "⚠ 中止しました。書き込み済みの分は反映先に残っています" : hasIssue ? "⚠ 一部の項目を反映できませんでした" : `✓ ${last.ok} 項目を反映しました`}</div><div>反映先 #${escapeHtml(last.appId || "-")} / 成功 ${last.ok} / 失敗 ${last.ng}${last.stopped ? ` / 途中で停止 ${last.stopped}` : ""}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? `<div style="margin-top:4px">${last.cancelled ? "差分を取得し直して現在の状態を確認してから、" : ""}「失敗・未実行だけ選択」で対象を絞って再実行してください。</div>` : '<div style="margin-top:4px">変わったのは反映先のプレビューだけです。本番へ公開するには、反映先の設定画面で公開してください。</div>');
+      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.cancelled ? "⚠ 中止しました。書き込み済みの分は反映先に残っています" : hasIssue ? "⚠ 一部の項目を反映できませんでした" : `✓ ${last.ok} 項目を反映しました`}</div><div>反映先 #${escapeHtml(last.appId || "-")} / 成功 ${last.ok} / 失敗 ${last.ng}${last.stopped ? ` / 途中で停止 ${last.stopped}` : ""}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? `<div style="margin-top:4px">${last.cancelled ? "差分を取得し直して現在の状態を確認してから、" : ""}「失敗・未実行だけ選択」で対象を絞って再実行してください。</div>` : '<div style="margin-top:4px">変わったのは反映先のプレビューだけです。本番へ公開するには、反映先の設定画面で公開するか、「本番反映」ツールを使ってください。</div>');
       renderApplySectionResults(lastResultSections, last.report.sections);
       const guidance = describeUndoGuidance(last.report.targetPending);
       undoNote.textContent = guidance.text;
@@ -9037,7 +9055,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         panel.setStatus(`${ok + ng + outcome.counts.stopped + pending} 項目中 ${ok} 項目を反映しました。失敗 ${ng} 項目${pending ? `、未実行 ${pending} 項目` : ""}${outcome.failureNote ? `（${outcome.failureNote}）` : ""}。「失敗・未実行だけ選択」で再実行してください。`, "warn");
         return;
       }
-      panel.setStatus(`${outcome.counts.ok} 項目を反映先プレビューへ反映しました。本番へ公開するには、「反映先の設定画面を開く」から kintone の設定画面で公開してください。`, "ok");
+      panel.setStatus(`${outcome.counts.ok} 項目を反映先プレビューへ反映しました。本番へ公開するには、「反映先の設定画面を開く」から kintone の設定画面で公開するか、「本番反映」ツールを使ってください。`, "ok");
     });
     const nav = document.createElement("nav");
     nav.className = "kus-rl-nav";
