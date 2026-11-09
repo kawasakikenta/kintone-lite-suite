@@ -1385,7 +1385,7 @@ ${base}`
     return stats;
   }
   var BUNDLE_FETCH_CONCURRENCY = 3;
-  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false }) {
+  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false, skipPluginConfig = false, skipCustomizeBodies = false }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
     const bundle = {
@@ -1422,7 +1422,7 @@ ${base}`
       bundle.sections[def.key] = value;
       if (revision) bundle.meta.sectionRevisions[def.key] = revision;
     });
-    if (!rawSettings && sections.includes("customizeSettings")) {
+    if (!rawSettings && !skipCustomizeBodies && sections.includes("customizeSettings")) {
       const cust = bundle.sections.customizeSettings;
       if (cust && !cust._fetchError) {
         try {
@@ -1446,7 +1446,7 @@ ${base}`
     }
     if (!rawSettings && sections.includes("pluginSettings")) {
       const plug = bundle.sections.pluginSettings;
-      if (plug && !plug._fetchError) {
+      if (plug && !plug._fetchError && !skipPluginConfig) {
         try {
           const prefix = buildApiPrefix(guestId, preview);
           const stats = await fetchPluginConfigs(plug, prefix, app);
@@ -5373,6 +5373,12 @@ ${base}`
     return options;
   }
 
+  // src/pluginConfigMarker.ts
+  var PLUGIN_CONFIG_OMITTED_KIND = "pluginConfigOmitted";
+  function isPluginConfigOmittedMarker(partial) {
+    return !!partial && typeof partial === "object" && partial.kind === PLUGIN_CONFIG_OMITTED_KIND;
+  }
+
   // src/diff/engine.ts
   var ENTITY_PATH_SEGMENT = String.raw`(?:\.[^.[\]]+|\["(?:[^"\\]|\\.)*"\])`;
   var ENTITY_IDENTIFIER_PATH_PATTERNS = [
@@ -8770,6 +8776,8 @@ ${base}`
     const bundle = pickSettingsBundle(opts.sourceBundle, { side: "source", appId: String(opts.sourceAppId || "").trim(), rawSettings: true });
     const customize = bundle.sections?.customizeSettings;
     if (customize && typeof customize === "object" && customize._partial?.kind === "customizeBody" && !customize._fetchError) delete customize._partial;
+    const plugins = bundle.sections?.pluginSettings;
+    if (plugins && typeof plugins === "object" && isPluginConfigOmittedMarker(plugins._partial) && !plugins._fetchError) delete plugins._partial;
     return bundle;
   }
   async function resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus, download) {

@@ -570,13 +570,14 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     AREA: '面グラフ', SPLINE: 'スプライン', SPLINE_AREA: 'スプライン面', SCATTER: '散布図'
   };
   const CHART_MODE_LABEL = { NORMAL: '通常', STACKED: '積み上げ', PERCENTAGE: '100%積み上げ' };
-  const AGGREGATION_TYPE_LABEL = { COUNT: '件数', SUM: '合計', AVG: '平均', MAX: '最大値', MIN: '最小値' };
+  // kintone のレポート API が返す平均の値は AVERAGE（AVG は旧来の表記として残す）
+  const AGGREGATION_TYPE_LABEL = { COUNT: '件数', SUM: '合計', AVERAGE: '平均', AVG: '平均', MAX: '最大値', MIN: '最小値' };
   const GROUP_PER_LABEL = {
     YEAR: '年', QUARTER: '四半期', MONTH: '月', WEEK: '週', DAY: '日',
     HOUR: '時', MINUTE: '分'
   };
   const ASSIGNEE_TYPE_LABEL = {
-    ONE: '1人選出（候補から1人）', ANYONE: '候補の誰でも（先着）', ALL: '全員（全員の処理が必要）'
+    ONE: '1人選出（候補から1人）', ANY: '候補の誰でも（先着）', ANYONE: '候補の誰でも（先着）', ALL: '全員（全員の処理が必要）'
   };
   const RESOURCE_TYPE_LABEL = { URL: 'URL指定', FILE: 'ファイル指定' };
   const CUSTOMIZE_SCOPE_LABEL = { ALL: 'すべてのユーザー', ADMIN: 'アプリ管理者のみ', NONE: '適用しない' };
@@ -839,20 +840,21 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     return '-';
   }
 
-  function buildFieldGroupMap(layout) {
+  // グループ名は、レイアウトにはグループのコードしか無いため、フィールド設定のラベルから引く（無ければコード）。
+  function buildFieldGroupMap(layout, fields: any = {}) {
     const groupByCode = new Map();
     const walk = (rows, currentGroup) => {
       const safeRows = Array.isArray(rows) ? rows : [];
       for (const row of safeRows) {
         if (row?.type === 'GROUP') {
-          walk(Array.isArray(row.layout) ? row.layout : [], row.label || row.code || currentGroup);
+          walk(Array.isArray(row.layout) ? row.layout : [], row.label || fields?.[row.code]?.label || row.code || currentGroup);
           continue;
         }
         const items = Array.isArray(row?.fields) ? row.fields : [];
         for (const item of items) {
           if (!item) continue;
           if (item.type === 'GROUP') {
-            walk(Array.isArray(item.layout) ? item.layout : [], item.label || item.code || currentGroup);
+            walk(Array.isArray(item.layout) ? item.layout : [], item.label || fields?.[item.code]?.label || item.code || currentGroup);
             continue;
           }
           if (item.code && currentGroup) groupByCode.set(item.code, currentGroup);
@@ -1216,7 +1218,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
     UI.update('Excelファイルを生成中...', 10);
 
-    const fieldGroupMap = buildFieldGroupMap(layout || ({} as any));
+    const fieldGroupMap = buildFieldGroupMap(layout || ({} as any), fields);
     const fieldUsageMap = buildFieldUsageMap({
       fields, views, reports, status, genNotif, recNotif, remNotif, recordAcl, fieldAcl, actions
     });
@@ -1839,7 +1841,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         for (const row of safeRows) {
           if (row?.type === 'GROUP') {
             orderedItems.push({ kind: 'GROUP', item: row, groupLabel });
-            walkForFields(Array.isArray(row.layout) ? row.layout : [], row.label || row.code || groupLabel || '');
+            walkForFields(Array.isArray(row.layout) ? row.layout : [], row.label || fields[row.code]?.label || row.code || groupLabel || '');
             continue;
           }
           if (row?.type === 'SUBTABLE') {
@@ -1851,7 +1853,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
             if (!item) continue;
             if (item.type === 'GROUP') {
               orderedItems.push({ kind: 'GROUP', item, groupLabel });
-              walkForFields(Array.isArray(item.layout) ? item.layout : [], item.label || item.code || groupLabel || '');
+              walkForFields(Array.isArray(item.layout) ? item.layout : [], item.label || fields[item.code]?.label || item.code || groupLabel || '');
               continue;
             }
             if (item.type === 'SUBTABLE') {
@@ -1973,7 +1975,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         fAoa.push(padRow([
           no++,
           groupLabel || '-',
-          item.label || item.code || '',
+          item.label || fields[item.code]?.label || item.code || '',
           code || '-',
           FIELD_TYPE['GROUP'] || 'グループ'
         ]));
@@ -3002,12 +3004,13 @@ export async function runBatchDesignExportXlsxZip(params: {
   manifestLines.push('kintone 設計書 一括出力マニフェスト');
   manifestLines.push(`出力日時: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
   manifestLines.push(`対象アプリ数: ${appIds.length}（成功 ${successCount} / 失敗 ${appIds.length - successCount}）`);
+  manifestLines.push(`取得環境: ${batchPreview ? 'プレビュー（未公開の設定）' : '本番（運用中の設定）'}。設定JSONを読み込んだアプリはその内容を使っています`);
   const manifestGuestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
   if (manifestGuestIds.length) manifestLines.push(`ゲストスペース: ${manifestGuestIds.join(', ')}`);
   manifestLines.push('');
   manifestLines.push('## 出力ファイル');
   for (const r of results) {
-    if (r.ok) manifestLines.push(`- [OK] App ${r.appId} (${r.appName}) → ${r.filename}`);
+    if (r.ok) manifestLines.push(`- [OK] App ${r.appId} (${String(r.appName || '').replace(/\s*[\r\n]+\s*/g, ' ')}) → ${r.filename}`);
     else manifestLines.push(`- [NG] App ${r.appId}: ${r.error}`);
   }
   const failedAPIs = batchUi.getFailedAPIs();
@@ -3019,6 +3022,8 @@ export async function runBatchDesignExportXlsxZip(params: {
   zip.file('_manifest.txt', manifestLines.join('\n') + '\n');
   zip.file('_manifest.json', JSON.stringify({
     generatedAt: new Date().toISOString(),
+    preview: batchPreview,
+    environment: batchPreview ? 'preview' : 'production',
     appCount: appIds.length,
     successCount,
     failedCount: appIds.length - successCount,
@@ -3031,7 +3036,7 @@ export async function runBatchDesignExportXlsxZip(params: {
   // 5. ZIP 生成 & ダウンロード
   batchUi.update('ZIPファイルを生成中...', appIds.length + 2);
   const blob = await zip.generateAsync({ type: 'blob' });
-  const zipName = `kintone設計書_${appIds.length}件_${nowStampZip()}.zip`;
+  const zipName = `kintone設計書_${appIds.length}件${batchPreview ? '_プレビュー' : ''}_${nowStampZip()}.zip`;
   const doc = getToolDocument();
   const a = doc.createElement('a');
   const url = URL.createObjectURL(blob);

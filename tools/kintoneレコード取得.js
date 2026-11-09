@@ -1380,7 +1380,7 @@
     return stats;
   }
   var BUNDLE_FETCH_CONCURRENCY = 3;
-  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false }) {
+  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false, skipPluginConfig = false, skipCustomizeBodies = false }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
     const bundle = {
@@ -1417,7 +1417,7 @@
       bundle.sections[def.key] = value;
       if (revision) bundle.meta.sectionRevisions[def.key] = revision;
     });
-    if (!rawSettings && sections.includes("customizeSettings")) {
+    if (!rawSettings && !skipCustomizeBodies && sections.includes("customizeSettings")) {
       const cust = bundle.sections.customizeSettings;
       if (cust && !cust._fetchError) {
         try {
@@ -1441,7 +1441,7 @@
     }
     if (!rawSettings && sections.includes("pluginSettings")) {
       const plug = bundle.sections.pluginSettings;
-      if (plug && !plug._fetchError) {
+      if (plug && !plug._fetchError && !skipPluginConfig) {
         try {
           const prefix = buildApiPrefix(guestId, preview);
           const stats = await fetchPluginConfigs(plug, prefix, app);

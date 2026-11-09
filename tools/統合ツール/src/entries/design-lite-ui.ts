@@ -68,7 +68,7 @@ export function mountDesignLitePanel() {
     ]
   }));
   cardTarget.body.appendChild(appTable.element);
-  const prev = makeCheck({ label: 'プレビュー環境から取得（単一出力・2アプリ差分・Markdown ZIP）' });
+  const prev = makeCheck({ label: 'プレビュー環境から取得' });
   cardTarget.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
   cardTarget.body.appendChild(makeNote('出力は対象アプリ表の1行目が対象です（ZIP 一括出力だけは全行）。Excel は人が読む用、AI向けMarkdown は AI に渡す用です。', 'help'));
   cardTarget.body.appendChild(makeNote('アプリごとに別のゲストスペースを指定できます。各行の「↑コピー」で上の行を複製できます。', 'help'));
@@ -290,7 +290,7 @@ export function mountDesignLitePanel() {
     if (targetError) { panel.setStatus(targetError, 'warn'); return; }
     liteRun(panel, '複数アプリ Excel 生成中…', async () => {
       await runBatchDesignExportXlsxZipStandalone(
-        { apps },
+        { apps, preview: prev.checkbox.checked },
         (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
       );
     });
@@ -375,7 +375,7 @@ export function mountDesignLitePanel() {
     advancedCopy: '保存済みの設定JSONを使う、ZIP一括出力や設計差分の補足を読むときはこちら。',
     actions: [
       { id: 'xlsx', label: 'Excel設計書を保存', description: '1行目のアプリの設計書をExcel（.xlsx）で保存します。', button: bXlsx, validate: firstTargetRequired, summary: () => singleSummary('Excel (.xlsx)') },
-      { id: 'zip', label: '全対象をExcel ZIPで保存', description: '全対象アプリの設計書をExcelにして、1つのZIPで保存します。', button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), '対象アプリ表: '), summary: () => [['対象', summarizeList(appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? '読込済みJSON' : '本番')))], ['出力', appTable.count() + ' アプリのExcelをZIPに保存'], ['取得環境', 'ZIP一括出力は本番から取得します。設定JSONを読み込んだアプリはその内容を使用します。'], ...(appTable.count() >= 50 ? [['件数が多い場合', 'アプリごとに順に取得するため、時間とメモリを使います。途中で「中止」でき、その場合ZIPは保存しません。'] as [string, string]] : [])] },
+      { id: 'zip', label: '全対象をExcel ZIPで保存', description: '全対象アプリの設計書をExcelにして、1つのZIPで保存します。', button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), '対象アプリ表: '), summary: () => [['対象', summarizeList(appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? '読込済みJSON' : prev.checkbox.checked ? 'プレビュー' : '本番')))], ['出力', appTable.count() + ' アプリのExcelをZIPに保存'], ['取得環境', `${prev.checkbox.checked ? 'プレビュー' : '本番'}から取得します。設定JSONを読み込んだアプリはその内容を使用します。`], ...(appTable.count() >= 50 ? [['件数が多い場合', 'アプリごとに順に取得するため、時間とメモリを使います。途中で「中止」でき、その場合ZIPは保存しません。'] as [string, string]] : [])] },
       { id: 'ai-md', label: 'AI向けMarkdownを保存', description: '1行目のアプリの設定を、AIに渡す用のMarkdownファイルで保存します。', button: bAiMd, validate: firstTargetRequired, summary: () => singleSummary('AI向けMarkdown（AIへの受け渡し）') },
       { id: 'md', label: 'Markdown設計書を保存', description: '1行目のアプリの設計書をMarkdownファイルで保存します。', button: bMd, validate: firstTargetRequired, summary: () => singleSummary('Markdown') },
       { id: 'ai-copy', label: 'AI向けMarkdownをコピー', description: '1行目のアプリの設定を、AIに渡す用のMarkdownとしてコピーします。', button: bAiCopy, validate: firstTargetRequired, summary: () => singleSummary('AI向けMarkdown（クリップボード）') },

@@ -1254,7 +1254,7 @@
     return stats;
   }
   var BUNDLE_FETCH_CONCURRENCY = 3;
-  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false }) {
+  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false, skipPluginConfig = false, skipCustomizeBodies = false }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
     const bundle = {
@@ -1291,7 +1291,7 @@
       bundle.sections[def.key] = value;
       if (revision) bundle.meta.sectionRevisions[def.key] = revision;
     });
-    if (!rawSettings && sections.includes("customizeSettings")) {
+    if (!rawSettings && !skipCustomizeBodies && sections.includes("customizeSettings")) {
       const cust = bundle.sections.customizeSettings;
       if (cust && !cust._fetchError) {
         try {
@@ -1315,7 +1315,7 @@
     }
     if (!rawSettings && sections.includes("pluginSettings")) {
       const plug = bundle.sections.pluginSettings;
-      if (plug && !plug._fetchError) {
+      if (plug && !plug._fetchError && !skipPluginConfig) {
         try {
           const prefix = buildApiPrefix(guestId, preview);
           const stats = await fetchPluginConfigs(plug, prefix, app);
@@ -1529,6 +1529,12 @@
   state.workHistory = loadWorkHistory();
   state.connectionPresets = loadConnectionPresets();
   var ui = {};
+
+  // src/pluginConfigMarker.ts
+  var PLUGIN_CONFIG_OMITTED_KIND = "pluginConfigOmitted";
+  function isPluginConfigOmittedMarker(partial) {
+    return !!partial && typeof partial === "object" && partial.kind === PLUGIN_CONFIG_OMITTED_KIND;
+  }
 
   // src/diff/engine.ts
   var HIGH_IMPACT_SECTIONS = /* @__PURE__ */ new Set([
@@ -2731,6 +2737,20 @@
     });
     return cloned;
   }
+  function hasPluginConfigOmittedMarker(section) {
+    return isPluginConfigOmittedMarker(section?._partial);
+  }
+  function stripPluginConfigForDiff(value) {
+    if (!value || typeof value !== "object") return value;
+    const cloned = deepClone(value);
+    delete cloned._partial;
+    if (Array.isArray(cloned.plugins)) {
+      cloned.plugins.forEach((p) => {
+        if (p && typeof p === "object") delete p.config;
+      });
+    }
+    return cloned;
+  }
   function getLegacyPluginSettingsFetchError(value) {
     if (!value || typeof value !== "object") return "";
     const failed = Number(value.failed);
@@ -2981,6 +3001,10 @@
       } else if (sec === "pluginSettings") {
         sourceForSection = preprocessPluginSettingsForDiff(s);
         targetForSection = preprocessPluginSettingsForDiff(t);
+        if (hasPluginConfigOmittedMarker(s) || hasPluginConfigOmittedMarker(t)) {
+          sourceForSection = stripPluginConfigForDiff(sourceForSection);
+          targetForSection = stripPluginConfigForDiff(targetForSection);
+        }
       } else if (sec === "actionSettings") {
         sourceForSection = preprocessActionSettingsForDiff(s);
         targetForSection = preprocessActionSettingsForDiff(t);

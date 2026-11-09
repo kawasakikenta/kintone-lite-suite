@@ -757,6 +757,16 @@
     return legacyCopy(text);
   }
 
+  // src/pluginConfigMarker.ts
+  var PLUGIN_CONFIG_OMITTED_KIND = "pluginConfigOmitted";
+  var PLUGIN_CONFIG_OMITTED_MESSAGE = "プラグインの設定値は含めずに保存しています（プラグインの一覧だけです）";
+  function markPluginConfigOmitted(bundle) {
+    const section = bundle?.sections?.pluginSettings;
+    if (!section || typeof section !== "object" || section._fetchError || !Array.isArray(section.plugins) || !section.plugins.length) return 0;
+    section._partial = { kind: PLUGIN_CONFIG_OMITTED_KIND, message: PLUGIN_CONFIG_OMITTED_MESSAGE, omittedPlugins: section.plugins.length };
+    return section.plugins.length;
+  }
+
   // src/diff/engine.ts
   var ENTITY_PATH_SEGMENT = String.raw`(?:\.[^.[\]]+|\["(?:[^"\\]|\\.)*"\])`;
   var ENTITY_IDENTIFIER_PATH_PATTERNS = [
@@ -1213,7 +1223,7 @@
     return stats;
   }
   var BUNDLE_FETCH_CONCURRENCY = 3;
-  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false }) {
+  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false, skipPluginConfig = false, skipCustomizeBodies = false }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
     const bundle = {
@@ -1250,7 +1260,7 @@
       bundle.sections[def.key] = value;
       if (revision) bundle.meta.sectionRevisions[def.key] = revision;
     });
-    if (!rawSettings && sections.includes("customizeSettings")) {
+    if (!rawSettings && !skipCustomizeBodies && sections.includes("customizeSettings")) {
       const cust = bundle.sections.customizeSettings;
       if (cust && !cust._fetchError) {
         try {
@@ -1274,7 +1284,7 @@
     }
     if (!rawSettings && sections.includes("pluginSettings")) {
       const plug = bundle.sections.pluginSettings;
-      if (plug && !plug._fetchError) {
+      if (plug && !plug._fetchError && !skipPluginConfig) {
         try {
           const prefix = buildApiPrefix(guestId, preview);
           const stats = await fetchPluginConfigs(plug, prefix, app);
@@ -3742,6 +3752,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const files = bundle?.sections?.customizeSettings?._partial?.files;
     return Array.isArray(files) ? files.length : 0;
   }
+  function omittedPluginConfigCount(bundle) {
+    const partial = bundle?.sections?.pluginSettings?._partial;
+    return partial?.kind === PLUGIN_CONFIG_OMITTED_KIND ? Number(partial.omittedPlugins || 0) : 0;
+  }
+  var PLUGIN_CONFIG_INCLUDED_NOTE = "プラグインの設定値を含みます（API キーなどの機微な値を含む場合があります）";
+  var PLUGIN_CONFIG_OMITTED_NOTE = "プラグインの設定値は含めていません（プラグインの一覧だけを保存）";
+  var CUSTOMIZE_BODY_SENSITIVE_NOTE = "JS/CSSファイルの本文を含みます（API トークンなどが書かれている場合があります）";
   function zipEntryBaseName(bundle, guestId, preview) {
     const suffix = `${guestId ? `_ゲスト${guestId}` : ""}${preview ? "_プレビュー" : "_本番"}`;
     return `${buildAppFilenameLabel(bundle.appId, bundleAppName(bundle))}${suffix}`;
@@ -3831,6 +3848,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       `- 対象アプリ数: ${apps.length}件`,
       `- 対象セクション: ${scopeText}`
     ];
+    if (input?.pluginConfig === "included") lines.push(`- プラグインの設定値: ${PLUGIN_CONFIG_INCLUDED_NOTE}。共有する前に内容を確認してください`);
+    if (input?.pluginConfig === "omitted") lines.push(`- プラグインの設定値: ${PLUGIN_CONFIG_OMITTED_NOTE}`);
+    if ((input?.scopes || []).includes("customizeSettings") || (input?.scopeLabels || []).includes(sectionLabel("customizeSettings"))) lines.push(`- JS/CSSファイルの本文: 各アプリの JSON に含みます（API トークンなどが書かれている場合があります。共有する前に内容を確認してください）`);
     if (totalOmitted > 0) {
       lines.push(`- JS/CSS本文省略合計: ${totalOmitted}件（サイズ上限・非テキスト等のため本文を省略し fileKey のみ記録）`);
     }
@@ -3849,6 +3869,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       if (omitted > 0) {
         notes.push(`JS/CSS本文省略 ${omitted}件`);
       }
+      if (Number(app?.omittedPluginConfigs || 0) > 0) notes.push(`プラグインの設定値は含めず ${app.omittedPluginConfigs}件`);
       if (app?.customizeFiles) {
         notes.push(`JS/CSSファイル保存 ${app.customizeFiles.saved}件${app.customizeFiles.failed ? `（失敗 ${app.customizeFiles.failed}件）` : ""}`);
       }
@@ -3859,8 +3880,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return lines.join("\n") + "\n";
   }
-  function renderSettingsExportSummaryHtml(rows, scopes) {
+  function renderSettingsExportSummaryHtml(rows, scopes, notes = []) {
     const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(", ");
+    const noteHtml = notes.map((text) => `<div style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#fffbeb;color:#78350f">${esc(text)}</div>`).join("");
     const body = rows.map(
       (r) => `<tr>
     <td>${esc(r.appId)}</td>
@@ -3873,6 +3895,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     ).join("");
     return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || "-")}</div>
+    ${noteHtml}
     <table style="width:100%;font-size:11px;border-collapse:collapse">
       <thead><tr><th scope="col" style="text-align:left;padding:4px">アプリID</th><th scope="col">アプリ名</th><th scope="col">ゲスト</th><th scope="col">取得OK</th><th scope="col">取得NG</th><th scope="col">メモ</th></tr></thead>
       <tbody>${body || '<tr><td colspan="6">結果なし</td></tr>'}</tbody>
@@ -3943,6 +3966,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const fileLayout = opts.customizeFileLayout || "slot";
     if (!CUSTOMIZE_FILE_LAYOUTS.some(([value]) => value === fileLayout)) throw new Error(`JS/CSSファイルのフォルダ分けの指定が正しくありません: ${fileLayout}`);
     const fileOrderPrefix = !!opts.customizeFileOrderPrefix;
+    const pluginConfigState = scopes.includes("pluginSettings") ? opts.excludePluginConfig ? "omitted" : "included" : void 0;
     const preview = !!opts.preview;
     const JSZipCtor = mode === "zip" ? await loadJSZipLite() : null;
     const bundles = [];
@@ -3960,6 +3984,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           guestId,
           preview,
           sections: scopes,
+          skipPluginConfig: pluginConfigState === "omitted",
           onProgress: (p, l) => setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
         });
       } catch (error) {
@@ -3975,6 +4000,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         stoppedAt = i;
         break;
       }
+      if (pluginConfigState === "omitted") markPluginConfigOmitted(bundle);
       let customizeFiles = null;
       if (includeCustomizeFiles) {
         try {
@@ -4014,6 +4040,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         noteParts.push(`一部セクション取得失敗あり: ${failedKeys.map(sectionLabel).join("、")}`);
       }
       if (omittedBodies2) noteParts.push(`JS/CSS本文を省略したファイル ${omittedBodies2}件`);
+      const omittedPlugins = omittedPluginConfigCount(bundle);
+      if (omittedPlugins) noteParts.push(`プラグインの設定値は含めず ${omittedPlugins}件`);
       const filesNote = customizeFilesNote(customizeFiles);
       if (filesNote) noteParts.push(filesNote);
       rows.push({
@@ -4023,6 +4051,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         okCount,
         ngCount,
         omittedBodies: omittedBodies2,
+        omittedPlugins,
         savedFiles: customizeFiles?.saved || 0,
         failedFiles: customizeFiles?.failed || 0,
         note: noteParts.join(" / ") || "OK"
@@ -4034,7 +4063,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       throw createCancelReport(0, targets.length, [`未実行（中止）: ${notRunLabels.join(", ")}`, "何も保存していません"]);
     }
     for (const t of notRun) {
-      rows.push({ appId: t.appId, appName: "", guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, savedFiles: 0, failedFiles: 0, note: "未実行（中止）" });
+      rows.push({ appId: t.appId, appName: "", guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, omittedPlugins: 0, savedFiles: 0, failedFiles: 0, note: "未実行（中止）" });
     }
     const cancelNote = notRun.length ? `${formatCancelledHeadline(stoppedAt, targets.length)}。取得済みの ${bundles.length}アプリだけを保存しました。` : "";
     const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
@@ -4052,7 +4081,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           label: SECTION_DEFS.find((s) => s.key === key)?.label || key,
           error: sectionFetchError(bundle.sections?.[key])
         })),
-        omittedCustomizeBodies: rows[i].omittedBodies
+        omittedCustomizeBodies: rows[i].omittedBodies,
+        ...rows[i].omittedPlugins ? { omittedPluginConfigs: rows[i].omittedPlugins } : {}
       };
     });
     const payload = {
@@ -4063,6 +4093,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       preview,
       scopes,
       scopeLabels,
+      ...pluginConfigState ? { pluginConfig: pluginConfigState } : {},
       appCount: bundles.length,
       failedAppCount,
       omittedCustomizeBodies: rows.reduce((sum, row) => sum + row.omittedBodies, 0),
@@ -4078,6 +4109,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const failedFiles = rows.reduce((sum, row) => sum + row.failedFiles, 0);
     const filesFailureNote = failedFiles ? `。JS/CSSファイル ${failedFiles}件は取得できませんでした（理由は結果表と manifest.json に記録しています）` : "";
     const hasWarning = failedSections > 0 || omittedBodies > 0 || failedFiles > 0 || notRun.length > 0;
+    const configOmitted = rows.reduce((sum, row) => sum + (row.omittedPlugins || 0), 0);
+    const configNote = pluginConfigState === "omitted" ? configOmitted ? "。プラグインの設定値は含めていません" : "" : "";
+    const resultNotes = [
+      ...pluginConfigState === "included" ? [PLUGIN_CONFIG_INCLUDED_NOTE] : pluginConfigState === "omitted" ? [PLUGIN_CONFIG_OMITTED_NOTE] : [],
+      ...scopes.includes("customizeSettings") ? [CUSTOMIZE_BODY_SENSITIVE_NOTE] : []
+    ];
     if (mode === "zip") {
       const zip = new JSZipCtor();
       const entries = bundles.map((bundle, i) => {
@@ -4093,6 +4130,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           fetchedAt: bundle.fetchedAt || "",
           sections: { ok: rows[i].okCount, ng: rows[i].ngCount },
           omittedCustomizeBodies: rows[i].omittedBodies,
+          ...rows[i].omittedPlugins ? { omittedPluginConfigs: rows[i].omittedPlugins } : {},
           failedSections: failedSections2.map((key) => ({
             key,
             label: SECTION_DEFS.find((s) => s.key === key)?.label || key,
@@ -4115,6 +4153,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
             preview: payload.preview,
             scopes: payload.scopes,
             scopeLabels,
+            ...pluginConfigState ? { pluginConfig: pluginConfigState } : {},
             appCount: bundles.length,
             failedAppCount: entries.filter((entry) => entry.sections.ng > 0).length,
             omittedCustomizeBodies: omittedBodies,
@@ -4142,6 +4181,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           preview: payload.preview,
           scopes: payload.scopes,
           scopeLabels,
+          ...pluginConfigState ? { pluginConfig: pluginConfigState } : {},
           apps: entries
         })
       );
@@ -4152,12 +4192,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const zipBlob = await zip.generateAsync({ type: "blob" });
       downloadBlob(buildExportFilename("設定一括取得", "zip", { appLabel: settingsExportLabel(bundles) }), zipBlob);
       const countText = includeCustomizeFiles ? `${bundles.length}アプリ・JS/CSSファイル ${savedFiles}件` : `${bundles.length}アプリ`;
-      setStatus(`${cancelNote}設定一括取得ZIPを保存しました（${countText}）${failureNote}${omittedNote}${filesFailureNote}`, hasWarning);
-      return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
+      setStatus(`${cancelNote}設定一括取得ZIPを保存しました（${countText}）${failureNote}${omittedNote}${filesFailureNote}${configNote}`, hasWarning);
+      return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes) };
     }
     downloadText(buildExportFilename("設定一括取得", "json", { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), "application/json");
-    setStatus(`${cancelNote}設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
-    return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
+    setStatus(`${cancelNote}設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}${configNote}`, hasWarning);
+    return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes) };
   }
 
   // src/entries/appSearchControl.ts
@@ -4603,6 +4643,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     cardFiles.body.appendChild(makeRow([fileLayout], { label: "フォルダ分け" }));
     cardFiles.body.appendChild(makeRow([fileOrder], { label: "読み込み順" }));
     cardFiles.body.appendChild(makeNote("「設定とJS/CSSファイルをZIPで保存」で、アプリごとのフォルダの中の分け方とファイル名を選びます（例: desktop/js/main.js。読み込み順を付けると desktop/js/01_main.js、フォルダを分けないと desktop_js_01_main.js）。URLで指定したJS/CSSは保存しません。", "help"));
+    const cardSensitive = makeCard({ title: "機微な値の扱い" });
+    const excludePluginConfig = makeCheck({ label: "プラグインの設定値を含めない" });
+    cardSensitive.body.appendChild(makeRow([excludePluginConfig.label], { label: "プラグイン" }));
+    cardSensitive.body.appendChild(makeNote("プラグインの設定値には API キーなどが含まれる場合があります。含めない場合も、プラグインの一覧（ID・名前・有効状態）は保存します。", "help"));
+    cardSensitive.body.appendChild(makeNote("JS/CSS設定を取得すると、ファイルの本文も保存します（API トークンなどが書かれている場合があります）。共有する前に内容を確認してください。", "help"));
     const btnJson = makeButton("JSON で保存", "primary", { icon: "↓" });
     const btnZip = makeButton("ZIP で保存", "primary", { icon: "↓" });
     const btnZipFiles = makeButton("JS/CSSファイルも ZIP で保存", "primary", { icon: "↓" });
@@ -4631,7 +4676,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const runExport = (mode, includeCustomizeFiles) => async () => {
       const { summaryHtml } = await runSettingsExportStandalone(
         mode,
-        { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value, customizeFileOrderPrefix: fileOrder.value === "prefix" },
+        { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value, customizeFileOrderPrefix: fileOrder.value === "prefix", excludePluginConfig: excludePluginConfig.checkbox.checked },
         // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
         (m, e) => panel.setStatus(m, /^中止しました/.test(m) ? "warn" : e ? "err" : "busy")
       );
@@ -4648,15 +4693,21 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       return chips.some((c) => c.checkbox.checked) ? "" : "取得する設定を1つ以上選んでください。";
     };
     const filesExportProblem = () => exportProblem() || (chips.some((c) => c.checkbox.checked && c.checkbox.value === "customizeSettings") ? "" : "JS/CSSファイルも保存するときは、取得する設定に「JS/CSS設定」を含めてください。");
+    const scopeChecked = (key) => chips.some((c) => c.checkbox.checked && c.checkbox.value === key);
+    const sensitiveSummary = () => [
+      ...scopeChecked("pluginSettings") ? [["プラグインの設定値", excludePluginConfig.checkbox.checked ? "含めない（プラグインの一覧だけを保存）" : "含める（API キーなどの機微な値を含む場合があります）"]] : [],
+      ...scopeChecked("customizeSettings") ? [["JS/CSSファイルの本文", "JSON に含める（API トークンなどが書かれている場合があります）"]] : []
+    ];
     const exportSummary = (format) => [
       ["対象アプリ", summarizeList(appTable.getApps().map((r) => connectionSummary(r.appId, r.guestId, prev.checkbox.checked ? "プレビュー" : "本番")))],
       ["取得する設定", chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent || "").join("、")],
-      ["保存形式", format]
+      ["保存形式", format],
+      ...sensitiveSummary()
     ];
     installLiteWorkflow(panel, {
       setup: [cardTarget.card, cardScope.card],
-      advanced: [cardChips.card, cardFiles.card],
-      advancedCopy: "取得する設定を1項目ずつ選ぶとき、JS/CSSファイルの保存形式を変えるときはこちら。",
+      advanced: [cardChips.card, cardSensitive.card, cardFiles.card],
+      advancedCopy: "取得する設定を1項目ずつ選ぶとき、プラグインの設定値を含めないとき、JS/CSSファイルの保存形式を変えるときはこちら。",
       results: [summary],
       beforeRun: () => {
         summary.replaceChildren();
