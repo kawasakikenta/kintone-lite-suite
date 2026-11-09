@@ -1789,9 +1789,9 @@ ${base}`
     const copy = deepClone(section);
     const entries = listFileEntries(copy);
     const results = /* @__PURE__ */ new Map();
-    const unique = /* @__PURE__ */ new Map();
-    for (const entry of entries) if (!unique.has(entry.fileKey)) unique.set(entry.fileKey, entry);
-    await pool([...unique.values()], async (entry) => {
+    const unique2 = /* @__PURE__ */ new Map();
+    for (const entry of entries) if (!unique2.has(entry.fileKey)) unique2.set(entry.fileKey, entry);
+    await pool([...unique2.values()], async (entry) => {
       try {
         const blob = await download(opts.guestId, entry.fileKey);
         results.set(entry.fileKey, { content: { base64: bytesToBase64(await blobBytes(blob)), contentType: blob.type || String(entry.item.file?.contentType || "") || guessContentType(entry.name), byteSize: blob.size } });
@@ -1813,6 +1813,96 @@ ${base}`
       }
     }
     return { section: copy, unavailable };
+  }
+
+  // src/reflect/lookupCandidates.ts
+  var SOURCE_NAME_LIMIT = 5;
+  var own = (object2, key) => Object.prototype.hasOwnProperty.call(object2, key);
+  var isObject2 = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+  var appIdOf = (value) => {
+    const id = value === void 0 || value === null ? "" : String(value).trim();
+    return /^[1-9]\d*$/.test(id) ? id : "";
+  };
+  function observeFields(source, target, labelOf, out) {
+    for (const [code, sourceDef] of Object.entries(source)) {
+      if (!own(target, code) || !isObject2(sourceDef) || !isObject2(target[code])) continue;
+      const targetDef = target[code];
+      for (const holder of ["lookup", "referenceTable"]) {
+        const from = appIdOf(sourceDef[holder]?.relatedApp?.app), to = appIdOf(targetDef[holder]?.relatedApp?.app);
+        if (from && to) out.push({ from, to, source: `${holder === "lookup" ? "ルックアップ" : "関連レコード一覧"}「${labelOf(code)}」` });
+      }
+      if (sourceDef.type === "SUBTABLE" && targetDef.type === "SUBTABLE" && isObject2(sourceDef.fields) && isObject2(targetDef.fields)) observeFields(sourceDef.fields, targetDef.fields, labelOf, out);
+    }
+  }
+  function observeActions(source, target, out) {
+    for (const [name, sourceAction] of Object.entries(source)) {
+      if (!own(target, name) || !isObject2(sourceAction) || !isObject2(target[name])) continue;
+      const from = appIdOf(sourceAction.destApp?.app), to = appIdOf(target[name].destApp?.app);
+      if (from && to) out.push({ from, to, source: `アクション「${name}」` });
+    }
+  }
+  function findLookupMapCandidates(input) {
+    const observations = [];
+    const labelOf = (code) => {
+      const label = input.fieldLabels?.[code];
+      return label && label !== code ? `${label}（${code}）` : code;
+    };
+    if (isObject2(input.sourceFields?.properties) && isObject2(input.targetFields?.properties)) observeFields(input.sourceFields.properties, input.targetFields.properties, labelOf, observations);
+    if (isObject2(input.sourceActions?.actions) && isObject2(input.targetActions?.actions)) observeActions(input.sourceActions.actions, input.targetActions.actions, observations);
+    const entered = new Set(Object.keys(input.lookupMap || {}));
+    const byFrom = /* @__PURE__ */ new Map();
+    for (const { from, to, source } of observations) {
+      if (entered.has(from)) continue;
+      const targets = byFrom.get(from) ?? /* @__PURE__ */ new Map();
+      const entry = targets.get(to) ?? { total: 0, sources: [] };
+      entry.total += 1;
+      if (entry.sources.length < SOURCE_NAME_LIMIT && !entry.sources.includes(source)) entry.sources.push(source);
+      targets.set(to, entry);
+      byFrom.set(from, targets);
+    }
+    const result = { candidates: [], conflicts: [] };
+    const byNumber = (a, b) => Number(a) - Number(b);
+    for (const from of [...byFrom.keys()].sort(byNumber)) {
+      const targets = byFrom.get(from);
+      const list2 = [...targets.keys()].sort(byNumber).map((to) => ({ to, ...targets.get(to) }));
+      if (list2.length === 1) {
+        if (list2[0].to !== from) result.candidates.push({ from, ...list2[0] });
+      } else result.conflicts.push({ from, targets: list2 });
+    }
+    return result;
+  }
+  function hasLookupCandidates(result) {
+    return !!result && (result.candidates.length > 0 || result.conflicts.length > 0);
+  }
+  function appendLookupMapCandidates(text, candidates) {
+    const trimmed = String(text || "").trim();
+    if (trimmed.startsWith("{")) {
+      let parsed;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        return { text, added: 0 };
+      }
+      if (!isObject2(parsed)) return { text, added: 0 };
+      const next = { ...parsed };
+      let added = 0;
+      for (const { from, to } of candidates) if (!own(next, from)) {
+        next[from] = to;
+        added += 1;
+      }
+      return added ? { text: JSON.stringify(next, null, 2), added } : { text, added: 0 };
+    }
+    const existing = new Set(trimmed.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#")).map((line) => line.split(/\s*(?:→|->|=>|=|:|,|\t)\s*|\s+/).filter(Boolean)[0]));
+    const lines = candidates.filter(({ from }) => !existing.has(from)).map(({ from, to }) => `${from} → ${to}`);
+    if (!lines.length) return { text, added: 0 };
+    const head = String(text || "").replace(/\s+$/, "");
+    return { text: head ? `${head}
+${lines.join("\n")}` : lines.join("\n"), added: lines.length };
+  }
+  function describeLookupCandidate(candidate, names = {}) {
+    const idText = (id, name) => name ? `${id}（${name}）` : id;
+    const sources = candidate.sources.join("、") + (candidate.total > candidate.sources.length ? ` ほか ${candidate.total - candidate.sources.length} 件` : "");
+    return `${idText(candidate.from, names.from)} → ${idText(candidate.to, names.to)}（${sources}）`;
   }
 
   // src/kintone-enums.ts
@@ -2342,10 +2432,10 @@ ${base}`
   // src/reflect/changeSummary.ts
   var MAX_VALUE = 80;
   var MAX_DETAILS = 8;
-  var own = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
+  var own2 = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
   var isObj = (value) => !!value && typeof value === "object" && !Array.isArray(value);
-  var dictGet = (dict2, key) => dict2 && own(dict2, key) ? dict2[key] : void 0;
-  var get = (target, key) => isObj(target) && own(target, key) ? target[key] : void 0;
+  var dictGet = (dict2, key) => dict2 && own2(dict2, key) ? dict2[key] : void 0;
+  var get = (target, key) => isObj(target) && own2(target, key) ? target[key] : void 0;
   var list = (value) => Array.isArray(value) ? value : [];
   function stable(value) {
     const sort = (input) => Array.isArray(input) ? input.map(sort) : isObj(input) ? Object.fromEntries(Object.keys(input).sort().map((key) => [key, sort(input[key])])) : input;
@@ -2453,7 +2543,7 @@ ${base}`
     if (typeof value === "number") return String(value);
     if (typeof value === "string") {
       if (value === "") return "（空）";
-      const translated = dictGet(key === "type" ? typeDict : ENUM_BY_KEY[own(ENUM_BY_KEY, key) ? key : ""], value);
+      const translated = dictGet(key === "type" ? typeDict : ENUM_BY_KEY[own2(ENUM_BY_KEY, key) ? key : ""], value);
       return clip(translated ?? value);
     }
     if (Array.isArray(value)) return clip(value.map((item) => isObj(item) || Array.isArray(item) ? stable(item) : String(item)).join("、"));
@@ -2513,7 +2603,7 @@ ${base}`
       return `${from} → ${to}`;
     }
     if (key === "fieldMappings") return `${element.field ?? ""} ← ${element.relatedField ?? ""}`;
-    if (isObj(element.entity) || element.type && own(element, "code") && !element.name) return entityText(entityOf(element), labels);
+    if (isObj(element.entity) || element.type && own2(element, "code") && !element.name) return entityText(entityOf(element), labels);
     return clip(String(element.name ?? element.code ?? element.id ?? stable(element)));
   }
   function arrayLine(key, label, before, after, labels, section) {
@@ -2614,7 +2704,7 @@ ${base}`
       const bv = get(b, key), av = get(a, key);
       if (same(bv, av)) continue;
       const name = labelFor(key, options.over), label = [...prefix, name].join(" / ");
-      const special = options.special && own(options.special, key) ? options.special[key] : void 0;
+      const special = options.special && own2(options.special, key) ? options.special[key] : void 0;
       if (special) {
         lines.push(...special(bv, av, label));
         continue;
@@ -2655,7 +2745,7 @@ ${base}`
     const bp = get(before, "properties"), ap = get(after, "properties");
     if (!isObj(bp) || !isObj(ap)) throw new Error("フィールド設定の形式が不正です。");
     const walk = (b, a, parentLabel) => {
-      for (const code of [...Object.keys(a), ...Object.keys(b).filter((key) => !own(a, key))]) {
+      for (const code of [...Object.keys(a), ...Object.keys(b).filter((key) => !own2(a, key))]) {
         const bd = get(b, code), ad = get(a, code), definition = ad ?? bd;
         const label = labelOnly(code, get(definition, "label"), labels);
         const withCode = label !== code ? `${label}（${code}）` : code;
@@ -2781,7 +2871,7 @@ ${base}`
       if (Array.isArray(value.mappings)) out.push(`フィールド対応 ${value.mappings.length}件`);
       return out;
     };
-    for (const name of [...Object.keys(am), ...Object.keys(bm).filter((key) => !own(am, key))]) {
+    for (const name of [...Object.keys(am), ...Object.keys(bm).filter((key) => !own2(am, key))]) {
       const bv = get(bm, name), av = get(am, name);
       if (bv === void 0 || av === void 0) {
         push(av === void 0 ? "削除" : "追加", name, brief(av ?? bv));
@@ -2846,7 +2936,7 @@ ${base}`
       if (entities.length) out.push(`作業者: ${listText(entities.map((entity) => entityText(entityOf(entity), labels)))}`);
       return out;
     };
-    for (const name of [...Object.keys(as), ...Object.keys(bs).filter((key) => !own(as, key))]) {
+    for (const name of [...Object.keys(as), ...Object.keys(bs).filter((key) => !own2(as, key))]) {
       const bv = get(bs, name), av = get(as, name);
       if (bv === void 0 || av === void 0) {
         push(av === void 0 ? "削除" : "追加", name, stateBrief(av ?? bv));
@@ -2961,7 +3051,7 @@ ${base}`
         const path = [...trail, name];
         out.set(path.join(" / "), child);
         if (isObj(child)) {
-          for (const key of ["children", "subCategories", "categories"]) if (own(child, key)) walk(child[key], path);
+          for (const key of ["children", "subCategories", "categories"]) if (own2(child, key)) walk(child[key], path);
         }
       }
     };
@@ -3235,7 +3325,7 @@ ${base}`
   // src/reflect/standalonePlan.ts
   var formatBytes = (bytes) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
   var namedSections = { viewSettings: "views", reportSettings: "reports", actionSettings: "actions" };
-  var own2 = (object2, key) => Object.prototype.hasOwnProperty.call(object2, key);
+  var own3 = (object2, key) => Object.prototype.hasOwnProperty.call(object2, key);
   var object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
   var equal = (a, b) => stableReflectStringify(a) === stableReflectStringify(b);
   var valueText = (value) => value === void 0 ? "（なし）" : typeof value === "string" ? value : JSON.stringify(value);
@@ -3244,7 +3334,7 @@ ${base}`
   function diffValues(before, after, path, output, keysAreNames = false) {
     if (equal(before, after)) return;
     if (object(before) && object(after)) {
-      for (const key of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own2(before, key) ? before[key] : void 0, own2(after, key) ? after[key] : void 0, [...path, !keysAreNames && own2(diffPathLabels, key) ? diffPathLabels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
+      for (const key of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own3(before, key) ? before[key] : void 0, own3(after, key) ? after[key] : void 0, [...path, !keysAreNames && own3(diffPathLabels, key) ? diffPathLabels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
     } else if (Array.isArray(before) && Array.isArray(after)) {
       const queues = /* @__PURE__ */ new Map(), taken = /* @__PURE__ */ new Set();
       after.forEach((value, index) => {
@@ -3279,7 +3369,7 @@ ${base}`
         continue;
       }
       if (SYSTEM_FIELD_TYPES.has(def.type)) continue;
-      const current = own2(target, code) ? target[code] : void 0;
+      const current = own3(target, code) ? target[code] : void 0;
       if (current && current.type !== def.type) {
         plan.blockers.push(`${[...path, code].join(" / ")}: 種類が異なります（${current.type} → ${def.type}）。既存項目の種類はこの反映では変更できません。`);
         continue;
@@ -3298,7 +3388,7 @@ ${base}`
         }
       }
       for (const holder of ["lookup", "referenceTable"]) {
-        if (current && object(current[holder]) && !own2(def, holder)) plan.warnings.push(`${[...path, code].join(" / ")}: 反映先では${holder === "lookup" ? "ルックアップ" : "関連レコード一覧"}の設定がありますが、反映元にはありません。この反映では設定を外さず、反映先の設定を残します。`);
+        if (current && object(current[holder]) && !own3(def, holder)) plan.warnings.push(`${[...path, code].join(" / ")}: 反映先では${holder === "lookup" ? "ルックアップ" : "関連レコード一覧"}の設定がありますが、反映元にはありません。この反映では設定を外さず、反映先の設定を残します。`);
       }
       if (def.type === "SUBTABLE") {
         if (!object(def.fields)) throw new Error(`${code}: テーブル内のフィールド定義がありません。`);
@@ -3306,7 +3396,7 @@ ${base}`
       }
       after[code] = next;
     }
-    for (const [code, def] of Object.entries(target)) if (!own2(source, code) && !SYSTEM_FIELD_TYPES.has(def?.type)) {
+    for (const [code, def] of Object.entries(target)) if (!own3(source, code) && !SYSTEM_FIELD_TYPES.has(def?.type)) {
       plan.changes.push({ kind: "保持", path: [...path, code].join(" / "), before: valueText(def), after: "反映先の設定を保持" });
     }
     return after;
@@ -3391,28 +3481,28 @@ ${base}`
   function reflectRequiredFields(key, after, knownFieldCodes) {
     const known = knownFieldCodes ? knownFieldCodes instanceof Set ? knownFieldCodes : new Set(knownFieldCodes) : void 0;
     const queryCodes = (...queries) => known ? queries.flatMap((query) => extractQueryFieldCodes(query, known)) : [];
-    const unique = (codes) => [...new Set(codes)];
+    const unique2 = (codes) => [...new Set(codes)];
     if (key === "viewSettings") {
       if (!object(after?.views)) return [];
-      return unique(Object.values(after.views).flatMap((view) => [
+      return unique2(Object.values(after.views).flatMap((view) => [
         ...view?.type === "LIST" ? view.fields || [] : view?.type === "CALENDAR" ? [view.date, view.title].filter(Boolean) : [],
         ...queryCodes(view?.filterCond, view?.sort)
       ]).filter((code) => !["$id", "$revision"].includes(code)));
     }
-    if (key === "actionSettings") return unique([...extractActionRequiredFields(after?.actions), ...queryCodes(...Object.values(object(after?.actions) ? after.actions : {}).map((action) => action?.filterCond))]);
-    if (key === "reportSettings") return unique([...extractReportRequiredFields(after?.reports), ...queryCodes(...Object.values(object(after?.reports) ? after.reports : {}).map((report) => report?.filterCond))]);
+    if (key === "actionSettings") return unique2([...extractActionRequiredFields(after?.actions), ...queryCodes(...Object.values(object(after?.actions) ? after.actions : {}).map((action) => action?.filterCond))]);
+    if (key === "reportSettings") return unique2([...extractReportRequiredFields(after?.reports), ...queryCodes(...Object.values(object(after?.reports) ? after.reports : {}).map((report) => report?.filterCond))]);
     if (key === "recordPermissions" || key === "perRecordNotifications") {
       const list2 = key === "recordPermissions" ? after?.rights : after?.notifications;
-      return unique(queryCodes(...(Array.isArray(list2) ? list2 : []).map((item) => item?.filterCond)));
+      return unique2(queryCodes(...(Array.isArray(list2) ? list2 : []).map((item) => item?.filterCond)));
     }
     if (key === "fieldAcl") return [...new Set((after?.rights || []).map((right) => String(right?.code || "")).filter((code) => code && !["$id", "$revision"].includes(code)))];
-    if (key === "reminderNotifications") return unique([
+    if (key === "reminderNotifications") return unique2([
       ...(after?.notifications || []).flatMap((item) => [item?.timing?.code, ...(item?.targets || []).filter((target) => target?.entity?.type === "FIELD_ENTITY").map((target) => target.entity.code)]).map((code) => String(code || "")).filter((code) => !!code),
       ...queryCodes(...(Array.isArray(after?.notifications) ? after.notifications : []).map((item) => item?.filterCond))
     ]);
     if (key === "processSettings") {
       if (!object(after?.states)) return void 0;
-      return unique([
+      return unique2([
         ...Object.values(after.states).flatMap((state3) => (state3?.assignee?.entities || []).filter((item) => item?.entity?.type === "FIELD_ENTITY").map((item) => String(item.entity.code || ""))).filter((code) => !!code),
         ...queryCodes(...(Array.isArray(after?.actions) ? after.actions : []).map((action) => action?.filterCond))
       ]);
@@ -3435,9 +3525,9 @@ ${base}`
   var settingValue = (value) => typeof value === "number" ? String(value) : Array.isArray(value) ? value.map(settingValue) : object(value) ? Object.fromEntries(Object.entries(value).map(([name, item]) => [name, settingValue(item)])) : value;
   function buildAppSettingsPlan(plan, source, target, options) {
     try {
-      if (own2(source, "titleField") && !object(source.titleField)) throw new Error("レコードのタイトルの設定形式が不正です。");
+      if (own3(source, "titleField") && !object(source.titleField)) throw new Error("レコードのタイトルの設定形式が不正です。");
       plan.behavior = "動作・表示の設定を更新（アプリ名・説明・アイコンは対象外）";
-      const pick = (section) => Object.fromEntries(APP_SETTINGS_REFLECT_KEYS.filter((name) => own2(source, name) && own2(section, name)).map((name) => [name, name === "titleField" && object(section[name]) && section[name].selectionMode === "AUTO" ? { selectionMode: "AUTO" } : settingValue(section[name])]));
+      const pick = (section) => Object.fromEntries(APP_SETTINGS_REFLECT_KEYS.filter((name) => own3(source, name) && own3(section, name)).map((name) => [name, name === "titleField" && object(section[name]) && section[name].selectionMode === "AUTO" ? { selectionMode: "AUTO" } : settingValue(section[name])]));
       const before = pick(target), after = pick(source);
       if (!Object.keys(after).length) throw new Error("反映元に比較できる一般設定がありません（古い設定JSONの可能性があります）。");
       if (after.titleField?.selectionMode === "MANUAL") {
@@ -3510,17 +3600,17 @@ ${base}`
         const merged = mergeFields(sourceProps, targetProps, options.lookupMap || {}, ["フィールド"], plan);
         const adds = /* @__PURE__ */ Object.create(null), updates = /* @__PURE__ */ Object.create(null);
         for (const [code, value] of Object.entries(merged)) {
-          if (!own2(sourceProps, code) || SYSTEM_FIELD_TYPES.has(value?.type)) continue;
-          if (!own2(targetProps, code)) adds[code] = value;
+          if (!own3(sourceProps, code) || SYSTEM_FIELD_TYPES.has(value?.type)) continue;
+          if (!own3(targetProps, code)) adds[code] = value;
           else if (value.type === "SUBTABLE") {
-            const current = targetProps[code], addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own2(current.fields || {}, child)));
+            const current = targetProps[code], addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own3(current.fields || {}, child)));
             if (Object.keys(addedFields).length) adds[code] = { type: "SUBTABLE", code, fields: addedFields };
-            const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own2(current.fields || {}, child) && !equal(childDef, current.fields[child])));
+            const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own3(current.fields || {}, child) && !equal(childDef, current.fields[child])));
             const { fields: _nextFields, ...nextTable } = value, { fields: _currentFields, ...currentTable } = current;
             if (Object.keys(updatedFields).length || !equal(nextTable, currentTable)) updates[code] = { ...nextTable, fields: updatedFields };
           } else if (!equal(value, targetProps[code])) updates[code] = value;
         }
-        const fieldCounts = { add: Object.keys(adds).length, update: Object.keys(updates).length, tgtOnly: Object.keys(targetProps).filter((code) => !own2(sourceProps, code) && !SYSTEM_FIELD_TYPES.has(targetProps[code]?.type)).length };
+        const fieldCounts = { add: Object.keys(adds).length, update: Object.keys(updates).length, tgtOnly: Object.keys(targetProps).filter((code) => !own3(sourceProps, code) && !SYSTEM_FIELD_TYPES.has(targetProps[code]?.type)).length };
         plan.fieldStats = fieldCounts;
         if (fieldCounts.add) plan.operations.push({ method: "POST", endpoint: def.endpoint, body: { properties: adds }, label: "フィールド追加" });
         if (fieldCounts.update) plan.operations.push({ method: "PUT", endpoint: def.endpoint, body: { properties: updates }, label: "フィールド更新" });
@@ -3535,7 +3625,7 @@ ${base}`
           }
         }
         for (const name of Object.keys(from)) {
-          if (own2(to, name) && (!from[name].type || !to[name].type || from[name].type === to[name].type)) from[name] = { ...to[name], ...from[name] };
+          if (own3(to, name) && (!from[name].type || !to[name].type || from[name].type === to[name].type)) from[name] = { ...to[name], ...from[name] };
           if (key === "actionSettings" && from[name]?.destApp?.app != null) {
             const mappedApp = options.lookupMap?.[String(from[name].destApp.app)];
             if (mappedApp) {
@@ -3550,7 +3640,7 @@ ${base}`
         }
         const preserve = options.preserveTargetOnly !== false;
         const combined = preserve ? { ...to, ...from } : from;
-        const ordered = [...Object.keys(from).sort((a, b) => Number(from[a].index || 0) - Number(from[b].index || 0)), ...preserve ? Object.keys(to).filter((name) => !own2(from, name)).sort((a, b) => Number(to[a].index || 0) - Number(to[b].index || 0)) : []];
+        const ordered = [...Object.keys(from).sort((a, b) => Number(from[a].index || 0) - Number(from[b].index || 0)), ...preserve ? Object.keys(to).filter((name) => !own3(from, name)).sort((a, b) => Number(to[a].index || 0) - Number(to[b].index || 0)) : []];
         for (const [index, name] of ordered.entries()) combined[name] = { ...combined[name], index: String(index) };
         if (key === "viewSettings") for (const [name, view] of Object.entries(combined)) {
           if (!["LIST", "CALENDAR", "CUSTOM"].includes(view.type)) throw new Error(`${name}: 一覧の種類を取得できません。`);
@@ -3561,7 +3651,7 @@ ${base}`
         before = { [property]: to };
         after = { [property]: combined };
         plan.behavior = preserve ? "追加・更新（反映先だけの設定は保持）" : "全置換（反映元にない設定を削除）";
-        if (preserve) for (const name of Object.keys(to).filter((name2) => !own2(from, name2))) plan.changes.push({ kind: "保持", path: `${diffPathLabels[property]} / ${name}`, before: valueText(to[name]), after: "内容を保持（表示順は反映元の後）" });
+        if (preserve) for (const name of Object.keys(to).filter((name2) => !own3(from, name2))) plan.changes.push({ kind: "保持", path: `${diffPathLabels[property]} / ${name}`, before: valueText(to[name]), after: "内容を保持（表示順は反映元の後）" });
         plan.requiredFields = reflectRequiredFields(key, after, options.knownFieldCodes);
       } else if (key === "pluginSettings") {
         if (!Array.isArray(source.plugins) || !Array.isArray(target.plugins)) throw new Error("プラグイン一覧の形式が不正です。");
@@ -3849,7 +3939,7 @@ ${base}`
   }
 
   // src/reflect/selectionPointer.ts
-  var own3 = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
+  var own4 = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
   var isPlainObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
   function stableJson(value) {
     const sort = (input) => Array.isArray(input) ? input.map(sort) : isPlainObject(input) ? Object.fromEntries(Object.keys(input).sort().map((key) => [key, sort(input[key])])) : input;
@@ -3859,7 +3949,7 @@ ${base}`
 
   // src/reflect/selectionLabels.ts
   function fieldDisplayName(code, fieldLabels, hint) {
-    const label = typeof hint === "string" && hint ? hint : own3(fieldLabels, code) ? fieldLabels[code] : "";
+    const label = typeof hint === "string" && hint ? hint : own4(fieldLabels, code) ? fieldLabels[code] : "";
     return label && label !== code ? `${label}（${code}）` : code;
   }
   var VIEW_LABELS = {
@@ -3952,11 +4042,11 @@ ${base}`
     if (definition.type === "DROP_DOWN" || definition.type === "RADIO_BUTTON") {
       if (defaults === void 0 || defaults === "" || defaults === null) return definition.type === "RADIO_BUTTON" ? [`${label}の初期値がありません。ラジオボタンは、初期値を選択肢のどれかにする必要があります。`] : [];
       if (typeof defaults !== "string") return [`${label}の初期値の形式が不正です。${hint}`];
-      return own3(options, defaults) ? [] : [`${label}の初期値「${defaults}」が選択肢にありません。${hint}`];
+      return own4(options, defaults) ? [] : [`${label}の初期値「${defaults}」が選択肢にありません。${hint}`];
     }
     if (defaults === void 0 || defaults === null) return [];
     if (!Array.isArray(defaults)) return [`${label}の初期値の形式が不正です（選択肢の配列にしてください）。`];
-    return defaults.filter((value) => typeof value !== "string" || !own3(options, value)).map((value) => `${label}の初期値「${String(value)}」が選択肢にありません。${hint}`);
+    return defaults.filter((value) => typeof value !== "string" || !own4(options, value)).map((value) => `${label}の初期値「${String(value)}」が選択肢にありません。${hint}`);
   }
   function checkFieldSettings(before, after, fieldLabels, knownFieldCodes) {
     const issues = [];
@@ -3968,7 +4058,7 @@ ${base}`
           continue;
         }
         if (definition.code !== void 0 && definition.code !== code) issues.push(`${name(code, parent)}のフィールドコードは変更できません（${code} → ${String(definition.code)}）。`);
-        const current = own3(beforeFields, code) ? beforeFields[code] : void 0;
+        const current = own4(beforeFields, code) ? beforeFields[code] : void 0;
         if (isPlainObject(current) && current.type !== definition.type) issues.push(`${name(code, parent)}の種類は変更できません（${String(current.type)} → ${definition.type}）。`);
         issues.push(...checkChoiceDefault(name(code, parent), definition));
         if (definition.type === "SUBTABLE") {
@@ -3977,7 +4067,7 @@ ${base}`
         }
       }
       for (const code of Object.keys(beforeFields)) {
-        if (!own3(afterFields, code)) issues.push(`${name(code, parent)}を削除する設定は反映できません（このツールではフィールドを削除しません）。`);
+        if (!own4(afterFields, code)) issues.push(`${name(code, parent)}を削除する設定は反映できません（このツールではフィールドを削除しません）。`);
       }
     };
     if (!isPlainObject(after?.properties)) return ["フィールド設定の properties がありません。"];
@@ -4082,12 +4172,12 @@ ${base}`
     const adds = /* @__PURE__ */ Object.create(null), updates = /* @__PURE__ */ Object.create(null);
     for (const [code, value] of Object.entries(afterProps)) {
       if (SYSTEM_FIELD_TYPES.has(value?.type)) continue;
-      if (!own3(beforeProps, code)) adds[code] = value;
+      if (!own4(beforeProps, code)) adds[code] = value;
       else if (value.type === "SUBTABLE") {
         const current = beforeProps[code];
-        const addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own3(current.fields || {}, child)));
+        const addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own4(current.fields || {}, child)));
         if (Object.keys(addedFields).length) adds[code] = { type: "SUBTABLE", code, fields: addedFields };
-        const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own3(current.fields || {}, child) && !sameValue(childDef, current.fields[child])));
+        const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own4(current.fields || {}, child) && !sameValue(childDef, current.fields[child])));
         const { fields: _nextFields, ...nextTable } = value, { fields: _currentFields, ...currentTable } = current;
         if (Object.keys(updatedFields).length || !sameValue(nextTable, currentTable)) updates[code] = { ...nextTable, fields: updatedFields };
       } else if (!sameValue(value, beforeProps[code])) updates[code] = value;
@@ -4250,9 +4340,9 @@ ${base}`
       throw prefixed;
     }
   }
-  async function getReflectBundles(opts, scopes, setStatus) {
+  async function fetchReflectSourceBundle(opts, scopes, setStatus) {
     setStatus(opts.sourceBundle ? "反映元の設定JSONを読み込み中..." : "反映元の設定を取得中...");
-    const source = opts.sourceBundle ? importedReflectSource(opts) : await withAppPrefix("反映元", opts.sourceAppId, () => fetchBundle({
+    return opts.sourceBundle ? importedReflectSource(opts) : await withAppPrefix("反映元", opts.sourceAppId, () => fetchBundle({
       rawSettings: true,
       // フィールド設定を選んでいなくても、参照するフィールドの有無と表示名を示せるよう反映先と同じ範囲を取得する。
       appId: opts.sourceAppId,
@@ -4261,6 +4351,24 @@ ${base}`
       sections: reflectInspectionScopes(scopes),
       onProgress: (p, label) => setStatus(`反映元取得 ${Math.round(p * 100)}% (${label})`)
     }));
+  }
+  async function prepareReflectSourceStandalone(opts, setStatus, download) {
+    if (!opts.sourceBundle && !/^[1-9]\d*$/.test(String(opts.sourceAppId || ""))) throw new Error("反映元アプリIDには正の整数を入力してください。");
+    if (opts.sourceGuestId && !/^[1-9]\d*$/.test(String(opts.sourceGuestId))) throw new Error("反映元ゲストスペースIDには正の整数を入力してください。");
+    const scopes = orderedScopes(opts.scopes);
+    const bundle = await fetchReflectSourceBundle(opts, scopes, setStatus);
+    return { bundle, scopes: reflectInspectionScopes(scopes), ...download ? { download } : {} };
+  }
+  async function resolveReflectTargetStandalone(opts) {
+    const appId = String(opts.targetAppId || ""), guestId = opts.targetGuestId || "";
+    if (!/^[1-9]\d*$/.test(appId) || guestId && !/^[1-9]\d*$/.test(guestId)) throw new Error("反映先アプリIDには正の整数を入力してください。");
+    const info = await withAppPrefix("反映先", appId, () => apiGet(buildApiPrefix(guestId, false), "/app.json", { id: appId }));
+    if (String(info?.appId) !== appId || typeof info?.name !== "string" || !info.name) throw new Error(`反映先 #${appId} の名前とIDを確認できません。入力と閲覧権限を確認してください。`);
+    return { appId, guestId, name: info.name, code: String(info.code || "") };
+  }
+  async function getReflectBundles(opts, scopes, setStatus, prepared) {
+    const needed = reflectInspectionScopes(scopes);
+    const source = prepared && needed.every((key) => prepared.scopes.includes(key)) ? deepClone(prepared.bundle) : await fetchReflectSourceBundle(opts, scopes, setStatus);
     setStatus("反映先プレビューの設定を確認中...");
     const target = await withAppPrefix("反映先", opts.targetAppId, () => fetchBundle({
       rawSettings: true,
@@ -4278,13 +4386,13 @@ ${base}`
     if (customize && typeof customize === "object" && customize._partial?.kind === "customizeBody" && !customize._fetchError) delete customize._partial;
     return bundle;
   }
-  async function resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus) {
+  async function resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus, download) {
     if (!scopes.includes("customizeSettings")) return void 0;
     const sourceSection = source.sections?.customizeSettings, targetSection = target.sections?.customizeSettings;
     if (!isCompleteReflectSection(sourceSection) || !isCompleteReflectSection(targetSection)) return void 0;
     setStatus("JS/CSSファイルを確認中…");
     const sourceGuestId = opts.sourceBundle ? String(opts.sourceBundle?.guestId || "") : opts.sourceGuestId || "";
-    return resolveCustomizeFiles(sourceSection, targetSection, { sourceGuestId, targetGuestId: opts.targetGuestId || "" });
+    return resolveCustomizeFiles(sourceSection, targetSection, { sourceGuestId, targetGuestId: opts.targetGuestId || "", ...download ? { download } : {} });
   }
   function knownFieldCodesOf(source, target) {
     return [.../* @__PURE__ */ new Set([...listReflectFieldCodes(source), ...listReflectFieldCodes(target)])];
@@ -4305,10 +4413,10 @@ ${base}`
     const invalid = reflectConnectionError(opts);
     if (invalid) throw new Error(invalid);
     const scopes = orderedScopes(opts.scopes);
-    const { source, target } = await getReflectBundles(opts, scopes, setStatus);
+    const { source, target } = await getReflectBundles(opts, scopes, setStatus, options.source);
     setStatus("反映先の未公開の変更を確認中…");
     const targetPending = await inspectTargetPendingChanges({ targetAppId: opts.targetAppId, targetGuestId: opts.targetGuestId, scopes: reflectInspectionScopes(scopes) }, target);
-    const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
+    const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus, options.source?.download);
     let targetDeployStatus;
     if (options.checkTargetDeployStatus) {
       setStatus("反映先の反映状況を確認中…");
@@ -4340,6 +4448,12 @@ ${base}`
         }
       }
     }
+    const lookupCandidates = scopes.some((key) => key === "fieldSettings" || key === "actionSettings") ? findLookupMapCandidates({
+      ...scopes.includes("fieldSettings") && isCompleteReflectSection(source.sections?.fieldSettings) && isCompleteReflectSection(target.sections?.fieldSettings) ? { sourceFields: source.sections.fieldSettings, targetFields: target.sections.fieldSettings } : {},
+      ...scopes.includes("actionSettings") && isCompleteReflectSection(source.sections?.actionSettings) && isCompleteReflectSection(target.sections?.actionSettings) ? { sourceActions: source.sections.actionSettings, targetActions: target.sections.actionSettings } : {},
+      lookupMap: opts.lookupMap,
+      fieldLabels
+    }) : void 0;
     return {
       totalSections: entries.length,
       changedSections: entries.filter((entry) => entry.status === "change").length,
@@ -4352,7 +4466,8 @@ ${base}`
       baseline,
       targetPending,
       fieldLabels,
-      ...targetDeployStatus ? { targetDeployStatus } : {}
+      ...targetDeployStatus ? { targetDeployStatus } : {},
+      ...hasLookupCandidates(lookupCandidates) ? { lookupCandidates } : {}
     };
   }
   function composedFieldCodes(after) {
@@ -6274,6 +6389,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     if (lookupPairs.length) lines.push(`- 参照先変換: ${lookupPairs.map(([from, to]) => `${escapeReflectMarkdown(from)} → ${escapeReflectMarkdown(to)}`).join("、")}`);
     if (input.targetPending) lines.push(`- 反映先の未公開の変更: ${escapeReflectMarkdown(input.targetPending.message)}`);
     lines.push("- 書き込み先はプレビューです。本番への公開はアプリの設定画面で行います。", "");
+    const candidates = input.lookupCandidates;
+    if (candidates && (candidates.candidates.length || candidates.conflicts.length)) {
+      lines.push("## 注意: 参照先変換の候補", "");
+      lines.push("- 反映元と反映先で、ルックアップ・関連レコード一覧・アクションの参照先アプリが違います。参照先変換に入れずに反映すると、反映先の参照先が反映元のアプリに書き換わります。");
+      for (const candidate of candidates.candidates) lines.push(`- 候補: ${escapeReflectMarkdown(describeLookupCandidate(candidate))}`);
+      for (const conflict of candidates.conflicts) lines.push(`- 食い違い（自動では入れません）: ${escapeReflectMarkdown(conflict.from)} → ${conflict.targets.map((target) => escapeReflectMarkdown(target.to)).join(" / ")}`);
+      lines.push("");
+    }
     lines.push("## 概要", "");
     const outcomeOf = (key) => input.outcome?.sections.find((section) => section.sectionKey === key);
     lines.push(record ? "| 項目 | 結果 | 変更 | 削除 | 反映方法 |" : "| 項目 | 状態 | 変更 | 削除 | 保持 | 反映方法 |");
@@ -6291,8 +6414,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         lines.push(`- 結果: ${outcomeLabel(outcome)}`);
         if (outcome.message) lines.push(`- 詳細: ${escapeReflectMarkdown(describeReflectFailure(outcome.message))}`);
       }
-      lines.push(`- 状態: ${escapeReflectMarkdown(entry.message || STATUS_LABELS[entry.status] || entry.status)}`);
-      for (const blocker of listOf(entry.blockers)) lines.push(`- 停止理由: ${escapeReflectMarkdown(blocker)}`);
+      lines.push(`- 状態: ${escapeReflectMarkdown(withoutApiContextLines(entry.message) || STATUS_LABELS[entry.status] || entry.status)}`);
+      for (const blocker of listOf(entry.blockers)) lines.push(`- 停止理由: ${escapeReflectMarkdown(withoutApiContextLines(blocker))}`);
       for (const warning of listOf(entry.warnings)) lines.push(`- 注意: ${escapeReflectMarkdown(warning)}`);
       for (const upload of entry.fileUploads || []) lines.push(`- アップロードするファイル: ${upload.platform === "desktop" ? "PC" : "モバイル"} ${upload.kind.toUpperCase()} / ${escapeReflectMarkdown(upload.name)}`);
       const items = [...entry.items || []].sort((a, b) => KIND_ORDER2.indexOf(a.kind) - KIND_ORDER2.indexOf(b.kind));
@@ -6541,6 +6664,276 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return out;
   }
   var REFLECT_UNDO_GUIDANCE = "取り消す場合: 反映前に反映先プレビューへ未公開の変更が無ければ、アプリの設定画面の『変更を中止』で今回の反映を含む未公開の変更をすべて破棄できます。または自動保存したバックアップJSONを『設定JSONから取得』で反映元に読み込み、差分を確認して戻せます（追加したフィールドは削除されません）。";
+
+  // src/reflect/rolloutPrecheck.ts
+  var ROLLOUT_PRECHECK_STATE_LABELS = {
+    diff: "差分あり",
+    same: "差分なし（一致）",
+    attention: "確認が必要",
+    error: "取得失敗",
+    notrun: "未実行（中止）"
+  };
+  var LABEL_LIMIT = 24;
+  var REASON_LIMIT = 160;
+  var rolloutRowKey = (target) => `${target.guestId || ""}:${target.appId}`;
+  var firstLine = (message, limit = REASON_LIMIT) => {
+    const line = withoutApiContextLines(message).split("\n").map((item) => item.trim()).find(Boolean) || "";
+    return Array.from(line).length > limit ? `${Array.from(line).slice(0, limit - 1).join("")}…` : line;
+  };
+  var unique = (values) => [...new Set(values)];
+  function summarizeRolloutPreview(target, preview, scopes, at) {
+    const entries = preview.entries.filter((entry) => scopes.includes(entry.sectionKey));
+    const fetchFailed = entries.filter((entry) => entry.status === "src-missing" || entry.status === "tgt-missing");
+    const blocked = entries.filter((entry) => entry.status === "error" || entry.blockers.length > 0 && !fetchFailed.includes(entry));
+    const issues = reflectSelectionBlockers(entries, scopes, preview.sourceFieldCodes, preview.targetFieldCodes, preview.sourceSystemFieldCodes);
+    const missing = findMissingFieldReferences(entries, scopes, preview.sourceFieldCodes, preview.targetFieldCodes, preview.sourceSystemFieldCodes);
+    const attentionLabels = unique([...blocked.map((entry) => entry.label), ...missing.map((item) => item.label)]);
+    const changed = entries.filter((entry) => entry.status === "change");
+    let state3 = changed.length ? "diff" : "same";
+    let reason = "";
+    if (attentionLabels.length || issues.length) {
+      state3 = "attention";
+      reason = firstLine(issues[0] || blocked[0]?.blockers[0] || blocked[0]?.message);
+    }
+    if (fetchFailed.length) {
+      state3 = "error";
+      reason = firstLine(fetchFailed[0].message);
+    }
+    const pending = preview.targetPending;
+    return {
+      appId: target.appId,
+      guestId: target.guestId || "",
+      name: target.name || "",
+      state: state3,
+      changedLabels: changed.map((entry) => entry.label).slice(0, LABEL_LIMIT),
+      attentionLabels: unique([...fetchFailed.map((entry) => entry.label), ...attentionLabels]).slice(0, LABEL_LIMIT),
+      changeCount: changed.reduce((sum, entry) => sum + entry.changeCount, 0),
+      removalCount: changed.reduce((sum, entry) => sum + entry.removalCount, 0),
+      pending: pending?.state || "",
+      pendingLabels: pending?.state === "pending" ? pending.sectionKeys.map(reflectSectionLabel).slice(0, LABEL_LIMIT) : [],
+      reason,
+      lookupCandidates: preview.lookupCandidates?.candidates.length || 0,
+      lookupConflicts: preview.lookupCandidates?.conflicts.length || 0,
+      at
+    };
+  }
+  function rolloutFailureRow(target, error, at) {
+    const message = error instanceof Error ? error.message : typeof error === "object" && error && "message" in error ? String(error.message) : String(error);
+    return {
+      appId: target.appId,
+      guestId: target.guestId || "",
+      name: target.name || "",
+      state: "error",
+      changedLabels: [],
+      attentionLabels: [],
+      changeCount: 0,
+      removalCount: 0,
+      pending: "",
+      pendingLabels: [],
+      reason: firstLine(message) || "設定を取得できませんでした",
+      lookupCandidates: 0,
+      lookupConflicts: 0,
+      at
+    };
+  }
+  function rolloutNotRunRow(target, at) {
+    return {
+      appId: target.appId,
+      guestId: target.guestId || "",
+      name: target.name || "",
+      state: "notrun",
+      changedLabels: [],
+      attentionLabels: [],
+      changeCount: 0,
+      removalCount: 0,
+      pending: "",
+      pendingLabels: [],
+      reason: "中止したため確認していません",
+      lookupCandidates: 0,
+      lookupConflicts: 0,
+      at
+    };
+  }
+  async function runRolloutPrecheck(targets, check, options = {}) {
+    const now = options.now ?? Date.now;
+    const rows = new Array(targets.length).fill(void 0);
+    let next = 0, done = 0, cancelled = false;
+    const finish = (index, row) => {
+      rows[index] = row;
+      done += 1;
+      try {
+        options.onProgress?.(done, targets.length, row);
+      } catch {
+      }
+    };
+    const worker = async () => {
+      while (next < targets.length) {
+        const index = next++;
+        const target = targets[index];
+        if (cancelled || options.isCancelled?.()) {
+          cancelled = true;
+          finish(index, rolloutNotRunRow(target, now()));
+          continue;
+        }
+        try {
+          finish(index, await check(target, index));
+        } catch (error) {
+          if (isRunCancelledError(error)) {
+            cancelled = true;
+            finish(index, rolloutNotRunRow(target, now()));
+          } else finish(index, rolloutFailureRow(target, error, now()));
+        }
+      }
+    };
+    const width = Math.max(1, Math.min(Math.floor(options.concurrency ?? 3), targets.length || 1));
+    await Promise.all(Array.from({ length: width }, worker));
+    return rows;
+  }
+  function countRolloutPrecheck(rows) {
+    const counts = { total: rows.length, diff: 0, same: 0, attention: 0, error: 0, notrun: 0, withPending: 0, withLookupCandidates: 0 };
+    for (const row of rows) {
+      counts[row.state] += 1;
+      if (row.pending === "pending") counts.withPending += 1;
+      if (row.lookupCandidates + row.lookupConflicts > 0) counts.withLookupCandidates += 1;
+    }
+    return counts;
+  }
+  function filterRolloutPrecheckRows(rows, filter) {
+    return filter === "all" ? [...rows] : rows.filter((row) => row.state === filter);
+  }
+  function mergeRolloutPrecheckRows(previous, updates) {
+    const byKey = new Map(updates.map((row) => [rolloutRowKey(row), row]));
+    const seen = /* @__PURE__ */ new Set();
+    const merged = previous.map((row) => {
+      const key = rolloutRowKey(row);
+      seen.add(key);
+      return byKey.get(key) ?? row;
+    });
+    for (const row of updates) if (!seen.has(rolloutRowKey(row))) merged.push(row);
+    return merged;
+  }
+  function selectRolloutPrecheckRows(rows, targets) {
+    const byKey = new Map(rows.map((row) => [rolloutRowKey(row), row]));
+    const found = [], unchecked = [];
+    for (const target of targets) {
+      const row = byKey.get(rolloutRowKey(target));
+      if (row) found.push(row);
+      else unchecked.push(target);
+    }
+    return { rows: found, unchecked };
+  }
+  function dropSameRolloutTargets(targets, rows) {
+    const same2 = new Set(rows.filter((row) => row.state === "same").map(rolloutRowKey));
+    const kept = [], removed = [];
+    for (const target of targets) (same2.has(rolloutRowKey(target)) ? removed : kept).push(target);
+    return { kept, removed };
+  }
+  function rolloutRetryTargets(rows) {
+    return rows.filter((row) => row.state === "error" || row.state === "notrun").map((row) => ({ appId: row.appId, guestId: row.guestId }));
+  }
+  function describeRolloutPrecheckSummary(counts) {
+    const parts = [`差分あり ${counts.diff}`, `差分なし ${counts.same}`];
+    if (counts.attention) parts.push(`確認が必要 ${counts.attention}`);
+    if (counts.error) parts.push(`取得失敗 ${counts.error}`);
+    if (counts.notrun) parts.push(`未実行（中止） ${counts.notrun}`);
+    return `${counts.total} 件を確認しました（${parts.join(" / ")}）。`;
+  }
+  function formatRolloutPrecheckTarget(row) {
+    return `#${row.appId}${row.guestId ? `（ゲスト ${row.guestId}）` : ""}${row.name ? ` ${row.name}` : ""}`;
+  }
+  function describeRolloutPrecheckPending(row) {
+    if (row.pending === "pending") return `あり${row.pendingLabels.length ? `（${row.pendingLabels.join("、")}）` : ""}`;
+    if (row.pending === "clean") return "なし";
+    if (row.pending === "own") return "このツールの反映分だけ";
+    if (row.pending === "unknown") return "確認できない";
+    return "－";
+  }
+  var ENVIRONMENT_LABELS2 = { production: "本番設定", preview: "プレビュー設定", json: "設定JSON" };
+  var cell2 = (value) => escapeReflectMarkdown(value) || "－";
+  function buildRolloutPrecheckMarkdown(input) {
+    const counts = countRolloutPrecheck(input.rows);
+    const lines = [];
+    lines.push("# プレビュー反映 一括事前確認", "");
+    const stamp = new Date(input.generatedAt);
+    lines.push(`- 作成日時: ${escapeReflectMarkdown(Number.isNaN(stamp.getTime()) ? input.generatedAt : stamp.toLocaleString("ja-JP", { hour12: false }))}`);
+    const sourceParts = [`App ${input.source.appId || "－"}`, input.source.guestId ? `ゲストスペース ${input.source.guestId}` : "通常スペース", ENVIRONMENT_LABELS2[input.sourceEnvironment] || input.sourceEnvironment];
+    lines.push(`- 反映元: ${escapeReflectMarkdown(input.source.name || "（名前なし）")}（${sourceParts.map(escapeReflectMarkdown).join(" / ")}）`);
+    lines.push(`- 反映する項目: ${input.scopes.map((key) => escapeReflectMarkdown(reflectSectionLabel(key))).join("、") || "－"}`);
+    lines.push(`- 反映先だけの一覧・グラフ・アクション: ${input.preserveTargetOnly ? "保持する" : "削除する"}`);
+    const lookupPairs = Object.entries(input.lookupMap || {});
+    if (lookupPairs.length) lines.push(`- 参照先変換: ${lookupPairs.slice(0, 30).map(([from, to]) => `${escapeReflectMarkdown(from)} → ${escapeReflectMarkdown(to)}`).join("、")}${lookupPairs.length > 30 ? ` ほか ${lookupPairs.length - 30} 件` : ""}`);
+    if (input.uncheckedCount) lines.push(`- 確認していない反映先: ${input.uncheckedCount} 件`);
+    lines.push("- 読み取りだけの確認です。反映先のプレビューにも書き込んでいません。反映先ごとの差分確認と最終確認は、反映のときに行います。", "");
+    lines.push("## 概要", "");
+    lines.push("| 状態 | 反映先の数 |", "| --- | ---: |");
+    for (const state3 of ["diff", "same", "attention", "error", "notrun"]) lines.push(`| ${ROLLOUT_PRECHECK_STATE_LABELS[state3]} | ${counts[state3]} |`);
+    lines.push(`| 合計 | ${counts.total} |`, "");
+    if (counts.withPending) lines.push(`- 以前からの未公開の変更がある反映先: ${counts.withPending} 件`);
+    if (counts.withLookupCandidates) lines.push(`- 参照先変換の候補がある反映先: ${counts.withLookupCandidates} 件（反映元と反映先で、ルックアップなどの参照先アプリが違います。参照先変換を確認してください）`);
+    if (counts.withPending || counts.withLookupCandidates) lines.push("");
+    lines.push("## 反映先ごとの結果", "");
+    lines.push("| 反映先 | アプリ名 | 状態 | 差分のある項目 | 変更 | 削除 | 未公開の変更 | 補足 |");
+    lines.push("| --- | --- | --- | --- | ---: | ---: | --- | --- |");
+    for (const row of input.rows) {
+      const notes = [row.reason, row.attentionLabels.length && row.state === "attention" ? `対象: ${row.attentionLabels.join("、")}` : "", row.lookupCandidates + row.lookupConflicts ? "参照先変換の候補あり" : ""].filter(Boolean).join(" / ");
+      lines.push(`| ${cell2(`#${row.appId}${row.guestId ? `（ゲスト ${row.guestId}）` : ""}`)} | ${cell2(row.name)} | ${cell2(ROLLOUT_PRECHECK_STATE_LABELS[row.state])} | ${cell2(row.changedLabels.join("、"))} | ${row.changeCount} | ${row.removalCount} | ${cell2(describeRolloutPrecheckPending(row))} | ${cell2(notes)} |`);
+    }
+    lines.push("");
+    if (input.removed?.length) {
+      lines.push(`## 差分がないため続けて反映から外した反映先（${input.removed.length} 件）`, "");
+      lines.push(input.removed.map((row) => escapeReflectMarkdown(formatRolloutPrecheckTarget(row))).join("、"), "");
+    }
+    return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+  }
+
+  // src/tabs/reflect-rollout-standalone.ts
+  function createRecentFileDownloader(download = downloadCustomizeFile, limit = 24) {
+    const cache = /* @__PURE__ */ new Map();
+    return (guestId, fileKey) => {
+      const key = `${guestId}|${fileKey}`;
+      const hit = cache.get(key);
+      if (hit) {
+        cache.delete(key);
+        cache.set(key, hit);
+        return hit;
+      }
+      const request = download(guestId, fileKey);
+      cache.set(key, request);
+      request.catch(() => {
+        if (cache.get(key) === request) cache.delete(key);
+      });
+      while (cache.size > limit) cache.delete(cache.keys().next().value);
+      return request;
+    };
+  }
+  async function precheckRolloutTargetsStandalone(params) {
+    const { options, targets } = params;
+    if (!targets.length) return [];
+    const download = createRecentFileDownloader();
+    let source;
+    try {
+      source = await prepareReflectSourceStandalone({ ...options, targetAppId: "" }, () => {
+      }, download);
+    } catch (error) {
+      if (!isRunCancelledError(error)) throw error;
+      const now = Date.now();
+      return targets.map((target) => rolloutNotRunRow(target, now));
+    }
+    const check = async (target) => {
+      let name = "";
+      try {
+        name = (await resolveReflectTargetStandalone({ targetAppId: target.appId, targetGuestId: target.guestId })).name;
+        const preview = await previewReflectStandalone({ ...options, targetAppId: target.appId, targetGuestId: target.guestId }, () => {
+        }, { source });
+        preview.targetPending = reconcileOwnPendingChanges(preview.targetPending, params.lastWrite, { appId: target.appId, guestId: target.guestId || "" });
+        return summarizeRolloutPreview({ ...target, name }, preview, options.scopes, Date.now());
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        return rolloutFailureRow({ ...target, name }, error, Date.now());
+      }
+    };
+    return runRolloutPrecheck(targets, check, { concurrency: params.concurrency, onProgress: params.onProgress, isCancelled: isCancelRequested });
+  }
 
   // src/reflect/applyProgress.ts
   function describeApplyProgressStatus(status, stopped = false) {
@@ -6817,11 +7210,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         grid.className = "kus-rl-change__values";
         for (const [label, raw] of [["反映先の現在", change.before], ["反映後", change.after]]) {
           const value = formatReflectChangeValue(raw);
-          const cell2 = document.createElement("div"), caption = document.createElement("span"), content = document.createElement("pre");
+          const cell3 = document.createElement("div"), caption = document.createElement("span"), content = document.createElement("pre");
           caption.textContent = label;
           content.textContent = value.length > 1600 ? value.slice(0, 1600) + "\n…（全内容は計画JSONで確認できます）" : value;
-          cell2.append(caption, content);
-          grid.appendChild(cell2);
+          cell3.append(caption, content);
+          grid.appendChild(cell3);
         }
         row.appendChild(grid);
         list2.appendChild(row);
@@ -6890,7 +7283,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const tr = document.createElement("tr");
       tr.setAttribute("role", "row");
       tr.dataset.reflectSummary = entry.sectionKey;
-      const cell2 = (kind, label) => {
+      const cell3 = (kind, label) => {
         const td = document.createElement("td");
         td.setAttribute("role", "cell");
         td.className = `kus-rl-summary__${kind}`;
@@ -6903,21 +7296,21 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       nameButton.className = "kus-rl-summary__link";
       nameButton.textContent = entry.label;
       nameButton.title = `${entry.label}の詳細へ移動`;
-      cell2("name", "項目").appendChild(nameButton);
+      cell3("name", "項目").appendChild(nameButton);
       const pill = document.createElement("span");
       pill.className = `kus-rl-pill kus-rl-pill--${SUMMARY_STATUS[tone].pill}`;
       pill.textContent = SUMMARY_STATUS[tone].text;
-      cell2("status", "状態").appendChild(pill);
+      cell3("status", "状態").appendChild(pill);
       const kept = Math.max(0, entry.changes.length - entry.changeCount);
-      cell2("num", "変更").textContent = computed ? String(entry.changeCount) : "－";
-      cell2("num", "削除").textContent = computed ? String(entry.removalCount) : "－";
-      cell2("num", "保持").textContent = computed ? String(kept) : "－";
-      cell2("how", "反映方法").textContent = computed ? entry.behavior : "－";
+      cell3("num", "変更").textContent = computed ? String(entry.changeCount) : "－";
+      cell3("num", "削除").textContent = computed ? String(entry.removalCount) : "－";
+      cell3("num", "保持").textContent = computed ? String(kept) : "－";
+      cell3("how", "反映方法").textContent = computed ? entry.behavior : "－";
       const selected = options.selectedScopes.has(entry.sectionKey);
       const mark = document.createElement("span");
       mark.className = "kus-rl-preview-mini";
       mark.textContent = selected ? "選択中" : "未選択";
-      cell2("sel", "選択").appendChild(mark);
+      cell3("sel", "選択").appendChild(mark);
       tr.addEventListener("click", () => options.onNavigate(entry.sectionKey));
       tbody.appendChild(tr);
     }
@@ -7171,13 +7564,26 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     };
   }
 
+  // src/entries/deployMemory.ts
+  var HOLDER_KEY = "__kusDeployLiteMemory";
+  function sharedMemory(name, initial) {
+    const holder = document.documentElement;
+    const store = holder[HOLDER_KEY] || (holder[HOLDER_KEY] = {});
+    const existing = store[name];
+    if (existing && typeof existing === "object") {
+      for (const key of Object.keys(initial)) if (!(key in existing)) existing[key] = initial[key];
+      return { state: existing, restored: true };
+    }
+    store[name] = initial;
+    return { state: initial, restored: false };
+  }
+
   // src/entries/reflect-lite-ui.ts
   var REFLECT_PRESET_LIMIT = 30;
   var STALE_RESULT_NOTICE = "直近の反映結果は現在の対象と異なるため表示していません。対象を戻すと表示されます。";
+  var LOOKUP_CANDIDATES_REASON = "参照先変換に入れていない、参照先アプリの違いがあります（反映元の参照先アプリが、そのまま反映先に書き込まれます）";
   var RESTORE_FIELD_SETTINGS_NOTE = "バックアップから戻している間はフィールド設定を追加できません。この項目を対象から外してください。";
-  var memoryState = {
-    presets: []
-  };
+  var memoryState = sharedMemory("reflect", { presets: [] }).state;
   var SCOPE_QUICK_PRESETS = [
     { id: "all", label: "すべての項目", hint: "反映できる項目をすべて選びます" },
     {
@@ -7427,6 +7833,25 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 #kus-reflect-lite .kus-rl-rollout-item--pending{border-color:#fde68a;background:#fffbeb}
 #kus-reflect-lite .kus-rl-rollout-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px}
 #kus-reflect-lite .kus-rl-rollout-card .kus-rl-next[hidden]{display:none}
+#kus-reflect-lite .kus-rl-precheck__note{margin-top:8px;font-size:13px;line-height:1.5;color:#475569;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-precheck__note--warn{color:#9a3412;font-weight:600}
+#kus-reflect-lite .kus-rl-precheck__tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0 0}
+#kus-reflect-lite .kus-rl-precheck__tools .kus-lp__select{min-width:0;max-width:100%}
+#kus-reflect-lite .kus-rl-precheck__list{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+#kus-reflect-lite .kus-rl-precheck--stale .kus-rl-precheck__list{opacity:.6}
+#kus-reflect-lite .kus-rl-precheck-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-precheck-item--diff{border-color:#fdba74;background:#fffaf0}
+#kus-reflect-lite .kus-rl-precheck-item--same{border-color:#bbf7d0;background:#f0fdf4}
+#kus-reflect-lite .kus-rl-precheck-item--error{border-color:#fca5a5;background:#fff5f5}
+#kus-reflect-lite .kus-rl-precheck-item--attention{border-color:#fde68a;background:#fffbeb}
+#kus-reflect-lite .kus-rl-precheck-item--notrun{border-color:#cbd5e1;background:#f8fafc}
+#kus-reflect-lite .kus-rl-precheck-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px}
+#kus-reflect-lite .kus-rl-precheck-item__meta{margin-top:4px;font-size:13px;line-height:1.5;color:#475569}
+#kus-reflect-lite .kus-rl-precheck-item__actions{margin-top:6px}
+#kus-reflect-lite .kus-rl-pill--attention{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+#kus-reflect-lite .kus-rl-candidates{margin-bottom:0}
+#kus-reflect-lite .kus-rl-candidates .kus-rl-issues{margin:6px 0}
+#kus-reflect-lite .kus-rl-candidates .kus-lp__btn{margin-top:4px}
 @media(max-width:760px){
   #kus-reflect-lite .kus-rl-summary__table,#kus-reflect-lite .kus-rl-summary__table tbody{display:block}
   #kus-reflect-lite .kus-rl-summary__table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
@@ -7512,6 +7937,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   #kus-reflect-lite .kus-rl-confirm-route{gap:4px;margin-bottom:8px}
   #kus-reflect-lite .kus-rl-confirm-route>div{padding:6px 10px}
   #kus-reflect-lite .kus-rl-confirm-route span{display:inline;margin:0 8px 0 0;font-size:12px}
+  /* 最終確認では、書き込み先（反映先）を先頭に置き、段階の見出しと重なるカードの見出しは読み上げ専用にして、書き込み先がスクロールなしで見えるようにする。 */
+  #kus-reflect-lite .kus-rl-stage[data-stage="confirm"] .kus-lp__card>.kus-lp__card-head{position:absolute;width:1px;height:1px;margin:0;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  #kus-reflect-lite .kus-rl-confirm-route>div:last-child{order:-1}
   #kus-reflect-lite .kus-rl-stage-head{margin:0 2px 8px}
   #kus-reflect-lite .kus-rl-stage-head h2{font-size:15px}
   #kus-reflect-lite .kus-rl-action-dock{padding:5px 12px 6px}
@@ -8486,6 +8914,355 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       refreshReviewCard();
       return startPreview(`次の反映先 ${formatRolloutTarget(next)} の差分を取得しました。内容を確認してから反映してください（まだ書き込んでいません）。`);
     }
+    const PRECHECK_PAGE = 50;
+    const precheckCard = makeCard({ title: "全反映先の事前確認", soft: true });
+    precheckCard.card.classList.add("kus-rl-precheck");
+    precheckCard.card.dataset.precheck = "card";
+    precheckCard.card.style.display = "none";
+    precheckCard.body.appendChild(makeNote("現在の反映先と、続けて反映する反映先のすべてについて、差分を書き込まずに先に取得して一覧にします。反映先ごとの差分確認と最終確認は、反映のときに今までどおり行います。", "help"));
+    const precheckRunBtn = makeButton("全反映先の差分を一括確認", "primary");
+    precheckRunBtn.dataset.precheckRun = "all";
+    const precheckRunRow = document.createElement("div");
+    precheckRunRow.className = "kus-lp__btn-row";
+    precheckRunRow.appendChild(precheckRunBtn);
+    const precheckNote = document.createElement("div");
+    precheckNote.className = "kus-rl-precheck__note";
+    precheckNote.dataset.precheckNote = "true";
+    precheckNote.setAttribute("aria-live", "polite");
+    const precheckStaleNote = document.createElement("p");
+    precheckStaleNote.className = "kus-rl-next kus-rl-next--warn";
+    precheckStaleNote.dataset.precheckStale = "true";
+    precheckStaleNote.textContent = "反映元・項目・保持の設定・参照先変換のいずれかが変わったため、この結果は古くなっています。もう一度「全反映先を確認し直す」を押してください。";
+    precheckStaleNote.hidden = true;
+    const precheckResult = document.createElement("div");
+    precheckResult.dataset.precheckResult = "true";
+    const precheckPills = document.createElement("div");
+    precheckPills.className = "kus-rl-preview-summary";
+    precheckPills.dataset.precheckSummary = "true";
+    const precheckFilterSelect = document.createElement("select");
+    precheckFilterSelect.className = "kus-lp__select";
+    precheckFilterSelect.setAttribute("aria-label", "一括確認の結果を状態で絞り込み");
+    const precheckDropBtn = makeButton("差分のない反映先を外す", "sub");
+    precheckDropBtn.dataset.precheckDrop = "true";
+    precheckDropBtn.title = "差分なし（一致）と確認できた反映先を、続けて反映する反映先から外します（kintone には何も書き込みません）";
+    const precheckRetryBtn = makeButton("取得失敗だけ確認し直す", "sub");
+    precheckRetryBtn.dataset.precheckRetry = "true";
+    const precheckTools = document.createElement("div");
+    precheckTools.className = "kus-rl-precheck__tools";
+    precheckTools.append(precheckFilterSelect, precheckDropBtn, precheckRetryBtn);
+    const precheckList = document.createElement("ul");
+    precheckList.className = "kus-rl-precheck__list";
+    precheckList.dataset.precheckList = "true";
+    const precheckMoreBtn = makeButton("さらに表示", "sub");
+    precheckMoreBtn.dataset.precheckMore = "true";
+    const precheckShare = makeDetails("事前確認の結果を記録する");
+    const precheckSaveMdBtn = makeButton("事前確認をMarkdownで保存", "sub");
+    const precheckCopyMdBtn = makeButton("事前確認のMarkdownをコピー", "sub");
+    precheckShare.body.appendChild(makeRow([precheckSaveMdBtn, precheckCopyMdBtn]));
+    precheckShare.body.appendChild(makeNote("承認依頼や作業記録に貼れる形式です。設定値の生JSONは含みません。", "help"));
+    precheckResult.append(precheckPills, precheckTools, precheckList, precheckMoreBtn, precheckShare.details);
+    precheckCard.body.append(precheckRunRow, precheckNote, precheckStaleNote, precheckResult);
+    let precheckFilter = "all";
+    let precheckShown = PRECHECK_PAGE;
+    let precheckVersion = 0;
+    let precheckRenderKey = "";
+    function precheckTargets() {
+      const queue = currentRollout();
+      if ("error" in queue) return { ok: false, error: `続けて反映する反映先を読み取れません。${queue.error}` };
+      const appId = tgtApp.value.trim(), guestId = tgtGuest.value.trim();
+      const current = appId && isLookupableReflectApp(appId, guestId) ? [{ appId, guestId }] : [];
+      return { ok: true, targets: [...current, ...queue.targets] };
+    }
+    function precheckConditionKey() {
+      const lookup = parseLookupMapText(lookupTa.value);
+      return JSON.stringify({
+        source: sourceMode === "json" ? ["json", sourceBundleToken, String(sourceBundleFromJson?.appId || "")] : ["app", srcApp.value.trim(), srcGuest.value.trim(), sourceEnvironment.value],
+        scopes: [...collectSelectedScopes()].sort(),
+        preserve: preserve.checkbox.checked,
+        lookup: lookup.ok ? Object.entries(lookup.value).sort() : lookupTa.value.trim()
+      });
+    }
+    function precheckBlocker(targets) {
+      const first = targets[0];
+      return describeReflectSetupBlocker({
+        connectionError: first ? reflectConnectionError({ ...currentOptions(), targetAppId: first.appId, targetGuestId: first.guestId }) : "",
+        sourceMode,
+        hasSourceBundle: !!sourceBundleFromJson,
+        scopeCount: collectSelectedScopes().length,
+        lookupError: lookupMapError(parseLookupMapText(lookupTa.value))
+      });
+    }
+    const PRECHECK_PILL_CLASS = { diff: "change", same: "same", attention: "attention", error: "error", notrun: "" };
+    const PRECHECK_ICON = { diff: "△", same: "✓", attention: "！", error: "✕", notrun: "－" };
+    function renderPrecheckItem(row, isCurrent) {
+      const item = document.createElement("li");
+      item.className = `kus-rl-precheck-item kus-rl-precheck-item--${row.state}`;
+      item.dataset.precheckRow = `${row.guestId ? `${row.guestId}:` : ""}${row.appId}`;
+      item.dataset.state = row.state;
+      const head = document.createElement("div");
+      head.className = "kus-rl-precheck-item__head";
+      const pill = document.createElement("span");
+      pill.className = `kus-rl-pill${PRECHECK_PILL_CLASS[row.state] ? ` kus-rl-pill--${PRECHECK_PILL_CLASS[row.state]}` : ""}`;
+      const icon = document.createElement("span");
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = PRECHECK_ICON[row.state];
+      pill.append(icon, document.createTextNode(ROLLOUT_PRECHECK_STATE_LABELS[row.state]));
+      const name = document.createElement("strong");
+      name.textContent = formatRolloutPrecheckTarget(row);
+      head.append(pill, name);
+      if (isCurrent) {
+        const badge = document.createElement("span");
+        badge.className = "kus-rl-preview-mini";
+        badge.textContent = "現在の反映先";
+        head.appendChild(badge);
+      }
+      const meta = document.createElement("div");
+      meta.className = "kus-rl-precheck-item__meta";
+      const lines = [];
+      if (row.state === "diff") lines.push(`差分のある項目: ${row.changedLabels.join("、")}（変更 ${row.changeCount} 件 / 削除 ${row.removalCount} 件）`);
+      else if (row.state === "same") lines.push("選んだ項目は反映元と一致しています。");
+      else if (row.state === "attention") {
+        lines.push(`確認が必要な項目: ${row.attentionLabels.join("、")}${row.reason ? `（${row.reason}）` : ""}`);
+        if (row.changedLabels.length) lines.push(`差分のある項目: ${row.changedLabels.join("、")}`);
+      } else if (row.state === "error") lines.push(`${row.reason}${row.attentionLabels.length ? `（対象: ${row.attentionLabels.join("、")}）` : ""}`);
+      else lines.push(row.reason);
+      if (row.pending) lines.push(`反映先プレビューの未公開の変更: ${describeRolloutPrecheckPending(row)}`);
+      if (row.lookupCandidates + row.lookupConflicts > 0) lines.push("参照先変換の候補があります（反映元と反映先で、ルックアップなどの参照先アプリが違います）。");
+      for (const text of lines) {
+        const line = document.createElement("div");
+        line.textContent = text;
+        meta.appendChild(line);
+      }
+      const actions = document.createElement("div");
+      actions.className = "kus-rl-precheck-item__actions";
+      const open = makeButton("この反映先の差分を確認", "sub");
+      open.dataset.precheckOpen = item.dataset.precheckRow;
+      open.setAttribute("aria-label", `反映先 ${formatRolloutPrecheckTarget(row)} の差分を確認`);
+      open.disabled = busy || !!restoreMode;
+      open.addEventListener("click", () => {
+        openPrecheckTarget(row);
+      });
+      actions.appendChild(open);
+      item.append(head, meta, actions);
+      return item;
+    }
+    function renderPrecheck() {
+      const info = precheckTargets();
+      const targets = info.ok ? info.targets : [];
+      const stored = memoryState.rolloutPrecheck || null;
+      const selection = stored ? selectRolloutPrecheckRows(stored.rows, targets) : { rows: [], unchecked: targets };
+      const show = !restoreMode && (info.ok ? targets.length >= 2 || selection.rows.length > 1 : rolloutTa.value.trim() !== "");
+      precheckCard.card.style.display = show ? "block" : "none";
+      if (!show) {
+        precheckRenderKey = "";
+        return;
+      }
+      const stale = !!stored && stored.key !== precheckConditionKey();
+      const blocker = "error" in info ? info.error : precheckBlocker(targets);
+      const key = [precheckVersion, stale, precheckFilter, precheckShown, busy, blocker, targets.length, targets[0] ? rolloutRowKey(targets[0]) : "", selection.rows.length, selection.unchecked.length, stored?.removed.length || 0].join("|");
+      if (key === precheckRenderKey) return;
+      precheckRenderKey = key;
+      const counts = countRolloutPrecheck(selection.rows);
+      precheckCard.card.classList.toggle("kus-rl-precheck--stale", stale);
+      setButtonText(precheckRunBtn, selection.rows.length ? "全反映先を確認し直す" : "全反映先の差分を一括確認");
+      precheckRunBtn.disabled = busy || !!blocker;
+      precheckStaleNote.hidden = !(stale && selection.rows.length > 0);
+      const notes = [];
+      if (blocker) notes.push(`一括確認するには：${blocker}`);
+      else if (!selection.rows.length) notes.push(`現在の反映先と続けて反映する反映先、合わせて ${targets.length} 件の差分を先に取得します。書き込みは行いません。`);
+      else {
+        notes.push(describeRolloutPrecheckSummary(counts));
+        if (selection.unchecked.length) notes.push(`未確認の反映先が ${selection.unchecked.length} 件あります（「全反映先を確認し直す」で含まれます）。`);
+        if (counts.withPending) notes.push(`${counts.withPending} 件の反映先プレビューに、以前からの未公開の変更があります。`);
+      }
+      precheckNote.textContent = notes.join(" ");
+      precheckNote.classList.toggle("kus-rl-precheck__note--warn", !!blocker);
+      precheckResult.hidden = !selection.rows.length;
+      if (!selection.rows.length) return;
+      precheckPills.replaceChildren();
+      for (const [state3, count] of [["diff", counts.diff], ["same", counts.same], ["attention", counts.attention], ["error", counts.error], ["notrun", counts.notrun]]) {
+        if (!count && state3 !== "diff" && state3 !== "same") continue;
+        const pill = document.createElement("span");
+        pill.className = `kus-rl-pill${PRECHECK_PILL_CLASS[state3] ? ` kus-rl-pill--${PRECHECK_PILL_CLASS[state3]}` : ""}`;
+        pill.textContent = `${ROLLOUT_PRECHECK_STATE_LABELS[state3]} ${count}`;
+        precheckPills.appendChild(pill);
+      }
+      const total = document.createElement("span");
+      total.className = "kus-rl-pill";
+      total.textContent = `${counts.total} 件`;
+      precheckPills.appendChild(total);
+      if (precheckFilter !== "all" && !counts[precheckFilter]) precheckFilter = "all";
+      precheckFilterSelect.replaceChildren(...[["all", `すべての状態（${counts.total}）`], ...["diff", "same", "attention", "error", "notrun"].filter((state3) => counts[state3]).map((state3) => [state3, `${ROLLOUT_PRECHECK_STATE_LABELS[state3]}（${counts[state3]}）`])].map(([value, label]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        return option;
+      }));
+      precheckFilterSelect.value = precheckFilter;
+      const queueNow = currentRollout();
+      const droppable = queueNow.ok ? dropSameRolloutTargets(queueNow.targets, selection.rows).removed.length : 0;
+      const retryable = rolloutRetryTargets(selection.rows).length;
+      precheckDropBtn.disabled = busy || stale || !droppable;
+      setButtonText(precheckDropBtn, `差分のない反映先を外す（${droppable} 件）`);
+      precheckRetryBtn.disabled = busy || stale || !retryable || !!blocker;
+      setButtonText(precheckRetryBtn, `${counts.notrun ? "取得失敗・未実行" : "取得失敗"}だけ確認し直す（${retryable} 件）`);
+      precheckSaveMdBtn.disabled = busy || stale;
+      precheckCopyMdBtn.disabled = busy || stale;
+      const visible = filterRolloutPrecheckRows(selection.rows, precheckFilter);
+      const shown = visible.slice(0, precheckShown);
+      const currentKey = targets[0] ? rolloutRowKey(targets[0]) : "";
+      precheckList.replaceChildren(...shown.map((row) => renderPrecheckItem(row, rolloutRowKey(row) === currentKey)));
+      const rest = visible.length - shown.length;
+      precheckMoreBtn.hidden = rest <= 0;
+      precheckMoreBtn.disabled = busy;
+      setButtonText(precheckMoreBtn, `さらに ${Math.min(PRECHECK_PAGE, rest)} 件を表示（残り ${rest} 件）`);
+    }
+    precheckFilterSelect.addEventListener("change", () => {
+      precheckFilter = precheckFilterSelect.value;
+      precheckShown = PRECHECK_PAGE;
+      precheckVersion += 1;
+      renderPrecheck();
+    });
+    precheckMoreBtn.addEventListener("click", () => {
+      precheckShown += PRECHECK_PAGE;
+      renderPrecheck();
+    });
+    precheckRunBtn.addEventListener("click", () => {
+      startPrecheck("all");
+    });
+    precheckRetryBtn.addEventListener("click", () => {
+      startPrecheck("retry");
+    });
+    precheckDropBtn.addEventListener("click", () => {
+      dropSamePrecheckTargets();
+    });
+    function startPrecheck(mode) {
+      if (busy || restoreMode) return;
+      const info = precheckTargets();
+      if ("error" in info) {
+        panel.setStatus(info.error, "warn");
+        return;
+      }
+      const blocker = precheckBlocker(info.targets);
+      if (blocker) {
+        panel.setStatus(`一括確認できません。${blocker}`, "warn");
+        return;
+      }
+      const key = precheckConditionKey();
+      const stored = memoryState.rolloutPrecheck;
+      const reuse = mode === "retry" && !!stored && stored.key === key ? stored : null;
+      const targets = reuse ? rolloutRetryTargets(selectRolloutPrecheckRows(reuse.rows, info.targets).rows) : info.targets;
+      if (!targets.length) {
+        panel.setStatus("確認し直す反映先はありません。", "info");
+        return;
+      }
+      const { targetAppId: _targetAppId, targetGuestId: _targetGuestId, ...options } = currentOptions();
+      return runLite(`全反映先の差分を確認中… 0/${targets.length} 件`, async () => {
+        const rows = await precheckRolloutTargetsStandalone({
+          options,
+          targets,
+          lastWrite: memoryState.lastWrite,
+          onProgress: (done, total) => panel.setStatus(`全反映先の差分を確認中… ${done}/${total} 件`, "busy")
+        });
+        memoryState.rolloutPrecheck = { key, rows: mergeRolloutPrecheckRows(reuse ? reuse.rows : [], rows), removed: reuse ? reuse.removed : [], at: Date.now() };
+        precheckVersion += 1;
+        precheckShown = PRECHECK_PAGE;
+        const all = countRolloutPrecheck(selectRolloutPrecheckRows(memoryState.rolloutPrecheck.rows, info.targets).rows);
+        const prefix = reuse ? `${rows.length} 件を確認し直しました。` : "";
+        if (all.notrun) panel.setStatus(`中止しました（${all.total - all.notrun}/${all.total} 件を確認、${all.notrun} 件は未実行（中止））。確認できた分の結果は一覧にあります。書き込みは行っていません。`, "warn");
+        else if (all.error || all.attention) panel.setStatus(`${prefix}${describeRolloutPrecheckSummary(all)}取得失敗・確認が必要な反映先を確認してください（まだ書き込んでいません）。`, "warn");
+        else panel.setStatus(`${prefix}${describeRolloutPrecheckSummary(all)}反映先ごとの差分確認は、反映のときに行います（まだ書き込んでいません）。`, "ok");
+      }).then(() => {
+        scrollWithinCanvas(precheckCard.card);
+      });
+    }
+    function dropSamePrecheckTargets() {
+      const stored = memoryState.rolloutPrecheck;
+      if (busy || restoreMode || !stored || stored.key !== precheckConditionKey()) return;
+      const queue = currentRollout();
+      if (!queue.ok) return;
+      const selection = selectRolloutPrecheckRows(stored.rows, queue.targets);
+      const { kept, removed } = dropSameRolloutTargets(queue.targets, selection.rows);
+      if (!removed.length) {
+        panel.setStatus("続けて反映する反映先に、差分のない反映先はありません。", "info");
+        return;
+      }
+      const removedKeys = new Set(removed.map(rolloutRowKey));
+      const removedRows = selection.rows.filter((row) => removedKeys.has(rolloutRowKey(row)));
+      stored.removed = mergeRolloutPrecheckRows(stored.removed, removedRows);
+      rolloutTa.value = serializeRolloutQueue(kept);
+      precheckVersion += 1;
+      saveState();
+      refreshReviewCard();
+      const current = precheckTargets();
+      const currentRow = current.ok && current.targets[0] ? selectRolloutPrecheckRows(stored.rows, [current.targets[0]]).rows[0] : void 0;
+      panel.setStatus(`差分のない反映先 ${removed.length} 件を、続けて反映する反映先から外しました（残り ${kept.length} 件）。${currentRow?.state === "same" ? `現在の反映先 ${formatRolloutTarget(currentRow)} にも差分はありませんが、現在の反映先は外していません。` : ""}`, "ok");
+    }
+    function openPrecheckTarget(row) {
+      if (busy || restoreMode) return;
+      const picked = { appId: row.appId, guestId: row.guestId };
+      const appId = tgtApp.value.trim(), guestId = tgtGuest.value.trim();
+      if (!(appId === picked.appId && guestId === picked.guestId)) {
+        const queue = currentRollout();
+        if ("error" in queue) {
+          panel.setStatus(`続けて反映する反映先を読み取れません。${queue.error}`, "warn");
+          return;
+        }
+        const blocker = describeReflectSetupBlocker({
+          connectionError: reflectConnectionError({ ...currentOptions(), targetAppId: picked.appId, targetGuestId: picked.guestId }),
+          sourceMode,
+          hasSourceBundle: !!sourceBundleFromJson,
+          scopeCount: collectSelectedScopes().length,
+          lookupError: lookupMapError(parseLookupMapText(lookupTa.value))
+        });
+        if (blocker) {
+          panel.setStatus(`反映先 ${formatRolloutTarget(picked)} へ進めません。${blocker}`, "warn");
+          return;
+        }
+        const current = appId && isLookupableReflectApp(appId, guestId) ? { appId, guestId } : null;
+        const done = !!current && (memoryState.rolloutKey === rolloutConditionKey() ? memoryState.rolloutLog || [] : []).some((entry) => rolloutRowKey(entry) === rolloutRowKey(current) && entry.ng === 0 && entry.pending === 0 && !(entry.stopped || 0) && !entry.cancelled);
+        const rest = queue.targets.flatMap((target) => rolloutRowKey(target) === rolloutRowKey(picked) ? current && !done ? [current] : [] : [target]);
+        tgtApp.value = picked.appId;
+        tgtGuest.value = picked.guestId;
+        rolloutTa.value = serializeRolloutQueue(rest);
+        saveState();
+        refreshSameConnBanner();
+        refreshReviewCard();
+      }
+      return startPreview(`反映先 ${formatRolloutTarget(picked)} の差分を取得しました。内容を確認してから反映してください（まだ書き込んでいません）。`);
+    }
+    function precheckMarkdown() {
+      const stored = memoryState.rolloutPrecheck;
+      const info = precheckTargets();
+      if (!stored || !info.ok || stored.key !== precheckConditionKey()) return null;
+      const selection = selectRolloutPrecheckRows(stored.rows, info.targets);
+      if (!selection.rows.length) return null;
+      const source = sourceMode === "json" ? { appId: String(sourceBundleFromJson?.appId || ""), name: sourceBundleFromJson ? extractAppNameFromBundle(sourceBundleFromJson) : "", guestId: "" } : { appId: srcApp.value.trim(), name: sourceNote.known()?.name || "", guestId: srcGuest.value.trim() };
+      return buildRolloutPrecheckMarkdown({
+        generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        source,
+        sourceEnvironment: sourceMode === "json" ? "json" : sourceEnvironment.value === "preview" ? "preview" : "production",
+        scopes: REFLECT_SECTION_KEYS.filter((scope) => collectSelectedScopes().includes(scope)),
+        preserveTargetOnly: preserve.checkbox.checked,
+        lookupMap: lookupMapValue(parseLookupMapText(lookupTa.value)),
+        rows: selection.rows,
+        removed: stored.removed,
+        uncheckedCount: selection.unchecked.length
+      });
+    }
+    precheckSaveMdBtn.addEventListener("click", () => {
+      const text = precheckMarkdown();
+      if (!text) {
+        panel.setStatus("事前確認のMarkdownを作成できません。全反映先を確認し直してください。", "warn");
+        return;
+      }
+      const filename = buildExportFilename("プレビュー反映事前確認", "md");
+      downloadText(filename, text, "text/markdown");
+      panel.setStatus(`事前確認の結果を ${filename} に保存しました。`, "ok");
+    });
+    precheckCopyMdBtn.addEventListener("click", () => {
+      void copyMarkdown(precheckMarkdown() || void 0, "事前確認の結果");
+    });
     const previewBtn = makeButton("差分を再取得", "primary");
     const changedOnlyBtn = makeButton("差分ありだけ選択", "sub");
     const reviewCard = makeCard({ title: "反映予定を確認", soft: true });
@@ -8529,8 +9306,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     panel.body.insertBefore(previewCard.card, panel.status);
     function saveState() {
       const before = restoreMode?.before;
-      memoryState = {
-        ...memoryState,
+      Object.assign(memoryState, {
         sourceAppId: (before ? before.sourceAppId : srcApp.value).trim(),
         sourceGuestId: (before ? before.sourceGuestId : srcGuest.value).trim(),
         targetAppId: tgtApp.value.trim(),
@@ -8540,7 +9316,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         lookupMapText: before ? before.lookupText : lookupTa.value,
         rolloutQueueText: rolloutTa.value,
         preserveTargetOnly: before ? before.preserve : preserve.checkbox.checked
-      };
+      });
     }
     function currentOptions(scopes = collectSelectedScopes()) {
       return {
@@ -8677,6 +9453,41 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         note.adopt(info);
       }
     }
+    const candidateNames = /* @__PURE__ */ new Map();
+    const candidateRequested = /* @__PURE__ */ new Set();
+    function candidateAppName(side, id) {
+      const guest = side === "to" ? tgtGuest.value.trim() : sourceMode === "json" ? "" : srcGuest.value.trim();
+      const key = `${guest}|${id}`;
+      const known = candidateNames.get(key) ?? appLookupCache.peek(id, guest)?.name;
+      if (known !== void 0) return known;
+      if (!candidateRequested.has(key) && isLookupableReflectApp(id, guest)) {
+        candidateRequested.add(key);
+        void appLookupCache.get(id, guest).then((result) => {
+          if (!result.ok || !panel.root.isConnected) return;
+          candidateNames.set(key, result.name);
+          refreshReviewCard();
+        });
+      }
+      return "";
+    }
+    function applyLookupCandidates(candidates) {
+      if (busy || restoreMode) return;
+      const state3 = parseLookupMapText(lookupTa.value);
+      if ("error" in state3) {
+        panel.setStatus(`参照先変換に誤りがあります。直してから候補を追加してください。${state3.error}`, "warn");
+        return;
+      }
+      const { text, added } = appendLookupMapCandidates(lookupTa.value, candidates.candidates);
+      if (!added) {
+        panel.setStatus("追加できる候補はありません（入力済みの旧IDは上書きしません）。", "info");
+        return;
+      }
+      lookupTa.value = text;
+      refreshLookupStatus();
+      saveState();
+      refreshReviewCard();
+      return startPreview(`参照先変換に候補 ${added} 件を追加して、差分を取り直しました。内容を確認してから反映してください（まだ書き込んでいません）。`);
+    }
     async function runPreview(scopes, lookupMap, postApplyCheck = false) {
       memoryState.lastPreview = null;
       clearConfirmation();
@@ -8765,6 +9576,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (preview?.identities && fresh) renderReflectRoute(reviewBody, preview.identities, sourceMode === "json" ? "設定JSON" : sourceEnvironment.value === "preview" ? "プレビュー" : "本番", restoreRouteOptions(preview.identities));
       if (fresh && restoreMode) appendRestoreNotice(reviewBody);
       if (fresh && result) appendTargetPendingNotice(reviewBody, result.targetPending);
+      if (fresh && result) appendLookupCandidatesNotice(reviewBody, result.lookupCandidates, { nameOf: candidateAppName, apply: restoreMode ? void 0 : { disabled: busy, onClick: () => {
+        applyLookupCandidates(result.lookupCandidates);
+      } } });
       const info = document.createElement("div");
       info.className = "kus-rl-next " + (blockers.length ? "kus-rl-next--warn" : postApply ? `kus-rl-next--${postApply.tone}` : "kus-rl-next--info");
       info.textContent = message;
@@ -8778,7 +9592,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         list2.className = "kus-rl-issues";
         for (const message2 of blockers) {
           const item = document.createElement("li");
-          item.textContent = message2;
+          item.textContent = withoutApiContextLines(message2);
           list2.appendChild(item);
         }
         reviewBody.appendChild(list2);
@@ -8814,6 +9628,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       exportPlanMdBtn.disabled = busy || !fresh;
       copyPlanMdBtn.disabled = busy || !fresh;
       renderRollout();
+      renderPrecheck();
       rerenderPreviewCard();
       refreshWorkflow();
     }
@@ -8937,6 +9752,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (removals) reasons.push(`削除・置換される設定が ${removals} 件あります`);
       if (entries.some((entry) => RISKY_SCOPE_KEYS.has(entry.sectionKey))) reasons.push("権限・通知・プロセス管理の変更を含みます");
       if (preview?.result.targetPending?.state === "pending") reasons.push(TARGET_PENDING_REASON);
+      if (scopes.some((key) => key === "fieldSettings" || key === "actionSettings") && hasLookupCandidates(preview?.result.lookupCandidates)) reasons.push(LOOKUP_CANDIDATES_REASON);
       if (!sourceBundleFromJson && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim()) reasons.push("同じアプリの本番の設定でプレビューを更新します");
       return reasons;
     }
@@ -9002,6 +9818,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       policy.textContent = "実行直前に設定を再取得し、確認後に別の変更があれば中止します。途中でエラーが起きたら、以降の項目を実行せず中断します。";
       confirmBody.appendChild(policy);
       appendTargetPendingNotice(confirmBody, state3.preview.result.targetPending);
+      if (state3.scopes.some((key) => key === "fieldSettings" || key === "actionSettings")) appendLookupCandidatesNotice(confirmBody, state3.preview.result.lookupCandidates, { nameOf: candidateAppName });
       const reasons = highImpactReasons();
       targetCheckRow.hidden = !reasons.length;
       if (reasons.length) {
@@ -9085,7 +9902,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         preserveTargetOnly: preserve.checkbox.checked,
         lookupMap: lookupMapValue(state3.lookupState),
         entries: state3.preview.result.entries.filter((entry) => state3.scopes.includes(entry.sectionKey)),
-        targetPending: state3.preview.result.targetPending
+        targetPending: state3.preview.result.targetPending,
+        ...state3.scopes.some((key) => key === "fieldSettings" || key === "actionSettings") && state3.preview.result.lookupCandidates ? { lookupCandidates: state3.preview.result.lookupCandidates } : {}
       });
       return { text, appLabel: buildAppFilenameLabel(tgtApp.value.trim(), identities.target.name) };
     }
@@ -9628,6 +10446,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     detailRow.className = "kus-rl-detail-row";
     detailRow.append(detailBtn, detailSummary);
     setupGrid.appendChild(detailRow);
+    setupGrid.appendChild(precheckCard.card);
     function refreshDetailSummary() {
       const parts = [preserve.checkbox.checked ? "反映先だけの一覧・グラフ・アクションは保持" : "反映先だけの一覧・グラフ・アクションを削除"];
       let warn = !preserve.checkbox.checked;
@@ -9835,6 +10654,47 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     }
     host.appendChild(box);
   }
+  function appendLookupCandidatesNotice(host, candidates, options) {
+    if (!candidates || !hasLookupCandidates(candidates)) return;
+    const box = document.createElement("div");
+    box.className = "kus-rl-next kus-rl-next--warn kus-rl-candidates";
+    box.dataset.lookupCandidates = "true";
+    const title = document.createElement("strong");
+    title.textContent = "参照先変換の候補があります";
+    const text = document.createElement("span");
+    text.textContent = "反映元と反映先で、ルックアップ・関連レコード一覧・アクションの参照先アプリが違います。参照先変換に入れずに反映すると、反映先の参照先が反映元のアプリに書き換わります。";
+    box.append(title, text);
+    const list2 = document.createElement("ul");
+    list2.className = "kus-rl-issues";
+    list2.dataset.lookupCandidateList = "true";
+    const label = (id, side) => {
+      const name = options.nameOf(side, id);
+      return name ? `${id}（${name}）` : id;
+    };
+    for (const candidate of candidates.candidates) {
+      const item = document.createElement("li");
+      item.dataset.lookupCandidate = `${candidate.from}>${candidate.to}`;
+      item.textContent = describeLookupCandidate(candidate, { from: options.nameOf("from", candidate.from), to: options.nameOf("to", candidate.to) });
+      list2.appendChild(item);
+    }
+    for (const conflict of candidates.conflicts) {
+      const item = document.createElement("li");
+      item.dataset.lookupConflict = conflict.from;
+      const heads = conflict.targets.map((target) => label(target.to, "to")).join(" または ");
+      const details = conflict.targets.map((target) => `${target.to}: ${target.sources.join("、")}${target.total > target.sources.length ? ` ほか ${target.total - target.sources.length} 件` : ""}`).join(" / ");
+      item.textContent = `${label(conflict.from, "from")} → ${heads}：反映先の参照先が一致していません（${details}）。自動では入れません。参照先変換に自分で入力してください。`;
+      list2.appendChild(item);
+    }
+    box.appendChild(list2);
+    if (options.apply && candidates.candidates.length) {
+      const apply = makeButton("候補を参照先変換に追加して差分を取り直す", "sub");
+      apply.dataset.lookupApply = "true";
+      apply.disabled = options.apply.disabled;
+      apply.addEventListener("click", options.apply.onClick);
+      box.appendChild(apply);
+    }
+    host.appendChild(box);
+  }
   function describeConfirmUndo(pending) {
     if (pending?.state === "clean" || pending?.state === "own") {
       return "取り消し方：反映後に、kintone のアプリ設定画面で「変更を中止」を押すと取り消せます。反映前の設定は自動でバックアップされ、「バックアップから戻す」でも戻せます。";
@@ -10039,7 +10899,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         if (skippedSameSet.has(entry.sectionKey)) statePills.push('<span class="kus-rl-preview-mini">一致のため除外</span>');
         if (skippedErrorSet.has(entry.sectionKey)) statePills.push('<span class="kus-rl-preview-mini">取得失敗のため除外</span>');
         if (RISKY_SCOPE_KEYS.has(entry.sectionKey)) statePills.push('<span class="kus-rl-preview-mini">高リスク</span>');
-        row.innerHTML = `<div class="kus-rl-preview-row__head">  <div class="kus-rl-preview-row__title">${escapeHtml(entry.label)}</div>  <span class="kus-rl-pill kus-rl-pill--${group.tone}">${statusLabel}</span></div><div class="kus-rl-preview-row__detail">${escapeHtml(entry.message)}</div>` + (statePills.length ? `<div class="kus-rl-preview-row__state">${statePills.join("")}</div>` : "") + (metaPills.length ? `<div class="kus-rl-preview-row__meta">${metaPills.join("")}</div>` : "");
+        row.innerHTML = `<div class="kus-rl-preview-row__head">  <div class="kus-rl-preview-row__title">${escapeHtml(entry.label)}</div>  <span class="kus-rl-pill kus-rl-pill--${group.tone}">${statusLabel}</span></div><div class="kus-rl-preview-row__detail">${escapeHtml(withoutApiContextLines(entry.message))}</div>` + (statePills.length ? `<div class="kus-rl-preview-row__state">${statePills.join("")}</div>` : "") + (metaPills.length ? `<div class="kus-rl-preview-row__meta">${metaPills.join("")}</div>` : "");
         if (opts.onAdd && opts.onRemove) {
           const selection = makeCheck({ label: "反映候補に含める", checked: selectedSet.has(entry.sectionKey) });
           selection.checkbox.setAttribute("aria-label", `${entry.label}を反映候補に含める`);

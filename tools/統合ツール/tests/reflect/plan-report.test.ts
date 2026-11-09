@@ -66,4 +66,30 @@ describe('プレビュー反映のMarkdownレポート', () => {
     expect(markdown).toContain('| 203 | 大阪営業所 | 通常スペース | 失敗 | GAIA\\_CO02 revision競合 |');
     expect(markdown).not.toMatch(/比較[元先]/);
   });
+
+  it('取得失敗の理由から内部の通信情報（[API] …）を除き、承認依頼に載せない', () => {
+    const failed = { ...views, status: 'tgt-missing' as const, message: '反映先を完全に取得できません: 権限がありません。\n[API] GET /k/v1/preview/app/views.json app=202 payload={"app":"202"}', blockers: ['反映先を完全に取得できません: 権限がありません。\n[API] GET /k/v1/preview/app/views.json app=202'] };
+    const markdown = buildReflectReportMarkdown({ ...base, entries: [failed] });
+    expect(markdown).toContain('- 状態: 反映先を完全に取得できません: 権限がありません。');
+    expect(markdown).toContain('- 停止理由: 反映先を完全に取得できません: 権限がありません。');
+    expect(markdown).not.toMatch(/\[API\]|payload|k\/v1/);
+  });
+
+  it('参照先変換の候補（入れ忘れ）を注意として載せ、食い違いは自動では入れないと示す', () => {
+    const markdown = buildReflectReportMarkdown({
+      ...base,
+      entries: [fields],
+      lookupCandidates: {
+        candidates: [{ from: '401', to: '301', total: 2, sources: ['ルックアップ「顧客」', 'アクション「コピー」'] }],
+        conflicts: [{ from: '402', targets: [{ to: '302', total: 1, sources: ['ルックアップ「a」'] }, { to: '303', total: 1, sources: ['ルックアップ「b」'] }] }]
+      }
+    });
+    expect(markdown).toContain('## 注意: 参照先変換の候補');
+    expect(markdown).toContain('参照先変換に入れずに反映すると、反映先の参照先が反映元のアプリに書き換わります。');
+    expect(markdown).toContain('- 候補: 401 → 301（ルックアップ「顧客」、アクション「コピー」）');
+    expect(markdown).toContain('- 食い違い（自動では入れません）: 402 → 302 / 303');
+    expect(markdown.indexOf('## 注意: 参照先変換の候補')).toBeLessThan(markdown.indexOf('## 概要'));
+    // 候補が無いときは出さない
+    expect(buildReflectReportMarkdown({ ...base, entries: [fields], lookupCandidates: { candidates: [], conflicts: [] } })).not.toContain('参照先変換の候補');
+  });
 });

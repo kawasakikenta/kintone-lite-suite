@@ -31,6 +31,7 @@
     "test:deploy-dom": "node tools/test-harness/run-deploy-lite-dom.cjs",
     "test:deploy-explore": "node tools/test-harness/deploy-explore.cjs",
     "test:field-jsconfig-explore": "node tools/test-harness/field-jsconfig-explore.cjs",
+    "test:reflect-explore": "node tools/test-harness/reflect-explore.cjs",
     "snippet": "node scripts/build-snippet.js",
     "mcp:playwright": "node node_modules/@playwright/mcp/cli.js --browser=chrome --output-dir=.playwright-mcp --save-session",
     "verify:playwright-mcp": "node scripts/verify-playwright-mcp.cjs",
