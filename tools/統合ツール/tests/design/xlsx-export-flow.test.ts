@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readZip } from '../archive/zip-reader';
 import { clampCellText, getExporterDialogZIndex, readableErrorMessage, runAdvancedDesignExporter, runBatchDesignExportXlsxZip, toManifestTargets } from '../../src/tabs/design-xlsx';
+
+// 同梱の xlsx-js-style の代わりに、各テストが用意した記録用の偽物（globalThis.XLSX）を渡す。
+vi.mock('../../src/tabs/sheetLib', () => ({ loadSheetLib: async () => (globalThis as any).XLSX }));
 
 type Sheet = { __aoa: any[][]; [key: string]: any };
 
@@ -304,17 +308,10 @@ describe('フィールド依存関係シート', () => {
 describe('runBatchDesignExportXlsxZip の preview / preselectedSheets オプション', () => {
   it('preselectedSheets 指定時はシート選択ダイアログを表示せず、preview: true でプレビュー API から取得する', async () => {
     const { calls } = installEnvironment(baseResponses());
-    const zipEntries: Record<string, any> = {};
-    (globalThis as any).window.JSZip = class FakeJSZip {
-      file(name: string, content: any) {
-        zipEntries[name] = content;
-      }
-      async generateAsync() {
-        return new Uint8Array([1, 2, 3]);
-      }
-    };
+    // 実際の ZIP 実装で作られた Blob をダウンロード直前に受け取り、中身を読み戻して確かめる。
+    const downloads: Blob[] = [];
     vi.stubGlobal('URL', {
-      createObjectURL: () => 'blob:fake',
+      createObjectURL: (blob: Blob) => { downloads.push(blob); return 'blob:fake'; },
       revokeObjectURL: () => {}
     });
 
@@ -334,8 +331,13 @@ describe('runBatchDesignExportXlsxZip の preview / preselectedSheets オプシ�
       cancelled: false
     }));
     expect(calls).toContain('/k/v1/preview/app/form/fields.json');
-    expect(Object.keys(zipEntries)).toContain('_manifest.json');
-    const manifest = JSON.parse(zipEntries['_manifest.json']);
+    expect(downloads).toHaveLength(1);
+    const zipEntries = Object.fromEntries(readZip(Buffer.from(await downloads[0].arrayBuffer())).map((entry) => [entry.name, entry]));
+    const names = Object.keys(zipEntries);
+    expect(names).toHaveLength(3);
+    expect(names).toEqual(expect.arrayContaining(['_manifest.json', '_manifest.txt']));
+    expect(names.filter((name) => /^設計書_テスト\(app5\)_\d{8}_\d{6}\.xlsx$/.test(name))).toHaveLength(1);
+    const manifest = JSON.parse(zipEntries['_manifest.json'].data.toString('utf8'));
     expect(manifest.successCount).toBe(1);
   });
 });

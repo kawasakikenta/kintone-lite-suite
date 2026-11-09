@@ -6,91 +6,19 @@ import { loadJSZipLite } from '../jszipLoader.js';
 import { isCancelRequested } from '../runControl.js';
 import { createCancelReport, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
 import { uniqueZipEntryName } from './record-query.js';
+import { loadMermaidScript, MERMAID_LOAD_FAILURE_MESSAGE } from './mermaid-loader.js';
 
-let mermaidLoadPromise = null;
-const MERMAID_CDN_URLS = [
-  'https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js',
-  'https://unpkg.com/mermaid@10.6.1/dist/mermaid.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.6.1/mermaid.min.js'
-];
-
-function loadScript(url: string): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    let cspViolation: any = null;
-    const onPolicyViolation = (ev: any) => {
-      const blocked = String(ev.blockedURI || '');
-      if (blocked === url || blocked.includes('mermaid')) {
-        cspViolation = ev;
-      }
-    };
-    const existing = document.querySelector(`script[src="${url}"]`) as HTMLScriptElement | null;
-    if (existing) {
-      if (existing.dataset.loaded === '1') {
-        resolve();
-      } else if (existing.dataset.failed === '1') {
-        existing.remove();
-        loadScript(url).then(resolve).catch(reject);
-      } else {
-        existing.addEventListener('load', () => resolve(), { once: true });
-        existing.addEventListener('error', () => reject(new Error(`スクリプト読み込み失敗: ${url}`)), { once: true });
-      }
-      return;
-    }
-    const s = document.createElement('script');
-    s.src = url;
-    s.async = true;
-    document.addEventListener('securitypolicyviolation', onPolicyViolation as any, false);
-    const cleanup = () => document.removeEventListener('securitypolicyviolation', onPolicyViolation as any, false);
-    s.onload = () => {
-      cleanup();
-      s.dataset.loaded = '1';
-      resolve();
-    };
-    s.onerror = () => {
-      cleanup();
-      s.dataset.failed = '1';
-      if (cspViolation) {
-        reject(new Error(
-          `スクリプト読み込み失敗(CSP): ${url} / directive=${cspViolation.effectiveDirective || 'unknown'} / blocked=${cspViolation.blockedURI || 'unknown'}`
-        ));
-        return;
-      }
-      reject(new Error(`スクリプト読み込み失敗: ${url}`));
-    };
-    document.head.appendChild(s);
-  });
-}
-
-async function loadScriptWithFallback(urls: string[]): Promise<void> {
-  // すべての読み込み先の失敗理由をログに残せるよう、最後の 1 件だけでなく全件をまとめる
-  const failures: string[] = [];
-  for (const url of urls) {
-    try {
-      await loadScript(url);
-      return;
-    } catch (e) {
-      failures.push(e instanceof Error ? e.message : String(e));
-    }
-  }
-  throw new Error(failures.join('\n') || 'Mermaid.js の読み込みに失敗しました');
-}
-
-/** 図の描画ライブラリを読み込めなかったときに利用者へ見せる文言（読み込み先の URL などは出さずログへ回す）。 */
-export const MERMAID_LOAD_FAILURE_MESSAGE = '図の描画ライブラリ（Mermaid）を読み込めませんでした。ネットワークやブラウザの制限を確認してください。';
+// Mermaid は固定版を検証付き（SRI）で読み込む。読み込み先・ハッシュ・失敗時の文言は mermaid-loader.ts。
+export { MERMAID_LOAD_FAILURE_MESSAGE };
 
 const initializedMermaid = new WeakSet<object>();
 
 async function ensureMermaid(): Promise<any> {
   const w = window as any;
-  if (!w.mermaid) {
-    if (!mermaidLoadPromise) {
-      mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS).catch((err: any) => {
-        mermaidLoadPromise = null;
-        throw err;
-      });
-    }
-    await mermaidLoadPromise;
-  }
+  // window.mermaid が既にあれば再利用する。それは、このツールが検証付きで読み込んだ固定版か、
+  // このページで既に実行されている別のスクリプト（kintone のカスタマイズなど）が読み込んだもの。
+  // 後者は、このツールが新たに外部スクリプトを実行するわけではないため、再読み込みせず使う（内容は検証できない）。
+  if (!w.mermaid) await loadMermaidScript();
   if (!w.mermaid) throw new Error('Mermaid.js の読み込みに失敗しました');
   // kintone 側のカスタマイズが先に mermaid を読み込んでいた場合も、ステータス名・アクション名を
   // 描画するので securityLevel: 'strict' を必ず適用する（初期化は 1 回だけ）
@@ -842,7 +770,7 @@ export async function runProcessBatchZipStandalone(
   if (!targets.length) throw new Error('まとめて出力する対象アプリを1件以上指定してください');
   const preview = !!opts.preview;
 
-  // 時間のかかる取得を始める前に JSZip を読み込み、読み込めない環境（CSP・ネットワーク制限）では取得結果を無駄にしない。
+  // 時間のかかる取得を始める前に ZIP の実装を準備し、準備に失敗したときに取得結果を無駄にしない。
   const JSZipCtor = await loadJSZipLite();
 
   const total = targets.length;

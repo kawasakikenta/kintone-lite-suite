@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright');
+const { readZip } = require('./zip-reader.cjs');
 const ROOT = path.resolve(__dirname, '../..');
 const TOOL = path.join(ROOT, 'tools/統合ツール');
 const OUT = path.join(ROOT, '.iter-shots/record-quality');
@@ -66,13 +67,6 @@ async function main() {
         const anchor = event.target.closest('a[download]');
         if (anchor) { event.preventDefault(); window.downloads.push({ filename: anchor.download, blob: window.blobs.get(anchor.href) }); }
       });
-      // JSZip's file collection is inspected separately from its unchanged encoding implementation.
-      window.zipFiles = {};
-      window.JSZip = class {
-        constructor() { window.zipFiles = {}; }
-        file(name, value) { window.zipFiles[name] = value; return this; }
-        async generateAsync() { return new Blob(['synthetic zip']); }
-      };
     });
     await page.addScriptTag({ content: build.outputFiles[0].text });
     await page.evaluate(() => RecordUI.mountRecordLitePanel());
@@ -171,7 +165,11 @@ async function main() {
     await pickAction('CSV取込ひな形を作成');
     await run('CSV取込ひな形を作成');
     assert.equal(await output.isVisible(), false, '別操作の結果に古い検査を表示しない');
-    const zip = await page.evaluate(() => window.zipFiles);
+    // 画面が実際に保存する ZIP を、作成側とは別の実装で読み戻して確かめる。
+    const zipBytes = await page.evaluate(async () => Array.from(new Uint8Array(await window.downloads.at(-1).blob.arrayBuffer())));
+    assert.match(await page.evaluate(() => window.downloads.at(-1).filename), /\.zip$/);
+    const zipEntries = readZip(Buffer.from(zipBytes));
+    const zip = Object.fromEntries([...zipEntries].filter(([, entry]) => !entry.isFolder).map(([name, entry]) => [name, entry.data.toString('utf8')]));
     assert.equal(zip['app_7/import.csv'], '\uFEFFtitle,amount,tags,date,due,link\r\n');
     assert.match(zip['app_7/fields.csv'], /必須/);
     assert.match(zip['app_7/excluded.csv'], /SUBTABLE/);

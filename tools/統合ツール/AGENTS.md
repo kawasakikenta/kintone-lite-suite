@@ -49,7 +49,8 @@ tools/統合ツール/
 │   ├── state.ts               # グローバル state
 │   ├── api.ts                 # kintone REST API ラッパー（書き込みガード / revision 競合判定 / レコード全件取得 / 中止・応答待ち上限）
 │   ├── runControl.ts          # 実行の中止（パネルの「中止」ボタン → API 層が次のリクエスト前で停止、読み取りは打ち切り）
-│   ├── jszipLoader.ts         # lite 版共通の JSZip 動的ローダ
+│   ├── jszipLoader.ts         # lite 版共通の ZIP 作成の入口（loadJSZipLite は自前実装 archive/lite-zip.ts を返す。通信しない）
+│   ├── archive/               # ZIP 実装（lite-zip.ts: JSZip 互換の最小 API・DEFLATE/STORE・classic ZIP の上限検査 / stored-zip.ts: 差分比較用の STORE 専用・決定的 / crc32.ts）
 │   ├── utils.ts               # 汎用ユーティリティ
 │   ├── kintoneGuard.ts        # kintone 画面ガード（全エントリ・boot 共通）
 │   ├── entries/               # esbuild エントリポイント

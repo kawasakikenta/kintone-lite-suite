@@ -14,10 +14,6 @@ export interface ExternalLibrarySpec {
 
 /** 実行時に読み込む外部ライブラリ/CDN 一覧 */
 export const EXTERNAL_LIBRARIES: Readonly<Record<string, Readonly<ExternalLibrarySpec>>> = Object.freeze({
-  jszip: Object.freeze({
-    version: '3.10.1',
-    cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
-  }),
   cytoscape: Object.freeze({
     version: '3.28.1',
     cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js',

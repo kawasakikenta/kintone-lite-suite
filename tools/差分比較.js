@@ -266,10 +266,6 @@
   var TOOL_ID = "kintone-unified-suite-v2";
   var TOOL_VERSION = "2.5.0";
   var EXTERNAL_LIBRARIES = Object.freeze({
-    jszip: Object.freeze({
-      version: "3.10.1",
-      cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
-    }),
     cytoscape: Object.freeze({
       version: "3.28.1",
       cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js",
