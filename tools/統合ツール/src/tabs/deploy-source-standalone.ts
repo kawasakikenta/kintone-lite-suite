@@ -49,10 +49,12 @@ export async function runSourceToProductionStandalone(opts: SourceDeployOptions)
     return skip(`反映先プレビューへの書き込みが完了しなかった項目があるため（${list}）、本番へは反映していません。反映先プレビューは一部だけ更新されている可能性があります。差分を取得し直して現在の状態を確認してください。`);
   }
 
-  // 2. 以前からの未公開の変更があるときは、利用者の了承がなければ本番へ反映しない。
+  // 2. 以前からの未公開の変更がある、または有無を確認できなかったときは、利用者の了承がなければ本番へ反映しない
+  //    （本番へ反映するとプレビューの全体が公開されるため、自分の書き込み以外が混ざっていないと言えない場合は止める）。
   const pending = opts.targetPending;
-  if (pending?.state === 'pending' && !opts.allowPendingChanges) {
-    return skip(`${WRITTEN_NOTE}ただし、反映先には以前からの未公開の変更があるため、本番へは反映していません。${PUBLISH_GUIDE}`);
+  if (pending?.state !== 'clean' && pending?.state !== 'own' && !opts.allowPendingChanges) {
+    const reason = pending?.state === 'pending' ? '反映先には以前からの未公開の変更があるため' : '反映先に以前からの未公開の変更があるか確認できなかったため';
+    return skip(`${WRITTEN_NOTE}ただし、${reason}、本番へは反映していません。${PUBLISH_GUIDE}`);
   }
 
   // 3. 書き込み後の反映先の本番とプレビューを確認する。
