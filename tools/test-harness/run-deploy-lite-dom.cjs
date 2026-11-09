@@ -397,7 +397,7 @@ async function main() {
     assert.equal(await checkOf('105').isChecked(), true, '反映処理中は選択したまま');
     assert.match(await reviewRow('104').innerText(), /権限がありません[\s\S]*取得失敗/);
     assert.match(await reviewRow('101').innerText(), /フィールド設定、ビュー設定/, '変更のある項目名');
-    assert.match(await reviewRow('101').innerText(), /1 件（フィールド 2 件）/, '削除の件数（フィールドは別に示す）');
+    assert.match(await reviewRow('101').innerText(), /1 件 \/ フィールド 2 件（値も削除）/, '削除の件数（フィールドは別に示す）');
     assert.match(await reviewRow('101').innerText(), /本番 12 → プレビュー 15/, 'revision');
     assert.match(await reviewRow('106').innerText(), /設定の内容は同じです（revision だけが異なります）/);
     assert.equal(await button('最終確認に進む').isDisabled(), true, '取得失敗・処理中を選んだままでは進めない');
