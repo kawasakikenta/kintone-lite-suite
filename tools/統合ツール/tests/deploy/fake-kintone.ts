@@ -30,6 +30,8 @@ export interface FakeOptions {
   onGet?: (call: FakeCall, apps: Record<string, FakeApp>) => void;
   /** deploy.json の POST の後に呼ばれる */
   onPost?: (call: FakeCall, apps: Record<string, FakeApp>) => void;
+  /** プレビューの設定の書き込み（PUT / POST）を受け付ける直前に呼ばれる（途中で別の更新が入る再現に使う）。例外を投げると書き込みを拒否する */
+  onWrite?: (call: FakeCall, apps: Record<string, FakeApp>) => void;
 }
 
 interface Deployment { ids: string[]; revert: boolean; polls: number; done: boolean; result: Record<string, string> }
@@ -43,6 +45,24 @@ export function makeApp(overrides: Partial<FakeApp> = {}): FakeApp {
 
 export function field(code: string, label = code, type = 'SINGLE_LINE_TEXT') {
   return { type, code, label, required: false };
+}
+
+/** プレビューの設定の書き込み（フィールド・一般設定・プラグインなど）を、保存している設定へ反映する。 */
+function writeSection(app: FakeApp, key: string, method: string, body: any) {
+  const { app: _app, revision: _revision, ...rest } = body;
+  const section = app.preview[key] ?? (app.preview[key] = {});
+  if (key === 'fieldSettings') {
+    section.properties = section.properties ?? {};
+    for (const [code, definition] of Object.entries<any>(rest.properties || {})) {
+      const current = section.properties[code];
+      if (method === 'POST') {
+        if (current && definition.type === 'SUBTABLE') current.fields = { ...current.fields, ...copy(definition.fields) };
+        else section.properties[code] = copy(definition);
+      } else section.properties[code] = definition.type === 'SUBTABLE' && current
+        ? { ...current, ...copy(definition), fields: { ...current.fields, ...copy(definition.fields) } } : { ...(current || {}), ...copy(definition) };
+    }
+  } else if (key === 'pluginSettings') section.plugins = [...(section.plugins || []), ...(rest.ids || rest.pluginIds || []).map((id: string) => ({ id }))];
+  else app.preview[key] = { ...section, ...copy(rest) };
 }
 
 export function createFakeKintone(apps: Record<string, FakeApp>, options: FakeOptions = {}) {
@@ -112,6 +132,17 @@ export function createFakeKintone(apps: Record<string, FakeApp>, options: FakeOp
       options.onPost?.(call, apps);
       deployments.push({ ids: params.apps.map((row: any) => row.app), revert: !!params.revert, polls: options.pollsToFinish ?? 2, done: false, result: {} });
       return {};
+    }
+    if ((method === 'PUT' || method === 'POST') && isPreview && endpointToKey.has(path)) {
+      const app = apps[String(params?.app)];
+      if (!app) throw Object.assign(new Error('指定したアプリが見つかりません。'), { code: 'GAIA_AP01' });
+      options.onWrite?.(call, apps);
+      if (params.revision !== undefined && String(params.revision) !== app.previewRevision) {
+        throw Object.assign(new Error('リビジョンが最新ではありません。'), { code: 'GAIA_CO02' });
+      }
+      writeSection(app, endpointToKey.get(path)!, method, params);
+      app.previewRevision = String(Number(app.previewRevision) + 1);
+      return { revision: app.previewRevision };
     }
     throw new Error(`Unexpected write: ${method} ${url}`);
   });
