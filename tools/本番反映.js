@@ -564,6 +564,18 @@
     const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
     return cleaned || fallback;
   }
+  function extractAppNameFromBundle(bundle) {
+    const appSettings = bundle?.sections?.appSettings;
+    const candidates = [
+      appSettings?.name,
+      appSettings?.app?.name,
+      appSettings?.general?.name,
+      bundle?.meta?.appName,
+      bundle?.appName
+    ];
+    const found = candidates.find((item) => String(item || "").trim());
+    return found ? String(found).trim() : "";
+  }
   function buildAppFilenameLabel(appId, appName) {
     const id = String(appId || "").trim();
     const name = String(appName || "").trim();
@@ -995,6 +1007,17 @@ ${base}`
       return { app, status };
     });
   }
+  function sanitizeBundleMeta(meta) {
+    const out = { sectionRevisions: {} };
+    const revisions = meta?.sectionRevisions;
+    if (!revisions || typeof revisions !== "object") return out;
+    Object.keys(revisions).forEach((key) => {
+      const value = revisions[key];
+      if (value == null || value === "") return;
+      out.sectionRevisions[key] = String(value);
+    });
+    return out;
+  }
   function extractSectionRevision(res) {
     if (!res || typeof res !== "object") return "";
     const candidates = [res.revision, res.appRevision, res.revisionNo, res.app?.revision];
@@ -1003,6 +1026,40 @@ ${base}`
       return String(value);
     }
     return "";
+  }
+  function ensureBundleShape(bundle, rawSettings = false) {
+    if (!bundle || typeof bundle !== "object") throw new Error("バンドル形式が不正です");
+    if (!bundle.sections || typeof bundle.sections !== "object") throw new Error("sections がありません");
+    return {
+      appId: String(bundle.appId || ""),
+      guestId: String(bundle.guestId || ""),
+      preview: !!bundle.preview,
+      fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      meta: sanitizeBundleMeta(bundle.meta),
+      sections: rawSettings ? deepClone(bundle.sections) : Object.fromEntries(
+        Object.keys(bundle.sections).sort().map((key) => [key, normalizeSettingsSection(bundle.sections[key])])
+      )
+    };
+  }
+  function pickBundleSections(bundle, sections) {
+    const picked = {
+      appId: String(bundle.appId || ""),
+      guestId: String(bundle.guestId || ""),
+      preview: !!bundle.preview,
+      fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      meta: { sectionRevisions: {} },
+      sections: {}
+    };
+    for (const sec of sections) {
+      if (Object.prototype.hasOwnProperty.call(bundle.sections || {}, sec)) {
+        picked.sections[sec] = deepClone(bundle.sections[sec]);
+      } else {
+        picked.sections[sec] = { _fetchError: "bundleに該当セクションなし" };
+      }
+      const revision = bundle?.meta?.sectionRevisions?.[sec];
+      if (revision != null && revision !== "") picked.meta.sectionRevisions[sec] = String(revision);
+    }
+    return picked;
   }
   var CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
   var CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
@@ -1310,9 +1367,14 @@ ${base}`
   }
 
   // src/reflect/customizeFiles.ts
+  function customizeSlotKey(platform, kind, fileKey) {
+    return `${platform}/${kind}/${fileKey}`;
+  }
   var PLATFORMS = ["desktop", "mobile"];
   var KINDS = ["js", "css"];
   var DOWNLOAD_CONCURRENCY = 4;
+  var isObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+  var dict = () => /* @__PURE__ */ Object.create(null);
   var messageOf = (error) => error instanceof Error ? error.message : String(error);
   function listFileEntries(section) {
     const entries = [];
@@ -1326,13 +1388,44 @@ ${base}`
     }
     return entries;
   }
+  function customizeFileNames(...sections) {
+    const names = dict();
+    for (const section of sections) for (const entry of listFileEntries(section)) if (entry.name && names[entry.fileKey] === void 0) names[entry.fileKey] = entry.name;
+    return names;
+  }
   function bytesToBase64(bytes) {
     let binary = "";
     for (let offset = 0; offset < bytes.length; offset += 32768) binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(offset, offset + 32768)));
     return btoa(binary);
   }
+  function base64ToBytes(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  }
   async function blobBytes(blob) {
     return new Uint8Array(await blob.arrayBuffer());
+  }
+  function fallbackHash(bytes) {
+    let a = 2166136261, b = 16777619 ^ 2654435769;
+    for (const byte of bytes) {
+      a = Math.imul(a ^ byte, 16777619) >>> 0;
+      b = Math.imul(b ^ byte, 2246822507) >>> 0;
+      b = (b ^ b >>> 13) >>> 0;
+    }
+    return `fnv1a:${a.toString(16).padStart(8, "0")}${b.toString(16).padStart(8, "0")}${bytes.length.toString(16)}`;
+  }
+  async function hashBytes(bytes) {
+    try {
+      const subtle = globalThis.crypto?.subtle;
+      if (subtle?.digest) {
+        const digest = new Uint8Array(await subtle.digest("SHA-256", bytes));
+        return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      }
+    } catch {
+    }
+    return fallbackHash(bytes);
   }
   function guessContentType(name) {
     return /\.css$/i.test(name) ? "text/css" : /\.js$/i.test(name) ? "text/javascript" : "";
@@ -1351,6 +1444,86 @@ ${base}`
     await Promise.all(Array.from({ length: Math.min(DOWNLOAD_CONCURRENCY, items.length) }, async () => {
       while (next < items.length) await worker(items[next++]);
     }));
+  }
+  async function loadBody(entry, guestId, download, allowEmbedded) {
+    const embedded = allowEmbedded ? entry.item.file?._content : void 0;
+    let blob;
+    if (isObject(embedded) && typeof embedded.base64 === "string") {
+      let bytes;
+      try {
+        bytes = base64ToBytes(embedded.base64);
+      } catch {
+        throw new Error("バックアップに保存されたファイル本体を読み取れません");
+      }
+      blob = new Blob([bytes], { type: typeof embedded.contentType === "string" ? embedded.contentType : "" });
+    } else blob = await download(guestId, entry.fileKey);
+    return { blob, hash: await hashBytes(await blobBytes(blob)) };
+  }
+  async function resolveCustomizeFiles(sourceSection, targetSection, opts) {
+    const download = opts.download || downloadCustomizeFile;
+    const resolution = { files: dict(), hashes: dict(), blobs: /* @__PURE__ */ new Map(), targetBlobs: /* @__PURE__ */ new Map(), targetUnavailable: [] };
+    const slotOf = (entry) => customizeSlotKey(entry.platform, entry.kind, entry.fileKey);
+    const targetEntries = listFileEntries(targetSection);
+    const targetSlots = new Set(targetEntries.map(slotOf));
+    const pending = [];
+    for (const entry of listFileEntries(sourceSection)) {
+      if (targetSlots.has(slotOf(entry))) resolution.files[slotOf(entry)] = { status: "existing" };
+      else if (!pending.some((item) => slotOf(item) === slotOf(entry))) pending.push(entry);
+    }
+    if (!pending.length) return resolution;
+    const sourceBodies = /* @__PURE__ */ new Map(), sourceErrors = /* @__PURE__ */ new Map();
+    const sourceByKey = /* @__PURE__ */ new Map();
+    for (const entry of pending) if (!sourceByKey.has(entry.fileKey)) sourceByKey.set(entry.fileKey, entry);
+    await pool([...sourceByKey.values()], async (entry) => {
+      try {
+        sourceBodies.set(entry.fileKey, await loadBody(entry, opts.sourceGuestId, download, true));
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        sourceErrors.set(entry.fileKey, messageOf(error));
+      }
+    });
+    const targetByKey = /* @__PURE__ */ new Map();
+    for (const entry of targetEntries) if (!targetByKey.has(entry.fileKey)) targetByKey.set(entry.fileKey, entry);
+    const targetBodies = /* @__PURE__ */ new Map();
+    if (sourceBodies.size) await pool([...targetByKey.values()], async (entry) => {
+      try {
+        targetBodies.set(entry.fileKey, await loadBody(entry, opts.targetGuestId, download, false));
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        resolution.targetUnavailable.push({ fileKey: entry.fileKey, name: entry.name || entry.fileKey, reason: messageOf(error) });
+      }
+    });
+    for (const [key, body] of targetBodies) {
+      resolution.hashes[key] = body.hash;
+      resolution.targetBlobs.set(key, body.blob);
+    }
+    const reusedTargetSlots = /* @__PURE__ */ new Set();
+    for (const entry of pending) {
+      const slot = slotOf(entry), body = sourceBodies.get(entry.fileKey);
+      if (!body) {
+        resolution.files[slot] = { status: "unavailable", reason: sourceErrors.get(entry.fileKey) || "本体を取得できません" };
+        continue;
+      }
+      resolution.hashes[entry.fileKey] = body.hash;
+      resolution.blobs.set(entry.fileKey, body.blob);
+      const reused = entry.name ? targetEntries.find((candidate) => candidate.platform === entry.platform && candidate.kind === entry.kind && candidate.name === entry.name && targetBodies.get(candidate.fileKey)?.hash === body.hash && !reusedTargetSlots.has(slotOf(candidate))) : void 0;
+      if (reused) reusedTargetSlots.add(slotOf(reused));
+      resolution.files[slot] = reused ? { status: "reuse", targetFileKey: reused.fileKey, hash: body.hash, byteSize: body.blob.size } : { status: "upload", hash: body.hash, byteSize: body.blob.size, contentType: body.blob.type || String(entry.item.file?.contentType || "") || guessContentType(entry.name) };
+    }
+    return resolution;
+  }
+  function comparableCustomizePayload(payload, resolution, names) {
+    const result = deepClone(payload);
+    for (const platform of PLATFORMS) for (const kind of KINDS) {
+      const list2 = result?.[platform]?.[kind];
+      if (!Array.isArray(list2)) continue;
+      result[platform][kind] = list2.map((item) => {
+        if (item?.type !== "FILE") return item;
+        const fileKey = item.file?.fileKey, name = names[fileKey], hash = resolution?.hashes[fileKey];
+        return { type: "FILE", file: { ...name !== void 0 ? { name } : {}, ...hash ? { contentHash: hash } : { fileKey } } };
+      });
+    }
+    return result;
   }
   async function embedCustomizeFileContents(section, opts) {
     const download = async (guestId, fileKey) => opts.cached?.get(fileKey) || (opts.download || downloadCustomizeFile)(guestId, fileKey);
@@ -1965,6 +2138,7 @@ ${base}`
     keys.splice(anchor + 1, 0, "appSettings");
     return keys;
   })();
+  var APP_SETTINGS_REFLECT_KEYS = ["theme", "titleField", "enableThumbnails", "enableBulkDeletion", "enableComments", "enableDuplicateRecord", "enableInlineRecordEditing", "numberPrecision", "firstMonthOfFiscalYear"];
   var APP_SETTINGS_LABELS = {
     theme: "テーマ",
     titleField: "レコードのタイトル",
@@ -1985,7 +2159,7 @@ ${base}`
   var MAX_DETAILS = 8;
   var own = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
   var isObj = (value) => !!value && typeof value === "object" && !Array.isArray(value);
-  var dictGet = (dict, key) => dict && own(dict, key) ? dict[key] : void 0;
+  var dictGet = (dict2, key) => dict2 && own(dict2, key) ? dict2[key] : void 0;
   var get = (target, key) => isObj(target) && own(target, key) ? target[key] : void 0;
   var list = (value) => Array.isArray(value) ? value : [];
   function stable(value) {
@@ -2100,18 +2274,18 @@ ${base}`
     if (Array.isArray(value)) return clip(value.map((item) => isObj(item) || Array.isArray(item) ? stable(item) : String(item)).join("、"));
     return clip(stable(value));
   }
-  function labelOnly(code, hint, labels) {
+  function labelOnly(code, hint, labels2) {
     if (typeof hint === "string" && hint) return hint;
-    return dictGet(labels, code) || code;
+    return dictGet(labels2, code) || code;
   }
-  function fieldName(code, labels, hint) {
-    const label = labelOnly(code, hint, labels);
+  function fieldName(code, labels2, hint) {
+    const label = labelOnly(code, hint, labels2);
     return label && label !== code ? `${label}（${code}）` : code;
   }
   function entityOf(element) {
     return isObj(element) && isObj(element.entity) ? element.entity : element;
   }
-  function entityText(entity, labels) {
+  function entityText(entity, labels2) {
     if (!isObj(entity)) return typeof entity === "string" ? entity : "（不明）";
     const type = String(entity.type || ""), code = String(entity.code ?? entity.login ?? "");
     const name = String(entity.name || "");
@@ -2122,7 +2296,7 @@ ${base}`
     if (type === "ALL" || type === "EVERYONE") return "全員";
     if (type === "LOGIN_USER") return "ログインユーザー";
     if (type === "CREATOR" || type === "MODIFIER") return code ? `${dictGet(ENTITY_TYPE_JP, type)}「${code}」` : dictGet(ENTITY_TYPE_JP, type);
-    if (type === "FIELD_ENTITY" || type === "CUSTOM_FIELD") return `フィールド値「${fieldName(code, labels)}」`;
+    if (type === "FIELD_ENTITY" || type === "CUSTOM_FIELD") return `フィールド値「${fieldName(code, labels2)}」`;
     const typeText = type === "DEPARTMENT" || type === "DEPT" ? "組織" : dictGet(ENTITY_TYPE_JP, type) ?? (type || "対象");
     const display = name && code && name !== code ? `${name}（${code}）` : name || code || "（未設定）";
     return `${typeText}「${display}」`;
@@ -2140,13 +2314,13 @@ ${base}`
     const joined = items.join("、"), text = clip(joined);
     return text !== joined && items.length > 1 ? `${text}（計 ${items.length} 件）` : text;
   };
-  function elementText(key, element, labels, section) {
+  function elementText(key, element, labels2, section) {
     if (!isObj(element)) {
       const text = String(element);
-      return key === "fields" && section === "viewSettings" ? fieldName(text, labels) : clip(text);
+      return key === "fields" && section === "viewSettings" ? fieldName(text, labels2) : clip(text);
     }
-    if (key === "groups") return `${fieldName(String(element.code ?? ""), labels)}${element.per ? ` ${dictGet(GROUP_PER_JP, String(element.per)) ?? element.per}単位` : ""}`;
-    if (key === "aggregations") return `${dictGet(AGGREGATION_TYPE_JP, String(element.type)) ?? element.type ?? ""}${element.code ? ` ${fieldName(String(element.code), labels)}` : ""}`.trim();
+    if (key === "groups") return `${fieldName(String(element.code ?? ""), labels2)}${element.per ? ` ${dictGet(GROUP_PER_JP, String(element.per)) ?? element.per}単位` : ""}`;
+    if (key === "aggregations") return `${dictGet(AGGREGATION_TYPE_JP, String(element.type)) ?? element.type ?? ""}${element.code ? ` ${fieldName(String(element.code), labels2)}` : ""}`.trim();
     if (key === "sorts") return `${dictGet(REPORT_SORT_BY_JP, String(element.by)) ?? element.by ?? ""} ${dictGet(REPORT_SORT_ORDER_JP, String(element.order)) ?? element.order ?? ""}`.trim();
     if (key === "mappings") {
       const from = element.srcType === "RECORD_URL" ? "レコードのURL" : element.srcField ?? element.sourceField ?? "";
@@ -2154,10 +2328,10 @@ ${base}`
       return `${from} → ${to}`;
     }
     if (key === "fieldMappings") return `${element.field ?? ""} ← ${element.relatedField ?? ""}`;
-    if (isObj(element.entity) || element.type && own(element, "code") && !element.name) return entityText(entityOf(element), labels);
+    if (isObj(element.entity) || element.type && own(element, "code") && !element.name) return entityText(entityOf(element), labels2);
     return clip(String(element.name ?? element.code ?? element.id ?? stable(element)));
   }
-  function arrayLine(key, label, before, after, labels, section) {
+  function arrayLine(key, label, before, after, labels2, section) {
     const pool2 = /* @__PURE__ */ new Map();
     for (const element of before) {
       const k = stable(element);
@@ -2178,7 +2352,7 @@ ${base}`
       }
       return false;
     });
-    const text = (items) => listText(items.map((element) => elementText(key, element, labels, section)));
+    const text = (items) => listText(items.map((element) => elementText(key, element, labels2, section)));
     if (!added.length && !removed.length) return `${label}: 並び順のみ変更`;
     const parts = [];
     if (added.length) parts.push(`追加 ${text(added)}`);
@@ -2204,7 +2378,7 @@ ${base}`
     if (removed.length) parts.push(`削除 ${listText(removed)}`);
     return [`${label}: ${parts.join(" / ")}`];
   }
-  function entityListLines(label, beforeList, afterList, labels) {
+  function entityListLines(label, beforeList, afterList, labels2) {
     const permissionText = (element) => {
       if (!isObj(element)) return "";
       const on = [];
@@ -2228,16 +2402,16 @@ ${base}`
     for (const element of beforeList) {
       const peer = queues.get(entityKey(element))?.shift();
       if (peer === void 0) {
-        removed.push(entityText(entityOf(element), labels));
+        removed.push(entityText(entityOf(element), labels2));
         continue;
       }
       matched.add(peer);
       if (same(element, peer)) continue;
       const keys = /* @__PURE__ */ new Set([...Object.keys(isObj(element) ? element : {}), ...Object.keys(isObj(peer) ? peer : {})]);
       const diffs = [...keys].filter((key) => !["entity", "type", "code", "name"].includes(key) && !same(get(element, key), get(peer, key))).map((key) => `${labelOfProp(key)} ${fmt(get(element, key), key)} → ${fmt(get(peer, key), key)}`);
-      if (diffs.length) changed.push(`${label} ${entityText(entityOf(element), labels)}: ${diffs.join("、")}`);
+      if (diffs.length) changed.push(`${label} ${entityText(entityOf(element), labels2)}: ${diffs.join("、")}`);
     }
-    const added = afterList.filter((element) => !matched.has(element)).map((element) => `${entityText(entityOf(element), labels)}${permissionText(element)}`);
+    const added = afterList.filter((element) => !matched.has(element)).map((element) => `${entityText(entityOf(element), labels2)}${permissionText(element)}`);
     const lines = [];
     const parts = [];
     if (added.length) parts.push(`追加 ${listText(added)}`);
@@ -2281,7 +2455,7 @@ ${base}`
     }
     return lines;
   }
-  var entitiesSpecial = (labels) => (before, after, label) => entityListLines(label, list(before), list(after), labels);
+  var entitiesSpecial = (labels2) => (before, after, label) => entityListLines(label, list(before), list(after), labels2);
   function fieldBrief(definition) {
     if (!isObj(definition)) return [];
     const out = [];
@@ -2292,13 +2466,13 @@ ${base}`
     else if (isObj(definition.options) && Object.keys(definition.options).length) out.push(`選択肢 ${Object.keys(definition.options).length}件`);
     return out.slice(0, 2);
   }
-  function fieldItems(before, after, labels, push) {
+  function fieldItems(before, after, labels2, push) {
     const bp = get(before, "properties"), ap = get(after, "properties");
     if (!isObj(bp) || !isObj(ap)) throw new Error("フィールド設定の形式が不正です。");
     const walk = (b, a, parentLabel) => {
       for (const code of [...Object.keys(a), ...Object.keys(b).filter((key) => !own(a, key))]) {
         const bd = get(b, code), ad = get(a, code), definition = ad ?? bd;
-        const label = labelOnly(code, get(definition, "label"), labels);
+        const label = labelOnly(code, get(definition, "label"), labels2);
         const withCode = label !== code ? `${label}（${code}）` : code;
         const name = parentLabel ? `${parentLabel} / ${withCode}` : withCode;
         if (bd === void 0 || ad === void 0) {
@@ -2308,14 +2482,14 @@ ${base}`
         const ignore = /* @__PURE__ */ new Set(["fields"]);
         const bc = get(bd, "code"), ac = get(ad, "code");
         if (bc === void 0 || ac === void 0 || bc === ac) ignore.add("code");
-        const lines = attrLines(bd, ad, { ignore, over: FIELD_ATTR_LABELS, typeDict: FIELD_TYPE_JP, labels, section: "fieldSettings", special: { options: (x, y, l) => optionLines(x, y, l) } });
+        const lines = attrLines(bd, ad, { ignore, over: FIELD_ATTR_LABELS, typeDict: FIELD_TYPE_JP, labels: labels2, section: "fieldSettings", special: { options: (x, y, l) => optionLines(x, y, l) } });
         if (lines.length) push("変更", name, lines);
         if (isObj(bd.fields) || isObj(ad.fields)) walk(isObj(bd.fields) ? bd.fields : {}, isObj(ad.fields) ? ad.fields : {}, label);
       }
     };
     walk(bp, ap, null);
   }
-  function scanLayout(layout, labels) {
+  function scanLayout(layout, labels2) {
     const placed = /* @__PURE__ */ new Map();
     const plain = /* @__PURE__ */ new Map();
     const place = (node, where) => {
@@ -2339,10 +2513,10 @@ ${base}`
           });
         } else if (node.type === "GROUP" && typeof node.code === "string") {
           place(node, `${prefix}${i + 1}行目`);
-          walk(list(node.layout), `グループ「${fieldName(node.code, labels, node.label)}」`);
+          walk(list(node.layout), `グループ「${fieldName(node.code, labels2, node.label)}」`);
         } else if (node.type === "SUBTABLE" && typeof node.code === "string") {
           place(node, `${prefix}${i + 1}行目`);
-          const table = `テーブル「${fieldName(node.code, labels)}」`;
+          const table = `テーブル「${fieldName(node.code, labels2)}」`;
           list(node.fields).forEach((child, j) => {
             if (isObj(child) && typeof child.code === "string" && child.code) place(child, `${table}の${j + 1}番目`);
             else if (isObj(child)) addPlain(child);
@@ -2353,17 +2527,17 @@ ${base}`
     walk(list(layout), "");
     return { placed, plain };
   }
-  function layoutItems(before, after, labels, push) {
+  function layoutItems(before, after, labels2, push) {
     const bl = get(before, "layout"), al = get(after, "layout");
     if (!Array.isArray(bl) || !Array.isArray(al)) throw new Error("レイアウトの形式が不正です。");
-    const b = scanLayout(bl, labels), a = scanLayout(al, labels);
+    const b = scanLayout(bl, labels2), a = scanLayout(al, labels2);
     let count = 0;
     const emit = (kind, name, details) => {
       count += 1;
       push(kind, name, details);
     };
     for (const [code, now] of a.placed) {
-      const nameOf = (placed) => fieldName(code, labels, placed.node.type === "GROUP" ? placed.node.label : void 0);
+      const nameOf = (placed) => fieldName(code, labels2, placed.node.type === "GROUP" ? placed.node.label : void 0);
       const prev = b.placed.get(code);
       if (!prev) {
         emit("追加", nameOf(now), [`配置: ${now.where}`]);
@@ -2377,10 +2551,10 @@ ${base}`
         const x = get(prev.node.size, key), y = get(now.node.size, key);
         if (String(x ?? "") !== String(y ?? "")) lines.push(`${labelFor(key, LAYOUT_ATTR_LABELS)}: ${px(x)} → ${px(y)}`);
       }
-      lines.push(...attrLines(prev.node, now.node, { ignore: /* @__PURE__ */ new Set(["code", "type", "size", "layout", "fields", "elementId"]), over: LAYOUT_ATTR_LABELS, labels }));
+      lines.push(...attrLines(prev.node, now.node, { ignore: /* @__PURE__ */ new Set(["code", "type", "size", "layout", "fields", "elementId"]), over: LAYOUT_ATTR_LABELS, labels: labels2 }));
       if (lines.length) emit("変更", nameOf(now), lines);
     }
-    for (const [code, prev] of b.placed) if (!a.placed.has(code)) emit("削除", fieldName(code, labels, prev.node.type === "GROUP" ? prev.node.label : void 0), [`配置: ${prev.where} → なし`]);
+    for (const [code, prev] of b.placed) if (!a.placed.has(code)) emit("削除", fieldName(code, labels2, prev.node.type === "GROUP" ? prev.node.label : void 0), [`配置: ${prev.where} → なし`]);
     const plainLines = { 削除: [], 追加: [], 変更: [] };
     for (const type of /* @__PURE__ */ new Set([...b.plain.keys(), ...a.plain.keys()])) {
       const x = b.plain.get(type) || [], y = a.plain.get(type) || [], name = dictGet(LAYOUT_PLAIN_LABELS, type) ?? type;
@@ -2389,21 +2563,21 @@ ${base}`
         continue;
       }
       const texts = (items) => items.map((item) => String(item.label ?? ""));
-      if (type === "LABEL" && !same(texts(x), texts(y))) plainLines.変更.push(arrayLine("label", `${name}の内容`, texts(x), texts(y), labels, "layoutSettings"));
+      if (type === "LABEL" && !same(texts(x), texts(y))) plainLines.変更.push(arrayLine("label", `${name}の内容`, texts(x), texts(y), labels2, "layoutSettings"));
       const sizes = (items) => items.map((item) => stable(item.size ?? null));
       if (!same(sizes(x), sizes(y))) plainLines.変更.push(`${name}の大きさを変更`);
     }
     for (const kind of ["削除", "変更", "追加"]) if (plainLines[kind].length) emit(kind, "ラベル・スペース・罫線", plainLines[kind]);
     if (!count && !same(bl, al)) emit("変更", "レイアウト", ["行や要素の並びを変更"]);
   }
-  function namedItems(sectionKey, before, after, labels, push) {
+  function namedItems(sectionKey, before, after, labels2, push) {
     const property = sectionKey === "viewSettings" ? "views" : sectionKey === "reportSettings" ? "reports" : "actions";
     const bm = get(before, property), am = get(after, property);
     if (!isObj(bm) || !isObj(am)) throw new Error("設定の形式が不正です。");
     const over = sectionKey === "viewSettings" ? VIEW_ATTR_LABELS : sectionKey === "reportSettings" ? REPORT_ATTR_LABELS : ACTION_ATTR_LABELS;
     const special = {
       index: (x, y, label) => [`${label}: ${ordinal(x)} → ${ordinal(y)}`],
-      entities: entitiesSpecial(labels),
+      entities: entitiesSpecial(labels2),
       destApp: (x, y, label) => [
         ...same(get(x, "app"), get(y, "app")) ? [] : [`${label}: ${fmt(get(x, "app"))} → ${fmt(get(y, "app"))}`],
         ...same(get(x, "code"), get(y, "code")) ? [] : [`${label}のアプリコード: ${fmt(get(x, "code"))} → ${fmt(get(y, "code"))}`]
@@ -2430,7 +2604,7 @@ ${base}`
       }
       const ignore = /* @__PURE__ */ new Set(["id"]);
       if (get(bv, "name") === void 0 || get(av, "name") === void 0 || get(bv, "name") === get(av, "name")) ignore.add("name");
-      const lines = attrLines(bv, av, { ignore, over, typeDict: VIEW_TYPE_JP, labels, section: sectionKey, special });
+      const lines = attrLines(bv, av, { ignore, over, typeDict: VIEW_TYPE_JP, labels: labels2, section: sectionKey, special });
       if (lines.length) push("変更", name, lines);
     }
   }
@@ -2472,19 +2646,19 @@ ${base}`
     if (rule.includeSubs === true) on.push("配下を含む");
     return [on.length ? `許可: ${listText(on)}` : "許可: なし", ...extra];
   }
-  function processItems(before, after, labels, push) {
+  function processItems(before, after, labels2, push) {
     if (!isObj(before) || !isObj(after)) throw new Error("プロセス管理の形式が不正です。");
     if (before.enable !== after.enable) push("変更", "プロセス管理", [`有効化: ${fmt(before.enable, "enable")} → ${fmt(after.enable, "enable")}`]);
     const assignee = (x, y) => {
       const lines = [];
       if (get(x, "type") !== get(y, "type")) lines.push(`作業者の選択方式: ${fmt(get(x, "type"), "type", PROCESS_ASSIGNEE_TYPE_JP)} → ${fmt(get(y, "type"), "type", PROCESS_ASSIGNEE_TYPE_JP)}`);
-      return [...lines, ...entityListLines("作業者", list(get(x, "entities")), list(get(y, "entities")), labels)];
+      return [...lines, ...entityListLines("作業者", list(get(x, "entities")), list(get(y, "entities")), labels2)];
     };
     const bs = isObj(before.states) ? before.states : {}, as = isObj(after.states) ? after.states : {};
     const stateBrief = (state3) => {
       const out = ["種類: 状態"];
       const entities = list(get(get(state3, "assignee"), "entities"));
-      if (entities.length) out.push(`作業者: ${listText(entities.map((entity) => entityText(entityOf(entity), labels)))}`);
+      if (entities.length) out.push(`作業者: ${listText(entities.map((entity) => entityText(entityOf(entity), labels2)))}`);
       return out;
     };
     for (const name of [...Object.keys(as), ...Object.keys(bs).filter((key) => !own(as, key))]) {
@@ -2493,56 +2667,56 @@ ${base}`
         push(av === void 0 ? "削除" : "追加", name, stateBrief(av ?? bv));
         continue;
       }
-      const lines = attrLines(bv, av, { ignore: /* @__PURE__ */ new Set(["name"]), over: { index: "表示順", assignee: "作業者" }, labels, section: "processSettings", special: { index: (x, y, label) => [`${label}: ${ordinal(x)} → ${ordinal(y)}`], assignee } });
+      const lines = attrLines(bv, av, { ignore: /* @__PURE__ */ new Set(["name"]), over: { index: "表示順", assignee: "作業者" }, labels: labels2, section: "processSettings", special: { index: (x, y, label) => [`${label}: ${ordinal(x)} → ${ordinal(y)}`], assignee } });
       if (lines.length) push("変更", name, lines);
     }
     const actionKey = (action) => `${action.name ?? ""}\0${action.from ?? ""}\0${action.to ?? ""}`;
     const actionName = (action) => `${action.name ?? "（名称なし）"}（${action.from ?? "?"} → ${action.to ?? "?"}）`;
-    const actionSpecial = { executableUser: (x, y) => entityListLines("実行者", list(get(x, "entities")), list(get(y, "entities")), labels) };
+    const actionSpecial = { executableUser: (x, y) => entityListLines("実行者", list(get(x, "entities")), list(get(y, "entities")), labels2) };
     ruleItems(list(before.actions), list(after.actions), {
       key: actionKey,
       name: actionName,
       sectionName: "アクション",
       orderName: "アクションの並び",
       brief: (action) => ["種類: アクション", ...action.filterCond ? [`条件: ${fmt(action.filterCond)}`] : []],
-      diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["name", "from", "to"]), over: PROCESS_ACTION_LABELS, labels, section: "processSettings", special: actionSpecial })
+      diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["name", "from", "to"]), over: PROCESS_ACTION_LABELS, labels: labels2, section: "processSettings", special: actionSpecial })
     }, push);
   }
-  function aclItems(sectionKey, before, after, labels, push) {
+  function aclItems(sectionKey, before, after, labels2, push) {
     const br = get(before, "rights"), ar = get(after, "rights");
     if (!Array.isArray(br) || !Array.isArray(ar)) throw new Error("権限の形式が不正です。");
-    const special = { entities: entitiesSpecial(labels) };
+    const special = { entities: entitiesSpecial(labels2) };
     if (sectionKey === "appAcl") {
       ruleItems(br, ar, {
         sectionName: "アプリ権限",
         key: (rule) => entityKey(rule),
-        name: (rule) => entityText(entityOf(rule), labels),
+        name: (rule) => entityText(entityOf(rule), labels2),
         brief: (rule) => permissionBrief(rule),
-        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["entity"]), labels, section: sectionKey })
+        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["entity"]), labels: labels2, section: sectionKey })
       }, push);
     } else if (sectionKey === "recordPermissions") {
       ruleItems(br, ar, {
         sectionName: "レコード権限",
         key: (rule) => String(rule.filterCond ?? ""),
         name: (rule) => rule.filterCond ? `条件「${clip(String(rule.filterCond), 60)}」` : "条件なし（すべてのレコード）",
-        brief: (rule) => rule.entities?.length ? entityListLines("対象", [], list(rule.entities), labels) : ["対象なし"],
-        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["filterCond"]), labels, section: sectionKey, special, over: { entities: "対象" } })
+        brief: (rule) => rule.entities?.length ? entityListLines("対象", [], list(rule.entities), labels2) : ["対象なし"],
+        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["filterCond"]), labels: labels2, section: sectionKey, special, over: { entities: "対象" } })
       }, push);
     } else {
       ruleItems(br, ar, {
         sectionName: "フィールド権限",
         key: (rule) => typeof rule.code === "string" && rule.code ? rule.code : null,
-        name: (rule) => fieldName(String(rule.code), labels),
-        brief: (rule) => rule.entities?.length ? entityListLines("対象", [], list(rule.entities), labels) : ["対象なし"],
-        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["code"]), labels, section: sectionKey, special, over: { entities: "対象" } })
+        name: (rule) => fieldName(String(rule.code), labels2),
+        brief: (rule) => rule.entities?.length ? entityListLines("対象", [], list(rule.entities), labels2) : ["対象なし"],
+        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["code"]), labels: labels2, section: sectionKey, special, over: { entities: "対象" } })
       }, push);
     }
     extraItems(before, after, /* @__PURE__ */ new Set(["rights"]), push);
   }
-  function timingText(timing, labels) {
+  function timingText(timing, labels2) {
     if (!isObj(timing)) return fmt(timing);
     const parts = [];
-    if (timing.code) parts.push(fieldName(String(timing.code), labels));
+    if (timing.code) parts.push(fieldName(String(timing.code), labels2));
     if (timing.daysLater !== void 0 && timing.daysLater !== "") parts.push(describeReminderOffset("days", timing.daysLater) ?? `${timing.daysLater}日`);
     if (timing.hoursLater !== void 0 && timing.hoursLater !== "") parts.push(describeReminderOffset("hours", timing.hoursLater) ?? `${timing.hoursLater}時間`);
     if (timing.time) parts.push(String(timing.time));
@@ -2557,20 +2731,20 @@ ${base}`
       push("変更", labelOfProp(key), [`${fmt(bv, key)} → ${fmt(av, key)}`]);
     }
   }
-  function notificationItems(sectionKey, before, after, labels, push) {
+  function notificationItems(sectionKey, before, after, labels2, push) {
     const bn = get(before, "notifications"), an = get(after, "notifications");
     if (!Array.isArray(bn) || !Array.isArray(an)) throw new Error("通知の形式が不正です。");
-    const targets = entitiesSpecial(labels);
+    const targets = entitiesSpecial(labels2);
     if (sectionKey === "notifications") {
       ruleItems(bn, an, {
         sectionName: "通知",
         key: (rule) => entityKey(rule),
-        name: (rule) => entityText(entityOf(rule), labels),
+        name: (rule) => entityText(entityOf(rule), labels2),
         brief: (rule) => {
           const on = Object.keys(rule).filter((key) => key !== "entity" && key !== "includeSubs" && rule[key] === true).map((key) => labelOfProp(key));
           return [on.length ? `通知する: ${listText(on)}` : "通知する条件なし"];
         },
-        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["entity"]), labels, section: sectionKey })
+        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["entity"]), labels: labels2, section: sectionKey })
       }, push);
     } else {
       const reminder = sectionKey === "reminderNotifications";
@@ -2579,16 +2753,16 @@ ${base}`
         key: (rule) => typeof rule.title === "string" && rule.title ? rule.title : null,
         name: (rule) => String(rule.title),
         brief: (rule) => [
-          ...reminder ? [`通知するタイミング: ${timingText(rule.timing, labels)}`] : [],
+          ...reminder ? [`通知するタイミング: ${timingText(rule.timing, labels2)}`] : [],
           ...rule.filterCond ? [`絞り込み条件: ${fmt(rule.filterCond)}`] : [],
-          ...list(rule.targets).length ? entityListLines("通知先", [], list(rule.targets), labels) : ["通知先なし"]
+          ...list(rule.targets).length ? entityListLines("通知先", [], list(rule.targets), labels2) : ["通知先なし"]
         ],
         diff: (x, y) => attrLines(x, y, {
           ignore: /* @__PURE__ */ new Set(["title"]),
-          labels,
+          labels: labels2,
           section: sectionKey,
           over: { targets: "通知先", filterCond: "絞り込み条件", timing: "通知するタイミング" },
-          special: { targets, timing: (p, q, label) => [`${label}: ${timingText(p, labels)} → ${timingText(q, labels)}`] }
+          special: { targets, timing: (p, q, label) => [`${label}: ${timingText(p, labels2)} → ${timingText(q, labels2)}`] }
         })
       }, push);
     }
@@ -2609,7 +2783,7 @@ ${base}`
     walk(categories, []);
     return out;
   }
-  function categoryItems(before, after, labels, push) {
+  function categoryItems(before, after, labels2, push) {
     if (!isObj(before) || !isObj(after)) throw new Error("カテゴリーの形式が不正です。");
     if (before.enabled !== after.enabled) push("変更", "カテゴリー機能", [`有効状態: ${fmt(before.enabled, "enabled")} → ${fmt(after.enabled, "enabled")}`]);
     const b = categoryPaths(before.categories), a = categoryPaths(after.categories);
@@ -2619,7 +2793,7 @@ ${base}`
         push("追加", path, ["カテゴリーを追加"]);
         continue;
       }
-      const lines = attrLines(strip(b.get(path)), strip(node), { over: { index: "表示順", name: "名前", label: "名前" }, labels, special: { index: (x, y, label) => [`${label}: ${ordinal(x)} → ${ordinal(y)}`] } });
+      const lines = attrLines(strip(b.get(path)), strip(node), { over: { index: "表示順", name: "名前", label: "名前" }, labels: labels2, special: { index: (x, y, label) => [`${label}: ${ordinal(x)} → ${ordinal(y)}`] } });
       if (lines.length) push("変更", path, lines);
     }
     for (const path of b.keys()) if (!a.has(path)) push("削除", path, ["カテゴリーを削除"]);
@@ -2685,7 +2859,7 @@ ${base}`
       }
     }
   }
-  function appSettingsItems(before, after, labels, push) {
+  function appSettingsItems(before, after, labels2, push) {
     if (!isObj(before) || !isObj(after)) throw new Error("アプリ設定の形式が不正です。");
     const order = Object.keys(APP_SETTING_LABELS);
     const keys = [...order, ...[.../* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])].filter((key) => !order.includes(key) && key !== "revision")];
@@ -2698,7 +2872,7 @@ ${base}`
       if (key === "titleField") {
         details = [
           ...kv("選択方法", get(bv, "selectionMode"), get(av, "selectionMode"), (value) => fmt(value, "selectionMode")),
-          ...kv("フィールド", get(bv, "code"), get(av, "code"), (value) => value ? fieldName(String(value), labels) : "（なし）")
+          ...kv("フィールド", get(bv, "code"), get(av, "code"), (value) => value ? fieldName(String(value), labels2) : "（なし）")
         ];
       } else if (key === "numberPrecision") {
         details = [
@@ -2709,12 +2883,12 @@ ${base}`
       } else if (key === "firstMonthOfFiscalYear") {
         details = [`${bv === void 0 ? "（なし）" : `${bv}月`} → ${av === void 0 ? "（なし）" : `${av}月`}`];
       } else if (isObj(bv) && isObj(av)) {
-        details = attrLines(bv, av, { labels });
+        details = attrLines(bv, av, { labels: labels2 });
       } else details = [`${fmt(bv, key)} → ${fmt(av, key)}`];
       push("変更", name, details.length ? details : [`${fmt(bv, key)} → ${fmt(av, key)}`]);
     }
   }
-  function genericItems(before, after, labels, push) {
+  function genericItems(before, after, labels2, push) {
     if (!isObj(before) && !isObj(after)) {
       if (!same(before, after)) push("変更", "設定", [`${fmt(before)} → ${fmt(after)}`]);
       return;
@@ -2725,13 +2899,13 @@ ${base}`
       if (same(bv, av)) continue;
       const name = labelOfProp(key);
       const arrayish = (value) => Array.isArray(value) || value === void 0;
-      const lines = arrayish(bv) && arrayish(av) ? [arrayLine(key, name, list(bv), list(av), labels, "")] : isObj(bv) && isObj(av) ? attrLines(bv, av, { labels }) : [`${fmt(bv, key)} → ${fmt(av, key)}`];
+      const lines = arrayish(bv) && arrayish(av) ? [arrayLine(key, name, list(bv), list(av), labels2, "")] : isObj(bv) && isObj(av) ? attrLines(bv, av, { labels: labels2 }) : [`${fmt(bv, key)} → ${fmt(av, key)}`];
       push(bv === void 0 ? "追加" : av === void 0 ? "削除" : "変更", name, lines.length ? lines : ["内容を変更"]);
     }
   }
   var KIND_ORDER = { 削除: 0, 変更: 1, 追加: 2, 保持: 3 };
   function summarizeReflectItems(sectionKey, before, after, context = {}) {
-    const labels = context.fieldLabels;
+    const labels2 = context.fieldLabels;
     const run = (build) => {
       const items2 = [];
       const push = (kind, name, details) => {
@@ -2744,33 +2918,33 @@ ${base}`
     const specific = (push) => {
       switch (sectionKey) {
         case "fieldSettings":
-          return fieldItems(before, after, labels, push);
+          return fieldItems(before, after, labels2, push);
         case "layoutSettings":
-          return layoutItems(before, after, labels, push);
+          return layoutItems(before, after, labels2, push);
         case "viewSettings":
         case "reportSettings":
         case "actionSettings":
-          return namedItems(sectionKey, before, after, labels, push);
+          return namedItems(sectionKey, before, after, labels2, push);
         case "processSettings":
-          return processItems(before, after, labels, push);
+          return processItems(before, after, labels2, push);
         case "appAcl":
         case "recordPermissions":
         case "fieldAcl":
-          return aclItems(sectionKey, before, after, labels, push);
+          return aclItems(sectionKey, before, after, labels2, push);
         case "notifications":
         case "perRecordNotifications":
         case "reminderNotifications":
-          return notificationItems(sectionKey, before, after, labels, push);
+          return notificationItems(sectionKey, before, after, labels2, push);
         case "categories":
-          return categoryItems(before, after, labels, push);
+          return categoryItems(before, after, labels2, push);
         case "pluginSettings":
           return pluginItems(before, after, push);
         case "customizeSettings":
           return customizeItems(before, after, push);
         case "appSettings":
-          return appSettingsItems(before, after, labels, push);
+          return appSettingsItems(before, after, labels2, push);
         default:
-          return genericItems(before, after, labels, push);
+          return genericItems(before, after, labels2, push);
       }
     };
     let items;
@@ -2778,7 +2952,7 @@ ${base}`
       items = run(specific);
     } catch {
       try {
-        items = run((push) => genericItems(before, after, labels, push));
+        items = run((push) => genericItems(before, after, labels2, push));
       } catch {
         items = [];
       }
@@ -2791,18 +2965,86 @@ ${base}`
     }
     return items.map((item, index) => ({ item, index })).sort((x, y) => KIND_ORDER[x.item.kind] - KIND_ORDER[y.item.kind] || x.index - y.index).map((entry) => entry.item);
   }
+  function inventoryLayout(nodes) {
+    const inventory = { codes: /* @__PURE__ */ new Set(), plain: /* @__PURE__ */ Object.create(null) };
+    const visit = (node) => {
+      if (!isObj(node)) return;
+      if (typeof node.code === "string" && node.code) inventory.codes.add(node.code);
+      else if (node.type !== "ROW") {
+        const type = String(node.type ?? "不明");
+        inventory.plain[type] = (inventory.plain[type] || 0) + 1;
+      }
+      for (const child of [...list(node.fields), ...list(node.layout)]) visit(child);
+    };
+    for (const node of Array.isArray(nodes) ? nodes : [nodes]) visit(node);
+    return inventory;
+  }
+  function describeLayoutNode(node, fieldLabels) {
+    if (!isObj(node)) return "不明な要素";
+    const names = (nodes) => {
+      const codes = [...inventoryLayout(nodes).codes];
+      return { count: codes.length, text: codes.slice(0, 4).map((code) => fieldName(code, fieldLabels)).join("、") + (codes.length > 4 ? "…" : "") };
+    };
+    if (node.type === "ROW") {
+      const inside = names(list(node.fields));
+      return inside.count ? `フィールド ${inside.count} 個の行（${inside.text}）` : "ラベル・スペース・罫線だけの行";
+    }
+    if (node.type === "GROUP") {
+      const inside = names(list(node.layout));
+      return `グループ「${fieldName(String(node.code ?? ""), fieldLabels, node.label)}」${inside.count ? `（中のフィールド ${inside.count} 個）` : ""}`;
+    }
+    if (node.type === "SUBTABLE") return `テーブル「${fieldName(String(node.code ?? ""), fieldLabels)}」`;
+    return typeof node.code === "string" && node.code ? `フィールド「${fieldName(node.code, fieldLabels)}」` : "配置の要素";
+  }
+  function reclassifyLayoutRemovals(changes, beforeLayout, afterLayout, fieldLabels) {
+    const kept = inventoryLayout(afterLayout), old = inventoryLayout(beforeLayout);
+    for (const change of changes) {
+      if (change.kind !== "削除" || !/^配置 \/ \d+件目$/.test(change.path)) continue;
+      let node;
+      try {
+        node = JSON.parse(change.before);
+      } catch {
+        continue;
+      }
+      if (!isObj(node)) continue;
+      const inside = inventoryLayout(node);
+      const lostCode = [...inside.codes].some((code) => !kept.codes.has(code));
+      const lostPlain = Object.keys(inside.plain).some((type) => (kept.plain[type] || 0) < (old.plain[type] || 0));
+      const description = describeLayoutNode(node, fieldLabels);
+      if (lostCode || lostPlain) change.summary = description;
+      else {
+        change.kind = "変更";
+        change.after = "別の位置の行・グループに含まれます（フィールドは残ります）";
+        change.summary = `${description}を並べ替え・移動`;
+      }
+    }
+  }
+  function retainedItemNames(sectionKey, changes, fieldLabels) {
+    const names = [];
+    for (const change of changes) {
+      if (change.kind !== "保持") continue;
+      const separator = change.path.indexOf(" / ");
+      const rest = separator < 0 ? change.path : change.path.slice(separator + 3);
+      if (sectionKey === "fieldSettings") {
+        const parts = rest.split(" / ");
+        names.push(parts.length >= 2 ? `${labelOnly(parts[0], void 0, fieldLabels)} / ${fieldName(parts[1], fieldLabels)}` : fieldName(rest, fieldLabels));
+      } else if (sectionKey === "layoutSettings") names.push(fieldName(rest, fieldLabels));
+      else names.push(rest);
+    }
+    return names;
+  }
   function reflectFieldLabels(...bundles) {
-    const labels = /* @__PURE__ */ Object.create(null);
+    const labels2 = /* @__PURE__ */ Object.create(null);
     const collect = (properties) => {
       if (!isObj(properties)) return;
       for (const [code, definition] of Object.entries(properties)) {
         if (!isObj(definition)) continue;
-        if (typeof definition.label === "string" && definition.label) labels[code] = definition.label;
+        if (typeof definition.label === "string" && definition.label) labels2[code] = definition.label;
         if (definition.type === "SUBTABLE") collect(definition.fields);
       }
     };
     for (const bundle of bundles) collect(bundle?.sections?.fieldSettings?.properties);
-    return labels;
+    return labels2;
   }
 
   // src/reflect/standalonePreflight.ts
@@ -2810,8 +3052,134 @@ ${base}`
     const sort = (input) => Array.isArray(input) ? input.map(sort) : input && typeof input === "object" ? Object.fromEntries(Object.keys(input).sort().map((key) => [key, sort(input[key])])) : input;
     return JSON.stringify(sort(value));
   }
+  function connectionKey(opts) {
+    return stableReflectStringify({
+      sourceAppId: String(opts.sourceAppId || "").trim(),
+      sourceGuestId: String(opts.sourceGuestId || "").trim(),
+      sourcePreview: !!opts.sourcePreview,
+      sourceMode: opts.sourceBundle ? "json" : "api",
+      targetAppId: String(opts.targetAppId || "").trim(),
+      targetGuestId: String(opts.targetGuestId || "").trim(),
+      lookupMap: opts.lookupMap || {},
+      preserveTargetOnly: opts.preserveTargetOnly !== false
+    });
+  }
   function isCompleteReflectSection(section) {
     return !!section && typeof section === "object" && !Array.isArray(section) && !section._fetchError && !section._partial;
+  }
+  var withoutTopLevelRevision = (section) => {
+    if (!section || typeof section !== "object" || Array.isArray(section) || !Object.prototype.hasOwnProperty.call(section, "revision")) return section;
+    const { revision: _revision, ...rest } = section;
+    return rest;
+  };
+  function captureSections(bundle, scopes) {
+    return Object.fromEntries(scopes.map((key) => {
+      const section = bundle?.sections?.[key];
+      return [key, {
+        content: stableReflectStringify(withoutTopLevelRevision(section)) ?? "",
+        revision: String(bundle?.meta?.sectionRevisions?.[key] ?? section?.revision ?? ""),
+        complete: isCompleteReflectSection(section)
+      }];
+    }));
+  }
+  function captureReflectBaseline(opts, source, target) {
+    return {
+      connection: connectionKey(opts),
+      source: captureSections(source, opts.scopes),
+      target: captureSections(target, opts.scopes)
+    };
+  }
+  function assertReflectBaselineMatches(baseline, opts, source, target) {
+    if (!baseline || baseline.connection !== connectionKey(opts)) {
+      throw new Error("確認済みの差分と反映条件が一致しません。差分を取得し直してから再実行してください。");
+    }
+    const current = captureReflectBaseline({ ...opts, scopes: [.../* @__PURE__ */ new Set([...opts.scopes, ...opts.targetDependencies || []])] }, source, target);
+    for (const side of ["source", "target"]) {
+      const label = side === "source" ? "反映元" : "反映先プレビュー";
+      const revisions = /* @__PURE__ */ new Set();
+      const requireRevision = side === "target" || !opts.sourceBundle;
+      const checkedScopes = side === "source" ? opts.scopes : [.../* @__PURE__ */ new Set([...opts.scopes, ...opts.targetDependencies || []])];
+      const changedLabels = [];
+      let revisionChange = null;
+      for (const key of checkedScopes) {
+        const before = baseline[side]?.[key];
+        const after = current[side][key];
+        const sectionLabel = reflectSectionLabel(key);
+        if (!before?.complete || !after.complete) {
+          throw new Error(`${label}の${sectionLabel}を完全に確認できないため反映を中止しました。差分を取得し直してください。`);
+        }
+        if (requireRevision && (!/^\d+$/.test(before.revision) || !/^\d+$/.test(after.revision))) {
+          throw new Error(`${label}の${sectionLabel}のrevisionを確認できないため反映を中止しました。差分を取得し直してください。`);
+        }
+        if (before.content !== after.content) changedLabels.push(sectionLabel);
+        else if (before.revision !== after.revision && !revisionChange) revisionChange = { from: before.revision, to: after.revision };
+        if (requireRevision) revisions.add(after.revision);
+      }
+      if (changedLabels.length) {
+        throw new Error(`差分確認後に${label}の${changedLabels.join("、")}が変更されたため反映を中止しました。差分を取得し直して、変更内容を再確認してください。`);
+      }
+      if (revisionChange) {
+        const { from, to } = revisionChange;
+        throw new Error(`${side === "source" ? "反映元" : "反映先"}アプリの設定が確認後に更新されました（revision ${from || "不明"} → ${to || "不明"}）。選択した項目の内容は同じでしたが、安全のため反映を中止しました。差分を取得し直してください。`);
+      }
+      if (requireRevision && revisions.size !== 1) {
+        throw new Error(`${label}の取得中に設定が更新された可能性があるため反映を中止しました。差分を取得し直してください。`);
+      }
+    }
+    return current.target[opts.scopes[0]].revision;
+  }
+  var SYSTEM_REF_FIELDS = /* @__PURE__ */ new Set(["$id", "$revision"]);
+  function findUnmappedActionDestApps(sourceActions, lookupMap, targetActions) {
+    if (!sourceActions || typeof sourceActions !== "object") return [];
+    const map = lookupMap || {};
+    const unmapped = [];
+    for (const [actionName, action] of Object.entries(sourceActions)) {
+      const rawApp = action?.destApp?.app;
+      if (rawApp == null) continue;
+      const destAppId = String(rawApp).trim();
+      if (!destAppId || map[destAppId]) continue;
+      const targetAppId = String(targetActions?.[actionName]?.destApp?.app ?? "").trim();
+      if (targetAppId && targetAppId === destAppId) continue;
+      unmapped.push({ actionName, destAppId });
+    }
+    return unmapped;
+  }
+  function extractActionRequiredFields(actions) {
+    if (!actions || typeof actions !== "object") return [];
+    const codes = [];
+    for (const action of Object.values(actions)) {
+      if (!Array.isArray(action?.mappings)) continue;
+      for (const mapping of action.mappings) {
+        if (mapping?.srcType === "FIELD" && typeof mapping.srcField === "string" && mapping.srcField.trim()) {
+          const code = mapping.srcField.trim();
+          if (!SYSTEM_REF_FIELDS.has(code)) codes.push(code);
+        }
+      }
+    }
+    return [...new Set(codes)];
+  }
+  function extractReportRequiredFields(reports) {
+    if (!reports || typeof reports !== "object") return [];
+    const codes = [];
+    for (const report of Object.values(reports)) {
+      if (Array.isArray(report?.groups)) {
+        for (const group of report.groups) {
+          if (typeof group?.code === "string" && group.code.trim()) {
+            const code = group.code.trim();
+            if (!SYSTEM_REF_FIELDS.has(code)) codes.push(code);
+          }
+        }
+      }
+      if (Array.isArray(report?.aggregations)) {
+        for (const agg of report.aggregations) {
+          if (agg?.type !== "COUNT" && typeof agg?.code === "string" && agg.code.trim()) {
+            const code = agg.code.trim();
+            if (!SYSTEM_REF_FIELDS.has(code)) codes.push(code);
+          }
+        }
+      }
+    }
+    return [...new Set(codes)];
   }
 
   // src/deploy/sections.ts
@@ -2821,18 +3189,18 @@ ${base}`
   }
 
   // src/deploy/inspect.ts
-  var isObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+  var isObject2 = (value) => !!value && typeof value === "object" && !Array.isArray(value);
   function withoutRevision(section) {
-    if (!isObject(section) || !Object.prototype.hasOwnProperty.call(section, "revision")) return section;
+    if (!isObject2(section) || !Object.prototype.hasOwnProperty.call(section, "revision")) return section;
     const { revision: _revision, ...rest } = section;
     return rest;
   }
   function comparableCustomize(section) {
-    if (!isObject(section)) return section;
+    if (!isObject2(section)) return section;
     const result = { ...section };
     for (const platform of ["desktop", "mobile"]) {
       const platformSection = section[platform];
-      if (!isObject(platformSection)) continue;
+      if (!isObject2(platformSection)) continue;
       const next = { ...platformSection };
       for (const kind of ["js", "css"]) {
         if (!Array.isArray(platformSection[kind])) continue;
@@ -2848,8 +3216,8 @@ ${base}`
   }
   function incompleteReason(side, label, section) {
     if (isCompleteReflectSection(section)) return void 0;
-    if (isObject(section) && section._fetchError) return `${side}の${label}を取得できません（${String(section._fetchError).split("\n")[0]}）。`;
-    if (isObject(section) && section._partial) return `${side}の${label}を完全に取得できません。`;
+    if (isObject2(section) && section._fetchError) return `${side}の${label}を取得できません（${String(section._fetchError).split("\n")[0]}）。`;
+    if (isObject2(section) && section._partial) return `${side}の${label}を完全に取得できません。`;
     return `${side}の${label}を取得できません。`;
   }
   function compareDeploySection(sectionKey, production, preview, fieldLabels = {}) {
@@ -2877,16 +3245,16 @@ ${base}`
   var NO_VALUE_FIELD_TYPES = /* @__PURE__ */ new Set(["GROUP", "REFERENCE_TABLE"]);
   function flattenFields(fieldSettings) {
     const out = [];
-    const properties = isObject(fieldSettings) ? fieldSettings.properties : void 0;
-    if (!isObject(properties)) return out;
+    const properties = isObject2(fieldSettings) ? fieldSettings.properties : void 0;
+    if (!isObject2(properties)) return out;
     for (const [key, definition] of Object.entries(properties)) {
-      if (!isObject(definition)) continue;
+      if (!isObject2(definition)) continue;
       const code = typeof definition.code === "string" && definition.code ? definition.code : key;
       const type = String(definition.type ?? "");
       out.push({ code, label: typeof definition.label === "string" ? definition.label : "", type });
-      if (type === "SUBTABLE" && isObject(definition.fields)) {
+      if (type === "SUBTABLE" && isObject2(definition.fields)) {
         for (const [innerKey, inner] of Object.entries(definition.fields)) {
-          if (!isObject(inner)) continue;
+          if (!isObject2(inner)) continue;
           out.push({ code: typeof inner.code === "string" && inner.code ? inner.code : innerKey, label: typeof inner.label === "string" ? inner.label : "", type: String(inner.type ?? ""), table: code });
         }
       }
@@ -3652,6 +4020,21 @@ ${base}`
   function appSettingsPath(app) {
     const base = app.guestId ? `/k/guest/${encodeURIComponent(app.guestId)}` : "/k";
     return `${base}/admin/app/flow?app=${encodeURIComponent(app.appId)}`;
+  }
+
+  // src/reflect/applyOutcome.ts
+  function describeReflectFailure(message) {
+    return withoutApiContextLines(message).replace("（revision 競合）", "（ほかの更新と重なったため。revision 競合）");
+  }
+  function summarizeApplyOutcome(sections) {
+    const out = { ok: 0, ng: 0, stopped: 0, pending: 0, skip: 0 };
+    for (const s of sections || []) {
+      if (s.status === "ok") out.ok += 1;
+      else if (s.status === "ng") out[s.stopped ? "stopped" : "ng"] += 1;
+      else if (s.status === "pending") out.pending += 1;
+      else out.skip += 1;
+    }
+    return out;
   }
 
   // src/reflect/planReport.ts
@@ -4922,6 +5305,14 @@ ${base}`
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
+  function makeTextarea(opts = {}) {
+    const t = document.createElement("textarea");
+    t.className = "kus-lp__textarea" + (opts.code ? " kus-lp__textarea--code" : "");
+    if (opts.rows) t.rows = opts.rows;
+    if (opts.placeholder) t.placeholder = opts.placeholder;
+    if (opts.value) t.value = opts.value;
+    return t;
+  }
   function makeSelect(options, defaultValue) {
     const sel = document.createElement("select");
     sel.className = "kus-lp__select";
@@ -4953,6 +5344,18 @@ ${base}`
   function makeCheck(opts) {
     const lab = document.createElement("label");
     lab.className = "kus-lp__check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    if (opts.checked) cb.checked = true;
+    if (opts.value !== void 0) cb.value = opts.value;
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(opts.label));
+    if (opts.help) lab.title = opts.help;
+    return { label: lab, checkbox: cb };
+  }
+  function makeChip(opts) {
+    const lab = document.createElement("label");
+    lab.className = "kus-lp__chip";
     const cb = document.createElement("input");
     cb.type = "checkbox";
     if (opts.checked) cb.checked = true;
@@ -5841,314 +6244,7 @@ ${base}`
     return details;
   }
 
-  // src/reflect/appReference.ts
-  function guestIdFromPagePath(pathname) {
-    return extractGuestIdFromInput(String(pathname || ""));
-  }
-
-  // src/reflect/applyProgress.ts
-  var REFLECT_ITEM_KIND_ORDER = ["削除", "変更", "追加", "保持"];
-  function orderReflectItems(items) {
-    const valid = (items || []).filter((item) => item && REFLECT_ITEM_KIND_ORDER.includes(item.kind) && typeof item.name === "string");
-    return REFLECT_ITEM_KIND_ORDER.flatMap((kind) => valid.filter((item) => item.kind === kind));
-  }
-  function countReflectItemKinds(items) {
-    const counts = { 削除: 0, 変更: 0, 追加: 0, 保持: 0 };
-    for (const item of items || []) if (item && item.kind in counts) counts[item.kind] += 1;
-    return counts;
-  }
-
-  // src/entries/reflectPlanView.ts
-  var ITEM_KIND_CLASS = { 削除: "delete", 変更: "change", 追加: "add", 保持: "keep" };
-  var ITEMS_INITIAL = 20;
-  var ITEMS_STEP = 50;
-  function buildReflectItem(item) {
-    const row = document.createElement("li");
-    row.className = `kus-rl-item kus-rl-item--${ITEM_KIND_CLASS[item.kind]}`;
-    row.dataset.kind = item.kind;
-    const badge = document.createElement("span");
-    badge.className = `kus-rl-kind kus-rl-kind--${ITEM_KIND_CLASS[item.kind]}`;
-    badge.textContent = item.kind;
-    const name = document.createElement("span");
-    name.className = "kus-rl-item__name";
-    name.textContent = item.name;
-    row.append(badge, name);
-    const details = (item.details || []).filter(Boolean);
-    if (details.length) {
-      const list2 = document.createElement("ul");
-      list2.className = "kus-rl-item__details";
-      for (const detail of details) {
-        const li = document.createElement("li");
-        li.textContent = detail;
-        list2.appendChild(li);
-      }
-      row.appendChild(list2);
-    }
-    return row;
-  }
-  function appendReflectItems(host, plan) {
-    const items = orderReflectItems(plan.items);
-    if (!items.length) return;
-    const counts = countReflectItemKinds(items);
-    const onlyKept = counts.保持 === items.length;
-    const root2 = document.createElement(onlyKept ? "details" : "section");
-    root2.className = `kus-rl-items${onlyKept ? " kus-rl-items--quiet" : ""}`;
-    root2.dataset.reflectItems = "true";
-    if (plan.sectionKey) {
-      root2.dataset.reflectSection = plan.sectionKey;
-      if (onlyKept) root2.dataset.reflectDetails = `${plan.sectionKey}:kept`;
-    }
-    const countText = REFLECT_ITEM_KIND_ORDER.filter((kind) => counts[kind]).map((kind) => `${kind} ${counts[kind]}`).join("・");
-    const list2 = document.createElement("ul");
-    list2.className = "kus-rl-items__list";
-    let shown = 0;
-    const more = document.createElement("button");
-    more.type = "button";
-    more.className = "kus-lp__btn kus-lp__btn--sub kus-rl-items__more";
-    const showNext = (limit) => {
-      for (const item of items.slice(shown, shown + limit)) list2.appendChild(buildReflectItem(item));
-      shown = Math.min(items.length, shown + limit);
-      more.hidden = shown >= items.length;
-      more.textContent = `残り ${items.length - shown} 件を表示`;
-    };
-    more.addEventListener("click", () => showNext(ITEMS_STEP));
-    if (onlyKept) {
-      const head = document.createElement("summary");
-      head.textContent = `${plan.label}：反映先だけの設定を保持（${counts.保持} 件）`;
-      root2.appendChild(head);
-      root2.addEventListener("toggle", () => {
-        if (root2.open && !shown) showNext(ITEMS_INITIAL);
-      });
-    } else {
-      const head = document.createElement("div");
-      head.className = "kus-rl-items__title";
-      const title = document.createElement("strong");
-      title.textContent = "変更の要約";
-      const total = document.createElement("span");
-      total.textContent = countText;
-      head.append(title, total);
-      root2.appendChild(head);
-      showNext(ITEMS_INITIAL);
-    }
-    root2.append(list2, more);
-    more.hidden = onlyKept || shown >= items.length;
-    host.appendChild(root2);
-  }
-
-  // src/entries/deploy-lite-ui.ts
-  var memory = { targets: [], mode: "deploy", batchMode: "sequential", stopOnError: true, lastRun: null };
-  var STYLE_ID2 = "kus-deploy-lite-styles";
-  var P = "#kus-deploy-lite";
-  var CSS2 = `
-${P}.kus-lp--wide{width:min(960px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px;border-color:#cbd5e1}
-${P} .kus-lp__hero{padding:16px 24px}
-${P} .kus-lp__title{font-size:22px;letter-spacing:-.01em;word-break:keep-all}
-${P} .kus-lp__subtitle{font-size:14px;max-width:560px}
-${P} .kus-lp__body{padding:0;background:#f4f6f8;display:flex;flex-direction:column;overflow:hidden}
-${P} .kus-lp__hint{margin:0;padding:11px 24px;border:0;border-bottom:1px solid #e2e8f0;border-radius:0;background:#fff1f2;color:#9f1239}
-${P} .kus-lp__hint strong{color:#881337}
-${P} .kus-lp__card{border-radius:16px;padding:16px 18px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
-${P} .kus-lp__card-head{border:0;margin:0 0 12px;padding:0}
-${P} .kus-lp__card-title{font-size:13px;text-transform:none;letter-spacing:.01em;color:#172033}
-${P} .kus-lp__card-num{background:#881337;color:#fff}
-${P} [hidden]{display:none!important}
-${P} :is(button,input,select,summary):focus-visible{outline:3px solid #2563eb;outline-offset:3px}
-${P} .kus-dp-workspace{display:flex;flex-direction:column;min-height:0;flex:1}
-${P} .kus-dp-canvas{min-width:0;min-height:0;overflow:auto;padding:20px 24px;scroll-padding:16px}
-${P} .kus-dp-nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 24px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
-${P} .kus-dp-nav__btn{appearance:none;width:100%;border:1px solid transparent;border-radius:10px;background:transparent;color:#64748b;padding:10px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:9px;text-align:left}
-${P} .kus-dp-nav__btn:hover{background:#f1f5f9;color:#172033}
-${P} .kus-dp-nav__btn[aria-selected="true"]{background:#fff1f2;color:#881337;border-color:#fecdd3}
-${P} .kus-dp-nav__btn:disabled{opacity:.45;cursor:not-allowed}
-${P} .kus-dp-nav__num{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#e2e8f0;color:#475569;font-size:11.5px}
-${P} .kus-dp-nav__btn[aria-selected="true"] .kus-dp-nav__num{background:#ffe4e6;color:#881337}
-${P} .kus-dp-nav__copy{display:block;font-size:11px;font-weight:500;color:#94a3b8;margin-top:2px}
-${P} .kus-dp-nav__btn[aria-selected="true"] .kus-dp-nav__copy{color:#64748b}
-${P} .kus-dp-stage[hidden]{display:none}
-${P} .kus-dp-stage-head{margin:0 2px 16px}
-${P} .kus-dp-stage-head h2{margin:0;font-size:20px;letter-spacing:-.02em;color:#0f172a}
-${P} .kus-dp-stage-head p{margin:4px 0 0;font-size:13px;color:#64748b}
-${P} .kus-dp-stage .kus-lp__card:last-child{margin-bottom:0}
-${P} .kus-dp-setup{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
-${P} .kus-dp-setup>.kus-lp__card{margin:0}
-${P} .kus-dp-count{font-size:12.5px;font-weight:700;color:#475569}
-${P} .kus-dp-count--over{color:#b91c1c}
-${P} .kus-dp-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px}
-${P} .kus-dp-choice{padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;cursor:pointer;display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:13px;min-width:0;align-items:start}
-${P} .kus-dp-choice:has(input:checked){border-color:#be123c;background:#fff1f2}
-${P} .kus-dp-choice:has(input:disabled){opacity:.55;cursor:not-allowed}
-${P} .kus-dp-choice strong{display:block;color:#0f172a}
-${P} .kus-dp-choice small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
-${P} .kus-dp-detail-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
-${P} .kus-dp-detail-summary{flex:1 1 220px;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.5;color:#475569}
-${P} .kus-dp-detail-summary--warn{color:#9a3412;font-weight:700}
-${P} .kus-lp__dialog .kus-lp__card--soft{box-shadow:none}
-${P} .kus-dp-next{padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.6;border:1px solid #e2e8f0;background:#fff;overflow-wrap:anywhere}
-${P} .kus-dp-next--ok{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
-${P} .kus-dp-next--info{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}
-${P} .kus-dp-next--warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
-${P} .kus-dp-next--err{background:#fef2f2;border-color:#fecaca;color:#991b1b}
-${P} .kus-dp-quiet{margin:6px 0 0;font-size:13px;color:#64748b;overflow-wrap:anywhere}
-${P} .kus-dp-pills{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
-${P} .kus-dp-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;font-size:12.5px;font-weight:700;border:1px solid #e2e8f0;background:#fff;color:#334155}
-${P} .kus-dp-pill--change{background:#fff7ed;border-color:#fdba74;color:#9a3412}
-${P} .kus-dp-pill--same{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
-${P} .kus-dp-pill--error{background:#fef2f2;border-color:#fca5a5;color:#991b1b}
-${P} .kus-dp-pill--processing{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
-${P} .kus-dp-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
-${P} .kus-dp-issues{margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.6;color:#92400e;overflow-wrap:anywhere}
-${P} .kus-dp-table-wrap{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#fff}
-${P} .kus-dp-table{width:100%;border-collapse:collapse;font-size:13px}
-${P} .kus-dp-table th{padding:7px 10px;text-align:left;font-size:12.5px;font-weight:700;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;white-space:nowrap}
-${P} .kus-dp-table td{padding:8px 10px;border-top:1px solid #f1f5f9;vertical-align:top;overflow-wrap:anywhere}
-${P} .kus-dp-table td.kus-dp-c-sel{width:34px}
-${P} .kus-dp-table td.kus-dp-c-app{min-width:150px}
-${P} .kus-dp-table td.kus-dp-c-state,${P} .kus-dp-table td.kus-dp-c-act{white-space:nowrap}
-${P} .kus-dp-table td.kus-dp-c-rev{min-width:130px}
-${P} .kus-dp-table td.kus-dp-c-act .kus-lp__btn{padding:4px 8px;white-space:nowrap}
-${P} .kus-dp-pill{white-space:nowrap}
-${P} .kus-dp-table tr.kus-dp-row--error td{background:#fff5f5}
-${P} .kus-dp-table tr.kus-dp-row--processing td{background:#eff6ff}
-${P} .kus-dp-table tr.kus-dp-row--clean td{color:#64748b}
-${P} .kus-dp-table tr.kus-dp-detail-tr>td{padding:0 10px 10px;background:#fff}
-${P} .kus-dp-app-name{font-weight:700;color:#0f172a}
-${P} .kus-dp-app-id{display:block;font-size:12px;color:#64748b}
-${P} .kus-dp-app-error{display:block;margin-top:4px;font-size:12.5px;color:#991b1b;white-space:pre-wrap}
-${P} .kus-dp-app-sub{display:block;margin-top:4px;font-size:12.5px;color:#475569}
-${P} .kus-dp-del{font-variant-numeric:tabular-nums}
-${P} .kus-dp-del--has{color:#b91c1c;font-weight:700}
-${P} .kus-dp-more{margin-top:8px}
-${P} .kus-dp-detail{display:flex;flex-direction:column;gap:8px;padding-top:6px}
-${P} .kus-dp-detail h4{margin:4px 0 0;font-size:13px;color:#0f172a}
-${P} .kus-dp-danger{padding:10px 12px;border:1px solid #fca5a5;border-radius:10px;background:#fef2f2;color:#991b1b;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
-${P} .kus-dp-danger strong{display:block;margin-bottom:2px}
-${P} .kus-dp-danger ul{margin:4px 0 0;padding-left:18px}
-${P} .kus-dp-danger small{display:block;color:#7f1d1d}
-${P} .kus-dp-info{padding:8px 12px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;color:#1e3a8a;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
-${P} .kus-dp-warn{padding:8px 12px;border:1px solid #fde68a;border-radius:10px;background:#fffbeb;color:#92400e;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
-${P} .kus-dp-facts{margin:0;display:grid;gap:8px}
-${P} .kus-dp-fact{padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
-${P} .kus-dp-fact dt{margin:0 0 4px;font-size:12.5px;font-weight:700;color:#64748b}
-${P} .kus-dp-fact dd{margin:0;font-size:14px;line-height:1.6;color:#0f172a}
-${P} .kus-dp-fact--direction{border:2px solid #be123c;background:#fff1f2}
-${P} .kus-dp-fact--danger{border-color:#fca5a5;background:#fef2f2}
-${P} .kus-dp-fact--danger dd{color:#991b1b}
-${P} .kus-dp-targets{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.6 inherit;color:#334155}
-${P} .kus-dp-confirm-input{margin-top:12px;display:flex;flex-direction:column;gap:8px}
-${P} .kus-dp-confirm-input label.kus-dp-confirm-label{font-size:13px;font-weight:700;color:#0f172a}
-${P} .kus-dp-confirm-input .kus-lp__input{width:100%;max-width:260px;box-sizing:border-box;min-height:40px;font-size:14px}
-${P} .kus-dp-progress__summary{margin:0 0 6px;font-size:13px;font-weight:700;color:#334155}
-${P} .kus-dp-progress__omitted{margin:0 0 6px;font-size:12.5px;color:#64748b}
-${P} .kus-dp-result-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
-${P} .kus-dp-result-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
-${P} .kus-dp-result-item--ok{border-color:#a7f3d0}
-${P} .kus-dp-result-item--ng{border-color:#fca5a5;background:#fff5f5}
-${P} .kus-dp-result-item--warn{border-color:#fcd34d;background:#fffbeb}
-${P} .kus-dp-result-item--pending{border-color:#e2e8f0;background:#f8fafc}
-${P} .kus-dp-result-item--run{border-color:#93c5fd;background:#eff6ff}
-${P} .kus-dp-result-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px}
-${P} .kus-dp-result-state{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;font-size:12.5px;font-weight:700;color:#475569}
-${P} .kus-dp-result-state--ok{border-color:#a7f3d0;background:#ecfdf5;color:#065f46}
-${P} .kus-dp-result-state--ng{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
-${P} .kus-dp-result-state--warn{border-color:#fcd34d;background:#fffbeb;color:#92400e}
-${P} .kus-dp-result-state--run{border-color:#93c5fd;background:#dbeafe;color:#1e40af}
-${P} .kus-dp-result-item__message{margin-top:6px;font-size:13px;line-height:1.6;color:#334155;white-space:pre-wrap;overflow-wrap:anywhere}
-${P} .kus-dp-result-item__meta{margin-top:4px;font-size:12.5px;color:#64748b}
-${P} .kus-dp-result-item__meta--warn{color:#9a3412;font-weight:700}
-${P} .kus-dp-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-wrap:anywhere}
-${P} .kus-dp-result-notes{display:flex;flex-direction:column;gap:8px;margin:8px 0}
-${P} .kus-dp-empty{padding:14px 12px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;font-size:13px;color:#64748b}
-${P} .kus-dp-action-dock{flex-shrink:0;padding:12px 24px;background:#fff;border-top:1px solid #e2e8f0}
-${P} .kus-dp-dock-row{display:flex;align-items:center;gap:10px}
-${P} .kus-dp-dock-copy{flex:1;min-width:0;font-size:13px;color:#475569;overflow-wrap:anywhere}
-${P} .kus-dp-dock-copy strong{display:block;color:#0f172a}
-${P} .kus-dp-dock-msg{display:block}
-${P} .kus-dp-dock-reason{color:#9a3412;font-weight:600}
-${P} .kus-dp-dock-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-${P} .kus-dp-dock-actions .kus-lp__btn{min-height:42px}
-${P} .kus-dp-action-dock .kus-lp__result{max-height:80px;overflow:auto}
-${P} .kus-dp-action-dock .kus-lp__status-text{max-height:48px;overflow:auto}
-${P} .kus-dp-action-dock .kus-lp__status{margin-top:8px}
-${P} .kus-rl-items{margin:4px 0;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff}
-${P} .kus-rl-items__title{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin-bottom:8px;font-size:13px;color:#475569}
-${P} .kus-rl-items__title strong{font-size:13px;color:#0f172a}
-${P} .kus-rl-items__list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
-${P} .kus-rl-item{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;row-gap:2px;align-items:baseline;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
-${P} .kus-rl-item__name{min-width:0;font-weight:700;color:#0f172a}
-${P} .kus-rl-item__details{grid-column:2;margin:0;padding-left:16px;font-size:13px;color:#475569}
-${P} .kus-rl-item--keep .kus-rl-item__name{font-weight:600;color:#475569}
-${P} .kus-rl-kind{display:inline-block;min-width:36px;padding:0 6px;border:1px solid #cbd5e1;border-radius:4px;background:#f1f5f9;color:#475569;font-size:12px;font-weight:800;line-height:18px;letter-spacing:.04em;text-align:center}
-${P} .kus-rl-kind--delete{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
-${P} .kus-rl-kind--change{border-color:#fdba74;background:#fff7ed;color:#9a3412}
-${P} .kus-rl-kind--add{border-color:#86efac;background:#f0fdf4;color:#166534}
-${P} .kus-rl-items--quiet{padding:0 12px;border-style:dashed;background:#f8fafc}
-${P} .kus-rl-items--quiet>summary{cursor:pointer;padding:8px 0;font-size:13px;font-weight:700;color:#64748b}
-${P} .kus-rl-items__more{margin-top:8px}
-@media(max-width:760px){
-  ${P} .kus-dp-table,${P} .kus-dp-table tbody{display:block}
-  ${P} .kus-dp-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-  ${P} .kus-dp-table tr.kus-dp-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:4px 8px;padding:10px 12px;border-top:1px solid #e2e8f0}
-  ${P} .kus-dp-table tr.kus-dp-row:first-child{border-top:0}
-  ${P} .kus-dp-table tr.kus-dp-row>td{display:block;padding:0;border:0;min-width:0;background:transparent!important}
-  ${P} .kus-dp-table td.kus-dp-c-sel{grid-column:1;grid-row:1;width:auto}
-  ${P} .kus-dp-table td.kus-dp-c-app,${P} .kus-dp-table td.kus-dp-c-rev{min-width:0}
-  ${P} .kus-dp-table td.kus-dp-c-app{grid-column:2;grid-row:1}
-  ${P} .kus-dp-table td.kus-dp-c-state{grid-column:3;grid-row:1;justify-self:end}
-  ${P} .kus-dp-table td.kus-dp-c-items,${P} .kus-dp-table td.kus-dp-c-del,${P} .kus-dp-table td.kus-dp-c-rev,${P} .kus-dp-table td.kus-dp-c-act{grid-column:2/-1}
-  ${P} .kus-dp-table td.kus-dp-c-items::before,${P} .kus-dp-table td.kus-dp-c-del::before,${P} .kus-dp-table td.kus-dp-c-rev::before{content:attr(data-label) "：";font-size:12px;font-weight:700;color:#64748b}
-  ${P} .kus-dp-table tr.kus-dp-row.kus-dp-row--error{background:#fff5f5}
-  ${P} .kus-dp-table tr.kus-dp-row.kus-dp-row--processing{background:#eff6ff}
-  ${P} .kus-dp-table tr.kus-dp-detail-tr{display:block}
-  ${P} .kus-dp-table tr.kus-dp-detail-tr>td{display:block}
-}
-@media(max-width:720px){
-  ${P}.kus-lp--wide{width:calc(100vw - 16px);right:8px;top:8px;max-height:calc(100dvh - 16px)}
-  ${P} .kus-lp__hero{padding:12px 16px}
-  ${P} .kus-lp__hint{display:none}
-  ${P} .kus-dp-nav{padding:8px;gap:4px}
-  ${P} .kus-dp-nav__copy,${P} .kus-dp-nav__num{display:none}
-  ${P} .kus-dp-nav__btn{display:flex;justify-content:center;text-align:center;padding:8px 4px;font-size:12.5px}
-  ${P} .kus-dp-canvas{padding:18px 16px 8px}
-  ${P} .kus-dp-action-dock{padding:12px 16px 15px}
-  ${P} .kus-dp-dock-row{align-items:stretch;flex-direction:column;gap:8px}
-  ${P} .kus-dp-dock-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
-  ${P} .kus-dp-dock-actions .kus-lp__btn{min-width:0;white-space:normal}
-  ${P} .kus-dp-dock-actions .kus-lp__btn--danger,${P} .kus-dp-dock-actions .kus-lp__btn--primary{grid-column:1/-1}
-  ${P} .kus-lp__card{padding:12px}
-  ${P} .kus-lp__card-head{flex-wrap:wrap}
-  ${P} .kus-lp__select{min-width:0!important;max-width:100%}
-}
-@media(max-width:400px){${P} .kus-lp__elapsed{display:none}}
-@media(max-height:720px){
-  ${P} .kus-lp__hero{padding:8px 16px}
-  ${P} .kus-lp__title{font-size:17px}
-  ${P} .kus-lp__subtitle{display:none}
-  ${P} .kus-dp-nav{padding:6px 12px}
-  ${P} .kus-dp-nav__btn{padding:6px 4px}
-  ${P} .kus-dp-nav__copy{display:none}
-  ${P} .kus-dp-canvas{padding:12px 16px 8px}
-  ${P} .kus-dp-stage-head{margin-bottom:10px}
-  ${P} .kus-dp-stage-head h2{font-size:17px}
-  ${P} .kus-dp-stage-head p{display:none}
-  ${P} .kus-dp-action-dock{padding:8px 16px 10px}
-  ${P} .kus-dp-dock-row{gap:6px}
-  ${P} .kus-dp-dock-copy{font-size:12.5px;line-height:1.4}
-  ${P} .kus-dp-dock-copy strong,${P} .kus-dp-dock-msg{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
-  ${P} .kus-dp-dock-actions{gap:4px 6px}
-  ${P} .kus-dp-dock-actions .kus-lp__btn{min-height:36px;padding:6px 10px}
-  ${P} .kus-dp-action-dock .kus-lp__status{margin-top:6px;padding:6px 10px;min-height:0;line-height:1.4}
-  ${P} .kus-dp-action-dock .kus-lp__status-text{max-height:2.9em}
-  ${P} .kus-dp-action-dock .kus-lp__result{max-height:48px}
-}
-@media(prefers-reduced-motion:reduce){${P}{animation:none}${P} *{scroll-behavior:auto!important}}
-`;
-  function ensureStyles2() {
-    if (document.getElementById(STYLE_ID2)) return;
-    const st = document.createElement("style");
-    st.id = STYLE_ID2;
-    st.textContent = CSS2;
-    document.head.appendChild(st);
-  }
+  // src/entries/deployProgressView.ts
   function el(tag, className = "", text = "") {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -6258,6 +6354,3712 @@ ${P} .kus-rl-items__more{margin-top:8px}
       }
     };
   }
+
+  // src/tabs/deploy-source-standalone.ts
+  async function runSourceToProductionStandalone(opts) {
+    void opts;
+    throw new Error("runSourceToProductionStandalone は未実装です");
+  }
+
+  // src/reflect/standalonePlan.ts
+  var formatBytes = (bytes) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
+  var namedSections = { viewSettings: "views", reportSettings: "reports", actionSettings: "actions" };
+  var own2 = (object2, key) => Object.prototype.hasOwnProperty.call(object2, key);
+  var object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+  var equal = (a, b) => stableReflectStringify(a) === stableReflectStringify(b);
+  var valueText = (value) => value === void 0 ? "（なし）" : typeof value === "string" ? value : JSON.stringify(value);
+  var labels = { properties: "フィールド", layout: "配置", views: "一覧", reports: "グラフ", actions: "アクション", rights: "アクセス権", notifications: "通知", categories: "カテゴリー", label: "表示名", required: "必須", unique: "重複禁止", options: "選択肢", defaultValue: "初期値", type: "種類", index: "表示順", filterCond: "絞り込み", sort: "並び順", enable: "有効", states: "状態", scope: "適用範囲", fields: "フィールド", desktop: "PC", mobile: "モバイル" };
+  var nameKeyedContainers = /* @__PURE__ */ new Set(["properties", "fields", "views", "reports", "actions", "states", "categories", "options"]);
+  function diffValues(before, after, path, output, keysAreNames = false) {
+    if (equal(before, after)) return;
+    if (object(before) && object(after)) {
+      for (const key of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own2(before, key) ? before[key] : void 0, own2(after, key) ? after[key] : void 0, [...path, !keysAreNames && own2(labels, key) ? labels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
+    } else if (Array.isArray(before) && Array.isArray(after)) {
+      const queues = /* @__PURE__ */ new Map(), taken = /* @__PURE__ */ new Set();
+      after.forEach((value, index) => {
+        const key = stableReflectStringify(value);
+        const queue = queues.get(key);
+        if (queue) queue.push(index);
+        else queues.set(key, [index]);
+      });
+      const beforeKeys = before.map((value) => stableReflectStringify(value));
+      for (const [index, value] of before.entries()) {
+        const found = queues.get(beforeKeys[index])?.shift();
+        if (found !== void 0) taken.add(found);
+        else output.push({ kind: "削除", path: [...path, `${index + 1}件目`].join(" / "), before: valueText(value), after: "（なし）" });
+      }
+      const remaining = after.filter((_value, index) => !taken.has(index));
+      for (const value of remaining) output.push({ kind: "追加", path: path.join(" / "), before: "（なし）", after: valueText(value) });
+      if (!remaining.length && before.length === after.length && beforeKeys.every((key) => queues.has(key))) {
+        output.push({ kind: "変更", path: path.join(" / ") + " / 順序", before: valueText(before), after: valueText(after) });
+      }
+    } else output.push({ kind: before === void 0 ? "追加" : after === void 0 ? "削除" : "変更", path: path.join(" / "), before: valueText(before), after: valueText(after) });
+  }
+  function fieldDefinitions(section) {
+    const properties = section?.properties;
+    if (!object(properties)) throw new Error("フィールド設定の properties を取得できません。");
+    return properties;
+  }
+  function mergeFields(source, target, lookupMap, path, plan) {
+    const after = Object.assign(/* @__PURE__ */ Object.create(null), deepClone(target));
+    for (const [code, def] of Object.entries(source)) {
+      if (!object(def) || !def.type) {
+        plan.blockers.push(`${[...path, code].join(" / ")}: フィールドの種類がありません。`);
+        continue;
+      }
+      if (SYSTEM_FIELD_TYPES.has(def.type)) continue;
+      const current = own2(target, code) ? target[code] : void 0;
+      if (current && current.type !== def.type) {
+        plan.blockers.push(`${[...path, code].join(" / ")}: 種類が異なります（${current.type} → ${def.type}）。既存項目の種類はこの反映では変更できません。`);
+        continue;
+      }
+      const next = { code, ...deepClone(current || {}), ...deepClone(def) };
+      if (!current && next.label === void 0) next.label = code;
+      if (next.code && next.code !== code) plan.blockers.push(`${code}: フィールドコードの変更を含みます。フィールド追加ツールで確認してください。`);
+      for (const holder of ["lookup", "referenceTable"]) {
+        const mapped = next[holder]?.relatedApp?.app && lookupMap[String(next[holder].relatedApp.app)];
+        if (!mapped) continue;
+        const currentRelated = current?.[holder]?.relatedApp;
+        if (object(currentRelated) && String(currentRelated.app) === String(mapped)) next[holder].relatedApp = deepClone(currentRelated);
+        else {
+          next[holder].relatedApp.app = mapped;
+          delete next[holder].relatedApp.code;
+        }
+      }
+      for (const holder of ["lookup", "referenceTable"]) {
+        if (current && object(current[holder]) && !own2(def, holder)) plan.warnings.push(`${[...path, code].join(" / ")}: 反映先では${holder === "lookup" ? "ルックアップ" : "関連レコード一覧"}の設定がありますが、反映元にはありません。この反映では設定を外さず、反映先の設定を残します。`);
+      }
+      if (def.type === "SUBTABLE") {
+        if (!object(def.fields)) throw new Error(`${code}: テーブル内のフィールド定義がありません。`);
+        next.fields = mergeFields(def.fields, current?.fields || {}, lookupMap, [...path, code], plan);
+      }
+      after[code] = next;
+    }
+    for (const [code, def] of Object.entries(target)) if (!own2(source, code) && !SYSTEM_FIELD_TYPES.has(def?.type)) {
+      plan.changes.push({ kind: "保持", path: [...path, code].join(" / "), before: valueText(def), after: "反映先の設定を保持" });
+    }
+    return after;
+  }
+  function namedPayload(section, property) {
+    if (!object(section?.[property])) throw new Error(`${property} の設定を取得できません。`);
+    return Object.fromEntries(Object.entries(section[property]).map(([key, raw]) => {
+      if (!object(raw)) throw new Error(`${key}: 設定の形式が不正です。`);
+      const value = deepClone(raw);
+      delete value.id;
+      return [key, value];
+    }));
+  }
+  function mergeLayout(source, target, plan) {
+    const result = deepClone(source), locations = /* @__PURE__ */ new Map();
+    const collect = (nodes) => {
+      for (const node of nodes) {
+        if (!object(node)) throw new Error("レイアウトに不正な項目があります。");
+        if (node.code) {
+          if (locations.has(node.code)) throw new Error(`配置が重複しています: ${node.code}`);
+          locations.set(node.code, node);
+        }
+        if (Array.isArray(node.fields)) collect(node.fields);
+        if (Array.isArray(node.layout)) collect(node.layout);
+      }
+    };
+    collect(result);
+    const retain = (field) => {
+      if (!field.code || locations.has(field.code)) return false;
+      locations.set(field.code, field);
+      plan.changes.push({ kind: "保持", path: `配置 / ${field.code}`, before: valueText(field), after: "既存の配置を末尾に保持" });
+      return true;
+    };
+    const appendMissing = (nodes, destination) => {
+      for (const node of deepClone(nodes)) {
+        if (node.type === "ROW") {
+          node.fields = (node.fields || []).filter(retain);
+          if (node.fields.length) destination.push(node);
+        } else if (node.type === "GROUP") {
+          const existing = locations.get(node.code);
+          if (existing) appendMissing(node.layout || [], existing.layout || (existing.layout = []));
+          else {
+            retain(node);
+            const children = node.layout || [];
+            node.layout = [];
+            appendMissing(children, node.layout);
+            destination.push(node);
+          }
+        } else if (node.type === "SUBTABLE") {
+          const existing = locations.get(node.code);
+          const fields = (node.fields || []).filter(retain);
+          if (existing) existing.fields.push(...fields);
+          else {
+            retain(node);
+            node.fields = fields;
+            destination.push(node);
+          }
+        }
+      }
+    };
+    appendMissing(target, result);
+    return result;
+  }
+  var FIELD_DEPENDENT_SECTIONS = ["layoutSettings", "viewSettings", "reportSettings", "actionSettings", "appSettings", "fieldAcl", "reminderNotifications", "processSettings"];
+  function reflectInspectionScopes(scopes) {
+    return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => FIELD_DEPENDENT_SECTIONS.includes(key)) ? ["fieldSettings"] : []])];
+  }
+  var settingValue = (value) => typeof value === "number" ? String(value) : Array.isArray(value) ? value.map(settingValue) : object(value) ? Object.fromEntries(Object.entries(value).map(([name, item]) => [name, settingValue(item)])) : value;
+  function buildAppSettingsPlan(plan, source, target, options) {
+    try {
+      if (own2(source, "titleField") && !object(source.titleField)) throw new Error("レコードのタイトルの設定形式が不正です。");
+      plan.behavior = "動作・表示の設定を更新（アプリ名・説明・アイコンは対象外）";
+      const pick = (section) => Object.fromEntries(APP_SETTINGS_REFLECT_KEYS.filter((name) => own2(source, name) && own2(section, name)).map((name) => [name, name === "titleField" && object(section[name]) && section[name].selectionMode === "AUTO" ? { selectionMode: "AUTO" } : settingValue(section[name])]));
+      const before = pick(target), after = pick(source);
+      if (!Object.keys(after).length) throw new Error("反映元に比較できる一般設定がありません（古い設定JSONの可能性があります）。");
+      if (after.titleField?.selectionMode === "MANUAL") {
+        if (typeof after.titleField.code !== "string" || !after.titleField.code) throw new Error("レコードのタイトルに使うフィールドが指定されていません。");
+        plan.requiredFields = [after.titleField.code];
+      }
+      diffValues(before, after, [], plan.changes);
+      for (const change of plan.changes) if (change.kind === "削除") change.kind = "変更";
+      try {
+        plan.items = summarizeReflectItems("appSettings", before, after, { fieldLabels: options.fieldLabels });
+      } catch {
+        plan.items = [];
+      }
+      for (const change of plan.changes) {
+        const [head, ...rest] = change.path.split(" / ");
+        change.path = [APP_SETTINGS_LABELS[head] || head, ...rest].join(" / ");
+      }
+      plan.changeCount = plan.changes.filter((change) => change.kind !== "保持").length;
+      plan.removalCount = plan.changes.filter((change) => change.kind === "削除").length;
+      if (plan.changeCount) plan.operations.push({ method: "PUT", endpoint: SECTION_DEFS.find((item) => item.key === "appSettings")?.endpoint || "/app/settings.json", body: after, label: plan.label });
+      plan.status = plan.operations.length ? "change" : "same";
+      plan.message = plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : "書き込み不要（一致）";
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      plan.status = "error";
+      plan.blockers.push(error.message || String(error));
+      plan.message = plan.blockers.join("\n");
+    }
+    return plan;
+  }
+  function buildReflectSectionPlan(key, source, target, options = {}) {
+    const def = SECTION_DEFS.find((item) => item.key === key);
+    const plan = { sectionKey: key, label: reflectSectionLabel(key), status: "same", message: "", behavior: "全置換", changes: [], changeCount: 0, removalCount: 0, warnings: [], blockers: [], operations: [] };
+    const fail = (side, section) => {
+      plan.status = side === "src" ? "src-missing" : "tgt-missing";
+      const partial = section?._partial?.kind === "customizeBody" ? "JS/CSSファイルの本文が一部取得できていない設定JSONです。設定取得をやり直すか、アプリから取得してください" : section?._partial?.message;
+      plan.message = `${side === "src" ? "反映元" : "反映先"}を完全に取得できません: ${section?._fetchError || partial || "設定がありません"}`;
+      plan.blockers.push(plan.message);
+      return plan;
+    };
+    if (!isCompleteReflectSection(source)) return fail("src", source);
+    if (!isCompleteReflectSection(target)) return fail("tgt", target);
+    if (key === "appSettings") return buildAppSettingsPlan(plan, source, target, options);
+    if (!def?.put || !def.putBuilder) {
+      plan.status = "error";
+      plan.blockers.push("この項目は反映に対応していません。");
+      return plan;
+    }
+    try {
+      let before, after, comparable3;
+      const uploads = [];
+      if (key === "fieldSettings") {
+        plan.behavior = "追加・更新（反映先だけの項目は保持）";
+        const sourceProps = fieldDefinitions(source), targetProps = fieldDefinitions(target);
+        const positions = (props) => {
+          const map = /* @__PURE__ */ new Map();
+          const add = (code, parent) => {
+            if (map.has(code)) throw new Error(`フィールドコードが重複しています: ${code}`);
+            map.set(code, parent);
+          };
+          for (const [code, field] of Object.entries(props)) {
+            add(code, "フォーム");
+            if (field?.type === "SUBTABLE") for (const child of Object.keys(field.fields || {})) add(child, code);
+          }
+          return map;
+        };
+        const sourcePositions = positions(sourceProps), targetPositions = positions(targetProps);
+        for (const [code, parent] of sourcePositions) if (targetPositions.has(code) && parent !== targetPositions.get(code)) plan.blockers.push(`${code}: フォームとテーブル間、またはテーブル間の移動には対応していません。`);
+        const merged = mergeFields(sourceProps, targetProps, options.lookupMap || {}, ["フィールド"], plan);
+        const adds = /* @__PURE__ */ Object.create(null), updates = /* @__PURE__ */ Object.create(null);
+        for (const [code, value] of Object.entries(merged)) {
+          if (!own2(sourceProps, code) || SYSTEM_FIELD_TYPES.has(value?.type)) continue;
+          if (!own2(targetProps, code)) adds[code] = value;
+          else if (value.type === "SUBTABLE") {
+            const current = targetProps[code], addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own2(current.fields || {}, child)));
+            if (Object.keys(addedFields).length) adds[code] = { type: "SUBTABLE", code, fields: addedFields };
+            const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own2(current.fields || {}, child) && !equal(childDef, current.fields[child])));
+            const { fields: _nextFields, ...nextTable } = value, { fields: _currentFields, ...currentTable } = current;
+            if (Object.keys(updatedFields).length || !equal(nextTable, currentTable)) updates[code] = { ...nextTable, fields: updatedFields };
+          } else if (!equal(value, targetProps[code])) updates[code] = value;
+        }
+        const fieldCounts = { add: Object.keys(adds).length, update: Object.keys(updates).length, tgtOnly: Object.keys(targetProps).filter((code) => !own2(sourceProps, code) && !SYSTEM_FIELD_TYPES.has(targetProps[code]?.type)).length };
+        plan.fieldStats = fieldCounts;
+        if (fieldCounts.add) plan.operations.push({ method: "POST", endpoint: def.endpoint, body: { properties: adds }, label: "フィールド追加" });
+        if (fieldCounts.update) plan.operations.push({ method: "PUT", endpoint: def.endpoint, body: { properties: updates }, label: "フィールド更新" });
+        before = { properties: targetProps };
+        after = { properties: merged };
+      } else if (namedSections[key]) {
+        const property = namedSections[key];
+        const from = namedPayload(source, property), to = namedPayload(target, property);
+        if (key === "actionSettings") {
+          for (const unmapped of findUnmappedActionDestApps(from, options.lookupMap, to)) {
+            plan.warnings.push(`アクション「${unmapped.actionName}」のコピー先アプリID (${unmapped.destAppId}) が参照先変換に未指定のため、そのままのIDで反映します。`);
+          }
+        }
+        for (const name of Object.keys(from)) {
+          if (own2(to, name) && (!from[name].type || !to[name].type || from[name].type === to[name].type)) from[name] = { ...to[name], ...from[name] };
+          if (key === "actionSettings" && from[name]?.destApp?.app != null) {
+            const mappedApp = options.lookupMap?.[String(from[name].destApp.app)];
+            if (mappedApp) {
+              const currentDest = to[name]?.destApp;
+              if (object(currentDest) && String(currentDest.app) === String(mappedApp)) from[name].destApp = { ...currentDest };
+              else {
+                from[name].destApp = { ...from[name].destApp, app: mappedApp };
+                delete from[name].destApp.code;
+              }
+            }
+          }
+        }
+        const preserve = options.preserveTargetOnly !== false;
+        const combined = preserve ? { ...to, ...from } : from;
+        const ordered = [...Object.keys(from).sort((a, b) => Number(from[a].index || 0) - Number(from[b].index || 0)), ...preserve ? Object.keys(to).filter((name) => !own2(from, name)).sort((a, b) => Number(to[a].index || 0) - Number(to[b].index || 0)) : []];
+        for (const [index, name] of ordered.entries()) combined[name] = { ...combined[name], index: String(index) };
+        if (key === "viewSettings") for (const [name, view] of Object.entries(combined)) {
+          if (!["LIST", "CALENDAR", "CUSTOM"].includes(view.type)) throw new Error(`${name}: 一覧の種類を取得できません。`);
+          if (view.type === "LIST" && (!Array.isArray(view.fields) || view.fields.some((code) => typeof code !== "string"))) throw new Error(`${name}: 一覧のフィールド定義が不完全です。`);
+          if (view.type === "CUSTOM" && typeof view.html !== "string") throw new Error(`${name}: カスタマイズ一覧のHTMLを取得できません。`);
+        }
+        for (const item of Object.values(to)) if (item.index !== void 0) item.index = String(item.index);
+        before = { [property]: to };
+        after = { [property]: combined };
+        plan.behavior = preserve ? "追加・更新（反映先だけの設定は保持）" : "全置換（反映元にない設定を削除）";
+        if (preserve) for (const name of Object.keys(to).filter((name2) => !own2(from, name2))) plan.changes.push({ kind: "保持", path: `${labels[property]} / ${name}`, before: valueText(to[name]), after: "内容を保持（表示順は反映元の後）" });
+        if (key === "viewSettings") plan.requiredFields = [...new Set(Object.values(combined).flatMap((view) => view.type === "LIST" ? view.fields || [] : view.type === "CALENDAR" ? [view.date, view.title].filter(Boolean) : []).filter((code) => !["$id", "$revision"].includes(code)))];
+        if (key === "actionSettings") plan.requiredFields = extractActionRequiredFields(combined);
+        if (key === "reportSettings") plan.requiredFields = extractReportRequiredFields(combined);
+      } else if (key === "pluginSettings") {
+        if (!Array.isArray(source.plugins) || !Array.isArray(target.plugins)) throw new Error("プラグイン一覧の形式が不正です。");
+        const existing = new Set(target.plugins.map((item) => item.id));
+        const additions = source.plugins.filter((item) => !existing.has(item.id));
+        if (additions.some((item) => typeof item.id !== "string" || !item.id)) throw new Error("プラグインIDがありません。");
+        plan.behavior = "未追加のプラグインを追加（設定値は対象外）";
+        plan.warnings.push("プラグイン本体はkintoneシステム管理に導入済みである必要があります。プラグイン固有の設定はコピーしません。");
+        before = { plugins: target.plugins.map((item) => item.id) };
+        after = { plugins: [...before.plugins, ...additions.map((item) => item.id)] };
+        if (additions.length) plan.operations.push({ method: "POST", endpoint: def.endpoint, body: { ids: additions.map((item) => item.id) }, label: "プラグイン追加" });
+      } else {
+        for (const section of [source, target]) {
+          const arrayKey = ["appAcl", "fieldAcl", "recordPermissions"].includes(key) ? "rights" : ["notifications", "perRecordNotifications", "reminderNotifications"].includes(key) ? "notifications" : "";
+          if (arrayKey && !Array.isArray(section[arrayKey])) throw new Error(`${arrayKey} の設定がありません。空の設定で上書きしないため、反映を停止します。`);
+          if (key === "reminderNotifications" && section === source && section.notifications.length && (typeof section.timezone !== "string" || !section.timezone)) throw new Error("リマインダー通知のタイムゾーンを取得できません。");
+          if (key === "categories" && (typeof section.enabled !== "boolean" || !object(section.categories))) throw new Error("カテゴリーの enabled / categories を取得できません。");
+          if (key === "processSettings" && (typeof section.enable !== "boolean" || section.enable && (!object(section.states) || !Array.isArray(section.actions)))) throw new Error("プロセス管理の enable / states / actions を取得できません。");
+          if (key === "customizeSettings") {
+            if (!["ALL", "ADMIN", "NONE"].includes(section.scope)) throw new Error("JS/CSSの適用範囲を取得できません。");
+            for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) {
+              const list2 = section[platform]?.[kind];
+              if (!Array.isArray(list2) || list2.some((item) => !item || (item.type === "URL" ? typeof item.url !== "string" || !item.url : item.type === "FILE" ? typeof item.file?.fileKey !== "string" || !item.file.fileKey : true))) throw new Error(`${platform}/${kind}: JS/CSS一覧が不完全です。`);
+            }
+          }
+        }
+        before = def.putBuilder(target);
+        after = def.putBuilder(source);
+        if (key === "categories") {
+          before.enabled = target.enabled;
+          after.enabled = source.enabled;
+        }
+        if (key === "reminderNotifications" && !after.timezone) after.timezone = before.timezone;
+        if (key === "processSettings") {
+          const firstState = (states) => object(states) ? String(Object.values(states).sort((a, b) => Number(a?.index) - Number(b?.index))[0]?.name || "") : "";
+          const sourceFirst = firstState(source.states), targetFirst = firstState(target.states);
+          if (sourceFirst && targetFirst && sourceFirst !== targetFirst) plan.warnings.push(`先頭のステータスが異なります（反映先「${targetFirst}」→ 反映元「${sourceFirst}」）。kintone は先頭のステータスの入れ替えを拒否することがあります。拒否された場合は、反映先の管理画面で先頭のステータスを合わせてから再実行してください。`);
+        }
+        if (key === "notifications") {
+          if (typeof target.notifyToCommenter === "boolean") before.notifyToCommenter = after.notifyToCommenter = target.notifyToCommenter;
+          if (typeof source.notifyToCommenter === "boolean") after.notifyToCommenter = source.notifyToCommenter;
+        }
+        if (key === "customizeSettings") {
+          if (source.scope !== void 0) after.scope = source.scope;
+          if (target.scope !== void 0) before.scope = target.scope;
+          const resolution = options.customizeFiles, names = customizeFileNames(source, target);
+          comparable3 = (value) => comparableCustomizePayload(value, resolution, names);
+          const currentKeys = new Set(["desktop", "mobile"].flatMap((platform) => ["js", "css"].flatMap((kind) => (target[platform]?.[kind] || []).map((item) => item.file?.fileKey).filter(Boolean))));
+          for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) for (const [index, item] of after[platform][kind].entries()) {
+            if (item.type !== "FILE") continue;
+            const fileKey = item.file.fileKey, name = names[fileKey] || "", state3 = resolution?.files[customizeSlotKey(platform, kind, fileKey)];
+            const shown = name || "アップロードファイル";
+            if (state3?.status === "reuse") item.file.fileKey = state3.targetFileKey;
+            else if (state3?.status === "upload") {
+              if (!name) plan.blockers.push(`${platform}/${kind}: 反映元のファイル（${fileKey}）にファイル名がありません。反映元のJS/CSS設定を確認してください。`);
+              else uploads.push({ platform, kind, index, sourceFileKey: fileKey, name, byteSize: state3.byteSize });
+            } else if (state3?.status === "unavailable") plan.blockers.push(`${platform}/${kind}: 「${shown}」を反映元から取得できません（${state3.reason}）。反映元でファイルを確認してください。`);
+            else if (!state3 && !currentKeys.has(fileKey)) plan.blockers.push(`${platform}/${kind}: 「${shown}」は反映先に存在せず、反映元のファイル本体を確認できません。`);
+          }
+          if (uploads.length) plan.warnings.push(`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`);
+          if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map((item) => `「${item.name}」（${item.reason}）`).join("、")} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
+        }
+        if (key === "fieldAcl") plan.requiredFields = [...new Set((after.rights || []).map((right) => String(right?.code || "")).filter((code) => code && !["$id", "$revision"].includes(code)))];
+        if (key === "reminderNotifications") plan.requiredFields = [...new Set((after.notifications || []).flatMap((item) => [item?.timing?.code, ...(item?.targets || []).filter((target2) => target2?.entity?.type === "FIELD_ENTITY").map((target2) => target2.entity.code)]).map((code) => String(code || "")).filter((code) => !!code))];
+        if (key === "processSettings" && object(after.states)) plan.requiredFields = [...new Set(Object.values(after.states).flatMap((state3) => (state3?.assignee?.entities || []).filter((item) => item?.entity?.type === "FIELD_ENTITY").map((item) => String(item.entity.code || ""))).filter((code) => !!code))];
+        if (key === "layoutSettings") {
+          if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error("レイアウトの形式が不正です。");
+          after.layout = mergeLayout(source.layout, target.layout, plan);
+          plan.behavior = "配置を更新（反映先だけのフィールド配置は保持）";
+          const codes = [];
+          const walk = (nodes) => {
+            for (const node of nodes) {
+              if (node.code) codes.push(String(node.code));
+              if (Array.isArray(node.fields)) walk(node.fields);
+              if (Array.isArray(node.layout)) walk(node.layout);
+            }
+          };
+          walk(after.layout);
+          plan.requiredFields = [...new Set(codes)];
+        }
+      }
+      const shownBefore = comparable3 ? comparable3(before) : before, shownAfter = comparable3 ? comparable3(after) : after;
+      diffValues(shownBefore, shownAfter, [], plan.changes);
+      if (key === "layoutSettings") reclassifyLayoutRemovals(plan.changes, shownBefore?.layout, shownAfter?.layout, options.fieldLabels);
+      try {
+        plan.items = summarizeReflectItems(key, shownBefore, shownAfter, { fieldLabels: options.fieldLabels, retained: retainedItemNames(key, plan.changes, options.fieldLabels) });
+      } catch {
+        plan.items = [];
+      }
+      plan.changeCount = plan.changes.filter((change) => change.kind !== "保持").length;
+      plan.removalCount = plan.changes.filter((change) => change.kind === "削除").length;
+      if (key !== "fieldSettings" && key !== "pluginSettings" && plan.changeCount) plan.operations.push({ method: "PUT", endpoint: def.endpoint, body: after, label: def.label, ...uploads.length ? { uploads } : {} });
+      if (uploads.length && plan.changeCount) plan.fileUploads = uploads;
+      if (plan.blockers.length) plan.status = "error";
+      else plan.status = plan.operations.length ? "change" : "same";
+      plan.message = plan.blockers.length ? plan.blockers.join("\n") : plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : `書き込み不要${plan.changes.some((change) => change.kind === "保持") ? "（反映先だけの設定は保持）" : "（一致）"}`;
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      plan.status = "error";
+      plan.blockers.push(error.message || String(error));
+      plan.message = plan.blockers.join("\n");
+    }
+    return plan;
+  }
+  function listReflectSystemFieldCodes(bundle) {
+    const props = bundle?.sections?.fieldSettings?.properties;
+    if (!object(props)) return [];
+    return Object.entries(props).filter(([, def]) => SYSTEM_FIELD_TYPES.has(def?.type)).map(([code]) => code);
+  }
+  function listReflectFieldCodes(bundle, writableOnly = false) {
+    const props = bundle?.sections?.fieldSettings?.properties;
+    if (!object(props)) return [];
+    return Object.entries(props).filter(([, def]) => !writableOnly || !SYSTEM_FIELD_TYPES.has(def?.type)).flatMap(([code, def]) => [code, ...Object.keys(def?.type === "SUBTABLE" ? def.fields || {} : {})]);
+  }
+
+  // src/settingsBundleImport.ts
+  function preserveImportedMetadata(bundle, raw, preserve) {
+    if (!preserve || !bundle || !raw || typeof raw !== "object") return bundle;
+    bundle.fetchedAt = Object.prototype.hasOwnProperty.call(raw, "fetchedAt") ? raw.fetchedAt : null;
+    if (Object.prototype.hasOwnProperty.call(raw, "guestId")) bundle.guestId = raw.guestId;
+    else delete bundle.guestId;
+    if (Object.prototype.hasOwnProperty.call(raw, "preview")) bundle.preview = raw.preview;
+    else delete bundle.preview;
+    if (raw.meta && typeof raw.meta === "object" && !Array.isArray(raw.meta)) {
+      bundle.meta = {
+        ...raw.meta,
+        sectionRevisions: bundle.meta?.sectionRevisions || {}
+      };
+    }
+    return bundle;
+  }
+  function limitImportedBundleToSections(bundle, sections, raw, preserveMetadata = false) {
+    if (!Array.isArray(sections) || !sections.length) return preserveImportedMetadata(bundle, raw, preserveMetadata);
+    const sourceSections = bundle?.sections || {};
+    const picked = pickBundleSections(bundle, sections);
+    sections.forEach((sectionKey) => {
+      if (Object.prototype.hasOwnProperty.call(sourceSections, sectionKey)) return;
+      picked.sections[sectionKey] = {
+        _fetchError: "読み込んだ設定JSONに比較対象セクションが含まれていません"
+      };
+    });
+    return preserveImportedMetadata(picked, raw, preserveMetadata);
+  }
+  function unwrapBundleCandidates(raw, side) {
+    if (!raw || typeof raw !== "object") return [];
+    if (raw.source && raw.target) return unwrapBundleCandidates(side === "target" ? raw.target : raw.source, side);
+    if (raw.bundle) return unwrapBundleCandidates(raw.bundle, side);
+    if (Array.isArray(raw.apps)) return raw.apps;
+    if (Array.isArray(raw.bundles)) return raw.bundles;
+    if (raw.sections && raw.appId != null) return [raw];
+    return [raw];
+  }
+  function pickSettingsBundle(raw, options = {}) {
+    const side = options.side || "source";
+    const appId = String(options.appId || "").trim();
+    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
+      try {
+        return { bundle: ensureBundleShape(item, options.rawSettings), raw: item };
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
+    if (appId) {
+      const matched = candidates.find((entry) => String(entry?.bundle?.appId || "") === appId) || (candidates.length === 1 && !String(candidates[0]?.bundle?.appId || "") ? candidates[0] : void 0);
+      if (matched) return limitImportedBundleToSections(matched.bundle, options.sections, matched.raw, !!options.preserveMetadata);
+      throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
+    }
+    return limitImportedBundleToSections(candidates[0].bundle, options.sections, candidates[0].raw, !!options.preserveMetadata);
+  }
+  function pickAllSettingsBundles(raw, side, rawSettings = false, preserveMetadata = false) {
+    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
+      try {
+        return preserveImportedMetadata(ensureBundleShape(item, rawSettings), item, preserveMetadata);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
+    return candidates;
+  }
+
+  // src/reflect/targetPending.ts
+  var comparableResources = (list2) => Array.isArray(list2) ? list2.map((item) => item?.type === "FILE" ? { type: "FILE", name: item.file?.name ?? "", size: String(item.file?.size ?? "") } : item) : list2;
+  var comparable2 = (key, section) => {
+    if (!section || typeof section !== "object" || Array.isArray(section)) return stableReflectStringify(section);
+    const { revision: _revision, ...rest } = section;
+    if (key === "customizeSettings") {
+      for (const platform of ["desktop", "mobile"]) if (rest[platform] && typeof rest[platform] === "object") rest[platform] = { ...rest[platform], js: comparableResources(rest[platform].js), css: comparableResources(rest[platform].css) };
+    }
+    return stableReflectStringify(rest);
+  };
+  async function inspectTargetPendingChanges(opts, targetPreviewBundle) {
+    const unknown = (productionRevision2, previewRevision2, reason) => ({ state: "unknown", productionRevision: productionRevision2, previewRevision: previewRevision2, sectionKeys: [], message: `反映先プレビューに未公開の変更があるか確認できませんでした（${reason}）。` });
+    let productionRevision = "", previewRevision = "";
+    try {
+      const incomplete = opts.scopes.find((key) => !isCompleteReflectSection(targetPreviewBundle?.sections?.[key]));
+      if (incomplete) return unknown("", "", `反映先プレビューの${reflectSectionLabel(incomplete)}を取得できません`);
+      const revisions = new Set(opts.scopes.map((key) => String(targetPreviewBundle?.meta?.sectionRevisions?.[key] ?? targetPreviewBundle?.sections?.[key]?.revision ?? "")));
+      if (revisions.size !== 1) return unknown("", "", "取得中に反映先プレビューが更新された可能性があります");
+      previewRevision = [...revisions][0];
+      if (!/^\d+$/.test(previewRevision)) return unknown("", "", "反映先プレビューのrevisionがありません");
+      const response = await apiGet(buildApiPrefix(opts.targetGuestId || "", false), "/app/settings.json", { app: opts.targetAppId });
+      productionRevision = String(response?.revision ?? "");
+      if (!/^\d+$/.test(productionRevision)) return unknown("", previewRevision, "本番のrevisionがありません");
+      if (productionRevision === previewRevision) return { state: "clean", productionRevision, previewRevision, sectionKeys: [], message: "反映先プレビューに未公開の変更はありません。" };
+      const production = await fetchBundle({ appId: opts.targetAppId, guestId: opts.targetGuestId || "", preview: false, sections: opts.scopes, rawSettings: true });
+      const sectionKeys = [];
+      for (const key of opts.scopes) {
+        const before = production.sections?.[key], after = targetPreviewBundle?.sections?.[key];
+        if (!isCompleteReflectSection(before) || !isCompleteReflectSection(after)) return unknown(productionRevision, previewRevision, `${reflectSectionLabel(key)}を取得できません`);
+        if (comparable2(key, before) !== comparable2(key, after)) sectionKeys.push(key);
+      }
+      const customizeNote = opts.scopes.includes("customizeSettings") ? "。JS/CSSのファイルは名前とサイズだけで比べています" : "";
+      const message = sectionKeys.length ? `反映先プレビューには未公開の変更があります（${sectionKeys.map(reflectSectionLabel).join("、")}）。公開すると今回の反映と一緒に本番へ反映されます。` : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（設定の更新番号 revision が 本番 ${productionRevision} とプレビュー ${previewRevision} で異なります${customizeNote}）。`;
+      return { state: "pending", productionRevision, previewRevision, sectionKeys, message };
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      return unknown(productionRevision, previewRevision, error?.message || String(error));
+    }
+  }
+
+  // src/tabs/reflect-standalone.ts
+  function reflectConnectionError(opts) {
+    for (const [label, value, optional] of [
+      ["反映元アプリID", opts.sourceAppId, !!opts.sourceBundle],
+      ["反映先アプリID", opts.targetAppId, false],
+      ["反映元ゲストスペースID", opts.sourceGuestId, true],
+      ["反映先ゲストスペースID", opts.targetGuestId, true]
+    ]) {
+      if (optional && !value) continue;
+      if (!/^[1-9]\d*$/.test(String(value || ""))) return `${label}には正の整数を入力してください。`;
+    }
+    if (!opts.sourceBundle && opts.sourcePreview && opts.sourceAppId === opts.targetAppId && (opts.sourceGuestId || "") === (opts.targetGuestId || "")) return "反映元と反映先が同じプレビューです。別のアプリ、または反映元の本番設定を選んでください。";
+    return "";
+  }
+  async function resolveReflectAppsStandalone(opts) {
+    const invalid = reflectConnectionError(opts);
+    if (invalid) throw new Error(invalid);
+    const resolve = async (role, appId, guestId = "") => {
+      let info;
+      try {
+        info = await apiGet(buildApiPrefix(guestId, false), "/app.json", { id: appId });
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        const prefixed = new Error(`${role} #${appId}: ${error?.message != null ? String(error.message) : String(error)}`);
+        prefixed.original = error;
+        if (error?.code) prefixed.code = error.code;
+        throw prefixed;
+      }
+      if (String(info?.appId) !== appId || typeof info?.name !== "string" || !info.name) throw new Error(`${role} #${appId} の名前とIDを確認できません。入力と閲覧権限を確認してください。`);
+      return { appId, guestId, name: info.name, code: String(info.code || "") };
+    };
+    const target = await resolve("反映先", opts.targetAppId, opts.targetGuestId);
+    const jsonAppName = opts.sourceBundle ? extractAppNameFromBundle(opts.sourceBundle) : "";
+    const source = opts.sourceBundle ? { appId: opts.sourceAppId, guestId: "", name: jsonAppName ? `設定JSON（${jsonAppName}）` : "設定JSON", code: "" } : await resolve("反映元", opts.sourceAppId, opts.sourceGuestId);
+    return { source, target };
+  }
+  function usesLookupMap(opts, scopes) {
+    return Object.keys(opts.lookupMap || {}).length > 0 && scopes.some((key) => key === "fieldSettings" || key === "actionSettings");
+  }
+  function orderedScopes(scopes) {
+    if (!scopes?.length) throw new Error("反映する項目を選択してください。");
+    if (scopes.some((key) => !REFLECT_SECTION_KEYS.includes(key))) throw new Error("反映に対応していない項目が含まれています。");
+    return REFLECT_SECTION_KEYS.filter((key) => scopes.includes(key));
+  }
+  async function withAppPrefix(role, appId, run) {
+    try {
+      return await run();
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      const prefixed = new Error(`${role} #${appId}: ${error?.message != null ? String(error.message) : String(error)}`);
+      prefixed.original = error;
+      if (error?.code) prefixed.code = error.code;
+      throw prefixed;
+    }
+  }
+  async function getReflectBundles(opts, scopes, setStatus) {
+    setStatus(opts.sourceBundle ? "反映元の設定JSONを読み込み中..." : "反映元の設定を取得中...");
+    const source = opts.sourceBundle ? importedReflectSource(opts) : await withAppPrefix("反映元", opts.sourceAppId, () => fetchBundle({
+      rawSettings: true,
+      // フィールド設定を選んでいなくても、参照するフィールドの有無と表示名を示せるよう反映先と同じ範囲を取得する。
+      appId: opts.sourceAppId,
+      guestId: opts.sourceGuestId || "",
+      preview: !!opts.sourcePreview,
+      sections: reflectInspectionScopes(scopes),
+      onProgress: (p, label) => setStatus(`反映元取得 ${Math.round(p * 100)}% (${label})`)
+    }));
+    setStatus("反映先プレビューの設定を確認中...");
+    const target = await withAppPrefix("反映先", opts.targetAppId, () => fetchBundle({
+      rawSettings: true,
+      appId: opts.targetAppId,
+      guestId: opts.targetGuestId || "",
+      preview: true,
+      sections: reflectInspectionScopes(scopes),
+      onProgress: (p, label) => setStatus(`反映先取得 ${Math.round(p * 100)}% (${label})`)
+    }));
+    return { source, target };
+  }
+  function importedReflectSource(opts) {
+    const bundle = pickSettingsBundle(opts.sourceBundle, { side: "source", appId: String(opts.sourceAppId || "").trim(), rawSettings: true });
+    const customize = bundle.sections?.customizeSettings;
+    if (customize && typeof customize === "object" && customize._partial?.kind === "customizeBody" && !customize._fetchError) delete customize._partial;
+    return bundle;
+  }
+  async function resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus) {
+    if (!scopes.includes("customizeSettings")) return void 0;
+    const sourceSection = source.sections?.customizeSettings, targetSection = target.sections?.customizeSettings;
+    if (!isCompleteReflectSection(sourceSection) || !isCompleteReflectSection(targetSection)) return void 0;
+    setStatus("JS/CSSファイルを確認中…");
+    const sourceGuestId = opts.sourceBundle ? String(opts.sourceBundle?.guestId || "") : opts.sourceGuestId || "";
+    return resolveCustomizeFiles(sourceSection, targetSection, { sourceGuestId, targetGuestId: opts.targetGuestId || "" });
+  }
+  async function previewReflectStandalone(opts, setStatus) {
+    const invalid = reflectConnectionError(opts);
+    if (invalid) throw new Error(invalid);
+    const scopes = orderedScopes(opts.scopes);
+    const { source, target } = await getReflectBundles(opts, scopes, setStatus);
+    setStatus("反映先の未公開の変更を確認中…");
+    const targetPending = await inspectTargetPendingChanges({ targetAppId: opts.targetAppId, targetGuestId: opts.targetGuestId, scopes: reflectInspectionScopes(scopes) }, target);
+    const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
+    const fieldLabels = reflectFieldLabels(target, source);
+    const entries = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels }));
+    const baseline = captureReflectBaseline({ ...opts, scopes: reflectInspectionScopes(scopes) }, source, target);
+    for (const entry of entries.filter((entry2) => !entry2.blockers.length)) {
+      try {
+        assertReflectBaselineMatches(baseline, { ...opts, scopes: [entry.sectionKey], targetDependencies: entry.requiredFields?.length ? ["fieldSettings"] : [] }, source, target);
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        entry.status = "error";
+        entry.blockers.push(error.message);
+        entry.message = error.message;
+      }
+    }
+    if (usesLookupMap(opts, scopes)) {
+      const lookup = await preflightLookupMapStandalone(opts.lookupMap, { targetGuestId: opts.targetGuestId });
+      if (!lookup.ok) {
+        const lookupErr = `ルックアップ変換先を確認できません: ${lookup.missing.map((item) => `${item.from} → ${item.to}: ${item.reason}`).join(" / ")}`;
+        const affected = entries.filter((entry) => entry.sectionKey === "fieldSettings" || entry.sectionKey === "actionSettings");
+        for (const entry of affected.length ? affected : entries.slice(0, 1)) {
+          entry.status = "error";
+          entry.blockers.push(lookupErr);
+          entry.message = entry.blockers.join("\n");
+        }
+      }
+    }
+    return {
+      totalSections: entries.length,
+      changedSections: entries.filter((entry) => entry.status === "change").length,
+      sameSections: entries.filter((entry) => entry.status === "same").length,
+      errorSections: entries.filter((entry) => !["change", "same"].includes(entry.status)).length,
+      entries,
+      sourceFieldCodes: listReflectFieldCodes(source, true),
+      targetFieldCodes: listReflectFieldCodes(target),
+      sourceSystemFieldCodes: listReflectSystemFieldCodes(source),
+      baseline,
+      targetPending
+    };
+  }
+  function composeReflectSelectionStandalone(preview, states) {
+    void preview;
+    void states;
+    throw new Error("composeReflectSelectionStandalone は未実装です");
+  }
+  async function preflightLookupMapStandalone(lookupMap, opts = {}) {
+    const missing = [];
+    for (const [from, to] of Object.entries(lookupMap || {})) {
+      if (!/^[1-9]\d*$/.test(from) || !/^[1-9]\d*$/.test(String(to))) {
+        missing.push({ from, to, reason: "AppID形式が不正" });
+        continue;
+      }
+      try {
+        const info = await apiGet(buildApiPrefix(opts.targetGuestId || "", false), "/app.json", { id: to });
+        if (String(info?.appId) !== to) throw new Error("応答のアプリIDが一致しません");
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        missing.push({ from, to, reason: `取得失敗: ${error.message || String(error)}` });
+      }
+    }
+    return { ok: !missing.length, missing };
+  }
+
+  // src/reflect/appReference.ts
+  function parseAppReference(text) {
+    const raw = String(text || "").trim();
+    if (!raw) return null;
+    if (/^[1-9]\d*$/.test(raw)) return { appId: raw, guestId: "" };
+    const appId = extractAppIdFromInput(raw);
+    if (!/^[1-9]\d*$/.test(appId)) return null;
+    return { appId, guestId: extractGuestIdFromInput(raw) };
+  }
+  function guestIdFromPagePath(pathname) {
+    return extractGuestIdFromInput(String(pathname || ""));
+  }
+  function needsAppReferenceParse(text) {
+    const raw = String(text || "").trim();
+    return !!raw && !/^\d+$/.test(raw);
+  }
+
+  // src/reflect/liteSetup.ts
+  var LOOKUP_PAIR_SEPARATOR = /\s*(?:→|->|=>|=|:|,|\t)\s*|\s+/;
+  function parseLookupMapText(text) {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return { ok: true, value: {}, count: 0 };
+    const pairs = [];
+    if (trimmed.startsWith("{")) {
+      let parsed;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        return { ok: false, error: '参照先変換の JSON が壊れています。{"旧AppID":"新AppID"} 形式か、1 行ずつ「旧ID → 新ID」で入力してください。' };
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ok: false, error: '参照先変換は {"旧AppID":"新AppID"} 形式のJSONを入力してください。' };
+      for (const [key, value] of Object.entries(parsed)) pairs.push([key, String(value)]);
+    } else {
+      for (const [index, line] of trimmed.split(/\r?\n/).entries()) {
+        const body = line.trim();
+        if (!body || body.startsWith("#")) continue;
+        const parts = body.split(LOOKUP_PAIR_SEPARATOR).filter(Boolean);
+        if (parts.length !== 2) return { ok: false, error: `参照先変換の ${index + 1} 行目を読み取れません。「旧ID → 新ID」の形式で入力してください。` };
+        pairs.push([parts[0], parts[1]]);
+      }
+    }
+    const out = /* @__PURE__ */ Object.create(null);
+    for (const [from, to] of pairs) {
+      if (!/^[1-9]\d*$/.test(from) || !/^[1-9]\d*$/.test(to)) return { ok: false, error: `参照先変換のアプリIDには正の整数を指定してください（${from} → ${to}）。` };
+      if (out[from] !== void 0 && out[from] !== to) return { ok: false, error: `参照先変換で旧ID ${from} が複数の変換先（${out[from]}, ${to}）に指定されています。` };
+      out[from] = to;
+    }
+    return { ok: true, value: out, count: Object.keys(out).length };
+  }
+  function lookupMapError(result) {
+    return "error" in result ? result.error : "";
+  }
+  function lookupMapValue(result) {
+    return "value" in result ? result.value : {};
+  }
+  var REFLECT_SCOPE_GROUPS = [
+    { id: "form", label: "フォーム・表示", keys: ["fieldSettings", "layoutSettings", "viewSettings", "reportSettings", "categories"] },
+    { id: "behavior", label: "動作・カスタマイズ", keys: ["appSettings", "processSettings", "actionSettings", "pluginSettings", "customizeSettings"] },
+    { id: "access", label: "権限・通知", keys: ["appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications"] }
+  ];
+  var REFLECT_OTHER_SCOPE_GROUP = { id: "other", label: "その他", keys: [] };
+  var REFLECT_SCOPE_HINTS = {
+    appSettings: "テーマ、レコードのタイトル、サムネイル表示、一括削除、コメント機能、レコードの再利用、一覧でのインライン編集、数値の桁数と丸め、年度の開始月を反映元に合わせます。アプリ名・説明・アイコンは変えません。",
+    fieldSettings: "不足しているフィールドを追加し、変更のある定義だけ更新します。反映先だけのフィールドは保持します。",
+    layoutSettings: "配置を反映元に合わせます。反映先だけのフィールドは、フォーム・グループ・テーブルの末尾に保持します。",
+    viewSettings: "一覧を追加・更新します。反映先だけの一覧は「保持」の設定に従います。",
+    reportSettings: "グラフを追加・更新します。反映先だけのグラフは「保持」の設定に従います。",
+    actionSettings: "アクションを追加・更新します。反映先だけのアクションは「保持」の設定に従います。",
+    pluginSettings: "反映先にまだ無いプラグインだけ追加します。プラグインの設定値はコピーしません。",
+    customizeSettings: "適用範囲と、PC・モバイルのJS/CSSファイル一覧を反映元の内容に置き換えます。反映先だけのファイル・URLは外れます。別アプリのファイルは反映先へアップロードして設定します。",
+    processSettings: "反映元の内容で置き換えます。状態・アクション・作業者が変わり、運用中の申請に影響することがあります。",
+    appAcl: "反映元の内容で置き換えます。反映先だけの権限は削除されます。",
+    fieldAcl: "反映元の内容で置き換えます。反映先だけの権限は削除されます。",
+    recordPermissions: "反映元の内容で置き換えます。反映先だけの権限は削除されます。",
+    notifications: "反映元の内容で置き換えます。反映先だけの通知は削除されます。",
+    perRecordNotifications: "反映元の内容で置き換えます。反映先だけの通知は削除されます。",
+    reminderNotifications: "反映元の内容で置き換えます。タイムゾーンも反映元に合わせます。",
+    categories: "反映元の内容で置き換えます。カテゴリーの有効状態も反映元に合わせます。"
+  };
+  function describeReflectScope(key) {
+    return REFLECT_SCOPE_HINTS[key] || "";
+  }
+  function groupReflectScopes(availableKeys) {
+    const available = new Set(availableKeys);
+    const placed = /* @__PURE__ */ new Set();
+    const groups = REFLECT_SCOPE_GROUPS.map((group) => {
+      const keys = group.keys.filter((key) => available.has(key));
+      keys.forEach((key) => placed.add(key));
+      return { ...group, keys };
+    });
+    const rest = availableKeys.filter((key) => !placed.has(key));
+    if (rest.length) groups.push({ ...REFLECT_OTHER_SCOPE_GROUP, keys: [...rest] });
+    return groups.filter((group) => group.keys.length > 0);
+  }
+  function shouldWarnMissingFieldSettings(scopes) {
+    if (scopes.includes("fieldSettings")) return false;
+    return reflectInspectionScopes([...scopes]).includes("fieldSettings");
+  }
+  var FIELD_SETTINGS_OMITTED_NOTICE = "フィールド設定を含めない場合、反映先に無いフィールドを参照していると差分確認で停止します。";
+  var REFLECT_UNDO_GUIDANCE = "取り消す場合: 反映前に反映先プレビューへ未公開の変更が無ければ、アプリの設定画面の『変更を中止』で今回の反映を含む未公開の変更をすべて破棄できます。または自動保存したバックアップJSONを『設定JSONから取得』で反映元に読み込み、差分を確認して戻せます（追加したフィールドは削除されません）。";
+
+  // src/reflect/applyProgress.ts
+  function describeApplyProgressStatus(status, stopped = false) {
+    if (status === "ng" && stopped) return { icon: "■", text: "途中で停止", tone: "ng" };
+    if (status === "running") return { icon: "…", text: "実行中…", tone: "running" };
+    if (status === "ok") return { icon: "✓", text: "成功", tone: "ok" };
+    if (status === "ng") return { icon: "✕", text: "失敗", tone: "ng" };
+    if (status === "skip") return { icon: "－", text: "変更なし", tone: "skip" };
+    if (status === "pending") return { icon: "○", text: "未実行", tone: "pending" };
+    return { icon: "○", text: "待機中", tone: "waiting" };
+  }
+  function createApplyProgressRows(sectionKeys, labelOf) {
+    const order = (key) => {
+      const index = REFLECT_SECTION_KEYS.indexOf(key);
+      return index < 0 ? REFLECT_SECTION_KEYS.length : index;
+    };
+    return [...new Set(sectionKeys)].sort((a, b) => order(a) - order(b)).map((sectionKey) => ({ sectionKey, label: labelOf(sectionKey), status: "waiting" }));
+  }
+  function applyProgressUpdate(rows, update) {
+    return rows.map((row) => row.sectionKey === update.sectionKey ? { sectionKey: row.sectionKey, label: row.label, status: update.status, ...update.message ? { message: update.message } : {}, ...update.status === "ng" && update.stopped ? { stopped: true } : {} } : row);
+  }
+  function summarizeApplyProgress(rows) {
+    if (!rows.length) return "";
+    const settled = rows.filter((row) => ["ok", "ng", "skip"].includes(row.status)).length;
+    const failed = rows.filter((row) => row.status === "ng" && !row.stopped).length;
+    const stopped = rows.filter((row) => row.status === "ng" && row.stopped).length;
+    const skipped = rows.filter((row) => row.status === "pending").length;
+    const running = rows.find((row) => row.status === "running");
+    return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ""}${stopped ? `（途中で停止 ${stopped}）` : ""}${skipped ? `、未実行 ${skipped}` : ""}${running ? `。実行中: ${running.label}` : ""}`;
+  }
+  function describeUndoGuidance(targetPending) {
+    if (targetPending?.state === "clean") {
+      return { tone: "ok", openSettings: true, text: "反映前、反映先プレビューに未公開の変更はありませんでした。アプリの設定画面で『変更を中止』を押すと、今回の反映をすべて取り消せます。" };
+    }
+    if (targetPending?.state === "own") {
+      return { tone: "ok", openSettings: true, text: "反映前の未公開の変更は、このツールによる反映分だけでした。アプリの設定画面で『変更を中止』を押すと、それらを含む未公開の変更をすべて取り消せます。" };
+    }
+    if (targetPending?.state === "pending") {
+      return { tone: "warn", openSettings: false, text: "反映前から未公開の変更があったため、『変更を中止』ではそれらも破棄されます。今回の反映だけを戻す場合は『バックアップから戻す』を使ってください。" };
+    }
+    return { tone: "info", openSettings: false, text: REFLECT_UNDO_GUIDANCE };
+  }
+  var REFLECT_ITEM_KIND_ORDER = ["削除", "変更", "追加", "保持"];
+  function orderReflectItems(items) {
+    const valid = (items || []).filter((item) => item && REFLECT_ITEM_KIND_ORDER.includes(item.kind) && typeof item.name === "string");
+    return REFLECT_ITEM_KIND_ORDER.flatMap((kind) => valid.filter((item) => item.kind === kind));
+  }
+  function countReflectItemKinds(items) {
+    const counts = { 削除: 0, 変更: 0, 追加: 0, 保持: 0 };
+    for (const item of items || []) if (item && item.kind in counts) counts[item.kind] += 1;
+    return counts;
+  }
+  function describeRemovedItem(sectionLabel, item) {
+    const details = (item.details || []).filter(Boolean);
+    return `${sectionLabel} / ${item.name}${details.length ? `：${details.join("、")}` : ""}`;
+  }
+
+  // src/deploy/sourceDisplay.ts
+  var searchCache = /* @__PURE__ */ new WeakMap();
+  function changeSearchText(change) {
+    let text = searchCache.get(change);
+    if (text === void 0) {
+      text = [change.groupLabel, ...change.labelPath, change.kind, change.beforeText, change.afterText].join("\n").toLowerCase();
+      searchCache.set(change, text);
+    }
+    return text;
+  }
+  function isFilterActive(filter) {
+    return !!filter.keyword.trim() || filter.kind !== "all";
+  }
+  function filterChanges(changes, filter) {
+    const words = filter.keyword.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length && filter.kind === "all") return [...changes];
+    return changes.filter((change) => (filter.kind === "all" || change.kind === filter.kind) && (!words.length || words.every((word) => changeSearchText(change).includes(word))));
+  }
+  function groupChanges(changes) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const change of changes) {
+      let group = groups.get(change.groupId);
+      if (!group) {
+        group = { groupId: change.groupId, groupLabel: change.groupLabel, changes: [] };
+        groups.set(change.groupId, group);
+      }
+      group.changes.push(change);
+    }
+    return [...groups.values()];
+  }
+  function groupCheckState(changes, selected) {
+    let count = 0;
+    for (const change of changes) if (selected.has(change.id)) count += 1;
+    return count === 0 ? "none" : count === changes.length ? "all" : "some";
+  }
+  function describePath(change) {
+    return change.labelPath.length ? change.labelPath.join(" / ") : change.groupLabel;
+  }
+  function clipText(text, max = 160) {
+    const value = String(text ?? "");
+    return value.length > max ? `${value.slice(0, max)}…` : value;
+  }
+  function buildRequirementIndex(models) {
+    const byId = /* @__PURE__ */ new Map();
+    const dependents = /* @__PURE__ */ new Map();
+    for (const model of models) for (const change of model.changes) byId.set(change.id, change);
+    for (const change of byId.values()) {
+      for (const required of change.requires || []) {
+        if (!byId.has(required)) continue;
+        const list2 = dependents.get(required);
+        if (list2) list2.push(change.id);
+        else dependents.set(required, [change.id]);
+      }
+    }
+    return { byId, dependents };
+  }
+  function requiredToSelect(ids, index, selected) {
+    const seen = new Set(ids);
+    const added = [];
+    const queue = [...ids];
+    while (queue.length) {
+      const change = index.byId.get(queue.pop());
+      for (const required of change?.requires || []) {
+        if (seen.has(required) || !index.byId.has(required)) continue;
+        seen.add(required);
+        if (!selected.has(required)) added.push(required);
+        queue.push(required);
+      }
+    }
+    return added;
+  }
+  function dependentsToDeselect(ids, index, selected) {
+    const seen = new Set(ids);
+    const removed = [];
+    const queue = [...ids];
+    while (queue.length) {
+      for (const dependent of index.dependents.get(queue.pop()) || []) {
+        if (seen.has(dependent)) continue;
+        seen.add(dependent);
+        if (selected.has(dependent)) removed.push(dependent);
+        queue.push(dependent);
+      }
+    }
+    return removed;
+  }
+  function describeRequires(change, index) {
+    const names = (change.requires || []).map((id) => index.byId.get(id)).filter((item) => !!item).map((item) => describePath(item));
+    if (!names.length) return "";
+    const shown = names.slice(0, 3).join("、");
+    return `選ぶと一緒に選ばれる変更: ${shown}${names.length > 3 ? ` ほか ${names.length - 3} 件` : ""}`;
+  }
+  function entryTone(entry) {
+    return entry.status === "change" || entry.status === "same" ? entry.status : "error";
+  }
+  function countExtraction(entries, scopes) {
+    const counts = { change: 0, same: 0, error: 0, changes: 0 };
+    for (const entry of entries) {
+      if (scopes && !scopes.includes(entry.sectionKey)) continue;
+      counts[entryTone(entry)] += 1;
+      if (entry.status === "change") counts.changes += entry.changeCount || 0;
+    }
+    return counts;
+  }
+  function describeExtractionSummary(counts) {
+    if (!counts.change && !counts.error) return "差分はありません。反映先は反映元と同じ設定です。";
+    const parts = [`差分のある項目 ${counts.change}`, `差分なし ${counts.same}`];
+    if (counts.error) parts.push(`取得失敗 ${counts.error}`);
+    return `${parts.join("・")}（変更 ${counts.changes} 件）。`;
+  }
+  function collectSelectionBlockers(input) {
+    const active2 = new Set(input.activeScopes);
+    const failed = [];
+    let selectedTotal = 0;
+    for (const entry of input.entries) {
+      if (!active2.has(entry.sectionKey)) continue;
+      const model = input.models[entry.sectionKey];
+      if (entryTone(entry) === "error" || !model && entry.status !== "same") {
+        const reason = [...entry.blockers || [], entry.message].filter(Boolean)[0] || "設定を取得できませんでした。";
+        failed.push({ sectionKey: entry.sectionKey, label: entry.label, message: String(reason).split("\n")[0] });
+      }
+    }
+    const problems = [];
+    for (const section of input.composed?.sections || []) {
+      if (!active2.has(section.sectionKey)) continue;
+      selectedTotal += section.selectedCount;
+      for (const error of section.errors || []) problems.push(`${section.label}: ${error}`);
+    }
+    for (const blocker of input.composed?.blockers || []) problems.push(blocker);
+    return { failed, problems: [...new Set(problems)], references: [...new Set(input.composed?.blockers || [])], empty: !!input.composed && selectedTotal === 0 };
+  }
+  function firstEditEntryBlockerText(result) {
+    if (result.failed.length) return firstBlockerText({ ...result, problems: [] });
+    if (result.references.length) return result.references[0];
+    if (result.empty) return "反映する差分を選んでください。";
+    return "";
+  }
+  function firstBlockerText(result) {
+    if (result.failed.length) return `取得失敗の項目（${result.failed.map((item) => item.label).join("、")}）は、反映しない項目から外すか、差分を抽出し直してください。`;
+    if (result.problems.length) return result.problems[0];
+    if (result.empty) return "反映する差分を選んでください。";
+    return "";
+  }
+  function buildSourceSetupSignature(input) {
+    const lookupPairs = Object.keys(input.lookupMap || {}).sort().map((key) => [key, input.lookupMap[key]]);
+    return JSON.stringify([input.sourceKind, input.sourceAppId, input.sourceGuestId, input.jsonToken, input.targetAppId, input.targetGuestId, !!input.preserveTargetOnly, lookupPairs]);
+  }
+  function scopesCoveredBy(current, extracted) {
+    return current.length > 0 && current.every((key) => extracted.includes(key));
+  }
+  function sourceRunLabel(goal) {
+    return goal === "production" ? "確認した内容を反映先へ書き込み、本番へ反映" : "確認した内容を反映先プレビューへ反映";
+  }
+  function describeRoute(sourceLabel, targetLabel, goal) {
+    return goal === "production" ? `${sourceLabel} → ${targetLabel}のプレビュー → ${targetLabel}の本番` : `${sourceLabel} → ${targetLabel}のプレビュー（本番へは反映しません）`;
+  }
+  function sourceBackupDescriptions(goal) {
+    const list2 = ["反映前の反映先プレビューの設定をJSONで保存してから、プレビューへ書き込みます。"];
+    if (goal === "production") list2.push("本番へ反映する前の本番設定をJSONで保存してから、本番へ反映します（変更のあるJS/CSSはファイル本体も含む）。");
+    return list2;
+  }
+  function sourceUndoGuidance(goal, targetPending) {
+    if (goal === "production") return undoGuidance("deploy");
+    return describeUndoGuidance(targetPending).text;
+  }
+  function summarizeItemKinds(items) {
+    const counts = {};
+    for (const item of items || []) counts[item.kind] = (counts[item.kind] || 0) + 1;
+    return REFLECT_ITEM_KIND_ORDER.filter((kind) => kind !== "保持" && counts[kind]).map((kind) => `${kind} ${counts[kind]}`).join("・");
+  }
+  function collectRemovedSettings(sections) {
+    const out = [];
+    for (const section of sections) {
+      for (const item of section.plan.items || []) {
+        if (item.kind !== "削除") continue;
+        out.push({ sectionKey: section.sectionKey, sectionLabel: section.label, text: describeRemovedItem(section.label, item), isField: section.sectionKey === "fieldSettings" });
+      }
+    }
+    return out;
+  }
+  function sectionsToRun(composed, activeScopes) {
+    const active2 = new Set(activeScopes);
+    return (composed?.sections || []).filter((section) => active2.has(section.sectionKey) && section.selectedCount > 0);
+  }
+  function composedAfterMap(sections) {
+    const map = {};
+    for (const section of sections) map[section.sectionKey] = section.after;
+    return map;
+  }
+  function describeSourceResult(input) {
+    const counts = summarizeApplyOutcome([...input.sections]);
+    const total = counts.ok + counts.ng + counts.stopped + counts.pending + counts.skip;
+    const written = counts.ok;
+    if (input.cancelled) {
+      return {
+        text: `中止しました（${written}/${total} 項目を反映先プレビューへ反映${counts.stopped ? `、${counts.stopped} 項目は途中で停止` : ""}${counts.ng ? `、${counts.ng} 項目は失敗` : ""}、残り ${counts.pending} 項目は未実行）。書き込み済みの分は反映先プレビューに残っています。本番へは反映していません。`,
+        tone: "warn"
+      };
+    }
+    if (counts.ng || counts.pending || counts.stopped) {
+      const failure = input.sections.find((section) => section.status === "ng" && !section.stopped);
+      const reason = failure ? `（${failure.label}: ${String(failure.message || "").split("\n")[0].slice(0, 80)}）` : "";
+      return {
+        text: `${total} 項目中 ${written} 項目を反映先プレビューへ反映しました。失敗 ${counts.ng} 項目${counts.pending ? `、未実行 ${counts.pending} 項目` : ""}${reason}。本番へは反映していません。`,
+        tone: written ? "warn" : "err"
+      };
+    }
+    if (input.goal === "preview") {
+      return { text: `${written} 項目を反映先プレビューへ反映しました。本番へは反映していません。`, tone: "ok" };
+    }
+    if (input.deploySkipped) {
+      return { text: `${written} 項目を反映先プレビューへ反映しましたが、本番へは反映していません。${input.deploySkipped}`, tone: "warn" };
+    }
+    if (input.deploy) return { text: `${written} 項目を反映先プレビューへ反映し、${input.deploy.text}`, tone: input.deploy.ok ? "ok" : "warn" };
+    return { text: `${written} 項目を反映先プレビューへ反映しました。`, tone: "ok" };
+  }
+  function describeDeploySkippedFollowUp() {
+    return "反映先プレビューには書き込み済みです。理由を解消したあと、パネル上部の「プレビューの変更を公開」から続けて本番へ反映できます。";
+  }
+
+  // src/deploy/sourceReport.ts
+  var ITEMS_PER_SECTION_LIMIT2 = 50;
+  var KIND_ORDER3 = ["削除", "変更", "追加", "保持"];
+  var esc3 = (value) => escapeReflectMarkdown(value);
+  var cell2 = (value) => esc3(value) || "－";
+  function formatStamp2(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value || "") : date.toLocaleString("ja-JP", { hour12: false });
+  }
+  var ENVIRONMENT_LABEL = { production: "本番", preview: "プレビュー", json: "設定JSON" };
+  function deploySummary(result) {
+    if (!result.deploy) return void 0;
+    const message = describeRunResult(result.deploy);
+    return { ok: message.tone === "ok", text: message.text };
+  }
+  function describeSourceDeployResult(result) {
+    return describeSourceResult({
+      goal: result.goal,
+      sections: result.apply.sections,
+      cancelled: result.apply.cancelled,
+      deploy: deploySummary(result),
+      deploySkipped: result.deploySkipped
+    });
+  }
+  function appLine(app, environment) {
+    const parts = [`App ${app.appId || "－"}`, app.guestId ? `ゲストスペース ${app.guestId}` : "通常スペース", environment];
+    return `${esc3(app.name || "（名前なし）")}（${parts.map(esc3).join(" / ")}）`;
+  }
+  function outcomeLabel(section) {
+    if (!section) return "未実行";
+    if (section.status === "ok") return "成功";
+    if (section.status === "skip") return "変更なし";
+    if (section.status === "pending") return "未実行";
+    return section.stopped ? "途中で停止" : "失敗";
+  }
+  function buildSourceDeployRecordMarkdown(input) {
+    const { result } = input;
+    const message = describeSourceDeployResult(result);
+    const counts = summarizeApplyOutcome(result.apply.sections);
+    const lines = [];
+    lines.push("# 反映元アプリから本番への反映の記録", "");
+    lines.push(`- 開始日時: ${esc3(formatStamp2(input.startedAt))}`);
+    lines.push(`- 終了日時: ${esc3(formatStamp2(input.finishedAt))}`);
+    lines.push(`- 反映元: ${appLine(input.source, ENVIRONMENT_LABEL[input.source.environment])}`);
+    lines.push(`- 反映先: ${appLine(input.target, input.goal === "production" ? "プレビュー → 本番" : "プレビュー")}`);
+    lines.push(`- 目標: ${input.goal === "production" ? "本番まで反映" : "プレビューまで（本番へは反映しない）"}`);
+    lines.push(`- 反映先だけの一覧・グラフ・アクション: ${input.preserveTargetOnly ? "保持する" : "削除する"}`);
+    const lookupPairs = Object.entries(input.lookupMap || {});
+    if (lookupPairs.length) lines.push(`- 参照先変換: ${lookupPairs.map(([from, to]) => `${esc3(from)} → ${esc3(to)}`).join("、")}`);
+    if (input.targetPending) {
+      const acknowledged = input.targetPending.state === "pending" && input.goal === "production" ? `（${input.allowPendingChanges ? "本番へ一緒に反映されることを了承して実行" : "了承なし"}）` : "";
+      lines.push(`- 反映先の未公開の変更: ${esc3(input.targetPending.message)}${acknowledged}`);
+    }
+    lines.push(`- 結果: ${esc3(message.text)}`);
+    lines.push(`- 件数（プレビューへの書き込み）: 成功 ${counts.ok}・失敗 ${counts.ng}・途中で停止 ${counts.stopped}・未実行 ${counts.pending}・変更なし ${counts.skip}`);
+    if (result.apply.cancelled) lines.push("- 利用者の操作で中止しました。");
+    if (result.apply.backup) lines.push(`- バックアップ（反映前のプレビュー）: ${esc3(formatStamp2(result.apply.backup.generatedAt))} に保存（項目: ${esc3(result.apply.backup.scopes.join("、"))}）`);
+    else lines.push("- バックアップ（反映前のプレビュー）: 保存していません");
+    if (input.goal === "production") {
+      const backup = result.deploy?.backup;
+      lines.push(backup ? `- バックアップ（本番へ反映する前の本番）: \`${String(backup.fileName).replace(/`/g, "")}\`（${backup.appCount} アプリ分）` : "- バックアップ（本番へ反映する前の本番）: 保存していません");
+      for (const file of backup?.unavailableFiles || []) lines.push(`  - 本体を保存できなかったファイル: App ${esc3(file.appId)} / ${esc3(file.name)}（${esc3(file.reason)}）`);
+    }
+    lines.push(`- 取り消し方: ${esc3(sourceUndoGuidance(input.goal, input.targetPending))}`, "");
+    lines.push("## 項目別の結果", "");
+    lines.push("| 項目 | 選んだ変更 | 修正した値 | 結果 | 理由 |");
+    lines.push("| --- | --- | --- | --- | --- |");
+    for (const section of input.sections) {
+      const outcome = result.apply.sections.find((candidate) => candidate.sectionKey === section.sectionKey);
+      lines.push(`| ${cell2(section.label)} | ${section.selectedCount}/${section.totalCount} | ${section.editedCount} | ${cell2(outcomeLabel(outcome))} | ${cell2(String(outcome?.message || "").split("\n")[0])} |`);
+    }
+    lines.push("");
+    lines.push("## 本番への反映", "");
+    if (result.deploy) {
+      lines.push(`- ${esc3(describeRunResult(result.deploy).text)}`);
+      for (const app of result.deploy.apps) {
+        lines.push(`- ${esc3(formatDeployApp(app))}: ${esc3(describeDeployStatus(app.status, "deploy").text)}${app.message ? `（${esc3(describeDeployMessage(app.message).split("\n")[0])}）` : ""}。本番の revision ${esc3(app.productionRevisionBefore || "－")} → ${esc3(app.productionRevisionAfter || "－")}`);
+      }
+    } else if (input.goal === "preview") {
+      lines.push("- 目標がプレビューまでのため、本番へは反映していません。");
+    } else {
+      lines.push(`- 本番へは反映していません。${esc3(result.deploySkipped || "")}`);
+      lines.push(`- ${esc3(describeDeploySkippedFollowUp())}`);
+    }
+    lines.push("");
+    lines.push("## 項目別の変更の要約", "");
+    for (const section of input.sections) {
+      const kinds = summarizeItemKinds(section.items);
+      lines.push(`### ${esc3(section.label)}（選んだ変更 ${section.selectedCount}/${section.totalCount}${kinds ? `・${kinds}` : ""}）`, "");
+      const items = [...section.items].sort((a, b) => KIND_ORDER3.indexOf(a.kind) - KIND_ORDER3.indexOf(b.kind));
+      for (const item of items.slice(0, ITEMS_PER_SECTION_LIMIT2)) {
+        lines.push(`- **${item.kind}** ${esc3(item.name)}`);
+        for (const detail of item.details || []) lines.push(`  - ${esc3(detail)}`);
+      }
+      if (items.length > ITEMS_PER_SECTION_LIMIT2) lines.push(`- ほか ${items.length - ITEMS_PER_SECTION_LIMIT2} 件`);
+      if (!items.length) lines.push("- 変更の要約はありません。");
+      lines.push("");
+    }
+    return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}
+`;
+  }
+  function buildSourceDeployResultJson(input) {
+    const { result } = input;
+    return {
+      kind: "kintone-source-deploy-result",
+      version: 1,
+      goal: input.goal,
+      startedAt: input.startedAt,
+      finishedAt: input.finishedAt,
+      source: { ...input.source },
+      target: { ...input.target },
+      message: describeSourceDeployResult(result).text,
+      cancelled: !!result.apply.cancelled,
+      selection: input.sections.map(({ sectionKey, label, selectedCount: selectedCount2, totalCount, editedCount }) => ({ sectionKey, label, selectedCount: selectedCount2, totalCount, editedCount })),
+      apply: {
+        summary: summarizeApplyOutcome(result.apply.sections),
+        sections: result.apply.sections.map((section) => ({ ...section })),
+        finalRevision: result.apply.finalRevision,
+        ...result.apply.backup ? { backup: { generatedAt: result.apply.backup.generatedAt, scopes: [...result.apply.backup.scopes] } } : {},
+        logs: [...result.apply.logs || []]
+      },
+      ...result.deploy ? { deploy: buildDeployResultJson(result.deploy), deploySummary: countOutcomes(result.deploy.apps) } : {},
+      ...result.deploySkipped ? { deploySkipped: result.deploySkipped } : {}
+    };
+  }
+  function stringifySourceDeployResultJson(input) {
+    return JSON.stringify(buildSourceDeployResultJson(input), null, 2);
+  }
+
+  // src/reflect/selection.ts
+  function buildSectionSelectionModel(plan, fieldLabels = {}) {
+    void plan;
+    void fieldLabels;
+    throw new Error("buildSectionSelectionModel は未実装です");
+  }
+  function defaultSelectionState(model) {
+    return { selected: model.changes.map((change) => change.id), overrides: {} };
+  }
+
+  // src/deploy/sourceSession.ts
+  var REAL_SOURCE_SESSION_DEPS = {
+    buildModel: buildSectionSelectionModel,
+    defaultState: defaultSelectionState,
+    compose: composeReflectSelectionStandalone
+  };
+  var sessionSeq = 0;
+  function createSourceSession(input, deps = REAL_SOURCE_SESSION_DEPS) {
+    const { preview } = input;
+    const fieldLabels = preview.fieldLabels || {};
+    const models = {};
+    const modelErrors = {};
+    const states = {};
+    const selected = {};
+    for (const entry of preview.entries) {
+      if (entry.status !== "change") continue;
+      try {
+        const model = deps.buildModel(entry, fieldLabels);
+        if (!model) continue;
+        models[entry.sectionKey] = model;
+        states[entry.sectionKey] = deps.defaultState(model);
+        selected[entry.sectionKey] = new Set(states[entry.sectionKey].selected);
+      } catch (error) {
+        modelErrors[entry.sectionKey] = String(error?.message || error || "不明なエラー");
+      }
+    }
+    return {
+      id: ++sessionSeq,
+      signature: input.signature,
+      scopes: [...input.opts.scopes],
+      opts: input.opts,
+      identities: input.identities,
+      sourceEnvironment: input.sourceEnvironment,
+      preview,
+      fieldLabels,
+      models,
+      modelErrors,
+      states,
+      selected,
+      index: buildRequirementIndex(Object.values(models)),
+      composed: null,
+      composeError: "",
+      extractedAt: Date.now()
+    };
+  }
+  function recomposeSession(session, activeScopes, deps = REAL_SOURCE_SESSION_DEPS) {
+    const active2 = new Set(activeScopes);
+    const states = {};
+    for (const [key, model] of Object.entries(session.models)) {
+      if (!active2.has(key)) continue;
+      const state3 = session.states[key];
+      state3.selected = model.changes.filter((change) => session.selected[key].has(change.id)).map((change) => change.id);
+      states[key] = state3;
+    }
+    try {
+      session.composed = deps.compose({ ...session.preview, entries: session.preview.entries.filter((entry) => active2.has(entry.sectionKey)) }, states);
+      session.composeError = "";
+    } catch (error) {
+      session.composed = null;
+      session.composeError = String(error?.message || error || "不明なエラー");
+    }
+  }
+  function isChangeSelected(session, change) {
+    return !!session.selected[change.sectionKey]?.has(change.id);
+  }
+  function selectedCount(session, sectionKey) {
+    return session.selected[sectionKey]?.size ?? 0;
+  }
+  function applySelection(session, ids, on) {
+    const result = { changed: [], required: [], cascaded: [] };
+    const bySection = (id) => session.index.byId.get(id)?.sectionKey || "";
+    const flat = /* @__PURE__ */ new Set();
+    for (const set of Object.values(session.selected)) for (const id of set) flat.add(id);
+    const mutate = (id, value) => {
+      const set = session.selected[bySection(id)];
+      if (!set) return false;
+      if (value === set.has(id)) return false;
+      if (value) {
+        set.add(id);
+        flat.add(id);
+      } else {
+        set.delete(id);
+        flat.delete(id);
+      }
+      result.changed.push(id);
+      return true;
+    };
+    const targets = ids.filter((id) => session.index.byId.has(id));
+    if (on) {
+      result.required = requiredToSelect(targets, session.index, flat);
+      for (const id of [...targets, ...result.required]) mutate(id, true);
+    } else {
+      const cascade = dependentsToDeselect(targets, session.index, flat);
+      for (const id of [...targets, ...cascade]) mutate(id, false);
+      result.cascaded = cascade;
+    }
+    return result;
+  }
+  var same2 = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function setOverride(session, sectionKey, pointer, value, defaultValue) {
+    const state3 = session.states[sectionKey];
+    if (!state3) return;
+    if (same2(value, defaultValue)) delete state3.overrides[pointer];
+    else state3.overrides[pointer] = value;
+  }
+  function clearOverrides(session, sectionKey) {
+    const state3 = session.states[sectionKey];
+    if (state3) state3.overrides = {};
+  }
+  function hasOverride(session, sectionKey, pointer) {
+    return !!session.states[sectionKey] && Object.prototype.hasOwnProperty.call(session.states[sectionKey].overrides, pointer);
+  }
+  function setJsonOverride(session, sectionKey, json) {
+    const state3 = session.states[sectionKey];
+    if (!state3) return;
+    if (json === void 0) delete state3.json;
+    else state3.json = json;
+  }
+  function hasJsonOverride(session, sectionKey) {
+    return session.states[sectionKey]?.json !== void 0;
+  }
+
+  // src/reflect/appLookup.ts
+  var REFLECT_APP_LOOKUP_FAILURE = "アプリを確認できません。ID・ゲストスペース・閲覧権限を確認してください。";
+  var POSITIVE_INTEGER2 = /^[1-9]\d*$/;
+  function isLookupableReflectApp(appId, guestId) {
+    const id = String(appId || "").trim();
+    const guest = String(guestId || "").trim();
+    return POSITIVE_INTEGER2.test(id) && (!guest || POSITIVE_INTEGER2.test(guest));
+  }
+  async function lookupReflectApp(appId, guestId) {
+    const id = String(appId || "").trim();
+    const guest = String(guestId || "").trim();
+    const failure = { ok: false, message: REFLECT_APP_LOOKUP_FAILURE };
+    if (!isLookupableReflectApp(id, guest)) return failure;
+    try {
+      const response = await apiGet(buildApiPrefix(guest, false), "/app.json", { id }, { retries: 1 });
+      if (String(response?.appId ?? "") !== id) return failure;
+      return { ok: true, appId: id, name: String(response?.name ?? ""), code: String(response?.code ?? "") };
+    } catch {
+      return failure;
+    }
+  }
+  function createReflectAppLookupCache(lookup = lookupReflectApp) {
+    const done = /* @__PURE__ */ new Map();
+    const pending = /* @__PURE__ */ new Map();
+    const keyOf = (appId, guestId) => `${String(guestId || "").trim()}|${String(appId || "").trim()}`;
+    return {
+      peek(appId, guestId) {
+        return done.get(keyOf(appId, guestId));
+      },
+      remember(info, guestId) {
+        done.set(keyOf(info.appId, guestId), { ok: true, appId: String(info.appId).trim(), name: info.name, code: info.code });
+      },
+      get(appId, guestId) {
+        const key = keyOf(appId, guestId);
+        const cached = done.get(key);
+        if (cached) return Promise.resolve(cached);
+        const inFlight = pending.get(key);
+        if (inFlight) return inFlight;
+        const request = lookup(String(appId || "").trim(), String(guestId || "").trim()).catch(() => ({ ok: false, message: REFLECT_APP_LOOKUP_FAILURE })).then((result) => {
+          pending.delete(key);
+          if (!result.ok) return result;
+          const kept = done.get(key);
+          if (kept) return kept;
+          done.set(key, result);
+          return result;
+        });
+        pending.set(key, request);
+        return request;
+      }
+    };
+  }
+  function formatReflectAppName(info) {
+    const name = info.name || `アプリ #${info.appId}`;
+    return info.code ? `${name}（コード: ${info.code}）` : name;
+  }
+
+  // src/entries/reflectPlanView.ts
+  var ITEM_KIND_CLASS = { 削除: "delete", 変更: "change", 追加: "add", 保持: "keep" };
+  var ITEMS_INITIAL = 20;
+  var ITEMS_STEP = 50;
+  function buildReflectItem(item) {
+    const row = document.createElement("li");
+    row.className = `kus-rl-item kus-rl-item--${ITEM_KIND_CLASS[item.kind]}`;
+    row.dataset.kind = item.kind;
+    const badge = document.createElement("span");
+    badge.className = `kus-rl-kind kus-rl-kind--${ITEM_KIND_CLASS[item.kind]}`;
+    badge.textContent = item.kind;
+    const name = document.createElement("span");
+    name.className = "kus-rl-item__name";
+    name.textContent = item.name;
+    row.append(badge, name);
+    const details = (item.details || []).filter(Boolean);
+    if (details.length) {
+      const list2 = document.createElement("ul");
+      list2.className = "kus-rl-item__details";
+      for (const detail of details) {
+        const li = document.createElement("li");
+        li.textContent = detail;
+        list2.appendChild(li);
+      }
+      row.appendChild(list2);
+    }
+    return row;
+  }
+  function appendReflectItems(host, plan) {
+    const items = orderReflectItems(plan.items);
+    if (!items.length) return;
+    const counts = countReflectItemKinds(items);
+    const onlyKept = counts.保持 === items.length;
+    const root2 = document.createElement(onlyKept ? "details" : "section");
+    root2.className = `kus-rl-items${onlyKept ? " kus-rl-items--quiet" : ""}`;
+    root2.dataset.reflectItems = "true";
+    if (plan.sectionKey) {
+      root2.dataset.reflectSection = plan.sectionKey;
+      if (onlyKept) root2.dataset.reflectDetails = `${plan.sectionKey}:kept`;
+    }
+    const countText = REFLECT_ITEM_KIND_ORDER.filter((kind) => counts[kind]).map((kind) => `${kind} ${counts[kind]}`).join("・");
+    const list2 = document.createElement("ul");
+    list2.className = "kus-rl-items__list";
+    let shown = 0;
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "kus-lp__btn kus-lp__btn--sub kus-rl-items__more";
+    const showNext = (limit) => {
+      for (const item of items.slice(shown, shown + limit)) list2.appendChild(buildReflectItem(item));
+      shown = Math.min(items.length, shown + limit);
+      more.hidden = shown >= items.length;
+      more.textContent = `残り ${items.length - shown} 件を表示`;
+    };
+    more.addEventListener("click", () => showNext(ITEMS_STEP));
+    if (onlyKept) {
+      const head = document.createElement("summary");
+      head.textContent = `${plan.label}：反映先だけの設定を保持（${counts.保持} 件）`;
+      root2.appendChild(head);
+      root2.addEventListener("toggle", () => {
+        if (root2.open && !shown) showNext(ITEMS_INITIAL);
+      });
+    } else {
+      const head = document.createElement("div");
+      head.className = "kus-rl-items__title";
+      const title = document.createElement("strong");
+      title.textContent = "変更の要約";
+      const total = document.createElement("span");
+      total.textContent = countText;
+      head.append(title, total);
+      root2.appendChild(head);
+      showNext(ITEMS_INITIAL);
+    }
+    root2.append(list2, more);
+    more.hidden = onlyKept || shown >= items.length;
+    host.appendChild(root2);
+  }
+  function createApplyProgressView(host, initial) {
+    host.replaceChildren();
+    host.setAttribute("aria-live", "polite");
+    host.setAttribute("aria-atomic", "false");
+    let rows = [...initial];
+    const summary = document.createElement("div");
+    summary.className = "kus-rl-progress__summary";
+    const list2 = document.createElement("ul");
+    list2.className = "kus-rl-result-list";
+    const nodes = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const item = document.createElement("li");
+      item.dataset.progressSection = row.sectionKey;
+      const head = document.createElement("div");
+      head.className = "kus-rl-result-item__head";
+      const state3 = document.createElement("span");
+      const icon = document.createElement("span");
+      icon.setAttribute("aria-hidden", "true");
+      const text = document.createTextNode("");
+      state3.append(icon, text);
+      const name = document.createElement("strong");
+      name.textContent = row.label;
+      head.append(state3, name);
+      const message = document.createElement("div");
+      message.className = "kus-rl-result-item__message";
+      item.append(head, message);
+      list2.appendChild(item);
+      nodes.set(row.sectionKey, { item, state: state3, icon, text, message });
+    }
+    const paint = (row) => {
+      const node = nodes.get(row.sectionKey);
+      if (!node) return;
+      const display = describeApplyProgressStatus(row.status, row.stopped);
+      node.item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
+      node.state.className = `kus-rl-result-state kus-rl-result-state--${display.tone}`;
+      node.icon.textContent = display.icon;
+      node.text.data = display.text;
+      const shownMessage = describeReflectFailure(row.message);
+      node.message.textContent = shownMessage;
+      node.message.hidden = !shownMessage;
+    };
+    const paintSummary = () => {
+      summary.textContent = summarizeApplyProgress(rows);
+    };
+    rows.forEach(paint);
+    paintSummary();
+    host.append(summary, list2);
+    return {
+      update(update) {
+        rows = applyProgressUpdate(rows, update);
+        const row = rows.find((candidate) => candidate.sectionKey === update.sectionKey);
+        if (row) paint(row);
+        paintSummary();
+      },
+      rows: () => rows.map((row) => ({ ...row }))
+    };
+  }
+
+  // src/entries/deploy-source-edit.ts
+  var EDIT_OPEN_LIMIT = 30;
+  var EDIT_GROUP_PAGE = 40;
+  var same3 = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function editableText(value) {
+    if (value === void 0 || value === null) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  }
+  function coerceEditable(text, like) {
+    if (typeof like === "number") {
+      const n = Number(text);
+      return text.trim() !== "" && Number.isFinite(n) ? n : text;
+    }
+    if (typeof like === "boolean") return text === "true";
+    return text;
+  }
+  function collectEditables(session, model) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const change of model.changes) {
+      if (!session.selected[model.sectionKey]?.has(change.id) || !change.editables.length) continue;
+      let group = groups.get(change.groupId);
+      if (!group) {
+        group = { label: change.groupLabel, items: [] };
+        groups.set(change.groupId, group);
+      }
+      for (const editable of change.editables) group.items.push({ change, editable });
+    }
+    return [...groups.values()];
+  }
+  function createEditView(host) {
+    const root2 = el("div", "kus-ds-edit-root");
+    const cardsHost = el("div", "kus-ds-cards");
+    const blockers = el("div", "kus-ds-blockers");
+    blockers.dataset.editBlockers = "true";
+    root2.append(cardsHost, blockers);
+    const cards = /* @__PURE__ */ new Map();
+    let idSeq = 0;
+    function currentValue(session, sectionKey, editable) {
+      return hasOverride(session, sectionKey, editable.pointer) ? session.states[sectionKey].overrides[editable.pointer] : editable.value;
+    }
+    function buildControl(session, view, sectionKey, change, editable) {
+      const id = `kus-ds-edit-${++idSeq}`;
+      const row = el("div", "kus-ds-edit");
+      row.dataset.editPointer = editable.pointer;
+      const label = el("label", "kus-ds-edit__label", `${change.groupLabel} / ${editable.label}`);
+      label.htmlFor = id;
+      const control = el("div", "kus-ds-edit__control");
+      const controls = [];
+      let setControl;
+      const push = (value, debounce) => host.setOverride(sectionKey, editable.pointer, value, editable.value, debounce);
+      if (editable.editor.type === "boolean") {
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.id = id;
+        const text = el("span", "kus-ds-edit__bool");
+        input.addEventListener("change", () => {
+          text.textContent = input.checked ? "はい" : "いいえ";
+          push(input.checked, false);
+          paint();
+        });
+        setControl = (value) => {
+          input.checked = value === true || value === "true";
+          text.textContent = input.checked ? "はい" : "いいえ";
+        };
+        control.append(input, text);
+        controls.push(input);
+      } else if (editable.editor.type === "select") {
+        const options = [...editable.editor.options || []];
+        const select = makeSelect(options.map(([value, text]) => [value, text]));
+        select.id = id;
+        select.classList.add("kus-ds-edit__select");
+        select.addEventListener("change", () => {
+          push(coerceEditable(select.value, editable.value), false);
+          paint();
+        });
+        setControl = (value) => {
+          const text = editableText(value);
+          if (![...select.options].some((option) => option.value === text)) {
+            const option = document.createElement("option");
+            option.value = text;
+            option.textContent = text || "（空）";
+            select.appendChild(option);
+          }
+          select.value = text;
+        };
+        control.appendChild(select);
+        controls.push(select);
+      } else {
+        const input = makeInput({ width: "wide", noSubmit: true });
+        input.id = id;
+        input.classList.add("kus-ds-edit__input");
+        input.addEventListener("input", () => {
+          push(coerceEditable(input.value, editable.value), true);
+          paint();
+        });
+        input.addEventListener("change", () => {
+          push(coerceEditable(input.value, editable.value), false);
+          paint();
+        });
+        setControl = (value) => {
+          input.value = editableText(value);
+        };
+        control.appendChild(input);
+        controls.push(input);
+      }
+      const reset = makeButton("元に戻す", "ghost");
+      reset.dataset.action = "edit-reset";
+      reset.setAttribute("aria-label", `${change.groupLabel} / ${editable.label}を既定の値に戻す`);
+      reset.addEventListener("click", () => {
+        setControl(editable.value);
+        push(editable.value, false);
+        paint();
+      });
+      const meta = el("div", "kus-ds-edit__meta");
+      const fallback = el("span", "kus-ds-edit__default", `既定: ${editableText(editable.value) || "（空）"}`);
+      fallback.title = clipText(editableText(editable.value), 2e3);
+      meta.append(fallback, reset);
+      row.append(label, control, meta);
+      const rowView = { section: sectionKey, change, editable, row, reset, controls, setControl };
+      setControl(currentValue(session, sectionKey, editable));
+      const paint = () => paintRow(rowView);
+      view.rows.set(`${change.id}|${editable.pointer}`, rowView);
+      paintRow(rowView);
+      return row;
+    }
+    function paintRow(row) {
+      const session = host.session();
+      if (!session) return;
+      const changed = !same3(currentValue(session, row.section, row.editable), row.editable.value);
+      row.row.classList.toggle("kus-ds-edit--changed", changed);
+      row.row.dataset.changed = String(changed);
+      row.reset.hidden = !changed;
+      const locked = hasJsonOverride(session, row.section);
+      for (const control of row.controls) control.disabled = locked;
+      row.reset.disabled = locked;
+    }
+    function appendGroups(view, session) {
+      const next = view.groups.slice(view.shown, view.shown + EDIT_GROUP_PAGE);
+      const frag = document.createDocumentFragment();
+      for (const group of next) {
+        const node = el("div", "kus-ds-edit-group");
+        node.appendChild(el("div", "kus-ds-edit-group__title", group.label));
+        for (const { change, editable } of group.items) node.appendChild(buildControl(session, view, view.sectionKey, change, editable));
+        frag.appendChild(node);
+      }
+      view.body.insertBefore(frag, view.more);
+      view.shown += next.length;
+      const rest = view.groups.length - view.shown;
+      view.more.hidden = rest <= 0;
+      if (rest > 0) setButtonText(view.more, `さらに表示（残り ${rest} グループ）`);
+    }
+    function setOpen(view, open, session) {
+      view.opened = open;
+      view.body.hidden = !open;
+      view.toggle.setAttribute("aria-expanded", String(open));
+      const total = view.groups.reduce((sum, group) => sum + group.items.length, 0);
+      setButtonText(view.toggle, open ? "入力欄を閉じる" : `入力欄を表示（${total} 件）`);
+      view.body.replaceChildren(view.more);
+      view.rows.clear();
+      view.shown = 0;
+      if (open) appendGroups(view, session);
+    }
+    function buildCard(session, sectionKey) {
+      const model = session.models[sectionKey];
+      if (!model) return null;
+      const card = el("section", "kus-ds-card");
+      card.dataset.editSection = sectionKey;
+      const head = el("div", "kus-ds-card__head");
+      const counts = el("span", "kus-ds-card__count");
+      counts.dataset.editCount = sectionKey;
+      const tools = el("div", "kus-ds-card__tools");
+      const resetAll = makeButton("この項目の修正を元に戻す", "ghost");
+      resetAll.dataset.action = "edit-reset-all";
+      resetAll.setAttribute("aria-label", `${model.label}の入力欄の修正をすべて元に戻す`);
+      resetAll.addEventListener("click", () => {
+        host.resetSection(sectionKey);
+        render();
+      });
+      tools.appendChild(resetAll);
+      let jsonToggle = null;
+      if (model.jsonEditable) {
+        jsonToggle = makeButton("JSONで編集", "sub");
+        jsonToggle.dataset.action = "json-toggle";
+        jsonToggle.setAttribute("aria-label", `${model.label}の送る設定をJSONで編集`);
+        jsonToggle.setAttribute("aria-expanded", "false");
+        tools.appendChild(jsonToggle);
+      }
+      head.append(el("strong", "kus-ds-card__title", model.label), counts, tools);
+      card.appendChild(head);
+      const jsonNote = el("div", "kus-ds-note kus-ds-note--info", "JSONで修正中です。この項目は、選択・入力欄より JSON の内容を優先します。入力欄は使えません。");
+      jsonNote.dataset.jsonActive = sectionKey;
+      card.appendChild(jsonNote);
+      const groups = collectEditables(session, model);
+      const total = groups.reduce((sum, group) => sum + group.items.length, 0);
+      const toggle = makeButton("", "sub");
+      toggle.dataset.action = "toggle";
+      toggle.setAttribute("aria-label", `${model.label}の入力欄を表示`);
+      const more = makeButton("さらに表示", "sub");
+      more.classList.add("kus-dp-more");
+      more.dataset.action = "more";
+      more.hidden = true;
+      const body = el("div", "kus-ds-card__body");
+      body.dataset.editBody = sectionKey;
+      body.appendChild(more);
+      const jsonArea = el("div", "kus-ds-json");
+      jsonArea.dataset.jsonArea = sectionKey;
+      jsonArea.hidden = true;
+      const jsonText = makeTextarea({ rows: 14, code: true });
+      jsonText.setAttribute("aria-label", `${model.label}の送る設定（JSON）`);
+      jsonText.spellcheck = false;
+      const jsonError = el("p", "kus-ds-json__error");
+      jsonError.setAttribute("role", "alert");
+      jsonError.hidden = true;
+      const apply = makeButton("JSONを適用", "primary");
+      apply.dataset.action = "json-apply";
+      apply.setAttribute("aria-label", `${model.label}のJSONを適用`);
+      const cancel = makeButton("JSONでの修正を取り消す", "sub");
+      cancel.dataset.action = "json-cancel";
+      cancel.setAttribute("aria-label", `${model.label}のJSONでの修正を取り消す`);
+      const jsonActions = el("div", "kus-ds-json__actions");
+      jsonActions.append(apply, cancel);
+      jsonArea.append(el("p", "kus-ds-json__help", "反映先に送る設定（反映後の形）です。直した内容は、選択・入力欄より優先されます。"), jsonText, jsonError, jsonActions);
+      const errors = el("ul", "kus-ds-card__problems kus-ds-card__problems--error");
+      errors.dataset.editErrors = sectionKey;
+      const warnings = el("ul", "kus-ds-card__problems kus-ds-card__problems--warn");
+      const planHost = el("div", "kus-ds-plan");
+      planHost.dataset.editPlan = sectionKey;
+      const view = { sectionKey, card, counts, jsonNote, errors, warnings, planHost, resetAll, jsonArea, jsonText, jsonError, jsonToggle, body, toggle, more, opened: false, groups, shown: 0, rows: /* @__PURE__ */ new Map() };
+      cards.set(sectionKey, view);
+      if (total) card.append(toggle, body);
+      else card.appendChild(el("div", "kus-ds-card__note", "画面で直せる値はありません。必要なときは「JSONで編集」を使います。"));
+      toggle.addEventListener("click", () => {
+        const current = host.session();
+        if (current) setOpen(view, !view.opened, current);
+      });
+      more.addEventListener("click", () => {
+        const current = host.session();
+        if (current) appendGroups(view, current);
+      });
+      card.append(jsonArea, errors, warnings, planHost);
+      if (total) setOpen(view, total <= EDIT_OPEN_LIMIT, session);
+      const openJson = (open) => {
+        const current = host.session();
+        if (!current) return;
+        jsonArea.hidden = !open;
+        jsonToggle?.setAttribute("aria-expanded", String(open));
+        if (jsonToggle) setButtonText(jsonToggle, open ? "JSONの編集を閉じる" : "JSONで編集");
+        if (open) {
+          const composed = current.composed?.sections.find((section) => section.sectionKey === sectionKey);
+          const base = current.states[sectionKey].json !== void 0 ? current.states[sectionKey].json : composed?.after;
+          jsonText.value = JSON.stringify(base ?? {}, null, 2);
+          jsonError.hidden = true;
+        }
+      };
+      jsonToggle?.addEventListener("click", () => openJson(jsonArea.hidden));
+      apply.addEventListener("click", () => {
+        let parsed;
+        try {
+          parsed = JSON.parse(jsonText.value);
+        } catch (error) {
+          jsonError.textContent = `JSONの形式が正しくありません（${firstLines(String(error?.message || error), 1)}）。直してから適用してください。`;
+          jsonError.hidden = false;
+          return;
+        }
+        if (parsed === null || typeof parsed !== "object") {
+          jsonError.textContent = "JSONはオブジェクトまたは配列で入力してください。";
+          jsonError.hidden = false;
+          return;
+        }
+        jsonError.hidden = true;
+        host.applyJson(sectionKey, parsed);
+        host.notify(`${model.label}をJSONの内容で修正しました。選択・入力欄より JSON を優先します。`);
+      });
+      cancel.addEventListener("click", () => {
+        jsonError.hidden = true;
+        host.applyJson(sectionKey, void 0);
+        openJson(false);
+        host.notify(`${model.label}のJSONでの修正を取り消しました。選択と入力欄の内容に戻しました。`);
+      });
+      return card;
+    }
+    function render() {
+      const session = host.session();
+      cardsHost.replaceChildren();
+      blockers.replaceChildren();
+      blockers.hidden = true;
+      cards.clear();
+      if (!session || !host.isFresh()) {
+        cardsHost.appendChild(el("div", "kus-ds-empty", "「対象を選ぶ」で差分を抽出し、反映する変更を選んでください。"));
+        return;
+      }
+      if (!session.composed) {
+        cardsHost.appendChild(el("div", "kus-ds-note kus-ds-note--warn", `選んだ内容から反映内容を作れません（${firstLines(session.composeError || "原因を確認できません。", 1)}）。`));
+        return;
+      }
+      const active2 = new Set(host.activeScopes());
+      const sections = session.composed.sections.filter((section) => active2.has(section.sectionKey) && section.selectedCount > 0);
+      for (const section of sections) {
+        const card = buildCard(session, section.sectionKey);
+        if (card) cardsHost.appendChild(card);
+      }
+      if (!cardsHost.children.length) cardsHost.appendChild(el("div", "kus-ds-empty", "反映する変更が選ばれていません。「差分を選ぶ」で選んでください。"));
+      refresh();
+    }
+    function refresh() {
+      const session = host.session();
+      if (!session || !session.composed) return;
+      for (const view of cards.values()) {
+        const composed = session.composed.sections.find((section) => section.sectionKey === view.sectionKey);
+        if (!composed) continue;
+        view.counts.textContent = `選んだ変更 ${composed.selectedCount}/${composed.totalCount}・修正した値 ${composed.editedCount}`;
+        const json = hasJsonOverride(session, view.sectionKey);
+        view.jsonNote.hidden = !json;
+        view.resetAll.disabled = json || !Object.keys(session.states[view.sectionKey].overrides).length;
+        view.errors.replaceChildren(...[.../* @__PURE__ */ new Set([...composed.errors, ...composed.plan.blockers])].slice(0, 10).map((line) => el("li", "", line)));
+        view.errors.hidden = !view.errors.children.length;
+        view.warnings.replaceChildren(...(composed.plan.warnings || []).slice(0, 5).map((line) => el("li", "", line)));
+        view.warnings.hidden = !view.warnings.children.length;
+        view.planHost.replaceChildren();
+        view.planHost.appendChild(el("div", "kus-ds-plan__title", "反映される内容"));
+        if (composed.plan.items?.length) appendReflectItems(view.planHost, { label: composed.label, items: composed.plan.items, sectionKey: composed.sectionKey });
+        else view.planHost.appendChild(el("div", "kus-ds-card__note", `変更 ${composed.plan.changeCount} 件（要約を作成できませんでした）`));
+        for (const row of view.rows.values()) paintRow(row);
+      }
+      const lines = [.../* @__PURE__ */ new Set([...session.composed.sections.flatMap((section) => host.activeScopes().includes(section.sectionKey) ? section.errors.map((error) => `${section.label}: ${error}`) : []), ...session.composed.blockers])];
+      blockers.replaceChildren();
+      blockers.hidden = !lines.length;
+      if (lines.length) {
+        const box = el("div", "kus-ds-note kus-ds-note--warn");
+        box.append(el("strong", "", "次へ進む前に解消が必要です"));
+        const list2 = el("ul", "kus-ds-card__problems");
+        for (const line of lines.slice(0, 20)) list2.appendChild(el("li", "", line));
+        box.appendChild(list2);
+        blockers.appendChild(box);
+      }
+    }
+    return { root: root2, render, refresh };
+  }
+
+  // src/entries/deploy-source-select.ts
+  var SELECT_OPEN_LIMIT = 30;
+  var SELECT_GROUP_PAGE = 40;
+  function renderTargetPending(host, pending, emphasis = true) {
+    if (!pending) return null;
+    const box = el("div");
+    box.dataset.targetPending = pending.state;
+    const text = el("span", "", pending.message);
+    if (pending.state === "pending") {
+      box.className = "kus-ds-note kus-ds-note--warn";
+      box.append(el("strong", "", "反映先に以前からの未公開の変更があります"), text);
+    } else {
+      box.className = `kus-ds-note kus-ds-note--${pending.state === "unknown" ? "info" : "ok"}${emphasis ? "" : " kus-ds-note--quiet"}`;
+      const title = pending.state === "clean" ? "✓ 未公開の変更なし" : pending.state === "own" ? "✓ 未公開の変更はこのツールの反映分だけ" : "ⓘ 未公開の変更は未確認";
+      box.append(el("strong", "", title), text);
+    }
+    host.appendChild(box);
+    return box;
+  }
+  var KIND_CLASS = { 追加: "add", 変更: "change", 削除: "delete" };
+  function createSelectView(host) {
+    const root2 = el("div", "kus-ds-select");
+    const summaryHost = el("div", "kus-ds-summary");
+    const filterBar = el("div", "kus-ds-filter");
+    const keywordInput = makeInput({ placeholder: "場所・値で絞り込み（例: 顧客名）", width: "wide", noSubmit: true });
+    keywordInput.setAttribute("aria-label", "変更をキーワードで絞り込み");
+    keywordInput.dataset.selectFilter = "keyword";
+    const kindSelect = makeSelect([["all", "すべての種類"], ["追加", "追加"], ["変更", "変更"], ["削除", "削除"]], "all");
+    kindSelect.setAttribute("aria-label", "変更を種類で絞り込み");
+    kindSelect.dataset.selectFilter = "kind";
+    const filterCount = el("span", "kus-ds-filter__count");
+    filterCount.setAttribute("aria-live", "polite");
+    filterBar.append(keywordInput, kindSelect, filterCount);
+    const cardsHost = el("div", "kus-ds-cards");
+    const blockersHost = el("div", "kus-ds-blockers");
+    blockersHost.dataset.selectBlockers = "true";
+    root2.append(summaryHost, filterBar, cardsHost, blockersHost);
+    const cards = /* @__PURE__ */ new Map();
+    const filter = () => ({ keyword: keywordInput.value, kind: kindSelect.value });
+    function describeSelectionResult(session, result, on) {
+      const names = (ids) => {
+        const labels2 = ids.slice(0, 2).map((id) => {
+          const change = session.index.byId.get(id);
+          return change ? `「${describePath(change)}」` : "";
+        }).filter(Boolean);
+        return `${labels2.join("、")}${ids.length > 2 ? ` ほか ${ids.length - 2} 件` : ""}`;
+      };
+      if (on && result.required.length) host.notify(`${names(result.required)}は、選んだ変更に必要なため一緒に選びました。`);
+      else if (!on && result.cascaded.length) host.notify(`${names(result.cascaded)}は、外した変更を必要とするため一緒に外しました。`);
+    }
+    function select(ids, on) {
+      const session = host.session();
+      if (!session) return;
+      describeSelectionResult(session, host.changeSelection(ids, on), on);
+    }
+    function buildRow(view, change, session) {
+      const row = el("div", "kus-ds-row");
+      row.dataset.changeId = change.id;
+      row.dataset.changeKind = change.kind;
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = isChangeSelected(session, change);
+      input.setAttribute("aria-label", `${describePath(change)}（${change.kind}）を反映する`);
+      input.addEventListener("change", () => select([change.id], input.checked));
+      const check = el("label", "kus-ds-row__check");
+      check.appendChild(input);
+      const main = el("div", "kus-ds-row__main");
+      const path = el("div", "kus-ds-row__path");
+      path.append(el("span", `kus-rl-kind kus-rl-kind--${KIND_CLASS[change.kind] || "change"}`, change.kind), el("span", "kus-ds-row__name", describePath(change)));
+      const diff = el("div", "kus-ds-row__diff");
+      if (change.whole) {
+        const text = change.kind === "削除" ? change.beforeText : change.afterText;
+        diff.append(el("span", "kus-ds-row__whole", change.kind === "削除" ? "この要素を削除します" : "この要素を追加します"));
+        if (text) diff.append(el("span", "kus-ds-value", clipText(text)));
+        diff.title = clipText(text, 2e3);
+      } else {
+        const before = el("span", "kus-ds-value kus-ds-value--before", clipText(change.beforeText || "（なし）"));
+        const after = el("span", "kus-ds-value kus-ds-value--after", clipText(change.afterText || "（なし）"));
+        before.title = clipText(change.beforeText, 2e3);
+        after.title = clipText(change.afterText, 2e3);
+        const arrow = el("span", "kus-ds-arrow", "→");
+        arrow.setAttribute("aria-label", "変更後");
+        diff.append(before, arrow, after);
+      }
+      main.append(path, diff);
+      const requires = describeRequires(change, session.index);
+      if (requires) main.appendChild(el("div", "kus-ds-row__req", requires));
+      row.append(check, main);
+      view.rows.set(change.id, { change, input });
+      return row;
+    }
+    function buildGroup(view, group, session) {
+      const node = el("div", "kus-ds-group");
+      node.dataset.groupId = group.groupId;
+      const head = el("label", "kus-ds-group__head");
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.setAttribute("aria-label", `${group.groupLabel}の変更をまとめて選ぶ`);
+      input.dataset.groupCheck = group.groupId;
+      input.addEventListener("change", () => select(group.changes.map((change) => change.id), input.checked));
+      const count = el("small", "kus-ds-group__count");
+      head.append(input, el("strong", "", group.groupLabel), count);
+      node.appendChild(head);
+      view.groupViews.set(group.groupId, { group, input, count });
+      for (const change of group.changes) node.appendChild(buildRow(view, change, session));
+      return node;
+    }
+    function paintGroup(view, session) {
+      const state3 = groupCheckState(view.group.changes, session.selected[view.group.changes[0].sectionKey] || /* @__PURE__ */ new Set());
+      view.input.checked = state3 === "all";
+      view.input.indeterminate = state3 === "some";
+      view.input.dataset.checkState = state3;
+      const chosen = view.group.changes.filter((change) => isChangeSelected(session, change)).length;
+      view.count.textContent = `${chosen}/${view.group.changes.length}`;
+    }
+    function appendGroups(view, session) {
+      const next = view.groups.slice(view.shown, view.shown + SELECT_GROUP_PAGE);
+      const frag = document.createDocumentFragment();
+      for (const group of next) frag.appendChild(buildGroup(view, group, session));
+      view.body.insertBefore(frag, view.more);
+      view.shown += next.length;
+      for (const group of next) {
+        const groupView = view.groupViews.get(group.groupId);
+        if (groupView) paintGroup(groupView, session);
+      }
+      const rest = view.groups.length - view.shown;
+      view.more.hidden = rest <= 0;
+      if (rest > 0) setButtonText(view.more, `さらに表示（残り ${rest} グループ）`);
+    }
+    function renderBody(view, session) {
+      const model = session.models[view.sectionKey];
+      view.filtered = filterChanges(model.changes, filter());
+      view.groups = groupChanges(view.filtered);
+      view.shown = 0;
+      view.rows.clear();
+      view.groupViews.clear();
+      view.body.replaceChildren(view.more);
+      if (!view.filtered.length) view.body.insertBefore(el("div", "kus-ds-empty", "この条件に合う変更はありません。"), view.more);
+      appendGroups(view, session);
+    }
+    function setOpen(view, open, session) {
+      view.opened = open;
+      view.body.hidden = !open;
+      view.toggle.setAttribute("aria-expanded", String(open));
+      const model = session.models[view.sectionKey];
+      setButtonText(view.toggle, open ? "変更を閉じる" : `変更を表示（${model.changes.length} 件）`);
+      if (open) renderBody(view, session);
+      else {
+        view.body.replaceChildren(view.more);
+        view.rows.clear();
+        view.groupViews.clear();
+      }
+    }
+    function statusCard(session, key, tone, message) {
+      const entry = session.preview.entries.find((candidate) => candidate.sectionKey === key);
+      const card = el("section", `kus-ds-card kus-ds-card--${tone}`);
+      card.dataset.selectSection = key;
+      card.dataset.selectState = tone;
+      const head = el("div", "kus-ds-card__head");
+      head.append(el("strong", "kus-ds-card__title", entry.label), el("span", `kus-dp-pill kus-dp-pill--${tone === "same" ? "same" : "error"}`, tone === "same" ? "差分なし" : "取得失敗"));
+      card.appendChild(head);
+      card.appendChild(el("div", tone === "error" ? "kus-ds-card__problem" : "kus-ds-card__note", message));
+      if (tone === "error") {
+        const drop = makeButton("この項目を反映しない", "sub");
+        drop.dataset.action = "drop-scope";
+        drop.setAttribute("aria-label", `${entry.label}を反映しない項目から外す`);
+        drop.addEventListener("click", () => host.dropScope(key));
+        card.appendChild(drop);
+      }
+      return card;
+    }
+    function buildCard(session, key) {
+      const entry = session.preview.entries.find((candidate) => candidate.sectionKey === key);
+      if (session.modelErrors[key]) return statusCard(session, key, "error", `差分の選択を準備できませんでした。${firstLines(session.modelErrors[key], 2)}`);
+      const model = session.models[key];
+      if (entry.status === "same") return statusCard(session, key, "same", "反映先は反映元と同じ設定です。反映する変更はありません。");
+      if (entry.status !== "change" || !model) {
+        const reason = [...entry.blockers || [], entry.message].filter(Boolean)[0] || "設定を取得できませんでした。";
+        return statusCard(session, key, "error", firstLines(reason, 4));
+      }
+      const card = el("section", "kus-ds-card");
+      card.dataset.selectSection = key;
+      card.dataset.selectState = "change";
+      const head = el("div", "kus-ds-card__head");
+      const count = el("span", "kus-ds-card__count");
+      count.dataset.selectCount = key;
+      const allBtn = makeButton("すべて選ぶ", "ghost");
+      const noneBtn = makeButton("すべて外す", "ghost");
+      allBtn.dataset.action = "select-all";
+      noneBtn.dataset.action = "select-none";
+      allBtn.setAttribute("aria-label", `${model.label}の変更をすべて選ぶ`);
+      noneBtn.setAttribute("aria-label", `${model.label}の変更をすべて外す`);
+      const tools = el("div", "kus-ds-card__tools");
+      tools.append(allBtn, noneBtn);
+      head.append(el("strong", "kus-ds-card__title", model.label), count, tools);
+      card.appendChild(head);
+      if (model.note) card.appendChild(el("div", "kus-ds-card__note", model.note));
+      const jsonBadge = el("div", "kus-ds-note kus-ds-note--info", "JSONで修正中です。この項目は、選択・入力欄より JSON の内容を優先します。");
+      jsonBadge.dataset.jsonActive = key;
+      card.appendChild(jsonBadge);
+      const problems = el("ul", "kus-ds-card__problems");
+      problems.dataset.cardProblems = key;
+      card.appendChild(problems);
+      const toggle = makeButton("", "sub");
+      toggle.dataset.action = "toggle";
+      toggle.setAttribute("aria-label", `${model.label}の変更を表示`);
+      const more = makeButton("さらに表示", "sub");
+      more.classList.add("kus-dp-more");
+      more.dataset.action = "more";
+      more.hidden = true;
+      const body = el("div", "kus-ds-card__body");
+      body.dataset.selectBody = key;
+      body.hidden = true;
+      const view = { sectionKey: key, card, count, jsonBadge, problems, body, toggle, allBtn, noneBtn, more, opened: false, groups: [], shown: 0, rows: /* @__PURE__ */ new Map(), groupViews: /* @__PURE__ */ new Map(), filtered: model.changes };
+      cards.set(key, view);
+      toggle.addEventListener("click", () => {
+        const current = host.session();
+        if (current) setOpen(view, !view.opened, current);
+      });
+      more.addEventListener("click", () => {
+        const current = host.session();
+        if (current) appendGroups(view, current);
+      });
+      const visibleIds = () => filterChanges(model.changes, filter()).map((change) => change.id);
+      allBtn.addEventListener("click", () => select(visibleIds(), true));
+      noneBtn.addEventListener("click", () => select(visibleIds(), false));
+      card.append(toggle, body);
+      body.appendChild(more);
+      setOpen(view, model.changes.length <= SELECT_OPEN_LIMIT, session);
+      return card;
+    }
+    function renderSummary(session) {
+      summaryHost.replaceChildren();
+      const counts = countExtraction(session.preview.entries, host.activeScopes());
+      const pills = el("div", "kus-dp-pills");
+      pills.append(
+        el("span", "kus-dp-pill kus-dp-pill--change", `差分のある項目 ${counts.change}`),
+        el("span", "kus-dp-pill kus-dp-pill--same", `差分なし ${counts.same}`),
+        el("span", "kus-dp-pill kus-dp-pill--error", `取得失敗 ${counts.error}`)
+      );
+      const info = el("div", "kus-ds-note kus-ds-note--info", describeExtractionSummary(counts));
+      info.dataset.extractSummary = "true";
+      summaryHost.append(pills, info);
+      renderTargetPending(summaryHost, session.preview.targetPending);
+    }
+    function paintBlockers(session) {
+      const result = host.blockers();
+      blockersHost.replaceChildren();
+      const lines = [
+        ...result.failed.map((item) => `${item.label}: 取得失敗（${item.message}）。この項目を反映しない項目から外すか、差分を抽出し直してください。`),
+        ...result.problems
+      ];
+      if (session.composeError) lines.push(`選んだ内容から反映内容を作れません（${firstLines(session.composeError, 1)}）。`);
+      if (result.empty && !lines.length) lines.push("反映する差分を選んでください。");
+      blockersHost.hidden = !lines.length;
+      if (!lines.length) return;
+      const box = el("div", "kus-ds-note kus-ds-note--warn");
+      box.append(el("strong", "", "次へ進む前に解消が必要です"));
+      const list2 = el("ul", "kus-ds-card__problems");
+      for (const line of lines.slice(0, 20)) list2.appendChild(el("li", "", line));
+      if (lines.length > 20) list2.appendChild(el("li", "", `ほか ${lines.length - 20} 件`));
+      box.appendChild(list2);
+      blockersHost.appendChild(box);
+    }
+    function renderCards(session) {
+      cards.clear();
+      cardsHost.replaceChildren();
+      const active2 = new Set(host.activeScopes());
+      for (const entry of session.preview.entries) if (active2.has(entry.sectionKey)) cardsHost.appendChild(buildCard(session, entry.sectionKey));
+      if (!cardsHost.children.length) cardsHost.appendChild(el("div", "kus-ds-empty", "反映する項目がありません。「対象を選ぶ」で項目を選んでください。"));
+      paintFilterCount(session);
+    }
+    function paintFilterCount(session) {
+      const active2 = isFilterActive(filter());
+      filterCount.textContent = active2 ? `表示中 ${[...cards.values()].reduce((sum, view) => sum + filterChanges(session.models[view.sectionKey].changes, filter()).length, 0)} 件` : "";
+      for (const view of cards.values()) {
+        view.allBtn.textContent = active2 ? "表示中をすべて選ぶ" : "すべて選ぶ";
+        view.noneBtn.textContent = active2 ? "表示中をすべて外す" : "すべて外す";
+      }
+    }
+    function render() {
+      const session = host.session();
+      if (!session || !host.isFresh()) {
+        summaryHost.replaceChildren(el("div", "kus-ds-empty", "「対象を選ぶ」で差分を抽出してください。"));
+        cardsHost.replaceChildren();
+        blockersHost.replaceChildren();
+        blockersHost.hidden = true;
+        filterBar.hidden = true;
+        cards.clear();
+        return;
+      }
+      filterBar.hidden = false;
+      renderSummary(session);
+      renderCards(session);
+      paintBlockers(session);
+      refresh();
+    }
+    function refresh() {
+      const session = host.session();
+      if (!session || !host.isFresh()) return;
+      for (const view of cards.values()) {
+        const model = session.models[view.sectionKey];
+        const chosen = selectedCount(session, view.sectionKey);
+        view.count.textContent = `選んだ変更 ${chosen}/${model.changes.length}`;
+        view.count.dataset.chosen = String(chosen);
+        view.jsonBadge.hidden = !hasJsonOverride(session, view.sectionKey);
+        const composed = session.composed?.sections.find((section) => section.sectionKey === view.sectionKey);
+        const lines = [.../* @__PURE__ */ new Set([...composed?.errors || [], ...composed?.plan.blockers || [], ...(session.composed?.blockers || []).filter((line) => line.startsWith(`${model.label}:`)).map((line) => line.slice(model.label.length + 1).trim())])];
+        view.problems.replaceChildren(...lines.slice(0, 10).map((line) => el("li", "", line)));
+        view.problems.hidden = !lines.length;
+        for (const row of view.rows.values()) row.input.checked = isChangeSelected(session, row.change);
+        for (const group of view.groupViews.values()) paintGroup(group, session);
+      }
+      paintBlockers(session);
+    }
+    let keywordTimer = 0;
+    keywordInput.addEventListener("input", () => {
+      window.clearTimeout(keywordTimer);
+      keywordTimer = window.setTimeout(() => rebuildBodies(), 150);
+    });
+    kindSelect.addEventListener("change", () => rebuildBodies());
+    function rebuildBodies() {
+      const session = host.session();
+      if (!session || !host.isFresh()) return;
+      for (const view of cards.values()) if (view.opened) renderBody(view, session);
+      paintFilterCount(session);
+    }
+    return { root: root2, render, refresh };
+  }
+
+  // src/entries/deploy-source-style.ts
+  var P = "#kus-deploy-lite";
+  var STYLE_ID2 = "kus-deploy-source-styles";
+  var CSS2 = `
+${P} .kus-ds-flowbar{flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:8px 24px;background:#fff;border-bottom:1px solid #e2e8f0}
+${P} .kus-ds-flowbar__label{font-size:12.5px;font-weight:700;color:#64748b}
+${P} .kus-ds-flowbar__group{display:flex;flex-wrap:wrap;gap:6px}
+${P} .kus-ds-flow{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;color:#334155;font-size:13px;font-weight:700;cursor:pointer}
+${P} .kus-ds-flow:has(input:checked){border-color:#be123c;background:#fff1f2;color:#881337}
+${P} .kus-ds-flow:has(input:disabled){opacity:.55;cursor:not-allowed}
+${P} .kus-ds-flow:has(input:focus-visible){outline:3px solid #2563eb;outline-offset:2px}
+${P} .kus-ds-flow input{margin:0;accent-color:#be123c}
+${P} .kus-dp-nav--five{grid-template-columns:repeat(5,minmax(0,1fr))}
+${P} .kus-ds-route{display:grid;grid-template-columns:minmax(0,1fr) 40px minmax(0,1fr);align-items:stretch;gap:10px}
+${P} .kus-ds-endpoint{padding:13px;border:1px solid #e2e8f0;border-radius:13px;background:#f8fafc;min-width:0}
+${P} .kus-ds-endpoint--target{background:#fff7ed;border-color:#fed7aa}
+${P} .kus-ds-endpoint__eyebrow{margin-bottom:8px;font-size:12px;font-weight:800;letter-spacing:.08em;color:#64748b}
+${P} .kus-ds-endpoint--target .kus-ds-endpoint__eyebrow{color:#c2410c}
+${P} .kus-ds-endpoint__note{font-size:12.5px;color:#9a3412;margin-bottom:8px}
+${P} .kus-ds-endpoint .kus-lp__select{width:100%;margin-bottom:8px;min-width:0}
+${P} .kus-ds-endpoint .kus-lp__input{width:100%;min-width:0;box-sizing:border-box;min-height:40px;font-size:14px}
+${P} .kus-ds-endpoint .kus-lp__file{width:100%;min-width:0;box-sizing:border-box;margin:8px 0}
+${P} .kus-ds-field{display:flex;flex-direction:column;gap:4px;font-size:12.5px;font-weight:600;margin:8px 0}
+${P} .kus-ds-arrow-col{display:flex;align-items:center;justify-content:center;color:#be123c;font-size:22px;font-weight:800}
+${P} .kus-ds-app-note{margin:-2px 0 8px;min-height:18px;font-size:13px;line-height:1.5;color:#64748b;overflow-wrap:anywhere}
+${P} .kus-ds-app-note--ok{color:#065f46;font-weight:600}
+${P} .kus-ds-app-note--warn{color:#b91c1c;font-weight:700}
+${P} .kus-ds-scope-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+${P} .kus-ds-scope-group{min-width:0;margin:0;padding:10px;border:1px solid #e2e8f0;border-radius:10px}
+${P} .kus-ds-scope-group legend{font-size:12.5px;font-weight:700;color:#475569;padding:0 4px}
+${P} .kus-ds-scope-group .kus-lp__chips{display:flex;flex-direction:column;align-items:stretch;margin-bottom:0}
+${P} .kus-ds-scope-group .kus-lp__chip{display:flex;align-items:center;gap:6px;border-radius:6px;white-space:normal;min-height:32px}
+${P} .kus-ds-chip__badge{margin-left:auto;flex:none;padding:0 6px;border:1px solid #fb923c;border-radius:4px;background:#fff7ed;color:#9a3412;font-size:11.5px;font-weight:800;line-height:16px}
+${P} .kus-ds-note{padding:9px 12px;border-radius:10px;font-size:13px;line-height:1.6;border:1px solid #e2e8f0;background:#fff;overflow-wrap:anywhere}
+${P} .kus-ds-note strong{display:block;margin-bottom:2px}
+${P} .kus-ds-note--info{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}
+${P} .kus-ds-note--ok{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+${P} .kus-ds-note--warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
+${P} .kus-ds-note--err{background:#fef2f2;border-color:#fecaca;color:#991b1b}
+${P} .kus-ds-note--quiet{background:#f8fafc;border-color:#e2e8f0;color:#475569}
+${P} .kus-ds-note[hidden]{display:none}
+${P} .kus-ds-summary,${P} .kus-ds-cards,${P} .kus-ds-select,${P} .kus-ds-edit-root{display:flex;flex-direction:column;gap:10px;min-width:0}
+${P} .kus-ds-filter{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:12px;background:#fff}
+${P} .kus-ds-filter .kus-lp__input{flex:1 1 220px;min-width:0}
+${P} .kus-ds-filter__count{font-size:12.5px;color:#64748b}
+${P} .kus-ds-card{padding:12px 14px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;min-width:0;display:flex;flex-direction:column;gap:8px}
+${P} .kus-ds-card--same{background:#f8fafc}
+${P} .kus-ds-card--error{border-color:#fca5a5;background:#fff5f5}
+${P} .kus-ds-card__head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+${P} .kus-ds-card__title{font-size:14px;color:#0f172a}
+${P} .kus-ds-card__count{font-size:12.5px;font-weight:700;color:#475569}
+${P} .kus-ds-card__tools{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
+${P} .kus-ds-card__note{font-size:13px;color:#64748b;overflow-wrap:anywhere}
+${P} .kus-ds-card__problem{font-size:13px;color:#991b1b;white-space:pre-wrap;overflow-wrap:anywhere}
+${P} .kus-ds-card__problems{margin:0;padding-left:18px;font-size:13px;line-height:1.6;color:#92400e;overflow-wrap:anywhere}
+${P} .kus-ds-card__problems--error{color:#991b1b}
+${P} .kus-ds-card__problems[hidden]{display:none}
+${P} .kus-ds-card__body{display:flex;flex-direction:column;gap:6px;min-width:0}
+${P} .kus-ds-card__body[hidden]{display:none}
+${P} .kus-ds-group{border:1px solid #f1f5f9;border-radius:10px;overflow:hidden}
+${P} .kus-ds-group__head{display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f8fafc;cursor:pointer;font-size:13px}
+${P} .kus-ds-group__head input{margin:0;flex:none}
+${P} .kus-ds-group__count{margin-left:auto;color:#64748b;font-variant-numeric:tabular-nums}
+${P} .kus-ds-row{display:grid;grid-template-columns:28px minmax(0,1fr);gap:6px;padding:7px 10px;border-top:1px solid #f1f5f9;align-items:start}
+${P} .kus-ds-row__check{display:flex;align-items:center;justify-content:center;padding-top:2px}
+${P} .kus-ds-row__main{min-width:0;display:flex;flex-direction:column;gap:3px}
+${P} .kus-ds-row__path{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13px;font-weight:700;color:#0f172a;overflow-wrap:anywhere}
+${P} .kus-ds-row__name{min-width:0}
+${P} .kus-ds-row__diff{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;font-size:13px;color:#334155;min-width:0}
+${P} .kus-ds-row__whole{font-size:12.5px;color:#64748b}
+${P} .kus-ds-row__req{font-size:12.5px;color:#1e40af}
+${P} .kus-ds-value{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;max-width:100%;overflow-wrap:anywhere;white-space:pre-wrap;padding:1px 6px;border-radius:5px;background:#f1f5f9}
+${P} .kus-ds-value--before{background:#fef2f2;color:#991b1b}
+${P} .kus-ds-value--after{background:#f0fdf4;color:#166534}
+${P} .kus-ds-arrow{color:#64748b}
+${P} .kus-ds-empty{padding:12px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;font-size:13px;color:#64748b}
+${P} .kus-ds-edit-group{border:1px solid #f1f5f9;border-radius:10px;overflow:hidden}
+${P} .kus-ds-edit-group__title{padding:6px 10px;background:#f8fafc;font-size:13px;font-weight:700;color:#0f172a;overflow-wrap:anywhere}
+${P} .kus-ds-edit{display:grid;grid-template-columns:minmax(120px,.8fr) minmax(0,1.2fr) auto;gap:6px 10px;align-items:center;padding:7px 10px;border-top:1px solid #f1f5f9;border-left:4px solid transparent}
+${P} .kus-ds-edit--changed{border-left-color:#d97706;background:#fffbeb}
+${P} .kus-ds-edit__label{font-size:13px;font-weight:600;color:#334155;overflow-wrap:anywhere}
+${P} .kus-ds-edit__control{display:flex;align-items:center;gap:8px;min-width:0}
+${P} .kus-ds-edit__control .kus-lp__input,${P} .kus-ds-edit__control .kus-lp__select{width:100%;min-width:0;box-sizing:border-box}
+${P} .kus-ds-edit__meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12.5px;color:#64748b;min-width:0}
+${P} .kus-ds-edit__default{overflow-wrap:anywhere}
+${P} .kus-ds-json{display:flex;flex-direction:column;gap:8px}
+${P} .kus-ds-json[hidden]{display:none}
+${P} .kus-ds-json__help{margin:0;font-size:12.5px;color:#64748b}
+${P} .kus-ds-json__error{margin:0;font-size:13px;font-weight:700;color:#b91c1c}
+${P} .kus-ds-json__actions{display:flex;flex-wrap:wrap;gap:6px}
+${P} .kus-ds-json textarea{min-height:200px}
+${P} .kus-ds-plan{min-width:0}
+${P} .kus-ds-plan__title{font-size:12.5px;font-weight:700;color:#64748b;margin-bottom:2px}
+${P} .kus-ds-blockers{margin-top:2px}
+${P} .kus-ds-blockers[hidden]{display:none}
+${P} .kus-ds-confirm-sections{display:flex;flex-direction:column;gap:8px}
+${P} .kus-ds-confirm-section{padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;min-width:0}
+${P} .kus-ds-confirm-section__head{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;font-size:13px}
+${P} .kus-ds-confirm-section__head strong{color:#0f172a}
+${P} .kus-ds-confirm-section details{margin-top:4px}
+${P} .kus-ds-confirm-section summary{cursor:pointer;font-size:12.5px;font-weight:700;color:#64748b}
+${P} .kus-ds-route-line{font-size:14px;font-weight:700;color:#0f172a;overflow-wrap:anywhere}
+${P} .kus-ds-result-grid{display:flex;flex-direction:column;gap:12px}
+${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-wrap:anywhere}
+@media(max-width:900px){
+  ${P} .kus-ds-scope-groups{grid-template-columns:1fr}
+}
+@media(max-width:760px){
+  ${P} .kus-ds-route{grid-template-columns:1fr}
+  ${P} .kus-ds-arrow-col{height:24px;transform:rotate(90deg)}
+  ${P} .kus-ds-edit{grid-template-columns:1fr}
+  ${P} .kus-ds-card__tools{margin-left:0}
+}
+@media(max-width:720px){
+  ${P} .kus-ds-flowbar{padding:8px 16px}
+  ${P} .kus-ds-flowbar__label{display:none}
+  ${P} .kus-ds-flow{flex:1 1 auto;justify-content:center}
+  ${P} .kus-dp-nav--five{padding:8px;gap:4px}
+  ${P} .kus-dp-nav--five .kus-dp-nav__btn{font-size:11.5px;padding:8px 2px}
+}
+@media(max-width:420px){
+  ${P} .kus-ds-flowbar__group{flex-wrap:nowrap;width:100%}
+  ${P} .kus-ds-flow{font-size:12px;padding:6px 8px;gap:4px;white-space:nowrap}
+}
+@media(max-height:720px){
+  ${P} .kus-ds-flowbar{padding:4px 12px}
+}
+`;
+  function ensureSourceStyles() {
+    if (document.getElementById(STYLE_ID2)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID2;
+    style.textContent = CSS2;
+    document.head.appendChild(style);
+  }
+
+  // src/entries/deploy-source-ui.ts
+  var REPLACING_SCOPE_KEYS = /* @__PURE__ */ new Set(["appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications", "processSettings"]);
+  var DEFAULT_SCOPES = ["fieldSettings", "layoutSettings", "viewSettings"];
+  var memory = { kind: "production", sourceApp: "", sourceGuest: "", targetApp: "", targetGuest: "", scopes: [...DEFAULT_SCOPES], preserve: true, lookupText: "", goal: "production", lastRun: null };
+  function createSourceFlow(panel) {
+    ensureSourceStyles();
+    const runLite = (busyMsg, fn, okMsg) => liteRun(panel, busyMsg, async () => {
+      panel.setResult("");
+      return fn();
+    }, okMsg);
+    let busy = false;
+    let ready = false;
+    let activeStage = "setup";
+    let session = null;
+    let revision = 0;
+    let confirmedToken = "";
+    let requiredId = "";
+    let pendingRequired = false;
+    let progress = null;
+    let deployProgress = null;
+    let running = false;
+    let composeTimer = 0;
+    let currentRunGoal = "production";
+    let viewsFresh = false;
+    let shown = false;
+    let showStage = () => {
+    };
+    let refreshWorkflow = () => {
+    };
+    const pageGuest = () => guestIdFromPagePath(window.location?.pathname || "");
+    const srcApp = makeInput({ placeholder: "反映元アプリID", value: memory.sourceApp, width: "id" });
+    const srcGuest = makeInput({ placeholder: "ゲストID", value: memory.sourceGuest, width: "guest" });
+    const defaultsToCurrentApp = !memory.targetApp && !!DEFAULT_APP_ID;
+    const tgtApp = makeInput({ placeholder: "反映先アプリID", value: memory.targetApp || DEFAULT_APP_ID || "", width: "id" });
+    const tgtGuest = makeInput({ placeholder: "ゲストID", value: defaultsToCurrentApp ? pageGuest() : memory.targetGuest, width: "guest" });
+    srcApp.setAttribute("aria-label", "反映元アプリID");
+    srcGuest.setAttribute("aria-label", "反映元ゲストスペースID");
+    tgtApp.setAttribute("aria-label", "反映先アプリID");
+    tgtGuest.setAttribute("aria-label", "反映先ゲストスペースID");
+    for (const input of [srcApp, tgtApp]) input.inputMode = "numeric";
+    let jsonBundle = null;
+    let jsonBundles = [];
+    let jsonToken = "";
+    let jsonFileName = "";
+    const appLookupCache = createReflectAppLookupCache();
+    function createAppNote(appInput, guestInput, isActive) {
+      const node = el("div", "kus-ds-app-note");
+      node.setAttribute("aria-live", "polite");
+      let key = "\0";
+      let seq = 0;
+      let timer;
+      let failed = false;
+      const paint = (text, tone = "") => {
+        node.textContent = text;
+        node.classList.toggle("kus-ds-app-note--ok", tone === "ok");
+        node.classList.toggle("kus-ds-app-note--warn", tone === "warn");
+      };
+      const show = (info) => {
+        failed = false;
+        paint(`✓ ${formatReflectAppName(info)}`, "ok");
+        refreshWorkflow();
+      };
+      function refresh() {
+        const appId = appInput.value.trim();
+        const guest = guestInput.value.trim();
+        const active2 = isActive() && isLookupableReflectApp(appId, guest);
+        const nextKey = active2 ? `${guest}|${appId}` : "";
+        if (nextKey === key) return;
+        key = nextKey;
+        seq += 1;
+        failed = false;
+        window.clearTimeout(timer);
+        if (!active2) {
+          paint("");
+          return;
+        }
+        const cached = appLookupCache.peek(appId, guest);
+        if (cached) {
+          show(cached);
+          return;
+        }
+        paint("確認中…");
+        const mine = seq;
+        timer = window.setTimeout(async () => {
+          if (!panel.root.isConnected) return;
+          const result = await appLookupCache.get(appId, guest);
+          if (mine !== seq || !panel.root.isConnected) return;
+          if (result.ok) show(result);
+          else {
+            failed = true;
+            paint("message" in result ? result.message : REFLECT_APP_LOOKUP_FAILURE, "warn");
+          }
+        }, 350);
+      }
+      function adopt(info) {
+        const appId = appInput.value.trim();
+        const guest = guestInput.value.trim();
+        if (!isActive() || info.appId !== appId || !isLookupableReflectApp(appId, guest)) return;
+        key = `${guest}|${appId}`;
+        seq += 1;
+        window.clearTimeout(timer);
+        show(info);
+      }
+      const recheck = () => {
+        if (!failed) return;
+        key = "\0";
+        refresh();
+      };
+      appInput.addEventListener("change", recheck);
+      guestInput.addEventListener("change", recheck);
+      return { el: node, refresh, adopt, stop() {
+        seq += 1;
+        window.clearTimeout(timer);
+      } };
+    }
+    const sourceNote = createAppNote(srcApp, srcGuest, () => shown && currentKind() !== "json");
+    const targetNote = createAppNote(tgtApp, tgtGuest, () => shown);
+    panel.root.addEventListener("kus-lite-dispose", () => {
+      sourceNote.stop();
+      targetNote.stop();
+    }, { once: true });
+    const cardApp = makeCard({ title: "反映元と反映先のアプリ", number: 1 });
+    const route = el("div", "kus-ds-route");
+    const sourceEndpoint = el("section", "kus-ds-endpoint");
+    sourceEndpoint.appendChild(el("div", "kus-ds-endpoint__eyebrow", "反映元 · 設定を読み取る"));
+    const kindSelect = makeSelect([["production", "アプリの本番設定から取得"], ["preview", "アプリのプレビュー設定から取得"], ["json", "設定JSONから取得"]], memory.kind);
+    kindSelect.setAttribute("aria-label", "反映元の取得方法");
+    kindSelect.dataset.sourceKind = "true";
+    sourceEndpoint.appendChild(kindSelect);
+    function labeled(input, caption) {
+      const label = el("label", "kus-ds-field");
+      label.append(el("span", "", caption), input);
+      return label;
+    }
+    const sourceAppFields = el("div");
+    const sourceGuestDetails = makeDetails("ゲストスペースを指定", { open: !!srcGuest.value });
+    sourceGuestDetails.body.appendChild(labeled(srcGuest, "ゲストスペースID（任意）"));
+    const currentSrcBtn = makeButton("現在のアプリを反映元", "sub");
+    sourceAppFields.append(labeled(srcApp, "アプリID"), sourceNote.el, sourceGuestDetails.details, currentSrcBtn);
+    const sourceJsonFields = el("div");
+    sourceJsonFields.hidden = true;
+    const jsonFile = document.createElement("input");
+    jsonFile.type = "file";
+    jsonFile.accept = ".json,application/json";
+    jsonFile.className = "kus-lp__file";
+    jsonFile.setAttribute("aria-label", "反映元の設定JSON");
+    const jsonAppSelect = makeSelect([]);
+    jsonAppSelect.setAttribute("aria-label", "設定JSON内の反映元アプリ");
+    jsonAppSelect.hidden = true;
+    const jsonClearBtn = makeButton("クリア", "ghost");
+    jsonClearBtn.hidden = true;
+    const jsonNote = el("div", "kus-lp__small");
+    jsonNote.hidden = true;
+    sourceJsonFields.append(jsonFile, jsonAppSelect, jsonClearBtn, jsonNote);
+    sourceEndpoint.append(sourceAppFields, sourceJsonFields);
+    const targetEndpoint = el("section", "kus-ds-endpoint kus-ds-endpoint--target");
+    targetEndpoint.appendChild(el("div", "kus-ds-endpoint__eyebrow", "反映先 · 設定を書き込む"));
+    const targetNoteText = el("div", "kus-ds-endpoint__note");
+    const targetGuestDetails = makeDetails("ゲストスペースを指定", { open: !!tgtGuest.value });
+    targetGuestDetails.body.appendChild(labeled(tgtGuest, "ゲストスペースID（任意）"));
+    const currentTgtBtn = makeButton("現在のアプリを反映先", "sub");
+    targetEndpoint.append(targetNoteText, labeled(tgtApp, "アプリID"), targetNote.el, targetGuestDetails.details, currentTgtBtn);
+    const arrow = el("div", "kus-ds-arrow-col", "→");
+    arrow.setAttribute("aria-hidden", "true");
+    route.append(sourceEndpoint, arrow, targetEndpoint);
+    cardApp.body.appendChild(route);
+    cardApp.body.appendChild(createAppSearchControl(panel, {
+      targets: [
+        { label: "反映元", apply: (id, _name, guestId) => {
+          if (currentKind() === "json") setKind("production");
+          srcApp.value = id;
+          srcGuest.value = guestId || "";
+          onInputsChanged();
+        } },
+        { label: "反映先", apply: (id, _name, guestId) => {
+          tgtApp.value = id;
+          tgtGuest.value = guestId || "";
+          onInputsChanged();
+        } }
+      ]
+    }));
+    cardApp.body.appendChild(makeNote("反映元の設定を読み取り、反映先のプレビューへ書き込みます。反映先は本番のアプリで、書き込んだあとに本番へ反映します（目標を「プレビューまで」にすると、本番へは反映しません）。", "help"));
+    const cardScope = makeCard({ title: "反映する項目", number: 2 });
+    const putSections = REFLECT_SECTION_KEYS.map((key) => ({ key, label: reflectSectionLabel(key) }));
+    const initialScopes = new Set(memory.scopes);
+    const chips = putSections.map((section) => {
+      const chip = makeChip({ label: section.label, checked: initialScopes.has(section.key), value: section.key });
+      const hint = describeReflectScope(section.key);
+      chip.checkbox.setAttribute("aria-label", section.label);
+      if (hint) {
+        chip.label.title = `${section.label}: ${hint}`;
+        const description = el("span", "", `${REPLACING_SCOPE_KEYS.has(section.key) ? "置換型の項目。" : ""}${hint}`);
+        description.id = `kus-ds-scope-hint-${section.key}`;
+        description.hidden = true;
+        chip.label.appendChild(description);
+        chip.checkbox.setAttribute("aria-describedby", description.id);
+      }
+      if (REPLACING_SCOPE_KEYS.has(section.key)) {
+        const badge = el("span", "kus-ds-chip__badge", "置換");
+        badge.setAttribute("aria-hidden", "true");
+        chip.label.appendChild(badge);
+      }
+      chip.checkbox.addEventListener("change", onScopesChanged);
+      return chip;
+    });
+    const scopeGroups = el("div", "kus-ds-scope-groups");
+    for (const group of groupReflectScopes(putSections.map((section) => section.key))) {
+      const fieldset = el("fieldset", "kus-ds-scope-group");
+      fieldset.appendChild(el("legend", "", group.label));
+      const list2 = el("div", "kus-lp__chips");
+      for (const key of group.keys) {
+        const chip = chips.find((candidate) => candidate.checkbox.value === key);
+        if (chip) list2.appendChild(chip.label);
+      }
+      fieldset.appendChild(list2);
+      scopeGroups.appendChild(fieldset);
+    }
+    const fieldNotice = el("p", "kus-ds-note kus-ds-note--warn", FIELD_SETTINGS_OMITTED_NOTICE);
+    fieldNotice.hidden = true;
+    cardScope.body.append(scopeGroups, fieldNotice);
+    cardScope.body.appendChild(makeNote("標準はフィールド・レイアウト・一覧です。選んだ項目ごとに差分を抽出し、次の画面で設定値 1 つずつ選べます。", "help"));
+    const cardGoal = makeCard({ title: "目標", number: 3 });
+    function makeChoice(name, value, title, description, checked) {
+      const label = el("label", "kus-dp-choice");
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = name;
+      input.value = value;
+      input.checked = checked;
+      input.setAttribute("aria-label", title);
+      const copy = el("span");
+      copy.append(el("strong", "", title), el("small", "", description));
+      label.append(input, copy);
+      return { label, input };
+    }
+    const goalName = `${panel.root.id}-source-goal`;
+    const goalProduction = makeChoice(goalName, "production", "本番まで反映", "反映先のプレビューへ書き込み、続けて本番へ反映します（アプリを更新）。", memory.goal !== "preview");
+    const goalPreview = makeChoice(goalName, "preview", "プレビューまで（本番へは反映しない）", "反映先のプレビューへ書き込むだけです。本番へは反映しません。", memory.goal === "preview");
+    const goalGroup = el("div", "kus-dp-choices");
+    goalGroup.setAttribute("role", "radiogroup");
+    goalGroup.setAttribute("aria-label", "目標");
+    goalGroup.append(goalProduction.label, goalPreview.label);
+    cardGoal.body.append(goalGroup);
+    cardGoal.body.appendChild(makeNote("目標は最終確認でも確認します。「プレビューまで」を選んだ場合も、あとから「プレビューの変更を公開」で本番へ反映できます。", "help"));
+    const detail = makeDialog({ title: "詳細設定", id: "kus-ds-detail" });
+    const preserve = makeCheck({ label: "反映先だけの一覧・グラフ・アクションを保持する", checked: memory.preserve });
+    preserve.checkbox.setAttribute("aria-label", "反映先だけの一覧・グラフ・アクションを保持する");
+    const preserveCard = makeCard({ title: "一覧・グラフ・アクションの扱い", soft: true });
+    preserveCard.body.append(preserve.label, makeNote("標準はON（保持）です。OFFにすると、反映元にない一覧・グラフ・アクションの削除が差分に出ます。", "help"));
+    const lookupTa = makeTextarea({ rows: 4, code: true, placeholder: "1 行ずつ「旧AppID → 新AppID」（例: 10 → 25）", value: memory.lookupText });
+    lookupTa.setAttribute("aria-label", "参照先変換（旧AppID → 新AppID）");
+    const lookupError = el("p", "kus-ds-json__error");
+    lookupError.hidden = true;
+    const lookupCard = makeCard({ title: "参照先変換", soft: true });
+    lookupCard.body.append(lookupTa, lookupError, makeNote('ルックアップ・関連レコード一覧・アクションのコピー先が参照するアプリIDを、反映先の環境のIDへ読み替えます。JSON形式（{"旧":"新"}）も使えます。', "help"));
+    detail.body.append(preserveCard.card, lookupCard.card);
+    attachCardHelp(detail.body);
+    const detailBtn = makeButton("詳細設定…", "sub");
+    detailBtn.setAttribute("aria-haspopup", "dialog");
+    detailBtn.addEventListener("click", () => detail.open());
+    const detailSummary = el("span", "kus-dp-detail-summary");
+    const detailRow = el("div", "kus-dp-detail-row");
+    detailRow.append(detailBtn, detailSummary);
+    const setupStage = el("div", "kus-dp-setup");
+    setupStage.append(cardApp.card, cardScope.card, cardGoal.card, detailRow);
+    const currentKind = () => kindSelect.value === "json" ? "json" : kindSelect.value === "preview" ? "preview" : "production";
+    const currentGoal = () => goalPreview.input.checked ? "preview" : "production";
+    const activeScopes = () => REFLECT_SECTION_KEYS.filter((key) => chips.some((chip) => chip.checkbox.value === key && chip.checkbox.checked));
+    const currentLookup = () => parseLookupMapText(lookupTa.value);
+    function currentOptions(scopes = activeScopes()) {
+      const kind = currentKind();
+      return {
+        sourceAppId: kind === "json" ? String(jsonBundle?.appId || srcApp.value.trim()) : srcApp.value.trim(),
+        sourceGuestId: kind === "json" ? "" : srcGuest.value.trim(),
+        sourcePreview: kind === "preview",
+        ...kind === "json" ? { sourceBundle: jsonBundle } : {},
+        targetAppId: tgtApp.value.trim(),
+        targetGuestId: tgtGuest.value.trim(),
+        scopes,
+        lookupMap: lookupMapValue(currentLookup()),
+        preserveTargetOnly: preserve.checkbox.checked
+      };
+    }
+    function currentSignature() {
+      const options = currentOptions();
+      return buildSourceSetupSignature({
+        sourceKind: currentKind(),
+        sourceAppId: options.sourceAppId,
+        sourceGuestId: options.sourceGuestId || "",
+        jsonToken: currentKind() === "json" ? jsonToken : "",
+        targetAppId: options.targetAppId,
+        targetGuestId: options.targetGuestId || "",
+        preserveTargetOnly: !!options.preserveTargetOnly,
+        lookupMap: options.lookupMap || {}
+      });
+    }
+    function isFresh() {
+      return !!session && session.signature === currentSignature() && scopesCoveredBy(activeScopes(), session.scopes);
+    }
+    function setupBlocker() {
+      const kind = currentKind();
+      if (kind === "json" && !jsonBundle) return "反映元の設定JSONを読み込んでください。";
+      const lookupMessage = lookupMapError(currentLookup());
+      const connection = reflectConnectionError(currentOptions());
+      if (connection) return connection;
+      if (!activeScopes().length) return "反映する項目を選んでください。";
+      if (lookupMessage) return lookupMessage;
+      return "";
+    }
+    function setKind(kind) {
+      kindSelect.value = kind;
+      syncKindFields();
+    }
+    function syncKindFields() {
+      const kind = currentKind();
+      sourceAppFields.hidden = kind === "json";
+      sourceJsonFields.hidden = kind !== "json";
+      jsonAppSelect.hidden = jsonBundles.length < 2;
+      jsonClearBtn.hidden = !jsonBundle;
+      jsonNote.hidden = !jsonBundle;
+      if (jsonBundle) {
+        const appName = extractAppNameFromBundle(jsonBundle);
+        jsonNote.textContent = `設定JSONを読み込み済み${jsonFileName ? `（${jsonFileName}）` : ""}: アプリ #${jsonBundle?.appId || "-"}${appName ? ` (${appName})` : ""}。反映元はこのJSONから取得し、アプリからは取得しません。`;
+      }
+    }
+    function describeDetail() {
+      const lookup = currentLookup();
+      const parts = [preserve.checkbox.checked ? "反映先だけの一覧・グラフ・アクションを保持" : "反映先だけの一覧・グラフ・アクションを削除", lookup.ok ? lookup.count ? `参照先変換 ${lookup.count} 件` : "参照先変換なし" : "参照先変換に誤りあり"];
+      return { text: `詳細設定: ${parts.join(" / ")}`, warn: !preserve.checkbox.checked || !lookup.ok };
+    }
+    function onInputsChanged() {
+      memory.kind = currentKind();
+      memory.sourceApp = srcApp.value;
+      memory.sourceGuest = srcGuest.value;
+      memory.targetApp = tgtApp.value;
+      memory.targetGuest = tgtGuest.value;
+      memory.scopes = activeScopes();
+      memory.preserve = preserve.checkbox.checked;
+      memory.lookupText = lookupTa.value;
+      memory.goal = currentGoal();
+      if (srcGuest.value) sourceGuestDetails.details.open = true;
+      if (tgtGuest.value) targetGuestDetails.details.open = true;
+      sourceNote.refresh();
+      targetNote.refresh();
+      syncKindFields();
+      const summary = describeDetail();
+      detailSummary.textContent = summary.text;
+      detailSummary.classList.toggle("kus-dp-detail-summary--warn", summary.warn);
+      const lookupMessage = lookupMapError(currentLookup());
+      lookupError.textContent = lookupMessage;
+      lookupError.hidden = !lookupMessage;
+      fieldNotice.hidden = !shouldWarnMissingFieldSettings(activeScopes()) || !activeScopes().length;
+      targetNoteText.textContent = currentGoal() === "production" ? "書き込むのは反映先のプレビュー。続けて本番へ反映します" : "書き込むのは反映先のプレビューだけです";
+      bump();
+      if (ready && isFresh() !== viewsFresh) renderViews();
+      refreshWorkflow();
+    }
+    function renderViews() {
+      viewsFresh = isFresh();
+      selectView.render();
+      editView.render();
+    }
+    function onScopesChanged() {
+      memory.scopes = activeScopes();
+      fieldNotice.hidden = !shouldWarnMissingFieldSettings(activeScopes()) || !activeScopes().length;
+      bump();
+      if (session && isFresh()) recompose();
+      if (ready) renderViews();
+      refreshWorkflow();
+    }
+    for (const input of [srcApp, srcGuest, tgtApp, tgtGuest]) input.addEventListener("input", onInputsChanged);
+    for (const input of [goalProduction.input, goalPreview.input, preserve.checkbox]) input.addEventListener("change", onInputsChanged);
+    lookupTa.addEventListener("input", onInputsChanged);
+    kindSelect.addEventListener("change", () => {
+      onInputsChanged();
+    });
+    function adoptAppReference(appInput, guestInput, guestDetails, sideLabel, text = appInput.value) {
+      if (!needsAppReferenceParse(text)) return false;
+      const reference = parseAppReference(text);
+      if (!reference) {
+        panel.setStatus(`${sideLabel}のアプリIDを読み取れません。数字のID、またはアプリのURLを入力してください。`, "warn");
+        return false;
+      }
+      const clearedGuest = !reference.guestId && !!guestInput.value.trim();
+      appInput.value = reference.appId;
+      guestInput.value = reference.guestId;
+      if (reference.guestId) guestDetails.open = true;
+      onInputsChanged();
+      panel.setStatus(`URLから${sideLabel}のアプリID ${reference.appId}${reference.guestId ? `（ゲストスペース ${reference.guestId}）` : ""}を読み取りました。${clearedGuest ? "ゲストスペースIDは空にしました。" : ""}`, "ok");
+      return true;
+    }
+    for (const [appInput, guestInput, guestDetails, sideLabel] of [
+      [srcApp, srcGuest, sourceGuestDetails.details, "反映元"],
+      [tgtApp, tgtGuest, targetGuestDetails.details, "反映先"]
+    ]) {
+      appInput.addEventListener("paste", (event) => {
+        const pasted = event.clipboardData?.getData("text") || "";
+        if (!needsAppReferenceParse(pasted)) return;
+        if (adoptAppReference(appInput, guestInput, guestDetails, sideLabel, pasted)) event.preventDefault();
+      });
+      appInput.addEventListener("change", () => {
+        adoptAppReference(appInput, guestInput, guestDetails, sideLabel);
+      });
+    }
+    currentSrcBtn.addEventListener("click", () => {
+      srcApp.value = DEFAULT_APP_ID || "";
+      srcGuest.value = DEFAULT_APP_ID ? pageGuest() : srcGuest.value;
+      onInputsChanged();
+      panel.setStatus("現在のアプリを反映元にセットしました。", "info");
+    });
+    currentTgtBtn.addEventListener("click", () => {
+      tgtApp.value = DEFAULT_APP_ID || "";
+      tgtGuest.value = DEFAULT_APP_ID ? pageGuest() : tgtGuest.value;
+      onInputsChanged();
+      panel.setStatus("現在のアプリを反映先にセットしました。", "info");
+    });
+    function renderJsonAppSelect() {
+      jsonAppSelect.replaceChildren(...jsonBundles.map((bundle, index) => {
+        const option = document.createElement("option");
+        option.value = String(index);
+        const appName = extractAppNameFromBundle(bundle);
+        option.textContent = `アプリ #${bundle.appId}${appName ? ` (${appName})` : ""}`;
+        return option;
+      }));
+    }
+    jsonFile.addEventListener("change", () => runLite("反映元の設定JSONを読み込み中…", async () => {
+      const file = jsonFile.files?.[0];
+      if (!file) return;
+      jsonFile.value = "";
+      jsonBundle = null;
+      jsonBundles = [];
+      jsonToken = "";
+      jsonFileName = "";
+      let parsed;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch {
+        throw new Error("設定JSONの読み込みに失敗しました（JSON形式が不正です）");
+      }
+      jsonBundles = pickAllSettingsBundles(parsed, "source", true);
+      renderJsonAppSelect();
+      jsonBundle = jsonBundles[0];
+      jsonToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
+      jsonFileName = file.name;
+      onInputsChanged();
+      panel.setStatus(`反映元の設定JSONを読み込みました（アプリ #${jsonBundle?.appId || "-"}）。`, "ok");
+    }));
+    jsonAppSelect.addEventListener("change", () => {
+      jsonBundle = jsonBundles[Number(jsonAppSelect.value)];
+      onInputsChanged();
+    });
+    jsonClearBtn.addEventListener("click", () => {
+      jsonBundle = null;
+      jsonBundles = [];
+      jsonToken = "";
+      jsonFileName = "";
+      jsonFile.value = "";
+      onInputsChanged();
+      panel.setStatus("読み込んだ設定JSONをクリアしました。設定JSONを選び直してください。", "info");
+    });
+    function recompose() {
+      window.clearTimeout(composeTimer);
+      composeTimer = 0;
+      if (session) recomposeSession(session, activeScopes());
+    }
+    function flushRecompose() {
+      if (composeTimer) recompose();
+    }
+    function scheduleRecompose() {
+      window.clearTimeout(composeTimer);
+      composeTimer = window.setTimeout(() => {
+        recompose();
+        afterComposed();
+      }, 200);
+    }
+    function afterComposed() {
+      selectView.refresh();
+      editView.refresh();
+      refreshWorkflow();
+    }
+    function bump() {
+      revision += 1;
+      if (confirmedToken && confirmedToken !== confirmationToken()) clearConfirmation();
+    }
+    function selectionBlockers2() {
+      if (!session || !isFresh()) return { failed: [], problems: [], references: [], empty: false };
+      return collectSelectionBlockers({ entries: session.preview.entries, activeScopes: activeScopes(), models: session.models, composed: session.composed });
+    }
+    function editEntryBlocker() {
+      if (!session || !isFresh()) return "";
+      if (session.composeError) return `選んだ内容から反映内容を作れません（${firstLines(session.composeError, 1)}）。`;
+      return firstEditEntryBlockerText(selectionBlockers2());
+    }
+    function stageBlocker() {
+      if (!session || !isFresh()) return "";
+      if (session.composeError) return `選んだ内容から反映内容を作れません（${firstLines(session.composeError, 1)}）。`;
+      return firstBlockerText(selectionBlockers2());
+    }
+    const selectView = createSelectView({
+      session: () => session,
+      activeScopes,
+      isFresh,
+      blockers: selectionBlockers2,
+      notify: (message) => panel.setStatus(message, "info"),
+      dropScope: (key) => {
+        const chip = chips.find((candidate) => candidate.checkbox.value === key);
+        if (!chip) return;
+        chip.checkbox.checked = false;
+        onScopesChanged();
+        panel.setStatus(`${reflectSectionLabel(key)}を反映する項目から外しました。`, "info");
+      },
+      changeSelection: (ids, on) => {
+        const result = session ? applySelection(session, ids, on) : { changed: [], required: [], cascaded: [] };
+        if (result.changed.length) {
+          bump();
+          recompose();
+          afterComposed();
+        }
+        return result;
+      }
+    });
+    const editView = createEditView({
+      session: () => session,
+      activeScopes,
+      isFresh,
+      notify: (message) => panel.setStatus(message, "info"),
+      setOverride: (sectionKey, pointer, value, defaultValue, debounce) => {
+        if (!session) return;
+        setOverride(session, sectionKey, pointer, value, defaultValue);
+        bump();
+        if (debounce) {
+          scheduleRecompose();
+          refreshWorkflow();
+        } else {
+          recompose();
+          afterComposed();
+        }
+      },
+      resetSection: (sectionKey) => {
+        if (!session) return;
+        clearOverrides(session, sectionKey);
+        bump();
+        recompose();
+        afterComposed();
+      },
+      applyJson: (sectionKey, json) => {
+        if (!session) return;
+        setJsonOverride(session, sectionKey, json);
+        bump();
+        recompose();
+        afterComposed();
+      }
+    });
+    async function startExtract() {
+      if (busy) return;
+      const blocker = setupBlocker();
+      if (blocker) {
+        panel.setStatus(blocker, "warn");
+        return;
+      }
+      const options = currentOptions();
+      const signature = currentSignature();
+      const kind = currentKind();
+      await runLite("差分を抽出中…", async () => {
+        panel.setStatus("反映元と反映先のアプリを確認中…", "busy");
+        const identities = await resolveReflectAppsStandalone(options);
+        if (kind !== "json") sourceNote.adopt({ ok: true, appId: identities.source.appId, name: identities.source.name, code: identities.source.code });
+        targetNote.adopt({ ok: true, appId: identities.target.appId, name: identities.target.name, code: identities.target.code });
+        const preview = await previewReflectStandalone(options, (message) => panel.setStatus(message, "busy"));
+        session = createSourceSession({ signature, opts: options, identities, sourceEnvironment: kind, preview });
+        bump();
+        clearConfirmation();
+        recompose();
+        viewsFresh = true;
+        showStage("select");
+        const counts = countExtraction(preview.entries);
+        const summary = describeExtractionSummary(counts);
+        if (counts.error) panel.setStatus(`${summary}取得失敗の項目は、反映しない項目から外すか、抽出し直してください。まだ書き込んでいません。`, "warn");
+        else if (!counts.change) panel.setStatus(`${summary}まだ書き込んでいません。`, "info");
+        else panel.setStatus(`${summary}反映する変更を選んでください。まだ書き込んでいません。`, "ok");
+      });
+    }
+    const confirmBtn = makeButton("最終確認に進む", "primary");
+    const runBtn = makeButton(sourceRunLabel("production"), "danger");
+    runBtn.disabled = true;
+    const confirmCard = makeCard({ title: "この内容で反映先を変更します" });
+    const confirmBody = el("div");
+    const ack = makeCheck({ label: "上記の内容を確認しました", checked: false });
+    ack.checkbox.setAttribute("aria-label", "上記の内容を確認しました");
+    const confirmInput = makeInput({ width: "wide", noSubmit: true });
+    confirmInput.autocomplete = "off";
+    confirmInput.inputMode = "numeric";
+    confirmInput.setAttribute("data-lp-no-submit", "");
+    const confirmLabel = el("label", "kus-dp-confirm-label");
+    const confirmInputWrap = el("div", "kus-dp-confirm-input");
+    confirmInputWrap.append(confirmLabel, confirmInput);
+    const confirmStatus = el("p", "kus-dp-quiet");
+    confirmStatus.setAttribute("aria-live", "polite");
+    let pendingAck = makeCheck({ label: "", checked: false });
+    confirmCard.body.append(confirmBody, ack.label, confirmInputWrap, confirmStatus);
+    function confirmationToken() {
+      return session && isFresh() ? `${session.id}:${revision}:${currentGoal()}` : "";
+    }
+    function clearConfirmation() {
+      confirmedToken = "";
+      ack.checkbox.checked = false;
+      pendingAck.checkbox.checked = false;
+      confirmInput.value = "";
+      confirmStatus.textContent = "内容を確認して、チェックと入力をしてください。";
+      runBtn.disabled = true;
+    }
+    function confirmationReady() {
+      return !!confirmedToken && confirmedToken === confirmationToken() && ack.checkbox.checked && !!requiredId && confirmInput.value.trim() === requiredId && (!pendingRequired || pendingAck.checkbox.checked) && !stageBlocker();
+    }
+    function refreshConfirmState() {
+      runBtn.disabled = busy || !confirmationReady();
+      const missing = [];
+      if (!ack.checkbox.checked) missing.push("確認のチェック");
+      if (pendingRequired && !pendingAck.checkbox.checked) missing.push("未公開の変更の了承");
+      if (confirmInput.value.trim() !== requiredId) missing.push("反映先アプリIDの入力");
+      confirmStatus.textContent = confirmationReady() ? "確認できました。下の実行ボタンで実行できます。" : `${missing.join("と")}が必要です。`;
+      refreshWorkflow();
+    }
+    for (const control of [ack.checkbox, confirmInput]) control.addEventListener("input", refreshConfirmState);
+    function fact(key, title, mod = "") {
+      const root2 = el("div", `kus-dp-fact${mod ? ` kus-dp-fact--${mod}` : ""}`);
+      root2.dataset.confirm = key;
+      const dd = el("dd");
+      root2.append(el("dt", "", title), dd);
+      return { root: root2, dd };
+    }
+    function sourceLabelText(current) {
+      const identity = current.identities.source;
+      const where = current.sourceEnvironment === "json" ? "設定JSON" : current.sourceEnvironment === "preview" ? "プレビュー設定" : "本番設定";
+      return `${identity.name}（#${identity.appId}・${where}）`;
+    }
+    function openConfirmation() {
+      if (busy || !session || !isFresh()) return;
+      flushRecompose();
+      if (stageBlocker()) return;
+      const run = sectionsToRun(session.composed, activeScopes());
+      if (!run.length) return;
+      clearConfirmation();
+      confirmedToken = confirmationToken();
+      const goal = currentGoal();
+      const target = session.identities.target;
+      confirmCard.card.querySelector(".kus-lp__card-title").textContent = goal === "production" ? "この内容で反映先を変更し、本番へ反映します" : "この内容で反映先のプレビューを変更します";
+      confirmBody.replaceChildren();
+      const facts = el("dl", "kus-dp-facts");
+      const routeFact = fact("route", "経路", "direction");
+      routeFact.dd.appendChild(el("div", "kus-ds-route-line", describeRoute(sourceLabelText(session), `${target.name}（#${target.appId}）`, goal)));
+      facts.appendChild(routeFact.root);
+      const goalFact = fact("goal", "目標");
+      goalFact.dd.textContent = goal === "production" ? "本番まで反映（プレビューへ書き込み、続けて本番へ反映します）" : "プレビューまで（本番へは反映しません）";
+      facts.appendChild(goalFact.root);
+      const sectionsFact = fact("sections", `反映する項目（${run.length} 項目）`);
+      const list2 = el("div", "kus-ds-confirm-sections");
+      for (const section of run) {
+        const box = el("div", "kus-ds-confirm-section");
+        box.dataset.confirmSection = section.sectionKey;
+        const kinds = summarizeItemKinds(section.plan.items);
+        const head = el("div", "kus-ds-confirm-section__head");
+        head.append(el("strong", "", section.label), el("span", "", `選んだ変更 ${section.selectedCount}/${section.totalCount}`), el("span", "", `修正した値 ${section.editedCount}`), el("span", "", kinds || `変更 ${section.plan.changeCount} 件`));
+        box.appendChild(head);
+        if (section.plan.items?.length) {
+          const details = document.createElement("details");
+          details.appendChild(el("summary", "", "変更の要約を表示"));
+          let rendered = false;
+          details.addEventListener("toggle", () => {
+            if (details.open && !rendered) {
+              rendered = true;
+              appendReflectItems(details, { label: section.label, items: section.plan.items, sectionKey: section.sectionKey });
+            }
+          });
+          box.appendChild(details);
+        }
+        list2.appendChild(box);
+      }
+      sectionsFact.dd.appendChild(list2);
+      facts.appendChild(sectionsFact.root);
+      const removed = collectRemovedSettings(run);
+      const removedFact = fact("removed", "削除される設定", removed.length ? "danger" : "");
+      if (removed.length) {
+        removedFact.dd.appendChild(el("strong", "", `${removed.length} 件の設定が削除されます。`));
+        const ul = el("ul", "kus-dp-issues");
+        ul.style.color = "#991b1b";
+        for (const item of removed.slice(0, 30)) ul.appendChild(el("li", "", item.text));
+        if (removed.length > 30) ul.appendChild(el("li", "", `ほか ${removed.length - 30} 件（全件は記録のMarkdownで確認できます）`));
+        removedFact.dd.appendChild(ul);
+        const removedFields = removed.filter((item) => item.isField).length;
+        if (removedFields && goal === "production") removedFact.dd.appendChild(el("strong", "", `削除されるフィールド（${removedFields} 件）は、本番へ反映すると、レコードの値も削除され、元に戻せません。`));
+      } else {
+        removedFact.dd.textContent = "削除される設定はありません。";
+      }
+      facts.appendChild(removedFact.root);
+      const pending = session.preview.targetPending;
+      const pendingState = pending?.state;
+      pendingRequired = goal === "production" && pendingState !== "clean" && pendingState !== "own";
+      pendingAck = makeCheck({ label: pendingState === "pending" ? "反映先プレビューの以前からの未公開の変更も、一緒に本番へ反映されることを了承しました" : "未公開の変更があるか確認できないまま、プレビューの内容がすべて本番へ反映されることを了承しました", checked: false });
+      pendingAck.checkbox.setAttribute("aria-label", "未公開の変更も一緒に本番へ反映されることを了承する");
+      pendingAck.checkbox.addEventListener("input", refreshConfirmState);
+      const pendingFact = fact("pending", "反映先の未公開の変更", pendingRequired ? "danger" : "");
+      renderTargetPending(pendingFact.dd, pending, false);
+      if (pendingRequired) {
+        pendingFact.dd.appendChild(el("strong", "", pendingState === "pending" ? "以前からの未公開の変更は、今回の反映と一緒に本番へ反映されます。" : "反映先に以前からの未公開の変更があるか確認できませんでした。本番へ反映すると、プレビューの内容がすべて本番へ反映されます。"));
+        pendingFact.dd.appendChild(pendingAck.label);
+      } else if (!pending) pendingFact.dd.textContent = "確認していません。";
+      facts.appendChild(pendingFact.root);
+      const backup = fact("backup", "バックアップ");
+      const backupList = el("ul", "kus-dp-issues");
+      backupList.style.color = "#334155";
+      for (const line of sourceBackupDescriptions(goal)) backupList.appendChild(el("li", "", line));
+      backup.dd.appendChild(backupList);
+      const undo = fact("undo", "取り消し方", goal === "production" ? "danger" : "");
+      undo.dd.textContent = sourceUndoGuidance(goal, pending);
+      facts.append(backup.root, undo.root);
+      confirmBody.appendChild(facts);
+      requiredId = target.appId;
+      confirmLabel.textContent = `反映先アプリID（${requiredId} と入力）`;
+      confirmInput.placeholder = requiredId;
+      confirmInput.setAttribute("aria-label", "確認用の反映先アプリID");
+      confirmInput.id = `${panel.root.id}-source-confirm-input`;
+      confirmLabel.htmlFor = confirmInput.id;
+      setButtonText(runBtn, sourceRunLabel(goal));
+      refreshConfirmState();
+      showStage("confirm");
+      panel.setStatus(`反映先と内容を確認してください。まだ${goal === "production" ? "反映先へは書き込んで" : "反映先のプレビューへは書き込んで"}いません。`, "info");
+    }
+    confirmBtn.addEventListener("click", openConfirmation);
+    const resultCard = makeCard({ title: "実行結果" });
+    const resultHead = el("div", "kus-ds-result-head");
+    resultHead.setAttribute("aria-live", "polite");
+    const resultNotes = el("div", "kus-dp-result-notes");
+    const applyCard = makeCard({ title: "反映先プレビューへの書き込み", soft: true });
+    const applyHost = el("div");
+    applyCard.body.appendChild(applyHost);
+    const deployCard = makeCard({ title: "本番への反映", soft: true });
+    const deployHost = el("div");
+    deployCard.body.appendChild(deployHost);
+    const resultTools = el("div", "kus-dp-tools");
+    const saveJsonBtn = makeButton("結果JSONを保存", "sub");
+    const saveRecordBtn = makeButton("記録をMarkdownで保存", "sub");
+    const copyRecordBtn = makeButton("記録をコピー", "sub");
+    const openSettingsBtn = makeButton("反映先アプリの設定画面を開く", "sub");
+    resultTools.append(saveJsonBtn, saveRecordBtn, copyRecordBtn, openSettingsBtn);
+    const resultGrid = el("div", "kus-ds-result-grid");
+    resultGrid.append(resultHead, resultNotes, applyCard.card, deployCard.card, resultTools);
+    resultCard.body.appendChild(resultGrid);
+    const resultEmpty = el("div", "kus-dp-empty", "まだ実行していません。対象を選び、差分を選んで最終確認をしてから実行してください。");
+    function progressRowsFromResult(result) {
+      return result.apply.sections.map((section) => ({
+        sectionKey: section.sectionKey,
+        label: section.label,
+        status: section.status,
+        ...section.message ? { message: section.message } : {},
+        ...section.stopped ? { stopped: true } : {}
+      }));
+    }
+    function renderFinalProgress(last) {
+      progress = createApplyProgressView(applyHost, progressRowsFromResult(last.result));
+      deployHost.replaceChildren();
+      deployProgress?.dispose();
+      deployProgress = null;
+      deployCard.card.hidden = last.context.goal !== "production";
+      if (last.context.goal !== "production") return;
+      if (last.result.deploy) {
+        deployProgress = createProgressView(deployHost, "deploy", []);
+        deployProgress.setOutcomes(last.result.deploy.apps);
+      } else {
+        const note = el("div", "kus-ds-note kus-ds-note--warn");
+        note.dataset.deploySkipped = "true";
+        note.append(el("strong", "", "本番へは反映していません"), el("span", "", last.result.deploySkipped || "本番への反映は行われませんでした。"));
+        deployHost.appendChild(note);
+      }
+    }
+    function renderResultCard() {
+      const last = memory.lastRun;
+      const showing = running || !!last;
+      resultCard.card.hidden = !showing;
+      resultEmpty.hidden = showing;
+      if (!showing) return;
+      resultNotes.replaceChildren();
+      if (running || !last) {
+        resultHead.textContent = `${currentRunGoal === "preview" ? "反映先プレビューへの書き込み" : "反映先プレビューへの書き込みと本番への反映"}を実行中です。`;
+        resultTools.hidden = true;
+        applyCard.card.hidden = false;
+        deployCard.card.hidden = currentRunGoal !== "production";
+        return;
+      }
+      resultTools.hidden = false;
+      applyCard.card.hidden = false;
+      const result = last.result;
+      const message = describeSourceDeployResult(result);
+      resultHead.textContent = message.text;
+      resultHead.dataset.tone = message.tone;
+      if (result.deploySkipped && !result.apply.cancelled) {
+        const note = el("div", "kus-ds-note kus-ds-note--warn");
+        note.dataset.deploySkippedNote = "true";
+        note.append(el("strong", "", "本番へは反映していません"), el("span", "", result.deploySkipped), el("span", "", "反映先プレビューには書き込み済みです。「プレビューの変更を公開」から、続けて本番へ反映できます。"));
+        resultNotes.appendChild(note);
+      }
+      const unverified = (result.deploy?.apps || []).filter((app) => app.status === "success" && app.verified === false);
+      if (unverified.length) {
+        const note = el("div", "kus-dp-warn", `注意: 反映後の状態（revision）が本番とプレビューで一致しませんでした。アプリの設定画面で確認してください。`);
+        note.dataset.deployUnverified = String(unverified.length);
+        resultNotes.appendChild(note);
+      }
+      const previewBackup = result.apply.backup;
+      const previewNote = el("div", previewBackup ? "kus-dp-info" : "kus-dp-warn", previewBackup ? `バックアップ（反映前のプレビュー）: 保存しました（項目: ${previewBackup.scopes.map(reflectSectionLabel).join("、")}）` : "バックアップ（反映前のプレビュー）: 保存していません。");
+      previewNote.dataset.backupPreview = previewBackup ? "saved" : "none";
+      resultNotes.appendChild(previewNote);
+      if (last.context.goal === "production") {
+        const backup = result.deploy?.backup;
+        const note = el("div", backup ? "kus-dp-info" : "kus-dp-warn");
+        note.dataset.backupProduction = backup ? "saved" : "none";
+        note.textContent = backup ? `バックアップ（本番へ反映する前の本番）: ${backup.fileName}（反映前の本番設定）` : "バックアップ（本番へ反映する前の本番）: 保存していません。";
+        if (backup?.unavailableFiles?.length) {
+          const warn = el("div", "kus-dp-warn");
+          warn.append(el("strong", "", `本体を保存できなかったファイル（${backup.unavailableFiles.length} 件）`));
+          const ul = el("ul", "kus-dp-issues");
+          for (const file of backup.unavailableFiles.slice(0, 20)) ul.appendChild(el("li", "", `App ${file.appId} / ${file.name}（${file.reason}）`));
+          warn.appendChild(ul);
+          note.appendChild(warn);
+        }
+        resultNotes.appendChild(note);
+      }
+      resultNotes.appendChild(el("div", "kus-dp-info", sourceUndoGuidance(last.context.goal, last.context.targetPending)));
+    }
+    function recordInput(last) {
+      return { ...last.context, finishedAt: last.finishedAt, result: last.result };
+    }
+    function exportName(base, ext, last) {
+      return buildExportFilename(base, ext, { appLabel: buildAppFilenameLabel(last.context.target.appId, last.context.target.name) });
+    }
+    saveJsonBtn.addEventListener("click", () => {
+      const last = memory.lastRun;
+      if (!last) return;
+      downloadText(exportName("反映元から本番反映結果", "json", last), stringifySourceDeployResultJson(recordInput(last)), "application/json;charset=utf-8");
+      panel.setStatus("結果JSONを保存しました。", "ok");
+    });
+    saveRecordBtn.addEventListener("click", () => {
+      const last = memory.lastRun;
+      if (!last) return;
+      downloadText(exportName("反映元から本番反映記録", "md", last), buildSourceDeployRecordMarkdown(recordInput(last)), "text/markdown;charset=utf-8");
+      panel.setStatus("記録をMarkdownで保存しました。", "ok");
+    });
+    copyRecordBtn.addEventListener("click", () => {
+      const last = memory.lastRun;
+      if (!last) return;
+      void copyTextToClipboard(buildSourceDeployRecordMarkdown(recordInput(last))).then((ok) => panel.setStatus(ok ? "記録のMarkdownをコピーしました。" : "コピーできませんでした。「記録をMarkdownで保存」を使ってください。", ok ? "ok" : "warn"));
+    });
+    openSettingsBtn.addEventListener("click", () => {
+      const last = memory.lastRun;
+      if (!last) return;
+      window.open(`${window.location.origin}${appSettingsPath(last.context.target)}`, "_blank", "noopener");
+      panel.setStatus(`アプリ #${last.context.target.appId} の設定画面を開きました。`, "info");
+    });
+    async function startRun() {
+      if (busy || !confirmationReady() || !session) return;
+      flushRecompose();
+      const current = session;
+      const run = sectionsToRun(current.composed, activeScopes());
+      if (!run.length) return;
+      const goal = currentGoal();
+      const allowPendingChanges = pendingRequired && pendingAck.checkbox.checked;
+      const target = current.identities.target;
+      const source = current.identities.source;
+      const context = {
+        goal,
+        source: { appId: source.appId, guestId: source.guestId, name: source.name, environment: current.sourceEnvironment },
+        target: { appId: target.appId, guestId: target.guestId, name: target.name },
+        preserveTargetOnly: !!current.opts.preserveTargetOnly,
+        lookupMap: { ...current.opts.lookupMap || {} },
+        targetPending: current.preview.targetPending,
+        allowPendingChanges,
+        sections: run.map((section) => ({ sectionKey: section.sectionKey, label: section.label, selectedCount: section.selectedCount, totalCount: section.totalCount, editedCount: section.editedCount, items: section.plan.items || [] })),
+        startedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      const reflect = { ...current.opts, scopes: run.map((section) => section.sectionKey) };
+      const composed = composedAfterMap(run);
+      const previous = memory.lastRun;
+      currentRunGoal = goal;
+      clearConfirmation();
+      running = true;
+      progress = createApplyProgressView(applyHost, createApplyProgressRows(run.map((section) => section.sectionKey), (key) => run.find((section) => section.sectionKey === key)?.label || key));
+      deployProgress?.dispose();
+      deployProgress = goal === "production" ? createProgressView(deployHost, "deploy", [{ appId: target.appId, guestId: target.guestId, name: target.name, status: "waiting" }]) : null;
+      if (!deployProgress) deployHost.replaceChildren();
+      memory.lastRun = null;
+      let wroteAnything = false;
+      showStage("result");
+      renderResultCard();
+      const finish2 = (result) => {
+        const last = { result, context, finishedAt: (/* @__PURE__ */ new Date()).toISOString() };
+        memory.lastRun = last;
+        session = null;
+        running = false;
+        renderFinalProgress(last);
+      };
+      await runLite(goal === "production" ? "反映先プレビューへ書き込み中…" : "反映先プレビューへ反映中…", async () => {
+        let result;
+        try {
+          result = await runSourceToProductionStandalone({
+            reflect,
+            reviewBaseline: current.preview.baseline,
+            composed,
+            goal,
+            targetPending: current.preview.targetPending,
+            allowPendingChanges,
+            onSectionUpdate: (update) => {
+              if (update.status === "running" || update.status === "ok" || update.status === "ng") wroteAnything = true;
+              progress?.update(update);
+            },
+            onDeployUpdate: (update) => {
+              wroteAnything = true;
+              deployProgress?.update(update);
+            },
+            setStatus: (message2) => panel.setStatus(message2, "busy")
+          });
+        } catch (error) {
+          const reason = String(error?.message || error || "不明なエラー");
+          if (!wroteAnything) {
+            running = false;
+            memory.lastRun = previous;
+            if (previous) renderFinalProgress(previous);
+            renderResultCard();
+            showStage("edit");
+            throw error;
+          }
+          const rows = progress?.rows() || [];
+          finish2({
+            goal,
+            apply: {
+              logs: [`エラー: ${reason}`],
+              finalRevision: "",
+              sections: run.map((section) => {
+                const row = rows.find((candidate) => candidate.sectionKey === section.sectionKey);
+                const status = row?.status === "ok" || row?.status === "skip" || row?.status === "ng" ? row.status : row?.status === "running" ? "ng" : "pending";
+                return { sectionKey: section.sectionKey, label: section.label, status, message: status === "ng" ? row?.message || `処理が中断されました。反映先プレビューの状態を確認してください。（${reason}）` : status === "pending" ? "実行前に処理が止まりました。" : row?.message, ...row?.stopped ? { stopped: true } : {} };
+              })
+            },
+            deploySkipped: goal === "production" ? `実行中にエラーが発生したため、本番の状態をアプリの設定画面で確認してください。（${reason}）` : void 0
+          });
+          renderResultCard();
+          throw new Error(`実行中にエラーが発生しました。反映先と本番の状態をアプリの設定画面で確認してください。（${reason}）`);
+        }
+        finish2(result);
+        if (result.apply.logs?.length) panel.setResult(result.apply.logs.join("\n"));
+        renderResultCard();
+        const message = describeSourceDeployResult(result);
+        panel.setStatus(message.text, message.tone);
+      });
+      running = false;
+      renderResultCard();
+      refreshWorkflow();
+    }
+    runBtn.addEventListener("click", () => {
+      void startRun();
+    });
+    const nav = el("nav", "kus-dp-nav kus-dp-nav--five");
+    nav.setAttribute("aria-label", "反映元アプリから本番への手順");
+    nav.setAttribute("role", "tablist");
+    const stageDefs = [
+      { id: "setup", number: "1", label: "対象を選ぶ", copy: "反映元・反映先・項目" },
+      { id: "select", number: "2", label: "差分を選ぶ", copy: "設定値を 1 つずつ選ぶ" },
+      { id: "edit", number: "3", label: "内容を修正", copy: "値を直してから確認" },
+      { id: "confirm", number: "4", label: "最終確認", copy: "経路と削除を確かめる" },
+      { id: "result", number: "5", label: "結果", copy: "結果を見て次の操作を選ぶ" }
+    ];
+    const stages = {};
+    const navButtons = {};
+    for (const def of stageDefs) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "kus-dp-nav__btn";
+      button.id = `kus-ds-tab-${def.id}`;
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-controls", `kus-ds-stage-${def.id}`);
+      button.innerHTML = `<span class="kus-dp-nav__num">${def.number}</span><span>${def.label}<small class="kus-dp-nav__copy">${def.copy}</small></span>`;
+      nav.appendChild(button);
+      navButtons[def.id] = button;
+      const stage = document.createElement("section");
+      stage.className = "kus-dp-stage";
+      stage.id = `kus-ds-stage-${def.id}`;
+      stage.dataset.stage = def.id;
+      stage.setAttribute("role", "tabpanel");
+      stage.setAttribute("aria-labelledby", button.id);
+      stages[def.id] = stage;
+      button.addEventListener("click", () => {
+        if (def.id === "confirm") openConfirmation();
+        else showStage(def.id);
+      });
+      button.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const count = stageDefs.length;
+        const index = stageDefs.findIndex((item) => item.id === def.id);
+        const enabledAt = (at) => !navButtons[stageDefs[at].id].disabled;
+        let next = -1;
+        if (event.key === "Home" || event.key === "End") next = stageDefs.map((_, at) => event.key === "Home" ? at : count - 1 - at).find(enabledAt) ?? -1;
+        else {
+          const direction = event.key === "ArrowRight" ? 1 : -1;
+          for (let step = 1; step < count; step += 1) {
+            const at = (index + direction * step + count) % count;
+            if (enabledAt(at)) {
+              next = at;
+              break;
+            }
+          }
+        }
+        if (next < 0 || next === index) return;
+        if (stageDefs[next].id === "confirm") openConfirmation();
+        else showStage(stageDefs[next].id);
+      });
+    }
+    const heads = {
+      setup: ["どの設定を、どのアプリへ反映しますか？", "反映元と反映先、反映する項目、目標を選びます。次の画面で差分を抽出します（この時点では書き込みません）。"],
+      select: ["反映する差分を選ぶ", "反映元との差分を、設定値 1 つずつ選びます（例: 「必須」だけ反映し、表示名は反映しない）。この画面では書き込みません。"],
+      edit: ["反映する内容を修正する", "主な値は入力欄で、残りは「JSONで編集」で直せます。JSONで直した項目は、選択・入力欄より JSON を優先します。直さない場合は、そのまま最終確認へ進めます。"],
+      confirm: ["反映先と内容の最終確認", "経路・項目・削除される設定・バックアップ・取り消し方を確認してから実行します。"],
+      result: ["実行結果と次の操作", "プレビューへの書き込みと、本番への反映の結果を確認します。"]
+    };
+    for (const def of stageDefs) {
+      const head = el("header", "kus-dp-stage-head");
+      head.append(el("h2", "", heads[def.id][0]), el("p", "", heads[def.id][1]));
+      stages[def.id].appendChild(head);
+    }
+    stages.setup.appendChild(setupStage);
+    stages.select.appendChild(selectView.root);
+    stages.edit.appendChild(editView.root);
+    stages.confirm.appendChild(confirmCard.card);
+    stages.result.append(resultCard.card, resultEmpty);
+    const dock = el("div", "kus-dp-action-dock");
+    const dockRow = el("div", "kus-dp-dock-row");
+    const dockCopy = el("div", "kus-dp-dock-copy");
+    dockCopy.setAttribute("aria-live", "polite");
+    const dockActions = el("div", "kus-dp-dock-actions");
+    const backBtn = makeButton("対象を変更", "sub");
+    const extractBtn = makeButton("差分を抽出する", "primary");
+    const toEditBtn = makeButton("内容の修正へ", "primary");
+    backBtn.addEventListener("click", () => {
+      const back = { setup: "setup", select: "setup", edit: "select", confirm: "edit", result: "setup" };
+      showStage(back[activeStage]);
+    });
+    extractBtn.addEventListener("click", () => {
+      void startExtract();
+    });
+    toEditBtn.addEventListener("click", () => {
+      flushRecompose();
+      if (!session || !isFresh() || editEntryBlocker()) return;
+      showStage("edit");
+    });
+    dockActions.append(backBtn, extractBtn, toEditBtn, confirmBtn, runBtn);
+    dockRow.append(dockCopy, dockActions);
+    dock.append(dockRow);
+    const workspace = el("div", "kus-dp-workspace");
+    const canvas = el("main", "kus-dp-canvas");
+    workspace.append(nav, canvas);
+    for (const def of stageDefs) canvas.appendChild(stages[def.id]);
+    workspace.appendChild(detail.dialog);
+    [stages.setup, stages.select, stages.edit, stages.confirm, stages.result].forEach((scope) => attachCardHelp(scope));
+    const noInputSubmit = document.createElement("button");
+    noInputSubmit.disabled = true;
+    function selectedTotal() {
+      return (session?.composed?.sections || []).filter((section) => activeScopes().includes(section.sectionKey)).reduce((sum, section) => sum + section.selectedCount, 0);
+    }
+    function dockTitle() {
+      if (activeStage === "setup") {
+        const kind = currentKind();
+        return `反映元 ${kind === "json" ? "設定JSON" : `#${srcApp.value.trim() || "－"}`} → 反映先 #${tgtApp.value.trim() || "－"} · ${currentGoal() === "production" ? "本番まで反映" : "プレビューまで"}`;
+      }
+      if (activeStage === "result") return memory.lastRun ? describeRoute(memory.lastRun.context.source.name, memory.lastRun.context.target.name, memory.lastRun.context.goal) : "実行結果";
+      return `選んだ変更 ${selectedTotal()} 件 · ${currentGoal() === "production" ? "本番まで反映" : "プレビューまで"}`;
+    }
+    refreshWorkflow = () => {
+      const fresh = isFresh();
+      const blocker = activeStage === "setup" ? setupBlocker() : "";
+      const stageProblem = fresh ? stageBlocker() : "";
+      backBtn.hidden = activeStage === "setup";
+      extractBtn.hidden = activeStage !== "setup";
+      toEditBtn.hidden = activeStage !== "select";
+      confirmBtn.hidden = activeStage !== "edit";
+      runBtn.hidden = activeStage !== "confirm";
+      backBtn.disabled = busy;
+      extractBtn.disabled = busy || !!blocker;
+      toEditBtn.disabled = busy || !fresh || !!editEntryBlocker();
+      confirmBtn.disabled = busy || !fresh || !!stageProblem;
+      setButtonText(backBtn, activeStage === "select" ? "対象を変更" : activeStage === "edit" ? "差分の選択に戻る" : activeStage === "confirm" ? "内容の修正に戻る" : "対象を選び直す");
+      setButtonText(extractBtn, fresh ? "抽出し直す" : "差分を抽出する");
+      navButtons.select.disabled = !fresh;
+      navButtons.edit.disabled = !fresh || !!editEntryBlocker();
+      navButtons.confirm.disabled = !fresh || !!stageProblem || busy;
+      let message = "";
+      if (activeStage === "setup") {
+        message = blocker ? `次に進むには：${blocker}` : fresh ? "抽出済みの差分があります。「差分を選ぶ」へ進むか、抽出し直してください。" : "反映元と反映先の差分を抽出します。書き込みは行いません。";
+      } else if (activeStage === "select" || activeStage === "edit") {
+        message = !fresh ? "入力が変わりました。「対象を選ぶ」で差分を抽出し直してください。" : (activeStage === "select" ? editEntryBlocker() : stageProblem) ? `次に進むには：${activeStage === "select" ? editEntryBlocker() : stageProblem}` : activeStage === "select" ? `${selectedTotal()} 件の変更を選んでいます。内容を修正するか、そのまま進めます。` : `${selectedTotal()} 件の変更を反映します。最終確認へ進んでください。`;
+      } else if (activeStage === "confirm") {
+        message = confirmationReady() ? "内容を確認できました。実行すると反映先が変わります。" : "確認のチェックと入力をすると、実行できます。";
+      } else {
+        message = busy ? "実行中です。終わるまでお待ちください。「中止」で、次の書き込みの前に止められます。" : memory.lastRun ? "結果を確認してください。" : "まだ実行していません。";
+      }
+      const blocked = activeStage === "setup" && !!blocker || (activeStage === "select" || activeStage === "edit") && fresh && !!(activeStage === "select" ? editEntryBlocker() : stageProblem);
+      dockCopy.replaceChildren(el("strong", "", dockTitle()), el("span", `kus-dp-dock-msg${blocked ? " kus-dp-dock-reason" : ""}`, message));
+      panel.result.hidden = activeStage === "confirm";
+      panel.setPrimaryAction(activeStage === "setup" ? extractBtn : activeStage === "select" ? toEditBtn : activeStage === "edit" ? confirmBtn : noInputSubmit);
+    };
+    showStage = (active2) => {
+      if (active2 === "confirm" && !confirmedToken) return;
+      if ((active2 === "select" || active2 === "edit") && (!session || !isFresh())) return;
+      if (activeStage === "confirm" && active2 !== "confirm") clearConfirmation();
+      if (active2 === "select") selectView.render();
+      if (active2 === "edit") {
+        flushRecompose();
+        editView.render();
+      }
+      activeStage = active2;
+      for (const def of stageDefs) {
+        const selectedStage = def.id === active2;
+        stages[def.id].hidden = !selectedStage;
+        navButtons[def.id].setAttribute("aria-selected", String(selectedStage));
+        navButtons[def.id].tabIndex = selectedStage ? 0 : -1;
+      }
+      navButtons[active2].focus({ preventScroll: true });
+      canvas.scrollTo({ top: 0 });
+      renderResultCard();
+      refreshWorkflow();
+    };
+    function setBusy(value) {
+      busy = value;
+      nav.inert = value;
+      for (const def of stageDefs) stages[def.id].inert = value && def.id !== "result";
+      if (value) {
+        refreshWorkflow();
+        renderResultCard();
+        return;
+      }
+      onInputsChangedQuiet();
+      renderResultCard();
+      refreshConfirmStateIfOpen();
+      navButtons[activeStage].focus({ preventScroll: true });
+    }
+    function onInputsChangedQuiet() {
+      const summary = describeDetail();
+      detailSummary.textContent = summary.text;
+      detailSummary.classList.toggle("kus-dp-detail-summary--warn", summary.warn);
+      refreshWorkflow();
+    }
+    function refreshConfirmStateIfOpen() {
+      if (activeStage === "confirm" && confirmedToken) refreshConfirmState();
+      else runBtn.disabled = true;
+    }
+    panel.root.addEventListener("kus-lite-dispose", () => {
+      progress = null;
+      deployProgress?.dispose();
+      window.clearTimeout(composeTimer);
+    }, { once: true });
+    ready = true;
+    clearConfirmation();
+    onInputsChanged();
+    if (memory.lastRun) {
+      currentRunGoal = memory.lastRun.context.goal;
+      renderFinalProgress(memory.lastRun);
+    }
+    renderViews();
+    for (const def of stageDefs) stages[def.id].hidden = def.id !== "setup";
+    showStage(memory.lastRun ? "result" : "setup");
+    return {
+      workspace,
+      dock,
+      deactivate() {
+        shown = false;
+        sourceNote.refresh();
+        targetNote.refresh();
+      },
+      activate() {
+        shown = true;
+        dock.append(panel.status, panel.result);
+        sourceNote.refresh();
+        targetNote.refresh();
+        refreshWorkflow();
+        const last = memory.lastRun;
+        if (last && activeStage === "result") {
+          if (last.result.apply.logs?.length) panel.setResult(last.result.apply.logs.join("\n"));
+          const message = describeSourceDeployResult(last.result);
+          panel.setStatus(message.text, message.tone);
+        }
+      },
+      setBusy
+    };
+  }
+
+  // src/entries/deploy-lite-ui.ts
+  var memory2 = { flow: "source", targets: [], mode: "deploy", batchMode: "sequential", stopOnError: true, lastRun: null };
+  var STYLE_ID3 = "kus-deploy-lite-styles";
+  var P2 = "#kus-deploy-lite";
+  var CSS3 = `
+${P2}.kus-lp--wide{width:min(960px,calc(100vw - 32px));max-height:calc(100dvh - 32px);top:16px;right:16px;border-radius:18px;border-color:#cbd5e1}
+${P2} .kus-lp__hero{padding:16px 24px}
+${P2} .kus-lp__title{font-size:22px;letter-spacing:-.01em;word-break:keep-all}
+${P2} .kus-lp__subtitle{font-size:14px;max-width:560px}
+${P2} .kus-lp__body{padding:0;background:#f4f6f8;display:flex;flex-direction:column;overflow:hidden}
+${P2} .kus-lp__hint{margin:0;padding:11px 24px;border:0;border-bottom:1px solid #e2e8f0;border-radius:0;background:#fff1f2;color:#9f1239}
+${P2} .kus-lp__hint strong{color:#881337}
+${P2} .kus-lp__card{border-radius:16px;padding:16px 18px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+${P2} .kus-lp__card-head{border:0;margin:0 0 12px;padding:0}
+${P2} .kus-lp__card-title{font-size:13px;text-transform:none;letter-spacing:.01em;color:#172033}
+${P2} .kus-lp__card-num{background:#881337;color:#fff}
+${P2} [hidden]{display:none!important}
+${P2} :is(button,input,select,summary):focus-visible{outline:3px solid #2563eb;outline-offset:3px}
+${P2} .kus-dp-workspace{display:flex;flex-direction:column;min-height:0;flex:1}
+${P2} .kus-dp-canvas{min-width:0;min-height:0;overflow:auto;padding:20px 24px;scroll-padding:16px}
+${P2} .kus-dp-nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 24px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
+${P2} .kus-dp-nav__btn{appearance:none;width:100%;border:1px solid transparent;border-radius:10px;background:transparent;color:#64748b;padding:10px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:9px;text-align:left}
+${P2} .kus-dp-nav__btn:hover{background:#f1f5f9;color:#172033}
+${P2} .kus-dp-nav__btn[aria-selected="true"]{background:#fff1f2;color:#881337;border-color:#fecdd3}
+${P2} .kus-dp-nav__btn:disabled{opacity:.45;cursor:not-allowed}
+${P2} .kus-dp-nav__num{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#e2e8f0;color:#475569;font-size:11.5px}
+${P2} .kus-dp-nav__btn[aria-selected="true"] .kus-dp-nav__num{background:#ffe4e6;color:#881337}
+${P2} .kus-dp-nav__copy{display:block;font-size:11px;font-weight:500;color:#94a3b8;margin-top:2px}
+${P2} .kus-dp-nav__btn[aria-selected="true"] .kus-dp-nav__copy{color:#64748b}
+${P2} .kus-dp-stage[hidden]{display:none}
+${P2} .kus-dp-stage-head{margin:0 2px 16px}
+${P2} .kus-dp-stage-head h2{margin:0;font-size:20px;letter-spacing:-.02em;color:#0f172a}
+${P2} .kus-dp-stage-head p{margin:4px 0 0;font-size:13px;color:#64748b}
+${P2} .kus-dp-stage .kus-lp__card:last-child{margin-bottom:0}
+${P2} .kus-dp-setup{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+${P2} .kus-dp-setup>.kus-lp__card{margin:0}
+${P2} .kus-dp-count{font-size:12.5px;font-weight:700;color:#475569}
+${P2} .kus-dp-count--over{color:#b91c1c}
+${P2} .kus-dp-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px}
+${P2} .kus-dp-choice{padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;cursor:pointer;display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:13px;min-width:0;align-items:start}
+${P2} .kus-dp-choice:has(input:checked){border-color:#be123c;background:#fff1f2}
+${P2} .kus-dp-choice:has(input:disabled){opacity:.55;cursor:not-allowed}
+${P2} .kus-dp-choice strong{display:block;color:#0f172a}
+${P2} .kus-dp-choice small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
+${P2} .kus-dp-detail-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+${P2} .kus-dp-detail-summary{flex:1 1 220px;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.5;color:#475569}
+${P2} .kus-dp-detail-summary--warn{color:#9a3412;font-weight:700}
+${P2} .kus-lp__dialog .kus-lp__card--soft{box-shadow:none}
+${P2} .kus-dp-next{padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.6;border:1px solid #e2e8f0;background:#fff;overflow-wrap:anywhere}
+${P2} .kus-dp-next--ok{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+${P2} .kus-dp-next--info{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}
+${P2} .kus-dp-next--warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
+${P2} .kus-dp-next--err{background:#fef2f2;border-color:#fecaca;color:#991b1b}
+${P2} .kus-dp-quiet{margin:6px 0 0;font-size:13px;color:#64748b;overflow-wrap:anywhere}
+${P2} .kus-dp-pills{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+${P2} .kus-dp-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;font-size:12.5px;font-weight:700;border:1px solid #e2e8f0;background:#fff;color:#334155}
+${P2} .kus-dp-pill--change{background:#fff7ed;border-color:#fdba74;color:#9a3412}
+${P2} .kus-dp-pill--same{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+${P2} .kus-dp-pill--error{background:#fef2f2;border-color:#fca5a5;color:#991b1b}
+${P2} .kus-dp-pill--processing{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+${P2} .kus-dp-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+${P2} .kus-dp-issues{margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.6;color:#92400e;overflow-wrap:anywhere}
+${P2} .kus-dp-table-wrap{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#fff}
+${P2} .kus-dp-table{width:100%;border-collapse:collapse;font-size:13px}
+${P2} .kus-dp-table th{padding:7px 10px;text-align:left;font-size:12.5px;font-weight:700;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;white-space:nowrap}
+${P2} .kus-dp-table td{padding:8px 10px;border-top:1px solid #f1f5f9;vertical-align:top;overflow-wrap:anywhere}
+${P2} .kus-dp-table td.kus-dp-c-sel{width:34px}
+${P2} .kus-dp-table td.kus-dp-c-app{min-width:150px}
+${P2} .kus-dp-table td.kus-dp-c-state,${P2} .kus-dp-table td.kus-dp-c-act{white-space:nowrap}
+${P2} .kus-dp-table td.kus-dp-c-rev{min-width:130px}
+${P2} .kus-dp-table td.kus-dp-c-act .kus-lp__btn{padding:4px 8px;white-space:nowrap}
+${P2} .kus-dp-pill{white-space:nowrap}
+${P2} .kus-dp-table tr.kus-dp-row--error td{background:#fff5f5}
+${P2} .kus-dp-table tr.kus-dp-row--processing td{background:#eff6ff}
+${P2} .kus-dp-table tr.kus-dp-row--clean td{color:#64748b}
+${P2} .kus-dp-table tr.kus-dp-detail-tr>td{padding:0 10px 10px;background:#fff}
+${P2} .kus-dp-app-name{font-weight:700;color:#0f172a}
+${P2} .kus-dp-app-id{display:block;font-size:12px;color:#64748b}
+${P2} .kus-dp-app-error{display:block;margin-top:4px;font-size:12.5px;color:#991b1b;white-space:pre-wrap}
+${P2} .kus-dp-app-sub{display:block;margin-top:4px;font-size:12.5px;color:#475569}
+${P2} .kus-dp-del{font-variant-numeric:tabular-nums}
+${P2} .kus-dp-del--has{color:#b91c1c;font-weight:700}
+${P2} .kus-dp-more{margin-top:8px}
+${P2} .kus-dp-detail{display:flex;flex-direction:column;gap:8px;padding-top:6px}
+${P2} .kus-dp-detail h4{margin:4px 0 0;font-size:13px;color:#0f172a}
+${P2} .kus-dp-danger{padding:10px 12px;border:1px solid #fca5a5;border-radius:10px;background:#fef2f2;color:#991b1b;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+${P2} .kus-dp-danger strong{display:block;margin-bottom:2px}
+${P2} .kus-dp-danger ul{margin:4px 0 0;padding-left:18px}
+${P2} .kus-dp-danger small{display:block;color:#7f1d1d}
+${P2} .kus-dp-info{padding:8px 12px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;color:#1e3a8a;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
+${P2} .kus-dp-warn{padding:8px 12px;border:1px solid #fde68a;border-radius:10px;background:#fffbeb;color:#92400e;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
+${P2} .kus-dp-facts{margin:0;display:grid;gap:8px}
+${P2} .kus-dp-fact{padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
+${P2} .kus-dp-fact dt{margin:0 0 4px;font-size:12.5px;font-weight:700;color:#64748b}
+${P2} .kus-dp-fact dd{margin:0;font-size:14px;line-height:1.6;color:#0f172a}
+${P2} .kus-dp-fact--direction{border:2px solid #be123c;background:#fff1f2}
+${P2} .kus-dp-fact--danger{border-color:#fca5a5;background:#fef2f2}
+${P2} .kus-dp-fact--danger dd{color:#991b1b}
+${P2} .kus-dp-targets{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.6 inherit;color:#334155}
+${P2} .kus-dp-confirm-input{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+${P2} .kus-dp-confirm-input label.kus-dp-confirm-label{font-size:13px;font-weight:700;color:#0f172a}
+${P2} .kus-dp-confirm-input .kus-lp__input{width:100%;max-width:260px;box-sizing:border-box;min-height:40px;font-size:14px}
+${P2} .kus-dp-progress__summary{margin:0 0 6px;font-size:13px;font-weight:700;color:#334155}
+${P2} .kus-dp-progress__omitted{margin:0 0 6px;font-size:12.5px;color:#64748b}
+${P2} .kus-dp-result-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+${P2} .kus-dp-result-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
+${P2} .kus-dp-result-item--ok{border-color:#a7f3d0}
+${P2} .kus-dp-result-item--ng{border-color:#fca5a5;background:#fff5f5}
+${P2} .kus-dp-result-item--warn{border-color:#fcd34d;background:#fffbeb}
+${P2} .kus-dp-result-item--pending{border-color:#e2e8f0;background:#f8fafc}
+${P2} .kus-dp-result-item--run{border-color:#93c5fd;background:#eff6ff}
+${P2} .kus-dp-result-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px}
+${P2} .kus-dp-result-state{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;font-size:12.5px;font-weight:700;color:#475569}
+${P2} .kus-dp-result-state--ok{border-color:#a7f3d0;background:#ecfdf5;color:#065f46}
+${P2} .kus-dp-result-state--ng{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
+${P2} .kus-dp-result-state--warn{border-color:#fcd34d;background:#fffbeb;color:#92400e}
+${P2} .kus-dp-result-state--run{border-color:#93c5fd;background:#dbeafe;color:#1e40af}
+${P2} .kus-dp-result-item__message{margin-top:6px;font-size:13px;line-height:1.6;color:#334155;white-space:pre-wrap;overflow-wrap:anywhere}
+${P2} .kus-dp-result-item__meta{margin-top:4px;font-size:12.5px;color:#64748b}
+${P2} .kus-dp-result-item__meta--warn{color:#9a3412;font-weight:700}
+${P2} .kus-dp-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-wrap:anywhere}
+${P2} .kus-dp-result-notes{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+${P2} .kus-dp-empty{padding:14px 12px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;font-size:13px;color:#64748b}
+${P2} .kus-dp-action-dock{flex-shrink:0;padding:12px 24px;background:#fff;border-top:1px solid #e2e8f0}
+${P2} .kus-dp-dock-row{display:flex;align-items:center;gap:10px}
+${P2} .kus-dp-dock-copy{flex:1;min-width:0;font-size:13px;color:#475569;overflow-wrap:anywhere}
+${P2} .kus-dp-dock-copy strong{display:block;color:#0f172a}
+${P2} .kus-dp-dock-msg{display:block}
+${P2} .kus-dp-dock-reason{color:#9a3412;font-weight:600}
+${P2} .kus-dp-dock-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+${P2} .kus-dp-dock-actions .kus-lp__btn{min-height:42px}
+${P2} .kus-dp-action-dock .kus-lp__result{max-height:80px;overflow:auto}
+${P2} .kus-dp-action-dock .kus-lp__status-text{max-height:48px;overflow:auto}
+${P2} .kus-dp-action-dock .kus-lp__status{margin-top:8px}
+${P2} .kus-rl-items{margin:4px 0;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff}
+${P2} .kus-rl-items__title{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin-bottom:8px;font-size:13px;color:#475569}
+${P2} .kus-rl-items__title strong{font-size:13px;color:#0f172a}
+${P2} .kus-rl-items__list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
+${P2} .kus-rl-item{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;row-gap:2px;align-items:baseline;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
+${P2} .kus-rl-item__name{min-width:0;font-weight:700;color:#0f172a}
+${P2} .kus-rl-item__details{grid-column:2;margin:0;padding-left:16px;font-size:13px;color:#475569}
+${P2} .kus-rl-item--keep .kus-rl-item__name{font-weight:600;color:#475569}
+${P2} .kus-rl-kind{display:inline-block;min-width:36px;padding:0 6px;border:1px solid #cbd5e1;border-radius:4px;background:#f1f5f9;color:#475569;font-size:12px;font-weight:800;line-height:18px;letter-spacing:.04em;text-align:center}
+${P2} .kus-rl-kind--delete{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
+${P2} .kus-rl-kind--change{border-color:#fdba74;background:#fff7ed;color:#9a3412}
+${P2} .kus-rl-kind--add{border-color:#86efac;background:#f0fdf4;color:#166534}
+${P2} .kus-rl-items--quiet{padding:0 12px;border-style:dashed;background:#f8fafc}
+${P2} .kus-rl-items--quiet>summary{cursor:pointer;padding:8px 0;font-size:13px;font-weight:700;color:#64748b}
+${P2} .kus-rl-items__more{margin-top:8px}
+@media(max-width:760px){
+  ${P2} .kus-dp-table,${P2} .kus-dp-table tbody{display:block}
+  ${P2} .kus-dp-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  ${P2} .kus-dp-table tr.kus-dp-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:4px 8px;padding:10px 12px;border-top:1px solid #e2e8f0}
+  ${P2} .kus-dp-table tr.kus-dp-row:first-child{border-top:0}
+  ${P2} .kus-dp-table tr.kus-dp-row>td{display:block;padding:0;border:0;min-width:0;background:transparent!important}
+  ${P2} .kus-dp-table td.kus-dp-c-sel{grid-column:1;grid-row:1;width:auto}
+  ${P2} .kus-dp-table td.kus-dp-c-app,${P2} .kus-dp-table td.kus-dp-c-rev{min-width:0}
+  ${P2} .kus-dp-table td.kus-dp-c-app{grid-column:2;grid-row:1}
+  ${P2} .kus-dp-table td.kus-dp-c-state{grid-column:3;grid-row:1;justify-self:end}
+  ${P2} .kus-dp-table td.kus-dp-c-items,${P2} .kus-dp-table td.kus-dp-c-del,${P2} .kus-dp-table td.kus-dp-c-rev,${P2} .kus-dp-table td.kus-dp-c-act{grid-column:2/-1}
+  ${P2} .kus-dp-table td.kus-dp-c-items::before,${P2} .kus-dp-table td.kus-dp-c-del::before,${P2} .kus-dp-table td.kus-dp-c-rev::before{content:attr(data-label) "：";font-size:12px;font-weight:700;color:#64748b}
+  ${P2} .kus-dp-table tr.kus-dp-row.kus-dp-row--error{background:#fff5f5}
+  ${P2} .kus-dp-table tr.kus-dp-row.kus-dp-row--processing{background:#eff6ff}
+  ${P2} .kus-dp-table tr.kus-dp-detail-tr{display:block}
+  ${P2} .kus-dp-table tr.kus-dp-detail-tr>td{display:block}
+}
+@media(max-width:720px){
+  ${P2}.kus-lp--wide{width:calc(100vw - 16px);right:8px;top:8px;max-height:calc(100dvh - 16px)}
+  ${P2} .kus-lp__hero{padding:12px 16px}
+  ${P2} .kus-lp__hint{display:none}
+  ${P2} .kus-dp-nav{padding:8px;gap:4px}
+  ${P2} .kus-dp-nav__copy,${P2} .kus-dp-nav__num{display:none}
+  ${P2} .kus-dp-nav__btn{display:flex;justify-content:center;text-align:center;padding:8px 4px;font-size:12.5px}
+  ${P2} .kus-dp-canvas{padding:18px 16px 8px}
+  ${P2} .kus-dp-action-dock{padding:12px 16px 15px}
+  ${P2} .kus-dp-dock-row{align-items:stretch;flex-direction:column;gap:8px}
+  ${P2} .kus-dp-dock-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  ${P2} .kus-dp-dock-actions .kus-lp__btn{min-width:0;white-space:normal}
+  ${P2} .kus-dp-dock-actions .kus-lp__btn--danger,${P2} .kus-dp-dock-actions .kus-lp__btn--primary{grid-column:1/-1}
+  ${P2} .kus-lp__card{padding:12px}
+  ${P2} .kus-lp__card-head{flex-wrap:wrap}
+  ${P2} .kus-lp__select{min-width:0!important;max-width:100%}
+}
+@media(max-width:400px){${P2} .kus-lp__elapsed{display:none}}
+@media(max-height:720px){
+  ${P2} .kus-lp__hero{padding:8px 16px}
+  ${P2} .kus-lp__title{font-size:17px}
+  ${P2} .kus-lp__subtitle{display:none}
+  ${P2} .kus-dp-nav{padding:6px 12px}
+  ${P2} .kus-dp-nav__btn{padding:6px 4px}
+  ${P2} .kus-dp-nav__copy{display:none}
+  ${P2} .kus-dp-canvas{padding:12px 16px 8px}
+  ${P2} .kus-dp-stage-head{margin-bottom:10px}
+  ${P2} .kus-dp-stage-head h2{font-size:17px}
+  ${P2} .kus-dp-stage-head p{display:none}
+  ${P2} .kus-dp-action-dock{padding:8px 16px 10px}
+  ${P2} .kus-dp-dock-row{gap:6px}
+  ${P2} .kus-dp-dock-copy{font-size:12.5px;line-height:1.4}
+  ${P2} .kus-dp-dock-copy strong,${P2} .kus-dp-dock-msg{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+  ${P2} .kus-dp-dock-actions{gap:4px 6px}
+  ${P2} .kus-dp-dock-actions .kus-lp__btn{min-height:36px;padding:6px 10px}
+  ${P2} .kus-dp-action-dock .kus-lp__status{margin-top:6px;padding:6px 10px;min-height:0;line-height:1.4}
+  ${P2} .kus-dp-action-dock .kus-lp__status-text{max-height:2.9em}
+  ${P2} .kus-dp-action-dock .kus-lp__result{max-height:48px}
+}
+@media(prefers-reduced-motion:reduce){${P2}{animation:none}${P2} *{scroll-behavior:auto!important}}
+`;
+  function ensureStyles2() {
+    if (document.getElementById(STYLE_ID3)) return;
+    const st = document.createElement("style");
+    st.id = STYLE_ID3;
+    st.textContent = CSS3;
+    document.head.appendChild(st);
+  }
+  var FLOW_SUBTITLES = {
+    source: "反映元アプリとの差分を選んで、反映先のプレビューへ書き込み、続けて本番へ反映します。",
+    publish: "プレビューの未公開の変更を確認してから、本番へ反映します。"
+  };
   function renderAppDetail(host, app, mode) {
     host.replaceChildren();
     const body = el("div", "kus-dp-detail");
@@ -6307,8 +10109,8 @@ ${P} .kus-rl-items__more{margin-top:8px}
       }
       body.appendChild(block);
     }
-    const same2 = (app.sections || []).filter((section) => section.status === "same").map((section) => section.label);
-    if (same2.length) body.appendChild(el("div", "kus-dp-quiet", `変更のない項目: ${same2.join("、")}`));
+    const same4 = (app.sections || []).filter((section) => section.status === "same").map((section) => section.label);
+    if (same4.length) body.appendChild(el("div", "kus-dp-quiet", `変更のない項目: ${same4.join("、")}`));
     if (!changed.length && !removed.length && !(app.warnings || []).length && !app.contentSame) {
       body.appendChild(el("div", "kus-dp-quiet", "変更の要約はありません。"));
     }
@@ -6325,10 +10127,10 @@ ${P} .kus-rl-items__more{margin-top:8px}
     const panel = createLitePanel({
       id: "kus-deploy-lite",
       title: "本番反映",
-      subtitle: "プレビューの未公開の変更を確認してから、本番へ反映します。",
+      subtitle: FLOW_SUBTITLES[memory2.flow],
       accent: "deploy",
       badges: [{ label: "本番の設定を変更", tone: "production" }],
-      hint: "<strong>本番のアプリ設定を変更します。</strong>プレビューとの差分と削除される設定を確認し、反映前の本番設定をバックアップしてから実行します。",
+      hint: "<strong>本番のアプリ設定を変更します。</strong>反映前に差分と削除される設定を確認し、反映前の設定をバックアップしてから実行します。",
       wide: true
     });
     const runLite = (busyMsg, fn, okMsg) => liteRun(panel, busyMsg, async () => {
@@ -6343,7 +10145,7 @@ ${P} .kus-rl-items__more{margin-top:8px}
     let confirmedToken = "";
     let progressView = null;
     let reviewShown = 200;
-    let runningMode = memory.mode;
+    let runningMode = memory2.mode;
     let showStage = () => {
     };
     let refreshWorkflow = () => {
@@ -6359,7 +10161,7 @@ ${P} .kus-rl-items__more{margin-top:8px}
       minRows: 1,
       currentAppId: DEFAULT_APP_ID,
       currentGuestId: pageGuest(),
-      initial: memory.targets,
+      initial: memory2.targets,
       onChange: () => {
         if (ready) onInputsChanged();
       }
@@ -6408,8 +10210,8 @@ ${P} .kus-rl-items__more{margin-top:8px}
     opGroup.setAttribute("role", "radiogroup");
     opGroup.setAttribute("aria-label", "操作");
     const modeId = `${panel.root.id}-mode`;
-    const deployChoice = makeChoice(modeId, "deploy", deployModeText("deploy").label, deployModeText("deploy").description, memory.mode !== "revert");
-    const revertChoice = makeChoice(modeId, "revert", deployModeText("revert").label, deployModeText("revert").description, memory.mode === "revert");
+    const deployChoice = makeChoice(modeId, "deploy", deployModeText("deploy").label, deployModeText("deploy").description, memory2.mode !== "revert");
+    const revertChoice = makeChoice(modeId, "revert", deployModeText("revert").label, deployModeText("revert").description, memory2.mode === "revert");
     const modeRadios = { deploy: deployChoice.input, revert: revertChoice.input };
     opGroup.append(deployChoice.label, revertChoice.label);
     cardOp.body.appendChild(opGroup);
@@ -6417,8 +10219,8 @@ ${P} .kus-rl-items__more{margin-top:8px}
     const detail = makeDialog({ title: "詳細設定", id: "kus-dp-detail" });
     const cardBatch = makeCard({ title: "反映の方法", soft: true });
     const batchId = `${panel.root.id}-batch`;
-    const seqChoice = makeChoice(batchId, "sequential", "1アプリずつ反映（既定）", "1アプリずつ依頼し、完了を確認してから次へ進みます。", memory.batchMode !== "atomic");
-    const atomicChoice = makeChoice(batchId, "atomic", "まとめて反映", `すべて成功したときだけ本番へ反映します。最大 ${DEPLOY_ATOMIC_LIMIT} 件・同じゲストスペース。`, memory.batchMode === "atomic");
+    const seqChoice = makeChoice(batchId, "sequential", "1アプリずつ反映（既定）", "1アプリずつ依頼し、完了を確認してから次へ進みます。", memory2.batchMode !== "atomic");
+    const atomicChoice = makeChoice(batchId, "atomic", "まとめて反映", `すべて成功したときだけ本番へ反映します。最大 ${DEPLOY_ATOMIC_LIMIT} 件・同じゲストスペース。`, memory2.batchMode === "atomic");
     const batchRadios = { sequential: seqChoice.input, atomic: atomicChoice.input };
     const batchGroup = el("div", "kus-dp-choices");
     batchGroup.setAttribute("role", "radiogroup");
@@ -6427,8 +10229,8 @@ ${P} .kus-rl-items__more{margin-top:8px}
     cardBatch.body.append(batchGroup, makeNote("まとめて反映は、1回の依頼にまとめます。kintone は1件でも失敗するとすべて取り消すため、本番が中途半端な状態になりません。", "help"));
     const cardStop = makeCard({ title: "失敗したとき", soft: true });
     const stopId = `${panel.root.id}-stop`;
-    const stopChoice = makeChoice(stopId, "stop", "残りを実行しない（既定）", "失敗・確認後の更新・完了を確認できないアプリが出たら、残りは未実行にします。", memory.stopOnError);
-    const continueChoice = makeChoice(stopId, "continue", "残りも続ける", "失敗したアプリがあっても、残りのアプリを続けます。", !memory.stopOnError);
+    const stopChoice = makeChoice(stopId, "stop", "残りを実行しない（既定）", "失敗・確認後の更新・完了を確認できないアプリが出たら、残りは未実行にします。", memory2.stopOnError);
+    const continueChoice = makeChoice(stopId, "continue", "残りも続ける", "失敗したアプリがあっても、残りのアプリを続けます。", !memory2.stopOnError);
     const continueRadio = continueChoice.input;
     const stopGroup = el("div", "kus-dp-choices");
     stopGroup.setAttribute("role", "radiogroup");
@@ -6471,10 +10273,10 @@ ${P} .kus-rl-items__more{margin-top:8px}
       return "";
     }
     function onInputsChanged() {
-      memory.targets = appTable.getAllRows().map((row) => ({ ...row }));
-      memory.mode = currentMode();
-      memory.batchMode = currentBatchMode();
-      memory.stopOnError = currentStopOnError();
+      memory2.targets = appTable.getAllRows().map((row) => ({ ...row }));
+      memory2.mode = currentMode();
+      memory2.batchMode = currentBatchMode();
+      memory2.stopOnError = currentStopOnError();
       const count = appTable.count();
       countLabel.textContent = `${count} アプリ（最大 ${DEPLOY_TARGET_LIMIT}）`;
       countLabel.classList.toggle("kus-dp-count--over", count > DEPLOY_TARGET_LIMIT);
@@ -6555,8 +10357,8 @@ ${P} .kus-rl-items__more{margin-top:8px}
       tdState.appendChild(el("span", `kus-dp-pill kus-dp-pill--${pillClass}`, inspectStateLabel(app.state)));
       const tdItems = el("td", "kus-dp-c-items");
       tdItems.dataset.label = "変更のある項目";
-      const labels = changedSectionLabels(app);
-      tdItems.textContent = labels.length ? labels.join("、") : "－";
+      const labels2 = changedSectionLabels(app);
+      tdItems.textContent = labels2.length ? labels2.join("、") : "－";
       if (app.contentSame) tdItems.appendChild(el("span", "kus-dp-app-sub", "設定の内容は同じです（revision だけが異なります）"));
       const tdDel = el("td", "kus-dp-c-del");
       tdDel.dataset.label = "削除";
@@ -6892,7 +10694,7 @@ ${P} .kus-rl-items__more{margin-top:8px}
     resultCard.body.append(resultHead, resultPills, resultNotes, progressHost, resultTools);
     const resultEmpty = el("div", "kus-dp-empty", "まだ実行していません。対象を選び、変更を確認してから実行してください。");
     function renderResultCard() {
-      const last = memory.lastRun;
+      const last = memory2.lastRun;
       const showing = !!progressView && (busy || !!last);
       resultCard.card.hidden = !showing;
       resultEmpty.hidden = showing;
@@ -6958,24 +10760,24 @@ ${P} .kus-rl-items__more{margin-top:8px}
       return buildDeployRecordMarkdown({ result: last.result, inspections: last.inspections, stopOnError: last.stopOnError });
     }
     saveJsonBtn.addEventListener("click", () => {
-      const last = memory.lastRun;
+      const last = memory2.lastRun;
       if (!last) return;
       downloadText(exportFilename(last.result.mode === "revert" ? "変更の中止結果" : "本番反映結果", "json", last.result.apps), stringifyDeployResultJson(last.result), "application/json;charset=utf-8");
       panel.setStatus("結果JSONを保存しました。", "ok");
     });
     saveRecordBtn.addEventListener("click", () => {
-      const last = memory.lastRun;
+      const last = memory2.lastRun;
       if (!last) return;
       downloadText(exportFilename(last.result.mode === "revert" ? "変更の中止記録" : "本番反映記録", "md", last.result.apps), recordMarkdown(last), "text/markdown;charset=utf-8");
       panel.setStatus("記録をMarkdownで保存しました。", "ok");
     });
     copyRecordBtn.addEventListener("click", () => {
-      const last = memory.lastRun;
+      const last = memory2.lastRun;
       if (!last) return;
       void copyTextToClipboard(recordMarkdown(last)).then((ok) => panel.setStatus(ok ? "記録のMarkdownをコピーしました。" : "コピーできませんでした。「記録をMarkdownで保存」を使ってください。", ok ? "ok" : "warn"));
     });
     retryBtn.addEventListener("click", () => {
-      const last = memory.lastRun;
+      const last = memory2.lastRun;
       if (!last || busy) return;
       const retry = retryableOutcomes(last.result.apps);
       if (!retry.length) return;
@@ -6993,7 +10795,7 @@ ${P} .kus-rl-items__more{margin-top:8px}
       panel.setStatus(`失敗・未実行の ${retry.length} アプリを対象に選び直しました。未公開の変更を確認し直してください。`, "info");
     });
     openSettingsBtn.addEventListener("click", () => {
-      const last = memory.lastRun;
+      const last = memory2.lastRun;
       const app = last?.result.apps[0];
       if (!app) return;
       window.open(`${window.location.origin}${appSettingsPath(app)}`, "_blank", "noopener");
@@ -7015,14 +10817,14 @@ ${P} .kus-rl-items__more{margin-top:8px}
       runningMode = mode;
       clearConfirmation();
       progressView?.dispose();
-      memory.lastRun = null;
+      memory2.lastRun = null;
       progressView = createProgressView(progressHost, mode, targets.map((app) => ({ appId: app.appId, guestId: app.guestId, name: app.name, status: "waiting" })));
       const view = progressView;
       showStage("result");
       resultEmpty.hidden = true;
       resultCard.card.hidden = false;
       const finish2 = (result) => {
-        memory.lastRun = { result, inspections: targets.map(stripBundles), stopOnError };
+        memory2.lastRun = { result, inspections: targets.map(stripBundles), stopOnError };
         inspection = null;
         selected = /* @__PURE__ */ new Set();
         view.setOutcomes(result.apps);
@@ -7168,9 +10970,6 @@ ${P} .kus-rl-items__more{margin-top:8px}
     workspace.appendChild(nav);
     for (const def of stageDefs) canvas.appendChild(stages[def.id]);
     workspace.appendChild(canvas);
-    if (hint) hint.insertAdjacentElement("afterend", workspace);
-    else panel.body.insertBefore(workspace, panel.body.firstChild);
-    panel.body.appendChild(dock);
     [stages.setup, stages.review, stages.confirm, stages.result].forEach((scope) => attachCardHelp(scope));
     const noInputSubmit = document.createElement("button");
     noInputSubmit.disabled = true;
@@ -7205,11 +11004,12 @@ ${P} .kus-rl-items__more{margin-top:8px}
       } else if (activeStage === "confirm") {
         message = confirmationReady() ? "内容を確認できました。実行すると本番の設定が変わります。" : "確認のチェックと入力をすると、実行できます。";
       } else {
-        message = busy ? "実行中です。終わるまでお待ちください。「中止」で、次の依頼の前に止められます。" : memory.lastRun ? "結果を確認してください。" : "まだ実行していません。";
+        message = busy ? "実行中です。終わるまでお待ちください。「中止」で、次の依頼の前に止められます。" : memory2.lastRun ? "結果を確認してください。" : "まだ実行していません。";
       }
       const blocked = activeStage === "setup" && !!blocker || activeStage === "review" && fresh && !!inspection && selectionBlockers(inspection.apps, selected, mode).length > 0;
       dockCopy.replaceChildren();
       dockCopy.append(el("strong", "", dockTitle()), el("span", `kus-dp-dock-msg${blocked ? " kus-dp-dock-reason" : ""}`, message));
+      if (memory2.flow !== "publish") return;
       panel.result.hidden = activeStage === "confirm";
       panel.setPrimaryAction(activeStage === "setup" ? nextBtn : activeStage === "review" ? confirmBtn : noInputSubmit);
     };
@@ -7237,6 +11037,7 @@ ${P} .kus-rl-items__more{margin-top:8px}
       if (value) refreshWorkflow();
       nav.inert = value;
       for (const def of stageDefs) stages[def.id].inert = value && def.id !== "result";
+      if (value) sourceFlow.setBusy(true);
       if (value) {
         panel.root.querySelectorAll("input,button,select,textarea").forEach((control) => {
           if (control.classList.contains("kus-lp__cancel") || control.classList.contains("kus-lp__toggle")) return;
@@ -7252,30 +11053,89 @@ ${P} .kus-rl-items__more{margin-top:8px}
           control.disabled = disabled;
         });
         disabledBefore.clear();
+        sourceFlow.setBusy(false);
         refreshDetailSummary();
         renderResultCard();
         refreshReview();
-        navButtons[activeStage].focus({ preventScroll: true });
+        if (memory2.flow === "publish") navButtons[activeStage].focus({ preventScroll: true });
       } finally {
         setPanelBusy(value);
       }
     };
+    const flowbar = el("div", "kus-ds-flowbar");
+    flowbar.appendChild(el("span", "kus-ds-flowbar__label", "操作"));
+    const flowGroup = el("div", "kus-ds-flowbar__group");
+    flowGroup.setAttribute("role", "radiogroup");
+    flowGroup.setAttribute("aria-label", "操作の切り替え");
+    const flowInputs = {};
+    const flowName = `${panel.root.id}-flow`;
+    for (const [id, label] of [["source", "反映元アプリから本番へ"], ["publish", "プレビューの変更を公開"]]) {
+      const wrap = el("label", "kus-ds-flow");
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = flowName;
+      input.value = id;
+      input.checked = memory2.flow === id;
+      input.setAttribute("aria-label", label);
+      input.dataset.flow = id;
+      wrap.append(input, document.createTextNode(label));
+      flowGroup.appendChild(wrap);
+      flowInputs[id] = input;
+      input.addEventListener("change", () => {
+        if (input.checked) switchFlow(id);
+      });
+    }
+    flowbar.appendChild(flowGroup);
+    const subtitleEl = panel.root.querySelector(".kus-lp__subtitle");
+    function mountFlow(flow) {
+      const next = flow === "source" ? { workspace: sourceFlow.workspace, dock: sourceFlow.dock } : { workspace, dock };
+      const other = flow === "source" ? { workspace, dock } : { workspace: sourceFlow.workspace, dock: sourceFlow.dock };
+      other.workspace.remove();
+      other.dock.remove();
+      if (!flowbar.isConnected) {
+        if (hint) hint.insertAdjacentElement("afterend", flowbar);
+        else panel.body.insertBefore(flowbar, panel.body.firstChild);
+      }
+      flowbar.insertAdjacentElement("afterend", next.workspace);
+      panel.body.appendChild(next.dock);
+      if (subtitleEl) subtitleEl.textContent = FLOW_SUBTITLES[flow];
+      flowInputs[flow].checked = true;
+      next.dock.append(panel.status, panel.result);
+      if (flow === "source") sourceFlow.activate();
+      else {
+        sourceFlow.deactivate();
+        refreshWorkflow();
+      }
+    }
+    function switchFlow(flow) {
+      if (busy) {
+        flowInputs[memory2.flow].checked = true;
+        return;
+      }
+      memory2.flow = flow;
+      mountFlow(flow);
+      panel.setStatus("", "neutral");
+    }
     panel.root.addEventListener("kus-lite-dispose", () => {
       progressView?.dispose();
     }, { once: true });
+    const sourceFlow = createSourceFlow(panel);
     ready = true;
     clearConfirmation();
     refreshDetailSummary();
     onInputsChanged();
     renderReviewTable();
-    if (memory.lastRun) {
-      runningMode = memory.lastRun.result.mode;
-      progressView = createProgressView(progressHost, memory.lastRun.result.mode, []);
-      progressView.setOutcomes(memory.lastRun.result.apps);
-      if (memory.lastRun.result.logs?.length) panel.setResult(memory.lastRun.result.logs.join("\n"));
+    if (memory2.lastRun) {
+      runningMode = memory2.lastRun.result.mode;
+      progressView = createProgressView(progressHost, memory2.lastRun.result.mode, []);
+      progressView.setOutcomes(memory2.lastRun.result.apps);
     }
-    showStage(memory.lastRun ? "result" : "setup");
-    if (memory.lastRun) panel.setStatus(describeRunResult(memory.lastRun.result).text, describeRunResult(memory.lastRun.result).tone);
+    showStage(memory2.lastRun ? "result" : "setup");
+    mountFlow(memory2.flow);
+    if (memory2.flow === "publish" && memory2.lastRun) {
+      if (memory2.lastRun.result.logs?.length) panel.setResult(memory2.lastRun.result.logs.join("\n"));
+      panel.setStatus(describeRunResult(memory2.lastRun.result).text, describeRunResult(memory2.lastRun.result).tone);
+    }
   }
 
   // src/entries/deploy-lite-entry.ts

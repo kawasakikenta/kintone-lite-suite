@@ -211,12 +211,15 @@ async function main() {
   const checks = [];
   const ok = name => { checks.push(name); };
 
-  async function reset(extra = {}) {
+  // 既定は「反映元アプリから本番へ」。従来の流れ（プレビューの変更を公開）を検証する reset は、操作を切り替えてから始める。
+  const flowRadio = name => page.getByRole('radio', { name, exact: true });
+  async function reset(extra = {}, flow = 'publish') {
     await page.setContent('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><body style="background:#e8edf3"></body></html>');
     await page.evaluate(fixture);
     if (Object.keys(extra).length) await page.evaluate(extra => Object.assign(window.__deployMock, extra), extra);
     await page.addScriptTag({ content: script });
     await page.evaluate(() => DeployHarness.mountDeployLitePanel());
+    if (flow === 'publish') await flowRadio('プレビューの変更を公開').check();
   }
   const ROOT_SEL = '#kus-deploy-lite';
   const button = name => page.getByRole('button', { name, exact: true });
@@ -276,7 +279,9 @@ async function main() {
   }
   async function assertNoLegacyTerms(where) {
     const found = await page.evaluate(() => {
-      const root = document.querySelector('#kus-deploy-lite');
+      // 操作の切り替え（反映元アプリから本番へ）は新しい流れの名前なので対象外にする
+      const root = document.querySelector('#kus-deploy-lite').cloneNode(true);
+      root.querySelectorAll('.kus-ds-flowbar').forEach(node => node.remove());
       const texts = [root.textContent];
       root.querySelectorAll('[aria-label],[placeholder],[title]').forEach(el => texts.push(el.getAttribute('aria-label') || '', el.getAttribute('placeholder') || '', el.getAttribute('title') || ''));
       // 取り消し方の案内は、プレビュー反映の入力名「反映元（設定JSON）」をそのまま示す
@@ -832,6 +837,11 @@ async function main() {
     await page.keyboard.press('ArrowRight');
     assert.equal(await tab('変更を確認').getAttribute('aria-selected'), 'true');
     ok('keyboard');
+
+    // 反映元アプリから本番へ（合成エンジン。続けて実エンジンとの結合は deploy-engine-scenarios.cjs の側で扱う）
+    const sourceScenarios = require('./deploy-source-scenarios.cjs');
+    const sourceScript = await sourceScenarios.bundle({ esbuild: require(path.join(TOOL, 'node_modules/esbuild')), deployMock: mockEngine });
+    for (const name of await sourceScenarios.run({ page, script: sourceScript, out: OUT })) ok(`source: ${name}`);
 
     // 実エンジン＋合成 kintone API（画面の表示と、合成 kintone が受け取った送信内容の両方を確かめる）
     for (const name of await require('./deploy-engine-scenarios.cjs')({ page, script: await bundle('real'), out: OUT })) ok(name);

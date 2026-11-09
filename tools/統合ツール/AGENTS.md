@@ -16,7 +16,7 @@
 | `ER図.js` | `er-lite-entry.ts` | `tabs/er.ts`, `tabs/er-standalone.ts` |
 | `プロセス実行.js` | `process-lite-entry.ts` | `tabs/process-standalone.ts` |
 | `プレビュー反映.js` | `reflect-lite-entry.ts` | `tabs/reflect-standalone.ts` |
-| `本番反映.js` | `deploy-lite-entry.ts` | `tabs/deploy-standalone.ts`（取り決めの型は `deploy/types.ts`、画面は `entries/deploy-lite-ui.ts`） |
+| `本番反映.js` | `deploy-lite-entry.ts` | `tabs/deploy-standalone.ts`・`tabs/deploy-source-standalone.ts`（取り決めの型は `deploy/types.ts`・`deploy/sourceTypes.ts`・`reflect/selectionTypes.ts`、画面は `entries/deploy-lite-ui.ts`・`entries/deploy-source-ui.ts`） |
 | `フィールド追加.js` | `field-lite-entry.ts` | `tabs/field-standalone.ts` |
 | `kintoneレコード取得.js` | `record-lite-entry.ts` | `tabs/record-standalone.ts` |
 | `CSV出力.js` | `csv-export-lite-entry.ts` | `tabs/record-standalone.ts` |
@@ -63,7 +63,7 @@ tools/統合ツール/
 │   │   └── *-standalone.ts    # lite 版用に統合 UI 依存を外した関数群
 │   ├── diff/                  # 差分エンジン
 │   ├── reflect/               # プレビュー反映エンジン
-│   ├── deploy/                # 本番反映（types.ts: エンジンと画面の取り決め / display.ts・report.ts: 表示・Markdown・結果 JSON の純粋関数 / sections.ts・inspect.ts: エンジン）
+│   ├── deploy/                # 本番反映（types.ts・sourceTypes.ts: エンジンと画面の取り決め / display.ts・report.ts・sourceDisplay.ts・sourceReport.ts: 表示・Markdown・結果 JSON の純粋関数 / sourceSession.ts: 差分の選択・修正の状態 / sections.ts・inspect.ts: エンジン）
 │   ├── handlers/              # 差分行のフォーカス移動
 │   └── ui/                    # UI 層（ダイアログ・共通コンポーネント）
 └── tools/                     # ← 親ディレクトリ（生成物の出力先）
@@ -89,3 +89,4 @@ tools/統合ツール/
 - プレビュー反映で反映できる項目と実行順は `reflect/sections.ts` の `REFLECT_SECTION_KEYS` が正規の一覧（一般設定 `appSettings` を含む）。共有の `SECTION_DEFS` の `put` は他ツールにも波及するため、反映項目を増やすときはこちらを変更する。
 - 設定の書き戻し（フィールド追加 / JS/CSS 設定）は GET の `revision` を送り、`decorateRevisionConflict` で競合を利用者へ通知する。
 - 本番反映（`entries/deploy-lite-ui.ts`）は、エンジンを `tabs/deploy-standalone.ts` の `validateDeployTargets`・`inspectDeployTargetsStandalone`・`runDeployStandalone` と `deploy/types.ts` の型だけで使う。状態の表示名・件数の集計・ステータス文は `deploy/display.ts`、計画・記録の Markdown と結果 JSON は `deploy/report.ts`（どちらも DOM 非依存）に置く。差分確認後に対象・操作・詳細設定が変わったら、確認は差分確認からやり直す（署名の比較）。取得失敗・反映処理中のアプリは自動で除外せず、選択している間は先へ進めない。数百件を超える結果は全行を描画せず、要約と問題のある行だけ出す。
+- 本番反映パネルは、上部の「操作」で 2 つの流れを切り替える（既定は「反映元アプリから本番へ」。実行中は切り替え不可。見えない流れの DOM は外し、ステータス欄・主操作は見えている流れだけが持つ）。「反映元アプリから本番へ」（`entries/deploy-source-ui.ts`）は 5 段階（対象を選ぶ → 差分を選ぶ → 内容を修正 → 最終確認 → 結果）で、段階 2 は `entries/deploy-source-select.ts`、段階 3 は `entries/deploy-source-edit.ts`、共通の実行状況の一覧は `entries/deployProgressView.ts`、スタイルは `entries/deploy-source-style.ts`。エンジンは `tabs/reflect-standalone.ts`（`previewReflectStandalone`・`composeReflectSelectionStandalone`・`resolveReflectAppsStandalone`・`reflectConnectionError`）、`reflect/selection.ts`、`tabs/deploy-source-standalone.ts` の `runSourceToProductionStandalone` と、`reflect/selectionTypes.ts`・`deploy/sourceTypes.ts` の型だけで使う。選択・修正の状態と作り直しは `deploy/sourceSession.ts`（DOM 非依存）、表示用の純粋関数は `deploy/sourceDisplay.ts`、記録と結果 JSON は `deploy/sourceReport.ts`。抽出結果は入力の署名（`buildSourceSetupSignature`。項目は含めず、抽出時の項目の部分集合なら使い続ける）と結び付け、段階 1〜3 の変更（選択・修正・JSON・目標）のたびに確認を解除する。実行には、選んだ変更がある項目だけを `reflect.scopes` に、項目ごとの送る設定を `composed` に渡す（`composed` に無い項目は既定の計画どおり書き込まれる）。反映先プレビューの未公開の変更が clean・own 以外（pending・unknown・未指定）のとき、最終確認で了承を必須にして `allowPendingChanges: true` を渡す。数千件の変更は、項目を畳み、開いたときにグループ単位で描画する。
