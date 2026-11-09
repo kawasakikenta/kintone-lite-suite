@@ -24,7 +24,7 @@ export interface ReflectSectionPlan {
   requiredFields?: string[]; fileUploads?: ReflectFileUpload[];
   items?: ReflectItemSummary[];
   /** 反映先の現在（before）と既定の反映後（after）。どちらも PUT 形。差分の選択・修正（reflect/selection.ts）に使う */
-  values?: { before: any; after: any };
+  values?: { before: any; after: any; /** JS/CSS 設定のみ: fileKey → ファイル名（反映元・反映先） */ fileNames?: Record<string, string>; /** JS/CSS 設定のみ: fileKey → 内容ハッシュ（差分の比較用） */ fileHashes?: Record<string, string> };
 }
 export interface ReflectPlanOptions { lookupMap?: Record<string, string>; preserveTargetOnly?: boolean; customizeFiles?: CustomizeFileResolution; fieldLabels?: Record<string, string> }
 export const formatBytes = (bytes: number) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
@@ -32,18 +32,18 @@ const namedSections: Record<string, string> = { viewSettings: 'views', reportSet
 const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 const object = (value: any): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value);
 const equal = (a: any, b: any) => stableReflectStringify(a) === stableReflectStringify(b);
-const valueText = (value: any) => value === undefined ? '（なし）' : typeof value === 'string' ? value : JSON.stringify(value);
-const labels: Record<string, string> = { properties: 'フィールド', layout: '配置', views: '一覧', reports: 'グラフ', actions: 'アクション', rights: 'アクセス権', notifications: '通知', categories: 'カテゴリー', label: '表示名', required: '必須', unique: '重複禁止', options: '選択肢', defaultValue: '初期値', type: '種類', index: '表示順', filterCond: '絞り込み', sort: '並び順', enable: '有効', states: '状態', scope: '適用範囲', fields: 'フィールド', desktop: 'PC', mobile: 'モバイル' };
+export const valueText = (value: any) => value === undefined ? '（なし）' : typeof value === 'string' ? value : JSON.stringify(value);
+export const diffPathLabels: Record<string, string> = { properties: 'フィールド', layout: '配置', views: '一覧', reports: 'グラフ', actions: 'アクション', rights: 'アクセス権', notifications: '通知', categories: 'カテゴリー', label: '表示名', required: '必須', unique: '重複禁止', options: '選択肢', defaultValue: '初期値', type: '種類', index: '表示順', filterCond: '絞り込み', sort: '並び順', enable: '有効', states: '状態', scope: '適用範囲', fields: 'フィールド', desktop: 'PC', mobile: 'モバイル' };
 
 /** Objects whose keys are user-defined names (field codes, view names, option labels), not setting attributes. */
 const nameKeyedContainers = new Set(['properties', 'fields', 'views', 'reports', 'actions', 'states', 'categories', 'options']);
 
 /** Compare the payload's actual effect, not app-specific IDs or API metadata. */
-function diffValues(before: any, after: any, path: string[], output: ReflectChange[], keysAreNames = false) {
+export function diffValues(before: any, after: any, path: string[], output: ReflectChange[], keysAreNames = false) {
   if (equal(before, after)) return;
   if (object(before) && object(after)) {
     // A field named "label" or "type" must stay "label"/"type" in the path instead of reading as an attribute.
-    for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own(before, key) ? before[key] : undefined, own(after, key) ? after[key] : undefined, [...path, !keysAreNames && own(labels, key) ? labels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
+    for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own(before, key) ? before[key] : undefined, own(after, key) ? after[key] : undefined, [...path, !keysAreNames && own(diffPathLabels, key) ? diffPathLabels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
   } else if (Array.isArray(before) && Array.isArray(after)) {
     // Align lists by content to avoid presenting a reorder as removal of every item.
     // Each item is serialized once; pairwise comparison made a full ACL replacement quadratic (1,000 rows took seconds).
@@ -173,6 +173,33 @@ export function reflectSelectionBlockers(entries: ReflectSectionPlan[], scopes: 
   return [...new Set(issues)];
 }
 
+/**
+ * 反映後の設定（PUT 形）から、反映先に存在が必要なフィールドコードを求める。対象外の項目・求められない形は undefined。
+ * 既定の計画と、選択・修正後の計画（reflect/selection.ts）で同じ規則を使う。
+ */
+export function reflectRequiredFields(key: string, after: any): string[] | undefined {
+  if (key === 'viewSettings') {
+    if (!object(after?.views)) return [];
+    return [...new Set<string>(Object.values<any>(after.views).flatMap(view => view?.type === 'LIST' ? (view.fields || []) : view?.type === 'CALENDAR' ? [view.date, view.title].filter(Boolean) : []).filter(code => !['$id', '$revision'].includes(code)))];
+  }
+  if (key === 'actionSettings') return extractActionRequiredFields(after?.actions);
+  if (key === 'reportSettings') return extractReportRequiredFields(after?.reports);
+  if (key === 'fieldAcl') return [...new Set<string>((after?.rights || []).map((right: any) => String(right?.code || '')).filter((code: string) => code && !['$id', '$revision'].includes(code)))];
+  if (key === 'reminderNotifications') return [...new Set<string>((after?.notifications || []).flatMap((item: any) => [item?.timing?.code, ...(item?.targets || []).filter((target: any) => target?.entity?.type === 'FIELD_ENTITY').map((target: any) => target.entity.code)]).map((code: any) => String(code || '')).filter((code: string) => !!code))];
+  if (key === 'processSettings') {
+    if (!object(after?.states)) return undefined;
+    return [...new Set<string>(Object.values(after.states).flatMap((state: any) => (state?.assignee?.entities || []).filter((item: any) => item?.entity?.type === 'FIELD_ENTITY').map((item: any) => String(item.entity.code || ''))).filter((code: string) => !!code))];
+  }
+  if (key === 'layoutSettings') {
+    const codes: string[] = [];
+    const walk = (nodes: any[]) => { for (const node of nodes) { if (node.code) codes.push(String(node.code)); if (Array.isArray(node.fields)) walk(node.fields); if (Array.isArray(node.layout)) walk(node.layout); } };
+    walk(Array.isArray(after?.layout) ? after.layout : []);
+    return [...new Set(codes)];
+  }
+  if (key === 'appSettings') return after?.titleField?.selectionMode === 'MANUAL' && typeof after.titleField.code === 'string' && after.titleField.code ? [after.titleField.code] : undefined;
+  return undefined;
+}
+
 const settingValue = (value: any): any => typeof value === 'number' ? String(value) : Array.isArray(value) ? value.map(settingValue) : object(value) ? Object.fromEntries(Object.entries(value).map(([name, item]) => [name, settingValue(item)])) : value;
 
 /** 一般設定。反映元に無いキーは「変更なし」として送らない（古いJSONとの互換）。アプリ名・説明・アイコンは対象外。 */
@@ -185,7 +212,7 @@ function buildAppSettingsPlan(plan: ReflectSectionPlan, source: any, target: any
     if (!Object.keys(after).length) throw new Error('反映元に比較できる一般設定がありません（古い設定JSONの可能性があります）。');
     if (after.titleField?.selectionMode === 'MANUAL') {
       if (typeof after.titleField.code !== 'string' || !after.titleField.code) throw new Error('レコードのタイトルに使うフィールドが指定されていません。');
-      plan.requiredFields = [after.titleField.code];
+      plan.requiredFields = reflectRequiredFields('appSettings', after);
     }
     diffValues(before, after, [], plan.changes);
     // 一般設定のAPIは設定を削除しない（例: タイトルを自動にするとフィールド指定は不要になるだけ）ため、削除としては数えない。
@@ -197,6 +224,7 @@ function buildAppSettingsPlan(plan: ReflectSectionPlan, source: any, target: any
     if (plan.changeCount) plan.operations.push({ method: 'PUT', endpoint: SECTION_DEFS.find(item => item.key === 'appSettings')?.endpoint || '/app/settings.json', body: after, label: plan.label });
     plan.status = plan.operations.length ? 'change' : 'same';
     plan.message = plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : '書き込み不要（一致）';
+    plan.values = { before: deepClone(before), after: deepClone(after) };
   } catch (error: any) { if (isRunCancelledError(error)) throw error; plan.status = 'error'; plan.blockers.push(error.message || String(error)); plan.message = plan.blockers.join('\n'); }
   return plan;
 }
@@ -280,10 +308,8 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
       for (const item of Object.values(to)) if (item.index !== undefined) item.index = String(item.index);
       before = { [property]: to }; after = { [property]: combined };
       plan.behavior = preserve ? '追加・更新（反映先だけの設定は保持）' : '全置換（反映元にない設定を削除）';
-      if (preserve) for (const name of Object.keys(to).filter(name => !own(from, name))) plan.changes.push({ kind: '保持', path: `${labels[property]} / ${name}`, before: valueText(to[name]), after: '内容を保持（表示順は反映元の後）' });
-      if (key === 'viewSettings') plan.requiredFields = [...new Set(Object.values(combined).flatMap(view => view.type === 'LIST' ? (view.fields || []) : view.type === 'CALENDAR' ? [view.date, view.title].filter(Boolean) : []).filter(code => !['$id', '$revision'].includes(code)))];
-      if (key === 'actionSettings') plan.requiredFields = extractActionRequiredFields(combined);
-      if (key === 'reportSettings') plan.requiredFields = extractReportRequiredFields(combined);
+      if (preserve) for (const name of Object.keys(to).filter(name => !own(from, name))) plan.changes.push({ kind: '保持', path: `${diffPathLabels[property]} / ${name}`, before: valueText(to[name]), after: '内容を保持（表示順は反映元の後）' });
+      plan.requiredFields = reflectRequiredFields(key, after);
     } else if (key === 'pluginSettings') {
       if (!Array.isArray(source.plugins) || !Array.isArray(target.plugins)) throw new Error('プラグイン一覧の形式が不正です。');
       const existing = new Set(target.plugins.map(item => item.id));
@@ -345,16 +371,15 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
         if (uploads.length) plan.warnings.push(`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`);
         if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map(item => `「${item.name}」（${item.reason}）`).join('、')} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
       }
-      if (key === 'fieldAcl') plan.requiredFields = [...new Set<string>((after.rights || []).map((right: any) => String(right?.code || '')).filter((code: string) => code && !['$id', '$revision'].includes(code)))];
-      if (key === 'reminderNotifications') plan.requiredFields = [...new Set<string>((after.notifications || []).flatMap((item: any) => [item?.timing?.code, ...(item?.targets || []).filter((target: any) => target?.entity?.type === 'FIELD_ENTITY').map((target: any) => target.entity.code)]).map((code: any) => String(code || '')).filter((code: string) => !!code))];
-      if (key === 'processSettings' && object(after.states)) plan.requiredFields = [...new Set<string>(Object.values(after.states).flatMap((state: any) => (state?.assignee?.entities || []).filter((item: any) => item?.entity?.type === 'FIELD_ENTITY').map((item: any) => String(item.entity.code || ''))).filter((code: string) => !!code))];
+      if (key === 'fieldAcl' || key === 'reminderNotifications' || key === 'processSettings') {
+        const required = reflectRequiredFields(key, after);
+        if (required) plan.requiredFields = required;
+      }
       if (key === 'layoutSettings') {
         if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error('レイアウトの形式が不正です。');
         after.layout = mergeLayout(source.layout, target.layout, plan);
         plan.behavior = '配置を更新（反映先だけのフィールド配置は保持）';
-        const codes: string[] = [];
-        const walk = (nodes: any[]) => { for (const node of nodes) { if (node.code) codes.push(String(node.code)); if (Array.isArray(node.fields)) walk(node.fields); if (Array.isArray(node.layout)) walk(node.layout); } };
-        walk(after.layout); plan.requiredFields = [...new Set(codes)];
+        plan.requiredFields = reflectRequiredFields('layoutSettings', after);
       }
     }
     const shownBefore = comparable ? comparable(before) : before, shownAfter = comparable ? comparable(after) : after;
@@ -366,6 +391,11 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
     plan.removalCount = plan.changes.filter(change => change.kind === '削除').length;
     if (key !== 'fieldSettings' && key !== 'pluginSettings' && plan.changeCount) plan.operations.push({ method: 'PUT', endpoint: def.endpoint, body: after, label: def.label, ...(uploads.length ? { uploads } : {}) });
     if (uploads.length && plan.changeCount) plan.fileUploads = uploads;
+    plan.values = { before: deepClone(before), after: deepClone(after) };
+    if (key === 'customizeSettings') {
+      plan.values.fileNames = { ...customizeFileNames(source, target) };
+      plan.values.fileHashes = { ...(options.customizeFiles?.hashes || {}) };
+    }
     if (plan.blockers.length) plan.status = 'error';
     else plan.status = plan.operations.length ? 'change' : 'same';
     plan.message = plan.blockers.length ? plan.blockers.join('\n') : plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : `書き込み不要${plan.changes.some(change => change.kind === '保持') ? '（反映先だけの設定は保持）' : '（一致）'}`;

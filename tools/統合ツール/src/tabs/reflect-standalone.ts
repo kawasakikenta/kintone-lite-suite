@@ -11,7 +11,9 @@ import { REFLECT_SECTION_KEYS } from '../reflect/sections.js';
 import { inspectTargetPendingChanges, type ReflectTargetPending } from '../reflect/targetPending.js';
 import { pushReflectErrorLog as pushErrorLog, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
 import { RUN_CANCELLED_MESSAGE, isRunCancelledError } from '../runControl.js';
-import type { ComposedReflectSelection, SectionSelectionState } from '../reflect/selectionTypes.js';
+import type { ComposedReflectSelection, ComposedSection, SectionSelectionState } from '../reflect/selectionTypes.js';
+import { buildPlanFromComposedAfter, buildSectionSelectionModel, composeSectionSelection, defaultSelectionState } from '../reflect/selection.js';
+import { SYSTEM_FIELD_TYPES } from '../constants.js';
 
 export interface ReflectOptions {
   sourceAppId: string; sourceGuestId?: string; sourcePreview?: boolean; sourceBundle?: unknown;
@@ -196,17 +198,46 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
     totalSections: entries.length, changedSections: entries.filter(entry => entry.status === 'change').length,
     sameSections: entries.filter(entry => entry.status === 'same').length,
     errorSections: entries.filter(entry => !['change', 'same'].includes(entry.status)).length,
-    entries, sourceFieldCodes: listReflectFieldCodes(source, true), targetFieldCodes: listReflectFieldCodes(target), sourceSystemFieldCodes: listReflectSystemFieldCodes(source), baseline, targetPending
+    entries, sourceFieldCodes: listReflectFieldCodes(source, true), targetFieldCodes: listReflectFieldCodes(target), sourceSystemFieldCodes: listReflectSystemFieldCodes(source), baseline, targetPending, fieldLabels
   };
+}
+
+/** 選択・修正後のフィールド設定（PUT 形）で、実際に追加・存在する通常フィールドのコード（テーブル内を含む）。 */
+function composedFieldCodes(after: any): string[] {
+  const properties = after?.properties;
+  if (!properties || typeof properties !== 'object') return [];
+  return Object.entries<any>(properties).filter(([, definition]) => !SYSTEM_FIELD_TYPES.has(definition?.type)).flatMap(([code, definition]) => [code, ...Object.keys(definition?.type === 'SUBTABLE' && definition.fields && typeof definition.fields === 'object' ? definition.fields : {})]);
 }
 
 /**
  * 差分の選択・修正の状態から、項目ごとの送る設定と計画を作り直す（純粋。通信しない）。
- * states に無い項目は既定の選択（すべて選択・修正なし）とする。仮実装: 実装担当が置き換える。
+ * states に無い項目は既定の選択（すべて選択・修正なし）とする。
+ * 計画を作れない項目（取得失敗・種類の違いなど、status が change / same 以外）は sections に含めず、その blockers を引き継ぐ。
  */
 export function composeReflectSelectionStandalone(preview: PreviewReflectResult, states: Record<string, SectionSelectionState>): ComposedReflectSelection {
-  void preview; void states;
-  throw new Error('composeReflectSelectionStandalone は未実装です');
+  const fieldLabels = preview.fieldLabels || {};
+  const sections: ComposedSection[] = [];
+  const plans: ReflectSectionPlan[] = [];
+  const issues: string[] = [];
+  for (const entry of preview.entries) {
+    const model = entry.status === 'change' || entry.status === 'same' ? buildSectionSelectionModel(entry, fieldLabels) : null;
+    if (!model) {
+      if (entry.status === 'change' || entry.status === 'same') issues.push(`${entry.label}: 設定値を取得できていないため、選択・修正できません。`);
+      plans.push(entry);
+      continue;
+    }
+    const state = states && Object.prototype.hasOwnProperty.call(states, entry.sectionKey) && states[entry.sectionKey] ? states[entry.sectionKey] : defaultSelectionState(model);
+    const composed = composeSectionSelection(model, state, entry, fieldLabels);
+    sections.push(composed);
+    plans.push(composed.plan);
+    for (const error of composed.errors) issues.push(`${composed.label}: ${error}`);
+  }
+  const scopes = preview.entries.map(entry => entry.sectionKey);
+  // 「反映元のフィールドが追加される」前提は、選択・修正後のフィールド設定で実際に追加・存在するフィールドだけにする。
+  const fieldSettings = sections.find(section => section.sectionKey === 'fieldSettings');
+  const sourceFields = fieldSettings ? composedFieldCodes(fieldSettings.after) : [];
+  issues.push(...reflectSelectionBlockers(plans, scopes, sourceFields, preview.targetFieldCodes, preview.sourceSystemFieldCodes));
+  return { sections, blockers: [...new Set(issues)] };
 }
 
 export async function runApplyPreviewStandalone(
@@ -223,8 +254,12 @@ export async function runApplyPreviewStandalone(
   let revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes }, source, target);
   const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
   const fieldLabels = reflectFieldLabels(target, source);
-  const plans = scopes.map(key => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels }));
-  const issues = reflectSelectionBlockers(plans, scopes, listReflectFieldCodes(source, true), listReflectFieldCodes(target), listReflectSystemFieldCodes(source));
+  const defaultPlans = scopes.map(key => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels }));
+  // 差分の選択・修正がある項目は、確認済みの送る設定から計画を作り直す（再取得した既定の計画を土台に、baseline の照合は済んでいる）。
+  const composed = opts.composed;
+  const plans = composed ? defaultPlans.map(plan => Object.prototype.hasOwnProperty.call(composed, plan.sectionKey) ? buildPlanFromComposedAfter(plan, composed[plan.sectionKey], fieldLabels) : plan) : defaultPlans;
+  const sourceFields = composed && Object.prototype.hasOwnProperty.call(composed, 'fieldSettings') ? composedFieldCodes(composed.fieldSettings) : listReflectFieldCodes(source, true);
+  const issues = reflectSelectionBlockers(plans, scopes, sourceFields, listReflectFieldCodes(target), listReflectSystemFieldCodes(source));
   if (issues.length) throw new Error(`反映前の検査で停止しました。まだ書き込んでいません。\n${issues.join('\n')}`);
   if (plans.some(plan => plan.requiredFields?.length)) revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes, targetDependencies: ['fieldSettings'] }, source, target);
   // 参照先変換が使われる項目（フィールド・アクション）を書くときだけ変換先を確認する（差分確認と同じ条件）。
