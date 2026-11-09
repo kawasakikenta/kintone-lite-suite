@@ -2,10 +2,9 @@
 'use strict';
 
 // 本番反映（lite）の画面と操作契約を、エンジンだけを合成エンジンに差し替えて検証する。
+// 続けて、bundle('real') で tabs/deploy-standalone.ts をそのまま束ねた画面を、合成 kintone API につないで検証する
+// （deploy-engine-scenarios.cjs。run-reflect-lite-dom.cjs の reflect-engine-scenarios.cjs と同じ作り）。
 // 実アプリ・外部 API への通信や書き込みは行わない。結果と画面は .iter-shots/deploy-lite-dom/（Git 管理外）に保存する。
-//
-// 実エンジン＋合成 kintone API のシナリオを足すときは、bundle('real') で tabs/deploy-standalone.ts をそのまま束ね、
-// fixture の kintone.api を合成 API にする（run-reflect-lite-dom.cjs の reflect-engine-scenarios.cjs と同じ作り）。
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -833,6 +832,9 @@ async function main() {
     await page.keyboard.press('ArrowRight');
     assert.equal(await tab('変更を確認').getAttribute('aria-selected'), 'true');
     ok('keyboard');
+
+    // 実エンジン＋合成 kintone API（画面の表示と、合成 kintone が受け取った送信内容の両方を確かめる）
+    for (const name of await require('./deploy-engine-scenarios.cjs')({ page, script: await bundle('real'), out: OUT })) ok(name);
 
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ passed: true, sizes, checks }, null, 2));
